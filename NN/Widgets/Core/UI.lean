@@ -13,18 +13,8 @@ public meta import ProofWidgets.Component.HtmlDisplay -- shake: keep
 /-!
 # Widgets UI helpers
 
-TorchLean has multiple ProofWidgets-based viewers (IR graphs, autograd tapes, RL rollouts, etc.).
-Several widgets share the same compact HTML helpers (`monospace`, `pill`, status badges, DOT label
-escaping).
-
-This file centralizes those helpers so:
-- widget modules stay consistent,
-- style tweaks happen in one place, and
-- we avoid “private def …” duplication across many files.
-
-Design notes:
-- This is small and explicit and depends on Lean and ProofWidgets.
-- These helpers are **meta** only (used for infoview UI), not part of the executable runtime.
+Shared HTML formatting, status badges, DOT label escaping, and source-location handling for
+ProofWidgets viewers. These helpers run in the infoview's meta code, not the model runtime.
 
 References:
 - ProofWidgets: https://github.com/leanprover-community/ProofWidgets4
@@ -105,7 +95,6 @@ def flagBadge (name : String) (isSet : Bool) : ProofWidgets.Html :=
 
 /-- Escape a string so it is safe to embed inside a double-quoted DOT node label. -/
 def escapeDotLabel (s : String) : String :=
-  -- DOT labels are double-quoted; keep widget-generated DOT robust.
   let s := s.replace "\\" "\\\\"
   let s := s.replace "\"" "\\\""
   s.replace "\n" "\\n"

@@ -212,7 +212,7 @@ def corners_from_bbox_depth(
     return corners
 
 
-def export_cert_with_pipelines(
+def export_cert(
     args: argparse.Namespace,
     detector: Any | None = None,
     depth_estimator: Any | None = None,
@@ -267,7 +267,7 @@ def export_cert_with_pipelines(
         "tol": float(args.tol),
         "camera_P": camera_p,
         "corners3d": corners,
-        "bbox2d": [float(x) for x in bbox],
+        "bbox2d": list(bbox),
         "metadata": {
             "producer": "scripts/verification/geometry3d/export_hf_depth_box3d_cert.py",
             "corner_order": "binary",
@@ -299,18 +299,9 @@ def args_with_case(args: argparse.Namespace, case: dict[str, Any], index: int) -
         case_args.image_url = case["image_url"]
     if "label" in case:
         case_args.label = case["label"]
-    if "det_threshold" in case:
-        case_args.det_threshold = float(case["det_threshold"])
-    if "tol" in case:
-        case_args.tol = float(case["tol"])
-    if "focal_length" in case:
-        case_args.focal_length = float(case["focal_length"])
-    if "focal_y" in case:
-        case_args.focal_y = float(case["focal_y"])
-    if "principal_x" in case:
-        case_args.principal_x = float(case["principal_x"])
-    if "principal_y" in case:
-        case_args.principal_y = float(case["principal_y"])
+    for name in ("det_threshold", "tol", "focal_length", "focal_y", "principal_x", "principal_y"):
+        if name in case:
+            setattr(case_args, name, float(case[name]))
     if "detection_index" in case:
         value = case["detection_index"]
         case_args.detection_index = None if value is None else int(value)
@@ -325,9 +316,8 @@ def args_with_case(args: argparse.Namespace, case: dict[str, Any], index: int) -
 def run_batch(args: argparse.Namespace) -> None:
     """Run one detector/depth-model load over many real-image cases.
 
-    This avoids reloading model weights for every manifest entry.  If `--verify` is set, every
-    generated certificate is immediately checked by the Lean CLI, so failures surface at the exact
-    producer/checker boundary.
+    The models are loaded once. With `--verify`, the Lean CLI checks each certificate after
+    all cases have been exported.
     """
     with args.batch_manifest.open("r", encoding="utf-8") as fh:
         manifest = json.load(fh)
@@ -344,7 +334,7 @@ def run_batch(args: argparse.Namespace) -> None:
         if not isinstance(case, dict):
             raise ValueError(f"case {i}: expected object")
         case_args = args_with_case(args, case, i)
-        cert = export_cert_with_pipelines(case_args, detector, depth_estimator)
+        cert = export_cert(case_args, detector, depth_estimator)
         case_args.out.parent.mkdir(parents=True, exist_ok=True)
         with case_args.out.open("w", encoding="utf-8") as fh:
             json.dump(cert, fh, indent=2, allow_nan=False)
@@ -386,7 +376,7 @@ def main() -> None:
         run_batch(args)
         return
 
-    cert = export_cert_with_pipelines(args)
+    cert = export_cert(args)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w", encoding="utf-8") as fh:
         json.dump(cert, fh, indent=2, allow_nan=False)

@@ -207,9 +207,9 @@ Proof-carrying graph for the sequence-shaped residual FFN:
 
 `X ↦ X + A₂(GELU(A₁ X + b₁)) + b₂`.
 
-The affine maps are supplied explicitly over flattened sequence tensors. The theorem applies to
-shared-weight position-wise FFNs, fused FFN kernels, and future compiler-generated linearizations
-as long as they expose the same affine map.
+The affine maps and biases are supplied over flattened sequence tensors and remain fixed during
+differentiation. A position-wise shared-weight FFN can supply block-diagonal maps and repeated
+biases. Correspondence with a concrete runtime or fused kernel requires a separate proof.
 -/
 def seqFfnResidualDGraph {seqLen dModel dFF : Nat}
     (fc1 :

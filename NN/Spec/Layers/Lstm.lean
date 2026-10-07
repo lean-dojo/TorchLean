@@ -263,13 +263,9 @@ def lstmCellBackwardSpec {inputSize hiddenSize : Nat}
   let dGPre := mulSpec dG (Activation.tanhOutputDerivSpec candidate)
 
   let dWf := outerProductSpec dFPre concat
-  let dbf := dFPre
   let dWi := outerProductSpec dIPre concat
-  let dbi := dIPre
   let dWc := outerProductSpec dGPre concat
-  let dbc := dGPre
   let dWo := outerProductSpec dOPre concat
-  let dbo := dOPre
 
   let dConcatF := vecMatMulSpec dFPre lstm.forgetWeight
   let dConcatI := vecMatMulSpec dIPre lstm.inputWeight
@@ -281,10 +277,10 @@ def lstmCellBackwardSpec {inputSize hiddenSize : Nat}
   let dPrevHidden := sliceRangeSpec dConcat inputSize hiddenSize (by simp)
 
   { gates :=
-      { forgetWeight := dWf, forgetBias := dbf
-        inputWeight := dWi, inputBias := dbi
-        candidateWeight := dWc, candidateBias := dbc
-        outputWeight := dWo, outputBias := dbo }
+      { forgetWeight := dWf, forgetBias := dFPre
+        inputWeight := dWi, inputBias := dIPre
+        candidateWeight := dWc, candidateBias := dGPre
+        outputWeight := dWo, outputBias := dOPre }
     input := dInput
     previousState := ⟨dPrevHidden, dCPrev⟩ }
 

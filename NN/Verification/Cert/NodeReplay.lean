@@ -81,9 +81,8 @@ theorem exactEqTensor_eq_true {s : Shape} {t u : Tensor (ExecFloat.Binary 8 23) 
 /--
 Whether `outer` contains `inner` componentwise.
 
-This deliberately has no tolerance. A lower endpoint may be rounded farther down and an upper
-endpoint farther up, but a serialized certificate may never move either endpoint inward. This is
-the relation used for interval claims.
+This deliberately has no tolerance after decimal decoding. The decoded lower endpoint may be
+farther down and the upper endpoint farther up, but neither may lie inward of the recomputed box.
 -/
 def flatBoxContains (outer inner : FlatBox (ExecFloat.Binary 8 23)) : Bool :=
   if h : outer.dim = inner.dim then
@@ -254,7 +253,8 @@ theorem crownCertificateAccepts_eq_true
 
 /--
 Read a length-`dim` JSON vector into binary32, rounding each exact decimal once with `mode`.
-The entries have already been validated as finite by the caller.
+Callers validate the JSON entries through host binary64 first. This conversion itself does not
+check finiteness after rounding into binary32, whose smaller range can overflow.
 -/
 def binary32Vec (ctx : String) (mode : Model.IEEERoundingMode) (dim : Nat) (j : Json) :
     IO (Tensor (ExecFloat.Binary 8 23) [dim]) := do

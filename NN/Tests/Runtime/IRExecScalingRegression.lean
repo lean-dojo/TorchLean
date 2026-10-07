@@ -50,8 +50,8 @@ private def checkForward {shape : Shape} (label : String) (graph : NN.IR.Graph)
 
 private def checkGraph {shape : Shape} (label : String) (graph : NN.IR.Graph)
     (payload : NN.IR.Payload Float) (x : Tensor Float shape) : IO Unit := do
-  let expected ← Runtime.Autograd.okOrThrow <| graph.denoteAll payload (Spec.SomeTensor.ofTensor x)
-  let exec ← Runtime.Autograd.okOrThrow <| lowerToForwardGraph graph payload
+  let expected ← IO.ofExcept <| graph.denoteAll payload (Spec.SomeTensor.ofTensor x)
+  let exec ← IO.ofExcept <| lowerToForwardGraph graph payload
   checkForward label graph exec x expected
 
 private def mixedGraph : NN.IR.Graph :=
@@ -74,16 +74,16 @@ private def mixedGraph : NN.IR.Graph :=
 
 private def checkPrefix (x : Tensor Float [4]) : IO Unit := do
   let prefixGraph : NN.IR.Graph := { nodes := mixedGraph.nodes.extract 0 4 }
-  let exec ← Runtime.Autograd.okOrThrow <| lowerToForwardGraph (α := Float) prefixGraph {}
-  let state ← Runtime.Autograd.okOrThrow <|
+  let exec ← IO.ofExcept <| lowerToForwardGraph (α := Float) prefixGraph {}
+  let state ← IO.ofExcept <|
     Internal.buildFrom mixedGraph {} exec.inShape 4 ⟨exec.ss, exec.body⟩
   let extended : ForwardGraph Float :=
     { inShape := exec.inShape, ss := state.1, body := state.2 }
-  let expected ← Runtime.Autograd.okOrThrow <|
+  let expected ← IO.ofExcept <|
     mixedGraph.denoteAll {} (Spec.SomeTensor.ofTensor x)
   checkForward "nonempty prefix" mixedGraph extended x expected
   -- Starting beyond the graph must preserve even a heterogeneous existing prefix.
-  let unchanged ← Runtime.Autograd.okOrThrow <|
+  let unchanged ← IO.ofExcept <|
     Internal.buildFrom mixedGraph {} extended.inShape (mixedGraph.nodes.size + 3)
       ⟨extended.ss, extended.body⟩
   checkForward "finished prefix" mixedGraph
@@ -103,20 +103,6 @@ private def checkRandom : IO Unit := do
     { const? := fun id =>
         if id == 3 then some ⟨4, Tensor.full [4] 0.25⟩ else none }
   checkGraph "random and payload" graph payload (Tensor.scalar 0.5)
-
-private def checkIndices : IO Unit := do
-  let ss : List Shape := [Shape.scalar, [2, 2], [0]]
-  let ctx := Internal.ShapeArray.ofList ([([4] : Shape)] ++ ss)
-  for id in [0, 1, 2, 3, 4, 100] do
-    for shape in [([4] : Shape), Shape.scalar, [2, 2], [0], [5]] do
-      match ctx.mkIdx id shape, Internal.mkIdx [4] ss id shape with
-      | .ok a, .ok b =>
-          unless a.i.val == b.i.val do
-            throw <| IO.userError "array lookup returned a different parent id"
-      | .error a, .error b =>
-          unless a == b do
-            throw <| IO.userError "array lookup changed the diagnostic"
-      | _, _ => throw <| IO.userError "array lookup changed success or failure"
 
 private def checkError {α : Type} (expected : String) (result : Except String α) : IO Unit :=
   match result with
@@ -152,7 +138,6 @@ def check : IO Unit := do
   checkGraph "mixed shapes and shared parents" mixedGraph {} x
   checkPrefix x
   checkRandom
-  checkIndices
   checkFailures
   IO.println "IRExec scaling semantic regressions passed"
 

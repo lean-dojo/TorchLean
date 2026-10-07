@@ -11,15 +11,13 @@ public import NN.Tensor.Internal.Semantics.Transform.Reduction
 /-!
 # Dual numbers and product reduction
 
-Forward-mode differentiation of a product reduction is stated here, at both the representation and
-the checked-transform level: evaluating the reducer on dual numbers puts the leave-one-out Leibniz
-formula in the tangent component, and that formula is adjoint to the zero-aware reverse map.
+Evaluating product reduction on dual numbers gives the leave-one-out Leibniz
+formula in the tangent component. The checked-transform theorem identifies
+that formula with the zero-aware VJP under the tensor pairing.
 
-The results sit apart from `NN.Tensor.Internal.Representation.Fiber.Product` and
-`NN.Tensor.Internal.Semantics.Transform.Reduction`, which define the formulas themselves, because
-naming `DualNumber` costs mathlib's `TrivSqZeroExt` algebra and everything under it. Nothing in the
-tensor runtime or in the layers built on it evaluates a tensor over dual numbers, so the facade
-`NN.Tensor.Internal.Laws` leaves this module out and CI imports it directly.
+This proof module imports mathlib's `DualNumber` algebra separately from the
+runtime formulas. The main tensor facade omits it to keep that dependency out
+of ordinary tensor programs; `NN.CI.Foundation` checks it directly.
 -/
 
 @[expose] public section

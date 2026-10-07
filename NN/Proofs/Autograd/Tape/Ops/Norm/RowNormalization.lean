@@ -8,7 +8,6 @@ module
 
 public import NN.Proofs.Autograd.Tape.Nodes.Matrix
 
-
 /-!
 # Calculus of row normalization
 
@@ -308,12 +307,9 @@ def nrmJvpCLM (X : Vec (matSize m n)) (ε : ℝ) : Vec (matSize m n) →L[ℝ] V
     nrmJvpCLM X ε dX ip = nrmJvp X ε dX (rowOf ip) (colOf ip) := by
   simp [nrmJvpCLM]
 
-/-- Row normalization of a flattened matrix is differentiable for positive `ε`, with the
-closed-form JVP as derivative.
-
-Writing the derivative down in closed form and then proving `HasFDerivAt` against it, rather than
-deriving it compositionally, is what keeps the `ε` guard visible: the formula is only the derivative
-because `ε > 0` keeps the denominator away from zero. -/
+/-- Row normalization is differentiable on a nonempty feature axis, with the closed-form JVP
+as derivative. The coordinatewise chain-rule calculation agrees with that JVP because positive
+epsilon keeps each row's denominator nonzero. -/
 theorem hasFDerivAt_nrmVec (hn : 0 < n) {ε : ℝ} (hε : 0 < ε) (X : Vec (matSize m n)) :
     HasFDerivAt (fun Y : Vec (matSize m n) => nrmVec Y ε) (nrmJvpCLM X ε) X := by
   rw [← hasFDerivWithinAt_univ, hasFDerivWithinAt_euclidean]

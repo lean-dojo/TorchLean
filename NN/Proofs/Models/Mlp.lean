@@ -120,8 +120,8 @@ def exampleGrad :=
 /--
 Input gradient from the `OpSpec` backward pass, which composes per-operation adjoints instead.
 -/
-def exampleDXOpspec :=
-  Examples.mlpOpspecBackward (α := ℚ) exampleHiddenLayer exampleOutputLayer exampleInput exampleDLdy
+def exampleDXOpspec : TorchLean.Tensor ℚ [exampleInDim] :=
+  (Examples.mlpOpspec exampleHiddenLayer exampleOutputLayer).backward exampleInput exampleDLdy
 
 /-- Input gradient projected out of `exampleGrad`, so the two routes can be compared directly. -/
 def exampleDXHand : TorchLean.Tensor ℚ [exampleInDim] :=
@@ -136,7 +136,7 @@ example :
 example :
     exampleDXHand = exampleDXOpspec := by
   simp [exampleDXHand, exampleGrad, exampleDXOpspec, Examples.mlpBackward,
-    Examples.mlpOpspecBackward, Examples.mlpOpspec, Spec.OpSpec.compose, Spec.linearOp,
+    Examples.mlpOpspec, Spec.OpSpec.compose, Spec.linearOp,
     Spec.reluOp, Spec.liftElementwiseBackward, Activation.reluDerivSpec]
 
 end NN.Proofs.Models.Mlp

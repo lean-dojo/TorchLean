@@ -55,7 +55,7 @@ theorem dot_scale_left {s : Shape} (a b : Tensor ℝ s) (k : ℝ) :
   rw [dot, dot, sum_spec_eq_coord_sum, sum_spec_eq_coord_sum, Finset.mul_sum]
   apply Finset.sum_congr rfl
   intro coordinate _
-  simp [scaleSpec, mapSpec, Tensor.map, mulSpec, map2Spec, mul_assoc]
+  simp [scaleSpec, Tensor.map, mulSpec, map2Spec, mul_assoc]
   ring
 
 /-!

@@ -33,7 +33,7 @@ for accumulation is an explicit parameter to the theorem (`addBound`, `addSound`
 ## Reading guide
 1. `RevNode` / `RevGraph`: nodes carry both forward and VJP approximation data.
 2. `RevGraph.eval_*`: reuse the forward theory by forgetting VJP data.
-3. `RevGraph.backprop*`: executable reverse-mode accumulation + its explicit bound propagation.
+3. `RevGraph.backprop*`: reverse-mode accumulation and its explicit bound propagation.
 4. `RevGraph.backprop_approx`: composes node-local VJP bounds and accumulation bounds over the
    whole graph (induction over the snoc-list).
 
@@ -46,12 +46,11 @@ https://pytorch.org/docs/stable/autograd.html
 
 @[expose] public section
 
-
 namespace Proofs
 namespace RuntimeApprox
 
 open Spec TorchLean
-open TorchLean TorchLean.Tensor
+open TorchLean.Tensor
 open NN.MLTheory.Robustness.Spec
 open Proofs.Autograd.Algebra
 
@@ -61,7 +60,10 @@ variable {α : Type}
 
 -- Reverse-mode graph nodes carrying forward and VJP approximation data.
 
-/-- A node with both forward and VJP approximation data. -/
+/-- A node with forward and VJP approximation data.
+
+`vjpSound` relates the two supplied reverse maps; it does not itself prove that either map is
+the derivative of the forward map. Derivative correctness requires a separate node contract. -/
 structure RevNode (toSpec : α → SpecScalar) (Γ : List Shape) (τ : Shape) extends
     FwdNode (α := α) toSpec Γ τ where
   /-- Spec-level VJP: maps a context and an output cotangent into a context cotangent. -/
@@ -348,7 +350,6 @@ theorem backprop_approx {Γ : List Shape} {ss : List Shape} (g : RevGraph (α :=
         addSound (Δ := Γ ++ ssPrev) seedPrevS contribS seedPrevR contribR epsSeedPrev epsContrib
           hseedPrev hcontrib
 
-      -- finish by IH
       simpa [backpropSpec, backpropRuntime, backpropBounds, assoc, seedS', seedR', epsSeed',
         seedPrevS, seedPrevR, seedOutS, seedOutR, epsSeedPrev, epsSeedOut, ctxS, ctxR, epsCtx,
           contribS, contribR, epsContrib]

@@ -91,12 +91,6 @@ end FintypeInstances
 
 namespace ExecLemmas
 
-/-- Comparing a non-NaN float with itself yields `eq`, infinities included. -/
-theorem compare_self_of_isNaN_false (x : F) (hx : isNaN x = false) :
-    ExecFloat.compare x x = some .eq := by
-  change Model.compare (toModel x) (toModel x) = some .eq
-  exact Model.compare_self_of_isNaN_eq_false (toModel x) hx
-
 /-- Reflexivity of `≤` away from NaN, which is as much as IEEE 754 order gives. -/
 theorem le_self_of_isNaN_false (x : F) (hx : isNaN x = false) : x ≤ x := by
   apply FloatLib.Floats.ExecFloat.Binary.le_iff_le_toModel.mpr
@@ -132,10 +126,6 @@ abbrev Box (d : Nat) : Type := Fin d → I
 /-- Concretization `γ` for boxes (Eq. 7). -/
 def γ {d : Nat} (B : Box d) : Set (Fin d → F) := fun x => ∀ i, x i ∈ B i
 
-/-- A box is in `[-1,1]^d` (paper: “abstract boxes in `[-1,1]^d`”). -/
-def InCube {d : Nat} (B : Box d) : Prop :=
-  ∀ i, ((-1) : F) ∈ B i ∧ (1 : F) ∈ B i
-
 /-- Everything is in `⊤`, NaN included; that is what makes `⊤` the sound fallback. -/
 @[simp] theorem mem_top (x : F) : x ∈ (top : I) := by
   -- `γ(top) = univ`.
@@ -164,68 +154,14 @@ theorem mem_pointBox_of_isNaN_false {d : Nat} (x : Fin d → F) (hx : ∀ i, isN
 
 end I
 
-/-! ## Executable interval operators for `+`, `*`, and ReLU -/
+/-! ## Finite-image interval semantics for `+`, `*`, and ReLU -/
 
 namespace OpsExact
 
 open I
 
-/-- Minimum of two `ExecFloat.Binary 8 23` values (NaN-aware, via `min`). -/
-@[inline] def min2 (x y : F) : F := min x y
-
-/-- Maximum of two `ExecFloat.Binary 8 23` values (NaN-aware, via `max`). -/
-@[inline] def max2 (x y : F) : F := max x y
-
-/-- Minimum of four `ExecFloat.Binary 8 23` values, computed via nested `min2`. -/
-@[inline] def minOfFour (a b c d : F) : F := min2 (min2 a b) (min2 c d)
-/-- Maximum of four `ExecFloat.Binary 8 23` values, computed via nested `max2`. -/
-@[inline] def maxOfFour (a b c d : F) : F := max2 (max2 a b) (max2 c d)
-
-/-- Return `true` iff any of the four arguments is `NaN`. -/
-@[inline] def hasNaNAmongFour (a b c d : F) : Bool :=
-  isNaN a || isNaN b || isNaN c || isNaN d
-
-/-- Corner-based interval addition for `ExecFloat.add`. -/
-def addSharpCorners : I → I → I
-  | I.top, _ => I.top
-  | _, I.top => I.top
-  | I.range a b, I.range c d =>
-      let p00 := ExecFloat.add a c
-      let p01 := ExecFloat.add a d
-      let p10 := ExecFloat.add b c
-      let p11 := ExecFloat.add b d
-      if hasNaNAmongFour p00 p01 p10 p11 then
-        I.top
-      else
-        I.range (minOfFour p00 p01 p10 p11) (maxOfFour p00 p01 p10 p11)
-
-/-- Corner-based interval multiplication for `ExecFloat.mul`. -/
-def mulSharpCorners : I → I → I
-  | I.top, _ => I.top
-  | _, I.top => I.top
-  | I.range a b, I.range c d =>
-      let p00 := ExecFloat.mul a c
-      let p01 := ExecFloat.mul a d
-      let p10 := ExecFloat.mul b c
-      let p11 := ExecFloat.mul b d
-      if hasNaNAmongFour p00 p01 p10 p11 then
-        I.top
-  else
-        I.range (minOfFour p00 p01 p10 p11) (maxOfFour p00 p01 p10 p11)
-
 /-- Executable ReLU for `ExecFloat.Binary 8 23`, defined via `max`. -/
 @[inline] def relu (x : F) : F := max x (0 : F)
-
-/--
-Exact `ReLU♯` for intervals, using monotonicity of ReLU:
-for `⟨a,b⟩`, `ReLU([a,b]) = [ReLU(a), ReLU(b)]`.
--/
-def reluSharpEndpoints : I → I
-  | I.top => I.top
-  | I.range a b =>
-      let ra := relu a
-      let rb := relu b
-      if isNaN ra || isNaN rb then I.top else I.range ra rb
 
 /-! ### Eq. (8): exact interval hull on finite sets -/
 
@@ -636,7 +572,7 @@ def eval {d h : Nat} (net : Net d h) (x : Fin d → F) : F :=
   let z2 : Fin 1 → F := aff net.W2 net.b2 a1
   z2 0
 
-/-- Interval affine transform `aff♯` using corner multiplication and interval summation. -/
+/-- Interval affine transform `aff♯` using finite-image multiplication and interval summation. -/
 def affSharp {d m : Nat} (W : Fin m → Fin d → F) (b : Fin m → F) (B : I.Box d) : I.Box m :=
   fun i =>
     let terms : Fin d → I := fun j => OpsExact.mulSharp (I.range (W i j) (W i j)) (B j)

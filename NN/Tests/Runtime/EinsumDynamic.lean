@@ -116,7 +116,8 @@ private def checkCase (device : NN.Backend.Device) (equation explicit : String)
   let seed : Tensor Float sOut := Tensor.generateFlat _ fun i => (i % 5).toFloat / 3 - 0.5
   let expected ← reference explicit a b seed
   let tolerance := if device == .cuda then 2e-5 else 1e-10
-  for expression in [equation, explicit] do
+  let expressions := if equation == explicit then [equation] else [equation, explicit]
+  for expression in expressions do
     let actual ← evaluate device expression a b seed expectFast maxElements
     close s!"{expression}: values" actual.1 expected.1 tolerance
     close s!"{expression}: left VJP" actual.2.1 expected.2.1 tolerance

@@ -41,8 +41,9 @@ multiple uses of an intermediate contribute to the same stored cotangent, so ind
 matters for both reading forward values and adding backward contributions.
 :::
 
-:::definition "runtime_typed_graph_autograd" (parent := "autograd_execution") (lean := "Runtime.Autograd.TypedGraph.lowerToTape")
-`lowerToTape` takes executable typed graph data and its input context, then returns a
+:::definition "runtime_typed_graph_autograd" (parent := "autograd_execution") (lean := "Proofs.Autograd.Algebra.Graph.lowerGraphDataToTape")
+`Graph.lowerGraphDataToTape` takes executable typed graph data, its input context and auxiliary
+data, then returns a
 {uses "runtime_autograd_tape"}[runtime tape] together with the typed list of inputs and intermediate
 values.
 :::
@@ -65,7 +66,7 @@ loop accumulates each node's contribution.
 
 :::definition "runtime_typed_graph_compiled" (parent := "autograd_execution") (lean := "Runtime.Autograd.TypedGraph.compileChecked")
 Checked execution validates and evaluates each node while retaining an indexed primal context and
-certified local reverse programs in `Compiled`. Checked and pure VJP calls use this saved execution
+local reverse programs in `Compiled`. Checked and pure VJP calls use this saved execution
 through proved compiler simplifications; sessions and the typed trainer use it directly.
 :::
 
@@ -92,10 +93,10 @@ Saved backward agrees with graph backpropagation for the complete seed context. 
 supplies a real derivative law for unrestricted IEEE arithmetic or a GPU kernel theorem.
 :::
 
-:::theorem "typed_graph_output_backward_agreement" (parent := "autograd_execution") (lean := "Runtime.Autograd.TypedGraph.backwardDenseAllFrom_lowerToTape_eq_backpropAllCtx")
+:::theorem "typed_graph_output_backward_agreement" (parent := "autograd_execution") (lean := "Runtime.Autograd.TypedGraph.backwardDenseAllFrom_lowerGraphDataToTape_eq_backpropAllCtx")
 For any typed output reference, including an input or intermediate node, lowering to the runtime
 tape and running reverse mode agrees with seeding that same output in executable graph
-backpropagation.
+backpropagation, with auxiliary data held fixed.
 :::
 
 :::proof "typed_graph_output_backward_agreement"
@@ -147,8 +148,9 @@ which the tape-agreement theorem could be applied.
 nodes. This restriction matters because the IR evaluator rejects nonpositive inputs to raw `log`,
 while the lowered closure applies the total spec logarithm. A theorem that admitted raw `log`
 would need per-node positivity hypotheses; this theorem instead excludes that operation.
-Every other operation kind is covered, including `mseLoss`, `concat` along any axis, matmul with
-any shared leading shape, and batched linear layers.
+The supported built-in operations include `mseLoss`, `concat` along any axis, matmul with
+any shared leading shape, and batched linear layers. A custom operation that has no lowering
+is rejected; the theorem does not provide an implementation for it.
 :::
 
 :::proof "shared_ir_execution_correctness"

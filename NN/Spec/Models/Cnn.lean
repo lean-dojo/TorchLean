@@ -6,31 +6,29 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Module.Activation
-public import NN.Spec.Module.Conv
-public import NN.Spec.Module.Flatten
-public import NN.Spec.Module.Linear
-public import NN.Spec.Module.Pooling
+public import NN.Spec.Layers.Activation
+public import NN.Spec.Layers.Conv
+public import NN.Spec.Layers.Linear
+public import NN.Spec.Layers.Pooling
+public import NN.Tensor.Conversion
 
 /-!
 # Convolutional Network Specifications
 
 This module defines a two-block convolutional network over an arbitrary number of spatial axes.
 Its spatial parameters are vectors, so the same model definition applies to sequence,
-image, volume, and higher-rank data. Both the compositional module description and the explicit
-reverse-mode specification use the generic convolution and pooling operations.
+image, volume, and higher-rank data. The forward and reverse-mode specifications use the
+generic convolution and pooling operations.
 
-The executable `nn.models.cnn` accepts a list of independently configured convolution/pooling
-stages. This module's two-block specification supplies the pure forward and backward functions
-used by `NN/Runtime/PyTorch/Export/CNN.lean`;
-it does not prove equivalence to the executable builder.
+This is a standalone reference model. The executable `nn.models.cnn` accepts independently
+configured stages, and `NN/Runtime/PyTorch/Export/CNN.lean` renders its own configuration.
+Neither is constructed from this specification, and no equivalence theorem connects them here.
 -/
 
 @[expose] public section
 
 namespace Models
 
-open Spec.Module
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
 open Activation
@@ -68,108 +66,6 @@ def featureSize {d : Nat} (channels : Nat)
   Shape.size (featureShape channels spatial kernel convStride₁ convPadding₁ convStride₂
     convPadding₂ poolKernel poolStride₁ poolPadding₁ poolStride₂ poolPadding₂)
 
-/-- Two convolution-pooling blocks followed by a linear head. -/
-def spec {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
-    {d inChannels hiddenChannels outputSize : Nat}
-    {spatial kernel convStride₁ convPadding₁ convStride₂ convPadding₂ poolKernel poolStride₁
-      poolPadding₁ poolStride₂ poolPadding₂ : TorchLean.Tensor Nat [d]}
-    {hPoolKernel : ∀ i : Fin d, poolKernel.getScalar i ≠ 0}
-    {hPoolStride₁ : ∀ i : Fin d, poolStride₁.getScalar i ≠ 0}
-    {hPoolStride₂ : ∀ i : Fin d, poolStride₂.getScalar i ≠ 0}
-    (conv₁ : ConvSpec d inChannels hiddenChannels kernel convStride₁ convPadding₁ α)
-    (conv₂ : ConvSpec d hiddenChannels hiddenChannels kernel convStride₂ convPadding₂ α)
-    (pool₁ : MaxPoolSpec d poolKernel poolStride₁ poolPadding₁ hPoolKernel hPoolStride₁)
-    (pool₂ : MaxPoolSpec d poolKernel poolStride₂ poolPadding₂ hPoolKernel hPoolStride₂)
-    (head : LinearSpec α
-      (featureSize hiddenChannels spatial kernel convStride₁ convPadding₁ convStride₂
-        convPadding₂ poolKernel poolStride₁ poolPadding₁ poolStride₂ poolPadding₂)
-      outputSize) :
-    Spec.Module.Chain α (Shape.ofList (inChannels :: (Tensor.to spatial (List Nat))))
-      (.dim outputSize .scalar) :=
-  let convSpatial₁ := convOutSpatial spatial kernel convStride₁ convPadding₁
-  let pooledSpatial₁ := poolOutSpatialPad convSpatial₁ poolKernel poolStride₁ poolPadding₁
-  let convSpatial₂ := convOutSpatial pooledSpatial₁ kernel convStride₂ convPadding₂
-  let pooledSpatial₂ := poolOutSpatialPad convSpatial₂ poolKernel poolStride₂ poolPadding₂
-  let convModule₁ :
-      Spec.Module α (Shape.ofList (inChannels :: (Tensor.to spatial (List Nat))))
-        (Shape.ofList (hiddenChannels :: (Tensor.to convSpatial₁ (List Nat)))) :=
-    Spec.Module.conv conv₁
-  let poolModule₁ :
-      Spec.Module α (Shape.ofList (hiddenChannels :: (Tensor.to convSpatial₁ (List Nat))))
-        (Shape.ofList (hiddenChannels :: (Tensor.to pooledSpatial₁ (List Nat)))) :=
-    Spec.Module.maxPool pool₁
-  let convModule₂ :
-      Spec.Module α (Shape.ofList (hiddenChannels :: (Tensor.to pooledSpatial₁ (List Nat))))
-        (Shape.ofList (hiddenChannels :: (Tensor.to convSpatial₂ (List Nat)))) :=
-    Spec.Module.conv conv₂
-  let poolModule₂ :
-      Spec.Module α (Shape.ofList (hiddenChannels :: (Tensor.to convSpatial₂ (List Nat))))
-        (Shape.ofList (hiddenChannels :: (Tensor.to pooledSpatial₂ (List Nat)))) :=
-    Spec.Module.maxPool pool₂
-  let flattenModule :=
-    Spec.Module.flatten α (Shape.ofList (hiddenChannels :: (Tensor.to pooledSpatial₂ (List Nat))))
-  let headModule := Spec.Module.linear head
-  Spec.Module.Chain.single convModule₁
-    |>.append poolModule₁
-    |>.append convModule₂
-    |>.append poolModule₂
-    |>.append flattenModule
-    |>.append headModule
-
-/-- The same network with ReLU after each convolution. -/
-def withReluSpec {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)]
-    {d inChannels hiddenChannels outputSize : Nat}
-    {spatial kernel convStride₁ convPadding₁ convStride₂ convPadding₂ poolKernel poolStride₁
-      poolPadding₁ poolStride₂ poolPadding₂ : TorchLean.Tensor Nat [d]}
-    {hPoolKernel : ∀ i : Fin d, poolKernel.getScalar i ≠ 0}
-    {hPoolStride₁ : ∀ i : Fin d, poolStride₁.getScalar i ≠ 0}
-    {hPoolStride₂ : ∀ i : Fin d, poolStride₂.getScalar i ≠ 0}
-    (conv₁ : ConvSpec d inChannels hiddenChannels kernel convStride₁ convPadding₁ α)
-    (conv₂ : ConvSpec d hiddenChannels hiddenChannels kernel convStride₂ convPadding₂ α)
-    (pool₁ : MaxPoolSpec d poolKernel poolStride₁ poolPadding₁ hPoolKernel hPoolStride₁)
-    (pool₂ : MaxPoolSpec d poolKernel poolStride₂ poolPadding₂ hPoolKernel hPoolStride₂)
-    (head : LinearSpec α
-      (featureSize hiddenChannels spatial kernel convStride₁ convPadding₁ convStride₂
-        convPadding₂ poolKernel poolStride₁ poolPadding₁ poolStride₂ poolPadding₂)
-      outputSize) :
-    Spec.Module.Chain α (Shape.ofList (inChannels :: (Tensor.to spatial (List Nat))))
-      (.dim outputSize .scalar) :=
-  let convSpatial₁ := convOutSpatial spatial kernel convStride₁ convPadding₁
-  let pooledSpatial₁ := poolOutSpatialPad convSpatial₁ poolKernel poolStride₁ poolPadding₁
-  let convSpatial₂ := convOutSpatial pooledSpatial₁ kernel convStride₂ convPadding₂
-  let pooledSpatial₂ := poolOutSpatialPad convSpatial₂ poolKernel poolStride₂ poolPadding₂
-  let convModule₁ :
-      Spec.Module α (Shape.ofList (inChannels :: (Tensor.to spatial (List Nat))))
-        (Shape.ofList (hiddenChannels :: (Tensor.to convSpatial₁ (List Nat)))) :=
-    Spec.Module.conv conv₁
-  let reluModule₁ := Spec.Module.relu (α := α)
-    (Shape.ofList (hiddenChannels :: (Tensor.to convSpatial₁ (List Nat))))
-  let poolModule₁ :
-      Spec.Module α (Shape.ofList (hiddenChannels :: (Tensor.to convSpatial₁ (List Nat))))
-        (Shape.ofList (hiddenChannels :: (Tensor.to pooledSpatial₁ (List Nat)))) :=
-    Spec.Module.maxPool pool₁
-  let convModule₂ :
-      Spec.Module α (Shape.ofList (hiddenChannels :: (Tensor.to pooledSpatial₁ (List Nat))))
-        (Shape.ofList (hiddenChannels :: (Tensor.to convSpatial₂ (List Nat)))) :=
-    Spec.Module.conv conv₂
-  let reluModule₂ := Spec.Module.relu (α := α)
-    (Shape.ofList (hiddenChannels :: (Tensor.to convSpatial₂ (List Nat))))
-  let poolModule₂ :
-      Spec.Module α (Shape.ofList (hiddenChannels :: (Tensor.to convSpatial₂ (List Nat))))
-        (Shape.ofList (hiddenChannels :: (Tensor.to pooledSpatial₂ (List Nat)))) :=
-    Spec.Module.maxPool pool₂
-  let flattenModule :=
-    Spec.Module.flatten α (Shape.ofList (hiddenChannels :: (Tensor.to pooledSpatial₂ (List Nat))))
-  let headModule := Spec.Module.linear head
-  Spec.Module.Chain.single convModule₁
-    |>.append reluModule₁
-    |>.append poolModule₁
-    |>.append convModule₂
-    |>.append reluModule₂
-    |>.append poolModule₂
-    |>.append flattenModule
-    |>.append headModule
 
 end Cnn
 
@@ -210,22 +106,7 @@ def defaultConfig (d : Nat) : Config d := {}
 
 /-- The default configuration is well formed. -/
 theorem defaultConfig_wf (d : Nat) : (defaultConfig d).WF := by
-  constructor
-  · simp [defaultConfig]
-  · simp [defaultConfig]
-  · simp [defaultConfig]
-  · intro i
-    simp [defaultConfig]
-  · intro i
-    simp [defaultConfig]
-  · intro i
-    simp [defaultConfig]
-  · intro i
-    simp [defaultConfig]
-  · intro i
-    simp [defaultConfig]
-  · intro i
-    simp [defaultConfig]
+  constructor <;> simp [defaultConfig]
 
 /-- A generic two-block convolutional network with an explicit linear head. -/
 structure Model {d : Nat} (config : Config d) (inChannels : Nat)

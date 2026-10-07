@@ -62,16 +62,16 @@ def push (counts : Counters) (nominalOk cert : Bool) : Counters :=
 end Counters
 
 /-- Check one report entry and return `(nominalOk, positiveMargin)`. -/
-def checkOneExample (numClasses : Nat) (ex : Json) : IO (Bool × Bool) := do
+def checkEntry (numClasses : Nat) (ex : Json) : IO (Bool × Bool) := do
   let exObj ← expectObject ex "example"
   let label ← expectFieldNat exObj "label" "example"
   let lo ← expectFieldFiniteFloatArray exObj "logits_lo" "example"
   let hi ← expectFieldFiniteFloatArray exObj "logits_hi" "example"
-  let lo ← NN.Verification.Util.Tensor.requireVecOfArray "logits_lo" numClasses lo
-  let hi ← NN.Verification.Util.Tensor.requireVecOfArray "logits_hi" numClasses hi
+  let lo ← NN.Verification.Util.Tensor.requireArray "logits_lo" [numClasses] lo
+  let hi ← NN.Verification.Util.Tensor.requireArray "logits_hi" [numClasses] hi
   if !NN.Verification.Util.Tensor.boundsOrdered lo hi then
     throw <| IO.userError "example has invalid bounds (lo ≤ hi violated)"
-  let cert := TopLabel.certifiesLabelFromTensorBounds lo hi label
+  let cert := TopLabel.check lo hi label
 
   match ← optionalFieldBool? exObj "certified" "example" with
   | some b =>
@@ -89,9 +89,10 @@ def checkOneExample (numClasses : Nat) (ex : Json) : IO (Bool × Bool) := do
 /--
 Check the internal consistency of a `robust_margin_cert_v0_1` JSON report.
 
-If `timing = true`, prints per-example timings every `timingEvery` examples.
+With `timing := true`, print a timing summary. A positive `timingEvery` also prints per-entry
+timings at that interval; zero leaves only the summary.
 -/
-def checkWithTiming (path : String) (timing : Bool) (timingEvery : Nat) : IO Unit := do
+def check (path : String) (timing : Bool := false) (timingEvery : Nat := 0) : IO Unit := do
   let topObj ← readJsonObjectFile path
   expectFormat topObj formatTag
   let numClasses ← expectFieldNat topObj "num_classes" "top-level"
@@ -111,7 +112,7 @@ def checkWithTiming (path : String) (timing : Bool) (timingEvery : Nat) : IO Uni
   let mut maxMs : Float := 0.0
   for ex in examples do
     if timing then
-      let ((nominalOk, cert), ms) ← timeMs (checkOneExample numClasses ex)
+      let ((nominalOk, cert), ms) ← timeMs (checkEntry numClasses ex)
       counts := counts.push nominalOk cert
       totalMs := totalMs + ms
       if ms > maxMs then
@@ -119,7 +120,7 @@ def checkWithTiming (path : String) (timing : Bool) (timingEvery : Nat) : IO Uni
       if timingEvery > 0 && counts.total % timingEvery == 0 then
         IO.println s!"[margin report] example {counts.total}: {ms} ms"
     else
-      let (nominalOk, cert) ← checkOneExample numClasses ex
+      let (nominalOk, cert) ← checkEntry numClasses ex
       counts := counts.push nominalOk cert
 
   IO.println s!"[margin report] examples={counts.total}"
@@ -144,7 +145,7 @@ def checkWithTiming (path : String) (timing : Bool) (timingEvery : Nat) : IO Uni
       checkNatField "certified_ok" counts.certifiedOk
 
 /-- Parsed CLI flags for a logit-bound report run. -/
-structure RunArgs where
+structure Options where
   /-- Report JSON path. -/
   path : String
   /-- Print per-example checker timings. -/
@@ -152,8 +153,10 @@ structure RunArgs where
   /-- Print every `timingEvery` examples when timing is enabled; `0` disables periodic lines. -/
   timingEvery : Nat := 0
 
-/-- Parse shared margin-report CLI flags. -/
-def parseRunArgs (defaultPath : String) (args : List String) : Except String RunArgs := do
+namespace Options
+
+/-- Parse report-checker flags, using `defaultPath` when no report path is supplied. -/
+def parse (args : List String) (defaultPath : String) : Except String Options := do
   let args := TorchLean.CLI.dropDashDash args
   let (timing, args) ← TorchLean.CLI.takeBoolFlag args "timing"
   let (timingEvery, args) ← TorchLean.CLI.takeNatFlag args "timing-every" (default := 0)
@@ -161,10 +164,12 @@ def parseRunArgs (defaultPath : String) (args : List String) : Except String Run
   TorchLean.CLI.checkNoArgs args
   pure { path := path, timing := timing, timingEvery := timingEvery }
 
+end Options
+
 /-- Run the checker with a caller-provided default report path. -/
-def runWithDefault (defaultPath : String) (args : List String) : IO Unit := do
-  let parsed ← IO.ofExcept (parseRunArgs defaultPath args)
-  checkWithTiming parsed.path parsed.timing parsed.timingEvery
+def run (args : List String) (defaultPath : String) : IO Unit := do
+  let options ← IO.ofExcept (Options.parse args (defaultPath := defaultPath))
+  check options.path (timing := options.timing) (timingEvery := options.timingEvery)
 
 end MarginCert
 end Robustness

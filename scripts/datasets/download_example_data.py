@@ -15,19 +15,24 @@ Outputs:
   data/real/text/tiny_shakespeare.txt
   data/real/text/tinystories_valid.txt
 
-Only stdlib + NumPy are required.
+Requires Python 3.12+ and NumPy. WikiText additionally needs PyArrow; other datasets do not.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import os
 import pickle
+import sys
 import tarfile
+import tempfile
+import urllib.request
 import warnings
 import zipfile
 from pathlib import Path
-
-from download_io import download_atomic
+from urllib.parse import urlparse
 
 import numpy as np
 
@@ -46,6 +51,55 @@ HOUSEHOLD_POWER_URL = (
 )
 AUTO_MPG_URL = "https://archive.ics.uci.edu/static/public/9/auto+mpg.zip"
 DEFAULT_TIMEOUT_SECONDS = 60.0
+
+
+def require_https(url: str) -> None:
+    """Reject a non-HTTPS initial URL or redirect."""
+    if urlparse(url).scheme != "https":
+        raise SystemExit(f"refusing non-https URL: {url}")
+
+
+class HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        require_https(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def open_https(url: str, *, timeout: float):
+    require_https(url)
+    return urllib.request.build_opener(HTTPSRedirectHandler()).open(url, timeout=timeout)
+
+
+def file_md5(path: Path) -> str:
+    """Compute the legacy checksum published with the CIFAR archive."""
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "md5").hexdigest()
+
+
+def download_atomic(url: str, path: Path, *, timeout: float, md5: str | None = None) -> None:
+    """Publish a complete, nonempty transfer only after checking its checksum."""
+    require_https(url)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file() and path.stat().st_size > 0 and (md5 is None or file_md5(path) == md5):
+        return
+    temporary = None
+    try:
+        with open_https(url, timeout=timeout) as response:
+            with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".",
+                                             delete=False) as out:
+                temporary = Path(out.name)
+                for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                    out.write(chunk)
+        if temporary.stat().st_size == 0:
+            raise ValueError(f"empty dataset download: {url}")
+        if md5 is not None:
+            got = file_md5(temporary)
+            if got != md5:
+                raise ValueError(f"md5 mismatch for {path}: expected {md5}, got {got}")
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def download(
@@ -80,10 +134,19 @@ def prepare_cifar10(root: Path, *, limit_train: int | None, limit_test: int | No
     out_dir = root / "cifar10"
     archive = download(CIFAR10_URL, raw_dir / "cifar-10-python.tar.gz", md5=CIFAR10_MD5)
     extract_root = raw_dir / "cifar-10-batches-py"
-    if not extract_root.exists():
+    batches = [extract_root / f"data_batch_{i}" for i in range(1, 6)]
+    batches.append(extract_root / "test_batch")
+    complete = extract_root / ".extracted"
+    if not (complete.is_file() and all(p.is_file() and p.stat().st_size > 0 for p in batches)):
+        # An interrupted extraction can leave even its last batch nonempty but incomplete.
+        # Publish the marker only after extractall returns; old caches are extracted once again.
+        complete.unlink(missing_ok=True)
         print(f"[extract] {archive}")
         with tarfile.open(archive, "r:gz") as tf:
             tf.extractall(raw_dir, filter="data")
+        if not all(p.is_file() and p.stat().st_size > 0 for p in batches):
+            raise ValueError("CIFAR-10 archive is missing a required batch")
+        complete.touch()
 
     train_xs: list[np.ndarray] = []
     train_ys: list[np.ndarray] = []
@@ -111,16 +174,6 @@ def prepare_cifar10(root: Path, *, limit_train: int | None, limit_test: int | No
     print(f"[write] {out_dir}/cifar10_train_y.npy {train_y.shape}")
     print(f"[write] {out_dir}/cifar10_test_X.npy {test_x.shape}")
     print(f"[write] {out_dir}/cifar10_test_y.npy {test_y.shape}")
-
-
-def prepare_tiny_shakespeare(root: Path) -> None:
-    """Download the Tiny Shakespeare text corpus used by sequence examples."""
-    download(TINY_SHAKESPEARE_URL, root / "text" / "tiny_shakespeare.txt")
-
-
-def prepare_tinystories_valid(root: Path) -> None:
-    """Download the TinyStories validation corpus used by text examples."""
-    download(TINYSTORIES_VALID_URL, root / "text" / "tinystories_valid.txt")
 
 
 def prepare_household_power(root: Path, *, windows: int, stride: int) -> None:
@@ -246,15 +299,7 @@ def prepare_auto_mpg(root: Path) -> None:
                 if len(fields) < 8 or fields[3] == "?":
                     continue
                 mpg = float(fields[0])
-                features = [
-                    float(fields[1]),
-                    float(fields[2]),
-                    float(fields[3]),
-                    float(fields[4]),
-                    float(fields[5]),
-                    float(fields[6]),
-                    float(fields[7]),
-                ]
+                features = [float(field) for field in fields[1:8]]
                 rows.append(features + [mpg])
 
     arr = np.asarray(rows, dtype=np.float32)
@@ -271,6 +316,81 @@ def prepare_auto_mpg(root: Path) -> None:
     print("[source] UCI Auto MPG, CC BY 4.0")
 
 
+DATASET = "Salesforce/wikitext"
+DATASET_SERVER = "https://datasets-server.huggingface.co"
+LICENSE_NOTE = "WikiText license: CC BY-SA 3.0 / GFDL (see Hugging Face dataset card)."
+
+
+def fetch_json(url: str) -> dict:
+    """Fetch and decode one JSON response from the Hugging Face Dataset Viewer."""
+    with open_https(url, timeout=DEFAULT_TIMEOUT_SECONDS) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def shard_path(cache_dir: Path, file: dict) -> Path:
+    """Keep server-provided shard names inside the requested cache directory."""
+    parts = [file[key] for key in ("config", "split", "filename")]
+    for part in parts:
+        if not isinstance(part, str) or part in ("", ".", "..") or "/" in part or "\\" in part:
+            raise ValueError(f"invalid parquet cache component: {part!r}")
+    path = cache_dir.joinpath(*parts)
+    if not path.resolve().is_relative_to(cache_dir.resolve()):
+        raise ValueError("parquet cache path escapes through a symlink")
+    return path
+
+
+def parquet_files(config: str, split: str) -> list[dict]:
+    """Return Dataset Viewer parquet metadata for one WikiText config and split."""
+    url = f"{DATASET_SERVER}/parquet?dataset={DATASET}"
+    files = fetch_json(url)["parquet_files"]
+    selected = [
+        file
+        for file in files
+        if file["config"] == config and file["split"] == split
+    ]
+    if not selected:
+        raise SystemExit(f"no parquet files found for config={config!r}, split={split!r}")
+    return selected
+
+
+def export_text(files: list[dict], cache_dir: Path, output: Path, max_bytes: int | None) -> int:
+    """Concatenate WikiText parquet rows into one UTF-8 corpus file."""
+    if max_bytes is not None and max_bytes < 0:
+        raise ValueError("max_bytes must be nonnegative")
+    import pyarrow.parquet as pq
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with output.open("w", encoding="utf-8") as out:
+        out.write("# Source: Hugging Face dataset Salesforce/wikitext\n")
+        out.write(f"# {LICENSE_NOTE}\n\n")
+        for file in files:
+            shard = shard_path(cache_dir, file)
+            download_atomic(file["url"], shard, timeout=DEFAULT_TIMEOUT_SECONDS)
+            table = pq.read_table(shard, columns=["text"])
+            for maybe_text in table.column("text").to_pylist():
+                if not maybe_text:
+                    continue
+                text = str(maybe_text)
+                line = text if text.endswith("\n") else text + "\n"
+                if max_bytes is not None:
+                    remaining = max_bytes - written
+                    if remaining <= 0:
+                        return written
+                    encoded = line.encode("utf-8")
+                    if len(encoded) > remaining:
+                        # Byte caps can split a UTF-8 codepoint. Decode with
+                        # `ignore` and return immediately so the output stays
+                        # valid UTF-8 and respects the requested cap.
+                        chunk = encoded[:remaining].decode("utf-8", errors="ignore")
+                        out.write(chunk)
+                        written += len(chunk.encode("utf-8"))
+                        return written
+                out.write(line)
+                written += len(line.encode("utf-8"))
+    return written
+
+
 def main() -> None:
     """CLI entry point selecting which public example datasets to prepare."""
     ap = argparse.ArgumentParser(description=__doc__)
@@ -284,6 +404,12 @@ def main() -> None:
     ap.add_argument("--auto-mpg", action="store_true", help="download UCI Auto MPG tabular regression")
     ap.add_argument("--tiny-shakespeare", action="store_true", help="download tiny-shakespeare")
     ap.add_argument("--tinystories-valid", action="store_true", help="download TinyStories valid split")
+    ap.add_argument("--wikitext", action="store_true", help="export WikiText (requires PyArrow)")
+    ap.add_argument("--config", default="wikitext-2-raw-v1", help="WikiText dataset configuration")
+    ap.add_argument("--split", default="train", help="WikiText split")
+    ap.add_argument("--output", type=Path, help="WikiText output; defaults to ROOT/text/wikitext2_train.txt")
+    ap.add_argument("--cache-dir", type=Path, help="WikiText cache; defaults to ROOT/hf_cache/wikitext")
+    ap.add_argument("--max-bytes", type=int, help="maximum WikiText corpus bytes, excluding source header")
     ap.add_argument(
         "--all",
         action="store_true",
@@ -314,6 +440,8 @@ def main() -> None:
         help="hour stride between exported household-power windows",
     )
     args = ap.parse_args()
+    if args.max_bytes is not None and args.max_bytes < 0:
+        ap.error("--max-bytes must be nonnegative")
 
     root: Path = args.root
     if not any(
@@ -324,6 +452,7 @@ def main() -> None:
             args.auto_mpg,
             args.tiny_shakespeare,
             args.tinystories_valid,
+            args.wikitext,
         ]
     ):
         ap.error("choose at least one dataset flag, e.g. --cifar10 or --all")
@@ -343,9 +472,17 @@ def main() -> None:
     if args.all or args.auto_mpg:
         prepare_auto_mpg(root)
     if args.all or args.tiny_shakespeare:
-        prepare_tiny_shakespeare(root)
+        download(TINY_SHAKESPEARE_URL, root / "text" / "tiny_shakespeare.txt")
     if args.all or args.tinystories_valid:
-        prepare_tinystories_valid(root)
+        download(TINYSTORIES_VALID_URL, root / "text" / "tinystories_valid.txt")
+    if args.wikitext:
+        files = parquet_files(args.config, args.split)
+        print(f"[dataset] {DATASET} config={args.config} split={args.split}", file=sys.stderr)
+        print(f"[dataset] shards={len(files)} {LICENSE_NOTE}", file=sys.stderr)
+        output = args.output if args.output is not None else root / "text" / "wikitext2_train.txt"
+        cache = args.cache_dir if args.cache_dir is not None else root / "hf_cache" / "wikitext"
+        written = export_text(files, cache, output, args.max_bytes)
+        print(f"[output] wrote {written} bytes to {output}", file=sys.stderr)
 
 
 if __name__ == "__main__":

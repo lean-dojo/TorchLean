@@ -49,7 +49,7 @@ theorem evalAt_concat_binary_eq
           #[Spec.SomeTensor.mk (α := α) s₁ lhs, Spec.SomeTensor.mk (α := α) s₂ rhs]).bind
         (Graph.normalizeNodeOutput (α := α) 2 (binaryNodeOut (.concat axis) out)) := by
   simp [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, binaryGraphOut, binaryNodeOut,
-    Graph.getNode, Graph.getNode?, Bind.bind, Except.bind, Pure.pure, Except.pure]
+    Graph.getNode, Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 /--
 Successful binary concat evaluation, once the shared concat interpreter has produced a value with

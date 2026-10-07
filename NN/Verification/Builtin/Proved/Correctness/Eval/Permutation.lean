@@ -11,9 +11,10 @@ public import NN.Verification.Builtin.Proved.Correctness.Eval.Core
 /-!
 # Permutation IR Evaluation
 
-Local semantics for axis permutation.  The theorem is stated against `Graph.permuteSomeTensor`,
-the shared permutation interpreter used by `permute`, non-last-axis softmax, and axis-generic
-concat.
+Local semantics for axis permutation. The theorem assumes that the shared dynamic interpreter,
+`Graph.permuteSomeTensor`, succeeded and returned the declared output shape; it then proves that
+the complete IR node returns that value. Softmax's axis handling follows its tensor specification
+directly and is proved separately in `Eval.Softmax`.
 -/
 
 @[expose] public section
@@ -42,7 +43,7 @@ theorem evalAt_permute_eq
       =
       Except.ok (Spec.SomeTensor.mk (α := α) out (hShape ▸ vOut.tensor)) := by
   simp [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, unaryGraphOut, unaryNodeOut,
-    Graph.getNode, Graph.getNode?,
+    Graph.getNode,
     Graph.unaryParentId, unaryParent?, Bind.bind, Except.bind, Pure.pure, Except.pure]
   rw [hPerm]
   simp [hShape]

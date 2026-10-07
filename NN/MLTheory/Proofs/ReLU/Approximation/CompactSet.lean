@@ -72,71 +72,6 @@ theorem mlpEval_scaleOutput {n m : Nat} (c : ℝ) (l1 : LinearSpec ℝ n m) (l2 
   simp [scaleOutput, mat1Get_matrix, extractScalarOutput, Tensor.ofFn,
     mul_add, Finset.mul_sum, mul_left_comm, mul_comm]
 
-/-! ## Uniform approximation on an arbitrary domain -/
-
-/-- `ApproxOn D f` means: on the domain `D`, the scalar function `f` can be uniformly approximated
-by a single-hidden-layer ReLU MLP (`mlpEval`). -/
-def ApproxOn {n : Nat} (D : Set (Tensor ℝ [n])) (f : Tensor ℝ [n] → ℝ) : Prop :=
-  ∀ ε > 0, ∃ (hidDim : ℕ) (l1 : LinearSpec ℝ n hidDim) (l2 : LinearSpec ℝ hidDim 1),
-    ∀ x ∈ D, |f x - mlpEval (n := n) (hidDim := hidDim) l1 l2 x| < ε
-
-namespace ApproxOn
-
-/-- The zero function is uniformly approximable on any domain `D`. -/
-theorem zero {n : Nat} (D : Set (Tensor ℝ [n])) :
-    ApproxOn (n := n) D (fun _ => (0 : ℝ)) := by
-  intro ε hε
-  -- The zero affine map is represented exactly.
-  refine ⟨2, affineIdLayer1 (n := n) (w := fun _ => (0 : ℝ)) (b := 0), affineIdLayer2, ?_⟩
-  intro x _
-  have : mlpEval (n := n) (hidDim := 2)
-        (affineIdLayer1 (n := n) (w := fun _ => (0 : ℝ)) (b := 0)) affineIdLayer2 x = 0 := by
-    simp [mlp_eval_affine_id, ReLUMlpBridge.dot]
-  simpa [this] using hε
-
-/-- If `f` and `g` are uniformly approximable on `D`, then so is `f + g`. -/
-theorem add {n : Nat} {D : Set (Tensor ℝ [n])} {f g : Tensor ℝ [n] → ℝ}
-    (hf : ApproxOn (n := n) D f) (hg : ApproxOn (n := n) D g) :
-    ApproxOn (n := n) D (fun x => f x + g x) := by
-  intro ε hε
-  have hε2 : 0 < ε / 2 := half_pos hε
-  rcases hf (ε / 2) hε2 with ⟨m, l1f, l2f, hf'⟩
-  rcases hg (ε / 2) hε2 with ⟨k, l1g, l2g, hg'⟩
-  -- Append the hidden units of the two networks and add their outputs.
-  refine ⟨m + k, appendLinearSpec (inDim := n) l1f l1g,
-    combineOutput (m := m) (n := k) (α := (1 : ℝ)) (β := (1 : ℝ)) (γ := 0) l2f l2g,
-    fun x hx => ?_⟩
-  calc |f x + g x - mlpEval (n := n) (hidDim := m + k) (appendLinearSpec (inDim := n) l1f l1g)
-          (combineOutput (m := m) (n := k) (α := (1 : ℝ)) (β := (1 : ℝ)) (γ := 0) l2f l2g) x|
-      = |(f x - mlpEval (n := n) (hidDim := m) l1f l2f x)
-          + (g x - mlpEval (n := n) (hidDim := k) l1g l2g x)| := by
-        rw [mlpEval_append_add]
-        congr 1
-        ring
-    _ ≤ |f x - mlpEval (n := n) (hidDim := m) l1f l2f x|
-          + |g x - mlpEval (n := n) (hidDim := k) l1g l2g x| := abs_add_le _ _
-    _ < ε := by linarith [hf' x hx, hg' x hx]
-
-/-- If `f` is uniformly approximable on `D`, then so is the scalar multiple `c • f`. -/
-theorem smul {n : Nat} {D : Set (Tensor ℝ [n])} {f : Tensor ℝ [n] → ℝ} (c : ℝ)
-    (hf : ApproxOn (n := n) D f) :
-    ApproxOn (n := n) D (fun x => c * f x) := by
-  intro ε hε
-  by_cases hc : c = 0
-  · subst hc
-    simpa [zero_mul] using (zero (n := n) D) ε hε
-  have hcabs : 0 < |c| := abs_pos.2 hc
-  rcases hf (ε / |c|) (div_pos hε hcabs) with ⟨m, l1, l2, hf'⟩
-  refine ⟨m, l1, scaleOutput c l2, fun x hx => ?_⟩
-  have hcancel : |c| * (ε / |c|) = ε := by field_simp [hc, abs_ne_zero.2 hc]
-  calc |c * f x - mlpEval (n := n) (hidDim := m) l1 (scaleOutput c l2) x|
-      = |c| * |f x - mlpEval (n := n) (hidDim := m) l1 l2 x| := by
-        rw [mlpEval_scaleOutput, ← mul_sub, abs_mul]
-    _ < |c| * (ε / |c|) := mul_lt_mul_of_pos_left (hf' x hx) hcabs
-    _ = ε := hcancel
-
-end ApproxOn
-
 /-! ## Uniform approximation of continuous maps on `K`
 
 The predicate is stated for `C(K, ℝ)` so that Stone–Weierstrass applies directly. -/
@@ -628,46 +563,6 @@ end Polarization
 /-- The box `[-M,M]^n` as a subset of `Tensor ℝ [n]`. -/
 noncomputable def boxN (n : Nat) (M : ℝ) : Set (Tensor ℝ [n]) :=
   fun x => ∀ i : Fin n, TorchLean.Tensor.getScalar x i ∈ Set.Icc (-M) M
-
-/-- The weight vector `e_i + e_j` (sum of two standard basis vectors). -/
-noncomputable def wPlusCoord {n : Nat} (i j : Fin n) : Fin n → ℝ :=
-  fun k => stdBasis (n := n) i k + stdBasis (n := n) j k
-
-/-- The weight vector `e_i - e_j` (difference of two standard basis vectors). -/
-noncomputable def wMinusCoord {n : Nat} (i j : Fin n) : Fin n → ℝ :=
-  fun k => stdBasis (n := n) i k - stdBasis (n := n) j k
-
-/-- `dot (e_i + e_j) x = x_i + x_j` for rank-one tensor coordinates. -/
-theorem dot_wPlusCoord {n : Nat} (i j : Fin n) (x : Tensor ℝ [n]) :
-    dot (wPlusCoord (n := n) i j) x =
-      TorchLean.Tensor.getScalar x i + TorchLean.Tensor.getScalar x j := by
-  classical
-  simp [ReLUMlpBridge.dot, wPlusCoord, stdBasis, add_mul, Finset.sum_add_distrib]
-
-/-- `dot (e_i - e_j) x = x_i - x_j` for rank-one tensor coordinates. -/
-theorem dot_wMinusCoord {n : Nat} (i j : Fin n) (x : Tensor ℝ [n]) :
-    dot (wMinusCoord (n := n) i j) x =
-      TorchLean.Tensor.getScalar x i - TorchLean.Tensor.getScalar x j := by
-  classical
-  simp [ReLUMlpBridge.dot, wMinusCoord, stdBasis, sub_mul, Finset.sum_sub_distrib]
-
-/-- If `x ∈ [-M,M]^n`, then `x_i + x_j ∈ [-2M, 2M]`. -/
-theorem coordSum_mem_Icc {n : Nat} {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [n]} (hx : x ∈ boxN n M)
-    (i j : Fin n) :
-    dot (wPlusCoord (n := n) i j) x ∈ Set.Icc (-2*M) (2*M) := by
-  have hxi := hx i
-  have hxj := hx j
-  rw [dot_wPlusCoord]
-  exact ⟨by linarith [hxi.1, hxj.1], by linarith [hxi.2, hxj.2]⟩
-
-/-- If `x ∈ [-M,M]^n`, then `x_i - x_j ∈ [-2M, 2M]`. -/
-theorem coordDiff_mem_Icc {n : Nat} {M : ℝ} (_hM : 0 ≤ M) {x : Tensor ℝ [n]} (hx : x ∈ boxN n M)
-    (i j : Fin n) :
-    dot (wMinusCoord (n := n) i j) x ∈ Set.Icc (-2*M) (2*M) := by
-  have hxi := hx i
-  have hxj := hx j
-  rw [dot_wMinusCoord]
-  exact ⟨by linarith [hxi.1, hxj.2], by linarith [hxi.2, hxj.1]⟩
 
 /--
 Coordinate multiplication is uniformly approximable on the box `[-M,M]^n`.
@@ -1241,46 +1136,5 @@ theorem relu_universal_approximation_compact (f : C(K, ℝ)) :
     _ < ε := by linarith [hnet x]
 
 end ReLUStoneWeierstrassBridgeFull
-
-/-! ## Two-dimensional multiplication from the general coordinate theorem -/
-
-/-- The two-coordinate box of `ReLUMulApprox` is the `n = 2` case of `boxN`. -/
-theorem planeBox_iff_coordinateBox (M : ℝ) (x : Tensor ℝ [2]) :
-    x ∈ boxN 2 M ↔ x ∈ ReLUMulApprox.box M := by
-  constructor
-  · intro hx
-    refine And.intro ?_ ?_
-    · have := hx (0 : Fin 2)
-      simpa [ReLUMulApprox.box, ReLUMulApprox.firstCoordinate] using this
-    · have := hx (1 : Fin 2)
-      simpa [ReLUMulApprox.box, ReLUMulApprox.secondCoordinate] using this
-  · intro hx
-    -- Convert a two-coordinate box proof into the corresponding pair of interval facts.
-    change ∀ i : Fin 2, TorchLean.Tensor.getScalar x i ∈ Set.Icc (-M) M
-    refine (Fin.forall_fin_two).2 ?_
-    refine And.intro ?_ ?_
-    · simpa [ReLUMulApprox.box, ReLUMulApprox.firstCoordinate] using hx.1
-    · simpa [ReLUMulApprox.box, ReLUMulApprox.secondCoordinate] using hx.2
-
-/--
-The same 2D multiplication guarantee derived from the nD coordinate-product theorem.
-
-This theorem is a cross-check between the specialized two-dimensional construction and the general
-coordinate-product approximation pipeline used by the compact-set theorem.
--/
-theorem relu_mul_universal_approximation_plane_box_via_nd
-    {M : ℝ} (hM : 0 < M) :
-    ∀ ε > 0, ∃ (hidDim : ℕ) (l1 : LinearSpec ℝ 2 hidDim) (l2 : LinearSpec ℝ hidDim 1),
-      ∀ x ∈ ReLUMulApprox.box M,
-        |ReLUMulApprox.mulFun x - mlpEval (n := 2) (hidDim := hidDim) l1 l2 x| < ε := by
-  intro ε hε
-  rcases relu_mul_coord_universal_approximation_box (n := 2) (M := M) hM (0 : Fin 2) (1 : Fin 2) ε
-    hε with
-    ⟨hidDim, l1, l2, h⟩
-  refine ⟨hidDim, l1, l2, ?_⟩
-  intro x hx
-  have hxN : x ∈ boxN 2 M := (planeBox_iff_coordinateBox (M := M) (x := x)).2 hx
-  simpa [ReLUMulApprox.mulFun, ReLUMulApprox.firstCoordinate, ReLUMulApprox.secondCoordinate]
-    using h x hxN
 
 end NN.MLTheory.Proofs.ReLU.Approximation.CompactSet

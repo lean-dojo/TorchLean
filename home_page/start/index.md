@@ -5,10 +5,8 @@ layout: default
 
 # Getting Started
 
-Build the project, train a small model, and run interval bound propagation over a second model:
-
-The checkout selects Lean 4.34.0 and the pinned FloatLib dependency through Lake. Follow the
-[installation guide]({{ '/installation/' | relative_url }}) to prepare those dependencies.
+After [installing TorchLean]({{ '/installation/' | relative_url }}), let's train a small model
+and try interval bound propagation:
 
 ```bash
 scripts/lake.sh build
@@ -149,7 +147,7 @@ running-statistics updates or extend the trainer's checkpoint interface.
    explains eager and typed graph execution, autograd, runtime artifacts, PyTorch interop boundaries,
    data streams, and backend selection.
 4. [Semantics and Graphs]({{ '/blueprint/Semantics-and-Graphs/' | relative_url }}) explains the
-   graph IR, graph denotation, shape discipline, named operations, and why verifiers reuse the same
+   graph IR, graph denotation, shape checks, named operations, and why verifiers reuse the same
    graph rather than inventing a second model language.
 5. [Floating Point and Native Boundaries]({{ '/blueprint/Floating-Point-and-Native-Boundaries/' | relative_url }})
    separates real-valued specifications, executable Float32 models, CUDA/native execution, and

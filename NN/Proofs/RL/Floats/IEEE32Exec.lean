@@ -125,43 +125,11 @@ theorem toReal_tdResidual_eq_round_chain_of_isFinite
                   (continueMask (α := (ExecFloat.Binary 8 23)) done)).toReal) *
                   (ExecFloat.Binary.toModel nextValue).toReal)) -
           (ExecFloat.Binary.toModel value).toReal) := by
-  -- First, refine the discounted backup part.
-  have hbackup :
-      (ExecFloat.Binary.toModel (discountedBackup (α := (ExecFloat.Binary 8 23)) reward gamma
-        nextValue done)).toReal =
-        Model.roundAt FloatFormat.binary32
-          ((ExecFloat.Binary.toModel reward).toReal +
-            Model.roundAt FloatFormat.binary32
-              (Model.roundAt FloatFormat.binary32
-                ((ExecFloat.Binary.toModel gamma).toReal * (ExecFloat.Binary.toModel
-                (continueMask (α := (ExecFloat.Binary 8 23)) done)).toReal) *
-                (ExecFloat.Binary.toModel nextValue).toReal)) :=
-    toReal_discountedBackup_eq_round_chain_of_isFinite
-      (reward := reward) (gamma := gamma) (bootstrap := nextValue) (done := done)
-      (h₁ := h₁) (h₂ := h₂) (h₃ := h₃)
-
-  -- Then apply the subtraction refinement for the final TD residual step.
-  have hbackupFin :
-      ExecFloat.Binary.isFinite (discountedBackup (α := (ExecFloat.Binary 8 23)) reward gamma
-        nextValue done) = true :=
-    h₃
-  have hsubReal :
-      (ExecFloat.Binary.toModel (ExecFloat.sub (discountedBackup (α := (ExecFloat.Binary 8 23))
-        reward gamma nextValue done) value)).toReal =
-        Model.roundAt FloatFormat.binary32
-          ((ExecFloat.Binary.toModel (discountedBackup (α := (ExecFloat.Binary 8 23)) reward gamma
-            nextValue done)).toReal -
-            (ExecFloat.Binary.toModel value).toReal) :=
-    toReal_sub_eq_round_of_isFinite
-      (x := discountedBackup (α := (ExecFloat.Binary 8 23)) reward gamma nextValue done) (y :=
-        value)
-      hbackupFin hval hsub
-
-  -- Unfold the RL definition and substitute the refined discounted-backup real meaning.
-  -- `tdResidual = tdTarget - value` and `tdTarget = discountedBackup`.
   change (ExecFloat.Binary.toModel (ExecFloat.sub (discountedBackup reward gamma nextValue done)
     value)).toReal = _
-  rw [hsubReal, hbackup]
+  rw [toReal_sub_eq_round_of_isFinite
+      (x := discountedBackup reward gamma nextValue done) (y := value) h₃ hval hsub,
+    toReal_discountedBackup_eq_round_chain_of_isFinite reward gamma nextValue done h₁ h₂ h₃]
 
 end Float32Exec
 end RL

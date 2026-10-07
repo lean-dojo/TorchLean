@@ -22,8 +22,11 @@ each tensor entry.
 The stable spec implementation is `Activation.softmaxVecSpec`. `Proofs.Analysis.Softmax` proves
 that its entries are positive, sum to one, and lie in `[0,1]`. The analytic derivative is
 `Proofs.Autograd.softmaxJvp`; its Jacobian is self-adjoint, so the same formula implements the VJP.
-The theorem below adds the conservation law needed for backward error analysis: every softmax JVP
-has coordinate sum zero.
+The rounded-real bounds follow max subtraction, exponential, sequential summation, and division.
+They require denominator-error margins supplied as proofs; this noncomputable file does not
+implement an executable certificate checker or verify a native softmax kernel. The analytic
+conservation law says that the exact real JVP has coordinate sum zero, not that a rounded VJP
+satisfies that identity exactly.
 
 References:
 
@@ -162,9 +165,9 @@ def denominatorErrorBound {n : Nat} (eps : ℝ)
 
 /-- Per-coordinate output budget for stable softmax.
 
-The exact denominator is at least one. The checker must additionally establish
-`denominatorErrorBound eps xR < 1`; this prevents the rounded denominator from crossing zero and
-turns the division condition into an explicit, checkable certificate obligation.
+The exact denominator is at least one. The forward theorem additionally requires a proof of
+`denominatorErrorBound eps xR < 1`, which keeps the rounded denominator positive. This real-valued
+bound is not itself an executable check.
 -/
 def softmaxBoundTensor {n : Nat} (eps : ℝ)
     (xR : Tensor R [Nat.succ n]) : SpecTensor [Nat.succ n] :=
@@ -186,9 +189,9 @@ def softmaxErrorBound {n : Nat} (eps : ℝ)
 
 /-- The max-shifted `NF` implementation approximates real vector softmax.
 
-Unlike a blanket continuity statement, the theorem follows the executable stages: maximum,
-subtraction, exponential, sequential sum, and division. The sole side condition is the numerical
-certificate check that the denominator error remains below its proved real lower bound `1`.
+The theorem follows the rounded-real stages: maximum, subtraction, exponential, sequential sum,
+and division. In addition to the input approximation, it requires a proof that the denominator
+error remains below the exact denominator's lower bound `1`.
 -/
 theorem approxTensor_softmaxVecSpec {n : Nat}
     {xS : SpecTensor [Nat.succ n]}
@@ -319,10 +322,8 @@ def softmaxRowsErrorBound {m n : Nat} (eps : ℝ)
 /-- Matrix-level stable softmax theorem, obtained by applying the vector theorem independently to
 each row.
 
-The denominator obligation remains row-specific: a certificate may accept well-conditioned rows
-without replacing them by a single pessimistic analytic assumption. The output uses one global
-infinity-norm budget because that is the contract consumed by matrix multiplication and graph
-composition.
+The denominator premise is proved separately for each row. The output uses one global
+infinity-norm budget, as required by the matrix multiplication and graph composition contracts.
 -/
 theorem approxTensor_softmaxRowsSpec {m n : Nat}
     {xS : SpecTensor [m, Nat.succ n]}
@@ -380,7 +381,9 @@ def hardMaskedNumerators {α : Type} [TorchLean.Storage α] [Context α] {n : Na
   map2Spec
     (fun value allowed => if allowed then value else 0) exponentials mask
 
-/-- The staged numerator computation equals the fused expression used by the public spec. -/
+/-- The staged numerator computation equals the entrywise expression in the public spec.
+This is an equality of tensor expressions, not a claim about a fused native kernel.
+-/
 theorem hardMaskedNumerators_eq_fused {α : Type} [TorchLean.Storage α] [Context α] {n : Nat}
     (scores : Tensor α [n])
     (mask : Tensor Bool [n]) (rowMax : α) :
@@ -392,7 +395,7 @@ theorem hardMaskedNumerators_eq_fused {α : Type} [TorchLean.Storage α] [Contex
   intro coordinate
   rcases coordinate with ⟨i, coordinate⟩
   cases coordinate
-  simp only [hardMaskedNumerators, Tensor.replicate, map2Spec, expSpec, subSpec, mapSpec,
+  simp only [hardMaskedNumerators, Tensor.replicate, map2Spec, expSpec, subSpec, Tensor.map,
     Tensor.scalar, TorchLean.Tensor.Internal.Rep.zipWith_apply]
   by_cases hallowed : mask (i, PUnit.unit) = true
   · simp only [hallowed, ite_true]
@@ -452,7 +455,7 @@ def hardMaskedSoftmaxBoundTensor {n : Nat} (η epsScores epsMax : ℝ)
       epsScores epsMax scoresR mask rowMaxR)
     numeratorsR denominatorRepR
 
-/-- Numerical certificate for the nonempty branch of hard-masked vector softmax.
+/-- Rounded-real error theorem for the nonempty branch of hard-masked vector softmax.
 
 `hmaxS` and `hmaxR` identify the selected allowed-row maxima. The theorem does not trust those
 values blindly: `hmax` must relate them numerically, and `hdenomLower` supplies the exact positive
@@ -557,11 +560,12 @@ theorem approxTensor_hardMaskedSoftmaxVecSpec_allBlocked {n : Nat}
   exact NFBackend.approxTensor_full_zero (β := β) (fexp := fexp) (rnd := rnd)
     (s := .dim n .scalar)
 
-/-- Checkable evidence for nonempty hard-masked softmax rows.
+/-- Proof-bearing evidence for nonempty hard-masked softmax rows.
 
-The data fields record the maxima and margins used by execution; the proposition fields establish
-that they describe the exact and rounded rows. Keeping this evidence together prevents a caller
-from accidentally pairing a denominator check with a different score matrix or mask.
+The data fields record real-valued maxima and margins; the proposition fields relate them to the
+exact and rounded rows. The structure is indexed by both score matrices, the mask, and the score
+error budget, so its proofs cannot be reused for unrelated inputs without establishing a bridge.
+It does not construct or decide those proofs automatically.
 -/
 structure HardMaskedRowsEvidence {m n : Nat}
     (scoresS : SpecTensor [m, n])
@@ -608,7 +612,7 @@ def hardMaskedRowsBoundTensor {m n : Nat}
 
 /-- Matrix-level hard-masked softmax when every row has at least one allowed coordinate.
 
-The selected maxima and denominator checks remain row-local. This matches causal attention, where
+The selected maxima and denominator premises remain row-local. This matches causal attention, where
 row `i` always admits key `i`, and avoids replacing all rows by the worst intermediate scale before
 the final infinity norm is taken.
 -/
@@ -755,12 +759,12 @@ theorem approxTensor_softmaxBackwardFromWeightsVecSpec {n : Nat}
   simpa [Spec.softmaxBackwardFromWeightsSpec, productS, productR, dotS, dotR,
     dotRepS, dotRepR, centeredS, centeredR, epsCentered, softmaxVjpErrorBound] using hout
 
-/-- Forward-error theorem for the executable softmax VJP.
+/-- Error theorem for the rounded-real softmax VJP.
 
 This is the training counterpart of `approxTensor_softmaxVecSpec`. It follows the implementation's
 factorization `y * (dY - sum (dY * y))`; the proof never materializes a dense Jacobian and reuses
-the same rounded multiplication, reduction, replication, and subtraction contracts as ordinary
-model execution.
+the rounded multiplication, reduction, replication, and subtraction contracts. It does not
+establish that a native backend uses this arithmetic schedule.
 -/
 theorem approxTensor_softmaxBackwardVecSpec {n : Nat}
     {xS dYS : SpecTensor [Nat.succ n]}

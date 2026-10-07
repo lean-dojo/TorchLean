@@ -69,15 +69,6 @@ def prepare_wilddet3d_source() -> Path:
     return snapshot
 
 
-def download_checkpoint() -> str:
-    """Download the WildDet3D checkpoint from Hugging Face."""
-    return hf_hub_download(
-        repo_id=HF_MODEL_REPO,
-        filename=HF_CKPT_NAME,
-        token=os.environ.get("HF_TOKEN"),
-    )
-
-
 def scale_intrinsics_to_original(K: torch.Tensor, input_hw: tuple[int, int], original_hw: tuple[int, int]) -> np.ndarray:
     """Scale model-input intrinsics back to original image resolution."""
     K_np = K.detach().cpu().numpy()
@@ -187,7 +178,7 @@ def corners_from_wilddet3d_box(box3d: torch.Tensor) -> list[float]:
         dtype=np.float64,
     )
     corners = local @ rot.T + center
-    return [float(x) for x in corners.reshape(-1).tolist()]
+    return corners.reshape(-1).tolist()
 
 
 def project_corners(camera_p: list[float], corners3d: list[float]) -> list[tuple[float, float, float]]:
@@ -241,13 +232,17 @@ def export_cert(args: argparse.Namespace) -> dict[str, Any]:
     from wilddet3d.preprocessing import preprocess
 
     image = load_image(args.image, args.image_url)
-    image_np = np.array(image.convert("RGB"))
+    image_np = np.array(image)
     data = preprocess(image_np.astype(np.float32), intrinsics=None)
     device = "cuda" if args.device == "auto" and torch.cuda.is_available() else args.device
     if device == "auto":
         device = "cpu"
 
-    checkpoint = download_checkpoint()
+    checkpoint = hf_hub_download(
+        repo_id=HF_MODEL_REPO,
+        filename=HF_CKPT_NAME,
+        token=os.environ.get("HF_TOKEN"),
+    )
     detector = build_model(
         checkpoint=checkpoint,
         score_threshold=0.0,

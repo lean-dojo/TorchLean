@@ -20,7 +20,7 @@ The preceding files prove the smooth residual components:
 * `x ↦ x + MultiHeadSelfAttention(x)`;
 * `x ↦ x + W₂ GELU(W₁x + b₁) + b₂`.
 
-This module proves the next runtime layer boundary:
+This module proves the LayerNorm composition:
 
 `residual_stream ↦ LayerNorm(residual_stream, gamma, beta)`.
 
@@ -28,7 +28,9 @@ That is the exact post-norm sublayer shape used by classical Transformer encoder
 (`LayerNorm(x + Sublayer(x))`). Attention and feed-forward sublayers reach the *same* boundary, so
 `postNorm_backpropVec_eq_adjoint_fderiv_at` serves both of them. The single-graph theorems
 `mhaPostNorm_backpropVec_eq_adjoint_fderiv_at` and `seqFfnPostNorm_backpropVec_eq_adjoint_fderiv_at`
-additionally fuse each residual prefix with its LayerNorm into one SSA graph.
+additionally append LayerNorm to each residual prefix in one SSA graph. The attention prefix
+uses `DirectReshapeAttention`, not the executable head layout. These are exact-real graph results,
+not correspondence proofs for a runtime Transformer or fused kernels.
 
 We deliberately keep this proof factored at the residual-stream interface. It avoids treating
 LayerNorm's pointwise domain hypotheses as globally smooth, and it gives full-block proofs a clean
@@ -119,9 +121,8 @@ def mhaPostNormInputs {seqLen dModel numHeads headDim : Nat} :
 /--
 Residual-MHA graph while carrying the following LayerNorm's affine parameters.
 
-The carried `gamma/beta` are not read by attention; `DGraph.weakenContext` ensures their gradients
-from the attention prefix are zero, while still keeping them available to the appended LayerNorm
-node.
+The attention result does not depend on the carried `gamma/beta`. `DGraph.weakenContext`
+preserves them in the full context so the appended LayerNorm can read them.
 -/
 def mhaResidualWithNormParamsDGraph {seqLen dModel numHeads headDim : Nat} (c : ℝ) :
     DGraph (ΓMHAWithNorm seqLen dModel numHeads headDim)
@@ -137,6 +138,7 @@ Single SSA graph for the first post-norm Transformer encoder sublayer:
 `LayerNorm(x + MultiHeadSelfAttention(x), gamma, beta)`.
 
 LayerNorm is appended as a whole pointwise node backed by the detailed LayerNorm graph theorem.
+The attention prefix retains its direct-reshape head split.
 -/
 def mhaPostNormGraph {seqLen dModel numHeads headDim : Nat} (c ε : ℝ) :
     Graph (ΓMHAWithNorm seqLen dModel numHeads headDim)
@@ -223,9 +225,9 @@ This is the second sublayer shape in a post-norm Transformer encoder block:
 
 `LayerNorm(X + FFN(X), gamma, beta)`.
 
-The FFN residual is sequence-shaped, not merely one-token-shaped. Its affine maps are supplied over
-flattened sequence tensors, so a shared position-wise implementation or a fused backend can both
-instantiate the theorem by exposing their fixed affine maps.
+The FFN affine maps and biases are supplied over flattened sequence tensors and remain fixed
+during differentiation. A shared position-wise implementation can provide block-diagonal maps;
+runtime or fused-kernel correspondence is a separate obligation.
 -/
 
 /-- Sequence-FFN context extended with the affine parameters for the following LayerNorm. -/
@@ -403,8 +405,8 @@ def postNormGraph {seqLen dModel : Nat} (ε : ℝ) :
 /--
 Pointwise correctness for the post-norm Transformer boundary.
 
-The only hypothesis is `0 < ε`. LayerNorm's differentiability side conditions at the runtime point
-(positive variance-plus-epsilon, nonzero standard deviation) follow from it.
+The only hypothesis is `0 < ε`. At the evaluation point, it implies LayerNorm's differentiability
+conditions: positive variance-plus-epsilon and nonzero standard deviation.
 -/
 def postNormGraphFDerivCorrectAt
     {seqLen dModel : Nat} (ε : ℝ) (xV : CtxVec (ΓPostNorm seqLen dModel))
@@ -526,8 +528,7 @@ The theorem says that if the two residual-pack maps are differentiable and both 
 are positive, then the whole two-sublayer block is differentiable by ordinary Fréchet chain rule.
 
 The concrete graph-level VJP theorems for each sublayer are `mhaPostNorm_*` and `seqFfnPostNorm_*`.
-This bridge is the public mathematical composition point for Transformer, ViT, and GPT-style
-post-norm blocks while the final monolithic SSA graph is assembled.
+This bridge composes the supplied maps; it does not construct their attention or FFN semantics.
 -/
 theorem twoSublayerPostNormBlock_hasFDerivAt
     {E : Type u} [NormedAddCommGroup E] [NormedSpace ℝ E]

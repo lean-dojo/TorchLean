@@ -115,6 +115,10 @@ relation to be symmetric. If an application uses symmetric adjacency, it can app
 inequality with the datasets exchanged; otherwise that reverse comparison needs its own adjacency
 premise. This matters when reading ratios in the example below.
 
+The predicate also leaves budget restrictions to the caller. For the usual privacy guarantee,
+we use $`\varepsilon\ge0` and $`0\le\delta<1`. `ENNReal` ensures that delta is nonnegative,
+but permits values at least one and infinity; the predicate itself does not exclude them.
+
 The body is the standard event inequality: for every adjacent pair and every measurable event `S`,
 
 $$`\forall D\sim D',\;\forall S,\qquad
@@ -148,10 +152,6 @@ example {α β : Type} [MeasurableSpace β]
 The proof is `simp` because after `intro` the goal is
 $`\mu(S)\le e^0\cdot\mu(S)+0`, and $`e^0=1`. Both sides concern the same event under the same
 measure. `PureDP` is the $`\delta=0` abbreviation.
-
-Note which quantifier order made this easy. Privacy is universally quantified over adjacent pairs
-*and* over measurable events, so `intro a a' _ S _` discharges all five binders and leaves an
-arithmetic goal. The proof works for any probability measure on the output space.
 
 ## Monotonicity Of The Budget
 
@@ -600,13 +600,6 @@ and the identity map as the classifier's tail, so $`L=1`:
 -- two-logit identity map.
 def marginLogits : Tensor ℝ [2] := [2, 0]
 
-example :
-    HasLogitMargin marginLogits ⟨0, by decide⟩ 2 := by
-  intro k hk
-  fin_cases k
-  · exact absurd rfl hk
-  · norm_num [marginLogits]
-
 example : IsCertifiedRobust (α := ℝ)
     (classifier := fun y : Tensor ℝ [2] =>
       argmaxClassifier (n := 2) y)
@@ -695,15 +688,6 @@ The norm slot here is `Proofs.tensorL2Norm`, the Mathlib-backed real norm from
 `Context`-dictionary `tensorL2Norm` from the robustness spec. They agree at $`\mathbb R`, and the
 predicate takes the norm as a parameter precisely so that a proof may use whichever formulation its
 lemmas are stated for. Applying a result across the two formulations requires that norm identity.
-
-To use the existential MLP result in a proof, one can unpack its conclusion into a real number,
-a proof that the number is positive, and a proof of the Lipschitz inequality. Those are three
-different pieces of information. The inequality can then be applied to any two inputs of shape
-`[inDim]`; the hidden dimension constrains the two layer types but disappears from the final
-input/output predicate. If a deployment needs a numerical radius, the proof must additionally
-relate the chosen witness to a concrete bound that can be evaluated or certified, which is what
-the explicit `mlp_lipschitz_frobenius` form provides. Unpacking an existential alone does not
-print a decimal value for it.
 
 ## Runtime Margin Reports
 
@@ -1009,8 +993,8 @@ check rather than assume {Informal.citep flocq2011}[].
 What the executable side proves is narrower than the agreement suggests:
 
 ```lean (name := ridgeBridge)
--- This bridge uses a finite evaluation of the
--- expression-tree ridge estimator.
+-- The expression and direct fit have the same ordered
+-- binary32 operations. We require finite evaluation.
 open IEEE32Exec.RidgeIEEEBridge in
 #check @ridgeFit_toReal_eq_spec_of_finiteEval
 ```
@@ -1025,12 +1009,12 @@ open IEEE32Exec.RidgeIEEEBridge in
       IEEE32Exec.Example._proof_4)
   (S : Dataset (n + 1) IEEE32Exec.Example) {d : FloatLib.Numerics.Dyadic},
   Floats.IEEE754.IEEE32Exec.FiniteEval (fun x => 0) (ridgeExpr lam S) d →
-    (ridgeFit1DExecExpr lam S).toModel.toReal = ridgeFitSpec lam S
+    (IEEE32Exec.ridgeFit1DExec lam S).toModel.toReal = ridgeFitSpec lam S
 ```
 
-This theorem concerns `ridgeFit1DExecExpr`, whose expression tree has its own association. The
-example above executes the separately defined ordered-fold ridge estimator. No theorem in this
-module equates those two binary32 evaluation paths for arbitrary data.
+The theorem now covers the fit we ran above. We prove that evaluating `ridgeExpr` gives exactly
+`ridgeFit1DExec`, with the same left-to-right additions, multiplications, and final division for
+any dataset. We need no associativity law for floating-point addition.
 
 This is a finite-evaluation bridge: *if* the executable expression evaluates without overflowing to
 infinity or producing a NaN, then its real interpretation agrees with the proof-level FP32
@@ -1056,8 +1040,7 @@ NN.MLTheory.LearningTheory.Stability.Dynamics API], which covers recurrences $`x
 input-driven systems. The spec file
 {src "NN/MLTheory/LearningTheory/Stability/Dynamics/Spec.lean"}[Dynamics.Spec] names Lyapunov
 stability, asymptotic stability, exponential stability, input-to-state stability, BIBO stability,
-incremental stability, practical stability, finite-time stability, and training and generalization
-stability. The runtime file
+practical stability, finite-time stability, and one-step training stability. The runtime file
 {src "NN/MLTheory/LearningTheory/Stability/Dynamics/Runtime.lean"}[Dynamics.Runtime] provides
 `Float` diagnostics.
 
@@ -1175,10 +1158,6 @@ is `Stability.Dynamics.Spec` versus `Stability.Dynamics.Runtime`, with the joini
 missing. For ridge regression, `RidgeRegression1D.Real` proves ideal stability, while
 the ridge-regression bridge connects one executable binary32 expression to an FP32 expression.
 That finite-evaluation bridge does not yet transfer the real stability bound.
-
-A theorem over the reals does not automatically apply to a floating-point computation.
-For ridge regression, the real stability bound and the finite-evaluation bridge leave a specific
-obligation: bound the numerical error in each of the two fits whose losses we compare.
 
 # Learning Theory Assumptions And Evidence
 

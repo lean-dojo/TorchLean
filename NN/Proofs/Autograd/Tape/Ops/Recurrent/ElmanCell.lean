@@ -15,10 +15,10 @@ This file proves the core differentiable cell used by a vanilla tanh RNN:
 
 `h' = tanh(W [x; h] + b)`.
 
-The theorem is deliberately cell-level. Runtime sequence layers unroll this cell over time and
-scatter the hidden states into an output sequence; the full BPTT theorem is the induction over that
-unroll plus the existing `gather`/`scatter` adjoint facts. We prove the cell first because it is the
-right reusable grain size: vector concatenation, affine maps, and smooth elementwise `tanh`.
+The cell graph concatenates the input and hidden state, applies a fixed affine map, and takes
+`tanh`. We prove its reverse-mode adjoint identity and differentiability of mathematical unrolls
+with supplied differentiable transitions. Connecting those unrolls to the runtime sequence layer,
+its gradient accumulation, and trainable parameters requires separate correspondence proofs.
 
 References:
 
@@ -313,11 +313,11 @@ def elmanTransitionsDifferentiableAt {inputSize hiddenSize : Nat}
       elmanTransitionsDifferentiableAt cell rest (step (elmanCellEval cell x))
 
 /--
-Arbitrary-length BPTT chain-rule induction for an Elman RNN unroll.
+Differentiability of an arbitrary-length mathematical Elman RNN unroll.
 
 If every transition between cells is differentiable at the trace reached during the forward pass,
-then the whole unrolled recurrence is differentiable at the initial cell context.  This is the
-mathematical induction principle behind backpropagation through time for the vanilla tanh RNN cell.
+then the whole recurrence is differentiable at the initial cell context. This supplies the
+chain-rule induction used to reason about BPTT; it does not identify a runtime backward pass.
 -/
 theorem elmanUnroll_hasFDerivAt
     {inputSize hiddenSize : Nat}

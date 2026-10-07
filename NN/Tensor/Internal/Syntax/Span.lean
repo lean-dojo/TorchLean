@@ -17,7 +17,7 @@ cannot precede its start. The type does not certify bounds within a particular s
 
 namespace TorchLean.Tensor.Internal.Syntax
 
-universe u v
+universe u
 
 /-- A half-open source range, measured in Unicode scalar values. -/
 structure Span where
@@ -71,21 +71,5 @@ structure Located (α : Type u) where
   /-- Source range from which the value was parsed. -/
   span : Span
 deriving Repr, DecidableEq
-
-namespace Located
-
-/-- Apply a function without changing a value's source location. -/
-def map {α : Type u} {β : Type v} (f : α → β) (value : Located α) : Located β :=
-  ⟨f value.value, value.span⟩
-
-/-- Mapping a located value applies the function to its payload. -/
-@[simp] theorem map_value {α : Type u} {β : Type v} (f : α → β) (value : Located α) :
-    (value.map f).value = f value.value := rfl
-
-/-- Mapping a located value preserves its source span. -/
-@[simp] theorem map_span {α : Type u} {β : Type v} (f : α → β) (value : Located α) :
-    (value.map f).span = value.span := rfl
-
-end Located
 
 end TorchLean.Tensor.Internal.Syntax

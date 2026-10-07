@@ -136,32 +136,26 @@ a capsule for every operation. The final replay executes the stored graph with b
 semantics and checks all ten intermediate tensors against the regenerated ranges.
 -/
 
-def mlpInputShape : Spec.Shape := [1, 2]
-def mlpHiddenShape : Spec.Shape := [1, 3]
-def mlpFirstWeightShape : Spec.Shape := [2, 3]
-def mlpSecondWeightShape : Spec.Shape := [3, 1]
-def mlpOutputShape : Spec.Shape := [1, 1]
+namespace Mlp
 
 /-- A two-layer matrix MLP expressed only in the canonical operation IR. -/
-def mlpGraph : NN.IR.Graph :=
+def graph : NN.IR.Graph :=
   { nodes := #[
-      { id := 0, parents := #[], kind := .input, outShape := mlpInputShape },
-      { id := 1, parents := #[], kind := .const mlpFirstWeightShape,
-        outShape := mlpFirstWeightShape },
-      { id := 2, parents := #[0, 1], kind := .matmul, outShape := mlpHiddenShape },
-      { id := 3, parents := #[], kind := .const mlpHiddenShape, outShape := mlpHiddenShape },
-      { id := 4, parents := #[2, 3], kind := .add, outShape := mlpHiddenShape },
-      { id := 5, parents := #[4], kind := .relu, outShape := mlpHiddenShape },
-      { id := 6, parents := #[], kind := .const mlpSecondWeightShape,
-        outShape := mlpSecondWeightShape },
-      { id := 7, parents := #[5, 6], kind := .matmul, outShape := mlpOutputShape },
-      { id := 8, parents := #[], kind := .const mlpOutputShape, outShape := mlpOutputShape },
-      { id := 9, parents := #[7, 8], kind := .add, outShape := mlpOutputShape }
+      { id := 0, parents := #[], kind := .input, outShape := [1, 2] },
+      { id := 1, parents := #[], kind := .const [2, 3], outShape := [2, 3] },
+      { id := 2, parents := #[0, 1], kind := .matmul, outShape := [1, 3] },
+      { id := 3, parents := #[], kind := .const [1, 3], outShape := [1, 3] },
+      { id := 4, parents := #[2, 3], kind := .add, outShape := [1, 3] },
+      { id := 5, parents := #[4], kind := .relu, outShape := [1, 3] },
+      { id := 6, parents := #[], kind := .const [3, 1], outShape := [3, 1] },
+      { id := 7, parents := #[5, 6], kind := .matmul, outShape := [1, 1] },
+      { id := 8, parents := #[], kind := .const [1, 1], outShape := [1, 1] },
+      { id := 9, parents := #[7, 8], kind := .add, outShape := [1, 1] }
     ] }
 
 /-- Source ranges cover inputs, both weight matrices, and both bias tensors. A single enclosure per
 tensor is sufficient for this certificate format; the graph walk remains independent of rank. -/
-def mlpSources : Array SourceRange := #[
+def sources : Array SourceRange := #[
   { nodeId := 0, enclosure := interval 0xbf800000 0x3f800000 },
   { nodeId := 1, enclosure := interval 0xbf800000 0x3f800000 },
   { nodeId := 3, enclosure := interval 0xbe800000 0x3e800000 },
@@ -172,7 +166,8 @@ def mlpSources : Array SourceRange := #[
 /-! Constant payloads use the IR's canonical flat storage ABI; node shapes recover the typed matrix
 view during evaluation. The explicit order below is row-major. -/
 
-def mlpFirstWeightFlat : Tensor (Binary 8 23) [6] :=
+/-- First weight matrix `[2, 3]`, stored in the payload's flat row-major layout. -/
+def w1 : Tensor (Binary 8 23) [6] :=
   [ ofBits32 0x3f000000
   , ofBits32 0xbe800000
   , ofBits32 0x3f400000
@@ -181,49 +176,51 @@ def mlpFirstWeightFlat : Tensor (Binary 8 23) [6] :=
   , ofBits32 0x3e800000 ]
 
 /-- First bias, flat. -/
-def mlpHiddenBiasFlat : Tensor (Binary 8 23) [3] :=
+def b1 : Tensor (Binary 8 23) [3] :=
   [ofBits32 0x3e000000, ofBits32 0xbe000000, (Binary.zero false : Binary 8 23)]
 
 /-- Second weight matrix `[3, 1]`, flat. -/
-def mlpSecondWeightFlat : Tensor (Binary 8 23) [3] :=
+def w2 : Tensor (Binary 8 23) [3] :=
   [ofBits32 0x3f000000, ofBits32 0xbf400000, (1 : Binary 8 23)]
 
 /-- Output bias, a single value. -/
-def mlpOutputBiasFlat : Tensor (Binary 8 23) [1] :=
+def b2 : Tensor (Binary 8 23) [1] :=
   [ofBits32 0x3d800000]
 
 /-- Concrete parameters are payloads of the constant nodes, not special fields in the checker. -/
-def mlpPayload : NN.IR.Payload (Binary 8 23) where
+def payload : NN.IR.Payload (Binary 8 23) where
   const? := fun nodeId =>
     match nodeId with
-    | 1 => some { n := 6, v := mlpFirstWeightFlat }
-    | 3 => some { n := 3, v := mlpHiddenBiasFlat }
-    | 6 => some { n := 3, v := mlpSecondWeightFlat }
-    | 8 => some { n := 1, v := mlpOutputBiasFlat }
+    | 1 => some { n := 6, v := w1 }
+    | 3 => some { n := 3, v := b1 }
+    | 6 => some { n := 3, v := w2 }
+    | 8 => some { n := 1, v := b2 }
     | _ => none
 
 /-- The concrete `[1, 2]` input the full-model replay runs on. -/
-def mlpInput : Spec.SomeTensor (Binary 8 23) :=
+def input : Spec.SomeTensor (Binary 8 23) :=
   let value : Tensor (Binary 8 23) [1, 2] :=
     [[ofBits32 0x3f000000, (-1 : Binary 8 23)]]
   Spec.SomeTensor.ofTensor value
 
 /-- Generate the operation-local range trace and bind it to the checked CPU capsule plan. -/
-def mlpCertificate : Except String RegistryCheckedCertificate :=
-  generateChecked NN.Backend.BackendProfile.checkedCpu mlpGraph mlpSources
+def certificate : Except String RegistryCheckedCertificate :=
+  generateChecked NN.Backend.BackendProfile.checkedCpu graph sources
 
 /-- Execute the stored graph in the bit-level binary32 interpreter and check every node. -/
-def mlpReplay : Except String RangeCheckedExecution := do
-  let certificate <- mlpCertificate
-  executeIEEE32 mlpPayload mlpInput certificate
+def replay : Except String RangeCheckedExecution := do
+  let certificate <- certificate
+  executeIEEE32 payload input certificate
+
+end Mlp
 
 /-- Generate and replay both graphs, and reject the deliberately tampered base artifact. -/
-def exampleChecks : Array (String × Bool) :=
+def checks : Array (String × Bool) :=
   #[ ("base certificate", accepted checked)
   , ("base IEEE replay", accepted replay)
   , ("tampered range rejected", !accepted tamperedCheck)
-  , ("two-layer MLP certificate", accepted mlpCertificate)
-  , ("two-layer MLP IEEE replay", accepted mlpReplay)
+  , ("two-layer MLP certificate", accepted Mlp.certificate)
+  , ("two-layer MLP IEEE replay", accepted Mlp.replay)
   ]
 
 /-- Help text for the certificate example. -/
@@ -250,7 +247,7 @@ def main (args : List String) : IO UInt32 := do
     return 2
   IO.println "TorchLean numerical runtime certificate"
   let mut failed := false
-  for (name, ok) in exampleChecks do
+  for (name, ok) in checks do
     IO.println s!"  {if ok then "ok" else "FAIL"}  {name}"
     if !ok then
       failed := true

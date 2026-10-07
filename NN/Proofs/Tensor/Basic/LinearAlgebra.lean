@@ -130,10 +130,8 @@ theorem matrix_transpose_mul {m n p : Nat}
   swapAdjacentAxes (matMulSpec A B) 0 =
   matMulSpec (swapAdjacentAxes B 0) (swapAdjacentAxes A 0) := by
   classical
-  -- Prove equality by `get2`-extensionality on matrix entries.
   apply matrix_ext
   intro j i
-  -- Compare the `(j,i)` entry of both sides.
   calc
     get2 (swapAdjacentAxes (matMulSpec A B) 0) j i
         = get2 (matMulSpec A B) i j := by
@@ -155,9 +153,7 @@ theorem matrix_transpose_mul {m n p : Nat}
             (get2_mat_mul_spec (A := swapAdjacentAxes B 0) (B := swapAdjacentAxes A 0) (i :=
               j) (j := i))
 
--- ---------------------------------------------------------------------------
--- Frobenius dot / matmul adjointness
--- ---------------------------------------------------------------------------
+/-! ## Frobenius dot and matmul adjointness -/
 
 /-- Expand the matrix dot-product as a double sum over entries (Frobenius inner product). -/
 theorem dot_mat_eq_sum {m n : Nat}
@@ -187,14 +183,12 @@ theorem dot_mat_mul_right_adjoint
   (C : Tensor ℝ [m, p]) :
   dot (matMulSpec A B) C = dot A (matMulSpec C (swapAdjacentAxes B 0)) := by
   classical
-  -- Expand both sides into entry sums; then it's just rearranging a finite triple sum.
+  -- Interchange the two inner indices of the finite triple sum.
   -- LHS: ∑ i ∑ j (∑ k Aik*Bkj) * Cij
   -- RHS: ∑ i ∑ k Aik * (∑ j Cij*Bkj)
   rw [dot_mat_eq_sum (A := matMulSpec A B) (B := C)]
   rw [dot_mat_eq_sum (A := A) (B := matMulSpec C (swapAdjacentAxes B 0))]
-  -- Rewrite matrix products and transpose entries.
   simp [get2_mat_mul_spec, get2_matrix_transpose_spec, Finset.mul_sum, Finset.sum_mul]
-  -- The goal is now exactly `Finset.sum_comm` on the two inner indices.
   refine Finset.sum_congr rfl ?_
   intro i _
   simpa [mul_assoc, mul_left_comm, mul_comm] using
@@ -231,12 +225,10 @@ theorem dot_mat_mul_left_adjoint
   -- ⟪A·B, C⟫ = ⟪(A·B)ᵀ, Cᵀ⟫ = ⟪Bᵀ·Aᵀ, Cᵀ⟫ = ⟪B, (Cᵀ·A)ᵀ⟫ = ⟪B, Aᵀ·C⟫.
   have htrans :=
     (dot_mat_transpose (m := m) (n := p) (A := matMulSpec A B) (B := C)).symm
-  -- rewrite `(A·B)ᵀ`
   have hmulT :
       swapAdjacentAxes (matMulSpec A B) 0 =
         matMulSpec (swapAdjacentAxes B 0) (swapAdjacentAxes A 0) :=
     matrix_transpose_mul (A := A) (B := B)
-  -- apply the right-adjoint lemma to `Bᵀ·Aᵀ` against `Cᵀ`
   have hadj :
       dot (matMulSpec (swapAdjacentAxes B 0) (swapAdjacentAxes A 0)) (swapAdjacentAxes
         C 0)
@@ -247,7 +239,6 @@ theorem dot_mat_mul_left_adjoint
     simpa using
       (dot_mat_mul_right_adjoint (A := swapAdjacentAxes B 0) (B := swapAdjacentAxes A 0)
         (C := swapAdjacentAxes C 0))
-  -- simplify involutions and transpose the last dot back
   have hAinv : swapAdjacentAxes (swapAdjacentAxes A 0) 0 = A :=
     matrix_transpose_involution (A := A)
   have hCinv : swapAdjacentAxes (swapAdjacentAxes C 0) 0 = C :=
@@ -257,12 +248,9 @@ theorem dot_mat_mul_left_adjoint
       dot (swapAdjacentAxes B 0) (matMulSpec (swapAdjacentAxes C 0) A)
         =
       dot B (swapAdjacentAxes (matMulSpec (swapAdjacentAxes C 0) A) 0) := by
-    -- Apply `dot_mat_transpose` to `B` and `((Cᵀ·A)ᵀ)`.
     have := dot_mat_transpose (m := n) (n := p)
       (A := B) (B := swapAdjacentAxes (matMulSpec (swapAdjacentAxes C 0) A) 0)
-    -- Rewrite involutions.
     simpa [matrix_transpose_involution, hCinv] using this
-  -- Finish by rewriting `transpose (Cᵀ·A) = Aᵀ·C`.
   calc
     dot (matMulSpec A B) C
         = dot (swapAdjacentAxes (matMulSpec A B) 0) (swapAdjacentAxes C 0) := htrans
@@ -273,7 +261,6 @@ theorem dot_mat_mul_left_adjoint
           simpa [hAinv] using hadj
     _ = dot B (swapAdjacentAxes (matMulSpec (swapAdjacentAxes C 0) A) 0) := hdot_swap
     _ = dot B (matMulSpec (swapAdjacentAxes A 0) C) := by
-          -- `transpose (Cᵀ·A) = Aᵀ·C`
           simp [matrix_transpose_mul, hCinv]
 
 /-! ## Entry rules for matrix-shaped tensor operations -/

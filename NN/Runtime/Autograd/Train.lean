@@ -8,7 +8,6 @@ module
 
 public import NN.Runtime.Autograd.Train.Core
 public import NN.Runtime.Autograd.Train.Trainer
-public import NN.Runtime.Autograd.Train.Logging
 public import NN.Runtime.Autograd.Train.Eval
 public import NN.Runtime.Autograd.Train.TapeM
 public import NN.Runtime.Autograd.Train.Optim
@@ -21,16 +20,13 @@ public import NN.Runtime.Autograd.Train.Optim
 This layer is about training-loop infrastructure, not model definitions:
 
 - `Core` gives tagged errors plus typed value/gradient extraction from shape-erased tape data.
-- `Dataset` gives pure, deterministic datasets/loaders with seeded shuffling.
-- `Trainer` and `Logging` give small report/logging abstractions for example loops and tests.
+- `Trainer` collects structured step reports and invokes a caller-supplied logger.
 - `Eval` averages reports over samples or batches while checking metric names.
 - `TapeM` contains ergonomic tape-building helpers for params, constants, and mean losses.
-- `NN.Data.IO` parses CSV and NPY payloads used by file-backed datasets.
 - `Optim` connects parameter tables, schedulers, and canonical optimizer equations.
 
-The public model/training API in `NN.API.*` builds on these pieces. This umbrella exists so tests,
-examples, and downstream users can import one stable training helper surface instead of memorizing
-the internal file split.
+This umbrella collects the low-level tape-training helpers used by examples and tests. The public
+model and trainer interfaces live under `NN.API`.
 -/
 
 @[expose] public section

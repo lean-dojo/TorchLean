@@ -25,7 +25,8 @@ equivalence. Both round-trip laws therefore hold for every scalar type,
 including scalar components, zero-size shapes, and zero-length segments.
 
 No tensor lowering is executed here. The later lowering theorem compares
-reshape and concatenation primitives with this coordinate denotation.
+direct row-major output fills with this coordinate denotation; no intermediate
+reshape or concatenation tensors are required.
 -/
 
 @[expose] public section

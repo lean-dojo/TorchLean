@@ -97,8 +97,8 @@ This is the “proved-correct local op” interface needed to build a sound reve
 structure OpSpecCorrect (σ τ : Shape) where
   /-- The underlying real-valued op (forward map and VJP). -/
   op : Spec.OpSpec ℝ σ τ
-  /-- The forward-mode derivative: `jvp x dx` is the directional derivative of `op.forward` at
-  `x` along `dx`. -/
+  /-- The selected tangent map. Adjointness relates it to `op.backward`; a separate analytic
+  theorem must identify it with the derivative of `op.forward`. -/
   jvp : Tensor ℝ σ → Tensor ℝ σ → Tensor ℝ τ
   /-- Adjointness of `jvp` and `op.backward` under the tensor dot product. -/
   correct : VJPCorrect op.forward jvp op.backward
@@ -118,11 +118,8 @@ def compose {σ τ υ : Shape}
   jvp := fun x dx => g.jvp (f.op.forward x) (f.jvp x dx)
   correct := by
     intro x dx δ
-    -- Use g's correctness at y = f x, dy = JVP_f x dx.
     have hg := g.correct (f.op.forward x) (f.jvp x dx) δ
-    -- Use f's correctness with δ := VJP_g (f x) δ.
     have hf := f.correct x dx (g.op.backward (f.op.forward x) δ)
-    -- Combine.
     simpa [Spec.OpSpec.compose, VJPCorrect] using hg.trans hf
 }
 
@@ -263,7 +260,8 @@ def geluCorrect {s : Shape} :
 /--
 Correctness of `safeLog`’s backward rule (a log with an $\varepsilon$ safeguard).
 
-PyTorch analogue: typically implemented as `torch.log(torch.clamp(x, min=ε))` (or similar).
+The forward formula is `log(softplus(x) + ε)`, not a clamped logarithm. This declaration proves
+adjointness of the selected backward mask; differentiability also requires the analytic hypotheses.
 -/
 def safeLogCorrect {s : Shape} (ε : ℝ := Context.defaultEpsilon) :
   OpSpecCorrect s s :=
@@ -280,7 +278,7 @@ def safeLogCorrect {s : Shape} (ε : ℝ := Context.defaultEpsilon) :
 /--
 Correctness of a smooth absolute value’s backward rule (a differentiable approximation to `|x|`).
 
-PyTorch analogue: a custom smooth `abs` implemented via $\sqrt{x^2+\varepsilon^2}$ or similar.
+The forward formula is $\sqrt{x^2+\varepsilon}$, with the same epsilon in the backward denominator.
 -/
 def smoothAbsCorrect {s : Shape} (ε : ℝ := Context.defaultEpsilon) :
   OpSpecCorrect s s :=
@@ -446,7 +444,7 @@ def sumCorrect {s : Shape} : OpSpecCorrect s Shape.scalar :=
           scaleSpec (α:=ℝ) (s:=s) (Tensor.full s (1 : ℝ)) g := by
       apply TorchLean.Tensor.Internal.Rep.ext
       intro coordinate
-      simp [scaleSpec, mapSpec, Tensor.map]
+      simp [scaleSpec, Tensor.map]
     -- Reduce both sides using `dot_scale_left` and the fact that the all-ones tensor is the
     -- multiplicative identity.
     calc

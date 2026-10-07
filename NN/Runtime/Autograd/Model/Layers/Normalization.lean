@@ -78,7 +78,7 @@ def affineNormalization (kind : String) (shape parameterShape : Shape)
         runtimeInit := some (.cons .ones .nil)
         validateConfig
         forward := fun _ {α} _ _ {m} _ _ weight input =>
-          show m (RefTy (m := m) (α := α) shape) from do
+          show m (Ref (m := m) (α := α) shape) from do
             let bias ← const (m := m) (α := α) (Tensor.zeros parameterShape)
             normalize (α := α) (m := m) weight bias input }
   else
@@ -87,7 +87,7 @@ def affineNormalization (kind : String) (shape parameterShape : Shape)
       initState := .nil
       validateConfig
       forward := fun _ {α} _ _ {m} _ _ input =>
-        show m (RefTy (m := m) (α := α) shape) from do
+        show m (Ref (m := m) (α := α) shape) from do
           let weight ← const (m := m) (α := α) (Tensor.ones parameterShape)
           let bias ← const (m := m) (α := α) (Tensor.zeros parameterShape)
           normalize (α := α) (m := m) weight bias input }
@@ -147,7 +147,7 @@ def rmsNorm
       initState := .nil
       validateConfig := Internal.validateEpsilon "RMSNorm" eps
       forward := fun _ {α} _ _ {m} _ _ input =>
-        show m (RefTy (m := m) (α := α) (leading.appendDim width)) from do
+        show m (Ref (m := m) (α := α) (leading.appendDim width)) from do
           let weight ← const (m := m) (α := α) (Tensor.ones weightShape)
           Norm.rmsNorm (m := m) (α := α)
             (leading := leading) (width := width) hWidth input weight (ε := Context.ofRat eps) }

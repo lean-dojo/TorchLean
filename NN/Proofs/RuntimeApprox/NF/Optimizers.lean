@@ -12,9 +12,10 @@ public import NN.Proofs.RuntimeApprox.Optimizer
 /-!
 # Rounded Optimizer Steps for `NF`
 
-Concrete instances of `RuntimeApprox.Optimizer.NumericalStepContract` for TorchLean's rounded
-`NF` runtime. These proofs use the same tensor equations as the public optimizers and the shared
-elementwise error transformers; there is no second optimizer implementation in the proof layer.
+Instances of `RuntimeApprox.Optimizer.NumericalStepContract` for the `NF` rounded-real model.
+Exact and rounded updates both use the public optimizer equations, with shared elementwise error
+transformers. The real-valued error traces are noncomputable; these contracts do not verify native
+buffer management or LibTorch execution.
 
 The first contracts cover SGD and momentum SGD. They already compose with the generic
 `NumericalStepContract.run_approx` theorem over arbitrary finite gradient streams and arbitrary
@@ -54,7 +55,7 @@ def sgdStateApprox {s : Shape} (stateS : Optim.SGD.State ℝ s)
   abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) stateR.learningRate -
     stateS.learningRate) ≤ error
 
-/-- Parameter error after one SGD update, computed from the actual runtime tensors. -/
+/-- Parameter error after one SGD update, expressed using the rounded-real tensors. -/
 def sgdStepError {s : Shape} (learningRateError parameterError gradientError : ℝ)
     (runtimeState : Optim.SGD.State R s)
     (runtimeParameters runtimeGradients : Tensor R s) :
@@ -322,9 +323,10 @@ structure AdamWStepErrorTrace where
   /-- Final parameter error after the full AdamW step. -/
   parameterError : ℝ
 
-/-- Compute AdamW's complete one-step error trace from runtime values and scalar subexpression
-budgets. The reduction to one infinity-norm number per tensor keeps the trace independent of
-rank. -/
+/-- AdamW's one-step error trace from rounded-real tensors and scalar subexpression budgets.
+Each tensor contributes one infinity-norm bound, regardless of rank. This trace does not compute
+the scalar budgets or prove the domain premises supplied by the caller.
+-/
 def adamWStepErrorTrace {s : Shape} (stateError : AdamWStateError s)
     (derivedErrors : AdamWDerivedErrors)
     (parameterError gradientError minimumSecondMoment : ℝ)
@@ -425,9 +427,11 @@ def adamWStepErrorTrace {s : Shape} (stateError : AdamWStateError s)
 
 /-- One AdamW update is numerically sound on a certified positive second-moment domain.
 
-The hypotheses for the derived scalar expressions expose rounding in `1-β`, bias correction, and
-the decoupled decay coefficient. `η` keeps `sqrt(vHat)` away from its singular derivative at zero;
-the two margin hypotheses ensure the rounded second moment and final denominator remain positive.
+The derived-scalar hypotheses account for rounding in `1-β`, bias correction, and decoupled decay.
+`η` bounds the exact corrected second moment away from zero. The denominator-error margin is used
+to justify division. The additional corrected-second-moment error margin is retained in the public
+statement but unused by this proof: the square-root rule already handles the rounded input with
+the spec's nonnegative clamp.
 -/
 theorem approxTensor_adamW_update {s : Shape}
     {stateS : Optim.AdamW.State ℝ s} {stateR : Optim.AdamW.State R s}
@@ -532,7 +536,7 @@ theorem approxTensor_adamW_update {s : Shape}
   have hdenominator := approxTensor_add_spec
     (β := β) (fexp := fexp) (rnd := rnd) hsqrt hepsilonFill
   have hstdLower : Tensor.Forall (fun z : ℝ => Real.sqrt η ≤ z) (sqrtSpec vHatS) := by
-    apply Tensor.forall_mapSpec (by simpa [vHatS, vS, bias2S] using hMoment2Hat)
+    apply Tensor.forall_map (by simpa [vHatS, vS, bias2S] using hMoment2Hat)
     intro z hz
     change Real.sqrt η ≤ Real.sqrt (max z 0)
     exact Real.sqrt_le_sqrt (le_trans hz (le_max_left z 0))
@@ -560,10 +564,10 @@ theorem approxTensor_adamW_update {s : Shape}
     (β := β) (fexp := fexp) (rnd := rnd) hdecayed hadamUpdate
   constructor
   · refine ⟨hlr, hbeta1, hbeta2, hepsilon, hweightDecay, ?_, ?_, ?_⟩
-    · simpa [Optim.AdamW.update, trace, adamWStepErrorTrace, mS, mR] using hm'
-    · simpa [Optim.AdamW.update, trace, adamWStepErrorTrace, vS, vR] using hv'
-    · simpa [Optim.AdamW.update] using ht
-  · simpa [trace, adamWStepErrorTrace, Optim.AdamW.update,
+    · simpa [Optim.AdamW.update, Optim.Adam.update, trace, adamWStepErrorTrace, mS, mR] using hm'
+    · simpa [Optim.AdamW.update, Optim.Adam.update, trace, adamWStepErrorTrace, vS, vR] using hv'
+    · simpa [Optim.AdamW.update, Optim.Adam.update] using ht
+  · simpa [trace, adamWStepErrorTrace, Optim.AdamW.update, Optim.Adam.update,
       Optim.adaptiveLearningRate, mS, mR, vS, vR, mHatS, mHatR,
       vHatS, vHatR, bias1S, bias1R, bias2S, bias2R] using hnext
 
@@ -573,7 +577,7 @@ theorem approxTensor_adamW_update {s : Shape}
 structure AdamWStepAssumptions where
   /-- Bounds for rounded scalar subexpressions used by bias correction and decay. -/
   derivedErrors : AdamWDerivedErrors
-  /-- Strict lower bound on the exact bias-corrected second moment. -/
+  /-- Positive lower bound on the exact bias-corrected second moment. -/
   minimumSecondMoment : ℝ
 
 /-- Complete validity predicate for one AdamW contract application. -/

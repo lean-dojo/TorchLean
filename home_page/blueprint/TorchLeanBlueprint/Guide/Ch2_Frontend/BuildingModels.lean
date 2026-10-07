@@ -59,11 +59,8 @@ $$`g:s_1\to s_2`,
 then $`g` may follow $`f`. A layer expecting $`s_3` cannot be inserted there merely because the two
 shapes contain the same number of values.
 
-For the MLP, the first map produces eight hidden features, so the second map must consume those
-eight features as a vector. Reshaping them into a `[2, 4]` matrix would preserve the scalar count
-but change that interface. An explicit reshape could be part of a different model; sequential
-composition will not invent one. The type of the intermediate value is where one layer's
-promise becomes the next layer's requirement.
+For the MLP, `[8]` and `[2, 4]` have the same scalar count but different layer interfaces.
+Changing between them requires an explicit reshape; sequential composition will not invent one.
 
 Model builders use:
 
@@ -206,11 +203,8 @@ This distinction is intentional. Mutating an `nn.Sequential` or `nn.Layer` would
 of a lowered graph depend on hidden state. Mutation belongs to the instantiated `nn.Module`; the
 definition passed to lowering and proofs remains an ordinary Lean value.
 
-The snippet first constructs that definition's live state and then runs the same input in two
-modes. `module.eval` changes how subsequent mode-sensitive operations behave; it does not create
-a new architecture or replace learned weights. For a plain linear/ReLU MLP the modes have the
-same forward formula. For dropout or normalization, the mode changes which formula or persistent
-statistics are used, so it belongs to the execution state even though the layer shapes stay fixed.
+For a plain linear/ReLU MLP, training and evaluation use the same forward formula. Dropout and
+normalization depend on the mode; `module.eval` changes their behavior without replacing weights.
 
 # Token Models And Bounded Indices
 
@@ -298,13 +292,6 @@ the `requiresGrad := false` case from the field list above. Current embedding mo
 lookup and scatter-add gradients. Options that change PyTorch's forward or backward semantics, such
 as `padding_idx`, `max_norm`, frequency-scaled gradients, and sparse gradients, require their own
 checked definitions and are not accepted as ignored flags.
-
-For `bmRawIds`, lookup selects table rows zero, two, and four. Each selected row has three
-features, which explains the extra final dimension in `[1, 3, 3]`: the original batch and token
-positions survive, and each identifier becomes a vector. The failed validation of `bmBadIds`
-occurs before this lookup because row nine does not exist. The successful `true` above reports
-only that the bounds check accepted the identifiers; it does not evaluate the embedding or say
-anything about the quality of its learned vectors.
 
 # MLP Architecture
 
@@ -460,12 +447,9 @@ map, so those two layers have the expressive power of one. Shape safety prevents
 composition; it does not declare two well-shaped networks equivalent, and it does not tell you that
 an architecture suits the learning problem.
 
-The additional layer contributes `8 * 8 + 8 = 72` scalars, exactly the difference between the
-two summaries. In exact arithmetic, combining the first two affine maps would multiply their
-weights and transform their biases. Training those factors separately still gives a different
-parameterization and optimizer state, and rounded evaluation can depend on the chosen sequence
-of operations. A shape-compatible edit is therefore a reason to reread the summary and the
-forward formula, even though composition continues to typecheck.
+Although the consecutive affine layers can be combined in exact arithmetic, training their
+factors separately gives a different parameterization and optimizer state. Rounded evaluation
+can also depend on the sequence of operations.
 
 The second kind of mistake is arithmetic on shapes rather than composition of them, and it is
 reported by validation rather than by the type checker. We meet it in the convolutional section
@@ -551,11 +535,7 @@ The per-layer shapes now carry the prefix, while the parameter count remains `33
 parameter tensors apply to every sample in the batch. The prefix changes the activation shapes
 without introducing a separate set of weights for each sample.
 
-One row follows `[2] → [8] → [1]` inside that batched computation. The next row follows the
-same maps with the same weights, so adding rows increases activation storage and arithmetic work
-without adding trainable scalars. During training, contributions from the rows meet in the
-gradients of those shared weights. This is why a batch prefix belongs to the input/output
-contract, whereas the parameter layout remains the one printed for the unbatched MLP.
+During training, contributions from the rows accumulate into gradients of those shared weights.
 
 The batch prefix must be passed to each parameterized layer. It is an ordinary
 argument with a default of `[]`, and the default is inserted before the composition is checked. The
@@ -726,13 +706,6 @@ configuration API instead reports invalid geometry through `Except` at the bound
 dimensions arrive. The resulting layer types still record the computed shapes and check their
 composition.
 
-The successful validation result, `Except.ok ()`, carries no computed tensor. Its unit value
-means that the configuration checks passed. The two error results identify different missing
-conditions: usable spatial geometry and a positive class count. Once accepted, the same
-configuration determines the activation shapes printed in the summary. Validation and summary
-thus answer complementary questions: whether the requested model is admissible, and what model
-that request actually describes.
-
 ## CIFAR-10 Training Example
 
 The maintained example trains a convolutional classifier on prepared CIFAR-10 images; its
@@ -742,7 +715,7 @@ configuration and image dimensions differ from the small summary above:
 # Use one downloaded CIFAR-10 example to exercise the
 # complete image training route.
 python3 scripts/datasets/download_example_data.py --cifar10
-scripts/lake.sh -R -Kcuda=false exe torchlean cnn \
+scripts/lake.sh -Kcuda=false exe torchlean cnn \
   --device cpu --n-total 1 --steps 1 --seed 2026
 ```
 
@@ -834,16 +807,16 @@ encoder params  : 872
 ```
 
 `872` against TorchLean's `840`. The difference is $`872-840=32`, and the listing says exactly where
-it lives: `in_proj_bias` contributes `24` and `out_proj.bias` contributes `8`. TorchLean's attention
-projections are bias-free, while PyTorch's are not. Everything else matches term by term: PyTorch's
+it lives: `in_proj_bias` contributes `24` and `out_proj.bias` contributes `8`. This TorchLean
+configuration leaves attention biases disabled, while the PyTorch configuration includes them.
+The remaining parameter shapes match term by term: PyTorch's
 packed $`[24,8]` query/key/value projection is TorchLean's three separate $`[8,8]` matrices
 ($`192=3\cdot64`), the output projection is $`[8,8]` in both, and the two feed-forward layers and
 the two normalizations agree exactly.
 
-The parameter comparison makes the bias choice in this transformer block
-{Informal.citep transformer2017}[] explicit. When porting the PyTorch block, its 32 attention bias
-values need a decision: the TorchLean block shown here has no corresponding state entries.
-The per-tensor summary exposes that mismatch before a forward comparison.
+Set `attentionInputBias := true` and `attentionOutputBias := true` to include those 32 parameters
+in the TorchLean block. A port must also match activation, normalization, dropout, and mask choices;
+matching the parameter count alone does not establish forward agreement.
 
 ## Block Structure And Masks
 
@@ -903,20 +876,16 @@ transformer: ok
 The log identifies the arithmetic, execution mode, and device chosen for this run. The next runtime
 chapters explain how those choices are made.
 
-This transcript comes from the maintained causal next-byte example, whereas the summary above
-describes a standalone encoder block. The log identifies a complete learning task, with a
-dataset and loss attached to its model. Its sixteen items and before/after losses should be
-read in that context; they are not measurements of the isolated four-layer summary. The shared
-interface lets both examples use the same construction machinery while their masks and
-objectives specify different computations.
+This transcript comes from the causal next-byte example, not the standalone encoder block above.
+Its dataset and loss belong to that complete training task.
 
 # Model Family Constructors
 
 KANs, GPT-style language models, vision transformers {Informal.citep vit2021}[], recurrent and
 state-space models {Informal.citep mamba2024}[], neural operators {Informal.citep fno2021}[],
 autoencoders, diffusion models, and reinforcement-learning policies all build from the same shape,
-parameter, and runtime interfaces. None of them introduces a private tensor type, and each one is
-inspectable with the same `nn.printSummary` used above.
+parameter, and runtime interfaces. They use the shared tensor type. `nn.printSummary` inspects
+models represented as `nn.Sequential`; indexed token models have their own module interface.
 
 For example, `nn.models.KAN.Config` records input/output widths, hidden widths, and an edge basis
 family. The basis is explicit because a KAN edge performs a learned scalar function rather than an
@@ -1133,10 +1102,8 @@ visible independently of any training procedure. The chosen rank restricts how t
 is factored. Here we supplied both factors by hand, so the outputs show their effect before
 any training.
 
-Use `Adapters.LoRA.weightUpdate adapter scale` to inspect only the scaled low-rank update, or
-`Adapters.LoRA.effectiveWeight base adapter scale` to construct the combined weight. Keeping
-`scale` explicit supports the usual $`\alpha/\mathrm{rank}` choice as well as scheduled or
-experimental scales.
+Keeping `scale` explicit supports the usual $`\alpha/\mathrm{rank}` choice as well as scheduled
+or experimental scales.
 
 These are pure tensor definitions, not yet a trainer-integrated LoRA workflow. They do not insert
 an adapter into an `nn.Sequential`, initialize its factors, freeze the base weight, or tell an

@@ -51,15 +51,17 @@ TorchLean uses one tensor type for specifications and execution:
 Tensor α shape
 ```
 
-Its runtime representation is one contiguous row-major buffer whose length is certified by
+Its runtime representation is one row-major buffer whose length is certified by
 `shape`. The scalar type chooses the physical buffer through `Storage`: executable scalar types
-can use packed native storage, while general proof scalar types use the generic representation.
+can use packed native storage, while general scalar types use arrays that may contain boxed values.
+`Float` and `UInt8` have packed storage; this does not imply an unboxed buffer for every executable
+scalar type.
 
 Proofs do not reason about raw buffer offsets. A tensor coerces to a total function on the typed
 coordinate space of its shape, and extensionality says that tensors with equal values at every
 coordinate are equal. A vector coordinate contains `Fin n`, so out-of-range lookup cannot be
 expressed. Shape induction remains available through rank-zero observation and leading-axis slicing,
-but those are proof views and smart constructors over the same contiguous tensor, not a second
+but those are proof views and smart constructors over the same stored tensor, not a second
 recursive physical datatype. Public shapes still use `[]`, `[n]`, and `[m, n]`.
 
 Model code uses ordinary shape lists, and a linear layer is a structure with two fields:
@@ -216,9 +218,6 @@ Over `ℚ` the definition returns that fraction, exactly:
 [(17 : Rat)/25]
 ```
 
-The stored result is the fraction $`17/25`. Both products and the bias addition were evaluated in
-`ℚ`, so there is no rounding error to separate from the formula in this example.
-
 The backward specification receives an upstream cotangent $`g=\partial L/\partial y` and returns
 
 $$`
@@ -257,8 +256,8 @@ activation written as a row. The bias gradient is $`g` unchanged, because $`\par
 is the identity. The input gradient $`W^\mathsf{T}g` is the weight row transposed. All three are
 exact rationals that can be compared directly with the three expressions.
 
-The source definitions are `linearSpec`, `linearWeightsDerivSpec`, `linearBiasDerivSpec`,
-`linearInputDerivSpec`, and `linearBackwardSpec` in
+The source definitions are `linearSpec`, `linearWeightsDerivSpec`, `linearInputDerivSpec`,
+and `linearBackwardSpec` in
 {src "NN/Spec/Layers/Linear.lean"}[`NN/Spec/Layers/Linear.lean`]. Later, the autograd proofs compare
 executable VJP rules with these definitions.
 {ref "autograd-proofs"}[The autograd proofs chapter] states the agreement theorems and their
@@ -551,7 +550,7 @@ Native execution adds another boundary: a capsule records the planned provider a
 obligations, and execution checks establish which provider actually ran. The capsule's evidence
 determines what is known about that provider's agreement with the specification.
 
-The batch axes have a separate role from the feature axis: `projectLast` applies the affine map
+The batch axes have a separate role from the feature axis: `Tensor.linear` applies the affine map
 independently to each row. It introduces no reduction across rows, so the first row's value does
 not depend on the second row's features.
 
@@ -582,9 +581,6 @@ def slShifted : Spec.LinearSpec ℚ 2 2 :=
 ```leanOutput slPerturb (whitespace := lax)
 [(7 : Rat)/25]
 ```
-
-$`\tfrac{7}{25}` is exactly $`0.28`. A `Float` result printed as `0.280000` would need a separate
-comparison of its stored value, as the preceding example showed.
 
 Interval propagation extends this calculation from one point to a set of possible inputs, bounding
 each intermediate tensor. The sign change is the important event here: the first hidden unit
@@ -917,8 +913,11 @@ Randomness is explicit. A masked dropout specification receives the mask as an a
 training code may generate that mask from a seed and tape state, but the semantic function does not
 consult hidden global randomness.
 
-The inverted-dropout scale of {Informal.citet dropout2014}[] is $`1/(1-p)`, which at $`p=\tfrac12`
-is exactly $`2`:
+Ordinary inverted dropout uses the scale $`1/(1-p)` {Informal.citet dropout2014}[].
+TorchLean uses $`1/\max(1-p,\varepsilon)` when $`1-p>0`, and zero otherwise, with
+`ε := Context.defaultEpsilon`. The clamp matters when the keep probability is smaller than
+epsilon. At $`p=\tfrac12`, the rational context's epsilon is small enough that the scale is
+exactly $`2`:
 
 ```lean (name := slDropout)
 -- Separate a fixed dropout mask from the scale applied to
@@ -964,10 +963,8 @@ trivially:
 [1.0, 2.0, 3.0, 4.0]
 ```
 
-With an explicit mask, the output is determined by the arguments shown in the definition. A theorem
-can first reason about that fixed mask, then add a distributional assumption when an expectation is
-needed. A stateful specification can also be formalized, but must include the generator state in
-its contract.
+An expectation theorem needs a distributional assumption on the mask; a stateful specification
+must also include the generator state in its contract.
 
 ## Invalid windows
 

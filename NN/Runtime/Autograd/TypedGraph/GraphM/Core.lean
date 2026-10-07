@@ -102,18 +102,14 @@ abbrev MWith (α : Type) [TorchLean.Storage α] (Δ : Type) (Γ : List Shape) : 
 abbrev M (α : Type) [TorchLean.Storage α] (Γ : List Shape) : Type → Type :=
   MWith α Unit Γ
 
-/-- Empty builder state (no intermediate nodes yet). -/
-def empty {α : Type} [TorchLean.Storage α] {Γ : List Shape} : State α Γ :=
-  ⟨[], .nil, #[]⟩
-
-/-- Empty builder state for an explicit environment type `Δ`. -/
-def emptyWith {α : Type} [TorchLean.Storage α]
+/-- Empty builder state; the runtime environment is inferred from the expected state type. -/
+def empty {α : Type} [TorchLean.Storage α]
     {Δ : Type} {Γ : List Shape} : StateWith α Δ Γ :=
   ⟨[], .nil, #[]⟩
 
 /-- Run a `GraphM` program from an empty state. -/
-def run {α : Type} [TorchLean.Storage α] {Γ : List Shape} {β : Type} (m : M α Γ β) :
-    Runtime.Autograd.Result (β × State α Γ) :=
+def run {α : Type} [TorchLean.Storage α] {Δ : Type} {Γ : List Shape} {β : Type}
+    (m : MWith α Δ Γ β) : Runtime.Autograd.Result (β × StateWith α Δ Γ) :=
   StateT.run m empty
 
 /-- Length of the current context `Γ ++ ss` (inputs + intermediates). -/

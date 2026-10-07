@@ -113,7 +113,6 @@ theorem approxCtx_setIdx {Γ : List Shape} {s : Shape} (idx : Idx Γ s)
           | mk iVal hiVal =>
               cases iVal with
               | zero =>
-                  -- head is the distinguished index
                   cases hshape
                   refine And.intro ?_ ?_
                   · simpa [SparseContext.setIdx, EList.setIdx] using ht
@@ -130,8 +129,8 @@ theorem approxCtx_setIdx {Γ : List Shape} {s : Shape} (idx : Idx Γ s)
 
 /-- Two writes at distinct positions do not interfere: each slot carries its own error bound.
 
-Distinctness is essential. If the indices coincided the two contributions would have to be added,
-and the sum would carry the sum of the errors rather than either one. -/
+Distinctness is essential. At a shared index the contributions must be added, with a combined
+bound that includes addition rounding as well as both input errors. -/
 theorem approxCtx_set2Idx_ne {Γ : List Shape} {s₁ s₂ : Shape} (a : Idx Γ s₁) (b : Idx Γ s₂)
     {t₁S : SpecTensor s₁} {t₁R : Tensor R s₁} {eps₁ : ℝ}
     {t₂S : SpecTensor s₂} {t₂R : Tensor R s₂} {eps₂ : ℝ}

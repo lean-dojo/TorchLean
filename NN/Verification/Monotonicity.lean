@@ -105,11 +105,11 @@ theorem relu_preserves_order {α : Type} [Storage α] [LinearOrder α] [Zero α]
   intro x y hxy
   induction s with
   | scalar =>
-      simpa [Tensor.Forall₂, Activation.reluSpec, Tensor.mapSpec,
+      simpa [Tensor.Forall₂, Activation.reluSpec,
         Activation.Math.reluSpec_eq_max] using max_le_max hxy (le_refl (0 : α))
   | dim n s ih =>
       intro i
-      simpa [Activation.reluSpec, Tensor.mapSpec, ← Tensor.unstack_map] using
+      simpa [Activation.reluSpec] using
         ih (x.unstack i) (y.unstack i) (hxy i)
 
 /-- Acceptance proves global monotonicity of the recorded TorchLean model over real inputs. -/

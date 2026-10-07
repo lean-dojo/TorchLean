@@ -314,12 +314,6 @@ h(3) = 9, stop-gradient result = 3.000000
 This mechanism is used in self-supervised objectives and detached targets in temporal-difference
 learning.
 
-In the mixed example, squaring contributes `2xᵢ`, the outer scale contributes `1/2`, and the mean
-contributes `1/3`. Their product gives `xᵢ/3`, explaining the increasing coordinates of the printed
-gradient. The added constant contributes to the forward mean but disappears from the input
-derivative. A check that omitted the mean could return `[1, 2, 3]` with the right signs and still
-be wrong by a factor of three.
-
 In the detach block, `h(3) = 9` is printed as literal explanatory text; the transform computes the
 gradient. Only one product-rule contribution remains because the second factor is detached.
 
@@ -335,7 +329,7 @@ the guide build:
 -- Require both agreement with the formula and rejection of
 -- the named wrong answers.
 open NN.Examples.Functional.Transcendentals in
-#eval checkAll
+#eval run
 ```
 
 ```leanOutput sfmControls (whitespace := lax)
@@ -351,12 +345,6 @@ open NN.Examples.Functional.Transcendentals in
 The three positive controls check $`\frac{d}{dx}e^x=e^x` at $`x=0.5`, a slope of three for
 $`3x+1`, and $`\frac{d}{dx}e^{-2x}=-2e^{-2x}` at $`x=0.5`.
 
-Each positive control is paired with a plausible wrong answer that must *not* match. A suite that
-only checked $`\frac{d}{dx}e^x` at a point where
-the answer happens to be close to one would also pass if autograd returned the constant one, and a
-suite that compared $`|f'|` would pass with the sign flipped. The negative controls demonstrate
-that each test can distinguish the defect it is intended to catch.
-
 `PASS` uses an absolute tolerance of `1e-6` in the maintained control runner. `PASS-NEG` checks
 that the named incorrect value lies outside that same tolerance. Neither label asserts bitwise
 equality. For the exponential case, choosing `0.5` keeps the correct derivative far enough from
@@ -366,16 +354,15 @@ because their purpose is to localize those mistakes, not estimate accuracy acros
 
 # Inner Scaling And Derivatives
 
-In the $`e^{-2x}` control, change the inner scaling from $`-2` to $`-3`. This changes both the
+In the $`e^{-2x}` control, change `scale := -2` to `scale := -3`. This changes both the
 exponential's argument and the factor contributed by the chain rule:
 
 ```lean (name := sfmThree)
 -- Update the closed form when the inner coefficient
 -- changes.
 def sfmSteeper : autograd.Function [] [] :=
-  fun x => do
-    let u ← nn.functional.scale x (-3)
-    nn.functional.exp u
+  NN.Examples.Functional.Transcendentals.exponential
+    (scale := -3)
 
 #eval do
   let x : Tensor Float [] := Tensor.full [] 0.5
@@ -411,11 +398,11 @@ proof-layer object for real-valued `exp`:
 -- This bundle connects a real operation to its Fréchet
 -- derivative.
 open NN.Examples.Functional.Transcendentals in
-#check @expProofSurface
+#check @expSpec
 ```
 
 ```leanOutput sfmProofSurface (whitespace := lax)
-expProofSurface : Proofs.Autograd.OpSpecFDerivCorrect 1 1
+expSpec : Proofs.Autograd.OpSpecFDerivCorrect 1 1
 ```
 
 `OpSpecFDerivCorrect` packages the real-valued forward operation, its JVP candidate, its backward
@@ -426,13 +413,13 @@ derives the statement that the backward rule is the adjoint of the derivative:
 -- The theorem covers every real input and cotangent of the
 -- stated shape.
 open NN.Examples.Functional.Transcendentals in
-#check @expBackward_eq_adjoint_fderiv
+#check @exp_backward_eq_adjoint_fderiv
 ```
 
 ```leanOutput sfmAdjoint (whitespace := lax)
-expBackward_eq_adjoint_fderiv : ∀ (x δ : Tensor ℝ [1]),
-  Proofs.Autograd.getScalarE (expProofSurface.correct.op.backward x δ) =
-    (Proofs.Autograd.vjp expProofSurface.forwardVec
+exp_backward_eq_adjoint_fderiv : ∀ (x δ : Tensor ℝ [1]),
+  Proofs.Autograd.getScalarE (expSpec.correct.op.backward x δ) =
+    (Proofs.Autograd.vjp expSpec.forwardVec
       (Proofs.Autograd.getScalarE x)) (Proofs.Autograd.getScalarE δ)
 ```
 
@@ -443,11 +430,11 @@ audit is:
 -- Inspect the theorem dependencies separately from
 -- executable numerical behavior.
 open NN.Examples.Functional.Transcendentals in
-#print axioms expBackward_eq_adjoint_fderiv
+#print axioms exp_backward_eq_adjoint_fderiv
 ```
 
 ```leanOutput sfmAxioms (whitespace := lax)
-'NN.Examples.Functional.Transcendentals.expBackward_eq_adjoint_fderiv' depends on axioms: [propext,
+'NN.Examples.Functional.Transcendentals.exp_backward_eq_adjoint_fderiv' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
 ```
@@ -459,11 +446,8 @@ LibTorch requires the runtime refinement boundary, which {ref "runtime-approxima
 approximation chapter] develops and {ref "autograd-proofs"}[the autograd proofs chapter] applies to
 the differentiation rules.
 
-The proof-surface type uses one-dimensional real tensors, whereas the executable attenuation
-example used rank-zero `Float` tensors. Both represent one scalar quantity, but they are distinct
-interfaces and the theorem explicitly names the former. Its cotangent `δ` is arbitrary: the
-backward rule agrees with the derivative adjoint for every seed of the stated shape, not just the
-unit seed used by `grad`.
+The theorem uses shape `[1]` over `ℝ`, not the executable example's rank-zero `Float` interface.
+Its cotangent `δ` is arbitrary, rather than restricted to the unit seed used by `grad`.
 
 # The Domain Of `log`
 
@@ -652,12 +636,8 @@ layer says nothing at all about the `NaN` printed above unless the positivity hy
 explicitly. Executable IEEE behavior lives in FloatLib binary32 and in {ref "floats"}[the floats
 chapter]; real-valued theorems should carry the domain hypotheses they mean.
 
-At input `2`, raw log gives slope `0.5`; safe log gives `0.414117`. That difference is expected
-from the softplus derivative in the numerator and the transformed argument in the denominator.
-At `-1` and `0`, the finite safe-log outputs describe the extended model, while the raw-log
-transform rejects the request before reporting a gradient. A catchable domain error gives an
-inverse-problem loop a chance to reject a proposed parameter state instead of updating from an
-invalid objective.
+An inverse-problem loop can catch the raw-log domain error and reject the proposed parameter state
+instead of updating from an invalid objective.
 
 The error also mentions NaN because an unordered value cannot satisfy the positive-input guard.
 Positive-domain validation is still narrower than a guarantee of a useful finite loss: a very
@@ -795,13 +775,8 @@ implementation and evidence. Neither choice resolves an ambiguity in the model: 
 $`x` are unknown and observations depend only on their product, different parameter pairs can fit
 equally well.
 
-The mean-output example isolates reduction; it does not yet differentiate a least-squares fit.
-For the displayed inputs, the exponential sensitivity decreases from `1` to `exp(-2)`, and the
-mean scales each contribution by one third. A least-squares parameter gradient would additionally
-multiply each prediction derivative by its residual and by `2`, then sum over observations.
-Those residuals can have different signs, so the gradient of a fit need not resemble the three
-negative entries printed here. Separating these two programs prevents a correct reduction check
-from being mistaken for an end-to-end inverse-problem validation.
+This is a mean-output derivative, not a least-squares parameter gradient. The latter also includes
+each residual and a factor of two; residuals of different signs can change the gradient direction.
 
 ## Identifiability And A Flat Direction
 
@@ -1042,9 +1017,6 @@ FloatLib's executable transcendental approximations are deterministic definition
 about them. What has not been proved is a universal correctly-rounded contract. A passing
 derivative check at $`\exp(-2x)` supports that input on that code path; it does not establish
 accuracy for `exp`, `log`, `sin`, or `cos` over all finite bit patterns.
-
-The display scale makes differences of about `8.88e-16` visible. It supplies no error bound beyond
-these two evaluations.
 
 # Parameterization, Reduction, And Arithmetic
 

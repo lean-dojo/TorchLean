@@ -22,10 +22,9 @@ The bound is derived from the conditioned division budget `divPosErrorBound`. Th
 `exp(x) + 1` is at least `1`; the rounded denominator error `logisticDenomError` is the numerator
 exponential budget plus the rounded constant `1` plus one addition rounding. When that error is
 below `1` the bound is the conditioned division budget; otherwise it falls back to `|ℓ̂| + 1`,
-which is always valid because the exact logistic lies in `(0, 1)`. The regression theorems
-`softmax_bound_scalar_le_of_denom_le_half` and `softmax_bound_scalar_le_one` show the certified
-branch is linear in the rounding budgets and stays below `1` for modest formats on the
-nonpositive half line.
+which is always valid because the exact logistic lies in `(0, 1)`. The subsequent theorems
+bound the conditioned branch under explicit hypotheses on numerator magnitude, error budgets,
+and output ULP; they do not establish those hypotheses for a chosen format automatically.
 -/
 
 @[expose] public section
@@ -95,8 +94,8 @@ Scalar forward bound for the scalar logistic NF node (public name `softmax`) at 
 
 The node computes `exp(x) / (exp(x) + 1)`, whose exact denominator is at least `1`. When the
 rounded denominator budget `logisticDenomError eps xR` is below `1`, the bound is the conditioned
-division budget `divPosErrorBound` with margin `1 - logisticDenomError`. Otherwise the certificate
-fails and the bound falls back to `|ℓ̂| + 1`, valid because the exact logistic lies in `(0, 1)`.
+division budget `divPosErrorBound` with margin `1 - logisticDenomError`. Otherwise it uses
+the coarser bound `|ℓ̂| + 1`, valid because the exact logistic lies in `(0, 1)`.
 -/
 def softmaxBoundScalar (eps : ℝ) (xR : R) : ℝ :=
   if logisticDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR < 1 then
@@ -222,8 +221,8 @@ theorem approxTensor_softmax_spec {s : Shape} :
     ∀ {xS : SpecTensor s} {xR : Tensor R s} {eps : ℝ},
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR eps →
         approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-          (mapSpec (s := s) (Activation.Math.logisticSpec (α := ℝ)) xS)
-          (mapSpec (s := s) (Activation.Math.logisticSpec (α := R)) xR)
+          (Tensor.map (shape := s) (Activation.Math.logisticSpec (α := ℝ)) xS)
+          (Tensor.map (shape := s) (Activation.Math.logisticSpec (α := R)) xR)
           (linfNorm (softmaxBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (s := s) eps xR)) := by
   intro xS xR eps hx
   have h :=

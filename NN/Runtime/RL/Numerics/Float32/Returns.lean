@@ -31,7 +31,7 @@ namespace Numerics
 namespace Float32
 
 open Spec TorchLean
-open TorchLean TorchLean.Tensor
+open TorchLean.Tensor
 open Spec.RL
 
 
@@ -60,44 +60,32 @@ results; it does not certify correct rounding or a real-error bound.
 /-- Checked configured binary32 addition. -/
 def checkedAdd (label : String) (x y : Binary 8 23) : Except String (Binary 8 23) :=
   let z := ExecFloat.add x y
-  match requireFinite label z with
-  | .ok _ => .ok z
-  | .error e => .error e
+  (requireFinite label z).map fun _ => z
 
 /-- Checked configured binary32 subtraction. -/
 def checkedSub (label : String) (x y : Binary 8 23) : Except String (Binary 8 23) :=
   let z := ExecFloat.sub x y
-  match requireFinite label z with
-  | .ok _ => .ok z
-  | .error e => .error e
+  (requireFinite label z).map fun _ => z
 
 /-- Checked configured binary32 multiplication. -/
 def checkedMul (label : String) (x y : Binary 8 23) : Except String (Binary 8 23) :=
   let z := ExecFloat.mul x y
-  match requireFinite label z with
-  | .ok _ => .ok z
-  | .error e => .error e
+  (requireFinite label z).map fun _ => z
 
 /-- Approximate `eˣ` in binary32 and reject a nonfinite result. -/
 def checkedExp (label : String) (x : Binary 8 23) : Except String (Binary 8 23) :=
   let z := FloatLib.Floats.ExecFloat.Binary.exp x
-  match requireFinite label z with
-  | .ok _ => .ok z
-  | .error e => .error e
+  (requireFinite label z).map fun _ => z
 
 /-- Checked configured binary32 `min` using IEEE-754 `minimum`. -/
 def checkedMin (label : String) (x y : Binary 8 23) : Except String (Binary 8 23) :=
   let z := min x y
-  match requireFinite label z with
-  | .ok _ => .ok z
-  | .error e => .error e
+  (requireFinite label z).map fun _ => z
 
 /-- Checked configured binary32 `max` using IEEE-754 `maximum`. -/
 def checkedMax (label : String) (x y : Binary 8 23) : Except String (Binary 8 23) :=
   let z := max x y
-  match requireFinite label z with
-  | .ok _ => .ok z
-  | .error e => .error e
+  (requireFinite label z).map fun _ => z
 
 /--
 Checked version of the one-step discounted backup
@@ -113,14 +101,11 @@ The runtime return type is `Except String …` so training code can choose to:
 -/
 def discountedBackupChecked
     (reward gamma bootstrap : Binary 8 23) (done : Bool) :
-    Except String (Binary 8 23) :=
+    Except String (Binary 8 23) := do
   let mask : Binary 8 23 := Spec.RL.continueMask (α := Binary 8 23) done
-  match checkedMul "discountedBackup/mul(gamma,mask)" gamma mask with
-  | .error e => .error e
-  | .ok t1 =>
-      match checkedMul "discountedBackup/mul(t1,bootstrap)" t1 bootstrap with
-      | .error e => .error e
-      | .ok t2 => checkedAdd "discountedBackup/add(reward,t2)" reward t2
+  let discounted ← checkedMul "discountedBackup/mul(gamma,mask)" gamma mask
+  let future ← checkedMul "discountedBackup/mul(t1,bootstrap)" discounted bootstrap
+  checkedAdd "discountedBackup/add(reward,t2)" reward future
 
 /-!
 ## Checked preconditions → proof hypotheses
@@ -173,27 +158,32 @@ theorem discountedBackup_eq_ok
     | false =>
         -- If the first intermediate is not finite, the checked routine must return `.error _`,
         -- contradicting `h`.
-        simp [discountedBackupChecked, checkedMul, requireFinite, mask, t1, hft1] at h
+        simp [discountedBackupChecked, checkedMul, requireFinite, Except.map,
+          Bind.bind, Except.bind, mask, t1, hft1] at h
 
   have ht2 : Binary.isFinite t2 = true := by
     cases hft2 : Binary.isFinite t2 with
     | true =>
         rfl
     | false =>
-        simp [discountedBackupChecked, checkedMul, requireFinite, mask, t1, t2, ht1, hft2] at h
+        simp [discountedBackupChecked, checkedMul, requireFinite, Except.map,
+          Bind.bind, Except.bind, mask, t1, t2, ht1, hft2] at h
 
   have hout0 : Binary.isFinite out0 = true := by
     cases hfout : Binary.isFinite out0 with
     | true =>
         rfl
     | false =>
-        simp [discountedBackupChecked, checkedMul, checkedAdd, requireFinite,
+        simp [discountedBackupChecked, checkedMul, checkedAdd, requireFinite, Except.map,
+          Bind.bind, Except.bind,
           mask, t1, t2, out0, ht1, ht2, hfout] at h
 
   -- If all checks passed, the routine returns the plain `discountedBackup` expression.
   have hout : out = out0 := by
     have : discountedBackupChecked reward gamma bootstrap done = .ok out0 := by
-      simp [discountedBackupChecked, checkedMul, checkedAdd, requireFinite, mask, t1, t2, out0,
+      simp [discountedBackupChecked, checkedMul, checkedAdd, requireFinite, Except.map,
+        Bind.bind, Except.bind,
+        mask, t1, t2, out0,
         ht1, ht2, hout0]
     exact Except.ok.inj (h.symm.trans this)
 
@@ -209,7 +199,7 @@ theorem discountedBackup_eq_ok
 /--
 Checked fixed-horizon discounted returns (no `done` flags), specialized to `Binary 8 23`.
 
-This is the checked/finite counterpart to `Runtime.RL.Core.discountedReturnsFrom`.
+This is the checked/finite counterpart to `Runtime.RL.Core.discountedReturns`.
 -/
 def discountedReturnsChecked {n : Nat}
     (gamma : Binary 8 23) (rewards : Tensor (Binary 8 23) [n])

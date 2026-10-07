@@ -68,8 +68,8 @@ Parsing a successful expression's canonical rendering succeeds with the same
 canonical syntax.
 
 The reparsed tree has fresh source spans and fresh anonymous-axis occurrence
-offsets. Comparing renderings captures every parser distinction used by later
-checking while intentionally ignoring that source-location metadata.
+offsets. The theorem compares canonical renderings, not syntax-tree equality
+or the result of shape checking a reparsed pattern.
 -/
 theorem parseExpression_render_eq_ok (source : String)
     (config : ExpressionConfig) (expression : Expression)
@@ -145,6 +145,5 @@ theorem parseExpression_render_eq_ok (source : String)
               targetExpression.render = expression.render :=
             congrArg TokenKind.renderSequence hTargetKinds
           exact congrArg Except.ok hRender
-
 
 end TorchLean.Tensor.Internal.Syntax

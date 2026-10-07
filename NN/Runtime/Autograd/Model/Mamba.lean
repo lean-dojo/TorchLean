@@ -21,7 +21,7 @@ a matrix on the right. The convolution kernel is newest-first. We store `logA` a
 negative throughout training. Floating-point overflow and underflow still follow the chosen
 backend's arithmetic.
 
-`step` and `runArray` carry both the hidden state and projected-token history. Keeping references
+`step` and `run` carry both the hidden state and projected-token history. Keeping references
 in that cache lets a continued computation retain gradients through earlier chunks. Callers that
 want truncated backpropagation can detach those references explicitly.
 
@@ -200,7 +200,7 @@ Run a chunk and return the complete cache needed by the next chunk, together wit
 An empty chunk preserves both pieces of state. Chunk boundaries introduce no detach operation:
 using the returned references in a later chunk keeps gradients through the earlier computation.
 -/
-def runArray
+def run
     (parameters : Parameters (Ref (m := m) (α := α))
       inputWidth innerWidth stateWidth outputWidth kernelWidth)
     (state : State (Ref (m := m) (α := α)) innerWidth stateWidth)

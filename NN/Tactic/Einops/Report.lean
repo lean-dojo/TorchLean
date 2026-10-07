@@ -5,7 +5,7 @@ Authors: TorchLean contributors
 -/
 module
 
-public meta import NN.Tactic.Einops.Report.Analysis
+public meta import NN.Tactic.Einops.Report.Analysis.Render
 public meta import ProofWidgets.Component.HtmlDisplay
 public import NN.Tactic.Einops.Report.Analysis.Render
 public import ProofWidgets.Component.HtmlDisplay
@@ -19,7 +19,9 @@ shape transformation remain visible. Independent disclosure sections expose
 the checked axes, proof obligations, lowering stages, generated execution,
 static work estimates, and correctness theorems on demand.
 
-The tactic never evaluates or benchmarks user terms during elaboration.
+The tactic inspects expressions and reduces shape metadata; it does not execute tensor kernels or
+run benchmarks. Optimization estimates are reconstructed by the report analyzer, not extracted
+from an execution trace. A checked semantic result does not certify those estimates.
 -/
 
 public meta section
@@ -387,9 +389,9 @@ Report checked types and shapes, verified lowering stages, generated
 execution, static work estimates, and compiler-correctness theorems found in
 the current target.
 
-The tactic is observational: it does not change the target, add local facts,
-evaluate user terms, or run benchmarks. Symbolic certificates receive exact
-formulas without invented concrete dimensions.
+The tactic is observational: it does not change the target or add local facts. It reduces reflected
+metadata without executing tensor kernels or running benchmarks. Symbolic certificates retain
+their dimensions. Optimization descriptions are planner estimates, not observed execution.
 -/
 elab (name := einopsSuggestionTactic) token:"einops?" : tactic =>
     withMainContext do

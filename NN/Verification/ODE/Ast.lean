@@ -12,7 +12,7 @@ public import NN.Spec.Core.Tensor -- shake: keep
 /-!
 # Ast
 
-ODE RHS expression language + interval evaluator.
+ODE right-hand-side expressions and interval endpoint calculations.
 
 This is a small companion to the existing PINN PDE DSL, specialized for ODE IVPs:
 
@@ -20,14 +20,14 @@ $$
 u'(t)=f(t,u(t)).
 $$
 
-We use conservative interval arithmetic over `α × α` intervals (for any scalar `α` with a
-`Context` instance), with a few common transcendentals (`sin`, `cos`, `exp`, `log`) needed by the
-benchmarks in arXiv:2601.19818.
+The evaluator uses `α × α` endpoint pairs and the arithmetic supplied by `Context α`, including
+`sin`, `cos`, `exp`, and `log` for the benchmarks in arXiv:2601.19818. It does not request directed
+rounding or supply transcendental error bounds. Floating-point evaluation therefore does not
+automatically establish an enclosure of the exact-real expression.
 
 For the trigonometric cases we use a 1-Lipschitz enclosure around the midpoint and then clamp to
-$[-1,1]$. Over real-valued semantics this is the intended enclosure argument; executable scalar
-backends rely on their `Context` operations matching the assumed real behavior closely enough for
-the checker mode being used.
+$[-1,1]$. That is the exact-real enclosure argument; finite arithmetic needs separate rounding and
+function-approximation bounds before the same conclusion follows.
 -/
 
 @[expose] public section
@@ -79,10 +79,6 @@ the same expression under `Float` or `ExecFloat.Binary 8 23` (or other executabl
 -/
 namespace Ival
 
-/- The interval layer below is the checker kernel for ODE certificates.  The definitions favor
-direct, inspectable enclosures over clever rewrites so that each arithmetic case can be reviewed
-against the mathematical interval rule it implements. -/
-
 /--
 Whether a checker scalar is finite under the supported `Float` and `ExecFloat.Binary 8 23` backends.
 
@@ -120,7 +116,7 @@ part of the certificate check rather than an optimization.
 @[inline] def add {α : Type} [TorchLean.Storage α] [Context α] (x y : α × α) : α × α :=
   let (xl, xh) := x; let (yl, yh) := y; (xl + yl, xh + yh)
 
-/-- Subtract closed intervals using the standard outward endpoint formula. -/
+/-- Subtract endpoint pairs with the standard interval formula, using the selected arithmetic. -/
 @[inline] def sub {α : Type} [TorchLean.Storage α] [Context α] (x y : α × α) : α × α :=
   let (xl, xh) := x; let (yl, yh) := y; (xl - yh, xh - yl)
 
@@ -130,7 +126,6 @@ part of the certificate check rather than an optimization.
 
 /-- Interval multiplication using the standard four-product enclosure. -/
 @[inline] def mul {α : Type} [TorchLean.Storage α] [Context α] (x y : α × α) : α × α :=
-  -- Standard interval product: compute four products and take min/max.
   let (xl, xh) := x; let (yl, yh) := y
   let p1 := xl * yl
   let p2 := xl * yh

@@ -107,21 +107,10 @@ theorem vectorEquiv_map {α : Type u} {β : Type v}
       (vectorEquiv α shape tensor).map f := by
   apply Vector.ext
   intro flatIndex hFlatIndex
-  let index : Fin (Shape.size shape) := ⟨flatIndex, by
-    simpa using hFlatIndex⟩
   change
-    ((vectorEquiv β shape) (map f tensor)).get index =
-      ((vectorEquiv α shape tensor).map f).get index
-  calc
-    ((vectorEquiv β shape) (map f tensor)).get index =
-        map f tensor (Coord.unlinearize index) :=
-      vectorEquiv_apply (map f tensor) index
-    _ = f (tensor (Coord.unlinearize index)) :=
-      Rep.map_apply f tensor (Coord.unlinearize index)
-    _ = f ((vectorEquiv α shape tensor).get index) :=
-      congrArg f (vectorEquiv_apply tensor index).symm
-    _ = ((vectorEquiv α shape tensor).map f).get index :=
-      by simp
+    (vectorEquiv β shape (map f tensor)).get ⟨flatIndex, hFlatIndex⟩ =
+      ((vectorEquiv α shape tensor).map f).get ⟨flatIndex, hFlatIndex⟩
+  simp only [Vector.get_map, vectorEquiv_apply, map_apply]
 
 /--
 Reshape preserves the same row-major vector storage.

@@ -347,11 +347,9 @@ private theorem exists_fixedPoint_of_contraction [Nonempty S]
     refine ⟨Real.toNNReal_lt_one.mpr hγ₁, LipschitzWith.of_dist_le_mul fun f g => ?_⟩
     simpa [dist_eq_valueSupDist, hγ₀, F, BddMeas.mk] using
       hT _ _ f.2 g.2 (bddAbove_abs f) (bddAbove_abs g)
-  have hiter : ∀ (k : Nat) (f : BddMeas S), ((F^[k] f).1 : S → ℝ) = T^[k] f.1 := by
-    intro k
-    induction k with
-    | zero => intro f; rfl
-    | succ k ih => intro f; rw [Function.iterate_succ_apply, Function.iterate_succ_apply, ih]; rfl
+  have hiter (k : Nat) (f : BddMeas S) : ((F^[k] f).1 : S → ℝ) = T^[k] f.1 :=
+    (Function.Semiconj.iterate_right
+      (f := fun f : BddMeas S => (f.1 : S → ℝ)) (ga := F) (gb := T) (fun _ => rfl) k) f
   let p := ContractingWith.fixedPoint F hF
   refine ⟨p.1, p.2, bddAbove_abs p, ?_, fun v hv hb => ?_⟩
   · exact congrArg (fun f : BddMeas S => (f.1 : S → ℝ)) (ContractingWith.fixedPoint_isFixedPt hF)

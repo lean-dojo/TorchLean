@@ -18,6 +18,10 @@ parents along the leading axis, and (for a nonzero axis) permute the concatenate
 first and back afterwards. The proofs here relate the two `mapM` traversals over the parent ids and
 the two folds.
 
+The contract requires at least two parents and preserves their order and repeated occurrences.
+An input's concatenated dimension may be zero. These are forward specification equalities, not
+claims about native concatenation or its VJP.
+
 ## Main definitions
 
 - `array_mapM_ok_of_pointwise`: successful `Except` traversals are pointwise determined.
@@ -46,8 +50,6 @@ open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
--- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
--- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
 /-- A successful `Except` traversal of a list determines any pointwise related traversal. -/
@@ -283,9 +285,9 @@ theorem permuteSomeTensor_frontInput {α : Type} [TorchLean.Storage α] [Context
     (f : ConcatFrontInput α Γ permFront restFront) (t : Tensor α f.sIn) :
     NN.IR.Graph.permuteSomeTensor (α := α) (Spec.SomeTensor.mk (α := α) f.sIn t) permFront =
       .ok (Spec.SomeTensor.mk (α := α) (.dim f.nP restFront)
-        (Tensor.castShape (applySwapsTensor (α := α) (s := f.sIn) (swaps := f.swaps) t)
+        (Tensor.castShape (swapAxes (α := α) (s := f.sIn) (swaps := f.swaps) t)
           f.final_eq)) := by
-  rw [permuteSomeTensor_eq_applySwapsTensor (α := α) t permFront (.dim f.nP restFront) f.swaps
+  rw [permuteSomeTensor_eq_swapAxes (α := α) t permFront (.dim f.nP restFront) f.swaps
     f.perm_eq f.swaps_eq]
   rw [someTensor_mk_castShape _ f.final_eq]
 
@@ -562,7 +564,7 @@ theorem buildFrom_denoteAllFrom_concat_pos
       let nodeData : ForwardNode α ([inShape] ++ ss) nOutShape :=
         mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := nOutShape) (fun context =>
           Tensor.castShape
-            (applySwapsTensor (α := α) (s := .dim nOutFront restFront) (swaps := swapsBack)
+            (swapAxes (α := α) (s := .dim nOutFront restFront) (swaps := swapsBack)
               (concatInputsForward (α := α) inputs nOutFront hSum' context))
             hOutBackFinal)
       let st1 : State α inShape := ⟨ss ++ [nOutShape], .snoc (ss := ss) gd nodeData⟩
@@ -602,7 +604,7 @@ theorem buildFrom_denoteAllFrom_concat_pos
         have hSigsSize :
             0 < (frontInputs.map fun fi =>
               (⟨fi.nP, Tensor.castShape
-                (applySwapsTensor (α := α) (s := fi.sIn) (swaps := fi.swaps)
+                (swapAxes (α := α) (s := fi.sIn) (swaps := fi.swaps)
                   (getIdx (α := α)
                     (xs := ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil))
                     fi.ip))
@@ -612,7 +614,7 @@ theorem buildFrom_denoteAllFrom_concat_pos
             concatList (α := α) (rest := restFront)
                 (frontInputs.map fun fi =>
                   (⟨fi.nP, Tensor.castShape
-                    (applySwapsTensor (α := α) (s := fi.sIn) (swaps := fi.swaps)
+                    (swapAxes (α := α) (s := fi.sIn) (swaps := fi.swaps)
                       (getIdx (α := α)
                         (xs := ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd
                           (.cons x .nil))
@@ -632,7 +634,7 @@ theorem buildFrom_denoteAllFrom_concat_pos
         split
         · rename_i hFoldEq
           simp only [Pure.pure, Except.pure, Except.ok_bind]
-          rw [permuteSomeTensor_eq_applySwapsTensor (α := α) _ permBack outBack swapsBack hPB
+          rw [permuteSomeTensor_eq_swapAxes (α := α) _ permBack outBack swapsBack hPB
             (by simpa using hSwapsBack)]
           simp only [Graph.expectShape_mk_of_eq hOutBackFinal, Functor.map, Except.map,
             Except.ok_bind, NN.IR.Graph.normalizeNodeOutput_nodeShape, nodeData,

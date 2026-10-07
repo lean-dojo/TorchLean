@@ -191,10 +191,9 @@ def gelu {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   executeRecorded (α := α) s .gelu #[x.identity?] cpu cuda
 
 /--
-Record softmax (shape-preserving).
+Record shape-preserving softmax over the last axis.
 
-PyTorch comparison: `torch.softmax(x, dim=...)` (dimension convention is chosen by the underlying
-  tape op).
+PyTorch comparison: `torch.softmax(x, dim=-1)`.
 -/
 def softmaxLast {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
@@ -290,9 +289,9 @@ def inv {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
 /--
 Record `log(softplus(x) + ε)` and its derivative.
 
-The CPU and CUDA nodes use the same softplus transformation and the same `ε`. Backward
-multiplies the incoming gradient by `sigmoid(x) / (softplus(x) + ε)`. Choose positive `ε` to
-keep the logarithm's argument positive even when softplus rounds to zero.
+Backward multiplies the incoming gradient by `sigmoid(x) / (softplus(x) + ε)`. CUDA converts
+`ε` to binary32; choose a value that stays positive after conversion if softplus can round to
+zero. Neither backend checks positivity here or guarantees finite results for nonfinite inputs.
 -/
 def safeLog {α : Type} [TorchLean.Storage α] [TensorTransfer α] (s : EagerSession α)
   [Context α]

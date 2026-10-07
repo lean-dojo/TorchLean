@@ -33,7 +33,7 @@ Reshape a tensor, given a proof that the total sizes match.
 
 PyTorch comparison: `torch.reshape(x, new_shape)`.
 -/
-def reshape {α : Type} {Δ : Type} [TorchLean.Storage α] [Inhabited α] [Zero α]
+def reshape {α : Type} {Δ : Type} [TorchLean.Storage α] [Zero α]
   {Γ : List Shape} {s₁ s₂ : Shape} (x : Var s₁) (h : Spec.Shape.size s₁ = Spec.Shape.size s₂) :
     MWith α Δ Γ (Var s₂) := do
   let ⟨ss, g, _⟩ ← get
@@ -56,7 +56,7 @@ Flatten a tensor to a 1D vector (preserving total size).
 
 PyTorch comparison: `torch.flatten(x)` (for a single tensor value).
 -/
-def flatten {α : Type} {Δ : Type} [TorchLean.Storage α] [Inhabited α] [Zero α]
+def flatten {α : Type} {Δ : Type} [TorchLean.Storage α] [Zero α]
   {Γ : List Shape} {s : Shape} (x : Var s) :
     MWith α Δ Γ (Var (.dim (Spec.Shape.size s) .scalar)) :=
   reshape x (by simp only [Shape.size, Nat.mul_one])
@@ -91,7 +91,7 @@ Broadcast `x : s₁` to a larger shape `s₂` (given a `CanBroadcastTo` witness)
 
 PyTorch comparison: `x.expand(...)` / broadcasting semantics in elementwise ops.
 -/
-def broadcastTo {α : Type} {Δ : Type} [TorchLean.Storage α] [Inhabited α] [Add α] [Zero α]
+def broadcastTo {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Zero α]
   {Γ : List Shape} {s₁ s₂ : Shape} (cb : Shape.CanBroadcastTo s₁ s₂) (x : Var s₁) :
   MWith α Δ Γ (Var s₂) := do
   let ⟨ss, g, _⟩ ← get
@@ -112,7 +112,7 @@ Reduce-sum along a given `axis`.
 
 PyTorch comparison: `torch.sum(x, dim=axis)`.
 -/
-def reduceSum {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Zero α] [Inhabited α]
+def reduceSum {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Zero α]
   {Γ : List Shape} {s : Shape} (axis : Nat)
   [_valid : Shape.HasNonemptyAxis axis s] [_wf : Shape.WellFormed s]
   (x : Var s) : MWith α Δ Γ (Var (shapeAfterSum s axis)) := do
@@ -137,7 +137,8 @@ Reduce-mean along a given `axis`.
 
 PyTorch comparison: `torch.mean(x, dim=axis)`.
 -/
-def reduceMean {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
+def reduceMean {α : Type} {Δ : Type} [TorchLean.Storage α]
+    [Add α] [Zero α] [Div α] [Mul α] [One α] [NatCast α]
   {Γ : List Shape} {s : Shape} (axis : Nat)
   [valid : Shape.HasNonemptyAxis axis s] [_wf : Shape.WellFormed s]
   (x : Var s) : MWith α Δ Γ (Var (shapeAfterSum s axis)) := do

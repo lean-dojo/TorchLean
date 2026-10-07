@@ -17,7 +17,7 @@ This file defines shape-preserving, elementwise operations on `Tensor α s`.
 Naming convention:
 
 - `fooSpec` means “pure spec definition” (no runtime side effects).
-- most functions use packed pointwise kernels via `mapSpec` / `map2Spec`.
+- most functions use packed pointwise kernels via `Tensor.map` / `map2Spec`.
 
 ## Domain / smoothness notes
 
@@ -128,52 +128,6 @@ def sliceAxisRangeBackwardSpec {α : Type}
           (Spec.get gradients outer)
 
 /--
-Map a scalar function over a tensor (shape preserved).
-
-This is the core packed pointwise combinator for spec tensors.
-Most elementwise ops are direct instances of `mapSpec f`.
-
-PyTorch analogy: `f` applied pointwise (like `torch.<op>` broadcasting over all entries),
-but here shape is fixed and enforced by the type.
--/
-def mapSpec {s : Shape} (f : α → α) : Tensor α s → Tensor α s :=
-  Tensor.map f
-
-omit [Context α] in
-/-- Elementwise mapping computes directly on a scalar tensor. -/
-@[simp] theorem mapSpec_scalar (f : α → α) (x : α) :
-    mapSpec f (Tensor.scalar x) = Tensor.scalar (f x) := by
-  exact Tensor.map_scalar f x
-
-omit [Context α] in
-/-- Elementwise mapping distributes over the leading tensor dimension. -/
-@[simp] theorem mapSpec_dim {n : Nat} {s : Shape} (f : α → α)
-    (values : Fin n → Tensor α s) :
-    mapSpec f (Tensor.dim values) = Tensor.dim (fun i => mapSpec f (values i)) := by
-  exact Tensor.map_dim f values
-
-omit [Context α] in
-/-- Extracting a scalar after an elementwise map applies the scalar function once. -/
-@[simp] theorem toScalar_mapSpec (f : α → α) (x : Tensor α .scalar) :
-    (mapSpec f x).item = f x.item := by
-  exact Tensor.item_map f x
-
-omit [Context α] in
-/-- Vector indexing commutes with an elementwise operation. -/
-@[simp] theorem getScalar_mapSpec {n : Nat} (f : α → α)
-    (tensor : Tensor α [n]) (index : Fin n) :
-    (mapSpec f tensor).getScalar index = f (tensor.getScalar index) := by
-  exact Tensor.getScalar_map f tensor index
-
-omit [Context α] in
-/-- Transport a pointwise tensor property through an elementwise operation. -/
-theorem forall_mapSpec
-    {p q : α → Prop} {f : α → α} {s : Shape} {x : Tensor α s}
-    (hx : Forall p x) (hf : ∀ a, p a → q (f a)) :
-    Forall q (mapSpec f x) :=
-  Tensor.forall_map hx hf
-
-/--
 Map a binary function over two tensors of the same shape.
 
 This is the packed `zipWith` combinator for spec tensors.
@@ -265,13 +219,13 @@ def map2Spec {α β γ : Type}
 
 omit [Context α] in
 /-- Matrix indexing commutes with a pointwise unary tensor operation. -/
-@[simp] theorem get2_mapSpec
+@[simp] theorem get2_map
     {m n : Nat} (f : α → α) (tensor : Tensor α [m, n])
     (i : Fin m) (j : Fin n) :
-    Spec.get2 (mapSpec f tensor) i j =
+    Spec.get2 (Tensor.map f tensor) i j =
       f (Spec.get2 tensor i j) := by
-  simp [mapSpec, Spec.get2, Tensor.getScalar,
-    Spec.get, Tensor.unstack, Tensor.item, Tensor.map]
+  simp [Tensor.map, Spec.get2, Tensor.getScalar,
+    Spec.get, Tensor.unstack, Tensor.item]
 
 /-- Transport two pointwise properties through a binary shape-preserving operation. -/
 theorem forall_map2Spec {α β γ : Type}
@@ -281,18 +235,9 @@ theorem forall_map2Spec {α β γ : Type}
     {f : α → β → γ} {s : Shape} {x : Tensor α s} {y : Tensor β s}
     (hx : Forall p x) (hy : Forall q y) (hf : ∀ a b, p a → q b → r (f a b)) :
     Forall r (map2Spec f x y) := by
-  induction s with
-  | scalar =>
-      have hx' : p x.item := by simpa [Forall] using hx
-      have hy' : q y.item := by simpa [Forall] using hy
-      change r ((map2Spec f x y).item)
-      simp only [map2Spec, Tensor.item, TorchLean.Tensor.Internal.Rep.zipWith_apply]
-      exact hf x.item y.item hx' hy'
-  | dim n inner ih =>
-      intro i
-      change Forall r (Spec.get (map2Spec f x y) i)
-      rw [get_map2Spec]
-      exact ih (hx i) (hy i)
+  rw [forall_iff] at hx hy ⊢
+  intro coordinate
+  simpa only [map2Spec_apply] using hf (x coordinate) (y coordinate) (hx coordinate) (hy coordinate)
 
 /-- Element‑wise addition (shape preserved). -/
 def addSpec {α : Type} [TorchLean.Storage α] [Add α]
@@ -358,10 +303,10 @@ def mulSpec {α : Type} [TorchLean.Storage α] [Mul α]
 @[simp] theorem mulSpec_full_left {α : Type}
     [TorchLean.Storage α] [Mul α] {s : Shape} (coefficient : α)
     (tensor : Tensor α s) :
-    mulSpec (Tensor.full s coefficient) tensor = mapSpec (coefficient * ·) tensor := by
+    mulSpec (Tensor.full s coefficient) tensor = Tensor.map (coefficient * ·) tensor := by
   apply TorchLean.Tensor.Internal.Rep.ext
   intro coordinate
-  simp [mulSpec, map2Spec, mapSpec, Tensor.map]
+  simp [mulSpec, map2Spec, Tensor.map]
 
 /-- `Mul` instance for shape-indexed tensors: multiply pointwise, preserving the shape. -/
 instance {α : Type} [TorchLean.Storage α] [Mul α]
@@ -394,12 +339,12 @@ def safedivSpec {s : Shape} (t1 t2 : Tensor α s) : Tensor α s :=
 /-- Scale a tensor by a scalar. -/
 def scaleSpec {α : Type} [TorchLean.Storage α] [Mul α]
     {s : Shape} (t : Tensor α s) (scalar : α) : Tensor α s :=
-  mapSpec (fun x => x * scalar) t
+  Tensor.map (fun x => x * scalar) t
 
 /-- Square each element of a tensor. -/
 def squareSpec {α : Type} [TorchLean.Storage α] [Mul α]
     {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec (fun x => x * x) t
+  Tensor.map (fun x => x * x) t
 
 /-- Squaring is elementwise multiplication with the same tensor on both inputs. -/
 theorem squareSpec_eq_mulSpec {α : Type} [TorchLean.Storage α] [Mul α]
@@ -407,28 +352,28 @@ theorem squareSpec_eq_mulSpec {α : Type} [TorchLean.Storage α] [Mul α]
     squareSpec t = mulSpec t t := by
   apply TorchLean.Tensor.Internal.Rep.ext
   intro coordinate
-  simp [squareSpec, mapSpec, Tensor.map, mulSpec, map2Spec]
+  simp [squareSpec, Tensor.map, mulSpec, map2Spec]
 
 /-- Square root of each element (clamped to `max x 0` to stay total). -/
 def sqrtSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec (fun x => MathFunctions.sqrt (Max.max x 0)) t
+  Tensor.map (fun x => MathFunctions.sqrt (Max.max x 0)) t
 
 /-- Absolute value of each element. -/
 def absSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec MathFunctions.abs t
+  Tensor.map MathFunctions.abs t
 
 /-- Element‑wise natural log. -/
 def logSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec MathFunctions.log t
+  Tensor.map MathFunctions.log t
 
 /-- Element‑wise exponential. -/
 def expSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec MathFunctions.exp t
+  Tensor.map MathFunctions.exp t
 
 /-- Element‑wise negation. -/
 def negSpec {α : Type} [TorchLean.Storage α] [Neg α]
     {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec Neg.neg t
+  Tensor.map Neg.neg t
 
 /-- `negSpec` is the tensor negation (both are `Rep.map Neg.neg`). -/
 theorem negSpec_eq_neg {α : Type} [TorchLean.Storage α] [Neg α]
@@ -441,12 +386,12 @@ def powSpec {s : Shape} (t1 t2 : Tensor α s) : Tensor α s :=
 
 /-- Element‑wise reciprocal (`1/x`). -/
 def invSpec {s : Shape} (x : Tensor α s) : Tensor α s :=
-  mapSpec (fun x => 1 / x) x
+  Tensor.map (fun x => 1 / x) x
 
 /-- Scalar extraction commutes with coordinatewise reciprocal. -/
 @[simp] theorem toScalar_invSpec (x : Tensor α .scalar) :
     (invSpec x).item = 1 / x.item := by
-  simp [invSpec, mapSpec, Tensor.item, Tensor.map]
+  simp [invSpec, Tensor.map, Tensor.item]
 
 /--
 Clamp each entry into `[minVal, maxVal]`.
@@ -456,7 +401,7 @@ Clearing scalar tangents on that branch gives dual-number execution the same con
 recorded JVP and VJP. The underlying minimum and maximum still determine the primal value.
 -/
 def clampSpec {s : Shape} (x : Tensor α s) (minVal maxVal : α) : Tensor α s :=
-  mapSpec (fun v =>
+  Tensor.map (fun v =>
     let clipped := Min.min maxVal (Max.max minVal v)
     if v > minVal ∧ maxVal > v then clipped else Context.stopGradient clipped) x
 
@@ -470,27 +415,27 @@ def maxSpec {s : Shape} (t1 t2 : Tensor α s) : Tensor α s :=
 
 /-- Element‑wise sign function: returns `-1`, `0`, or `1`. -/
 def signSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec (fun x => if x > 0 then 1 else if x < 0 then -1 else 0) t
+  Tensor.map (fun x => if x > 0 then 1 else if x < 0 then -1 else 0) t
 
 /-- Elementwise sine, with each input interpreted as an angle in radians. -/
 def sinSpec {s : Shape} : Tensor α s → Tensor α s :=
-  mapSpec MathFunctions.sin
+  Tensor.map MathFunctions.sin
 
 /-- Elementwise cosine, with each input interpreted as an angle in radians. -/
 def cosSpec {s : Shape} : Tensor α s → Tensor α s :=
-  mapSpec MathFunctions.cos
+  Tensor.map MathFunctions.cos
 
 /-- Element‑wise cosh. -/
 def coshSpec {s : Shape} : Tensor α s → Tensor α s :=
-  mapSpec MathFunctions.cosh
+  Tensor.map MathFunctions.cosh
 
 /-- Element‑wise sinh. -/
 def sinhSpec {s : Shape} : Tensor α s → Tensor α s :=
-  mapSpec MathFunctions.sinh
+  Tensor.map MathFunctions.sinh
 
 /-- Derivative mask for clamp: `1` strictly inside `(minVal, maxVal)`, else `0`. -/
 def clampDerivativeSpec {s : Shape} (x : Tensor α s) (minVal maxVal : α) : Tensor α s :=
-  mapSpec (fun v => if v > minVal ∧ v < maxVal then 1 else 0) x
+  Tensor.map (fun v => if v > minVal ∧ v < maxVal then 1 else 0) x
 
 /-- Update a tensor at a runtime index path.
 

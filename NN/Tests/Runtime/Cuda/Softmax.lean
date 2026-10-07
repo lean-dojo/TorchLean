@@ -107,7 +107,7 @@ def Internal.checkDegenerateLast (s : Shape) (logarithmic : Bool) : IO Unit := d
   let input ← LibTorch.Buffer.ofFloatArrayIO (Utils.floatArray (Array.replicate s.size 7.0))
   let (tape, xId) := LibTorch.Tape.empty.leaf { s := s, buf := input }
   let result ← IO.lazyPure fun _ => applyOp tape xId
-  let (tape, yId) ← Utils.okOrThrow result
+  let (tape, yId) ← IO.ofExcept result
   let some node := tape.getNode? yId
     | throw <| IO.userError s!"{label}: missing output node"
   unless node.value.s == s do
@@ -159,7 +159,7 @@ def checkScratchLifetime (logarithmic : Bool) : IO Unit := do
   let result ← IO.lazyPure fun _ =>
     if logarithmic then Runtime.Autograd.LibTorch.Tape.logSoftmaxLast (s := [2, 3]) tape xId
     else Runtime.Autograd.LibTorch.Tape.softmaxLast (s := [2, 3]) tape xId
-  let (tape, yId) ← Utils.okOrThrow result
+  let (tape, yId) ← IO.ofExcept result
   let some node := tape.getNode? yId
     | throw <| IO.userError s!"{label}: missing output node"
   Internal.checkWrongUpstream label [2, 3] node

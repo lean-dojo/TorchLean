@@ -13,7 +13,7 @@ public import NN.Runtime.Autograd.Model.Mamba
 # Mamba Layer
 
 The trainable layer around the selective recurrence in `Model.Mamba`. Every call starts with zero
-hidden state and empty convolution history. Streaming callers can use `Mamba.runArray` with an
+hidden state and empty convolution history. Streaming callers can use `Mamba.run` with an
 explicit cache instead; the ordinary layer has no mutable sequence state.
 -/
 

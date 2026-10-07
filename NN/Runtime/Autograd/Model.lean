@@ -21,7 +21,6 @@ public import NN.Runtime.Autograd.Model.Layers -- shake: keep
 public import NN.Runtime.Autograd.Model.Norm -- shake: keep
 public import NN.Runtime.Autograd.Model.Optim -- shake: keep
 public import NN.Runtime.Autograd.Model.Session -- shake: keep
-public import NN.Runtime.Autograd.Model.Training -- shake: keep
 public import NN.Runtime.Autograd.Model.VqVae -- shake: keep
 
 /-!
@@ -62,7 +61,7 @@ export Runtime.Autograd.Torch
 -- automatically via the import above.
 
 namespace Init
-export Runtime.Autograd.Torch.Init (Scheme tensor xavierUniform kaimingUniform)
+export Runtime.Autograd.Torch.Init (Scheme tensor xavierUniform)
 end Init
 
 /-! ## Optimizers -/

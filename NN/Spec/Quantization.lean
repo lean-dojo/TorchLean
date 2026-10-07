@@ -68,36 +68,19 @@ theorem quantizeTensor_mono (q : RealAffineQuantizer) (rnd : ℝ → ℤ) [Valid
     {s : Shape} {x y : Tensor ℝ s}
     (hxy : Tensor.Forall₂ (· ≤ ·) x y) :
     Tensor.Forall₂ (· ≤ ·) (q.quantizeTensor rnd x) (q.quantizeTensor rnd y) := by
-  induction s with
-  | scalar =>
-      change x.item ≤ y.item at hxy
-      change q.quantize rnd x.item ≤ q.quantize rnd y.item
-      exact affine_quantize_monotone q rnd hxy
-  | dim n inner ih =>
-      intro i
-      change Tensor.Forall₂ (· ≤ ·)
-        (Tensor.unstack (Tensor.map (q.quantize rnd) x) i)
-        (Tensor.unstack (Tensor.map (q.quantize rnd) y) i)
-      rw [Tensor.unstack_map, Tensor.unstack_map]
-      exact ih (hxy i)
+  rw [Tensor.forall₂_iff] at hxy ⊢
+  intro i
+  simpa [quantizeTensor, Tensor.map] using affine_quantize_monotone q rnd (hxy i)
 
 /-- An in-range code tensor survives pointwise dequantization and requantization exactly. -/
 theorem quantizeTensor_dequantizeTensor (q : RealAffineQuantizer) (rnd : ℝ → ℤ)
     [ValidRnd rnd] {s : Shape} {codes : Tensor ℤ s} (hcodes : q.CodesInRange codes) :
     q.quantizeTensor rnd (q.dequantizeTensor codes) = codes := by
-  induction s with
-  | scalar =>
-      apply Tensor.ext_scalar
-      change q.quantize rnd (q.dequantize codes.item) = codes.item
-      exact affine_quantize_dequantize q rnd hcodes.1 hcodes.2
-  | dim n inner ih =>
-      apply (Tensor.dimEquiv n inner).injective
-      funext i
-      change Tensor.unstack
-        (Tensor.map (q.quantize rnd) (Tensor.map q.dequantize codes)) i =
-          Tensor.unstack codes i
-      rw [Tensor.unstack_map, Tensor.unstack_map]
-      exact ih (hcodes i)
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro i
+  have hi := Tensor.forall_iff.mp hcodes i
+  simpa [quantizeTensor, dequantizeTensor, Tensor.map] using
+    affine_quantize_dequantize q rnd hi.1 hi.2
 
 /-- If no coordinate clips, every tensor reconstruction error is at most half a step. -/
 theorem dequantizeTensor_quantizeTensor_error_le (q : RealAffineQuantizer) (rnd : ℝ → ℤ)
@@ -105,20 +88,12 @@ theorem dequantizeTensor_quantizeTensor_error_le (q : RealAffineQuantizer) (rnd 
     (hinactive : q.SaturationInactive rnd x) :
     Tensor.Forall (fun e : ℝ => abs e ≤ q.scale / 2)
       ((q.dequantizeTensor (q.quantizeTensor rnd x)).subSpec x) := by
-  induction s with
-  | scalar =>
-      change q.qmin ≤ q.rawCode rnd x.item ∧ q.rawCode rnd x.item ≤ q.qmax at hinactive
-      change abs (q.dequantize (q.quantize rnd x.item) - x.item) ≤ q.scale / 2
-      exact affine_dequantize_quantize_error_le_half q rnd x.item hinactive.1 hinactive.2
-  | dim n inner ih =>
-      intro i
-      change Tensor.Forall (fun e : ℝ => abs e ≤ q.scale / 2)
-        (Spec.get
-          (Tensor.map2Spec (· - ·)
-            (Tensor.map q.dequantize (Tensor.map (q.quantize rnd) x)) x) i)
-      rw [Tensor.get_map2Spec]
-      simp only [Spec.get, Tensor.unstack_map]
-      exact ih (hinactive i)
+  rw [Tensor.forall_iff]
+  intro i
+  have hi := Tensor.forall_iff.mp hinactive i
+  simpa [Tensor.subSpec, quantizeTensor, dequantizeTensor, Tensor.map,
+    RealAffineQuantizer.roundedValue] using
+    affine_dequantize_quantize_error_le_half q rnd (x i) hi.1 hi.2
 
 end RealAffineQuantizer
 end FloatLib.Numerics.Quantization

@@ -110,9 +110,9 @@ end ModelSummary
 
 /-- Recursive worker that records one summary row for each layer in a sequential model. -/
 private def layerSummaries :
-    {σ τ : Shape} → Nat → Sequential σ τ → Array LayerSummary
-  | _, _, _, .id _ => #[]
-  | σ, _, i, .cons (τ := τ') layer rest =>
+    {σ τ : Shape} → Nat → Sequential σ τ → Array LayerSummary → Array LayerSummary
+  | _, _, _, .id _, rows => rows
+  | σ, _, i, .cons (τ := τ') layer rest, rows =>
       let row : LayerSummary :=
         { index := i
           kind := layer.kind
@@ -121,13 +121,12 @@ private def layerSummaries :
           stateShapes := layer.stateShapes.toArray
           parameterCount := trainableCount layer.stateShapes layer.requiresGrad
           stateElementCount := elementCount layer.stateShapes }
-      #[row] ++
-      layerSummaries (i + 1) rest
+      layerSummaries (i + 1) rest (rows.push row)
 
 /-- Validate a sequential model and construct its structured summary. -/
 @[no_expose] def summary {σ τ : Shape} (model : Sequential σ τ) : Except String ModelSummary := do
   validate model
-  let layers := layerSummaries 0 model
+  let layers := layerSummaries 0 model #[]
   pure
     { input := σ
       output := τ

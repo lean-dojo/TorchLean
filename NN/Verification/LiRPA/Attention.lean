@@ -25,10 +25,10 @@ References:
   `https://github.com/Verified-Intelligence/auto_LiRPA`
 
 Export (Python):
-`python3.12 scripts/verification/lirpa/export_attention_cert.py`
+`python3 scripts/verification/lirpa/export_cert.py attention`
 
 Run (Lean):
-`lake exe verify -- lirpa-attention [NN/Examples/Verification/LiRPA/attention_softmax_cert.json]`
+`scripts/lake.sh exe verify -- lirpa-attention [path]`
 -/
 
 @[expose] public section
@@ -72,12 +72,11 @@ def seedParamsFloat : ParamStore Float :=
 /--
 Check an IBP certificate JSON against this attention graph.
 
-This is wired into `lake exe verify -- lirpa-attention [path]`.
+This is wired into `scripts/lake.sh exe verify -- lirpa-attention [path]`.
 -/
 def verifyCert (path : String) : IO Unit := do
   let g := buildGraph
-  -- Every input coordinate gets the box $[x_i - \varepsilon, x_i + \varepsilon]$; the
-  -- graph has 4 inputs, ids `0 .. 3`.
+  -- Give input node 0 a radius-0.5 box around [1, 2, 3, 4].
   let ps := ExampleInputs.seedNaturalInputBox 0 4 0.5 seedParamsFloat
   NN.Verification.Cert.IBPCert.checkOrThrow g ps (outId := 3) path
 

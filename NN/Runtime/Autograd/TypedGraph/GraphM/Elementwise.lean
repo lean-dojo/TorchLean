@@ -23,7 +23,7 @@ namespace Autograd
 namespace TypedGraph
 namespace GraphM
 
-open Spec TorchLean
+open Spec
 open TorchLean TorchLean.Tensor
 open Proofs.Autograd.Algebra
 -- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
@@ -47,7 +47,7 @@ explicit stop-gradient boundaries; it must not stand in for an unimplemented der
 
 The input lookup, saved context, and singleton contribution are shared; this constructor is only
 used for operations whose two derivative programs already agree. -/
-def Internal.unaryWithSharedDerivative {α Δ : Type} [TorchLean.Storage α] [Zero α]
+def Internal.unary {α Δ : Type} [TorchLean.Storage α] [Zero α]
     {Γ : List Shape} {s : Shape} (x : Var s) (op : Spec.OpSpec α s s) :
     MWith α Δ Γ (Var s) := do
   let ⟨ss, graph, _⟩ ← get
@@ -144,20 +144,12 @@ Scale a tensor by a scalar constant `c` (`y = c * x`).
 
 PyTorch comparison: `c * x` / `torch.mul(x, c)`.
 -/
-def scale {α : Type} {Δ : Type} [TorchLean.Storage α] [Mul α] [Add α] [Zero α]
+def scale {α : Type} {Δ : Type} [TorchLean.Storage α] [Mul α] [Zero α]
     {Γ : List Shape} {s : Shape}
-    (x : Var s) (c : α) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
-  let ix ← liftM (mkIdx (Γ := Γ) ss x)
-  let node : NodeData α Δ (Γ ++ ss) s :=
-    NodeData.ofLocalCompact (fun lookup => lookup.read ix)
-      (forward := fun ctx _d =>
-        scaleSpec (α := α) (s := s) (ctx) c)
-      (jvp := fun _ctx dctx _d =>
-        scaleSpec (α := α) (s := s) (dctx) c)
-      (vjp := fun _ctx _d δ =>
-        Contributions.single (α := α) (Γ := Γ ++ ss) (s := s) ix (scaleSpec (α := α) (s := s) δ c))
-  push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
+    (x : Var s) (c : α) : MWith α Δ Γ (Var s) :=
+  Internal.unary x
+    { forward := fun input => scaleSpec input c
+      backward := fun _ seed => scaleSpec seed c }
 
 /--
 Elementwise absolute value.
@@ -167,7 +159,7 @@ PyTorch comparison: `torch.abs(x)`.
 def abs {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x Spec.absOp
+  Internal.unary x Spec.absOp
 
 /--
 Elementwise square root.
@@ -177,7 +169,7 @@ PyTorch comparison: `torch.sqrt(x)`.
 def sqrt {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x Spec.sqrtOp
+  Internal.unary x Spec.sqrtOp
 
 /--
 Elementwise clamp to `[minVal, maxVal]`.
@@ -187,7 +179,7 @@ PyTorch comparison: `torch.clamp(x, min=minVal, max=maxVal)`.
 def clamp {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) (minVal maxVal : α) : MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x (Spec.clampOp minVal maxVal)
+  Internal.unary x (Spec.clampOp minVal maxVal)
 
 /--
 Elementwise maximum.
@@ -265,17 +257,17 @@ def relu {α : Type} [TorchLean.Storage α]
   [Mul α] [Add α] [Zero α] [Max α] [BEq α] [One α] [LT α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x Spec.reluOp
+  Internal.unary x Spec.reluOp
 
 /-- Elementwise sigmoid. PyTorch comparison: `torch.sigmoid(x)`. -/
 def sigmoid {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x Spec.sigmoidOp
+  Internal.unary x Spec.sigmoidOp
 
 /-- Elementwise tanh. PyTorch comparison: `torch.tanh(x)`. -/
 def tanh {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x Spec.tanhOp
+  Internal.unary x Spec.tanhOp
 
 /--
 Elementwise tanh-approximate GELU.
@@ -286,7 +278,7 @@ retaining the same JVP and VJP meaning.
 -/
 def gelu {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x Spec.geluOp
+  Internal.unary x Spec.geluOp
 
 /--
 Softmax along the last axis (recursing over outer dimensions).
@@ -297,7 +289,7 @@ The symmetric Jacobian uses the same JVP and VJP program.
 -/
 def softmaxLast {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x
+  Internal.unary x
     { forward := Activation.Internal.softmaxInnermostSpec
       backward := Activation.Internal.softmaxInnermostBackwardSpec }
 
@@ -305,7 +297,7 @@ def softmaxLast {α : Type} [TorchLean.Storage α] [Context α]
 def softmax {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
     (x : Var s) : MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x (Spec.softmaxOp axis)
+  Internal.unary x (Spec.softmaxOp axis)
 
 /--
 Stable log-softmax along the last axis.
@@ -361,12 +353,12 @@ def logSoftmax {α : Type} [TorchLean.Storage α] [Context α]
 /-- Elementwise softplus. PyTorch comparison: `torch.nn.functional.softplus(x)`. -/
 def softplus {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x Spec.softplusOp
+  Internal.unary x Spec.softplusOp
 
 /-- Elementwise exponential. PyTorch comparison: `torch.exp(x)`. -/
 def exp {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x Spec.expOp
+  Internal.unary x Spec.expOp
 
 /--
 Elementwise sine, with angles in radians.
@@ -377,12 +369,12 @@ dual-number scalars differentiate the VJP again for a Hessian-vector product.
 -/
 def sin {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x Spec.sinOp
+  Internal.unary x Spec.sinOp
 
 /-- Elementwise cosine; its JVP and VJP multiply by `-sin(x)` at the original input. -/
 def cos {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x Spec.cosOp
+  Internal.unary x Spec.cosOp
 
 /-- Elementwise natural logarithm. PyTorch comparison: `torch.log(x)`. -/
 def log {α : Type} [TorchLean.Storage α] [Context α]
@@ -418,28 +410,18 @@ def log {α : Type} [TorchLean.Storage α] [Context α]
           (mulSpec (invSpec (α := α) xval) δ))
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
-/-- Elementwise reciprocal `x ↦ 1/x`. PyTorch comparison: `torch.reciprocal(x)`. -/
+/-- Elementwise reciprocal `x ↦ 1/x`. PyTorch comparison: `torch.reciprocal(x)`.
+
+The JVP and VJP square the reciprocal first, multiply by the seed, then scale by `-1`.
+This fixes the evaluation order for rounded scalars. -/
 def inv {α : Type} [TorchLean.Storage α] [Context α]
-  {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
-  let ix ← liftM (mkIdx (Γ := Γ) ss x)
-  let node : NodeData α Δ (Γ ++ ss) s :=
-    NodeData.ofLocalCompact (fun lookup => lookup.read ix)
-      (forward := fun ctx _d =>
-        invSpec (α := α) (s := s) (ctx))
-      (jvp := fun ctx dctx _d =>
-        let xval := ctx
-        let dx0 := dctx
-        let invx := invSpec (α := α) xval
-        let invx2 := mulSpec invx invx
-        scaleSpec (α := α) (s := s) (mulSpec dx0 invx2) (-1 : α))
-      (vjp := fun ctx _d δ =>
-        let xval := ctx
-        let invx := invSpec (α := α) xval
-        let invx2 := mulSpec invx invx
-        let dx := scaleSpec (α := α) (s := s) (mulSpec δ invx2) (-1 : α)
-        Contributions.single (α := α) (Γ := Γ ++ ss) (s := s) ix dx)
-  push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
+  {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
+  Internal.unary x
+    { forward := invSpec
+      backward := fun input seed =>
+        let inverse := invSpec input
+        let squared := mulSpec inverse inverse
+        scaleSpec (mulSpec seed squared) (-1 : α) }
 
 /--
 Apply `log(softplus(x) + ε)` elementwise.
@@ -451,7 +433,7 @@ argument positive when softplus rounds to zero. The JVP and VJP use
 def safeLog {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) (ε : α := Context.defaultEpsilon) :
     MWith α Δ Γ (Var s) :=
-  Internal.unaryWithSharedDerivative x (Spec.safeLogOp ε)
+  Internal.unary x (Spec.safeLogOp ε)
 
 /--
 Reduce-sum over all entries, producing a scalar.
@@ -560,13 +542,11 @@ def linear {α : Type} {Δ : Type} [TorchLean.Storage α]
         let xv := ctx.2.2
         let dW := Spec.linearWeightsDerivSpec (α := α) (inDim := inDim) (outDim := outDim) xv
           dLdy
-        let db := Spec.linearBiasDerivSpec (α := α) (inDim := inDim) (outDim := outDim) dW dLdy
-          xv
         let dx := Spec.linearInputDerivSpec (α := α) (inDim := inDim) (outDim := outDim) W dLdy
         let z0 := Contributions.add (α := α) (shapes := Γ ++ ss)
           (Contributions.single (α := α) (Γ := Γ ++ ss)
             (s := .dim outDim (.dim inDim .scalar)) iW dW)
-          (Contributions.single (α := α) (Γ := Γ ++ ss) (s := .dim outDim .scalar) ib db)
+          (Contributions.single (α := α) (Γ := Γ ++ ss) (s := .dim outDim .scalar) ib dLdy)
         Contributions.add (α := α) (shapes := Γ ++ ss) z0
           (Contributions.single (α := α) (Γ := Γ ++ ss) (s := .dim inDim .scalar) ix dx))
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := (.dim outDim .scalar)) g node
@@ -580,8 +560,7 @@ product rule `d(A @ B) = dA @ B + A @ dB`.
 
 PyTorch comparison: `torch.matmul` for operands of rank at least two.
 -/
-def matmul {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)]
+def matmul {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
     {Γ : List Shape} {batchA batchB batch : Shape} {m n p : Nat}
     [broadcastA : Shape.BroadcastTo batchA batch]
     [broadcastB : Shape.BroadcastTo batchB batch]

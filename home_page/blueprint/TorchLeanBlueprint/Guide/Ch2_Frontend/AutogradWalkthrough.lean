@@ -196,9 +196,7 @@ gradient = [0.500000, -1.200000]
 
 By hand, $`f(x)=(0.25+1.44)/2=0.845` and $`\nabla f(x)=x=(0.5,-1.2)`. Both agree.
 
-The reduction divides by two, cancelling the factor of two from differentiating each square. Thus
-the gradient of $`\tfrac12\sum x_i^2` is $`x`. Replacing `mean` with `sum` would leave the
-elementwise derivative rule unchanged but double the final gradient.
+Replacing `mean` with `sum` leaves the square rule unchanged but doubles the final gradient.
 
 The signature explains the `(value := true)`:
 
@@ -315,9 +313,7 @@ $`J_g(x)^{\mathsf T}(1,1)=(2\cdot0.5,\,2\cdot(-1.2))=(1,-2.4)`, and scaling the 
 component by ten scales the second output by ten. PyTorch reports the same two vectors from
 `torch.autograd.grad(out, x, grad_outputs=seed)`.
 
-The two seeds ask different questions about the same function: the first weights both outputs
-equally, while the second gives the second output ten times the weight. `autograd.vjp` requires
-this choice explicitly, with a cotangent of the output shape:
+`autograd.vjp` takes this cotangent explicitly, with the output shape:
 
 ```lean (name := agVjpSig)
 -- The seed has output shape, while the returned sensitivity
@@ -526,9 +522,6 @@ semantic swap between gradients for two parameters with equal shapes. The input 
 returned alongside
 the state gradient, so both results come from the same reverse pass.
 
-The type protects structural correspondence: a `[3,2]` weight gradient cannot occupy the `[3]`
-bias slot. For this affine model there are six weight entries and three biases, so the returned
-pack contains nine parameter sensitivities, plus the separate two-entry input sensitivity.
 For a model with persistent state, `State` can also include buffers. The model transform computes
 sensitivities for the state entries; the optimizer's trainability mask separately determines
 which entries it updates. A derivative result by itself is not an instruction to modify every
@@ -848,13 +841,6 @@ absolute value, sinh, cosh, square, linear layers, and reductions. Its companion
 `SemiringCorrectness.lean` keeps the algebraic ones generic over a commutative semiring so exact
 backends such as `ℚ` can use them without dragging in real analysis.
 
-The `OpSpecCorrect s s` output says that one bundle works at any shape `s`; it contains no
-runtime gradient numbers. In the two proof blocks, `.correct` extracts its adjointness field at
-the supplied `x`, `dx`, and `delta`. Composition feeds the first operation's forward value to the
-second and sends the second operation's cotangent back through the first. The intermediate
-shape must match in both directions. This is the structural reason the same bundle interface
-can organize many local rules without reproving the chain of dot-product equalities each time.
-
 # `detach` And Gradient Flow
 
 `autograd.model.Loss.detach` leaves the forward value alone and replaces the backward map by zero:
@@ -888,11 +874,7 @@ need not be the gradient of any scalar objective, so adding a detach requires ma
 {ref "runtime-autograd"}[Runtime and Autograd] shows the same idea one level down, where detach is a
 tape node that the reverse traversal simply never crosses.
 
-Detaching the model output also leaves the target available to the loss. The operation cuts the
-path back into the model state; it does not replace the target or erase the residual calculation.
-For example, the three nonzero residuals above still produce `0.244900`, but none can send a
-cotangent through the stopped output. When reading a zero gradient, inspect this connectivity
-before concluding that a parameter is at a stationary point of the original, undetached loss.
+This zero gradient does not establish that the original, undetached loss is at a stationary point.
 
 # JVPs And Hessian-Vector Products
 
@@ -977,9 +959,10 @@ a rounding argument or an explicit backend boundary. A CUDA kernel may implement
 equation with a different reduction tree and produce different last bits, which is not a bug in
 either the kernel or the theorem, and is precisely why they are counted as different claims.
 
-First-order `autograd` helpers use typed graph lowering, including dual-number evaluation for
-forward mode. Higher-order helpers also use the tape lowering described in the runtime chapter. A
-trainer's choice between
+First-order `autograd` helpers lower to a typed graph: forward-mode queries use its checked JVP
+rules, and reverse-mode queries use a seeded pullback. HVPs evaluate a reverse pass over dual
+scalars; the tangent parts of the returned gradients give the curvature product. These helpers
+also use the tape lowering described in the runtime chapter. A trainer's choice between
 eager and typed-graph execution, and its selection of native kernels, are separate decisions
 described in {ref "execution-modes"}[Execution Modes] and
 {ref "backend-selection"}[Backend Selection]. Primals, cotangents, parameters, and returned
@@ -1048,30 +1031,6 @@ The transforms differ in what they seed and what they return:
   * Hessian-vector product
   * curvature without a full Hessian
 :::
-
-For one-input tensor functions:
-
-```
--- These queries differentiate a single-input tensor
--- function.
-autograd.grad
-autograd.vjp
-autograd.jacfwd
-autograd.jacrev
-autograd.hessian
-```
-
-For checked models:
-
-```
--- These queries retain the model's state layout in their
--- derivative results.
-autograd.model.grad
-autograd.model.vjp
-autograd.model.jacrev
-autograd.model.jvp
-autograd.model.hvp
-```
 
 Namespace completion after `autograd.` lists the function transforms, and after `autograd.model.`
 the model transforms and the loss namespace. Named options such as `value` live in the signature

@@ -217,11 +217,11 @@ theorem box_relu_sound (n : Nat)
       (castDimScalar (α:=α) rfl (Activation.reluSpec (α:=α) x)) := by
   rw [castDimScalar_self]
   change ∀ i : Fin n,
-    Tensor.getScalar (Tensor.mapSpec (fun value =>
+    Tensor.getScalar (Tensor.map (fun value =>
       Activation.Math.reluSpec (α := α) value) lo) i ≤
         Tensor.getScalar (Activation.reluSpec (α := α) x) i ∧
       Tensor.getScalar (Activation.reluSpec (α := α) x) i ≤
-        Tensor.getScalar (Tensor.mapSpec (fun value =>
+        Tensor.getScalar (Tensor.map (fun value =>
           Activation.Math.reluSpec (α := α) value) hi) i
   intro i
   have hx_i := hx i

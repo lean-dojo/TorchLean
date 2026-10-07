@@ -339,8 +339,8 @@ def withGeneratedLetResults (bindings : List (Name × Expr))
 /--
 Introduce generated values as ordinary `let` bindings and pass their local
 variables to the body in source order. Both returned expressions receive the
-same bindings, allowing an optimized value and its correctness proof to be
-constructed together.
+bindings they actually use, allowing an optimized value and its correctness
+proof to be constructed together without capturing unused lets.
 -/
 def withGeneratedLetPair (bindings : List (Name × Expr))
     (body : List Expr → TermElabM (Expr × Expr)) :

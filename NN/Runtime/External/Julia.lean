@@ -49,9 +49,9 @@ open Lean
 Require Julia to be available and return the resolved command.
 `TORCHLEAN_JULIA` takes precedence over the supplied command.
 -/
-def Internal.ensureAvailable (juliaCmd : String) : IO String := do
-  let cmd ← TorchLean.External.Process.resolveCmdFromEnv "TORCHLEAN_JULIA" juliaCmd
-  TorchLean.External.Process.ensureCmdAvailable "Julia" cmd #["--version"] (some "TORCHLEAN_JULIA")
+def Internal.command (juliaCmd : String) : IO String := do
+  let cmd ← TorchLean.External.Process.command "TORCHLEAN_JULIA" juliaCmd
+  TorchLean.External.Process.require "Julia" cmd #["--version"] (some "TORCHLEAN_JULIA")
 
 /-!
 ## Running Julia
@@ -66,7 +66,7 @@ integrations.
 -/
 def run (args : Array String) (cwd : Option String := some ".") (juliaCmd : String := "julia") :
     IO String := do
-  let cmd ← Internal.ensureAvailable juliaCmd
+  let cmd ← Internal.command juliaCmd
   TorchLean.External.Process.run (ctx := "Julia") (cmd := cmd) (args := args)
     (cwd := cwd)
 
@@ -78,7 +78,7 @@ Julia process and parses that payload.
 -/
 def runJson (args : Array String) (cwd : Option String := some ".") (juliaCmd : String := "julia") :
     IO Json := do
-  let cmd ← Internal.ensureAvailable juliaCmd
+  let cmd ← Internal.command juliaCmd
   TorchLean.External.Process.runJson (ctx := "Julia")
     (cmd := cmd) (args := args) (cwd := cwd)
 

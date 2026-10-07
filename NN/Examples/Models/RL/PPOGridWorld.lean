@@ -12,7 +12,7 @@ public import Mathlib.Data.Nat.Dist
 public import NN.API
 public import NN.Examples.Support
 public import NN.Runtime.RL.Artifacts.GridWorld
-public import NN.Runtime.RL.Artifacts.DefaultPaths
+public import NN.Runtime.RL.Artifacts.Paths
 public import NN.Proofs.RL.Envs.GridWorld
 
 /-!
@@ -369,12 +369,12 @@ def main (args : List String) : IO UInt32 := do
     (.native fun runtime rest => do
       let (policyPath, rest) ← CLI.orThrow exeName <|
         CLI.takePathFlag rest "policy"
-          (default := Runtime.RL.Artifacts.DefaultPaths.ppoGridWorldPolicy)
+          (default := Runtime.RL.Artifacts.path "ppo_gridworld" "policy")
       let (episodePath, rest) ← CLI.orThrow exeName <|
-        CLI.takePathFlag rest "path" (default := Runtime.RL.Artifacts.DefaultPaths.ppoGridWorldPath)
+        CLI.takePathFlag rest "path" (default := Runtime.RL.Artifacts.path "ppo_gridworld" "path")
       let (ppo, rest) ← CLI.orThrow exeName <|
         rl.cli.Options.parse
-          exeName rest Runtime.RL.Artifacts.DefaultPaths.ppoGridWorldTrainLog
+          exeName rest (Runtime.RL.Artifacts.path "ppo_gridworld")
           (defaultUpdateCount := maxUpdates)
           (defaultEvaluationInterval := defaultEvaluationInterval)
           (defaultEvaluationEpisodes := defaultEvaluationEpisodes)
@@ -396,13 +396,13 @@ def main (args : List String) : IO UInt32 := do
       let actorGraph ← nn.lowerToTypedGraph actorObs
       let criticGraph ← nn.lowerToTypedGraph criticObs
 
-      let m ← rl.ppo.instantiateActorCritic
+      let m ← rl.ppo.ActorCritic.create
         (α := Float) (options := runtime)
         (batch := horizon) (nActions := actionCount)
         actorRollout criticRollout
 
       let stepSample ←
-        rl.ppo.trainingStep m
+        m.bind
           (optim.adam { learningRate := learningRate })
 
 
@@ -419,11 +419,11 @@ def main (args : List String) : IO UInt32 := do
             env contract (resetOnDone := false)
 
       -- Evaluate + snapshot the untrained policy.
-      let psAll0 ← rl.ppo.state (α := Float) m
+      let psAll0 ← m.state
       let policyLogits0 : Tensor Float observation → Tensor Float [actionCount] :=
-        rl.ppo.actorPolicy actorGraph actorRollout criticRollout psAll0
+        rl.ppo.policy actorGraph actorRollout criticRollout psAll0
       let avg0 ←
-        rl.eval.averageEpisodeTotalReward
+        rl.eval.meanReward
           (obsShape := observation) (nActions := actionCount)
           evaluationSessionAt policyLogits0 (baseSeed := runtime.seed)
           (episodes := ppo.evaluationEpisodes)
@@ -435,10 +435,10 @@ def main (args : List String) : IO UInt32 := do
         Tensor.ofFn (fun (s : Fin stateCount) =>
           let obs := observationOfState s
           let logits := policyLogits0 obs
-          (rl.eval.greedyActionFromLogits
+          (rl.eval.greedy
             (α := Float) (nActions := actionCount) logits).val)
       let pathBeforeStates ←
-        rl.eval.episodePath (obsShape := observation) (nActions := actionCount)
+        rl.eval.path (obsShape := observation) (nActions := actionCount)
           (evaluationSessionAt runtime.seed) policyLogits0
           (maxSteps := ppo.maximumEvaluationSteps)
       let pathBefore : Array (Nat × Nat) :=
@@ -451,11 +451,11 @@ def main (args : List String) : IO UInt32 := do
         { updates := ppo.updateCount, epochs := updateEpochs,
           evaluationEvery := ppo.evaluationInterval, seed := runtime.seed }
         (fun _update rngSeed rngCounter => do
-            let psAll ← rl.ppo.state (α := Float) m
+            let psAll ← m.state
             let predictLogits : Tensor Float observation → Tensor Float [actionCount] :=
-              rl.ppo.actorPolicy actorGraph actorRollout criticRollout psAll
+              rl.ppo.policy actorGraph actorRollout criticRollout psAll
             let predictValue : Tensor Float observation → Float :=
-              rl.ppo.criticValue criticGraph actorRollout criticRollout psAll
+              rl.ppo.value criticGraph actorRollout criticRollout psAll
 
             let (rollout, rngCounter') ←
               collectRolloutFromEnvironment predictLogits predictValue
@@ -463,11 +463,11 @@ def main (args : List String) : IO UInt32 := do
             pure (rollout, rngCounter'))
         stepSample
         (fun completedUpdates => do
-            let psAll' ← rl.ppo.state (α := Float) m
+            let psAll' ← m.state
             let policyLogits : Tensor Float observation → Tensor Float [actionCount] :=
-              rl.ppo.actorPolicy actorGraph actorRollout criticRollout psAll'
+              rl.ppo.policy actorGraph actorRollout criticRollout psAll'
             let avg ←
-              rl.eval.averageEpisodeTotalReward
+              rl.eval.meanReward
                 (obsShape := observation) (nActions := actionCount)
                 evaluationSessionAt policyLogits (baseSeed := runtime.seed)
                 (episodes := ppo.evaluationEpisodes)
@@ -477,17 +477,17 @@ def main (args : List String) : IO UInt32 := do
         curve
 
       -- Snapshot the final greedy policy and a single episode path.
-      let psAllF ← rl.ppo.state (α := Float) m
+      let psAllF ← m.state
       let policyLogitsF : Tensor Float observation → Tensor Float [actionCount] :=
-        rl.ppo.actorPolicy actorGraph actorRollout criticRollout psAllF
+        rl.ppo.policy actorGraph actorRollout criticRollout psAllF
       let policyAfter : Tensor Nat [stateCount] :=
         Tensor.ofFn (fun (s : Fin stateCount) =>
           let obs := observationOfState s
           let logits := policyLogitsF obs
-          (rl.eval.greedyActionFromLogits
+          (rl.eval.greedy
             (α := Float) (nActions := actionCount) logits).val)
       let pathAfterStates ←
-        rl.eval.episodePath (obsShape := observation) (nActions := actionCount)
+        rl.eval.path (obsShape := observation) (nActions := actionCount)
           (evaluationSessionAt runtime.seed) policyLogitsF
           (maxSteps := ppo.maximumEvaluationSteps)
       let pathAfter : Array (Nat × Nat) :=

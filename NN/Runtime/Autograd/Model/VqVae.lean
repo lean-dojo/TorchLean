@@ -40,8 +40,8 @@ The index is non-differentiable data. Selection leaves the embedding connected t
 so the codebook-loss gradient is scattered back to this row by the ordinary selection primitive.
 -/
 def quantized {numCodes : Nat}
-    (codebook : RefTy (m := m) (α := α) (latent.prependDim numCodes))
-    (index : Fin numCodes) : m (RefTy (m := m) (α := α) latent) :=
+    (codebook : Ref (m := m) (α := α) (latent.prependDim numCodes))
+    (index : Fin numCodes) : m (Ref (m := m) (α := α) latent) :=
   select (m := m) (α := α) (s := latent.prependDim numCodes) 0 codebook index
 
 /--
@@ -50,11 +50,13 @@ Pass the selected embedding to the decoder with the encoder's straight-through g
 We compute `detach(selected) + (encoded - detach(encoded))`. For finite floating-point inputs,
 subtracting the encoder value from itself avoids the cancellation in
 `encoded + detach(selected - encoded)` when the two vectors have very different magnitudes.
-The value is the selected embedding; the encoder cotangent is the incoming cotangent, and the
-embedding cotangent is zero. These roles depend on the backend's stop-gradient semantics.
+Over the reals, the value is the selected embedding. Floating-point evaluation may change a
+signed zero, and nonfinite encoder values can produce NaN in the residual. The encoder cotangent
+is the incoming cotangent, and the embedding cotangent is zero. These roles depend on the
+backend's stop-gradient semantics.
 -/
-def straightThrough (encoded selected : RefTy (m := m) (α := α) latent) :
-    m (RefTy (m := m) (α := α) latent) := do
+def straightThrough (encoded selected : Ref (m := m) (α := α) latent) :
+    m (Ref (m := m) (α := α) latent) := do
   let fixedCode ← detach selected
   let fixedEncoder ← detach encoded
   let encoderResidual ← sub encoded fixedEncoder
@@ -66,8 +68,8 @@ Mean squared codebook loss, with the encoder output held fixed.
 Only `selected` receives a gradient. If it came from `quantized`, the gradient updates the
 selected row and leaves every other codebook row at zero.
 -/
-def codebookLoss (encoded selected : RefTy (m := m) (α := α) latent) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := do
+def codebookLoss (encoded selected : Ref (m := m) (α := α) latent) :
+    m (Ref (m := m) (α := α) Shape.scalar) := do
   let fixedEncoder ← detach encoded
   mseLoss selected fixedEncoder
 
@@ -77,8 +79,8 @@ Mean squared commitment loss, with the selected embedding held fixed.
 Only `encoded` receives a gradient. The commitment weight is applied by `loss`, so callers can
 inspect this unweighted term independently of the total objective.
 -/
-def commitmentLoss (encoded selected : RefTy (m := m) (α := α) latent) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := do
+def commitmentLoss (encoded selected : Ref (m := m) (α := α) latent) :
+    m (Ref (m := m) (α := α) Shape.scalar) := do
   let fixedCode ← detach selected
   mseLoss encoded fixedCode
 
@@ -89,9 +91,9 @@ Decode the selected embedding using the straight-through gradient rule.
 ordinary decoder operations; the estimator only changes the encoder/codebook boundary.
 -/
 def forward
-    (decode : RefTy (m := m) (α := α) latent → m (RefTy (m := m) (α := α) obs))
-    (encoded selected : RefTy (m := m) (α := α) latent) :
-    m (RefTy (m := m) (α := α) obs) := do
+    (decode : Ref (m := m) (α := α) latent → m (Ref (m := m) (α := α) obs))
+    (encoded selected : Ref (m := m) (α := α) latent) :
+    m (Ref (m := m) (α := α) obs) := do
   decode (← straightThrough encoded selected)
 
 /--
@@ -101,10 +103,10 @@ The observation is held fixed as a target. Encoder and decoder parameters receiv
 reconstruction gradient, while the selected codebook embedding receives none from this term.
 -/
 def reconstructionLoss
-    (decode : RefTy (m := m) (α := α) latent → m (RefTy (m := m) (α := α) obs))
-    (encoded selected : RefTy (m := m) (α := α) latent)
-    (observation : RefTy (m := m) (α := α) obs) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := do
+    (decode : Ref (m := m) (α := α) latent → m (Ref (m := m) (α := α) obs))
+    (encoded selected : Ref (m := m) (α := α) latent)
+    (observation : Ref (m := m) (α := α) obs) :
+    m (Ref (m := m) (α := α) Shape.scalar) := do
   let reconstruction ← forward decode encoded selected
   let target ← detach observation
   mseLoss reconstruction target
@@ -118,10 +120,10 @@ output and selected embedding to each term so their stop-gradient boundaries rem
 intended role. `beta` is a fixed scalar hyperparameter, usually nonnegative.
 -/
 def loss
-    (decode : RefTy (m := m) (α := α) latent → m (RefTy (m := m) (α := α) obs))
-    (encoded selected : RefTy (m := m) (α := α) latent)
-    (observation : RefTy (m := m) (α := α) obs) (beta : α) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := do
+    (decode : Ref (m := m) (α := α) latent → m (Ref (m := m) (α := α) obs))
+    (encoded selected : Ref (m := m) (α := α) latent)
+    (observation : Ref (m := m) (α := α) obs) (beta : α) :
+    m (Ref (m := m) (α := α) Shape.scalar) := do
   let reconstruction ← reconstructionLoss decode encoded selected observation
   let codebook ← codebookLoss encoded selected
   let commitment ← commitmentLoss encoded selected

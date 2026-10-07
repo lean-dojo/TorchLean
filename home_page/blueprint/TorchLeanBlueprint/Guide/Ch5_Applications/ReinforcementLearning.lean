@@ -117,16 +117,13 @@ the saved path, rather than leaving a scalar reward curve as the only evidence o
 The horizon of sixty-four concerns training collection; the eight-step evaluation cap concerns a
 separate greedy episode. They need not have the same length.
 
-The command uses eight optimization epochs per collected rollout. Thus `--updates 1` collects
-one batch and reuses it for the configured optimization passes. The displayed counter is not a
-count of individual environment actions or a promise of one gradient evaluation. This distinction
-matters when comparing a longer rollout with more update epochs: one changes the collected data,
-while the other changes how often the existing data influences the parameters.
+The command uses eight optimization epochs per collected rollout. Thus `--updates 1` is not a
+count of individual environment actions or a promise of one gradient evaluation.
 
 # Episode Returns
 
 The evaluation metric is
-{src "NN/Runtime/RL/Eval.lean"}[`rl.eval.averageEpisodeTotalReward`], the undiscounted sum of
+{src "NN/Runtime/RL/Eval.lean"}[`rl.eval.meanReward`], the undiscounted sum of
 rewards over a greedy episode, capped at `--eval-max-steps`. The command also writes the greedy
 policy and path. Together with the reward definition, these artifacts let us recompute the
 two reported
@@ -437,7 +434,7 @@ share the same observation width and hidden-width configuration. The `[64, 1]` c
 must eventually align with one scalar target per collected step; the singleton axis is a model
 interface choice, not sixty-four additional value predictions.
 
-For a single observation, `rl.ppo.criticValue` accepts any output shape with exactly one
+For a single observation, `rl.ppo.value` accepts any output shape with exactly one
 element. The default critic returns `[1]`, but a scalar `[]` or a tensor `[1, 1]` expresses the
 same number of predictions. The adapter reshapes that one element to a scalar and reads it:
 
@@ -445,7 +442,7 @@ same number of predictions. The adapter reshapes that one element to a scalar an
 #eval show IO Unit from do
   let model : nn.Sequential [1, 1] [1, 1] := .id [1, 1]
   let graph ← nn.lowerToTypedGraph model (α := Float)
-  let value := rl.ppo.criticValue
+  let value := rl.ppo.value
     graph model model nn.State.empty
   IO.println (value ([[2.5]] : Tensor Float [1, 1]))
 ```
@@ -525,9 +522,9 @@ The runtime's shape abbreviations compute these dimensions:
 ([64, 16], [64, 4], [64], [64, 1])
 ```
 
-The conversion from rollout to batch is total: because the horizon invariant is already in the
-structure, no step of the packing can fail, and `trainingBatch` needs no error case at all. The one
-subtlety is deliberate and documented in the source: value targets are computed from the
+The horizon invariant makes every step lookup in the packing valid. `trainingBatch` returns
+`IO (TrainingBatch ...)`; it does not return an `Except` for mismatched field lengths, nor does
+the length proof establish finite numerical results or successful allocation. Value targets use the
 *unnormalized* advantages, and only the policy term sees z-score normalized advantages. Normalizing
 the advantages that feed the value target would change what the critic regresses to, which is a
 different algorithm than the one {Informal.citet ppo2017}[] describe.
@@ -745,10 +742,6 @@ in the application
 The message identifies the mismatched argument and required shape. The PyTorch column example
 instead produces a valid tensor of an unintended shape.
 
-The same horizon appears in every input and output tensor of this GAE function. The runtime
-exports the specification's single-mask recurrence. The PPO collector uses the separate
-termination and episode-boundary masks described below, while keeping the common horizon.
-
 The broadcast counterexample creates all pairwise sums of three advantages and three values.
 Its nine entries can look numerically plausible, and taking a mean afterwards could even hide
 the extra axis. The desired operation pairs step zero with value zero, step one with value one,
@@ -780,7 +773,7 @@ advantage $`A_t=1`. At ratio one, the objective is one:
 ```lean (name := rlClipOne)
 -- At ratio one, the new and behavior policies agree on the
 -- sampled action probability.
-#eval rl.policy.ppoClippedObjectiveFromRatio (α := Float)
+#eval rl.ppo.objective (α := Float)
   1.0 1.0 0.25
 ```
 
@@ -793,7 +786,7 @@ At ratio $`3/2`, the clipped branch reaches $`1+\epsilon`:
 ```lean (name := rlClipUp)
 -- A positive advantage stops rewarding ratio increases
 -- beyond the upper clip.
-#eval rl.policy.ppoClippedObjectiveFromRatio (α := Float)
+#eval rl.ppo.objective (α := Float)
   1.5 1.0 0.25
 ```
 
@@ -810,7 +803,7 @@ $`1/2` and nothing is clipped, because the minimum picks the unclipped branch:
 ```lean (name := rlClipDown)
 -- Reducing a positively advantaged action remains penalized
 -- below the lower clip.
-#eval rl.policy.ppoClippedObjectiveFromRatio (α := Float)
+#eval rl.ppo.objective (α := Float)
   0.5 1.0 0.25
 ```
 
@@ -823,7 +816,7 @@ With a negative advantage, multiplication by $`A_t` reverses the order of the tw
 ```lean (name := rlClipNegUp)
 -- For a negative advantage, an increased action probability
 -- stays on the penalized branch.
-#eval rl.policy.ppoClippedObjectiveFromRatio (α := Float)
+#eval rl.ppo.objective (α := Float)
   1.5 (-1.0) 0.25
 ```
 
@@ -834,7 +827,7 @@ With a negative advantage, multiplication by $`A_t` reverses the order of the tw
 ```lean (name := rlClipNegDown)
 -- A negative advantage flattens after the ratio falls below
 -- the lower clip.
-#eval rl.policy.ppoClippedObjectiveFromRatio (α := Float)
+#eval rl.ppo.objective (α := Float)
   0.5 (-1.0) 0.25
 ```
 
@@ -883,13 +876,6 @@ objective can be checked
 exactly at `ℚ`; computing the ratio from log probabilities additionally requires an exponential.
 Their tape implementations live inside {ref "runtime-autograd"}[the autograd runtime] and need
 their own agreement arguments.
-
-The ratio is computed for the action actually stored in the rollout, not for whichever action
-the updated actor now prefers. A ratio above one says that sampled action has become more likely
-under the new policy; the advantage supplies the judgment about whether that change is desirable.
-The five examples separate those two pieces by providing ratios directly. They do not evaluate
-log probabilities or sample an action, which is why they can isolate the clipped minimum without
-involving a categorical distribution or a random seed.
 
 A training loss minimizes the negative surrogate. At positive advantage, increasing the ratio
 inside the unclipped interval improves the surrogate and lowers that loss. The critic term has
@@ -1229,13 +1215,6 @@ the common collector can use the same rollout structure. The Python process stil
 transition dynamics; successful JSON exchange establishes that the data reached Lean in the
 expected form, rather than proving how the simulator produced it.
 
-The rejected action `99` probes one boundary without changing the observation dimensions. It
-shows why a successful shape handshake is only the beginning of the protocol: every subsequent
-message still carries values that need checking. Conversely, a valid action does not imply that
-its resulting reward is finite or its observations lie in the declared range. The following
-contracts separate these conditions, so a failure can identify the field responsible instead of
-reporting only that an episode could not continue.
-
 ## Transition Contracts
 
 Every message that comes back is checked against a
@@ -1377,13 +1356,6 @@ Except.error "RL boundary: action out of range:
 After this check, the action has type `Fin nActions`. Subsequent indexing can use that bounded
 index without repeating the range check.
 
-These failures exercise distinct clauses. A NaN reward violates finiteness; the reward `7.5`
-violates a declared interval even though it is finite; the bad observation violates a tensor-wide
-range condition; and the action index violates a discrete bound. Combining them into one invalid
-transition would obscure which check was responsible. Varying one field at a time makes the error
-messages useful specifications of the boundary and shows which accepted data downstream code may
-rely on.
-
 ## Checker Soundness
 
 The checker has a theorem connecting successful execution to the declared contract:
@@ -1428,10 +1400,12 @@ CartPole and Pong RAM exercise the same collector with external environments.
 `ppo_cartpole` runs the same PPO loop against Gymnasium. Here is a recorded 30-update run with the
 shipped hyperparameters, evaluating every fifth update over five episodes with a 200-step cap:
 
+The recorded command uses the former `--log-json` flag. Use `--log PATH` with the current CLI.
+
 ```terminal +output
 $ torchlean ppo_cartpole --updates 30 --eval-every 5 \
     --eval-episodes 5 --eval-max-steps 200 \
-    --log-json /mnt/build/rl-cartpole-log.json
+    --log-json rl-cartpole-log.json
 [TorchLean] arithmetic: native binary32
 [TorchLean] execution: eager
 [TorchLean] device: cpu
@@ -1445,7 +1419,7 @@ ppo_cartpole: PPO on CartPole-v1 (horizon=64) (device=cpu)
   update=20 avg_return=9.800000
   update=25 avg_return=10.000000
   update=30 avg_return=10.000000
-  wrote TrainLog JSON: /mnt/build/rl-cartpole-log.json
+  wrote TrainLog JSON: rl-cartpole-log.json
 ppo_cartpole: done
 ppo_cartpole: ok
 ```
@@ -1492,13 +1466,6 @@ the command to fix it. The Lean-side exception on the last line says only that t
 diagnostic is visible because the subprocess writes to the same standard error, not because the Lean
 side captured it, so in a context that separates the two streams the useful half can go missing.
 Keep both output streams when diagnosing an external environment failure.
-
-The CartPole trace illustrates why evaluation settings belong beside the metric. Thirty update
-cycles can finish successfully while the greedy policy's survival time remains near ten steps.
-A different exploration distribution might collect different trajectories even when greedy
-evaluation looks unchanged. The trace reports what this evaluation observed; it does not isolate
-whether the limiting factor is optimization, advantage estimates, rollout coverage, or model
-capacity. The Pong failure occurs earlier still, before the environment can provide a trajectory.
 
 # Off-Policy Data: Replay Buffers And DQN
 
@@ -1569,13 +1536,6 @@ The type also pins the transition down. `Transition Float [1] 2` fixes the obser
 action count, and the action field is a `Fin 2`, which is why the literal above needs `by decide`.
 A `deque` does not check these fields when an item is appended; its callers must arrange those
 checks separately.
-
-The buffer stores oldest-first entries in a bounded FIFO array. Its capacity controls how much
-past experience remains available, while the sampling policy controls which retained entries
-participate in an update. These are separate choices. The capacity theorem assumes an initially
-full valid buffer and positive capacity; a manually constructed oversized buffer is not covered
-by that hypothesis. The public empty constructor and repeated pushes are the path illustrated
-here, so the capacity-two example exposes eviction without requiring a large training run.
 
 ## DQN Replay Example
 
@@ -1771,7 +1731,7 @@ With $`\tau=\tfrac1{100}`, an online value of $`5` and a target of $`1`:
 ```lean (name := rlSoft)
 -- Move the target one percent of the way toward the online
 -- value.
-#eval rl.dqn.softUpdateScalar 0.01 5.0 1.0
+#eval rl.dqn.updateTarget 0.01 5.0 1.0
 ```
 
 ```leanOutput rlSoft (whitespace := lax)
@@ -1788,12 +1748,12 @@ the original gap:
 -- Over the reals, the displacement equals the mixing weight
 -- times the original gap.
 open Proofs.RL.DQN Runtime.RL.DQN in
-#check @softUpdateScalar_sub_target
+#check @updateTarget_sub_target
 ```
 
 ```leanOutput rlSoftThm (whitespace := lax)
-softUpdateScalar_sub_target : ∀ (tau online target : ℝ),
-  softUpdateScalar tau online target - target =
+updateTarget_sub_target : ∀ (tau online target : ℝ),
+  updateTarget tau online target - target =
     tau * (online - target)
 ```
 

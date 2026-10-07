@@ -69,7 +69,6 @@ namespace NN
 namespace GraphSpec
 
 open _root_.Spec _root_.TorchLean
-open TorchLean.Tensor
 open _root_.TorchLean.Tensor
 
 namespace Primitive

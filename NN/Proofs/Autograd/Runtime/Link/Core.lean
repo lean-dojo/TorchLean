@@ -21,9 +21,9 @@ theorem. Lowering places the stored VJP into each runtime node's `backward` clos
 
 ## What is proved here
 
-- Forward-pass correspondence: `lowerGraphToTape{,Data}` produces the same values as
-  `Graph{,Data}.eval`, and the runtime tape stores those values in the same order
-  (`lowerGraphToTape{,Data}_ctx_eq_eval`, `lowerGraphToTape{,Data}_values_eq`).
+- Forward-pass correspondence: `lowerGraphToTape` and `lowerGraphDataToTape` produce the same
+  values as `Graph.eval` and `GraphData.eval`, respectively. Their `ctx_eq_eval` and `values_eq`
+  lemmas show that the returned context and runtime tape store those values in the same order.
 - Backward-pass correspondence: running the runtime dense reverse loop
   `Tape.backwardDenseFrom` on a lowered tape matches the graph's stored reverse program
   `backpropAllCtx` (`backwardDenseFrom_lowerGraphToTape_eq_backpropAllCtx` and its `GraphData`
@@ -304,8 +304,9 @@ theorem lowerGraphDataToTape_nodes_size {α : Type} {Δ : Type}
 Lower a proved graph (`Graph`) to a runtime tape by evaluating forward nodes and storing each
 node’s proved `vjp`.
 
-Compared to `lowerGraphDataToTape`, this uses the pure graph interface (no explicit `GraphData`
-payload).
+Both lowering functions pass a payload `Δ` through the graph. This interface also carries local
+adjointness proofs and labels its runtime nodes as proof-carrying; `GraphData` stores the functions
+without those proofs.
 -/
 def lowerGraphToTape {α : Type} {Δ : Type}
     [Storage α] [CommSemiring α]

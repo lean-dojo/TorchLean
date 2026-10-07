@@ -11,7 +11,9 @@ public import NN.Tensor.Internal.Syntax.Parser.Expression -- shake: keep
 # Pack-pattern parsing
 
 This module parses the fixed axes surrounding a unique packed `*` axis and
-proves canonical rendering round trips.
+proves canonical rendering round trips. Fixed axes must be distinct names;
+numeric axes, underscores, groups, and ellipses are not part of this grammar.
+The parser does not check tensor shapes or unpacked component sizes.
 -/
 
 @[expose] public section

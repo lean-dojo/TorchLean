@@ -239,7 +239,7 @@ def layerNormReplay : Except String RangeCheckedExecution := do
 
 /-- The same fixed-left LayerNorm transfer is not attributed to an unspecified CUDA reduction. -/
 def cudaLayerNormCertificate : Except String GraphNumericalCertificate :=
-  generate NN.Backend.BackendProfile.checkedCuda layerNormGraph layerNormSources
+  generate NN.Backend.BackendProfile.libTorchCuda layerNormGraph layerNormSources
 
 /-!
 ## Stable axis softmax
@@ -278,7 +278,7 @@ def softmaxReplay : Except String RangeCheckedExecution := do
 invalid-domain, or wrong-reduction-policy cases should be `false`. This array exercises range
 reconstruction and IEEE replay; it does not construct the separate exact-real enclosure proof. -/
 def exampleChecks : Array (String × Bool) :=
-  NN.Examples.DeepDives.Floats.GraphNumericalCertificate.exampleChecks ++
+  NN.Examples.DeepDives.Floats.GraphNumericalCertificate.checks ++
   #[ ("misplaced source rejected", !accepted misplacedSourceCheck)
   , ("duplicate contract rejected", !accepted duplicateContractCheck)
   , ("registry mismatch rejected", !accepted registryMismatchCheck)

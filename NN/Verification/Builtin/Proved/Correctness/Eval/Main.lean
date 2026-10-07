@@ -11,6 +11,11 @@ public import NN.Verification.Builtin.Proved.Correctness.Eval.Return
 
 /-!
 # Lowered Forward Evaluation: End-to-End Correctness
+
+The proved first-order fragment and its lowered IR share the complete intermediate value table.
+The final theorem seeds that table with the distinguished input, uses the let-chain agreement,
+and selects the source return index. Equality includes evaluation errors; it is not a theorem
+about the broader polymorphic `Program` interpreter.
 -/
 
 @[expose] public section
@@ -26,11 +31,8 @@ namespace Correctness
 open NN.Verification.Builtin
 
 /--
-**Main lowering correctness theorem (verified forward fragment).**
-
-In words: lowering a first-order forward program `p` into the verifier IR and then
-evaluating the lowered graph yields the same output as directly evaluating `p` with
-`evalForward`.
+Lowering a first-order forward program and evaluating its IR gives the same result, including
+errors, as `evalForward` on the source program.
 -/
 theorem runForwardIR_eq_evalForward
     {α : Type} [TorchLean.Storage α] [Context α]
@@ -46,7 +48,6 @@ theorem runForwardIR_eq_evalForward
     evalForward (α := α) (paramShapes := paramShapes) (inShape := inShape) (outShape := outShape) p
       params x := by
   classical
-  -- Evaluate `lowerForwardProgramToIR` via the IR semantics, and rewrite it to the DSL evaluator.
   let inputVal : Spec.SomeTensor α := Spec.SomeTensor.mk (α := α) inShape x
   let inputNode : NN.IR.Node := { id := 0, parents := #[], kind := .input, outShape := inShape }
   let c0 : NN.Verification.Builtin.LoweredIR α :=
@@ -56,10 +57,7 @@ theorem runForwardIR_eq_evalForward
         (outShape := outShape) p params).graph.wellFormed = true :=
     lowerForwardProgramToIR_wellFormed (α := α) (paramShapes := paramShapes) (inShape := inShape)
       (outShape := outShape) p params
-  -- Unfold the lowered evaluator down to the IR `denoteAllFrom` suffix, then apply the
-  -- correctness lemma.
-  -- The input node is always id=0, so we start the suffix evaluation at `i=1` with
-  -- `vals=[inputVal]`.
+  -- The input occupies node zero; the let-chain suffix starts with its value already in the table.
   have hDenote :
       (NN.IR.Graph.denoteAllFrom (α := α)
           (g := (lowerForwardProgramToIR (α := α) (paramShapes := paramShapes)
@@ -72,8 +70,6 @@ theorem runForwardIR_eq_evalForward
         =
       evalForwardLetChainVals (α := α) (paramShapes := paramShapes) (inShape := inShape)
         (ss := []) (out := outShape) p params #[inputVal] := by
-    -- `lowerForwardProgramToIR` is `lowerForwardLetChain` starting from `c0`, so apply the lemma
-    -- at `c=c0` and `vals=[inputVal]`.
     have hShapes0 :
         shapesOfVals (α := α) (#[inputVal] : Array (Spec.SomeTensor α)) = Ctx inShape [] := by
       simp [shapesOfVals, Ctx, inputVal]
@@ -81,8 +77,6 @@ theorem runForwardIR_eq_evalForward
       denoteAllFrom_lowerForwardLetChain_eq_evalForwardLetChainVals (α := α)
         (paramShapes := paramShapes) (inShape := inShape) (ss := []) (out := outShape)
       (g := p) (params := params) (c := c0) (x := x) (vals := #[inputVal]) hShapes0
-  -- Unfold both front-end evaluators, then rewrite both sides to a shared
-  -- `evalForwardLetChainVals` computation.
   have hOutId :
       (lowerForwardProgramToIR (α := α) (paramShapes := paramShapes) (inShape := inShape)
         (outShape := outShape) p params).outputId
@@ -93,7 +87,6 @@ theorem runForwardIR_eq_evalForward
       lowerForwardLetChain_outputId_eq_outputIndex_id (α := α) (paramShapes := paramShapes)
         (inShape := inShape) (ss := []) (out := outShape) p params c0
 
-  -- Rewrite `Graph.denoteAll` to start at `i=1` with the already-evaluated input.
   have hDenoteAll0 :
       NN.IR.Graph.denoteAll (α := α)
           (g := (lowerForwardProgramToIR (α := α) (paramShapes := paramShapes)
@@ -110,9 +103,7 @@ theorem runForwardIR_eq_evalForward
             (lowerForwardProgramToIR (α := α) (paramShapes := paramShapes) (inShape := inShape)
               (outShape := outShape) p params).ps)
           (input := inputVal) (i := 1) (vals := #[inputVal]) := by
-    -- `denoteAll` runs `denoteAllFrom` from `i=0` with `vals=[]`.
     simp (config := { zeta := false }) [NN.IR.Graph.denoteAll, hWF]
-    -- Unfold one step at `i=0`: the `input` node deterministically yields `inputVal`.
     have h0 :
         (0 : Nat) <
           (lowerForwardProgramToIR (α := α) (paramShapes := paramShapes) (inShape := inShape)
@@ -142,7 +133,7 @@ theorem runForwardIR_eq_evalForward
         simp [c0]
       -- `lowerForwardProgramToIR` is `lowerForwardLetChain` starting from `c0`; indices below
       -- `c0`'s size are preserved.
-      simpa [lowerForwardProgramToIR, c0, inputNode, NN.IR.Graph.getNode, NN.IR.Graph.getNode?,
+      simpa [lowerForwardProgramToIR, c0, inputNode, NN.IR.Graph.getNode,
         BEq.beq] using
         lowerForwardLetChain_getNode_lt (α := α) (paramShapes := paramShapes) (inShape := inShape)
           (ss := []) (out := outShape) (g := p) (params := params) (c := c0) (i := 0) (hi := hi)
@@ -157,8 +148,6 @@ theorem runForwardIR_eq_evalForward
           (input := inputVal) (vals := #[]) (i := 0)
         =
         Except.ok inputVal := by
-      -- `getNode 0` returns the input node, and the `.input` branch deterministically returns
-      -- `inputVal`.
       simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, NN.IR.Graph.normalizeNodeOutput, hGet0,
         inputNode, inputVal, NN.IR.Graph.expectShape,
         Bind.bind, Pure.pure, Except.pure, Except.bind]
@@ -178,11 +167,7 @@ theorem runForwardIR_eq_evalForward
           (input := inputVal) (i := 1) (vals := vals))
       hPushEq
 
-  -- Now both `runForwardIR` and `evalForward` can be expressed via `evalForwardLetChainVals`.
-  -- We finish by case-splitting on `evalForwardLetChainVals` and simplifying the shared
-  -- `if`/lookup logic.
-  -- (The "out of bounds" / "shape mismatch" branches are unreachable under the well-typedness
-  -- invariants we establish.)
+  -- The final context invariant rules out output lookup and shape errors on both sides.
   have hEvalForward :
       evalForward (α := α) (paramShapes := paramShapes) (inShape := inShape)
         (outShape := outShape)
@@ -203,11 +188,9 @@ theorem runForwardIR_eq_evalForward
         (paramShapes := paramShapes) (inShape := inShape)
         (ss := []) (out := outShape) (g := p) (params := params) (vals := #[inputVal]))
 
-  -- Rewrite the RHS, and unfold the lowered evaluator down to the same `evalForwardLetChainVals`.
   rw [hEvalForward]
   rw [NN.Verification.Builtin.runForwardIR, NN.IR.Graph.denote, hOutId]
 
-  -- The remaining LHS still mentions IR `denoteAll`; rewrite it using the established equalities.
   have hDenoteAll0' :
       NN.IR.Graph.denoteAll (α := α)
           (g := (lowerForwardProgramToIR (α := α) (paramShapes := paramShapes)
@@ -240,18 +223,14 @@ theorem runForwardIR_eq_evalForward
         (ss := []) (out := outShape) p params
         #[Spec.SomeTensor.mk (α := α) inShape x] := by
     simpa [inputVal, Except.bind, Except.pure, Pure.pure] using hDenote
-  -- Rewrite `Graph.denoteAll` → `denoteAllFrom` → `evalForwardLetChainVals` on the lowered side.
   rw [hDenoteAll0', hDenote']
 
-  -- Now both sides bind the same `evalForwardLetChainVals`; split on that result.
   cases hVals :
       evalForwardLetChainVals (α := α) (paramShapes := paramShapes) (inShape := inShape)
         (ss := []) (out := outShape) p params #[inputVal] with
   | error e =>
-      -- Both sides are `Except.error e` because the first monadic bind fails.
       simp [Bind.bind, Except.bind]
   | ok vals' =>
-      -- Establish that the output index is in-bounds and has the expected shape.
       have hShapes' :
           shapesOfVals (α := α) vals' = Ctx inShape (finalShapes (α := α)
             (paramShapes := paramShapes) (inShape := inShape)

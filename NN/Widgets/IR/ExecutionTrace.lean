@@ -15,28 +15,14 @@ import ProofWidgets.Component.HtmlDisplay
 public import NN.IR.Semantics
 
 /-!
-# IRExecTrace
+# IR execution trace
 
-IR execution trace viewer (step-by-step evaluation).
+`#ir_exec_trace_view g, input` evaluates nodes in order and displays intermediate values until
+the first evaluation error. The input is `Spec.SomeTensor α`; an explicit `NN.IR.Payload α`
+can be supplied with `#ir_exec_trace_view g, payload, input` instead of the empty default.
 
-TorchLean’s IR semantics (`NN.IR.Semantics`) can evaluate a graph and either:
-- return the full table of intermediate values, or
-- stop at the first failure (missing payload, shape mismatch, etc.).
-
-When debugging, it is often more helpful to see:
-- which nodes ran successfully,
-- the intermediate tensor values (for small graphs),
-- and the exact node id where evaluation stopped.
-
-Main commands:
-- `#ir_exec_trace_view g, input` where `input : Spec.SomeTensor α` (payload defaults to empty)
-- `#ir_exec_trace_view g, payload, input` where `payload : NN.IR.Payload α`
-
-## Main definitions
-
-- `execTrace`: execute nodes left-to-right and capture the first failure point.
-- `irExecTraceHtml`: render checks, status badges, and per-node intermediate values.
-- `#ir_exec_trace_view`: command entry point with optional payload.
+`irExecTraceHtml` reports well-formedness and shape checks separately from evaluation. A failed
+check does not prevent the panel from attempting a trace. Displaying a result does not prove it.
 -/
 
 public meta section

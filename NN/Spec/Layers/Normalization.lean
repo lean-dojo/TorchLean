@@ -14,5 +14,3 @@ public import NN.Spec.Layers.Normalization.BatchNorm
 
 Umbrella import for normalization primitives and BatchNorm semantics.
 -/
-
-@[expose] public section

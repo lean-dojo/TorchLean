@@ -17,7 +17,7 @@ End-to-end “one semantic universe” tutorial (single graph, many semantics, o
 This tutorial lives under `NN/Examples/DeepDives` because it connects execution, interval semantics,
 and checker soundness in one graph.
 
-We build one medium IR graph:
+We build one six-node IR graph:
 
 $$
 x\mapsto\tanh\!\left(\operatorname{sum}
@@ -27,16 +27,15 @@ $$
 and then:
 1) evaluate it under multiple scalar semantics (`ℝ`, `FP32`, `ExecFloat.Binary 8 23`);
 2) run IBP under multiple interval semantics (endpoints in `ℝ`, `FP32`, `ExecFloat.Binary 8 23` with
-directed
-  rounding);
+   directed rounding);
 3) empirically check that `evalIEEE(G,x)` lies in the IBP output box for random $x\in B$;
 4) point to the Lean theorem that the Boolean checker is sound (`Box.containsDecBool_sound`).
 
 Notes:
 - `ℝ` and `FP32` instantiations are proof-oriented and noncomputable (they typecheck, but do not run
   as an executable).
-- `ExecFloat.Binary 8 23` is fully executable inside Lean, so we use it for the runnable consistency
-check.
+- `ExecFloat.Binary 8 23` is executable inside Lean, so we use it for the runnable
+  consistency check.
 
 Run:
   `scripts/lake.sh exe torchlean one_semantic_universe --samples 50`
@@ -46,7 +45,6 @@ Run:
 
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.ExecFloat (Binary)
-open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 open Spec TorchLean
 open TorchLean.Tensor
@@ -71,29 +69,6 @@ def usage : String :=
     , "  --samples N"
     ]
 
-/-- Four input features. -/
-def inputWidth : Nat := 4
-/-- Five hidden units. -/
-def hiddenWidth : Nat := 5
-/-- Three outputs, then summed and squashed to a scalar. -/
-def outputWidth : Nat := 3
-
-/-- Shape of one input vector. -/
-abbrev input : Spec.Shape := [inputWidth]
-/-- Shape of the hidden activation. -/
-abbrev hiddenShape : Spec.Shape := [hiddenWidth]
-/-- Shape of the second layer's output, before the reduction. -/
-abbrev output : Spec.Shape := [outputWidth]
-
-/-- First weight matrix, `[out, in]` as in PyTorch. -/
-abbrev hiddenWeightShape : Spec.Shape := [hiddenWidth, inputWidth]
-/-- First bias. -/
-abbrev hiddenBiasShape : Spec.Shape := [hiddenWidth]
-/-- Second weight matrix. -/
-abbrev outputWeightShape : Spec.Shape := [outputWidth, hiddenWidth]
-/-- Second bias. -/
-abbrev outputBiasShape : Spec.Shape := [outputWidth]
-
 /--
 The network's parameters, generic in the scalar type.
 
@@ -103,13 +78,13 @@ evaluated in each.
 -/
 structure Parameters (α : Type) [Storage α] where
   /-- Weight matrix for layer 1. -/
-  hiddenWeight : Tensor α hiddenWeightShape
+  hiddenWeight : Tensor α [5, 4]
   /-- Bias for layer 1. -/
-  hiddenBias : Tensor α hiddenBiasShape
+  hiddenBias : Tensor α [5]
   /-- Weight matrix for layer 2. -/
-  outputWeight : Tensor α outputWeightShape
+  outputWeight : Tensor α [3, 5]
   /-- Bias for layer 2. -/
-  outputBias : Tensor α outputBiasShape
+  outputBias : Tensor α [3]
 
 /-- Transport every parameter tensor along a scalar conversion. -/
 def Parameters.map {α β : Type}
@@ -126,7 +101,7 @@ Concrete parameters, written as small decimal literals.
 The executable binary32 parameters are obtained from these host `Float` values by `Parameters.map`.
 Conversion may round coefficients; the graph structure and parameter layout remain fixed.
 -/
-def floatParameters : Parameters Float :=
+def parameters : Parameters Float :=
   { hiddenWeight :=
       [ [0.15, -0.12, 0.08, 0.05]
       , [0.02, 0.11, -0.09, 0.07]
@@ -148,13 +123,13 @@ evaluator and the interval propagator are given.
 -/
 def graph : NN.IR.Graph :=
   let inputNode : NN.IR.Node :=
-    { id := 0, parents := #[], kind := .input, outShape := input }
+    { id := 0, parents := #[], kind := .input, outShape := [4] }
   let hiddenLinearNode : NN.IR.Node :=
-    { id := 1, parents := #[0], kind := .linear, outShape := hiddenShape }
+    { id := 1, parents := #[0], kind := .linear, outShape := [5] }
   let hiddenActivationNode : NN.IR.Node :=
-    { id := 2, parents := #[1], kind := .relu, outShape := hiddenShape }
+    { id := 2, parents := #[1], kind := .relu, outShape := [5] }
   let outputLinearNode : NN.IR.Node :=
-    { id := 3, parents := #[2], kind := .linear, outShape := output }
+    { id := 3, parents := #[2], kind := .linear, outShape := [3] }
   let reductionNode : NN.IR.Node :=
     { id := 4, parents := #[3], kind := .sum, outShape := [] }
   let outputNode : NN.IR.Node :=
@@ -169,15 +144,15 @@ def payload {α : Type} [Storage α] [Context α]
   { linear? := fun id =>
       if id = 1 then
         some {
-          outDim := hiddenWidth
-          inDim := inputWidth
+          outDim := 5
+          inDim := 4
           W := parameters.hiddenWeight
           b := parameters.hiddenBias
         }
       else if id = 3 then
         some {
-          outDim := outputWidth
-          inDim := hiddenWidth
+          outDim := 3
+          inDim := 5
           W := parameters.outputWeight
           b := parameters.outputBias
         }
@@ -191,36 +166,29 @@ def parameterStore {α : Type} [Storage α] [Context α]
     linearWB :=
       (Std.HashMap.emptyWithCapacity)
         |>.insert 1 {
-          m := hiddenWidth
-          n := inputWidth
+          m := 5
+          n := 4
           w := parameters.hiddenWeight
           b := parameters.hiddenBias
         }
         |>.insert 3 {
-          m := outputWidth
-          n := hiddenWidth
+          m := 3
+          n := 5
           w := parameters.outputWeight
           b := parameters.outputBias
         } }
 
 /-- Evaluate the graph at scalar type `α` and check that the result really is a scalar. -/
-def evaluateOutput
+def evaluate
     {α : Type} [Storage α] [Context α]
-    (parameters : Parameters α) (inputTensor : Tensor α input) :
-    Except String (Tensor α []) :=
-      do
+    (parameters : Parameters α) (inputTensor : Tensor α [4]) :
+    Except String (Tensor α []) := do
   let graphPayload := payload (α := α) parameters
   let input : Spec.SomeTensor α := Spec.SomeTensor.ofTensor inputTensor
   let output ←
     NN.IR.Graph.denote (α := α) (g := graph) (payload := graphPayload) (input := input)
       (outputId := 5)
   NN.IR.Graph.expectShape (α := α) (expected := []) output
-
-/-- Propagate the tutorial graph using the endpoint operations of the inferred scalar type. -/
-def propagateBounds {α : Type} [Storage α] [Context α]
-    [BoundOps α] [NonlinearBoundOps α]
-    (parameters : ParamStore α) : Array (Option (FlatBox α)) :=
-  runIBP graph parameters
 
 /-!
 ### Proof-oriented instantiations
@@ -233,149 +201,129 @@ section ProofOnly
 
 /-- Evaluation over the reals: the mathematical meaning of the network, with no rounding at all. -/
 noncomputable example
-    (parameters : Parameters ℝ) (input : Tensor ℝ input) :
+    (parameters : Parameters ℝ) (input : Tensor ℝ [4]) :
     Except String (Tensor ℝ []) :=
-  evaluateOutput (α := ℝ) parameters input
+  evaluate (α := ℝ) parameters input
 
 /--
-Evaluation over rounded reals: each operation rounds to nearest binary32, but the carrier is still
-`ℝ`, which is what makes the error proofs possible.
+Evaluation over rounded reals: each operation rounds to binary32 precision. Values carry a real
+interpretation for proofs rather than an executable bit pattern; this model has no upper exponent
+cutoff.
 -/
 noncomputable example
     (parameters : Parameters TorchLean.Floats.FP32)
-    (input : Tensor TorchLean.Floats.FP32 input) :
+    (input : Tensor TorchLean.Floats.FP32 [4]) :
     Except String (Tensor TorchLean.Floats.FP32 []) :=
-  evaluateOutput (α := TorchLean.Floats.FP32) parameters input
+  evaluate (α := TorchLean.Floats.FP32) parameters input
 
 /-- Interval bound propagation over the reals. -/
 noncomputable example
     (parameters : ParamStore ℝ) : Array (Option (FlatBox ℝ)) :=
-  propagateBounds parameters
+  runIBP graph parameters
 
 /-- The same propagation over rounded reals. -/
 noncomputable example
     (parameters : ParamStore TorchLean.Floats.FP32) :
     Array (Option (FlatBox TorchLean.Floats.FP32)) :=
-  propagateBounds parameters
+  runIBP graph parameters
 
 end ProofOnly
 
 /-- The centre of the input box. -/
-def referenceInputFloat : Tensor Float input :=
+def center : Tensor Float [4] :=
   [0.3, -0.2, 0.1, 0.4]
 
-/-- An `eps`-ball around `referenceInputFloat`, in the scalar type `α`. -/
-def inputBoxOf (α : Type) [Context α] [Runtime.FromFloat α] (eps : Float) :
-    Box α input :=
-  let center : Tensor α input :=
-    Tensor.map Runtime.ofFloat referenceInputFloat
+/-- An `eps`-ball around `center`, in the scalar type `α`. -/
+def inputBox {α : Type} [Context α] [Runtime.FromFloat α] (eps : Float) :
+    Box α [4] :=
+  let center : Tensor α [4] :=
+    Tensor.map Runtime.ofFloat center
   let r : α := Runtime.ofFloat eps
-  let radius : Tensor α input := Tensor.full (α := α) input r
+  let radius : Tensor α [4] := Tensor.full (α := α) [4] r
   { lo := Tensor.subSpec (α := α) center radius
     hi := Tensor.addSpec (α := α) center radius }
-
-/-- Present an input box in the flat form the propagator consumes. -/
-def flattenInputBox {α : Type} [Storage α] [Context α]
-    (box : Box α input) : FlatBox α :=
-  { dim := inputWidth, lo := box.lo, hi := box.hi }
 
 /--
 Read a one-dimensional flat box back as a scalar box, failing loudly if the dimension is not one.
 -/
-def scalarBoxOfFlat (box : FlatBox (Binary 8 23)) :
-    Except String (Box (Binary 8 23) []) :=
-  do
+def scalarBox {α : Type} [Storage α] [Context α] (box : FlatBox α) :
+    Except String (Box α []) := do
   if h : box.dim = 1 then
-    let lowerTensor : Tensor (Binary 8 23) [1] :=
+    let lowerTensor : Tensor α [1] :=
       Tensor.castShape box.lo
         (congrArg (fun extent => ([extent] : Spec.Shape)) h)
-    let upperTensor : Tensor (Binary 8 23) [1] :=
+    let upperTensor : Tensor α [1] :=
       Tensor.castShape box.hi
         (congrArg (fun extent => ([extent] : Spec.Shape)) h)
-    let lower : Binary 8 23 := lowerTensor[0]
-    let upper : Binary 8 23 := upperTensor[0]
+    let lower : α := lowerTensor[0]
+    let upper : α := upperTensor[0]
     pure { lo := Tensor.full [] lower, hi := Tensor.full [] upper }
   else
     throw s!"expected a scalar FlatBox (dim=1), got dim={box.dim}"
 
 /--
-Draw one sample from an input box under the bit-level IEEE model.
+Draw a deterministic sample using the box's scalar arithmetic and shape.
 
-The final clamp is not cosmetic: `lo + u * (hi - lo)` is computed in binary32, so rounding can push
-the result a fraction of an ulp outside the box. Clamping makes the sample genuinely a member of the
-box, which is what the enclosure check below assumes.
+Rounding in `lo + u * (hi - lo)` can move a sample outside the endpoints. Clamp after the
+interpolation; the runnable example still checks membership before evaluating the sample.
 -/
-def sampleInBoxIEEE (seed idx : Nat) (box : Box (Binary 8 23) input) :
-    Tensor (Binary 8 23) input :=
+def sample {α : Type} [Storage α] [Context α] {shape : Shape}
+    (seed idx : Nat) (box : Box α shape) : Tensor α shape :=
   let key := rand.keyOf seed idx
-  let unitSample : Tensor (Binary 8 23) input :=
-    rand.uniform (α := (Binary 8 23)) key (s := input)
-  let width := Tensor.subSpec (α := (Binary 8 23)) box.hi box.lo
+  let unitSample : Tensor α shape := rand.uniform key
+  let width := Tensor.subSpec box.hi box.lo
   let rawSample :=
-    Tensor.addSpec (α := (Binary 8 23)) box.lo
-      (Tensor.mulSpec (α := (Binary 8 23)) unitSample width)
-  -- Clamp to be sure we land inside `[lo,hi]` despite rounding.
-  let lowerClamped := Tensor.maxSpec (α := (Binary 8 23)) rawSample box.lo
-  Tensor.minSpec (α := (Binary 8 23)) lowerClamped box.hi
+    Tensor.addSpec box.lo (Tensor.mulSpec unitSample width)
+  -- Clamp before the caller's membership check.
+  let lowerClamped := Tensor.maxSpec rawSample box.lo
+  Tensor.minSpec lowerClamped box.hi
 
 /--
 Run the tutorial: evaluate at the centre, propagate bounds, then check that randomly drawn samples
 from the input box land inside the propagated output interval.
 -/
-def showIEEECheck (samples : Nat) : IO Unit := do
+def run (samples : Nat) : IO Unit := do
   IO.println "== One semantic universe tutorial =="
   IO.println s!"graph nodes = {graph.nodes.size}"
 
-  let ieeeParameters : Parameters (Binary 8 23) := floatParameters.map Runtime.ofFloat
-  let inputBox : Box (Binary 8 23) input := inputBoxOf (α := (Binary 8 23)) (eps := 0.05)
-  let flatInputBox : FlatBox (Binary 8 23) := flattenInputBox (α := (Binary 8 23)) inputBox
+  let ieeeParameters : Parameters (Binary 8 23) := parameters.map Runtime.ofFloat
+  let box : Box (Binary 8 23) [4] := inputBox (eps := 0.05)
+  let flatInputBox : FlatBox (Binary 8 23) := { dim := 4, lo := box.lo, hi := box.hi }
 
   -- Evaluate at the center point.
-  let referenceInputIEEE : Tensor (Binary 8 23) input :=
-    Tensor.map Runtime.ofFloat referenceInputFloat
-  let centerResult : Except String (Tensor (Binary 8 23) []) :=
-    evaluateOutput (α := Binary 8 23) ieeeParameters referenceInputIEEE
-  match centerResult with
-  | .error msg => throw <| IO.userError msg
-  | .ok outputAtCenter =>
-      IO.println s!"[eval configured binary32] y(x0) = {Spec.pretty outputAtCenter}"
+  let referenceInputIEEE : Tensor (Binary 8 23) [4] :=
+    Tensor.map Runtime.ofFloat center
+  let outputAtCenter ← IO.ofExcept (evaluate ieeeParameters referenceInputIEEE)
+  IO.println s!"[eval configured binary32] y(x0) = {Spec.pretty outputAtCenter}"
 
   -- Compute the IBP box with directed rounding via
   -- `BoundOps (FloatLib.Floats.ExecFloat.Binary 8 23)`.
   let parameters := parameterStore (α := (Binary 8 23)) ieeeParameters flatInputBox
-  let ibp := propagateBounds parameters
+  let ibp := runIBP graph parameters
   let outEntry ←
     match ibp[5]? with
     | some outEntry => pure outEntry
     | none => throw <| IO.userError "IBP did not produce an entry for node 5"
   let some outFlat := outEntry | throw <| IO.userError "IBP produced no output box at node 5"
-  let outBox ←
-    match scalarBoxOfFlat outFlat with
-    | .error msg => throw <| IO.userError msg
-    | .ok b => pure b
+  let outBox ← IO.ofExcept (scalarBox outFlat)
   IO.println s!"[IBP IEEE endpoints] lo = {Spec.pretty outBox.lo}"
   IO.println s!"[IBP IEEE endpoints] hi = {Spec.pretty outBox.hi}"
 
   -- Empirical consistency: random x ∈ B, check eval(x) ∈ IBP(B).
   let mut okCount : Nat := 0
   for k in [0:samples] do
-    let x := sampleInBoxIEEE (seed := 12345) (idx := k) inputBox
-    let inOk := Box.containsDecBool (α := (Binary 8 23)) (s := input) inputBox x
+    let x := sample (seed := 12345) (idx := k) box
+    let inOk := Box.containsDecBool (α := (Binary 8 23)) (s := [4]) box x
     if inOk != true then
       throw <| IO.userError s!"internal error: sampled x not in box (k={k})"
-    let sampleResult : Except String (Tensor (Binary 8 23) []) :=
-      evaluateOutput (α := Binary 8 23) ieeeParameters x
-    match sampleResult with
-    | .error msg => throw <| IO.userError msg
-    | .ok y =>
-        let outOk :=
-          Box.containsDecBool (α := (Binary 8 23)) (s := []) outBox y
-        if outOk then
-          okCount := okCount + 1
-        else
-          IO.println s!"[counterexample?] k={k}"
-          IO.println s!"x = {Spec.pretty x}"
-          IO.println s!"y = {Spec.pretty y}"
+    let y ← IO.ofExcept (evaluate ieeeParameters x)
+    let outOk := Box.containsDecBool outBox y
+    if outOk then
+      okCount := okCount + 1
+    else
+      IO.println s!"[counterexample?] k={k}"
+      IO.println s!"x = {Spec.pretty x}"
+      IO.println s!"y = {Spec.pretty y}"
   IO.println s!"consistency: {okCount}/{samples} samples satisfied evalIEEE(x) ∈ IBP(B)"
   unless okCount == samples do
     throw <| IO.userError "an evaluated sample escaped the propagated interval"
@@ -390,6 +338,6 @@ def main (args : List String) : IO Unit := do
   let (samples?, rest) ← CLI.orThrow "OneSemanticUniverse" <| CLI.takeNatFlag? args
     "samples"
   CLI.requireNoArgs "OneSemanticUniverse" rest
-  showIEEECheck (samples := samples?.getD 50)
+  run (samples := samples?.getD 50)
 
 end NN.Examples.DeepDives.OneSemanticUniverse

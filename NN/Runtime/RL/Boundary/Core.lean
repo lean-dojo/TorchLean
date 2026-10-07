@@ -26,7 +26,7 @@ provided rollouts and a checker that turns “assumptions” into “checked pre
 The boundary emits `Spec.RL.ObservedTransition` as the validated output type. This
 lets downstream training code share one common input type for both:
 
-- Lean-native environments via `Spec.RL.rolloutFrom`, and
+- Lean-native environments via `Spec.RL.rollout`, and
 - external rollouts after passing this contract check.
 
 ## References
@@ -45,7 +45,7 @@ namespace RL
 namespace Boundary
 
 open Spec TorchLean
-open TorchLean TorchLean.Tensor
+open TorchLean.Tensor
 
 /-!
 ## Basic numeric checks

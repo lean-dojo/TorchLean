@@ -131,7 +131,7 @@ def tanh_second_bounds(y_lo: float, y_hi: float) -> Tuple[float, float]:
 def deriv_and_second_for_mlp(
     first_weight: List[List[float]], first_bias: List[float],
     middle_weight: List[List[float]], middle_bias: List[float],
-    output_weight: List[List[float]], output_bias: List[float],
+    output_weight: List[List[float]],
     x_lo: List[float], x_hi: List[float]
 ) -> Tuple[Tuple[List[float], List[float]], Tuple[List[float], List[float]]]:
     """Propagate first- and second-derivative intervals through the tanh MLP."""
@@ -148,62 +148,35 @@ def deriv_and_second_for_mlp(
     # First derivative intervals
     first_deriv_lo, first_deriv_hi = [1.0], [1.0]
     second_deriv_lo, second_deriv_hi = [0.0], [0.0]
-    # Through first linear
-    first_deriv_lo, first_deriv_hi = lin_deriv(first_weight, first_deriv_lo, first_deriv_hi)
-    second_deriv_lo, second_deriv_hi = lin_deriv(first_weight, second_deriv_lo, second_deriv_hi)
-    # Through tanh1
-    first_tanh_deriv_lo: List[float] = []
-    first_tanh_deriv_hi: List[float] = []
-    first_tanh_second_lo: List[float] = []
-    first_tanh_second_hi: List[float] = []
-    for value_lo, value_hi, deriv_lo, deriv_hi, second_lo, second_hi in zip(
-        first_activation_lo,
-        first_activation_hi,
-        first_deriv_lo,
-        first_deriv_hi,
-        second_deriv_lo,
-        second_deriv_hi,
+    # Both hidden layers use the same chain rule and endpoint operation order.
+    for weight, activation_lo, activation_hi in (
+        (first_weight, first_activation_lo, first_activation_hi),
+        (middle_weight, middle_activation_lo, middle_activation_hi),
     ):
-        tanh_prime_lo, tanh_prime_hi = tanh_prime_bounds(value_lo, value_hi)
-        tanh_second_lo, tanh_second_hi = tanh_second_bounds(value_lo, value_hi)
-        # first derivative
-        deriv_out_lo, deriv_out_hi = mul_interval((tanh_prime_lo, tanh_prime_hi), (deriv_lo, deriv_hi))
-        first_tanh_deriv_lo.append(deriv_out_lo); first_tanh_deriv_hi.append(deriv_out_hi)
-        # second derivative: p2*(z')^2 + p1*z''
-        deriv_sq = square_interval((deriv_lo, deriv_hi))
-        curvature_term = mul_interval((tanh_second_lo, tanh_second_hi), deriv_sq)
-        chain_term = mul_interval((tanh_prime_lo, tanh_prime_hi), (second_lo, second_hi))
-        second_out_lo, second_out_hi = add_interval(curvature_term, chain_term)
-        first_tanh_second_lo.append(second_out_lo); first_tanh_second_hi.append(second_out_hi)
-    first_deriv_lo, first_deriv_hi = first_tanh_deriv_lo, first_tanh_deriv_hi
-    second_deriv_lo, second_deriv_hi = first_tanh_second_lo, first_tanh_second_hi
-    # Through middle linear
-    first_deriv_lo, first_deriv_hi = lin_deriv(middle_weight, first_deriv_lo, first_deriv_hi)
-    second_deriv_lo, second_deriv_hi = lin_deriv(middle_weight, second_deriv_lo, second_deriv_hi)
-    # Through tanh2
-    second_tanh_deriv_lo: List[float] = []
-    second_tanh_deriv_hi: List[float] = []
-    second_tanh_second_lo: List[float] = []
-    second_tanh_second_hi: List[float] = []
-    for value_lo, value_hi, deriv_lo, deriv_hi, second_lo, second_hi in zip(
-        middle_activation_lo,
-        middle_activation_hi,
-        first_deriv_lo,
-        first_deriv_hi,
-        second_deriv_lo,
-        second_deriv_hi,
-    ):
-        tanh_prime_lo, tanh_prime_hi = tanh_prime_bounds(value_lo, value_hi)
-        tanh_second_lo, tanh_second_hi = tanh_second_bounds(value_lo, value_hi)
-        deriv_out_lo, deriv_out_hi = mul_interval((tanh_prime_lo, tanh_prime_hi), (deriv_lo, deriv_hi))
-        second_tanh_deriv_lo.append(deriv_out_lo); second_tanh_deriv_hi.append(deriv_out_hi)
-        deriv_sq = square_interval((deriv_lo, deriv_hi))
-        curvature_term = mul_interval((tanh_second_lo, tanh_second_hi), deriv_sq)
-        chain_term = mul_interval((tanh_prime_lo, tanh_prime_hi), (second_lo, second_hi))
-        second_out_lo, second_out_hi = add_interval(curvature_term, chain_term)
-        second_tanh_second_lo.append(second_out_lo); second_tanh_second_hi.append(second_out_hi)
-    first_deriv_lo, first_deriv_hi = second_tanh_deriv_lo, second_tanh_deriv_hi
-    second_deriv_lo, second_deriv_hi = second_tanh_second_lo, second_tanh_second_hi
+        first_deriv_lo, first_deriv_hi = lin_deriv(weight, first_deriv_lo, first_deriv_hi)
+        second_deriv_lo, second_deriv_hi = lin_deriv(weight, second_deriv_lo, second_deriv_hi)
+        next_deriv_lo: List[float] = []
+        next_deriv_hi: List[float] = []
+        next_second_lo: List[float] = []
+        next_second_hi: List[float] = []
+        for value_lo, value_hi, deriv_lo, deriv_hi, second_lo, second_hi in zip(
+            activation_lo, activation_hi, first_deriv_lo, first_deriv_hi,
+            second_deriv_lo, second_deriv_hi,
+        ):
+            prime = tanh_prime_bounds(value_lo, value_hi)
+            second = tanh_second_bounds(value_lo, value_hi)
+            deriv_out_lo, deriv_out_hi = mul_interval(prime, (deriv_lo, deriv_hi))
+            next_deriv_lo.append(deriv_out_lo)
+            next_deriv_hi.append(deriv_out_hi)
+            # Second derivative: p2*(z')^2 + p1*z''.
+            deriv_sq = square_interval((deriv_lo, deriv_hi))
+            curvature_term = mul_interval(second, deriv_sq)
+            chain_term = mul_interval(prime, (second_lo, second_hi))
+            second_out_lo, second_out_hi = add_interval(curvature_term, chain_term)
+            next_second_lo.append(second_out_lo)
+            next_second_hi.append(second_out_hi)
+        first_deriv_lo, first_deriv_hi = next_deriv_lo, next_deriv_hi
+        second_deriv_lo, second_deriv_hi = next_second_lo, next_second_hi
     # Final linear to scalar output
     first_deriv_lo, first_deriv_hi = lin_deriv(output_weight, first_deriv_lo, first_deriv_hi)
     second_deriv_lo, second_deriv_hi = lin_deriv(output_weight, second_deriv_lo, second_deriv_hi)
@@ -252,7 +225,6 @@ def run_ibp() -> Dict[str, Any]:
             middle_weight,
             middle_bias,
             output_weight,
-            output_bias,
             x_lo,
             x_hi,
         )

@@ -15,8 +15,8 @@ This file lifts the single-step energy lemma to whole trajectories:
 for any (possibly adversarial) asynchronous update schedule `useq`, the energy sequence is
 non-increasing.
 
-Stronger theorems from the paper (convergence for fair schedules; cyclic convergence bounds) can
-be built on top of these monotonicity facts.
+Monotonicity alone does not guarantee convergence: a schedule might never update an unstable unit.
+`Convergence.lean` proves finite-state convergence and a sweep bound for the cyclic schedule.
 -/
 
 @[expose] public section
@@ -38,7 +38,6 @@ theorem energy_seqStates_succ_le (p : Params ℝ n)
     energy (α := ℝ) p (seqStates (α := ℝ) p useq s0 (k + 1))
       ≤
     energy (α := ℝ) p (seqStates (α := ℝ) p useq s0 k) := by
-  -- Unfold one step and apply the single-update lemma.
   simp only [Spec.Hopfield.seqStates]
   exact energy_updateAt_le (n := n) p hsym hdiag _ _
 

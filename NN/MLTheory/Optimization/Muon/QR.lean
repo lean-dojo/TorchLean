@@ -268,41 +268,6 @@ theorem update_newtonSchulz_exact_gram_direction_has_exact_column_gram_checked {
           State ℝ (.dim m (.dim n .scalar)))
         parameters gradients).optimizerState.momentumBuffer hgram hsum)
 
-/--
-Initialized version: exact column Gram of the first fresh momentum buffer and $a+b+c=1$
-certify the first Newton-Schulz Muon step exactly.
--/
-theorem init_has_exact_certified_step_newtonSchulz_exact_gram_checked {m n : Nat}
-    (coeffs : NewtonSchulzCoeffs ℝ) (steps : Nat)
-    (learningRate momentum : ℝ) (parameters gradients : MatrixTensor ℝ m n)
-    (hgram :
-      HasExactColumnGram
-        (update
-          (init learningRate momentum
-            (newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps)
-            parameters)
-          parameters gradients).optimizerState.momentumBuffer)
-    (hsum : coeffs.a + coeffs.b + coeffs.c = 1) :
-    ∃ direction : MatrixTensor ℝ m n,
-      ExactCertifiedStep
-        (init learningRate momentum
-          (newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps)
-          parameters)
-        parameters gradients direction := by
-  exact exactCertifiedStep_of_checkedBackend
-    (backend := newtonSchulzFixedPointCheckedExactOrthogonalizer
-      (α := ℝ) (m := m) (n := n) coeffs steps)
-    (learningRate := learningRate) (momentum := momentum)
-    (momentumBuffer := Tensor.full (.dim m (.dim n .scalar)) 0) (parameters := parameters)
-    (gradients := gradients)
-    (newtonSchulzFixedPointCheckedExact_success_of_coeff_sum_one
-      coeffs steps
-      (update
-        (init learningRate momentum
-          (newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps)
-          parameters)
-        parameters gradients).optimizerState.momentumBuffer hgram hsum)
-
 /-! ## QR certificates -/
 
 /--
@@ -376,51 +341,6 @@ theorem update_qr_direction_has_exact_column_gram {m n : Nat}
     (backend := qrCheckedExactOrthogonalizer (m := m) (n := n))
     (learningRate := learningRate) (momentum := momentum) (momentumBuffer := momentumBuffer)
     (parameters := parameters) (gradients := gradients)
-    hpivots
-
-/--
-Initialized QR-backed Muon step theorem: if the first fresh momentum buffer has positive QR pivots,
-the first initialized Muon update has a certified exact step.
--/
-theorem init_has_exact_certified_step_qr {m n : Nat}
-    (learningRate momentum : ℝ) (parameters gradients : MatrixTensor ℝ m n)
-    (hpivots :
-      HasPositiveQRPivots
-        (update
-          (init learningRate momentum (qrOrthogonalizer (m := m) (n := n)) parameters)
-          parameters gradients).optimizerState.momentumBuffer) :
-    ∃ direction : MatrixTensor ℝ m n,
-      ExactCertifiedStep
-        (init learningRate momentum (qrOrthogonalizer (m := m) (n := n)) parameters)
-        parameters gradients direction := by
-  exact exactCertifiedStep_of_checkedBackend
-    (backend := qrCheckedExactOrthogonalizer (m := m) (n := n))
-    (learningRate := learningRate) (momentum := momentum)
-    (momentumBuffer := Tensor.full (.dim m (.dim n .scalar)) 0) (parameters := parameters)
-    (gradients := gradients)
-    hpivots
-
-/--
-Initialized QR-backed direction theorem: if the first fresh momentum buffer has positive QR pivots,
-the first initialized Muon update direction has column Gram $I$.
--/
-theorem init_qr_direction_has_exact_column_gram {m n : Nat}
-    (learningRate momentum : ℝ) (parameters gradients : MatrixTensor ℝ m n)
-    (hpivots :
-      HasPositiveQRPivots
-        (update
-          (init learningRate momentum (qrOrthogonalizer (m := m) (n := n)) parameters)
-          parameters gradients).optimizerState.momentumBuffer) :
-    HasExactColumnGram
-      ((qrOrthogonalizer (m := m) (n := n)).apply
-        (update
-          (init learningRate momentum (qrOrthogonalizer (m := m) (n := n)) parameters)
-          parameters gradients).optimizerState.momentumBuffer) := by
-  exact checkedBackend_updateDirection_hasExactColumnGram
-    (backend := qrCheckedExactOrthogonalizer (m := m) (n := n))
-    (learningRate := learningRate) (momentum := momentum)
-    (momentumBuffer := Tensor.full (.dim m (.dim n .scalar)) 0) (parameters := parameters)
-    (gradients := gradients)
     hpivots
 
 end Muon

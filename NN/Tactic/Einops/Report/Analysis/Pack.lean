@@ -13,6 +13,9 @@ public import NN.Tactic.Einops.Report.Analysis.Common
 
 This module reports segment metadata and native execution for concrete `pack`
 and `unpack` certificates.
+
+Unpack returns a component-indexed function. Its reported total counts describe evaluating each
+component once; they do not imply that all component buffers are allocated eagerly.
 -/
 
 public meta section

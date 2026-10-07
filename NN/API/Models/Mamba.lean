@@ -87,7 +87,7 @@ With no Mamba layers, the projection accepts empty sequences and ignores the unu
 
 The time-step projection is a dense matrix, matching `Models.SelectiveMambaBlockSpec`. The usual
 low-rank Mamba checkpoint stores two factors instead; their product matches a forward map here, but
-training a dense matrix gives a different parameterization. `Model.Mamba.runArray` exposes explicit
+training a dense matrix gives a different parameterization. `Model.Mamba.run` exposes explicit
 state and convolution history for streaming computations.
 -/
 def languageModel (config : Config) (sequenceLength : Nat) (batchShape : Shape := []) :

@@ -11,9 +11,8 @@ public import NN.Runtime.Autograd.Engine.TapeM
 /-!
 # Reasoning about the tape-builder monad
 
-`Runtime.Autograd.TapeM` is the `StateT (Tape α) Result` wrapper users write eager programs in.
-The pure engine underneath is well covered by proofs; the monadic surface was not, so a `do`-block
-had no route back to a statement about the tape it built. This file supplies that route.
+`Runtime.Autograd.TapeM` is the `StateT (Tape α) Result` wrapper for eager programs. These lemmas
+relate a monadic program's result to the pure operations and tape states it passes through.
 
 Every op wrapper that threads the tape is `TapeM.Internal.record` applied to its pure counterpart,
 so the whole surface reduces through one lemma:
@@ -23,11 +22,9 @@ so the whole surface reduces through one lemma:
   returns value-then-state.
 - `run_bind_inv` splits a successful `run` of `m >>= f` into its two successful stages, which is
   what peels a `do`-block one statement at a time.
-- The `run_<op>_ok` family below is `record_run_ok` instantiated at each op's own pure
-  counterpart. Each is a definitional instantiation (the proof term is `record_run_ok` with `op`
-  supplied, with no unfolding lemma in between), so the family stays correct by construction as
-  ops are added: if one of them ever stops typechecking, the wrapper it names has stopped being
-  `Internal.record` at its pure op.
+- The `run_<op>_ok` lemmas instantiate `record_run_ok` for individual operators. They transfer
+  successful results; they do not themselves establish the operators' numerical or gradient
+  correctness.
 
 `TapeM.leaf` is not in the family: it is total, so its pure counterpart returns a bare pair rather
 than a `Result`, and `run_leaf` states its (unconditional) run directly. `TapeM.backwardScalar` is

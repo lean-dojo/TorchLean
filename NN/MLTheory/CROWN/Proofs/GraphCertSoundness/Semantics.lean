@@ -217,7 +217,7 @@ def evalNode? (nodes : Array Node) (ps : ParamStore ℝ) (inputs : Std.HashMap N
           | some x =>
               some
                 { n := x.n
-                  v := Tensor.mapSpec (α := ℝ) (s := .dim x.n .scalar) (fun z => Real.sin z) x.v }
+                  v := Tensor.map (α := ℝ) (shape := .dim x.n .scalar) (fun z => Real.sin z) x.v }
           | none => none
       | _ => none
   | .cos =>
@@ -227,7 +227,7 @@ def evalNode? (nodes : Array Node) (ps : ParamStore ℝ) (inputs : Std.HashMap N
           | some x =>
               some
                 { n := x.n
-                  v := Tensor.mapSpec (α := ℝ) (s := .dim x.n .scalar) (fun z => Real.cos z) x.v }
+                  v := Tensor.map (α := ℝ) (shape := .dim x.n .scalar) (fun z => Real.cos z) x.v }
           | none => none
       | _ => none
   | .linear =>

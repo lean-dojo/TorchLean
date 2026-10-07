@@ -18,6 +18,10 @@ One lemma per operator of the proved forward fragment whose lowering writes to t
 to unit affine parameters), and convolutions. Each lemma assumes the IR graph holds the node
 emitted by `lowerNode` at index `id` and that the parameter store agrees with the lowering at that
 id; it concludes that IR evaluation returns exactly what the typed evaluator `evalNode` returns.
+
+The convolution theorem covers arbitrary spatial rank, but this source fragment is unbatched,
+with one group, unit dilation, and symmetric padding. `PayloadBridge` separately relates the more
+general parameter-store convolution to its IR evaluation.
 -/
 
 @[expose] public section
@@ -148,7 +152,6 @@ theorem evalAt_eq_evalNode_layerNorm
       (h_seq_pos := op.rows_pos) (h_embed_pos := op.width_pos)
   have hNoLayerNorm : (payloadOfParamStore (α := α) P).layerNorm? id = none := by
     rw [IRStep.payloadOfParamStore_layerNorm?_eq, hLayerNorm]
-  -- `Graph.layerNormWithoutAffine` is this `layerNormMatrix` application by definition.
   have hLayerNormMatrix :
       Graph.layerNormMatrix op.rows op.width xMatrix
           (Tensor.full (α := α) [op.width] 1) (Tensor.full (α := α) [op.width] 0)
@@ -169,8 +172,8 @@ theorem evalAt_eq_evalNode_layerNorm
     Bind.bind, Except.bind, Pure.pure, Except.pure] using hEvalAt
 
 /--
-A lowered `conv` node evaluates like the typed `conv` node. The IR evaluates a grouped, dilated
-convolution with `groups = 1`, unit dilation, and symmetric padding, which agrees with the dense
+A lowered unbatched `conv` node evaluates like the typed `conv` node. The IR evaluates a grouped,
+dilated convolution with `groups = 1`, unit dilation, and symmetric padding, agreeing with the dense
 `Spec.convSpec` used by the typed evaluator up to a shape cast.
 -/
 theorem evalAt_eq_evalNode_conv

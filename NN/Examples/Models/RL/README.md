@@ -51,6 +51,19 @@ scripts/lake.sh -Kcuda=true exe torchlean ppo_pong_ram --device cuda --updates 1
 PPO commands write JSON artifacts under `data/rl/` by default. Open the corresponding file in
 `Views/` and place the cursor on its widget command to inspect the artifact in the Lean infoview.
 
+| Viewer under `Views/` | Artifact producer | What it shows |
+| --- | --- | --- |
+| `PPOCartPole.lean` | `torchlean ppo_cartpole` | Greedy evaluation return by training checkpoint |
+| `PPOGridWorld.lean` | `torchlean ppo_gridworld` | Return curve, before/after policies, and episode paths |
+| `PPOPongRam.lean` | `torchlean ppo_pong_ram` | Evaluation return from the optional ALE/Gymnasium run |
+| `GymnasiumRollout.lean` | `scripts/rl/gymnasium_server.py --out PATH` | Recorded transitions and boundary-check results |
+
+These views display saved data; opening them does not launch training. If you choose a custom
+output path, update the viewer path too. Missing files appear as error panels, so the modules can
+build before a training run. `GymnasiumRollout.lean` includes the export command for its expected
+`data/rl/gym_cartpole_rollout.json` file. Its observation, action, reward, and termination checks
+do not prove that the external simulator obeys an MDP model or that a policy is optimal.
+
 ## What Is Checked
 
 The RL examples are executable algorithm examples with formal hooks. The checked surface is the

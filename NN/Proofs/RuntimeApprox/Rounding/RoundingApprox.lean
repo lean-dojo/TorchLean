@@ -97,8 +97,8 @@ theorem scalarApprox_roundedAdd {x y xhat yhat epsx epsy : ℝ}
 /--
 Compositional absolute-error bound for rounded multiplication.
 
-Besides the fresh rounding term for `xhat * yhat`, the budget includes the usual first-order
-product perturbation terms using the available magnitude/error bounds.
+Besides the fresh rounding term for `xhat * yhat`, the budget includes magnitude-weighted input
+errors and the conservative cross term `2 * epsx * epsy`; it is not a first-order-only estimate.
 -/
 theorem scalarApprox_roundedMul {x y xhat yhat epsx epsy : ℝ}
     (hx : scalarApprox x xhat epsx) (hy : scalarApprox y yhat epsy) :

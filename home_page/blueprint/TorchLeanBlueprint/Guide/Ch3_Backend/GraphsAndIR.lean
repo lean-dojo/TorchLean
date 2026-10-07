@@ -96,10 +96,6 @@ Proved.ForwardProgram ── Proved.lowerForwardProgramToIR ──> NN.IR.Graph
 `Proved.ForwardProgram` is a smaller first-order let-chain whose constructors expose the fragment
 covered by the theorem. It is not an alias for the general `TorchLean.Program` interface.
 
-To apply a source-lowering theorem, the source must belong to the language it covers.
-A successful export from a general `TorchLean.Program` does not supply a term of
-`Proved.ForwardProgram` or a proof about that export.
-
 # MLP Graph Structure
 
 The running example is
@@ -148,13 +144,13 @@ from the example file:
 -- remain in a separate payload.
 def graph : NN.IR.Graph :=
   let inputNode : NN.IR.Node :=
-    { id := 0, parents := #[], kind := .input, outShape := input }
+    { id := 0, parents := #[], kind := .input, outShape := [4] }
   let hiddenLinearNode : NN.IR.Node :=
-    { id := 1, parents := #[0], kind := .linear, outShape := hiddenShape }
+    { id := 1, parents := #[0], kind := .linear, outShape := [5] }
   let hiddenActivationNode : NN.IR.Node :=
-    { id := 2, parents := #[1], kind := .relu, outShape := hiddenShape }
+    { id := 2, parents := #[1], kind := .relu, outShape := [5] }
   let outputLinearNode : NN.IR.Node :=
-    { id := 3, parents := #[2], kind := .linear, outShape := output }
+    { id := 3, parents := #[2], kind := .linear, outShape := [3] }
   let reductionNode : NN.IR.Node :=
     { id := 4, parents := #[3], kind := .sum, outShape := [] }
   let outputNode : NN.IR.Node :=
@@ -414,13 +410,9 @@ Except.error "IR graph: id discipline violated at
   index 2: nodes[2].id = 7"
 ```
 
-Each failed check returns an `Except.error` that identifies the inconsistent field.
-Every failure is a value in `Except String`, because the caller that reads an untrusted file is
-supposed to be able to report the problem rather than crash.
-
-Each diagnostic points to a different repair. Changing a tensor dimension will not repair the
-forward reference, and renumbering a node will not establish that ReLU has the declared output
-shape.
+Each failed check returns an `Except.error` identifying the inconsistent field, so an importer can
+report the problem. A shape change cannot repair a forward reference, and renumbering cannot
+repair a shape mismatch.
 
 ## Relating Shape Checking To Evaluation
 
@@ -467,19 +459,15 @@ we can watch that happen:
 -- These are the shapes of the values actually returned by
 -- its reference evaluator.
 #eval (Graph.denoteAll (α := Float) (g := graph)
-    (payload := payload floatParameters)
+    (payload := payload parameters)
     (input :=
-      Spec.SomeTensor.ofTensor referenceInputFloat)).map
+      Spec.SomeTensor.ofTensor center)).map
   fun vals => vals.map fun v => v.shape
 ```
 
 ```leanOutput irShapesAgree2 (whitespace := lax)
 Except.ok #[[4], [5], [5], [3], [], []]
 ```
-
-The first array contains the declared shapes; the second contains the shapes returned by
-evaluation. The theorem establishes this agreement for every successful evaluation covered by
-its hypotheses.
 
 The distinction also matters in the backend adapter. `NN.Backend.IR.checkedPlanGraph` calls
 `checkWellFormed` before selecting kernels, and does not run the shape check. A caller accepting
@@ -502,15 +490,15 @@ def payload {α : Type} [TorchLean.Storage α] [Context α]
   { linear? := fun id =>
       if id = 1 then
         some {
-          outDim := hiddenWidth
-          inDim := inputWidth
+          outDim := 5
+          inDim := 4
           W := parameters.hiddenWeight
           b := parameters.hiddenBias
         }
       else if id = 3 then
         some {
-          outDim := outputWidth
-          inDim := hiddenWidth
+          outDim := 3
+          inDim := 5
           W := parameters.outputWeight
           b := parameters.outputBias
         }
@@ -547,14 +535,14 @@ def irBadPayload : Payload Float :=
                b := Tensor.full [3] 0.0 }
       else if id = 3 then
         some { outDim := 3, inDim := 5
-               W := floatParameters.outputWeight
-               b := floatParameters.outputBias }
+               W := parameters.outputWeight
+               b := parameters.outputBias }
       else none }
 
 #eval (Graph.denote (α := Float) (g := graph)
     (payload := irBadPayload)
     (input :=
-      Spec.SomeTensor.ofTensor referenceInputFloat)
+      Spec.SomeTensor.ofTensor center)
     (outputId := 5)).map fun v => Spec.pretty v.tensor
 ```
 
@@ -615,9 +603,9 @@ We can read every intermediate value from this table to locate where two evaluat
 -- Inspect every intermediate, so the final scalar can be
 -- traced through all six nodes.
 #eval (Graph.denoteAll (α := Float) (g := graph)
-    (payload := payload floatParameters)
+    (payload := payload parameters)
     (input :=
-      Spec.SomeTensor.ofTensor referenceInputFloat)).map
+      Spec.SomeTensor.ofTensor center)).map
   fun vals => vals.map fun v => Spec.pretty v.tensor
 ```
 
@@ -657,8 +645,8 @@ We can compare two executable choices directly:
 ```lean (name := irFloat)
 -- Evaluate the graph using the host Float scalar
 -- interpretation.
-#eval (evaluateOutput (α := Float) floatParameters
-  referenceInputFloat).map Spec.pretty
+#eval (evaluate (α := Float) parameters
+  center).map Spec.pretty
 ```
 
 ```leanOutput irFloat (whitespace := lax)
@@ -669,12 +657,12 @@ Except.ok "0.027713"
 -- Convert the same parameters to the executable binary32
 -- interpretation.
 def irIEEEParams : Parameters (ExecFloat.Binary 8 23) :=
-  floatParameters.map Runtime.ofFloat
+  parameters.map Runtime.ofFloat
 
-def irCenter : Tensor (ExecFloat.Binary 8 23) input :=
-  Tensor.map Runtime.ofFloat referenceInputFloat
+def irCenter : Tensor (ExecFloat.Binary 8 23) [4] :=
+  Tensor.map Runtime.ofFloat center
 
-#eval (evaluateOutput (α := (ExecFloat.Binary 8 23))
+#eval (evaluate (α := (ExecFloat.Binary 8 23))
   irIEEEParams irCenter).map fun output =>
     Spec.pretty (Tensor.map
       (Float32.toFloat ∘ ExecFloat.Binary.toFloat32)
@@ -700,19 +688,19 @@ the graph:
 -- These functions return optional boxes; a type alone does
 -- not promise a bound at every node.
 open NN.MLTheory.CROWN in
-#check propagateBounds (α := ℝ)
+#check runIBP (α := ℝ) graph
 
 open NN.MLTheory.CROWN in
-#check propagateBounds (α := Floats.FP32)
+#check runIBP (α := Floats.FP32) graph
 ```
 
 ```leanOutput irNoncomputable (whitespace := lax)
-propagateBounds : Graph.ParamStore ℝ →
+runIBP graph : Graph.ParamStore ℝ →
   Array (Option (FlatBox ℝ))
 ```
 
 ```leanOutput irNoncomputable (whitespace := lax)
-propagateBounds : Graph.ParamStore Floats.FP32 →
+runIBP graph : Graph.ParamStore Floats.FP32 →
   Array (Option (FlatBox Floats.FP32))
 ```
 
@@ -740,11 +728,12 @@ it, then print the box at every node:
 ```lean (name := irIBP)
 -- Propagate the input box and display where the interval
 -- becomes less precise.
-def irBox := inputBoxOf (α := (ExecFloat.Binary 8 23))
+def irBox := inputBox (α := (ExecFloat.Binary 8 23))
   (eps := 0.05)
 
-def irFlatBox := flattenInputBox
-  (α := (ExecFloat.Binary 8 23)) irBox
+def irFlatBox : NN.MLTheory.CROWN.FlatBox
+    (ExecFloat.Binary 8 23) :=
+  { dim := 4, lo := irBox.lo, hi := irBox.hi }
 
 def irStore := parameterStore
   (α := (ExecFloat.Binary 8 23)) irIEEEParams irFlatBox
@@ -970,12 +959,13 @@ hypotheses.
 
 # Executable Coverage And Proof Coverage
 
-`Runtime.Autograd.IRExec.lowerToForwardGraph` validates the graph and lowers the current IR
-vocabulary operation by operation: elementwise arithmetic, seeded masks, broadcasting, reductions,
+`Runtime.Autograd.IRExec.lowerToForwardGraph` validates the graph and lowers supported operations:
+elementwise arithmetic, seeded masks, broadcasting, reductions,
 matrix multiplication with vector promotion and broadcast batch shapes, linear layers over any
 leading batch shape, convolution payloads, pooling, normalization, reshape and permutation,
 concatenation along any axis, and scalar MSE. Lowering rejects a shape or axis that the IR semantics
-itself rejects; it does not panic and it does not guess.
+itself rejects. Custom nodes currently return an error requiring checked execution; they have no
+total forward lowering. Recognizing their IR tag is not enough to execute them.
 
 On our graph it succeeds, and the result records the input shape and one shape per lowered node:
 
@@ -983,7 +973,7 @@ On our graph it succeeds, and the result records the input shape and one shape p
 -- Expose the input shape and the sequence of intermediate
 -- shapes recovered by lowering.
 #eval (lowerToForwardGraph (α := Float) graph
-  (payload floatParameters)).map fun exec =>
+  (payload parameters)).map fun exec =>
     (exec.inShape, exec.ss)
 ```
 
@@ -1037,15 +1027,15 @@ agrees with IR denotation on every input.
 -/
 theorem irLoweringAgrees (exec : ForwardGraph Float)
     (h : lowerToForwardGraph (α := Float) graph
-      (payload floatParameters) = .ok exec)
+      (payload parameters) = .ok exec)
     (x : Tensor Float exec.inShape) :
     Graph.denoteAll (α := Float) (g := graph)
-        (payload := payload floatParameters)
+        (payload := payload parameters)
         (input :=
           { shape := exec.inShape, tensor := x }) =
       .ok (exec.denoteAll x) :=
   denoteAll_eq_of_lowerToForwardGraph graph
-    (payload floatParameters) exec irNoRawLog h x
+    (payload parameters) exec irNoRawLog h x
 ```
 
 `decide` checks the concrete node array for raw-log operations. The resulting proof discharges
@@ -1073,18 +1063,9 @@ chronological shape list once when lowering finishes.
 used by compiler simplification to select this implementation. It preserves both successful
 lowerings and errors; it does not change operation closures or their summation order.
 
-The {src "docs/benchmarks/irexec-scaling-20260925.md"}[2026-09-25 scaling measurements] compare
-this implementation with `0f845313` on native ReLU chains with one `[4]` input, using Lean 4.34.0
-on Linux `x86_64`. Across three fresh processes per case, median lowering time at 16,000 ReLUs
-fell from 2,352.590 ms to 4.180 ms, while whole-process peak memory fell from 3,987.46 MiB to
-77.20 MiB. Lowering 1,024,000 ReLUs took 247.650 ms; that larger experiment measured construction
-and disposal without tensor evaluation.
-
-These measurements concern lowering cost. Evaluation of the 16,000-node small-tensor chain took
-7.925 ms after the change versus 4.323 ms before, with matching result bits. Native evaluation
-still uses recursion and depends on stack capacity. The retained timings and growth guard give
-empirical scaling evidence; the equality theorem proves semantic preservation, not an asymptotic
-complexity bound.
+The equality theorem proves semantic preservation, including error results. It does not prove an
+asymptotic complexity bound. Native graph evaluation still uses recursion and depends on stack
+capacity.
 
 # Axis Operations And Lowering Coverage
 
@@ -1100,7 +1081,7 @@ scripts/lake.sh exe torchlean ir_axis_ops
 
 ```terminal +output
 == IR axis ops tutorial ==
-The runtime validates each graph and evaluates its selected output.
+The IR evaluator validates each graph and computes its selected output on CPU.
 
 -- softmax axis=1 on shape [2,3,4]
 [softmax_middle_axis] output shape: [2, 3, 4]
@@ -1116,16 +1097,11 @@ PyTorch meaning: normalized_shape = x.shape[axis:] = [3,4]
 The full transcript also prints the leading scalars. The example calls
 `Runtime.Autograd.IRExec.evaluate`, which checks the graph and input shapes, lowers the graph,
 and returns the selected output. The tutorial supplies the graphs and prints the results;
-validation and execution live in the runtime library.
+validation and execution live in the runtime library. This is the Lean tensor evaluator, not
+LibTorch dispatch. Choose the scalar with `--arithmetic native`, `ieee`, or `complex`; this command
+does not accept device, execution-mode, or backend-reporting flags.
 
-The selected dimension is part of the operation, so axis zero, an interior axis, and the final axis
-all retain their usual tensor meaning. LayerNorm folds the dimensions before the axis into rows and
-the dimensions from the axis onward into the normalized extent, which is PyTorch's
-`normalized_shape = x.shape[axis:]`. Unsupported lowering and invalid shapes return errors.
-Execution alone does not establish equivalence with the specification; that is the role of the
-semantic preservation theorem and its hypotheses.
-
-Change `concat axis=1` to an out-of-range axis in
+Change the graph's `concat (axis := 1)` to an out-of-range axis in
 {src "NN/Examples/DeepDives/IRAxisOps.lean"}[`IRAxisOps.lean`] and shape inference rejects the node
 before evaluation, with the same kind of error message the broken graphs produced earlier.
 
@@ -1134,11 +1110,9 @@ coordinates fixed. LayerNorm starting at that axis combines twelve entries into 
 statistics. Concatenation instead changes one extent and retains the others. These examples
 exercise choices that a last-axis-only test would miss.
 
-The axis and shape attributes are part of an operation's meaning, even when they do not alter
-the final tensor shape. For example, two different normalization axes of a square matrix can
-both return that matrix's shape while producing different values. Shape soundness therefore
-cannot establish the axis choice by itself. The semantic preservation result must read the
-same attribute as the source operation and identify the resulting values.
+Changing the normalization axis can change values without changing the output shape. Shape
+soundness alone cannot establish that the intended axis was used; semantic preservation must
+identify the values too.
 
 # Kernel Planning
 
@@ -1264,15 +1238,3 @@ Changing one field at a time isolates the checks and interpretations used above.
    condition doing its job.
 7. Plan the graph with a policy asking for a provider this build does not have, and read the error.
    It comes from the backend boundary, not from the graph.
-
-# Graph Verification Requirements
-
-The six-node example separates two remaining verification tasks. The interval rule must preserve
-enclosure under the chosen scalar semantics, and the resulting interval must be tight enough for
-the property being checked. The global `tanh` range shows why these are separate: the final rule
-discards the narrow interval from node 4 regardless of how many samples pass containment.
-
-{ref "verification"}[Verification And Certificates] develops the enclosure arguments and their
-graph hypotheses. {ref "fp32-soundness"}[Floating-Point Soundness] studies how rounding affects
-those arguments. Applying them to a particular execution requires checking both its operations
-and its scalar backend against the hypotheses of the theorem being used.

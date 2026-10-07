@@ -18,8 +18,9 @@ appending future tokens cannot change outputs already emitted for a prefix.
 
 We state the theorem at the array-runner level rather than for a particular CUDA kernel. Runtime
 implementations may use chunked or parallel selective scan, but they must refine these spec
-runners. Combined with `NN.MLTheory.StateSpace.diagonalSelectiveScan_append`, this gives the
-proof layer contract for Mamba/S4-style causal sequence processing.
+runners. `NN.MLTheory.StateSpace.diagonalSelectiveScan_append` describes how sequential scan chunks
+compose. These theorems do not establish native-kernel refinement or equality after reordering
+floating-point arithmetic.
 
 References:
 * Albert Gu and Tri Dao, "Mamba: Linear-Time Sequence Modeling with Selective State Spaces",

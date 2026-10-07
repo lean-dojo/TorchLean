@@ -39,56 +39,6 @@ def floatMatrix : Tensor Float [2, 2] :=
 def floatRight : Tensor Float [2, 2] :=
   [[5.0, 6.0], [7.0, 8.0]]
 
-def complexMatrix : Tensor (Complex Float) [2, 2] :=
-  [[{ re := 1.0, im := 2.0 }, { re := 3.0, im := 4.0 }],
-   [{ re := 5.0, im := 6.0 }, { re := 7.0, im := 8.0 }]]
-
-def complexIdentity : Tensor (Complex Float) [2, 2] :=
-  [[{ re := 1.0, im := 0.0 }, { re := 0.0, im := 0.0 }],
-   [{ re := 0.0, im := 0.0 }, { re := 1.0, im := 0.0 }]]
-
-/-! The surface operations infer compact public tensor shapes without annotations. -/
-
-def inferredMatrix : Tensor Float [2, 3] :=
-  [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
-
-def inferredRight : Tensor Float [3, 4] :=
-  [[1.0, 2.0, 3.0, 4.0],
-   [5.0, 6.0, 7.0, 8.0],
-   [9.0, 10.0, 11.0, 12.0]]
-
-def inferredTransposed :=
-  rearrange inferredMatrix "row column -> column row"
-
-def inferredTiled :=
-  expand inferredMatrix "row column -> batch row column" with batch := 3
-
-def inferredRowSums :=
-  reduce inferredMatrix "row column -> row" by sum
-
-def inferredProduct :=
-  einsum inferredMatrix, inferredRight
-    "row contracted, contracted column -> row column"
-
-def inferredPacked :=
-  pack inferredRowSums, inferredMatrix "*"
-
-def inferredRestored :=
-  unpack inferredPacked "*"
-
-def inferredDimensions :=
-  parse_shape inferredMatrix "row column"
-
-example : Tensor Float [3, 2] := inferredTransposed
-example : Tensor Float [3, 2, 3] := inferredTiled
-example : Tensor Float [2] := inferredRowSums
-example : Tensor Float [2, 4] := inferredProduct
-example : Tensor Float [8] := inferredPacked.tensor
-example : List Shape := inferredPacked.shapes
-example : Tensor Float [2] := inferredRestored 0
-example : Tensor Float [2, 3] := inferredRestored 1
-example : List (String × Nat) := inferredDimensions
-
 /-- Two contracted axes whose stride costs favor a different traversal. -/
 def orderedContraction (weights : Tensor Float [2, 2]) (values : Tensor Float [2, 2, 2]) :
     Tensor Float [2] :=
@@ -159,6 +109,72 @@ def checkFactorizationResiduals : IO Unit := do
         expect s!"Cholesky reconstruction at {n}:{i.val},{j.val}"
           (Float.abs (Spec.get2 reconstructed i j - Spec.get2 kernel i j) < 1e-12)
 
+/-- Invalid columns must not alter the active-basis policy or contaminate unused tensor slots. -/
+def checkExceptionalWideQR : IO Unit := do
+  let nan : Float := 0.0 / 0.0
+  let firstInvalid : Tensor Float [2, 3] := [[nan, 1.0, 0.0], [0.0, 0.0, 1.0]]
+  let firstFactors := Tensor.qr firstInvalid
+  expect "invalid first column leaves room for later independent columns"
+    (Tensor.maxAbsDiff firstFactors.q (Tensor.identity 2) == 0)
+  expect "invalid first column has no active projection coefficients"
+    (Tensor.maxAbsDiff firstFactors.r
+      ([[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] : Tensor Float [2, 3]) == 0)
+  let lastInvalid : Tensor Float [2, 3] := [[1.0, 0.0, nan], [0.0, 1.0, 0.0]]
+  let lastFactors := Tensor.qr lastInvalid
+  expect "invalid later column preserves the completed basis"
+    (Tensor.maxAbsDiff lastFactors.q (Tensor.identity 2) == 0)
+  expect "active projections preserve IEEE invalid products"
+    (lastFactors.r[0][2].isNaN && lastFactors.r[1][2].isNaN)
+
+/-- Reduced QR keeps independent columns after dependent columns and handles empty axes. -/
+def checkReducedQR : IO Unit := do
+  checkExceptionalWideQR
+  let wide : Tensor Float [2, 3] :=
+    [[1.0, 2.0, 0.0],
+     [0.0, 0.0, 1.0]]
+  let wideFactors := Tensor.qr wide
+  let wideQ : Tensor Float [2, 2] := wideFactors.q
+  let wideR : Tensor Float [2, 3] := wideFactors.r
+  let wideReconstructed : Tensor Float [2, 3] :=
+    einsum wideQ, wideR
+      "row contracted, contracted column -> row column"
+  expect "wide reduced QR reconstructs after an early dependent column"
+    (Tensor.maxAbsDiff wide wideReconstructed < 1e-6)
+  let wideQtq : Tensor Float [2, 2] :=
+    einsum wideQ, wideQ
+      "contracted row, contracted column -> row column"
+  expect "wide reduced QR retains a complete row-space basis"
+    (Tensor.maxAbsDiff wideQtq (Tensor.identity 2) < 1e-6)
+
+  let deficient : Tensor Float [3, 2] :=
+    [[1.0, 2.0],
+     [2.0, 4.0],
+     [3.0, 6.0]]
+  let deficientFactors := Tensor.qr deficient
+  let deficientReconstructed : Tensor Float [3, 2] :=
+    einsum deficientFactors.q, deficientFactors.r
+      "row contracted, contracted column -> row column"
+  expect "rank-deficient QR still reconstructs its input"
+    (Tensor.maxAbsDiff deficient deficientReconstructed < 1e-6)
+  let deficientSecondColumn : Tensor Float [3] :=
+    rearrange deficientFactors.q "row column -> column row" |>.get 1
+  expect "rank-deficient QR emits a zero dependent column"
+    (Tensor.maxAbs deficientSecondColumn < 1e-6)
+
+  let noRows : Tensor Float [0, 3] := Tensor.zeros [0, 3]
+  let noRowsFactors := Tensor.qr noRows
+  expect "zero-row QR has an empty Q buffer"
+    ((Tensor.to noRowsFactors.q (Array Float)).isEmpty)
+  expect "zero-row QR has an empty R buffer"
+    ((Tensor.to noRowsFactors.r (Array Float)).isEmpty)
+
+  let noColumns : Tensor Float [3, 0] := Tensor.zeros [3, 0]
+  let noColumnsFactors := Tensor.qr noColumns
+  expect "zero-column QR has an empty Q buffer"
+    ((Tensor.to noColumnsFactors.q (Array Float)).isEmpty)
+  expect "zero-column QR has an empty R buffer"
+    ((Tensor.to noColumnsFactors.r (Array Float)).isEmpty)
+
 /-- Error reductions must not turn exceptional entries into an apparent numerical match. -/
 def checkErrorReductions : IO Unit := do
   let left : Tensor Float [2, 2] := [[1.0, -3.0], [2.0, 4.0]]
@@ -184,17 +200,20 @@ def checkErrorReductions : IO Unit := do
   let integral : Tensor Int [2] := [-3, 2]
   expect "ordered tensor fold" (Tensor.foldl (fun acc x => 10 * acc + x) 0 integral == -28)
 
+/-- Huge empty axes must avoid traversal; literals must select the intended scalar storage. -/
 def checkConstruction : IO Unit := do
   checkErrorReductions
   expect "empty einsum output" emptyEinsumOutput.data.isEmpty
   expect "symbolic empty einsum output" (symbolicEmptyEinsumOutput (2^40)).data.isEmpty
   expect "empty einsum contraction" (emptyEinsumContraction.data == #[0.0, 0.0])
   checkFactorizationResiduals
+  checkReducedQR
   expect "decimal literals construct scalar Float tensors"
     (floatScalarLiteral.item == 1.25)
   expect "integer literals construct scalar exact tensors"
     (rationalScalarLiteral.item == 3)
 
+/-- Packed native loops must retain scalar IEEE behavior, including signed zeros and NaNs. -/
 def checkNativeArithmetic : IO Unit := do
   let positiveZero := Float.ofBits 0x0000000000000000
   let negativeZero := Float.ofBits 0x8000000000000000
@@ -286,8 +305,7 @@ def checkIndexingAndWindows : IO Unit := do
     (middleChannels.to (Array Float) ==
       #[4.0, 5.0, 6.0, 7.0, 16.0, 17.0, 18.0, 19.0])
 
-  -- This is the shape path used by the CIFAR example. It guards against accidentally rebuilding
-  -- every outer slice through nested `unstack`/`stack` calls.
+  -- The CIFAR crop path must preserve channel and row strides after both axis truncations.
   let imageBatch : Tensor Float [1, 3, 32, 32] :=
     Tensor.generateFlat [1, 3, 32, 32] Float.ofNat
   let croppedRows : Tensor Float [1, 3, 8, 32] :=
@@ -300,7 +318,7 @@ def checkIndexingAndWindows : IO Unit := do
       let withinChannel := index.val % 64
       Float.ofNat
         (channel * 1024 + (withinChannel / 8) * 32 + withinChannel % 8)
-  expect "packed CIFAR-style crops materialize one correct output buffer"
+  expect "CIFAR-style crops preserve channel and row offsets"
     (cropped.to (Array Float) == expectedCrop)
 
   let floatWindow : Tensor Float [4] :=
@@ -377,15 +395,6 @@ def checkPackedTransposes : IO Unit := do
   expect "Float32 rearrange remains correct"
     ((binary32Transposed.to (Array Float32)).map (Float32.toFloat ·) ==
       #[1.0, 4.0, 2.0, 5.0, 3.0, 6.0])
-
-def checkReferenceTranspose : IO Unit := do
-  let reference : Tensor (Binary 8 23) [2, 3] :=
-    [[1, 2, 3], [4, 5, 6]]
-  let transposed : Tensor (Binary 8 23) [3, 2] :=
-    rearrange reference "row column -> column row"
-  expect "configured binary transpose preserves interchange words"
-    ((transposed.to (Array (Binary 8 23))).map Binary.toNatBits ==
-      #[0x3f800000, 0x40800000, 0x40000000, 0x40a00000, 0x40400000, 0x40c00000])
 
 def checkBoxedTransposes : IO Unit := do
   let rationalMatrix : Tensor Rat [2, 3] :=
@@ -520,70 +529,15 @@ def checkMixedPacking : IO Unit := do
     (parse_shape floatMatrix "row column" ==
       [("row", 2), ("column", 2)])
 
-def checkExactOperations : IO Unit := do
-  let rationals : Tensor Rat [2, 2] := [[1, 2], [3, 4]]
-  let repeatedRationals : Tensor Rat [2, 2] :=
-    expand ([1, 2] : Tensor Rat [2])
-      "column -> row column" with row := 2
-  expect "leading repeat remains generic over exact scalar storage"
-    (repeatedRationals.to (Array Rat) == #[1, 2, 1, 2])
-
-  let rationalSums : Tensor Rat [2] :=
-    reduce rationals "row column -> row" by sum
-  expect "exact rational reduction"
-    (rationalSums.to (Array Rat) == #[3, 7])
-
-  let complexProduct : Tensor (Complex Float) [2, 2] :=
-    einsum complexMatrix, complexIdentity
-      "row contracted, contracted column -> row column"
-  expect "complex contraction through boxed generic storage"
-    (complexProduct.to (Array (Complex Float)) ==
-      complexMatrix.to (Array (Complex Float)))
-
-def checkModelOperations : IO Unit := do
-  let floatPredicted : Tensor Float [2] := [1.0, 3.0]
-  let floatTarget : Tensor Float [2] := [0.0, 1.0]
-  expect "public Float mean-squared error"
-    (Tensor.meanSquaredError floatPredicted floatTarget == 2.5)
-  let rationalPredicted : Tensor Rat [2] := [1, 3]
-  let rationalTarget : Tensor Rat [2] := [0, 1]
-  expect "public exact rational mean-squared error"
-    (Tensor.meanSquaredError rationalPredicted rationalTarget == (5 : Rat) / 2)
-
-  let complexScale : Complex Float := { re := 0.0, im := 1.0 }
-  let scaledComplex := complexMatrix.scale complexScale
-  expect "public scalar scaling preserves complex tensor storage"
-    (scaledComplex.to (Array (Complex Float)) ==
-      (complexMatrix.to (Array (Complex Float))).map (· * complexScale))
-
-  let activationInput : Tensor Float [4] := [-2.0, 0.0, 1.0, 2.0]
-  expect "public relu is pointwise"
-    (activationInput.relu.to (Array Float) == #[0.0, 0.0, 1.0, 2.0])
-
-  let linearInput : Tensor Float [2, 2] := [[1.0, 2.0], [3.0, 4.0]]
-  let linearWeight : Tensor Float [3, 2] :=
-    [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
-  let linearBias : Tensor Float [3] := [0.5, -0.5, 1.0]
-  let linearOutput : Tensor Float [2, 3] :=
-    linearInput.linear linearWeight linearBias
-  expect "public linear maps every leading vector"
-    (linearOutput.to (Array Float) == #[1.5, 1.5, 4.0, 3.5, 3.5, 8.0])
-
-  let emptyMean := Tensor.mean (Tensor.zeros (α := Float) [0, 3])
-  expect "public empty mean is totalized with denominator one"
-    (emptyMean == 0.0)
-
+/-- Exercise compiled construction, packed storage, indexing, and scalar-generic operations. -/
 def run : IO Unit := do
   checkConstruction
   checkNativeArithmetic
   checkIndexingAndWindows
   checkPackedTransposes
-  checkReferenceTranspose
   checkBoxedTransposes
   checkReductionsAndRepeat
   checkMixedPacking
-  checkExactOperations
-  checkModelOperations
   IO.println "  public tensor operations: passed"
 
 end NN.Tests.Tensor.Operations

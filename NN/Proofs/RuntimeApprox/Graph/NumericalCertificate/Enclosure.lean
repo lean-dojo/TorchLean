@@ -26,7 +26,6 @@ open FloatLib.Floats.ExecFloat (Binary)
 open FloatLib.Numerics (Interval)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
-
 namespace Proofs
 namespace RuntimeApprox
 namespace NumericalCertificate
@@ -265,7 +264,7 @@ theorem tensor_map_enclosed
     (op : Real -> Real) (input output : Interval (Binary 8 23))
     (sound : ∀ {x}, RealEncloses input x -> RealEncloses output (op x)) :
     ∀ {shape : Shape} {x : Tensor Real shape},
-      TensorEnclosed input x -> TensorEnclosed output (Tensor.mapSpec op x) := by
+      TensorEnclosed input x -> TensorEnclosed output (Tensor.map op x) := by
   intro shape
   induction shape with
   | scalar =>
@@ -273,21 +272,21 @@ theorem tensor_map_enclosed
       exact sound hx
   | dim n shape ih =>
       intro x hx i
-      rw [show (Tensor.mapSpec op x).unstack i = Tensor.mapSpec op (x.unstack i) by
+      rw [show (Tensor.map op x).unstack i = Tensor.map op (x.unstack i) by
         exact (TorchLean.Tensor.Internal.Rep.map_unstack op x i).symm]
       exact ih (x := x.unstack i) (hx i)
 
 /-- Tensor-level soundness of the ReLU interval transfer. -/
 theorem tensor_relu_enclosed {shape : Shape} {x : Tensor Real shape}
     {a : Interval (Binary 8 23)} (ha : Binary.Interval.Valid a) (hx : TensorEnclosed a x) :
-    TensorEnclosed (Binary.Interval.relu a) (Tensor.mapSpec (fun value => max value 0) x) :=
+    TensorEnclosed (Binary.Interval.relu a) (Tensor.map (fun value => max value 0) x) :=
   tensor_map_enclosed (fun value => max value 0) a (Binary.Interval.relu a)
     (fun hx' => relu_realEncloses ha hx') hx
 
 /-- Tensor-level soundness of the absolute-value interval transfer. -/
 theorem tensor_abs_enclosed {shape : Shape} {x : Tensor Real shape}
     {a : Interval (Binary 8 23)} (ha : Binary.Interval.Valid a) (hx : TensorEnclosed a x) :
-    TensorEnclosed (Binary.Interval.abs a) (Tensor.mapSpec abs x) :=
+    TensorEnclosed (Binary.Interval.abs a) (Tensor.map abs x) :=
   tensor_map_enclosed abs a (Binary.Interval.abs a) (fun hx' => abs_realEncloses ha hx') hx
 
 /-- Tensor-level soundness of directed interval square root. -/
@@ -295,7 +294,7 @@ theorem tensor_sqrt_enclosed {shape : Shape} {x : Tensor Real shape}
     {a : Interval (Binary 8 23)} (ha : Binary.Interval.Valid a)
     (hlo : nonnegativeEndpoint a.lo = true)
     (hout : Binary.Interval.Valid (Binary.Interval.sqrt a)) (hx : TensorEnclosed a x) :
-    TensorEnclosed (Binary.Interval.sqrt a) (Tensor.mapSpec Real.sqrt x) :=
+    TensorEnclosed (Binary.Interval.sqrt a) (Tensor.map Real.sqrt x) :=
   tensor_map_enclosed Real.sqrt a (Binary.Interval.sqrt a)
     (fun hx' => sqrt_realEncloses ha hlo hout hx') hx
 

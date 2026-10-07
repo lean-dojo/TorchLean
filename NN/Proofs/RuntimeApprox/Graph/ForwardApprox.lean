@@ -11,40 +11,18 @@ public import NN.Proofs.RuntimeApprox.Core.SpecApprox
 public import NN.Proofs.Autograd.Tape.Algebra.Soundness -- shake: keep
 
 /-!
-# ForwardApprox
+# Forward graph approximation
 
-Forward (runtime→spec) approximation framework.
+`FwdGraph.eval_approx` composes the local bounds supplied by `FwdNode.sound`. Each node receives
+a heterogeneous context of tensors and an aligned `EList` of scalar error bounds. Shape lists
+describe context entries; they do not replace tensor storage.
 
-This file is **backend-agnostic**: it proves that approximation bounds compose over a
-tape/SSA-style graph, assuming each node provides a local forward approximation lemma.
-
-It is intended to be instantiated by rounding models such as the noncomputable
-`FloatLib.Floats.Formats.Flocq.NF`, whose arithmetic uses `Flocq.round`. Lean gives builtin `Float`
-a logical model, but connecting that model and its runtime implementation to these approximation
-bounds requires separate per-operation proofs.
-
-## What you get
-- `FwdGraph.eval_approx`: an end-to-end theorem saying that if the runtime input context is within
-  an explicit per-entry error budget of the spec input context, then runtime graph evaluation
-  is within a computable propagated error budget of the spec evaluation.
-
-## Reading guide
-1. `Autograd.Algebra.TensorPack` and `EList`: heterogeneous contexts and aligned error vectors.
-2. `approxTensor` and `approxCtx`: the approximation predicates for a single tensor and a whole
-   context.
-3. `Idx`: a typed index into a context (so graph nodes can refer to earlier values safely).
-4. `FwdNode` / `FwdGraph`: local approximation lemmas and their composition over a snoc-list DAG.
-
-## PyTorch correspondence / citations
-This is conceptually similar to the “graph of ops” view behind PyTorch Autograd (and tooling like
-`torch.fx`), except that our graph nodes carry *proof-relevant* approximation bounds that can be
-composed into an end-to-end theorem.
-https://pytorch.org/docs/stable/autograd.html
-https://pytorch.org/docs/stable/fx.html
+The framework is backend-independent and allows noncomputable rounding models such as FloatLib's
+`NF`. An explicit propagated bound need not be an executable numerical calculation. Instantiating
+the node contracts with native arithmetic requires separate per-operation correspondence proofs.
 -/
 
 @[expose] public section
-
 
 namespace Proofs
 namespace RuntimeApprox
@@ -262,7 +240,6 @@ theorem approxCtx_snoc {toSpec : α → SpecScalar} {ss : List Shape} {τ : Shap
               | cons eh et =>
                   have hx' : approxCtx (α := α) toSpec xSt xRt et := hx.2
                   have ih' := ih hx'
-                  -- peel off the head entry
                   exact And.intro hx.1 ih'
 
 /-- Extract a single entry approximation from `approxCtx`. -/
@@ -369,13 +346,7 @@ theorem approxCtx_unsnoc {toSpec : α → SpecScalar} {ss : List Shape} {τ : Sh
 def getIdxEps {Γ : List Shape} {s : Shape} (es : EList Γ) (idx : Idx Γ s) : ℝ :=
   EList.get es idx.i
 
-/--
-Context approximation implies approximation of any indexed entry.
-
-Informally: if every tensor in the runtime context is close to its spec counterpart (with an
-aligned error list `eps`), then reading any entry `idx : Idx Γ s` yields an `approxTensor` fact
-with the corresponding scalar bound `getIdxEps eps idx`.
--/
+/-- Read an indexed tensor approximation with its aligned scalar error bound. -/
 theorem approxCtx_getIdx {toSpec : α → SpecScalar} {Γ : List Shape} {s : Shape}
     {xS : TorchLean.TensorPack SpecScalar Γ} {xR : TorchLean.TensorPack α Γ} {eps : EList Γ}
     (h : approxCtx (α := α) toSpec xS xR eps) (idx : Idx Γ s) :
@@ -522,7 +493,6 @@ theorem eval_approx {Γ : List Shape} {ss : List Shape} (g : FwdGraph (α := α)
         (approxCtx_cast (α := α) (toSpec := toSpec) (h := (List.append_nil Γ).symm) hIn)
   | snoc g node ih =>
       rename_i ssPrev τ
-      -- IH gives approximation for the previous context.
       have hPrev :
           approxCtx (α := α) toSpec
             (evalSpec (Γ := Γ) (ss := ssPrev) g xS)

@@ -83,12 +83,11 @@ def checkedCpu : BackendProfile :=
     availability := Availability.cpu }
 
 /--
-Maintained LibTorch CUDA profile with TorchLean tape traversal and selected local VJPs.
+Strict LibTorch CUDA profile with TorchLean tape traversal and selected local VJPs.
 
-LibTorch supplies every maintained CUDA operation, including attention.
-
-`checked` means runtime guards and regression evidence. Capsules supported only by explicit
-trusted-boundary evidence are not admitted, and no LibTorch autograd graph is recorded.
+Only capsules with retained regression evidence and runtime guards are admitted. Operations
+whose dedicated CUDA checks were removed require `libTorchCuda` or an explicit external policy.
+No LibTorch autograd graph is recorded.
 -/
 def checkedCuda : BackendProfile :=
   { name := "checked_cuda"
@@ -99,6 +98,17 @@ def checkedCuda : BackendProfile :=
         vjpMode := .torchLeanTape }
     availability := Availability.cuda }
 
+/-- Default GPU profile, admitting explicitly recorded LibTorch implementation assumptions.
+
+Runtime guards still check the bridge. Numerical comparisons are named only for operations
+covered by the retained suite; the other capsules declare their external trust boundary.
+Use `checkedCuda` to reject those untested operations instead.
+-/
+def libTorchCuda : BackendProfile :=
+  { checkedCuda with
+    name := "libtorch_cuda"
+    policy := { checkedCuda.policy with assurance := .external } }
+
 /--
 Maintained execution profile for a device, when TorchLean currently provides one.
 
@@ -107,7 +117,7 @@ converted into profiles with empty registries.
 -/
 def maintainedForDevice? : Device → Option BackendProfile
   | .cpu => some checkedCpu
-  | .cuda => some checkedCuda
+  | .cuda => some libTorchCuda
   | .rocm | .metal | .wasm | .tpu | .trainium | .custom | .external => none
 
 /-- Whether this profile registers at least one capsule for its selected device. -/

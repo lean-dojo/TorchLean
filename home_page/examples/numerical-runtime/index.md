@@ -2,8 +2,8 @@
 title: Numerical Runtime Certificates
 ---
 
-So now, in this example, we'll take a small two-layer MLP and check its intermediate results as
-we run it. We'll first compute a range for each result, then use bit-level binary32 arithmetic
+So now, let's take a small two-layer MLP and check its intermediate results as
+we run it. We'll compute a range for each result, then use bit-level binary32 arithmetic
 to check that the computed values stay within those ranges.
 
 We'll represent our model with `NN.IR.Graph`, a graph of tensor operations and their dependencies.
@@ -22,7 +22,7 @@ Let's run it first. From the TorchLean repository:
 scripts/lake.sh exe torchlean numerical_certificate
 ```
 
-The final two rows should be:
+The last two checks should report:
 
 ```text
   ok  two-layer MLP certificate
@@ -53,8 +53,8 @@ works for a larger architecture assembled from supported operations.
 
 The source is
 [`GraphNumericalCertificate.lean`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/DeepDives/Floats/GraphNumericalCertificate.lean).
-The definitions `mlpGraph`, `mlpSources`, `mlpPayload`, `mlpCertificate`, and `mlpReplay` are the
-complete runnable path.
+The definitions `Mlp.graph`, `Mlp.sources`, `Mlp.payload`, `Mlp.certificate`, and `Mlp.replay`
+define the graph, inputs, certificate, and replay used below.
 
 ## What Happens During the Run
 
@@ -78,8 +78,8 @@ input enclosures, and derived output enclosure.
 
 The kernel planner selects a kernel capsule, a description of an implementation, for each operation.
 It records the provider, device, layout requirements, forward and reverse-mode ownership,
-reduction policy, and trust classification. We'll use the checked portable CPU profile because its fixed-left matrix
-accumulation matches the canonical tensor semantics.
+reduction policy, and trust classification. We'll use the checked portable CPU profile because
+its fixed-left matrix accumulation matches the canonical tensor semantics.
 
 The selected numerical policy must be supported by the range rule. For example, a rule for
 left-to-right accumulation cannot be used for a provider that advertises a different reduction
@@ -136,13 +136,10 @@ step data because square root, bias correction, and division need explicit posit
 `trainingStepTrace` returns forward bounds, backward bounds, the selected parameter-gradient bound,
 the next parameter bound, and optimizer-state bounds.
 
-Canonical `NN.IR.Graph` lowering currently proves forward
-semantic preservation. It does not yet lower every typed graph node to a proof-bearing VJP. Therefore:
-
-- the runnable MLP above is a complete canonical-IR **forward** certificate and IEEE replay;
-- rounded backward and optimizer theorems are complete for a supplied proof-bearing `RevGraph`;
-- automatically producing that `RevGraph` from every canonical-IR model remains a separate lowering
-  theorem.
+The MLP example checks the forward calculation. The backward and optimizer theorems use a
+supplied `RevGraph` with proved local VJPs and error bounds. TorchLean's current `NN.IR.Graph`
+lowering preserves forward semantics, but does not automatically construct that proof-bearing
+reverse graph for every model.
 
 ## Adding Another Architecture
 
@@ -154,8 +151,8 @@ let registry <- Proofs.RuntimeApprox.NumericalCertificate.defaultRegistry
 let _ <- Proofs.RuntimeApprox.NumericalCertificate.requireNumericalCoverage registry graph
 ```
 
-Covered graphs use the same certificate and replay APIs, subject to the shape, finite-range, payload,
-and backend-policy checks described above. If one operation
+Covered graphs use the same certificate and replay APIs, subject to the shape, finite-range,
+payload, and backend-policy checks described above. If one operation
 is missing, add its executable `GraphRangeContract` and prove the corresponding exact-real
 enclosure rule. The former extends range generation; the latter is needed before the generated
 range can support `ProvedRealEnclosure`. If execution needs a new provider, add a `KernelCapsule`

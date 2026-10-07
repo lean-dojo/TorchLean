@@ -789,28 +789,20 @@ section GraphLevel
 
 variable {α : Type} [TorchLean.Storage α] [Context α]
 
-/-- Case analysis on an `Except` value stated as a disjunction of equations. -/
-theorem except_cases {ε β : Type} (x : Except ε β) : (∃ e, x = .error e) ∨ ∃ a, x = .ok a := by
-  cases x <;> simp
-
-/-- Sequencing a computation before `y` does not change a successful result of `y`. -/
-theorem seq_ok {β γ : Type} {x : Except String β} {y : Except String γ} {v : γ}
-    (h : (x >>= fun _ => y) = .ok v) : y = .ok v := by
-  rw [bind_ok_iff] at h
-  obtain ⟨_, _, h⟩ := h
-  exact h
-
 /-- A successful `denoteAll` is a successful `denoteAllFrom` started at node `0`. -/
 theorem denoteAll_ok_from {g : Graph} {payload : Payload α} {input : Spec.SomeTensor α}
     {vals : Array (Spec.SomeTensor α)} (h : denoteAll g payload input = .ok vals) :
     denoteAllFrom g payload input 0 #[] = .ok vals := by
   unfold denoteAll at h
-  split at h <;> (try simp only at h) <;> first | exact h | exact seq_ok h
+  split at h
+  · exact h
+  · obtain ⟨_, _, h⟩ := bind_ok_iff.mp h
+    exact h
 
 /-- A successful checked lookup returns the node stored at the requested index. -/
 theorem getNode_ok {g : Graph} {i : Nat} {n : Node} (h : g.getNode i = .ok n) :
     g.nodes[i]? = some n := by
-  unfold getNode getNode? at h
+  unfold getNode at h
   rcases Option.eq_none_or_eq_some g.nodes[i]? with hnone | ⟨n', hsome⟩
   · rw [hnone] at h
     peel_ok h
@@ -958,12 +950,13 @@ theorem denoteAllRawFrom_eq_denoteAllFrom (g : Graph) (payload : Payload α)
       obtain ⟨out, hOut, hDecl, hRec⟩ := hInfer
       unfold evalAt evalNode
       rw [hN, ok_bind, ok_bind]
-      rcases except_cases (evalNodeRaw payload input vals i n) with ⟨e, hE⟩ | ⟨v, hV⟩
-      · rw [hE, error_bind, error_bind, error_bind]
-      · have hvShape : v.shape = n.outShape :=
+      cases hV : evalNodeRaw payload input vals i n with
+      | error e => rw [error_bind, error_bind, error_bind]
+      | ok v =>
+        have hvShape : v.shape = n.outShape :=
           evalNodeRaw_shape_of_infer
             (parentShapesOf_of_lookup (hVals.trans hInferred.symm) hShapes hL) hOut hDecl hV
-        rw [hV, ok_bind, ok_bind, normalizeNodeOutput_eq_ok_self hvShape, ok_bind]
+        rw [ok_bind, ok_bind, normalizeNodeOutput_eq_ok_self hvShape, ok_bind]
         refine denoteAllRawFrom_eq_denoteAllFrom g payload input (i + 1) (vals.push v)
           (inferred.push out) inferredAll hRec (by simp [hVals]) (by simp [hInferred]) ?_
         intro j hj
@@ -987,12 +980,14 @@ evaluating with `evalNodeRaw` and with `evalNode` produce the same result. -/
 theorem denoteAllRaw_eq_denoteAll (g : Graph) (payload : Payload α) (input : Spec.SomeTensor α)
     (hShapes : g.checkShapes = .ok ()) :
     denoteAllRaw g payload input = denoteAll g payload input := by
-  rcases except_cases (g.inferShapesFrom 0 #[]) with ⟨e, hE⟩ | ⟨arr, hArr⟩
-  · exfalso
+  cases hArr : g.inferShapesFrom 0 #[] with
+  | error e =>
+    exfalso
     unfold checkShapes inferShapes at hShapes
-    rw [hE] at hShapes
+    rw [hArr] at hShapes
     peel_ok hShapes
-  · have h := denoteAllRawFrom_eq_denoteAllFrom g payload input 0 #[] #[] arr hArr rfl rfl
+  | ok arr =>
+    have h := denoteAllRawFrom_eq_denoteAllFrom g payload input 0 #[] #[] arr hArr rfl rfl
       (fun j hj => absurd hj (by simp))
     unfold denoteAllRaw denoteAll
     simp only [h]
@@ -1057,12 +1052,11 @@ theorem denoteAllFrom_ok_shapes (g : Graph) (payload : Payload α) (input : Spec
     exact absurd (Nat.lt_of_le_of_lt hij hj) hlt
 
 /--
-The literal soundness statement: on a well-shaped graph, every evaluated node value has its
-declared shape.
+Successful evaluation produces exactly one value per node, each with its declared shape.
 
-Note that `hShapes` is not needed for the conclusion, because `evalNode` normalizes each value to
-the declared shape (`denoteAll_shape`); its role is documented by `denoteAllRaw_eq_denoteAll`, which
-shows that on a `checkShapes`-accepted graph the normalization never changes anything.
+This needs no shape-inference hypothesis: `evalNode` checks each result's declared shape.
+The stronger correspondence `denoteAllRaw_eq_denoteAll` shows that on a graph accepted by
+`checkShapes`, these checks never change or reject a raw result.
 -/
 theorem denoteAll_shape (g : Graph) (payload : Payload α) (input : Spec.SomeTensor α)
     (vals : Array (Spec.SomeTensor α)) (h : denoteAll g payload input = .ok vals) :

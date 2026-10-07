@@ -29,10 +29,10 @@ title: Tools
     <p class="tool-kind">Checked case studies</p>
     <h2>TorchLean Verified Examples</h2>
     <p>
-      TorchLean Verified Examples develops larger case studies outside the core library. They range
+      We keep the larger case studies in TorchLean Verified Examples. They range
       from batch-invariant inference and replayable checkpoints to GPT training and a formal Kimi
       K3 architecture specification. Each project identifies its Lean statements and remaining
-      runtime assumptions; the Kimi K3 case study formalizes architecture properties.
+      runtime assumptions.
     </p>
     <nav class="tool-links" aria-label="TorchLean Verified Examples links">
       <a href="https://github.com/Robertboy18/TorchLean-Verified-Examples">

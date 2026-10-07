@@ -89,8 +89,10 @@ supports arbitrary spatial rank and batch shape; the dataset determines the dime
 Its default `spectralPath := .automatic` transforms each spatial axis separately, calling LibTorch
 FFT operations in eager CUDA execution and dense per-axis operations otherwise. Set
 `spectralPath := .denseReference` in the model configuration to use full-grid DFT matrices instead.
-Both paths share weights and checkpoint layout; tests compare their predictions, input gradients,
-and every parameter gradient.
+Both paths share weights and checkpoint layout. The spectral-convolution checks in
+[`NN/Tests/Runtime/Cuda/Fft.lean`](../../../Tests/Runtime/Cuda/Fft.lean) compare forward values,
+input gradients, and real/imaginary spectral-weight gradients against the dense reference. These
+checks cover the spectral operation, not every parameter in a complete FNO model.
 
 TorchLean records the differentiation tape and runs the trainer and optimizer. LibTorch computes
 native tensor values, including FFTs. Dataset metadata and prediction artifacts are visible in

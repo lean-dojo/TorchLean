@@ -20,10 +20,9 @@ This file stays on the *mathematical* side of training:
 - `SGD.step` lifts the single-tensor SGD equation to a heterogeneous `TorchLean.TensorPack` of
   parameters.
 
-It is not another runtime optimizer implementation. Runtime files such as
-`Runtime.Autograd.Torch.ParamList.sgdStep{,Fast}` and CUDA eager `sgdStepAllCudaMap` mutate
-`IO.Ref`s or device buffers; their intended mathematical update is the pure context equation
-stated here.
+It is not another runtime optimizer implementation. Runtime optimizers update parameter
+references or device buffers; the pure context equation here states their mathematical target,
+not a proof that those mutations implement it.
 
 ## PyTorch correspondence / citations
 - “Scalar loss” convention: backprop starts with upstream gradient 1.
@@ -33,7 +32,6 @@ stated here.
 -/
 
 @[expose] public section
-
 
 namespace Proofs
 namespace Autograd
@@ -112,10 +110,8 @@ def step {Γ : List Shape} (params grads : TorchLean.TensorPack α Γ) (lr : α)
   rfl
 
 /--
-Cons-form unfolding of a context-level SGD step.
-
-This lemma is compact but useful as documentation: the head tensor update is exactly
-`subSpec p (scaleSpec g lr)`, and the tail recursively receives the same learning rate.
+An SGD step updates the head tensor by `subSpec p (scaleSpec g lr)` and applies the same
+learning rate recursively to the remaining parameters.
 -/
 @[simp] theorem step_cons {s : Shape} {Γ : List Shape} (p g : Tensor α s)
     (ps gs : TorchLean.TensorPack α Γ) (lr : α) :

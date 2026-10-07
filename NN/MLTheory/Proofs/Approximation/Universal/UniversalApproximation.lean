@@ -146,7 +146,7 @@ theorem mlp_eval_scalar_hinge (n : ℕ) (t : Fin n → ℝ) (c : Fin n → ℝ) 
       Activation.reluSpec (α := ℝ) (s := .dim n .scalar)
           (Spec.linearSpec (α := ℝ) (hingeLayer1 n t) (Tensor.singleton x)) =
         Tensor.dim (fun i : Fin n => Tensor.scalar (relu (x - t i))) := by
-    simp [hz1, Activation.reluSpec, Tensor.mapSpec, relu]
+    simp [hz1, Activation.reluSpec, relu]
   -- Compute the second linear layer as a sum of hinges.
   have hy :
       Spec.linearSpec (α := ℝ) (hingeLayer2 n c b)
@@ -369,20 +369,12 @@ theorem relu_hinge_approximation_Icc_of_mesh {f : ℝ → ℝ} {a b L ε : ℝ} 
       g_affine_on_segment (k := k) hkN (x := x) hx0 hx1
     have hfx : |f x - g x| < ε := by
       -- bound via Lipschitz: |f x - g x| ≤ 2 L δ < ε
-      have hgridk_mem : grid k ∈ Set.Icc a b := by
-        have ha : a ≤ grid k := by
-          have : grid 0 ≤ grid k := grid_mono (Nat.zero_le k)
+      have hgrid_mem (i : ℕ) (hi : i ≤ N) : grid i ∈ Set.Icc a b := by
+        have ha : a ≤ grid i := by
+          have : grid 0 ≤ grid i := grid_mono (Nat.zero_le i)
           simpa [hgrid0] using this
-        have hb : grid k ≤ b := by
-          have : grid k ≤ grid N := grid_mono hk_le
-          simpa [hgridN] using this
-        exact ⟨ha, hb⟩
-      have hgridkp1_mem : grid (k + 1) ∈ Set.Icc a b := by
-        have ha : a ≤ grid (k + 1) := by
-          have : grid 0 ≤ grid (k + 1) := grid_mono (Nat.zero_le (k + 1))
-          simpa [hgrid0] using this
-        have hb : grid (k + 1) ≤ b := by
-          have : grid (k + 1) ≤ grid N := grid_mono hkN
+        have hb : grid i ≤ b := by
+          have : grid i ≤ grid N := grid_mono hi
           simpa [hgridN] using this
         exact ⟨ha, hb⟩
       have hx_dist : |x - grid k| ≤ δ := by
@@ -393,7 +385,7 @@ theorem relu_hinge_approximation_Icc_of_mesh {f : ℝ → ℝ} {a b L ε : ℝ} 
         have habs : |x - grid k| = x - grid k := abs_of_nonneg hx0'
         simpa [habs] using hxle
       have h1 : |f x - f (grid k)| ≤ L * δ := by
-        have := h_lip x hx (grid k) hgridk_mem
+        have := h_lip x hx (grid k) (hgrid_mem k hk_le)
         exact le_trans this (mul_le_mul_of_nonneg_left hx_dist hL.le)
       have h2 : |f (grid k) - g x| ≤ L * δ := by
         -- g x is between the endpoints; bound by the endpoint difference.
@@ -413,7 +405,8 @@ theorem relu_hinge_approximation_Icc_of_mesh {f : ℝ → ℝ} {a b L ε : ℝ} 
           simp [abs_mul, abs_of_nonneg hδnonneg, mul_comm]
         have hendpoint : |mNat k * δ| ≤ L * δ := by
           -- from Lipschitz on grid points
-          have hdiff := h_lip (grid (k + 1)) hgridkp1_mem (grid k) hgridk_mem
+          have hdiff := h_lip (grid (k + 1)) (hgrid_mem (k + 1) hkN)
+            (grid k) (hgrid_mem k hk_le)
           have hstepAbs : |grid (k + 1) - grid k| = δ := by
             rw [hstep k]
             exact abs_of_nonneg hδnonneg
@@ -427,12 +420,7 @@ theorem relu_hinge_approximation_Icc_of_mesh {f : ℝ → ℝ} {a b L ε : ℝ} 
         simpa [habs'] using hfinal
       have : |f x - g x| ≤ 2 * L * δ := by
         have htri : |f x - g x| ≤ |f x - f (grid k)| + |f (grid k) - g x| := by
-          have htri0 :
-              |(f x - f (grid k)) + (f (grid k) - g x)| ≤
-                |f x - f (grid k)| + |f (grid k) - g x| :=
-            abs_add_le (f x - f (grid k)) (f (grid k) - g x)
-          have hrew' : (f x - f (grid k)) + (f (grid k) - g x) = f x - g x := by ring
-          simpa [hrew'] using htri0
+          exact abs_sub_le (f x) (f (grid k)) (g x)
         have hsum : |f x - f (grid k)| + |f (grid k) - g x| ≤ L * δ + L * δ :=
           add_le_add h1 (by simpa [abs_sub_comm] using h2)
         have hsum' : L * δ + L * δ = 2 * L * δ := by ring

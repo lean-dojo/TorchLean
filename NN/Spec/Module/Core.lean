@@ -64,12 +64,6 @@ def append {α : Type} [TorchLean.Storage α] {s t u : Shape}
     (a : Chain α s t) (b : Module α t u) : Chain α s u :=
   .comp a (.single b)
 
-/-- Return operation names in evaluation order. -/
-def kinds {α : Type} [TorchLean.Storage α]
-    {s t : Shape} : Chain α s t → Array String
-  | .single m => #[m.kind]
-  | .comp a b => kinds a ++ kinds b
-
 /-- Return operation names and Python expressions in evaluation order. -/
 def layerInfo {α : Type} [TorchLean.Storage α]
     {s t : Shape} : Chain α s t → Array (String × String)

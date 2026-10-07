@@ -23,7 +23,9 @@ The generator writes ignored tutorial files for:
 | --- | --- | --- |
 | tabular regression | `small_regression.csv` | rows `x1,x2,y` |
 | tensor regression | `small_regression_{X,y}.npy` | `(25, 2)`, `(25, 1)` |
+| seven-feature regression | `small_tabular_regression.csv` | 10 rows `x1,...,x7,y` |
 | image classification | `small_cifar10like_{X,y}.npy` | `(200, 3, 32, 32)`, `(200,)` |
+| time-series forecasting | `small_forecast_{X,y}.npy` | `(4, 24, 1)`, `(4, 24, 1)` |
 | operator learning | `small_fno1d_{X,y}.npy` | `(4, 32)`, `(4, 32)` |
 
 ## Real Example Data

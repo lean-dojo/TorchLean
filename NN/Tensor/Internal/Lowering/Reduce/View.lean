@@ -14,6 +14,10 @@ These kernels consume a certified flat scalar reader instead of requiring an
 already materialized input tensor. The ordinary reduction definitions and
 the fused transform-to-reduction path therefore share the same fiber
 enumeration, accumulator order, and correctness proofs.
+
+The tensor argument supplies the reference semantics; execution reads through
+`read`. The pointwise equality proof connects the two but does not itself
+force or cache a materialized reference tensor.
 -/
 
 @[expose] public section

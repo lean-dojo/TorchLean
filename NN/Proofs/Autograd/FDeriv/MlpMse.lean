@@ -178,35 +178,9 @@ def mseGrad {n : Nat} (y t : Vec n) : Vec n :=
 /-- Fréchet derivative of MSE, packaged as a continuous linear map `Vec n →L ℝ`. -/
 theorem hasFDerivAt_mse {n : Nat} (t y : Vec n) :
     HasFDerivAt (mse (n := n) t) ((2 / (n : ℝ)) • (innerSL ℝ (y - t))) y := by
-  have hsub : HasFDerivAt (fun y : Vec n => y - t) (1 : Vec n →L[ℝ] Vec n) y := by
-    change HasFDerivAt (fun y : Vec n => y - t) (ContinuousLinearMap.id ℝ (Vec n)) y
-    exact (hasFDerivAt_id y).sub_const t
-  have hnorm : HasFDerivAt (fun z : Vec n => ‖z‖ ^ 2) (2 • innerSL ℝ (y - t)) (y - t) := by
-    simpa using (hasStrictFDerivAt_norm_sq (x := (y - t)) (F := Vec n)).hasFDerivAt
-  have hcomp : HasFDerivAt (fun y : Vec n => ‖y - t‖ ^ 2) (2 • innerSL ℝ (y - t)) y := by
-    have hcomp0 := hnorm.comp y hsub
-    have hcomp0' :
-        HasFDerivAt (fun y : Vec n => ‖y - t‖ ^ 2)
-          (2 • (((innerSL ℝ) y).comp (1 : Vec n →L[ℝ] Vec n) -
-            ((innerSL ℝ) t).comp (1 : Vec n →L[ℝ] Vec n))) y := by
-      simpa [Function.comp_def, sub_eq_add_neg] using hcomp0
-    have hlin :
-        (2 • (((innerSL ℝ) y).comp (1 : Vec n →L[ℝ] Vec n) -
-            ((innerSL ℝ) t).comp (1 : Vec n →L[ℝ] Vec n))) =
-          (2 • innerSL ℝ (y - t)) := by
-      ext z
-      simp
-    exact hcomp0'.congr_fderiv hlin
-  have hscaled :
-      HasFDerivAt (mse (n := n) t) (((n : ℝ)⁻¹) • (2 • innerSL ℝ (y - t))) y := by
-    change HasFDerivAt (fun y : Vec n => ((n : ℝ)⁻¹) * ‖y - t‖ ^ 2)
-      (((n : ℝ)⁻¹) • (2 • innerSL ℝ (y - t))) y
-    exact hcomp.const_mul ((n : ℝ)⁻¹)
-  have hcoef :
-      (((n : ℝ)⁻¹) • (2 • innerSL ℝ (y - t))) = ((2 / (n : ℝ)) • innerSL ℝ (y - t)) := by
-    ext z
-    simp [div_eq_mul_inv, mul_assoc, mul_comm]
-  exact hscaled.congr_fderiv hcoef
+  apply (((hasFDerivAt_id y).sub_const t).norm_sq.const_mul (n : ℝ)⁻¹).congr_fderiv
+  ext z
+  simp [div_eq_mul_inv, mul_assoc, mul_comm]
 
 /-- The adjoint of the MSE derivative, applied to the seed `1`, is the gradient `mseGrad y t`. -/
 theorem adjoint_mseDeriv_one {n : Nat} (t y : Vec n) :
@@ -229,13 +203,9 @@ This is the scalar-loss specialization: for scalar loss `ℓ`, the gradient is `
 -/
 theorem mseGrad_eq_adjoint_fderiv {n : Nat} (t y : Vec n) :
     VJP[mse (n := n) t, y] (1 : ℝ) = mseGrad (n := n) y t := by
-  have hf : fderiv ℝ (mse (n := n) t) y = (2 / (n : ℝ)) • innerSL ℝ (y - t) := by
-    simpa using (hasFDerivAt_mse (n := n) t y).fderiv
-  calc
-    (fderiv ℝ (mse (n := n) t) y).adjoint (1 : ℝ)
-        = ((2 / (n : ℝ)) • innerSL ℝ (y - t)).adjoint (1 : ℝ) := by
-            simp [hf]
-    _ = mseGrad (n := n) y t := adjoint_mseDeriv_one t y
+  change (fderiv ℝ (mse t) y).adjoint (1 : ℝ) = _
+  rw [(hasFDerivAt_mse t y).fderiv]
+  exact adjoint_mseDeriv_one t y
 
 /--
 Convenience lemma: adjoint of the derivative of a scalar composition, applied to seed `1`.
@@ -249,16 +219,9 @@ theorem adjoint_fderiv_comp_apply_one
     {f' : E →L[ℝ] F} {g' : F →L[ℝ] ℝ} {x : E}
     (hf : HasFDerivAt f f' x) (hg : HasFDerivAt g g' (f x)) :
     (fderiv ℝ (fun x => g (f x)) x).adjoint (1 : ℝ) = f'.adjoint (g'.adjoint (1 : ℝ)) := by
-  have hcomp : HasFDerivAt (fun x => g (f x)) (g'.comp f') x := hg.comp x hf
-  have hfderiv : fderiv ℝ (fun x => g (f x)) x = g'.comp f' := by
-    simpa using hcomp.fderiv
-  calc
-    (fderiv ℝ (fun x => g (f x)) x).adjoint (1 : ℝ)
-        = (ContinuousLinearMap.adjoint (g'.comp f')) (1 : ℝ) := by
-            simp [hfderiv]
-    _ = (ContinuousLinearMap.adjoint f').comp (ContinuousLinearMap.adjoint g') (1 : ℝ) := by
-          simp [ContinuousLinearMap.adjoint_comp]
-    _ = f'.adjoint (g'.adjoint (1 : ℝ)) := rfl
+  change (fderiv ℝ (g ∘ f) x).adjoint (1 : ℝ) = _
+  rw [(hg.comp x hf).fderiv, ContinuousLinearMap.adjoint_comp]
+  rfl
 
 -- ---------------------------------------------------------------------------
 -- Scalar-loss gradient theorems (inputs + parameters)

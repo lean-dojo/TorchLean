@@ -15,10 +15,11 @@ public import NN.Spec.Core.Context.Real
 public import NN.Spec.Layers.Activation
 
 /-!
-# `NN.Proofs.Gradients.Activation`
+# Scalar Activation Derivatives
 
 Real calculus lemmas (`HasDerivAt`, etc.) for scalar activation functions, used as building blocks
 for TorchLean autograd correctness proofs.
+These identify derivatives of the real specifications, not the behavior of native kernels.
 -/
 
 @[expose] public section
@@ -33,21 +34,10 @@ open Filter
 namespace Proofs
 
 /-!
-# Calculus lemmas for activation functions (real-valued)
+## Related PyTorch operators
 
-This file proves `HasDerivAt` facts for common scalar activations (ReLU, leaky ReLU, sigmoid, …)
-and connects them to the derivative “spec” functions used elsewhere in TorchLean.
-
-## Why this is here
-TorchLean’s autograd correctness theorems often come in two layers:
-1) algebraic adjointness theorems (VJP/JVP duality) for tensor programs, and
-2) calculus facts that the chosen scalar primitives really have the stated derivatives.
-
-This file contributes to (2) in the simplest setting: scalar functions `ℝ → ℝ`.
-
-## PyTorch correspondence / citations
-
-These theorems are best read as “the scalar formulas behind PyTorch agree with the spec”:
+The operator references below give context for the formulas. Native evaluation, rounding, and
+implementation-specific branches are outside these exact-real theorems.
 
 - ReLU: `torch.relu` / `torch.nn.functional.relu`
   https://pytorch.org/docs/stable/generated/torch.relu.html
@@ -70,15 +60,9 @@ These theorems are best read as “the scalar formulas behind PyTorch agree with
   https://pytorch.org/docs/stable/generated/torch.sinh.html
   https://pytorch.org/docs/stable/generated/torch.cosh.html
 
-Important caveat (matches PyTorch practice): `relu` (and `leakyRelu`) are not differentiable at
-`0`. ELU is differentiable at `0` only for the special case `alpha = 1`; the reusable theorem below
-therefore also takes `x ≠ 0`.
-
-## References
-- Mathlib’s calculus library is the main dependency:
-  `Mathlib.Analysis.Calculus.Deriv.*` and `Mathlib.Analysis.SpecialFunctions.ExpDeriv`.
-- The derivatives themselves are standard and can be found in any calculus textbook; the value here
-  is turning them into reusable Lean lemmas.
+The ReLU, leaky-ReLU, and ELU theorems assume `x ≠ 0`. ReLU has a kink there; leaky ReLU
+and ELU are differentiable there when their slope parameter is `1`, but these statements do not
+cover that case.
 -/
 
 /--
@@ -91,12 +75,12 @@ theorem relu_deriv_correct (x : ℝ) (h : x ≠ 0) :
     HasDerivAt Activation.Math.reluSpec (Activation.Math.reluDerivSpec x) x := by
   unfold Activation.Math.reluDerivSpec
   by_cases hx : 0 < x
-  · -- Case: x > 0
+  ·
     simp only [ite_eq_left hx]
     apply (hasDerivAt_id' x).congr_of_eventuallyEq
     filter_upwards [Ioi_mem_nhds hx] with y hy
     simpa only [Activation.Math.reluSpec_eq_max] using max_eq_left (le_of_lt hy)
-  · -- Case: x ≤ 0 but x ≠ 0 ⇒ x < 0
+  ·
     push Not at hx
     have hx' : x < 0 := lt_of_le_of_ne hx h
     simp only [ite_eq_right (not_lt.mpr hx)]
@@ -125,7 +109,6 @@ theorem leaky_relu_deriv_correct (x : ℝ) (h : x ≠ 0) (αₗ : ℝ) (_ : α�
   · push Not at hx
     have hx' : x < 0 := lt_of_le_of_ne hx h
     simp only [ite_eq_right (not_lt.mpr hx)]
-    -- derivative is αₗ * id derivative = αₗ * 1 = αₗ
     apply (hasDerivAt_mul_const αₗ).congr_of_eventuallyEq
     filter_upwards [Iio_mem_nhds hx'] with y hy
     show Activation.Math.leakyReluSpec y αₗ = y * αₗ
@@ -431,7 +414,6 @@ theorem softplus_deriv_correct (x : ℝ) :
     exact softplus_spec_eq_log_one_add_exp y
   rw [softplus_eq_log_exp]
   unfold Activation.Math.softplusDerivSpec
-  -- derivative of `log (1 + exp x)`
   have hx0 : (1 : ℝ) + Real.exp x ≠ 0 := by
     have : 0 < (1 : ℝ) + Real.exp x := by linarith [Real.exp_pos x]
     exact ne_of_gt this
@@ -512,7 +494,6 @@ theorem safe_log_deriv_correct (x ε : ℝ) (hε : 0 < ε) :
       linarith
     exact ne_of_gt this
   have h_comp := (Real.hasDerivAt_log hx0).comp x h_inner
-  -- `log' u = 1/u`
   simpa [Function.comp_def, MathFunctions.log, Activation.Math.softplusDerivSpec, one_div,
     div_eq_mul_inv, mul_assoc, mul_left_comm, mul_comm] using h_comp
 

@@ -161,10 +161,9 @@ the storage layout, not a rank-specific implementation.
 /-!
 ## Softmax (last axis, row folding)
 
-We implement softmax along the last axis by folding all leading dimensions into one `rows` axis.
-This covers:
-- 2D softmax (`(rows, cols)`),
-- 3D batched softmax (`(batch, rows, cols)`) by folding `batch*rows` into `rows`.
+All leading dimensions are folded into one row axis; normalization acts independently on the
+last axis at any rank. Empty tensors retain their shape. A scalar softmax is one, and a scalar
+log-softmax is zero; both have zero cotangent.
 -/
 
 /--

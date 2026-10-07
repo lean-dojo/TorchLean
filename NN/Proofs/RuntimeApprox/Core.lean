@@ -17,7 +17,7 @@ Backend-independent predicates and tolerance budgets for runtime-to-spec approxi
 This layer provides:
 - `ApproxTol`, the absolute/relative/slack tolerance object used for “close enough” claims;
 - scalar approximation predicates over `ℝ`;
-- tensor/context approximation predicates that compare runtime tensors after mapping them into the
+- tensor approximation predicates that compare runtime tensors after mapping them into the
   real-valued spec world.
 
 It deliberately contains no rounding model, no FP32 specialization, and no graph semantics. Those
@@ -26,4 +26,3 @@ are layered on top by `NN.Proofs.RuntimeApprox.Rounding`, `NN.Proofs.RuntimeAppr
 -/
 
 @[expose] public section
-

@@ -208,8 +208,8 @@ theorem approxTensor_tanh_spec {s : Shape} :
     ∀ {xS : SpecTensor s} {xR : Tensor R s} {eps : ℝ},
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR eps →
         approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-          (mapSpec (s := s) Numerics.MathFunctions.tanh xS)
-          (mapSpec (s := s) Numerics.MathFunctions.tanh xR)
+          (Tensor.map (shape := s) Numerics.MathFunctions.tanh xS)
+          (Tensor.map (shape := s) Numerics.MathFunctions.tanh xR)
           (linfNorm (tanhBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (s := s) xR)) := by
   intro xS xR eps hx
   have h :=
@@ -239,7 +239,7 @@ ReLU is 1-Lipschitz (`|max x 0 - max y 0| ≤ |x - y|`), so the only new error i
 step in `reluR`.
 -/
 def reluBoundTensor {s : Shape} (eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
-  mapSpec
+  Tensor.map
     (fun a => eps + ulp β fexp (max a 0) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
@@ -252,8 +252,8 @@ theorem approxTensor_relu_spec {s : Shape} :
     ∀ {xS : SpecTensor s} {xR : Tensor R s} {eps : ℝ},
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR eps →
         approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-          (mapSpec (fun x => max x 0) xS)
-          (mapSpec (reluR (β := β) (fexp := fexp) (rnd := rnd)) xR)
+          (Tensor.map (fun x => max x 0) xS)
+          (Tensor.map (reluR (β := β) (fexp := fexp) (rnd := rnd)) xR)
           (linfNorm (reluBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (s := s) eps xR)) := by
   intro xS xR eps hx
   have h :=

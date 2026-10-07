@@ -820,9 +820,9 @@ line names the provider, the trust level, the VJP source, and how the operation 
     layout: canonical-tensor layout compatibility for matmul
 ```
 
-The complete report includes every capsule used by the run. These entries connect the device
-choice to the implementations of individual operations; {ref "backend-selection"}[the backend
-chapter] explains how the planner selects them and what each trust level means.
+The complete report lists the capsules selected by the profile. It describes the intended
+implementations, not evidence that each native kernel executed. {ref "backend-selection"}[The
+backend chapter] explains how the planner selects them and what each trust level means.
 
 # Lowering The Forward Map
 
@@ -864,10 +864,11 @@ Eighteen nodes for a three-layer network, because lowering is explicit: paramete
 nodes, a linear layer becomes a reshape, a matmul, and an add, and each node records its parents and
 output shape. {ref "graphs-and-ir"}[The IR chapter] walks the node list.
 
-Using `nn.initialState reInit` analyzes the initial model. To analyze the trained model, the
-lowering must receive the trained runtime parameters through the lower-level manual interface or a
-saved exact-bits payload. Reusing the initial payload after training would verify another function.
-Everything below therefore describes the network at seed `2026`, before any Adam step.
+Using `nn.initialState reInit` analyzes the initial model. For a supported training result, call
+`trained.verify` to analyze its snapshot, or read `trained.state` when constructing a graph-level
+workflow. A saved exact-bits checkpoint is another way to retain that payload. Reusing the initial
+state after training would analyze another function. Everything below therefore describes the
+network at seed `2026`, before any Adam step.
 
 # Input Regions
 

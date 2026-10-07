@@ -222,8 +222,8 @@ theorem tokenKinds_pushAxis (axis : Located Axis)
       simp [tokenKinds, pushAxis, hGroup]
 
 /--
-Relate parser states that differ only in source spans and canonical decimal
-spelling.
+Agreement of duplicate-tracking keys, rendered tokens, and whether a group is open.
+Source spans and anonymous-axis occurrence offsets are not compared.
 -/
 def CanonicalEq (left right : ExpressionState) : Prop :=
   left.seen = right.seen ∧
@@ -534,7 +534,6 @@ theorem decodeEllipsis_canonical
             ExpressionState.canonicalEq_setSeen _ _ nextSeen nextSeen
               hState rfl
         · rfl
-
 
 end Parser.Impl
 

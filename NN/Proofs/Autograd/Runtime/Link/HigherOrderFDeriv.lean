@@ -106,9 +106,9 @@ theorem tangent_vjp {E : Type*} [NormedAddCommGroup E] [NormedSpace ℝ E] {n : 
     (seed : E → Tensor ℝ shape) (hseed : ContDiff ℝ n seed)
     {inputShape : Shape} (input : Idx Γ inputShape) :
     Dual.Nested.tangentTensor
-      (getIdx (nested.vjpWithSeed values data (DualTensor.jet directions seed x)) input) =
+      (getIdx (nested.vjp values data (DualTensor.jet directions seed x)) input) =
       iteratedFDeriv ℝ n
-        (fun y => getIdx (real.vjpWithSeed (inputs y) data (seed y)) input) x directions := by
+        (fun y => getIdx (real.vjp (inputs y) data (seed y)) input) x directions := by
   rcases real with ⟨rs, rg, ro, rb⟩
   rcases nested with ⟨ns, ng, no, nb⟩
   dsimp only at sameShapes hgraph sameOutput ⊢
@@ -139,7 +139,7 @@ theorem tangent_vjpChecked {E : Type*} [NormedAddCommGroup E] [NormedSpace ℝ E
     (checked : nested.vjpChecked values data (DualTensor.jet directions seed x) = .ok result)
     {inputShape : Shape} (input : Idx Γ inputShape) :
     Dual.Nested.tangentTensor (getIdx result.1 input) =
-      iteratedFDeriv ℝ n (fun y => getIdx (real.vjpWithSeed (inputs y) data (seed y)) input)
+      iteratedFDeriv ℝ n (fun y => getIdx (real.vjp (inputs y) data (seed y)) input)
         x directions := by
   rw [eq_of_vjpChecked_ok nested values data (DualTensor.jet directions seed x) result checked]
   exact tangent_vjp real nested sameShapes hgraph sameOutput directions x inputs values data
@@ -175,13 +175,13 @@ theorem tangent_vjpChecked_adjoint_fderiv
           (flattenCtx (inputs y))).adjoint (tensorToVec (seed y)))) input) x directions := by
   have hderiv := tangent_vjpChecked real nested sameShapes hgraph sameOutput directions x
     inputs values data hinputs seed hseed result checked input
-  have hfun : (fun y => getIdx (real.vjpWithSeed (inputs y) data (seed y)) input) =
+  have hfun : (fun y => getIdx (real.vjp (inputs y) data (seed y)) input) =
       fun y => getIdx (unflattenCtx
         ((fderiv ℝ (fun z => tensorToVec (real.forward (unflattenCtx z) data))
           (flattenCtx (inputs y))).adjoint (tensorToVec (seed y)))) input := by
     funext y
     have heq := congrArg unflattenCtx
-      (vjpWithSeed_adjoint_fderiv real proofGraph same (inputs y) data (seed y) (correct y))
+      (vjp_adjoint_fderiv real proofGraph same (inputs y) data (seed y) (correct y))
     simp only [unflattenCtx_flattenCtx] at heq
     exact congrArg (fun ctx => getIdx ctx input) heq
   rwa [hfun] at hderiv

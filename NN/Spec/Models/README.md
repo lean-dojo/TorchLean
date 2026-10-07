@@ -47,7 +47,7 @@ Practical checklist:
 
 1. Pick a file name and namespace
    - Add `NN/Spec/Models/<your_model>.lean`.
-   - Use `namespace Models` and open `Spec`/`Tensor` as the other files do.
+   - Use `namespace Spec` for shared specifications, or extend the model's existing namespace.
 
 2. Choose the input convention (and be explicit)
    - Describe semantic axes in the declaration instead of encoding a layout in its name.
@@ -96,3 +96,6 @@ Practical checklist:
   preserve `H×W`, add the corresponding equality proof that rewrites the type.
 - Avoid duplicating derivative logic in two places. Prefer one authoritative backward/VJP and call
   it from training wrappers (as in `Svm.lean`).
+- Reuse shape-generic losses from `NN/Spec/Layers/Loss.lean` on the model's predictions rather than
+  adding a loss catalogue to each model. Preserve numerical schedules when refactoring: multiplying
+  by a reciprocal and dividing directly can produce different floating-point results.

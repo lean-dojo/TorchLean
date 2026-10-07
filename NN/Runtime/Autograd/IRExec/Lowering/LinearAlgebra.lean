@@ -51,9 +51,6 @@ def lowerMatmul {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match binaryParents? n.parents with
   | some (aId, bId) =>
       let aNode ← g.getNode aId
@@ -62,12 +59,12 @@ def lowerMatmul {α : Type} [TorchLean.Storage α] [Context α]
       let ia ← parentIdx aId dims.leftShape
       let ib ← parentIdx bId dims.rightShape
       if hOut : dims.outShape = n.outShape then
-        let forward := fun ctx : TensorReader α Γ =>
+        let forward := fun ctx : TensorLookup α Γ =>
           Tensor.castShape
             (NN.IR.Graph.matmulWithDims dims
-              (readTensor (α := α) (xs := ctx) ia)
-              (readTensor (α := α) (xs := ctx) ib)) hOut
-        pure <| fwd forward
+              (ctx.read ia)
+              (ctx.read ib)) hOut
+        pure <| mkForwardNode (τ := τ) forward
       else
           throw <|
             s!"IRExec: node {i}: matmul outShape mismatch: " ++
@@ -88,9 +85,6 @@ def lowerLinear {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some xId =>
       match payload.linear? n.id with
@@ -107,12 +101,12 @@ def lowerLinear {α : Type} [TorchLean.Storage α] [Context α]
           -- on the `dite` terms these produce.
           if hIn : xNode.outShape = leading.concat [p.inDim] then
             if hOut : leading.concat [p.outDim] = n.outShape then
-              let forward := fun ctx : TensorReader α Γ =>
+              let forward := fun ctx : TensorLookup α Γ =>
                 let xIn : Tensor α expectedIn :=
-                  Tensor.castShape (readTensor (α := α) (xs := ctx) ix) hIn
+                  Tensor.castShape (ctx.read ix) hIn
                 let y : Tensor α expectedOut := NN.IR.Graph.linearLeading leading p.W p.b xIn
                 Tensor.castShape y hOut
-              pure <| fwd forward
+              pure <| mkForwardNode (τ := τ) forward
             else
               throw <|
                 s!"IRExec: linear {n.id}: declared outShape mismatch: {repr τ} vs " ++

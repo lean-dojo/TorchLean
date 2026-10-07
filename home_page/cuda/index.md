@@ -33,7 +33,7 @@ TORCHLEAN_REQUIRE_CUDA=1 scripts/lake.sh -Kcuda=true test
 Run the CUDA sanitizer suite when changing the native adapter:
 
 ```bash
-scripts/checks/cuda_sanitize_tests.sh --all-tools
+scripts/checks/cuda.sh sanitize --all-tools
 ```
 
 ## What CUDA Covers

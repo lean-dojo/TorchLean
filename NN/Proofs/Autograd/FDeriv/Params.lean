@@ -112,38 +112,15 @@ theorem inner_matApply_eq {m n : Nat} (x : Vec n) (dW : Mat m n) (δ : Vec m) :
       =
     inner ℝ dW (outer (m := m) (n := n) δ x) := by
   classical
-  have hL :
-      inner ℝ ((matApplyLin (m := m) (n := n) x) dW) δ
-        = ∑ i : Fin m, ((toMatrix dW).mulVec x.ofLp) i * δ.ofLp i := by
-    simp [matApplyLin, matApplyLM, inner_eq_sum_mul]
-  have hR :
-      inner ℝ dW (outer (m := m) (n := n) δ x)
-        =
-      ∑ i : Fin m, ∑ j : Fin n, dW i j * (δ.ofLp i * x.ofLp j) := by
-    simp [inner_mat_eq_sum, outer]
-
-  calc
-    inner ℝ ((matApplyLin (m := m) (n := n) x) dW) δ
-        = ∑ i : Fin m, ((toMatrix dW).mulVec x.ofLp) i * δ.ofLp i := hL
-    _ = ∑ i : Fin m, (∑ j : Fin n, dW i j * x.ofLp j) * δ.ofLp i := by
-          refine Finset.sum_congr rfl ?_
-          intro i _
-          simp [toMatrix, Matrix.mulVec, dotProduct]
-    _ = ∑ i : Fin m, ∑ j : Fin n, dW i j * (δ.ofLp i * x.ofLp j) := by
-          refine Finset.sum_congr rfl ?_
-          intro i _
-          calc
-            (∑ j : Fin n, dW i j * x.ofLp j) * δ.ofLp i
-                = δ.ofLp i * ∑ j : Fin n, dW i j * x.ofLp j := by
-                    ring
-            _ = ∑ j : Fin n, δ.ofLp i * (dW i j * x.ofLp j) := by
-                    simp [Finset.mul_sum]
-            _ = ∑ j : Fin n, dW i j * (δ.ofLp i * x.ofLp j) := by
-                    refine Finset.sum_congr rfl ?_
-                    intro j _
-                    ring
-    _ = inner ℝ dW (outer (m := m) (n := n) δ x) := by
-          simp [hR]
+  rw [inner_eq_sum_mul, inner_mat_eq_sum]
+  change (∑ i : Fin m, (∑ j : Fin n, dW i j * x.ofLp j) * δ.ofLp i) =
+    ∑ i : Fin m, ∑ j : Fin n, dW i j * (δ.ofLp i * x.ofLp j)
+  apply Finset.sum_congr rfl
+  intro i _
+  rw [Finset.sum_mul]
+  apply Finset.sum_congr rfl
+  intro j _
+  ring
 
 /--
 Adjoint of `W ↦ W x` under Frobenius/$\ell_2$ inner products.

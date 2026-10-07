@@ -30,12 +30,6 @@ class DigitsLinear(nn.Module):
         return self.layers(x)
 
 
-def set_seeds(seed: int) -> None:
-    """Seed NumPy and PyTorch for reproducible exported artifacts."""
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-
 def accuracy(model: nn.Module, x: torch.Tensor, y: torch.Tensor) -> float:
     """Compute classification accuracy on a tensor batch."""
     with torch.no_grad():
@@ -44,16 +38,16 @@ def accuracy(model: nn.Module, x: torch.Tensor, y: torch.Tensor) -> float:
 
 
 def export_weights_json(model: DigitsLinear, in_dim: int, out_dim: int, normalize_div: float) -> dict[str, Any]:
-  """Serialize learned weights in the schema consumed by Lean examples."""
-  state = model.state_dict()
-  return {
-    "format": "digits_linear_weights_v0_1",
-    "in_dim": in_dim,
-    "out_dim": out_dim,
-    "normalize_div": normalize_div,
-    "layers.0.weight": state["layers.0.weight"].tolist(),
-    "layers.0.bias": state["layers.0.bias"].tolist(),
-  }
+    """Serialize learned weights in the schema consumed by Lean examples."""
+    state = model.state_dict()
+    return {
+        "format": "digits_linear_weights_v0_1",
+        "in_dim": in_dim,
+        "out_dim": out_dim,
+        "normalize_div": normalize_div,
+        "layers.0.weight": state["layers.0.weight"].tolist(),
+        "layers.0.bias": state["layers.0.bias"].tolist(),
+    }
 
 
 def export_dataset_json(x: np.ndarray, y: np.ndarray, in_dim: int, out_dim: int, normalize_div: float) -> dict[str, Any]:
@@ -103,7 +97,8 @@ def main() -> None:
     if args.out_weights.resolve() == args.out_dataset.resolve():
         parser.error("weights and dataset outputs must be distinct")
 
-    set_seeds(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     digits = load_digits()
     x = digits.data.astype(np.float32)

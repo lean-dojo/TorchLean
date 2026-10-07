@@ -161,9 +161,11 @@ and upstream gradient remain owned by the tape.
         Buffer.releaseThen prod <| Buffer.scale prod (-1.0))
 
 /--
-Elementwise "safe log" that protects against `log(0)` by adding a small `ε` internally.
+Elementwise `log(softplus(x) + ε)`.
 
-Spec semantics: `log(softplus(x) + ε)`.
+The caller must choose `ε` positive after conversion to binary32 to keep a rounded-zero softplus
+away from `log(0)`. This operation does not validate `ε` or guarantee finite results for nonfinite
+inputs.
 -/
 @[inline] def safeLog {s : Shape} (t : Tape) (xId : Nat) (ε : Float) : Result (Tape × Nat) := do
   let n ← AnyBuffer.numelU32 s

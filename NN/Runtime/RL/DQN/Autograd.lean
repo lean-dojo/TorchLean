@@ -37,12 +37,12 @@ zero gradient. `reduction` applies to all entries of the prediction tensor.
 This is Huber loss, whose outer derivative has magnitude `delta`. For `delta ≠ 1`, it differs
 from Smooth L1 loss by a factor of `delta`.
 -/
-def huberTDLoss
+def huber
     {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     {s : Shape}
-    (prediction target : RefTy (m := m) (α := α) s)
+    (prediction target : Ref (m := m) (α := α) s)
     (delta : α := 1) (reduction : Loss.Reduction := .mean) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := do
+    m (Ref (m := m) (α := α) Shape.scalar) := do
   let fixedTarget ← detach (m := m) (α := α) target
   let residual ← sub (m := m) (α := α) prediction fixedTarget
   let magnitude ← abs (m := m) (α := α) residual
@@ -65,14 +65,14 @@ adding unused actions does not rescale the loss.
 Pass a positive `delta`. Target construction, termination masking, and target-network updates
 remain the caller's responsibility.
 -/
-def actionHuberLoss
+def loss
     {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     {batch nActions : Nat} [NeZero batch] [NeZero nActions]
     (qValues actionOneHot :
-      RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
-    (target : RefTy (m := m) (α := α) (.dim batch .scalar))
+      Ref (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
+    (target : Ref (m := m) (α := α) (.dim batch .scalar))
     (delta : α := 1) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := do
+    m (Ref (m := m) (α := α) Shape.scalar) := do
   let s : Shape := .dim batch (.dim nActions .scalar)
   let _ : Shape.WellFormed s := by infer_instance
   let _ : Shape.HasNonemptyAxis 1 s :=
@@ -80,6 +80,6 @@ def actionHuberLoss
   let fixedActions ← detach (m := m) (α := α) actionOneHot
   let masked ← mul (m := m) (α := α) qValues fixedActions
   let selected ← reduceSum (m := m) (α := α) (s := s) (axis := 1) masked
-  huberTDLoss (m := m) (α := α) selected target delta
+  huber (m := m) (α := α) selected target delta
 
 end Runtime.RL.DQN.Autograd

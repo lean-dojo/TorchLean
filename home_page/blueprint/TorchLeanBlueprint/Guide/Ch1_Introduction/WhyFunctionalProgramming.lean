@@ -480,11 +480,11 @@ Optim.Step : (α : Type) → [Storage α] → Shape → Type → Type
 ```leanOutput wfMomentumType (whitespace := lax)
 @Optim.MomentumSGD.update : {α : Type} →
   [inst : Storage α] →
-    [inst_1 : Context α] →
-      [DecidableRel fun x1 x2 => x1 > x2] →
-        {s : Shape} →
-          Optim.MomentumSGD.State α s → Tensor α s →
-            Tensor α s →
+    [Add α] →
+      [Sub α] →
+        [Mul α] →
+          {s : Shape} →
+            Optim.MomentumSGD.State α s → Tensor α s → Tensor α s →
               Optim.Step α s (Optim.MomentumSGD.State α s)
 ```
 

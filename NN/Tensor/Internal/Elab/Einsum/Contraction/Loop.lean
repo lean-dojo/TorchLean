@@ -21,6 +21,10 @@ last of those stages and is what importers of the contraction compiler name.
 This module compiles arbitrary-rank coordinate folds and sums to certified
 native loops. Concrete, symbolic, flattened, and compile-time-unrolled axes all
 share the same finite-fold correctness boundary.
+
+These passes change index representation and loop structure, not the order of
+updates to each accumulator. Their equality certificates do not assume that
+floating-point addition is associative.
 -/
 
 public meta section

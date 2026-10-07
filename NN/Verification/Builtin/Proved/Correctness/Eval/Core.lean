@@ -10,6 +10,11 @@ public import NN.Verification.Builtin.Proved.Correctness.WellFormed
 
 /-!
 # Lowered Forward Evaluation: Shared Invariants
+
+The shape list records the expected type of every value in the dynamic evaluator table.
+`packedAt` and `tensorAt` recover an in-bounds value and its typed tensor from that invariant;
+the lookup lemmas connect them to the evaluator's failure-aware interface. Small graph
+constructors are shared by the local, per-operator evaluation theorems.
 -/
 
 @[expose] public section
@@ -135,7 +140,7 @@ theorem rangeArray_mapM_eq_of_getElem_eq {β : Type} (values : Array β)
   change ({ nodes := inputNodes.push (variadicNodeOut kind parentShapes outShape) } : Graph).getNode
       parentShapes.size = .ok (variadicNodeOut kind parentShapes outShape)
   rw [← hSize]
-  simp [Graph.getNode, Graph.getNode?, variadicNodeOut,
+  simp [Graph.getNode, variadicNodeOut,
     Bind.bind, Except.bind, Pure.pure, Except.pure]
   exact hSize.symm
 

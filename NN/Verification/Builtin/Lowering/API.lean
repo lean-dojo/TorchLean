@@ -21,6 +21,11 @@ The broad `lowerForwardToIR` entry point runs a `TorchLean.Program` with the IR-
 interpreter, then checks the graph's structure and shapes. A successful result is executable and
 ready for verifier passes, but does not by itself prove equality with the source program. The
 theorem-backed source fragment lives under `NN.Verification.Builtin.Proved`.
+
+In particular, the builder's softmax-then-log expansion does not retain stable log-softmax
+behavior under finite precision. Its one-hot matrix encoding of slicing also performs arithmetic
+instead of direct indexing. Structural validation does not establish numerical equivalence for
+either expansion.
 -/
 
 @[expose] public section
@@ -112,15 +117,6 @@ def LoweredIR.outputBox? {α : Type} [TorchLean.Storage α] [Context α]
     Except String (NN.MLTheory.CROWN.FlatBox α) := do
   NN.MLTheory.CROWN.Graph.outputBox? boxes lowered.outputId
 
-/-- Read the lowered verifier output box, throwing an `IO.userError` if it is missing. -/
-def LoweredIR.outputBoxOrThrow {α : Type} [TorchLean.Storage α] [Context α]
-    (lowered : LoweredIR α)
-    (boxes : Array (Option (NN.MLTheory.CROWN.FlatBox α))) :
-    IO (NN.MLTheory.CROWN.FlatBox α) := do
-  match lowered.outputBox? boxes with
-  | .ok outB => pure outB
-  | .error msg => throw <| IO.userError msg
-
 /--
 Compute CROWN output bounds on a selected input box. Exact-reassociation backends use a forward
 affine sweep; rounded backends request directed backward bounds for the output coordinates.
@@ -134,16 +130,6 @@ def LoweredIR.outputBoxCROWN? {α : Type} [TorchLean.Storage α] [Context α]
   NN.MLTheory.CROWN.Graph.outputBoxCROWN? (α := α) lowered.graph ps xB
     lowered.inputId lowered.outputId inputDim
 
-/-- Compute CROWN output bounds for a lowered graph, throwing an `IO.userError` on failure. -/
-def LoweredIR.outputBoxCROWNOrThrow {α : Type} [TorchLean.Storage α] [Context α]
-    [NN.MLTheory.CROWN.BoundOps α] [NN.MLTheory.CROWN.NonlinearBoundOps α]
-    (lowered : LoweredIR α) (ps : NN.MLTheory.CROWN.Graph.ParamStore α)
-    (xB : NN.MLTheory.CROWN.FlatBox α) :
-    IO (NN.MLTheory.CROWN.FlatBox α) := do
-  match lowered.outputBoxCROWN? ps xB with
-  | .ok outB => pure outB
-  | .error msg => throw <| IO.userError msg
-
 /-- Run objective-dependent backward CROWN and evaluate the scalar objective on the input box. -/
 def LoweredIR.backwardObjectiveBox? {α : Type} [TorchLean.Storage α] [Context α]
     [NN.MLTheory.CROWN.BoundOps α]
@@ -154,13 +140,6 @@ def LoweredIR.backwardObjectiveBox? {α : Type} [TorchLean.Storage α] [Context 
   let ctx ← lowered.affineCtx?
   NN.MLTheory.CROWN.Graph.backwardObjectiveBox? (α := α) lowered.graph ps ctx
     ibp xB lowered.outputId obj
-
-/-- Convert a parameter `TorchLean.TensorPack` into constant references for IR lowering. -/
-def refListConstOfPack {α : Type} [TorchLean.Storage α] [Context α] :
-    {ss : List Shape} → TorchLean.TensorPack α ss →
-      Runtime.Autograd.Torch.RefList (fun s => Ref α s) ss
-  | .nil, .nil => .nil
-  | .cons _s ss, .cons t ts => .cons (.const t) (refListConstOfPack (ss := ss) ts)
 
 /--
 Lower a TorchLean forward model with one distinguished input, supplied as its last argument.
@@ -175,10 +154,15 @@ def lowerForwardToIR
     (model : Runtime.Autograd.Model.Program α (paramShapes ++ [inShape]) outShape)
     (params : TorchLean.TensorPack α paramShapes) :
     Except String (LoweredIR α) :=
+  let rec constRefs : {shapes : List Shape} → TorchLean.TensorPack α shapes →
+      Runtime.Autograd.Torch.RefList (Ref α) shapes
+    | [], .nil => .nil
+    | _ :: shapes, .cons tensor tensors =>
+        .cons (.const tensor) (constRefs (shapes := shapes) tensors)
   let build : BuildM α Nat := do
     let x : Ref α inShape ← emitInput (α := α)
     let psRefs : Runtime.Autograd.Torch.RefList (Ref α) paramShapes :=
-      refListConstOfPack (α := α) (ss := paramShapes) params
+      constRefs params
     let allRefs : Runtime.Autograd.Torch.RefList (Ref α) (paramShapes ++ [inShape]) :=
       Runtime.Autograd.Torch.RefList.append (ss₁ := paramShapes) (ss₂ := [inShape]) psRefs (.cons x
         .nil)

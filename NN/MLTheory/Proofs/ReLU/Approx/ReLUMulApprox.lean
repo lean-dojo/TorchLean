@@ -149,18 +149,6 @@ noncomputable def combineOutput
     bias := Tensor.ofFn (n := 1)
       (fun _ => γ + α * extractScalarOutput a.bias + β * extractScalarOutput b.bias) }
 
-/-- Reading the left component from an appended hidden vector. -/
-theorem getScalar_append_left {m n : Nat} (a : Tensor ℝ [m]) (b : Tensor ℝ [n]) (i : Fin m) :
-    TorchLean.Tensor.getScalar (appendDim a b) (Fin.castAdd n i) =
-      TorchLean.Tensor.getScalar a i := by
-  simp [appendDim, TorchLean.Tensor.getScalar, Spec.get, Fin.append]
-
-/-- Reading the right component from an appended hidden vector. -/
-theorem getScalar_append_right {m n : Nat} (a : Tensor ℝ [m]) (b : Tensor ℝ [n]) (i : Fin n) :
-    TorchLean.Tensor.getScalar (appendDim a b) (Fin.natAdd m i) =
-      TorchLean.Tensor.getScalar b i := by
-  simp [appendDim, TorchLean.Tensor.getScalar, Spec.get, Fin.append]
-
 /-- Pointwise behavior of the ReLU activation on tensor-vectors. -/
 theorem getScalar_relu {n : Nat} (z : Tensor ℝ [n]) (i : Fin n) :
     TorchLean.Tensor.getScalar (Activation.reluSpec (α := ℝ) (s := .dim n .scalar) z) i =

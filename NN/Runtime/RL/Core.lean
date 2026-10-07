@@ -36,8 +36,8 @@ open Spec TorchLean
 open TorchLean TorchLean.Tensor
 
 export Spec.RL
-  (continueMask discountedBackup tdTarget tdResidual
-   discountedReturnsFrom discountedReturns discountedReturnsDone
+  (continueMask discountedBackup tdResidual
+   discountedReturns discountedReturnsDone
    generalizedAdvantageEstimation returnsFromAdvantages)
 
 variable {α : Type} [TorchLean.Storage α] [Context α]

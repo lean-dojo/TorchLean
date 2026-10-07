@@ -17,7 +17,7 @@ adds the missing batch-facing layer used by replay-buffer training loops:
 
 - evaluate one transition with caller-provided online/target Q-functions;
 - average DQN or Double-DQN losses as a tensor over a replay minibatch;
-- soft-update scalar parameters for target networks.
+- update target-network parameters by a weighted average.
 
 The functions are intentionally higher-order: TorchLean examples can pass typed-graph/eager model
 closures without this module knowing anything about parameters, optimizers, or autograd sessions.
@@ -61,7 +61,7 @@ def loss {obsShape : Shape} {nActions : Nat}
     (many := Array (Core.Transition α obsShape nActions)) (batch := batch)
   subst Input
   let evaluate := fun tr : Core.Transition α obsShape nActions =>
-    let prediction := ValueLearning.chosenActionValue (onlineQ tr.state) tr.action
+    let prediction := Tensor.getScalar (onlineQ tr.state) tr.action
     let target := if double then
         ValueLearning.doubleDqnTarget tr.reward gamma tr.done
           (onlineQ tr.nextState) (targetQ tr.nextState)
@@ -74,13 +74,16 @@ def loss {obsShape : Shape} {nActions : Nat}
       exact (Tensor.ofFn fun index : Fin inputs.size => evaluate inputs[index]).mean
 
 /--
-Soft target-network update for a single scalar:
+Weighted target-network update:
 
 `target ← τ * online + (1 - τ) * target`.
 
-Use this elementwise over parameter tensors/lists when implementing DQN/DDPG/TD3/SAC target sync.
+Use this elementwise over parameter tensors for DQN/DDPG/TD3/SAC target synchronization.
+The mixing weight is used as supplied, without validation. The arithmetic order is retained
+for floating-point callers; algebraically equivalent rearrangements can round differently.
 -/
-def softUpdateScalar (tau online target : α) : α :=
+def updateTarget {α : Type*} [One α] [Add α] [Sub α] [Mul α]
+    (tau online target : α) : α :=
   tau * online + ((1 : α) - tau) * target
 
 end DQN

@@ -44,7 +44,7 @@ def scalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean.Storage δ]
     (fun initParams => do
       let parameters ← ParamList.ofPackWithRequiresGrad (α := α) initParams initRequiresGrad
       let validateDataInputsIO (inputs : TorchLean.TensorPack δ dataInputShapes) : IO Unit :=
-        okOrThrow (validateDataInputs inputs)
+        IO.ofExcept (validateDataInputs inputs)
       match options.execution with
       | .typedGraph => Internal.graphScalarTrainer options parameters validateDataInputsIO loss
       | .eager => Internal.eagerScalarTrainer options parameters validateDataInputsIO loss)

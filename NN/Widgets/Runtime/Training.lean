@@ -27,7 +27,7 @@ When debugging a training loop, it helps to inspect the values recorded after ea
 - a few scalar metrics (accuracy, learning rate, gradient norm),
 - a compact “last N steps” table.
 
-This module provides a *pure* log viewer (no JS): inline SVG sparklines + HTML tables.
+The log viewer uses inline SVG sparklines and HTML tables, with no custom JavaScript.
 
 Main command:
 - `#train_log_view log` renders a `TrainLog`.
@@ -345,12 +345,6 @@ syntax (name := trainLogViewCmd) "#train_log_view " term : command
 macro "#train_log_view " log:term : command =>
   UI.canonicalCommand <$> `(#html (trainLogHtml $log))
 
-/-!
-`TrainLog` is pure data, but many executables write logs to disk.
-
-This command reads a saved JSON log (written by `Runtime.Training.TrainLog.writeJson`) and
-renders it using the same viewer as `#train_log_view`.
--/
 /--
 Read a saved `Runtime.Training.TrainLog` JSON file and render it in the infoview.
 

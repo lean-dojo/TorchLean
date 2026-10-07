@@ -94,36 +94,14 @@ def initialState {σ τ : Spec.Shape} (model : Sequential σ τ) (α : Type := F
     (Runtime.Autograd.Model.Layers.Seq.initState model)).map
       (fun tensor => TorchLean.Tensor.map (Runtime.ofFloat (α := α)) tensor)
 
-/-! Constructors that pair an immutable model with a scalar training loss. -/
+/-!
+Constructors that pair an immutable model with a scalar training loss.
+
+These return a public objective definition; instantiate it to allocate runtime state.
+-/
 namespace Objective
 
-/--
-Pair an immutable sequential model with a scalar loss.
-
-The result is a public objective definition, not an executable module. Instantiate it to allocate
-runtime state.
--/
-def fromLoss {σ τ : Spec.Shape} (model : Sequential σ τ)
-    (loss : ∀ {α : Type}, [TorchLean.Storage α] → [Context α] →
-      Runtime.Autograd.Model.Program α [τ, τ] [])
-    (mode : Mode := .train) :
-    TorchLean.Module.ObjectiveDefinition Unit (stateShapes model) [σ, τ] :=
-  Runtime.Autograd.Model.Layers.Seq.Objective.fromLoss model loss mode
-
-/-- Pair an immutable sequential model with mean-squared error. -/
-def mse {σ τ : Spec.Shape} (model : Sequential σ τ)
-    (reduction : TorchLean.Loss.Reduction := .mean)
-    (mode : Mode := .train) :
-    TorchLean.Module.ObjectiveDefinition Unit (stateShapes model) [σ, τ] :=
-  Runtime.Autograd.Model.Layers.Seq.Objective.mse model reduction mode
-
-/-- Pair an immutable sequential model with one-hot cross entropy. -/
-def oneHotCrossEntropy {σ τ : Spec.Shape} (model : Sequential σ τ)
-    (axis : Nat)
-    (reduction : TorchLean.Loss.Reduction := .mean)
-    (mode : Mode := .train) :
-    TorchLean.Module.ObjectiveDefinition Unit (stateShapes model) [σ, τ] :=
-  Runtime.Autograd.Model.Layers.Seq.Objective.oneHotCrossEntropy model axis reduction mode
+export Runtime.Autograd.Model.Layers.Seq.Objective (fromLoss mse oneHotCrossEntropy)
 
 end Objective
 
@@ -133,9 +111,7 @@ namespace Sequential
 def identity (shape : Spec.Shape) : Sequential shape shape :=
   Runtime.Autograd.Model.Layers.Seq.id shape
 
-/-- Lift one layer into a sequential model. -/
-def fromLayer {σ τ : Spec.Shape} (layer : Layer σ τ) : Sequential σ τ :=
-  Runtime.Autograd.Model.Layers.Seq.fromLayer layer
+export Runtime.Autograd.Model.Layers.Seq (fromLayer)
 
 end Sequential
 

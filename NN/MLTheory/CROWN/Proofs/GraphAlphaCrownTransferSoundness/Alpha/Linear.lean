@@ -12,8 +12,8 @@ public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Alpha.Ba
 # α-CROWN Transfer: Linear Nodes
 
 The `.linear`, `.matmul`, and `.sum` cases of `alphaCrown_transfer_sound`. All three are instances
-of the sign-splitting rule `linearBoundsFromAffine`, proved once in
-`enclosesAtInput_linearBoundsFromAffine` and instantiated with the node's weights (all-ones row
+of the sign-splitting rule `propagateLinearBounds`, proved once in
+`enclosesAtInput_propagateLinearBounds` and instantiated with the node's weights (all-ones row
 for `.sum`) and bias (zero for `.matmul` and `.sum`).
 -/
 
@@ -29,8 +29,8 @@ open CrownCertSoundness
 open CertSoundness
 
 /-- Sign-splitting transfer through `y = W x + bv`: if the affine bounds `xin` enclose the parent
-value `vp` at `x`, then `linearBoundsFromAffine W bv xin hout` encloses `W · vp + bv`. -/
-theorem enclosesAtInput_linearBoundsFromAffine {ctx : AffineCtx} {x : Tensor ℝ [ctx.inputDim]}
+value `vp` at `x`, then `propagateLinearBounds W bv xin hout` encloses `W · vp + bv`. -/
+theorem enclosesAtInput_propagateLinearBounds {ctx : AffineCtx} {x : Tensor ℝ [ctx.inputDim]}
     {xin : FlatAffineBounds ℝ} {vp : Val} {n m : Nat}
     (W : Tensor ℝ [m, n]) (bv : Tensor ℝ [m])
     (hout : xin.outDim = n) (hvIn : vp.n = n)
@@ -40,7 +40,7 @@ theorem enclosesAtInput_linearBoundsFromAffine {ctx : AffineCtx} {x : Tensor ℝ
       { n := m
         v := Spec.linearSpec (α := ℝ) { weights := W, bias := bv }
           (castDimScalar (α := ℝ) hvIn vp.v) } := by
-  obtain ⟨hinDim, -⟩ := id hpar
+  have hinDim := hpar.1
   have hxCast := encloses_castOut_of_enclosesAtInput hout hvIn hinDim hpar
   have hy := encloses_linear_signSplit (m := m) (n := n) W bv _ _ _ hxCast
   refine ⟨hinDim, rfl, ?_⟩
@@ -77,7 +77,7 @@ theorem linear_sound {g : Graph} {ps : ParamStore ℝ} {ibp : Array (Option (Fla
       · rw [dite_eq_left hvIn] at hEvalSome
         cases hs
         cases hEvalSome
-        exact enclosesAtInput_linearBoundsFromAffine p.w p.b hout hvIn
+        exact enclosesAtInput_propagateLinearBounds p.w p.b hout hvIn
           (parent_encloses_of_unaryParent? hpar hps hxin hgv)
       · rw [dite_eq_right hvIn] at hEvalSome
         cases hEvalSome
@@ -113,7 +113,7 @@ theorem matmul_sound {g : Graph} {ps : ParamStore ℝ} {ibp : Array (Option (Fla
       · rw [dite_eq_left hvIn] at hEvalSome
         cases hs
         cases hEvalSome
-        exact enclosesAtInput_linearBoundsFromAffine p.w
+        exact enclosesAtInput_propagateLinearBounds p.w
           (Tensor.full (α := ℝ) (.dim p.m .scalar) 0) hout hvIn
           (parent_encloses_of_unaryParent? hpar hps hxin hgv)
       · rw [dite_eq_right hvIn] at hEvalSome
@@ -158,8 +158,8 @@ theorem sum_sound {g : Graph} {ps : ParamStore ℝ} {ibp : Array (Option (FlatBo
             (Tensor.full (α := ℝ) (.dim 1 (.dim vp.n .scalar)) (1 : ℝ)) vp.v :=
       (linear_spec_bias_zero_eq_matvec _ _).trans
         (mat_vec_mul_full_one_castDimScalar hvIn vp.v).symm
-    exact enclosesAtInput_congr_val (congrArg (FlatTensor.mk 1) hval)
-      (enclosesAtInput_linearBoundsFromAffine _ _ rfl hvIn hpar')
+    exact (congrArg (FlatTensor.mk 1) hval) ▸
+      (enclosesAtInput_propagateLinearBounds _ _ rfl hvIn hpar')
 
 end NN.MLTheory.CROWN.Graph.AlphaCrownTransferSoundness.Alpha
 

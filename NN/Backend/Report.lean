@@ -185,8 +185,8 @@ def summary (p : BackendProfile) : String :=
 
 /-- Plan a list of backend ops and report their declared evidence classifications.
 
-The `trustedExternal` list does not enumerate every foreign implementation boundary: maintained
-LibTorch capsules are classified as `checked` and still execute native code. -/
+The `trustedExternal` list does not enumerate every foreign implementation boundary: LibTorch
+capsules with retained comparisons are classified as `checked` and still execute native code. -/
 def planReport (p : BackendProfile) (ops : Array BackendOp) : Except String String := do
   let plan ← p.planOps ops
   let boundary :=

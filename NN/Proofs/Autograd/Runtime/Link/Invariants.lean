@@ -35,16 +35,8 @@ theorem all_requiresGrad_addLeaves {α : Type} [TorchLean.Storage α] (t : Tape 
     (ht : t.nodes.all (fun n => n.requiresGrad) = true)
     {Γ : List Shape} (xs : TorchLean.TensorPack α Γ) :
     (addLeaves (α := α) (t := t) (Γ := Γ) xs).nodes.all (fun n => n.requiresGrad) = true := by
-  induction xs generalizing t with
-  | nil => simpa [addLeaves] using ht
-  | cons x xs ih =>
-      -- `leaf` pushes a node with `requiresGrad = true`, so `.all` survives the push.
-      let t' : Tape α := (Runtime.Autograd.Tape.leaf (t := t) x).1
-      have ht' : t'.nodes.all (fun n => n.requiresGrad) = true := by
-        simpa [t', Runtime.Autograd.Tape.leaf, Runtime.Autograd.Tape.addNode, Array.all_push]
-          using ht
-      simpa [addLeaves, t', Runtime.Autograd.Tape.leaf, Runtime.Autograd.Tape.addNode]
-        using ih (t := t') ht'
+  rw [nodes_addLeaves, Array.all_append, ht, Bool.true_and, Array.all_map]
+  exact Array.all_eq_true.mpr (fun _ _ => rfl)
 
 /--
 All nodes produced by `lowerGraphDataToTape` have `requiresGrad = true`.

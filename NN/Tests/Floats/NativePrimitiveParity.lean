@@ -12,14 +12,16 @@ public import FloatLib.Floats.Formats.IEEE754.Native
 /-!
 # Native binary32 parity: the test behind the CUDA float32 contract
 
-`Runtime.Autograd.LibTorch.Float32Contract.NativePrimitiveAgreement` records assumptions that
-native `add`, `mul`, `div`, `fma`, and `sqrt` agree bit-for-bit with `ExecFloat.Binary 8 23`.
+`Runtime.Autograd.LibTorch.Float32Contract.NativePrimitiveAgreement` records agreement assumptions
+for native `add`, `mul`, `div`, `fma`, and `sqrt` against `ExecFloat.Binary 8 23`: non-NaN results
+must have identical bits, while two NaN results may have different encodings.
 This regression harness compares selected host results with that reference; passing a finite set of
 cases does not establish the universal contract or verify a GPU implementation.
 
 Lean's native `Float32` calls host binary32 arithmetic for four operations. Core provides no
 `Float32` fused-multiply-add primitive, so this harness emits reference FMA cases for
-`scripts/checks/cuda_float32_parity.sh`. That script compares host `fmaf` and device `__fmaf_rn`.
+`scripts/checks/cuda.sh parity`. That script compares host `std::fma`, ATen tensor
+operations, and TorchLean's production C interface with the emitted reference bits.
 
 Lean's `Float32.ofBits` canonicalizes NaNs, while `ExecFloat.Binary 8 23` preserves their sign and
 payload when quieting them. The native conversion therefore cannot serve as a payload-preserving
@@ -314,7 +316,7 @@ def usage : String :=
     , "  --sweep N     draw N pseudorandom operand pairs, skipping NaN inputs (default 0)"
     , "  --seed S      seed for the sweep generator (default 1)"
     , "  --emit-cases  print cases and their reference bits, one per line, in the format read"
-    , "                by scripts/checks/cuda_float32_parity.sh;" ++
+    , "                by scripts/checks/cuda.sh parity;" ++
         " --sweep N adds up to N random cases"
     ]
 

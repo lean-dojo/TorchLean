@@ -84,7 +84,7 @@ def mask : Tensor Bool [n, n] :=
 /-- Evaluate a checked buffer operation at this point in a test's ownership sequence. -/
 @[no_expose] def checked {α : Type} (action : Unit → Except String α) : IO α := do
   let result ← IO.lazyPure action
-  Utils.okOrThrow result
+  IO.ofExcept result
 
 /-- Saved probabilities and borrowed Q/K/V support repeated VJPs after output release.
 A fully blocked row contributes zero even when its cotangent is NaN. -/
@@ -322,14 +322,14 @@ def run : IO Unit := do
   let (t3, wvId) := Tape.leaf (t := t2) wv (name := some "wv")
   let (t4, woId) := Tape.leaf (t := t3) wo (name := some "wo")
   let (t5, xId) := Tape.leaf (t := t4) x (name := some "x")
-  let (t6, yId) ← Utils.okOrThrow
+  let (t6, yId) ← IO.ofExcept
     (Tape.attention (α := Float) (t := t5)
       (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
       (h1 := n_ne_zero) wqId wkId wvId woId xId (mask := some mask))
   let yCpu ← Utils.cpuValue (s := outShape) t6 yId
   let seedCpu : Spec.SomeTensor Float :=
     Spec.SomeTensor.ofTensor (Tensor.full outShape (1.0 : Float))
-  let gradsCpu ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t6) yId seedCpu)
+  let gradsCpu ← IO.ofExcept (Tape.backwardDenseAll (α := Float) (t := t6) yId seedCpu)
   let dxCpu ← Utils.cpuGrad (s := outShape) gradsCpu xId
   let dWqCpu ← Utils.cpuGrad (s := [dModel, projDim]) gradsCpu wqId
   let dWkCpu ← Utils.cpuGrad (s := [dModel, projDim]) gradsCpu wkId
@@ -351,12 +351,12 @@ def run : IO Unit := do
   let directResult ← Runtime.Autograd.LibTorch.Tape.attention (t := t5c)
       (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
       (h1 := n_ne_zero) wqIdc wkIdc wvIdc woIdc xIdc (mask := some mask)
-  let (t6c, yIdc) ← Utils.okOrThrow directResult
+  let (t6c, yIdc) ← IO.ofExcept directResult
   let yCuda ← Utils.cudaValue (s := outShape) t6c yIdc
   let seedCuda : Runtime.Autograd.LibTorch.AnyBuffer :=
     { s := outShape,
       buf := Runtime.Autograd.LibTorch.Buffer.full (UInt32.ofNat (Spec.Shape.size outShape)) 1.0 }
-  let gradsCuda ← Utils.okOrThrow
+  let gradsCuda ← IO.ofExcept
     (Runtime.Autograd.LibTorch.Tape.backwardDenseAll (t := t6c) yIdc seedCuda)
   let dxCuda ← Utils.cudaGrad (s := outShape) gradsCuda xIdc
   let dWqCuda ← Utils.cudaGrad (s := [dModel, projDim]) gradsCuda wqIdc
@@ -399,13 +399,13 @@ def run : IO Unit := do
   let batchResult ← Runtime.Autograd.LibTorch.Tape.attention (t := tb5)
     (batch := some 2) (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
     (hBatch := by decide) n_ne_zero bwq bwk bwv bwo bx (mask := some mask)
-  let (tb6, byId) ← Utils.okOrThrow batchResult
+  let (tb6, byId) ← IO.ofExcept batchResult
   let yBatch ← Utils.cudaValue (s := batchShape) tb6 byId
   let batchSeed : Runtime.Autograd.LibTorch.AnyBuffer :=
     { s := batchShape,
       buf := Runtime.Autograd.LibTorch.Buffer.full
         (UInt32.ofNat (Spec.Shape.size batchShape)) 1.0 }
-  let batchGrads ← Utils.okOrThrow
+  let batchGrads ← IO.ofExcept
     (Runtime.Autograd.LibTorch.Tape.backwardDenseAll (t := tb6) byId batchSeed)
   let dxBatch ← Utils.cudaGrad (s := batchShape) batchGrads bx
   let dWqBatch ← Utils.cudaGrad (s := [dModel, projDim]) batchGrads bwq
@@ -420,12 +420,12 @@ def run : IO Unit := do
     let (tc3, cv) := Tape.leaf (t := tc2) batchIdentity
     let (tc4, co) := Tape.leaf (t := tc3) batchIdentity
     let (tc5, cx) := Tape.leaf (t := tc4) input
-    let (tc6, cy) ← Utils.okOrThrow <|
+    let (tc6, cy) ← IO.ofExcept <|
       Tape.attention (t := tc5) (dModel := dModel)
         (numHeads := numHeads) (headDim := headDim)
         n_ne_zero cq ck cv co cx (some mask)
     let output ← Utils.cpuValue (s := outShape) tc6 cy
-    let gradients ← Utils.okOrThrow <|
+    let gradients ← IO.ofExcept <|
       Tape.backwardDenseAll tc6 cy (Spec.SomeTensor.ofTensor (Tensor.full outShape (1.0 : Float)))
     let dx ← Utils.cpuGrad (s := outShape) gradients cx
     let dq ← Utils.cpuGrad (s := [dModel, projDim]) gradients cq

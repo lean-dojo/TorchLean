@@ -16,9 +16,6 @@ open Spec TorchLean
 
 namespace TorchLean.Tensor
 
-variable {α : Type} [TorchLean.Storage α] [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)]
-
 /-!
 # Linear Algebra Helpers
 

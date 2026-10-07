@@ -27,34 +27,7 @@ open TorchLean TorchLean.Tensor
 
 noncomputable section
 
-/-!
-### Coordinate lemmas for the Euclidean identification
-
-Mathlib's `EuclideanSpace` is `PiLp 2`, a type synonym carrying a `WithLp` wrapper. The four named
-coordinate identities below say that reading coordinate `i` of a vector built from `f` gives
-`f i`, for the different forms of the wrapper. Mathlib's existing `simp` rules prove these
-identities, so they need no additional `simp` registrations here.
--/
-
-/-- Coordinates of the inverse `PiLp` equivalence are the values of the underlying function. -/
-theorem piLpContinuousLinearEquiv2_symm_apply {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
-    ((PiLp.continuousLinearEquiv 2 ℝ (fun _ : Fin n => ℝ)).symm f) i = f i := by
-  simp
-
-/-- The same, applied through the bundled continuous linear map. -/
-theorem piLpContinuousLinearEquiv2_symm_clm_apply {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
-    (((PiLp.continuousLinearEquiv 2 ℝ (fun _ : Fin n => ℝ)).symm.toContinuousLinearMap) f) i = f i
-      := by
-  simp
-
-/-- The same again, with the `ofLp` projection made explicit. -/
-theorem piLpContinuousLinearEquiv2_symm_clm_apply_ofLp {n : Nat} (f : Fin n → ℝ)
-    (i : Fin n) :
-    (((PiLp.continuousLinearEquiv 2 ℝ (fun _ : Fin n => ℝ)).symm.toContinuousLinearMap) f).ofLp i =
-      f i := by
-  simp
-
-/-- And once more for `EuclideanSpace.equiv`, the spelling used by `vecOfFun`. -/
+/-- Reading a coordinate after the inverse Euclidean equivalence recovers its original value. -/
 theorem euclideanEquiv_symm_ofLp {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
     ((EuclideanSpace.equiv (𝕜 := ℝ) (ι := Fin n)).symm f).ofLp i = f i := by
   simp [EuclideanSpace.equiv]
@@ -249,29 +222,8 @@ def single {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (v : Vec (Spec.Shape.s
 theorem inner_get_single {Γ : List Shape} {s : Shape} (idx : Idx Γ s)
     (x : CtxVec Γ) (v : Vec (Spec.Shape.size s)) :
     inner ℝ x (single (Γ := Γ) (s := s) idx v) = inner ℝ (get (Γ := Γ) (s := s) idx x) v := by
-  classical
-  -- unfold `get`/`single` and reduce to the raw statement + cast isometries
-  let hsz : Spec.Shape.size (Γ.get idx.i) = Spec.Shape.size s := congrArg Spec.Shape.size idx.h
-  -- use the raw lemma, then cancel the casts on both sides
-  have hraw :=
-    inner_getBlock_singleBlock (Γ := Γ) idx.i x (castVec hsz.symm v)
-  -- rewrite RHS using cast-isometry
-  have hcastR :
-      inner ℝ (castVec hsz (getBlock (Γ := Γ) idx.i x)) v =
-        inner ℝ (getBlock (Γ := Γ) idx.i x) (castVec hsz.symm v) := by
-    -- reduce to the isometry lemma `inner_castVec_castVec`
-    have hv : castVec hsz (castVec hsz.symm v) = v := by
-      simp
-    calc
-      inner ℝ (castVec hsz (getBlock (Γ := Γ) idx.i x)) v
-          = inner ℝ (castVec hsz (getBlock (Γ := Γ) idx.i x))
-              (castVec hsz (castVec hsz.symm v)) := by
-              simp [hv]
-      _ = inner ℝ (getBlock (Γ := Γ) idx.i x) (castVec hsz.symm v) := by
-            simpa using
-              (inner_castVec_castVec (h := hsz) (x := getBlock (Γ := Γ) idx.i x) (y := castVec
-                hsz.symm v))
-  simpa [get, single, hcastR] using hraw
+  obtain ⟨i, rfl⟩ := idx
+  simpa [get, single] using inner_getBlock_singleBlock i x v
 
 /-- Continuous linear map extracting the head block of a nonempty vectorized context. -/
 def headCLM {s : Shape} {ss : List Shape} : CtxVec (s :: ss) →L[ℝ] Vec (Spec.Shape.size s) := by

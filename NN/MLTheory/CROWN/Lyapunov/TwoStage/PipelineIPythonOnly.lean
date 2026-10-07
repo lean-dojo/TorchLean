@@ -83,7 +83,7 @@ Why this is an *IO runner* instead of a theorem:
   3) run a semantic checker that constructs `LyapunovCert.ValidFor` for the imported bounds.
 
 Usage (via the CLI tool registered in `NN/Verification/CLI.lean`):
-`lake exe verify -- twostage-pythononly-certgen --model <path>.pth --region
+`scripts/lake.sh exe verify -- twostage-pythononly-certgen --model <path>.pth --region
   \"[-1,1]x[-1,1]\" --dynamics van_der_pol`
 -/
 def main (args : List String) : IO Unit := do

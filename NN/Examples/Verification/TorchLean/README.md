@@ -24,9 +24,10 @@ scripts/lake.sh exe verify -- torchlean-mlp-workflow
 
 The first three commands use bundled, fixed weights. The MLP workflow trains its own small model.
 In the printed reports, `lo` and `hi` are lower and upper output bounds over an input box, rather
-than predictions for one input. A positive lower bound on a class margin establishes that ordering
-within the checked region; a nonpositive bound leaves it unresolved. Loss bounds describe a range
-of possible losses and do not establish convergence or accuracy on a dataset.
+than predictions for one input. For a sound enclosure, a positive lower bound on a class margin
+establishes that ordering within the input region; a nonpositive bound leaves it unresolved.
+The printed rounded bounds alone do not supply a real-semantics soundness theorem. Loss bounds
+describe a range of possible losses and do not establish convergence or accuracy on a dataset.
 
 For example, the MSE case in `torchlean-crown-ops` varies each coordinate of `(0.3, -0.4)` by at most
 `0.05`. Its native run reports a loss enclosure of approximately `[0.234125, 0.345425]`.
@@ -46,5 +47,5 @@ Implementation map:
   with the default `.alphaBetaCrown` method, which is fixed-relaxation alpha-CROWN with ReLU phases
   taken from IBP (printed as `Alpha-CROWN (IBP phases)`)
 
-The `Proved/` subtree contains theorem-backed lowering and evaluator fragments. Runtime reports and
-checker results remain separate from those theorems.
+`NN/Verification/Builtin/Proved/` contains theorem-backed lowering and evaluator fragments.
+Runtime reports and checker results remain separate from those theorems.

@@ -53,15 +53,16 @@ theorem runDirectedBackwardObjective_encloses
   let initial : DirectedBackwardState α :=
     { coeffs := (Array.replicate g.nodes.size none).set! output (some (FlatBox.ofTensor obj.v))
       cstLo := 0, cstHi := 0 }
-  let final := (List.finRange g.nodes.size).reverse.foldl
-    (fun state i => directedBackwardNode g.nodes ps ibp ctx state i.val) initial
+  let final := Fin.foldr g.nodes.size
+    (fun i state => directedBackwardNode g.nodes ps ibp ctx state i.val) initial
   have hinitial : SweepInvariant dims v ctx.inputId g.nodes.size g.nodes.size z initial :=
     initial_represents dims v ctx.inputId g.nodes.size output houtput obj hdim
-  have hfinal : SweepInvariant dims v ctx.inputId g.nodes.size 0 z final :=
-    reverseSweep_preserves (directedBackwardNode g.nodes ps ibp ctx)
-      (fun k state => SweepInvariant dims v ctx.inputId g.nodes.size k z state)
-      g.nodes.size (fun k hk state h => backwardNode_preserves point k hk state z h)
-      g.nodes.size le_rfl initial hinitial
+  have hfinal : SweepInvariant dims v ctx.inputId g.nodes.size 0 z final := by
+    simpa only [List.foldl_reverse, ← Fin.foldr_eq_finRange_foldr] using
+      reverseSweep_preserves (directedBackwardNode g.nodes ps ibp ctx)
+        (fun k state => SweepInvariant dims v ctx.inputId g.nodes.size k z state)
+        g.nodes.size (fun k hk state h => backwardNode_preserves point k hk state z h)
+        g.nodes.size le_rfl initial hinitial
   let inputCoefficient := final.coeffs[ctx.inputId]!.getD
     { dim := ctx.inputDim
       lo := Tensor.full (α := α) (.dim ctx.inputDim .scalar) 0

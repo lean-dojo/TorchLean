@@ -35,11 +35,9 @@ abbrev Function (σ τ : Shape) :=
 /--
 Present a `Function` as the one-argument `Program` the autograd runtime consumes.
 
-The wrapping is pure plumbing: `curry` turns the runtime's heterogeneous argument list into the
-single `ValueRef` a `Function` expects. Every differentiation entry point below goes through here,
-so exactly one place knows the arity convention.
+`curry` presents the runtime's single tensor argument as the `ValueRef` a `Function` expects.
 -/
-def Internal.functionProgram {σ τ : Shape}
+def Internal.program {σ τ : Shape}
     (f : Function σ τ) :
     ∀ {α : Type}, [TorchLean.Storage α] → [Context α] → Runtime.Autograd.Model.Program α [σ] τ :=
   fun {α} _ _ => fun {m} _ _ =>
@@ -57,14 +55,14 @@ def jacfwd {σ τ : Shape} (f : Function σ τ)
     {α : Type} [TorchLean.Storage α] [Context α]
     (input : Tensor α σ) : IO (Tensor α (τ.concat σ)) :=
   Runtime.Autograd.Model.Autodiff.jacfwdInput
-    (α := α) (σ := σ) (τ := τ) (Internal.functionProgram f) input
+    (α := α) (σ := σ) (τ := τ) (Internal.program f) input
 
 /-- Hessian of a scalar function, with one copy of the input axes for each derivative. -/
 def hessian {σ : Shape} (f : Function σ [])
     {α : Type} [TorchLean.Storage α] [Context α]
     (input : Tensor α σ) : IO (Tensor α (σ.concat σ)) :=
   Runtime.Autograd.Model.Autodiff.hessianInput
-    (α := α) (σ := σ) (Internal.functionProgram f) input
+    (α := α) (σ := σ) (Internal.program f) input
 
 /-- Vector-Jacobian product (VJP) for a pure function. -/
 def vjp {σ τ : Shape} (f : Function σ τ)
@@ -76,7 +74,7 @@ def vjp {σ τ : Shape} (f : Function σ τ)
     Runtime.Autograd.Model.Autodiff.vjp (α := α)
       (paramShapes := ([] : List Shape)) (inputShapes := [σ])
       (τ := τ)
-      (Internal.functionProgram (σ := σ) (τ := τ) f)
+      (Internal.program (σ := σ) (τ := τ) f)
       emptyState (TorchLean.TensorPack.singleton input) outputGradient
   pure (TorchLean.TensorPack.head inputGradients)
 
@@ -91,10 +89,10 @@ def jacrev {σ τ : Shape} (f : Function σ τ)
     IO (Tensor α (τ.concat σ)) := do
   let emptyState : TorchLean.TensorPack α ([] : List Shape) := TorchLean.TensorPack.empty
   let rows ←
-    Runtime.Autograd.Model.Autodiff.jacrevOutInputs (α := α)
+    Runtime.Autograd.Model.Autodiff.jacrevInputs (α := α)
       (paramShapes := ([] : List Shape)) (inputShapes := [σ])
       (τ := τ)
-      (Internal.functionProgram (σ := σ) (τ := τ) f)
+      (Internal.program (σ := σ) (τ := τ) f)
       emptyState (TorchLean.TensorPack.singleton input)
   pure (TorchLean.TensorPack.head rows)
 
@@ -118,19 +116,19 @@ def grad {σ : Shape} (f : Function σ [])
         let (_, inputGradients) ←
           Runtime.Autograd.Model.Autodiff.gradients (α := α)
             (paramShapes := ([] : List Shape)) (inputShapes := [σ])
-            (Internal.functionProgram (σ := σ) (τ := []) f)
+            (Internal.program (σ := σ) (τ := []) f)
             emptyState (TorchLean.TensorPack.singleton input)
         pure (TorchLean.TensorPack.head inputGradients)
   | true =>
       exact do
         let graph ←
-          Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph (α := α)
+          Runtime.Autograd.Model.Autodiff.lowerToTypedGraph (α := α)
             (paramShapes := ([] : List Shape)) (inputShapes := [σ])
-            (Internal.functionProgram (σ := σ) (τ := []) f)
+            (Internal.program (σ := σ) (τ := []) f)
         let arguments : TorchLean.TensorPack α [σ] :=
           TorchLean.TensorPack.singleton input
         let (gradients, functionValue) ←
-          Runtime.Autograd.Model.Autodiff.Impl.vjpWithValue
+          Runtime.Autograd.Model.Autodiff.Impl.pullback
             graph arguments (Tensor.scalar (1 : α))
         pure (TorchLean.TensorPack.head gradients, functionValue)
 

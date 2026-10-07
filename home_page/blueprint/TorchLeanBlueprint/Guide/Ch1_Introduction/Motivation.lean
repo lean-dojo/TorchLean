@@ -441,8 +441,8 @@ Over the box $`x\in[-1,1]` the true range of $`g` is $`[0,1]`. Interval propagat
 hidden unit separately, then adds their intervals without retaining the relationship between them:
 
 ```lean (name := moBoxOps)
--- Interval arithmetic for the two operations we need,
--- which is all IBP does at a ReLU and at an addition.
+-- A toy interval calculation illustrating dependency loss.
+-- The checker also follows its selected rounding policy.
 def moReluBox (lo hi : Float) : Float × Float :=
   (max 0.0 lo, max 0.0 hi)
 
@@ -719,8 +719,11 @@ $$`\operatorname{check}(g,\theta,B,c)=\mathrm{true}
 The certificate may come from an expensive external search;
 the checker validates the resulting artifact. Branch-and-bound
 verifiers make the split concrete, exploring a tree of neuron splits and emitting a bound per leaf
-{Informal.citep bunel2020}[]; {ref "certificates"}[the certificates chapter] reads such artifacts
-and checks the leaves in Lean without reproducing the search.
+{Informal.citep bunel2020}[]. In {ref "certificates"}[the certificates chapter], we'll inspect
+the imported leaf boxes and their claimed bounds. The external leaf-artifact checker checks box
+coverage and threshold witnesses without repeating the search, but it does not recompute the
+claimed bounds. The chapter treats that consistency check separately from theorem-backed
+bound checking.
 
 # Executable Verification Workflows
 

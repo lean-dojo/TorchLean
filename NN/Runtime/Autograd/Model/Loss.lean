@@ -62,8 +62,8 @@ This is the common final step for losses like MSE and cross-entropy.
 -/
 def «reduce» {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
-    {s : Shape} (x : RefTy (m := m) (α := α) s) (reduction : Reduction) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := by
+    {s : Shape} (x : Ref (m := m) (α := α) s) (reduction : Reduction) :
+    m (Ref (m := m) (α := α) Shape.scalar) := by
   cases reduction with
   | mean => exact F.mean (m := m) (α := α) (s := s) x
   | sum => exact sum (m := m) (α := α) (s := s) x
@@ -76,9 +76,9 @@ This is backend-generic and supports both `mean` and `sum` reduction.
 def mse {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s : Shape}
-    (yhat y : RefTy (m := m) (α := α) s)
+    (yhat y : Ref (m := m) (α := α) s)
     (reduction : Reduction := .mean) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := by
+    m (Ref (m := m) (α := α) Shape.scalar) := by
   cases reduction with
   | mean =>
       exact mseLoss (m := m) (α := α) (s := s) yhat y
@@ -99,8 +99,8 @@ they do not suppress NaN or infinity, because the loss is evaluated before multi
 def mseWeighted {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s : Shape}
-    (yhat y weights : RefTy (m := m) (α := α) s) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := do
+    (yhat y weights : Ref (m := m) (α := α) s) :
+    m (Ref (m := m) (α := α) Shape.scalar) := do
   let diff ← sub (m := m) (α := α) (s := s) yhat y
   let squared ← F.square (m := m) (α := α) (s := s) diff
   let weighted ← mul (m := m) (α := α) (s := s) squared weights
@@ -110,9 +110,9 @@ def mseWeighted {α : Type} [TorchLean.Storage α] [Context α]
 def nllOneHot {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
-    (logProbs targetOneHot : RefTy (m := m) (α := α) s)
+    (logProbs targetOneHot : Ref (m := m) (α := α) s)
     (reduction : Reduction := .mean) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := do
+    m (Ref (m := m) (α := α) Shape.scalar) := do
   let prod ← mul (m := m) (α := α) (s := s) targetOneHot logProbs
   let negProd ← scale (m := m) (α := α) (s := s) prod (-1)
   match reduction with
@@ -126,7 +126,9 @@ def nllOneHot {α : Type} [TorchLean.Storage α] [Context α]
       scale (m := m) (α := α) (s := Shape.scalar) avgAll (Shape.axisSize s axis)
 
 /--
-Cross-entropy (one-hot targets), computed as `-sum(y * log(softmax(logits)))`.
+Cross-entropy (one-hot targets), computed using the backend's log-softmax and `nllOneHot`.
+The eager and typed-graph backends use stable log-softmax rather than taking the logarithm of
+rounded probabilities. `reduction` selects the sum or mean over samples.
 
 Note: this is one-hot only. For integer class labels, use `crossEntropy`, whose
 `Fin classes` target tensor records the class bound in its element type.
@@ -134,9 +136,9 @@ Note: this is one-hot only. For integer class labels, use `crossEntropy`, whose
 def oneHotCrossEntropy {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
-    (logits targetOneHot : RefTy (m := m) (α := α) s)
+    (logits targetOneHot : Ref (m := m) (α := α) s)
     (reduction : Reduction := .mean) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := do
+    m (Ref (m := m) (α := α) Shape.scalar) := do
   let logp ← F.logSoftmax (m := m) (α := α) (s := s) axis logits
   nllOneHot (m := m) (α := α) (s := s) axis logp targetOneHot (reduction := reduction)
 
@@ -157,10 +159,10 @@ def nllUnreduced {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leading trailing : Shape} {classes : Nat}
     (classAxis : Nat) (_hClassAxis : classAxis = leading.rank)
-    (logProbs : RefTy (m := m) (α := α) (leading.concat (trailing.prependDim classes)))
+    (logProbs : Ref (m := m) (α := α) (leading.concat (trailing.prependDim classes)))
     (target : Runtime.Autograd.Torch.DataRef (m := m) (α := α) (Fin classes)
       (leading.concat trailing)) :
-    m (RefTy (m := m) (α := α) (leading.concat trailing)) := do
+    m (Ref (m := m) (α := α) (leading.concat trailing)) := do
   let toIndices := fun (target : Tensor (Fin classes) (leading.concat trailing)) =>
     (Tensor.ofFn fun i =>
       let targetClass := target.getFlat ⟨i.val, by
@@ -221,11 +223,11 @@ def nll {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leading trailing : Shape} {classes : Nat}
     (classAxis : Nat) (hClassAxis : classAxis = leading.rank)
-    (logProbs : RefTy (m := m) (α := α) (leading.concat (trailing.prependDim classes)))
+    (logProbs : Ref (m := m) (α := α) (leading.concat (trailing.prependDim classes)))
     (target : Runtime.Autograd.Torch.DataRef (m := m) (α := α) (Fin classes)
       (leading.concat trailing))
     (reduction : Reduction := .mean) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := do
+    m (Ref (m := m) (α := α) Shape.scalar) := do
   let losses ← nllUnreduced (m := m) (α := α) classAxis hClassAxis logProbs target
   Loss.reduce (m := m) (α := α) (s := leading.concat trailing) losses reduction
 
@@ -241,11 +243,11 @@ def nllWeighted {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leading trailing : Shape} {classes : Nat}
     (classAxis : Nat) (hClassAxis : classAxis = leading.rank)
-    (logProbs : RefTy (m := m) (α := α) (leading.concat (trailing.prependDim classes)))
+    (logProbs : Ref (m := m) (α := α) (leading.concat (trailing.prependDim classes)))
     (target : Runtime.Autograd.Torch.DataRef (m := m) (α := α) (Fin classes)
       (leading.concat trailing))
-    (weights : RefTy (m := m) (α := α) (leading.concat trailing)) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := do
+    (weights : Ref (m := m) (α := α) (leading.concat trailing)) :
+    m (Ref (m := m) (α := α) Shape.scalar) := do
   let losses ← nllUnreduced (m := m) (α := α) classAxis hClassAxis logProbs target
   let weighted ← mul (m := m) (α := α) (s := leading.concat trailing) losses weights
   sum (m := m) (α := α) (s := leading.concat trailing) weighted
@@ -260,11 +262,11 @@ def crossEntropy {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leading trailing : Shape} {classes : Nat}
     (classAxis : Nat) (hClassAxis : classAxis = leading.rank)
-    (logits : RefTy (m := m) (α := α) (leading.concat (trailing.prependDim classes)))
+    (logits : Ref (m := m) (α := α) (leading.concat (trailing.prependDim classes)))
     (target : Runtime.Autograd.Torch.DataRef (m := m) (α := α) (Fin classes)
       (leading.concat trailing))
     (reduction : Reduction := .mean) :
-    m (RefTy (m := m) (α := α) Shape.scalar) :=
+    m (Ref (m := m) (α := α) Shape.scalar) :=
   letI : Shape.AxisInBounds classAxis (leading.concat (trailing.prependDim classes)) :=
     Shape.AxisInBounds.mk <| by
       rw [hClassAxis]
@@ -284,11 +286,11 @@ def crossEntropyWeighted {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leading trailing : Shape} {classes : Nat}
     (classAxis : Nat) (hClassAxis : classAxis = leading.rank)
-    (logits : RefTy (m := m) (α := α) (leading.concat (trailing.prependDim classes)))
+    (logits : Ref (m := m) (α := α) (leading.concat (trailing.prependDim classes)))
     (target : Runtime.Autograd.Torch.DataRef (m := m) (α := α) (Fin classes)
       (leading.concat trailing))
-    (weights : RefTy (m := m) (α := α) (leading.concat trailing)) :
-    m (RefTy (m := m) (α := α) Shape.scalar) :=
+    (weights : Ref (m := m) (α := α) (leading.concat trailing)) :
+    m (Ref (m := m) (α := α) Shape.scalar) :=
   letI : Shape.AxisInBounds classAxis (leading.concat (trailing.prependDim classes)) :=
     Shape.AxisInBounds.mk <| by
       rw [hClassAxis]
@@ -307,9 +309,9 @@ Targets are expected in `[0,1]` (typically 0/1), same shape as `logits`.
 def bceWithLogits {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s : Shape}
-    (logits target : RefTy (m := m) (α := α) s)
+    (logits target : Ref (m := m) (α := α) s)
     (reduction : Reduction := .mean) :
-    m (RefTy (m := m) (α := α) Shape.scalar) := do
+    m (Ref (m := m) (α := α) Shape.scalar) := do
   let onesT : Tensor α s := Tensor.full s (1 : α)
   let ones ← const (m := m) (α := α) (s := s) onesT
   let oneMinusY ← sub (m := m) (α := α) (s := s) ones target

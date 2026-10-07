@@ -19,7 +19,7 @@ namespace Runtime
 namespace Autograd
 namespace Torch
 
-open Spec TorchLean
+open Spec
 open TorchLean TorchLean.Tensor
 
 namespace Internal
@@ -65,11 +65,11 @@ def backwardDenseAll {α : Type} [TorchLean.Storage α] (s : TypedGraphSession �
   IO (Array (Spec.SomeTensor α)) := do
   s.validateTensorRef out
   let st0 ← s.state.get
-  let output ← okOrThrow (mkIdxOrThrow (Γ := st0.Γ) (ss := st0.ss) out.id sh)
+  let output ← IO.ofExcept (index (Γ := st0.Γ) (ss := st0.ss) out.id sh)
   if st0.leafMetadata.size != st0.Γ.length then
     throw <| IO.userError
       "typed graph session: leaf metadata is not aligned with the typed leaf context"
-  let compiled ← okOrThrow <|
+  let compiled ← IO.ofExcept <|
     Runtime.Autograd.TypedGraph.compileChecked st0.g st0.x st0.nat
   let gradients := compiled.backwardDenseAllFrom output seed
   -- Frozen leaves have no outgoing reverse program. Suppressing their incoming contributions
@@ -82,16 +82,6 @@ def backwardDenseAll {α : Type} [TorchLean.Storage α] (s : TypedGraphSession �
         else if id == output.i.val then Spec.SomeTensor.ofTensor seed
         else Spec.SomeTensor.ofTensor (Tensor.zeros gradient.shape)
     | none => gradient
-
-/--
-Run backward from a scalar loss with seed `1`.
-
-PyTorch comparison: `loss.backward()` for a scalar loss.
--/
-def backwardScalarDenseAll {α : Type} [TorchLean.Storage α] (s : TypedGraphSession α)
-    [Add α] [Zero α] [One α]
-    (loss : TensorRef α Shape.scalar) : IO (Array (Spec.SomeTensor α)) :=
-  backwardDenseAll (α := α) s (sh := Shape.scalar) loss (Tensor.scalar (1 : α))
 
 /--
 Extract the gradient tensor for a particular `TensorRef` from a dense gradient array.
@@ -112,8 +102,8 @@ def grad {α : Type} [TorchLean.Storage α] {sh : Shape}
 
 /-! ## Forward-mode JVP over the typed graph -/
 
-/-- Like `mkIdxOrThrow`, but restricted to leaves `Γ` only. -/
-def mkLeafIdxOrThrow {Γ : List Shape} (id : Nat) (s : Shape) :
+/-- Check an index into the leaf context `Γ`, excluding recorded operation nodes. -/
+def leafIndex {Γ : List Shape} (id : Nat) (s : Shape) :
     Runtime.Autograd.Result (Proofs.Idx Γ s) := by
     if h : id < Γ.length then
       let fin : Fin Γ.length := ⟨id, h⟩
@@ -127,28 +117,13 @@ def mkLeafIdxOrThrow {Γ : List Shape} (id : Nat) (s : Shape) :
   else
     exact .error s!"torch(TypedGraphSession): invalid leaf id={id} for leafLen={Γ.length}"
 
-/--
-Convert a dense tangent array (aligned with leaf creation order) into a typed
-`TorchLean.TensorPack α Γ`.
-
-This is the main adapter needed to call the proved `GraphData.jvpCtx` forward-mode routine.
--/
-def tangentPackOfShapeErasedArray {α : Type} [TorchLean.Storage α]
-    (Γ : List Shape) (dxs : Array (Spec.SomeTensor α)) :
-    IO (TorchLean.TensorPack α Γ) := do
-  if dxs.size = Γ.length then
-    okOrThrow (TorchLean.TensorPack.ofShapeErasedArray (α := α) dxs (shapes := Γ))
-  else
-    throw <| IO.userError
-      s!"torch(TypedGraphSession): dx array size mismatch (expected {Γ.length}, got {dxs.size})"
-
 /-- Evaluate a JVP from a tangent pack aligned with the session's typed leaf context. -/
-def jvpWithTangentPack {α : Type} [TorchLean.Storage α] (st : TypedGraphSessionState α)
+def jvp {α : Type} [TorchLean.Storage α] (st : TypedGraphSessionState α)
     {sh : Shape} (out : TensorRef α sh) (dx : TorchLean.TensorPack α st.Γ) :
     IO (Tensor α sh) := do
-  let (_, dctx) ← okOrThrow <|
+  let (_, dctx) ← IO.ofExcept <|
     Runtime.Autograd.TypedGraph.jvpChecked st.g st.x dx st.nat
-  let idx ← okOrThrow (mkIdxOrThrow (Γ := st.Γ) (ss := st.ss) out.id sh)
+  let idx ← IO.ofExcept (index (Γ := st.Γ) (ss := st.ss) out.id sh)
   pure (Proofs.getIdx (α := α) (xs := dctx) idx)
 
 /--
@@ -156,13 +131,19 @@ Jacobian-vector product for the current session snapshot.
 
 `dxs` is a dense array of tangents for leaf tensors, aligned with leaf creation order.
 -/
-def jvpDenseAll {α : Type} [TorchLean.Storage α] (s : TypedGraphSession α) [Zero α]
+def jvpDenseAll {α : Type} [TorchLean.Storage α] (s : TypedGraphSession α)
     {sh : Shape} (out : TensorRef α sh) (dxs : Array (Spec.SomeTensor α)) :
   IO (Tensor α sh) := do
   s.validateTensorRef out
   let st0 ← s.state.get
-  let dx ← tangentPackOfShapeErasedArray (α := α) st0.Γ dxs
-  jvpWithTangentPack (α := α) st0 out dx
+  let dx ←
+    if dxs.size = st0.Γ.length then
+      IO.ofExcept (TorchLean.TensorPack.ofShapeErasedArray (α := α) dxs (shapes := st0.Γ))
+    else
+      throw <| IO.userError
+        s!"torch(TypedGraphSession): dx array size mismatch \
+          (expected {st0.Γ.length}, got {dxs.size})"
+  jvp (α := α) st0 out dx
 
 /-- JVP for a single leaf: tangent is nonzero only at `x`. -/
 def jvpLeaf {α : Type} [TorchLean.Storage α] (s : TypedGraphSession α) [Zero α]
@@ -172,23 +153,16 @@ def jvpLeaf {α : Type} [TorchLean.Storage α] (s : TypedGraphSession α) [Zero 
   s.validateTensorRef out
   s.validateTensorRef x
   let st0 ← s.state.get
-  let idxX ← okOrThrow (mkLeafIdxOrThrow (Γ := st0.Γ) x.id shX)
+  let idxX ← IO.ofExcept (leafIndex (Γ := st0.Γ) x.id shX)
   let dxAll : TorchLean.TensorPack α st0.Γ :=
     Proofs.Autograd.Algebra.TensorPack.single (α := α) (Γ := st0.Γ) (s := shX) idxX dx
-  jvpWithTangentPack (α := α) st0 out dxAll
-
-/-- Scalar-loss JVP for a single leaf. -/
-def jvpScalarLeaf {α : Type} [TorchLean.Storage α] (s : TypedGraphSession α) [Zero α]
-    (loss : TensorRef α Shape.scalar) {shX : Shape} (x : TensorRef α shX) (dx : Tensor α shX) :
-    IO α := do
-  let dl ← jvpLeaf (α := α) s (shOut := Shape.scalar) (shX := shX) loss x dx
-  pure dl.item
+  jvp (α := α) st0 out dxAll
 
 /--
 Apply an SGD update to all parameters recorded via `use`.
 
-`gradients` is expected to be the dense gradient array returned by `backwardDenseAll` /
-`backwardScalarDenseAll`. Only entries corresponding to parameters (leaves that were produced by
+`gradients` is expected to be the dense gradient array returned by `backwardDenseAll`.
+Only entries corresponding to parameters (leaves that were produced by
 `use`) are used to update `Param.value`. Repeated uses of the same storage contribute additively
 in leaf recording order. All gradients are validated before each storage is updated once.
 PyTorch comparison: like iterating `params` and doing `p.data -= lr * p.grad`.
@@ -236,7 +210,7 @@ the VJP is the derivative of the stored forward function; that stronger statemen
 proof-carrying `Node`s.
 -/
 theorem backwardDenseFrom_lowerGraphDataToTape_eq_backpropAllCtx
-    {α : Type} [TorchLean.Storage α] [CommSemiring α]
+    {α : Type} [TorchLean.Storage α] [Add α]
     (st : TypedGraphSessionState α) (seed : TorchLean.TensorPack α (st.Γ ++ st.ss)) :
     Runtime.Autograd.Tape.backwardDenseFrom
         (t := (Proofs.Autograd.Algebra.Graph.lowerGraphDataToTape (α := α) (Δ := NatEnv) (Γ := st.Γ)

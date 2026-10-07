@@ -22,7 +22,6 @@ namespace GraphSpec
 namespace DAG
 
 open _root_.Spec _root_.TorchLean
-open TorchLean.Tensor
 open _root_.TorchLean.Tensor
 
 namespace PrimOp
@@ -165,15 +164,15 @@ namespace Internal
 def moveAxisToFront {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     (shape : Shape) (axis extent : Nat) [Shape.AxisInBounds axis shape]
-    (input : Runtime.Autograd.Model.RefTy (m := m) (α := α)
+    (input : Runtime.Autograd.Model.Ref (m := m) (α := α)
       (shape.replaceAxis axis extent)) :
-    m (Runtime.Autograd.Model.RefTy (m := m) (α := α)
+    m (Runtime.Autograd.Model.Ref (m := m) (α := α)
       (.dim extent (shape.eraseAxis axis))) := do
   let swaps := List.range axis
   have axisReplacement :=
     applyAdjacentSwaps_range_eq_replaceAxis shape axis extent
       (inferInstance : Shape.AxisInBounds axis shape).proof
-  let input' : Runtime.Autograd.Model.RefTy (m := m) (α := α)
+  let input' : Runtime.Autograd.Model.Ref (m := m) (α := α)
       ((Shape.dim extent (shape.eraseAxis axis)).applyAdjacentSwaps swaps) :=
     axisReplacement.symm ▸ input
   let moved ← Runtime.Autograd.Model.F.Einsum.permuteBySwapsTyped
@@ -185,9 +184,9 @@ def moveAxisToFront {α : Type} [TorchLean.Storage α] [Context α]
 def moveAxisFromFront {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     (shape : Shape) (axis extent : Nat) [Shape.AxisInBounds axis shape]
-    (input : Runtime.Autograd.Model.RefTy (m := m) (α := α)
+    (input : Runtime.Autograd.Model.Ref (m := m) (α := α)
       (.dim extent (shape.eraseAxis axis))) :
-    m (Runtime.Autograd.Model.RefTy (m := m) (α := α)
+    m (Runtime.Autograd.Model.Ref (m := m) (α := α)
       (shape.replaceAxis axis extent)) := do
   let moved ← Runtime.Autograd.Model.F.Einsum.permuteBySwapsTyped
     (m := m) (α := α) input (List.range axis)
@@ -233,7 +232,7 @@ def concatAxis (shape : Shape) (axis left right : Nat)
       | .cons a (.cons b .nil) => concatAxisSpec (α := α) shape axis left right a b
     program := fun {α} _ _ =>
       fun {m} _ _ => fun a b =>
-        let run : m (Runtime.Autograd.Model.RefTy (m := m) (α := α)
+        let run : m (Runtime.Autograd.Model.Ref (m := m) (α := α)
             (shape.replaceAxis axis (left + right))) := do
           let aFront ← Internal.moveAxisToFront (m := m) (α := α) shape axis left a
           let bFront ← Internal.moveAxisToFront (m := m) (α := α) shape axis right b
@@ -265,10 +264,10 @@ def sliceAxisRange (shape : Shape) (axis start length : Nat)
             axis input start length hRange
     program := fun {α} _ _ =>
       fun {m} _ _ => fun input =>
-        let run : m (Runtime.Autograd.Model.RefTy (m := m) (α := α)
+        let run : m (Runtime.Autograd.Model.Ref (m := m) (α := α)
             (shape.replaceAxis axis length)) := do
           let total := shape.axisSize axis
-          let input' : Runtime.Autograd.Model.RefTy (m := m) (α := α)
+          let input' : Runtime.Autograd.Model.Ref (m := m) (α := α)
               (shape.replaceAxis axis total) :=
             (replaceAxis_axisSize shape axis).symm ▸ input
           let inputFront ← Internal.moveAxisToFront (m := m) (α := α) shape axis total input'

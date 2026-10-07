@@ -23,7 +23,7 @@ pure helpers in `NN.Runtime.RL.Algorithms.PolicyGradient`:
 
 - `NN.Runtime.RL.PolicyGradient` works with concrete spec tensors (`Tensor α s`).
 - `NN.Runtime.RL.PolicyGradient.Autograd` works with backend refs
-  (`RefTy (m := m) (α := α) s`) so autograd can differentiate the objectives.
+  (`Ref (m := m) (α := α) s`) so autograd can differentiate the objectives.
 
 ## Action Encoding
 
@@ -76,14 +76,14 @@ beyond `10^30`. Inside that range the clamp's derivative is 1, so gradients also
 unclamped formula. The guard requires `10^30` to be finite in `α`; it is ineffective for binary16,
 where the bound overflows. Rows whose log-softmax is NaN are not repaired.
 -/
-def actionLogProbOneHot
+def logProbability
     {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     {batch nActions : Nat} [NeZero batch] [NeZero nActions]
     (logits :
-      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
+      Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
     (actionOneHot :
-      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar))) :
-    m (Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch .scalar)) := do
+      Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch (.dim nActions .scalar))) :
+    m (Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch .scalar)) := do
   let s : Shape := .dim batch (.dim nActions .scalar)
   let _ : Shape.WellFormed s := by infer_instance
   let _ : Shape.HasNonemptyAxis 1 s :=
@@ -108,12 +108,12 @@ it is ineffective for binary16, where `10^30` overflows. Exact or wider-range ca
 nonzero probabilities below the bound, so the clipped expression can differ from their entropy.
 Rows whose log-softmax is itself NaN are not repaired by this guard.
 -/
-def entropyMean
+def entropy
     {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     {batch nActions : Nat} [NeZero batch] [NeZero nActions]
     (logits :
-      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar))) :
-    m (Runtime.Autograd.Model.RefTy (m := m) (α := α) Shape.scalar) := do
+      Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch (.dim nActions .scalar))) :
+    m (Runtime.Autograd.Model.Ref (m := m) (α := α) Shape.scalar) := do
   let s : Shape := .dim batch (.dim nActions .scalar)
   let _ : Shape.WellFormed s := by infer_instance
   let _ : Shape.HasNonemptyAxis 1 s :=
@@ -129,29 +129,31 @@ def entropyMean
 
 /-! ## PPO (batched) -/
 
+namespace PPO
+
 /--
 PPO clipped surrogate objective (the thing to maximize), computed per sample:
 
 `L_clip_i = min(r_i * A_i, clip(r_i, 1-ε, 1+ε) * A_i)`
 
 where `r_i = exp(logπ_new(a_i|s_i) - logπ_old(a_i|s_i))`.
-The new log-probability uses `actionLogProbOneHot`'s clamp. Cached old values must use the same
+The new log-probability uses `Autograd.logProbability`'s clamp. Cached old values must use the same
 clamp, with matching reductions, for the ratio to equal one at identical policy parameters.
 -/
-def ppoClippedObjective
+def objective
     {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     {batch nActions : Nat} [NeZero batch] [NeZero nActions]
     (newLogits :
-      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
+      Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
     (actionOneHot :
-      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
-    (oldLogProb : Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch .scalar))
-    (advantage : Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch .scalar))
+      Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
+    (oldLogProb : Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch .scalar))
+    (advantage : Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch .scalar))
     (clipEps : α := (1 : α) / ((5 : Nat) : α)) :
-    m (Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch .scalar)) := do
+    m (Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch .scalar)) := do
   let sVec : Shape := .dim batch .scalar
   let newLogProb ←
-    actionLogProbOneHot (m := m) (α := α) (batch := batch) (nActions := nActions)
+    logProbability (m := m) (α := α) (batch := batch) (nActions := nActions)
       newLogits actionOneHot
   let diff ← sub (m := m) (α := α) (s := sVec) newLogProb oldLogProb
   let ratio ← exp (m := m) (α := α) (s := sVec) diff
@@ -168,30 +170,30 @@ PPO scalar loss to *minimize* (mean over batch):
 
 This is the standard discrete-action PPO loss used in many reference implementations.
 -/
-def ppoLoss
+def loss
     {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
     {batch nActions : Nat} [NeZero batch] [NeZero nActions]
     (newLogits :
-      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
+      Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
     (actionOneHot :
-      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
-    (oldLogProb : Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch .scalar))
-    (advantage : Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch .scalar))
+      Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch (.dim nActions .scalar)))
+    (oldLogProb : Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch .scalar))
+    (advantage : Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch .scalar))
     (valuePred valueTarget :
-      Runtime.Autograd.Model.RefTy (m := m) (α := α) (.dim batch (.dim 1 .scalar)))
+      Runtime.Autograd.Model.Ref (m := m) (α := α) (.dim batch (.dim 1 .scalar)))
     (clipEps : α := (1 : α) / ((5 : Nat) : α))
     (valueCoef : α := (1 : α) / ((2 : Nat) : α))
     (entropyCoef : α := (1 : α) / ((100 : Nat) : α)) :
-    m (Runtime.Autograd.Model.RefTy (m := m) (α := α) Shape.scalar) := do
+    m (Runtime.Autograd.Model.Ref (m := m) (α := α) Shape.scalar) := do
   let obj ←
-    ppoClippedObjective (m := m) (α := α) (batch := batch) (nActions := nActions)
+    objective (m := m) (α := α) (batch := batch) (nActions := nActions)
       newLogits actionOneHot oldLogProb advantage (clipEps := clipEps)
   let objMean ← Runtime.Autograd.Model.F.mean (m := m) (α := α) (s := .dim batch .scalar) obj
   let policyLoss ← scale (m := m) (α := α) (s := Shape.scalar) objMean (-1)
   let valueLoss ←
     TorchLean.Loss.mse (m := m) (α := α) (s := .dim batch (.dim 1 .scalar)) valuePred valueTarget
   let valueLossScaled ← scale (m := m) (α := α) (s := Shape.scalar) valueLoss valueCoef
-  let entropy ← entropyMean (m := m) (α := α) (batch := batch) (nActions := nActions) newLogits
+  let entropy ← entropy (m := m) (α := α) (batch := batch) (nActions := nActions) newLogits
   let entropyScaled ← scale (m := m) (α := α) (s := Shape.scalar) entropy entropyCoef
   let tmp ← add (m := m) (α := α) (s := Shape.scalar) policyLoss valueLossScaled
   sub (m := m) (α := α) (s := Shape.scalar) tmp entropyScaled
@@ -209,7 +211,7 @@ Bundle an actor and critic into an `ObjectiveDef` whose inputs are a PPO minibat
 
 The model state is `actor.state ++ critic.state`, and one optimizer step updates both models.
 -/
-def ppoActorCriticObjectiveDef
+def create
     {stateShape : Shape} {batch nActions : Nat} [NeZero batch] [NeZero nActions]
     (actor : Runtime.Autograd.Model.Layers.Seq stateShape (.dim batch (.dim nActions .scalar)))
     (critic : Runtime.Autograd.Model.Layers.Seq stateShape (.dim batch (.dim 1 .scalar))) :
@@ -233,16 +235,16 @@ def ppoActorCriticObjectiveDef
       intro _ _; exact
         (fun {m} _ _ =>
           Runtime.Autograd.Torch.CurriedRef.curry
-            (Ref := fun sh => Runtime.Autograd.Model.RefTy (m := m) (α := α) sh)
+            (Ref := fun sh => Runtime.Autograd.Model.Ref (m := m) (α := α) sh)
             (ss := (Runtime.Autograd.Model.Layers.Seq.stateShapes actor ++
               Runtime.Autograd.Model.Layers.Seq.stateShapes critic) ++
               [stateShape, (.dim batch (.dim nActions .scalar)), (.dim batch .scalar),
                 (.dim batch .scalar), (.dim batch (.dim 1 .scalar))])
-            (β := m (Runtime.Autograd.Model.RefTy (m := m) (α := α) Shape.scalar))
+            (β := m (Runtime.Autograd.Model.Ref (m := m) (α := α) Shape.scalar))
             (fun args => do
               let (ps, xs) :=
                 Runtime.Autograd.Torch.RefList.split
-                  (Ref := fun sh => Runtime.Autograd.Model.RefTy (m := m) (α := α) sh)
+                  (Ref := fun sh => Runtime.Autograd.Model.Ref (m := m) (α := α) sh)
                   (ss₁ := (Runtime.Autograd.Model.Layers.Seq.stateShapes actor ++
                     Runtime.Autograd.Model.Layers.Seq.stateShapes critic))
                   (ss₂ := [stateShape, (.dim batch (.dim nActions .scalar)), (.dim batch .scalar),
@@ -250,7 +252,7 @@ def ppoActorCriticObjectiveDef
                   args
               let (psActor, psCritic) :=
                 Runtime.Autograd.Torch.RefList.split
-                  (Ref := fun sh => Runtime.Autograd.Model.RefTy (m := m) (α := α) sh)
+                  (Ref := fun sh => Runtime.Autograd.Model.Ref (m := m) (α := α) sh)
                   (ss₁ := Runtime.Autograd.Model.Layers.Seq.stateShapes actor)
                   (ss₂ := Runtime.Autograd.Model.Layers.Seq.stateShapes critic)
                   ps
@@ -262,10 +264,11 @@ def ppoActorCriticObjectiveDef
               let values ←
                 Runtime.Autograd.Model.Layers.Seq.forwardState
                   (model := critic) (α := α) (m := m) .train psCritic states
-              ppoLoss (m := m) (α := α) (batch := batch) (nActions := nActions)
+              loss (m := m) (α := α) (batch := batch) (nActions := nActions)
                 logits actionsOneHot oldLogProb advantages values valueTarget))
   }
 
+end PPO
 end Autograd
 end PolicyGradient
 end RL

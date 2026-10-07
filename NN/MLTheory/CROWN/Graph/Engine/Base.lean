@@ -466,8 +466,8 @@ def boxSum (B : FlatBox α) : FlatBox α :=
 @[expose]
 public def boxRelu (B : FlatBox α) : FlatBox α :=
   { dim := B.dim
-    lo := Tensor.mapSpec (fun x => Activation.Math.reluSpec (α := α) x) B.lo
-    hi := Tensor.mapSpec (fun x => Activation.Math.reluSpec (α := α) x) B.hi }
+    lo := Tensor.map (fun x => Activation.Math.reluSpec (α := α) x) B.lo
+    hi := Tensor.map (fun x => Activation.Math.reluSpec (α := α) x) B.hi }
 
 /-- Componentwise absolute value bounds using directed negation at negative endpoints. -/
 @[expose] def boxAbs (B : FlatBox α) : FlatBox α :=
@@ -492,7 +492,10 @@ def boxUnaryEnclosure?
   let upper : Tensor α [B.dim] := Tensor.ofFn fun i => (bounds i).2
   pure { dim := B.dim, lo := lower, hi := upper }
 
-/-- Componentwise square-root bounds, failing when a coordinate interval reaches below zero. -/
+/-- Componentwise square-root bounds using the scalar backend's domain checks.
+
+The supplied real and native-float backends clamp negative lower endpoints to zero and reject
+wholly negative intervals. A backend may also reject an operation it does not support. -/
 @[expose]
 def boxSqrt? [NonlinearBoundOps α] (B : FlatBox α) : Option (FlatBox α) :=
   boxUnaryEnclosure? (α := α) NonlinearBoundOps.sqrtBounds B
@@ -522,10 +525,6 @@ def boxInv? [NonlinearBoundOps α] (B : FlatBox α) : Option (FlatBox α) :=
   boxUnaryEnclosure? (α := α)
     (fun lo hi => NonlinearBoundOps.divBounds 1 1 lo hi) B
 
-/-- Derivative range for `exp`; `exp' = exp`. -/
-def derivBoxExp? [NonlinearBoundOps α] (zB : FlatBox α) : Option (FlatBox α) :=
-  boxUnaryEnclosure? (α := α) NonlinearBoundOps.expBounds zB
-
 /-- Derivative range for `log`; `log' x = 1/x` on a strictly positive interval. -/
 def derivBoxLog? [NonlinearBoundOps α] (zB : FlatBox α) : Option (FlatBox α) :=
   boxUnaryEnclosure? (α := α)
@@ -551,8 +550,8 @@ def secondDerivBoxLog? [NonlinearBoundOps α] (zB : FlatBox α) : Option (FlatBo
 /-- Negate an interval box by swapping and negating its endpoints. -/
 def boxNeg (B : FlatBox α) : FlatBox α :=
   { dim := B.dim
-    lo := Tensor.mapSpec (fun x => -x) B.hi
-    hi := Tensor.mapSpec (fun x => -x) B.lo }
+    lo := Tensor.map (fun x => -x) B.hi
+    hi := Tensor.map (fun x => -x) B.lo }
 
 /-- Convert a row-major flat index into coordinates for the given dimensions. -/
 private def flatCoordinates (dims : Array Nat) (index : Nat) : Array Nat := Id.run do
@@ -1087,14 +1086,8 @@ public def ibpMatmul (id : Nat) (ps : ParamStore α) (Xin : FlatBox α) : Option
   match ps.matmulW[id]? with
   | none => none
   | some p =>
-    if h : Xin.dim = p.n then
-      let xB   : Box α (.dim p.n .scalar) := castBoxDim (α:=α) h (ofFlatBox Xin)
-      let zeroB : Box α (.dim p.m .scalar) :=
-        let z := Tensor.full (α:=α) (.dim p.m .scalar) 0
-        Box.point (α:=α) z
-      let yB := NN.MLTheory.CROWN.IBP.linear (α:=α) (m:=p.m) (n:=p.n) p.w xB zeroB
-      some (toFlatBox p.m yB)
-    else none
+      ibpLinearParams
+        { m := p.m, n := p.n, w := p.w, b := Tensor.full [p.m] 0 } Xin
 
 /--
 IBP transfer for a supported convolution node whose parameters are stored in `ParamStore.convCfg`.

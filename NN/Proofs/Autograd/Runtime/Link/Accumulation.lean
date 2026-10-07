@@ -281,40 +281,20 @@ theorem backwardDenseFromStep_ok_size {α : Type}
         cases hfold
         rfl
     | cons head tail ih =>
-        cases head with
-        | mk pid pg =>
-            cases h1 : Runtime.Autograd.Tape.addGradAll (t := t) acc0 pid pg with
-            | error e =>
-                simp [List.foldlM, h1] at hfold
-                cases hfold
-            | ok acc1 =>
-                have htail :
-                    tail.foldlM
-                        (fun acc2 (pid, pg) => Runtime.Autograd.Tape.addGradAll (t := t) acc2 pid
-                          pg) acc1 =
-                      .ok accOut := by
-                  simpa [List.foldlM, Bind.bind, Except.bind, Pure.pure, Except.pure, h1]
-                    using hfold
-                have hs1 : acc1.size = acc0.size :=
-                  addGradAll_ok_size (t := t) (grads := acc0) (id := pid) (g := pg) (grads' := acc1)
-                    (by
-                    simpa using h1)
-                have := ih (acc0 := acc1) (accOut := accOut) htail
-                simpa [hs1] using this
-
-  have fold_ok_size :
-      ∀ (contribs : Array (Nat × Spec.SomeTensor α)) (acc0 accOut : Array (Spec.SomeTensor α)),
-        (contribs.foldlM (fun acc2 (pid, pg) => Runtime.Autograd.Tape.addGradAll (t := t) acc2 pid
-          pg) acc0 = .ok accOut) → accOut.size = acc0.size := by
-    intro contribs acc0 accOut hfold
-    apply list_fold_ok_size contribs.toList acc0 accOut
-    simpa only [Array.foldlM_toList] using hfold
+        obtain ⟨pid, pg⟩ := head
+        cases hstep : Runtime.Autograd.Tape.addGradAll (t := t) acc0 pid pg with
+        | error error => simp [List.foldlM, hstep, Bind.bind, Except.bind] at hfold
+        | ok acc1 =>
+            have htail := ih (acc0 := acc1) (accOut := accOut)
+              (by simpa [List.foldlM, hstep, Bind.bind, Except.bind] using hfold)
+            exact htail.trans (addGradAll_ok_size (t := t) hstep)
 
   simp only [Runtime.Autograd.Tape.backwardDenseFromStep, Pure.pure, Except.pure, Bind.bind,
     Except.bind, throw, throwThe, MonadExceptOf.throw] at h
   repeat' split at h
   all_goals simp_all
-  exact fold_ok_size _ _ _ h
+  rw [← Array.foldlM_toList] at h
+  exact list_fold_ok_size _ _ _ h
 
 end Graph
 

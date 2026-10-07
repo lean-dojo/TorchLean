@@ -13,7 +13,7 @@ public import NN.Verification.Robustness.MarginCert
 
 Command entry point for checking the bundled logit-bound report. The JSON checker lives
 in `NN.Verification.Robustness.MarginCert`; this module supplies the repository default artifact
-path used by `lake exe verify -- margin-report`.
+path used by `scripts/lake.sh exe verify -- margin-report`.
 -/
 
 @[expose] public section
@@ -24,12 +24,12 @@ namespace NN.Verification.Robustness.MarginCertCLI
 def defaultPath : String :=
   "NN/Examples/Verification/Robustness/digits_linear_margin_cert.json"
 
-/-- CLI entry point for `lake exe verify -- margin-report [report.json]`. -/
+/-- CLI entry point for `scripts/lake.sh exe verify -- margin-report [report.json]`. -/
 def run (args : List String) : IO Unit := do
   let usage :=
     String.intercalate "\n" [
       "Usage:",
-      "  lake exe verify -- margin-report [<path/to/report.json>]",
+      "  scripts/lake.sh exe verify -- margin-report [<path/to/report.json>]",
       "",
       "If no path is provided, uses the bundled digits report:",
       s!"  {defaultPath}",
@@ -42,6 +42,6 @@ def run (args : List String) : IO Unit := do
     IO.println usage
     return
 
-  NN.Verification.Robustness.MarginCert.runWithDefault defaultPath args
+  NN.Verification.Robustness.MarginCert.run args (defaultPath := defaultPath)
 
 end NN.Verification.Robustness.MarginCertCLI

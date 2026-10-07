@@ -146,7 +146,7 @@ theorem boxRelu_encloses {x : FlatBox α} {n : Nat} {f : Nat → ℝ}
   simp only [boxRelu]
   rw [rowEncloses_iff]
   intro i
-  simp only [getScalar_mapSpec, value_relu]
+  simp only [getScalar_map, value_relu]
   exact ⟨max_le_max (hx i).1 le_rfl, max_le_max (hx i).2 le_rfl⟩
 
 /-- A lawful scalar enclosure, applied coordinatewise, encloses the pointwise image. -/
@@ -229,22 +229,7 @@ theorem ibpMatmul_encloses {id : Nat} {ps : ParamStore α} {config : MatParams �
     (hbox : ibpMatmul id ps x = some box) :
     RowEncloses box config.m g := by
   simp only [ibpMatmul, hconfig] at hbox
-  obtain ⟨m, n, W⟩ := config
-  obtain ⟨dx, lx, ux⟩ := x
-  have hdx := hx.1
-  change dx = n at hdx
-  subst hdx
-  rw [rowEncloses_iff] at hx
-  simp only [dite_true, Option.some.injEq] at hbox
-  subst hbox
-  change RowEncloses { dim := m, lo := _, hi := _ } m g
-  rw [rowEncloses_iff]
-  intro i
-  have h := affineEvalOnBox_encloses
-    (⟨W, Tensor.full (α := α) (.dim m .scalar) 0⟩ : AffineVec α dx m) ⟨lx, ux⟩
-    (fun j => f j.val) hx i
-  rw [hg i]
-  exact h
+  exact ibpLinearParams_encloses hx hg hbox
 
 /-- Enclosure depends only on the coordinates below the box width. -/
 theorem RowEncloses.congr {box : FlatBox α} {n : Nat} {f g : Nat → ℝ}

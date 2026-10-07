@@ -80,6 +80,9 @@ different input coordinates.
 A shape mismatch returns `none`: the unequal shapes themselves are already a
 complete reason for inequivalence. When the physical shapes agree, `none`
 means the coordinate maps are equivalent.
+
+This implementation materializes every output coordinate before searching;
+it is an exhaustive diagnostic, not a constant-memory index comparison.
 -/
 def rearrangeCounterexample?
     (first second : CheckedTransform)

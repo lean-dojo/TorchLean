@@ -17,7 +17,7 @@ This file defines:
 
 - fixed-horizon PPO rollout records stored as typed tensors / arrays, and
 - a conversion to the minibatch format expected by the PPO autograd objective
-  (`Runtime.RL.PolicyGradient.Autograd.ppoActorCriticObjectiveDef`).
+  (`Runtime.RL.PolicyGradient.Autograd.PPO.create`).
 
 The single-mask tensor GAE/return definitions live in `NN.Spec.RL.Core` and are re-exported by
 `NN.Runtime.RL.Core`. This typed rollout layer separates task termination from episode boundaries
@@ -186,7 +186,7 @@ def generalizedAdvantages {obsShape : Shape} {nActions horizon : Nat}
 
 /--
 Convert a fixed-horizon rollout into the PPO minibatch expected by
-`Autograd.ppoActorCriticObjectiveDef`.
+`Autograd.PPO.create`.
 
 Notes:
 

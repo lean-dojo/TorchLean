@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-import NN.Runtime.RL.Artifacts.DefaultPaths
+import NN.Runtime.RL.Artifacts.Paths
+meta import NN.Runtime.RL.Artifacts.Paths
 import NN.Runtime.RL.Core
 import NN.Widgets.Runtime.Training
 
@@ -43,6 +44,6 @@ References:
 
 /-- Default training-log path for the optional Pong RAM artifact viewer. -/
 def trainLogPath : System.FilePath :=
-  Runtime.RL.Artifacts.DefaultPaths.ppoPongRamTrainLog
+  Runtime.RL.Artifacts.path "ppo_pong_ram"
 
 #train_log_file_view trainLogPath

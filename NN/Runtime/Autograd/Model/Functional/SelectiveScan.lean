@@ -33,8 +33,9 @@ namespace SelectiveScan
 
 /-- Reference recurrence with token-dependent coefficients and an explicit initial state. -/
 def variableReference {state : Nat} :
-    {seqLen : Nat} → RefTy m α [seqLen, state] → RefTy m α [seqLen, state] →
-      RefTy m α [seqLen, state] → RefTy m α [state] → m (RefTy m α [seqLen, state])
+    {seqLen : Nat} → Ref (m := m) (α := α) [seqLen, state] → Ref (m := m) (α := α) [seqLen, state] →
+      Ref (m := m) (α := α) [seqLen, state] → Ref (m := m) (α := α) [state] →
+      m (Ref (m := m) (α := α) [seqLen, state])
   | 0, _, _, _, _ => const (Tensor.zeros (α := α) [0, state])
   | count + 1, a, b, x, initial => do
       let a0 ← select 0 a ⟨0, by simpa only [Shape.axisSize_zero] using Nat.succ_pos count⟩
@@ -60,8 +61,8 @@ All three sequence inputs have shape `[seqLen, state]`. Gradients flow through `
 and `initial`, including when the coefficients themselves were computed from the input tokens.
 -/
 def selectiveScanDiagVar {seqLen state : Nat}
-    (a b x : RefTy m α [seqLen, state]) (initial : RefTy m α [state]) :
-    m (RefTy m α [seqLen, state]) := do
+    (a b x : Ref (m := m) (α := α) [seqLen, state]) (initial : Ref (m := m) (α := α) [state]) :
+    m (Ref (m := m) (α := α) [seqLen, state]) := do
   if let some native :=
       _root_.Runtime.Autograd.Torch.Ops.selectiveScanDiagVarNative? (m := m) (α := α) then
     if let some result ← native a b x initial then return result
@@ -74,8 +75,8 @@ Reverse mode sums the contributions to each shared coefficient over all steps. T
 kernel performs that accumulation directly; the reference route gets it from broadcasting.
 -/
 def selectiveScanDiag {seqLen state : Nat}
-    (a b : RefTy m α [state]) (x : RefTy m α [seqLen, state])
-    (initial : RefTy m α [state]) : m (RefTy m α [seqLen, state]) := do
+    (a b : Ref (m := m) (α := α) [state]) (x : Ref (m := m) (α := α) [seqLen, state])
+    (initial : Ref (m := m) (α := α) [state]) : m (Ref (m := m) (α := α) [seqLen, state]) := do
   if let some native :=
       _root_.Runtime.Autograd.Torch.Ops.selectiveScanDiagNative? (m := m) (α := α) then
     if let some result ← native a b x initial then return result

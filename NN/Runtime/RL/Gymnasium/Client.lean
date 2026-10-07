@@ -41,7 +41,7 @@ namespace RL
 namespace Gymnasium
 
 open Spec TorchLean
-open TorchLean TorchLean.Tensor
+open TorchLean.Tensor
 open Lean
 open Json
 

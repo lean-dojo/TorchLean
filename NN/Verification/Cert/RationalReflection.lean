@@ -109,16 +109,14 @@ private theorem cast_foldl {ι : Type} (xs : List ι)
   apply TorchLean.Tensor.Internal.Rep.ext
   rintro ⟨i, j, ⟨⟩⟩
   by_cases h : 0 < w (i, j, PUnit.unit) <;>
-    simp [h, realTensor, IBP.matPos, get2_eq_getScalar_get, Spec.get, Tensor.unstack,
-      Tensor.getScalar, Tensor.item, Tensor.map, Tensor.dim, Tensor.scalar]
+    simp [h, realTensor, IBP.matPos, Tensor.map]
 
 @[simp] theorem realTensor_matNeg {m n : Nat} (w : Tensor ℚ [m, n]) :
     realTensor (IBP.matNeg w) = IBP.matNeg (realTensor w) := by
   apply TorchLean.Tensor.Internal.Rep.ext
   rintro ⟨i, j, ⟨⟩⟩
   by_cases h : 0 < w (i, j, PUnit.unit) <;>
-    simp [h, realTensor, IBP.matNeg, get2_eq_getScalar_get, Spec.get, Tensor.unstack,
-      Tensor.getScalar, Tensor.item, Tensor.map, Tensor.dim, Tensor.scalar]
+    simp [h, realTensor, IBP.matNeg, Tensor.map]
 
 /-- Interpret both endpoints of a rational box over the reals. -/
 noncomputable def realBox {s : Shape} (b : Box ℚ s) : Box ℝ s :=
@@ -165,8 +163,8 @@ noncomputable def realAffineBounds (b : FlatAffineBounds ℚ) : FlatAffineBounds
         (NN.MLTheory.CROWN.Graph.affIdentity (α := ℝ) n).A := by
     apply TorchLean.Tensor.Internal.Rep.ext
     rintro ⟨i, j, ⟨⟩⟩
-    simp [NN.MLTheory.CROWN.Graph.affIdentity, realTensor, Tensor.map, Tensor.dim,
-      Tensor.scalar, apply_ite]
+    simp [NN.MLTheory.CROWN.Graph.affIdentity, realTensor, Tensor.map,
+      Spec.identityTensorSpec, apply_ite]
   have hconstant : realTensor (NN.MLTheory.CROWN.Graph.affIdentity (α := ℚ) n).c =
       (NN.MLTheory.CROWN.Graph.affIdentity (α := ℝ) n).c := by
     simp [NN.MLTheory.CROWN.Graph.affIdentity]
@@ -177,7 +175,7 @@ noncomputable def realAffineBounds (b : FlatAffineBounds ℚ) : FlatAffineBounds
     realTensor (Activation.reluSpec t) = Activation.reluSpec (realTensor t) := by
   apply TorchLean.Tensor.Internal.Rep.ext
   intro i
-  simp [realTensor, Tensor.map, Activation.reluSpec, Tensor.mapSpec,
+  simp [realTensor, Tensor.map, Activation.reluSpec,
     Activation.Math.reluSpec_eq_max, Rat.cast_max]
 
 /-- Interpret the slope and offset of a ReLU relaxation exactly. -/

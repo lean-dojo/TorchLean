@@ -149,14 +149,9 @@ def pfOdeSampleEuler (sch : VPLinearSchedule α) (model : EpsModel α s)
   | Nat.succ steps' =>
       let n : Nat := Nat.succ steps'
       let dt : α := -((1 : α) / (n : α))
-      let rec loop : Nat → Tensor α s → Tensor α s
-        | 0, x => x
-        | Nat.succ i, x =>
-            -- The recursive counter runs `n, n-1, ..., 1`, so these are the descending
-            -- times `1, (n-1)/n, ..., 1/n`.
-            let t : α := ((Nat.succ i : Nat) : α) / (n : α)
-            loop i (eulerStep (α := α) (s := s) (pfOdeRhs (α := α) (s := s) sch model) x t dt)
-      loop n x1
+      Fin.foldr n (fun i x =>
+        let t : α := ((i.val + 1 : Nat) : α) / (n : α)
+        eulerStep (pfOdeRhs sch model) x t dt) x1
 
 /--
 Real-valued probability-flow Euler step as a `DynamicalSystem`.

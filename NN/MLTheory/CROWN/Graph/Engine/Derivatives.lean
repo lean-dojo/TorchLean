@@ -340,7 +340,7 @@ private def runFirstDerivativeWithSeed
       | #[p1] =>
         match (drs[p1]?).join, (ibp[p1]?).join with
         | some dZ, some zB =>
-          match derivBoxExp? (α := α) zB with
+          match boxUnaryEnclosure? (α := α) NonlinearBoundOps.expBounds zB with
           | some dF =>
             match boxMulElem (α:=α) dZ dF with
             | some prod => drs.set! id (some prod)
@@ -637,7 +637,7 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
       | #[p1] =>
         match (ibp[p1]?).join, (dLeft[p1]?).join, (dRight[p1]?).join, (d2s[p1]?).join with
         | some zB, some dzLeft, some dzRight, some d2z =>
-          match derivBoxExp? (α := α) zB with
+          match boxUnaryEnclosure? (α := α) NonlinearBoundOps.expBounds zB with
           | some derivative =>
             match boxMulElem (α := α) dzLeft dzRight with
             | none => d2s

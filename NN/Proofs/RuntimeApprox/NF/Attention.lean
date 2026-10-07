@@ -13,18 +13,19 @@ import FloatLib.Floats.Formats.Flocq.Theory.Rounding.Order
 /-!
 # Rounded scaled dot-product attention
 
-This module connects TorchLean's stable last-axis softmax theorem to the matrix operations used by
-attention. The forward theorem follows the actual unmasked computation
+This module composes rounded-real NF bounds for attention's matrix operations and stable
+last-axis softmax. The unmasked forward theorem follows
 
 `softmax(c * (Q Kᵀ)) V`,
 
 where `c` is normally `1 / sqrt(d)`. Both the matrices and `c` may be approximate. The result is a
-single infinity-norm budget assembled from the existing transpose, matrix-multiplication,
-coefficient-aware scaling, and row-softmax contracts.
+single infinity-norm budget assembled from transpose, sequential matrix multiplication,
+coefficient-aware scaling, and row-softmax contracts. The current statements use the same feature
+width for queries, keys, and values; they do not prove a native or fused attention kernel.
 
 The theorem keeps the rounded coefficient error explicit. A caller may obtain it from the concrete
-construction of `1 / sqrt(d)`, from an interval certificate, or from a backend capsule. Hiding that
-error would incorrectly treat a rounded normalization factor as an exact real constant.
+construction of `1 / sqrt(d)` or another proved coefficient bound. Backend metadata alone does
+not establish this hypothesis. Hiding the error would treat a rounded scale as an exact constant.
 
 References:
 
@@ -55,7 +56,7 @@ local notation "R" => NF β fexp rnd
 
 /-! ## The canonical `1 / sqrt(d)` coefficient -/
 
-/-- Rounding budget for embedding the positive feature dimension into `NF`. -/
+/-- Half-ULP budget for embedding feature dimension `d + 1` into `NF`. -/
 def dimensionCastError (d : Nat) : ℝ :=
   ulp β fexp (Nat.succ d : ℝ) / 2
 
@@ -65,7 +66,7 @@ def dimensionSqrtError (d : Nat) : ℝ :=
   dimensionCastError (β := β) (fexp := fexp) d / Real.sqrt 1 +
     ulp β fexp (Real.sqrt (NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd) dR)) / 2
 
-/-- End-to-end error budget for constructing `1 / sqrt(d)` in the rounded backend. -/
+/-- Error budget for constructing `1 / sqrt(d + 1)` in the rounded-real model. -/
 def canonicalScaleErrorBound (d : Nat) : ℝ :=
   let oneR : R := 1
   let dR : R := (Nat.succ d : Nat)
@@ -76,11 +77,10 @@ def canonicalScaleErrorBound (d : Nat) : ℝ :=
     (NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd) oneR)
     (NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd) sqrtR)
 
-/-- The canonical rounded attention scale approximates the exact real `1 / sqrt(d)`.
+/-- The canonical rounded attention scale approximates the exact real `1 / sqrt(d + 1)`.
 
-The side condition is format-sensitive and executable: the accumulated square-root error must be
-smaller than the exact lower bound one. For IEEE binary32 and ordinary transformer dimensions it
-is tiny; keeping it explicit also makes the theorem valid for low-precision experimental formats.
+The accumulated square-root error must be smaller than one. This is a hypothesis about a
+noncomputable real-valued bound; the theorem does not automatically discharge it for a format.
 -/
 theorem approx_canonicalAttentionScale (d : Nat)
     (hbudget : dimensionSqrtError (β := β) (fexp := fexp) (rnd := rnd) d < 1) :
@@ -320,9 +320,9 @@ theorem approxTensor_hardMaskedScaledDotProductAttentionCore {nQ nK d : Nat}
 
 /-- Numerical forward theorem for the unmasked scaled-dot-product attention core.
 
-`hdenom` is checked on each rounded score row after matrix multiplication and scaling. This is the
-only nonlocal side condition introduced by stable softmax; it certifies that the accumulated
-denominator error remains below the exact lower bound one.
+`hdenom` supplies a bound for each rounded score row after matrix multiplication and scaling:
+the accumulated denominator error must remain below the exact lower bound one. It is a
+mathematical hypothesis, not an executable check performed by this theorem.
 -/
 theorem approxTensor_scaledDotProductAttentionCore {nQ nK d : Nat}
     {qS : SpecTensor [nQ, d]}
@@ -486,8 +486,8 @@ theorem approxTensor_scaledDotProductAttention_masked {nQ nK d : Nat}
 /-- Fully instantiated unmasked attention theorem for a positive feature dimension.
 
 This corollary discharges the scale-coefficient approximation with
-`approx_canonicalAttentionScale`; callers provide only tensor approximation hypotheses and the two
-checkable safety margins for square root and row normalization.
+`approx_canonicalAttentionScale`; callers supply tensor approximation hypotheses and the two
+error-margin proofs for square root and row normalization.
 -/
 theorem approxTensor_scaledDotProductAttention_unmasked_canonical {nQ nK d : Nat}
     {hQ : nQ ≠ 0} {hK : Nat.succ nK ≠ 0}

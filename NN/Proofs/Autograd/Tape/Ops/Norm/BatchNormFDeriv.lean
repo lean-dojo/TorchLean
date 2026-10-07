@@ -52,10 +52,10 @@ theorem reshapeSpec_map2Spec {s₁ s₂ : Shape} (f : ℝ → ℝ → ℝ) (a b 
 /-- Reshaping commutes with pointwise unary operations. -/
 theorem reshapeSpec_mapSpec {s₁ s₂ : Shape} (f : ℝ → ℝ) (a : Tensor ℝ s₁)
     (h : s₁.size = s₂.size) :
-    reshapeSpec (mapSpec f a) h = mapSpec f (reshapeSpec a h) := by
+    reshapeSpec (Tensor.map f a) h = Tensor.map f (reshapeSpec a h) := by
   apply TorchLean.Tensor.Internal.Rep.ext
   intro c
-  simp [reshapeSpec, mapSpec, Tensor.map]
+  simp [reshapeSpec, Tensor.map]
 
 /-- Reshaping back and forth is the identity, for any proofs of the size equalities. -/
 theorem reshapeSpec_reshapeSpec {s₁ s₂ : Shape} (t : Tensor ℝ s₁) (h : s₁.size = s₂.size)

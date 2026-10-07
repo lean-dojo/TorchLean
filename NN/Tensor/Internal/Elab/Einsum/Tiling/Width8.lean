@@ -182,12 +182,7 @@ theorem updateTile8_eq_updateTile
 
 /--
 Run a native finite sum while carrying eight lane totals as separate scalar
-arguments.
-
-The compiler selects this loop when eight neighboring outputs are available
-and shared coordinate work amortizes the additional live state. Both concrete
-tile widths advance one contraction coordinate per recursive step; the
-eight-lane loop keeps twice as many independent accumulators live.
+arguments, advancing one contraction coordinate per step.
 -/
 @[specialize] def nativeFinSum8Loop
     {α : Type u} [Add α] (length : Nat)

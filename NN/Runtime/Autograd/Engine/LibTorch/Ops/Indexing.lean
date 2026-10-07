@@ -26,45 +26,10 @@ open TorchLean TorchLean.Tensor
 namespace Tape
 
 /-!
-## Rank-one tensor slice
--/
-
-/-- Slice `len` entries from a one-dimensional CUDA buffer starting at `start`. -/
-@[inline] def sliceBuffer {n start len : Nat} (t : Tape) (xId : Nat) : Result (Tape × Nat) := do
-  if start + len ≤ n then
-    let n32 ← AnyBuffer.natToU32Checked n
-    let start32 ← AnyBuffer.natToU32Checked start
-    let len32 ← AnyBuffer.natToU32Checked len
-    let outShape : Shape := .dim len .scalar
-    let x ← requireValue (t := t) xId (.dim n .scalar)
-    let y := Buffer.sliceBuffer x n32 start32 len32
-    let node : Node :=
-      { name := some s!"slice_vector_buffer[{start}:{start+len}]"
-        value := { s := outShape, buf := y }
-        requiresGrad := (t.getNode? xId).any (·.requiresGrad)
-        parents := #[xId]
-        backward := fun dLdyAny => do
-          let dLdy ← requireGrad dLdyAny outShape
-          let pre := Buffer.zeros start32
-          let postLen : Nat := n - start - len
-          let post32 ← AnyBuffer.natToU32Checked postLen
-          let post := Buffer.zeros post32
-          let tmp := Buffer.concatBuffers pre dLdy.buf start32 len32
-          let startLen32 ← AnyBuffer.natToU32Checked (start + len)
-          let dx := Buffer.releaseThen pre <|
-            Buffer.releaseThen post <|
-              Buffer.releaseThen tmp <|
-                Buffer.concatBuffers tmp post startLen32 post32
-          pure #[(xId, { s := .dim n .scalar, buf := dx })] }
-    pure (t.addNode node)
-  else
-    throw "autograd: slice_vector_buffer: start+len out of bounds"
-
-/-!
 ## Concat / slice along dim 0
 -/
 
-/-- Concatenate along dim 0 for tensors with leading dimension (CPU tape name). -/
+/-- Concatenate along the leading dimension, preserving the common trailing shape. -/
 @[inline]
 def concat {n m : Nat} {s : Shape} (t : Tape) (aId bId : Nat) : Result (Tape × Nat) := do
   let inner : Nat := Spec.Shape.size s
@@ -80,7 +45,7 @@ def concat {n m : Nat} {s : Shape} (t : Tape) (aId bId : Nat) : Result (Tape × 
       let dB := Buffer.sliceBuffer dLdy nmLen32 nLen32 mLen32
       (dA, dB))
 
-/-- Slice along dim 0: `x[start:start+len]` (CPU tape name). -/
+/-- Slice along the leading dimension: `x[start:start+len]`. -/
 @[inline] def slice {n : Nat} {s : Shape} (t : Tape) (xId : Nat) (start len : Nat)
     (_h : start + len ≤ n) : Result (Tape × Nat) := do
   let inner : Nat := Spec.Shape.size s

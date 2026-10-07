@@ -11,38 +11,18 @@ public import NN.Runtime.Autograd.IRExec.Correctness.Common
 /-!
 # Loss
 
-Loss-function correctness lemmas for the IR-to-forward-executor lowering.
-
-The IR node kind `.mseLoss` is lowered into an SSA node whose `forward` computes the
-specification-level mean squared error loss.
-
-This file proves the forward-correctness lemma for that lowering step: on successful lowering
-at position `i`, the IR evaluator `NN.IR.Graph.denoteAllFrom` and the forward-graph evaluator
-`denoteAllState` append the same result.
-
-This structural correctness statement connects the IR semantics to the lowered forward node. It
-makes no claim about generalization, training convergence, or the statistical properties of MSE.
+Successful `.mseLoss` lowering appends the same scalar loss as the IR evaluator. Both operands
+must have the same shape. The loss averages over all elements and is zero for an empty tensor,
+using `Tensor.meanDenominator` to avoid division by zero.
 
 ## Main definitions
 
 - `buildFrom_denoteAllFrom_mseLoss`: correctness step for `.mseLoss` lowering.
 
-## Implementation notes
-
-- We keep this theorem in a dedicated file because it is heavier than most per-op steps.
-- The proof structure follows the lowering pass's guard sequence, including the dependent shape
-  checks.
-- This file can build slowly because MSE touches two parents, a scalar output shape, and a sequence
-  of lowering guards. Repeated guard eliminations belong in focused helper lemmas, leaving the
-  theorem focused on the loss equation itself.
-
 ## References
 
 - [Mean squared error (concept overview)](https://en.wikipedia.org/wiki/Mean_squared_error)
 
-## Tags
-
-mse-loss, correctness, ir, runtime, semantic equivalence
 -/
 
 @[expose] public section
@@ -56,8 +36,6 @@ open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
--- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
--- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
 /-- Correctness lemma for the `.mseLoss` node lowering pass. -/
@@ -91,11 +69,9 @@ theorem buildFrom_denoteAllFrom_mseLoss
   have hkKind : nKind = .mseLoss := by
     simpa using hk
   subst nKind
-  -- Pre-simplify `buildFrom` once so we don't repeatedly whnf the huge op-table in every branch.
+  -- Select the loss branch before splitting its dependent shape guards.
   have hBuild0 := hBuild
   unfold buildFrom at hBuild0
-  -- Keep simp very focused: unfolding `buildFrom` introduces a large `match` over op-kinds, and we
-  -- only want to reduce the control-flow forced by `hi`, `hN`, and the monad bind structure.
   simp (config := { failIfUnchanged := false }) only
     [hi, hN, Except.ok_bind]
     at hBuild0
@@ -114,8 +90,6 @@ theorem buildFrom_denoteAllFrom_mseLoss
               simp [hY, hT] at hBuild0
           | ok tNode =>
               have hBuild1 := hBuild0
-              -- Keep simp focused; `buildFrom` has a large op table, and default simp
-              -- search does unnecessary work here.
               simp (config := { failIfUnchanged := false }) only
                 [hY, hT, Except.ok_bind]
                 at hBuild1
@@ -141,8 +115,8 @@ theorem buildFrom_denoteAllFrom_mseLoss
                           let nodeData : ForwardNode α ([inShape] ++ ss) nOutShape :=
                             mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := nOutShape) (fun
                               ctx =>
-                              let yhat := readTensor (α := α) (xs := ctx) iy
-                              let target := readTensor (α := α) (xs := ctx) it
+                              let yhat := ctx.read iy
+                              let target := ctx.read it
                               let diff := Tensor.subSpec (α := α) yhat target
                               let sq := Tensor.mulSpec (α := α) diff diff
                               let total : α := Tensor.sumSpec (α := α) sq
@@ -182,11 +156,7 @@ theorem buildFrom_denoteAllFrom_mseLoss
                                   (input := input) (vals := vals0) (i := i) =
                                 .ok (Spec.SomeTensor.mk (α := α) nOutShape
                                   (nodeData.eval ctx)) := by
-                            -- `evalAt` normalizes using `Eq.rec` casts, while the lowered
-                            -- `forward` closure uses `Tensor.cast_shape`.
-                            --
-                            -- Reduce the node fetch first so the large `OpKind` match
-                            -- collapses to the `.mseLoss` branch.
+                            -- Reconcile the evaluator's equality transport with `castShape`.
                             unfold NN.IR.Graph.evalAt NN.IR.Graph.evalNode
                             simp (config := { failIfUnchanged := false })
                               [hN, hParentIds, hGetY, hGetT,

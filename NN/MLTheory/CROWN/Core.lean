@@ -120,7 +120,6 @@ theorem containsDecBool_sound [DecidableRel ((· ≤ ·) : α → α → Prop)] 
       exact containsDecBool_sound (s := inner)
         ⟨b.lo.unstack i, b.hi.unstack i⟩ (x.unstack i) hi'
 
--- Dirac box around a given tensor
 /-- Degenerate (Dirac) box with `lo = hi = t`. -/
 def point (t : Tensor α s) : Box α s := { lo := t, hi := t }
 
@@ -162,9 +161,9 @@ CROWN affine bounds use one matrix row per output scalar and one column per inpu
 A tensor of shape `s` contributes `s.size` coordinates to this flat representation. Graph nodes
 retain their tensor shapes, and each transfer checks its operator's shape contract.
 
-The graph `matmul` contract requires rank at least two and exactly the same leading shape on both
-operands: `(...×m×n) · (...×n×p) → (...×m×p)`. The leading shape can contain any number of axes;
-implicit broadcasting and vector operands are not supported.
+Graph `matmul` uses the canonical IR contract, including vector promotion and broadcasting of
+leading batch axes. The matrix sign-splitting and affine evaluation below operate on the flattened
+coefficient matrix; they do not restrict the original graph operands to that matrix shape.
 -/
 
 /--
@@ -187,18 +186,12 @@ open BoundOps
 /-- Positive part of a weight matrix, `W⁺ = max(W, 0)`, used by sign-split bound rules. -/
 def matPos {m n : Nat}
     (W : Tensor α [m, n]) : Tensor α [m, n] :=
-  Tensor.dim (fun i =>
-    Tensor.dim (fun j =>
-      let w := get2 W i j
-      Tensor.scalar (if w > 0 then w else 0)))
+  Tensor.map (fun w => if w > 0 then w else 0) W
 
 /-- Negative part of a weight matrix, `W⁻ = min(W, 0)`, used by sign-split bound rules. -/
 def matNeg {m n : Nat}
     (W : Tensor α [m, n]) : Tensor α [m, n] :=
-  Tensor.dim (fun i =>
-    Tensor.dim (fun j =>
-      let w := get2 W i j
-      Tensor.scalar (if w > 0 then 0 else w)))
+  Tensor.map (fun w => if w > 0 then 0 else w) W
 
 /--
 Interval bound propagation for a linear layer.
@@ -242,7 +235,6 @@ variable {inDim outDim : Nat}
 variable [BoundOps α]
 open BoundOps
 
--- Evaluate affine upper/lower bound over a box using interval arithmetic splitting
 /--
 Evaluate an affine form on an input box, producing an output box.
 
@@ -263,16 +255,11 @@ def evalOnFlatBox (aff : AffineVec α inDim outDim) (B : FlatBox α) (h : B.dim 
     Box α (.dim outDim .scalar) :=
   aff.evalOnBox (B.getScalarBox h)
 
--- Affine for linear layer: y = W x + b
 /-- Build an affine form from a linear layer `y = W*x + b`. -/
 def ofLinear (W : Tensor α [outDim, inDim]) (b : Tensor α [outDim])
-  :
-  AffineVec α inDim outDim :=
+    : AffineVec α inDim outDim :=
   { A := W, c := b }
 
 end AffineVec
-
-
-
 
 end NN.MLTheory.CROWN

@@ -74,8 +74,8 @@ The core Lean build does not require that Python environment. Generating fresh Î
 artifacts requires external verifier output plus TorchLean's conversion helper.
 
 During a branch-and-bound verification run, an instrumented external verifier can expose terminal
-subdomains. TorchLean's helper converts that terminal-domain data into a small JSON *leaf artifact*
-for each represented subdomain. TorchLean can parse that JSON and validate several
+subdomains. TorchLean's helper converts that terminal-domain data into a JSON *leaf artifact*
+containing the represented subdomains. TorchLean can parse that JSON and validate several
 properties entirely inside Lean: every leaf box lies inside the declared root input region; every
 leaf satisfies the exported local prune test
 ($`\exists i,\;lb_i>threshold_i` in the exported fields); and the document is internally consistent
@@ -292,12 +292,6 @@ interpreting a small margin: the schema's tolerance belongs only to the redundan
 bound count as positive. A consumer that silently reused the bookkeeping tolerance for pruning
 would be checking a different statement.
 
-The failed threshold example also shows why diagnostics should report the field that failed.
-The exporter need not regenerate endpoint boxes when the boxes still pass containment. Nor does
-a consistent subtraction rescue a threshold that the lower bound does not clear. Reading the
-three flags separately lets us distinguish an inconsistent document from an insufficient
-exported witness, even before asking whether that witness came from a sound network bound.
-
 ## Leaf Acceptance Predicates
 
 For a parsed leaf supplying both witness fields, the acceptance flag is the conjunction of these
@@ -438,11 +432,6 @@ question about the producer's claim. The second detects a recorded wrong witness
 an omitted index, in which
 case the checker uses the searching form.
 
-
-Those checks are about exported numbers. They do not by themselves prove that the exported `lb`
-values are lower bounds of the neural network. That stronger claim needs either recomputation in
-Lean or a proof-backed certificate whose local transfer rules Lean can check.
-
 Leaf nesting has the form:
 
 $$`B_\ell\subseteq B_{\mathrm{root}}.`
@@ -507,11 +496,6 @@ leaves pass, `leavesCoverRoot` checks coverage on the closed grid cut out by the
 coordinates spanned fully by every leaf and returns an error if the grid exceeds one million cells.
 
 # Certificate Checking And Soundness
-
-The `v0.1` format intentionally stops at structural checking. Lean checks that every represented
-leaf lies inside the root box, that dimensions and arrays agree, that numeric fields are finite,
-that every leaf's witness satisfies $`\exists i,\;lb_i>threshold_i`, and that the leaves cover
-the root.
 
 The current artifact checks $`lb_i>threshold_i` for an exported lower bound. A stronger artifact
 would also check that $`lb_i` is a sound lower bound for the graph on the leaf.
@@ -934,28 +918,10 @@ margin is caught as a disagreement rather than believed.
 A dump with one leaf and no list is accepted too, as is JSON Lines with one domain per line, since
 producers stream terminal domains as they are closed.
 
-# Leaf Checker CLI
-
-Use the unified `verify` CLI tool `abcrown-leaf` to check the converted JSON artifact against
-TorchLean's structural leaf predicate.
-
-Example:
-
-```terminal
-# With no path argument, this command checks the maintained
-# sample file.
-scripts/lake.sh exe verify -- abcrown-leaf
-```
-
-With no path, the command uses the bundled sample. With a path, it checks that artifact instead.
 Run `scripts/lake.sh exe verify -- list` to see the other registered certificate and workflow
-checkers,
-including LiRPA, PINN, spline, logit-margin, and TorchLean-to-IR robustness paths.
-
-The leaf command answers whether the exported leaf document satisfies
-the `v0.1` structural contract. The neural-network verification chapter gives the theorem chain
-needed for a semantic robustness result, while the two-stage chapter shows where an external
-producer enters that chain.
+checkers, including LiRPA, PINN, spline, logit-margin, and TorchLean-to-IR robustness paths.
+The neural-network verification chapter gives the theorem chain needed for a semantic robustness
+result, while the two-stage chapter shows where an external producer enters that chain.
 
 # References
 

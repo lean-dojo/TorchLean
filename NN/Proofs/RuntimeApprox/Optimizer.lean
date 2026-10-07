@@ -78,9 +78,9 @@ structure NumericalStepContract (R : Type) (toSpec : R → ℝ) where
   nextError : {shape : Shape} → StateError shape → ℝ → ℝ →
     RuntimeState shape → Tensor R shape → Tensor R shape → StepAssumptions shape →
       StepError StateError shape
-  /-- Proof-free scalar components of a state bound for reports and UI consumers. -/
+  /-- Labelled real-valued components of a state bound; executable formatting is separate. -/
   stateErrorReport : {shape : Shape} → StateError shape → Array (String × ℝ)
-  /-- Proof-free scalar components of one step's side data. -/
+  /-- Labelled real-valued components of one step's side data. -/
   assumptionReport : {shape : Shape} → StepAssumptions shape → Array (String × ℝ)
   /-- One-step numerical soundness. -/
   updateApprox : ∀ {shape : Shape}
@@ -125,7 +125,7 @@ structure StepInput (contract : NumericalStepContract R toSpec) (shape : Shape) 
   /-- Optimizer-specific side data and domain margins. -/
   assumptions : contract.StepAssumptions shape
 
-/-- Execute a finite step stream using the exact-real recurrence. -/
+/-- Fold a finite step stream using the exact-real recurrence. -/
 def runExact (contract : NumericalStepContract R toSpec) {shape : Shape}
     (initial : Optim.Step ℝ shape (contract.ExactState shape))
     (steps : Array (StepInput contract shape)) :
@@ -135,7 +135,7 @@ def runExact (contract : NumericalStepContract R toSpec) {shape : Shape}
       contract.updateExact current.optimizerState current.parameters step.exactGradient)
     initial
 
-/-- Execute the same finite step stream using the rounded runtime recurrence. -/
+/-- Fold the same finite step stream using the rounded recurrence. -/
 def runRuntime (contract : NumericalStepContract R toSpec) {shape : Shape}
     (initial : Optim.Step R shape (contract.RuntimeState shape))
     (steps : Array (StepInput contract shape)) :
@@ -171,8 +171,8 @@ def runErrors (contract : NumericalStepContract R toSpec) {shape : Shape}
 /-- Approximation and side-condition evidence for a complete optimizer run.
 
 The indices thread exact state, runtime state, and error bounds through the same recurrence used by
-`runExact`, `runRuntime`, and `runErrors`. Adaptive-domain conditions are therefore checked at the
-step where they are needed rather than asserted once for an entire run.
+`runExact`, `runRuntime`, and `runErrors`. Each step requires its own proof of the adaptive-domain
+conditions at the states actually reached. This proposition does not implement a runtime check.
 -/
 inductive StepStreamApprox (contract : NumericalStepContract R toSpec) {shape : Shape} :
     Optim.Step ℝ shape (contract.ExactState shape) →

@@ -299,7 +299,7 @@ def readTensorFloat32Into {α : Type} [TorchLean.Storage α] (decode : Float32 �
     let buffer ← Runtime.Autograd.LibTorch.Buffer.ofFloat32BytesIO bytes
     Torch.Internal.setParamCudaValue tensorRef { s := shape, buf := buffer }
   else
-    let tensor ← okOrThrow (tensorFromFloat32Bytes decode shape bytes)
+    let tensor ← IO.ofExcept (tensorFromFloat32Bytes decode shape bytes)
     Torch.Internal.setParamHostValue tensorRef tensor
 
 /-- Stream a checkpoint into shape-indexed runtime state. -/

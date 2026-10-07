@@ -85,47 +85,27 @@ def pcaInverseSpec {inDim outDim : Nat}
   let reconstructed := vecMatMulSpec reduced m.components
   addSpec reconstructed m.mean
 
-/-- VJP contribution for `components`: outer product `dL/dy ⊗ (x - mean)`. -/
-def pcaComponentsDerivSpec {inDim outDim : Nat}
-  (m : PCASpec α inDim outDim)
-  (input : Tensor α [inDim])
-  (gradOutput : Tensor α [outDim]) :
-  Tensor α [outDim, inDim] :=
-  let centered := subSpec input m.mean
-  outerProductSpec gradOutput centered
-
-/-- VJP contribution for `mean`: `dL/dmean = -componentsᵀ · dL/dy`. -/
-def pcaMeanDerivSpec {inDim outDim : Nat}
-  (m : PCASpec α inDim outDim)
-  (gradOutput : Tensor α [outDim]) :
-  Tensor α [inDim] :=
-  negSpec (vecMatMulSpec gradOutput m.components)
-
-/-- VJP contribution for `input`: `dL/dx = componentsᵀ · dL/dy`. -/
-def pcaInputDerivSpec {inDim outDim : Nat}
-  (m : PCASpec α inDim outDim)
-  (gradOutput : Tensor α [outDim]) :
-  Tensor α [inDim] :=
-  vecMatMulSpec gradOutput m.components
-
 /-- Gradients for a `PCASpec` projection. -/
 structure PCAGradients (α : Type) [TorchLean.Storage α] (inDim outDim : Nat) where
   /-- Gradient with respect to the component matrix. -/
   componentsGradient : Tensor α [outDim, inDim]
   /-- Gradient with respect to the stored mean. -/
   meanGradient : Tensor α [inDim]
-  /-- Gradient with respect to the projected input. -/
+  /-- Gradient with respect to the input before centering. -/
   inputGradient : Tensor α [inDim]
 
-/-- Full backward pass for a PCA projection. -/
+/-- Full backward pass: the mean and input gradients share `componentsᵀ · gradOutput`,
+with opposite signs. -/
 def pcaBackwardSpec {inDim outDim : Nat}
   (m : PCASpec α inDim outDim)
   (input : Tensor α [inDim])
   (gradOutput : Tensor α [outDim]) :
   PCAGradients α inDim outDim :=
-  { componentsGradient := pcaComponentsDerivSpec m input gradOutput
-    meanGradient := pcaMeanDerivSpec m gradOutput
-    inputGradient := pcaInputDerivSpec m gradOutput }
+  let centered := subSpec input m.mean
+  let gradInput := vecMatMulSpec gradOutput m.components
+  { componentsGradient := outerProductSpec gradOutput centered
+    meanGradient := negSpec gradInput
+    inputGradient := gradInput }
 
 /-- Approximate one leading PCA component with deterministic multistart power iteration.
 
@@ -166,23 +146,14 @@ def pcaFitLeadingComponentApproxSpec {nSamples inDim : Nat}
     coordinates.foldl (fun largest j =>
       Max.max largest (MathFunctions.abs (getScalar (get covarianceScaled i) j))) largest) 0
   let (iterationMatrix, restoreScale) := if matrixScale > 0 then
-    (mapSpec (fun value => value / matrixScale) covarianceScaled, matrixScale)
+    (Tensor.map (fun value => value / matrixScale) covarianceScaled, matrixScale)
   else (covarianceScaled, 1)
-  let rec iterate (direction : Tensor α [inDim]) (remaining : Nat) :
-      α × Tensor α [inDim] :=
-    match remaining with
-    | 0 => (dotSpec direction (matVecMulSpec iterationMatrix direction), direction)
-    | steps + 1 =>
-      let next := matVecMulSpec iterationMatrix direction
-      let norm := MathFunctions.sqrt (sumSpec (squareSpec next))
-      let normalized := if norm > 0 then mapSpec (fun value => value / norm) next
-        else direction
-      iterate normalized steps
   let initial := powerIterationLeadingEigenpairSpec iterationMatrix iterations
   -- A single fixed start can miss the leading component, even when it finds a nonzero eigenvalue.
   let (scaledEigenvalue, eigenvector) := coordinates.foldl (fun best coordinate =>
     let start := Tensor.ofFn (fun i => if i == coordinate then (1 : α) else 0)
-    let candidate := iterate start iterations
+    let candidate :=
+      powerIterationLeadingEigenpairSpec iterationMatrix iterations (initial := start)
     if candidate.1 > best.1 then candidate else best) initial
   let eigenvalue := scaledEigenvalue * restoreScale
 

@@ -19,7 +19,6 @@ The actual Real and rounded-real FP32 constants satisfy the required nonnegativi
 
 public section
 
-
 namespace NN.Tests.MLTheory.DirectedIBPNormalization
 
 open Spec TorchLean TorchLean.Tensor

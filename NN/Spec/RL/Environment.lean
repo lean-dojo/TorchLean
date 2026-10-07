@@ -96,27 +96,19 @@ def stateAfter (env : Env State Action Observation Reward) (initialState : State
       | some action => (env.step state action).state
       | none => state
 
-/-- Final latent state reached after executing an array of actions. -/
-def evolveFrom (env : Env State Action Observation Reward) (state : State)
-    (actions : Array Action) : State :=
+/-- Final state after the actions, starting at `env.initialState` unless `state` is supplied. -/
+def evolve (env : Env State Action Observation Reward) (actions : Array Action)
+    (state : State := env.initialState) : State :=
   stateAfter env state actions actions.size
 
-/-- Final latent state reached from the environment's initial state. -/
-def evolve (env : Env State Action Observation Reward) (actions : Array Action) : State :=
-  evolveFrom env env.initialState actions
-
-/-- State trace that records the initial state and every successor state. -/
-def statesFrom (env : Env State Action Observation Reward) (state : State)
-    (actions : Array Action) : Array State :=
+/-- The starting state and every successor; `state` defaults to `env.initialState`. -/
+def states (env : Env State Action Observation Reward) (actions : Array Action)
+    (state : State := env.initialState) : Array State :=
   Array.ofFn fun i : Fin (actions.size + 1) => stateAfter env state actions i
 
-/-- State trace from the environment's initial state. -/
-def states (env : Env State Action Observation Reward) (actions : Array Action) : Array State :=
-  statesFrom env env.initialState actions
-
-/-- Observed transition rollout from an explicit initial state. -/
-def rolloutFrom (env : Env State Action Observation Reward) (state : State)
-    (actions : Array Action) : Array (ObservedTransition Observation Action Reward) :=
+/-- One observed transition per action; `state` defaults to `env.initialState`. -/
+def rollout (env : Env State Action Observation Reward) (actions : Array Action)
+    (state : State := env.initialState) : Array (ObservedTransition Observation Action Reward) :=
   Array.ofFn fun i : Fin actions.size =>
       let currentState := stateAfter env state actions i
       let action := actions[i]
@@ -127,11 +119,6 @@ def rolloutFrom (env : Env State Action Observation Reward) (state : State)
         nextObservation := env.observe out.state
         terminated := out.terminated
         truncated := out.truncated }
-
-/-- Observed transition rollout from the environment's initial state. -/
-def rollout (env : Env State Action Observation Reward) (actions : Array Action) :
-    Array (ObservedTransition Observation Action Reward) :=
-  rolloutFrom env env.initialState actions
 
 /-- Environment with an invariant and an action-validity predicate. -/
 structure SafeEnv (State : Type u) (Action : Type v) (Observation : Type w) (Reward : Type z) where

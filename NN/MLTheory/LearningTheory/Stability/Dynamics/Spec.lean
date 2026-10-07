@@ -198,18 +198,6 @@ def IsBiboStable {s₁ s₂ : Shape}
   ∀ x : Tensor α s₁, norm₁ x ≤ bound → norm₂ (f x) ≤ bound
 
 /--
-Incremental stability: distances between trajectories contract by `contractionFactor`.
-
-This is the contraction predicate `Robustness.Spec.IsContractive` under its dynamical-systems
-name: a discrete-time contraction condition phrased using `tensorDistance`.
--/
-def IsIncrementallyStable {s : Shape}
-    (f : Tensor α s → Tensor α s)
-    (norm : ∀ {s : Shape}, Tensor α s → α)
-    (contractionFactor : α) : Prop :=
-  IsContractive f norm contractionFactor
-
-/--
 Return the configured stability-margin value. The real instance uses a supremum, which need not
 be attained and requires boundedness for its usual interpretation; custom instances have no
 correctness law in this interface.
@@ -251,32 +239,5 @@ def IsTrainingStable {s : Shape}
     (loss : Tensor α s → α)
     (parameters : Tensor α s) : Prop :=
   loss (updateRule parameters) ≤ loss parameters
-
-/--
-Generalization stability of a learning algorithm: small dataset changes produce small prediction
-changes.
-
-This is a generic stability-style specification; concrete instances typically choose a specific
-dataset metric and output norm.
--/
-def IsGeneralizationStable {s₁ s₂ : Shape}
-    (trainingAlgorithm : Array (Tensor α s₁ × Tensor α s₂) → (Tensor α s₁ → Tensor α s₂))
-    (norm₁ : ∀ {s : Shape}, Tensor α s → α)
-    (norm₂ : ∀ {s : Shape}, Tensor α s → α)
-    (stabilityConstant : α) : Prop :=
-  ∀ dataset₁ dataset₂ : Array (Tensor α s₁ × Tensor α s₂),
-    let model₁ := trainingAlgorithm dataset₁
-    let model₂ := trainingAlgorithm dataset₂
-    ∀ x : Tensor α s₁,
-      tensorDistance norm₂ (model₁ x) (model₂ x) ≤
-      stabilityConstant * datasetDistance dataset₁ dataset₂
-where
-  datasetDistance (d₁ d₂ : Array (Tensor α s₁ × Tensor α s₂)) : α :=
-    let sampleDistance : (Tensor α s₁ × Tensor α s₂) → (Tensor α s₁ × Tensor α s₂) → α :=
-      fun p q => tensorDistance norm₁ p.1 q.1 + tensorDistance norm₂ p.2 q.2
-    let alignedDistance :=
-      (d₁.zip d₂).foldl (fun acc pq => acc + sampleDistance pq.1 pq.2) 0
-    let lenPenalty := MathFunctions.abs ((d₁.size : α) - (d₂.size : α))
-    alignedDistance + lenPenalty
 
 end NN.MLTheory.Stability.Spec

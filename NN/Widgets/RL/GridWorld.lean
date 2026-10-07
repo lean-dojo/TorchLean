@@ -33,6 +33,13 @@ This module provides small infoview widgets for TorchLean's Lean-native GridWorl
 These widgets do not run training loops; instead, they help you *see* the state-space objects that
 RL algorithms manipulate.
 
+To produce saved policy and path snapshots, run from the repository root:
+
+```bash
+scripts/lake.sh exe torchlean ppo_gridworld --updates 1 --eval-every 1 \
+  --eval-episodes 1 --eval-max-steps 8
+```
+
 ## Main definitions
 
 - `gridworldHtml`: base grid renderer with start/goal/current position highlights.
@@ -371,22 +378,16 @@ syntax (name := gridworldPathViewCmd) "#gridworld_path_view " term ", " term : c
 /--
 Read a saved GridWorld greedy-policy snapshot (`before` vs `after`) from JSON and render it.
 
-This is intended for executable examples or training jobs that write artifacts to disk, for example:
-`lake -R -K cuda=true exe torchlean ppo_gridworld --device cuda --updates 1 --eval-every 1
---eval-episodes 1 --eval-max-steps 8`.
-
-The JSON schema matches `Runtime.RL.Artifacts.GridWorld.PolicyDiff`.
+The JSON schema matches `Runtime.RL.Artifacts.GridWorld.PolicyDiff`; the PPO command in the
+module documentation produces this file.
 -/
 syntax (name := gridworldPolicyFileViewCmd) "#gridworld_policy_file_view " term ", " term : command
 
 /--
 Read a saved GridWorld episode path snapshot (`before` vs `after`) from JSON and render it.
 
-This is intended for executable examples or training jobs that write artifacts to disk, for example:
-`lake -R -K cuda=true exe torchlean ppo_gridworld --device cuda --updates 1 --eval-every 1
---eval-episodes 1 --eval-max-steps 8`.
-
-The JSON schema matches `Runtime.RL.Artifacts.GridWorld.PathDiff`.
+The JSON schema matches `Runtime.RL.Artifacts.GridWorld.PathDiff`; the PPO command in the
+module documentation produces this file.
 -/
 syntax (name := gridworldPathFileViewCmd) "#gridworld_path_file_view " term ", " term : command
 

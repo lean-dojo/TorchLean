@@ -17,7 +17,7 @@ public import NN.Tensor.Constructors -- shake: keep
 /-!
 # Public Tensor Operations
 
-Shape-polymorphic lookup, axis operations, and list-shaped mapping and flattening helpers for
+Shape-polymorphic lookup, axis operations, mapping over leading dimensions, and flattening for
 `TorchLean.Tensor`. The implementations delegate to the canonical specification operations.
 -/
 

@@ -30,7 +30,7 @@ namespace Autograd
 namespace TypedGraph
 namespace GraphM
 
-open Spec TorchLean
+open Spec
 open TorchLean TorchLean.Tensor
 open Proofs.Autograd.Algebra
 -- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place

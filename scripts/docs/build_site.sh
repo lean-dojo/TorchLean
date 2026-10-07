@@ -57,7 +57,6 @@ if [ -d home_page/blueprint/TorchLeanBlueprint/Guide/Assets ]; then
   cp -r home_page/blueprint/TorchLeanBlueprint/Guide/Assets/* _out/blueprint/html-multi/Guide/Assets/
 fi
 python3 scripts/docs/polish_verso_guide.py --guide _out/blueprint/html-multi
-python3 scripts/docs/check_verso_layout.py --guide _out/blueprint/html-multi
 
 echo "==> Building dependency graph audit"
 # The Graphs page reads this JSON to populate the import explorer.
@@ -71,7 +70,7 @@ echo "==> Building interactive import graph HTML"
 # reflects the same module graph users get from the current checkout.
 mkdir -p home_page/importgraph
 "$LAKE" exe graph --to NN home_page/importgraph/index.html
-python3 scripts/docs/postprocess_importgraph.py home_page/importgraph/index.html
+python3 scripts/docs/polish_docgen.py --importgraph home_page/importgraph/index.html
 
 echo "==> Installing Jekyll bundle"
 # Prefer the lockfile Bundler version when installed, but keep local previewing

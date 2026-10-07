@@ -91,19 +91,8 @@ theorem addGradAll_addNode_push (t : Tape α) (nd : Runtime.Autograd.Node α)
         · simp only [dite_eq_left hex]
           cases hadd : Runtime.Autograd.SomeTensor.add
               (Spec.SomeTensor.ofTensor ((acc[pid]).cast hex))
-              (Spec.SomeTensor.ofTensor (pg.cast hshape)) with
-          | error e =>
-            dsimp only
-            split
-            · rename_i hget
-              simp [hgetPrev] at hget
-            · rename_i previous hget
-              have heq : previous = acc[pid] := Option.some.inj (hget.symm.trans hgetPrev)
-              subst previous
-              simp only [dite_eq_left hex]
-              rw [hadd]
-              rfl
-          | ok summed =>
+              (Spec.SomeTensor.ofTensor (pg.cast hshape))
+          all_goals
             dsimp only
             split
             · rename_i hget

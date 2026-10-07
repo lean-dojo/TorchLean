@@ -10,7 +10,7 @@ module
 
 public import NN.API
 public import NN.Examples.Support
-public import NN.Runtime.RL.Artifacts.DefaultPaths
+public import NN.Runtime.RL.Artifacts.Paths
 
 /-!
 # PPO on Atari Pong (RAM Observations) (Executable Example)
@@ -263,7 +263,7 @@ def main (args : List String) : IO UInt32 := do
     (.native fun runtime rest => do
       let (ppo, rest) ← CLI.orThrow exeName <|
         rl.cli.Options.parse
-          exeName rest Runtime.RL.Artifacts.DefaultPaths.ppoPongRamTrainLog
+          exeName rest (Runtime.RL.Artifacts.path "ppo_pong_ram")
           (defaultUpdateCount := maxUpdates)
           (defaultEvaluationInterval := defaultEvaluationInterval)
           (defaultEvaluationEpisodes := defaultEvaluationEpisodes)
@@ -294,14 +294,14 @@ def main (args : List String) : IO UInt32 := do
         let criticGraph ← nn.lowerToTypedGraph criticObs
 
         IO.eprintln "  initializing module + optimizer..."
-        let m ← rl.ppo.instantiateActorCritic
+        let m ← rl.ppo.ActorCritic.create
           (α := Float) (options := runtime)
           (batch := horizon) (nActions := actionCount)
           actorRollout criticRollout
         IO.eprintln "  module ready"
 
         let stepSample ←
-          rl.ppo.trainingStep m
+          m.bind
             (optim.adam { learningRate := learningRate })
         IO.eprintln "  optimizer ready"
 
@@ -318,13 +318,13 @@ def main (args : List String) : IO UInt32 := do
         -- Evaluate once before training (step=0).
         do
           IO.eprintln "  evaluating initial policy..."
-          let psAll0 ← rl.ppo.state (α := Float) m
-          let policy0 := rl.ppo.actorPolicy actorGraph actorRollout criticRollout psAll0
+          let psAll0 ← m.state
+          let policy0 := rl.ppo.policy actorGraph actorRollout criticRollout psAll0
           let policyLogits0 :
               Tensor Float observation → Tensor Float actionLogits :=
             fun obs => policy0 (Tensor.map (fun x => x / 255.0) obs)
           let avg0 ←
-            rl.eval.averageEpisodeTotalReward
+            rl.eval.meanReward
               (obsShape := observation) (nActions := actionCount)
               evaluationSessionAt policyLogits0 (baseSeed := 9000)
               (episodes := ppo.evaluationEpisodes)
@@ -336,12 +336,12 @@ def main (args : List String) : IO UInt32 := do
           { updates := ppo.updateCount, epochs := updateEpochs,
             evaluationEvery := ppo.evaluationInterval, seed := runtime.seed }
           (fun update rngSeed rngCounter => do
-              let psAll ← rl.ppo.state (α := Float) m
+              let psAll ← m.state
               let predictLogits :
                   Tensor Float observation → Tensor Float actionLogits :=
-                rl.ppo.actorPolicy actorGraph actorRollout criticRollout psAll
+                rl.ppo.policy actorGraph actorRollout criticRollout psAll
               let predictValue : Tensor Float observation → Float :=
-                rl.ppo.criticValue criticGraph actorRollout criticRollout psAll
+                rl.ppo.value criticGraph actorRollout criticRollout psAll
 
               let (rollout, rngCounter') ←
                 rl.ppo.collectRolloutFromGymnasium
@@ -353,13 +353,13 @@ def main (args : List String) : IO UInt32 := do
               pure (rollout, rngCounter'))
           stepSample
           (fun completedUpdates => do
-              let psAll' ← rl.ppo.state (α := Float) m
-              let policy := rl.ppo.actorPolicy actorGraph actorRollout criticRollout psAll'
+              let psAll' ← m.state
+              let policy := rl.ppo.policy actorGraph actorRollout criticRollout psAll'
               let policyLogits :
                   Tensor Float observation → Tensor Float actionLogits :=
                 fun obs => policy (Tensor.map (fun x => x / 255.0) obs)
               let avg ←
-                rl.eval.averageEpisodeTotalReward
+                rl.eval.meanReward
                   (obsShape := observation) (nActions := actionCount)
                   evaluationSessionAt policyLogits (baseSeed := 9000 + completedUpdates)
                     (episodes := ppo.evaluationEpisodes)

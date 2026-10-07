@@ -35,6 +35,10 @@ open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 tag := "widgets"
 %%%
 
+```lean -show
+namespace Tutorial.Widgets
+```
+
 A wide verifier bound can originate far from the output node. Lean may already hold every
 intermediate interval in a graph state, but a long printed record makes it hard to locate the
 first loss of precision. A widget displays those node bounds together with the graph that
@@ -135,7 +139,7 @@ has a checker, check it first and then inspect the accepted object.
 
 # Tensor Viewer
 
-I encode the three indices of `rankThreeGrid` in the hundreds, tens, and units places so we can
+I encode the three indices of `grid` in the hundreds, tens, and units places so we can
 recognize an axis change in the entries themselves. The floating-point vectors address a
 separate inspection problem: decimal printing can hide differences in scalar representation.
 
@@ -145,37 +149,37 @@ separate inspection problem: decimal printing can hide differences in scalar rep
 def decimalTenth : Float :=
   Float.ofBits 0x3fb999999999999a
 
-def oneThirdFloat : Float :=
+def third : Float :=
   Float.ofBits 0x3fd5555555555555
 
-def floatTensor : Tensor Float [4] :=
+def native : Tensor Float [4] :=
   [ Float.ofNat 1
   , Float.ofNat 2
   , decimalTenth
-  , oneThirdFloat ]
+  , third ]
 
-def ieeeTensor : Tensor (ExecFloat.Binary 8 23) [4] :=
+def ieee : Tensor (ExecFloat.Binary 8 23) [4] :=
   [ (1 : (ExecFloat.Binary 8 23))
   , (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32)
       (Float.ofNat 2)
   , (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32)
       decimalTenth
   , (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32)
-      oneThirdFloat ]
+      third ]
 
-def indexTensor : Tensor Nat [5] := [0, 1, 2, 3, 4]
+def indices : Tensor Nat [5] := [0, 1, 2, 3, 4]
 
-def rankThreeGrid : Tensor Nat [2, 3, 4] :=
+def grid : Tensor Nat [2, 3, 4] :=
   Tensor.generate [2, 3, 4] fun c =>
     c.getD 0 0 * 100 + c.getD 1 0 * 10 + c.getD 2 0
 
-def sampleMatrix : Tensor Int [2, 4] :=
+def matrix : Tensor Int [2, 4] :=
   Tensor.generate [2, 4] fun c =>
     Int.ofNat (c.getD 0 0 * 10 + c.getD 1 0)
 ```
 
 `Tensor.generate` passes the coordinate list to its callback. For shape `[2, 3, 4]`, the three
-lookups give the indices that `rankThreeGrid` encodes; `sampleMatrix` uses the first two coordinates
+lookups give the indices that `grid` encodes; `matrix` uses the first two coordinates
 of its rank-two shape.
 
 Those definitions are the widget inputs. In an editor, each `#tensor_view` line renders the value
@@ -184,14 +188,14 @@ beside the cursor:
 ```lean
 -- Compare nesting, entries, and summaries without changing
 -- the underlying tensors.
-#tensor_view indexTensor
-#tensor_view rankThreeGrid
-#tensor_view floatTensor
-#tensor_view ieeeTensor
-#tensor_view sampleMatrix
+#tensor_view indices
+#tensor_view grid
+#tensor_view native
+#tensor_view ieee
+#tensor_view matrix
 
 -- Numeric summaries for the small tensors above:
-#tensor_stats_view floatTensor
+#tensor_stats_view native
 ```
 
 The commands above are elaborated when this page is built. Interactive panels require the
@@ -200,7 +204,7 @@ Infoview; the same tensor can also be inspected through its printed entries:
 ```lean (name := wgGrid)
 -- Print the same coordinate-coded tensor used by the
 -- interactive view.
-#eval IO.println s!"{rankThreeGrid}"
+#eval IO.println s!"{grid}"
 ```
 
 ```leanOutput wgGrid (whitespace := lax)
@@ -212,7 +216,7 @@ Infoview; the same tensor can also be inspected through its printed entries:
 Entry `112` sits at $`(1,1,2)`. Moving the first axis would move the hundreds digit's variation to
 a different nesting level, making the layout change visible across the whole grid.
 
-`floatTensor` and `ieeeTensor` use different scalar types. Comparing their decimal renderings does
+`native` and `ieee` use different scalar types. Comparing their decimal renderings does
 not reveal every difference introduced by binary32 conversion:
 
 ```lean (name := wgPrecision)
@@ -228,7 +232,7 @@ def compareLine (x : Float) : String :=
 #eval do
   IO.println (compareLine (Float.ofNat 1))
   IO.println (compareLine decimalTenth)
-  IO.println (compareLine oneThirdFloat)
+  IO.println (compareLine third)
 ```
 
 ```leanOutput wgPrecision (whitespace := lax)
@@ -266,66 +270,51 @@ carry a runtime shape. Model code continues to accept and return `Tensor α shap
 ```lean
 -- Keep the graph structure separate from the input and
 -- constant payload it evaluates.
-def pairTensor (x y : Float) : Tensor Float [2] :=
-  [x, y]
-
-def sampleGraph : NN.IR.Graph :=
+def graph (op : NN.IR.OpKind) : NN.IR.Graph :=
   { nodes := #[
       { id := 0, parents := #[], kind := .input
         outShape := [2] },
       { id := 1, parents := #[]
         kind := .const [2]
         outShape := [2] },
-      { id := 2, parents := #[0, 1], kind := .add
-        outShape := [2] }
-    ] }
-
--- Same as `sampleGraph`, but `sub` at the output node.
--- Useful for rewrite and diff examples.
-def sampleGraphSub : NN.IR.Graph :=
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input
-        outShape := [2] },
-      { id := 1, parents := #[]
-        kind := .const [2]
-        outShape := [2] },
-      { id := 2, parents := #[0, 1], kind := .sub
+      { id := 2, parents := #[0, 1], kind := op
         outShape := [2] }
     ] }
 
 -- The `.const` node reads an external payload rather than
 -- storing its value in the graph.
-def sampleInput : Spec.SomeTensor Float :=
-  { shape := [2], tensor := pairTensor 0.60 (-0.20) }
+def input : Spec.SomeTensor Float :=
+  { shape := [2], tensor := [0.60, -0.20] }
 
-def samplePayload : Payload Float :=
+def payload : Payload Float :=
   { const? := fun id =>
       if id = 1 then
-        some { n := 2, v := pairTensor 0.25 0.25 }
+        some { n := 2, v := [0.25, 0.25] }
       else
         none }
 ```
 
 `parents := #[0, 1]` stores the input and constant node ids in an `Array Nat`. The constant's
-value lives in `samplePayload`; the graph records its shape and the operation that reads it.
+value lives in `payload`; the graph records its shape and the operation that reads it.
 
 The four views then attach to those definitions:
 
 ```lean
 -- Inspect structure first, then compare shapes, the edited
 -- graph, and execution.
-#ir_view sampleGraph
+#ir_view (graph (op := .add))
 
 -- 1) Invariant check:
 -- declared shape tags vs inferred shapes.
-#shape_infer_view sampleGraph
+#shape_infer_view (graph (op := .add))
 
 -- 2) Before/after view:
 -- handy for compiler/optimizer passes.
-#graph_rewrite_view sampleGraph, sampleGraphSub
+#graph_rewrite_view (graph (op := .add)),
+  (graph (op := .sub))
 
 -- 3) Evaluation trace: step through the IR semantics.
-#ir_exec_trace_view sampleGraph, samplePayload, sampleInput
+#ir_exec_trace_view (graph (op := .add)), payload, input
 ```
 
 The graph view shows node `2` depending on the input and constant. The shape view compares all
@@ -338,8 +327,8 @@ and prints the successful result in node order:
 -- Evaluate all nodes so each displayed value can be matched
 -- to its parent values.
 #eval do
-  let g := sampleGraph
-  let r := Graph.denoteAll g samplePayload sampleInput
+  let g := graph (op := .add)
+  let r := Graph.denoteAll g payload input
   match r with
   | .ok vals =>
     for i in [0:vals.size] do
@@ -360,9 +349,9 @@ If that result were unexpected, the two parent rows would distinguish incorrect 
 incorrect addition. Shape checking addresses failures that prevent this evaluation from succeeding.
 
 The addition/subtraction comparison is a display example, not a justified graph rewrite.
-`sampleGraphSub` changes the mathematical operation, so seeing both graphs side by side helps locate
-the change but cannot establish that they compute the same result. For an optimizer rewrite, the
-corresponding correctness statement must relate the source and destination semantics under its
+`graph (op := .sub)` changes the mathematical operation. Seeing both graphs side by side helps us
+locate the change but cannot establish that they compute the same result. For an optimizer rewrite,
+the correctness statement must relate the source and destination semantics under its
 hypotheses. A structural diff remains useful even then: it lets the reader check which nodes and
 payloads that statement is supposed to cover.
 
@@ -405,11 +394,11 @@ order, or stops at the first disagreement:
 -- Separate incorrect output declarations from incompatible
 -- operand shapes.
 #eval do
-  match Graph.inferShapes sampleGraph with
+  match Graph.inferShapes (graph (op := .add)) with
   | .ok shapes =>
-    IO.println s!"sampleGraph inferred {shapes}"
+    IO.println s!"addition graph inferred {shapes}"
   | .error e =>
-    IO.println s!"sampleGraph rejected: {e}"
+    IO.println s!"addition graph rejected: {e}"
   match Graph.checkShapes miscountedGraph with
   | .ok _ => IO.println "miscountedGraph accepted"
   | .error e =>
@@ -421,7 +410,7 @@ order, or stops at the first disagreement:
 ```
 
 ```leanOutput wgInfer (whitespace := lax)
-sampleGraph inferred #[[2], [2], [2]]
+addition graph inferred #[[2], [2], [2]]
 miscountedGraph rejected: IR graph: node 2: outShape
   mismatch: inferred=[2], declared=[3]
   (Node(id=2, kind=add, parents=#[0, 1], outShape=[3]))
@@ -460,7 +449,7 @@ def qnan32 : (ExecFloat.Binary 8 23) :=
 
 -- Compare a Float64 input to its Float32 rounding:
 #float32_round_view decimalTenth
-#float32_round_view oneThirdFloat
+#float32_round_view third
 ```
 
 We can print the same sign, exponent, and fraction fields that the viewer displays:
@@ -537,20 +526,20 @@ have bounds and whether shapes and flattened dimensions match the intended layou
 -- printed one at a time.
 def inputBox : FlatBox Float :=
   { dim := 2
-    lo := pairTensor (-1.0) (-1.0)
-    hi := pairTensor 1.0 1.0 }
+    lo := [-1.0, -1.0]
+    hi := [1.0, 1.0] }
 
 def constBox : FlatBox Float :=
   { dim := 2
-    lo := pairTensor 0.25 0.25
-    hi := pairTensor 0.25 0.25 }
+    lo := [0.25, 0.25]
+    hi := [0.25, 0.25] }
 
 def outputBox : FlatBox Float :=
   { dim := 2
-    lo := pairTensor (-0.75) (-0.75)
-    hi := pairTensor 1.25 1.25 }
+    lo := [-0.75, -0.75]
+    hi := [1.25, 1.25] }
 
-def samplePropState : Graph.PropState Float :=
+def bounds : Graph.PropState Float :=
   { inputId := 0
     inputDim := 2
     states := #[
@@ -559,15 +548,15 @@ def samplePropState : Graph.PropState Float :=
     , { shape := [2], ibp? := some outputBox, aff? := none }
     ] }
 
-#crown_view sampleGraph, samplePropState
+#crown_view (graph (op := .add)), bounds
 
 -- Interval widths (`hi - lo`) are a
 -- "where did bounds blow up?" diagnostic.
-#bounds_tightness_view sampleGraph, samplePropState
+#bounds_tightness_view (graph (op := .add)), bounds
 ```
 
-The graph is the same `sampleGraph` from above, so a trace value and a bound refer to the same node
-id. Here `samplePropState` is a manually constructed display fixture, not the output of a verifier
+We use the same `graph (op := .add)` as above, so a trace value and a bound refer to the same
+node id. Here `bounds` is a manually constructed display fixture, not the output of a verifier
 or a checked certificate. Adding
 the exact constant $`0.25` shifts $`[-1,1]` to $`[-0.75,1.25]` without changing the width:
 
@@ -655,33 +644,33 @@ produced by scalar backprop, corresponding to a call to `loss.backward()` in PyT
 ```lean
 -- Record ab + b so the shared leaf b must receive two
 -- reverse contributions.
-def sampleTape : Tape Float :=
+def record : Result (Tape Float) := do
   let (t0, aId) :=
     Tape.leaf (α := Float) (t := Tape.empty)
       (value := Tensor.full [] 2.0) (name := some "a")
   let (t1, bId) :=
     Tape.leaf (α := Float) (t := t0)
       (value := Tensor.full [] 3.0) (name := some "b")
-  let (t2, abId) :=
-    match Tape.mul (α := Float) (t := t1)
-        (s := []) aId bId with
-    | .ok r => r
-    | .error _ => (t1, 0)
-  let (t3, _) :=
-    match Tape.add (α := Float) (t := t2)
-        (s := []) abId bId with
-    | .ok r => r
-    | .error _ => (t2, 0)
-  t3
+  let (t2, abId) ←
+    Tape.mul (α := Float) (t := t1) (s := []) aId bId
+  let (t3, _) ←
+    Tape.add (α := Float) (t := t2) (s := []) abId bId
+  pure t3
 
-#tape_grads_view sampleTape, 3
+def tape : Tape Float :=
+  have succeeds : record.toOption.isSome = true := by decide
+  record.toOption.get succeeds
+
+#tape_grads_view tape, 3
 
 -- For a step by step account of why a gradient exists
 -- (or is missing), use the reverse pass trace:
-#tape_trace_view sampleTape, 3
+#tape_trace_view tape, 3
 ```
 
-The recorded scalar is $`ab+b` at $`a=2` and $`b=3`, so $`\partial/\partial a = b = 3` and
+The proof in `tape` checks that recording succeeded; it cannot silently replace a failed operation
+with an earlier tape. The recorded scalar is $`ab+b` at $`a=2` and $`b=3`, so
+$`\partial/\partial a = b = 3` and
 $`\partial/\partial b = a+1 = 3`. Both derivatives are three by coincidence at this point, which is
 convenient for reading the output and worth remembering when changing the numbers. Running the same
 reverse pass the widget runs:
@@ -700,10 +689,10 @@ def tapeLine
   s!"{name}: value {n.value.tensor} grad {grad}"
 
 #eval do
-  match Tape.backwardScalar (t := sampleTape) 3 with
+  match Tape.backwardScalar (t := tape) 3 with
   | .ok grads =>
-    for id in [0:sampleTape.nodes.size] do
-      match sampleTape.nodes[id]? with
+    for id in [0:tape.nodes.size] do
+      match tape.nodes[id]? with
       | some n => IO.println (tapeLine grads id n)
       | none => pure ()
   | .error e => IO.println s!"backward failed: {e}"
@@ -747,7 +736,7 @@ that nothing consumes and the reverse pass never visits it:
 -- at the original output.
 def strayLeafTape : Tape Float :=
   let (t0, _) :=
-    Tape.leaf (α := Float) (t := sampleTape)
+    Tape.leaf (α := Float) (t := tape)
       (value := Tensor.full [] 5.0) (name := some "c")
   t0
 
@@ -787,7 +776,7 @@ no training run produced them:
 ```lean (name := wgLog)
 -- These independent records exercise the dashboard without
 -- claiming a training run.
-def sampleTrainLog : Runtime.Training.TrainLog :=
+def log : Runtime.Training.TrainLog :=
   { title := "Classifier training run"
     steps := #[0, 1, 2, 3, 4]
     series := #[
@@ -804,9 +793,9 @@ def sampleTrainLog : Runtime.Training.TrainLog :=
     , "dataset: synthetic 3-class classifier"
     ] }
 
-def sampleLabels : Array String := #["cat", "dog", "owl"]
+def labels : Array String := #["cat", "dog", "owl"]
 
-def sampleCM : Runtime.Training.ConfusionMatrix :=
+def confusion : Runtime.Training.ConfusionMatrix :=
   { counts := #[
       #[8, 1, 0]
     , #[2, 6, 1]
@@ -820,8 +809,8 @@ show the invocation:
 ```
 -- Render the named metric log and the separately supplied
 -- confusion matrix.
-#train_log_view sampleTrainLog
-#confusion_view sampleLabels, sampleCM
+#train_log_view log
+#confusion_view labels, confusion
 ```
 
 Ordinary array operations can summarize these records without rendering a widget:
@@ -830,13 +819,13 @@ Ordinary array operations can summarize these records without rendering a widget
 -- Summarize endpoints and diagonal counts to check what the
 -- two panels would display.
 #eval do
-  let log := sampleTrainLog
+  let log := log
   IO.println s!"steps: {log.steps.size}"
   for s in log.series do
     let a := s.values[0]!
     let b := s.values.back!
     IO.println s!"{s.name}: {a} -> {b}"
-  let rows := sampleCM.counts
+  let rows := confusion.counts
   let mut total := 0
   let mut hits := 0
   for i in [0:rows.size] do
@@ -941,7 +930,7 @@ Work through four changes:
    the same Lean value.
 2. Give an IR node the wrong declared output shape. `#shape_infer_view` should identify the first
    disagreement; restore the shape before continuing.
-3. Replace `sampleGraph` by `sampleGraphSub` in the rewrite view and inspect the changed operation
+3. Change `op := .add` to `op := .sub` in the rewrite view and inspect the changed operation
    tag rather than comparing raw record syntax.
 4. Compare `(1 : ExecFloat.Binary 8 23)` with a quiet NaN. The bit viewer should expose the
    exponent, fraction, and classification that ordinary decimal printing hides.
@@ -1004,3 +993,7 @@ the same data; retain the accepted artifact when documenting a result.
 Keep the definition or producer path near its view. A graph panel can then be traced to the graph
 record, a bound to its verifier state, and a training curve to the parsed file. This makes a
 surprising display traceable to the data that produced it.
+
+```lean -show
+end Tutorial.Widgets
+```

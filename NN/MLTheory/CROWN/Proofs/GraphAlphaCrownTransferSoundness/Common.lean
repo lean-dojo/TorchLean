@@ -219,14 +219,16 @@ theorem get2_mat_pos {m n : Nat}
     (W : Tensor ℝ [m, n]) (i : Fin m) (j : Fin n) :
     Spec.get2 (NN.MLTheory.CROWN.IBP.matPos (α := ℝ) (m := m) (n := n) W) i j =
       (if Spec.get2 W i j > 0 then Spec.get2 W i j else 0) := by
-  simp [NN.MLTheory.CROWN.IBP.matPos]
+  simpa only [NN.MLTheory.CROWN.IBP.matPos, Tensor.map] using
+    Tensor.get2_map (fun w : ℝ => if w > 0 then w else 0) W i j
 
 /-- Entries of the negative part of a matrix: the entry where it is not positive, else zero. -/
 theorem get2_mat_neg {m n : Nat}
     (W : Tensor ℝ [m, n]) (i : Fin m) (j : Fin n) :
     Spec.get2 (NN.MLTheory.CROWN.IBP.matNeg (α := ℝ) (m := m) (n := n) W) i j =
       (if Spec.get2 W i j > 0 then 0 else Spec.get2 W i j) := by
-  simp [NN.MLTheory.CROWN.IBP.matNeg]
+  simpa only [NN.MLTheory.CROWN.IBP.matNeg, Tensor.map] using
+    Tensor.get2_map (fun w : ℝ => if w > 0 then 0 else w) W i j
 
 /-- One term of the interval upper bound: `w * x` is at most `w⁺ * u + w⁻ * l`.
 
@@ -642,13 +644,7 @@ theorem phaseRelaxVec?_some_getScalar {n : Nat}
       simp [hnone] at h
     exact False.elim this
 
-/-! ## Evaluating `linearBoundsFromAffine` at a point -/
-
-/-- `get2` distributes over matrix addition. -/
-theorem get2_add_spec {m n : Nat}
-    (A B : Tensor ℝ [m, n]) (i : Fin m) (j : Fin n) :
-    Spec.get2 (Tensor.addSpec (α := ℝ) A B) i j = Spec.get2 A i j + Spec.get2 B i j := by
-  simp [Tensor.addSpec]
+/-! ## Evaluating `propagateLinearBounds` at a point -/
 
 /-- Matrix-vector multiplication is additive in the matrix. -/
 theorem mat_vec_add_matrix {m n : Nat}
@@ -661,32 +657,9 @@ theorem mat_vec_add_matrix {m n : Nat}
   classical
   apply Tensor.ext_vector
   intro i
-  rw [Proofs.TensorAlgebra.getScalar_mat_vec_mul_spec (A := Tensor.addSpec (α := ℝ) A B) (v := x)
-    (i := i)]
-  simp [Spec.getScalar_add_spec]
-  rw [Proofs.TensorAlgebra.getScalar_mat_vec_mul_spec (A := A) (v := x) (i := i)]
-  rw [Proofs.TensorAlgebra.getScalar_mat_vec_mul_spec (A := B) (v := x) (i := i)]
-  -- Distribute `get2 (A+B)` and split the sum.
-  have :
-      (∑ k : Fin n,
-          (Spec.get2 (Tensor.addSpec (α := ℝ) A B) i k) * (TorchLean.Tensor.getScalar x k)) =
-        (∑ k : Fin n, (Spec.get2 A i k) * (TorchLean.Tensor.getScalar x k)) +
-        (∑ k : Fin n, (Spec.get2 B i k) * (TorchLean.Tensor.getScalar x k)) := by
-    calc
-      (∑ k : Fin n,
-          (Spec.get2 (Tensor.addSpec (α := ℝ) A B) i k) * (TorchLean.Tensor.getScalar x k))
-          = ∑ k : Fin n,
-              ((Spec.get2 A i k + Spec.get2 B i k) * (TorchLean.Tensor.getScalar x k)) := by
-              refine Finset.sum_congr rfl ?_
-              intro k _
-              simp [get2_add_spec]
-      _ = ∑ k : Fin n, ((Spec.get2 A i k) * (TorchLean.Tensor.getScalar x k) +
-            (Spec.get2 B i k) * (TorchLean.Tensor.getScalar x k)) := by
-            simp [add_mul]
-      _ = (∑ k : Fin n, (Spec.get2 A i k) * (TorchLean.Tensor.getScalar x k)) +
-          (∑ k : Fin n, (Spec.get2 B i k) * (TorchLean.Tensor.getScalar x k)) := by
-            simp [Finset.sum_add_distrib]
-  simp [this]
+  rw [congrFun (Spec.getScalar_add_spec _ _) i]
+  simp only [Proofs.TensorAlgebra.getScalar_mat_vec_mul_spec]
+  simp [Tensor.addSpec, add_mul, Finset.sum_add_distrib]
 
 /-- The zero matrix sends every vector to zero, which is what makes constant bounds constant. -/
 theorem mat_vec_mul_spec_full_zero {m n : Nat}
@@ -708,17 +681,9 @@ theorem mat_vec_mul_spec_aff_identity {n : Nat}
   classical
   apply Tensor.ext_vector
   intro i
-  -- Expand mat-vec coordinate; only the diagonal term survives.
   rw [Proofs.TensorAlgebra.getScalar_mat_vec_mul_spec
     (A := (Graph.affIdentity (α := ℝ) n).A) (v := x) (i := i)]
-  simp only [Graph.affIdentity, Spec.get2_dim]
-  rw [Finset.sum_eq_single i]
-  · simp
-  · intro j _ hj
-    have hji : i ≠ j := fun h => hj h.symm
-    simp [show i.val ≠ j.val from fun h => hji (Fin.ext h)]
-  · intro hnot
-    exact False.elim (hnot (Finset.mem_univ i))
+  simp [Graph.affIdentity, Spec.get2_identityTensorSpec]
 
 /-- The identity bounds certificate evaluates to the degenerate box `[x, x]`.
 

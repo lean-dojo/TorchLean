@@ -398,43 +398,23 @@ it prints axes, shapes, seeds, and convolution/pooling metadata so malformed gra
 without cross-referencing the original builder.
 -/
 def describe : OpKind → String
-  | .input => "input"
   | .const valueShape => s!"const(shape={repr valueShape})"
   | .custom name inputs output =>
       s!"custom(name={name}, inputs={repr inputs}, output={repr output}, body=payload)"
   | .permute perm => s!"permute(perm={repr perm})"
   | .transpose axis₁ axis₂ => s!"transpose(axis1={axis₁}, axis2={axis₂})"
-  | .detach => "detach"
   | .randUniform seed => s!"rand_uniform(seed={seed})"
   | .bernoulliMask seed => s!"bernoulli_mask(seed={seed})"
-  | .add => "add"
-  | .sub => "sub"
-  | .mulElem => "mul_elem"
-  | .abs => "abs"
-  | .sqrt => "sqrt"
-  | .inv => "inv"
-  | .maxElem => "max_elem"
-  | .minElem => "min_elem"
   | .maxPool config => s!"max_pool(config={repr config})"
   | .avgPool config => s!"avg_pool(config={repr config})"
   | .broadcastTo s₁ s₂ => s!"broadcastTo(from={repr s₁}, to={repr s₂})"
   | .reduceSum axis => s!"reduce_sum(axis={axis})"
   | .reduceMean axis => s!"reduce_mean(axis={axis})"
-  | .sum => "sum"
-  | .matmul => "matmul"
   | .linear => "linear(payload=node_id)"
   | .conv config => s!"conv(config={repr config}, payload=node_id)"
   | .batchNormEval channelAxis channels =>
       s!"batch_norm_eval(channelAxis={channelAxis}, channels={channels}, payload=node_id)"
-  | .relu => "relu"
-  | .tanh => "tanh"
-  | .sigmoid => "sigmoid"
-  | .softplus => "softplus"
   | .safeLog => "safe_log(epsilon=scalar_parent)"
-  | .exp => "exp"
-  | .log => "log"
-  | .sin => "sin"
-  | .cos => "cos"
   | .softmax axis => s!"softmax(axis={axis})"
   | .hardMaskedSoftmax mask =>
       s!"hard_masked_softmax(maskShape={repr mask.shape})"
@@ -442,7 +422,7 @@ def describe : OpKind → String
   | .reshape inShape outShape => s!"reshape(from={repr inShape}, to={repr outShape})"
   | .flatten s => s!"flatten(shape={repr s})"
   | .concat axis => s!"concat(axis={axis})"
-  | .mseLoss => "mse_loss"
+  | kind => kind.tag
 
 end OpKind
 

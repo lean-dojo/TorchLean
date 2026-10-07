@@ -152,14 +152,6 @@ This proves one component of the gradient for an affine layer. The graph theorem
 such local derivatives and account for parameters used along several paths, where the reverse pass
 must add their contributions.
 
-The two scalar proofs unpack the displayed gradients. In the mean-square example, differentiating
-one squared entry gives twice that entry and the mean contributes the factor one third. In the
-model example, the squared residual contributes twice the residual, while differentiating the
-affine prediction with respect to a weight contributes its input feature. The bias contributes
-one instead. Thus a common residual factor appears in all parameter gradients, but each weight
-also remembers which feature it multiplies. The numerical output is easier to inspect once these
-separate factors are visible.
-
 # Autograd Proof Obligations
 
 In PyTorch, the default runtime model is approximately:
@@ -257,13 +249,6 @@ The comparison to PyTorch is most direct at this point. PyTorch's engine perform
 over a dynamic graph and accumulates cotangents into inputs. TorchLean's algebraic graph does the
 same conceptual work, but the graph object carries enough structure for Lean to prove that the
 accumulation is sound for every input context in the supported fragment.
-
-The two-by-two calculation expresses the same scalar in two orders. On the left, the matrix acts
-on the tangent before pairing with the output cotangent. On the right, its transpose acts on that
-cotangent before pairing with the original tangent. Expanding the products shows that every
-coefficient appears once on each side. This identity is exactly what reverse mode needs to move
-a scalar pairing backwards through a node. It also explains why reverse accumulation adds
-contributions when several later pairings depend on the same earlier value.
 
 # Adjoint Laws And Fréchet Derivatives
 
@@ -375,13 +360,6 @@ approximation theorem, as developed in {ref "runtime-approximation"}[the runtime
 chapter]. The run is a useful check of indexing and accumulation, while shared errors in local
 rules can still escape it.
 
-The two equal printed pairings test the identity for the particular tangent and cotangent chosen
-in the example. Choosing nonuniform values helps expose a transpose or reduction mistake that a
-seed of all ones might hide. Nevertheless, the floating-point equality is one observation. The
-adjoint theorem quantifies over all tangents and cotangents in the stated spaces, and the analytic
-theorem identifies the underlying linear map as a derivative. The experiment is most useful as a
-way to understand which scalar quantity those theorems compare.
-
 # Derivative Correctness Of The Lowered Tape
 
 The derivative theorem above is stated for the real analytic graph. The tape-lowering correctness
@@ -438,11 +416,6 @@ them only along evaluation at the given input. The latter supports a graph conta
 whose derivatives exist only on part of their domain. Both hypotheses lead to the same conjunction:
 successful reverse execution and identification of its input cotangent with an analytic adjoint.
 
-The result of reverse execution includes cotangents for inputs and intermediate values.
-`takeLeft` selects the input prefix, and `flattenCtx` turns that shaped context into the Euclidean
-vector used by `fderiv`. These functions specify which part of the runtime result the derivative
-claim concerns.
-
 Suppose `g` is an algebraic graph over `Real`, `x` is its typed input context, `d` is its fixed
 environment, and `seed` is a cotangent for the full evaluated context `Γ ++ ss`, including the
 input prefix and intermediate values. To differentiate a loss attached only to the final output,
@@ -471,14 +444,6 @@ $`dL/dx`, $`dL/dW`, and $`dL/db`.
 In this example, `x`, `W`, and `b` must all be part of the differentiated input context to obtain
 all three cotangents. Composing the scalar loss seed with the adjoint of the forward map gives the
 corresponding derivatives of the loss.
-
-The lowered-tape signatures contain both an execution result and a mathematical identification of
-that result. Successful execution settles which cotangent pack the evaluator returned; the
-adjoint equality settles what that pack means. The context includes the graph inputs and stored
-intermediates, so a seed on an intermediate asks a different differentiation question from a seed
-only on the final output. For an ordinary scalar loss, the application chooses the seed pack that
-selects that loss and puts zero in unrelated entries. The theorem's general seed argument allows
-other observations, but does not choose the intended loss on the caller's behalf.
 
 The point-local variant is particularly useful for piecewise operations. It requires the local
 derivative conditions at the values reached by this execution, instead of requiring them at every
@@ -536,14 +501,6 @@ Their comments cite the PyTorch API reference for naming alignment, not as proof
 
 Documentation tells us what users expect the op to mean; Lean proves the derivative law for
 TorchLean's mathematical definition.
-
-The difference between the log-softmax JVP and VJP is visible in their sums. The JVP subtracts
-the softmax-weighted average of the input tangent from every coordinate. Its adjoint instead
-subtracts the softmax weight at that coordinate times the unweighted sum of the output
-cotangents. Interchanging these formulas would be an error because the log-softmax Jacobian is
-not generally symmetric. For softmax itself, the Jacobian is symmetric, so the analogous formulas
-coincide. The adjoint identity establishes which expression belongs on each side without relying
-on that special symmetry.
 
 ## Operator Derivative Proof Obligations
 
@@ -756,7 +713,8 @@ only have a theorem about ideal arithmetic.
 # Convolution And BatchNorm
 
 Convolution and BatchNorm are not represented by separate one-, two-, and three-dimensional proof
-families. Their spatial shape is a list, so one theorem covers sequences, images, volumes, and
+families. Convolution takes its kernel, stride, padding, and input extents as `Tensor ℕ [d]`;
+BatchNorm takes a spatial `Shape`. The same theorems cover sequences, images, volumes, and
 higher-dimensional grids.
 
 For convolution,
@@ -842,12 +800,6 @@ broadcast tangent. If kernel and input are perturbed simultaneously, their produ
 term containing both perturbations; that term is second order and does not belong in the
 derivative. The analytic theorem justifies this first-order decomposition. The adjoint identity
 then reorganizes its three terms into the corresponding returned gradients.
-
-This also explains why input and parameter gradients cannot be certified by examining only the
-output shape. They can share valid tensor dimensions while pairing with the wrong tangent or
-omitting one contribution. The printed identity tests the whole differential through arbitrary
-tangents and output cotangents. Its indexing hypotheses make that pairing argument apply to the
-particular backward definitions used here.
 
 # MLP And MSE Gradients
 
@@ -971,9 +923,10 @@ those gradients are seeded and consumed. That role belongs to
 
 There are two pieces to keep separate.
 
-First, `Graph.scalarLoss_grad_correct` specializes the global graph theorem to scalar losses. The
-seed is the scalar cotangent `1`, represented by `seedScalarLoss`. Formally, this is
-$`loss.backward()` seeding $`d loss / d loss = 1`.
+First, `Graph.scalarLoss_grad_correct` specializes the algebraic pairing law to scalar losses.
+The seed is the scalar cotangent `1`, represented by `seedScalarLoss`, corresponding to
+$`loss.backward()` seeding $`d loss / d loss = 1`. Identifying the supplied JVP with a derivative
+still requires the analytic bridge above.
 
 Second, `step` defines the algebra behind a simple optimizer update:
 

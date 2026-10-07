@@ -228,7 +228,7 @@ that result with the graph's first-order certificate, proving higher derivatives
 adjoint derivative. None of these theorems identifies floating-point results with exact real
 derivatives.
 
-For the pure runtime graph API, `TypedGraphWithData.tangent_vjp` connects nested `vjpWithSeed`
+For the pure runtime graph API, `TypedGraphWithData.tangent_vjp` connects nested `vjp`
 execution to the iterated derivative of the real graph's VJP. Its hypotheses check both the node
 laws and agreement of the recorded shapes and selected output.
 

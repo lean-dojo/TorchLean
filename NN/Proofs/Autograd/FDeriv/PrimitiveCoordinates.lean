@@ -28,11 +28,11 @@ noncomputable section
 /-- Row-major flattening commutes with a unary pointwise map. -/
 @[simp] theorem tensorToVec_mapSpec_apply {s : Shape} (f : ℝ → ℝ)
     (x : Tensor ℝ s) (i : Fin (Shape.size s)) :
-    tensorToVec (mapSpec f x) i = f (tensorToVec x i) := by
-  change (getScalarE (flattenSpec (mapSpec f x))).ofLp i =
+    tensorToVec (Tensor.map f x) i = f (tensorToVec x i) := by
+  change (getScalarE (flattenSpec (Tensor.map f x))).ofLp i =
     f ((getScalarE (flattenSpec x)).ofLp i)
   rw [getScalarE_ofLp, getScalarE_ofLp, getScalar_eq_apply, getScalar_eq_apply]
-  simp only [flattenSpec, Internal.Rep.reshape_apply_coordEquiv, mapSpec, Tensor.map,
+  simp only [flattenSpec, Internal.Rep.reshape_apply_coordEquiv, Tensor.map,
     Internal.Rep.map_apply]
 
 /-- Both operands of a binary pointwise map use the same flattened coordinate. -/

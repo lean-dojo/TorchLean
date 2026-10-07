@@ -40,7 +40,7 @@ theorem evalAt_input_eq
       =
       Except.ok (Spec.SomeTensor.mk (α := α) s x) := by
   simp [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, inputGraph, Graph.getNode,
-    Graph.getNode?, Graph.expectShape,
+    Graph.expectShape,
     Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 /--
@@ -58,7 +58,7 @@ theorem evalAt_detach_eq
       =
       Except.ok (Spec.SomeTensor.mk (α := α) s (Tensor.detachSpec x)) := by
   simp [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, unaryGraph,
-    unaryGraphOut, unaryNodeOut, Graph.getNode, Graph.getNode?, Graph.expectShape,
+    unaryGraphOut, unaryNodeOut, Graph.getNode, Graph.expectShape,
     Graph.unaryParentId, unaryParent?, Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 /-- A graph containing a zero-parent `rand_uniform` node. -/
@@ -78,7 +78,7 @@ theorem evalAt_randUniform_eq
           (Spec.Random.uniform
             (α := α) (Spec.Random.keyOf seed 0) (s := s))) := by
   simp [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, randUniformGraph, Graph.getNode,
-    Graph.getNode?, Bind.bind, Except.bind,
+    Bind.bind, Except.bind,
     Pure.pure, Except.pure]
 
 /-- Local IR semantics for deterministic seeded Bernoulli masks. -/
@@ -95,7 +95,7 @@ theorem evalAt_bernoulliMask_eq
           (Spec.Random.mask
             (α := α) (Spec.Random.keyOf seed 1) keepProb (s := s))) := by
   simp [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, unaryGraphOut, unaryNodeOut,
-    Graph.getNode, Graph.getNode?,
+    Graph.getNode,
     Graph.unaryParentId, unaryParent?, Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 /-- Local IR semantics for scalar mean-squared error. -/
@@ -115,8 +115,9 @@ theorem evalAt_mseLoss_eq
                 (Tensor.subSpec (α := α) y target)).sumSpec /
               (↑(TorchLean.Tensor.meanDenominator s) : α)))) := by
   simp [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, binaryGraphOut, binaryNodeOut,
-    Graph.getNode, Graph.getNode?,
-    Graph.binaryParentIds, binaryParents?, Graph.mseLossSomeTensor, Spec.mseSpec, Spec.meanOver,
+    Graph.getNode,
+    Graph.binaryParentIds, binaryParents?, Graph.mseLossSomeTensor, Spec.mseSpec,
+    TorchLean.Tensor.meanSquaredError, TorchLean.Tensor.meanSpec,
     Bind.bind, Except.bind,
     Pure.pure, Except.pure]
 

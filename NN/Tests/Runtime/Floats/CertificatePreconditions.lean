@@ -170,9 +170,9 @@ def run : IO Unit := do
   expect "bound ordering accepted NaN" <|
     !NN.Verification.Util.Tensor.boundsOrdered ([nan] : Tensor Float [1]) [0.0]
   expect "vector decoding accepted a mismatched length" <|
-    (NN.Verification.Util.Tensor.vecOfArray 2 #[1.0]).isNone
+    (NN.Verification.Util.Tensor.ofArray? [2] #[1.0]).isNone
   expect "matrix decoding accepted a ragged row" <|
-    (NN.Verification.Util.Tensor.matOfArray 2 2 #[#[1.0, 0.0], #[1.0]]).isNone
+    (NN.Verification.Util.Tensor.ofRows? 2 2 #[#[1.0, 0.0], #[1.0]]).isNone
   let term : NN.Verification.VNNComp.VNNLib.Term :=
     { rows := 1, cols := 2, mat := [[2.0, -3.0]], rhs := [-5.0] }
   let box : FlatBox Float := { dim := 2, lo := [1.0, 1.0], hi := [2.0, 2.0] }
@@ -187,7 +187,7 @@ def run : IO Unit := do
   let reversedMarginEntry ← parseJson! <|
     "{\"label\":0,\"logits_lo\":[2.0,0.0],\"logits_hi\":[1.0,0.5]}"
   expectRejected "margin report accepted reversed logit bounds" <|
-    NN.Verification.Robustness.MarginCert.checkOneExample 2 reversedMarginEntry
+    NN.Verification.Robustness.MarginCert.checkEntry 2 reversedMarginEntry
 
   let validPinnSource :=
     "{\"pinn\":{\"pde\":\"u\",\"h\":0.1,\"eps\":0.0,\"points\":[0.0]}," ++
@@ -265,7 +265,7 @@ def run : IO Unit := do
   let labelLower : Tensor Float [3] := [1, 0, 0]
   let labelUpper : Tensor Float [3] := [1, floatNaN, 0]
   expect "top-label check hid an unordered competitor while taking a maximum"
-    (!NN.Verification.Robustness.TopLabel.certifiesLabelFromTensorBounds labelLower labelUpper 0)
+    (!NN.Verification.Robustness.TopLabel.check labelLower labelUpper 0)
   let unitBox : NN.MLTheory.CROWN.Box Float .scalar :=
     ⟨Tensor.scalar 0, Tensor.scalar 1⟩
   expect "box containment accepted a NaN value"

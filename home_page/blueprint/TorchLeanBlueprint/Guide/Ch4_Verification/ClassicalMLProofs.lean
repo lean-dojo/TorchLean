@@ -521,13 +521,9 @@ needs one. The bound counts states because its proof uses finiteness and lexicog
 It does not analyze the particular weights or update order that make this example converge
 quickly. A sharper bound for a family of networks would need that additional analysis.
 
-The three outputs of `hebbBasins` answer three different questions. The Boolean asks whether
-every enumerated start is stable after one sweep. The two natural numbers count starts whose
-result equals each named pattern. Here `allStates` decodes all four-bit integers, so its sixteen
-entries cover this state space rather than a sample of it. The split of eight and eight is a
-cardinality statement. Interpreting it as a fifty-percent recall probability would require
-choosing a uniform distribution on those starts. A noise process concentrated near the stored
-pattern could have a different recall probability even with exactly the same dynamics.
+`allStates` enumerates the entire four-bit state space, not a sample. The eight-eight split becomes
+a fifty-percent recall probability only if starts are uniformly distributed. A noise process
+concentrated near the stored pattern can have a different recall probability with the same dynamics.
 
 The theorem guarantees that the sweep sequence stops, but does not identify the final state.
 Half of these starts recover $`\xi` and half
@@ -643,14 +639,6 @@ This small example demonstrates cross-talk through an exactly zero row. Asymptot
 estimates for large networks with random patterns do not supply a threshold for these four neurons
 and deliberately correlated patterns. Here the printed matrix and exhaustive state checks explain
 the failure directly.
-
-The row of zeros also explains why a global energy minimum can fail the stability check. Energy
-is indifferent to neuron three, but the update rule is not: it always chooses the positive
-activation on that row. Thus the Boolean `false` for `stableWith twoPatterns pattern` is
-consistent with the energy value `-6`; the two commands test different predicates. For an
-associative-memory application, a useful further specification would ask that each stored
-pattern be stable, and then describe which corrupted inputs return to it. The convergence theorem
-supplies neither condition merely from the way the weights were constructed.
 
 ## Hopfield Updates In PyTorch
 
@@ -941,10 +929,8 @@ The five dimensions are arbitrary natural numbers. The scalar type needs `Storag
 instances, which provide the tensor representation and operations used by the specification.
 The same statement therefore covers `Float`, `ℝ`, and the opt-in scoped `Rat` context.
 
-Its content is one equation. `runArray` returns the final recurrent state together with the array of
-outputs, and the statement is about the outputs component: run the block on `xs ++ ys`, keep the
-first `xs.size` outputs, and you get exactly what running it on `xs` alone produces. Appending
-future tokens cannot disturb an earlier output.
+`runArray` returns the final recurrent state and an output array. The theorem compares the output
+prefix, not the final states, which may differ after processing the suffix.
 
 The example declaration is itself a proposition whose proof is the named theorem on its final
 line. There is no `by` block because applying that theorem already produces a term of exactly
@@ -955,11 +941,11 @@ would be a different statement: earlier outputs can depend on that state even wh
 depend on a later suffix.
 
 The theorem is polymorphic over any scalar `α` with a TorchLean `Context`. The runner theorem
-instantiates the generic `scanArray_append_outputs_take` lemma. Its supporting scan proof inducts
-over the input list with the state and emitted outputs generalized; the selective block's state
-includes the convolution history. It does not require commutative or exact arithmetic because
-causality depends on
-evaluation order, not algebraic rearrangement.
+instantiates the generic `scanArray_append_outputs_take` lemma. The supporting proof uses the
+array fold laws: processing a suffix starts from the state reached by the prefix and appends its
+outputs. For the selective block, that state includes the convolution history. No commutativity or
+exact-arithmetic assumption is needed because causality depends on evaluation order, not algebraic
+rearrangement.
 
 The selective block's causal convolution needs a window of
 recent inputs, so the internal runner threads a newest-first history alongside the recurrent state.
@@ -986,13 +972,9 @@ The public theorem above is the `history := #[]` instance of this one, obtained 
 `simpa [Models.SelectiveMambaBlockSpec.runArray]`. A streaming implementation may resume with
 earlier inputs still in its convolution window; the history theorem covers that case.
 
-A carried history is part of the starting configuration, just like the recurrent tensor.
-`runArrayWithHistory` compares runs with the same history on both sides, so a previously buffered
-input may affect an early convolution output in both runs. The induction can keep this invariant
-because one step consumes the current token and passes the updated state and history to the next
-step. No step receives the unprocessed suffix as an additional argument. This identifies what a
-streaming implementation must preserve when splitting a sequence into chunks: dropping or
-reordering the history changes the initial configuration to which the theorem applies.
+A streaming implementation must retain the recurrent state and convolution history when splitting
+a sequence into chunks. Dropping or reordering the history changes the starting configuration to
+which the theorem applies.
 
 The reusable array argument is factored through
 {src "NN/MLTheory/Proofs/StateSpace/Scan.lean"}[`Scan`],

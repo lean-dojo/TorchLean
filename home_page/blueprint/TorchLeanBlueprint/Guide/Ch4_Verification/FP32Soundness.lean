@@ -236,9 +236,8 @@ to `bfloat16`, which has eight significand bits, can reuse the generic format th
 Binary32-specific bridges, constants, and composed budgets in this chapter need
 new specializations; changing one exponent function does not establish a new native backend bridge.
 
-The two identical dyadic records explain more than the Boolean result alone. They show that the
-sum and the converted literal occupy the same binary32 grid point, whose exact value is
-`10066330 * 2^-25`. That point is not the rational number three tenths. Here `ofFloat32` imports
+The shared grid point `10066330 * 2^-25` is not the rational number three tenths.
+Here `ofFloat32` imports
 Lean's native `Float32` arguments by their interchange words; the decimal literals have already
 rounded to binary32. The addition and comparison then use FloatLib's configured operations.
 Keeping the conversion in view avoids turning a precision-specific observation into a claim
@@ -305,11 +304,6 @@ theorem fpsHalfUlp (x : ℝ) :
     (fexp := Model.fexpOf FloatFormat.binary32)
     nearestEven x
 ```
-
-`8388608` is $`2^{23}` ; half that local spacing is $`2^{-24}` . That is the whole relationship
-between the two constants, and it is the reason the
-error terms in the layer budgets later on are all written as `ulp(...)/2` rather than as a fixed
-number.
 
 The absolute half-ULP formulation remains useful where a uniform relative-error formulation
 would fail. At the midpoint between zero and the least positive subnormal, rounding to zero
@@ -439,9 +433,9 @@ square root, order, and min/max. Their qualifications are operation-specific; fo
 total division
 bridge assumes a finite quotient, while the dyadic form states a nonzero-denominator condition
 explicitly. A composite expression needs finite intermediate results rather than merely finite
-inputs. Executable `log` and `tanh` still need a separate accuracy or refinement
-contract. A subnormal result is finite; `0/0`, overflow to infinity, and square root of a negative
-value are not paths that the rounded-real theorem silently absorbs.
+inputs. The default approximate `log` and `tanh` implementations still need a separate accuracy
+or refinement contract. A subnormal result is finite; `0/0`, overflow to infinity, and square
+root of a negative value are not paths that the rounded-real theorem silently absorbs.
 
 For a composite expression, finiteness must be available at the point where each bridge is
 applied. Finite weights and inputs do not exclude an overflowing product inside a dot product,
@@ -532,13 +526,6 @@ Boldo and Melquiond's *Computer Arithmetic and Formal Proofs* (ISTE Press, 2017)
 account of Flocq's approach. TorchLean now imports the corresponding generic theory from
 `FloatLib.Floats.Formats.Flocq`; its binary32 specialization and network error bounds build on those
 Lean definitions and proofs.
-
-The table is also a guide to which choices a specialization must supply. The exponent function
-chooses the grid, its validity evidence makes the generic format theorems applicable, and the
-rounding-mode evidence determines the error guarantee. Fixing binary radix and 24-bit precision
-alone would not justify a half-ULP claim for a directed rounding mode. Conversely, changing
-the mode does not require redefining which real values lie on the grid. This separation is
-what allows the format facts to support both nearest-rounding analysis and interval endpoints.
 
 # Rounding Error For A Single Operation
 
@@ -781,11 +768,8 @@ related to it by `ex`, which is then propagated through the network. Consequentl
 An application must identify the intended real input and provide both its membership and
 approximation evidence.
 
-To obtain one box for an entire input region, choose a constant that dominates the pointwise
-error expression throughout that region. It may be conservative; finding the smallest such
-constant is unnecessary. A maximum observed over sampled inputs is not that domination proof.
-Bounds on parameter magnitudes, activations, and intermediate sums can instead supply the
-inequalities needed to replace the input-dependent expression by a uniform one.
+Bounds on parameter magnitudes, activations, and intermediate sums can supply a uniform budget.
+A maximum observed over sampled inputs cannot replace that proof.
 
 The two margin-transfer lemmas are small enough to read in full, and they are the exact formal
 content of the `0.12` calculation this chapter opened with:
@@ -830,11 +814,11 @@ is acceptable.
 
 The result so far concerns the rounded-real `FP32` semantics. For a network whose primitives are
 covered, a FloatLib binary32 claim can use the exact finite-path bridges and discharge their
-domain and
-finiteness hypotheses. The current bridges cover basic arithmetic, FMA, square root, order, and
-min/max behavior; they do not yet give an accuracy or refinement theorem connecting executable
-`log` or `tanh` to the rounded-real operations. In particular, the tanh MLP theorem above remains a
-result about the `FP32` proof model until such a transcendental contract is supplied.
+domain and finiteness hypotheses. The current bridges cover basic arithmetic, FMA, square root,
+order, and min/max behavior; they do not yet connect the default approximate
+`log` or `tanh` implementations to the rounded-real operations. In particular, the tanh MLP
+theorem above remains a result about the `FP32` proof model until such a transcendental contract
+is supplied.
 
 FloatLib also proves correspondence with Lean 4.34's logical native float model. Its native
 round-trip theorem covers every value; addition and subtraction correspondence require finite
@@ -951,12 +935,7 @@ model. That is a legitimate claim as long as it says so. For the construction of
 representations, read *Floating-Point Semantics*; for the graph and checker side of the argument,
 return to *Neural Network Verification*.
 
-The finite-result implication retains every finite bit, including the sign of zero; it is
-stronger than equality after conversion to a real number. The only alternative allowed by
-`AgreeUpToNaN` is that both results are NaNs. A finite result on one side and an infinity or
-NaN on the other cannot satisfy the contract. This makes the finite bridge useful for numerical
-bounds without asking those bounds to give a real meaning to exceptional values. The provider
-agreement premise still has to apply to the primitive and configuration actually used.
+The finite-result implication retains the sign of zero, which conversion to a real number erases.
 
 # Native Parity Test Results
 
@@ -1051,7 +1030,7 @@ The disagreement occurs during conversion, before arithmetic. It therefore canno
 mismatch in addition or division; a payload-sensitive arithmetic test must preserve the input bits.
 
 The GPU check uses the same Lean reference stream and the production LibTorch backend.
-`scripts/checks/cuda_float32_parity.sh` generates reference bits with `--emit-cases`, builds a C++
+`scripts/checks/cuda.sh parity` generates reference bits with `--emit-cases`, builds a C++
 regression against the selected SDK and TorchLean library, and checks addition, multiplication,
 division, square root, and fused multiply-add:
 
@@ -1059,7 +1038,7 @@ division, square root, and fused multiply-add:
 # Use the same SDK and shared library as the CUDA build.
 export TORCHLEAN_LIBTORCH_HOME=/path/to/libtorch
 export TORCHLEAN_BACKEND_LIBRARY=/path/to/libtorchlean_libtorch.so
-scripts/checks/cuda_float32_parity.sh --sweep 200000
+scripts/checks/cuda.sh parity --sweep 200000
 ```
 
 Every finite result and signed zero must match the reference bits. When both results are NaNs,
@@ -1100,11 +1079,17 @@ The budgets are pointwise in the input. Turning `ibpReluTwoLayerErrorBudget` int
 constant needs an upper bound valid over the whole input box; it need not be the least upper
 bound. Such a bound is not proved here.
 
-The covered architectures are two. `Linear → ReLU → Linear` and the three-layer tanh network have
-composed theorems; other architectures need their own composition and any missing local rules.
+The architecture-specific examples here are `Linear → ReLU → Linear` and a three-layer tanh
+network. For other models, the {ref "runtime-approximation"}[runtime approximation chapter]
+uses the same composition theorem for a supplied `RevGraph`, whose nodes carry proved local
+error bounds. Any missing local rules or lowering proof still need to be supplied.
 
-The transcendental bridge is missing. `tanh` and `log` have rounded-real bounds and executable
-implementations, and no theorem relating the two, so tanh networks stop at the proof model.
+The tanh network theorem does not yet cover the default executable `tanh` implementation.
+FloatLib now has separate certified `exp` and `log` implementations, with correct-rounding
+theorems whenever they return `some`. These optional operations are not the default approximate
+transcendentals used by this network, and they do not supply its missing tanh bridge.
+The `Certified.log_correctlyRoundedCertificateOn` theorem in FloatLib's binary-interchange
+transcendental module records this conditional guarantee.
 
 Native agreement remains an assumption. The production parity sweep tests concrete inputs and
 rejects finite-bit disagreements. Contraction and reduction schedules need additional

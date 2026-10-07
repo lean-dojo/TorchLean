@@ -65,12 +65,6 @@ theorem checkBoxWithinAbs_spec {n : Nat} {B : Box ℝ (.dim n .scalar)} {eps : �
   classical
   simp [checkBoxWithinAbs, decide_eq_true_eq]
 
-/-- Project a `Box.contains` hypothesis to scalar inequalities at a single coordinate. -/
-theorem boxContains_getScalar {n : Nat} {B : Box ℝ (.dim n .scalar)} {x : Tensor ℝ [n]}
-    (h : Box.contains (α := ℝ) B x) (i : Fin n) :
-    B.lo.getScalar i ≤ x.getScalar i ∧ x.getScalar i ≤ B.hi.getScalar i :=
-  h i
-
 /-- If `x ∈ T` and `y ∈ S`, then `x - y ∈ boxSub T S`. -/
 theorem boxSub_contains {n : Nat}
     {T S : Box ℝ (.dim n .scalar)}
@@ -79,13 +73,15 @@ theorem boxSub_contains {n : Nat}
     (hy : Box.contains (α := ℝ) S y) :
     Box.contains (α := ℝ) (boxSub (n := n) T S) (Tensor.subSpec x y) := by
   intro i
-  have hx_scalar := boxContains_getScalar hx i
-  have hy_scalar := boxContains_getScalar hy i
+  have hx_scalar : T.lo.getScalar i ≤ x.getScalar i ∧
+      x.getScalar i ≤ T.hi.getScalar i := hx i
+  have hy_scalar : S.lo.getScalar i ≤ y.getScalar i ∧
+      y.getScalar i ≤ S.hi.getScalar i := hy i
   change
     (boxSub T S).lo.getScalar i ≤ (Tensor.subSpec x y).getScalar i ∧
       (Tensor.subSpec x y).getScalar i ≤ (boxSub T S).hi.getScalar i
   simp only [boxSub, getScalar_subSpec]
-  constructor <;> linarith [hx_scalar.1, hx_scalar.2, hy_scalar.1, hy_scalar.2]
+  exact ⟨sub_le_sub hx_scalar.1 hy_scalar.2, sub_le_sub hx_scalar.2 hy_scalar.1⟩
 
 /-! ## Distillation certificate for 2-layer MLPs -/
 
@@ -118,69 +114,11 @@ theorem checkEquivalenceTwoLayerMlp_sound {inDim hidDim outDim : Nat}
           (NN.MLTheory.CROWN.forward (α := ℝ) teacher x)
           (NN.MLTheory.CROWN.forward (α := ℝ) student x)) i| ≤ eps := by
   intro x hx i
-  -- Extract the checked predicate.
-  have hwithin :
-      BoxWithinAbs (n := outDim)
-        (boxSub (n := outDim)
-          (NN.MLTheory.CROWN.boundIbp (α := ℝ) teacher xB)
-          (NN.MLTheory.CROWN.boundIbp (α := ℝ) student xB))
-        eps := by
-    have hcheck' :
-        checkBoxWithinAbs (n := outDim)
-            (boxSub (n := outDim)
-              (NN.MLTheory.CROWN.boundIbp (α := ℝ) teacher xB)
-              (NN.MLTheory.CROWN.boundIbp (α := ℝ) student xB))
-            eps = true := by
-      simpa [checkEquivalenceTwoLayerMlp] using hcheck
-    exact (checkBoxWithinAbs_spec (n := outDim)
-      (B := boxSub (n := outDim)
-        (NN.MLTheory.CROWN.boundIbp (α := ℝ) teacher xB)
-        (NN.MLTheory.CROWN.boundIbp (α := ℝ) student xB))
-      (eps := eps)).1 hcheck'
-
-  -- Sound IBP enclosures for both networks at x.
-  have ht :
-      Box.contains (α := ℝ)
-        (NN.MLTheory.CROWN.boundIbp (α := ℝ) teacher xB)
-        (NN.MLTheory.CROWN.forward (α := ℝ) teacher x) :=
-    NN.MLTheory.CROWN.Theorems.bound_ibp_sound (net := teacher) (xB := xB) (x := x) hx
-  have hs :
-      Box.contains (α := ℝ)
-        (NN.MLTheory.CROWN.boundIbp (α := ℝ) student xB)
-        (NN.MLTheory.CROWN.forward (α := ℝ) student x) :=
-    NN.MLTheory.CROWN.Theorems.bound_ibp_sound (net := student) (xB := xB) (x := x) hx
-
-  -- Therefore the difference lies in the difference box.
-  have hdiff :
-      Box.contains (α := ℝ)
-        (boxSub (n := outDim)
-          (NN.MLTheory.CROWN.boundIbp (α := ℝ) teacher xB)
-          (NN.MLTheory.CROWN.boundIbp (α := ℝ) student xB))
-        (Tensor.subSpec
-          (NN.MLTheory.CROWN.forward (α := ℝ) teacher x)
-          (NN.MLTheory.CROWN.forward (α := ℝ) student x)) :=
-    boxSub_contains (n := outDim) (hx := ht) (hy := hs)
-
-  -- Read off the per-component bounds and conclude abs ≤ eps.
-  have hmem_i :=
-    boxContains_getScalar (n := outDim) (B := boxSub (n := outDim)
-      (NN.MLTheory.CROWN.boundIbp (α := ℝ) teacher xB)
-      (NN.MLTheory.CROWN.boundIbp (α := ℝ) student xB))
-      (x := Tensor.subSpec
-        (NN.MLTheory.CROWN.forward (α := ℝ) teacher x)
-        (NN.MLTheory.CROWN.forward (α := ℝ) student x))
-      hdiff i
-
-  have hlo : -eps ≤ (Tensor.subSpec
-        (NN.MLTheory.CROWN.forward (α := ℝ) teacher x)
-        (NN.MLTheory.CROWN.forward (α := ℝ) student x)).getScalar i :=
-    le_trans (hwithin i).1 hmem_i.1
-
-  have hhi : (Tensor.subSpec
-        (NN.MLTheory.CROWN.forward (α := ℝ) teacher x)
-        (NN.MLTheory.CROWN.forward (α := ℝ) student x)).getScalar i ≤ eps :=
-    le_trans hmem_i.2 (hwithin i).2
-
-  exact (abs_le).2 ⟨hlo, hhi⟩
+  have hwithin := checkBoxWithinAbs_spec.mp hcheck
+  have ht := Theorems.bound_ibp_sound (net := teacher) (xB := xB) (x := x) hx
+  have hs := Theorems.bound_ibp_sound (net := student) (xB := xB) (x := x) hx
+  have hdiff := boxSub_contains ht hs
+  exact abs_le.mpr ⟨(hwithin i).1.trans (hdiff i).1,
+    (hdiff i).2.trans (hwithin i).2⟩
 
 end NN.MLTheory.CROWN.Distillation

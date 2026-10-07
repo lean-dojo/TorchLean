@@ -9,7 +9,6 @@ module
 public import NN.MLTheory.Generative.Latent.VAE
 public import NN.MLTheory.Generative.Latent.VQVAE
 public import NN.MLTheory.Generative.Latent.GAN
-public import NN.MLTheory.Generative.Latent.Objective
 
 /-!
 # Latent generative model theory
@@ -18,9 +17,7 @@ This entrypoint collects the proved theory facts for TorchLean's latent generati
 
 - VAE reparameterization and β-VAE objective decomposition;
 - VQ-VAE codebook lookup and loss decomposition;
-- LSGAN generator/discriminator composition facts; and
-- shared weighted-objective algebra connecting continuous-latent, discrete-latent, and adversarial
-  objectives.
+- LSGAN generator/discriminator composition and target-score facts.
 
 The executable model equations and the heavier probabilistic/game assumptions stay separate. These
 files prove the stable rewrite and optimization facts that examples, verifiers, and theory modules

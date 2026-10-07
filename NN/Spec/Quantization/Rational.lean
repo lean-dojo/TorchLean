@@ -55,19 +55,11 @@ theorem quantizeTensor_inRange (q : AffineQuantizer)
 theorem quantizeTensor_dequantizeTensor (q : AffineQuantizer)
     {s : Shape} {codes : Tensor ℤ s} (hcodes : q.CodesInRange codes) :
     q.quantizeTensor (q.dequantizeTensor codes) = codes := by
-  induction s with
-  | scalar =>
-      apply Tensor.ext_scalar
-      change q.quantize (q.dequantize codes.item) = codes.item
-      exact q.quantize_dequantize hcodes.1 hcodes.2
-  | dim n inner ih =>
-      apply (Tensor.dimEquiv n inner).injective
-      funext i
-      change Tensor.unstack
-        (Tensor.map q.quantize (Tensor.map q.dequantize codes)) i =
-          Tensor.unstack codes i
-      rw [Tensor.unstack_map, Tensor.unstack_map]
-      exact ih (hcodes i)
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro i
+  have hi := Tensor.forall_iff.mp hcodes i
+  simpa [quantizeTensor, dequantizeTensor, Tensor.map] using
+    q.quantize_dequantize hi.1 hi.2
 
 /-- If no coordinate clips, every tensor reconstruction error is at most half a step. -/
 theorem dequantizeTensor_quantizeTensor_error_le (q : AffineQuantizer)
@@ -75,20 +67,12 @@ theorem dequantizeTensor_quantizeTensor_error_le (q : AffineQuantizer)
     (hinactive : q.SaturationInactive x) :
     Tensor.Forall (fun e : ℚ => abs e ≤ q.scale / 2)
       ((q.dequantizeTensor (q.quantizeTensor x)).subSpec x) := by
-  induction s with
-  | scalar =>
-      change q.qmin ≤ q.rawCode x.item ∧ q.rawCode x.item ≤ q.qmax at hinactive
-      change abs (q.dequantize (q.quantize x.item) - x.item) ≤ q.scale / 2
-      exact q.dequantize_quantize_error_le x.item hinactive.1 hinactive.2
-  | dim n inner ih =>
-      intro i
-      change Tensor.Forall (fun e : ℚ => abs e ≤ q.scale / 2)
-        (Spec.get
-          (Tensor.map2Spec (· - ·)
-            (Tensor.map q.dequantize (Tensor.map q.quantize x)) x) i)
-      rw [Tensor.get_map2Spec]
-      simp only [Spec.get, Tensor.unstack_map]
-      exact ih (hinactive i)
+  rw [Tensor.forall_iff]
+  intro i
+  have hi := Tensor.forall_iff.mp hinactive i
+  simpa [Tensor.subSpec, quantizeTensor, dequantizeTensor, Tensor.map,
+    AffineQuantizer.roundedValue] using
+    q.dequantize_quantize_error_le (x i) hi.1 hi.2
 
 end AffineQuantizer
 end FloatLib.Numerics.Quantization

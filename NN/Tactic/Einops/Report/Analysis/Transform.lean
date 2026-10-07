@@ -12,6 +12,9 @@ public import NN.Tactic.Einops.Report.Analysis.Common
 # Transform reports
 
 This module reports concrete `rearrange`, `repeat`, and `reduce` certificates.
+
+Work estimates count the generated traversal and calls to supplied reducers, fold steps, and
+finalizers. They exclude work and allocations performed inside those user functions.
 -/
 
 public meta section

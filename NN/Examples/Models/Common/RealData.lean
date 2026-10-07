@@ -268,7 +268,7 @@ def loadCifarBatches
     IO (Array (Sample.Batch Float batchSize CifarImage CifarTarget)) := do
   let loader ← loadCifarLoader exeName batchSize rowCount seed xPath yPath
   let epoch ← CLI.orThrow exeName <|
-    Data.Loader.nextNonemptyEpoch exeName loader
+    Data.Loader.nextEpoch exeName loader (requireBatch := true)
   pure epoch.batches
 
 /-- Train a cropped CIFAR classifier with the examples' shared Adam and cross-entropy policy. -/
@@ -302,7 +302,7 @@ def loadCifarBatch
     (exeName : String) (batchSize rowCount seed : Nat) (xPath yPath : System.FilePath) :
     IO (Sample.Batch Float batchSize CifarImage CifarTarget) := do
   let loader ← loadCifarLoader exeName batchSize rowCount seed xPath yPath
-  CLI.orThrow exeName <| Data.Loader.firstFullBatch exeName loader
+  CLI.orThrow exeName <| Data.Loader.firstBatch exeName loader
 
 /--
 Load a user-prepared ImageNet-style `64x64` minibatch.
@@ -324,7 +324,7 @@ def loadImageNet64Batches
     IO (Array (Sample.Batch Float batchSize ImageNet64Image ImageNet64Target)) := do
   let loader ← loadImageNet64Loader exeName batchSize rowCount seed xPath yPath
   let epoch ← CLI.orThrow exeName <|
-    Data.Loader.nextNonemptyEpoch exeName loader
+    Data.Loader.nextEpoch exeName loader (requireBatch := true)
   pure epoch.batches
 
 /--

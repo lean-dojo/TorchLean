@@ -109,11 +109,6 @@ theorem foldl_add_init {α β : Type*} [AddMonoid β] (l : List α) (f : α → 
     (List.foldl_assoc (op := (· + ·)) (ha := ⟨add_assoc⟩)
       (l := l.map f) (a₁ := acc) (a₂ := 0))
 
-/-- `foldl_add_init` read right to left, which is the direction `rw` usually needs. -/
-theorem add_foldl_add_zero {α β : Type*} [AddMonoid β] (l : List α) (f : α → β) (acc : β) :
-    acc + l.foldl (fun a x => a + f x) 0 = l.foldl (fun a x => a + f x) acc := by
-  simpa using (foldl_add_init (l := l) (f := f) (acc := acc)).symm
-
 /--
 Distribute a fold of `g1 x + g2 x` into the sum of two folds.
 

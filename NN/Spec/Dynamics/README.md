@@ -11,8 +11,8 @@ statements without committing to a CUDA kernel, simulator, or training loop.
 ## Files
 
 - `System.lean`: `DynamicalSystem`, `DrivenSystem`, iteration semantics, trajectories, and
-  stability-style predicates wired to `NN.MLTheory.LearningTheory.Robustness.Spec` and
-  `NN.MLTheory.LearningTheory.Stability.Dynamics.Spec`.
+  stability predicates parameterized by a supplied size function. These predicates do not assume
+  norm laws; relating them to metric stability requires those laws separately.
 - `StateSpace.lean`: channelwise/state-space recurrence structures used by state-space and
   sequence-model specifications.
 

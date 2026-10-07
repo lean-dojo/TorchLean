@@ -44,6 +44,22 @@ namespace Tape
   if !decide (∀ i : Fin d, stride.getScalar i ≠ 0) then
     throw s!"autograd: cuda: {opName}: stride must be > 0"
 
+/-- Convert spatial metadata to the native ABI, checking axis sizes before element counts. -/
+@[inline] def Internal.spatialMetadata {d : Nat} (opName : String)
+    (inSpatial kernel stride padding : TorchLean.Tensor Nat [d]) :
+    Result (Array Nat × Array Nat × Array Nat × Array Nat) := do
+  let inputDims := Array.ofFn (fun i : Fin d => inSpatial.getScalar i)
+  let kernelDims := Array.ofFn (fun i : Fin d => kernel.getScalar i)
+  let strides := Array.ofFn (fun i : Fin d => stride.getScalar i)
+  let pads := Array.ofFn (fun i : Fin d => padding.getScalar i)
+  validateU32Dimensions opName inputDims
+  validateU32Dimensions opName kernelDims
+  validateU32Dimensions opName strides
+  validateU32Dimensions opName pads
+  let _ ← AnyBuffer.numelU32 (Shape.ofList (inSpatial.to (List Nat)))
+  let _ ← AnyBuffer.numelU32 (Shape.ofList (kernel.to (List Nat)))
+  pure (inputDims, kernelDims, strides, pads)
+
 /-- One-, two-, or three-dimensional convolution through LibTorch. -/
 @[inline] def conv
   {d inC outC : Nat}
@@ -55,16 +71,8 @@ namespace Tape
 
   let inC32 ← AnyBuffer.natToU32Checked inC
   let outC32 ← AnyBuffer.natToU32Checked outC
-  let inSpatialArr : Array Nat := Array.ofFn (fun i : Fin d => inSpatial.getScalar i)
-  let kernelSpatialArr : Array Nat := Array.ofFn (fun i : Fin d => kernel.getScalar i)
-  let strideArr : Array Nat := Array.ofFn (fun i : Fin d => stride.getScalar i)
-  let paddingArr : Array Nat := Array.ofFn (fun i : Fin d => padding.getScalar i)
-  validateU32Dimensions "conv" inSpatialArr
-  validateU32Dimensions "conv" kernelSpatialArr
-  validateU32Dimensions "conv" strideArr
-  validateU32Dimensions "conv" paddingArr
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (inSpatial.to (List Nat)))
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (kernel.to (List Nat)))
+  let (inSpatialArr, kernelSpatialArr, strideArr, paddingArr) ←
+    Internal.spatialMetadata "conv" inSpatial kernel stride padding
 
   let kernelShape : Shape :=
     Shape.ofList (outC :: inC :: kernel.to (List Nat))
@@ -118,16 +126,8 @@ namespace Tape
 
   let inC32 ← AnyBuffer.natToU32Checked inC
   let outC32 ← AnyBuffer.natToU32Checked outC
-  let inSpatialArr : Array Nat := Array.ofFn (fun i : Fin d => inSpatial.getScalar i)
-  let kernelSpatialArr : Array Nat := Array.ofFn (fun i : Fin d => kernel.getScalar i)
-  let strideArr : Array Nat := Array.ofFn (fun i : Fin d => stride.getScalar i)
-  let paddingArr : Array Nat := Array.ofFn (fun i : Fin d => padding.getScalar i)
-  validateU32Dimensions "conv_transpose" inSpatialArr
-  validateU32Dimensions "conv_transpose" kernelSpatialArr
-  validateU32Dimensions "conv_transpose" strideArr
-  validateU32Dimensions "conv_transpose" paddingArr
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (inSpatial.to (List Nat)))
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (kernel.to (List Nat)))
+  let (inSpatialArr, kernelSpatialArr, strideArr, paddingArr) ←
+    Internal.spatialMetadata "conv_transpose" inSpatial kernel stride padding
 
   -- NOTE: for transposed conv, kernel layout is `(inC, outC, kernelSpatial...)`.
   let kernelShape : Shape :=
@@ -178,16 +178,8 @@ namespace Tape
   Internal.validateSpatialGeometry "max_pool" kernel stride
 
   let inC32 ← AnyBuffer.natToU32Checked C
-  let inSpatialArr : Array Nat := Array.ofFn (fun i : Fin d => inSpatial.getScalar i)
-  let kernelArr : Array Nat := Array.ofFn (fun i : Fin d => kernel.getScalar i)
-  let strideArr : Array Nat := Array.ofFn (fun i : Fin d => stride.getScalar i)
-  let paddingArr : Array Nat := Array.ofFn (fun i : Fin d => padding.getScalar i)
-  validateU32Dimensions "max_pool" inSpatialArr
-  validateU32Dimensions "max_pool" kernelArr
-  validateU32Dimensions "max_pool" strideArr
-  validateU32Dimensions "max_pool" paddingArr
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (inSpatial.to (List Nat)))
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (kernel.to (List Nat)))
+  let (inSpatialArr, kernelArr, strideArr, paddingArr) ←
+    Internal.spatialMetadata "max_pool" inSpatial kernel stride padding
 
   let inputShape : Shape :=
     Shape.ofList (C :: inSpatial.to (List Nat))
@@ -231,16 +223,8 @@ to zero or overflow a finite one to infinity.
   Internal.validateSpatialGeometry "smooth_max_pool" kernel stride
 
   let inC32 ← AnyBuffer.natToU32Checked C
-  let inSpatialArr : Array Nat := Array.ofFn (fun i : Fin d => inSpatial.getScalar i)
-  let kernelArr : Array Nat := Array.ofFn (fun i : Fin d => kernel.getScalar i)
-  let strideArr : Array Nat := Array.ofFn (fun i : Fin d => stride.getScalar i)
-  let paddingArr : Array Nat := Array.ofFn (fun i : Fin d => padding.getScalar i)
-  validateU32Dimensions "smooth_max_pool" inSpatialArr
-  validateU32Dimensions "smooth_max_pool" kernelArr
-  validateU32Dimensions "smooth_max_pool" strideArr
-  validateU32Dimensions "smooth_max_pool" paddingArr
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (inSpatial.to (List Nat)))
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (kernel.to (List Nat)))
+  let (inSpatialArr, kernelArr, strideArr, paddingArr) ←
+    Internal.spatialMetadata "smooth_max_pool" inSpatial kernel stride padding
 
   let inputShape : Shape :=
     Shape.ofList (C :: inSpatial.to (List Nat))
@@ -279,16 +263,8 @@ to zero or overflow a finite one to infinity.
   Internal.validateSpatialGeometry "avg_pool" kernel stride
 
   let inC32 ← AnyBuffer.natToU32Checked C
-  let inSpatialArr : Array Nat := Array.ofFn (fun i : Fin d => inSpatial.getScalar i)
-  let kernelArr : Array Nat := Array.ofFn (fun i : Fin d => kernel.getScalar i)
-  let strideArr : Array Nat := Array.ofFn (fun i : Fin d => stride.getScalar i)
-  let paddingArr : Array Nat := Array.ofFn (fun i : Fin d => padding.getScalar i)
-  validateU32Dimensions "avg_pool" inSpatialArr
-  validateU32Dimensions "avg_pool" kernelArr
-  validateU32Dimensions "avg_pool" strideArr
-  validateU32Dimensions "avg_pool" paddingArr
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (inSpatial.to (List Nat)))
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (kernel.to (List Nat)))
+  let (inSpatialArr, kernelArr, strideArr, paddingArr) ←
+    Internal.spatialMetadata "avg_pool" inSpatial kernel stride padding
 
   let inputShape : Shape :=
     Shape.ofList (C :: inSpatial.to (List Nat))

@@ -47,9 +47,3 @@ those endpoints from a rounded center and radius. Failed interval checks subdivi
 pass, the configured depth or width limit is reached, or no representable interior split remains.
 The final diagnostic names that stopping condition. Initial-time failures are point checks, so
 subdividing later time intervals cannot repair them.
-
-Recheck the curated passing fixture with:
-
-```bash
-scripts/lake.sh exe verify -- ode --cert=NN/Examples/Verification/ODE/sample_ode_cert.json
-```

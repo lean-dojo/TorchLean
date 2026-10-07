@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Tensor.Pack
+public import NN.Spec.Core.TensorOps
 public import NN.Core.Numeric.Angle
 
 /-!
@@ -285,44 +285,21 @@ def ofPrimal {α : Type} [TorchLean.Storage α]
     ∀ {s : Shape}, Tensor α s → Tensor (Dual α) s :=
   fun {_s} t => TorchLean.Tensor.map (fun a => Dual.ofPrimal a) t
 
-/-- Lift a tensor pack to dual numbers with zero tangents. -/
-def ofPrimalPack {α : Type} [TorchLean.Storage α]
-    [TorchLean.Storage (Dual α)] [Zero α] :
-    {ss : List Shape} → TorchLean.TensorPack α ss →
-      TorchLean.TensorPack (Dual α) ss :=
-  TorchLean.TensorPack.map ofPrimal
-
 /--
 Combine a primal tensor and a tangent tensor into a dual tensor.
 
 This is the tensor-level analogue of `Dual.mk`.
 -/
 def withTangents {α : Type} [TorchLean.Storage α]
-    [TorchLean.Storage (Dual α)] [Context α]
+    [TorchLean.Storage (Dual α)]
     {s : Shape} (primal tangent : Tensor α s) : Tensor (Dual α) s :=
   TorchLean.Tensor.map2Spec Dual.mk primal tangent
-
-/-- Apply `withTangents` pointwise to a tensor pack. -/
-def withTangentsPack {α : Type} [TorchLean.Storage α]
-    [TorchLean.Storage (Dual α)] [Context α] :
-    {ss : List Shape} →
-      TorchLean.TensorPack α ss →
-      TorchLean.TensorPack α ss →
-      TorchLean.TensorPack (Dual α) ss :=
-  TorchLean.TensorPack.zipWith withTangents
 
 /-- Project the tangent part of a dual tensor. -/
 def tangent {α : Type} [TorchLean.Storage α]
     [TorchLean.Storage (Dual α)] {s : Shape}
     (tensor : Tensor (Dual α) s) : Tensor α s :=
   TorchLean.Tensor.map Dual.tangent tensor
-
-/-- Extract every tangent in a tensor pack. -/
-def tangentPack {α : Type} [TorchLean.Storage α]
-    [TorchLean.Storage (Dual α)] :
-    {ss : List Shape} → TorchLean.TensorPack (Dual α) ss →
-      TorchLean.TensorPack α ss :=
-  TorchLean.TensorPack.map tangent
 
 end DualTensor
 

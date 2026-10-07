@@ -55,9 +55,6 @@ namespace NN.Examples.DeepDives.GraphSpec.Tutorial
 open TorchLean
 open TorchLean.Tensor
 
-/-- Command name used in diagnostics and by the top-level example runner. -/
-def exeName : String := "graphspec"
-
 /-- Command-line help for the GraphSpec tutorial. -/
 def usage : String :=
   String.intercalate "\n"
@@ -92,7 +89,7 @@ def mlp :
 A small CNN graph, included here so the tutorial is visibly not “just MLP”.
 
 This is still a sequential graph: convolution, ReLU, pooling, convolution, ReLU, pooling, flatten,
-linear head. The ugly-looking type is the point: the parameter shapes and intermediate spatial
+linear head. The type records the parameter shapes and intermediate spatial
 arithmetic are checked before the model can be used.
 -/
 def cnn :=
@@ -107,7 +104,7 @@ def cnn :=
     NN.GraphSpec.Chain.maxPool 3 [2, 2] [2, 2] [0, 0] [4, 4]
       (hKernel := by intro i; fin_cases i <;> decide)
       (hStride := by intro i; fin_cases i <;> decide)
-  NN.GraphSpec.Models.cnn features 4
+  NN.GraphSpec.Models.classifier features 4
 
 /--
 The minimal DAG-native skip-connection example:
@@ -122,31 +119,20 @@ sharing in a special layer. That is the pedagogical reason `GraphSpec.DAG` exist
 def residual :=
   NN.GraphSpec.Models.residualLinear (d := 4)
 
-/-- Print the architecture ladder this tutorial is checking. -/
-def printCatalog : IO Unit := do
-  IO.println "GraphSpec architecture ladder:"
-  IO.println "  1. MLP: sequential layer stack; lowers to nn.Sequential and trains below."
-  IO.println "  2. CNN: sequential vision graph with checked conv/pool shape arithmetic."
-  IO.println "  3. residualLinear: minimal DAG-native skip connection."
-  IO.println ""
-
 /-- Tiny one-sample dataset for the lowered GraphSpec MLP training path. -/
 def dataset : Trainer.Dataset [2] [1] :=
-  let input : Tensor Float [2] := [0.5, 0.8]
-  let target : Tensor Float [1] := [1.0]
-  let inputs : Tensor Float [1, 2] :=
-    Tensor.stack 0 (count := 1) fun _ => input
-  let targets : Tensor Float [1, 1] :=
-    Tensor.stack 0 (count := 1) fun _ => target
+  let inputs : Tensor Float [1, 2] := [[0.5, 0.8]]
+  let targets : Tensor Float [1, 1] := [[1.0]]
   Data.fromTensors inputs targets
 
 /-- Run the compact MLP lowering/training path. -/
-def runMlpTrainingPath (args : List String) : IO Unit := do
+def run (args : List String) : IO Unit := do
   -- Lower the same architecture term shown above; its parameter ABI stays visible in `mlp`.
+  -- A sequential model lives in Type 1, so inspect it before entering IO.
   match NN.GraphSpec.ToSequential.toSeq (σ := [2]) (τ := [1]) mlp with
   | .error message => CLI.orThrow "GraphSpec.ToSequential.toSeq failed" (.error message)
   | .ok network =>
-    let runConfig ← TorchLean.CLI.Trainer.parseCommandLine exeName
+    let runConfig ← TorchLean.CLI.Trainer.parseCommandLine "graphspec"
       (CLI.dropDashDash args)
       { optimizer := optim.sgd { learningRate := 0.1 } }
     let trainer :=
@@ -166,7 +152,11 @@ def main (args : List String) : IO Unit := do
     IO.println usage
     return
   IO.println "== GraphSpec tutorial =="
-  printCatalog
-  runMlpTrainingPath args
+  IO.println "GraphSpec architecture ladder:"
+  IO.println "  1. MLP: sequential layer stack; lowers to nn.Sequential and trains below."
+  IO.println "  2. CNN: sequential vision graph with checked conv/pool shape arithmetic."
+  IO.println "  3. residualLinear: minimal DAG-native skip connection."
+  IO.println ""
+  run args
 
 end NN.Examples.DeepDives.GraphSpec.Tutorial

@@ -109,10 +109,6 @@ answers whether one position belongs to a mask. A producer theorem relating that
 array membership, together with a no-duplicates property when needed, would answer the stronger
 selection question. The loss interface itself deliberately accepts any in-range array.
 
-The container is `Array`, not `List`. The producer is executable code that filters
-`Array.finRange`, and using the producer's own type means no conversion lemma has to sit between
-the runtime index buffer and the theorems about it.
-
 The result is a sum, so concatenating arrays adds their losses. With per-patch losses `1, 2, 3, 4`
 the sum over `#[0]` is `1`, the sum over
 `#[2]` is `3`, and the sum over the concatenation is `4`. The corresponding means are `1`, `3`, and
@@ -506,13 +502,8 @@ Now try the same proof with `targetsC`. The `rcases` branch for index `2` leaves
 computed losses differ. Extensionality requires equality on the selected targets, regardless of
 how small a change is.
 
-The proof follows the theorem's quantifier over membership. `intro i hi` introduces an arbitrary
-selected position and evidence that it occurs in the array. Simplifying `maskedIdxs` reduces
-that evidence to two alternatives; each branch then substitutes its concrete index. The change
-at position `1` is never examined because neither alternative reaches it. The experiment with
-`targetsC` also shows why “small target change” is a different theorem: extensionality requires
-exact equality, while a perturbation bound would need a quantitative continuity assumption on
-`repLoss` and would conclude an inequality rather than equal objectives.
+Bounding a small target change would require a quantitative continuity assumption on `repLoss`,
+not the exact equality used by extensionality.
 
 This is target-value extensionality, not a stop-gradient theorem. With context, predictor, indices,
 and loss fixed, changing only unselected target values leaves the objective unchanged.
@@ -725,14 +716,6 @@ example (rep : Fin 1 → EuclideanRep 3) :
   rfl
 ```
 
-The witness in `CollapsedRep rep` is one vector shared by all view indices. In the one-view
-proof, `rep 0` supplies that witness, and `fin_cases` checks the only possible index. This is
-why positive embedding dimension does not ensure a noncollapsed configuration exists: there
-must also be enough views to differ. For several views, proving that a guard rules out collapse
-would require exhibiting a lower objective value or comparing minimizers under further
-conditions. The positive-loss theorem is a useful ingredient in that comparison because it
-computes the cost of collapse explicitly.
-
 With several views, alignment costs can also compete with the spread reward.
 
 # Pairwise Spread And Variance
@@ -792,8 +775,12 @@ std_x = torch.sqrt(x.var(dim=0) + 0.0001)
 std_loss = torch.mean(F.relu(1 - std_x))
 ```
 
-The positive `1e-4` shifts the square-root input away from zero, making that derivative finite.
-It also changes the objective and must appear in a theorem about that formula. Note also that
+For a finite nonnegative variance, the positive `1e-4` shifts the square-root input away from zero,
+making its derivative finite. It cannot repair a NaN variance: the displayed `x.var(dim=0)` uses
+[PyTorch's default correction of
+one](https://docs.pytorch.org/docs/stable/generated/torch.var.html),
+so a single-view batch still produces NaN before the offset is added. The variance convention and
+admissible batch sizes must be part of a theorem about this formula. Note also that
 `F.relu(1 - s)` is literally $`\max(0,\gamma-s)` with $`\gamma=1`, so the hinge shape does carry
 over exactly; it is the argument of the hinge that differs.
 
@@ -1156,11 +1143,6 @@ It does not establish:
 - a correspondence between the coordinate-spread floor and VICReg's standard-deviation floor;
 - exclusion of collapsed minimizers, or quality and downstream usefulness of representations;
 - floating-point agreement for the runtime objective.
-
-The tensor bridge reuses `Array (Fin n)` for indices and instantiates the existing MAE contract
-with tensor lookups. Its proof applies `mae_is_predictive_view_objective` to those arguments.
-That explains both the short proof and its scope: the equality concerns the assembled objective,
-while mask generation, model evaluation, and gradient behavior need their own specifications.
 
 The objective shapes are motivated by MAE {Informal.citep mae2022}[], I-JEPA
 {Informal.citep ijepa2023}[], VICReg {Informal.citep vicreg2022}[], and Barlow Twins

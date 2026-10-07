@@ -85,9 +85,10 @@ also imports `NN.Core.Numeric` for native scalar instances, including direct bin
 
 ## Proofs retained at the TorchLean boundary
 
-`IEEEExec/Bridge/Finite.lean` transfers FloatLib's arithmetic refinement to configured binary32.
-Its add and multiply theorems have the original result-finiteness premise and conclude that the
-encoded real value equals one `Model.roundAt FloatFormat.binary32` of the exact operation. Subnormal cases do not acquire
+`IEEEExec/Bridge/Finite.lean` transfers FloatLib's arithmetic refinement to configured IEEE
+formats and provides binary32 specializations. For IEEE formats, its add and multiply theorems
+require a finite result and identify its real value with one rounding of the exact operation.
+The binary32 versions use `Model.roundAt FloatFormat.binary32`. Subnormal cases do not acquire
 a global relative-error assumption.
 
 Native proofs import FloatLib's native bridge directly. The CUDA contract reads native bits through

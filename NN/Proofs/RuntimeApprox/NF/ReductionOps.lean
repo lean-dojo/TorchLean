@@ -23,8 +23,9 @@ axis), analogous to `torch.sum` and `torch.mean`.
 https://pytorch.org/docs/stable/generated/torch.sum.html
 https://pytorch.org/docs/stable/generated/torch.mean.html
 
-Current scope: row and column reductions on matrices. Broader-rank reductions can reuse the same
-argument after moving the selected axis into a matrix view.
+Current scope: row and column reductions on matrices, with sequential addition along the
+selected axis. Extending this proof through a matrix view requires a bridge preserving the
+element order and rounding schedule, not only the exact real sum.
 
 ## Mean bound
 The row mean divides the rounded row sum by the rounded row length `n`. Its budget `meanRowBound`
@@ -32,7 +33,8 @@ is derived from the conditioned division bound `divPosErrorBound`: the exact den
 the denominator rounding error is `natCastError n = |n̂ - n|`, and the certificate `natCastError n
 < n` keeps the rounded denominator positive. When `n` is exactly representable the budget is
 `ulp(Σ̂ / n) / 2 + sumBound eps row / n` (`mean_row_bound_of_exact`); if the certificate fails
-the budget falls back to an always valid triangle-inequality bound.
+the budget falls back to an always valid triangle-inequality bound. The rounded-real division
+is total even when the rounded length is zero; this is not native NaN or infinity behavior.
 -/
 
 @[expose] public section
@@ -111,17 +113,13 @@ private theorem pos_of_row_axis {m n : Nat}
   cases hRed with
   | succ inner => cases inner; exact Nat.succ_pos _
 
-/-- Row-wise budget vector for an `m × n` runtime matrix: entry `i` is the accumulated rounding
-budget of runtime row `i`, so a row of large magnitudes is allowed a larger error than a row of
-small ones. This is the sum-side counterpart of `meanRowBoundVec` below, and naming it keeps the
-theorem statement readable instead of inlining the whole vector into the tolerance slot. -/
+/-- Per-row sequential summation budgets for an `m × n` NF matrix. -/
 def sumRowBoundVec {m n : Nat} (eps : ℝ) (xR : Tensor R [m, n]) : SpecTensor [m] :=
   Tensor.dim fun i =>
     Tensor.scalar (sumBound (β := β) (fexp := fexp) (rnd := rnd) (s := [n]) eps (xR.unstack i))
 
 /-- Row-wise `reduceSum` along axis `1` approximates the exact row sums within
-`linfNorm (sumRowBoundVec eps xR)`. The reduction's own nonempty-axis evidence is the hypothesis, so
-the statement asks for exactly what `reduceSum` needs and nothing more. -/
+`linfNorm (sumRowBoundVec eps xR)`. -/
 theorem approxTensor_reduce_sum_rows
     {m n : Nat}
     {xS : SpecTensor [m, n]}
@@ -277,8 +275,8 @@ theorem mean_row_bound_of_exact {n : Nat} (hn : 0 < n) (eps : ℝ) (rowR : Tenso
   ring
 
 omit [ValidRndToNearest rnd] in
-/-- Regression: under the half-margin certificate `natCastError n ≤ n / 2`, the mean budget is
-linear in the row-sum budget, the row-length rounding error, and one output rounding. The
+/-- Under the half-margin certificate `natCastError n ≤ n / 2`, the mean budget is controlled by
+the row-sum budget, the row-length rounding error, their product, and one output rounding. The
 hypothesis `hsum` records that the row-sum budget is nonnegative, which holds for every budget
 produced by `approxTensor_sum_spec`. -/
 theorem mean_row_bound_le_of_natCastError_le_half {n : Nat} (hn : 0 < n) (eps : ℝ)

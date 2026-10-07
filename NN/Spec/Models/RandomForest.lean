@@ -7,109 +7,26 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Models.GradientBoostedTrees
-public import NN.Spec.Module.DecisionTree
 import NN.Spec.Core.Random
 
 /-!
 # Random Forest
 
 Forests aggregate tree predictions by majority vote for classification or by an arithmetic mean
-for regression. `Forest` stores symbolic decision trees; `Numeric` fits typed CART trees to tensors.
+for regression. `Numeric` fits typed CART trees to tensors.
 
 Numeric training draws a bootstrap sample of rows for each tree, with replacement. An explicit seed
 makes those draws reproducible. A separate stream selects candidate features without replacement at
 each split when `maxFeatures` is smaller than the input width. The default considers every feature.
 
-These are standalone reference models with targeted executable tests. No API builder or
-model-correctness theorem is provided here.
+These are standalone reference models. No API builder or model-correctness theorem is provided
+here.
 -/
 
 public section
 
 
 namespace RandomForest
-open DecisionTree
-
-/--
-A forest is just an array of trees. The count is a runtime value, not a type index, because nothing
-in the aggregation depends on how many trees there are.
-
-The container leaves training and label semantics to its caller. Numeric training below has a
-separate typed representation whose feature count and depth are recorded in each tree's type.
--/
-structure Forest (α : Type) where
-  /-- The trees, in the order they were grown. -/
-  trees : Array (DecisionTree α)
-
-/--
-Predict by evaluating every tree and folding the results with a caller-supplied aggregation.
-
-The aggregation is a parameter rather than a field of `Forest` because the same grown forest answers
-a classification question with `majorityVote` and a regression question with `average`, and a spec
-should not force a choice the caller has not made yet.
--/
-def predict {α : Type} (forest : Forest α) (decisionFn : String → Bool)
-    (aggregateFn : Array α → α) : α :=
-  aggregateFn (forest.trees.map fun tree => tree.evaluate decisionFn)
-
-/--
-Majority vote: the most frequent prediction, or `none` for an empty forest.
-
-Ties go to the smallest label under `Ord`. This symbolic helper uses label order; the numeric
-classification forest below instead keeps the first tied label in tree order.
--/
-def majorityVote {α : Type} [Ord α] (predictions : Array α) : Option α :=
-  if predictions.isEmpty then
-    none
-  else
-    -- Count frequencies using an ordered map so results are deterministic.
-    let grouped := predictions.foldl
-      (fun acc pred =>
-        acc.insert pred (acc.getD pred 0 + 1))
-      (Std.TreeMap.empty : Std.TreeMap α Nat compare)
-
-    -- Pick the element with highest frequency.
-    grouped.foldl
-      (fun best label count =>
-        match best with
-        | none => some (label, count)
-        | some (_, bestCount) => if count > bestCount then some (label, count) else best)
-      none
-      |>.map (·.1)
-
-/--
-Arithmetic mean of the predictions, and `0` for an empty forest.
-
-The empty-array result matches the convention used by `Numeric.RegressionForestSpec.forward`.
--/
-def average {α : Type} [Zero α] [Add α] [Div α] [NatCast α] (predictions : Array α) : α :=
-  if predictions.isEmpty then
-    0
-  else
-    predictions.foldl (fun sum pred => sum + pred) 0 / (predictions.size : α)
-
-/-!
-## Numeric random forest (spec baseline)
-
-The `Forest` above wraps the symbolic `DecisionTree` from `NN.Spec.Module.DecisionTree`, where
-splits are keyed by `String` feature names and an external `decisionFn : String → Bool` decides the
-branch. That is handy for examples, but it is not something we can “train” without providing
-feature-value semantics.
-
-For a more classical baseline, we also provide a *numeric* random forest built on the
-`Spec.DecisionTreeSpec` representation used by `NN/Spec/Models/GradientBoostedTrees.lean`:
-
-- features are indexed by `Nat`
-- splits compare a feature value to a threshold
-- regression splits minimize the sum of squared errors and classification splits minimize
-  weighted Gini impurity
-- each tree receives `batch` row draws from the original dataset, with replacement
-- `maxFeatures` controls a fresh feature subset at each split; its default is all features
-
-Both samplers use `Spec.Random`'s SplitMix64 generator. Row draws and feature draws have separate
-streams, so changing the feature budget does not change a tree's bootstrap sample.
--/
-
 namespace Numeric
 
 open Spec TorchLean

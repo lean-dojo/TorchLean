@@ -27,9 +27,9 @@ interpretation, and allowed operations are part of the object being specified.
 - `TensorReductionShape.lean` and `TensorReductionShape/`: reductions, reshape/flatten/unflatten,
   concat/slice, broadcasting, and shape-changing helpers.
 - `Sequence.lean`: helpers for common time and sequence-axis patterns.
-- `Tensor/Constructors.lean`: total builders, including coordinate generators, stacking, and
-  rectangular-row validation. `Tensor.full`, `Tensor.zeros`, and `Tensor.ones` are the canonical
-  constant constructors. In-memory list and array conversion lives under `NN.Tensor`.
+- `Tensor/Constructors.lean`: total coordinate generators and constant constructors.
+  `Tensor.full`, `Tensor.zeros`, and `Tensor.ones` are the canonical constant constructors.
+  In-memory list and array conversion lives under `NN.Tensor`; external loaders validate file shapes.
 - `Complex.lean`: small complex-number support used by FFT/FNO-style specifications.
 - `Random.lean`: the deterministic `Spec.Random` helpers (`splitmix64`, `keyOf`, `nextSeed`,
   `sampleNat`, uniform sampling, dropout keep bits) shared by the spec layer and the runtime.

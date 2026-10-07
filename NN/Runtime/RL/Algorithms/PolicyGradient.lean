@@ -51,30 +51,32 @@ open TorchLean TorchLean.Tensor
 variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Softmax policy induced by a vector of logits. -/
-def actionPolicy {nActions : Nat} (logits : Tensor α [nActions]) :
+def probabilities {nActions : Nat} (logits : Tensor α [nActions]) :
     Tensor α [nActions] :=
   Activation.softmaxVecSpec (α := α) (n := nActions) logits
 
-/-- Probability of a selected action under a categorical policy. -/
-def actionProbability {nActions : Nat} (logits : Tensor α [nActions])
+/-- Guarded selected softmax probability `min (1 - epsilon) (max epsilon p)`.
+
+`epsilon` is used as supplied; the guard bounds are not validated. -/
+def probability {nActions : Nat} (logits : Tensor α [nActions])
     (action : Fin nActions) (epsilon : α := Context.defaultEpsilon) : α :=
-  let probs := actionPolicy (α := α) logits
+  let probs := probabilities (α := α) logits
   let p := Tensor.getScalar probs action
   Min.min ((1 : α) - epsilon) (Max.max epsilon p)
 
-/-- Log-probability of a selected action. -/
-def actionLogProbability {nActions : Nat} (logits : Tensor α [nActions])
+/-- Logarithm of the guarded selected probability from `probability`. -/
+def logProbability {nActions : Nat} (logits : Tensor α [nActions])
     (action : Fin nActions) (epsilon : α := Context.defaultEpsilon) : α :=
-  MathFunctions.log (actionProbability (α := α) logits action epsilon)
+  MathFunctions.log (probability (α := α) logits action epsilon)
 
 /-- Unclamped log-probability `log_softmax(logits)[action]`.
 
-`Autograd.actionLogProbOneHot` additionally clamps log-probabilities to `[-10^30, 10^30]`
+`Autograd.logProbability` additionally clamps log-probabilities to `[-10^30, 10^30]`
 before one-hot multiplication. This helper agrees with that selected value only when the clamp
 is inactive and the reductions agree. Rollouts used by that objective must apply the same clamp
 to cached old log-probabilities; an unclamped tail value can otherwise produce a nonunit ratio
 even when the policy parameters are unchanged. -/
-def actionLogSoftmax {nActions : Nat} (logits : Tensor α [nActions])
+def logSoftmax {nActions : Nat} (logits : Tensor α [nActions])
     (action : Fin nActions) : α :=
   Tensor.getScalar (Activation.logSoftmaxVecSpec (α := α) (n := nActions) logits) action
 
@@ -83,9 +85,9 @@ def actionLogSoftmax {nActions : Nat} (logits : Tensor α [nActions])
 
 Clamped probabilities are used both as weights and as logarithm inputs, without
 renormalization. For positive `epsilon`, this can differ from the Shannon entropy of `p`. -/
-def entropyBonus {nActions : Nat} (logits : Tensor α [nActions])
+def entropy {nActions : Nat} (logits : Tensor α [nActions])
     (epsilon : α := Context.defaultEpsilon) : α :=
-  let probs := actionPolicy (α := α) logits
+  let probs := probabilities (α := α) logits
   let clamped := clampSpec probs epsilon ((1 : α) - epsilon)
   let entropy := sumSpec (mulSpec clamped (logSpec clamped))
   Neg.neg entropy
@@ -94,7 +96,7 @@ def entropyBonus {nActions : Nat} (logits : Tensor α [nActions])
 `-G_t * log π(a_t | s_t)`. -/
 def reinforceLoss {nActions : Nat} (logits : Tensor α [nActions])
     (action : Fin nActions) (returnOrAdvantage : α) (epsilon : α := Context.defaultEpsilon) : α :=
-  Neg.neg (returnOrAdvantage * actionLogProbability (α := α) logits action epsilon)
+  Neg.neg (returnOrAdvantage * logProbability (α := α) logits action epsilon)
 
 /-- Value-regression loss used by actor-critic and PPO critics. -/
 def criticLoss (valuePrediction valueTarget : α) (valueCoef : α := 1) : α :=
@@ -108,10 +110,10 @@ def actorCriticLoss {nActions : Nat} (logits : Tensor α [nActions])
     (epsilon : α := Context.defaultEpsilon) : α :=
   reinforceLoss (α := α) logits action advantage epsilon
     + criticLoss (α := α) valuePrediction valueTarget valueCoef
-    - entropyCoef * entropyBonus (α := α) logits epsilon
+    - entropyCoef * entropy (α := α) logits epsilon
 
 /-- Importance ratio `π_new(a|s) / π_old(a|s)` computed from log-probabilities. -/
-def importanceRatio (newLogProb oldLogProb : α) : α :=
+def ratio (newLogProb oldLogProb : α) : α :=
   MathFunctions.exp (newLogProb - oldLogProb)
 
 /--
@@ -123,7 +125,7 @@ Normalization keeps the guarded inputs probability distributions. The result agr
 `KL(old || new)` when clamping leaves normalized inputs unchanged, up to floating-point rounding.
 Empty action vectors return zero.
 -/
-def categoricalKL {nActions : Nat}
+def kl {nActions : Nat}
     (oldProbs newProbs : Tensor α [nActions])
     (epsilon : α := Context.defaultEpsilon) : α :=
   match nActions with
@@ -138,25 +140,15 @@ def categoricalKL {nActions : Nat}
 
 /--
 Categorical KL divergence from logits, using the clamped, normalized policies of
-`categoricalKL`.
+`kl`.
 -/
-def categoricalKLFromLogits {nActions : Nat}
+def klFromLogits {nActions : Nat}
     (oldLogits newLogits : Tensor α [nActions])
     (epsilon : α := Context.defaultEpsilon) : α :=
-  categoricalKL (α := α)
-    (oldProbs := actionPolicy (α := α) oldLogits)
-    (newProbs := actionPolicy (α := α) newLogits)
+  kl (α := α)
+    (oldProbs := probabilities (α := α) oldLogits)
+    (newProbs := probabilities (α := α) newLogits)
     (epsilon := epsilon)
-
-/--
-TRPO-style surrogate objective from a precomputed importance ratio:
-`ratio * A`.
-
-TRPO maximizes this surrogate subject to a KL trust-region constraint. We expose the scalar
-surrogate separately from the constraint so callers can choose line search / penalty / diagnostics.
--/
-def trpoSurrogateFromRatio (ratio advantage : α) : α :=
-  ratio * advantage
 
 /--
 KL-penalized policy-gradient loss:
@@ -165,8 +157,8 @@ KL-penalized policy-gradient loss:
 This is not the full constrained TRPO optimizer; it is the differentiable scalar objective commonly
 used as a practical surrogate or diagnostic when implementing trust-region updates.
 -/
-def klPenalizedPolicyLoss (ratio advantage kl penaltyCoef : α) : α :=
-  Neg.neg (trpoSurrogateFromRatio (α := α) ratio advantage) + penaltyCoef * kl
+def klLoss (ratio advantage kl penaltyCoef : α) : α :=
+  Neg.neg (ratio * advantage) + penaltyCoef * kl
 
 /--
 Finite-action SAC actor objective, minimized over actor logits:
@@ -182,7 +174,7 @@ For an actor-only gradient, callers hold `qValues` and `temperature` constant wi
 parameters. If two critics are used, pass their pointwise minimum as `qValues`. This function sums
 over actions for one state without averaging across states.
 -/
-def sacCategoricalActorLoss {nActions : Nat} [NeZero nActions]
+def sacActorLoss {nActions : Nat} [NeZero nActions]
     (logits qValues : Tensor α [nActions]) (temperature : α) : α := by
   cases nActions with
   | zero => exact False.elim (NeZero.ne 0 rfl)
@@ -204,6 +196,8 @@ def sacCategoricalActorLoss {nActions : Nat} [NeZero nActions]
             Tensor.scalar <|
               temperature * entropyTerm - p * Tensor.getScalar qValues action
 
+namespace PPO
+
 /--
 PPO clipped surrogate objective from a precomputed importance ratio:
 
@@ -212,7 +206,7 @@ PPO clipped surrogate objective from a precomputed importance ratio:
 This helper is useful when you already have the ratio (e.g. from cached log-probabilities) and want
 to avoid recomputing it from logits.
 -/
-def ppoClippedObjectiveFromRatio (ratio advantage clipEps : α) : α :=
+def objective (ratio advantage clipEps : α) : α :=
   let clippedRatio := Min.min ((1 : α) + clipEps) (Max.max ((1 : α) - clipEps) ratio)
   let unclipped := ratio * advantage
   let clipped := clippedRatio * advantage
@@ -223,34 +217,39 @@ def ppoClippedObjectiveFromRatio (ratio advantage clipEps : α) : α :=
 This is the objective to maximize:
 `min(r_t A_t, clip(r_t, 1-ε, 1+ε) A_t)`.
 -/
-def ppoClippedObjective {nActions : Nat} (newLogits : Tensor α [nActions])
+def objectiveFromLogits {nActions : Nat} (newLogits : Tensor α [nActions])
     (action : Fin nActions) (oldLogProb advantage clipEps : α)
     (epsilon : α := Context.defaultEpsilon) : α :=
-  let newLogProb := actionLogProbability (α := α) newLogits action epsilon
-  let ratio := importanceRatio (α := α) newLogProb oldLogProb
-  ppoClippedObjectiveFromRatio (α := α) ratio advantage clipEps
+  let newLogProb := logProbability (α := α) newLogits action epsilon
+  let ratio := ratio (α := α) newLogProb oldLogProb
+  objective (α := α) ratio advantage clipEps
 
 /-- PPO loss to minimize:
 `-L_clip + c_v * value_loss - c_e * entropy`. -/
-def ppoLoss {nActions : Nat} (newLogits : Tensor α [nActions])
+def loss {nActions : Nat} (newLogits : Tensor α [nActions])
     (action : Fin nActions) (oldLogProb advantage valuePrediction valueTarget clipEps : α)
     (valueCoef : α := 1) (entropyCoef : α := 0)
     (epsilon : α := Context.defaultEpsilon) : α :=
-  Neg.neg (ppoClippedObjective (α := α) newLogits action oldLogProb advantage clipEps epsilon)
+  Neg.neg (objectiveFromLogits (α := α) newLogits action oldLogProb advantage clipEps epsilon)
     + criticLoss (α := α) valuePrediction valueTarget valueCoef
-    - entropyCoef * entropyBonus (α := α) newLogits epsilon
+    - entropyCoef * entropy (α := α) newLogits epsilon
+
+end PPO
 
 /--
-Sample from a categorical distribution represented as a probability vector.
+Sample a categorical action from probability weights, or from logits (`logits := true`).
 
 `seed` and `counter` form an explicit RNG stream identifier. The function returns the incremented
 counter together with the sampled action index.
 
-Implementation note: this uses the standard cumulative-sum / inverse-CDF sampler.
+Probability weights are used without validation or normalization. The sampler scans their
+cumulative sum in action order and falls back to the final action if no earlier threshold is
+crossed.
 -/
-def sampleCategorical {nActions : Nat} [NeZero nActions]
-    (seed counter : Nat) (probs : Tensor α [nActions]) :
+def sample {nActions : Nat} [NeZero nActions]
+    (seed counter : Nat) (values : Tensor α [nActions]) (logits : Bool := false) :
     Nat × Fin nActions :=
+  let probs := if logits then probabilities (α := α) values else values
   let key := Spec.Random.keyOf seed counter
   let u : α :=
     Tensor.item (Spec.Random.uniform (α := α) key (s := Shape.scalar))
@@ -265,13 +264,6 @@ def sampleCategorical {nActions : Nat} [NeZero nActions]
       if Context.gtBool cum u then
         return (counter + 1, action)
     return (counter + 1, default)
-
-/-- Sample an action from logits by applying softmax then `sampleCategorical`. -/
-def sampleActionFromLogits {nActions : Nat} [NeZero nActions]
-    (seed counter : Nat) (logits : Tensor α [nActions]) :
-    Nat × Fin nActions :=
-  sampleCategorical (α := α) (nActions := nActions) (seed := seed) (counter := counter)
-    (probs := actionPolicy (α := α) logits)
 
 end PolicyGradient
 end RL

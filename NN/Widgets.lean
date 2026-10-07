@@ -27,8 +27,6 @@ public import NN.Widgets.Verification.CROWN
 
 Umbrella import for TorchLean's optional Infoview / widget tooling.
 
-This module imports the widget implementation modules directly.
-
 The import is for editor and inspection workflows:
 
 - ordinary runtime/proof files should import the concrete library modules they need;
@@ -39,5 +37,3 @@ The import is for editor and inspection workflows:
 editor-side assistant. It helps navigate PyTorch-to-TorchLean workflows; checked import still goes
 through the explicit artifact bridges and verifier/proof layers.
 -/
-
-@[expose] public section

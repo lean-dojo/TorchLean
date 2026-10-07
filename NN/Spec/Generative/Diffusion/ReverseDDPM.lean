@@ -124,7 +124,7 @@ Order note:
 -/
 def ddpmSample (sched : VPSchedule α T) (model : EpsModel α s)
     (x_T : Tensor α s) (noise : Fin T → Tensor α s) : Tensor α s :=
-  (List.finRange T).foldr
+  Fin.foldr T
     (fun k x => ddpmStep (α := α) (T := T) (s := s) sched model k x (noise k)) x_T
 
 end Generative.Diffusion

@@ -59,7 +59,6 @@ PyTorch comparison: `torch.nn.functional.linear`.
           contributions := contributions.push
             (wId, Spec.SomeTensor.ofTensor (Spec.linearWeightsDerivSpec (α := α) x dLdy))
         if biasGrad then
-          -- `linearBiasDerivSpec` returns the upstream gradient and ignores its other arguments.
           contributions := contributions.push (bId, Spec.SomeTensor.ofTensor dLdy)
         if inputGrad then
           contributions := contributions.push
@@ -75,29 +74,15 @@ Matrix-rank multiplication with explicit batch-prefix broadcasting.
 shape `batch ++ [m, p]`. The empty-prefix defaults preserve ordinary 2D matrix multiplication.
 PyTorch comparison: `torch.matmul(a, b)` for operands of rank at least two.
 -/
-@[inline] def matmul {α : Type} [TorchLean.Storage α] [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)]
+@[inline] def matmul {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
   {m n p : Nat} (t : Tape α) (aId bId : Nat)
   (batchA : Shape := .scalar) (batchB : Shape := .scalar) (batch : Shape := .scalar)
   [broadcastA : Shape.BroadcastTo batchA batch]
-  [broadcastB : Shape.BroadcastTo batchB batch] : Result (Tape α × Nat) := do
-  let a ← requireValue (α := α) (t := t) (s := batchA.concat [m, n]) aId
-  let b ← requireValue (α := α) (t := t) (s := batchB.concat [n, p]) bId
-  let y := TorchLean.Tensor.matmulSpec broadcastA.proof broadcastB.proof a b
-  let node : Node α :=
-    { name := some "matmul"
-      value := Spec.SomeTensor.ofTensor y
-      requiresGrad :=
-        (t.getNode? aId).any (·.requiresGrad) ||
-        (t.getNode? bId).any (·.requiresGrad)
-      parents := #[aId, bId]
-      backward := fun dLdyAny => do
-        let dLdy ← requireGrad (α := α) (τ := batch.concat [m, p]) dLdyAny
-        let (dA, dB) :=
-          TorchLean.Tensor.matmulBackwardSpec broadcastA.proof broadcastB.proof a b dLdy
-        pure #[(aId, Spec.SomeTensor.ofTensor dA), (bId, Spec.SomeTensor.ofTensor dB)]
-    }
-  pure (t.addNode node)
+  [broadcastB : Shape.BroadcastTo batchB batch] : Result (Tape α × Nat) :=
+  binary (α := α) (t := t) (σ₁ := batchA.concat [m, n]) (σ₂ := batchB.concat [n, p])
+    (τ := batch.concat [m, p]) "matmul" aId bId
+    (forward := TorchLean.Tensor.matmulSpec broadcastA.proof broadcastB.proof)
+    (backward := TorchLean.Tensor.matmulBackwardSpec broadcastA.proof broadcastB.proof)
 
 /--
 Concatenate two tensors along dimension 0.
@@ -105,26 +90,12 @@ Concatenate two tensors along dimension 0.
 PyTorch comparison: `torch.cat([a, b], dim=0)`.
 -/
 @[inline] def concat {α : Type} [TorchLean.Storage α]
-  {n m : Nat} {s : Shape} (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) := do
-  let a ← requireValue (α := α) (t := t) (s := .dim n s) aId
-  let b ← requireValue (α := α) (t := t) (s := .dim m s) bId
-  let y := TorchLean.Tensor.concatAxisSpec .scalar (α := α) (n := n) (m := m) (suffix := s) a b
-  let node : Node α :=
-    { name := some "concat_leading_axis"
-      value := Spec.SomeTensor.ofTensor y
-      requiresGrad :=
-        (t.getNode? aId).any (·.requiresGrad) ||
-        (t.getNode? bId).any (·.requiresGrad)
-      parents := #[aId, bId]
-      backward := fun dLdyAny => do
-        let dLdy ← requireGrad (α := α) (τ := .dim (n + m) s) dLdyAny
-        let dA := Spec.sliceRangeSpec (α := α) (n := n + m) (shape := s) dLdy 0 n
-          (by simp)
-        let dB := Spec.sliceRangeSpec (α := α) (n := n + m) (shape := s) dLdy n m
-          (by simp)
-        pure #[(aId, Spec.SomeTensor.ofTensor dA), (bId, Spec.SomeTensor.ofTensor dB)]
-    }
-  pure (t.addNode node)
+  {n m : Nat} {s : Shape} (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) :=
+  binary (α := α) (t := t) (σ₁ := .dim n s) (σ₂ := .dim m s) (τ := .dim (n + m) s)
+    "concat_leading_axis" aId bId
+    (forward := TorchLean.Tensor.concatAxisSpec .scalar)
+    (backward := fun _a _b dLdy =>
+      (Spec.sliceRangeSpec dLdy 0 n (by simp), Spec.sliceRangeSpec dLdy n m (by simp)))
 
 /--
 Slice along dimension 0: `x[start : start+len]`.

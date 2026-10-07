@@ -72,17 +72,6 @@ def linearWeightsDerivSpec {inDim outDim : Nat}
   outerProductSpec gradOutput input
 
 /--
-Gradient w.r.t. bias: `∂L/∂b = ∂L/∂y`.
-
-Since `y = W x + b`, the Jacobian of `y` w.r.t. `b` is the identity.
--/
-def linearBiasDerivSpec {inDim outDim : Nat}
-  (_dW : Tensor α [outDim, inDim])
-  (gradOutput : Tensor α [outDim])
-  (_input : Tensor α [inDim]) :
-  Tensor α [outDim] := gradOutput
-
-/--
 Gradient w.r.t. input: `∂L/∂x = Wᵀ (∂L/∂y)`.
 
 This is the standard "matmul by the transpose" rule for `y = W x + b`.
@@ -178,9 +167,8 @@ def linearBackwardSpec {inDim outDim : Nat}
   (gradOutput : Tensor α [outDim]) :
   LinearGradients α inDim outDim [inDim] :=
   let d_weights := linearWeightsDerivSpec input gradOutput
-  let d_bias := linearBiasDerivSpec d_weights gradOutput input
   let d_input := linearInputDerivSpec layer.weights gradOutput
-  { weightGradient := d_weights, biasGradient := d_bias, inputGradient := d_input }
+  { weightGradient := d_weights, biasGradient := gradOutput, inputGradient := d_input }
 
 /--
 Backward pass for a linear layer applied at every position of a sequence.

@@ -12,17 +12,10 @@ public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Unary
 /-!
 # FP32 MLP Approximation
 
-This module builds on `NN.Proofs.RuntimeApprox.FP32.Layers` and packages end-to-end error bounds
-for small MLP patterns that show up frequently in examples and verification pipelines.
-
-The theorems here are intentionally architecture-shaped rather than fully generic. They are the
-readable bridge lemmas that downstream verification examples can cite: “this whole FP32 MLP is
-within some explicit real error budget of the corresponding real-spec MLP.”
-
-This module uses `TorchLean.Floats.FP32`, the nearest-even rounded-real model with
-binary32 exponents. Its values are real numbers; bit-level finite binary32 arithmetic
-refinements are in `NN/Floats/IEEEExec/Bridge/Finite.lean`; further arithmetic refinements are in
-`NN/Proofs/RuntimeApprox/IEEE32/Arithmetic.lean`.
+Compose the generic layer and activation bounds for a three-layer tanh MLP and a two-layer
+ReLU MLP. These are rounded-real `TorchLean.Floats.FP32` bounds, not native kernel guarantees;
+the numerical model and separate IEEE refinements are described in
+`NN.Proofs.RuntimeApprox.FP32.Layers`.
 -/
 
 @[expose] public section
@@ -31,7 +24,6 @@ open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
 open Flocq
-
 
 namespace NN.Proofs.RuntimeApprox.FP32
 
@@ -45,19 +37,23 @@ open TorchLean.Floats
 
 noncomputable section
 
-/-- Explicit propagated error budget for `Linear → tanh → Linear → tanh → Linear`. -/
+/-- Error budget for `Linear → tanh → Linear → tanh → Linear`.
+
+Each tanh uses the coarse boundedness estimate `2 + ULP/2`, independent of its input-error
+magnitude. Thus the first two layers' error magnitudes do not affect the final budget; they are
+not propagated through a Lipschitz estimate. -/
 def tanhMlp3ErrorBudget {d0 d1 d2 d3 : Nat}
     (e0W e0b e1W e1b e2W e2b ex : ℝ)
     (L0R : LinearSpec R d0 d1) (L1R : LinearSpec R d1 d2)
     (L2R : LinearSpec R d2 d3) (xR : Tensor R [d0]) : ℝ :=
   let z0R := Spec.linearSpec (α := R) L0R xR
   let _eZ0 := linearErrorBudget e0W e0b ex L0R xR
-  let a0R := mapSpec Numerics.MathFunctions.tanh z0R
+  let a0R := Tensor.map Numerics.MathFunctions.tanh z0R
   let eA0 := linfNorm (Proofs.RuntimeApprox.NFBackend.tanhBoundTensor
     (β := β) (fexp := fexp) (rnd := rnd) (s := Shape.dim d1 .scalar) z0R)
   let z1R := Spec.linearSpec (α := R) L1R a0R
   let _eZ1 := linearErrorBudget e1W e1b eA0 L1R a0R
-  let a1R := mapSpec Numerics.MathFunctions.tanh z1R
+  let a1R := Tensor.map Numerics.MathFunctions.tanh z1R
   let eA1 := linfNorm (Proofs.RuntimeApprox.NFBackend.tanhBoundTensor
     (β := β) (fexp := fexp) (rnd := rnd) (s := Shape.dim d2 .scalar) z1R)
   linearErrorBudget e2W e2b eA1 L2R a1R
@@ -67,9 +63,9 @@ Compositional FP32 approximation theorem for a 3-layer tanh MLP:
 
 `Linear → tanh → Linear → tanh → Linear`.
 
-Each parameter/input hypothesis is an `approxTensor` statement comparing the real-spec tensor with
-the FP32 runtime tensor. The conclusion exposes the composed `tanhMlp3ErrorBudget`, built from the
-NF backend's matrix-vector, activation, and addition bounds.
+The parameter/input hypotheses compare real-spec tensors with rounded-real tensors. The
+conclusion uses `tanhMlp3ErrorBudget`, including its coarse tanh estimates rather than tight
+propagation of the earlier layers' errors.
 -/
 theorem approxTensor_tanhMlp3 {d0 d1 d2 d3 : Nat}
     {L0S : LinearSpec ℝ d0 d1} {L1S : LinearSpec ℝ d1 d2} {L2S : LinearSpec ℝ d2 d3}
@@ -85,14 +81,14 @@ theorem approxTensor_tanhMlp3 {d0 d1 d2 d3 : Nat}
     (hx : approxTensor (α := R) (toSpec := toSpec) xS xR ex) :
     approxTensor (α := R) (toSpec := toSpec)
       (let z0 := Spec.linearSpec (α := ℝ) L0S xS
-       let a0 := mapSpec Numerics.MathFunctions.tanh z0
+       let a0 := Tensor.map Numerics.MathFunctions.tanh z0
        let z1 := Spec.linearSpec (α := ℝ) L1S a0
-       let a1 := mapSpec Numerics.MathFunctions.tanh z1
+       let a1 := Tensor.map Numerics.MathFunctions.tanh z1
        Spec.linearSpec (α := ℝ) L2S a1)
       (let z0 := Spec.linearSpec (α := R) L0R xR
-       let a0 := mapSpec Numerics.MathFunctions.tanh z0
+       let a0 := Tensor.map Numerics.MathFunctions.tanh z0
        let z1 := Spec.linearSpec (α := R) L1R a0
-       let a1 := mapSpec Numerics.MathFunctions.tanh z1
+       let a1 := Tensor.map Numerics.MathFunctions.tanh z1
        Spec.linearSpec (α := R) L2R a1)
       (tanhMlp3ErrorBudget e0W e0b e1W e1b e2W e2b ex L0R L1R L2R xR) := by
   -- First linear layer: propagate input/weight/bias error to the first pre-activation.
@@ -116,58 +112,58 @@ theorem approxTensor_tanhMlp3 {d0 d1 d2 d3 : Nat}
       (Spec.linearSpec (α := R) L0R xR))
   have hA0' :
       approxTensor (α := R) (toSpec := toSpec)
-        (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))
-        (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))
+        (Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))
+        (Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))
         eA0 := by
     simpa [toSpec, NFBackend.toSpec, eA0] using hA0
 
   -- Second linear layer: use the tanh activation bound as this layer's input bound.
   let eZ1 := linearErrorBudget e1W e1b eA0 L1R
-    (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))
+    (Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))
   have hZ1 :
       approxTensor (α := R) (toSpec := toSpec)
         (Spec.linearSpec (α := ℝ) L1S
-          (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS)))
+          (Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS)))
         (Spec.linearSpec (α := R) L1R
-          (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))) eZ1 := by
+          (Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))) eZ1 := by
     simpa [eZ1] using approxTensor_linear
       (WS := L1S) (WR := L1R)
-      (xS := mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))
-      (xR := mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))
+      (xS := Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))
+      (xR := Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))
       (epsW := e1W) (epsb := e1b) (epsx := eA0) h1W h1b hA0'
   have hA1 :=
     Proofs.RuntimeApprox.NFBackend.approxTensor_tanh_spec
       (β := β) (fexp := fexp) (rnd := rnd) (s := Shape.dim d2 .scalar)
       (xS := Spec.linearSpec (α := ℝ) L1S
-        (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS)))
+        (Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS)))
       (xR := Spec.linearSpec (α := R) L1R
-        (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR)))
+        (Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR)))
       (eps := eZ1) hZ1
   let eA1 : ℝ :=
     linfNorm (Proofs.RuntimeApprox.NFBackend.tanhBoundTensor
       (β := β) (fexp := fexp) (rnd := rnd) (s := Shape.dim d2 .scalar)
       (Spec.linearSpec (α := R) L1R
-        (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))))
+        (Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))))
   have hA1' :
       approxTensor (α := R) (toSpec := toSpec)
-        (mapSpec Numerics.MathFunctions.tanh
+        (Tensor.map Numerics.MathFunctions.tanh
           (Spec.linearSpec (α := ℝ) L1S
-            (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))))
-        (mapSpec Numerics.MathFunctions.tanh
+            (Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))))
+        (Tensor.map Numerics.MathFunctions.tanh
           (Spec.linearSpec (α := R) L1R
-            (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))))
+            (Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))))
         eA1 := by
     simpa [toSpec, NFBackend.toSpec, eA1] using hA1
 
   -- Final linear layer: produces the network-level output approximation.
   have hOut := approxTensor_linear
       (WS := L2S) (WR := L2R)
-      (xS := mapSpec Numerics.MathFunctions.tanh
+      (xS := Tensor.map Numerics.MathFunctions.tanh
         (Spec.linearSpec (α := ℝ) L1S
-          (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))))
-      (xR := mapSpec Numerics.MathFunctions.tanh
+          (Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := ℝ) L0S xS))))
+      (xR := Tensor.map Numerics.MathFunctions.tanh
         (Spec.linearSpec (α := R) L1R
-          (mapSpec Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))))
+          (Tensor.map Numerics.MathFunctions.tanh (Spec.linearSpec (α := R) L0R xR))))
       (epsW := e2W) (epsb := e2b) (epsx := eA1) h2W h2b hA1'
 
   simpa [tanhMlp3ErrorBudget, eA0, eA1] using hOut
@@ -189,7 +185,7 @@ def reluTwoLayerMlpErrorBudget {d0 d1 d2 : Nat}
     (xR : Tensor R [d0]) : ℝ :=
   let z0R := Spec.linearSpec (α := R) L0R xR
   let eZ0 := linearErrorBudget e0W e0b ex L0R xR
-  let a0R := mapSpec (reluR (β := β) (fexp := fexp) (rnd := rnd)) z0R
+  let a0R := Tensor.map (reluR (β := β) (fexp := fexp) (rnd := rnd)) z0R
   let eA0 := linfNorm (Proofs.RuntimeApprox.NFBackend.reluBoundTensor
     (β := β) (fexp := fexp) (rnd := rnd) (s := Shape.dim d1 .scalar) eZ0 z0R)
   linearErrorBudget e1W e1b eA0 L1R a0R
@@ -214,10 +210,10 @@ theorem approxTensor_reluTwoLayerMlp {d0 d1 d2 : Nat}
     (hx : approxTensor (α := R) (toSpec := toSpec) xS xR ex) :
     approxTensor (α := R) (toSpec := toSpec)
       (let z0 := Spec.linearSpec (α := ℝ) L0S xS
-       let a0 := mapSpec (fun x => max x 0) z0
+       let a0 := Tensor.map (fun x => max x 0) z0
        Spec.linearSpec (α := ℝ) L1S a0)
       (let z0 := Spec.linearSpec (α := R) L0R xR
-       let a0 := mapSpec (reluR (β := β) (fexp := fexp) (rnd := rnd)) z0
+       let a0 := Tensor.map (reluR (β := β) (fexp := fexp) (rnd := rnd)) z0
        Spec.linearSpec (α := R) L1R a0)
       (reluTwoLayerMlpErrorBudget e0W e0b e1W e1b ex L0R L1R xR) := by
   -- First linear layer: real/FP32 pre-activations are close.
@@ -243,17 +239,17 @@ theorem approxTensor_reluTwoLayerMlp {d0 d1 d2 : Nat}
       (Spec.linearSpec (α := R) L0R xR))
   have hA0' :
       approxTensor (α := R) (toSpec := toSpec)
-        (mapSpec (fun x => max x 0) (Spec.linearSpec (α := ℝ) L0S xS))
-        (mapSpec (reluR (β := β) (fexp := fexp) (rnd := rnd)) (Spec.linearSpec (α := R) L0R xR))
+        (Tensor.map (fun x => max x 0) (Spec.linearSpec (α := ℝ) L0S xS))
+        (Tensor.map (reluR (β := β) (fexp := fexp) (rnd := rnd)) (Spec.linearSpec (α := R) L0R xR))
         eA0 := by
-    -- The NF backend states the real side of the ReLU bound as `mapSpec (fun x => max x 0)`.
+    -- The NF backend states the real side of the ReLU bound as `Tensor.map (fun x => max x 0)`.
     simpa [toSpec, NFBackend.toSpec, eA0] using hA0
 
   -- Final linear layer: propagate the activation error to the network output.
   have hOut := approxTensor_linear
       (WS := L1S) (WR := L1R)
-      (xS := mapSpec (fun x => max x 0) (Spec.linearSpec (α := ℝ) L0S xS))
-      (xR := mapSpec (reluR (β := β) (fexp := fexp) (rnd := rnd))
+      (xS := Tensor.map (fun x => max x 0) (Spec.linearSpec (α := ℝ) L0S xS))
+      (xR := Tensor.map (reluR (β := β) (fexp := fexp) (rnd := rnd))
         (Spec.linearSpec (α := R) L0R xR))
       (epsW := e1W) (epsb := e1b) (epsx := eA0) h1W h1b hA0'
 

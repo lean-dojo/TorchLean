@@ -172,8 +172,8 @@ L(\theta;x,y)
 
 Changing `.mse` to `.oneHotCrossEntropy axis` changes the objective and target
 convention without changing the architecture. The zero-based `axis` may name any output dimension;
-Lean rejects an axis outside the output shape. A custom objective supplies a checked scalar loss
-program.
+opening the trainer validates the objective and rejects an axis outside the output shape.
+A custom objective supplies a checked scalar loss program.
 
 Here the output has shape `[1]`, so the mean contains one squared residual. In the batched version,
 `[5, 1]` contains five residuals and the same objective averages all five. This reduction is part of
@@ -261,11 +261,8 @@ initialization {Informal.citep glorot2010}[], whose bound for a $`2\to8` layer i
 
 and every entry above sits inside $`\pm0.774597`, the largest magnitude being `0.767575`.
 
-The four shapes identify which values belong to which computation. The first matrix forms eight
-weighted combinations of the two input coordinates; the first bias shifts those combinations before
-ReLU. The second matrix combines the eight resulting activations, and the final bias shifts the
-prediction. Zero biases do not make the initial model zero, because the two weight matrices already
-contain nonzero values. The negative initial held-out prediction is consistent with this layout.
+Zero biases do not make the initial model zero: the two weight matrices already contain nonzero
+values.
 
 PyTorch makes both decisions differently. Its `Linear` uses Kaiming uniform initialization
 {Informal.citep he2015}[] with bound $`1/\sqrt{n_{\text{in}}}` and gives the bias a random value
@@ -393,7 +390,6 @@ The returned `Trainer.Result` retains:
 
 - final parameters and buffers, readable as `Float` tensors through `trained.state` and
   writable to a checkpoint file through `trained.save path`;
-- the runtime model state;
 - the completed step count and numeric before/after losses;
 - prediction and verification closures.
 
@@ -451,10 +447,6 @@ time that it is
 `[[8, 2], [8], [1, 8], [1]]`; the equality is checked once at runtime and then used to transport the
 state into a type where `get 3` is meaningful. This is the same check a checkpoint loader performs,
 and it is why a checkpoint for a wider model cannot be quietly accepted here.
-
-The displayed output-bias change isolates one coordinate of a much larger update. Both matrices
-and the hidden bias have also been trainable throughout the forty steps, so this coordinate alone
-cannot explain the loss reduction.
 
 # Gradient Descent Updates
 
@@ -659,9 +651,7 @@ Adam counter $`t=1`. The square, square root, and division act coordinatewise.
 The first moment supplies a smoothed
 gradient, while the square root of the second moment rescales each coordinate; the positive
 $`\epsilon` keeps a zero second-moment estimate from producing a zero denominator.
-Both moment packs have the same dependent tensor shapes as $`\theta`. Restoring only parameters
-from a checkpoint loses these estimates and the step counter used in bias correction, so it does
-not resume the same Adam update.
+Both moment packs have the same dependent tensor shapes as $`\theta`.
 
 PyTorch exposes the corresponding state for each parameter:
 
@@ -824,11 +814,8 @@ predict(batch=heldout) = [[0.303611], [0.303611], [0.303611], [0.303611], [0.303
 The five identical predictions are not a bug: the held-out batch repeats one row five times, so a
 batched model answers it five times.
 
-The CSV loss cannot be read as the next stage of the earlier grid experiment. Its starting mean is
-`0.210192`, not `0.495227`, because this command uses the CSV example's data and configuration.
-Within that run, the before and after values measure the same dataset and are directly comparable.
-Across the two examples, the matching architecture and parameter count explain the shared API, while
-the different target values and learning rate explain why the logs describe separate experiments.
+This is a separate experiment from the grid above: its data and learning rate differ, despite
+the matching architecture.
 
 # Eager And Typed Graph Execution
 
@@ -902,9 +889,6 @@ scripts/lake.sh -Kcuda=true exe torchlean quickstart_mlp \
   --device cuda --steps 20 --seed 2026 --show-backend
 ```
 
-The two successful lookup rows attach device profiles without allocating tensors or executing
-kernels. Opening a session validates execution and rejects CUDA when the native runtime is
-unavailable.
 `--show-backend` prints the selected implementation for each operation; the
 {ref "backend-selection"}[backend chapter] explains the profile, provider, VJP, and evidence fields
 in that report.
@@ -1449,9 +1433,8 @@ an input region, we need the statements and hypotheses developed in
 {ref "optimization-theory"}[the optimization chapter] and
 {ref "certificates"}[the certificate chapters].
 
-The saved parameters and backend audit rows identify what ran. Establishing equality of eager,
-typed graph, CUDA, and LibTorch execution would require relating their operations; a successful
-training run alone cannot establish that relation or the correctness of every native instruction.
+Saved parameters describe the resulting model, while backend audit rows describe the selected
+execution plan. Neither alone proves which native operations ran or their correctness.
 
 For a useful comparison, decide which quantity is being held fixed before interpreting a smaller
 loss. The accumulation example fixes update count but changes samples consumed; the optimizer

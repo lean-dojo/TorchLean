@@ -2,14 +2,12 @@
 title: Examples
 ---
 
-Let's try TorchLean on a few examples. We'll train models, compute gradients, import PyTorch
-weights, and check numerical claims in Lean. Pick a topic below and we'll work through the
-commands, code, and results together.
+Let's train a model, compute some gradients, or check a numerical claim in Lean.
+Pick an example below for the code and commands.
 
 ## Featured Examples
 
-The cards illustrate each workflow. Their numerical values and “verified” badges are schematic;
-the linked pages state the actual artifacts, checker predicates, and theorem assumptions.
+The card images are illustrations. Each example page includes its own results and assumptions.
 
 <div class="showcase-grid showcase-grid-featured">
   <a class="showcase-card showcase-image-card" href="{{ '/examples/custom-computations/' | relative_url }}">
@@ -40,16 +38,16 @@ the linked pages state the actual artifacts, checker predicates, and theorem ass
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/blueprint/Building-Models/Training___-One-State-Transition-At-A-Time/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/supervised-training-new.png' | relative_url }}" alt="MLP and CNN training example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/supervised-training-new.png' | relative_url }}" alt="Illustration of batches, a model, loss, optimizer, and training curves"/>
     <span class="showcase-body">
       <span class="showcase-title">Supervised Training</span>
-      <span class="showcase-text">Instantiate supervised models, build loaders, fit for multiple epochs or fixed steps, and save loss curves from the same Lean runner.</span>
+      <span class="showcase-text">Build a model, load its training data, and train it in Lean. Save the loss curve to see how the run went.</span>
       <span class="showcase-link">Open training guide</span>
     </span>
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/examples/diffusion/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/diffusion-new.png' | relative_url }}" alt="Diffusion on real images example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/diffusion-new.png' | relative_url }}" alt="Illustration of iterative denoising from noise to an image, not a measured sample"/>
     <span class="showcase-body">
       <span class="showcase-title">Diffusion</span>
       <span class="showcase-text">Train a small denoiser, run deterministic DDIM sampling, and inspect both the generated images and the saved loss log.</span>
@@ -58,7 +56,7 @@ the linked pages state the actual artifacts, checker predicates, and theorem ass
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/examples/text-models/#gpt-2' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/gpt-text-new.png' | relative_url }}" alt="GPT-2 style text example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/gpt-text-new.png' | relative_url }}" alt="Illustration of token embeddings, transformer blocks, and next-token scores"/>
     <span class="showcase-body">
       <span class="showcase-title">GPT-Style Text</span>
       <span class="showcase-text">Tokenize bytes, build next-token examples, train a small causal transformer, save a checkpoint, and sample continuations.</span>
@@ -67,7 +65,7 @@ the linked pages state the actual artifacts, checker predicates, and theorem ass
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/examples/scientific-ml/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/scientific-ml-new.png' | relative_url }}" alt="Scientific ML pipeline from Burgers data to FNO training and Lean checks"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/scientific-ml-new.png' | relative_url }}" alt="Illustration of a PDE, Fourier neural operator, and training loss; residual checks are separate"/>
     <span class="showcase-body">
       <span class="showcase-title">Scientific ML</span>
       <span class="showcase-text">Train a Fourier neural operator on Burgers data or a PINN from an equation, then explore separate checks for PDE residuals and datasets.</span>
@@ -88,7 +86,7 @@ the linked pages state the actual artifacts, checker predicates, and theorem ass
     <img class="showcase-media" src="{{ '/assets/media/examples/showcase/float32-ieee-new.png' | relative_url }}" alt="Floating-point formats and IEEE arithmetic illustration"/>
     <span class="showcase-body">
       <span class="showcase-title">Floating-Point Formats and Proofs</span>
-      <span class="showcase-text">Compare FloatLib's executable binary arithmetic with rounded <code>FP32</code> models and its proofs of agreement with Lean's logical <code>Float32</code> operations, then follow their use in TorchLean.</span>
+      <span class="showcase-text">Choose a floating-point format with FloatLib, compare rounded calculations, and see how we prove their numerical properties.</span>
       <span class="showcase-link">Open floating-point guide</span>
     </span>
   </a>
@@ -97,13 +95,13 @@ the linked pages state the actual artifacts, checker predicates, and theorem ass
     <img class="showcase-media" src="{{ '/assets/media/examples/showcase/graph-ir-bounds-new.png' | relative_url }}" alt="Numerical certificate and binary32 replay for a two-layer MLP"/>
     <span class="showcase-body">
       <span class="showcase-title">Numerical Runtime Certificates</span>
-      <span class="showcase-text">Run a two-layer MLP through operation coverage, interval propagation, backend-capsule audit, and bit-level binary32 replay.</span>
+      <span class="showcase-text">Compute intervals for a small MLP, then replay its binary32 calculations and check each intermediate result.</span>
       <span class="showcase-link">Open the complete run</span>
     </span>
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/blueprint/Examples-and-Applications/Reinforcement-Learning/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/reinforcement-learning-new.png' | relative_url }}" alt="Reinforcement learning examples"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/reinforcement-learning-new.png' | relative_url }}" alt="An agent selects actions, receives states and rewards, and gathers rollouts for policy updates"/>
     <span class="showcase-body">
       <span class="showcase-title">Reinforcement Learning</span>
       <span class="showcase-text">Run PPO on Lean-native and Gymnasium environments, then inspect the rollout, reward, and policy artifacts that enter training.</span>
@@ -121,7 +119,7 @@ the linked pages state the actual artifacts, checker predicates, and theorem ass
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/examples/3d-vision/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/geometry3d-vision-new.png' | relative_url }}" alt="3D Vision Certificates example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/geometry3d-vision-new.png' | relative_url }}" alt="Illustration of camera projection and a cuboid; the example checks projected-point enclosure"/>
     <span class="showcase-body">
       <span class="showcase-title">3D Vision Certificates</span>
       <span class="showcase-text">Export camera and box tensors from a detector, recompute projection in Lean, and reject boxes that do not enclose projected corners.</span>
@@ -130,7 +128,7 @@ the linked pages state the actual artifacts, checker predicates, and theorem ass
   </a>
 
   <a class="showcase-card showcase-image-card" href="{{ '/examples/verification/' | relative_url }}">
-    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/verification-bounds-new.png' | relative_url }}" alt="IBP and alpha-CROWN verification example"/>
+    <img class="showcase-media" src="{{ '/assets/media/examples/showcase/verification-bounds-new.png' | relative_url }}" alt="Interval bounds propagated through a network; the shaded region illustrates a nonnegative-output property."/>
     <span class="showcase-body">
       <span class="showcase-title">IBP and CROWN Verification</span>
       <span class="showcase-text">Bound a model's outputs over an input region using IBP or CROWN, and check certificates exported by other verification tools.</span>

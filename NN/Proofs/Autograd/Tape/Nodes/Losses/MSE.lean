@@ -58,62 +58,11 @@ def mseLoss {Γ : List Shape} {s : Shape} (yhat target : Idx Γ s) : Node Γ Sha
       CtxVec.single (Γ := Γ) (s := s) yhat dYhat + CtxVec.single (Γ := Γ) (s := s) target dTarget)
     (correct_inner := by
       intro xV dxV δV
-      classical
-      let n : Nat := TorchLean.Tensor.meanDenominator s
-      let c : ℝ := (1 : ℝ) / (n : ℝ)
-      let i0 : Fin (Spec.Shape.size Shape.scalar) := ⟨0, by simp [Spec.Shape.size]⟩
-      let δ0 : ℝ := δV i0
-      let diff := (CtxVec.get (Γ := Γ) (s := s) yhat xV) - (CtxVec.get (Γ := Γ) (s := s) target xV)
-      let dy := (CtxVec.get (Γ := Γ) (s := s) yhat dxV)
-      let dt := (CtxVec.get (Γ := Γ) (s := s) target dxV)
-      let ddiff := dy - dt
-      let scale : ℝ := δ0 * (2 * c)
-      let dYhat : Vec (Spec.Shape.size s) := scale • diff
-      let dTarget : Vec (Spec.Shape.size s) := -dYhat
-      have hL :
-          inner ℝ (vecOfFun (n := Spec.Shape.size Shape.scalar)
-            (fun _ => c * (2 * inner ℝ diff ddiff))) δV
-            =
-          (c * (2 * inner ℝ diff ddiff)) * δ0 := by
-        convert inner_scalarVec_left (a := c * (2 * inner ℝ diff ddiff)) (δ := δV) using 1
-      have hA :
-          inner ℝ dxV (CtxVec.single (Γ := Γ) (s := s) yhat dYhat) =
-            inner ℝ dy dYhat := by
-        simpa using (CtxVec.inner_get_single (Γ := Γ) (s := s) yhat dxV dYhat)
-      have hB :
-          inner ℝ dxV (CtxVec.single (Γ := Γ) (s := s) target dTarget) =
-            inner ℝ dt dTarget := by
-        simpa using (CtxVec.inner_get_single (Γ := Γ) (s := s) target dxV dTarget)
-      have hR :
-          inner ℝ dxV
-              (CtxVec.single (Γ := Γ) (s := s) yhat dYhat + CtxVec.single (Γ := Γ) (s := s) target
-                dTarget)
-            =
-          (inner ℝ dy dYhat) + (inner ℝ dt dTarget) := by
-        simp [inner_add_right, hA, hB]
-      -- Now simplify the RHS using `dTarget = -dYhat` and `ddiff = dy - dt`.
-      have hR' :
-          (inner ℝ dy dYhat) + (inner ℝ dt dTarget) =
-            scale * inner ℝ ddiff diff := by
-        have hdd : inner ℝ ddiff diff = inner ℝ dy diff - inner ℝ dt diff := by
-          simp [ddiff, inner_sub_left]
-        -- unfold `dYhat`/`dTarget`, and reduce to a ring identity
-        simp [dYhat, dTarget, hdd, inner_smul_right, inner_neg_right, sub_eq_add_neg]
-        ring
-      -- Relate `scale * ⟪ddiff,diff⟫` to LHS form.
-      have hfinal :
-          (c * (2 * inner ℝ diff ddiff)) * δ0 = scale * inner ℝ ddiff diff := by
-        simp [scale, mul_assoc, mul_left_comm, mul_comm, real_inner_comm]
-      -- Finish.
-      calc
-        inner ℝ (vecOfFun (n := Spec.Shape.size Shape.scalar)
-            (fun _ => c * (2 * inner ℝ diff ddiff))) δV
-            = (c * (2 * inner ℝ diff ddiff)) * δ0 := hL
-        _ = scale * inner ℝ ddiff diff := hfinal
-        _ = inner ℝ dxV
-              (CtxVec.single (Γ := Γ) (s := s) yhat dYhat + CtxVec.single (Γ := Γ) (s := s) target
-                dTarget) := by
-              simp [hR, hR'] )
+      simp only [inner_scalarVec_left, inner_add_right, CtxVec.inner_get_single,
+        inner_smul_right, inner_neg_right, inner_sub_right]
+      rw [real_inner_comm (CtxVec.get yhat dxV), real_inner_comm (CtxVec.get target dxV)]
+      simp only [inner_sub_right]
+      ring)
 
 /-- `NodeFDerivCorrect` for `mseLoss`. -/
 def mseLossFderiv {Γ : List Shape} {s : Shape} (yhat target : Idx Γ s) :

@@ -19,7 +19,7 @@ PINN/scientific ML checks, ODE and spline certificates, and graph-level IBP/CROW
   beta multipliers or branch splits. `Cert/FiniteArtifact` checks binary32 affine bounds for
   linear/ReLU chains against exact rational transfers, and `FiniteArtifact.accepts_graph_sound`
   proves the requested output inequalities for the original graph under the exact real values of
-  its binary32 parameters. It is a library API with no `lake exe verify` command.
+  its binary32 parameters. It is a library API with no `scripts/lake.sh exe verify` command.
 - `Monotonicity`: exact nonnegative-weight certificates for linear/ReLU chains, with a theorem
   from JSON text acceptance to global componentwise monotonicity over real inputs.
 - `Robustness/`: dataset-backed robustness workflows, including certified accuracy for small
@@ -77,6 +77,13 @@ payload-backed constants, `linear`, arbitrary-rank no-dilation convolution, eval
 channel-first BatchNorm, arbitrary-rank pooling, suffix-axis LayerNorm, graph input/detach, and scalar MSE formulas used
 by the PyTorch/ONNX path.
 
+The broader `lowerForwardToIR` builder is not covered wholesale by that theorem. Its current
+log-softmax expansion takes the logarithm of computed softmax probabilities, so finite-precision
+underflow can trigger the IR's positive-domain rejection even when stable source log-softmax
+would remain finite. Its slicing expansion uses one-hot matrix multiplication rather than direct
+indexing. A graph passing shape checks does not establish numerical equivalence with these source
+operations.
+
 For payload-backed imported ops, the bridge records both the helper evaluator contract and the
 actual one-step `Graph.evalAt` success path. The
 `NN.Verification.Builtin.Proved.Correctness.Eval` import collects the concrete evaluator modules
@@ -106,13 +113,13 @@ and their relation to the graph soundness theorems.
 - `NN.Verification.PINN`: reusable PINN verification support.
 - `NN.Verification.Geometry3D`: 3D projection and box-certificate checking.
 - `NN.Verification.VNNComp`: compact VNN-COMP-style network and property workflows.
-- `NN.Verification.CLI`: runnable CLI registry used by `lake exe verify`.
+- `NN.Verification.CLI`: runnable CLI registry used by `scripts/lake.sh exe verify`.
 
 ## Commands To Try
 
 ### Exact CROWN output queries
 
-Run `lake exe verify -- crown-query <query.json>`, or import `NN.Verification.Cert.CROWNQuery.Json`
+Run `scripts/lake.sh exe verify -- crown-query <query.json>`, or import `NN.Verification.Cert.CROWNQuery.Json`
 and call `NN.Verification.Cert.CROWNQuery.acceptsText`, on a document such as:
 
 ```json
@@ -144,8 +151,6 @@ the query; it need not mean the property is false.
 every decoded output inequality for every real input in the decoded box. The model uses existing
 `Spec.Module.linear`, `Spec.Module.relu`, and `Spec.Module.Chain` semantics; its evaluation is
 total. These theorems require no producer-soundness, local-transfer, or graph-coverage hypothesis.
-`NN.Tests.MLTheory.CROWNQuery` includes a concrete kernel-checked safety theorem and runtime
-acceptance/rejection tests in `nn_tests_suite`.
 
 This format is separate from the binary32 node-replay JSON format. It does not certify ONNX
 translation, floating-point deployment, β dual variables, cuts, or branch-tree coverage. A model
@@ -178,23 +183,21 @@ corresponding theorem for typed certificates. Neither requires a producer-soundn
 hypothesis. This is a theorem about the model recorded in the document; correspondence to an ONNX
 file, deployment arithmetic, and CROWN/branch-and-bound certificates are outside this format.
 
-`NN.Tests.MLTheory.Monotonicity` contains a concrete kernel-checked model theorem and parser tests,
-included in `nn_tests_suite`.
 
 ### Other verification workflows
 
 Run the curated verification suite:
 
 ```bash
-lake exe verify -- all
+scripts/lake.sh exe verify -- all
 ```
 
 Run TorchLean-native graph workflows:
 
 ```bash
-lake exe verify -- torchlean-ibp
-lake exe verify -- torchlean-crown-ops
-lake exe verify -- torchlean-mlp-workflow
+scripts/lake.sh exe verify -- torchlean-ibp
+scripts/lake.sh exe verify -- torchlean-crown-ops
+scripts/lake.sh exe verify -- torchlean-mlp-workflow
 ```
 
 These commands lower or build small TorchLean models, attach input regions, and run native bound
@@ -207,14 +210,14 @@ propagation, typed graph execution, or the verification API.
 Run a compact PINN certificate and residual-expression check:
 
 ```bash
-lake exe verify -- pinn-cert
-lake exe verify -- pinn-cli -- "u_t + u*u_x - 0.01*u_xx" 0.0 0.5 0.01
+scripts/lake.sh exe verify -- pinn-cert
+scripts/lake.sh exe verify -- pinn-cli -- "u_t + u*u_x - 0.01*u_xx" 0.0 0.5 0.01
 ```
 
 Run a dataset containment diagnostic for PINN artifacts:
 
 ```bash
-lake exe verify -- pinn-dataset-check
+scripts/lake.sh exe verify -- pinn-dataset-check
 ```
 
 Use `--strict` on diagnostic commands when misses should turn into command failure.
@@ -222,7 +225,7 @@ Use `--strict` on diagnostic commands when misses should turn into command failu
 Run a compact consistency check of a converted alpha-beta-CROWN leaf artifact:
 
 ```bash
-lake exe verify -- abcrown-leaf
+scripts/lake.sh exe verify -- abcrown-leaf
 ```
 
 The checker confirms that the leaf boxes lie inside the root and together cover it, and that each
@@ -233,11 +236,11 @@ network is verified.
 Run compact LiRPA-style fixture checks:
 
 ```bash
-lake exe verify -- lirpa-mlp
-lake exe verify -- lirpa-cnn
-lake exe verify -- lirpa-attention
-lake exe verify -- lirpa-gru
-lake exe verify -- lirpa-encoder
+scripts/lake.sh exe verify -- lirpa-mlp
+scripts/lake.sh exe verify -- lirpa-cnn
+scripts/lake.sh exe verify -- lirpa-attention
+scripts/lake.sh exe verify -- lirpa-gru
+scripts/lake.sh exe verify -- lirpa-encoder
 ```
 
 These fixtures are small JSON artifacts for supported network fragments. They are replay fixtures:
@@ -251,7 +254,7 @@ The VNN-COMP-style MNIST workflow requires externally prepared weights and suite
 not bundled. Follow [the artifact setup](../Examples/Verification/VNNComp/README.md), then run:
 
 ```bash
-lake exe verify -- vnncomp-mnistfc \
+scripts/lake.sh exe verify -- vnncomp-mnistfc \
   --weights=_external/vnncomp/mnist_fc/model_weights.json \
   --suite=_external/vnncomp/mnist_fc/suite.json
 ```
@@ -259,7 +262,7 @@ lake exe verify -- vnncomp-mnistfc \
 Run a 3D projection certificate check:
 
 ```bash
-lake exe verify -- camera-box3d-cert
+scripts/lake.sh exe verify -- camera-box3d-cert
 ```
 
 `BoxCameraCert.pointCount` fixes the number of supplied points; its tensor has shape
@@ -278,10 +281,10 @@ exact real projection; the artifact's `tol` is the only slack for rounding.
 Run the spline certificate checker:
 
 ```bash
-lake exe verify -- spline-cert
+scripts/lake.sh exe verify -- spline-cert
 ```
 
-The exact command registry lives in `NN.Verification.CLI`; `lake exe verify --help` prints the
+The exact command registry lives in `NN.Verification.CLI`; `scripts/lake.sh exe verify --help` prints the
 commands available in the current checkout.
 
 ## What A Checker Should Say

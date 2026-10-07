@@ -47,9 +47,6 @@ def lowerMaxPool {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let pNode ← g.getNode pId
@@ -57,17 +54,17 @@ def lowerMaxPool {α : Type} [TorchLean.Storage α] [Context α]
       let ip ← parentIdx pId sIn
       let plan ← OpContracts.planPool "max_pool" config sIn
       if hOut : plan.outShape = τ then
-        let forward := fun ctx : TensorReader α Γ =>
+        let forward := fun ctx : TensorLookup α Γ =>
           let input : Tensor α
               (plan.leading.concat (Shape.ofList (Tensor.to plan.spatial (List Nat)))) :=
-            Tensor.castShape (readTensor (α := α) (xs := ctx) ip) plan.concat_eq.symm
+            Tensor.castShape (ctx.read ip) plan.concat_eq.symm
           let layer : Spec.MaxPoolSpec config.spatialRank config.kernel config.stride
               config.padding plan.kernelNonzero plan.strideNonzero := {}
           let output : Tensor α plan.outShape :=
             Tensor.mapLeading plan.leading
               (Spec.maxPoolSpatialSpec (α := α) (inSpatial := plan.spatial) layer) input
           Tensor.castShape output hOut
-        pure <| fwd forward
+        pure <| mkForwardNode (τ := τ) forward
       else
         throw s!"IRExec: node {i}: max_pool outShape mismatch ({n.summary})"
   | _ => throw s!"IRExec: node {i}: max_pool expects 1 parent ({n.summary})"
@@ -81,9 +78,6 @@ def lowerAvgPool {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let pNode ← g.getNode pId
@@ -91,17 +85,17 @@ def lowerAvgPool {α : Type} [TorchLean.Storage α] [Context α]
       let ip ← parentIdx pId sIn
       let plan ← OpContracts.planPool "avg_pool" config sIn
       if hOut : plan.outShape = τ then
-        let forward := fun ctx : TensorReader α Γ =>
+        let forward := fun ctx : TensorLookup α Γ =>
           let input : Tensor α
               (plan.leading.concat (Shape.ofList (Tensor.to plan.spatial (List Nat)))) :=
-            Tensor.castShape (readTensor (α := α) (xs := ctx) ip) plan.concat_eq.symm
+            Tensor.castShape (ctx.read ip) plan.concat_eq.symm
           let layer : Spec.AvgPoolSpec config.spatialRank config.kernel config.stride
               config.padding plan.kernelNonzero plan.strideNonzero := {}
           let output : Tensor α plan.outShape :=
             Tensor.mapLeading plan.leading
               (Spec.avgPoolSpatialSpec (α := α) (inSpatial := plan.spatial) layer) input
           Tensor.castShape output hOut
-        pure <| fwd forward
+        pure <| mkForwardNode (τ := τ) forward
       else
         throw s!"IRExec: node {i}: avg_pool outShape mismatch ({n.summary})"
   | _ => throw s!"IRExec: node {i}: avg_pool expects 1 parent ({n.summary})"
@@ -116,9 +110,6 @@ def lowerConv {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some xId =>
       let xNode ← g.getNode xId
@@ -135,9 +126,9 @@ def lowerConv {α : Type} [TorchLean.Storage α] [Context α]
             if hInput : expectedIn = payloadShape then
               if hPayloadOut : params.output leading = expected then
                 if hOut : expected = τ then
-                  let forward := fun ctx : TensorReader α Γ =>
+                  let forward := fun ctx : TensorLookup α Γ =>
                     let input : Tensor α payloadShape :=
-                      Tensor.castShape (readTensor (α := α) (xs := ctx) ix) hInput
+                      Tensor.castShape (ctx.read ix) hInput
                     let output : Tensor α (params.output leading) :=
                       Tensor.mapLeading leading
                         (Spec.groupedConvSpec (α := α) (stride := params.stride)
@@ -146,7 +137,7 @@ def lowerConv {α : Type} [TorchLean.Storage α] [Context α]
                           params.spec.kernel params.spec.bias)
                         input
                     Tensor.castShape output (hPayloadOut.trans hOut)
-                  pure <| fwd forward
+                  pure <| mkForwardNode (τ := τ) forward
                 else
                   throw s!"IRExec: node {i}: conv outShape mismatch ({n.summary})"
               else
@@ -172,9 +163,6 @@ def lowerBatchNormEval {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some xId =>
       let xNode ← g.getNode xId
@@ -192,16 +180,16 @@ def lowerBatchNormEval {α : Type} [TorchLean.Storage α] [Context α]
             match decEq expectedIn payloadShape with
             | isTrue hInput =>
                 if hOut : @Eq Shape expectedIn τ then
-                  let forward := fun ctx : TensorReader α Γ =>
+                  let forward := fun ctx : TensorLookup α Γ =>
                     let input : Tensor α payloadShape :=
-                      Tensor.castShape (readTensor (α := α) (xs := ctx) ix) hInput
+                      Tensor.castShape (ctx.read ix) hInput
                     let output : Tensor α payloadShape :=
                       Tensor.mapLeading leading
                         (fun sample => Spec.batchNormInference sample params.mean params.var
                           params.gamma params.beta params.eps)
                         input
                     Tensor.castShape output (hInput.symm.trans hOut)
-                  pure <| fwd forward
+                  pure <| mkForwardNode (τ := τ) forward
                 else
                   throw s!"IRExec: node {i}: batch_norm_eval outShape mismatch ({n.summary})"
             | isFalse _ =>
@@ -222,9 +210,6 @@ def lowerLayernorm {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId => do
       let (seqLen, embedDim) ←
@@ -237,14 +222,14 @@ def lowerLayernorm {α : Type} [TorchLean.Storage α] [Context α]
           let ip ← parentIdx pId τ
           let affine ←
             NN.IR.Graph.resolveLayerNormAffine payload i axis τ embedDim
-          let forward := fun ctx : TensorReader α Γ =>
-            let x : Tensor α τ := readTensor (α := α) (xs := ctx) ip
+          let forward := fun ctx : TensorLookup α Γ =>
+            let x : Tensor α τ := ctx.read ip
             let x2d : Tensor α view2d :=
               Tensor.reshapeSpec (α := α) (source := τ) (target := view2d) x hNumel
             let y2d := NN.IR.Graph.layerNormMatrixValue seqLen embedDim x2d
               affine.gamma affine.beta affine.epsilon hEmb
             Tensor.reshapeSpec (α := α) (source := view2d) (target := τ) y2d hNumel.symm
-          pure <| fwd forward
+          pure <| mkForwardNode (τ := τ) forward
         else
           throw s!"IRExec: node {i}: layernorm embedDim must be > 0 (got {embedDim})"
       else

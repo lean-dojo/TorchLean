@@ -46,18 +46,12 @@ abbrev sum {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
 /-- Arithmetic mean of all entries, using denominator one for an empty tensor. -/
 def mean {α : Type} [TorchLean.Storage α] [Add α] [Zero α] [Div α] [NatCast α]
     {shape : Shape} (tensor : Tensor α shape) : α :=
-  tensor.sum / (meanDenominator shape : α)
+  meanSpec tensor
 
 /-- Under a full scalar `Context`, the public mean is the specification mean. -/
 theorem mean_eq_meanSpec {α : Type} [TorchLean.Storage α] [Context α]
     {shape : Shape} (tensor : Tensor α shape) :
     mean tensor = meanSpec tensor :=
   rfl
-
-/-- Mean squared difference between two equally shaped tensors. -/
-def meanSquaredError {α : Type} [TorchLean.Storage α]
-    [Add α] [Sub α] [Mul α] [Div α] [Zero α] [NatCast α]
-    {shape : Shape} (predicted target : Tensor α shape) : α :=
-  mean (square (predicted - target))
 
 end TorchLean.Tensor

@@ -10,12 +10,12 @@ public import NN.Tensor.Internal.Semantics.Einsum
 /-!
 # Fused native lowering for einsum
 
-A checked einsum allocates only its final output tensor. For each output
-entry, the executable kernel:
+A checked einsum allocates no intermediate tensors. For each output
+entry, the executable reference:
 
 1. enumerates flat indices for only the contracted logical axes;
 2. evaluates a precompiled row-major stride plan for each operand;
-3. reads every operand directly from its native array, with diagonal selection
+3. reads every operand directly from its storage, with diagonal selection
    and singleton broadcasting already encoded by that plan;
 4. multiplies the operand values in source order; and
 5. sums those products into the output entry.
@@ -124,8 +124,9 @@ private theorem coordinateAt_axisTuple {ι : Type*}
 /--
 Compile physical operand axes to source-position and input-stride triples.
 
-The plan is built once per operand. Omitting singleton dimensions makes
-broadcasting free inside the scalar loop.
+The plan contains one entry per nonsingleton physical axis. Omitting singleton
+dimensions removes their index terms from the scalar loop. Whether plan
+construction is shared across output entries depends on the calling executor.
 -/
 def inputFlatIndexPlan {ι : Type*} [BEq ι] [LawfulBEq ι]
     (outputAxes contractedAxes : List ι) :
@@ -595,10 +596,11 @@ arithmetic; the bound proof is erased from executable code.
     exact (Coord.linearize _).isLt⟩
 
 /-!
-The executable kernel uses nested `Fin.foldl` loops so contraction and operand
-traversal allocate no temporary finite sets or lists. The row-major traversal
-itself is `Semantics.coordinateSum`: there is one such loop in the library, and
-the lemmas below are what connect it to the big-operator semantics.
+The general fused kernel uses `Fin.foldl` for operands and
+`Semantics.coordinateSum` for contraction, without constructing finite sets or
+operand lists. Specialized loops are proved equal to this ordered reference.
+The lemmas below connect the reference to the big-operator semantics under
+the required algebraic assumptions.
 -/
 
 /-- Multiplicative finite folding preserves the source order of the list fold. -/
@@ -731,9 +733,10 @@ theorem einsumInputProduct_eq_foldl {R : Type u}
 /--
 Evaluate every contracted coordinate for one flat output position.
 
-This reference executor is completely general. Literal syntax compiles it to
-the same nested loops after reducing the checked pattern, which removes
-coordinate-pair construction from the native scalar loop.
+This reference executor is completely general. Literal syntax specializes its
+index arithmetic and may use sequential, tiled, or parallel output traversal.
+Those executors must prove the same scalar result and preserve contraction
+order unless additional algebraic laws justify a change.
 -/
 def einsumOutput {R : Type u}
     [Storage R] [Add R] [Mul R] [OfNat R 0] [OfNat R 1]

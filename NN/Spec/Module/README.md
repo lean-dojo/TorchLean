@@ -4,7 +4,9 @@
 are part of the type, so Lean rejects a composition whose intermediate shapes do not agree.
 
 ```lean
-def block : Spec.Module Float input output :=
+def block {α : Type} [TorchLean.Storage α] {input hidden output : Spec.Shape}
+    (first : Spec.Module α input hidden) (second : Spec.Module α hidden output) :
+    Spec.Module.Chain α input output :=
   Spec.Module.Chain.single first
     |>.append second
 ```
@@ -15,11 +17,9 @@ reports and Python source export; only `forward` determines the mathematical mea
 The directory contains:
 
 - `Core.lean`: the module type, typed chains, leading-dimension mapping, and selection;
-- layer adapters for activations, linear maps, convolution, pooling, normalization, attention,
-  embeddings, dropout, and positional encoding;
+- layer adapters for activations, linear maps, convolution, pooling, normalization, and flattening;
 - recurrent compositions for RNNs, GRUs, and LSTMs;
-- adapters for autoencoders, sequence-to-sequence models, graph networks, classical models, and
-  probabilistic models.
+- adapters for autoencoders, sequence-to-sequence models, and hidden Markov models.
 
 The underlying formulas remain in `NN.Spec.Layers` and `NN.Spec.Models`. These adapters provide one
 typed composition interface without duplicating those semantics.

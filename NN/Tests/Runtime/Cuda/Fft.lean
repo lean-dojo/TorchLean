@@ -35,10 +35,6 @@ open Runtime.Autograd.LibTorch
 open Runtime.Autograd
 open Spec TorchLean
 
--- Buffer comparisons and the `floatArray` literal wrapper come from `Tests.Cuda.Utils`. The
--- tolerances
--- here are loose by the standards of the other CUDA suites because a packed real FFT accumulates
--- float32 rounding across every butterfly stage.
 open Tests.Cuda.Utils (floatArray assertFloatArrayApprox)
 
 def Internal.dotFloatArray (a b : FloatArray) : IO Float := do

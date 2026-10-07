@@ -30,12 +30,6 @@ graph capture, the right path is still the existing `torch.export` JSON bridge i
 whether a model is close to the supported TorchLean subset before users commit to the full
 capture/import path.
 
-The VS Code extension version can reuse this design:
-
-1. Run a stronger Python-side analyzer (`ast`, `torch.fx`, or `torch.export`).
-2. Send the normalized layer/graph report to Lean.
-3. Display the same kind of TorchLean skeleton plus trust-boundary diagnostics.
-
 For the in-repo workflow, prefer `#pytorch_translate_file "path/to/model.py"`. That command reads a
 real Python source file and renders the report in the Lean infoview. The lower-level
 `#pytorch_translate_view someString` command remains useful for tests and for future editor
@@ -55,7 +49,7 @@ open Lean Elab Command
 /--
 A layer shape recognized by the file-based PyTorch supported-subset analyzer.
 
-The constructors intentionally describe *semantic layer families*, not exact Python AST nodes. For
+The constructors describe recognized layer families, not Python AST nodes or inferred semantics. For
 example, `linear 784 128` can come from `nn.Linear(784, 128)` inside `nn.Sequential`, a field
 assignment such as `self.fc = nn.Linear(784, 128)`, or a compact documentation snippet. The widget
 uses this vocabulary to give immediate editor feedback while still marking anything outside the
@@ -198,9 +192,9 @@ private def layerName : Layer → String
 /--
 Render a layer as a direct `nn.Sequential!` term when that is safe for the supported subset.
 
-Only vector-shaped elementwise and linear layers are emitted directly. Shape-changing CNN pieces are
-not silently guessed, because that would create exactly the kind of misleading "it translated!"
-experience TorchLean should avoid.
+Only elementwise and linear layers are emitted directly. Shape-changing CNN pieces remain
+comments until the user supplies the required shapes. Recognition does not establish that the
+source model executes these constructors in their textual order.
 -/
 private def layerTorchLeanTerm? : Layer → Option String
   | .linear i o => some s!"nn.linear {i} {o}"

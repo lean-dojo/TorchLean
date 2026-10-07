@@ -109,8 +109,8 @@ We reuse the real-valued graph dialect evaluator from
 the CROWN enclosure theorem below holds for **any** locally-consistent semantic interpretation
 `vals` (provided the graph is topologically sorted).
 
-For IEEE32Exec, a separate evaluator can be plugged in later; the theorem below is stated for any
-`vals` satisfying `SemLocalOK`.
+The real-valued theorem uses `SemLocalOK`. The `IEEE32` section below supplies a separate
+interface for a caller-proved binary32 trace and transfer rules.
 -/
 
 /-!
@@ -135,8 +135,8 @@ end-to-end theorem as long as they provide a step function and discharge transfe
 
 /-- The certificate is exactly what the step rule recomputes at every node: a local fixed point.
 
-Checking this is cheap and purely syntactic, which is the whole point of shipping a certificate
-rather than rerunning the bounding algorithm. -/
+Replay checks local consistency with the chosen step rule. Its cost depends on that rule; this
+predicate alone does not establish transfer soundness or complete node coverage. -/
 def CrownCertLocalOK {α : Type} [TorchLean.Storage α] [Context α]
     (g : Graph) (step : Array (Option (FlatAffineBounds α)) → Nat → Option (FlatAffineBounds α))
     (cert : Array (Option (FlatAffineBounds α))) : Prop :=

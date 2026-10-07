@@ -9,14 +9,9 @@ module
 /-!
 # FloatApprox
 
-Small numeric comparison helpers used by verification checkers.
-
-Motivation:
-- Many checkers compare a Lean-recomputed bound to a Python-exported certificate.
-- Those certificates are typically serialized as decimal floats, so equality is unrealistic.
-
-These helpers stay local to the verification layer.  They model the practical comparison we need
-for exported certificates, not a general-purpose analysis library.
+Finite absolute-tolerance comparisons for PINN artifacts and leaf witness-margin bookkeeping.
+IBP interval containment and CROWN binary32 replay use separate, tolerance-free comparisons.
+An approximate match here is not a proof that an interval encloses every real execution.
 -/
 
 @[expose] public section

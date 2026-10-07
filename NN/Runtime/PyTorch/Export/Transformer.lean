@@ -33,90 +33,90 @@ namespace Export.PyTorch.Transformer
 This produces readable "reference PyTorch" code (MultiHeadAttention + residual + LayerNorm + FFN),
 useful for round-trip examples.
 -/
-def classSource
+def source
     (sequenceLength modelWidth headCount feedForwardWidth layerCount : Nat)
     (className : String := "TransformerEncoder") : String :=
   joinLines <|
-  #[generatePyTorchImports, "import math", ""] ++ #[
+  #[imports, "import math", ""] ++ #[
     "class MultiHeadAttention(nn.Module):",
-    indentTwo s!"def __init__(self, embed_dim={modelWidth}, num_heads={headCount}):",
-    indentFour "super().__init__()",
-    indentFour "self.embed_dim = embed_dim",
-    indentFour "self.num_heads = num_heads",
-    indentFour "self.head_dim = embed_dim // num_heads",
-    indentFour "assert embed_dim % num_heads == 0",
+    indent 2 s!"def __init__(self, embed_dim={modelWidth}, num_heads={headCount}):",
+    indent 4 "super().__init__()",
+    indent 4 "self.embed_dim = embed_dim",
+    indent 4 "self.num_heads = num_heads",
+    indent 4 "self.head_dim = embed_dim // num_heads",
+    indent 4 "assert embed_dim % num_heads == 0",
     -- TorchLean's executable attention uses bias-free projection matrices.
-    indentFour "self.q_proj = nn.Linear(embed_dim, embed_dim, bias=False)",
-    indentFour "self.k_proj = nn.Linear(embed_dim, embed_dim, bias=False)",
-    indentFour "self.v_proj = nn.Linear(embed_dim, embed_dim, bias=False)",
-    indentFour "self.out_proj = nn.Linear(embed_dim, embed_dim, bias=False)",
-    indentTwo "",
-    indentTwo "def forward(self, x, mask=None):",
-    indentFour "B, S, E = x.shape",
-    indentFour "q = self.q_proj(x).view(B, S, self.num_heads, self.head_dim).transpose(1, 2)",
-    indentFour "k = self.k_proj(x).view(B, S, self.num_heads, self.head_dim).transpose(1, 2)",
-    indentFour "v = self.v_proj(x).view(B, S, self.num_heads, self.head_dim).transpose(1, 2)",
-    indentFour "scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)",
-    indentFour "if mask is not None:",
-    indentSix "scores = scores.masked_fill(mask == 0, float('-inf'))",
-    indentFour "attn = torch.softmax(scores, dim=-1)",
-    indentFour "out = torch.matmul(attn, v)",
-    indentFour "out = out.transpose(1, 2).contiguous().view(B, S, E)",
-    indentFour "return self.out_proj(out)",
+    indent 4 "self.q_proj = nn.Linear(embed_dim, embed_dim, bias=False)",
+    indent 4 "self.k_proj = nn.Linear(embed_dim, embed_dim, bias=False)",
+    indent 4 "self.v_proj = nn.Linear(embed_dim, embed_dim, bias=False)",
+    indent 4 "self.out_proj = nn.Linear(embed_dim, embed_dim, bias=False)",
+    indent 2 "",
+    indent 2 "def forward(self, x, mask=None):",
+    indent 4 "B, S, E = x.shape",
+    indent 4 "q = self.q_proj(x).view(B, S, self.num_heads, self.head_dim).transpose(1, 2)",
+    indent 4 "k = self.k_proj(x).view(B, S, self.num_heads, self.head_dim).transpose(1, 2)",
+    indent 4 "v = self.v_proj(x).view(B, S, self.num_heads, self.head_dim).transpose(1, 2)",
+    indent 4 "scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)",
+    indent 4 "if mask is not None:",
+    indent 6 "scores = scores.masked_fill(mask == 0, float('-inf'))",
+    indent 4 "attn = torch.softmax(scores, dim=-1)",
+    indent 4 "out = torch.matmul(attn, v)",
+    indent 4 "out = out.transpose(1, 2).contiguous().view(B, S, E)",
+    indent 4 "return self.out_proj(out)",
     "",
     "class FeedForward(nn.Module):",
-    indentTwo
+    indent 2
       s!"def __init__(self, embed_dim={modelWidth}, hidden_dim={feedForwardWidth}):",
-    indentFour "super().__init__()",
-    indentFour "self.fc1 = nn.Linear(embed_dim, hidden_dim)",
-    indentFour "self.fc2 = nn.Linear(hidden_dim, embed_dim)",
-    indentTwo "",
-    indentTwo "def forward(self, x):",
-    indentFour "return self.fc2(F.relu(self.fc1(x)))",
+    indent 4 "super().__init__()",
+    indent 4 "self.fc1 = nn.Linear(embed_dim, hidden_dim)",
+    indent 4 "self.fc2 = nn.Linear(hidden_dim, embed_dim)",
+    indent 2 "",
+    indent 2 "def forward(self, x):",
+    indent 4 "return self.fc2(F.relu(self.fc1(x)))",
     "",
     s!"class {className}(nn.Module):",
-    indentTwo (s!"\"\"\"Transformer Encoder with {layerCount} layers, {headCount} heads, " ++
+    indent 2 (s!"\"\"\"Transformer Encoder with {layerCount} layers, {headCount} heads, " ++
       s!"embed dim {modelWidth}, hidden dim {feedForwardWidth}\"\"\""),
-    indentTwo "",
-    indentTwo s!"def __init__(self):",
-    indentFour "super().__init__()",
-    indentFour "self.layers = nn.ModuleList([nn.ModuleDict({",
-    indentSix s!"'mha': MultiHeadAttention({modelWidth}, {headCount}),",
-    indentSix s!"'norm1': nn.LayerNorm({modelWidth}),",
-    indentSix s!"'ffn': FeedForward({modelWidth}, {feedForwardWidth}),",
-    indentSix s!"'norm2': nn.LayerNorm({modelWidth})",
-    indentFour s!"}) for _ in range({layerCount})])",
-    indentTwo "",
-    indentTwo "def forward(self, x, mask=None):",
-    indentFour "# x: (batch, seq_len, embed_dim)",
-    indentFour "for layer in self.layers:",
-    indentSix "# Self-attention block",
-    indentSix "attn_out = layer['mha'](x, mask)",
-    indentSix "x = layer['norm1'](x + attn_out)",
-    indentSix "# Feed-forward block",
-    indentSix "ffn_out = layer['ffn'](x)",
-    indentSix "x = layer['norm2'](x + ffn_out)",
-    indentFour "return x",
-    indentTwo "",
-    indentTwo "@property",
-    indentTwo "def input_shape(self):",
-    indentFour s!"return ({sequenceLength}, {modelWidth})",
-    indentFour "",
-    indentTwo "@property",
-    indentTwo "def output_shape(self):",
-    indentFour s!"return ({sequenceLength}, {modelWidth})",
-    indentFour "",
-    indentTwo "@property",
-    indentTwo "def layer_count(self):",
-    indentFour s!"return {layerCount}",
-    indentFour "",
-    indentTwo "@property",
-    indentTwo "def operation_types(self):",
-    indentFour
+    indent 2 "",
+    indent 2 s!"def __init__(self):",
+    indent 4 "super().__init__()",
+    indent 4 "self.layers = nn.ModuleList([nn.ModuleDict({",
+    indent 6 s!"'mha': MultiHeadAttention({modelWidth}, {headCount}),",
+    indent 6 s!"'norm1': nn.LayerNorm({modelWidth}),",
+    indent 6 s!"'ffn': FeedForward({modelWidth}, {feedForwardWidth}),",
+    indent 6 s!"'norm2': nn.LayerNorm({modelWidth})",
+    indent 4 s!"}) for _ in range({layerCount})])",
+    indent 2 "",
+    indent 2 "def forward(self, x, mask=None):",
+    indent 4 "# x: (batch, seq_len, embed_dim)",
+    indent 4 "for layer in self.layers:",
+    indent 6 "# Self-attention block",
+    indent 6 "attn_out = layer['mha'](x, mask)",
+    indent 6 "x = layer['norm1'](x + attn_out)",
+    indent 6 "# Feed-forward block",
+    indent 6 "ffn_out = layer['ffn'](x)",
+    indent 6 "x = layer['norm2'](x + ffn_out)",
+    indent 4 "return x",
+    indent 2 "",
+    indent 2 "@property",
+    indent 2 "def input_shape(self):",
+    indent 4 s!"return ({sequenceLength}, {modelWidth})",
+    indent 4 "",
+    indent 2 "@property",
+    indent 2 "def output_shape(self):",
+    indent 4 s!"return ({sequenceLength}, {modelWidth})",
+    indent 4 "",
+    indent 2 "@property",
+    indent 2 "def layer_count(self):",
+    indent 4 s!"return {layerCount}",
+    indent 4 "",
+    indent 2 "@property",
+    indent 2 "def operation_types(self):",
+    indent 4
       "return ['MultiHeadAttention', 'LayerNorm', 'FeedForward', 'LayerNorm'] * self.layer_count",
-    indentFour ""
+    indent 4 ""
   ] ++
-    generateGetModelInfoMethodLines className
+    metadata className
 
 /--
 Generate a single-layer Transformer encoder module with an embedded `state_dict` initializer.
@@ -127,7 +127,7 @@ TorchLean attention projections use mathematical `(input, output)` orientation a
 for PyTorch. Feed-forward layers already use PyTorch's `(output, input)` orientation and are emitted
 unchanged.
 -/
-def withParameters (sequenceLength modelWidth headCount feedForwardWidth : Nat)
+def weights (sequenceLength modelWidth headCount feedForwardWidth : Nat)
   (queryWeight keyWeight valueWeight outputWeight :
     Tensor Float [modelWidth, modelWidth])
   (feedForwardInputWeight : Tensor Float [feedForwardWidth, modelWidth])
@@ -137,52 +137,52 @@ def withParameters (sequenceLength modelWidth headCount feedForwardWidth : Nat)
     Tensor Float [modelWidth])
   (className : String := "TransformerEncoder") : String :=
   joinLines #[
-    classSource sequenceLength modelWidth headCount feedForwardWidth 1 className,
+    source sequenceLength modelWidth headCount feedForwardWidth 1 className,
     "",
     "# Weight initialization helpers",
     "def get_transformer_state_dict():",
-    indentTwo "state_dict = {}",
-    indentTwo (s!"state_dict['layers.0.mha.q_proj.weight'] = "
-      ++ s!"torch.tensor({transposedMatrixTensorToPy queryWeight})"),
-    indentTwo (s!"state_dict['layers.0.mha.k_proj.weight'] = "
-      ++ s!"torch.tensor({transposedMatrixTensorToPy keyWeight})"),
-    indentTwo (s!"state_dict['layers.0.mha.v_proj.weight'] = "
-      ++ s!"torch.tensor({transposedMatrixTensorToPy valueWeight})"),
-    indentTwo (s!"state_dict['layers.0.mha.out_proj.weight'] = "
-      ++ s!"torch.tensor({transposedMatrixTensorToPy outputWeight})"),
-    indentTwo (s!"state_dict['layers.0.ffn.fc1.weight'] = "
-      ++ s!"torch.tensor({tensorToPyString feedForwardInputWeight})"),
-    indentTwo (s!"state_dict['layers.0.ffn.fc1.bias'] = "
-      ++ s!"torch.tensor({tensorToPyString feedForwardInputBias})"),
-    indentTwo (s!"state_dict['layers.0.ffn.fc2.weight'] = "
-      ++ s!"torch.tensor({tensorToPyString feedForwardOutputWeight})"),
-    indentTwo (s!"state_dict['layers.0.ffn.fc2.bias'] = "
-      ++ s!"torch.tensor({tensorToPyString feedForwardOutputBias})"),
-    indentTwo (s!"state_dict['layers.0.norm1.weight'] = "
-      ++ s!"torch.tensor({tensorToPyString norm1Scale})"),
-    indentTwo (s!"state_dict['layers.0.norm1.bias'] = "
-      ++ s!"torch.tensor({tensorToPyString norm1Bias})"),
-    indentTwo (s!"state_dict['layers.0.norm2.weight'] = "
-      ++ s!"torch.tensor({tensorToPyString norm2Scale})"),
-    indentTwo (s!"state_dict['layers.0.norm2.bias'] = "
-      ++ s!"torch.tensor({tensorToPyString norm2Bias})"),
-    indentTwo "return state_dict",
-    indentTwo "",
+    indent 2 "state_dict = {}",
+    indent 2 (s!"state_dict['layers.0.mha.q_proj.weight'] = "
+      ++ s!"torch.tensor({tensorLiteral (Tensor.swapAdjacentAxes queryWeight 0)})"),
+    indent 2 (s!"state_dict['layers.0.mha.k_proj.weight'] = "
+      ++ s!"torch.tensor({tensorLiteral (Tensor.swapAdjacentAxes keyWeight 0)})"),
+    indent 2 (s!"state_dict['layers.0.mha.v_proj.weight'] = "
+      ++ s!"torch.tensor({tensorLiteral (Tensor.swapAdjacentAxes valueWeight 0)})"),
+    indent 2 (s!"state_dict['layers.0.mha.out_proj.weight'] = "
+      ++ s!"torch.tensor({tensorLiteral (Tensor.swapAdjacentAxes outputWeight 0)})"),
+    indent 2 (s!"state_dict['layers.0.ffn.fc1.weight'] = "
+      ++ s!"torch.tensor({tensorLiteral feedForwardInputWeight})"),
+    indent 2 (s!"state_dict['layers.0.ffn.fc1.bias'] = "
+      ++ s!"torch.tensor({tensorLiteral feedForwardInputBias})"),
+    indent 2 (s!"state_dict['layers.0.ffn.fc2.weight'] = "
+      ++ s!"torch.tensor({tensorLiteral feedForwardOutputWeight})"),
+    indent 2 (s!"state_dict['layers.0.ffn.fc2.bias'] = "
+      ++ s!"torch.tensor({tensorLiteral feedForwardOutputBias})"),
+    indent 2 (s!"state_dict['layers.0.norm1.weight'] = "
+      ++ s!"torch.tensor({tensorLiteral norm1Scale})"),
+    indent 2 (s!"state_dict['layers.0.norm1.bias'] = "
+      ++ s!"torch.tensor({tensorLiteral norm1Bias})"),
+    indent 2 (s!"state_dict['layers.0.norm2.weight'] = "
+      ++ s!"torch.tensor({tensorLiteral norm2Scale})"),
+    indent 2 (s!"state_dict['layers.0.norm2.bias'] = "
+      ++ s!"torch.tensor({tensorLiteral norm2Bias})"),
+    indent 2 "return state_dict",
+    indent 2 "",
     "def load_transformer_weights(model):",
-    indentTwo "model.load_state_dict(get_transformer_state_dict())",
-    indentTwo "return model",
-    indentTwo "",
+    indent 2 "model.load_state_dict(get_transformer_state_dict())",
+    indent 2 "return model",
+    indent 2 "",
     "# Usage example",
     "if __name__ == \"__main__\":",
-    indentTwo s!"model = {className}()",
-    indentTwo "model = load_transformer_weights(model)",
-    indentTwo (s!"x = torch.randn(1, {sequenceLength}, {modelWidth})  " ++
+    indent 2 s!"model = {className}()",
+    indent 2 "model = load_transformer_weights(model)",
+    indent 2 (s!"x = torch.randn(1, {sequenceLength}, {modelWidth})  " ++
       s!"# batch=1, seq_len={sequenceLength}, embed_dim={modelWidth}"),
-    indentTwo "y = model(x)",
-    indentTwo "print(f\"Input shape: {x.shape}\")",
-    indentTwo "print(f\"Output shape: {y.shape}\")",
-    indentTwo "print(f\"Output: {y}\")",
-    indentTwo "print(f\"Model info: {model.get_model_info()}\")"
+    indent 2 "y = model(x)",
+    indent 2 "print(f\"Input shape: {x.shape}\")",
+    indent 2 "print(f\"Output shape: {y.shape}\")",
+    indent 2 "print(f\"Output: {y}\")",
+    indent 2 "print(f\"Model info: {model.get_model_info()}\")"
   ]
 
 end Export.PyTorch.Transformer

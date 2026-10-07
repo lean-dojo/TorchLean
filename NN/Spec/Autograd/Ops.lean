@@ -64,7 +64,7 @@ PyTorch analogy: the "local backward" rule for a pointwise op multiplies by the 
 def liftElementwiseBackward [Mul α] {s : Shape}
   (df : α → α) : Tensor α s → Tensor α s → Tensor α s :=
   fun x dLdy =>
-    let gx := mapSpec df x
+    let gx := Tensor.map df x
     mulSpec gx dLdy
 
 /-- Elementwise ReLU OpSpec on any shape.
@@ -73,7 +73,7 @@ PyTorch analogy: `torch.relu(x)` / `torch.nn.functional.relu(x)`. -/
 def reluOp [Mul α] [One α] [Zero α] [Max α] [BEq α] [LT α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {s : Shape} : OpSpec α s s :=
-{ forward      := mapSpec (α:=α) (s:=s) Activation.Math.reluSpec
+{ forward      := Tensor.map (α:=α) (shape :=s) Activation.Math.reluSpec
 , backward     := liftElementwiseBackward (α:=α) (s:=s) Activation.Math.reluDerivSpec }
 
 variable [Context α]
@@ -82,21 +82,21 @@ variable [Context α]
 
 PyTorch analogy: `torch.sigmoid(x)`. -/
 def sigmoidOp {s : Shape} : OpSpec α s s :=
-{ forward      := mapSpec (α:=α) (s:=s) Activation.Math.sigmoidSpec
+{ forward      := Tensor.map (α:=α) (shape :=s) Activation.Math.sigmoidSpec
 , backward     := liftElementwiseBackward (α:=α) (s:=s) Activation.Math.sigmoidDerivSpec }
 
 /-- Elementwise tanh OpSpec on any shape.
 
 PyTorch analogy: `torch.tanh(x)`. -/
 def tanhOp {s : Shape} : OpSpec α s s :=
-{ forward      := mapSpec (α:=α) (s:=s) Activation.Math.tanhSpec
+{ forward      := Tensor.map (α:=α) (shape :=s) Activation.Math.tanhSpec
 , backward     := liftElementwiseBackward (α:=α) (s:=s) Activation.Math.tanhDerivSpec }
 
 /-- Elementwise softplus OpSpec on any shape.
 
 PyTorch analogy: `torch.nn.functional.softplus(x)`. -/
 def softplusOp {s : Shape} : OpSpec α s s :=
-{ forward      := mapSpec (α:=α) (s:=s) Activation.Math.softplusSpec
+{ forward      := Tensor.map (α:=α) (shape :=s) Activation.Math.softplusSpec
 , backward     := liftElementwiseBackward (α:=α) (s:=s) Activation.Math.softplusDerivSpec }
 
 /-- Elementwise SiLU (also called Swish) OpSpec on any shape.
@@ -212,7 +212,7 @@ This is useful when you want to avoid a kink at 0 in optimization.
 PyTorch analogy: there is no single canonical `smoothAbs`, but it is similar in spirit to
 $\sqrt{x^2+\varepsilon}$-style smoothings. -/
 def smoothAbsOp {s : Shape} (ε : α := Context.defaultEpsilon) : OpSpec α s s :=
-{ forward      := mapSpec (α:=α) (s:=s) (fun x => Activation.Math.smoothAbsSpec (α := α)
+{ forward      := Tensor.map (α:=α) (shape :=s) (fun x => Activation.Math.smoothAbsSpec (α := α)
   x ε)
 , backward     := liftElementwiseBackward (α:=α) (s:=s) (fun x =>
   Activation.Math.smoothAbsDerivSpec (α := α) x ε) }
@@ -246,7 +246,7 @@ $\operatorname{sigmoid}(x)/(\operatorname{softplus}(x)+\varepsilon)$.
 PyTorch expression: `torch.log(torch.nn.functional.softplus(x) + eps)`.
 -/
 def safeLogOp {s : Shape} (ε : α := Context.defaultEpsilon) : OpSpec α s s :=
-{ forward      := mapSpec (α:=α) (s:=s) (fun x => Activation.Math.safeLogSpec (α := α) x
+{ forward      := Tensor.map (α:=α) (shape :=s) (fun x => Activation.Math.safeLogSpec (α := α) x
   ε)
 , backward     := liftElementwiseBackward (α:=α) (s:=s) (fun x =>
   Activation.Math.safeLogDerivSpec (α := α) x ε) }
@@ -268,7 +268,7 @@ def sqrtOp  {s : Shape} : OpSpec α s s :=
     -- Select the local factor before multiplying by the upstream value.
     -- The false branch also covers unordered IEEE comparisons.
     let dsqrt : Tensor α s :=
-      mapSpec (α := α) (s := s) (fun v =>
+      Tensor.map (α := α) (shape := s) (fun v =>
         if v > 0 then
           (1 : α) / (2 * MathFunctions.sqrt v)
         else
@@ -321,7 +321,7 @@ PyTorch analogy: usually written manually as `1.0 / (x + eps)`.
 def safeInvOp {s : Shape} : OpSpec α s s :=
 { forward := fun x => safedivSpec (Tensor.full _ (1 : α)) x
 , backward := fun x dLdy =>
-    let denomInv := mapSpec (fun y => (1 : α) / (y + Context.defaultEpsilon)) x
+    let denomInv := Tensor.map (fun y => (1 : α) / (y + Context.defaultEpsilon)) x
     let g := mulSpec (Tensor.full _ (-(1 : α))) (squareSpec denomInv)
     mulSpec g dLdy
 }
@@ -359,7 +359,7 @@ PyTorch analogy: usually written manually as `x / (rhs + eps)`.
 def safeDivOp {s : Shape} (rhs : Tensor α s) : OpSpec α s s :=
 { forward      := fun x => safedivSpec x rhs
 , backward     := fun _x dLdy =>
-    let denomInv := mapSpec (fun y => (1 : α) / (y + Context.defaultEpsilon)) rhs
+    let denomInv := Tensor.map (fun y => (1 : α) / (y + Context.defaultEpsilon)) rhs
     mulSpec denomInv dLdy
 }
 
@@ -550,7 +550,7 @@ PyTorch analogy: `torch.full_like(x, value)` (but here we keep the input only to
 shape, and ignore its content). -/
 def constantOp {s : Shape} (value : α) : OpSpec α s s :=
 { forward      := fun _x => Tensor.full s value
-, backward     := fun x _d => mapSpec (fun _ => 0) x }
+, backward     := fun x _d => Tensor.map (fun _ => 0) x }
 
 /-- Replicate a scalar to any shape; backward sums gradients back to a scalar.
 
@@ -566,11 +566,6 @@ PyTorch analogy: `torch.where(mask, x, 0)`. -/
 def applyMaskOp {s : Shape} (mask : Tensor Bool s) : OpSpec α s s :=
 { forward      := fun x => map2Spec (fun v b => if b then v else 0) x mask
 , backward     := fun _x dLdy => map2Spec (fun g b => if b then g else 0) dLdy mask }
-
-/-- Evaluation-mode dropout, which is the identity in both the forward and backward maps. -/
-def dropoutInferenceOp {s : Shape} (p : α) : OpSpec α s s :=
-{ forward      := fun x => dropoutInferenceSpec (α:=α) p x
-, backward     := fun _x dLdy => dropoutInferenceBackwardSpec (α:=α) p dLdy }
 
 /-- Masked inverted-dropout OpSpec with an explicit mask. -/
 def dropoutMaskedOp {s : Shape} (p : α) (mask : Tensor Bool s) : OpSpec α s s :=

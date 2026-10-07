@@ -6,9 +6,7 @@ Authors: TorchLean Team
 
 module
 
--- These two are discussed in the overview rather than used by it, which is exactly the shape
--- `lake shake` reads as dead. They stay: the overview is the only route by which they get
--- typechecked.
+-- This proof entrypoint re-exports the interval lemmas and runtime correspondence theorem.
 public import NN.MLTheory.CROWN.Proofs.GraphIBPBasicTheorems
 public import NN.MLTheory.CROWN.Proofs.GraphRuntimeBridge
 
@@ -28,7 +26,13 @@ The core pattern repeated throughout the development is:
 4. Use a topological-order induction to obtain an end-to-end “checker implies enclosure” theorem.
 5. Connect the proof-side objects to the executable ones: `GraphRunibpEndToEnd` identifies the
    engine's `runIBP` with the proof-side pass, and `GraphRuntimeBridge` shows that the runtime
-   evaluator `NN.IR.Graph.evalNode` at `ℝ` is reproduced by the proof-side value semantics.
+   evaluator `NN.IR.Graph.evalNode` at `ℝ` agrees with the proof-side value semantics for the
+   supported node kinds, under the stated input, parameter, id, and shape hypotheses.
+
+These results use exact real semantics. Applying them to an imported certificate requires the
+checker and the theorem to describe the same graph and query, with their enclosure assumptions
+proved. Native floating-point and GPU execution require separate numerical and implementation
+contracts.
 
 ## Relation to existing implementations
 

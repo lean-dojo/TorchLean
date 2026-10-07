@@ -96,9 +96,9 @@ def forState {σ τ : Shape} {α : Type}
     let outputBox ←
     match algorithm with
       | .ibp =>
-          lowered.outputBoxOrThrow (lowered.runIBP parameters)
+          IO.ofExcept (lowered.outputBox? (lowered.runIBP parameters))
       | .crown =>
-          lowered.outputBoxCROWNOrThrow parameters inputBox
+          IO.ofExcept (lowered.outputBoxCROWN? parameters inputBox)
       | .alphaBetaCrown =>
           let inputDim ← IO.ofExcept lowered.inputDim?
           IO.ofExcept <| NN.MLTheory.CROWN.Cert.outputBoxAlphaBetaCROWN?

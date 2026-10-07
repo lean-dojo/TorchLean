@@ -12,14 +12,10 @@ public import NN.Proofs.Tensor.Basic.FactorizationsReconstruction
 /-!
 # Orthonormality of the executable Gram–Schmidt `Q` factor (`Qᵀ Q = 1`)
 
-This file closes the one finite-fold property left open by
-`NN.Proofs.Tensor.Basic.FactorizationsReconstruction`: the orthonormality of the `Q` factor produced
-by the executable classical Gram–Schmidt `gramSchmidtFn`.
-
-The strategy is to **unify the executable variant with Mathlib's `gramSchmidt`** rather than
-re-derive the orthogonality induction by hand. Reading the columns of `A` as vectors of
+The columns of classical Gram–Schmidt's `Q` factor are identified with mathlib's normalized
+Gram–Schmidt vectors. Reading the columns of `A` as vectors of
 `EuclideanSpace ℝ (Fin m)`, the `j`-th executable `Q` column equals Mathlib's `gramSchmidtNormed ℝ`
-of the column map (`Qcol_bridge`), so the orthonormality follows from Mathlib's
+of the column map (`Qcol_bridge`), so orthonormality follows from mathlib's
 `gramSchmidtNormed_orthonormal'`.
 
 ## Main results
@@ -114,14 +110,13 @@ noncomputable def gsCol (A : Fin m → Fin n → ℝ) (j : Fin n) : EuclideanSpa
 theorem gsCol_apply (A : Fin m → Fin n → ℝ) (k : Fin n) (r : Fin m) :
     gsCol A k r = gsA A k r := rfl
 
-/-- **Orthogonalized-vector bridge.** Given that the earlier `Q` columns coincide with Mathlib's
+/-- Given that the earlier `Q` columns coincide with mathlib's
 normalized Gram–Schmidt vectors, the executable orthogonalized vector `v` at index `k` equals
 Mathlib's (un-normalized) `gramSchmidt` vector. -/
 theorem gsV_bridge (A : Fin m → Fin n → ℝ) (k : Fin n)
     (ih : ∀ i : Fin n, i.val < k.val →
         (WithLp.toLp 2 (Qcol A i) : EuclideanSpace ℝ (Fin m)) = gramSchmidtNormed ℝ (gsCol A) i) :
     gramSchmidt ℝ (gsCol A) k = WithLp.toLp 2 (gsV A (qsPrefix A k) k) := by
-  -- Rewrite Mathlib's vector via the explicit recurrence.
   rw [show gramSchmidt ℝ (gsCol A) k
         = gsCol A k - ∑ i ∈ Finset.Iio k,
             (⟪gramSchmidt ℝ (gsCol A) i, gsCol A k⟫_ℝ / ‖gramSchmidt ℝ (gsCol A) i‖ ^ 2)
@@ -138,7 +133,6 @@ theorem gsV_bridge (A : Fin m → Fin n → ℝ) (k : Fin n)
     rw [proj_normalize (gramSchmidt ℝ (gsCol A) i) (gsCol A k),
       ← gramSchmidtNormed_eq_inv_norm_smul, ih i hik]
   rw [Finset.sum_congr rfl hproj]
-  -- Compare entrywise.
   ext r
   rw [PiLp.sub_apply]
   show gsCol A k r - _ = gsV A (qsPrefix A k) k r
@@ -159,9 +153,8 @@ theorem gsV_bridge (A : Fin m → Fin n → ℝ) (k : Fin n)
   rw [sum_Iio_eq_mask, qsPrefix_eq_map, List.map_map, take_map_sum_eq]
   rfl
 
-/-- **Normalized-column bridge.** The executable `Q` column at index `k` equals Mathlib's
-`gramSchmidtNormed`. Proved by strong induction on `k`, under positive `R` pivots (full column
-rank). -/
+/-- The specification `Q` column at index `k` equals mathlib's `gramSchmidtNormed`,
+under positive `R` pivots. -/
 theorem Qcol_bridge (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < Rmat A j j) :
     ∀ k : Fin n,
       (WithLp.toLp 2 (Qcol A k) : EuclideanSpace ℝ (Fin m)) = gramSchmidtNormed ℝ (gsCol A) k := by
@@ -202,7 +195,7 @@ theorem gramSchmidtNormed_gsCol_ne_zero (A : Fin m → Fin n → ℝ)
   rw [gramSchmidtNormed_eq_inv_norm_smul]
   exact smul_ne_zero (inv_ne_zero (ne_of_gt hpos)) (norm_pos_iff.mp hpos)
 
-/-- **Orthonormality of the executable `Q` columns.** Under positive `R` pivots,
+/-- Under positive `R` pivots, the specification `Q` columns satisfy
 `qₐ · q_b = δₐᵦ`. -/
 theorem Q_orthonormal (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < Rmat A j j) (a b : Fin n) :
     Spec.dotFn (Qcol A a) (Qcol A b) = if a = b then 1 else 0 := by
@@ -214,7 +207,7 @@ theorem Q_orthonormal (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < 
   rw [horth]
   simp only [Subtype.mk.injEq]
 
-/-- **Matrix-level orthonormality.** `Qᵀ Q = 1` for the executable Gram–Schmidt `Q` factor. -/
+/-- `Qᵀ Q = 1` for the specification Gram–Schmidt `Q` factor under positive pivots. -/
 theorem QT_mul_Q_eq_one (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < Rmat A j j) :
     (Matrix.of (fun i k => Qmat A i k))ᵀ * Matrix.of (fun i k => Qmat A i k) = 1 := by
   ext a b
@@ -224,8 +217,8 @@ theorem QT_mul_Q_eq_one (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 
         rw [dotFn_eq_sum]; rfl,
     Q_orthonormal A hrank a b]
 
-/-- **Full QR specification.** For `A` with positive executable `R`-pivots (full column rank), the
-executable Gram–Schmidt factors satisfy `Spec.Factorization.IsQR`: `Qᵀ Q = 1`, `R` upper-triangular,
+/-- For `A` with positive specification `R`-pivots, the
+Gram–Schmidt factors satisfy `Spec.Factorization.IsQR`: `Qᵀ Q = 1`, `R` upper-triangular,
 and `A = Q · R`. -/
 theorem isQR_of_pos (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < Rmat A j j) :
     Spec.Factorization.IsQR (Matrix.of A) (Matrix.of (fun i k => Qmat A i k))
@@ -235,7 +228,7 @@ theorem isQR_of_pos (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < Rm
   show Rmat A i j = 0
   exact Rmat_upper_triangular A (Fin.lt_def.mp hji)
 
-/-- **Tensor-level orthonormality.** For a tensor `A` with positive `qrRSpec` pivots, the `Q` factor
+/-- For a tensor `A` with positive `qrRSpec` pivots, the `Q` factor
 `qrQSpec A` has orthonormal columns: `Σ_i Q[i,a]·Q[i,b] = δₐᵦ`. -/
 theorem qrSpec_orthonormal (A : TorchLean.Tensor ℝ [m, n])
     (hrank : ∀ j : Fin n, 0 < Spec.get2 (Spec.qrRSpec A) j j) (a b : Fin n) :

@@ -13,7 +13,8 @@ public import NN.Runtime.Autograd.Torch.Core.Session.State
 # Eager Backend Dispatch
 
 Cache each accepted backend capsule, then require an executable handler for that exact provider
-and device. Reports describe the handler we actually run.
+and device. Reports describe the selection before handler lookup or execution; they are not a
+record of completed native calls.
 -/
 
 public section

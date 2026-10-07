@@ -241,14 +241,19 @@ theorem convOutSpatial_same {d : Nat} (spatial radius : Tensor Nat [d]) :
 def convOutShape {d : Nat} (inSpatial kernel stride padding : Tensor Nat [d]) : Shape :=
   Shape.ofList (convOutSpatial inSpatial kernel stride padding).data.toList
 
-/-- The grouped bilinear contraction shared by arbitrary-rank convolutions. -/
+/-- The bilinear contraction shared by arbitrary-rank convolutions.
+
+`inputChannel` selects the input channel. `weightChannel` selects the corresponding weight channel;
+it defaults to the input channel for dense weights, while packed grouped weights use the local
+channel index. Both layouts keep the same channel and spatial accumulation order. -/
 def Conv.Internal.convCoreWith
-    {d inC outC : Nat} {kernel inSpatial outSpatial : Tensor Nat [d]}
+    {d inC outC weightC : Nat} {kernel inSpatial outSpatial : Tensor Nat [d]}
     (channelsPerOutput : Nat)
     (inputChannel : Fin outC → Fin channelsPerOutput → Nat)
     (inputIndex? : List Nat → List Nat → Option (List Nat))
-    (weights : Tensor α (Shape.ofList (outC :: inC :: kernel.data.toList)))
-    (input : Tensor α (Shape.ofList (inC :: inSpatial.data.toList))) :
+    (weights : Tensor α (Shape.ofList (outC :: weightC :: kernel.data.toList)))
+    (input : Tensor α (Shape.ofList (inC :: inSpatial.data.toList)))
+    (weightChannel : Fin outC → Fin channelsPerOutput → Nat := inputChannel) :
     Tensor α (Shape.ofList (outC :: outSpatial.data.toList)) :=
   Tensor.dim fun outChannel =>
     Tensor.generate outSpatial.data.toList fun outIndex =>
@@ -260,7 +265,8 @@ def Conv.Internal.convCoreWith
             | none => 0
             | some inputIndex => getAtOrZero input (inChannel :: inputIndex)
           let kernelValue : α :=
-            getAtOrZero weights (outChannel.val :: inChannel :: kernelIndex)
+            getAtOrZero weights
+              (outChannel.val :: weightChannel outChannel localChannel :: kernelIndex)
           acc + inputValue * kernelValue) 0
 
 /--
@@ -299,32 +305,6 @@ def groupedConvCoreSpec
     weights input
 
 /--
-The grouped bilinear contraction with weights packed per group, so that the channel axis of
-`weights` is indexed by the position of an input channel inside its group rather than by the
-global input channel.
--/
-def Conv.Internal.groupedConvCoreWith
-    {d inC outC weightC : Nat} {kernel inSpatial outSpatial : Tensor Nat [d]}
-    (channelsPerOutput : Nat)
-    (inputChannel : Fin outC → Fin channelsPerOutput → Nat)
-    (inputIndex? : List Nat → List Nat → Option (List Nat))
-    (weights : Tensor α (Shape.ofList (outC :: weightC :: kernel.data.toList)))
-    (input : Tensor α (Shape.ofList (inC :: inSpatial.data.toList))) :
-    Tensor α (Shape.ofList (outC :: outSpatial.data.toList)) :=
-  Tensor.dim fun outChannel =>
-    Tensor.generate outSpatial.data.toList fun outIndex =>
-      (List.finRange channelsPerOutput).foldl (fun acc localChannel =>
-        let inChannel := inputChannel outChannel localChannel
-        Conv.Internal.foldlIndices kernel.data.toList acc fun acc kernelIndex =>
-          let inputValue : α :=
-            match inputIndex? outIndex kernelIndex with
-            | none => 0
-            | some inputIndex => getAtOrZero input (inChannel :: inputIndex)
-          let kernelValue : α :=
-            getAtOrZero weights (outChannel.val :: localChannel.val :: kernelIndex)
-          acc + inputValue * kernelValue) 0
-
-/--
 The grouped, dilated contraction with weights in PyTorch's packed layout
 `(outC, inC / groups, k...)`, which is how `torch.nn.Conv{1,2,3}d(groups=g).weight` is stored.
 
@@ -349,13 +329,13 @@ def groupedConvPackedCoreSpec
 
   let inChannelsPerGroup := inC / groups
   let outChannelsPerGroup := outC / groups
-  Conv.Internal.groupedConvCoreWith inChannelsPerGroup
+  Conv.Internal.convCoreWith inChannelsPerGroup
     (fun outChannel localChannel =>
       (outChannel.val / outChannelsPerGroup) * inChannelsPerGroup + localChannel.val)
     (fun outIndex kernelIndex =>
       Conv.Internal.mkDilatedInputIdx? outIndex kernelIndex stride.data.toList dilation.data.toList
         paddingBefore.data.toList)
-    weights input
+    weights input (weightChannel := fun _ localChannel => localChannel.val)
 
 /--
 Expand packed grouped weights `(outC, inC / groups, k...)` into the block-diagonal dense layout
@@ -446,6 +426,7 @@ theorem castShape_groupedConvCoreSpec_one_symmetric
   rw [convOutSpatialDilated_one_symmetric]
   rw [Nat.div_one inC]
   rw [hInputChannel, hInputIndex]
+  rw [Nat.div_one outC, hInputChannel]
 
 /-- Broadcast one channel value over a supplied spatial shape. -/
 def Conv.Internal.convBiasBroadcastWith

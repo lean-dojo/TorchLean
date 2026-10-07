@@ -11,7 +11,9 @@ public import NN.Tensor.Internal.Syntax.Parser.Expression -- shake: keep
 # Einsum-pattern parsing
 
 This module parses comma-separated operands, the output expression, and their
-canonical rendering round trip.
+canonical rendering round trip. Empty operand expressions represent scalar tensors;
+leading, adjacent, and trailing commas therefore preserve empty operands.
+Dimension compatibility and supported axis forms belong to the einsum checker.
 -/
 
 @[expose] public section
@@ -24,7 +26,7 @@ open Parser.Impl
 
 namespace Parser.Impl
 
-/-- Split an einsum input token stream at comma tokens. -/
+/-- Split at commas without discarding empty scalar-operand expressions. -/
 def splitCommas : List Token → List Token → List (List Token) → List (List Token)
   | [], currentRev, groupsRev => (currentRev.reverse :: groupsRev).reverse
   | token :: rest, currentRev, groupsRev =>

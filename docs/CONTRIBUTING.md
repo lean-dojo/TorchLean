@@ -38,11 +38,6 @@ Custom scalar computations use the checked `NN.Kernel` frontend and NVRTC rather
 operator catalogue. Its [guide](../NN/Kernel/README.md) describes source correspondence, supported
 precision, and the separate native execution boundary.
 
-Set `TORCHLEAN_BUILD_ROOT` to choose the cache location, or use `--torchlean-build-dir` to print
-the selected path. `TORCHLEAN_BUILD_PROFILE` overrides the profile name; use distinct names for
-different backend configurations. If `.lake/build` is an existing directory, move it aside once
-before using the wrapper. The wrapper preserves it and reports the destination it needs.
-
 `import NN.API` provides the application API; `import NN` includes specifications, runtime,
 verification, and proofs. Neither imports executable examples or tests.
 
@@ -50,10 +45,14 @@ verification, and proofs. Neither imports executable examples or tests.
 | --- | --- |
 | `NN` | Library specifications, runtimes, APIs, proofs, and checkers |
 | `NNExamples` | Runnable examples and model commands |
-| `NNTests` | Test modules and compiled documentation snippets |
+| `NNTests` | Test modules |
 | `NNCI` | Maintained modules outside the downstream umbrella |
 | `NNSlowProofs` | Proof-heavy IR semantic equivalence |
 | `TorchLeanDocs:docs` | Generated API documentation |
+
+For public API or proof changes, also run `scripts/lake.sh build NNCI NNSlowProofs`.
+These import targets check maintained library modules; examples and tests have their own targets.
+Large proofs may elaborate without intermediate progress output.
 
 Use Lean's types and proofs for mathematical behavior. Run development checks, tactic experiments,
 and broad input sweeps in temporary scratch files outside the repository, then remove them after
@@ -122,7 +121,7 @@ may have relied on a dependency arriving indirectly.
 A runtime-only or verifier-only operation must identify that boundary in its documentation.
 Theorems, conditional contracts, checker acceptance, and native execution carry different
 assumptions; see [trust boundaries](TRUST_BOUNDARIES.md). AI assistance is disclosed in
-[AI usage](AI_USAGE.md).
+[AI usage](#ai-usage-disclosure).
 
 ## Names and Proof Style
 
@@ -148,8 +147,6 @@ assumptions; see [trust boundaries](TRUST_BOUNDARIES.md). AI assistance is discl
 - Preserve theorem statements. Split expensive proofs into reusable lemmas rather than weakening
   hypotheses or raising resource limits.
 
-Run `python3 scripts/checks/repo_lint.py --fail-on-warn` for source and API checks.
-
 Reusable proof automation lives under `NN/Tactic`; see the [tactic guide](../NN/Tactic/README.md).
 Extend `autograd` with a proved rule when adding a differentiable operation, rather than adding
 another expression representation or a model-specific proof solver.
@@ -171,56 +168,51 @@ Guide source lives in `home_page/blueprint/`. Build the website with:
 scripts/docs/build_site.sh
 ```
 
-See [website development](../home_page/README.md) for preview commands. Edit source files,
+See [website development](../scripts/README.md#documentation-and-data) for preview commands. Edit source files,
 not generated pages under `home_page/docs` or `home_page/_site`.
 
 ### Docstring Examples
 
-API docstrings with an `Example:` block use compiler-checked snippets under
-`NN/Tests/API/DocExamples/`. The linter synchronizes their text with the docstrings.
-
-Adding one is three steps:
-
-1. Write the snippet in the mirror module for its area (`Neural.lean`, `Trainer.lean`, `Data.lean`,
-   `Tensor.lean`, `Text.lean`), inside a namespace of its own, preceded by a marker naming the
-   declaration it documents:
-
-   ```lean
-   -- doc-example: NN/API/Seeded.lean :: def dropout
-   namespace Dropout
-
-   -- Active in `.train` mode and the identity in `.eval` mode, which the trainer selects for you.
-   def model : nn.Builder (nn.Sequential [64] [64]) :=
-     nn.dropout 0.1
-
-   end Dropout
-   ```
-
-   The part after `::` is a prefix of the declaration line, and it has to name exactly one
-   declaration in that file; the linter says so when it does not.
-
-2. Run `python3 scripts/checks/repo_lint.py --sync-doc-examples`. That copies the namespace body
-   into the docstring verbatim as a fenced `lean` block under an `Example:` heading, expanding a
-   one-line docstring into the multi-line form if it has to.
-
-3. Build. `scripts/lake.sh build NNTests` compiles the snippet, and `scripts/lake.sh lint` compares the docstring against
-   it, so the two cannot drift apart afterwards.
-
-Snippets use `--` line comments, never nested docstrings: a `-/` inside the snippet would close the
-docstring it is being pasted into. Nothing in the mirror modules runs, and that is deliberate.
-Elaboration is the property worth checking, and a snippet that has to run needs fixtures, a device,
-and a seed, which is what the example programs under `NN/Examples/` are for.
-
-The build sets `warningAsError`, so any warning fails `lake build`. Check a single file the same
-way the build will:
-
-```bash
-scripts/lake.sh env lean -DwarningAsError=true NN/Path/To/File.lean
-```
+Keep short examples directly in API docstrings. Check changed snippets in temporary Lean files
+outside the repository, then remove the scratch files. Runnable tutorials belong in `NN/Examples`;
+do not maintain a second copy under the test tree.
 
 ## Before Review
+
+The build treats warnings as errors. Check an individual module with
+`scripts/lake.sh env lean -DwarningAsError=true NN/Path/To/File.lean`.
 
 - Relevant build, proof, numerical, and lint checks pass.
 - Temporary refactor tests and exploratory code are removed.
 - Public documentation matches the final implementation and states remaining assumptions.
 - Dataset and third-party provenance is retained.
+
+## AI Usage Disclosure
+
+TorchLean has been developed and formalized primarily by hand over an extended
+period of work. The core definitions, architecture, theorem statements, proof
+decisions, runtime boundaries, examples, and release choices were made and
+reviewed by the maintainers. We used AI assistance only as a limited support
+tool for some of the harder proof engineering and debugging work, not as an
+oracle and not as a replacement for manual formalization.
+
+This included autograd proofs, runtime approximation, CROWN verification explanations,
+and IR lowering correctness, as well as native-runtime debugging and documentation.
+
+### Tools We Used
+
+- OpenAI GPT-5.2 Pro was used selectively as an interactive assistant for a few
+  difficult proof and engineering tasks. In particular, it helped with proof
+  planning, Lean search, refactoring long proof scripts, debugging stubborn Lean
+  goals, and explaining possible ways to organize large correctness arguments.
+- GPT-5.6 Pro was also useful while working around CUDA and native runtime
+  boundaries: reading error logs, thinking through FFI and memory ownership
+  issues, checking documentation language, and helping us separate what Lean
+  proves from what the CUDA/cuBLAS runtime must be trusted to do.
+- More recently, OpenAI Codex has helped with repository-wide cleanup, API and
+  module organization, upgrades to newer Lean releases, and the build, test,
+  and documentation checks that accompany those changes. The maintainers
+  reviewed the resulting code and decided which changes belonged in TorchLean.
+- Harmonic was used in a narrower exploratory role for a small amount of
+  definition design and mathematical organization, especially before committing
+  some concepts to Lean.

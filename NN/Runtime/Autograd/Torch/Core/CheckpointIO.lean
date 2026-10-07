@@ -79,9 +79,7 @@ partial def readExact
 
 /-- Read one unsigned 64-bit little-endian field. -/
 def readNat64 (formatName : String) (handle : IO.FS.Handle) : IO Nat := do
-  match nat64FromLE formatName (← readExact formatName handle 8) with
-  | .ok value => pure value
-  | .error message => throw <| IO.userError message
+  IO.ofExcept (nat64FromLE formatName (← readExact formatName handle 8))
 
 /-- Write the stable family magic and explicit version of a binary checkpoint. -/
 def writeFormat (format : Format) (handle : IO.FS.Handle) : IO Unit := do

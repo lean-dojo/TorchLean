@@ -204,9 +204,12 @@ def freshOwner : IO Nat :=
     set (owner + 1)
     pure owner
 
-/-- Reject a handle from another session or an earlier recording phase. -/
-def validateAgainst (expectedOwner : Nat) (expectedGeneration : IO.Ref Nat) (identity : RefIdentity)
+/-- Reject an unowned handle, a foreign session, or an earlier recording phase, in that order. -/
+def validate (expectedOwner : Nat) (expectedGeneration : IO.Ref Nat)
+    (identity? : Option RefIdentity)
     (kind : String := "reference") : IO Unit := do
+  let some identity := identity?
+    | throw <| IO.userError s!"torch: {kind} has no session owner"
   unless expectedOwner == identity.owner do
     throw <| IO.userError s!"torch: {kind} belongs to a different session"
   let currentGeneration ← expectedGeneration.get

@@ -15,6 +15,10 @@ The lexer separates punctuation from axis words while preserving Unicode
 scalar offsets. Its default identifier policy reproduces the CPython 3.12
 Unicode predicates used by einops v0.8.2. An explicit ASCII policy remains
 available for applications that deliberately restrict their pattern format.
+
+Locations count Unicode scalar values, not UTF-8 bytes. Both `...` and `…`
+produce an ellipsis token, with their original three-character and one-character
+spans respectively; canonical rendering uses `...`.
 -/
 
 public section

@@ -13,16 +13,10 @@ public import NN.Runtime.Autograd.IRExec.Correctness.SemanticEquivalenceCommon
 
 Semantic-preservation lemmas for permutation-style operators in the IR-to-forward-graph bridge.
 
-This file covers the IR `.permute perm` node kind. The lowering pass lowers a permutation to a
-swap-depth program (a list of axis swaps). The proof below mirrors that lowering: it validates the
-permutation witness and computed swaps, constructs the forward-graph closure in terms of
-`applySwapsTensor`, then rewrites the IR evaluator's `permuteSomeTensor` to the same swap-based
-implementation via `permuteSomeTensor_eq_applySwapsTensor`.
-
-Build note: permutation proofs are slow because a permutation changes both tensor data and the type
-level shape. The proof therefore has to relate a dynamic IR permutation to the lowered swap program
-while keeping casts proof-irrelevant. The swap-program lemmas should stay small and
-avoid redoing permutation arithmetic inside the lowering branch proof.
+Permutation and transpose both lower to adjacent-axis swaps. `permuteSomeTensor_eq_swapAxes`
+identifies the shape-erased evaluator's swap fold with the typed `swapAxes` calculation. Transpose
+first checks its two axes and constructs the corresponding permutation. Both proofs retain the
+computed-shape and declared-output checks before composing with the rest of the graph.
 -/
 
 @[expose] public section
@@ -35,8 +29,6 @@ open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
--- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
--- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
 /-- Semantic-preservation lemma for `.permute perm` lowering. -/
@@ -69,27 +61,23 @@ theorem buildFrom_denoteAllFrom_permute
 
   unfold buildFrom at hBuild
   simp (config := { failIfUnchanged := false }) [hi, hN, hk, lowerPermute] at hBuild
-  -- The operation has exactly one parent.
   cases hp : unaryParent? n.parents with
   | none =>
       simp [hp, throw_eq_error] at hBuild
       try cases hBuild
   | some pId =>
-          -- `getNode pId` must succeed.
           cases hP : g.getNode pId with
           | error msg =>
               simp [hp, hP, throw_eq_error] at hBuild
               try cases hBuild
           | ok pNode =>
               simp (config := { failIfUnchanged := false }) [hp, hP] at hBuild
-              -- Parent index must typecheck.
               cases hIdx : mkIdx (inShape := inShape) (ss := ss) pId pNode.outShape with
               | error msg =>
                   simp [hIdx] at hBuild
                   try cases hBuild
               | ok ip =>
                   simp [hIdx] at hBuild
-                  -- Permutation must be valid and swap computation must succeed.
                   cases hPerm : Spec.Shape.permute? pNode.outShape perm.toList with
                   | none =>
                       simp [hPerm] at hBuild
@@ -104,7 +92,7 @@ theorem buildFrom_denoteAllFrom_permute
                           try cases hBuild
                       | ok swaps =>
                           simp [hSwaps] at hBuild
-                          let sFinal : Shape := swapShapeBySwaps pNode.outShape swaps
+                          let sFinal : Shape := swapShape pNode.outShape swaps
                           by_cases hFinal : sFinal = expected
                           · simp [sFinal, hFinal, throw_eq_error] at hBuild
                             by_cases hOut : expected = n.outShape
@@ -112,9 +100,9 @@ theorem buildFrom_denoteAllFrom_permute
                               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                                 mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
                                   (fun ctx =>
-                                    let x := readTensor (α := α) (xs := ctx) ip
+                                    let x := ctx.read ip
                                     let y : Tensor α sFinal :=
-                                      applySwapsTensor (α := α) (s := pNode.outShape)
+                                      swapAxes (α := α) (s := pNode.outShape)
                                         (swaps := swaps) x
                                     let yExpected : Tensor α expected :=
                                       Tensor.castShape y hFinal
@@ -140,45 +128,31 @@ theorem buildFrom_denoteAllFrom_permute
                                       (input := input) (vals := vals0) (i := i) =
                                     .ok (Spec.SomeTensor.mk (α := α) n.outShape
                                       (nodeData.eval ctx)) := by
-                                -- `evalAt` uses `permuteSomeTensor`; rewrite it to swaps plus
-                                -- `applySwapsTensor`.
                                 have hPermute :
                                     NN.IR.Graph.permuteSomeTensor (α := α)
                                         (v := Spec.SomeTensor.mk (α := α) pNode.outShape
                                           (getIdx (α := α) (xs := ctx) ip)) perm =
                                       .ok
                                         (Spec.SomeTensor.mk (α := α)
-                                          (swapShapeBySwaps pNode.outShape swaps)
-                                          (applySwapsTensor (α := α) (s := pNode.outShape)
+                                          (swapShape pNode.outShape swaps)
+                                          (swapAxes (α := α) (s := pNode.outShape)
                                             (swaps := swaps)
                                             (getIdx (α := α) (xs := ctx) ip))) := by
                                   simpa using
-                                    (permuteSomeTensor_eq_applySwapsTensor (α := α)
+                                    (permuteSomeTensor_eq_swapAxes (α := α)
                                       (t := getIdx (α := α) (xs := ctx) ip) (perm := perm)
                                       (expected := expected) (swaps := swaps) hPerm (by
-                                        -- `simp` normalizes `.ok`/`.error` to
-                                        -- `Except.ok`/`Except.error`.
                                         simpa [NN.IR.Graph.swapDepthsForPerm] using hSwaps))
-                                -- Now simplify `evalAt` with the computed permutation and
-                                -- parent lookup.
                                 have hShape :
-                                    swapShapeBySwaps pNode.outShape swaps = n.outShape := by
+                                    swapShape pNode.outShape swaps = n.outShape := by
                                   simpa [sFinal] using (hFinal.trans hOut)
-                                -- Expand `evalAt` to the permute branch, rewrite
-                                -- `permuteSomeTensor` by `hPermute`, then discharge the dependent
-                                -- shape check via `hShape`.
                                 simp (config := { failIfUnchanged := false })
                                   [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode,
                                     NN.IR.Graph.normalizeNodeOutput,
                                     hN, hk, hp, hGet, throw_eq_error]
-                                -- Rewrite the `permuteSomeTensor` call to its computed `.ok`
-                                -- value, reduce the `Except` do-block, and select the success
-                                -- branch using `hShape`.
                                 erw [hPermute]
                                 simp (config := { failIfUnchanged := false })
-                                -- The remaining conditional is a dependent `if` (`dite`).
-                                -- `dite_eq_left` picks the success branch and carries the proof
-                                -- `hShape` into the cast.
+                                -- Transport the computed swap shape to the declared output.
                                 rw [dite_eq_left hShape]
                                 simp [nodeData, sFinal, mkForwardNode,
                                   Tensor.eqRec_eq_cast_shape, Tensor.cast_shape_trans]
@@ -223,20 +197,17 @@ theorem buildFrom_denoteAllFrom_transpose
 
   unfold buildFrom at hBuild
   simp (config := { failIfUnchanged := false }) [hi, hN, hk, lowerTranspose] at hBuild
-  -- The operation has exactly one parent.
   cases hp : unaryParent? n.parents with
   | none =>
       simp [hp, throw_eq_error] at hBuild
       try cases hBuild
   | some pId =>
-          -- `getNode pId` must succeed.
           cases hP : g.getNode pId with
           | error msg =>
               simp [hp, hP, throw_eq_error] at hBuild
               try cases hBuild
           | ok pNode =>
               simp (config := { failIfUnchanged := false }) [hp, hP] at hBuild
-              -- Parent index must typecheck.
               cases hIdx : mkIdx (inShape := inShape) (ss := ss) pId pNode.outShape with
               | error msg =>
                   simp [hIdx] at hBuild
@@ -250,7 +221,6 @@ theorem buildFrom_denoteAllFrom_transpose
                       try cases hBuild
                   | ok perm =>
                       simp [hTranspose] at hBuild
-                      -- Permutation must be valid and swap computation must succeed.
                       cases hPerm : Spec.Shape.permute? pNode.outShape perm.toList with
                       | none =>
                           simp [hPerm] at hBuild
@@ -265,7 +235,7 @@ theorem buildFrom_denoteAllFrom_transpose
                               try cases hBuild
                           | ok swaps =>
                               simp [hSwaps] at hBuild
-                              let sFinal : Shape := swapShapeBySwaps pNode.outShape swaps
+                              let sFinal : Shape := swapShape pNode.outShape swaps
                               by_cases hFinal : sFinal = expected
                               · simp [sFinal, hFinal, throw_eq_error] at hBuild
                                 by_cases hOut : expected = n.outShape
@@ -273,9 +243,9 @@ theorem buildFrom_denoteAllFrom_transpose
                                   let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                                     mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
                                       (fun ctx =>
-                                        let x := readTensor (α := α) (xs := ctx) ip
+                                        let x := ctx.read ip
                                         let y : Tensor α sFinal :=
-                                          applySwapsTensor (α := α) (s := pNode.outShape)
+                                          swapAxes (α := α) (s := pNode.outShape)
                                             (swaps := swaps) x
                                         let yExpected : Tensor α expected :=
                                           Tensor.castShape y hFinal
@@ -301,40 +271,28 @@ theorem buildFrom_denoteAllFrom_transpose
                                           (input := input) (vals := vals0) (i := i) =
                                         .ok (Spec.SomeTensor.mk (α := α) n.outShape
                                           (nodeData.eval ctx)) := by
-                                    -- `evalAt` uses `permuteSomeTensor`; rewrite it to swaps plus
-                                    -- `applySwapsTensor`.
                                     have hPermute :
                                         NN.IR.Graph.permuteSomeTensor (α := α)
                                             (v := Spec.SomeTensor.mk (α := α) pNode.outShape
                                               (getIdx (α := α) (xs := ctx) ip)) perm =
                                           .ok
                                             (Spec.SomeTensor.mk (α := α)
-                                              (swapShapeBySwaps pNode.outShape swaps)
-                                              (applySwapsTensor (α := α) (s := pNode.outShape)
+                                              (swapShape pNode.outShape swaps)
+                                              (swapAxes (α := α) (s := pNode.outShape)
                                                 (swaps := swaps)
                                                 (getIdx (α := α) (xs := ctx) ip))) := by
                                       simpa using
-                                        (permuteSomeTensor_eq_applySwapsTensor (α := α)
+                                        (permuteSomeTensor_eq_swapAxes (α := α)
                                           (t := getIdx (α := α) (xs := ctx) ip) (perm := perm)
                                           (expected := expected) (swaps := swaps) hPerm (by
-                                            -- `simp` normalizes `.ok`/`.error` to
-                                            -- `Except.ok`/`Except.error`.
                                             simpa [NN.IR.Graph.swapDepthsForPerm] using hSwaps))
-                                    -- Now simplify `evalAt` with the computed permutation and
-                                    -- parent lookup.
                                     have hShape :
-                                        swapShapeBySwaps pNode.outShape swaps = n.outShape := by
+                                        swapShape pNode.outShape swaps = n.outShape := by
                                       simpa [sFinal] using (hFinal.trans hOut)
-                                    -- Expand `evalAt` to the permute branch, rewrite
-                                    -- `permuteSomeTensor` by `hPermute`, then discharge the
-                                    -- dependent shape check via `hShape`.
                                     simp (config := { failIfUnchanged := false })
                                       [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode,
                                         NN.IR.Graph.normalizeNodeOutput,
                                         hN, hk, hp, hGet, hTranspose, throw_eq_error]
-                                    -- Rewrite the `permuteSomeTensor` call to its computed `.ok`
-                                    -- value, reduce the `Except` do-block, and select the success
-                                    -- branch using `hShape`.
                                     erw [hPermute]
                                     simp (config := { failIfUnchanged := false })
                                     rw [Graph.expectShape_mk_of_eq hShape]

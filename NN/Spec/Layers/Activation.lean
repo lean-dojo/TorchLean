@@ -322,27 +322,27 @@ variable {α : Type} [TorchLean.Storage α] [Context α]
 PyTorch analogy: `torch.tanh(t)` or `torch.nn.functional.tanh(t)` applied elementwise.
 -/
 def tanhSpec {s : Shape} : Tensor α s → Tensor α s :=
-  mapSpec Activation.Math.tanhSpec
+  Tensor.map Activation.Math.tanhSpec
 
 /-- Tensor-level ReLU (pointwise). -/
 def reluSpec {α : Type} [TorchLean.Storage α] [Zero α] [Max α] [BEq α]
     {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec Activation.Math.reluSpec t
+  Tensor.map Activation.Math.reluSpec t
 
 /-- Tensor-level sigmoid (pointwise). -/
 def sigmoidSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec Activation.Math.sigmoidSpec t
+  Tensor.map Activation.Math.sigmoidSpec t
 
 /-- Tensor-level ReLU derivative (pointwise), using the scalar subgradient choice in
 `Activation.Math.reluDerivSpec`. -/
 def reluDerivSpec {α : Type} [TorchLean.Storage α] [Zero α] [One α] [LT α]
     [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
     (t : Tensor α s) : Tensor α s :=
-  mapSpec Activation.Math.reluDerivSpec t
+  Tensor.map Activation.Math.reluDerivSpec t
 
 /-- Tensor-level sigmoid derivative (pointwise). -/
 def sigmoidDerivSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec Activation.Math.sigmoidDerivSpec t
+  Tensor.map Activation.Math.sigmoidDerivSpec t
 
 /--
 Derivative of sigmoid when the sigmoid output has already been computed.
@@ -361,21 +361,21 @@ def tanhOutputDerivSpec {α : Type} [TorchLean.Storage α] [One α] [Sub α] [Mu
 
 /-- Tensor-level tanh derivative (pointwise). -/
 def tanhDerivSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec Activation.Math.tanhDerivSpec t
+  Tensor.map Activation.Math.tanhDerivSpec t
 
 /-- Apply a parameter-free pointwise activation to a tensor. -/
 def Kind.applySpec {s : Shape} : Kind → Tensor α s → Tensor α s
   | .relu => reluSpec
-  | .gelu => mapSpec Math.geluSpec
-  | .silu => mapSpec Math.swishSpec
+  | .gelu => Tensor.map Math.geluSpec
+  | .silu => Tensor.map Math.swishSpec
   | .tanh => tanhSpec
   | .sigmoid => sigmoidSpec
 
 /-- Apply the derivative selected by a parameter-free pointwise activation. -/
 def Kind.derivSpec {s : Shape} : Kind → Tensor α s → Tensor α s
   | .relu => reluDerivSpec
-  | .gelu => mapSpec Math.geluDerivSpec
-  | .silu => mapSpec Math.swishDerivSpec
+  | .gelu => Tensor.map Math.geluDerivSpec
+  | .silu => Tensor.map Math.swishDerivSpec
   | .tanh => tanhDerivSpec
   | .sigmoid => sigmoidDerivSpec
 
@@ -610,90 +610,67 @@ def logSoftmaxBackwardSpec {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
 def leakyReluSpec {α : Type} [TorchLean.Storage α] [Zero α] [Mul α] [LT α]
     [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
     (t : Tensor α s) (αₗ : α) : Tensor α s :=
-  mapSpec (fun x => Activation.Math.leakyReluSpec x αₗ) t
+  Tensor.map (fun x => Activation.Math.leakyReluSpec x αₗ) t
 
 /-- Tensor-level derivative of leaky ReLU (pointwise). -/
 def leakyReluDerivSpec {α : Type} [TorchLean.Storage α] [Zero α] [One α] [LT α]
     [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
     (t : Tensor α s) (αₗ : α) : Tensor α s :=
-  mapSpec (fun x => Activation.Math.leakyReluDerivSpec x αₗ) t
+  Tensor.map (fun x => Activation.Math.leakyReluDerivSpec x αₗ) t
 
 /-- Tensor-level ELU (pointwise).  PyTorch analogy: `torch.nn.functional.elu`. -/
 def eluSpec {α : Type} [TorchLean.Storage α] [Zero α] [One α] [LT α]
     [DecidableRel ((· > ·) : α → α → Prop)] [MathFunctions α] [Sub α] [Mul α]
     {s : Shape} (t : Tensor α s) (alpha : α) : Tensor α s :=
-  mapSpec (fun x => Activation.Math.eluSpec x alpha) t
+  Tensor.map (fun x => Activation.Math.eluSpec x alpha) t
 
 /-- Tensor-level derivative of ELU (pointwise). -/
 def eluDerivSpec {α : Type} [TorchLean.Storage α] [Zero α] [One α] [LT α]
     [DecidableRel ((· > ·) : α → α → Prop)] [MathFunctions α] [Mul α]
     {s : Shape} (t : Tensor α s) (alpha : α) : Tensor α s :=
-  mapSpec (fun x => Activation.Math.eluDerivSpec x alpha) t
+  Tensor.map (fun x => Activation.Math.eluDerivSpec x alpha) t
 
 /-- Tensor-level GELU (approximate, pointwise). PyTorch analogy: `gelu(..., approximate="tanh")`. -/
 def geluSpec {α : Type} [TorchLean.Storage α] [Context α] {s : Shape} (t : Tensor α s) :
     Tensor α s :=
-  mapSpec Activation.Math.geluSpec t
+  Tensor.map Activation.Math.geluSpec t
 
 /-- Tensor-level derivative of tanh-approx GELU (pointwise). -/
 def geluDerivSpec {α : Type} [TorchLean.Storage α] [Context α] {s : Shape} (t : Tensor α s) :
     Tensor α s :=
-  mapSpec Activation.Math.geluDerivSpec t
+  Tensor.map Activation.Math.geluDerivSpec t
 
 /-- Tensor-level Swish / SiLU (pointwise). -/
 def swishSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec Activation.Math.swishSpec t
+  Tensor.map Activation.Math.swishSpec t
 
 /-- Tensor-level derivative of Swish / SiLU (pointwise). -/
 def swishDerivSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec Activation.Math.swishDerivSpec t
+  Tensor.map Activation.Math.swishDerivSpec t
 
 /-- Tensor-level softplus (pointwise). -/
 def softplusSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec Activation.Math.softplusSpec t
+  Tensor.map Activation.Math.softplusSpec t
 
 /-- Tensor-level derivative of softplus (pointwise). -/
 def softplusDerivSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
-  mapSpec Activation.Math.softplusDerivSpec t
+  Tensor.map Activation.Math.softplusDerivSpec t
 
 /-- Tensor-level `safeLogSpec` (pointwise). -/
 def safeLogSpec {s : Shape} (t : Tensor α s) (ε : α := Context.defaultEpsilon) : Tensor α s :=
-  mapSpec (fun x => Activation.Math.safeLogSpec (α := α) x ε) t
+  Tensor.map (fun x => Activation.Math.safeLogSpec (α := α) x ε) t
 
 /-- Tensor-level derivative of `safeLogSpec` (pointwise). -/
 def safeLogDerivSpec {s : Shape} (t : Tensor α s) (ε : α := Context.defaultEpsilon) : Tensor α s :=
-  mapSpec (fun x => Activation.Math.safeLogDerivSpec (α := α) x ε) t
+  Tensor.map (fun x => Activation.Math.safeLogDerivSpec (α := α) x ε) t
 
 /-- Tensor-level `smoothAbsSpec` (pointwise). -/
 def smoothAbsSpec {s : Shape} (t : Tensor α s) (ε : α := Context.defaultEpsilon) : Tensor α s :=
-  mapSpec (fun x => Activation.Math.smoothAbsSpec (α := α) x ε) t
+  Tensor.map (fun x => Activation.Math.smoothAbsSpec (α := α) x ε) t
 
 /-- Tensor-level derivative of `smoothAbsSpec` (pointwise). -/
 def smoothAbsDerivSpec {s : Shape} (t : Tensor α s) (ε : α := Context.defaultEpsilon) :
     Tensor α s :=
-  mapSpec (fun x => Activation.Math.smoothAbsDerivSpec (α := α) x ε) t
-
-/-- A generic pointwise activation VJP helper.
-
-Given:
-
-- `f'` (as a tensor-level derivative function),
-- the forward input `x`,
-- and an upstream gradient $\partial L/\partial f(x)$,
-
-this returns $\partial L/\partial x$ by the chain rule:
-
-$\frac{\partial L}{\partial x}
-=\frac{\partial L}{\partial f(x)}\odot f'(x)$.
-
-This matches how most PyTorch elementwise ops behave in backward: multiply upstream gradients by
-the pointwise derivative mask/value.
--/
-def vjpSpec {s : Shape}
-  (activationDeriv : Tensor α s → Tensor α s)
-  (input : Tensor α s)
-  (gradOutput : Tensor α s) :
-  Tensor α s :=
-  mulSpec gradOutput (activationDeriv input)
+  Tensor.map (fun x => Activation.Math.smoothAbsDerivSpec (α := α) x ε) t
 
 end Activation

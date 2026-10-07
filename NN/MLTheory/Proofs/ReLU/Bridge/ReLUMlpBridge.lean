@@ -146,7 +146,7 @@ theorem mlp_eval_affine_id {n : Nat} (w : Fin n → ℝ) (b : ℝ) (x : Tensor �
     apply Tensor.ext_vector
     intro i
     fin_cases i <;>
-      simp [Activation.reluSpec, TorchLean.Tensor.mapSpec, relu, Activation.Math.reluSpec_eq_max]
+      simp [Activation.reluSpec, relu, Activation.Math.reluSpec_eq_max]
   -- Compute the output layer and extract the scalar.
   have hy :
       Spec.linearSpec (α := ℝ) affineIdLayer2

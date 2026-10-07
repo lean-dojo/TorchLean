@@ -42,7 +42,7 @@ theorem shapesOfVals_push {α : Type} [TorchLean.Storage α] [Context α]
 theorem getNode_push_lt (g : NN.IR.Graph) (n : NN.IR.Node) {i : Nat} (hi : i < g.nodes.size) :
     NN.IR.Graph.getNode (g := { nodes := g.nodes.push n }) i =
       NN.IR.Graph.getNode (g := g) i := by
-  simp [NN.IR.Graph.getNode, NN.IR.Graph.getNode?, Array.getElem?_push, hi, Nat.ne_of_lt hi]
+  simp [NN.IR.Graph.getNode, Array.getElem?_push, hi, Nat.ne_of_lt hi]
 
 /--
 Preservation of `Graph.wellFormed` under pushing a new node with the right id, arity, and parent

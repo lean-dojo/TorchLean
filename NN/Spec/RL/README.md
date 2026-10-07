@@ -17,9 +17,10 @@ this folder are the reference definitions those systems can be compared against.
 - `MarkovMDP.lean`: measurable space discounted MDPs using mathlib Markov kernels.
 - `Envs/GridWorld.lean`: a concrete finite GridWorld plus deterministic/stochastic MDP views.
 
-The repeated names (`MDP`, `ValueFunction`, `bellmanPolicy`, etc.) are namespace-scoped on purpose:
-`Spec.RL` is deterministic finite, `Spec.RL.FiniteStochastic` is finite stochastic, and
-`Spec.RL.Markov` is measure-theoretic.
+The deterministic model is `Spec.RL.FiniteMDP`; the stochastic models are
+`Spec.RL.FiniteStochastic.MDP` and `Spec.RL.Markov.MDP`. Both finite models use the tensor-backed
+`Spec.RL.ValueFunction`, while `Spec.RL.Markov.ValueFunction` is a real-valued function on a
+measurable state space. Their Bellman operators live in the corresponding namespaces.
 
 ## How It Connects To The Rest Of TorchLean
 

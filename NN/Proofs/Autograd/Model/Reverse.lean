@@ -53,8 +53,8 @@ theorem vjp_eq_checked {σ τ : Shape} (model : nn.Sequential σ τ)
         (TensorPack.split (ss₁ := nn.stateShapes model) (ss₂ := [σ]) result.1).1,
         (TensorPack.split (ss₁ := nn.stateShapes model) (ss₂ := [σ]) result.1).2.head) := by
   simp only [nn.lowerToTypedGraph, valid] at lowered
-  simp only [vjp, valid, IO.ofExcept, Autodiff.vjp, lowered, pure_bind,
-    checked, Runtime.Autograd.okOrThrow]
+  simp only [vjp, valid, IO.ofExcept, Autodiff.vjp, Autodiff.Impl.pullback, lowered, pure_bind,
+    checked]
 
 /-- The public higher-order VJP returns the pullback of the requested iterated input derivative.
 

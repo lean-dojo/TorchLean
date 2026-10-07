@@ -190,7 +190,7 @@ theorem matmul_node_encloses {nodes : Array Node} {ps : ParamStore ℝ}
       simp only [hparents] at hcertStep hvalStep
       rcases hgb : getBox? cert p1 with _ | B1 <;> simp only [hgb, reduceCtorEq] at hcertStep
       rcases hmat : ps.matmulW[k]? with _ | p <;>
-        simp only [ibpMatmul, hmat, reduceCtorEq] at hcertStep hvalStep
+        simp only [ibpMatmul, ibpLinearParams, hmat, reduceCtorEq] at hcertStep hvalStep
       rcases hgv : getVal? vals p1 with _ | v1 <;> simp only [hgv, reduceCtorEq] at hvalStep
       have h1 := parents_enclosed_unary hpe hparents hgb hgv
       obtain ⟨hXin, hcertStep⟩ := dite_eq_some_elim hcertStep

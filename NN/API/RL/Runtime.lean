@@ -96,9 +96,10 @@ structure ActorCritic (α : Type) [TorchLean.Storage α] [Context α]
 /--
 Instantiate the standard PPO actor-critic runtime.
 
-The actor and critic share the objective's forward execution and optimizer history.
+The actor and critic share one objective. Use `ActorCritic.bind` to attach an optimizer and
+obtain an update callback with persistent optimizer history.
 -/
-@[no_expose] def instantiateActorCritic
+@[no_expose] def ActorCritic.create
     {stateShape : Spec.Shape} {batch nActions : Nat} {α : Type}
     [TorchLean.Storage α] [Context α]
     [TorchLean.Runtime.FromFloat α]
@@ -119,7 +120,7 @@ The actor and critic share the objective's forward execution and optimizer histo
     letI : NeZero nActions := ⟨hActions⟩
     do
       let objective ← TorchLean.Module.instantiate (α := α)
-        (Runtime.RL.PolicyGradient.Autograd.ppoActorCriticObjectiveDef
+        (Runtime.RL.PolicyGradient.Autograd.PPO.create
           (batch := batch) (nActions := nActions) actor critic)
         options
       pure ⟨objective⟩
@@ -130,7 +131,7 @@ Bind a PPO actor-critic update function and preserve its optimizer history acros
 Each call updates model buffers from the activations used to compute the gradients, then performs
 the optimizer step. This includes every repeated PPO epoch over the same rollout batch.
 -/
-@[no_expose] def trainingStep {α : Type}
+@[no_expose] def ActorCritic.bind {α : Type}
     [TorchLean.Storage α] [Context α] [TorchLean.Runtime.FromFloat α]
     {stateShapes : List Spec.Shape} {obsShape : Spec.Shape} {batch nActions : Nat}
     (m : ActorCritic α stateShapes
@@ -143,7 +144,7 @@ the optimizer step. This includes every repeated PPO epoch over the same rollout
       (Runtime.RL.PPO.TrainingBatch.Internal.arguments trainingBatch)
 
 /-- Read concatenated actor-critic state without refreshing buffers. -/
-@[no_expose] def state {α : Type} [TorchLean.Storage α] [Context α]
+@[no_expose] def ActorCritic.state {α : Type} [TorchLean.Storage α] [Context α]
     {stateShapes : List Spec.Shape} {stateShape : Spec.Shape} {batch nActions : Nat}
     (m : ActorCritic α stateShapes stateShape batch nActions) :
     IO (nn.State α stateShapes) :=
@@ -152,37 +153,14 @@ the optimizer step. This includes every repeated PPO epoch over the same rollout
 /--
 Restore actor and critic parameters and persistent buffers.
 
-An already-bound `trainingStep` keeps its optimizer history; this restores model state only.
+An already-bound `ActorCritic.bind` callback keeps its optimizer history; this restores model
+state only.
 -/
-@[no_expose] def setState {α : Type} [TorchLean.Storage α] [Context α]
+@[no_expose] def ActorCritic.setState {α : Type} [TorchLean.Storage α] [Context α]
     {stateShapes : List Spec.Shape} {stateShape : Spec.Shape} {batch nActions : Nat}
     (m : ActorCritic α stateShapes stateShape batch nActions)
     (newState : nn.State α stateShapes) : IO Unit :=
   TorchLean.Module.Objective.setState m.objective newState
-
-/-- Actor and critic states, including parameters and persistent buffers. -/
-structure ActorCriticState (α : Type) [TorchLean.Storage α]
-    (actorShapes criticShapes : List Spec.Shape) where
-  /-- Parameters and persistent buffers consumed by the actor graph. -/
-  actor : nn.State α actorShapes
-  /-- Parameters and persistent buffers consumed by the critic graph. -/
-  critic : nn.State α criticShapes
-
-/-- Split concatenated actor-critic state into its actor and critic components. -/
-def splitState
-    {σ₁ τ₁ σ₂ τ₂ : Spec.Shape}
-    (actor : Runtime.Autograd.Model.Layers.Seq σ₁ τ₁)
-    (critic : Runtime.Autograd.Model.Layers.Seq σ₂ τ₂)
-    {α : Type} [TorchLean.Storage α]
-    (state : nn.State α
-        (Runtime.Autograd.Model.Layers.Seq.stateShapes actor ++
-          Runtime.Autograd.Model.Layers.Seq.stateShapes critic)) :
-    ActorCriticState α
-      (Runtime.Autograd.Model.Layers.Seq.stateShapes actor)
-      (Runtime.Autograd.Model.Layers.Seq.stateShapes critic) :=
-  let partition := state.split
-  { actor := partition.left
-    critic := partition.right }
 
 /--
 Build a single-observation actor policy from the state of a rollout-shaped actor-critic module.
@@ -190,7 +168,7 @@ Build a single-observation actor policy from the state of a rollout-shaped actor
 The typed actor graph records its state layout, while `sameActorState` states that the rollout actor
 uses that layout as well.
 -/
-def actorPolicy
+def policy
     {obsShape logitsShape rolloutStateShape rolloutLogitsShape rolloutValueShape : Spec.Shape}
     {actorStateShapes : List Spec.Shape}
     {α : Type} [TorchLean.Storage α]
@@ -201,7 +179,7 @@ def actorPolicy
       (nn.stateShapes actorRollout ++ nn.stateShapes criticRollout))
     (sameActorState : nn.stateShapes actorRollout = actorStateShapes := by rfl) :
     Tensor α obsShape → Tensor α logitsShape :=
-  let actorState := (splitState actorRollout criticRollout state).actor
+  let actorState := state.split.left
   let actorState : nn.State α actorStateShapes :=
     actorState.cast sameActorState
   fun obs => actorGraph.forward actorState obs
@@ -212,7 +190,7 @@ Build a single-observation critic function from the state of a rollout-shaped ac
 The result is scalar because the typed critic graph has a checked one-element output shape.
 Scalar tensors and any number of singleton axes are accepted.
 -/
-def criticValue
+def value
     {obsShape valueShape rolloutStateShape rolloutLogitsShape rolloutValueShape : Spec.Shape}
     {criticStateShapes : List Spec.Shape}
     {α : Type} [TorchLean.Storage α]
@@ -224,7 +202,7 @@ def criticValue
     (sameCriticState : nn.stateShapes criticRollout = criticStateShapes := by rfl)
     (oneValue : valueShape.size = 1 := by decide) :
     Tensor α obsShape → α :=
-  let criticState := (splitState actorRollout criticRollout state).critic
+  let criticState := state.split.right
   let criticState : nn.State α criticStateShapes :=
     criticState.cast sameCriticState
   fun obs =>

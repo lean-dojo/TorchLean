@@ -149,8 +149,7 @@ Elementwise natural logarithm.
 
 PyTorch analogy: `torch.log(x)`.
 
-If you need a total (always-defined) "log-like" surrogate without positivity side conditions, see
-`safeLog`.
+For a log-like surrogate on unrestricted real inputs, see `safeLog` with positive epsilon.
 -/
 def log {α : Type} [TorchLean.Storage α] (s : Session α) [Context α]
   {sh : Shape} (x : Runtime.Autograd.Torch.TensorRef α sh) :
@@ -164,8 +163,9 @@ def log {α : Type} [TorchLean.Storage α] (s : Session α) [Context α]
 Elementwise safe-log surrogate:
 $\operatorname{safeLog}(x;\varepsilon)=\log(\operatorname{softplus}(x)+\varepsilon)$.
 
-We use this when we want something log-like but would rather not carry side conditions about inputs
-being strictly positive.
+For positive epsilon, the argument of the logarithm is positive for every real input.
+Native execution also needs epsilon to remain positive after binary32 conversion; this operation
+does not validate epsilon or guarantee finite outputs for nonfinite inputs.
 
 PyTorch analogy: `torch.log(torch.nn.functional.softplus(x) + eps)`.
 -/
@@ -183,7 +183,7 @@ Sum-reduce all elements of a tensor to a scalar.
 
 PyTorch analogy: `x.sum()` (with no `dim` argument).
 -/
-def sum {α : Type} [TorchLean.Storage α] (s : Session α) [Context α] {sh : Shape}
+def sum {α : Type} [TorchLean.Storage α] (s : Session α) [Add α] [Zero α] {sh : Shape}
   (x : Runtime.Autograd.Torch.TensorRef α sh) :
   IO (Runtime.Autograd.Torch.TensorRef α Shape.scalar) := do
   match s.state with
@@ -198,7 +198,7 @@ Flatten a tensor to a 1D vector of length `Spec.Shape.size sh`.
 PyTorch analogy: `torch.flatten(x)` or `x.reshape(-1)`.
 -/
 def flatten {α : Type} [TorchLean.Storage α] (s : Session α)
-    [Inhabited α] [Zero α] {sh : Shape}
+    [Zero α] {sh : Shape}
   (x : Runtime.Autograd.Torch.TensorRef α sh) :
   IO (Runtime.Autograd.Torch.TensorRef α [Spec.Shape.size sh]) := do
   match s.state with
@@ -215,7 +215,7 @@ performed by `reshape`/`view`.
 PyTorch analogy: `x.reshape(new_shape)` (when the element count matches).
 -/
 def reshape {α : Type} [TorchLean.Storage α] (s : Session α)
-    [Inhabited α] [Zero α] {sh1 sh2 : Shape}
+    [Zero α] {sh1 sh2 : Shape}
   (x : Runtime.Autograd.Torch.TensorRef α sh1) (h : Spec.Shape.size sh1 = Spec.Shape.size sh2) :
   IO (Runtime.Autograd.Torch.TensorRef α sh2) := do
   match s.state with
@@ -230,7 +230,7 @@ Generic "swap adjacent axes" view operation.
 This is a shape-driven permutation helper used in some attention/transformer code.
 -/
 def swapAdjacentAtDepth {α : Type} [TorchLean.Storage α] (s : Session α)
-    [Context α] {sh : Shape}
+    [Zero α] {sh : Shape}
   (depth : Nat) (x : Runtime.Autograd.Torch.TensorRef α sh) :
   IO (Runtime.Autograd.Torch.TensorRef α (sh.swapAdjacentAtDepth depth)) := do
   match s.state with
@@ -241,7 +241,7 @@ def swapAdjacentAtDepth {α : Type} [TorchLean.Storage α] (s : Session α)
 
 /-- Broadcast a tensor to a larger shape (dispatches by execution mode). -/
 def broadcastTo {α : Type} [TorchLean.Storage α] (s : Session α)
-    [Inhabited α] [Add α] [Zero α]
+    [Add α] [Zero α]
   {sh1 sh2 : Shape} (cb : Shape.CanBroadcastTo sh1 sh2) (x : Runtime.Autograd.Torch.TensorRef
     α sh1) :
   IO (Runtime.Autograd.Torch.TensorRef α sh2) := do
@@ -253,7 +253,7 @@ def broadcastTo {α : Type} [TorchLean.Storage α] (s : Session α)
 
 /-- Reduce-sum along an axis (dispatches by execution mode). -/
 def reduceSum {α : Type} [TorchLean.Storage α] (s : Session α)
-    [Add α] [Zero α] [Inhabited α]
+    [Add α] [Zero α]
   {sh : Shape} (axis : Nat) (x : Runtime.Autograd.Torch.TensorRef α sh)
   [valid : Shape.HasNonemptyAxis axis sh] [wf : Shape.WellFormed sh] :
   IO (Runtime.Autograd.Torch.TensorRef α (shapeAfterSum sh axis)) := do
@@ -264,7 +264,7 @@ def reduceSum {α : Type} [TorchLean.Storage α] (s : Session α)
 
 /-- Reduce-mean along an axis (dispatches by execution mode). -/
 def reduceMean {α : Type} [TorchLean.Storage α] (s : Session α)
-    [Context α]
+    [Add α] [Zero α] [Div α] [Mul α] [One α] [NatCast α]
   {sh : Shape} (axis : Nat) (x : Runtime.Autograd.Torch.TensorRef α sh)
   [valid : Shape.HasNonemptyAxis axis sh] [wf : Shape.WellFormed sh] :
   IO (Runtime.Autograd.Torch.TensorRef α (shapeAfterSum sh axis)) := do

@@ -82,73 +82,37 @@ theorem valid_ofFlatBox_real (B : FlatBox ℝ) (hB : B.Valid) :
 /-- Validity is preserved by interval addition on `FlatBox` (over `ℝ`). -/
 theorem valid_box_add_real (B1 B2 : FlatBox ℝ) (h1 : B1.Valid) (h2 : B2.Valid) :
     (boxAdd (α := ℝ) B1 B2).Valid := by
-  cases B1 with
-  | mk n1 lo1 hi1 =>
-    cases B2 with
-    | mk n2 lo2 hi2 =>
-      by_cases h : n1 = n2
-      · subst h
-        -- use the canonical form lemma for the equal-dimension case
-        have hEq :
-            boxAdd (α := ℝ)
-                { dim := n1, lo := lo1, hi := hi1 }
-                { dim := n1, lo := lo2, hi := hi2 } =
-              { dim := n1
-                lo := Tensor.map2Spec BoundOps.addDown lo1 lo2
-                hi := Tensor.map2Spec BoundOps.addUp hi1 hi2 } := by
-          simpa using (NN.MLTheory.CROWN.Graph.Theorems.box_add_on_eq (α := ℝ) n1 lo1 hi1 lo2 hi2)
-        -- reduce the goal to scalar arithmetic
-        rw [hEq]
-        intro i
-        rw [Tensor.getScalar_map2Spec, Tensor.getScalar_map2Spec]
-        exact add_le_add (h1 i) (h2 i)
-      · -- mismatch branch: returns B1 unchanged
-        have hEq :
-            boxAdd (α := ℝ)
-                { dim := n1, lo := lo1, hi := hi1 }
-                { dim := n2, lo := lo2, hi := hi2 } =
-              { dim := n1, lo := lo1, hi := hi1 } := by
-          simp [boxAdd, h]
-        simpa [hEq] using h1
+  rcases B1 with ⟨n1, lo1, hi1⟩
+  rcases B2 with ⟨n2, lo2, hi2⟩
+  by_cases h : n1 = n2
+  · subst n2
+    simp only [boxAdd, ↓reduceDIte]
+    intro i
+    rw [Tensor.getScalar_map2Spec, Tensor.getScalar_map2Spec]
+    exact add_le_add (h1 i) (h2 i)
+  · simpa only [boxAdd, h, ↓reduceDIte] using h1
 
 /-- Validity is preserved by interval subtraction on `FlatBox` (over `ℝ`). -/
 theorem valid_box_sub_real (B1 B2 : FlatBox ℝ) (h1 : B1.Valid) (h2 : B2.Valid) :
     (boxSub (α := ℝ) B1 B2).Valid := by
-  cases B1 with
-  | mk n1 lo1 hi1 =>
-    cases B2 with
-    | mk n2 lo2 hi2 =>
-      by_cases h : n1 = n2
-      · subst h
-        have hEq :
-            boxSub (α := ℝ)
-                { dim := n1, lo := lo1, hi := hi1 }
-                { dim := n1, lo := lo2, hi := hi2 } =
-              { dim := n1
-                lo := Tensor.map2Spec BoundOps.subDown lo1 hi2
-                hi := Tensor.map2Spec BoundOps.subUp hi1 lo2 } := by
-          simpa using (NN.MLTheory.CROWN.Graph.Theorems.box_sub_on_eq (α := ℝ) n1 lo1 hi1 lo2 hi2)
-        rw [hEq]
-        intro i
-        rw [Tensor.getScalar_map2Spec, Tensor.getScalar_map2Spec]
-        exact sub_le_sub (h1 i) (h2 i)
-      ·
-        have hEq :
-            boxSub (α := ℝ)
-                { dim := n1, lo := lo1, hi := hi1 }
-                { dim := n2, lo := lo2, hi := hi2 } =
-              { dim := n1, lo := lo1, hi := hi1 } := by
-          simp [boxSub, h]
-        simpa [hEq] using h1
+  rcases B1 with ⟨n1, lo1, hi1⟩
+  rcases B2 with ⟨n2, lo2, hi2⟩
+  by_cases h : n1 = n2
+  · subst n2
+    simp only [boxSub, ↓reduceDIte]
+    intro i
+    rw [Tensor.getScalar_map2Spec, Tensor.getScalar_map2Spec]
+    exact sub_le_sub (h1 i) (h2 i)
+  · simpa only [boxSub, h, ↓reduceDIte] using h1
 
 /-- Validity is preserved by ReLU-IBP on `FlatBox` (over `ℝ`). -/
 theorem valid_box_relu_real (B : FlatBox ℝ) (hB : B.Valid) :
     (boxRelu (α := ℝ) B).Valid := by
   change ∀ i : Fin B.dim,
-    (Tensor.mapSpec (fun x => Activation.Math.reluSpec (α := ℝ) x) B.lo).getScalar i ≤
-      (Tensor.mapSpec (fun x => Activation.Math.reluSpec (α := ℝ) x) B.hi).getScalar i
+    (Tensor.map (fun x => Activation.Math.reluSpec (α := ℝ) x) B.lo).getScalar i ≤
+      (Tensor.map (fun x => Activation.Math.reluSpec (α := ℝ) x) B.hi).getScalar i
   intro i
-  rw [Tensor.getScalar_mapSpec, Tensor.getScalar_mapSpec]
+  rw [Tensor.getScalar_map, Tensor.getScalar_map]
   simpa only [Activation.Math.reluSpec_eq_max] using max_le_max (hB i) (le_refl 0)
 
 end FlatBoxTheorems
@@ -173,6 +137,19 @@ theorem ibp_linear_valid_real {m n : Nat}
     NN.MLTheory.CROWN.Theorems.ibp_linear_sound_real W xB bB xB.lo bB.lo hx hb
   exact Box.valid_of_contains (B := IBP.linear (α := ℝ) W xB bB) _ hout
 
+private theorem ibpLinearParams_valid_real (p : LinParams ℝ) (Xin : FlatBox ℝ)
+    (hXin : Xin.Valid) :
+  match ibpLinearParams p Xin with
+  | none => True
+  | some Bout => FlatBox.Valid (α := ℝ) Bout := by
+  by_cases hdim : Xin.dim = p.n
+  · simp only [ibpLinearParams, hdim, ↓reduceDIte]
+    exact FlatBoxTheorems.valid_toFlatBox_real _
+      (ibp_linear_valid_real p.w _ _
+        (Box.valid_castBoxDim hdim _ (FlatBoxTheorems.valid_ofFlatBox_real Xin hXin))
+        (Box.valid_point p.b))
+  · simp [ibpLinearParams, hdim]
+
 /-- Validity of the graph-level `linear` IBP rule (over `ℝ`), if the parameters are present. -/
 theorem graph_ibp_linear_valid_real (id : Nat) (ps : ParamStore ℝ) (Xin : FlatBox ℝ)
   (hXin : FlatBox.Valid (α := ℝ) Xin) :
@@ -180,30 +157,9 @@ theorem graph_ibp_linear_valid_real (id : Nat) (ps : ParamStore ℝ) (Xin : Flat
   | none => True
   | some Bout => FlatBox.Valid (α := ℝ) Bout := by
   unfold ibpLinear
-  cases hlin : ps.linearWB[id]? with
-  | none => simp
-  | some p =>
-      by_cases hdim : Xin.dim = p.n
-      · -- dimension match: reduce to `IBP.linear_valid_real`
-        simp [ibpLinearParams, hdim]
-        -- show the produced box is valid
-        -- Convert input to a dimension-safe `Box` and prove it is valid.
-        have hxBoxValid : Valid (castBoxDim (α := ℝ) hdim (ofFlatBox (α := ℝ) Xin)) := by
-          -- validity is preserved by definitional cast
-          have : Valid (ofFlatBox (α := ℝ) Xin) := FlatBoxTheorems.valid_ofFlatBox_real (B := Xin)
-            hXin
-          exact NN.MLTheory.CROWN.Box.valid_castBoxDim (h := hdim) (B := ofFlatBox (α := ℝ) Xin)
-            this
-        have hbBoxValid : Valid (Box.point (α := ℝ) p.b) := Box.valid_point p.b
-        have hyValid : Valid (IBP.linear (α := ℝ) (m := p.m) (n := p.n) p.w
-            (castBoxDim (α := ℝ) hdim (ofFlatBox (α := ℝ) Xin))
-            (Box.point (α := ℝ) p.b)) :=
-          ibp_linear_valid_real (W := p.w) (xB := castBoxDim (α := ℝ) hdim (ofFlatBox (α := ℝ) Xin))
-            (bB := Box.point (α := ℝ) p.b) hxBoxValid hbBoxValid
-        exact FlatBoxTheorems.valid_toFlatBox_real (B := IBP.linear (α := ℝ) (m := p.m) (n := p.n)
-          p.w
-          (castBoxDim (α := ℝ) hdim (ofFlatBox (α := ℝ) Xin)) (Box.point (α := ℝ) p.b)) hyValid
-      · simp [ibpLinearParams, hdim]
+  cases ps.linearWB[id]? with
+  | none => trivial
+  | some p => exact ibpLinearParams_valid_real p Xin hXin
 
 /-- Validity of the graph-level `matmul` IBP rule (over `ℝ`), if the parameters are present. -/
 theorem graph_ibp_matmul_valid_real (id : Nat) (ps : ParamStore ℝ) (Xin : FlatBox ℝ)
@@ -212,28 +168,11 @@ theorem graph_ibp_matmul_valid_real (id : Nat) (ps : ParamStore ℝ) (Xin : Flat
   | none => True
   | some Bout => FlatBox.Valid (α := ℝ) Bout := by
   unfold ibpMatmul
-  cases hmat : ps.matmulW[id]? with
-  | none => simp
+  cases ps.matmulW[id]? with
+  | none => trivial
   | some p =>
-      by_cases hdim : Xin.dim = p.n
-      · simp [hdim]
-        have hxBoxValid : Valid (castBoxDim (α := ℝ) hdim (ofFlatBox (α := ℝ) Xin)) := by
-          have : Valid (ofFlatBox (α := ℝ) Xin) := FlatBoxTheorems.valid_ofFlatBox_real (B := Xin)
-            hXin
-          exact NN.MLTheory.CROWN.Box.valid_castBoxDim (h := hdim) (B := ofFlatBox (α := ℝ) Xin)
-            this
-        -- zero bias point box is valid
-        let z : Tensor ℝ [p.m] := Tensor.full (α := ℝ) (.dim p.m .scalar) 0
-        have hbBoxValid : Valid (Box.point (α := ℝ) z) := Box.valid_point z
-        have hyValid : Valid (IBP.linear (α := ℝ) (m := p.m) (n := p.n) p.w
-            (castBoxDim (α := ℝ) hdim (ofFlatBox (α := ℝ) Xin))
-            (Box.point (α := ℝ) z)) :=
-          ibp_linear_valid_real (W := p.w) (xB := castBoxDim (α := ℝ) hdim (ofFlatBox (α := ℝ) Xin))
-            (bB := Box.point (α := ℝ) z) hxBoxValid hbBoxValid
-        exact FlatBoxTheorems.valid_toFlatBox_real (B := IBP.linear (α := ℝ) (m := p.m) (n := p.n)
-          p.w
-          (castBoxDim (α := ℝ) hdim (ofFlatBox (α := ℝ) Xin)) (Box.point (α := ℝ) z)) hyValid
-      · simp [hdim]
+      exact ibpLinearParams_valid_real
+        { m := p.m, n := p.n, w := p.w, b := Tensor.full [p.m] 0 } Xin hXin
 
 end Theorems
 

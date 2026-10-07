@@ -33,11 +33,6 @@ namespace Utils
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
 
-/-- Convert any `Except String` into `IO` by throwing `IO.userError` on failure. -/
-def okOrThrow {α : Type} : Except String α → IO α
-  | .ok a => pure a
-  | .error e => throw <| IO.userError e
-
 -- Scalar comparisons share `Tests.Utils.assertApprox`; CUDA tolerances are explicit at call sites.
 
 /-- Construct a raw float buffer from an array of values. -/
@@ -89,12 +84,12 @@ def anyBufferToTensor {s : Shape} (ab : Runtime.Autograd.LibTorch.AnyBuffer) : I
 
 /-- Read a typed CPU tape value from an id. -/
 def cpuValue {s : Shape} (t : Runtime.Autograd.Tape Float) (id : Nat) : IO (Tensor Float s) :=
-  okOrThrow (Runtime.Autograd.Tape.requireValue (α := Float) (t := t) (s := s) id)
+  IO.ofExcept (Runtime.Autograd.Tape.requireValue (α := Float) (t := t) (s := s) id)
 
 /-- Read a typed CUDA tape value from an id. -/
 def cudaValue {s : Shape} (t : Runtime.Autograd.LibTorch.Tape) (id : Nat) : IO (Tensor
   Float s) := do
-  let b ← okOrThrow (Runtime.Autograd.LibTorch.Tape.requireValue (t := t) id s)
+  let b ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.requireValue (t := t) id s)
   bufferToTensor (s := s) b
 
 /-- Extract a typed gradient tensor from the CPU dense-grad array (with a shape check). -/

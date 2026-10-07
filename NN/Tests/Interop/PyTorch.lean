@@ -19,8 +19,10 @@ public import NN.Runtime.PyTorch.Import.Transformer
 /-!
 # PyTorch numerical boundary checks
 
-Check exact scalar emission, nonsymmetric matrix orientation, normalization epsilon, and
-representative imported-model execution against PyTorch. Generated fixtures use no downloaded data.
+Check binary64 scalar emission, nonsymmetric matrix orientation, normalization epsilon, and
+representative imported-model execution against PyTorch. Non-NaN scalar encodings must round-trip
+exactly; NaNs need only remain NaN. Both strict `torch.export` capture and FX capture check operator
+classification and rejection before artifact publication. Generated fixtures use no downloaded data.
 
 Run `scripts/lake.sh exe pytorch_export_check`.
 -/
@@ -45,7 +47,7 @@ def usage : String :=
 
 /-- Scratch directory for the generated Python and the captured graphs. -/
 def workDir : System.FilePath :=
-  TorchLean.External.Process.artifactWorkDir "pytorch_export_check"
+  TorchLean.External.Process.directory "pytorch_export_check"
 
 /-- Where the export bridge script is written. -/
 def bridgePath : System.FilePath :=
@@ -305,7 +307,7 @@ def runFloatCodegenChecks : IO Unit := do
     seed := seed * 6364136223846793005 + 1442695040888963407
     cases := cases.push seed
   let checks := cases.map fun bits =>
-    s!"check({Export.PyTorch.floatToPyString (Float.ofBits bits)}, {bits})"
+    s!"check({Export.PyTorch.floatLiteral (Float.ofBits bits)}, {bits})"
   let matrix : Tensor Float [2, 4] :=
     [[1.0e-9, Float.ofBits 0x8000000000000000, Float.ofBits 1, 0.1],
       [Float.ofBits 0x7fefffffffffffff, -1.0e-300, 1.23456789, -0.5]]
@@ -328,8 +330,8 @@ def runFloatCodegenChecks : IO Unit := do
      , "    assert math.isnan(value)"
      , "  else:"
      , "    assert struct.unpack('>Q', struct.pack('>d', value))[0] == expected"
-     , s!"matrix = {Export.PyTorch.tensorToPyString matrix}"
-     , s!"transposed = {Export.PyTorch.transposedMatrixTensorToPy matrix}"
+     , s!"matrix = {Export.PyTorch.tensorLiteral matrix}"
+     , s!"transposed = {Export.PyTorch.tensorLiteral (Tensor.swapAdjacentAxes matrix 0)}"
      , s!"expected = [{expected}]"
      , "assert len(matrix) == 2 and all(len(row) == 4 for row in matrix)"
      , "assert len(transposed) == 4 and all(len(row) == 2 for row in transposed)"
@@ -358,9 +360,9 @@ def runReferenceCodegenChecks : IO Unit := do
   let matrix : Tensor Float [2, 2] := [[1.0, 2.0], [3.0, 4.0]]
   let bias : Tensor Float [2] := [0.25, 0.5]
   IO.FS.writeFile (workDir / "reference_mlp.py")
-    (Export.PyTorch.MLP.withParameters matrix bias matrix bias "ReferenceMLP" .sequential)
+    (Export.PyTorch.MLP.weights matrix bias matrix bias "ReferenceMLP" .sequential)
   IO.FS.writeFile (workDir / "reference_transformer.py")
-    (Export.PyTorch.Transformer.withParameters 1 2 1 2
+    (Export.PyTorch.Transformer.weights 1 2 1 2
       matrix matrix matrix matrix matrix matrix bias bias bias bias bias bias
       "ReferenceTransformer")
   let source := String.intercalate "\n"
@@ -393,9 +395,9 @@ def runReferenceCodegenChecks : IO Unit := do
 /-- Main runtime-check body. -/
 def run : IO Unit := do
   IO.FS.createDirAll workDir
-  IO.FS.writeFile bridgePath (Export.PyTorch.TorchExport.generateGraphBridgeScript {})
+  IO.FS.writeFile bridgePath (Export.PyTorch.TorchExport.script {})
   IO.FS.writeFile fxBridgePath
-    (Export.PyTorch.TorchExport.generateGraphBridgeScript { preferTorchExport := false })
+    (Export.PyTorch.TorchExport.script { preferTorchExport := false })
   IO.FS.writeFile modelPath supportedModelSource
   IO.println "== PyTorch nn.Module → TorchLean IR runtime check =="
   runFloatCodegenChecks

@@ -112,35 +112,6 @@ namespace Internal
 def smoothMaxPivotStep (beta current candidate : α) : α :=
   if beta > 0 then Max.max current candidate else Min.min current candidate
 
-/-- Coordinate of a window cell in the padded input, or `none` on a rank mismatch.
-
-Per axis this is `output * stride + window`, the position the cell occupies before padding is
-removed. -/
-def paddedCoords? (outIdxs winIdxs stride : List Nat) : Option (List Nat) :=
-  match outIdxs, winIdxs, stride with
-  | [], [], [] => some []
-  | o :: os, w :: ws, s :: ss =>
-      match paddedCoords? os ws ss with
-      | some rest => some ((o * s + w) :: rest)
-      | none => none
-  | _, _, _ => none
-
-/-- Turn a padded-input coordinate back into a real input coordinate.
-
-Returns `none` when the coordinate lands inside the padding, which is how the callers tell a genuine
-input cell from a fabricated one; average and max pooling then treat that answer differently. -/
-def unpadCoords? (padded padding : List Nat) : Option (List Nat) :=
-  match padded, padding with
-  | [], [] => some []
-  | x :: xs, p :: ps =>
-      if _h : x < p then
-        none
-      else
-        match unpadCoords? xs ps with
-        | some rest => some ((x - p) :: rest)
-        | none => none
-  | _, _ => none
-
 /-- Whether a runtime coordinate list is in range for `dims`, and of the right length. -/
 def coordsInBounds (idx dims : List Nat) : Bool :=
   match idx, dims with
@@ -160,12 +131,9 @@ def getPaddedAverageInputVal
     (input : Tensor α (Shape.ofList inSpatial.data.toList))
     (outIdxs winIdxs : List Nat)
     (stride padding : List Nat) : α :=
-  match paddedCoords? outIdxs winIdxs stride with
+  match Conv.Internal.mkInputIdx? outIdxs winIdxs stride padding with
   | none => 0
-  | some padded =>
-      match unpadCoords? padded padding with
-      | none => 0
-      | some orig => getAtOrZero input orig
+  | some orig => getAtOrZero input orig
 
 /--
 Input lookup for hard max-pooling.
@@ -181,20 +149,13 @@ def getPaddedMaxInputVal?
     (input : Tensor α (Shape.ofList inSpatial.data.toList))
     (outIdxs winIdxs : List Nat)
     (stride padding : List Nat) : Option α :=
-  match paddedCoords? outIdxs winIdxs stride with
+  match Conv.Internal.mkInputIdx? outIdxs winIdxs stride padding with
   | none => none
-  | some padded =>
-      match unpadCoords? padded padding with
-      | none => none
-      | some orig =>
-          if coordsInBounds orig inSpatial.data.toList then
-            some (getAtOrZero input orig)
-          else
-            none
-
-/-- Number of cells in a pooling window, the denominator average pooling counts with. -/
-def kernelProd (kernel : List Nat) : Nat :=
-  kernel.prod
+  | some orig =>
+      if coordsInBounds orig inSpatial.data.toList then
+        some (getAtOrZero input orig)
+      else
+        none
 
 /-- Start of adaptive-pooling bin `i`: `floor(i * input / output)`. -/
 def adaptiveStart (input output i : Nat) : Nat :=
@@ -258,7 +219,7 @@ def adaptiveAvgPoolValue
   let window := adaptiveWindowDims inSpatial.data.toList outSpatial.data.toList outIdxs
   let sum := Conv.Internal.foldlIndices window (0 : α) (fun acc offset =>
     acc + getAtOrZero input (List.zipWith Nat.add starts offset))
-  sum / (kernelProd window : Nat)
+  sum / (window.prod : Nat)
 
 /-- Maximum over one adaptive-pooling bin.
 
@@ -325,16 +286,13 @@ def maxPoolSelectedTangentValue
   match maxPoolWinner? (d := d) (inSpatial := inSpatial) input outIdxs kernel stride padding with
   | none => 0
   | some (bestWin, _) =>
-      match paddedCoords? outIdxs bestWin stride with
+      match Conv.Internal.mkInputIdx? outIdxs bestWin stride padding with
       | none => 0
-      | some padded =>
-          match unpadCoords? padded padding with
-          | none => 0
-          | some orig =>
-              if coordsInBounds orig inSpatial.data.toList then
-                getAtOrZero tangent orig
-              else
-                0
+      | some orig =>
+          if coordsInBounds orig inSpatial.data.toList then
+            getAtOrZero tangent orig
+          else
+            0
 
 /-- Average over one fixed pooling window, counting padded cells as zero.
 
@@ -349,7 +307,7 @@ def avgPoolValue
     acc + getPaddedAverageInputVal (d := d) (inSpatial := inSpatial)
       (input := input) (outIdxs := outIdxs) (winIdxs := winIdxs) (stride := stride)
       (padding := padding))
-  sum / (kernelProd kernel : α)
+  sum / (kernel.prod : α)
 
 /-- Input-space pivot whose scaled value is maximal over a nonempty arbitrary-rank pooling
 window. -/
@@ -530,17 +488,14 @@ def maxPoolSpatialBackwardSpec
     match best? with
     | none => accGrad
     | some (bestWin, _) =>
-        match Pooling.Internal.paddedCoords? outIdxs bestWin strideL with
+        match Conv.Internal.mkInputIdx? outIdxs bestWin strideL paddingL with
         | none => accGrad
-        | some padded =>
-            match Pooling.Internal.unpadCoords? padded paddingL with
-            | none => accGrad
-            | some orig =>
-                if Pooling.Internal.coordsInBounds orig inSpatial.data.toList then
-                  let current : α := getAtOrZero accGrad orig
-                  updateSpec accGrad orig (current + gOut)
-                else
-                  accGrad)
+        | some orig =>
+            if Pooling.Internal.coordsInBounds orig inSpatial.data.toList then
+              let current : α := getAtOrZero accGrad orig
+              updateSpec accGrad orig (current + gOut)
+            else
+              accGrad)
 
 /--
 Backward/VJP for `avgPoolSpatialSpec` (single-channel).
@@ -561,7 +516,7 @@ def avgPoolSpatialBackwardSpec
   let kernelL := kernel.data.toList
   let strideL := stride.data.toList
   let paddingL := padding.data.toList
-  let poolSize : α := (Pooling.Internal.kernelProd kernelL : Nat)
+  let poolSize : α := (kernelL.prod : Nat)
 
   let gradInit : Tensor α (Shape.ofList inSpatial.data.toList) :=
     Tensor.generate inSpatial.data.toList (fun _ => 0)
@@ -569,14 +524,11 @@ def avgPoolSpatialBackwardSpec
   Conv.Internal.foldlIndices outDims gradInit (fun accGrad outIdxs =>
     let gOut : α := getAtOrZero gradOutput outIdxs
     Conv.Internal.foldlIndices kernelL accGrad (fun acc winIdxs =>
-      match Pooling.Internal.paddedCoords? outIdxs winIdxs strideL with
+      match Conv.Internal.mkInputIdx? outIdxs winIdxs strideL paddingL with
       | none => acc
-      | some padded =>
-          match Pooling.Internal.unpadCoords? padded paddingL with
-          | none => acc
-          | some orig =>
-              let current : α := getAtOrZero acc orig
-              updateSpec acc orig (current + gOut / poolSize)))
+      | some orig =>
+          let current : α := getAtOrZero acc orig
+          updateSpec acc orig (current + gOut / poolSize)))
 
 /-!
 ### Forward (channels-first: `C × spatial...`)
@@ -638,7 +590,9 @@ image, volume, and higher-rank tensors.
 /-- Adaptive average pooling on a channels-first tensor of arbitrary spatial rank.
 
 The two hypotheses make every bin nonempty (`Pooling.Internal.adaptiveStart_lt_adaptiveEnd`), so
-the per-bin average never divides by zero. They are not eliminated inside the definition. -/
+its natural cell count is positive. Casting and dividing still use the scalar context; these
+hypotheses alone do not ensure that the scalar denominator is nonzero. They are not eliminated
+inside the definition. -/
 def adaptiveAvgPoolSpec
     {d C : Nat} {inSpatial outSpatial : Tensor Nat [d]}
     (input : Tensor α (Shape.ofList (C :: inSpatial.data.toList)))
@@ -810,8 +764,7 @@ For a window `x₁,…,xₙ`, the surrogate is:
 `y = (1/beta) * log(∑ exp(beta*xᵢ))`
 
 and the VJP distributes upstream gradient proportionally to `exp(beta*xᵢ)`.
-The implementation evaluates the equivalent max/min-shifted weights so large finite inputs do not
-overflow before normalization.
+The implementation evaluates max/min-shifted weights rather than exponentiating unshifted scores.
 -/
 def smoothMaxPoolSpatialBackwardSpec
     {d : Nat} {inSpatial kernel stride padding : Tensor Nat [d]}
@@ -849,20 +802,17 @@ def smoothMaxPoolSpatialBackwardSpec
         acc + MathFunctions.exp (beta * (x - pivot)))
     let gOut : α := getAtOrZero gradOutput outIdxs
     Conv.Internal.foldlIndices kernelL accGrad (fun acc winIdxs =>
-      match Pooling.Internal.paddedCoords? outIdxs winIdxs strideL with
+      match Conv.Internal.mkInputIdx? outIdxs winIdxs strideL paddingL with
       | none => acc
-      | some padded =>
-          match Pooling.Internal.unpadCoords? padded paddingL with
-          | none => acc
-          | some orig =>
-              let x :=
-                Pooling.Internal.getPaddedAverageInputVal (d := d) (inSpatial := inSpatial)
-                  (input := input) (outIdxs := outIdxs) (winIdxs := winIdxs)
-                  (stride := strideL) (padding := paddingL)
-              let expVal := MathFunctions.exp (beta * (x - pivot))
-              let w : α := coeff * (expVal / sumExp)
-              let current : α := getAtOrZero acc orig
-              updateSpec acc orig (current + gOut * w)))
+      | some orig =>
+          let x :=
+            Pooling.Internal.getPaddedAverageInputVal (d := d) (inSpatial := inSpatial)
+              (input := input) (outIdxs := outIdxs) (winIdxs := winIdxs)
+              (stride := strideL) (padding := paddingL)
+          let expVal := MathFunctions.exp (beta * (x - pivot))
+          let w : α := coeff * (expVal / sumExp)
+          let current : α := getAtOrZero acc orig
+          updateSpec acc orig (current + gOut * w)))
 
 /-- Multi-channel VJP for `smoothMaxPoolSpec` (apply spatial backward per channel). -/
 def smoothMaxPoolBackwardSpec

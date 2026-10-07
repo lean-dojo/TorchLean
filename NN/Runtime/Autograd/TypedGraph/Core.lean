@@ -14,10 +14,9 @@ import NN.Tactic.Except
 
 Shape-indexed graph execution and its runtime-tape lowering.
 
-This module exposes the "approach (a)" workflow:
-1) Build an executable SSA/DAG graph (`Proofs.Autograd.Algebra.GraphData`).
-2) Lower it to a runtime `Tape` with `Graph.lowerGraphDataToTape`.
-3) Run `Tape.backwardDenseFrom` / `Tape.backwardDenseAll`.
+Checked application execution uses `compileChecked` from `TypedGraph.Compiled`. This module
+retains the raw-tape bridge for tape consumers and its correspondence proofs. The pure
+`Graph.lowerGraphDataToTape` and checked `lowerToTapeChecked` both retain the complete context.
 
 `GraphData` is executable data, not a derivative-correctness certificate. The lowering theorem
 shows that the tape implements `GraphData.backpropAllCtx`. To prove that this operation is the
@@ -49,38 +48,13 @@ namespace Runtime
 namespace Autograd
 namespace TypedGraph
 
-open Spec TorchLean
+open Spec
 open TorchLean
 
 open Proofs.Autograd.Algebra
 -- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
 -- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
-
-/--
-Executable SSA/DAG graph for typed graph execution.
-
-This is `Proofs.Autograd.Algebra.GraphData` specialized to:
-- `Δ := Unit` (no extra opaque environment threaded through evaluation), and
-- the `Runtime.Autograd.TypedGraph` namespace.
--/
-abbrev GraphData (α : Type) [TorchLean.Storage α] (Γ : List Shape) (ss : List Shape) :=
-  Proofs.Autograd.Algebra.GraphData α Unit Γ ss
-
-/--
-Lower an executable `GraphData` into a runtime tape.
-
-This is the bridge from the shape-indexed SSA representation to the runtime tape engine:
-`Graph.lowerGraphDataToTape` emits a `Runtime.Autograd.Tape` whose nodes replay the graph and whose
-backward closures implement the graph's VJP rules.
-
-The graph remains the persistent artifact; the tape contains the runtime closures needed for one
-execution and reverse pass.
--/
-def lowerToTape {α : Type} [TorchLean.Storage α]
-    {Γ : List Shape} {ss : List Shape} (g : GraphData α Γ ss) (x : TorchLean.TensorPack α Γ) :
-    Runtime.Autograd.Tape α × TorchLean.TensorPack α (Γ ++ ss) :=
-  Proofs.Autograd.Algebra.Graph.lowerGraphDataToTape (α := α) (Δ := Unit) (Γ := Γ) (ss := ss) g x ()
 
 /-- Validate and evaluate nodes in one pass while constructing their reverse-mode tape. -/
 def lowerToTapeChecked {α Δ : Type} [TorchLean.Storage α]
@@ -282,19 +256,20 @@ The result covers outputs that are inputs or intermediate nodes, not only the fi
 It states fidelity to the executable VJP stored in `GraphData`; derivative correctness requires the
 separate local laws carried by `Proofs.Autograd.Algebra.Node`.
 -/
-theorem backwardDenseAllFrom_lowerToTape_eq_backpropAllCtx
-    {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
+theorem backwardDenseAllFrom_lowerGraphDataToTape_eq_backpropAllCtx
+    {α Δ : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {Γ : List Shape} {ss : List Shape} {τ : Shape}
-    (g : GraphData α Γ ss) (x : TorchLean.TensorPack α Γ) (output : Idx (Γ ++ ss) τ)
+    (g : Proofs.Autograd.Algebra.GraphData α Δ Γ ss) (x : TorchLean.TensorPack α Γ)
+    (data : Δ) (output : Idx (Γ ++ ss) τ)
     (seed : Tensor α τ) :
-    backwardDenseAllFrom (lowerToTape g x).1 output seed =
+    backwardDenseAllFrom (Graph.lowerGraphDataToTape g x data).1 output seed =
       .ok
         (TorchLean.TensorPack.toShapeErasedArray
           (Proofs.Autograd.Algebra.GraphData.backpropAllCtx
-            g x () (Proofs.Autograd.Algebra.TensorPack.single output seed))) := by
+            g x data (Proofs.Autograd.Algebra.TensorPack.single output seed))) := by
   exact
     Proofs.Autograd.Algebra.Graph.backwardDenseFrom_lowerGraphDataToTape_eq_backpropAllCtx
-      (α := α) (Δ := Unit) (Γ := Γ) (ss := ss) g x ()
+      (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) g x data
       (Proofs.Autograd.Algebra.TensorPack.single output seed)
 
 end TypedGraph

@@ -113,19 +113,10 @@ There are several routes into the same graph language:
 - Verification examples can build small graphs directly when the graph itself is the artifact under
   study.
 
-Those routes are intentionally different producers with one consumer contract. Once a graph reaches
-`NN.IR.Graph`, downstream code should be able to ask the same questions: are node ids topological,
-are shapes inferred by the shared op contracts, which payloads are required, and what denotation does
-the graph have in the spec layer?
-
 ## Role And Scope
 
-The IR gives the runtime, checkers, exporters, and future compiler passes one graph object to share. Write
-ordinary models through `TorchLean.nn`, `Trainer`, or `GraphSpec`, then lower them. Construct `Node`
-arrays directly only when testing an IR consumer.
-
-Each runtime backend retains its own proof status. Proofs, tests, and trust-boundary statements say
-how a particular runtime, lowering fragment, or certificate checker relates to the shared graph.
+Write ordinary models through `TorchLean.nn`, `Trainer`, or `GraphSpec`, then lower them.
+Direct `Node` construction is useful for developing IR consumers and certificate examples.
 
 ## Current Consumers
 
@@ -155,15 +146,9 @@ used for verified claims.
 
 ## Payload Discipline
 
-The graph syntax stores operation structure. It does not smuggle learned tensors into node fields.
-Weights, constants, and normalization parameters live in `NN.IR.Payload` stores keyed by node id.
-Verifier input boxes belong to the verifier's separate payload boundary. This separation makes the
-data ownership explicit:
-
-- graph topology can be checked independently of parameter values,
-- payload shape mismatches are explicit errors,
-- certificate and verifier code can cite the node id that owns each parameter or input box,
-- imported weights can be treated as artifacts rather than trusted syntax.
+`NN.IR.Payload` stores constants, weights, normalization parameters, and custom bodies by node id.
+Topology checking needs no parameter values; evaluation rejects missing or inconsistent payloads.
+Verifier input boxes use a separate payload. Imported weights remain artifacts to validate.
 
 ## Release Invariants
 

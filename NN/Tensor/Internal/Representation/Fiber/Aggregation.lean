@@ -66,9 +66,10 @@ def reduce {α : Type u} {β : Type v}
 /--
 Reduce fibers with an operation that is defined only on nonempty multisets.
 
-The geometric premise is independent of tensor values. It is satisfied by a
-checked einops reduction exactly when the product of its removed-axis lengths
-is positive.
+The geometric premise is independent of tensor values. A checked einops
+reduction satisfies it when the product of its removed-axis lengths is
+positive. If the output coordinate space is empty, the premise is vacuous
+even when that product is zero.
 -/
 def reduceNonempty {α : Type u} {β : Type v}
     [Storage α] [Storage β] {s t : Shape}

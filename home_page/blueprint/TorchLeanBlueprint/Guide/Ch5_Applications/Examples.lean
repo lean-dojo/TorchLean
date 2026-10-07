@@ -300,35 +300,10 @@ $$`\frac{\partial L}{\partial b}=2(y-t),
 L=(y-t)^2.`
 
 So the bias gradient should be twice the residual, and the weight gradient should be that same
-number times the input $`(0.5,-1)`. The loss determines the residual magnitude. Its sign also
-requires the prediction or the signed
-gradient; the following calculation uses the negative sign from this example's bias gradient:
-
-```lean (name := exGradCheck)
--- Recover the residual magnitude and use the observed
--- gradient sign.
-#eval show IO Unit from do
-  let state : autograd.model.State exModel Float :=
-    nn.initialState exModel
-  let input : Tensor Float [2] := [0.5, -1.0]
-  let target : Tensor Float [1] := [0.25]
-  let (_, loss) ← autograd.model.grad exModel
-    autograd.model.Loss.mse state input target
-    (value := true)
-  let residual := Float.sqrt (Tensor.at loss ())
-  IO.println s!"|y - t|   = {residual}"
-  IO.println s!"2 (y - t) = {-2.0 * residual}"
-  IO.println s!"times 0.5 = {-2.0 * residual * 0.5}"
-```
-```leanOutput exGradCheck
-|y - t|   = 0.877432
-2 (y - t) = -1.754865
-times 0.5 = -0.877432
-```
-
-`-1.754865` is the printed bias gradient and `-0.877432` is the printed first weight gradient, to
-every digit shown. The sign tells us the untrained prediction is below the target. This calculation
-checks the chain rule and the squared-error convention against the displayed gradient.
+number times the input $`(0.5,-1)`. Dividing the printed bias gradient by two gives a residual
+of about $`-0.8774325`: the untrained prediction is below the target. Its square is about
+$`0.769887`, matching the displayed loss. Multiplying the bias gradient by $`0.5` and $`-1`
+recovers the two weight entries, to the displayed precision.
 
 The same identity can be checked in PyTorch with explicitly chosen parameters:
 
@@ -371,12 +346,8 @@ The two gradient entry points differ in what they differentiate:
 Training normally calls the second path through `Trainer`, which manages the differentiation
 invocation for each update.
 
-A state gradient is useful because an optimizer must update the same collection of tensors
-that produced the prediction. The weight row and bias vector have different shapes and different
-roles; concatenating their displayed numbers would lose that information. The typed state keeps
-the pairing available through differentiation and the subsequent update. Input differentiation
-instead treats those parameters as fixed and asks how the model responds to a changed example.
-Both are chain-rule computations, but they answer different application questions.
+The state gradient keeps each tensor paired with its parameter, including its shape, so an
+optimizer can update the weights and biases without flattening them into one untyped collection.
 
 ## Higher-Order And Directional Transforms
 
@@ -428,13 +399,9 @@ and
 These executions are useful checks, not theorems that every runtime derivative agrees with real
 calculus; {ref "autograd-walkthrough"}[the autograd chapter] is where that question is taken up.
 
-The directional derivative and Hessian-vector product answer questions that a full matrix dump
-can obscure. The first gives the local loss change along one chosen parameter perturbation; the
-second gives how the gradient changes along that perturbation. Their tensor layouts still match
-the parameter state, so the three weight rows and three biases remain distinguishable. A zero
-Hessian-vector entry would concern curvature in that direction, whereas the detached gradients
-above are zero because a computation path has been cut. Reading the operation that produced a
-zero is as important as reading its printed value.
+The directional derivative measures the local loss change along the chosen perturbation; the
+Hessian-vector product measures how the gradient changes. A zero in either result concerns that
+direction; detaching instead cuts a computation out of the reverse pass.
 
 # MLP Training
 
@@ -848,13 +815,6 @@ Certificate ranges are outward-rounded FloatLib binary32, and concrete inputs ar
 bit-level interpreter. A native runtime is a separate provider. Comparing its outputs and
 gradients with FloatLib on one trajectory does not prove agreement on every execution.
 
-Replaying a certificate also separates the producer's work from the checker's decision. The
-producer can supply proposed intermediate ranges, but acceptance depends on checking them against
-the graph and numerical operations. Altering a range is therefore a useful negative probe: the
-checker must reject an artifact that no longer satisfies its conditions even if its format still
-parses. The rejection check concerns that altered artifact; the proof layer states the general
-conditions under which the checker can justify a numerical claim.
-
 # PyTorch Graph Import
 
 The last lab imports PyTorch models into canonical IR and compares their outputs on deterministic
@@ -946,20 +906,3 @@ Command implementations keep their local configuration vocabulary short because 
 already supplies the command name: `Options` for parsed flags and `Preset` for a named model
 setup. Data prepared for one command likewise uses role names such as `Splits` or `Evaluation`,
 rather than repeating the command name in every type.
-
-# Example Coverage
-
-When reusing an example, carry its evidence with it. The value and gradient transcripts record
-particular executions: `mean(x^2)` having the right gradient at $`(1,2,3)` is a useful check of
-autodiff, but a theorem must cover its stated domain. The reshape example illustrates a different
-condition: the API requires a proof that the element counts agree, and Lean rejects the attempted
-four-to-nine reshape because that proposition is false.
-
-The interval workflow covers an input region within its supported IR fragment and numerical
-policy. Certificate replay checks an artifact against the checker's conditions, including a
-deliberately altered range that it rejects. The import checks combine a structural guarantee with
-output comparisons on fixed probes; correctness of the Python exporter remains a separate
-obligation.
-
-The chapters that carry those claims further are {ref "verification"}[verification],
-{ref "floats"}[floating point], and {ref "autograd-walkthrough"}[autograd].

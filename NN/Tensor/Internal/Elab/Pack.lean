@@ -8,7 +8,8 @@ module
 public import NN.Tensor.Packing
 public import NN.Tensor.Internal.Elab.Native.Pack.Dispatch
 public import NN.Tensor.Internal.Elab.Native.Pack.Unpack
-public meta import NN.Tensor.Internal.Elab.Native.Pack -- shake: keep
+public meta import NN.Tensor.Internal.Elab.Native.Pack.Dispatch -- shake: keep
+public meta import NN.Tensor.Internal.Elab.Native.Pack.Unpack -- shake: keep
 public import NN.Tensor.Internal.Elab.Syntax
 
 /-!
@@ -18,6 +19,11 @@ This module implements heterogeneous-rank `pack` and `unpack`. It preserves
 symbolic component dimensions, verifies fixed-axis agreement, proves exact
 segment partitioning, and returns the dependent tensor family dictated by the
 checked metadata.
+
+Component ranks may differ. Scalar promotion chooses one common scalar type
+before constructing the family; `unpack` restores shapes, not the original
+pre-promotion scalar types. Symbolic dimensions still require a statically
+known shape-list structure.
 -/
 
 public meta section

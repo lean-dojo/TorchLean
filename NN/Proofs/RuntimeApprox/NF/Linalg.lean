@@ -13,13 +13,15 @@ public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
 /-!
 # NF Linear Algebra
 
-Forward (runtime→spec) approximation lemmas for non-elementwise linear algebra ops over `NF`.
+Forward-error bounds for the noncomputable rounded-real NF model.
 
 This extends `NN.Proofs.RuntimeApprox.NF.Ops` with bounds for the core
 sum-of-products patterns that appear in linear layers and matrix multiplication.
 
 The development separates scalar fold bounds for dot products from the tensor-level wrappers that
 turn those fold bounds into `approxTensor` theorems and graph nodes.
+Each dot product rounds multiplication and addition separately in increasing index order.
+These results do not establish a native GEMM or fused multiply-add error bound.
 
 ## PyTorch correspondence / citations
 This is the proof analogue of linear algebra building blocks used throughout PyTorch models:
@@ -148,10 +150,9 @@ def dotStep {n : Nat} (epsa epsb : ℝ) (aR bR : Fin n → R) :
       (accR + prodR, epsAcc')
 
 /--
-Closed-form bound for a runtime dot-product over `List.finRange n`.
-
-`dotBound epsa epsb aR bR` is the accumulated `eps` component produced by folding `dotStep`
-starting from 0.
+Accumulated error budget for a sequential dot product over `List.finRange n`.
+The initial zero contributes a conservative half ULP, followed by separate multiplication
+and addition budgets at each index.
 -/
 def dotBound {n : Nat} (epsa epsb : ℝ) (aR bR : Fin n → R) : ℝ :=
   let initEps : ℝ := ulp β fexp 0 / 2
@@ -170,10 +171,8 @@ private theorem getScalar_matVecMulSpec {α : Type} [TorchLean.Storage α] [Add 
 /--
 Dot-product approximation bound over an arbitrary list of indices.
 
-In words: if `aR` and `bR` approximate `aS` and `bS` entrywise (within `epsa`/`epsb`),
-  then
-folding `acc + aR k * bR k` approximates the corresponding spec fold, with error bounded by the
-accumulated `dotStep` epsilon.
+The list determines the traversal order and may repeat indices. Each multiplication and
+addition contributes its own error budget through `dotStep`.
 -/
 private theorem approx_dot_list {n : Nat} (l : List (Fin n))
     {aS bS : Fin n → SpecScalar} {aR bR : Fin n → R}

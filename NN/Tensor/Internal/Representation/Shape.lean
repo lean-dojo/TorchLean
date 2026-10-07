@@ -241,15 +241,11 @@ theorem linearize_unlinearizeAux :
       rw [unlinearizeAux, linearize_cons_val, linearize_unlinearizeAux s]
       exact Nat.mod_add_div _ _
 
-/-- Arithmetic `unlinearize`, which replaces it in compiled code. -/
-def unlinearizeFast {s : Shape} (index : Fin (Shape.size s)) : Coord s :=
-  unlinearizeAux s index
-
-/-- Compiled code runs `unlinearizeFast` in place of `unlinearize`. -/
-@[csimp] theorem unlinearize_eq_unlinearizeFast : @unlinearize = @unlinearizeFast := by
+/-- Compiled code uses the arithmetic inverse directly in place of `unlinearize`. -/
+@[csimp] theorem unlinearize_eq_unlinearizeAux : @unlinearize = unlinearizeAux := by
   funext s index
-  rw [unlinearizeFast, ← linearize_unlinearizeAux s index, unlinearize_linearize,
-    linearize_unlinearizeAux]
+  apply linearize_injective
+  rw [linearize_unlinearize, linearize_unlinearizeAux]
 
 /--
 The row-major equivalence built from the arithmetic index maps. Compiled code uses it in place of
@@ -257,12 +253,12 @@ The row-major equivalence built from the arithmetic index maps. Compiled code us
 -/
 def equivFinFast (s : Shape) : Coord s ≃ Fin (Shape.size s) where
   toFun := linearizeFast
-  invFun := unlinearizeFast
+  invFun := unlinearizeAux s
   left_inv coordinate := by
-    rw [← linearize_eq_linearizeFast, ← unlinearize_eq_unlinearizeFast]
+    rw [← linearize_eq_linearizeFast, ← unlinearize_eq_unlinearizeAux]
     exact unlinearize_linearize coordinate
   right_inv index := by
-    rw [← linearize_eq_linearizeFast, ← unlinearize_eq_unlinearizeFast]
+    rw [← linearize_eq_linearizeFast, ← unlinearize_eq_unlinearizeAux]
     exact linearize_unlinearize index
 
 /-- Compiled code runs `equivFinFast` in place of `equivFin`. -/

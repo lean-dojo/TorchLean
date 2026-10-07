@@ -51,11 +51,11 @@ def input : Tensor Float [3] :=
   [1.0, 2.0, 3.0]
 
 /-- Matrix multiplication preserves the output dimension in the result type. -/
-def linearOutput : Tensor Float [4] :=
+def linear : Tensor Float [4] :=
   einsum weights, input "output input, input -> output"
 
-#tensor_view linearOutput
-#tensor_stats_view linearOutput
+#tensor_view linear
+#tensor_stats_view linear
 
 /-! ## Batches and reshaping -/
 
@@ -79,23 +79,23 @@ def secondSample : Tensor Float [2, 3] :=
 #tensor_view secondSample
 
 /-- A flat tensor whose values will be viewed at another shape. -/
-def flatValues : Tensor Float [6] :=
+def flat : Tensor Float [6] :=
   [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
 
 /-- Reshape a vector without changing row-major element order. -/
-def reshapedMatrix : Tensor Float [2, 3] :=
-  flatValues.reshape [2, 3]
+def reshaped : Tensor Float [2, 3] :=
+  flat.reshape [2, 3]
 
-#tensor_view reshapedMatrix
+#tensor_view reshaped
 
 /-! ## Shape-preserving transformations -/
 
 /-- A constant matrix of twos for the elementwise addition example. -/
-def tensorA : Tensor Float [2, 2] :=
+def a : Tensor Float [2, 2] :=
   Tensor.full [2, 2] 2.0
 
-/-- A constant matrix of threes; adding it to `tensorA` produces a matrix of fives. -/
-def tensorB : Tensor Float [2, 2] :=
+/-- A constant matrix of threes; adding it to `a` produces a matrix of fives. -/
+def b : Tensor Float [2, 2] :=
   Tensor.full [2, 2] 3.0
 
 /--
@@ -103,15 +103,15 @@ Ordinary `+` on tensors is elementwise, and the shapes must already agree.
 
 There is no implicit broadcasting here: a shape mismatch is a type error, not a runtime surprise.
 -/
-def elementwiseSum : Tensor Float [2, 2] :=
-  tensorA + tensorB
+def sum : Tensor Float [2, 2] :=
+  a + b
 
 /-- A pointwise transformation has the same shape discipline as a gradient buffer. -/
-def doubledOutput : Tensor Float [4] :=
-  Tensor.map (2.0 * ·) linearOutput
+def doubled : Tensor Float [4] :=
+  Tensor.map (2.0 * ·) linear
 
-#eval elementwiseSum
-#tensor_view elementwiseSum
-#tensor_view doubledOutput
+#eval sum
+#tensor_view sum
+#tensor_view doubled
 
 end NN.Examples.DeepDives.TensorOperations

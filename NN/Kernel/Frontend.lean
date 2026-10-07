@@ -243,7 +243,10 @@ def elaborate (source : Syntax) (expectedType? : Option Lean.Expr) : TermElabM L
     unless ← isDefEq (← inferType body) resultType do
       throwError "Program.of: the function must return {resultType}, got {← inferType body}"
     let expression ← reify α read [(index, .index)] .scalar 4096 body
-    let arithmetic := mkConst (if binary32 then ``Arithmetic.binary32 else ``Arithmetic.binary64)
+    let arithmeticType ← mkAppM ``Arithmetic #[α]
+    let arithmetic ← elabTermEnsuringType (← `(Arithmetic.ofOps)) (some arithmeticType)
+    synthesizeSyntheticMVarsNoPostponing
+    let arithmetic ← instantiateMVars arithmetic
     let evaluation ← mkAppM ``evaluate #[arithmetic, expression, read, index]
     let equality ← mkEq evaluation body
     let evidence ← if ← isDefEq evaluation body then
@@ -252,8 +255,8 @@ def elaborate (source : Syntax) (expectedType? : Option Lean.Expr) : TermElabM L
         let goal ← mkFreshExprSyntheticOpaqueMVar equality
         let remaining ← Lean.Elab.Tactic.run goal.mvarId! do
           Lean.Elab.Tactic.evalTactic (← `(tactic|
-            simp [evaluate, Expr.eval, Env.output, Env.push, Arithmetic.binary32,
-              Arithmetic.binary64, Compare.index, IndexOp.eval, Bind.bind, Pure.pure,
+            simp [evaluate, Expr.eval, Env.output, Env.push, Arithmetic.ofOps,
+              Compare.index, IndexOp.eval, Bind.bind, Pure.pure,
               Except.instMonad, Except.bind, Except.pure, BEq.beq, instBEqOfDecidableEq,
               Bool.cond_decide, apply_ite] <;>
               repeat' first

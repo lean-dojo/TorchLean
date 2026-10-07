@@ -29,16 +29,16 @@ This CLI is the interactive PINN residual-bound tool:
 - use the certificate checker when you want a stable artifact for docs, papers, or CI.
 
 The stable artifact checker is:
-`lake exe verify -- pinn-cert [NN/Examples/Verification/PINN/pinn_cert.json]`
+`scripts/lake.sh exe verify -- pinn-cert [NN/Examples/Verification/PINN/pinn_cert.json]`
 
 Run this CLI via the unified verification dispatcher:
-`lake exe verify -- pinn-cli -- [flags] "<PDE>" x eps`
+`scripts/lake.sh exe verify -- pinn-cli -- [flags] "<PDE>" x eps`
 or for 2D:
-`lake exe verify -- pinn-cli -- [flags] "<PDE>" x y eps`
+`scripts/lake.sh exe verify -- pinn-cli -- [flags] "<PDE>" x y eps`
 
 Examples:
-- `lake exe verify -- pinn-cli -- "u_xx + u" 0.0 0.1`
-- `lake exe verify -- pinn-cli -- --backend=float "u_t - u_xx" 0.0 0.05`
+- `scripts/lake.sh exe verify -- pinn-cli -- "u_xx + u" 0.0 0.1`
+- `scripts/lake.sh exe verify -- pinn-cli -- "u_t - u_xx" 0.0 0.0 0.05`
 
 References:
 - PINNs: `https://arxiv.org/abs/1711.10561`
@@ -90,7 +90,6 @@ def computePrimsAt (g : Graph) (ps : ParamStore Float) (uMethod : Method := .ibp
   let outId := NN.Verification.PINN.SequentialPINNArch.graphOutputId g
   let ibp := runIBP (α:=Float) g ps
   let uBox ← IO.ofExcept (outputInterval "IBP failed at output" ibp outId)
-  -- Determine input dimension from graph's input node shape
   let inDim : Nat ←
     match g.nodes[0]? with
     | some n0 =>
@@ -98,11 +97,8 @@ def computePrimsAt (g : Graph) (ps : ParamStore Float) (uMethod : Method := .ibp
       | .dim n .scalar => pure n
       | _ => throw <| IO.userError "PINN input node must have a one-dimensional vector shape"
     | none => throw <| IO.userError "PINN graph has no input node"
-  -- Every axis is bounded the same way, so ask `Core` once per axis. Getting the first and second
-  -- derivative back from one call matters here: the earlier version of this function ran the
-  -- first-derivative sweep along `y` twice, once for `duY` and again as the seed for `d2uY`.
-  -- The two components are also reported independently now, so a first derivative survives a
-  -- second-derivative sweep that the propagator cannot finish.
+  -- Reuse each first-derivative sweep to seed the second. Preserve the first result if the
+  -- second-derivative propagator cannot finish.
   let boundsAlong (index : Nat) : Option (Option FloatInterval × Option FloatInterval) :=
     if h : index < inDim then
       some (axisDerivativeBounds g ps ibp inDim ⟨index, h⟩)
@@ -156,7 +152,7 @@ def loadWeightsOrDefault
                   s!"built-in {expectedInputDim}D weights.")
               pure (defaultGraph, defaultParams)
             else
-              pure (Import.PINNPyTorch.buildGraph sd, Import.PINNPyTorch.toParamStore sd)
+              pure (Import.PINNPyTorch.graph sd, Import.PINNPyTorch.parameters sd)
         | none =>
             IO.eprintln <|
               ("[PINN] Weights JSON did not match expected shapes; falling back to " ++
@@ -208,16 +204,16 @@ def parseFlags (args : List String) : Except String (Options × List String) := 
 Entry point for the PINN residual-bounding CLI.
 
 This is an interactive tool registered as:
-`lake exe verify -- pinn-cli -- ...`
+`scripts/lake.sh exe verify -- pinn-cli -- ...`
 
 For certificate checking, use:
-`lake exe verify -- pinn-cert [NN/Examples/Verification/PINN/pinn_cert.json]`
+`scripts/lake.sh exe verify -- pinn-cert [NN/Examples/Verification/PINN/pinn_cert.json]`
 
 Run:
-`lake exe verify -- pinn-cli -- [--method=ibp|crown-fwd|crown-bwd] [--split-depth=N]
+`scripts/lake.sh exe verify -- pinn-cli -- [--method=ibp|crown-fwd|crown-bwd] [--split-depth=N]
   [--backend=float] [--weights=PATH.json] "<PDE>" x eps`
 or (2D):
-`lake exe verify -- pinn-cli -- [flags] "<PDE>" x y eps`
+`scripts/lake.sh exe verify -- pinn-cli -- [flags] "<PDE>" x y eps`
 -/
 def main (args : List String) : IO Unit := do
   let (options, rest) ←
@@ -284,8 +280,7 @@ def main (args : List String) : IO Unit := do
           pure (lo0, hi0)
         else
           split1D x eps splitDepth evalAt
-      -- Never return a worse interval when splitting: intersect when consistent, otherwise fall
-      -- back to hull.
+      -- Intersect consistent results; retain both via their hull if they disagree.
       let loI := if lo0 > loS then lo0 else loS
       let hiI := if hi0 < hiS then hi0 else hiS
       let (lo, hi) :=

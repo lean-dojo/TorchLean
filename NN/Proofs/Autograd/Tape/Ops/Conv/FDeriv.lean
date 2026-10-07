@@ -18,6 +18,9 @@ public import NN.Spec.Core.Context.Real
 
 This file proves the derivative and reverse-mode formulas for channels-first convolution at an
 arbitrary spatial rank.  All sums use bounded multi-indices; no axis count is fixed in a theorem.
+The forward coordinate map is bilinear in kernel and input. The input-gradient adjoint identity
+requires positive strides so the forward and transpose index relations agree. These are exact-real
+specification results; they do not establish correspondence with native LibTorch kernels.
 -/
 
 @[expose] public section
@@ -282,7 +285,7 @@ theorem channelGet_convBiasBroadcastSpec
   change getAtOrZero bias [outCh.val] = (bias.unstack outCh).item
   simp
 
-/-- One input-gradient coordinate is the transpose-index convolution used by the runtime. -/
+/-- One input-gradient coordinate is the specification's transpose-index contraction. -/
 theorem channelGet_convInputDerivSpec
     {d inC outC : Nat}
     {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
@@ -314,7 +317,7 @@ theorem channelGet_convInputDerivSpec
     getAtOrZero_toList _ layer.kernel (outCh, (inCh, kIdx))
   split <;> simp_all [channelPairGet]
 
-/-- The implemented input gradient is multiplication by the transposed coefficient matrix. -/
+/-- The specification's input gradient multiplies by the transposed coefficient matrix. -/
 theorem channelGet_convInputDerivSpec_eq_coefficients
     {d inC outC : Nat}
     {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
@@ -396,7 +399,7 @@ theorem channelGet_convInputDerivSpec_eq_coefficients
 
 /-! ## Adjoint identities -/
 
-/-- The forward input map and implemented input gradient are adjoint at every spatial rank. -/
+/-- The forward input map and input-gradient specification are adjoint at every spatial rank. -/
 theorem convCoreSpec_convInputDerivSpec_adjoint
     {d inC outC : Nat}
     {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
@@ -478,7 +481,7 @@ theorem convCoreSpec_convInputDerivSpec_adjoint
               intro outIdx _
               ring
 
-/-- The kernel contraction and implemented kernel gradient are adjoint. -/
+/-- The kernel contraction and kernel-gradient specification are adjoint. -/
 theorem convCoreSpec_convKernelDerivSpec_adjoint
     {d inC outC : Nat}
     {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
@@ -812,8 +815,7 @@ def convCoreBilin
 /-- The bundled bilinear map computes the same contraction as `convCoreVec`.
 
 Bundling matters: once convolution is a continuous bilinear map, its derivative in each argument
-comes
-from Mathlib rather than from a hand-written difference quotient. -/
+comes from mathlib rather than a separate difference-quotient argument. -/
 @[simp]
 theorem convCoreBilin_apply
     {d inC outC : Nat}
@@ -1013,12 +1015,10 @@ theorem tensorToCoordVec_convJvpSpec
   rw [add_comm]
   rw [convCoreBilin_apply, convCoreBilin_apply]
 
-/-- The implemented convolution backward pass is the adjoint of the exact JVP.
+/-- The convolution backward specification is the adjoint of the exact JVP.
 
-`convBackwardSpec` returns a `ConvGradients` record, so the equation below reads one inner product
-per gradient, each paired with the matching piece of the input tangent. An earlier version returned
-a bare triple and had to project the components out by position, which is the same proposition and
-considerably harder to check against a sentence describing it. -/
+The `ConvGradients` fields pair the kernel, bias, and input gradients with their corresponding
+tangents. Positive strides are needed for the transpose input-index relation. -/
 theorem convJvpSpec_convBackwardSpec_adjoint
     {d inC outC : Nat}
     {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}

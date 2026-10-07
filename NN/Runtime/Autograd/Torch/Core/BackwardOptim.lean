@@ -37,14 +37,14 @@ This is the CUDA analogue of `backwardDenseAll`, but it does *not* download grad
 host. This is primarily useful for implementing GPU-native optimizer steps.
 -/
 def backwardDenseAllCuda {α : Type} [TorchLean.Storage α] [TensorTransfer α]
-    (s : EagerSession α) [Add α] [Zero α]
+    (s : EagerSession α)
   {sh : Shape} (out : TensorRef α sh) (seed : Tensor α sh) :
   IO (Array Runtime.Autograd.LibTorch.AnyBuffer) := do
   if Config.device s.options != .cuda then
     throw <| IO.userError "torch: backwardDenseAllCuda called on non-CUDA eager session"
   let t ← s.cudaTape.get
   let seedAny ← CudaBridge.toAnyBuffer (α := α) (s := sh) seed
-  okOrThrow <|
+  IO.ofExcept <|
     Runtime.Autograd.LibTorch.Tape.backwardDenseAll (t := t) (outId := out.id) (seed := seedAny)
 
 /--
@@ -99,7 +99,7 @@ def accumulateCudaGradMap (accumulator : IO.Ref CudaGradMap)
       | none =>
           pure { gradient with buf := Runtime.Autograd.LibTorch.Buffer.copy gradient.buf }
       | some old =>
-          okOrThrow (Runtime.Autograd.LibTorch.AnyBuffer.add old gradient)
+          IO.ofExcept (Runtime.Autograd.LibTorch.AnyBuffer.add old gradient)
     accumulator.set (current.insert id summed)
     if let some old := current.get? id then
       releaseCudaAnyBuffer old
@@ -118,19 +118,8 @@ def backwardDenseAll {α : Type} [TorchLean.Storage α] [TensorTransfer α]
     gradsDev.mapM (fun g => CudaBridge.ofAnyBuffer (α := α) g)
   else
     let t ← s.tape.get
-    okOrThrow (Runtime.Autograd.Tape.backwardDenseAll (t := t) (outId := out.id)
+    IO.ofExcept (Runtime.Autograd.Tape.backwardDenseAll (t := t) (outId := out.id)
       (seed := Spec.SomeTensor.ofTensor seed))
-
-/--
-Run backward from a scalar loss with seed `1`.
-
-PyTorch comparison: `loss.backward()` for a scalar loss.
--/
-def backwardScalarDenseAll {α : Type} [TorchLean.Storage α] [TensorTransfer α]
-    (s : EagerSession α) [Add α]
-  [Zero α] [One α]
-  (loss : TensorRef α Shape.scalar) : IO (Array (Spec.SomeTensor α)) := do
-  backwardDenseAll (α := α) s (sh := Shape.scalar) loss (Tensor.scalar (1 : α))
 
 /--
 Extract the gradient for a particular `TensorRef` from a dense gradient array.
@@ -163,7 +152,7 @@ def sgdStepAll {α : Type} [TorchLean.Storage α] [TensorTransfer α] (s : Eager
     let t0 ← s.cudaTape.get
     for group in groups do
       for id in group.leaves do
-        let value ← okOrThrow <|
+        let value ← IO.ofExcept <|
           Runtime.Autograd.LibTorch.Tape.requireValue (t := t0) (id := id) (s := group.parameter.s)
         checkCudaAnyBufferSize "SGD parameter value" { s := group.parameter.s, buf := value }
     let currentValues ← groups.mapM ParameterGroup.currentCudaValue
@@ -212,7 +201,7 @@ def checkCudaOptimizerInputs {α : Type} [TorchLean.Storage α] (operation : Str
     unless grad.s == param.s do
       throw <| IO.userError s!"torch: gradient shape mismatch during {operation}"
     checkCudaAnyBufferSize s!"{operation} gradient for parameter leaf {id}" grad
-    let value ← okOrThrow <|
+    let value ← IO.ofExcept <|
       Runtime.Autograd.LibTorch.Tape.requireValue (t := tape) (id := id) (s := param.s)
     checkCudaAnyBufferSize s!"{operation} value for parameter leaf {id}"
       { s := param.s, buf := value }
@@ -299,7 +288,7 @@ def applyCudaAdamUpdate {α : Type} [TorchLean.Storage α]
   let groups ← parameterGroups s
   checkSharedCudaAdamState groups state
   let currentValues ← groups.mapM ParameterGroup.currentCudaValue
-  ensureCudaAdamConfig configRef config
+  bindAdamConfig configRef config
   for (group, currentValue) in groups.zip currentValues do
     let id := group.id
     let p := group.parameter
@@ -354,7 +343,7 @@ def adamStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
   checkCudaLearningRate "CUDA Adam" lrF
   let config : CudaAdamConfig :=
     { kind := .adam, beta1 := beta1F, beta2 := beta2F, epsilon := epsF, weightDecay := 0.0 }
-  okOrThrow config.validate
+  IO.ofExcept config.validate
   applyCudaAdamUpdate s "CUDA Adam" configRef stateRef config lrF (fun _ => 0.0) grads
 
 /--
@@ -378,7 +367,7 @@ def adamWStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
   checkCudaLearningRate "CUDA AdamW" lrF
   let config : CudaAdamConfig :=
     { kind := .adamW, beta1 := beta1F, beta2 := beta2F, epsilon := epsF, weightDecay := wdF }
-  okOrThrow config.validate
+  IO.ofExcept config.validate
   applyCudaAdamUpdate s "CUDA AdamW" configRef stateRef config lrF
     (fun _ => -(lrF * wdF)) grads
 

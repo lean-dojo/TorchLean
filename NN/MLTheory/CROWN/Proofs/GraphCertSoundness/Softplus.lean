@@ -104,7 +104,7 @@ theorem enclosesBox_boxUnaryEnclosure {f : ℝ → ℝ}
         outLo ≤ f x ∧ f x ≤ outHi)
     {B1 B : FlatBox ℝ} {v1 : Val}
     (h1 : EnclosesBox B1 v1) (hB : boxUnaryEnclosure? enclose B1 = some B) :
-    EnclosesBox B ⟨v1.n, Tensor.mapSpec f v1.v⟩ := by
+    EnclosesBox B ⟨v1.n, Tensor.map f v1.v⟩ := by
   obtain ⟨hDim, hx⟩ := h1
   obtain ⟨n, lo, hi⟩ := B1
   obtain ⟨m, x⟩ := v1

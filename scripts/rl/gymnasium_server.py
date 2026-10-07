@@ -45,10 +45,7 @@ import sys
 from argparse import ArgumentParser
 from importlib import metadata
 from pathlib import Path
-from typing import Any, Dict, NoReturn
-
-
-JsonObject = Dict[str, Any]
+from typing import Any
 
 
 def _to_jsonable_obs(obs: Any) -> Any:
@@ -63,15 +60,10 @@ def _to_jsonable_obs(obs: Any) -> Any:
     raise TypeError(f"Unsupported observation type for JSON transport: {type(obs)}")
 
 
-def _write(obj: JsonObject) -> None:
+def _write(obj: dict[str, Any]) -> None:
     """Write one compact JSON response and flush so Lean can read it immediately."""
     sys.stdout.write(json.dumps(obj, separators=(",", ":"), allow_nan=False) + "\n")
     sys.stdout.flush()
-
-
-def _fail(message: str) -> NoReturn:
-    """Raise a protocol error that will be reported as an `{ok:false}` response."""
-    raise RuntimeError(message)
 
 
 def _register_ale_if_needed(env_id: str) -> None:
@@ -145,17 +137,17 @@ def main() -> int:
     # do not need the dependency.
     _register_ale_if_needed(args.env_id)
 
-    make_kwargs: Dict[str, Any] = {}
+    make_kwargs: dict[str, Any] = {}
     if args.make_kwargs is not None:
         parsed = json.loads(args.make_kwargs)
         if not isinstance(parsed, dict):
-            _fail("--make-kwargs must be a JSON object")
+            raise RuntimeError("--make-kwargs must be a JSON object")
         make_kwargs = parsed
 
     env = gym.make(args.env_id, **make_kwargs)
     try:
         if not isinstance(env.action_space, gym.spaces.Discrete):
-            _fail(f"Only Discrete action spaces are supported, got {env.action_space}")
+            raise RuntimeError(f"Only Discrete action spaces are supported, got {env.action_space}")
 
         if args.out is not None:
             export_rollout(env, args.env_id, args.steps, args.seed, args.out)

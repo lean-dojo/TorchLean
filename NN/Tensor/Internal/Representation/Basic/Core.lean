@@ -11,10 +11,12 @@ public import NN.Tensor.Internal.Representation.Shape
 /-!
 # Native shaped tensor storage
 
-`Rep α shape` owns one contiguous row-major buffer selected by
+`Rep α shape` stores one contiguous row-major buffer selected by
 `Storage α`. Its proof field certifies that the buffer length is exactly
 `Shape.size shape`, while its coordinate-function view supplies the
 mathematical observation semantics.
+The size proof does not establish exclusive ownership or verify an external
+storage implementation; native copy-on-write behavior belongs to the backend.
 -/
 
 @[expose] public section
@@ -186,8 +188,9 @@ instance {α : Type u} [Storage α] {componentCount : Nat}
 /--
 Build a tensor from a row-major function.
 
-The selected storage backend emits one native allocation and fills it in
-increasing flat-index order.
+Construction reserves the requested capacity, then appends values in
+increasing flat-index order. Allocation and buffer reuse depend on the
+selected storage backend.
 -/
 def ofFlatFn {α : Type u} [storage : Storage α] {s : Shape}
     (values : Fin (Shape.size s) → α) : Rep α s where

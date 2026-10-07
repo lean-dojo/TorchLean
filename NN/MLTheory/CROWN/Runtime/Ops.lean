@@ -141,42 +141,37 @@ def sigmoid {s : Shape} (xB : Box α s) : Box α s :=
 def tanh {s : Shape} (xB : Box α s) : Box α s :=
   mapMinmax Activation.Math.tanhSpec xB
 
+namespace Internal
+
+/-- Midpoint-radius calculation clipped to `[-1, 1]`, shared by sine and cosine.
+
+Soundness requires exact ordered arithmetic, a 1-Lipschitz function and its unit-range bound.
+The graph engine's rounded scalar enclosures remain separate. -/
+def midpoint {s : Shape} (f : α → α) (xB : Box α s) : Box α s :=
+  { lo := Tensor.map2Spec (fun l u => max (-1) (f ((l + u) / 2) - (u - l) / 2))
+      xB.lo xB.hi
+    hi := Tensor.map2Spec (fun l u => min 1 (f ((l + u) / 2) + (u - l) / 2))
+      xB.lo xB.hi }
+
+end Internal
+
 /--
-Conservative IBP for `sin` using a 1-Lipschitz enclosure:
+IBP for `sin` using a 1-Lipschitz enclosure:
 
 $$
 \sin([l,u])\subseteq[\sin(m)-r,\sin(m)+r]\cap[-1,1],
 \qquad m=\frac{l+u}{2},\quad r=\frac{u-l}{2}.
 $$
 
-This avoids periodic case splits (no `floor/ceil` in `Context α`) while remaining sound.
+The real-arithmetic soundness theorem avoids periodic case splits. This is not an outward-rounded
+native-float transfer; the graph engine uses the scalar backend's enclosure rules for that path.
 -/
 def sin {s : Shape} (xB : Box α s) : Box α s :=
-  let outLo := Tensor.map2Spec (fun l u =>
-    let m := (l + u) / 2
-    let r := (u - l) / 2
-    let base := MathFunctions.sin m
-    max (-1) (base - r)) xB.lo xB.hi
-  let outHi := Tensor.map2Spec (fun l u =>
-    let m := (l + u) / 2
-    let r := (u - l) / 2
-    let base := MathFunctions.sin m
-    min 1 (base + r)) xB.lo xB.hi
-  { lo := outLo, hi := outHi }
+  Internal.midpoint MathFunctions.sin xB
 
 /-- Same 1-Lipschitz enclosure as `IBP.sin`, but for `cos`. -/
 def cos {s : Shape} (xB : Box α s) : Box α s :=
-  let outLo := Tensor.map2Spec (fun l u =>
-    let m := (l + u) / 2
-    let r := (u - l) / 2
-    let base := MathFunctions.cos m
-    max (-1) (base - r)) xB.lo xB.hi
-  let outHi := Tensor.map2Spec (fun l u =>
-    let m := (l + u) / 2
-    let r := (u - l) / 2
-    let base := MathFunctions.cos m
-    min 1 (base + r)) xB.lo xB.hi
-  { lo := outLo, hi := outHi }
+  Internal.midpoint MathFunctions.cos xB
 
 end IBP
 

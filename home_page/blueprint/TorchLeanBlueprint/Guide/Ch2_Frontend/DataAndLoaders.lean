@@ -73,12 +73,9 @@ The same host-`Float` data source can therefore feed several arithmetic implemen
 one materialization interface. A proof-level real tensor cannot enter this IO training loop:
 `Runtime.FromFloat α` has no instance for `ℝ`.
 
-The signature also separates constructing a dataset from asking it for data. A value of
-`Trainer.Dataset input target` records how materialization should happen. Calling `materialize`
-supplies the scalar instances and runs the action; the resulting stream then supplies individual
-samples by index. Some constructors can create those samples lazily. Materializing a dataset
-therefore does not universally mean allocating an array containing every tensor in advance,
-although a file parser may need to read its source before returning the stream.
+The materialized stream supplies samples by index, and some constructors create them lazily.
+Materialization need not allocate every tensor in advance, although a file parser may read its
+source before returning the stream.
 
 For tensors already in memory, the public constructor shows how the sample shapes are inferred:
 
@@ -296,12 +293,8 @@ def dlPair : Trainer.Dataset [2] [1] :=
 samples = 2
 ```
 
-The count is two because the array contains two supervised records. Each record keeps its input
-and target together, which prevents shuffling from independently reordering the two sides.
-Choosing `Data.fromSamples` is useful when labels are computed one record at a time or samples
-already arrive as pairs. `Data.fromTensors` instead starts with two stacked tensors and uses
-their common leading index to construct those same pairs. Both routes eventually expose the
-same per-item interface to the trainer.
+Each record keeps its input and target together during shuffling. Use `Data.fromSamples` when
+samples already arrive as pairs, or `Data.fromTensors` when they arrive as two stacked tensors.
 
 For an existing `Data.SampleStream (Sample.Supervised Float input target)`, use
 `Data.fromStream` instead: `Data.fromSamples` takes an array, not a stream. Both adapters convert
@@ -630,12 +623,6 @@ even when conversion to `float32` changes its values, so successful dtype valida
 establish lossless conversion. The header records the source representation; `scalar=Float32`
 records the arithmetic used for training.
 
-For this widened copy, the source header changes but the original binary32 values remain
-representable on conversion back. A newly generated binary64 dataset could contain values
-between adjacent binary32 numbers; materialization would then choose representable values in the
-runtime scalar. The file dtype, conversion, and arithmetic label describe three successive steps
-in the value's path from disk to a loss computation.
-
 We can also keep the file and select FloatLib's configured binary32 arithmetic for training:
 
 ```terminal
@@ -747,8 +734,8 @@ target = [11, 12, 13, 14]
 ## Token ID Validation
 
 An embedding lookup requires each token id to name a valid table row.
-`Data.CausalLM.tokenBatch` validates the whole batch against the vocabulary size at
-the corpus boundary and returns `Fin`-indexed tensors, so model code has no out-of-range case left
+`Data.CausalLM.tokenBatch` validates its sampled token windows against the vocabulary size and
+returns `Fin`-indexed tensors, so model code has no out-of-range case left
 to handle:
 
 ```lean (name := dlTokenBatch)
@@ -863,7 +850,7 @@ First prepare the example corpus, then run the CUDA trainer with both tokenizer 
 # text-model training command.
 python3 scripts/datasets/download_example_data.py --tiny-shakespeare
 
-scripts/lake.sh -R -Kcuda=true exe torchlean text_gpt2 --device cuda \
+scripts/lake.sh -Kcuda=true exe torchlean text_gpt2 --device cuda \
   --data-file data/real/text/tiny_shakespeare.txt \
   --bpe-vocab data/real/gpt2/vocab.json \
   --bpe-merges data/real/gpt2/merges.txt \
@@ -1047,7 +1034,8 @@ with a diagnostic that includes the batch size and row count:
 #eval show IO Unit from do
   let samples ← dlRamp.materialize (α := Float)
   let loader := Data.Loader.fromStream samples 30
-  match Data.Loader.nextNonemptyEpoch "dlRamp" loader with
+  match Data.Loader.nextEpoch "dlRamp" loader
+      (requireBatch := true) with
   | .ok epoch =>
       IO.println s!"batches = {epoch.batches.size}"
   | .error message => IO.println message
@@ -1201,21 +1189,7 @@ Keep the log with the source identity and configuration above. If the CSV and NP
 those records let us check the input values, column split, batching, and arithmetic before
 attributing the difference to training.
 
-# CSV Training Example
-
-Generate the small deterministic dataset once, then run the maintained loader-and-trainer example:
-
-```terminal
-# Generate the small regression files before invoking the
-# example that reads their CSV rows.
-python3 NN/Examples/Data/generate_small_data.py
-scripts/lake.sh exe torchlean data_csv \
-  --device cpu --batch 5 --steps 5 --seed 2026
-```
-
-Swap `data_csv` for `data_npy` to train on the same twenty-five samples loaded from NPY.
-
-Sources:
+# Sources
 
 - [`NN/API/Data/README.md`](https://github.com/lean-dojo/TorchLean/blob/main/NN/API/Data/README.md);
 - {src "NN/Examples/Data/README.md"}[`NN/Examples/Data/README.md`];

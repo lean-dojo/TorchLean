@@ -12,7 +12,7 @@ export TORCHLEAN_LIBTORCH_HOME=/path/to/torch
 export TORCHLEAN_LEAN_PREFIX=/path/to/lean
 export TORCHLEAN_BACKEND_LIBRARY=/absolute/path/to/libtorchlean_libtorch.so
 
-time scripts/checks/cuda_float32_parity.sh --sweep 1024 --keep
+time scripts/checks/cuda.sh parity --sweep 1024 --keep
 ```
 
 The runner resolves the backend path before selecting the CPU reference-generation

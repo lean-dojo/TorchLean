@@ -15,7 +15,7 @@ public import NN.Spec.Module.Linear
 
 This file defines a 2-layer MLP by composing `Spec.Module.Chain`s from module specs:
 
-`Linear → ReLU → Linear` (optionally followed by a softmax head).
+`Linear → ReLU → Linear`.
 
 The file is organized around module wiring rather than re-implementing matrix multiplications
 directly. `Linear` and `ReLU` come from the spec layer and are composed through `Spec.Module` /
@@ -27,8 +27,7 @@ pass.
 There is no dedicated `nn.models` builder; the API composes `nn.linear` and `nn.relu` directly.
 The relating theorem is `mlp_interp` in
 `NN/GraphSpec/Models/MlpSpecEquivalence.lean`, which shows the typed-graph interpretation of the
-MLP equals this spec's forward pass; `NN/Proofs/Models/Mlp.lean` and
-`NN/Tests/Runtime/Floats/TorchLeanSpecMlpEquivCheck.lean` exercise it further.
+MLP equals this spec's forward pass. Further results are in `NN/Proofs/Models/Mlp.lean`.
 -/
 
 @[expose] public section
@@ -93,7 +92,6 @@ def mlpBackward
 
   -- Layer 2 grads
   let dW2 := Spec.linearWeightsDerivSpec (α:=α) a1 dLdy
-  let db2 := Spec.linearBiasDerivSpec (α:=α) dW2 dLdy a1
   let da1 := Spec.linearInputDerivSpec (α:=α) l2.weights dLdy
 
   -- ReLU backprop
@@ -102,15 +100,10 @@ def mlpBackward
 
   -- Layer 1 grads
   let dW1 := Spec.linearWeightsDerivSpec (α:=α) x dz1
-  let db1 := Spec.linearBiasDerivSpec (α:=α) dW1 dz1 x
   let dX  := Spec.linearInputDerivSpec (α:=α) l1.weights dz1
 
-  (dW1, db1, dW2, db2, dX)
+  (dW1, dz1, dW2, dLdy, dX)
 
-/-
-Phase 1: Composition correctness (shape + functional) for the MLP Spec.Module.Chain.
-This lemma states that evaluating the composed chain equals the sequential computation.
--/
 /-- The composed `Spec.Module.Chain` forward equals the hand-written `Linear → ReLU → Linear`
 computation. -/
 theorem mlp_spec_forward_eq
@@ -129,9 +122,6 @@ theorem mlp_spec_forward_eq
   dsimp [Spec.Module.linear, Spec.Module.relu]
 
 
-/-Phase 2: Symbolic gradient verification via OpSpec composition.
-We build an OpSpec for the 2-layer MLP and expose its composed backward.-/
-
 /-- `OpSpec` for the same 2-layer MLP.
 
 This packaging is convenient for symbolic gradient checks: `OpSpec` pairs a forward definition with
@@ -149,17 +139,5 @@ def mlpOpspec
   Spec.OpSpec.compose (α:=α)
     (Spec.OpSpec.compose (α:=α) lin1 relu)
     lin2
-
-/-- Composed backward of the MLP using the OpSpec chain. -/
-def mlpOpspecBackward
-  {α : Type} [TorchLean.Storage α] [Context α]
-  {inDim hidDim outDim : Nat}
-  (l1 : Spec.LinearSpec α inDim hidDim)
-  (l2 : Spec.LinearSpec α hidDim outDim)
-  (x : Tensor α [inDim])
-  (dLdy : Tensor α [outDim]) :
-  Tensor α [inDim] :=
-  let op := mlpOpspec (α:=α) l1 l2
-  op.backward x dLdy
 
 end Examples

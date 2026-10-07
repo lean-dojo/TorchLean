@@ -15,11 +15,9 @@ Semantic preservation for lowering arbitrary-rank max and average pooling. A `Wi
 selects a spatial suffix and gives a separate kernel, stride, and symmetric padding for every
 pooled axis. All leading axes are preserved, including any number of batch dimensions.
 
-Shape inference, denotational evaluation, and executable lowering share `OpContracts.PoolPlan`.
-Consequently, successful lowering records exactly the rank split and positivity evidence consumed
-by the typed pooling specification; there are no separate padded or two-dimensional proof paths.
-The lowered closure applies the typed pooling specification to the plan directly, so the proof only
-has to show that the IR evaluator computes the same `Tensor.mapLeading` term.
+Shape inference, denotational evaluation, and lowering share `OpContracts.PoolPlan` and its rank
+split and positivity evidence. The proof identifies the lowered `Tensor.mapLeading` calculation
+with the IR evaluator. It concerns forward specification evaluation, not native kernels or VJPs.
 -/
 
 @[expose] public section
@@ -32,8 +30,6 @@ open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
--- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
--- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
 /-- Lowering arbitrary-rank max pooling preserves the IR denotation. -/
@@ -85,7 +81,7 @@ theorem buildFrom_denoteAllFrom_maxPool
                             let input : Tensor α
                                 (plan.leading.concat
                                   (Shape.ofList (Tensor.to plan.spatial (List Nat)))) :=
-                              Tensor.castShape (readTensor (α := α) (xs := context) parentIdx)
+                              Tensor.castShape (context.read parentIdx)
                                 plan.concat_eq.symm
                             let layer : Spec.MaxPoolSpec config.spatialRank config.kernel
                                 config.stride config.padding plan.kernelNonzero
@@ -192,7 +188,7 @@ theorem buildFrom_denoteAllFrom_avgPool
                             let input : Tensor α
                                 (plan.leading.concat
                                   (Shape.ofList (Tensor.to plan.spatial (List Nat)))) :=
-                              Tensor.castShape (readTensor (α := α) (xs := context) parentIdx)
+                              Tensor.castShape (context.read parentIdx)
                                 plan.concat_eq.symm
                             let layer : Spec.AvgPoolSpec config.spatialRank config.kernel
                                 config.stride config.padding plan.kernelNonzero

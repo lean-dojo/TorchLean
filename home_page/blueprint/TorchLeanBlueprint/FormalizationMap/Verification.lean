@@ -540,9 +540,10 @@ semantic value, with the IBP enclosure hypothesis discharged rather than assumed
 :::
 
 :::definition "alpha_beta_crown_runner" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Cert.runAlphaBetaCROWN")
-The native fixed-relaxation runner computes IBP bounds, infers stable ReLU phases, and replays the
-α/β-CROWN affine pass. Unstable phases remain unsplit; this runner does not implement the external
-optimizer's branch-and-bound search.
+The fixed-relaxation runner takes IBP bounds, infers stable ReLU phases, and replays the
+α/β-CROWN affine pass. Its `outputBoxAlphaBetaCROWN?` caller computes the IBP bounds first.
+Unstable phases remain unsplit; no β multipliers are optimized, and this runner does not implement
+the external optimizer's branch-and-bound search.
 :::
 
 :::definition "alpha_beta_node_checker" (parent := "bound_propagation") (lean := "NN.Verification.Cert.CROWNNodeCertAlphaBeta.checkAlphaBetaCROWNNodeCertificate")
@@ -575,7 +576,8 @@ Specification-layer kernels identified with their analytic presentations.
 :::theorem "softmax_spec_fderiv" (parent := "spec_bridges") (lean := "Proofs.Autograd.hasFDerivAt_softmaxSpec_vec")
 The specification softmax `Activation.softmaxSpec 0` on a real vector, which uses the numerically
 stable max-shifted form, is Fréchet differentiable after vectorization, with the derivative of the
-analytic `softmaxVec`. The log-softmax kernel has the same theorem.
+analytic `softmaxVec`. `hasFDerivAt_logSoftmaxSpec_vec` gives the corresponding result for
+log-softmax.
 :::
 
 :::proof "softmax_spec_fderiv"
@@ -591,8 +593,8 @@ claim holds.
 
 :::theorem "softmax_backward_is_vjp" (parent := "spec_bridges") (lean := "Proofs.Autograd.softmaxBackwardSpec_eq_vjp")
 The specification backward rule `Activation.softmaxBackwardSpec 0` on a real vector is the
-vector-Jacobian product of the specification softmax at that point. The same holds for
-log-softmax.
+vector-Jacobian product of the specification softmax at that point.
+`logSoftmaxBackwardSpec_eq_vjp` gives the corresponding result for log-softmax.
 :::
 
 :::proof "softmax_backward_is_vjp"

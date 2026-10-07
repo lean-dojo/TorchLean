@@ -63,19 +63,8 @@ variable {E : Type*} [NormedAddCommGroup E] [NormedSpace ℝ E]
 theorem contDiffAt_iff_coordinates {shape : Shape} {n : ℕ∞ω}
     (f : E → Tensor ℝ shape) (x : E) :
     ContDiffAt ℝ n f x ↔ ∀ i, ContDiffAt ℝ n (fun y => f y i) x := by
-  constructor
-  · intro hf i
-    simpa only [Function.comp_def, coordinateCLM_apply] using
-      (coordinateCLM i).contDiff.contDiffAt.comp x hf
-  · intro h
-    have hpi := (contDiffAt_pi (𝕜 := ℝ)).2 h
-    have hcomp := (coordinateEquiv shape).symm.contDiff.contDiffAt.comp x hpi
-    have hfun : (coordinateEquiv shape).symm ∘ (fun y i => f y i) = f := by
-      funext y
-      apply Internal.Rep.ext
-      intro i
-      exact coordinateEquiv_symm_apply _ i
-    rwa [hfun] at hcomp
+  rw [← (coordinateEquiv shape).comp_contDiffAt_iff, contDiffAt_pi]
+  rfl
 
 /-- Reading a fixed coordinate preserves local smoothness. -/
 @[fun_prop] theorem contDiffAt_coordinate {shape : Shape} {n : ℕ∞ω}
@@ -243,15 +232,8 @@ theorem hasFDerivAt_of_coordinates {shape : Shape} (f : E → Tensor ℝ shape)
     HasFDerivAt f (assemble derivatives) x := by
   have hpi := (hasFDerivAt_pi (𝕜 := ℝ)
     (φ := fun i y => f y i) (φ' := derivatives) (x := x)).2 h
-  have hcomp :=
-    (coordinateEquiv shape).symm.toContinuousLinearMap.hasFDerivAt.comp x hpi
-  have hfun :
-      f = (coordinateEquiv shape).symm ∘ (fun y i => f y i) := by
-    funext y
-    apply Internal.Rep.ext
-    intro i
-    exact (coordinateEquiv_symm_apply _ i).symm
-  exact hcomp.congr_of_eventuallyEq hfun.eventuallyEq
+  apply (coordinateEquiv shape).comp_hasFDerivAt_iff'.1
+  exact hpi
 
 end
 

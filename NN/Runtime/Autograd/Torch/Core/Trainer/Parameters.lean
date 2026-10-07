@@ -64,12 +64,6 @@ def canonicalSlotIndices {α : Type} [TorchLean.Storage α] {ss : List Shape}
     (parameters : ParamList α ss) : IO (Array (Option Nat)) :=
   Internal.ParameterStorage.canonicalIndices (optimizerStorage parameters)
 
-/-- Materialize `value - rate * gradient` in one traversal. -/
-def subScaleMaterialize {α : Type} [TorchLean.Storage α] [Sub α] [Mul α] :
-    {s : Shape} → Tensor α s → Tensor α s → α → Tensor α s
-  | _, value, gradient, rate =>
-      Tensor.map2Spec (fun x dx => x - rate * dx) value gradient
-
 /-- Allocate mutable parameters from an ordered tensor pack. -/
 def ofPack {α : Type} [TorchLean.Storage α] :
     {ss : List Shape} → TorchLean.TensorPack α ss → IO (ParamList α ss)
@@ -182,8 +176,10 @@ def canonicalGradient {α : Type} [TorchLean.Storage α] (shape : Shape)
 Apply one SGD update to each trainable storage, using the sum of its occurrence gradients.
 
 Storage aliases use the same canonical-slot map as generic optimizers and checkpoints.
+Only scalar addition, subtraction, and multiplication are needed; no neural activation or
+ordering operations are required.
 -/
-def sgdStep {α : Type} [TorchLean.Storage α] [Context α] {ss : List Shape}
+def sgdStep {α : Type} [TorchLean.Storage α] [Add α] [Sub α] [Mul α] {ss : List Shape}
     (parameters : ParamList α ss) (rate : α) (gradients : TorchLean.TensorPack α ss) :
     IO Unit := do
   let slots ← canonicalSlotIndices parameters
@@ -194,7 +190,7 @@ def sgdStep {α : Type} [TorchLean.Storage α] [Context α] {ss : List Shape}
         if slots[index]? == some (some index) then
           let gradient ← canonicalGradient shape sums index
           let value ← parameter.value.get
-          let updated := subScaleMaterialize value gradient rate
+          let updated := Tensor.map2Spec (fun x dx => x - rate * dx) value gradient
           Internal.setParamHostValue parameter updated
         update rest (index + 1)
   update parameters 0

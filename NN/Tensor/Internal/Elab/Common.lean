@@ -867,8 +867,9 @@ around the generated consumer.
 
 The continuation sees local tensor variables rather than repeated conversion
 expressions. Each conversion is passed through `nativeStage`, whose no-inline
-boundary ensures native execution materializes it once before entering the
-consumer rather than sinking it into every downstream scalar read.
+boundary separates conversion from the consumer to avoid placing it in each
+downstream scalar read. This is the intended staging strategy, not a theorem
+about compiler scheduling.
 -/
 def withCommonScalarFamily (operation member : String)
     (tensorSyntax : Array (TSyntax `term))

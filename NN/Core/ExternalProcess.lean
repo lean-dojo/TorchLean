@@ -39,7 +39,7 @@ open Lean
 -/
 
 /-- Build-directory scratch space for subprocess adapters and generated check artifacts. -/
-def artifactWorkDir (stem : String) : System.FilePath :=
+def directory (stem : String) : System.FilePath :=
   System.FilePath.mk s!".lake/build/torchlean_{stem}"
 
 /-!
@@ -50,9 +50,9 @@ def artifactWorkDir (stem : String) : System.FilePath :=
 Resolve an executable command name, allowing an environment-variable override.
 
 Example:
-- `resolveCmdFromEnv "TORCHLEAN_JULIA" "julia"` uses `$TORCHLEAN_JULIA` if set, otherwise `"julia"`.
+- `command "TORCHLEAN_JULIA" "julia"` uses `$TORCHLEAN_JULIA` if set, otherwise `"julia"`.
 -/
-def resolveCmdFromEnv (envVar : String) (defaultCmd : String) : IO String := do
+def command (envVar : String) (defaultCmd : String) : IO String := do
   pure <| (← IO.getEnv envVar) |>.getD defaultCmd
 
 /-!
@@ -63,10 +63,10 @@ def resolveCmdFromEnv (envVar : String) (defaultCmd : String) : IO String := do
 Check whether a command is available by running it with version-style arguments.
 
 Any exception (including “executable not found”) is treated as `false`. This helper is for optional
-dependencies; callers that require the command should use `ensureCmdAvailable` so users get a
+dependencies; callers that require the command should use `require` so users get a
 helpful message.
 -/
-def isCmdAvailable (cmd : String) (args : Array String := #["--version"]) : IO Bool := do
+def available (cmd : String) (args : Array String := #["--version"]) : IO Bool := do
   try
     let out ← IO.Process.output { cmd := cmd, args := args }
     pure (out.exitCode == 0)
@@ -79,7 +79,7 @@ def pythonCanImport (modules : Array String) (pythonCmd : String := "python3") :
     pure true
   else
     let code := "import " ++ String.intercalate ", " modules.toList
-    isCmdAvailable pythonCmd #["-c", code]
+    available pythonCmd #["-c", code]
 
 /--
 Require a command to be available and return the command name/path.
@@ -87,7 +87,7 @@ Require a command to be available and return the command name/path.
 The `toolName` and `envVar` fields are only used in error messages. Wrappers such as Julia or
 Python oracles use this to keep optional-dependency diagnostics consistent across the codebase.
 -/
-def ensureCmdAvailable (toolName : String) (cmd : String)
+def require (toolName : String) (cmd : String)
     (args : Array String := #["--version"]) (envVar : Option String := none) : IO String := do
   let hint :=
     match envVar with

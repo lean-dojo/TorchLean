@@ -72,7 +72,7 @@ theorem full_zero_eq_zero (s : Shape) : Tensor.full s (0 : ℝ) = 0 :=
 theorem scaleSpec_eq_smul {s : Shape} (t : Tensor ℝ s) (c : ℝ) : scaleSpec t c = c • t := by
   apply TorchLean.Tensor.Internal.Rep.ext
   intro i
-  simp only [scaleSpec, mapSpec, Tensor.map, TorchLean.Tensor.Internal.Rep.map_apply,
+  simp only [scaleSpec, Tensor.map, TorchLean.Tensor.Internal.Rep.map_apply,
     TorchLean.Tensor.Internal.Rep.smul_apply, smul_eq_mul, mul_comm]
 
 /-- The squared norm is the coordinate sum of squares. -/

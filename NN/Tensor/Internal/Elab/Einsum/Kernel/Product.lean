@@ -15,14 +15,10 @@ public import NN.Tensor.Internal.Elab.Einsum.Kernel.View
 /-!
 # Verified einsum scalar product generation
 
-The scalar kernel compiler is organized as certified operand indexing,
-generated-term utilities, contraction-invariance analysis, and ordered product
-assembly; this module is the final assembly stage and is what importers of the
-kernel compiler name.
-
-This module assembles direct operand reads into the ordered scalar product
-used by a checked einsum. It also extracts semiring factors that are invariant
-across the contraction while retaining a pointwise semantic certificate.
+This module assembles direct operand reads into the source-ordered scalar
+product used by a checked einsum. Factoring contraction-invariant prefixes
+and suffixes requires a `Semiring` instance; it is not a floating-point
+reassociation optimization. Each result retains a pointwise certificate.
 -/
 
 public meta section

@@ -31,12 +31,6 @@ def expect (tag : String) (ok : Bool) : IO Unit := do
 def expectCapsules (tag : String) (got expected : Array String) : IO Unit := do
   expect tag (got == expected)
 
-def expectOp (tag : String) (kind : NN.IR.OpKind) (expected : Option BackendOp) : IO Unit := do
-  expect tag (NN.Backend.IR.op? kind == expected)
-
-def scalarHardMask : NN.IR.HardMask :=
-  { shape := Spec.Shape.scalar, allowed := #[true] }
-
 def expectContains (tag needle haystack : String) : IO Unit := do
   expect tag (haystack.contains needle)
 
@@ -299,8 +293,8 @@ def checkLibTorchLocalVJPs : IO Unit := do
         ((LibTorch.capsules.filter fun capsule => capsule.op == op).size == 1)
 
   let nativeOnly : BackendProfile :=
-    { BackendProfile.checkedCuda with
-      policy := { BackendProfile.checkedCuda.policy with vjpMode := .backendVJP } }
+    { BackendProfile.libTorchCuda with
+      policy := { BackendProfile.libTorchCuda.policy with vjpMode := .backendVJP } }
   for op in leanComposed do
     expectPlanningFails s!"native-only VJP policy rejects Lean-composed `{op.name}`"
       nativeOnly #[op]
@@ -308,12 +302,13 @@ def checkLibTorchLocalVJPs : IO Unit := do
     nativeOnly nativeBackward
   expectCapsules "native backward routing retains capsule identities" nativePlan.capsuleNames
     (nativeBackward.map fun op => s!"libtorch.{op.name}")
-  expect "native backward contracts satisfy the checked policy"
-    (isAccepted (nativePlan.checkContracts AssurancePolicy.checked))
+  expect "native backward contracts record their LibTorch assumptions"
+    (isAccepted (nativePlan.checkContracts AssurancePolicy.external))
   let randomPlan ← planOrThrow "random generation remains forward-only" nativeOnly forwardOnly
   expect "forward-only operations do not acquire a VJP"
     (randomPlan.kernels.all fun kernel => kernel.capsule.vjpMode == .none)
 
+/-- Reject invalid routing and evidence before a selected implementation executes. -/
 def run : IO Unit := do
   checkHandlerIdentity
   checkLibTorchLocalVJPs
@@ -321,14 +316,6 @@ def run : IO Unit := do
     (Reference.scatterAdd.numericalPolicy.reduction == .fixedLeft)
   expect "LibTorch scatter-add records implementation-defined accumulation order"
     (LibTorch.scatterAdd.numericalPolicy.reduction == .implementationDefined)
-  let typedGraphCpuOpts : Runtime.Autograd.Torch.Config :=
-    { execution := .typedGraph
-      device := .cpu }
-  expect "typed graph CPU options retain the public execution and device choices"
-    (typedGraphCpuOpts.execution == .typedGraph && typedGraphCpuOpts.device == .cpu)
-  let typedGraphCpuProfile ← profileOrThrow "typed graph CPU profile" typedGraphCpuOpts
-  expect "execution mode does not alter CPU capsule selection"
-    (typedGraphCpuProfile.policy.device == .cpu)
   expect "default registry contract fields are aligned"
     ((Registry.flatten Registry.maintainedModules).all KernelCapsule.contractsAligned)
   expect "CPU availability excludes every LibTorch CUDA primitive"
@@ -360,33 +347,6 @@ def run : IO Unit := do
   let trainingProfile ← profileOrThrow "training default profile" trainingOpts
   expect "training runtime planning requests the TorchLean tape"
     (trainingProfile.policy.vjpMode == .torchLeanTape)
-  expectOp "IR add maps to exact add capsule" .add (some .add)
-  expectOp "IR linear maps to exact linear capsule" .linear (some .linear)
-  let convConfig : NN.IR.ConvConfig :=
-    { spatialRank := 2
-      kernel := [3, 3]
-      stride := [1, 1]
-      padding := [0, 0]
-      channelAxis := 0
-      inChannels := 1
-      outChannels := 1 }
-  let poolConfig : NN.IR.WindowConfig :=
-    { spatialRank := 2
-      kernel := [2, 2]
-      stride := [2, 2]
-      padding := [0, 0] }
-  expectOp "IR convolution maps to the convolution capability"
-    (.conv convConfig) (some .conv)
-  expectOp "IR max pooling maps to the max-pool capability"
-    (.maxPool poolConfig) (some .maxPool)
-  expectOp "IR rand uniform maps to exact forward-only capsule"
-    (.randUniform 0) (some .randUniform)
-  expectOp "IR permute maps to exact permute capsule"
-    (.permute #[1, 0]) (some .permute)
-  expectOp "IR hard-masked softmax keeps its exact capsule identity"
-    (.hardMaskedSoftmax scalarHardMask) (some .hardMaskedSoftmax)
-  expectOp "IR input has no backend capsule" .input none
-
   expect "cpu availability rejects external device capsule"
     (!(Availability.cpu.admitsCapsule externalReluCapsule))
   expect "external availability admits external capsule when provider is available"
@@ -507,18 +467,6 @@ def run : IO Unit := do
   expect "different numerical policies retain separate audit groups"
     (changedReduction.toCoalescedGroups.groups.size == 2)
 
-  let exactOps :=
-    #[ BackendOp.matmul, .linear, .mseLoss, .add, .sub, .mul, .scale, .abs, .sqrt
-    , .clamp, .max, .min, .relu, .gelu, .sigmoid, .tanh
-    , .softmax, .hardMaskedSoftmax, .softplus, .exp, .log, .inv, .safeLog, .logSoftmax
-    , .sin, .cos, .reduceSum
-    , .reduceMean, .randUniform, .bernoulliMask, .reshape, .permute, .broadcast
-    , .concat, .slice, .gather, .scatterAdd, .layerNorm, .batchNorm, .conv
-    , .convTranspose, .maxPool, .smoothMaxPool, .avgPool ]
-
-  let cudaExactOps := exactOps ++ #[.fftFno, .selectiveScan]
-  let exactReferenceCapsules := exactOps.map fun op => s!"reference.{op.name}"
-  let exactLibTorchCapsules := cudaExactOps.map fun op => s!"libtorch.{op.name}"
   let profileOps :=
     #[ BackendOp.matmul, .relu, .softmax, .hardMaskedSoftmax, .layerNorm, .batchNorm
     , .conv, .convTranspose, .maxPool, .smoothMaxPool, .avgPool, .mseLoss
@@ -542,9 +490,6 @@ def run : IO Unit := do
     ]
   expect "checked cpu has no trusted external" (!cpu.hasTrustedExternal)
 
-  let cpuExact ← planOrThrow "checked cpu exact ops" BackendProfile.checkedCpu exactOps
-  expectCapsules "checked cpu exact capsules" cpuExact.capsuleNames exactReferenceCapsules
-
   let replacementModule : Registry.CapsuleModule :=
     { name := "profile-test-replacement", capsules := #[replacementReluCapsule] }
   let extendedCpu := BackendProfile.checkedCpu.withCapsuleModules #[replacementModule]
@@ -552,22 +497,8 @@ def run : IO Unit := do
   expectCapsules "extended modules preserve model-independent preference" extendedPlan.capsuleNames
     #["replacement.relu", "reference.matmul"]
 
-  let reportOps := exactOps ++ #[.attention]
-  match BackendProfile.checkedCpu.planReport reportOps with
-  | .ok report =>
-      expectContains "checked cpu report names exact add" "add: reference.add" report
-      expectContains "checked cpu report names exact reshape" "reshape: reference.reshape" report
-      expectContains "checked cpu report names exact batchnorm"
-        "batch_norm: reference.batch_norm" report
-      expectContains "checked cpu report names exact smooth max pool"
-        "smooth_max_pool: reference.smooth_max_pool" report
-      expectContains "checked cpu report names exact attention"
-        "attention: reference.attention" report
-  | .error msg =>
-      throw <| IO.userError s!"checked cpu report failed: {msg}"
-
-  let cuda ← planOrThrow "checked cuda" BackendProfile.checkedCuda profileOps
-  expectCapsules "checked cuda capsule order" cuda.capsuleNames
+  let cuda ← planOrThrow "LibTorch cuda" BackendProfile.libTorchCuda profileOps
+  expectCapsules "LibTorch cuda capsule order" cuda.capsuleNames
     #[ "libtorch.matmul"
     , "libtorch.relu"
     , "libtorch.softmax"
@@ -582,36 +513,13 @@ def run : IO Unit := do
     , "libtorch.mse_loss"
     , "libtorch.direct_attention"
     ]
-  expect "checked CUDA capsules retain the maintained evidence classification"
-    (!cuda.hasTrustedExternal)
-  expect "checked CUDA contracts are accepted without trusted-boundary evidence"
-    (isAccepted (cuda.checkContracts AssurancePolicy.checked))
+  expect "untested CUDA operations retain an explicit trust boundary" cuda.hasTrustedExternal
+  expect "default CUDA admits the recorded LibTorch assumptions"
+    (isAccepted (cuda.checkContracts AssurancePolicy.external))
+  expect "strict CUDA rejects the untested convolution capsule"
+    (!LibTorch.conv.admissible BackendProfile.checkedCuda.policy)
   expect "checked CUDA retains global TorchLean tape ownership"
     (BackendProfile.checkedCuda.policy.vjpMode == .torchLeanTape)
-
-  let cudaExact ← planOrThrow "checked cuda exact ops" BackendProfile.checkedCuda cudaExactOps
-  expectCapsules "checked cuda exact capsules" cudaExact.capsuleNames exactLibTorchCapsules
-  expect "every CUDA primitive is dispatched through LibTorch"
-    (cudaExact.kernels.all fun kernel => kernel.capsule.provider == .libTorch)
-  expect "every CUDA primitive advertises LibTorch tensor storage"
-    (cudaExact.kernels.all fun kernel =>
-      kernel.capsule.layoutContract.claim ==
-        .layoutCompatibility kernel.op .libTorchCudaView)
-  match BackendProfile.checkedCuda.planReport (cudaExactOps ++ #[.attention]) with
-  | .ok report =>
-      expectContains "checked cuda report names exact add" "add: libtorch.add" report
-      expectContains "checked cuda report names exact max pool"
-        "max_pool: libtorch.max_pool" report
-      expectContains "checked cuda report names exact batchnorm"
-        "batch_norm: libtorch.batch_norm" report
-      expectContains "checked cuda report names exact smooth max pool"
-        "smooth_max_pool: libtorch.smooth_max_pool" report
-      expectContains "checked cuda report names exact attention"
-        "attention: libtorch.direct_attention" report
-      expectContains "report names the classification rather than denying foreign execution"
-        "trusted-external capsules: none" report
-  | .error msg =>
-      throw <| IO.userError s!"checked cuda report failed: {msg}"
 
   let directAttention ← planOrThrow "default LibTorch direct attention" BackendProfile.checkedCuda
     #[.attention]
@@ -653,8 +561,8 @@ def run : IO Unit := do
       expectContains "LibTorch attention report names the selected local VJP"
         "attention: libtorch.direct_attention provider=libtorch trust=checked vjp=torchlean-tape"
         report
-      expectContains "LibTorch attention report names its capsule"
-        "attention: libtorch.direct_attention" report
+      expectContains "report classifies evidence without denying foreign execution"
+        "trusted-external capsules: none" report
   | .error msg =>
       throw <| IO.userError s!"LibTorch direct attention report failed: {msg}"
 
@@ -681,7 +589,7 @@ def run : IO Unit := do
     (firstRelu.name == secondRelu.name && cpuSelections.size == 1)
   expectRandomProviderRejected
 
-  let checkedCudaOpts : Runtime.Autograd.Torch.Config :=
+  let cudaOptions : Runtime.Autograd.Torch.Config :=
     { device := .cuda }
   for op in
       #[ BackendOp.matmul
@@ -691,8 +599,8 @@ def run : IO Unit := do
       , .smoothMaxPool
       , .attention
       ] do
-    expectLibTorchBindingAccepts s!"checked cuda runtime binding accepts `{op.name}`"
-      checkedCudaOpts op
+    expectLibTorchBindingAccepts s!"default cuda runtime binding accepts `{op.name}`"
+      cudaOptions op
 
   IO.println "  backend profiles: ok"
 

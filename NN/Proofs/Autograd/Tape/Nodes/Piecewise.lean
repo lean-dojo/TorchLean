@@ -343,80 +343,14 @@ def minElemFderivAt {Γ : List Shape} {s : Shape} (a b : Idx Γ s) (xV : CtxVec 
     exact hcomp.congr_of_eventuallyEq hEq.eventuallyEq
   · intro dxV
     ext i
-    have hne : CtxVec.get (Γ := Γ) (s := s) a xV i ≠ CtxVec.get (Γ := Γ) (s := s) b xV i := hneq i
-    have hlt : CtxVec.get (Γ := Γ) (s := s) a xV i < CtxVec.get (Γ := Γ) (s := s) b xV i ∨
-        CtxVec.get (Γ := Γ) (s := s) a xV i > CtxVec.get (Γ := Γ) (s := s) b xV i := lt_or_gt_of_ne
-          hne
-    cases hlt with
-    | inl hlt =>
-        have haCoord : (aCLM xV).ofLp i = (CtxVec.get (Γ := Γ) (s := s) a xV).ofLp i := by
-          dsimp [aCLM]
-          exact getCLM_apply_ofLp (Γ := Γ) (s := s) a xV i
-        have hbCoord : (bCLM xV).ofLp i = (CtxVec.get (Γ := Γ) (s := s) b xV).ofLp i := by
-          dsimp [bCLM]
-          exact getCLM_apply_ofLp (Γ := Γ) (s := s) b xV i
-        have hltCLM : (aCLM xV).ofLp i < (bCLM xV).ofLp i := by
-          simpa [haCoord, hbCoord] using hlt
-        have hR :
-            ((((euclideanEquiv n).symm.toContinuousLinearMap).comp
-                    (ContinuousLinearMap.pi fun j : Fin n =>
-                      if (aCLM xV).ofLp j < (bCLM xV).ofLp j then (evalCLM (n := n) j).comp aCLM
-                      else (evalCLM (n := n) j).comp bCLM)) dxV).ofLp i
-              =
-              ((evalCLM (n := n) i).comp aCLM) dxV := by
-          simp [ContinuousLinearMap.comp_apply, hltCLM]
-        have hGet :
-            (CtxVec.get (Γ := Γ) (s := s) a dxV).ofLp i = ((evalCLM (n := n) i).comp aCLM) dxV := by
-          have hGet' :
-              (aCLM dxV).ofLp i = (CtxVec.get (Γ := Γ) (s := s) a dxV).ofLp i := by
-            dsimp [aCLM]
-            exact getCLM_apply_ofLp (Γ := Γ) (s := s) a dxV i
-          calc
-            (CtxVec.get (Γ := Γ) (s := s) a dxV).ofLp i
-                = (aCLM dxV).ofLp i := by simpa using hGet'.symm
-            _   = ((evalCLM (n := n) i).comp aCLM) dxV := by
-                  simp [ContinuousLinearMap.comp_apply, evalCLM_apply]
-        -- goal is a coordinate identity; finish by rewriting the RHS via `hR`.
-        have hjvp :
-            ((minElem (Γ := Γ) (s := s) a b).jvpVec xV dxV).ofLp i =
-              (CtxVec.get (Γ := Γ) (s := s) a dxV).ofLp i := by
-          simp [minElem, Node.jvpVec_ofFn, hlt]
-        exact hjvp.trans (hGet.trans hR.symm)
-    | inr hgt =>
-        have hn : ¬ CtxVec.get (Γ := Γ) (s := s) a xV i < CtxVec.get (Γ := Γ) (s := s) b xV i :=
-          not_lt_of_gt hgt
-        have haCoord : (aCLM xV).ofLp i = (CtxVec.get (Γ := Γ) (s := s) a xV).ofLp i := by
-          dsimp [aCLM]
-          exact getCLM_apply_ofLp (Γ := Γ) (s := s) a xV i
-        have hbCoord : (bCLM xV).ofLp i = (CtxVec.get (Γ := Γ) (s := s) b xV).ofLp i := by
-          dsimp [bCLM]
-          exact getCLM_apply_ofLp (Γ := Γ) (s := s) b xV i
-        have hnCLM : ¬ (aCLM xV).ofLp i < (bCLM xV).ofLp i := by
-          simpa [haCoord, hbCoord] using hn
-        have hR :
-            ((((euclideanEquiv n).symm.toContinuousLinearMap).comp
-                    (ContinuousLinearMap.pi fun j : Fin n =>
-                      if (aCLM xV).ofLp j < (bCLM xV).ofLp j then (evalCLM (n := n) j).comp aCLM
-                      else (evalCLM (n := n) j).comp bCLM)) dxV).ofLp i
-              =
-              ((evalCLM (n := n) i).comp bCLM) dxV := by
-          simp [ContinuousLinearMap.comp_apply, hnCLM]
-        have hGet :
-            (CtxVec.get (Γ := Γ) (s := s) b dxV).ofLp i = ((evalCLM (n := n) i).comp bCLM) dxV := by
-          have hGet' :
-              (bCLM dxV).ofLp i = (CtxVec.get (Γ := Γ) (s := s) b dxV).ofLp i := by
-            dsimp [bCLM]
-            exact getCLM_apply_ofLp (Γ := Γ) (s := s) b dxV i
-          calc
-            (CtxVec.get (Γ := Γ) (s := s) b dxV).ofLp i
-                = (bCLM dxV).ofLp i := by simpa using hGet'.symm
-            _   = ((evalCLM (n := n) i).comp bCLM) dxV := by
-                  simp [ContinuousLinearMap.comp_apply, evalCLM_apply]
-        have hjvp :
-            ((minElem (Γ := Γ) (s := s) a b).jvpVec xV dxV).ofLp i =
-              (CtxVec.get (Γ := Γ) (s := s) b dxV).ofLp i := by
-          simp [minElem, Node.jvpVec_ofFn, hn]
-        exact hjvp.trans (hGet.trans hR.symm)
+    have ha := congrArg (fun v : Vec n => v i) (CtxVec.getCLM_apply a xV)
+    have hb := congrArg (fun v : Vec n => v i) (CtxVec.getCLM_apply b xV)
+    have hda := congrArg (fun v : Vec n => v i) (CtxVec.getCLM_apply a dxV)
+    have hdb := congrArg (fun v : Vec n => v i) (CtxVec.getCLM_apply b dxV)
+    by_cases h : CtxVec.get a xV i < CtxVec.get b xV i
+    all_goals
+      simp [minElem, Node.jvpVec_ofFn, aCLM, bCLM, ha, hb, hda, hdb, h,
+        ContinuousLinearMap.comp_apply, evalCLM_apply]
 
 
 end TapeNodes

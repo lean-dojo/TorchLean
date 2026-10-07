@@ -108,8 +108,8 @@ def runRngStress : IO Unit := do
   let nSmall : Nat := 64
   let nLarge : Nat := 4096
 
-  -- Exact prefix checks catch low-bits versus high-bits SplitMix64 mismatches between the Lean
-  -- reference and CUDA seeded buffers.
+  -- Prefix comparisons use a binary32 rounding tolerance and catch low-bits versus high-bits
+  -- SplitMix64 mismatches between the Lean reference and CUDA seeded buffers.
   let uSmall := Buffer.toFloatArray (← Buffer.randUniformIO (UInt32.ofNat nSmall) key)
   let uExpected := expectedUniformArray nSmall key
   assertFloatArrayApprox "randUniform exact prefix" uSmall uExpected (tol := 1e-7)
@@ -190,10 +190,10 @@ def runGradientAliasingStress : IO Unit := do
   let (t1, xId) := LibTorch.Tape.leaf (t := t0) (Utils.tensorToAnyBuffer x) (name := some "x")
   -- `x + x` sends the same upstream gradient to both parents of an add node. This checks
   -- accumulated-gradient aliasing in add nodes.
-  let (t2, yId) ← Utils.okOrThrow (LibTorch.Tape.add (t := t1) (s := s) xId xId)
-  let (t3, outId) ← Utils.okOrThrow (LibTorch.Tape.sum (t := t2) (s := s) yId)
+  let (t2, yId) ← IO.ofExcept (LibTorch.Tape.add (t := t1) (s := s) xId xId)
+  let (t3, outId) ← IO.ofExcept (LibTorch.Tape.sum (t := t2) (s := s) yId)
   let seed : LibTorch.AnyBuffer := { s := Shape.scalar, buf := Buffer.full 1 1.0 }
-  let grads ← Utils.okOrThrow (LibTorch.Tape.backwardDenseAll (t := t3) outId seed)
+  let grads ← IO.ofExcept (LibTorch.Tape.backwardDenseAll (t := t3) outId seed)
   let dx ← Utils.cudaGrad (s := s) grads xId
   let expected : Tensor Float s :=
     (Tensor.from #[2.0, 2.0, 2.0, 2.0]).reshape [4] (by dsimp; decide)
@@ -278,10 +278,10 @@ def runDisconnectedDenseGradientStress : IO Unit := do
   let (t1, xId) := LibTorch.Tape.leaf (t := t0) (Utils.tensorToAnyBuffer zero) (name := some "x")
   let (t2, outId) :=
     LibTorch.Tape.leaf (t := t1) (Utils.tensorToAnyBuffer output) (name := some "output")
-  let (t3, invId) ← Utils.okOrThrow <|
+  let (t3, invId) ← IO.ofExcept <|
     LibTorch.Tape.inv (t := t2) (s := scalarShape) xId
   let seed : LibTorch.AnyBuffer := { s := scalarShape, buf := Buffer.full 1 1.0 }
-  let grads ← Utils.okOrThrow <| LibTorch.Tape.backwardDenseAll (t := t3) outId seed
+  let grads ← IO.ofExcept <| LibTorch.Tape.backwardDenseAll (t := t3) outId seed
   unless grads.size = t3.nodes.size do
     throw <| IO.userError "disconnected CUDA dense gradient: result length mismatch"
   let xGrad := Tensor.item (← Utils.cudaGrad (s := scalarShape) grads xId)
@@ -311,11 +311,11 @@ def runConstantBranchGradientStress : IO Unit := do
       let (t2, pId) := t1.leaf { s := scalar, buf := p } (requiresGrad := trainable)
       let (t3, maskId) := t2.leaf { s := vector, buf := mask } (requiresGrad := false)
       let (t4, onesId) := t3.leaf { s := vector, buf := ones } (requiresGrad := false)
-      let (t5, broadcastId) ← Utils.okOrThrow <|
+      let (t5, broadcastId) ← IO.ofExcept <|
         t4.broadcastTo (Shape.CanBroadcastTo.scalarTo vector) pId
-      let (t6, retainedId) ← Utils.okOrThrow <| t5.mul (s := vector) broadcastId maskId
-      let (t7, denominatorId) ← Utils.okOrThrow <| t6.sub (s := vector) onesId retainedId
-      let (t8, inverseId) ← Utils.okOrThrow <| t7.inv (s := vector) denominatorId
+      let (t6, retainedId) ← IO.ofExcept <| t5.mul (s := vector) broadcastId maskId
+      let (t7, denominatorId) ← IO.ofExcept <| t6.sub (s := vector) onesId retainedId
+      let (t8, inverseId) ← IO.ofExcept <| t7.inv (s := vector) denominatorId
       for id in #[broadcastId, retainedId, denominatorId, inverseId] do
         unless (t8.getNode? id).any (fun node => node.requiresGrad == trainable) do
           throw <| IO.userError "dropout probability gradient flag was not propagated"
@@ -325,20 +325,20 @@ def runConstantBranchGradientStress : IO Unit := do
             if id == broadcastId then
               { node with backward := fun _ => .error "constant probability was differentiated" }
             else node }
-      let (t9, maskedId) ← Utils.okOrThrow <| t8.mul (s := vector) xId maskId
-      let (t10, yId) ← Utils.okOrThrow <| t9.mul (s := vector) maskedId inverseId
-      let (tape, outId) ← Utils.okOrThrow <| t10.sum (s := vector) yId
+      let (t9, maskedId) ← IO.ofExcept <| t8.mul (s := vector) xId maskId
+      let (t10, yId) ← IO.ofExcept <| t9.mul (s := vector) maskedId inverseId
+      let (tape, outId) ← IO.ofExcept <| t10.sum (s := vector) yId
       let expectedValue := if probability == 0.0 then 10.0 else
         if probability == 0.5 then 6.0 else 0.0
       let expectedInput := FloatArray.mk <| if probability == 0.0 then #[1.0, 1.0, 1.0, 1.0]
         else if probability == 0.5 then #[0.0, 0.0, 2.0, 0.0] else #[0.0, 0.0, 0.0, 0.0]
       let expectedProbability := if probability == 0.0 then 10.0 else
         if probability == 0.5 then 12.0 else 0.0
-      let output ← Utils.okOrThrow <| tape.requireValue outId scalar
+      let output ← IO.ofExcept <| tape.requireValue outId scalar
       assertFloatArrayEq "dropout forward value"
         (← Buffer.toFloatArrayIO output) (FloatArray.mk #[expectedValue])
       let denseSeed : LibTorch.AnyBuffer := { s := scalar, buf := ← Buffer.fullIO 1 1.0 }
-      let dense ← Utils.okOrThrow <| tape.backwardDenseAll outId denseSeed
+      let dense ← IO.ofExcept <| tape.backwardDenseAll outId denseSeed
       let inputGradient ← Utils.cudaGrad (s := vector) dense xId
       assertFloatArrayEq "dropout dense input gradient"
         (Runtime.Autograd.LibTorch.Convert.flattenFloat inputGradient) expectedInput
@@ -380,7 +380,7 @@ def runSparseLifetimeStress : IO Unit := do
   let x : Tensor Float s := (Tensor.from #[0.25, -0.50, 0.75, -1.00]).reshape [4] (by dsimp; decide)
   let t0 : LibTorch.Tape := LibTorch.Tape.empty
   let (t1, xId) := LibTorch.Tape.leaf (t := t0) (Utils.tensorToAnyBuffer x) (name := some "x")
-  let (t2, outId) ← Utils.okOrThrow (LibTorch.Tape.sum (t := t1) (s := s) xId)
+  let (t2, outId) ← IO.ofExcept (LibTorch.Tape.sum (t := t1) (s := s) xId)
 
   -- The output cotangent must be allocated afresh on every pass. A pure constant allocation can
   -- be hoisted by Lean and then reused after sparse backward has retired its native storage.
@@ -503,7 +503,7 @@ def runMatmulStress : IO Unit := do
   Utils.assertTensorApprox (s := sY1) "matmul stress case1 fp64" yFp641 yRef1 (tol := 1e-9)
 
   -- Dot-product-shaped case: small but asymmetric enough to exercise the degenerate leading
-  -- dimensions in the DGEMM bridge.
+  -- dimensions in the binary64 matmul bridge.
   let sA2 : Shape := [1, 7]
   let sB2 : Shape := [7, 1]
   let sY2 : Shape := [1, 1]
@@ -625,7 +625,7 @@ storage while leaving the output usable; leaving scope must also finalize every 
   let value ← Buffer.fullIO elements 2.0
   let outResult ← IO.lazyPure fun _ =>
     Buffer.attentionForward query key value none 1 n d 1.0
-  let (out, probabilities) ← Utils.okOrThrow outResult
+  let (out, probabilities) ← IO.ofExcept outResult
   assertMemoryReadback "attention forward" out elements.toNat 2.0
   assertMemoryReadback "attention saved probabilities" probabilities (n.toNat * n.toNat)
     (1.0 / Float.ofNat n.toNat)
@@ -646,7 +646,7 @@ storage while leaving the output usable; leaving scope must also finalize every 
   let upstream ← Buffer.fullIO elements 1.0
   let gradResult ← IO.lazyPure fun _ =>
     Buffer.attentionBackward query key value probabilities upstream 1 n d 1.0
-  let (dq, dk, dv) ← Utils.okOrThrow gradResult
+  let (dq, dk, dv) ← IO.ofExcept gradResult
   -- Uniform attention, constant V, and unit output cotangent give dQ=dK=0, dV=1.
   assertMemoryReadback "attention saved dQ" dq elements.toNat 0.0
   assertMemoryReadback "attention saved dK" dk elements.toNat 0.0
@@ -762,7 +762,7 @@ def runMemoryOOMProbe : IO Unit := do
   IO.println "  OOM returned resourceExhausted; live inputs and subsequent allocations survived"
 
 /--
-Fork fresh processes so accounting excludes earlier suite work and allocator limits cannot affect
+Run fresh processes so accounting excludes earlier suite work and allocator limits cannot affect
 other tests. No assertion depends on an exact cached block size or amount returned to the driver.
 -/
 def runMemoryTests : IO Unit := do

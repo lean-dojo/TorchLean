@@ -18,7 +18,7 @@ public import NN.Verification.PINN.PyTorch -- shake: keep
 Dataset-backed PINN certificate checker.
 
 This is small and explicit: it reads a dataset JSON in the same schema
-as `train_pinn_1d.py --dataset-json`, evaluates the network on the dataset's
+as `train_pinn.py evolution --dataset-json`, evaluates the network on the dataset's
 `initial`/`boundary`/`data` points, and reports whether the ground-truth `u`
 value is contained in the output interval (with a tolerance).
 
@@ -44,7 +44,7 @@ open Import
 open Spec TorchLean
 open TorchLean.Tensor
 
-/-- Bundled dataset sample used by `lake exe verify -- pinn-dataset-check`. -/
+/-- Bundled dataset sample used by `scripts/lake.sh exe verify -- pinn-dataset-check`. -/
 def defaultDatasetPath : String :=
   "NN/Examples/Verification/PINN/sample_dataset_1d.json"
 
@@ -104,7 +104,7 @@ def loadGraphAndParams (weightsPath? : Option String) : IO (Graph × ParamStore 
     let j ← NN.Verification.Json.readJsonFile path
     match Import.PINNPyTorch.loadPinnState j with
     | some sd =>
-      pure (Import.PINNPyTorch.buildGraph sd, Import.PINNPyTorch.toParamStore sd)
+      pure (Import.PINNPyTorch.graph sd, Import.PINNPyTorch.parameters sd)
     | none =>
       throw <| IO.userError "Weights JSON did not match expected shapes"
 
@@ -136,9 +136,9 @@ def checkSection
 Entry point: dataset-backed interval containment check for a PINN model.
 
 This is wired into the unified dispatcher as:
-`lake exe verify -- pinn-dataset-check [PATH.json]`
+`scripts/lake.sh exe verify -- pinn-dataset-check [PATH.json]`
 
-The JSON schema matches the exporter used by `train_pinn_1d.py --dataset-json`.
+The JSON schema matches the exporter used by `train_pinn.py evolution --dataset-json`.
 -/
 def main (args : List String) : IO Unit := do
   let args := TorchLean.CLI.normalizePathFlag args "dataset" defaultDatasetPath

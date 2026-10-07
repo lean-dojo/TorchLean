@@ -27,7 +27,7 @@ This module provides infoview panels for TorchLean’s eager-mode autograd tape:
 
 - `tapeHtml`: inspect a tape's nodes and edge structure.
 - `tapeGradsHtml`: run scalar reverse-mode and show gradient coverage/results.
-- `tapeTraceHtml`: step-by-step reverse-pass trace with per-parent VJP contributions.
+- `tapeTraceHtml`: accumulated cotangents and recomputed per-parent VJP contributions.
 - `#tape_view`, `#tape_grads_view`, `#tape_trace_view`: command frontends.
 -/
 
@@ -248,7 +248,8 @@ This viewer runs reverse-mode, then recomputes each visited node's local VJP fro
 cotangent for display in reverse id order. It does not record intermediate accumulator updates.
 -/
 
-/-- Render a reverse-pass trace for a tape, starting from a scalar output node `outId`. -/
+/-- Show final cotangents and recomputed local VJPs from scalar output node `outId`.
+This is not a recording of intermediate gradient accumulation. -/
 def tapeTraceHtml {α : Type} [TorchLean.Storage α] [ToString α] [Add α] [One α]
     (t : Tape α) (outId : Nat) : ProofWidgets.Html :=
   let seed : Spec.SomeTensor α := Spec.SomeTensor.ofTensor (Tensor.scalar (1 : α))

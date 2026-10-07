@@ -211,19 +211,6 @@ theorem directedLayerNormRow?_encloses [NonlinearBoundOps α]
       have hfinal := checkedFiniteBounds?_eq_of_eq_some hj
       simpa only [← hfinal] using hshifted
 
-/-- Exact real endpoints instantiate the sequence theorem. -/
-theorem directedLayerNormRow?_encloses_real {m n : Nat} (hm : 0 < m) (hn : 0 < n)
-    (lo hi gamma beta : Tensor ℝ [n]) (epsilon : ℝ)
-    (x : Tensor ℝ [m, n]) (row : Fin m)
-    (hx : ∀ j, lo.getScalar j ≤ Spec.get2 x row j ∧
-      Spec.get2 x row j ≤ hi.getScalar j)
-    {outLo outHi : Tensor ℝ [n]}
-    (hout : directedLayerNormRow? lo hi gamma beta epsilon = some (outLo, outHi)) :
-    ∀ j, outLo.getScalar j ≤ Spec.get2 (Spec.layerNorm x gamma beta hm hn epsilon) row j ∧
-      Spec.get2 (Spec.layerNorm x gamma beta hm hn epsilon) row j ≤ outHi.getScalar j := by
-  simpa only [LawfulBoundOps.toReal, id_eq, Tensor.ofFn_getScalar] using
-    directedLayerNormRow?_encloses (α := ℝ) hm hn lo hi gamma beta epsilon x row hx hout
-
 end
 
 end NN.MLTheory.CROWN.Graph.LayerNormDirected

@@ -20,16 +20,6 @@ These are checked case studies rather than training executables. The geometry ch
 with `scripts/lake.sh exe verify -- camera-box3d-cert`; `verify -- all` runs the broader registered
 verification suite, not every BugZoo file.
 
-With PyTorch installed, compare native normalization results against the constant-slice reference:
-
-```bash
-python3 scripts/verification/normalization_contract_probe.py --device cpu
-```
-
-The probe prints version metadata and residuals for outputs and gradients across two dtypes and
-four input magnitudes. Use `--device cuda` to inspect a GPU implementation. These are measurements
-of the installed provider, separate from the Lean theorems.
-
 ## Bug Families And Contracts
 
 | BugZoo file | Real bug family | What Lean makes explicit |

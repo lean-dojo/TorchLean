@@ -11,8 +11,9 @@ The command loads `digits_linear_weights.json` (a 64-input, 10-output linear cla
 lower bound exceeds every competing class's upper bound over the specified input box. A low
 certified count is a result, not a program failure. No retraining or dataset download is needed.
 
-The default computation uses Float bound propagation. `--arithmetic ieee` selects the executable
-binary32 model; neither choice is by itself a proof about the deployed native classifier.
+Nominal predictions use host binary64 `Float`. The default bound pass uses native binary32
+`Float32`; `--arithmetic ieee` selects the bit-level binary32 reference. Neither bound pass is
+by itself a proof about the deployed native classifier.
 Read `NN/Verification/Robustness/Digits.lean` for the arithmetic, clipping, and propagation choices.
 
 There is a separate report-format example:

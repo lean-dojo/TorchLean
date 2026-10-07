@@ -66,7 +66,7 @@ theorem evalAt_axisReduction_eq
   cases op <;>
     simp [AxisReductionOperation.toOpKind, AxisReductionOperation.denote, Graph.evalAt,
       Graph.evalNode, Graph.normalizeNodeOutput, unaryGraphOut, unaryNodeOut, Graph.getNode,
-      Graph.getNode?, hAxisLookup, Bind.bind,
+      hAxisLookup, Bind.bind,
       Graph.unaryParentId, unaryParent?, Except.bind, Pure.pure, Except.pure]
 
 /-- Local IR semantics for `reduce_sum` along a valid axis. -/

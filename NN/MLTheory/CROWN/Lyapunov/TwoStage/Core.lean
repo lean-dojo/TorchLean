@@ -103,10 +103,10 @@ def Internal.controllerOutput
     {β : Type} [TorchLean.Storage β] [Context β]
     {m : Type → Type} [Monad m]
     [Runtime.Autograd.Torch.Ops (m := m) (α := β)]
-    (wC : Runtime.Autograd.Model.RefTy (m := m) (α := β) [uDim, xDim])
-    (bC : Runtime.Autograd.Model.RefTy (m := m) (α := β) [uDim])
-    (x : Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape)
-    (scaleU : β) : m (Runtime.Autograd.Model.RefTy (m := m) (α := β) []) := do
+    (wC : Runtime.Autograd.Model.Ref (m := m) (α := β) [uDim, xDim])
+    (bC : Runtime.Autograd.Model.Ref (m := m) (α := β) [uDim])
+    (x : Runtime.Autograd.Model.Ref (m := m) (α := β) xShape)
+    (scaleU : β) : m (Runtime.Autograd.Model.Ref (m := m) (α := β) []) := do
   let uPre ← Runtime.Autograd.Torch.linear
     (m := m) (α := β) (inDim := xDim) (outDim := uDim) wC bC x
   let uT ← Runtime.Autograd.Model.tanh (m := m) (α := β) (s := uShape) uPre
@@ -120,26 +120,26 @@ def Internal.lyapunovValueAndGradient
     {m : Type → Type} [Monad m]
     [Runtime.Autograd.Torch.Ops (m := m) (α := β)]
     (width : Nat)
-    (w1 : Runtime.Autograd.Model.RefTy (m := m) (α := β) [width, xDim])
-    (b1 : Runtime.Autograd.Model.RefTy (m := m) (α := β) [width])
-    (w2 : Runtime.Autograd.Model.RefTy (m := m) (α := β) [1, width])
-    (b2 : Runtime.Autograd.Model.RefTy (m := m) (α := β) [1])
-    (x : Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape)
-    (oneS : Runtime.Autograd.Model.RefTy (m := m) (α := β) [])
+    (w1 : Runtime.Autograd.Model.Ref (m := m) (α := β) [width, xDim])
+    (b1 : Runtime.Autograd.Model.Ref (m := m) (α := β) [width])
+    (w2 : Runtime.Autograd.Model.Ref (m := m) (α := β) [1, width])
+    (b2 : Runtime.Autograd.Model.Ref (m := m) (α := β) [1])
+    (x : Runtime.Autograd.Model.Ref (m := m) (α := β) xShape)
+    (oneS : Runtime.Autograd.Model.Ref (m := m) (α := β) [])
     (two : β) :
-    m (Runtime.Autograd.Model.RefTy (m := m) (α := β) [] ×
-      Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape) := do
+    m (Runtime.Autograd.Model.Ref (m := m) (α := β) [] ×
+      Runtime.Autograd.Model.Ref (m := m) (α := β) xShape) := do
   let z1 ← Runtime.Autograd.Torch.linear
     (m := m) (α := β) (inDim := xDim) (outDim := width) w1 b1 x
   let h1 ← Runtime.Autograd.Model.tanh (m := m) (α := β) (s := [width]) z1
   let sVec ← Runtime.Autograd.Torch.linear
     (m := m) (α := β) (inDim := width) (outDim := 1) w2 b2 h1
-  let s0 : Runtime.Autograd.Model.RefTy (m := m) (α := β) [] ←
+  let s0 : Runtime.Autograd.Model.Ref (m := m) (α := β) [] ←
     Runtime.Autograd.Model.reshape (m := m) (α := β) (s₁ := [1]) (s₂ := []) sVec (by
       simp [Spec.Shape.size])
   let V ← Runtime.Autograd.Model.mul (m := m) (α := β) (s := []) s0 s0
 
-  let w2Row : Runtime.Autograd.Model.RefTy (m := m) (α := β) [width] ←
+  let w2Row : Runtime.Autograd.Model.Ref (m := m) (α := β) [width] ←
     Runtime.Autograd.Model.reshape (m := m) (α := β) (s₁ := [1, width]) (s₂ := [width]) w2 (by
       simp [Spec.Shape.size])
   let h1Sq ← Runtime.Autograd.Model.mul (m := m) (α := β) (s := [width]) h1 h1
@@ -158,7 +158,7 @@ def Internal.lyapunovValueAndGradient
   let ds ← Runtime.Autograd.Model.reshape (m := m) (α := β)
     (s₁ := [xDim, 1]) (s₂ := xShape) dsM (by
       simp [xShape, Spec.Shape.size])
-  let k : Runtime.Autograd.Model.RefTy (m := m) (α := β) [] ←
+  let k : Runtime.Autograd.Model.Ref (m := m) (α := β) [] ←
     Runtime.Autograd.Model.scale (m := m) (α := β) (s := []) s0 (c := two)
   let kV ← Runtime.Autograd.Model.broadcastTo (m := m) (α := β) (s₁ := []) (s₂ := xShape)
     (Shape.CanBroadcastTo.scalarTo xShape) k
@@ -171,9 +171,9 @@ def Internal.closedLoopDynamics
     {β : Type} [TorchLean.Storage β] [Context β]
     {m : Type → Type} [Monad m]
     [Runtime.Autograd.Torch.Ops (m := m) (α := β)]
-    (x : Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape)
-    (u0 oneS : Runtime.Autograd.Model.RefTy (m := m) (α := β) [])
-    (mu one : β) : m (Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape) := do
+    (x : Runtime.Autograd.Model.Ref (m := m) (α := β) xShape)
+    (u0 oneS : Runtime.Autograd.Model.Ref (m := m) (α := β) [])
+    (mu one : β) : m (Runtime.Autograd.Model.Ref (m := m) (α := β) xShape) := do
   let x1 ← Runtime.Autograd.Model.select (m := m) (α := β) (s := [xDim]) 0 x ⟨0, by decide⟩
   let x2 ← Runtime.Autograd.Model.select (m := m) (α := β) (s := [xDim]) 0 x ⟨1, by decide⟩
   let x1Sq0 ← Runtime.Autograd.Model.mul (m := m) (α := β) (s := []) x1 x1
@@ -196,10 +196,10 @@ def Internal.lossFromDynamics
     {β : Type} [TorchLean.Storage β] [Context β]
     {m : Type → Type} [Monad m]
     [Runtime.Autograd.Torch.Ops (m := m) (α := β)]
-    (x : Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape)
-    (V : Runtime.Autograd.Model.RefTy (m := m) (α := β) [])
-    (gradV dynamics : Runtime.Autograd.Model.RefTy (m := m) (α := β) xShape)
-    (cV cD : β) : m (Runtime.Autograd.Model.RefTy (m := m) (α := β) []) := do
+    (x : Runtime.Autograd.Model.Ref (m := m) (α := β) xShape)
+    (V : Runtime.Autograd.Model.Ref (m := m) (α := β) [])
+    (gradV dynamics : Runtime.Autograd.Model.Ref (m := m) (α := β) xShape)
+    (cV cD : β) : m (Runtime.Autograd.Model.Ref (m := m) (α := β) []) := do
   let prod ← Runtime.Autograd.Model.mul (m := m) (α := β) (s := xShape) gradV dynamics
   let Vdot ← Runtime.Autograd.Model.sum (m := m) (α := β) (s := xShape) prod
   let xSqV ← Runtime.Autograd.Model.mul (m := m) (α := β) (s := xShape) x x
@@ -237,6 +237,6 @@ def lossProgram (width : Nat) :
             Internal.lyapunovValueAndGradient (m := m) width w1 b1 w2 b2 x oneS two
           let dynamics ← Internal.closedLoopDynamics (m := m) x u0 oneS mu one
           Internal.lossFromDynamics (m := m) x V gradV dynamics cV cD
-          : m (Runtime.Autograd.Model.RefTy (m := m) (α := β) []))
+          : m (Runtime.Autograd.Model.Ref (m := m) (α := β) []))
 
 end NN.MLTheory.CROWN.Lyapunov.TwoStage.Core

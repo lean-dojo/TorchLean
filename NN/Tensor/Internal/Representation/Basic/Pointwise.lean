@@ -13,6 +13,11 @@ public import NN.Tensor.Internal.Representation.Basic.Core
 
 Scalar maps, binary maps, finite tensor families, stacking, and rank-one list
 construction over native tensor storage.
+
+`const`, `map`, `zipWith`, and `stack` have logical definitions and
+`implemented_by` fast paths. The observation lemmas below reason about the
+logical definitions; the compiler substitutes the fast bodies. The `unstack`
+replacement is registered separately through a proved `csimp` equality.
 -/
 
 @[expose] public section
@@ -23,7 +28,7 @@ universe u v w
 
 /-- Evaluate a finite family once per index in ascending order and retain indexed access.
 
-The temporary buffer also supports heterogeneous tensor packs, which have no scalar Storage
+The temporary buffer also supports dependent tensor families, which have no scalar Storage
 instance. Public construction APIs expose tensors or packs rather than this buffer.
 -/
 def sequenceFinM {m : Type → Type} [Monad m] {α : Type} {n : Nat}
@@ -285,8 +290,9 @@ instantiate through equal identity-map terms.
 /--
 Native implementation of leading-axis stacking.
 
-Each component is evaluated once, in ascending order, and its buffer is copied into the output
-with one `appendSlice`. The size check always succeeds because every component has
+For nonempty component shapes, each component is evaluated once in ascending order, and its
+buffer is copied into the output with one `appendSlice`. Empty component shapes need no
+component evaluation. The size check succeeds under the storage laws because every component has
 `Shape.size s` entries; its fallback is the reference definition.
 -/
 @[inline] unsafe def stackFast {α : Type u} [storage : Storage α] {n : Nat} {s : Shape}
@@ -309,8 +315,8 @@ with one `appendSlice`. The size check always succeeds because every component h
 Place a finite family of identically shaped tensors along a new leading axis.
 
 The transparent definition is the proof semantics. Compiled code uses
-`stackFast`, which preserves these semantics while evaluating each component
-only once.
+`stackFast`, which evaluates each component once when its shape is nonempty
+and skips component evaluation for empty shapes.
 -/
 @[implemented_by stackFast]
 def stack {α : Type u} [Storage α] {n : Nat} {s : Shape}

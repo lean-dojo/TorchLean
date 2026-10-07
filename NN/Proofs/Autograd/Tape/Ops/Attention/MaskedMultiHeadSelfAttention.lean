@@ -40,7 +40,7 @@ open DGraph
 
 universe u v
 
-/-- Context for a masked multi-head attention core: `[Q_heads, Kᵀ_heads, V_heads]`. -/
+/-- Context for a fixed-bias attention core: `[Q_heads, Kᵀ_heads, V_heads]`. -/
 abbrev ΓMaskedCore (n numHeads headDim : Nat) : List Shape :=
   [ HeadsShape n numHeads headDim
   , KtShape n numHeads headDim
@@ -56,23 +56,23 @@ abbrev ssMaskedCore (n numHeads headDim : Nat) : List Shape :=
   , HeadsShape n numHeads headDim -- per-head output
   ]
 
-/-- Query-head index in the masked attention core context. -/
+/-- Query-head index in the fixed-bias attention context. -/
 def idxMaskedCoreQ {n numHeads headDim : Nat} {ss : List Shape} :
     Idx (ΓMaskedCore n numHeads headDim ++ ss) (HeadsShape n numHeads headDim) :=
   ⟨⟨0, by simp [ΓMaskedCore]⟩, by simp [ΓMaskedCore]⟩
 
-/-- Transposed-key index in the masked attention core context. -/
+/-- Transposed-key index in the fixed-bias attention context. -/
 def idxMaskedCoreKt {n numHeads headDim : Nat} {ss : List Shape} :
     Idx (ΓMaskedCore n numHeads headDim ++ ss) (KtShape n numHeads headDim) :=
   ⟨⟨1, by simp [ΓMaskedCore]⟩, by simp [ΓMaskedCore, KtShape]⟩
 
-/-- Value-head index in the masked attention core context. -/
+/-- Value-head index in the fixed-bias attention context. -/
 def idxMaskedCoreV {n numHeads headDim : Nat} {ss : List Shape} :
     Idx (ΓMaskedCore n numHeads headDim ++ ss) (HeadsShape n numHeads headDim) :=
   ⟨⟨2, by simp [ΓMaskedCore]⟩, by simp [ΓMaskedCore]⟩
 
 /--
-Proof-carrying masked multi-head attention core.
+Proof-carrying fixed-bias attention core.
 
 The fixed `bias` is added after scaling the score tensor and before the row-wise softmax.
 -/
@@ -264,16 +264,17 @@ theorem maskedCoreAfterProjection_hasFDerivAt
   exact hDcore.comp x hProject
 
 /--
-Full masked-attention composition contract.
+Fixed-bias attention composition contract.
 
-The theorem separates the already-proved pieces of a GPT-style attention block:
+The theorem composes:
 
 * a differentiable front half that projects/splits inputs into `Q`, `Kᵀ`, and `V`;
-* the proved finite-mask split-head attention core;
-* a differentiable back half that merges/project outputs or packages residual data for the caller.
+* the proved fixed-bias split-head attention core;
+* a differentiable back half that merges/projects outputs or packages residual data for the caller.
 
 Instantiating `projectPack` and `mergePack` with the concrete projection/split/merge graphs gives
-the full masked-MHA differentiability statement without changing the core proof.
+the corresponding fixed-bias block's differentiability statement. The theorem assumes the two
+outer derivative certificates; it does not construct them or prove Boolean causal masking.
 -/
 theorem projectedMaskedAttention_hasFDerivAt
     {E : Type u} [NormedAddCommGroup E] [NormedSpace ℝ E]

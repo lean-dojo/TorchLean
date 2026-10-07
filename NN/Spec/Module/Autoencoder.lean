@@ -12,7 +12,7 @@ public import NN.Spec.Module.Core
 /-!
 # Autoencoder as an `Spec.Module`
 
-The autoencoder spec model defines the forward pass and its VJP pieces.
+The autoencoder spec model defines the forward and complete backward passes.
 This file adds the `Spec.Module` wrapper so it can be composed with other modules and exported.
 -/
 

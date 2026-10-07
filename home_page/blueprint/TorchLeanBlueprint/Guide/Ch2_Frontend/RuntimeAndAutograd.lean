@@ -62,9 +62,12 @@ A standalone `autograd.grad` call constructs its own computation:
 :::
 
 The `autograd.*` transforms do not consult the trainer's execution setting. In
-{src "NN/Runtime/Autograd/Model/Autodiff.lean"}[`Autodiff.lean`], `gradients` starts with
-`lowerScalarToTypedGraph`, then evaluates through checked tape lowering and a reverse pass.
-The graph describes the reusable computation; the tape captures values for this invocation.
+{src "NN/Runtime/Autograd/Model/Autodiff.lean"}[`Autodiff.lean`], `gradients` uses the general
+`vjp` path with a unit scalar seed. That path calls `lowerToTypedGraph`, then `vjpChecked`, whose
+compiled implementation uses checked graph execution and saved reverse programs. A proved
+compiler simplification replaces its raw-tape specification. Scalars use the same
+lowering as other tensor outputs. The graph describes the reusable computation; each invocation
+supplies its own values and saved local rules.
 Higher-order transforms in the same file lower graphs to tapes over dual scalars, so the reverse
 calculation also carries directional derivatives. The trainer's execution choice is separate
 from these transforms.
@@ -128,8 +131,8 @@ parameterized by a scalar type, so the same graph can be interpreted over the
 reals, over intervals, and over binary32 without being rewritten. See
 {ref "graphs-and-ir"}[Graph IR].
 
-`NN.Backend.IR.GraphKernelPlan : Type` has no element type and no shapes. It holds node identifiers
-and capsule metadata, and it contains no tensors whatsoever. A plan therefore cannot witness that
+`NN.Backend.IR.GraphKernelPlan : Type` has no scalar or static shape indices. It holds node
+identifiers and capsule metadata, and it contains no tensors whatsoever. A plan cannot witness that
 anything executed. Accepting a plan is a statement about a choice, not about a computation.
 
 Here is the same set with the two remaining columns filled in:
@@ -329,7 +332,7 @@ one branch detached: [6.0, -3.0]
 
 The first line agrees with the tape we built. The second line is the next section.
 
-The backward closure's result is a list of contributions, not a map with one entry per parent.
+The backward closure's result is an array of contributions, not a map with one entry per parent.
 That lets multiplication return two entries for node `0`, and lets the traversal add contributions
 from both square branches later. At `x = [3, -1.5]`, one square contributes `[6, -3]`; the second
 contributes the same vector. Their sum explains every coordinate of `[12, -6]` without relying on
@@ -492,9 +495,6 @@ this input. The comparison checks several implementations of the same branch str
 one result changes, that narrows the investigation to its construction or execution path; shared
 rules can still produce shared errors.
 
-The manual tape spells out parent identifiers, while the transform records them through its
-handler. Comparing the results checks their agreement at the chosen values.
-
 A useful independent reference here is the algebraic calculation above: two square branches give
 `4x`, and the chosen stop-gradient rule on one branch leaves `2x`. For a more complicated program,
 derive a small special
@@ -532,11 +532,6 @@ This is the tagless-final pattern ({Informal.citet kiselyov2012}[]): one object 
 interpreters, with the object language's types carried by the host language. The two fields of a
 GraphSpec primitive use the same design. A shared operation interface keeps the program text
 aligned, while the interpreters still need correspondence checks for the operations they implement.
-
-The two `rfl` proofs identify what the abstract reference type becomes in each interpreter. They
-do not evaluate a tensor or compare two model predictions. In an eager session a reference names
-a recorded value; a graph variable identifies an entry in a typed context. That distinction lets
-the same authored operation sequence build either representation.
 
 The maintained eager handle also records a session owner and generation. A reset can reuse numeric
 node `0`, so its number alone cannot establish that an old handle belongs to the new recording.
@@ -595,7 +590,7 @@ does not require raw NaN sign or payload identity. Custom nodes without certifie
 or compact contributions retain materializing adapters, and noncompressible histories can require
 quadratic replay. The raw Tape adapter also retains full prefix contributions.
 
-The {src "NN/Tests/Runtime/TypedGraphScaling.md"}[2026-09-25 scaling report] compares baseline
+The 2026-09-25 scaling measurements compare baseline
 `0f845313` with implementation `8d9d99eb`, using Lean 4.34.0 and the original dependency cache on
 an Intel Xeon Platinum 8275CL CPU. For 16,000 native binary64 `Float` ReLU nodes of shape `[4]`,
 checked lowering fell from `32,312.11` to `25.33` ms and retained backward from `124,642.42` to
@@ -614,11 +609,6 @@ The typed graph trainer currently supports CPU execution. A non-CPU request is r
 successful run's execution label continues to identify the path being measured. Recording and
 lowering also do not imply the optimization, fusion, scheduling, or native code generation
 associated with a compiler such as `torch.compile`.
-
-The wrapper equality says where model state enters the graph: the leaf context is the list of
-state shapes followed by the input shape. A caller can keep state and input separate at the API,
-while lowering supplies one ordered context to the graph. The order is part of the interface; two
-same-shaped parameter tensors are not interchangeable merely because either fits a slot.
 
 # Canonical IR Representation
 
@@ -707,10 +697,8 @@ in the application
   value.cast ⋯
 ```
 
-Second, `ofTensor_cast` says the round trip is the identity: pack a tensor, check its shape, and you
-are back where you started with nothing lost along the way. So the shape did not vanish. It moved
-from a compile-time index of the whole collection into a value stored beside each entry, and a
-theorem says the move is reversible.
+Second, `ofTensor_cast` says that casting a packed tensor to the matching shape and repacking it
+returns the original packed value. Its stored shape and values survive the round trip.
 
 The instantiated runner also holds parameter
 names, bounded token inputs, RNG state, optimizer memory, mutable model buffers, and the train or
@@ -721,11 +709,8 @@ matters: it transports the existing tensor; it does not reshape, truncate, pad, 
 buffer. The roundtrip theorem says that packing a tensor and recovering it with the matching
 shape returns that tensor. It does not manufacture an equality for arbitrary packed data.
 
-The rejected `rfl` illustrates exactly that missing information. For an arbitrary `SomeTensor`,
-Lean cannot reduce its hidden shape to `[2]`. A runtime equality test can provide evidence in its
-successful branch, after which the cast is justified. Until that check succeeds, reporting an
-error preserves the caller's shape contract. The printed metavariable names are elaborator details;
-the useful part of the diagnostic is the demanded equality with `[2]`.
+The printed metavariable names are elaborator details; the useful part of the diagnostic is the
+demanded equality with `[2]`.
 
 # Model Mode And Random State
 

@@ -23,10 +23,8 @@ Two independent developments meet in this file.
 
 The two developments are stated on *different graph types*: the algebraic
 `Algebra.Graph (α := α) Δ Γ ss` versus the `ℝ`-monomorphic, environment-free
-`Proofs.Autograd.Graph Γ ss`. Their contexts already coincide (`TorchLean.TensorPack ℝ Γ` is by
-definition `Algebra.TorchLean.TensorPack ℝ Γ`), and their `eval`/`jvpCtx`/`backpropCtx` recursions
-mirror each other node for node; what has been missing is the formal connection. This file
-supplies it:
+`Proofs.Autograd.Graph Γ ss`. Both use `TorchLean.TensorPack ℝ Γ` for their contexts.
+This file connects their evaluation, JVP, and backpropagation semantics:
 
 * **The real, environment-free slice.** `Algebra.Node.toReal` / `Algebra.Graph.toReal` specialize an
   algebraic graph at `α := ℝ` and a fixed environment `d : Δ` to an analytic graph;
@@ -40,8 +38,7 @@ supplies it:
 * **Input-prefix extraction.** `TensorPack.takeLeft` reads the input (`Γ`-prefix) block out of a
   full context (it is the left half of `TorchLean.TensorPack.split`), and
   `takeLeft_backpropAllCtx` (for `GraphData`, and for `Graph` through `toData`) identifies the
-  input block of the full backpropagation with the inputs-only `backpropCtx`, the missing lemma
-  relating the runtime-facing `backpropAllCtx` to the proof-facing `backpropCtx`.
+  input block of the full backpropagation with the inputs-only `backpropCtx`.
 * **Vectorization transport.** The `flattenCtx_*` lemmas of `NN.Proofs.Autograd.Tape.Core.FDeriv`
   commute context vectorization with `cast`/`snoc`/`unsnoc`/`add`, so the `TensorPack`-level
   graph semantics coincide with the Euclidean `CtxVec` semantics: `evalVec_flattenCtx`,

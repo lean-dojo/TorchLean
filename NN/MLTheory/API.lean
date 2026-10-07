@@ -6,11 +6,7 @@ Authors: TorchLean Team
 
 module
 
--- Read as an umbrella: this file names no constant from the modules below, so `lake shake` sees
--- them as redundant. They stay because being importable under one name is the point, and because
--- `NN.MLTheory.API` is how the theory layer reaches a typecheck target at all.
-public import NN.MLTheory.CROWN.Extras.AlphaConfig
-public import NN.MLTheory.CROWN.Operators
+-- These public re-exports define the theory import surface; retain them when auditing imports.
 public import NN.MLTheory.CROWN.Proofs.Distillation
 public import NN.MLTheory.CROWN.Proofs.LayerNormDirected
 public import NN.MLTheory.CROWN.Proofs.SoundnessProofs
@@ -28,14 +24,14 @@ public import NN.MLTheory.SelfSupervised
 
 This is the recommended entrypoint for TorchLean's formal “ML theory” layer.
 
-It collects the core specifications, executable checkers, and theorems into a single import. The
-subdirectories still contain focused implementation modules, but users should not need separate
-top-level umbrellas such as `NN.MLTheory.Optimization` or `NN.MLTheory.SelfSupervised`.
+It collects specifications, executable checkers, and theorems into a single import. Import a focused
+submodule when you only need one topic.
 
 ## Optimization theory
 
 The optimization layer has three levels:
-- executable optimizer equations over TorchLean `TorchLean.Tensor`s;
+
+- executable optimizer equations over `TorchLean.Tensor`s;
 - exact `ℝ` convergence theorems for gradient-descent-style operators;
 - a calculus bridge from strong convexity to strong monotonicity of `∇f`.
 
@@ -57,19 +53,18 @@ fully collapsed embeddings can still obtain zero alignment energy, and that a po
 variance-floor guard assigns positive objective value to collapsed representations in nonzero
 dimension.
 
-These are objective semantics, not special-purpose layers: API training helpers can feed the same
-masked/reconstruction or joint-embedding targets into an MLP, CNN, ViT, Mamba block, or custom
-model.
+API training helpers can use these objectives with masked/reconstruction or joint-embedding targets
+and an MLP, CNN, ViT, Mamba block, or custom model.
 
 ## Verified-network integration
 
-This entrypoint also imports the CROWN soundness layer and the NeuralFloat error-bound layer so
-verification statements and floating-point error statements compile together through one surface.
+This entrypoint includes CROWN soundness proofs and finite-precision approximation bounds.
+For graph-level forward and backward rounding-error bounds, import `NN.Proofs.RuntimeApprox`.
 
 Notes:
-- The tactic frontends for external certificate tooling are kept out of this umbrella; import them
-  explicitly when needed. The Lyapunov certificate semantics are re-exported here as part of the
-  current `NN.MLTheory` surface.
+
+- Import `NN.MLTheory.CROWN.Lyapunov.Certificate` for Lyapunov certificate semantics. Tactic
+  frontends for external certificate tooling also need explicit imports.
 - This module does not define additional convenience APIs; those belong in `NN.Runtime` or
   `NN.Examples` rather than the theory layer.
 -/

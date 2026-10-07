@@ -10,8 +10,9 @@ public import NN.Tensor.Internal.Syntax.Parser.Expression.State
 /-!
 # Expression token parsing
 
-The recursive parser and its canonical-token theorem turn a checked token
-stream into one physical-axis expression.
+The recursive parser validates grouping and axis names in a lexer-produced
+token stream. Its canonical-token theorem records the syntax consumed on success;
+tensor dimensions and operation-specific constraints are checked separately.
 -/
 
 @[expose] public section
@@ -457,7 +458,6 @@ theorem canonical_words_valid_of_lex_eq_ok (source : String)
 /-- The span covering an entire source string. -/
 def sourceSpan (source : String) : Span :=
   ⟨0, source.toList.length⟩
-
 
 end Parser.Impl
 

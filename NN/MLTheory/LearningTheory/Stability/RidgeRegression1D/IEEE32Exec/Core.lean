@@ -61,19 +61,15 @@ equalities).
 Even if exceptional values never occur, evaluation order still matters for floats due to rounding.
 -/
 
-/-- Sum $f(0)+f(1)+\cdots+f(m-1)$ using a left fold (order matters for floats). -/
-def sumFin (m : Nat) (f : Fin m → (ExecFloat.Binary 8 23)) : ExecFloat.Binary 8 23 :=
-  Fin.foldl m (fun acc i => acc + f i) 0
-
 /-- Executable sum $\sum_i x_i^2$ (with IEEE-754 rounding after every multiplication and
 addition). -/
 def sumXX (S : Dataset (n + 1) Example) : ExecFloat.Binary 8 23 :=
-  sumFin (n + 1) (fun i => (Dataset.get S i).x * (Dataset.get S i).x)
+  Fin.foldl (n + 1) (fun acc i => acc + (Dataset.get S i).x * (Dataset.get S i).x) 0
 
 /-- Executable sum $\sum_i x_i y_i$ (with IEEE-754 rounding after every multiplication and
 addition). -/
 def sumXY (S : Dataset (n + 1) Example) : ExecFloat.Binary 8 23 :=
-  sumFin (n + 1) (fun i => (Dataset.get S i).x * (Dataset.get S i).y)
+  Fin.foldl (n + 1) (fun acc i => acc + (Dataset.get S i).x * (Dataset.get S i).y) 0
 
 /--
 Executable ridge regression (1D) using the fold-based sums.
@@ -124,22 +120,16 @@ def ridgeFit1DExecVec1 (lam : ExecFloat.Binary 8 23) (S : Dataset (n + 1) Vector
 
 namespace RidgeIEEEBridge
 
-/-- Expression for the term $x^2$ for a single example. -/
-def termXXExpr (z : Example) : IEEE32Exec.Expr :=
-  .mul (.const z.x) (.const z.x)
-
-/-- Expression for the term $xy$ for a single example. -/
-def termXYExpr (z : Example) : IEEE32Exec.Expr :=
-  .mul (.const z.x) (.const z.y)
-
 /-- Expression for $\sum_i x_i^2$ over the dataset. -/
 def sumXXExpr (S : Dataset (n + 1) Example) : IEEE32Exec.Expr :=
-  Fin.foldl (n + 1) (fun acc i => .add acc (termXXExpr (Dataset.get S i)))
+  Fin.foldl (n + 1) (fun acc i =>
+    .add acc (.mul (.const (Dataset.get S i).x) (.const (Dataset.get S i).x)))
     (.const (0 : ExecFloat.Binary 8 23))
 
 /-- Expression for $\sum_i x_i y_i$ over the dataset. -/
 def sumXYExpr (S : Dataset (n + 1) Example) : IEEE32Exec.Expr :=
-  Fin.foldl (n + 1) (fun acc i => .add acc (termXYExpr (Dataset.get S i)))
+  Fin.foldl (n + 1) (fun acc i =>
+    .add acc (.mul (.const (Dataset.get S i).x) (.const (Dataset.get S i).y)))
     (.const (0 : ExecFloat.Binary 8 23))
 
 /--
@@ -152,15 +142,23 @@ def ridgeExpr (lam : ExecFloat.Binary 8 23) (S : Dataset (n + 1) Example) : IEEE
     (sumXYExpr (n := n) S)
     (.add (sumXXExpr (n := n) S) (.mul (.const lam) (.const N)))
 
-/--
-Execute `ridgeExpr` using the bit-level IEEE runtime evaluator.
+private theorem eval_sum (env : Nat → ExecFloat.Binary 8 23) (m : Nat)
+    (terms : Fin m → IEEE32Exec.Expr) (initial : IEEE32Exec.Expr) :
+    IEEE32Exec.evalRuntime env (Fin.foldl m (fun acc i => .add acc (terms i)) initial) =
+      Fin.foldl m (fun acc i => acc + IEEE32Exec.evalRuntime env (terms i))
+        (IEEE32Exec.evalRuntime env initial) := by
+  induction m generalizing initial with
+  | zero => simp
+  | succ m ih =>
+    simp only [Fin.foldl_succ]
+    exact ih (fun i => terms i.succ) (.add initial (terms 0))
 
-We use the constant environment `fun _ => 0` because `ridgeExpr` is closed (it contains no
-variables).
--/
-def ridgeFit1DExecExpr (lam : ExecFloat.Binary 8 23) (S : Dataset (n + 1) Example) :
-  ExecFloat.Binary 8 23 :=
-  IEEE32Exec.evalRuntime (fun _ => 0) (ridgeExpr (n := n) lam S)
+/-- The expression evaluates to the direct fit with the same ordered binary32 operations. -/
+theorem eval_ridgeExpr (lam : ExecFloat.Binary 8 23) (S : Dataset (n + 1) Example) :
+    IEEE32Exec.evalRuntime (fun _ => 0) (ridgeExpr lam S) = ridgeFit1DExec lam S := by
+  simp only [ridgeExpr, IEEE32Exec.evalRuntime, sumXXExpr, sumXYExpr, eval_sum,
+    ridgeFit1DExec, sumXX, sumXY, ExecFloat.add, ExecFloat.mul, ExecFloat.div]
+  rfl
 
 /--
 Evaluate `ridgeExpr` using the FP32-style spec semantics.
@@ -183,9 +181,9 @@ theorem ridgeFit_toReal_eq_spec_of_finiteEval
     (lam : ExecFloat.Binary 8 23) (S : Dataset (n + 1) Example)
     {d : FloatLib.Numerics.Dyadic}
     (hfin : IEEE32Exec.FiniteEval (fun _ => 0) (ridgeExpr (n := n) lam S) d) :
-    (ExecFloat.Binary.toModel (ridgeFit1DExecExpr (n := n) lam S)).toReal =
+    (ExecFloat.Binary.toModel (ridgeFit1DExec (n := n) lam S)).toReal =
       ridgeFitSpec (n := n) lam S := by
-  simpa [ridgeFit1DExecExpr, ridgeFitSpec] using
+  simpa only [ridgeFitSpec, eval_ridgeExpr] using
     (IEEE32Exec.toReal_evalRuntime_eq_evalSpec (env := fun _ => (0 : ExecFloat.Binary 8 23))
       (e := ridgeExpr (n := n) lam S) (d := d) hfin)
 

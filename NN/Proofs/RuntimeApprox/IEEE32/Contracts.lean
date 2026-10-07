@@ -24,7 +24,6 @@ open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.ExecFloat.Binary (isFinite toModel)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
-
 namespace TorchLean.Floats.IEEE754.IEEE32Exec
 
 open TorchLean.Floats
@@ -119,7 +118,8 @@ theorem bpow_eq_ulp_of_ulpExp?_eq_some {x : ExecFloat.Binary 8 23} {k : Int}
       rw [hx] at h
       exact Option.some.inj h
 
-/-- Whether adding the second word leaves the first word unchanged. -/
+/-- Whether adding the second word leaves the first encoded value unchanged, including its
+zero sign. The real-valued absorption theorem below additionally requires a finite result. -/
 def absorbs (a b : ExecFloat.Binary 8 23) : Bool := decide (ExecFloat.add a b = a)
 
 /-- An observed absorption agrees with the rounded-real addition. Only finiteness of the sum is

@@ -324,23 +324,6 @@ def Model.backward {seqLen inputSize hiddenSize outputSize : Nat}
       output := headGrads.parameters },
     rnnBackward.inputs )
 
--- Loss function for sequence classification
-/--
-Mean cross-entropy loss over a sequence of class-probability predictions.
-
-This is the spec-level analogue of a per-time-step classification loss, averaged across steps.
-Predictions are probabilities, with the clamping convention of `crossEntropySpec`.
--/
-def classificationLoss {seqLen numClasses : Nat}
-  [Shape.HasNonemptyAxis 0 ([numClasses])]
-  (predictions : Tensor α [seqLen, numClasses])
-  (targets : Tensor α [seqLen, numClasses]) :
-  α :=
-  let losses := Tensor.zipEach [seqLen] []
-    (fun prediction target => Tensor.scalar (crossEntropySpec 0 prediction target))
-    predictions targets
-  meanSpec losses
-
 /--
 Package an `Rnn.Model` as a shape-indexed module.
 

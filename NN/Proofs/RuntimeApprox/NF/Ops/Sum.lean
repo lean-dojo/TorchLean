@@ -14,6 +14,8 @@ public import NN.Proofs.Tensor.Basic.Folds
 
 Forward-error bounds for rounded sum reductions.  The accumulator carries both the runtime value
 and a proof budget, so every addition contributes the incoming element error plus one rounding term.
+These bounds follow `sumSpec`'s left-to-right tensor traversal, starting at rounded zero. They
+do not cover a different reduction tree or establish a native kernel's accumulation order.
 -/
 
 @[expose] public section
@@ -71,9 +73,9 @@ def sumFoldState {s : Shape} (epsElem : ℝ) (st : R × ℝ) (tR : Tensor R s) :
 /--
 Forward absolute-error bound for `sumSpec`.
 
-`sumBound epsElem tR` is the `.2` component of `sumFoldState` started at 0, assuming each element
-is approximated within `epsElem`. This corresponds to naive sequential summation with a rounding
-term added at each step (cf. standard floating-point summation analyses).
+Assumes each element is approximated within `epsElem`. The budget starts with a conservative
+half ULP at zero and adds one rounding term per sequential addition; it is not a tight bound
+for an empty tensor, whose sum is exactly zero.
 -/
 def sumBound {s : Shape} (epsElem : ℝ) (tR : Tensor R s) : ℝ :=
   (sumFoldState (β := β) (fexp := fexp) (rnd := rnd) (s := s) epsElem
@@ -83,7 +85,7 @@ omit [ValidRndToNearest rnd] in
 /--
 The accumulator component of `sumFoldState` matches the plain spec fold.
 
-Informal: `sumFoldState` only adds bookkeeping to `.2`; `.1` is exactly `foldlSpec (·+·)`.
+The error bookkeeping does not change the accumulator's values or addition order.
 -/
 private theorem sumFoldState_fst_eq {s : Shape} (epsElem : ℝ) (st : R × ℝ) (tR : Tensor R s) :
     (sumFoldState (β := β) (fexp := fexp) (rnd := rnd) (s := s) epsElem st tR).1 =
@@ -201,7 +203,6 @@ private theorem approx_sumFoldState {s : Shape} :
             rw [Spec.foldlSpec_go_of_lt (f := (· + ·)) (values := valuesS) (k := k)
               (acc := accS) hlt]
             have h_next : n - (k + 1) = m := by omega
-            -- Apply the shape IH to fold over the current slice `valuesR ⟨k, hlt⟩`.
             have hx_k :=
               approxTensor_unstack (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
                 rnd))
@@ -210,7 +211,6 @@ private theorem approx_sumFoldState {s : Shape} :
             have h_step :=
               ih (xS := valuesS ⟨k, hlt⟩) (xR := valuesR ⟨k, hlt⟩) (accS := accS) (st := st)
                 hAcc (by simpa only [Tensor.unstack_dim] using hx_k)
-            -- Use IH on the tail of the outer `go`.
             have htail :=
               ih_go (k := k + 1)
                 (accS := foldlSpec (· + ·) accS (valuesS ⟨k, hlt⟩))
@@ -245,14 +245,12 @@ theorem approxTensor_sum_spec {s : Shape} :
   have h :=
     approx_sumFoldState (β := β) (fexp := fexp) (rnd := rnd) (s := s)
       (xS := xS) (xR := xR) (accS := (0 : ℝ)) (st := ((0 : R), initEps)) (epsElem := eps) hAcc hx
-  -- Relate the accumulator component to `sum_spec`.
   have hfst :
       (sumFoldState (β := β) (fexp := fexp) (rnd := rnd) (s := s) eps ((0 : R), initEps) xR).1 =
         sumSpec (α := R) (s := s) xR := by
     simpa [sumSpec] using
       (sumFoldState_fst_eq (β := β) (fexp := fexp) (rnd := rnd) (s := s) (epsElem := eps)
         (st := ((0 : R), initEps)) (tR := xR))
-  -- Wrap back into `approxTensor` on scalar tensors.
   refine (approxTensor_scalar_iff (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
       (x := sumSpec (α := ℝ) (s := s) xS) (xR := sumSpec (α := R) (s := s) xR)
       (eps := sumBound (β := β) (fexp := fexp) (rnd := rnd) (s := s) eps xR)).2 ?_

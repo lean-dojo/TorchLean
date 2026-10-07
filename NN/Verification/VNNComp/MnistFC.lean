@@ -24,7 +24,7 @@ The checker expects exported JSON artifacts. Keep large VNN-COMP snapshots outsi
 under `_external/vnncomp/mnist_fc/`, and pass explicit paths when needed.
 
 Run (Lean):
-  `lake exe verify -- vnncomp-mnistfc`
+  `scripts/lake.sh exe verify -- vnncomp-mnistfc`
 -/
 
 @[expose] public section
@@ -152,7 +152,7 @@ def requireArtifact (label path : String) : IO Unit := do
 /--
 Weights for one exported fully-connected layer ($y=Wx+b$).
 
-This is the lightest data structure we need to rebuild a CROWN `Graph` for MNIST-FC.
+Each layer stores PyTorch's row-major weights and bias with their checked dimensions.
 -/
 structure LayerWB where
   /-- Input dimension for this layer. -/
@@ -179,7 +179,6 @@ def loadWeights (path : String) : IO (Array LayerWB) := do
   let some sd := Import.PyTorch.loadWeights? j
     | throw <| IO.userError "Weights JSON must be an object (or {\"params\": {...}})"
 
-  -- Discover layers by scanning keys of the form layers.<i>.weight
   let layerIdxs : Array Nat :=
     sd.foldl (init := #[]) (fun acc k _v =>
       match Import.PyTorch.parseIndexedKey "layers." ".weight" k with
@@ -199,10 +198,10 @@ def loadWeights (path : String) : IO (Array LayerWB) := do
     let some (rows, cols) := Import.PyTorch.inferMatrixDims wJ
       | throw <| IO.userError s!"Bad matrix for {kW}"
     let wArr ← NN.Verification.Json.expectFiniteFloatMatrix wJ kW
-    let some w := NN.Verification.Util.Tensor.matOfArray rows cols wArr
+    let some w := NN.Verification.Util.Tensor.ofRows? rows cols wArr
       | throw <| IO.userError s!"Bad matrix shape for {kW} (expected {rows}x{cols})"
     let bArr ← NN.Verification.Json.expectFiniteFloatArray bJ kB
-    let bT ← NN.Verification.Util.Tensor.requireVecOfArray kB rows bArr
+    let bT ← NN.Verification.Util.Tensor.requireArray kB [rows] bArr
     layers := layers.push { inDim := cols, outDim := rows, w := w, b := bT }
 
   for i in [0:layers.size - 1] do
@@ -253,9 +252,8 @@ def loadAlphas (path : String) : IO (Array AlphaEntry) := do
 /--
 Lower the loaded weights into a CROWN `Graph` + `ParamStore`.
 
-For MNIST-FC we build:
-`input -> linear -> relu -> linear -> relu -> linear`
-and return the graph plus the inferred `inDim`, `outDim`, and output node id.
+The graph alternates linear layers and ReLUs, ending with a linear layer. The number of layers
+comes from the export. Return its parameters, input/output dimensions, and output node id.
 -/
 def buildGraphAndParams (layers : Array LayerWB) : IO (Graph × ParamStore Float × Nat × Nat × Nat)
   := do
@@ -320,11 +318,9 @@ without paying the full cost of "evaluate every affine on the input box".
 -/
 def boxesForObjective (g : Graph) (ps : ParamStore Float) (xB : FlatBox Float)
     (inId inDim : Nat) : IO (Array (Option (FlatBox Float))) := do
-  -- Use IBP as a baseline and then refine boxes using forward CROWN affine bounds
-  -- evaluated on the input box (tighter for deeper linear nodes).
   let ibp0 := runIBP (α := Float) g ps
   -- For large input dimensions, evaluating forward CROWN affines on the input box is too slow
-  -- in this compact checker. Fall back to pure IBP boxes (still sound, just looser).
+  -- in this compact checker. Retain the baseline IBP boxes instead.
   if inDim > 64 then
     return ibp0
   let ctx : AffineCtx := { inputId := inId, inputDim := inDim }
@@ -400,7 +396,8 @@ def refutesRowByCROWNObjectiveWithReluAlpha
 /--
 Refute a VNNLIB disjunction-of-conjunctions spec using per-row CROWN objective bounds.
 
-This is strictly stronger than checking an output interval box, but it is also slower.
+Each row is bounded directly, avoiding some correlations lost when evaluating a row over an
+output interval box. This implementation does not guarantee that every resulting bound is tighter.
 -/
 def vnnlibRefutedByCROWNObjectives
     (g : Graph) (ps : ParamStore Float) (xB : FlatBox Float)
@@ -427,8 +424,9 @@ def vnnlibRefutedByCROWNObjectives
 /--
 Refute a VNNLIB spec using CROWN objectives with externally-provided ReLU alphas.
 
-This mode is meant for apples-to-apples comparisons against alpha-CROWN style tools where the
-alphas are optimized elsewhere and then imported into TorchLean for checking.
+The artifact supplies slopes for fixed ReLU node ids `2` and `4`. The current directed Float
+backend rejects imported slopes, so this interface does not provide a working alpha-CROWN
+comparison mode for that backend.
 -/
 def vnnlibRefutedByCROWNObjectivesAlpha
     (g : Graph) (ps : ParamStore Float) (xB : FlatBox Float)
@@ -445,9 +443,9 @@ def vnnlibRefutedByCROWNObjectivesAlpha
       let mut reluAlpha : Array (Option (FlatTensor Float)) := Array.replicate g.nodes.size none
       match a2Row?, a4Row? with
       | some a2Row, some a4Row =>
-        let some a2T := NN.Verification.Util.Tensor.vecOfArray hid1 a2Row
+        let some a2T := NN.Verification.Util.Tensor.ofArray? [hid1] a2Row
           | throw <| IO.userError s!"Alpha dim mismatch for node 2 (expected {hid1})"
-        let some a4T := NN.Verification.Util.Tensor.vecOfArray hid2 a4Row
+        let some a4T := NN.Verification.Util.Tensor.ofArray? [hid2] a4Row
           | throw <| IO.userError s!"Alpha dim mismatch for node 4 (expected {hid2})"
         if 2 < g.nodes.size then
           reluAlpha := reluAlpha.set! 2 (some { n := hid1, v := a2T })
@@ -478,7 +476,7 @@ def vnnlibRefutedByCROWNObjectivesAlpha
 /--
 CLI entry point.
 
-This is wired into `lake exe verify -- vnncomp-mnistfc`.
+This is wired into `scripts/lake.sh exe verify -- vnncomp-mnistfc`.
 -/
 def main (args : List String) : IO Unit := do
   let args := TorchLean.CLI.dropDashDash args

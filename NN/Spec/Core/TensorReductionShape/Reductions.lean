@@ -145,10 +145,21 @@ theorem meanDenominator_pos (s : Shape) : 0 < meanDenominator s := by
 
 /-- Mean of all elements (treats nested dims as one big collection).
 
-An empty tensor has mean zero: the sum is divided by `meanDenominator`, which is one when the
-shape has no entries. -/
-def meanSpec {s : Shape} (tensor : Tensor α s) : α :=
+An empty tensor evaluates as `0 / (1 : α)`: `meanDenominator` uses one when the shape has no
+entries. This is zero under ordinary scalar arithmetic. -/
+def meanSpec {α : Type} [TorchLean.Storage α] [Add α] [Zero α] [Div α] [NatCast α]
+    {s : Shape} (tensor : Tensor α s) : α :=
   sumSpec tensor / (meanDenominator s : α)
+
+/-- Mean squared difference between two equally shaped tensors.
+
+Subtraction and squaring are pointwise. The final mean uses row-major accumulation and the
+totalized denominator, including for empty shapes. -/
+def meanSquaredError {α : Type} [TorchLean.Storage α]
+    [Add α] [Sub α] [Mul α] [Div α] [Zero α] [NatCast α]
+    {shape : Shape} (predicted target : Tensor α shape) : α :=
+  let diff := subSpec predicted target
+  meanSpec (mulSpec diff diff)
 
 omit [DecidableRel ((· > ·) : α → α → Prop)] in
 /-- On a nonempty tensor the mean is the sum divided by the element count. -/
@@ -378,11 +389,12 @@ def reduceSum {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
   reduceDim sumSpec axis t
 
 /-- Mean-reduction along a given axis. -/
-def reduceMean {s : Shape} (axis : Nat) (t : Tensor α s) (h : Shape.NonemptyAxis axis s) :
+def reduceMean {α : Type} [TorchLean.Storage α] [Add α] [Zero α] [Div α] [NatCast α]
+    {s : Shape} (axis : Nat) (t : Tensor α s) (h : Shape.NonemptyAxis axis s) :
   Tensor α (shapeAfterSum s axis) :=
   let summed := reduceSum axis t h
   letI : Shape.AxisInBounds axis s := h.toAxisInBounds
-  mapSpec (fun x => x / (Shape.axisSize s axis : α)) summed
+  Tensor.map (fun x => x / (Shape.axisSize s axis : α)) summed
 
 /-- Variance-reduction along a given axis (population variance, divides by `n`).
 
@@ -402,7 +414,7 @@ def reduceVar
       let mean := reduceMean 0 t h
       let centered :=
         Tensor.dim (fun i => subSpec (Tensor.unstack t i) mean)
-      let squared := mapSpec (fun x => x * x) centered
+      let squared := Tensor.map (fun x => x * x) centered
       reduceMean 0 squared h
 
     | Nat.succ k =>

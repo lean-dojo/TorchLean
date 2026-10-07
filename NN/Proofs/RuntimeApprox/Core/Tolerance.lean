@@ -17,7 +17,7 @@ This file defines a small, reusable tolerance object for "close enough" reasonin
 
 - absolute tolerance (units of the quantity),
 - relative tolerance (dimensionless), and
-- a nonnegative slack factor to scale the budget.
+- a nonnegative multiplier for the whole budget.
 
 It is small and explicit and independent of any specific backend (IBP/FP32/etc.).
 
@@ -36,14 +36,14 @@ namespace RuntimeApprox
 
 open scoped Real NNReal
 
-/-- Absolute/relative tolerance with an extra nonnegative slack factor. -/
+/-- Absolute/relative tolerance with a nonnegative budget multiplier. -/
 structure ApproxTol where
   /-- Absolute part of the bound, which is what keeps the tolerance meaningful near zero. -/
   abs : ℝ≥0
   /-- Relative part, multiplied by the maximum magnitude of the compared values. -/
   rel : ℝ≥0
-  /-- Extra nonnegative headroom. Composing two tolerated steps generally produces a bound slightly
-  worse than either, and this field absorbs that without having to widen `abs` or `rel`. -/
+  /-- Multiplier for the whole budget: `1` leaves it unchanged, values above `1` loosen it,
+  and values below `1` tighten it. `0` requires exact agreement. -/
   slack : ℝ≥0
 
 namespace ApproxTol

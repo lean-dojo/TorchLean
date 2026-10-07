@@ -28,8 +28,7 @@ batch-dependent statistics and is not claimed by this theorem.
 
 namespace Proofs
 
-open Spec TorchLean
-open TorchLean TorchLean.Tensor
+open Spec TorchLean TorchLean.Tensor
 
 noncomputable section
 
@@ -61,9 +60,8 @@ private theorem batchNorm_inference_affine_scalar (x μ γ β std : ℝ) :
 /--
 Shape-generic tensor version of `batchNorm_inference_affine_scalar`.
 
-All operations here are pointwise tensor ops, so the proof is structural induction on the tensor
-shape. This private theorem handles the algebra after BatchNorm parameters have already been
-broadcast to the input shape.
+Coordinate extensionality reduces the pointwise tensor operations to the scalar identity. BatchNorm
+parameters have already been broadcast to the input shape.
 -/
 private theorem batchNorm_inference_affine_tensor {s : Shape}
     (x mean gamma beta std : Tensor ℝ s) :
@@ -79,11 +77,9 @@ private theorem batchNorm_inference_affine_tensor {s : Shape}
 /--
 Inference-time BatchNorm is affine in the input `x`.
 
-This is the public theorem users want for verification and graph simplification:
-
 `batchNormInference x runningMean runningVar gamma beta epsilon`
 
-is definitionally equal to a pointwise affine map
+equals the pointwise affine map
 
 $x\,\frac{\gamma}{\operatorname{std}}
 +\left(\beta-\mu\frac{\gamma}{\operatorname{std}}\right)$

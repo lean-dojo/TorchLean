@@ -50,7 +50,8 @@ They are conditional: the caller must supply the obligation in the middle column
 
 Selecting a Newton–Schulz iteration count alone does not prove its residual is small.
 The two consumers preserve those hypotheses and extract the direction and parameter equation.
-For initialized-state and fixed-point variants, use the library theorems in `Optim.Muon`.
+For initialized states, use the same checked-backend theorems with the zero momentum buffer from
+`Optim.Muon.init`. Fixed-point results also live in `Optim.Muon`.
 
 ## Build and continue
 

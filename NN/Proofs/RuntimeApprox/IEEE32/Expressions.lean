@@ -9,33 +9,15 @@ module
 public import NN.Proofs.RuntimeApprox.IEEE32.Arithmetic
 
 /-!
-# Expression Refinement
+# Scalar expression refinement
 
-Compositional refinement lemmas on top of `NN/Proofs/RuntimeApprox/IEEE32/Arithmetic.lean`.
+`toReal_evalRuntime_eq_evalSpec` composes FloatLib's arithmetic refinement results along an
+`Expr` tree. `evalRuntime` uses encoded binary32 operations; `evalSpec` rounds each real operation
+with `Model.roundAt FloatFormat.binary32`. Fused multiply-add rounds once, not after its product.
 
-The arithmetic adapter transfers FloatLib’s refinement theorems one operation at a time.
-The expression theorem composes those results along the scalar expression tree.
-
-This file provides:
-
-- a compact scalar expression language `Expr`, and
-- an “all intermediates are finite” witness `FiniteEval`,
-
-so we can state and prove a single theorem that looks like:
-
-$$
-\operatorname{toReal}(\operatorname{evalRuntime}(\mathrm{env},e))
-=\operatorname{evalSpec}(\operatorname{toReal}\circ\mathrm{env},e).
-$$
-
-where:
-- `evalRuntime` evaluates the AST using the executable IEEE-754 kernel `ExecFloat.Binary 8 23`, and
-- `evalSpec` evaluates the AST in `ℝ`, rounding after every operation using `Model.roundAt
-FloatFormat.binary32`.
-
-This mirrors the standard mathematical model of float32 evaluation: compute the real operation, then
-round-to-float32 at each node, provided we stay on the finite path (no NaNs/Infs, no division by
-zero, no overflow).
+The theorem requires a `FiniteEval` witness for every intermediate result, including finite
+leaves and a nonzero divisor. Subnormals and underflow to zero are allowed. The decoded real
+equality does not distinguish signed zeros or establish native CPU/GPU kernel correspondence.
 
 References / background (for the rounding model itself, not this AST wrapper):
 - IEEE 754-2019: https://doi.org/10.1109/IEEESTD.2019.8766229
@@ -48,7 +30,6 @@ References / background (for the rounding model itself, not this AST wrapper):
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.ExecFloat.Binary (isFinite toModel)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
-
 
 namespace TorchLean.Floats.IEEE754
 
@@ -109,12 +90,8 @@ The arithmetic adapter bridges finite `ExecFloat.Binary 8 23` behavior to binary
 reals.
 For expression-level statements, every intermediate evaluation must remain finite.
 
-`FiniteEval env e d` is a proof object that says:
-- evaluating `e` under `env` is finite, and
-- its decoded dyadic value is `d`.
-
-We store the dyadic because it gives us a convenient “finiteness certificate”:
-`toDyadic? x = some d` immediately rules out NaN/Inf and unlocks the op-level bridge lemmas.
+`FiniteEval env e d` records the result's decoded dyadic `d` and finite-evaluation witnesses
+for every subtree. A successful `toDyadic?` observation rules out NaN and infinity.
 -/
 
 /-- Finite-evaluation witness for the compact scalar expression language. -/
@@ -187,12 +164,7 @@ end FiniteEval
 /-!
 ## Whole-expression refinement
 
-This is the main result of the file: a compositional refinement theorem that follows the
-AST shape and invokes the corresponding op-level bridge theorem at each node.
-
-If you are thinking in PyTorch terms: `Expr` is a compact “forward graph”. Its executable float32
-evaluation agrees with the standard float32 mathematical model (real arithmetic plus rounding)
-on the finite path.
+Induction on `FiniteEval` applies the arithmetic refinement theorem at each operation.
 -/
 
 /-- Main expression-level refinement theorem for IEEEExec. -/

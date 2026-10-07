@@ -151,82 +151,21 @@ Informally: `⟪dx, single idx v⟫ = ⟪getIdx dx idx, v⟫`.
 theorem dotList_single {Γ : List Shape} {s : Shape}
     (dx : TorchLean.TensorPack α Γ) (idx : Idx Γ s) (v : Tensor α s) :
     TensorPack.dotList (α := α) dx (single idx v) = dot (α := α) (getIdx (α := α) dx idx) v := by
-  revert dx idx
+  obtain ⟨i, rfl⟩ := idx
   induction Γ with
-  | nil =>
-    intro dx idx
-    cases idx with
-    | mk i _h =>
-      cases i with
-      | mk val isLt =>
-        exact False.elim ((Nat.not_lt_zero val) isLt)
-  | cons s0 Γtail ih =>
-    intro dx idx
+  | nil => exact Fin.elim0 i
+  | cons head shapes ih =>
     cases dx with
-    | cons dx0 dxRest =>
-      cases idx with
-        | mk i h =>
-          cases i with
-          | mk val isLt =>
-            cases val with
-            | zero =>
-                have hs0 : (s0 :: Γtail).get ⟨0, isLt⟩ = s0 := by
-                  rfl
-                have hs : s0 = s := by
-                  simpa [hs0] using h
-                cases hs
-                calc
-                  TensorPack.dotList (α := α) (TorchLean.TensorPack.cons dx0 dxRest)
-                      (single ⟨⟨0, isLt⟩, rfl⟩ v)
-                      = dot (α := α) dx0 v := by
-                          simp [TensorPack.dotList, single, Tensor.castShape,
-                            TensorPack.dotList_zero_right]
-                  _ = dot (α := α)
-                        (getIdx (α := α) (TorchLean.TensorPack.cons dx0 dxRest)
-                          ⟨⟨0, isLt⟩, rfl⟩) v := by
-                          -- `getIdx` at index `0` reduces definitionally to the head tensor.
-                          dsimp [getIdx, Tensor.castShape]
-                          have hget0 :
-                              (TorchLean.TensorPack.cons dx0 dxRest).get
-                                (i := (0 : Fin (s :: Γtail).length)) = dx0 := by
-                            rfl
-                          exact (congrArg (fun t => dot (α := α) t v) hget0).symm
-            | succ j =>
-                have h0 : dot (α := α) dx0 (Tensor.full s0 (0 : α)) = 0 :=
-                  TensorAlgebra.dot_full_zero_right (α := α) (s := s0) (tensor := dx0)
-                let iHead : Fin (s0 :: Γtail).length := ⟨Nat.succ j, isLt⟩
-                let iTail : Fin Γtail.length := ⟨j, Nat.lt_of_succ_lt_succ isLt⟩
-                let hTail : Γtail.get iTail = s := by
-                  simpa using h
-                let idxTail : Idx Γtail s := ⟨iTail, hTail⟩
-                have hget :
-                    getIdx (α := α) (TorchLean.TensorPack.cons dx0 dxRest) ⟨iHead, h⟩ =
-                      getIdx (α := α) dxRest idxTail := by
-                  -- Peel off the head entry, then use definitional equality for `cast_shape` after
-                  -- rewriting the index proof.
-                  dsimp [getIdx, idxTail, iHead, iTail]
-                  have hcons :
-                      TorchLean.TensorPack.get (α := α) (ss := s0 :: Γtail)
-                          (TorchLean.TensorPack.cons dx0 dxRest) iHead =
-                        TorchLean.TensorPack.get (α := α) (ss := Γtail) dxRest iTail := by
-                    exact TorchLean.TensorPack.get_cons_succ (α := α) (s := s0)
-                      (ss := Γtail) dx0 dxRest j isLt
-                  -- After rewriting `h`, the two casts become the same.
-                  cases h
-                  rw [hcons]
-                calc
-                  TensorPack.dotList (α := α) (TorchLean.TensorPack.cons dx0 dxRest)
-                      (single ⟨iHead, h⟩ v)
-                      = dot (α := α) dx0 (Tensor.full s0 (0 : α)) +
-                          TensorPack.dotList (α := α) dxRest (single idxTail v) := by
-                            simp [TensorPack.dotList, single, idxTail, iHead, iTail]
-                  _ = TensorPack.dotList (α := α) dxRest (single idxTail v) := by
-                        simp [h0]
-                  _ = dot (α := α) (getIdx (α := α) dxRest idxTail) v :=
-                        ih (dx := dxRest) (idx := idxTail)
-                  _ = dot (α := α)
-                        (getIdx (α := α) (TorchLean.TensorPack.cons dx0 dxRest) ⟨iHead, h⟩) v := by
-                        simp [hget]
+    | cons first rest =>
+      obtain ⟨i, hi⟩ := i
+      cases i with
+      | zero =>
+        simp [single, dotList, getIdx, Tensor.castShape, dotList_zero_right]
+        rfl
+      | succ i =>
+        simpa [single, dotList, getIdx, Tensor.castShape,
+          TensorAlgebra.dot_full_zero_right] using
+          ih rest ⟨i, Nat.lt_of_succ_lt_succ hi⟩ v
 
 end
 

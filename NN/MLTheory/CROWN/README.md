@@ -165,7 +165,7 @@ The proof-side payload-backed unary matrix map also has a different interface fr
 matrix multiplication. Read the theorem's graph fragment and hypotheses before applying it to
 one of these computations.
 
-Endpoint arithmetic is organized by four interfaces in `BoundOps.lean`. `BoundOps` contains the
+Endpoint arithmetic is organized by interfaces re-exported from `BoundOps.lean`. `BoundOps` contains the
 executable lower and upper operations. `LawfulBoundOps` interprets their endpoints as real numbers
 and proves that each lower result is below the exact operation and each upper result is above it.
 Sound arithmetic lemmas require both interfaces; defining executable operations alone does not
@@ -175,6 +175,10 @@ returns `none` when it has no justified enclosure. The graph pass then leaves th
 it does not substitute an ordinary host-library value. `LawfulNonlinearBoundOps` proves that every
 successful nonlinear transfer encloses the corresponding real operation and relates the
 layer-normalization and coupled-derivative flags to explicit mathematical obligations.
+
+`LawfulMinBoundOps` adds the real-interpretation law for the context's `min` operation. This is
+separate from the comparison-based endpoint selector `BoundOps.min2`, whose interpretation follows
+from `LawfulBoundOps` alone.
 
 The current instances make the numerical boundary visible:
 
@@ -214,12 +218,22 @@ discharges the IBP hypothesis, and `runCROWNBackwardObjective_encloses_runIBP`,
 `directedNodeBounds_encloses_runIBP`, and `backwardObjectiveBox_encloses_runIBP` are end-to-end
 rounded statements.
 
-The rounded forward transfers without a proof are convolution, `concat`, `transpose`, `permute`,
-binary `matmul`, `abs`, `maxElem`, `minElem`, `softplus`, `safeLog`, the pools, `broadcastTo`,
-`reduceSum`, `reduceMean`, `mseLoss`, `batchNormEval`, `layernorm`, `softmax`,
-`hardMaskedSoftmax`, and the random nodes. For these the IBP enclosure is proved only over real
-endpoints (`runIBP_encloses_evalGraphRec`, where covered) or remains a hypothesis. The rounded
-backward sweep does not use per-neuron ReLU slopes: the rounded branch of
+The more general `runIBP_encloses_all` in `Proofs/DirectedIBPFullSoundness.lean` removes that
+operation-family restriction. It proves enclosure for every successful entry, including convolution,
+binary matrix multiplication, structural operations, normalization, and seeded random operations.
+It requires `LawfulBoundOps`, `LawfulNonlinearBoundOps`, `LawfulMinBoundOps`, a nonnegative default
+normalization epsilon, topologically ordered parents, enclosed inputs, and `RealNodeEquation` at
+every node. The induction proves the intermediate enclosures; callers do not supply them.
+Invalid shapes, missing payloads, custom operations without a transfer, and unavailable arithmetic
+can still return `none`. Covering every operation tag does not guarantee a box for every graph.
+
+`backwardObjectiveBox_encloses_runIBP_all` in `Proofs/DirectedBackwardEvaluation.lean` composes
+this forward result with the directed backward sweep and objective evaluation. Its graph-point,
+input, objective-dimension and successful-result premises remain explicit. FP32 discharges the
+default-epsilon premise with `FP32.normalizationEpsilon_nonneg`; host Float and Float32 do not
+provide the global lawful endpoint instances required by these theorems.
+
+The rounded backward sweep does not use per-neuron ReLU slopes: the rounded branch of
 `runCROWNBackwardObjectiveLowerWithReluAlpha` returns `none` when any slope is supplied.
 Relating a rounded result to a separate native execution also needs the finite-precision bridge
 described in `NN/Proofs/RuntimeApprox`.
@@ -259,7 +273,7 @@ a separate obligation.
 
 - `Graph/`: graph engine, backward propagation, and graph-level theorem statements.
 - `Operators/`: op-specific IBP and affine transfer rules.
-- `Propagation/`: specialized propagation routines such as backward or sign-split passes. The
+- Graph backward-objective propagation lives in `Graph/Engine/BackwardObjective.lean`. The
   canonical `IBP.matPos`/`IBP.matNeg` weight decomposition lives in `Core.lean` and is shared by
   interval and graph-CROWN linear rules.
 - `Cert/`: alpha/alpha-beta certificate structures.
@@ -273,8 +287,8 @@ a separate obligation.
 
 ## Optional Modules
 
-- `Extras/IntervalLemmas.lean`: interval-arithmetic lemmas over `ℝ`.
-- `Extras/AlphaConfig.lean`: data structures for alpha-optimized relaxations.
+- `Extras/IntervalLemmas.lean`: real interval arithmetic and interpreted directed-endpoint laws,
+  including the four-corner product bound reused from FloatLib.
 - `Extras/FP32.lean` and `Extras/BoundOpsIEEE32Exec.lean`: finite-precision specializations and
   executable IEEE32 connections.
 

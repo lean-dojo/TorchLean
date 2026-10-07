@@ -183,14 +183,6 @@ there is no vector or matrix axis to display.
 3
 ```
 
-The two printed values already say something about element types. `Float` renders through Lean's
-host binary64 formatting, so `0.5` comes back as `0.500000`; `Rat` renders as an exact integer
-because three is exactly representable and no decimal expansion is involved.
-
-There is no separate public scalar-tensor format. `[]` says that the tensor has no axes, while the
-element type still determines whether its single value is native floating point, exact rational
-arithmetic, an executable IEEE reference, or a proof-level number.
-
 `rankFourShape` is a shape value that describes an ordinary rank-four tensor. Axis meanings come
 from the
 operation or model: `[batch, channel, height, width]` and `[batch, height, width, channel]` are two
@@ -199,12 +191,14 @@ represent language tokens {Informal.citep transformer2017}[], PDE grids
 {Informal.citep fno2021}[], volumetric data, batched matrices, or an unusual scientific coordinate
 system.
 
-# Certified Contiguous Representation
+# Shape-Certified Storage
 
-A tensor owns one contiguous row-major buffer. Its erased proof field certifies that the physical
+A tensor owns one row-major buffer. Its erased proof field certifies that the physical
 buffer length is exactly the number of scalar coordinates in its static shape. `Storage α` selects
 that physical buffer: `Float` uses `FloatArray`, `UInt8` uses `ByteArray`, and arbitrary scalar
 types use the default `Array α` storage unless a custom instance selects another representation.
+`FloatArray` and `ByteArray` pack unboxed entries. Generic arrays may hold boxed values; using a
+flat representation does not give every scalar type the same memory layout or execution cost.
 
 The tensor also acts as a total function from an in-bounds coordinate to a scalar. This observation
 view is what statements and proofs use; it does not allocate a second recursive tensor at runtime.
@@ -229,7 +223,7 @@ TorchLean.Tensor.map {α β : Type} [Storage α] [Storage β]
 
 Read that signature from the right: `shape` is bound once and appears in both the argument and the
 result. The result shape is therefore fixed before any values are evaluated, and no runtime check
-can disagree with it. `Tensor.map` traverses the contiguous buffer once and preserves the certified
+can disagree with it. `Tensor.map` traverses the row-major entries once and preserves the certified
 shape.
 
 The two `Storage` arguments allow different physical representations on input and output. At each
@@ -1071,11 +1065,9 @@ Here are the transposed tensor and the parsed dimension names:
 [("row", 2), ("column", 3)]
 ```
 
-The macros read `matrix : Tensor Float [2, 3]` and
-`right : Tensor Float [3, 4]` while elaborating the file, bind pattern names to those dimensions,
-and synthesize the result type. The implementation receives a fully checked operation after
-elaboration. The regression suite deliberately defines all eight results without result
-annotations and then checks them against the types in this table.
+The macros bind pattern names to the input dimensions and synthesize the result type during
+elaboration. The definitions above omit result annotations; the checked `#check` blocks show the
+inferred transpose and contraction shapes.
 Multi-input `einsum` and `pack` automatically promote registered element types just as ordinary
 arithmetic does. `pack` retains the exact star shapes needed by `unpack`, so the round trip
 does not repeat dimensions or expose an anonymous tensor-metadata pair. `parse_shape` returns
@@ -1378,75 +1370,6 @@ different execution policies.
 
 Measure end-to-end training separately. Graph construction, parameter initialization, autograd,
 and optimizer state can dominate even when individual tensor kernels are fast.
-
-# Common Tensor Declarations
-
-The examples above use these declarations for construction, coordinate access, and arithmetic:
-
-:::table +header
-*
-  * Declaration
-  * Use
-*
-  * `[d₀, ..., dₙ]`
-  * build a shape known while Lean elaborates the file
-*
-  * `[[...], [...]]`
-  * construct a rectangular tensor literal checked against its expected shape
-*
-  * `0.5 : Tensor Float []`
-  * construct a rank-zero tensor directly from an ordinary numeric literal
-*
-  * `Tensor.full shape value`, `Tensor.zeros shape`, `Tensor.ones shape`
-  * build a constant tensor; the shape is usually inferred from the expected type
-*
-  * `Tensor.from source`
-  * convert an in-memory array, list, vector, or packed buffer using its intrinsic shape
-*
-  * `tensor.reshape shape`
-  * reinterpret an equal-size row-major buffer without moving scalar data; symbolic sizes may need a
-    proof
-*
-  * `tensor.at coordinate`
-  * read one scalar using a statically valid complete coordinate
-*
-  * `tensor.set coordinate value`
-  * immutably replace one scalar while preserving shape and storage selection
-*
-  * `Tensor.sum tensor`, `Tensor.mean tensor`
-  * reduce every entry to one scalar in row-major fold order
-*
-  * `left.dotSpec right`
-  * sum the elementwise products of two equally shaped tensors
-*
-  * `Tensor.matmul left right`, `Tensor.matvec matrix vector`, `Tensor.vecmat vector matrix`
-  * contract the shared extent of a matrix product
-*
-  * `tensor.linear weight bias`
-  * apply a linear map to the final axis while preserving all leading axes
-*
-  * `tensor.relu`, `tensor.sigmoid`, `tensor.tanh`
-  * apply a public pointwise activation without exposing its proof specification
-*
-  * `Tensor.qr tensor`
-  * compute named reduced QR factors; an `m × n` input gives
-    `result.q : Tensor α [m, min m n]` and `result.r : Tensor α [min m n, n]`
-*
-  * `Tensor.cholesky tensor`
-  * compute the lower-triangular Cholesky factor candidate
-*
-  * `tensor.cast TargetElement`
-  * convert element types using a registered `ElementCast`
-*
-  * `Tensor.castShape`
-  * transport a tensor along a proved equality of shapes
-*
-  * `tensor.to TargetType`
-  * convert to a requested in-memory representation such as `Array α`
-:::
-
-The generated API reference gives the complete signatures. This table is the smaller working set
-used by the examples in this guide.
 
 # Tensor Inspection In The Lean Infoview
 

@@ -111,11 +111,8 @@ apiM1 : Tensor Float [2, 3]
 The list literals are notation for tensor values, checked against the declared shape. A row of the
 wrong length is a compile error rather than a surprise at the first matrix multiply.
 
-The reported type of `apiM1` retains both dimensions, `[2, 3]`, rather than merely recording six
-stored values. The first index selects one of two rows and the second selects one of three entries
-in that row. A transpose and a reshape may preserve the total number of entries while assigning them
-different coordinates. The matrix products below depend on that coordinate structure, so the shape
-annotation carries information that a flat array's length would lose.
+`[2, 3]` records more than six stored values: it fixes their row and column coordinates.
+A transpose and a reshape can preserve the entry count while assigning different coordinates.
 
 ## Dot Product
 
@@ -210,11 +207,8 @@ sum, mean  : 6.0 2.0
 Elementwise operations require identical shapes. To combine a reduced vector with a matrix,
 the program must explicitly expand it along the intended axis.
 
-Read the three outputs separately: `[4, 10, 18]` contains the coordinatewise products of the two
-vectors, while `6` and `2` reduce `apiV1`, whose entries are `1, 2, 3`. Summing the product vector
-would give the earlier dot product, `32`. This distinction is easy to miss when reductions appear
-next to elementwise operations; following which value each call consumes prevents confusing a mean
-of inputs with a mean of their products. The
+Summing `[4, 10, 18]` would instead give the dot product, `32`. Keep track of which tensor each
+reduction consumes. The
 {ref "bugzoo-catalog"}[BugZoo chapter] examines bugs caused by choosing that axis incorrectly.
 
 ## Matrix Products
@@ -425,15 +419,17 @@ implementations may still specialize how they execute batched operations.
 Dot syntax is used when the value before the dot is the natural subject of the operation:
 `tensor.reshape`, `module.forward`, `trainer.train`, `trained.predict`, and
 `result.printSummary`. The reshape above was written `apiV1.reshape [3, 1]` for exactly that
-reason. A leading dot is used for a choice whose expected type is already known, such as `.native`,
-`.eager`, or `.mse`; the type checker knows which enumeration is meant, so repeating
-its name would be noise.
+reason. Lean also accepts a leading dot for a constructor whose expected type is known, such as
+`.native`, `.eager`, or `.mse`. Application code can use the exported `native`, `eager`, `cpu`,
+and `gpu` names after `open TorchLean`. For other choices, open the owning namespace locally
+or qualify the name when that makes the call clearer.
 
 Ordinary application code does not construct shapes through recursive representation constructors;
 it writes `[]`, `[width]`, or `[batch, width]`. It also does not inspect public results through
 positional tuple projections. Multi-value transforms use tuple destructuring, while training
-progress reads as `.loss.before` and `.loss.after`. Runtime representations such as `TensorPack`
-and `ObjectiveDefinition` stay behind the maintained API.
+progress reads as `result.loss.before` and `result.loss.after`. Most training code uses the model's
+typed state and trainer interfaces. `TensorPack` remains available when lower-level graph code
+needs a collection of tensors with different shapes.
 
 These conventions keep operations such as prediction and fields such as reported loss visible
 at the call site without requiring callers to unpack the runtime representation.
@@ -703,13 +699,6 @@ with several seeds, trained on several datasets, or interpreted by another runti
 redefining its layers. It also means a failed run is diagnosable: the builder either typechecks
 or it does not, independently of whether any data was available.
 
-The signature's model type `M` is abstract because the constructor asks the `ToModel M input output`
-instance for a compatible model definition. The resulting `Trainer input output` retains those
-boundary shapes but hides the original construction syntax. A caller can consequently share a
-training routine between a sequential builder and another supported model representation. This
-abstraction changes how the model is supplied; it does not relax the requirement that its input and
-output agree with the data and objective.
-
 # Persistent And Per-Call Configuration
 
 Persistent choices can be expressed as `Trainer.RunConfig`:
@@ -788,8 +777,8 @@ attaching a label to an untyped buffer. This is why the scratch run above report
 `arithmetic=native scalar=Float32` in its summary line: the run states its own semantics.
 
 Trainer-facing datasets are commonly authored as `Tensor Float ...`, where `Float` is Lean's host
-binary64 type. The dataset builder converts those values once the trainer selects its scalar
-semantics. This is an input boundary, not a claim that training itself uses binary64.
+binary64 type. The dataset materializes its samples in the scalar selected by the trainer.
+This is an input boundary, not a claim that training itself uses binary64.
 
 For a different precision, choose a FloatLib binary format directly in typed tensors, state and
 graphs. The CPU path supports binary128 and custom valid binary widths through `nn.sgdStep`
@@ -993,11 +982,12 @@ tie-breaking by neighbor order.
 def apiPoint (x y : Float) : Tensor Float [2] := [x, y]
 
 def apiKnn : Spec.KNN Float String 2 :=
-  Spec.KNN.fromData Float String 2 3 #[
-    (apiPoint 0.0 0.0, "blue"),
-    (apiPoint 0.0 1.0, "blue"),
-    (apiPoint 3.0 3.0, "orange"),
-    (apiPoint 3.0 4.0, "orange")]
+  { k := 3
+    dataset := #[
+      (apiPoint 0.0 0.0, "blue"),
+      (apiPoint 0.0 1.0, "blue"),
+      (apiPoint 3.0 3.0, "orange"),
+      (apiPoint 3.0 4.0, "orange")] }
 
 open Spec in
 #eval classify Float String 2 apiKnn (apiPoint 0.2 0.1)
@@ -1006,8 +996,8 @@ open Spec in
 "blue"
 ```
 
-The dataset is an `Array` of pairs, and the `3` after the dimension is $`k`. A point near the far
-cluster classifies the other way:
+The dataset is an `Array` of labeled tensors, and `k := 3` selects three neighbors. A point near
+the far cluster classifies the other way:
 
 ```lean (name := apiKnnOrange)
 -- This query lies near the two orange points rather than
@@ -1035,12 +1025,6 @@ open Spec in
 
 Two of the three nearest neighbors of $`(0.2, 0.1)` are blue, so the ideal vote share is
 $`2/3` ; the returned `Float` is rounded. This vote share is not a calibrated probability.
-
-This classifier has no seed-consuming builder or optimizer step. Its state is the four stored
-labeled points, and a query selects neighbors from that state before voting. With three neighbors,
-a cluster containing only two stored points can supply at most two votes even for a query very close
-to it. The returned `0.666667` therefore describes the composition of the selected neighbor set;
-it is not a fitted estimate of the chance that the query's label is blue.
 
 The type says what the classifier needs from its scalars and labels:
 
@@ -1186,7 +1170,7 @@ These objects may all refer to the same architecture:
   * exactly one Lean proposition under hypotheses
 *
   * certificate
-  * accepted external claim plus checker theorem
+  * artifact accepted under a checker's conditions; any soundness theorem has its own hypotheses
 :::
 
 The XOR transcripts record two particular training runs. A theorem about either resulting model

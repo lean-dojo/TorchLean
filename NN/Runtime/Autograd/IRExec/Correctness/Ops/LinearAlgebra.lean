@@ -11,24 +11,13 @@ public import NN.Runtime.Autograd.IRExec.Correctness.Common
 /-!
 # Linear Algebra
 
-Linear-algebra correctness lemmas for the IR-to-forward-executor lowering.
-
-This file proves the forward-correctness step for lowering a `.matmul` IR node into a single SSA
-node in the lowered `ForwardData`. Concretely, it shows that:
-
-* if `buildFrom` successfully lowers a `.matmul` node at position `i`, and
-* we compare the IR evaluator `NN.IR.Graph.denoteAllFrom` against the forward-graph evaluator
-  `denoteAllState`,
-
-then the value appended by the IR evaluator at step `i` is the same tensor as the value produced by
-the forward-graph node's `forward`.
+Successful `.matmul` lowering appends the same tensor as the IR evaluator.
 
 The lowering and the IR semantics use `OpContracts.matmulDims` to check batch broadcasting and
 vector promotion. Both compute `NN.IR.Graph.matmulWithDims`, so the statement covers vector dot
 products, matrix/vector products, and arbitrarily many broadcast batch axes.
 
-This module is about semantic correctness. Performance backends (external BLAS libraries, kernel
-fusion, and so on) are a separate lowering layer and are not involved here.
+This proves agreement of the two forward specifications, not native BLAS or GPU execution.
 
 The shape rule matches the public PyTorch matrix multiplication API:
 
@@ -39,16 +28,6 @@ The shape rule matches the public PyTorch matrix multiplication API:
 - `buildFrom_denoteAllFrom_matmul_success`: correctness step once the typed operands are known.
 - `buildFrom_denoteAllFrom_matmul`: correctness step for `.matmul` lowering.
 
-## Implementation notes
-
-- The proof follows the lowering pass's shape checks, so each branch records the same preconditions
-  that the lowering code enforces.
-- A successful contract preserves the two original operand shapes, which identifies the layout
-  recovered from runtime values with the layout used by the lowered closure.
-
-## Tags
-
-matmul, bmm, correctness, ir, runtime
 -/
 
 @[expose] public section
@@ -61,8 +40,6 @@ open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
--- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
--- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
 /--
@@ -100,7 +77,7 @@ theorem buildFrom_denoteAllFrom_matmul_success
           .snoc (ss := ss) gd
             (mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
               hOut ▸ NN.IR.Graph.matmulWithDims (α := α) dims
-                (readTensor (α := α) (xs := ctx) ia) (readTensor (α := α) (xs := ctx) ib)))⟩ :
+                (ctx.read ia) (ctx.read ib)))⟩ :
           State α inShape)) = .ok st') :
     NN.IR.Graph.denoteAllFrom (α := α) (g := g) (payload := payload)
       (input := Spec.SomeTensor.mk (α := α) inShape x)
@@ -114,7 +91,7 @@ theorem buildFrom_denoteAllFrom_matmul_success
   let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
     mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
       hOut ▸ NN.IR.Graph.matmulWithDims (α := α) dims
-        (readTensor (α := α) (xs := ctx) ia) (readTensor (α := α) (xs := ctx) ib))
+        (ctx.read ia) (ctx.read ib))
   have hRec :
       buildFrom (α := α) (g := g) (payload := payload)
         (inShape := inShape) (i := i + 1)
@@ -141,7 +118,7 @@ theorem buildFrom_denoteAllFrom_matmul_success
       NN.IR.Graph.evalAt (α := α) (g := g) (payload := payload)
         (input := input) (vals := vals0) (i := i) =
         .ok (Spec.SomeTensor.mk (α := α) n.outShape (nodeData.eval ctx)) := by
-    simpa only [nodeData, mkForwardNode_eval, readTensor_ofPack] using
+    simpa only [nodeData, mkForwardNode_eval, TensorLookup.read_ofPack] using
       (evalAt_matmul_dims_ok (α := α)
         (g := g) (payload := payload) (input := input) (vals := vals0)
         (i := i) (n := n) (aId := aId) (bId := bId)

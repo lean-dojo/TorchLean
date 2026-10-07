@@ -11,7 +11,7 @@ public import NN.Proofs.RuntimeApprox.Graph.ForwardApprox
 /-!
 # Sparse VJP Contexts
 
-Shape-indexed context builders used by the NF reverse-mode proofs.  These helpers write only the
+Shape-indexed context builders used by the NF reverse-mode proofs. These helpers write only the
 positions touched by a local VJP rule and leave every other component at zero, which lets the sparse
 cases avoid unnecessary rounded additions.
 -/
@@ -112,7 +112,8 @@ namespace SparseContext
 /-- Set three indices when the positions are pairwise distinct.
 
 This avoids any context-wise addition: only the three targeted positions are written, and all
-others are `0`, so the error budget carries no rounding term for a context-wide addition. -/
+others are `0`. This local context construction adds no rounding term; later accumulation into
+the graph's seed context still uses the explicit addition bound. -/
 def set3IdxNe {α : Type} [TorchLean.Storage α] [Zero α] [Add α] :
     {Γ : List Shape} → {s₁ s₂ s₃ : Shape} →
       (a : Idx Γ s₁) → Tensor α s₁ →

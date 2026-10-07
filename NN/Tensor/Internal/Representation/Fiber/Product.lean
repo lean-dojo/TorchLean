@@ -10,7 +10,8 @@ public import NN.Tensor.Internal.Representation.Fiber.Differential
 /-!
 # Product-reduction differentiation
 
-Dual numbers derive the exact leave-one-out differential of product reduction.
+The leave-one-out product formula defines an algebraic differential and its
+adjoint reverse map. The dual-number derivation is in `Laws.DualNumberReduction`.
 The reverse rule is zero-aware and requires no division by primal entries.
 -/
 

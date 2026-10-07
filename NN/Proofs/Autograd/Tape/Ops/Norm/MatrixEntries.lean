@@ -118,7 +118,7 @@ theorem getScalar_reduceSum_one (x : Tensor ℝ [m, n])
 theorem getScalar_reduceMean_one (x : Tensor ℝ [m, n])
     (h : Shape.NonemptyAxis 1 (.dim m (.dim n .scalar))) (i : Fin m) :
     getScalar (reduceMean 1 x h) i = (∑ j : Fin n, Spec.get2 x i j) / n := by
-  simp only [reduceMean, getScalar_mapSpec, Shape.axisSize_succ, Shape.axisSize_zero]
+  simp only [reduceMean, getScalar_map, Shape.axisSize_succ, Shape.axisSize_zero]
   rw [getScalar_reduceSum_one]
 
 /-- Population variance of a vector, as the scalar entry of `reduceVar 0`. -/
@@ -128,13 +128,13 @@ theorem item_reduceVar_zero (row : Tensor ℝ [n]) (h : Shape.NonemptyAxis 0 (.d
         (getScalar row j - (∑ k : Fin n, getScalar row k) / n)) / n := by
   simp only [reduceVar, reduceMean, reduceSum, reduceDim,
     TorchLean.Tensor.Reduction.Internal.reduceDimCore_dim_zero,
-    TorchLean.Tensor.Reduction.Internal.reduceOuterAxis_vector, shapeAfterSum, toScalar_mapSpec,
-    Tensor.item_scalar, Shape.axisSize_zero, mapSpec_dim]
+    TorchLean.Tensor.Reduction.Internal.reduceOuterAxis_vector, shapeAfterSum, item_map,
+    Tensor.item_scalar, Shape.axisSize_zero, map_dim]
   rw [sum_spec_vec, sum_spec_vec]
   congr 1
   apply Finset.sum_congr rfl
   intro j _
-  simp only [TorchLean.Tensor.getScalar_dim_entry, toScalar_mapSpec, subSpec, toScalar_map2Spec]
+  simp only [TorchLean.Tensor.getScalar_dim_entry, item_map, subSpec, toScalar_map2Spec]
   rfl
 
 /-- Row variances along the last axis (population variance of each row). -/

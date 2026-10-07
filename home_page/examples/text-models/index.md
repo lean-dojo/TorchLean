@@ -85,9 +85,8 @@ sample contains.
 
 ## GPT-2: A Small Causal Transformer
 
-`NN.Examples.Models.Sequence.Gpt2` wires up a miniature causal Transformer from reusable layers
-(`nn.models.CausalTransformer.oneHot`). The default configuration is compact enough for a local run,
-but it is still large enough to learn short structure from Tiny Shakespeare.
+We'll build a small causal transformer with `nn.models.CausalTransformer.oneHot`.
+The example uses the GPT-style architecture, not pretrained GPT-2 weights.
 
 We can build the transformer with this Lean definition:
 
@@ -130,9 +129,11 @@ required; `samplesPerStep` is the number of dataset items whose gradients are av
 update. The surrounding code builds a bank of token windows from the corpus, reports before/after
 predictions, saves checkpoints when requested, and samples text from the trained prediction closure.
 
-To generate text, the example computes logits, applies temperature and top-k filtering, and
-chooses the next token. If you’ve ever written a small “Karpathy-style” sampler, the code will look
-familiar.
+For generation, we pass the model's score callback to `text.generate`. It keeps the context
+window, applies the repetition penalty, and appends the sampled tokens to the prompt.
+`text.next` selects a single token using the same options. For lower-level experiments,
+`text.greedy?`, `text.topK`, and `text.sample?` work directly with a tensor of scores.
+The `?` means selection can fail—for example, if every allowed score is NaN.
 
 Try the short CUDA run:
 
@@ -170,10 +171,9 @@ Next, let's try a different sequence model. `NN.Examples.Models.Sequence.Mamba` 
 with a compact state-space block in place of attention. We can keep the same trainer, automatic
 differentiation, and JSON loss logs.
 
-Algorithmically, the example replaces “attend over all previous tokens” with a learned recurrent
-state update. Each token updates a compact state, and the model projects the resulting sequence
-states to next-token logits. The surrounding training interface stays the same: corpus windows in,
-logits out, cross-entropy loss, optimizer step, JSON log.
+Each token updates a recurrent state instead of attending to every previous token.
+The model turns those states into next-token scores. We'll train it with the same cross-entropy
+loss and save the same kind of loss log as the transformer.
 
 We'll configure one block with width `modelWidth`:
 

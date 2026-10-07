@@ -11,11 +11,8 @@ public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
 /-!
 # Graph neural network layers (spec layer)
 
-We provide a couple of small, standard GNN building blocks that show up in lots of papers and
-PyTorch GNN libraries:
-
-- a basic "message passing / neighbor aggregation" primitive, and
-- a GCN-style graph convolution layer.
+This file defines a GCN-style graph convolution layer. Neighbor aggregation uses the shared tensor
+matrix multiplication and its backward rule.
 
 ## Message passing (the common core idea)
 
@@ -51,13 +48,6 @@ PyTorch mental picture:
 - This is the algebraic core of what libraries like PyTorch Geometric call `GCNConv` once you pick
   a concrete choice of `A` (raw adjacency, `D^{-1/2} (A + I) D^{-1/2}`, etc.) and batch conventions.
 
-Why this file defines only these two:
-
-- GCN + plain aggregation are enough to cover a lot of examples and give us something we can
-  reason about cleanly.
-- We do plan to add other families (GraphSAGE, GAT, generic MPNNs). Those require more choices
-  (per-edge features, masking/batching conventions, and tie-ins to attention-style ops), so we want
-  to introduce them carefully instead of piling on half-finished variants.
 -/
 
 @[expose] public section
@@ -71,25 +61,6 @@ open TorchLean TorchLean.Tensor
 open Shape
 
 variable {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
-
-/-- Neighbor aggregation / message passing via a graph matrix: `Agg(A, X) = A · X`.
-
-This is the reusable "mix neighbors" step. The semantics are entirely determined by `A`
-(raw adjacency, normalized adjacency, weighted adjacency, etc.). -/
-def messagePassingSpec {n inDim : Nat}
-  (A : Tensor α [n, n])
-  (x : Tensor α [n, inDim]) :
-  Tensor α [n, inDim] :=
-  matMulSpec A x
-
-/-- Backward/VJP for `messagePassingSpec`: returns `(dA, dX)`. -/
-def messagePassingBackwardSpec {n inDim : Nat}
-  (A : Tensor α [n, n])
-  (x : Tensor α [n, inDim])
-  (dY : Tensor α [n, inDim]) :
-  (Tensor α [n, n] × Tensor α [n, inDim]) :=
-  matmulBackwardSpec (α := α) (m := n) (n := n) (p := inDim)
-    (Shape.CanBroadcastTo.refl .scalar) (Shape.CanBroadcastTo.refl .scalar) A x dY
 
 /-- Parameters/data for a single GCN-style layer.
 
@@ -117,7 +88,7 @@ def gcnLayerSpec {n inDim outDim : Nat}
   (x : Tensor α [n, inDim]) :
   Tensor α [n, outDim] :=
   let ax : Tensor α [n, inDim] :=
-    messagePassingSpec (α := α) (n := n) (inDim := inDim) layer.A x
+    matMulSpec layer.A x
   let axw : Tensor α [n, outDim] :=
     matMulSpec ax layer.W
   let hB : Shape.CanBroadcastTo (.dim outDim .scalar) (.dim n (.dim outDim .scalar)) := by
@@ -177,7 +148,7 @@ def gcnLayerBackwardSpec {n inDim outDim : Nat}
   (h_n : n ≠ 0) :
   GCNLayerGradients n inDim outDim α :=
 
-  let ax : Tensor α [n, inDim] := messagePassingSpec layer.A x
+  let ax : Tensor α [n, inDim] := matMulSpec layer.A x
 
   -- Backprop through the second matmul: (A·X) · W
   let (dAx, dW) :=
@@ -189,7 +160,9 @@ def gcnLayerBackwardSpec {n inDim outDim : Nat}
     gradOutput (Shape.hasNonemptyAxisZeroOfNe h_n).proof
 
   -- Backprop through the first matmul: A · X
-  let (dA, dX) := messagePassingBackwardSpec layer.A x dAx
+  let (dA, dX) :=
+    matmulBackwardSpec (Shape.CanBroadcastTo.refl .scalar)
+      (Shape.CanBroadcastTo.refl .scalar) layer.A x dAx
   { parameters :=
       { adjacencyGradient := dA, weightGradient := dW, biasGradient := db }
     inputGradient := dX }

@@ -48,14 +48,12 @@ autograd engine, written in a way that stays close to the structure of PyTorch A
 
 - **Dynamic graphs**: both systems support DAG structure with sharing/fan-out.
 - **VJP-first**: PyTorch’s backward is VJP-based; TorchLean proofs are organized around the same
-  VJP/JVP
-  adjointness statement.
+  VJP/JVP adjointness statement.
 - **Pure semantics**: TorchLean uses pure functions and typed shapes in the spec/proof layers;
-  PyTorch
-  uses an imperative engine with runtime shapes and a mutable `ctx` for custom Functions.
-- **Trust boundary**: TorchLean can swap “runtime semantics” (exact, rounded models, etc.) depending
-  on
-  the backend, whereas PyTorch executes on IEEE-754 hardware by default.
+  PyTorch uses an imperative engine with runtime shapes and a mutable `ctx` for custom Functions.
+- **Trust boundary**: these proofs describe exact or explicitly rounded mathematical models.
+  LibTorch executes native operations; the tape proofs do not verify its implementation or the
+  compiler that runs it.
 
 ## References / citations
 - PyTorch Autograd docs: https://pytorch.org/docs/stable/autograd.html
@@ -63,5 +61,3 @@ autograd engine, written in a way that stays close to the structure of PyTorch A
 - AD survey: Baydin et al. (JMLR 2018), https://arxiv.org/abs/1502.05767
 - Foundations: Griewank & Walther, *Evaluating Derivatives* (SIAM, 2008).
 -/
-
-@[expose] public section

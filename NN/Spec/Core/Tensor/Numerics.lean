@@ -6,6 +6,7 @@ Authors: TorchLean Team
 
 module
 
+public import Mathlib.Logic.Function.Iterate
 public import NN.Spec.Core.TensorReductionShape.LinearAlgebra
 
 /-!
@@ -135,35 +136,24 @@ The scalar is the final dot product `v · (matrix v)`, which is the Rayleigh quo
 unit norm. Each normalization is attempted only when its computed norm is positive; finite-precision
 execution does not guarantee a unit vector. Convergence to a dominant eigenvector requires spectral
 assumptions on `matrix` and a suitable initial vector.
+
+The default `initial` is the normalized all-ones vector. An explicitly supplied tensor is used
+as-is, so callers can retain their own initialization and normalization convention.
 -/
 def powerIterationLeadingEigenpairSpec {n : Nat}
-    (matrix : Tensor α [n, n]) (iterations : Nat) :
+    (matrix : Tensor α [n, n]) (iterations : Nat)
+    (initial : Tensor α [n] :=
+      let raw : Tensor α [n] := Tensor.ones [n]
+      let norm := MathFunctions.sqrt (sumSpec (squareSpec raw))
+      if norm > 0 then scaleSpec raw (1 / norm) else raw) :
     α × Tensor α [n] :=
   -- Retain the last iterate when its next computed norm is not positive.
-  let rec powerIteration (v : Tensor α [n]) (iter : Nat) :
-    (Tensor α [n] × α) :=
-    if iter = 0 then
-      let Av := matVecMulSpec matrix v
-      let eigenvalue := dotSpec v Av
-      (v, eigenvalue)
-    else
-      let Av := matVecMulSpec matrix v
-      let norm := MathFunctions.sqrt (sumSpec (squareSpec Av))
-      let normalized := if norm > 0 then
-        Tensor.dim (fun i =>
-          Tensor.scalar (getScalar Av i / norm))
-      else v
-      powerIteration normalized (iter - 1)
-
-  -- Start from a normalized all-ones vector.  Normalizing before the first multiplication matters
-  -- for the zero matrix: every direction is then an eigenvector, and the fallback branch below
-  -- should still return a unit vector rather than the raw all-ones vector.
-  let initialRaw : Tensor α [n] := Tensor.dim (fun _ => Tensor.scalar 1)
-  let initialNorm := MathFunctions.sqrt (sumSpec (squareSpec initialRaw))
-  let initialTensor :=
-    if initialNorm > 0 then scaleSpec initialRaw (1 / initialNorm) else initialRaw
-  let (eigenvector, eigenvalue) := powerIteration initialTensor iterations
-  (eigenvalue, eigenvector)
+  let step (v : Tensor α [n]) : Tensor α [n] :=
+    let next := matVecMulSpec matrix v
+    let norm := MathFunctions.sqrt (sumSpec (squareSpec next))
+    if norm > 0 then Tensor.map (fun value => value / norm) next else v
+  let direction := step^[iterations] initial
+  (dotSpec direction (matVecMulSpec matrix direction), direction)
 
 
 -- Distance functions used by nearest-neighbor, clustering, and metric-learning specs.
@@ -211,7 +201,7 @@ def normalizeL2RegularizedSpec {n : Nat}
     (vector : Tensor α [n]) (regularizer : α) :
     Tensor α [n] :=
   let norm := MathFunctions.sqrt (sumSpec (squareSpec vector) + regularizer)
-  Tensor.mapSpec (fun value => value / norm) vector
+  Tensor.map (fun value => value / norm) vector
 
 /--
 Z-score normalization: subtract the mean and divide by the population standard deviation.
@@ -228,13 +218,11 @@ def normalizeZscoreSpec {n : Nat} (vector : Tensor α [n]) :
   else
     let count : α := (n : α)
     let mean := sumSpec vector / count
-    let centered := Tensor.dim (fun i =>
-      Tensor.scalar (getScalar vector i - mean))
+    let centered := Tensor.map (fun value => value - mean) vector
     let variance := sumSpec (squareSpec centered) / count
     let std := MathFunctions.sqrt variance
     if std > 0 then
-      Tensor.dim (fun i =>
-        Tensor.scalar (getScalar centered i / std))
+      Tensor.map (fun value => value / std) centered
     else
       centered
 

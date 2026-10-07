@@ -85,7 +85,7 @@ private def roundingRegression : IO Unit := do
   expect "same-artifact real dominance rejects inward rounding" decoded.check false
   expect "combined checker rejects inward rounding" (accepts g ps cert (query 2 true)) false
 
-/-- Run the bounded fragment checks without changing the shared test suite. -/
+/-- Check finite-artifact dominance, query margins, and rejection of malformed inputs. -/
 def run : IO Unit := do
   expect "finite linear/ReLU graph and strict margin"
     (accepts graph params certificate (query 1.5 true)) true

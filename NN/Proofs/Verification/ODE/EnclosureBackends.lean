@@ -13,20 +13,14 @@ public import FloatLib.Floats.Formats.BinaryInterchange.Configured
 /-!
 # Backend Views for ODE Enclosures
 
-`Enclosure.lean` proves the ODE corridor theorems over exact real-valued functions. The executable
-verification pipeline, however, often evaluates candidate PINN corridors in concrete numeric
-backends:
+The generic adapters apply the real-valued corridor theorems to a supplied interpretation
+`toReal : α → ℝ`. The specialized wrappers use TorchLean's rounded-real `FP32` model and
+FloatLib's executable `ExecFloat.Binary 8 23`.
 
-- `TorchLean.Floats.FP32`, our proof-level binary32-style rounded real model;
-- `TorchLean.Floats.IEEE754.IEEE32Exec`, the executable IEEE-754 binary32 bridge.
-
-This file does **not** prove that those backends are numerically sound by itself. Instead, it gives
-the clean final adapters: if the backend-valued functions satisfy the real hypotheses after applying
-their `toReal` interpretation, then the real ODE enclosure theorem applies.
-
-That is the same trust split used by Tanaka and Yatabe's learn-and-verify framework
-(arXiv:2601.19818): interval/CROWN/IBP machinery verifies inequalities for a concrete producer,
-while the ODE comparison theorem consumes the resulting real inequalities.
+Continuity, exact derivatives, and corridor inequalities of the interpreted functions remain
+caller hypotheses. Correct rounding or finite-error bounds alone do not supply these hypotheses:
+an ordinary sampled floating-point trajectory is not automatically a continuous ODE solution.
+These adapters establish neither backend numerical soundness nor a certificate-to-ODE bridge.
 -/
 
 @[expose] public section
@@ -243,8 +237,7 @@ end ConstantExtension
 /--
 Real interpretation of an executable IEEE-754 binary32 trajectory.
 
-This abbreviation is the real-valued view used after the caller has supplied the required rounding
-and error guarantees.
+This view does not establish continuity, derivative identities, or finiteness of the trajectory.
 -/
 abbrev ieee32RealView (g : ℝ → (ExecFloat.Binary 8 23)) : ℝ → ℝ := fun t =>
   (ExecFloat.Binary.toModel (g t)).toReal

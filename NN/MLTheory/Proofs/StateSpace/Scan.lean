@@ -18,8 +18,10 @@ $$
 (a_2,b_2)\circ(a_1,b_1)=(a_2a_1,a_2b_1+b_2).
 $$
 
-The tensor/CUDA implementation is allowed to choose an efficient scan schedule, but the mathematical
-contract is this file: prefix summaries denote the same state as the left-to-right recurrence.
+Over a semiring, prefix summaries denote the same state as the left-to-right recurrence. This
+does not assert equality between differently ordered floating-point computations or verify a native
+implementation. The stateful scan and prefix-causality results preserve the sequential step order
+and do not require semiring laws.
 -/
 
 @[expose] public section
@@ -116,17 +118,15 @@ theorem scanArrayFrom_eq {State Input Output : Type}
       let result := Spec.scanArray step initial xs
       (result.1, initialOutputs ++ result.2) := by
   unfold Spec.scanArray Spec.scanArrayFrom
-  rw [← Array.foldl_toList, ← Array.foldl_toList]
-  generalize xs.toList = items
-  induction items generalizing initial initialOutputs with
-  | nil => simp
-  | cons input rest ih =>
-      simp only [List.foldl_cons]
-      rcases step initial input with ⟨nextState, output⟩
-      rw [ih nextState (initialOutputs.push output)]
-      simp only [show (#[] : Array Output).push output = #[output] from rfl]
-      rw [ih nextState #[output]]
-      simp
+  let prepend : State × Array Output → State × Array Output :=
+    fun result => (result.1, initialOutputs ++ result.2)
+  let advance : State × Array Output → Input → State × Array Output :=
+    fun result input => ((step result.1 input).1, result.2.push (step result.1 input).2)
+  change xs.foldl advance (initial, initialOutputs) = prepend (xs.foldl advance (initial, #[]))
+  simpa [prepend] using
+    (Array.foldl_hom prepend (g₁ := advance) (g₂ := advance)
+      (xs := xs) (init := (initial, #[]))
+      (fun _ _ => by simp [prepend, advance]))
 
 /-- The output buffer carried by a scan does not affect its final state. -/
 theorem scanArrayFrom_state_eq_foldl {State Input Output : Type}
@@ -135,14 +135,11 @@ theorem scanArrayFrom_state_eq_foldl {State Input Output : Type}
     (Spec.scanArrayFrom step initial initialOutputs xs).1 =
       xs.foldl (fun state input => (step state input).1) initial := by
   unfold Spec.scanArrayFrom
-  rw [← Array.foldl_toList, ← Array.foldl_toList]
-  generalize xs.toList = items
-  induction items generalizing initial initialOutputs with
-  | nil => rfl
-  | cons input rest ih =>
-      simp only [List.foldl_cons]
-      rcases step initial input with ⟨nextState, output⟩
-      exact ih nextState (initialOutputs.push output)
+  exact (Array.foldl_hom Prod.fst (xs := xs) (init := (initial, initialOutputs))
+    (fun stateAndOutputs input => by
+      rcases stateAndOutputs with ⟨state, outputs⟩
+      rcases hstep : step state input with ⟨nextState, output⟩
+      simp [hstep])).symm
 
 /-- The state component of `scanArray` is the ordinary state-only left fold. -/
 theorem scanArray_state_eq_foldl {State Input Output : Type}

@@ -12,24 +12,11 @@ public import NN.Widgets.IR.Graph
 import ProofWidgets.Component.HtmlDisplay
 
 /-!
-# GraphRewrite
+# IR rewrite viewer
 
-Graph rewrite / diff viewer.
-
-TorchLean’s IR is designed to support compilation and optimization passes. When working on those
-passes, the most useful debugging UI is "before/after":
-- render both graphs,
-- show which nodes changed (op kind / parents / shapes),
-- and make it obvious when a pass accidentally changes shapes or dependencies.
-
-Main command:
-- `#graph_rewrite_view before, after`
-
-## Main definitions
-
-- `diffRows`: align nodes by array position for before/after comparison.
-- `graphRewriteHtml`: side-by-side graph panels plus a structural diff table.
-- `#graph_rewrite_view`: command entry point.
+`#graph_rewrite_view before, after` displays both graphs and compares node IDs, operations,
+parents, and declared shapes by array position. The diff table and change count cover at most
+400 positions. Structural equality in the displayed rows is not a proof of semantic equivalence.
 -/
 
 public meta section

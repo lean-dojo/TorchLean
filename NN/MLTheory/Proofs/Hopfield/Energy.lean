@@ -72,7 +72,7 @@ theorem energy_eq_energyU (p : Params ℝ n) (s : State n) :
 /-- Likewise for the net input. -/
 theorem net_eq_netx (p : Params ℝ n) (s : State n) (u : Fin n) :
     net (α := ℝ) p s u = netx (n := n) p (x (n := n) s) u := by
-  simp [Spec.Hopfield.net, Spec.Hopfield.mulVec, dotProduct, netx, x, U, Spec.Hopfield.actVec]
+  simp [Spec.Hopfield.net, dotProduct, netx, x, U, Spec.Hopfield.actVec]
 
 /-- An update of the state becomes a `Function.update` of the activation vector. -/
 theorem x_updateAt_eq_update (p : Params ℝ n) (s : State n) (u : Fin n) :
@@ -187,7 +187,6 @@ theorem quad_delta_update (p : Params ℝ n) (hsym : SymmetricW (n := n) p)
   have hu : u ∈ (U (n := n)) := by simp [U]
   let x1 : Fin n → ℝ := Function.update x0 u xu'
   have hx1u : x1 u = xu' := by simp [x1]
-  have hx0u : x0 u = x0 u := rfl
   -- Split `quad` into the `i=u` row and the rest.
   have hsplit1 :
       quad (n := n) p x1
@@ -213,23 +212,6 @@ theorem quad_delta_update (p : Params ℝ n) (hsym : SymmetricW (n := n) p)
       (∑ i ∈ (U (n := n) \ {u}), ∑ j ∈ (U (n := n)), p.W i j * x0 i * x0 j)
         =
       (∑ i ∈ (U (n := n) \ {u}), p.W i u * x0 i) * (xu' - x0 u) := by
-    -- Compute termwise via `quad_inner_delta_ne`.
-    have :
-        (∑ i ∈ (U (n := n) \ {u}),
-          ((∑ j ∈ (U (n := n)), p.W i j * x0 i * x1 j) - (∑ j ∈ (U (n := n)), p.W i j * x0 i * x0
-            j)))
-          =
-        (∑ i ∈ (U (n := n) \ {u}), p.W i u * x0 i * (xu' - x0 u)) := by
-      refine Finset.sum_congr rfl ?_
-      intro i hi
-      have hiu : i ≠ u := by
-        have : i ∉ ({u} : Finset (Fin n)) := (Finset.mem_sdiff.1 hi).2
-        simpa [Finset.mem_singleton] using this
-      -- Replace `x1` by `update`.
-      have hxj : (fun j => x1 j) = Function.update x0 u xu' := by rfl
-      -- Use the delta lemma.
-      simpa [x1, Function.update] using (quad_inner_delta_ne (n := n) (p := p) (u := u) (i := i) hiu
-        x0 xu')
     -- Replace `x1 i` by `x0 i` (since `i≠u`) and factor the constant term.
     -- Also note `x1 i = x0 i` on `U \ {u}`.
     have hxi : ∀ i ∈ (U (n := n) \ {u}), x1 i = x0 i := by

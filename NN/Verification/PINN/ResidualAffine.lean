@@ -18,11 +18,9 @@ This module provides:
 - Evaluation of affine upper/lower bounds on the network output `u(x)`.
 - McCormick-style linear upper/lower envelopes for scalar products over
   independent intervals (for Burgers-type residuals).
-- A compact branch-and-bound splitter on the 1D input box to tighten bounds by
-  subdividing the domain and taking the envelope across sub-boxes.
 
-Notes:
-- We intentionally keep this file numeric (Float) and specialized to this workflow.
+These calculations use host `Float` arithmetic. The exact-real McCormick inequalities do not
+by themselves prove that the rounded coefficients and endpoints enclose the exact residual.
 
 References:
 - CROWN / DeepPoly-style affine bounds: `https://arxiv.org/abs/1811.00866`
@@ -86,7 +84,8 @@ $$
 uv\le a_xu+a_yv+c.
 $$
 
-It chooses the tighter of the two classical McCormick upper planes.
+It selects the plane with the smaller value at the rectangle midpoint. That need not be the
+tighter plane at every point of the rectangle.
 -/
 def mccormickUpper (lx ux ly uy : Float) : (Float × Float × Float) :=
   let cx := (lx + ux) * 0.5

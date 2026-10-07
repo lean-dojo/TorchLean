@@ -48,18 +48,10 @@ theorem relu_mono_real : ∀ {a b : ℝ}, a ≤ b →
   intro a b hab
   simpa only [Activation.Math.reluSpec_eq_max] using max_le_max hab (le_rfl : (0 : ℝ) ≤ 0)
 
-/-- Interval multiplication: the product of two bounded values lies between the min and the max of
-the four endpoint products. This is FloatLib's `mul_bounds_Icc` with the bounds split out. -/
-theorem interval_mul_bounds
-    {lx ux ly uy x y : ℝ} (hx : lx ≤ x) (hx' : x ≤ ux) (hy : ly ≤ y) (hy' : y ≤ uy) :
-    min (min (lx * ly) (lx * uy)) (min (ux * ly) (ux * uy)) ≤ x * y ∧
-      x * y ≤ max (max (lx * ly) (lx * uy)) (max (ux * ly) (ux * uy)) :=
-  FloatLib.Floats.Interval.mul_bounds_Icc lx ux ly uy x y ⟨hx, hx'⟩ ⟨hy, hy'⟩
-
 /-- Elementwise interval multiplication of two boxes is sound.
 
-Coordinatewise this is `interval_mul_bounds`; the box wrapper adds the dimension check, which is why
-the conclusion is about whatever box `boxMulElem` actually returned. -/
+FloatLib bounds each coordinate by the four endpoint products. The box wrapper also checks the
+dimensions, so the conclusion concerns the box actually returned by `boxMulElem`. -/
 theorem box_mulElem_sound_real (n : Nat)
     (lo1 hi1 lo2 hi2 x y : Tensor ℝ [n])
     (hx : encloses { dim := n, lo := lo1, hi := hi1 } x)
@@ -77,67 +69,20 @@ theorem box_mulElem_sound_real (n : Nat)
   refine ⟨rfl, ?_⟩
   intro i
   have hMul :=
-    interval_mul_bounds
-      (lx := lo1.getScalar i) (ux := hi1.getScalar i)
-      (ly := lo2.getScalar i) (uy := hi2.getScalar i)
-      (x := x.getScalar i) (y := y.getScalar i)
-      (hx := (hx i).1) (hx' := (hx i).2)
-      (hy := (hy i).1) (hy' := (hy i).2)
-  simpa [Tensor.mulSpec, min2_eq_min, max2_eq_max, BoundOps.mulDown, BoundOps.mulUp]
+    FloatLib.Floats.Interval.mul_bounds_Icc
+      (lo1.getScalar i) (hi1.getScalar i) (lo2.getScalar i) (hi2.getScalar i)
+      (x.getScalar i) (y.getScalar i) (hx i) (hy i)
+  simpa [Tensor.mulSpec, min2_eq_min, max2_eq_max, BoundOps.mulDown, BoundOps.mulUp,
+    FloatLib.Floats.Interval.minOfFour, FloatLib.Floats.Interval.maxOfFour]
     using hMul
 
 /-!
-### Casting lemmas (avoid `cases` on `B.dim = v.n`)
+### Casting and containment
 
-`FlatBox` and `FlatTensor` carry their dimensions in dependent types, so it is tempting to
-`cases` equalities like `h : B.dim = v.n` to “align” types. In Lean this can easily trigger
-dependent elimination failures when the equality mentions fields of dependent records.
-
-Instead, we keep such equalities as *data* and move tensors/boxes across them using
-`castDimScalar` / `castBoxDim`. The following small lemmas are proved once (by `cases` on
-*fresh* Nat equalities) and then used throughout the main proof without ever `cases`-ing on
-`B.dim = v.n` directly.
- -/
-
-theorem castDimScalar_trans {n n' n'' : Nat}
-    (h₁ : n = n') (h₂ : n' = n'') (t : Tensor ℝ [n]) :
-    castDimScalar (α := ℝ) (Eq.trans h₁ h₂) t
-      = castDimScalar (α := ℝ) h₂ (castDimScalar (α := ℝ) h₁ t) := by
-  cases h₁
-  cases h₂
-  rfl
-
-/-- Dimension casts commute with elementwise maps. -/
-theorem castDimScalar_map_spec {n n' : Nat}
-    (h : n = n') (f : ℝ → ℝ) (t : Tensor ℝ [n]) :
-    castDimScalar (α := ℝ) h (Tensor.mapSpec (α := ℝ) f t)
-      = Tensor.mapSpec (α := ℝ) f (castDimScalar (α := ℝ) h t) := by
-  cases h
-  rfl
-
-/-- Dimension casts commute with addition. -/
-theorem castDimScalar_add_spec {n n' : Nat}
-    (h : n = n') (x y : Tensor ℝ [n]) :
-    castDimScalar (α := ℝ) h (Tensor.addSpec (α := ℝ) x y)
-      = Tensor.addSpec (α := ℝ) (castDimScalar (α := ℝ) h x) (castDimScalar (α := ℝ) h y) := by
-  cases h
-  rfl
-
-/-- Dimension casts commute with subtraction. -/
-theorem castDimScalar_sub_spec {n n' : Nat}
-    (h : n = n') (x y : Tensor ℝ [n]) :
-    castDimScalar (α := ℝ) h (Tensor.subSpec (α := ℝ) x y)
-      = Tensor.subSpec (α := ℝ) (castDimScalar (α := ℝ) h x) (castDimScalar (α := ℝ) h y) := by
-  cases h
-  rfl
-
-/-- Dimension casts commute with elementwise multiplication. -/
-theorem castDimScalar_mul_spec {n n' : Nat}
-    (h : n = n') (x y : Tensor ℝ [n]) :
-    castDimScalar (α := ℝ) h (Tensor.mulSpec (α := ℝ) x y)
-      = Tensor.mulSpec (α := ℝ) (castDimScalar (α := ℝ) h x) (castDimScalar (α := ℝ) h y) := by
-  cases h
-  rfl
+Boxes and values carry their dimensions in dependent types. Transporting both along the same
+equality preserves containment; the box conversion lemmas let operator proofs reuse `Box` bounds
+without unfolding the flattened representation.
+-/
 
 /-- Casting a box and a point along the same equality does not change containment. -/
 theorem contains_castBoxDim_iff {n n' : Nat}
@@ -146,20 +91,6 @@ theorem contains_castBoxDim_iff {n n' : Nat}
       ↔ Box.contains (α := ℝ) B x := by
   cases h
   simp [castBoxDim, castDimScalar]
-
-/-- Enclosure survives a dimension cast, which is how a box proved for one layer width is reused at
-the next one without ever eliminating the equality itself. -/
-theorem encloses_castDim {B : FlatBox ℝ} {n' : Nat}
-    (h : B.dim = n') (x : Tensor ℝ [B.dim]) :
-    encloses B x →
-      encloses { dim := n'
-                 lo := castDimScalar (α := ℝ) h B.lo
-                 hi := castDimScalar (α := ℝ) h B.hi }
-        (castDimScalar (α := ℝ) h x) := by
-  intro hx
-  subst n'
-  convert hx using 1 <;>
-    simp only [NN.MLTheory.CROWN.Graph.castDimScalar_self]
 
 /-- `Box.contains` implies `encloses` on the flattened box; the two are definitionally the same, and
 the lemma exists so proofs can change vocabulary without unfolding. -/

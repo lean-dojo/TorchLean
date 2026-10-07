@@ -37,7 +37,7 @@ certificate recomputation, exact CROWN output queries, consistency checks for co
 propagation workflows.
 
 This file defines a single dispatcher so users can run everything from:
-  `lake exe verify -- <tool> [args...]`
+  `scripts/lake.sh exe verify -- <tool> [args...]`
 
 References (background on the verifier families exposed here):
 
@@ -75,7 +75,7 @@ structure Tool where
   description : String
   /-- Default file/path argument, if the tool expects a path. -/
   defaultArg : Option String := none
-  /-- Whether `lake exe verify -- all` should run this tool. -/
+  /-- Whether `scripts/lake.sh exe verify -- all` should run this tool. -/
   includeInAll : Bool := true
   /-- Implementation: run the tool with the remaining CLI args. -/
   run : List String → IO Unit
@@ -91,9 +91,9 @@ def usage (tools : List Tool) : String :=
   let header :=
     String.intercalate "\n" [
       "Usage:",
-      "  lake exe verify -- list",
-      "  lake exe verify -- all",
-      "  lake exe verify -- <tool> [args...]",
+      "  scripts/lake.sh exe verify -- list",
+      "  scripts/lake.sh exe verify -- all",
+      "  scripts/lake.sh exe verify -- <tool> [args...]",
       "",
       "Tools:"
     ]
@@ -212,7 +212,7 @@ def otherTools : List Tool :=
       description := "train sklearn-digits classifier, lower to IR, then run IBP/CROWN report"
       includeInAll := false
       run := fun args =>
-        NN.Verification.Robustness.Digits.mainTrainThenCertify args }
+        NN.Verification.Robustness.Digits.Training.main args }
   , { name := "vnncomp-mnistfc"
       description := "VNN-COMP-style suite: MNIST-FC (vnncomp2022) via exported JSON"
       includeInAll := false

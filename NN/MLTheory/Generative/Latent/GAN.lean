@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Models.Gan
-public import NN.MLTheory.Generative.Latent.Objective
 public import NN.Spec.Core.Context.Real
 
 /-!
@@ -45,7 +44,6 @@ namespace NN.MLTheory.Generative.Latent.GAN
 
 open _root_.Spec _root_.TorchLean
 open _root_.Generative.GAN
-open NN.MLTheory.Generative.Latent.Objective
 
 variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {latent obs : Shape}
@@ -69,7 +67,7 @@ the discriminator's "fake" target; it tries to move generated samples onto the r
       Spec.mseSpec (s := .scalar) (fakeScore model z) (realTarget (α := α)) := by
   rfl
 
-/-! ## Connection to shared objective algebra and equilibrium checks -/
+/-! ## Target-score checks -/
 
 /-- Score-regression MSE is zero when the scalar prediction equals the scalar target. -/
 private theorem mse_scalar_self_zero (x : Tensor ℝ .scalar) :
@@ -77,39 +75,8 @@ private theorem mse_scalar_self_zero (x : Tensor ℝ .scalar) :
   have hdiff : Tensor.subSpec x x = Tensor.scalar 0 := by
     apply Tensor.ext_scalar
     simp [Tensor.subSpec]
-  simp [Spec.mseSpec, hdiff, Tensor.mulSpec,
-    Spec.meanOver, TorchLean.Tensor.meanDenominator, Spec.Shape.size]
-
-/-- Package the LSGAN generator objective as a two-term objective with no regularizer. -/
-noncomputable def generatorObjectiveTerms
-    [DecidableRel ((· > ·) : ℝ → ℝ → Prop)]
-    (model : Model ℝ latent obs) (z : Tensor ℝ latent) : WeightedTwoTerm :=
-  { base := generatorLoss model z
-    regularizer := 0 }
-
-/-- Package the LSGAN discriminator objective as real-score plus fake-score regression. -/
-noncomputable def discriminatorObjectiveTerms
-    [DecidableRel ((· > ·) : ℝ → ℝ → Prop)]
-    (model : Model ℝ latent obs) (xReal : Tensor ℝ obs) (z : Tensor ℝ latent) :
-    WeightedThreeTerm :=
-  { base := Spec.mseSpec (s := .scalar) (realScore model xReal) (realTarget (α := ℝ))
-    middle := Spec.mseSpec (s := .scalar) (fakeScore model z) (fakeTarget (α := ℝ))
-    regularizer := 0 }
-
-/-- LSGAN generator loss is the shared two-term objective with zero regularizer. -/
-theorem generatorLoss_eq_weightedTwoTerm
-    [DecidableRel ((· > ·) : ℝ → ℝ → Prop)]
-    (model : Model ℝ latent obs) (z : Tensor ℝ latent) (weight : ℝ) :
-    generatorLoss model z = weightedTwoTerm weight (generatorObjectiveTerms model z) := by
-  simp [generatorObjectiveTerms, weightedTwoTerm]
-
-/-- LSGAN discriminator loss is the shared three-term objective with zero regularizer. -/
-theorem discriminatorLoss_eq_weightedThreeTerm
-    [DecidableRel ((· > ·) : ℝ → ℝ → Prop)]
-    (model : Model ℝ latent obs) (xReal : Tensor ℝ obs) (z : Tensor ℝ latent) (weight : ℝ) :
-    discriminatorLoss model xReal z =
-      weightedThreeTerm weight (discriminatorObjectiveTerms model xReal z) := by
-  simp [discriminatorObjectiveTerms, weightedThreeTerm, discriminatorLoss]
+  simp [Spec.mseSpec, Tensor.meanSquaredError, hdiff, Tensor.mulSpec,
+    TorchLean.Tensor.meanSpec, TorchLean.Tensor.meanDenominator, Spec.Shape.size]
 
 /-- If generated samples receive the real target score, the LSGAN generator loss is zero. -/
 theorem generatorLoss_zero_of_fake_score_real

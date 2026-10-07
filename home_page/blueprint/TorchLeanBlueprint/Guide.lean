@@ -116,8 +116,8 @@ reading the API. Lean syntax enters as a way to express those objects and their 
 
 At the held-out input $`(0.25,-0.75)`, the network in our
 {ref "running-example"}[running example] initially predicts `-0.088261`. The target is `0.2`.
-After 200 Adam updates, its prediction is `0.228325`. The network still has the same two linear
-layers, the same eight hidden units, and the same ReLU between them. What changed was the set of
+After 200 Adam updates, we compare the trained prediction with the same target. The model still
+has two linear layers, eight hidden units, and a ReLU between them. What changed was the set of
 numbers inside its four parameter tensors. Understanding how those numbers determine a function,
 and how a training program changes them, gives us a way to read more than the final loss in a log.
 

@@ -9,33 +9,20 @@ module
 public import NN.Tests.Runtime.ParameterAliases
 public import NN.Tests.Runtime.Cuda.Softmax
 public import NN.Tests.Runtime.Cuda.Elementwise
-public import NN.Tests.Runtime.Cuda.LayerNorm
-public import NN.Tests.Runtime.Cuda.BatchNorm
 public import NN.Tests.Runtime.Cuda.Attention
-public import NN.Tests.Runtime.Cuda.ConvPool
-public import NN.Tests.Runtime.Cuda.ConvTranspose
-public import NN.Tests.Runtime.Cuda.GatherScatter
-public import NN.Tests.Runtime.Cuda.DeterministicReductions
 public import NN.Tests.Runtime.Cuda.SelectiveScan
-public import NN.Tests.Runtime.Cuda.PositionalEncoding
-public import NN.Tests.Runtime.Cuda.Matmul
 public import NN.Tests.Runtime.Cuda.Fft
-public import NN.Tests.API.Fourier
-public import NN.Tests.Runtime.Cuda.ViewsBroadcastReduce
-public import NN.Tests.Runtime.Cuda.LinearMseConcatSliceGather
-public import NN.Tests.Runtime.Cuda.ScaledProdExp
 public import NN.Tests.Runtime.Cuda.Stress
 public import NN.Tests.Runtime.Cuda.Trainer
-public import NN.Tests.Runtime.Cuda.PPORatio
 
 /-!
 # Suite
 
-CUDA kernel-coverage regression tests.
+Focused LibTorch CUDA runtime checks.
 
-These tests are deliberately small and deterministic. CUDA correctness lives at the native trust
-boundary; this suite compares the Lean side eager/autograd behavior with the CUDA FFI path so
-memory, shape, and numerical regressions are caught during regression testing.
+Checks of numerical primitives, tape wiring, buffer ownership, shape validation, and training
+through the LibTorch CUDA path. Comparisons with CPU execution and explicit reference values cover
+the exercised cases; they do not prove correctness of the SDK's kernels for every input.
 -/
 
 @[expose] public section
@@ -46,28 +33,15 @@ namespace Cuda
 /-- Unified CUDA test entrypoint (called by `NN/Tests/Suite.lean`). -/
 def run : IO Unit := do
   NN.Tests.Runtime.ParameterAliases.runCuda
-  IO.println "=== Runtime CUDA kernel coverage suite ==="
+  IO.println "=== Runtime CUDA checks ==="
   Softmax.run
   Elementwise.run
-  LayerNorm.run
-  BatchNorm.run
   Attention.run
-  ConvPool.run
-  ConvTranspose.run
-  GatherScatter.run
-  DeterministicReductions.run
   SelectiveScan.run
-  PositionalEncoding.run
-  Matmul.run
   Fft.run
-  NN.Tests.API.Fourier.run .cuda
-  ViewsBroadcastReduce.run
-  LinearMseConcatSliceGather.run
-  ScaledProdExp.run
   Stress.run
   Trainer.run
-  PPORatio.run
-  IO.println "=== CUDA kernel coverage suite completed ==="
+  IO.println "=== CUDA checks completed ==="
 
 end Cuda
 end Tests

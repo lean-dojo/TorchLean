@@ -67,8 +67,8 @@ open Lean Json
 Helpers for the alpha/beta-CROWN style node certificate checker.
 
 These are the JSON-facing utilities for the checker: they parse imported bounds, require exact
-binary32 agreement for affine replay data, and keep shape mismatches from reaching the semantic
-checker.
+binary32 agreement for affine replay data, and reject shape mismatches. Acceptance proves local
+replay consistency, not a real-input enclosure on its own.
 -/
 
 /-- Parse a JSON integer (used for beta vectors). -/
@@ -134,7 +134,7 @@ def readAlphaBetaCROWNNodeCertificate (g : Graph) (path : String) :
   pure { core with beta := beta }
 
 /--
-Check the local α/β-CROWN enclosure condition for one node against a certificate entry.
+Compare one certificate entry with the locally replayed α/β-CROWN bound.
 
 `step` recomputes the candidate affine bound from the bounds replayed so far.
 `checkAlphaBetaCROWNNodeCertificate` passes `replayStep`, the function whose acceptance theorem

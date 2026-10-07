@@ -17,26 +17,12 @@ import NN.Spec.Core.Tensor
 import ProofWidgets.Component.HtmlDisplay
 
 /-!
-# ShapeInfer
+# IR shape inference
 
-Shape inference / checking viewer for `NN.IR.Graph`.
-
-TorchLean’s IR carries a declared `outShape` at each node. In practice, there are two common
-debugging questions when working with graphs:
-
-- "Do the declared shapes match what the op semantics would infer from parent shapes?"
-- "Where exactly did shape propagation fail, and what parent shapes caused it?"
-
-This module provides a small infoview panel that answers those questions in a compact table.
-
-Main command:
-- `#shape_infer_view g`
-
-## Main definitions
-
-- `inferRows`: perform sequential shape inference and collect row diagnostics.
-- `shapeInferHtml`: render declared vs inferred shapes in a status table.
-- `#shape_infer_view`: command entry point.
+`#shape_infer_view g` compares declared output shapes with shapes inferred from earlier nodes.
+Malformed graphs are rejected before inference. A declared-shape mismatch is reported while
+inference continues using the inferred shape; an inference error stops propagation and marks
+later rows as skipped.
 -/
 
 public meta section

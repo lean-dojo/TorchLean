@@ -74,7 +74,7 @@ def checkActivation
   let (t1, xId) := Runtime.Autograd.LibTorch.Tape.leaf
     Runtime.Autograd.LibTorch.Tape.empty { s := s, buf := input }
   let result ← IO.lazyPure fun _ => record s t1 xId
-  let (t2, yId) ← Utils.okOrThrow result
+  let (t2, yId) ← IO.ofExcept result
   let some node := t2.getNode? yId
     | throw <| IO.userError s!"{label}: missing activation node"
   unless t2.nodes.size == 2 && node.parents == #[xId] &&
@@ -89,7 +89,7 @@ def checkActivation
     let seed ← Runtime.Autograd.LibTorch.Buffer.ofFloatArrayIO (FloatArray.mk seeds)
     -- Exercise the recorded closure before accumulation, including signed-zero cotangents.
     let localResult ← IO.lazyPure fun _ => node.backward { s := s, buf := seed }
-    let contributions ← Utils.okOrThrow localResult
+    let contributions ← IO.ofExcept localResult
     let some (parentId, contribution) := contributions[0]?
       | throw <| IO.userError s!"{label}: missing VJP contribution"
     unless contributions.size == 1 && parentId == xId && contribution.s == s do
@@ -188,27 +188,64 @@ private def checkCustomComputations : IO Unit := do
       NN.Kernel.iterate (fun column acc => do
         let x ← read 0 (row * 3 + column)
         pure (acc + x)) 3 0 0)
-  let sums ← rowSum.run (TensorPack.singleton rows) [2] (device := gpu)
+  let sums ← rowSum.run (Arguments.empty.push rows) [2] (device := gpu)
   unless sums[0] == 0 && sums[1] == 6 do
     throw <| IO.userError "custom fold: changed sequential addition order"
   let guarded := Program.of
     (fun (read : NN.Kernel.Reader Float32) (i : UInt64) =>
       if i == 0 then pure 7 else read 0 i)
   let noInput : Tensor Float32 [0] := Tensor.zeros [0]
-  let guardedOutput ← guarded.run (TensorPack.singleton noInput) [1] (device := gpu)
+  let guardedOutput ← guarded.run (Arguments.empty.push noInput) [1] (device := gpu)
   unless guardedOutput[0] == 7 do
     throw <| IO.userError "custom conditional: incorrect branch"
   let rejected ← try
-    let _ ← guarded.run (TensorPack.singleton noInput) [2] (device := gpu)
+    let _ ← guarded.run (Arguments.empty.push noInput) [2] (device := gpu)
     pure false
   catch _ => pure true
   unless rejected do
     throw <| IO.userError "custom read: accepted an out-of-bounds native access"
   IO.println "  custom computations: binary32/binary64, branches, folds and bounds passed"
 
+open Runtime.Autograd.LibTorch in
+/-- Check the C ABI's scalar cast and multiplication order against separate ATen calls. -/
+private def checkScaledProductExponential : IO Unit := do
+  IO.println "=== scaledProdExp composition parity ==="
+  -- Varied, signed, finite fixtures, kept in a range where `exp` stays finite.
+  let xs : FloatArray := FloatArray.mk
+    #[0.10, -0.20, 0.35, -0.50, 0.75, -0.90, 0.00, 1.00, -1.00, 0.42]
+  let ys : FloatArray := FloatArray.mk
+    #[0.90, -0.75, 0.50, -0.30, 0.15, -0.05, 1.00, -1.00, 0.25, -0.60]
+  let n : UInt32 := xs.size.toUInt32
+  let x := Buffer.ofFloatArray xs
+  let y := Buffer.ofFloatArray ys
+  -- Scalars spanning sign and magnitude, including the constant-one case `c = 0`.
+  for c in (#[-2.0, 0.5, 3.25, -0.125, 1.0, 0.0] : Array Float) do
+    let actual := Buffer.scaledProdExp x y c
+    let composed := Buffer.exp (Buffer.mul (Buffer.mul (Buffer.full n c) x) y)
+    let af := Buffer.toFloatArray actual
+    let ac := Buffer.toFloatArray composed
+    if af.size != ac.size then
+      throw <| IO.userError s!"scaledProdExp c={c}: size mismatch ({af.size} vs {ac.size})"
+    let mut mism : Nat := 0
+    let mut maxDiff : Float := 0.0
+    for i in [:af.size] do
+      let vf := af.get! i
+      let vc := ac.get! i
+      -- Bit-level comparison: `toBits` distinguishes results that `==` would call equal.
+      if vf.toBits != vc.toBits then mism := mism + 1
+      let d := Float.abs (vf - vc)
+      if d > maxDiff then maxDiff := d
+    if mism != 0 then
+      throw <| IO.userError <|
+        s!"scaledProdExp c={c}: {mism}/{af.size} elements differ from composed exp((c·x)·y) " ++
+          s!"(max |Δ|={maxDiff})"
+  IO.println "  scaledProdExp bit-identical to composed exp((c·x)·y) over all fixtures ✓"
+
+/-- Exercise native elementwise VJPs, generated computations, and composed buffer operations. -/
 @[no_expose] def run : IO Unit := do
   IO.println "=== CUDA kernel coverage: elementwise ==="
   runActivationNumerics
+  checkScaledProductExponential
   checkCustomComputations
 
   let s : Shape := [5]
@@ -226,30 +263,30 @@ private def checkCustomComputations : IO Unit := do
   let t0 : Tape Float := Tape.empty
   let (t1, aId) := Tape.leaf (t := t0) a (name := some "a")
   let (t2, bId) := Tape.leaf (t := t1) b (name := some "b")
-  let (t3, u1) ← Utils.okOrThrow (Tape.add (α := Float) (t := t2) (s := s) aId bId)
-  let (t4, u2) ← Utils.okOrThrow (Tape.scale (α := Float) (t := t3) (s := s) aId scaleC)
-  let (t5, u3) ← Utils.okOrThrow (Tape.sub (α := Float) (t := t4) (s := s) u1 u2)
-  let (t6, u4) ← Utils.okOrThrow (Tape.mul (α := Float) (t := t5) (s := s) u3 bId)
-  let (t7, u5) ← Utils.okOrThrow (Tape.max (α := Float) (t := t6) (s := s) u4 aId)
-  let (t8, u6) ← Utils.okOrThrow (Tape.min (α := Float) (t := t7) (s := s) u5 bId)
-  let (t9, u7) ← Utils.okOrThrow (Tape.relu (α := Float) (t := t8) (s := s) u6)
-  let (t10, u8) ← Utils.okOrThrow (Tape.sigmoid (α := Float) (t := t9) (s := s) u7)
-  let (t11, u9) ← Utils.okOrThrow (Tape.tanh (α := Float) (t := t10) (s := s) u8)
-  let (t12, u10) ← Utils.okOrThrow (Tape.softplus (α := Float) (t := t11) (s := s) u9)
-  let (t13, u11) ← Utils.okOrThrow (Tape.exp (α := Float) (t := t12) (s := s) u10)
-  let (t14, u12) ← Utils.okOrThrow (Tape.abs (α := Float) (t := t13) (s := s) u11)
-  let (t15, u13) ← Utils.okOrThrow (Tape.clamp (α := Float) (t := t14) (s := s) u12 clampLo clampHi)
-  let (t16, u14) ← Utils.okOrThrow (Tape.sqrt (α := Float) (t := t15) (s := s) u13)
-  let (t17, u15) ← Utils.okOrThrow (Tape.inv (α := Float) (t := t16) (s := s) u14)
-  let (t18, u16) ← Utils.okOrThrow (Tape.log (α := Float) (t := t17) (s := s) u14)
-  let (t19, u17) ← Utils.okOrThrow (Tape.safeLog (α := Float) (t := t18) (s := s) u14 (ε := eps))
-  let (t20, u18) ← Utils.okOrThrow (Tape.add (α := Float) (t := t19) (s := s) u15 u16)
-  let (t21, u19) ← Utils.okOrThrow (Tape.add (α := Float) (t := t20) (s := s) u18 u17)
-  let (t22, outId) ← Utils.okOrThrow (Tape.sum (α := Float) (t := t21) (s := s) u19)
+  let (t3, u1) ← IO.ofExcept (Tape.add (α := Float) (t := t2) (s := s) aId bId)
+  let (t4, u2) ← IO.ofExcept (Tape.scale (α := Float) (t := t3) (s := s) aId scaleC)
+  let (t5, u3) ← IO.ofExcept (Tape.sub (α := Float) (t := t4) (s := s) u1 u2)
+  let (t6, u4) ← IO.ofExcept (Tape.mul (α := Float) (t := t5) (s := s) u3 bId)
+  let (t7, u5) ← IO.ofExcept (Tape.max (α := Float) (t := t6) (s := s) u4 aId)
+  let (t8, u6) ← IO.ofExcept (Tape.min (α := Float) (t := t7) (s := s) u5 bId)
+  let (t9, u7) ← IO.ofExcept (Tape.relu (α := Float) (t := t8) (s := s) u6)
+  let (t10, u8) ← IO.ofExcept (Tape.sigmoid (α := Float) (t := t9) (s := s) u7)
+  let (t11, u9) ← IO.ofExcept (Tape.tanh (α := Float) (t := t10) (s := s) u8)
+  let (t12, u10) ← IO.ofExcept (Tape.softplus (α := Float) (t := t11) (s := s) u9)
+  let (t13, u11) ← IO.ofExcept (Tape.exp (α := Float) (t := t12) (s := s) u10)
+  let (t14, u12) ← IO.ofExcept (Tape.abs (α := Float) (t := t13) (s := s) u11)
+  let (t15, u13) ← IO.ofExcept (Tape.clamp (α := Float) (t := t14) (s := s) u12 clampLo clampHi)
+  let (t16, u14) ← IO.ofExcept (Tape.sqrt (α := Float) (t := t15) (s := s) u13)
+  let (t17, u15) ← IO.ofExcept (Tape.inv (α := Float) (t := t16) (s := s) u14)
+  let (t18, u16) ← IO.ofExcept (Tape.log (α := Float) (t := t17) (s := s) u14)
+  let (t19, u17) ← IO.ofExcept (Tape.safeLog (α := Float) (t := t18) (s := s) u14 (ε := eps))
+  let (t20, u18) ← IO.ofExcept (Tape.add (α := Float) (t := t19) (s := s) u15 u16)
+  let (t21, u19) ← IO.ofExcept (Tape.add (α := Float) (t := t20) (s := s) u18 u17)
+  let (t22, outId) ← IO.ofExcept (Tape.sum (α := Float) (t := t21) (s := s) u19)
 
   let outCpu ← Utils.cpuValue (s := Shape.scalar) t22 outId
   let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (Tensor.scalar 1.0)
-  let gradsCpu ← Utils.okOrThrow (Tape.backwardDenseAll (α := Float) (t := t22) outId seedCpu)
+  let gradsCpu ← IO.ofExcept (Tape.backwardDenseAll (α := Float) (t := t22) outId seedCpu)
   let dA_cpu ← Utils.cpuGrad (s := s) gradsCpu aId
   let dB_cpu ← Utils.cpuGrad (s := s) gradsCpu bId
 
@@ -259,39 +296,39 @@ private def checkCustomComputations : IO Unit := do
     Runtime.Autograd.LibTorch.Tape.leaf (t := t0c) (Utils.tensorToAnyBuffer a) (name := some "a")
   let (t2c, bIdc) :=
     Runtime.Autograd.LibTorch.Tape.leaf (t := t1c) (Utils.tensorToAnyBuffer b) (name := some "b")
-  let (t3c, u1c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.add (t := t2c) (s := s)
+  let (t3c, u1c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.add (t := t2c) (s := s)
     aIdc bIdc)
-  let (t4c, u2c) ← Utils.okOrThrow
+  let (t4c, u2c) ← IO.ofExcept
     (Runtime.Autograd.LibTorch.Tape.scale (t := t3c) (s := s) aIdc scaleC)
-  let (t5c, u3c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.sub (t := t4c) (s := s) u1c u2c)
-  let (t6c, u4c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.mul (t := t5c) (s := s) u3c bIdc)
-  let (t7c, u5c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.max (t := t6c) (s := s) u4c aIdc)
-  let (t8c, u6c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.min (t := t7c) (s := s) u5c bIdc)
-  let (t9c, u7c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.relu (t := t8c) (s := s) u6c)
-  let (t10c, u8c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.sigmoid (t := t9c) (s := s) u7c)
-  let (t11c, u9c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.tanh (t := t10c) (s := s) u8c)
-  let (t12c, u10c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.softplus (t := t11c)
+  let (t5c, u3c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.sub (t := t4c) (s := s) u1c u2c)
+  let (t6c, u4c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.mul (t := t5c) (s := s) u3c bIdc)
+  let (t7c, u5c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.max (t := t6c) (s := s) u4c aIdc)
+  let (t8c, u6c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.min (t := t7c) (s := s) u5c bIdc)
+  let (t9c, u7c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.relu (t := t8c) (s := s) u6c)
+  let (t10c, u8c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.sigmoid (t := t9c) (s := s) u7c)
+  let (t11c, u9c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.tanh (t := t10c) (s := s) u8c)
+  let (t12c, u10c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.softplus (t := t11c)
     (s := s) u9c)
-  let (t13c, u11c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.exp (t := t12c) (s := s) u10c)
-  let (t14c, u12c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.abs (t := t13c) (s := s) u11c)
-  let (t15c, u13c) ← Utils.okOrThrow
+  let (t13c, u11c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.exp (t := t12c) (s := s) u10c)
+  let (t14c, u12c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.abs (t := t13c) (s := s) u11c)
+  let (t15c, u13c) ← IO.ofExcept
     (Runtime.Autograd.LibTorch.Tape.clamp (t := t14c) (s := s) u12c clampLo clampHi)
-  let (t16c, u14c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.sqrt (t := t15c) (s := s) u13c)
-  let (t17c, u15c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.inv (t := t16c) (s := s) u14c)
-  let (t18c, u16c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.log (t := t17c) (s := s) u14c)
-  let (t19c, u17c) ← Utils.okOrThrow
+  let (t16c, u14c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.sqrt (t := t15c) (s := s) u13c)
+  let (t17c, u15c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.inv (t := t16c) (s := s) u14c)
+  let (t18c, u16c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.log (t := t17c) (s := s) u14c)
+  let (t19c, u17c) ← IO.ofExcept
     (Runtime.Autograd.LibTorch.Tape.safeLog (t := t18c) (s := s) u14c eps)
-  let (t20c, u18c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.add (t := t19c) (s :=
+  let (t20c, u18c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.add (t := t19c) (s :=
     s) u15c u16c)
-  let (t21c, u19c) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.add (t := t20c) (s :=
+  let (t21c, u19c) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.add (t := t20c) (s :=
     s) u18c u17c)
-  let (t22c, outIdc) ← Utils.okOrThrow (Runtime.Autograd.LibTorch.Tape.sum (t := t21c) (s
+  let (t22c, outIdc) ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.sum (t := t21c) (s
     := s) u19c)
 
   let outCuda ← Utils.cudaValue (s := Shape.scalar) t22c outIdc
   let seedCuda : Runtime.Autograd.LibTorch.AnyBuffer :=
     { s := Shape.scalar, buf := Runtime.Autograd.LibTorch.Buffer.full 1 1.0 }
-  let gradsCuda ← Utils.okOrThrow
+  let gradsCuda ← IO.ofExcept
     (Runtime.Autograd.LibTorch.Tape.backwardDenseAll (t := t22c) outIdc seedCuda)
   let dA_cuda ← Utils.cudaGrad (s := s) gradsCuda aIdc
   let dB_cuda ← Utils.cudaGrad (s := s) gradsCuda bIdc
@@ -299,20 +336,6 @@ private def checkCustomComputations : IO Unit := do
   Utils.assertTensorApprox (s := Shape.scalar) "elementwise forward" outCuda outCpu (tol := 2e-3)
   Utils.assertTensorApprox (s := s) "elementwise backward dA" dA_cuda dA_cpu (tol := 2e-3)
   Utils.assertTensorApprox (s := s) "elementwise backward dB" dB_cuda dB_cpu (tol := 2e-3)
-
-  -- The former exp(2x) quotient produced infinity divided by infinity at +100.
-  let tailShape : Shape := [2]
-  let tails : Tensor Float tailShape :=
-    (Tensor.from #[100.0, -100.0]).reshape [2] (by dsimp; decide)
-  let tailTape0 : Runtime.Autograd.LibTorch.Tape := Runtime.Autograd.LibTorch.Tape.empty
-  let (tailTape1, tailsId) := Runtime.Autograd.LibTorch.Tape.leaf
-    (t := tailTape0) (Utils.tensorToAnyBuffer tails) (name := some "tanh tails")
-  let (tailTape2, tanhId) ← Utils.okOrThrow <|
-    Runtime.Autograd.LibTorch.Tape.tanh (t := tailTape1) (s := tailShape) tailsId
-  let gotTails ← Utils.cudaValue (s := tailShape) tailTape2 tanhId
-  let expectedTails : Tensor Float tailShape :=
-    (Tensor.from #[1.0, -1.0]).reshape [2] (by dsimp; decide)
-  Utils.assertTensorApprox (s := tailShape) "tanh finite tails" gotTails expectedTails
 
   -- GELU is one semantic tape node and one pointwise kernel in each direction. Check both against
   -- the spec-backed CPU tape over the nonlinear center and saturated tails.
@@ -322,12 +345,12 @@ private def checkCustomComputations : IO Unit := do
   let geluCpu0 : Tape Float := Tape.empty
   let (geluCpu1, geluCpuInputId) :=
     Tape.leaf (t := geluCpu0) geluInput (name := some "gelu input")
-  let (geluCpu2, geluCpuOutputId) ← Utils.okOrThrow <|
+  let (geluCpu2, geluCpuOutputId) ← IO.ofExcept <|
     Tape.gelu (α := Float) (t := geluCpu1) (s := geluShape) geluCpuInputId
   let geluCpuOutput ← Utils.cpuValue (s := geluShape) geluCpu2 geluCpuOutputId
   let geluSeedCpu : Spec.SomeTensor Float :=
     Spec.SomeTensor.ofTensor (Tensor.full (α := Float) geluShape 1.0)
-  let geluCpuGrads ← Utils.okOrThrow <|
+  let geluCpuGrads ← IO.ofExcept <|
     Tape.backwardDenseAll (α := Float) (t := geluCpu2) geluCpuOutputId geluSeedCpu
   let geluCpuGrad ← Utils.cpuGrad (s := geluShape) geluCpuGrads geluCpuInputId
 
@@ -335,12 +358,12 @@ private def checkCustomComputations : IO Unit := do
   let (geluCuda1, geluCudaInputId) :=
     Runtime.Autograd.LibTorch.Tape.leaf
       (t := geluCuda0) (Utils.tensorToAnyBuffer geluInput) (name := some "gelu input")
-  let (geluCuda2, geluCudaOutputId) ← Utils.okOrThrow <|
+  let (geluCuda2, geluCudaOutputId) ← IO.ofExcept <|
     Runtime.Autograd.LibTorch.Tape.gelu (t := geluCuda1) (s := geluShape) geluCudaInputId
   let geluCudaOutput ← Utils.cudaValue (s := geluShape) geluCuda2 geluCudaOutputId
   let geluSeedCuda : Runtime.Autograd.LibTorch.AnyBuffer :=
     { s := geluShape, buf := Runtime.Autograd.LibTorch.Buffer.full 7 1.0 }
-  let geluCudaGrads ← Utils.okOrThrow <|
+  let geluCudaGrads ← IO.ofExcept <|
     Runtime.Autograd.LibTorch.Tape.backwardDenseAll
       (t := geluCuda2) geluCudaOutputId geluSeedCuda
   let geluCudaGrad ← Utils.cudaGrad (s := geluShape) geluCudaGrads geluCudaInputId

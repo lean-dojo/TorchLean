@@ -22,7 +22,7 @@ $$
 The full S4/Mamba family uses structured matrices and input-dependent ("selective") parameters.
 This file starts with the diagonal/channelwise version because it is:
 
-- the primitive implemented by a compact CUDA selective-scan kernel,
+- the recurrence described by `DiagonalTransition` and `diagonalSelectiveScan`,
 - enough to express the formal affine-scan algebra,
 - and a useful educational baseline for examples.
 

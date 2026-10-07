@@ -47,9 +47,8 @@ Instead, this file establishes the first correctness link in that pipeline:
 The bridge lemma is local: it shows that `toReal` of the executable IEEE run agrees with the
 `FP32`-style “round-after-each-primitive” semantics, under an explicit finiteness assumption
 (`FiniteEval`) ruling out NaN/Inf and division-by-zero.
-It applies specifically to `RidgeIEEEBridge.ridgeFit1DExecExpr`. The separately defined
-fold-based `ridgeFit1DExec` has the same intended arithmetic order, but this file does not prove
-an equality between those two implementations.
+It applies to the direct fold-based `ridgeFit1DExec`. `RidgeIEEEBridge.eval_ridgeExpr` proves that
+evaluating the expression gives exactly this fit, preserving the order of every binary32 operation.
 
 ## Why this file exists
 

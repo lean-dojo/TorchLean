@@ -62,7 +62,7 @@ open Lean Json
 /-!
 The helpers below are the JSON-facing boundary for the CROWN certificate checkers. They parse the
 artifact, require exact binary32 agreement for affine replay data, and check parent and shape
-requirements before invoking the semantic checker.
+requirements. Acceptance proves local replay consistency, not a real-input enclosure on its own.
 -/
 
 /-- Read a CROWN node certificate from JSON on disk. -/
@@ -71,7 +71,7 @@ def readCROWNNodeCertificate (g : Graph) (path : String) : IO CROWNNodeCoreCerti
   parseCROWNNodeCoreCertificate g topObj
 
 /--
-Check the local CROWN enclosure condition for one node against a certificate entry.
+Compare one certificate entry with the locally replayed CROWN bound.
 
 `step` recomputes the candidate affine bound from the bounds replayed so far.
 `checkCROWNNodeCertificate` passes `replayStep`, the function whose acceptance theorem is proved

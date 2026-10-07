@@ -15,8 +15,9 @@ axis concurrently. This module proves that task execution followed by
 source-order assembly produces the same row-major array as sequential
 traversal.
 
-Parallelism never enters a scalar contraction. Every output value therefore
-uses the original reduction order, including for floating-point scalars.
+Parallelism splits output positions, not scalar contractions. Each position
+keeps the contraction order chosen by its scalar compiler; task scheduling
+does not introduce a parallel floating-point reduction.
 -/
 
 @[expose] public section

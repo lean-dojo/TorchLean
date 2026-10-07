@@ -67,7 +67,7 @@ theorem enclosesBox_map_minmax {B1 : FlatBox ℝ} {v1 : Val} (f : ℝ → ℝ) (
     EnclosesBox
       (toFlatBox (α := ℝ) B1.dim
         (NN.MLTheory.CROWN.Runtime.Ops.IBP.mapMinmax (α := ℝ) f (ofFlatBox (α := ℝ) B1)))
-      ⟨v1.n, Tensor.mapSpec (α := ℝ) f v1.v⟩ := by
+      ⟨v1.n, Tensor.map (α := ℝ) f v1.v⟩ := by
   obtain ⟨hDim, hx⟩ := h1
   obtain ⟨n1, lo, hi⟩ := B1
   obtain ⟨m, x⟩ := v1
@@ -98,7 +98,7 @@ theorem enclosesBox_ibp_sin {B1 : FlatBox ℝ} {v1 : Val} (h1 : EnclosesBox B1 v
     EnclosesBox
       (toFlatBox (α := ℝ) B1.dim
         (NN.MLTheory.CROWN.Runtime.Ops.IBP.sin (α := ℝ) (ofFlatBox (α := ℝ) B1)))
-      ⟨v1.n, Tensor.mapSpec (α := ℝ) (s := .dim v1.n .scalar) (fun z => Real.sin z) v1.v⟩ := by
+      ⟨v1.n, Tensor.map (α := ℝ) (shape := .dim v1.n .scalar) (fun z => Real.sin z) v1.v⟩ := by
   obtain ⟨hDim, hx⟩ := h1
   obtain ⟨n1, lo, hi⟩ := B1
   obtain ⟨m, x⟩ := v1
@@ -113,7 +113,7 @@ theorem enclosesBox_ibp_cos {B1 : FlatBox ℝ} {v1 : Val} (h1 : EnclosesBox B1 v
     EnclosesBox
       (toFlatBox (α := ℝ) B1.dim
         (NN.MLTheory.CROWN.Runtime.Ops.IBP.cos (α := ℝ) (ofFlatBox (α := ℝ) B1)))
-      ⟨v1.n, Tensor.mapSpec (α := ℝ) (s := .dim v1.n .scalar) (fun z => Real.cos z) v1.v⟩ := by
+      ⟨v1.n, Tensor.map (α := ℝ) (shape := .dim v1.n .scalar) (fun z => Real.cos z) v1.v⟩ := by
   obtain ⟨hDim, hx⟩ := h1
   obtain ⟨n1, lo, hi⟩ := B1
   obtain ⟨m, x⟩ := v1

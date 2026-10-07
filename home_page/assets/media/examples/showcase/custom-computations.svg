@@ -4,7 +4,8 @@
   <rect width="640" height="480" fill="#fff"/>
   <rect x="32" y="64" width="576" height="352" rx="18" fill="#f8fafc" stroke="#dce3eb"/>
   <g font-family="ui-monospace, monospace" font-size="22" fill="#183448">
-    <text x="64" y="124">def square := fun x =&gt; x * x</text>
+    <text x="64" y="112">def square :=</text>
+    <text x="86" y="148">fun (x : Float32) =&gt; x * x</text>
     <text x="64" y="186">square.run input (device := cpu)</text>
     <text x="64" y="222">square.run input (device := gpu)</text>
   </g>

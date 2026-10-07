@@ -34,7 +34,7 @@ namespace Numerics
 namespace Float32
 
 open Spec TorchLean
-open TorchLean TorchLean.Tensor
+open TorchLean.Tensor
 open Spec.RL
 
 
@@ -129,11 +129,11 @@ theorem tdResidual_eq_ok
         | true =>
             rfl
         | false =>
-            simp [checkedSub, requireFinite, out0, hf] at hsub
+            simp [checkedSub, requireFinite, Except.map, out0, hf] at hsub
 
       have hout : out = out0 := by
         have : checkedSub "tdResidual/sub(target,value)" target value = .ok out0 := by
-          simp [checkedSub, requireFinite, out0, hout0]
+          simp [checkedSub, requireFinite, Except.map, out0, hout0]
         exact Except.ok.inj (hsub.symm.trans this)
 
       -- Assemble the final statement.
@@ -144,7 +144,7 @@ theorem tdResidual_eq_ok
         -- `out0` is definitionally `target - value`.
         -- Rewrite `target` to the spec discounted backup and unfold `tdResidual`.
         rw [hout]
-        simp [out0, htargetEq, Spec.RL.tdResidual, Spec.RL.tdTarget,
+        simp [out0, htargetEq, Spec.RL.tdResidual,
           HSub.hSub, Sub.sub]
 
 /--

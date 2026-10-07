@@ -83,10 +83,7 @@ def hingeLossPerExample (score y : α) : α :=
 def hingeLossMean {n : Nat} (scores : Tensor α [n]) (y : Tensor α [n]) :
   α :=
   let losses : Tensor α [n] :=
-    Tensor.dim (fun i =>
-      let s := item (get scores i)
-      let yi := item (get y i)
-      Tensor.scalar (hingeLossPerExample s yi))
+    map2Spec hingeLossPerExample scores y
   meanSpec losses
 
 /-- L2-regularized SVM objective (primal, soft-margin style).
@@ -306,10 +303,6 @@ def SVM.predictOne {n p : ℕ} (model : SVM p n α) (x : Tensor α [p]) : α :=
   Tensor.getScalar (model.predict (Tensor.dim fun (_ : Fin 1) => x)) ⟨0, by decide⟩
 
 namespace Kernel
-/-- Linear kernel: `k(x, y) = x·y`. -/
-def linear {p : ℕ} (x y : Tensor α [p]) : α :=
-  Tensor.dotSpec x y
-
 /-- Polynomial kernel: `k(x, y) = (x·y + c)^degree` (naive power for generic `α`). -/
 def polynomial {p : ℕ} (degree : Nat) (c : α) (x y : Tensor α [p]) : α :=
   let dot := Tensor.dotSpec x y
@@ -346,7 +339,7 @@ def rbf {p : ℕ} (gamma : α) (x y : Tensor α [p]) {h : p ≠ 0} : α :=
       -- Applying gamma before the square avoids an overflowing unweighted distance.
       -- This also keeps gamma zero well-defined for finite differences: each weighted
       -- term is zero, rather than multiplying zero by an already infinite distance.
-      let weightedSquares := mapSpec (fun value => (gamma * value) * value) diff
+      let weightedSquares := Tensor.map (fun value => (gamma * value) * value) diff
       exp (-item (reduceSum 0 weightedSquares leadingAxis))
     else
       -- Nonfinite differences or gamma retain the original expression and its NaN or

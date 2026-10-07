@@ -219,7 +219,7 @@ def generate {α : Type} [Storage α] {promptLength : Nat}
     throw (IO.userError "generation requires a nonempty model batch")
   else
     let firstBatchRow : Fin batchSize := ⟨0, Nat.pos_of_ne_zero hBatchSize⟩
-    let ids ← text.autoregressiveTokenIds contextLength paddingTokenId.val
+    let ids ← text.generate contextLength paddingTokenId.val
       (promptTokens.map Fin.val) options
       (fun padded position => do
         let bounded ← IO.ofExcept (Tensor.checkIndices vocabularySize padded)

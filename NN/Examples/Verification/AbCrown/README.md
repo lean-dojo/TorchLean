@@ -40,3 +40,21 @@ The converter accepts aliases such as `x_L`, `x_U`, `lower_bounds`, and `thresho
 alpha-beta-CROWN does not directly emit TorchLean's schema. Real runs must export their terminal
 leaf data before conversion. The checker implementation is
 `NN/Verification/Cert/AbCrownLeafCert.lean`.
+
+To export terminal leaves from an instrumented verifier, call the adapter after its search:
+
+```python
+from scripts.verification.abcrown.export_leaf_artifact import write_abcrown_leaf_artifact
+
+write_abcrown_leaf_artifact(
+    root_lo=original_property_lo,
+    root_hi=original_property_hi,
+    leaves=terminal_leaves,
+    out_path="leaf_artifact.json",
+)
+```
+
+Use the original property box for a robustness or safety claim. When no root is supplied,
+the converter infers an envelope from the leaves; that checks a different region.
+If `out_path` is omitted, set `ABCROWN_ARTIFACT_OUT`. This is a TorchLean adapter convention;
+setting it alone does not make an external alpha-beta-CROWN run export anything.

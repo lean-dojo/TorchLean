@@ -40,7 +40,7 @@ private theorem avgPoolValue_eq_flat_mean {d : Nat} {spatial : Tensor Nat [d]}
         (Shape.ofList kernel).size := by
   unfold avgPoolValue
   rw [foldlIndices_eq_flat_sum (Shape.ofList kernel)]
-  simp only [kernelProd, Shape.size_eq_prod, Shape.toArray,
+  simp only [Shape.size_eq_prod, Shape.toArray,
     Shape.toList, Shape.ofList]
 
 private theorem avgPoolSpatial_getScalar {d : Nat}

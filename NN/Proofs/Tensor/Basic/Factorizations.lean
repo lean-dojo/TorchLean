@@ -11,35 +11,17 @@ public import NN.Spec.Core.Context.Real
 public import NN.Proofs.Tensor.Basic.Core -- shake: keep
 
 /-!
-# Correctness of the exact matrix factorizations (Cholesky and QR)
+# Exact Cholesky and QR Specifications
 
-This file sets up the **formal correctness layer** for the two exact, finite spec-layer
-factorizations in `NN.Spec.Core.Tensor.Factorizations` (`choleskySpec`, `qrSpec`): the
-factorization predicates over real matrices, and the first structural theorem about the executable
-Cholesky factor.
+`IsCholesky` and `IsQR` state the factorization properties using mathlib matrices. The fold-indexing
+lemmas track columns appended by the specification recurrences, and
+`choleskySpec_lower_triangular` shows that the Cholesky recurrence sets above-diagonal entries to
+zero without a pivot assumption.
 
-## Architecture (refinement)
-
-* **Specifications** (`IsCholesky`, `IsQR`) are `Prop`s on Mathlib `Matrix (Fin n) (Fin n) ℝ`.
-  Mathlib's `Matrix m n α` is *definitionally* `m → n → α`, so the function representation
-  `Spec.toMatFn` produced by the executable specs bridges for free.
-* **Fold-indexing lemmas** (`length_foldl_snoc`, `getD_foldl_snoc_lt`, `getD_foldl_snoc_read`,
-  `getD_foldl_finRange`) read off the column produced at a given position of the left fold that both
-  `choleskyColsFn` and `gramSchmidtFn` use to build their output, bridging the executable
-  `List.foldl` form to per-entry reasoning. They live here once and are reused by
-  `FactorizationsReconstruction`.
-* **Structural theorem.** The executable Cholesky factor is lower-triangular
-  (`choleskyFn_lower_triangular`, lifted to the tensor level as `choleskySpec_lower_triangular`),
-  proved directly from the column fold: the above-diagonal entry is forced to `0` by construction.
-
-## Scope
-
-This file proves only the predicates and the lower-triangularity fact. The exact algebraic
-reconstructions, namely `A = L · Lᵀ` for Cholesky (under positive pivots) and `A = Q · R` with
-`Qᵀ Q = 1` for Gram–Schmidt (under full column rank), are proved in the companion modules
-`NN.Proofs.Tensor.Basic.FactorizationsReconstruction` and
-`NN.Proofs.Tensor.Basic.FactorizationsOrthonormal`. Everything here is an exact identity over `ℝ`;
-the only hypotheses are the genuine success conditions of the algorithms.
+`FactorizationsReconstruction` proves Cholesky reconstruction under symmetry and positive pivots,
+and QR reconstruction under positive pivots. `FactorizationsOrthonormal` supplies QR orthonormality.
+These are exact real-arithmetic results about the specification bodies. They do not establish
+floating-point stability or the equivalence of Cholesky's `implemented_by` runtime override.
 -/
 
 @[expose] public section
@@ -70,8 +52,7 @@ def IsQR {m k : Nat} (A Q : Matrix (Fin m) (Fin k) ℝ) (R : Matrix (Fin k) (Fin
 
 `choleskyColsFn` and `gramSchmidtFn` build their output with a left fold that appends one column per
 index. The lemmas here read off the column produced at a given position, bridging the executable
-`List.foldl` form to per-entry reasoning. They are generic over the appended-value function `g` and
-are the single home for these snoc-fold read lemmas; `FactorizationsReconstruction` reuses them. -/
+`List.foldl` form to per-entry reasoning. They are generic over the appended-value function `g`. -/
 
 section FoldSnoc
 

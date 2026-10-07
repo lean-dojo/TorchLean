@@ -55,60 +55,22 @@ theorem dot_scale_right {s : Shape}
     dot left (scaleSpec right scalar) = dot left right * scalar := by
   induction s with
   | scalar =>
-      simp [dot, scaleSpec, Tensor.toScalar_mapSpec, mul_assoc]
+      simp [dot, scaleSpec, Tensor.item_map, mul_assoc]
   | dim length inner inductionHypothesis =>
-      have hTerm : ∀ index : Fin length,
-          dot (left.unstack index)
-              ((scaleSpec right scalar).unstack index) =
-            dot (left.unstack index) (right.unstack index) * scalar := by
-        intro index
-        have hUnstack :
-            (scaleSpec right scalar).unstack index =
-              scaleSpec (right.unstack index) scalar := by
-          apply TorchLean.Tensor.Internal.Rep.ext
-          intro coordinate
-          simp [Tensor.unstack, scaleSpec, mapSpec, Tensor.map]
-        rw [hUnstack]
-        exact inductionHypothesis _ _
-      have hCongruence :
-          (List.finRange length).foldl
-              (fun accumulator index =>
-                accumulator +
-                  dot (left.unstack index)
-                    ((scaleSpec right scalar).unstack index))
-              0 =
-            (List.finRange length).foldl
-              (fun accumulator index =>
-                accumulator +
-                  dot (left.unstack index) (right.unstack index) * scalar)
-              0 := by
-        simpa using
-          (List.foldl_add_congr
-            (l := List.finRange length)
-            (f := fun index =>
-              dot (left.unstack index)
-                ((scaleSpec right scalar).unstack index))
-            (g := fun index =>
-              dot (left.unstack index) (right.unstack index) * scalar)
-            (a := (0 : α)) (h := hTerm))
-      have hScaleFold :
-          (List.finRange length).foldl
-              (fun accumulator index =>
-                accumulator +
-                  dot (left.unstack index) (right.unstack index) * scalar)
-              0 =
-            (List.finRange length).foldl
-                (fun accumulator index =>
-                  accumulator +
-                    dot (left.unstack index) (right.unstack index))
-                0 * scalar := by
-        simpa [zero_mul] using
-          (List.foldl_add_mul_right
-            (α := α) (l := List.finRange length)
-            (g := fun index =>
-              dot (left.unstack index) (right.unstack index))
-            (a := (0 : α)) (k := scalar))
-      exact hCongruence.trans hScaleFold
+      simp only [dot]
+      calc
+        _ = (List.finRange length).foldl (fun accumulator index =>
+            accumulator + dot (left.unstack index) (right.unstack index) * scalar) 0 := by
+          apply List.foldl_add_congr
+          intro index
+          change dot (left.unstack index)
+            (Internal.Rep.unstack (Internal.Rep.map (· * scalar) right) index) = _
+          rw [← Internal.Rep.map_unstack]
+          exact inductionHypothesis _ _
+        _ = _ := by
+          simpa only [zero_mul] using
+            List.foldl_add_mul_right (List.finRange length)
+              (fun index => dot (left.unstack index) (right.unstack index)) 0 scalar
 
 /-- Dot is symmetric over a commutative semiring. -/
 theorem dot_comm {s : Shape} (left right : Tensor α s) :
@@ -139,53 +101,23 @@ theorem dot_add_left {s : Shape}
       simp [dot, addSpec, map2Spec, Tensor.item,
         TorchLean.Tensor.Internal.Rep.zipWith_apply, add_mul]
   | dim length inner inductionHypothesis =>
-      have hTerm : ∀ index : Fin length,
-          dot ((addSpec left middle).unstack index)
-              (right.unstack index) =
-            dot (left.unstack index) (right.unstack index) +
-              dot (middle.unstack index) (right.unstack index) := by
-        intro index
-        have hUnstack :
-            (addSpec left middle).unstack index =
-              addSpec (left.unstack index) (middle.unstack index) := by
-          apply TorchLean.Tensor.Internal.Rep.ext
-          intro coordinate
-          simp [Tensor.unstack, addSpec, map2Spec]
-        rw [hUnstack]
-        exact inductionHypothesis _ _ _
-      have hCongruence :
-          (List.finRange length).foldl
-              (fun accumulator index =>
-                accumulator +
-                  dot ((addSpec left middle).unstack index)
-                    (right.unstack index))
-              0 =
-            (List.finRange length).foldl
-              (fun accumulator index =>
-                accumulator +
-                  (dot (left.unstack index) (right.unstack index) +
-                    dot (middle.unstack index) (right.unstack index)))
-              0 := by
-        simpa using
-          (List.foldl_add_congr
-            (l := List.finRange length)
-            (f := fun index =>
-              dot ((addSpec left middle).unstack index)
-                (right.unstack index))
-            (g := fun index =>
-              dot (left.unstack index) (right.unstack index) +
-                dot (middle.unstack index) (right.unstack index))
-            (a := (0 : α)) (h := hTerm))
-      have hSplit :=
-        List.foldl_add_distrib2
-          (l := List.finRange length)
-          (g1 := fun index =>
-            dot (left.unstack index) (right.unstack index))
-          (g2 := fun index =>
-            dot (middle.unstack index) (right.unstack index))
-          (a1 := (0 : α)) (a2 := (0 : α))
-      exact hCongruence.trans (by
-        simpa only [dot, zero_add, add_assoc, add_left_comm, add_comm] using hSplit)
+      simp only [dot]
+      calc
+        _ = (List.finRange length).foldl (fun accumulator index =>
+            accumulator + (dot (left.unstack index) (right.unstack index) +
+              dot (middle.unstack index) (right.unstack index))) 0 := by
+          apply List.foldl_add_congr
+          intro index
+          change dot
+            (Internal.Rep.unstack (Internal.Rep.zipWith (· + ·) left middle) index)
+            (right.unstack index) = _
+          rw [← Internal.Rep.zipWith_unstack]
+          exact inductionHypothesis _ _ _
+        _ = _ := by
+          simpa only [zero_add] using
+            List.foldl_add_distrib2 (List.finRange length)
+              (fun index => dot (left.unstack index) (right.unstack index))
+              (fun index => dot (middle.unstack index) (right.unstack index)) 0 0
 
 /-- Dot distributes over addition in its right argument. -/
 theorem dot_add_right {s : Shape}
@@ -202,46 +134,24 @@ theorem dot_add_right {s : Shape}
 theorem dot_full_zero_right {s : Shape} (tensor : Tensor α s) :
     dot tensor (Tensor.full s 0) = 0 := by
   induction s with
-  | scalar =>
-      simp only [dot]
-      have hFill : (Tensor.full .scalar (0 : α)).item = 0 := by
-        exact Tensor.full_apply .scalar 0 PUnit.unit
-      calc
-        tensor.item * (Tensor.full .scalar 0).item = tensor.item * 0 :=
-          congrArg (tensor.item * ·) hFill
-        _ = 0 := mul_zero tensor.item
+  | scalar => simp [dot, Tensor.item, Tensor.full_apply]
   | dim length inner inductionHypothesis =>
-      have hTerm : ∀ index : Fin length,
-          dot (tensor.unstack index)
-              ((Tensor.full (.dim length inner) 0).unstack index) = 0 := by
-        intro index
-        have hUnstack :
-            (Tensor.full (.dim length inner) (0 : α)).unstack index = Tensor.full inner 0 := by
-          simpa only [Spec.get] using get_full length inner (0 : α) index
-        calc
-          dot (tensor.unstack index)
-              ((Tensor.full (.dim length inner) 0).unstack index) =
-              dot (tensor.unstack index) (Tensor.full inner 0) := by
-                exact congrArg (dot (tensor.unstack index)) hUnstack
-          _ = 0 := inductionHypothesis _
-      have hCongruence :
-          (List.finRange length).foldl
-              (fun accumulator index =>
-                accumulator +
-                  dot (tensor.unstack index)
-                    ((Tensor.full (.dim length inner) 0).unstack index))
-              0 =
-            (List.finRange length).foldl
-              (fun accumulator (_ : Fin length) => accumulator + 0)
-              0 := by
-        simpa using
-          (List.foldl_add_congr
-            (l := List.finRange length)
-            (f := fun index =>
-              dot (tensor.unstack index)
-                ((Tensor.full (.dim length inner) 0).unstack index))
-            (g := fun _ => (0 : α)) (a := (0 : α)) (h := hTerm))
-      exact hCongruence.trans (by simp)
+      simp only [dot]
+      calc
+        dot tensor (Tensor.full (.dim length inner) 0) = (List.finRange length).foldl
+            (fun accumulator (_ : Fin length) => accumulator + 0) 0 := by
+          apply List.foldl_add_congr (l := List.finRange length)
+            (f := fun index => dot (tensor.unstack index)
+              ((Tensor.full (.dim length inner) (0 : α)).unstack index))
+            (g := fun _ => (0 : α)) (a := (0 : α))
+          intro index
+          have hUnstack :
+              (Tensor.full (.dim length inner) (0 : α)).unstack index =
+                Tensor.full inner 0 := by
+            simpa only [Spec.get] using get_full length inner (0 : α) index
+          rw [hUnstack]
+          exact inductionHypothesis _
+        _ = 0 := by simp
 
 /-- Vector dot is the ordinary finite sum of matching scalar coordinates. -/
 theorem dot_vec_eq_sum {n : Nat} (a b : Tensor α [n]) :

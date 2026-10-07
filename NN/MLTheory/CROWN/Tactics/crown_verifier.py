@@ -408,7 +408,21 @@ def verify_lyapunov(net: IBPNetwork, lo: List[float], hi: List[float],
         raise ValueError(f"Unknown dynamics: {dynamics}. Available: {list(DYNAMICS.keys())}")
     f_lo, f_hi = DYNAMICS[dynamics](lo, hi)
     
-    # Compute V̇ = ∇V · f
+    return _lyapunov_certificate(
+        lo, hi, dynamics, method, (V_lo, V_hi), (grad_lo, grad_hi), (f_lo, f_hi)
+    )
+
+
+def _lyapunov_certificate(
+    lo: List[float], hi: List[float], dynamics: str, method: str,
+    value_bounds: Tuple[float, float],
+    gradient_bounds: Tuple[List[float], List[float]],
+    dynamics_bounds: Tuple[List[float], List[float]],
+) -> Dict[str, Any]:
+    """Combine reported value, gradient and dynamics bounds without changing the sum order."""
+    V_lo, V_hi = value_bounds
+    grad_lo, grad_hi = gradient_bounds
+    f_lo, f_hi = dynamics_bounds
     Vdot_lo, Vdot_hi = 0.0, 0.0
     for gl, gh, fl, fh in zip(grad_lo, grad_hi, f_lo, f_hi):
         prods = [gl * fl, gl * fh, gh * fl, gh * fh]
@@ -471,26 +485,9 @@ def _verify_with_crown(net: IBPNetwork, lo: List[float], hi: List[float],
     # Dynamics bounds
     f_lo, f_hi = DYNAMICS[dynamics](lo, hi)
     
-    # V̇ bounds
-    Vdot_lo, Vdot_hi = 0.0, 0.0
-    for gl, gh, fl, fh in zip(grad_lo, grad_hi, f_lo, f_hi):
-        prods = [gl * fl, gl * fh, gh * fl, gh * fh]
-        Vdot_lo += min(prods)
-        Vdot_hi += max(prods)
-    
-    return {
-        "method": "CROWN",
-        "dynamics": dynamics,
-        "region": {"dim": len(lo), "lo": lo, "hi": hi},
-        "V_bounds": {"lo": V_lo, "hi": V_hi},
-        "grad_bounds": {"lo": grad_lo, "hi": grad_hi},
-        "Vdot_bounds": {"lo": Vdot_lo, "hi": Vdot_hi},
-        "verification": {
-            "V_positive": V_lo > 0,
-            "Vdot_negative": Vdot_hi < 0,
-            "lyapunov_verified": V_lo > 0 and Vdot_hi < 0
-        }
-    }
+    return _lyapunov_certificate(
+        lo, hi, dynamics, "CROWN", (V_lo, V_hi), (grad_lo, grad_hi), (f_lo, f_hi)
+    )
 
 
 # ============================================================================

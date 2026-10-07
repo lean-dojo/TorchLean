@@ -19,21 +19,13 @@ emission, compilation and execution have the separate trust boundary described i
 
 namespace NN.Kernel
 
-/-- Binary32 scalar operations in the same order as ordinary Lean arithmetic. -/
-def Arithmetic.binary32 : Arithmetic Float32 where
-  binary
-    | .add, x, y => x + y
-    | .sub, x, y => x - y
-    | .mul, x, y => x * y
-    | .div, x, y => x / y
-  neg := fun x => -x
-  compare
-    | .eq, x, y => x == y
-    | .lt, x, y => x < y
-    | .le, x, y => x ≤ y
+/-- Use the scalar type's arithmetic and comparisons, preserving their evaluation order.
 
-/-- Binary64 scalar operations in the same order as ordinary Lean arithmetic. -/
-def Arithmetic.binary64 : Arithmetic Float where
+No algebraic or order laws are required. Equality uses `BEq`, retaining the scalar representation's
+comparison behavior, including floating-point NaNs.
+-/
+def Arithmetic.ofOps {α : Type} [Add α] [Sub α] [Mul α] [Div α] [Neg α]
+    [BEq α] [LT α] [LE α] [DecidableLT α] [DecidableLE α] : Arithmetic α where
   binary
     | .add, x, y => x + y
     | .sub, x, y => x - y

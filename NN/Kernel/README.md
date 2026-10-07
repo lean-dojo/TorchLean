@@ -1,7 +1,8 @@
 # Custom tensor computations
 
-Write the calculation once, then choose a device when you run it. Ordinary tensor operations
-already use LibTorch; this API is for custom scalar calculations applied to tensor entries.
+Write the calculation once, then choose a device when you run it. Supported GPU tensor operations
+already use LibTorch; CPU execution uses Lean. This API applies custom scalar calculations to
+tensor entries.
 
 ```lean
 import NN.Kernel
@@ -56,7 +57,7 @@ def squared : Program Float32 := Program.of (fun (read : Reader Float32) (i : UI
   pure (x * x))
 
 def input : Tensor Float32 [3] := Tensor.ofFn fun i => Float32.ofNat (i.val + 1)
-def inputs : TensorPack Float32 [[3]] := TensorPack.singleton input
+def inputs : Arguments Float32 [[3]] := Arguments.empty.push input
 def onCpu : IO (Tensor Float32 [3]) := squared.run inputs [3] (device := cpu)
 def onGpu : IO (Tensor Float32 [3]) := squared.run inputs [3] (device := gpu)
 ```
@@ -68,7 +69,7 @@ order is preserved, without assuming floating-point addition is associative. Uns
 retains Lean's wraparound and division-by-zero conventions.
 
 `Program.eval` is the pure checked evaluator. `Program.eval_eq_reference` proves agreement with
-the source calculation for every input pack and output shape, including failures.
+the source calculation for every set of tensor arguments and output shape, including failures.
 Host arrays and resident buffers stay inside the native bridge; callers use `.run` with tensors.
 The resident graph ABI currently stores binary32.
 

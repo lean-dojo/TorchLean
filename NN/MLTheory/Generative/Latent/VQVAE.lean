@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Models.VqVae
-public import NN.MLTheory.Generative.Latent.Objective
 public import NN.Spec.Core.Context.Real
 
 /-!
@@ -35,7 +34,6 @@ namespace NN.MLTheory.Generative.Latent.VQVAE
 
 open _root_.Spec _root_.TorchLean
 open _root_.Generative.VQVAE
-open NN.MLTheory.Generative.Latent.Objective
 open BigOperators
 
 variable {α : Type} [TorchLean.Storage α] [Context α]
@@ -48,25 +46,7 @@ omit [Context α] in
     forward model x idx = model.decoder.forward (model.codebook.embedding idx) := by
   rfl
 
-/-! ## Connection to the shared latent-objective algebra -/
-
-/-- Package VQ-VAE reconstruction, codebook, and commitment terms as a weighted three-term
-objective. -/
-noncomputable def vqvaeObjectiveTerms
-    [DecidableRel ((· > ·) : ℝ → ℝ → Prop)]
-    (model : Model ℝ obs latent numCodes) (x : Tensor ℝ obs) (idx : Fin numCodes) :
-    WeightedThreeTerm :=
-  { base := reconstructionLoss model x idx
-    middle := codebookLoss model x idx
-    regularizer := commitmentLoss model x idx }
-
-/-- VQ-VAE loss is exactly the shared
-$\mathrm{base}+\mathrm{middle}+\beta\,\mathrm{regularizer}$ objective. -/
-theorem vqvae_loss_eq_weightedThreeTerm
-    [DecidableRel ((· > ·) : ℝ → ℝ → Prop)]
-    (model : Model ℝ obs latent numCodes) (beta : ℝ) (x : Tensor ℝ obs) (idx : Fin numCodes) :
-    loss model beta x idx = weightedThreeTerm beta (vqvaeObjectiveTerms model x idx) := by
-  rfl
+/-! ## Loss identities -/
 
 /-- At commitment weight $\beta=0$, VQ-VAE keeps reconstruction plus codebook loss. -/
 @[simp] theorem vqvae_loss_zero_beta
@@ -98,8 +78,8 @@ theorem vqvae_loss_mono_beta_of_commitment_nonneg
     {beta₁ beta₂ : ℝ} (hbeta : beta₁ ≤ beta₂)
     (hcommit : 0 ≤ commitmentLoss model x idx) :
     loss model beta₁ x idx ≤ loss model beta₂ x idx := by
-  rw [vqvae_loss_eq_weightedThreeTerm, vqvae_loss_eq_weightedThreeTerm]
-  exact weightedThreeTerm_mono_weight (vqvaeObjectiveTerms model x idx) hbeta hcommit
+  unfold loss
+  exact add_le_add le_rfl (mul_le_mul_of_nonneg_right hbeta hcommit)
 
 /-! ## Nearest-code optimality -/
 

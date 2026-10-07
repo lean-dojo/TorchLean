@@ -19,8 +19,9 @@ two complementary facts:
 - recurrent S4/Mamba runners are prefix-causal, so appending future tokens cannot change outputs
   already emitted for a prefix.
 
-The CUDA and runtime implementations are free to use efficient scan schedules, but their semantic
-target is the spec-level recurrence captured here.
+The associative-summary theorem assumes semiring laws; it does not establish identical rounded
+results for different floating-point scan schedules. The causality results concern the sequential
+spec runners. Native implementations need a separate refinement argument.
 
 References:
 - Gu, Goel, and Ré, "Efficiently Modeling Long Sequences with Structured State Spaces", ICLR 2022.

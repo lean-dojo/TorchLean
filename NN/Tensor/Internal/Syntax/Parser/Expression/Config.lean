@@ -6,7 +6,6 @@ Authors: TorchLean contributors
 module
 public import NN.Tensor.Internal.Syntax.Ast -- shake: keep
 
-
 /-!
 # Expression parser configuration
 
@@ -20,9 +19,9 @@ namespace TorchLean.Tensor.Internal.Syntax
 
 /-- Duplicate and underscore rules for one expression. -/
 structure ExpressionConfig where
-  /-- Whether `_` is accepted as an ignored axis name. -/
+  /-- Whether the name `_` is accepted, including repeated occurrences. -/
   allowUnderscore : Bool := false
-  /-- Whether a named axis may occur more than once in the expression. -/
+  /-- Whether named axes may repeat; an ellipsis must still occur at most once. -/
   allowDuplicates : Bool := false
 
 namespace ExpressionConfig
@@ -31,7 +30,7 @@ namespace ExpressionConfig
 def transformation : ExpressionConfig :=
   {}
 
-/-- Permit ignored `_` axes in `parse_shape` and einsum output expressions. -/
+/-- Accept `_` in `parse_shape` and einsum output expressions; only `parse_shape` ignores it. -/
 def parseShape : ExpressionConfig :=
   { allowUnderscore := true }
 

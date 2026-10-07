@@ -29,12 +29,12 @@ FloatLib supplies the descriptor-generic rounding theorems:
   under its normal-range hypothesis.
 - `Model.roundAt_sub_eq_of_sterbenz` in
   `FloatLib/Floats/Formats/BinaryInterchange/Analysis/Sterbenz.lean` gives exact subtraction
-  for nearby representable values.
+  for positive representable values within a factor of two.
 
 `NN/Proofs/RuntimeApprox/FP32.lean` expresses the per-operation bounds through the generic
 tolerance relation `≈[t]`.
 
 ## Relationship To Runtime
 
-Bridges and provider contracts outside this directory connect `FP32` results with Lean `Float`,
-C/CUDA `float`, and external kernels.
+Applying these bounds to Lean `Float`, C/CUDA `float`, or external kernels requires a separate
+agreement theorem or provider contract. See [trust boundaries](../../../docs/TRUST_BOUNDARIES.md).

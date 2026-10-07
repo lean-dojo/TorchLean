@@ -108,11 +108,8 @@ def runMain {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α]
           (Tensor.from (#[0.0, 0.0, 0.0, 0.0] : Array Float)).reshape
             [1, 2, 2] (by dsimp; decide))
 
-  let lowered ←
-    match Verification.lowerProgramToIR (α := α)
-          (modelLoss (α := α)) params with
-    | .ok c => pure c
-    | .error e => throw <| IO.userError e
+  let lowered ← IO.ofExcept <|
+    Verification.lowerProgramToIR (α := α) (modelLoss (α := α)) params
 
   IO.println s!"lowered IR nodes: {lowered.graph.nodes.size}"
 
@@ -124,7 +121,7 @@ def runMain {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α]
   let ps : ParamStore α := lowered.seedInputBox xB
 
   let boxes := lowered.runIBP ps
-  let outB ← lowered.outputBoxOrThrow boxes
+  let outB ← IO.ofExcept (lowered.outputBox? boxes)
   if outB.dim != 1 then
     throw <| IO.userError s!"[IBP] unexpected output dim {outB.dim} (expected 1)"
   IO.println s!"[IBP] loss lo: {pretty outB.lo}"
@@ -136,7 +133,7 @@ def runMain {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α]
     return ()
 
   IO.println "[CROWN] computing output bounds for the attention/LayerNorm loss"
-  let outC ← lowered.outputBoxCROWNOrThrow ps xB
+  let outC ← IO.ofExcept (lowered.outputBoxCROWN? ps xB)
   if outC.dim != 1 then
     throw <| IO.userError s!"[CROWN] unexpected output dim {outC.dim} (expected 1)"
   IO.println s!"[CROWN] loss lo: {pretty outC.lo}"
@@ -154,18 +151,6 @@ def runMain {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α]
   IO.println s!"[CROWN-backward] loss lo: {pretty outObjective.lo}"
   IO.println s!"[CROWN-backward] loss hi: {pretty outObjective.hi}"
 
-/-- Runtime-selected typed runner for the default IBP-only path. -/
-def runMainDefault {α : Type} [TorchLean.Storage α]
-    [_root_.Context α] [ToString α]
-    [Runtime.FromFloat α] [BoundOps α] [NonlinearBoundOps α] : IO Unit :=
-  runMain (α := α) false
-
-/-- Runtime-selected typed runner for the optional IBP+CROWN path. -/
-def runMainWithCrown {α : Type} [TorchLean.Storage α]
-    [_root_.Context α] [ToString α]
-    [Runtime.FromFloat α] [BoundOps α] [NonlinearBoundOps α] : IO Unit :=
-  runMain (α := α) true
-
 /--
 CLI entry point for the transformer-IBP workflow.
 
@@ -177,19 +162,10 @@ The separate `torchlean-crown-ops` command exercises linear/softmax and linear/M
 Missing bounds or unexpected output dimensions fail the command.
 -/
 def main (args : List String) : IO Unit := do
-  let parsedWithCrown : Bool × List String ←
-    match CLI.takeBoolFlag args "with-crown" with
-    | .ok parsed => pure parsed
-    | .error msg => throw <| IO.userError msg
-  let withCrown : Bool := parsedWithCrown.1
-  let restArgs : List String := parsedWithCrown.2
-  if withCrown then
-    NN.Verification.Builtin.runWithBoundArithmetic
-      "TorchLean (MHA+LayerNorm+MSE) → IR → IBP + CROWN" restArgs
-      (@runMainWithCrown)
-  else
-    NN.Verification.Builtin.runWithBoundArithmetic
-      "TorchLean (MHA+LayerNorm+MSE) → IR → IBP" restArgs
-      (@runMainDefault)
+  let (withCrown, restArgs) ← IO.ofExcept (CLI.takeBoolFlag args "with-crown")
+  let title := if withCrown then "TorchLean (MHA+LayerNorm+MSE) → IR → IBP + CROWN"
+    else "TorchLean (MHA+LayerNorm+MSE) → IR → IBP"
+  NN.Verification.Builtin.runWithBoundArithmetic title restArgs
+    (fun {α} _ _ _ _ _ _ => runMain (α := α) withCrown)
 
 end NN.Verification.Builtin.TransformerIBPWorkflow

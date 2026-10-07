@@ -38,8 +38,8 @@ scripts/lake.sh env lean Primer.lean
 ```
 
 `scripts/lake.sh env` runs the command in the project's environment, including the search paths
-for its Lean
-libraries. The checkout pins its toolchain in `lean-toolchain`. Use this command from the repository
+for its Lean libraries. The checkout pins its toolchain in `lean-toolchain`.
+Use this command from the repository
 root so that `NN.API` resolves against the project and its dependencies.
 
 When every command in the file succeeds, Lean prints nothing except the output you asked for with
@@ -847,19 +847,8 @@ an error depends on the branch's implementation; the type checker does not choos
 
 # Implicit Arguments And Instances
 
-We already used an implicit argument above. In
-
-```lean (name := langImplicitAgain)
--- The caller can omit s, but both tensors must still
--- instantiate the same shape.
-example {s : Shape}
-    (_left _right : Tensor Float s) : Unit :=
-  ()
-```
-
-the shape `s` in curly braces is written once and used twice. Callers can usually omit it: Lean
-infers it from the first tensor and requires the second to match. Reusing a shape variable
-expresses equality of dimensions without asking callers to pass and check separate integers.
+In `requireSameShape` above, the shape `s` in curly braces is written once and used twice.
+Callers can usually omit it: Lean infers it from the first tensor and requires the second to match.
 
 Square brackets introduce instance arguments, resolved by search rather than by inference:
 

@@ -30,8 +30,10 @@ parameters depend only on:
 - `n` (the number of leaves), and
 - $A=\sum_i|\mathtt{leaf}_i|$ (a scale factor).
 
-This matches the standard $\gamma_k$-style summation bounds where order-dependence is absorbed by
-$A$ (sum of absolute values) and a growth factor in `n`.
+The bound uses the geometric factor $(1+u)^{n-1}-1$, not the rational $\gamma_k$ bound.
+Its rounding hypothesis quantifies over all real operands. Finiteness of the selected tree does
+not establish that hypothesis, and binary32 underflow prevents choosing the usual normal-range
+unit roundoff globally. These are conditional theorems, not executable certificate checks.
 
 For `ExecFloat.Binary 8 23`, we connect the executable `add` to the real model
 `Model.roundAt FloatFormat.binary32 (a + b)`, but only on the *finite* branch. If `Inf`/`NaN`/
@@ -154,13 +156,8 @@ def exactSumIEEE (t : SumTree (ExecFloat.Binary 8 23)) : ℝ :=
 def sumAbsIEEE (t : SumTree (ExecFloat.Binary 8 23)) : ℝ :=
   sumAbs (Model.toReal ∘ toModel) t
 
-/--
-Under `FiniteEvalSumTree`, the decoded executable sum agrees with the real-valued rounding model.
-
-Informal: as long as all intermediate `add`s stay finite, `ExecFloat.add` refines
-`Model.roundAt FloatFormat.binary32 (toReal a + toReal b)` at each node, so the whole tree refines
-`evalRealIEEE`.
--/
+/-- Under `FiniteEvalSumTree`, the decoded executable sum agrees with its real-valued rounding
+model. -/
 theorem toReal_evalIEEE_eq_evalRealIEEE_of_FiniteEvalSumTree :
     ∀ t : SumTree (ExecFloat.Binary 8 23), FiniteEvalSumTree t → (toModel (evalIEEE t)).toReal =
       evalRealIEEE t
@@ -225,41 +222,16 @@ theorem sumTreeResult_enclosure
 /-!
 ## Dot-product accumulation (sum of products)
 
-The definitions below model computations such as:
-
-- dot products `Σᵢ xᵢ * yᵢ`, and
-- the inner accumulations that show up in `matmul` / conv / attention scores.
-
-On real hardware, the *sum* part is where a lot of nondeterminism creeps in:
-threads compute partial sums and then reduce them with a tree-shaped schedule. Different valid
-schedules correspond to different parenthesizations and different orders of the same leaf terms.
-
-We model that explicitly:
-
-- leaves are pairs `(x, y)`, interpreted as the executable product `mul x y`,
-- internal nodes add those products using executable `add`.
-
-Two important notes (to avoid over-claiming):
-
-1) Our enclosure bounds the *accumulation* error (the rounded adds) relative to the real
-   sum of the **already-rounded** products `toReal (mul x y)`. If you want a bound relative to the
-   exact real dot product `Σᵢ (toReal xᵢ) * (toReal yᵢ)`, you also need a per-product error bound
-   for `mul` (provided elsewhere).
-2) Some runtimes use fused multiply-add (FMA) for dot products. `ExecFloat.Binary 8 23` has an
-   `fma`, but this particular model uses the more basic “mul then add” semantics.
--/
-
-/-!
-### Executable semantics
-
-`evalDotIEEE` is the concrete reduction semantics: it returns an `ExecFloat.Binary 8 23` result and
-therefore includes all IEEE special-value behavior and rounding.
+Leaves are operand pairs, evaluated by executable multiplication; internal nodes use executable
+addition. The enclosure bounds accumulation error relative to the exact sum of the already-rounded
+products. Bounding error against the original real dot product additionally needs multiplication
+error bounds. This schedule does not model fused multiply-add or establish which schedule a native
+matmul, convolution, or attention kernel uses.
 -/
 
 /--
 Evaluate a dot-product reduction tree using executable `mul` at leaves and `add` at internal nodes.
 
-This is the “concrete” semantics of a sum-of-products accumulation.
 -/
 def evalDotIEEE :
     SumTree ((ExecFloat.Binary 8 23) × (ExecFloat.Binary 8 23)) → ExecFloat.Binary 8 23
@@ -272,9 +244,8 @@ def evalDotIEEE :
 - each leaf product `mul x y` is finite, and
 - each internal accumulation `add` stays finite.
 
-This is the exact analogue of `FiniteEvalSumTree`, but for the sum-of-products setting. We need it
-whenever we want to interpret an executable dot-product accumulation as “a real sum + small rounded
-add errors”.
+The operand pairs themselves are not separately required to be finite; the predicate concerns
+their computed products and the accumulation results.
 -/
 def FiniteEvalDot : SumTree ((ExecFloat.Binary 8 23) × (ExecFloat.Binary 8 23)) → Prop
   | .leaf (x, y) => isFinite (ExecFloat.mul x y) = true

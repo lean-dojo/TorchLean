@@ -29,19 +29,6 @@ namespace Layers
 
 namespace Internal
 
-/-- Write one leading-axis slice through the general `scatterAdd` operation. -/
-def writeLeading {α : Type} [TorchLean.Storage α] [Context α]
-    {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
-    {rows : Nat} {tail : Shape}
-    (base : Ref (m := m) (α := α) (tail.prependDim rows))
-    (value : Ref (m := m) (α := α) tail) (index : Fin rows) :
-    m (Ref (m := m) (α := α) (tail.prependDim rows)) := do
-  let source ← Runtime.Autograd.Model.reshape (m := m) (α := α)
-    (s₁ := tail) (s₂ := tail.prependDim 1) value (by simp [Shape.size])
-  let indices : Tensor (Fin rows) [1] := Tensor.ofFn fun _ => index
-  Runtime.Autograd.Model.scatterAdd (m := m) (α := α) (s := tail.prependDim rows) 0 1
-    base source (Runtime.Autograd.Torch.dataConst (m := m) (α := α) indices)
-
 /--
 Stack `count` consecutive one-row tensors starting at `start` along the leading axis.
 
@@ -86,9 +73,8 @@ def collectRows {α : Type} [TorchLean.Storage α] [Context α]
 /--
 Unroll a recurrence over the leading axis and add the stacked step outputs to `base`.
 
-Row `t` of the result is `base[t] + value_t`, where `value_t` is the output of step `t`. This is
-the tensor that writing each step through `writeLeading` produces, built with one stack and one
-addition instead of one full-output scatter per step.
+Row `t` of the result is `base[t] + value_t`, where `value_t` is the output of step `t`. Outputs
+are assembled with one stack and one addition instead of one full-output scatter per step.
 -/
 def unrollLeading {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]

@@ -224,8 +224,10 @@ dispatcher and autograd machinery
 ({Informal.citep pytorch2019 baydin2018}[]).
 
 TorchLean's eager runtime records its own tape, including when its CUDA backend calls LibTorch.
-The native bridge disables LibTorch autograd recording. ATen computes values and local gradients;
-TorchLean decides which local rule to invoke and accumulates its results while traversing the tape.
+The native bridge disables LibTorch autograd recording. TorchLean defines the local backward
+rules and accumulates their results while traversing its tape. On CUDA, those rules either call
+a backend VJP or combine ATen operations. For example, the matrix-product rule computes its two
+input gradients with transposed matrix products; it does not ask LibTorch to differentiate a graph.
 To reason about a backward step, its proofs refer
 to an ideal derivative or VJP definition. For covered operations, correctness theorems show that
 this rule is the mathematical derivative; numerical results relate it to the rule evaluated with
@@ -747,7 +749,7 @@ def tpCudaOnCpuBuild : BackendProfile :=
     (Verification.lowerForwardToIR (α := Float)
       tpInit (nn.initialState tpInit))
   for p in [BackendProfile.checkedCpu,
-      BackendProfile.checkedCuda, tpCudaOnCpuBuild] do
+      BackendProfile.libTorchCuda, tpCudaOnCpuBuild] do
     match p.planGraphNodes l.graph with
     | .ok plan =>
         let names := (plan.kernels.map
@@ -769,7 +771,7 @@ checked_cpu: 6 capsules
   reference.broadcast
   reference.add
   reference.relu
-checked_cuda: 6 capsules
+libtorch_cuda: 6 capsules
   libtorch.reshape
   libtorch.permute
   libtorch.matmul

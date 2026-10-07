@@ -22,19 +22,18 @@ execution provider described in the
 
 `Export/` contains reusable exporters and adapters.
 
-- `Export/Core.lean` holds shared string utilities and import/header rendering.
+- `Export/Core.lean` holds shared string utilities, import/header rendering, and Python
+  `state_dict` save/load helpers. Callers supply any checkpoint-to-JSON conversion.
 - `Export/IRPyTorch.lean` is the general model code path: it exports an `NN.IR.Graph` plus a
   parameter store into a standalone PyTorch module.
 - `Export/ONNX.lean` emits a conservative Python adapter that reads an ONNX graph and writes the
   same `torchlean.ir.v1` JSON artifact used by the graph importer. It includes static-shape
   lowerings for common tensor ops plus Conv/Gemm/BatchNorm graph structure where the current IR can
-  represent it.
-- `Export/Core.lean` emits Python `state_dict` save/load helpers. Callers supply the script
-  that serializes tensor values as nested-list JSON; `Export.lean` documents this boundary.
+  represent it. Use `Export.PyTorch.ONNX.script` with `ONNX.Options` to generate the adapter.
 - `Export/TorchExport.lean` emits a Python adapter that captures a PyTorch `nn.Module` with
   `torch.export`/FX and writes TorchLean IR JSON for the supported op subset. The script is
-  assembled from one Lean definition per Python section (imports, shape helpers, payload
-  helpers, `_lower_kind` rule groups, capture, entry point, `main`).
+  emitted by `Export.PyTorch.TorchExport.script`, configured with `TorchExport.Options`.
+  Python-generation sections live under `TorchExport.Internal`.
 
 ## Semantic operators and v1 wire strings
 
@@ -44,15 +43,15 @@ execution provider described in the
 `OpTag.toKind?` reconstructs operations whose tags supply all their static information.
 
 `Wire.lean` assigns each tag its fixed spelling in `torchlean.ir.v1`. Both Python-emitting adapters
-write through `Wire.opTag`, and `Import/TorchExport.lean` reads through `Wire.parseOpTag?`.
+write through `Wire.tag`, and `Import/TorchExport.lean` reads through `Wire.parseTag?`.
 The v1 strings have their own table, so changing a diagnostic name does not change existing files.
 The round trips are proved in Lean:
 
 ```lean
 theorem Wire.parse_op_tag (tag : OpTag) :
-    Wire.parseOpTag? (Wire.opTag tag) = some tag
+    Wire.parseTag? (Wire.tag tag) = some tag
 theorem Wire.parse_op_kind (kind : OpKind) (h : kind.opTag.hasAttributes = false) :
-    Wire.parseOpKind? (Wire.opTag kind.opTag) = some kind
+    Wire.parse? (Wire.tag kind.opTag) = some kind
 ```
 
 Operators with axes, shapes, or convolution geometry parse their tag first and then read those
@@ -89,7 +88,7 @@ matching CNN/Transformer namespaces.
 
 Runnable examples and small reference artifacts live under `NN/Examples/Interop/PyTorch`.
 `NN/Tests/Interop/PyTorch.lean` contains graph-capture and numerical parity regressions, run with
-`lake exe pytorch_export_check`.
+`scripts/lake.sh exe pytorch_export_check`.
 
 ## What Users Can Do Today
 

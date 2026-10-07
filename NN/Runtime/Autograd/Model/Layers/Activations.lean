@@ -189,7 +189,7 @@ def dropout {s : Shape} (p : Float) (seed : Nat := 0) : Layer s s :=
     forward := fun mode {α} _ _ =>
       fun {m} _ _ =>
         fun pRef x =>
-          (show m (RefTy (m := m) (α := α) s) from
+          (show m (Ref (m := m) (α := α) s) from
             if mode == .eval || p == 0.0 then
               pure x
             else if p == 1.0 then

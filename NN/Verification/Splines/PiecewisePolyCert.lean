@@ -15,20 +15,14 @@ public import FloatLib.Floats.Formats.BinaryInterchange.Configured
 
 This module implements a Lean checker for one-dimensional piecewise-polynomial certificates.
 
-Why this exists:
-- In TorchLean’s “external producer, Lean checker” workflow, an external tool (Julia, Python, ...)
-  can fit or search for a piecewise-polynomial surrogate and export a compact JSON artifact.
-- Lean then checks basic algebraic consistency conditions on that artifact.
-
-Our checker is conservative: it checks *exact* equalities over `Rat` with no floating-point
-tolerance.
+An external tool fits a piecewise-polynomial surrogate and exports its knots and coefficients.
+The checker validates their algebraic consistency with exact `Rat` arithmetic and no tolerance.
 
 Optionally, you can also run an *executable float32* cross-check via `checkJsonIEEE32ExecExact`:
 if every rational in the certificate is exactly representable as a finite IEEE-754 binary32
 (`ExecFloat.Binary 8 23`), we re-run the endpoint equalities under `ExecFloat.Binary 8 23`
-arithmetic. This is useful
-when the producer is actually operating in float32 and you want to confirm the certificate’s
-equalities hold under the same semantics.
+arithmetic. This tests the specified Horner evaluation order, not arbitrary producer code or
+fused GPU evaluation.
 
 What is checked in `format = "piecewise_poly_v0"`:
 - `xs` is strictly increasing,

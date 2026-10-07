@@ -13,7 +13,7 @@ public import NN.Tensor.Internal.Semantics.Transform -- shake: keep
 A checked repeat is executed by one row-major output fill. For each output
 flat index, the checked axis projection computes the corresponding input
 coordinate after forgetting every introduced axis. The kernel then reads that
-entry directly from the input tensor's native array.
+entry directly from the input tensor's storage.
 
 This implementation allocates no singleton reshape, broadcast tensor, or
 permutation tensor. Its correctness theorem compares the flat-index kernel

@@ -133,7 +133,7 @@ def layer (config : Config) (inputWidth : Nat) :
                 (s₂ := [inputWidth * config.gridSize])
                 basisValues (by
                   simp [Spec.Shape.size, Nat.mul_comm])
-            ) : m (Runtime.Autograd.Model.RefTy (m := m) (α := α)
+            ) : m (Runtime.Autograd.Model.Ref (m := m) (α := α)
               [inputWidth * config.gridSize]))
     }
 

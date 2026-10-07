@@ -774,25 +774,9 @@ snapshot and accepts a tensor center and named choices such as `radius`, `norm`,
 and `algorithm`. A result obtained from `session.finish` uses the same snapshot semantics:
 further training or loading a checkpoint into the session does not change the model it verifies.
 
-```
--- This import exposes verification on the ordinary
--- trained-model result.
-import NN.API.Verification
-
--- Verification uses the trained weights retained in this
--- value.
-let trained ← trainer.train dataset { steps := 120 }
--- Radius and norm define the input set; topLabel defines
--- the output property.
-let report ← trained.verify center
-  (radius := 0.10)
-  (norm := .inf)
-  (property := .topLabel 0)
-```
-
-The default method is fixed-relaxation Alpha-Beta-CROWN; `.ibp` and `.crown` are available for
-comparison. To inspect graph nodes and intermediate bounds, import
-`NN.API.Verification.Lowering`.
+Import `NN.API.Verification` to use the `trained.verify` call shown above. The default method is
+fixed-relaxation Alpha-Beta-CROWN; `.ibp` and `.crown` are available for comparison. To inspect
+graph nodes and intermediate bounds, import `NN.API.Verification.Lowering`.
 
 This high-level verifier belongs to the ordinary binary32 training path. A session opened with
 `trainer.openTyped` preserves its chosen scalar in training and prediction, but supplies no
@@ -1011,13 +995,6 @@ The shared predicate `CrownTransferSound` states the local enclosure obligation.
 relaxation can use the generic checker theorem once its step function has a proof of that
 obligation.
 
-Then compare `alphaCrown_cert_encloses_semantics` with
-`alphaCrown_cert_encloses_evalGraphRec`. The second has strictly fewer hypotheses because it stops
-being generic: `ibp` is instantiated to `runIBP? g ps` and the values to `evalGraphRec g ps inputs`,
-which discharges `CertLocalOK` and `SemLocalOK` outright. That is the version to cite from
-application code. The general one is there for a caller who obtained boxes and values some other
-way, and paying for that generality means proving two more consistency conditions by hand.
-
 These theorems should not be confused with the JSON node-certificate checkers:
 
 - `checkCROWNNodeCertificate`;
@@ -1208,6 +1185,9 @@ and layer normalization. A successful computation is not itself a theorem. The s
 operation; sound entrypoints must require this class. A transfer returns `none` when the scalar
 backend has no finite implementation for that operation.
 
+These classes specify directed endpoint operations and separate scalar soundness laws; they do
+not implement the full IEEE interval-arithmetic standard.
+
 A point interval already shows why the distinction matters. Both entries of
 $`x=(1,2^{-25})` are exactly representable in binary32, but their real sum
 $`1+2^{-25}` rounds to $`1` under nearest rounding. Using that same rounded value as both
@@ -1340,7 +1320,7 @@ different result from failing to prove that none exists.
 
 TorchLean currently checks several kinds of artifact, each with a deliberately limited meaning.
 
-The graph numerical certificate records source ranges, derived node ranges, a registry identity,
+The graph numerical certificate records source ranges, derived node ranges, a registry name,
 and a backend-plan audit. `generateChecked` reconstructs this data, and `executeIEEE32` performs a
 bit-level reference replay while checking each intermediate tensor. A `GraphRangeContract`
 contains an executable `derive` function but no semantic soundness field. A proof-level error trace
@@ -1477,8 +1457,3 @@ A verification report should make the following boundary visible:
 For a particular report, select the rows that refer to its graph, scalar type, and checker. The
 last column identifies the additional evidence needed before composing them into a deployment
 claim.
-
-# References
-
-The `BoundOps` classes specify directed endpoint operations and separate scalar soundness laws.
-They do not supply an implementation of the full IEEE interval-arithmetic standard.

@@ -11,7 +11,9 @@ public import NN.Verification.Builtin.Proved.Correctness.Eval.Core
 /-!
 # Linear Algebra IR Evaluation
 
-Local semantics for matrix multiplication nodes accepted by the shared IR importer.
+Local semantics for the proved fragment's matrix multiplication nodes. `MatmulOperation.leading`
+uses matrices with the same leading batch shape; these theorems do not cover every vector-promotion
+or batch-broadcasting case accepted by the general IR evaluator.
 -/
 
 @[expose] public section
@@ -71,7 +73,7 @@ theorem evalAt_matmul_eq
   | leading batchAxes m n p =>
       simp [MatmulOperation.denote, Graph.evalAt, Graph.evalNode,
         binaryGraphOut, binaryNodeOut, Graph.getNode,
-        Graph.getNode?, Graph.binaryParentIds, binaryParents?,
+        Graph.binaryParentIds, binaryParents?,
         Shape.reverse_concat, Shape.toList, Shape.ofList,
         Bind.bind, Except.bind, Pure.pure, Except.pure]
 

@@ -84,50 +84,19 @@ theorem backward_eq_adjoint_fderiv {inDim outDim : Nat} (C : OpSpecFDerivCorrect
     (x : Tensor ℝ [inDim]) (δ : Tensor ℝ [outDim]) :
     getScalarE (C.correct.op.backward x δ) =
       VJP[C.forwardVec, getScalarE x] (getScalarE δ) := by
-  classical
-  -- Reduce to the `x = ofFnE xV` case.
-  let xV : Vec inDim := getScalarE x
-  have hx : x = ofFnE (n := inDim) xV := by
-    simp [xV]
-  -- Prove the statement at `xV` and then rewrite.
-  have h_ofFn :
-      getScalarE (C.correct.op.backward (ofFnE xV) δ) =
-        VJP[C.forwardVec, xV] (getScalarE δ) := by
-    -- Use the dot-level correctness to characterize the backward cotangent via inner products.
-    have hf : HasFDerivAt (C.forwardVec) (C.deriv xV) xV := by
-      change HasFDerivAt
-        (fun xV : Vec inDim => getScalarE (C.correct.op.forward (ofFnE xV))) (C.deriv xV) xV
-      exact C.hasFDerivAt xV
-    have hfderiv : fderiv ℝ (C.forwardVec) xV = C.deriv xV := by
-      simpa using hf.fderiv
-
-    have hinner :
-        ∀ dxV : Vec inDim,
-          inner ℝ ((C.deriv xV) dxV) (getScalarE δ) =
-            inner ℝ dxV (getScalarE (C.correct.op.backward (ofFnE xV) δ)) := by
-      intro dxV
-      have hdot := C.correct.correct (x := ofFnE xV) (dx := ofFnE dxV) (δ := δ)
-      -- Convert `dot` to `inner` and rewrite the JVP via `jvp_eq`.
-      have hinner' :
-          inner ℝ (getScalarE (C.correct.jvp (ofFnE xV) (ofFnE dxV))) (getScalarE δ) =
-            inner ℝ (getScalarE (ofFnE dxV)) (getScalarE (C.correct.op.backward (ofFnE xV) δ)) := by
-        simpa [dot_eq_inner_vec] using hdot
-      -- Replace the JVP with the analytic derivative and simplify `getScalarE (ofFnE dxV)`.
-      rw [C.jvp_eq xV dxV] at hinner'
-      simpa using hinner'
-
-    -- The backward cotangent has the same inner product with every tangent as the adjoint.
-    change getScalarE (C.correct.op.backward (ofFnE xV) δ) =
-      (fderiv ℝ (C.forwardVec) xV).adjoint (getScalarE δ)
-    apply ext_inner_left ℝ
-    intro dxV
-    rw [ContinuousLinearMap.adjoint_inner_right, hfderiv]
-    exact (hinner dxV).symm
-
-  -- Rewrite `x` to `ofFnE xV` everywhere.
-  rw [hx]
-  -- `getScalarE (ofFnE xV) = xV`.
-  simpa using h_ofFn
+  change getScalarE (C.correct.op.backward x δ) =
+    (fderiv ℝ C.forwardVec (getScalarE x)).adjoint (getScalarE δ)
+  have hf : HasFDerivAt C.forwardVec (C.deriv (getScalarE x)) (getScalarE x) :=
+    C.hasFDerivAt (getScalarE x)
+  rw [hf.fderiv]
+  apply ext_inner_left ℝ
+  intro dxV
+  rw [ContinuousLinearMap.adjoint_inner_right]
+  have hdot := C.correct.correct (x := x) (dx := ofFnE dxV) (δ := δ)
+  have hjvp :
+      getScalarE (C.correct.jvp x (ofFnE dxV)) = C.deriv (getScalarE x) dxV := by
+    simpa only [ofFnE_getScalarE] using C.jvp_eq (getScalarE x) dxV
+  simpa only [dot_eq_inner_vec, hjvp, getScalarE_ofFnE] using hdot.symm
 
 /--
 Composition preserves analytic correctness (chain rule).

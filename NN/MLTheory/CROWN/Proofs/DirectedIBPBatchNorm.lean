@@ -155,7 +155,7 @@ theorem batchNormInference_normalization_apply {channels : Nat} {spatial : Shape
           gamma.getScalar i + beta.getScalar i := by
   simp only [Spec.batchNormInference, Tensor.addSpec, Tensor.subSpec, Tensor.mulSpec,
     Tensor.divSpec, Tensor.sqrtSpec, Shape.concat, Tensor.map2Spec_apply,
-    Tensor.mapSpec, Tensor.map, TorchLean.Tensor.Internal.Rep.map_apply,
+    Tensor.map, TorchLean.Tensor.Internal.Rep.map_apply,
     Tensor.full_apply]
   change ((x (i, c) - Spec.broadcastChannel spatial mean (i, c)) /
     Real.sqrt (max

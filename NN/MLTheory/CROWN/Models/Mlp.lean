@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Operators.Activations
+public import NN.MLTheory.CROWN.Core
 public import NN.MLTheory.CROWN.Proofs.ReLUUpperBound
 public import NN.MLTheory.CROWN.Graph.Engine.BackwardObjective
 public import NN.Spec.Layers.Linear
@@ -129,15 +129,6 @@ def forward {inDim hidDim outDim : Nat}
   let hiddenActivation := Activation.reluSpec (α:=α) hiddenPreactivation
   Spec.linearSpec (α:=α) outputLayer hiddenActivation
 
-/-- Build a `TwoLayerMLP` from two `LinearSpec` records. -/
-def ofLinearSpecs {inDim hidDim outDim : Nat}
-  (hiddenLayer : Spec.LinearSpec α inDim hidDim) (outputLayer : Spec.LinearSpec α hidDim outDim) :
-  TwoLayerMLP α inDim hidDim outDim :=
-  { hiddenWeight := hiddenLayer.weights
-    hiddenBias := hiddenLayer.bias
-    outputWeight := outputLayer.weights
-    outputBias := outputLayer.bias }
-
 /--
 Compute an output interval box via pure IBP.
 
@@ -252,18 +243,6 @@ def boundAffineCrown {inDim hidDim outDim : Nat} [BoundOps α]
   let BL := AffineVec.evalOnBox (α:=α) forms.1 xB
   let BU := AffineVec.evalOnBox (α:=α) forms.2 xB
   { lo := BL.lo, hi := BU.hi }
-
-/--
-End-to-end bound API exposed by this file.
-
-This API returns the IBP bound. Its enclosure guarantee depends on the selected `BoundOps`
-implementation; `boundAffineCrown` additionally retains affine dependence on exact backends.
-On rounded backends it uses directed graph propagation, which reduces to IBP at the ReLU.
--/
-def boundAffine {inDim hidDim outDim : Nat} [BoundOps α]
-  (net : TwoLayerMLP α inDim hidDim outDim)
-  (xB : Box α (.dim inDim .scalar)) : Box α (.dim outDim .scalar) :=
-  boundIbp (α:=α) net xB
 
 /-!
 Theorems inspired by CROWN (Zhang et al., 2018, arXiv:1811.00866)
@@ -380,7 +359,7 @@ private theorem ibp_relu_sound_real {n : Nat}
         getScalar (Activation.reluSpec (α := ℝ) z) i ∧
       getScalar (Activation.reluSpec (α := ℝ) z) i ≤
         getScalar (IBP.relu (α := ℝ) zB).hi i
-  simp only [IBP.relu, Tensor.getScalar_map, Activation.reluSpec, getScalar_mapSpec,
+  simp only [IBP.relu, Tensor.getScalar_map, Activation.reluSpec, getScalar_map,
     Activation.Math.reluSpec_eq_max, relu_eq_max]
   constructor
   · exact max_le_max hcoord.1 (le_refl 0)
@@ -434,79 +413,6 @@ theorem bound_ibp_sound {inDim hidDim outDim : Nat}
   -- `boundIbp` and `forward` are exactly the compositions bounded above.
   simpa [boundIbp, forward]
 
-/--
-Soundness of the affine-bound wrapper for a 2-layer MLP over `ℝ`.
-
-In this module `boundAffine` delegates to the IBP implementation, so this theorem is a direct
-corollary of `bound_ibp_sound`.
--/
-theorem bound_affine_sound {inDim hidDim outDim : Nat}
-  (net : TwoLayerMLP ℝ inDim hidDim outDim)
-  (xB : Box ℝ (.dim inDim .scalar))
-  (x : Tensor ℝ [inDim])
-  (hx : Box.contains (α:=ℝ) xB x) :
-  Box.contains (α:=ℝ) (boundAffine (α:=ℝ) net xB) (forward (α:=ℝ) net x) := by
-  -- `boundAffine` delegates to pure IBP bounds in this module.
-  simpa [boundAffine] using bound_ibp_sound (net := net) (xB := xB) (x := x) hx
-
 end Theorems
-
-/- Public API -/
-namespace Examples
-
-/--
-Compute both IBP bounds and affine-CROWN bounds for a two-layer MLP around an `ε`-box.
-
-The input set is the axis-aligned box centered at `xCenter` with radius `eps` in each coordinate.
--/
-def crownTwoLayerMlpBounds {inDim hidDim outDim : Nat} [BoundOps α]
-  (hiddenLayer : Spec.LinearSpec α inDim hidDim)
-  (outputLayer : Spec.LinearSpec α hidDim outDim)
-  (xCenter : Tensor α [inDim]) (eps : α) :
-  Box α (.dim outDim .scalar) × Box α (.dim outDim .scalar) :=
-  let net := ofLinearSpecs (α:=α) hiddenLayer outputLayer
-  let xB : Box α (.dim inDim .scalar) :=
-    let rad := Tensor.full (α:=α) (.dim inDim .scalar) eps
-    { lo := Tensor.subSpec xCenter rad, hi := Tensor.addSpec xCenter rad }
-  (boundIbp (α:=α) net xB, boundAffineCrown (α:=α) net xB)
-
-end Examples
-
-/- Classification helpers based on logit bounds -/
-namespace Classify
-
-open NN.MLTheory.CROWN
-
-/-- Lower endpoint at index `i` from a vector box. -/
-def lowerAt {n : Nat} (B : Box α (.dim n .scalar)) (i : Fin n) : α :=
-  Tensor.getScalar B.lo i
-
-/-- Upper endpoint at index `i` from a vector box. -/
-def upperAt {n : Nat} (B : Box α (.dim n .scalar)) (i : Fin n) : α :=
-  Tensor.getScalar B.hi i
-
-/--
-Maximum upper bound among competitors `k ≠ c`.
-With no competitors, use the selected class's upper endpoint as a conservative singleton fallback.
--/
-def maxCompetitorUpper {n : Nat} (B : Box α (.dim n .scalar)) (c : Fin n) : α :=
-  let competitor := (List.finRange n).foldl (fun (acc : Option α) k =>
-    if k ≠ c then
-      let uk := upperAt B k
-      match acc with
-      | none => some uk
-      | some current => some (if uk > current then uk else current)
-    else acc) none
-  competitor.getD (upperAt B c)
-
-/-- Certified margin lower bound: `lowerAt c - maxCompetitorUpper c`. -/
-def certifiedMargin {n : Nat} (B : Box α (.dim n .scalar)) (c : Fin n) : α :=
-  lowerAt B c - maxCompetitorUpper B c
-
-/-- Decide whether class `c` is certified by a positive margin. -/
-def isCertifiedClass {n : Nat} (B : Box α (.dim n .scalar)) (c : Fin n) : Bool :=
-  decide (certifiedMargin (α:=α) B c > 0)
-
-end Classify
 
 end NN.MLTheory.CROWN

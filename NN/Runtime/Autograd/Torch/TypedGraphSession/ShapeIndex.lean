@@ -99,7 +99,7 @@ Flatten a tensor into a 1D vector of length `Spec.Shape.size sh`.
 PyTorch comparison: `torch.flatten(x)` (with default `start_dim=0`).
 -/
 def flatten {α : Type} [TorchLean.Storage α]
-    (s : TypedGraphSession α) [Inhabited α] [Zero α] {sh : Shape}
+    (s : TypedGraphSession α) [Zero α] {sh : Shape}
   (x : TensorRef α sh) : IO (TensorRef α [Spec.Shape.size sh]) :=
   recordGraphM (α := α) s (refs := #[x.identity?])
     (fun {Γ} =>
@@ -112,7 +112,7 @@ The proof argument `h` enforces `Spec.Shape.size sh1 = Spec.Shape.size sh2`.
 PyTorch comparison: `torch.reshape(x, new_shape)` / `x.view(new_shape)` (when contiguous).
 -/
 def reshape {α : Type} [TorchLean.Storage α]
-    (s : TypedGraphSession α) [Inhabited α] [Zero α]
+    (s : TypedGraphSession α) [Zero α]
     {sh1 sh2 : Shape} (x : TensorRef α sh1) (h : Spec.Shape.size sh1 = Spec.Shape.size sh2) :
     IO (TensorRef α sh2) :=
   recordGraphM (α := α) s (refs := #[x.identity?])
@@ -126,7 +126,7 @@ Swap two adjacent axes at a given `depth` inside the shape.
 Arbitrary permutations are lowered to this typed-graph primitive.
 -/
 def swapAdjacentAtDepth {α : Type} [TorchLean.Storage α]
-    (s : TypedGraphSession α) [Context α]
+    (s : TypedGraphSession α) [Zero α]
   {sh : Shape} (depth : Nat) (x : TensorRef α sh) : IO (TensorRef α (sh.swapAdjacentAtDepth depth))
     :=
   recordGraphM (α := α) s (refs := #[x.identity?])
@@ -141,7 +141,7 @@ The witness `cb : Shape.CanBroadcastTo sh1 sh2` encodes the broadcasting proof.
 PyTorch comparison: `x.expand(...)` / implicit broadcasting.
 -/
 def broadcastTo {α : Type} [TorchLean.Storage α]
-    (s : TypedGraphSession α) [Inhabited α] [Add α] [Zero α]
+    (s : TypedGraphSession α) [Add α] [Zero α]
   {sh1 sh2 : Shape} (cb : Shape.CanBroadcastTo sh1 sh2) (x : TensorRef α sh1) : IO (TensorRef α sh2)
     :=
   recordGraphM (α := α) s (refs := #[x.identity?])
@@ -155,7 +155,7 @@ Sum-reduce along `axis`.
 PyTorch comparison: `torch.sum(x, dim=axis)`.
 -/
 def reduceSum {α : Type} [TorchLean.Storage α]
-    (s : TypedGraphSession α) [Add α] [Zero α] [Inhabited α]
+    (s : TypedGraphSession α) [Add α] [Zero α]
   {sh : Shape} (axis : Nat) [valid : Shape.HasNonemptyAxis axis sh] [wf : Shape.WellFormed sh]
   (x : TensorRef α sh) : IO (TensorRef α (shapeAfterSum sh axis)) :=
   recordGraphM (α := α) s (refs := #[x.identity?])
@@ -168,7 +168,7 @@ Mean-reduce along `axis`.
 PyTorch comparison: `torch.mean(x, dim=axis)`.
 -/
 def reduceMean {α : Type} [TorchLean.Storage α]
-    (s : TypedGraphSession α) [Context α]
+    (s : TypedGraphSession α) [Add α] [Zero α] [Div α] [Mul α] [One α] [NatCast α]
   {sh : Shape} (axis : Nat) [valid : Shape.HasNonemptyAxis axis sh] [wf : Shape.WellFormed sh]
   (x : TensorRef α sh) : IO (TensorRef α (shapeAfterSum sh axis)) :=
   recordGraphM (α := α) s (refs := #[x.identity?])

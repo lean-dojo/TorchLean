@@ -34,11 +34,14 @@ variable {α : Type} [Storage α] [Context α]
 namespace Fourier
 
 /-- Complete a real transform by reflecting its stored nonnegative-frequency bins. -/
-def fullSpectrum {batch n : Nat} (hn : 0 < n) (x : RefTy m α [batch, n])
-    (path : SpectralPath) : m (RefTy m α [batch, n] × RefTy m α [batch, n]) := do
+def fullSpectrum {batch n : Nat} (hn : 0 < n) (x : Ref (m := m) (α := α) [batch, n])
+    (path : SpectralPath) :
+    m (Ref (m := m) (α := α) [batch, n] × Ref (m := m) (α := α) [batch, n]) := do
   let packed ← Runtime.Autograd.Model.F.rfft (batch := [batch]) hn x path
-  let realPart : RefTy m α [batch, n / 2 + 1] ← select 2 packed ⟨0, by change 0 < 2; decide⟩
-  let imagPart : RefTy m α [batch, n / 2 + 1] ← select 2 packed ⟨1, by change 1 < 2; decide⟩
+  let realPart : Ref (m := m) (α := α) [batch, n / 2 + 1] ←
+    select 2 packed ⟨0, by change 0 < 2; decide⟩
+  let imagPart : Ref (m := m) (α := α) [batch, n / 2 + 1] ←
+    select 2 packed ⟨1, by change 1 < 2; decide⟩
   let indices : Tensor (Fin (n / 2 + 1)) [n] := Id.run <|
     Tensor.generateFlatM [n] fun k => do
       have bound : k.val < n := by simpa [Shape.size] using k.isLt
@@ -55,8 +58,8 @@ def fullSpectrum {batch n : Nat} (hn : 0 < n) (x : RefTy m α [batch, n])
 
 /-- Transform independent complex rows; inverse normalization is local to this axis. -/
 def rows {batch n : Nat} (hn : 0 < n)
-    (realPart imagPart : RefTy m α [batch, n]) (inverse : Bool) (path : SpectralPath) :
-    m (RefTy m α [batch, n] × RefTy m α [batch, n]) := do
+    (realPart imagPart : Ref (m := m) (α := α) [batch, n]) (inverse : Bool) (path : SpectralPath) :
+    m (Ref (m := m) (α := α) [batch, n] × Ref (m := m) (α := α) [batch, n]) := do
   let imaginary ← if inverse then scale imagPart (-1) else pure imagPart
   let (ar, ai) ← fullSpectrum hn realPart path
   let (br, bi) ← fullSpectrum hn imaginary path
@@ -74,15 +77,15 @@ An empty spatial shape is the identity; channels may be empty.
 -/
 def axes {channels : Nat} (outer : Nat) :
     (spatial : List Nat) → 0 < spatial.prod →
-    RefTy m α [outer * spatial.prod, channels] →
-    RefTy m α [outer * spatial.prod, channels] → Bool → SpectralPath →
-    m (RefTy m α [outer * spatial.prod, channels] ×
-      RefTy m α [outer * spatial.prod, channels])
+    Ref (m := m) (α := α) [outer * spatial.prod, channels] →
+    Ref (m := m) (α := α) [outer * spatial.prod, channels] → Bool → SpectralPath →
+    m (Ref (m := m) (α := α) [outer * spatial.prod, channels] ×
+      Ref (m := m) (α := α) [outer * spatial.prod, channels])
   | [], _, realPart, imagPart, _, _ => pure (realPart, imagPart)
   | n :: rest, positive, realPart, imagPart, inverse, path => do
     have lengths : 0 < n ∧ 0 < rest.prod :=
       ⟨Nat.pos_of_mul_pos_right positive, Nat.pos_of_mul_pos_left positive⟩
-    let toRows (value : RefTy m α [outer * (n :: rest).prod, channels]) := do
+    let toRows (value : Ref (m := m) (α := α) [outer * (n :: rest).prod, channels]) := do
       let tensor ← reshape (s₂ := [outer, n, rest.prod * channels]) value
         (by simp [Shape.size, Nat.mul_assoc])
       let transposed ← swapAdjacentAtDepth 1 tensor
@@ -91,7 +94,7 @@ def axes {channels : Nat} (outer : Nat) :
     let realRows ← toRows realPart
     let imagRows ← toRows imagPart
     let (transformedReal, transformedImag) ← rows lengths.1 realRows imagRows inverse path
-    let fromRows (value : RefTy m α [outer * (rest.prod * channels), n]) := do
+    let fromRows (value : Ref (m := m) (α := α) [outer * (rest.prod * channels), n]) := do
       let tensor ← reshape (s₂ := [outer, rest.prod * channels, n]) value
         (by simp [Shape.size, Nat.mul_assoc])
       let transposed ← swapAdjacentAtDepth 1 tensor
@@ -113,9 +116,10 @@ The phase is `exp(-2*pi*i*sum_j(k_j*x_j/n_j))`, not a transform of the flattened
 spatial extents must be positive. `automatic` selects native per-axis FFT hooks when available.
 -/
 def fft (spatial : List Nat) (positive : 0 < spatial.prod) {channels : Nat}
-    (realPart imagPart : RefTy m α [spatial.prod, channels])
+    (realPart imagPart : Ref (m := m) (α := α) [spatial.prod, channels])
     (inverse : Bool := false) (path : SpectralPath := .automatic) :
-    m (RefTy m α [spatial.prod, channels] × RefTy m α [spatial.prod, channels]) := do
+    m (Ref (m := m) (α := α) [spatial.prod, channels] ×
+      Ref (m := m) (α := α) [spatial.prod, channels]) := do
   let result ← Fourier.axes 1 spatial positive
     (by simpa using realPart) (by simpa using imagPart) inverse path
   pure (by simpa using result)

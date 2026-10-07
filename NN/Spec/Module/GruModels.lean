@@ -332,21 +332,16 @@ def Classifier.forward {seqLen inputSize hiddenSize numClasses : Nat}
 Forward pass for a `Gru.Generator` (many-to-many).
 
 This applies an embedding linear map to each token vector, runs the GRU, and projects each hidden
-state back into vocabulary space.
+state back into vocabulary space. Empty sequences preserve the initial hidden state.
 -/
 def Generator.forward {seqLen vocabularySize hiddenSize : Nat}
   (model : Generator α vocabularySize hiddenSize)
   (inputTokens : Tensor α [seqLen, vocabularySize])
-  (initialHidden : Tensor α [hiddenSize]) (h : 0 < seqLen) :
+  (initialHidden : Tensor α [hiddenSize]) :
   (Tensor α [seqLen, vocabularySize] × Tensor α [hiddenSize]) :=
   let embedded := Tensor.mapLeading ([seqLen]) (linearSpec model.embedding) inputTokens
-  let hiddenStates := gruSequenceSpec model.gru embedded initialHidden
-  let outputs := Tensor.mapLeading ([seqLen])
-    (linearSpec model.outputProjection) hiddenStates
-  have hLast : seqLen - 1 < seqLen :=
-    Nat.sub_one_lt (Nat.ne_of_gt h)
-  let finalHidden := get hiddenStates ⟨seqLen - 1, hLast⟩
-  (outputs, finalHidden)
+  Model.forwardSequence { gru := model.gru, outputLayer := model.outputProjection }
+    embedded initialHidden
 
 /--
 Forward pass for a bidirectional GRU model (time-major).
@@ -587,12 +582,12 @@ Wiring analogue: GRU language model (`nn.GRU` + vocabulary projection) producing
 logits.
 -/
 def Generator.toModule {seqLen vocabularySize hiddenSize : Nat}
-  (model : Generator α vocabularySize hiddenSize) (h : 0 < seqLen) :
+  (model : Generator α vocabularySize hiddenSize) :
   Spec.Module α ([seqLen, vocabularySize]) ([seqLen, vocabularySize]) :=
 {
   forward := fun inputs =>
     let initialHidden := Tensor.full ([hiddenSize]) 0
-    (model.forward inputs initialHidden h).1,
+    (model.forward inputs initialHidden).1,
   kind := "GRUGenerator",
   pythonExpr := s!"GRULanguageModel(vocab_size={vocabularySize}, hidden_size={hiddenSize})"
 }

@@ -10,18 +10,20 @@ public import NN.Tensor.Internal.Lowering.Rearrange -- shake: keep
 /-!
 # Fused native lowering for reduction
 
-A checked reduction allocates only its final output tensor. For each output
-coordinate, the executable kernel:
+A checked reduction allocates no intermediate tensors. For each output
+coordinate, the executable reference:
 
 1. converts the retained output axes to elementary-axis coordinates;
 2. enumerates assignments of only the axes removed by the reduction;
 3. reconstructs the corresponding original input coordinate;
-4. reads that scalar directly from the input tensor's native array.
+4. reads that scalar directly from the input tensor's storage.
 
 There are no intermediate reshape, permutation, or reduction tensors. A
 generic reducer still receives a `Multiset`, because its type promises that
 the result is independent of coordinate enumeration order, but that multiset
 contains exactly one value per removed-axis assignment.
+The multiset path materializes those values; the accumulator path folds them
+directly. Allocation inside a user-supplied reducer is not constrained here.
 
 The correctness proof uses the abstract reduction-fiber equivalence only in
 the theorem layer. The executable definitions remain computable and operate
@@ -169,7 +171,9 @@ def reductionValues {α : Type u} [Storage α]
 Fold one reduction fiber without materializing its value multiset.
 
 The traversal is the same row-major enumeration used by `reductionValues`.
-Only the accumulator and the current scalar remain live in the loop.
+The enumeration itself keeps an accumulator rather than a collection of
+scalars. An arbitrary `step` may still allocate or retain values in that
+accumulator.
 -/
 def reductionFoldlFromFlat {α : Type u} {β : Type v}
     (step : β → α → β) (initial : β)

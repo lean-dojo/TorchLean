@@ -52,94 +52,8 @@ Running `scripts/lake.sh exe torchlean`
 with no arguments prints the same help and exits with status `1`, so a bare invocation in a
 Makefile fails rather than silently doing nothing.
 
-The help groups commands by the work they perform:
-
-```
-TorchLean runnable examples
-
-Usage:
-  scripts/lake.sh exe torchlean <example> [flags...]
-  scripts/lake.sh exe torchlean --choose <example> [flags...]
-  scripts/lake.sh exe torchlean <example> --help
-  scripts/lake.sh exe torchlean --list
-
-Start here:
-  scripts/lake.sh exe torchlean quickstart_tensors
-  scripts/lake.sh exe torchlean quickstart_autograd
-  scripts/lake.sh exe torchlean quickstart_mlp --steps 20
-
-Quickstarts:
-  quickstart_tensors - construct, transform, and print typed tensors
-  quickstart_autograd - differentiate tensor functions and model losses
-  quickstart_mlp - train and evaluate a small regression MLP
-
-Supervised and vision:
-  mlp - train an MLP on supervised CSV data
-  kan - train a Kolmogorov-Arnold network on CSV data
-  lstm_regression - forecast a scalar sequence with an LSTM
-  cnn - train a convolutional image classifier
-  resnet - train a residual image classifier
-  vit - train a compact vision transformer
-
-Sequence:
-  rnn - train a vanilla recurrent text model
-  lstm - train an LSTM text model
-  transformer - train a small transformer text model
-  chargpt - train an indexed character-level GPT
-  gpt2 - train and sample a byte-level GPT
-  gpt2_saved - load a saved GPT checkpoint and generate text
-  text_gpt2 - train byte or BPE GPT models on a text corpus
-  gpt_adder - train a GPT on digit addition
-  mamba - train a compact Mamba-style sequence model
-
-Generative and operator learning:
-  autoencoder - reconstruct a compact vector of CIFAR values
-  mae - train a masked image autoencoder
-  diffusion - train and sample an image diffusion model
-  fno1d_burgers - learn the one-dimensional Burgers operator
-  pinn - train a neural field from an equation and boundary conditions
-  complex_regression - fit complex parameters using a real loss
-
-Reinforcement learning:
-  ppo_cartpole - train and evaluate PPO on CartPole
-  ppo_gridworld - train PPO against a checked GridWorld contract
-  ppo_pong_ram - train PPO on Pong RAM observations
-  dqn_replay - inspect checked DQN replay-buffer behavior
-
-PyTorch interop:
-  pytorch_roundtrip - export PyTorch source or import reference JSON weights
-
-Data:
-  data_csv - load and validate supervised CSV tensors
-  data_npy - load and validate NumPy tensor files
-  data_cifar10 - load prepared CIFAR-10 image tensors
-
-Numerical checks:
-  factorizations - check Cholesky and QR reconstruction properties
-  transcendentals - check transcendental autograd rules
-
-Deep dives:
-  autograd_transforms - run Jacobian, Hessian, JVP, VJP, and detach examples
-  floats_arb_ieee_compare - compare arbitrary precision and IEEE execution
-  float32_semantics - inspect executable binary32 semantics
-  numerical_certificate - check a graph-level numerical certificate
-  graphspec - build and inspect a typed graph specification
-  ir_axis_ops - lower axis operations into executable graph IR
-  one_semantic_universe - relate executable and proof-oriented scalar semantics
-  torch_ir_pytorch - export TorchLean IR for PyTorch execution
-
-Runtime flags:
-  --choose                         ask for runtime choices before running
-  --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external
-  --arithmetic native|ieee|complex
-      arithmetic availability depends on the example; check its --help
-  --execution eager|typed-graph
-  --seed N
-  --show-backend
-
-Verification commands live under `scripts/lake.sh exe verify -- list`.
-Use `scripts/lake.sh exe torchlean <example> --help` for command-specific flags.
-```
+Use the generated help for the current groups and command descriptions; they come directly from
+the runner's registry rather than a second catalogue maintained in this chapter.
 
 `--list` prints the registered command names with no grouping and no descriptions:
 
@@ -444,8 +358,9 @@ scripts/lake.sh exe torchlean --device cpu quickstart_mlp \
   --steps 20 --seed 2026
 ```
 
-Both forms reach the same parser, because the runtime flags are removed from the list wherever they
-appear. I put the command first in these examples so we can read what will run before its options.
+The runner collects prefix flags, finds the command, and forwards those flags together with the
+arguments after it. The selected command parses both. I put the command first in these examples
+so we can read what will run before its options.
 A leading separator is accepted for wrappers that require one:
 
 ```terminal
@@ -622,7 +537,7 @@ must be compatible; {ref "gpu-and-cuda"}[GPU And CUDA] describes the native buil
 Add `--show-backend` to inspect what was selected:
 
 ```terminal
-# Inspect the capabilities compiled into this executable.
+# Inspect the contracts selected by this runtime profile.
 scripts/lake.sh exe torchlean quickstart_mlp --steps 1 --show-backend
 ```
 
@@ -658,8 +573,9 @@ for each operation on that device.
 A build flag and a runtime flag act at different stages. `-Kcuda=true` changes the build
 configuration and linked backend support. `--device cuda` asks an already built executable to
 select that backend. Recording only the latter leaves out whether the executable could satisfy
-the request. The backend capsule helps resolve this ambiguity by reporting compiled capabilities;
-the command's own runtime messages then show the path selected for that particular run.
+the request. Capsule reporting describes selection before handler lookup and execution; a report
+can therefore precede a missing-handler error. A successful native call requires the linked
+implementation and a usable device as well as an admissible capsule.
 
 # Arithmetic
 
@@ -1158,12 +1074,6 @@ They answer different questions:
 
 The numerical-certificate command includes a negative control alongside successful certificate
 and replay cases:
-
-```terminal
-# Exercise both accepted certificates and the deliberately
-# tampered negative case.
-scripts/lake.sh exe torchlean numerical_certificate
-```
 
 ```terminal +output
 TorchLean numerical runtime certificate

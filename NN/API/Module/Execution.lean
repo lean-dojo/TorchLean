@@ -246,7 +246,7 @@ def instantiate
     (initialState? : Option (nn.State α stateShapes) := none) :
     IO (Objective α β stateShapes inputShapes dataInputShapes) := do
   let objective ←
-    Runtime.Autograd.Model.Module.ObjectiveDef.instantiateWith
+    Runtime.Autograd.Model.Module.ObjectiveDef.instantiate
       (α := α) (β := β) (stateShapes := stateShapes) (inputShapes := inputShapes)
       (dataInputShapes := dataInputShapes) definition cast runtime
       (initialState?.map nn.State.Internal.toTensorPack)

@@ -26,31 +26,15 @@ The fused operation has the same denotation as standard masked scaled dot-produc
 attention over the spec scalar. Different tile sizes are runtime scheduling choices, not semantic
 choices.
 
-## What is proved here?
+## Refinement target
 
-The theorems in this file are compact but important:
+The forward and backward contracts reuse standard attention directly. Their equality theorems
+let a downstream refinement certificate use either name without duplicating the attention
+calculation. Tile sizes remain implementation metadata; this file defines no online softmax
+recurrence, tile loops, or memory-traffic model.
 
-- `onlineSoftmaxTiledAttention_eq_scaledDotProductAttention` proves the named FlashAttention
-  algorithmic contract has the same denotation as standard attention.
-- `flashAttention_eq_scaledDotProductAttention` proves the fused forward operator is semantically
-  equal to TorchLean's existing standard attention spec.
-- `flashAttentionBackward_eq_scaledDotProductAttentionBackward` proves the fused VJP contract is
-  semantically equal to the existing standard attention backward spec.
-
-These are definitional-equality theorems because the proof layer contract spells out the same
-mathematical stages as standard attention. The Lean composition over LibTorch primitives is
-tested against the attention contract operationally; its numerical calls remain a runtime trust
-boundary.
-
-## Why this is not a CUDA proof
-
-The definitions below are the mathematical contract for FlashAttention. They do not claim to verify
-LibTorch's attention kernels. Instead, they make the important theorem explicit:
-
-`onlineSoftmaxTiledAttention config ctx = scaledDotProductAttention ctx`.
-
-That is the theorem a compiler rewrite or fused backend relies on. A production IO-tiled CUDA kernel
-can be swapped in under the same contract once it is tested/refined.
+The current LibTorch composition is tested operationally. Its foreign numerical calls remain
+outside Lean's kernel; a fused implementation needs its own refinement argument.
 
 References:
 - Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, Christopher Ré, "FlashAttention: Fast and
@@ -63,10 +47,6 @@ References:
 -/
 
 @[expose] public section
-
-open Spec TorchLean
-open TorchLean TorchLean.Tensor
-open Shape
 
 open TorchLean
 
@@ -94,104 +74,18 @@ def default : FlashAttentionConfig :=
 
 end FlashAttentionConfig
 
-/-!
-## Algorithmic Contract
-
-The original FlashAttention algorithm streams over blocks of keys/values and maintains a row-wise
-online softmax summary. The exact CUDA schedule is an implementation detail, but the mathematical
-result is the same as the closed-form stabilized softmax over the full masked score row.
-
-TorchLean names the stages below so proofs and compiler passes can point at a real algorithmic
-contract rather than only at an opaque fused primitive:
-
-1. build scaled scores `QKᵀ / sqrt(d)`;
-2. apply the boolean mask with true hard-mask semantics (blocked numerator is zero);
-3. compute the same row-wise normalized weights that a correct online summary must produce;
-4. multiply by values.
-
-This is schedule-polymorphic: `config.blockQ` and `config.blockK` describe how a runtime may tile
-the work, but they do not alter the denotation.
--/
-
-/-- Unmasked attention scores `QKᵀ`. -/
-def attentionScores
-    {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
-    (ctx : AttentionContext α nQ nK dModel h1 h2) :
-    Tensor α [nQ, nK] :=
-  matMulSpec ctx.Q (swapAdjacentAxes ctx.K 0)
-
-/-- Scaled attention scores before row normalization.
-
-Masking is applied at the weight level by `onlineSoftmaxWeights`, using the same true hard-mask
-semantics as `scaledDotProductAttention`.
--/
-def scaledAttentionScores
-    {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
-    (ctx : AttentionContext α nQ nK dModel h1 h2) :
-    Tensor α [nQ, nK] :=
-  let scale := attentionScaleDenom (α := α) dModel
-  scaleSpec (attentionScores (α := α) ctx) (1 / scale)
-
-/-- The row-wise softmax weights produced by the online softmax summary.
-
-`Activation.softmaxSpec` uses the stabilized form `exp(x - rowMax) / Σ exp(x - rowMax)`.
-This definition is the **denotation** that a FlashAttention implementation must refine. It is not a
-formal model of Dao-style tile loops or SRAM/HBM traffic.
--/
-def onlineSoftmaxWeights
-    (config : FlashAttentionConfig)
-    {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
-    (ctx : AttentionContext α nQ nK dModel h1 h2) :
-    Tensor α [nQ, nK] :=
-  -- Tile metadata is relevant to the runtime schedule, not to the exact normalized weights.
-  let _blockQ := config.blockQ
-  let _blockK := config.blockK
-  let scores := scaledAttentionScores (α := α) ctx
-  match ctx.mask with
-  | none => Activation.softmaxSpec (α := α) 1 scores
-  | some m => hardMaskedSoftmaxSpec scores m
-
-/-- Proof-facing FlashAttention forward algorithm.
-
-This is the mathematical result of the online/tiled schedule: row-wise softmax weights multiplied by
-`V`. Runtime kernels may avoid storing the full weights, but they must refine this value.
--/
-def onlineSoftmaxTiledAttention
-    (config : FlashAttentionConfig)
-    {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
-    (ctx : AttentionContext α nQ nK dModel h1 h2) :
-    Tensor α [nQ, dModel] :=
-  matMulSpec (onlineSoftmaxWeights (α := α) config ctx) ctx.V
-
-/--
-The proof layer FlashAttention denotation equals standard SDPA.
-
-This theorem is useful for graph-rewrite semantics, but should not be read as a verification of a
-particular CUDA implementation.
--/
-@[simp] theorem onlineSoftmaxTiledAttention_eq_scaledDotProductAttention
-    (config : FlashAttentionConfig)
-    {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
-    (ctx : AttentionContext α nQ nK dModel h1 h2) :
-    onlineSoftmaxTiledAttention (α := α) config ctx =
-      scaledDotProductAttention (α := α) ctx := by
-  cases config
-  rfl
-
 /-- Semantic FlashAttention forward operator.
 
-At the spec layer this is the named online/tiled algorithmic contract above. Runtime
-implementations may use tiling, online softmax summaries, or a fused CUDA kernel, but they must
-refine this denotation to be considered correct.
+Tile sizes do not change the result. A fused implementation must refine the same masked
+scaled-dot-product attention calculation as an unfused implementation.
 -/
 def flashAttention
     (config : FlashAttentionConfig)
     {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
     (ctx : AttentionContext α nQ nK dModel h1 h2) :
     Tensor α [nQ, dModel] :=
-  -- The config is kept in the signature so graph rewrites and runtimes can record the intended
-  -- schedule. At the denotational level, schedules must not change the mathematical result.
-  onlineSoftmaxTiledAttention (α := α) config ctx
+  let _ := config
+  scaledDotProductAttention (α := α) ctx
 
 /-- Semantic FlashAttention backward/VJP operator.
 
@@ -208,10 +102,7 @@ def flashAttentionBackward
     (Tensor α [nQ, dModel] ×
      Tensor α [nK, dModel] ×
      Tensor α [nK, dModel]) :=
-  -- As with the forward operator, the tile metadata belongs to the implementation schedule.
-  -- The proof layer VJP is the same local derivative contract as standard SDPA.
-  let _blockQ := config.blockQ
-  let _blockK := config.blockK
+  let _ := config
   scaledDotProductAttentionBackward (α := α) ctx dOut
 
 /-- Forward semantic correctness of the fused FlashAttention spec. -/
@@ -219,8 +110,7 @@ def flashAttentionBackward
     (config : FlashAttentionConfig)
     {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
     (ctx : AttentionContext α nQ nK dModel h1 h2) :
-    flashAttention (α := α) config ctx = scaledDotProductAttention (α := α) ctx := by
-  simp [flashAttention]
+    flashAttention (α := α) config ctx = scaledDotProductAttention (α := α) ctx := rfl
 
 /-- Backward/VJP semantic correctness of the fused FlashAttention spec. -/
 @[simp] theorem flashAttentionBackward_eq_scaledDotProductAttentionBackward
@@ -229,8 +119,6 @@ def flashAttentionBackward
     (ctx : AttentionContext α nQ nK dModel h1 h2)
     (dOut : Tensor α [nQ, dModel]) :
     flashAttentionBackward (α := α) config ctx dOut =
-      scaledDotProductAttentionBackward (α := α) ctx dOut := by
-  cases config
-  rfl
+      scaledDotProductAttentionBackward (α := α) ctx dOut := rfl
 
 end Spec

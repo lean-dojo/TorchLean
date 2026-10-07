@@ -31,11 +31,6 @@ variable {α : Type} [Storage α] [Context α] [BoundOps α] [LawfulBoundOps α]
 
 local notation "value" => LawfulBoundOps.toReal (α := α)
 
-omit [Context α] [BoundOps α] [LawfulBoundOps α] in
-private theorem unstack_item_eq_getScalar {n : Nat} (t : Tensor α [n]) (i : Fin n) :
-    (Tensor.unstack t i).item = t.getScalar i := by
-  rfl
-
 /-- Interpret which side of a real objective a directed scalar bounds. -/
 def DirectionBound (dir : BackwardDir) (bound : α) (z : ℝ) : Prop :=
   match dir with
@@ -85,8 +80,7 @@ theorem consumeObjectiveFromBox_encloses
     (fun i => value (coefficients.getScalar i) * x i.val) hterms
   cases dir <;>
     simp only [consumeObjectiveFromBox, ↓reduceDIte, castDimScalar_self,
-      ← Array.foldl_toList, Array.toList_map, List.foldl_map,
-      Array.finRange, Array.toList_ofFn, unstack_item_eq_getScalar, decide_eq_true_eq,
+      Fin.foldl_eq_finRange_foldl, decide_eq_true_eq,
       Option.some.injEq] at hresult
   · subst bound
     simpa only [DirectionBound, dot, Spec.getAtOrZero_eq_getScalar, product,

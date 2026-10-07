@@ -42,6 +42,13 @@ let prediction ← trained.predict input
 The shared command helpers parse data and runtime flags around this lifecycle. They do not define a
 second training API.
 
+`Common/RealData.lean` loads prepared CIFAR-10 and ImageNet-style tensors and local text corpora,
+crops images, builds typed minibatches, and reports missing-data preparation steps.
+`Common/Train.lean` adapts CSV, NPY, and forecasting commands to
+`TorchLean.CLI.Training.Command`. Flag parsing comes from `TorchLean.CLI.Trainer`; training logs
+come from `TorchLean.Training`. Dataset scripts write under `data/`, and the helpers pass those
+files through typed loaders to the public trainer. Model definitions stay in their example files.
+
 Diffusion and FNO use `trainer.trainStream` for indexed samples and evaluation callbacks.
 The PPO examples use the specialized `rl.ppo` runtime, while CharGPT uses the `Module` API for
 mixed-dtype token inputs and floating-point parameters.
@@ -82,3 +89,5 @@ is correct. When an artifact enters a formal claim, the relevant checker or theo
 Compile the examples with `scripts/lake.sh build NNExamples`, then run the affected model command on
 a small dataset. Retain permanent tests for numerical and native-boundary behavior; use temporary
 checks for routine command changes.
+
+See [contributing](../../../docs/CONTRIBUTING.md) for API and validation conventions.

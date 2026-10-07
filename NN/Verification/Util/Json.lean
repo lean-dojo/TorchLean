@@ -125,8 +125,8 @@ Parse a rational in the format emitted by TorchLean’s Arb helpers:
 - integer: `"5"`, `"-3"`
 - fraction: `"5/2"`, `"-7/10"`
 
-We avoid JSON numbers here because they are stored as `Scientific` and are not guaranteed to
-round-trip exactly for large integers.
+Fraction strings represent arbitrary rationals without a floating-point conversion, including
+values such as `1/3` that cannot be written as a finite JSON decimal.
 -/
 def parseRatString (s : String) : Except String Rat := do
   let s := s.trimAscii.toString
@@ -181,9 +181,11 @@ end BoxRegion
 Parse either `{lo, hi}` or `{center, eps}` notation for a finite axis-aligned region.
 
 When `dim` is absent, it is inferred from the endpoint or center array. When present, it must be a
-natural number equal to the resulting endpoint lengths. The `{center, eps}` endpoints are rounded
-outward, so the parsed box contains the exact real box. The parser also rejects negative radii,
-non-finite values, incomplete schemas, and intervals whose lower endpoint exceeds the upper one.
+natural number equal to the resulting endpoint lengths. Numbers are first decoded to host binary64.
+The `{center, eps}` arithmetic rounds outward from those decoded values, not from the original
+exact JSON decimals. Endpoint notation uses the decoded values directly. The parser rejects
+negative radii, non-finite values, incomplete schemas, and intervals whose lower endpoint exceeds
+the upper one.
 Keeping these checks here gives certificate consumers one well-formed region type instead of
 several subtly different parsers.
 -/
@@ -225,7 +227,7 @@ def parseBoxRegion (ctx : String) (j : Json) : Except String BoxRegion := do
   region.validate ctx
   pure region
 
-/-- Parse the exact endpoint schema `{lo, hi}`, with an optional matching `dim` field. -/
+/-- Parse the endpoint-only schema `{lo, hi}`, with an optional matching `dim` field. -/
 def parseEndpointBoxRegion (ctx : String) (j : Json) : Except String BoxRegion := do
   let obj ← TorchLean.Json.expectObject ctx j
   if (Std.TreeMap.Raw.get? obj "center").isSome || (Std.TreeMap.Raw.get? obj "eps").isSome then

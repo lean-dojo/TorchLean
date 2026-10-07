@@ -10,19 +10,21 @@ public import NN.Proofs.Autograd.Tape.Ops.Attention.MaskedMultiHeadSelfAttention
 public import NN.Proofs.Autograd.Tape.Ops.Transformer.PostNorm
 
 /-!
-# GPT-Style Decoder Block
+# Post-Norm Decoder Core
 
-This module builds the concrete finite-mask decoder-core SSA graph, proves its end-to-end VJP
+This module builds a decoder-core SSA graph with a fixed additive score bias and proves its VJP
 theorem (`decoderCore_backpropVec_eq_adjoint_fderiv_at`), and names the post-norm decoder-block
 composition theorem (`postNormGptDecoderBlock_hasFDerivAt`).
 
-The map-level composition theorem takes the attention front half as a differentiable residual-pack
-map.  The concrete additive-bias attention core and its projection/merge composition theorem live in
-`NN.Proofs.Autograd.Tape.Ops.Attention.MaskedMultiHeadSelfAttention`.  To feed the decoder-core
-graph from a full token/parameter context, instantiate
-`DirectReshapeAttention.projectedMaskedAttention_hasFDerivAt` with
-`F := CtxVec (ΓPostNorm seqLen dModel)`; combined with `postNormGptDecoderBlock_hasFDerivAt` this
-gives the projected finite-mask decoder-block differentiability statement.
+The concrete graph starts with already projected head tensors. Its merge and FFN affine maps
+are fixed arguments, not trainable entries in the differentiated context. The score bias is
+finite real data; it does not implement Boolean hard or causal masking. These are exact-real
+derivative theorems, not a correspondence theorem for the executable decoder or LibTorch.
+
+The map-level composition theorem accepts differentiable residual-pack maps. The attention
+composition theorem in `NN.Proofs.Autograd.Tape.Ops.Attention.MaskedMultiHeadSelfAttention`
+can supply such a map when the caller provides the projection and merge derivative certificates.
+It does not construct a full decoder from a token/parameter context automatically.
 -/
 
 @[expose] public section
@@ -38,18 +40,17 @@ open DGraph
 noncomputable section
 
 /-!
-## Concrete finite-mask decoder-core SSA graph
+## Concrete fixed-bias decoder-core SSA graph
 
 The concrete graph below starts after the Q/K/V projection split:
 
 `[Q_heads, Kᵀ_heads, V_heads, residual_stream, gamma₁, beta₁, gamma₂, beta₂]`.
 
-It then runs finite-mask split-head attention, merges the head output through a supplied affine
-map, adds the residual stream, and applies the two post-norm sublayers. A separate projection
-theorem can feed this graph from a full token/parameter context.
+It then adds the fixed bias to the scaled attention scores, merges the head output through a
+supplied affine map, adds the residual stream, and applies the two post-norm sublayers.
 -/
 
-/-- Concrete decoder-core context: masked attention core inputs, residual stream, and two LayerNorm
+/-- Concrete decoder-core context: head tensors, residual stream, and two LayerNorm
 parameter pairs. -/
 abbrev ΓDecoderCore (seqLen dModel numHeads headDim : Nat) : List Shape :=
   DirectReshapeAttention.ΓMaskedCore seqLen numHeads headDim ++
@@ -58,7 +59,7 @@ abbrev ΓDecoderCore (seqLen dModel numHeads headDim : Nat) : List Shape :=
     , LayerNorm.VecShape dModel, LayerNorm.VecShape dModel
     ]
 
-/-- Saved tensors for the concrete finite-mask decoder-core block. -/
+/-- Saved tensors for the concrete fixed-bias decoder-core block. -/
 abbrev ssDecoderCore (seqLen dModel numHeads headDim dFF : Nat) : List Shape :=
   DirectReshapeAttention.ssMaskedCore seqLen numHeads headDim ++
     [LayerNorm.MatShape seqLen dModel, LayerNorm.MatShape seqLen dModel,
@@ -91,7 +92,7 @@ def idxDecoderNorm2Beta {seqLen dModel numHeads headDim : Nat} {ss : List Shape}
     Idx (ΓDecoderCore seqLen dModel numHeads headDim ++ ss) (LayerNorm.VecShape dModel) :=
   ⟨⟨7, by simp⟩, by simp⟩
 
-/-- Masked attention core while carrying residual and LayerNorm parameters. -/
+/-- Fixed-bias attention core while carrying residual and LayerNorm parameters. -/
 def decoderMaskedCoreDGraph {seqLen dModel numHeads headDim : Nat}
     (c : ℝ)
     (bias : Vec (Spec.Shape.size (DirectReshapeAttention.ScoresShape seqLen numHeads)) := 0) :
@@ -105,7 +106,7 @@ def decoderMaskedCoreDGraph {seqLen dModel numHeads headDim : Nat}
     , LayerNorm.VecShape dModel, LayerNorm.VecShape dModel
     ]
 
-/-- Split-head masked attention output after the masked core. -/
+/-- Head output after the fixed-bias attention core. -/
 def idxDecoderHeadOut {seqLen dModel numHeads headDim : Nat} :
     Idx
       (ΓDecoderCore seqLen dModel numHeads headDim ++
@@ -142,7 +143,7 @@ def idxDecoderResidualInputAfterMerge {seqLen dModel numHeads headDim : Nat} :
       (ss := DirectReshapeAttention.ssMaskedCore seqLen numHeads headDim))
     [LayerNorm.MatShape seqLen dModel]
 
-/-- Residual attention stream `x + masked_attention(x)` before the first LayerNorm. -/
+/-- Sum of the residual stream and projected attention output before the first LayerNorm. -/
 def idxDecoderAttentionResidual {seqLen dModel numHeads headDim : Nat} :
     Idx
       (ΓDecoderCore seqLen dModel numHeads headDim ++
@@ -172,7 +173,7 @@ def decoderNorm1Inputs {seqLen dModel numHeads headDim : Nat} :
       (ss := DirectReshapeAttention.ssMaskedCore seqLen numHeads headDim ++
         [LayerNorm.MatShape seqLen dModel, LayerNorm.MatShape seqLen dModel]) }
 
-/-- Decoder graph through the first post-norm masked-attention sublayer. -/
+/-- Decoder graph through the first post-norm attention sublayer. -/
 def decoderAfterNorm1Graph {seqLen dModel numHeads headDim : Nat}
     (merge :
       Vec (Spec.Shape.size (DirectReshapeAttention.HeadsShape seqLen numHeads headDim)) →L[ℝ]
@@ -629,12 +630,12 @@ theorem decoderCore_backpropVec_eq_adjoint_fderiv_at
       (dFF := dFF) merge mergeBias fc1 b1 fc2 b2 c ε₁ ε₂ bias xV hε₁ hε₂)
 
 /--
-Fréchet differentiability of a GPT-style post-norm decoder block.
+Post-norm composition theorem under its decoder alias.
 
-This is `twoSublayerPostNormBlock_hasFDerivAt` under its decoder name: the first pack builds the
-LayerNorm input triple `[x + MaskedMHA(x), gamma₁, beta₁]`.  Instantiate its differentiability
-hypothesis with `DirectReshapeAttention.projectedMaskedAttention_hasFDerivAt` when the attention
-sublayer is built from the proved finite-mask split-head core.
+This is `twoSublayerPostNormBlock_hasFDerivAt` with the same supplied-map hypotheses.
+`DirectReshapeAttention.projectedMaskedAttention_hasFDerivAt` can discharge the attention
+map's hypothesis for a fixed-bias core with supplied projection and merge certificates.
+Neither theorem constructs Boolean causal masking or proves executable-model correspondence.
 -/
 alias postNormGptDecoderBlock_hasFDerivAt := twoSublayerPostNormBlock_hasFDerivAt
 

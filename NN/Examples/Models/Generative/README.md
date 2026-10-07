@@ -1,14 +1,7 @@
 # Generative Examples
 
-This folder contains runnable generative and self-supervised model commands in TorchLean. They
-cover reconstruction losses, masked image reconstruction, diffusion noise schedules, image
-artifacts, CPU/CUDA execution, and training logs.
-
-The examples are runtime producers. They train small models, write logs or images, and keep the
-model example path honest across families whose losses and artifacts look very different from ordinary
-classification. The mathematical identities behind the objectives live in the theory layer:
-masking/reconstruction contracts for MAE-style models and denoising/noise-schedule contracts for
-diffusion. Formal use of a generated artifact begins with the checker or theorem that consumes it.
+Here we train an autoencoder, reconstruct masked image patches, and generate images with diffusion.
+Each command uses a small model and can save its training log; diffusion can also write PPM images.
 
 ## Files
 

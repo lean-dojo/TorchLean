@@ -86,10 +86,7 @@ The penalty is positive when both the number of coordinates and the floor are po
 -/
 theorem varianceTerm_replicate_zero (gamma d : Nat) :
     varianceTerm gamma (Array.replicate d 0) = d * gamma := by
-  induction d with
-  | zero => simp [varianceTerm]
-  | succ d ih =>
-      rw [Array.replicate_succ, varianceTerm_push, varianceFloorPenalty_zero, ih, Nat.succ_mul]
+  simp [varianceTerm, varianceFloorPenalty, Array.sum_replicate_nat]
 
 /-- If $\gamma>0$ and there is at least one collapsed coordinate, the variance term is positive. -/
 theorem varianceTerm_collapsed_positive {gamma d : Nat} (hγ : 0 < gamma) :
@@ -123,10 +120,6 @@ value $1$ is free, while collapsed diagonal value $0$ is not.
 def diagonalRedundancyPenalty (c : Nat) : Nat :=
   (c - 1) + (1 - c)
 
-/-- Penalty for an off-diagonal cross-correlation entry that should be zero. -/
-def offDiagonalRedundancyPenalty (c : Nat) : Nat :=
-  c
-
 /--
 Barlow-style redundancy-reduction objective over already-computed diagonal and off-diagonal
 correlation summaries.
@@ -136,17 +129,12 @@ versions can use squared floating-point deviations.
 -/
 def redundancyReductionObjective (lambda : Nat) (diag offDiag : Array Nat) : Nat :=
   (diag.map diagonalRedundancyPenalty).sum +
-    lambda * (offDiag.map offDiagonalRedundancyPenalty).sum
+    lambda * offDiag.sum
 
 /-- The ideal diagonal entry `1` pays nothing. -/
 @[simp] theorem diagonalRedundancyPenalty_one :
     diagonalRedundancyPenalty 1 = 0 := by
   simp [diagonalRedundancyPenalty]
-
-/-- The ideal off-diagonal entry `0` pays nothing. -/
-@[simp] theorem offDiagonalRedundancyPenalty_zero :
-    offDiagonalRedundancyPenalty 0 = 0 := by
-  simp [offDiagonalRedundancyPenalty]
 
 /--
 The ideal Barlow-style correlation summary has zero redundancy loss: all diagonal entries are $1$

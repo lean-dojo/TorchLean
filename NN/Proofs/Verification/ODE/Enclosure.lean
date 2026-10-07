@@ -29,6 +29,8 @@ mathematical argument is independent of the neural-network producer:
 The proof is deliberately stated over exact `ℝ` functions. Floating-point or executable backends
 must first justify these real hypotheses; `EnclosureBackends.lean` only reuses this theorem through
 backend `toReal` views. The trust boundary is at that `toReal` bridge.
+The theorems assume a continuous solution with the stated derivative; they do not construct a
+solution or prove existence or uniqueness.
 -/
 
 @[expose] public section
@@ -94,8 +96,7 @@ We implement this by reducing to mathlib’s 1D *fencing theorem*
 If `u` solves the clamped ODE (right-derivative form), and `uL,uU` are sub- and
 super-solutions for the original ODE, then `u` is trapped between `uL` and `uU` on `[0,T]`.
 
-This corresponds to the paper's local enclosure result, but the public Lean name describes the
-mathematical content rather than the theorem number.
+The solution and its right derivative are hypotheses; no existence or uniqueness claim is made.
 -/
 theorem localEnclosure_fromClampedDynamics
     {T : ℝ} {f : ℝ → ℝ → ℝ}
@@ -130,7 +131,6 @@ theorem localEnclosure_fromClampedDynamics
       change HasDerivWithinAt (uU + fun t : ℝ => ε * (1 + t)) (B' t) (Ici t) t
       simpa [B', add_assoc, add_left_comm, add_comm] using (hU_der t ht).add this
     have h0 : u 0 ≤ B 0 := by
-      -- `u(0)=a ≤ uU(0) ≤ uU(0) + ε`
       have : u 0 ≤ uU 0 := by simpa [hu0] using hU0
       have : u 0 ≤ uU 0 + ε := le_trans this (by linarith [hε])
       simpa [B] using this
@@ -152,7 +152,6 @@ theorem localEnclosure_fromClampedDynamics
       have : f t (clampToCorridor uL uU t (u t)) < uU' t + ε :=
         lt_of_le_of_lt this (by linarith [hε])
       simpa [B'] using this
-    -- Apply fencing theorem.
     have hu_le : ∀ t ∈ Icc 0 T, u t ≤ B t :=
       image_le_of_deriv_right_lt_deriv_boundary'
         (f := u) (f' := fun t => f t (clampToCorridor uL uU t (u t)))
@@ -185,14 +184,11 @@ theorem localEnclosure_fromClampedDynamics
         change HasDerivWithinAt ((fun x : ℝ => ε * (1 + x)) + -uL)
           (ε + (-uL' t)) (Ici t) t
         exact this.add (hL_der t ht).neg
-      -- Commute the sum to match `B`.
       exact hsum.congr_of_mem (s := Ici t)
         (fun x _ => by simp [B, add_comm]) (Set.self_mem_Ici)
     have h0 : F 0 ≤ B 0 := by
-      -- `-a ≤ -uL(0) + ε`
       have : uL 0 ≤ u 0 := by simpa [hu0] using hL0
       have : -u 0 ≤ -uL 0 + ε := by
-        -- rearrange `uL 0 ≤ u 0` and use `ε>0`
         have : -u 0 ≤ -uL 0 := neg_le_neg this
         linarith [this, hε]
       simpa [F, B, add_assoc, add_left_comm, add_comm] using this
@@ -202,7 +198,6 @@ theorem localEnclosure_fromClampedDynamics
       have ht1 : 0 < 1 + t := by linarith [ht.1]
       have hLUt : uL t ≤ uU t := hLU t ⟨ht.1, le_of_lt ht.2⟩
       have hEqU : u t = uL t - ε * (1 + t) := by
-        -- `-u = ε(1+t) - uL` ⇒ `u = uL - ε(1+t)`
         linarith [htEq]
       have hLgt : u t < uL t := by linarith [mul_pos hε ht1]
       have htr : clampToCorridor uL uU t (u t) = uL t :=
@@ -219,7 +214,6 @@ theorem localEnclosure_fromClampedDynamics
         hF_cont hF_der h0 hB_cont hB_der bound
     intro t ht
     have := hF_le t ht
-    -- `-u ≤ -uL + ε(1+t)` → `uL - ε(1+t) ≤ u`
     have : uL t - ε * (1 + t) ≤ u t := by
       linarith [this]
     simpa using this
@@ -242,7 +236,8 @@ theorem localEnclosure_fromClampedDynamics
 /--
 Local unclamping theorem.
 
-Once the local enclosure proves `uL(t) ≤ u(t) ≤ uU(t)`, the clamp is definitionally equal to `u(t)`.
+Once the local enclosure proves `uL(t) ≤ u(t) ≤ uU(t)`, `clampToCorridor_eq_self` gives
+equality of the clamped value and `u(t)`.
 A solution of the clamped ODE is therefore enclosed and solves the original ODE on the same
 interval. This is the exact real-analysis contract that interval/PINN certificate producers
 must establish before TorchLean can claim a verified ODE solve.
@@ -299,19 +294,12 @@ noncomputable def constantExtensionAfter (T : ℝ) (g : ℝ → ℝ) : ℝ → �
 @[simp] theorem constantExtensionAfter_of_gt {T : ℝ} {g : ℝ → ℝ} {t : ℝ} (ht : T < t) :
     constantExtensionAfter T g t = g T := by simp [constantExtensionAfter, not_le_of_gt ht]
 
-/-!
-The next two lemmas provide derivatives for `constantExtensionAfter T g`:
-- strictly before `T`, the derivative matches `g'` because the extension and `g` agree locally;
-- at/after `T`, the derivative is zero because the extension is locally constant there
-  when viewed within the right-derivative filter `𝓝[Ici t] t`.
--/
 /-- Derivative of `constantExtensionAfter T g` strictly before `T` matches the derivative of `g`. -/
 private theorem hasDerivWithinAt_constantExtensionAfter_before
     {T : ℝ} {g g' : ℝ → ℝ} {t : ℝ} (ht : t < T)
     (hg : HasDerivWithinAt g (g' t) (Ici t) t) :
     HasDerivWithinAt (constantExtensionAfter T g) (g' t) (Ici t) t := by
   have hIio : (Iio T) ∈ 𝓝[Ici t] t := by
-    -- Use the neighborhood `Iio T` and the definition of `mem_nhdsWithin`.
     refine (mem_nhdsWithin.2 ?_)
     refine ⟨Iio T, isOpen_Iio, ht, ?_⟩
     intro x hx
@@ -395,7 +383,6 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
     (∀ t ∈ Icc 0 τ,
       constantExtensionAfter T uL t ≤ u t ∧ u t ≤ constantExtensionAfter T uU t) ∧
       (∀ t ∈ Ico 0 τ, HasDerivWithinAt u (f t (u t)) (Ici t) t) := by
-  -- Build derivative witnesses for the constant extensions on `[0,τ]`.
   let uLext : ℝ → ℝ := constantExtensionAfter T uL
   let uUext : ℝ → ℝ := constantExtensionAfter T uU
   let uLext' : ℝ → ℝ := fun t => if t < T then uL' t else 0
@@ -438,7 +425,6 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
       have hnonneg : 0 ≤ f t (uL T) := by
         cases htgt with
         | inl hlt =>
-            -- `0 ≤ f(T,uL(T)) ≤ f(t,uL(T))`
             exact (hLower t hlt).1.trans (hLower t hlt).2
         | inr heq =>
             -- Use `0 ≤ f(T,uL(T))` from any `t'>T` instance.
@@ -449,7 +435,6 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
         · have : t = T := le_antisymm htle (le_of_not_gt htT)
           simp [uLext, this]
         · simp [uLext, constantExtensionAfter, htle]
-      -- Here `uLext' t = 0`; reduce to `0 ≤ f t (uL T)`.
       simpa [uLext, uLext', ite_eq_right htT, huLext] using hnonneg
 
   have hUext_sup : ∀ t ∈ Ico 0 τ, f t (uUext t) ≤ uUext' t := by
@@ -463,7 +448,6 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
       have hnonpos : f t (uU T) ≤ 0 := by
         cases htgt with
         | inl hlt =>
-            -- `f(t,uU(T)) ≤ f(T,uU(T)) ≤ 0`
             exact le_trans (hUpper t hlt).1 (hUpper t hlt).2
         | inr heq =>
             have hTnonpos : f T (uU T) ≤ 0 := (hUpper (T + 1) (by linarith)).2
@@ -473,7 +457,6 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
         · have : t = T := le_antisymm htle htge
           simp [uUext, this]
         · simp [uUext, constantExtensionAfter, htle]
-      -- Here `uUext' t = 0`; reduce to `f t (uU T) ≤ 0`.
       simpa [uUext, uUext', ite_eq_right htT, huUext] using hnonpos
 
   have hLext0 : uLext 0 ≤ a := by simpa [uLext, constantExtensionAfter, hT] using hL0
@@ -487,7 +470,6 @@ theorem extendedSolutionEnclosed_fromClampedDynamics
       have : uL T ≤ uU T := hLU T ⟨hT, le_rfl⟩
       simp [uLext, uUext, constantExtensionAfter, htT, this]
 
-  -- Apply the local corridor theorem on `[0,τ]` with the extended corridor.
   exact localSolutionEnclosed_fromClampedDynamics (T := τ) (f := f)
     (u := u) (uL := uLext) (uU := uUext) (uL' := uLext') (uU' := uUext') (a := a)
     hu_cont hu_der hu0

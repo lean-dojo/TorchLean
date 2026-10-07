@@ -21,6 +21,24 @@ layout: null
     "text": "install start introduction Lean models tensors examples first workflow"
   },
   {
+    "title": "Installation",
+    "url": "{{ '/installation/' | relative_url }}",
+    "section": "Getting started",
+    "text": "install CPU Linux macOS Windows WSL NVIDIA CUDA LibTorch SDK build platform requirements"
+  },
+  {
+    "title": "Custom Tensor Computations",
+    "url": "{{ '/examples/custom-computations/' | relative_url }}",
+    "section": "Examples",
+    "text": "custom Lean functions CPU GPU square activation indexed reads row sum bounded folds precision source proofs"
+  },
+  {
+    "title": "Numerical Runtime Certificates",
+    "url": "{{ '/examples/numerical-runtime/' | relative_url }}",
+    "section": "Examples",
+    "text": "numerical certificate binary32 IEEE replay MLP intermediate interval enclosures rounding forward backward optimizer"
+  },
+  {
     "title": "Graphs and IR",
     "url": "{{ '/blueprint/Semantics-and-Graphs/The-Canonical-Graph-IR/' | relative_url }}",
     "section": "Guide",
@@ -109,6 +127,12 @@ layout: null
     "url": "{{ '/graphs/' | relative_url }}",
     "section": "Reference",
     "text": "Lean import graph modules imports importers source tree build performance"
+  },
+  {
+    "title": "Build Performance",
+    "url": "{{ '/performance/' | relative_url }}",
+    "section": "Reference",
+    "text": "build performance GitHub Actions CI timings main branch history tests lint"
   },
   {
     "title": "Formalization Graph",

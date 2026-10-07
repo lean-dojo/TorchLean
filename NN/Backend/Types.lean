@@ -250,7 +250,8 @@ namespace AssurancePolicy
 Maintained TorchLean runtime policy.
 
 Implementations backed by maintained runtime guards and regression evidence are accepted. This
-includes TorchLean's LibTorch wrappers; it does not verify LibTorch, the FFI, or compiled code.
+includes LibTorch wrappers with retained CUDA comparisons; it does not verify LibTorch, the FFI,
+or compiled code.
 Capsules classified as `trustedExternal` and named trusted-boundary evidence are not admitted.
 -/
 def checked : AssurancePolicy := {}

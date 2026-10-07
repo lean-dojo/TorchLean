@@ -1594,8 +1594,6 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_scatter_add_rows(
 
 }  // namespace torchlean::operators
 
-// Attention and saved backward state
-
 // Host double-precision matrix multiplication
 
 

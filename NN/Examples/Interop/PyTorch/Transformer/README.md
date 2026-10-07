@@ -1,6 +1,6 @@
 # Transformer state-dict example
 
-Despite its filename, `train_transformer.py` does not train. It initializes a seeded single-layer
+`export_transformer.py` initializes a seeded single-layer
 Transformer encoder, prints the output for input `[[[1.5, 1.5]]]`, and overwrites
 `transformer_encoder.json`. The model has one attention head, width two, feed-forward width two,
 post-residual LayerNorm, ReLU, and bias-free attention projections.
@@ -18,7 +18,7 @@ are square, shape checks alone cannot detect an orientation mistake.
 From the repository root:
 
 ```bash
-python3 NN/Examples/Interop/PyTorch/Transformer/train_transformer.py
+python3 NN/Examples/Interop/PyTorch/Transformer/export_transformer.py
 scripts/lake.sh exe torchlean pytorch_roundtrip --model transformer --action import
 scripts/lake.sh exe torchlean pytorch_roundtrip --model transformer --action export
 ```

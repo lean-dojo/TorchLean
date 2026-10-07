@@ -367,12 +367,8 @@ should. A faulty lowering would instead mix these cases: the source would retain
 the lowered graph omitted it. The result $`(3,7)` would still have the expected shape and finite
 entries, so shape and finiteness checks alone would not reveal that change.
 
-The four outputs are paired in the order of the four commands: reference with bias, lowered
-with bias, reference without bias, lowered without bias. `Except.ok` records that evaluation
-succeeded; the vector is the returned value. The repeated vectors within each pair support the
-comparison for this one input. The difference between the pairs explains what a missing-bias
-bug would change. We deliberately changed the payload in both calls here, so this demonstration
-does not report an actual bug in the lowering implementation.
+We deliberately changed the payload in both calls here; this demonstrates the effect of a missing
+bias, not an actual bug in the lowering implementation.
 
 ## Value-Table Preservation
 
@@ -492,14 +488,6 @@ here is to show how the general theorem specializes to our graph and payload. Th
 `exec` ranges over possible lowered graphs, while `h` ties it to this exact call to the lowering
 function. Removing `h` would leave no reason for an arbitrary forward graph to agree with the
 reference evaluator.
-
-Notice also what the proof does not need to enumerate. It never lists input vectors, evaluates
-the ReLU at a grid of points, or stores expected outputs. Once the graph restriction and successful
-lowering are available, the general preservation theorem handles all tensors of the input shape.
-The earlier evaluations remain useful for understanding the proposition and the effect of the
-bias. Their role is explanatory evidence about concrete values; the quantified conclusion comes
-from the theorem application. This is why preserving the hypotheses in the printed statement
-matters as much as explaining its final equality.
 
 # Logarithm Domain Restriction
 
@@ -697,8 +685,9 @@ admit the unclamped negative-input example, whose two results differ.
 
 # Graph Specification And Runtime Example
 
-The `graphspec` example constructs a typed model, lowers it, trains it through the runtime, and
-reports the object that crossed each layer:
+The `graphspec` example takes a different path: it converts a typed `GraphSpec.Chain` to an
+`nn.Sequential` using `ToSequential.toSeq`, then trains that model. It does not call
+`lowerToForwardGraph` or instantiate the IR preservation theorem above.
 
 ```terminal
 # Run the maintained example that builds, lowers, and trains
@@ -718,10 +707,10 @@ mean_loss(after) = 0.247518
 forward: GraphSpec MLP lowered to TorchLean and executed
 ```
 
-The recorded summary reports a completed execution and a loss decrease on that run. The
-lowering theorem supplies the stronger statement: for every input, if lowering succeeds and the
-graph has no raw logarithm, the forward-graph denotation equals the IR denotation. The training
-log and lowering theorem answer different questions, and both are useful.
+The recorded summary reports a completed execution and a loss decrease on that run. It is runtime
+evidence for the GraphSpec-to-sequential path, not an application of the canonical-IR theorem.
+To connect this training run to a mathematical model, we need results about the same conversion,
+parameters, and runtime used here.
 
 The parameter counts help identify the model in that log. The first linear layer has six
 weights and three biases, giving nine parameters. ReLU adds none. The last linear layer has

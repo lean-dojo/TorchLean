@@ -20,7 +20,7 @@ an additional weight-loading script when that JSON exists. It does not run Pytho
 | --- | --- |
 | `MLP/` | Two linear layers and ReLU; `train_mlp.py` fits one input/target pair. |
 | `CNN/` | Two convolution/ReLU/pooling blocks and a linear head; `train_cnn.py` fits one image. |
-| `Transformer/` | One seeded encoder block; `train_transformer.py` exports initialization without training. |
+| `Transformer/` | One seeded encoder block; `export_transformer.py` exports initialization without training. |
 
 Each folder documents the tensor shapes and parameter orientation. Producers overwrite their local
 JSON fixture when run. The importers accept bare state dictionaries or a `params` wrapper, check

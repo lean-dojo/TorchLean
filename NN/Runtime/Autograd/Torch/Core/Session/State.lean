@@ -164,7 +164,7 @@ value, as in the backend dispatch.
   let result ← s.tape.modifyGet fun t =>
     let (t', result) := op t
     (result, t')
-  Runtime.Autograd.okOrThrow result
+  IO.ofExcept result
 
 /-- `recordCpu` for constructors that cannot fail, such as leaves. -/
 @[inline] def recordCpuPure {α : Type} [Storage α] (s : EagerSession α)
@@ -180,7 +180,7 @@ value, as in the backend dispatch.
   let result ← s.cudaTape.modifyGet fun t =>
     let (t', result) := op t
     (result, t')
-  Runtime.Autograd.okOrThrow result
+  IO.ofExcept result
 
 /-- `recordCpuPure` for the CUDA tape. -/
 @[inline] def recordCudaPure {α : Type} [Storage α] (s : EagerSession α)

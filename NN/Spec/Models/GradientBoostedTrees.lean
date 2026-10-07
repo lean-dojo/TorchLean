@@ -8,7 +8,7 @@ module
 
 public import NN.Spec.Core.TensorReductionShape.ConcatSlice
 public import NN.Spec.Core.Sequence
-public import NN.Spec.Layers.Activation
+public import NN.Spec.Core.TensorReductionShape.Reductions
 
 /-!
 # Gradient boosted trees (spec model)
@@ -542,46 +542,6 @@ def gbtMseLossSpec {batch nTrees maxDepth nFeatures : Nat}
   scaleSpec mse (1 / (batch : α))
 
 /--
-Mean binary cross-entropy of the ensemble's logits.
-
-For logit `z` and target `y`, evaluate
-`max z 0 - z * y + log (1 + exp (-abs z))`. This avoids taking the logarithm of a sigmoid rounded
-to zero or one. The logarithmic term compensates for rounding in `1 + tail`; if that addition
-rounds to one, it retains `tail` instead of returning zero.
--/
-def gbtBinaryCrossentropyLossSpec {batch nTrees maxDepth nFeatures : Nat}
-  (model : GradientBoostedTreesSpec α nFeatures nTrees maxDepth)
-  (input : Tensor α [batch, nFeatures])
-  (target : Tensor α [batch]) (h : batch ≠ 0) :
-  Tensor α .scalar :=
-  let predictions := gradientBoostedTreesForwardLeadingSpec (.dim batch .scalar) model input
-  let losses := map2Spec (fun z y =>
-    let tail := MathFunctions.exp (-MathFunctions.abs z)
-    let sum := 1 + tail
-    -- Context has no log1p primitive; compensate for rounding in the addition to one.
-    let logTail := if sum == 1 then tail
-      else MathFunctions.log sum * (tail / (sum - 1))
-    Max.max z 0 - z * y + logTail)
-    predictions target
-  have inst : Shape.HasNonemptyAxis 0 (Shape.dim batch Shape.scalar) := by
-    apply Shape.hasNonemptyAxisZeroOfNe h
-  scaleSpec (reduceSum 0 losses inst.proof) (1 / (batch : α))
-
-/-- Per-example sigmoid BCE derivative `sigmoid(logit) - target`, without batch reduction.
-
-Divide by `batch` to obtain the derivative of `gbtBinaryCrossentropyLossSpec`.
-When the target compares equal to one, use `(1 - target) - sigmoid(-logit)` to retain
-the positive-logit tail and any target tangent carried by the scalar.
--/
-def gbtBinaryCrossentropyGradSpec {batch : Nat}
-  (predictions : Tensor α [batch])
-  (target : Tensor α [batch]) :
-  Tensor α [batch] :=
-  map2Spec (fun z y =>
-    if y == 1 then (1 - y) - Activation.Math.sigmoidSpec (-z)
-    else Activation.Math.sigmoidSpec z - y) predictions target
-
-/--
 Residual computation for gradient boosting.
 
 For squared-error regression, the residual is `target - prediction`.
@@ -687,52 +647,5 @@ def computeFeatureImportanceSpec {nTrees maxDepth nFeatures : Nat}
     scaleSpec counts (1 / total)
   else
     counts
-
-/--
-Coefficient of determination (R^2) for regression.
-
-This uses the standard formula `1 - ss_res / ss_tot`, written as `(ss_tot - ss_res) / ss_tot`
-to avoid an explicit `1 - ...` when working in an abstract scalar context.
--/
-def gbtRSquaredSpec {batch nTrees maxDepth nFeatures : Nat}
-  (model : GradientBoostedTreesSpec α nFeatures nTrees maxDepth)
-  (input : Tensor α [batch, nFeatures])
-  (target : Tensor α [batch]) (h : batch ≠ 0) :
-  Tensor α .scalar :=
-  let predictions := gradientBoostedTreesForwardLeadingSpec (.dim batch .scalar) model input
-  have inst : Shape.HasNonemptyAxis 0 (Shape.dim batch Shape.scalar) := by
-    apply Shape.hasNonemptyAxisZeroOfNe h
-  let targetMean := reduceMean 0 target inst.proof
-  let targetMeanBroadcast := replicate (shape := [batch]) targetMean
-  let ss_res := reduceSum 0 (squareSpec (subSpec predictions target)) inst.proof
-  let ss_tot := reduceSum 0 (squareSpec (subSpec target targetMeanBroadcast)) inst.proof
-  -- Correct R-squared formula: (ss_tot - ss_res) / ss_tot
-  divSpec (subSpec ss_tot ss_res) ss_tot
-
-/-- Mean absolute error (MAE) for regression. -/
-def gbtMaeSpec {batch nTrees maxDepth nFeatures : Nat}
-  (model : GradientBoostedTreesSpec α nFeatures nTrees maxDepth)
-  (input : Tensor α [batch, nFeatures])
-  (target : Tensor α [batch]) (h : batch ≠ 0) :
-  Tensor α .scalar :=
-  let predictions := gradientBoostedTreesForwardLeadingSpec (.dim batch .scalar) model input
-  let errors := absSpec (subSpec predictions target)
-  have inst : Shape.HasNonemptyAxis 0 (Shape.dim batch Shape.scalar) := by
-    apply Shape.hasNonemptyAxisZeroOfNe h
-  reduceMean 0 errors inst.proof
-
-/-- Root mean squared error (RMSE) for regression. -/
-def gbtRmseSpec {batch nTrees maxDepth nFeatures : Nat}
-  (model : GradientBoostedTreesSpec α nFeatures nTrees maxDepth)
-  (input : Tensor α [batch, nFeatures])
-  (target : Tensor α [batch]) (h : batch ≠ 0) :
-  Tensor α .scalar :=
-  let predictions := gradientBoostedTreesForwardLeadingSpec (.dim batch .scalar) model input
-  let errors := subSpec predictions target
-  let squaredErrors := squareSpec errors
-  have inst : Shape.HasNonemptyAxis 0 (Shape.dim batch Shape.scalar) := by
-    apply Shape.hasNonemptyAxisZeroOfNe h
-  let mse := reduceMean 0 squaredErrors inst.proof
-  sqrtSpec mse
 
 end Spec

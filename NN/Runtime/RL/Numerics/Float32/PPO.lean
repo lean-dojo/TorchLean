@@ -27,7 +27,7 @@ namespace Numerics
 namespace Float32
 
 open Spec TorchLean
-open TorchLean TorchLean.Tensor
+open TorchLean.Tensor
 open Spec.RL
 open FloatLib.Floats (ExecFloat)
 
@@ -35,7 +35,7 @@ open FloatLib.Floats (ExecFloat)
 /--
 Checked importance ratio `exp(newLogProb - oldLogProb)`, specialized to `ExecFloat.Binary 8 23`.
 
-This is the float32-semantics variant of `Runtime.RL.PolicyGradient.importanceRatio`.
+This is the float32-semantics variant of `Runtime.RL.PolicyGradient.ratio`.
 -/
 def importanceRatioChecked (newLogProb oldLogProb : ExecFloat.Binary 8 23) :
     Except String (ExecFloat.Binary 8 23) := do

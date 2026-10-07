@@ -72,17 +72,13 @@ def outputNodeId (arch : SequentialPINNArch) : Nat :=
 
 namespace Internal
 
-/-- Internal: map a `PINN.HiddenActivation` to the corresponding `NN.IR.OpKind`. -/
+/-- Graph operation for a hidden activation. -/
 def activationOpKind : HiddenActivation → OpKind
   | .tanh => NN.IR.OpKind.tanh
   | .relu => NN.IR.OpKind.relu
   | .sin  => NN.IR.OpKind.sin
 
-/--
-Internal: worker for `buildGraph`.
-
-Implementation note: exported definitions must not depend on private helpers.
--/
+/-- Append linear layers and intervening activations, starting from the supplied node ids. -/
 def buildNodes
     (activation : HiddenActivation)
     (remaining : Array (Nat × Nat))

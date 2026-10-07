@@ -69,12 +69,12 @@ Create a reusable no-gradient evaluator for an execution-polymorphic program.
 The evaluator shares the supplied live parameter objects. Its eager session is reset after every
 call, so validation and generation do not retain one execution graph per input batch.
 -/
-def withState
+def new
     {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
     [Context α]
     [tensorTransfer : Runtime.Autograd.Torch.TensorTransfer α]
     {stateShapes inputShapes dataInputShapes : List Shape} {outputShape : Shape}
-    (program : ProgramWithDataInputs α β (stateShapes ++ inputShapes) dataInputShapes outputShape)
+    (program : Program.Data α β (stateShapes ++ inputShapes) dataInputShapes outputShape)
     (options : Torch.Config)
     (state : Torch.ParamList α stateShapes)
     (validateDataInputs : TorchLean.TensorPack β dataInputShapes → Except String Unit :=
@@ -92,7 +92,7 @@ def withState
       (β := Torch.Curried.Function β dataInputShapes (IO (Tensor α outputShape))) (fun xs =>
         Torch.Curried.curry (α := β) (ss := dataInputShapes)
           (β := IO (Tensor α outputShape)) (fun dataInputs => do
-            Runtime.Autograd.okOrThrow (validateDataInputs dataInputs)
+            IO.ofExcept (validateDataInputs dataInputs)
             sess.resetTape
             try
               let outRef ← (do
@@ -102,7 +102,7 @@ def withState
                   (ss₁ := stateShapes) (ss₂ := inputShapes) pRefs xRefs
                 let withData := Torch.CurriedRef.uncurry
                   (ss := stateShapes ++ inputShapes) programEager allRefs
-                Torch.CurriedRef.uncurryPack
+                Torch.Curried.uncurry
                   (α := β) (ss := dataInputShapes) withData dataInputs) |>.run sess
               Torch.Internal.EagerSession.getValue (α := α) sess outRef
             finally
@@ -123,7 +123,7 @@ for example training and evaluation losses for a model containing dropout. The e
 the parameter objects and their current backend storage with the training module. Its eager session
 is reset after every call, so repeated validation does not retain one execution graph per batch.
 -/
-def evaluatorWithState
+def evaluator
     {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
     [Context α]
     [tensorTransfer : Runtime.Autograd.Torch.TensorTransfer α]
@@ -131,12 +131,10 @@ def evaluatorWithState
     (d : ObjectiveDef β stateShapes inputShapes dataInputShapes)
     (options : Torch.Config)
     (state : Torch.ParamList α stateShapes) :
-    IO (ObjectiveEvaluator α β stateShapes inputShapes dataInputShapes) :=
-  match d.validate with
-  | .error message => throw <| IO.userError message
-  | .ok () =>
-      Evaluator.withState (program := d.loss (α := α)) options state
-        (validateDataInputs := d.validateDataInputs)
+    IO (ObjectiveEvaluator α β stateShapes inputShapes dataInputShapes) := do
+  IO.ofExcept d.validate
+  Evaluator.new (program := d.loss (α := α)) options state
+    (validateDataInputs := d.validateDataInputs)
 
 end ObjectiveDef
 

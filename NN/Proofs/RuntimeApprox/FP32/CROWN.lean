@@ -177,7 +177,7 @@ private theorem crown_forward_eq_linear_relu {inDim hidDim outDim : Nat}
        let outputLayer : Spec.LinearSpec ℝ hidDim outDim :=
           { weights := net.outputWeight, bias := net.outputBias }
        Spec.linearSpec (α := ℝ) outputLayer
-         (mapSpec (fun value : ℝ => max value 0)
+         (Tensor.map (fun value : ℝ => max value 0)
            (Spec.linearSpec (α := ℝ) hiddenLayer x))) := by
   have hrelu : (Activation.Math.reluSpec : ℝ → ℝ) = (fun value => max value 0) :=
     funext fun value => Activation.Math.reluSpec_eq_max value
@@ -214,7 +214,7 @@ theorem ibpBound_contains_reluTwoLayerMlp {inDim hidDim outDim : Nat}
          let l2R : Spec.LinearSpec R hidDim outDim :=
             { weights := netR.outputWeight, bias := netR.outputBias }
          let z1R := Spec.linearSpec (α := R) l1R xR
-         let a1R := mapSpec (reluR (β := β) (fexp := fexp) (rnd := rnd)) z1R
+         let a1R := Tensor.map (reluR (β := β) (fexp := fexp) (rnd := rnd)) z1R
          Spec.linearSpec (α := R) l2R a1R)) := by
   -- Real IBP box contains the real forward output.
   have hyS :
@@ -245,7 +245,7 @@ theorem ibpBound_contains_reluTwoLayerMlp {inDim hidDim outDim : Nat}
     (yS := NN.MLTheory.CROWN.forward (α := ℝ) netS xS)
     (yR :=
       (let z1R := Spec.linearSpec (α := R) l1R xR
-       let a1R := mapSpec (reluR (β := β) (fexp := fexp) (rnd := rnd)) z1R
+       let a1R := Tensor.map (reluR (β := β) (fexp := fexp) (rnd := rnd)) z1R
        Spec.linearSpec (α := R) l2R a1R))
     (eps := epsOut) hyS ?_
   -- The scalar equality is propositional; asking `change` to find it by reduction would

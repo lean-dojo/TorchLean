@@ -22,7 +22,6 @@ open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.ExecFloat.Binary (isFinite isInfinite isNaN signBit toModel)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
-
 namespace TorchLean.Floats.IEEE754.IEEE32Exec
 
 open FloatLib.Floats.Formats.BinaryInterchange

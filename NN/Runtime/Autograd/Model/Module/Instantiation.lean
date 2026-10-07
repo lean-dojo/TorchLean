@@ -36,47 +36,34 @@ Instantiate an `ObjectiveDef` under a runtime scalar and configuration.
 An explicit `initialState?` is used directly, without a `Float` intermediate. Otherwise the model's
 stored Float initializers are converted with `cast`.
 
-This is the most general constructor. The shorter `instantiate` entrypoint chooses standard runtime
-settings before calling this function.
+`runtime` selects the device, execution mode and arithmetic policy. Its default uses the standard
+runtime settings.
 -/
-def instantiateWith {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
-    [Context α]
-        [Runtime.Autograd.Torch.TensorTransfer α]
-    {stateShapes inputShapes dataInputShapes : List Shape}
-    (d : ObjectiveDef β stateShapes inputShapes dataInputShapes)
-    (cast : Float → α) (runtime : Torch.Config)
-    (initialState? : Option (TorchLean.TensorPack α stateShapes) := none) :
-    IO (Objective α β stateShapes inputShapes dataInputShapes) := do
-  unless d.requiresGrad.size = stateShapes.length do
-    throw <| IO.userError
-      s!"objective: expected {stateShapes.length} requiresGrad flags, got {d.requiresGrad.size}"
-  Runtime.Autograd.okOrThrow (d.validate)
-  match d.runtimeInit with
-  | some plan =>
-      Runtime.Autograd.okOrThrow (plan.validate)
-  | none => pure ()
-  let initState : TorchLean.TensorPack α stateShapes :=
-    match initialState? with
-    | some state => state
-    | none => castPack (α := α) cast d.initState
-  Objective.create (α := α) (stateShapes := stateShapes) (inputShapes := inputShapes)
-    (dataInputShapes := dataInputShapes)
-    (runtime := runtime) (requiresGrad := d.requiresGrad)
-    (validateDataInputs := d.validateDataInputs)
-    (loss := d.loss (α := α)) initState
-
-/-- Convenience instantiator that chooses only the execution mode. -/
 def instantiate {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
     [Context α]
     [Runtime.Autograd.Torch.TensorTransfer α]
     {stateShapes inputShapes dataInputShapes : List Shape}
     (d : ObjectiveDef β stateShapes inputShapes dataInputShapes)
-    (cast : Float → α) (execution : Torch.ExecutionMode := .eager)
+    (cast : Float → α) (runtime : Torch.Config := {})
     (initialState? : Option (TorchLean.TensorPack α stateShapes) := none) :
     IO (Objective α β stateShapes inputShapes dataInputShapes) := do
-  instantiateWith (α := α) (stateShapes := stateShapes) (inputShapes := inputShapes)
+  unless d.requiresGrad.size = stateShapes.length do
+    throw <| IO.userError
+      s!"objective: expected {stateShapes.length} requiresGrad flags, got {d.requiresGrad.size}"
+  IO.ofExcept (d.validate)
+  match d.runtimeInit with
+  | some plan =>
+      IO.ofExcept (plan.validate)
+  | none => pure ()
+  let initState : TorchLean.TensorPack α stateShapes :=
+    match initialState? with
+    | some state => state
+    | none => TorchLean.TensorPack.map (fun tensor => TorchLean.Tensor.map cast tensor) d.initState
+  Objective.create (α := α) (stateShapes := stateShapes) (inputShapes := inputShapes)
     (dataInputShapes := dataInputShapes)
-    d cast { execution := execution } initialState?
+    (runtime := runtime) (requiresGrad := d.requiresGrad)
+    (validateDataInputs := d.validateDataInputs)
+    (loss := d.loss (α := α)) initState
 
 end ObjectiveDef
 

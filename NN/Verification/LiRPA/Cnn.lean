@@ -24,10 +24,10 @@ References:
   `https://github.com/Verified-Intelligence/auto_LiRPA`
 
 Export (Python):
-`python3.12 scripts/verification/lirpa/export_cnn_cert.py`
+`python3 scripts/verification/lirpa/export_cert.py cnn`
 
 Run (Lean):
-`lake exe verify -- lirpa-cnn [NN/Examples/Verification/LiRPA/cnn_cert.json]`
+`scripts/lake.sh exe verify -- lirpa-cnn [path]`
 -/
 
 @[expose] public section
@@ -120,7 +120,6 @@ def seedParamsFloat : ParamStore Float :=
       | [i] => Float.ofNat i
       | _ => 0.0
   let emptyStore : ParamStore Float := {}
-  -- set input box
   let withInputBox := emptyStore.seedInputBox 0 inFlat
   -- Store the exact flattened convolution as a linear node.
   let withConvAffine :=
@@ -131,7 +130,6 @@ def seedParamsFloat : ParamStore Float :=
             n := nIn
             w := convWeight
             b := convBias } }
-  -- set head linear
   let withClassifier :=
     { withConvAffine with
       linearWB := withConvAffine.linearWB.insert 3
@@ -141,7 +139,7 @@ def seedParamsFloat : ParamStore Float :=
 /--
 Check an IBP certificate JSON against this CNN graph.
 
-This is wired into `lake exe verify -- lirpa-cnn [path]`.
+This is wired into `scripts/lake.sh exe verify -- lirpa-cnn [path]`.
 -/
 def verifyCert (path : String) : IO Unit := do
   let g := buildGraph

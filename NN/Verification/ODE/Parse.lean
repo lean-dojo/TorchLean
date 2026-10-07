@@ -26,6 +26,7 @@ Supported identifiers: pi.
 
 Exponentiation is expanded into repeated multiplication when `^ n` is given; `x^0` is one.
 Exponentiation binds more tightly than unary minus, so `-u^2` means `-(u^2)`.
+The expansion is proportional to `n` and is not capped by the recursive parser fuel.
 -/
 
 @[expose] public section
@@ -42,7 +43,7 @@ This parser is part of the executable ODE verifier.  We keep the grammar direct 
 that the accepted certificate syntax is visible in one file, with predictable errors and no hidden
 parser-combinator behavior.
 
-The output AST is `NN.Verification.ODE.Ast.Expr`.
+The output AST is `NN.Verification.ODE.Expr`.
 -/
 
 /-! ## Parser state and low-level helpers -/
@@ -110,10 +111,7 @@ def applyFunc? (id : String) (arg : Expr) : Option Expr :=
 
 mutual
   /--
-  Internal: parse an `expr` (addition/subtraction chain), with an explicit fuel budget.
-
-  This is a plain `def` (not `private`) because the module is in a `public` section for
-  export/doc tooling, and public declarations should not depend on private helper definitions.
+  Parse an addition/subtraction chain with an explicit fuel budget.
   -/
   def parseExprFuel (fuel : Nat) (st : Cursor) :
       Except String (Expr × Cursor) := do
@@ -249,7 +247,7 @@ end Internal
 Parse an ODE RHS expression string into an AST.
 
 This is the user-facing entrypoint for the ODE verifier: it parses a string like
-`"sin(t) + u^2"` into an `Expr` (`NN.Verification.ODE.Ast.Expr`).
+`"sin(t) + u^2"` into an `Expr` (`NN.Verification.ODE.Expr`).
 -/
 def parseExpr (s : String) : Except String Expr :=
   let st0 : Cursor := { source := s }

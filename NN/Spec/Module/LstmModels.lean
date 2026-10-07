@@ -400,7 +400,7 @@ def Classifier.backward
 Forward pass for an `Lstm.Generator` (many-to-many).
 
 This applies an embedding linear map to each token vector, runs the LSTM, and projects each hidden
-state back into vocabulary space.
+state back into vocabulary space. Empty sequences preserve the initial recurrent state.
 -/
 def Generator.forward {seqLen vocabularySize hiddenSize : Nat}
   (model : Generator α vocabularySize hiddenSize)
@@ -408,10 +408,8 @@ def Generator.forward {seqLen vocabularySize hiddenSize : Nat}
   (initialState : LSTMState α hiddenSize) :
   (Tensor α [seqLen, vocabularySize] × LSTMState α hiddenSize) :=
   let embedded := Tensor.mapLeading ([seqLen]) (linearSpec model.embedding) inputTokens
-  let (hiddenStates, finalState) := lstmSequenceSpec model.lstm embedded initialState
-  let outputs := Tensor.mapLeading ([seqLen])
-    (linearSpec model.outputProjection) hiddenStates
-  (outputs, finalState)
+  Model.forwardSequence { lstm := model.lstm, outputLayer := model.outputProjection }
+    embedded initialState
 
 -- Forward pass for bidirectional LSTM
 /--

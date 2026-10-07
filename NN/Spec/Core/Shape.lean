@@ -468,8 +468,6 @@ class SameRank (s₁ s₂ : Shape) : Prop where
   /-- The two shapes have the same number of dimensions. -/
   rank_eq : rank s₁ = rank s₂
 
-instance : SameRank .scalar .scalar := ⟨rfl⟩
-
 /-- Every shape has the same rank as itself. -/
 instance sameRankRefl (s : Shape) : SameRank s s := ⟨rfl⟩
 
@@ -934,14 +932,8 @@ theorem size_pos_of_well_formed : ∀ {s : Shape}, s.wellFormed → 0 < Spec.Sha
 /-- A shape of positive total size has no zero dimension. -/
 theorem wellFormed_of_size_pos : ∀ {s : Shape}, 0 < Spec.Shape.size s → s.wellFormed
   | .scalar, _ => trivial
-  | .dim n s, h => by
-      have hn : n ≠ 0 := by
-        intro hn
-        simp [Spec.Shape.size, hn] at h
-      have hs : Spec.Shape.size s ≠ 0 := by
-        intro hs
-        simp [Spec.Shape.size, hs] at h
-      exact ⟨Nat.pos_of_ne_zero hn, wellFormed_of_size_pos (Nat.pos_of_ne_zero hs)⟩
+  | .dim _ _, h =>
+      ⟨Nat.pos_of_mul_pos_right h, wellFormed_of_size_pos (Nat.pos_of_mul_pos_left h)⟩
 
 /-- Every in-bounds axis of a well-formed shape has positive extent. -/
 theorem nonemptyAxis_of_wellFormed {s : Shape} (hw : s.wellFormed) {axis : Nat}
@@ -975,7 +967,6 @@ provided locally (e.g. `letI : Shape.WellFormed s := ...`) when needed.
 class WellFormed (s : Shape) : Prop where
   proof : s.wellFormed
 
--- Scalars are always well-formed.
 /-- Scalars are always well-formed. -/
 instance : WellFormed .scalar where
   proof := trivial

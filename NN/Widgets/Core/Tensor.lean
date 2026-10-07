@@ -21,19 +21,9 @@ import ProofWidgets.Component.HtmlDisplay
 
 Tensor inspection widgets for the Lean infoview.
 
-This module defines a `#tensor_view t` command that displays a small tensor as a rich HTML panel in
-the infoview. It is designed for:
-- examples,
-- inspecting runtime output,
-- teaching/exposition in the manual.
-
-It is **not** intended to be used inside proofs. Import `NN.Widgets` or the concrete
-`NN.Widgets.Core.Tensor` module to use it without importing the full `NN` umbrella, which also
-includes the widgets.
-
-Implementation note:
-We build on ProofWidgets’ `#html` command (which ships with mathlib’s dependency set) rather than
-introducing any custom JavaScript or external build step.
+Import `NN.Widgets` or `NN.Widgets.Core.Tensor` to inspect values through ProofWidgets' `#html`
+command. Previews read bounded prefixes and leading slices; the statistics panel scans the whole
+tensor. Rendering a value does not prove a property of it.
 
 ## Main definitions
 
@@ -54,11 +44,8 @@ open _root_.TorchLean.Tensor
 open UI
 
 /--
-Element renderer for `#tensor_view`.
-
-The tensor widget is used across the library, so we keep element rendering customizable:
-- the default instance uses `ToString`,
-- specialized instances can add tooltips (e.g. float32 bits), units, or compact formatting.
+Element renderer for `#tensor_view`. The default uses `ToString`; specialized instances can add
+tooltips, units, or compact formatting.
 -/
 class TensorElemView (α : Type) where
   render : α → ProofWidgets.Html
@@ -184,8 +171,7 @@ flat preview when the recursion depth is exhausted.
 def tensorHtml {α : Type} [TorchLean.Storage α] [ToString α] [TensorElemView α]
     {s : Shape} (t : Tensor α s)
     (maxRows : Nat := 16) (maxCols : Nat := 16) (maxElems : Nat := 64) : ProofWidgets.Html :=
-  -- Core renderer: only depends on a depth budget, so it can recurse on higher-rank tensors without
-  -- dumping an enormous nested pretty-printer view by default.
+  -- Recurse on the depth budget so both slice count and nesting stay bounded.
   let rec tensorHtmlRec {s : Shape} (t : Tensor α s)
       (depth : Nat) : ProofWidgets.Html :=
     match depth with
@@ -236,8 +222,6 @@ def tensorHtml {α : Type} [TorchLean.Storage α] [ToString α] [TensorElemView 
       {pill s!"shape={Shape.pretty s}"} {pill s!"rank={Spec.Shape.rank s}"} {pill
         s!"size={Spec.Shape.size s}"}
     </div>;
-  -- Default to `ToString` element rendering, but allow specialized renderers via
-  -- `TensorElemView` instances (when the caller imports them).
   let body := tensorHtmlRec (s := s) (t := t) (depth := 2);
   <div style={json% {
     "padding": "10px",
@@ -264,11 +248,8 @@ def packedTensorHtml {α : Type} [TorchLean.Storage α] [ToString α] [TensorEle
 /-!
 ## Stats
 
-For small tensors, it is often helpful to inspect numeric ranges without expanding
-every element. This widget computes simple scalar summaries (min/max/mean/norms).
-
-Main command:
-- `#tensor_stats_view t`
+`#tensor_stats_view t` computes extrema, mean, and norms using the scalar's `Context` operations.
+Unlike the clipped previews, it materializes and scans every entry.
 -/
 
 namespace TensorInternal
@@ -319,7 +300,7 @@ def tensorStatsHtml {α : Type} [TorchLean.Storage α] [Context α] [ToString α
 
 end TensorInternal
 
-/-- Render simple scalar summary statistics (min/max/mean/norms) for a tensor as HTML. -/
+/-- Render extrema, mean, and norms, scanning every entry with the scalar's arithmetic. -/
 def tensorStatsHtml {α : Type} [TorchLean.Storage α] [Context α] [ToString α] {s : Shape}
     (t : Tensor α s) : ProofWidgets.Html :=
   TensorInternal.tensorStatsHtml (α := α) (s := s) t

@@ -134,13 +134,13 @@ This is the reference-level forward pass used to implement `forward`.
 def forwardState {σ τ : Shape} (model : Seq σ τ) {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Torch.Ops (m := m) (α := α)]
     (mode : Mode)
-    (ps : Torch.RefList (RefTy (m := m) (α := α)) (stateShapes model))
-    (x : RefTy (m := m) (α := α) σ) : m (RefTy (m := m) (α := α) τ) :=
+    (ps : Torch.RefList (Ref (m := m) (α := α)) (stateShapes model))
+    (x : Ref (m := m) (α := α) σ) : m (Ref (m := m) (α := α) τ) :=
   match model with
   | .id _ => pure x
   | .cons l rest =>
       let (psL, psR) :=
-        Torch.RefList.split (Ref := RefTy (m := m) (α := α))
+        Torch.RefList.split (Ref := Ref (m := m) (α := α))
           (ss₁ := l.stateShapes) (ss₂ := stateShapes rest) ps
       do
         let y ← l.forwardRef (α := α) (m := m) mode psL x
@@ -161,9 +161,9 @@ def forward {σ τ : Shape} (model : Seq σ τ) (mode : Mode := .eval)
     {α : Type} [TorchLean.Storage α] [Context α] :
     Runtime.Autograd.Model.Program α (stateShapes model ++ [σ]) τ :=
   fun {m} _ _ =>
-    Torch.CurriedRef.curry (Ref := RefTy (m := m) (α := α))
-      (ss := stateShapes model ++ [σ]) (β := m (RefTy (m := m) (α := α) τ)) (fun args => do
-        let (ps, x) := Torch.RefList.splitLast (Ref := RefTy (m := m) (α := α)) (ss := stateShapes
+    Torch.CurriedRef.curry (Ref := Ref (m := m) (α := α))
+      (ss := stateShapes model ++ [σ]) (β := m (Ref (m := m) (α := α) τ)) (fun args => do
+        let (ps, x) := Torch.RefList.splitLast (Ref := Ref (m := m) (α := α)) (ss := stateShapes
           model) (τ := σ) args
         forwardState (model := model) (α := α) (m := m) mode ps x)
 
@@ -172,8 +172,8 @@ def forward {σ τ : Shape} (model : Seq σ τ) (mode : Mode := .eval)
 
   `Mode.train` and `Mode.eval` choose how layers such as dropout and BatchNorm behave.
   `forwardNoGrad` takes live parameters and a concrete input, runs eagerly without recording
-  gradients, and returns the output tensor. `predict` selects evaluation mode for that same
-  operation. Decoding and sampling loops can use these helpers to inspect logits directly.
+  gradients, and returns the output tensor. Evaluation mode is the default. Decoding and sampling
+  loops can use this operation to inspect logits directly.
 
   For repeated graph execution, call `lowerToTypedGraph` once and evaluate the result with
   `TypedGraph.forward`. The recorded graph keeps the layer mode selected during lowering.
@@ -194,7 +194,7 @@ def forward {σ τ : Shape} (model : Seq σ τ) (mode : Mode := .eval)
       (params : Runtime.Autograd.Torch.ParamList α (stateShapes model))
       (x : TorchLean.Tensor α σ) (mode : Mode := .eval)
       (rngCounter : Option (IO.Ref Nat) := none) : IO (TorchLean.Tensor α τ) := do
-    Runtime.Autograd.okOrThrow (validate model)
+    IO.ofExcept (validate model)
     -- Inference still uses the eager session machinery so it can select native kernels, but its
     -- leaves are deliberately non-differentiable and the transient tape is released before return.
     let options := { options with gradEnabled := false }
@@ -221,20 +221,6 @@ def forward {σ τ : Shape} (model : Seq σ τ) (mode : Mode := .eval)
       sess.resetTape
       if options.usesCuda then
         Runtime.Autograd.LibTorch.Buffer.collectGarbage
-
-  /--
-  Run eval-mode eager inference for one concrete input.
-
-  This is the eval-mode convenience wrapper around `forwardNoGrad`.
-  -/
-  def predict {σ τ : Shape}
-      (options : Runtime.Autograd.Torch.Config)
-      (model : Seq σ τ)
-      {α : Type} [TorchLean.Storage α] [Context α]
-      [tensorTransfer : Runtime.Autograd.Torch.TensorTransfer α]
-      (params : Runtime.Autograd.Torch.ParamList α (stateShapes model))
-      (x : TorchLean.Tensor α σ) : IO (TorchLean.Tensor α τ) :=
-    forwardNoGrad (α := α) (tensorTransfer := tensorTransfer) options model params x
 
   /--
   Lower a sequential model into a reusable `TypedGraph`.
@@ -306,15 +292,15 @@ def fromLoss {σ τ : Shape} (model : Seq σ τ)
     loss := fun {α} => by
       intro _ _; exact
         (fun {m} _ _ =>
-          Torch.CurriedRef.curry (Ref := RefTy (m := m) (α := α))
+          Torch.CurriedRef.curry (Ref := Ref (m := m) (α := α))
             (ss := stateShapes model ++ [σ, τ])
-            (β := m (RefTy (m := m) (α := α) [])) (fun args => do
+            (β := m (Ref (m := m) (α := α) [])) (fun args => do
               let (ps, xy) :=
-                Torch.RefList.split (Ref := RefTy (m := m) (α := α))
+                Torch.RefList.split (Ref := Ref (m := m) (α := α))
                   (ss₁ := stateShapes model) (ss₂ := [σ, τ]) args
               let .cons x (.cons y .nil) := xy
               let yhat ← forwardState (model := model) (α := α) (m := m) mode ps x
-              Torch.CurriedRef.uncurry (Ref := RefTy (m := m) (α := α)) (ss := [τ, τ])
+              Torch.CurriedRef.uncurry (Ref := Ref (m := m) (α := α)) (ss := [τ, τ])
                 (loss (α := α) (m := m)) (.cons yhat (.cons y .nil))
           ))
   }

@@ -37,7 +37,7 @@ theorem vjpChecked_eq {α Δ : Type} [Storage α] [Add α] [Zero α]
     (checked : Runtime.Autograd.TypedGraph.lowerToTapeChecked graph.data inputs data =
       .ok result) :
     graph.vjpChecked inputs data seed =
-      .ok (graph.vjpWithSeed inputs data seed, graph.forward inputs data) := by
+      .ok (graph.vjp inputs data seed, graph.forward inputs data) := by
   have same := Runtime.Autograd.TypedGraph.lowerToTapeChecked_eq
     graph.data inputs data result checked
   have checked' := checked.trans (congrArg Except.ok same)
@@ -56,7 +56,7 @@ theorem eq_of_vjpChecked_ok {α Δ : Type} [Storage α] [Add α] [Zero α]
     (graph : TypedGraphWithData α Δ Γ τ) (inputs : TensorPack α Γ) (data : Δ)
     (seed : Tensor α τ) (result : TensorPack α Γ × Tensor α τ)
     (checked : graph.vjpChecked inputs data seed = .ok result) :
-    result = (graph.vjpWithSeed inputs data seed, graph.forward inputs data) := by
+    result = (graph.vjp inputs data seed, graph.forward inputs data) := by
   obtain ⟨tape, lowered⟩ : ∃ tape,
       Runtime.Autograd.TypedGraph.lowerToTapeChecked graph.data inputs data = .ok tape := by
     cases lowered : Runtime.Autograd.TypedGraph.lowerToTapeChecked graph.data inputs data with
@@ -110,13 +110,13 @@ theorem jvpChecked_fderiv {Δ : Type} {Γ : List Shape} {τ : Shape}
   simp only [Algebra.Graph.jvpCtx, same]
 
 /-- The pure graph pullback is the adjoint derivative of its selected output. -/
-theorem vjpWithSeed_adjoint_fderiv {Δ : Type} {Γ : List Shape} {τ : Shape}
+theorem vjp_adjoint_fderiv {Δ : Type} {Γ : List Shape} {τ : Shape}
     (graph : TypedGraphWithData ℝ Δ Γ τ)
     (proofGraph : Algebra.Graph (α := ℝ) Δ Γ graph.nodeShapes)
     (same : proofGraph.toData = graph.data)
     (inputs : TensorPack ℝ Γ) (data : Δ) (seed : Tensor ℝ τ)
     (correct : GraphFDerivCorrectAt (Algebra.Graph.toReal proofGraph data) (flattenCtx inputs)) :
-    flattenCtx (graph.vjpWithSeed inputs data seed) =
+    flattenCtx (graph.vjp inputs data seed) =
       (fderiv ℝ (fun x => tensorToVec (graph.forward (unflattenCtx x) data))
         (flattenCtx inputs)).adjoint (tensorToVec seed) := by
   have seed_eq : (CtxVec.getCLM graph.output).adjoint (tensorToVec seed) =
@@ -130,7 +130,7 @@ theorem vjpWithSeed_adjoint_fderiv {Δ : Type} {Γ : List Shape} {τ : Shape}
       dot_eq_inner_tensorToVec]
   rw [(hasFDerivAt_forward graph proofGraph same inputs data correct).fderiv,
     ContinuousLinearMap.adjoint_comp, ContinuousLinearMap.comp_apply, seed_eq]
-  unfold vjpWithSeed
+  unfold vjp
   rw [← same]
   exact Algebra.Graph.backpropCtx_eq_adjoint_fderiv_at proofGraph data inputs correct _
 
@@ -153,6 +153,6 @@ theorem vjpChecked_adjoint_fderiv {Δ : Type} {Γ : List Shape} {τ : Shape}
       (fderiv ℝ (fun x => tensorToVec (graph.forward (unflattenCtx x) data))
         (flattenCtx inputs)).adjoint (tensorToVec seed) := by
   rw [eq_of_vjpChecked_ok graph inputs data seed result checked]
-  exact vjpWithSeed_adjoint_fderiv graph proofGraph same inputs data seed correct
+  exact vjp_adjoint_fderiv graph proofGraph same inputs data seed correct
 
 end Runtime.Autograd.Torch.TypedGraphWithData

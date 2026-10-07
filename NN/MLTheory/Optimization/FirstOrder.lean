@@ -15,7 +15,7 @@ public import NN.Runtime.Optim.Optimizers
 Relations between distinct first-order optimizer updates.
 
 This is the tensor-facing layer: the statements are phrased over `TorchLean.Tensor` and the
-executable operator dictionary `Spec.Context`. When we want ordinary algebraic simplification, such
+executable operator dictionary `Context`. When we want ordinary algebraic simplification, such
 as proving that a zero weight-decay AdamW update is the same parameter update as Adam, we
 specialize to `ℝ`, where mathlib provides the ring laws.
 -/
@@ -47,22 +47,9 @@ theorem update_weight_decay_zero_parameters_eq_adam_real {s : Shape}
              secondMoment := state.secondMoment
              stepCount := state.stepCount } : Adam.State ℝ s)
           parameters gradients).parameters := by
-  -- With `weightDecay = 0` the decoupled decay term is `scaleSpec parameters 0`, which is the zero
-  -- tensor, and subtracting the zero tensor is the identity.
-  have scaleSpec_zero : ∀ {s : Shape} (t : Tensor ℝ s), scaleSpec t (0 : ℝ) = Tensor.full s 0 := by
-    intro s t
-    apply TorchLean.Tensor.Internal.Rep.ext
-    intro coordinate
-    simp [Tensor.scaleSpec, Tensor.mapSpec, Tensor.map]
-  have subSpec_full_zero : ∀ {s : Shape} (t : Tensor ℝ s), subSpec t (Tensor.full s 0) = t := by
-    intro s t
-    apply TorchLean.Tensor.Internal.Rep.ext
-    intro coordinate
-    simp [Tensor.subSpec]
-  cases state with
-  | mk learningRate beta1 beta2 epsilon weightDecay firstMoment secondMoment stepCount =>
-      have hwd' : weightDecay = 0 := by simpa using hwd
-      simp [AdamW.update, Adam.update, hwd', scaleSpec_zero, subSpec_full_zero]
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simp [AdamW.update, Adam.update, hwd, Tensor.subSpec, Tensor.scaleSpec, Tensor.map]
 
 end AdamW
 

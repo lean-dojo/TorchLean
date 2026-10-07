@@ -26,89 +26,7 @@ still required to transfer this pure result to program execution or a native bac
 
 open Spec TorchLean
 namespace NN.GraphSpec.LowerToDAG
-variable {α : Type} [Storage α]
-
-private theorem get_append_left_heq {ss ts : List Shape}
-    (xs : TensorPack α ss) (ys : TensorPack α ts) (i : Fin ss.length)
-    (j : Fin (ss ++ ts).length) (h : j.val = i.val) :
-    HEq (TensorPack.get (TensorPack.append xs ys) j) (TensorPack.get xs i) := by
-  induction ss with
-  | nil => exact Fin.elim0 i
-  | cons s ss ih =>
-    cases xs with
-    | cons x xs =>
-      cases i with
-      | mk i hi =>
-        cases j with
-        | mk j hj =>
-          dsimp at h
-          subst j
-          cases i with
-          | zero => rfl
-          | succ i =>
-              exact ih xs ⟨i, Nat.lt_of_succ_lt_succ hi⟩
-                ⟨i, Nat.lt_of_succ_lt_succ hj⟩ rfl
-
-private theorem get_append_right_heq {ss ts : List Shape}
-    (xs : TensorPack α ss) (ys : TensorPack α ts) (i : Fin ts.length)
-    (j : Fin (ss ++ ts).length) (h : j.val = ss.length + i.val) :
-    HEq (TensorPack.get (TensorPack.append xs ys) j) (TensorPack.get ys i) := by
-  induction ss with
-  | nil =>
-    cases xs
-    have : j = i := Fin.ext (by simpa using h)
-    subst j
-    rfl
-  | cons s ss ih =>
-    cases xs with
-    | cons x xs =>
-      cases j with
-      | mk j hj =>
-        cases j with
-        | zero => simp only [List.length_cons] at h; omega
-        | succ j =>
-          exact ih xs ⟨j, Nat.lt_of_succ_lt_succ hj⟩ (by
-            change j = ss.length + i.val
-            change j + 1 = ss.length + 1 + i.val at h
-            omega)
-
-variable [Context α]
-
-private theorem eval_cast_heq {Γ : List Shape} {s t : Shape}
-    (env : TensorPack α Γ) (h : s = t) (term : DAG.Term Γ s) :
-    HEq (DAG.Term.eval env (DAG.Term.cast term h)) (DAG.Term.eval env term) := by
-  cases h
-  rfl
-
-private theorem eval_mkParamTerm {pre ps post extra : List Shape}
-    (a : TensorPack α pre) (b : TensorPack α ps)
-    (c : TensorPack α post) (d : TensorPack α extra) (i : Fin ps.length) :
-    DAG.Term.eval (TensorPack.append (TensorPack.append (TensorPack.append a b) c) d)
-      (mkParamTerm (pre := pre) (post := post) (extra := extra) i) =
-      TensorPack.get b i := by
-  unfold mkParamTerm
-  apply eq_of_heq
-  apply HEq.trans (eval_cast_heq _ _ _)
-  simp only [DAG.Term.eval, DAG.Env.tget_ofFin]
-  let j : Fin (pre ++ ps).length := ⟨pre.length + i.val, by simp⟩
-  let k : Fin ((pre ++ ps) ++ post).length := ⟨j.val, by simp only [j, List.length_append]; omega⟩
-  exact (get_append_left_heq _ d k _ rfl).trans
-    ((get_append_left_heq _ c j k rfl).trans (get_append_right_heq a b i j rfl))
-private theorem eval_argsOfFn {Γ ps : List Shape} (env : TensorPack α Γ)
-    (params : TensorPack α ps) (f : ∀ i : Fin ps.length, DAG.Term Γ (ps.get i))
-    (hf : ∀ i, DAG.Term.eval env (f i) = TensorPack.get params i) :
-    DAG.Term.evalArgs env (argsOfFn ps f) = params := by
-  induction ps with
-  | nil => cases params; rfl
-  | cons shape ps ih =>
-    cases params with
-    | cons value rest =>
-      simp only [argsOfFn, DAG.Term.evalArgs]
-      congr 1
-      · exact hf ⟨0, by simp⟩
-      · apply ih rest
-        intro i
-        exact hf ⟨i.val + 1, Nat.succ_lt_succ i.isLt⟩
+variable {α : Type} [Storage α] [Context α]
 
 private theorem eval_primCall {pre ps post extra : List Shape} {σ τ : Shape}
     (a : TensorPack α pre) (b : TensorPack α ps)
@@ -119,9 +37,12 @@ private theorem eval_primCall {pre ps post extra : List Shape} {σ τ : Shape}
   dsimp only
   unfold primCall
   dsimp only
-  simp only [eq_mpr_eq_cast, eq_mp_eq_cast, cast_cast, cast_eq]
+  have hparams : DAG.Env.RenamingSound b (((a.append b).append c).append d)
+      (fun v => DAG.Var.inLeft extra (DAG.Var.inLeft post (DAG.Var.inRight pre v))) := by
+    intro s v
+    simp only [DAG.Env.tget_append_inLeft, DAG.Env.tget_append_inRight]
   rw [DAG.Term.eval_op, DAG.Term.evalArgs_append,
-    eval_argsOfFn _ b _ (eval_mkParamTerm a b c d)]
+    DAG.Term.evalArgs_rename b _ _ hparams, DAG.Term.evalArgs_vars]
   simp only [Primitive.toDAGPrimOp, TensorPack.split_append]
   rfl
 
@@ -194,17 +115,6 @@ private theorem pack_four_heq {ss ts us vs : List Shape}
     (HEq.rfl : HEq a a) (pack_assoc_heq b c d))
   exact (pack_assoc_heq a b (c.append d)).symm
 
-private theorem eval_lastOfFin {Γ : List Shape} {s : Shape}
-    (env : TensorPack α Γ) (value : Tensor α s)
-    (i : Fin (Γ ++ [s]).length) (hi : i.val = Γ.length)
-    (h : (Γ ++ [s]).get i = s) :
-    DAG.Term.eval (env.append (.cons value .nil))
-      (DAG.Term.cast (DAG.Term.var (DAG.Var.ofFin i)) h) = value := by
-  apply eq_of_heq
-  apply (eval_cast_heq _ _ _).trans
-  simp only [DAG.Term.eval, DAG.Env.tget_ofFin]
-  exact get_append_right_heq env (.cons value .nil) ⟨0, by simp⟩ i (by simpa using hi)
-
 /-- The parameter segment is preserved even inside an ambient SSA environment. -/
 private theorem eval_toTerm {ps : List Shape} {σ τ : Shape} (g : Chain ps σ τ) :
     ∀ {pre post extra : List Shape} (a : TensorPack α pre) (b : TensorPack α ps)
@@ -215,10 +125,10 @@ private theorem eval_toTerm {ps : List Shape} {σ τ : Shape} (g : Chain ps σ �
   induction g with
   | id s =>
     intro pre post extra a b c d x
-    simp only [toTerm, Interp.spec, eq_mpr_eq_cast, eq_mp_eq_cast, cast_cast, cast_eq]
+    simp only [toTerm, Interp.spec]
   | prim p =>
     intro pre post extra a b c d x
-    simp only [toTerm, Interp.spec, eq_mpr_eq_cast, eq_mp_eq_cast, cast_cast, cast_eq]
+    simp only [toTerm, Interp.spec]
     exact eval_primCall a b c d p x
   | @seq ps₁ ps₂ σ middle τ g₁ g₂ ih₁ ih₂ =>
     intro pre post extra a b c d x
@@ -255,7 +165,7 @@ private theorem eval_toTerm {ps : List Shape} {σ τ : Shape} (g : Chain ps σ �
         (HEq.rfl : HEq (.cons v .nil : TensorPack α [middle]) (.cons v .nil))).trans
         (pack_assoc_heq (((a.append b₁).append b₂).append c) d (.cons v .nil))
     rw [pack_cast_eq_of_heq _ henv₂, ih₂, eval_castEnv,
-      pack_cast_eq_of_heq _ henv₂.symm, eval_lastOfFin _ _ _ rfl]
+      pack_cast_eq_of_heq _ henv₂.symm, DAG.Term.eval_var_last_append]
 
 private theorem eval_transport {Γ Δ : List Shape} {s : Shape}
     (h : Γ = Δ) (env : TensorPack α Δ) (term : DAG.Term Γ s) :
@@ -296,6 +206,6 @@ theorem Chain.eval_toDAGTerm {ps : List Shape} {σ τ : Shape} (g : Chain ps σ 
     exact pack_append_heq (by simp) rfl (pack_append_nil_heq params).symm HEq.rfl
   rw [henv, eval_toTerm]
   apply congrArg (Interp.spec g params)
-  rw [eval_lastOfFin _ _ _ (by simp)]
+  exact DAG.Term.eval_var_last_append _ _
 
 end NN.GraphSpec.LowerToDAG

@@ -37,7 +37,7 @@ structure Loader (α : Type) [TorchLean.Storage α] (batch : Nat)
   seed : Nat := 0
 
 /-- Collate a statically bounded sample function without an intermediate array. -/
-def Internal.collateSupervisedFn {α : Type} [TorchLean.Storage α]
+def Internal.collateFn {α : Type} [TorchLean.Storage α]
     {σ τ : Spec.Shape} {n : Nat}
     (sample : Fin n → TorchLean.Sample.Supervised α σ τ) :
     TorchLean.Sample.Batch α n σ τ :=
@@ -57,15 +57,15 @@ Example:
 -- Three samples in, one batched sample out, with the batch size checked against the array length.
 def batched (samples : Array (Sample.Supervised Float [2] [1])) :
     Except String (Sample.Batch Float 3 [2] [1]) :=
-  Data.collateSupervised 3 samples
+  Data.collate 3 samples
 ```
 -/
-def collateSupervised {α : Type} [TorchLean.Storage α]
+def collate {α : Type} [TorchLean.Storage α]
     {σ τ : Spec.Shape} (n : Nat)
     (batch : Array (TorchLean.Sample.Supervised α σ τ)) :
     Except String (TorchLean.Sample.Batch α n σ τ) := do
   if h : batch.size = n then
-    pure <| Internal.collateSupervisedFn fun i =>
+    pure <| Internal.collateFn fun i =>
       batch[i.val]'(by simp [h])
   else
     throw s!"collate: expected batch size {n}, got {batch.size}"
@@ -101,15 +101,20 @@ def collateStream {α : Type} [TorchLean.Storage α]
         simp only [Nat.add_mul, Nat.one_mul] at batchBound
         omega
       stream.get ⟨batchIndex.val * n + sampleIndex.val, bound⟩
-    Internal.collateSupervisedFn fun i : Fin n =>
+    Internal.collateFn fun i : Fin n =>
       samples[i.val]'(by simp [samples])
 
 namespace Loader
 
-/-- Run one epoch: return the updated loader state and an array of typed minibatches. -/
+/--
+Return one epoch of full typed minibatches and the loader state for the next epoch.
+
+With `requireBatch := true`, reject an epoch with no full minibatch. The diagnostic includes
+the batch size and row count. The default permits an empty epoch.
+-/
 def nextEpoch {α : Type} [TorchLean.Storage α]
     {n : Nat} {σ τ : Spec.Shape}
-    (name : String) (loader : Loader α n σ τ) :
+    (name : String) (loader : Loader α n σ τ) (requireBatch : Bool := false) :
     Except String (TorchLean.Data.Epoch
       (Loader α n σ τ)
       (TorchLean.Sample.Batch α n σ τ)) := do
@@ -117,13 +122,17 @@ def nextEpoch {α : Type} [TorchLean.Storage α]
     (shuffle := loader.shuffle) (seed := loader.seed) (dropLast := true)
   let result ←
     TorchLean.Data.EpochLoader.mapNextEpoch name raw
-      (fun batch => collateSupervised (α := α) (σ := σ) (τ := τ) n batch)
-  pure
+      (fun batch => collate (α := α) (σ := σ) (τ := τ) n batch)
+  let epoch : TorchLean.Data.Epoch (Loader α n σ τ) (TorchLean.Sample.Batch α n σ τ) :=
     { nextLoader :=
         { samples := result.nextLoader.samples
           shuffle := loader.shuffle
           seed := result.nextLoader.seed }
       batches := result.batches }
+  if requireBatch && epoch.batches.isEmpty then
+    throw s!"{name}: no full minibatch available (batch={n}, rows={loader.samples.size})"
+  else
+    pure epoch
 
 /-- Produce the next typed epoch and map each minibatch through `f`. -/
 def mapNextEpoch {α β : Type} [TorchLean.Storage α]
@@ -137,28 +146,8 @@ def mapNextEpoch {α β : Type} [TorchLean.Storage α]
     { nextLoader := result.nextLoader
       batches := ← result.batches.mapM f }
 
-/--
-Run one epoch and require at least one full typed minibatch.
-
-This is the shared checked boundary for examples that need a nonempty array of full batches. It
-keeps the "drop partial batches, but fail if nothing remains" policy with the loader API rather than
-repeating it in each dataset-specific helper.
--/
-def nextNonemptyEpoch {α : Type} [TorchLean.Storage α]
-    {n : Nat} {σ τ : Spec.Shape}
-    (name : String) (loader : Loader α n σ τ) :
-    Except String (TorchLean.Data.Epoch
-      (Loader α n σ τ)
-      (TorchLean.Sample.Batch α n σ τ)) := do
-  let result ← nextEpoch (α := α) (σ := σ) (τ := τ) name loader
-  if result.batches.isEmpty then
-    throw
-      s!"{name}: no full minibatch available (batch={n}, rows={loader.samples.size})"
-  else
-    pure result
-
 /-- Return the first full typed minibatch without materializing the rest of the epoch. -/
-def firstFullBatch {α : Type} [TorchLean.Storage α]
+def firstBatch {α : Type} [TorchLean.Storage α]
     {n : Nat} {σ τ : Spec.Shape}
     (name : String) (loader : Loader α n σ τ) :
     Except String (TorchLean.Sample.Batch α n σ τ) := do

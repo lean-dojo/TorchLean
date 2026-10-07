@@ -6,7 +6,6 @@ Authors: TorchLean contributors
 module
 public import Mathlib.Init -- shake: keep
 
-
 /-!
 # Literal tensor-pattern term syntax
 
@@ -58,8 +57,8 @@ namespace TorchLean.Tensor
 
 /--
 Rearrange a tensor with a literal einops pattern checked against its static
-  shape. The optional `with` clause supplies lengths needed to split composite
-  input dimensions. Active after `open TorchLean.Tensor`.
+shape. The optional `with` clause supplies lengths needed to split composite
+input dimensions. Active after `open TorchLean.Tensor`.
 -/
 scoped syntax (name := rearrangeStx)
   "rearrange " term:arg str
@@ -69,7 +68,7 @@ scoped syntax (name := rearrangeStx)
 Expand a tensor along new axes with a literal einops pattern checked against
 its static shape. This is the einops `repeat` operation under a name that
 does not collide with Lean's `repeat`. New output axes require lengths in the
-  optional `with` clause. Active after `open TorchLean.Tensor`.
+optional `with` clause. Active after `open TorchLean.Tensor`.
 -/
 scoped syntax (name := expandStx)
   "expand " term:arg str
@@ -80,7 +79,7 @@ Reduce a tensor with a literal einops pattern. The named reduction follows
 `by`; accepted built-ins are `sum`, `prod`, `mean`, `min`, `max`, `any`, and
 `all`. Other identifiers and parenthesized terms are elaborated as total
 multiset aggregates and may change the output scalar type. Active after
-  `open TorchLean.Tensor`.
+`open TorchLean.Tensor`.
 -/
 scoped syntax (name := reduceStx)
   "reduce " term:arg str " by " einopsReduction
@@ -90,7 +89,7 @@ scoped syntax (name := reduceStx)
 Contract one or more tensors with a literal, statically checked einsum
 pattern. Operand tensors may have different shapes and registered scalar
 types; multi-input scalar promotion is automatic. Active after
-  `open TorchLean.Tensor`.
+`open TorchLean.Tensor`.
 -/
 scoped syntax (name := einsumStx)
   "einsum " term:arg,+ str : term
@@ -99,14 +98,14 @@ scoped syntax (name := einsumStx)
 Pack one or more tensors with a literal packing pattern. Registered scalar
 types are promoted automatically. The result keeps the packed tensor and the
 certified star shape of each input in one named value. Active after
-  `open TorchLean.Tensor`.
+`open TorchLean.Tensor`.
 -/
 scoped syntax (name := packStx)
   "pack " term:arg,+ str : term
 
 /--
 Recover the component tensors from a named result returned by `pack`. Active
-  after `open TorchLean.Tensor`.
+after `open TorchLean.Tensor`.
 -/
 scoped syntax (name := unpackStx)
   "unpack " term:arg str : term
@@ -115,7 +114,7 @@ scoped syntax (name := unpackStx)
 Match a literal parse-shape expression against a statically shaped tensor.
 The result lists each named axis and its length in pattern order; wildcards
 and ellipsis-expanded dimensions are omitted. Active after
-  `open TorchLean.Tensor`.
+`open TorchLean.Tensor`.
 -/
 scoped syntax (name := parseShapeStx)
   "parse_shape " term:arg str : term

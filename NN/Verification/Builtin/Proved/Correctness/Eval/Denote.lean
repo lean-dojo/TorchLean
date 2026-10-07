@@ -137,7 +137,7 @@ theorem evalAt_lowerForwardLetChain_lowerStep_eq_evalNode
   refine evalAt_eq_evalNode_of_lowerNode node params c.ps c.graph.nodes.size _ _ input vals
     hShapes ?_ ?_ ?_ ?_ ?_
   · exact (lowerForwardLetChain_getNode_lt gNext params (lowerStep node params c) hLt).trans
-      (by simp [lowerStep, Graph.getNode, Graph.getNode?, hnId])
+      (by simp [lowerStep, Graph.getNode, hnId])
   · exact (lowerForwardLetChain_ps_constVals_get?_lt gNext params (lowerStep node params c)
       hLt).trans rfl
   · exact (lowerForwardLetChain_ps_linearWB_get?_lt gNext params (lowerStep node params c)

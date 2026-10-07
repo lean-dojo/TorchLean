@@ -41,11 +41,11 @@ theorem reshape_batch_channel_flat_size {batch channels : Nat} {spatial : Shape}
   simp [Spec.Shape.size]
 
 /-- Repeat a channel vector over the batch and flattened spatial axes. -/
-def broadcastChannelToBatchSpatial {α : Type} [TorchLean.Storage α] [Context α]
+def broadcast {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     (batch channels spatialSize : Nat)
-    (x : RefTy (m := m) (α := α) (.dim channels .scalar)) :
-    m (RefTy (m := m) (α := α)
+    (x : Ref (m := m) (α := α) (.dim channels .scalar)) :
+    m (Ref (m := m) (α := α)
       (.dim batch (.dim channels (.dim spatialSize .scalar)))) := do
   let acrossSpatial ← Runtime.Autograd.Torch.broadcastAfterSum
     (m := m) (α := α) (.dim channels (.dim spatialSize .scalar)) 1 x
@@ -67,10 +67,10 @@ shape, so we return it before constructing the reduction.
 def rmsNorm {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leading : Shape} {width : Nat} (hWidth : width > 0)
-    (x : RefTy (m := m) (α := α) (leading.appendDim width))
-    (gamma : RefTy (m := m) (α := α) (.dim width .scalar))
+    (x : Ref (m := m) (α := α) (leading.appendDim width))
+    (gamma : Ref (m := m) (α := α) (.dim width .scalar))
     (ε : α := TorchLean.normalizationEpsilon) :
-    m (RefTy (m := m) (α := α) (leading.appendDim width)) := by
+    m (Ref (m := m) (α := α) (leading.appendDim width)) := by
   by_cases hLeading : Shape.size leading = 0
   · exact const (m := m) (α := α) (s := leading.appendDim width)
       (Tensor.full (leading.appendDim width) (0 : α))
@@ -111,9 +111,9 @@ small. An empty leading axis produces an empty output of the same shape.
 def l2Normalize {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leading : Shape} {width : Nat} (hWidth : width > 0)
-    (x : RefTy (m := m) (α := α) (leading.appendDim width))
-    (epsilon : RefTy (m := m) (α := α) .scalar) :
-    m (RefTy (m := m) (α := α) (leading.appendDim width)) := by
+    (x : Ref (m := m) (α := α) (leading.appendDim width))
+    (epsilon : Ref (m := m) (α := α) .scalar) :
+    m (Ref (m := m) (α := α) (leading.appendDim width)) := by
   by_cases hLeading : Shape.size leading = 0
   · exact const (m := m) (α := α) (s := leading.appendDim width)
       (Tensor.full (leading.appendDim width) (0 : α))
@@ -152,10 +152,10 @@ def instanceNorm {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {batch channels : Nat} {spatial : Shape}
     (hWellFormed : (Shape.dim batch (Shape.dim channels spatial)).wellFormed)
-    (x : RefTy (m := m) (α := α) (.dim batch (.dim channels spatial)))
-    (gamma beta : RefTy (m := m) (α := α) (.dim channels .scalar))
+    (x : Ref (m := m) (α := α) (.dim batch (.dim channels spatial)))
+    (gamma beta : Ref (m := m) (α := α) (.dim channels .scalar))
     (ε : α := TorchLean.normalizationEpsilon) :
-    m (RefTy (m := m) (α := α) (.dim batch (.dim channels spatial))) := do
+    m (Ref (m := m) (α := α) (.dim batch (.dim channels spatial))) := do
   let spatialSize := Shape.size spatial
   let inputShape : Shape := .dim batch (.dim channels spatial)
   let flatShape : Shape := .dim batch (.dim channels (.dim spatialSize .scalar))
@@ -186,9 +186,9 @@ def instanceNorm {α : Type} [TorchLean.Storage α] [Context α]
   let invDenomB ← Runtime.Autograd.Torch.broadcastAfterSum
     (m := m) (α := α) flatShape axis invDenom
   let normalized ← mul (m := m) (α := α) (s := flatShape) centered invDenomB
-  let gammaB ← Internal.broadcastChannelToBatchSpatial
+  let gammaB ← Internal.broadcast
     (m := m) (α := α) batch channels spatialSize gamma
-  let betaB ← Internal.broadcastChannelToBatchSpatial
+  let betaB ← Internal.broadcast
     (m := m) (α := α) batch channels spatialSize beta
   let yFlat ← add (m := m) (α := α) (s := flatShape)
     (← mul (m := m) (α := α) (s := flatShape) normalized gammaB) betaB
@@ -213,10 +213,10 @@ def groupNorm {α : Type} [TorchLean.Storage α] [Context α]
     (hWellFormed : (Shape.dim batch (Shape.dim channels spatial)).wellFormed)
     (hGroups : groups > 0) (hGroupsLe : channels ≥ groups)
     (hDiv : channels % groups = 0)
-    (x : RefTy (m := m) (α := α) (.dim batch (.dim channels spatial)))
-    (gamma beta : RefTy (m := m) (α := α) (.dim channels .scalar))
+    (x : Ref (m := m) (α := α) (.dim batch (.dim channels spatial)))
+    (gamma beta : Ref (m := m) (α := α) (.dim channels .scalar))
     (ε : α := TorchLean.normalizationEpsilon) :
-    m (RefTy (m := m) (α := α) (.dim batch (.dim channels spatial))) := do
+    m (Ref (m := m) (α := α) (.dim batch (.dim channels spatial))) := do
   let channelsPerGroup := channels / groups
   let spatialSize := Shape.size spatial
   let groupSize := channelsPerGroup * spatialSize
@@ -266,9 +266,9 @@ def groupNorm {α : Type} [TorchLean.Storage α] [Context α]
   let yFlat ← reshape (m := m) (α := α) (s₁ := inputShape) (s₂ := flatShape)
     normalizedInput (Internal.reshape_batch_channel_flat_size (batch := batch)
       (channels := channels) (spatial := spatial))
-  let gammaB ← Internal.broadcastChannelToBatchSpatial
+  let gammaB ← Internal.broadcast
     (m := m) (α := α) batch channels spatialSize gamma
-  let betaB ← Internal.broadcastChannelToBatchSpatial
+  let betaB ← Internal.broadcast
     (m := m) (α := α) batch channels spatialSize beta
   let yFlat ← add (m := m) (α := α) (s := flatShape)
     (← mul (m := m) (α := α) (s := flatShape) yFlat gammaB) betaB
@@ -291,12 +291,12 @@ def batchNormTrainStats {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {batch channels : Nat} {spatial : Shape}
     (hWellFormed : (Shape.dim batch (Shape.dim channels spatial)).wellFormed)
-    (x : RefTy (m := m) (α := α) (.dim batch (.dim channels spatial)))
-    (gamma beta : RefTy (m := m) (α := α) (.dim channels .scalar))
+    (x : Ref (m := m) (α := α) (.dim batch (.dim channels spatial)))
+    (gamma beta : Ref (m := m) (α := α) (.dim channels .scalar))
     (ε : α := TorchLean.normalizationEpsilon) :
-    m (RefTy (m := m) (α := α) (.dim batch (.dim channels spatial)) ×
-       RefTy (m := m) (α := α) (.dim channels .scalar) ×
-       RefTy (m := m) (α := α) (.dim channels .scalar)) := do
+    m (Ref (m := m) (α := α) (.dim batch (.dim channels spatial)) ×
+       Ref (m := m) (α := α) (.dim channels .scalar) ×
+       Ref (m := m) (α := α) (.dim channels .scalar)) := do
   let spatialSize := Shape.size spatial
   let inputShape : Shape := .dim batch (.dim channels spatial)
   let flatShape : Shape := .dim batch (.dim channels (.dim spatialSize .scalar))
@@ -324,7 +324,7 @@ def batchNormTrainStats {α : Type} [TorchLean.Storage α] [Context α]
     simpa [hBatchChannelShape] using
       Shape.hasNonemptyAxisZeroOfPos (n := batch) (s := .dim channels .scalar) hBatch
   let mean ← reduceMean (m := m) (α := α) (s := batchChannelShape) batchAxis meanSpatial
-  let meanB ← Internal.broadcastChannelToBatchSpatial
+  let meanB ← Internal.broadcast
     (m := m) (α := α) batch channels spatialSize mean
   let centered ← sub (m := m) (α := α) (s := flatShape) xFlat meanB
   let sq ← F.square (m := m) (α := α) (s := flatShape) centered
@@ -338,12 +338,12 @@ def batchNormTrainStats {α : Type} [TorchLean.Storage α] [Context α]
   let denom ← sqrt (m := m) (α := α) (s := channelShape)
     (← add (m := m) (α := α) (s := channelShape) varClamped epsT)
   let invDenom ← inv (m := m) (α := α) (s := channelShape) denom
-  let invDenomB ← Internal.broadcastChannelToBatchSpatial
+  let invDenomB ← Internal.broadcast
     (m := m) (α := α) batch channels spatialSize invDenom
   let normalized ← mul (m := m) (α := α) (s := flatShape) centered invDenomB
-  let gammaB ← Internal.broadcastChannelToBatchSpatial
+  let gammaB ← Internal.broadcast
     (m := m) (α := α) batch channels spatialSize gamma
-  let betaB ← Internal.broadcastChannelToBatchSpatial
+  let betaB ← Internal.broadcast
     (m := m) (α := α) batch channels spatialSize beta
   let yFlat ← add (m := m) (α := α) (s := flatShape)
     (← mul (m := m) (α := α) (s := flatShape) normalized gammaB) betaB
@@ -362,10 +362,10 @@ def batchNormTrain {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {batch channels : Nat} {spatial : Shape}
     (hWellFormed : (Shape.dim batch (Shape.dim channels spatial)).wellFormed)
-    (x : RefTy (m := m) (α := α) (.dim batch (.dim channels spatial)))
-    (gamma beta : RefTy (m := m) (α := α) (.dim channels .scalar))
+    (x : Ref (m := m) (α := α) (.dim batch (.dim channels spatial)))
+    (gamma beta : Ref (m := m) (α := α) (.dim channels .scalar))
     (ε : α := TorchLean.normalizationEpsilon) :
-    m (RefTy (m := m) (α := α) (.dim batch (.dim channels spatial))) := do
+    m (Ref (m := m) (α := α) (.dim batch (.dim channels spatial))) := do
   let (y, _mean, _var) ← batchNormTrainStats
     (α := α) (m := m) hWellFormed x gamma beta (ε := ε)
   pure y
@@ -381,10 +381,10 @@ def batchNormEval {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {batch channels : Nat} {spatial : Shape}
     (hWellFormed : (Shape.dim batch (Shape.dim channels spatial)).wellFormed)
-    (x : RefTy (m := m) (α := α) (.dim batch (.dim channels spatial)))
-    (gamma beta mean var : RefTy (m := m) (α := α) (.dim channels .scalar))
+    (x : Ref (m := m) (α := α) (.dim batch (.dim channels spatial)))
+    (gamma beta mean var : Ref (m := m) (α := α) (.dim channels .scalar))
     (ε : α := TorchLean.normalizationEpsilon) :
-    m (RefTy (m := m) (α := α) (.dim batch (.dim channels spatial))) := do
+    m (Ref (m := m) (α := α) (.dim batch (.dim channels spatial))) := do
   let spatialSize := Shape.size spatial
   let inputShape : Shape := .dim batch (.dim channels spatial)
   let flatShape : Shape := .dim batch (.dim channels (.dim spatialSize .scalar))
@@ -395,7 +395,7 @@ def batchNormEval {α : Type} [TorchLean.Storage α] [Context α]
   let xFlat ← reshape (m := m) (α := α) (s₁ := inputShape) (s₂ := flatShape) x
     (Internal.reshape_batch_channel_flat_size (batch := batch) (channels := channels)
       (spatial := spatial))
-  let meanB ← Internal.broadcastChannelToBatchSpatial
+  let meanB ← Internal.broadcast
     (m := m) (α := α) batch channels spatialSize mean
   let centered ← sub (m := m) (α := α) (s := flatShape) xFlat meanB
   let channelShape : Shape := .dim channels .scalar
@@ -406,12 +406,12 @@ def batchNormEval {α : Type} [TorchLean.Storage α] [Context α]
   let denom ← sqrt (m := m) (α := α) (s := channelShape)
     (← add (m := m) (α := α) (s := channelShape) varClamped epsT)
   let invDenom ← inv (m := m) (α := α) (s := channelShape) denom
-  let invDenomB ← Internal.broadcastChannelToBatchSpatial
+  let invDenomB ← Internal.broadcast
     (m := m) (α := α) batch channels spatialSize invDenom
   let normalized ← mul (m := m) (α := α) (s := flatShape) centered invDenomB
-  let gammaB ← Internal.broadcastChannelToBatchSpatial
+  let gammaB ← Internal.broadcast
     (m := m) (α := α) batch channels spatialSize gamma
-  let betaB ← Internal.broadcastChannelToBatchSpatial
+  let betaB ← Internal.broadcast
     (m := m) (α := α) batch channels spatialSize beta
   let yFlat ← add (m := m) (α := α) (s := flatShape)
     (← mul (m := m) (α := α) (s := flatShape) normalized gammaB) betaB

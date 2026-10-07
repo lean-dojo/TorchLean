@@ -42,7 +42,7 @@ U_DIM = 1
 FORMAT = "uint32-bits-as-decimal-strings"
 
 
-def float32_bits_as_str_list(t: torch.Tensor) -> list[str]:
+def encode(t: torch.Tensor) -> list[str]:
     """Serialize a tensor as decimal strings containing raw IEEE-754 binary32 bits.
 
     The `.view(np.uint32)` is the important line: it does not numerically convert the tensor.  It
@@ -157,12 +157,12 @@ def main() -> None:
         "width": width,
         "dtype": "float32",
         "format": FORMAT,
-        "wC": float32_bits_as_str_list(params[0]),
-        "bC": float32_bits_as_str_list(params[1]),
-        "w1": float32_bits_as_str_list(params[2]),
-        "b1": float32_bits_as_str_list(params[3]),
-        "w2": float32_bits_as_str_list(params[4]),
-        "b2": float32_bits_as_str_list(params[5]),
+        "wC": encode(params[0]),
+        "bC": encode(params[1]),
+        "w1": encode(params[2]),
+        "b1": encode(params[3]),
+        "w2": encode(params[4]),
+        "b2": encode(params[5]),
     }
     out_path.write_text(json.dumps(payload))
     print(f"Wrote {out_path} (width={width})")

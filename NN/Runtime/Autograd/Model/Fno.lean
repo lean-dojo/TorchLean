@@ -26,34 +26,8 @@ namespace Runtime.Autograd.Model.Layers.FNO
 
 open Spec TorchLean TorchLean.Tensor
 
-/-- Reshape `[modes, width]` for mode-wise batched matrix multiplication. -/
-def reshapeModesForMatmul (modes width : Nat) :
-    Layer [modes, width] [modes, 1, width] :=
-  let source : Shape := [modes, width]
-  let target : Shape := [modes, 1, width]
-  have sameSize : Shape.size source = Shape.size target := by
-    simp [source, target, Shape.size]
-  { stateShapes := []
-    initState := .nil
-    requiresGrad := #[]
-    forward := fun _ {α} _ _ => fun {m} _ _ => fun x =>
-      Runtime.Autograd.Model.reshape (m := m) (α := α) (s₁ := source) (s₂ := target) x sameSize }
-
-/-- Restore the matrix view produced by `reshapeModesForMatmul`. -/
-def restoreModesAfterMatmul (modes width : Nat) :
-    Layer [modes, 1, width] [modes, width] :=
-  let source : Shape := [modes, 1, width]
-  let target : Shape := [modes, width]
-  have sameSize : Shape.size source = Shape.size target := by
-    simp [source, target, Shape.size]
-  { stateShapes := []
-    initState := .nil
-    requiresGrad := #[]
-    forward := fun _ {α} _ _ => fun {m} _ _ => fun x =>
-      Runtime.Autograd.Model.reshape (m := m) (α := α) (s₁ := source) (s₂ := target) x sameSize }
-
 /-- Pointwise affine channel map over a flattened spatial grid. -/
-def pointwiseAffine (grid inChannels outChannels : Nat) (weightSeed : Nat := 0) :
+def linear (grid inChannels outChannels : Nat) (weightSeed : Nat := 0) :
     Layer [grid, inChannels] [grid, outChannels] :=
   let weightShape : Shape := [inChannels, outChannels]
   let biasShape : Shape := [outChannels]
@@ -73,7 +47,7 @@ def pointwiseAffine (grid inChannels outChannels : Nat) (weightSeed : Nat := 0) 
       if outChannels = 0 then
         throw "FNO: output width must be positive"
     forward := fun _ {α} _ _ => fun {m} _ _ => fun w b x =>
-      (show m (RefTy (m := m) (α := α) [grid, outChannels]) from do
+      (show m (Ref (m := m) (α := α) [grid, outChannels]) from do
         let y ← Runtime.Autograd.Model.matmul (m := m) (α := α)
           (batchA := .scalar) (batchB := .scalar) (batch := .scalar)
           (mDim := grid) (nDim := inChannels) (pDim := outChannels) x w
@@ -229,8 +203,8 @@ end Internal
 One multidimensional FNO block.
 
 The first `d` axes are transformed. A learned channel map is applied at every retained frequency,
-the discarded frequency rectangle is set to zero, and a pointwise affine skip is added after the
-inverse transform.
+the discarded frequencies are multiplied by a zero mask, and a pointwise affine skip is added
+after the inverse transform. The mask removes finite values; it does not suppress NaN or infinity.
 -/
 def block {d : Nat} (spatial modes : TorchLean.Tensor Nat [d]) (width : Nat)
     (activation : Activation.Kind := .tanh)
@@ -266,7 +240,7 @@ def block {d : Nat} (spatial modes : TorchLean.Tensor Nat [d]) (width : Nat)
       if width = 0 then
         throw "FNO: width must be positive"
     forward := fun mode {α} _ _ => fun {m} _ _ => fun spectralReal spectralImag skip bias x =>
-      (show m (RefTy (m := m) (α := α) field) from do
+      (show m (Ref (m := m) (α := α) field) from do
         let xMatrix ← (Internal.flattenSpatial spatial).forward mode (α := α) (m := m) x
         have grid_eq : grid = (spatial.to (List Nat)).prod := Tensor.prod_eq_to_list_prod spatial
         let (xReal, xImag) ← if positive : 0 < grid ∧ path = .automatic then do
@@ -281,10 +255,10 @@ def block {d : Nat} (spatial modes : TorchLean.Tensor Nat [d]) (width : Nat)
           let realPart ← matmul (batchA := []) (batchB := []) (batch := []) cosRef xMatrix
           let imagPart ← matmul (batchA := []) (batchB := []) (batch := []) negSinRef xMatrix
           pure (realPart, imagPart)
-        let xRealBatched ← (reshapeModesForMatmul grid width).forward mode
-          (α := α) (m := m) xReal
-        let xImagBatched ← (reshapeModesForMatmul grid width).forward mode
-          (α := α) (m := m) xImag
+        let xRealBatched ← reshape (s₁ := [grid, width]) (s₂ := [grid, 1, width]) xReal
+          (by simp [Shape.size])
+        let xImagBatched ← reshape (s₁ := [grid, width]) (s₂ := [grid, 1, width]) xImag
+          (by simp [Shape.size])
         let realReal ← Runtime.Autograd.Model.matmul (m := m) (α := α)
           (batchA := [grid]) (batchB := [grid]) (batch := [grid])
           (mDim := 1) (nDim := width) (pDim := width) xRealBatched spectralReal
@@ -301,10 +275,10 @@ def block {d : Nat} (spatial modes : TorchLean.Tensor Nat [d]) (width : Nat)
           (s := [grid, 1, width]) realReal imagImag
         let transformedImagBatched ← Runtime.Autograd.Model.add (m := m) (α := α)
           (s := [grid, 1, width]) realImag imagReal
-        let transformedReal ← (restoreModesAfterMatmul grid width).forward mode
-          (α := α) (m := m) transformedRealBatched
-        let transformedImag ← (restoreModesAfterMatmul grid width).forward mode
-          (α := α) (m := m) transformedImagBatched
+        let transformedReal ← reshape (s₂ := [grid, width]) transformedRealBatched
+          (by simp [Shape.size])
+        let transformedImag ← reshape (s₂ := [grid, width]) transformedImagBatched
+          (by simp [Shape.size])
         let mask : Tensor α flat := Internal.frequencyMask (channels := width) spatial modes
         let maskRef ← Runtime.Autograd.Model.const (m := m) (α := α) (s := flat) mask
         let retainedReal ← Runtime.Autograd.Model.mul (m := m) (α := α) (s := flat)

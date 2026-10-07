@@ -796,6 +796,39 @@ def Forall₂ {α β : Type}
       ∀ index : Fin n,
         Forall₂ relation (shape := shape) (unstack left index) (unstack right index)
 
+/-- An entrywise predicate holds exactly when it holds at every tensor coordinate. -/
+theorem forall_iff {α : Type} [TorchLean.Storage α] {shape : Shape}
+    {predicate : α → Prop} {tensor : Tensor α shape} :
+    Forall predicate tensor ↔ ∀ coordinate : shape.Coord, predicate (tensor coordinate) := by
+  induction shape with
+  | scalar =>
+      constructor
+      · intro h coordinate; cases coordinate; exact h
+      · intro h; exact h PUnit.unit
+  | dim n shape ih =>
+      change (∀ i : Fin n, Forall predicate (unstack tensor i)) ↔ _
+      simp only [ih, unstack, TorchLean.Tensor.Internal.Rep.unstack_apply]
+      constructor
+      · intro h coordinate; exact h coordinate.1 coordinate.2
+      · intro h i j; exact h (i, j)
+
+/-- An entrywise relation holds exactly when it holds at every shared tensor coordinate. -/
+theorem forall₂_iff {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β] {shape : Shape}
+    {relation : α → β → Prop} {left : Tensor α shape} {right : Tensor β shape} :
+    Forall₂ relation left right ↔
+      ∀ coordinate : shape.Coord, relation (left coordinate) (right coordinate) := by
+  induction shape with
+  | scalar =>
+      constructor
+      · intro h coordinate; cases coordinate; exact h
+      · intro h; exact h PUnit.unit
+  | dim n shape ih =>
+      change (∀ i : Fin n, Forall₂ relation (unstack left i) (unstack right i)) ↔ _
+      simp only [ih, unstack, TorchLean.Tensor.Internal.Rep.unstack_apply]
+      constructor
+      · intro h coordinate; exact h coordinate.1 coordinate.2
+      · intro h i j; exact h (i, j)
+
 /-- `Forall` on a scalar tensor is the predicate on its value. -/
 @[simp] theorem forall_scalar {α : Type} [TorchLean.Storage α]
     {predicate : α → Prop} {value : α} :
@@ -830,11 +863,7 @@ def Forall₂ {α β : Type}
 theorem forall_true {α : Type} [TorchLean.Storage α]
     {shape : Shape} (tensor : Tensor α shape) :
     Forall (fun _ => True) tensor := by
-  induction shape with
-  | scalar => trivial
-  | dim _ _ inductionHypothesis =>
-      intro index
-      exact inductionHypothesis (unstack tensor index)
+  exact forall_iff.mpr fun _ => trivial
 
 /-- `Forall` transports along `map` when the function respects the two predicates.
 
@@ -847,41 +876,19 @@ theorem forall_map {α β : Type}
     (hTensor : Forall predicate tensor)
     (hMap : ∀ value, predicate value → resultPredicate (f value)) :
     Forall resultPredicate (map f tensor) := by
-  induction shape with
-  | scalar =>
-      change predicate tensor.item at hTensor
-      rw [← scalar_item tensor, map_scalar]
-      simpa only [forall_scalar] using hMap tensor.item hTensor
-  | dim _ _ inductionHypothesis =>
-      have hTensor' :
-          ∀ index, Forall predicate (unstack tensor index) :=
-        hTensor
-      rw [← dim_unstack tensor, map_dim]
-      apply forall_dim.mpr
-      intro index
-      exact inductionHypothesis (hTensor' index)
+  rw [forall_iff] at hTensor ⊢
+  intro coordinate
+  simpa only [map, TorchLean.Tensor.Internal.Rep.map_apply] using
+    hMap (tensor coordinate) (hTensor coordinate)
 
 /-- A predicate true of one value is true entrywise of the tensor replicating it. -/
 theorem forall_replicate {α : Type} [TorchLean.Storage α]
     {predicate : α → Prop} {shape : Shape} {value : α}
     (hValue : predicate value) :
     Forall predicate (Spec.replicate (shape := shape) (scalar value)) := by
-  change Forall predicate
-    (TorchLean.Tensor.Internal.Rep.const (scalar value).item)
-  rw [item_scalar]
-  induction shape with
-  | scalar =>
-      change predicate
-        ((TorchLean.Tensor.Internal.Rep.const value : Tensor α .scalar)
-          PUnit.unit)
-      simpa using hValue
-  | dim n shape inductionHypothesis =>
-      intro index
-      change Forall predicate
-        (TorchLean.Tensor.Internal.Rep.unstack
-          (TorchLean.Tensor.Internal.Rep.const value : Tensor α (.dim n shape)) index)
-      rw [TorchLean.Tensor.Internal.Rep.unstack_const]
-      exact inductionHypothesis
+  rw [forall_iff]
+  intro coordinate
+  simpa only [Spec.replicate_apply, item_scalar] using hValue
 
 /-- Multiply all vector entries in row-major order. -/
 def prod {α : Type} [TorchLean.Storage α] [Mul α] [One α]

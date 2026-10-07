@@ -1,3 +1,7 @@
+{%- assign build_revision = site.build_revision -%}
+{%- if build_revision == nil or build_revision == "local" -%}
+  {%- assign build_revision = site.github.build_revision | default: "local" -%}
+{%- endif -%}
 <!DOCTYPE html>
 <html lang="{{ site.lang | default: 'en-US' }}">
 
@@ -11,7 +15,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#157878">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="stylesheet" href="{{ '/assets/css/style.css?v=' | append: site.build_revision | relative_url }}">
+  <link rel="stylesheet" href="{{ '/assets/css/style.css?v=' | append: build_revision | relative_url }}">
   {% include head-custom.html %}
   {% include mathjax.html %}
 </head>
@@ -71,7 +75,7 @@
         </span>
         <span class="build-item">
           <strong>Commit</strong>
-          {{ site.build_revision | default: "local" | slice: 0, 12 }}
+          {{ build_revision | slice: 0, 12 }}
         </span>
         <span class="build-item">
           <strong>Lean</strong>
@@ -112,7 +116,7 @@
     </div>
   </div>
 
-  <script src="{{ '/assets/js/search.js?v=' | append: site.build_revision | relative_url }}" defer></script>
+  <script src="{{ '/assets/js/search.js?v=' | append: build_revision | relative_url }}" defer></script>
 </body>
 
 </html>

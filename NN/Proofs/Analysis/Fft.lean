@@ -12,9 +12,9 @@ import Mathlib.LinearAlgebra.Matrix.SemiringInverse
 /-!
 # Discrete Fourier Transform (DFT) theorems over mathlib `ℂ`
 
-TorchLean’s runtime FFT building blocks (`NN.Runtime.Autograd.Model.Fft`) implement FFT/IFFT by
-explicit DFT matrices. This file proves the corresponding *exact* math facts over mathlib’s complex
-numbers `ℂ`:
+`NN.Runtime.Autograd.Model.Fft` provides a dense DFT layer and explicit DFT/IDFT matrices, not a
+fast FFT algorithm. This file proves the corresponding exact facts over mathlib’s complex numbers
+`ℂ`:
 
 - the inverse DFT matrix is a left inverse of the DFT matrix, and therefore
 - $\operatorname{ifft}(\operatorname{fft}(x))=x$ for vectors.
@@ -94,14 +94,6 @@ $n$-th root of unity, so the geometric sum is $0$.
 private theorem zeta_ne_zero (n : Nat) : ζ n ≠ 0 := by
   -- `exp` is never zero in `ℂ`.
   simp [ζ]
-
-/--
-Geometric-sum lemma (specialized): if $r^n=1$ and $r\ne1$, then
-$\sum_{j=0}^{n-1}r^j=0$.
--/
-private theorem geom_sum_eq_zero_of_pow_eq_one {r : ℂ} {n : Nat} (hr : r ≠ 1) (hrn : r ^ n = 1) :
-    (∑ j ∈ Finset.range n, r ^ j) = 0 := by
-  rw [geom_sum_eq hr, hrn, sub_self, zero_div]
 
 /--
 Main algebraic identity: $\operatorname{IDFT}\operatorname{DFT}=I$ (over `ℂ`), for $n\ne0$.
@@ -200,13 +192,8 @@ theorem idft_mul_dft (n : Nat) (hn : n ≠ 0) :
         _ = 1 := by simp [hzk]
 
     have hsum0 : (∑ j : Fin n, r ^ (j : Nat)) = 0 := by
-      -- Convert the `Fin n` sum to a `range n` sum, then apply the geometric-sum lemma.
-      have hsumRange : (∑ j ∈ Finset.range n, r ^ j) = 0 :=
-        geom_sum_eq_zero_of_pow_eq_one (r := r) (n := n) hr_ne_one hr_pow_n
-      have hfin :
-          (∑ j : Fin n, r ^ (j : Nat)) = (∑ j ∈ Finset.range n, r ^ j) := by
-        simpa using (Fin.sum_univ_eq_sum_range (f := fun j : Nat => r ^ j) n)
-      simpa [hfin] using hsumRange
+      rw [Fin.sum_univ_eq_sum_range (f := fun j : Nat => r ^ j),
+        geom_sum_eq hr_ne_one, hr_pow_n, sub_self, zero_div]
 
     -- Finish: entry is `(1/n) * 0 = 0`.
     calc
@@ -294,16 +281,7 @@ Rank-one tensor inversion theorem: $\operatorname{idft}(\operatorname{dft}(x))=x
 theorem idft_dft (n : Nat) (hn : n ≠ 0) (x : Fin n → ℂ) :
     idft n (dft n x) = x := by
   classical
-  -- Use `(IDFT * DFT).mulVec x = IDFT.mulVec (DFT.mulVec x)` and the matrix identity.
-  have hmulVec :
-      Matrix.mulVec (idftMatrix n) (Matrix.mulVec (dftMatrix n) x) =
-        Matrix.mulVec (idftMatrix n * dftMatrix n) x := by
-    exact Matrix.mulVec_mulVec (v := x) (M := idftMatrix n) (N := dftMatrix n)
-  calc
-    idft n (dft n x) = Matrix.mulVec (idftMatrix n) (Matrix.mulVec (dftMatrix n) x) := rfl
-    _ = Matrix.mulVec (idftMatrix n * dftMatrix n) x := hmulVec
-    _ = Matrix.mulVec 1 x := by simp [idft_mul_dft (n := n) hn]
-    _ = x := by simp [Matrix.one_mulVec]
+  simp only [idft, dft, Matrix.mulVec_mulVec, idft_mul_dft n hn, Matrix.one_mulVec]
 
 /--
 Rank-one tensor inversion theorem (other direction):
@@ -312,15 +290,7 @@ $\operatorname{dft}(\operatorname{idft}(x))=x$, for $n\ne0$.
 theorem dft_idft (n : Nat) (hn : n ≠ 0) (x : Fin n → ℂ) :
     dft n (idft n x) = x := by
   classical
-  have hmulVec :
-      Matrix.mulVec (dftMatrix n) (Matrix.mulVec (idftMatrix n) x) =
-        Matrix.mulVec (dftMatrix n * idftMatrix n) x := by
-    exact Matrix.mulVec_mulVec (v := x) (M := dftMatrix n) (N := idftMatrix n)
-  calc
-    dft n (idft n x) = Matrix.mulVec (dftMatrix n) (Matrix.mulVec (idftMatrix n) x) := rfl
-    _ = Matrix.mulVec (dftMatrix n * idftMatrix n) x := hmulVec
-    _ = Matrix.mulVec 1 x := by simp [dft_mul_idft (n := n) hn]
-    _ = x := by simp [Matrix.one_mulVec]
+  simp only [dft, idft, Matrix.mulVec_mulVec, dft_mul_idft n hn, Matrix.one_mulVec]
 
 end Fft
 

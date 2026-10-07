@@ -27,9 +27,6 @@ The scale/weight gradient for that slice is also zero, because it is multiplied 
 activation. This applies to the mathematical core behind LayerNorm, GroupNorm, InstanceNorm, and
 BatchNorm; those layers differ mainly in which axes define the slice.
 
-Run `python3 scripts/verification/normalization_contract_probe.py --device cpu` to measure forward
-and backward residuals from PyTorch normalization kernels on constant tensors.
-
 The theorems use real arithmetic with totalized division and square root. They assume the supplied
 mean and variance already equal `x` and zero; they do not prove that a floating-point statistics
 kernel computes those values exactly on a constant slice.

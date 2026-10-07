@@ -4,11 +4,8 @@ import VersoBlueprint
 /-!
 Bibliography entries for the TorchLean guide.
 
-Every work that the guide leans on for a technical claim is registered here once, with an
-`@[bib "label"]` attribute, and cited from prose with `{Informal.citet label}[]` or
-`{Informal.citep label}[]`. Keeping the metadata in one file means a paper's authors and year are
-written once, the rendered bibliography lists each work a single time, and the bibliography page
-can show which sections cite it.
+Register papers once with `@[bib "label"]`; cite them with `{Informal.citet label}[]` or
+`{Informal.citep label}[]`. The rendered bibliography links back to the citing sections.
 
 Verso's `Citable` type covers papers: conference proceedings, journal articles, arXiv preprints,
 and theses. Books and living web resources (standards pages, project repositories, framework
@@ -50,10 +47,7 @@ def mathlib2020 : Citable := .inProceedings
     booktitle := inlines!"Certified Programs and Proofs (CPP)"
     url := some "https://doi.org/10.1145/3372885.3373824" }
 
-/--
-Lean's reference-counting story. We cite it whenever the guide claims that an immutable interface
-does not force a copy: uniquely owned values are updated in place by the compiled code.
--/
+/-- Reference-counting optimization and in-place updates of uniquely owned values in Lean. -/
 @[bib "immutablebeans2019"]
 def immutablebeans2019 : Citable := .inProceedings
   { title := inlines!"Counting Immutable Beans: Reference Counting Optimized for Purely " ++
@@ -79,11 +73,7 @@ def pytorch2019 : Citable := .arXiv
     year := 2019
     id := "1912.01703" }
 
-/--
-PyTorch's own op-tagged graph capture. We cite it in the IR chapter because `torch.fx` is the
-analogue of `NN.IR.Graph`. FX represents function, method, and module calls; targets may be Python
-callables or names, depending on the node kind. Shape metadata is separate from the node's type.
--/
+/-- PyTorch FX program capture and transformation, compared with TorchLean's IR in the guide. -/
 @[bib "fx2022"]
 def fx2022 : Citable := .inProceedings
   { title := inlines!"torch.fx: Practical Program Capture and Transformation for Deep Learning " ++
@@ -123,12 +113,7 @@ def baydin2018 : Citable := .article
     pages := some (1, 43)
     url := some "https://jmlr.org/papers/v18/17-468.html" }
 
-/--
-Reverse mode as a program transformation on a functional language rather than as a mutable tape.
-TorchLean's eager engine is closer to this reading than to a framework tape: `Tape` is a pure
-grow-only array, and `backward` is a function of it, so replaying a reverse pass cannot observe a
-different forward value than the one that was recorded.
--/
+/-- Reverse-mode differentiation as a transformation of functional programs. -/
 @[bib "pearlmutter2008"]
 def pearlmutter2008 : Citable := .article
   { title := inlines!"Reverse-Mode AD in a Functional Framework: Lambda the Ultimate Backpropagator"
@@ -141,11 +126,7 @@ def pearlmutter2008 : Citable := .article
     pages := none
     url := some "https://doi.org/10.1145/1330017.1330018" }
 
-/--
-What checkpointing actually is when it is implemented: a schedule that trades recomputation for
-storage during the reverse sweep. We cite it where `nn.functional.checkpoint` is discussed, because
-that hook currently has the mathematical meaning and none of the schedule.
--/
+/-- Checkpoint schedules that trade reverse-mode storage for recomputation. -/
 @[bib "griewank2000"]
 def griewank2000 : Citable := .article
   { title := inlines!"Algorithm 799: Revolve. An Implementation of Checkpointing for " ++
@@ -172,11 +153,7 @@ def bolte2020 : Citable := .inProceedings
     booktitle := inlines!"Neural Information Processing Systems (NeurIPS)"
     url := some "https://arxiv.org/abs/2006.02080" }
 
-/--
-The tracing-and-transforms design that `torch.func` and TorchLean's `autograd` transforms both
-follow: differentiation is a function on functions, not a method on a mutable tensor. Worth reading
-next to our `autograd.Function` type, which is the same idea expressed as scalar polymorphism.
--/
+/-- High-level tracing and function transformations for machine-learning programs. -/
 @[bib "jax2018"]
 def jax2018 : Citable := .inProceedings
   { title := inlines!"Compiling Machine Learning Programs via High-Level Tracing"
@@ -206,7 +183,7 @@ def flocq2011 : Citable := .inProceedings
     booktitle := inlines!"20th IEEE Symposium on Computer Arithmetic (ARITH)"
     url := some "https://doi.org/10.1109/ARITH.2011.40" }
 
-/-- Goldberg's survey, still the shortest correct answer to "why is float arithmetic like this". -/
+/-- Goldberg's survey of floating-point arithmetic and numerical error. -/
 @[bib "goldberg1991"]
 def goldberg1991 : Citable := .article
   { title := inlines!"What Every Computer Scientist Should Know About Floating-Point Arithmetic"
@@ -219,10 +196,7 @@ def goldberg1991 : Citable := .article
     pages := some (5, 48)
     url := some "https://doi.org/10.1145/103162.103163" }
 
-/--
-The CompCert float work, which is the closest existing answer to "how do I connect a proof about
-rounded arithmetic to the code a compiler actually emitted".
--/
+/-- Verified compilation of floating-point computations in CompCert. -/
 @[bib "boldo2015"]
 def boldo2015 : Citable := .article
   { title := inlines!"Verified Compilation of Floating-Point Computations"
@@ -410,12 +384,7 @@ def kproofgen2021 : Citable := .inProceedings
 
 /-! ## Typed syntax with several interpretations -/
 
-/--
-The tagless-final style: one object language, several interpreters, with the object language's
-types carried by the host language. GraphSpec's primitive record is this idea with tensor shapes
-as the type index, which is why one architecture term can be read as a pure function and as an
-executable program.
--/
+/-- Typed tagless-final representations with several interpreters. -/
 @[bib "kiselyov2012"]
 def kiselyov2012 : Citable := .inProceedings
   { title := inlines!"Typed Tagless Final Interpreters"
@@ -424,12 +393,7 @@ def kiselyov2012 : Citable := .inProceedings
     booktitle := inlines!"Generic and Indexed Programming (Spring School)"
     url := some "https://okmij.org/ftp/tagless-final/" }
 
-/--
-Intrinsically typed term representations with de Bruijn variables. GraphSpec's DAG variables carry
-their tensor shape in the type for exactly the reason this paper gives: the well-typedness
-invariant lives in the syntax, so evaluation and renaming need no dependent casts through a
-separate typing judgement.
--/
+/-- Intrinsically typed term representations with de Bruijn variables. -/
 @[bib "benton2012"]
 def benton2012 : Citable := .article
   { title := inlines!"Strongly Typed Term Representations in Coq"

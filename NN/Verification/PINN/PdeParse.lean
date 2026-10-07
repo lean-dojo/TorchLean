@@ -31,6 +31,8 @@ Unsupported tokens produce an error.
 
 Natural powers use the usual identities ($x^0=1$), and powers bind more tightly than unary
 minus, so `-u^2` means `-(u^2)`.
+Power expansion creates a multiplication chain proportional to the exponent; recursive parser
+fuel does not cap that expansion.
 
 Implementation note:
 The parser is total by threading a simple `fuel : Nat` through the recursive descent; `fuel` is
@@ -52,20 +54,14 @@ open TextCursor (Cursor)
 namespace Internal
 
 /-!
-`NN.Verification.Util.TextCursor` is the shared byte-position cursor, and this parser and the ODE
-parser both scan with it. The four forwarders below read exactly like the ODE parser's, but each one
-closes over `fuelOf`, and the fuel policy is where the two grammars part company. Binding it once
-here is what keeps the recursive descent underneath free of budget arithmetic.
+Scanning uses the same byte-position cursor as the ODE parser, with this grammar's fuel policy.
 -/
 
 /--
 Recursion budget with additional headroom for the mutually recursive PDE grammar.
 
-This is the one place where the two hand-written parsers genuinely differ, so it is worth stating
-why. `fuel` is a recursion budget, not a token count. Even a one-character input like `u` walks
-`expr → term → unary → factor → primary`, so a budget equal to the remaining bytes would run out
-before the grammar bottoms out. Scaling by 8 and adding 16 covers the deepest descent that any
-accepted input can force.
+Even a one-character input like `u` traverses `expr → term → unary → factor → primary`, so the
+budget includes headroom beyond the remaining byte count.
 -/
 @[inline] def fuelOf (st : Cursor) : Nat :=
   16 + 8 * TextCursor.remainingFuel st
@@ -165,7 +161,6 @@ mutual
         else if n = 1 then
           .ok (p, st3)
         else
-          -- expand p^n as repeated multiplication
           let rec powMul (base : Expr) (k : Nat) (acc : Expr) : Expr :=
             match k with
             | 0 => acc

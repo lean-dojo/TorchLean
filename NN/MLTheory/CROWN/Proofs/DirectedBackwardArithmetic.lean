@@ -129,18 +129,15 @@ theorem dotBox_encloses
     intervalMul_encloses (ha i).1 (ha i).2 (hb i).1 (hb i).2
   have h := sum_encloses (fun i => (term i).1) (fun i => (term i).2)
     (fun i => a i * b i) hterms
+  let lower (acc : α) (i : Fin n) := BoundOps.addDown acc (term i).1
+  let upper (acc : α) (i : Fin n) := BoundOps.addUp acc (term i).2
+  have hfold := List.foldl_hom₂ (List.finRange n) Prod.mk lower upper
+    (fun acc i => (lower acc.1 i, upper acc.2 i)) 0 0 (fun _ _ _ => rfl)
+  dsimp only [lower, upper, term] at hfold
   simp only [directedDotBox, ↓reduceDIte, castDimScalar_self, getAtOrZero_eq_getScalar,
-    List.foldl_map, Option.some.injEq, Prod.mk.injEq] at hresult
+    Fin.foldl_eq_finRange_foldl, hfold, Option.some.injEq, Prod.mk.injEq] at hresult
   obtain ⟨rfl, rfl⟩ := hresult
   exact h
-
-private theorem foldl_pair {ι β γ : Type} (indices : List ι)
-    (f : β → ι → β) (g : γ → ι → γ) (b : β) (c : γ) :
-    indices.foldl (fun acc i => (f acc.1 i, g acc.2 i)) (b, c) =
-      (indices.foldl f b, indices.foldl g c) := by
-  induction indices generalizing b c with
-  | nil => rfl
-  | cons i indices ih => exact ih (f b i) (g c i)
 
 /-- Each coefficient produced by the linear transfer encloses the exact transposed matrix
 product; its constant contribution encloses the exact bias dot product. -/
@@ -162,22 +159,18 @@ theorem linear_encloses
   cases hpair
   refine ⟨rfl, ?_, ?_⟩
   · intro j
+    let term (i : Fin m) := intervalMul (aLo.getScalar i) (aHi.getScalar i)
+      (Spec.get2 W i j) (Spec.get2 W i j)
     have hterm (i : Fin m) := intervalMul_encloses
       (ha i).1 (ha i).2
       (le_refl (value (Spec.get2 W i j))) (le_refl (value (Spec.get2 W i j)))
-    have hsum := sum_encloses
-      (fun i => (intervalMul (aLo.getScalar i) (aHi.getScalar i)
-        (Spec.get2 W i j) (Spec.get2 W i j)).1)
-      (fun i => (intervalMul (aLo.getScalar i) (aHi.getScalar i)
-        (Spec.get2 W i j) (Spec.get2 W i j)).2)
+    have hsum := sum_encloses (fun i => (term i).1) (fun i => (term i).2)
       (fun i => a i * value (Spec.get2 W i j)) hterm
-    have hfold := foldl_pair (List.finRange m)
-      (fun acc i => BoundOps.addDown acc
-        (intervalMul (aLo.getScalar i) (aHi.getScalar i)
-          (Spec.get2 W i j) (Spec.get2 W i j)).1)
-      (fun acc i => BoundOps.addUp acc
-        (intervalMul (aLo.getScalar i) (aHi.getScalar i)
-          (Spec.get2 W i j) (Spec.get2 W i j)).2) 0 0
+    let lower (acc : α) (i : Fin m) := BoundOps.addDown acc (term i).1
+    let upper (acc : α) (i : Fin m) := BoundOps.addUp acc (term i).2
+    have hfold := List.foldl_hom₂ (List.finRange m) Prod.mk lower upper
+      (fun acc i => (lower acc.1 i, upper acc.2 i)) 0 0 (fun _ _ _ => rfl)
+    dsimp only [lower, upper, term] at hfold
     simpa only [getAtOrZero_eq_getScalar, Tensor.getScalar_dim, getAtOrZero_eq_get2, hfold] using
       hsum
   · exact dotBox_encloses aLo aHi b b a (fun i => value (b.getScalar i))

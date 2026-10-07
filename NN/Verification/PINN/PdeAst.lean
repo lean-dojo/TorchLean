@@ -16,7 +16,8 @@ A compact PDE mini-language (AST) and interval evaluator.
 This module defines a small expression language to describe PDE residuals in
 terms of u, its first/second partial derivatives along axes, and arithmetic
 combinators. An interval evaluator consumes primitive bounds (u, u_x, u_y, u_xx,
-...) and assembles a conservative residual bound for the whole expression.
+...) and computes residual endpoints. Its host `Float` arithmetic does not request directed
+rounding; a sound exact-real enclosure requires separate rounding-error evidence.
 
 We focus on 2D workflows: axes are X and Y, but the evaluator works for 1D by
 ignoring Y.
@@ -81,7 +82,7 @@ structure Prims where
 @[inline] def ivalAdd (a b : Float × Float) : Float × Float :=
   let (al, ah) := a; let (bl, bh) := b; (al + bl, ah + bh)
 
-/-- Subtract two closed Float intervals using outward endpoint selection. -/
+/-- Subtract endpoint pairs with the standard interval formula and host Float arithmetic. -/
 @[inline] def ivalSub (a b : Float × Float) : Float × Float :=
   let (al, ah) := a; let (bl, bh) := b; (al - bh, ah - bl)
 
@@ -96,7 +97,6 @@ structure Prims where
 
 /-- Bound the product of two Float intervals through the shared McCormick envelopes. -/
 @[inline] def ivalMul (a b : Float × Float) : Float × Float :=
-  -- Use McCormick envelopes to bound u*v conservatively
   let (al, ah) := a; let (bl, bh) := b
   let (axU, ayU, cU) := mccormickUpper al ah bl bh
   let (_, uHi) := evalAffine2DOnBox axU ayU cU al ah bl bh

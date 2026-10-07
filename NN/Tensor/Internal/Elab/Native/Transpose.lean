@@ -14,6 +14,10 @@ This module gives the common two-axis `rearrange` permutation tiled native
 implementations for packed `FloatArray` and ordinary polymorphic `Array`
 storage. Their proof-visible definitions are ordinary row-major `Array.ofFn`
 terms; compiled execution uses native tiled loops.
+
+The equality theorems below concern the Lean definitions. The external C
+implementations remain a foreign-code boundary and require separate validation;
+the `csimp` equalities do not prove their memory or ownership behavior.
 -/
 
 @[expose] public section

@@ -12,7 +12,8 @@ public import NN.Proofs.Tensor.Basic.Core -- shake: keep
 Fold and reduction lemmas for dependent tensors.
 
 This module packages the algebra needed to reason about tensor reductions, finite sums, and
-shape-indexed traversals.
+shape-indexed traversals. The finite-sum and associativity results concern exact real arithmetic;
+they do not permit reassociating a floating-point reduction.
 -/
 
 @[expose] public section
@@ -60,12 +61,7 @@ recursive dot product is `Proofs.TensorAlgebra.dot`.
 noncomputable def dot {s : Shape} (a b : Tensor ℝ s) : ℝ :=
   sumSpec (mulSpec a b)
 
-/--
-One-step unfolding of the internal tail-recursive helper `foldlSpec.go` when the loop
-condition holds (`k < n`).
-
-This lemma is a proof tool: it lets proofs *peel one loop step* without using `unfold` directly.
--/
+/-- Peel one slice from the proof-facing fold starting at `k`, when `k < n`. -/
 theorem foldlSpec_go_of_lt {α β : Type} [TorchLean.Storage α]
     (f : β → α → β)
     {n : Nat} {s : Shape} (values : Fin n → Tensor α s) {k : Nat} (acc : β) (hk : k < n) :
@@ -75,10 +71,7 @@ theorem foldlSpec_go_of_lt {α β : Type} [TorchLean.Storage α]
     List.drop_eq_getElem_cons (by simpa using hk)]
   simp
 
-/--
-One-step unfolding of the internal tail-recursive helper `foldlSpec.go` when the loop
-condition fails (`¬ k < n`), i.e. the loop terminates and returns the accumulator.
--/
+/-- Starting the proof-facing slice fold at or beyond its length returns the accumulator. -/
 theorem foldlSpec_go_of_not_lt {α β : Type} [TorchLean.Storage α]
     (f : β → α → β)
     {n : Nat} {s : Shape} (values : Fin n → Tensor α s) {k : Nat} (acc : β) (hk : ¬ k < n) :
@@ -91,7 +84,7 @@ theorem foldlSpec_go_of_not_lt {α β : Type} [TorchLean.Storage α]
 /--
 Coordinate formula for `matMulSpec` (matrix-matrix multiplication).
 
-This is the standard triple-sum identity: `(A @ B)[i,j] = ∑ k, A[i,k] * B[k,j]`, matching the
+This is the coordinate identity `(A @ B)[i,j] = ∑ k, A[i,k] * B[k,j]`, matching the
 textbook/PyTorch view of matrix multiplication.
 
 Citations:
@@ -158,12 +151,10 @@ theorem sum_spec_dim {n : Nat} {s : Shape} (t : Tensor ℝ (.dim n s)) :
   exact (TorchLean.Tensor.Internal.Rep.unstack_apply t i coordinate).symm
 
 /--
-The real-analysis `Spec.dot` agrees with the backend-generic recursive dot.
+The packed real sum-of-products agrees with the generic shape-recursive dot product.
 
-`Spec.dot` is defined as `sumSpec (mulSpec a b)`, which is the proof layer version of the
-PyTorch idiom `(a * b).sum()`.  `Proofs.TensorAlgebra.dot` is recursive over the tensor shape so it
-works over arbitrary semiring-like scalar models.  This bridge lets real proofs reuse generic
-algebra instead of repeating finite-sum rearrangements.
+This bridge allows real-analysis proofs to reuse generic dot-product algebra. The equality uses
+exact addition; the two groupings need not agree for a rounded scalar model.
 -/
 theorem dot_eq_tensorAlgebra_dot {s : Shape} (a b : Tensor ℝ s) :
     dot a b = Proofs.TensorAlgebra.dot (α := ℝ) a b := by

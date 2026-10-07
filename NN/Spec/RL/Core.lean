@@ -65,16 +65,11 @@ def discountedBackup [Zero α] [One α] [Add α] [Mul α]
     (reward gamma bootstrap : α) (done : Bool) : α :=
   reward + gamma * continueMask (α := α) done * bootstrap
 
-/-- One-step TD target for state-value or action-value updates. -/
-def tdTarget [Zero α] [One α] [Add α] [Mul α]
-    (reward gamma nextValue : α) (done : Bool) : α :=
-  discountedBackup (α := α) reward gamma nextValue done
-
 /-- TD residual / Bellman error:
 $r+\gamma(1-d)\mathtt{nextValue}-\mathtt{value}$. -/
 def tdResidual [Zero α] [One α] [Add α] [Mul α] [Sub α]
     (value reward gamma nextValue : α) (done : Bool) : α :=
-  tdTarget (α := α) reward gamma nextValue done - value
+  discountedBackup (α := α) reward gamma nextValue done - value
 
 open TorchLean
 
@@ -82,15 +77,13 @@ variable [TorchLean.Storage α]
 
 /-! ## Shape-indexed trajectory calculations -/
 
-/-- Discounted returns with a far-right bootstrap, evaluated from right to left. -/
-def discountedReturnsFrom [Zero α] [Add α] [Mul α] {n : Nat} (gamma : α)
+/-- Discounted returns, evaluated from right to left with an optional far-right bootstrap.
+
+The default bootstrap is `0`, representing a terminal trajectory.
+-/
+def discountedReturns [Zero α] [Add α] [Mul α] {n : Nat} (gamma : α)
     (rewards : Tensor α [n]) (bootstrap : α := 0) : Tensor α [n] :=
   Tensor.scanr (fun reward future => reward + gamma * future) bootstrap rewards
-
-/-- Discounted returns for a terminal trajectory. -/
-def discountedReturns [Zero α] [Add α] [Mul α] {n : Nat}
-    (gamma : α) (rewards : Tensor α [n]) : Tensor α [n] :=
-  discountedReturnsFrom gamma rewards 0
 
 /-- Discounted returns with one termination marker per reward; unequal lengths are unrepresentable.
 

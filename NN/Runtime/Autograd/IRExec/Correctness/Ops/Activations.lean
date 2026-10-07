@@ -15,6 +15,10 @@ Semantic preservation for activation lowering. Pointwise activations reuse the u
 and graph-tail proof in `Correctness.Common`. Softmax additionally checks the axis before looking
 up its parent; hard-masked softmax looks up the parent before decoding the mask. Their proofs keep
 those different guards explicit.
+
+The masked operation normalizes the innermost dimension and returns zero for an all-blocked row.
+These are forward specification equalities; they do not establish native execution or gradient
+correctness.
 -/
 
 @[expose] public section
@@ -27,8 +31,6 @@ open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
--- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
--- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
 /-- Semantic-preservation lemma for `.relu` lowering. -/
@@ -199,7 +201,7 @@ theorem buildFrom_denoteAllFrom_sin
       (i := i) (vals := denoteAllState (α := α) inShape (st := (⟨ss, gd⟩ : State α inShape)) x) =
       .ok (denoteAllState (α := α) inShape st' x) := by
   refine buildFrom_denoteAllFrom_unary g payload gd i st' x n hN hi
-    "sin" (Tensor.mapSpec (fun value => MathFunctions.sin value)) ?_ ?_ hBuild ih
+    "sin" (Tensor.map (fun value => MathFunctions.sin value)) ?_ ?_ hBuild ih
   · simp [loweringContext, hk, lowerSin]
   · intro pId value hp hGet
     simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, NN.IR.Graph.normalizeNodeOutput,
@@ -228,7 +230,7 @@ theorem buildFrom_denoteAllFrom_cos
       (i := i) (vals := denoteAllState (α := α) inShape (st := (⟨ss, gd⟩ : State α inShape)) x) =
       .ok (denoteAllState (α := α) inShape st' x) := by
   refine buildFrom_denoteAllFrom_unary g payload gd i st' x n hN hi
-    "cos" (Tensor.mapSpec (fun value => MathFunctions.cos value)) ?_ ?_ hBuild ih
+    "cos" (Tensor.map (fun value => MathFunctions.cos value)) ?_ ?_ hBuild ih
   · simp [loweringContext, hk, lowerCos]
   · intro pId value hp hGet
     simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode, NN.IR.Graph.normalizeNodeOutput,
@@ -290,7 +292,7 @@ theorem buildFrom_denoteAllFrom_softmax
                   let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                     mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
                       @Activation.softmaxSpec α _ _ n.outShape axis h.down
-                        (readTensor (α := α) (xs := ctx) ip))
+                        (ctx.read ip))
                   let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                   have hRec :
                       buildFrom (α := α) (g := g) (payload := payload) (inShape := inShape)
@@ -363,7 +365,7 @@ theorem buildFrom_denoteAllFrom_hardMaskedSoftmax
                   let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                     mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
                       Spec.hardMaskedSoftmaxSpec
-                        (readTensor (α := α) (xs := ctx) ip) allowed)
+                        (ctx.read ip) allowed)
                   let st1 : State α inShape :=
                     ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                   have hRec :

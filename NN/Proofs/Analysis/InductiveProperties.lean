@@ -11,29 +11,12 @@ public import NN.Proofs.Analysis.Lipschitz.Network
 /-!
 # Tensor-shape induction and lifting lemmas
 
-This file collects reusable *proof patterns* for reasoning about `Tensor` by structural induction
-on its `Shape` (i.e. the nested `scalar`/`dim` structure), plus a few higher-level lifting lemmas
-that are easiest to state once the Lipschitz/norm library is available.
+The scalar and stacked views of a tensor support induction on its shape. These views describe the
+mathematical components; the tensor itself uses contiguous row-major storage, not a nested tree.
 
-## Why this exists
-Many lemmas in TorchLean are naturally phrased as “for all shapes / for all dimensions …”.
-Rather than re-proving the same induction scaffolding (or writing deeply nested `cases`/`induction`
-blocks) throughout the repo, we keep a few canonical lemmas here.
-
-- `tensor_induction_principle` for predicates `P : Tensor ℝ s → Prop`,
-- `binary_tensor_induction` for predicates `P : Tensor ℝ s → Tensor ℝ s → Prop`.
-
-These are especially useful when proving algebraic properties of `*_spec` tensor operations, or
-norm/metric bounds that are proved “componentwise” and then lifted to the whole tensor.
-
-Why this is not under `NN/Spec`: `NN/Spec` should define the mathematical objects and operations.
-The induction principles below are theorem/proof conveniences about those objects, so they belong
-under `NN/Proofs`.
-
-## References
-- This is standard structural induction on an inductive family; no external paper is required.
-  The main detail is that TorchLean encodes tensors as a tree indexed by `Shape`,
-  rather than (say) a flat array with a runtime `shape`.
+`tensor_induction_principle` and `binary_tensor_induction` lift componentwise arguments to arbitrary
+shapes. The remaining results give stacked L2 norm bounds, activation bounds and composition of
+maps carrying a proved mathlib `LipschitzWith` constant.
 -/
 
 @[expose] public section
@@ -41,14 +24,9 @@ under `NN/Proofs`.
 
 namespace Proofs
 
-open Spec TorchLean
-open TorchLean TorchLean.Tensor
+open Spec TorchLean TorchLean.Tensor
 open Shape
 open scoped BigOperators
-
--- ====================================================================
--- DIMENSIONAL INDUCTION PATTERNS
--- ====================================================================
 
 /--
 Structural induction on tensors by their `Shape`.
@@ -95,10 +73,6 @@ theorem binary_tensor_induction
     apply step
     intro i
     exact ih (t₁.unstack i) (t₂.unstack i)
-
--- ====================================================================
--- NORM PRESERVATION UNDER DIMENSIONAL SCALING
--- ====================================================================
 
 /--
 The squared $\ell_2$ norm of a concatenation is the sum of the squared $\ell_2$ norms.
@@ -181,10 +155,6 @@ theorem componentwise_bound_extension {n : Nat} {s : Shape}
         (hSg.trans (Finset.sum_eq_zero fun i _ => by simp [hg_norm0 i]))
     simp [nf0, ng0]
 
--- ====================================================================
--- ACTIVATION FUNCTION INDUCTIVE ANALYSIS
--- ====================================================================
-
 /--
 ReLU preserves non-negativity inductively over all dimensions.
 
@@ -209,18 +179,18 @@ theorem relu_nonneg_inductive {s : Shape} (t : Tensor ℝ s) :
     cases indices with
     | nil =>
       -- ReLU(x) = max x 0, so it is always nonnegative.
-      simp [Activation.reluSpec, Activation.Math.reluSpec_eq_max, mapSpec]
-    | cons _ _ => simp [Activation.reluSpec, Activation.Math.reluSpec, mapSpec]
+      simp [Activation.reluSpec, Activation.Math.reluSpec_eq_max]
+    | cons _ _ => simp [Activation.reluSpec]
   · -- Inductive case
     intro n s f ih indices
-    simp [Activation.reluSpec, mapSpec]
+    simp [Activation.reluSpec]
     cases indices with
     | nil =>
       simp
     | cons head tail =>
         simp
         by_cases h : head < n
-        · simpa [Activation.reluSpec, mapSpec, h] using ih ⟨head, h⟩ tail
+        · simpa [Activation.reluSpec, h] using ih ⟨head, h⟩ tail
         · simp [h]
 
 /--
@@ -232,13 +202,13 @@ https://pytorch.org/docs/stable/generated/torch.sigmoid.html
 -/
 theorem sigmoid_bounds_inductive {s : Shape} (t : Tensor ℝ s) :
   ∀ indices : List Nat,
-  match getSpec (mapSpec (fun x => 1 / (1 + Real.exp (-x))) t) indices with
+  match getSpec (Tensor.map (fun x => 1 / (1 + Real.exp (-x))) t) indices with
   | some y => 0 < y ∧ y < 1
   | none => True := by
   refine tensor_induction_principle
     (P := fun {s} t =>
       ∀ indices : List Nat,
-        match getSpec (mapSpec (fun x => 1 / (1 + Real.exp (-x))) t) indices with
+        match getSpec (Tensor.map (fun x => 1 / (1 + Real.exp (-x))) t) indices with
         | some y => 0 < y ∧ y < 1
         | none => True)
     (t := t) ?_ ?_
@@ -246,7 +216,7 @@ theorem sigmoid_bounds_inductive {s : Shape} (t : Tensor ℝ s) :
     intro x indices
     cases indices with
     | nil =>
-      simp [mapSpec]
+      simp
       have hden_pos : 0 < (1 + Real.exp (-x)) := by
         have : 0 < Real.exp (-x) := by simpa using Real.exp_pos (-x)
         linarith
@@ -259,22 +229,18 @@ theorem sigmoid_bounds_inductive {s : Shape} (t : Tensor ℝ s) :
         have : (1 : ℝ) / (1 + Real.exp (-x)) < 1 := (div_lt_one hden_pos).2 hden_lt
         simpa [one_div] using this
     | cons _ _ =>
-      simp [mapSpec]
+      simp
   · -- Inductive case
     intro n s f ih indices
     cases indices with
     | nil =>
       simp
     | cons head tail =>
-      rw [mapSpec_dim, get_spec_dim_cons]
+      rw [map_dim, get_spec_dim_cons]
       by_cases h : head < n
       · simp only [h, dite_true]
         simpa using ih ⟨head, h⟩ tail
       · simp [h]
-
--- ====================================================================
--- COMPOSITION INDUCTIVE THEOREMS
--- ====================================================================
 
 /--
 A tensor map packaged with a proved Lipschitz constant.
@@ -309,36 +275,17 @@ def composeFunctions {s : Shape} (layers : Array (LipschitzLayer s))
 def composedLipschitzConstant {s : Shape} (layers : Array (LipschitzLayer s)) : NNReal :=
   layers.foldr (fun layer bound => layer.constant * bound) 1
 
-/-- Apply a list of layers left to right. The `List` form exists so the Lipschitz proof below can
-recurse on `cons`; the public `Array` version delegates to it. -/
-private def composeLayerList {s : Shape} (layers : List (LipschitzLayer s))
-    (x : Tensor ℝ s) : Tensor ℝ s :=
-  layers.foldl (fun value layer => layer.forward value) x
-
-/-- Product of the Lipschitz constants of a layer list, matching `composeLayerList`. -/
-private def layerListConstant {s : Shape} (layers : List (LipschitzLayer s)) : NNReal :=
-  layers.foldr (fun layer bound => layer.constant * bound) 1
-
-private theorem composeLayerList_lipschitzWith {s : Shape} (layers : List (LipschitzLayer s)) :
-    LipschitzWith (layerListConstant layers) (composeLayerList layers) := by
-  induction layers with
-  | nil => exact LipschitzWith.id
-  | cons layer layers ih =>
-      have h : LipschitzWith (layerListConstant layers * layer.constant)
-          (composeLayerList layers ∘ layer.forward) := ih.comp layer.lipschitz
-      rw [mul_comm] at h
-      exact h
-
 /-- The composition of proved Lipschitz layers is Lipschitz with the product constant. -/
 theorem composeFunctions_lipschitzWith {s : Shape} (layers : Array (LipschitzLayer s)) :
     LipschitzWith (composedLipschitzConstant layers) (composeFunctions layers) := by
-  have hfun : composeFunctions layers = composeLayerList layers.toList := by
-    funext x
-    simp only [composeFunctions, composeLayerList, Array.foldl_toList]
-  have hconst : composedLipschitzConstant layers = layerListConstant layers.toList := by
-    simp only [composedLipschitzConstant, layerListConstant, Array.foldr_toList]
-  rw [hfun, hconst]
-  exact composeLayerList_lipschitzWith layers.toList
+  unfold composedLipschitzConstant composeFunctions
+  simp only [← Array.foldr_toList, ← Array.foldl_toList]
+  generalize layers.toList = items
+  induction items with
+  | nil => exact LipschitzWith.id
+  | cons layer layers ih =>
+      simpa only [List.foldr_cons, List.foldl_cons, mul_comm, Function.comp_def] using
+        ih.comp layer.lipschitz
 
 /-- The composition of proved Lipschitz layers is Lipschitz with the product bound. -/
 theorem nested_lipschitz_composition {s : Shape} (layers : Array (LipschitzLayer s))

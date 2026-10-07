@@ -54,7 +54,7 @@ If `nActions = 0` then `Fin nActions` is uninhabited, so we require `[NeZero nAc
 When `nActions > 0`, `Metrics.argmax?` never returns `none`; the `none` branch returns `0` only as
 an unreachable totality fallback.
  -/
-def greedyActionFromLogits {α : Type} [TorchLean.Storage α]
+def greedy {α : Type} [TorchLean.Storage α]
     [LT α] [DecidableRel ((· > ·) : α → α → Prop)]
     {nActions : Nat} [NeZero nActions]
     (logits : Tensor α [nActions]) : Fin nActions :=
@@ -75,7 +75,7 @@ the total (undiscounted) reward.
 
 The episode terminates early when the checked transition reports `terminated || truncated`.
  -/
-def episodeTotalReward {obsShape : Shape} {nActions : Nat} [NeZero nActions]
+def totalReward {obsShape : Shape} {nActions : Nat} [NeZero nActions]
     (sess : Session.CheckedSession obsShape nActions)
     (policyLogits : Tensor Float obsShape → Tensor Float [nActions])
     (maxSteps : Nat := 1000) :
@@ -85,7 +85,7 @@ def episodeTotalReward {obsShape : Shape} {nActions : Nat} [NeZero nActions]
   for _t in [0:maxSteps] do
     let obs : Tensor Float obsShape := sess.observe s
     let logits := policyLogits obs
-    let a := greedyActionFromLogits (α := Float) (nActions := nActions) logits
+    let a := greedy (α := Float) (nActions := nActions) logits
     let (tr, s') ← sess.stepChecked s a
     s := s'
     total := total + tr.reward
@@ -103,7 +103,7 @@ Note: for `Session.CheckedSession.ofEnv`, `State` is the Lean-native environment
 For Gymnasium-backed sessions, `State` is the session record (it stores the last observation, etc.),
 not the underlying Python environment's internal state.
 -/
-def episodePath {obsShape : Shape} {nActions : Nat} [NeZero nActions]
+def path {obsShape : Shape} {nActions : Nat} [NeZero nActions]
     (sess : Session.CheckedSession obsShape nActions)
     (policyLogits : Tensor Float obsShape → Tensor Float [nActions])
     (maxSteps : Nat := 1000) :
@@ -113,7 +113,7 @@ def episodePath {obsShape : Shape} {nActions : Nat} [NeZero nActions]
   for _t in [0:maxSteps] do
     let obs : Tensor Float obsShape := sess.observe s
     let logits := policyLogits obs
-    let a := greedyActionFromLogits (α := Float) (nActions := nActions) logits
+    let a := greedy (α := Float) (nActions := nActions) logits
     let (tr, s') ← sess.stepChecked s a
     s := s'
     path := path.push s'
@@ -122,15 +122,16 @@ def episodePath {obsShape : Shape} {nActions : Nat} [NeZero nActions]
   pure path
 
 /--
-Average `episodeTotalReward` across multiple episodes, seeding each episode by `baseSeed + k`.
+Average `totalReward` across multiple episodes, seeding each episode by `baseSeed + k`.
 
 The `mkSession` callback is responsible for interpreting the seed:
 - for Gymnasium-backed sessions it typically passes the seed to `reset`, and
 - for Lean-native environments it can ignore the seed.
 
-When `episodes = 0`, this function returns `0` by convention.
+This is the mean of episode totals, not the mean reward per step. When `episodes = 0`, the
+function returns `0` without creating or starting a session.
  -/
-def averageEpisodeTotalReward {obsShape : Shape} {nActions : Nat} [NeZero nActions]
+def meanReward {obsShape : Shape} {nActions : Nat} [NeZero nActions]
     (mkSession : Nat → Session.CheckedSession obsShape nActions)
     (policyLogits : Tensor Float obsShape → Tensor Float [nActions])
     (baseSeed : Nat) (episodes : Nat)
@@ -142,7 +143,7 @@ def averageEpisodeTotalReward {obsShape : Shape} {nActions : Nat} [NeZero nActio
     let mut acc : Float := 0.0
     for k in [0:episodes] do
       let sess := mkSession (baseSeed + k)
-      acc := acc + (← episodeTotalReward (obsShape := obsShape) (nActions := nActions)
+      acc := acc + (← totalReward (obsShape := obsShape) (nActions := nActions)
         sess policyLogits (maxSteps := maxSteps))
     pure (acc / (episodes : Float))
 

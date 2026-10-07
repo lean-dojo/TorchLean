@@ -36,7 +36,7 @@ structure IndexedModel (σ τ : Spec.Shape) (β : Type) [TorchLean.Storage β] w
   private inputValidatorValue : Tensor β σ → Except String Unit
   private programValue : ∀ (_mode : Mode)
       {α : Type}, [TorchLean.Storage α] → [Context α] →
-        Runtime.Autograd.Model.ProgramWithDataInputs α β stateShapes [σ] τ
+        Runtime.Autograd.Model.Program.Data α β stateShapes [σ] τ
 
 namespace IndexedModel
 
@@ -48,7 +48,7 @@ opaque create {σ τ : Spec.Shape} {β : Type} [TorchLean.Storage β]
     (initialState : State Float stateShapes)
     (program : ∀ (_mode : Mode)
       {α : Type}, [TorchLean.Storage α] → [Context α] →
-        Runtime.Autograd.Model.ProgramWithDataInputs α β stateShapes [σ] τ)
+        Runtime.Autograd.Model.Program.Data α β stateShapes [σ] τ)
     (kind : String := "IndexedModel")
     (initializationPlan : Option
       (Runtime.Autograd.Model.Module.RuntimeInit.Plan stateShapes) := none)
@@ -110,7 +110,7 @@ opaque validateInput {σ τ : Spec.Shape} {β : Type} [TorchLean.Storage β]
 opaque program {σ τ : Spec.Shape} {β : Type} [TorchLean.Storage β]
     (model : IndexedModel σ τ β) (mode : Mode)
     {α : Type} [TorchLean.Storage α] [Context α] :
-    Runtime.Autograd.Model.ProgramWithDataInputs α β model.stateShapes [σ] τ :=
+    Runtime.Autograd.Model.Program.Data α β model.stateShapes [σ] τ :=
   match model with
   | ⟨_, _, _, _, _, _, _, program⟩ => program mode
 

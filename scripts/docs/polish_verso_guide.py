@@ -10,6 +10,7 @@ low-overhead reading-progress indicator.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import re
@@ -1391,14 +1392,15 @@ def write_js(root: Path) -> None:
 def inject_script(root: Path) -> None:
     """Install the shared guide script into every generated HTML page."""
     marker = "torchlean-guide-polish.js"
-    script_re = re.compile(r'\s*<script defer src="[^"]*torchlean-guide-polish\.js(?:\?v=[^"]*)?"></script>\n?')
+    script_re = re.compile(r'<script defer src="[^"]*torchlean-guide-polish\.js(?:\?v=[^"]*)?"></script>')
     # Verso emits a <base> tag on every generated page. A bare script URL is
     # therefore resolved relative to the guide root, even from nested pages.
-    tag = '    <script defer src="torchlean-guide-polish.js?v=20260916-docstring-math"></script>\n'
+    version = hashlib.sha256((root / marker).read_bytes()).hexdigest()[:16]
+    tag = f'    <script defer src="{marker}?v={version}"></script>\n'
     for path in root.rglob("*.html"):
         html = path.read_text()
         if marker in html:
-            new_html = script_re.sub("\n" + tag, html, count=1)
+            new_html = script_re.sub(tag.strip(), html, count=1)
             if new_html != html:
                 path.write_text(new_html)
             continue
@@ -1499,7 +1501,6 @@ def rewrite_repository_links(root: Path) -> None:
         "home_page/",
         ".github/",
         "README",
-        "AI_USAGE",
         "CONTRIBUTING",
         "TRUST_BOUNDARIES",
         "THIRD_PARTY",
@@ -1755,6 +1756,104 @@ def validate_math_runtime(root: Path) -> None:
         raise SystemExit(f"KaTeX is not loaded by every guide page: {sample}{suffix}")
 
 
+DEEP_NUMBER = re.compile(r"^\s*\d+(?:\.\d+){2,}\.?(?:\s|$)")
+
+
+class GuideLayoutPage(HTMLParser):
+    """Collect anchors, headings, and the table of contents' number cells."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self.ids: set[str] = set()
+        self.labels: list[str] = []
+        self.pending: list[tuple[str, list[str]]] = []
+        self.feed(text)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if identifier := attributes.get("id"):
+            self.ids.add(identifier)
+        # Restrict the scan to section labels so version links such as "1.2.3"
+        # in prose or code do not look like unwanted section numbering.
+        if tag in {"h1", "h2", "h3", "h4", "h5", "h6"} or (
+            tag == "td" and "num" in (attributes.get("class") or "").split()
+        ):
+            self.pending.append((tag, []))
+
+    def handle_data(self, data: str) -> None:
+        for _, pieces in self.pending:
+            pieces.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        for index in range(len(self.pending) - 1, -1, -1):
+            name, pieces = self.pending[index]
+            if name == tag:
+                self.labels.append(" ".join("".join(pieces).split()))
+                self.pending.pop(index)
+                break
+
+
+def check_layout(root: Path) -> tuple[int, int]:
+    """Keep chapter/page numbers, with all deeper sections on their parent page."""
+    root = root.resolve()
+    pages: dict[Path, GuideLayoutPage] = {}
+    errors: list[str] = []
+    for path in root.rglob("*.html"):
+        text = path.read_text()
+        if 'href="book.css"' not in text:
+            continue
+        page = GuideLayoutPage(text)
+        pages[path] = page
+        for label in page.labels:
+            if DEEP_NUMBER.match(label):
+                errors.append(f"{path.relative_to(root)}: deep section number in {label!r}")
+    if not pages:
+        raise ValueError(f"no rendered guide pages under {root}")
+
+    xref = json.loads((root / "xref.json").read_text())
+    sections = [
+        entry
+        for entries in xref["Verso.Genre.Manual.section"]["contents"].values()
+        for entry in entries
+    ]
+    if not sections:
+        raise ValueError("the guide has no section references")
+
+    # Context contains the book, chapter, page, then any headings within that page.
+    # Compare addresses rather than slugs: changing a title must not split its children.
+    page_addresses = {
+        tuple(part["title"] for part in entry["data"]["context"]): entry["address"]
+        for entry in sections
+        if len(entry["data"]["context"]) == 3
+    }
+    for entry in sections:
+        data = entry["data"]
+        title = data["title"]
+        context = data["context"]
+        number = data.get("sectionNum") or ""
+        if DEEP_NUMBER.match(number):
+            errors.append(f"{title!r}: deep section number in cross-reference {number!r}")
+        if len(context) > 3:
+            parent = tuple(part["title"] for part in context[:3])
+            address = page_addresses.get(parent)
+            if address is None or entry["address"] != address:
+                errors.append(f"{title!r}: section is split away from its parent page")
+
+        address = unquote(urlsplit(entry["address"]).path).lstrip("/")
+        target = (root / address / "index.html").resolve()
+        if not target.is_relative_to(root):
+            errors.append(f"{title!r}: section address leaves the guide")
+            continue
+        page = pages.get(target)
+        if page is None or entry["id"] not in page.ids:
+            errors.append(f"{title!r}: section anchor is missing from {address or '/'}")
+
+    if errors:
+        sample = "\n".join(dict.fromkeys(errors[:20]))
+        raise ValueError(f"guide reading-layout check failed ({len(errors)} findings):\n{sample}")
+    return len(pages), len(sections)
+
+
 def main() -> int:
     """CLI entry point for the post-Verso guide polish pass."""
     parser = argparse.ArgumentParser()
@@ -1787,6 +1886,11 @@ def main() -> int:
     inject_favicon(args.guide)
     inject_script(args.guide)
     validate_math_runtime(args.guide)
+    try:
+        pages, sections = check_layout(args.guide)
+    except (KeyError, OSError, ValueError) as error:
+        parser.exit(1, f"{error}\n")
+    print(f"Guide layout checked: {pages} pages, {sections} sections; numbering stops at N.M.")
     return 0
 
 

@@ -231,104 +231,29 @@ theorem contractHolds_of_checkTransitionFin_eq_ok {obsShape : Spec.Shape} {nActi
       checkTransitionFin (obsShape := obsShape) (nActions := nActions) c observation
         nextObservation action reward terminated truncated = .ok t) :
     ContractHolds (obsShape := obsShape) (nActions := nActions) c t := by
-  -- Peel the `Except` do-chain to recover each successful sub-check and the returned record.
   unfold checkTransitionFin at h
-  except_cases hDone :
-      checkDoneFlags (obsShape := obsShape) (nActions := nActions) c terminated truncated
-      using h with u =>
+  except_cases hDone : checkDoneFlags c terminated truncated using h with u =>
+    cases u
+    simp only [hDone, Bind.bind, Except.bind] at h
+    except_cases hReward : checkReward c reward using h with u =>
       cases u
-      have h' :
-          (do
-            checkReward (obsShape := obsShape) (nActions := nActions) c reward
-            checkObservation (obsShape := obsShape) (nActions := nActions) c
-              (field := "observation") observation
-            checkObservation (obsShape := obsShape) (nActions := nActions) c
-              (field := "nextObservation") nextObservation
-            pure
-              ({ observation := observation
-                 action := action
-                 reward := reward
-                 nextObservation := nextObservation
-                 terminated := terminated
-                 truncated := truncated } : Transition obsShape nActions)) = .ok t := by
-        simpa [hDone, Bind.bind, Except.bind, Pure.pure, Except.pure, Except.instMonad] using h
-      except_cases hReward : checkReward (obsShape := obsShape) (nActions := nActions) c reward
-          using h' with uR =>
-          cases uR
-          have h'' :
-              (do
-                checkObservation (obsShape := obsShape) (nActions := nActions) c
-                  (field := "observation") observation
-                checkObservation (obsShape := obsShape) (nActions := nActions) c
-                  (field := "nextObservation") nextObservation
-                pure
-                  ({ observation := observation
-                     action := action
-                     reward := reward
-                     nextObservation := nextObservation
-                     terminated := terminated
-                     truncated := truncated } : Transition obsShape nActions)) = .ok t := by
-            simpa [hReward, Bind.bind, Except.bind, Pure.pure, Except.pure, Except.instMonad]
-              using h'
-          except_cases hObs : checkObservation (obsShape := obsShape) (nActions := nActions) c
-              (field := "observation") observation using h'' with uO =>
-              cases uO
-              have h''' :
-                  (do
-                    checkObservation (obsShape := obsShape) (nActions := nActions) c
-                      (field := "nextObservation") nextObservation
-                    pure
-                      ({ observation := observation
-                         action := action
-                         reward := reward
-                         nextObservation := nextObservation
-                         terminated := terminated
-                         truncated := truncated } : Transition obsShape nActions)) = .ok t := by
-                simpa [hObs, Bind.bind, Except.bind, Pure.pure, Except.pure, Except.instMonad]
-                  using h''
-              except_cases hNextObs :
-                  checkObservation (obsShape := obsShape) (nActions := nActions) c
-                    (field := "nextObservation") nextObservation using h''' with uNO =>
-                  cases uNO
-                  have hFinal :
-                      (.ok
-                        { observation := observation
-                          action := action
-                          reward := reward
-                          nextObservation := nextObservation
-                          terminated := terminated
-                          truncated := truncated } :
-                        Except String (Transition obsShape nActions)) = .ok t := by
-                    simpa [hNextObs, Bind.bind, Except.bind, Pure.pure, Except.pure,
-                      Except.instMonad] using h'''
-                  have ht :
-                      t =
-                        { observation := observation
-                          action := action
-                          reward := reward
-                          nextObservation := nextObservation
-                          terminated := terminated
-                          truncated := truncated } := by
-                    cases hFinal
-                    rfl
-
-                  -- Assemble `ContractHolds`.
-                  refine ht ▸ ?_
-                  refine
-                    { doneFlags :=
-                        doneFlagsHolds_of_checkDoneFlags_eq_ok (c := c) (terminated := terminated)
-                          (truncated := truncated)
-                          (by simpa using hDone)
-                      reward :=
-                        rewardHolds_of_checkReward_eq_ok (c := c) (reward := reward)
-                          (by simpa using hReward)
-                      observation :=
-                        observationHolds_of_checkObservation_eq_ok (c := c) (field := "observation")
-                          (obs := observation) (by simpa using hObs)
-                      nextObservation :=
-                        observationHolds_of_checkObservation_eq_ok (c := c)
-                          (field := "nextObservation") (obs := nextObservation)
-                          (by simpa using hNextObs) }
+      simp only [hReward] at h
+      except_cases hObs : checkObservation c (field := "observation") observation
+          using h with u =>
+        cases u
+        simp only [hObs] at h
+        except_cases hNextObs : checkObservation c (field := "nextObservation") nextObservation
+            using h with u =>
+          cases u
+          simp only [hNextObs, Pure.pure, Except.pure, Except.ok.injEq] at h
+          cases h
+          exact
+            { doneFlags := doneFlagsHolds_of_checkDoneFlags_eq_ok c terminated truncated hDone
+              reward := rewardHolds_of_checkReward_eq_ok c reward hReward
+              observation := observationHolds_of_checkObservation_eq_ok c "observation"
+                observation hObs
+              nextObservation := observationHolds_of_checkObservation_eq_ok c "nextObservation"
+                nextObservation hNextObs }
 
 /--
 Run the executable checker and, on success, return the transition bundled with the Prop-level

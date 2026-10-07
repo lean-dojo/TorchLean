@@ -15,22 +15,11 @@ public import NN.Widgets.Core.UI
 import ProofWidgets.Component.HtmlDisplay
 
 /-!
-# Widgets IR
+# IR graph viewer
 
-IR graph viewer widget (for debugging / teaching).
-
-This module defines `#ir_view g`, which renders an `NN.IR.Graph` as an interactive HTML panel with:
-- a well-formedness check result,
-- a per-node expandable view,
-- and a DOT snippet you can paste into GraphViz if needed.
-
-Like other widgets, this is an inspection surface for examples and pass debugging. Proof scripts
-should cite the underlying graph definitions and theorems directly.
-
-## Main definitions
-
-- `irHtml`: render checks, node details, and DOT text for one `NN.IR.Graph`.
-- `#ir_view`: command frontend for interactive infoview inspection.
+`#ir_view g` shows `Graph.checkWellFormed`, expandable node details, and GraphViz DOT text.
+`irHtml` clips only the DOT preview; it still renders every node. The panel displays executable
+diagnostics, not a proof about the graph's semantics.
 -/
 
 public meta section

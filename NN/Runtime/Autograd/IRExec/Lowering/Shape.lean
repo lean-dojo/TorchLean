@@ -51,9 +51,6 @@ def lowerPermute {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let pNode ← g.getNode pId
@@ -64,16 +61,16 @@ def lowerPermute {α : Type} [TorchLean.Storage α] [Context α]
           throw s!"IRExec: node {i}: invalid permutation {repr perm} for shape {repr sIn}"
       | some expected =>
           let swaps ← NN.IR.Graph.swapDepthsForPerm perm (Spec.Shape.rank sIn)
-          let sFinal : Shape := swapShapeBySwaps sIn swaps
+          let sFinal : Shape := swapShape sIn swaps
           if hFinal : sFinal = expected then
             if hOut : expected = τ then
-              let forward := fun ctx : TensorReader α Γ =>
-                let x := readTensor (α := α) (xs := ctx) ip
-                let y : Tensor α sFinal := applySwapsTensor (α := α) (s := sIn) (swaps :=
+              let forward := fun ctx : TensorLookup α Γ =>
+                let x := ctx.read ip
+                let y : Tensor α sFinal := swapAxes (α := α) (s := sIn) (swaps :=
                   swaps) x
                 let yExpected : Tensor α expected := Tensor.castShape y hFinal
                 Tensor.castShape yExpected hOut
-              pure <| fwd forward
+              pure <| mkForwardNode (τ := τ) forward
             else
               throw <|
                 s!"IRExec: node {i}: permute outShape mismatch: " ++
@@ -92,18 +89,15 @@ def lowerReshape {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId inS
       if hNumel : Spec.Shape.size inS = Spec.Shape.size outS then
         if hOut : outS = τ then
-          let forward := fun ctx : TensorReader α Γ =>
-            let x := readTensor (α := α) (xs := ctx) ip
+          let forward := fun ctx : TensorLookup α Γ =>
+            let x := ctx.read ip
             hOut ▸ Tensor.reshapeSpec (α := α) (source := inS) (target := outS) x hNumel
-          pure <| fwd forward
+          pure <| mkForwardNode (τ := τ) forward
         else
           throw <|
             s!"IRExec: node {i}: reshape outShape mismatch: kind={repr outS}, " ++
@@ -121,19 +115,16 @@ def lowerFlatten {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId s
       let expected : Shape := .dim (Spec.Shape.size s) .scalar
       if hOut : expected = τ then
-        let forward := fun ctx : TensorReader α Γ =>
-          let x := readTensor (α := α) (xs := ctx) ip
+        let forward := fun ctx : TensorLookup α Γ =>
+          let x := ctx.read ip
           let y : Tensor α expected := Tensor.flattenSpec (α := α) (shape := s) x
           hOut ▸ y
-        pure <| fwd forward
+        pure <| mkForwardNode (τ := τ) forward
       else
         throw <|
           s!"IRExec: node {i}: flatten outShape mismatch: " ++
@@ -153,7 +144,7 @@ def concatAxisZeroInputs {α : Type} [TorchLean.Storage α] [Context α]
     | .dim nP restP =>
         if _hRest : restP = rest then
           let ip ← ctx.parentIdx pid (.dim nP rest)
-          pure ⟨nP, fun context => readTensor (α := α) (xs := context) ip⟩
+          pure ⟨nP, fun context => context.read ip⟩
         else
           throw <|
             s!"IRExec: node {ctx.index}: concat axis=0 tail mismatch: {repr restP} vs " ++
@@ -184,7 +175,7 @@ structure ConcatFrontInput (α : Type) [TorchLean.Storage α] (Γ : List Shape)
   /-- The swaps were computed for the parent's own rank. -/
   swaps_eq : NN.IR.Graph.swapDepthsForPerm permFront (Spec.Shape.rank sIn) = .ok swaps
   /-- Applying the swaps yields the permuted shape. -/
-  final_eq : swapShapeBySwaps sIn swaps = .dim nP restFront
+  final_eq : swapShape sIn swaps = .dim nP restFront
 
 /-- Read and permute the parent so the concatenated axis comes first. -/
 def ConcatFrontInput.toInput {α : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape}
@@ -192,8 +183,8 @@ def ConcatFrontInput.toInput {α : Type} [TorchLean.Storage α] [Context α] {Γ
     (input : ConcatFrontInput α Γ permFront restFront) : ConcatInput α Γ restFront :=
   ⟨input.nP, fun context =>
     Tensor.castShape
-      (applySwapsTensor (α := α) (s := input.sIn) (swaps := input.swaps)
-        (readTensor (α := α) (xs := context) input.ip))
+      (swapAxes (α := α) (s := input.sIn) (swaps := input.swaps)
+        (context.read input.ip))
       input.final_eq⟩
 
 /--
@@ -218,7 +209,7 @@ def concatAxisFrontInputs {α : Type} [TorchLean.Storage α] [Context α]
           match hSwaps : NN.IR.Graph.swapDepthsForPerm permFront (Spec.Shape.rank sIn) with
           | .error msg => throw s!"IRExec: node {ctx.index}: concat: {msg}"
           | .ok swaps =>
-              if hFinal : swapShapeBySwaps sIn swaps = .dim nP restFront then
+              if hFinal : swapShape sIn swaps = .dim nP restFront then
                 pure
                   { sIn := sIn, ip := ip, swaps := swaps, nP := nP
                     perm_eq := by rw [hPerm, hRest]
@@ -227,7 +218,7 @@ def concatAxisFrontInputs {α : Type} [TorchLean.Storage α] [Context α]
               else
                 throw <|
                   s!"IRExec: node {ctx.index}: concat permute shape mismatch: " ++
-                    s!"computed={repr (swapShapeBySwaps sIn swaps)}, " ++
+                    s!"computed={repr (swapShape sIn swaps)}, " ++
                     s!"expected={repr (Shape.dim nP restFront)} ({ctx.node.summary})"
         else
           throw <|
@@ -246,7 +237,7 @@ Fold concat inputs along the leading axis into a tensor of the declared leading 
 def concatInputsForward {α : Type} [TorchLean.Storage α] [Context α]
     {Γ : List Shape} {rest : Shape} (inputs : Array (ConcatInput α Γ rest)) (nOut : Nat)
     (hSum : inputs.foldl (fun acc input => acc + input.1) 0 = nOut)
-    (context : TensorReader α Γ) : Tensor α (.dim nOut rest) :=
+    (context : TensorLookup α Γ) : Tensor α (.dim nOut rest) :=
   let out := concatInputs (α := α) (Γ := Γ) (rest := rest) context inputs
   Tensor.castShape out.2
     (congrArg (fun k => Shape.dim k rest)
@@ -259,9 +250,6 @@ def lowerConcat {α : Type} [TorchLean.Storage α] [Context α]
   let i := ctx.index
   let n := ctx.node
   let τ : Shape := n.outShape
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   let parents := n.parents
   if parents.size < 2 then
     throw s!"IRExec: node {i}: concat expects at least 2 parents"
@@ -283,9 +271,9 @@ def lowerConcat {α : Type} [TorchLean.Storage α] [Context α]
     | .dim nOut rest =>
         let inputs ← concatAxisZeroInputs ctx rest
         if hSum : inputs.foldl (fun acc input => acc + input.1) 0 = nOut then
-          let forward := fun context : TensorReader α Γ =>
+          let forward := fun context : TensorLookup α Γ =>
             Tensor.castShape (concatInputsForward inputs nOut hSum context) hτ.symm
-          pure <| fwd forward
+          pure <| mkForwardNode (τ := τ) forward
         else
           throw <|
             s!"IRExec: node {i}: concat out dim mismatch: declared {nOut}, computed " ++
@@ -319,20 +307,20 @@ def lowerConcat {α : Type} [TorchLean.Storage α] [Context α]
             | some _ =>
             let swapsBack ←
               NN.IR.Graph.swapDepthsForPerm permBack (Spec.Shape.rank outFrontExpected)
-            let τBackFinal : Shape := swapShapeBySwaps outFrontExpected swapsBack
+            let τBackFinal : Shape := swapShape outFrontExpected swapsBack
             if hOutBackFinal : τBackFinal = τ then
               let frontInputs ← concatAxisFrontInputs ctx permFront restFront
               let inputs := frontInputs.map ConcatFrontInput.toInput
               if hSum : inputs.foldl (fun acc input => acc + input.1) 0 = nOutFront then
-                let forward := fun context : TensorReader α Γ =>
+                let forward := fun context : TensorLookup α Γ =>
                   let tFront : Tensor α outFrontExpected :=
                     Tensor.castShape (concatInputsForward inputs nOutFront hSum context)
                       hOutFrontExpected.symm
                   let tBack : Tensor α τBackFinal :=
-                    applySwapsTensor (α := α) (s := outFrontExpected) (swaps := swapsBack)
+                    swapAxes (α := α) (s := outFrontExpected) (swaps := swapsBack)
                       tFront
                   Tensor.castShape tBack hOutBackFinal
-                pure <| fwd forward
+                pure <| mkForwardNode (τ := τ) forward
               else
                 throw <|
                   s!"IRExec: node {i}: concat out dim mismatch: declared {nOutFront}, " ++
@@ -354,9 +342,6 @@ def lowerTranspose {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let pNode ← g.getNode pId
@@ -368,15 +353,15 @@ def lowerTranspose {α : Type} [TorchLean.Storage α] [Context α]
         | some expected => pure expected
         | none => throw s!"IRExec: node {i}: invalid transpose axes ({n.summary})"
       let swaps ← NN.IR.Graph.swapDepthsForPerm perm sIn.rank
-      let computed : Shape := swapShapeBySwaps sIn swaps
+      let computed : Shape := swapShape sIn swaps
       if hComputed : computed = expected then
         if hOut : expected = τ then
-          let forward := fun ctx : TensorReader α Γ =>
-            let x := readTensor (α := α) (xs := ctx) ip
-            let y : Tensor α computed := applySwapsTensor (α := α) (s := sIn)
+          let forward := fun ctx : TensorLookup α Γ =>
+            let x := ctx.read ip
+            let y : Tensor α computed := swapAxes (α := α) (s := sIn)
               (swaps := swaps) x
             Tensor.castShape (Tensor.castShape y hComputed) hOut
-          pure <| fwd forward
+          pure <| mkForwardNode (τ := τ) forward
         else
           throw s!"IRExec: node {i}: transpose outShape mismatch ({n.summary})"
       else

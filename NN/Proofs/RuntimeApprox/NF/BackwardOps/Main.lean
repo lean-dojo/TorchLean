@@ -12,8 +12,10 @@ public import NN.Proofs.RuntimeApprox.Graph.BackwardApprox
 /-!
 # NF Backpropagation Approximation
 
-The end-to-end theorem for the rounded NF reverse-mode backend.  A reverse graph built from sound
-local nodes produces a runtime backpropagated context enclosed by the corresponding spec context.
+The end-to-end theorem for the rounded NF reverse-mode backend. Given approximate inputs and
+seeds, a graph built from local approximation contracts produces a rounded reverse-pass context
+within the propagated bounds of the supplied spec reverse pass. Derivative correctness of that
+spec pass is a separate premise when interpreting the result as a gradient guarantee.
 -/
 @[expose] public section
 
@@ -45,8 +47,8 @@ local notation "R" => NF β fexp rnd
 /--
 End-to-end NF reverse-mode soundness for a well-typed reverse graph.
 
-This is the main composition theorem: if each node in the graph has a sound `RevNode` instance,
-then the whole backpropagated context is an `approxCtx` enclosure of the spec backpropagation.
+Compose the node-local approximation bounds with NF context-addition bounds. Input and seed
+errors are explicit premises; shared-node accumulation includes its rounding error.
 -/
 theorem backprop_approx {Γ : List Shape} {ss : List Shape}
     (g : RevGraph (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) Γ ss) :

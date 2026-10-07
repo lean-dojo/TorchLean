@@ -236,7 +236,7 @@ def Training.run
   let evalStep := config.schedule.T / 2
   let evalSample : Sample.Supervised Float (input c h w) (output c h w) := by
     simpa [input, output] using
-      diffusion.noisedSample [batchSize] ([h, w] : Tensor Nat [2])
+      diffusion.sample [batchSize] ([h, w] : Tensor Nat [2])
         schedule (by simpa [output] using evalX0) (seed := runtime.seed)
         (step := evalStep)
   let trainer :=
@@ -253,7 +253,7 @@ def Training.run
       let x0 := batchAt step
       show Sample.Supervised Float (input c h w) (output c h w) from by
         simpa [input, output] using
-          diffusion.noisedSample [batchSize] ([h, w] : Tensor Nat [2])
+          diffusion.sample [batchSize] ([h, w] : Tensor Nat [2])
             schedule (by simpa [output] using x0)
             (seed := runtime.seed) (step := step + 1))
     evalSample
@@ -269,7 +269,7 @@ def Training.run
   | some path => do
       let x_T := diffusion.normalNoise (shape := output c h w)
         (seed := runtime.seed) (step := 999)
-      let x_t ← diffusion.reverseDdim (conditionedPredictor trained.predict) alphaBars x_T
+      let x_t ← diffusion.ddim (conditionedPredictor trained.predict) alphaBars x_T
       Data.Image.writeFirstRgbPpm path (x_t.map fun x => (x + 1.0) / 2.0)
   match config.artifacts.noisyPpm?, config.artifacts.reconstructPpm? with
   | none, none => pure ()
@@ -293,8 +293,8 @@ def Training.run
       match reconstructionPath? with
       | none => pure ()
       | some path => do
-          let x_t ← diffusion.reverseDdimFrom
-            (conditionedPredictor trained.predict) alphaBars tIdx noisyImage
+          let x_t ← diffusion.ddim
+            (conditionedPredictor trained.predict) alphaBars noisyImage (start := some tIdx)
           Data.Image.writeFirstRgbPpm path (x_t.map fun x => (x + 1.0) / 2.0)
   pure curve
 

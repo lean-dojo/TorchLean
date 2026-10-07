@@ -1,24 +1,21 @@
 #!/usr/bin/env python3
 """Polish DocGen output for the public TorchLean website.
 
-DocGen owns the declaration pages. This script only adds a nicer landing page and a thin visual
-layer after `scripts/lake.sh build TorchLeanDocs:docs` and copying its output to `home_page/docs`.
-
-The script keeps DocGen as the source of truth for search data, declaration pages,
-source links, sidebars, and module navigation. The post-processing below is small
-and deterministic: it makes those generated artifacts feel like part of the
-TorchLean website.
+Run after `scripts/lake.sh build TorchLeanDocs:docs` and copying its output to `home_page/docs`.
+This adds the landing page and shared styles, removes local dependency pages, and rewrites their
+links to upstream documentation. Search data and navigation are adjusted to the published URLs;
+DocGen still supplies declaration content and source links. Use `--importgraph PAGE` to style
+the generated import viewer instead.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import shutil
 from pathlib import Path
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import unquote, urlsplit
 
 
 # `append_style` is idempotent: it removes everything after this marker before
@@ -228,85 +225,6 @@ def rewrite_search_links(docs: Path) -> None:
                 raise SystemExit(f"DocGen URL handling changed in {path}; update the polish step")
             source = source.replace(old, new)
         path.write_text(source, encoding="utf-8")
-
-
-def _nearest_existing_doc_page(docs: Path, target: Path) -> Path | None:
-    """Return the nearest published module page for a missing DocGen target.
-
-    The public API site intentionally prunes dependency pages and only publishes
-    a curated slice of TorchLean module pages.  DocGen can still emit links to a
-    deeper `NN/...` module that was typechecked but not published as an HTML
-    page.  Rather than ship a local 404, send readers to the nearest published
-    ancestor module page.
-    """
-    try:
-        rel = target.relative_to(docs)
-    except ValueError:
-        return None
-
-    parts = list(rel.parts)
-    if not parts or parts[0] != "NN":
-        return None
-
-    if parts[-1].endswith(".html"):
-        parts[-1] = parts[-1][:-5]
-
-    while len(parts) > 1:
-        candidate = docs.joinpath(*parts).with_suffix(".html")
-        if candidate.exists():
-            return candidate
-        parts.pop()
-
-    candidate = docs / "NN.html"
-    return candidate if candidate.exists() else None
-
-
-def rewrite_missing_nn_links(docs: Path) -> None:
-    """Rewrite missing local TorchLean links to the nearest emitted module page.
-
-    This keeps generated docs and hand-written DocGen landing pages honest after
-    the public site prunes the full DocGen universe.  The link text still names
-    the precise declaration/module; the href lands on the closest page that is
-    actually present in the published reference.
-    """
-
-    for path in docs.rglob("*.html"):
-        text = path.read_text(encoding="utf-8")
-
-        def repl(match: re.Match[str]) -> str:
-            url = match.group(1)
-            if (
-                not url
-                or url.startswith("#")
-                or urlsplit(url).scheme
-            ):
-                return match.group(0)
-
-            path_part, sep, suffix = url.partition("#")
-            query = ""
-            if "?" in path_part:
-                path_part, query_sep, query = path_part.partition("?")
-                suffix = query_sep + query + (sep + suffix if sep else "")
-            elif sep:
-                suffix = sep + suffix
-
-            if not path_part:
-                return match.group(0)
-
-            target = (path.parent / unquote(path_part)).resolve()
-            if target.exists():
-                return match.group(0)
-
-            replacement = _nearest_existing_doc_page(docs, target)
-            if replacement is None:
-                return match.group(0)
-
-            rel = os.path.relpath(replacement, path.parent).replace(os.sep, "/")
-            return f'href="{quote(rel, safe="/.#?=&:%")}{suffix}"'
-
-        updated = HREF_RE.sub(repl, text)
-        if updated != text:
-            path.write_text(updated, encoding="utf-8")
 
 
 def rewrite_floatlib_profile_link(docs: Path) -> None:
@@ -1394,28 +1312,6 @@ def rename_docgen_header(docs: Path) -> None:
         # module name display.
         updated = text.replace("<span>Documentation</span>", "<span>TorchLean API</span>")
 
-        # Normalize the generated Tensor page path for case-sensitive hosting.
-        updated = updated.replace(
-            "NN/Spec/Core/tensor/Core.html",
-            "NN/Spec/Core/Tensor/Core.html",
-        )
-        semantic_equivalence_source = (
-            "https://github.com/lean-dojo/TorchLean/blob/main/"
-            "NN/Runtime/Autograd/IRExec/Correctness/SemanticEquivalence.lean"
-        )
-        updated = re.sub(
-            r'href="[^"]*Correctness/SemanticEquivalence\.html"',
-            f'href="{semantic_equivalence_source}"',
-            updated,
-        )
-        updated = re.sub(
-            r'href="[^"]*https://github\.com/lean-dojo/TorchLean/blob/main/'
-            r'NN/Runtime/Autograd/(?:TypedGraph/)?IRExec/Correctness/'
-            r'SemanticEquivalence\.lean"',
-            f'href="{semantic_equivalence_source}"',
-            updated,
-        )
-
         # DocGen's global CSS treats every `nav` as a fixed sidebar, so normalize
         # this tiny cross-site link group to a plain div before adding links.
         updated = updated.replace(
@@ -1523,11 +1419,41 @@ def validate_math_runtime(docs: Path) -> None:
         raise SystemExit(f"MathJax is not loaded by every DocGen content page: {sample}{suffix}")
 
 
+def polish_importgraph(page: Path) -> None:
+    """Point the generated graph viewer at our API docs and fit mobile controls."""
+    html = page.read_text(encoding="utf-8")
+    html = html.replace('  <link rel="stylesheet" href="style.css" />\n', "")
+    html = html.replace(
+        'var docs_url = params.get("docs_url") || '
+        '"https://leanprover-community.github.io/mathlib4_docs/";',
+        'var docs_url = params.get("docs_url") || '
+        'new URL("../docs/", window.location.href).href;',
+    )
+    if 'id="torchlean-importgraph-controls"' not in html:
+        controls = """<style id="torchlean-importgraph-controls">
+    @media (max-width: 700px) {
+      .summary .pause-checkbox, .summary .reverse-checkbox {
+        position: static;
+        display: block;
+        padding: .25em .5em;
+      }
+    }
+  </style>
+"""
+        html = html.replace("</head>", controls + "</head>", 1)
+    page.write_text(html, encoding="utf-8")
+
+
 def main() -> None:
     """Entry point used by `scripts/docs/build_site.sh` and local preview loops."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--docs", default="home_page/docs", help="DocGen output directory")
+    outputs = parser.add_mutually_exclusive_group()
+    outputs.add_argument("--docs", default="home_page/docs", help="DocGen output directory")
+    outputs.add_argument("--importgraph", type=Path, help="generated importgraph HTML page")
     args = parser.parse_args()
+    if args.importgraph is not None:
+        polish_importgraph(args.importgraph)
+        return
     docs = Path(args.docs).resolve()
     if not docs.exists():
         raise SystemExit(f"DocGen output directory does not exist: {docs}")
@@ -1539,7 +1465,6 @@ def main() -> None:
     add_nav_hint(docs)
     rename_docgen_header(docs)
     rewrite_floatlib_profile_link(docs)
-    rewrite_missing_nn_links(docs)
     configure_math_runtime(docs)
     validate_math_runtime(docs)
 

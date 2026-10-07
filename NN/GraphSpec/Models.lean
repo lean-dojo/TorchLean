@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.GraphSpec.Models.Mlp
-public import NN.GraphSpec.Models.Cnn
+public import NN.GraphSpec.Models.Classifier
 public import NN.GraphSpec.Models.ResidualLinear
 
 /-!
@@ -22,7 +22,7 @@ scripts live in `NN.Examples.Models`.
 The set is a coverage ladder, not a catalog:
 
 1. `mlp`: the smallest sequential `Chain` with a typed parameter ABI.
-2. `cnn`: a caller-supplied feature chain (for example convolutions) followed by flattening and a
+2. `classifier`: a caller-supplied feature chain followed by flattening and a
    linear classifier.
 3. `residualLinear`: a minimal `DAG.Model` with a real skip connection.
 

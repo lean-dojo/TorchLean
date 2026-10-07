@@ -15,9 +15,9 @@ public import NN.Spec.Layers.Attention
 This file proves the exact Boolean semantics of TorchLean's causal and future masks and connects
 those mask facts to the true hard-masked attention primitive.
 
-TorchLean's main attention spec uses the proof layer semantics corresponding to
-`scores.masked_fill(~mask, -torch.inf)`: blocked entries receive zero softmax numerator, hence zero
-attention mass.
+The real specification gives blocked entries a zero softmax numerator, hence zero attention mass.
+It does not represent negative infinity as a real number. These are specification-level mask laws,
+not a correspondence theorem for native attention implementations.
 
 References:
 - Vaswani et al., “Attention Is All You Need”, 2017.
@@ -81,8 +81,8 @@ theorem futureMask_rejects_past {n : Nat} (i j : Fin n) (hji : j.val ≤ i.val) 
 ## Exact hard-mask attention weights
 
 For hard masking, a blocked entry has a definitionally zero softmax numerator. These lemmas are the
-attention-level facts needed for causal
-non-interference proofs.
+attention-level facts used in causal non-interference arguments; this file proves zero weights,
+not full model non-interference.
 -/
 
 /-- Any blocked coordinate of a hard-masked softmax vector has exactly zero weight. -/

@@ -654,12 +654,6 @@ example :
   norm_num
 ```
 
-Over the reals, those value intervals give the stated bound on the difference quotient, but say
-little about the network's second derivative. Shrinking $`h` makes the interval width grow
-quadratically, even when smoothness makes the finite-difference truncation error smaller.
-The independent value boxes do not capture the cancellation needed for a sharp derivative
-estimate.
-
 For an exact smooth function, neighboring values are highly related. A Taylor expansion cancels
 the constant and first-order terms in
 $`u(x-h)-2u(x)+u(x+h)`, leaving the second derivative times $`h^2` plus a remainder. Independent
@@ -776,13 +770,9 @@ Addition is endpointwise, so a Poisson-style residual $`u_{xx}+u` adds the two e
 some (-28.447900, 28.447900)
 ```
 
-The `some` wrapper in the sum result records successful evaluation of every primitive needed by
-that expression. For $`u_{xx}+u`, the lower endpoints add to $`-28.4479` and the upper endpoints
-to $`28.4479`. Requesting $`u_{yy}` fails earlier because `d2uY` is absent. An absent derivative
-is not a zero derivative: zero would be a substantive assertion that the field has no curvature
-in that direction. This is why the optional fields belong in `Prims`. They let one-dimensional
-and two-dimensional callers share a residual language without silently supplying missing
-mathematical information.
+Optional fields let one-dimensional and two-dimensional callers share the residual language.
+An absent derivative is not a zero derivative: supplying zero would assert that the field has
+no curvature in that direction.
 
 The PINN and ODE evaluators use different multiplication rules on the same box:
 
@@ -849,12 +839,13 @@ default: it prints `ok` and `bad` counts but exits successfully even when misses
 ```terminal
 # Make dataset misses fail the command instead of appearing
 # only in its report.
-scripts/lake.sh exe verify -- pinn-dataset-check --strict
+scripts/lake.sh exe verify -- pinn-dataset-check \
+  --dataset=NN/Examples/Verification/PINN/sample_dataset_1d.json --strict
 ```
 
-when a nonzero `bad` count should fail an automated run. Even strict success is still a checker
-result until a soundness theorem connects the selected bound path and imported parameters to a
-quantified PDE statement.
+when a nonzero `bad` count should fail an automated run. Replace the bundled sample path with your
+dataset. Even strict success is still a checker result until a soundness theorem connects the
+selected bound path and imported parameters to a quantified PDE statement.
 
 The reference point for the application is the physics-informed neural network of
 {Informal.citet pinn2019}[]. That paper motivates the residual objective. TorchLean's bundled replay
@@ -944,12 +935,11 @@ checkCertificateRat : PiecewisePolyCertificate → IO Unit
 
 `evalPolyHorner` asks only for `Zero`, `Add`, and `Mul`, which is what lets the same evaluation run
 over `Rat` for exact checking and over FloatLib binary32 for the `--arithmetic ieee` pass. The
-checker
-returns `IO Unit` and throws on the first mismatch. Successful direct evaluation prints nothing;
-a failed endpoint comparison names the piece and the two unequal values. The JSON parser also
-requires at least two knots and exactly one piece per adjacent pair. Those count checks belong
-to the parser: a direct call to `checkCertificateRat` checks the supplied pieces without separately
-requiring their array to cover every adjacent pair.
+checker returns `IO Unit` and throws on the first mismatch. Successful direct evaluation prints
+nothing; a failed endpoint comparison names the piece and the two unequal values. Both direct
+checkers validate the knot partition and piece metadata before evaluation, including at least two
+knots and exactly one piece per adjacent pair. Constructing a certificate in Lean does not bypass
+those checks.
 
 Horner's rule reads the coefficient array from highest degree to lowest. For
 $`[a_0,a_1,a_2]`, it forms $`(a_2t+a_1)t+a_0`, so the stored array is in ascending power order
@@ -1079,35 +1069,3 @@ can require more significand bits or exceed the format's finite range. The IEEE 
 checks both the conversion of the document and the endpoint computations under the reference
 operations. The rational pass remains useful on its own: it identifies the polynomial the
 artifact describes without mixing that algebraic question with one execution format.
-
-# Artifact Boundary Examples
-
-The same scientific artifact can support different strengths of claim depending on what it exports.
-
-- If a PINN JSON contains only sampled residuals, Lean can check those samples; it cannot infer a
-  uniform residual bound over the domain.
-- If a PINN certificate contains interval or affine residual bounds over domain boxes, Lean can
-  recompute those box obligations. A uniform residual theorem additionally needs soundness of
-  the bound computation and evidence covering the requested domain.
-- If an ODE artifact contains a proposed trajectory but no interval enclosure condition, Lean can
-  parse the trajectory but does not get an enclosure theorem.
-- If a piecewise polynomial artifact contains rational coefficients in the current format, Lean can
-  check exact knot interpolation. An interior range claim needs a richer schema and checker.
-
-This is the same checked/proved/assumed distinction used for robustness certificates. The producer
-may be a numerical solver; the theorem applies only to the artifact fields that Lean checked or to
-producer hypotheses named in the statement.
-
-# Checking Scientific Artifacts
-
-Exporting a small artifact makes it possible to recompute its claims in Lean. Connecting the
-accepted artifact to a theorem then requires a proof that these checks imply the theorem's
-hypotheses. A plot can show how a corridor or residual bound behaves across the domain; the
-checker and soundness theorem determine which conclusions follow from it.
-
-The examples expose different sources of uncertainty. Rewriting $`u(1-u)` as
-$`\tfrac14-(u-\tfrac12)^2` reduced interval dependency on the chosen box. Direct derivative
-propagation avoided the width introduced by dividing independent value bounds by $`h^2`.
-The spline midpoint value of $`\tfrac14` showed why exact knot interpolation does not determine
-an interior range. Improving a bound and strengthening a certificate's claim are separate tasks;
-both depend on identifying which information the current check uses.

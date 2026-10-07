@@ -32,6 +32,29 @@ namespace LibTorch
 
 namespace Internal
 
+/-- Retained CUDA comparisons, by operation. An absent entry leaves an explicit trust boundary. -/
+def coverage (op : BackendOp) (vjp : Bool := false) : Option String :=
+  match op with
+  | .add | .sub | .mul | .scale | .abs | .sqrt | .clamp | .max | .min | .relu
+    | .sigmoid | .tanh | .gelu | .softplus | .exp | .log | .inv | .safeLog | .reduceSum =>
+      some "NN.Tests.Runtime.Cuda.Elementwise"
+  | .softmax | .logSoftmax => some "NN.Tests.Runtime.Cuda.Softmax"
+  | .matmul | .hardMaskedSoftmax => some "NN.Tests.Runtime.Cuda.Attention"
+  | .selectiveScan => some "NN.Tests.Runtime.Cuda.SelectiveScan"
+  | .fftFno => some "NN.Tests.Runtime.Cuda.Fft"
+  | .linear | .mseLoss => some "NN.Tests.Runtime.Cuda.Trainer"
+  | .randUniform | .bernoulliMask | .reduceMean =>
+      if vjp then none else some "NN.Tests.Runtime.Cuda.Stress"
+  | _ => none
+
+/-- Record the available comparison, or the untested native agreement being assumed. -/
+def evidence (op : BackendOp) (vjp : Bool := false) : ContractEvidence :=
+  match coverage op vjp with
+  | some suite => .testSuite suite
+  | none => .trustedBoundary <|
+      s!"LibTorch `{op.name}` implementation; no retained dedicated CUDA " ++
+        (if vjp then "VJP parity check" else "forward parity check")
+
 /-- Describe a maintained LibTorch primitive and the evidence required by its runtime contract. -/
 def capsule
     (name : String) (op : BackendOp) (valueSummary vjpSummary : String)
@@ -40,7 +63,9 @@ def capsule
     op
     provider := .libTorch
     device := .cuda
-    trustLevel := .checked
+    trustLevel := if (coverage op).isSome &&
+        (vjpMode == .none || (coverage op (vjp := true)).isSome) then
+      .checked else .trustedExternal
     supportsForward := true
     vjpMode
     shapeContract :=
@@ -55,12 +80,14 @@ def capsule
     valueContract :=
       { claim := .valueRefinement op
         summary := valueSummary
-        evidence := .testSuite "NN.Tests.Runtime.Cuda.Suite" }
+        evidence := evidence op }
     vjpContract :=
       match vjpMode with
       | .none => ContractDescriptor.vjpUnavailable op vjpSummary
-      | mode => ContractDescriptor.tested
-          (.vjpRefinement op mode) vjpSummary "NN.Tests.Runtime.Cuda.Suite"
+      | mode =>
+          { claim := .vjpRefinement op mode
+            summary := vjpSummary
+            evidence := evidence op (vjp := true) }
     numericalPolicy := { reduction := .notApplicable } }
 
 /-- Build the standard LibTorch CUDA capsule for a pointwise operation. -/
@@ -69,7 +96,7 @@ def pointwiseCapsule (op : BackendOp) (vjpMode : VJPMode) : KernelCapsule :=
     s!"libtorch.{op.name}"
     op
     s!"LibTorch CUDA `{op.name}` follows the pointwise tensor contract."
-    s!"LibTorch CUDA `{op.name}` VJP is checked through runtime autograd tests."
+    s!"Local reverse rule for LibTorch CUDA `{op.name}`."
     vjpMode
 
 /-- Build a LibTorch CUDA reduction capsule with implementation-defined reduction order. -/
@@ -78,7 +105,7 @@ def reductionCapsule (op : BackendOp) (vjpMode : VJPMode) : KernelCapsule :=
     s!"libtorch.{op.name}"
     op
     s!"LibTorch CUDA `{op.name}` follows the explicit reduction shape contract."
-    s!"LibTorch CUDA `{op.name}` adjoint is checked through runtime gradient tests."
+    s!"Local reduction adjoint for LibTorch CUDA `{op.name}`."
     vjpMode with
     numericalPolicy.reduction := .implementationDefined }
 
@@ -98,7 +125,7 @@ def viewCapsule (op : BackendOp) (vjpMode : VJPMode) : KernelCapsule :=
     s!"libtorch.{op.name}"
     op
     s!"LibTorch CUDA `{op.name}` follows the explicit shape/layout contract."
-    s!"LibTorch CUDA `{op.name}` adjoint is checked through runtime gradient tests."
+    s!"Local shape/layout adjoint for LibTorch CUDA `{op.name}`."
     vjpMode
 
 /-- Build a LibTorch CUDA forward-only capsule with no registered reverse derivative. -/
@@ -250,7 +277,7 @@ def layerNorm : KernelCapsule :=
     "libtorch.layer_norm"
     .layerNorm
     "LayerNorm follows the per-row normalization contract."
-    "LayerNorm VJP is checked by CUDA runtime coverage."
+    "LayerNorm VJP calls the native backward primitive."
     .backendVJP
 
 /-- LibTorch CUDA batch normalization. -/
@@ -259,7 +286,7 @@ def batchNorm : KernelCapsule :=
     "libtorch.batch_norm"
     .batchNorm
     "BatchNorm follows the channel-first normalization contract."
-    "BatchNorm VJP is checked by CUDA runtime coverage."
+    "Lean composes the BatchNorm VJP from LibTorch numerical primitives."
     .torchLeanTape
 
 /-- LibTorch CUDA generic channel-first convolution. -/
@@ -268,7 +295,7 @@ def conv : KernelCapsule :=
     "libtorch.conv"
     .conv
     "Convolution follows the generic channel-first runtime contract."
-    "Convolution VJP is checked by CUDA runtime coverage."
+    "Convolution VJP calls the native backward primitive."
     .backendVJP
 
 /-- LibTorch CUDA generic channel-first transpose convolution. -/
@@ -277,7 +304,7 @@ def convTranspose : KernelCapsule :=
     "libtorch.conv_transpose"
     .convTranspose
     "Transpose convolution follows the generic channel-first runtime contract."
-    "Transpose-convolution VJP is checked by CUDA runtime coverage."
+    "Transpose-convolution VJP calls the native backward primitive."
     .backendVJP
 
 /-- LibTorch CUDA max pooling, skipping padded cells and retaining the first row-major winner. -/
@@ -286,7 +313,7 @@ def maxPool : KernelCapsule :=
   accumulationCapsule
     s!"libtorch.{op.name}" op
     s!"LibTorch CUDA `{op.name}` follows the channel-first runtime contract."
-    s!"LibTorch CUDA `{op.name}` VJP is checked by CUDA runtime coverage."
+    s!"LibTorch CUDA `{op.name}` VJP calls the native backward primitive."
     .backendVJP
 
 /-- LibTorch CUDA smooth max pooling. -/
@@ -295,7 +322,7 @@ def smoothMaxPool : KernelCapsule :=
     "libtorch.smooth_max_pool"
     .smoothMaxPool
     "Smooth max pooling uses finite nonzero beta and stable max/min-shifted window weights."
-    "Forward and VJP stability are checked against the reference runtime at overflow-scale inputs."
+    "The native backward rule uses the shifted window weights."
     .backendVJP
 
 /-- LibTorch CUDA average pooling. -/
@@ -304,7 +331,7 @@ def avgPool : KernelCapsule :=
     "libtorch.avg_pool"
     .avgPool
     "Average-pooling follows the channel-first window contract."
-    "Average-pooling VJP is checked by CUDA runtime coverage."
+    "Average-pooling VJP calls the native backward primitive."
     .backendVJP
 
 /-- LibTorch CUDA linear layer. -/

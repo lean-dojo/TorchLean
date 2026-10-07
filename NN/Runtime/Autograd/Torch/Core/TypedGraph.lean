@@ -24,7 +24,7 @@ namespace Runtime
 namespace Autograd
 namespace Torch
 
-open Spec TorchLean
+open Spec
 open TorchLean TorchLean.Tensor
 open Proofs.Autograd.Algebra
 -- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
@@ -84,7 +84,7 @@ def jvp {α Δ : Type} [TorchLean.Storage α] {Γ : List Shape} {τ : Shape}
   getIdx (Proofs.Autograd.Algebra.GraphData.jvpCtx (g := c.data) x dx d) c.output
 
 /-- Reverse-mode vector-Jacobian product with an explicit output cotangent seed. -/
-def vjpWithSeed {α Δ : Type} [TorchLean.Storage α] [Add α] [Zero α]
+def vjp {α Δ : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {Γ : List Shape} {τ : Shape} (c : TypedGraphWithData α Δ Γ τ)
     (x : TorchLean.TensorPack α Γ) (d : Δ) (seedOut : Tensor α τ) : TorchLean.TensorPack α Γ :=
   Proofs.Autograd.Algebra.GraphData.backpropCtx
@@ -162,10 +162,6 @@ end TypedGraphWithData
 abbrev TypedGraph (α : Type) [TorchLean.Storage α] (Γ : List Shape) (τ : Shape) : Type :=
   TypedGraphWithData α Unit Γ τ
 
-/-- Scalar-output typed graph with no auxiliary, non-differentiable runtime inputs. -/
-abbrev TypedScalarGraph (α : Type) [TorchLean.Storage α] (Γ : List Shape) : Type :=
-  TypedGraph α Γ Shape.scalar
-
 namespace TypedGraph
 
 /-- Evaluate the output tensor for leaf values `x`. -/
@@ -181,32 +177,16 @@ def jvp {α : Type} [TorchLean.Storage α] {Γ : List Shape} {τ : Shape}
 /--
 Reverse-mode vector-Jacobian product (VJP) with an explicit output cotangent seed.
 
-This is the tensor-valued analogue of `TypedScalarGraph.backwardWithSeed`.
-PyTorch comparison: `out.backward(gradient=seedOut)` (for a tensor output).
+Scalar outputs use the same operation with `Tensor.scalar seed`; a seed of `1` computes the
+ordinary scalar-loss gradient. No `One` instance is required when the seed is supplied explicitly.
 -/
-def vjpWithSeed {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
+def vjp {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {Γ : List Shape} {τ : Shape}
     (c : TypedGraph α Γ τ) (x : TorchLean.TensorPack α Γ) (seedOut : Tensor α τ) :
     TorchLean.TensorPack α Γ :=
-  TypedGraphWithData.vjpWithSeed c x () seedOut
+  TypedGraphWithData.vjp c x () seedOut
 
 end TypedGraph
-
-namespace TypedScalarGraph
-
-/-- Reverse-mode backpropagation for a scalar output with implicit cotangent seed `1`. -/
-def backward {α : Type} [TorchLean.Storage α] [Add α] [Zero α] [One α]
-    {Γ : List Shape} (c : TypedScalarGraph α Γ) (x : TorchLean.TensorPack α Γ) :
-    TorchLean.TensorPack α Γ :=
-  TypedGraph.vjpWithSeed c x (Tensor.scalar (1 : α))
-
-/-- Reverse-mode backpropagation for a scalar output with an explicit scalar seed. -/
-def backwardWithSeed {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
-    {Γ : List Shape} (c : TypedScalarGraph α Γ) (x : TorchLean.TensorPack α Γ) (seedOut : α) :
-    TorchLean.TensorPack α Γ :=
-  TypedGraph.vjpWithSeed c x (Tensor.scalar seedOut)
-
-end TypedScalarGraph
 
 /-- Lower a graph builder with non-differentiable runtime data into a reusable typed graph. -/
 def lowerToTypedGraphWithData {α Δ : Type} [TorchLean.Storage α]
@@ -214,7 +194,7 @@ def lowerToTypedGraphWithData {α Δ : Type} [TorchLean.Storage α]
     (build : Runtime.Autograd.TypedGraph.GraphM.MWith α Δ Γ
       (Runtime.Autograd.TypedGraph.GraphM.Var τ)) :
     Runtime.Autograd.Result (TypedGraphWithData α Δ Γ τ) := do
-  let (outVar, st) ← StateT.run build Runtime.Autograd.TypedGraph.GraphM.emptyWith
+  let (outVar, st) ← Runtime.Autograd.TypedGraph.GraphM.run build
   let output ← Runtime.Autograd.TypedGraph.GraphM.mkIdx
     (Γ := Γ) st.nodeShapes outVar
   pure
@@ -222,19 +202,6 @@ def lowerToTypedGraphWithData {α Δ : Type} [TorchLean.Storage α]
       data := st.data
       output := output
       bufferUpdates := st.bufferUpdates }
-
-/--
-Lower a scalar-output graph builder into a `TypedScalarGraph`.
-
-The builder is expressed in the `TypedGraph.GraphM` monad. Its returned scalar variable may be an
-input or any recorded node; lowering preserves that reference as the graph output.
--/
-def lowerScalarToTypedGraph {α : Type} [TorchLean.Storage α]
-    {Γ : List Shape}
-    (build : Runtime.Autograd.TypedGraph.GraphM.M α Γ
-      (Runtime.Autograd.TypedGraph.GraphM.Var Shape.scalar)) :
-    Runtime.Autograd.Result (TypedScalarGraph α Γ) :=
-  lowerToTypedGraphWithData (α := α) (Δ := Unit) (Γ := Γ) (τ := Shape.scalar) build
 
 /--
 Lower a tensor-output graph builder into a `TypedGraph`.

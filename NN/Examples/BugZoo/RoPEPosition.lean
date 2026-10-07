@@ -6,6 +6,8 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Tensor
+
 /-!
 # BugZoo: RoPE position accounting
 
@@ -23,28 +25,27 @@ mutable state; it should hand over a schedule that Lean can inspect.
 
 namespace NN.Examples.BugZoo.RoPEPosition
 
-/-- A position schedule gives the rotary/absolute position used for every token slot. -/
-structure PositionSchedule (seqLen : Nat) where
-  pos : Fin seqLen → Nat
+open TorchLean
 
 /--
-Append one decode step using the canonical next position `seqLen`.
+Append one position to the tensor schedule supplied to rotary or absolute position embeddings.
 
-Existing positions are preserved, and the new final token is assigned the next sequence index.
-This is the zero-based, unshifted convention; an offset or sliding-window schedule needs a
-different append rule. No rotation kernel is evaluated or verified by this function.
+The default is the old sequence length, matching the zero-based, unshifted convention.
+An offset or sliding-window schedule can supply `position` explicitly. No rotation kernel is
+evaluated or verified by this function.
 -/
-def appendNextPosition {seqLen : Nat} (sched : PositionSchedule seqLen) :
-    PositionSchedule (seqLen + 1) where
-  pos i :=
-    if h : i.val < seqLen then
-      sched.pos ⟨i.val, h⟩
-    else
-      seqLen
+def append {seqLen : Nat} (schedule : Tensor Nat [seqLen]) (position : Nat := seqLen) :
+    Tensor Nat [seqLen + 1] :=
+  Tensor.concat schedule (Tensor.full [1] position)
 
-/-- The newly appended token gets exactly the next position, not an off-by-one cache position. -/
-theorem appendNextPosition_last {seqLen : Nat} (sched : PositionSchedule seqLen) :
-    (appendNextPosition sched).pos ⟨seqLen, Nat.lt_succ_self seqLen⟩ = seqLen := by
-  simp [appendNextPosition]
+/-- The last slot contains the supplied position, or the old length when using the default. -/
+theorem append_last {seqLen : Nat} (schedule : Tensor Nat [seqLen])
+    (position : Nat := seqLen) :
+    (append schedule position)[seqLen] = position := by
+  change (append schedule position) (⟨seqLen, Nat.lt_succ_self seqLen⟩, ()) = position
+  have h := congrArg (fun value : Tensor Nat [] => value ())
+    (Tensor.get_concat_right schedule (Tensor.full [1] position) (0 : Fin 1))
+  simpa [append, Tensor.full, Spec.get, Tensor.unstack,
+    Tensor.Internal.Rep.unstack] using h
 
 end NN.Examples.BugZoo.RoPEPosition

@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Spec.Layers.Loss
+public import NN.Spec.Core.TensorReductionShape.Reductions
 
 /-!
 # Latent-variable generative helpers
@@ -69,7 +69,7 @@ def diagonalGaussianKlToStandard
   let mu2 := mulSpec mu mu
   let ones := Tensor.full (α := α) latent (1 : α)
   let per := var + mu2 - ones - logvar
-  (1 / 2) * Spec.meanOver (s := latent) (TorchLean.Tensor.sumSpec per)
+  (1 / 2) * Tensor.meanSpec per
 
 /-- A finite codebook for vector-quantized latent models. -/
 structure Codebook (α : Type) (numCodes : Nat) (latent : Shape) [TorchLean.Storage α] where

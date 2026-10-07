@@ -28,9 +28,6 @@ namespace TorchLean.Floats.IEEE754.IEEE32Exec
 
 open FloatLib.Floats.Formats.BinaryInterchange
 
-/-- Real denotation of FloatLib's signed dyadic representation. -/
-noncomputable abbrev dyadicToReal (d : FloatLib.Numerics.Dyadic) : ℝ := d.toReal
-
 /-- A decoded dyadic witnesses that the IEEE value is finite. -/
 theorem isFinite_eq_true_of_toDyadic?_some {x : ExecFloat.Binary 8 23} {d :
   FloatLib.Numerics.Dyadic}
@@ -90,7 +87,7 @@ theorem toReal_roundDyadic_eq_round {d : FloatLib.Numerics.Dyadic}
     (hfin : isFinite ((ofModel (Model.roundDyadic FloatFormat.binary32 d) : ExecFloat.Binary 8 23))
       = true) :
     (toModel ((ofModel (Model.roundDyadic FloatFormat.binary32 d) : ExecFloat.Binary 8 23))).toReal
-      = Model.roundAt FloatFormat.binary32 (dyadicToReal d) :=
+      = Model.roundAt FloatFormat.binary32 d.toReal :=
   IEEEExec.toReal_roundDyadic_eq_round (by decide) hfin
 
 /-- Finite square-root evaluation excludes negative nonzero inputs and refines real rounding. -/

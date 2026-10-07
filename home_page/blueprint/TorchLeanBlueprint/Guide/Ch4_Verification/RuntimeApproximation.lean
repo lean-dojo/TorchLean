@@ -142,10 +142,6 @@ example :
     Real.toNNReal]
 ```
 
-The relative budget grows with the operands: at this scale it permits an absolute difference of
-one thousand. The absolute budget remains one millionth. Both use the literal `1e-6`, so a claim
-must identify which tolerance field it supplies.
-
 Near a zero reference value, a purely relative comparison deserves particular care. With zero
 absolute tolerance and slack one, comparing a nonzero value to zero would require its magnitude
 to be at most `rel` times that same magnitude. For a relative tolerance below one, this cannot
@@ -343,13 +339,9 @@ The local rule then adds the rounding error of the multiplication itself. The nu
 as a universal tolerance; it shows why the graph carries operand scale and incoming error rather
 than attaching one unexplained epsilon to every multiplication.
 
-The product term in the multiplication estimate makes it a finite-perturbation bound rather than
-only a first-order sensitivity calculation. Dropping that term would be justified for a
-derivative limit, but would understate this particular finite error budget. The graph carries
-these bounds for all available values, not just the newest output. If a later node reuses an
-earlier activation, its local theorem retrieves the bound attached to that activation. The
-context invariant therefore follows the same data dependencies as the computation, including
-values that bypass several intervening nodes.
+The graph carries bounds for all available values, not just the newest output. If a later node
+reuses an earlier activation, its local theorem retrieves that activation's bound. The context
+invariant follows the same data dependencies as the computation.
 
 # Backward Graph Approximation
 
@@ -396,6 +388,11 @@ not a semantic reinterpretation. The file defines `toNodeData` and `toGraphData`
 - `evalRuntime_of_toGraphData`;
 - `backpropRuntime_of_toGraphData`.
 
+This conversion supports forward evaluation and reverse accumulation only. Its required JVP
+field repeats the forward map rather than computing a derivative, so we must not use the converted
+graph for forward-mode differentiation. The two preservation theorems also do not establish native
+kernel correctness or prove that the supplied reverse maps are derivatives.
+
 In words, the runtime approximation graph can be viewed as an autograd algebra graph by forgetting
 the approximation evidence and keeping the same forward/VJP structure. That means the two layers
 compose cleanly:
@@ -423,9 +420,11 @@ that graph directly to executable binary32 through
 checker]. It does not introduce a second deployment graph or a second interval type.
 
 A certificate contains source enclosures, one derived range per IR node, the name of the range
-registry, and the existing backend execution audit. A successful `check` stores the graph inside
-`RegistryCheckedCertificate`; later replay cannot silently substitute a different graph or rule set.
-Checking performs three independent executable validations:
+registry, and the backend selection audit. A successful `check` stores the graph and regenerated
+ranges in `RegistryCheckedCertificate`. `executeIEEE32` reads that stored graph rather than
+accepting another graph argument. The public record does not carry proof that it originated from
+`check`, and registry names are labels, not unique fingerprints of rule implementations. Checking
+performs three executable validations:
 
 1. validate that source and derived endpoints are finite and ordered;
 2. reconstruct every supported range transfer from the graph;
@@ -552,9 +551,9 @@ is replaced with `[0,0]`. The checker regenerates the range trace and compares i
 one. The runner returns a nonzero exit status if generation or replay fails, or if the corrupted
 artifact is accepted.
 
-`mlpCertificate` checks that all ten graph nodes have a registered numerical rule. It derives every
-range, selects the CPU capsules, and stores the graph, registry identity, source assumptions,
-ranges, and backend audit in one artifact. `mlpReplay` then supplies concrete weights, biases, and
+`Mlp.certificate` checks that all ten graph nodes have a registered numerical rule. It derives every
+range, selects the CPU capsules, and stores the graph, registry name, source assumptions,
+ranges, and backend audit in one artifact. `Mlp.replay` then supplies concrete weights, biases, and
 input values, executes the stored graph with FloatLib binary32, and checks every intermediate
 tensor. These Boolean and `Except` checks exercise range reconstruction, concrete replay, and
 tamper rejection separately. The example does not construct a `ProvedRealEnclosure`, so it is
@@ -599,6 +598,10 @@ The file includes scalar and tensor approximation lemmas for common operations:
 - tensor rules: `approxTensor_add_spec`, `approxTensor_mul_spec`, `approxTensor_exp_spec`,
   `approxTensor_relu_spec`;
 - graph nodes: `addNode`, `mulNode`, `expNode`, `reluNode`, `safeDivNode`, `softmaxNode`, `sumNode`.
+
+Here `softmaxNode` applies a scalar logistic function entrywise; it does not normalize an axis.
+Axis-softmax bounds live in `NF/SoftmaxAxis.lean`. The sum rule follows `sumSpec`'s sequential
+addition order, so we cannot apply its budget to a different parallel reduction without a bridge.
 
 Several of these lemmas make the numerical analysis tradeoff visible. Division requires a positive
 lower bound on the exact denominator that survives rounding (`approx_div_nf_of_pos_lb`) or a
@@ -655,14 +658,6 @@ particular rounded denominator happened to remain positive. The theorem uses a u
 that must justify every value admitted by its premises, rather than inspecting only a favorable
 sample. The squared reciprocal in the denominator-error term makes this loss of separation
 especially costly.
-
-The remaining names in `nfOps` specialize this reasoning in different ways. The reciprocal
-sigmoid budget theorem bounds evaluation of `1 / (1 + exp(-x))` under its stated small-error
-conditions. The stable sigmoid theorem instead follows the branch of the public implementation,
-including the exponential used as a numerator in the negative branch. The exact-count mean
-lemma removes uncertainty about representing the divisor; it still accounts for the rounded
-sum and final division. A closed form for one of these budgets is useful only with the
-hypotheses belonging to that particular sequence.
 
 A safe division example has three pieces: the mathematical value is a guarded division, the runtime
 value is computed by `safeDivR eps xR yR`, and the theorem states that the runtime value
@@ -829,7 +824,7 @@ margins. It does not derive the mean and variance reduction bounds itself.
 
 For BatchNorm, the ideal reverse rule is connected to the mathematical forward map in the
 {src "NN/Proofs/Autograd/Tape/Ops/Norm/BatchNorm.lean"}[BatchNorm autograd proof].
-The theorem `batchNormJvp_batchNormBackward_adjoint` covers an arbitrary list of spatial axes and
+The theorem `batchNormJvp_batchNormBackward_adjoint` covers an arbitrary spatial `Shape` and
 all three cotangents: input, scale, and bias. The rounded normalization bounds can therefore be read
 against a proved ideal reverse rule rather than an independently written gradient formula.
 
@@ -1090,7 +1085,9 @@ rounding, including the arithmetic used for the powers. Then come the domain
 conditions: `0 < eta` , `0 ≤ stateS.epsilon` , a `Tensor.Forall` saying the
 exact bias-corrected second moment is everywhere at least `eta`, and two strict inequalities
 requiring the accumulated error in the corrected second moment and in the denominator to stay below
-`eta` and `√eta` . These conditions are stronger than merely choosing positive epsilon: they require
+`eta` and `√eta` . The first error-margin premise is currently unused by the proof, since the
+square-root rule handles the spec's nonnegative clamp; the denominator margin is needed for
+division. These conditions are stronger than merely choosing positive epsilon: they require
 the corrected
 second moment itself to have a strictly positive lower bound, excluding a zero second moment even
 when epsilon would make the numerical division finite. An application with zero second moments
@@ -1119,24 +1116,22 @@ The scale layer is split across
 {src "NN/Proofs/RuntimeApprox/Scale/BackwardScale.lean"}[backward scale propagation].
 
 The scale approximation API defines `BList`, a list of nonnegative scale bounds indexed by shape,
-plus helpers such as `scaleTensor`, `scaleCtx`, and `tolFromEpsScale`. An absolute error budget is
-computed from a machine-like epsilon times a local scale bound.
+plus helpers such as `scaleTensor`, `scaleCtx`, and `tolFromEpsScale`. The scale relations bound the
+magnitudes of both the exact tensors and the interpreted rounded tensors.
 
 A graph can then carry both "how close" and "at what scale" information. The lemmas
 `approxTensorWithTol_from_scale` and `approxCtx_get_tolFromEpsScale` connect scale estimates back to
 the tolerance API used by graph theorems. These two lemmas weaken an absolute bound to the
-derived absolute-plus-relative tolerance for any scale; the second retains an unused `scaleCtx`
-hypothesis to record that the relative component describes the tensors' actual scale.
-
-This remains a separate layer because not every proof needs scale aware reasoning. Small examples
-and operator proofs written by hand are often clearer with absolute tolerances. Larger deployment
-claims usually need scale, because one global absolute epsilon is rarely meaningful across all
-activations and gradients.
+derived absolute-plus-relative tolerance for any scale. Neither requires a `scaleCtx` hypothesis:
+both retain the full absolute error budget. Dividing that budget by an upper magnitude bound does
+not establish a relative-only error estimate, especially for values near zero.
 
 A scale bound can simplify a value-dependent error expression before it enters the next node.
 Scale propagation has its own `FwdNodeScale.scaleSound` obligation. A number recorded in `BList`
 only describes the tensor magnitudes when the accompanying scale relation holds; the tolerance
-weakening lemmas alone do not prove that relation.
+weakening lemmas alone do not prove that relation. Backward accumulation separately requires
+`AddScaleSound`; for rounded addition, the sum of two input magnitude bounds may need an additional
+rounding allowance.
 
 # FP32 And Verification Margins
 
@@ -1275,10 +1270,6 @@ These are graph-level bridge theorems:
   optimizer-state bounds. Its interpretation comes from the surrounding approximation theorems,
   not from the report record itself.
 
-That is the runtime approximation analogue of the autograd proof architecture. Local operator
-lemmas are the leaves; graph theorems compose them; deployment claims then combine the graph theorem
-with any scalar/backend assumptions.
-
 The index `i` in the printed theorem chooses a tensor from the input context, so its gradient
 has shape `Γ.get i`. `backprop_gradient_approx_graphData` extracts precisely that component
 from the whole-context reverse result. This is why one graph theorem can support parameters
@@ -1317,46 +1308,16 @@ square root, form the adaptive learning rate, apply decoupled decay, and subtrac
 `AdamWStepAssumptions`: a strictly positive `minimumSecondMoment` lying below every entry of the
 exact bias-corrected second moment, plus the `AdamWDerivedErrors` budgets for the rounded scalars
 `1 - beta1`, `1 - beta2`, the two reciprocal bias corrections, and the product `lr * weightDecay`.
-The validity predicate then demands that the trace's own `correctedSecondMoment` error stay below
-that margin and its `denominator` error below the margin's square root, which is what keeps the
-division by the adaptive denominator away from zero. The optimizer theorem remains the same; only
-the local contract's validity evidence is richer than SGD's.
+The validity predicate demands that the trace's `correctedSecondMoment` error stay below that margin
+and its `denominator` error below the margin's square root. The current proof uses only the latter
+error-margin condition to keep division away from zero; the former remains an unnecessary API
+premise. These are proof obligations, not executable tests. The optimizer theorem remains the same;
+only the local contract's validity evidence is richer than SGD's.
 
 These proofs describe numerical recurrences for explicit states. They do not automatically cover
 the native trainer's parameter lookup, mutable moment-buffer allocation, per-parameter clocks, or
 checkpoint restore. Those runtime mechanisms must be shown to instantiate the same state and step
 relation before `NumericalStepContract.run_approx` can be cited for a concrete training process.
-
-# Runtime Approximation APIs
-
-The definitions are organized in the same order as the proof: define closeness, prove local operator
-bounds, compose them over forward and backward graphs, and finally connect the result to autograd.
-
-- The
-  {src "NN/Proofs/RuntimeApprox/Core/Tolerance.lean"}[tolerance API] and
-  {src "NN/Proofs/RuntimeApprox/Core/SpecApprox.lean"}[spec approximation API] define the
-  approximation relation.
-- The
-  {src "NN/Proofs/RuntimeApprox/Graph/ForwardApprox.lean"}[forward graph approximation API] contains
-  `FwdGraph.eval_approx`; the
-  {src "NN/Proofs/RuntimeApprox/Graph/BackwardApprox.lean"}[backward graph approximation API]
-  contains `RevGraph.backprop_approx`.
-- The
-  {src "NN/Proofs/RuntimeApprox/NF/Ops.lean"}[rounded-real operator API] supplies local obligations,
-  including domain-sensitive operations such as division and safe log.
-- The
-  {src "NN/Proofs/RuntimeApprox/NF/Convolution.lean"}[rounded convolution proof] gives ordered
-  forward and backward bounds at arbitrary spatial rank.
-- The
-  {src "NN/Proofs/RuntimeApprox/Scale/ScaleApprox.lean"}[scale approximation API] supports
-  scale-aware error bounds.
-- The
-  {src "NN/Proofs/RuntimeApprox/Graph/LinkAutogradAlgebra.lean"}[autograd algebra link API] connects
-  approximation to the autograd proof layer.
-- The
-  {src "NN/Proofs/RuntimeApprox/Optimizer.lean"}[optimizer contract API] and
-  {src "NN/Proofs/RuntimeApprox/NF/Optimizers.lean"}[NF optimizer instances] continue the backward
-  error budget through parameter updates.
 
 # Runtime Agreement
 

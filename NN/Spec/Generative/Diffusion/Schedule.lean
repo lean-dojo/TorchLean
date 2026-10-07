@@ -121,12 +121,12 @@ when a model or theorem needs them.
 -/
 def linearBetas (T : Nat) (β_start β_end : α) : TorchLean.Tensor α [T] :=
   match T with
-  | 0 => TorchLean.Tensor.ofFn (fun i : Fin 0 => (False.elim (by simpa using i.2)))
+  | 0 => Tensor.full [0] β_end
   | Nat.succ T' =>
       match T' with
       | 0 =>
           -- `T = 1`: by convention, return the endpoint.
-          TorchLean.Tensor.ofFn (fun _i : Fin 1 => β_end)
+          Tensor.full [1] β_end
       | Nat.succ T'' =>
           -- `T = T'' + 2`: interpolate using denominator `(T-1) = T'' + 1`.
           -- The last beta equals `β_end` in exact real arithmetic; rounding can change it.

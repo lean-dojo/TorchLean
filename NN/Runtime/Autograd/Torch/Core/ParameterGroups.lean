@@ -133,7 +133,7 @@ def denseGroupGradient {α : Type} [Storage α] [Add α]
     let gradient ← match gradients[id]? with
       | some gradient => pure gradient
       | none => throw <| IO.userError "torch: gradient array out of bounds during grouped update"
-    total ← okOrThrow <| Runtime.Autograd.SomeTensor.add total gradient
+    total ← IO.ofExcept <| Runtime.Autograd.SomeTensor.add total gradient
   pure total
 
 /-- Borrow a singleton CUDA gradient or own the temporary sum of shared-leaf cotangents.
@@ -157,7 +157,7 @@ def withCudaGroupGradient {α β : Type} [Storage α]
         let gradient ← match gradients.get? id with
           | some gradient => pure gradient
           | none => throw <| IO.userError "torch: missing shared CUDA gradient"
-        let next ← okOrThrow <| Runtime.Autograd.LibTorch.AnyBuffer.add total gradient
+        let next ← IO.ofExcept <| Runtime.Autograd.LibTorch.AnyBuffer.add total gradient
         let previous ← owned.swap (some next)
         if let some previous := previous then
           releaseCudaAnyBuffer previous

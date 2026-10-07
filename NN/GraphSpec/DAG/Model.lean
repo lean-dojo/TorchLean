@@ -65,7 +65,7 @@ def inline {Γ ps ins : List Shape} {τ : Shape} (model : Model ps ins τ)
 /--
 Pure forward semantics of a DAG model.
 
-We build the full environment `Γ = ps ++ ins` by appending the parameter list and the input list,
+We build the full environment `Γ = ps ++ ins` by appending the parameter and input tensor packs,
 then evaluate the body using `Term.eval`.
  -/
 def specFwd {ps ins : List Shape} {τ : Shape} (m : Model ps ins τ)
@@ -94,9 +94,9 @@ def toProgram {ps ins : List Shape} {τ : Shape} (m : Model ps ins τ)
     Runtime.Autograd.Model.Program α (ps ++ ins) τ :=
   fun {μ} _ _ =>
     Runtime.Autograd.Torch.CurriedRef.curry
-      (Ref := Runtime.Autograd.Model.RefTy (m := μ) (α := α))
+      (Ref := Runtime.Autograd.Model.Ref (m := μ) (α := α))
       (ss := ps ++ ins)
-      (β := μ (Runtime.Autograd.Model.RefTy (m := μ) (α := α) τ))
+      (β := μ (Runtime.Autograd.Model.Ref (m := μ) (α := α) τ))
       (fun args => Term.lower (Γ := ps ++ ins) (α := α) (m := μ) args m.body)
 
 end Model
@@ -152,17 +152,17 @@ theorem eval_inline {Γ ps ins outs : List Shape} (model : MultiModel ps ins out
 abbrev Program (α : Type 0) [TorchLean.Storage α] [Context α]
     (ins outs : List Shape) : Type 1 :=
   ∀ {μ : Type → Type}, [Monad μ] → [Runtime.Autograd.Torch.Ops (m := μ) (α := α)] →
-    CurriedRef (fun s => Runtime.Autograd.Model.RefTy (m := μ) (α := α) s) ins
-      (μ (RefList (Runtime.Autograd.Model.RefTy (m := μ) (α := α)) outs))
+    CurriedRef (fun s => Runtime.Autograd.Model.Ref (m := μ) (α := α) s) ins
+      (μ (RefList (Runtime.Autograd.Model.Ref (m := μ) (α := α)) outs))
 
 /-- Lower every result of a multi-output model for the selected TorchLean execution target. -/
 def toProgram {ps ins outs : List Shape} (m : MultiModel ps ins outs)
     {α : Type 0} [TorchLean.Storage α] [Context α] : Program α (ps ++ ins) outs :=
   fun {μ} _ _ =>
     CurriedRef.curry
-      (Ref := Runtime.Autograd.Model.RefTy (m := μ) (α := α))
+      (Ref := Runtime.Autograd.Model.Ref (m := μ) (α := α))
       (ss := ps ++ ins)
-      (β := μ (RefList (Runtime.Autograd.Model.RefTy (m := μ) (α := α)) outs))
+      (β := μ (RefList (Runtime.Autograd.Model.Ref (m := μ) (α := α)) outs))
       (fun args => Block.lower (Γ := ps ++ ins) (α := α) (μ := μ) args m.body)
 
 end MultiModel

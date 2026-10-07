@@ -21,7 +21,7 @@ namespace Runtime
 namespace Autograd
 namespace IRExec
 
-open Spec TorchLean
+open Spec
 open TorchLean TorchLean.Tensor
 open Proofs.Autograd.Algebra
 -- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
@@ -68,42 +68,42 @@ def mkIdx
 
 /-- Package a typed forward closure as one node of the executable IR graph. -/
 def mkForwardNode {α : Type} [TorchLean.Storage α] {Γ : List Shape} {τ : Shape}
-    (forward : TensorReader α Γ → Tensor α τ) : ForwardNode α Γ τ :=
+    (forward : TensorLookup α Γ → Tensor α τ) : ForwardNode α Γ τ :=
   ⟨forward⟩
 
 /-- Running a constructed forward node applies its reader closure. -/
 @[simp] theorem mkForwardNode_run {α : Type} [TorchLean.Storage α] {Γ : List Shape} {τ : Shape}
-    (f : TensorReader α Γ → Tensor α τ) (ctx : TensorReader α Γ) :
+    (f : TensorLookup α Γ → Tensor α τ) (ctx : TensorLookup α Γ) :
     (mkForwardNode f).run ctx = f ctx := rfl
 
 /--
 Evaluation projection for `mkForwardNode`.
 -/
 @[simp] theorem mkForwardNode_eval {α : Type} [TorchLean.Storage α] {Γ : List Shape} {τ : Shape}
-    (f : TensorReader α Γ → Tensor α τ) (ctx : TorchLean.TensorPack α Γ) :
+    (f : TensorLookup α Γ → Tensor α τ) (ctx : TorchLean.TensorPack α Γ) :
     (mkForwardNode (α := α) (Γ := Γ) (τ := τ) f).eval ctx = f ctx := rfl
 
 /-- Internal list recursion used to track the dependent output shape of adjacent swaps. -/
-def swapShapeBySwapsList (s : Shape) : List Nat → Shape
+def swapShapeList (s : Shape) : List Nat → Shape
   | [] => s
-  | d :: ds => swapShapeBySwapsList (s.swapAdjacentAtDepth d) ds
+  | d :: ds => swapShapeList (s.swapAdjacentAtDepth d) ds
 
 /-- Apply adjacent swaps, represented by their axis depths, to a shape. -/
-def swapShapeBySwaps (s : Shape) (swaps : Array Nat) : Shape :=
-  swapShapeBySwapsList s swaps.toList
+def swapShape (s : Shape) (swaps : Array Nat) : Shape :=
+  swapShapeList s swaps.toList
 
-/-- Internal dependent recursion underlying `applySwapsTensor`. -/
-def applySwapsTensorList {α : Type} [TorchLean.Storage α] [Context α] :
-    {s : Shape} → (swaps : List Nat) → Tensor α s → Tensor α (swapShapeBySwapsList s swaps)
+/-- Internal dependent recursion underlying `swapAxes`. -/
+def swapAxesList {α : Type} [TorchLean.Storage α] :
+    {s : Shape} → (swaps : List Nat) → Tensor α s → Tensor α (swapShapeList s swaps)
   | _s, [], t => t
   | s, d :: ds, t =>
       let t' : Tensor α (s.swapAdjacentAtDepth d) := Tensor.swapAdjacentAxes (tensor := t) d
-      applySwapsTensorList (s := s.swapAdjacentAtDepth d) (swaps := ds) t'
+      swapAxesList (s := s.swapAdjacentAtDepth d) (swaps := ds) t'
 
-/-- Apply the same adjacent-swap sequence as `swapShapeBySwaps` to a tensor value. -/
-def applySwapsTensor {α : Type} [TorchLean.Storage α] [Context α] {s : Shape} (swaps : Array Nat)
-    (tensor : Tensor α s) : Tensor α (swapShapeBySwaps s swaps) :=
-  applySwapsTensorList swaps.toList tensor
+/-- Apply the same adjacent-swap sequence as `swapShape` to a tensor value. -/
+def swapAxes {α : Type} [TorchLean.Storage α] {s : Shape} (swaps : Array Nat)
+    (tensor : Tensor α s) : Tensor α (swapShape s swaps) :=
+  swapAxesList swaps.toList tensor
 
 /--
 One typed concat input: a leading extent together with a closure that reads the tensor with that
@@ -111,7 +111,7 @@ extent from the runtime context. Inputs for a nonzero concat axis permute the pa
 returning it, so the closure is the common shape for every concat branch.
 -/
 abbrev ConcatInput (α : Type) [TorchLean.Storage α] (Γ : List Shape) (rest : Shape) : Type :=
-  Sigma fun nP => TensorReader α Γ → Tensor α (.dim nP rest)
+  Sigma fun nP => TensorLookup α Γ → Tensor α (.dim nP rest)
 
 /--
 Concatenate typed tensors along their leading axis, folding from the first tensor.
@@ -119,7 +119,7 @@ Concatenate typed tensors along their leading axis, folding from the first tenso
 The empty list yields the empty tensor with leading extent `0`. This is the same fold shape as
 the IR evaluator's `NN.IR.Graph.evalConcatLeadingAxisFold`.
 -/
-def concatList {α : Type} [TorchLean.Storage α] [Context α] {rest : Shape} :
+def concatList {α : Type} [TorchLean.Storage α] [Zero α] {rest : Shape} :
     List (Sigma fun n => Tensor α (.dim n rest)) → Sigma fun nSum => Tensor α (.dim nSum rest)
   | [] => ⟨0, Tensor.full (α := α) (.dim 0 rest) 0⟩
   | first :: others =>
@@ -130,7 +130,7 @@ def concatList {α : Type} [TorchLean.Storage α] [Context α] {rest : Shape} :
         first
 
 /-- The leading extent of the fold in `concatList` is a plain sum of extents. -/
-theorem concatList_fst {α : Type} [TorchLean.Storage α] [Context α] {rest : Shape}
+theorem concatList_fst {α : Type} [TorchLean.Storage α] [Zero α] {rest : Shape}
     (tensors : List (Sigma fun n => Tensor α (.dim n rest))) :
     (concatList (α := α) (rest := rest) tensors).1 =
       tensors.foldl (fun acc t => acc + t.1) 0 := by
@@ -142,8 +142,8 @@ theorem concatList_fst {α : Type} [TorchLean.Storage α] [Context α] {rest : S
 
 /-- Concatenate the tensors produced by concat inputs along their leading axis. -/
 def concatInputs
-    {α : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape} {rest : Shape}
-    (ctx : TensorReader α Γ) (inputs : Array (ConcatInput α Γ rest)) :
+    {α : Type} [TorchLean.Storage α] [Zero α] {Γ : List Shape} {rest : Shape}
+    (ctx : TensorLookup α Γ) (inputs : Array (ConcatInput α Γ rest)) :
     Sigma fun nSum => Tensor α (.dim nSum rest) :=
   concatList (inputs.toList.map fun input => ⟨input.1, input.2 ctx⟩)
 
@@ -153,8 +153,8 @@ The concatenated size reported by `concatInputs` is the sum of the input extents
 This theorem justifies the output-shape cast in the concat lowering branches.
 -/
 theorem concatInputs_size_eq_sum
-    {α : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape} {rest : Shape}
-    (ctx : TensorReader α Γ) (inputs : Array (ConcatInput α Γ rest)) :
+    {α : Type} [TorchLean.Storage α] [Zero α] {Γ : List Shape} {rest : Shape}
+    (ctx : TensorLookup α Γ) (inputs : Array (ConcatInput α Γ rest)) :
     (concatInputs (α := α) (Γ := Γ) (rest := rest) ctx inputs).1 =
       inputs.foldl (fun acc input => acc + input.1) 0 := by
   simpa only [concatInputs, concatList_fst, List.foldl_map] using

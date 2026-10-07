@@ -64,11 +64,7 @@ structure ObjectiveDef (β : Type) [TorchLean.Storage β] (stateShapes inputShap
   -/
   loss :
     ∀ {α : Type}, [TorchLean.Storage α] → [Context α] →
-      ∀ {m : Type → Type}, [Monad m] → [Torch.Ops (m := m) (α := α)] →
-        Torch.CurriedRef (fun s => Torch.Ops.Ref (m := m) (α := α) s)
-          (stateShapes ++ inputShapes)
-          (Torch.CurriedRef (fun s => Torch.Ops.DataRef (m := m) (α := α) β s)
-            dataInputShapes (m (Torch.Ops.Ref (m := m) (α := α) Shape.scalar)))
+      Program.Data α β (stateShapes ++ inputShapes) dataInputShapes Shape.scalar
 
 /--
 Runtime state for a model together with a scalar objective.
@@ -103,11 +99,7 @@ def create {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
     (requiresGrad : Array Bool := Array.replicate stateShapes.length true)
     (validateDataInputs : TorchLean.TensorPack β dataInputShapes → Except String Unit :=
       fun _ => pure ())
-    (loss :
-      ∀ {m : Type → Type}, [Monad m] → [Torch.Ops (m := m) (α := α)] →
-        Torch.CurriedRef (fun s => Torch.Ops.Ref (m := m) (α := α) s) (stateShapes ++ inputShapes)
-          (Torch.CurriedRef (fun s => Torch.Ops.DataRef (m := m) (α := α) β s)
-            dataInputShapes (m (Torch.Ops.Ref (m := m) (α := α) Shape.scalar))))
+    (loss : Program.Data α β (stateShapes ++ inputShapes) dataInputShapes Shape.scalar)
     (initState : TorchLean.TensorPack α stateShapes) :
     IO (Objective α β stateShapes inputShapes dataInputShapes) := do
   unless requiresGrad.size = stateShapes.length do
@@ -219,7 +211,7 @@ def step {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
             let nextState ← opt.step st m.trainer.state grads
             pure (nextState, lossValue)
 
-/-- Read the complete parameter-and-buffer state as a shape-indexed list. -/
+/-- Read the complete parameter-and-buffer state as a shape-indexed tensor pack. -/
 def state {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
     [Context α]
     {stateShapes inputShapes dataInputShapes : List Shape}

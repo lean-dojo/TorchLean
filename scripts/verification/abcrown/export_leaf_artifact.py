@@ -89,7 +89,7 @@ def _float_list_or_scalar(value: Any, dim: int, ctx: str) -> list[float]:
         raise ArtifactExportError(f"{ctx}: expected number or list of numbers") from exc
     if not math.isfinite(x):
         raise ArtifactExportError(f"{ctx}: expected finite number, got {x!r}")
-    return [x for _ in range(dim)]
+    return [x] * dim
 
 
 def _parse_csv_floats(text: str, ctx: str) -> list[float]:
@@ -126,10 +126,8 @@ def _box_root_from_leaves(leaves: Sequence[Mapping[str, Any]]) -> tuple[list[flo
 
     if not leaves:
         raise ArtifactExportError("cannot infer root from an empty leaf list")
-    first_lo = _float_list(_get_any(leaves[0], LEAF_LO_FIELDS, "leaf[0]"), "leaf[0].lo")
-    first_hi = _float_list(_get_any(leaves[0], LEAF_HI_FIELDS, "leaf[0]"), "leaf[0].hi")
-    root_lo = list(first_lo)
-    root_hi = list(first_hi)
+    root_lo = _float_list(_get_any(leaves[0], LEAF_LO_FIELDS, "leaf[0]"), "leaf[0].lo")
+    root_hi = _float_list(_get_any(leaves[0], LEAF_HI_FIELDS, "leaf[0]"), "leaf[0].hi")
     for idx, leaf in enumerate(leaves[1:], start=1):
         lo = _float_list(_get_any(leaf, LEAF_LO_FIELDS, f"leaf[{idx}]"), f"leaf[{idx}].lo")
         hi = _float_list(_get_any(leaf, LEAF_HI_FIELDS, f"leaf[{idx}]"), f"leaf[{idx}].hi")
@@ -314,8 +312,7 @@ def write_abcrown_leaf_artifact(
 def _read_json(path: Path) -> Any:
     """Read JSON or newline-delimited JSON leaves from `path`."""
 
-    with path.open("r", encoding="utf-8") as handle:
-        text = handle.read()
+    text = path.read_text(encoding="utf-8")
     try:
         return json.loads(text)
     except JSONDecodeError:

@@ -116,8 +116,6 @@ def parseFloatString (tag : String) (s : String) : Except String Float := do
 
 end Internal
 
-open Internal
-
 /--
 Parse one CSV line into an array of floats.
 
@@ -150,7 +148,7 @@ Read a CSV file into an array of float rows.
 This helper is intended for compact example datasets and runtime checks, not a full CSV
 implementation.
 -/
-def readCsvFloatRows (path : System.FilePath) (options : CsvOptions := {}) :
+def readCsv (path : System.FilePath) (options : CsvOptions := {}) :
   IO (Except String (Array (Array Float))) := do
   let content <- IO.FS.readFile path
   let lines := content.splitOn "\n"

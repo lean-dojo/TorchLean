@@ -114,13 +114,9 @@ theorem TensorEncloses.paddedAverage {d : Nat} {spatial : Tensor Nat [d]}
       getPaddedAverageInputVal x out window stride padding ≤
         value (getPaddedAverageInputVal hi out window stride padding) := by
   unfold getPaddedAverageInputVal
-  cases paddedCoords? out window stride with
+  cases Conv.Internal.mkInputIdx? out window stride padding with
   | none => simp [LawfulBoundOps.toReal_zero (α := α)]
-  | some padded =>
-      simp only
-      cases hu : unpadCoords? padded padding with
-      | none => simp [LawfulBoundOps.toReal_zero (α := α)]
-      | some original => exact h.getAtOrZero original
+  | some original => exact h.getAtOrZero original
 
 theorem TensorEncloses.paddedMax {d : Nat} {spatial : Tensor Nat [d]}
     {lo hi : Tensor α (Shape.ofList spatial.data.toList)}
@@ -130,17 +126,13 @@ theorem TensorEncloses.paddedMax {d : Nat} {spatial : Tensor Nat [d]}
       (getPaddedMaxInputVal? hi out window stride padding)
       (getPaddedMaxInputVal? x out window stride padding) := by
   unfold getPaddedMaxInputVal?
-  cases paddedCoords? out window stride with
+  cases Conv.Internal.mkInputIdx? out window stride padding with
   | none => exact .none
-  | some padded =>
+  | some original =>
       simp only
-      cases unpadCoords? padded padding with
-      | none => exact .none
-      | some original =>
-          simp only
-          split
-          · exact .some (h.getAtOrZero original)
-          · exact .none
+      split
+      · exact .some (h.getAtOrZero original)
+      · exact .none
 
 theorem TensorEncloses.maxPoolValue {d : Nat} {spatial : Tensor Nat [d]}
     {lo hi : Tensor α (Shape.ofList spatial.data.toList)}

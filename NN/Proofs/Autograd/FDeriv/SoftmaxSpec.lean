@@ -184,7 +184,7 @@ theorem getScalar_expSpec_logSoftmaxVecSpec {n : Nat} (x : Tensor ℝ [Nat.succ 
       softmaxVec (n := Nat.succ n) (getScalarE x) i := by
   have hsumPos : 0 < ∑ j, Real.exp (TorchLean.Tensor.getScalar x j) :=
     Finset.sum_pos (fun j _ => Real.exp_pos _) Finset.univ_nonempty
-  rw [expSpec, TorchLean.Tensor.getScalar_mapSpec, Proofs.getScalar_logSoftmaxVecSpec_eq_sub_log,
+  rw [expSpec, TorchLean.Tensor.getScalar_map, Proofs.getScalar_logSoftmaxVecSpec_eq_sub_log,
     mathfunc_exp_eq_rexp, Real.exp_sub, Real.exp_log hsumPos]
   simp [softmaxVec, sumExp]
 

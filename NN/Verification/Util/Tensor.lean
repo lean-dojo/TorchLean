@@ -13,8 +13,8 @@ public import NN.MLTheory.CROWN.Flatbox
 # Tensor helpers for verification artifacts
 
 Verification tools often sit at the boundary between Lean tensors and external JSON artifacts.
-This module keeps those conversions in one place instead of reimplementing vector/matrix unpacking
-inside each checker.
+Flat payloads are checked against the requested tensor shape; nested matrix payloads also check
+each row. Once loaded, the checkers work with tensors rather than serialized arrays.
 -/
 
 @[expose] public section
@@ -44,46 +44,22 @@ def refutesThresholdAt {n : Nat} (lowerBound threshold : TorchLean.Tensor Float 
     decide (threshold.getScalar ⟨witnessIdx, h⟩ < lowerBound.getScalar ⟨witnessIdx, h⟩)
   else false
 
-/-- Convert a float array into a length-`n` vector tensor, returning `none` on length mismatch. -/
-def vecOfArray (n : Nat) (xs : Array Float) : Option (Tensor Float [n]) :=
-  if hSize : xs.size = n then
-    some <| Tensor.dim (fun i =>
-      let h : i.val < xs.size := by
-        simp [hSize, i.isLt]
-      Tensor.scalar (xs[i.val]'h))
+/-- Read a row-major artifact into the requested tensor shape; reject a length mismatch. -/
+def ofArray? {α : Type} [Storage α] (shape : Shape) (xs : Array α) :
+    Option (Tensor α shape) :=
+  if hSize : xs.size = shape.size then
+    some <| TorchLean.Tensor.Internal.Rep.ofArray xs (by
+      simpa only [Spec.Shape.internalSize_eq] using hSize)
   else
     none
 
 /--
-Convert a row-major flat array into a `rows × cols` matrix tensor.
-
-This is the common JSON-artifact shape: external tools often serialize matrices as one flat float
-array plus schema-level dimensions.
--/
-def matOfFlatArray (rows cols : Nat) (xs : Array Float) :
-    Option (Tensor Float [rows, cols]) :=
-  if hSize : xs.size = rows * cols then
-    some <|
-      Tensor.dim (fun i =>
-        Tensor.dim (fun j =>
-          let h : i.val * cols + j.val < xs.size := by
-            rw [hSize]
-            have hIdxLtNext : i.val * cols + j.val < (i.val + 1) * cols := by
-              rw [Nat.add_mul, one_mul]
-              exact Nat.add_lt_add_left j.isLt (i.val * cols)
-            exact lt_of_lt_of_le hIdxLtNext
-              (Nat.mul_le_mul_right cols (Nat.succ_le_of_lt i.isLt))
-          Tensor.scalar (xs[i.val * cols + j.val]'h)))
-  else
-    none
-
-/--
-Convert a `rows × cols` float matrix payload into a matrix tensor.
+Read a nested row-major artifact into a matrix tensor.
 
 Both the row count and every row length are checked before the tensor is built.
 -/
-def matOfArray (rows cols : Nat) (xs : Array (Array Float)) :
-    Option (Tensor Float [rows, cols]) :=
+def ofRows? {α : Type} [Storage α] (rows cols : Nat) (xs : Array (Array α)) :
+    Option (Tensor α [rows, cols]) :=
   if hRows : xs.size = rows then
     if hCols : ∀ i : Fin rows,
         (xs[i.val]'(by simp [hRows, i.isLt])).size = cols then
@@ -99,20 +75,12 @@ def matOfArray (rows cols : Nat) (xs : Array (Array Float)) :
   else
     none
 
-/-- Load a length-checked vector tensor from a JSON float array, or raise a schema error. -/
-def requireVecOfArray (ctx : String) (n : Nat) (xs : Array Float) :
-    IO (Tensor Float [n]) := do
-  match vecOfArray n xs with
+/-- Read a JSON float array into the requested shape, or raise a schema error. -/
+def requireArray (ctx : String) (shape : Shape) (xs : Array Float) :
+    IO (Tensor Float shape) := do
+  match ofArray? shape xs with
   | some x => pure x
   | none =>
-      throw <| IO.userError s!"{ctx}: expected {n} floats, got {xs.size}"
-
-/-- Load a row-major matrix tensor from a JSON float array, or raise a schema error. -/
-def requireMatOfFlatArray (ctx : String) (rows cols : Nat) (xs : Array Float) :
-    IO (Tensor Float [rows, cols]) := do
-  match matOfFlatArray rows cols xs with
-  | some x => pure x
-  | none =>
-      throw <| IO.userError s!"{ctx}: expected {rows * cols} floats, got {xs.size}"
+      throw <| IO.userError s!"{ctx}: expected {shape.size} floats, got {xs.size}"
 
 end NN.Verification.Util.Tensor

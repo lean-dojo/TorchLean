@@ -141,7 +141,7 @@ def samples (corpus : String) (windows : Nat) :
 /-- Print the current argmax prediction beside the prompt and shifted target text. -/
 def printPrediction (label prompt : String) (logits : Tensor Float output) : IO Unit := do
   IO.println
-    s!"  {label} pred={text.escape (text.decodeArgmaxLogits tokenizer logits)}"
+    s!"  {label} pred={text.escape (text.decodeLogits tokenizer logits)}"
   IO.println s!"  prompt={
     text.escape (text.decodeWindow tokenizer contextLength prompt
       (paddingTokenId := paddingByte))}"
@@ -156,7 +156,7 @@ def generate
   let allowToken :=
     if generation.asciiOnly then text.isPrintableAscii else fun _ => true
   let ids ←
-    text.autoregressiveTokenIds contextLength paddingByte
+    text.generate contextLength paddingByte
       (Tensor.from (tokenizer.encode generation.prompt)) generation
       (fun padded predPos => do
         let logits ← predict (Tensor.oneHotIndices vocabularySize (padded.map byteIndex))

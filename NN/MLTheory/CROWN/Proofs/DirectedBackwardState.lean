@@ -141,7 +141,7 @@ theorem negateCoeff_encloses
   have hhi := LawfulBoundOps.le_subUp (0 : α) (lo.getScalar i)
   have hb := hbox i
   simp only [Spec.getAtOrZero_eq_getScalar] at hb
-  simp only [negateDirectedCoeff, Spec.getAtOrZero_eq_getScalar, Tensor.getScalar_mapSpec]
+  simp only [negateDirectedCoeff, Spec.getAtOrZero_eq_getScalar, Tensor.getScalar_map]
   rw [(LawfulBoundOps.toReal_zero (α := α)), zero_sub] at hlo hhi
   exact ⟨hlo.trans (neg_le_neg hb.2), (neg_le_neg hb.1).trans hhi⟩
 

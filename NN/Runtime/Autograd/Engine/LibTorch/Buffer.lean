@@ -544,7 +544,8 @@ TorchLean's tape owns the `1 - y * y` derivative.
 @[never_extract, extern "torchlean_cuda_buffer_tanh"]
 opaque tanh (x : @& Buffer) : Buffer
 
-/-- Tanh-approximate GELU evaluated by one pointwise CUDA kernel. -/
+/-- Tanh-approximate GELU evaluated through staged ATen operations.
+The arithmetic ordering follows TorchLean's activation specification. -/
 @[never_extract, extern "torchlean_cuda_buffer_gelu"]
 opaque gelu (x : @& Buffer) : Buffer
 

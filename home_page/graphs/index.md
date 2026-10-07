@@ -78,7 +78,7 @@ expanded here.
   const state = { report: null, selected: null };
 
   const $ = (id) => document.getElementById(id);
-  const fmt = (n) => Number(n).toLocaleString();
+  const fmt = (n) => n == null ? "Unavailable" : Number(n).toLocaleString();
   const esc = (s) => String(s).replace(/[&<>"']/g, c => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[c]));

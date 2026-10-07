@@ -2,6 +2,10 @@
 title: Updates
 ---
 
+These notes record what changed at the time. Older entries describe earlier APIs and backends;
+use the [installation page]({{ '/installation/' | relative_url }}) and
+[guide]({{ '/blueprint/' | relative_url }}) for the current setup.
+
 <nav class="timeline-nav" aria-label="TorchLean update timeline">
   <a href="#october-2026-custom-computations">Custom computations</a>
   <a href="#september-2026-libtorch">LibTorch backend</a>
@@ -60,6 +64,17 @@ We shortened the settings users write too: `open TorchLean` exposes `cpu`, `gpu`
 with a leading axis for the derivative order. The PINN example uses tensors for its collocation
 points and boundary data as well.
 
+We shortened more names in the data and model APIs: `collateSupervised` is now `collate`, and
+`firstFullBatch` is `firstBatch`. For diffusion, `diffusion.noisedSample` is now `diffusion.sample`;
+its positional arguments take the step before the seed. Prefer `seed := ...` when migrating a call
+so the two numbers cannot be mixed up.
+
+We fixed the `RealWitness` strict-growth assumption too. It now applies to distinct inputs:
+requiring it at equal inputs would demand `0 > 0` and make the assumptions contradictory.
+
+Backend reports now name the retained CUDA comparisons. Other GPU operations record an explicit
+LibTorch assumption, which the default GPU profile accepts and the strict checked profile rejects.
+
 Try the [custom computations example]({{ '/examples/custom-computations/' | relative_url }})
 for a square, a conditional activation and a row sum. The
 [guide chapter]({{ '/blueprint/Runtime___-Autograd___-and-Interop/Custom-Tensor-Computations/' | relative_url }})
@@ -86,8 +101,8 @@ composition live in Lean, using numerical primitives through the buffer API. Abo
 hand-written CUDA (elementwise, reduction, convolution, pooling, tensor, attention and DGEMM
 kernels) are gone, replaced by one shared C++ adapter, `csrc/libtorch/torchlean.cpp`, calling the corresponding
 ATen operations under a no-grad guard. The per-kernel CPU stub files went with them. A build
-without LibTorch now links one file, `unavailable.c`, which exports every symbol and fails each
-call with a message that says how to rebuild.
+without LibTorch now links one file, `unavailable.c`. Status and telemetry still work; numerical
+calls are rejected with a message that says how to rebuild.
 
 Select the SDK with `-Klibtorch_home=PATH` or `TORCHLEAN_LIBTORCH_HOME`; a CUDA-enabled pip
 PyTorch installation works as the SDK root. The [SDK notes](https://github.com/lean-dojo/TorchLean/blob/main/csrc/libtorch/README.md#tested-sdk-versions)
@@ -138,9 +153,8 @@ initializations of biases and normalization parameters are unchanged.
 
 ## Choosing Scalar Precision with FloatLib
 
-The checkout selects Lean 4.34.0 and imports its reusable scalar arithmetic and generic
-rounding theory from a pinned FloatLib dependency. Choose a FloatLib binary format, including
-custom precision, directly in typed tensors and models. `ExecFloat.Binary 8 23` gives the familiar
+We wanted precision to be a choice users make in their tensors and models. FloatLib supplies
+the scalar arithmetic and rounding theory. `ExecFloat.Binary 8 23` gives the familiar
 binary32 format; `ExecFloat.Binary 15 112` gives binary128. Valid custom widths use the same API.
 
 A wider type matters only if the extra digits reach the computation. For example, binary128
@@ -170,10 +184,9 @@ or construct interval bounds with binary, decimal, or posit endpoints. TorchLean
 lifts and backend contracts. Its numerical graph certificates still use binary32 endpoints; the
 broader scalar interval API does not change that certificate format.
 
-The [installation page]({{ '/installation/' | relative_url }}) records the current dependency pin,
-and the [floating-point chapter]({{ '/blueprint/Floating-Point-and-Native-Boundaries/Floating-Point-Semantics/' | relative_url }})
-explains the public scalar API and its proof boundaries. Earlier timeline entries describe the
-older versions, including their numerical module names and recorded validation runs.
+The [floating-point chapter]({{ '/blueprint/Floating-Point-and-Native-Boundaries/Floating-Point-Semantics/' | relative_url }})
+explains the scalar API and numerical proofs. Older entries below describe the implementations
+we used at the time.
 
   </div>
 </article>
@@ -214,7 +227,8 @@ hypotheses. These results do not establish soundness of the rounded CLI passes.
 
 Softmax, attention, LayerNorm, and BatchNorm derivative proofs are now stated about the `Spec`
 definitions rather than about auxiliary functions that happened to agree with them.
-`hasFDerivAt_softmaxSpec_vec` and `softmaxBackwardSpec_eq_vjp` cover softmax and log-softmax;
+`hasFDerivAt_softmaxSpec_vec` and `softmaxBackwardSpec_eq_vjp` cover softmax; log-softmax uses
+`hasFDerivAt_logSoftmaxSpec_vec` and `logSoftmaxBackwardSpec_eq_vjp`.
 `backpropVec_eq_adjoint_fderiv_scaledDotProductAttention` connects the attention tape rule to the
 derivative of the spec; `hasFDerivAt_batchNorm`, `fderiv_batchNorm_eq_batchNormJvp`, and
 `layerNormJvp_layerNormBackward_adjoint` do the same for normalization. The LayerNorm theorems
@@ -243,10 +257,6 @@ Several monolithic proofs were split into files that can be read one case at a t
 `alphaCrown_transfer_sound` went from 1,857 lines to a 44-line dispatch over per-operation files,
 `cert_encloses_semantics` from 1,283 lines to 10, and the two dense backward lowering proofs from
 about 800 lines each to 64 over shared leaf and snoc lemmas.
-
-Fully qualified `_root_` escapes dropped from about 4,400 to a few hundred. Most were proofs
-reaching around their own namespace for names that a proper `open` or a local `abbrev` supplies.
-The `lemma` keyword is replaced by `theorem` outside `NN/Floats`.
 
 The backend capsule layer was cut to what the runtime uses. `ProofCarryingKernel`,
 `VerifiedPlannedKernel`, `Target`, `Gate`, `Recheck`, and the `TrustLevel.verified` and `fuzzed`
@@ -286,11 +296,8 @@ Smaller renames from the same pass: `Tensor.tensorFoldlSpec` lost its stuttering
 `inferNodeOutShape` is `nodeOutShape`, and `TextCorpusOptions` is `CorpusFileOptions`. Two naming
 rules came out of this and are written down in `docs/CONTRIBUTING.md` so the next reader does not have to
 guess: the smart constructor of a sealed structure is `create` inside that structure's own
-`Internal` namespace, and batched variants use a `batch` prefix when a separate operation is needed.
+`Internal` namespace. Batch choices belong in named options when the shapes and semantics agree.
 Logit row selection now uses `Tensor.get` directly, without separate text-specific indexing helpers.
-
-The repository lint now enforces 100-column lines and prose without em-dashes outside
-`NN/Floats`, and `omega` is allowed again.
 
   </div>
 </article>
@@ -438,20 +445,22 @@ import NN.Proofs.Autograd.Runtime.Link.FDeriv
 This result concerns the exact tape over `Real`. Native `Float32` and CUDA executions still require
 the numerical-refinement assumptions described in the runtime-approximation chapter.
 
-The CUDA allocator also has an optional byte limit for released buffers retained for reuse:
+At the time of this update, TorchLean's own CUDA allocator had an optional byte limit for released
+buffers retained for reuse. The September LibTorch migration replaced this allocator and removed
+the setting shown below:
 
 ```bash
 TORCHLEAN_CUDA_CACHE_CAP_BYTES=$((512 * 1024 * 1024)) \
   lake -K cuda=true exe torchlean gpt2 --device cuda --steps 100
 ```
 
-`AllocatorStats.cacheBytes` reports reusable device memory separately from live tensors, while
-`cacheCapBytes` reports the parsed limit. A block that would exceed the limit is synchronized and
-freed. The cap is fixed when the allocator first reads it; `0` or an unset variable means
+`AllocatorStats.cacheBytes` reported reusable device memory separately from live tensors, while
+`cacheCapBytes` reported the parsed limit. A block that would exceed the limit was synchronized and
+freed. The cap was fixed when the allocator first read it; `0` or an unset variable meant
 unbounded.
 
-The CUDA stress suite runs the allocator in fresh subprocesses and checks a finite limit, an
-explicit unbounded control, malformed input, and integer overflow. Its assertion uses the limit
+The CUDA stress suite ran the allocator in fresh subprocesses and checked a finite limit, an
+explicit unbounded control, malformed input, and integer overflow. Its assertion used the limit
 reported by the native allocator rather than reproducing the native parser in Lean.
 
   </div>
@@ -603,8 +612,10 @@ fail at the node that produced them.
 
 Range rules live in an operation registry. The same traversal handles any architecture after
 lowering. Before propagation, a coverage pass lists
-the exact nodes whose primitives lack a range contract. Custom registries are named and the name is
-stored in the certificate, so an artifact cannot be replayed under a different set of rules.
+the exact nodes whose primitives lack a range contract. The checker compares the certificate's
+registry name, recomputes the ranges using the selected rules, and compares the trace and kernel
+audit. The name does not uniquely identify a rule implementation; changing a rule without changing
+those results need not cause rejection.
 
 The same certificate contains the kernel-selection audit. Each kernel capsule records its
 reduction order in its numerical policy. Portable accumulations use the fixed left fold from the
@@ -747,9 +758,10 @@ finite-path theorems instead of a blanket ordered instance.
 
 The Lyapunov workflow no longer contains a repository-wide oracle axiom. Python output records a
 region and numerical margins, and generated Lean files may prove arithmetic facts about those
-numbers. A stability theorem additionally requires `LyapunovCert.ValidFor`, whose fields prove that
-the reported intervals enclose the named Lyapunov function and orbital derivative throughout that
-region.
+numbers. `LyapunovCert.ValidFor` proves that the reported intervals enclose the named value and
+orbital-derivative functions throughout that region. With strict margins, this gives positivity
+and decay there. A stability theorem also needs the connection to the dynamics and the appropriate
+region and equilibrium conditions.
 
 The graph evaluator and verifier lowering are split by operation. Their coverage theorems still
 range over the full operation vocabulary, so adding a new file does not weaken the statement being
@@ -839,30 +851,6 @@ mistaken for a source-module dependency.
 Wide tables are wrapped during the documentation build, and the Guide's equations render with
 KaTeX.
 
-<div class="validation-list" markdown="1">
-  <h3>Validation</h3>
-
-- `lake lint`
-- `lake build`
-- `lake build NN NN.CI.All`
-- `lake exe nn_tests_suite`
-- `lake -R -K cuda=true exe nn_tests_suite`
-- temporary audits across registered commands and selected CPU/CUDA examples
-- sustained 20-update CPU runs across 21 model workflows
-- sustained 100-update CUDA runs across 24 model workflows
-- repeated sparse-backward ownership and allocator-drift regression
-- external-wrapper allocation/finalization regression on both the CUDA and CPU-stub builds
-- NVIDIA Compute Sanitizer memcheck (`ERROR SUMMARY: 0 errors`)
-- DocGen API generation
-- Verso Guide generation
-- dependency audit and interactive import-graph generation
-- Jekyll production build
-- `git diff --check`
-
-All of these checks passed on the Linux machine used for the release. That gives us evidence for the
-paths we exercised, but it does not turn CUDA machine code or LibTorch into Lean proofs. Their trust
-levels remain explicit in the backend contracts and in `docs/TRUST_BOUNDARIES.md`.
-</div>
 
   </div>
 </article>
@@ -902,9 +890,10 @@ direct, and moved duplicated PINN training code into shared helpers.
   <section>
     <h3>PINNs</h3>
     <p>
-      Python PINN trainers share dataset loading, MLP construction,
-      expression evaluation, gradients, constant parsing, and export helpers
-      through <code>scripts/verification/pinn/pinn_common.py</code>.
+      The Python PINN command shares dataset loading, MLP construction,
+      expression evaluation, gradients, constant parsing, and weight export
+      between its evolution and stationary problems in
+      <code>scripts/verification/pinn/train_pinn.py</code>.
     </p>
   </section>
 </div>
@@ -914,20 +903,6 @@ With `import NN.API`, users get `TorchLean.nn`, `TorchLean.optim`,
 `TorchLean.Trainer`, `TorchLean.Data`, `TorchLean.Loss`, and
 `TorchLean.Metrics` without importing the broader `NN` umbrella.
 
-<div class="validation-list" markdown="1">
-  <h3>Validation</h3>
-
-- `lake test`
-- `lake build NN.CI.All`
-- `lake lint -R -K cuda=true -K cuda_home=/usr/local/cuda-13.0`
-- `scripts/checks/check.sh --cuda --cuda-home /usr/local/cuda-13.0`
-- `scripts/checks/cuda_sanitize_tests.sh --cuda-home /usr/local/cuda-13.0 --all-tools`
-- focused Lean checks for the CROWN MLP and graph CROWN certificate modules
-- PyTorch CUDA regression runs for the PINN trainers on an A100 GPU
-
-CUDA sanitizer reported zero memcheck/initcheck/synccheck errors and no
-racecheck hazards on the exercised runtime suite.
-</div>
 
   </div>
 </article>
@@ -1072,21 +1047,6 @@ can be released after the step finishes.
   </section>
 </div>
 
-<div class="validation-list" markdown="1">
-  <h3>Validation</h3>
-
-- `lake build`
-- `lake -R -K cuda=true build`
-- `lake exe torchlean mlp --device cpu --steps 10 --log false`
-- `lake exe torchlean mlp --steps 10 --scalar float32 --execution eager --log false`
-- `lake -R -K cuda=true exe torchlean mlp --device cuda --steps 1000 --log false`
-- `lake -R -K cuda=true exe torchlean cnn --device cuda --steps 1000 --log false`
-- `lake -R -K cuda=true exe torchlean gpt2 --device cuda --steps 1200 --generate 0 --log false`
-- `lake -R -K cuda=true exe torchlean fno1d_burgers --device cuda --steps 50 --log false`
-
-The validation checked representative losses or MSE values going down and the
-CUDA allocator staying bounded on the exercised runs.
-</div>
 
   </div>
 </article>

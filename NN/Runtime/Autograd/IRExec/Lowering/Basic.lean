@@ -45,12 +45,9 @@ def lowerConst {α : Type} [TorchLean.Storage α] [Context α]
   let i := ctx.index
   let n := ctx.node
   let τ : Shape := n.outShape
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   let t ← NN.IR.Graph.evalConst (α := α) (payload := payload) (id := n.id) (s := s)
   if hOut : s = τ then
-    pure <| fwd (fun _ctx => hOut ▸ t)
+    pure <| mkForwardNode (τ := τ) (fun _ctx => hOut ▸ t)
   else
     throw s!"IRExec: const node {i}: outShape mismatch: kind={repr s}, declared={repr τ}"
 
@@ -62,18 +59,15 @@ def lowerDetach {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let pNode ← g.getNode pId
       let s := pNode.outShape
       let ip ← parentIdx pId s
       if hOut : s = τ then
-        let forward := fun ctx : TensorReader α Γ =>
-          hOut ▸ Tensor.detachSpec (readTensor (α := α) (xs := ctx) ip)
-        pure <| fwd forward
+        let forward := fun ctx : TensorLookup α Γ =>
+          hOut ▸ Tensor.detachSpec (ctx.read ip)
+        pure <| mkForwardNode (τ := τ) forward
       else
         throw s!"IRExec: node {i}: detach expects outShape=parent.outShape ({n.summary})"
   | _ => throw s!"IRExec: node {i}: detach expects 1 parent ({n.summary})"
@@ -84,14 +78,11 @@ def lowerRandUniform {α : Type} [TorchLean.Storage α] [Context α]
   let i := ctx.index
   let n := ctx.node
   let τ : Shape := n.outShape
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match n.parents.isEmpty with
   | true =>
       let key := Spec.Random.keyOf seed i
       let t : Tensor α τ := Spec.Random.uniform (α := α) key (s := τ)
-      pure <| fwd (fun _ctx => t)
+      pure <| mkForwardNode (τ := τ) (fun _ctx => t)
   | _ => throw s!"IRExec: node {i}: rand_uniform expects 0 parents ({n.summary})"
 
 /-- Checked lowering for `.bernoulliMask seed`: a keyed mask with a scalar keep probability. -/
@@ -101,18 +92,15 @@ def lowerBernoulliMask {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId Shape.scalar
       let key := Spec.Random.keyOf seed i
-      let forward := fun ctx : TensorReader α Γ =>
-        let kpT := readTensor (α := α) (xs := ctx) ip
+      let forward := fun ctx : TensorLookup α Γ =>
+        let kpT := ctx.read ip
         let kp : α := kpT.item
         Spec.Random.mask (α := α) key kp (s := τ)
-      pure <| fwd forward
+      pure <| mkForwardNode (τ := τ) forward
   | _ => throw s!"IRExec: node {i}: bernoulli_mask expects 1 parent ({n.summary})"
 
 end Internal

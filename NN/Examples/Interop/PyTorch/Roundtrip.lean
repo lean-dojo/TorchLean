@@ -13,10 +13,9 @@ import NN.Runtime.PyTorch.Import.MLP
 import NN.Runtime.PyTorch.Import.CNN
 import NN.Runtime.PyTorch.Import.Transformer
 public import NN.Tensor
-import NN.API.Data.Sources
 import NN.API.Json
-import NN.API.Precision
-import NN.API.RL.Runtime
+import NN.API.Module
+import NN.API.Seeded
 
 /-!
 # PyTorch Round-Trip Driver
@@ -118,48 +117,32 @@ private def cnnInputHeight : Nat := 8
 private def cnnInputWidth : Nat := 8
 private def cnnKernelHeight : Nat := 3
 private def cnnKernelWidth : Nat := 3
-private def cnnFirstStride : Nat := 1
-private def cnnFirstPadding : Nat := 1
-private def cnnSecondStride : Nat := 1
-private def cnnSecondPadding : Nat := 1
 private def cnnPoolKernelHeight : Nat := 2
 private def cnnPoolKernelWidth : Nat := 2
-private def cnnFirstPoolStride : Nat := 2
-private def cnnSecondPoolStride : Nat := 2
 
 private def cnnInputSpatial : Tensor Nat [2] := [cnnInputHeight, cnnInputWidth]
 
-private def cnnFirstConvolution : nn.Convolution.Config 2 :=
+private def cnnConvolution : nn.Convolution.Config 2 :=
   { outChannels := cnnOutputChannels
     kernelSize := [cnnKernelHeight, cnnKernelWidth]
-    stride := [cnnFirstStride, cnnFirstStride]
-    padding := [cnnFirstPadding, cnnFirstPadding] }
+    stride := [1, 1]
+    padding := [1, 1] }
 
-private def cnnFirstPooling : nn.Pooling.Config 2 :=
+private def cnnPooling : nn.Pooling.Config 2 :=
   { kernelSize := [cnnPoolKernelHeight, cnnPoolKernelWidth]
-    stride := [cnnFirstPoolStride, cnnFirstPoolStride] }
+    stride := [2, 2] }
 
 private def cnnAfterFirstConvolution : Tensor Nat [2] :=
-  cnnFirstConvolution.outputSpatial cnnInputSpatial
+  cnnConvolution.outputSpatial cnnInputSpatial
 
 private def cnnAfterFirstPooling : Tensor Nat [2] :=
-  cnnFirstPooling.outputSpatial cnnAfterFirstConvolution
-
-private def cnnSecondConvolution : nn.Convolution.Config 2 :=
-  { outChannels := cnnOutputChannels
-    kernelSize := [cnnKernelHeight, cnnKernelWidth]
-    stride := [cnnSecondStride, cnnSecondStride]
-    padding := [cnnSecondPadding, cnnSecondPadding] }
-
-private def cnnSecondPooling : nn.Pooling.Config 2 :=
-  { kernelSize := [cnnPoolKernelHeight, cnnPoolKernelWidth]
-    stride := [cnnSecondPoolStride, cnnSecondPoolStride] }
+  cnnPooling.outputSpatial cnnAfterFirstConvolution
 
 private def cnnAfterSecondConvolution : Tensor Nat [2] :=
-  cnnSecondConvolution.outputSpatial cnnAfterFirstPooling
+  cnnConvolution.outputSpatial cnnAfterFirstPooling
 
 private def cnnAfterSecondPooling : Tensor Nat [2] :=
-  cnnSecondPooling.outputSpatial cnnAfterSecondConvolution
+  cnnPooling.outputSpatial cnnAfterSecondConvolution
 
 private def cnnFlattenedWidth : Nat :=
   cnnOutputChannels * cnnAfterSecondPooling.prod
@@ -168,12 +151,12 @@ private def cnnModel := by
   letI : NeZero cnnInputChannels := ⟨by decide⟩
   letI : NeZero cnnOutputChannels := ⟨by decide⟩
   exact nn.build 0 <| nn.Sequential![
-    nn.conv cnnInputSpatial cnnFirstConvolution (inputChannels := cnnInputChannels),
+    nn.conv cnnInputSpatial cnnConvolution (inputChannels := cnnInputChannels),
     nn.relu,
-    nn.maxPool cnnAfterFirstConvolution cnnFirstPooling (channels := cnnOutputChannels),
-    nn.conv cnnAfterFirstPooling cnnSecondConvolution (inputChannels := cnnOutputChannels),
+    nn.maxPool cnnAfterFirstConvolution cnnPooling (channels := cnnOutputChannels),
+    nn.conv cnnAfterFirstPooling cnnConvolution (inputChannels := cnnOutputChannels),
     nn.relu,
-    nn.maxPool cnnAfterSecondConvolution cnnSecondPooling (channels := cnnOutputChannels),
+    nn.maxPool cnnAfterSecondConvolution cnnPooling (channels := cnnOutputChannels),
     nn.flatten,
     nn.linear cnnFlattenedWidth cnnOutputChannels
   ]
@@ -207,7 +190,7 @@ private def writePythonFile (directory : System.FilePath) (baseName : String)
 
 private def exportMLP : IO Unit := do
   let directory := modelDirectory .mlp
-  let source := Export.PyTorch.MLP.completeSource
+  let source := Export.PyTorch.MLP.script
     (inputWidth := mlpInputWidth) (hiddenWidth := mlpHiddenWidth)
     (outputWidth := mlpOutputWidth) "TestMLP"
   writePythonFile directory "TestMLP_PyTorch" source
@@ -219,7 +202,7 @@ private def exportMLP : IO Unit := do
         mlpInputWidth mlpHiddenWidth mlpOutputWidth json
       | throw <| IO.userError "MLP JSON present but failed to parse as an MLP state_dict"
     let sourceWithWeights :=
-      Export.PyTorch.MLP.withParameters
+      Export.PyTorch.MLP.weights
         stateDictionary.inputWeight stateDictionary.inputBias
         stateDictionary.outputWeight stateDictionary.outputBias
         "TestMLP"
@@ -228,37 +211,27 @@ private def exportMLP : IO Unit := do
 
 private def exportCNN : IO Unit := do
   let directory := modelDirectory .cnn
-  let firstConvolution : Export.PyTorch.CNN.ConvolutionConfig 2 :=
+  let firstConvolution : Export.PyTorch.CNN.Convolution 2 :=
     { inputChannels := cnnInputChannels
-      outputChannels := cnnOutputChannels
-      kernel := [cnnKernelHeight, cnnKernelWidth]
-      stride := [cnnFirstStride, cnnFirstStride]
-      padding := [cnnFirstPadding, cnnFirstPadding] }
-  let firstPooling : Export.PyTorch.CNN.PoolingConfig 2 :=
-    { kernel := [cnnPoolKernelHeight, cnnPoolKernelWidth]
-      stride := [cnnFirstPoolStride, cnnFirstPoolStride]
-      padding := [0, 0] }
-  let secondConvolution : Export.PyTorch.CNN.ConvolutionConfig 2 :=
-    { inputChannels := cnnOutputChannels
-      outputChannels := cnnOutputChannels
-      kernel := [cnnKernelHeight, cnnKernelWidth]
-      stride := [cnnSecondStride, cnnSecondStride]
-      padding := [cnnSecondPadding, cnnSecondPadding] }
-  let secondPooling : Export.PyTorch.CNN.PoolingConfig 2 :=
-    { kernel := [cnnPoolKernelHeight, cnnPoolKernelWidth]
-      stride := [cnnSecondPoolStride, cnnSecondPoolStride]
-      padding := [0, 0] }
+      outputChannels := cnnConvolution.outChannels
+      kernel := cnnConvolution.kernelSize
+      stride := cnnConvolution.stride
+      padding := cnnConvolution.padding }
+  let pooling : Export.PyTorch.CNN.Window 2 :=
+    { kernel := cnnPooling.kernelSize
+      stride := cnnPooling.stride
+      padding := cnnPooling.padding }
   let config : Export.PyTorch.CNN.Config 2 :=
     { className := "TestCNN"
       inputChannels := cnnInputChannels
       inputSpatial := [cnnInputHeight, cnnInputWidth]
       firstConvolution
-      firstPooling
-      secondConvolution
-      secondPooling
+      firstPooling := pooling
+      secondConvolution := { firstConvolution with inputChannels := cnnOutputChannels }
+      secondPooling := pooling
       flattenedWidth := cnnFlattenedWidth
       outputWidth := cnnOutputChannels }
-  let source ← IO.ofExcept (Export.PyTorch.CNN.classSource config)
+  let source ← IO.ofExcept (Export.PyTorch.CNN.source config)
   writePythonFile directory "TestCNN_PyTorch" source
   -- An existing state dict is optional, but an invalid one must fail visibly.
   if ← (stateDictionaryPath .cnn).pathExists then
@@ -268,20 +241,20 @@ private def exportCNN : IO Unit := do
         cnnInputChannels cnnOutputChannels cnnKernelHeight cnnKernelWidth cnnFlattenedWidth json
       | throw <| IO.userError "CNN JSON present but failed to parse as a CNN state_dict"
     let sourceWithWeights ← IO.ofExcept <|
-      Export.PyTorch.CNN.withParameters config
-        (Export.PyTorch.tensorToPyString stateDictionary.firstConvolutionWeight)
-        (Export.PyTorch.tensorToPyString stateDictionary.firstConvolutionBias)
-        (Export.PyTorch.tensorToPyString stateDictionary.secondConvolutionWeight)
-        (Export.PyTorch.tensorToPyString stateDictionary.secondConvolutionBias)
-        (Export.PyTorch.tensorToPyString stateDictionary.classifierWeight)
-        (Export.PyTorch.tensorToPyString stateDictionary.classifierBias)
+      Export.PyTorch.CNN.weights config
+        (Export.PyTorch.tensorLiteral stateDictionary.firstConvolutionWeight)
+        (Export.PyTorch.tensorLiteral stateDictionary.firstConvolutionBias)
+        (Export.PyTorch.tensorLiteral stateDictionary.secondConvolutionWeight)
+        (Export.PyTorch.tensorLiteral stateDictionary.secondConvolutionBias)
+        (Export.PyTorch.tensorLiteral stateDictionary.classifierWeight)
+        (Export.PyTorch.tensorLiteral stateDictionary.classifierBias)
     writePythonFile directory "TestCNN_WithWeights" sourceWithWeights
   IO.println "Exported CNN PyTorch files under NN/Examples/Interop/PyTorch/CNN/."
 
 private def exportTransformer : IO Unit := do
   let directory := modelDirectory .transformer
   let source :=
-    Export.PyTorch.Transformer.classSource
+    Export.PyTorch.Transformer.source
       transformerSequenceLength transformerModelWidth transformerHeadCount
       transformerFeedForwardWidth transformerLayerCount
       "TestTransformerEncoder"
@@ -295,7 +268,7 @@ private def exportTransformer : IO Unit := do
       | throw <| IO.userError
           "Transformer JSON present but failed to parse as a Transformer state_dict"
     let sourceWithWeights :=
-      Export.PyTorch.Transformer.withParameters
+      Export.PyTorch.Transformer.weights
         transformerSequenceLength transformerModelWidth transformerHeadCount
         transformerFeedForwardWidth
         stateDictionary.queryWeight stateDictionary.keyWeight stateDictionary.valueWeight
@@ -308,12 +281,6 @@ private def exportTransformer : IO Unit := do
     writePythonFile directory "TestTransformer_Encoder_WithWeights" sourceWithWeights
   IO.println ("Exported Transformer encoder PyTorch files under "
     ++ "NN/Examples/Interop/PyTorch/Transformer/.")
-
-private def runExport (model : Model) : IO Unit := do
-  match model with
-  | .mlp => exportMLP
-  | .cnn => exportCNN
-  | .transformer => exportTransformer
 
 /-! ## Import actions -/
 
@@ -403,12 +370,6 @@ private def importTransformer : IO Unit := do
   IO.println "Output (executable `nn` module on CPU, Float):"
   IO.println (reprStr y)
 
-private def runImport (model : Model) : IO Unit := do
-  match model with
-  | .mlp => importMLP
-  | .cnn => importCNN
-  | .transformer => importTransformer
-
 /-! ## Public entrypoint called from the examples runner -/
 
 /-- Run the selected import or export action; omitted flags select MLP export. -/
@@ -430,8 +391,12 @@ public def main (args : List String) : IO Unit := do
   let some action := Action.parse? actionStr
     | throw <| IO.userError s!"Unknown --action {actionStr}\n\n{usage}"
 
-  match action with
-  | .export => runExport model
-  | .import => runImport model
+  match action, model with
+  | .export, .mlp => exportMLP
+  | .export, .cnn => exportCNN
+  | .export, .transformer => exportTransformer
+  | .import, .mlp => importMLP
+  | .import, .cnn => importCNN
+  | .import, .transformer => importTransformer
 
 end NN.Examples.Interop.PyTorch.Roundtrip

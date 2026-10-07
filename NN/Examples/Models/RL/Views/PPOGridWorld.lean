@@ -7,7 +7,8 @@ Authors: TorchLean Team
 module
 
 import NN.Spec.RL.Envs.GridWorld
-import NN.Runtime.RL.Artifacts.DefaultPaths
+import NN.Runtime.RL.Artifacts.Paths
+meta import NN.Runtime.RL.Artifacts.Paths
 public meta import NN.Runtime.RL.Artifacts.GridWorld.Policy
 public meta import NN.Runtime.RL.Artifacts.GridWorld.Path
 import NN.Runtime.RL.Core
@@ -56,19 +57,19 @@ def defaultGridWorld : GridWorld 4 4 :=
 
 /-- Default training-log path written by `torchlean ppo_gridworld` (override with `--log`). -/
 def trainLogPath : System.FilePath :=
-  Runtime.RL.Artifacts.DefaultPaths.ppoGridWorldTrainLog
+  Runtime.RL.Artifacts.path "ppo_gridworld"
 
 /--
 Default greedy-policy snapshot path written by `torchlean ppo_gridworld` (override with `--policy`).
 -/
 def policyPath : System.FilePath :=
-  Runtime.RL.Artifacts.DefaultPaths.ppoGridWorldPolicy
+  Runtime.RL.Artifacts.path "ppo_gridworld" "policy"
 
 /--
 Default greedy-episode path snapshot written by `torchlean ppo_gridworld` (override with `--path`).
 -/
 def episodePath : System.FilePath :=
-  Runtime.RL.Artifacts.DefaultPaths.ppoGridWorldPath
+  Runtime.RL.Artifacts.path "ppo_gridworld" "path"
 
 #gridworld_view defaultGridWorld, defaultGridWorld.start
 

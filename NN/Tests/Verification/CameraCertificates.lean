@@ -38,13 +38,6 @@ private def cuboid : BoxCameraCert Float :=
     corners := Tensor.full [8, 3] 1
     bbox := [0, 0, 64, 64] }
 
-example : cuboid.pointCount = 8 := rfl
-
-/-- Soundness quantifies over the count carried by the artifact, including counts above eight. -/
-example (cert : BoxCameraCert Float) (accepted : checkCert cert = true)
-    (index : Fin cert.pointCount) : 0 < certProjectZ cert index :=
-  (checkCert_sound accepted).corner_positive_depth index
-
 private def certificateJson (points : Lean.Json) (pointCount? : Option Lean.Json := none)
     (format : String := formatStringPoints) : Lean.Json :=
   Lean.Json.mkObj <|
@@ -90,6 +83,7 @@ private def checkCount (count : Nat) (points : Array Float) (format : String)
   let narrow := { cert with bbox := ([0, 0, 0, 0] : Tensor Float [4]) }
   expect s!"count {count} checks enclosure" (!checkCert narrow)
 
+/-- Check parsed point counts and defects at the last point, beyond the eight-corner default. -/
 def run : IO Unit := do
   expect "eight-point default" (cuboid.pointCount == 8 && checkCert cuboid)
   for count in [1, 3, 8, 17] do

@@ -208,19 +208,14 @@ private theorem directed_weight_product {lo hi weight : α} {x : ℝ}
       then BoundOps.mulDown weight hi else BoundOps.mulDown weight lo) ≤ x * value weight ∧
       x * value weight ≤ value (if BoundOps.mulUp weight lo > BoundOps.mulUp weight hi
         then BoundOps.mulUp weight lo else BoundOps.mulUp weight hi) := by
+  have h := intervalMul_encloses (al := weight) (au := weight)
+    (le_refl (value weight)) (le_refl (value weight)) hl hu
+  simp only [Graph.intervalMul, value_min2, value_max2, min_self, max_self] at h
   have hmin := value_min2 (BoundOps.mulDown weight lo) (BoundOps.mulDown weight hi)
   have hmax := value_max2 (BoundOps.mulUp weight lo) (BoundOps.mulUp weight hi)
   simp only [BoundOps.min2, BoundOps.max2, Bool.decide_iff] at hmin hmax
   rw [hmin, hmax, mul_comm x]
-  by_cases hw : 0 ≤ value weight
-  · exact ⟨(min_le_left _ _).trans ((LawfulBoundOps.mulDown_le _ _).trans
-        (mul_le_mul_of_nonneg_left hl hw)),
-      ((mul_le_mul_of_nonneg_left hu hw).trans (LawfulBoundOps.le_mulUp _ _)).trans
-        (le_max_right _ _)⟩
-  · exact ⟨(min_le_right _ _).trans ((LawfulBoundOps.mulDown_le _ _).trans
-        (mul_le_mul_of_nonpos_left hu (le_of_not_ge hw))),
-      ((mul_le_mul_of_nonpos_left hl (le_of_not_ge hw)).trans
-        (LawfulBoundOps.le_mulUp _ _)).trans (le_max_left _ _)⟩
+  exact h
 
 /-- The directed spatial folds enclose exact grouped convolution of the interpreted parameters,
 with arbitrary dilation, padding, channel groups and leading batch dimensions. -/

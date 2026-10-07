@@ -25,18 +25,12 @@ namespace F
 
 namespace Einsum
 
--- Needed for runtime checks (e.g. to build a `HasNonemptyAxis` for reductions).
 /-- Decidable instance for `Shape.wellFormed`, used by the dynamic einsum lowering. -/
 instance instDecidableWellFormed : (s : Shape) → Decidable s.wellFormed
-  | .scalar => isTrue trivial
+  | .scalar => inferInstanceAs (Decidable True)
   | .dim n s =>
-      match (inferInstance : Decidable (n > 0)) with
-      | isTrue hn =>
-          match instDecidableWellFormed s with
-          | isTrue hs => isTrue ⟨hn, hs⟩
-          | isFalse hs => isFalse (fun h => hs h.2)
-      | isFalse hn =>
-          isFalse (fun h => hn h.1)
+      letI := instDecidableWellFormed s
+      inferInstanceAs (Decidable (n > 0 ∧ s.wellFormed))
 
 /--
 Label used by the dynamic einsum parser.
@@ -71,7 +65,10 @@ structure Subscript where
 def stripSpaces (s : String) : String :=
   String.ofList <| s.toList.filter (fun c => c != ' ' && c != '\n' && c != '\t' && c != '\r')
 
-/-- Parse a single operand subscript (with at most one `...`). -/
+/-- Parse a single operand subscript (with at most one `...`).
+
+Non-whitespace characters outside the ellipsis are labels; this parser does not restrict them
+to PyTorch's ASCII letters. -/
 def parseSubscript (raw : String) : Except String Subscript := do
   let s := stripSpaces raw
   let parts := s.splitOn "..."
@@ -231,12 +228,12 @@ reordering.
 -/
 def permuteBySwaps {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
-    (x : Σ s : Shape, RefTy (m := m) (α := α) s) (swaps : List Nat) :
-    m (Σ s : Shape, RefTy (m := m) (α := α) s) := do
+    (x : Σ s : Shape, Ref (m := m) (α := α) s) (swaps : List Nat) :
+    m (Σ s : Shape, Ref (m := m) (α := α) s) := do
   let mut cur := x
   for d in swaps do
     -- This is definitional: each swap updates the shape index.
-    let cur' : RefTy (m := m) (α := α) (cur.fst.swapAdjacentAtDepth d) ←
+    let cur' : Ref (m := m) (α := α) (cur.fst.swapAdjacentAtDepth d) ←
       swapAdjacentAtDepth (m := m) (α := α) (s := cur.fst) d cur.snd
     cur := ⟨cur.fst.swapAdjacentAtDepth d, cur'⟩
   pure cur
@@ -244,9 +241,9 @@ def permuteBySwaps {α : Type} [TorchLean.Storage α] [Context α]
 /-- Apply adjacent swaps while retaining the resulting shape in the return type. -/
 def permuteBySwapsTyped {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)] {s : Shape}
-    (x : RefTy (m := m) (α := α) s) :
+    (x : Ref (m := m) (α := α) s) :
     (depths : List Nat) →
-      m (RefTy (m := m) (α := α) (s.applyAdjacentSwaps depths))
+      m (Ref (m := m) (α := α) (s.applyAdjacentSwaps depths))
   | .nil => pure x
   | .cons depth depths => do
       let moved ← swapAdjacentAtDepth (m := m) (α := α) (s := s) depth x

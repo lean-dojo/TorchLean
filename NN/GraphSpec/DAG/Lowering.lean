@@ -52,9 +52,9 @@ mutual
       {Γ ins : List Shape}
       {α : Type 0} [TorchLean.Storage α] [Context α]
       {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
-      (env : Runtime.Autograd.Torch.RefList (Runtime.Autograd.Model.RefTy (m := m) (α := α)) Γ) :
+      (env : Runtime.Autograd.Torch.RefList (Runtime.Autograd.Model.Ref (m := m) (α := α)) Γ) :
       Args Γ ins →
-        m (Runtime.Autograd.Torch.RefList (Runtime.Autograd.Model.RefTy (m := m) (α := α)) ins)
+        m (Runtime.Autograd.Torch.RefList (Runtime.Autograd.Model.Ref (m := m) (α := α)) ins)
     | .nil => pure .nil
     | .cons t ts => do
         let r ← lower (Γ := Γ) (α := α) (m := m) env t
@@ -73,9 +73,9 @@ mutual
       {Γ : List Shape} {τ : Shape}
       {α : Type 0} [TorchLean.Storage α] [Context α]
       {m : Type → Type} [Monad m] [Runtime.Autograd.Torch.Ops (m := m) (α := α)]
-      (env : Runtime.Autograd.Torch.RefList (Runtime.Autograd.Model.RefTy (m := m) (α := α)) Γ) :
-      Term Γ τ → m (Runtime.Autograd.Model.RefTy (m := m) (α := α) τ)
-    | .var i => pure (Env.rget (Ref := Runtime.Autograd.Model.RefTy (m := m) (α := α)) env i)
+      (env : Runtime.Autograd.Torch.RefList (Runtime.Autograd.Model.Ref (m := m) (α := α)) Γ) :
+      Term Γ τ → m (Runtime.Autograd.Model.Ref (m := m) (α := α) τ)
+    | .var i => pure (Env.rget (Ref := Runtime.Autograd.Model.Ref (m := m) (α := α)) env i)
     | .cast t h =>
         match h with
         | rfl => lower (Γ := Γ) (α := α) (m := m) env t
@@ -86,13 +86,13 @@ mutual
     | .op (ins := ins) p args => do
         let rs ← lowerArgs (Γ := Γ) (ins := ins) (α := α) (m := m) env args
         Runtime.Autograd.Torch.CurriedRef.uncurry (ss := ins)
-          (Ref := Runtime.Autograd.Model.RefTy (m := m) (α := α))
+          (Ref := Runtime.Autograd.Model.Ref (m := m) (α := α))
           (p.program (α := α)) rs
     | .let1 (σ := σ) t body => do
         let v ← lower (Γ := Γ) (α := α) (m := m) env t
         let env' :=
           Runtime.Autograd.Torch.RefList.append
-            (Ref := Runtime.Autograd.Model.RefTy (m := m) (α := α))
+            (Ref := Runtime.Autograd.Model.Ref (m := m) (α := α))
             (ss₁ := Γ) (ss₂ := [σ]) env (.cons v .nil)
         lower (Γ := Γ ++ [σ]) (α := α) (m := m) env' body
 end
@@ -106,13 +106,13 @@ open Runtime.Autograd.Torch
 /-- Lower a multi-output block for an arbitrary TorchLean execution target. -/
 def lower {Γ outs : List Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
     {μ : Type → Type} [Monad μ] [Runtime.Autograd.Torch.Ops (m := μ) (α := α)]
-    (env : RefList (Runtime.Autograd.Model.RefTy (m := μ) (α := α)) Γ) :
-    Block Γ outs → μ (RefList (Runtime.Autograd.Model.RefTy (m := μ) (α := α)) outs)
+    (env : RefList (Runtime.Autograd.Model.Ref (m := μ) (α := α)) Γ) :
+    Block Γ outs → μ (RefList (Runtime.Autograd.Model.Ref (m := μ) (α := α)) outs)
   | .ret results => Term.lowerArgs (Γ := Γ) (α := α) (m := μ) env results
   | .let1 (σ := σ) value body => do
       let result ← Term.lower (Γ := Γ) (α := α) (m := μ) env value
       let env' := RefList.append
-        (Ref := Runtime.Autograd.Model.RefTy (m := μ) (α := α))
+        (Ref := Runtime.Autograd.Model.Ref (m := μ) (α := α))
         (ss₁ := Γ) (ss₂ := [σ]) env (.cons result .nil)
       lower (Γ := Γ ++ [σ]) (α := α) (μ := μ) env' body
 

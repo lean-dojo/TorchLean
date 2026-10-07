@@ -296,12 +296,8 @@ Both statements have kernel-level twins, `integral_id_forwardKernel` and
 `variance_dual_forwardKernel`, proved by rewriting with `forwardKernel_apply` and applying the
 measure-level theorem.
 
-At `b = 0`, the affine noising map sends every Gaussian sample to `a • x`, so its pushforward
-is concentrated at that one point. Its total mass is still one and every linear readout has
-variance zero, exactly as these formulas predict. A zero noise scale is therefore a legitimate
-specialization of the transition theorem. Nothing in the displayed type requires a positive
-density or nonzero variance. At nonzero `b`, changing its sign preserves the variance because
-the scale enters quadratically; the mean remains `a • x` in either case.
+Changing the sign of `b` preserves the variance because the scale enters quadratically;
+the mean remains `a • x` in either case.
 
 # Gaussian Noising Proofs
 
@@ -371,14 +367,6 @@ failed to synthesize instance of type class
 Hint: Type class instance resolution failures can be inspected
 with the `set_option trace.Meta.synthInstance true` command.
 ```
-
-The error names a missing structure, not a failed numerical calculation. Lean knows how to add
-and scale vectors from the algebraic instances, but the theorem's measurable pushforward also
-uses the relation between open sets and measurable sets. The intentionally failing example keeps
-all the algebra intact and removes only that relation. This is a useful way to read a typeclass
-error: find the mathematical operation that needs the missing structure before trying to add
-more imports or unfold definitions. Here the theorem's instance list already states the needed
-assumption explicitly.
 
 The Borel structure is what ties the measurable-space instance to the topology, and without it the
 pushforward along a continuous map is not known to be measurable. Deleting
@@ -507,35 +495,23 @@ The input rule:
 And the bias rule:
 
 ```lean (name := bRule)
--- Bias cotangents pass through unchanged; the other
--- arguments are unused.
-#check @linearBiasDerivSpec_eq
+-- Read the bias cotangent from the backward result.
+#check @linearBackwardSpec_biasGradient
 ```
 
 ```leanOutput bRule (whitespace := lax)
-@linearBiasDerivSpec_eq : ∀ {inDim outDim : ℕ}
-  (x : Tensor ℝ [inDim]) (δ : Tensor ℝ [outDim]),
-  linearBiasDerivSpec Tensor.default δ x = δ
+@linearBackwardSpec_biasGradient : ∀ {inDim outDim : ℕ}
+  (layer : LinearSpec ℝ inDim outDim) (x : Tensor ℝ [inDim]) (δ : Tensor ℝ [outDim]),
+  (linearBackwardSpec layer x δ).biasGradient = δ
 ```
 
-The bias rule has two arguments it never reads, a weight-gradient tensor and the input. They are
-there so that all three rules have one call shape, which is what `linearBackwardSpec` relies on when
-it produces the `LinearGradients` record. The theorem is stated at `Tensor.default` for the unused
-slot to make the
-point that the value cannot matter.
+The bias gradient is already the incoming cotangent. `linearBackwardSpec` stores it directly in
+the result alongside the weight and input gradients; there is no separate calculation to run.
 
 The tensor types also prevent transposing the outer product accidentally: $`\delta\otimes x` has
 shape `[outDim, inDim]`, while $`x\otimes\delta` has shape `[inDim, outDim]`. For different input
 and output dimensions, the swapped outer product has the wrong type.
 The square example below still needs a value-level check.
-
-The outer-product orientation also follows directly from a single weight perturbation. Changing
-$`W_{ij}` by a small amount changes only output coordinate $`i`, with coefficient $`x_j`.
-The incoming cotangent weights that output by $`\delta_i`, giving the entry
-$`\delta_i x_j`. An input perturbation instead affects every output row, so the reverse rule
-sums those weighted contributions over `i`. These are different index operations even though
-both are matrix products. The three displayed signatures keep the input, weight, and bias
-roles separate so later proofs can rewrite the appropriate part of the backward record.
 
 # Linear-Layer Gradient Example
 
@@ -557,10 +533,6 @@ def layerX : Tensor Float [2] := [4, 5]
 def layerB : Tensor Float [2] := [2, -1]
 def cotangent : Tensor Float [2] := [2, -1]
 
--- The bias rule takes a weight-gradient argument it
--- never reads. This is what we pass for that slot,
--- to make the point that it cannot matter.
-def unusedGrad : Tensor Float [2, 2] := Tensor.default
 ```
 
 The forward pass first, so there is something for the cotangent to come back through:
@@ -586,9 +558,7 @@ By hand, $`1\cdot4+2\cdot5+2=16` and $`-1\cdot4+3\cdot5-1=10`. Now the three rev
   (Array Float)
 #eval Tensor.to (linearInputDerivSpec layerW cotangent)
   (Array Float)
-#eval Tensor.to
-  (linearBiasDerivSpec unusedGrad cotangent layerX)
-  (Array Float)
+#eval Tensor.to cotangent (Array Float)
 ```
 
 ```leanOutput revRun
@@ -902,10 +872,6 @@ accident {Informal.citep goldberg1991}[].
 Both implementations select a zero gradient at the kink, but the sign of the forward zero can
 affect a downstream division or another sign-sensitive operation. The `ℝ`-level
 theorem cannot distinguish those signs, since $`\mathbb R` has one zero.
-
-A runtime autograd system must specify its backward value at the kink. TorchLean chooses the
-subgradient `0`, making the backward rule total. This convention does not supply an ordinary
-`HasDerivAt` theorem at zero.
 
 Other primitives have domain conditions too. A theorem using the usual positive domain of `log`
 needs positivity;

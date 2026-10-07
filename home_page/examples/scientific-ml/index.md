@@ -22,8 +22,6 @@ the domain, while the viscosity term $\nu u_{xx}$ smooths them. That combination
 good compact benchmark for scientific ML: the model has to learn a time evolution pattern rather
 than a static regression label.
 
-"Benchmark" here means the standard test problem, not a timing measurement.
-
 There are two common neural ways to approach this equation.
 
 An operator-learning model sees examples of whole functions. Given an initial condition $u_0(x)$,
@@ -229,6 +227,16 @@ The separate `NN.Verification.PINN` workflows check exported artifacts. Python c
 weights, PDE descriptions, or dataset samples; Lean reloads those artifacts and checks the residual
 or dataset conditions. This is independent of the native training example above.
 
+The bundled `pinn_cert.json` in `NN/Examples/Verification/PINN` demonstrates the simpler residual
+$u_{xx}$ with fixed seed weights, not a trained Burgers solution. `pinn-cert` recomputes bounds for
+those built-in weights; it does not load the JSON's `model.weights` or validate its `domain`
+metadata. We can run it without regenerating the certificate or training a model.
+Its derivative-residual interval is roughly $[-25.65,25.65]$: matching those bounds checks replay,
+not that the residual is close to zero.
+
+`sample_dataset_1d.json` and `sample_dataset_2d.json` are small illustrative datasets for the
+space-time and two-spatial-coordinate paths. Their labels are not certified PDE solutions.
+
 Let's start with the small bundled examples:
 
 ```bash
@@ -241,11 +249,25 @@ scripts/lake.sh exe verify -- pinn-dataset-check
 For a Burgers-style training/export path on the Python side:
 
 ```bash
-python3 scripts/verification/pinn/train_pinn_1d.py \
+python3 scripts/verification/pinn/train_pinn.py evolution \
   --steps 500 \
   --nu 0.01 \
   --pde-expr "u_t + u * u_x - nu * u_xx"
 ```
+
+Use `train_pinn.py stationary` for a problem with two spatial coordinates. Both trainers export
+checkpoints and TorchLean weight JSON. To convert an existing checkpoint or initialize a fresh
+model, use `python3 scripts/verification/pinn/train_pinn.py export --help`.
+`import_burgers_shock_mat.py` in the same directory converts the external Burgers `.mat` dataset
+to JSON.
+
+When importing weights, set `meta.activation` to the activation used during training. The loader
+accepts `tanh`, `relu`, and `sin`/`sine`/`siren`. An absent metadata object or activation field
+selects `tanh`; malformed metadata and unsupported names reject the checkpoint. The loader checks
+the name, but cannot establish that it matches the model used to produce the weights.
+
+Certificates require a `pinn.pde` residual expression, such as `"uxx"` for $u_{xx}=0$.
+Missing, null, or non-string expressions are rejected. Write the residual, not an equation.
 
 The three commands check different objects. `pinn-cert` recomputes the compact certificate's residual
 intervals and compares them with the exported values. `pinn-cli` bounds a residual expression over a
@@ -254,13 +276,6 @@ small box; the PDE parser accepts both compact names such as `uxx` and subscript
 checks whether initial, boundary, and supervised data values are contained in the network output
 intervals. By default the dataset command is diagnostic and prints contained/missed counts. Add
 `--strict` when misses should make the command fail.
-
-Read the outputs as three different forms of evidence:
-
-- `pinn-cert` is a compact certificate replay.
-- `pinn-cli` is a local residual-expression check over a stated box.
-- `pinn-dataset-check` is a dataset containment diagnostic. It shows which samples are already
-  covered by the exported intervals and which samples need tighter bounds or a different artifact.
 
 ## Related Sources
 

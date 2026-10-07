@@ -87,11 +87,16 @@ Lean array or deriving its contents from the type.
 A backend profile stores a name, a kernel policy (device, provider preference, assurance policy,
 and VJP mode), the devices and providers declared available, and the capsule modules that form its
 planning registry. Capsule modules are validated for duplicate names when a graph is planned.
+
+The maintained CPU profile uses checked assurance. The default CUDA profile, `libTorchCuda`,
+admits recorded LibTorch implementation assumptions as well as retained numerical comparisons.
+The separate `checkedCuda` profile rejects operations without admissible checked evidence. Neither
+profile proves the native implementation correct.
 :::
 
 :::definition "backend_provider_catalog" (parent := "backend_selection") (lean := "NN.Backend.Registry.maintainedModules")
 The maintained registry collects {uses "backend_capsule_contracts"}[contract capsules] contributed
-by the attention, LibTorch, and reference modules. It contains planning metadata, not executable
+by the LibTorch and reference modules. It contains planning metadata, not executable
 handlers. Build availability filters CUDA entries from CPU-only profiles.
 :::
 
@@ -190,9 +195,9 @@ optional learning-rate schedule, and refreshes mode-dependent model buffers befo
 Checked import of captured PyTorch graph artifacts and the operation wire format.
 :::
 
-:::definition "pytorch_op_wire_format" (parent := "external_graph_bridges") (lean := "Interop.PyTorch.Wire.parseOpTag?")
-`NN.IR.OpTag` identifies each IR operation constructor. `Wire.opTag` gives its fixed v1 `kind`
-string, and `Wire.parseOpTag?` reads that string back into a tag.
+:::definition "pytorch_op_wire_format" (parent := "external_graph_bridges") (lean := "Interop.PyTorch.Wire.parseTag?")
+`NN.IR.OpTag` identifies each IR operation constructor. `Wire.tag` gives its fixed v1 `kind`
+string, and `Wire.parseTag?` reads that string back into a tag.
 :::
 
 :::theorem "pytorch_op_wire_round_trip" (parent := "external_graph_bridges") (lean := "Interop.PyTorch.Wire.parse_op_tag")

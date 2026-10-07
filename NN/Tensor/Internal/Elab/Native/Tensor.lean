@@ -11,7 +11,7 @@ public import NN.Tensor.Internal.Representation.Basic.Traversal -- shake: keep
 /-!
 # Certified native tensor construction
 
-This module lifts the operation-independent native array builder to shaped
+This module lifts the operation-independent native buffer builders to shaped
 tensors. Generated kernels fill one contiguous buffer with a `USize` loop,
 while the correctness theorem exposes the ordinary `Rep.ofFlatFn`
 semantics used throughout the library.
@@ -226,10 +226,10 @@ work.
 /--
 Evaluate a staged value before entering the consumer that uses it.
 
-Lean is strict, and `@[noinline]` prevents native code generation from
-sinking `value` into a consumer closure. The transformation scheduler uses
-this boundary when materializing an intermediate tensor is cheaper than
-composing another flat-index program.
+The no-inline call keeps the materialization step separate from its consumer.
+The transformation scheduler uses it when materializing an intermediate tensor
+is cheaper than composing another flat-index program. The equality theorem
+describes the returned value, not a compiler scheduling guarantee.
 -/
 @[noinline] def nativeStage {α : Type u} {β : Type v}
     (value : α) (next : α → β) : β :=

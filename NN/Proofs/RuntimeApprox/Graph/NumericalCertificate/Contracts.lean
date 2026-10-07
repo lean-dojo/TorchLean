@@ -23,7 +23,6 @@ open FloatLib.Floats.ExecFloat (Binary)
 open FloatLib.Numerics (Interval)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
-
 namespace Proofs
 namespace RuntimeApprox
 namespace NumericalCertificate
@@ -326,7 +325,10 @@ structure GraphRangeContract where
   name : String
   derive : NumericalRangeContext -> Node -> Except String RangeTransferResult
 
-/-- Deterministic registry used by graph certificate generation and replay. -/
+/-- Registry used by graph certificate generation and replay.
+
+Construct with `GraphRangeRegistry.ofArray` or `register` to reject duplicate keys. The structure
+itself does not enforce uniqueness; direct construction can supply ambiguous entries. -/
 structure GraphRangeRegistry where
   name : String
   contracts : Array GraphRangeContract
@@ -336,7 +338,9 @@ namespace GraphRangeRegistry
 /-- Empty named registry for downstream composition. -/
 def empty (name : String) : GraphRangeRegistry := ⟨name, #[]⟩
 
-/-- Find the unique contract associated with a numerical operation key. -/
+/-- Find the first contract associated with a numerical operation key.
+
+Registries built through `ofArray` or `register` have at most one matching contract. -/
 def find? (registry : GraphRangeRegistry) (key : NumericalOpKey) :
     Option GraphRangeContract :=
   registry.contracts.find? (fun contract => decide (contract.key = key))

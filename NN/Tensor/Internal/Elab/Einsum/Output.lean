@@ -43,23 +43,18 @@ private def sealSequentialOutput (output : Expr) : TermElabM Expr := do
   mkAuxDefinitionFor name output (zetaDelta := true)
 
 /--
-Compile the contraction into one arbitrary-rank output loop nest.
+Compile the contraction into a certified arbitrary-rank output buffer.
 
-Every output axis follows the same recursive lowering. Concrete portable
-lengths use native counters; symbolic and oversized lengths use `Fin.foldl`.
-Small concrete contractions evaluate one output at a time. With more than
-eight contraction terms, a concrete final axis may use four lanes, or eight
-lanes when enough output positions are available and the live read family is
-modest. `einsumOutputTileWidth?` selects the width. Multi-axis tiled contractions
-flatten into one native loop from 32 terms for four lanes and 128 terms for eight lanes. Untiled
-scalar contractions retain the nested arbitrary-rank fold. Each lane keeps
-the scalar reduction order, and both concrete widths advance one contraction
-coordinate per recursive step so their callbacks inline consistently. When
-the contraction is one native loop, completed tiles are appended directly to
-the output buffer; nested contractions retain the vector result required by
-their outer folds. Any incomplete tile is emitted by the scalar path. The
-returned certificate identifies the complete loop nest with the general
-`Array.ofFn` executor.
+The compiler first tries task-parallel outer-axis chunks. Otherwise, concrete
+portable buffers with at least 1,024 entries use a flat native traversal; the
+remaining cases use nested output folds. Native counters require portable
+concrete bounds, while symbolic or oversized axes retain `Fin.foldl`.
+
+Nested folds may tile the final axis according to `einsumOutputTileWidth?`.
+Each lane preserves its scalar contraction order, and incomplete tiles use
+the scalar path. A single native contraction may fuse its completed tile
+directly into the output append. Every selected path supplies an equality
+certificate against the general `Array.ofFn` reference.
 -/
 def compileEinsumOutput
     (checked inputTensorFamily scalarType storage : Expr)

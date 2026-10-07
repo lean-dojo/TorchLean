@@ -120,8 +120,9 @@ def defaultAlphaVec {n : Nat} (lo hi : Tensor α [n]) : Tensor α [n] :=
 /--
 One-node α-CROWN step function for a supported subset of IR ops.
 
-This is a *safe* (Option-returning) step: it returns `none` when required parent bounds or
-parameters are missing, or when dimensions mismatch.
+The step returns `none` when required parent bounds or parameters are missing, or when dimensions
+mismatch. Callers must validate node ids and the size of the IBP table before calling it; direct
+array indexing relies on those invariants.
 
 It is intended to be used for:
 - executable per-node certificate checking (recompute node `id` from certificate parents), and

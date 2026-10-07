@@ -569,7 +569,7 @@ def mhaAttentionDGraph {n dModel numHeads headDim : Nat} (c : ℝ) :
 Multi-head attention with a direct reshape split as a proof-carrying graph.
 
 This implements
-`x Wq Wk Wv Wo ↦ Wo (concat_heads (softmax(c * (Q Kᵀ)) V))`, with `Q`, `K`, and `V`
+`x Wq Wk Wv Wo ↦ concat_heads (softmax(c * (Q Kᵀ)) V) * Wo`, with `Q`, `K`, and `V`
 projected from `x`. Each projection is reshaped directly to `[numHeads, n, headDim]` without
 permuting its flat entries. The output merge swaps the head/token axes before flattening. These
 are the graph's declared operations; its input split differs from `Spec.splitHeadsSpec`.

@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Model -- shake: keep
+public import NN.Runtime.Autograd.Engine.LibTorch.Buffer
+public import NN.Runtime.Autograd.Engine.LibTorch.Controls
+public import NN.Runtime.Autograd.Torch.Core.Types
 
 /-!
 # Training Memory Monitoring

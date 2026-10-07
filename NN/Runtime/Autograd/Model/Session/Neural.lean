@@ -56,7 +56,6 @@ PyTorch analogue: `torch.nn.functional.mse_loss(..., reduction='mean')`.
 -/
 def mseLoss {α : Type} [TorchLean.Storage α] (s : Session α)
   [Inhabited α] [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [NatCast α]
-  [Runtime.Autograd.Torch.TensorTransfer α]
   {sh : Shape}
   (yhat target : Runtime.Autograd.Torch.TensorRef α sh) :
   IO (Runtime.Autograd.Torch.TensorRef α Shape.scalar) := do

@@ -28,7 +28,6 @@ namespace NN.Verification.Builtin.IBPWorkflow
 
 open _root_.Spec _root_.TorchLean
 open _root_.TorchLean.Tensor
-open _root_.TorchLean
 
 open NN.MLTheory.CROWN.Graph
 open NN.MLTheory.CROWN
@@ -80,10 +79,7 @@ def runMain {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α]
         (TorchLean.Tensor.map cast <|
           (Tensor.from (#[0.4] : Array Float)).reshape [1] (by dsimp; decide))
 
-  let lowered ←
-    match Verification.lowerForwardToIR (α := α) model params with
-    | .ok c => pure c
-    | .error e => throw <| IO.userError e
+  let lowered ← IO.ofExcept (Verification.lowerForwardToIR (α := α) model params)
 
   IO.println s!"lowered IR nodes: {lowered.graph.nodes.size}"
 
@@ -95,7 +91,7 @@ def runMain {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α]
   let ps : ParamStore α := lowered.seedInputBox xB
 
   let boxes := lowered.runIBP ps
-  let outB ← lowered.outputBoxOrThrow boxes
+  let outB ← IO.ofExcept (lowered.outputBox? boxes)
   IO.println s!"output box lo: {pretty outB.lo}"
   IO.println s!"output box hi: {pretty outB.hi}"
 

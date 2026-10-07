@@ -36,7 +36,7 @@ open Spec TorchLean TorchLean.Tensor
 namespace NN.Examples.Models.RL.Views.GymnasiumRollout
 
 /--
-A recorded CartPole rollout, checked in so this view renders without needing Gymnasium installed.
+Path of the local CartPole rollout. Run the export command above before opening the view.
 -/
 def rolloutPath : System.FilePath :=
   ("data/rl/gym_cartpole_rollout.json" : System.FilePath)

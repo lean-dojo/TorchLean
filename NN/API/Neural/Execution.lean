@@ -68,7 +68,7 @@ def vjp {σ τ : Shape} {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
     (state : State α stateShapes)
     (input : Tensor α σ) (outputGradient : Tensor α τ) :
     State α stateShapes × Tensor α σ :=
-  let gradients := Runtime.Autograd.Torch.TypedGraph.vjpWithSeed model
+  let gradients := Runtime.Autograd.Torch.TypedGraph.vjp model
     (TensorPack.append (ss₁ := stateShapes) (ss₂ := [σ])
       (State.Internal.toTensorPack state) (TensorPack.singleton input))
     outputGradient

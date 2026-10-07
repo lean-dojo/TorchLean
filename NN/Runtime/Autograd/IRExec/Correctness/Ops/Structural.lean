@@ -13,10 +13,8 @@ public import NN.Runtime.Autograd.IRExec.Correctness.Common
 
 Structural correctness facts for IR nodes that do not lower to ordinary executable operators.
 
-The first node of the source IR graph is the distinguished input, but the recursive `buildFrom` loop
-starts after that input node. If `buildFrom` ever encounters another `.input` node while lowering
-the tail, successful lowering is impossible. We keep that fact as a named theorem so the
-top-level semantic-equivalence proof can dispatch to it directly.
+The recursive `buildFrom` loop starts after the distinguished input node. Encountering another
+`.input` node in the tail makes successful lowering impossible.
 
 The `.detach` case checks the parent shape and applies `Tensor.detachSpec`, which preserves primal
 values and removes scalar differentiation metadata. This matters when the scalar carrier is a dual
@@ -36,8 +34,6 @@ open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
--- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
--- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
 /-- The recursive lowering pass cannot successfully lower an `.input` node in the graph tail. -/
@@ -109,7 +105,7 @@ theorem buildFrom_denoteAllFrom_detach
                   · simp [hOut] at hBuild
                     let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                       mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                        hOut ▸ Tensor.detachSpec (readTensor (α := α) (xs := ctx) ip))
+                        hOut ▸ Tensor.detachSpec (ctx.read ip))
                     let st1 : State α inShape :=
                       ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
                     have hRec :

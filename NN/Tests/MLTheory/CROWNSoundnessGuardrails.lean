@@ -11,6 +11,9 @@ public import NN.MLTheory.CROWN.Proofs.DirectedBackwardEvaluation
 public import NN.Tests.MLTheory.DirectedConvSemanticsRegression
 public import NN.Tests.MLTheory.DirectedIBPNormalization
 public import NN.Tests.MLTheory.DirectedIBPPointwise
+public import NN.MLTheory.CROWN.Proofs.DirectedIBPFullSoundness
+public import NN.MLTheory.CROWN.Proofs.DirectedIBPSoundness
+public import NN.Verification.Robustness.TopLabel
 public import NN.MLTheory.CROWN.Extras.FP32
 public import NN.Tests.MLTheory.Utils
 public import NN.Tests.Utils
@@ -365,10 +368,68 @@ example {g : NN.IR.Graph} {ps : ParamStore FP32} {ctx : AffineCtx}
     FP32.normalizationEpsilon_nonneg hinputs equation
     xB hx output houtput obj hdim hresult
 
+/-! ## Classification verdicts
+
+The graph computes `1 - relu x` and the constant `0.5`. On `[-2, 1]`, optimizing only the upper
+affine form falsely certifies the first logit. This checks the complete bound-to-verdict path.
+-/
+
+namespace LabelBounds
+
+open NN.MLTheory.CROWN NN.MLTheory.CROWN.Graph
+open NN.Verification.Robustness
+
+private def graph : NN.IR.Graph := ⟨#[
+  { id := 0, parents := #[], kind := .input, outShape := [1] },
+  { id := 1, parents := #[0], kind := .relu, outShape := [1] },
+  { id := 2, parents := #[1], kind := .linear, outShape := [2] }]⟩
+
+private def box (lo hi : Float) : FlatBox Float :=
+  { dim := 1, lo := [lo], hi := [hi] }
+
+private def params (xB : FlatBox Float) : ParamStore Float :=
+  { inputBoxes := ({} : Std.HashMap Nat (FlatBox Float)).insert 0 xB
+    linearWB := ({} : Std.HashMap Nat (LinParams Float)).insert 2
+      { m := 2, n := 1, w := [[-1], [0]], b := [1, 0.5] } }
+
+private def verdict (xB : FlatBox Float) (label : Nat) : IO Bool :=
+  match outputBoxCROWN? graph (params xB) xB 0 2 xB.dim with
+  | .ok bounds => pure (TopLabel.check bounds.lo bounds.hi label)
+  | .error e => throw <| IO.userError s!"CROWN label bounds verdict failed: {e}"
+
+def run : IO Unit := do
+  let crossing := box (-2) 1
+  -- The upper form alone would give the first logit the point range [1, 1].
+  let affines := runAffine graph (params crossing) { inputId := 0, inputDim := 1 }
+    (runIBP graph (params crossing))
+  let some upper := affines[2]!
+    | throw <| IO.userError "CROWN label bounds: upper affine form missing"
+  let separated :=
+    if hIn : crossing.dim = upper.inDim then
+      let upperOnly := upper.evalOnFlatBox crossing hIn
+      if h0 : 0 < upper.outDim then upperOnly.lo.getScalar ⟨0, h0⟩ > 0.5 else false
+    else false
+  unless separated do
+    throw <| IO.userError "CROWN label bounds: the test graph no longer separates the two forms"
+  if ← verdict crossing 0 then
+    throw <| IO.userError "CROWN label bounds certified label 0, which loses at x = 1"
+  if ← verdict crossing 1 then
+    throw <| IO.userError "CROWN label bounds certified label 1, which loses at x = -2"
+  -- On x ∈ [-2, -1] the first logit is exactly 1 and does win.
+  unless ← verdict (box (-2) (-1)) 0 do
+    throw <| IO.userError "CROWN label bounds rejected label 0 on a box where it always wins"
+  IO.println "CROWN label bounds verdict: ok"
+
+
+end LabelBounds
+
+/-- Check rejection and rounding behavior in the executable CROWN pipeline. -/
+
 def run : IO Unit := do
   checkConvolutionGuards
   checkLayerNormPayloadGuard
   checkAffineCancellation
+  LabelBounds.run
   checkUpperAffineSign
   checkRoundedReluAlphaRejected
   checkIBPForwardSupport

@@ -77,15 +77,15 @@ theorem linearInputDerivSpec_eq_vecMatMulSpec
   vecMatMulSpec δ layer.weights := rfl
 
 /--
-Spec identity: bias gradient for a linear layer.
+The complete linear backward result passes the bias cotangent through unchanged.
 
 For `y = W x + b`, the bias gradient is `∂L/∂b = δ`.
 -/
-theorem linearBiasDerivSpec_eq
+theorem linearBackwardSpec_biasGradient
   {inDim outDim : Nat}
+  (layer : Spec.LinearSpec ℝ inDim outDim)
   (x : Tensor ℝ [inDim])
   (δ : Tensor ℝ [outDim]) :
-  Spec.linearBiasDerivSpec
-      (Tensor.default : Tensor ℝ [outDim, inDim]) δ x = δ := rfl
+  (Spec.linearBackwardSpec layer x δ).biasGradient = δ := rfl
 
 end Proofs

@@ -37,7 +37,7 @@ theorem sub_spec_add_right {s : Shape} (a b c : Tensor ℝ s) :
     subSpec a (addSpec b c) = addSpec (subSpec a b) (negSpec c) := by
   apply TorchLean.Tensor.Internal.Rep.ext
   intro coordinate
-  simp [subSpec, addSpec, negSpec, map2Spec, mapSpec, Tensor.map]
+  simp [subSpec, addSpec, negSpec, map2Spec, Tensor.map]
   ring
 
 /-- Elementwise multiplication distributes over addition on the right. -/

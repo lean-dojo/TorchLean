@@ -23,5 +23,5 @@ public import NN.Tactic.Verify
 
 The `?` variants explain the proof or tensor transformation. Import individual tactic modules when
 the other domains are not needed. `NN.Tactic.Verify.Lowering` separately loads graph-lowering
-correctness rules. Differential tests live in `NN.Testing.Command`, not in this proof collection.
+correctness rules. Executable regression checks are separate from this proof collection.
 -/

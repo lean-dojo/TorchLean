@@ -41,7 +41,7 @@ namespace Internal
   match unaryParent? ctx.node.parents with
   | some pId =>
       let ip ← ctx.parentIdx pId ctx.node.outShape
-      pure <| mkForwardNode (fun values => operation (readTensor (xs := values) ip))
+      pure <| mkForwardNode (fun values => operation (values.read ip))
   | none =>
       throw s!"IRExec: node {ctx.index}: {label} expects 1 parent ({ctx.node.summary})"
 
@@ -55,7 +55,7 @@ namespace Internal
       let ia ← ctx.parentIdx aId ctx.node.outShape
       let ib ← ctx.parentIdx bId rightShape
       pure <| mkForwardNode (fun values =>
-        operation (readTensor (xs := values) ia) (readTensor (xs := values) ib))
+        operation (values.read ia) (values.read ib))
   | none =>
       throw s!"IRExec: node {ctx.index}: {label} expects 2 parents ({ctx.node.summary})"
 
@@ -148,12 +148,12 @@ def lowerLog {α : Type} [TorchLean.Storage α] [Context α]
 /-- Checked lowering for `.sin`. -/
 def lowerSin {α : Type} [TorchLean.Storage α] [Context α]
     {Γ : List Shape} (ctx : NodeLoweringContext α Γ) : NodeLoweringResult ctx :=
-  lowerUnary ctx "sin" (Tensor.mapSpec (fun x => MathFunctions.sin x))
+  lowerUnary ctx "sin" (Tensor.map (fun x => MathFunctions.sin x))
 
 /-- Checked lowering for `.cos`. -/
 def lowerCos {α : Type} [TorchLean.Storage α] [Context α]
     {Γ : List Shape} (ctx : NodeLoweringContext α Γ) : NodeLoweringResult ctx :=
-  lowerUnary ctx "cos" (Tensor.mapSpec (fun x => MathFunctions.cos x))
+  lowerUnary ctx "cos" (Tensor.map (fun x => MathFunctions.cos x))
 
 /-- Checked lowering for `.softmax axis`. -/
 def lowerSoftmax {α : Type} [TorchLean.Storage α] [Context α]
@@ -162,9 +162,6 @@ def lowerSoftmax {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId => do
       match Spec.Shape.axisInBounds? axis τ with
@@ -172,10 +169,10 @@ def lowerSoftmax {α : Type} [TorchLean.Storage α] [Context α]
           throw s!"softmax: invalid axis {axis} for rank {Spec.Shape.rank τ}"
       | some h =>
           parentIdx pId τ >>= fun ip =>
-            let forward := fun ctx : TensorReader α Γ =>
+            let forward := fun ctx : TensorLookup α Γ =>
               @Activation.softmaxSpec α _ _ τ axis h.down
-                (readTensor (α := α) (xs := ctx) ip)
-            pure <| fwd forward
+                (ctx.read ip)
+            pure <| mkForwardNode (τ := τ) forward
   | _ => throw s!"IRExec: node {i}: softmax expects 1 parent ({n.summary})"
 
 /-- Checked lowering for `.hardMaskedSoftmax mask`. -/
@@ -186,9 +183,6 @@ def lowerHardMaskedSoftmax {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId => do
       let ip ← parentIdx pId τ
@@ -197,10 +191,10 @@ def lowerHardMaskedSoftmax {α : Type} [TorchLean.Storage α] [Context α]
         | .ok value => pure value
         | .error msg =>
             throw s!"IRExec: node {i}: hard_masked_softmax: {msg} ({n.summary})"
-      let forward := fun ctx : TensorReader α Γ =>
+      let forward := fun ctx : TensorLookup α Γ =>
         Spec.hardMaskedSoftmaxSpec
-          (readTensor (α := α) (xs := ctx) ip) allowed
-      pure <| fwd forward
+          (ctx.read ip) allowed
+      pure <| mkForwardNode (τ := τ) forward
   | _ =>
       throw s!"IRExec: node {i}: hard_masked_softmax expects 1 parent ({n.summary})"
 

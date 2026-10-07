@@ -178,10 +178,9 @@ mutual
     | term => Term.rename (fun v => .tail v) term
 
   /-- Preserve typed operation arguments when a value is prepended to their environment. -/
-  def Args.weakenLeft {Γ : List Shape} {ss : List Shape} {t : Shape} :
-      Args Γ ss → Args (t :: Γ) ss
-    | .nil => .nil
-    | .cons term rest => .cons (Term.weakenLeft term) (Args.weakenLeft rest)
+  def Args.weakenLeft {Γ : List Shape} {ss : List Shape} {t : Shape}
+      (args : Args Γ ss) : Args (t :: Γ) ss :=
+    Args.rename (fun v => .tail v) args
 end
 
 namespace Term
@@ -234,11 +233,7 @@ def vars : (Γ : List Shape) → Args Γ Γ
     (args : Args Γ ss) (position : Var ss s) :
     Args.get (Args.weakenLeft (t := t) args) position =
       Term.weakenLeft (t := t) (Args.get args position) := by
-  induction position with
-  | head => cases args; rfl
-  | tail position ih =>
-      cases args with
-      | cons _ rest => exact ih rest
+  exact get_rename (fun v => .tail v) args position
 
 /-- Selecting a variable from the complete environment returns that variable as a term. -/
 @[simp] theorem get_vars {Γ : List Shape} {s : Shape} (position : Var Γ s) :

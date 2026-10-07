@@ -13,9 +13,6 @@ import TorchLeanBlueprint.Roles
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 
--- Opening these namespaces is what lets the `#check` lines below stay narrow enough
--- to read. Nothing is hidden by it: a printed signature always names its constants in
--- full, so the module a theorem came from is still visible in the output.
 open TorchLean
 open Optim
 open Optim.Muon
@@ -234,12 +231,8 @@ chapter on
 {ref "runtime-approximation"}[runtime approximation] is where the gap between those two claims gets
 its own bounds.
 
-The conclusion is about the `.parameters` field, not the state as a whole, and not the loss curve
-of a training run. The moment buffers are equal too, but that takes its own theorem, and
-generalization would require a separate statistical theorem with additional assumptions.
-
-The hypothesis `state.weightDecay = 0` lets a caller apply the result to any state for which it
-can prove that field is zero.
+The conclusion is about `.parameters`, not equality of the whole state or the loss curve of a
+training run. Generalization would require a separate statistical theorem.
 
 ## Optimizer State And Update Laws
 
@@ -259,8 +252,8 @@ a value that theorems can quantify over rather than a string in a config file:
 ```
 
 ```leanOutput otLaws (whitespace := lax)
-@TensorOptimizer.sgd : {α : Type} → [inst : Storage α] → [inst_1 : Context α] → [DecidableRel
-  fun x1 x2 => x1 > x2] → α → TensorOptimizer α
+@TensorOptimizer.sgd : {α : Type} → [inst : Storage α] → [inst_1 : Context α] →
+  α → TensorOptimizer α
 ```
 
 ```leanOutput otLaws (whitespace := lax)
@@ -567,14 +560,6 @@ iterative, or external. Lean only uses it as an orthogonalizing step after that 
 proved for that buffer, using the backend's contract. Executing the update alone does not
 discharge the success premise.
 
-Read the long conclusion from its innermost expression outward. `update ...` first constructs
-the new momentum state. `.optimizerState.momentumBuffer` selects the matrix sent to the backend,
-and `backend.orthogonalizer.apply` computes its direction. `HasApproxColumnGram eps` is then a
-property of that direction. The success premise uses the same updated buffer, so a certificate
-for yesterday's buffer cannot be substituted without another argument. This matching of the
-certificate input with the actual backend input is the essential content of a checked-step
-interface.
-
 The consumer side of the boundary is in
 {src "NN/Examples/Optimization/MuonCertificates.lean"}[NN.Examples.Optimization.MuonCertificates],
 where the certificates are combined with the update equation to say something about a parameter
@@ -643,9 +628,6 @@ soundness.
 The existential `∃ direction` binds one matrix shared by both conjuncts. A caller receives
 orthonormality of that matrix and the equation showing that it was used in the parameter step.
 Keeping the same witness in both places rules out proving a Gram fact about an unrelated matrix.
-In the concrete column example, the parameter equation is simply
-$`2-(1/10)(3/5)=97/50` and $`3-(1/10)(4/5)=73/25`. The certificate explains the direction's
-geometry; the subtraction equation connects that geometry to the two parameters that change.
 
 ## GaLore Projection Contracts
 
@@ -708,7 +690,7 @@ def demoTrace (x : ℚ) (k : ℕ) : Tensor ℚ [k + 1] :=
 
 #eval demoTrace 4 4
 
-#eval Tensor.mapSpec (fun x => x ^ 2) (demoTrace 4 4)
+#eval Tensor.map (fun x => x ^ 2) (demoTrace 4 4)
 
 #eval (demoStep (demoStep 4)) ^ 2
         == demoQ ^ 2 * (4 : ℚ) ^ 2
@@ -787,7 +769,7 @@ The following signatures show the one-step bound, its iteration, and the step-si
 -- explicit step-size conditions.
 #check @StrongMonotone
 #check @step_norm_sq_le
-#check @dist_sq_iterate_le_of_q_lt_one
+#check @dist_sq_iterate_le_of_q_nonneg
 #check @q_lt_one_of_mul_sq_lt
 #check @dist_sq_iterate_le_of_step_size
 #print axioms Optim.GD.dist_sq_iterate_le_of_step_size
@@ -805,9 +787,9 @@ The following signatures show the one-step bound, its iteration, and the step-si
 ```
 
 ```leanOutput otGdThms (whitespace := lax)
-@dist_sq_iterate_le_of_q_lt_one : ∀ {E : Type} [inst : NormedAddCommGroup E] [inst_1 :
+@dist_sq_iterate_le_of_q_nonneg : ∀ {E : Type} [inst : NormedAddCommGroup E] [inst_1 :
   InnerProductSpace ℝ E] (η μ : ℝ), 0 ≤ η → ∀ {L : NNReal} (g : E → E), StrongMonotone μ g →
-  LipschitzWith L g → ∀ {xStar x : E}, g xStar = 0 → 0 ≤ q η μ L → q η μ L < 1 → ∀ (k : ℕ),
+  LipschitzWith L g → ∀ {xStar x : E}, g xStar = 0 → 0 ≤ q η μ L → ∀ (k : ℕ),
   ‖(step η g)^[k] x - xStar‖ ^ 2 ≤ q η μ L ^ k * ‖x - xStar‖ ^ 2
 ```
 
@@ -835,11 +817,14 @@ monotonicity bounds the cross term from above because its coefficient is nonposi
 Lipschitzness bounds the squared gradient difference. Combining the three coefficients gives
 the displayed factor. The
 {src "NN/MLTheory/Optimization/StronglyConvexGD.lean"}[strongly convex gradient descent API] then
-iterates it. `dist_sq_iterate_le_of_q_lt_one` is the statement readers should remember:
+iterates it with `dist_sq_iterate_le_of_q_nonneg`:
 
 > If the contraction factor $`q(\eta,\mu,L)` is nonnegative and strictly below one, then after
 > $`k` gradient descent steps the squared distance to the root is at most $`q^k` times the initial
 > squared distance.
+
+The bound itself only needs $`q\ge 0`. When $`q<1`, its right-hand side tends to zero;
+`tendsto_iterate_of_q_lt_one` proves that the iterates converge to the supplied root.
 
 The factor $`q^k` is in the conclusion, not only in the prose, and `(step η g)^[k]` is Mathlib's
 function iteration, so "after $`k` steps" is literal {Informal.citep mathlib2020}[]. Note also
@@ -865,18 +850,6 @@ Two companions turn the abstract condition on $`q` into a condition on the step 
 `dist_sq_iterate_le_of_step_size` packages the geometric bound together with $`q<1` under
 $`0\le\mu\le L` and that step-size inequality, so a caller checks numbers rather than an inequality
 about $`q`. The demo above checked exactly those numbers: $`\eta L^2=1` against $`2\mu=4`.
-
-The contraction and convergence shapes are:
-
-$$`\|T_\eta(x)-T_\eta(y)\|^2\le q\|x-y\|^2`
-
-with a typical monotone/Lipschitz factor
-
-$$`q=1-2\eta\mu+\eta^2L^2,`
-
-and then
-
-$$`\|x_t-x^\star\|^2\le q^t\|x_0-x^\star\|^2.`
 
 The scalar specialization is proved separately as `ScalarGD.error_abs_contract_real`, which is the
 version closest to the rational demo above:
@@ -940,10 +913,7 @@ The first-order inequality itself mentions Mathlib's `gradient f x`. To obtain i
 convex-analysis specification, the same source provides a pointwise bridge from `StrongConvexOn`
 on the whole space and differentiability at the base point. Differentiability everywhere supplies
 the global first-order hypothesis. This supplies the mathematical justification for
-treating the named gradient as the tangent term. Once first-order inequalities are available at
-both $`x` and $`y`, adding them cancels $`f(x)` and $`f(y)`, and the two quadratic terms add to
-$`\mu\|x-y\|^2`. Neither that cancellation nor strong monotonicity supplies the separate
-upper bound on gradient differences required by `LipschitzWith`.
+treating the named gradient as the tangent term. It does not supply the separate Lipschitz bound.
 
 The bridge is useful because autograd theorems usually speak about derivatives of a loss, while
 convergence theorems often speak about a gradient map. The theorem connects those two vocabularies

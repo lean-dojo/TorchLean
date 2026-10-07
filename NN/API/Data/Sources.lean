@@ -27,7 +27,7 @@ namespace TorchLean
 namespace Data
 
 export TorchLean.Data.IO
-  (CsvOptions readCsvFloatRows readNpy readNpyLeadingAxisPrefix)
+  (CsvOptions readCsv readNpy readNpyPrefix)
 
 /-- Require that every path exists, adding `hint` to a missing-file error when supplied. -/
 def requireFiles (exeName : String) (paths : Array System.FilePath) (hint : String := "") :
@@ -136,7 +136,7 @@ def Internal.readNpyTensor (path : System.FilePath) (dims : Shape)
           else
             pure <| Internal.tensorFromFlat "npy" dims data.values
   | .leadingPrefix =>
-      let res ← readNpyLeadingAxisPrefix path dims.toArray
+      let res ← readNpyPrefix path dims.toArray
       match res with
       | .error e => pure (.error e)
       | .ok data => pure <| Internal.tensorFromFlat "npy" dims data.values
@@ -183,7 +183,7 @@ private def readCsvSupervised {α : Type} [TorchLean.Storage α]
     (path : System.FilePath) (inputWidth targetWidth : Nat) (options : CsvOptions := {}) :
     IO (Except String (SampleStream
       (TorchLean.Sample.Supervised α [inputWidth] [targetWidth]))) := do
-  let rowsResult ← readCsvFloatRows path options
+  let rowsResult ← readCsv path options
   match rowsResult with
   | .error e => pure (.error e)
   | .ok rows =>
@@ -247,7 +247,7 @@ def Internal.loadCsvTensor
     IO (Except String (Tensor Float dims)) := do
   match hDims : dims with
   | .dim rowsExpected (.dim colsExpected .scalar) =>
-      let rowsRes ← readCsvFloatRows path options
+      let rowsRes ← readCsv path options
       match rowsRes with
       | .error e => pure (.error e)
       | .ok rows =>
@@ -264,7 +264,7 @@ def Internal.loadCsvTensor
                   (Internal.tensorFromFlat "csv" [rowsExpected, colsExpected] flat).map
                     (fun tensor => by simpa [hDims] using tensor)
   | .dim n .scalar =>
-      let rowsRes ← readCsvFloatRows path options
+      let rowsRes ← readCsv path options
       match rowsRes with
       | .error e => pure (.error e)
       | .ok rows =>
@@ -316,10 +316,9 @@ opaque load {α : Type} [TorchLean.Storage α] [TorchLean.Runtime.FromFloat α]
     {shape : Shape} (path : System.FilePath) (csvOptions : Data.CsvOptions := {}) :
     IO (Tensor α shape) := do
   let loaded ← Data.Internal.loadFloatTensor path shape csvOptions
-  match loaded with
-  | .ok tensor => pure <| Tensor.map Runtime.ofFloat tensor
-  | .error message =>
-      throw <| IO.userError s!"Tensor.load: {message}"
+  let tensor ← IO.ofExcept <|
+    loaded.mapError fun message => s!"Tensor.load: {message}"
+  pure <| Tensor.map Runtime.ofFloat tensor
 
 end Tensor
 
@@ -474,11 +473,9 @@ opaque load {α : Type} [TorchLean.Storage α]
     (source : TabularSupervisedSource) :
     IO (SampleStream
       (TorchLean.Sample.Supervised α [source.inputWidth] [source.targetWidth])) := do
-  match ← readCsvSupervised (α := α) source.path source.inputWidth source.targetWidth
-      source.csvOptions with
-  | .ok samples => pure samples
-  | .error message =>
-      throw <| IO.userError s!"TabularSupervisedSource.load: {message}"
+  let samples ← readCsvSupervised (α := α) source.path source.inputWidth source.targetWidth
+    source.csvOptions
+  IO.ofExcept <| samples.mapError fun message => s!"TabularSupervisedSource.load: {message}"
 
 end TabularSupervisedSource
 

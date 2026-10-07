@@ -102,7 +102,8 @@ backend record rather than changing Muon's semantics.
 
 The convergence theorems in this directory are exact `ℝ` statements. For strongly convex
 gradient descent, `Optimization/StronglyConvexGD.lean` states the contraction with the explicit
-`q^k` factor (`dist_sq_iterate_le_of_q_lt_one`) and derives the step-size form
+`q^k` factor (`dist_sq_iterate_le_of_q_nonneg`), proves convergence when `q < 1`
+(`tendsto_iterate_of_q_lt_one`), and derives the step-size form
 (`dist_sq_iterate_le_of_step_size`). Applying them to executable
 Float32 operations, CUDA kernels, or a particular trained model requires a separate refinement
 argument with explicit floating-point error accounting.

@@ -16,12 +16,11 @@ Scale-aware approximation helpers.
 This module adds an *optional* layer that tracks a per-tensor "scale bound" (a nonnegative bound
 on `linfNorm`) alongside the existing `eps` error bounds.
 
-It is designed to be used to *derive* readable abs+rel tolerances from existing eps-style proofs:
-given an error budget `eps` and a scale bound `B`, we can form an `ApproxTol` whose `rel` component
-is computed from `(eps / B)` (with safe handling of `B = 0`).
-
-Nothing here changes existing forward/backward frameworks; it only provides new predicates and
-lemmas you can opt into.
+An absolute budget `eps` and a reference magnitude `B` give an abs-plus-rel tolerance whose
+relative coefficient is `eps / B` (zero when `B = 0`). The full absolute budget is retained, so this
+conversion weakens the tolerance; it does not establish a relative-only error bound. Its soundness
+does not require a magnitude proof. Actual magnitude propagation uses the separate `scaleTensor`
+and `scaleCtx` predicates.
 
 ## PyTorch correspondence / citations
 This is the proof-oriented analogue of reasoning with a magnitude/scale estimate (e.g. `‖x‖∞ ≤ B`)
@@ -71,11 +70,7 @@ def unsnoc {τ : Shape} : {ss : List Shape} → BList (ss ++ [τ]) → BList ss 
       let (ys, last) := unsnoc (ss := ss) (τ := τ) xs
       (.cons x ys, last)
 
-/-- `unsnoc` undoes `snoc`.
-
-Graph evaluation appends one bound per node, so the pair `snoc`/`unsnoc` is how a scale list follows
-a growing context. This lemma is what keeps the induction on graph length from having to reason
-about list append at all. -/
+/-- `unsnoc` undoes `snoc`. -/
 @[simp] theorem unsnoc_snoc {ss : List Shape} {τ : Shape} (xs : BList ss) (e : ℝ≥0) :
     unsnoc (ss := ss) (τ := τ) (snoc (ss := ss) (τ := τ) xs e) = (xs, e) := by
   induction ss with
@@ -137,10 +132,7 @@ theorem scaleCtx_cast {α : Type} [TorchLean.Storage α] {toSpec : α → SpecSc
   cases h
   simp
 
-/-- Appending a tensor with a known scale bound extends the context predicate.
-
-This is the step used every time a node's output is pushed onto the context: the existing bounds are
-untouched and the new one only has to hold for the new entry. -/
+/-- Appending a tensor with a known scale bound extends the context predicate. -/
 theorem scaleCtx_snoc {α : Type} [TorchLean.Storage α] {toSpec : α → SpecScalar} {ss : List Shape}
     {τ : Shape}
     {xS : TorchLean.TensorPack SpecScalar ss} {xR : TorchLean.TensorPack α ss} {bs : BList ss}
@@ -217,10 +209,7 @@ theorem scaleCtx_unsnoc {α : Type} [TorchLean.Storage α] {toSpec : α → Spec
                   simpa [TorchLean.TensorPack.unsnoc, BList.unsnoc, scaleCtx]
                     using And.intro h.1 ht.1
 
-/-- Every individual entry of a context that satisfies `scaleCtx` satisfies its own scale bound.
-
-Stated for an arbitrary index rather than only for the head, because a node reads its inputs from
-anywhere in the context. -/
+/-- Every entry of a context satisfying `scaleCtx` satisfies its own scale bound. -/
 theorem scaleCtx_get {α : Type} [TorchLean.Storage α] {toSpec : α → SpecScalar} {Γ : List Shape}
     {xS : TorchLean.TensorPack SpecScalar Γ} {xR : TorchLean.TensorPack α Γ} {bs : BList Γ}
     (h : scaleCtx (α := α) toSpec xS xR bs) (i : Fin Γ.length) :
@@ -263,11 +252,7 @@ def tolFromEpsScale (eps : ℝ) (B : ℝ≥0) : ApproxTol :=
   let rel : ℝ := if (B : ℝ) = 0 then 0 else eps / (B : ℝ)
   ApproxTol.ofReal eps rel 1
 
-/-- `tolFromEpsScale` is at least as permissive as the absolute-only tolerance in every field.
-
-That is the whole reason the absolute component is kept rather than traded for the relative one: the
-derived tolerance can then be reached from an absolute bound by monotonicity alone, with no case
-analysis on whether `B` is zero. -/
+/-- `tolFromEpsScale` is at least as permissive as the absolute-only tolerance in every field. -/
 theorem absOnly_le_tolFromEpsScale (eps : ℝ) (B : ℝ≥0) :
     (ApproxTol.absOnly eps).abs ≤ (tolFromEpsScale eps B).abs ∧
     (ApproxTol.absOnly eps).rel ≤ (tolFromEpsScale eps B).rel ∧
@@ -280,10 +265,8 @@ theorem approxTensorWithTol_from_scale {α : Type} [TorchLean.Storage α] {s : S
     {spec : SpecTensor s} {runtime : Tensor α s} (eps : ℝ) (B : ℝ≥0)
     (h : approxTensor (α := α) (toSpec := toSpec) spec runtime eps) :
     approxTensorWithTol (α := α) (toSpec := toSpec) spec runtime (tolFromEpsScale eps B) := by
-  -- `approxTensor` -> `absOnly eps`, then enlarge tolerance (abs+rel) via monotonicity.
   have habsOnly :
       approxTensorWithTol (α := α) (toSpec := toSpec) spec runtime (ApproxTol.absOnly eps) := by
-    -- use eps->absOnly lift lemma for `approxWith`
     have : approxWith (α := α) (toSpec := toSpec) (norm := linfNorm) spec runtime eps := by
       simpa [approxTensor] using h
     simpa [approxTensorWithTol] using
@@ -297,8 +280,8 @@ theorem approxTensorWithTol_from_scale {α : Type} [TorchLean.Storage α] {s : S
 and its own scale bound.
 
 As in `approxTensorWithTol_from_scale`, no scale hypothesis is needed: the derived tolerance is
-reached purely by weakening the absolute bound. A scale bound on the context only makes the
-relative component informative; it is not required for soundness. -/
+reached purely by weakening the absolute bound. A magnitude proof can justify the chosen reference
+scale, but an upper magnitude bound does not imply a relative-only error guarantee. -/
 theorem approxCtx_get_tolFromEpsScale {α : Type} [TorchLean.Storage α] {toSpec : α → SpecScalar}
     {Γ : List Shape}
     {xS : TorchLean.TensorPack SpecScalar Γ} {xR : TorchLean.TensorPack α Γ} {eps : EList Γ}

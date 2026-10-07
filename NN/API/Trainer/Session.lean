@@ -284,7 +284,7 @@ def openSession {σ τ : Shape} {α β : Type}
     let frozenPublicState := nn.State.Internal.fromTensorPack frozenPack
     let parameters ← Runtime.Autograd.Torch.ParamList.ofPack
       (nn.State.Internal.toTensorPack frozenState)
-    let evaluator ← Runtime.Autograd.Model.Module.Evaluator.withState
+    let evaluator ← Runtime.Autograd.Model.Module.Evaluator.new
       (β := Unit) (stateShapes := nn.stateShapes trainer.model) (inputShapes := [σ])
       (dataInputShapes := []) (nn.forward trainer.model (α := α) (mode := .eval))
       trainer.runtime.executionSettings parameters

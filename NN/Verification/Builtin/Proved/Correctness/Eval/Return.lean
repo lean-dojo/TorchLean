@@ -10,6 +10,10 @@ public import NN.Verification.Builtin.Proved.Correctness.Eval.NodeShape
 
 /-!
 # Lowered Forward Evaluation: Return Value Shape
+
+The source return index can refer to any earlier value, not only the last binding. These lemmas
+separate evaluation of the complete value table from selecting that index and recovering its
+statically declared tensor shape.
 -/
 
 @[expose] public section
@@ -25,7 +29,7 @@ namespace Correctness
 open NN.Verification.Builtin
 
 /-!
-Helper functions for the final "lowered forward = DSL forward" theorem.
+Helpers for equality between lowered IR and source forward evaluation.
 
 - `finalShapes g` is the list of available value shapes at the point where `g` returns.
   (It is the `ss` parameter of the `.ret` constructor reached by running through `.let1`.)
@@ -110,14 +114,12 @@ theorem evalForwardLetChain_eq_evalForwardLetChainVals_outputIndex
   classical
   induction g generalizing vals with
   | ret y =>
-      -- Definitional: `evalForwardLetChainVals (.ret _) = pure vals`.
       rfl
   | @let1 ss₀ mid₀ out₀ node gNext ih =>
       cases hNode :
           evalNode (α := α) (paramShapes := paramShapes) (inShape := inShape) (ss := ss₀)
             (out := mid₀) node params vals with
       | error e =>
-          -- Short-circuiting on `Except.error` makes both sides definitional.
           simp [evalForwardLetChain, evalForwardLetChainVals, outputIndex, hNode]
           rfl
       | ok vOut =>
@@ -151,12 +153,10 @@ theorem evalForwardLetChainVals_shapes_of_hShapes
       cases hOk
       simpa [finalShapes]
   | @let1 ss₀ mid₀ out₀ node gNext ih =>
-      -- Unfold once and split on `evalNode`.
       cases hNode :
           evalNode (α := α) (paramShapes := paramShapes) (inShape := inShape) (ss := ss₀)
             (out := mid₀) node params vals with
       | error e =>
-          -- impossible: `hOk` claims the whole computation returned `ok`.
           simp [evalForwardLetChainVals, hNode] at hOk
           cases hOk
       | ok vOut =>
@@ -170,7 +170,6 @@ theorem evalForwardLetChainVals_shapes_of_hShapes
               Except.ok vals' := by
             simpa [evalForwardLetChainVals, hNode, Pure.pure, Except.pure, Except.bind,
               Except.instMonad, bind, pure] using hOk
-          -- Apply IH to the suffix.
           simpa [finalShapes, evalForwardLetChainVals, hNode] using
             ih (vals := vals.push vOut) (vals' := vals') (hShapes := hShapes') (hOk := hOk')
 

@@ -45,7 +45,7 @@ def sum {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α] [Zero 
   executeRecorded (α := α) s .reduceSum #[x.identity?] cpu cuda
 
 /-- Flatten a tensor to a 1D vector. PyTorch: `torch.flatten`. -/
-def flatten {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Inhabited α] {sh : Shape}
+def flatten {α : Type} [TorchLean.Storage α] (s : EagerSession α) {sh : Shape}
   (x : TensorRef α sh) : IO (TensorRef α [Spec.Shape.size sh]) := do
   let cpu := do
     s.recordCpu fun t0 => keepTapeOnError t0 <|
@@ -60,7 +60,7 @@ Reshape a tensor while preserving total number of elements.
 
 PyTorch comparison: `torch.reshape` / `view` (when valid).
 -/
-def reshape {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Inhabited α] {sh1 sh2 : Shape}
+def reshape {α : Type} [TorchLean.Storage α] (s : EagerSession α) {sh1 sh2 : Shape}
   (x : TensorRef α sh1) (h : Spec.Shape.size sh1 = Spec.Shape.size sh2) : IO (TensorRef α sh2) := do
   let cpu := do
     s.recordCpu fun t0 => keepTapeOnError t0 <|
@@ -82,7 +82,7 @@ def swapAdjacentAtDepth {α : Type} [TorchLean.Storage α] (s : EagerSession α)
   executeRecorded (α := α) s .permute #[x.identity?] cpu cuda
 
 /-- Broadcast a tensor to a larger shape. PyTorch: implicit broadcasting / `expand`. -/
-def broadcastTo {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Inhabited α] [Add α]
+def broadcastTo {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α]
   [Zero α]
   {sh1 sh2 : Shape} (cb : Shape.CanBroadcastTo sh1 sh2) (x : TensorRef α sh1) : IO (TensorRef α sh2)
     := do
@@ -96,7 +96,6 @@ def broadcastTo {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Inhabi
 
 /-- Sum-reduce along `axis`. PyTorch: `torch.sum(x, dim=axis)`. -/
 def reduceSum {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α] [Zero α]
-  [Inhabited α]
   {sh : Shape} (axis : Nat) [valid : Shape.HasNonemptyAxis axis sh] [wf : Shape.WellFormed sh]
   (x : TensorRef α sh) : IO (TensorRef α (shapeAfterSum sh axis)) := do
   let cpu := do
@@ -108,7 +107,8 @@ def reduceSum {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α] 
   executeRecorded (α := α) s .reduceSum #[x.identity?] cpu cuda
 
 /-- Mean-reduce along `axis`. PyTorch: `torch.mean(x, dim=axis)`. -/
-def reduceMean {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
+def reduceMean {α : Type} [TorchLean.Storage α] (s : EagerSession α)
+    [Add α] [Zero α] [Div α] [Mul α] [One α] [NatCast α]
   {sh : Shape} (axis : Nat) [valid : Shape.HasNonemptyAxis axis sh] [wf : Shape.WellFormed sh]
   (x : TensorRef α sh) : IO (TensorRef α (shapeAfterSum sh axis)) := do
   let cpu := do

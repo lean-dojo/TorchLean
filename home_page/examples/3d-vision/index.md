@@ -14,8 +14,9 @@ counts.
   <img src="{{ '/assets/media/examples/showcase/geometry3d-vision-certificates.png' | relative_url }}" alt="3D vision projection certificate workflow"/>
 </div>
 
-The illustration sketches the workflow. The checker below establishes projection and enclosure
-conditions for the supplied points; its result does not certify the detector's pose or box dimensions.
+The illustration sketches the workflow. Here we check projection and enclosure for the supplied
+points—not the pose, dimensions, or perpendicular edges of a detected cuboid. The sections below
+show the exact certificate fields and checks.
 
 ## Checked Geometry
 
@@ -107,9 +108,41 @@ The accepted overlay uses the projected 3D footprint as the claimed box. The str
 overlay uses WildDet3D's own 2D detection box. On the default example image, Lean rejects the strict
 claim because projected 3D corners fall outside that box.
 
+WildDet3D downloads its Hugging Face Space source and checkpoint, including the SAM and
+LingBot-depth dependencies. We install `utils3d` separately with `--no-deps` because its full
+dependency chain includes Open3D/GLTF visualization packages that the exporter does not use.
+The exporter rejects detections below `--min-score`.
+
+Choose the claimed box with `--bbox-source`:
+
+- `auto`, the default, uses the model's 2D box when it encloses the projected corners. Otherwise,
+  it records the mismatch in metadata and exports the projected footprint.
+- `model2d` keeps the model's box, so the checker can reject an inconsistent prediction.
+- `projected-envelope` always uses the image-clipped projected footprint with the requested padding.
+
 <div class="media-slab">
   <img src="{{ '/assets/media/examples/bug-zoo/geometry3d-wilddet3d-bbox-diagnostic.png' | relative_url }}" alt="WildDet3D model 2D box compared with projected 3D footprint"/>
 </div>
+
+### Combining A Detector With Depth
+
+We can also combine `facebook/detr-resnet-50` detections with
+`depth-anything/Depth-Anything-V2-Small-hf` depth estimates. The producer backprojects each selected
+image box and depth crop into eight camera-frame corners. Lean checks the exported projection
+contract; it does not establish that the label or estimated depth matches the scene.
+
+```bash
+python3 -m pip install -r scripts/verification/geometry3d/requirements-realworld.txt
+python3 scripts/verification/geometry3d/export_hf_depth_box3d_cert.py \
+  --batch-manifest scripts/verification/geometry3d/realworld_manifest.json \
+  --batch-out-dir _external/geometry3d/realworld --verify
+python3 scripts/verification/geometry3d/render_box3d_cert_overlay.py \
+  --glob '_external/geometry3d/realworld/*.json' \
+  --out-dir _external/geometry3d/overlays/realworld --contact-sheet
+```
+
+The JSON artifacts go under `_external/geometry3d/realworld/`; the overlays and
+`geometry3d_contact_sheet.png` go under `_external/geometry3d/overlays/realworld/`.
 
 ## What A JSON Artifact Looks Like
 
@@ -155,7 +188,16 @@ python3 scripts/verification/geometry3d/export_wilddet3d_box3d_cert.py \
   --overlay
 ```
 
-The renderer runs the Lean checker and marks accepted and rejected artifacts. A model-box
+To compare the claimed box with the projected corners:
+
+```bash
+python3 scripts/verification/geometry3d/render_box3d_cert_overlay.py --view intervals \
+  --cert _external/geometry3d/wilddet3d/wilddet3d_cat_box3d_cert.json \
+  --out _external/geometry3d/wilddet3d/wilddet3d_bbox_diagnostic.png
+```
+
+The default overlay runs the Lean checker and marks accepted and rejected artifacts. The
+interval view above only compares the exported metadata; it does not run the checker. A model-box
 mismatch remains visible in this diagnostic; it is not repaired by changing the claimed box.
 
 The Bug Zoo wrapper re-exports the theorem under a tutorial-facing name:

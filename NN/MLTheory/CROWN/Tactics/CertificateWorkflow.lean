@@ -137,25 +137,19 @@ def parseCertificate (j : Json) : Except String CrownCert := do
   let vPositive ←
     parseBoolFieldOr vBounds "guaranteed_positive" (vLower > 0.0)
 
-  -- Parse gradient bounds (optional; accept supported key names)
-  let (gradLo, gradHi) ← do
+  let gradBounds? :=
     match j.getObjVal? "gradient_bounds" with
-    | .ok gradBounds =>
-      let loJson ← gradBounds.getObjVal? "lo"
-      let hiJson ← gradBounds.getObjVal? "hi"
-      let lo ← parseFiniteFloatArray "gradient_bounds.lo" loJson
-      let hi ← parseFiniteFloatArray "gradient_bounds.hi" hiJson
+    | .ok bounds => some ("gradient_bounds", bounds)
+    | .error _ => (j.getObjVal? "grad_bounds").toOption.map ("grad_bounds", ·)
+  let (gradLo, gradHi) ←
+    match gradBounds? with
+    | some (key, bounds) => do
+      let loJson ← bounds.getObjVal? "lo"
+      let hiJson ← bounds.getObjVal? "hi"
+      let lo ← parseFiniteFloatArray s!"{key}.lo" loJson
+      let hi ← parseFiniteFloatArray s!"{key}.hi" hiJson
       pure (lo, hi)
-    | .error _ =>
-      match j.getObjVal? "grad_bounds" with
-      | .ok gradBounds =>
-        let loJson ← gradBounds.getObjVal? "lo"
-        let hiJson ← gradBounds.getObjVal? "hi"
-        let lo ← parseFiniteFloatArray "grad_bounds.lo" loJson
-        let hi ← parseFiniteFloatArray "grad_bounds.hi" hiJson
-        pure (lo, hi)
-      | .error _ =>
-        pure (#[], #[])
+    | none => pure (#[], #[])
 
   -- Parse Vdot bounds
   let vdotBounds ← j.getObjVal? "Vdot_bounds"

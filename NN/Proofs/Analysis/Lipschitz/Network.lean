@@ -47,10 +47,6 @@ theorem _root_.LipschitzWith.tensorL2Dist_le {s t : Shape} {f : Tensor ℝ s →
     tensorL2Dist (f x) (f y) ≤ K * tensorL2Dist x y := by
   simpa only [tensorL2Dist_eq_dist] using hf.dist_le_mul x y
 
--- ====================================================================
--- RELU LIPSCHITZ CONTINUITY PROOFS
--- ===================================================================
-
 /--
 Pointwise ReLU is 1-Lipschitz for scalars.
 Foundation for tensor-level Lipschitz bounds.
@@ -76,7 +72,7 @@ theorem relu_lipschitz_general {s : Shape} (x y : Tensor ℝ s) :
   rw [sum_spec_eq_coord_sum, sum_spec_eq_coord_sum]
   apply Finset.sum_le_sum
   intro coordinate _
-  simpa [reluSpec, mapSpec, subSpec, mulSpec, Tensor.map] using
+  simpa [reluSpec, Tensor.map, subSpec, mulSpec] using
     relu_squared_difference_le (x coordinate) (y coordinate)
 
 /-- ReLU is `1`-Lipschitz for the Euclidean metric on real tensors. -/
@@ -127,16 +123,6 @@ noncomputable def matrixFrobeniusNorm {m n : Nat} (W : Tensor ℝ [m, n]) : ℝ 
   Real.sqrt (∑ i : Fin m, tensorNormSquared (get W i))
 
 /--
-Compatibility between two row/column access views:
-
-`getScalar (get W i) j` and `get2 W i j` name the same scalar entry of a matrix tensor.
--/
-private theorem getScalar_get_eq_get2 {m n : Nat}
-    (W : Tensor ℝ [m, n]) (i : Fin m) (j : Fin n) :
-    getScalar (get W i) j = get2 W i j := by
-  rfl
-
-/--
 Each coordinate of `matVecMulSpec W x` is the dot product of the corresponding matrix row with
 `x`.
 
@@ -146,13 +132,8 @@ private theorem mat_vec_coord_eq_dot_row {m n : Nat}
     (W : Tensor ℝ [m, n])
     (x : Tensor ℝ [n]) (i : Fin m) :
     getScalar (matVecMulSpec W x) i = dot (get W i) x := by
-  classical
-  -- Expand both sides as `Finset.univ` sums and match terms.
-  rw [getScalar_mat_vec_mul_spec (A := W) (v := x) (i := i)]
-  rw [dot_vec_eq_sum (a := get W i) (b := x)]
-  refine Finset.sum_congr rfl ?_
-  intro j _
-  simp [getScalar_get_eq_get2 (W := W) (i := i) (j := j)]
+  rw [getScalar_mat_vec_mul_spec, dot_vec_eq_sum]
+  rfl
 
 /-- The Frobenius norm bounds matrix-vector multiplication in the Euclidean norm. -/
 theorem matVec_norm_le_frobenius {m n : Nat}
@@ -214,8 +195,8 @@ theorem linear_op_norm_bound {m n : Nat}
 Composition of Lipschitz functions preserves Lipschitz property.
 Essential for analyzing deep neural networks.
 
-This is `LipschitzWith.comp` read through `tensorL2Dist_eq_dist`. A negative `Lf` is degenerate:
-the hypothesis on `f` then forces `x = y`, and both sides vanish.
+The nonnegative `Lg` preserves the inequality when multiplying the bound for `f`.
+No sign assumption on `Lf` is needed.
 -/
 theorem lipschitz_composition {s t u : Shape}
   (f : Tensor ℝ s → Tensor ℝ t) (g : Tensor ℝ t → Tensor ℝ u)
@@ -225,22 +206,10 @@ theorem lipschitz_composition {s t u : Shape}
   (hLg : 0 ≤ Lg)
   (x y : Tensor ℝ s) :
   tensorL2Dist (g (f x)) (g (f y)) ≤ (Lg * Lf) * tensorL2Dist x y := by
-  rcases le_or_gt 0 Lf with hLf | hLf
-  · have h :=
-      ((lipschitzWith_of_tensorL2Dist_le hLg hg).comp
-        (lipschitzWith_of_tensorL2Dist_le hLf hf)).tensorL2Dist_le x y
-    exact h
-  · have hxy : x = y := by
-      have h0 : 0 ≤ Lf * tensorL2Dist x y :=
-        le_trans (by rw [tensorL2Dist_eq_dist]; exact dist_nonneg) (hf x y)
-      have hle : tensorL2Dist x y ≤ 0 := by
-        by_contra hpos
-        have hpos' : 0 < tensorL2Dist x y := lt_of_not_ge hpos
-        exact absurd h0 (not_le.mpr (mul_neg_of_neg_of_pos hLf hpos'))
-      rw [tensorL2Dist_eq_dist] at hle
-      exact dist_le_zero.mp hle
-    subst hxy
-    simp only [tensorL2Dist_eq_dist, dist_self, mul_zero, le_refl]
+  calc
+    tensorL2Dist (g (f x)) (g (f y)) ≤ Lg * tensorL2Dist (f x) (f y) := hg (f x) (f y)
+    _ ≤ Lg * (Lf * tensorL2Dist x y) := mul_le_mul_of_nonneg_left (hf x y) hLg
+    _ = (Lg * Lf) * tensorL2Dist x y := (mul_assoc _ _ _).symm
 
 /--
 ReLU + Linear composition Lipschitz bound.

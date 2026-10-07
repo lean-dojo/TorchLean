@@ -20,7 +20,6 @@ Most users should import `NN.Proofs.RuntimeApprox.Graph.NumericalCertificate`.
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
-
 namespace Proofs
 namespace RuntimeApprox
 namespace NumericalCertificate
@@ -85,7 +84,8 @@ intermediate value against a registry-replayed range trace. -/
 structure RangeCheckedExecution where
   /-- The registry-checked certificate the replay was checked against. -/
   certificate : RegistryCheckedCertificate
-  /-- Bit-level binary32 node values produced by replaying the certificate's graph. -/
+  /-- Bit-level binary32 node values. `executeIEEE32` obtains these from graph replay; this
+  structure does not itself carry a denotation equality for independently supplied values. -/
   values : Array (Spec.SomeTensor (ExecFloat.Binary 8 23))
   /-- Proof that every replayed value lies in its checked range row. -/
   withinRanges : executionWithinRanges certificate.ranges values = true
@@ -202,8 +202,9 @@ structure ProvedRealEnclosure (certificate : RegistryCheckedCertificate) where
 
 namespace RangeCheckedExecution
 
-/-- Pair a checked IEEE replay with a proved real enclosure trace to obtain a graph-wide,
-pointwise error trace. Each node's error budget is the width of its checked outward interval. -/
+/-- Pair range-checked binary32 values with a proved real enclosure trace to obtain a graph-wide,
+pointwise error trace. Each node's error budget is its interval width. The bound follows from
+shared enclosure; it does not require or establish native execution provenance. -/
 theorem error_trace (execution : RangeCheckedExecution)
     (exact : ProvedRealEnclosure execution.certificate) :
     ExecutionErrorTrace execution.certificate.ranges exact.values execution.values :=

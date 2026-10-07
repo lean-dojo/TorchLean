@@ -150,13 +150,13 @@ are still open work rather than already-proved claims:
 * stochastic training-mode operators beyond dropout. Dropout has the proof-level fixed-mask
   scaling node; future stochastic layers should follow the same split: sampled object is
   stop-gradient data, differentiable map is proved conditionally on that sampled object;
-* executable CUDA/cuBLAS/cuDNN/cuFFT kernels themselves. Those are tested and contract-checked
-  against specs, but are not C/CUDA proofs inside Lean.
+* native LibTorch/ATen operations and the CUDA libraries they call. Runtime checks compare
+  supported paths with their specifications, but do not prove those native implementations.
 
 ## Trust boundary
 
-These are source-level mathematical theorems about TorchLean specs and the proof tape. CUDA
-kernels, cuBLAS/cuDNN/cuFFT, and compiler backends remain engineering trust boundaries. The intended
+These are source-level mathematical theorems about TorchLean specs and the proof tape. LibTorch,
+its CUDA dependencies, and compiler backends remain engineering trust boundaries. The intended
 bridge is: prove the spec/VJP rule here, then test and contract-check each executable fast path
 against that spec.
 

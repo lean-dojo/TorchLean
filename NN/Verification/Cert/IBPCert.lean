@@ -36,9 +36,10 @@ Notes on trust boundaries:
   is rounded once into binary64, the lower endpoint toward `-∞` and the upper toward `+∞`, and
   containment is checked exactly on those values. An endpoint inward of Lean's by one binary64 ulp
   or more is rejected; one that is closer reads as Lean's value.
-- This checker validates an exported artifact against Lean execution. The theorem-backed path is
-  separate: use `NN.Verification` when you need a Lean theorem connecting checker
-  hypotheses to semantic enclosure.
+- Acceptance here compares bounds with Lean execution; it does not itself prove a universal
+  real-input enclosure. `Cert.CROWNQuery.Json.acceptsText_sound` proves an output property for its
+  separate exact-rational dense/ReLU format. `Cert.FiniteArtifactSemantics.accepts_graph_sound`
+  handles finite binary32 affine artifacts with additional exact-real dominance checks.
 
 References (informal):
 - IBP: Gowal et al. (2018).

@@ -20,6 +20,11 @@ This is a definitional/structural bridge:
 Both sides use `TorchLean.TensorPack` directly, so the bridge does not convert between
 different context representations.
 
+Only forward evaluation and reverse accumulation are preserved. The required `NodeData.jvp`
+field is filled with the forward map, independent of its tangent argument: it is not a derivative
+and must not be used for forward-mode differentiation. This bridge also does not establish native
+kernel correspondence or that the supplied reverse maps are derivatives.
+
 Note on environments (`Δ`):
 `Proofs.Autograd.Algebra.GraphData` is parameterized by an extra (non-differentiable) environment
 `Δ` threaded through evaluation. The runtime-approximation graphs here do not use such an
@@ -28,7 +33,6 @@ evaluation/backprop.
 -/
 
 @[expose] public section
-
 
 namespace Proofs
 namespace RuntimeApprox
@@ -49,8 +53,8 @@ variable {α : Type} {toSpec : α → SpecScalar}
 /--
 Erase a `RuntimeApprox.RevNode` into an executable `Autograd.Algebra.NodeData`.
 
-We take `Δ := Unit` (no extra environment) and ignore the JVP input, since this bridge is only
-used for forward evaluation and VJP-based backprop.
+We take `Δ := Unit` (no extra environment). The JVP field repeats the forward map as a
+placeholder; only forward evaluation and VJP-based backprop are supported by this conversion.
 -/
 def toNodeData {Γ : List Shape} {τ : Shape}
     (node : Proofs.RuntimeApprox.RevNode (α := α) toSpec Γ τ) :

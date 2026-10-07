@@ -215,12 +215,12 @@ def hingeSumStateStep {n : ℕ} (c t : Fin n → Rounded format) (x : Rounded fo
         Model.epsilonAt format (accQ.val + termQ.val)
       (accQ + termQ, accR + termR, err + termErr + addErr)
 
-/-- Compute the hinge-term sum state over all `Fin n` in a fixed order (`List.finRange`). -/
+/-- Compute the hinge-term sum state in ascending index order. -/
 def hingeSumState {n : ℕ} (c t : Fin n → Rounded format) (x : Rounded format) :
     HingeSumState format :=
-  (List.finRange n).foldl (hingeSumStateStep format c t x) (0, 0, 0)
+  Fin.foldl n (hingeSumStateStep format c t x) (0, 0, 0)
 
-/-- Rounded value produced by folding all hinge terms in the fixed `List.finRange` order. -/
+/-- Rounded value produced by folding all hinge terms in ascending index order. -/
 def hingeSum {n : ℕ} (c t : Fin n → Rounded format) (x : Rounded format) : Rounded format :=
   (hingeSumState format c t x).1
 
@@ -299,7 +299,8 @@ theorem hinge_sum_abs_error {n : ℕ} (c t : Fin n → Rounded format) (x : Roun
   have h :=
     hinge_sum_state_invariant format (c := c) (t := t) (x := x)
       (xs := List.finRange n) (accQ := (0 : Rounded format)) (accR := (0 : ℝ)) (err := (0 : ℝ)) h0
-  simpa [hingeSum, hingeSumReal, hingeSumErrorBound, hingeSumState] using h
+  simpa [hingeSum, hingeSumReal, hingeSumErrorBound, hingeSumState,
+    Fin.foldl_eq_foldl_finRange] using h
 
 /-- Rounded hinge-network output: sum of hinge terms, then add the bias. -/
 def hingeFun {n : ℕ} (t c : Fin n → Rounded format) (b x : Rounded format) : Rounded format :=
@@ -402,7 +403,7 @@ theorem hinge_sum_real_eq_sum {n : ℕ} (c t : Fin n → Rounded format) (x : Ro
       | cons i xs ih =>
           intro accQ accR err
           simp [List.foldl, hingeSumStateStep, ih]
-    simpa [hingeSumReal, hingeSumState] using
+    simpa [hingeSumReal, hingeSumState, Fin.foldl_eq_foldl_finRange] using
       (this (List.finRange n) 0 0 0)
   -- Rewrite the executable fold as the corresponding finite sum.
   simpa [hfold] using

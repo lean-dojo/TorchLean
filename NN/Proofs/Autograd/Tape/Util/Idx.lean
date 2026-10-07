@@ -31,7 +31,6 @@ Both are pure list arithmetic, and centralizing them keeps that boilerplate out 
 
 @[expose] public section
 
-
 namespace Proofs
 
 open Spec TorchLean

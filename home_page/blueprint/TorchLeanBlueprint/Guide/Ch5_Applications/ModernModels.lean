@@ -344,11 +344,8 @@ average pooling over all $`d` spatial axes, and a linear classifier. An empty st
 the stem output directly; stem geometry and a positive class count are still validated. The model
 API is not tied to images, to two dimensions, or to one batch axis.
 
-The pooling step explains why the final shape has no spatial axes. Each hidden channel is
-averaged across the image. The isolated stem above produces sixteen pooled features; the Lean
-model's residual stage produces thirty-two. In each case the final affine map consumes that
-last channel count and produces ten class scores. Same-padding preserves the grid, a strided
-stage changes it, and pooling discards spatial locations at the classifier boundary.
+The isolated stem above produces sixteen pooled features; the Lean model's residual stage
+produces thirty-two. The classifier consumes that final channel count, not the spatial grid.
 
 ## Residual Branch Shapes
 
@@ -367,6 +364,9 @@ kernel $`k`, stride $`s`, padding $`p`, and unit dilation, each output extent is
 $$`n'_i
 =\left\lfloor\frac{n_i+2p_i-k_i}{s_i}\right\rfloor+1.`
 
+This formula assumes positive stride and enough padded input for a complete kernel. The model's
+validation rejects unusable patch geometry rather than interpreting a negative extent.
+
 If the patch convolution emits $`D` channels then the patch grid becomes
 
 $$`B\times D\times n'_1\times\cdots\times n'_d
@@ -374,7 +374,8 @@ $$`B\times D\times n'_1\times\cdots\times n'_d
 B\times N\times D,\qquad
 N=\prod_i n'_i.`
 
-{src "NN/API/Models/Vit.lean"}[`NN.API.Models.Vit`] defines that conversion as `patchesToTokens`:
+{src "NN/API/Models/Vit.lean"}[`NN.API.Models.Vit`] implements that conversion in
+`ViT.Internal.patchesToTokens`:
 the implementation reshapes the patch grid and moves the channel axis to the end, so the following
 Transformer block receives the conventional `batch × sequence × embedding` layout. Every stage is a
 derived field of the configuration, so we can print the whole pipeline. Take $`32\times32` inputs
@@ -508,11 +509,8 @@ images reveals that this configuration discards a border. The types remain consi
 Transformer receives exactly the number of tokens that the patch convolution produces. Whether
 discarding those pixels is acceptable is a separate modeling decision.
 
-This patch experiment changes the evidence available to the classifier before any attention
-weight is computed. Increasing depth later cannot recover the pixels omitted at the boundary.
-Conversely, choosing a smaller stride can preserve more coverage while producing more tokens.
-The grid calculation is therefore a modeling check as well as a type-level calculation: it tells
-us which observations survive preprocessing and how many positions the sequence model receives.
+Increasing depth cannot recover omitted pixels. A smaller stride can preserve more coverage,
+but also creates more tokens for attention to process.
 
 For $`H` attention heads of width $`D_h` the model width is
 
@@ -719,11 +717,8 @@ def mmCausal4 : Spec.AttentionContext Float 4 4 2
  [3.510470, 4.510470], [5.837654, 6.837654]]
 ```
 
-The fourth output has a different role from the first three. It is newly computed from four
-visible values; it is not expected to match any row in the shorter run. The unchanged prefix is
-the property needed when generating tokens sequentially: making a later token available must not
-retroactively alter a prediction whose context ended earlier. The displayed example makes that
-property inspectable for these inputs.
+The fourth output uses all four visible values; only the first three should match the shorter
+run. This comparison checks prefix preservation on these inputs, not on every possible sequence.
 
 ## Permuting Keys, Values, And Queries
 
@@ -867,12 +862,6 @@ specification is the one evaluated with `Float` in the comparison above.
 {ref "runtime-approximation"}[Runtime Approximation] develops error bounds for rounded operations;
 those bounds have their own hypotheses and do not by themselves prove this entire attention
 execution equivalent to its real-valued specification.
-
-Read the theorem's indices as query row `i` and key column `j`. The assumption `i < j` is exactly
-the strict-future case, and the conclusion concerns a weight in the normalized matrix. It is
-stronger than observing a small printed number. At the same time, this statement is about the
-masking operation itself: a complete language model must also avoid future information in its
-other inputs and transformations, such as the construction of token features.
 
 ## The GPT-Family Constructor
 
@@ -1165,12 +1154,6 @@ print([i for i in range(16) if abs(int(freqs[i])) < 4 or int(freqs[i]) == -4])
 [0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, -1]
 [0, 1, 2, 3, 12, 13, 14, 15]
 ```
-
-The frequency lists give a more precise description than “keep four modes.” The first list maps
-every storage location to a signed frequency; the second selects the locations the layer actually
-uses. Comparing them reveals the asymmetric endpoint at negative four. It also explains why
-asking for six indices at each end of an eight-point axis keeps everything: the two sets cover
-the axis. This is set membership, so their overlap does not multiply a coefficient twice.
 
 The public constructor transforms each spatial axis separately. With
 `spectralPath := .automatic`, eager CUDA execution uses LibTorch FFTs and other interpreters use

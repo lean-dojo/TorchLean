@@ -11,8 +11,8 @@ public import NN.Tensor.Internal.Semantics.Pack
 # Direct native lowering for pack and unpack
 
 The checked component-to-packed coordinate equivalence drives both kernels.
-Packing fills one packed output array by reading the corresponding component
-entry. Unpacking fills each component array by reading its corresponding
+Packing fills one packed output buffer by reading the corresponding component
+entry. Unpacking fills each component buffer by reading its corresponding
 packed entry. Neither direction allocates slice, reshape, or concatenation
 intermediates.
 
@@ -50,11 +50,13 @@ def packTensor {α : Type u} [Storage α] (checked : CheckedPack)
     inputTensors inputCoordinate.1 inputCoordinate.2
 
 /--
-Execute unpack by filling every component buffer directly from the packed
-tensor.
+Return a component-indexed function that fills the requested component buffer
+directly from the packed tensor.
 
 The checked coordinate equivalence maps each component flat index to its
 unique packed location, so no slice or reshape buffer is constructed.
+The definition does not memoize component buffers or eagerly construct the
+whole family; callers control which components they evaluate and retain.
 -/
 def unpackTensor {α : Type u} [Storage α] (checked : CheckedPack)
     (packedTensor : checked.OutputTensor α) : checked.InputTensors α :=

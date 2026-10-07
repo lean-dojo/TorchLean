@@ -71,9 +71,6 @@ def getParam {α : Type} [TorchLean.Storage α] {paramShapes : List Shape} {s : 
 
 /-! ## First-order SSA nodes -/
 
-/- We index runtime values by the context `inShape :: ss` where `ss` are the already-produced
-node output shapes. Input is always index 0. -/
-
 /--
 Evaluation context shape list.
 
@@ -125,12 +122,11 @@ structure LayerNormOperation (s : Shape) where
 /--
 A well-typed SSA node in the verified forward fragment.
 
-Each `Node` can only reference earlier values (via `Idx (Ctx inShape ss) _`), ensuring the DAG/SSA
-discipline by construction.
+Each `Node` can only reference earlier values (via `Idx (Ctx inShape ss) _`), so a let-chain cannot
+contain a forward reference or cycle.
 
-The constructors match the operator subset for which this file proves lowering correctness into the
-verifier IR (`NN.IR.Graph`).  Adding a new operator means extending both this syntax and the
-correctness proof, which keeps the trusted fragment explicit.
+The constructors match the operator subset whose lowering to `NN.IR.Graph` is proved in
+`Correctness`. Adding an operator requires extending both this syntax and those proofs.
 -/
 inductive Node
     (α : Type) [TorchLean.Storage α]

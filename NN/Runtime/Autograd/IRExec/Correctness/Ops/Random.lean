@@ -151,7 +151,7 @@ theorem buildFrom_denoteAllFrom_bernoulliMask
               let key := Spec.Random.keyOf seed i
               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                 mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                  let kpT := readTensor (α := α) (xs := ctx) ip
+                  let kpT := ctx.read ip
                   let kp : α := kpT.item
                   Spec.Random.mask (α := α) key kp (s := n.outShape))
               let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩

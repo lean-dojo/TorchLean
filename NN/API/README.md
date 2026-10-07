@@ -39,10 +39,7 @@ import, while verification, proof, and backend internals remain focused imports.
 routes are removed instead of re-exported under old names; the update guide records the required
 source changes.
 
-`NN/Tests/API/PublicSurface.lean` imports only `NN.API` and compiles representative tensor, model,
-data, trainer, autograd, text, self-supervised, and reinforcement-learning usage. The external
-example regression checks the same umbrella independently, and the repository linter prevents
-removed routes from being restored.
+The external example regression checks the application umbrella independently.
 
 ## First Training Program
 
@@ -50,6 +47,7 @@ removed routes from being restored.
 import NN.API
 
 open TorchLean
+open Trainer.Objective (mse)
 
 def model :=
   nn.Sequential![
@@ -105,9 +103,9 @@ computed at runtime. Arrays and lists can still occur at file-decoding and inter
 boundaries; convert them there and validate the required shape. Application code does not choose
 among internal tensor representations.
 
-`TensorPack α shapes` is reserved for a statically heterogeneous collection of tensor shapes, such
-as model parameters and buffers. `Spec.SomeTensor α` is a runtime shape-erased value used by
-evaluators. Neither replaces `Tensor` in application code.
+Use `nn.State α shapes` for model parameters and buffers, and `Arguments α shapes` for a
+multi-input program. Each entry is a tensor with its own shape; these collections are not
+single homogeneous tensors. Their internal representations do not need to appear in application code.
 
 ## Naming And Dot Syntax
 
@@ -212,8 +210,7 @@ its decimal parser; a prior conversion to `Float` can already discard the additi
 Lower the architecture with `nn.lowerToTypedGraph model (α := Scalar)`, then use
 `nn.TypedGraphModel.forward`, `jvp`, or `vjp` with explicit typed state and inputs.
 `NN/Examples/Quickstart/Precision.lean` demonstrates an affine model whose parameter and
-derivative retain `1 + 2^-100`. `NN/Tests/API/Precision.lean` supplies maintained checks at
-several widths and native controls.
+derivative retain `1 + 2^-100`.
 
 This path uses CPU software arithmetic. `trainer.openTyped` also retains the selected scalar
 for samples, predictions, state, losses, and exact checkpoints. The ordinary `trainer.open`

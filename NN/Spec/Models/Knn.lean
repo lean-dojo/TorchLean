@@ -34,8 +34,8 @@ PyTorch / sklearn analogies:
 
 ## Implementation status
 
-This is a standalone reference specification with targeted executable tests. No API builder or
-model-correctness theorem is provided here.
+This is a standalone reference specification. The guide runs a small classification example;
+no API builder or model-correctness theorem is provided here.
 -/
 
 public section
@@ -269,12 +269,6 @@ def predictWeighted (α : Type) (n : ℕ)
             acc + (weight / total) * value) 0
 
 /-! ## Helpers -/
-
-/-- Constructor helper (explicit arguments keep elaboration simple in examples). -/
-def KNN.fromData (α β : Type) (n : ℕ) (k : Nat)
-    [TorchLean.Storage α]
-    (data : Array (Tensor α [n] × β)) : KNN α β n :=
-  { k := k, dataset := data }
 
 /-- Classify and return the winning label's fraction of the selected neighbors.
 

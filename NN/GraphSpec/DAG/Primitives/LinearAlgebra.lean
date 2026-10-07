@@ -21,7 +21,6 @@ namespace GraphSpec
 namespace DAG
 
 open _root_.Spec _root_.TorchLean
-open TorchLean.Tensor
 open _root_.TorchLean.Tensor
 
 namespace PrimOp
@@ -121,7 +120,7 @@ def broadcastVecMat (vectorBatch matrixBatch batch : Shape) (rows columns : Nat)
           Runtime.Autograd.Model.reshape (m := m) (α := α)
             (s₂ := batch.concat [columns]) product
             (by simp [_root_.Spec.Shape.size_concat, _root_.Spec.Shape.size]) :
-          m (Runtime.Autograd.Model.RefTy (m := m) (α := α)
+          m (Runtime.Autograd.Model.Ref (m := m) (α := α)
             (batch.concat [columns]))) }
 
 /-- Pure evaluation of broadcasted vector–matrix multiplication. -/

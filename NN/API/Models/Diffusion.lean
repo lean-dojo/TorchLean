@@ -329,17 +329,18 @@ def appendTimeChannel {α : Type} [Storage α]
   Tensor.concatAfter batchShape x (Tensor.full (sampleShape batchShape 1 spatial) tNorm)
 
 /--
-Build an epsilon-prediction training sample from explicit noise.
+Build an epsilon-prediction training sample.
 
-The caller supplies `eps`, usually from the runtime RNG.  Keeping randomness outside this helper
-makes the transformation reusable:
+By default, `(seed, step)` determines reproducible Gaussian noise. Pass `noise := ...` to use
+a supplied tensor instead, without changing the noising formula:
 
 $x_t=\sqrt{\bar{\alpha}_t}\,x_0+\sqrt{1-\bar{\alpha}_t}\,\varepsilon$, with target
 $\varepsilon$.
 -/
-def noisedSampleFromNoise (batchShape : Shape) {d c T : Nat}
+def sample (batchShape : Shape) {d c T : Nat}
     (spatial : Tensor Nat [d]) (schedule : Schedule T)
-    (x0 eps : Tensor Float (sampleShape batchShape c spatial)) (step : Nat) :
+    (x0 : Tensor Float (sampleShape batchShape c spatial)) (step : Nat) (seed : Nat := 0)
+    (noise : Tensor Float (sampleShape batchShape c spatial) := normalNoise seed step) :
     TorchLean.Sample.Supervised Float
       (sampleShape batchShape (c + 1) spatial)
       (sampleShape batchShape c spatial) :=
@@ -354,25 +355,9 @@ def noisedSampleFromNoise (batchShape : Shape) {d c T : Nat}
   let x_t : Tensor Float (sampleShape batchShape c spatial) :=
     TorchLean.Tensor.add
       (TorchLean.Tensor.scale x0 sqrtAb)
-      (TorchLean.Tensor.scale eps sqrtOneMinusAb)
+      (TorchLean.Tensor.scale noise sqrtOneMinusAb)
   { input := appendTimeChannel batchShape spatial x_t (schedule.normalizedTime step)
-    target := eps }
-
-/--
-Build a deterministic epsilon-prediction training sample.
-
-This is the common DDPM training step used by examples: draw reproducible Gaussian noise from
-`(seed, step)`, corrupt $x_0$, and use that same noise as the target.
--/
-def noisedSample (batchShape : Shape) {d c T : Nat}
-    (spatial : Tensor Nat [d]) (schedule : Schedule T)
-    (x0 : Tensor Float (sampleShape batchShape c spatial)) (seed step : Nat) :
-    TorchLean.Sample.Supervised Float
-      (sampleShape batchShape (c + 1) spatial)
-      (sampleShape batchShape c spatial) :=
-  noisedSampleFromNoise batchShape spatial schedule x0
-    (normalNoise (shape := sampleShape batchShape c spatial) seed step)
-    step
+    target := noise }
 
 /--
 One deterministic DDIM reverse update ($\eta=0$).

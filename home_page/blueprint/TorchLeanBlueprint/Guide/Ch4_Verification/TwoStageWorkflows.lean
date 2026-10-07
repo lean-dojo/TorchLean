@@ -172,6 +172,10 @@ the checker validates that coordinate. The schema also permits an
 omitted index, in which case the checker searches for a positive margin. Neither route validates
 the underlying network bound.
 
+When `witness_margin` is supplied, the checker also requires a witness index and compares that
+margin with the computed subtraction using an absolute tolerance of `1e-6`. This is bookkeeping
+agreement, not exact equality. The strict `lb[i] > threshold[i]` test itself uses no tolerance.
+
 For the bundled domain, the witness calculation is `1.0 - 0.0 = 1.0`, so index zero is the only
 possible choice. `input_dim = 2` comes from the two endpoint coordinates, while the bound and
 threshold arrays have length one. This tells us that the domain is two-dimensional and carries
@@ -439,12 +443,8 @@ three cases check coverage with an extra disjoint segment and both outcomes for 
 These executable checks illustrate the sweep; a verified coverage checker also needs a theorem
 relating its Boolean result to membership in the union of the closed intervals.
 
-The tuple output follows the order of the final three calls. The first is `true` because
-`[0, 1]` already covers the target; the extra `[2, 3]` does not undo that fact. The second is
-`false` because an empty collection covers no point, including the singleton target `{0}`.
-The third is `true` because `[-1, 1]` contains that singleton. Closed endpoints matter at an
-ordinary split too: `[-1, 0]` and `[0, 1]` both contain the cut at zero, leaving no uncovered
-boundary between them.
+Closed endpoints matter at a split: `[-1, 0]` and `[0, 1]` both contain the cut at zero, leaving
+no uncovered boundary between them.
 
 For boxes split along several axes, even a correct interval checker cannot decide coverage from
 one projection. A multidimensional sweep has to track coverage of cross-sections, involving
@@ -643,6 +643,10 @@ while constructing the graph. The index is fixed for that graph; having type `Fi
 mean a value must be known at elaboration time. Selecting one coordinate becomes a constant one-hot
 projection: take a leading slice of length one, then reshape to remove that axis.
 
+The slice is encoded as a one-hot matrix multiplication with reshapes. This agrees with selection
+over exact real arithmetic, but it also evaluates zero products and an accumulation. NaN,
+infinity, and signed-zero behavior need not match direct floating-point indexing.
+
 `indexSelect` and `scatterAdd` take tensor-valued indices and remain outside this lowering fragment.
 That is a limit of the implemented translation and transfer rules, not a claim that indexed
 operations cannot be bounded. Selection on an inner axis is also rejected by this builder. The
@@ -791,14 +795,6 @@ The hypothesis `enclosure` supplies `ValidFor` on the region. The next two hypot
 real certificate endpoints with zero. A generated module that leaves `ValidFor` as a
 hypothesis proves a conditional sign result. It does not establish that the external verifier's
 bounds apply to the intended dynamical system.
-
-The proof `tsValid` shows what discharging that hypothesis looks like in a small case.
-Membership in the one-dimensional region gives `1 ≤ x ≤ 2`. The first branch derives the
-range of `x²`; the second derives the range after multiplication by `-2`, which reverses the
-endpoint order. `tsConditions` then uses the lower value bound `1 > 0` and the upper derivative
-bound `-2 < 0`. Its short proof is possible because the enclosure argument has already been
-done. The code blocks defining these theorems produce no numeric output: successful checking
-means Lean accepted the proof terms for their stated propositions.
 
 In a controller workflow the producer searches for a policy $`u_\theta` and a candidate $`V`, aiming
 at

@@ -83,139 +83,15 @@ def klDivLast {Γ : List Shape} {m n : Nat}
     (correct_inner := by
       intro xV dxV δV
       classical
-      let s : Shape := .dim m (.dim n .scalar)
-      let hsz : Spec.Shape.size s = m * n := by simp [s, Spec.Shape.size]
-      let c : ℝ := (1 : ℝ) / (m : ℝ)
-      let i0 : Fin (Spec.Shape.size Shape.scalar) := ⟨0, by simp [Spec.Shape.size]⟩
-      let δ0 : ℝ := δV i0
-      let q : Vec (m * n) := castVec hsz (CtxVec.get (Γ := Γ) (s := s) target xV)
-      let dq : Vec (m * n) := castVec hsz (CtxVec.get (Γ := Γ) (s := s) target dxV)
-      let lp : Vec (m * n) := castVec hsz (CtxVec.get (Γ := Γ) (s := s) logProbs xV)
-      let dlp : Vec (m * n) := castVec hsz (CtxVec.get (Γ := Γ) (s := s) logProbs dxV)
-      let logq : Vec (m * n) := elemwiseVec (n := m * n) (f := Real.log) q
-      let dlogq : Vec (m * n) := vecOfFun (n := m * n) fun i => dq i * (q i)⁻¹
-      let rhs : Vec (m * n) := logq - lp
-      let drhs : Vec (m * n) := dlogq - dlp
-      let qInvMul : Vec (m * n) := vecOfFun (n := m * n) fun i => q i * (q i)⁻¹
-      let scale : ℝ := c * δ0
-      let dLogProbs : Vec (m * n) := vecOfFun (n := m * n) fun i => scale * (-q i)
-      let dTarget : Vec (m * n) := vecOfFun (n := m * n) fun i => scale * (rhs i + qInvMul i)
-      have hL :
-          inner ℝ
-              (vecOfFun (n := Spec.Shape.size Shape.scalar) fun _ =>
-                c * (inner ℝ dq rhs + inner ℝ q drhs))
-              δV
-            =
-          (c * (inner ℝ dq rhs + inner ℝ q drhs)) * δ0 := by
-        convert
-          inner_scalarVec_left (a := c * (inner ℝ dq rhs + inner ℝ q drhs)) (δ := δV)
-          using 1
-      have hA :
-          inner ℝ dxV (CtxVec.single (Γ := Γ) (s := s) logProbs (castVec hsz.symm dLogProbs)) =
-            inner ℝ (CtxVec.get (Γ := Γ) (s := s) logProbs dxV) (castVec hsz.symm dLogProbs) := by
-        simpa using
-          (CtxVec.inner_get_single (Γ := Γ) (s := s) logProbs dxV (castVec hsz.symm dLogProbs))
-      have hB :
-          inner ℝ dxV (CtxVec.single (Γ := Γ) (s := s) target (castVec hsz.symm dTarget)) =
-            inner ℝ (CtxVec.get (Γ := Γ) (s := s) target dxV) (castVec hsz.symm dTarget) := by
-        simpa using
-          (CtxVec.inner_get_single (Γ := Γ) (s := s) target dxV (castVec hsz.symm dTarget))
-      have hAc :
-          inner ℝ (CtxVec.get (Γ := Γ) (s := s) logProbs dxV) (castVec hsz.symm dLogProbs) =
-            inner ℝ dlp dLogProbs := by
-        have h :=
-          inner_castVec_castVec (h := hsz)
-            (x := CtxVec.get (Γ := Γ) (s := s) logProbs dxV)
-            (y := castVec hsz.symm dLogProbs)
-        simpa [dlp] using h.symm
-      have hBc :
-          inner ℝ (CtxVec.get (Γ := Γ) (s := s) target dxV) (castVec hsz.symm dTarget) =
-            inner ℝ dq dTarget := by
-        have h :=
-          inner_castVec_castVec (h := hsz)
-            (x := CtxVec.get (Γ := Γ) (s := s) target dxV)
-            (y := castVec hsz.symm dTarget)
-        simpa [dq] using h.symm
-      have hAterm : inner ℝ dlp dLogProbs = scale * (- inner ℝ q dlp) := by
-        simp [dLogProbs, scale, inner_eq_sum_mul, vecOfFun, mul_assoc, mul_left_comm,
-          Finset.mul_sum, Finset.sum_neg_distrib, real_inner_comm]
-      have hBterm :
-          inner ℝ dq dTarget = scale * (inner ℝ dq rhs + inner ℝ q dlogq) := by
-        -- expand `dTarget = scale • (rhs + qInvMul)` and use `qInvMul` to express `inner q dlogq`
-        have hmul : inner ℝ q dlogq = inner ℝ dq qInvMul := by
-          simp [inner_eq_sum_mul, dlogq, qInvMul, vecOfFun, mul_assoc, mul_comm]
-        have hdTarget : dTarget = scale • (rhs + qInvMul) := by
-          ext i
-          simp [dTarget, scale, vecOfFun, smul_eq_mul, mul_add, mul_assoc]
-        calc
-          inner ℝ dq dTarget
-              =
-            inner ℝ dq (scale • (rhs + qInvMul)) := by
-              simp [hdTarget]
-          _ =
-            scale * inner ℝ dq (rhs + qInvMul) := by
-              -- avoid expanding `smul_add` before applying `inner_smul_right`
-              simpa [smul_eq_mul] using (inner_smul_right (x := dq) (y := rhs + qInvMul) (r :=
-                scale))
-          _ =
-            scale * (inner ℝ dq rhs + inner ℝ dq qInvMul) := by
-              simp [inner_add_right, mul_add]
-          _ =
-            scale * (inner ℝ dq rhs + inner ℝ q dlogq) := by
-              simp [hmul]
-      have hqd :
-          inner ℝ q drhs = inner ℝ q dlogq - inner ℝ q dlp := by
-        simp [drhs, sub_eq_add_neg, inner_add_right, inner_neg_right]
-      have hSubst :
-          scale * (inner ℝ dq rhs + inner ℝ q dlogq - inner ℝ q dlp) =
-            inner ℝ dlp dLogProbs + inner ℝ dq dTarget := by
-        calc
-          scale * (inner ℝ dq rhs + inner ℝ q dlogq - inner ℝ q dlp)
-              =
-            scale * (inner ℝ dq rhs + inner ℝ q dlogq) + scale * (-inner ℝ q dlp) := by
-              simp [sub_eq_add_neg, mul_add, add_assoc]
-          _ =
-            scale * (-inner ℝ q dlp) + scale * (inner ℝ dq rhs + inner ℝ q dlogq) := by
-              ac_rfl
-          _ =
-            inner ℝ dlp dLogProbs + inner ℝ dq dTarget := by
-              have hAterm' : scale * (-inner ℝ q dlp) = inner ℝ dlp dLogProbs := by
-                simpa using hAterm.symm
-              have hBterm' : scale * (inner ℝ dq rhs + inner ℝ q dlogq) = inner ℝ dq dTarget := by
-                simpa using hBterm.symm
-              calc
-                scale * (-inner ℝ q dlp) + scale * (inner ℝ dq rhs + inner ℝ q dlogq)
-                    =
-                  inner ℝ dlp dLogProbs + scale * (inner ℝ dq rhs + inner ℝ q dlogq) := by
-                    simp [hAterm']
-                _ =
-                  inner ℝ dlp dLogProbs + inner ℝ dq dTarget := by
-                    simp [hBterm']
-      calc
-        inner ℝ
-            (vecOfFun (n := Spec.Shape.size Shape.scalar) fun _ =>
-              c * (inner ℝ dq rhs + inner ℝ q drhs))
-            δV
-            =
-          (c * (inner ℝ dq rhs + inner ℝ q drhs)) * δ0 := hL
-        _ =
-          scale * (inner ℝ dq rhs + inner ℝ q drhs) := by
-            simp [scale, mul_assoc, mul_left_comm, mul_comm]
-        _ =
-          scale * (inner ℝ dq rhs + inner ℝ q dlogq - inner ℝ q dlp) := by
-            simp [hqd, sub_eq_add_neg, add_assoc]
-        _ =
-          inner ℝ dlp dLogProbs + inner ℝ dq dTarget := by
-            exact hSubst
-        _ =
-          inner ℝ (CtxVec.get (Γ := Γ) (s := s) logProbs dxV) (castVec hsz.symm dLogProbs) +
-            inner ℝ (CtxVec.get (Γ := Γ) (s := s) target dxV) (castVec hsz.symm dTarget) := by
-            simp [hAc, hBc]
-        _ =
-          inner ℝ dxV
-              (CtxVec.single (Γ := Γ) (s := s) logProbs (castVec hsz.symm dLogProbs) +
-                CtxVec.single (Γ := Γ) (s := s) target (castVec hsz.symm dTarget)) := by
-            simp [inner_add_right, hA, hB])
+      simp only [inner_scalarVec_left, inner_add_right, CtxVec.inner_get_single]
+      rw [← inner_castVec_left hsz, ← inner_castVec_left hsz]
+      simp only [inner_sub_right, inner_eq_sum_mul, vecOfFun_apply]
+      simp only [mul_add, mul_sub, Finset.mul_sum, Finset.sum_mul,
+        ← Finset.sum_add_distrib, ← Finset.sum_sub_distrib]
+      apply Finset.sum_congr rfl
+      intro i _
+      simp only [PiLp.sub_apply]
+      ring)
 
 /-- Pointwise `NodeFDerivCorrectAt` for `klDivLast`, assuming `target` entries are nonzero. -/
 def klDivLastFderivAt {Γ : List Shape} {m n : Nat}

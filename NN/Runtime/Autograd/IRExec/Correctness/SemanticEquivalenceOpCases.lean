@@ -27,8 +27,6 @@ open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
--- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
--- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
 /--
@@ -97,7 +95,7 @@ theorem buildFrom_denoteAllFrom_linear
       let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
         mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
           let xIn : Tensor α expectedIn :=
-            Tensor.castShape (readTensor (α := α) (xs := ctx) ix) hIn
+            Tensor.castShape (ctx.read ix) hIn
           let y : Tensor α expectedOut := NN.IR.Graph.linearLeading leading p.W p.b xIn
           Tensor.castShape y hOut)
       let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
@@ -174,7 +172,6 @@ theorem buildFrom_denoteAllFrom_reshape
   | some pId =>
           cases hIdx : mkIdx (inShape := inShape) (ss := ss) pId inS with
           | error msg =>
-              -- The parent id/shape check fails, so `buildFrom` cannot return `.ok _`.
               simp [Bind.bind, Except.bind, hp, hIdx] at hBuild
           | ok ip =>
               simp [Bind.bind, Except.bind, hp, hIdx] at hBuild
@@ -186,7 +183,7 @@ theorem buildFrom_denoteAllFrom_reshape
                   simp [hOut] at hBuild
                   let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                     mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                      let x := readTensor (α := α) (xs := ctx) ip
+                      let x := ctx.read ip
                       hOut ▸ Tensor.reshapeSpec (α := α) (source := inS) (target := outS) x
                         hNumel)
                   let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
@@ -261,7 +258,6 @@ theorem buildFrom_denoteAllFrom_flatten
   | some pId =>
           cases hIdx : mkIdx (inShape := inShape) (ss := ss) pId s with
           | error msg =>
-              -- The parent id/shape check fails, so `buildFrom` cannot return `.ok _`.
               simp [Bind.bind, Except.bind, hp, hIdx] at hBuild
           | ok ip =>
               simp [Bind.bind, Except.bind, hp, hIdx] at hBuild
@@ -271,7 +267,7 @@ theorem buildFrom_denoteAllFrom_flatten
                 simp [expected, hOut] at hBuild
                 let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                   mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape) (fun ctx =>
-                    let x := readTensor (α := α) (xs := ctx) ip
+                    let x := ctx.read ip
                     let y : Tensor α expected := Tensor.flattenSpec (α := α) (shape := s) x
                     hOut ▸ y)
                 let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩

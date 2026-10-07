@@ -21,9 +21,8 @@ $$`F_\theta:[2]\to[1]`
 
 Its type stays `[2] → [1]` whether it runs eagerly on the CPU, through a typed graph, or with
 LibTorch's CUDA operations. Holding the architecture, seed, and data fixed lets us compare these
-execution
-paths on the same training problem. The transcripts below record the binary's output on the
-machine used for this guide; the embedded Lean comparisons also run when the page is built.
+execution paths on the same training problem. The transcripts below record the binary's output
+on the machine used for this guide; the embedded Lean comparisons also run when the page is built.
 
 # Runtime Configuration
 
@@ -629,15 +628,17 @@ The report now names a different provider for every operation. Comparing it agai
   * `implementation-defined`
 :::
 
-The provider label changes from `reference` to `libtorch`, the VJP label changes from
-`torchlean-tape` to `backend-vjp`, the test suite named in the evidence lines changes from
-`NN.Tests.Runtime.Floats.Suite` to `NN.Tests.Runtime.Cuda.Suite`, and the guard for shapes changes
-from portable runtime checks to CUDA FFI size and rank checks at the Lean and native boundary. Trust
-stays `checked` throughout. `backend-vjp` means that an ATen operation evaluates the local
-gradient; TorchLean still records and traverses the tape. LibTorch autograd recording is disabled.
-For numerical comparison, the last column is especially relevant:
-the two
-reducing operations move from `fixed-left` to `implementation-defined`.
+The provider label changes from `reference` to `libtorch`. Evidence names the retained CUDA
+comparison for each tested operation; operations without one record a LibTorch trust boundary.
+Shape guards move to CUDA FFI size and rank checks at the Lean and native boundary. The default
+GPU profile admits those external implementation assumptions; the strict checked profile does not.
+
+Local VJP ownership depends on the operation. ReLU and broadcast use `backend-vjp`: their
+derivatives call native backward primitives. Matmul, addition, MSE, reshape, and permutation retain
+`torchlean-tape`: Lean composes their derivatives from LibTorch numerical operations. TorchLean
+records and traverses the tape in both cases; LibTorch autograd recording is disabled.
+For numerical comparison, the two reducing operations move from `fixed-left` to
+`implementation-defined`.
 
 To compare the two devices, hold the model, dataset, seed, optimizer, and step count fixed.
 A provider with `reduction=implementation-defined` may use a different summation order, and
@@ -682,6 +683,12 @@ Formal floating-point models make these rules explicit
 arithmetic a compiler actually emits {Informal.citep boldo2015}[]. FloatLib supplies the executable
 format and arithmetic used here. For higher precision, select a valid FloatLib binary format in
 typed CPU tensors and graphs; the trainer flag shown above remains fixed to binary32.
+
+For typed training, `trainer.openTyped (α := α)` keeps inputs, state, predictions, and losses in
+the chosen scalar type on CPU. It rejects GPU devices and custom backend profiles. Supply
+`initialState?` when the parameters need precision beyond the seeded `Float` initializers;
+converting those initializers into a wider format does not add precision. Optimizer and scheduler
+coefficients are still configured in `Float` and converted into the selected scalar.
 
 The following embedded comparison runs two hundred steps with each arithmetic choice, holding
 the seed and dataset fixed. It also checks prediction equality:
@@ -886,11 +893,6 @@ reference does. The imperative `Session` API instead records one graph per recor
 `resetTape` starts a fresh one. When the graph itself must survive across calls, lower it or use the
 high level trainer.
 
-The direct graph calculation isolates derivatives with respect to the input. Its parameter
-tangents are zero, so the two unit input directions ask how the prediction changes when one input
-coordinate moves and the parameters stay fixed. The resulting JVPs, `0.263189` and `0.205411`,
-match the two coordinates of the input VJP seeded by `1`. This scalar-output case makes the
-relationship especially visible: each basis direction selects one entry of the same gradient.
 The example explicitly uses `Float`; it should not be read as another execution of the trainer's
 binary32 comparison, despite the similar printed initial prediction.
 
@@ -1045,9 +1047,14 @@ changed parameters.
 
 # Dynamic Control Flow And Typed Graphs
 
-A fixed typed graph needs its operation structure and its shapes to be known when it is recorded. A
-program that reads a token value and then decides which operations to perform cannot be represented
-as one fixed graph, and TorchLean's recorder does not try.
+A fixed typed model graph needs its operation structure and its shapes to be known when it is
+recorded. A program that reads a token value and then changes that structure cannot be represented
+by this recorder as one fixed graph.
+
+This differs from a scalar conditional inside a tensor computation. The
+{ref "custom-computations"}[custom computation frontend] supports `if` expressions on tensor
+elements on CPU and GPU. The conditional stays in the scalar program; it does not change the
+model graph's nodes or shapes.
 
 Tracing and export illustrate why this restriction matters. Consider a function whose branch
 depends on the input values:

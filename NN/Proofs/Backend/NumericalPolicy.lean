@@ -15,8 +15,9 @@ public import NN.Proofs.RuntimeApprox.Graph.NumericalCertificate.Contracts
 Every fixed-left range transfer (matrix product, whole and axis sums and means, average pooling,
 mean squared error, and LayerNorm) succeeds only after the reduction guard accepts the node, and
 the guard reads the numerical policy of a selected capsule. The lookup takes the first kernel with
-a matching node id. `AcceptedGraphKernelPlan` does not require ids to be distinct, so a later
-kernel with the same id is not checked. The statements establish the consumer's policy gate, not
+a matching node id. `AcceptedGraphKernelPlan` does not require ids to be distinct, so the reduction
+guard does not consult a later kernel with the same id. Each capsule still passes the accepted
+plan's policy and evidence gate. The statements establish the consumer's policy gate, not
 numerical correctness of a native implementation.
 -/
 

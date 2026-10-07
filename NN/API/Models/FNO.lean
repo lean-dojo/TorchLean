@@ -110,10 +110,10 @@ def fno {d : Nat} (config : FNO.Config d) (batchShape : Spec.Shape := []) :
         let operators ← buildBlocks config.layerCount
         nn.withSeed fun projectWeightSeed =>
           let lift :=
-            Runtime.Autograd.Model.Layers.FNO.pointwiseAffine
+            Runtime.Autograd.Model.Layers.FNO.linear
               grid config.inputFeatures.size config.width liftWeightSeed
           let project :=
-            Runtime.Autograd.Model.Layers.FNO.pointwiseAffine
+            Runtime.Autograd.Model.Layers.FNO.linear
               grid config.width config.outputFeatures.size projectWeightSeed
           let model :=
             Runtime.Autograd.Model.Layers.Seq.comp

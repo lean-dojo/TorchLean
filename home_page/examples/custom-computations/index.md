@@ -5,7 +5,7 @@ title: Custom Tensor Computations
 Let's apply a function we wrote in Lean to a tensor, then choose where to run it. We'll start
 in the editor.
 
-We already use LibTorch for standard model operations. But when we want a different activation
+We already use LibTorch for standard GPU model operations. But when we want a different activation
 or a small indexed calculation, it's useful to write the function in Lean and keep working with
 tensors. We don't have to maintain a separate CUDA implementation for the supported calculations
 shown here.
@@ -95,8 +95,8 @@ the GPU frontend preserves that choice too. The result still has shape `[3]`.
 
 ## Read several tensors
 
-An indexed `Program` lets an output read entries from more than one tensor. A tensor pack groups
-those inputs while keeping each tensor's shape:
+An indexed `Program` lets an output read entries from more than one tensor. We put the tensors
+in `Arguments`, keeping each one's shape:
 
 ```lean
 open NN.Kernel
@@ -108,8 +108,8 @@ def addInputs : Program Float32 :=
     let y ← read 1 i
     pure (x + y))
 
-def inputs : TensorPack Float32 [[3], [3]] :=
-  TensorPack.cons input (TensorPack.singleton input)
+def inputs : Arguments Float32 [[3], [3]] :=
+  (Arguments.empty.push input).push input
 
 #eval addInputs.run inputs [3]
 -- [2.000000, 4.000000, 6.000000]
@@ -133,11 +133,11 @@ def rowSum : Program Float32 :=
       let x ← read 0 (row * 3 + column)
       pure (acc + x)) 3 0 0)
 
-#eval rowSum.run (TensorPack.singleton matrix) [2]
+#eval rowSum.run (Arguments.empty.push matrix) [2]
 -- [6.000000, 15.000000]
 
 def rowsOnGpu : IO (Tensor Float32 [2]) :=
-  rowSum.run (TensorPack.singleton matrix) [2] (device := gpu)
+  rowSum.run (Arguments.empty.push matrix) [2] (device := gpu)
 ```
 
 `row * 3 + column` locates an entry in our three-column input. `iterate` runs three steps,

@@ -92,7 +92,7 @@ private theorem sub_add_scaled_eq {s : Shape} (x y fx fy : Tensor ‚Ñù s) (dt : ‚
     addSpec (subSpec x y) (scaleSpec (subSpec fx fy) dt)
   apply TorchLean.Tensor.Internal.Rep.ext
   intro coordinate
-  simp [subSpec, addSpec, scaleSpec, map2Spec, mapSpec, Tensor.map]
+  simp [subSpec, addSpec, scaleSpec, map2Spec, Tensor.map]
   ring_nf
 
 /--

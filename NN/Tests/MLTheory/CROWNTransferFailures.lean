@@ -221,6 +221,7 @@ private def checkConvolutionDerivatives : IO Unit := do
         secondExpected ≤ getAtOrZero secondBox.hi [index])
       "convolution mixed derivative lost its upstream bilinear term"
 
+/-- Exercise transfers whose malformed inputs or rounded accumulations defeat real-only tests. -/
 def run : IO Unit := do
   checkConvolution Float (1 / 18014398509481984) "Float"
   checkConvolution Float32 (1 / 67108864) "Float32"

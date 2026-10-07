@@ -47,13 +47,6 @@ def getVecCLM {Γ : List Shape} {n : Nat} (idx : Idx Γ (.dim n .scalar)) : CtxV
     getVecCLM (Γ := Γ) (n := n) idx x = getVec (Γ := Γ) (n := n) idx x := by
   simp [getVecCLM, getVec, CtxVec.getCLM_apply, Graph.castCLM]
 
-/-- Coordinate form of the general context lookup. -/
-@[simp] theorem getCLM_apply_ofLp {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (x : CtxVec Γ)
-    (i : Fin (Spec.Shape.size s)) :
-    ((CtxVec.getCLM (Γ := Γ) (s := s) idx) x).ofLp i =
-      (CtxVec.get (Γ := Γ) (s := s) idx x).ofLp i := by
-  simp
-
 /-- Inject a `Vec n` into a vectorized context at `idx` (fills other blocks with zeros). -/
 def singleVec {Γ : List Shape} {n : Nat} (idx : Idx Γ (.dim n .scalar)) (v : Vec n) : CtxVec Γ :=
   CtxVec.single (Γ := Γ) (s := .dim n .scalar) idx
@@ -67,30 +60,8 @@ this equation says. -/
 @[simp] theorem inner_getVec_singleVec {Γ : List Shape} {n : Nat} (idx : Idx Γ (.dim n .scalar))
     (x : CtxVec Γ) (v : Vec n) :
     inner ℝ x (singleVec (Γ := Γ) (n := n) idx v) = inner ℝ (getVec (Γ := Γ) (n := n) idx x) v := by
-  classical
-  let hsz : Spec.Shape.size (.dim n .scalar) = n := by simp [Spec.Shape.size]
-  -- reduce to `CtxVec.inner_get_single` plus cast isometries
-  have h :=
-    (CtxVec.inner_get_single (Γ := Γ) (s := .dim n .scalar) idx x (castVec hsz.symm v))
-  -- rewrite both sides to `getVec`/`singleVec`
-  -- RHS: move casts across `inner`
-  have hcast :
-      inner ℝ (castVec hsz (CtxVec.get (Γ := Γ) (s := .dim n .scalar) idx x)) v =
-        inner ℝ (CtxVec.get (Γ := Γ) (s := .dim n .scalar) idx x) (castVec hsz.symm v) := by
-    -- same trick as in `CtxVec.inner_get_single`
-    have hv : castVec hsz (castVec hsz.symm v) = v := by
-      simp
-    calc
-      inner ℝ (castVec hsz (CtxVec.get (Γ := Γ) (s := .dim n .scalar) idx x)) v
-          = inner ℝ (castVec hsz (CtxVec.get (Γ := Γ) (s := .dim n .scalar) idx x)) (castVec hsz
-            (castVec hsz.symm v)) := by
-              simp [hv]
-      _ = inner ℝ (CtxVec.get (Γ := Γ) (s := .dim n .scalar) idx x) (castVec hsz.symm v) := by
-            simpa using
-              (inner_castVec_castVec (h := hsz) (x := CtxVec.get (Γ := Γ) (s := .dim n .scalar) idx
-                x) (y := castVec hsz.symm v))
-  -- finish
-  simpa [singleVec, getVec, hcast] using h
+  rw [singleVec, CtxVec.inner_get_single, ← inner_castVec_left]
+  rfl
 
 -- ---------------------------------------------------------------------------
 -- Generic elementwise nodes on flattened tensors
@@ -421,70 +392,12 @@ def unaryOp {Γ : List Shape} {inDim outDim : Nat}
           (ofFnE δV'))))
     (correct_inner := by
       intro ctxV dctxV δV
-      let δV' : Vec outDim := castVec hOut δV
-      -- move the output cast across `inner`
-      have hcast :
-          inner ℝ (castVec hOut.symm
-              (getScalarE (C.correct.jvp (ofFnE (getVec (Γ := Γ) (n := inDim) idx ctxV))
-                (ofFnE (getVec (Γ := Γ) (n := inDim) idx dctxV))))) δV
-            =
-          inner ℝ
-              (getScalarE (C.correct.jvp (ofFnE (getVec (Γ := Γ) (n := inDim) idx ctxV))
-                (ofFnE (getVec (Γ := Γ) (n := inDim) idx dctxV)))) δV' := by
-        -- `δV = castVec hOut.symm δV'`
-        have hδ : castVec hOut.symm δV' = δV := by
-          simp [δV']
-        -- move the cast across `inner` via `inner_castVec_castVec`
-        have hinner :=
-          inner_castVec_castVec (h := hOut.symm)
-            (x := getScalarE (C.correct.jvp (ofFnE (getVec (Γ := Γ) (n := inDim) idx ctxV))
-              (ofFnE (getVec (Γ := Γ) (n := inDim) idx dctxV))))
-            (y := δV')
-        calc
-          inner ℝ (castVec hOut.symm
-              (getScalarE (C.correct.jvp (ofFnE (getVec (Γ := Γ) (n := inDim) idx ctxV))
-                (ofFnE (getVec (Γ := Γ) (n := inDim) idx dctxV))))) δV
-              =
-            inner ℝ (castVec hOut.symm
-              (getScalarE (C.correct.jvp (ofFnE (getVec (Γ := Γ) (n := inDim) idx ctxV))
-                (ofFnE (getVec (Γ := Γ) (n := inDim) idx dctxV))))) (castVec hOut.symm δV') := by
-                  simp [hδ]
-          _ = inner ℝ (getScalarE (C.correct.jvp (ofFnE (getVec (Γ := Γ) (n := inDim) idx ctxV))
-                (ofFnE (getVec (Γ := Γ) (n := inDim) idx dctxV)))) δV' := by
-                  simpa using hinner
-      -- op-level correctness, converted from `dot` to `inner`
-      have h :=
-        C.correct.correct
-          (x := ofFnE (getVec (Γ := Γ) (n := inDim) idx ctxV))
-          (dx := ofFnE (getVec (Γ := Γ) (n := inDim) idx dctxV))
-          (δ := ofFnE δV')
-      have hinner :
-          inner ℝ
-              (getScalarE (C.correct.jvp (ofFnE (getVec (Γ := Γ) (n := inDim) idx ctxV))
-                (ofFnE (getVec (Γ := Γ) (n := inDim) idx dctxV))))
-              δV'
-            =
-          inner ℝ
-              (getVec (Γ := Γ) (n := inDim) idx dctxV)
-              (getScalarE (C.correct.op.backward (ofFnE (getVec (Γ := Γ) (n := inDim) idx ctxV))
-                (ofFnE δV'))) := by
-        simpa [dot_eq_inner_vec, getScalarE_ofFnE, δV'] using h
-      -- lift the vjp back to the full context with `singleVec`
-      have hctx :
-          inner ℝ dctxV
-              (singleVec (Γ := Γ) (n := inDim) idx
-                (getScalarE (C.correct.op.backward (ofFnE (getVec (Γ := Γ) (n := inDim) idx ctxV))
-                  (ofFnE δV'))))
-            =
-          inner ℝ
-              (getVec (Γ := Γ) (n := inDim) idx dctxV)
-              (getScalarE (C.correct.op.backward (ofFnE (getVec (Γ := Γ) (n := inDim) idx ctxV))
-                (ofFnE δV'))) :=
-        inner_getVec_singleVec (Γ := Γ) (n := inDim) idx dctxV
-          (getScalarE (C.correct.op.backward (ofFnE (getVec (Γ := Γ) (n := inDim) idx ctxV)) (ofFnE
-            δV')))
-      -- combine
-      simpa [δV', hcast] using (hcast.trans (hinner.trans hctx.symm)))
+      rw [inner_castVec_left, inner_getVec_singleVec]
+      have h := C.correct.correct
+        (x := ofFnE (getVec (Γ := Γ) (n := inDim) idx ctxV))
+        (dx := ofFnE (getVec (Γ := Γ) (n := inDim) idx dctxV))
+        (δ := ofFnE (castVec hOut δV))
+      simpa [dot_eq_inner_vec, getScalarE_ofFnE, getVecCLM_apply] using h)
 
 /-- `NodeFDerivCorrect` for `unaryOp`. -/
 def unaryOpFderiv {Γ : List Shape} {inDim outDim : Nat}

@@ -38,8 +38,9 @@ a pure construction and yields the same result whenever `nn.build` starts from t
 :::
 
 :::definition "seeded_relu_mlp" (parent := "model_api") (lean := "TorchLean.nn.mlp")
-This {uses "seeded_builder_state"}[seeded builder] constructs one batched, single-hidden-layer
-MLP: a linear layer, ReLU, and a second linear layer.
+This {uses "seeded_builder_state"}[seeded builder] constructs an MLP with configured hidden widths,
+activation, optional dropout, and batch shape. Each hidden stage runs a linear layer followed by
+the activation and optional dropout; a final linear layer produces the output.
 :::
 
 :::group "model_specs"
@@ -47,7 +48,7 @@ Reference definitions used by the mathematical examples below.
 :::
 
 :::definition "knn_model_container" (parent := "model_specs") (lean := "Spec.KNN")
-A k-nearest-neighbor model stores $`k` together with a list of
+A k-nearest-neighbor model stores $`k` together with an array of
 {uses "shape_indexed_tensors"}[fixed-length feature vectors] and their labels or regression targets.
 The structure itself does not assert any statistical property.
 :::
@@ -194,7 +195,7 @@ $`\gamma-v` over already-computed coordinate summaries.
 
 :::theorem "vicreg_variance_penalizes_collapse" (parent := "model_theorems") (lean := "NN.MLTheory.SelfSupervised.varianceTerm_collapsed_positive")
 If $`\gamma` is positive, then {uses "vicreg_variance_term"}[the variance term] is positive on any
-nonempty list in which every coordinate summary is zero. This finite arithmetic statement does
+nonempty array in which every coordinate summary is zero. This finite arithmetic statement does
 not claim that an optimizer avoids collapse.
 :::
 

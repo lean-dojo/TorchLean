@@ -79,7 +79,7 @@ def instantiate {α : Type} [TorchLean.Storage α] [Context α]
               (α := α) cast runtime stateRef plan
             pure stateRef
         | none => do
-            let values := Runtime.Autograd.Model.Module.castPack cast initial
+            let values := TensorPack.map (fun tensor => Tensor.map cast tensor) initial
             Runtime.Autograd.Torch.ParamList.ofPackWithRequiresGrad values requiresGrad
   let modeRef ← IO.mkRef nn.Mode.train
   let rngCounter ← IO.mkRef 0
@@ -385,12 +385,12 @@ def forward {σ τ : Shape} {α β : Type}
     | none => module.mode
   IO.ofExcept (nn.IndexedModel.Internal.validateInput model input)
   let state := Internal.runtimeState module
-  let program : Runtime.Autograd.Model.ProgramWithDataInputs α β
+  let program : Runtime.Autograd.Model.Program.Data α β
       (model.stateShapes ++ []) [σ] τ :=
     fun {m} _ _ => by
       simpa using
         (nn.IndexedModel.Internal.program model selectedMode (α := α) (m := m))
-  let evaluator ← Runtime.Autograd.Model.Module.Evaluator.withState
+  let evaluator ← Runtime.Autograd.Model.Module.Evaluator.new
     (program := program)
     (TorchLean.Module.RuntimeState.Internal.runtime state)
     (TorchLean.Module.RuntimeState.Internal.stateRef state)
@@ -435,7 +435,7 @@ def Objective.dataLossEvaluator {α β : Type}
     IO (Tensor β firstShape → Tensor β secondShape → IO (Tensor α [])) := do
   let runtimeObjective := Objective.Internal.runtime objective
   let evaluator ←
-    Runtime.Autograd.Model.Module.ObjectiveDef.evaluatorWithState
+    Runtime.Autograd.Model.Module.ObjectiveDef.evaluator
       definition runtimeObjective.runtime runtimeObjective.trainer.state
   pure fun first second =>
     Runtime.Autograd.Model.Module.Evaluator.run
@@ -457,13 +457,13 @@ def Objective.indexedPredictor {α β : Type}
     IO (Tensor β σ → IO (Tensor α τ)) := do
   if hState : model.stateShapes = stateShapes then
     let runtimeObjective := Objective.Internal.runtime objective
-    let program : Runtime.Autograd.Model.ProgramWithDataInputs α β
+    let program : Runtime.Autograd.Model.Program.Data α β
         (stateShapes ++ []) [σ] τ := by
       subst stateShapes
       exact fun {m} _ _ => by
         simpa only [List.append_nil] using
           (nn.IndexedModel.Internal.program model .eval (α := α) (m := m))
-    let evaluator ← Runtime.Autograd.Model.Module.Evaluator.withState
+    let evaluator ← Runtime.Autograd.Model.Module.Evaluator.new
       (program := program) runtimeObjective.runtime runtimeObjective.trainer.state
       (validateDataInputs := fun
         | .cons input .nil => nn.IndexedModel.Internal.validateInput model input)

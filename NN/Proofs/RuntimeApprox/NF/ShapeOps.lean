@@ -11,17 +11,12 @@ public import NN.Proofs.RuntimeApprox.NF.Ops -- shake: keep
 /-!
 # NF Shape Operators
 
-NF (rounded) backend: approximation lemmas for shape-only tensor operators.
-
-These operators do not perform arithmetic on scalars (they only permute/replicate entries), so
-they preserve existing `approxTensor` error bounds.
-
-Shape-only operations should not introduce extra rounding error. Their proofs
-are mostly transport/indexing arguments rather than numerical analysis.
+Approximation lemmas for filling, replication, broadcasting, and Boolean masking in the
+rounded-real NF model. Copied entries retain their error budgets; masked entries are exactly
+zero. None of these operations introduces arithmetic rounding.
 
 ## PyTorch correspondence / citations
-These are the proof analogues of “view-like”/index-rearrangement ops in PyTorch which do not change
-floating-point values, only their arrangement:
+Related PyTorch shape operations:
 https://pytorch.org/docs/stable/generated/torch.reshape.html
 https://pytorch.org/docs/stable/generated/torch.Tensor.view.html
 https://pytorch.org/docs/stable/generated/torch.permute.html
@@ -135,8 +130,7 @@ theorem approxTensor_replicate {s : Shape}
       simpa only [Spec.unstack_replicate] using ih
 
 omit [ValidExp fexp] [ValidRndToNearest rnd] in
-/-- Broadcasting preserves the approximation tolerance, for the same reason `replicate` does: every
-output entry is a copy of some input entry, so it inherits that entry's error and nothing more. -/
+/-- Broadcasting preserves the approximation tolerance: each output entry copies an input. -/
 theorem approxTensor_broadcastTo
     {s₁ s₂ : Shape} (cb : Shape.CanBroadcastTo s₁ s₂)
     {xS : SpecTensor s₁} {xR : Tensor R s₁} {eps : ℝ}

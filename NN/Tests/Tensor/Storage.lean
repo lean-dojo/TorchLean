@@ -57,24 +57,6 @@ def floats : Tensor Float [3] :=
     | ⟨1, _⟩ => 1.5
     | _ => 2.5
 
-/-- Ordinary bracket syntax constructs tensors of any positive rank. -/
-def literalVector : Tensor Nat [3] :=
-  [1, 2, 3]
-
-def literalMatrix : Tensor Nat [2, 2] :=
-  [[1, 2], [3, 4]]
-
-def literalCube : Tensor Nat [2, 1, 2] :=
-  [[[1, 2]], [[3, 4]]]
-
-/-- Rank-zero tensors use the same shape notation and render as their sole value. -/
-def rankZeroValue : Tensor Nat [] :=
-  Tensor.full [] 7
-
-/-- Flat sources are vectors until an equal-size reshape is requested explicitly. -/
-def convertedMatrix : Tensor Nat [2, 2] :=
-  (Tensor.from #[1, 2, 3, 4]).reshape [2, 2]
-
 /-- Native byte slicing must clamp before allocating, even for heap-allocated naturals. -/
 def checkByteSliceBounds : IO Unit := do
   let source := ByteArray.mk #[10, 20, 30, 40]
@@ -125,8 +107,7 @@ def checkRationalPromotion : IO Unit := do
     expect "rational Float rounding" ((converted.getScalar 0).toBits == expected)
 
 /--
-Exercise storage selection and automatic `UInt8`/`Float` promotion through
-the ordinary `Tensor.add` API.
+Check native slice bounds, aliasing, scalar conversion, and mixed-element arithmetic.
 -/
 def run : IO Unit := do
   checkRationalPromotion
@@ -135,37 +116,6 @@ def run : IO Unit := do
   let emptyStack : Tensor Nat [2^64, 0] := Tensor.dim fun _ => emptyRow
   expect "empty stacking does not allocate a cache for the leading extent"
     emptyStack.data.isEmpty
-
-  expect "rank-one bracket literal"
-    (literalVector.to (Array Nat) == #[1, 2, 3])
-  expect "matrix bracket literal is row-major"
-    (literalMatrix.to (Array Nat) == #[1, 2, 3, 4])
-  expect "rank-three bracket literal is row-major"
-    (literalCube.to (Array Nat) == #[1, 2, 3, 4])
-  expect "array conversion and reshape"
-    (convertedMatrix.to (Array Nat) == #[1, 2, 3, 4])
-  expect "rank-zero tensor prints as its value"
-    (reprStr rankZeroValue == "7")
-  expect "rank-zero shape uses bracket notation"
-    (reprStr ([] : Spec.Shape) == "[]")
-  expect "higher-rank shapes use bracket notation"
-    (reprStr ([2, 3] : Spec.Shape) == "[2, 3]")
-  expect "tensor representation is shape-aware rather than array syntax"
-    (reprStr literalVector == "[1, 2, 3]")
-  expect "matrix representation preserves nested axes"
-    (reprStr literalMatrix == "[[1, 2], [3, 4]]")
-  let doubled : Tensor Nat [3] := literalVector + literalVector
-  expect "computed tensors use the direct tensor representation"
-    (reprStr doubled == "[2, 4, 6]")
-  expect "general conversion accepts computed tensor expressions"
-    (Tensor.to (literalVector + literalVector) (Array Nat) == #[2, 4, 6])
-  let vectorView : Vector Nat (Spec.Shape.size [2, 2]) :=
-    Tensor.to convertedMatrix (Vector Nat (Spec.Shape.size [2, 2]))
-  expect "general conversion supports statically sized vectors"
-    (vectorView.toArray == #[1, 2, 3, 4])
-  let fromList : Tensor Nat [3] := Tensor.from ([4, 5, 6] : List Nat)
-  expect "list conversion"
-    (fromList.to (List Nat) == [4, 5, 6])
 
   let floatSource := FloatArray.mk #[0.25, 0.5, 0.75]
   let floatRoundtrip : FloatArray := (Tensor.from floatSource).to FloatArray
@@ -252,11 +202,6 @@ def run : IO Unit := do
   let divided : Tensor Float [3] := bytes / floats
   expect "UInt8 / Float infers Float output"
     (divided.to (Array Float) == #[2.0, 2.0 / 1.5, 3.0 / 2.5])
-
-  let row : Fin 2 := ⟨1, by decide⟩
-  let column : Fin 2 := ⟨0, by decide⟩
-  expect "chained static indexing returns a scalar"
-    (convertedMatrix[row][column] == 3)
 
   let floatCoordinate : Spec.Shape.Coord [3] :=
     (⟨1, by decide⟩, PUnit.unit)

@@ -37,24 +37,18 @@ def makeNatRef {α : Type} [Storage α] (s : EagerSession α) (id : Nat) : IO Na
 
 /-- Validate one tensor handle before using its numeric tape id. -/
 def validateTensorRef {α : Type} [Storage α] (s : EagerSession α) {sh : Shape}
-    (x : TensorRef α sh) : IO Unit := do
-  match x.identity? with
-  | some identity => identity.validateAgainst s.refOwner s.refGeneration "tensor reference"
-  | none => throw <| IO.userError "torch: tensor reference has no session owner"
+    (x : TensorRef α sh) : IO Unit :=
+  RefIdentity.validate s.refOwner s.refGeneration x.identity? "tensor reference"
 
 /-- Validate tensor handles consumed by one operation. -/
 def validateRefIdentities {α : Type} [Storage α] (s : EagerSession α)
     (identities : Array (Option RefIdentity)) : IO Unit := do
   for identity? in identities do
-    match identity? with
-    | some identity => identity.validateAgainst s.refOwner s.refGeneration "tensor reference"
-    | none => throw <| IO.userError "torch: tensor reference has no session owner"
+    RefIdentity.validate s.refOwner s.refGeneration identity? "tensor reference"
 
 /-- Validate one non-differentiable handle before using its environment index. -/
-def validateNatRef {α : Type} [Storage α] (s : EagerSession α) (x : NatRef) : IO Unit := do
-  match x.identity? with
-  | some identity => identity.validateAgainst s.refOwner s.refGeneration "Nat reference"
-  | none => throw <| IO.userError "torch: Nat reference has no session owner"
+def validateNatRef {α : Type} [Storage α] (s : EagerSession α) (x : NatRef) : IO Unit :=
+  RefIdentity.validate s.refOwner s.refGeneration x.identity? "Nat reference"
 
 /--
 Record a non-differentiable `Nat` input in the session environment.

@@ -12,26 +12,19 @@ public import NN.Floats.Interval.Comparison
 /-!
 # Finite binary32 interval regressions
 
-These checks exercise the actual nonlinear backend, including exceptional endpoints, overflow,
-subnormal values, zero-crossing square roots, and interior trigonometric extrema. All numerical
-comparisons decode endpoints exactly as rationals. The theorem below separately checks that the
-backend's containment interface applies at the irrational input `π / 2`.
+These are TorchLean's CROWN transfers, not standalone FloatLib arithmetic tests. They check the
+adapter's rejection of nonfinite regions and its handling of overflow, subnormals, zero-crossing
+square roots, and interior trigonometric extrema. Comparisons decode endpoints exactly as rationals.
 -/
 
 open FloatLib.Floats.ExecFloat (Binary)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 open FloatLib.Numerics (Interval RationalInterval)
 open NN.MLTheory.CROWN
-open TorchLean.Floats.Interval.Comparison (intervalToRat?)
+open TorchLean.Floats.Interval.Comparison (toRational?)
 
 namespace NN.Tests.Floats.IEEE32IntervalBounds
 
-/-- A successful sine transfer includes an interior maximum whenever its input includes `π / 2`. -/
-public theorem sinBounds_contains_pi_div_two {lo hi outLo outHi : Binary 8 23}
-    (h : NonlinearBoundOps.sinBounds lo hi = some (outLo, outHi))
-    (hx : (⟨lo, hi⟩ : Interval (Binary 8 23)).ContainsReal Binary.toRat? (Real.pi / 2)) :
-    (⟨outLo, outHi⟩ : Interval (Binary 8 23)).ContainsReal Binary.toRat? 1 := by
-  simpa only [Real.sin_pi_div_two] using IEEE32ExecBounds.sinBounds_containsReal h hx
 
 private abbrev Endpoint := Binary 8 23
 
@@ -40,7 +33,7 @@ private def binary32 (q : ℚ) : Endpoint :=
 
 private def decodedBounds? (result : Option (Endpoint × Endpoint)) :
     Option RationalInterval :=
-  result.bind fun (lo, hi) => intervalToRat? Binary.toRat? ⟨lo, hi⟩
+  result.bind fun (lo, hi) => toRational? Binary.toRat? ⟨lo, hi⟩
 
 private def satisfies (result : Option (Endpoint × Endpoint))
     (p : RationalInterval → Bool) : Bool :=

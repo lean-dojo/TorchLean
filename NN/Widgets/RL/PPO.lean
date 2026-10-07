@@ -23,8 +23,7 @@ This module provides a small infoview widget for visualizing PPO rollouts as cur
 - `return_t` (lambda-returns computed from GAE),
 - `advantage_t` (GAE(λ) advantages).
 
-Implementation note: we intentionally reuse TorchLean's generic training-log widget
-(`NN.Widgets.Runtime.Training.trainLogHtml`) so we do not duplicate plotting/sparkline code.
+The curves use the shared training-log viewer; this module only prepares the rollout series.
 
 References:
 - Schulman et al., "High-Dimensional Continuous Control Using Generalized Advantage Estimation"

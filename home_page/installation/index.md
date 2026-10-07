@@ -7,16 +7,14 @@ redirect_from:
 
 # Installation
 
-If you want to try TorchLean on a laptop, start with the CPU build. It does not require PyTorch,
-CUDA, or a GPU. The repository pins its Lean version in `lean-toolchain`, so Elan will select the
-right compiler for you: Lean 4.34.0. Mathlib uses the matching release. FloatLib tracks `main` in
-`lakefile.lean`, with the exact revision recorded in `lake-manifest.json`. Run
-`scripts/lake.sh update floatlib` to adopt newer FloatLib changes, then rebuild and test TorchLean.
-
 ## CPU Installation
 
 The build wrapper requires Bash and Python 3. Install the compiler tools described for your
 platform below before building.
+
+Optional [dataset preparation](https://github.com/lean-dojo/TorchLean/tree/main/scripts/datasets)
+requires Python 3.12+ and NumPy; WikiText also needs PyArrow. These packages are not needed to
+build the CPU library or run its offline examples.
 
 First install [Elan](https://github.com/leanprover/elan), the Lean toolchain manager. On Linux or
 macOS:
@@ -56,20 +54,18 @@ scripts/lake.sh exe torchlean --help
 scripts/lake.sh exe verify --help
 ```
 
-That CPU build is the common starting point on every platform. From there, TorchLean can link
-its LibTorch CUDA backend without changing the Lean model being run.
-The table below separates paths that work today from platforms that still need platform-specific
-runtime work.
+For GPU execution, build with LibTorch as described below. The Lean model stays the same.
 
 | Platform | CPU | NVIDIA GPU | LibTorch provider | Current status |
 | --- | --- | --- | --- | --- |
 | Linux | &#10003; | &#10003; Through LibTorch | Tensor operations and local gradients | Supported |
-| macOS, Intel or Apple silicon | &#10003; | Not applicable | Not yet | CPU supported; Metal is planned |
+| macOS, Intel or Apple silicon | &#10003; | Not applicable | Not implemented | CPU supported; GPU unsupported |
 | Windows with WSL2 | &#10003; Linux path | &#10003; CUDA on WSL2 | Linux path | Recommended Windows setup |
 | Native Windows | Not yet | Not validated | Not wired | Native toolchain work remains; use WSL2 |
 
 LibTorch is the standard CUDA backend: build with `-Kcuda=true` and run with `--device cuda`.
-You can also request `--device gpu` (or `.gpu` in Lean). Currently it selects CUDA through
+You can also request `--device gpu` (or `device := gpu` after `open TorchLean` in Lean).
+Currently it selects CUDA through
 LibTorch and fails if that GPU runtime is unavailable; it does not fall back to CPU.
 A plain build still uses the portable CPU runtime and does not link LibTorch.
 The GPU backend uses ATen, LibTorch's tensor library. TorchLean retains its own tape, backward
@@ -90,13 +86,6 @@ sudo apt install -y git curl bash python3 build-essential
 Then follow the CPU installation steps above. The default build uses the portable CPU runtime.
 One unavailable-backend shim supplies the GPU symbols so CPU-only machines can compile the
 complete Lean project. GPU requests fail with instructions to rebuild with LibTorch.
-
-Linux native targets also build a private mimalloc 3.4.4 object from checksum-pinned source.
-Position-independent code and initial-exec thread-local storage let it link into executables and
-shared libraries. It includes a narrow arena-purge wakeup repair; the installed Lean compiler and
-`#eval` keep their existing allocator. The
-[native allocation boundary](https://github.com/lean-dojo/TorchLean/blob/main/docs/TRUST_BOUNDARIES.md#native-host-allocation)
-describes the repair and its remaining assumptions.
 
 ### NVIDIA CUDA
 
@@ -144,7 +133,7 @@ also pass the SDK path directly to Lake:
 scripts/lake.sh -Kcuda=true \
   -Klibtorch_home=/absolute/path/to/libtorch build
 scripts/lake.sh -Kcuda=true \
-  -Klibtorch_home=/absolute/path/to/libtorch exe libtorch_sdpa_test
+  -Klibtorch_home=/absolute/path/to/libtorch test
 ```
 
 The maintained CUDA profile uses attention composed in Lean from matrix products, masking,
@@ -200,12 +189,8 @@ powershell -ExecutionPolicy Bypass -f elan-init.ps1
 del elan-init.ps1
 ```
 
-The remaining work is platform engineering: the native libraries must be compiled with a compatible
-Windows C/C++ toolchain; CUDA and LibTorch must be discovered as `.lib` and DLL artifacts; Linux
-linker options such as `-Wl,-rpath` must be replaced; and the GPU runtime must be tested
-under the Windows loader and ABI. Once those pieces are wired, the existing device, provider, and
-capsule abstractions do not need to be redesigned. Until then, WSL2 is the supported route for both
-CPU and NVIDIA GPU execution on Windows.
+Installing these tools alone does not make the native runtime work on Windows. Use WSL2 for
+the supported CPU and NVIDIA GPU paths.
 
 ## Use TorchLean From Another Lean Project
 
@@ -230,8 +215,8 @@ import NN.API
 open TorchLean
 ```
 
-Scalar arithmetic and numerical proofs come from the separate
-[FloatLib package](https://github.com/lean-dojo/FloatLib), included as a pinned dependency:
+TorchLean includes [FloatLib](https://github.com/lean-dojo/FloatLib) for scalar arithmetic and
+numerical proofs. For example:
 
 ```lean
 import FloatLib
@@ -249,12 +234,8 @@ rounded from exact rationals directly into the selected format. Wider software f
 same public arithmetic interface; selecting one does not add arbitrary-precision hardware support
 to CUDA or cuBLAS.
 
-`import FloatLib` supplies configured numerical types, reference semantics, refinement theorems,
-and intervals without importing TorchLean's model or runtime layers. Binary elementary functions
-have a separate import,
-`FloatLib.Floats.Formats.BinaryInterchange.Configured.Transcendentals`; they are deterministic
-approximations and need their own accuracy claims. Tensor quantization and graph-level numerical
-proofs remain TorchLean integrations.
+See the [floating-point guide]({{ '/blueprint/Floating-Point-and-Native-Boundaries/Floating-Point-Semantics/' | relative_url }})
+for other formats, elementary functions, and numerical proofs.
 
 For development against a neighboring checkout, use a path dependency:
 
@@ -264,27 +245,17 @@ require TorchLean from "../TorchLean"
 
 ## From A Model To A Kernel
 
-Installation chooses a device or a complete backend profile; the model API stays the same. Each
-operation an eager session executes is first matched to a `KernelCapsule`: a record naming the
-operation, provider, device, trust level (`checked` or `trustedExternal`), VJP mode, and four
-contract descriptors (shape, layout, value, VJP) with their evidence. Its `numericalPolicy` has one
-field, `reduction`, which says whether the kernel accumulates in the fixed left-fold order of the
-tensor semantics or in an implementation-defined order. The numerical certificate registry reads
-that field, so a CUDA or LibTorch capsule cannot inherit a fixed-left reduction certificate.
+The model API stays the same when you change devices. The backend planner checks each operation's
+provider, device, and contract evidence against the selected profile before binding its handler.
+Unavailable providers fail rather than changing the request. Add `--show-backend` to a model
+command to see the selected implementations.
 
-Selection has three steps. The planner picks the first capsule whose device, provider preference,
-VJP mode, and trust level fit the profile. `checkContracts` then produces a `ContractCheck` that
-rejects any selected descriptor whose evidence the profile's assurance policy does not admit. The
-session finally calls `KernelCapsule.bind` to pair the capsule with a handler for the same
-operation, provider, and device before running it. Unavailable providers fail at that point instead
-of quietly changing the request. `--show-backend` prints each selected capsule the first time a
-session uses it.
-
-`checked_cuda` selects LibTorch numerical operations. Attention retains the capsule name
-`libtorch.direct_attention` and reports `torchlean-tape`: Lean composes its local VJP and manages
-the saved buffers. Capsules labelled `backend-vjp` instead call a native routine for their local
-reverse rule. TorchLean traverses the tape and accumulates gradients in both cases. Attention has
-one CUDA implementation; there is no separate fused-attention provider to select.
+The default `libtorch_cuda` profile uses LibTorch numerical operations and TorchLean's tape.
+Operations without retained CUDA parity checks record an explicit LibTorch trust boundary.
+The strict `checked_cuda` profile rejects those operations. These profile names do
+not assert a Lean refinement proof for LibTorch kernels. Reduction order remains part of each
+operation's numerical policy: an implementation-defined CUDA reduction cannot inherit a
+certificate for fixed-left accumulation.
 
 Read [Inside the Backend Planner]({{ '/blueprint/Runtime___-Autograd___-and-Interop/Inside-The-Backend-Planner/' | relative_url }})
 for capsules, provider preference, VJP ownership, assurance policies, and backend reports. Read

@@ -3,7 +3,7 @@
 This directory contains TorchLean's layer definitions: common neural-network building blocks written
 as pure functions on spec tensors and parameter records.
 
-The emphasis is a clear reference definition. Runtime code, graph lowering, CUDA kernels, and
+The emphasis is a clear reference definition. Runtime code, graph lowering, native backends, and
 verification passes should be able to point back here when they need the mathematical meaning of an
 operation. For layers used by reverse-mode training, the spec layer also records derivative or VJP
 rules so the backward meaning is visible.
@@ -30,7 +30,8 @@ Files:
   rules follow the first selected maximum at ties.
 - `Normalization.lean`, `Normalization/Core.lean`, `Normalization/BatchNorm.lean`: LayerNorm,
   RMSNorm, and BatchNorm style utilities with explicit backward specs.
-- `Embedding.lean`: one-hot embeddings (`oneHot @ W`) and the corresponding VJP.
+- `Embedding.lean`: finite-index table lookup over arbitrary tensor shapes, plus one-hot
+  embeddings (`oneHot @ W`) and the corresponding VJP.
 - `PositionalEncoding.lean`: learnable/sinusoidal positional encodings and RoPE style rotations.
 - `Dropout.lean`: deterministic inference and mask-driven training dropout specs.
 - `Loss.lean`: common scalar losses and their derivatives.

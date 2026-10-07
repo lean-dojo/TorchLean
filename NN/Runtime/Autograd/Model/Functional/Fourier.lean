@@ -41,15 +41,15 @@ variable {α : Type} [Storage α] [Context α]
 namespace Fourier
 
 /-- Dense real-linear reference transform, used when the interpreter has no native FFT hook. -/
-def rfft {batch n : Nat} (x : RefTy m α [batch, n]) :
-    m (RefTy m α [batch, n / 2 + 1, 2]) := do
+def rfft {batch n : Nat} (x : Ref (m := m) (α := α) [batch, n]) :
+    m (Ref (m := m) (α := α) [batch, n / 2 + 1, 2]) := do
   let basis ← const (m := m) (RealFFT.forwardMatrix (α := α) n)
   let packed ← matmul (batchA := []) (batchB := []) (batch := []) x basis
   reshape packed (by simp [Shape.size])
 
 /-- Dense normalized inverse, with explicit length so odd and even inputs remain distinct. -/
-def irfft {batch n : Nat} (x : RefTy m α [batch, n / 2 + 1, 2]) :
-    m (RefTy m α [batch, n]) := do
+def irfft {batch n : Nat} (x : Ref (m := m) (α := α) [batch, n / 2 + 1, 2]) :
+    m (Ref (m := m) (α := α) [batch, n]) := do
   let packed ← reshape (s₂ := [batch, (n / 2 + 1) * 2]) x
     (by simp [Shape.size])
   let basis ← const (m := m) (RealFFT.inverseMatrix (α := α) n)
@@ -65,11 +65,11 @@ The positive-length witness rules out an undefined transform; an empty batch is 
 operation records differentiable references, including on interpreters that use the dense fallback.
 -/
 def rfft {batch : Shape} {n : Nat} (_hn : 0 < n)
-    (x : RefTy m α (batch.concat [n])) (path : SpectralPath := .automatic) :
-    m (RefTy m α (batch.concat [n / 2 + 1, 2])) := do
+    (x : Ref (m := m) (α := α) (batch.concat [n])) (path : SpectralPath := .automatic) :
+    m (Ref (m := m) (α := α) (batch.concat [n / 2 + 1, 2])) := do
   let rows ← reshape (s₂ := [Shape.size batch, n]) x
     (by simp [Shape.size_concat, Shape.size])
-  let packed ← (show m (RefTy m α [Shape.size batch, n / 2 + 1, 2]) from do
+  let packed ← (show m (Ref (m := m) (α := α) [Shape.size batch, n / 2 + 1, 2]) from do
     if path == .automatic then
       if let some native := _root_.Runtime.Autograd.Torch.Ops.rfft1dNative? (m := m) (α := α) then
         if let some result ← native rows then return result
@@ -79,16 +79,17 @@ def rfft {batch : Shape} {n : Nat} (_hn : 0 < n)
 /--
 Normalized inverse real transform with output length `n`.
 
-Interior bins are completed by conjugate symmetry. Imaginary DC and even-length Nyquist inputs
-are ignored, and their derivatives are zero. Passing `n` explicitly distinguishes lengths such
-as four and five, which have the same number of stored bins.
+Interior bins are completed by conjugate symmetry. In exact real arithmetic, imaginary DC and
+even-length Nyquist coordinates contribute zero and have zero derivatives. The dense path still
+multiplies these coordinates by zero, so it does not suppress NaN or infinity. Passing `n`
+explicitly distinguishes lengths such as four and five, which store the same number of bins.
 -/
 def irfft {batch : Shape} {n : Nat} (_hn : 0 < n)
-    (x : RefTy m α (batch.concat [n / 2 + 1, 2]))
-    (path : SpectralPath := .automatic) : m (RefTy m α (batch.concat [n])) := do
+    (x : Ref (m := m) (α := α) (batch.concat [n / 2 + 1, 2]))
+    (path : SpectralPath := .automatic) : m (Ref (m := m) (α := α) (batch.concat [n])) := do
   let rows ← reshape (s₂ := [Shape.size batch, n / 2 + 1, 2]) x
     (by simp [Shape.size_concat, Shape.size])
-  let values ← (show m (RefTy m α [Shape.size batch, n]) from do
+  let values ← (show m (Ref (m := m) (α := α) [Shape.size batch, n]) from do
     if path == .automatic then
       if let some native := _root_.Runtime.Autograd.Torch.Ops.irfft1dNative? (m := m) (α := α) then
         if let some result ← native rows then return result

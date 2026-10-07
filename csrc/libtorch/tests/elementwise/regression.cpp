@@ -650,8 +650,12 @@ void lean_primitive_parity(const char* path) {
 
 }  // namespace
 
-// Shared entrypoint for the migrated parity CLI; its frontend is ordinary C++.
-int torchlean_elementwise_regressions(const char* reference_path) {
+int main(int argc, char** argv) {
+  if (argc > 2) {
+    std::cerr << "usage: torchlean_elementwise_regression [LEAN_CASES.txt]\n";
+    return 2;
+  }
+  const char* reference_path = argc == 2 ? argv[1] : "/dev/stdin";
   try {
     check(std::fesetround(FE_TONEAREST) == 0, "cannot set host round-to-nearest");
     lean_initialize_runtime_module();

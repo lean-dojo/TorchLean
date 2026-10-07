@@ -20,8 +20,12 @@ their transfer rules support its operations and parameter payloads.
 
 The builder handles arithmetic, shape operations, common activations, pooling, linear layers,
 and arbitrary-rank convolution. Composite operations such as multi-head attention produce several
-IR nodes. Training BatchNorm, tensor-valued gather/scatter indices, and selection on an
-inner axis return lowering errors.
+IR nodes. Training BatchNorm, transposed convolution, smooth max-pooling, tensor-valued
+gather/scatter indices, and selection on an inner axis return lowering errors.
+
+Log-softmax currently expands to softmax followed by log, unlike the stable source primitive.
+For finite-precision scalars, a probability can underflow to zero and fail the IR logarithm's
+positive-domain check. This expansion does not preserve the source's numerical behavior.
 
 Softplus and `safeLog` have dedicated operations that retain the scalar specification's stable
 branch. SafeLog stores epsilon as a scalar constant parent, so its value, including any dual
@@ -230,7 +234,12 @@ def Internal.emitAttention {α : Type} [TorchLean.Storage α] [Context α]
     emitUnary (α := α) (kind := .reshape sProjected sBig) (x := swapped) (t := sBig)
   emitMatmul (α := α) (a := concat) (b := wo) (sOut := sX)
 
-/-- Exact leading-axis slice expressed through the verifier's affine matrix fragment. -/
+/-- Leading-axis slice encoded as a one-hot affine matrix followed by a reshape.
+
+The matrix representation selects the intended coordinates over exact arithmetic. It also
+evaluates zero products and a reduction, unlike direct indexing; exceptional floating-point values
+and signed zeros can therefore behave differently.
+-/
 def emitSlice {α : Type} [TorchLean.Storage α] [Context α]
     {n len : Nat} {s : Shape} (start : Nat) (_h : start + len ≤ n)
     (x : Ref α (.dim n s)) : BuildM α (Ref α (.dim len s)) := do
@@ -438,9 +447,9 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
       | Nat.succ r => r
     emitUnary (α := α) (kind := .softmax axis) (x := x) (t := s)
   logSoftmaxLast := fun {s} x => do
-    -- The verifier IR represents `log_softmax` by lowering it through
-    -- `softmax` followed by `log` so the semantic graph remains expressible; eager/typed graph
-    -- training still uses the stable primitive from the autograd runtime.
+    -- Unlike the stable source primitive, this expansion can underflow before taking log.
+    -- The IR evaluator rejects zero probabilities; graph shape validation does not detect this
+    -- numerical mismatch. Eager and typed-graph training retain the stable primitive.
     let axis :=
       match Spec.Shape.rank s with
       | 0 => 0

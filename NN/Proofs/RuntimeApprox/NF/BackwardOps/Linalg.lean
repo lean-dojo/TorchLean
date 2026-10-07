@@ -14,6 +14,11 @@ public import NN.Proofs.RuntimeApprox.NF.Linalg
 # Linear Algebra NF Reverse Nodes
 
 Reverse-mode approximation nodes for matrix-vector and matrix-matrix multiplication.
+They compare supplied real adjoint formulas with rounded NF formulas. The local bounds do not
+establish native-kernel correspondence or independently prove the adjoint identities.
+
+Matrix multiplication permits both operands to refer to the same context slot. That case adds
+both cotangent contributions and includes the addition's rounding error in the bound.
 -/
 @[expose] public section
 
@@ -130,7 +135,6 @@ def matVecMulRevNode {Γ : List Shape} {m n : Nat}
           v dVBound 0
       vjpSound := ?_ }
   intro ctxS ctxR epsCtx δS δR epsδ hctx hδ
-  -- Approximate `v` and `A` from the context.
   have hv := approxCtx_getIdx (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hctx
     v
   have hA := approxCtx_getIdx (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hctx

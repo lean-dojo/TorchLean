@@ -153,29 +153,20 @@ def makeNatRef {α : Type} [TorchLean.Storage α]
 /-- Validate one tensor handle before using its numeric graph id. -/
 def validateTensorRef {α : Type} [TorchLean.Storage α]
     (s : TypedGraphSession α) {sh : Shape}
-    (x : TensorRef α sh) : IO Unit := do
-  match x.identity? with
-  | some identity =>
-      identity.validateAgainst s.referenceOwner s.referenceGeneration "tensor reference"
-  | none => throw <| IO.userError "torch: tensor reference has no session owner"
+    (x : TensorRef α sh) : IO Unit :=
+  RefIdentity.validate s.referenceOwner s.referenceGeneration x.identity? "tensor reference"
 
 /-- Validate tensor handles consumed by one graph operation. -/
 def validateRefIdentities {α : Type} [TorchLean.Storage α]
     (s : TypedGraphSession α)
     (identities : Array (Option RefIdentity)) : IO Unit := do
   for identity? in identities do
-    match identity? with
-    | some identity =>
-        identity.validateAgainst s.referenceOwner s.referenceGeneration "tensor reference"
-    | none => throw <| IO.userError "torch: tensor reference has no session owner"
+    RefIdentity.validate s.referenceOwner s.referenceGeneration identity? "tensor reference"
 
 /-- Validate one non-differentiable handle before using its environment index. -/
 def validateNatRef {α : Type} [TorchLean.Storage α]
-    (s : TypedGraphSession α) (x : NatRef) : IO Unit := do
-  match x.identity? with
-  | some identity =>
-      identity.validateAgainst s.referenceOwner s.referenceGeneration "Nat reference"
-  | none => throw <| IO.userError "torch: Nat reference has no session owner"
+    (s : TypedGraphSession α) (x : NatRef) : IO Unit :=
+  RefIdentity.validate s.referenceOwner s.referenceGeneration x.identity? "Nat reference"
 
 /--
 Reset the session to an empty snapshot.
@@ -318,7 +309,7 @@ Build a typed index into the current context `Γ ++ ss` from a raw numeric id an
 This is the main "dynamic check" used by `getValue` (and by a few index-driven nodes): it ensures
 that the `Nat` id points to an existing tensor in the session context and that the shape matches.
 -/
-def mkIdxOrThrow {Γ ss : List Shape} (id : Nat) (s : Shape) :
+def index {Γ ss : List Shape} (id : Nat) (s : Shape) :
     Runtime.Autograd.Result (Proofs.Idx (Γ ++ ss) s) := by
     if h : id < (Γ ++ ss).length then
       let fin : Fin (Γ ++ ss).length := ⟨id, h⟩
@@ -350,7 +341,7 @@ def getValue {α : Type} [TorchLean.Storage α]
         if cached == version then pure values
         else evaluate st0 version
     | none => evaluate st0 version
-  let _ ← okOrThrow (mkIdxOrThrow (Γ := st0.Γ) (ss := st0.ss) x.id sh)
+  let _ ← IO.ofExcept (index (Γ := st0.Γ) (ss := st0.ss) x.id sh)
   match values[x.id]? with
   | some value =>
       if h : value.shape = sh then pure (value.cast h)
@@ -360,7 +351,7 @@ where
   /-- Validate and evaluate the recorded graph, retaining only its value context. -/
   evaluate (st0 : TypedGraphSessionState α) (version : Nat) :
       IO (Array (Spec.SomeTensor α)) := do
-    let compiled ← okOrThrow <|
+    let compiled ← IO.ofExcept <|
       Runtime.Autograd.TypedGraph.compileChecked st0.g st0.x st0.nat
     let values := compiled.context.values
     s.valueCache.set (some (version, values))

@@ -13,25 +13,11 @@ public import NN.Widgets.Core.UI
 import ProofWidgets.Component.HtmlDisplay
 
 /-!
-# Docs
+# Declaration Documentation
 
-Small helpers for surfacing docstrings in the InfoView.
-
-This is available through the widget entrypoint (`import NN.Widgets`) or
-directly as `import NN.Widgets.Core.Docs`, since it depends on ProofWidgets.
-
-Commands:
-- `#tl_doc f` prints the type + docstring for `f` as an info message.
-- `#tl_doc_view f` renders the type + docstring for `f` as a rich HTML panel in the InfoView.
-
-Tip: if you already have an identifier in the InfoView (e.g. under “Expected type”), you can also
-hover it to see its type + docstring. InfoView hover tooltips can be toggled in VS Code under
-`Lean 4 > Infoview: Show Tooltip On Hover`.
-
-## Main definitions
-
-- `#tl_doc f`: print `f`'s type and docstring in a plain info message.
-- `#tl_doc_view f`: show the same information in a richer HTML panel.
+`#tl_doc f` prints a declaration's type and docstring as an info message.
+`#tl_doc_view f` renders them in a themed infoview panel. Import `NN.Widgets` or
+`NN.Widgets.Core.Docs`; both commands use Lean's declaration lookup and pretty-printer.
 -/
 
 public meta section

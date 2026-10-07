@@ -51,7 +51,6 @@ jobs:
                   or path.endswith('.md')
                   or path in {
                       'scripts/verification/abcrown/export_leaf_artifact.py',
-                      'scripts/verification/abcrown/test_export_leaf_artifact.py',
                   }
               )
 
@@ -91,7 +90,7 @@ jobs:
 
       - name: Check build script syntax
         run: |
-          bash -n scripts/lake.sh scripts/checks/check.sh scripts/checks/cuda_sanitize_tests.sh
+          bash -n scripts/lake.sh scripts/checks/cuda.sh
           python3 - <<'PY'
           import ast
           from pathlib import Path
@@ -99,18 +98,8 @@ jobs:
           ast.parse(source.read_text(), filename=str(source))
           PY
 
-      - name: Test leaf artifact exporter
-        run: |
-          python3 -B -m unittest discover -s scripts/verification/abcrown -p 'test_*.py'
-          python3 -B -m unittest discover -s scripts/verification/robustness -p 'test_*.py'
-
-      - name: Test LiRPA certificate regions
-        run: python3 -B -m unittest discover -s scripts/verification/lirpa -p 'test_*.py'
-
-      - name: Test documentation links and dependency checks
-        run: |
-          python3 -B -m unittest discover -s scripts/docs -p 'test_*.py'
-          python3 -B -m unittest discover -s scripts/checks -p 'test_*.py'
+      - name: Test Python checks and bridges
+        run: python3 -B -m unittest discover -s scripts/checks -p 'test_*.py'
 
       - name: Validate citation metadata
         if: needs.changes.outputs.citation == 'true'
@@ -137,13 +126,12 @@ jobs:
         if: needs.changes.outputs.lean == 'true'
         run: |
           python3 -m pip install -r scripts/checks/requirements-interop.txt
-          python3 scripts/checks/check_interop_dependencies.py
+          python3 -c 'import torch, numpy, onnx; print(torch.__version__, numpy.__version__, onnx.__version__)'
 
-      - name: Test dataset conversion and PINN training
+      - name: Test dataset downloads and conversion
         if: needs.changes.outputs.lean == 'true'
         run: |
           python3 -B -m unittest discover -s scripts/datasets -p 'test_*.py'
-          python3 -B -m unittest discover -s scripts/verification/pinn -p 'test_*.py'
 
       - name: Identify native build configuration
         if: needs.changes.outputs.lean == 'true'

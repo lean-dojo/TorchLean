@@ -435,9 +435,7 @@ theorem toArray_finFoldl_push_eq_array_ofFn
 theorem toArray_ofFn {α : Type u} [storage : Storage α]
     {length : Nat} (values : Fin length → α) :
     storage.toArray (ofFn values) = Array.ofFn values := by
-  rw [ofFn, toArray_finFoldl_push,
-    storage.toArray_emptyWithCapacity,
-    fin_foldl_push_eq_array_ofFn]
+  exact toArray_finFoldl_push_eq_array_ofFn length values
 
 /-- Finite construction creates exactly the requested number of scalars. -/
 theorem size_ofFn {α : Type u} [storage : Storage α]

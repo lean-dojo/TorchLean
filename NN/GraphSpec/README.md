@@ -102,7 +102,7 @@ constructors, and `NN.GraphSpec.Chain.ToDAG.Semantics` for the theorem.
 | `DAG/Primitives/Shape.lean` | reshape, broadcast, concat, slicing, and axis operations |
 | `Primitives/Spatial.lean` | rank-polymorphic convolution, pooling, and spatial normalization |
 | `ToSequential.lean` | conversion of the supported layer-stack subset to `Runtime.Autograd.Model.Layers.Seq` |
-| `Models/` | MLP, CNN, residual, and TorchLean lowering examples |
+| `Models/` | MLP, general classifier heads, and residual graph examples |
 
 ## Adding A Primitive
 

@@ -199,8 +199,8 @@ theorem evalAt_eq_evalNode_reshape
     evalNode, hGetVal, Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 /--
-A lowered `transpose` node evaluates like the typed `transpose` node. Both evaluators run the same
-dynamic permutation, so the proof follows the three fallible steps case by case.
+A lowered `transpose` node evaluates like the typed `transpose` node, including permutation and
+output-shape errors. Both evaluators use the same dynamic permutation.
 -/
 theorem evalAt_eq_evalNode_transpose
     {α : Type} [TorchLean.Storage α] [Context α]
@@ -298,7 +298,8 @@ theorem evalAt_eq_evalNode_mseLoss
         Except.ok (Spec.SomeTensor.mk (α := α) .scalar (Tensor.scalar mean)) := by
     simp [Graph.evalAt, Graph.evalNode, Graph.binaryParentIds, binaryParents?,
       Graph.normalizeNodeOutput, Graph.mseLossSomeTensor, hGetNode, hSomeY, hSomeT, mean, diff,
-      yT, tT, yV, tV, Spec.mseSpec, Spec.meanOver,
+      yT, tT, yV, tV, Spec.mseSpec, TorchLean.Tensor.meanSquaredError,
+      TorchLean.Tensor.meanSpec,
       Bind.bind, Except.bind, Pure.pure, Except.pure]
   have hTypedEval :
       evalNode (α := α) (paramShapes := paramShapes) (inShape := inShape) (ss := ss)

@@ -210,9 +210,9 @@ def tokenWindowIds (prompt : String) (offset : Nat) : Tensor Nat [contextLength]
 def printPredictionReport (label prompt : String) (logits : Tensor Float output) :
     IO Unit := do
   let predIds := text.argmaxTokens (α := Float) (logits.get 0)
-  IO.println s!"  {label} pred={text.formatByteTokens predIds}"
-  IO.println s!"  prompt={text.formatByteTokens (tokenWindowIds prompt 0)}"
-  IO.println s!"  target={text.formatByteTokens (tokenWindowIds prompt 1)}"
+  IO.println s!"  {label} pred={text.formatBytes predIds}"
+  IO.println s!"  prompt={text.formatBytes (tokenWindowIds prompt 0)}"
+  IO.println s!"  target={text.formatBytes (tokenWindowIds prompt 1)}"
 
 /-- Convert byte ids into the typed batched one-hot input tensor used for generation. -/
 def inputTensorFromIds (ids : Tensor Nat [contextLength]) : Tensor Float input :=
@@ -234,7 +234,7 @@ def generate {promptLength : Nat}
     (predict : Predictor) (tokens : Tensor Nat [promptLength])
     (options : text.GenerationOptions) :
     IO (Tensor Nat [promptLength + options.newTokenCount]) :=
-  text.autoregressiveTokenIds contextLength 32 tokens options
+  text.generate contextLength 32 tokens options
     (fun padded position => do
       let logits ← predict (inputTensorFromIds padded)
       pure ((logits.get 0).get position))
@@ -282,7 +282,7 @@ partial def interactiveLoop
       IO.println "  interactive: cleared context"
       loop (Tensor.full [0] 0)
     else if prompt = ":show" then
-      IO.println s!"  context={text.formatByteTokens ctx}"
+      IO.println s!"  context={text.formatBytes ctx}"
       loop ctx
     else
       let encoded := text.Tokenizer.byte.encode prompt
@@ -292,7 +292,7 @@ partial def interactiveLoop
         generate predict inputIds options.generation
       let genOnly := Tensor.window outIds options.generation.newTokenCount
         (count + encoded.size + 1) 0
-      IO.println s!"  generated={text.formatByteTokens genOnly}"
+      IO.println s!"  generated={text.formatBytes genOnly}"
       loop outIds
   loop (Tensor.full [0] 0)
 
@@ -339,7 +339,7 @@ def trainAndDecode (runtime : Runtime.Config) (corpus : String)
   let generatedIds ←
     generate trained.predict
       (Tensor.from (text.Tokenizer.byte.encode options.generation.prompt)) options.generation
-  let generated := text.formatByteTokens generatedIds
+  let generated := text.formatBytes generatedIds
   IO.println s!"  generated={generated}"
   IO.println s!"  corpus_bytes={corpus.toByteArray.size} windows={samples.size}"
   IO.println s!"  sampling=top_k({options.generation.topK}), temperature={

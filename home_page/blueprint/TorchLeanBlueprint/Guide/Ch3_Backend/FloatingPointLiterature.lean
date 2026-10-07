@@ -265,13 +265,6 @@ summation, a pairwise reduction with logarithmic depth, or a wider accumulator. 
 contract matching the implemented arithmetic. The reduction theorem below makes its hypotheses
 explicit; it does not certify the printed $`\gamma_n` column unconditionally.
 
-The table's observed discrepancy and its theoretical factor answer different questions. The former
-compares two computed sums of the chosen harmonic terms. The latter describes how a local relative
-error assumption can grow with the number of rounding steps. To turn that factor into an absolute
-bound, one also needs a scale, such as the sum of the magnitudes of the terms, and must justify the
-local assumption for the arithmetic path. A small measured discrepancy can coexist with a much
-larger valid bound because the bound must permit error signs that this example never realizes.
-
 # Sequential, Pairwise, And Compensated Summation
 
 Keep the converted harmonic terms fixed and change only the accumulation algorithm. The naive
@@ -301,9 +294,9 @@ def harmPairwise32 (n : Nat) :
     level := next
   pure level[0]!
 
--- Kahan compensated summation. `drift` holds the part of
--- the last addend that did not fit into the accumulator,
--- recovered by subtracting the old accumulator back out.
+-- Kahan's signed correction estimates the addition error
+-- as (next - total) - adjusted.
+-- Subtract it from the next term.
 def harmKahan32 (n : Nat) : (ExecFloat.Binary 8 23) :=
   ((List.range n).foldl
     (fun (state : (ExecFloat.Binary 8 23) ×
@@ -391,13 +384,8 @@ a sequential one. A sharper logarithmic-depth bound requires another theorem. Th
 also does not provide a complete compensated-summation error contract. Its proved Sterbenz
 subtraction lemma is a useful ingredient, but does not by itself prove the Kahan program above.
 
-In `sumTreeResult_enclosure`, the existential tree is the record of an allowed reduction order.
-The permutation condition says that its leaves contain the supplied summands, with multiplicity;
-it does not let the evaluator drop an inconvenient term. The local addition hypothesis must then
-hold at the scale used by the theorem. In particular, a relative bound with a small constant cannot
-simply be assumed for every real input in a format with a fixed subnormal spacing. The theorem's
-current growth expression uses leaf count. A sharper estimate based on balanced-tree depth would
-be an additional theorem, even though the pairwise program visibly has that balanced structure.
+The witness tree records an allowed order. Its permutation condition preserves every supplied
+summand, with multiplicity; it does not permit dropping a term.
 
 # Cancellation And Relative Error
 
@@ -514,10 +502,6 @@ the ReLU output close while changing which VJP branch is selected. Backward appr
 therefore carries branch hypotheses or a bound that covers both possibilities rather than blindly
 reusing the forward proof.
 
-We can see the forward argument directly when the inputs straddle zero: removing the negative
-part shortens their distance. The outputs stay close even though the reverse rules select
-different slopes. That is why the forward bound needs no same-branch hypothesis.
-
 # Range Conditions For Softmax And Normalization
 
 For a nonlinear operation such as softmax, a global absolute-error rule is usually too weak.
@@ -552,18 +536,17 @@ x
 Subtracting the mean produces centered values; squaring and averaging them produces the variance.
 Adding $`\epsilon` gives the exact stabilized variance a positive lower bound. Rounding errors must
 also be small enough to preserve that margin. The theorem `approxTensor_normalizeCore` assumes
-a lower bound $`\eta>0` for the exact stabilized variance and checks that `stabilizedError < η`
-and `stdError < Real.sqrt η`. The first keeps the perturbed square-root input positive; the second
+a lower bound $`\eta>0` for the exact stabilized variance, with premises `stabilizedError < η`
+and `stdError < Real.sqrt η`. The first would keep the perturbed square-root input positive,
+but the current proof does not use it because `sqrtSpec` clamps its input to zero. The second
 keeps the perturbed denominator away from zero. Its error trace composes the subtraction,
 stabilization, square-root, division, and affine-scaling bounds, using the supplied error bounds
 for the input, mean, variance, and affine parameters.
 
-The normalization margins refer to successive stages. First, the error in the stabilized variance
-must be smaller than its positive real lower bound; this keeps the rounded square-root input on
-the controlled side of zero. Next, the error in the resulting standard deviation must be smaller
-than its own lower bound. This second check protects division. The two comparisons involve
-different quantities and different units, which is why replacing both with a single informal
-claim that epsilon is positive would lose information needed by the proof.
+The two margins refer to different stages and have different units. For the current clamped
+square-root proof, the standard-deviation error margin is the one needed to protect division.
+Positivity of epsilon alone does not establish that margin. These are mathematical premises
+about a noncomputable trace, not comparisons performed by an executable checker.
 
 # Composition Over A Graph
 
@@ -663,11 +646,6 @@ their initial approximation relations. The two instance arguments are the price 
 nearest-rounding facts from the previous chapter: the exponent policy has to be a valid one and the
 integer rounder has to round to nearest.
 
-This is why TorchLean keeps saved values in the numerical model. A backward rule for multiplication
-uses the opposite operand; a normalization VJP uses saved statistics; attention backward uses
-probabilities and mask semantics from the forward pass. Bounding only the final forward output
-would throw away the information needed to analyze those gradients.
-
 A cotangent seed is numerical input to the reverse computation. Scaling the seed scales the ideal
 VJP, and errors in that seed also propagate through the local reverse rules. Fanout adds a second
 issue: two paths can contribute to the same earlier variable. Their contributions must be summed,
@@ -766,8 +744,9 @@ but these examples do not exercise every policy or failure mode.
 
 Open
 {src "NN/Examples/DeepDives/Floats/GraphNumericalCertificate.lean"}[
-`GraphNumericalCertificate.lean`] and find `mlpGraph`, `mlpSources`, `mlpPayload`, `mlpCertificate`,
-and `mlpReplay`. Change one weight source interval so that it no longer contains the payload value,
+`GraphNumericalCertificate.lean`] and find `Mlp.graph`, `Mlp.sources`, `Mlp.payload`,
+`Mlp.certificate`, and `Mlp.replay`. Change one weight source interval so that it no longer
+contains the payload value,
 then rerun the command. Replay will identify the node whose value escaped the claimed enclosure.
 
 These are artifact checks and concrete replay. Rejecting the changed interval checks that validation

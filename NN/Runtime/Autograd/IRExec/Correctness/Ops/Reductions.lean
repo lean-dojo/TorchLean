@@ -17,15 +17,11 @@ Correctness lemmas for IR nodes whose primary behavior is broadcasting or reduct
 * `reduceSum axis` and `reduceMean axis` (single-axis reductions),
 * `sum` (full reduction to a scalar).
 
-Each lemma matches the lowering control flow closely: we validate the parent structure and the
-side-condition checks that `buildFrom` enforces, then construct the forward-graph closure and
-show that it matches `NN.IR.Graph.evalAt` at the current node. We finish by appealing to the shared
-`buildFrom_denoteAllFrom_nodeData_exact` lemma for the tail of the graph.
-
-Build note: reductions are among the more expensive op proofs because axes change shapes. Lean has
-to track both the input and output shapes, normalize the axis-side conditions, and then compare the
-lowered reduction with the IR denotation. Axis/shape arithmetic belongs in
-small lemmas so the semantic proof can read more like the lowering code.
+Sum and mean share the axis-validation proof but keep their distinct denotations. Axis reductions
+require the selected dimension to be nonempty; other dimensions may be empty. The full sum accepts
+empty tensors and folds scalar leaves in row-major order from zero. No associativity or native
+reduction-order assumption is used. `buildFrom_denoteAllFrom_nodeData_exact` handles the remaining
+graph after each operation's output has been identified.
 -/
 
 @[expose] public section
@@ -38,8 +34,6 @@ open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
--- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
--- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
 /-- Correctness lemma for `.broadcastTo s₁ s₂` lowering. -/
@@ -94,7 +88,7 @@ theorem buildFrom_denoteAllFrom_broadcastTo
                     let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                       mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
                         (fun ctx =>
-                          let x := readTensor (α := α) (xs := ctx) ip
+                          let x := ctx.read ip
                           hOut ▸ Tensor.broadcastTo (α := α) (s₁ := s₁) (s₂ := s₂) hCan x)
                     let st1 : State α inShape :=
                       ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
@@ -193,7 +187,7 @@ theorem buildFrom_denoteAllFrom_axisReduction
                         let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                           mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
                             (fun ctx =>
-                              let x := readTensor (α := α) (xs := ctx) ip
+                              let x := ctx.read ip
                               let y : Tensor α expected :=
                                 operation.denote axis x hRed
                               hOut ▸ y)
@@ -339,7 +333,7 @@ theorem buildFrom_denoteAllFrom_sum
                     let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                       mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
                         (fun ctx =>
-                          let x := readTensor (α := α) (xs := ctx) ip
+                          let x := ctx.read ip
                           hOut ▸ Tensor.scalar (Tensor.sumSpec (α := α) x))
                     let st1 : State α inShape :=
                       ⟨ss ++ [n.outShape], .snoc (ss := ss) gd nodeData⟩
@@ -361,8 +355,6 @@ theorem buildFrom_denoteAllFrom_sum
                       simp [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode,
                         NN.IR.Graph.normalizeNodeOutput, hN, hk, hp, hGet,
                         hOut, nodeData, mkForwardNode]
-                      -- The remaining obligation (if any) is proof-irrelevance for the cast used to
-                      -- type the scalar tensor.
                       rfl
                     have hTail := ih st1 hRec
                     exact buildFrom_denoteAllFrom_nodeData_exact (α := α) (g := g)

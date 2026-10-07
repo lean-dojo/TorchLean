@@ -52,8 +52,8 @@ References (background, not required to read the code):
 
 ## Implementation status
 
-No API builder implements this model. It is exercised numerically in
-`NN/Tests/Runtime/Floats/TorchLeanOpsCheck.lean`; no theorem is proved about it.
+No API builder implements this model. This module defines the mixture calculations;
+it does not prove EM convergence or derivative correctness.
 -/
 
 public section
@@ -262,8 +262,7 @@ def gmmWeightsDerivSpec {nComponents nFeatures : Nat}
   (_h : nComponents ≠ 0) :
   Option (Tensor α [nComponents]) :=
   if gmmParametersValidSpec m then
-    sequenceFin (fun k =>
-      some (Tensor.scalar (gradOutput.getScalar k / m.weights.getScalar k)))
+    some (divSpec gradOutput m.weights)
   else
     none
 
@@ -418,8 +417,7 @@ def gmmInitSpec {nComponents nFeatures : Nat} :
   GMMSpec α nComponents nFeatures :=
   let weights : Tensor α [nComponents] := uniformWeights (α := α) (nComponents :=
     nComponents)
-  let means : Tensor α [nComponents, nFeatures] := Tensor.dim (fun _ =>
-    Tensor.dim (fun _ => Tensor.scalar (0 : α)))
+  let means : Tensor α [nComponents, nFeatures] := Tensor.zeros [nComponents, nFeatures]
   let covariances : Tensor α [nComponents, nFeatures, nFeatures] :=
     Tensor.dim (fun _ => identityTensorSpec nFeatures)
   {
@@ -436,17 +434,14 @@ This is the standard
 $m+\log\!\left(\sum_i\exp(x_i-m)\right)$ trick, where $m=\max_i x_i$.
 -/
 def logSumExpReduce {n : Nat} (logProbs : Tensor α [n]) (h : n ≠ 0) : α :=
-  -- Step 1: Find maximum for numerical stability
   have inst : Shape.HasNonemptyAxis 0 (Shape.dim n .scalar) := by
     apply Shape.hasNonemptyAxisZeroOfNe h
   let maxLogProb := item (reduceMax 0 logProbs inst.proof)
 
-  -- Step 2: Compute sum of exp(logProb - maxLogProb)
-  let shiftedProbs := mapSpec
+  let shiftedProbs := Tensor.map
     (fun logProb => MathFunctions.exp (logProb - maxLogProb)) logProbs
   let sumShifted := sumSpec shiftedProbs
 
-  -- Step 3: Compute log(sumShifted) + maxLogProb
   if sumShifted > 0 then
     MathFunctions.log sumShifted + maxLogProb
   else

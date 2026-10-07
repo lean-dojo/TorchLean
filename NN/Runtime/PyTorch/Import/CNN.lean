@@ -58,25 +58,17 @@ structure Parameters
 def load (inputChannels outputChannels kernelHeight kernelWidth flattenedWidth : Nat)
     (json : Json) :
     Option (Parameters inputChannels outputChannels kernelHeight kernelWidth flattenedWidth) :=
-  let firstConvolutionWeightShape : Shape :=
-    [outputChannels, inputChannels, kernelHeight, kernelWidth]
-  let firstConvolutionBiasShape : Shape := [outputChannels]
-  let secondConvolutionWeightShape : Shape :=
-    [outputChannels, outputChannels, kernelHeight, kernelWidth]
-  let secondConvolutionBiasShape : Shape := [outputChannels]
-  let classifierWeightShape : Shape := [outputChannels, flattenedWidth]
-  let classifierBiasShape : Shape := [outputChannels]
   do
     -- Accepts both `{...}` and `{ "params": {...} }`.
     let weights ← loadWeights? json
     let firstConvolutionWeight ←
-      getTensor? weights "conv1.weight" firstConvolutionWeightShape
-    let firstConvolutionBias ← getTensor? weights "conv1.bias" firstConvolutionBiasShape
+      getTensor? weights "conv1.weight" [outputChannels, inputChannels, kernelHeight, kernelWidth]
+    let firstConvolutionBias ← getTensor? weights "conv1.bias" [outputChannels]
     let secondConvolutionWeight ←
-      getTensor? weights "conv2.weight" secondConvolutionWeightShape
-    let secondConvolutionBias ← getTensor? weights "conv2.bias" secondConvolutionBiasShape
-    let classifierWeight ← getTensor? weights "fc.weight" classifierWeightShape
-    let classifierBias ← getTensor? weights "fc.bias" classifierBiasShape
+      getTensor? weights "conv2.weight" [outputChannels, outputChannels, kernelHeight, kernelWidth]
+    let secondConvolutionBias ← getTensor? weights "conv2.bias" [outputChannels]
+    let classifierWeight ← getTensor? weights "fc.weight" [outputChannels, flattenedWidth]
+    let classifierBias ← getTensor? weights "fc.bias" [outputChannels]
     pure {
       firstConvolutionWeight, firstConvolutionBias
       secondConvolutionWeight, secondConvolutionBias

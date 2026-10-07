@@ -54,24 +54,14 @@ namespace DiagonalS4Spec
 variable {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
 variable {inputDim stateDim outputDim : Nat}
 
-/-- Project an input token into state channels. -/
-def projectInput (m : DiagonalS4Spec α inputDim stateDim outputDim)
-    (x : Tensor α [inputDim]) : Tensor α [stateDim] :=
-  vecMatMulSpec x m.inProj
-
-/-- Project state channels to output channels. -/
-def projectOutput (m : DiagonalS4Spec α inputDim stateDim outputDim)
-    (h : Tensor α [stateDim]) : Tensor α [outputDim] :=
-  vecMatMulSpec h m.outProj
-
 /-- One recurrent S4-style token step, returning `(new_state, output)`. -/
 def step (m : DiagonalS4Spec α inputDim stateDim outputDim)
     (h : Tensor α [stateDim])
     (x : Tensor α [inputDim]) :
     Tensor α [stateDim] × Tensor α [outputDim] :=
-  let xState := m.projectInput x
+  let xState := vecMatMulSpec x m.inProj
   let h' := m.ssm.step h xState
-  (h', m.projectOutput (m.ssm.readout h' xState))
+  (h', vecMatMulSpec (m.ssm.readout h' xState) m.outProj)
 
 /-- Run an array of tokens through the recurrent layer. -/
 def runArray (m : DiagonalS4Spec α inputDim stateDim outputDim)

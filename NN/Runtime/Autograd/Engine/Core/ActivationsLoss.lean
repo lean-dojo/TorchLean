@@ -200,9 +200,10 @@ Unlike `log (softmax x)`, this uses the max-shifted
  Elementwise `log(softplus(x) + ε)`.
 
  The forward value is `Activation.safeLogSpec` and the backward factor is
- `Activation.safeLogDerivSpec`, which is `sigmoid(x) / (softplus(x) + ε)`. Softplus keeps the
- argument positive for every real input, so this is not `log(x + ε)`: for large positive `x`
- it is close to `log x`, and for negative `x` it decays toward `log ε` instead of failing.
+ `Activation.safeLogDerivSpec`, which is `sigmoid(x) / (softplus(x) + ε)`. Over the reals with
+ positive `ε`, the argument stays positive and the value approaches `log ε` as `x` tends to
+ negative infinity. Executable arithmetic uses the chosen scalar representation; this operation
+ does not validate `ε` or promise finite results for every input.
 
  PyTorch comparison: `torch.log(torch.nn.functional.softplus(x) + eps)`; PyTorch has no single
  `safe_log` primitive.
@@ -242,24 +243,10 @@ Unlike `log (softmax x)`, this uses the max-shifted
  -/
 @[inline] def mseLoss {α : Type} [TorchLean.Storage α]
   [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [NatCast α]
-  {s : Shape} (t : Tape α) (yhatId targetId : Nat) : Result (Tape α × Nat) := do
-  let yhat ← requireValue (α:=α) (t:=t) (s:=s) yhatId
-  let target ← requireValue (α:=α) (t:=t) (s:=s) targetId
-  let y : Tensor α .scalar := Tensor.scalar (Spec.mseSpec (α := α) yhat target)
-  let node : Node α :=
-    { name := some "mse_loss"
-      value := Spec.SomeTensor.ofTensor y
-      requiresGrad :=
-        (t.getNode? yhatId).any (·.requiresGrad) ||
-        (t.getNode? targetId).any (·.requiresGrad)
-      parents := #[yhatId, targetId]
-      backward := fun dLdyAny => do
-        let dLdy ← requireGrad (α := α) (τ := Shape.scalar) dLdyAny
-        let g : α := Tensor.item dLdy
-        let dYhat :=
-          scaleSpec (α := α) (s := s) (Spec.mseDerivSpec (α := α) yhat target) g
-        let dTarget : Tensor α s := subSpec (Tensor.full s (0 : α)) dYhat
-        pure #[(yhatId, Spec.SomeTensor.ofTensor dYhat),
-          (targetId, Spec.SomeTensor.ofTensor dTarget)]
-    }
-  pure (t.addNode node)
+  {s : Shape} (t : Tape α) (yhatId targetId : Nat) : Result (Tape α × Nat) :=
+  binary (α := α) (t := t) (σ₁ := s) (σ₂ := s) (τ := Shape.scalar)
+    "mse_loss" yhatId targetId
+    (forward := fun yhat target => Tensor.scalar (Spec.mseSpec (α := α) yhat target))
+    (backward := fun yhat target dLdy =>
+      let dYhat := scaleSpec (Spec.mseDerivSpec (α := α) yhat target) (Tensor.item dLdy)
+      (dYhat, subSpec (Tensor.full s (0 : α)) dYhat))

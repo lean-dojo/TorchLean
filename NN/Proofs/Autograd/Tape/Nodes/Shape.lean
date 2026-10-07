@@ -146,23 +146,10 @@ theorem inner_reindex_left {n m : Nat} (e : Fin n ≃ Fin m) (x : Vec n) (y : Ve
     inner ℝ (reindexVec (n := n) (m := m) e x) y = inner ℝ x (reindexVec (n := m) (m := n) e.symm y)
       := by
   classical
-  have hs :
-      (∑ i : Fin m, x (e.symm i) * y i) = ∑ j : Fin n, x j * y (e j) := by
-    refine (Fintype.sum_equiv (e := e.symm)
+  simpa [reindexVec, inner_eq_sum_mul] using
+    (Fintype.sum_equiv (e := e.symm)
       (f := fun i : Fin m => x (e.symm i) * y i)
-      (g := fun j : Fin n => x j * y (e j)) ?_)
-    intro i
-    have hy : y (e (e.symm i)) = y i := by
-      simp
-    -- `f i = g (e.symm i)`
-    simp [hy]
-  calc
-    inner ℝ (reindexVec (n := n) (m := m) e x) y
-        = ∑ i : Fin m, x (e.symm i) * y i := by
-            simp [reindexVec, inner_eq_sum_mul]
-    _ = ∑ j : Fin n, x j * y (e j) := hs
-    _ = inner ℝ x (reindexVec (n := m) (m := n) e.symm y) := by
-            simp [reindexVec, inner_eq_sum_mul]
+      (g := fun j : Fin n => x j * y (e j)) (by intro i; simp))
 
 /-- Coordinate equivalence induced by exchanging two adjacent blocks. -/
 def swapAdjacentEquiv (outer inner tail : Nat) :

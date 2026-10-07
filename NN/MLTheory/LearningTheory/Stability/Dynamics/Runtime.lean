@@ -120,48 +120,6 @@ def testAsymptoticStability {s : Shape}
   pure passed
 
 /--
-Empirical exponential decay test:
-
-We simulate a trajectory, compute distances
-$d_t=\lVert x_t-\mathrm{equilibrium}\rVert_2$, and check a simple
-inequality of the form
-
-$$
-d_t\leq d_0 e^{-\mathrm{rate}\,t}
-$$
-
-for the given `expectedDecayRate`.
-
-This is a heuristic diagnostic. A theorem about exponential stability should state the dynamical
-hypotheses separately and use this run only as runtime evidence.
--/
-def testExponentialStability {s : Shape}
-    (f : Tensor Float s → Tensor Float s)
-    (equilibrium : Tensor Float s)
-    (x₀ : Tensor Float s)
-    (expectedDecayRate : Float)
-    (maxIterations : Nat) : Except String Bool := do
-  if maxIterations = 0 then
-    throw "exponential-stability diagnostic requires at least one transition"
-  unless expectedDecayRate.isFinite && 0.0 ≤ expectedDecayRate do
-    throw "exponential-stability diagnostic requires a finite nonnegative decay rate"
-  let trajectory := generateTrajectory f x₀ maxIterations
-  let distances := trajectory.map (tensorL2DistanceFloat equilibrium)
-  let some d₀ := distances[0]?
-    | throw "exponential-stability diagnostic requires a nonempty trajectory"
-  unless d₀.isFinite do
-    throw "exponential-stability diagnostic encountered a non-finite distance"
-  let mut passed := true
-  for n in [1:distances.size] do
-    let distance := distances[n]!
-    let bound := d₀ * Float.exp (-expectedDecayRate * Float.ofNat n)
-    unless distance.isFinite && bound.isFinite do
-      throw "exponential-stability diagnostic encountered a non-finite value"
-    if !(distance ≤ bound) then
-      passed := false
-  pure passed
-
-/--
 Empirical contractivity test on a finite list of input pairs.
 
 Checks the inequality
@@ -225,31 +183,6 @@ def testBiboStability {s₁ s₂ : Shape}
     unless inputNorm.isFinite && outputNorm.isFinite do
       throw "BIBO diagnostic encountered a non-finite norm"
     if inputNorm ≤ inputBound && !(outputNorm ≤ outputBound) then
-      passed := false
-  pure passed
-
-/--
-Empirical monotonic-loss check for a training log.
-
-Returns `.ok true` if each consecutive loss satisfies
-$\ell_{t+1}\leq\ell_t+\mathrm{tolerance}$. Fewer than two losses and non-finite values are
-inconclusive errors.
--/
-def testTrainingStability
-    (lossSequence : Array Float)
-    (tolerance : Float) : Except String Bool := do
-  if lossSequence.size < 2 then
-    throw "training-stability diagnostic requires at least two loss values"
-  unless tolerance.isFinite && 0.0 ≤ tolerance do
-    throw "training-stability diagnostic requires a finite nonnegative tolerance"
-  let mut passed := true
-  for i in [1:lossSequence.size] do
-    let previous := lossSequence[i - 1]!
-    let current := lossSequence[i]!
-    let bound := previous + tolerance
-    unless previous.isFinite && current.isFinite && bound.isFinite do
-      throw "training-stability diagnostic encountered a non-finite loss or bound"
-    if !(current ≤ bound) then
       passed := false
   pure passed
 

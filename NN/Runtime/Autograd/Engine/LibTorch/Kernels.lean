@@ -70,6 +70,7 @@ Maximum down the rows of a 2D row-major buffer.
 
 Input `b` has shape `(rows, cols)` and is stored as length `rows*cols`.
 Output is length `cols` (max down the rows for each column).
+When `rows = 0`, the result contains `cols` zeros by TorchLean's native compatibility convention.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_reduce_max_by_column"]
 opaque reduceMaxByColumn (b : @& Buffer) (rows cols : UInt32) : Buffer
@@ -79,6 +80,7 @@ Maximum across the columns of a 2D row-major buffer.
 
 Input `b` has shape `(rows, cols)` and is stored as length `rows*cols`.
 Output is length `rows` (max across the columns for each row).
+When `cols = 0`, the result contains `rows` zeros by TorchLean's native compatibility convention.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_reduce_max_by_row"]
 opaque reduceMaxByRow (b : @& Buffer) (rows cols : UInt32) : Buffer

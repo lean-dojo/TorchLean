@@ -263,52 +263,12 @@ def mul {Γ : List Shape} {s : Shape} (a b : Idx Γ s) : Node Γ s :=
     (correct_inner := by
       intro x dx δ
       classical
-      have hA :
-          inner ℝ (hadamard (CtxVec.get (Γ := Γ) (s := s) a x) (CtxVec.get (Γ := Γ) (s := s) b dx))
-            δ
-            =
-          inner ℝ (CtxVec.get (Γ := Γ) (s := s) b dx) (hadamard δ (CtxVec.get (Γ := Γ) (s := s) a
-            x)) := by
-        simp [hadamard, inner_eq_sum_mul, mul_assoc, mul_comm]
-        rfl
-      have hB :
-          inner ℝ (hadamard (CtxVec.get (Γ := Γ) (s := s) b x) (CtxVec.get (Γ := Γ) (s := s) a dx))
-            δ
-            =
-          inner ℝ (CtxVec.get (Γ := Γ) (s := s) a dx) (hadamard δ (CtxVec.get (Γ := Γ) (s := s) b
-            x)) := by
-        simp [hadamard, inner_eq_sum_mul, mul_left_comm, mul_comm]
-        rfl
-      calc
-        inner ℝ
-            (hadamard (CtxVec.get (Γ := Γ) (s := s) a x) (CtxVec.get (Γ := Γ) (s := s) b dx) +
-              hadamard (CtxVec.get (Γ := Γ) (s := s) b x) (CtxVec.get (Γ := Γ) (s := s) a dx)) δ
-            =
-            inner ℝ (hadamard (CtxVec.get (Γ := Γ) (s := s) a x) (CtxVec.get (Γ := Γ) (s := s) b
-              dx)) δ +
-              inner ℝ (hadamard (CtxVec.get (Γ := Γ) (s := s) b x) (CtxVec.get (Γ := Γ) (s := s) a
-                dx)) δ := by
-              simp [inner_add_left]
-        _ =
-            inner ℝ (CtxVec.get (Γ := Γ) (s := s) b dx) (hadamard δ (CtxVec.get (Γ := Γ) (s := s) a
-              x)) +
-              inner ℝ (CtxVec.get (Γ := Γ) (s := s) a dx) (hadamard δ (CtxVec.get (Γ := Γ) (s := s)
-                b x)) := by
-              simp [hA, hB]
-        _ =
-            inner ℝ dx
-                (CtxVec.single (Γ := Γ) (s := s) a (hadamard δ (CtxVec.get (Γ := Γ) (s := s) b x)))
-                  +
-              inner ℝ dx
-                (CtxVec.single (Γ := Γ) (s := s) b (hadamard δ (CtxVec.get (Γ := Γ) (s := s) a x)))
-                  := by
-              simp [CtxVec.inner_get_single, add_comm]
-        _ =
-            inner ℝ dx
-              (CtxVec.single (Γ := Γ) (s := s) a (hadamard δ (CtxVec.get (Γ := Γ) (s := s) b x)) +
-                CtxVec.single (Γ := Γ) (s := s) b (hadamard δ (CtxVec.get (Γ := Γ) (s := s) a x)))
-                  := by
-              simp [inner_add_right])
+      simp only [inner_add_left, inner_add_right, CtxVec.inner_get_single]
+      simp only [hadamard, inner_eq_sum_mul, vecOfFun_apply]
+      simp only [← Finset.sum_add_distrib]
+      apply Finset.sum_congr rfl
+      intro i _
+      ring)
 
 /-- `NodeFDerivCorrect` for `mul` (Hadamard product), using the product rule coordinatewise. -/
 def mulFderiv {Γ : List Shape} {s : Shape} (a b : Idx Γ s) :

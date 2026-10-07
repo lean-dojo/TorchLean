@@ -142,11 +142,7 @@ theorem updateTile4_eq_updateTile
 
 /--
 Run a native finite sum while carrying four lane totals as separate scalar
-arguments.
-
-Each recursive step advances one contraction coordinate. This keeps the
-generated callback small enough for Lean's native compiler to inline it into
-the loop, matching the eight-lane implementation.
+arguments, advancing one contraction coordinate per step.
 -/
 @[specialize] def nativeFinSum4Loop
     {α : Type u} [Add α] (length : Nat)

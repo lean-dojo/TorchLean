@@ -43,11 +43,11 @@ def exeName : String := "torch_ir_pytorch"
 
 /-! ## Architectures -/
 
-def archLinear : nn.Builder (nn.Sequential [2] [1]) :=
+def linear : nn.Builder (nn.Sequential [2] [1]) :=
   nn.linear 2 1
 
 /-- A `2 -> 3 -> 1` MLP with ReLU, the smallest architecture with a nonlinearity. -/
-def archMLP : nn.Builder (nn.Sequential [2] [1]) :=
+def mlp : nn.Builder (nn.Sequential [2] [1]) :=
   nn.Sequential![
     nn.linear 2 3,
     nn.relu,
@@ -55,43 +55,30 @@ def archMLP : nn.Builder (nn.Sequential [2] [1]) :=
   ]
 
 /-- A bare reduction, included because it exports to `torch.sum` rather than to a module. -/
-def archSumReduce : nn.Builder (nn.Sequential [4] []) :=
+def sum : nn.Builder (nn.Sequential [4] []) :=
   nn.sum (shape := [4])
 
 /-- A `3 -> 2 -> 3` autoencoder with a tanh bottleneck. -/
-def archAutoencoder : nn.Builder (nn.Sequential [3] [3]) :=
+def autoencoder : nn.Builder (nn.Sequential [3] [3]) :=
   nn.Sequential![
     nn.linear 3 2,
     nn.tanh,
     nn.linear 2 3
   ]
 
-/-- Two-head self-attention over a length-four sequence of width eight. -/
-def archMHA :
+/-- Two-head self-attention over a length-four sequence of width eight, with an optional mask.
+For causal attention, pass `some (Spec.causalMask 4)`; position `i` then attends only to `j ≤ i`. -/
+def attention (mask : Option (Tensor Bool [4, 4]) := none) :
     nn.Builder (nn.Sequential [1, 4, 8] [1, 4, 8]) :=
   nn.attention { headCount := 2, headWidth := 4 }
-    (batchShape := [1]) (sequenceLength := 4) (modelWidth := 8)
-
-/-- A causal mask: position `i` may attend only to positions `j ≤ i`. -/
-def archMHAMask : Tensor Bool [4, 4] :=
-  Spec.causalMask 4
-
-/--
-The same attention block with the causal mask applied, so the export can be compared against
-`torch.nn.MultiheadAttention` with `attn_mask`.
--/
-def archMHAMasked :
-    nn.Builder (nn.Sequential [1, 4, 8] [1, 4, 8]) :=
-  nn.attention { headCount := 2, headWidth := 4 }
-    (mask := some archMHAMask) (batchShape := [1])
-    (sequenceLength := 4) (modelWidth := 8)
+    (mask := mask) (batchShape := [1]) (sequenceLength := 4) (modelWidth := 8)
 
 /--
 A full encoder block: attention, residual, LayerNorm, feed-forward, residual, LayerNorm.
 
 Deliberately tiny (one head of width two) so the emitted Python stays readable.
 -/
-def archTransformer :
+def transformer :
     nn.Builder (nn.Sequential [1, 2, 2] [1, 2, 2]) :=
   nn.transformerEncoderBlock
     { headCount := 1
@@ -121,7 +108,7 @@ def usage : String :=
 /-! ## Export driver -/
 
 /-- Lower a sequential model and its initial state, then write generated Python to stdout. -/
-def emitSeq {σ τ : Shape} (className : String) (model : nn.Sequential σ τ) : IO Unit := do
+def emit {σ τ : Shape} (className : String) (model : nn.Sequential σ τ) : IO Unit := do
   let lowered ← IO.ofExcept <| Verification.lowerForwardToIR model (nn.initialState model)
   let code ← IO.ofExcept <| Export.IRPyTorch.emit
     (g := lowered.graph) (ps := lowered.ps) (inputId := lowered.inputId)
@@ -142,19 +129,20 @@ def main (args : List String) : IO Unit := do
       CLI.takeFlagValue args "arch" (default := "mlp")
     CLI.requireNoArgs exeName rest
     if arch == "linear" then
-      emitSeq (className := "TorchLeanLinear") (nn.build seed archLinear)
+      emit (className := "TorchLeanLinear") (nn.build seed linear)
     else if arch == "mlp" then
-      emitSeq (className := "TorchLeanMLP") (nn.build seed archMLP)
+      emit (className := "TorchLeanMLP") (nn.build seed mlp)
     else if arch == "sum" then
-      emitSeq (className := "TorchLeanSumReduce") (nn.build seed archSumReduce)
+      emit (className := "TorchLeanSumReduce") (nn.build seed sum)
     else if arch == "autoencoder" then
-      emitSeq (className := "TorchLeanAutoencoder") (nn.build seed archAutoencoder)
+      emit (className := "TorchLeanAutoencoder") (nn.build seed autoencoder)
     else if arch == "mha" then
-      emitSeq (className := "TorchLeanMHA") (nn.build seed archMHA)
+      emit (className := "TorchLeanMHA") (nn.build seed attention)
     else if arch == "mha-mask" then
-      emitSeq (className := "TorchLeanMHAMasked") (nn.build seed archMHAMasked)
+      emit (className := "TorchLeanMHAMasked")
+        (nn.build seed (attention (mask := some (Spec.causalMask 4))))
     else if arch == "transformer" then
-      emitSeq (className := "TorchLeanTransformerBlock") (nn.build seed archTransformer)
+      emit (className := "TorchLeanTransformerBlock") (nn.build seed transformer)
     else
       throw <| IO.userError
         (s!"unknown --arch {arch} (supported: linear | mlp | sum | autoencoder | " ++

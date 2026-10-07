@@ -35,16 +35,14 @@ open NN.Verification.PINN
 namespace Internal
 
 /-- Convert a `PinnLayer` into the graph backend's `LinParams` container. -/
-def layerToLinParams (layer : PinnLayer) : LinParams Float :=
+def parameters (layer : PinnLayer) : LinParams Float :=
   { m := layer.outDim, n := layer.inDim, w := layer.weights, b := layer.bias }
 
 end Internal
 
 /-- Build a `ParamStore Float` for the PINN graph from a loaded state. -/
-def toParamStore (sd : PinnState) : ParamStore Float :=
-  CROWNParamStore.ofLinearStack
-    (nodeIdOfIndex := SequentialPINNArch.linearNodeId)
-    (layers := sd.layers.map Internal.layerToLinParams)
+def parameters (sd : PinnState) : ParamStore Float :=
+  CROWNParamStore.ofArray SequentialPINNArch.linearNodeId sd.layers Internal.parameters
 
 /--
 Convert a loaded float state dict to a `ParamStore` over an arbitrary scalar `α`.
@@ -54,16 +52,13 @@ This is useful when you want to reuse the same trained parameters for:
 - executable backends (`Float`, `ExecFloat.Binary 8 23`), or
 - proof-level backends (e.g. `ℝ`), by supplying an appropriate `ofFloat` cast.
 -/
-def toParamStoreWith {α : Type} [TorchLean.Storage α] [Context α] (ofFloat : Float → α)
+def mapParameters {α : Type} [Storage α] [Context α] (ofFloat : Float → α)
     (sd : PinnState) : ParamStore α :=
-  CROWNParamStore.ofLinearStackWith
-    (α := α)
-    (ofFloat := ofFloat)
-    (nodeIdOfIndex := SequentialPINNArch.linearNodeId)
-    (layers := sd.layers.map Internal.layerToLinParams)
+  CROWNParamStore.ofArray SequentialPINNArch.linearNodeId sd.layers
+    (fun layer => CROWNParamStore.map ofFloat (Internal.parameters layer))
 
 /-- Build the computation graph corresponding to a loaded state. -/
-def buildGraph (sd : PinnState) : Graph :=
+def graph (sd : PinnState) : Graph :=
   SequentialPINNArch.buildGraph sd.arch
 
 end PINNPyTorch

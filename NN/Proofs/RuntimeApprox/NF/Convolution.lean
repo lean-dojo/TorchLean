@@ -14,8 +14,10 @@ public import NN.Proofs.RuntimeApprox.NF.Ops.Scalar
 # Rounded Convolution
 
 Forward- and reverse-mode error bounds for channels-first convolution at arbitrary spatial rank.
-The bounds replay the exact ordered folds in `Spec.convSpec` and `Spec.convBackwardSpec`; no
-associativity of rounded addition is assumed.
+The bounds follow the ordered folds in `Spec.convSpec` and `Spec.convBackwardSpec`, with separate
+rounding of products and sums. They do not assume associativity of rounded addition or verify
+LibTorch's convolution kernels. Inputs and weights are tensors; lists describe the internal
+coordinate traversal, whose order must be preserved by any replacement implementation.
 -/
 
 @[expose] public section
@@ -51,7 +53,7 @@ def productError (x y : R) (xError yError : ℝ) : ℝ :=
   (abs xValue + xError) * yError + (abs yValue + yError) * xError +
     ulp β fexp (xValue * yValue) / 2
 
-/-- Replay a rounded sum while carrying its absolute-error budget. -/
+/-- Fold rounded terms with their absolute-error budgets, in the supplied index order. -/
 def foldErrorState {ι : Type} (indices : List ι)
     (term : ι → R) (termError : ι → ℝ) (initial : R × ℝ) : R × ℝ :=
   indices.foldl (fun state index =>
@@ -169,9 +171,8 @@ def enumerateIndices : List Nat → List (List Nat)
 
 /-- The nested index loop equals a single fold over the flattened index list.
 
-This is the workhorse of the file. The implementation loops over dimensions recursively, whereas an
-error bound is much easier to state as one sum over coordinates; turning one into the other once,
-here, keeps every later bound free of nested inductions. -/
+Flattening preserves the nested loop's order; it does not replace the rounded fold by an unordered
+sum. -/
 theorem foldlIndices_eq_enumerateIndices {α : Type} (dims : List Nat)
     (initial : α) (step : α → List Nat → α) :
     foldlIndices dims initial step =
@@ -275,11 +276,7 @@ theorem approx_getAtOrZero {shape : Shape} {ideal : Tensor ℝ shape}
 
 /-! ## Forward convolution -/
 
-/-- The input element a convolution reads for one output position and one `(channel, offset)` pair,
-or zero when the strided, padded index falls outside the input.
-
-Naming the read explicitly is what lets the approximation proof treat padding as an exact zero
-rather than as another rounded value. -/
+/-- Input element for an output position and `(channel, offset)` pair, or zero outside the input. -/
 def convolutionInputValue
     {α : Type} [Context α]
     {d inC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
@@ -291,10 +288,7 @@ def convolutionInputValue
   | none => 0
   | some inputIndex => getAtOrZero input (index.1.val :: inputIndex)
 
-/-- The weight a given input coordinate is multiplied by, as the implementation reads it.
-
-Named so the error bound can talk about the summands of the accumulation in the same order the code
-produces them, which is what makes the bound tight rather than merely valid. -/
+/-- Weight used by one `(input channel, kernel offset)` pair at the selected output channel. -/
 def convolutionWeightValue
     {α : Type} [Context α]
     {d inC outC : Nat} {kernel : TorchLean.Tensor Nat [d]}
@@ -305,8 +299,9 @@ def convolutionWeightValue
 /--
 Absolute-error budget for one coordinate of a rounded arbitrary-rank convolution.
 
-The budget follows the implementation's multiplication and accumulation order, then accounts for
-the final bias addition.
+The budget follows the spec's multiplication and accumulation order, then accounts for the final
+bias addition. It is conservative: padded reads still receive the uniform input-error budget even
+though their exact and rounded values are both zero.
 -/
 def convolutionPointError
     {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
@@ -660,8 +655,8 @@ private theorem get_convInputDerivSpec
   rw [MultiIndex.get_generate]
   rfl
 
-/-- One summand of the input-gradient accumulation: an output gradient times the kernel weight that
-connected them, or zero when the transposed index falls outside the input. -/
+/-- Input-gradient summand: an output gradient times its kernel weight, or zero when the transposed
+index has no corresponding output position. -/
 def inputGradientTermValue
     {α : Type} [Context α]
     {d inC outC : Nat} {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}

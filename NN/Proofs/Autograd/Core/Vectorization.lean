@@ -98,13 +98,8 @@ def ofFnE {n : Nat} (v : Vec n) : Tensor ℝ [n] :=
 
 /-- `getScalarE` is a left inverse of `ofFnE`. -/
 @[simp] theorem getScalarE_ofFnE {n : Nat} (v : Vec n) : getScalarE (ofFnE v) = v := by
-  classical
-  let e := EuclideanSpace.equiv (𝕜 := ℝ) (ι := Fin n)
-  change e.symm (fun i => (TorchLean.Tensor.ofFn (e v)).getScalar i) = v
-  rw [show (fun i => (TorchLean.Tensor.ofFn (e v)).getScalar i) = e v by
-    funext i
-    simp]
-  exact e.symm_apply_apply v
+  ext i
+  simp [getScalarE, ofFnE, EuclideanSpace.equiv]
 
 /-- Coordinate evaluation commutes with conversion from a Euclidean vector. -/
 @[simp] theorem getScalar_ofFnE {n : Nat} (v : Vec n) (i : Fin n) :

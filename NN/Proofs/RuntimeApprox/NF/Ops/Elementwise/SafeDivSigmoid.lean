@@ -59,7 +59,8 @@ local notation "R" => NF β fexp rnd
 def safeDiv (ε : ℝ) (x y : ℝ) : ℝ :=
   x / max y ε
 
-/-- Runtime implementation of `safeDiv` as a single rounded primitive. -/
+/-- Rounded-real model of clamped division, with one rounding after the exact quotient.
+The clamp threshold `ε` is an exact real parameter, not a separately rounded NF constant. -/
 def safeDivR (ε : ℝ) (xR yR : R) : R :=
   NF.ofReal (β := β) (fexp := fexp) (rnd := rnd)
     (safeDiv (ε := ε)
@@ -199,10 +200,8 @@ theorem approx_safeDiv_nf {x y : ℝ} {xR yR : R} {epsx epsy ε : ℝ}
               have hsum_nonneg : 0 ≤ abs xhat + epsx := add_nonneg (abs_nonneg _) epsx_nonneg
               exact mul_le_mul_of_nonneg_left h_inv hsum_nonneg
 
-    -- Combine the two contributions and rewrite `safeDiv`.
     simpa [safeDiv, uhat, u] using le_trans hsplit (add_le_add hnum hden)
 
-  -- Final triangle inequality: rounding + input sensitivity.
   have :=
     calc
       abs
@@ -407,7 +406,7 @@ theorem approxTensor_div_spec_of_pos_lb {s : Shape} (η : ℝ) :
         have h := linfNorm_unstack_le
           (t := divPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
             (s := .dim n inner) η epsx epsy xR yR) i
-        simpa [bound, divPosBoundTensor, tensorToSpec, map2Spec, mapSpec,
+        simpa [bound, divPosBoundTensor, tensorToSpec, map2Spec, Tensor.map,
           TorchLean.Tensor.map, TorchLean.Tensor.unstack,
           TorchLean.Tensor.Internal.Rep.map_unstack,
           TorchLean.Tensor.Internal.Rep.zipWith_unstack] using h
@@ -569,9 +568,9 @@ private theorem approx_reciprocal_sigmoid_nf {x : ℝ} {xR : R} {eps : ℝ}
             linarith
 
 omit [ValidRndToNearest rnd] in
-/-- With denominator error at most `1/2`, the reciprocal sequence's bound is linear in the
-rounding budget of the constant `1`, the denominator error, and one output rounding.
-In particular it tends to the output half ulp as the format is refined. -/
+/-- With denominator error at most `1/2`, the reciprocal sequence's bound is controlled by
+the constant-one budget, the denominator error, and one output rounding. Input error remains
+part of the denominator budget even if the format's rounding errors decrease. -/
 theorem reciprocal_sigmoid_bound_scalar_le_of_denom_le_half {eps : ℝ} (xR : R) (heps : 0 ≤ eps)
     (hden : reciprocalSigmoidDenomError (β := β) (fexp := fexp) (rnd := rnd) eps xR ≤ 1 / 2) :
     reciprocalSigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps xR ≤
@@ -637,8 +636,8 @@ theorem approxTensor_reciprocal_sigmoid_spec {s : Shape} :
     ∀ {xS : SpecTensor s} {xR : Tensor R s} {eps : ℝ},
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR eps →
         approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-          (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := ℝ)) xS)
-          (mapSpec (s := s) (reciprocalSigmoidR (β := β) (fexp := fexp) (rnd := rnd)) xR)
+          (Tensor.map (shape := s) (Activation.Math.sigmoidSpec (α := ℝ)) xS)
+          (Tensor.map (shape := s) (reciprocalSigmoidR (β := β) (fexp := fexp) (rnd := rnd)) xR)
           (linfNorm (reciprocalSigmoidBoundTensor
             (β := β) (fexp := fexp) (rnd := rnd) (s := s) eps xR)) := by
   intro xS xR eps hx
@@ -765,8 +764,8 @@ theorem approxTensor_sigmoid_spec {s : Shape} :
     ∀ {xS : SpecTensor s} {xR : Tensor R s} {eps : ℝ},
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR eps →
         approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-          (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := ℝ)) xS)
-          (mapSpec (s := s) (Activation.Math.sigmoidSpec (α := R)) xR)
+          (Tensor.map (shape := s) (Activation.Math.sigmoidSpec (α := ℝ)) xS)
+          (Tensor.map (shape := s) (Activation.Math.sigmoidSpec (α := R)) xR)
           (linfNorm (sigmoidBoundTensor (β := β) (fexp := fexp) (rnd := rnd) (s := s) eps xR)) := by
   intro xS xR eps hx
   have h :=

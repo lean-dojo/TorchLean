@@ -118,7 +118,7 @@ def dft (n : Nat) (rest : Shape) :
     forward := fun _ {α} _ _ =>
       fun {m} _ _ =>
         fun x =>
-          (show m (RefTy (m := m) (α := α) sIn) from do
+          (show m (Ref (m := m) (α := α) sIn) from do
             let xMat ← Runtime.Autograd.Model.reshape (m := m) (α := α)
               (s₁ := sIn) (s₂ := sMat) x hSz
             let f : Tensor α [n, n] := dftMatrix (α := α) n
@@ -146,7 +146,7 @@ def dft {s : Shape} (axis : Nat) : Layer s s :=
       forward := fun mode {α} _ _ =>
         fun {m} _ _ =>
           fun x =>
-            (show m (RefTy (m := m) (α := α) s) from do
+            (show m (Ref (m := m) (α := α) s) from do
               if axis ≥ Spec.Shape.rank s then
                 pure x
               else
@@ -165,7 +165,7 @@ def dft {s : Shape} (axis : Nat) : Layer s s :=
                 | ⟨.dim nDim rest, x0⟩ =>
                     let y0 ← (Internal.dft (n := nDim) (rest := rest)).forward mode
                       (α := α) (m := m) x0
-                    let yFront : Σ s' : Shape, RefTy (m := m) (α := α) s' :=
+                    let yFront : Σ s' : Shape, Ref (m := m) (α := α) s' :=
                       ⟨.dim nDim rest, y0⟩
                     let yBack ← F.Einsum.permuteBySwaps (α := α) (m := m) yFront swapsBack
                     if h : yBack.fst = s then

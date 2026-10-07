@@ -36,29 +36,14 @@ This module proves equivalence between two Lean-level graph interpretations:
 It does not identify that reference evaluator with eager tensor execution, native CPU kernels,
 CUDA, or LibTorch. Those implementations require their own refinement boundary.
 
-This module ties the per-op correctness lemmas together into the recursive preservation argument.
-
 ## Main definitions
 
 - `buildFrom_preserves_denotation`: recursive preservation theorem for `buildFrom`.
 - `denoteAll_eq_of_lowerToForwardGraph`: end-to-end forward semantic equivalence theorem, under the
   `NoRawLog` side condition.
 
-## Implementation notes
-
-- The proof mirrors `buildFrom` branch-by-branch. It is verbose, but this "same shape as code"
-  style makes regressions easier to diagnose when new ops are added.
-- This is one of the slower proof modules in TorchLean. The theorem recursively walks an IR graph,
-  dispatches every supported node kind, and maintains equality between an untyped IR value table and
-  a shape-indexed execution context. Even simple operator branches can become expensive once shape
-  equality, `Except` success/failure paths, and cast proof irrelevance all appear in the same goal.
-- Branch-local work belongs in `Correctness/Ops/*` files, with repeated simplification scripts
-  replaced by named lemmas. Each lowering branch should stay small enough that adding a new IR op is
-  routine.
-
-## Tags
-
-semantic equivalence, correctness, ir, lowering pass
+The recursive proof dispatches to the operation lemmas in `Correctness/Ops`. Its invariant relates
+the IR value table to the shape-indexed context for the already-lowered prefix.
 -/
 
 @[expose] public section
@@ -99,23 +84,20 @@ private theorem buildFrom_preserves_denotation
   rcases st with ⟨ss, gd⟩
 
   by_cases hi : i < g.nodes.size
-  · -- Step case.
+  ·
     have hBuild := h
     unfold buildFrom at hBuild
     simp [hi] at hBuild
     cases hN : g.getNode i with
     | error msg =>
-        -- `buildFrom` cannot return `.ok` if `getNode` fails.
         have : False := by
           simp [hN] at hBuild
         cases this
     | ok n =>
-        -- Reduce the successful `getNode` and eliminate the resulting `do`-binder.
         simp (config := { failIfUnchanged := false })
           [hN] at hBuild
         let input : Spec.SomeTensor α := Spec.SomeTensor.mk (α := α) inShape x
-        -- Tail correctness helper: wrap the recursive call so the termination side-goal is solved
-        -- immediately at the call site.
+        -- The tail advances the node index while preserving the prefix invariant.
         have tail
             (st1 : State α inShape)
             (hRec :
@@ -124,12 +106,9 @@ private theorem buildFrom_preserves_denotation
             NN.IR.Graph.denoteAllFrom (α := α) (g := g) (payload := payload)
                 (input := input) (i := i + 1) (vals := denoteAllState (α := α) inShape st1 x) =
               .ok (denoteAllState (α := α) inShape st' x) := by
-          -- The recursive call leaves a termination side-goal (`size - (i+1) < size - i`) which we
-          -- discharge from the `hi : i < g.nodes.size` step-case hypothesis.
           simpa [input] using
             (buildFrom_preserves_denotation (α := α) (g := g) (payload := payload)
               (inShape := inShape) (i := i + 1) (st := st1) (st' := st') hNoRawLog hRec x)
-        -- Mirror the node step, then recurse.
         cases hk : n.kind with
           | custom name shapes output =>
               simp [hk] at hBuild
@@ -313,11 +292,11 @@ One side condition remains. `NoRawLog` excludes raw `.log`: the IR evaluator rej
 inputs while the lowered closure applies `Tensor.logSpec` to every input, so the two can only be
 compared under a positivity precondition the theorem does not carry.
 
-Every successfully lowered operation kind is covered, including `.mseLoss` and `.concat` along
-any axis. Custom computations are rejected by this total forward-only lowering. The
-lowering accepts exactly the shapes the IR semantics accepts for `.matmul` and `.linear` (any shared
-leading shape, so rank at least four matmul and batched linear are covered); shapes rejected by the
-lowering never reach this theorem because `lowerToForwardGraph` returns an error for them.
+Under `NoRawLog`, the theorem covers every successfully lowered operation kind, including
+`.mseLoss` and `.concat` along any axis. Matmul uses the canonical dimension contract, with vector
+promotion and broadcasting of leading dimensions; linear accepts arbitrary leading dimensions.
+Custom computations are rejected by this forward-only lowering. The theorem concerns successful
+lowering, not equality of the two interpreters' failure results.
 -/
 theorem denoteAll_eq_of_lowerToForwardGraph
     {α : Type} [TorchLean.Storage α] [Context α]
@@ -334,7 +313,6 @@ theorem denoteAll_eq_of_lowerToForwardGraph
     simp [hWF] at h
     except_cases hN0 : g.getNode 0 using h with n0 =>
       simp (config := { failIfUnchanged := false }) [hN0] at h
-      -- Node 0 must be `.input` in the successful lowering path.
       cases hk0 : n0.kind
       case input =>
         simp (config := { failIfUnchanged := false }) [hk0] at h
@@ -344,7 +322,6 @@ theorem denoteAll_eq_of_lowerToForwardGraph
           simp [hSt] at h
           cases h
           intro x
-          -- Rewrite the executable result in terms of `stFinal`.
           have hExec :
               ForwardGraph.denoteAll (α := α)
                   (e := (fun a ↦ { inShape := n0.outShape, ss := a.fst, body := a.snd })
@@ -352,9 +329,8 @@ theorem denoteAll_eq_of_lowerToForwardGraph
                     =
                 denoteAllState (α := α) n0.outShape stFinal x := by
             rfl
-          -- Start `denoteAll`: it reduces to `denoteAllFrom 0 #[]` after the well-formedness check.
           simp [NN.IR.Graph.denoteAll, hWF]
-          -- Evaluate node 0 (`.input`), then apply the semantic equivalence lemma from `i=1`.
+          -- Seed the prefix with the input before applying the tail invariant.
           have h0 :
               NN.IR.Graph.evalAt (α := α) (g := g) (payload := payload)
                   (input := Spec.SomeTensor.mk (α := α) n0.outShape x) (vals := #[]) (i := 0) =
@@ -378,27 +354,23 @@ theorem denoteAll_eq_of_lowerToForwardGraph
                 (inShape := n0.outShape)
                 (i := 1) (st := (⟨[], .nil⟩ : State α n0.outShape)) (st' := stFinal)
                 hNoRawLog hSt x)
-          -- Now unfold `denoteAllFrom` at `i=0` and rewrite by `h0`/`hTail`.
           have hSize : 0 < g.nodes.size := by
             -- If `g.nodes.size = 0`, `getNode 0` would be out of bounds.
             cases hs : g.nodes.size with
             | zero =>
                 have : g.getNode 0 = Except.error s!"IR graph: node id out of bounds: {0}" := by
-                  simp [NN.IR.Graph.getNode, NN.IR.Graph.getNode?, hs, throw, throwThe,
+                  simp [NN.IR.Graph.getNode, hs, throw, throwThe,
                     MonadExceptOf.throw]
                 have : False := by
-                  -- `hN0` contradicts the computed out-of-bounds error.
                   simp [this] at hN0
                 cases this
             | succ n =>
                 simp
-          -- With `0 < size`, the `if` guard in `denoteAllFrom` is true at `i=0`.
           unfold NN.IR.Graph.denoteAllFrom
           rw [dite_eq_left hSize, h0, hExec]
           simpa using hTail
       all_goals
         have : False := by
-          -- Non-`.input` node0 kinds lower to an error, contradicting success.
           simp [hk0, throw_eq_error] at h
         cases this
 

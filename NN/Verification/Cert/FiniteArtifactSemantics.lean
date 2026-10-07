@@ -58,7 +58,7 @@ private theorem getNode_of_split (g : Graph) (before rest : List Node) (node : N
   have hget : g.nodes[before.length]? = some node := by
     have hh := congrArg (fun nodes : List Node => nodes[before.length]?) h
     simpa using hh
-  simp [NN.IR.Graph.getNode, NN.IR.Graph.getNode?, hget, hid, Pure.pure, Except.pure]
+  simp [NN.IR.Graph.getNode, hget, hid, Pure.pure, Except.pure]
 
 private theorem decodeTail_denote (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
     {n : Nat} (x : Tensor ℝ [n]) (before rest : List Node) {m : Nat}

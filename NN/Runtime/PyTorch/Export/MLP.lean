@@ -33,92 +33,79 @@ inductive KeyStyle where
   | sequential
   deriving DecidableEq, Repr
 
-/-- Key name for the first layer's weight tensor in a PyTorch `state_dict`. -/
-def firstWeightKey : KeyStyle → String
-  | .linear => "fc1.weight"
-  | .sequential => "layers.0.weight"
-
-/-- Key name for the first layer's bias tensor in a PyTorch `state_dict`. -/
-def firstBiasKey : KeyStyle → String
-  | .linear => "fc1.bias"
-  | .sequential => "layers.0.bias"
-
-/-- Key name for the second layer's weight tensor in a PyTorch `state_dict`. -/
-def secondWeightKey : KeyStyle → String
-  | .linear => "fc2.weight"
-  | .sequential => "layers.2.weight"
-
-/-- Key name for the second layer's bias tensor in a PyTorch `state_dict`. -/
-def secondBiasKey : KeyStyle → String
-  | .linear => "fc2.bias"
-  | .sequential => "layers.2.bias"
+/-- State-dictionary key for a zero-based linear-layer index and parameter field.
+Sequential models place a ReLU between linear layers, so their indices are doubled. -/
+def key (style : KeyStyle) (layer : Nat) (field : String) : String :=
+  match style with
+  | .linear => s!"fc{layer + 1}.{field}"
+  | .sequential => s!"layers.{2 * layer}.{field}"
 
 /--
 Emit the Python class body for a `Linear → ReLU → Linear` MLP, optionally ending in softmax.
 
 This returns *lines* (not a single string) so callers can splice it into larger scripts.
 -/
-def classLines
+def body
     (inputWidth hiddenWidth outputWidth : Nat) (className : String)
-    (withSoftmax : Bool := false) : Array String :=
+    (softmax : Bool := false) : Array String :=
   #[
     s!"class {className}(nn.Module):",
-    indentTwo (if withSoftmax then
+    indent 2 (if softmax then
       "\"\"\"Multi-Layer Perceptron with softmax output for classification\"\"\""
       else s!"\"\"\"Multi-Layer Perceptron with {inputWidth} input, " ++
         s!"{hiddenWidth} hidden, {outputWidth} output dimensions\"\"\""),
-    indentTwo "",
-    indentTwo (s!"def __init__(self, input_dim: int = {inputWidth}, hidden_dim: int = " ++
+    indent 2 "",
+    indent 2 (s!"def __init__(self, input_dim: int = {inputWidth}, hidden_dim: int = " ++
       s!"{hiddenWidth}, output_dim: int = {outputWidth}):"),
-    indentFour "super().__init__()",
-    indentFour "self.input_dim = input_dim",
-    indentFour "self.hidden_dim = hidden_dim",
-    indentFour "self.output_dim = output_dim",
-    indentFour "",
-    indentFour "# Define layers",
-    indentFour "self.fc1 = nn.Linear(input_dim, hidden_dim)",
-    indentFour "self.relu = nn.ReLU()",
-    indentFour "self.fc2 = nn.Linear(hidden_dim, output_dim)"
+    indent 4 "super().__init__()",
+    indent 4 "self.input_dim = input_dim",
+    indent 4 "self.hidden_dim = hidden_dim",
+    indent 4 "self.output_dim = output_dim",
+    indent 4 "",
+    indent 4 "# Define layers",
+    indent 4 "self.fc1 = nn.Linear(input_dim, hidden_dim)",
+    indent 4 "self.relu = nn.ReLU()",
+    indent 4 "self.fc2 = nn.Linear(hidden_dim, output_dim)"
   ] ++
-    (if withSoftmax then #[indentFour "self.softmax = nn.Softmax(dim=-1)"] else #[]) ++ #[
-    indentFour "",
-    indentTwo "def forward(self, x):",
-    indentFour "x = self.fc1(x)",
-    indentFour "x = self.relu(x)",
-    indentFour "x = self.fc2(x)"
+    (if softmax then #[indent 4 "self.softmax = nn.Softmax(dim=-1)"] else #[]) ++ #[
+    indent 4 "",
+    indent 2 "def forward(self, x):",
+    indent 4 "x = self.fc1(x)",
+    indent 4 "x = self.relu(x)",
+    indent 4 "x = self.fc2(x)"
   ] ++
-    (if withSoftmax then #[indentFour "x = self.softmax(x)"] else #[]) ++ #[
-    indentFour "return x",
-    indentFour "",
-    indentTwo "@property",
-    indentTwo "def input_shape(self):",
-    indentFour "return (self.input_dim,)",
-    indentFour "",
-    indentTwo "@property",
-    indentTwo "def output_shape(self):",
-    indentFour "return (self.output_dim,)",
-    indentFour "",
-    indentTwo "@property",
-    indentTwo "def layer_count(self):",
-    indentFour (if withSoftmax then "return 4" else "return 3"),
-    indentFour "",
-    indentTwo "@property",
-    indentTwo "def operation_types(self):",
-    indentFour (if withSoftmax then "return [\"Linear\", \"ReLU\", \"Linear\", \"Softmax\"]"
+    (if softmax then #[indent 4 "x = self.softmax(x)"] else #[]) ++ #[
+    indent 4 "return x",
+    indent 4 "",
+    indent 2 "@property",
+    indent 2 "def input_shape(self):",
+    indent 4 "return (self.input_dim,)",
+    indent 4 "",
+    indent 2 "@property",
+    indent 2 "def output_shape(self):",
+    indent 4 "return (self.output_dim,)",
+    indent 4 "",
+    indent 2 "@property",
+    indent 2 "def layer_count(self):",
+    indent 4 (if softmax then "return 4" else "return 3"),
+    indent 4 "",
+    indent 2 "@property",
+    indent 2 "def operation_types(self):",
+    indent 4 (if softmax then "return [\"Linear\", \"ReLU\", \"Linear\", \"Softmax\"]"
       else "return [\"Linear\", \"ReLU\", \"Linear\"]")
   ] ++
-    (if withSoftmax then #[] else #[indentFour ""]) ++
-    generateGetModelInfoMethodLines className
+    (if softmax then #[] else #[indent 4 ""]) ++
+    metadata className
       #[ ("input_dim", "self.input_dim")
       , ("hidden_dim", "self.hidden_dim")
       , ("output_dim", "self.output_dim")
       ]
 
-/-- Render a standalone Python file containing an `nn.Module` MLP class. -/
-def classSource (inputWidth hiddenWidth outputWidth : Nat)
-    (className : String := "MLP") : String :=
+/-- Render a standalone MLP class, optionally applying softmax after its output layer. -/
+def source (inputWidth hiddenWidth outputWidth : Nat)
+    (className : String := "MLP") (softmax : Bool := false) : String :=
   joinLines <|
-    #[generatePyTorchImports, ""] ++ classLines inputWidth hiddenWidth outputWidth className
+    #[imports, ""] ++ body inputWidth hiddenWidth outputWidth className softmax
 
 /--
 Generate Python code for an MLP plus helper functions that embed concrete weights.
@@ -126,53 +113,54 @@ Generate Python code for an MLP plus helper functions that embed concrete weight
 The output contains a `get_mlp_state_dict` function that returns a PyTorch-shaped dictionary
 (`state_dict`). Its `load_mlp_weights` helper normalizes either key convention to the generated
 class's `fc1`/`fc2` layers before calling `model.load_state_dict(...)`.
+Set `softmax := true` to apply softmax after the final linear layer; parameter keys are unchanged.
 -/
-def withParameters {inputWidth hiddenWidth outputWidth : Nat}
+def weights {inputWidth hiddenWidth outputWidth : Nat}
     (inputWeight : Tensor Float [hiddenWidth, inputWidth])
     (inputBias : Tensor Float [hiddenWidth])
     (outputWeight : Tensor Float [outputWidth, hiddenWidth])
     (outputBias : Tensor Float [outputWidth])
     (className : String := "MLP")
-    (keyStyle : KeyStyle := .linear) : String :=
+    (keyStyle : KeyStyle := .linear) (softmax : Bool := false) : String :=
   joinLines #[
-    classSource inputWidth hiddenWidth outputWidth className,
+    source inputWidth hiddenWidth outputWidth className softmax,
     "",
     "# Weight initialization functions",
     "def get_mlp_state_dict():",
-    indentTwo "state_dict = {}",
-    indentTwo
-      s!"state_dict['{firstWeightKey keyStyle}'] = torch.tensor({tensorToPyString inputWeight})",
-    indentTwo
-      s!"state_dict['{firstBiasKey keyStyle}'] = torch.tensor({tensorToPyString inputBias})",
-    indentTwo
-      s!"state_dict['{secondWeightKey keyStyle}'] = torch.tensor({tensorToPyString outputWeight})",
-    indentTwo
-      s!"state_dict['{secondBiasKey keyStyle}'] = torch.tensor({tensorToPyString outputBias})",
-    indentTwo "return state_dict",
-    indentTwo "",
+    indent 2 "state_dict = {}",
+    indent 2
+      s!"state_dict['{key keyStyle 0 "weight"}'] = torch.tensor({tensorLiteral inputWeight})",
+    indent 2
+      s!"state_dict['{key keyStyle 0 "bias"}'] = torch.tensor({tensorLiteral inputBias})",
+    indent 2
+      s!"state_dict['{key keyStyle 1 "weight"}'] = torch.tensor({tensorLiteral outputWeight})",
+    indent 2
+      s!"state_dict['{key keyStyle 1 "bias"}'] = torch.tensor({tensorLiteral outputBias})",
+    indent 2 "return state_dict",
+    indent 2 "",
     "def load_mlp_weights(model):",
-    indentTwo "state_dict = get_mlp_state_dict()",
-    indentTwo "# Normalize either export key convention to this class's named layers.",
-    indentTwo "state_dict = {",
-    indentFour s!"'fc1.weight': state_dict['{firstWeightKey keyStyle}'],",
-    indentFour s!"'fc1.bias': state_dict['{firstBiasKey keyStyle}'],",
-    indentFour s!"'fc2.weight': state_dict['{secondWeightKey keyStyle}'],",
-    indentFour s!"'fc2.bias': state_dict['{secondBiasKey keyStyle}'],",
-    indentTwo "}",
-    indentTwo "model.load_state_dict(state_dict)",
-    indentTwo "return model",
-    indentTwo "",
+    indent 2 "state_dict = get_mlp_state_dict()",
+    indent 2 "# Normalize either export key convention to this class's named layers.",
+    indent 2 "state_dict = {",
+    indent 4 s!"'fc1.weight': state_dict['{key keyStyle 0 "weight"}'],",
+    indent 4 s!"'fc1.bias': state_dict['{key keyStyle 0 "bias"}'],",
+    indent 4 s!"'fc2.weight': state_dict['{key keyStyle 1 "weight"}'],",
+    indent 4 s!"'fc2.bias': state_dict['{key keyStyle 1 "bias"}'],",
+    indent 2 "}",
+    indent 2 "model.load_state_dict(state_dict)",
+    indent 2 "return model",
+    indent 2 "",
     "# Usage example",
     "if __name__ == \"__main__\":",
-    indentTwo s!"model = {className}()",
-    indentTwo "model = load_mlp_weights(model)",
-    indentTwo
+    indent 2 s!"model = {className}()",
+    indent 2 "model = load_mlp_weights(model)",
+    indent 2
       s!"x = torch.randn(1, {inputWidth})  # batch_size=1, features={inputWidth}",
-    indentTwo "y = model(x)",
-    indentTwo "print(f\"Input shape: {x.shape}\")",
-    indentTwo "print(f\"Output shape: {y.shape}\")",
-    indentTwo "print(f\"Output: {y}\")",
-    indentTwo "print(f\"Model info: {model.get_model_info()}\")"
+    indent 2 "y = model(x)",
+    indent 2 "print(f\"Input shape: {x.shape}\")",
+    indent 2 "print(f\"Output shape: {y.shape}\")",
+    indent 2 "print(f\"Output: {y}\")",
+    indent 2 "print(f\"Model info: {model.get_model_info()}\")"
   ]
 
 /--
@@ -181,35 +169,35 @@ Generate a complete Python script for MLP examples.
 This includes:
 - a base MLP class,
 - a Softmax variant,
-- shared helper modules from `NN/Runtime/PyTorch/Export/Core.lean`,
+- shared checkpoint and test utilities,
 - and convenience helpers for construction and parameter counting.
 -/
-def completeSource {inputWidth hiddenWidth outputWidth : Nat}
+def script {inputWidth hiddenWidth outputWidth : Nat}
     (className : String := "MLP") : String :=
   joinLines #[
-    generatePyTorchImports,
+    imports,
     "",
-    joinLines (classLines inputWidth hiddenWidth outputWidth className),
+    joinLines (body inputWidth hiddenWidth outputWidth className),
     "",
-    joinLines (classLines inputWidth hiddenWidth outputWidth
-      s!"{className}WithSoftmax" (withSoftmax := true)),
+    joinLines (body inputWidth hiddenWidth outputWidth
+      s!"{className}WithSoftmax" (softmax := true)),
     "",
-    generateWeightLoadingUtils,
+    checkpoints,
     "",
-    generateTestingUtils,
+    checks,
     "",
     "# MLP-specific utilities",
     ("def create_mlp_from_spec(input_dim: int, hidden_dim: int, output_dim: " ++
       "int, use_softmax: bool = False):"),
-    indentTwo "\"\"\"Create an MLP model from specifications.\"\"\"",
-    indentTwo "if use_softmax:",
-      indentFour s!"return {className}WithSoftmax(input_dim, hidden_dim, output_dim)",
-    indentTwo "else:",
-      indentFour s!"return {className}(input_dim, hidden_dim, output_dim)",
-    indentTwo "",
+    indent 2 "\"\"\"Create an MLP model from specifications.\"\"\"",
+    indent 2 "if use_softmax:",
+      indent 4 s!"return {className}WithSoftmax(input_dim, hidden_dim, output_dim)",
+    indent 2 "else:",
+      indent 4 s!"return {className}(input_dim, hidden_dim, output_dim)",
+    indent 2 "",
     "def mlp_parameter_count(input_dim: int, hidden_dim: int, output_dim: int) -> int:",
-    indentTwo "\"\"\"Calculate the number of parameters in an MLP.\"\"\"",
-    indentTwo "return input_dim * hidden_dim + hidden_dim + hidden_dim * output_dim + output_dim"
+    indent 2 "\"\"\"Calculate the number of parameters in an MLP.\"\"\"",
+    indent 2 "return input_dim * hidden_dim + hidden_dim + hidden_dim * output_dim + output_dim"
   ]
 
 end Export.PyTorch.MLP

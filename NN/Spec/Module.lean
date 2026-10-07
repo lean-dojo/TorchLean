@@ -9,9 +9,6 @@ module
 public import NN.Spec.Module.Activation
 public import NN.Spec.Module.Autoencoder
 public import NN.Spec.Module.Conv
-public import NN.Spec.Module.DecisionTree
-public import NN.Spec.Module.Dropout
-public import NN.Spec.Module.Embedding
 public import NN.Spec.Module.Flatten
 public import NN.Spec.Module.GruModels
 public import NN.Spec.Module.Hmm

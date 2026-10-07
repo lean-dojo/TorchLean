@@ -30,8 +30,8 @@ For attention + `layer_norm`, see
   `NN/Verification/Builtin/TransformerIBPWorkflow.lean`.
 
 Run:
-  `lake exe verify -- torchlean-crown-ops`
-  `lake exe verify -- torchlean-crown-ops --arithmetic ieee`
+  `scripts/lake.sh exe verify -- torchlean-crown-ops`
+  `scripts/lake.sh exe verify -- torchlean-crown-ops --arithmetic ieee`
 -/
 
 @[expose] public section
@@ -40,102 +40,74 @@ Run:
 namespace NN.Verification.Builtin.CrownOpsWorkflow
 
 open _root_.Spec _root_.TorchLean
-open _root_.TorchLean.Tensor
-open _root_.TorchLean
 
 open NN.MLTheory.CROWN.Graph
 open NN.MLTheory.CROWN
 
-/-- Input dimension for the softmax workflow model. -/
-def softmaxInDim : Nat := 2
-/-- Output dimension for the softmax workflow model. -/
-def softmaxOutDim : Nat := 3
-
-/-- Input shape for the softmax workflow model. -/
-def softmaxXShape : Spec.Shape := [softmaxInDim]
-/-- Output shape for the softmax workflow model. -/
-def softmaxYShape : Spec.Shape := [softmaxOutDim]
+namespace Softmax
 
 /-- TorchLean model: `Linear -> Softmax`. -/
-def softmaxModel : nn.Sequential [softmaxInDim] [softmaxOutDim] :=
+def model : nn.Sequential [2] [3] :=
   nn.build 0 <|
     nn.Sequential![
-      nn.linear softmaxInDim softmaxOutDim,
-      nn.softmax (shape := [softmaxOutDim]) 0
+      nn.linear 2 3,
+      nn.softmax (shape := [3]) 0
     ]
-
-/-- Parameter shapes for `softmaxModel`. -/
-def softmaxParamShapes : List Spec.Shape := nn.stateShapes softmaxModel
-
-/-- Directed lower bound on the softmax margin $p_0 - p_1$. -/
-def softmaxMargin {α : Type} [TorchLean.Storage α] [Context α] [BoundOps α]
-    (lo hi : TorchLean.Tensor α softmaxYShape) : α :=
-  let lo0 := _root_.TorchLean.Tensor.getScalar lo ⟨0, by decide⟩
-  let hi1 := _root_.TorchLean.Tensor.getScalar hi ⟨1, by decide⟩
-  BoundOps.subDown lo0 hi1
 
 /-- Print the softmax probability bounds of a verifier box under `tag`, together with the directed
 margin `p₀ - p₁`. Fails when the box does not have the softmax output dimension. -/
-def printSoftmaxBox {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α]
+def print {α : Type} [Storage α] [Context α] [ToString α]
     [BoundOps α] (tag : String) (box : FlatBox α) : IO Unit := do
-  if hDim : box.dim = softmaxOutDim then
-    let loY : TorchLean.Tensor α softmaxYShape := box.loAsDim hDim
-    let hiY : TorchLean.Tensor α softmaxYShape := box.hiAsDim hDim
+  if hDim : box.dim = 3 then
+    let loY : Tensor α [3] := box.loAsDim hDim
+    let hiY : Tensor α [3] := box.hiAsDim hDim
     IO.println s!"[{tag}] p lo = {pretty loY}"
     IO.println s!"[{tag}] p hi = {pretty hiY}"
-    IO.println s!"[{tag}] margin(p0 - p1) = {softmaxMargin (α := α) loY hiY}"
+    let margin := BoundOps.subDown
+      (Tensor.getScalar loY ⟨0, by decide⟩) (Tensor.getScalar hiY ⟨1, by decide⟩)
+    IO.println s!"[{tag}] margin(p0 - p1) = {margin}"
   else
-    throw <| IO.userError s!"[{tag}] unexpected output dim {box.dim} (expected {softmaxOutDim})"
+    throw <| IO.userError s!"[{tag}] unexpected output dim {box.dim} (expected 3)"
 
 /--
 Run the softmax workflow under a chosen scalar backend `α`.
 
 This lowers the TorchLean model to verifier IR and prints IBP/CROWN bounds.
 -/
-def runSoftmax {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α]
+def run {α : Type} [Storage α] [Context α] [ToString α]
     [Runtime.FromFloat α] [BoundOps α] [NonlinearBoundOps α] : IO Unit := do
   IO.println "== Workflow 1: linear -> softmax (vector) =="
   let cast : Float → α := Runtime.ofFloat
 
-  let params : nn.State α softmaxParamShapes :=
+  let params : nn.State α (nn.stateShapes model) :=
     nn.State.empty
       |>.push
-        (TorchLean.Tensor.map cast <|
-          (Tensor.from (#[1.0, -0.5, 0.2, 0.7, -0.3, 0.1] : Array Float)).reshape
-            [3, 2] (by dsimp; decide))
+        (Tensor.map cast ([[1.0, -0.5], [0.2, 0.7], [-0.3, 0.1]] : Tensor Float [3, 2]))
       |>.push
-        (TorchLean.Tensor.map cast <|
-          (Tensor.from (#[0.1, -0.2, 0.0] : Array Float)).reshape [3] (by dsimp; decide))
+        (Tensor.map cast ([0.1, -0.2, 0.0] : Tensor Float [3]))
 
-  let lowered ←
-    match Verification.lowerProgramToIR (α := α)
-          (nn.forward softmaxModel (α := α)) params with
-    | .ok c => pure c
-    | .error e => throw <| IO.userError e
+  let lowered ← IO.ofExcept <|
+    Verification.lowerProgramToIR (α := α) (nn.forward model (α := α)) params
 
   IO.println s!"lowered IR nodes: {lowered.graph.nodes.size}"
 
-  let x0 : TorchLean.Tensor α softmaxXShape :=
-    TorchLean.Tensor.map cast
-      ((Tensor.from (#[0.2, -0.1] : Array Float)).reshape [2] (by dsimp; decide))
+  let x0 : Tensor α [2] := Tensor.map cast ([0.2, -0.1] : Tensor Float [2])
   let eps : α := Runtime.ofFloat 0.05
   let xB : FlatBox α := NN.Verification.Builtin.lInfBall (α := α) x0 eps
   let ps : ParamStore α := lowered.seedInputBox xB
 
   -- IBP
   let ibp := lowered.runIBP ps
-  let outB ← lowered.outputBoxOrThrow ibp
-  printSoftmaxBox "IBP" outB
+  let outB ← IO.ofExcept (lowered.outputBox? ibp)
+  print "IBP" outB
 
   -- CROWN output bounds.
-  let outC ← lowered.outputBoxCROWNOrThrow ps xB
-  printSoftmaxBox "CROWN" outC
+  let outC ← IO.ofExcept (lowered.outputBoxCROWN? ps xB)
+  print "CROWN" outC
 
   -- Backward/dual CROWN for the margin objective: p0 - p1.
-  let objV : TorchLean.Tensor α [softmaxOutDim] :=
-    TorchLean.Tensor.map cast
-      ((Tensor.from (#[1.0, -1.0, 0.0] : Array Float)).reshape [3] (by dsimp; decide))
-  let obj : FlatTensor α := { n := softmaxOutDim, v := objV }
+  let objV : Tensor α [3] := Tensor.map cast ([1.0, -1.0, 0.0] : Tensor Float [3])
+  let obj : FlatTensor α := { n := 3, v := objV }
   let outObjective ←
     match lowered.backwardObjectiveBox? ps ibp xB obj with
     | .ok result => pure result
@@ -148,36 +120,22 @@ def runSoftmax {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString 
   IO.println s!"[CROWN-backward] margin lo = {loM}"
   IO.println s!"[CROWN-backward] margin hi = {hiM}"
 
-/-- Input dimension for the MSE-loss workflow model. -/
-def mseInDim : Nat := 2
-/-- Output dimension for the MSE-loss workflow model. -/
-def mseOutDim : Nat := 2
+end Softmax
 
-/-- Weight shape for the MSE-loss workflow's linear layer. -/
-def mseWShape : Spec.Shape := [mseOutDim, mseInDim]
-/-- Bias shape for the MSE-loss workflow's linear layer. -/
-def mseBShape : Spec.Shape := [mseOutDim]
-/-- Input shape for the MSE-loss workflow. -/
-def mseXShape : Spec.Shape := [mseInDim]
-/-- Output shape for the MSE-loss workflow. -/
-def mseYShape : Spec.Shape := [mseOutDim]
-
-/-- Parameter shapes for the MSE-loss workflow (`[W,b,target]`). -/
-def mseParamShapes : List Spec.Shape := [mseWShape, mseBShape, mseYShape]
+namespace Loss
 
 /-- TorchLean forward program computing
 $\widehat{y}=\operatorname{linear}(x)$ and
 $\operatorname{mse\_loss}(\widehat{y},\mathrm{target})$, returning a scalar. -/
-def mseLossModel {α : Type} [TorchLean.Storage α] [Context α] :
-    _root_.Runtime.Autograd.Model.Program α (mseParamShapes ++ [mseXShape])
-      [] :=
+def model {α : Type} [Storage α] [Context α] :
+    _root_.Runtime.Autograd.Model.Program α [[2, 2], [2], [2], [2]] [] :=
   fun {m} _ _ =>
     fun w b target x =>
       (do
         let yhat ← Runtime.linear
           (m := m) (α := α)
-          (batchShape := []) (inputWidth := mseInDim) (outputWidth := mseOutDim) w b x
-        Runtime.mseLoss (m := m) (α := α) (s := mseYShape) yhat target
+          (batchShape := []) (inputWidth := 2) (outputWidth := 2) w b x
+        Runtime.mseLoss (m := m) (α := α) (s := [2]) yhat target
         : m (Runtime.ValueRef (m := m) (α := α) []))
 
 /--
@@ -186,49 +144,40 @@ Run the MSE-loss workflow under a chosen scalar backend `α`.
 This lowers the TorchLean forward computation to verifier IR and prints IBP/CROWN bounds for the
 scalar loss.
 -/
-def runMSE {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α]
+def run {α : Type} [Storage α] [Context α] [ToString α]
     [Runtime.FromFloat α] [BoundOps α] [NonlinearBoundOps α] : IO Unit := do
   IO.println "== Workflow 2: linear -> mse_loss (scalar) =="
   let cast : Float → α := Runtime.ofFloat
 
-  let params : nn.State α mseParamShapes :=
+  let params : nn.State α [[2, 2], [2], [2]] :=
     nn.State.empty
       |>.push
-        (TorchLean.Tensor.map cast <|
-          (Tensor.from (#[0.4, -0.3, 1.2, 0.1] : Array Float)).reshape
-            [2, 2] (by dsimp; decide))
+        (Tensor.map cast ([[0.4, -0.3], [1.2, 0.1]] : Tensor Float [2, 2]))
       |>.push
-        (TorchLean.Tensor.map cast <|
-          (Tensor.from (#[0.05, -0.02] : Array Float)).reshape [2] (by dsimp; decide))
+        (Tensor.map cast ([0.05, -0.02] : Tensor Float [2]))
       |>.push
-        (TorchLean.Tensor.map cast <|
-          (Tensor.from (#[0.0, 1.0] : Array Float)).reshape [2] (by dsimp; decide))
+        (Tensor.map cast ([0.0, 1.0] : Tensor Float [2]))
 
-  let lowered ←
-    match Verification.lowerProgramToIR (α := α)
-          (mseLossModel (α := α)) params with
-    | .ok c => pure c
-    | .error e => throw <| IO.userError e
+  let lowered ← IO.ofExcept <|
+    Verification.lowerProgramToIR (α := α) (model (α := α)) params
 
   IO.println s!"lowered IR nodes: {lowered.graph.nodes.size}"
 
-  let x0 : TorchLean.Tensor α mseXShape :=
-    TorchLean.Tensor.map cast
-      ((Tensor.from (#[0.3, -0.4] : Array Float)).reshape [2] (by dsimp; decide))
+  let x0 : Tensor α [2] := Tensor.map cast ([0.3, -0.4] : Tensor Float [2])
   let eps : α := Runtime.ofFloat 0.05
   let xB : FlatBox α := NN.Verification.Builtin.lInfBall (α := α) x0 eps
   let ps : ParamStore α := lowered.seedInputBox xB
 
   -- IBP
   let ibp := lowered.runIBP ps
-  let outB ← lowered.outputBoxOrThrow ibp
+  let outB ← IO.ofExcept (lowered.outputBox? ibp)
   if outB.dim != 1 then
     throw <| IO.userError s!"[IBP] unexpected output dim {outB.dim} (expected 1)"
   IO.println s!"[IBP] loss lo = {pretty outB.lo}"
   IO.println s!"[IBP] loss hi = {pretty outB.hi}"
 
   -- CROWN output bounds on the scalar loss.
-  let outC ← lowered.outputBoxCROWNOrThrow ps xB
+  let outC ← IO.ofExcept (lowered.outputBoxCROWN? ps xB)
   if outC.dim != 1 then
     throw <| IO.userError s!"[CROWN] unexpected output dim {outC.dim} (expected 1)"
   IO.println s!"[CROWN] loss lo = {pretty outC.lo}"
@@ -246,22 +195,24 @@ def runMSE {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α]
   IO.println s!"[CROWN-backward] loss lo = {pretty outObjective.lo}"
   IO.println s!"[CROWN-backward] loss hi = {pretty outObjective.hi}"
 
-/-- Run all CROWN-ops workflows (softmax + mse_loss) under a chosen scalar backend `α`. -/
-def runOnce {α : Type} [TorchLean.Storage α] [_root_.Context α] [ToString α] [Runtime.FromFloat α]
+end Loss
+
+/-- Run both CROWN examples under a chosen scalar backend `α`. -/
+def run {α : Type} [Storage α] [Context α] [ToString α] [Runtime.FromFloat α]
     [BoundOps α] [NonlinearBoundOps α] : IO Unit := do
-  runSoftmax (α := α)
+  Softmax.run (α := α)
   IO.println ""
-  runMSE (α := α)
+  Loss.run (α := α)
 
 /--
 CLI entry point for the CROWN-ops workflow.
 
-This is wired into `lake exe verify -- torchlean-crown-ops`.
+This is wired into `scripts/lake.sh exe verify -- torchlean-crown-ops`.
 Missing bounds or unexpected output dimensions fail the command.
 -/
 def main (args : List String) : IO Unit :=
   NN.Verification.Builtin.runWithBoundArithmetic
     "TorchLean → IR → IBP + CROWN (ops: softmax/mse_loss)" args
-    (@runOnce)
+    (@run)
 
 end NN.Verification.Builtin.CrownOpsWorkflow

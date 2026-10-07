@@ -24,8 +24,9 @@ output loop and direct source-buffer reads. Rearrangement, repetition, and
 other shape-only transformations use this operation-independent lowering.
 
 The generated term carries its pointwise equality to `Rep.pullFlat`.
-Concrete portable shapes use `USize` counters and indices; symbolic shapes
-remain on the existing general lowering.
+Concrete portable output sizes use `USize` counters. Source reads use native
+indices only when their bounds can also be certified; otherwise they retain
+bounded `Fin` reads. Symbolic output sizes use the general lowering.
 -/
 
 public meta section
@@ -239,6 +240,9 @@ for other native tensor kernels. Packed `FloatArray` and ordinary polymorphic
 `Array` storage have dedicated implementations. If either the storage or index
 program is not the exact supported form, elaboration falls back to the generic
 gather.
+
+Returning `none` selects that fallback; unexpected proof-construction errors
+are not caught here.
 -/
 private def compileNativeTranspose2D?
     (checkedValue : Check.CheckedTransform)

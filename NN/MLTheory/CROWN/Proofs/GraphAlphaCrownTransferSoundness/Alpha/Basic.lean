@@ -83,12 +83,6 @@ theorem encloses_point_box {n : Nat} (t : Tensor ℝ [n]) :
     Theorems.Semantics.encloses (α := ℝ) { dim := n, lo := t, hi := t } t :=
   (encloses_iff_getScalar t t t).2 fun _ => ⟨le_rfl, le_rfl⟩
 
-/-- `EnclosesAtInput` respects equality of value payloads. -/
-theorem enclosesAtInput_congr_val {ctx : AffineCtx} {x : Tensor ℝ [ctx.inputDim]}
-    {b : FlatAffineBounds ℝ} {v w : Val} (h : v = w)
-    (hv : EnclosesAtInput (α := ℝ) ctx x b v) : EnclosesAtInput (α := ℝ) ctx x b w :=
-  h ▸ hv
-
 /-- A constant affine enclosure built from a box `B0` is sound at every input point whenever `B0`
 encloses the value. -/
 theorem enclosesAtInput_boundsConst_of_enclosesBox {ctx : AffineCtx} {x : Tensor ℝ [ctx.inputDim]}

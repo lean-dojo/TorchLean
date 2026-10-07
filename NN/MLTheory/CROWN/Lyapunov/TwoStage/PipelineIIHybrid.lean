@@ -31,7 +31,7 @@ Stage-1 export script:
   --steps 10`
 
 Run this pipeline:
-`lake exe verify -- twostage-hybrid-van-stage2`
+`scripts/lake.sh exe verify -- twostage-hybrid-van-stage2`
 
 Convenience flags for this workflow runner:
 - omit the weights path to auto-use `_external/van_stage1_w{width}_bits.json`
@@ -87,27 +87,17 @@ def Internal.parseBitsArray (j : Json) (ctx : String) : IO (Array UInt32) := do
     | none => throw <| IO.userError s!"{ctx}: expected nat/decimal-string array"
   ns.mapM (Internal.expectU32 ctx)
 
-/-- Turn `UInt32` float32 bit patterns into executable float32 values (`ExecFloat.Binary 8 23`). -/
-def Internal.decodeBits (bits : Array UInt32) : Array Scalar :=
-  bits.map ExecFloat.Binary.ofBits32
+/-- Restore a row-major tensor shape after checking its scalar count.
 
-/-- Build a length-`n` vector tensor from an array (with a length check). -/
-def Internal.vector (n : Nat) (values : Array Scalar) : IO (Tensor Scalar [n]) := do
-  if h : values.size = n then
-    pure <| (Tensor.from values).reshape [n] (by
+`context` adds shape information to a length-mismatch diagnostic. -/
+def Internal.tensor (shape : Shape) (values : Array Scalar) (context : String := "") :
+    IO (Tensor Scalar shape) := do
+  if h : values.size = shape.size then
+    pure <| (Tensor.from values).reshape shape (by
       simpa [Spec.Shape.size] using h)
   else
-    throw <| IO.userError s!"expected length {n}, got {values.size}"
-
-/-- Build an `m×n` matrix tensor from a flat array (row-major, with a length check). -/
-def Internal.matrix (m n : Nat) (values : Array Scalar) : IO (Tensor Scalar [m, n]) := do
-  let expected := m * n
-  if h : values.size = expected then
-    pure <| (Tensor.from values).reshape [m, n] (by
-      simpa [Spec.Shape.size, expected] using h)
-  else
     throw <|
-      IO.userError s!"expected length {expected} (matrix {m}x{n}), got {values.size}"
+      IO.userError s!"expected length {shape.size}{context}, got {values.size}"
 
 /--
 Load stage-1 parameters exported by PyTorch as *float32 bit patterns*.
@@ -135,12 +125,15 @@ def loadInitialState (width : Nat) (path : String) :
   let w2Bits ← Internal.parseBitsArray (← expectField top "w2" "top-level") "w2"
   let b2Bits ← Internal.parseBitsArray (← expectField top "b2" "top-level") "b2"
 
-  let wC ← Internal.matrix Core.uDim Core.xDim (Internal.decodeBits wCBits)
-  let bC ← Internal.vector Core.uDim (Internal.decodeBits bCBits)
-  let w1 ← Internal.matrix width Core.xDim (Internal.decodeBits w1Bits)
-  let b1 ← Internal.vector width (Internal.decodeBits b1Bits)
-  let w2 ← Internal.matrix 1 width (Internal.decodeBits w2Bits)
-  let b2 ← Internal.vector 1 (Internal.decodeBits b2Bits)
+  let wC ← Internal.tensor [Core.uDim, Core.xDim] (wCBits.map ExecFloat.Binary.ofBits32)
+    s!" (matrix {Core.uDim}x{Core.xDim})"
+  let bC ← Internal.tensor [Core.uDim] (bCBits.map ExecFloat.Binary.ofBits32)
+  let w1 ← Internal.tensor [width, Core.xDim] (w1Bits.map ExecFloat.Binary.ofBits32)
+    s!" (matrix {width}x{Core.xDim})"
+  let b1 ← Internal.tensor [width] (b1Bits.map ExecFloat.Binary.ofBits32)
+  let w2 ← Internal.tensor [1, width] (w2Bits.map ExecFloat.Binary.ofBits32)
+    s!" (matrix 1x{width})"
+  let b2 ← Internal.tensor [1] (b2Bits.map ExecFloat.Binary.ofBits32)
 
   pure <|
     TorchLean.nn.State.empty
@@ -241,7 +234,7 @@ def run (width : Nat) (args : List String) : IO Unit := do
     (initState := TorchLean.nn.State.Internal.toTensorPack initialState)
   let tr := Runtime.Autograd.Model.Module.Objective.trainer mod
 
-  let cLoss ← Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph
+  let cLoss ← Runtime.Autograd.Model.Autodiff.lowerToTypedGraph
     (α := Scalar) (paramShapes := Core.paramShapes width) (inputShapes := [Core.xShape])
       (Core.lossProgram width)
 

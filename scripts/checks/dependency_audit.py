@@ -39,7 +39,7 @@ IMPORT_RE = re.compile(
 )
 NAMESPACE_RE = re.compile(r"^\s*namespace\s+([A-Za-z0-9_'.]+)\s*$")
 DECL_RE = re.compile(
-    r"^\s*(?:private\s+|protected\s+|partial\s+|unsafe\s+|noncomputable\s+|scoped\s+|local\s+)*"
+    r"^\s*(?:public\s+|private\s+|protected\s+|partial\s+|unsafe\s+|noncomputable\s+|scoped\s+|local\s+)*"
     r"(def|theorem|lemma|structure|class|inductive|abbrev|axiom|opaque|instance)\b"
 )
 
@@ -129,18 +129,18 @@ def module_name(root: pathlib.Path, path: pathlib.Path) -> str:
 
 
 def mask_comments_and_strings(text: str) -> str:
-    """Replace Lean comments/docstrings/strings with spaces while preserving line numbers.
+    """Mask Lean comments and strings without changing offsets or line numbers.
 
-    This is a lexical scanner rather than a full Lean parser. It still tracks
-    nested block comments and ordinary string escapes so dependency regexes do
-    not fire on prose examples or URLs in documentation comments.
+    Used by the import audit and repository linter. Nested block comments and escaped
+    string characters are handled lexically; this is not a full Lean parser.
     """
 
     out = list(text)
-    i = 0
     n = len(text)
-    block_depth = 0
+    i = 0
+
     in_line_comment = False
+    block_depth = 0
     in_string = False
 
     while i < n:
@@ -149,55 +149,72 @@ def mask_comments_and_strings(text: str) -> str:
         if in_line_comment:
             if ch == "\n":
                 in_line_comment = False
+                i += 1
             else:
-                # Preserve newlines so line numbers in findings still match the source file.
                 out[i] = " "
-            i += 1
+                i += 1
             continue
 
         if block_depth > 0:
             if text.startswith("/-", i):
-                out[i] = out[i + 1] = " "
+                out[i] = " "
+                if i + 1 < n:
+                    out[i + 1] = " "
                 block_depth += 1
                 i += 2
                 continue
             if text.startswith("-/", i):
-                out[i] = out[i + 1] = " "
+                out[i] = " "
+                if i + 1 < n:
+                    out[i + 1] = " "
                 block_depth -= 1
                 i += 2
                 continue
-            if ch != "\n":
+            if ch == "\n":
+                i += 1
+            else:
                 out[i] = " "
-            i += 1
+                i += 1
             continue
 
         if in_string:
+            # Mask string contents while preserving newlines. Lean strings should
+            # not contain raw newlines, but the scanner stays defensive so a
+            # missing quote does not mask the rest of the file.
             if ch == "\n":
-                # Lean strings should not span raw newlines in this lexical scanner.
-                # Resetting here keeps a malformed string from masking the rest of the file.
                 in_string = False
                 i += 1
                 continue
-            out[i] = " "
             if ch == "\\" and i + 1 < n:
-                out[i + 1] = " "
+                # Escape sequence: mask both chars.
+                out[i] = " "
+                if text[i + 1] != "\n":
+                    out[i + 1] = " "
                 i += 2
                 continue
+            out[i] = " "
             if ch == '"':
                 in_string = False
             i += 1
             continue
 
+        # Outside comments/strings: detect comment/string starts.
         if text.startswith("--", i):
-            out[i] = out[i + 1] = " "
+            out[i] = " "
+            if i + 1 < n:
+                out[i + 1] = " "
             in_line_comment = True
             i += 2
             continue
+
         if text.startswith("/-", i):
-            out[i] = out[i + 1] = " "
+            out[i] = " "
+            if i + 1 < n:
+                out[i + 1] = " "
             block_depth = 1
             i += 2
             continue
+
         if ch == '"':
             out[i] = " "
             in_string = True

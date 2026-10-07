@@ -12,8 +12,9 @@ import Batteries.Lean.Except
 /-!
 # Maintained CUDA attention selection
 
-The default profile selects Lean-composed attention over LibTorch primitives. Its local VJP is
-compatible with the TorchLean tape policy, and its reduction order remains implementation-defined.
+The default profile selects a capsule declaring Lean-composed attention over LibTorch primitives.
+Its declared VJP ownership matches the TorchLean tape policy; reduction order remains
+implementation-defined.
 This does not select or verify an ATen flash, efficient, cuDNN, or math implementation.
 -/
 
@@ -21,7 +22,7 @@ This does not select or verify an ATen flash, efficient, cuDNN, or math implemen
 
 namespace NN.Backend.BackendProfile
 
-/-- The maintained CUDA registry and policy select the direct LibTorch attention capsule. -/
+/-- The maintained CUDA registry and policy select the Lean-composed LibTorch attention capsule. -/
 theorem checkedCuda_attention_choice :
     chooseCapsuleFor? checkedCuda.policy .attention
         (checkedCuda.availability.filterCapsules checkedCuda.registry) =
@@ -35,7 +36,7 @@ theorem checkedCuda_attention_choice :
     ContractDescriptor.tested, AssurancePolicy.checked, AssurancePolicy.acceptsTrust,
     BackendOp.requiresVJP]
 
-/-- A successful default attention plan retains exactly the selected direct LibTorch capsule. -/
+/-- A successful default attention plan retains exactly the selected Lean-composed capsule. -/
 theorem checkedCuda_attention_plan
     {plan : KernelPlan}
     (hplan : checkedCuda.planOps #[.attention] = .ok plan) :

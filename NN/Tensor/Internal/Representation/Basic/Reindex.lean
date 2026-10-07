@@ -272,8 +272,7 @@ theorem reindex_trans {α : Type u} [Storage α] {r s t : Shape}
     {β : Type v} [Storage β] {s t : Shape}
     (f : α → β) (e : Coord t ≃ Coord s) (x : Rep α s) :
     map f (reindex e x) = reindex e (map f x) := by
-  ext outputCoordinate
-  simp only [map_apply, reindex_apply]
+  exact map_pull f e x
 
 /-- Pointwise binary operators commute with a shared coordinate reindexing. -/
 @[grind =] theorem zipWith_reindex
@@ -284,8 +283,7 @@ theorem reindex_trans {α : Type u} [Storage α] {r s t : Shape}
     (x : Rep α s) (y : Rep β s) :
     zipWith f (reindex e x) (reindex e y) =
       reindex e (zipWith f x y) := by
-  ext outputCoordinate
-  simp only [zipWith_apply, reindex_apply]
+  exact zipWith_pull f e x y
 
 /-- Flatten a tensor in row-major coordinate order. -/
 def flatten {α : Type u} [Storage α] {s : Shape} (x : Rep α s) :

@@ -50,7 +50,7 @@ def Internal.graphScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
         (loss (m := Runtime.Autograd.TypedGraph.GraphM.MWith α dataInputPack argumentShapes))
         argumentVariables
     CurriedRef.applyPackProjections (full := dataInputShapes) id withDataInputs
-  let graph ← okOrThrow
+  let graph ← IO.ofExcept
     (lowerToTypedGraphWithData
       (α := α) (Δ := dataInputPack) (Γ := argumentShapes) (τ := []) buildLoss)
   let nodeShapes : List Shape := graph.nodeShapes
@@ -73,7 +73,7 @@ def Internal.graphScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
     let parameterValues ← ParamList.values (α := α) parameters
     let arguments := TorchLean.TensorPack.append (α := α) (ss₁ := paramShapes)
       (ss₂ := inputShapes) parameterValues inputs
-    let compiled ← okOrThrow <|
+    let compiled ← IO.ofExcept <|
       Runtime.Autograd.TypedGraph.compileChecked graphData arguments dataInputs
     let getValue {s : Shape} (id : Nat) : IO (Tensor α s) := do
       let some value := compiled.context.values[id]?
@@ -103,7 +103,7 @@ def Internal.graphScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
       (compiled : Runtime.Autograd.TypedGraph.Compiled α argumentShapes nodeShapes) :
       IO (TorchLean.TensorPack α paramShapes) := do
     let gradients := compiled.backwardDenseAllFrom graph.output (Tensor.scalar (1 : α))
-    let values ← okOrThrow (TorchLean.TensorPack.ofShapeErasedArray
+    let values ← IO.ofExcept (TorchLean.TensorPack.ofShapeErasedArray
       (α := α) gradients (shapes := paramShapes))
     let rec retainTrainable : {shapes : List Shape} → ParamList α shapes →
         TorchLean.TensorPack α shapes → TorchLean.TensorPack α shapes

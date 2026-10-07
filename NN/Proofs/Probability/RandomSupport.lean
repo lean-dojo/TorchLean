@@ -58,39 +58,19 @@ theorem keepBit_eq_zero_or_eq_one {α : Type} [Context α] (keepProb : α) (u de
 
 namespace Internal
 
-/-- The recursive uniform generator uses the offset plus the coordinate's row-major index. -/
+/-- The uniform generator uses the offset plus the coordinate's row-major index. -/
 theorem uniform_apply {α : Type} [Storage α] [Context α] (key : UInt64) {s : Shape}
     (offset : Nat) (c : s.Coord) :
     uniform (α := α) key offset c =
       sampleUnit (sampleNat key (offset + (Shape.Coord.linearize c).val)) (2 ^ 32) := by
-  induction s generalizing offset with
-  | scalar =>
-    cases c
-    simp [uniform, Shape.Coord.linearize, Tensor.Internal.Coord.linearize]
-  | dim n s ih =>
-    obtain ⟨i, c⟩ := c
-    rw [uniform]
-    simp only [Tensor.dim, Tensor.Internal.Rep.stack_apply]
-    rw [ih]
-    simp only [Shape.Coord.linearize, Tensor.Internal.Coord.linearize_cons_val,
-      Shape.internalSize_eq, Nat.mul_comm, Nat.add_comm, Nat.add_assoc]
+  exact Tensor.Internal.Rep.get_ofFn _ c
 
-/-- The recursive mask generator uses the offset plus the coordinate's row-major index. -/
+/-- The mask generator uses the offset plus the coordinate's row-major index. -/
 theorem mask_apply {α : Type} [Storage α] [Context α] (key : UInt64) (keepProb : α)
     {s : Shape} (offset : Nat) (c : s.Coord) :
     mask key keepProb offset c =
       keepBit keepProb (sampleNat key (offset + (Shape.Coord.linearize c).val)) (2 ^ 32) := by
-  induction s generalizing offset with
-  | scalar =>
-    cases c
-    simp [mask, Shape.Coord.linearize, Tensor.Internal.Coord.linearize]
-  | dim n s ih =>
-    obtain ⟨i, c⟩ := c
-    rw [mask]
-    simp only [Tensor.dim, Tensor.Internal.Rep.stack_apply]
-    rw [ih]
-    simp only [Shape.Coord.linearize, Tensor.Internal.Coord.linearize_cons_val,
-      Shape.internalSize_eq, Nat.mul_comm, Nat.add_comm, Nat.add_assoc]
+  exact Tensor.Internal.Rep.get_ofFn _ c
 
 end Internal
 

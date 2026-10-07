@@ -70,12 +70,13 @@ def explicitComposition
     mkLambdaFVars #[index] outerValue
 
 /--
-Estimate the runtime cost of a generated flat-index map.
+Estimate arithmetic complexity in a generated flat-index map.
 
 Only value-level arithmetic contributes to the estimate. Dependent bounds,
 types, and correctness proofs are deliberately ignored because they are
-erased before execution. The estimate is used to choose between composing a
-shape-only chain and materializing its already-certified native result.
+erased before execution. Unrecognized expressions contribute zero; this is
+not a cost model for arbitrary functions. The estimate chooses between
+composing a shape-only chain and materializing its certified native result.
 -/
 partial def flatIndexProgramCost (map : Expr) (fuel : Nat := 1024) : Nat :=
   if fuel = 0 then

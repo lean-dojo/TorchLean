@@ -128,9 +128,10 @@ noncomputable def denoteOrderedReduce
 /--
 Ordered reduction denotation initialized from the first fiber value.
 
-This form gives minimum and maximum a precise IEEE behavior without sentinel
-values. Positivity of the checked fiber size proves that the first value
-exists; the remaining row-major values are folded from left to right.
+Using scalar minimum or maximum as `step` fixes its evaluation order without
+inventing sentinel values. Positivity of the checked fiber size proves that
+the first value exists; the remaining row-major values are folded from left
+to right. Exceptional-value behavior comes from the chosen scalar operation.
 -/
 noncomputable def denoteOrderedReduceNonempty {α : Type u}
     [Storage α]

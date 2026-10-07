@@ -156,10 +156,6 @@ namespace Graph
 def size (g : Graph) : Nat :=
   g.nodes.size
 
-/-- Safe node lookup by id (treating ids as array indices). -/
-def getNode? (g : Graph) (id : Nat) : Option Node :=
-  g.nodes[id]?
-
 /--
 Total node lookup that enforces the common "id discipline" invariant
 $\mathrm{nodes}[i].\mathrm{id}=i$.
@@ -168,7 +164,7 @@ This is convenient for backends that treat node ids as array indices (verifiers,
 printers). The error message is meant to point to a builder bug rather than a user error.
 -/
 def getNode (g : Graph) (id : Nat) : Except String Node := do
-  match g.getNode? id with
+  match g.nodes[id]? with
   | none => throw s!"IR graph: node id out of bounds: {id}"
   | some n =>
       if n.id != id then

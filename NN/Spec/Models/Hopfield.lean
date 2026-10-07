@@ -31,8 +31,8 @@ in `Exec` below.
 - Hopfield (1982),
   "Neural networks and physical systems with emergent collective computational abilities":
   https://www.pnas.org/doi/10.1073/pnas.79.8.2554
-("Neurons with graded response have collective computational properties " ++
-  "like those of two-state neurons"):
+- Hopfield (1984), "Neurons with graded response have collective computational properties
+  like those of two-state neurons":
   https://www.pnas.org/doi/10.1073/pnas.81.10.3088
 - Ramsauer et al. (2020), "Hopfield Networks is All You Need":
   https://arxiv.org/abs/2008.02217
@@ -52,9 +52,9 @@ the correspondence is:
 
 ## Implementation status
 
-No API builder implements this model; it is used only by the proofs in
-`NN/MLTheory/Proofs/Hopfield/*` described above (`Basic`, `Dynamics`, `Energy`, `Progress`,
-`Convergence`).
+There is no `NN.API` model builder for Hopfield networks. The definitions are used by the
+structural proofs in `NN/MLTheory/Proofs/Hopfield/*` and the guide's rational-arithmetic examples.
+`Exec` provides the tensor-facing operations.
 -/
 
 @[expose] public section
@@ -118,11 +118,6 @@ so an energy argument written over `Fin n → Bool` transfers to the executable 
 def actVec {α : Type} [One α] [Neg α] {n : Nat} (s : State n) : Fin n → α :=
   fun i => act (α := α) (s i)
 
-/-- Matrix-vector product using mathlib's dot product, with no distributivity assumption. -/
-def mulVec {α : Type} [AddCommMonoid α] [Mul α] {m n : Nat}
-    (W : Fin m → Fin n → α) (x : Fin n → α) : Fin m → α :=
-  fun i => dotProduct (W i) x
-
 /-- Hopfield parameters:
 
 - `W` is the weight matrix
@@ -149,7 +144,7 @@ structure TensorParams (α : Type) [TorchLean.Storage α] (n : Nat) where
 /-- Net input to unit `u`: `(W * x)_u`, where `x = actVec s` is the `±1` encoding of the state. -/
 def net {α : Type} [AddCommMonoid α] [Mul α] [One α] [Neg α] {n : Nat}
     (p : Params α n) (s : State n) (u : Fin n) : α :=
-  mulVec p.W (actVec (α := α) s) u
+  dotProduct (p.W u) (actVec (α := α) s)
 
 /-- Asynchronous update at a single coordinate `u`.
 

@@ -37,15 +37,13 @@ namespace Autodiff
 
 namespace Impl
 
-export Runtime.Autograd (okOrThrow)
-
-/-- Execute the checked graph pullback, reporting domain errors through the IO API. -/
-def vjpWithValue {α : Type} [Storage α] [Add α] [Zero α]
+/-- Return the seeded input gradients and forward result, reporting domain errors through IO. -/
+def pullback {α : Type} [Storage α] [Add α] [Zero α]
     {shapes : List Shape} {output : Shape}
     (graph : Runtime.Autograd.Torch.TypedGraph α shapes output)
     (inputs : TorchLean.TensorPack α shapes) (seed : Tensor α output) :
     IO (TorchLean.TensorPack α shapes × Tensor α output) :=
-  okOrThrow <| graph.vjpChecked inputs () seed
+  IO.ofExcept <| graph.vjpChecked inputs () seed
 
 end Impl
 
@@ -55,8 +53,7 @@ open Impl
 Lower a TorchLean program to a reusable `TypedGraph`.
 
 The graph retains a typed reference to the value returned by the program, which may be an input or
-any recorded node. This is the tensor-output analogue of `lowerScalarToTypedGraph`; it is
-used by `jacrevOut*` and `vjpOut*`.
+any recorded node. Scalar outputs use the same path with shape `[]`.
 -/
 def lowerToTypedGraph {α : Type} [TorchLean.Storage α] [Context α]
     {paramShapes inputShapes : List Shape} {τ : Shape}
@@ -71,20 +68,10 @@ def lowerToTypedGraph {α : Type} [TorchLean.Storage α] [Context α]
     CurriedRef.applyVarList (Γ := Γ)
       (β := Runtime.Autograd.TypedGraph.GraphM.M α Γ (Runtime.Autograd.TypedGraph.GraphM.Var τ))
       (f (β := α) (m := Runtime.Autograd.TypedGraph.GraphM.M α Γ)) vs
-  okOrThrow (Runtime.Autograd.Torch.lowerToTypedGraph (α := α) (Γ := Γ) (τ := τ) build)
-
-/-- Lower a scalar-valued TorchLean program to a reusable typed graph. -/
-def lowerScalarToTypedGraph {α : Type} [TorchLean.Storage α] [Context α]
-    {paramShapes inputShapes : List Shape}
-    (program :
-      ∀ {β : Type}, [TorchLean.Storage β] → [Context β] →
-        Runtime.Autograd.Model.Program β (paramShapes ++ inputShapes) Shape.scalar) :
-    IO (Runtime.Autograd.Torch.TypedScalarGraph α (paramShapes ++ inputShapes)) :=
-  lowerToTypedGraph (α := α) (paramShapes := paramShapes) (inputShapes := inputShapes)
-    program
+  IO.ofExcept (Runtime.Autograd.Torch.lowerToTypedGraph (α := α) (Γ := Γ) (τ := τ) build)
 
 /-- Reverse Jacobian, with output axes prepended to each parameter tensor. -/
-def jacrevOutParams {α : Type} [TorchLean.Storage α] [Context α]
+def jacrevParams {α : Type} [TorchLean.Storage α] [Context α]
     {paramShapes inputShapes : List Shape} {τ : Shape}
     (f :
       ∀ {β : Type}, [TorchLean.Storage β] → [Context β] →
@@ -97,16 +84,16 @@ def jacrevOutParams {α : Type} [TorchLean.Storage α] [Context α]
   let Γ : List Shape := paramShapes ++ inputShapes
   let args : TorchLean.TensorPack α Γ :=
     TorchLean.TensorPack.append (α := α) (ss₁ := paramShapes) (ss₂ := inputShapes) params xs
-  let (tape, _) ← okOrThrow <|
+  let (tape, _) ← IO.ofExcept <|
     Runtime.Autograd.TypedGraph.lowerToTapeChecked c.data args ()
   TensorPack.stackLeadingM τ fun index => do
     let seedOut := (Tensor.oneHot (α := α) τ.size index).reshape τ (by simp [Spec.Shape.size])
-    let allGradients ← okOrThrow <| c.vjpFromTape tape seedOut
+    let allGradients ← IO.ofExcept <| c.vjpFromTape tape seedOut
     pure (TorchLean.TensorPack.split
       (ss₁ := paramShapes) (ss₂ := inputShapes) allGradients).1
 
 /-- Reverse Jacobian, with output axes prepended to each input tensor. -/
-def jacrevOutInputs {α : Type} [TorchLean.Storage α] [Context α]
+def jacrevInputs {α : Type} [TorchLean.Storage α] [Context α]
     {paramShapes inputShapes : List Shape} {τ : Shape}
     (f :
       ∀ {β : Type}, [TorchLean.Storage β] → [Context β] →
@@ -119,11 +106,11 @@ def jacrevOutInputs {α : Type} [TorchLean.Storage α] [Context α]
   let Γ : List Shape := paramShapes ++ inputShapes
   let args : TorchLean.TensorPack α Γ :=
     TorchLean.TensorPack.append (α := α) (ss₁ := paramShapes) (ss₂ := inputShapes) params xs
-  let (tape, _) ← okOrThrow <|
+  let (tape, _) ← IO.ofExcept <|
     Runtime.Autograd.TypedGraph.lowerToTapeChecked c.data args ()
   TensorPack.stackLeadingM τ fun index => do
     let seedOut := (Tensor.oneHot (α := α) τ.size index).reshape τ (by simp [Spec.Shape.size])
-    let allGradients ← okOrThrow <| c.vjpFromTape tape seedOut
+    let allGradients ← IO.ofExcept <| c.vjpFromTape tape seedOut
     pure (TorchLean.TensorPack.split
       (ss₁ := paramShapes) (ss₂ := inputShapes) allGradients).2
 
@@ -145,38 +132,17 @@ def jacfwdInput {α : Type} [TorchLean.Storage α] [Context α]
     (paramShapes := ([] : List Shape)) (inputShapes := [σ]) (τ := τ)
     (fun {β} _ _ _ => f (β := β))
   if σ.size = 0 then
-    let _ ← okOrThrow <|
+    let _ ← IO.ofExcept <|
       Runtime.Autograd.TypedGraph.jvpChecked c.data (.cons x .nil)
         (.cons (Tensor.zeros σ) .nil) ()
   let columns ← Tensor.stackLeadingM fun (index : Fin σ.size) => do
     let dx := (Tensor.oneHot (α := α) σ.size index).reshape σ (by simp [Spec.Shape.size])
-    let (_, tangentContext) ← okOrThrow <|
+    let (_, tangentContext) ← IO.ofExcept <|
       Runtime.Autograd.TypedGraph.jvpChecked c.data (.cons x .nil) (.cons dx .nil) ()
     pure (Proofs.getIdx tangentContext c.output)
   let matrix := columns.reshape [σ.size, τ.size] (by simp [Spec.Shape.size])
   pure <| (Tensor.swapAdjacentAxes matrix 0).reshape (τ.concat σ)
     (by simp [Spec.Shape.size_concat, Spec.Shape.size])
-
-/--
-Differentiate a scalar loss with respect to parameters and inputs in one reverse pass.
--/
-def gradients {α : Type} [TorchLean.Storage α] [Context α]
-    {paramShapes inputShapes : List Shape}
-    (loss :
-      ∀ {β : Type}, [TorchLean.Storage β] → [Context β] →
-        Runtime.Autograd.Model.Program β (paramShapes ++ inputShapes) Shape.scalar)
-    (params : TorchLean.TensorPack α paramShapes)
-    (xs : TorchLean.TensorPack α inputShapes) :
-    IO (TorchLean.TensorPack α paramShapes ×
-      TorchLean.TensorPack α inputShapes) := do
-  let c ← lowerScalarToTypedGraph (α := α)
-    (paramShapes := paramShapes) (inputShapes := inputShapes) loss
-  let Γ : List Shape := paramShapes ++ inputShapes
-  let args : TorchLean.TensorPack α Γ :=
-    TorchLean.TensorPack.append (α := α) (ss₁ := paramShapes) (ss₂ := inputShapes) params xs
-  let (gAll, _) ← okOrThrow <| c.vjpChecked args () (Tensor.scalar (1 : α))
-  pure (TorchLean.TensorPack.split (α := α)
-    (ss₁ := paramShapes) (ss₂ := inputShapes) gAll)
 
 /--
 Compute a tensor-output VJP with respect to parameters and inputs in one reverse pass.
@@ -196,9 +162,23 @@ def vjp {α : Type} [TorchLean.Storage α] [Context α]
   let Γ : List Shape := paramShapes ++ inputShapes
   let args : TorchLean.TensorPack α Γ :=
     TorchLean.TensorPack.append (α := α) (ss₁ := paramShapes) (ss₂ := inputShapes) params xs
-  let (gAll, _) ← okOrThrow <| c.vjpChecked args () seedOut
+  let (gAll, _) ← pullback c args seedOut
   pure (TorchLean.TensorPack.split (α := α)
     (ss₁ := paramShapes) (ss₂ := inputShapes) gAll)
+
+/-- Differentiate a scalar loss with respect to parameters and inputs in one reverse pass.
+
+This is the general VJP with a unit scalar seed. -/
+def gradients {α : Type} [TorchLean.Storage α] [Context α]
+    {paramShapes inputShapes : List Shape}
+    (loss :
+      ∀ {β : Type}, [TorchLean.Storage β] → [Context β] →
+        Runtime.Autograd.Model.Program β (paramShapes ++ inputShapes) Shape.scalar)
+    (params : TorchLean.TensorPack α paramShapes)
+    (xs : TorchLean.TensorPack α inputShapes) :
+    IO (TorchLean.TensorPack α paramShapes ×
+      TorchLean.TensorPack α inputShapes) :=
+  vjp loss params xs (Tensor.scalar (1 : α))
 
 /-- Directional derivative of scalar loss along `vparams` (forward-mode JVP). -/
 def jvpLossParams {α : Type} [TorchLean.Storage α] [Context α]
@@ -210,7 +190,7 @@ def jvpLossParams {α : Type} [TorchLean.Storage α] [Context α]
     (xs : TorchLean.TensorPack α inputShapes)
     (vparams : TorchLean.TensorPack α paramShapes) :
     IO (Tensor α []) := do
-  let c ← lowerScalarToTypedGraph (α := α)
+  let c ← lowerToTypedGraph (α := α)
     (paramShapes := paramShapes) (inputShapes := inputShapes) loss
   let Γ : List Shape := paramShapes ++ inputShapes
   let args : TorchLean.TensorPack α Γ :=
@@ -219,7 +199,7 @@ def jvpLossParams {α : Type} [TorchLean.Storage α] [Context α]
     TorchLean.TensorPack.zero (α := α) (ss := inputShapes)
   let dargs : TorchLean.TensorPack α Γ :=
     TorchLean.TensorPack.append (α := α) (ss₁ := paramShapes) (ss₂ := inputShapes) vparams zerosX
-  let (_, tangentContext) ← okOrThrow <|
+  let (_, tangentContext) ← IO.ofExcept <|
     Runtime.Autograd.TypedGraph.jvpChecked c.data args dargs ()
   pure (Proofs.getIdx tangentContext c.output)
 
@@ -232,15 +212,15 @@ def Impl.dualGradients {α : Type} [TorchLean.Storage α] [Context α]
     IO (TorchLean.TensorPack (Dual α) (paramShapes ++ inputShapes)) := do
   let αD := Dual α
   let Γ : List Shape := paramShapes ++ inputShapes
-  let graph ← lowerScalarToTypedGraph (α := αD)
+  let graph ← lowerToTypedGraph (α := αD)
     (paramShapes := paramShapes) (inputShapes := inputShapes) loss
   let ssFull : List Shape := graph.nodeShapes
   let fullGraph : Proofs.Autograd.Algebra.GraphData αD Unit Γ ssFull :=
     graph.data
 
-  let (tape, _ctx) ← okOrThrow <|
+  let (tape, _ctx) ← IO.ofExcept <|
     Runtime.Autograd.TypedGraph.lowerToTapeChecked fullGraph argsD ()
-  okOrThrow <| graph.vjpFromTape tape (Tensor.scalar (1 : αD))
+  IO.ofExcept <| graph.vjpFromTape tape (Tensor.scalar (1 : αD))
 
 /--
 Hessian-vector product (HVP) for a scalar loss w.r.t. *parameters*.
@@ -263,9 +243,9 @@ def hvpParams {α : Type} [TorchLean.Storage α] [Context α]
   let αD := Dual α
 
   let paramsD : TorchLean.TensorPack αD paramShapes :=
-    DualTensor.withTangentsPack (α := α) (ss := paramShapes) params vparams
+    TorchLean.TensorPack.zipWith DualTensor.withTangents params vparams
   let xsD : TorchLean.TensorPack αD inputShapes :=
-    DualTensor.ofPrimalPack (α := α) (ss := inputShapes) xs
+    TorchLean.TensorPack.map DualTensor.ofPrimal xs
 
   let Γ : List Shape := paramShapes ++ inputShapes
   let argsD : TorchLean.TensorPack αD Γ :=
@@ -275,7 +255,7 @@ def hvpParams {α : Type} [TorchLean.Storage α] [Context α]
   let gradsParamsD : TorchLean.TensorPack αD paramShapes :=
     (TorchLean.TensorPack.split (α := αD) (ss₁ := paramShapes) (ss₂ := inputShapes) gradsD).1
 
-  pure (DualTensor.tangentPack (α := α) (ss := paramShapes) gradsParamsD)
+  pure (TorchLean.TensorPack.map DualTensor.tangent gradsParamsD)
 
 /--
 Hessian-vector product (HVP) for a scalar loss w.r.t. *inputs*.
@@ -298,9 +278,9 @@ def hvpInputs {α : Type} [TorchLean.Storage α] [Context α]
   let αD := Dual α
 
   let paramsD : TorchLean.TensorPack αD paramShapes :=
-    DualTensor.ofPrimalPack (α := α) (ss := paramShapes) params
+    TorchLean.TensorPack.map DualTensor.ofPrimal params
   let xsD : TorchLean.TensorPack αD inputShapes :=
-    DualTensor.withTangentsPack (α := α) (ss := inputShapes) xs vxs
+    TorchLean.TensorPack.zipWith DualTensor.withTangents xs vxs
 
   let Γ : List Shape := paramShapes ++ inputShapes
   let argsD : TorchLean.TensorPack αD Γ :=
@@ -310,7 +290,7 @@ def hvpInputs {α : Type} [TorchLean.Storage α] [Context α]
   let gradsInputsD : TorchLean.TensorPack αD inputShapes :=
     (TorchLean.TensorPack.split (α := αD) (ss₁ := paramShapes) (ss₂ := inputShapes) gradsD).2
 
-  pure (DualTensor.tangentPack (α := α) (ss := inputShapes) gradsInputsD)
+  pure (TorchLean.TensorPack.map DualTensor.tangent gradsInputsD)
 
 /--
 Full Hessian tensor for a scalar function of a single tensor input.

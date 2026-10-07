@@ -68,7 +68,7 @@ def commitGraphM {α : Type} [TorchLean.Storage α]
     IO β := do
   s.validateRefIdentities refs
   let st0 ← s.state.get
-  let (b, st1) ← okOrThrow (k (Γ := st0.Γ) (ss := st0.ss) st0.x st0.nat st0.g)
+  let (b, st1) ← IO.ofExcept (k (Γ := st0.Γ) (ss := st0.ss) st0.x st0.nat st0.g)
   s.setState { st1 with leafMetadata := st0.leafMetadata }
   pure <| StampRefIdentity.stamp (← s.currentRefIdentity) b
 
@@ -241,7 +241,7 @@ def min {α : Type} [TorchLean.Storage α] (s : TypedGraphSession α)
 
 /-- Record matrix multiplication with broadcasted batch prefixes. -/
 def matmul {α : Type} [TorchLean.Storage α]
-    (s : TypedGraphSession α) [Context α]
+    (s : TypedGraphSession α) [Add α] [Mul α] [Zero α]
   {batchA batchB batch : Shape} {m n p : Nat}
   [broadcastA : Shape.BroadcastTo batchA batch]
   [broadcastB : Shape.BroadcastTo batchB batch]
@@ -260,7 +260,7 @@ Concatenate two tensors along dimension 0.
 PyTorch comparison: `torch.cat([a, b], dim=0)`.
 -/
 def concat {α : Type} [TorchLean.Storage α]
-    (s : TypedGraphSession α) [Context α]
+    (s : TypedGraphSession α) [Add α] [Zero α]
   {n m : Nat} {sh : Shape}
   (a : TensorRef α (.dim n sh))
   (b : TensorRef α (.dim m sh)) :

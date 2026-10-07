@@ -209,9 +209,8 @@ instance byteArrayTo {shape : Shape} :
 
 /-- Array in, array out: `Tensor.from` then `Tensor.to` is the identity.
 
-The four round-trip lemmas that follow are the reason the conversion layer can be trusted at the
-boundary. Nothing in the tensor representation reorders or pads the data, so importing and exporting
-gives back exactly what was handed in. -/
+Importing and exporting preserves the entries and their order. The list round trips below reuse
+this array result. -/
 @[simp] theorem to_array_from_array {α : Type} [TorchLean.Storage α]
     (values : Array α) :
     Tensor.to (Tensor.from values) (Array α) = values := by
@@ -224,20 +223,15 @@ gives back exactly what was handed in. -/
 @[simp] theorem to_list_from_array {α : Type} [TorchLean.Storage α]
     (values : Array α) :
     Tensor.to (Tensor.from values) (List α) = values.toList := by
-  change
-    (TorchLean.Tensor.Internal.Rep.ofArray values
-      (by simp [TorchLean.Tensor.Internal.Shape.size])).data.toList =
-      values.toList
-  rw [TorchLean.Tensor.Internal.Rep.data_ofArray]
+  change (Tensor.to (Tensor.from values) (Array α)).toList = values.toList
+  rw [to_array_from_array]
 
 /-- List in, list out. -/
 @[simp] theorem to_list_from_list {α : Type} [TorchLean.Storage α]
     (values : List α) :
     Tensor.to (Tensor.from values) (List α) = values := by
-  change
-    (TorchLean.Tensor.Internal.Rep.ofArray values.toArray
-      (by simp [TorchLean.Tensor.Internal.Shape.size])).data.toList = values
-  rw [TorchLean.Tensor.Internal.Rep.data_ofArray]
+  change Tensor.to (Tensor.from values.toArray) (List α) = values
+  rw [to_list_from_array, List.toList_toArray]
 
 /-- A shape cast does not touch the data, so exporting before or after it gives the same array.
 

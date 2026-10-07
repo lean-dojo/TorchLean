@@ -153,6 +153,10 @@ Compile an ordered flat-reader reduction to nested native loops.
 
 The source map may be the identity map of an ordinary tensor or a certified
 map recovered from a preceding shape-only transform.
+
+Nonconcrete or nonportable output, fiber, and logical-input sizes return
+`none`. Once compilation begins, certificate errors propagate to the caller;
+this function does not transactionally catch failed optimizations.
 -/
 def compileNativeReduceFold?
     (step initial finish checked hKind inputTensor semanticInputTensor

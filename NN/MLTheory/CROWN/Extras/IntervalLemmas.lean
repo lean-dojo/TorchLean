@@ -41,23 +41,11 @@ theorem monotone_realSigmoid : Monotone realSigmoid := by
 /-- Derivative of real hyperbolic tangent. -/
 theorem hasDerivAt_real_tanh (x : ℝ) :
     HasDerivAt Real.tanh (1 / (Real.cosh x) ^ 2) x := by
-  have hdiv :
-      HasDerivAt (Real.sinh * Real.cosh⁻¹)
-        ((Real.cosh x * Real.cosh x - Real.sinh x * Real.sinh x) /
-          (Real.cosh x) ^ 2) x := by
-    simpa [div_eq_mul_inv] using
-      (Real.hasDerivAt_sinh x).div (Real.hasDerivAt_cosh x) (Real.cosh_pos x).ne'
-  have htanh :
-      HasDerivAt Real.tanh
-        ((Real.cosh x * Real.cosh x - Real.sinh x * Real.sinh x) /
-          (Real.cosh x) ^ 2) x := by
-    convert hdiv using 1
-    funext y
-    simp [Real.tanh_eq_sinh_div_cosh, div_eq_mul_inv]
-  have hIdentity : Real.cosh x * Real.cosh x - Real.sinh x * Real.sinh x = 1 := by
-    simpa [pow_two, mul_assoc, mul_left_comm, mul_comm] using Real.cosh_sq_sub_sinh_sq x
-  simpa [hIdentity, div_eq_mul_inv, one_div, pow_two, mul_assoc, mul_left_comm, mul_comm]
-    using htanh
+  convert (Real.hasDerivAt_sinh x).div (Real.hasDerivAt_cosh x) (Real.cosh_pos x).ne'
+    using 1
+  · funext y
+    exact Real.tanh_eq_sinh_div_cosh y
+  · simp only [← pow_two, Real.cosh_sq_sub_sinh_sq]
 
 /-- The real hyperbolic tangent is strictly monotone. -/
 theorem strictMono_real_tanh : StrictMono Real.tanh := by

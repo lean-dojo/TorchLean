@@ -39,24 +39,6 @@ evaluator equations also live here so their operation proofs can use the same ty
 - `denoteAllState_*` helpers: semantic equivalence bridges between lowered state and IR denotation
   tables.
 
-## Implementation notes
-
-- This module is shared infrastructure: predictable proof contracts
-  matter more than clever proof tricks.
-- Many lemmas here are proof-irrelevance/indexing bridges; these are repetitive but they remove a
-  lot of friction from op-specific proofs.
-- Collecting these utilities in one place gives op-specific correctness modules shared rewrite and
-  indexing lemmas instead of repeated local proof scripts.
-- These files can build slowly because they connect two representations at once: typed
-  `TorchLean.TensorPack` contexts on the forward-graph side and dynamically shaped
-  `Spec.SomeTensor` arrays on the IR side. Most of the cost is not arithmetic; it is Lean checking
-  that shape casts, array indices, and proof-irrelevant casts line up exactly.
-- When the same proof pattern appears in multiple operator files, prefer a named lemma with a clear
-  contract over another local `simp` script.
-
-## Tags
-
-correctness, infrastructure, tensorpack, dval, bridge-lemmas
 -/
 
 @[expose] public section
@@ -70,8 +52,6 @@ open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Runtime.Autograd.IRExec.Internal
--- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
--- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
 /-- The lowering and semantic evaluators agree on a successfully decoded unary parent. -/
@@ -134,8 +114,7 @@ theorem noRawLog_of_forall_mem {g : NN.IR.Graph}
       · contradiction
       · have hfn : found = n := by injection hn
         subst hfn
-        -- `getNode?` is array indexing, so a successful lookup exhibits `n` as a member.
-        simpa [NN.IR.Graph.getNode?] using Array.mem_of_getElem? hFound
+        exact Array.mem_of_getElem? hFound
   exact h n hmem
 
 /--
@@ -447,7 +426,7 @@ theorem buildFrom_denoteAllFrom_unary
       | ok ip =>
           simp [hp, hIdx] at hBuild
           let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
-            mkForwardNode (fun values => operation (readTensor (xs := values) ip))
+            mkForwardNode (fun values => operation (values.read ip))
           let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc gd nodeData⟩
           have hRec : buildFrom g payload inShape (i + 1) st1 = .ok st' := by
             simpa [st1, nodeData] using hBuild
@@ -506,7 +485,7 @@ theorem buildFrom_denoteAllFrom_binary
               simp [hp, hIa, hIb] at hBuild
               let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                 mkForwardNode (fun values =>
-                  operation (readTensor (xs := values) ia) (readTensor (xs := values) ib))
+                  operation (values.read ia) (values.read ib))
               let st1 : State α inShape := ⟨ss ++ [n.outShape], .snoc gd nodeData⟩
               have hRec : buildFrom g payload inShape (i + 1) st1 = .ok st' := by
                 simpa [st1, nodeData] using hBuild

@@ -63,7 +63,7 @@ profiles exist for two of them:
 ```
 ```leanOutput bsDevices
 cpu: checked_cpu
-cuda: checked_cuda
+cuda: libtorch_cuda
 rocm: no maintained profile
 metal: no maintained profile
 tpu: no maintained profile
@@ -74,6 +74,9 @@ is `none`, the caller must supply a profile describing admissible implementation
 evidence before execution can proceed.
 
 The `cpu` and `cuda` lines report names of maintained policies, not results of hardware probes.
+The CPU default uses checked assurance. The CUDA default admits the explicitly recorded LibTorch
+boundary for operations without retained numerical comparisons. `BackendProfile.checkedCuda`
+remains available when we want planning to reject those operations instead.
 This distinction lets a tool inspect a CUDA plan on a machine that cannot execute it. The three
 `none` cases mean no default policy has been supplied for those devices; adding a constructor to
 `Device` would not change that result. A custom profile must describe the provider it intends to
@@ -148,8 +151,7 @@ The sources are {src "NN/Backend/Capsule.lean"}[`Capsule.lean`] for the record a
 [installation and kernel
 overview](https://lean-dojo.github.io/TorchLean/installation/#from-a-model-to-a-kernel).
 
-The registry rejects the duplicate `libtorch` name. Distinct modules
-can still contribute implementations of the same operation; the profile decides which one to use.
+Distinct modules can still offer the same operation; the profile decides which one to use.
 
 # Capsule Contracts And Evidence
 
@@ -357,8 +359,8 @@ Both sides are `Spec` functions. The theorem says that the fused *Lean specifica
 denotation as TorchLean's standard scaled-dot-product-attention specification, for every element
 type with the required operation instances and for every block configuration
 {Informal.citep flashattention2022}[]. That is what licenses a semantic graph rewrite, and it is
-what a fused implementation can be asked to refine. The Lean definition computes the standard
-attention stages and ignores the tile sizes; this theorem does not verify an online tiled
+what a fused implementation can be asked to refine. The Lean definition reuses the standard
+attention calculation and ignores tile sizes; this theorem does not verify an online tiled
 algorithm or its memory traffic. Its axiom audit is:
 
 ```lean (name := bsAxioms)
@@ -382,12 +384,8 @@ Connecting PTX or a library call all the way to the specification would require 
 argument over Float32, layout, compiler, and hardware behavior, and no capsule field can stand in
 for it.
 
-Read the theorem's `Context α` as the operations used to give both sides their meaning. The
-statement quantifies one context shared by the two expressions; it does not compare CPU
-arithmetic with CUDA arithmetic. The nonzero query and key dimensions are part of the attention
-context's contract. The axiom output reports logical dependencies of this Lean theorem and says
-nothing about a compiled CUDA binary. It is therefore useful evidence about the specification
-rewrite, while the capsule audit remains the place to inspect the implementation boundary.
+Both expressions use the same `Context α`; the theorem does not compare CPU and CUDA arithmetic.
+Its attention context also requires nonzero query and key dimensions.
 
 # Forward And Backward Ownership
 
@@ -622,10 +620,10 @@ layout still have runtime guards, and the VJP still names its regression suite. 
 The registered `LibTorch.matmul` uses test-suite evidence for its forward value; the example
 changed that field specifically to expose the policy boundary.
 
-These are Lean data structures rather than an informal convention between command-line flags. The
-eager runtime consumes the accepted per-operation value, binds it to the implementation it will
-call, and records the capsule it actually used. Inspection tools can retain rejected graph plans
-and explain why they failed.
+The eager runtime caches and reports an accepted selection before looking up its handler.
+It then binds a matching handler and runs it, or fails if no handler is available. The cached
+selection is therefore not a record of completed calls. Inspection tools can also retain rejected
+graph plans and explain why they failed.
 
 `AcceptedKernel` carries a proof that `PlannedKernel.acceptable policy = true`. This gate checks
 operation identity, forward support, contract alignment, trust, provider, device, VJP mode, and
@@ -660,12 +658,8 @@ Capsules record reduction order and layout claims but have no scalar-type field.
 configuration and native conversion checks determine which arithmetic and buffer format actually
 execute; a capsule label alone does not certify their relationship.
 
-The rejected value obligation does not say that a computed answer was numerically wrong.
-It says that the chosen policy does not permit that obligation to rest on an external assumption.
-Likewise, `external: accepted` does not report a numerical comparison; it records agreement
-between the evidence class and the caller's policy. No numerical computation ran in this
-example. A per-obligation record lets an application permit an assumption about one part of the
-computation without silently treating that assumption as evidence for all the others.
+Neither result reports a numerical comparison: this example only checks which evidence classes
+the policy permits.
 
 # Runtime Configuration
 
@@ -909,10 +903,9 @@ These statements have different strengths:
 - "this LibTorch build passed the attention tests" reports the tested cases and configuration,
   while the foreign implementation remains outside the Lean proof.
 
-A backend report records the selected
-provider and the evidence attached to it. Keeping that report beside a benchmark makes “CUDA”
-concrete: readers can see which capsules served the operations and which guards and tests stand
-behind each one. The SDK version and runtime settings identify choices below the capsule level.
+A backend report records the selected provider and its declared evidence. Keep it beside a
+benchmark to identify the intended implementations, together with execution results, SDK version
+and runtime settings. The report alone does not establish that their handlers completed.
 
 For example, a shape guard cannot justify a claim about attention's numerical result. Follow the
 selected capsule's value obligation to its cited test or trusted boundary, then check what that

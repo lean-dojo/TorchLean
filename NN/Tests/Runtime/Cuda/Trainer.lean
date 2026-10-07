@@ -10,9 +10,12 @@ public import NN.API.Trainer.Constructor
 public import NN.API.Trainer.Session
 
 /-!
-# CUDA Trainer Coverage
+# LibTorch trainer state and validation checks
 
-User-facing trainer checks whose behavior depends on selecting a distinct evaluation program.
+Evaluation-mode dropout, current parameter reads, view resets, batch averaging and result snapshots
+exercise state transitions through the public trainer and runtime session APIs. Adam checks cover
+history resets, rejection before mutation or allocation, and checkpoint decoding. These are native
+runtime regressions, not consequences of the real-valued optimizer theorems.
 -/
 
 @[expose] public section
@@ -85,7 +88,7 @@ def checkTypedGraphCudaParameter : IO Unit := do
     throw <| IO.userError
       s!"typed graph read stale CUDA parameter: got {value.item}, expected 2"
 
-/-- Resetting views must preserve the parameter allocation, including frozen parameters. -/
+/-- Parameter values remain available through detached views and tape resets, even when frozen. -/
 def checkParameterViews : IO Unit := do
   for requiresGrad in #[true, false] do
     let parameter ← Runtime.Autograd.Torch.Param.Internal.create
@@ -251,7 +254,7 @@ def checkAdamEpsilon : IO Unit := do
     finally
       session.resetTape
       releaseCudaGradMap gradients
-      releaseCudaAdamState (← state.get)
+      releaseAdam (← state.get)
 
 /-- Checkpoint decoding applies the same effective-epsilon check before allocating replacements. -/
 def checkAdamCheckpointEpsilon : IO Unit := do
@@ -282,7 +285,7 @@ def checkAdamCheckpointEpsilon : IO Unit := do
             handle.write vBytes
           let before ← Runtime.Autograd.LibTorch.Buffer.allocatorStats
           let rejected ← try
-            readCudaAdamStateFloat32 path schema config state
+            loadAdam path schema config state
             pure false
           catch error =>
             unless error.toString.contains "float32" do throw error
@@ -303,7 +306,7 @@ def checkAdamCheckpointEpsilon : IO Unit := do
               (← Runtime.Autograd.LibTorch.Buffer.toFloat32BytesIO entry.v) == vBytes do
             throw <| IO.userError "CUDA Adam checkpoint changed retained moment values"
       finally
-        releaseCudaAdamState (← state.get)
+        releaseAdam (← state.get)
 
 /-- A CUDA result owns its parameter snapshot after the live trainer moves on. -/
 def checkSnapshot : IO Unit := do

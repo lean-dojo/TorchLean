@@ -62,9 +62,8 @@ good for reading and proofs.
 
 ## Implementation status
 
-No API builder implements this model. `NN/Spec/Module/Hmm.lean` wraps it as a `Spec.Module`, and
-`NN/Tests/Runtime/Floats/TorchLeanOpsCheck.lean` checks it numerically; no theorem is proved about
-it.
+No API builder implements this model. `NN/Spec/Module/Hmm.lean` wraps it as a `Spec.Module`.
+This module defines the HMM calculations; it does not prove their algorithmic correctness.
 -/
 
 public section

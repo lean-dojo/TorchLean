@@ -53,10 +53,7 @@ def runWithBoundArithmetic
       [BoundOps α] → [NonlinearBoundOps α] → IO Unit) :
     IO Unit := do
   IO.println s!"=== {title} workflow ==="
-  let (arithmetic, rest) ←
-    match TorchLean.Runtime.Arithmetic.parseAndStrip args with
-    | .ok parsed => pure parsed
-    | .error msg => throw <| IO.userError msg
+  let (arithmetic, rest) ← IO.ofExcept (TorchLean.Runtime.Arithmetic.parseAndStrip args)
   unless rest.isEmpty do
     throw <| IO.userError s!"unexpected arguments: {rest}"
   TorchLean.Runtime.Arithmetic.log arithmetic

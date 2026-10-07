@@ -10,8 +10,9 @@ public import NN.Proofs.Autograd.Tape.Util.Idx
 public import NN.Proofs.Autograd.Runtime.ShapeErasure
 
 /-!
-Indexed tensor lookup and an array context for executing algebraic tapes. The correspondence
-certificate is erased at runtime; node preparation reads just the tensors that the node saves.
+Indexed tensor lookup and an array context shared by forward graphs and algebraic tapes.
+The correspondence certificate is erased at runtime; reads select tensors without traversing
+a linked pack. Conversion to a pack happens at an explicit typed boundary.
 -/
 
 @[expose] public section
@@ -30,9 +31,18 @@ def TensorLookup.ofPack {α : Type} [Storage α] {shapes : List Shape}
     (xs : TorchLean.TensorPack α shapes) : TensorLookup α shapes :=
   ⟨fun idx => getIdx xs idx⟩
 
+/-- Typed packs can supply a node's lookup without changing tensor values. -/
+instance {α : Type} [Storage α] {shapes : List Shape} :
+    Coe (TorchLean.TensorPack α shapes) (TensorLookup α shapes) := ⟨TensorLookup.ofPack⟩
+
 namespace TensorLookup
 
 variable {α : Type} [Storage α]
+
+/-- Reading a pack through the lookup agrees with its typed selection. -/
+@[simp] theorem read_ofPack {shapes : List Shape} (xs : TorchLean.TensorPack α shapes)
+    {shape : Shape} (idx : Idx shapes shape) :
+    (ofPack xs).read idx = getIdx xs idx := rfl
 
 /-- Materialize a reader at an explicit typed boundary. -/
 def toPack : {shapes : List Shape} → TensorLookup α shapes → TorchLean.TensorPack α shapes
@@ -215,7 +225,9 @@ def cast {other : List Shape} (h : shapes = other) (ctx : TensorContext α shape
   cases h
   rfl
 
-/-- Append a tensor reference; prepared nodes must release their reader before this push. -/
+/-- Append a tensor reference, amortized constant time when the context is uniquely owned.
+
+Retaining a previous context or its lookup can make this append copy the shared array. -/
 def push {shape : Shape} (ctx : TensorContext α shapes) (x : Tensor α shape) :
     TensorContext α (shapes ++ [shape]) :=
   ⟨ctx.values.push (Spec.SomeTensor.ofTensor x), by

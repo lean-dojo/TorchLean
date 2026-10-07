@@ -68,7 +68,7 @@ def PreferenceState.init {nActions : Nat} : PreferenceState α nActions :=
     averageReward := 0 }
 
 /-- Greedy action under the current estimates, if the action space is nonempty. -/
-def greedyAction? {nActions : Nat} (state : ValueState α nActions) : Option (Fin nActions) :=
+def ValueState.greedy? {nActions : Nat} (state : ValueState α nActions) : Option (Fin nActions) :=
   (TorchLean.Metrics.argmax? (α := α) state.values).map
     (Fin.cast (by simp [Shape.size]))
 
@@ -79,63 +79,64 @@ The caller supplies:
 - `draw`: a pre-sampled uniform value in `[0,1)`,
 - `exploreAction`: the action to use when the exploration branch is taken.
 -/
-def epsilonGreedyAction? {nActions : Nat} (state : ValueState α nActions)
+def ValueState.epsilonGreedy? {nActions : Nat} (state : ValueState α nActions)
     (epsilon draw : α) (exploreAction : Fin nActions) : Option (Fin nActions) :=
   if epsilon > draw then
     some exploreAction
   else
-    greedyAction? (α := α) state
+    ValueState.greedy? (α := α) state
 
 /-- Incremental sample-average update for one bandit arm. -/
-def sampleAverageStep {nActions : Nat} (state : ValueState α nActions) (action : Fin nActions)
+def ValueState.update {nActions : Nat} (state : ValueState α nActions) (action : Fin nActions)
     (reward : α) : ValueState α nActions :=
   let oldCount := Tensor.getScalar state.counts action
   let newCount := oldCount + 1
   let oldValue := Tensor.getScalar state.values action
   let newValue := oldValue + (reward - oldValue) / newCount
-  { counts := Tensor.updateSpec state.counts [action.val] newCount
-    values := Tensor.updateSpec state.values [action.val] newValue }
+  { counts := Tensor.set state.counts (action, PUnit.unit) newCount
+    values := Tensor.set state.values (action, PUnit.unit) newValue }
 
 /-- Total number of pulls recorded in a `ValueState`. -/
-def totalPulls {nActions : Nat} (state : ValueState α nActions) : α :=
+def ValueState.pulls {nActions : Nat} (state : ValueState α nActions) : α :=
   sumSpec state.counts
 
 /-- UCB1-style exploration bonus.
 
-We use `max(pulls, epsilon)` in the denominator so the helper stays total while still giving
-very large bonuses to unseen or nearly-unseen actions.
+The denominator is clamped at `Context.defaultEpsilon`, without a special infinity rule for unseen
+arms. `exploration` controls the multiplier. Counts and the scalar epsilon are used as supplied.
 -/
-def ucb1Bonus (exploration totalPulls actionPulls : α) : α :=
+def ucbBonus (exploration totalPulls actionPulls : α) : α :=
   let pullsSafe := Max.max actionPulls Context.defaultEpsilon
   exploration * MathFunctions.sqrt (MathFunctions.log (totalPulls + 1) / pullsSafe)
 
 /-- Per-action UCB1 scores. -/
-def ucb1Scores {nActions : Nat} (state : ValueState α nActions) (exploration : α := 2) :
+def ValueState.ucbScores {nActions : Nat} (state : ValueState α nActions) (exploration : α := 2) :
     Tensor α [nActions] :=
-  let total := totalPulls (α := α) state
+  let total := ValueState.pulls (α := α) state
   Tensor.dim (fun i =>
     let value := Tensor.getScalar state.values i
     let pulls := Tensor.getScalar state.counts i
-    Tensor.scalar (value + ucb1Bonus (α := α) exploration total pulls))
+    Tensor.scalar (value + ucbBonus (α := α) exploration total pulls))
 
 /-- Best action under UCB1 scores, if the action space is nonempty. -/
-def ucb1Action? {nActions : Nat} (state : ValueState α nActions) (exploration : α := 2) :
+def ValueState.ucb? {nActions : Nat} (state : ValueState α nActions) (exploration : α := 2) :
     Option (Fin nActions) :=
   (TorchLean.Metrics.argmax? (α := α)
-    (ucb1Scores (α := α) state exploration)).map (Fin.cast (by simp [Shape.size]))
+    (ValueState.ucbScores (α := α) state exploration)).map (Fin.cast (by simp [Shape.size]))
 
 /-- Softmax policy used by the gradient-bandit algorithm. -/
-def gradientPolicy {nActions : Nat} (state : PreferenceState α nActions) :
+def PreferenceState.policy {nActions : Nat} (state : PreferenceState α nActions) :
     Tensor α [nActions] :=
   Activation.softmaxVecSpec (α := α) (n := nActions) state.preferences
 
 /-- Gradient-bandit preference update with an optional average-reward baseline. -/
-def gradientBanditStep {nActions : Nat} (state : PreferenceState α nActions) (action :
-    Fin nActions) (reward stepSize : α) (useBaseline : Bool := true) : PreferenceState α nActions :=
+def PreferenceState.update {nActions : Nat} (state : PreferenceState α nActions)
+    (action : Fin nActions) (reward stepSize : α) (baseline : Bool := true) :
+    PreferenceState α nActions :=
   let newSteps := state.steps + 1
-  let probs := gradientPolicy (α := α) state
-  let baseline := if useBaseline then state.averageReward else 0
-  let advantage := reward - baseline
+  let probs := PreferenceState.policy (α := α) state
+  let reference := if baseline then state.averageReward else 0
+  let advantage := reward - reference
   let newPreferences :=
     Tensor.dim (fun i =>
       let p := Tensor.getScalar probs i

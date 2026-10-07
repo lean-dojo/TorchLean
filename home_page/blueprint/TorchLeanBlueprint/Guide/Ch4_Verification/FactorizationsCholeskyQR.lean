@@ -316,14 +316,6 @@ example (A : Fin 3 → Fin 3 → ℝ) :
 The column builder emits `0` whenever `i < j`, independently of the input values. This proves
 triangularity but says nothing about whether the remaining entries reconstruct the input.
 
-In the printed triangularity type, `{i j : Fin n}` are inferred indices, and `↑i < ↑j` compares
-their natural-number values. The result fixes one entry at zero. The example specializes `n` to
-three and the indices to zero and two; `norm_num` proves that index comparison without looking
-at any matrix entries. This is a useful kind of unconditional theorem because the recurrence
-explicitly writes zeros above the diagonal. Reconstruction is different: its claim depends on
-the arithmetic values written below the diagonal, so it cannot follow just from the branch that
-chooses which entries are zero.
-
 Reconstruction needs two hypotheses:
 
 ```lean (name := cholPos)
@@ -409,13 +401,8 @@ example : IsCholesky choleskyA choleskyL := by
         Fin.sum_univ_three] <;> norm_num
 ```
 
-The two bullets are the two conjuncts. `refine ⟨?_, ?_⟩` exposes the two properties as separate
-proof goals; these holes are filled by
-the following bullets, not left as assumptions. `ext i j` replaces matrix equality with equality at
-an arbitrary entry, after which finite case analysis is sufficient for this three-by-three example.
-The literal candidate contains only integers, so its reconstruction proof needs no square-root
-computation or floating tolerance. This is a convenient way to validate the meaning of the
-predicate before trying to prove that a general algorithm always produces a suitable witness.
+The two bullets prove triangularity and reconstruction. The candidate contains only integers,
+so the proof needs no square-root computation or floating tolerance.
 The first bullet enumerates the nine index pairs and discards the
 six where `i < j` fails; the surviving three are literal zeros. The second turns
 $`A=LL^\top` into nine scalar equations, expands the matrix product with `Fin.sum_univ_three`, and
@@ -963,14 +950,8 @@ For TorchLean's real Gram-Schmidt factors, $`0<R_{jj}` rules out that zero-colum
 This is a hypothesis about those particular factors. It is not a portable success test for
 arbitrary QR implementations, whose nonzero diagonal entries can have either sign.
 
-The compiled example runs four more variations, including a wide matrix whose second column depends
-on its first and whose third supplies a later independent direction:
-
-```terminal
-# The same shipped executable reports wide and
-# rank-deficient cases separately.
-scripts/lake.sh exe torchlean factorizations
-```
+The same executable also checks a wide matrix whose second column depends on its first and whose
+third supplies a later independent direction:
 
 ```terminal +output
 QR A = Q·R: OK (error = 0.000000)

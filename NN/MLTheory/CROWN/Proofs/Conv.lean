@@ -132,7 +132,7 @@ private theorem convCoreWith_apply
     (weights : Tensor ℝ (Shape.ofList (outC :: inC :: kernel.data.toList)))
     (input : Tensor ℝ (Shape.ofList (inC :: inSpatial.data.toList)))
     (outChannel : Fin outC) (outIndex : (Shape.ofList outSpatial.data.toList).Coord) :
-    convCoreWith count inputChannel inputIndex? weights input (outChannel, outIndex) =
+    (convCoreWith count inputChannel inputIndex? weights input) (outChannel, outIndex) =
       ∑ channelIndex : Fin count, ∑ kernelIndex : (Shape.ofList kernel.data.toList).Coord,
         (match inputIndex? (Shape.Coord.toList _ outIndex)
             (Shape.Coord.toList _ kernelIndex) with
@@ -152,8 +152,8 @@ private theorem convCoreWith_eq_coefficients
     (weights : Tensor ℝ (Shape.ofList (outC :: inC :: kernel.data.toList)))
     (input : Tensor ℝ (Shape.ofList (inC :: inSpatial.data.toList)))
     (outChannel : Fin outC) (outIndex : (Shape.ofList outSpatial.data.toList).Coord) :
-    convCoreWith count (fun channel i => start channel + i.val) inputIndex?
-        weights input (outChannel, outIndex) =
+    (convCoreWith count (fun channel i => start channel + i.val) inputIndex?
+        weights input) (outChannel, outIndex) =
       ∑ c : (Shape.ofList (inC :: inSpatial.data.toList)).Coord, input c *
         (if start outChannel ≤ c.1.val ∧ c.1.val < start outChannel + count then
           ∑ k : (Shape.ofList kernel.data.toList).Coord,

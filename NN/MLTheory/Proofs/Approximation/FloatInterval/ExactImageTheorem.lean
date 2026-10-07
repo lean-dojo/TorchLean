@@ -209,7 +209,11 @@ This is a “real” analogue of `Witness` that talks about a target function `�
   δ : ℝ
   /-- The threshold lies in the specified central window. -/
   δ_abs_mem : |δ| ∈ Set.Icc (3 / 8 : ℝ) (7 / 8 : ℝ)
-  /-- Threshold separation and local growth conditions for the real activation. -/
+  /-- Threshold separation and local growth conditions for the real activation.
+
+  Strict growth is required only for distinct inputs. Lemma 1 (C2′) of arXiv:2506.16065v1
+  prints it for all pairs, but equal inputs would require `0 > 0`. The distinct-input
+  interpretation retains the intended lower bound on changes in the activation. -/
   rho_threshold_properties :
     (∀ x y : ℝ,
       x ≤ δ - 1 / 8 → δ + 1 / 8 ≤ y →
@@ -218,7 +222,8 @@ This is a “real” analogue of `Witness` that talks about a target function `�
     ∧ (∀ x y : ℝ,
       x ∈ Set.Icc (δ - 1 / 8) (δ + 1 / 8) →
       y ∈ Set.Icc (δ - 1 / 8) (δ + 1 / 8) →
-        (|ρ x| ∈ Set.Icc (1 / 4 : ℝ) (1 : ℝ)) ∧ (|ρ x - ρ y| > (1 / 8 : ℝ) * |x - y|))
+        (|ρ x| ∈ Set.Icc (1 / 4 : ℝ) (1 : ℝ)) ∧
+          (x ≠ y → |ρ x - ρ y| > (1 / 8 : ℝ) * |x - y|))
 
   /-- Lipschitz constant for the real activation. -/
   lam : ℝ
@@ -281,8 +286,8 @@ def evalScalar {din : Nat} (σ : F → F) (n : Net din 1) (x : Fin din → F) : 
 
 /-- Interval semantics of the activation: the hull of its exact image on the interval.
 
-Taking the image over the finite set of representable points in `J` is what makes this the exact
-direct image rather than a relaxation, and it is only affordable because `J` is a float interval. -/
+The finite carrier makes this classical definition possible. It specifies the image hull;
+it is not an executable procedure for enumerating all binary32 inputs. -/
 def sigmaSharp (σ : F → F) (J : I) : I :=
   OpsExact.hull <| (OpsExact.γFinsetI J).image σ
 
@@ -368,10 +373,6 @@ semantics on `I[a,b]`” using our `SigmaNet.Net` interval interpreter `evalShar
 def IntervalDomain (a b : F) : Set I :=
   {J | IntervalIn (a := a) (b := b) J}
 
- /-- “Ideal” abstraction `g♯` for a unary function `g : F → F` on an input interval `J`. -/
- def unaryIdealSharp (g : F → F) (J : I) : I :=
-   OpsExact.hull <| (OpsExact.γFinsetI J).image g
-
  /--
 Separability of `σ` on `I[a,b]` with threshold `η` and scale `K`.
 
@@ -383,13 +384,13 @@ ideal abstraction of scaled threshold indicators (`ι_{≤z}`, `ι_{≥z}`, and 
        (a ≤ z ∧ z ≤ b) →
       (∃ ϕle : SigmaNet.Net 1 1,
           ∀ J, J ∈ IntervalDomain (a := a) (b := b) → SigmaNet.evalSharpScalar σ ϕle (fun _ => J) =
-            unaryIdealSharp (scale K (ιLe z)) J) ∧
+            SigmaNet.sigmaSharp (scale K (ιLe z)) J) ∧
         (∃ ϕge : SigmaNet.Net 1 1,
           ∀ J, J ∈ IntervalDomain (a := a) (b := b) → SigmaNet.evalSharpScalar σ ϕge (fun _ => J) =
-            unaryIdealSharp (scale K (ιGe z)) J)) ∧
+            SigmaNet.sigmaSharp (scale K (ιGe z)) J)) ∧
   (∃ ψη : SigmaNet.Net 1 1,
       ∀ J, J ∈ IntervalDomain (a := a) (b := b) → SigmaNet.evalSharpScalar σ ψη (fun _ => J) =
-        unaryIdealSharp (scale K (ιGt η)) J)
+        SigmaNet.sigmaSharp (scale K (ιGt η)) J)
 
 end Separability
 

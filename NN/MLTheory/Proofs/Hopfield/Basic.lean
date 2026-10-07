@@ -11,10 +11,8 @@ public import NN.Spec.Models.Hopfield
 /-!
 # Hopfield: basic lemmas
 
-This file contains small, reusable lemmas about the spec-level Hopfield definitions.
-
-The “paper theorems” (energy monotonicity, convergence, Hebbian stability) should live in
-separate files once proved.
+An asynchronous update changes one Boolean coordinate. The lemmas here describe that change and
+its effect on the active-unit count, used to break energy ties in the convergence argument.
 -/
 
 @[expose] public section
@@ -77,9 +75,7 @@ theorem pluses_updateAt_eq_succ_of_set_true {α : Type} [AddCommMonoid α] [Mul 
     (hdec : decide (p.θ u ≤ net (α := α) p s u) = true) :
     pluses (n := n) (updateAt (α := α) p s u) = pluses (n := n) s + 1 := by
   classical
-  -- `updateAt` only changes coordinate `u`, and it is set to `true`.
   have hu' : updateAt (α := α) p s u u = true := (updateAt_apply_self p s u).trans hdec
-  -- Describe the filtered true-set after the update.
   let A : Finset (Fin n) := Finset.univ.filter fun i : Fin n => s i = true
   let A' : Finset (Fin n) := Finset.univ.filter fun i : Fin n => updateAt (α := α) p s u i = true
   have huA : u ∉ A := by
@@ -89,16 +85,9 @@ theorem pluses_updateAt_eq_succ_of_set_true {α : Type} [AddCommMonoid α] [Mul 
     intro i
     by_cases hi : i = u
     · subst i
-      constructor
-      · intro _
-        exact Finset.mem_insert_self u A
-      · intro _
-        -- `u ∈ A'` since `u ∈ univ` and the predicate holds by `hu'`.
-        have : u ∈ (Finset.univ.filter fun i : Fin n => updateAt (α := α) p s u i = true) :=
-          Finset.mem_filter.2 ⟨by simp, hu'⟩
-        simpa [A'] using this
+      simp only [A', Finset.mem_filter, Finset.mem_univ, true_and, hu',
+        Finset.mem_insert_self]
     · simp [A', A, hi, Finset.mem_insert]
-  -- Convert back to `pluses`.
   have hcard : A'.card = A.card + 1 := by
     simp [hA', Finset.card_insert_of_notMem huA]
   simpa [Spec.Hopfield.pluses, A, A'] using hcard
@@ -111,7 +100,6 @@ theorem pluses_updateAt_eq_pred_of_set_false {α : Type} [AddCommMonoid α] [Mul
     (hdec : decide (p.θ u ≤ net (α := α) p s u) = false) :
     pluses (n := n) (updateAt (α := α) p s u) + 1 = pluses (n := n) s := by
   classical
-  -- `updateAt` only changes coordinate `u`, and it is set to `false`.
   have hu' : updateAt (α := α) p s u u = false := (updateAt_apply_self p s u).trans hdec
   let A : Finset (Fin n) := Finset.univ.filter fun i : Fin n => s i = true
   let A' : Finset (Fin n) := Finset.univ.filter fun i : Fin n => updateAt (α := α) p s u i = true
@@ -122,22 +110,9 @@ theorem pluses_updateAt_eq_pred_of_set_false {α : Type} [AddCommMonoid α] [Mul
     intro i
     by_cases hi : i = u
     · subst i
-      constructor
-      · intro hmem
-        -- `u ∈ A'` would imply `updateAt ... u = true`, contradicting `hu' : ... = false`.
-        have hpred :
-            updateAt (α := α) p s u u = true := by
-          -- Unfold the membership in the defining filter.
-          have hmem' :
-              u ∈ (Finset.univ.filter fun i : Fin n => updateAt (α := α) p s u i = true) := by
-            simpa [A'] using hmem
-          exact (Finset.mem_filter.1 hmem').2
-        exact Bool.noConfusion (Eq.trans (Eq.symm hpred) hu')
-      · intro hmem
-        -- `u ∈ A.erase u` is impossible.
-        exact False.elim ((Finset.notMem_erase u A) hmem)
+      simp only [A', Finset.mem_filter, Finset.mem_univ, true_and, hu', Bool.false_eq_true,
+        Finset.notMem_erase]
     · simp [A', A, hi, Finset.mem_erase]
-  -- `card (A.erase u) + 1 = card A` since `u ∈ A`.
   have : A'.card + 1 = A.card := by
     simpa [hA'] using (Finset.card_erase_add_one huA)
   simpa [Spec.Hopfield.pluses, A, A'] using this

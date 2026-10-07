@@ -444,7 +444,8 @@ def symbolicCheckedEinsumExpr (source : String)
           expectedAssignments :=
             appendEinsumAxisExpression expectedAssignments axis dimension
   -- Preserve first-input-occurrence order in the generated dependent function.
-  -- Expected dimensions replace only genuinely ambiguous broadcast expressions.
+  -- Expected dimensions may guide the chosen lengths, but must still satisfy
+  -- the broadcasting and source-occurrence proofs below.
   let mut assignments : List (Check.EinsumAxis × Expr) := []
   for axis in globalAxes do
     let dimensions :=

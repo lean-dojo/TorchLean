@@ -18,8 +18,8 @@ absolute-leaf-scale error enclosure. The argument is independent of a floating-p
 We retain the array-facing schedule API and use FloatLib's generic reduction-tree error bound.
 
 Binary32 does not satisfy the usual relative bound globally: gradual underflow needs an
-absolute-error term. The executable specializations retain the local-bound hypothesis and
-check finite intermediates. No unconditional unit-roundoff claim is made here.
+absolute-error term. The executable specializations require proofs that intermediates are finite
+as well as the local-bound hypothesis. No unconditional unit-roundoff claim is made here.
 -/
 
 @[expose] public section

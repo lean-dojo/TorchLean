@@ -9,7 +9,7 @@ module
 public import NN.Spec.Layers.Attention
 public import NN.Spec.Layers.Normalization.Core
 public import NN.Spec.Core.Sequence
-public import NN.Tensor.Conversion
+public import NN.Tensor.Reductions
 
 /-!
 # Transformer (spec model)
@@ -226,9 +226,7 @@ def TransformerEncoder.forward {numLayers headCount embedDim hiddenDim seqLen : 
   (encoder : TransformerEncoder numLayers headCount embedDim hiddenDim α)
   (x : Tensor α [seqLen, embedDim]) (h1 : seqLen > 0) (h2 : embedDim > 0)
   : Tensor α [seqLen, embedDim] :=
-  (Tensor.to encoder.layers
-    (Array (TransformerEncoderLayer headCount embedDim hiddenDim α))).foldl
-      (fun acc layer => TransformerEncoderLayer.forward layer acc h1 h2) x
+  Tensor.foldl (fun acc layer => TransformerEncoderLayer.forward layer acc h1 h2) x encoder.layers
 
 /-!
 ## Decoder notes
@@ -397,10 +395,10 @@ def TransformerDecoder.forward {numLayers headCount embedDim hiddenDim seqLen : 
   (targetMask : Option (Tensor Bool [seqLen, seqLen]) := none)
   (memoryMask : Option (Tensor Bool [seqLen, seqLen]) := none) :
   Tensor α [seqLen, embedDim] :=
-  (Tensor.to decoder.layers
-    (Array (TransformerDecoderLayer headCount embedDim hiddenDim α))).foldl
+  Tensor.foldl
     (fun acc layer =>
-      TransformerDecoderLayer.forward layer acc encoderOutput h1 h2 targetMask memoryMask) x
+      TransformerDecoderLayer.forward layer acc encoderOutput h1 h2 targetMask memoryMask)
+    x decoder.layers
 
 /--
 End-to-end encoder-decoder Transformer (spec model).

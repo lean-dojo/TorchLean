@@ -114,7 +114,7 @@ def sampleCheckpoint
   let outIds ←
     Gpt2.generate predict
       (Tensor.from (text.Tokenizer.byte.encode load.generation.prompt)) load.generation
-  let txt := text.formatByteTokens outIds
+  let txt := text.formatBytes outIds
   IO.println s!"  loaded={load.checkpointPath}"
   IO.println s!"  prompt={text.escape load.generation.prompt}"
   IO.println s!"  sampled={txt}"

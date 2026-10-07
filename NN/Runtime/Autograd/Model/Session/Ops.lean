@@ -196,7 +196,7 @@ def min {α : Type} [TorchLean.Storage α] (s : Session α) [Context α]
       Runtime.Autograd.Torch.Internal.TypedGraphSession.min (α := α) sess (sh := sh) a b
 
 /-- Matrix multiplication with broadcasted batch prefixes. -/
-def matmul {α : Type} [TorchLean.Storage α] (s : Session α) [Context α]
+def matmul {α : Type} [TorchLean.Storage α] (s : Session α) [Add α] [Mul α] [Zero α]
   {batchA batchB batch : Shape} {m n p : Nat}
   [broadcastA : Shape.BroadcastTo batchA batch]
   [broadcastB : Shape.BroadcastTo batchB batch]
@@ -216,7 +216,7 @@ def matmul {α : Type} [TorchLean.Storage α] (s : Session α) [Context α]
 /-- Concatenate along the outermost dimension (dimension 0) (dispatches to eager vs typed graph
   backend). -/
 def concat {α : Type} [TorchLean.Storage α] (s : Session α)
-    [Context α]
+    [Add α] [Zero α]
   {n m : Nat} {sh : Shape}
   (a : Runtime.Autograd.Torch.TensorRef α (.dim n sh))
   (b : Runtime.Autograd.Torch.TensorRef α (.dim m sh)) :

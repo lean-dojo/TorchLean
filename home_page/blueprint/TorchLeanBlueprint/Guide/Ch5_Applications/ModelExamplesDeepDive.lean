@@ -235,10 +235,6 @@ lnf = nn.LayerNorm(32);  head = nn.Linear(32, 65)
 
 ```
 
-Matching parameter counts can reveal a missing bias or unintended weight sharing. They cannot
-exclude either when another change compensates for the count, and they do not establish that the
-forward computations agree.
-
 The embedding and vocabulary head have related dimensions but separate storage. Looking up
 one token selects a row of the `[65, 32]` embedding table; producing logits compares a token
 representation with all sixty-five output rows. Tying those matrices would remove one independent
@@ -317,13 +313,6 @@ network in each block. Their `requiresGrad` entries are false, so stored state r
 scalars while the trainable count remains 30,017. The command reports a separate
 `non_trainable_state_scalars` count when these differ. Checkpoint validation must use the expected
 state layout, including these four slots.
-
-The four additional dropout slots explain why a checkpoint can have the right number of
-trainable weights and still have an incompatible state layout. Training must also preserve the
-non-trainable state used by the model's execution. The filtered count above reads `requiresGrad`
-from the same model that supplies `stateShapes`, so it pairs each decision with the correct
-tensor. A separate hand-maintained parameter total would not catch an inserted state slot or a
-change in that ordering.
 
 ## The Architecture
 
@@ -455,12 +444,8 @@ When the remaining arithmetic is finite, a zero forward weight gives zero gradie
 A small positive weight can
 carry a nonzero gradient, whose magnitude also depends on the upstream cotangent and weighted sum.
 
-I use a row with one visible key because its expected answer does not depend on any score.
-After normalization, the single permitted value receives all the weight. That isolates mask
-semantics from whether a particular dot product happened to be large or small. The logarithm
-of the penalized entry then gives information the six-decimal tensor printer cannot show. For
-later rows with several allowed keys, score differences still matter within the allowed set;
-the mask specifies support rather than choosing a uniform distribution over that support.
+I use one visible key so the expected answer does not depend on its score. With several allowed
+keys, score differences still matter: the mask restricts support, not the distribution within it.
 
 ## Changing Width, Heads, And Context
 
@@ -624,8 +609,7 @@ patch    = [[4, 3, 2, 2], [4]]
 cls, pos = [[1, 4], [5, 4]]
 ```
 
-The positional table is `[5, 4]`: five positions of width four, which is four image patches plus one
-class token. The corresponding PyTorch patch projection is:
+The corresponding PyTorch patch projection is:
 
 ```
 # A stride-two patch projection produces four spatial patch
@@ -645,12 +629,9 @@ is an explicit layer in the reusable ViT model. It moves the channel axis behind
 spatial axis. An incorrect axis order can preserve the total number of entries while changing
 which entries constitute a token, so checking size alone is insufficient.
 
-The class token is a learned width-four vector, not an additional image patch. It joins the
-four patch representations so attention can aggregate image information into the token that
-the classifier reads. The positional table distinguishes where each patch came from after the
-grid has been flattened. Here the spatial grid and feature width both happen to contain four
-entries, which makes axis mistakes particularly easy to hide behind equal sizes. The explicit
-convolution shape and subsequent token interpretation disambiguate them.
+The class token is learned, not an extra image patch; the classifier reads its output after
+attention. The positional table identifies each patch's location. Here the spatial grid and
+feature width both have four entries, so an axis-order mistake can hide behind equal sizes.
 
 ## Initial Cross-Entropy Loss
 
@@ -882,12 +863,9 @@ $`O(N^2)` transform work per channel. The automatic path takes
 $`O(N\sum_a n_a)` with dense per-axis transforms, or $`O(N\sum_a\log n_a)` with native FFTs.
 These costs describe the transforms, not the learned channel maps or the whole training step.
 
-The displayed spectral state contains two arrays of $`32\cdot8\cdot8=2048` scalars each.
-Together they account for 4,096 of the 4,193 stored scalars, so spectral storage dominates this
-small portable model even though only part of it contributes to the data loss. The remaining
-ninety-seven scalars belong to the lifting, pointwise branch, and projection. This breakdown
-explains why a smaller retained-bin representation can change checkpoint size substantially
-without changing the external `[32] → [32]` contract.
+The two spectral tensors account for 4,096 of the 4,193 stored scalars. The other ninety-seven
+belong to the lifting, pointwise branch, and projection. A retained-bin representation can
+therefore shrink the checkpoint without changing the external `[32] → [32]` contract.
 
 ## One Model Across Devices
 
@@ -896,9 +874,7 @@ The Burgers application uses the same
 Grid dimensions, retained frequency bands, activation, initialization, and parameter layout
 are independent of the selected device. There is no separate FNO-specific CUDA training loop.
 
-The automatic spectral path composes per-axis Fourier transforms. CPU execution uses the
-portable transform implementation; supported GPU execution calls LibTorch. TorchLean still
-owns the tape, optimizer, and explicit gradient rules.
+TorchLean owns the tape, optimizer, and explicit gradient rules on both devices.
 
 Older runs of this example used a retained-bin real-FFT model on CUDA. That representation had
 different parameters; its weights are not interchangeable with this full-spectrum model.

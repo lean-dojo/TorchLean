@@ -89,16 +89,6 @@ The other entries are inspected through their checked Lean definitions and theor
 `scripts/lake.sh exe verify -- all` command runs the ten bundled checks opted in through `includeInAll`.
 External, interactive, and longer workflows are excluded; `verify -- list` shows the complete registry.
 
-For a runnable PyTorch comparison of one-feature LayerNorm and constant normalization slices:
-
-```bash
-python3 scripts/verification/normalization_contract_probe.py --device cpu
-```
-
-This optional probe requires PyTorch. It prints version metadata and the output/input-gradient/
-scale-gradient residuals from the real-valued reference; `--device cuda` selects an available GPU.
-Residuals depend on the installed provider and hardware and are not proof certificates.
-
 The source files and the contracts they expose are listed below.
 
 | Source file | Bug family | Contract exposed |

@@ -162,6 +162,9 @@ Compute a packed flat index directly from one component's flat index.
 The trailing coordinates occupy the low-order digits, the component's star
 region occupies the next digits, and the shared leading coordinates occupy
 the high-order digits. `offset` is the total length of preceding components.
+
+This is an unbounded arithmetic formula. Checked-plan and native-lowering
+theorems below supply the bounds needed before reading a tensor buffer.
 -/
 def unpackDirectLinearIndex
     (starShape trailingShape : Shape)
@@ -252,6 +255,10 @@ Compute one component-local flat index from a packed flat index.
 The packed-axis position selects a segment. Subtracting that segment's
 compile-time prefix recovers the local star coordinate, while the leading and
 trailing coordinates retain their row-major positions.
+
+The formula alone does not check segment membership: subtraction is truncated
+natural subtraction. The inverse and buffer-bound laws require the selected
+segment's lower and upper bounds explicitly.
 -/
 def packDirectComponentIndex
     (starShape trailingShape : Shape)

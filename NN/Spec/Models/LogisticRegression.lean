@@ -90,7 +90,7 @@ def computeLogGradient {n p : ℕ} (X : Tensor α [n, p + 1])
   -- Near zero, σ(z) - y = (1/2 - y) + tanh(z/2)/2. Keep the two parts separate:
   -- rounding their sum near ±1/2 can discard the small contribution that remains after
   -- positive and negative examples cancel in a balanced batch.
-  let offsets := mapSpec (fun logit =>
+  let offsets := Tensor.map (fun logit =>
     if Context.gtBool (1 : α) (MathFunctions.abs logit) then tanh (logit / 2) / 2 else 0) logits
   let residuals : Tensor α [n] := Tensor.dim fun i =>
     let logit := Tensor.getScalar logits i
@@ -187,7 +187,7 @@ def LogisticRegression.predict {batch p : ℕ} (model : LogisticRegression p α)
   (X : Tensor α [batch, p]) (threshold : α := (1 : α) / (2 : α)) :
   Tensor α [batch] :=
   let probabilities := model.predictProba X
-  mapSpec (fun prob => if prob > threshold then (1 : α) else (0 : α)) probabilities
+  Tensor.map (fun prob => if prob > threshold then (1 : α) else (0 : α)) probabilities
 
 /-- Predict the probability of label `1` for one feature vector.
 

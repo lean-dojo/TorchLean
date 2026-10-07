@@ -38,46 +38,27 @@ namespace Import
 namespace CROWNParamStore
 
 open Spec TorchLean
-open TorchLean TorchLean.Tensor
-open Shape
 
 open NN.MLTheory.CROWN.Graph
 
-/-- Insert one linear layer's parameters at a given node id. -/
-def insertLinearWB
-  (nodeId : Nat)
-  (p : LinParams Float) (ps : ParamStore Float) : ParamStore Float :=
-  { ps with linearWB := ps.linearWB.insert nodeId p }
+/-- Build a graph parameter store from a sequence of layer descriptions.
 
-/--
-Build a `ParamStore Float` from an array of linear-layer parameters.
-
-`nodeIdOfIndex` tells us which graph node id corresponds to the i-th layer in the array.
-This is the only model-specific decision; the remaining steps are model-agnostic parameter assembly.
+`nodeId` assigns graph slots; `parameter` converts each description to typed weights and bias.
+Layers are inserted in array order, so the last occurrence of a node id wins.
 -/
-def ofLinearStack (nodeIdOfIndex : Nat → Nat) (layers : Array (LinParams Float)) :
-    ParamStore Float :=
-  layers.zipIdx.foldl (fun ps layerAndIndex =>
-    insertLinearWB (nodeId := nodeIdOfIndex layerAndIndex.2) layerAndIndex.1 ps) {}
+def ofArray {α β : Type} [Storage α] [Context α]
+    (nodeId : Nat → Nat) (layers : Array β) (parameter : β → LinParams α) :
+    ParamStore α :=
+  layers.zipIdx.foldl (fun store layer =>
+    { store with linearWB := store.linearWB.insert (nodeId layer.2) (parameter layer.1) }) {}
 
-/-- Cast linear parameters from Float to an arbitrary scalar type. -/
-def castLinParams {α : Type} [TorchLean.Storage α] [Context α] (ofFloat : Float → α)
-    (p : LinParams Float) : LinParams α :=
-  { m := p.m
-    n := p.n
-    w := TorchLean.Tensor.map ofFloat p.w
-    b := TorchLean.Tensor.map ofFloat p.b }
-
-/--
-Build a `ParamStore α` from Float parameters by casting each tensor entry with `ofFloat`.
--/
-def ofLinearStackWith {α : Type} [TorchLean.Storage α] [Context α]
-  (ofFloat : Float → α)
-  (nodeIdOfIndex : Nat → Nat)
-  (layers : Array (LinParams Float)) : ParamStore α :=
-  layers.zipIdx.foldl (fun ps layerAndIndex =>
-    let p := castLinParams (α := α) ofFloat layerAndIndex.1
-    { ps with linearWB := ps.linearWB.insert (nodeIdOfIndex layerAndIndex.2) p }) {}
+/-- Convert every weight and bias scalar, preserving the linear layer's dimensions. -/
+def map {α β : Type} [Storage α] [Context α] [Storage β] [Context β]
+    (f : α → β) (parameters : LinParams α) : LinParams β :=
+  { m := parameters.m
+    n := parameters.n
+    w := Tensor.map f parameters.w
+    b := Tensor.map f parameters.b }
 
 end CROWNParamStore
 end Import

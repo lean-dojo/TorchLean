@@ -20,6 +20,10 @@ This module implements `rearrange`, `expand`, `reduce`, and `parse_shape`.
 Concrete dimensions use the executable checker for precise source
 diagnostics. Symbolic dimensions construct the same checked transformation
 type and prove every shape equation in the caller's Lean context.
+
+Built-in reductions retain their ordered scalar fold. `mean`, `min`, and `max`
+require nonempty fibers. Custom reducers instead consume a `Multiset` and may
+return a different scalar type; they do not expose a custom accumulation order.
 -/
 
 public meta section
@@ -414,7 +418,8 @@ predecessor.
 
 When inherited flat-index arithmetic becomes expensive, the predecessor is
 bound outside the generated callback. This evaluates its certified native
-kernel once instead of rebuilding it for every output scalar.
+kernel before the consumer rather than placing it in each scalar callback.
+The proof preserves values; it does not establish compiler scheduling costs.
 -/
 private def withTransformSource
     (inputShape tensor : Expr)

@@ -66,83 +66,11 @@ def nllOneHotLast {Γ : List Shape} {m n : Nat}
         CtxVec.single (Γ := Γ) (s := s) target (castVec hsz.symm dTarget))
     (correct_inner := by
       intro xV dxV δV
-      classical
-      let s : Shape := .dim m (.dim n .scalar)
-      let hsz : Spec.Shape.size s = m * n := by simp [s, Spec.Shape.size]
-      let c : ℝ := (1 : ℝ) / (m : ℝ)
-      let i0 : Fin (Spec.Shape.size Shape.scalar) := ⟨0, by simp [Spec.Shape.size]⟩
-      let δ0 : ℝ := δV i0
-      let tMN : Vec (m * n) := castVec hsz (CtxVec.get (Γ := Γ) (s := s) target xV)
-      let dtMN : Vec (m * n) := castVec hsz (CtxVec.get (Γ := Γ) (s := s) target dxV)
-      let lpMN : Vec (m * n) := castVec hsz (CtxVec.get (Γ := Γ) (s := s) logProbs xV)
-      let dlpMN : Vec (m * n) := castVec hsz (CtxVec.get (Γ := Γ) (s := s) logProbs dxV)
-      let scale : ℝ := (-c) * δ0
-      let dLogProbs : Vec (m * n) := scale • tMN
-      let dTarget : Vec (m * n) := scale • lpMN
-      have hL :
-          inner ℝ (vecOfFun (n := Spec.Shape.size Shape.scalar)
-                (fun _ => (-c) * (inner ℝ tMN dlpMN + inner ℝ dtMN lpMN))) δV
-            =
-          ((-c) * (inner ℝ tMN dlpMN + inner ℝ dtMN lpMN)) * δ0 := by
-        convert
-          inner_scalarVec_left (a := (-c) * (inner ℝ tMN dlpMN + inner ℝ dtMN lpMN)) (δ := δV)
-          using 1
-      have hA :
-          inner ℝ dxV (CtxVec.single (Γ := Γ) (s := s) logProbs (castVec hsz.symm dLogProbs)) =
-            inner ℝ (CtxVec.get (Γ := Γ) (s := s) logProbs dxV) (castVec hsz.symm dLogProbs) := by
-        simpa using
-          (CtxVec.inner_get_single (Γ := Γ) (s := s) logProbs dxV (castVec hsz.symm dLogProbs))
-      have hB :
-          inner ℝ dxV (CtxVec.single (Γ := Γ) (s := s) target (castVec hsz.symm dTarget)) =
-            inner ℝ (CtxVec.get (Γ := Γ) (s := s) target dxV) (castVec hsz.symm dTarget) := by
-        simpa using
-          (CtxVec.inner_get_single (Γ := Γ) (s := s) target dxV (castVec hsz.symm dTarget))
-      have hAc :
-          inner ℝ (CtxVec.get (Γ := Γ) (s := s) logProbs dxV) (castVec hsz.symm dLogProbs) =
-            inner ℝ dlpMN dLogProbs := by
-        have h :=
-          inner_castVec_castVec (h := hsz)
-            (x := CtxVec.get (Γ := Γ) (s := s) logProbs dxV)
-            (y := castVec hsz.symm dLogProbs)
-        simpa [dlpMN] using h.symm
-      have hBc :
-          inner ℝ (CtxVec.get (Γ := Γ) (s := s) target dxV) (castVec hsz.symm dTarget) =
-            inner ℝ dtMN dTarget := by
-        have h :=
-          inner_castVec_castVec (h := hsz)
-            (x := CtxVec.get (Γ := Γ) (s := s) target dxV)
-            (y := castVec hsz.symm dTarget)
-        simpa [dtMN] using h.symm
-      have hAterm : inner ℝ dlpMN dLogProbs = scale * inner ℝ tMN dlpMN := by
-        -- use commutativity to match the `inner` order in the JVP
-        simp [dLogProbs, scale, inner_smul_right, real_inner_comm, mul_assoc]
-      have hBterm : inner ℝ dtMN dTarget = scale * inner ℝ dtMN lpMN := by
-        simp [dTarget, scale, inner_smul_right]
-      calc
-        inner ℝ
-            (vecOfFun (n := Spec.Shape.size Shape.scalar)
-              (fun _ => (-c) * (inner ℝ tMN dlpMN + inner ℝ dtMN lpMN)))
-            δV
-            =
-          ((-c) * (inner ℝ tMN dlpMN + inner ℝ dtMN lpMN)) * δ0 := hL
-        _ =
-          scale * (inner ℝ tMN dlpMN + inner ℝ dtMN lpMN) := by
-            simp [scale, mul_assoc, mul_left_comm, mul_comm]
-        _ =
-          scale * inner ℝ tMN dlpMN + scale * inner ℝ dtMN lpMN := by
-            simp [mul_add]
-        _ =
-          inner ℝ dlpMN dLogProbs + inner ℝ dtMN dTarget := by
-            simp [hAterm, hBterm]
-        _ =
-          inner ℝ (CtxVec.get (Γ := Γ) (s := s) logProbs dxV) (castVec hsz.symm dLogProbs) +
-            inner ℝ (CtxVec.get (Γ := Γ) (s := s) target dxV) (castVec hsz.symm dTarget) := by
-            simp [hAc, hBc]
-        _ =
-          inner ℝ dxV
-              (CtxVec.single (Γ := Γ) (s := s) logProbs (castVec hsz.symm dLogProbs) +
-                CtxVec.single (Γ := Γ) (s := s) target (castVec hsz.symm dTarget)) := by
-            simp [inner_add_right, hA, hB])
+      simp only [inner_scalarVec_left, inner_add_right, CtxVec.inner_get_single]
+      rw [← inner_castVec_left hsz, ← inner_castVec_left hsz]
+      simp only [inner_smul_right]
+      rw [real_inner_comm (castVec hsz (CtxVec.get logProbs dxV))]
+      ring)
 
 /-- `NodeFDerivCorrect` for `nllOneHotLast` (negative log-likelihood with one-hot targets). -/
 def nllOneHotLastFderiv {Γ : List Shape} {m n : Nat}

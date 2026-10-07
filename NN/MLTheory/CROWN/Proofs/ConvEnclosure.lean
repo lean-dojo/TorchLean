@@ -92,19 +92,19 @@ theorem contains_getAtOrZero {dims : List Nat}
     (h : Box.contains box input) (indices : List Nat) :
     getAtOrZero box.lo indices ≤ getAtOrZero input indices ∧
       getAtOrZero input indices ≤ getAtOrZero box.hi indices := by
-  have hc := (contains_iff_multiIndex dims box input).mp h
-  simp only [getAtOrZero_eq_sum_indicator dims]
-  constructor
-  · apply Finset.sum_le_sum
-    intro index _
-    by_cases hi : indices = index.toList
-    · simpa only [ite_eq_left hi] using (hc index).1
-    · simp only [ite_eq_right hi, le_refl]
-  · apply Finset.sum_le_sum
-    intro index _
-    by_cases hi : indices = index.toList
-    · simpa only [ite_eq_left hi] using (hc index).2
-    · simp only [ite_eq_right hi, le_refl]
+  induction dims generalizing indices with
+  | nil =>
+      cases indices with
+      | nil => simpa only [get_at_or_zero_scalar_nil, Box.contains] using h
+      | cons head tail => simp
+  | cons n dims ih =>
+      cases indices with
+      | nil => simp
+      | cons head tail =>
+          by_cases hhead : head < n
+          · simpa only [get_at_or_zero_dim_cons, dite_eq_left hhead] using
+              ih (h ⟨head, hhead⟩) tail
+          · simp only [get_at_or_zero_dim_cons, dite_eq_right hhead, le_refl, and_self]
 
 /-- The spatial iterator preserves a binary relation independently of rank and empty extents. -/
 theorem foldlIndices_rel {A B : Type} (relation : A → B → Prop) (dims : List Nat)

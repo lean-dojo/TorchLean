@@ -19,9 +19,8 @@ If we reorder the input tokens, the output is reordered in the same way.
 
 This file formalizes that statement for TorchLean’s spec-layer `Spec.selfAttention` over `ℝ`.
 
-The helper reindexing operations below are intentionally proof-local. They describe how this proof
-permutes tensor axes, but they are not part of the general `TorchLean.Tensor` API; reusable tensor
-operations should live under `NN.Spec`, while model theorems and their proof scaffolding live here.
+The reindexing adapters below are exported in the model-proof namespace, not the general
+`TorchLean.Tensor` API. They describe token permutations used by the attention theorems.
 -/
 
 @[expose] public section
@@ -38,8 +37,7 @@ open TorchLean.Tensor
 /-!
 ## Token reindexing
 
-Because spec tensors are functions out of `Fin n`, a token permutation is just reindexing the
-outer axis.
+The adapters rebuild tensor slices in the order selected by the permutation.
 -/
 
 /-- Reindex the outermost axis of a tensor by a permutation. -/
@@ -47,11 +45,7 @@ def reindexOuter {α : Type} [TorchLean.Storage α] {n : Nat} {s : Shape} (σ : 
     Tensor α (.dim n s) → Tensor α (.dim n s) :=
   fun tensor => Tensor.dim (fun i => tensor.unstack (σ i))
 
-/-- Reindexing composes with lookup: slice `i` of the permuted tensor is slice `σ i` of the
-original.
-
-Spec tensors are functions out of `Fin n`, so a token permutation costs nothing to define and this
-lemma is a `rfl`-level fact. That is precisely why the equivariance proofs below stay short. -/
+/-- Slice `i` of the permuted tensor is slice `σ i` of the original. -/
 @[simp] theorem get_reindexOuter {α : Type} [TorchLean.Storage α] {n : Nat} {s : Shape}
     (σ : Equiv.Perm (Fin n)) (t : Tensor α (.dim n s)) (i : Fin n) :
     Spec.get (reindexOuter (α := α) (n := n) (s := s) σ t) i = Spec.get t (σ i) := by
@@ -329,12 +323,10 @@ theorem selfAttention_reindexOuter
       (Spec.selfAttention (α := ℝ) (n := n) (dModel := dModel) (projDim := projDim)
         (x := x) (Wq := Wq) (Wk := Wk) (Wv := Wv) (Wo := Wo) h1) := by
   classical
-  -- Reduce to `n = succ _` using `h1`.
   cases n with
   | zero =>
       cases (h1 rfl)
   | succ n' =>
-      -- Abbreviations for the unpermuted intermediates.
       let Q : Tensor ℝ [Nat.succ n', projDim] := matMulSpec x Wq
       let K : Tensor ℝ [Nat.succ n', projDim] := matMulSpec x Wk
       let V : Tensor ℝ [Nat.succ n', projDim] := matMulSpec x Wv
@@ -455,7 +447,6 @@ theorem selfAttention_reindexOuter
                   (Spec.attentionScaleDenom (α := ℝ) projDim)⁻¹))
               (B := V))
 
-        -- Put it all together by unfolding `scaledDotProductAttention` (mask = none).
         -- We avoid simp-loops by rewriting the intermediates explicitly.
         simp only [Spec.scaledDotProductAttention, ctxσ, ctx]
         simp only [one_div]
@@ -464,7 +455,6 @@ theorem selfAttention_reindexOuter
         rw [hWeights]
         simpa using hOut
 
-      -- Now unfold `selfAttention` and finish via the matmul reindexing lemma.
       calc
         Spec.selfAttention (α := ℝ) (n := Nat.succ n') (dModel := dModel) (projDim := projDim)
             (x := reindexOuter (α := ℝ) (n := Nat.succ n') (s := .dim dModel .scalar) σ x)

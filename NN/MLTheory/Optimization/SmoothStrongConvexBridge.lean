@@ -89,10 +89,14 @@ theorem firstOrderStrongConvexAt_of_strongConvexOn_univ (μ : ℝ) {f : E → �
   intro y
   -- `g z = f z - (μ/2) ‖z‖²` is convex; restrict it to the segment from `x` to `y` and compare
   -- its derivative at `0` with the secant slope to `1`.
-  let g : E → ℝ := fun z => f z - (μ / 2) * ‖z‖ ^ 2
+  let q : E → ℝ := fun z => (μ / 2) * ‖z‖ ^ 2
+  have hq0 : DifferentiableAt ℝ (fun z : E => ‖z‖ ^ 2) x :=
+    (hasStrictFDerivAt_norm_sq x).differentiableAt
+  have hq : DifferentiableAt ℝ q x := hq0.const_mul (μ / 2)
+  let g : E → ℝ := fun z => f z - q z
   have hg_conv : ConvexOn ℝ (Set.univ : Set E) g := by
     have := (strongConvexOn_iff_convex (s := (Set.univ : Set E)) (m := μ) (f := f)).1 hsc
-    simpa [g] using this
+    simpa [g, q] using this
   let h : ℝ →ᵃ[ℝ] E := (AffineMap.lineMap x y : ℝ →ᵃ[ℝ] E)
   have hφ_conv : ConvexOn ℝ (Set.univ : Set ℝ) (g ∘ h) := by
     simpa [Set.preimage_univ] using (hg_conv.comp_affineMap h)
@@ -100,11 +104,7 @@ theorem firstOrderStrongConvexAt_of_strongConvexOn_univ (μ : ℝ) {f : E → �
     have hh : HasDerivAt (fun t => h t) (y - x) (0 : ℝ) := by
       simpa using (AffineMap.hasDerivAt_lineMap (a := x) (b := y) (x := (0 : ℝ)))
     have hgx : DifferentiableAt ℝ g x := by
-      have hq0 : DifferentiableAt ℝ (fun z : E => ‖z‖ ^ 2) x :=
-        (hasStrictFDerivAt_norm_sq (x := x)).differentiableAt
-      have hq : DifferentiableAt ℝ (fun z : E => (μ / 2) * ‖z‖ ^ 2) x := by
-        simpa [mul_assoc, mul_left_comm, mul_comm] using hq0.const_mul (μ / 2)
-      change DifferentiableAt ℝ (f - fun z : E => (μ / 2) * ‖z‖ ^ 2) x
+      change DifferentiableAt ℝ (f - q) x
       exact hdx.sub hq
     exact HasFDerivAt.comp_hasDerivAt_of_eq (𝕜 := ℝ) (l := g)
       (l' := fderiv ℝ g x) (y := x) (f := fun t => h t)
@@ -125,31 +125,12 @@ theorem firstOrderStrongConvexAt_of_strongConvexOn_univ (μ : ℝ) {f : E → �
     change
       (fderiv ℝ (fun z => f z - (μ / 2) * ‖z‖ ^ 2) x) (y - x)
         = ⟪(∇ f) x, y - x⟫ - μ * ⟪x, y - x⟫
-    let q : E → ℝ := fun z => (μ / 2) * ‖z‖ ^ 2
-    have hq0 : DifferentiableAt ℝ (fun z : E => ‖z‖ ^ 2) x :=
-      (hasStrictFDerivAt_norm_sq (x := x)).differentiableAt
-    have hq : DifferentiableAt ℝ q x := by
-      simpa [q, mul_assoc, mul_comm, mul_left_comm] using hq0.const_mul (μ / 2)
     have hf_apply : (fderiv ℝ f x) (y - x) = ⟪(∇ f) x, y - x⟫ :=
       (inner_gradient_left (f := f) (x := x) (y := y - x)).symm
     have hq_apply : (fderiv ℝ (fun z : E => (μ / 2) * ‖z‖ ^ 2) x) (y - x) = μ * ⟪x, y - x⟫ := by
-      have hfderiv :
-          fderiv ℝ q x = (μ / 2) • fderiv ℝ (fun z : E => ‖z‖ ^ 2) x := by
-        simpa [q, mul_comm, mul_left_comm, mul_assoc] using
-          (fderiv_const_mul (x := x) (a := fun z : E => ‖z‖ ^ 2) hq0 (μ / 2))
-      calc
-        (fderiv ℝ (fun z : E => (μ / 2) * ‖z‖ ^ 2) x) (y - x)
-            = (fderiv ℝ q x) (y - x) := by rfl
-        _ = ((μ / 2) • fderiv ℝ (fun z : E => ‖z‖ ^ 2) x) (y - x) := by
-            rw [hfderiv]
-        _ = (μ / 2) * ((fderiv ℝ (fun z : E => ‖z‖ ^ 2) x) (y - x)) := by
-            simp
-        _ = (μ / 2) * ((2 • innerSL ℝ x) (y - x)) := by
-            simp [fderiv_norm_sq_apply]
-        _ = (μ / 2) * (2 * ⟪x, y - x⟫) := by
-            simp [mul_left_comm, mul_comm]
-        _ = μ * ⟪x, y - x⟫ := by
-            ring
+      rw [fderiv_const_mul hq0 (μ / 2), fderiv_norm_sq_apply]
+      simp
+      ring
     have hsub :
         fderiv ℝ (fun z => f z - q z) x = fderiv ℝ f x - fderiv ℝ q x := by
       simpa [sub_eq_add_neg] using
@@ -173,7 +154,7 @@ theorem firstOrderStrongConvexAt_of_strongConvexOn_univ (μ : ℝ) {f : E → �
       (norm_add_sq_real (x := x) (y := (y - x)))
   have : f y ≥ f x + ⟪(∇ f) x, y - x⟫ + (μ / 2) * ‖y - x‖ ^ 2 := by
     have hgy' : f y - (μ / 2) * ‖y‖ ^ 2 ≥ f x - (μ / 2) * ‖x‖ ^ 2 + (fderiv ℝ g x) (y - x) := by
-      simpa [g, add_assoc, add_left_comm, add_comm, sub_eq_add_neg] using hgy
+      simpa [g, q, add_assoc, add_left_comm, add_comm, sub_eq_add_neg] using hgy
     have hgy'' :
         f y - (μ / 2) * ‖y‖ ^ 2
           ≥ f x - (μ / 2) * ‖x‖ ^ 2

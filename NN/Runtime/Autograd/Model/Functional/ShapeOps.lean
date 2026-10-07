@@ -20,21 +20,7 @@ open TorchLean TorchLean.Tensor
 
 namespace F
 
-/-! ## Shape/axis helpers -/
-
-/--
-Swap two adjacent axes at a given nesting depth.
-
-This is the primitive used to implement general permutations via a sequence of adjacent swaps.
-It corresponds to the backend op `Torch.swapAdjacentAtDepth`.
--/
-def swapAdjacentAtDepth {α : Type} [TorchLean.Storage α] [Context α]
-    {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
-    {s : Shape} (depth : Nat) (x : RefTy (m := m) (α := α) s) :
-    m (RefTy (m := m) (α := α) (s.swapAdjacentAtDepth depth)) :=
-  Runtime.Autograd.Torch.swapAdjacentAtDepth (m := m) (α := α) (s := s) depth x
-
-/-! ## Core tensor semantics (PyTorch-style) -/
+/-! ## Shape and axis operations -/
 
 /--
 Dynamic permutation: like `permute`, but returns an existential output shape.
@@ -45,8 +31,8 @@ def permute? {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s : Shape}
     (axes : Array Nat)
-    (x : RefTy (m := m) (α := α) s) :
-    m (Option (Σ s' : Shape, RefTy (m := m) (α := α) s')) := do
+    (x : Ref (m := m) (α := α) s) :
+    m (Option (Σ s' : Shape, Ref (m := m) (α := α) s')) := do
   let r := Spec.Shape.rank s
   if axes.size != r then
     return none
@@ -67,8 +53,8 @@ def permute {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s sOut : Shape}
     (axes : Array Nat)
-    (x : RefTy (m := m) (α := α) s) :
-    m (Option (RefTy (m := m) (α := α) sOut)) := do
+    (x : Ref (m := m) (α := α) s) :
+    m (Option (Ref (m := m) (α := α) sOut)) := do
   let y? ← permute? (α := α) (m := m) (s := s) axes x
   match y? with
   | none => pure none
@@ -86,8 +72,8 @@ The result is `none` when either axis is invalid or the transposed shape is not 
 def transpose {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s sOut : Shape} (axis₁ axis₂ : Nat)
-    (x : RefTy (m := m) (α := α) s) :
-    m (Option (RefTy (m := m) (α := α) sOut)) :=
+    (x : Ref (m := m) (α := α) s) :
+    m (Option (Ref (m := m) (α := α) sOut)) :=
   if axis₁ < s.rank && axis₂ < s.rank then
     permute (α := α) (m := m) (s := s) (sOut := sOut)
       (Shape.transposePermutation s.rank axis₁ axis₂).toArray x
@@ -101,10 +87,10 @@ def reduceAlongLast {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     (operation : {s : Shape} → (axis : Nat) →
       [Shape.HasNonemptyAxis axis s] → [Shape.WellFormed s] →
-      RefTy (m := m) (α := α) s →
-        m (RefTy (m := m) (α := α) (TorchLean.Tensor.shapeAfterSum s axis)))
-    (x : Σ s : Shape, RefTy (m := m) (α := α) s) :
-    m (Option (Σ s' : Shape, RefTy (m := m) (α := α) s')) := do
+      Ref (m := m) (α := α) s →
+        m (Ref (m := m) (α := α) (TorchLean.Tensor.shapeAfterSum s axis)))
+    (x : Σ s : Shape, Ref (m := m) (α := α) s) :
+    m (Option (Σ s' : Shape, Ref (m := m) (α := α) s')) := do
   let s := x.fst
   if hw : s.wellFormed then
     letI : Shape.WellFormed s := ⟨hw⟩
@@ -132,20 +118,20 @@ This lowers “reduce along axis k” to:
 def reduceAxes {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     (reduceLast :
-      (Σ s : Shape, RefTy (m := m) (α := α) s) →
-        m (Option (Σ s' : Shape, RefTy (m := m) (α := α) s')))
+      (Σ s : Shape, Ref (m := m) (α := α) s) →
+        m (Option (Σ s' : Shape, Ref (m := m) (α := α) s')))
     {s : Shape}
     (axes : Array Nat)
     (keepdim : Bool)
-    (x : RefTy (m := m) (α := α) s) :
-    m (Option (Σ s' : Shape, RefTy (m := m) (α := α) s')) := do
+    (x : Ref (m := m) (α := α) s) :
+    m (Option (Σ s' : Shape, Ref (m := m) (α := α) s')) := do
   let r0 := Spec.Shape.rank s
   if !axes.allDiff then
     return none
   if !(axes.all (fun a => a < r0)) then
     return none
   let axes' := if keepdim then axes else (axes.toList.mergeSort (· ≥ ·)).toArray
-  let mut cur : Σ s : Shape, RefTy (m := m) (α := α) s := ⟨s, x⟩
+  let mut cur : Σ s : Shape, Ref (m := m) (α := α) s := ⟨s, x⟩
   for axis in axes' do
     let r := Spec.Shape.rank cur.fst
     if axis ≥ r then
@@ -158,7 +144,7 @@ def reduceAxes {α : Type} [TorchLean.Storage α] [Context α]
       have hSz : Spec.Shape.size curRed.fst = Spec.Shape.size sReshape := by
         simpa [sReshape] using (Spec.Shape.size_appendDim curRed.fst 1).symm
       let xReshaped ← reshape (m := m) (α := α) (s₁ := curRed.fst) (s₂ := sReshape) curRed.snd hSz
-      let curKeep : Σ s : Shape, RefTy (m := m) (α := α) s := ⟨sReshape, xReshaped⟩
+      let curKeep : Σ s : Shape, Ref (m := m) (α := α) s := ⟨sReshape, xReshaped⟩
       let curBack ← Einsum.permuteBySwaps (α := α) (m := m) curKeep swaps.reverse
       cur := curBack
     else
@@ -172,9 +158,9 @@ def reduceSumDims? {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s : Shape}
     (axes : Array Nat)
-    (x : RefTy (m := m) (α := α) s)
+    (x : Ref (m := m) (α := α) s)
     (keepdim : Bool := false) :
-    m (Option (Σ s' : Shape, RefTy (m := m) (α := α) s')) :=
+    m (Option (Σ s' : Shape, Ref (m := m) (α := α) s')) :=
   Internal.reduceAxes (α := α) (m := m)
     (Internal.reduceAlongLast (Runtime.Autograd.Torch.Ops.reduceSum (m := m) (α := α)))
     (s := s) axes keepdim x
@@ -184,9 +170,9 @@ def reduceMeanDims? {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s : Shape}
     (axes : Array Nat)
-    (x : RefTy (m := m) (α := α) s)
+    (x : Ref (m := m) (α := α) s)
     (keepdim : Bool := false) :
-    m (Option (Σ s' : Shape, RefTy (m := m) (α := α) s')) :=
+    m (Option (Σ s' : Shape, Ref (m := m) (α := α) s')) :=
   Internal.reduceAxes (α := α) (m := m)
     (Internal.reduceAlongLast (Runtime.Autograd.Torch.Ops.reduceMean (m := m) (α := α)))
     (s := s) axes keepdim x
@@ -199,8 +185,8 @@ back. The reverse-swap theorem makes the result shape exactly `s`; no runtime sh
 def softmax {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
-    (x : RefTy (m := m) (α := α) s) :
-    m (RefTy (m := m) (α := α) s) := do
+    (x : Ref (m := m) (α := α) s) :
+    m (Ref (m := m) (α := α) s) := do
   let swaps := Shape.moveAxisToInnermostSwaps (Spec.Shape.rank s) axis
   let moved ← Einsum.permuteBySwapsTyped (α := α) (m := m) x swaps
   let y ← Runtime.Autograd.Torch.softmaxLast (m := m) (α := α) moved
@@ -211,8 +197,8 @@ def softmax {α : Type} [TorchLean.Storage α] [Context α]
 def logSoftmax {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
-    (x : RefTy (m := m) (α := α) s) :
-    m (RefTy (m := m) (α := α) s) := do
+    (x : Ref (m := m) (α := α) s) :
+    m (Ref (m := m) (α := α) s) := do
   let swaps := Shape.moveAxisToInnermostSwaps (Spec.Shape.rank s) axis
   let moved ← Einsum.permuteBySwapsTyped (α := α) (m := m) x swaps
   let y ← Runtime.Autograd.Torch.logSoftmaxLast (m := m) (α := α) moved

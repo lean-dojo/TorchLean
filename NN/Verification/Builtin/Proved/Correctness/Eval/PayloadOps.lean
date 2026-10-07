@@ -99,7 +99,7 @@ theorem evalAt_const_eq_unflatten
       Except.ok
         (Spec.SomeTensor.mk (α := α) s (Tensor.unflattenSpec (α := α) s v)) := by
   simp [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, constGraph, Graph.getNode,
-    Graph.getNode?, Graph.evalConst,
+    Graph.evalConst,
     singletonConstPayload, Graph.castDimScalar, Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 /-- Missing constant payloads are rejected before unflattening. -/
@@ -175,7 +175,7 @@ theorem evalAt_linear_eq_affine
           (Tensor.addSpec (α := α)
             (Spec.matVecMulSpec (α := α) (m := outDim) (n := inDim) W x) b)) := by
   simp [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, unaryGraphOut, unaryNodeOut,
-    Graph.getNode, Graph.getNode?,
+    Graph.getNode,
     Graph.unaryParentId, NN.IR.unaryParent?, Graph.evalLinear, singletonLinearPayload,
     Graph.expectShape, Graph.linearLeading, Shape.toList, Shape.ofList, Shape.concat,
     Bind.bind, Except.bind, Pure.pure, Except.pure]

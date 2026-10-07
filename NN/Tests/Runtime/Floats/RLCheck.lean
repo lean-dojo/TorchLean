@@ -7,13 +7,18 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.RL
-public import NN.Tests.Runtime.Floats.DQN
+public import NN.API.RL.Runtime
+public import NN.API.Seeded
+public import NN.Runtime.Autograd.Model.Autodiff
+public import NN.Runtime.RL.DQN.Autograd
 public import NN.Tests.Utils
 
 /-!
 # RL Runtime Checks
 
-Small compile-and-run runtime checks for TorchLean's RL helper surface.
+Runtime checks for termination versus truncation, binary32 overflow and interval endpoints,
+PPO clamp and zero-probability behavior, strict JSON integers, and actor/critic state selection.
+These exercise floating-point and external-input cases not settled by exact-real RL identities.
 -/
 
 @[expose] public section
@@ -31,6 +36,99 @@ open Tests.Utils
 namespace Tests
 namespace Floats
 namespace RLCheck
+
+/-! ## DQN target detachment and Huber gradients
+
+Real-valued Huber identities do not check tape detachment or native cancellation. These cases
+exercise both Float and Float32, including action masking and residuals below unit roundoff.
+-/
+
+namespace DQN
+
+open Spec TorchLean Runtime.Autograd.Model
+
+def expect (label : String) (condition : Bool) : IO Unit := do
+  unless condition do throw <| IO.userError s!"DQN loss check failed: {label}"
+
+def close {α : Type} [Context α] (actual expected : α) : Bool :=
+  Context.gtBool (1 / 100000 : α) (MathFunctions.abs (actual - expected))
+
+/-- Detach the Bellman target while testing the two Huber reduction schedules. -/
+def vectorLoss (delta : Rat) (reduction : Loss.Reduction) :
+    ∀ {β : Type}, [TorchLean.Storage β] → [Context β] →
+      Program β [Shape.ofList [7], Shape.ofList [7]] [] :=
+  fun {β} _ _ => fun {m} _ _ => fun prediction target =>
+    Runtime.RL.DQN.Autograd.huber (m := m) (α := β)
+      prediction target (delta : β) reduction
+
+/-- One-hot action selection must not send gradients into actions or target values. -/
+def actionLoss :
+    ∀ {β : Type}, [TorchLean.Storage β] → [Context β] →
+      Program β [Shape.ofList [2, 3], Shape.ofList [2, 3], Shape.ofList [2]] [] :=
+  fun {β} _ _ => fun {m} _ _ => fun prediction actions target =>
+    Runtime.RL.DQN.Autograd.loss (m := m) (α := β)
+      prediction actions target
+
+/-- Cover both tails, the joins, and the quadratic branch with one residual tensor. -/
+def checkVector {α : Type} [TorchLean.Storage α] [Context α] : IO Unit := do
+  let prediction : Tensor α [7] := [-4, -2, -1, 0, 1, 2, 4]
+  let target : Tensor α [7] := Tensor.zeros [7]
+  for reduction in [Loss.Reduction.sum, .mean] do
+    let divisor : α := if reduction == .mean then 7 else 1
+    let graph ← Autodiff.lowerToTypedGraph (α := α)
+      (paramShapes := [Shape.ofList [7]]) (inputShapes := [Shape.ofList [7]])
+      (vectorLoss 2 reduction)
+    let (gradients, loss) ← Autodiff.Impl.pullback graph
+      (.cons prediction (.cons target .nil)) (Tensor.scalar (1 : α))
+    expect "Huber value with delta two" (close (loss.getFlat ⟨0, by decide⟩) (17 / divisor))
+    let expected := ([-2, -2, -1, 0, 1, 2, 2] : Tensor α [7]).map (· / divisor)
+    for i in List.finRange 7 do
+      expect "Huber prediction gradient"
+        (close ((gradients.get ⟨0, by decide⟩).getFlat i) (expected.getFlat i))
+      expect "Bellman target is detached" (close ((gradients.get ⟨1, by decide⟩).getFlat i) 0)
+
+/-- Unselected action values cannot affect the transition mean or receive gradients. -/
+def checkActions {α : Type} [TorchLean.Storage α] [Context α] : IO Unit := do
+  let prediction : Tensor α [2, 3] := [[-3, 100, -100], [100, 1 / 2, -100]]
+  let actions : Tensor α [2, 3] := [[1, 0, 0], [0, 1, 0]]
+  let target : Tensor α [2] := Tensor.zeros [2]
+  let graph ← Autodiff.lowerToTypedGraph (α := α)
+    (paramShapes := [Shape.ofList [2, 3]])
+    (inputShapes := [Shape.ofList [2, 3], Shape.ofList [2]]) actionLoss
+  let (gradients, loss) ← Autodiff.Impl.pullback graph
+    (.cons prediction (.cons actions (.cons target .nil))) (Tensor.scalar (1 : α))
+  expect "mean over transitions" (close (loss.getFlat ⟨0, by decide⟩) (21 / 16))
+  let expected : Tensor α [2, 3] := [[-1 / 2, 0, 0], [0, 1 / 4, 0]]
+  for i in List.finRange 6 do
+    expect "only selected actions receive gradients"
+      (close ((gradients.get ⟨0, by decide⟩).getFlat i) (expected.getFlat i))
+    expect "action encoding is detached" (close ((gradients.get ⟨1, by decide⟩).getFlat i) 0)
+  for i in List.finRange 2 do
+    expect "selected-action target is detached" (close ((gradients.get ⟨2, by decide⟩).getFlat i) 0)
+
+/-- Small quadratic-region residuals must retain their derivative without cancellation. -/
+def checkSmallResidual {α : Type} [TorchLean.Storage α] [Context α] : IO Unit := do
+  let small : α := 1 / 1073741824
+  let prediction : Tensor α [7] := Tensor.ofFn fun _ => small
+  let target : Tensor α [7] := Tensor.zeros [7]
+  let (gradient, _) ← Autodiff.gradients (α := α)
+    (paramShapes := [Shape.ofList [7]]) (inputShapes := [Shape.ofList [7]])
+    (vectorLoss 1 .sum) (.cons prediction .nil) (.cons target .nil)
+  for i in List.finRange 7 do
+    expect "small residual derivative is preserved"
+      ((gradient.get ⟨0, by decide⟩).getFlat i == small)
+
+def run : IO Unit := do
+  checkVector (α := Float)
+  checkActions (α := Float)
+  checkSmallResidual (α := Float)
+  checkVector (α := Float32)
+  checkActions (α := Float32)
+  checkSmallResidual (α := Float32)
+  IO.println "DQN semi-gradient Huber checks passed (Float, Float32)."
+
+
+end DQN
 
 /-- Assert a boolean runtime condition with a labeled failure message. -/
 def assertBool (msg : String) (b : Bool) : IO Unit := do
@@ -220,29 +318,11 @@ def checkAdvantages : IO Unit := do
   assertApprox "returnsFromAdvantages[0]"
     (Tensor.getScalar returnsFromAdv ⟨0, by decide⟩) 1.75 1e-6
 
-/-- Check bandit, tabular, DQN, and policy-gradient runtime helpers. -/
-def checkValueLearning : IO Unit := do
-  let bandit0 : Runtime.RL.Bandits.ValueState Float 3 :=
-    { counts := Tensor.full [3] (0 : Float)
-      values := Tensor.full [3] (0 : Float) }
-  let bandit1 := Runtime.RL.Bandits.sampleAverageStep bandit0 ⟨1, by decide⟩ 4.0
-  assertApprox "bandit count" (Tensor.getScalar bandit1.counts ⟨1, by decide⟩) 1.0 1e-6
-  assertApprox "bandit value" (Tensor.getScalar bandit1.values ⟨1, by decide⟩) 4.0 1e-6
-  let greedy := Runtime.RL.Bandits.greedyAction? bandit1
-  assertBool "bandit greedy action should be arm 1" (greedy = some ⟨1, by decide⟩)
-
-  let q0 : Tensor Float [2, 2] := Tensor.full [2, 2] (0 : Float)
-  let q1 :=
-    Runtime.RL.Tabular.qLearningUpdate q0 ⟨0, by decide⟩ ⟨1, by decide⟩ 1.0 ⟨1, by decide⟩ 0.9 0.5
-  assertApprox "q-learning update"
-    (get2 q1 ⟨0, by decide⟩ ⟨1, by decide⟩) 0.5 1e-6
-
+/-- Replay sampling wraps correctly and truncation retains the bootstrap term. -/
+def checkReplay : IO Unit := do
   let qPred : Tensor Float [3] := [1.0, 2.0, 0.5]
   let qNext : Tensor Float [3] := [0.1, 1.4, 0.3]
-  let dqnTarget := Runtime.RL.ValueLearning.dqnTarget (α := Float) 1.0 0.9 false qNext
-  assertApprox "dqn target" dqnTarget 2.26 1e-6
-  let dqnLoss := Runtime.RL.ValueLearning.dqnMSELoss qPred ⟨1, by decide⟩ 1.0 0.9 false qNext
-  assertApprox "dqn mse loss" dqnLoss ((2.0 - 2.26) * (2.0 - 2.26)) 1e-6
+  let dqnLoss := (2.0 - 2.26) * (2.0 - 2.26)
 
   -- Replay + minibatch DQN layer: store typed transitions, sample deterministically, and compute
   -- the same DQN loss through caller-provided Q-functions.
@@ -264,9 +344,6 @@ def checkValueLearning : IO Unit := do
   let replayLoss :=
     Runtime.RL.DQN.loss (α := Float) onlineQ targetQ 0.9 replayBatch (batch := true)
   assertApprox "replay dqn minibatch loss" replayLoss dqnLoss 1e-6
-  let soft := Runtime.RL.DQN.softUpdateScalar (α := Float) 0.1 10.0 0.0
-  assertApprox "soft target update" soft 1.0 1e-6
-
   -- A time-limit truncation keeps the bootstrap term; only termination drops it.
   let observed (terminated truncated : Bool) :
       Spec.RL.ObservedTransition (Tensor Float [2]) (Fin 3) Float :=
@@ -282,28 +359,6 @@ def checkValueLearning : IO Unit := do
   assertApprox "terminated replay dqn loss"
     (Runtime.RL.DQN.loss (α := Float) onlineQ targetQ 0.9 #[terminatedTr] (batch := true))
     ((2.0 - 1.0) * (2.0 - 1.0)) 1e-6
-
-  let logits : Tensor Float [2] := [0.0, 1.0]
-  let p0 := 1.0 / (1.0 + Float.exp 1.0)
-  let p1 := 1.0 - p0
-  let expectedLogp := Float.log p1
-  let entropy := -(p0 * Float.log p0 + p1 * expectedLogp)
-  let logp := Runtime.RL.PolicyGradient.actionLogProbability (α := Float) logits ⟨1, by decide⟩
-  assertApprox "action log-probability" logp expectedLogp 1e-12
-  let ppoObj := Runtime.RL.PolicyGradient.ppoClippedObjective (α := Float) logits ⟨1, by decide⟩
-    (-0.2) 1.5 0.2
-  -- This fixture's ratio lies in [0.8, 1.2], so the clip leaves it unchanged.
-  assertApprox "ppo objective" ppoObj (Float.exp (expectedLogp + 0.2) * 1.5) 1e-12
-  let klSame := Runtime.RL.PolicyGradient.categoricalKLFromLogits (α := Float) logits logits
-  assertApprox "categorical KL same policy" klSame 0.0 1e-6
-  let a2cLoss := Runtime.RL.PolicyGradient.actorCriticLoss (α := Float) logits ⟨1, by decide⟩
-    1.0 0.2 0.5 1.0 0.01
-  assertApprox "a2c loss" a2cLoss (-expectedLogp + 0.09 - 0.01 * entropy) 1e-12
-  let qForPolicy : Tensor Float [2] := [0.1, 0.8]
-  let sacActor := Runtime.RL.PolicyGradient.sacCategoricalActorLoss (α := Float)
-    logits qForPolicy 0.2
-  assertApprox "sac categorical actor loss" sacActor
-    (-0.2 * entropy - (p0 * 0.1 + p1 * 0.8)) 1e-12
 
 /-- Check validation at an external RL environment boundary. -/
 def checkBoundary : IO Unit := do
@@ -342,14 +397,14 @@ def ppoMeanObjective :
         [Shape.ofList [2, 3], Shape.ofList [2, 3], Shape.ofList [2], Shape.ofList [2]] [] :=
   fun {β} _ _ => fun {m} _ _ => fun logits actions oldLogProb advantage =>
     (do
-      let objective ← Runtime.RL.PolicyGradient.Autograd.ppoClippedObjective (m := m) (α := β)
+      let objective ← Runtime.RL.PolicyGradient.Autograd.PPO.objective (m := m) (α := β)
         (batch := 2) (nActions := 3) logits actions oldLogProb advantage
       Runtime.Autograd.Model.F.mean (m := m) (α := β) (s := .dim 2 .scalar) objective :
-      m (Runtime.Autograd.Model.RefTy (m := m) (α := β) Shape.scalar))
+      m (Runtime.Autograd.Model.Ref (m := m) (α := β) Shape.scalar))
 
 /-- Within the one-hot log-probability clamp interval, collection and autograd reductions agree
 and the PPO ratio is exactly 1 at identical parameters. The second sample picks an action whose
-probability is far below the separate probability clamp used by `actionLogProbability`. -/
+probability is far below the separate probability clamp used by `logProbability`. -/
 def checkPPORatioAtIdenticalParams : IO Unit := do
   let rows : Array (Array Float) := #[#[0.0, 1.0, -0.5], #[0.0, 30.0, -30.0]]
   let chosen : Array (Fin 3) := #[⟨1, by decide⟩, ⟨2, by decide⟩]
@@ -359,13 +414,13 @@ def checkPPORatioAtIdenticalParams : IO Unit := do
     (Tensor.ofFn fun i : Fin 6 =>
       if chosen[i.val / 3]!.val == i.val % 3 then (1 : Float) else 0).reshape [2, 3] (by decide)
   let oldLogProb : Tensor Float [2] := Tensor.ofFn fun i =>
-    Runtime.RL.PolicyGradient.actionLogSoftmax (α := Float)
+    Runtime.RL.PolicyGradient.logSoftmax (α := Float)
       (Tensor.ofFn fun j : Fin 3 => (rows[i.val]!)[j.val]!) chosen[i.val]!
   let advantage : Tensor Float [2] := Tensor.ofFn fun _ => 1
-  let graph ← Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph (α := Float)
+  let graph ← Runtime.Autograd.Model.Autodiff.lowerToTypedGraph (α := Float)
     (paramShapes := [Shape.ofList [2, 3]])
     (inputShapes := [Shape.ofList [2, 3], Shape.ofList [2], Shape.ofList [2]]) ppoMeanObjective
-  let (_, objective) ← Runtime.Autograd.Model.Autodiff.Impl.vjpWithValue graph
+  let (_, objective) ← Runtime.Autograd.Model.Autodiff.Impl.pullback graph
     (.cons logits (.cons actions (.cons oldLogProb (.cons advantage .nil))))
     (Tensor.scalar (1 : Float))
   -- With ratio 1 and unit advantages every per-sample objective is exactly 1.
@@ -381,15 +436,15 @@ def checkPPOTailOutsideClamp : IO Unit := do
   let actions : Tensor Float [2, 3] :=
     (Tensor.ofFn fun i : Fin 6 => if i.val % 3 == 1 then (1 : Float) else 0).reshape
       [2, 3] (by decide)
-  let rawLogProb := Runtime.RL.PolicyGradient.actionLogSoftmax (α := Float)
+  let rawLogProb := Runtime.RL.PolicyGradient.logSoftmax (α := Float)
     (Tensor.ofFn fun i : Fin 3 => if i.val == 1 then -1.0e40 else 0.0) ⟨1, by decide⟩
   assertBool "PPO cached tail lies outside the one-hot clamp" (rawLogProb < -1.0e30)
   let oldLogProb : Tensor Float [2] := Tensor.full [2] rawLogProb
   let advantage : Tensor Float [2] := Tensor.full [2] 1
-  let graph ← Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph (α := Float)
+  let graph ← Runtime.Autograd.Model.Autodiff.lowerToTypedGraph (α := Float)
     (paramShapes := [Shape.ofList [2, 3]])
     (inputShapes := [Shape.ofList [2, 3], Shape.ofList [2], Shape.ofList [2]]) ppoMeanObjective
-  let (_, objective) ← Runtime.Autograd.Model.Autodiff.Impl.vjpWithValue graph
+  let (_, objective) ← Runtime.Autograd.Model.Autodiff.Impl.pullback graph
     (.cons logits (.cons actions (.cons oldLogProb (.cons advantage .nil))))
     (Tensor.scalar (1 : Float))
   assertApprox "PPO raw cached tail gives clipped nonunit objective" objective.item 1.2 1e-12
@@ -406,13 +461,13 @@ def checkPPONegativeInfinityLogit : IO Unit := do
     (Tensor.ofFn fun i : Fin 6 =>
       if chosen[i.val / 3]!.val == i.val % 3 then (1 : Float) else 0).reshape [2, 3] (by decide)
   let oldLogProb : Tensor Float [2] := Tensor.ofFn fun i =>
-    Runtime.RL.PolicyGradient.actionLogSoftmax (α := Float)
+    Runtime.RL.PolicyGradient.logSoftmax (α := Float)
       (Tensor.ofFn fun j : Fin 3 => (rows[i.val]!)[j.val]!) chosen[i.val]!
   let advantage : Tensor Float [2] := Tensor.ofFn fun _ => 1
-  let graph ← Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph (α := Float)
+  let graph ← Runtime.Autograd.Model.Autodiff.lowerToTypedGraph (α := Float)
     (paramShapes := [Shape.ofList [2, 3]])
     (inputShapes := [Shape.ofList [2, 3], Shape.ofList [2], Shape.ofList [2]]) ppoMeanObjective
-  let (gradients, objective) ← Runtime.Autograd.Model.Autodiff.Impl.vjpWithValue graph
+  let (gradients, objective) ← Runtime.Autograd.Model.Autodiff.Impl.pullback graph
     (.cons logits (.cons actions (.cons oldLogProb (.cons advantage .nil))))
     (Tensor.scalar (1 : Float))
   let value := objective.getFlat ⟨0, by decide⟩
@@ -442,16 +497,16 @@ def entropyObjective :
     ∀ {β : Type}, [TorchLean.Storage β] → [Context β] →
       Runtime.Autograd.Model.Program β [Shape.ofList [1, 2]] [] :=
   fun {β} _ _ => fun {m} _ _ => fun logits =>
-    Runtime.RL.PolicyGradient.Autograd.entropyMean (m := m) (α := β) logits
+    Runtime.RL.PolicyGradient.Autograd.entropy (m := m) (α := β) logits
 
 /-- A zero-probability action contributes zero to entropy and its logit gradient. -/
 def checkEntropyZeroProbability : IO Unit := do
-  let graph ← Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph (α := Float)
+  let graph ← Runtime.Autograd.Model.Autodiff.lowerToTypedGraph (α := Float)
     (paramShapes := [Shape.ofList [1, 2]]) (inputShapes := []) entropyObjective
   for tail in [-(1.0 / 0.0), -1000.0, -1.0e40, 0.0] do
     let logits : Tensor Float [1, 2] :=
       (Tensor.ofFn fun i : Fin 2 => if i.val == 0 then 0.0 else tail).reshape [1, 2] (by decide)
-    let (gradients, entropy) ← Runtime.Autograd.Model.Autodiff.Impl.vjpWithValue graph
+    let (gradients, entropy) ← Runtime.Autograd.Model.Autodiff.Impl.pullback graph
       (.cons logits .nil) (Tensor.scalar (1 : Float))
     let expected := if tail == 0 then Float.log 2.0 else 0.0
     assertBool "entropy must be finite" entropy.item.isFinite
@@ -463,24 +518,64 @@ def checkEntropyZeroProbability : IO Unit := do
 /-- A carrier's negative infinity yields zero entropy and a zero logit gradient. -/
 def checkEntropyAtNegativeInfinity {α : Type} [TorchLean.Storage α] [Context α]
     (label : String) (negativeInfinity : α) (isZero : α → Bool) : IO Unit := do
-  let graph ← Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph (α := α)
+  let graph ← Runtime.Autograd.Model.Autodiff.lowerToTypedGraph (α := α)
     (paramShapes := [Shape.ofList [1, 2]]) (inputShapes := []) entropyObjective
   let logits : Tensor α [1, 2] :=
     (Tensor.ofFn fun i : Fin 2 => if i.val == 0 then 0 else negativeInfinity).reshape
       [1, 2] (by decide)
-  let (gradients, entropy) ← Runtime.Autograd.Model.Autodiff.Impl.vjpWithValue graph
+  let (gradients, entropy) ← Runtime.Autograd.Model.Autodiff.Impl.pullback graph
     (.cons logits .nil) (Tensor.scalar (1 : α))
   assertBool s!"{label} zero-probability entropy" (isZero entropy.item)
   let .cons gradient .nil := gradients
   assertBool s!"{label} zero-probability entropy VJP" (Tensor.allSpec isZero gradient)
 
+-- Already-lowered policies only read typed graphs and stored scalars.
+example {α : Type} [Storage α] (graph : nn.TypedGraphModel [] [] [] α) :
+    Tensor α [] → α :=
+  rl.ppo.value graph (.id []) (.id []) nn.State.empty
+
+example {α : Type} [Storage α] (graph : nn.TypedGraphModel [] [] [] α) :
+    Tensor α [] → Tensor α [] :=
+  rl.ppo.policy graph (.id []) (.id []) nn.State.empty
+
+def checkShape (shape : Shape) (oneValue : shape.size = 1) : IO Unit := do
+  let model : nn.Sequential shape shape := .id shape
+  let graph ← nn.lowerToTypedGraph model (α := Float)
+  let value := rl.ppo.value graph model model nn.State.empty (oneValue := oneValue)
+  for bits in (#[0x0000000000000000, 0x8000000000000000, 0x3ff4000000000000,
+      0xc004000000000000, 0x7ff0000000000000, 0xfff0000000000000,
+      0x7ff8000000000042, 0xfff8000000000042] : Array UInt64) do
+    -- Float.ofBits canonicalizes NaNs; extraction must preserve the constructed scalar.
+    let scalar := Float.ofBits bits
+    let input := Tensor.full shape scalar
+    let actual := (value input).toBits
+    assertBool s!"shape {shape}: expected scalar bits {scalar.toBits}, got {actual}"
+      (actual == scalar.toBits)
+
+def checkStateSplit : IO Unit := do
+  let model := nn.build 0 (nn.linear 1 1)
+  let graph ← nn.lowerToTypedGraph model (α := Float)
+  let actorState : nn.State Float (nn.stateShapes model) := nn.State.full 50
+  let criticState : nn.State Float (nn.stateShapes model) := nn.State.full 2
+  let value := rl.ppo.value graph model model (actorState.append criticState)
+  let input : Tensor Float [1] := [4]
+  assertBool "critic reads its state after the actor state" (value input == 10)
+
+/-- The scalar adapter cannot accept empty or multi-element outputs. -/
+example : ¬ (Shape.size [0] = 1) ∧ ¬ (Shape.size [1, 2, 1] = 1) := by decide
+
 /-- Run the complete RL runtime check suite. -/
 def run : IO Unit := do
   IO.println "rl_check: begin"
+  checkShape [] (by decide)
+  checkShape [1] (by decide)
+  checkShape [1, 1] (by decide)
+  checkShape [1, 1, 1, 1, 1] (by decide)
+  checkStateSplit
   checkReturns
   checkCheckedScans
   checkAdvantages
-  checkValueLearning
+  checkReplay
   checkBoundary
   checkStrictNaturalJson
   checkEntropyZeroProbability

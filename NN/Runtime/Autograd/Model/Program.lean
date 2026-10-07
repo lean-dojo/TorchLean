@@ -18,6 +18,10 @@ public import NN.Tensor -- shake: keep
 `Program` is model code abstract over a tensor-operation interpreter. Supplying the eager
 interpreter executes operations immediately and records a dynamic tape; supplying the typed-graph
 interpreter records reusable shape-indexed SSA data.
+
+`Program.Data` also accepts non-differentiable tensor inputs with their own element type, such as
+token indices. `map` applies an operation over a specified prefix shape; `linear`, convolution,
+pooling, normalization and attention accept those prefixes without separate batched variants.
 -/
 
 @[expose] public section
@@ -56,23 +60,15 @@ export Runtime.Autograd.Torch
     mseLoss batchNorm
    randUniform bernoulliMask)
 
-/-! ## Operation-reference notation -/
-
-/-- A tensor reference under the currently selected operation interpreter. -/
-abbrev RefTy (m : Type → Type) (α : Type)
-    [TorchLean.Storage α] [Context α] [Ops (m := m) (α := α)]
-    (s : Shape) : Type :=
-  Runtime.Autograd.Torch.Ops.Ref (m := m) (α := α) s
-
 /-! ## Prefix-polymorphic derived operations -/
 
 /-- Apply a single-sample operation independently over an arbitrary prefix shape. -/
-def mapLeading {α : Type} [TorchLean.Storage α] [Context α]
+def map {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     (leadingShape : Shape) {s t : Shape}
-    (x : RefTy (m := m) (α := α) (leadingShape.concat s))
-    (f : RefTy (m := m) (α := α) s → m (RefTy (m := m) (α := α) t)) :
-    m (RefTy (m := m) (α := α) (leadingShape.concat t)) := do
+    (x : Ref (m := m) (α := α) (leadingShape.concat s))
+    (f : Ref (m := m) (α := α) s → m (Ref (m := m) (α := α) t)) :
+    m (Ref (m := m) (α := α) (leadingShape.concat t)) := do
   let xFlat ← Runtime.Autograd.Torch.reshape (m := m) (α := α)
     (s₁ := leadingShape.concat s) (s₂ := s.prependDim leadingShape.size) x (by
       simp [Shape.size_concat, Shape.size])
@@ -82,14 +78,14 @@ def mapLeading {α : Type} [TorchLean.Storage α] [Context α]
       simp [Shape.size_concat, Shape.size])
 
 /-- Affine transformation of the final axis, independently over any prefix shape. -/
-def linearEach {α : Type} [TorchLean.Storage α] [Context α]
+def linear {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leadingShape : Shape} {inDim outDim : Nat}
-    (weight : RefTy (m := m) (α := α) [outDim, inDim])
-    (bias : RefTy (m := m) (α := α) [outDim])
-    (input : RefTy (m := m) (α := α) (leadingShape.concat [inDim])) :
-    m (RefTy (m := m) (α := α) (leadingShape.concat [outDim])) :=
-  mapLeading (m := m) (α := α) leadingShape input fun x =>
+    (weight : Ref (m := m) (α := α) [outDim, inDim])
+    (bias : Ref (m := m) (α := α) [outDim])
+    (input : Ref (m := m) (α := α) (leadingShape.concat [inDim])) :
+    m (Ref (m := m) (α := α) (leadingShape.concat [outDim])) :=
+  map (m := m) (α := α) leadingShape input fun x =>
     Runtime.Autograd.Torch.linear (m := m) (α := α) weight bias x
 
 /-- Rank-polymorphic convolution over channels-first inputs with any prefix shape. -/
@@ -97,16 +93,16 @@ def conv {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leadingShape : Shape} {d inC outC : Nat}
     {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
-    (weight : RefTy (m := m) (α := α)
+    (weight : Ref (m := m) (α := α)
       (Shape.ofList (outC :: inC :: kernel.to (List Nat))))
-    (bias : RefTy (m := m) (α := α) [outC])
-    (input : RefTy (m := m) (α := α)
+    (bias : Ref (m := m) (α := α) [outC])
+    (input : Ref (m := m) (α := α)
       (leadingShape.concat (Shape.ofList (inC :: inSpatial.to (List Nat))))) :
-    m (RefTy (m := m) (α := α)
+    m (Ref (m := m) (α := α)
       (leadingShape.concat (Shape.ofList
         (outC ::
           (Spec.convOutSpatial inSpatial kernel stride padding).to (List Nat))))) :=
-  mapLeading (m := m) (α := α) leadingShape input (fun x ↦
+  map (m := m) (α := α) leadingShape input (fun x ↦
     Runtime.Autograd.Torch.conv (m := m) (α := α)
       (d := d) (inC := inC) (outC := outC) (kernel := kernel) (stride := stride)
       (padding := padding) (inSpatial := inSpatial) weight bias x)
@@ -116,16 +112,16 @@ def convTranspose {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leadingShape : Shape} {d inC outC : Nat}
     {kernel stride padding inSpatial : TorchLean.Tensor Nat [d]}
-    (weight : RefTy (m := m) (α := α)
+    (weight : Ref (m := m) (α := α)
       (Shape.ofList (inC :: outC :: kernel.to (List Nat))))
-    (bias : RefTy (m := m) (α := α) [outC])
-    (input : RefTy (m := m) (α := α)
+    (bias : Ref (m := m) (α := α) [outC])
+    (input : Ref (m := m) (α := α)
       (leadingShape.concat (Shape.ofList (inC :: inSpatial.to (List Nat))))) :
-    m (RefTy (m := m) (α := α)
+    m (Ref (m := m) (α := α)
       (leadingShape.concat (Shape.ofList
         (outC ::
           (Spec.convTransposeOutSpatial inSpatial kernel stride padding).to (List Nat))))) :=
-  mapLeading (m := m) (α := α) leadingShape input (fun x ↦
+  map (m := m) (α := α) leadingShape input (fun x ↦
     Runtime.Autograd.Torch.convTranspose (m := m) (α := α)
       (d := d) (inC := inC) (outC := outC) (kernel := kernel) (stride := stride)
       (padding := padding) (inSpatial := inSpatial) weight bias x)
@@ -135,12 +131,12 @@ def maxPool {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leadingShape : Shape} {d channels : Nat}
     {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
-    (input : RefTy (m := m) (α := α)
+    (input : Ref (m := m) (α := α)
       (leadingShape.concat (Shape.ofList (channels :: inSpatial.to (List Nat))))) :
-    m (RefTy (m := m) (α := α)
+    m (Ref (m := m) (α := α)
       (leadingShape.concat (Shape.ofList (channels ::
         (Spec.poolOutSpatialPad inSpatial kernel stride padding).to (List Nat))))) :=
-  mapLeading (m := m) (α := α) leadingShape input (fun x ↦
+  map (m := m) (α := α) leadingShape input (fun x ↦
     Runtime.Autograd.Torch.maxPool (m := m) (α := α)
       (d := d) (C := channels) (inSpatial := inSpatial) (kernel := kernel)
       (stride := stride) (padding := padding) x)
@@ -150,12 +146,12 @@ def avgPool {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leadingShape : Shape} {d channels : Nat}
     {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
-    (input : RefTy (m := m) (α := α)
+    (input : Ref (m := m) (α := α)
       (leadingShape.concat (Shape.ofList (channels :: inSpatial.to (List Nat))))) :
-    m (RefTy (m := m) (α := α)
+    m (Ref (m := m) (α := α)
       (leadingShape.concat (Shape.ofList (channels ::
         (Spec.poolOutSpatialPad inSpatial kernel stride padding).to (List Nat))))) :=
-  mapLeading (m := m) (α := α) leadingShape input (fun x ↦
+  map (m := m) (α := α) leadingShape input (fun x ↦
     Runtime.Autograd.Torch.avgPool (m := m) (α := α)
       (d := d) (C := channels) (inSpatial := inSpatial) (kernel := kernel)
       (stride := stride) (padding := padding) x)
@@ -165,12 +161,12 @@ def smoothMaxPool {α : Type} [TorchLean.Storage α] [Context α] [DecidableEq �
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leadingShape : Shape} {d channels : Nat}
     {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
-    (input : RefTy (m := m) (α := α)
+    (input : Ref (m := m) (α := α)
       (leadingShape.concat (Shape.ofList (channels :: inSpatial.to (List Nat))))) (temp : α) :
-    m (RefTy (m := m) (α := α)
+    m (Ref (m := m) (α := α)
       (leadingShape.concat (Shape.ofList (channels ::
         (Spec.poolOutSpatialPad inSpatial kernel stride padding).to (List Nat))))) :=
-  mapLeading (m := m) (α := α) leadingShape input (fun x ↦
+  map (m := m) (α := α) leadingShape input (fun x ↦
     Runtime.Autograd.Torch.smoothMaxPool (m := m) (α := α)
       (d := d) (C := channels) (inSpatial := inSpatial) (kernel := kernel)
       (stride := stride) (padding := padding) x temp)
@@ -186,10 +182,10 @@ kernel that requires a positive row count.
 def layerNorm {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leading : Shape} {width : Nat} (hWidth : width > 0)
-    (x : RefTy (m := m) (α := α) (leading.appendDim width))
-    (gamma beta : RefTy (m := m) (α := α) [width])
+    (x : Ref (m := m) (α := α) (leading.appendDim width))
+    (gamma beta : Ref (m := m) (α := α) [width])
     (epsilon : α := TorchLean.normalizationEpsilon) :
-    m (RefTy (m := m) (α := α) (leading.appendDim width)) :=
+    m (Ref (m := m) (α := α) (leading.appendDim width)) :=
   match hRows : leading.size with
   | 0 => Runtime.Autograd.Torch.const (m := m) (α := α)
       (s := leading.appendDim width) (Tensor.full (leading.appendDim width) (0 : α))
@@ -209,12 +205,12 @@ def layerNorm {α : Type} [TorchLean.Storage α] [Context α]
 def attention {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leadingShape : Shape} {n numHeads dModel headDim : Nat} (hN : n ≠ 0)
-    (wq wk wv : RefTy (m := m) (α := α) [dModel, numHeads * headDim])
-    (wo : RefTy (m := m) (α := α) [numHeads * headDim, dModel])
-    (x : RefTy (m := m) (α := α) (leadingShape.concat [n, dModel]))
+    (wq wk wv : Ref (m := m) (α := α) [dModel, numHeads * headDim])
+    (wo : Ref (m := m) (α := α) [numHeads * headDim, dModel])
+    (x : Ref (m := m) (α := α) (leadingShape.concat [n, dModel]))
     (mask : Option (Tensor Bool [n, n]) := none)
-    (outputBias : Option (RefTy (m := m) (α := α) [dModel]) := none) :
-    m (RefTy (m := m) (α := α) (leadingShape.concat [n, dModel])) := do
+    (outputBias : Option (Ref (m := m) (α := α) [dModel]) := none) :
+    m (Ref (m := m) (α := α) (leadingShape.concat [n, dModel])) := do
   let output ← do
     match batchEq : leadingShape.size with
     | 0 =>
@@ -245,20 +241,20 @@ def attention {α : Type} [TorchLean.Storage α] [Context α]
 abbrev Program (α : Type) [TorchLean.Storage α] [Context α] (ss : List Shape) (τ : Shape) :
     Type 1 :=
   ∀ {m : Type → Type}, [Monad m] → [Ops (m := m) (α := α)] →
-    CurriedRef (fun s ↦ RefTy (m := m) (α := α) s) ss (m (RefTy (m := m) (α := α) τ))
+    CurriedRef (fun s ↦ Ref (m := m) (α := α) s) ss (m (Ref (m := m) (α := α) τ))
 
 /--
 An execution-polymorphic program with differentiable tensors followed by non-differentiable data
 tensors. The data element type is explicit; for example, token models may use `Fin vocab` so an
 out-of-range token is unrepresentable.
 -/
-abbrev ProgramWithDataInputs (α β : Type) [TorchLean.Storage α] [TorchLean.Storage β]
+abbrev Program.Data (α β : Type) [TorchLean.Storage α] [TorchLean.Storage β]
     [Context α]
     (ss dataSs : List Shape) (τ : Shape) : Type 1 :=
   ∀ {m : Type → Type}, [Monad m] → [Ops (m := m) (α := α)] →
-    CurriedRef (fun s ↦ RefTy (m := m) (α := α) s) ss
+    CurriedRef (fun s ↦ Ref (m := m) (α := α) s) ss
       (CurriedRef (fun s ↦ Runtime.Autograd.Torch.DataRef
-        (m := m) (α := α) β s) dataSs (m (RefTy (m := m) (α := α) τ)))
+        (m := m) (α := α) β s) dataSs (m (Ref (m := m) (α := α) τ)))
 
 end Model
 end Autograd

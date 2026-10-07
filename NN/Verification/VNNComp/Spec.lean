@@ -78,8 +78,8 @@ def loadSuite (path : String) : IO (Array Instance) := do
     let lo ← expectFieldFiniteFloatArray exo "input_lo" "instance"
     let hi ← expectFieldFiniteFloatArray exo "input_hi" "instance"
     let inputDim := lo.size
-    let lo ← NN.Verification.Util.Tensor.requireVecOfArray "input_lo" inputDim lo
-    let hi ← NN.Verification.Util.Tensor.requireVecOfArray "input_hi" inputDim hi
+    let lo ← NN.Verification.Util.Tensor.requireArray "input_lo" [inputDim] lo
+    let hi ← NN.Verification.Util.Tensor.requireArray "input_hi" [inputDim] hi
     if !NN.Verification.Util.Tensor.boundsOrdered lo hi then
       throw <| IO.userError s!"instance {id}: input box endpoints are mismatched or reversed"
     let specArr ← expectFieldArray exo "spec" "instance"
@@ -91,9 +91,9 @@ def loadSuite (path : String) : IO (Array Instance) := do
       let rhs ← expectFieldFiniteFloatArray termObj "rhs" "spec term"
       let rows := mat.size
       let cols := (mat[0]?).map Array.size |>.getD 0
-      let some mat := NN.Verification.Util.Tensor.matOfArray rows cols mat
+      let some mat := NN.Verification.Util.Tensor.ofRows? rows cols mat
         | throw <| IO.userError "spec term.mat: ragged coefficient matrix"
-      let rhs ← NN.Verification.Util.Tensor.requireVecOfArray "spec term.rhs" rows rhs
+      let rhs ← NN.Verification.Util.Tensor.requireArray "spec term.rhs" [rows] rhs
       specOut := specOut.push { rows, cols, mat, rhs }
     out := out.push { id := id, input := { dim := inputDim, lo, hi }, spec := specOut }
   pure out

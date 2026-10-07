@@ -44,6 +44,15 @@ abbrev FP32 := TorchLean.Floats.FP32
 
 namespace FP32
 
+/-- Embed a real endpoint after rounding it downward to the binary32 grid. -/
+noncomputable def roundDownEndpoint (x : ℝ) : FP32 :=
+  ⟨FloatLib.Floats.Interval.roundDown
+    (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) x⟩
+
+/-- Embed a real endpoint after rounding it upward to the binary32 grid. -/
+noncomputable def roundUpEndpoint (x : ℝ) : FP32 :=
+  ⟨FloatLib.Floats.Interval.roundUp
+    (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) x⟩
 
 /--
 Directed endpoint arithmetic for the rounded-real FP32 model.
@@ -53,24 +62,12 @@ appropriate side of the binary32 grid. The enclosure laws are
 `FloatLib.Floats.Interval.roundDown_le` and `FloatLib.Floats.Interval.le_roundUp`.
 -/
 noncomputable instance : BoundOps FP32 where
-  addDown a b :=
-    ⟨FloatLib.Floats.Interval.roundDown
-      (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) (a.val + b.val)⟩
-  addUp a b :=
-    ⟨FloatLib.Floats.Interval.roundUp
-      (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) (a.val + b.val)⟩
-  subDown a b :=
-    ⟨FloatLib.Floats.Interval.roundDown
-      (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) (a.val - b.val)⟩
-  subUp a b :=
-    ⟨FloatLib.Floats.Interval.roundUp
-      (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) (a.val - b.val)⟩
-  mulDown a b :=
-    ⟨FloatLib.Floats.Interval.roundDown
-      (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) (a.val * b.val)⟩
-  mulUp a b :=
-    ⟨FloatLib.Floats.Interval.roundUp
-      (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) (a.val * b.val)⟩
+  addDown a b := roundDownEndpoint (a.val + b.val)
+  addUp a b := roundUpEndpoint (a.val + b.val)
+  subDown a b := roundDownEndpoint (a.val - b.val)
+  subUp a b := roundUpEndpoint (a.val - b.val)
+  mulDown a b := roundDownEndpoint (a.val * b.val)
+  mulUp a b := roundUpEndpoint (a.val * b.val)
 
 /--
 The proof-oriented FP32 endpoint operations enclose exact real arithmetic.
@@ -139,16 +136,6 @@ noncomputable instance : LawfulMinBoundOps FP32 where
     rcases le_total a b with h | h
     · rw [min_eq_left h, min_eq_left (show a.val ≤ b.val from h)]
     · rw [min_eq_right h, min_eq_right (show b.val ≤ a.val from h)]
-
-/-- Embed a real endpoint after rounding it downward to the binary32 grid. -/
-noncomputable def roundDownEndpoint (x : ℝ) : FP32 :=
-  ⟨FloatLib.Floats.Interval.roundDown
-    (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) x⟩
-
-/-- Embed a real endpoint after rounding it upward to the binary32 grid. -/
-noncomputable def roundUpEndpoint (x : ℝ) : FP32 :=
-  ⟨FloatLib.Floats.Interval.roundUp
-    (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) x⟩
 
 /-- Exact-real nonlinear operations rounded outward to the binary32 grid. -/
 noncomputable instance : NonlinearBoundOps FP32 where

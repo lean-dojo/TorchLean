@@ -22,7 +22,7 @@ uses the same coordinate semantics and dependent shape transport.
 
 The metaprogramming result is an ordinary tuple rather than a new public plan
 type. Its coordinate map is the independent semantics, its flat map is the
-native executable representation, one proof connects those maps, and another
+row-major representation, one proof connects those maps, and another
 identifies the visible tensor term with the flat pullback from its source.
 -/
 
@@ -156,10 +156,10 @@ preserved without duplicating their checked plans. The result includes
 equalities for both the visible tensor and the compact logical reference used
 by downstream denotational semantics.
 
-Repeated expressions are skipped, and the entire search visits at most 256
-expressions. This also bounds expanding view equations that never repeat an
-expression. Failed branches try later registered rules while the budget
-remains; exhaustion leaves the ordinary tensor lowering available.
+Expressions repeated along a search branch are skipped. A shared budget limits
+the entire search to 256 visits, including failed branches and expanding view
+equations that never repeat an expression. Failed branches try later registered
+rules while the budget remains; exhaustion leaves ordinary lowering available.
 -/
 partial def fusedTransformInput?
     (inputShape tensor : Expr) :

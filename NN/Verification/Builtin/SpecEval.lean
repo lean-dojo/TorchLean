@@ -17,15 +17,18 @@ public import NN.Spec.Layers.Pooling
 
 Pure (non-`IO`) TorchLean execution for forward models.
 
-This file gives the TorchLean `Program` interface a pure *spec semantics* backend:
+This file gives the TorchLean `Program` interface a pure reference interpreter:
 
 - `Ref s` is interpreted as an actual `Tensor α s`,
-- each primitive op is interpreted via the corresponding `Spec.*_spec` definition,
-- the monad is `Except String`, so unsupported verifier-fragment cases report explicit errors
-  instead of silently choosing a meaningless semantics.
+- operations use their tensor and layer specifications;
+- the monad is `Except String`, with errors for invalid pooling parameters and unsupported random
+  operations.
 
-This interpretation supplies the reference semantics for lowering-correctness theorems
-for `NN.Verification.Builtin.lowerForwardToIR`.
+This interpreter is not the `Proved.ForwardProgram` evaluator covered by the lowering theorem.
+It supports operations outside that proved fragment, including transposed convolution and smooth
+max pooling. Raw logarithm uses the scalar specification without the IR evaluator's positivity
+check, and log-softmax uses the stable specification rather than taking the logarithm of softmax.
+Agreement with the broader `lowerForwardToIR` builder is therefore not established for all programs.
 -/
 
 @[expose] public section

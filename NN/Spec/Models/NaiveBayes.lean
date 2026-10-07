@@ -57,23 +57,20 @@ inductive Error where
   | unknownFeature (feature : String)
   deriving Repr, BEq
 
--- A training example is a bag of features (multiset) and a label
 /-- One training example: a bag-of-words feature multiset and a class label. -/
 structure Example where
   /-- The feature tokens of the example; duplicates are kept so it acts as a multiset. -/
-  features : Array String  -- multiset-like: allows duplicates
+  features : Array String
   /-- The class label of the example. -/
   label : String
 deriving Repr
 
--- Count occurrences of each label.
 /-- Count how many times each label appears in the dataset. -/
 private def countLabels (data : Array Example) : HashMap String Nat :=
   data.foldl (fun acc ex =>
     acc.insert ex.label (acc.getD ex.label 0 + 1)
   ) {}
 
--- Count occurrences of each feature per label.
 /-- Count how many times each feature appears *within each label*. -/
 private def countFeaturesPerLabel (data : Array Example) : HashMap String (HashMap String Nat) :=
   data.foldl (fun acc ex =>
@@ -84,13 +81,11 @@ private def countFeaturesPerLabel (data : Array Example) : HashMap String (HashM
     acc.insert ex.label updated
   ) {}
 
--- Total number of features seen for each label.
 /-- Total number of feature occurrences per label (sum of the per-feature counts). -/
 private def totalFeatureCounts (counts : HashMap String (HashMap String Nat)) : HashMap String Nat
   :=
   counts.map (fun _ fmap => fmap.fold (fun acc _ v => acc + v) 0)
 
--- Get all distinct features in the dataset.
 /-- Collect the vocabulary as an array of distinct feature strings. -/
 private def distinctFeatures (data : Array Example) : Array String :=
   let seen : HashMap String Unit := data.foldl (fun seen ex =>

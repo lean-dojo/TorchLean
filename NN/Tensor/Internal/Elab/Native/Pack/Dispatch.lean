@@ -446,8 +446,9 @@ Try to compile a concrete pack plan to a native output loop.
 The generated dispatcher supports any number of components. Native pack is an
 optional proof-producing optimization: if its word-arithmetic certificates
 cannot be constructed, elaboration transactionally restores its state and
-retains the general verified coordinate lowering. Symbolic, zero-volume, and
-nonportable plans also return `none`.
+retains the general verified coordinate lowering. Symbolic and nonportable
+plans return `none`, as do plans with no nonempty segment or a zero-sized
+trailing shape. A zero-sized leading shape can use an empty native output loop.
 -/
 def compileNativePack?
     (compilerChecked checked inputFamily : Expr)

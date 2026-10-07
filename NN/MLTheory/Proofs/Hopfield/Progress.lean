@@ -182,44 +182,10 @@ private theorem pluses_foldl_gt_of_energy_eq_of_ne
       have hErest : energy (α := ℝ) p sf = energy (α := ℝ) p s1 := by
         simp [hEsf, hE1]
       by_cases hHead : s1 = s
-      · have hTailNe : l.foldl (fun s u => updateAt (α := ℝ) p s u) s ≠ s := by
-          intro hEq
-          apply hne_sf
-          -- `sf = l.foldl _ s1`, and `s1 = s`, so `sf = l.foldl _ s = s`.
-          calc
-            sf = l.foldl (fun s u => updateAt (α := ℝ) p s u) s1 := hsf
-            _ = l.foldl (fun s u => updateAt (α := ℝ) p s u) s := by simp [hHead]
-            _ = s := hEq
-        have hE' :
-            energy (α := ℝ) p (l.foldl (fun s u => updateAt (α := ℝ) p s u) s) = energy (α := ℝ) p s
-              := by
-          -- Rewrite `hEsf : energy sf = energy s` along `sf = foldl _ s`.
-          have : energy (α := ℝ) p sf = energy (α := ℝ) p s := hEsf
-          -- Replace `sf` by the tail fold using `hsf` and `hHead`.
-          calc
-            energy (α := ℝ) p (l.foldl (fun s u => updateAt (α := ℝ) p s u) s)
-                = energy (α := ℝ) p (l.foldl (fun s u => updateAt (α := ℝ) p s u) s1) := by
-                  simp [hHead]
-            _ = energy (α := ℝ) p sf := by simp [hsf]
-            _ = energy (α := ℝ) p s := this
-        have hTailLt :
-            pluses (n := n) (l.foldl (fun s u => updateAt (α := ℝ) p s u) s) >
-              pluses (n := n) s :=
-          IH s hE' hTailNe
-        -- Head update is a no-op, so the whole fold is the tail fold.
-        have huNoop : updateAt (α := ℝ) p s u = s := by
-          -- `updateAt ... = s1 = s`.
-          exact hs1.symm.trans hHead
-        have hfull :
-            (u :: l).foldl (fun s u => updateAt (α := ℝ) p s u) s =
-              l.foldl (fun s u => updateAt (α := ℝ) p s u) s :=
-          congrArg (fun t => l.foldl (fun s u => updateAt (α := ℝ) p s u) t) huNoop
-        -- Avoid `simp` here: `updateAt` has simp lemmas that unfold to `Function.update`.
-        have hpl :
-            pluses (n := n) (l.foldl (fun s u => updateAt (α := ℝ) p s u) s) =
-              pluses (n := n) ((u :: l).foldl (fun s u => updateAt (α := ℝ) p s u) s) :=
-          congrArg (pluses (n := n)) hfull.symm
-        exact lt_of_lt_of_eq hTailLt hpl
+      · have hTailNe : l.foldl (fun s u => updateAt (α := ℝ) p s u) s1 ≠ s1 := by
+          simpa only [hsf, hHead] using hne_sf
+        have hTailLt := IH s1 hErest hTailNe
+        simpa only [hfold, hsf, hHead] using hTailLt
       · have hHeadLt : pluses (n := n) s1 > pluses (n := n) s :=
           by
             have huNe : updateAt (α := ℝ) p s u ≠ s := by

@@ -14,23 +14,14 @@ public import NN.Proofs.RuntimeApprox.NF.Ops.Elementwise.Binary
 /-!
 # FP32 Layer Approximation
 
-This module specializes the backend-generic runtime-approximation framework
-(`NN.Proofs.RuntimeApprox`) to the rounded-real float32 model
-`TorchLean.Floats.FP32` (round-to-nearest-even with the IEEE-754
-binary32 exponent function). Every theorem in this directory is a statement about that rounded-real
-model. None of them is a statement about Lean's
-`Float32` type or about the bit-level `ExecFloat.Binary 8 23` model. Finite binary32 add/mul
-refinements are in
-`NN/Floats/IEEEExec/Bridge/Finite.lean`; further arithmetic refinements are in
+Specialize the generic NF bounds to `TorchLean.Floats.FP32` and compose matrix-vector
+multiplication with bias addition. `linearErrorBudget` exposes the resulting infinity-norm bound
+for use in the MLP and CROWN/IBP proofs.
+
+This rounded-real model uses nearest-even binary32 precision without an upper exponent bound
+or NaN/Inf values. Applying these bounds to native or encoded IEEE execution requires a separate
+refinement excluding exceptional results. See `NN/Floats/IEEEExec/Bridge/Finite.lean` and
 `NN/Proofs/RuntimeApprox/IEEE32/Arithmetic.lean`.
-
-The lemmas here are *compositional*: they let you relate a real-valued spec computation
-to its float32 execution under an explicit error budget, so that larger network theorems can be
-proved by chaining smaller ones.
-
-`TorchLean.Floats.FP32` has no upper exponent bound or NaN/Inf values. These theorems relate real
-spec computations to that rounded-real model. Applying them to IEEE execution requires a separate
-refinement argument whose hypotheses rule out exceptional results.
 -/
 
 @[expose] public section
@@ -39,7 +30,6 @@ open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 open FloatLib FloatLib.Numerics FloatLib.Floats.Formats
 open Flocq
-
 
 namespace NN.Proofs.RuntimeApprox.FP32
 
@@ -105,9 +95,6 @@ theorem approxTensor_linear {inDim outDim : Nat}
       (Spec.linearSpec (α := ℝ) WS xS)
       (Spec.linearSpec (α := R) WR xR)
       (linearErrorBudget epsW epsb epsx WR xR) := by
-  -- The linear layer factors into matvec followed by bias addition. Each operation already has
-  -- an NF-backend approximation theorem; this theorem specializes and composes them for
-  -- the concrete FP32 rounding model.
   have hmv :=
     Proofs.RuntimeApprox.NFBackend.approxTensor_mat_vec_mul_spec
       (β := β) (fexp := fexp) (rnd := rnd) (m := outDim) (n := inDim)

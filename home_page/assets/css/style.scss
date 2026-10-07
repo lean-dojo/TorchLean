@@ -339,13 +339,6 @@ body {
   margin: 0.35rem 0 1.5rem;
 }
 
-.home-intro .lede {
-  max-width: 1080px;
-  margin: 0 0 1.4rem;
-  font-size: clamp(1.38rem, calc(1.16rem + 0.7vw), 1.86rem);
-  line-height: 1.3;
-}
-
 .home-intro-copy {
   color: var(--tl-text);
   font-size: 1.04rem;
@@ -609,7 +602,6 @@ body {
 }
 
 .showcase-grid-featured .showcase-text {
-  font-size: var(--tl-small-size);
   line-height: 1.58;
 }
 
@@ -1254,8 +1246,6 @@ input.search-input[type="search"] {
 
 @media (max-width: 760px) {
 
-  .graph-overview,
-  .graph-overview .dep-stat-grid,
   .dep-controls,
   .dep-two-col {
     grid-template-columns: 1fr;

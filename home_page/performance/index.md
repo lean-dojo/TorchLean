@@ -107,7 +107,7 @@ making fine-grained runtime claims.
   const repository = "lean-dojo/TorchLean";
   const workflow = "ci.yml";
   const maximumRuns = 8;
-  const cacheKey = "torchlean-ci-performance-v3";
+  const cacheKey = "torchlean-ci-performance-v4";
   const cacheLifetimeMs = 30 * 60 * 1000;
   const apiRoot = `https://api.github.com/repos/${repository}`;
   // A cold page load makes one run-list request and at most eight job requests.
@@ -191,7 +191,8 @@ making fine-grained runtime claims.
     step.name === metric.step || step.name === metric.previousStep;
 
   const stepSeconds = (job, metric) => {
-    const step = (job.steps || []).find(candidate => matchesStep(candidate, metric));
+    const step = (job.steps || []).find(candidate =>
+      candidate.conclusion === "success" && matchesStep(candidate, metric));
     return step ? durationSeconds(step.started_at, step.completed_at) : null;
   };
 
@@ -265,6 +266,13 @@ making fine-grained runtime claims.
         candidate.name === "CPU build and checks" || candidate.name === "build_and_test"
       );
       if (!job || job.conclusion !== "success") return null;
+      const completedSteps = (job.steps || []).filter(step => step.conclusion === "success");
+      const scope = completedSteps.some(step => matchesStep(step, metrics.native)) ? "native" :
+        completedSteps.some(step => step.name === metrics.current.step) ? "current" :
+        completedSteps.some(step => step.name === metrics.maintained.step) ? "maintained" :
+        completedSteps.some(step =>
+          [metrics.build.step, metrics.broad.step].includes(step.name)) ? "legacy" : null;
+      if (!scope) return null;
       const durations = { total: durationSeconds(job.started_at, job.completed_at) };
       for (const [key, metric] of Object.entries(metrics)) {
         if (metric.step) durations[key] = stepSeconds(job, metric);
@@ -276,11 +284,7 @@ making fine-grained runtime claims.
         url: run.html_url,
         startedAt: job.started_at || run.run_started_at,
         durations,
-        scope: (job.steps || []).some(step => matchesStep(step, metrics.native)) ? "native" :
-          (job.steps || []).some(step => step.name === metrics.current.step) ? "current" :
-          (job.steps || []).some(step => step.name === metrics.maintained.step) ?
-          "maintained" : (job.steps || []).some(step =>
-            [metrics.build.step, metrics.broad.step].includes(step.name)) ? "legacy" : null,
+        scope,
       };
     }));
     return records

@@ -58,7 +58,7 @@ theorem toEReal_roundRatQUp_ge (q : Rat) (hformat : format.isIEEE = true) :
   exact Model.le_toEReal_roundRatUp format (q.num < 0) q.num.natAbs q.den hformat q.den_nz
 
 /-- Decode an endpoint exactly as a rational, failing on NaN or infinity. -/
-def ensureFinite (x : ExecFloat (Configured.Family format code plan)) (label : String) :
+def finite (x : ExecFloat (Configured.Family format code plan)) (label : String) :
     IO Rat := do
   match Binary.toRat? x with
   | some q => pure q
@@ -72,8 +72,8 @@ parsing its response does not prove that the requested function lies within thes
 -/
 def bounds (func : String) (X : Interval (ExecFloat (Configured.Family format code plan)))
     (precBits digits : Nat := 200) : IO (Rat × Rat) := do
-  let loQ ← ensureFinite X.lo "lo"
-  let hiQ ← ensureFinite X.hi "hi"
+  let loQ ← finite X.lo "lo"
+  let hiQ ← finite X.hi "hi"
   let q : TorchLean.Floats.Arb.Query :=
     { func := func
       lo := toString loQ

@@ -19,8 +19,8 @@ This module implements typed, total update rules for classic finite-state / fini
 - Q-learning,
 - Double Q-learning.
 
-The updates operate on shape-indexed vectors / Q-tables, so they fit naturally into the rest of
-TorchLean's typed tensor surface.
+Choose the bootstrap target with the appropriate rule, then apply `update` to a tensor coordinate.
+The same update works for state-value vectors, Q-tables, and higher-dimensional value tensors.
 
 Primary references:
 
@@ -47,46 +47,49 @@ namespace Tabular
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
 
+/-- Move one tensor entry toward a supplied target by `stepSize`.
+
+The target rule determines the algorithm; the update itself is independent of the table's shape.
+For Double Q-learning, update either table with a target computed using that table as selector and
+the other as evaluator. Arithmetic keeps the order `current + stepSize * (target - current)`.
+-/
+def update {α : Type} [Storage α] [Storage.Update α] [Add α] [Sub α] [Mul α]
+    {shape : Shape} (values : Tensor α shape) (coordinate : shape.Coord)
+    (target stepSize : α) : Tensor α shape :=
+  let current := values coordinate
+  Tensor.set values coordinate (current + stepSize * (target - current))
+
 variable {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Extract the action-value row `Q[s, :]`. -/
-def actionRow {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
+def row {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
     (state : Fin nStates) : Tensor α [nActions] :=
   get q state
 
 /-- Max action value at a state, defaulting to `0` for empty action spaces. -/
-def maxActionValue {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
+def maximum {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
     (state : Fin nStates) : α :=
-  let row := actionRow (α := α) q state
-  ValueLearning.maxQValue (α := α) row
+  let row := row (α := α) q state
+  ValueLearning.maximum (α := α) row
 
 /-- Greedy action at a state, if the action space is nonempty. -/
-def greedyAction? {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
+def greedy? {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
     (state : Fin nStates) : Option (Fin nActions) :=
-  (TorchLean.Metrics.argmax? (α := α) (actionRow (α := α) q state)).map
+  (TorchLean.Metrics.argmax? (α := α) (row (α := α) q state)).map
     (Fin.cast (by simp [Shape.size]))
 
-/-- Expected action value under an explicit policy over the next state. -/
-def expectedActionValue {nStates nActions : Nat}
+/-- Policy-weighted action value. Weights are used as supplied, without normalization. -/
+def expectation {nStates nActions : Nat}
     (q : Tensor α [nStates, nActions])
     (state : Fin nStates)
     (policy : Tensor α [nActions]) : α :=
-  sumSpec (mulSpec (actionRow (α := α) q state) policy)
-
-/-- One TD(0) update for a state-value table. -/
-def td0Update {nStates : Nat} (values : Tensor α [nStates])
-    (state nextState : Fin nStates) (reward gamma stepSize : α) (done : Bool := false) :
-    Tensor α [nStates] :=
-  let current := Tensor.getScalar values state
-  let target := Core.tdTarget (α := α) reward gamma (Tensor.getScalar values nextState) done
-  let newValue := current + stepSize * (target - current)
-  Tensor.updateSpec values [state.val] newValue
+  sumSpec (mulSpec (row (α := α) q state) policy)
 
 /-- SARSA target `r + γ Q(s', a')`. -/
 def sarsaTarget {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
     (nextState : Fin nStates) (nextAction : Fin nActions) (reward gamma : α)
     (done : Bool := false) : α :=
-  Core.tdTarget (α := α) reward gamma (get2 q nextState nextAction) done
+  Core.discountedBackup (α := α) reward gamma (get2 q nextState nextAction) done
 
 /-- Expected SARSA target
 `r + γ * E_{a' ~ π(.|s')}[Q(s', a')]`. -/
@@ -94,78 +97,23 @@ def expectedSarsaTarget {nStates nActions : Nat}
     (q : Tensor α [nStates, nActions])
     (nextState : Fin nStates) (nextPolicy : Tensor α [nActions])
     (reward gamma : α) (done : Bool := false) : α :=
-  Core.tdTarget (α := α) reward gamma
-    (expectedActionValue (α := α) q nextState nextPolicy) done
+  Core.discountedBackup (α := α) reward gamma
+    (expectation (α := α) q nextState nextPolicy) done
 
 /-- Q-learning target `r + γ max_a Q(s', a)`. -/
 def qLearningTarget {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
     (nextState : Fin nStates) (reward gamma : α) (done : Bool := false) : α :=
-  Core.tdTarget (α := α) reward gamma (maxActionValue (α := α) q nextState) done
+  Core.discountedBackup (α := α) reward gamma (maximum (α := α) q nextState) done
 
 /-- Double Q-learning / Double DQN-style target:
 choose the greedy action under `selector`, evaluate it under `evaluator`. -/
 def doubleQTarget {nStates nActions : Nat}
     (selector evaluator : Tensor α [nStates, nActions])
     (nextState : Fin nStates) (reward gamma : α) (done : Bool := false) : α :=
-  match greedyAction? (α := α) selector nextState with
-  | some action => Core.tdTarget (α := α) reward gamma (get2 evaluator nextState action) done
+  match greedy? (α := α) selector nextState with
+  | some action =>
+      Core.discountedBackup (α := α) reward gamma (get2 evaluator nextState action) done
   | none => reward
-
-/-- In-place style SARSA update on a Q-table, returned functionally. -/
-def sarsaUpdate {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
-    (state : Fin nStates) (action : Fin nActions)
-    (reward : α) (nextState : Fin nStates) (nextAction : Fin nActions)
-    (gamma stepSize : α) (done : Bool := false) :
-    Tensor α [nStates, nActions] :=
-  let current := get2 q state action
-  let target := sarsaTarget (α := α) q nextState nextAction reward gamma done
-  let newValue := current + stepSize * (target - current)
-  Tensor.updateSpec q [state.val, action.val] newValue
-
-/-- Expected SARSA update on a Q-table. -/
-def expectedSarsaUpdate {nStates nActions : Nat}
-    (q : Tensor α [nStates, nActions])
-    (state : Fin nStates) (action : Fin nActions)
-    (reward : α) (nextState : Fin nStates)
-    (nextPolicy : Tensor α [nActions])
-    (gamma stepSize : α) (done : Bool := false) :
-    Tensor α [nStates, nActions] :=
-  let current := get2 q state action
-  let target := expectedSarsaTarget (α := α) q nextState nextPolicy reward gamma done
-  let newValue := current + stepSize * (target - current)
-  Tensor.updateSpec q [state.val, action.val] newValue
-
-/-- Q-learning update on a Q-table. -/
-def qLearningUpdate {nStates nActions : Nat} (q : Tensor α [nStates, nActions])
-    (state : Fin nStates) (action : Fin nActions)
-    (reward : α) (nextState : Fin nStates)
-    (gamma stepSize : α) (done : Bool := false) :
-    Tensor α [nStates, nActions] :=
-  let current := get2 q state action
-  let target := qLearningTarget (α := α) q nextState reward gamma done
-  let newValue := current + stepSize * (target - current)
-  Tensor.updateSpec q [state.val, action.val] newValue
-
-/-- Update the left table in Double Q-learning. -/
-def doubleQUpdateLeft {nStates nActions : Nat}
-    (qLeft qRight : Tensor α [nStates, nActions])
-    (state : Fin nStates) (action : Fin nActions)
-    (reward : α) (nextState : Fin nStates)
-    (gamma stepSize : α) (done : Bool := false) :
-    Tensor α [nStates, nActions] :=
-  let current := get2 qLeft state action
-  let target := doubleQTarget (α := α) qLeft qRight nextState reward gamma done
-  let newValue := current + stepSize * (target - current)
-  Tensor.updateSpec qLeft [state.val, action.val] newValue
-
-/-- Update the right table in Double Q-learning. -/
-def doubleQUpdateRight {nStates nActions : Nat}
-    (qLeft qRight : Tensor α [nStates, nActions])
-    (state : Fin nStates) (action : Fin nActions)
-    (reward : α) (nextState : Fin nStates)
-    (gamma stepSize : α) (done : Bool := false) :
-    Tensor α [nStates, nActions] :=
-  doubleQUpdateLeft (α := α) qRight qLeft state action reward nextState gamma stepSize done
 
 end Tabular
 end RL

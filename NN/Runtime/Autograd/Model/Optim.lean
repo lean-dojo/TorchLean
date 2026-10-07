@@ -50,7 +50,7 @@ namespace Optim
 /-! ## Generic optimizer interface -/
 
 /-- Optimizer state paired with the loss produced by the same training step. -/
-structure StepWithLoss (α : Type) [TorchLean.Storage α] (OptimizerState : Type) where
+structure Report (α : Type) [TorchLean.Storage α] (OptimizerState : Type) where
   /-- Optimizer state to use for the next training step. -/
   optimizerState : OptimizerState
   /-- Scalar loss whose backward pass produced this update. -/
@@ -114,7 +114,7 @@ structure Optimizer (α : Type) [TorchLean.Storage α] [Context α] (paramShapes
     {inputShapes dataInputShapes : List Shape} →
     Torch.ScalarTrainer α β paramShapes inputShapes dataInputShapes → State →
       TorchLean.TensorPack α inputShapes → TorchLean.TensorPack β dataInputShapes →
-      IO (Option (StepWithLoss α State)) :=
+      IO (Option (Report α State)) :=
     fun {_β} _ {_inputShapes _dataInputShapes} _tr _st _xs _dataInputs => pure none
   /--
   Optional native mean-gradient update. The outer option reports whether the backend handled

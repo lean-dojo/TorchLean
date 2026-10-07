@@ -73,16 +73,8 @@ theorem mlp_interp
     let l1 : Spec.LinearSpec α inputWidth hiddenWidth := { weights := w1, bias := b1 }
     let l2 : Spec.LinearSpec α hiddenWidth outputWidth := { weights := w2, bias := b2 }
     Examples.mlpForward (α := α) l1 l2 x := by
-  cases params with
-  | cons w1 ps =>
-    cases ps with
-    | cons b1 ps =>
-      cases ps with
-      | cons w2 ps =>
-        cases ps with
-        | cons b2 ps =>
-          cases ps
-          rfl
+  match params with
+  | .cons w1 (.cons b1 (.cons w2 (.cons b2 .nil))) => rfl
 
 end Models
 end GraphSpec

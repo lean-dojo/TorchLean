@@ -33,8 +33,6 @@ Scope of this baseline:
 - the optional attention in `Seq2SeqDecoderSpec` is causal self-attention over decoder inputs.
   Training and inference use the same attention parameters and RNN recurrence. The baseline
   receives the encoder's final hidden state; it does not attend to the encoder's output sequence.
-- projected dot-product attention over encoder outputs is available separately at the bottom of
-  the file (`computeAttentionWeightsSpec` / `applyAttentionSpec`); the baseline does not call it.
 
 References:
 - Sutskever et al., "Sequence to Sequence Learning with Neural Networks" (NeurIPS 2014).
@@ -636,50 +634,5 @@ def Seq2SeqSpec.crossEntropyGradOneHot
       decoderAttention := decoderGrads.attention }
 
   (loss, grads)
-
-/--
-Compute attention weights over encoder outputs for a single decoder hidden state.
-
-This is a simple dot-product style attention:
-1. project the decoder hidden state (`attention_weights · decoder_hidden`),
-2. score each encoder hidden vector by an elementwise product + sum,
-3. normalize scores with `softmax` over the sequence axis.
-
-The score at position `i` is `Σ_j (attentionWeights · decoderHidden)_j · encoderOutputs[i,j]`.
--/
-def computeAttentionWeightsSpec {α : Type} [TorchLean.Storage α] [Context α]
-  {hiddenDim seqLen : Nat}
-  (attentionWeights : Tensor α [hiddenDim, hiddenDim])
-  (decoderHidden : Tensor α [hiddenDim])
-  (encoderOutputs : Tensor α [seqLen, hiddenDim])
-  (h1 : hiddenDim ≠ 0) :
-  Tensor α [seqLen] :=
-  -- Compute attention scores
-  let projectedHidden := matVecMulSpec attentionWeights decoderHidden
-  let scores := Tensor.dim (fun i =>
-    let encoderVec := get encoderOutputs i
-    let mulVec := mulSpec projectedHidden encoderVec
-    reduceSum 0 mulVec (Shape.hasNonemptyAxisZeroOfNe h1).proof
-  )
-  -- Apply softmax to get attention weights
-  Activation.softmaxSpec 0 scores
-
-/--
-Apply attention weights to encoder outputs (weighted sum / context vector).
-
-Given attention weights `a : (seqLen)` and encoder outputs `H : (seqLen × hiddenDim)`, returns the
-context vector `c = Σ_i a_i · H_i : (hiddenDim)`.
--/
-def applyAttentionSpec {hiddenDim seqLen : Nat}
-  (attentionWeights : Tensor α [seqLen])
-  (encoderOutputs : Tensor α [seqLen, hiddenDim])
-  (h1 : seqLen ≠ 0) :
-  Tensor α [hiddenDim] :=
-  -- Weighted sum of encoder outputs
-  let weightedOutputs := Tensor.dim (fun i =>
-    scaleSpec (get encoderOutputs i) (Tensor.getScalar attentionWeights i)
-  )
-  -- Sum across sequence dimension
-  reduceSum 0 weightedOutputs (Shape.hasNonemptyAxisZeroOfNe h1).proof
 
 end Spec

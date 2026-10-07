@@ -40,14 +40,12 @@ identifies that JVP with the actual derivative and proves that the primitive bac
 returns the same cotangents as this graph.
 
 ## PyTorch correspondence / citations
-- Conceptually corresponds to `torch.nn.LayerNorm` (without batching/running stats): normalize along
+- Conceptually corresponds to `torch.nn.LayerNorm`: normalize along
   the last dimension, then apply affine parameters `(gamma,beta)`.
   https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html
 -/
 
-
 @[expose] public section
-
 
 namespace Proofs
 namespace Autograd
@@ -365,11 +363,10 @@ def outputCLM {m n : Nat} :
 /--
 LayerNorm as one reusable pointwise node over arbitrary context indices.
 
-Internally this node runs the already-proved detailed LayerNorm graph. Its JVP is defined as the
-Fréchet derivative of that composed map at the current point, and its VJP is the adjoint of that
-derivative. This is exactly the block-level abstraction needed for large model proofs: the detailed
-LayerNorm proof remains in this file, while Transformer/GPT/ViT proofs can treat LayerNorm as a
-single pointwise node with explicit domain assumptions.
+The forward map evaluates the detailed LayerNorm graph. Its JVP is defined by the Fréchet
+derivative of that map, and its VJP by the adjoint. Transformer proofs use this mathematical
+block without expanding its internal nodes. This is not an executable backward implementation;
+`LayerNormFDeriv` separately identifies the derivative with the primitive JVP and VJP formulas.
 -/
 def wholeNode {Γ : List Shape} {m n : Nat} (inputs : Inputs Γ m n) (ε : ℝ) :
     Node Γ (MatShape m n) :=

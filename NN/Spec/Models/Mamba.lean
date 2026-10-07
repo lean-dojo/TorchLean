@@ -46,7 +46,7 @@ The layer has eleven trainable parameter tensors. Its expanded channel count is
 Expansion, state width, and convolution width determine the saved tensor shapes. Checkpoints from
 the former gated recurrence use a different parameter layout and cannot be loaded into this layer
 unchanged. Each layer call starts with zero recurrent state and empty convolution history;
-`Runtime.Autograd.Model.Mamba.runArray` accepts and returns both a state tensor of shape
+`Runtime.Autograd.Model.Mamba.run` accepts and returns both a state tensor of shape
 `[innerWidth, stateWidth]` and newest-first projected-token history for continuation across chunks.
 
 The causality (prefix-preservation) theorems in
@@ -95,22 +95,17 @@ namespace MambaBlockSpec
 variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {inputDim stateDim outputDim : Nat}
 
-/-- Input-to-state projection. -/
-def projectInput (m : MambaBlockSpec α inputDim stateDim outputDim)
-    (x : Tensor α [inputDim]) : Tensor α [stateDim] :=
-  vecMatMulSpec x m.inProj
-
 /-- Token-dependent sigmoid gate. -/
 def gate (m : MambaBlockSpec α inputDim stateDim outputDim)
     (x : Tensor α [inputDim]) : Tensor α [stateDim] :=
-  Tensor.mapSpec Activation.Math.sigmoidSpec (vecMatMulSpec x m.gateProj)
+  Tensor.map Activation.Math.sigmoidSpec (vecMatMulSpec x m.gateProj)
 
 /-- One Mamba-style token step, returning `(new_state, output)`. -/
 def step (m : MambaBlockSpec α inputDim stateDim outputDim)
     (h : Tensor α [stateDim])
     (x : Tensor α [inputDim]) :
     Tensor α [stateDim] × Tensor α [outputDim] :=
-  let xState := m.projectInput x
+  let xState := vecMatMulSpec x m.inProj
   let h' := m.ssm.step h xState
   let yState := m.ssm.readout h' xState
   let gated := Tensor.mulSpec yState (m.gate x)
@@ -189,16 +184,6 @@ namespace SelectiveMambaBlockSpec
 variable {α : Type} [TorchLean.Storage α] [Context α]
 variable {inputDim innerDim stateDim outputDim convWidth : Nat}
 
-/-- Projection feeding the content path before convolution and selective state updates. -/
-def projectX (m : SelectiveMambaBlockSpec α inputDim innerDim stateDim outputDim convWidth)
-    (x : Tensor α [inputDim]) : Tensor α [innerDim] :=
-  vecMatMulSpec x m.xProj
-
-/-- Projection feeding the multiplicative gate path in the selective state-space block. -/
-def projectZ (m : SelectiveMambaBlockSpec α inputDim innerDim stateDim outputDim convWidth)
-    (x : Tensor α [inputDim]) : Tensor α [innerDim] :=
-  vecMatMulSpec x m.zProj
-
 /--
 Causal depthwise convolution from a newest-first history of projected tokens.
 
@@ -213,9 +198,10 @@ def causalDepthwiseConv
     Tensor.scalar <|
       (List.finRange convWidth).foldl
         (fun acc tap =>
-          let zeroInner : Tensor α [innerDim] :=
-            Tensor.dim (fun _ => Tensor.scalar 0)
-          let xTap : α := Tensor.getScalar (history[tap.val]?.getD zeroInner) c
+          let xTap : α :=
+            match history[tap.val]? with
+            | some token => token.getScalar c
+            | none => 0
           acc + xTap * get2 m.convKernel tap c)
         (Tensor.getScalar m.convBias c))
 
@@ -223,19 +209,7 @@ def causalDepthwiseConv
 def delta
     (m : SelectiveMambaBlockSpec α inputDim innerDim stateDim outputDim convWidth)
     (u : Tensor α [innerDim]) : Tensor α [innerDim] :=
-  Tensor.mapSpec Activation.Math.softplusSpec (vecMatMulSpec u m.dtProj + m.dtBias)
-
-/-- Token-dependent input-state vector `B_t`. -/
-def bToken
-    (m : SelectiveMambaBlockSpec α inputDim innerDim stateDim outputDim convWidth)
-    (u : Tensor α [innerDim]) : Tensor α [stateDim] :=
-  vecMatMulSpec u m.bProj
-
-/-- Token-dependent state-output vector `C_t`. -/
-def cToken
-    (m : SelectiveMambaBlockSpec α inputDim innerDim stateDim outputDim convWidth)
-    (u : Tensor α [innerDim]) : Tensor α [stateDim] :=
-  vecMatMulSpec u m.cProj
+  Tensor.map Activation.Math.softplusSpec (vecMatMulSpec u m.dtProj + m.dtBias)
 
 /--
 One selective diagonal SSM update:
@@ -248,7 +222,7 @@ def selectiveStateStep
     (u : Tensor α [innerDim]) :
     Tensor α [innerDim, stateDim] :=
   let Δ := m.delta u
-  let B := m.bToken u
+  let B := vecMatMulSpec u m.bProj
   Tensor.dim (fun d : Fin innerDim =>
     Tensor.dim (fun n : Fin stateDim =>
       let deltaD := Tensor.getScalar Δ d
@@ -262,7 +236,7 @@ def stateReadout
     (h : Tensor α [innerDim, stateDim])
     (u : Tensor α [innerDim]) :
     Tensor α [innerDim] :=
-  let C := m.cToken u
+  let C := vecMatMulSpec u m.cProj
   Tensor.dim (fun d : Fin innerDim =>
     Tensor.scalar <|
       (List.finRange stateDim).foldl
@@ -299,8 +273,8 @@ def stepWithConvolutionHistory
     (Tensor α [innerDim, stateDim] ×
       Array (Tensor α [innerDim])) ×
       Tensor α [outputDim] :=
-  let xPath := m.projectX x
-  let zPath := m.projectZ x
+  let xPath := vecMatMulSpec x m.xProj
+  let zPath := vecMatMulSpec x m.zProj
   let history := (#[xPath] ++ state.2).take convWidth
   let (nextHidden, output) := m.stepWithHistory state.1 history zPath
   ((nextHidden, history), output)

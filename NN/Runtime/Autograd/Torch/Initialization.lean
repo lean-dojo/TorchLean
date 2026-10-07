@@ -37,7 +37,7 @@ namespace Autograd
 namespace Torch
 namespace Init
 
-open Spec TorchLean
+open Spec
 open TorchLean TorchLean.Tensor
 
 /-- A deterministic scheme for initializing a tensor of `Float` values. -/
@@ -50,7 +50,7 @@ inductive Scheme where
   | kaimingUniform (fanIn : Nat)
   deriving Repr
 
-/-- Reject initializer parameters that would produce invalid floating-point samples. -/
+/-- Check the parameter domains of a declared initialization scheme. -/
 def Scheme.validate : Scheme → Except String Unit
   | .zeros
   | .ones
@@ -123,11 +123,6 @@ def tensor (sch : Scheme) (seed : Nat := 0) : {s : Shape} → Tensor Float s
 def xavierUniform (outDim inDim : Nat) (seed : Nat := 0) :
     Tensor Float [outDim, inDim] :=
   tensor (s := .dim outDim (.dim inDim .scalar)) (.xavierUniform inDim outDim) seed
-
-/-- Initialize a matrix with the Kaiming/He uniform distribution for ReLU networks. -/
-def kaimingUniform (outDim inDim : Nat) (seed : Nat := 0) :
-    Tensor Float [outDim, inDim] :=
-  tensor (s := .dim outDim (.dim inDim .scalar)) (.kaimingUniform inDim) seed
 
 end Init
 end Torch

@@ -52,7 +52,7 @@ theorem boxUnaryEnclosure?_enclosesReal [LawfulBoundOps α] [NonlinearBoundOps �
     (henclose : UnaryEnclosure (α := α) f enclose) (B : FlatBox α)
     (x : Tensor ℝ [B.dim]) (hx : EnclosesReal B x)
     {out : FlatBox α} (hout : boxUnaryEnclosure? (α := α) enclose B = some out) :
-    EnclosesRealValue out (Tensor.mapSpec f x) := by
+    EnclosesRealValue out (Tensor.map f x) := by
   simp only [boxUnaryEnclosure?] at hout
   obtain ⟨bounds, hbounds, hout⟩ := Option.bind_eq_some_iff.mp hout
   have hpoint := Tensor.Internal.sequenceFinM_get_of_eq_some hbounds
@@ -60,6 +60,6 @@ theorem boxUnaryEnclosure?_enclosesReal [LawfulBoundOps α] [NonlinearBoundOps �
   refine ⟨rfl, ?_⟩
   intro i
   have hscalar := henclose (hpoint i) (hx i).1 (hx i).2
-  simpa [EnclosesReal, Tensor.mapSpec] using hscalar
+  simpa [EnclosesReal] using hscalar
 
 end NN.MLTheory.CROWN.Graph

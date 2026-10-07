@@ -192,7 +192,7 @@ theorem approxTensor_dim_of_forall {α : Type} {toSpec : α → SpecScalar} {n :
 -- ---------------------------------------------------------------------------
 
 /--
-Lift a domain-restricted scalar approximation bound to an elementwise `mapSpec`.
+Lift a domain-restricted scalar approximation bound to an elementwise `Tensor.map`.
 
 The predicate is carried by `Tensor.Forall`, so callers can certify operations such as square root
 once at the scalar level without rebuilding an elementwise tensor proof for every operation.
@@ -210,10 +210,10 @@ theorem approxTensor_map_spec_of_scalar_bound_of_forall
           abs (toSpec xR - x) ≤ eps →
             abs (toSpec (fR xR) - fS x) ≤ bnd (toSpec xR) eps) →
         approxTensor (α := α) (toSpec := toSpec)
-          (mapSpec (s := s) fS xS)
-          (mapSpec (s := s) fR xR)
+          (Tensor.map (shape := s) fS xS)
+          (Tensor.map (shape := s) fR xR)
           (linfNorm
-            (mapSpec (s := s) (fun a => bnd a eps)
+            (Tensor.map (shape := s) (fun a => bnd a eps)
               (tensorToSpec (α := α) (toSpec := toSpec) xR))) := by
   intro xS xR eps hx hdom hscalar
   induction s with
@@ -231,15 +231,15 @@ theorem approxTensor_map_spec_of_scalar_bound_of_forall
         (approxTensor_scalar_iff (α := α) (toSpec := toSpec)
           (x := fS xS.item) (xR := fR xR.item)
           (eps := linfNorm
-            (mapSpec (s := Shape.scalar) (fun a => bnd a eps)
+            (Tensor.map (shape := Shape.scalar) (fun a => bnd a eps)
               (tensorToSpec (α := α) (toSpec := toSpec)
                 (Tensor.scalar xR.item))))).2 (by
                   simpa [tensorToSpec, linfNorm, RuntimeApprox.linfNorm, tensorLinfNorm,
-                    mapSpec, Tensor.map, Tensor.item, MathFunctions.abs] using
+                    Tensor.map, Tensor.item, MathFunctions.abs] using
                     (le_trans herr (le_abs_self (bnd (toSpec xR.item) eps))))
   | dim n inner ih =>
       let boundTensor :=
-        mapSpec (s := Shape.dim n inner) (fun a => bnd a eps)
+        Tensor.map (shape := Shape.dim n inner) (fun a => bnd a eps)
           (tensorToSpec (α := α) (toSpec := toSpec) xR)
       let bound := linfNorm boundTensor
       have hbound : 0 ≤ bound := linfNorm_nonneg boundTensor
@@ -252,20 +252,20 @@ theorem approxTensor_map_spec_of_scalar_bound_of_forall
       have hlocal := ih hxI hdomI
       have hle :
           linfNorm
-              (mapSpec (s := inner) (fun a => bnd a eps)
+              (Tensor.map (shape := inner) (fun a => bnd a eps)
                 (tensorToSpec (α := α) (toSpec := toSpec) (xR.unstack i))) ≤
             bound := by
         have h := linfNorm_unstack_le boundTensor i
-        simpa [bound, boundTensor, tensorToSpec, mapSpec,
+        simpa [bound, boundTensor, tensorToSpec, Tensor.map,
           TorchLean.Tensor.map, TorchLean.Tensor.unstack,
           TorchLean.Tensor.Internal.Rep.map_unstack] using h
       have hmono := approxTensor_mono hlocal hle
-      simpa [bound, boundTensor, tensorToSpec, mapSpec,
+      simpa [bound, boundTensor, tensorToSpec, Tensor.map,
         TorchLean.Tensor.map, TorchLean.Tensor.unstack,
         TorchLean.Tensor.Internal.Rep.map_unstack] using hmono
 
 /--
-Lift a scalar approximation bound to an elementwise `mapSpec`.
+Lift a scalar approximation bound to an elementwise `Tensor.map`.
 
 Given a scalar bound of the form
 `|toSpec (fR xR) - fS x| ≤ bnd (toSpec xR) eps`
@@ -281,10 +281,10 @@ theorem approxTensor_map_spec_of_scalar_bound {α : Type} {toSpec : α → SpecS
           abs (toSpec xR - x) ≤ eps →
             abs (toSpec (fR xR) - fS x) ≤ bnd (toSpec xR) eps) →
         approxTensor (α := α) (toSpec := toSpec)
-          (mapSpec (s := s) fS xS)
-          (mapSpec (s := s) fR xR)
+          (Tensor.map (shape := s) fS xS)
+          (Tensor.map (shape := s) fR xR)
           (linfNorm
-            (mapSpec (s := s) (fun a => bnd a eps) (tensorToSpec (α := α) (toSpec := toSpec)
+            (Tensor.map (shape := s) (fun a => bnd a eps) (tensorToSpec (α := α) (toSpec := toSpec)
               xR))) := by
   intro xS xR eps hx hscalar
   exact approxTensor_map_spec_of_scalar_bound_of_forall (α := α) (toSpec := toSpec)
@@ -306,8 +306,8 @@ theorem approxTensor_map_spec_of_runtime_scalar_bound
           abs (toSpec xR - x) ≤ eps →
             abs (toSpec (fR xR) - fS x) ≤ bnd xR eps) →
         approxTensor (α := α) (toSpec := toSpec)
-          (mapSpec (s := s) fS xS)
-          (mapSpec (s := s) fR xR)
+          (Tensor.map (shape := s) fS xS)
+          (Tensor.map (shape := s) fR xR)
           (linfNorm (Tensor.map (fun a => bnd a eps) xR)) := by
   intro xS xR eps hx hscalar
   induction s with
@@ -324,7 +324,7 @@ theorem approxTensor_map_spec_of_runtime_scalar_bound
             (Tensor.map (fun a => bnd a eps)
               (Tensor.scalar xR.item)))).2 (by
                 simpa [linfNorm, RuntimeApprox.linfNorm, tensorLinfNorm,
-                  mapSpec, Tensor.map, Tensor.item, MathFunctions.abs] using
+                  Tensor.map, Tensor.item, MathFunctions.abs] using
                   (le_trans herr (le_abs_self (bnd xR.item eps))))
   | dim n inner ih =>
       let boundTensor :=
@@ -342,11 +342,11 @@ theorem approxTensor_map_spec_of_runtime_scalar_bound
               (Tensor.map (fun a => bnd a eps) (xR.unstack i)) ≤
             bound := by
         have h := linfNorm_unstack_le boundTensor i
-        simpa [bound, boundTensor, mapSpec, TorchLean.Tensor.map,
+        simpa [bound, boundTensor, Tensor.map, TorchLean.Tensor.map,
           TorchLean.Tensor.unstack,
           TorchLean.Tensor.Internal.Rep.map_unstack] using h
       have hmono := approxTensor_mono hlocal hle
-      simpa [bound, boundTensor, mapSpec, TorchLean.Tensor.map,
+      simpa [bound, boundTensor, Tensor.map, TorchLean.Tensor.map,
         TorchLean.Tensor.unstack,
         TorchLean.Tensor.Internal.Rep.map_unstack] using hmono
 
@@ -402,7 +402,7 @@ theorem approxTensor_map2_spec_of_scalar_bound {α : Type} {toSpec : α → Spec
               (tensorToSpec (α := α) (toSpec := toSpec) (Tensor.scalar xR.item))
               (tensorToSpec (α := α) (toSpec := toSpec) (Tensor.scalar yR.item))))).2 (by
                 simpa [tensorToSpec, linfNorm, RuntimeApprox.linfNorm, tensorLinfNorm,
-                  mapSpec, map2Spec, Tensor.map, Tensor.item, MathFunctions.abs] using herr')
+                  Tensor.map, map2Spec, Tensor.item, MathFunctions.abs] using herr')
   | dim n s ih =>
       let boundTensor :=
         map2Spec (fun a b => bnd a b epsx epsy)

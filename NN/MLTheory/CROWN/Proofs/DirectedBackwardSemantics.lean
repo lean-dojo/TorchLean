@@ -91,12 +91,10 @@ def NodeEquation (nodes : Array Node) (ps : ParamStore α)
       ∀ p, unaryParent? node.parents = some p → CopyEquation dims v id p
   | .add =>
       ∀ p q, binaryParents? node.parents = some (p, q) →
-        dims p = dims id ∧ dims q = dims id ∧
-          ∀ i : Fin (dims id), v id i.val = v p i.val + v q i.val
+        BinaryEquation dims v id p q (· + ·)
   | .sub =>
       ∀ p q, binaryParents? node.parents = some (p, q) →
-        dims p = dims id ∧ dims q = dims id ∧
-          ∀ i : Fin (dims id), v id i.val = v p i.val - v q i.val
+        BinaryEquation dims v id p q (· - ·)
   | .linear =>
       ∀ p, unaryParent? node.parents = some p →
         ∀ config, ps.linearWB[id]? = some config →

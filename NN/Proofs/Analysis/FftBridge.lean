@@ -35,6 +35,8 @@ Why this is not merged into `Fft.lean`: `Fft.lean` is pure Fourier algebra over 
 This file imports the TorchLean runtime FFT definitions and therefore sits at the boundary between
 runtime code and the exact theorem. The separation keeps the core inversion theorem focused and
 lets downstream proofs import only the pure DFT facts when they do not need runtime transport.
+The bridge proves matrix-entry equality at this local exact-complex context, not rounded complex
+arithmetic, native FFT execution or the compiled layer's end-to-end refinement.
 -/
 
 @[expose] public section
@@ -164,22 +166,10 @@ theorem twiddle_eq_omega_pow (n j k : Nat) :
     simpa [hω] using
       (Complex.exp_nat_mul (-(2 * Real.pi * Complex.I / (n : ℂ))) (j * k)).symm
 
-  -- Match exponents: `θ = 2π * j*k / n` and multiplication is commutative.
-  have hθ : θ = (2 * Real.pi * (j : ℂ) * (k : ℂ)) / (n : ℂ) := by
-    simp [θ, MathFunctions.pi, mul_left_comm, mul_comm]
-
   have hexp :
       -θ * Complex.I =
         (j * k : ℕ) * (-(2 * Real.pi * Complex.I / (n : ℂ))) := by
-    have hjk : ((j * k : ℕ) : ℂ) = (j : ℂ) * (k : ℂ) := by
-      simp [Nat.cast_mul]
-    calc
-      -θ * Complex.I
-          = -((2 * Real.pi * (j : ℂ) * (k : ℂ)) / (n : ℂ)) * Complex.I := by
-              simp [hθ]
-      _ = ((j * k : ℕ) : ℂ) * (-(2 * Real.pi * Complex.I / (n : ℂ))) := by
-              simp [hjk, div_eq_mul_inv, mul_assoc, mul_left_comm, mul_comm]
-      _ = (j * k : ℕ) * (-(2 * Real.pi * Complex.I / (n : ℂ))) := by rfl
+    simp [θ, MathFunctions.pi, Nat.cast_mul, div_eq_mul_inv, mul_assoc, mul_left_comm, mul_comm]
 
   calc
     Runtime.Autograd.Model.Layers.FFT.twiddle (α := ℂ) n j k
@@ -227,21 +217,10 @@ theorem twiddleInv_eq_zeta_pow (n j k : Nat) :
         Complex.exp ((j * k : ℕ) * (2 * Real.pi * Complex.I / (n : ℂ))) := by
     simpa [hζ] using (Complex.exp_nat_mul (2 * Real.pi * Complex.I / (n : ℂ)) (j * k)).symm
 
-  have hθ : θ = (2 * Real.pi * (j : ℂ) * (k : ℂ)) / (n : ℂ) := by
-    simp [θ, MathFunctions.pi, mul_left_comm, mul_comm]
-
   have hexp :
       θ * Complex.I =
         (j * k : ℕ) * (2 * Real.pi * Complex.I / (n : ℂ)) := by
-    have hjk : ((j * k : ℕ) : ℂ) = (j : ℂ) * (k : ℂ) := by
-      simp [Nat.cast_mul]
-    calc
-      θ * Complex.I
-          = ((2 * Real.pi * (j : ℂ) * (k : ℂ)) / (n : ℂ)) * Complex.I := by
-              simp [hθ]
-      _ = ((j * k : ℕ) : ℂ) * (2 * Real.pi * Complex.I / (n : ℂ)) := by
-              simp [hjk, div_eq_mul_inv, mul_assoc, mul_left_comm, mul_comm]
-      _ = (j * k : ℕ) * (2 * Real.pi * Complex.I / (n : ℂ)) := by rfl
+    simp [θ, MathFunctions.pi, Nat.cast_mul, div_eq_mul_inv, mul_assoc, mul_left_comm, mul_comm]
 
   calc
     Runtime.Autograd.Model.Layers.FFT.twiddleInv (α := ℂ) n j k

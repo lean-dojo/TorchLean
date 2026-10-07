@@ -107,7 +107,7 @@ def rmsNorm (leading : Shape) (width : Nat) (hWidth : 0 < width) :
       fun {m} _ _ => fun input gamma =>
         (Runtime.Autograd.Model.Norm.rmsNorm (m := m) (α := α)
           (leading := leading) (width := width) hWidth input gamma :
-          m (Runtime.Autograd.Model.RefTy (m := m) (α := α)
+          m (Runtime.Autograd.Model.Ref (m := m) (α := α)
             (leading.appendDim width))) }
 
 /-- Pure evaluation of final-axis RMS normalization with a shared scale. -/
@@ -160,7 +160,7 @@ def l2Normalize (leading : Shape) (width : Nat) (hWidth : 0 < width) :
       fun {m} _ _ => fun input epsilon =>
         (Runtime.Autograd.Model.Norm.l2Normalize (m := m) (α := α)
           (leading := leading) (width := width) hWidth input epsilon :
-          m (Runtime.Autograd.Model.RefTy (m := m) (α := α)
+          m (Runtime.Autograd.Model.Ref (m := m) (α := α)
             (leading.appendDim width))) }
 
 /-- Pure evaluation of final-axis regularized L2 normalization. -/

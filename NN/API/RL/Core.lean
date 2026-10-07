@@ -40,18 +40,18 @@ namespace rl
 namespace env
 export Spec.RL
   (StepResult ObservedTransition Env SafeEnv
-   reset stepGym stateAfter evolve evolveFrom
-   states statesFrom rollout rolloutFrom)
+   reset stepGym stateAfter evolve
+   states rollout)
 export Spec.RL.StepResult (done)
 export Spec.RL.SafeEnv (actionPathOk)
 end env
 
 namespace core
 export Spec.RL
-  (continueMask discountedBackup tdTarget tdResidual)
+  (continueMask discountedBackup tdResidual)
 export Runtime.RL.Core
   (Transition
-   discountedReturnsFrom discountedReturns discountedReturnsDone
+   discountedReturns discountedReturnsDone
    generalizedAdvantageEstimation returnsFromAdvantages
    squaredError huberLoss)
 end core
@@ -82,31 +82,66 @@ export Spec.RL.Markov
 end markov
 
 namespace bandits
+/-!
+Both state types expose `init` and `update`. A value state uses sample averages:
+
+```lean
+let state : rl.bandits.ValueState Float 3 := rl.bandits.ValueState.init
+let state := state.update action reward
+let action := state.greedy?
+```
+
+A preference state instead learns a softmax policy: `state.update action reward stepSize`, with
+`baseline := false` to omit the running-average baseline. Read its probabilities with
+`state.policy`. Exploration draws for `epsilonGreedy?` are supplied by the caller.
+-/
 export Runtime.RL.Bandits
-  (ValueState PreferenceState
-   greedyAction? epsilonGreedyAction?
-   sampleAverageStep totalPulls
-   ucb1Bonus ucb1Scores ucb1Action?
-   gradientPolicy gradientBanditStep)
-export Runtime.RL.Bandits.ValueState (init)
-export Runtime.RL.Bandits.PreferenceState (init)
+  (ValueState PreferenceState ucbBonus)
+
+namespace ValueState
+export Runtime.RL.Bandits.ValueState (init greedy? epsilonGreedy? update pulls ucbScores ucb?)
+end ValueState
+
+namespace PreferenceState
+export Runtime.RL.Bandits.PreferenceState (init policy update)
+end PreferenceState
 end bandits
 
 namespace tabular
+/-!
+Compute a target, then move one table entry toward it with `update`:
+
+```lean
+let target := rl.tabular.qLearningTarget q nextState reward discount
+let q := rl.tabular.update q (state, action, PUnit.unit) target stepSize
+```
+
+State-value tables use `(state, PUnit.unit)` instead. The coordinate is checked against the
+tensor's shape by Lean; `update` does not convert it through a runtime index list.
+-/
 export Runtime.RL.Tabular
-  (actionRow maxActionValue greedyAction? expectedActionValue
-   td0Update
-   sarsaTarget expectedSarsaTarget qLearningTarget doubleQTarget
-   sarsaUpdate expectedSarsaUpdate qLearningUpdate
-   doubleQUpdateLeft doubleQUpdateRight)
+  (row maximum greedy? expectation
+   update sarsaTarget expectedSarsaTarget qLearningTarget doubleQTarget)
 end tabular
 
 namespace value
+/-!
+Keep target selection separate from the scalar error function:
+
+```lean
+let target := rl.value.dqnTarget reward discount done nextValues
+let loss := rl.value.loss values action target
+let robustLoss := rl.value.loss values action target
+  (error := fun prediction target => rl.core.huberLoss prediction target threshold)
+```
+
+For a temporal-difference residual, subtract `Tensor.getScalar values action` from the target.
+DDPG's critic uses `rl.core.discountedBackup`; its actor minimizes the negative critic value.
+-/
 export Runtime.RL.ValueLearning
-  (chosenActionValue maxQValue
+  (maximum loss
    dqnTarget doubleDqnTarget
-   dqnResidual dqnMSELoss dqnHuberLoss doubleDqnResidual
-   ddpgActorObjective ddpgCriticTarget td3Target
+   td3Target
    sacTarget sacActorObjective)
 end value
 
@@ -118,7 +153,7 @@ end replay
 
 namespace dqn
 export Runtime.RL.DQN
-  (loss softUpdateScalar)
+  (loss updateTarget)
 
 namespace autograd
 /-!
@@ -126,20 +161,31 @@ Differentiable DQN losses over TorchLean backend references.
 
 These helpers build scalar semi-gradient losses for eager or typed graph autograd. Targets and
 action indicators are detached; the selected online Q values receive the loss gradient.
+
+`huber prediction target` detaches Bellman targets before reducing the elementwise loss.
+`loss qValues actions target` also detaches the one-hot actions and averages over transitions.
 -/
-export Runtime.RL.DQN.Autograd (huberTDLoss actionHuberLoss)
+export Runtime.RL.DQN.Autograd (huber loss)
 end autograd
 end dqn
 
 namespace policy
+/-!
+`probabilities` applies softmax. `probability` and `logProbability` guard a selected probability
+with epsilon; `logSoftmax` instead selects an unclamped log-softmax entry. `entropy` uses guarded
+weights without renormalizing, whereas `kl` clamps and normalizes both probability vectors.
+
+`sample seed counter values` consumes probability weights. Set `logits := true` to apply softmax
+first. Both modes return the next counter and chosen action; supplied weights are not validated.
+For TRPO's unpenalized surrogate, use `ratio * advantage`; the trust-region constraint is separate.
+-/
 export Runtime.RL.PolicyGradient
-  (actionPolicy actionProbability actionLogProbability actionLogSoftmax entropyBonus
+  (probabilities probability logProbability logSoftmax entropy
    reinforceLoss criticLoss actorCriticLoss
-   importanceRatio categoricalKL categoricalKLFromLogits
-   trpoSurrogateFromRatio klPenalizedPolicyLoss sacCategoricalActorLoss
-   ppoClippedObjectiveFromRatio ppoClippedObjective ppoLoss)
+   ratio kl klFromLogits
+   klLoss sacActorLoss)
 export Runtime.RL.PolicyGradient
-  (sampleCategorical sampleActionFromLogits)
+  (sample)
 
 namespace autograd
 /-!
@@ -150,16 +196,38 @@ counterpart: they build scalar losses from backend refs, so the same formulas ca
 or typed graph autograd.
 -/
 export Runtime.RL.PolicyGradient.Autograd
-  (actionLogProbOneHot
-   entropyMean
-   ppoClippedObjective
-   ppoLoss)
+  (logProbability entropy)
 end autograd
 end policy
 
+namespace ppo
+/-!
+`objective ratio advantage clipEps` is the clipped surrogate to maximize. When starting from
+policy logits and a cached old log-probability, use `objectiveFromLogits`; it applies the guarded
+selected probability from `policy.logProbability`. `loss` negates that objective and adds value
+regression and entropy terms. These pure functions do not construct a differentiation tape.
+-/
+export Runtime.RL.PolicyGradient.PPO (objective objectiveFromLogits loss)
+
+namespace autograd
+/-!
+`objective` records the per-sample clipped surrogate from logits and one-hot actions; `loss`
+records the mean policy, value and entropy loss. Both use `policy.autograd.logProbability`'s
+finite log-softmax guard. `create actor critic` bundles the two models into an objective definition
+for a PPO batch. The pure `ppo.loss` above instead operates on concrete tensors for one action.
+-/
+export Runtime.RL.PolicyGradient.Autograd.PPO (objective loss create)
+end autograd
+end ppo
+
 namespace eval
+/-!
+`totalReward` evaluates one greedy-policy episode without recording its history. `meanReward`
+averages these episode totals, not individual step rewards. `path` instead records the checked
+session states, including the initial state; those states can contain nonnumeric environment data.
+-/
 export Runtime.RL.Eval
-  (greedyActionFromLogits episodeTotalReward episodePath averageEpisodeTotalReward)
+  (greedy totalReward path meanReward)
 end eval
 
 end rl

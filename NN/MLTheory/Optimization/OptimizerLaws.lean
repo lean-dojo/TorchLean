@@ -250,8 +250,6 @@ end StepSpec
 
 /-! ## Muon comparison laws -/
 
-variable [DecidableRel ((· > ·) : α → α → Prop)]
-
 namespace Muon
 
 /--

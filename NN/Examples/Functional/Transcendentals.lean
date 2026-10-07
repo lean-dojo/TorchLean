@@ -24,17 +24,16 @@ rejects a named wrong answer. In particular, the last one distinguishes a missin
 rounding error. Every check should print `PASS` or `PASS-NEG`; a mismatch exits with an error.
 No dataset or GPU is needed.
 
-`expProofSurface` and `expBackward_eq_adjoint_fderiv` give the separate real-arithmetic theorem.
+`expSpec` and `exp_backward_eq_adjoint_fderiv` give the separate real-arithmetic theorem.
 The executable comparisons test the Float tape on these inputs; they do not prove its native
-implementation or establish a derivative at every input. Read `expNegativeTwoFn`, then `gradAt`,
-then `checkAll` for the application flow.
+implementation or establish a derivative at every input. Read `exponential`, then `grad`,
+then `run` for the application flow.
 -/
 
 @[expose] public section
 
 namespace NN.Examples.Functional.Transcendentals
 
-open TorchLean.Tensor
 open TorchLean
 
 /-! ## Proof objects and runtime checks -/
@@ -48,7 +47,7 @@ This is the actual proof layer object: it packages the forward op, its JVP, a Fr
 candidate, and the theorem that the JVP is the true derivative. The runtime checks below exercise
 the executable Float tape; this declaration points to the corresponding real-valued theorem.
 -/
-def expProofSurface : Proofs.Autograd.OpSpecFDerivCorrect 1 1 :=
+def expSpec : Proofs.Autograd.OpSpecFDerivCorrect 1 1 :=
   Proofs.Autograd.OpSpecFDerivCorrect.exp (n := 1)
 
 /--
@@ -56,35 +55,37 @@ For scalar exp over `ℝ`, the proved backward rule is the adjoint of the Fréch
 
 This is the theorem-level statement that the executable regression check is meant to complement.
 -/
-theorem expBackward_eq_adjoint_fderiv
+theorem exp_backward_eq_adjoint_fderiv
     (x δ : Tensor ℝ [1]) :
-    Proofs.Autograd.getScalarE (expProofSurface.correct.op.backward x δ) =
-      Proofs.Autograd.vjp expProofSurface.forwardVec (Proofs.Autograd.getScalarE x)
+    Proofs.Autograd.getScalarE (expSpec.correct.op.backward x δ) =
+      Proofs.Autograd.vjp expSpec.forwardVec (Proofs.Autograd.getScalarE x)
         (Proofs.Autograd.getScalarE δ) :=
-  Proofs.Autograd.OpSpecFDerivCorrect.backward_eq_adjoint_fderiv expProofSurface x δ
+  Proofs.Autograd.OpSpecFDerivCorrect.backward_eq_adjoint_fderiv expSpec x δ
 
 end
 
 -- The scalar formula is checked for every real input; the Float checks below sample execution.
-example (x : ℝ) : HasDerivAt (fun y : ℝ => Real.exp (-2 * y))
-    (-2 * Real.exp (-2 * x)) x := by
+example (scale x : ℝ) : HasDerivAt (fun y : ℝ => Real.exp (scale * y))
+    (scale * Real.exp (scale * x)) x := by
   autograd
 
 /-! ## Functions under test (written once; gradients come from autograd) -/
 
-/-- $f(x)=e^x$. -/
-def expFn : autograd.Function [] [] :=
-  fun x => nn.functional.exp x
+/--
+$f(x)=e^{\mathrm{scale}\,x}$ for any integer scale.
 
-/-- $f(x)=e^{-2x}$; its derivative needs both the factor two and the minus sign. -/
-def expNegativeTwoFn : autograd.Function [] [] :=
-  fun x => do
-    let u ← nn.functional.scale x (-2)
-    nn.functional.exp u
-
-/-- $f(x)=3x+1$ via the scalar-affine op. -/
-def affineFn : autograd.Function [] [] :=
-  fun x => nn.functional.affine x 3 1
+The default uses the exponential directly, without adding an identity-scale node to the tape.
+Other scales are converted through the scalar backend's natural-number and negation operations.
+-/
+def exponential (scale : Int := 1) : autograd.Function [] [] :=
+  fun x =>
+    if scale = 1 then
+      nn.functional.exp x
+    else do
+      let u ← nn.functional.scale x (match scale with
+        | .ofNat n => Nat.cast n
+        | .negSucc n => -Nat.cast (n + 1))
+      nn.functional.exp u
 
 /-! ## Float checks -/
 
@@ -106,8 +107,8 @@ def expectNot (name : String) (got wrong : Float) (tol : Float := 1e-6) : IO Uni
   else
     IO.println s!"[PASS-NEG] {name}: grad = {got} ≠ {wrong} (test discriminates)"
 
-/-- Differentiate a scalar→scalar `Fn` at a Float point, returning the gradient. -/
-def gradAt (f : autograd.Function [] []) (x0 : Float) :
+/-- Evaluate the scalar derivative at a Float input; extract its entry for printing. -/
+def grad (f : autograd.Function [] []) (x0 : Float) :
     IO Float := do
   let x := Tensor.full [] x0
   let g ← autograd.grad (σ := []) (α := Float) f x
@@ -119,19 +120,19 @@ Compare each derivative with its analytic value and reject a plausible wrong val
 The positive checks establish agreement at the sampled point; the negative controls show that
 those points and tolerances distinguish the particular mistakes named below.
 -/
-def checkAll : IO Unit := do
+def run : IO Unit := do
   -- exp:  d/dx eˣ = eˣ
-  let ge ← gradAt expFn 0.5
+  let ge ← grad exponential 0.5
   expectGrad "exp"   ge (Float.exp 0.5)
   expectNot  "exp≠1" ge 1.0                       -- a constant-1 gradient would be caught
 
   -- affine:  d/dx (3x+1) = 3
-  let ga ← gradAt affineFn 0.5
+  let ga ← grad (fun x => nn.functional.affine x 3 1) 0.5
   expectGrad "affine(3x+1)"   ga 3.0
   expectNot  "affine≠1"       ga 1.0              -- the slope is 3, not 1
 
   -- exp(-2x):  d/dx e^{-2x} = -2·e^{-2x}
-  let gn ← gradAt expNegativeTwoFn 0.5
+  let gn ← grad (exponential (scale := -2)) 0.5
   expectGrad "exp(-2x)"      gn ((-2.0) * Float.exp (-1.0))
   -- A positive derivative would have the wrong sign for this decreasing function.
   expectNot  "exp(-2x) sign" gn (( 2.0) * Float.exp (-1.0))
@@ -157,6 +158,6 @@ def main (args : List String) : IO Unit := do
     IO.println usage
     return
   CLI.requireNoArgs "transcendentals" args
-  checkAll
+  run
 
 end NN.Examples.Functional.Transcendentals

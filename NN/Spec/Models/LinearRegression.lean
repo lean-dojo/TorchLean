@@ -148,7 +148,7 @@ def mseLossSpec {batch inDim : Nat}
       -- representable. Divide one factor by the batch size before multiplication: each
       -- nonnegative contribution is then bounded by the exact mean. The divisor is a
       -- constant, so differentiation never passes through a data-dependent scale.
-      reduceSum 0 (mapSpec (fun error => error * (error / (batch : α))) errors) leadingAxis
+      reduceSum 0 (Tensor.map (fun error => error * (error / (batch : α))) errors) leadingAxis
     else
       -- A nonfinite residual belongs to the original loss, rather than to an overflowing
       -- reduction. Preserve that result, including NaN when it occurs alongside infinity.
@@ -266,7 +266,7 @@ def lassoSoftThresholdSpec {inDim : Nat}
   (weights : Tensor α [inDim])
   (threshold : α) :
   Tensor α [inDim] :=
-  mapSpec (fun w =>
+  Tensor.map (fun w =>
     if w > threshold then w - threshold
     else if (-threshold) > w then w + threshold
     else 0) weights

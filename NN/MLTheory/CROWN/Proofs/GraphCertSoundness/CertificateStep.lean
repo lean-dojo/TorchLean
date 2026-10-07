@@ -34,9 +34,9 @@ noncomputable section
 This is a safe version of `propagateIBPNode` tailored to the subset of ops we prove soundness for.
 It defines what it means for a per-node certificate to be “locally well-formed”.
 
-Important: the runtime implementation `propagateIBPNode` uses `get!` on parent boxes; it assumes
-topological order and that earlier boxes exist. Here we avoid partiality by returning `none`
-whenever parents are missing.
+Both this checker step and the runtime transfer use safe optional parent-box lookups. A missing
+parent leaves the result unresolved. This proof-level step covers the real operator subset below;
+the runtime dispatcher also handles structural and normalization operations.
 -/
 
 /-- Safe lookup of the interval box recorded for node id `pid`, `none` when out of range. -/

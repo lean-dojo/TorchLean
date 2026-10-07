@@ -10,7 +10,6 @@ Not every syntax extension is a proof tactic:
 | Form | What it does | Implementation |
 | --- | --- | --- |
 | `autograd`, `converges`, `verify`, `einops`, `except_cases` | Construct or simplify proofs. | `NN/Tactic/` |
-| `#compare` | Run differential tests on supplied inputs; no proof is produced. | `NN/Testing/` |
 | `einsum`, `rearrange`, tensor literals | Elaborate expressions into shaped tensor programs. | `NN/Tensor/Internal/Elab/` |
 | `nn.Sequential!`, `nn.compose!` | Expand model-building syntax into ordinary composition. | `NN/API/Macros.lean` |
 | `#tensor_view` and other widget commands | Display data in the editor. | `NN/Widgets/` |
@@ -237,7 +236,7 @@ nested-dual implementation must preserve higher derivatives. `Runtime.Link.Highe
 combines both certificates and proves that extracting the reverse result gives mathlib's
 iterated derivative of the adjoint Fréchet derivative. A backward routine that is equally wrong
 over reals and dual numbers cannot meet that first-order obligation merely by preserving jets.
-The same module provides `TypedGraphWithData.tangent_vjp` for the runtime's `vjpWithSeed` method;
+The same module provides `TypedGraphWithData.tangent_vjp` for the runtime's `vjp` method;
 it checks that the real and nested runs record matching node shapes and select the same output.
 
 `TypedGraphWithData.tangent_vjpChecked_adjoint_fderiv` extends the result to successful checked
@@ -385,27 +384,9 @@ from a neural-network definition or prove convergence of arbitrary SGD, Adam, or
 
 ## Comparing implementations
 
-For executable code, an independent reference is often a useful first check:
-
-```lean
-import NN.Testing.Command
-
-#compare (fun n : Nat => n + n) with (fun n => 2 * n) on #[0, 1, 7]
--- Compared 3 cases (test only; not a proof).
-```
-
-The command reports the first failing input and both outputs, and rejects an empty corpus.
-`using relation` selects a comparison instead of Boolean equality. For floating-point work,
-choose deliberately between numerical equality, bit identity, and a tolerance. NaNs do not
-silently count as equal, unless your chosen comparison says they do. In a `module` file, imported
-runtime functions used by this editor command need `meta import`, just as they do for `#eval`.
-
-For CPU/GPU calls or other effectful implementations, import `NN.Testing.Compare` and call
-`NN.Testing.compareOn cases candidate reference agrees` in a native executable. Both functions
-take the same input type, but their result types can differ: the comparison relates the two.
-Supply reproducible inputs, and reset any shared state before each side.
-Exceptions fail the test; two failing implementations do not count as agreement. The helper
-uses no external solver or hidden random generator.
+For executable code, compare against an independent reference in a temporary `#eval` or native
+executable. Choose numerical equality, bit identity, or a tolerance explicitly. Use reproducible
+inputs and reset shared state before each implementation runs. These checks do not produce proofs.
 
 Use temporary scratch files for development sweeps and remove them after validation. Keep a
 permanent runtime check only when it covers a specific gap in the proofs and existing tests.
@@ -415,7 +396,7 @@ cancellation that detects reordered reductions.
 Independent proof validation is a different task. A tool such as Lean Comparator can check a
 software-correctness theorem against a separately fixed specification, just as it can check a
 mathematical theorem. It cannot establish that the specification matches the intended software
-merely by accepting a proof. `#compare` is not a replacement for that proof checker.
+merely by accepting a proof. Executable comparisons do not replace that proof checker.
 
 ## Tensor identities
 

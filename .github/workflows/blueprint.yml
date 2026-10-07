@@ -86,16 +86,12 @@ jobs:
           rm -rf .lake/build/doc-data .lake/build/api-docs.db
           DISABLE_EQUATIONS=1 scripts/lake.sh -Kcuda=false -Kenv=dev build TorchLeanDocs:docs
 
-      - name: Detect homepage folder
-        id: check_home_page
+      - name: Copy API documentation to `home_page/docs`
         run: |
-          if [ -d home_page ]; then
-            echo "The 'home_page' folder exists in the repository."
-            echo "HOME_PAGE_EXISTS=true" >> $GITHUB_ENV
-          else
-            echo "The 'home_page' folder does not exist in the repository."
-            echo "HOME_PAGE_EXISTS=false" >> $GITHUB_ENV
-          fi
+          rm -rf home_page/docs
+          cp -r .lake/build/doc home_page/docs
+          python3 scripts/docs/polish_docgen.py --docs home_page/docs
+          du -sh home_page/docs
 
       - name: Build Verso guide from `home_page/blueprint`
         run: |
@@ -114,14 +110,6 @@ jobs:
             cp -r home_page/blueprint/TorchLeanBlueprint/Guide/Assets/* _out/blueprint/html-multi/Guide/Assets/
           fi
           python3 scripts/docs/polish_verso_guide.py --guide _out/blueprint/html-multi
-          python3 scripts/docs/check_verso_layout.py --guide _out/blueprint/html-multi
-
-      - name: Copy API documentation to `home_page/docs`
-        run: |
-          rm -rf home_page/docs
-          cp -r .lake/build/doc home_page/docs
-          python3 scripts/docs/polish_docgen.py --docs home_page/docs
-          du -sh home_page/docs
 
       - name: Trim Lake build metadata from docs
         run: |
@@ -142,7 +130,7 @@ jobs:
         run: |
           mkdir -p home_page/importgraph
           scripts/lake.sh -Kcuda=false exe graph --to NN home_page/importgraph/index.html
-          python3 scripts/docs/postprocess_importgraph.py home_page/importgraph/index.html
+          python3 scripts/docs/polish_docgen.py --importgraph home_page/importgraph/index.html
 
       - name: Bundle dependencies
         uses: ruby/setup-ruby@v1
@@ -152,7 +140,6 @@ jobs:
           bundler-cache: true
 
       - name: Build website using Jekyll
-        if: env.HOME_PAGE_EXISTS == 'true'
         working-directory: home_page
         env:
           JEKYLL_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -187,7 +174,7 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ${{ env.HOME_PAGE_EXISTS == 'true' && 'home_page/_site' || 'home_page/' }}
+          path: home_page/_site
 
   deploy_pages:
     runs-on: ubuntu-latest

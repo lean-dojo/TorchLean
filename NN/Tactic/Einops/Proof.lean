@@ -10,6 +10,7 @@ public import NN.Tensor.Internal.Lowering.Pack
 public import NN.Tensor.Internal.Laws.MixedRadix -- shake: keep
 public import NN.Tensor.Internal.Lowering.Reduce -- shake: keep
 import Mathlib.Algebra.Order.Field.Basic
+public meta import Mathlib.Util.SynthesizeUsing
 
 /-!
 # Proof automation for verified tensor transformations
@@ -448,25 +449,20 @@ private def clearNonPropositionalLocals (goal : MVarId) : MetaM MVarId :=
 /-- Ask Omega for a closed certificate without disturbing the caller's goal list. -/
 private def omegaCertificate? (proposition : Expr) :
     TacticM (Option Expr) := do
-  let certificateGoal ← mkFreshExprSyntheticOpaqueMVar proposition
-  let omegaGoal ← clearNonPropositionalLocals certificateGoal.mvarId!
-  let savedGoals ← getGoals
-  let result ←
+  let result? ←
     try
-      setGoals [omegaGoal]
-      try
+      let result ← synthesizeUsing (u := .zero) proposition do
+        setGoals [← clearNonPropositionalLocals (← getMainGoal)]
         evalTactic <| ← `(tactic| omega)
-      catch
-        | .error _ _ => return none
-        | error => throw error
-      unless (← getUnsolvedGoals).isEmpty do
-        return none
-      let certificate ← instantiateMVars certificateGoal
-      ensureHasNoMVars certificate
-      pure (some certificate)
-    finally
-      setGoals savedGoals
-  return result
+      pure (some result)
+    catch
+      | .error _ _ => pure none
+      | error => throw error
+  let some (goals, certificate) := result?
+    | return none
+  unless goals.isEmpty do return none
+  ensureHasNoMVars certificate
+  return some certificate
 
 /--
 Ask the ordinary simplifier for a small closed certificate.
@@ -476,24 +472,19 @@ may stop at identities such as `0 + dimension`.
 -/
 private def simpCertificate? (proposition : Expr) :
     TacticM (Option Expr) := do
-  let certificateGoal ← mkFreshExprSyntheticOpaqueMVar proposition
-  let savedGoals ← getGoals
-  let result ←
+  let result? ←
     try
-      setGoals [certificateGoal.mvarId!]
-      try
+      let result ← synthesizeUsing (u := .zero) proposition do
         evalTactic <| ← `(tactic| simp)
-      catch
-        | .error _ _ => return none
-        | error => throw error
-      unless (← getUnsolvedGoals).isEmpty do
-        return none
-      let certificate ← instantiateMVars certificateGoal
-      ensureHasNoMVars certificate
-      pure (some certificate)
-    finally
-      setGoals savedGoals
-  return result
+      pure (some result)
+    catch
+      | .error _ _ => pure none
+      | error => throw error
+  let some (goals, certificate) := result?
+    | return none
+  unless goals.isEmpty do return none
+  ensureHasNoMVars certificate
+  return some certificate
 
 /-- Add an arithmetic fact to a goal only when Omega can certify it. -/
 private def noteOmegaFact? (goal : MVarId) (proposition : Expr) :

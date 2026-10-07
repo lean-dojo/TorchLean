@@ -15,7 +15,7 @@ import NN.Tensor.Internal.Elab.Syntax
 /-!
 # Mathlib matrix correspondence
 
-A rank-two TorchLean.Tensor.Internal tensor has coordinates
+A rank-two tensor has coordinates
 `Fin rows × (Fin columns × PUnit)`, while a mathlib matrix is a curried
 function `Fin rows → Fin columns → α`. `Rep.matrixEquiv` identifies these
 representations without changing entry order.

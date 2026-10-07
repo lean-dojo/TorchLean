@@ -66,18 +66,15 @@ def lowerBroadcastTo {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let ip ← parentIdx pId s₁
       if hCan : Spec.Shape.CanBroadcastTo s₁ s₂ then
         if hOut : s₂ = τ then
-          let forward := fun ctx : TensorReader α Γ =>
-            let x := readTensor (α := α) (xs := ctx) ip
+          let forward := fun ctx : TensorLookup α Γ =>
+            let x := ctx.read ip
             hOut ▸ Tensor.broadcastTo (α := α) (s₁ := s₁) (s₂ := s₂) hCan x
-          pure <| fwd forward
+          pure <| mkForwardNode (τ := τ) forward
         else
           throw <|
             s!"IRExec: node {i}: broadcastTo outShape mismatch: kind={repr s₂}, " ++
@@ -95,9 +92,6 @@ def lowerBroadcastTo {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let pNode ← g.getNode pId
@@ -110,11 +104,11 @@ def lowerBroadcastTo {α : Type} [TorchLean.Storage α] [Context α]
           let hRed := hAxis.down
           let expected : Shape := TorchLean.Tensor.shapeAfterSum s axis
           if hOut : expected = τ then
-            let forward := fun ctx : TensorReader α Γ =>
-              let x := readTensor (α := α) (xs := ctx) ip
+            let forward := fun ctx : TensorLookup α Γ =>
+              let x := ctx.read ip
               let y : Tensor α expected := operation.denote axis x hRed
               hOut ▸ y
-            pure <| fwd forward
+            pure <| mkForwardNode (τ := τ) forward
           else
             throw <|
               s!"IRExec: node {i}: {operation.label} outShape mismatch: " ++
@@ -139,19 +133,16 @@ def lowerSum {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match unaryParent? n.parents with
   | some pId =>
       let pNode ← g.getNode pId
       let s := pNode.outShape
       let ip ← parentIdx pId s
       if hOut : Shape.scalar = τ then
-        let forward := fun ctx : TensorReader α Γ =>
-          let x := readTensor (α := α) (xs := ctx) ip
+        let forward := fun ctx : TensorLookup α Γ =>
+          let x := ctx.read ip
           hOut ▸ Tensor.scalar (Tensor.sumSpec (α := α) x)
-        pure <| fwd forward
+        pure <| mkForwardNode (τ := τ) forward
       else
         throw s!"IRExec: node {i}: sum expects scalar outShape ({n.summary})"
   | _ => throw s!"IRExec: node {i}: sum expects 1 parent ({n.summary})"
@@ -164,9 +155,6 @@ def lowerMseLoss {α : Type} [TorchLean.Storage α] [Context α]
   let n := ctx.node
   let τ : Shape := n.outShape
   let parentIdx := ctx.parentIdx
-  let fwd (forward : TensorReader α Γ → Tensor α τ) :
-      ForwardNode α Γ τ :=
-    mkForwardNode (α := α) (Γ := Γ) (τ := τ) forward
   match binaryParents? n.parents with
   | some (yId, tId) =>
       let yNode ← g.getNode yId
@@ -176,16 +164,16 @@ def lowerMseLoss {α : Type} [TorchLean.Storage α] [Context α]
           let s := yNode.outShape
           let iy ← parentIdx yId s
           let it ← parentIdx tId s
-          let forward := fun ctx : TensorReader α Γ =>
-            let yhat := readTensor (α := α) (xs := ctx) iy
-            let target := readTensor (α := α) (xs := ctx) it
+          let forward := fun ctx : TensorLookup α Γ =>
+            let yhat := ctx.read iy
+            let target := ctx.read it
             let diff := Tensor.subSpec (α := α) yhat target
             let sq := Tensor.mulSpec (α := α) diff diff
             let total : α := Tensor.sumSpec (α := α) sq
             let y0 : Tensor α .scalar :=
               Tensor.scalar (total / (↑(TorchLean.Tensor.meanDenominator s) : α))
             Tensor.castShape y0 hOut
-          pure <| fwd forward
+          pure <| mkForwardNode (τ := τ) forward
         else
           throw s!"IRExec: node {i}: mse_loss expects scalar outShape ({n.summary})"
       else

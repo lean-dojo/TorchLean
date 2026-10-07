@@ -55,7 +55,7 @@ executable with `TORCHLEAN_ARB_PY`; otherwise the wrapper uses `python3`.
 The deep-dive comparison command is:
 
 ```bash
-lake exe torchlean floats_arb_ieee_compare
+scripts/lake.sh exe torchlean floats_arb_ieee_compare
 ```
 
 ## Supported functions

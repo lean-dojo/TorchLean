@@ -37,7 +37,11 @@ Runtime-checked `einsum` that returns an existential output shape.
 Supported:
 - multiple inputs, explicit/implicit output, and ellipsis (`...`).
 - repeated labels within an operand (diagonal extraction / trace semantics).
-- repeated labels in the output (diagonal embedding / zeroing off-diagonal entries).
+- repeated labels in the output (diagonal embedding, a TorchLean extension).
+
+Labels are not restricted to ASCII letters. Diagonal extraction and embedding multiply by a
+zero/one mask: off-diagonal NaN or infinity is not discarded by an indexing operation and can
+contaminate the result. The zeroing description applies to finite arithmetic, not all IEEE values.
 
 Currently unsupported (returns `none`):
 - non-broadcastable size mismatches.
@@ -49,9 +53,9 @@ reordering, reshaping, broadcasting, elementwise multiplication, and summing con
 def einsum? {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     (equation : String)
-    (xs : List (Σ s : Shape, RefTy (m := m) (α := α) s)) :
-    m (Option (Σ s : Shape, RefTy (m := m) (α := α) s)) := do
-  let computation : OptionT m (Σ s : Shape, RefTy (m := m) (α := α) s) := do
+    (xs : List (Σ s : Shape, Ref (m := m) (α := α) s)) :
+    m (Option (Σ s : Shape, Ref (m := m) (α := α) s)) := do
+  let computation : OptionT m (Σ s : Shape, Ref (m := m) (α := α) s) := do
     let parsed : Einsum.Parsed ←
       match Einsum.parseEquation equation with
       | .ok p => pure p
@@ -83,13 +87,13 @@ def einsum? {α : Type} [TorchLean.Storage α] [Context α]
 
     -- Expand per-input labels (including ellipsis mapped to `ell k` labels), and apply diagonal
     -- extraction for repeated labels inside an operand (PyTorch semantics).
-    let mut processedRev : List (Σ s : Shape, RefTy (m := m) (α := α) s) := []
+    let mut processedRev : List (Σ s : Shape, Ref (m := m) (α := α) s) := []
     let mut inLabelsRev : List (List Label) := []
     let mut inLabelsRawRev : List (List Label) := []
 
     let rec diagonalizeOperand (fuel : Nat)
-        (cur : Σ s : Shape, RefTy (m := m) (α := α) s) (labs : List Label) :
-        OptionT m ((Σ s : Shape, RefTy (m := m) (α := α) s) × List Label) := do
+        (cur : Σ s : Shape, Ref (m := m) (α := α) s) (labs : List Label) :
+        OptionT m ((Σ s : Shape, Ref (m := m) (α := α) s) × List Label) := do
       match fuel with
       | 0 =>
           if !decide labs.Nodup then
@@ -197,7 +201,7 @@ def einsum? {α : Type} [TorchLean.Storage α] [Context α]
     -- Recognize axis roles after ellipsis expansion and output inference. A single shared
     -- contraction axis and two operand-exclusive output axes form a matrix product; all other
     -- output axes are batch axes. Their positions and the number of batch axes are unrestricted.
-    let attemptFast : OptionT m (Σ s : Shape, RefTy (m := m) (α := α) s) := do
+    let attemptFast : OptionT m (Σ s : Shape, Ref (m := m) (α := α) s) := do
       let [a, b] := processed | failure
       let [labelsA, labelsB] := inLabels | failure
       let [contract] := contracted | failure
@@ -246,9 +250,9 @@ def einsum? {α : Type} [TorchLean.Storage α] [Context α]
         Einsum.swapDepthsForPerm? outputPerm outLabels.length | failure
       -- Insert only missing batch axes. The matmul primitive owns batch broadcasting and
       -- its adjoint; neither operand is expanded across the other matrix's free axis.
-      let align (x : Σ s : Shape, RefTy (m := m) (α := α) s)
+      let align (x : Σ s : Shape, Ref (m := m) (α := α) s)
           (swaps : List Nat) (target : Shape) :
-          OptionT m (RefTy (m := m) (α := α) target) := do
+          OptionT m (Ref (m := m) (α := α) target) := do
         let ⟨shape, ref⟩ ← OptionT.lift <|
           Einsum.permuteBySwaps (α := α) (m := m) x swaps
         if h : shape = target then
@@ -279,7 +283,7 @@ def einsum? {α : Type} [TorchLean.Storage α] [Context α]
     let sCommon : Shape := Shape.ofList fullDims
 
     -- Align each operand to `fullLabels` (permute -> reshape insert ones -> broadcast).
-    let mut alignedRev : List (RefTy (m := m) (α := α) sCommon) := []
+    let mut alignedRev : List (Ref (m := m) (α := α) sCommon) := []
     for ((⟨sIn, xIn⟩), labsIn) in List.zip processed inLabels do
       let targetOrder := fullLabels.filter (fun l => labsIn.contains l)
       let mut permRev : List Nat := []
@@ -305,7 +309,7 @@ def einsum? {α : Type} [TorchLean.Storage α] [Context α]
         else
           insertedDimsRev := 1 :: insertedDimsRev
       let sInserted : Shape := Shape.ofList insertedDimsRev.reverse
-      let xInserted : RefTy (m := m) (α := α) sInserted ←
+      let xInserted : Ref (m := m) (α := α) sInserted ←
         if h : Spec.Shape.size sPerm = Spec.Shape.size sInserted then
           OptionT.lift <| reshape (m := m) (α := α) (s₁ := sPerm) (s₂ := sInserted) xPerm h
         else
@@ -321,14 +325,14 @@ def einsum? {α : Type} [TorchLean.Storage α] [Context α]
     -- Multiply all aligned operands elementwise.
     let aligned := alignedRev.reverse
     let some prod0 := aligned.head? | failure
-    let mut prod : RefTy (m := m) (α := α) sCommon := prod0
+    let mut prod : Ref (m := m) (α := α) sCommon := prod0
     for x in aligned.drop 1 do
       prod ← OptionT.lift <| mul (m := m) (α := α) (s := sCommon) prod x
 
     -- Sum-reduce contracted axes (a suffix by construction).
     let rec reduceContracted (n : Nat)
-        (cur : Σ s : Shape, RefTy (m := m) (α := α) s) :
-        OptionT m (Σ s : Shape, RefTy (m := m) (α := α) s) := do
+        (cur : Σ s : Shape, Ref (m := m) (α := α) s) :
+        OptionT m (Σ s : Shape, Ref (m := m) (α := α) s) := do
       match n with
       | 0 => pure cur
       | n + 1 =>
@@ -367,7 +371,7 @@ def einsum? {α : Type} [TorchLean.Storage α] [Context α]
                 go (l :: seen) ls
         go [] outLabelsRaw
       let outCanon : List Label := outLabels ++ extras
-      let mut cur : Σ s : Shape, RefTy (m := m) (α := α) s := out0
+      let mut cur : Σ s : Shape, Ref (m := m) (α := α) s := out0
       for l in extras do
         let some baseIdx := outLabels.findIdx? (· == l) | failure
         let some d := dimMap.lookup l | failure
@@ -399,8 +403,8 @@ def «einsum» {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {sOut : Shape}
     (equation : String)
-    (xs : List (Σ s : Shape, RefTy (m := m) (α := α) s)) :
-    m (Option (RefTy (m := m) (α := α) sOut)) := do
+    (xs : List (Σ s : Shape, Ref (m := m) (α := α) s)) :
+    m (Option (Ref (m := m) (α := α) sOut)) := do
   let r? ← einsum? (α := α) (m := m) equation xs
   match r? with
   | none => pure none

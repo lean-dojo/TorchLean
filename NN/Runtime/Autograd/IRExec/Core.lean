@@ -8,7 +8,7 @@ module
 
 public import NN.IR.Semantics -- shake: keep
 public import NN.Proofs.Autograd.Runtime.Link -- shake: keep
-public import NN.Runtime.Autograd.IRExec.Context
+public import NN.Proofs.Autograd.Tape.Algebra.Context
 
 /-!
 # Forward IR Execution
@@ -34,7 +34,7 @@ Numeric IR node identifiers are converted through checked typed indices (`Idx`).
 types contain no derivative operations: lowering to `ForwardGraph` cannot be mistaken for an
 autograd lowering.
 
-Node closures use `TensorReader` to select parents. `ForwardNode.eval` and `ForwardData.eval`
+Node closures use `TensorLookup` to select parents. `ForwardNode.eval` and `ForwardData.eval`
 retain their typed-pack semantics, while proved compiler simplification rules execute the graph
 with an array context. Each node appends one value; conversion to a typed pack happens only when
 the caller requests that representation. `ForwardGraph.denoteAll` returns the array directly.
@@ -61,35 +61,28 @@ open NN.IR
 -- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
-/--
-`simp` rule for `Except`-`do` chains: binding an `.ok` value is just function application.
--/
+/-- Simplify a successful `Except` bind without unfolding the recorded continuation. -/
 @[simp] theorem Except.ok_bind {ε α β : Type} (a : α) (f : α → Except ε β) :
     (Except.ok a >>= f) = f a := rfl
 
-/--
-`simp` rule for `Except`-`do` chains: binding an `.error` short-circuits.
-
-Used heavily when discharging impossible branches in lowering correctness proofs.
--/
+/-- An error short-circuits an `Except` bind. Used by the lowering proofs' default simp set. -/
 @[simp] theorem Except.error_bind {ε α β : Type} (e : ε) (f : α → Except ε β) :
     (Except.error e >>= f) = Except.error e := rfl
-
 
 /--
 One forward-only SSA node over the typed context `Γ`.
 
-The `run` closure reads its inputs through a `TensorReader` using `readTensor`.
+The `run` closure selects inputs through `TensorLookup.read`.
 The `eval` method evaluates the node on a `TensorPack` with the same typed result.
 -/
 structure ForwardNode (α : Type) [TorchLean.Storage α] (Γ : List Shape) (τ : Shape) where
   /-- Evaluate the node using typed reads of the input and preceding node values. -/
-  run : TensorReader α Γ → Tensor α τ
+  run : TensorLookup α Γ → Tensor α τ
 
 /-- Evaluate a node on a typed pack, as in the logical forward semantics. -/
 @[simp] def ForwardNode.eval {α : Type} [Storage α] {Γ : List Shape} {τ : Shape}
     (node : ForwardNode α Γ τ) (ctx : TensorPack α Γ) : Tensor α τ :=
-  node.run (TensorReader.ofPack ctx)
+  node.run (TensorLookup.ofPack ctx)
 
 namespace Internal
 
@@ -121,18 +114,18 @@ def eval {α : Type} [Storage α] {Γ rev : List Shape}
 
 /-- Evaluate with array reads and one append per node, retaining a proof of the context shapes. -/
 def evalArray {α : Type} [Storage α] {Γ rev : List Shape}
-    (g : ReverseData α Γ rev) (x : TensorPack α Γ) : ContextArray α (Γ ++ rev.reverse) :=
+    (g : ReverseData α Γ rev) (x : TensorPack α Γ) : TensorContext α (Γ ++ rev.reverse) :=
   match g with
-  | .nil => (ContextArray.ofPack x).cast (List.append_nil Γ).symm
+  | .nil => (TensorContext.ofPack x).cast (List.append_nil Γ).symm
   | .snoc g node =>
       let ctx := evalArray g x
-      let y := node.run ctx.reader
+      let y := node.run ctx.lookup
       (ctx.push y).cast (by simp [List.reverse_cons, List.append_assoc])
 
 /-- The array evaluator represents exactly the original typed result, for every node closure. -/
 theorem evalArray_eq {α : Type} [Storage α] {Γ rev : List Shape}
     (g : ReverseData α Γ rev) (x : TensorPack α Γ) :
-    evalArray g x = ContextArray.ofPack (eval g x) := by
+    evalArray g x = TensorContext.ofPack (eval g x) := by
   induction g with
   | nil => simp [evalArray, eval]
   | snoc g node ih => simp [evalArray, eval, ih]
@@ -190,13 +183,13 @@ namespace Internal
 
 /-- Evaluate a public forward graph using the array implementation of its shared internal data. -/
 def evalArray {α : Type} [Storage α] {Γ ss : List Shape}
-    (g : ForwardData α Γ ss) (x : TensorPack α Γ) : ContextArray α (Γ ++ ss) :=
+    (g : ForwardData α Γ ss) (x : TensorPack α Γ) : TensorContext α (Γ ++ ss) :=
   (g.body.evalArray x).cast (congrArg (Γ ++ ·) g.shape_eq)
 
 /-- Public array evaluation agrees with the typed semantics for every forward graph. -/
 theorem evalArray_eq {α : Type} [Storage α] {Γ ss : List Shape}
     (g : ForwardData α Γ ss) (x : TensorPack α Γ) :
-    evalArray g x = ContextArray.ofPack (ForwardData.eval g x) := by
+    evalArray g x = TensorContext.ofPack (ForwardData.eval g x) := by
   simp [evalArray, ReverseData.evalArray_eq, ForwardData.eval]
 
 /-- Recover a typed pack only after all node executions have finished. -/
@@ -278,7 +271,8 @@ def denoteAllWithArray (e : ForwardGraph α) (x : Tensor α e.inShape) :
 /-- Array denotation preserves the typed logical evaluator and every intermediate value. -/
 @[csimp] theorem denoteAll_eq_denoteAllWithArray : @denoteAll = @denoteAllWithArray := by
   funext α inst e x
-  simp [denoteAllWithArray, Internal.evalArray_eq, denoteAll, ForwardGraph.eval]
+  simp [denoteAllWithArray, Internal.evalArray_eq, denoteAll, ForwardGraph.eval,
+    TensorContext.ofPack]
 
 end ForwardGraph
 

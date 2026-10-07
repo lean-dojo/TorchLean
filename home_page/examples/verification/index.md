@@ -26,7 +26,7 @@ To ask it in TorchLean, we need four things:
 - a lowered `NN.IR.Graph`, so verifier code can traverse named nodes;
 - an input box, with lower and upper bounds for every input coordinate;
 - an output property, usually a margin such as
-  $\operatorname{logit}\_{\mathrm{true}}-\operatorname{logit}\_{\mathrm{other}}\geq 0$.
+  $\operatorname{logit}\_{\mathrm{true}}-\operatorname{logit}\_{\mathrm{other}}>0$ for every other class.
 
 The common path is therefore:
 
@@ -37,8 +37,8 @@ The common path is therefore:
 5. inspect or check the output bounds.
 
 The reusable workflows under `NN/Verification/Builtin/` keep the model, input box, output
-property, and bound pass together. The same path works for generated graphs, imported weights, and
-external verifier leaves.
+property, and bound pass together. Imported weights need to be attached to a supported graph.
+External verifier leaves use a separate artifact reader; that reader does not recompute their bounds.
 
 Let's build an input box for a small MLP. We'll use `inputCenter` as its center and `eps` as its
 radius, then insert the flattened `inputBox` at the lowered input node:
@@ -57,7 +57,7 @@ $$[\mathtt{inputCenter}-\mathtt{eps},\mathtt{inputCenter}+\mathtt{eps}].$$
 
 ```lean
 let ibp := lowered.runIBP ps
-let outB ← lowered.outputBoxOrThrow ibp
+let outB ← IO.ofExcept (lowered.outputBox? ibp)
 ```
 
 The bound engine returns node-indexed `FlatBox` values. Each box stores a flattened dimension plus
@@ -155,9 +155,7 @@ affine reassociation instead use the nodewise CROWN sweep. Either path can retai
 when no affine transfer is available:
 
 ```lean
-let crown ← match lowered.outputBoxCROWN? ps inputBox with
-  | .ok outC => pure outC
-  | .error msg => throw <| IO.userError msg
+let crown ← IO.ofExcept (lowered.outputBoxCROWN? ps inputBox)
 ```
 
 The result is another `FlatBox` for the output node. It need not improve on IBP. The separate
@@ -170,13 +168,12 @@ this lets the verifier push a
 single objective backward through the graph:
 
 ```lean
-let objV : Tensor α [softmaxOutDim] :=
+let objV : Tensor α [3] :=
   Tensor.map cast ([1.0, -1.0, 0.0] : Tensor Float [3])
-let obj : FlatTensor α := { n := softmaxOutDim, v := objV }
+let obj : FlatTensor α := { n := 3, v := objV }
 
-let margin ← match lowered.backwardObjectiveBox? ps ibp inputBox obj with
-  | .ok outC => pure (getAtOrZero outC.lo [0])
-  | .error msg => throw <| IO.userError msg
+let objectiveBox ← IO.ofExcept (lowered.backwardObjectiveBox? ps ibp inputBox obj)
+let margin := getAtOrZero objectiveBox.lo [0]
 ```
 
 `margin` is the reported candidate lower bound on $p_0 - p_1$ over the input box. Its semantic
@@ -237,8 +234,9 @@ scripts/lake.sh exe verify -- camera-box3d-cert
 ```
 
 `torchlean-ibp` is the smallest graph-bound check: lower a TorchLean model, attach an input
-box, and propagate interval bounds to the output. `torchlean-transformer-ibp` runs the same
-workflow over an attention block and an encoder block; `--with-crown` adds the affine pass.
+box, and propagate interval bounds to the output. `torchlean-transformer-ibp` applies attention
+and LayerNorm, then bounds their MSE against a fixed target; `--with-crown` also requests CROWN
+output and loss-objective bounds.
 `torchlean-crown-ops` uses the same graph style but adds forward and backward CROWN-style affine
 passes over softmax and MSE-loss operations. `torchlean-mlp-workflow` trains a classifier and then
 checks robustness with the alpha-beta-CROWN path on the resulting graph. The arithmetic used by

@@ -35,7 +35,7 @@ namespace Numerics
 namespace Float32
 
 open Spec TorchLean
-open TorchLean TorchLean.Tensor
+open TorchLean.Tensor
 open Spec.RL
 
 

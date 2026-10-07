@@ -290,7 +290,8 @@ evaluation with interval propagation through the lowered graph:
   let x0 : Tensor Float [2] := [0.25, -0.75]
   -- Radius zero: the "region" is one point.
   let ps := lowered.seedLInfBall x0 0.0
-  let box ← lowered.outputBoxOrThrow (lowered.runIBP ps)
+  let box ← IO.ofExcept <|
+    lowered.outputBox? (lowered.runIBP ps)
   let y ← trainer.predict x0
   IO.println s!"runtime  = {y}"
   IO.println s!"IBP lo   = {box.lo}"
@@ -378,8 +379,8 @@ same payload:
     (α := Float) x0 eps
   let ps := lowered.seedLInfBall x0 eps
   let ibp := lowered.runIBP ps
-  let ibpBox ← lowered.outputBoxOrThrow ibp
-  let fwd ← lowered.outputBoxCROWNOrThrow ps xB
+  let ibpBox ← IO.ofExcept (lowered.outputBox? ibp)
+  let fwd ← IO.ofExcept (lowered.outputBoxCROWN? ps xB)
   let obj : NN.MLTheory.CROWN.Graph.FlatTensor Float :=
     { n := 1, v := Tensor.full [1] 1.0 }
   IO.println s!"IBP      = {ibpBox.lo}, {ibpBox.hi}"
@@ -400,14 +401,17 @@ objective is the scalar network output itself. In a classifier, a vector of coef
 instead ask about a difference between two logits. Here all three passes compute bounds for the
 same scalar.
 
-All three produce the same displayed bounds here. The affine pass in
-{src "NN/MLTheory/CROWN/Graph/Engine/CROWN/Node.lean"}[the CROWN engine] carries real affine forms
-through `matmul`, `add`, `reshape`, and `transpose`, but at each ReLU it keeps the interval
-enclosure as a constant affine form instead of the usual relaxation. The comment in the source says
-why: the CROWN slope is a division, and until the executable arithmetic can supply directed
-coefficients for it, computing that slope in host arithmetic would put an unproved rounding step
-inside the bound. Since the only nonlinearity in this network is a ReLU, the affine information is
-discarded at node `9` and everything after it is the interval answer again.
+All three produce the same bounds in the displayed transcript. The
+{src "NN/MLTheory/CROWN/Graph/Engine/CROWN/Node.lean"}[CROWN engine] selects its transfer rules
+according to the scalar arithmetic. For exact arithmetic, it propagates affine forms through
+operations such as matrix multiplication and addition. For `Float`, those arithmetic nodes use
+`directedNodeBounds?`, which tries a directed backward objective for each output coordinate and
+falls back to the node's IBP box when that calculation is unavailable.
+
+The forward ReLU rule uses its IBP enclosure as a constant affine form. A crossing-zero ReLU
+relaxation requires a division to compute its slope; the forward rule keeps the interval until
+directed affine coefficients are available. The backward objective path has its own transfer
+rules, so this forward fallback alone does not explain whether the three final bounds agree.
 
 Replacing an affine form with its enclosing interval can lose tightness; the validity of that
 interval still depends on the arithmetic and enclosure hypotheses. The real-valued ReLU relaxation

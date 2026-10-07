@@ -41,7 +41,7 @@ abbrev ssMaskedScaledDotProduct (m d : Nat) : List Shape :=
   [ .dim d (.dim m .scalar)           -- Kᵀ
   , .dim m (.dim m .scalar)           -- Q*Kᵀ
   , .dim m (.dim m .scalar)           -- scaled logits
-  , .dim m (.dim m .scalar)           -- logits plus fixed mask/bias
+  , .dim m (.dim m .scalar)           -- logits plus fixed bias
   , .dim m (.dim m .scalar)           -- softmax probs
   , .dim m (.dim d .scalar)           -- output
   ]
@@ -195,7 +195,7 @@ def maskedScaledDotProductDGraph {m d : Nat}
   exact dg6
 
 /--
-Reverse-mode theorem for finite additive-mask scaled-dot-product attention.
+Reverse-mode theorem for fixed-bias scaled-dot-product attention.
 -/
 theorem backprop_eq_adjoint_fderiv_maskedScaledDotProduct
     {m d : Nat} (c : ℝ) (bias : Vec (Spec.Shape.size (.dim m (.dim m .scalar))))

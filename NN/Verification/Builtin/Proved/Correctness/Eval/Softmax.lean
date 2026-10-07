@@ -39,7 +39,7 @@ theorem evalAt_hardMaskedSoftmax_eq
       Except.ok
         (Spec.SomeTensor.mk (α := α) s (Spec.hardMaskedSoftmaxSpec scores allowed)) := by
   simp [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, unaryGraphOut, unaryNodeOut,
-    Graph.getNode, Graph.getNode?,
+    Graph.getNode,
     Graph.unaryParentId, NN.IR.unaryParent?, Graph.expectShape,
     Bind.bind, Except.bind, Pure.pure, Except.pure]
 
@@ -59,7 +59,7 @@ theorem evalAt_softmax_axis_eq
       simp [hAxis] at hSome
   | some h =>
       simp [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, unaryGraphOut,
-        unaryNodeOut, Graph.getNode, Graph.getNode?, Graph.unaryParentId,
+        unaryNodeOut, Graph.getNode, Graph.unaryParentId,
         NN.IR.unaryParent?, Graph.expectShape, hAxis,
         Bind.bind, Except.bind, Pure.pure, Except.pure]
 

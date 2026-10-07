@@ -51,8 +51,6 @@ hypotheses under which it holds.
 
 The `leanOutput` blocks below are checked when the guide builds. Each computation sits beside
 its general contract, so we can inspect both a concrete value and the conditions behind a theorem.
-For native normalization, a separate runnable probe records the framework version and device
-alongside its numerical residuals.
 
 I choose small inputs that let us isolate a cause. Repeated attention scores make the mask the only
 reason rows differ; a one-feature normalization axis makes its centered activation exactly zero;
@@ -97,8 +95,8 @@ import NN.Examples.BugZoo.AttentionMask
 import NN.Examples.BugZoo.ShapeAndBroadcast
 
 #check NN.Examples.BugZoo.AttentionMask.exactMaskedLogit_blocked_exp_zero
-#check NN.Examples.BugZoo.ShapeAndBroadcast.addSingletonBatch
-#check NN.Examples.BugZoo.ShapeAndBroadcast.broadcastRowToMatrix_firstRow
+#check TorchLean.Tensor.repeatLeading
+#check NN.Examples.BugZoo.ShapeAndBroadcast.broadcast_first
 ```
 
 Open the file in the Lean Infoview. The shape declarations expose the singleton batch insertion and
@@ -179,13 +177,17 @@ Summing the rows of a two by three matrix removes the leading dimension:
 def bzMat : Tensor Float [2, 3] :=
   [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
 
-#eval ShapeAndBroadcast.reduceRows bzMat
+/-- Sum the leading axis to get three column totals. -/
+def bzRow : Tensor Float [3] :=
+  Tensor.reduceSum 0 bzMat Spec.Shape.NonemptyAxis.zero
+
+#eval bzRow
 ```
 ```leanOutput bzMatDef (whitespace := lax)
 [5.000000, 7.000000, 9.000000]
 ```
 
-The result has shape `[3]`, which the catalog names `RowShape`. Adding this row back to the
+The result has shape `[3]`. Adding this row back to the
 matrix by broadcasting would produce `[[6, 9, 12], [9, 12, 15]]`. The shape cannot tell us whether
 that broadcast was intended. TorchLean's `addSpec` requires the two operand shapes to agree, so it
 rejects
@@ -197,17 +199,17 @@ Elementwise addition requires an explicit broadcast of the
 reduced row.
 -/
 def bzBadAdd : Tensor Float [2, 3] :=
-  Tensor.addSpec bzMat (ShapeAndBroadcast.reduceRows bzMat)
+  Tensor.addSpec bzMat bzRow
 ```
 ```leanOutput bzBadAdd (whitespace := lax)
 Application type mismatch: The argument
-  ShapeAndBroadcast.reduceRows bzMat
+  bzRow
 has type
-  Tensor Float ShapeAndBroadcast.RowShape
+  Tensor Float [3]
 but is expected to have type
   Tensor Float [2, 3]
 in the application
-  bzMat.addSpec (ShapeAndBroadcast.reduceRows bzMat)
+  bzMat.addSpec bzRow
 ```
 
 If the broadcast was intended, it has to be written down:
@@ -215,45 +217,40 @@ If the broadcast was intended, it has to be written down:
 ```lean (name := bzBroadcast)
 -- Expand the reduced row explicitly across both rows of the
 -- original matrix.
-#eval ShapeAndBroadcast.broadcastRowToMatrix
-  (ShapeAndBroadcast.reduceRows bzMat)
+#eval Tensor.broadcastTo
+  ShapeAndBroadcast.row_broadcast bzRow
 ```
 ```leanOutput bzBroadcast (whitespace := lax)
 [[5.000000, 7.000000, 9.000000], [5.000000, 7.000000, 9.000000]]
 ```
 
-The values agree with PyTorch's implicit expansion. The difference is that the expansion is now a
-term with a name, so a reviewer reading a diff sees it appear or disappear.
+The values agree with PyTorch's implicit expansion. The difference is that we write the expansion
+explicitly, so a reviewer reading a diff sees it appear or disappear.
 
-The catalog keeps a second, inference-driven spelling and proves the two agree, so a proof written
-against one form can be reused for the other:
+We can also let Lean infer the broadcast evidence. Both spellings use the same tensor operation,
+and the catalog proves they agree:
 
 ```lean (name := bzInferred)
 -- Check that inferred broadcast evidence selects the same
 -- tensor operation.
-#check @ShapeAndBroadcast.inferredRowBroadcastToMatrix_eq
-```
-```leanOutput bzInferred (whitespace := lax)
-@ShapeAndBroadcast.inferredRowBroadcastToMatrix_eq :
-  ∀ {α : Type} [inst : Storage α] [inst_1 : Inhabited α]
-    (x : Tensor α ShapeAndBroadcast.RowShape),
-  ShapeAndBroadcast.inferredRowBroadcastToMatrix x =
-    ShapeAndBroadcast.broadcastRowToMatrix x
+example :
+    Tensor.broadcastTo (s₂ := [2, 3])
+      Spec.Shape.BroadcastTo.proof bzRow =
+    Tensor.broadcastTo
+      ShapeAndBroadcast.row_broadcast bzRow :=
+  ShapeAndBroadcast.broadcast_infer_eq bzRow
 ```
 
-For an image, `addSingletonBatch` inserts the leading batch dimension. Its result type records
-that specific shape change:
+For an image, `Tensor.repeatLeading 1` inserts the singleton batch dimension. We use the existing
+tensor operation rather than an image-specific wrapper; the result type records the shape change:
 
 ```lean (name := bzBatchSig)
 -- Read the inserted leading batch dimension in the result
 -- type.
-#check @ShapeAndBroadcast.addSingletonBatch
-```
-```leanOutput bzBatchSig (whitespace := lax)
-@ShapeAndBroadcast.addSingletonBatch : {α : Type} →
-  [inst : Storage α] →
-    Tensor α ShapeAndBroadcast.ImageShape →
-      Tensor α ShapeAndBroadcast.SingletonBatchImageShape
+example {α : Type} [Storage α]
+    (image : Tensor α [100, 100, 3]) :
+    Tensor α [1, 100, 100, 3] :=
+  Tensor.repeatLeading 1 image
 ```
 
 In PyTorch, `m.unsqueeze(0) + m` also succeeds: the rank-two operand broadcasts against the
@@ -602,10 +599,10 @@ produced by lowering:
 -- Read both lowering success and the raw-log exclusion
 -- before using the equality.
 open CompilerBoundary in
-#check @successfulLowering_preservesDenotation
+#check @lowering_preserves_denotation
 ```
 ```leanOutput bzLowering (whitespace := lax)
-@successfulLowering_preservesDenotation :
+@lowering_preserves_denotation :
   ∀ {α : Type} [inst : Storage α] [inst_1 : Context α]
     (graph : NN.IR.Graph) (payload : NN.IR.Payload α)
     (executable : Runtime.Autograd.IRExec.ForwardGraph α),
@@ -781,17 +778,17 @@ reference theorem fix that state and show that inference is affine in the input:
 -- The scale and bias are chosen before the input is
 -- quantified.
 open NormalizationState in
-#check @batchNormEvalWithStats_affine
+#check @batchNorm_affine
 ```
 ```leanOutput bzAffine (whitespace := lax)
-@batchNormEvalWithStats_affine :
+@batchNorm_affine :
   ∀ {channels : ℕ} {sSpatial : Shape}
     (stats : RunningStats channels)
     (gamma beta : Tensor ℝ [channels])
     (epsilon : optParam ℝ normalizationEpsilon),
   ∃ scale bias,
     ∀ (x : Tensor ℝ (sSpatial.prependDim channels)),
-      batchNormEvalWithStats x stats gamma beta epsilon =
+      batchNorm x stats gamma beta epsilon =
         (x.mulSpec scale).addSpec bias
 ```
 
@@ -824,7 +821,7 @@ weight 2, bias 3, and epsilon $`10^{-5}`:
 ```lean (name := bzLnFwd)
 -- A one-feature normalized value should leave only the
 -- affine bias.
-#eval LayerNormDegenerateAxis.reproLayerNormForward
+#eval LayerNormDegenerateAxis.forward
 ```
 ```leanOutput bzLnFwd (whitespace := lax)
 3.000000
@@ -833,7 +830,7 @@ weight 2, bias 3, and epsilon $`10^{-5}`:
 ```lean (name := bzLnDw)
 -- The scale gradient multiplies the zero centered
 -- activation.
-#eval LayerNormDegenerateAxis.reproLayerNormWeightGradient
+#eval LayerNormDegenerateAxis.backward.scaleGradient[0]
 ```
 ```leanOutput bzLnDw (whitespace := lax)
 0.000000
@@ -842,7 +839,9 @@ weight 2, bias 3, and epsilon $`10^{-5}`:
 ```lean (name := bzLnDx)
 -- The input gradient cancels when the normalization axis
 -- has one feature.
-#eval LayerNormDegenerateAxis.reproLayerNormInputGradient
+#eval
+  let dx := LayerNormDegenerateAxis.backward.inputGradient
+  dx[((0 : Fin 1), (0 : Fin 1))]
 ```
 ```leanOutput bzLnDx (whitespace := lax)
 0.000000
@@ -864,33 +863,10 @@ one_feature_layernorm_scale_grad_contract :
     0
 ```
 
-Now run the same configuration through PyTorch at float32 and at float64, sweeping the input
-magnitude:
-
-```terminal
-# Sweep input magnitudes and scalar types while recording
-# normalization residuals.
-python3 scripts/verification/normalization_contract_probe.py --device cpu
-```
-
-The probe requires PyTorch and prints its version along with the forward and backward residuals.
-It also covers constant slices for LayerNorm, GroupNorm, InstanceNorm, and training-mode BatchNorm.
-The mathematical targets stay fixed throughout the sweep: the forward value is three, and the
-scale and input gradients are zero. Any measured departure from those targets is a residual of
-the tested native computation.
-
-The magnitude sweep matters because cancellation can depend on the input even when the exact
-answer does not. Compare the residuals for binary32 and binary64, and retain the printed version
-and device with the result. The probe measures an implementation; it does not identify its exact
-instruction sequence or prove an error bound.
-
 The three Lean outputs separate the forward value, scale gradient, and input gradient so that
 agreement in one cannot hide disagreement in another. Bias three survives normalization, whereas
-the scale multiplies a zero normalized activation. The magnitude sweep keeps these mathematical
-targets unchanged while varying a quantity that can affect floating-point cancellation. This
-makes the residual meaningful: it measures departure from the same zero target at every listed
-magnitude. It does not estimate training accuracy or show how an optimizer would amplify or damp
-that error over many steps.
+the scale multiplies a zero normalized activation. These outputs do not measure native-framework
+residuals or training accuracy.
 
 ## Constant Normalization Slice
 
@@ -1051,17 +1027,14 @@ with the KV cache example. Rotary position embeddings make position accounting p
 meaning. A decode position off by one can be hard to notice because the shapes still line up and the
 model still produces tokens.
 
-A schedule is a function from slots to positions, so appending is a total operation with a printable
-result:
+We'll keep the positions in a tensor. Appending grows its length by one, and the default position
+is the old sequence length:
 
 ```lean (name := bzRope)
-open RoPEPosition in
 /-- Positions already issued for two decoded tokens. -/
-def bzSchedule : PositionSchedule 2 :=
-  { pos := fun i => i.val }
+def bzSchedule : Tensor Nat [2] := [0, 1]
 
-#eval List.ofFn
-  (RoPEPosition.appendNextPosition bzSchedule).pos
+#eval RoPEPosition.append bzSchedule
 ```
 ```leanOutput bzRope (whitespace := lax)
 [0, 1, 2]
@@ -1071,25 +1044,32 @@ def bzSchedule : PositionSchedule 2 :=
 -- The appended position follows the zero-based
 -- sequence-length convention.
 open RoPEPosition in
-#check @appendNextPosition_last
+#check @append_last
 ```
 ```leanOutput bzRopeThm (whitespace := lax)
-@appendNextPosition_last :
-  ∀ {seqLen : ℕ} (sched : PositionSchedule seqLen),
-  (appendNextPosition sched).pos ⟨seqLen, ⋯⟩ = seqLen
+@append_last :
+  ∀ {seqLen : ℕ} (schedule : Tensor ℕ [seqLen])
+    (position : optParam ℕ seqLen),
+  (append schedule position)[seqLen] = position
 ```
 
-In this zero-based example, the appended position is the old sequence length. The theorem fixes
-that rule even for an arbitrary input schedule: it does not compute “previous position plus one.”
-A cache using an offset or nonconsecutive positions would need a schedule rule that represents
-those positions explicitly.
+In this zero-based example, the appended position is the old sequence length, not “previous
+position plus one.” If our cache uses an offset or nonconsecutive positions, we pass the next
+position explicitly:
+
+```lean (name := bzRopeOffset)
+#eval RoPEPosition.append bzSchedule (position := 12)
+```
+```leanOutput bzRopeOffset (whitespace := lax)
+[0, 1, 12]
+```
 
 A position schedule separates a token's storage slot from the position used by its embedding.
 They coincide in the displayed `[0, 1, 2]` example, which makes the append convention easy to read.
 They need not coincide after a window has been shifted or a prefix has been assigned an offset.
-The theorem's arbitrary `sched` is useful for spotting that limit: the new position is always
-`seqLen`, regardless of the last stored position. No rotation is evaluated by this example; it
-checks the bookkeeping that supplies positions to a rotation implementation.
+The theorem covers whichever position we supply. The default is `seqLen`, regardless of the last
+stored position. No rotation is evaluated by this example; it checks the bookkeeping that supplies
+positions to a rotation implementation.
 
 ## Tokenizer Boundary
 
@@ -1104,7 +1084,7 @@ A contract is a vocabulary size plus the special ids, each carrying its own boun
 ```lean (name := bzTok)
 open TokenizerBoundary in
 /-- A tiny tokenizer configuration with eight ids. -/
-def bzTokenizer : TokenizerContract :=
+def bzTokenizer : Metadata :=
   { vocabularySize := 8
     paddingTokenId := ⟨0, by decide⟩
     endOfSequenceTokenId := ⟨7, by decide⟩ }
@@ -1123,18 +1103,18 @@ elaborate. The following theorem extracts the bound already carried by the id:
 -- Recover the vocabulary bound carried by every token in
 -- the sequence.
 open TokenizerBoundary in
-#check @tokenId_isValid
+#check @token_lt_vocabulary
 ```
 ```leanOutput bzTokThm (whitespace := lax)
-@tokenId_isValid :
+@token_lt_vocabulary :
   ∀ {vocabularySize sequenceLength : ℕ}
-    (sequence : TokenSequence vocabularySize sequenceLength)
+    (sequence : Tensor (Fin vocabularySize) [sequenceLength])
     (position : Fin sequenceLength),
-  ↑(sequence.tokenAt position) < vocabularySize
+  ↑sequence[position] < vocabularySize
 ```
 
 Every token id constructed at this type is in range. An importer or tokenizer bridge must establish
-that bound when converting external data, and `paddingTokenId_isValid` gives the corresponding
+that bound when converting external data, and `padding_lt_vocabulary` gives the corresponding
 bound for padding. These bounds do not establish that two tokenizers assign the same text or
 special-token meaning to an id.
 

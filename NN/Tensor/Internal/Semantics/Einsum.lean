@@ -335,9 +335,9 @@ The initial accumulator is explicit because generated kernels may continue a
 partially computed contraction. No associativity or commutativity law is
 assumed; the nesting order is part of the denotation.
 
-The fused lowering in `Lowering.Einsum` runs this very function rather than a
-private copy of it, so the executable kernel and the denotation can never drift
-apart in their traversal order.
+The general fused lowering uses this function. Specialized contraction loops
+and tiled or parallel output builders carry equality proofs against these
+ordered semantics; their implementations need not be identical to this loop.
 -/
 def coordinateSum {R : Type u} [Add R] [OfNat R 0] :
     (shape : Shape) → (Coord shape → R) → (initial : R := 0) → R
@@ -755,6 +755,9 @@ dependent physical shape. It therefore covers any operand count,
 heterogeneous ranks, repeated-label diagonals, right-aligned ellipses,
 singleton broadcasting, scalar outputs, and zero-length axes without
 operation-specific cases.
+
+This is an identity for the bilinear `Rep.dot` pairing, not a Hermitian-adjoint
+or analytic differentiability theorem.
 -/
 @[grind =] theorem dot_denoteEinsum_update_eq_dot_einsumOperandVjp
     {R : Type u} [Storage R] [CommSemiring R]
@@ -901,11 +904,10 @@ so summing the output recovers the sum of all ordered operand products.
     (checked : CheckedEinsum) (inputTensors : checked.InputTensors R) :
     (∑ outputCoordinate, denoteEinsum checked inputTensors outputCoordinate) =
       ∑ globalCoordinate,
-        einsumProductTensor checked inputTensors globalCoordinate :=
-  by
-    rw [denoteEinsum_eq_push]
-    exact Rep.sum_push checked.outputCoordinateOfGlobal
-      (einsumProductTensor checked inputTensors)
+        einsumProductTensor checked inputTensors globalCoordinate := by
+  rw [denoteEinsum_eq_push]
+  exact Rep.sum_push checked.outputCoordinateOfGlobal
+    (einsumProductTensor checked inputTensors)
 
 end Semantics
 

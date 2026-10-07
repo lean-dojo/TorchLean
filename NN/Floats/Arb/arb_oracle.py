@@ -162,7 +162,7 @@ def _unary_interval_enclosure(func: str, lo, hi, *, strategy: str) -> Any:
     raise ValueError(f"unsupported strategy: {strategy}")
 
 
-def _eval_expr(node: Any, env: dict[str, Any]) -> Any:
+def _eval_expr(node: Any, env: dict[str, Any], arb_ctor) -> Any:
     """
     Evaluate a JSON expression node into an Arb ball, using only a small whitelisted language.
 
@@ -189,7 +189,7 @@ def _eval_expr(node: Any, env: dict[str, Any]) -> Any:
 
     if "const" in node:
         # Arb encloses the decimal value at the working precision.
-        return env["__arb__"](str(node["const"]))
+        return arb_ctor(str(node["const"]))
 
     op = node.get("op")
     args = node.get("args", [])
@@ -199,19 +199,19 @@ def _eval_expr(node: Any, env: dict[str, Any]) -> Any:
     if op == "neg":
         if len(args) != 1:
             raise ValueError("neg expects 1 arg")
-        return -_eval_expr(args[0], env)
+        return -_eval_expr(args[0], env, arb_ctor)
 
     unary = _unary_ops()
     if op in unary:
         if len(args) != 1:
             raise ValueError(f"{op} expects 1 arg")
-        return unary[op](_eval_expr(args[0], env))
+        return unary[op](_eval_expr(args[0], env, arb_ctor))
 
     binary = _binary_ops()
     if op in binary:
         if len(args) != 2:
             raise ValueError(f"{op} expects 2 args")
-        return binary[op](_eval_expr(args[0], env), _eval_expr(args[1], env))
+        return binary[op](_eval_expr(args[0], env, arb_ctor), _eval_expr(args[1], env, arb_ctor))
 
     raise ValueError(f"unsupported op: {op}")
 
@@ -356,13 +356,13 @@ def main(argv: list[str]) -> int:
             if not isinstance(vars_obj, dict) or expr is None:
                 raise SystemExit("expr request requires {vars: {...}, expr: {...}}")
 
-            env: dict[str, Any] = {"__arb__": arb}
+            env: dict[str, Any] = {}
             for name, iv in vars_obj.items():
                 if not isinstance(iv, dict) or "lo" not in iv or "hi" not in iv:
                     raise SystemExit(f"bad var entry for {name}: expected {{lo,hi}}")
                 env[str(name)] = _ball_interval(arb(str(iv["lo"])), arb(str(iv["hi"])))
 
-            y = _eval_expr(expr, env)
+            y = _eval_expr(expr, env, arb)
             out = {
                 "status": "ok",
                 "tool": "arb_oracle",

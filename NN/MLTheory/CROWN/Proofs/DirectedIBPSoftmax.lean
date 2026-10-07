@@ -187,10 +187,7 @@ theorem hardMaskedSoftmaxVecSpec_mem_Icc {n : Nat}
           HardMaskedSoftmax.numerator allowed (getScalarE x) i ≤
             HardMaskedSoftmax.denominator allowed (getScalarE x) :=
         Finset.single_le_sum (fun j _ => hn j) (Finset.mem_univ i)
-      have hp : 0 < HardMaskedSoftmax.denominator allowed (getScalarE x) := by
-        apply lt_of_lt_of_le _ hle
-        simpa only [HardMaskedSoftmax.numerator, hi, Bool.true_eq, ↓reduceIte] using
-          Real.exp_pos (getScalarE x i)
+      have hp := HardMaskedSoftmax.denominator_pos allowed (getScalarE x) ⟨i, hi⟩
       exact ⟨div_nonneg (hn i) hp.le, (div_le_one hp).mpr hle⟩
 
 /-- The only allowed entry in a hard-mask row has probability one. -/

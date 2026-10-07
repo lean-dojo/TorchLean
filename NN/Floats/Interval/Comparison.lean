@@ -37,7 +37,7 @@ namespace TorchLean.Floats.Interval.Comparison
 
 
 /-- Display configured endpoints through binary64, retaining their full original bit encodings. -/
-def showConfiguredInterval {fmt : FloatFormat} {plan : Configured.StoragePlan fmt}
+def formatConfigured {fmt : FloatFormat} {plan : Configured.StoragePlan fmt}
     {code : Type} [ExecFloat.ModelCodec plan (Model fmt) code]
     (I : Interval (ExecFloat (Configured.Family fmt code plan))) : String :=
   let lo := ExecFloat.Binary.toFloat <| ExecFloat.Binary.ofModel <|
@@ -48,11 +48,11 @@ def showConfiguredInterval {fmt : FloatFormat} {plan : Configured.StoragePlan fm
     s!"{hi} (bits={ExecFloat.Binary.toNatBits I.hi})]"
 
 /-- Pretty-print a scalar together with its raw encoding. -/
-def showValue {α β : Type} [ToString α] [ToString β] (bits : α → β) (x : α) : String :=
+def formatValue {α β : Type} [ToString α] [ToString β] (bits : α → β) (x : α) : String :=
   s!"{x} (bits={bits x})"
 
 /-- Pretty-print endpoints using a scalar renderer. -/
-def showInterval {α : Type} (render : α → String) (I : Interval α) : String :=
+def format {α : Type} (render : α → String) (I : Interval α) : String :=
   s!"[{render I.lo}, {render I.hi}]"
 
 namespace Naive
@@ -69,14 +69,6 @@ namespace Naive
 /-- `-∞` by IEEE-754 binary32 bits. -/
 @[inline] def negInf : Float32 := Float32.ofBits (0xff800000 : UInt32)
 
-/-- Minimum of four values, preserving the pairwise comparison order. -/
-def minOfFour {α : Type} [Min α] (a b c d : α) : α :=
-  min (min a b) (min c d)
-
-/-- Maximum of four values, preserving the pairwise comparison order. -/
-def maxOfFour {α : Type} [Max α] (a b c d : α) : α :=
-  max (max a b) (max c d)
-
 /-- Naive endpoint addition; no directed rounding. -/
 @[inline] def add {α : Type} [Add α] (A B : Interval α) : Interval α :=
   ⟨A.lo + B.lo, A.hi + B.hi⟩
@@ -91,7 +83,7 @@ def mul {α : Type} [Mul α] [Min α] [Max α] (A B : Interval α) : Interval α
   let p01 := A.lo * B.hi
   let p10 := A.hi * B.lo
   let p11 := A.hi * B.hi
-  ⟨minOfFour p00 p01 p10 p11, maxOfFour p00 p01 p10 p11⟩
+  ⟨min (min p00 p01) (min p10 p11), max (max p00 p01) (max p10 p11)⟩
 
 /-- Conservative fallback interval `[-∞, +∞]`. -/
 @[inline] def whole : Interval Float32 := ⟨negInf, posInf⟩
@@ -114,7 +106,7 @@ def div (A B : Interval Float32) : Interval Float32 :=
     let p01 := A.lo / B.hi
     let p10 := A.hi / B.lo
     let p11 := A.hi / B.hi
-    ⟨minOfFour p00 p01 p10 p11, maxOfFour p00 p01 p10 p11⟩
+    ⟨min (min p00 p01) (min p10 p11), max (max p00 p01) (max p10 p11)⟩
 
 end Naive
 
@@ -122,12 +114,8 @@ namespace Rational
 
 /-- Classical four-corner multiplication over exact rationals. -/
 def mul (A B : RationalInterval) : RationalInterval :=
-  let p00 := A.lo * B.lo
-  let p01 := A.lo * B.hi
-  let p10 := A.hi * B.lo
-  let p11 := A.hi * B.hi
-  ⟨FloatLib.Floats.Interval.minOfFour p00 p01 p10 p11,
-    FloatLib.Floats.Interval.maxOfFour p00 p01 p10 p11⟩
+  let product := Naive.mul (⟨A.lo, A.hi⟩ : Interval Rat) ⟨B.lo, B.hi⟩
+  ⟨product.lo, product.hi⟩
 
 /-- Boolean check that `outer` contains `inner`. -/
 def contains (outer inner : RationalInterval) : Bool :=
@@ -140,7 +128,7 @@ def format (I : RationalInterval) : String :=
 end Rational
 
 /-- Decode rational endpoints, preserving the decoder's special-value policy on failure. -/
-def intervalToRat? {α : Type} (decode : α → Option Rat) (I : Interval α) :
+def toRational? {α : Type} (decode : α → Option Rat) (I : Interval α) :
     Option RationalInterval :=
   (I.decode? decode).map fun J => ⟨J.lo, J.hi⟩
 
@@ -150,7 +138,7 @@ Endpoint-evaluate a unary function, using the carrier's minimum and maximum.
 This is not a sound transcendental interval rule in general; it is a comparison
 baseline for examples.
 -/
-def intervalUnaryEndpoints {α : Type} [Min α] [Max α] (f : α → α) (lo hi : α) :
+def endpoints {α : Type} [Min α] [Max α] (f : α → α) (lo hi : α) :
     Interval α :=
   let a := f lo
   let b := f hi

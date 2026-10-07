@@ -112,7 +112,7 @@ pair belongs to shared storage, so an aliased trainer must start a fresh history
 or later. Version 4 carries the random-operation counter as well.
 The check precedes config parsing and all device allocation.
 -/
-def readCudaAdamCheckpointFormat
+def readAdamFormat
     (handle : IO.FS.Handle) (schema : OptimizerCheckpoint.ParameterSchema) :
     IO CheckpointIO.Format := do
   let magic ← CheckpointIO.readExact checkpointName handle cudaAdamCheckpointFormat.magic.size
@@ -132,7 +132,7 @@ def readCudaAdamCheckpointFormat
         s!"{checkpointName}: unsupported format version {version}; expected 2, 3, or 4"
 
 /-- Release every device buffer owned by an Adam state map. -/
-def releaseCudaAdamState (state : CudaAdamState) : IO Unit := do
+def releaseAdam (state : CudaAdamState) : IO Unit := do
   for (_, entry) in state.toList do
     releaseCudaBuffer entry.m
     releaseCudaBuffer entry.v
@@ -143,9 +143,9 @@ Bind an in-memory moment map to one optimizer configuration.
 Changing Adam to AdamW, or changing a moment-defining hyperparameter, requires a fresh state rather
 than silently reinterpreting existing moments.
 -/
-def ensureCudaAdamConfig
+def bindAdamConfig
     (configRef : IO.Ref (Option CudaAdamConfig)) (expected : CudaAdamConfig) : IO Unit := do
-  okOrThrow expected.validate
+  IO.ofExcept expected.validate
   match ← configRef.get with
   | none => configRef.set (some expected)
   | some actual =>
@@ -180,7 +180,7 @@ def readConfig (handle : IO.FS.Handle) : IO CudaAdamConfig := do
   let weightDecay :=
     Float.ofBits (UInt64.ofNat (← CheckpointIO.readNat64 checkpointName handle))
   let config : CudaAdamConfig := { kind, beta1, beta2, epsilon, weightDecay }
-  okOrThrow config.validate
+  IO.ofExcept config.validate
   pure config
 
 /--
@@ -192,7 +192,7 @@ version 2 encoding. Supplying the session counter selects version 4, which retai
 sharing and the next random key. Saving before the first Adam-family update is rejected because
 no optimizer state has yet been defined.
 -/
-def writeCudaAdamStateFloat32
+def saveAdam
     (path : System.FilePath) (schema : OptimizerCheckpoint.ParameterSchema)
     (configRef : IO.Ref (Option CudaAdamConfig)) (stateRef : IO.Ref CudaAdamState)
     (randomCounter : Option Nat := none) : IO Unit := do
@@ -202,7 +202,7 @@ def writeCudaAdamStateFloat32
     | some config => pure config
     | none => throw <| IO.userError <|
         s!"{checkpointName}: no Adam or AdamW update has initialized optimizer state"
-  okOrThrow config.validate
+  IO.ofExcept config.validate
   let state ← stateRef.get
   if state.size != schema.optimizerStateCount then
     throw <| IO.userError <|
@@ -254,7 +254,7 @@ def readCheckpoint
     throw <| IO.userError s!"{checkpointName}: malformed expected parameter schema"
   let mut replacement : CudaAdamState := Std.HashMap.emptyWithCapacity
   try
-    let format ← readCudaAdamCheckpointFormat handle schema
+    let format ← readAdamFormat handle schema
     let config ← readConfig handle
     let randomCounter ← if format.version ≥ 4 then
         some <$> CheckpointIO.readNat64 checkpointName handle
@@ -301,7 +301,7 @@ def readCheckpoint
       throw <| IO.userError s!"{checkpointName}: trailing bytes after final state entry"
     pure (config, replacement, randomCounter)
   catch error =>
-    releaseCudaAdamState replacement
+    releaseAdam replacement
     throw error
 
 /--
@@ -311,7 +311,7 @@ The old state remains live until the replacement has been parsed completely. Dup
 frozen or out-of-range parameters, zero step counters, trailing bytes, and truncated payloads are
 rejected.
 -/
-def readCudaAdamStateFloat32
+def loadAdam
     (path : System.FilePath) (schema : OptimizerCheckpoint.ParameterSchema)
     (configRef : IO.Ref (Option CudaAdamConfig)) (stateRef : IO.Ref CudaAdamState)
     (rngCounter? : Option (IO.Ref Nat) := none) : IO Unit := do
@@ -322,12 +322,12 @@ def readCudaAdamStateFloat32
     IO.FS.withFile path IO.FS.Mode.read fun handle =>
       readCheckpoint handle schema expectedConfig
   if randomCounter.isSome && rngCounter?.isNone then
-    releaseCudaAdamState replacement
+    releaseAdam replacement
     throw <| IO.userError s!"{checkpointName}: destination has no random-counter reference"
   match ← configRef.get with
   | some expected =>
       unless config.sameBits expected do
-        releaseCudaAdamState replacement
+        releaseAdam replacement
         throw <| IO.userError <|
           s!"{checkpointName}: checkpoint belongs to a different optimizer configuration"
   | none => pure ()
@@ -340,7 +340,7 @@ def readCudaAdamStateFloat32
       IO.eprintln s!"{checkpointName}: legacy checkpoint has no random counter; \
         stochastic training cannot be resumed exactly"
   | _, _ => pure ()
-  releaseCudaAdamState previous
+  releaseAdam previous
 
 end EagerSession
 end Internal

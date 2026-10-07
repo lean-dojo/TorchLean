@@ -48,8 +48,7 @@ then using the seeded RNG from that point onward (`TorchLean.Session.initRngFrom
 
 namespace Spec.Random
 
-open Spec TorchLean
-open TorchLean TorchLean.Tensor
+open Spec TorchLean TorchLean.Tensor
 
 /-! ### SplitMix64-style mixing -/
 
@@ -107,7 +106,7 @@ Build a deterministic tensor on the backend-rounded grid `u/denom` with the requ
 
 This is keyed by:
 - `key` (typically derived from a seed and a counter), and
-- `linearOffset` (to make recursion order-insensitive).
+- `linearOffset` (the starting position in the deterministic stream).
 -/
 namespace Internal
 
@@ -116,16 +115,12 @@ namespace Internal
 Each coordinate gets its own counter value. The integer draw depends only on `key` and the linear
 coordinate; conversion and division use the selected backend. Reusing those inputs on the same
 backend reproduces the result, which can round to the upper endpoint `1`. -/
-def uniform {α : Type} [TorchLean.Storage α] [Context α] (key : UInt64) :
-    ∀ {s : Shape}, Nat → Tensor α s
-  | .scalar, linearOffset =>
-      let denom : Nat := (2:Nat) ^ 32
-      let u := sampleNat key linearOffset denom
-      Tensor.scalar (sampleUnit (α := α) u denom)
-  | .dim _n rest, linearOffset =>
-      let block := Spec.Shape.size rest
-      Tensor.dim (fun i =>
-        uniform (α := α) key (s := rest) (linearOffset + i.1 * block))
+def uniform {α : Type} [TorchLean.Storage α] [Context α] (key : UInt64)
+    {s : Shape} (linearOffset : Nat) : Tensor α s :=
+  Tensor.Internal.Rep.ofFn fun coordinate =>
+    let denom : Nat := (2:Nat) ^ 32
+    let u := sampleNat key (linearOffset + (Shape.Coord.linearize coordinate).val) denom
+    sampleUnit (α := α) u denom
 
 end Internal
 
@@ -148,16 +143,11 @@ namespace Internal
 
 /-- Fill a tensor with a Bernoulli keep mask, one for kept coordinates and zero for dropped. -/
 def mask {α : Type} [TorchLean.Storage α] [Context α]
-    (key : UInt64) (keepProb : α) :
-    ∀ {s : Shape}, Nat → Tensor α s
-  | .scalar, linearOffset =>
-      let denom : Nat := (2:Nat) ^ 32
-      let u := sampleNat key linearOffset denom
-      Tensor.scalar (keepBit (α := α) keepProb u denom)
-  | .dim _n rest, linearOffset =>
-      let block := Spec.Shape.size rest
-      Tensor.dim (fun i =>
-        mask (α := α) key keepProb (s := rest) (linearOffset + i.1 * block))
+    (key : UInt64) (keepProb : α) {s : Shape} (linearOffset : Nat) : Tensor α s :=
+  Tensor.Internal.Rep.ofFn fun coordinate =>
+    let denom : Nat := (2:Nat) ^ 32
+    let u := sampleNat key (linearOffset + (Shape.Coord.linearize coordinate).val) denom
+    keepBit (α := α) keepProb u denom
 
 end Internal
 
@@ -209,20 +199,16 @@ def normalScalar {α : Type} [Context α] (key : UInt64) (linearIndex : Nat) :
 /-
 Build a deterministic tensor with (approximate) standard normal entries.
 
-The recursion is order-insensitive: it uses `linearOffset` plus a
-block-size multiplier so the same tensor shape always yields the same samples.
+Each draw uses `linearOffset` plus its row-major coordinate, so the same tensor shape and key
+always yield the same samples on the same backend.
 -/
 namespace Internal
 
 /-- Fill a tensor with approximate normal draws keyed by their linear coordinates. -/
-def normal {α : Type} [TorchLean.Storage α] [Context α] (key : UInt64) :
-    ∀ {s : Shape}, Nat → Tensor α s
-  | .scalar, linearOffset =>
-      Tensor.scalar (normalScalar (α := α) key linearOffset)
-  | .dim _n rest, linearOffset =>
-      let block := Spec.Shape.size rest
-      Tensor.dim (fun i =>
-        normal (α := α) key (s := rest) (linearOffset + i.1 * block))
+def normal {α : Type} [TorchLean.Storage α] [Context α] (key : UInt64)
+    {s : Shape} (linearOffset : Nat) : Tensor α s :=
+  Tensor.Internal.Rep.ofFn fun coordinate =>
+    normalScalar (α := α) key (linearOffset + (Shape.Coord.linearize coordinate).val)
 
 end Internal
 

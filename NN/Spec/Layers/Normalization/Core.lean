@@ -123,18 +123,10 @@ def layerNorm {seqLen embedDim : Nat}
 
   let mean := reduceMean (Spec.Shape.rank s - 1) x h_valid.proof
 
-  have h₁ : (Shape.dim seqLen (Shape.dim embedDim Shape.scalar)).rank = 2 := by
-    simp [Spec.Shape.rank]
-
   let mean_broadcast := broadcastAfterSum s (Spec.Shape.rank s - 1) mean
   let centered := subSpec x mean_broadcast
 
-  have inst : Shape.HasNonemptyAxis (Spec.Shape.rank (.dim seqLen (.dim embedDim .scalar)) - 1)
-      (.dim seqLen (.dim embedDim .scalar)) := by
-    apply Shape.inferNonemptyAxis
-    simp [h₁]
-
-  let varianceRaw := reduceVar (Spec.Shape.rank s - 1) centered inst.proof
+  let varianceRaw := reduceVar (Spec.Shape.rank s - 1) centered h_valid.proof
   -- Clamp small negative variance estimates before adding epsilon. A positive denominator still
   -- depends on the scalar backend and the supplied epsilon; this does not exclude NaN or zero.
   let variance := maxSpec varianceRaw (Tensor.full (.dim seqLen .scalar) 0)
@@ -176,28 +168,10 @@ def layerNormBackward
 
   let mean := reduceMean (Spec.Shape.rank s - 1) input h_valid.proof
 
-  have h₁ : (Shape.dim seqLen (Shape.dim embedDim Shape.scalar)).rank = 2 := by
-    simp [Spec.Shape.rank]
-
-  have h₂ : shapeAfterSum (Shape.dim seqLen (Shape.dim embedDim Shape.scalar)) 1
-            = Shape.dim seqLen Shape.scalar := by
-    simp
-
-  have h3 : shapeAfterSum (Shape.dim seqLen (Shape.dim embedDim Shape.scalar)) ((Shape.dim seqLen
-    (Shape.dim embedDim Shape.scalar)).rank - 1)
-          = Shape.dim seqLen Shape.scalar := by
-    rw [h₁]
-    rw [h₂]
-
   let mean_broadcast := broadcastAfterSum s (Spec.Shape.rank s - 1) mean
   let centered := subSpec input mean_broadcast
 
-  have inst : Shape.HasNonemptyAxis (Spec.Shape.rank (.dim seqLen (.dim embedDim .scalar)) - 1)
-      (.dim seqLen (.dim embedDim .scalar)) := by
-    apply Shape.inferNonemptyAxis
-    simp [h₁]
-
-  let varianceRaw := reduceVar (Spec.Shape.rank s - 1) centered inst.proof
+  let varianceRaw := reduceVar (Spec.Shape.rank s - 1) centered h_valid.proof
   let variance := maxSpec varianceRaw (Tensor.full (.dim seqLen .scalar) 0)
   let std := sqrtSpec (addSpec variance (Tensor.full (.dim seqLen .scalar) epsilon))
   let invStd := divSpec (Tensor.full (.dim seqLen .scalar) 1) std
@@ -210,9 +184,7 @@ def layerNormBackward
     apply Shape.CanBroadcastTo.dim_eq
     exact Shape.CanBroadcastTo.scalar
 
-  -- `gamma` and `beta` have shape `[embedDim]` and are shared across all `seqLen` positions, so
-  -- their
-  -- gradients sum over the sequence dimension (axis 0).
+  -- Affine parameters are shared across positions, so their gradients sum over axis 0.
   let hSequenceAxis := Shape.hasNonemptyAxisZeroOfPos sequenceLengthPositive
   let biasGradient := reduceSum 0 outputGradient hSequenceAxis.proof
   let scaleGradient := reduceSum 0 (mulSpec outputGradient norm) hSequenceAxis.proof
@@ -231,7 +203,7 @@ def layerNormBackward
   let invStdBroadcast := broadcastAfterSum s (Spec.Shape.rank s - 1) invStd
   let dyGamma := mulSpec outputGradient scaleBroadcast
 
-  let sumDyGamma := reduceSum (Spec.Shape.rank s - 1) dyGamma inst.proof
+  let sumDyGamma := reduceSum (Spec.Shape.rank s - 1) dyGamma h_valid.proof
   -- We interpret `embedDim` as the feature-count `N` in the closed-form LayerNorm VJP.
   --
   -- Note: this relies on the `Context`'s `NatCast α` behaving sensibly (in particular, that
@@ -243,7 +215,7 @@ def layerNormBackward
   let meanDyGamma := divSpec sumDyGamma (Tensor.full (.dim seqLen .scalar) N)
 
   let sumDyGammaXhat :=
-    reduceSum (Spec.Shape.rank s - 1) (mulSpec dyGamma norm) inst.proof
+    reduceSum (Spec.Shape.rank s - 1) (mulSpec dyGamma norm) h_valid.proof
   let meanDyGammaXhat := divSpec sumDyGammaXhat (Tensor.full (.dim seqLen .scalar) N)
 
   let meanDyGammaBroadcast :=
@@ -288,30 +260,22 @@ def layerNormJvp
 
   let mean := reduceMean (Spec.Shape.rank s - 1) x h_valid.proof
 
-  have h₁ : (Shape.dim seqLen (Shape.dim embedDim Shape.scalar)).rank = 2 := by
-    simp [Spec.Shape.rank]
-
   let mean_broadcast := broadcastAfterSum s (Spec.Shape.rank s - 1) mean
   let centered := subSpec x mean_broadcast
 
-  have inst : Shape.HasNonemptyAxis (Spec.Shape.rank (.dim seqLen (.dim embedDim .scalar)) - 1)
-      (.dim seqLen (.dim embedDim .scalar)) := by
-    apply Shape.inferNonemptyAxis
-    simp [h₁]
-
-  let varianceRaw := reduceVar (Spec.Shape.rank s - 1) centered inst.proof
+  let varianceRaw := reduceVar (Spec.Shape.rank s - 1) centered h_valid.proof
   let variance := maxSpec varianceRaw (Tensor.full (.dim seqLen .scalar) 0)
   let std := sqrtSpec (addSpec variance (Tensor.full (.dim seqLen .scalar) epsilon))
   let invStd := divSpec (Tensor.full (.dim seqLen .scalar) 1) std
   let invStdBroadcast := broadcastAfterSum s (Spec.Shape.rank s - 1) invStd
   let norm := mulSpec centered invStdBroadcast
 
-  let sumTangent := reduceSum (Spec.Shape.rank s - 1) tangent inst.proof
+  let sumTangent := reduceSum (Spec.Shape.rank s - 1) tangent h_valid.proof
   let N : α := (embedDim : α)
   let meanTangent := divSpec sumTangent (Tensor.full (.dim seqLen .scalar) N)
 
   let sumTangentNorm :=
-    reduceSum (Spec.Shape.rank s - 1) (mulSpec tangent norm) inst.proof
+    reduceSum (Spec.Shape.rank s - 1) (mulSpec tangent norm) h_valid.proof
   let meanTangentNorm := divSpec sumTangentNorm (Tensor.full (.dim seqLen .scalar) N)
 
   let meanTangentBroadcast := broadcastAfterSum s (Spec.Shape.rank s - 1) meanTangent
@@ -458,7 +422,6 @@ def rmsNorm {seqLen embedDim : Nat}
 
   -- Scale
   let gammaBroadcast := broadcastTo h_gamma_broadcast gamma
-  let result := mulSpec normalized gammaBroadcast
-  result
+  mulSpec normalized gammaBroadcast
 
 end Spec

@@ -18,6 +18,10 @@ public import NN.Tactic.Einops.Report.Analysis.Common
 
 This module reports checked axes, contraction work, generated loops, and the
 correctness chain for concrete `einsum` certificates.
+
+Optimization descriptions are reconstructed from current shapes, scalar instances, and planning
+policies. This report does not inspect the supplied kernel body or record which optimizations its
+elaborator actually selected; those descriptions are not an execution trace.
 -/
 
 public meta section

@@ -75,7 +75,7 @@ theorem ddimStep_eq_x0Pred (sched : VPSchedule α T) (model : EpsModel α s)
 
 /-- Run the full deterministic DDIM sampler for $T$ steps ($\eta=0$). -/
 def ddimSample (sched : VPSchedule α T) (model : EpsModel α s) (x_T : Tensor α s) : Tensor α s :=
-  (List.finRange T).foldr (fun k x => ddimStep (α := α) (T := T) (s := s) sched model k x) x_T
+  Fin.foldr T (fun k x => ddimStep (α := α) (T := T) (s := s) sched model k x) x_T
 
 /--
 Real-valued DDIM transition as a `DynamicalSystem`.

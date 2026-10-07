@@ -50,7 +50,7 @@ theorem evalAt_transpose_eq
     simpa only [Spec.SomeTensor.cast, Tensor.eqRec_eq_cast_shape] using
       expectShape_eq_ok output hShape
   simp [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, unaryGraphOut, unaryNodeOut,
-    Graph.getNode, Graph.getNode?, Graph.unaryParentId, unaryParent?, hPerm, hEval, hExpect,
+    Graph.getNode, Graph.unaryParentId, unaryParent?, hPerm, hEval, hExpect,
     Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 end IRStep

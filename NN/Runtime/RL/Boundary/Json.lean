@@ -28,7 +28,7 @@ namespace RL
 namespace Boundary
 
 open Spec TorchLean
-open TorchLean TorchLean.Tensor
+open TorchLean.Tensor
 open Import
 open Lean
 open Json
@@ -186,11 +186,7 @@ def loadRollout {obsShape : Shape} {nActions : Nat}
     (c : Contract obsShape nActions) :
     IO (Array (Transition obsShape nActions)) := do
   let transitionsArr ← Internal.readRolloutTransitions path
-  let mut out : Array (Transition obsShape nActions) := #[]
-  for tj in transitionsArr do
-    let t ← IO.ofExcept (parseTransitionJson (obsShape := obsShape) (nActions := nActions) c tj)
-    out := out.push t
-  pure out
+  transitionsArr.mapM fun transition => IO.ofExcept (parseTransitionJson c transition)
 
 /--
 Load a rollout file and validate every transition, returning per-transition results.
@@ -209,10 +205,7 @@ def loadRolloutAll {obsShape : Shape} {nActions : Nat}
     (c : Contract obsShape nActions) :
     IO (Array (Except String (Transition obsShape nActions))) := do
   let transitionsArr ← Internal.readRolloutTransitions path
-  let mut out : Array (Except String (Transition obsShape nActions)) := #[]
-  for tj in transitionsArr do
-    out := out.push (parseTransitionJson (obsShape := obsShape) (nActions := nActions) c tj)
-  pure out
+  pure (transitionsArr.map (parseTransitionJson c))
 
 end Boundary
 end RL

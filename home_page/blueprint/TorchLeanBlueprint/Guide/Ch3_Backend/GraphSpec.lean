@@ -140,10 +140,6 @@ The four slots contain $`6+3+3+1=13` trainable scalars. Their shapes are availab
 type before allocation, so a tool can compute this count without inspecting initialized tensors
 or interpreting parameter names.
 
-Each weight matrix has one row per output of its layer and one column per input. The bias
-matches that layer's output width. A caller supplies four tensors in this order, rather than an
-undifferentiated collection of thirteen scalars.
-
 # Composition And The Parameter ABI
 
 The composition operator `>>>` does more than connect two arrows. If
@@ -196,10 +192,8 @@ The report names the two shapes that disagree, `[3]` and `[5]`, and points at th
 Each linear layer is valid on its own, but the first produces five hidden values while the last
 expects three. Lean rejects their composition while checking the architecture definition.
 
-One practical note about reading these messages. `>>>` is overloaded: TorchLean also uses it for
-sequential layer composition and for `Spec.OpSpec` composition. When a shape error additionally
-rules out every candidate, Lean prints one branch per candidate and ends with a failed instance
-search for `HShiftRight`. The first branch is the one about chains, and it is the one to read.
+`>>>` also names sequential-layer and `Spec.OpSpec` composition. An error can show several
+overload candidates; look for the `Chain` input and output shapes that disagree.
 
 ## Shape Mismatch In PyTorch
 
@@ -397,10 +391,8 @@ never specified. The three primitives of the sequential core, and the four in
 {src "NN/GraphSpec/Primitives/Spatial.lean"}[`Primitives/Spatial.lean`], all do supply a layer, so
 the partiality only shows up for primitives like the one above.
 
-The pure call supplies `.nil` because doubling needs no parameters. In the program interface,
-the ordinary input follows the parameter list, as the `ps ++ [σ]` type shows. The absent layer
-adapter prevents initialization through `toSeq`; it leaves these two forward definitions
-available. Derivative correctness would need its own statement.
+Doubling needs no parameters, hence `.nil` in the pure call. Derivative correctness would need
+its own statement.
 
 # Parameter Order And Shape Checking
 
@@ -484,10 +476,6 @@ GraphSpec fixes the number and shapes of parameter slots and computes their posi
 through composition. The example shows the remaining obligation: the tensors assigned to those
 slots must have the intended roles. A primitive's correctness theorem relates the slot order to
 its computation.
-
-A checkpoint bridge must therefore retain each tensor's layer and role. In this model,
-one bias shifts values before thresholding and the other shifts them afterwards; exchanging
-those roles changes the function.
 
 # Deterministic Initialization
 
@@ -588,8 +576,9 @@ forward: -0.011884444393217564
 mse vs target 1.0: 1.0239101648330688
 ```
 
-The pure GraphSpec evaluation, the runtime training loop, and PyTorch agree at the displayed
-precision for this parameter pack and input. That comparison checks the wiring of this example.
+The pure GraphSpec call uses `Float` (binary64); the trainer transcript below uses `Float32`.
+The comparison with PyTorch agrees at the displayed digits, not at a shared precision or at the
+bit level. It checks the wiring of this example.
 The theorem below addresses a different scope: it relates the two pure model definitions for
 every parameter pack and input.
 
@@ -903,7 +892,7 @@ DAG.PrimOp.matmul : (batchA batchB batch : Shape) →
 ```
 
 One primitive covers the shared-batch case, the pairwise-batched case, and the unbatched case,
-because the two broadcast facts are arguments rather than assumptions. There is no separate
+because the batch shapes and their broadcast proofs are arguments. There is no separate
 `bmm`, and no runtime branch that guesses which case you meant: the caller supplies the evidence,
 and vector inputs reach the same primitive through a row reshape. Multi-head attention follows the
 same convention as the public attention builder, taking any leading shape before the
@@ -1029,9 +1018,10 @@ requires a special combinator; duplicating the branch would lose the explicit sh
   * typed model environment
 :::
 
-There is a third form worth knowing about. `DAG.MultiModel ps ins outs` returns a typed *list* of
-tensors, which is what a recurrent layer needs when it produces an updated state alongside an
-observable output. Keeping those as a typed list rather than flattening them into one buffer means
+There is a third form worth knowing about. `DAG.MultiModel ps ins outs` returns a `TensorPack`
+indexed by the output shapes, which is what a recurrent layer needs when it produces an updated
+state alongside an observable output. Keeping those tensors separate rather than flattening them
+into one buffer means
 the shared `let1` binding that computes the new state is still shared after the model is inlined
 into a larger graph, and `MultiModel.eval_inline` is the theorem that says inlining preserves every
 output. The terms passed in as parameters and inputs are copied into each use, so pass variables
@@ -1046,7 +1036,7 @@ convolution and max pooling, flattening, and BatchNorm with an explicit channel 
 Rank-polymorphic means the same definition applies to signals, images, and volumes: the spatial
 extents are a `Tensor Nat [d]` rather than a fixed pair.
 
-The intermediate spatial arithmetic is part of the type. `Models.cnn` accepts a feature chain
+The intermediate spatial arithmetic is part of the type. `Models.classifier` accepts a feature chain
 and attaches flattening and a linear head. The chain determines its own depth and spatial
 operations. Here are the tutorial's two stages, with their different channel widths:
 
@@ -1071,7 +1061,7 @@ example :
       ([[2, 1, 3, 3], [2], [3, 2, 3, 3], [3]] ++
         [[4, 12], [4]])
       [1, 8, 8] [4] :=
-  Models.cnn gsCnnFeatures 4
+  Models.classifier gsCnnFeatures 4
 ```
 
 Padding 1 with a `3x3` kernel preserves the extent, so the two pooling stages halve `8` to `4` and
@@ -1084,6 +1074,13 @@ of compile error as the width typo earlier in this chapter.
 The feature chain can contain any composable sequence supported by its chosen interpretation.
 An identity chain gives a classifier on the flattened input. The general chain-to-DAG conversion
 applies to the resulting model; it does not require a separate CNN conversion.
+
+For example, we can attach the same head directly to a `2x3` input, without any convolutions:
+
+```lean (name := gsClassifierIdentity)
+example : Chain [[4, 6], [4]] [2, 3] [4] :=
+  Models.classifier (Chain.id [2, 3]) 4
+```
 
 # Checkpoint Import And Parameter Mapping
 

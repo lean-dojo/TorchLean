@@ -141,8 +141,8 @@ theorem flattenSpec_map2Spec {s : Shape} (f : ℝ → ℝ → ℝ) (a b : Tensor
 
 /-- Flattening commutes with pointwise unary operations. -/
 theorem flattenSpec_mapSpec {s : Shape} (f : ℝ → ℝ) (a : Tensor ℝ s) :
-    Tensor.flattenSpec (Tensor.mapSpec f a) = Tensor.mapSpec f (Tensor.flattenSpec a) := by
-  unfold Tensor.flattenSpec Tensor.mapSpec
+    Tensor.flattenSpec (Tensor.map f a) = Tensor.map f (Tensor.flattenSpec a) := by
+  unfold Tensor.flattenSpec Tensor.map
   exact (TorchLean.Tensor.Internal.Rep.map_reshape _ _ _).symm
 
 /-- Casting back and forth along a dimension equality is the identity. -/
@@ -157,18 +157,11 @@ private theorem castDimScalar_buffer {n n' : Nat} (h : n = n') (t : Tensor ℝ [
   cases h
   rfl
 
-/-- Native tensors with equal buffers are equal. -/
-private theorem rep_eq_of_buffer_eq {sh : TorchLean.Tensor.Internal.Shape}
-    {x y : TorchLean.Tensor.Internal.Rep ℝ sh} (h : x.buffer = y.buffer) : x = y := by
-  cases x
-  cases y
-  cases h
-  rfl
-
 /-- Flattening a vector only changes the recorded length from `n` to `n * 1`. -/
 theorem flattenSpec_vector {n : Nat} (t : Tensor ℝ [n]) :
     Tensor.flattenSpec t = castDimScalar (α := ℝ) (Nat.mul_one n).symm t := by
-  apply rep_eq_of_buffer_eq
+  apply Tensor.Internal.Rep.data_injective
+  unfold Tensor.Internal.Rep.data
   rw [castDimScalar_buffer]
   rfl
 

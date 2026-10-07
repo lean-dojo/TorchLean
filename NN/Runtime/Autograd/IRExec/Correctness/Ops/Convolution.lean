@@ -11,14 +11,15 @@ public import NN.Runtime.Autograd.IRExec.Correctness.Common
 /-!
 # Convolution Correctness
 
-Semantic preservation for arbitrary-rank convolution. `ConvConfig` records the channel axis and
-one kernel, stride, and padding value for every spatial axis. Axes before the channel axis are
+Semantic preservation for arbitrary-rank convolution. `ConvConfig` records the channel axis,
+groups, and per-axis kernel, stride, dilation, and padding. Axes before the channel axis are
 preserved, so the same theorem covers unbatched tensors and tensors with any number of leading
 batch dimensions.
 
 The lowered closure applies `Spec.groupedConvSpec` under `Tensor.mapLeading` directly, transporting
 along the payload and output shape equalities checked during lowering; `evalConv_eq_generalSpec`
-shows the IR evaluator produces the same term.
+shows the IR evaluator produces the same term. These are forward specification equalities,
+not correctness theorems for native kernels or their VJPs.
 -/
 
 @[expose] public section
@@ -31,8 +32,6 @@ open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
--- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
--- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
 /-- Successful convolution evaluation agrees with the generalized typed convolution semantics. -/
@@ -122,7 +121,7 @@ theorem buildFrom_denoteAllFrom_conv
           let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
             mkForwardNode (fun context =>
               let input : Tensor α payloadShape :=
-                Tensor.castShape (readTensor (α := α) (xs := context) parentIdx) hInput
+                Tensor.castShape (context.read parentIdx) hInput
               let output : Tensor α (params.output leading) :=
                 Tensor.mapLeading leading
                   (Spec.groupedConvSpec (α := α) (stride := params.stride)

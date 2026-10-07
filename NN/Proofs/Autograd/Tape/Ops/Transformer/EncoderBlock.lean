@@ -21,6 +21,11 @@ assembles them into a single graph over the context `[x, Wq, Wk, Wv, Wo, gamma�
 beta₂]` with VJP theorem `encoderBlock_backpropVec_eq_adjoint_fderiv_at`, and
 `postNormEncoderBlock_hasFDerivAt` is the map-level composition result that a model proof imports
 when it needs the whole encoder block as one differentiable map.
+
+Attention uses the direct-reshape variant from `DirectReshapeAttention`, whose head split differs
+from the executable attention layout. The FFN maps and biases are fixed inputs to this construction,
+not trainable entries in its context. The theorem proves this exact-real graph's derivative and
+reverse pass, not correspondence with the public runtime encoder.
 -/
 
 @[expose] public section
@@ -38,7 +43,7 @@ noncomputable section
 /-!
 ## Concrete SSA encoder block
 
-The definitions below assemble one executable-style proof graph for a post-norm encoder block.  The
+The definitions below assemble one mathematical proof graph for a post-norm encoder block. The
 context is:
 
 `[x, Wq, Wk, Wv, Wo, gamma₁, beta₁, gamma₂, beta₂]`.

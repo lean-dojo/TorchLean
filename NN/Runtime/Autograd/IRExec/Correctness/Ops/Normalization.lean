@@ -11,23 +11,12 @@ public import NN.Runtime.Autograd.IRExec.Correctness.Common
 /-!
 # Normalization
 
-Normalization correctness lemmas for the IR-to-forward-executor lowering.
-
-TorchLean’s LayerNorm correctness argument has two layers:
-
-* the spec layer (`Spec.layerNorm`) defines the mathematical normalization over a tensor axis,
-  matching the original Layer Normalization formulation from Ba et al. (2016) and the public
-  PyTorch `LayerNorm` API;
-* the runtime/lowering pass layer (`IRExec.Internal.buildFrom`) lowers `.layernorm axis` IR nodes
-  into SSA nodes
-  whose `forward` closure computes the same result on the forward-graph execution path.
-
-This file proves the forward-correctness lemmas for LayerNorm and eval-mode BatchNorm lowering:
-when `buildFrom` succeeds at IR node position `i`, the IR evaluator and the forward-graph evaluator
-append the same output tensor.
-
-The proof is shape-driven: it follows the same dependent matches and checks as the lowering pass, so
-failed preconditions discharge as contradictions.
+Successful LayerNorm and fixed-statistics BatchNorm lowering appends the same tensor as the IR
+evaluator. LayerNorm flattens the suffix beginning at `axis` into a matrix row and resolves its
+optional affine payload before normalization. The normalized width must be positive; an empty
+leading batch remains empty. BatchNorm preserves every axis and uses supplied statistics along
+the selected channel axis. These theorems concern forward specifications, not training-mode
+statistics updates, VJPs, or native kernels.
 
 References:
 * Jimmy Lei Ba, Jamie Ryan Kiros, Geoffrey E. Hinton, "Layer Normalization", arXiv:1607.06450.
@@ -39,21 +28,6 @@ References:
 - `buildFrom_denoteAllFrom_layernorm`: correctness step for `.layernorm axis` lowering.
 - `buildFrom_denoteAllFrom_batchNormEval`: correctness for an arbitrary BatchNorm channel axis.
 
-## Implementation notes
-
-- This proof is shape-driven and follows the same checks as lowering, which keeps it
-  maintainable as layernorm contracts evolve.
-- Branches that fail preconditions are discharged as contradictions close to where they arise,
-  keeping the successful path readable.
-- The BatchNorm closure applies `Spec.batchNormInference` under `Tensor.mapLeading` directly, so
-  the proof compares that term with the one computed by `NN.IR.Graph.evalBatchNorm`.
-- LayerNorm carries axis constraints through both the shape discipline and the tensor computation.
-  Keep axis-validity and shape-cast facts in small helper lemmas so the semantic theorem stays
-  focused on agreement between the lowered node and the evaluator.
-
-## Tags
-
-layernorm, correctness, ir, runtime, semantic equivalence
 -/
 
 @[expose] public section
@@ -66,8 +40,6 @@ open Spec TorchLean
 open Proofs.Autograd.Algebra
 open NN.IR
 open Internal
--- Typed context indices come from `NN.Proofs.Autograd.Tape.Util.Idx`, the one place
--- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
 /-- Correctness lemma for the `.layernorm` node lowering pass. -/
@@ -99,17 +71,14 @@ theorem buildFrom_denoteAllFrom_layernorm
     ForwardData.eval (α := α) (Γ := [inShape]) (ss := ss) gd (.cons x .nil)
   let input : Spec.SomeTensor α := Spec.SomeTensor.mk (α := α) inShape x
 
-  -- Unfold the lowering pass step and specialize to the `.layernorm axis` branch.
   unfold buildFrom at hBuild
   simp [hi, hN] at hBuild
   simp (config := { failIfUnchanged := false }) [hk, lowerLayernorm] at hBuild
 
-  -- `layernorm` is unary.
   cases hp : unaryParent? n.parents with
   | none =>
       exact False.elim <| throw_bind_ne_ok (by simpa [hp] using hBuild)
   | some pId =>
-          -- Compute the matrix-view parameters used by the lowering pass and the IR evaluator.
           cases hParams : OpContracts.layerNormMatrixDims axis n.outShape with
           | error msg =>
               exact False.elim <| throw_bind_ne_ok (by simpa [hp, hParams] using hBuild)
@@ -138,7 +107,6 @@ theorem buildFrom_denoteAllFrom_layernorm
                         | ok affine => exact ⟨affine, rfl⟩
                       rcases hAffineOk with ⟨affine, hAffine⟩
                       have hNodeId : n.id = i := NN.IR.Graph.getNode_id_eq hN
-                      -- Reduce `hBuild` to the recursive lowering call.
                       simp [hp, hParams, view2d, hNumel, hEmb, hIdx, hAffine] at hBuild
 
                       let gamma : Tensor α [embedDim] := affine.gamma
@@ -147,7 +115,7 @@ theorem buildFrom_denoteAllFrom_layernorm
                       let nodeData : ForwardNode α ([inShape] ++ ss) n.outShape :=
                         mkForwardNode (α := α) (Γ := [inShape] ++ ss) (τ := n.outShape)
                           (fun ctx =>
-                          let x : Tensor α n.outShape := readTensor (α := α) (xs := ctx) ip
+                          let x : Tensor α n.outShape := ctx.read ip
                           let x2d : Tensor α view2d :=
                             Tensor.reshapeSpec (α := α) (source := n.outShape)
                               (target := view2d) x hNumel
@@ -190,7 +158,6 @@ theorem buildFrom_denoteAllFrom_layernorm
                               (input := input) (vals := vals0) (i := i) =
                             .ok (Spec.SomeTensor.mk (α := α) n.outShape (nodeData.eval ctx)) :=
                               by
-                        -- Focused simplification of the `.layernorm` branch of the evaluator.
                         simp (config := { failIfUnchanged := false })
                           [NN.IR.Graph.evalAt, NN.IR.Graph.evalNode,
                             NN.IR.Graph.normalizeNodeOutput, hN, hk, hp, hGet, hParams,
@@ -295,7 +262,7 @@ theorem buildFrom_denoteAllFrom_batchNormEval
                                   mkForwardNode (α := α) (Γ := [inShape] ++ ss)
                                     (τ := n.outShape) (fun ctx =>
                                       let input : Tensor α payloadShape :=
-                                        Tensor.castShape (readTensor (α := α) (xs := ctx) ip) hInput
+                                        Tensor.castShape (ctx.read ip) hInput
                                       let output : Tensor α payloadShape :=
                                         Tensor.mapLeading leading
                                           (fun sample => Spec.batchNormInference sample

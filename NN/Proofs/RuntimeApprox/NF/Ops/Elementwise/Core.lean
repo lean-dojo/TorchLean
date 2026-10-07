@@ -64,8 +64,7 @@ def subBoundTensor {s : Shape} (epsx epsy : ℝ) (xR yR : Tensor R s) : SpecTens
 /--
 Per-entry bound tensor for multiplication.
 
-This is the elementwise lifting of the scalar bound `approx_mul_nf`, tracking first-order error
-propagation plus one rounding term.
+Lifts `approx_mul_nf` pointwise, including input-error cross terms and one final rounding term.
 -/
 def mulBoundTensor {s : Shape} (epsx epsy : ℝ) (xR yR : Tensor R s) : SpecTensor s :=
   map2Spec
@@ -81,7 +80,7 @@ Per-entry bound tensor for scaling by a runtime constant.
 `eps` and treating `c` as exact (relative to its own `toSpec` value).
 -/
 def scaleBoundTensor {s : Shape} (eps : ℝ) (c : R) (xR : Tensor R s) : SpecTensor s :=
-  mapSpec
+  Tensor.map
     (fun a =>
       abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) c) * eps +
         ulp β fexp (a * toSpec (β := β) (fexp := fexp) (rnd := rnd) c)
@@ -96,7 +95,7 @@ incurs rounding.
 -/
 def scaleApproxBoundTensor {s : Shape} (eps epsC : ℝ) (c : R)
     (xR : Tensor R s) : SpecTensor s :=
-  mapSpec
+  Tensor.map
     (fun a =>
       (abs a + eps) * epsC +
         (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) c) + epsC) * eps +
@@ -106,13 +105,13 @@ def scaleApproxBoundTensor {s : Shape} (eps epsC : ℝ) (c : R)
 
 /-- Per-entry bound tensor for negation. -/
 def negBoundTensor {s : Shape} (eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
-  mapSpec
+  Tensor.map
     (fun a => eps + ulp β fexp (-a) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
 /-- Per-entry bound tensor for absolute value. -/
 def absBoundTensor {s : Shape} (eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
-  mapSpec
+  Tensor.map
     (fun a => eps + ulp β fexp (abs a) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
@@ -122,12 +121,12 @@ Per-entry bound tensor for exponentiation (`exp`).
 This matches `approx_exp_nf`: a mean-value-theorem bound on the real `exp` plus one rounding term.
 -/
 def expBoundTensor {s : Shape} (eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
-  mapSpec (fun a => expErrorBound (β := β) (fexp := fexp) a eps)
+  Tensor.map (fun a => expErrorBound (β := β) (fexp := fexp) a eps)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
 /-- Per-entry square-root budget on a domain with exact lower bound `η`. -/
 def sqrtPosBoundTensor {s : Shape} (η eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
-  mapSpec
+  Tensor.map
     (fun a => eps / Real.sqrt η + ulp β fexp (Real.sqrt (max a 0)) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
@@ -137,7 +136,7 @@ Per-entry bound tensor for hyperbolic tangent (`tanh`).
 Currently uses the coarse unconditional bound from `approx_tanh_nf` (boundedness of `tanh`).
 -/
 def tanhBoundTensor {s : Shape} (xR : Tensor R s) : SpecTensor s :=
-  mapSpec
+  Tensor.map
     (fun a => (2 : ℝ) + ulp β fexp (Real.tanh a) / 2)
     (tensorToSpec (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xR)
 
@@ -150,7 +149,7 @@ Per-entry bound tensor for `safeLog`.
 combining a `(1/ε)` Lipschitz propagation term with one rounding-ULP term.
 -/
 def safeLogBoundTensor {s : Shape} (ε eps : ℝ) (xR : Tensor R s) : SpecTensor s :=
-  mapSpec
+  Tensor.map
     (fun a =>
       (1 / ε) * eps +
         ulp β fexp (safeLog (ε := ε) a) / 2)
@@ -166,8 +165,8 @@ theorem approxTensor_safeLog_spec {s : Shape} (ε : ℝ) (hε : 0 < ε) :
     ∀ {xS : SpecTensor s} {xR : Tensor R s} {eps : ℝ},
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR eps →
         approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-          (mapSpec (s := s) (safeLog (ε := ε)) xS)
-          (mapSpec (s := s) (safeLogR (β := β) (fexp := fexp) (rnd := rnd) ε) xR)
+          (Tensor.map (shape := s) (safeLog (ε := ε)) xS)
+          (Tensor.map (shape := s) (safeLogR (β := β) (fexp := fexp) (rnd := rnd) ε) xR)
           (linfNorm (safeLogBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
             (s := s) ε eps xR)) := by
   intro xS xR eps hx

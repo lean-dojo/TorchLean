@@ -17,6 +17,7 @@ public import NN.Proofs.RuntimeApprox.NF.BackwardOps.Sparse
 NF reverse-mode runtime-to-spec approximation lemmas.
 
 The public theorem is `NFBackend.backprop_approx`: a reverse graph built from sound local NF nodes
-has a backpropagated runtime context enclosed by the spec backpropagated context.  The local node
+has a backpropagated rounded context within explicit per-entry error bounds of the supplied spec
+reverse pass. This is approximation, not a derivative-correctness proof. The local node
 families cover sparse VJP contexts, context accumulation, primitive operations, and linear algebra.
 -/

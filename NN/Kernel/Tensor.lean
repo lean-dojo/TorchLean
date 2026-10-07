@@ -9,15 +9,15 @@ public import NN.Backend.Types
 public import NN.Kernel.Program
 public import NN.Kernel.Runtime
 public import NN.Tensor.Constructors
-public import NN.Tensor.Pack
+public import NN.API.Arguments
 public import NN.Runtime.Autograd.Engine.LibTorch.Convert
 public import NN.Runtime.Autograd.Torch.Core.TensorTransfer
 
 /-!
 # Custom operations on tensors
 
-Inputs use the same heterogeneous tensor packs as typed graphs. The pure evaluator uses checked
-row-major reads and stops at the first failure. Native execution uses the existing tensor transfer
+Inputs use the public `Arguments` container for shape-indexed tensors. The pure evaluator uses
+checked row-major reads and stops at the first failure. Native execution uses the tensor transfer
 capability; host arrays remain an implementation detail of the LibTorch bridge.
 -/
 
@@ -27,13 +27,13 @@ namespace NN.Kernel
 
 open Spec TorchLean
 
-/-- Read a tensor pack by operand number and row-major unsigned index.
+/-- Read tensor arguments by operand number and row-major unsigned index.
 
 The shape determines the bounds, without materializing an intermediate array. Invalid operand
 numbers and invalid addresses retain their distinct error diagnostics.
 -/
-def Reader.ofPack {α : Type} [Storage α] {shapes : List Shape}
-    (inputs : TensorPack α shapes) : Reader α := fun operand index =>
+def Reader.ofArguments {α : Type} [Storage α] {shapes : List Shape}
+    (inputs : Arguments α shapes) : Reader α := fun operand index =>
   if hOperand : operand < shapes.length then
     let tensor := inputs.get ⟨operand, hOperand⟩
     if hIndex : index.toNat < (shapes.get ⟨operand, hOperand⟩).size then
@@ -44,23 +44,23 @@ def Reader.ofPack {α : Type} [Storage α] {shapes : List Shape}
   else
     .error (.input operand)
 
-/-- Tensor-pack reads use the emitted unsigned bounds condition when the native length agrees
+/-- Tensor argument reads use the emitted unsigned bounds condition when the native length agrees
 with the tensor shape and in-bounds native loads agree with its entries.
 
 The premises identify the buffer metadata and contents; they do not assert that a foreign memory
 implementation satisfies them. Out-of-bounds loads need no value because that branch never loads.
 -/
-theorem Reader.ofPack_eq_native {α : Type} [Storage α] {shapes : List Shape}
-    (inputs : TensorPack α shapes) (operand : Nat) (hOperand : operand < shapes.length)
+theorem Reader.ofArguments_eq_native {α : Type} [Storage α] {shapes : List Shape}
+    (inputs : Arguments α shapes) (operand : Nat) (hOperand : operand < shapes.length)
     (size : UInt64) (hSize : size.toNat = (shapes.get ⟨operand, hOperand⟩).size)
     (load : UInt64 → α)
     (hLoad : ∀ index (hIndex : index.toNat < (shapes.get ⟨operand, hOperand⟩).size),
       load index = Tensor.Internal.Rep.getFlat (inputs.get ⟨operand, hOperand⟩)
         ⟨index.toNat, by simpa only [Shape.internalSize_eq] using hIndex⟩)
     (index : UInt64) :
-    Reader.ofPack inputs operand index =
+    Reader.ofArguments inputs operand index =
       if index ≥ size then .error (.bounds operand index size.toNat) else .ok (load index) := by
-  unfold Reader.ofPack
+  unfold Reader.ofArguments
   simp only [hOperand, ↓reduceDIte]
   by_cases h : index ≥ size
   · have hIndex : ¬index.toNat < (shapes.get ⟨operand, hOperand⟩).size := by
@@ -79,11 +79,11 @@ All output indices must fit the expression language's unsigned addressing. An em
 no reads. Input failures stop construction in increasing output-index order.
 -/
 def Program.eval {α : Type} [Storage α] {shapes : List Shape} (program : Program α)
-    (inputs : TensorPack α shapes) (shape : Shape) : Except Error (Tensor α shape) :=
+    (inputs : Arguments α shapes) (shape : Shape) : Except Error (Tensor α shape) :=
   if shape.size ≤ UInt64.size then
     let block := Target.lower program.expression
     Tensor.generateFlatM shape fun index =>
-      block.eval program.arithmetic (Reader.ofPack inputs) (Env.output index.val.toUInt64)
+      block.eval program.arithmetic (Reader.ofArguments inputs) (Env.output index.val.toUInt64)
   else
     .error (.size shape.size)
 
@@ -92,18 +92,18 @@ def Program.eval {α : Type} [Storage α] {shapes : List Shape} (program : Progr
 The equality includes read failures and output-size rejection, not just successful tensors.
 -/
 theorem Program.eval_eq_reference {α : Type} [Storage α] {shapes : List Shape}
-    (program : Program α) (inputs : TensorPack α shapes) (shape : Shape) :
+    (program : Program α) (inputs : Arguments α shapes) (shape : Shape) :
     program.eval inputs shape =
       if shape.size ≤ UInt64.size then
         Tensor.generateFlatM shape fun index =>
-          program.reference (Reader.ofPack inputs) index.val.toUInt64
+          program.reference (Reader.ofArguments inputs) index.val.toUInt64
       else .error (.size shape.size) := by
   unfold Program.eval
   split
   · dsimp only
     congr 1
     funext index
-    exact program.lower_correct (Reader.ofPack inputs) index.val.toUInt64
+    exact program.lower_correct (Reader.ofArguments inputs) index.val.toUInt64
   · rfl
 
 namespace Internal
@@ -125,7 +125,7 @@ fallback. Native code, transfers, NVRTC and GPU execution remain external trust 
 -/
 @[no_expose] def Program.run {α : Type} [Storage α]
     [Runtime.Autograd.Torch.TensorTransfer α] {shapes : List Shape} (program : Program α)
-    (inputs : TensorPack α shapes) (shape : Shape)
+    (inputs : Arguments α shapes) (shape : Shape)
     (device : NN.Backend.Device := cpu) : IO (Tensor α shape) := do
   if device == cpu then
     return ← IO.ofExcept (program.eval inputs shape |>.mapError reprStr)
@@ -134,7 +134,7 @@ fallback. Native code, transfers, NVRTC and GPU execution remain external trust 
   if shape.size > 2 ^ 63 - 1 then
     throw (IO.userError s!"kernel: output size {shape.size} exceeds native tensor addressing")
   let values ← Internal.runHost program.format program.bits program.expression
-    (← Internal.upload inputs #[]) shape.size.toUInt64
+    (← Internal.upload (Arguments.Internal.toTensorPack inputs) #[]) shape.size.toUInt64
   let some tensor := Runtime.Autograd.LibTorch.Convert.unflattenFloat? (s := shape) values |
     throw (IO.userError s!"kernel: expected {shape.size} outputs, received {values.size}")
   Runtime.Autograd.Torch.TensorTransfer.ofFloatTensor tensor

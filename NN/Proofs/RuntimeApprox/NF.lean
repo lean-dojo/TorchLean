@@ -39,7 +39,7 @@ File roles:
 - `Convolution`: ordered forward and backward bounds for arbitrary spatial rank.
 - `Normalization`: rank-generic affine-normalization traces with explicit denominator margins.
 - `Optimizers`: SGD, momentum-SGD, and AdamW instances of one numerical optimizer contract.
-- `EndToEnd`: architecture-independent executable graph bridges, parameter updates, and reports.
+- `EndToEnd`: graph-representation bridges, parameter updates, and mathematical error reports.
 
 This is the backend we can reason about inside Lean. Hardware CUDA/IEEE execution remains an
 implementation trust boundary unless it is connected to this model by a separately proved or

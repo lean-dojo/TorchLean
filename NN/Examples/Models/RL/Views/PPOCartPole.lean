@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-import NN.Runtime.RL.Artifacts.DefaultPaths
+import NN.Runtime.RL.Artifacts.Paths
+meta import NN.Runtime.RL.Artifacts.Paths
 import NN.Runtime.RL.Core
 import NN.Widgets.Runtime.Training
 
@@ -43,6 +44,6 @@ References:
 
 /-- Default training-log path written by `torchlean ppo_cartpole` (override with `--log`). -/
 def trainLogPath : System.FilePath :=
-  Runtime.RL.Artifacts.DefaultPaths.ppoCartPoleTrainLog
+  Runtime.RL.Artifacts.path "ppo_cartpole"
 
 #train_log_file_view trainLogPath

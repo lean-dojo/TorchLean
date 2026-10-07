@@ -144,11 +144,6 @@ def curry {Ref : Shape → Type} {β : Type} : {ss : List Shape} →
   | nil => rfl
   | cons x xs ih => exact ih (fun ys => f (.cons x ys))
 
-/-- Apply a tensor-valued `CurriedRef` to its shape-indexed tensor pack. -/
-def uncurryPack {α β : Type} [Storage α] {ss : List Shape}
-    (f : CurriedRef (fun s => Tensor α s) ss β) (xs : TensorPack α ss) : β :=
-  Curried.uncurry f xs
-
 end CurriedRef
 
 end Runtime.Autograd.Torch

@@ -12,21 +12,19 @@ public import NN.Proofs.Tensor.Basic.Factorizations
 /-!
 # Exact reconstruction of the finite factorizations (Cholesky and QR)
 
-This file proves the *exact* algebraic reconstruction of the finite executable Cholesky and QR
-factorizations from `NN.Spec.Core.Tensor.Factorizations`, building on the predicates and
-fold-indexing lemmas of `NN.Proofs.Tensor.Basic.Factorizations`. Because Cholesky and Gram–Schmidt
-are *direct, finite* constructions with no iteration and no convergence caveat; over `ℝ` they
-reconstruct their input on the nose under the success hypotheses (positive pivots / full column
-rank), an exact identity rather than an a-posteriori bound.
+Exact algebraic reconstruction for the Cholesky and classical Gram–Schmidt specification
+recurrences in `NN.Spec.Core.Tensor.Factorizations`. Both use finite column folds; these theorems
+do not assert floating-point error bounds or correctness of Cholesky's materialized runtime
+override. Positive pivots are proof hypotheses, not a runtime success check.
 
 ## Main results
 
 * `isCholesky_of_pos`: for a symmetric `A : Fin n → Fin n → ℝ` whose executable Cholesky pivots are
-  all positive (`0 < choleskyFn A j j`, the exact condition under which the algorithm succeeds over
-  `ℝ`), the factor `L = choleskyFn A` satisfies the spec `Spec.Factorization.IsCholesky`:
+  all positive (`0 < choleskyFn A j j`), the factor `L = choleskyFn A` satisfies
+  `Spec.Factorization.IsCholesky`:
   lower-triangular and `A = L · Lᵀ`. `choleskySpec_reconstruction` is the tensor-level corollary.
 * `qr_mul_eq`: for `A : Fin m → Fin n → ℝ` whose executable Gram–Schmidt `R`-pivots are positive
-  (`0 < Rmat A j j`, full column rank), the factors `Q = gramSchmidtFn A` and `R` satisfy
+  (`0 < Rmat A j j`), the factors `Q` and `R` satisfy
   `A = Q · R`, with `R` upper-triangular (`Rmat_upper_triangular`). `qrSpec_reconstruction` is the
   tensor-level corollary.
 
@@ -240,9 +238,8 @@ theorem choleskyFn_offdiag_eq (A : Fin n → Fin n → ℝ) {i j : Fin n} (hij :
 
 /-! ### Reconstruction `A = L · Lᵀ`
 
-The diagonal of the rotated/peeled product is reconstructed using the closed-form entries and the
-positive-pivot hypothesis (`0 < L[j,j]`), which is exactly the condition under which the executable
-Cholesky succeeds over `ℝ`. -/
+Closed-form entries and positive pivots give reconstruction on and below the diagonal. Symmetry
+then gives the remaining entries. -/
 
 /-- Per-entry reconstruction for the lower part (`j ≤ i`): the `(i, j)` entry of `L · Lᵀ` is
 `A i j`. -/
@@ -294,8 +291,8 @@ theorem choleskyFn_dot (A : Fin n → Fin n → ℝ) (hsymm : ∀ i j, A i j = A
         from Finset.sum_congr rfl (fun k _ => mul_comm _ _),
       choleskyFn_dot_eq A hpos h, hsymm j i]
 
-/-- **Exact Cholesky reconstruction.** For a symmetric `A` whose executable Cholesky pivots are all
-positive (`0 < L[j,j]`, the success condition over `ℝ`), the factor `L = choleskyFn A` is a genuine
+/-- For a symmetric `A` whose specification Cholesky pivots are all
+positive (`0 < L[j,j]`), the factor `L = choleskyFn A` is a
 Cholesky factor: lower-triangular with `A = L · Lᵀ`. -/
 theorem isCholesky_of_pos (A : Fin n → Fin n → ℝ) (hsymm : ∀ i j, A i j = A j i)
     (hpos : ∀ j : Fin n, 0 < Spec.choleskyFn A j j) :
@@ -309,7 +306,7 @@ theorem isCholesky_of_pos (A : Fin n → Fin n → ℝ) (hsymm : ∀ i j, A i j 
     simp only [Matrix.of_apply, Matrix.transpose_apply]
     exact (choleskyFn_dot A hsymm hpos i j).symm
 
-/-- **Tensor-level Cholesky reconstruction.** For a symmetric tensor `A` whose `choleskySpec` pivots
+/-- For a symmetric tensor `A` whose `choleskySpec` pivots
 are positive, every entry of `A` is reconstructed by `L · Lᵀ`:
 `A[i,j] = Σ_k L[i,k] · L[j,k]`, with `L = choleskySpec A`. -/
 theorem choleskySpec_reconstruction (A : TorchLean.Tensor ℝ [n, n])
@@ -578,8 +575,7 @@ theorem Rmat_upper_triangular (A : Fin m → Fin n → ℝ) {k j : Fin n} (hjk :
     Rmat A k j = 0 := by
   rw [Rmat_eq]; exact rStep_below_diag_zero A (qsPrefix A j) hjk
 
-/-- **Per-entry QR reconstruction.** When every `R` pivot is positive (`0 < R[j,j]`, the full
-column-rank success condition), `A[i,j] = Σ_k Q[i,k]·R[k,j]`. -/
+/-- When every specification `R` pivot is positive, `A[i,j] = Σ_k Q[i,k]·R[k,j]`. -/
 theorem qr_reconstruction (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < Rmat A j j)
     (i : Fin m) (j : Fin n) :
     A i j = ∑ k, Qmat A i k * Rmat A k j := by
@@ -616,8 +612,7 @@ theorem qr_reconstruction (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 
         · rw [ite_eq_right hkj, ite_eq_right hkj])]
   ring
 
-/-- **Matrix-level QR reconstruction.** `A = Q · R` for the executable Gram–Schmidt factors,
-under positive `R` pivots (full column rank). -/
+/-- `A = Q · R` for the specification Gram–Schmidt factors under positive `R` pivots. -/
 theorem qr_mul_eq (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < Rmat A j j) :
     Matrix.of A = Matrix.of (fun i k => Qmat A i k) * Matrix.of (fun k j => Rmat A k j) := by
   ext i j
@@ -625,8 +620,8 @@ theorem qr_mul_eq (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < Rmat
   simp only [Matrix.of_apply]
   exact qr_reconstruction A hrank i j
 
-/-- **Tensor-level QR reconstruction.** For a tensor `A` whose `qrSpec` `R`-pivots are positive
-(full column rank), every entry of `A` is reconstructed by `Q · R`:
+/-- For a tensor `A` whose `qrSpec` `R`-pivots are positive,
+every entry of `A` is reconstructed by `Q · R`:
 `A[i,j] = Σ_k Q[i,k]·R[k,j]`, with `Q = qrQSpec A`, `R = qrRSpec A`. -/
 theorem qrSpec_reconstruction (A : TorchLean.Tensor ℝ [m, n])
     (hrank : ∀ j : Fin n, 0 < Spec.get2 (Spec.qrRSpec A) j j) (i : Fin m) (j : Fin n) :

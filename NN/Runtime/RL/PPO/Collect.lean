@@ -59,8 +59,8 @@ The caller provides:
 - `predictValue` for the current critic (returns a scalar `α`).
 
 The API supports the “typed graph + parameters” calling convention used throughout TorchLean.
-Stored log-probabilities use `actionLogSoftmax` without clamping. When using this rollout with
-`Autograd.ppoClippedObjective`, selected log-probabilities must lie inside its `[-10^30, 10^30]`
+Stored log-probabilities use `logSoftmax` without clamping. When using this rollout with
+`Autograd.PPO.objective`, selected log-probabilities must lie inside its `[-10^30, 10^30]`
 clamp and the policy reductions must agree for identical parameters to yield a unit ratio.
 -/
 def collect {obsShape : Shape} {nActions horizon : Nat}
@@ -84,12 +84,12 @@ def collect {obsShape : Shape} {nActions horizon : Nat}
 
     let logits : Tensor α [nActions] := predictLogits obs
     let (counter', a) :=
-      PolicyGradient.sampleActionFromLogits (α := α) (nActions := nActions)
-        (seed := rngSeed) (counter := counter) logits
+      PolicyGradient.sample (α := α) (nActions := nActions)
+        (seed := rngSeed) (counter := counter) logits (logits := true)
     counter := counter'
 
     -- Cache the raw behavior-policy value; the autograd objective clamps its new value.
-    let lp : α := PolicyGradient.actionLogSoftmax (α := α) (nActions := nActions) logits a
+    let lp : α := PolicyGradient.logSoftmax (α := α) (nActions := nActions) logits a
     let v : α := predictValue obs
 
     let (tr, nextState) ← session.stepChecked state a

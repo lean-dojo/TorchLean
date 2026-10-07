@@ -239,11 +239,6 @@ open FloatLib.Floats.Formats.BinaryInterchange
     toModel (ExecFloat.add x y) = Model.add (toModel x) (toModel y) :=
   IEEEExec.toModel_add x y
 
-/-- Configured multiplication decodes to FloatLib's proved model multiplication. -/
-@[simp] theorem toModel_mul (x y : ExecFloat.Binary 8 23) :
-    toModel (ExecFloat.mul x y) = Model.mul (toModel x) (toModel y) :=
-  IEEEExec.toModel_mul x y
-
 /-- Quieting a binary32 NaN preserves its non-finite classification. -/
 theorem model_isFinite_quietNaN (x : Model FloatFormat.binary32) :
     Model.isFinite (Model.quietNaN x) = Model.isFinite x :=

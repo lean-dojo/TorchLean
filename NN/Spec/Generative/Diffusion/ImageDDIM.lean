@@ -121,7 +121,7 @@ def sample (denominatorFloor : α) (coefficients : Tensor α [T])
     (predict : Fin T → Tensor α s → Tensor α s) (initial : Tensor α s)
     (postprocess : Tensor α s → Tensor α s :=
       fun reconstruction => Tensor.clampSpec reconstruction (-1) 1) : Tensor α s :=
-  (List.finRange T).foldr
+  Fin.foldr T
     (fun index x => step denominatorFloor coefficients predict index x postprocess)
     initial
 

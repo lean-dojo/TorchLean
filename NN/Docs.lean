@@ -15,8 +15,6 @@ public import NN.Verification.CLI
 public import NN.CI.SlowProofs
 public import NN.MLTheory.CROWN.Proofs.GraphRefinement
 public import NN.Tactic.Verify.Lowering
-public import NN.Testing.Compare
-public import NN.Testing.Command
 
 /-!
 # TorchLean documentation surface

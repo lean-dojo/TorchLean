@@ -141,10 +141,11 @@ class Ops (m : Type → Type) (α : Type) [Storage α] [Context α] where
   /-- Apply the hyperbolic tangent elementwise. -/
   tanh : {s : Shape} → (x : Ref s) → m (Ref s)
   /--
-  Apply tanh-approximate GELU as one backend primitive.
+  Apply tanh-approximate GELU as one recorded operation.
 
-  The formula is `0.5 * x * (1 + tanh(√(2/π) * (x + 0.044715 * x^3)))`. Keeping it primitive
-  avoids building temporary tensors for each term. Backends must match `Activation.geluSpec` and
+  The formula is `0.5 * x * (1 + tanh(√(2/π) * (x + 0.044715 * x^3)))`. A backend may evaluate
+  it through several numerical primitives and temporary tensors without recording separate
+  tape nodes for the terms. The value and VJP follow `Activation.geluSpec` and
   `Activation.geluDerivSpec`.
   -/
   gelu : {s : Shape} → (x : Ref s) → m (Ref s)
@@ -177,9 +178,9 @@ class Ops (m : Type → Type) (α : Type) [Storage α] [Context α] where
   /--
   Apply `log(softplus(x) + epsilon)` elementwise.
 
-  Positive `epsilon` keeps the logarithm's argument positive, including when a floating-point
-  softplus rounds to zero. The derivative is `sigmoid(x) / (softplus(x) + epsilon)`, with
-  `epsilon` held fixed.
+  The derivative is `sigmoid(x) / (softplus(x) + epsilon)`, with `epsilon` held fixed. Over the
+  reals, positive `epsilon` keeps the argument positive. Executable arithmetic needs `epsilon`
+  to remain positive in its selected representation; this does not make nonfinite inputs finite.
   -/
   safeLog : {s : Shape} → Ref s → α → m (Ref s)
   /-- Sum every element into a scalar. -/

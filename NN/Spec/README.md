@@ -19,8 +19,8 @@ The practical goal is to avoid a gap between the network we run and the network 
 define the reference behavior once, then make runtime, graph, and verifier layers say how they
 connect back to it.
 
-Ordinary model/training code should start from `import NN`. Use `NN.Spec` when a file is
-spec-focused and should avoid importing the full public API.
+Ordinary model/training code should start from `import NN.API`. Use `NN.Spec` for reference
+definitions, or `NN` when a file also needs the proof and verification layers.
 
 ## How To Navigate
 
@@ -33,7 +33,7 @@ spec-focused and should avoid importing the full public API.
   - `Complex.lean`: complex-number support for FFT/FNO specs.
   - `Random.lean`: deterministic `Spec.Random` key and sampling helpers.
 - `Layers/`: forward and backward specs for common layers: linear, convolution, attention,
-  FlashAttention-style fused attention, normalization, pooling, embeddings, recurrent layers,
+  normalization, pooling, embeddings, recurrent layers,
   selective scan, dropout, and losses.
 - `Autograd/`: spec-level reverse-mode building blocks (`OpSpec`) used by runtime AD wrappers and
   proof files.

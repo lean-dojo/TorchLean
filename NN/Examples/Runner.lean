@@ -186,7 +186,7 @@ def commandGroups : List CommandGroup :=
         , unitCommand "graphspec" "build and inspect a typed graph specification"
             NN.Examples.DeepDives.GraphSpec.Tutorial.main (supportsDevice := true)
         , unitCommand "ir_axis_ops" "lower axis operations into executable graph IR"
-            NN.Examples.DeepDives.IRAxisOps.main (supportsDevice := true)
+            NN.Examples.DeepDives.IRAxisOps.main
         , unitCommand "one_semantic_universe"
             "relate executable and proof-oriented scalar semantics"
             NN.Examples.DeepDives.OneSemanticUniverse.main
@@ -294,19 +294,11 @@ partial def askDevice : IO (List String) := do
       IO.println "Please choose 1/cpu or 2/cuda."
       askDevice
 
-/-- Strip top-level runner flags that are not meant for individual examples. -/
-def stripFlag (flag : String) (args : List String) : List String :=
-  args.filter (· != flag)
-
-/-- Look up a subcommand inside a single group. -/
-def findCommandIn (name : String) (commands : List Command) : Option Command :=
-  commands.find? (·.name == name)
-
 /-- Look up a subcommand across every group, taking the first match. -/
 def findCommand (name : String) : List CommandGroup → Option Command
   | .nil => none
   | group :: rest =>
-      match findCommandIn name group.commands with
+      match group.commands.find? (·.name == name) with
       | some command => some command
       | none => findCommand name rest
 
@@ -355,7 +347,7 @@ arguments untouched, so an example's own flag parsing never sees runner flags. -
 def main (args : List String) : IO UInt32 := do
   let args := CLI.dropDashDash args
   let choose := args.contains "--choose" && !CLI.hasHelp args
-  let args := NN.Examples.Runner.stripFlag "--choose" args
+  let args := args.filter (· != "--choose")
   match args with
   | .nil =>
       IO.eprintln NN.Examples.Runner.usage

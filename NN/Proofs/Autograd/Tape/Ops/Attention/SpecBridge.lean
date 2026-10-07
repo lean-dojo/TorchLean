@@ -78,7 +78,7 @@ theorem transposeVec_idxMN {m n : Nat} (a : Vec (matSize m n)) (i : Fin n) (j : 
 
 /-- Swapping the two axes of a matrix tensor corresponds to the flat transpose.
 
-Attention transposes the key matrix, so without this the `Qᵀ` in `Q Kᵀ` would have to be reasoned
+Attention transposes the key matrix, so without this the `Kᵀ` in `Q Kᵀ` would have to be reasoned
 about at the tensor level and at the vector level separately. -/
 theorem tensorToVec_swapAdjacentAxes {m n : Nat} (A : Tensor ℝ [m, n]) :
     tensorToVec (t := swapAdjacentAxes A 0) =

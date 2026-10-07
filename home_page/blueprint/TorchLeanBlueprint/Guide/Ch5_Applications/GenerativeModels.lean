@@ -219,9 +219,8 @@ $$`x_t
 +\sqrt{1-\bar\alpha_t}\,\epsilon,
 \qquad \epsilon\sim\mathcal N(0,I).`
 
-TorchLean keeps the randomness outside this formula. `noisedSampleFromNoise` takes the noise tensor
-as an argument, and `noisedSample` is the thin wrapper that draws reproducible noise from a
-`(seed, step)` pair and then calls it. The training sample it returns pairs the noised image, with
+We use `diffusion.sample` for both cases: give it a seed to draw reproducible noise, or pass
+`noise := ...` to use a tensor we already have. The training sample pairs the noised image, with
 its time channel attached, against the noise that produced it:
 
 ```lean (name := genForward)
@@ -234,8 +233,9 @@ def genNoise : Tensor Float [1, 1, 2] := [[[1.0, -1.0]]]
   let sched ← IO.ofExcept
     (diffusion.Schedule.linear 5 0.1 0.5)
   let sample :=
-    diffusion.noisedSampleFromNoise [1]
-      ([2] : Tensor Nat [1]) sched genClean genNoise 2
+    diffusion.sample [1]
+      ([2] : Tensor Nat [1]) sched genClean 2
+      (noise := genNoise)
   IO.println s!"input  = {sample.input}"
   IO.println s!"target = {sample.target}"
 ```
@@ -323,7 +323,7 @@ The same `(seed, step)` pair reproduces the same tensor; the two step values abo
 tensors, although distinct keys are not guaranteed to do so. Replaying a whole training run also
 requires its data, configuration, checkpoint state, and backend behavior.
 
-Passing noise explicitly to `noisedSampleFromNoise` lets us study the noising formula independently
+Passing noise explicitly to `diffusion.sample` lets us study the noising formula independently
 of the generator. The formal Gaussian law in
 {ref "probability-and-gradients"}[the probability chapter] concerns measures. There is currently no
 proof connecting that law to the generator's output bits.
@@ -351,7 +351,8 @@ $$`x_{t-1}
 The defaults are $`\delta=10^{-12}` and $`P(x)=\operatorname{clip}(x,-1,1)`. A custom
 postprocessor must return the same tensor shape. It changes the reconstructed image before
 remixing; the noise prediction in the second term stays the one supplied by the caller.
-`reverseDdimFrom` and `reverseDdim` pass the chosen postprocessor and floor to every step.
+`diffusion.ddim` passes the chosen postprocessor and floor to every step. Use `start := some index`
+to start from a particular schedule entry instead of the last one.
 
 To test this formula, supply the noise that was used. Over real arithmetic, with a positive signal
 coefficient and an inactive denominator floor, $`\widehat x_0` is exactly $`x_0`. If clipping also
@@ -487,14 +488,6 @@ changes smaller ones. Ordinary floating-point rounding remains under either poli
 define different step maps, so transferring a numerical bound between them requires accounting
 for that difference.
 
-The oracle calculation also identifies when an exact inversion argument is available. Over real
-arithmetic, if the injected noise is supplied back to the sampler and the signal coefficient is
-positive, subtracting the noise term and dividing by that coefficient recovers the clean input.
-A denominator floor must be inactive for this algebra to apply unchanged, and clipping must leave
-the reconstructed value inside its allowed interval. These conditions separate denoiser error
-from changes introduced deliberately by the sampler. The printed guarded results illustrate why
-an oracle prediction alone is insufficient to make every implementation an exact inverse.
-
 ## Sampler Stability Bounds
 
 The division-guard example compares two step definitions. The sampler bounds in
@@ -602,13 +595,6 @@ or three spatial axes. It has no downsampling, upsampling, multi-scale skip conc
 blocks, or learned timestep embeddings. The example also has no exponential moving average of the
 weights. Those choices limit comparisons with diffusion systems that use a multiscale U-Net and
 weight averaging.
-
-The printed output is a noise field with three channels, matching the clean image's shape.
-Its small initialized values do not mean that the image has been reconstructed: they are the
-network's current estimates of the injected noise. The training loss will compare those estimates
-with a particular sampled target. Inspecting `stateShapes` first makes it possible to tell a
-wrong channel contract from a poorly trained predictor; both can produce an unusable sample,
-but only the former is a shape error.
 
 # Diffusion Training And Sampling
 
@@ -957,8 +943,9 @@ moves the encoder output toward a fixed embedding. TorchLean keeps these scalar 
 detaches the encoder output, while `commitmentLoss` detaches the selected code.
 
 Reconstruction needs a third choice. The decoder receives
-`detach(selected) + (encoded - detach(encoded))`: its forward value is the selected code for
-finite inputs, but the incoming decoder cotangent passes to the encoder. The codebook receives
+`detach(selected) + (encoded - detach(encoded))`: over the reals its forward value is the selected
+code. Finite floating-point evaluation can change a signed zero, and nonfinite encoder values can
+produce NaN. The incoming decoder cotangent passes to the encoder. The codebook receives
 no reconstruction gradient through this expression. This is the straight-through estimator,
 whose derivative rule is deliberately specified separately from hard nearest-code selection.
 There is no claim that a hard argmin has this classical derivative.
@@ -1073,12 +1060,8 @@ z_q   = [1.000000, 1.000000]
 total = 2.531250
 ```
 
-In this identity-decoder fixture, selecting code zero makes every squared-distance term
-$`(1^2+(-0.5)^2)/2=0.625`. Weighting commitment by $`0.25` gives
-$`0.625+0.625+0.25\cdot0.625=1.40625`. Forcing code one changes the coordinate differences
-to $`0` and $`-1.5`, so the common mean becomes $`1.125` and the total becomes $`2.53125`.
-I use the identity decoder so we can compare all three loss terms directly. With a learned
-nonlinear decoder, nearest latent distance need not select the smallest reconstruction error.
+With a learned nonlinear decoder, nearest latent distance need not select the smallest
+reconstruction error.
 
 Changing latent width affects the training scale even when nearest-code ordering is unchanged.
 A mean squared distance divides each coordinate's contribution by the number of latent coordinates.
@@ -1228,13 +1211,8 @@ over which network receives gradients during each update. The API builders here 
 supervised models. As the spec docstring states, they are not constructed from the GAN records,
 and no theorem relates the two. There is no runnable GAN training command.
 
-The two printed least-squares losses describe opposing targets for the same generated
-example. A discriminator score near zero is desirable during a discriminator update on fake
-data, while the generator wants that score near one. The ideal-score calculation makes the
-conflict explicit: a perfectly separating discriminator has zero loss and leaves generator loss
-at one. Neither objective is a probability, and a negative initialized score is valid for this
-unconstrained scalar output. Comparing GAN runs therefore requires identifying whose update
-produced a loss value, rather than treating any single decreasing curve as joint success.
+Neither objective is a probability, and a negative initialized score is valid for this
+unconstrained scalar output. When comparing GAN runs, identify whose update produced a loss value.
 
 # Masked Autoencoding
 
@@ -1365,13 +1343,6 @@ The finite theory for this objective lives in
 over a concatenated coordinate list splits into its parts, and `exactReconstruction_identity` says
 a perfect reconstruction scores zero. These results describe how the objective is computed;
 assessing the learned representation requires an empirical evaluation.
-
-The hidden-index output is also a shape calculation. A channel plane contains sixteen
-coordinates, so copying the same spatial mask to successive channels adds offsets of sixteen.
-The twelve indices therefore represent four hidden pixels in each of three channels. In the
-separate target-width example, the eight printed values come from the original tensor, before
-masking. Keeping that ordering explicit matters: gathering from an already masked tensor would
-silently replace the reconstruction target with zeros and train a different problem.
 
 # Result Scope
 

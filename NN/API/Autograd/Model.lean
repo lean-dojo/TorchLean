@@ -24,12 +24,6 @@ namespace autograd
 
 namespace model
 
-/-
-Model-shaped autograd: a TorchLean `NN.Seq` plus a `Loss` over its output.
-
-This covers the common training use case.
--/
-
 /-- Complete model state, indexed by its statically known tensor shapes. -/
 abbrev State {σ τ : Shape}
     (model : nn.Sequential σ τ) (α : Type) [TorchLean.Storage α] :=
@@ -91,7 +85,7 @@ def detach {τ υ : Shape}
 end Loss
 
 /-- Lower `loss (model state input) target` to the typed scalar program used by autograd. -/
-def Internal.lossProgram {σ τ υ : Shape}
+def Internal.program {σ τ υ : Shape}
     (model : nn.Sequential σ τ)
     (loss : Loss τ υ) :
     ∀ {α : Type}, [TorchLean.Storage α] → [Context α] → Runtime.Autograd.Model.Program α
@@ -127,7 +121,7 @@ def Internal.lossProgram {σ τ υ : Shape}
         loss.forward (α := α) (m := m) output target)
 
 /-- Reject an invalid model or loss before lowering an autograd program. -/
-def Internal.validateLoss {σ τ υ : Shape}
+def Internal.validate {σ τ υ : Shape}
     (model : nn.Sequential σ τ) (loss : Loss τ υ) : IO Unit := do
   IO.ofExcept (nn.validate model)
   IO.ofExcept loss.validate
@@ -152,24 +146,24 @@ def grad {σ τ υ : Shape}
   cases value with
   | false =>
       exact do
-        Internal.validateLoss model loss
+        Internal.validate model loss
         let (grad, _) ← Runtime.Autograd.Model.Autodiff.gradients
           (α := α)
           (paramShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes model)
           (inputShapes := [σ, υ])
-          (Internal.lossProgram model loss)
+          (Internal.program model loss)
           (nn.State.Internal.toTensorPack state)
           (TorchLean.TensorPack.pair input target)
         pure (nn.State.Internal.fromTensorPack grad)
   | true =>
       exact do
-        Internal.validateLoss model loss
+        Internal.validate model loss
         let stateShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes model
         let graph ←
-          Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph (α := α)
+          Runtime.Autograd.Model.Autodiff.lowerToTypedGraph (α := α)
             (paramShapes := stateShapes)
             (inputShapes := [σ, υ])
-            (Internal.lossProgram model loss)
+            (Internal.program model loss)
 
         let arguments : TorchLean.TensorPack α
             (stateShapes ++ [σ, υ]) :=
@@ -179,7 +173,7 @@ def grad {σ τ υ : Shape}
             (TorchLean.TensorPack.pair input target)
 
         let (allGradients, lossValue) ←
-          Runtime.Autograd.Model.Autodiff.Impl.vjpWithValue
+          Runtime.Autograd.Model.Autodiff.Impl.pullback
             graph arguments (Tensor.scalar (1 : α))
 
         let (grad, _) :=
@@ -223,7 +217,7 @@ def jacrev {σ τ : Shape}
     (input : Tensor α σ) :
     IO (nn.State α ((nn.stateShapes model).map τ.concat)) := do
   IO.ofExcept (nn.validate model)
-  let rows ← Runtime.Autograd.Model.Autodiff.jacrevOutParams
+  let rows ← Runtime.Autograd.Model.Autodiff.jacrevParams
     (α := α)
     (paramShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes model)
     (inputShapes := [σ]) (τ := τ)
@@ -251,12 +245,12 @@ def jvp {σ τ υ : Shape}
     (input : Tensor α σ) (target : Tensor α υ)
     (stateDirection : State model α) :
     IO (Tensor α []) := do
-  Internal.validateLoss model loss
+  Internal.validate model loss
   Runtime.Autograd.Model.Autodiff.jvpLossParams
     (α := α)
     (paramShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes model)
     (inputShapes := [σ, υ])
-    (Internal.lossProgram model loss)
+    (Internal.program model loss)
     (nn.State.Internal.toTensorPack state)
     (TorchLean.TensorPack.pair input target)
     (nn.State.Internal.toTensorPack stateDirection)
@@ -273,12 +267,12 @@ def hvp {σ τ υ : Shape}
     (input : Tensor α σ) (target : Tensor α υ)
     (stateDirection : State model α) :
     IO (State model α) := do
-  Internal.validateLoss model loss
+  Internal.validate model loss
   let result ← Runtime.Autograd.Model.Autodiff.hvpParams
     (α := α)
     (paramShapes := Runtime.Autograd.Model.Layers.Seq.stateShapes model)
     (inputShapes := [σ, υ])
-    (Internal.lossProgram model loss)
+    (Internal.program model loss)
     (nn.State.Internal.toTensorPack state)
     (TorchLean.TensorPack.pair input target)
     (nn.State.Internal.toTensorPack stateDirection)

@@ -52,7 +52,7 @@ def linear {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Inhabited �
   executeRecorded (α := α) s .linear #[w.identity?, b.identity?, x.identity?] cpu cuda
 
 /-- Mean-squared-error loss returning a scalar. PyTorch: `torch.nn.functional.mse_loss`. -/
-def mseLoss {α : Type} [TorchLean.Storage α] [TensorTransfer α] (s : EagerSession α)
+def mseLoss {α : Type} [TorchLean.Storage α] (s : EagerSession α)
   [Inhabited α] [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [NatCast α]
   {sh : Shape} (yhat target : TensorRef α sh) : IO (TensorRef α Shape.scalar) := do
   let cpu := do
@@ -128,7 +128,8 @@ def attentionCpu {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Conte
 Self-attention with an optional leading batch dimension.
 
 The head count is `numHeads`; `batch := some b` selects inputs of shape `[b, n, dModel]`.
-CPU execution maps the reference operation over samples; GPU execution calls LibTorch once.
+CPU execution maps the reference operation over samples; GPU execution records one tape node
+for the batch and evaluates it through multiple LibTorch primitives.
 -/
 def attention {α : Type} [TorchLean.Storage α] (s : EagerSession α)
   [Context α] [TensorTransfer α]
@@ -158,7 +159,7 @@ def attention {α : Type} [TorchLean.Storage α] (s : EagerSession α)
     let result ← Runtime.Autograd.LibTorch.Tape.attention (t := t0)
       (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
       h1 wq.id wk.id wv.id wo.id x.id mask (batch := batch) (hBatch := hBatch)
-    let (t1, id) ← okOrThrow result
+    let (t1, id) ← IO.ofExcept result
     s.cudaTape.set t1
     pure (some { id := id })
   execute (α := α) s .attention

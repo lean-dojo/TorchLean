@@ -37,15 +37,8 @@ private theorem tensor_list_eq_ofFn {n : Nat} (tensor : Tensor Nat [n]) :
       have hindex :
           Internal.Coord.linearize (s := [n])
               ((⟨index, by simpa using hleft⟩ : Fin n), PUnit.unit) =
-            ⟨index, by simpa using hleft⟩ := by
-        apply Fin.ext
-        change (Internal.Coord.linearize (s := [n])
-          ((⟨index, by simpa using hleft⟩ : Fin n), PUnit.unit)).val = index
-        erw [Internal.Coord.linearize_cons_val]
-        have htail : (Internal.Coord.linearize (s := []) PUnit.unit).val < 1 :=
-          (Internal.Coord.linearize (s := []) PUnit.unit).isLt
-        simp only [Internal.Shape.size_nil, Nat.one_mul]
-        omega
+            ⟨index, by simpa using hleft⟩ :=
+        Fin.ext (Tensor.vectorCoordinate_linearize_val ⟨index, by simpa using hleft⟩)
       simpa only [Array.getElem_ofFn, Tensor.getScalar_eq_apply, Internal.Rep.get,
         hindex] using h
   simpa only [Tensor.to_list_eq_data, Array.toList_ofFn] using congrArg Array.toList hdata

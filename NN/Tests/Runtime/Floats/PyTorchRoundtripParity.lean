@@ -17,8 +17,11 @@ public import NN.Tests.Runtime.Floats.Utils
 /-!
 # PyTorch Roundtrip Parity Checks
 
-Compares the checked-in PyTorch reference weights against TorchLean evaluation for the same fixed
-inputs used by the round-trip examples.
+Compares PyTorch and TorchLean evaluation of the checked-in MLP, CNN and transformer weights on the
+round-trip examples' fixed inputs. Separate checks cover parameter-wrapper precedence, dtype
+metadata rejection, and generated class initialization and summaries. Numerical parity is skipped
+when Python cannot import PyTorch; importer checks still run. These cases do not establish general
+import/export equivalence.
 -/
 
 @[expose] public section
@@ -34,7 +37,7 @@ namespace Floats
 namespace PyTorchRoundtripParity
 
 def workDir : System.FilePath :=
-  TorchLean.External.Process.artifactWorkDir "pytorch_roundtrip_parity"
+  TorchLean.External.Process.directory "pytorch_roundtrip_parity"
 
 def parityScriptPath : System.FilePath :=
   workDir / "compute_parity.py"
@@ -164,9 +167,9 @@ def checkImporterBoundaries : IO Unit := do
 
 /-- Execute the emitted class skeleton and both MLP variants, including their summary API. -/
 def checkGeneratedPythonContract : IO Unit := do
-  let source := Export.PyTorch.MLP.completeSource
+  let source := Export.PyTorch.MLP.script
       (inputWidth := 2) (hiddenWidth := 3) (outputWidth := 2) "Fixture" ++ "\n" ++
-    Export.PyTorch.generateBasePyTorchModule "Base" "Regression fixture" ++ "\n" ++
+    Export.PyTorch.base "Base" "Regression fixture" ++ "\n" ++
     String.intercalate "\n"
       [ "assert '_initialize_layers' in Base.__dict__"
       , "try:"

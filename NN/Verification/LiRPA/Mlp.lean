@@ -21,7 +21,7 @@ It does three things:
 
 Run via the unified CLI registry:
 
-- `lake exe verify -- lirpa-mlp [path]`
+- `scripts/lake.sh exe verify -- lirpa-mlp [path]`
 
 If `path` is omitted, the CLI uses the default example certificate at:
 `NN/Examples/Verification/LiRPA/mlp_cert.json`.
@@ -77,8 +77,7 @@ def seedParamsFloat : ParamStore Float :=
 /-- Check an IBP certificate JSON file and throw an error if it does not match recomputed bounds. -/
 def verifyCert (path : String) : IO Unit := do
   let g := buildGraph
-  -- Every input coordinate gets the box $[x_i - \varepsilon, x_i + \varepsilon]$; the
-  -- graph has 3 inputs, ids `0 .. 2`.
+  -- Give input node 0 a radius-1 box around [1, 2, 3].
   let ps := ExampleInputs.seedNaturalInputBox 0 3 1.0 seedParamsFloat
   NN.Verification.Cert.IBPCert.checkOrThrow g ps (outId := 3) path
 

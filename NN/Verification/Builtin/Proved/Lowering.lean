@@ -71,7 +71,8 @@ abbrev loweredConvParams
 Lower a single forward-fragment node into the verifier IR.
 
 Returns the corresponding `NN.IR.Node` together with an updated CROWN `ParamStore` that contains any
-payload required by `.const`, `.linear`, and payload-backed convolution nodes.
+payload required by `.const`, `.linear`, and convolution nodes. LayerNorm erases the entry at this
+id so that the IR uses unit affine parameters, as the source node does.
 -/
 def lowerNode
     {α : Type} [TorchLean.Storage α] [Context α]
@@ -157,12 +158,8 @@ def lowerNode
       ({ id := id, parents := #[yhat.id, target.id], kind := .mseLoss, outShape := .scalar }, ps)
 
 /--
-Lower a forward let-chain into a `LoweredIR` graph.
-
-This threads an accumulator `LoweredIR` that contains:
-- the growing `NN.IR.Graph`,
-- the payload store (`ParamStore`),
-- and the current output id.
+Append a forward let-chain to the graph and payload store in `c`. Node ids follow the graph's
+current size; the return node sets the output id, which may name an earlier value.
 -/
 def lowerForwardLetChain
     {α : Type} [TorchLean.Storage α] [Context α]

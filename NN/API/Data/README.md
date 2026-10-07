@@ -41,8 +41,9 @@ def loader : Data.Loader Float 32 [features] [targets] :=
 `Data.Loader.nextEpoch` returns full tensor batches and the loader state for the next deterministic
 epoch. The fixed batch size is part of the type, so the loader omits a final partial batch rather
 than exposing a `dropLast` option that could contradict its result type.
+Pass `(requireBatch := true)` to reject an epoch with no full batch, rather than return an empty one.
 `Data.collateStream` and `Data.batch` construct batches on access. Use
-`Data.Loader.firstFullBatch` to request one batch without constructing the rest of the epoch.
+`Data.Loader.firstBatch` to request one batch without constructing the rest of the epoch.
 
 The data boundary is focused:
 

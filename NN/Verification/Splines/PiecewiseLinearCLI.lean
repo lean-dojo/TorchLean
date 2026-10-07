@@ -22,17 +22,17 @@ The workflow follows the “external producer, Lean checker” pattern:
 
 This is dependency-free:
 - the Julia script uses only Julia Base (no packages),
-- the default `lake exe verify -- spline-cert` path checks a **bundled** JSON file and does not
-  require Julia,
+- the default `scripts/lake.sh exe verify -- spline-cert` path checks a bundled JSON file,
+  without requiring Julia,
 - passing `--regen` calls Julia to regenerate the JSON and checks the output.
 
 Run via the unified verification CLI:
 
 - Check bundled cert (no Julia required):
-  `lake exe verify -- spline-cert`
+  `scripts/lake.sh exe verify -- spline-cert`
 
 - Regenerate by calling Julia (requires `julia` on `PATH` or `TORCHLEAN_JULIA` set):
-  `lake exe verify -- spline-cert --regen`
+  `scripts/lake.sh exe verify -- spline-cert --regen`
 
 References:
 - “untrusted producer, trusted checker” workflow: see
@@ -112,7 +112,6 @@ def main (args : List String) : IO Unit := do
   let j ←
     if regen then
       let jsonStr ←
-        -- Call Julia and validate its stdout payload.
         Runtime.External.Julia.run (args := #["--color=no", "--startup-file=no", scriptPath])
       match Json.parse jsonStr with
       | .ok j => pure j

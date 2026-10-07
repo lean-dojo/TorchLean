@@ -52,21 +52,9 @@ namespace Tape
 @[inline] def scatterAdd {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {s : Shape} (t : Tape α) (baseId sourceId : Nat) (axis count : Nat)
     [Shape.AxisInBounds axis s]
-    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape α × Nat) := do
-  let base ← requireValue (α := α) (t := t) (s := s) baseId
-  let source ← requireValue (α := α) (t := t) (s := s.replaceAxis axis count) sourceId
-  let y := Tensor.scatterAddSpec axis base indices source
-  let node : Node α :=
-    { name := some s!"scatter_add(axis={axis})"
-      value := Spec.SomeTensor.ofTensor y
-      requiresGrad :=
-        (t.getNode? baseId).any (·.requiresGrad) ||
-        (t.getNode? sourceId).any (·.requiresGrad)
-      parents := #[baseId, sourceId]
-      backward := fun dLdyAny => do
-        let dLdy ← requireGrad (α := α) (τ := s) dLdyAny
-        let dSource := Tensor.indexSelectSpec axis dLdy indices
-        pure #[
-          (baseId, Spec.SomeTensor.ofTensor dLdy),
-          (sourceId, Spec.SomeTensor.ofTensor dSource)] }
-  pure (t.addNode node)
+    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape α × Nat) :=
+  binary (α := α) (t := t) (σ₁ := s) (σ₂ := s.replaceAxis axis count) (τ := s)
+    s!"scatter_add(axis={axis})" baseId sourceId
+    (forward := fun base source => Tensor.scatterAddSpec axis base indices source)
+    (backward := fun _base _source dLdy =>
+      (dLdy, Tensor.indexSelectSpec axis dLdy indices))

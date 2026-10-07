@@ -156,7 +156,8 @@ This implements an exponential moving average:
 
 PyTorch analogy: the update performed for `running_mean` / `running_var` in BatchNorm.
 -/
-def updateRunning {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+def updateRunning {α : Type} [TorchLean.Storage α] [Add α] [Sub α] [Mul α] [One α]
+    {s : Shape}
     (running batch : Tensor α s) (momentum : Tensor α .scalar) : Tensor α s :=
   let mom := momentum.item
   addSpec (scaleSpec running ((1 : α) - mom)) (scaleSpec batch mom)
@@ -166,7 +167,8 @@ Convert the biased variance used by BatchNorm's training forward pass into the u
 stored in its running buffer. For a singleton sample set there is no unbiased estimate; TorchLean
 keeps the finite biased value rather than dividing by zero.
 -/
-def unbiasedRunningVariance {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+def unbiasedRunningVariance {α : Type} [TorchLean.Storage α] [Mul α] [Div α] [NatCast α]
+    {s : Shape}
     (biased : Tensor α s) (sampleCount : Nat) : Tensor α s :=
   if sampleCount > 1 then
     scaleSpec biased ((sampleCount : α) / (sampleCount - 1 : Nat))
@@ -180,7 +182,8 @@ The first two axes are batch and channel; every remaining axis is reduced. The r
 vectors indexed by channel. A running-variance update uses
 `unbiasedRunningVariance vars (batch * spatial.size)` instead.
 -/
-def batchChannelStats {α : Type} [TorchLean.Storage α] [Context α]
+def batchChannelStats {α : Type} [TorchLean.Storage α] [Zero α] [Add α] [Sub α] [Mul α]
+    [Div α] [NatCast α]
     {batch channels : Nat} {spatial : Shape}
     (x : Tensor α (.dim batch (.dim channels spatial))) :
     Tensor α [channels] × Tensor α [channels] :=
@@ -232,9 +235,9 @@ PyTorch analogy: calling `layer(x)` where the layer's parameters are already all
 def forwardRef {σ τ : Shape} (l : Layer σ τ) {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Torch.Ops (m := m) (α := α)]
     (mode : Mode)
-    (ps : Torch.RefList (RefTy (m := m) (α := α)) l.stateShapes)
-    (x : RefTy (m := m) (α := α) σ) : m (RefTy (m := m) (α := α) τ) :=
-  Torch.CurriedRef.uncurry (ss := l.stateShapes ++ [σ]) (Ref := RefTy (m := m) (α := α))
+    (ps : Torch.RefList (Ref (m := m) (α := α)) l.stateShapes)
+    (x : Ref (m := m) (α := α) σ) : m (Ref (m := m) (α := α) τ) :=
+  Torch.CurriedRef.uncurry (ss := l.stateShapes ++ [σ]) (Ref := Ref (m := m) (α := α))
     (l.forward mode (α := α) (m := m)) (Torch.RefList.append ps (.cons x .nil))
 
 /--
@@ -248,7 +251,7 @@ PyTorch analogy: running a forward pass eagerly on concrete tensors.
 def forwardTensor {σ τ : Shape} (l : Layer σ τ) (mode : Mode)
     {α : Type} [TorchLean.Storage α] [Context α]
     (ps : TorchLean.TensorPack α l.stateShapes) (x : Tensor α σ) : IO (Tensor α τ) := do
-  Runtime.Autograd.okOrThrow (l.validate)
+  IO.ofExcept (l.validate)
   let graph ← Runtime.Autograd.Model.Autodiff.lowerToTypedGraph (α := α)
     (paramShapes := l.stateShapes) (inputShapes := [σ]) (τ := τ)
     (l.forward mode)

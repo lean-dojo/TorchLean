@@ -23,7 +23,7 @@ For round-trip examples we accept a *stable, explicit key format* in JSON:
   `norm2_beta`.
 
 We also accept the nested PyTorch module keys emitted by
-`Export.PyTorch.Transformer.withParameters`, such as
+`Export.PyTorch.Transformer.weights`, such as
 `layers.0.mha.q_proj.weight`. Explicit attention keys use `(input, output)` matrices. Nested
 `nn.Linear` projection keys use `(output, input)` and are transposed during import; feed-forward
 weights retain PyTorch's orientation under either naming scheme.
@@ -72,41 +72,35 @@ structure Parameters (modelWidth feedForwardWidth : Nat) where
 /-- Load Transformer parameters from JSON matching either supported export key format. -/
 def load (modelWidth feedForwardWidth : Nat) (json : Json) :
     Option (Parameters modelWidth feedForwardWidth) :=
-  let projectionShape : Shape := [modelWidth, modelWidth]
-  let feedForwardInputWeightShape : Shape := [feedForwardWidth, modelWidth]
-  let feedForwardOutputWeightShape : Shape := [modelWidth, feedForwardWidth]
-  let feedForwardInputBiasShape : Shape := [feedForwardWidth]
-  let feedForwardOutputBiasShape : Shape := [modelWidth]
-  let normShape : Shape := [modelWidth]
   do
     -- Accepts both `{...}` and `{ "params": {...} }`.
     let weights ← loadWeights? json
     -- Explicit keys store input×output matrices; nn.Linear state_dict keys store output×input.
     let projection (explicitKey moduleKey : String) :
         Option (Tensor Float [modelWidth, modelWidth]) :=
-      getTensor? weights explicitKey projectionShape <|> do
-        let matrix ← getTensor? weights moduleKey projectionShape
+      getTensor? weights explicitKey [modelWidth, modelWidth] <|> do
+        let matrix ← getTensor? weights moduleKey [modelWidth, modelWidth]
         pure <| rearrange matrix "output input -> input output"
     let queryWeight ← projection "Wq" "layers.0.mha.q_proj.weight"
     let keyWeight ← projection "Wk" "layers.0.mha.k_proj.weight"
     let valueWeight ← projection "Wv" "layers.0.mha.v_proj.weight"
     let outputWeight ← projection "Wo" "layers.0.mha.out_proj.weight"
     let feedForwardInputWeight ← getTensorFirst? weights
-      ["W1", "layers.0.ffn.fc1.weight"] feedForwardInputWeightShape
+      ["W1", "layers.0.ffn.fc1.weight"] [feedForwardWidth, modelWidth]
     let feedForwardOutputWeight ← getTensorFirst? weights
-      ["W2", "layers.0.ffn.fc2.weight"] feedForwardOutputWeightShape
+      ["W2", "layers.0.ffn.fc2.weight"] [modelWidth, feedForwardWidth]
     let feedForwardInputBias ← getTensorFirst? weights
-      ["b1", "layers.0.ffn.fc1.bias"] feedForwardInputBiasShape
+      ["b1", "layers.0.ffn.fc1.bias"] [feedForwardWidth]
     let feedForwardOutputBias ← getTensorFirst? weights
-      ["b2", "layers.0.ffn.fc2.bias"] feedForwardOutputBiasShape
+      ["b2", "layers.0.ffn.fc2.bias"] [modelWidth]
     let norm1Scale ←
-      getTensorFirst? weights ["norm1_gamma", "layers.0.norm1.weight"] normShape
+      getTensorFirst? weights ["norm1_gamma", "layers.0.norm1.weight"] [modelWidth]
     let norm1Bias ←
-      getTensorFirst? weights ["norm1_beta", "layers.0.norm1.bias"] normShape
+      getTensorFirst? weights ["norm1_beta", "layers.0.norm1.bias"] [modelWidth]
     let norm2Scale ←
-      getTensorFirst? weights ["norm2_gamma", "layers.0.norm2.weight"] normShape
+      getTensorFirst? weights ["norm2_gamma", "layers.0.norm2.weight"] [modelWidth]
     let norm2Bias ←
-      getTensorFirst? weights ["norm2_beta", "layers.0.norm2.bias"] normShape
+      getTensorFirst? weights ["norm2_beta", "layers.0.norm2.bias"] [modelWidth]
     pure {
       queryWeight, keyWeight, valueWeight, outputWeight
       feedForwardInputWeight, feedForwardOutputWeight

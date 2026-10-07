@@ -21,10 +21,10 @@ public import NN.Proofs.RuntimeApprox.Scale
 /-!
 # Runtime Approximation Proofs
 
-Umbrella import for TorchLean's executable-runtime-to-real-spec approximation theorems.
+Umbrella import for TorchLean's runtime approximation contracts and composition theorems.
 
 The runtime-approximation library is intentionally layered:
-- `Core`: tolerance objects and tensor/context approximation predicates;
+- `Core`: tolerance objects and scalar/tensor approximation predicates;
 - `Rounding`: scalar FloatLib rounding-error lemmas;
 - `Graph`: forward and reverse graph composition theorems;
 - `NF`: proof-relevant rounded tensor/operator backend;
@@ -34,8 +34,8 @@ The runtime-approximation library is intentionally layered:
 - `Reductions`: error bounds for rounded-addition trees and finite binary32 schedules;
 - `Scale`: optional magnitude propagation for abs/rel tolerance reporting.
 
-Leaf modules stay available for developers working on one operator family, but public entrypoints
-and CI should import this umbrella rather than listing every runtime-approximation file by hand.
+Import this umbrella for the full proof bundle, or a leaf module for one operator family.
+Native-runtime agreement still requires the provider assumptions stated by the relevant contract.
 -/
 
 @[expose] public section

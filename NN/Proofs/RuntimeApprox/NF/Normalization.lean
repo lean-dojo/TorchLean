@@ -12,14 +12,15 @@ public import NN.Spec.Layers.Normalization.Core
 /-!
 # Rounded Normalization Certificates
 
-This module connects TorchLean's mathematical normalization core to its rounded `NF` execution.
+This module bounds the shared normalization core in the rounded-real `NF` model.
 The proof is rank-generic: reductions such as a row mean or variance are certified separately and
 then supplied as inputs here. The resulting theorem covers the numerical part shared by LayerNorm,
 RMSNorm, BatchNorm, GroupNorm, and related affine normalizations.
 
-The conditioning assumptions are explicit. If the exact stabilized variance is at least `η > 0`,
-the square-root stage is controlled by `1 / sqrt η`. Division is accepted only when the computed
-square-root error is strictly smaller than `sqrt η`, so a rounded denominator cannot cross zero.
+If the exact stabilized variance is at least `η > 0`, the square-root stage is controlled by
+`1 / sqrt η`. The division theorem requires square-root error strictly smaller than `sqrt η`,
+so the rounded denominator cannot cross zero. This is a conditional mathematical bound, not
+an executable certificate checker or a native normalization-kernel proof.
 
 References:
 
@@ -53,9 +54,8 @@ local notation "R" => NF β fexp rnd
 
 /-- Stage-by-stage infinity-norm budget for an affine normalization.
 
-Keeping the intermediate errors is useful for auditing a failed certificate: a caller can see
-whether the loss of margin came from centering, variance stabilization, square root, division, or
-the final affine map instead of receiving only one opaque final number.
+Records the errors from centering, variance stabilization, square root, division, and affine
+scaling. Its real-valued fields are mathematical quantities, not an executable report.
 -/
 structure NormalizationErrorTrace where
   centeredError : ℝ
@@ -65,7 +65,7 @@ structure NormalizationErrorTrace where
   scaledError : ℝ
   outputError : ℝ
 
-/-- Compute the compositional error trace for `Spec.normalizeCore` on rounded runtime tensors. -/
+/-- Compositional error trace for `Spec.normalizeCore` in the rounded-real model. -/
 def normalizeCoreErrorTrace
     {s sMean sVar sGamma sBeta : Shape}
     (cbMean : Shape.CanBroadcastTo sMean s)
@@ -114,12 +114,13 @@ def normalizeCoreErrorTrace
         scaledError epsBeta scaledR betaBroadcastR)
   { centeredError, stabilizedError, stdError, normalizedError, scaledError, outputError }
 
-/-- Rounded execution of the shared affine-normalization core approximates its real semantics.
+/-- The rounded-real affine-normalization core approximates its exact real semantics.
 
 The five input tensor hypotheses can themselves come from reductions or earlier graph nodes. The
 epsilon scalar is treated like any other rounded constant. The exact stabilized variance must have
-the pointwise lower bound `η`; the two strict margin checks are directly computable from
-`normalizeCoreErrorTrace`.
+the pointwise lower bound `η`. The theorem retains two strict error-margin premises; its proof
+uses the square-root margin for division, but does not use the stabilized-variance error margin
+because `sqrtSpec` clamps its input. Both are propositions about the noncomputable error trace.
 -/
 theorem approxTensor_normalizeCore
     {s sMean sVar sGamma sBeta : Shape}
@@ -220,7 +221,7 @@ theorem approxTensor_normalizeCore
     (β := β) (fexp := fexp) (rnd := rnd) η hη
     hstabilizedApprox hstabilized
   have hstdLower : Tensor.Forall (fun z : ℝ => Real.sqrt η ≤ z) stdS := by
-    apply Tensor.forall_mapSpec hstabilized
+    apply Tensor.forall_map hstabilized
     intro z hz
     change Real.sqrt η ≤ Real.sqrt (max z 0)
     exact Real.sqrt_le_sqrt (le_trans hz (le_max_left z 0))

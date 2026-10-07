@@ -46,11 +46,7 @@ structure AffineCtx where
 /-- Identity affine map on a flattened vector of length `n`. -/
 @[expose]
 def affIdentity (n : Nat) : AffineVec α n n :=
-  let A :=
-    Tensor.dim (fun i =>
-      Tensor.dim (fun j => Tensor.scalar (if decide (i.val = j.val) then 1 else 0)))
-  let c := Tensor.full (α:=α) (.dim n .scalar) 0
-  { A := A, c := c }
+  { A := Spec.identityTensorSpec n, c := Tensor.full [n] 0 }
 
 /-- Pointwise addition of two affine maps with the same input and output dimensions. -/
 def affAdd {n m : Nat} (a1 a2 : AffineVec α n m) : AffineVec α n m :=

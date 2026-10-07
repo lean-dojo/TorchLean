@@ -170,7 +170,7 @@ Run the oracle script as a subprocess and parse its stdout as JSON.
 This is the shared IO boundary used by both unary queries and general JSON requests.
 -/
 def runPythonJson (pythonCmd : String) (args : Array String) : IO Json := do
-  let pythonCmd ← TorchLean.External.Process.resolveCmdFromEnv "TORCHLEAN_ARB_PY" pythonCmd
+  let pythonCmd ← TorchLean.External.Process.command "TORCHLEAN_ARB_PY" pythonCmd
   TorchLean.External.Process.runJson (ctx := "Arb oracle")
     (cmd := pythonCmd) (args := args) (cwd := some ".")
 
@@ -288,16 +288,6 @@ def parseBallField (o : Json) : Except String MidRad10Exp := do
   parseMidRad10Exp ballJson
 
 /--
-Internal helper: parse `(lo, hi)` endpoint strings from an object.
-
-The oracle includes both human-friendly decimal endpoints and exact integer ball encodings.
--/
-def parseLoHi (o : Json) : Except String (String × String) := do
-  let lo ← o.getObjVal? "lo" >>= jsonToString
-  let hi ← o.getObjVal? "hi" >>= jsonToString
-  pure (lo, hi)
-
-/--
 Internal helper: parse a `ball` plus decimal `(lo, hi)` endpoints from an object.
 
 The oracle includes both:
@@ -306,7 +296,8 @@ The oracle includes both:
 -/
 def parseBallLoHi (o : Json) : Except String (MidRad10Exp × String × String) := do
   let ball ← parseBallField o
-  let (lo, hi) ← parseLoHi o
+  let lo ← o.getObjVal? "lo" >>= jsonToString
+  let hi ← o.getObjVal? "hi" >>= jsonToString
   pure (ball, lo, hi)
 
 /--

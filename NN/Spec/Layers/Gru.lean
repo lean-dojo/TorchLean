@@ -364,7 +364,6 @@ def gruCellBackwardSpec {inputSize hiddenSize : Nat}
 
   -- New gate grads.
   let dNewW := outerProductSpec dPreH resetConcat
-  let dNewB := dPreH
   let dResetConcat := vecMatMulSpec dPreH gru.candidateWeight
   let dXFromH := sliceRangeSpec dResetConcat 0 inputSize (by
     simp)
@@ -378,7 +377,6 @@ def gruCellBackwardSpec {inputSize hiddenSize : Nat}
   -- Reset gate grads: r = sigmoid(pre_r)
   let dPreR := mulSpec dRFromReset (Activation.sigmoidOutputDerivSpec resetGate)
   let dResetW := outerProductSpec dPreR concat
-  let dResetB := dPreR
   let dConcatFromR := vecMatMulSpec dPreR gru.resetWeight
   let dXFromR := sliceRangeSpec dConcatFromR 0 inputSize (by
     simp)
@@ -388,7 +386,6 @@ def gruCellBackwardSpec {inputSize hiddenSize : Nat}
   -- Update gate grads: z = sigmoid(pre_z)
   let dPreZ := mulSpec dZ (Activation.sigmoidOutputDerivSpec updateGate)
   let dUpdateW := outerProductSpec dPreZ concat
-  let dUpdateB := dPreZ
   let dConcatFromZ := vecMatMulSpec dPreZ gru.updateWeight
   let dXFromZ := sliceRangeSpec dConcatFromZ 0 inputSize (by
     simp)
@@ -399,7 +396,7 @@ def gruCellBackwardSpec {inputSize hiddenSize : Nat}
   let dPrevHidden := addSpec (addSpec (addSpec dPrevDirect dPrevFromReset) dPrevFromR)
     dPrevFromZ
 
-  (dInput, dPrevHidden, dResetW, dResetB, dUpdateW, dUpdateB, dNewW, dNewB)
+  (dInput, dPrevHidden, dResetW, dPreR, dUpdateW, dPreZ, dNewW, dPreH)
 
 /--
 Reverse-mode backprop through an unrolled GRU over `seqLen` steps (BPTT).

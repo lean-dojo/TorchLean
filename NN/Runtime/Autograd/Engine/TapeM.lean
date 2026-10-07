@@ -65,10 +65,6 @@ variable {α β : Type} [TorchLean.Storage α]
 def run (t : Tape α) (m : TapeM α β) : Result (β × Tape α) :=
   StateT.run m t
 
-/-- Get the current tape state. -/
-def getTape : TapeM α (Tape α) :=
-  get
-
 /-- Adapt the tape's `(state, id)` result to the `StateT` `(id, state)` convention. -/
 @[inline] def Internal.record (op : Tape α → Result (Tape α × Nat)) : TapeM α Nat :=
   fun t => do
@@ -103,7 +99,7 @@ def mul {α : Type} [TorchLean.Storage α] [Mul α] {s : Shape}
   Internal.record fun t => Tape.mul (t := t) (s := s) aId bId
 
 /-- StateT wrapper around `Tape.div`. PyTorch comparison: `torch.div(a, b)` / `a / b`. -/
-def div {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+def div {α : Type} [TorchLean.Storage α] [Div α] [Mul α] [Sub α] [Zero α] {s : Shape}
   (aId bId : Nat) : TapeM α Nat :=
   Internal.record fun t => Tape.div (t := t) (s := s) aId bId
 
@@ -149,10 +145,14 @@ def linear {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
   {inDim outDim : Nat} (wId bId xId : Nat) : TapeM α Nat :=
   Internal.record fun t => Tape.linear (t := t) (inDim := inDim) (outDim := outDim) wId bId xId
 
-/-- StateT wrapper around `Tape.matmul`. PyTorch comparison: `torch.mm(a, b)`. -/
-def matmul {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]
-  {m n p : Nat} (aId bId : Nat) : TapeM α Nat :=
-  Internal.record fun t => Tape.matmul (t := t) (m := m) (n := n) (p := p) aId bId
+/-- Record matrix multiplication with broadcasted batch prefixes.
+The empty-prefix defaults give ordinary matrix multiplication. -/
+def matmul {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
+    {m n p : Nat} (aId bId : Nat)
+    (batchA : Shape := .scalar) (batchB : Shape := .scalar) (batch : Shape := .scalar)
+    [Shape.BroadcastTo batchA batch] [Shape.BroadcastTo batchB batch] : TapeM α Nat :=
+  Internal.record fun t =>
+    Tape.matmul (t := t) (m := m) (n := n) (p := p) aId bId batchA batchB batch
 
 /-- State wrapper around arbitrary-rank `Tape.conv`. -/
 def conv {α : Type} [TorchLean.Storage α] [Context α] [DecidableRel ((· > ·) : α → α → Prop)]

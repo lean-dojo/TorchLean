@@ -124,25 +124,17 @@ theorem cycleUpdate_no_nontrivial_cycles
       pluses (n := n) (cycleUpdate (n := n) p s) ≤
         pluses (n := n) ((cycleUpdate (n := n) p)^[k] s) := by
     have hk1 : 1 ≤ k := Nat.succ_le_of_lt hk
-    -- Truncate the sequence at `k` so that `monotone_nat_of_le_succ` applies; monotonicity only
-    -- holds on the initial segment `[0, k]`.
-    let g : Nat → Nat := fun i => pluses (n := n) ((cycleUpdate (n := n) p)^[Nat.min i k] s)
-    have hg_step : ∀ i, g i ≤ g (i + 1) := by
-      intro i
-      by_cases hi : i < k
-      · have hi' : Nat.min i k = i := Nat.min_eq_left (Nat.le_of_lt hi)
-        have hi1' : Nat.min (i + 1) k = i + 1 := Nat.min_eq_left (Nat.succ_le_of_lt hi)
-        simpa [g, hi', hi1', Nat.add_assoc] using hpl_mono i hi
-      · have hk_le : k ≤ i := Nat.le_of_not_gt hi
-        have hi' : Nat.min i k = k := Nat.min_eq_right hk_le
-        have hi1' : Nat.min (i + 1) k = k := Nat.min_eq_right (Nat.le_trans hk_le (Nat.le_succ _))
-        simp [g, hi', hi1']
-    have hg : Monotone g := monotone_nat_of_le_succ hg_step
-    have hg1k : g 1 ≤ g k := hg hk1
-    -- Untruncate at `1` and `k`.
-    have h1min : Nat.min 1 k = 1 := Nat.min_eq_left hk1
-    have hkmin : Nat.min k k = k := Nat.min_self k
-    simpa [g, h1min, hkmin, Function.iterate_one] using hg1k
+    have hbound : ∀ i, 1 ≤ i → i ≤ k →
+        pluses (n := n) ((cycleUpdate (n := n) p)^[1] s) ≤
+          pluses (n := n) ((cycleUpdate (n := n) p)^[i] s) := by
+      intro i hi
+      induction i, hi using Nat.le_induction with
+      | base => intro _; exact le_rfl
+      | succ i hi ih =>
+          intro hik
+          exact (ih (Nat.le_trans (Nat.le_succ i) hik)).trans
+            (hpl_mono i (Nat.lt_of_succ_le hik))
+    simpa only [Function.iterate_one] using hbound k hk1 le_rfl
   -- But `f^[k] s = s`, so pluses returns to its original value, contradiction.
   have hkPl : pluses (n := n) ((cycleUpdate (n := n) p)^[k] s) = pluses (n := n) s := by
     rw [hcyc]

@@ -24,8 +24,8 @@ This module is shared by the PINN verification workflows. It provides:
 - JSON parsing for the certificate schema used by the surrounding examples.
 
 Run the curated entrypoints instead of importing this file directly:
-- `lake exe verify -- pinn-cert [NN/Examples/Verification/PINN/pinn_cert.json]`
-- `lake exe verify -- pinn-dataset-check --dataset=PATH.json [--weights=WEIGHTS.json]`
+- `scripts/lake.sh exe verify -- pinn-cert [NN/Examples/Verification/PINN/pinn_cert.json]`
+- `scripts/lake.sh exe verify -- pinn-dataset-check --dataset=PATH.json [--weights=WEIGHTS.json]`
 
 References:
 - PINNs (physics-informed neural nets): `https://arxiv.org/abs/1711.10561`
@@ -152,11 +152,8 @@ structure Certificate where
   solutionBounds : Array SolutionBounds
 
 /--
-Tolerance for comparing a Lean-recomputed PINN bound against the decimal an external exporter
-printed. It is looser than the `1e-6` the leaf-artifact checker uses because these bounds come out
-of a finite-difference stencil, so the exported decimal carries more accumulated rounding than a
-single subtraction does. The comparison itself is `NN.Verification.Util.approxEq`; there is one
-implementation of it in the verification layer and this is only the constant it gets called with.
+Absolute tolerance for PINN artifact replay comparisons through `NN.Verification.Util.approxEq`.
+This is a comparison policy, not a proved bound on rounding or finite-difference truncation error.
 -/
 def certTol : Float := 1e-5
 

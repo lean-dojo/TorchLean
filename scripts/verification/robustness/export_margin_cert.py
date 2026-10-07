@@ -28,16 +28,13 @@ import hashlib
 import json
 import math
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 
 def sha256_file(path: Path) -> str:
     """Return the SHA-256 digest of a file for provenance metadata."""
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
 def clamp01(x: float) -> float:
@@ -100,13 +97,6 @@ def linear_forward(W: list[list[float]], b: list[float], x: list[float]) -> list
             acc += float(row[j]) * float(x[j])
         out.append(acc)
     return out
-
-
-def take_examples(examples: list[dict[str, Any]], max_n: int) -> Iterable[dict[str, Any]]:
-    """Return at most `max_n` examples, treating non-positive caps as empty."""
-    if max_n <= 0:
-        return []
-    return examples[:max_n]
 
 
 def finite_vector(values: list[Any], context: str) -> list[float]:
@@ -175,12 +165,11 @@ def main() -> None:
     rows = []
     nominal_ok = 0
     certified_ok = 0
-    total = 0
 
-    for ex in take_examples(examples, args.max):
-        x = finite_vector(ex["x"], f"example {total}")
-        y = natural(ex["y"], f"example {total} label")
-        ex_id = natural(ex.get("id", total), f"example {total} id")
+    for index, ex in enumerate(examples[:args.max] if args.max > 0 else []):
+        x = finite_vector(ex["x"], f"example {index}")
+        y = natural(ex["y"], f"example {index} label")
+        ex_id = natural(ex.get("id", index), f"example {index} id")
         if len(x) != in_dim:
             raise SystemExit(f"bad example {ex_id}: expected input_dim={in_dim}, got {len(x)}")
         if not (0 <= y < out_dim):
@@ -188,12 +177,12 @@ def main() -> None:
         if any(not 0.0 <= value <= 1.0 for value in x):
             raise SystemExit(f"bad example {ex_id}: normalized inputs must lie in [0,1]")
 
-        lo = [clamp01(float(v) - args.eps) for v in x]
-        hi = [clamp01(float(v) + args.eps) for v in x]
+        lo = [clamp01(v - args.eps) for v in x]
+        hi = [clamp01(v + args.eps) for v in x]
         logits_lo, logits_hi = ibp_linear(W, b, lo, hi)
         finite_vector(logits_lo + logits_hi, f"example {ex_id} propagated bounds")
 
-        nominal_logits = linear_forward(W, b, [float(v) for v in x])
+        nominal_logits = linear_forward(W, b, x)
         finite_vector(nominal_logits, f"example {ex_id} nominal logits")
         pred = argmax(nominal_logits)
         if pred == y:
@@ -212,8 +201,8 @@ def main() -> None:
                 "certified": bool(cert),
             }
         )
-        total += 1
 
+    total = len(rows)
     cert_obj: dict[str, Any] = {
         "format": "robust_margin_cert_v0_1",
         "norm": "linf",

@@ -141,7 +141,7 @@ Sum-reduce all elements to a scalar.
 PyTorch comparison: `x.sum()`.
 -/
 def sum {α : Type} [TorchLean.Storage α]
-    (s : TypedGraphSession α) [Context α] {sh : Shape}
+    (s : TypedGraphSession α) [Add α] [Zero α] {sh : Shape}
   (x : TensorRef α sh) : IO (TensorRef α Shape.scalar) :=
   recordGraphM (α := α) s (refs := #[x.identity?])
     (fun {Γ} =>

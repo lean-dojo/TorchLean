@@ -80,10 +80,10 @@ treatment of signed zeros and NaN comes from `maximum` itself. -/
     (x : Value) : Value → Fin n → Value :=
   fun acc i => ExecFloat.add acc (hingeTermBinary c t x i)
 
-/-- Executable configured binary sum of hinge terms, in the fixed `List.finRange` order. -/
+/-- Executable configured binary sum of hinge terms, in ascending index order. -/
 def hingeSumBinary {n : ℕ} (c t : Fin n → Value) (x : Value) :
     Value :=
-  (List.finRange n).foldl (hingeSumStepBinary c t x) (0 : Value)
+  Fin.foldl n (hingeSumStepBinary c t x) (0 : Value)
 
 /-- Executable configured binary hinge network: sum hinge terms, then add the executable bias. -/
 def hingeFunBinary {n : ℕ} (t c : Fin n → Value) (b x : Value) :
@@ -210,22 +210,6 @@ def HingeEvalFiniteProp {n : ℕ} (t c : Fin n → Value)
     HingeSumFinite t c x (0 : Value) (List.finRange n) ∧
     isFinite (hingeFunBinary (t := t) (c := c) (b := b) x) = true
 
-/--
-Unpack the compact pointwise finiteness bundle.
-
-The executable bridge lemmas need separate finiteness facts for the input, parameters, fold state,
-and final output. Keeping the bundled form at theorem boundaries makes user-facing statements
-shorter, while this projection feeds the stepwise IEEE-754 refinement proofs.
--/
-theorem hingeEvalFiniteProp_to_witness {n : ℕ} {t c : Fin n → Value}
-    {b x : Value} :
-    HingeEvalFiniteProp t c b x →
-      (isFinite x = true) ∧
-      (∀ i, isFinite (t i) = true) ∧
-      (∀ i, isFinite (c i) = true) ∧
-      HingeSumFinite t c x (0 : Value) (List.finRange n) ∧
-      isFinite (hingeFunBinary (t := t) (c := c) (b := b) x) = true :=
-  fun h => h
 
 /-! ## Sufficient range bounds for finite intermediates -/
 
@@ -310,7 +294,9 @@ theorem hinge_eval_finite_of_bounds (hformat : format.isIEEE = true) {n : ℕ}
   change Model.isFinite (toModel (ExecFloat.add (hingeSumBinary c t x) b)) = true
   rw [toModel_add]
   exact Model.isFinite_add_of_abs_toReal_add_le_posMaxFinite _ _ hformat
-    hsum.isFinite_fold hb hout
+    (by
+      change isFinite (hingeSumBinary c t x) = true
+      simpa only [hingeSumBinary, Fin.foldl_eq_foldl_finRange] using hsum.isFinite_fold) hb hout
 
 /-! ## Refinement to rounded-real execution -/
 
@@ -428,7 +414,7 @@ private theorem hinge_sum_rounded_eq_fold {n : ℕ} (c t : Fin n → RoundedValu
     | cons i xs ih =>
         intro accRounded accR err
         simp [List.foldl, hingeSumStateStep, ih]
-  simpa [hingeSum, hingeSumState] using
+  simpa [hingeSum, hingeSumState, Fin.foldl_eq_foldl_finRange] using
     (this (List.finRange n) (0 : RoundedValue) 0 0)
 
 /--
@@ -497,29 +483,10 @@ theorem toReal_hinge_fun_binary_eq_rounded_val (hformat : format.isIEEE = true) 
   have hsum :
       (toModel (hingeSumBinary (c := c) (t := t) x)).toReal =
         (hingeSum format (embedVec c) (embedVec t) (embed x)).val := by
-    -- Rewrite `hingeSum format` into a fold on the rounded-real accumulator component.
-    have hsumFold :
-        (hingeSum format (embedVec c) (embedVec t) (embed x)) =
-          (List.finRange n).foldl
-            (fun accRounded i =>
-              accRounded + hingeTerm format (embedVec c) (embedVec t) (embed x) i)
-            (0 : RoundedValue) := hinge_sum_rounded_eq_fold (embedVec c) (embedVec t) (embed x)
-    -- Use the fold refinement lemma on the same list.
-    have hfold :=
-      toReal_hinge_sum_binary_eq_rounded_val hformat (t := t) (c := c) (x := x)
-        (acc := (0 : Value)) (xs := List.finRange n) hSum hx ht hc
-    -- Both start accumulators are real zero.
+    rw [hinge_sum_rounded_eq_fold]
     have hstart : embed (0 : Value) = (0 : RoundedValue) := rounded_ext (by simp [embed])
-    -- Convert the RHS fold's start accumulator using `hstart`, then rewrite via `hsumFold`.
-    have hfold' :
-        (toModel ((List.finRange n).foldl (hingeSumStepBinary c t x)
-          (0 : Value))).toReal =
-          ((List.finRange n).foldl
-              (fun accRounded i =>
-                accRounded + hingeTerm format (embedVec c) (embedVec t) (embed x) i)
-              (0 : RoundedValue)).val := by
-        simpa [hingeSumBinary, hingeSumStepBinary, hstart] using hfold
-    simpa [hingeSumBinary, hsumFold] using hfold'
+    simpa only [hingeSumBinary, Fin.foldl_eq_foldl_finRange, hstart] using
+      toReal_hinge_sum_binary_eq_rounded_val hformat t c x hSum hx ht hc
   -- Finally refine the last `+ b`.
   have haddR :
       (toModel (ExecFloat.add (hingeSumBinary (c := c) (t := t) x) b)).toReal =
@@ -751,26 +718,6 @@ theorem relu_approximation_Icc_binary_three_term (hformat : format.isIEEE = true
               hingeFunErrorBound format (embedVec t) (embedVec c) (embed b0) (embed x) :=
   relu_approximation_Icc_binary_three_term_bias hformat (f a) tR cR t c b0 ht hc
 
-/-! ## Pointwise wrappers that take `HingeEvalFiniteProp` -/
-
-/--
-Pointwise strict error theorem using the compact finiteness bundle.
-
-Use this form when a checker or proof generator has produced one `HingeEvalFiniteProp` certificate
-instead of separate hypotheses for input, parameter, fold, and output finiteness.
--/
-theorem hinge_fun_total_abs_error_binary_lt_of_hingeEvalFiniteProp
-    (hformat : format.isIEEE = true) {n : ℕ}
-    {f : ℝ → ℝ} (t c : Fin n → Value) (b x : Value)
-    {ε : ℝ}
-    (hFin : HingeEvalFiniteProp t c b x)
-    (hε :
-      |f ((toModel x).toReal) -
-          hingeFunReal format (embedVec t) (embedVec c) (embed b) (embed x)| < ε) :
-    |f ((toModel x).toReal) - (toModel (hingeFunBinary (t := t) (c := c) (b := b) x)).toReal| <
-      ε + hingeFunErrorBound format (embedVec t) (embedVec c) (embed b) (embed x) := by
-  obtain ⟨hx, ht, hc, hSum, hOut⟩ := hingeEvalFiniteProp_to_witness hFin
-  exact hinge_fun_total_abs_error_binary_lt hformat f t c b x hx ht hc hSum hOut hε
 
 /-! ## Dyadic quantization helpers -/
 
@@ -945,7 +892,7 @@ theorem hinge_fun_abs_error_le_of_params_Icc_uniform
 /-! ## Removing the quantization term when reals are exactly representable -/
 
 /--
-The embedded embedded real reference is exactly the ordinary real hinge network evaluated on
+The embedded real reference is exactly the ordinary real hinge network evaluated on
 entrywise `ExecFloat.Binary.toModel` followed by `Model.toReal` parameters.
 -/
 theorem hinge_fun_real_embed_eq_hinge_fun_toReal {n : ℕ}

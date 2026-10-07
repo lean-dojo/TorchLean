@@ -101,21 +101,6 @@ theorem dist_sq_iterate_le_of_q_nonneg (η μ : ℝ) (hη : 0 ≤ η) {L : NNRea
       simpa [pow_succ, mul_assoc, mul_left_comm, mul_comm, Function.iterate_succ_apply'] using this
 
 /--
-Linear convergence: the squared distance to a root of `g` decays like `q ^ k`.
-
-This is `dist_sq_iterate_le_of_q_nonneg` restated for the regime `0 ≤ q < 1`. The extra hypothesis
-`q < 1` is what makes the right-hand side shrink geometrically in `k`; it is not used by the proof,
-which is the same iterated contraction. Use `q_lt_one_of_mul_sq_lt` and `q_nonneg_of_le` to
-discharge the two hypotheses on `q` from a step-size condition.
--/
-theorem dist_sq_iterate_le_of_q_lt_one (η μ : ℝ) (hη : 0 ≤ η) {L : NNReal} (g : E → E)
-    (hmono : StrongMonotone (E := E) μ g) (hlip : LipschitzWith L g)
-    {xStar x : E} (hxStar : g xStar = 0) (hq : 0 ≤ q η μ L) (_hq1 : q η μ L < 1) (k : Nat) :
-    ‖(step η g)^[k] x - xStar‖ ^ 2 ≤ (q η μ L) ^ k * ‖x - xStar‖ ^ 2 :=
-  dist_sq_iterate_le_of_q_nonneg (E := E) (η := η) (μ := μ) (hη := hη) (L := L) (g := g)
-    hmono hlip (xStar := xStar) (x := x) hxStar hq k
-
-/--
 The contraction factor is strictly below one when `0 < η` and `η * L ^ 2 < 2 * μ`.
 
 Since `q - 1 = η * (η * L ^ 2 - 2 * μ)`, this is exactly the condition for `q < 1` once `η > 0`.

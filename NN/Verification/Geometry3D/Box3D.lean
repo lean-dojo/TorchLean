@@ -33,12 +33,9 @@ Eight points are the default for a cuboid. The contract covers every supplied po
 assert that those points form a cuboid. The JSON parser rejects an artifact with no points, since
 the pointwise conditions would then hold vacuously.
 
-Why this shape?
-
-Real 3D perception systems already speak tensors: Cube R-CNN / Omni3D predictions, PyTorch3D
-utilities, and SAM-3D-style post-hoc metadata all move around matrices, points, boxes, and camera
-parameters. So this module uses `TorchLean.Tensor` throughout instead of introducing a detached
-`Vec3` island. The few abbrevs below are only names for tensor shapes.
+Matrices, points, and boxes use the shared tensor API. The interval theorems require ordered-field
+arithmetic and supplied input enclosures. The JSON workflow instead checks host Float projections
+of one artifact; it does not establish those uncertainty assumptions or a Float-to-real bridge.
 -/
 
 @[expose] public section
@@ -52,8 +49,8 @@ open NN.Verification.Json
 /--
 A closed scalar interval `[lo, hi]`.
 
-This module states and proves the camera-parameter uncertainty
-theorems without pulling the 3D example into a much larger interval-analysis framework.
+Endpoints for the ordered-field camera uncertainty theorems; ordering is required by their
+membership hypotheses rather than stored in this record.
 -/
 structure ScalarInterval (α : Type) where
   /-- Lower endpoint. -/
@@ -142,8 +139,6 @@ interval is bounded away from zero, then
 $x/z\in[\mathrm{num}_{\mathrm{lo}}/\mathrm{den}_{\mathrm{hi}},
 \mathrm{num}_{\mathrm{hi}}/\mathrm{den}_{\mathrm{lo}}]$.
 
-This theorem is the mathematical core behind the "full uncertainty envelope" for 3D boxes: depth
-uncertainty is handled by a certified quotient, not by an informal post-processing check.
 -/
 theorem divNonnegByPosInterval_sound
     {α : Type} [Field α] [LinearOrder α] [IsStrictOrderedRing α]
@@ -210,9 +205,6 @@ Here `uNumI` and `vNumI` enclose the first two rows of $P[X,Y,Z,1]^\mathsf{T}$, 
 the positive depth row.  The actual projected pixel is
 $(u_{\mathrm{num}}/z,v_{\mathrm{num}}/z)$.
 
-This formulation matches real exported tensors better than a detached `Vec3` API: camera matrices,
-3D corners, and interval bounds can all be produced by the same tensor pipeline, and Lean proves the
-final quotient/bbox claim.
 -/
 def homogeneousProjectionIntervalNonnegative {α : Type} [Div α]
     (uNumI vNumI zI : ScalarInterval α) : PixelInterval2D α where
@@ -494,7 +486,7 @@ bounded downstream pixel perturbation.
 -/
 
 /--
-The projected corners are inside the claimed 2D box with an explicit positive slack `margin`.
+The projected corners are inside the claimed 2D box with slack `margin`.
 
 Compared with `BBoxEnclosesProjection`, this predicate is stricter: corners must land inside
 $[x_{\min}+\mathrm{margin},x_{\max}-\mathrm{margin}]
@@ -809,14 +801,13 @@ def parseJsonCert (j : Lean.Json) : IO (BoxCameraCert Float) := do
   let cameraFlat ← expectFieldFiniteFloatArray j "camera_P" "top-level"
   let cornersFlat ← expectFieldFiniteFloatArray j "corners3d" "top-level"
   let bboxFlat ← expectFieldFiniteFloatArray j "bbox2d" "top-level"
-  let camera : CameraP Float ← NN.Verification.Util.Tensor.requireMatOfFlatArray
-    "top-level.camera_P" 3 4 cameraFlat
-  -- `requireMatOfFlatArray` checks `cornersFlat.size = 3 * pointCount`.
+  let camera : CameraP Float ← NN.Verification.Util.Tensor.requireArray
+    "top-level.camera_P" [3, 4] cameraFlat
   let corners : TorchLean.Tensor Float [pointCount, 3] ←
-    NN.Verification.Util.Tensor.requireMatOfFlatArray
-      "top-level.corners3d" pointCount 3 cornersFlat
-  let bbox : Box2D Float ← NN.Verification.Util.Tensor.requireVecOfArray
-    "top-level.bbox2d" 4 bboxFlat
+    NN.Verification.Util.Tensor.requireArray
+      "top-level.corners3d" [pointCount, 3] cornersFlat
+  let bbox : Box2D Float ← NN.Verification.Util.Tensor.requireArray
+    "top-level.bbox2d" [4] bboxFlat
   pure {
     pointCount := pointCount
     width := width

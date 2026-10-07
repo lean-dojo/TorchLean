@@ -513,14 +513,14 @@ Round-trip import therefore has two obligations:
 Run:
 
 ```terminal
-# Generate the default family artifacts for joint inspection
-# of model and payload.
+# Export the default MLP as Python source.
 scripts/lake.sh exe torchlean pytorch_roundtrip
 ```
 
-This writes the generated MLP PyTorch artifacts under
-`NN/Examples/Interop/PyTorch/MLP/`. Open the generated model and parameter files together: neither
-one is a complete description of the executable network by itself. A graph with a well-shaped
+This writes `TestMLP_PyTorch.py` under `NN/Examples/Interop/PyTorch/MLP/`. If the existing
+`mlp.json` fixture is present, it also writes `TestMLP_WithWeights.py`, embedding those
+weights. The command does not generate a new JSON checkpoint. When exchanging a graph and a
+separate state dictionary, inspect them together. A graph with a well-shaped
 convolution node contains no weights, and a checkpoint full of correctly shaped weights says nothing
 about the order the operations run in. Reconstructing the network requires matching the graph's
 parameter references to the tensors in the state dictionary.
@@ -667,20 +667,14 @@ Buffer.ofFloatArray : FloatArray → Buffer
 Buffer.ofFloatArrayIO : FloatArray → IO Buffer
 ```
 
-The first signature does not express allocation effects or release-sensitive identity. It says the
-result is a function of the input array, so
-Lean is entitled to treat two uploads of the same array as one value: common subexpression
-elimination is sound for pure functions. Allocation combined with explicit release cannot safely be
-treated that way without ownership rules. Two uploads of the
-same host array must produce independently owned buffers, or releasing one invalidates the other.
+The first signature does not express allocation effects or release-sensitive identity. For an
+ordinary pure function, common subexpression elimination can reuse the result of identical calls.
+However, `ofFloatArray` is marked `@[never_extract]`: in the pinned Lean compiler this suppresses
+both closed-term extraction and common subexpression elimination for the primitive. The current
+declaration therefore already guards against those optimizations. Its pure type still does not
+express when the upload happens, how allocation can fail, or when releasing a buffer is safe.
 
-The effectful entry point declares the native call itself in `IO`:
-
-```
--- Sequence the native upload and its allocation result in IO.
-@[never_extract, extern "torchlean_cuda_buffer_of_float_array_io"]
-opaque ofFloatArrayIO (a : @& FloatArray) : IO Buffer
-```
+The effectful entry point declares the native call itself in `IO`, as shown above.
 
 `ofFloatArrayIO a` describes an action. Executing it performs the upload at that point in the
 surrounding `IO` sequence. Executing it again with the same host array allocates a separate buffer.
@@ -847,13 +841,11 @@ claim attached to the check, test, or assumption that supports it.
 # Boundary Failure Tests
 
 The live blocks above exercise numeric parsing, region validation, graph acceptance, and graph
-rejection during the page build. To exercise the external capture process and a CUDA training
-call, run:
+rejection during the page build. The capture command earlier in this chapter exercises the external
+process. To also exercise a CUDA training call, run:
 
 ```terminal
-# Exercise external graph capture and a separately
-# configured CUDA runtime call.
-scripts/lake.sh exe pytorch_export_check
+# Exercise a separately configured CUDA runtime call.
 scripts/lake.sh -Kcuda=true exe torchlean quickstart_mlp \
   --device cuda --steps 2 --show-backend
 ```

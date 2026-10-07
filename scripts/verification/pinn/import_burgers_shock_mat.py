@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Convert the classic Raissi et al. viscous Burgers dataset (MATLAB .mat) into the
-JSON schema consumed by `train_pinn_1d.py` (`--dataset-json`).
+JSON schema consumed by `train_pinn.py evolution --dataset-json`.
 
 Source dataset format (as in https://github.com/AdrianDario10/Burgers_Equation1D):
   - x:    (Nx, 1)
@@ -124,21 +124,27 @@ def main() -> None:
         boundary.append(_as_entry(float(x[-1]), float(t[j]), float(usol[-1, j])))
 
     # Interior pool (exclude x-boundary and initial time column by default)
-    interior_i = list(range(1, nx - 1)) if nx >= 3 else list(range(nx))
-    interior_j = list(range(1, nt)) if nt >= 2 else list(range(nt))
-    pool = [(i, j) for i in interior_i for j in interior_j]
+    interior_i = range(1, nx - 1) if nx >= 3 else range(nx)
+    interior_j = range(1, nt) if nt >= 2 else range(nt)
+    pool_size = len(interior_i) * len(interior_j)
+
+    def entry(k: int, *, observed: bool) -> Dict[str, Any]:
+        # Decode the same row-major pool index without storing every grid pair.
+        row, column = divmod(k, len(interior_j))
+        i, j = interior_i[row], interior_j[column]
+        return _as_entry(float(x[i]), float(t[j]), float(usol[i, j]) if observed else None)
 
     # Data points (supervised u)
     if args.full_grid:
         data = [_as_entry(float(x[i]), float(t[j]), float(usol[i, j]))
                 for i in range(nx) for j in range(nt)]
     else:
-        data_idx = _sample_indices(rng, len(pool), args.max_data)
-        data = [_as_entry(float(x[pool[k][0]]), float(t[pool[k][1]]), float(usol[pool[k][0], pool[k][1]])) for k in data_idx]
+        data_idx = _sample_indices(rng, pool_size, args.max_data)
+        data = [entry(k, observed=True) for k in data_idx]
 
     # Collocation points: reuse the same interior pool but omit u
-    colloc_idx = _sample_indices(rng, len(pool), args.max_collocation)
-    collocation = [_as_entry(float(x[pool[k][0]]), float(t[pool[k][1]]), None) for k in colloc_idx]
+    colloc_idx = _sample_indices(rng, pool_size, args.max_collocation)
+    collocation = [entry(k, observed=False) for k in colloc_idx]
 
     payload = {
         "meta": {

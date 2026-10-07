@@ -325,13 +325,6 @@ takes that structure apart.
 `graphspec` and `one_semantic_universe` then show why lowering matters: the same operation graph can
 be evaluated for values or interpreted for bounds.
 
-Run the graph and arithmetic examples directly:
-
-```terminal
-scripts/lake.sh exe torchlean one_semantic_universe
-scripts/lake.sh exe torchlean float32_semantics
-```
-
 The first evaluates a graph and checks sampled values against an interval. A final $`\tanh`
 activation has the general range bound $`[-1,1]`; a useful input-specific enclosure may be tighter.
 Sampled membership checks do not establish enclosure for every input, and printing a soundness
@@ -362,7 +355,7 @@ CUDA_VISIBLE_DEVICES=0 TORCHLEAN_REQUIRE_CUDA=1 \
   scripts/lake.sh -K cuda=true env ./.lake/build/bin/nn_tests_suite
 
 # Check native kernels for memory, race, and synchronization defects.
-scripts/checks/cuda_sanitize_tests.sh \
+scripts/checks/cuda.sh sanitize \
   --all-tools --cuda-home /usr/local/cuda --skip-build
 
 # Replay the default checked-artifact suite.
@@ -398,13 +391,8 @@ and exits zero. The report contains 318 positive margins among 360 entries. That
 from the tool's internal consistency checks, and a successful exit does not establish that all 360
 entries have a positive verified margin.
 
-The three counts have different predicates. `examples` counts the entries inspected;
-`nominal_ok` depends on the available prediction field; `positive_margin` counts entries meeting
-the reported margin condition. A reader cannot infer from these totals alone which individual
-entries satisfy both conditions, or why an entry lacks one of them. In particular, exit status
-zero means the reporting workflow completed its own checks. It does not replace the application
-criterion that every required example, or every point in a specified region, must have a positive
-margin.
+The counts alone do not identify which entries satisfy both the nominal-prediction and margin
+conditions. Inspect the per-entry results when the application requires both.
 
 # Verification Claims
 
@@ -430,14 +418,6 @@ The evidence would include the checker's acceptance proof and the theorem derivi
 from acceptance. Deploying a float implementation adds a separate obligation to preserve the
 margin after numerical error. Changing `P`, the input box, or the implementation changes which
 parts of this argument must be repeated.
-
-For the shifted ReLU, the observed computation is {lean}`(ccScalar : Float → Float)` at input
-$`3.5`. The returned value 6 passes `Box.containsDecBool` for {lean}`ccBox`, whose bounds are
-$`5.5\le y\le 6.5`. `Box.containsDecBool_sound` would derive membership from a proof of that
-acceptance equality in the logical scalar model. This page records the host evaluation but does
-not supply that proof for `ccBox`. Connecting native evaluation to the logical model, and
-checking that both refer to the same value and box, are additional obligations. The check is
-point membership, not a bound over an input region.
 
 ## Printed Precision
 
@@ -788,10 +768,6 @@ wrapper must select the intended field before asking for a tensor. These checks 
 shape and encoding of the imported value. They do not establish that its numbers are the intended
 checkpoint or that the external model uses the same weight convention.
 
-This wrapper gives the same message for a wrong row width and a wrong JSON kind because both
-become `none`. The importer's `Except String` variants retain more detail, allowing callers to
-distinguish missing keys, invalid JSON kinds, and incompatible shapes.
-
 The third is the command line. Flags are parsed strictly, so an unknown flag stops the example
 rather than being ignored:
 
@@ -850,10 +826,6 @@ theorems.
 The capsule makes it possible to inspect evidence per operation. Strengthening one entry from
 test coverage to a proof requires a theorem for the stated provider, semantics, and numerical
 policy.
-
-The flag belongs to examples that perform backend dispatch. For example,
-`quickstart_tensors --show-backend` rejects it because that example does no dispatch. An unsupported
-flag is a usage error, not evidence that a different backend ran.
 
 # Scientific ML
 
@@ -932,9 +904,9 @@ remaining trusted assumptions
 ```
 
 For an example that supports backend reporting, compare this record with `--show-backend`.
-The report identifies provider, trust level, reduction order, and evidence for dispatched
-operations. Loss definition, data provenance, and application assumptions must come from the model
-and workflow artifacts.
+The report identifies the selected provider, trust level, reduction order, and evidence before
+handler lookup or execution; it is not a log of completed calls. Loss definition, data provenance,
+and application assumptions must come from the model and workflow artifacts.
 
 Compare the shifted ReLU in this chapter with a training workflow such as `chargpt` or
 `fno1d_burgers`. The former has a theorem over every real input but no training artifact; the

@@ -20,7 +20,9 @@ loop.
 
 The kernel is independent of transform kind, tensor rank, scalar type, and
 chain length. Its correctness theorem reconnects the executable flat-index
-program to the ordinary coordinate pullback semantics.
+program to the ordinary coordinate pullback semantics. The theorem assumes
+the supplied index-map certificate; it does not verify the metaprogram that
+constructs that certificate or an external storage implementation.
 -/
 
 @[expose] public section

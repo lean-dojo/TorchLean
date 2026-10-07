@@ -25,8 +25,8 @@ Current theorem surface:
   is an attained upper bound;
 - `softmax_shift_nonpos` and `exists_softmax_shift_eq_zero`: shifted logits are nonpositive and
   one is exactly zero;
-- `softmax_shift_exp_le_one` and `softmax_shift_denom_bounds`: exponentials cannot overflow and
-  their denominator lies between `1` and the axis length;
+- `softmax_shift_exp_le_one` and `softmax_shift_denom_bounds`: exact shifted exponentials are at
+  most `1`, and their denominator lies between `1` and the axis length;
 - `softmax_vec_spec_normalized`: exposes the positive normalized weights used by the stable
   max-shifted implementation;
 - `softmax_vec_spec_pos`: every coordinate is strictly positive;
@@ -45,6 +45,8 @@ Current theorem surface:
 
 We intentionally state these over `ℝ`: positivity of `exp` and division by a positive denominator
 are the mathematical facts that make the probabilistic interpretation precise.
+These results do not prove that a floating-point implementation avoids overflow or underflow;
+rounded subtraction, exponential evaluation and denominator accumulation need separate bounds.
 -/
 
 @[expose] public section
@@ -55,8 +57,7 @@ noncomputable section
 
 namespace Proofs
 
-open Spec TorchLean
-open TorchLean TorchLean.Tensor
+open Spec TorchLean TorchLean.Tensor
 open Activation
 
 /-! ## Stable max shift -/
@@ -111,8 +112,7 @@ theorem exists_softmax_shift_eq_zero {n : Nat}
   rw [TorchLean.Tensor.getScalar_map2Spec]
   simpa [Spec.replicate] using sub_eq_zero.mpr hi
 
-/-- Exponentiating a max-shifted real logit produces a value at most one. This is the central
-overflow-prevention fact behind stable softmax. -/
+/-- Exponentiating a max-shifted real logit produces a value at most one. -/
 theorem softmax_shift_exp_le_one {n : Nat}
     (t : Tensor ℝ [Nat.succ n]) (i : Fin (Nat.succ n)) :
     TorchLean.Tensor.getScalar (Activation.maxShiftedExpVecSpec t) i ≤ 1 := by
@@ -141,8 +141,7 @@ theorem exists_softmax_shift_exp_eq_one {n : Nat}
 /-- The stable softmax denominator lies in `[1,n]` for a nonempty vector of length `n`.
 
 The lower bound rules out division by zero. The upper bound follows because every shifted
-exponential is at most one. Together with `softmax_shift_exp_le_one`, this makes overflow
-prevention an explicit theorem of the max-shifted implementation rather than an empirical claim.
+exponential is at most one. These are exact-real bounds, not a finite-precision execution theorem.
 -/
 theorem softmax_shift_denom_bounds {n : Nat}
     (t : Tensor ℝ [Nat.succ n]) :
@@ -206,7 +205,7 @@ theorem getScalar_maxShiftedExpVecSpec {n : Nat}
     TorchLean.Tensor.getScalar (Activation.maxShiftedExpVecSpec t) j =
       Real.exp (TorchLean.Tensor.getScalar t j - Tensor.item (Activation.maxVecSpec t)) := by
   simp only [Activation.maxShiftedExpVecSpec, TorchLean.Tensor.expSpec, TorchLean.Tensor.subSpec,
-    TorchLean.Tensor.getScalar_mapSpec, TorchLean.Tensor.getScalar_map2Spec]
+    TorchLean.Tensor.getScalar_map, TorchLean.Tensor.getScalar_map2Spec]
   simp [Spec.replicate, mathfunc_exp_eq_rexp]
 
 /-- The stable softmax denominator is the plain exponential sum times the shift factor. -/
@@ -403,11 +402,8 @@ theorem abs_getScalar_softmax_backward_spec_le_two_mul {n : Nat}
       _ ≤ ∑ j, TorchLean.Tensor.getScalar y j * G :=
         Finset.sum_le_sum fun j _ => mul_le_mul_of_nonneg_left (hdY j) (le_of_lt (hyPos j))
       _ = G := by rw [← Finset.sum_mul, hySum, one_mul]
-  have hyLeOne : TorchLean.Tensor.getScalar y i ≤ 1 := by
-    calc
-      TorchLean.Tensor.getScalar y i ≤ ∑ j, TorchLean.Tensor.getScalar y j :=
-        Finset.single_le_sum (fun j _ => le_of_lt (hyPos j)) (Finset.mem_univ i)
-      _ = 1 := hySum
+  have hyLeOne : TorchLean.Tensor.getScalar y i ≤ 1 :=
+    (softmax_vec_spec_mem_unitInterval x i).2
   have hdiff : |TorchLean.Tensor.getScalar dY i - S| ≤ 2 * G := by
     calc
       |TorchLean.Tensor.getScalar dY i - S| ≤ |TorchLean.Tensor.getScalar dY i| + |S| :=

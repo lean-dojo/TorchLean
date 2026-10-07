@@ -35,8 +35,7 @@ namespace EagerSession
 /-! ## Linear algebra and concatenation -/
 
 /-- Matrix multiplication with PyTorch-style broadcasting across batch prefixes. -/
-def matmul {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)]
+def matmul {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α] [Mul α] [Zero α]
   {batchA batchB batch : Shape} {m n p : Nat}
   [broadcastA : Shape.BroadcastTo batchA batch]
   [broadcastB : Shape.BroadcastTo batchB batch]
@@ -53,20 +52,20 @@ def matmul {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
       TorchLean.Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [m, n] broadcastA.proof
     let broadcastBFull :=
       TorchLean.Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [n, p] broadcastB.proof
-    let (t1, commonAId) ← okOrThrow <|
+    let (t1, commonAId) ← IO.ofExcept <|
       Runtime.Autograd.LibTorch.Tape.broadcastTo (t := t0) broadcastAFull a.id
-    let (t2, commonBId) ← okOrThrow <|
+    let (t2, commonBId) ← IO.ofExcept <|
       Runtime.Autograd.LibTorch.Tape.broadcastTo (t := t1) broadcastBFull b.id
-    let (t3, flatAId) ← okOrThrow <|
+    let (t3, flatAId) ← IO.ofExcept <|
       Runtime.Autograd.LibTorch.Tape.reshape (t := t2) commonAId
         (TorchLean.Tensor.LinearAlgebra.Internal.flattenBatchMatrix_size batch m n)
-    let (t4, flatBId) ← okOrThrow <|
+    let (t4, flatBId) ← IO.ofExcept <|
       Runtime.Autograd.LibTorch.Tape.reshape (t := t3) commonBId
         (TorchLean.Tensor.LinearAlgebra.Internal.flattenBatchMatrix_size batch n p)
-    let (t5, flatOutId) ← okOrThrow <|
+    let (t5, flatOutId) ← IO.ofExcept <|
       Runtime.Autograd.LibTorch.Tape.Internal.matmulFlattened (t := t4) (batch := batch.size)
         (m := m) (n := n) (p := p) flatAId flatBId
-    let (t6, id) ← okOrThrow <|
+    let (t6, id) ← IO.ofExcept <|
       Runtime.Autograd.LibTorch.Tape.reshape (t := t5) flatOutId
         (TorchLean.Tensor.LinearAlgebra.Internal.flattenBatchMatrix_size batch m p).symm
     s.cudaTape.set t6

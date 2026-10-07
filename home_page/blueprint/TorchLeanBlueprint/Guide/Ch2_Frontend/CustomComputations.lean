@@ -89,7 +89,9 @@ typed expression with a proof that its evaluation agrees with the function we wr
 the native bridge renders CUDA, compiles it with NVRTC (NVIDIA's runtime CUDA compiler) and
 executes it.
 
-Ordinary model operations such as matrix multiplication still use LibTorch's ATen primitives.
+On GPU, ordinary model operations such as matrix multiplication still use LibTorch's ATen
+primitives.
+The portable CPU path evaluates the corresponding Lean runtime operations.
 This API lets us supply our own scalar calculation without writing a separate CUDA source file.
 It does not generate a backward rule; custom differentiation needs its own proved rule and runtime
 implementation.
@@ -155,8 +157,8 @@ kernel.
 
 # Reading several tensors
 
-For indexed calculations, we supply a `Program` and a tensor pack, which groups input tensors
-while keeping each one's shape. Here we read the same flat index from two tensors and add the
+For indexed calculations, we supply a `Program` and put our input tensors in `Arguments`,
+keeping each one's shape. Here we read the same flat index from two tensors and add the
 entries:
 
 ```lean (name := customIndexed)
@@ -169,8 +171,8 @@ def addInputs : Program Float32 :=
     let y ← read 1 i
     pure (x + y))
 
-def inputs : TensorPack Float32 [[3], [3]] :=
-  TensorPack.cons input (TensorPack.singleton input)
+def inputs : Arguments Float32 [[3], [3]] :=
+  (Arguments.empty.push input).push input
 
 #eval addInputs.run inputs [3]
 ```
@@ -179,7 +181,7 @@ def inputs : TensorPack Float32 [[3], [3]] :=
 [2.000000, 4.000000, 6.000000]
 ```
 
-The operand number identifies a tensor in the pack. The index addresses its entries in row-major
+The operand number identifies an input tensor. The index addresses its entries in row-major
 order, with the last axis changing fastest. Reads check both bounds and return an error if either
 is invalid. The requested output shape
 is `[3]`; passing `device := gpu` uses the same program on GPU. Bounded folds are also supported,
@@ -199,7 +201,7 @@ def rowSum : Program Float32 :=
       let x ← read 0 (row * 3 + column)
       pure (acc + x)) 3 0 0)
 
-#eval rowSum.run (TensorPack.singleton matrix) [2]
+#eval rowSum.run (Arguments.empty.push matrix) [2]
 ```
 
 ```leanOutput customRowSum (whitespace := lax)
@@ -213,7 +215,7 @@ For another width we'd change the row stride and the number of steps together.
 
 ```lean
 def rowsOnGpu : IO (Tensor Float32 [2]) :=
-  rowSum.run (TensorPack.singleton matrix) [2]
+  rowSum.run (Arguments.empty.push matrix) [2]
     (device := gpu)
 ```
 
@@ -222,7 +224,8 @@ Floating-point addition is not associative, so replacing that loop with a differ
 tree could change its result. This API does not make that replacement.
 
 This example explains indexed reads and folds. For ordinary tensor reductions, we'd normally
-use the existing tensor API and let LibTorch handle execution.
+use the existing tensor API. The model runtime can then use its CPU implementation or LibTorch
+on GPU.
 
 # Checking the calculation
 

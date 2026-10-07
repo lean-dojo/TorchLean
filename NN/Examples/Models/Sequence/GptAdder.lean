@@ -340,7 +340,7 @@ def generateResultDigits (predict : Predictor) (a b : Nat) :
   let options : text.GenerationOptions :=
     { prompt := "", newTokenCount := operandDigits + 1, temperature := 1.0, topK := 1,
       repeatPenalty := 0.0, repeatWindow := 0, seed := 0, asciiOnly := false }
-  let generated ← text.autoregressiveTokenIds contextLength 0 prompt options
+  let generated ← text.generate contextLength 0 prompt options
     (fun digits position => do
       let input ← CLI.orThrow exeName <| inputFromDigits digits
       let logits ← predict input

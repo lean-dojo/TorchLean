@@ -504,15 +504,12 @@ theorem evalArgs_append
 /-- Prepending an unrelated value does not change a typed argument list's pure meaning. -/
 @[simp] theorem evalArgs_weakenLeft
     {Γ ins : List Shape} {t : Shape} {α : Type 0} [TorchLean.Storage α] [Context α]
-    (env : TorchLean.TensorPack α Γ) (value : TorchLean.Tensor α t) :
-    (args : Args Γ ins) →
-      evalArgs (.cons value env) (Args.weakenLeft args) = evalArgs env args
-  | .nil => rfl
-  | .cons term rest => by
-      simp only [Args.weakenLeft, evalArgs, eval_weakenLeft,
-        evalArgs_weakenLeft env value rest]
-termination_by args => argsComplexity args
-decreasing_by (simp only [argsComplexity]; omega)
+    (env : TorchLean.TensorPack α Γ) (value : TorchLean.Tensor α t)
+    (args : Args Γ ins) :
+    evalArgs (.cons value env) (Args.weakenLeft args) = evalArgs env args := by
+  apply evalArgs_rename env (.cons value env) (fun v => .tail v)
+  intro shape v
+  rfl
 
 /-- Evaluating all variables of an environment returns that environment in order. -/
 @[simp] theorem evalArgs_vars

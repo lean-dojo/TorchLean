@@ -27,7 +27,7 @@ external α/β-CROWN systems. The complete computation, including its float32 se
 Lean and requires no external verifier.
 
 Run:
-`lake exe verify -- twostage-torchlean-cegis-van`
+`scripts/lake.sh exe verify -- twostage-torchlean-cegis-van`
 -/
 
 @[expose] public section
@@ -103,9 +103,9 @@ def run (width : Nat) (args : List String) : IO Unit := do
   let mod ← Runtime.Autograd.Model.Module.ObjectiveDef.instantiate (α := Scalar)
     (objectiveDef width) (fun x => (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary64
       FloatFormat.binary32 (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))) :
-      ExecFloat.Binary 8 23)) .typedGraph
+      ExecFloat.Binary 8 23)) { execution := .typedGraph }
   let tr := mod.trainer
-  let cLoss ← Runtime.Autograd.Model.Autodiff.lowerScalarToTypedGraph
+  let cLoss ← Runtime.Autograd.Model.Autodiff.lowerToTypedGraph
     (α := Scalar) (paramShapes := Core.paramShapes width) (inputShapes := [Core.xShape])
       (Core.lossProgram width)
 

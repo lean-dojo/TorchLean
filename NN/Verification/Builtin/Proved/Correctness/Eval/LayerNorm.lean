@@ -83,7 +83,7 @@ theorem evalAt_layernorm_eq
           TorchLean.normalizationEpsilon = .ok y2d :=
     hLayerNorm
   simp [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, unaryGraphOut, unaryNodeOut,
-    Graph.getNode, Graph.getNode?, Graph.unaryParentId, unaryParent?, Graph.expectShape, hParams,
+    Graph.getNode, Graph.unaryParentId, unaryParent?, Graph.expectShape, hParams,
     hNumel, Graph.resolveLayerNormAffine, hLayerNormMatrix, Bind.bind, Except.bind, Pure.pure,
     Except.pure]
 

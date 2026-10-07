@@ -13,10 +13,10 @@ public import NN.Runtime.External.Julia
 
 `NN.Runtime.External` is the umbrella for optional subprocess integrations.
 
-TorchLean uses external programs in a narrow, explicit way: the external process may produce an
-artifact, but Lean side code must still parse, validate, or check that artifact before it becomes
-trusted. This is the same “untrusted producer, trusted checker” boundary used by the Arb oracle,
-Julia examples, PyTorch export runtime checks, and future certificate-producing tools.
+External programs produce data and artifacts. The adapters handle process failures and parse
+outputs; mathematical claims about those outputs require a separate proof or certified checker.
+Parsing JSON alone does not establish numerical correctness. This boundary applies to the Arb
+oracle, Julia examples, and PyTorch export checks.
 
 This umbrella re-exports:
 - `NN.Core.ExternalProcess`, the generic subprocess/JSON/availability utilities; and

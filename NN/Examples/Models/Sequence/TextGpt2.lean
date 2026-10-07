@@ -230,7 +230,7 @@ def generateByteGreedy
       seed := 0
       asciiOnly := false }
   let ids ←
-    text.autoregressiveTokenIds ByteModel.contextLength 0
+    text.generate ByteModel.contextLength 0
       (Tensor.from (text.Tokenizer.byte.encode prompt)) gen
       (fun padded predPos => do
         let x := Tensor.repeatAxis 0 ByteModel.batchSize <|
@@ -373,7 +373,7 @@ def argmaxLocalBPETokens
     Except String (Tensor Nat [BpeModel.contextLength]) :=
   Tensor.generateFlatM [BpeModel.contextLength] fun index =>
     let position : Fin BpeModel.contextLength := ⟨index.val, by simpa [Shape.size] using index.isLt⟩
-    match text.greedyToken? ((logits.get 0).get position) (isLocalBPEId lv) with
+    match text.greedy? ((logits.get 0).get position) (isLocalBPEId lv) with
     | some token => pure token.val
     | none => throw "no assigned compact-vocabulary token has a non-NaN score"
 
@@ -412,7 +412,7 @@ def generateBpeGreedy
       seed := 0
       asciiOnly := false }
   let ids ←
-    text.autoregressiveTokenIds BpeModel.contextLength 0 initIds gen
+    text.generate BpeModel.contextLength 0 initIds gen
       (fun padded predPos => do
         let bounded ← CLI.orThrow exeName <|
           Tensor.checkIndices BpeModel.vocabularySize padded

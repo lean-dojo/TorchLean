@@ -150,8 +150,9 @@ def contractedAxisIndexContribution
         logical dimensions have different lengths"
 
 /--
-Generate one operand's physical row-major index while retaining the exact
-addition order of the generic verified plan.
+Generate one operand's physical row-major index, certified against the
+generic index plan. Natural-number index sums may be regrouped; this does not
+reorder the scalar contraction.
 
 For operands selected by `shouldHoistOutputIndexTerms`, all loop-invariant
 output contributions arrive as one precomputed base. Contracted axes already

@@ -26,7 +26,7 @@ open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 
-open Spec TorchLean
+open Spec
 open TorchLean TorchLean.Tensor
 
 namespace NN.MLTheory.CROWN.Lyapunov.TwoStage.LossAnalysis
@@ -49,7 +49,7 @@ the coordinate box `[-radius, radius]`.
 -/
 def projectedGradientStep
     (width : Nat)
-    (lossGraph : Runtime.Autograd.Torch.TypedScalarGraph Scalar (LossInputs width))
+    (lossGraph : Runtime.Autograd.Torch.TypedGraph Scalar (LossInputs width) [])
     (parameters : TorchLean.nn.State Scalar (Core.paramShapes width))
     (state : Tensor Scalar Core.xShape)
     (stepSize radius : Scalar) : Tensor Scalar Core.xShape :=
@@ -59,8 +59,7 @@ def projectedGradientStep
       (TorchLean.nn.State.Internal.toTensorPack parameters)
       (TorchLean.TensorPack.singleton state)
   let allGradients : TorchLean.TensorPack Scalar (LossInputs width) :=
-    Runtime.Autograd.Torch.TypedScalarGraph.backward
-      (α := Scalar) (Γ := LossInputs width) lossGraph arguments
+    Runtime.Autograd.Torch.TypedGraph.vjp lossGraph arguments (Tensor.scalar (1 : Scalar))
   let stateGradients : TorchLean.TensorPack Scalar [Core.xShape] :=
     let (_, stateGradients) := TorchLean.TensorPack.split (α := Scalar)
       (ss₁ := Core.paramShapes width) (ss₂ := [Core.xShape]) allGradients
@@ -85,7 +84,7 @@ def projectedGradientStep
     (lowered : NN.Verification.Builtin.LoweredIR Scalar)
     (parameterStore : ParamStore Scalar) : IO Unit := do
   let intervalBounds := runIBP (α := Scalar) lowered.graph parameterStore
-  let outputBounds ← lowered.outputBoxOrThrow intervalBounds
+  let outputBounds ← IO.ofExcept (lowered.outputBox? intervalBounds)
   IO.println s!"[IBP] scalar loss box dim={outputBounds.dim}"
 
 /-- Run and print the CROWN bound for an already lowered loss graph. -/
@@ -108,10 +107,7 @@ def checkLossBox
     (parameters : TorchLean.nn.State Scalar (Core.paramShapes width))
     (epsilon : Scalar) : IO Unit := do
   IO.println "Stage 2 check: IBP + CROWN on the scalar loss over a small box"
-  let lowered ←
-    match lowerLossToIR width parameters with
-    | .ok result => pure result
-    | .error error => throw <| IO.userError error
+  let lowered ← IO.ofExcept (lowerLossToIR width parameters)
 
   IO.println s!"lowered IR nodes: {lowered.graph.nodes.size}"
 

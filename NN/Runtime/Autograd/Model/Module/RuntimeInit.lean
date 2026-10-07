@@ -31,14 +31,7 @@ open Spec TorchLean
 open TorchLean TorchLean.Tensor
 open Proofs.Autograd.Algebra
 
-/-! ## Small helpers -/
-
 namespace Module
-
-/-- Cast every scalar in a heterogeneous Float tensor pack to the backend scalar type. -/
-def castPack {α : Type} [TorchLean.Storage α] (cast : Float → α) :
-    {ss : List Shape} → TorchLean.TensorPack Float ss → TorchLean.TensorPack α ss :=
-  TorchLean.TensorPack.map (fun t => TorchLean.Tensor.map cast t)
 
 /-! ## Runtime Float Initializers -/
 
@@ -275,7 +268,7 @@ def floatArrayOf (n : Nat) (init : FloatInit) : IO FloatArray := do
   | _ =>
       let mut out : Array Float := Array.mkEmpty n
       for i in [0:n] do
-        let value ← Runtime.Autograd.okOrThrow (sampleAt init i)
+        let value ← IO.ofExcept (sampleAt init i)
         out := out.push value
       pure (FloatArray.mk out)
 
@@ -369,7 +362,7 @@ cannot leave the module partially initialized.
 def applyPlan {α : Type} [TorchLean.Storage α] [Torch.TensorTransfer α]
     (cast : Float → α) (options : Torch.Config) {ss : List Shape}
     (parameters : Torch.ParamList α ss) (plan : Plan ss) : IO Unit := do
-  Runtime.Autograd.okOrThrow plan.validate
+  IO.ofExcept plan.validate
   Internal.applyPlanUnchecked (α := α) cast options parameters plan
 
 end RuntimeInit

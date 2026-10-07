@@ -359,7 +359,7 @@ prefix is interleaved across the payload, so prefix decoding would be unsound.  
 silently returning bad rows, we reject Fortran-order prefix loading and ask callers to convert the
 array to C-order first.
 -/
-def parseNpyLeadingAxisPrefix
+def parseNpyPrefix
     (tag : String) (expectedShape : Array Nat) (bs : ByteArray) : Except String NpyData := do
   let hdr ← parseNpyHeaderMeta tag bs
   let selected ← npyPrefixHeader tag hdr expectedShape
@@ -369,7 +369,7 @@ def parseNpyLeadingAxisPrefix
 Read validated metadata without reading the payload.
 
 Supports version 1 and 2 headers up to one MiB. Dtype, storage-order syntax, dimensions, and shape
-products are validated; payload completeness belongs to `readNpy` or `readNpyLeadingAxisPrefix`.
+products are validated; payload completeness belongs to `readNpy` or `readNpyPrefix`.
 -/
 def readNpyHeader (path : System.FilePath) : IO (Except String NpyHeader) :=
   _root_.IO.FS.withFile path .read readNpyHeaderFromHandle
@@ -387,7 +387,7 @@ Unrequested rows are neither read nor decoded. The requested range must be compl
 trailing dimensions must match exactly. Reads use bounded chunks so a malformed claimed size cannot
 trigger a correspondingly large allocation before any bytes have been read.
 -/
-def readNpyLeadingAxisPrefix
+def readNpyPrefix
     (path : System.FilePath) (expectedShape : Array Nat) : IO (Except String NpyData) := do
   _root_.IO.FS.withFile path .read fun handle => ExceptT.run do
     let hdr ← ExceptT.mk (readNpyHeaderFromHandle handle)

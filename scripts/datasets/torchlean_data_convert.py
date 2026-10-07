@@ -316,12 +316,11 @@ def cmd_image_folder(args: argparse.Namespace) -> None:
             die(f"{root}: no class subdirectories found")
         # Class IDs come from sorted directory names so exports are reproducible
         # across filesystems.
-        class_to_id = {p.name: i for i, p in enumerate(class_dirs)}
         files: list[tuple[Path, int]] = []
-        for cls_dir in class_dirs:
+        for label, cls_dir in enumerate(class_dirs):
             for p in sorted(cls_dir.rglob("*")):
                 if p.is_file() and p.suffix.lower() in exts:
-                    files.append((p, class_to_id[cls_dir.name]))
+                    files.append((p, label))
     else:
         files = [(p, -1) for p in sorted(root.rglob("*")) if p.is_file() and p.suffix.lower() in exts]
 

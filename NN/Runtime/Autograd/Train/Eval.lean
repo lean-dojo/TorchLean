@@ -13,7 +13,7 @@ public import NN.Runtime.Autograd.Train.Trainer
 /-!
 # Evaluation helpers
 
-These utilities aggregate per-sample or per-batch `StepReport`s into a single
+These utilities aggregate per-sample or per-batch `Report`s into a single
 mean report. Metrics are matched by name and position.
 -/
 
@@ -51,7 +51,7 @@ def addMetrics {a : Type} [Add a]
 ## Report sums (for weighted aggregation)
 -/
 /--
-An accumulator for averaging `StepReport`s.
+An accumulator for averaging `Report`s.
 
 Instead of retaining every report and reducing at the end, we maintain:
 - `count`: how many samples contributed,
@@ -71,7 +71,7 @@ structure ReportSum (a : Type) where
 namespace ReportSum
 
 /-- Start an accumulator from a single-sample report. -/
-def ofReport {a : Type} (r : StepReport a) : ReportSum a :=
+def ofReport {a : Type} (r : Report a) : ReportSum a :=
   { count := 1, lossSum := r.loss, metricsSum := r.metrics }
 
 /-- Combine two accumulators (failing if metric names/lengths mismatch). -/
@@ -82,8 +82,8 @@ def add {a : Type} [Add a]
          lossSum := acc.lossSum + next.lossSum
          metricsSum := metrics }
 
-/-- Convert an accumulator to a mean `StepReport`. -/
-def mean {a : Type} [Div a] [NatCast a] (s : ReportSum a) : StepReport a :=
+/-- Convert an accumulator to a mean `Report`. -/
+def mean {a : Type} [Div a] [NatCast a] (s : ReportSum a) : Report a :=
   let denom : a := (s.count : a)
   { loss := s.lossSum / denom
     metrics := s.metricsSum.map (fun m => { name := m.name, value := m.value / denom }) }
@@ -100,8 +100,8 @@ This is the “for sample in dataset: compute report; take mean” pattern.
 -/
 def evalArray {sample a : Type}
   [Add a] [Div a] [NatCast a]
-  (tag : String) (xs : Array sample) (evalSample : sample -> Result (StepReport a)) :
-  Result (StepReport a) := do
+  (tag : String) (xs : Array sample) (evalSample : sample -> Result (Report a)) :
+  Result (Report a) := do
   match xs[0]? with
   | none => .error (tagError tag "empty dataset")
   | some x0 => do
@@ -116,8 +116,8 @@ def evalArray {sample a : Type}
 def evalDataset {sample a : Type}
   [Add a] [Div a] [NatCast a]
   (tag : String) (ds : TorchLean.Data.SampleStream sample)
-  (evalSample : sample -> Result (StepReport a)) :
-  Result (StepReport a) :=
+  (evalSample : sample -> Result (Report a)) :
+  Result (Report a) :=
   evalArray (tag := tag) ds.toArray evalSample
 
 end Eval

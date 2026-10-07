@@ -51,7 +51,7 @@ namespace NN.Verification.Cert.AbCrownLeafCert
 open Lean
 open NN.Verification.Json
 open NN.Verification.Util (approxEq)
-open NN.Verification.Util.Tensor (requireVecOfArray boxWithin)
+open NN.Verification.Util.Tensor (requireArray boxWithin)
 open NN.Verification.Util.Tensor (refutesThreshold refutesThresholdAt)
 
 /-- Bundled sample alpha-beta-CROWN-style leaf artifact. -/
@@ -124,8 +124,8 @@ def checkAbCrownLeafArtifact (path : String) : IO Unit := do
     throw <| IO.userError
       s!"root dimension mismatch: input_dim={inputDim}, endpoints={root.dim}"
 
-  let rootLo ← requireVecOfArray "root.lo" inputDim root.lo
-  let rootHi ← requireVecOfArray "root.hi" inputDim root.hi
+  let rootLo ← requireArray "root.lo" [inputDim] root.lo
+  let rootHi ← requireArray "root.hi" [inputDim] root.hi
 
   let leaves ← expectFieldArray topObj "leaves" "top-level"
   if leaves.isEmpty then
@@ -148,11 +148,11 @@ def checkAbCrownLeafArtifact (path : String) : IO Unit := do
         s!"leaf lower-bound/threshold length mismatch: lb={lb.size}, threshold={thr.size}"
 
     boxes := boxes.push (region.lo, region.hi)
-    let lo ← requireVecOfArray "leaf.lo" inputDim region.lo
-    let hi ← requireVecOfArray "leaf.hi" inputDim region.hi
+    let lo ← requireArray "leaf.lo" [inputDim] region.lo
+    let hi ← requireArray "leaf.hi" [inputDim] region.hi
     let outputDim := lb.size
-    let lb ← requireVecOfArray "leaf.lb" outputDim lb
-    let thr ← requireVecOfArray "leaf.threshold" outputDim thr
+    let lb ← requireArray "leaf.lb" [outputDim] lb
+    let thr ← requireArray "leaf.threshold" [outputDim] thr
     let within := boxWithin rootLo rootHi lo hi
     let witnessIdx? ← optionalFieldNat? leafObj "witness_idx" "leaf"
     let witnessMargin? ← optionalFieldFiniteFloat? leafObj "witness_margin" "leaf"
@@ -160,9 +160,7 @@ def checkAbCrownLeafArtifact (path : String) : IO Unit := do
       match witnessIdx? with
       | some wi => refutesThresholdAt lb thr wi
       | none => refutesThreshold lb thr
-    -- The margin this leaf should have reported, when it names a witness index that is in range.
-    -- Keeping it as a value rather than folding it into the comparison lets the failure message
-    -- quote both numbers, which is the difference between a diagnostic and a verdict.
+    -- Retain the computed margin so a mismatch can report both values.
     let actualMargin? : Option Float :=
       match witnessIdx? with
       | some wi =>

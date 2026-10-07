@@ -102,7 +102,7 @@ def run : IO Unit := do
 
   let targetParam := 0.0
   let onlineParam := 10.0
-  let synced := rl.dqn.softUpdateScalar (α := Float) 0.1 onlineParam targetParam
+  let synced := rl.dqn.updateTarget (α := Float) 0.1 onlineParam targetParam
   IO.println s!"soft target update example: {synced}"
   IO.println "dqn_replay: ok"
 

@@ -17,9 +17,6 @@ open Spec TorchLean
 
 namespace TorchLean.Tensor
 
-variable {α : Type} [TorchLean.Storage α] [Context α]
-  [DecidableRel ((· > ·) : α → α → Prop)]
-
 /-!
 # Concatenation and Slicing
 
@@ -28,29 +25,15 @@ Concatenation, slicing, singleton dimensions, and layout transforms.
 
 /-- Concatenate at the axis following an arbitrary leading shape. -/
 def concatAxisSpec {α : Type} [TorchLean.Storage α]
-    (leading : Shape) {n m : Nat} {suffix : Shape} :
-      Tensor α (leading.concat (.dim n suffix)) →
-      Tensor α (leading.concat (.dim m suffix)) →
-      Tensor α (leading.concat (.dim (n + m) suffix)) :=
-  fun left right => by
-    have hLeft :
-        (leading.concat (.dim n suffix)).toList =
-          leading.toList ++ n :: suffix.toList := by
-      simp [Shape.concat_eq_append]
-    have hRight :
-        (leading.concat (.dim m suffix)).toList =
-          leading.toList ++ m :: suffix.toList := by
-      simp [Shape.concat_eq_append]
-    have hOutput :
-        leading.toList ++ (n + m) :: suffix.toList =
-          (leading.concat (.dim (n + m) suffix)).toList := by
-      simp [Shape.concat_eq_append]
-    exact TorchLean.Tensor.Internal.Rep.castShape hOutput <|
-      TorchLean.Tensor.Internal.Rep.concatenateAxis
-        (α := α) (leftLength := n) (rightLength := m)
-        leading.toList suffix.toList
-        (TorchLean.Tensor.Internal.Rep.castShape hLeft left)
-        (TorchLean.Tensor.Internal.Rep.castShape hRight right)
+    (leading : Shape) {n m : Nat} {suffix : Shape}
+    (left : Tensor α (leading.concat (.dim n suffix)))
+    (right : Tensor α (leading.concat (.dim m suffix))) :
+    Tensor α (leading.concat (.dim (n + m) suffix)) := by
+  exact TorchLean.Tensor.Internal.Rep.castShape (by simp [Shape.concat_eq_append]) <|
+    TorchLean.Tensor.Internal.Rep.concatenateAxis
+      (leftLength := n) (rightLength := m) leading.toList suffix.toList
+      (TorchLean.Tensor.Internal.Rep.castShape (by simp [Shape.concat_eq_append]) left)
+      (TorchLean.Tensor.Internal.Rep.castShape (by simp [Shape.concat_eq_append]) right)
 
 /-- Insert a singleton dimension at any valid axis. -/
 def unsqueezeSpec {α : Type} [TorchLean.Storage α]

@@ -56,7 +56,7 @@ The one fragment hypothesis excludes raw logarithm nodes, whose source semantics
 nonpositive inputs while the executable graph totalizes them. The executable graph is a Lean
 reference evaluator; native kernels and external compilers remain separate conformance boundaries.
 -/
-theorem successfulLowering_preservesDenotation
+theorem lowering_preserves_denotation
     {α : Type} [Storage α] [Context α]
     (graph : NN.IR.Graph)
     (payload : NN.IR.Payload α)

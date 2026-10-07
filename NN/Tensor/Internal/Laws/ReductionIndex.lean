@@ -28,10 +28,10 @@ open Check
 Compute a selected row-major index by decoding retained and reduced counters
 separately.
 
-The retained axes occupy the high-order digits and the reduced axes occupy
-the low-order digits. Keeping the counters separate gives native reduction
-loops a direct affine index program without changing the checked coordinate
-semantics.
+In the combined counter, retained axes occupy the high-order digits and reduced
+axes occupy the low-order digits. The resulting coordinates are then selected
+in source-axis order. Keeping the counters separate gives native reduction
+loops an index program without changing the checked coordinate semantics.
 -/
 def separatedRearrangeLinearIndex {ι : Type*} [BEq ι]
     (length : ι → Nat) (source left right : List ι)

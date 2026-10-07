@@ -6,9 +6,8 @@ layout: default
 
 # Guide
 
-The guide develops one small neural network from typed tensors and initialization through training,
-graph lowering, floating-point execution, and verification. Runtime values, graph denotations,
-certificates, and approximation theorems are kept distinct because they support different claims.
+We'll build a small neural network from typed tensors, train it, and use its graph to study
+floating-point calculations and verification.
 
 Later chapters apply the same definitions to transformers, scientific ML, reinforcement learning,
 native kernels, PyTorch interoperability, and certificate-producing verifiers. The

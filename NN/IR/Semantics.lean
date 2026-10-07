@@ -34,7 +34,8 @@ This file defines an evaluator for the current IR fragment:
 The evaluator returns `Except String`. It fails on malformed graphs (`Graph.checkWellFormed`),
 on nodes whose parents or declared `outShape` violate the shape rules, on missing or mismatched
 payloads (`const` flat length, `linear` dimensions, `conv` geometry, `batchNormEval` channels,
-`layernorm` normalized suffix). `.log` rejects an input tensor containing an entry `<= 0` (or NaN),
+`layernorm` normalized suffix), and on malformed hard-mask shapes or flat lengths. `.log` rejects
+an input tensor containing an entry `<= 0` (or NaN),
 because the spec logarithm is undefined there. A custom computation can also reject a missing
 operand, an out-of-bounds read, or an output count beyond its index range. The remaining
 operations are total on well-shaped inputs; `reduceMean` and `layernorm` divide by extents that
@@ -77,12 +78,7 @@ namespace NN.IR
 open _root_.Spec _root_.TorchLean
 open _root_.TorchLean.Tensor
 
-/-! ## Except helpers
-
-The evaluator returns `Except String`, so almost every proof about it has to unfold a `throw` at
-some point. That one `rfl` fact lives here, at the definition of the semantics, instead of being
-restated by each consumer: `NN.IR.ShapeSoundness` and the runtime correctness proofs in
-`NN.Runtime.Autograd.IRExec` both simp with it. -/
+/-! ## Except helpers -/
 
 /-- `throw msg` in the `Except String` monad is `.error msg`. -/
 theorem throw_eq_error {β : Type} (msg : String) :
@@ -146,7 +142,6 @@ tensor. -/
 def expectShape {α : Type} [TorchLean.Storage α]
     (expected : Shape) (v : Spec.SomeTensor α) : Except String (Tensor α expected) := do
   if h : v.shape = expected then
-    -- transport across the shape equality
     pure (h ▸ v.tensor)
   else
     throw s!"IR eval: shape mismatch: expected {repr expected}, got {repr v.shape}"
@@ -164,10 +159,7 @@ def mseLossSomeTensor {α : Type} [TorchLean.Storage α] [Context α]
       s!"IR eval: node {i}: mse_loss expects equal shapes, got \
         {repr yVal.shape} vs {repr tVal.shape}"
 
-/-- MSE on two shape-erased tensors of the same shape unfolds to the shaped formula.
-
-The IR hides tensor shapes, so the loss first has to re-discover that its two operands agree before
-it can subtract them. This equation says nothing else happens on the way. -/
+/-- MSE on shape-erased tensors of equal shape agrees with the shaped formula. -/
 @[simp] theorem mseLossSomeTensor_mk {α : Type} [TorchLean.Storage α] [Context α]
     (i : Nat) {s : Shape} (y t : Tensor α s) :
     mseLossSomeTensor (α := α) i (Spec.SomeTensor.mk (α := α) s y)
@@ -589,10 +581,7 @@ theorem normalizeNodeOutput_declared {α : Type} [TorchLean.Storage α]
       .ok (Spec.SomeTensor.mk (α := α) n.outShape t) := by
   simp [normalizeNodeOutput, Pure.pure, Except.pure]
 
-/-- The same statement with the node written out as a literal record.
-
-Both spellings show up in proofs depending on whether the node came from a builder or was written
-inline, and simp will not see through the record projection on its own. -/
+/-- A tensor at a literal node's declared shape passes normalization unchanged. -/
 @[simp]
 theorem normalizeNodeOutput_nodeShape {α : Type} [TorchLean.Storage α]
     (i id : Nat) (parents : Array Nat) (kind : OpKind) (s : Shape) (t : Tensor α s) :
@@ -656,7 +645,8 @@ selected branch exactly as before the split.
           throw s!"IR eval: custom {name}: missing checked body for node {n.id}"
         let parents ← n.parents.mapM getParent
         let inputs ← TensorPack.ofShapeErasedArray parents (shapes := shapes)
-        let result ← (program.eval inputs n.outShape).mapError fun error =>
+        let result ← (program.eval (Arguments.Internal.fromTensorPack inputs) n.outShape).mapError
+          fun error =>
           s!"IR eval: custom {name}: {repr error}"
         pure (Spec.SomeTensor.ofTensor result)
     | .permute perm => do
@@ -953,8 +943,7 @@ def evalAt
 /--
 Evaluate nodes `i, i+1, ...` given already computed prefix values `vals`.
 
-This is written as a structurally recursive function so it is easy to reason about in proofs
-(evaluation is “a simple loop over node ids”).
+Recursion decreases the number of unevaluated nodes.
 -/
 def denoteAllFrom
     {α : Type} [TorchLean.Storage α] [Context α]

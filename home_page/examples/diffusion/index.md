@@ -10,6 +10,9 @@ for the model, training code, sampler, and mathematical definitions.
   <img src="{{ '/assets/media/examples/diffusion_imagenette64_real_vs_generated_plot.png' | relative_url }}" alt="Real Imagenette image, diffusion-generated sample, and diffusion reconstruction"/>
 </div>
 
+The saved comparison above uses Imagenette-derived 64×64 images, enlarged for display.
+Its generated sample is still noisy; it is not the output of the one-step CIFAR-10 run below.
+
 ## Run It First
 
 Let's run a small version first, then go through how it works. We'll prepare the CIFAR-10 arrays
@@ -177,19 +180,18 @@ We're training the model to predict $\varepsilon$, the noise added to the image.
 
 TorchLean makes the supervised pair explicit as a `Sample.Supervised` value. The operation that
 constructs $x_t$ from $x_0$ and $\varepsilon$ is
-`TorchLean.diffusion.noisedSampleFromNoise`; it is the runtime version of the same formula used by
+`TorchLean.diffusion.sample`; it is the runtime version of the same formula used by
 `qSample` in the spec layer.
 
 The helper performs the schedule lookup, noising formula, time-channel append, and supervised-pair
-construction. `diffusion.noisedSample` draws the noise from a seed; `noisedSampleFromNoise` takes
-the noise tensor as an argument:
+construction. We can choose a seed or pass the noise tensor directly:
 
 ```lean
 let sample :=
-  diffusion.noisedSample [batchSize] ([h, w] : Tensor Nat [2]) schedule x0
+  diffusion.sample [batchSize] ([h, w] : Tensor Nat [2]) schedule x0
     (seed := runtime.seed) (step := step)
 let sampleFromNoise :=
-  diffusion.noisedSampleFromNoise [batchSize] ([h, w] : Tensor Nat [2]) schedule x0 eps step
+  diffusion.sample [batchSize] ([h, w] : Tensor Nat [2]) schedule x0 step (noise := eps)
 ```
 
 The schedule length is part of the type. A `Schedule T` for `T` diffusion steps cannot be used
@@ -225,8 +227,8 @@ let previous := diffusion.ddimPrev abPrev ab x_t epsHat
 ```
 
 The denominator uses $\sqrt{\bar\alpha_t}$ when that value is strictly greater than
-`denominatorFloor`, and the floor otherwise. Its default is `1e-12`. `reverseDdimFrom` and
-`reverseDdim` pass both choices through each step. A different postprocessor or floor changes
+`denominatorFloor`, and the floor otherwise. Its default is `1e-12`. `diffusion.ddim`
+passes both choices through each step. A different postprocessor or floor changes
 the sampler's function, even when the model and schedule are unchanged.
 
 `Generative.Diffusion.ImageDDIM.ddimPrev_eq_stepFromEps` relates this API update to

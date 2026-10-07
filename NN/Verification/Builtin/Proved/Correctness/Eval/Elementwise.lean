@@ -92,7 +92,7 @@ theorem evalAt_binaryElementwise_eq
       Graph.expectShape (α := α) (expected := s) (Spec.SomeTensor.mk (α := α) s b) = .ok b := by
     simp [Graph.expectShape, Pure.pure, Except.pure]
   simpa [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, binaryGraph,
-    binaryGraphOut, binaryNodeOut, Graph.getNode, Graph.getNode?] using
+    binaryGraphOut, binaryNodeOut, Graph.getNode] using
     (evalNode_binaryElementwise_eq op a b ({} : Payload α) (Spec.SomeTensor.mk (α := α) s a)
       #[Spec.SomeTensor.mk (α := α) s a, Spec.SomeTensor.mk (α := α) s b] 2 2 0 1
       (Spec.SomeTensor.mk (α := α) s a) (Spec.SomeTensor.mk (α := α) s b)
@@ -147,8 +147,8 @@ def UnaryElementwiseOp.denote
   | .sigmoid => Activation.sigmoidSpec x
   | .softplus => Activation.softplusSpec x
   | .exp => Tensor.expSpec x
-  | .sin => Tensor.mapSpec (fun v => MathFunctions.sin v) x
-  | .cos => Tensor.mapSpec (fun v => MathFunctions.cos v) x
+  | .sin => Tensor.map (fun v => MathFunctions.sin v) x
+  | .cos => Tensor.map (fun v => MathFunctions.cos v) x
 
 private theorem evalNode_unaryElementwise_eq
     {α : Type} [TorchLean.Storage α] [Context α]
@@ -178,7 +178,7 @@ theorem evalAt_unaryElementwise_eq
       Graph.expectShape (α := α) (expected := s) (Spec.SomeTensor.mk (α := α) s x) = .ok x := by
     simp [Graph.expectShape, Pure.pure, Except.pure]
   simpa [Graph.evalAt, Graph.evalNode, Graph.normalizeNodeOutput, unaryGraph,
-    unaryGraphOut, unaryNodeOut, Graph.getNode, Graph.getNode?] using
+    unaryGraphOut, unaryNodeOut, Graph.getNode] using
     (evalNode_unaryElementwise_eq op x ({} : Payload α) (Spec.SomeTensor.mk (α := α) s x)
       #[Spec.SomeTensor.mk (α := α) s x] 1 1 0 (Spec.SomeTensor.mk (α := α) s x)
       (by simp) hx)
@@ -441,7 +441,7 @@ theorem evalAt_sin_eq
         (vals := #[Spec.SomeTensor.mk (α := α) s x]) (i := 1)
       =
       Except.ok
-        (Spec.SomeTensor.mk (α := α) s (Tensor.mapSpec (fun v => MathFunctions.sin v) x)) := by
+        (Spec.SomeTensor.mk (α := α) s (Tensor.map (fun v => MathFunctions.sin v) x)) := by
   exact evalAt_unaryElementwise_eq .sin x
 
 /-- Local IR semantics for cos. -/
@@ -453,7 +453,7 @@ theorem evalAt_cos_eq
         (vals := #[Spec.SomeTensor.mk (α := α) s x]) (i := 1)
       =
       Except.ok
-        (Spec.SomeTensor.mk (α := α) s (Tensor.mapSpec (fun v => MathFunctions.cos v) x)) := by
+        (Spec.SomeTensor.mk (α := α) s (Tensor.map (fun v => MathFunctions.cos v) x)) := by
   exact evalAt_unaryElementwise_eq .cos x
 
 /-- Local IR semantics for log on inputs satisfying the IR positivity side condition. -/
@@ -467,7 +467,7 @@ theorem evalAt_log_eq
       =
       Except.ok (Spec.SomeTensor.mk (α := α) s (Tensor.logSpec (α := α) x)) := by
   simp [Graph.evalAt, Graph.evalNode, unaryGraph, unaryGraphOut, unaryNodeOut,
-    Graph.getNode, Graph.getNode?, Graph.unaryParentId, unaryParent?, Graph.expectShape, hpos,
+    Graph.getNode, Graph.unaryParentId, unaryParent?, Graph.expectShape, hpos,
     Bind.bind, Except.bind, Pure.pure, Except.pure]
 
 end IRStep

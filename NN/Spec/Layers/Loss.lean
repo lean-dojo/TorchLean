@@ -37,13 +37,6 @@ open MathFunctions
 
 variable {α : Type} [TorchLean.Storage α] [Context α]
 
-/-- Mean of a scalar that conceptually came from a tensor with shape `s`.
-
-The denominator is `TorchLean.Tensor.meanDenominator`, the same totalized element count the tensor
-reductions use, so the loss layer and `mean` agree on what an empty tensor averages to. -/
-def meanOver {α : Type} [Div α] [NatCast α] {s : Shape} (x : α) : α :=
-  x / (meanDenominator s : α)
-
 /-- Totalized denominator for a mean over slices orthogonal to `axis`.
 
 Classification losses sum along the selected class dimension and average over every other
@@ -62,9 +55,7 @@ def meanOverAxisSlices {α : Type} [Div α] [NatCast α] {s : Shape}
 def mseSpec {α : Type} [TorchLean.Storage α]
     [Add α] [Sub α] [Mul α] [Div α] [Zero α] [NatCast α]
     {s : Shape} (predicted target : Tensor α s) : α :=
-  let diff := subSpec predicted target
-  let squared := mulSpec diff diff
-  meanOver (s := s) (sumSpec squared)
+  Tensor.meanSquaredError predicted target
 
 /-- Derivative of `mseSpec` with respect to `predicted`. -/
 def mseDerivSpec {α : Type} [TorchLean.Storage α]
@@ -80,7 +71,7 @@ def mseDerivSpec {α : Type} [TorchLean.Storage α]
 def maeSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : α :=
   let diff := subSpec predicted target
   let abs_diff := absSpec diff
-  meanOver (s := s) (sumSpec abs_diff)
+  meanSpec abs_diff
 
 /-- Derivative of `maeSpec` w.r.t. `predicted` (subgradient via sign). -/
 def maeDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : Tensor α s :=
@@ -88,7 +79,7 @@ def maeDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : 
   -- Corresponds to PyTorch's `L1Loss(reduction="mean")`.
   -- This is a subgradient at 0.
   let grad :=
-    mapSpec (fun x => if x > (0 : α) then (1 : α) else if x < (0 : α) then -(1 : α) else (0 : α))
+    Tensor.map (fun x => if x > (0 : α) then (1 : α) else if x < (0 : α) then -(1 : α) else (0 : α))
       diff
   scaleSpec grad (1 / (meanDenominator s : α))
 
@@ -109,12 +100,12 @@ def huberSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) (delt
   :=
   let diff := subSpec predicted target
   let abs_diff := absSpec diff
-  let per_elem := mapSpec (fun x =>
+  let per_elem := Tensor.map (fun x =>
     if x < delta then
       (x * x) / 2
     else
       delta * (x - delta / 2)) abs_diff
-  meanOver (s := s) (sumSpec per_elem)
+  meanSpec per_elem
 
 /-- Derivative of `huberSpec` w.r.t. `predicted`. -/
 def huberDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) (delta : α := (1 :
@@ -122,7 +113,7 @@ def huberDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) 
   let diff := subSpec predicted target
   -- Subgradient at `|d| = delta` is fine for spec purposes; we pick the natural piecewise form.
   let grad :=
-    mapSpec (fun d =>
+    Tensor.map (fun d =>
       let ad := if d > (0 : α) then d else -d
       if ad < delta then d
       else if d > (0 : α) then delta
@@ -158,7 +149,7 @@ def crossEntropySpec {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
   let clamp01 := fun x : α =>
     let x := if x > epsilon then x else epsilon
     if x < (1 : α) - epsilon then x else (1 : α) - epsilon
-  let q := mapSpec clamp01 predicted
+  let q := Tensor.map clamp01 predicted
   let logq := logSpec q
   let total := sumSpec (mulSpec target logq)
   meanOverAxisSlices (s := s) axis (-total)
@@ -232,17 +223,17 @@ losses such as `HingeEmbeddingLoss` / `MultiMarginLoss`, but the exact signature
 -/
 def hingeSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : α :=
   let margin := mulSpec predicted target
-  let per_elem := mapSpec (fun m =>
+  let per_elem := Tensor.map (fun m =>
     let v := (1 : α) - m
     if v > (0 : α) then v else (0 : α)
   ) margin
-  meanOver (s := s) (sumSpec per_elem)
+  meanSpec per_elem
 
 /-- Derivative/subgradient of `hingeSpec` w.r.t. `predicted`. -/
 def hingeDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : Tensor α s :=
   let margin := mulSpec predicted target
   -- Subgradient: if `1 - y*x > 0` then `d/dx = -y`, else 0. Then mean-reduce.
-  let active := mapSpec (fun m => if (1 : α) - m > (0 : α) then (1 : α) else (0 : α)) margin
+  let active := Tensor.map (fun m => if (1 : α) - m > (0 : α) then (1 : α) else (0 : α)) margin
   let grad := mulSpec active (negSpec target)
   scaleSpec grad (1 / (meanDenominator s : α))
 
@@ -257,15 +248,15 @@ $\operatorname{loss}_i=\exp(\mathtt{pred}_i)-\mathtt{target}_i\mathtt{pred}_i$.
 This corresponds to PyTorch's `PoissonNLLLoss(log_input=true, full=false)` at the math level.
 -/
 def poissonSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : α :=
-  let exp_pred := mapSpec MathFunctions.exp predicted
+  let exp_pred := Tensor.map MathFunctions.exp predicted
   let target_times_pred := mulSpec target predicted
   let per_elem := subSpec exp_pred target_times_pred
-  meanOver (s := s) (sumSpec per_elem)
+  meanSpec per_elem
 
 /-- Derivative of `poissonSpec` w.r.t. `predicted`. -/
 def poissonDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : Tensor α s :=
   -- d/dpred [exp(pred) - target*pred] = exp(pred) - target, then mean-reduce.
-  let exp_pred := mapSpec MathFunctions.exp predicted
+  let exp_pred := Tensor.map MathFunctions.exp predicted
   let grad := subSpec exp_pred target
   scaleSpec grad (1 / (meanDenominator s : α))
 
@@ -322,13 +313,13 @@ def cosineSimilarityDerivSpec {s : Shape}
 /-- Log-cosh loss (reduced-to-scalar): `log(cosh(predicted - target))`. -/
 def logCoshSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : α :=
   let diff := subSpec predicted target
-  let per_elem := mapSpec (fun d => MathFunctions.log (MathFunctions.cosh d)) diff
-  meanOver (s := s) (sumSpec per_elem)
+  let per_elem := Tensor.map (fun d => MathFunctions.log (MathFunctions.cosh d)) diff
+  meanSpec per_elem
 
 /-- Derivative of `logCoshSpec` w.r.t. `predicted`. -/
 def logCoshDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : Tensor α s :=
   let diff := subSpec predicted target
-  let grad := mapSpec MathFunctions.tanh diff
+  let grad := Tensor.map MathFunctions.tanh diff
   scaleSpec grad (1 / (meanDenominator s : α))
 
 /--
@@ -375,7 +366,7 @@ def binaryCrossEntropyTensorSpec {s : Shape} (predicted : Tensor α s) (target :
   let per_elem := map2Spec (fun p y => binaryCrossEntropySpec (predicted := p) (target := y)
     (epsilon := epsilon))
       predicted target
-  meanOver (s := s) (sumSpec per_elem)
+  meanSpec per_elem
 
 /-- Derivative of `binaryCrossEntropyTensorSpec` w.r.t. `predicted`. -/
 def binaryCrossEntropyTensorDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α

@@ -47,14 +47,16 @@ state encodings, policies, and rollout traces in the infoview.
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.ExecFloat (Binary)
 open FloatLib.Floats.ExecFloat.Binary (ofBits32 ofModel toModel)
-open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+open FloatLib.Floats.Formats.BinaryInterchange (Model)
 
-namespace GridWorldWidgets
+namespace Gallery
+
+namespace World
 
 open Spec.RL.Envs
 
 /-- A small 4×4 GridWorld used by the widget gallery. -/
-def galleryGridWorld : GridWorld 4 4 :=
+def env : GridWorld 4 4 :=
   { start := (⟨0, by decide⟩, ⟨0, by decide⟩)
     goal := (⟨3, by decide⟩, ⟨3, by decide⟩)
     -- Discount isn't used by the widgets, so we pick a simple literal.
@@ -65,11 +67,11 @@ def pos : GridWorld.State 4 4 :=
   (⟨1, by decide⟩, ⟨2, by decide⟩)
 
 /-- Constant policy for the policy-visualization demo. -/
-def goRightPolicy : GridWorld.State 4 4 → GridWorld.Action :=
+def policy : GridWorld.State 4 4 → GridWorld.Action :=
   fun _ => GridWorld.Action.right
 
 /-- Example rollout path rendered by the GridWorld trace widget. -/
-def samplePath : Array (GridWorld.State 4 4) :=
+def path : Array (GridWorld.State 4 4) :=
   #[
     (⟨0, by decide⟩, ⟨0, by decide⟩),
     (⟨0, by decide⟩, ⟨1, by decide⟩),
@@ -80,11 +82,11 @@ def samplePath : Array (GridWorld.State 4 4) :=
     (⟨3, by decide⟩, ⟨3, by decide⟩)
   ]
 
-#gridworld_view galleryGridWorld, pos
-#gridworld_policy_view galleryGridWorld, goRightPolicy
-#gridworld_path_view galleryGridWorld, samplePath
+#gridworld_view env, pos
+#gridworld_policy_view env, policy
+#gridworld_path_view env, path
 
-end GridWorldWidgets
+end World
 
 /--
 A synthetic training log: a decaying loss with a small oscillation, and a saturating accuracy.
@@ -92,7 +94,7 @@ A synthetic training log: a decaying loss with a small oscillation, and a satura
 Synthetic rather than recorded, because the point is to exercise the renderer's axis scaling and
 legend layout, and a hand-written curve gives predictable extremes.
 -/
-def sampleTrainLog : Runtime.Training.TrainLog :=
+def log : Runtime.Training.TrainLog :=
   let n : Nat := 40
   let steps : Array Nat := Array.range n
   let loss : Tensor Float [n] :=
@@ -117,10 +119,10 @@ def sampleTrainLog : Runtime.Training.TrainLog :=
     ] }
 
 /-- Three class names for the confusion-matrix widget. -/
-def sampleLabels : Array String := #["cat", "dog", "owl"]
+def labels : Array String := #["cat", "dog", "owl"]
 
 /-- A three-class confusion matrix with a clear diagonal and a few off-diagonal mistakes. -/
-def sampleConfusionMatrix : Runtime.Training.ConfusionMatrix :=
+def confusion : Runtime.Training.ConfusionMatrix :=
   { counts := #[
       #[8, 1, 0]
     , #[2, 6, 1]
@@ -128,15 +130,14 @@ def sampleConfusionMatrix : Runtime.Training.ConfusionMatrix :=
     ] }
 
 /-- The simplest possible tensor view: the numbers zero through four. -/
-def indexTensor : Tensor Nat [5] :=
+def indices : Tensor Nat [5] :=
   [0, 1, 2, 3, 4]
 
 /--
-A rank-three tensor whose entries encode their own coordinates as `100 i + 10 j + k`, so the
-viewer's
-axis ordering can be read straight off the rendered values.
+A rank-three tensor whose entries encode their coordinates as `100 i + 10 j + k`, so the viewer's
+axis ordering can be read straight off the values.
 -/
-def sampleGrid : Tensor Nat [2, 3, 4] :=
+def grid : Tensor Nat [2, 3, 4] :=
   Tensor.generate [2, 3, 4] fun coordinates =>
     coordinates.getD 0 0 * 100 + coordinates.getD 1 0 * 10 + coordinates.getD 2 0
 
@@ -151,30 +152,30 @@ def decimalTenth : Float :=
   Float.ofBits 0x3fb999999999999a
 
 /-- `1/3`, likewise given by its bit pattern. -/
-def oneThirdFloat : Float :=
+def third : Float :=
   -- 1/3 as a binary64 literal.
   Float.ofBits 0x3fd5555555555555
 
 /-- Two exact values and two inexact ones, so the float viewer has both cases to render. -/
-def floatTensor : Tensor Float [4] :=
-  [1.0, 2.0, decimalTenth, oneThirdFloat]
+def native : Tensor Float [4] :=
+  [1.0, 2.0, decimalTenth, third]
 
 /--
 The same four values in the bit-level binary32 model, where the rounding is visible in the fields.
 -/
-def ieeeTensor : Tensor (Binary 8 23) [4] :=
+def ieee : Tensor (Binary 8 23) [4] :=
   [ (1 : Binary 8 23)
   , (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat x))) : Binary 8 23))
     2.0
   , (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat decimalTenth))) : Binary 8 23)
-  , (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat oneThirdFloat))) : Binary 8
+  , (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat third))) : Binary 8
     23) ]
 
 /--
 A rank-three tensor built by adding `decimalTenth` to coordinate-derived values and dividing by
 seven in host `Float`, then converting to binary32. The viewer exposes the resulting rounded fields.
 -/
-def ieeeCube : Tensor (Binary 8 23) [2, 2, 3] :=
+def cube : Tensor (Binary 8 23) [2, 2, 3] :=
   Tensor.generate [2, 2, 3] fun coordinates =>
     -- Small tensor whose values make the bit patterns interesting.
     let base : Float := Float.ofNat
@@ -183,58 +184,39 @@ def ieeeCube : Tensor (Binary 8 23) [2, 2, 3] :=
       7.0)))) : Binary 8 23)
 
 /-- A small integer matrix, to show the viewer with no rounding to worry about. -/
-def sampleMatrix : Tensor Int [2, 4] :=
+def matrix : Tensor Int [2, 4] :=
   [[0, 1, 2, 3], [10, 11, 12, 13]]
 
 /--
 The same matrix with its shape existentially packed, which is what the shape-agnostic widgets take.
 -/
-def anyMat : Spec.SomeTensor Int :=
-  Spec.SomeTensor.ofTensor sampleMatrix
+def packedMatrix : Spec.SomeTensor Int :=
+  Spec.SomeTensor.ofTensor matrix
 
-/-- A three-node IR graph: an input, a constant, and their sum. -/
-def sampleGraph : NN.IR.Graph :=
+/-- A three-node graph with a selectable final operation.
+
+The gallery compares addition and subtraction with the same inputs and shapes. -/
+def graph (op : NN.IR.OpKind) : NN.IR.Graph :=
   { nodes := #[
       { id := 0, parents := #[], kind := .input
         outShape := [2] },
       { id := 1, parents := #[]
         kind := .const [2]
         outShape := [2] },
-      { id := 2, parents := #[0, 1], kind := .add
+      { id := 2, parents := #[0, 1], kind := op
         outShape := [2] }
     ] }
 
-/--
-The same graph with subtraction at the output, so the graph-diff widget has two graphs that differ
-in
-exactly one node.
--/
-def sampleGraphSub : NN.IR.Graph :=
-  -- Same as `sampleGraph` but with `sub` instead of `add` at the output.
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input
-        outShape := [2] },
-      { id := 1, parents := #[]
-        kind := .const [2]
-        outShape := [2] },
-      { id := 2, parents := #[0, 1], kind := .sub
-        outShape := [2] }
-    ] }
+/-- The concrete input fed to the addition graph. -/
+def input : Spec.SomeTensor Float :=
+  Spec.SomeTensor.ofTensor ([0.60, -0.20] : Tensor Float [2])
 
-/-- Build a length-two float tensor; used repeatedly below. -/
-def pairTensor (x y : Float) : Tensor Float [2] :=
-  [x, y]
-
-/-- The concrete input fed to `sampleGraph`. -/
-def sampleInput : Spec.SomeTensor Float :=
-  Spec.SomeTensor.ofTensor (pairTensor 0.60 (-0.20))
-
-/-- The constant attached to node 1 of `sampleGraph`. -/
-def samplePayload : NN.IR.Payload Float :=
+/-- The constant attached to node 1 of `graph`. -/
+def payload : NN.IR.Payload Float :=
   { const? := fun id =>
       if id = 1 then
-        -- Node 1 is the `.const` in `sampleGraph` (a fixed vector).
-        some { n := 2, v := pairTensor 0.25 0.25 }
+        -- Node 1 is the `.const` in `graph` (a fixed vector).
+        some { n := 2, v := [0.25, 0.25] }
       else
         none }
 
@@ -247,23 +229,22 @@ def qnan : Binary 8 23 :=
   ofBits32 (0x7fc00000 : UInt32)
 
 /--
-A CROWN propagation state for `sampleGraph`: the input ranges over `[-1, 1]` in both coordinates,
-the
-constant is a point box, and the output box is what adding them gives.
+A display fixture for the addition graph: the input ranges over `[-1, 1]` in both coordinates,
+the constant is a point box, and the output box is what adding them gives.
 -/
-def samplePropState : NN.MLTheory.CROWN.Graph.PropState Float :=
+def bounds : NN.MLTheory.CROWN.Graph.PropState Float :=
   let bIn : NN.MLTheory.CROWN.FlatBox Float :=
     { dim := 2
-      lo := pairTensor (-1.0) (-1.0)
-      hi := pairTensor (1.0) (1.0) }
+      lo := [-1.0, -1.0]
+      hi := [1.0, 1.0] }
   let bConst : NN.MLTheory.CROWN.FlatBox Float :=
     { dim := 2
-      lo := pairTensor (0.25) (0.25)
-      hi := pairTensor (0.25) (0.25) }
+      lo := [0.25, 0.25]
+      hi := [0.25, 0.25] }
   let bOut : NN.MLTheory.CROWN.FlatBox Float :=
     { dim := 2
-      lo := pairTensor (-0.75) (-0.75)
-      hi := pairTensor (1.25) (1.25) }
+      lo := [-0.75, -0.75]
+      hi := [1.25, 1.25] }
   { inputId := 0
     inputDim := 2
     states := #[
@@ -272,7 +253,7 @@ def samplePropState : NN.MLTheory.CROWN.Graph.PropState Float :=
     , { shape := [2], ibp? := some bOut, aff? := none }
     ] }
 
-private def buildSampleTape : Result (Tape Float) := do
+private def record : Result (Tape Float) := do
   let (t0, aId) := Tape.leaf (α := Float) (t := Tape.empty) (value := Tensor.full [] 2.0) (name :=
     some "a")
   let (t1, bId) := Tape.leaf (α := Float) (t := t0) (value := Tensor.full [] 3.0) (name := some "b")
@@ -283,47 +264,47 @@ private def buildSampleTape : Result (Tape Float) := do
 /--
 A four-node autograd tape computing `a * b + b` at `a = 2`, `b = 3`.
 
-The `decide` establishes that the builder above succeeded, so this is a total definition rather than
-an
-`Option` the widget would have to unwrap.
+The `decide` establishes that recording succeeded, so the widget receives the complete tape.
 -/
-def sampleTape : Tape Float :=
-  have succeeds : buildSampleTape.toOption.isSome = true := by decide
-  buildSampleTape.toOption.get succeeds
+def tape : Tape Float :=
+  have succeeds : record.toOption.isSome = true := by decide
+  record.toOption.get succeeds
 
 -- Try hovering/cursoring on these commands in the editor.
-#tensor_view indexTensor
-#tensor_view sampleGrid
-#tensor_view floatTensor
-#tensor_view ieeeTensor
-#tensor_view ieeeCube
-#tensor_view sampleMatrix
-#tensor_stats_view floatTensor
-#tensor_stats_view (pairTensor 0.60 (-0.20))
-#ir_view sampleGraph
-#shape_infer_view sampleGraph
-#graph_rewrite_view sampleGraph, sampleGraphSub
+#tensor_view indices
+#tensor_view grid
+#tensor_view native
+#tensor_view ieee
+#tensor_view cube
+#tensor_view matrix
+#tensor_stats_view native
+#tensor_stats_view ([0.60, -0.20] : Tensor Float [2])
+#ir_view (graph (op := .add))
+#shape_infer_view (graph (op := .add))
+#graph_rewrite_view (graph (op := .add)), (graph (op := .sub))
 #float32_view one
 #float32_view (1 : Binary 8 23)
 #float32_view qnan
 #float32_compare_view one, qnan
-#anytensor_view anyMat
-#ir_exec_trace_view sampleGraph, samplePayload, sampleInput
-#train_log_view sampleTrainLog
-#confusion_view sampleLabels, sampleConfusionMatrix
+#anytensor_view packedMatrix
+#ir_exec_trace_view (graph (op := .add)), payload, input
+#train_log_view log
+#confusion_view labels, confusion
 
 -- Compare Float64 input to its Float32 rounding.
 #float32_round_view decimalTenth
-#float32_round_view oneThirdFloat
+#float32_round_view third
 
--- Verification: show a small CROWN/IBP state aligned with `sampleGraph`.
-#crown_view sampleGraph, samplePropState
-#bounds_tightness_view sampleGraph, samplePropState
+-- Verification: show a small CROWN/IBP state aligned with `graph`.
+#crown_view (graph (op := .add)), bounds
+#bounds_tightness_view (graph (op := .add)), bounds
 
 -- Autograd: show a compact tape and its scalar backprop (like `loss.backward()`).
-#tape_view sampleTape
-#tape_grads_view sampleTape, 3
-#tape_trace_view sampleTape, 3
+#tape_view tape
+#tape_grads_view tape, 3
+#tape_trace_view tape, 3
 
 -- Interop: preview how a small PyTorch model maps to TorchLean constructors.
 #pytorch_translate_file "NN/Examples/Interop/PyTorch/MLP/train_mlp.py"
+
+end Gallery

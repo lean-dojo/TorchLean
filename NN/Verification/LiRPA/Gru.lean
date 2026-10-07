@@ -27,10 +27,10 @@ References:
   `https://github.com/Verified-Intelligence/auto_LiRPA`
 
 Export (Python):
-`python3.12 scripts/verification/lirpa/export_gru_cert.py`
+`python3 scripts/verification/lirpa/export_cert.py gru`
 
 Run (Lean):
-`lake exe verify -- lirpa-gru [NN/Examples/Verification/LiRPA/gru_gate_cert.json]`
+`scripts/lake.sh exe verify -- lirpa-gru [path]`
 -/
 
 @[expose] public section
@@ -79,12 +79,11 @@ def seedParamsFloat : ParamStore Float :=
 /--
 Check an IBP certificate JSON against this GRU-fragment graph.
 
-This is wired into `lake exe verify -- lirpa-gru [path]`.
+This is wired into `scripts/lake.sh exe verify -- lirpa-gru [path]`.
 -/
 def verifyCert (path : String) : IO Unit := do
   let g := buildGraph
-  -- Every input coordinate gets the box $[x_i - \varepsilon, x_i + \varepsilon]$; the
-  -- graph has 3 inputs, ids `0 .. 2`.
+  -- Give input node 0 a radius-0.5 box around [1, 2, 3].
   let ps := ExampleInputs.seedNaturalInputBox 0 3 0.5 seedParamsFloat
   NN.Verification.Cert.IBPCert.checkOrThrow g ps (outId := 5) path
 

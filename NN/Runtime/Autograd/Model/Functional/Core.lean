@@ -38,7 +38,7 @@ PyTorch analogue: `torch.square`.
 -/
 def square {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
-    {s : Shape} (x : RefTy (m := m) (α := α) s) : m (RefTy (m := m) (α := α) s) :=
+    {s : Shape} (x : Ref (m := m) (α := α) s) : m (Ref (m := m) (α := α) s) :=
   mul (m := m) (α := α) (s := s) x x
 
 /-! ## Elementwise transcendentals for scientific forward models
@@ -64,20 +64,20 @@ constant via `Ops.const` at scalar shape and broadcasts it to `s` (same pattern
 as the dropout keep-probability broadcast). -/
 def shift {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
-    {s : Shape} (x : RefTy (m := m) (α := α) s) (c : α) : m (RefTy (m := m) (α := α) s) := do
+    {s : Shape} (x : Ref (m := m) (α := α) s) (c : α) : m (Ref (m := m) (α := α) s) := do
   let cs ← Runtime.Autograd.Torch.const (m := m) (α := α) (s := Shape.scalar)
     (Tensor.scalar c)
   let cb ← Runtime.Autograd.Torch.broadcastTo (m := m) (α := α)
     (s₁ := Shape.scalar) (s₂ := s) (Shape.CanBroadcastTo.scalarTo s) cs
   Runtime.Autograd.Torch.add (m := m) (α := α) (s := s) x cb
 
-/-- Scalar affine map $x\mapsto cx+k$.
+/-- Scalar affine map $x\mapsto xc+k$.
 
 This is a common building block in physical forward models, including the
 SMAP-NISAR AVS surface and vegetation terms. It composes `scale` and `shift`. -/
 def affine {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
-    {s : Shape} (x : RefTy (m := m) (α := α) s) (c k : α) : m (RefTy (m := m) (α := α) s) := do
+    {s : Shape} (x : Ref (m := m) (α := α) s) (c k : α) : m (Ref (m := m) (α := α) s) := do
   let sx ← scale (m := m) (α := α) (s := s) x c
   shift (m := m) (α := α) (s := s) sx k
 
@@ -91,7 +91,7 @@ export Runtime.Autograd.Torch (detach)
 def Internal.broadcastUnlessSame {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s t : Shape} [Shape.BroadcastTo s t]
-    (x : RefTy (m := m) (α := α) s) : m (RefTy (m := m) (α := α) t) :=
+    (x : Ref (m := m) (α := α) s) : m (Ref (m := m) (α := α) t) :=
   if h : s = t then
     pure (h ▸ x)
   else
@@ -105,8 +105,8 @@ PyTorch analogue: `torch.add` (broadcasting semantics).
 def addB {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s₁ s₂ t : Shape} [Shape.BroadcastTo s₁ t] [Shape.BroadcastTo s₂ t]
-    (x : RefTy (m := m) (α := α) s₁) (y : RefTy (m := m) (α := α) s₂) :
-    m (RefTy (m := m) (α := α) t) := do
+    (x : Ref (m := m) (α := α) s₁) (y : Ref (m := m) (α := α) s₂) :
+    m (Ref (m := m) (α := α) t) := do
   let xb ← Internal.broadcastUnlessSame (m := m) (α := α) (s := s₁) (t := t) x
   let yb ← Internal.broadcastUnlessSame (m := m) (α := α) (s := s₂) (t := t) y
   add (m := m) (α := α) (s := t) xb yb
@@ -119,8 +119,8 @@ PyTorch analogue: `torch.mul` (broadcasting semantics).
 def mulB {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s₁ s₂ t : Shape} [Shape.BroadcastTo s₁ t] [Shape.BroadcastTo s₂ t]
-    (x : RefTy (m := m) (α := α) s₁) (y : RefTy (m := m) (α := α) s₂) :
-    m (RefTy (m := m) (α := α) t) := do
+    (x : Ref (m := m) (α := α) s₁) (y : Ref (m := m) (α := α) s₂) :
+    m (Ref (m := m) (α := α) t) := do
   let xb ← Internal.broadcastUnlessSame (m := m) (α := α) (s := s₁) (t := t) x
   let yb ← Internal.broadcastUnlessSame (m := m) (α := α) (s := s₂) (t := t) y
   mul (m := m) (α := α) (s := t) xb yb
@@ -137,10 +137,10 @@ appended. The element type `Fin vocabularySize` makes an out-of-range token unre
 def embedding {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {vocabularySize embeddingWidth : Nat} {s : Shape}
-    (weight : RefTy (m := m) (α := α) [vocabularySize, embeddingWidth])
+    (weight : Ref (m := m) (α := α) [vocabularySize, embeddingWidth])
     (indices : Runtime.Autograd.Torch.DataRef
       (m := m) (α := α) (Fin vocabularySize) s) :
-    m (RefTy (m := m) (α := α) (s.appendDim embeddingWidth)) := do
+    m (Ref (m := m) (α := α) (s.appendDim embeddingWidth)) := do
   let flatIds := Runtime.Autograd.Torch.mapData (m := m) (α := α)
     (fun x => TorchLean.Tensor.reshapeSpec
       (source := s) (target := [s.size]) x (by simp [Shape.size])) indices
@@ -153,17 +153,15 @@ def embedding {α : Type} [TorchLean.Storage α] [Context α]
 
 /-! ## Reductions -/
 
-/--
-Mean reduction:
-$\operatorname{mean}(x)=\operatorname{sum}(x)/\operatorname{numel}(x)$.
+/-- Mean over all elements, scaling the sum by the reciprocal of the element count.
 
-PyTorch analogue: `torch.mean`.
+An empty tensor uses denominator one and returns its zero sum, unlike PyTorch's NaN convention.
+The reciprocal is computed before multiplication; this need not round like direct division.
 -/
 def mean {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
-  {s : Shape} (x : RefTy (m := m) (α := α) s) : m (RefTy (m := m) (α := α) Shape.scalar) := do
+  {s : Shape} (x : Ref (m := m) (α := α) s) : m (Ref (m := m) (α := α) Shape.scalar) := do
   let total ← sum (m := m) (α := α) (s := s) x
-  -- `sum` returns a scalar tensor; scale by `1 / numel` to get a mean.
   let denom : Nat := Tensor.meanDenominator s
   scale (m := m) (α := α) (s := Shape.scalar) total (1 / (denom : α))
 
@@ -178,8 +176,8 @@ deterministic PRNG keyed by `seed`.
 -/
 def dropoutSeeded {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
-    {s : Shape} (x : RefTy (m := m) (α := α) s) (p : α) (seed : Nat) (training : Bool := true) :
-    m (RefTy (m := m) (α := α) s) := do
+    {s : Shape} (x : Ref (m := m) (α := α) s) (p : α) (seed : Nat) (training : Bool := true) :
+    m (Ref (m := m) (α := α) s) := do
   if !training || p == 0 then
     pure x
   else if p == 1 then
@@ -211,10 +209,10 @@ suppress a NaN or infinity. Evaluation mode returns the input directly.
 def dropoutRefSeeded {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s : Shape}
-    (x : RefTy (m := m) (α := α) s)
-    (p : RefTy (m := m) (α := α) Shape.scalar)
+    (x : Ref (m := m) (α := α) s)
+    (p : Ref (m := m) (α := α) Shape.scalar)
     (seed : Nat) (training : Bool := true) :
-    m (RefTy (m := m) (α := α) s) := do
+    m (Ref (m := m) (α := α) s) := do
   if !training then
     pure x
   else

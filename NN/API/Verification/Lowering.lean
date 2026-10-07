@@ -52,11 +52,6 @@ def lowerProgramToIR {α : Type} [TorchLean.Storage α] [Context α]
     (inShape := σ) (outShape := τ)
     forwardProgram (TorchLean.nn.State.Internal.toTensorPack state)
 
-/-- Dimensions of the distinguished verifier input node. -/
-def inputShape? {α : Type} [TorchLean.Storage α] [Context α]
-    (lowered : LoweredIR α) : Except String Shape :=
-  lowered.inputShape?
-
 /-- Compute upper affine bounds after validating the lowered verifier input.
 
 The engine retains both sides internally so negative coefficients use the correct parent bound.

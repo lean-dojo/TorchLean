@@ -227,14 +227,8 @@ That is $`\lceil 2\cdot 1\cdot 1/(1/10)\rceil+1=21`; `norm_num` proves the arith
 ceiling. Halving $`\varepsilon` approximately doubles the width, so this construction is
 linear in $`1/\varepsilon`.
 
-The extra one after the ceiling turns a weak inequality into a strict one. If the ratio inside
-the ceiling is already an integer, choosing that integer alone would only give the mesh estimate
-at the requested tolerance; adding one leaves room for the final `< ε`. The proof also knows the
-width is positive, so division by its real-valued cast is legitimate. In the displayed type,
-`↑(reluApproximationWidth L a b ε)` is exactly that cast from a natural count to a real denominator.
-`norm_num` establishes an equality about this definition inside Lean's logic. It does not require
-an executable implementation of arbitrary real inputs, which is why the proof succeeds even
-though the preceding compilation attempt fails.
+Adding one after the ceiling makes the mesh estimate strict, even when the ratio is an integer.
+The `↑` in the signature casts the positive natural width to a real denominator.
 
 # Quadratic Approximation In Binary32
 
@@ -361,10 +355,6 @@ The width calculation alone does not discharge those obligations. A sharper inte
 can also use the second derivative of this smooth target, information absent from the Lipschitz
 hypotheses. The sampled error and the existence guarantee therefore describe different claims.
 
-The last two examples make the size cost concrete: halving $`\varepsilon` changes the prescribed
-width from 41 to 81. This is an upper bound on the width needed by the construction. Proving
-minimality would also require a lower bound that rules out smaller networks.
-
 ## Sine Approximation
 
 Convexity explains the one-sided interpolation error for $`x^2` and the increasing chord slopes.
@@ -484,11 +474,9 @@ with torch.no_grad():
     ys = net(xs).squeeze(1)
 ```
 
-The transcription is intended to produce the nine `H` values printed above. The inputs,
-parameters, intermediate products, and partial sums of the displayed hinge computation are all
-exactly representable in binary32. This explains why that computation has no rounding error;
-checking the PyTorch execution remains a separate runtime comparison
-({Informal.citep pytorch2019}[]).
+The CPU PyTorch transcription produces the nine `H` values printed above. On this grid, the inputs,
+parameters, products, and partial sums are exactly representable in binary32. This is a checked
+example, not a claim of agreement for every input or backend ({Informal.citep pytorch2019}[]).
 
 The Lean table evaluates `hingeFunBinary`, the function used in the three-term executable
 approximation theorem below. Applying that theorem still requires proofs of its
@@ -699,10 +687,6 @@ parameters; the per-parameter half-ULP errors are propagated through the hinge s
 including the interval length $`|b-a|`. The finite-evaluation witnesses remain necessary
 because finite stored parameters can still produce an overflowing intermediate.
 
-For example, the output accumulation can overflow even if every weight, bias, and input was
-converted successfully. The witness follows the intermediate operations of the hinge evaluation,
-which is why it appears separately from the parameter-conversion estimate. Checking only the
-stored parameter bits would leave that part of the theorem's hypothesis unaddressed.
 The dyadic specialization exposes those witnesses in its signature:
 
 ```lean (name := ieeeHalfUlp)
@@ -775,8 +759,8 @@ OpsExact.add_sound : ∀ (A B : I) {x y : F},
 
 For any members `x` of `A` and `y` of `B`, their executable sum belongs to `addSharp A B`.
 No separate rounding hypothesis appears, because the
-abstract operator was built by enumerating the concrete image rather than by an interval formula
-that would need one.
+abstract operator is defined as the hull of the concrete image rather than by an interval formula
+that would need one. This is a classical specification, not a runnable enumeration.
 
 The multiplication and ReLU theorems have the same shape. They are then composed through an affine
 layer and a two-layer ReLU network. Hover the two signatures to read the hypotheses in full:
@@ -794,10 +778,11 @@ network, which is slightly more verbose to supply and considerably easier to dis
 concrete checkpoint. The implicit `OpsExact.Sound` argument is supplied by the soundness
 instance proved in the same file.
 
-The weight and bias hypotheses rule out NaN parameters. The conclusion concerns executable
-FloatLib binary32 evaluation. The finite carrier lets the exact operators describe every concrete
-pair in an interval using classical finite sets. This gives a reference semantics for enclosure
-proofs; it does not supply an efficient interval evaluator.
+Here “finite” means the carrier has finitely many bit patterns, not that every value is finite:
+binary32 also contains infinities and NaNs. `I.top` includes every pattern, including NaNs;
+ordinary endpoint intervals use IEEE comparisons. The exact operators give a reference enclosure
+semantics, not an efficient interval evaluator or a guarantee that network intermediates stay
+finite.
 
 There is also a difference between an exact concrete image and its interval hull. For a set of
 executable results with gaps, the smallest containing interval can include values the operation
@@ -899,6 +884,12 @@ The original binary32 interval theorem packages the remaining construction oblig
 `roundedTargetExactIntervalImage_of_correctRounding` takes a correct-rounding bridge, real
 activation conditions, a threshold-network construction, and an exact interval-semantics
 construction. Supplying those premises gives the exact-image conclusion for rounded targets.
+
+In the real activation conditions, we require strict growth only for distinct inputs.
+Lemma 1 (C2′) in the cited paper prints that inequality for all pairs; at equal inputs it
+would say $`0>0`. This development makes the distinct-input interpretation explicit rather than
+using an impossible premise. The threshold-network and exact-semantics constructions remain
+separate assumptions.
 
 ```lean (name := roundedIntervalImage)
 #check @roundedTargetExactIntervalImage_of_correctRounding

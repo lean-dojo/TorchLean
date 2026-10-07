@@ -18,5 +18,8 @@ The negative controls are intentional: an `OK` rejection means the example detec
 the claimed property. The checks use floating-point arithmetic. They complement the factorization
 theorems under `NN/Proofs`; they do not prove the native implementation correct.
 
+QR uses reduced factors. The wide input is `2 x 3`, with `Q : Tensor Float [2, 2]` and
+`R : Tensor Float [2, 3]`; orthonormality concerns the two columns of `Q`, not three.
+
 `Common.lean` contains the shared error checks, including NaN handling. `Check.lean` joins the
 examples into the command above.

@@ -55,9 +55,8 @@ def newtonSchulzStep {m n : Nat} (coeffs : NewtonSchulzCoeffs α)
 
 /-- Iterate the column-oriented Newton-Schulz polynomial step a fixed number of times. -/
 def newtonSchulzIter {m n : Nat} (coeffs : NewtonSchulzCoeffs α) :
-    Nat → MatrixTensor α m n → MatrixTensor α m n
-  | 0, X => X
-  | steps + 1, X => newtonSchulzIter coeffs steps (newtonSchulzStep coeffs X)
+    Nat → MatrixTensor α m n → MatrixTensor α m n :=
+  fun steps => (newtonSchulzStep coeffs)^[steps]
 
 /-- Column-oriented Newton-Schulz-shaped orthogonalizer backend. -/
 def newtonSchulzOrthogonalizer {m n : Nat}
@@ -105,12 +104,8 @@ the same buffer.
 theorem newtonSchulzIter_fixed_of_step_fixed {m n : Nat}
     (coeffs : NewtonSchulzCoeffs α) (steps : Nat) (buffer : MatrixTensor α m n)
     (hfixed : NewtonSchulzFixedPoint coeffs buffer) :
-    newtonSchulzIter coeffs steps buffer = buffer := by
-  induction steps with
-  | zero => rfl
-  | succ steps ih =>
-      rw [newtonSchulzIter, hfixed]
-      exact ih
+    newtonSchulzIter coeffs steps buffer = buffer :=
+  Function.iterate_fixed hfixed steps
 
 /-- A Newton-Schulz fixed point is returned unchanged by the corresponding orthogonalizer. -/
 theorem newtonSchulzOrthogonalizer_fixed_apply {m n : Nat}

@@ -558,7 +558,7 @@ The importer must know the name and orientation of each tensor
 # Exchange the encoder projections and normalization
 # parameters.
 scripts/lake.sh exe torchlean pytorch_roundtrip --model transformer --action export
-python3 NN/Examples/Interop/PyTorch/Transformer/train_transformer.py
+python3 NN/Examples/Interop/PyTorch/Transformer/export_transformer.py
 scripts/lake.sh exe torchlean pytorch_roundtrip --model transformer --action import
 ```
 
@@ -570,10 +570,10 @@ Output (executable `nn` module on CPU, Float):
 ```
 
 The companion
-{src "NN/Examples/Interop/PyTorch/Transformer/train_transformer.py"}[`train_transformer.py`]
-writes `NN/Examples/Interop/PyTorch/Transformer/transformer_encoder.json`. The same pattern scales
-to larger families: Lean checks declared shapes and parameter layout, Python runs the training
-loop, and the JSON payload transports only named parameters back across the boundary.
+{src "NN/Examples/Interop/PyTorch/Transformer/export_transformer.py"}[`export_transformer.py`]
+writes `NN/Examples/Interop/PyTorch/Transformer/transformer_encoder.json` from seeded
+initialization; it does not train the encoder. Lean then checks the declared shapes and
+parameter layout as it imports that JSON payload.
 
 One caution that this family makes concrete: a projection matrix stored in the wrong orientation is
 only caught by shape checking when the two dimensions differ. A square $`d\times d` attention
@@ -645,16 +645,16 @@ scripts/lake.sh exe torchlean torch_ir_pytorch --arch mlp > exported_model.py
 python3 exported_model.py
 ```
 
-The `mlp` architecture is three lines of TorchLean:
+We can write the MLP with three layers:
 
 ```
 -- Fix the architecture before assigning seeded parameter
 -- values.
-def archMLP : nn.Builder (nn.Sequential [2] [1]) :=
+def mlp : nn.Builder (nn.Sequential [2] [1]) :=
   nn.Sequential![nn.linear 2 3, nn.relu, nn.linear 3 1]
 ```
 
-and `nn.build 0 archMLP` turns that description into a model with concrete seeded parameters. The
+and `nn.build 0 mlp` turns that description into a model with concrete seeded parameters. The
 emitted Python has no builder and no seed; the parameters are baked in as literals, and the forward
 pass is the lowered IR written out one SSA binding at a time:
 
@@ -793,7 +793,7 @@ operations. Its difference from the float64 rows therefore includes both convers
 it does not isolate accumulation precision alone. Matching NumPy and PyTorch float64 outputs at
 this point is a useful regression, not a theorem for arbitrary inputs or reduction schedules.
 
-The emitter uses `Export.PyTorch.floatToPyString`, rather than the tensor display formatter. It
+The emitter uses `Export.PyTorch.floatLiteral`, rather than the tensor display formatter. It
 keeps short decimal strings only when they round-trip to the same bits; otherwise it emits an exact
 hexadecimal Python expression. Small nonzero parameters therefore survive source generation:
 
@@ -801,8 +801,8 @@ hexadecimal Python expression. Small nonzero parameters therefore survive source
 -- Compare human-readable display with literals intended to
 -- preserve stored values.
 #eval toString (1e-9 : Float)
-#eval Export.PyTorch.floatToPyString (1e-9 : Float)
-#eval Export.PyTorch.floatToPyString (0.5 : Float)
+#eval Export.PyTorch.floatLiteral (1e-9 : Float)
+#eval Export.PyTorch.floatLiteral (0.5 : Float)
 ```
 
 ```leanOutput ptrFmt

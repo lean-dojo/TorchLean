@@ -21,18 +21,22 @@ This module is the executable checker for the PINN certificate workflow:
 - recompute IBP + derivative bounds in Lean, and
 - compare the resulting residual intervals against the exported values.
 
-It is conservative by design: it validates the export/import path and interval computations, rather
-than trying to be a fully featured PDE verifier.
+Acceptance means that the exported endpoints match the recomputation within `certTol`. This is
+not an exact-real residual enclosure theorem or a bound on PDE solution error.
+
+This checker always uses `referenceParams 1`. The JSON's `model` and `pinn.domain` fields are
+producer metadata, not validated inputs; acceptance does not authenticate their weights or domain.
+Use the weight-loading CLI for a trained model.
 
 References / context:
 - PINNs: Raissi et al. (2019), "Physics-informed neural networks" (JCP)
 - CROWN/LiRPA background (for the bound propagation machinery): `https://arxiv.org/abs/1811.00866`
 
 Export (Python):
-`python3.12 scripts/verification/pinn/export_pinn_cert.py`
+`python3 scripts/verification/pinn/export_pinn_cert.py`
 
 Run (Lean):
-`lake exe verify -- pinn-cert [NN/Examples/Verification/PINN/pinn_cert.json]`
+`scripts/lake.sh exe verify -- pinn-cert [NN/Examples/Verification/PINN/pinn_cert.json]`
 -/
 
 @[expose] public section
@@ -50,7 +54,7 @@ open TorchLean.Tensor
 open Lean
 open Json
 
-/-- Bundled PINN certificate sample used by `lake exe verify -- pinn-cert`. -/
+/-- Bundled PINN certificate sample used by `scripts/lake.sh exe verify -- pinn-cert`. -/
 def defaultCertPath : String :=
   "NN/Examples/Verification/PINN/pinn_cert.json"
 
@@ -135,7 +139,6 @@ def verifyCert (path : String) : IO Unit := do
           match parseExpr (fun _ => none) config.pde with
           | .ok e => pure e
           | .error msg => throw <| IO.userError s!"PINN PDE parse failed: {msg}"
-        -- Build primitive bounds at the central point x using computed intervals
         let prims ←
           match solutionTriplet[1]?, derivativeTriplet[1]?, secondDerivativeTriplet[1]? with
           | some solution, some derivative, some secondDerivative =>

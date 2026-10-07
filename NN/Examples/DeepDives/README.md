@@ -21,7 +21,7 @@ scripts/lake.sh build NN.Examples.DeepDives
 | `Floats/EffectiveRounding.lean` | `scripts/lake.sh build NN.Examples.DeepDives.Floats.EffectiveRounding` | Kernel-checked links between finite bit-level results and rounded-real mantissa/exponent calculations; no CLI. |
 | `Floats/GraphNumericalCertificate.lean` | `scripts/lake.sh exe torchlean numerical_certificate` | Checks range certificates, tamper rejection, and IEEE replay, including a two-layer MLP; separate exact-real enclosure proofs remain required. |
 | `GraphSpec/Tutorial.lean` | `scripts/lake.sh exe torchlean graphspec` | Authoring a small graph-style architecture and lowering it into the public trainer path. |
-| `IRAxisOps.lean` | `scripts/lake.sh exe torchlean ir_axis_ops` | Middle-axis softmax, LayerNorm, and concatenation through the shared checked IR evaluator. |
+| `IRAxisOps.lean` | `scripts/lake.sh exe torchlean ir_axis_ops` | Middle-axis softmax, LayerNorm, and concatenation through the checked Lean IR evaluator on CPU; `--arithmetic` selects the scalar, not a device. |
 | `TorchIRPyTorch.lean` | `scripts/lake.sh exe torchlean torch_ir_pytorch --arch mlp > exported_model.py` | Emitting readable PyTorch code from a TorchLean IR graph and payload shape. |
 | `OneSemanticUniverse.lean` | `scripts/lake.sh exe torchlean one_semantic_universe --samples 50` | One IR graph interpreted through execution, interval bounds, and checker-facing semantics. |
 | `Widgets.lean` | open in an editor with the Lean infoview | Tensor, graph, Float32, CROWN, autograd, training, and runtime-context widgets. |

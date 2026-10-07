@@ -163,6 +163,5 @@ references:
   source_files:
     - README.md
     - docs/TRUST_BOUNDARIES.md
-    - docs/AI_USAGE.md
     - docs/THIRD_PARTY_NOTICES.md
     - docs/CONTRIBUTING.md

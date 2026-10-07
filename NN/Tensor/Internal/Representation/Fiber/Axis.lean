@@ -14,6 +14,10 @@ public import Mathlib.Data.Fintype.BigOperators -- shake: keep
 
 This module describes preimages of coordinate maps and proves the cardinality
 of fibers induced by selecting a duplicate-free tuple of axes.
+
+The fiber equivalence is a noncomputable geometric description used by
+proofs. Reduction lowering reconstructs coordinates directly rather than
+executing this equivalence to enumerate a fiber.
 -/
 
 @[expose] public section
@@ -53,6 +57,9 @@ noncomputable def selectFiberEquiv {ι : Type u} [BEq ι] [LawfulBEq ι]
   have hIntroducedTarget :
       ∀ axis, axis ∈ introducedAxes → axis ∈ target :=
     fun _ hAxis => (List.mem_filter.mp hAxis).1
+  -- Indexing by axis membership lets mathlib split the coordinate function
+  -- into retained and free axes. The projection proofs reconnect that split
+  -- to the ordered, first-occurrence lookup used by `select`.
   let sourceByAxis :
       AxisTuple length source ≃
         ((axis : {axis // axis ∈ source}) → Fin (length axis.1)) :=

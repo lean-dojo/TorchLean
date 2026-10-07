@@ -23,7 +23,6 @@ namespace GraphSpec
 namespace DAG
 
 open _root_.Spec _root_.TorchLean
-open TorchLean.Tensor
 open _root_.TorchLean.Tensor
 
 namespace PrimOp

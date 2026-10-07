@@ -14,8 +14,10 @@ public import NN.Proofs.RuntimeApprox.NF.Ops.Plumbing -- shake: keep
 /-!
 # NF Scalar Primitive Bounds
 
-Scalar bridge lemmas and forward-error bounds for rounded `NF` primitives.  These are the facts
-that later tensor proofs lift pointwise across shapes.
+Scalar bridge lemmas and forward-error bounds for rounded `NF` primitives, lifted pointwise
+by the tensor proofs. This is a noncomputable rounded-real model, not a native-kernel proof.
+An `NF` value need not be representable in its format, so even negation and absolute value
+include a rounding term.
 -/
 
 @[expose] public section
@@ -94,15 +96,7 @@ theorem approx_ratCast_nf (q : Rat) :
 /-!
 ## Bridge lemmas from `NF` to $\mathbb R$
 
-Most approximation statements in this file are phrased over the spec scalar `ℝ`, but the runtime
-backend is `NF β fexp rnd`. The following lemmas are small bridge facts that let us rewrite
-runtime expressions into:
-
-- an exact real expression in terms of `toSpec`, plus
-- an explicit rounding operator `roundR` applied at the outermost step.
-
-Keeping these as named lemmas (instead of repeating huge `simp [...]` lists) makes the later
-forward-approx proofs much easier to read.
+The bridge lemmas express each `NF` operation as a real calculation followed by rounding.
 -/
 
 /-- `toSpec` of runtime `0` is the spec scalar `0`: every valid rounder fixes the integer `0`. -/
@@ -281,7 +275,6 @@ theorem approx_add_nf {x y : ℝ} {xR yR : R} {epsx epsy : ℝ}
         (toSpec (β := β) (fexp := fexp) (rnd := rnd) yR) epsy := by
     simpa [Proofs.RuntimeRoundingApprox.scalarApprox] using hy
   have h := scalarApprox_roundedAdd (β := β) (fexp := fexp) (rnd := rnd) hx' hy'
-  -- Rewrite the runtime result as `toSpec (xR + yR)`.
   simpa [Proofs.RuntimeRoundingApprox.scalarApprox,
     toSpec_add (β := β) (fexp := fexp) (rnd := rnd) xR yR] using h
 
@@ -527,10 +520,8 @@ def safeLog (ε : ℝ) (x : ℝ) : ℝ :=
   Real.log (max x ε)
 
 /--
-Clamped log on runtime `NF` scalars (implemented as `NF.ofReal (safeLog (toSpec xR))`).
-
-This definition keeps the semantic spec function explicit (so proofs can reason about it) while
-still producing an executable runtime scalar.
+Clamped log in the rounded-real `NF` model: evaluate `safeLog` and round once.
+This definition is noncomputable; it does not implement a native logarithm.
 -/
 def safeLogR (ε : ℝ) (xR : R) : R :=
   NF.ofReal (β := β) (fexp := fexp) (rnd := rnd)
@@ -556,7 +547,6 @@ private theorem abs_log_sub_log_le_one_div_mul_abs_sub {ε u v : ℝ}
       (s := Set.Ici ε) (x := u) (y := v) (C := (1 / ε))
       hf hbound (convex_Ici ε) hu hv
 
-  -- Unwrap norms on `ℝ`.
   simpa [Real.norm_eq_abs, abs_sub_comm] using hmv
 
 /--
@@ -633,10 +623,9 @@ theorem approx_safeLog_nf {x : ℝ} {xR : R} {eps ε : ℝ}
 
 /-- Forward approximation bound for ordinary square root on a certified positive domain.
 
-The extra runtime hypothesis is not cosmetic: the executable `NF.sqrt` receives the rounded input,
-so a real lower bound alone does not rule out an invalid rounded argument. Once both exact and
-runtime inputs are nonnegative, the clamped theorem above reduces definitionally to ordinary
-square root.
+Nonnegativity of the represented input lets the clamped bound reduce to ordinary square root.
+The underlying `Real.sqrt` is total, returning zero for negative arguments; this hypothesis
+describes the theorem's domain, not an IEEE invalid-operation check.
 -/
 theorem approx_sqrt_nf_of_pos_lb {x : ℝ} {xR : R} {eps η : ℝ}
     (hη : 0 < η) (hdom : η ≤ x)
@@ -689,9 +678,7 @@ theorem approx_sqrt_nf_of_pos_lb_of_error {x : ℝ} {xR : R} {eps η : ℝ}
 /--
 Forward approximation bound for multiplication in `NF`.
 
-This has the standard first-order shape: terms proportional to `|toSpec xR| * epsy` and
-`|toSpec yR| * epsx`, plus an `ulp` term for the final rounding. (For classical background, see
-Higham, *Accuracy and Stability of Numerical Algorithms*.)
+Includes both input perturbations, their cross terms, and one half-ULP rounding term.
 -/
 theorem approx_mul_nf {x y : ℝ} {xR yR : R} {epsx epsy : ℝ}
     (hx : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) xR - x) ≤ epsx)
@@ -730,7 +717,6 @@ theorem approx_scale_nf {x : ℝ} {xR : R} {eps : ℝ} (c : R)
     approx_mul_nf (β := β) (fexp := fexp) (rnd := rnd)
       (x := x) (y := toSpec (β := β) (fexp := fexp) (rnd := rnd) c)
       (xR := xR) (yR := c) (epsx := eps) (epsy := (0 : ℝ)) hx hc
-  -- Simplify away the `* 0` and `+ 0` terms.
   simpa [mul_assoc, add_assoc, add_left_comm, add_comm] using h
 
 end NFBackend

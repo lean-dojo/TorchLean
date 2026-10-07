@@ -94,10 +94,7 @@ def evalScales {Γ : List Shape} {ss : List Shape} (g : FwdGraphScale (α := α)
       BList.cast (ss₁ := (Γ ++ ssPrev) ++ [τ]) (ss₂ := Γ ++ (ssPrev ++ [τ])) hAssoc
         (BList.snoc (ss := Γ ++ ssPrev) (τ := τ) bPrev b)
 
-/-- Forward evaluation of a scale-annotated graph keeps every node inside its computed bound.
-
-Proved by induction along the graph, one node at a time; each node's own `scaleSound` field supplies
-the step, so nothing here has to know what the individual operations are. -/
+/-- Forward evaluation keeps each node inside its supplied, proved scale bound. -/
 theorem eval_scale {Γ : List Shape} {ss : List Shape} (g : FwdGraphScale (α := α) toSpec Γ ss) :
     ∀ (xS : TorchLean.TensorPack SpecScalar Γ) (xR : TorchLean.TensorPack α Γ) (epsIn : EList Γ)
       (bIn : BList Γ),
@@ -116,7 +113,6 @@ theorem eval_scale {Γ : List Shape} {ss : List Shape} (g : FwdGraphScale (α :=
         (scaleCtx_cast (α := α) (toSpec := toSpec) (h := (List.append_nil Γ).symm) hB)
   | snoc g node ih =>
       rename_i ssPrev τ
-      -- IH gives scale for the previous context.
       have hBPrev :
           scaleCtx (α := α) toSpec
             (evalSpec (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ssPrev) g xS)
@@ -129,7 +125,6 @@ theorem eval_scale {Γ : List Shape} {ss : List Shape} (g : FwdGraphScale (α :=
       let epsPrev := evalBounds (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ssPrev) g epsIn xR
       let bPrev := evalScales (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ssPrev) g bIn xR
 
-      -- Approx for the node context `Γ ++ ssPrev`.
       have hεPrev :
           approxCtx (α := α) toSpec ctxS ctxR epsPrev :=
         FwdGraph.eval_approx (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ssPrev)
@@ -143,7 +138,6 @@ theorem eval_scale {Γ : List Shape} {ss : List Shape} (g : FwdGraphScale (α :=
         node.scaleSound ctxS ctxR epsPrev bPrev (by simpa [ctxS, ctxR, epsPrev] using hεPrev)
           (by simpa [ctxS, ctxR, bPrev] using hBPrev)
 
-      -- Extend the context scale predicate with the new node output.
       have hSnoc :
           scaleCtx (α := α) toSpec
             (TorchLean.TensorPack.snoc (α := SpecScalar) (ss := Γ ++ ssPrev) ctxS

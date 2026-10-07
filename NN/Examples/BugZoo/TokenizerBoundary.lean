@@ -6,6 +6,8 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Tensor
+
 /-!
 # BugZoo: tokenizer/import boundary
 
@@ -25,26 +27,24 @@ padding and end-of-sequence metadata matches the model. Importers must check tho
 
 namespace NN.Examples.BugZoo.TokenizerBoundary
 
+open TorchLean
+
 /-- The tokenizer metadata that must agree with the model's embedding table. -/
-structure TokenizerContract where
+structure Metadata where
   vocabularySize : Nat
   paddingTokenId : Fin vocabularySize
   endOfSequenceTokenId : Fin vocabularySize
 
-/-- A token sequence whose IDs are statically bounded by the vocabulary size. -/
-structure TokenSequence (vocabularySize sequenceLength : Nat) where
-  tokenAt : Fin sequenceLength → Fin vocabularySize
-
 /-- The padding token is in range by construction. -/
-theorem paddingTokenId_isValid (contract : TokenizerContract) :
+theorem padding_lt_vocabulary (contract : Metadata) :
     contract.paddingTokenId.val < contract.vocabularySize :=
   contract.paddingTokenId.isLt
 
 /-- Every imported token ID is in range by construction. -/
-theorem tokenId_isValid {vocabularySize sequenceLength : Nat}
-    (sequence : TokenSequence vocabularySize sequenceLength)
+theorem token_lt_vocabulary {vocabularySize sequenceLength : Nat}
+    (sequence : Tensor (Fin vocabularySize) [sequenceLength])
     (position : Fin sequenceLength) :
-    (sequence.tokenAt position).val < vocabularySize :=
-  (sequence.tokenAt position).isLt
+    sequence[position].val < vocabularySize :=
+  sequence[position].isLt
 
 end NN.Examples.BugZoo.TokenizerBoundary

@@ -31,7 +31,7 @@ flag); those live at a different layer than the math we specify here.
 How this file fits with the runtime and API:
 - this file owns the scalar-polymorphic, per-tensor update equations;
 - `NN.Runtime.Autograd.Model.Optim` lifts those equations to runtime parameter lists; and
-- `NN.API.Runtime` exposes ergonomic `optim.sgd`, `optim.adam`, and related configuration helpers.
+- `NN.API.Optim` exposes ergonomic `optim.sgd`, `optim.adam`, and related configuration helpers.
 
 With this separation, the formula appears once while runtime adapters and API
 configuration can evolve independently around it.
@@ -137,9 +137,8 @@ def AdamPowers.advance {α : Type} [One α] [Mul α] {beta1 beta2 : α}
 
 /-! ## Shared equations -/
 
-/-- Next momentum buffer $\mu b+g$. -/
-def updateMomentumBuffer {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+/-- Next momentum buffer $b\mu+g$, preserving the scalar order used by tensor scaling. -/
+def updateMomentumBuffer {α : Type} [TorchLean.Storage α] [Add α] [Mul α] {s : Shape}
     (momentumBuffer : Tensor α s) (momentum : α)
     (gradients : Tensor α s) : Tensor α s :=
   addSpec (scaleSpec momentumBuffer momentum) gradients
@@ -160,7 +159,7 @@ tensors and three intermediates per call; this one maps the scalar formula once.
 def adaptiveLearningRateFused {α : Type} [TorchLean.Storage α] [Context α]
     [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
     (learningRate epsilon : α) (denominator : Tensor α s) : Tensor α s :=
-  mapSpec (fun v => learningRate / (MathFunctions.sqrt (Max.max v 0) + epsilon)) denominator
+  Tensor.map (fun v => learningRate / (MathFunctions.sqrt (Max.max v 0) + epsilon)) denominator
 
 /-- Compiled code runs the single-pass form. Proofs keep unfolding the reference definition. -/
 @[csimp] theorem adaptiveLearningRate_eq_fused :
@@ -168,8 +167,8 @@ def adaptiveLearningRateFused {α : Type} [TorchLean.Storage α] [Context α]
   funext α storage context decide s learningRate epsilon denominator
   apply TorchLean.Tensor.Internal.Rep.ext
   intro coordinate
-  simp [adaptiveLearningRate, adaptiveLearningRateFused, divSpec, addSpec, sqrtSpec, mapSpec,
-    map2Spec, Tensor.map, Tensor.full]
+  simp [adaptiveLearningRate, adaptiveLearningRateFused, divSpec, addSpec, sqrtSpec, Tensor.map,
+    map2Spec, Tensor.full]
 
 /-! ## SGD -/
 
@@ -188,18 +187,16 @@ Initialize SGD state.
 The parameter tensor is unused; we keep it in the signature so optimizers share the same
 “init from parameters” calling convention.
 -/
-def SGD.init {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def SGD.init {α : Type} [TorchLean.Storage α] {s : Shape}
   (learningRate : α) (_ : Tensor α s) : SGD.State α s :=
   { learningRate := learningRate }
 
 /--
-One SGD step: `p ← p - lr * g`.
+One SGD step: `p ← p - g * lr`, with the learning rate on the right of each gradient element.
 
 PyTorch analogy: the core of `torch.optim.SGD` without momentum/weight-decay extras.
 -/
-def SGD.update {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def SGD.update {α : Type} [TorchLean.Storage α] [Sub α] [Mul α] {s : Shape}
     (state : SGD.State α s) (parameters gradients : Tensor α s) :
     Step α s (SGD.State α s) :=
   { optimizerState := state
@@ -213,8 +210,8 @@ Momentum SGD state (per parameter tensor).
 We store a momentum buffer and a momentum coefficient $\mu$.
 Update rule:
 
-- $b\gets\mu b+g$,
-- $p\gets p-\mathtt{learningRate}\,b$.
+- $b\gets b\mu+g$,
+- $p\gets p-b\,\mathtt{learningRate}$.
 
 This matches PyTorch's SGD momentum behavior when `dampening = 0` and `nesterov = false`.
 -/
@@ -227,14 +224,13 @@ structure MomentumSGD.State (α : Type) [TorchLean.Storage α] (s : Shape) where
   momentumBuffer : Tensor α s
 
 /-- Initialize momentum SGD with a zero buffer. -/
-def MomentumSGD.init {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def MomentumSGD.init {α : Type} [TorchLean.Storage α] [Zero α] {s : Shape}
   (learningRate momentum : α) (_ : Tensor α s) : MomentumSGD.State α s :=
   { learningRate := learningRate, momentum := momentum, momentumBuffer := Tensor.full s 0 }
 
 /-- One momentum-SGD step. -/
-def MomentumSGD.update {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def MomentumSGD.update {α : Type} [TorchLean.Storage α] [Add α] [Sub α] [Mul α]
+    {s : Shape}
     (state : MomentumSGD.State α s) (parameters gradients : Tensor α s) :
     Step α s (MomentumSGD.State α s) :=
   let nextMomentumBuffer :=
@@ -259,8 +255,7 @@ structure AdaGrad.State (α : Type) [TorchLean.Storage α] (s : Shape) where
   squaredGradientSum : Tensor α s
 
 /-- Initialize AdaGrad with zero accumulator. -/
-def AdaGrad.init {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def AdaGrad.init {α : Type} [TorchLean.Storage α] [Zero α] {s : Shape}
   (learningRate epsilon : α) (_ : Tensor α s) : AdaGrad.State α s :=
   { learningRate := learningRate, epsilon := epsilon, squaredGradientSum := Tensor.full s 0 }
 
@@ -294,8 +289,7 @@ structure RMSProp.State (α : Type) [TorchLean.Storage α] (s : Shape) where
   squaredGradientAverage : Tensor α s
 
 /-- Initialize RMSProp with zero accumulator. -/
-def RMSProp.init {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def RMSProp.init {α : Type} [TorchLean.Storage α] [Zero α] {s : Shape}
   (learningRate decay epsilon : α) (_ : Tensor α s) : RMSProp.State α s :=
   { learningRate := learningRate
     decay := decay
@@ -345,8 +339,7 @@ structure Adam.State (α : Type) [TorchLean.Storage α] [One α] [Mul α] (s : S
   powers : AdamPowers beta1 beta2 stepCount := AdamPowers.compute beta1 beta2 stepCount
 
 /-- Initialize Adam with zero moments and a zero step count. -/
-def Adam.init {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def Adam.init {α : Type} [TorchLean.Storage α] [Zero α] [One α] [Mul α] {s : Shape}
   (learningRate beta1 beta2 epsilon : α) (_ : Tensor α s) : Adam.State α s :=
   {
     learningRate := learningRate,
@@ -436,8 +429,7 @@ structure AdamW.State (α : Type) [TorchLean.Storage α] [One α] [Mul α] (s : 
   powers : AdamPowers beta1 beta2 stepCount := AdamPowers.compute beta1 beta2 stepCount
 
 /-- Initialize AdamW state for a parameter tensor (moments start at `0`). -/
-def AdamW.init {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def AdamW.init {α : Type} [TorchLean.Storage α] [Zero α] [One α] [Mul α] {s : Shape}
   (learningRate weightDecay beta1 beta2 epsilon : α) (_ : Tensor α s) : AdamW.State α s :=
   {
     learningRate := learningRate,
@@ -454,9 +446,9 @@ def AdamW.init {α : Type} [TorchLean.Storage α] [Context α]
 One AdamW step.
 
 We implement the decoupled form from the AdamW paper:
-- update Adam moments using the *raw* gradient `g`,
 - apply weight decay directly to the parameters (`p ← p - lr * wd * p`),
-- then apply the Adam update.
+- apply the canonical Adam update using the *raw* gradient `g`,
+- retain the AdamW decay coefficient alongside the updated moments and powers.
 
 This is the same single-step ordering used by `torch.optim.AdamW`.
 -/
@@ -464,31 +456,26 @@ def AdamW.update {α : Type} [TorchLean.Storage α] [Context α]
     [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
     (state : AdamW.State α s) (parameters gradients : Tensor α s) :
     Step α s (AdamW.State α s) :=
-  let nextStepCount := state.stepCount + 1
-  let nextPowers := state.powers.advance
-  let nextFirstMoment :=
-    addSpec (scaleSpec state.firstMoment state.beta1)
-      (scaleSpec gradients (1 - state.beta1))
-  let nextSecondMoment :=
-    addSpec (scaleSpec state.secondMoment state.beta2)
-      (scaleSpec (squareSpec gradients) (1 - state.beta2))
-  let correctedFirstMoment :=
-    scaleSpec nextFirstMoment (1 / (1 - nextPowers.first))
-  let correctedSecondMoment :=
-    scaleSpec nextSecondMoment (1 / (1 - nextPowers.second))
-  let effectiveLearningRate :=
-    adaptiveLearningRate state.learningRate state.epsilon correctedSecondMoment
   let decayedParameters :=
     subSpec parameters
       (scaleSpec parameters (state.learningRate * state.weightDecay))
+  let adamState : Adam.State α s :=
+    { learningRate := state.learningRate
+      beta1 := state.beta1
+      beta2 := state.beta2
+      epsilon := state.epsilon
+      firstMoment := state.firstMoment
+      secondMoment := state.secondMoment
+      stepCount := state.stepCount
+      powers := state.powers }
+  let result := Adam.update adamState decayedParameters gradients
   { optimizerState :=
       { state with
-        firstMoment := nextFirstMoment
-        secondMoment := nextSecondMoment
-        stepCount := nextStepCount
-        powers := nextPowers }
-    parameters :=
-      subSpec decayedParameters (mulSpec effectiveLearningRate correctedFirstMoment) }
+        firstMoment := result.optimizerState.firstMoment
+        secondMoment := result.optimizerState.secondMoment
+        stepCount := result.optimizerState.stepCount
+        powers := result.optimizerState.powers }
+    parameters := result.parameters }
 
 /-- AdamW increments its step counter by one on every update. -/
 @[simp] theorem AdamW.update_stepCount {α : Type} [TorchLean.Storage α] [Context α]
@@ -519,8 +506,7 @@ structure Adadelta.State (α : Type) [TorchLean.Storage α] (s : Shape) where
   squaredUpdateAverage : Tensor α s
 
 /-- Initialize Adadelta state for a parameter tensor (EMAs start at `0`). -/
-def Adadelta.init {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def Adadelta.init {α : Type} [TorchLean.Storage α] [Zero α] {s : Shape}
   (learningRate rho epsilon : α) (_ : Tensor α s) : Adadelta.State α s :=
   { learningRate := learningRate
     rho := rho
@@ -551,8 +537,8 @@ def Adadelta.update {α : Type} [TorchLean.Storage α] [Context α]
       (scaleSpec squaredGradients (1 - state.rho))
 
   let rms := fun v : α => MathFunctions.sqrt (Max.max (v + state.epsilon) 0)
-  let gradientRms := mapSpec rms nextSquaredGradientAverage
-  let updateRms := mapSpec rms state.squaredUpdateAverage
+  let gradientRms := Tensor.map rms nextSquaredGradientAverage
+  let updateRms := Tensor.map rms state.squaredUpdateAverage
 
   let ratio := divSpec updateRms gradientRms
   let parameterUpdate := mulSpec ratio gradients
@@ -603,9 +589,8 @@ structure SGDState (α : Type) [TorchLean.Storage α] (full low : Shape) where
   /-- Current gradient projector. -/
   projector : Projector α full low
 
-/-- One projected-SGD update: `p ← p - learningRate * lift(project(g))`. -/
-def update {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)]
+/-- One projected-SGD update: `p ← p - lift(project(g)) * learningRate`. -/
+def update {α : Type} [TorchLean.Storage α] [Sub α] [Mul α]
     {full low : Shape} (state : SGDState α full low)
     (parameters gradients : Tensor α full) :
     Step α full (SGDState α full low) :=
@@ -627,7 +612,7 @@ Orthogonalization backend for a matrix-shaped update.
 
 Muon uses a momentum buffer and then replaces the raw momentum direction by an approximately
 orthogonalized update, commonly via Newton-Schulz iterations. TorchLean keeps this as an explicit
-backend so the pure update rule is testable before CUDA kernels are introduced.
+backend so the update rule can be used with different orthogonalization algorithms.
 -/
 structure Orthogonalizer (α : Type) [TorchLean.Storage α] (s : Shape) where
   /-- Convert a momentum buffer into the direction used for the parameter update. -/
@@ -650,8 +635,7 @@ structure State (α : Type) [TorchLean.Storage α] (s : Shape) where
   orthogonalizer : Orthogonalizer α s
 
 /-- Initialize Muon-style state with a zero momentum buffer. -/
-def init {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def init {α : Type} [TorchLean.Storage α] [Zero α] {s : Shape}
     (learningRate momentum : α) (orthogonalizer : Orthogonalizer α s)
     (_ : Tensor α s) : State α s :=
   { learningRate := learningRate
@@ -668,8 +652,7 @@ One Muon-style update:
 For actual Muon, use a matrix-shaped `s` and a Newton-Schulz orthogonalizer. The generic shape here
 keeps the definition reusable for tests and for future batched matrix layouts.
 -/
-def update {α : Type} [TorchLean.Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def update {α : Type} [TorchLean.Storage α] [Add α] [Sub α] [Mul α] {s : Shape}
     (state : State α s) (parameters gradients : Tensor α s) :
     Step α s (State α s) :=
   let nextMomentumBuffer :=

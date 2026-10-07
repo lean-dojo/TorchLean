@@ -12,7 +12,7 @@ public import NN.Runtime.Autograd.IRExec
 /-!
 # IR axis operations
 
-IR axis-ops runtime tutorial.
+Evaluate axis operations through the checked IR lowering.
 
 This tutorial constructs and evaluates three IR operations with an explicit `axis`:
 
@@ -21,14 +21,13 @@ This tutorial constructs and evaluates three IR operations with an explicit `axi
 - `layernorm axis`
   PyTorch: `F.layer_norm(x, normalized_shape=x.shape[axis:])`
 
-Each operation accepts any in-bounds tensor dimension. The implementation may move that dimension
-to an innermost position while evaluating an optimized kernel, but its public semantics preserves
-the original shape and dimension numbering. Forward graph execution reports unsupported backend
-cases explicitly.
+The axis is part of each operation's meaning. The evaluator checks graph and input shapes, lowers
+the graph and computes its selected output with Lean tensor operations. This example does not
+dispatch to LibTorch or select a GPU device; `--arithmetic` chooses the scalar implementation.
 
 Run:
 
-`scripts/lake.sh exe torchlean ir_axis_ops --execution eager`
+`scripts/lake.sh exe torchlean ir_axis_ops --arithmetic ieee`
 -/
 
 @[expose] public section
@@ -36,9 +35,6 @@ Run:
 namespace NN.Examples.DeepDives.IRAxisOps
 
 open TorchLean
-open NN.IR
-
-open Runtime.Autograd.TypedGraph
 
 /-- Command-line help for the IR axis-ops tutorial. -/
 def usage : String :=
@@ -50,52 +46,45 @@ def usage : String :=
     , ""
     , "Options:"
     , "  --arithmetic native|ieee|complex"
-    , "  --execution eager|typed-graph"
-    , "  --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external"
-    , "  --show-backend                    print backend capsules as they execute"
+    , ""
+    , "Evaluates the checked IR on CPU; no device or execution-mode selection."
     ]
-
-/-!
-## Tensor Shapes
-
-These shapes illustrate an axis that is neither first nor last.
--/
-
-abbrev baseTensorShape : Shape := [2, 3, 4]
-abbrev widerMiddleAxisShape : Shape := [2, 5, 4]
-abbrev concatenatedMiddleAxisShape : Shape := [2, 8, 4]
 
 /-!
 ## Small IR Graphs
 -/
 
-def softmaxMiddleAxisGraph : NN.IR.Graph :=
+/-- Softmax along a chosen axis of the example's `[2, 3, 4]` input. -/
+def softmax (axis : Nat := 1) : NN.IR.Graph :=
   { nodes := #[
-      { id := 0, parents := #[], kind := .input, outShape := baseTensorShape }
-    , { id := 1, parents := #[0], kind := .softmax (axis := 1), outShape := baseTensorShape }
+      { id := 0, parents := #[], kind := .input, outShape := [2, 3, 4] }
+    , { id := 1, parents := #[0], kind := .softmax axis, outShape := [2, 3, 4] }
     ] }
 
 /--
-LayerNorm over axis 1 of a rank-three tensor, the interesting case because the normalized axis is
-neither the first nor the last.
+LayerNorm over the suffix starting at `axis`. The default normalizes `[3, 4]` together, rather
+than just the final dimension.
 -/
-def layerNormMiddleAxisGraph : NN.IR.Graph :=
+def layerNorm (axis : Nat := 1) : NN.IR.Graph :=
   { nodes := #[
-      { id := 0, parents := #[], kind := .input, outShape := baseTensorShape }
-    , { id := 1, parents := #[0], kind := .layernorm (axis := 1), outShape := baseTensorShape }
+      { id := 0, parents := #[], kind := .input, outShape := [2, 3, 4] }
+    , { id := 1, parents := #[0], kind := .layernorm axis, outShape := [2, 3, 4] }
     ] }
 
-/-- Concatenation along axis 1, joining a `[2, 3, 4]` and a `[2, 5, 4]` tensor into `[2, 8, 4]`. -/
-def concatMiddleAxisGraph : NN.IR.Graph :=
+/--
+Join `[2, 3, 4]` and `[2, 5, 4]` along axis one. Other axis choices demonstrate shape rejection:
+the remaining dimensions must agree and the declared output must match the inferred shape.
+-/
+def concat (axis : Nat := 1) : NN.IR.Graph :=
   -- The concat example uses `rand_uniform` sources, so the input node only fixes the graph's
   -- single-input interface for the shared runner.
   { nodes := #[
       { id := 0, parents := #[], kind := .input, outShape := [] }
-    , { id := 1, parents := #[], kind := .randUniform (seed := 0), outShape := baseTensorShape }
+    , { id := 1, parents := #[], kind := .randUniform (seed := 0), outShape := [2, 3, 4] }
     , { id := 2, parents := #[], kind := .randUniform (seed := 1),
-        outShape := widerMiddleAxisShape }
-    , { id := 3, parents := #[1, 2], kind := .concat (axis := 1),
-        outShape := concatenatedMiddleAxisShape }
+        outShape := [2, 5, 4] }
+    , { id := 3, parents := #[1, 2], kind := .concat axis,
+        outShape := [2, 8, 4] }
     ] }
 
 /-!
@@ -103,22 +92,22 @@ def concatMiddleAxisGraph : NN.IR.Graph :=
 -/
 
 /-- Print a compact preview of a tensor. -/
-def firstScalars {α : Type} [Storage α] [ToString α] {σ : Shape}
+def preview {α : Type} [Storage α] [ToString α] {σ : Shape}
     (tensor : Tensor α σ) : String :=
-  let xs := Tensor.to tensor (Array α)
-  let ys := xs.extract 0 8
-  let body := String.intercalate ", " (ys.toList.map toString)
-  "[" ++ body ++ (if xs.size > ys.size then ", ..." else "") ++ "]"
+  let entries : Tensor α [min 8 σ.size] :=
+    Tensor.flattenThenTake [] (min 8 σ.size) (Nat.min_le_right 8 σ.size) tensor
+  let text := Spec.pretty entries
+  if σ.size > 8 then (text.dropEnd 1).toString ++ ", ...]" else text
 
-/-- Evaluate an example graph through the runtime API and print its selected output. -/
-def printEvaluation
+/-- Evaluate an example graph with Lean tensor operations and print its selected output. -/
+def print
     {α : Type} {σ : Shape} [Storage α] [Context α] [ToString α]
     (tag : String) (g : NN.IR.Graph) (payload : NN.IR.Payload α)
     (x : Tensor α σ) (outputId : Fin g.nodes.size) : IO Unit := do
   let ⟨shape, output⟩ ← CLI.orThrow tag <|
     Runtime.Autograd.IRExec.evaluate g payload x outputId
   IO.println s!"[{tag}] output shape: {repr shape}"
-  IO.println s!"[{tag}] first scalars: {firstScalars output}"
+  IO.println s!"[{tag}] first scalars: {preview output}"
 
 /--
 Run every axis-op example at scalar type `α`.
@@ -126,46 +115,38 @@ Run every axis-op example at scalar type `α`.
 Generic in `α` so the tutorial can be run under native `Float` or under the bit-level IEEE model
 with no change to the graphs.
 -/
-def runOnce
+def run
     {α : Type} [Storage α] [Context α] [ToString α]
     [Runtime.FromFloat α]
     : IO Unit := do
   let payload : NN.IR.Payload α := {}
 
   -- A small but nontrivial 2×3×4 input tensor.
-  let inputTensor : Tensor α baseTensorShape :=
+  let inputTensor : Tensor α [2, 3, 4] :=
     Tensor.generateFlat [2, 3, 4] (fun i =>
       Runtime.ofFloat ((Float.ofNat i) / 10.0 - 1.0))
 
   IO.println ""
   IO.println "== IR axis ops tutorial =="
-  IO.println "The runtime validates each graph and evaluates its selected output."
+  IO.println "The IR evaluator validates each graph and computes its selected output on CPU."
 
   IO.println ""
   IO.println "-- softmax axis=1 on shape [2,3,4]"
-  printEvaluation (α := α) (tag := "softmax_middle_axis") (g := softmaxMiddleAxisGraph)
+  print (α := α) (tag := "softmax_middle_axis") (g := softmax (axis := 1))
     (payload := payload) (x := inputTensor) (outputId := ⟨1, by decide⟩)
 
   IO.println ""
   IO.println "-- layernorm axis=1 on shape [2,3,4]"
   IO.println "PyTorch meaning: normalized_shape = x.shape[axis:] = [3,4]"
-  printEvaluation (α := α) (tag := "layernorm_middle_axis") (g := layerNormMiddleAxisGraph)
+  print (α := α) (tag := "layernorm_middle_axis") (g := layerNorm (axis := 1))
     (payload := payload) (x := inputTensor) (outputId := ⟨1, by decide⟩)
 
   IO.println ""
   IO.println "-- concat axis=1: [2,3,4] ++ [2,5,4] -> [2,8,4]"
   let scalarInput : Tensor α [] :=
     Tensor.full [] (Runtime.ofFloat (α := α) 0.0)
-  printEvaluation (α := α) (tag := "concat_middle_axis") (g := concatMiddleAxisGraph)
+  print (α := α) (tag := "concat_middle_axis") (g := concat (axis := 1))
     (payload := payload) (x := scalarInput) (outputId := ⟨3, by decide⟩)
-
-/-- Runtime-selected entrypoint body for the axis-ops tutorial. -/
-def runSelected
-    {α : Type} [Storage α] [Context α] [ToString α]
-    [Runtime.FromFloat α]
-    (rest : List String) : IO Unit := do
-  CLI.requireNoArgs "ir_axis_ops" rest
-  runOnce (α := α)
 
 /-- Entry point; `--arithmetic` picks the scalar type the whole tutorial runs at. -/
 def main (args : List String) : IO Unit := do
@@ -173,7 +154,10 @@ def main (args : List String) : IO Unit := do
   if CLI.hasHelp args then
     IO.println usage
     return
-  Module.withSelectedRuntime args
-    (fun {α} _ _ _ _ _cast _opts rest => runSelected (α := α) rest)
+  let (arithmetic, rest) ← CLI.orThrow "ir_axis_ops" <|
+    Runtime.Arithmetic.parseAndStrip args
+  CLI.requireNoArgs "ir_axis_ops" rest
+  arithmetic.log
+  Runtime.Arithmetic.withRuntime arithmetic @run
 
 end NN.Examples.DeepDives.IRAxisOps

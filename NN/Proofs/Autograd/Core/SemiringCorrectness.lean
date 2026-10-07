@@ -123,27 +123,13 @@ private theorem dot_elemwise_adjoint {α : Type} [TorchLean.Storage α] [CommSem
       simpa [TensorAlgebra.dot, mulSpec, map2Spec, Tensor.item] using
         (mul_assoc dx.item df.item δ.item)
   | dim n s ih =>
-      have hterm :
-          ∀ i : Fin n,
-            dot (α := α) (mulSpec (dx.unstack i) (df.unstack i)) (δ.unstack i) =
-              dot (α := α) (dx.unstack i) (mulSpec (df.unstack i) (δ.unstack i)) := by
-        intro i
-        exact ih (dx := dx.unstack i) (df := df.unstack i) (δ := δ.unstack i)
-      have hfold :=
-        List.foldl_add_congr (l := List.finRange n)
-          (f := fun i => dot (α := α) (mulSpec (dx.unstack i) (df.unstack i)) (δ.unstack i))
-          (g := fun i => dot (α := α) (dx.unstack i) (mulSpec (df.unstack i) (δ.unstack i)))
-          (a := (0 : α)) hterm
-      have hdxdf : ∀ i : Fin n,
-          (mulSpec dx df).unstack i = mulSpec (dx.unstack i) (df.unstack i) := by
-        intro i
-        exact (TorchLean.Tensor.Internal.Rep.zipWith_unstack (· * ·) dx df i).symm
-      have hdfδ : ∀ i : Fin n,
-          (mulSpec df δ).unstack i = mulSpec (df.unstack i) (δ.unstack i) := by
-        intro i
-        exact (TorchLean.Tensor.Internal.Rep.zipWith_unstack (· * ·) df δ i).symm
-      simp only [TensorAlgebra.dot, hdxdf, hdfδ]
-      exact hfold
+      apply List.foldl_add_congr
+      intro i
+      change dot (Internal.Rep.unstack (Internal.Rep.zipWith (· * ·) dx df) i)
+        (δ.unstack i) = dot (dx.unstack i)
+          (Internal.Rep.unstack (Internal.Rep.zipWith (· * ·) df δ) i)
+      rw [← Internal.Rep.zipWith_unstack, ← Internal.Rep.zipWith_unstack]
+      exact ih (dx := dx.unstack i) (df := df.unstack i) (δ := δ.unstack i)
 
 /--
 Correctness of ReLU’s backward rule, stated generically over `α`.

@@ -29,10 +29,10 @@ References:
   `https://github.com/Verified-Intelligence/auto_LiRPA`
 
 Export (Python):
-`python3.12 scripts/verification/lirpa/export_crown_cert.py`
+`python3 scripts/verification/lirpa/export_cert.py transformer`
 
 Run (Lean):
-`lake exe verify -- lirpa-encoder [NN/Examples/Verification/LiRPA/transformer_encoder_cert.json]`
+`scripts/lake.sh exe verify -- lirpa-encoder [path]`
 -/
 
 @[expose] public section
@@ -145,12 +145,11 @@ def seedParamsFloat : ParamStore Float :=
 /--
 Check an IBP certificate JSON against this transformer-encoder graph.
 
-This is wired into `lake exe verify -- lirpa-encoder [path]`.
+This is wired into `scripts/lake.sh exe verify -- lirpa-encoder [path]`.
 -/
 def verifyCert (path : String) : IO Unit := do
   let g := buildGraph
-  -- Every input coordinate gets the box $[x_i - \varepsilon, x_i + \varepsilon]$; the
-  -- graph has 4 inputs, ids `0 .. 3`.
+  -- Give input node 0 a radius-0.5 box around [1, 2, 3, 4].
   let ps := ExampleInputs.seedNaturalInputBox 0 4 0.5 seedParamsFloat
   NN.Verification.Cert.IBPCert.checkOrThrow g ps (outId := 10) path
 

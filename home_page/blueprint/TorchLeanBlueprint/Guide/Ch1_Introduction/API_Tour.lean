@@ -300,9 +300,8 @@ The matrix products are named after the ranks they combine:
 For the matrix product, the first row of `atM` meets the two columns of `atR`, giving
 $`1+3=4` and $`2+3=5`. Repeating that calculation for the second row gives $`10` and $`11`.
 The next two outputs use all-ones vectors to expose the direction of multiplication: `matvec`
-adds across each row, whereas `vecmat` adds down each column. The final output is a separate
-three-by-three identity matrix. Its diagonal ones preserve a compatible vector, and its off-diagonal
-zeros contribute nothing to the corresponding sums.
+adds across each row, whereas `vecmat` adds down each column. The final output is the
+three-by-three identity matrix.
 
 `matmul` contracts the left matrix's columns with the right matrix's rows, requiring those
 dimensions to agree. Since `atM` has shape `[2, 3]`, `Tensor.matmul atM atM` fails that check.
@@ -449,9 +448,7 @@ We can also reduce these entries to a scalar loss, apply ReLU, or select a row:
 ```
 
 Mean squared error squares each difference before taking the mean:
-$`((-3)^2+7^2+(-3)^2)/3=67/3`, or
-$`\frac13\left(9+49+9\right)=\frac{67}{3}\approx22.333333` with the final decimal rounded
-for display.
+$`((-3)^2+7^2+(-3)^2)/3=67/3\approx22.333333`, rounded for display.
 ReLU keeps the positive entry and replaces the negative one by zero; the zero stays zero.
 
 The indexing calls distinguish a row from an entry. Selecting row one leaves a length-three
@@ -558,8 +555,8 @@ payload.
 
 `stackLeading` takes a function from an index to a tensor. Its return type fixes the shape of
 each selected tensor, so every entry in the stack must have that shape. `concat` joins on the
-leading axis and adds the counts, `1 + 2 = 3`, in the result type; this is the operation a key-value
-cache append is, and {ref "modern-models"}[Modern Models] uses it for exactly that.
+leading axis and adds the counts, `1 + 2 = 3`, in the result type. This can also join cache tensors
+when their token axis is leading and their remaining shapes agree.
 `repeatLeading` is broadcasting made explicit, the counterpart of `expand` in PyTorch, except that
 it allocates and says so instead of producing a stride-zero view.
 
@@ -654,8 +651,8 @@ Repeating the initializer with the same arguments reproduces its result:
  [-0.674830, -0.151913, -0.376110]]
 ```
 
-`Init.kaimingUniform` is the same call with the ReLU-appropriate gain, and both work for every
-executable scalar with a `Runtime.FromFloat` instance. For constant tensors at any scalar type,
+`Init.kaimingUniform` infers its matrix dimensions the same way, using fan-in scaling for ReLU.
+Both work for executable scalars with a `Runtime.FromFloat` instance. For constant tensors,
 `Tensor.full`, `Tensor.zeros`, and `Tensor.ones` are the canonical constructors.
 
 An unrelated draw from a global generator cannot change this initializer's result. Reproducing
@@ -735,11 +732,8 @@ Sequential: [2] -> [1], layers=3, params=49, state=49
   [2] Linear(12, 1): [12] -> [1] params=13, state=13 [[1, 12], [1]]
 ```
 
-The change from thirty-three to forty-nine parameters can be reconstructed from the shapes:
-the first layer now stores $`12\cdot2+12=36` numbers, and the second stores $`1\cdot12+1=13`.
-ReLU stores no weights or biases. The four tensor groups still play the same roles, but their
-extents have changed, so a checkpoint for the eight-unit network cannot simply be attached to this
-one. Matching the public input and output shapes is only the first part of matching model state.
+The four parameter tensors have the same roles but different extents, so the eight-unit
+checkpoint does not fit this network. Matching `[2] → [1]` alone does not match model state.
 
 Returning to the eight-unit model, PyTorch reports the same total and parameter layout:
 
@@ -981,7 +975,7 @@ identifies the node where the input region belongs:
   match atLowered with
   | .error message => IO.println s!"error: {message}"
   | .ok lowered =>
-    let shape := Verification.inputShape? lowered
+    let shape := lowered.inputShape?
     IO.println s!"verifier input shape = {shape}"
 ```
 
@@ -1047,17 +1041,16 @@ $`2x=6`. The function passed to `autograd.grad` uses runtime references through 
 the concrete input tensor supplies their values when the function is executed. That separation lets
 the runtime record the operations needed for the backward pass.
 
-The autograd quickstart extends this example to VJPs, Jacobian rows and columns, and a
-Hessian-vector product:
+The quickstart covers scalar input gradients and model-state gradients. For Jacobians, Hessians,
+directional derivatives, and gradient stopping, run:
 
 ```terminal
-# Run the scalar-gradient and detach examples through the
-# public command-line entry point.
-scripts/lake.sh exe torchlean quickstart_autograd
+# Inspect higher-order derivatives and a detached model loss.
+scripts/lake.sh exe torchlean autograd_transforms
 ```
 
-It also prints a loss and the same loss after `detach`: their forward values agree, but the
-detached gradient is zero. {ref "autograd-walkthrough"}[The autograd
+The state-gradient row is zero because the loss detaches the model output from the reverse
+pass. {ref "autograd-walkthrough"}[The autograd
 walkthrough] derives that behavior, {ref "scientific-forward-models"}[the scientific models chapter]
 uses these transforms on PDE residuals, and {ref "autograd-proofs"}[the autograd proofs chapter]
 states which derivative rules are theorems.

@@ -28,7 +28,7 @@ What this file does **not** contain:
 
 Those are separate on purpose. The high-level runtime bridge in
 `NN.Runtime.Autograd.Model.Optim` lifts these pure single-tensor equations to parameter lists,
-and `NN.API.Runtime` exposes user-facing optimizer configs. Proofs, tests, and runtime code all use
+and `NN.API.Optim` exposes user-facing optimizer configs. Proofs, tests, and runtime code all use
 these pure update formulas.
 -/
 

@@ -86,22 +86,22 @@ Matching cumulative coefficients gives the same forward-corrupted sample and ima
 The hypothesis compares the actual stored coefficients with the chosen VP schedule. It does not
 identify the two linear constructors: their one-step endpoint conventions differ.
 -/
-theorem noisedSampleFromNoise_input_eq_qSample (batchShape : Shape) {d c : Nat}
+theorem sample_input_eq_qSample (batchShape : Shape) {d c : Nat}
     (spatial : Tensor Nat [d]) (schedule : TorchLean.diffusion.Schedule T)
     (specSchedule : VPSchedule Float T)
     (hCoefficients : ∀ index : Fin T,
       schedule.alphaBars[index] = specSchedule.alphaBar index.succ)
     (clean epsilon : Tensor Float (TorchLean.diffusion.sampleShape batchShape c spatial))
     (step : Nat) :
-    (TorchLean.diffusion.noisedSampleFromNoise
-      batchShape spatial schedule clean epsilon step).input =
+    (TorchLean.diffusion.sample
+      batchShape spatial schedule clean step (noise := epsilon)).input =
       TorchLean.diffusion.appendTimeChannel batchShape spatial
         (qSample specSchedule clean (schedule.index step).succ epsilon)
         (timeOfIndex (α := Float) (schedule.index step)) := by
   have hAlpha : schedule.alphaBar step =
       specSchedule.alphaBar (schedule.index step).succ :=
     hCoefficients (schedule.index step)
-  simp only [TorchLean.diffusion.noisedSampleFromNoise, qSample, sqrtNonneg,
+  simp only [TorchLean.diffusion.sample, qSample, sqrtNonneg,
     hAlpha, schedule_normalizedTime_eq, Tensor.scale, float_add_eq_addSpec]
   rfl
 

@@ -213,6 +213,19 @@ def alphaBetaCrownStepNode?
     (beta : Array (Option (Array Int)))
     (cert : Array (Option (FlatAffineBounds α)))
     (ctx : AffineCtx) (id : Nat) : Option (FlatAffineBounds α) :=
+  let propagate (xin : FlatAffineBounds α) (preB : FlatBox α)
+      (hout : xin.outDim = preB.dim) (αt : Tensor α [preB.dim])
+      (phases : Array Int) : Option (FlatAffineBounds α) :=
+    let xLo := Graph.castAffineOut (α := α) hout xin.loAff
+    let xHi := Graph.castAffineOut (α := α) hout xin.hiAff
+    match phaseRelaxVec? (α := α) (n := preB.dim) preB.lo preB.hi αt phases with
+    | some (relaxLo, relaxHi) =>
+        let loAff := NN.MLTheory.CROWN.Runtime.Ops.ReLU.propagateAffine (α := α)
+          (inDim := xin.inDim) (hidDim := preB.dim) relaxLo xLo
+        let hiAff := NN.MLTheory.CROWN.Runtime.Ops.ReLU.propagateAffine (α := α)
+          (inDim := xin.inDim) (hidDim := preB.dim) relaxHi xHi
+        some { inDim := xin.inDim, outDim := preB.dim, loAff := loAff, hiAff := hiAff }
+    | none => none
   let node := nodes[id]!
   match node.kind with
   | .relu =>
@@ -226,41 +239,17 @@ def alphaBetaCrownStepNode?
               | some xin, some preB, some αv =>
                   if hout : xin.outDim = preB.dim then
                     if hα : αv.n = preB.dim then
-                      let xLo := Graph.castAffineOut (α := α) hout xin.loAff
-                      let xHi := Graph.castAffineOut (α := α) hout xin.hiAff
                       let αt : Tensor α [preB.dim] :=
                         castDimScalar (α := α) (n := αv.n) (n' := preB.dim) hα αv.v
-                      match phaseRelaxVec? (α := α) (n := preB.dim) preB.lo preB.hi αt phases with
-                      | some (relaxLo, relaxHi) =>
-                          let loAff :=
-                            NN.MLTheory.CROWN.Runtime.Ops.ReLU.propagateAffine (α := α)
-                              (inDim := xin.inDim) (hidDim := preB.dim) relaxLo xLo
-                          let hiAff :=
-                            NN.MLTheory.CROWN.Runtime.Ops.ReLU.propagateAffine (α := α)
-                              (inDim := xin.inDim) (hidDim := preB.dim) relaxHi xHi
-                          some { inDim := xin.inDim, outDim := preB.dim, loAff := loAff, hiAff :=
-                            hiAff }
-                      | none => none
+                      propagate xin preB hout αt phases
                     else none
                   else none
               | some xin, some preB, none =>
                   -- No alpha provided: follow AlphaCROWN's default lower relaxation, but still
                   -- enforce β consistency.
                   if hout : xin.outDim = preB.dim then
-                    let xLo := Graph.castAffineOut (α := α) hout xin.loAff
-                    let xHi := Graph.castAffineOut (α := α) hout xin.hiAff
                     let αt := defaultAlphaVec (α := α) (n := preB.dim) preB.lo preB.hi
-                    match phaseRelaxVec? (α := α) (n := preB.dim) preB.lo preB.hi αt phases with
-                    | some (relaxLo, relaxHi) =>
-                        let loAff :=
-                          NN.MLTheory.CROWN.Runtime.Ops.ReLU.propagateAffine (α := α)
-                            (inDim := xin.inDim) (hidDim := preB.dim) relaxLo xLo
-                        let hiAff :=
-                          NN.MLTheory.CROWN.Runtime.Ops.ReLU.propagateAffine (α := α)
-                            (inDim := xin.inDim) (hidDim := preB.dim) relaxHi xHi
-                        some { inDim := xin.inDim, outDim := preB.dim, loAff := loAff, hiAff :=
-                          hiAff }
-                    | none => none
+                    propagate xin preB hout αt phases
                   else none
               | _, _, _ => none
           | none => none

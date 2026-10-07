@@ -11,12 +11,9 @@ public import NN.Verification.Splines.PiecewisePolyCert
 /-!
 # Spline Verification
 
-Public umbrella import for spline / piecewise-polynomial certificate checking.
-
-This namespace is focused: spline certificates are treated as untrusted artifacts that
-are checked by recomputation inside Lean against the same spec-layer evaluation used elsewhere in
-TorchLean verification.
+Public import for exact-rational piecewise-polynomial artifact checks and optional binary32 replay.
+The checker evaluates local-coordinate polynomials by Horner's rule; it does not establish a
+general approximation-error bound for the fitted function.
 -/
 
 @[expose] public section
-

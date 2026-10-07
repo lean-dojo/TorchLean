@@ -24,24 +24,16 @@ class upper bound. Bounds use equally shaped tensors, including after JSON decod
 namespace NN.Verification.Robustness.TopLabel
 
 open Spec TorchLean
-open TorchLean.Tensor
 
-/-- Strict label certificate over any indexed lower/upper bounds. -/
-def strictTopLabelBy {α : Type} (n label : Nat)
-    (lo hi : Fin n → α) (gt : α → α → Bool) : Bool :=
+/-- Check that the label's lower bound strictly exceeds every competing upper bound.
+An out-of-range label or unordered comparison returns false. -/
+def check {α : Type} [Storage α] [Context α] {n : Nat}
+    (lo hi : Tensor α [n]) (label : Nat) : Bool :=
   if h : label < n then
     let y : Fin n := ⟨label, h⟩
-    let loY := lo y
-    (List.finRange n).all fun i => i == y || gt loY (hi i)
+    let loY := Tensor.getScalar lo y
+    (List.finRange n).all fun i => i == y || Context.gtBool loY (Tensor.getScalar hi i)
   else
     false
-
-/-- Check a label directly from tensor lower/upper bounds. -/
-def certifiesLabelFromTensorBounds {α : Type} [TorchLean.Storage α] [Context α] {n : Nat}
-    (lo hi : Tensor α [n]) (label : Nat) : Bool :=
-  strictTopLabelBy n label
-    (fun i => Tensor.getScalar lo i)
-    (fun i => Tensor.getScalar hi i)
-    Context.gtBool
 
 end NN.Verification.Robustness.TopLabel

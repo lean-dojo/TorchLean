@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Models.Vae
-public import NN.MLTheory.Generative.Latent.Objective
 public import Mathlib.Probability.Distributions.Gaussian.Real
 public import NN.Spec.Core.Context.Real
 
@@ -43,7 +42,6 @@ namespace NN.MLTheory.Generative.Latent.VAE
 open _root_.Spec _root_.TorchLean
 open _root_.Generative.VAE
 open _root_.Generative.Latent
-open NN.MLTheory.Generative.Latent.Objective
 open BigOperators
 open MeasureTheory ProbabilityTheory
 open scoped NNReal
@@ -64,22 +62,7 @@ variable {obs latent : Shape}
     forward model x eps = model.decoder.forward (sampleLatent model x eps) := by
   rfl
 
-/-! ## Connection to the shared latent-objective algebra -/
-
-/-- Package the VAE reconstruction and KL terms as a shared weighted two-term objective. -/
-noncomputable def vaeObjectiveTerms
-    [DecidableRel ((· > ·) : ℝ → ℝ → Prop)]
-    (model : Model ℝ obs latent) (x : Tensor ℝ obs) (eps : Tensor ℝ latent) :
-    WeightedTwoTerm :=
-  { base := reconstructionLoss model x eps
-    regularizer := klLoss model x }
-
-/-- β-VAE loss is exactly the shared $\mathrm{base}+\beta\,\mathrm{regularizer}$ objective. -/
-theorem betaVae_loss_eq_weightedTwoTerm
-    [DecidableRel ((· > ·) : ℝ → ℝ → Prop)]
-    (model : Model ℝ obs latent) (beta : ℝ) (x : Tensor ℝ obs) (eps : Tensor ℝ latent) :
-    loss model beta x eps = weightedTwoTerm beta (vaeObjectiveTerms model x eps) := by
-  rfl
+/-! ## Loss identities -/
 
 /-- At $\beta=0$, the VAE objective reduces to reconstruction loss. -/
 @[simp] theorem betaVae_loss_zero_beta
@@ -107,8 +90,8 @@ theorem betaVae_loss_mono_beta_of_kl_nonneg
     (model : Model ℝ obs latent) (x : Tensor ℝ obs) (eps : Tensor ℝ latent)
     {beta₁ beta₂ : ℝ} (hbeta : beta₁ ≤ beta₂) (hkl : 0 ≤ klLoss model x) :
     loss model beta₁ x eps ≤ loss model beta₂ x eps := by
-  rw [betaVae_loss_eq_weightedTwoTerm, betaVae_loss_eq_weightedTwoTerm]
-  exact weightedTwoTerm_mono_weight (vaeObjectiveTerms model x eps) hbeta hkl
+  unfold loss
+  exact add_le_add le_rfl (mul_le_mul_of_nonneg_right hbeta hkl)
 
 /-! ## Real-valued KL facts for diagonal Gaussian posteriors -/
 
@@ -126,7 +109,7 @@ noncomputable def coordinateKlToStandard (mu logvar : ℝ) : ℝ :=
 /--
 Diagonal-Gaussian KL against a standard normal prior, represented as finite coordinates.
 
-For tensors, TorchLean's executable spec uses `Spec.meanOver`.  This theorem layer uses a
+For tensors, TorchLean's executable spec uses `Tensor.meanSpec`.  This theorem layer uses a
 coordinate sum because it is the cleanest interface for mathlib big-operator reasoning and for
 stating "zero iff every coordinate is zero".
 -/

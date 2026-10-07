@@ -33,10 +33,6 @@ open Lean
 
 namespace Import.PyTorch.MLP
 
--- We support two key conventions:
--- - PyTorch `nn.Linear` style: `fc1.weight`, `fc1.bias`, `fc2.weight`, `fc2.bias`
--- - sequential parameter style: `layers.0.weight`, `layers.0.bias`, `layers.2.weight`,
---   `layers.2.bias`
 /-- Parameters for a two-layer MLP imported from a PyTorch `state_dict`.
 
 We keep the tensors as `Float` because these importers are meant for runtime examples: train in
@@ -55,21 +51,15 @@ structure Parameters (inputWidth hiddenWidth outputWidth : Nat) where
 /-- Load MLP parameters from JSON using either supported PyTorch key convention. -/
 def load (inputWidth hiddenWidth outputWidth : Nat) (json : Json) :
     Option (Parameters inputWidth hiddenWidth outputWidth) :=
-  let inputWeightShape : Shape := [hiddenWidth, inputWidth]
-  let inputBiasShape : Shape := [hiddenWidth]
-  let outputWeightShape : Shape := [outputWidth, hiddenWidth]
-  let outputBiasShape : Shape := [outputWidth]
   do
-    -- `loadWeights?` accepts either:
-    -- - `{ ...state_dict... }`, or
-    -- - `{ "params": { ...state_dict... } }` (a common wrapper in our Python scripts).
+    -- Accept a raw state dictionary or its params wrapper.
     let weights ← loadWeights? json
     let tryKeys (inputWeightKey inputBiasKey outputWeightKey outputBiasKey : String) :
         Option (Parameters inputWidth hiddenWidth outputWidth) := do
-      let inputWeight ← getTensor? weights inputWeightKey inputWeightShape
-      let inputBias ← getTensor? weights inputBiasKey inputBiasShape
-      let outputWeight ← getTensor? weights outputWeightKey outputWeightShape
-      let outputBias ← getTensor? weights outputBiasKey outputBiasShape
+      let inputWeight ← getTensor? weights inputWeightKey [hiddenWidth, inputWidth]
+      let inputBias ← getTensor? weights inputBiasKey [hiddenWidth]
+      let outputWeight ← getTensor? weights outputWeightKey [outputWidth, hiddenWidth]
+      let outputBias ← getTensor? weights outputBiasKey [outputWidth]
       pure { inputWeight, inputBias, outputWeight, outputBias }
     tryKeys "fc1.weight" "fc1.bias" "fc2.weight" "fc2.bias" <|>
       tryKeys "layers.0.weight" "layers.0.bias" "layers.2.weight" "layers.2.bias"

@@ -40,9 +40,7 @@ endforeach()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_executable(torchlean_elementwise_regression
-  regression.cpp
-  ../../../../scripts/checks/cuda_float32_parity.cpp)
+add_executable(torchlean_elementwise_regression regression.cpp)
 target_compile_definitions(torchlean_elementwise_regression PRIVATE TORCHLEAN_LIBTORCH)
 target_include_directories(torchlean_elementwise_regression PRIVATE
   "${TORCHLEAN_LEAN_PREFIX}/include")

@@ -134,8 +134,7 @@ def evalRuntime {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α := α
     (fun fg => FwdGraph.evalSpec (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) fg x)
     (toFwdGraph_toFwdGraphScale_eq (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) g)
 
-/-- And so does runtime evaluation. The annotations carry bounds only; they never change what is
-computed, which is exactly what these two lemmas record. -/
+/-- Runtime evaluation agrees with the unannotated reverse graph. -/
 @[simp] theorem evalRuntime_eq_rev {Γ : List Shape} {ss : List Shape}
     (g : RevGraphScale (α := α) toSpec Γ ss) (x : TorchLean.TensorPack α Γ) :
     evalRuntime (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ss) g x =
@@ -208,9 +207,9 @@ def backpropScales {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α :=
 /-- The same statement for the backward pass: propagated cotangents stay within the backpropagated
 scale bounds.
 
-The `addBound` combiner is a parameter rather than a fixed choice, because how two accumulated
-gradients' bounds combine depends on the carrier: adding bounds is always sound, but a carrier
-with a sharper triangle inequality can do better. `addSound` is what pins down the requirement. -/
+The `addBound` combiner is supplied with `addSound`: its output must bound both the exact and
+interpreted runtime sums. Adding the two input bounds is enough for exact addition, but a rounded
+carrier may require another rounding allowance. -/
 theorem backprop_scale {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (α := α) toSpec Γ ss)
     [Add α]
     (addBound : {Δ : List Shape} → BList Δ → BList Δ →
@@ -242,7 +241,6 @@ theorem backprop_scale {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (�
       intro xS xR epsIn bIn seedS seedR bSeed hx hB hinSeed
       rename_i ssPrev τ
 
-      -- forward scale for the node context `Γ ++ ssPrev`
       have hctxScale :
           scaleCtx (α := α) toSpec
             (evalSpec (α := α) (toSpec := toSpec) (Γ := Γ) (ss := ssPrev) g xS)
@@ -328,7 +326,6 @@ theorem backprop_scale {Γ : List Shape} {ss : List Shape} (g : RevGraphScale (�
         addSound seedPrevS (node.vjpSpec ctxS seedOutS) seedPrevR (node.vjpRuntime ctxR seedOutR)
           bSeedPrev (node.vjpScaleBound bCtx ctxR bSeedOut seedOutR) hseedPrev hcontrib
 
-      -- Recurse.
       have := ih xS xR epsIn bIn seedPrevS' seedPrevR' bSeedPrev' hx hB hseedPrev'
       simpa [RevGraphScale.toRevGraph, RevGraph.backpropSpec, RevGraph.backpropRuntime,
         backpropScales,

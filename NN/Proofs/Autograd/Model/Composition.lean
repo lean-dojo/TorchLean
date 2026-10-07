@@ -33,8 +33,8 @@ namespace Runtime.Autograd.Model.Layers.Seq
 theorem forward_apply {α : Type} [Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops m α] {σ τ : Shape}
     (model : Seq σ τ) (mode : Mode)
-    (state : RefList (RefTy (m := m) (α := α)) (stateShapes model))
-    (x : RefTy (m := m) (α := α) σ) :
+    (state : RefList (Ref (m := m) (α := α)) (stateShapes model))
+    (x : Ref (m := m) (α := α) σ) :
     CurriedRef.uncurry (forward model mode (α := α) (m := m))
       (state.append (.cons x .nil)) = forwardState model mode state x := by
   simp only [forward]
@@ -43,8 +43,8 @@ theorem forward_apply {α : Type} [Storage α] [Context α]
 /-- A single-layer model in evaluation mode runs that layer without a buffer-update callback. -/
 theorem forwardState_fromLayer_eval {α : Type} [Storage α] [Context α]
     {m : Type → Type} [Monad m] [LawfulMonad m] [Ops m α] {σ τ : Shape}
-    (layer : Layer σ τ) (state : RefList (RefTy (m := m) (α := α)) layer.stateShapes)
-    (x : RefTy (m := m) (α := α) σ) :
+    (layer : Layer σ τ) (state : RefList (Ref (m := m) (α := α)) layer.stateShapes)
+    (x : Ref (m := m) (α := α) σ) :
     forwardState (fromLayer layer) .eval
       (state.append .nil) x = layer.forwardRef .eval state x := by
   simp [fromLayer, forwardState]
@@ -54,9 +54,9 @@ theorem forwardState_fromLayer_eval {α : Type} [Storage α] [Context α]
 private theorem forwardState_cons {α : Type} [Storage α] [Context α]
     {m : Type → Type} [Monad m] [LawfulMonad m] [Ops m α] {σ τ υ : Shape}
     (layer : Layer σ τ) (rest : Seq τ υ) (mode : Mode)
-    (state : RefList (RefTy (m := m) (α := α)) layer.stateShapes)
-    (restState : RefList (RefTy (m := m) (α := α)) (stateShapes rest))
-    (x : RefTy (m := m) (α := α) σ) :
+    (state : RefList (Ref (m := m) (α := α)) layer.stateShapes)
+    (restState : RefList (Ref (m := m) (α := α)) (stateShapes rest))
+    (x : Ref (m := m) (α := α) σ) :
     forwardState (.cons layer rest) mode (state.append restState) x = (do
       let y ← forwardState (fromLayer layer) mode (state.append .nil) x
       forwardState rest mode restState y) := by
@@ -86,9 +86,9 @@ monad laws; it neither commutes effects nor assumes algebraic laws on numerical 
 theorem forwardState_comp {α : Type} [Storage α] [Context α]
     {m : Type → Type} [Monad m] [LawfulMonad m] [Ops m α] {σ τ υ : Shape}
     (first : Seq σ τ) (second : Seq τ υ) (mode : Mode)
-    (firstState : RefList (RefTy (m := m) (α := α)) (stateShapes first))
-    (secondState : RefList (RefTy (m := m) (α := α)) (stateShapes second))
-    (x : RefTy (m := m) (α := α) σ) :
+    (firstState : RefList (Ref (m := m) (α := α)) (stateShapes first))
+    (secondState : RefList (Ref (m := m) (α := α)) (stateShapes second))
+    (x : Ref (m := m) (α := α) σ) :
     forwardState (comp first second) mode
       ((stateShapes_comp first second).symm ▸ firstState.append secondState) x =
       (forwardState first mode firstState x >>= forwardState second mode secondState) := by

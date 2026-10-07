@@ -17,6 +17,9 @@ public import NN.Runtime.Autograd.Torch.Core.TensorTransfer -- shake: keep
 # Runtime Selection
 
 Arithmetic semantics, execution mode, device, and backend-contract inspection.
+
+`map batchShape input f` applies a reference-valued operation to each sample without fixing
+the batch rank. `linear (batchShape := ...)` applies an affine map to the final feature axis.
 -/
 
 @[expose] public section
@@ -46,7 +49,7 @@ an eager session or typed graph and is valid only in the program that created it
 abbrev ValueRef (m : Type → Type) (α : Type)
     [TorchLean.Storage α] [Context α] [Monad m] [Ops (m := m) (α := α)]
     (shape : Shape) :=
-  Runtime.Autograd.Model.RefTy (m := m) (α := α) shape
+  Runtime.Autograd.Model.Ref (m := m) (α := α) shape
 
 /-- Apply an affine map to the final axis, independently over every index in `batchShape`. -/
 def linear {α : Type} [TorchLean.Storage α] [Context α]
@@ -59,7 +62,7 @@ def linear {α : Type} [TorchLean.Storage α] [Context α]
   let input' : ValueRef (m := m) (α := α) (batchShape.concat [inputWidth]) := by
     simpa only [Shape.appendDim_eq_concat] using input
   simpa only [Shape.appendDim_eq_concat] using
-    Runtime.Autograd.Model.linearEach
+    Runtime.Autograd.Model.linear
       (m := m) (α := α) (leadingShape := batchShape) weight bias input'
 
 /-!
@@ -78,7 +81,7 @@ export Runtime.Autograd.Torch
    relu silu gelu sigmoid tanh softplus exp sin cos log inv safeLog
    sum flatten mseLoss)
 export Runtime.Autograd.Model
-  (mapLeading maxPool avgPool smoothMaxPool layerNorm attention conv convTranspose)
+  (map maxPool avgPool smoothMaxPool layerNorm attention conv convTranspose)
 export Runtime.Autograd.Model.F (permute softmax logSoftmax)
 
 export Runtime.Autograd.Torch (ExecutionMode)

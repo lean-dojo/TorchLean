@@ -22,8 +22,9 @@ This file links those results to the executable SSA/DAG form used by typed graph
 `Proofs.Autograd.Algebra.GraphData`. A `GraphData` stores forward, JVP, and VJP functions; it does
 not carry the derivative laws required by the proof-carrying `Graph` type.
 
-In other words, this is where the abstract approximation graph model meets the executable graph
-interpreter used elsewhere in TorchLean.
+The bridge preserves forward and reverse evaluation, not forward-mode differentiation: its JVP
+field is not a derivative. These NF definitions are mathematical computations over real-valued
+rounding models, not a native CPU/GPU execution or serialization guarantee.
 -/
 
 @[expose] public section
@@ -156,9 +157,10 @@ theorem backprop_gradient_approx_graphData {Γ : List Shape} {ss : List Shape}
 ## A typed backward-and-update step
 
 The seed context represents the cotangent supplied by a loss. The theorem below takes one gradient
-from the executable reverse pass and applies an arbitrary proved numerical optimizer contract to
-the corresponding parameter tensor. It is deliberately indexed by `i`: models with many parameter
-tensors apply the same theorem to each entry of the typed parameter context.
+from the reverse pass and applies a proved numerical optimizer contract to supplied parameter
+tensors of the matching shape. The theorem does not require those tensors to equal context entry
+`i`; callers claiming an update at the differentiated parameter must establish that identification.
+Models with many parameter tensors can apply the theorem separately at each index.
 -/
 
 /-- Executable reverse mode followed by any valid numerical optimizer contract is sound.
@@ -248,11 +250,12 @@ structure TrainingStepTrace where
   optimizerStateErrors : Array (String × ℝ)
   assumptions : Array (String × ℝ)
 
-/-- Compute the report consumed by CLI, file, or InfoView front ends.
+/-- Assemble a mathematical report of the propagated error budgets.
 
 This function is intentionally proof-free: `backprop_optimizer_update_approx_graphData` is the
 theorem establishing its interpretation when the input, seed, parameter, optimizer-state, and
-step assumptions hold.
+step assumptions hold. Its real-valued fields and NF calculations are noncomputable; displaying
+numerical values in a CLI or serialized artifact requires a separate executable representation.
 -/
 def trainingStepTrace {Γ : List Shape} {ss : List Shape}
     (g : RevGraph (α := R)

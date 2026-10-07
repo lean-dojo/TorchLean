@@ -35,7 +35,8 @@ operations needed by scalar-polymorphic model code. It carries no laws.
 `LawfulContext α` records, for a scalar type that also carries a Mathlib linearly ordered field
 structure, that the {uses "scalar_context"}[`Context` dictionary] computes the same addition,
 multiplication, subtraction, division, negation, order, maximum, minimum, absolute value, and
-small numeric constants as the field, and that its epsilon is positive. The instance for `ℝ` is
+natural and rational casts as the field. It also identifies Boolean equality with equality and
+requires a positive default epsilon. The instance for `ℝ` is
 proved; transcendental constants and the total power operation stay unconstrained.
 
 This separation lets executable scalar types provide operations without claiming field laws that
@@ -46,9 +47,11 @@ exponentials, or powers explicitly; the class does not supply those analytic fac
 
 :::definition "shape_indexed_tensors" (parent := "tensor_foundations") (lean := "TorchLean.Tensor")
 `Spec.Shape` is `List Nat`, the dimensions outermost first, and it indexes `TorchLean.Tensor α s`,
-so tensor dimensions are present in the type. Each value stores one contiguous row-major buffer
+so tensor dimensions are present in the type. Each value stores one row-major buffer
 with a proof that its length equals the shape's element count. `Storage α` selects packed
 `FloatArray` storage for `Float`, `ByteArray` for `UInt8`, and ordinary arrays for other scalars.
+The first two store unboxed entries; a general array may contain boxed values, so a flat tensor
+does not imply a contiguous block of unboxed scalars for every element type.
 Proofs observe this same value through coordinate lookup; the storage invariant does not prove
 the correctness of native C or CUDA implementations.
 :::
@@ -151,8 +154,8 @@ which operations may consume it, while the environment records where the value c
 :::
 
 :::definition "typed_dag_pure_semantics" (parent := "graph_representations") (lean := "NN.GraphSpec.DAG.Model.specFwd")
-The DAG interpreter evaluates {uses "typed_dag_syntax"}[the model body] from typed parameter and
-input lists under {uses "scalar_context"}[the scalar context].
+The DAG interpreter evaluates {uses "typed_dag_syntax"}[the model body] from shape-indexed
+parameter and input tensor packs under {uses "scalar_context"}[the scalar context].
 :::
 
 :::definition "typed_dag_runtime_translation" (parent := "graph_representations") (lean := "NN.GraphSpec.DAG.Model.toProgram")
@@ -176,7 +179,7 @@ of how the initial parameter pack is assembled.
 :::
 
 :::proof "graphspec_mlp_spec_alignment"
-The proof unpacks the four-tensor parameter list, unfolds
+The proof unpacks the four-tensor parameter pack, unfolds
 {uses "graphspec_pure_semantics"}[the pure interpreter] for
 {uses "graphspec_mlp_model"}[the MLP], and reduces both sides to the same two linear maps with an
 intervening ReLU.
@@ -184,7 +187,7 @@ intervening ReLU.
 
 :::theorem "graphspec_mlp_initialization_alignment" (parent := "graph_representations") (lean := "NN.GraphSpec.Models.mlp_detInitParams")
 Deterministic initialization for the {uses "graphspec_mlp_model"}[GraphSpec MLP] produces the same
-typed parameter list, in the same order, as the two TorchLean linear-layer initializers.
+typed parameter pack, in the same order, as the two TorchLean linear-layer initializers.
 :::
 
 :::proof "graphspec_mlp_initialization_alignment"

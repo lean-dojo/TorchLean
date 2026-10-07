@@ -492,8 +492,8 @@ private def loadModelDirectWith {α : Type} [TorchLean.Storage α] [Context α] 
   if sd.arch.outputDim ≠ 1 then
     throw <| IO.userError
       s!"ODE verifier expects scalar outputDim=1, got {sd.arch.outputDim} in {path}"
-  let g := Import.PINNPyTorch.buildGraph sd
-  let baseParams := Import.PINNPyTorch.toParamStoreWith (α := α) ofFloat sd
+  let g := Import.PINNPyTorch.graph sd
+  let baseParams := Import.PINNPyTorch.mapParameters (α := α) ofFloat sd
   let outId := SequentialPINNArch.graphOutputId g
   let (dg, paramsWithDerivative, dOutId) ← buildDerivativeGraph1D (α := α) g baseParams outId
   pure { g := g, dg := dg, baseParams := paramsWithDerivative, outId := outId, dOutId := dOutId,
@@ -518,7 +518,7 @@ private inductive LayerChain : Nat → Nat → Type where
 private def linOfPinn (pl : Import.PINNPyTorch.PinnLayer) : LinLayer pl.inDim pl.outDim :=
   { w := pl.weights, b := pl.bias }
 
-/-- Convert an imported PINN layer list into a `LayerChain` (returns `none` if empty). -/
+/-- Convert imported PINN layers into a dimension-checked chain; reject an empty list. -/
 private def chainOfPinnLayers :
     List Import.PINNPyTorch.PinnLayer →
       Except String (Σ inDim outDim, LayerChain inDim outDim)
@@ -549,8 +549,8 @@ private def layerChainProgram {inDim outDim : Nat} (activation : HiddenActivatio
       let rec evalChain
           {inD outD : Nat}
           (ch : LayerChain inD outD)
-          (x : Runtime.Autograd.Model.RefTy (m := m) (α := Float) (.dim inD .scalar)) :
-          m (Runtime.Autograd.Model.RefTy (m := m) (α := Float) (.dim outD .scalar)) := do
+          (x : Runtime.Autograd.Model.Ref (m := m) (α := Float) (.dim inD .scalar)) :
+          m (Runtime.Autograd.Model.Ref (m := m) (α := Float) (.dim outD .scalar)) := do
         match ch with
         | .last l =>
           let wR ← Runtime.Autograd.Model.const (m := m) (α := Float)
@@ -578,8 +578,9 @@ private def layerChainProgram {inDim outDim : Nat} (activation : HiddenActivatio
 Load a corridor model via the TorchLean lowering pipeline.
 
 This path reconstructs a small TorchLean program from the imported weights, lowers it to a CROWN
-graph, and then builds the derivative graph from that lowered graph. Only ReLU and tanh hidden
-activations are accepted here; `sin` networks must use the direct import path.
+graph, and then builds the derivative graph from that lowered graph. The import stage accepts
+ReLU and tanh, but the derivative builder rejects ReLU. Tanh is supported through both stages;
+`sin` networks must use the direct import path.
 -/
 private def loadModelTorchLean (path : String) : IO (CorridorModel Float) := do
   let sd ← loadPinnState path
@@ -974,7 +975,7 @@ private def verifySegments (rhs : Expr) (segments : Array ODECertificateSegment)
 /--
 Run verification for a parsed certificate file.
 
-This is the main executable entry used by `lake exe verify -- ode --cert=...`.
+This is the main executable entry used by `scripts/lake.sh exe verify -- ode --cert=...`.
 -/
 def runCertificate (path : String) (backendOverride : Option ModelBackend)
     (arithmeticOverride : Option Arithmetic) : IO Unit := do
@@ -1086,7 +1087,7 @@ def runArgs (args : List String) : IO Unit := do
       throw <| IO.userError "[ODE] verification failed."
 
 /--
-`lake exe verify` entry point for the ODE verifier.
+`scripts/lake.sh exe verify` entry point for the ODE verifier.
 
 Prints a short help message on `--help` / `-h`, otherwise dispatches to `runArgs`.
 -/

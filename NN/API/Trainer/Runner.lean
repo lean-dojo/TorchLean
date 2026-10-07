@@ -109,7 +109,7 @@ def fromRuntimeObjective {σ τ : Spec.Shape}
     IO (Runner α model) := do
   let executableObjective := TorchLean.Module.Objective.Internal.runtime runtimeObjective
   let makePredictor (mode : nn.Mode) :=
-    Runtime.Autograd.Model.Module.Evaluator.withState (β := Unit)
+    Runtime.Autograd.Model.Module.Evaluator.new (β := Unit)
       (stateShapes := TorchLean.nn.stateShapes model) (inputShapes := [σ])
       (dataInputShapes := [])
       (program := Runtime.Autograd.Model.Layers.Seq.forward model mode (α := α))
@@ -117,7 +117,7 @@ def fromRuntimeObjective {σ τ : Spec.Shape}
   let trainingPredictor ← makePredictor .train
   let evaluationPredictor ← makePredictor .eval
   let evaluationLossEvaluator ←
-    Runtime.Autograd.Model.Module.ObjectiveDef.evaluatorWithState
+    Runtime.Autograd.Model.Module.ObjectiveDef.evaluator
       (objective.definition model (mode := .eval))
       executableObjective.runtime executableObjective.trainer.state
   pure (create runtimeObjective trainingPredictor evaluationPredictor

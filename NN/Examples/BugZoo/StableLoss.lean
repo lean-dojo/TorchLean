@@ -125,7 +125,7 @@ theorem crossEntropyProbabilities_clips_before_log {s : Spec.Shape} (axis : Nat)
       let clamp01 := fun x : α =>
         let x := if x > epsilon then x else epsilon
         if x < (1 : α) - epsilon then x else (1 : α) - epsilon
-      let q := Tensor.mapSpec clamp01 predicted
+      let q := Tensor.map clamp01 predicted
       let logq := Tensor.logSpec q
       let total := Tensor.sumSpec (Tensor.mulSpec target logq)
       Spec.meanOverAxisSlices (s := s) axis (-total) := by

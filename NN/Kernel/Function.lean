@@ -73,6 +73,6 @@ def run {α : Type} [Storage α]
   if device != gpu then
     throw (IO.userError s!"custom operation: device {device.cliName} is unsupported")
   let compiled ← IO.ofExcept compilation
-  compiled.program.run (TensorPack.singleton input) shape (device := device)
+  compiled.program.run (Arguments.empty.push input) shape (device := device)
 
 end Function

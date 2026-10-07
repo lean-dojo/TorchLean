@@ -6,8 +6,6 @@ Authors: TorchLean contributors
 module
 
 public import NN.Tensor.Internal.Representation.Fiber.Differential
-import Mathlib.Algebra.GroupWithZero.Commute
-import Mathlib.Data.Nat.Cast.Commute
 
 /-!
 # Equal-share tie rules

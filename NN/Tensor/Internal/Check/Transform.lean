@@ -138,23 +138,14 @@ structure CheckedTransform where
   /-- Proof that all lengths and physical shapes agree with the normalized pattern. -/
   valid : value.Valid
 
-/-- Select unresolved axes from one normalized physical-axis group. -/
-private def unknownAxes (lengths : PartialAxisLengths)
-    (group : List AxisId) : List AxisId :=
-  group.filter fun axis => (lengths axis).isNone
-
-/-- Named axes used by a normalized pattern, preserving pattern order. -/
-private def usedNamedAxes (normalized : NormalizedTransform) : List String :=
-  (normalized.inputAxes ++ normalized.outputAxes).filterMap fun axis =>
-    match axis with
-    | .named name => some name
-    | _ => none
-
 /-- Whether every supplied name occurs in the normalized pattern. -/
 private def supplementaryUsed (normalized : NormalizedTransform)
     (supplementary : SupplementaryLengths) : Bool :=
-  supplementary.all fun item =>
-    (usedNamedAxes normalized).contains item.1
+  let names := (normalized.inputAxes ++ normalized.outputAxes).filterMap fun axis =>
+    match axis with
+    | .named name => some name
+    | _ => none
+  supplementary.all fun item => names.contains item.1
 
 /-- Whether every axis relevant to a normalized pattern has been resolved. -/
 private def allAxesResolved (normalized : NormalizedTransform)
@@ -176,7 +167,7 @@ private def inferInputGroups (span : Syntax.Span) :
     List (List AxisId) → Shape → PartialAxisLengths → Result PartialAxisLengths
   | [], [], lengths => .ok lengths
   | group :: groups, dimension :: dimensions, lengths => do
-      match unknownAxes lengths group with
+      match group.filter (fun axis => (lengths axis).isNone) with
       | [] =>
           let some product := resolvedProduct lengths group
             | .error

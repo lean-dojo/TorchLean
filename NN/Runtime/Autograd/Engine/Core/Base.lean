@@ -58,18 +58,9 @@ The eager autograd engine is built out of a few small pieces:
 Runtime error monad for the eager autograd engine.
 
 We use plain `Except String` (instead of `IO` exceptions) so the tape constructors remain pure and
-easy to test. Front-ends that prefer exceptions can use `okOrThrow`.
+easy to test. Front-ends that prefer exceptions can use Lean's `IO.ofExcept`.
 -/
 abbrev Result (α : Type) := Except String α
-
-/--
-Convert an `Autograd.Result` into an `IO` action by throwing `IO.userError` on failure.
-
-This is mainly used by the imperative Torch/TorchLean front-ends to keep their code readable.
--/
-def okOrThrow {α : Type} : Result α → IO α
-  | .ok a => pure a
-  | .error e => throw <| IO.userError e
 
 namespace SomeTensor
 
@@ -95,7 +86,7 @@ A tape node representing a single tensor value in the recorded computation graph
 Fields:
 - `value`: the forward value (shape-erased).
 - `parents`: ids of parent nodes in the tape.
-- `backward`: a local VJP rule. Given an upstream cotangent for `value`, it returns a list of
+- `backward`: a local VJP rule. Given an upstream cotangent for `value`, it returns an array of
   `(parentId, parentCotangent)` contributions (one per parent, usually).
 
 PyTorch comparison: analogous to an autograd `Function` instance + saved tensors, but here we store

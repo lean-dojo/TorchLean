@@ -36,8 +36,9 @@ open Lean.Meta
 open Impl
 
 /--
-Elaborate arbitrary positive-arity einsum syntax to the generic verified
-lowering, reflecting concrete checks or proving symbolic shape invariants.
+Elaborate positive-arity einsum syntax to a specialized output with certificates relating it to
+the general executor. Empty concrete output uses that executor directly. Concrete checks give
+source diagnostics; symbolic certificates preserve dimension expressions in either path.
 -/
 @[term_elab TorchLean.Tensor.einsumStx]
 def elabEinsum : TermElab := fun stx expectedType? => withRef stx do

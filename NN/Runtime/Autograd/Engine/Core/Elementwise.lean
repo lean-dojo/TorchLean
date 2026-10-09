@@ -75,6 +75,12 @@ transcendental operations or an ordering on the scalar type. -/
       let db : Tensor α s := subSpec (Tensor.full s (0 : α)) dLdyA
       (da, db))
 
+/-- Direct elementwise negation; unlike subtraction from zero, this preserves signed zero. -/
+@[inline] def neg {α : Type} [TorchLean.Storage α] [Neg α] {s : Shape}
+    (t : Tape α) (xId : Nat) : Result (Tape α × Nat) :=
+  unary (α := α) (t := t) (σ := s) (τ := s) "neg" xId
+    (forward := negSpec) (backward := fun _ seed => negSpec seed)
+
 /-- Multiply a tensor by a scalar constant. PyTorch: `x * c` for Python scalar `c`. -/
 @[inline] def scale {α : Type} [TorchLean.Storage α] [Mul α] {s : Shape}
   (t : Tape α) (xId : Nat) (c : α) : Result (Tape α × Nat) :=

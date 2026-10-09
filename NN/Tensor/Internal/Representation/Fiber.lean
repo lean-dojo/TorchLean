@@ -16,7 +16,12 @@ public import NN.Tensor.Internal.Representation.Fiber.Tie
 /-!
 # Finite fibers and tensor aggregation
 
-This facade exposes coordinate-fiber geometry, order-independent tensor
-aggregation, and proved differential and reverse-mode identities for sum,
-product, mean, and attained-value reductions.
+A fiber groups the input coordinates that contribute to one output coordinate.
+For a row sum, it contains the entries of that row. The same grouping describes
+which inputs receive each output gradient during backward.
+
+This module exports the grouping and cardinality lemmas, together with forward
+and reverse identities for sum, product, mean, and min/max reductions. The
+order-independent results require the stated algebraic laws; ordered
+floating-point reductions use their separate semantics.
 -/

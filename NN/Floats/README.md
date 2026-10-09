@@ -142,6 +142,14 @@ promise a finite encoded result for an unrepresentable derivative.
 
 ## Intervals, quantization, and external enclosures
 
+For real inequalities, import `FloatLib.Numerics.Automation.Interval` and use `interval` directly.
+It supports positive-base real powers, `Real.logb`, and inverse hyperbolic functions, with checks
+for each operation's domain. A custom function can register its executable enclosure and
+containment theorem with `@[interval_extension]`; the checker recomputes that enclosure on each
+subdivision. These are kernel-checked bounds on real expressions, not checks of native GPU output.
+The [floating-point guide](../../home_page/blueprint/TorchLeanBlueprint/Guide/Ch3_Backend/Floats.lean)
+includes a worked bound.
+
 Use `FloatLib.Numerics.Interval (FloatLib.Floats.ExecFloat.Binary 8 23)` directly for binary32
 endpoints, with arithmetic and conversion proofs from `ExecFloat.Binary.Interval`.
 TorchLean's numerical graph certificates use these binary32 endpoints; selecting another scalar

@@ -13,6 +13,9 @@ public import NN.Runtime.Autograd.Train
 public import NN.Spec.Models.Mlp
 public import NN.Tests.Runtime.Floats.Utils
 public import NN.Tests.Runtime.TypedGraphScalingRegression
+import NN.Kernel
+import NN.API.Autograd.Function
+import NN.API.Precision
 
 /-!
 # Consolidated Float Runtime Autograd Tests
@@ -748,7 +751,102 @@ end Tests
 namespace Tests
 namespace Floats
 
-def runAllAutogradTests : IO Unit := do
+/-- A shared scalar intermediate must stay connected to the existing derivative programs. -/
+private def customPolynomial {shape : Shape} : autograd.Function shape shape :=
+  fun x => do
+    let y ← Runtime.mul x x
+    Runtime.add (← Runtime.mul y y) (← Runtime.const (Tensor.full shape 1))
+
+private def polynomial {α : Type} [Mul α] [Add α] [One α] (x : α) : α :=
+  let y := x * x
+  y * y + 1
+
+private def energy (x : Tensor Float [2]) : Float := Tensor.sum (x * x)
+
+private def weights : Tensor Float [2, 1] := [[2], [3]]
+
+private def project (x : Tensor Float [1, 2]) : Tensor Float [1, 1] := x.matmul weights
+
+private def customObjective {shape : Shape} : autograd.Function shape [] := fun x => do
+  TorchLean.Runtime.sum (← customPolynomial x)
+
+private abbrev Wide := FloatLib.Floats.ExecFloat.Binary 15 112
+
+/-- Frontend wiring is checked separately from the primitive derivative theorems: shared uses,
+reverse/forward mode, nested differentiation and wide scalar storage all use the same program. -/
+private def checkCustomAutograd : IO Unit := do
+  let input : Tensor Float [2] := Tensor.ofFn fun i => Float.ofNat (i.val + 1)
+  let gradient ← autograd.grad customObjective input
+  let forward ← autograd.jacfwd customPolynomial input
+  let reverse ← autograd.jacrev customPolynomial input
+  let hessian ← autograd.hessian customObjective input
+  let recorded ← polynomial.run input (grad := true)
+  let recordedGradient ← recorded.backward
+  unless recorded.value[0] == (2 : Float) && recorded.value[1] == (17 : Float) &&
+      recordedGradient[0] == gradient[0] && recordedGradient[1] == gradient[1] do
+    throw <| IO.userError "custom calculation: ordinary function disagrees with recorded operations"
+  let consumed ← try
+      discard <| recorded.backward
+      pure false
+    catch _ => pure true
+  unless consumed do throw <| IO.userError "custom calculation: consumed recording was reused"
+  let closed ← polynomial.run input (grad := true)
+  closed.close
+  closed.close
+  let released ← try
+      discard <| closed.backward
+      pure false
+    catch _ => pure true
+  unless released do throw <| IO.userError "custom calculation: closed recording was reused"
+  let loss ← energy.run input (grad := true)
+  let lossGradient ← loss.backward
+  unless loss.value.item == (5 : Float) &&
+      lossGradient[0] == 2 && lossGradient[1] == 4 do
+    throw <| IO.userError "custom calculation: whole-tensor reduction lost its derivative"
+  let projected ← project.run ([[1, 2]] : Tensor Float [1, 2]) (grad := true)
+  let projectedGradient ← projected.backward (Tensor.full [1, 1] 2)
+  unless projected.value[0][0] == 8 &&
+      projectedGradient[0][0] == 4 && projectedGradient[0][1] == 6 do
+    throw <| IO.userError "custom calculation: matrix product or explicit cotangent disagrees"
+  unless gradient[0] == 4 && gradient[1] == 32 &&
+      forward[0][0] == 4 && forward[1][1] == 32 &&
+      forward[0][1] == 0 && forward[1][0] == 0 &&
+      forward[0][0] == reverse[0][0] && forward[1][1] == reverse[1][1] &&
+      reverse[0][1] == 0 && reverse[1][0] == 0 &&
+      hessian[0][0] == 12 && hessian[1][1] == 48 &&
+      hessian[0][1] == 0 && hessian[1][0] == 0 do
+    throw <| IO.userError "custom calculation: recorded derivative programs disagree"
+  let wide : Tensor Wide [1] := Tensor.full [1] 2
+  let wideGradient ← autograd.grad customObjective wide
+  unless FloatLib.Floats.ExecFloat.Binary.toRat? wideGradient[0] == some 32 do
+    throw <| IO.userError "custom calculation: binary128 gradient changed precision"
+  let small : Rat := 1 / (2 ^ 100 : Nat)
+  let precise : Tensor Wide [1] :=
+    Tensor.full [1] (Rat.cast (1 + small))
+  let preciseGradient ← autograd.grad customObjective precise
+  unless FloatLib.Floats.ExecFloat.Binary.toRat? preciseGradient[0] == some (4 + 12 * small) do
+    throw <| IO.userError "custom calculation: gradient lost digits beyond binary64"
+  -- CPU recording also retains digits that would disappear in a binary32 transfer.
+  let native : Tensor Float [1] := Tensor.full [1] (Float.ofBits 0x3ff0000000001000)
+  let nativeResult ← (fun (x : Float) => x * x).run native (grad := true)
+  let nativeGradient ← nativeResult.backward
+  unless nativeResult.device == cpu &&
+      nativeResult.value[0].toBits == (native[0] * native[0]).toBits &&
+      nativeGradient[0].toBits == (2 * native[0]).toBits do
+    throw <| IO.userError "custom calculation: binary64 recording narrowed to binary32"
+  -- Ordinary CPU recording retains the same wide digits as the typed derivative above.
+  -- Configured GPU recording is checked separately in the CUDA suite.
+  let recordedWide ← polynomial.run precise (grad := true)
+  try
+    unless recordedWide.device == cpu do
+      throw <| IO.userError "custom calculation: CPU recording selected a different device"
+    let gradient ← recordedWide.backward
+    unless FloatLib.Floats.ExecFloat.Binary.toRat? gradient[0] == some (4 + 12 * small) do
+      throw <| IO.userError "custom calculation: CPU recording narrowed its gradient"
+  finally
+    recordedWide.close
+
+@[no_expose] def runAllAutogradTests : IO Unit := do
   IO.println "=== Runtime autograd test suite (Float) ==="
   AutogradEngine.run
   AutogradLayerNorm.run
@@ -759,6 +857,7 @@ def runAllAutogradTests : IO Unit := do
   DisconnectedDenseGradient.run
   TypedGraphScalingRegression.run
   OptimizerNumerics.run
+  checkCustomAutograd
   IO.println "=== Autograd test suite completed ==="
 
 end Floats

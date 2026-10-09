@@ -264,7 +264,7 @@ def expectCudaSessionMatchesRuntime : IO Unit := do
 def checkLibTorchLocalVJPs : IO Unit := do
   -- These groups follow the backward closures in Engine.LibTorch.Ops.
   let leanComposed : Array BackendOp :=
-    #[.attention, .matmul, .linear, .mseLoss, .add, .sub, .mul, .scale, .sigmoid,
+    #[.attention, .matmul, .linear, .mseLoss, .add, .sub, .mul, .div, .neg, .scale, .sigmoid,
       .tanh, .softplus, .exp, .sin, .cos, .log, .inv, .safeLog, .logSoftmax,
       .softmax, .hardMaskedSoftmax, .reduceSum, .reduceMean, .reshape, .permute,
       .concat, .slice, .gather, .scatterAdd, .batchNorm, .fftFno]

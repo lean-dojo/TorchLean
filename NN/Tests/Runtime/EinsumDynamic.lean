@@ -155,12 +155,12 @@ private def checkLargeCuda : IO Unit := do
     let a ← session.input (Tensor.ones (α := Float) aShape) (requiresGrad := true)
     let b ← session.input (Tensor.ones (α := Float) bShape) (requiresGrad := true)
     Runtime.Autograd.LibTorch.synchronize
-    let before ← Runtime.Autograd.LibTorch.Buffer.allocatorStats
+    let before ← Runtime.Autograd.LibTorch.Buffer.memory
     let some output ← Model.F.einsum (α := Float) (m := Torch.Internal.EagerM Float)
       (sOut := outShape) "...ij,...jk->...ik" [⟨aShape, a⟩, ⟨bShape, b⟩] session
       | throw <| IO.userError "large CUDA contraction was rejected"
     Runtime.Autograd.LibTorch.synchronize
-    let after ← Runtime.Autograd.LibTorch.Buffer.allocatorStats
+    let after ← Runtime.Autograd.LibTorch.Buffer.memory
     let growth := after.allocatedBytes.toNat - before.allocatedBytes.toNat
     IO.println s!"einsum CUDA large before: allocated={before.allocatedBytes} \
       reserved={before.reservedBytes} peak_allocated={before.peakAllocatedBytes} \

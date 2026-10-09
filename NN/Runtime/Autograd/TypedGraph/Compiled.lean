@@ -12,7 +12,7 @@ public import NN.Proofs.Autograd.Tape.Algebra.SavedBackward
 /-!
 Checked TypedGraph compilation saves local node programs and an indexed primal context. Reverse
 execution uses the certified compact contributions when available and preserves the complete dense
-gradient semantics. The explicit Tape adapter retains compatibility with consumers of raw tapes.
+gradient semantics. The explicit Tape adapter connects this execution to the runtime tape engine.
 -/
 
 @[expose] public section
@@ -23,7 +23,7 @@ open Spec TorchLean
 
 variable {α : Type} [Storage α] {Γ : List Shape}
 
-/-- Adapt saved programs to the original runtime Tape representation. -/
+/-- Adapt saved programs to the runtime tape representation. -/
 def toTape {ss : List Shape} (saved : SavedGraph α Γ ss)
     (inputs : TorchLean.TensorPack α Γ) : Runtime.Autograd.Tape α :=
   match saved with
@@ -32,7 +32,7 @@ def toTape {ss : List Shape} (saved : SavedGraph α Γ ss)
       ((previous.toTape inputs).addNode
         (Runtime.Autograd.TypedGraph.lowerPreparedNode prepared value)).1
 
-/-- The compatibility adapter produces the exact original Tape, including its closures. -/
+/-- Saved programs produce the same runtime tape, including its closures. -/
 theorem ofGraph_toTape {Δ : Type} {ss : List Shape} (graph : GraphData α Δ Γ ss)
     (inputs : TorchLean.TensorPack α Γ) (data : Δ) :
     (ofGraph graph inputs data).1.toTape inputs =
@@ -89,14 +89,9 @@ namespace Compiled
 
 variable {α : Type} [Storage α] {Γ ss : List Shape}
 
-/-- Materialize the original runtime Tape when required by another engine consumer. -/
+/-- Materialize the runtime tape when required by another engine consumer. -/
 def toTape (compiled : Compiled α Γ ss) : Tape α :=
   compiled.saved.toTape compiled.inputs
-
-/-- Preserve the original checked lowering result type at an explicit compatibility boundary. -/
-def asLegacy (compiled : Compiled α Γ ss) :
-    Tape α × TorchLean.TensorPack α (Γ ++ ss) :=
-  (compiled.toTape, compiled.context.toPack)
 
 /-- Compute every gradient from a typed seed pack, retaining the dense floating-point order. -/
 def backwardDenseFrom [Add α] (compiled : Compiled α Γ ss)
@@ -111,19 +106,20 @@ def backwardDenseAllFrom [Add α] [Zero α] {shape : Shape}
 
 end Compiled
 
-/-- Compiled execution and legacy checked lowering agree on both failures and complete results. -/
-theorem compileChecked_asLegacy {α Δ : Type} [Storage α] {Γ ss : List Shape}
+/-- Saved execution and tape lowering agree on failures, the tape and every forward value. -/
+theorem compileChecked_eq_lowerToTapeChecked {α Δ : Type} [Storage α] {Γ ss : List Shape}
     (graph : Proofs.Autograd.Algebra.GraphData α Δ Γ ss)
     (inputs : TorchLean.TensorPack α Γ) (data : Δ) :
-    (compileChecked graph inputs data).map Compiled.asLegacy =
+    (compileChecked graph inputs data).map (fun compiled =>
+      (compiled.toTape, compiled.context.toPack)) =
       lowerToTapeChecked graph inputs data := by
   have same := SavedGraph.lowerChecked_toTape graph inputs data
   have mapped := congrArg (fun result =>
     result.map (fun pair => (pair.1, pair.2.toPack))) same
   simp only [lowerToArrayChecked_eq] at mapped
   cases saved : SavedGraph.lowerChecked graph inputs data <;>
-    cases legacy : lowerToTapeChecked graph inputs data <;>
-      simpa only [saved, legacy, compileChecked, Compiled.asLegacy, Compiled.toTape,
+    cases lowered : lowerToTapeChecked graph inputs data <;>
+      simpa only [saved, lowered, compileChecked, Compiled.toTape,
         Except.map, TensorContext.toPack_ofPack] using mapped
 
 /-- Successful compilation has the original complete forward context. -/

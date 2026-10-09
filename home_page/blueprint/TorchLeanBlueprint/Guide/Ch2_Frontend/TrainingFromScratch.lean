@@ -922,7 +922,7 @@ different reduction order.
 # Model And Optimizer Checkpoints
 
 Native `Float32` modules use an exact binary32 checkpoint on CPU and CUDA. The binary64 `Float`
-path retains its exact-bit JSON format on CPU. Neither representation passes
+path retains its exact-bit JSON format on both devices. Neither representation passes
 through decimal text. The expected state shapes come from the model, and every tensor must have the
 right shape and scalar count before the checkpoint is accepted:
 

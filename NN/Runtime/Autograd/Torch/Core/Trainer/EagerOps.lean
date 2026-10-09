@@ -48,6 +48,7 @@ instance {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfer α] :
   DataRef := fun β _ s => Tensor β s
   dataConst := fun x => x
   mapData := fun f x => f x
+  observe := fun x session => do return (← session.getValue x).item
   updateBuffers? := some fun refs input update session => do
     let parameters ← session.paramsByLeaf.get
     let storages ← session.parameterStorageByLeaf.get
@@ -88,6 +89,8 @@ instance {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfer α] :
   add := fun {s} a b => fun sess => Internal.EagerSession.add (α := α) sess (sh := s) a b
   sub := fun {s} a b => fun sess => Internal.EagerSession.sub (α := α) sess (sh := s) a b
   mul := fun {s} a b => fun sess => Internal.EagerSession.mul (α := α) sess (sh := s) a b
+  div := fun {s} a b => fun sess => Internal.EagerSession.div (α := α) sess (sh := s) a b
+  neg := fun {s} x => fun sess => Internal.EagerSession.neg (α := α) sess (sh := s) x
   scale := fun {s} x c => fun sess => Internal.EagerSession.scale (α := α) sess (sh := s) x c
   abs := fun {s} x => fun sess => Internal.EagerSession.abs (α := α) sess (sh := s) x
   sqrt := fun {s} x => fun sess => Internal.EagerSession.sqrt (α := α) sess (sh := s) x

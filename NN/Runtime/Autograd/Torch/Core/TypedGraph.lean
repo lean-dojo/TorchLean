@@ -126,16 +126,17 @@ def vjpCompiledChecked {α Δ : Type} [Storage α] [Add α] [Zero α]
 /-- The maintained checked API compiles to the exact saved-program implementation. -/
 @[csimp] theorem vjpChecked_eq_compiled : @vjpChecked = @vjpCompiledChecked := by
   funext α Δ storage add zero Γ τ graph inputs data seed
-  have legacy := Runtime.Autograd.TypedGraph.compileChecked_asLegacy graph.data inputs data
+  have lowered := Runtime.Autograd.TypedGraph.compileChecked_eq_lowerToTapeChecked
+    graph.data inputs data
   cases checked : Runtime.Autograd.TypedGraph.compileChecked graph.data inputs data with
   | error message =>
-      simp only [checked, Except.map] at legacy
-      simp only [vjpChecked, vjpCompiledChecked, ← legacy, checked,
+      simp only [checked, Except.map] at lowered
+      simp only [vjpChecked, vjpCompiledChecked, ← lowered, checked,
         Bind.bind, Except.bind]
   | ok compiled =>
-      simp only [checked, Except.map] at legacy
+      simp only [checked, Except.map] at lowered
       have same := Runtime.Autograd.TypedGraph.lowerToTapeChecked_eq
-        graph.data inputs data compiled.asLegacy legacy.symm
+        graph.data inputs data (compiled.toTape, compiled.context.toPack) lowered.symm
       have tape := congrArg Prod.fst same
       have backward := Runtime.Autograd.TypedGraph.compileChecked_backwardDenseFrom_eq_tape
         graph.data inputs data compiled checked (TensorPack.single graph.output seed)
@@ -147,8 +148,8 @@ def vjpCompiledChecked {α Δ : Type} [Storage α] [Add α] [Zero α]
           Runtime.Autograd.TypedGraph.Compiled.backwardDenseAllFrom]
         rw [show compiled.toTape = _ from tape]
         exact backward.symm
-      simp only [vjpChecked, vjpCompiledChecked, ← legacy, checked,
-        Runtime.Autograd.TypedGraph.Compiled.asLegacy, Bind.bind, Except.bind,
+      simp only [vjpChecked, vjpCompiledChecked, ← lowered, checked,
+        Bind.bind, Except.bind,
         vjpFromTape, backward']
       have output := congrArg
         (fun (reader : TensorLookup α (Γ ++ graph.nodeShapes)) => reader.read graph.output)

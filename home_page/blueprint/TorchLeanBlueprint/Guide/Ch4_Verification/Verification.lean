@@ -408,9 +408,10 @@ consistent node identifiers, valid input and output dimensions, an objective of 
 dimension, and an enclosing input box. Every successful `.ok` query contains the real objective.
 No intermediate enclosure or additional backward node equation is assumed.
 
-The older `runIBP_encloses`, `GraphPoint.ofRunIBP`, and
-`backwardObjectiveBox_encloses_runIBP` retain the `ibpForwardSupported` core and `NodeEquation`
-for compatibility.
+For a graph in the `ibpForwardSupported` core, `runIBP_encloses`, `GraphPoint.ofRunIBP`, and
+`backwardObjectiveBox_encloses_runIBP` use `NodeEquation` directly. These theorems need no
+`LawfulMinBoundOps` instance or normalization-epsilon assumption, since the core excludes the
+operations that require them.
 
 ```lean (name := ibpThms)
 -- Locally consistent real boxes enclose the corresponding

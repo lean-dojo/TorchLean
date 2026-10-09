@@ -8,8 +8,9 @@ title: Performance
   How long does TorchLean take to build and test on its ordinary continuous-integration runner?
 </p>
 
-The charts fetch timing records from successful `main`-branch CI runs through GitHub's API and
-cache them in your browser for 30 minutes. Opening this page does not start another workflow.
+The charts show successful `main`-branch CI runs recorded when we build the website.
+Your browser loads that saved data from the site, so GitHub's API limits won't stop the charts
+from loading. Opening this page does not start another workflow.
 Because GitHub-hosted machines vary,
 these numbers are useful for spotting changes worth investigating, not for comparing hardware or
 making fine-grained runtime claims.
@@ -18,6 +19,7 @@ making fine-grained runtime claims.
   The commit-by-commit view is inspired by
   <a href="https://radar.lean-lang.org/about">Lean Radar</a>. This page reports TorchLean's
   existing GitHub Actions timings and labels them accordingly.
+  <a href="https://github.com/lean-dojo/TorchLean/actions/workflows/ci.yml">View the source runs.</a>
 </aside>
 
 <div class="performance-dashboard" id="performance-dashboard">
@@ -63,9 +65,9 @@ making fine-grained runtime claims.
           <option value="native">Modules and native commands build</option>
           <option value="current">Earlier maintained modules build</option>
           <option value="maintained">Earlier combined build</option>
-          <option value="build">Legacy library build</option>
+          <option value="build">Earlier library build</option>
           <option value="tests">Test suite</option>
-          <option value="broad">Legacy broad CI import</option>
+          <option value="broad">Earlier broad CI import</option>
           <option value="lint">Repository lint</option>
           <option value="total">Complete CI job</option>
         </select>
@@ -105,14 +107,7 @@ making fine-grained runtime claims.
   "use strict";
 
   const repository = "lean-dojo/TorchLean";
-  const workflow = "ci.yml";
-  const maximumRuns = 8;
-  const cacheKey = "torchlean-ci-performance-v4";
-  const cacheLifetimeMs = 30 * 60 * 1000;
-  const apiRoot = `https://api.github.com/repos/${repository}`;
-  // A cold page load makes one run-list request and at most eight job requests.
-  const runsUrl = `${apiRoot}/actions/workflows/${workflow}/runs` +
-    `?branch=main&event=push&status=success&per_page=${maximumRuns}`;
+  const timingsUrl = {{ '/assets/ci-timings.json' | relative_url | jsonify }};
 
   const metrics = {
     native: {
@@ -128,13 +123,13 @@ making fine-grained runtime claims.
       label: "Earlier combined build",
       step: "Build maintained library, CI, example, and test modules",
     },
-    build: { label: "Legacy library build", step: "Build curated library surface" },
+    build: { label: "Earlier library build", step: "Build curated library surface" },
     tests: {
       label: "Test suite",
       step: "Run curated CPU test suite",
       previousStep: "Run curated test suite",
     },
-    broad: { label: "Legacy broad CI import", step: "Build broad CI import surface" },
+    broad: { label: "Earlier broad CI import", step: "Build broad CI import surface" },
     lint: { label: "Repository lint", step: "Repo lint (TorchLean policies)" },
     total: { label: "Complete CI job", step: null },
   };
@@ -157,7 +152,7 @@ making fine-grained runtime claims.
     legacy: {
       buildMetric: "build",
       description: "Earlier workflow: the library build and broad CI import were separate steps. " +
-        "Select Legacy broad CI import to view that step. Trends stay within this workflow.",
+        "Select Earlier broad CI import to view that step. Trends stay within this workflow.",
     },
   };
   const recordScope = record => record.scope ||
@@ -191,8 +186,7 @@ making fine-grained runtime claims.
     step.name === metric.step || step.name === metric.previousStep;
 
   const stepSeconds = (job, metric) => {
-    const step = (job.steps || []).find(candidate =>
-      candidate.conclusion === "success" && matchesStep(candidate, metric));
+    const step = (job.steps || []).find(candidate => matchesStep(candidate, metric));
     return step ? durationSeconds(step.started_at, step.completed_at) : null;
   };
 
@@ -230,43 +224,18 @@ making fine-grained runtime claims.
     notice.hidden = message === "";
   };
 
-  const readCache = () => {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(cacheKey));
-      if (!parsed || !Array.isArray(parsed.records) || parsed.records.length === 0 ||
-          !Number.isFinite(parsed.savedAt)) return null;
-      return parsed;
-    } catch (_error) {
-      return null;
-    }
-  };
-
-  const writeCache = records => {
-    try {
-      // Keep API history in the visitor's browser; the website needs no data branch or service.
-      localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), records }));
-    } catch (_error) {
-      // Private browsing or a storage policy can disable localStorage; the page still works.
-    }
-  };
-
-  const requestJson = async url => {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`GitHub API returned HTTP ${response.status}`);
-    return response.json();
-  };
-
   const loadRecords = async () => {
-    const runData = await requestJson(runsUrl);
-    const records = await Promise.all((runData.workflow_runs || []).map(async run => {
-      const jobData = await requestJson(
-        `${apiRoot}/actions/runs/${run.id}/jobs?filter=latest&per_page=100`
-      );
-      const job = (jobData.jobs || []).find(candidate =>
-        candidate.name === "CPU build and checks" || candidate.name === "build_and_test"
-      );
-      if (!job || job.conclusion !== "success") return null;
-      const completedSteps = (job.steps || []).filter(step => step.conclusion === "success");
+    const response = await fetch(timingsUrl);
+    if (!response.ok) throw new Error(`Timing snapshot returned HTTP ${response.status}`);
+    const snapshot = await response.json();
+    if (snapshot.repository !== repository || !Array.isArray(snapshot.runs) ||
+        !Number.isFinite(Date.parse(snapshot.generatedAt))) {
+      throw new Error("Invalid CI timing snapshot");
+    }
+    const records = snapshot.runs.map(run => {
+      const job = run.job;
+      if (!job) return null;
+      const completedSteps = job.steps || [];
       const scope = completedSteps.some(step => matchesStep(step, metrics.native)) ? "native" :
         completedSteps.some(step => step.name === metrics.current.step) ? "current" :
         completedSteps.some(step => step.name === metrics.maintained.step) ? "maintained" :
@@ -286,10 +255,12 @@ making fine-grained runtime claims.
         durations,
         scope,
       };
-    }));
-    return records
-      .filter(record => record !== null)
-      .sort((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt));
+    });
+    return {
+      generatedAt: snapshot.generatedAt,
+      records: records.filter(record => record !== null)
+        .sort((left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt)),
+    };
   };
 
   const trend = (current, previous) => {
@@ -481,7 +452,7 @@ making fine-grained runtime claims.
 
   const render = records => {
     if (!records.length) throw new Error("No successful main-branch CI runs were found");
-    // Reject malformed cached records before retaining them as the offline fallback.
+    // Check the snapshot before using its records in the chart and run links.
     for (const record of records) {
       if (!record || !record.durations || !scopes[recordScope(record)] ||
           typeof record.sha !== "string" || typeof record.url !== "string" ||
@@ -505,38 +476,16 @@ making fine-grained runtime claims.
   });
   metricSelect.addEventListener("change", () => renderChart(selectedRecords(), metricSelect.value));
 
-  let cache = readCache();
-  if (cache) {
-    try {
-      render(cache.records);
-      setNotice("");
-    } catch (_error) {
-      cache = null;
-      try {
-        localStorage.removeItem(cacheKey);
-      } catch (_storageError) {
-        // A storage policy must not prevent fetching fresh timing data.
-      }
-    }
-  }
-
-  if (cache && Date.now() - cache.savedAt < cacheLifetimeMs) return;
-
   loadRecords()
-    .then(records => {
+    .then(({ records, generatedAt }) => {
       render(records);
-      writeCache(records);
-      setNotice("");
+      setNotice(`Timing data updated ${formatDate(generatedAt)}.`);
     })
-    .catch(error => {
-      if (cache && cache.records.length) {
-        setNotice("GitHub could not be reached; showing the last data saved in this browser.", "warning");
-      } else {
-        setNotice(`Could not load CI timing history: ${error.message}.`, "error");
-        cards.innerHTML = '<div class="performance-loading">Timing data is temporarily unavailable.</div>';
-        chart.innerHTML = '<div class="performance-loading">Chart data is temporarily unavailable.</div>';
-        runsBody.innerHTML = '<tr><td colspan="6">Run history is temporarily unavailable.</td></tr>';
-      }
+    .catch(() => {
+      setNotice("The saved timing data could not be loaded. Use the source-runs link above to view CI on GitHub.", "error");
+      cards.innerHTML = '<div class="performance-loading">Timing data is unavailable.</div>';
+      chart.innerHTML = '<div class="performance-loading">Chart data is unavailable.</div>';
+      runsBody.innerHTML = '<tr><td colspan="6">Run history is unavailable.</td></tr>';
     });
 })();
 </script>

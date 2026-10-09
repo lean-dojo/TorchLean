@@ -108,6 +108,8 @@ inductive BackendOp where
   | add
   | sub
   | mul
+  | div
+  | neg
   | scale
   | abs
   | sqrt
@@ -162,6 +164,8 @@ def name : BackendOp → String
   | .add => "add"
   | .sub => "sub"
   | .mul => "mul"
+  | .div => "div"
+  | .neg => "neg"
   | .scale => "scale"
   | .abs => "abs"
   | .sqrt => "sqrt"

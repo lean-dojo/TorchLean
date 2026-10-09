@@ -3,10 +3,10 @@ Copyright (c) 2026 TorchLean
 Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 
-LibTorch FFI: additional ATen operations over `LibTorch.Buffer` (float32).
+LibTorch FFI: additional ATen operations over dtype-carrying `LibTorch.Buffer` values.
 
 Notes:
-- `LibTorch.Buffer` is an opaque contiguous float32 buffer in CUDA device memory.
+- `LibTorch.Buffer` is an opaque contiguous, dtype-carrying buffer in CUDA device memory.
 - These operations keep their shape APIs explicit: dimensions are passed as `UInt32`.
 - Build with `scripts/lake.sh -Kcuda=true build` and a LibTorch SDK; the default build links failing
   placeholders for these symbols.
@@ -21,7 +21,7 @@ public import NN.Runtime.Autograd.Engine.LibTorch.Trusted
 /-!
 # CUDA Buffer Kernels FFI
 
-Foreign-function declarations for ATen operations on TorchLean's float32
+Foreign-function declarations for ATen operations on TorchLean's dtype-carrying
 `LibTorch.Buffer`: reductions, indexing, matmul/BMM, normalization, Fourier transforms, scans,
 and broadcast/view helpers. Lean composes attention from these primitives in `Ops.Attention`.
 The declarations here are the Lean side of the LibTorch CUDA trust boundary documented in

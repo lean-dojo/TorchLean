@@ -661,13 +661,14 @@ open Runtime.Autograd.LibTorch in
 #check @Buffer.ofFloatArrayIO
 ```
 ```leanOutput ffiToken
-Buffer.ofFloatArray : FloatArray → Buffer
+@Buffer.ofFloatArray : FloatArray → optParam Dtype Dtype.float32 → Buffer
 ```
 ```leanOutput ffiToken
-Buffer.ofFloatArrayIO : FloatArray → IO Buffer
+@Buffer.ofFloatArrayIO : FloatArray → optParam Dtype Dtype.float32 → IO Buffer
 ```
 
-The first signature does not express allocation effects or release-sensitive identity. For an
+The dtype argument selects binary32 or binary64 storage. The first signature does not express
+allocation effects or release-sensitive identity. For an
 ordinary pure function, common subexpression elimination can reuse the result of identical calls.
 However, `ofFloatArray` is marked `@[never_extract]`: in the pinned Lean compiler this suppresses
 both closed-term extraction and common subexpression elimination for the primitive. The current

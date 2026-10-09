@@ -84,6 +84,9 @@ else
 fi
 (cd home_page && "${BUNDLE_CMD[@]}" config set path vendor/bundle && "${BUNDLE_CMD[@]}" install)
 
+echo "==> Refreshing CI timing history"
+python3 scripts/docs/ci_timings.py
+
 echo "==> Building Jekyll site"
 (cd home_page && rm -rf _site && "${BUNDLE_CMD[@]}" exec jekyll build --config _config.yml,_config_dev.yml)
 mkdir -p home_page/_site/blueprint

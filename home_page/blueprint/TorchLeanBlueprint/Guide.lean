@@ -256,7 +256,10 @@ same real formula can return different values.
 
 In TorchLean, the scalar type selects a format from FloatLib. We will use binary32 for a first
 example, then change the precision through the same interface. Custom exponent and fraction widths
-are available on the typed CPU path; CUDA providers support native binary32 and binary64.
+work on the typed CPU path and in supported custom GPU forward computations. The native GPU tape
+retains binary32 or binary64. Configured binary arithmetic can record supported operations on
+the same GPU tape, keeping complete words for saved values and gradients. Native optimizers
+and the full LibTorch operator catalogue are not available for those configured formats.
 The useful question is what a precision change preserves in the actual calculation.
 
 An error bound adds another step. We need to relate the rounded operations to their real-valued

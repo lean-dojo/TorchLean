@@ -3,14 +3,14 @@ Copyright (c) 2026 TorchLean
 Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 
-CUDA-native autograd tape (float32 buffers).
+CUDA-native autograd tape (dtype-carrying buffers).
 
 This is the GPU/runtime analogue of `NN.Runtime.Autograd.Engine.Core`, but specialized to
 `Runtime.Autograd.LibTorch.Buffer` values plus runtime `Spec.Shape` metadata.
 
 Notes:
 - The tape is pure: we use `Except String` for errors (no `IO` exceptions).
-- Buffers are contiguous float32 arrays. Shape-erased inputs are checked against
+- Buffers retain their scalar dtype. Shape-erased inputs are checked against
   `Spec.Shape.size s` before shape-derived indexing or reverse-mode propagation.
 - Backprop supports both a dense result for diagnostics and a sparse, explicitly owned result for
   training paths that only retain parameter gradients.
@@ -26,7 +26,7 @@ public import NN.Spec.Core.Shape
 /-!
 # CUDA Autograd Tape
 
-Shape-erased CUDA tape machinery for float32 `LibTorch.Buffer` values. This is the
+Shape-erased CUDA tape machinery for dtype-carrying `LibTorch.Buffer` values. This is the
 GPU/runtime analogue
 of the CPU autograd tape: it records node ids, runtime shapes, parent links, and backward callbacks,
 then performs reverse-mode accumulation over buffers.
@@ -52,7 +52,7 @@ metadata with an opaque `LibTorch.Buffer` handle.
 structure AnyBuffer where
   /-- Runtime shape metadata for the buffer. -/
   s : Shape
-  /-- Device buffer (float32). Length is expected to be `Spec.Shape.size s`. -/
+  /-- Device buffer. Length is expected to be `Spec.Shape.size s`; dtype is retained natively. -/
   buf : Buffer
 
 namespace AnyBuffer
@@ -72,9 +72,15 @@ def numelU32 (s : Shape) : Result UInt32 := do
   natToU32Checked (Spec.Shape.size s)
 
 /-- Allocate a zero-filled buffer for a given shape. -/
-def zeros (s : Shape) : Result AnyBuffer := do
+def zeros (s : Shape) (dtype : Dtype := .float32) : Result AnyBuffer := do
   let n ← numelU32 s
-  pure { s := s, buf := Buffer.zeros n }
+  pure { s := s, buf := Buffer.zeros n dtype }
+
+/-- Reject an implicit promotion at a value or cotangent boundary. -/
+def checkDtype (value reference : AnyBuffer) : Result Unit := do
+  unless Buffer.dtype value.buf == Buffer.dtype reference.buf &&
+      Buffer.format? value.buf == Buffer.format? reference.buf do
+    throw "autograd: native buffer dtype mismatch"
 
 /--
 Check that runtime shape metadata agrees with the native CUDA buffer length.
@@ -99,23 +105,13 @@ Accumulate two `AnyBuffer` values by elementwise addition, with a dynamic shape 
 This is used by backprop to sum gradient contributions in DAGs. The addition runs only after the
 shape metadata agree and both native buffer lengths match that shape.
 -/
-def add (a b : AnyBuffer) : Result AnyBuffer := by
-  if decide (a.s = b.s) then
-    let expected := Spec.Shape.size a.s
-    match numelU32 a.s with
-    | .error _ =>
-        exact .error "autograd: tensor too large for CUDA gradient accumulation"
-    | .ok expectedU32 =>
-        let aSize := Buffer.size a.buf
-        let bSize := Buffer.size b.buf
-        if aSize = expectedU32 && bSize = expectedU32 then
-          exact .ok { s := a.s, buf := Buffer.add a.buf b.buf }
-        else
-          exact .error
-            s!"autograd: native gradient buffer size mismatch during accumulation \
-               (shape elements={expected}, left={aSize.toNat}, right={bSize.toNat})"
-  else
-    exact .error "autograd: gradient shape mismatch during accumulation"
+def add (a b : AnyBuffer) : Result AnyBuffer := do
+  unless a.s == b.s do
+    throw "autograd: gradient shape mismatch during accumulation"
+  checkDtype a b
+  let a ← validate a
+  let b ← validate b
+  pure { s := a.s, buf := Buffer.add a.buf b.buf }
 
 end AnyBuffer
 
@@ -294,6 +290,8 @@ Shapes are explicit and checked dynamically. The result requires gradients if ei
     Result (Tape × Nat) := do
   let a ← requireValue (t := t) aId σ₁
   let b ← requireValue (t := t) bId σ₂
+  unless Buffer.dtype a == Buffer.dtype b && Buffer.format? a == Buffer.format? b do
+    throw "autograd: binary operands have different dtypes"
   let y := forward a b
   let node : Node :=
     { name := some opName
@@ -338,6 +336,7 @@ def addGradAll (t : Tape) (grads : Array AnyBuffer) (id : Nat) (g : AnyBuffer) :
     else
       throw "autograd: internal error (gradient array out of bounds)"
   else if decide (g.s = node.value.s) then
+    AnyBuffer.checkDtype g node.value
     let g' : AnyBuffer := { s := node.value.s, buf := g.buf }
     let expected := Spec.Shape.size node.value.s
     let expectedU32 ← match AnyBuffer.numelU32 node.value.s with
@@ -389,6 +388,7 @@ def backwardDenseFromStep (t : Tape) (acc : Array AnyBuffer) (id : Nat) :
         | some g => pure g
         | none => throw "autograd: internal error (gradient array out of bounds)"
       if decide (dLdyAny.s = node.value.s) then
+        AnyBuffer.checkDtype dLdyAny node.value
         let dLdy : AnyBuffer := { s := node.value.s, buf := dLdyAny.buf }
         let contribs ← node.backward dLdy
         contribs.foldlM (fun acc2 (pid, pg) => addGradAll (t := t) acc2 pid pg) acc
@@ -425,6 +425,7 @@ def backwardDenseFrom (t : Tape) (grads0 : Array AnyBuffer) : Result (Array AnyB
         | some grad => pure grad
         | none => throw "autograd: internal error (gradient array out of bounds)"
       if decide (grad.s = node.value.s) then
+        AnyBuffer.checkDtype grad node.value
         let _ ← AnyBuffer.validate { s := node.value.s, buf := grad.buf }
       else
         throw "autograd: initial dense gradient has wrong shape for node"
@@ -456,6 +457,7 @@ def backwardDenseReachableStep
         | some g => pure g
         | none => throw "autograd: internal error (gradient array out of bounds)"
       if decide (dLdyAny.s = node.value.s) then
+        AnyBuffer.checkDtype dLdyAny node.value
         let dLdy : AnyBuffer := { s := node.value.s, buf := dLdyAny.buf }
         let contribs ← node.backward dLdy
         let mut reachable' := reachable
@@ -491,11 +493,13 @@ def backwardDenseAll (t : Tape) (outId : Nat) (seed : AnyBuffer) : Result (Array
     | some n => pure n
     | none => throw "autograd: invalid output id"
   if decide (seed.s = outNode.value.s) then
+    AnyBuffer.checkDtype seed outNode.value
     let _ ← AnyBuffer.validate outNode.value
     let seed' ← AnyBuffer.validate { s := outNode.value.s, buf := seed.buf }
     let mut grads : Array AnyBuffer := #[]
     for node in t.nodes do
-      let z ← AnyBuffer.zeros node.value.s
+      let _ ← AnyBuffer.validate node.value
+      let z : AnyBuffer := { s := node.value.s, buf := Buffer.zerosLike node.value.buf }
       grads := grads.push z
     if hout : outId < grads.size then
       let previousSeedSlot := grads[outId]
@@ -549,6 +553,11 @@ def addSparseGrad (t : Tape) (gradsRef : IO.Ref SparseGradMap)
   if !node.requiresGrad then
     releaseSparseBuffer g.buf
   else if _h : g.s = node.value.s then
+    match AnyBuffer.checkDtype g node.value with
+    | .ok () => pure ()
+    | .error message =>
+        releaseSparseBuffer g.buf
+        throw <| IO.userError message
     let contribution ← match AnyBuffer.validate { s := node.value.s, buf := g.buf } with
       | .ok contribution => pure contribution
       | .error msg =>
@@ -596,6 +605,11 @@ def backwardSparse (t : Tape) (outId : Nat) (seed : AnyBuffer)
         releaseSparseBuffer seed.buf
         throw <| IO.userError "autograd: invalid output id"
   if _h : seed.s = outNode.value.s then
+    match AnyBuffer.checkDtype seed outNode.value with
+    | .ok () => pure ()
+    | .error message =>
+        releaseSparseBuffer seed.buf
+        throw <| IO.userError message
     let _ ← match AnyBuffer.validate outNode.value with
       | .ok value => pure value
       | .error msg =>

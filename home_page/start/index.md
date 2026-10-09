@@ -126,8 +126,10 @@ checkpoints keep that type. Typed sessions run on CPU and reject custom backend 
 results have no attached verifier, so `Result.verify` returns an error. Seeded initialization and
 optimizer/scheduler settings still begin with
 `Float` values; supply typed initial state when those initial values need extra precision.
-The eager CUDA runtime uses LibTorch binary32 buffers; its separate
-matrix-multiplication interface also supports binary64.
+The eager CUDA tape retains binary32 for `Float32` and binary64 for `Float`, including saved
+values, gradients and optimizer state. Custom configured-binary computations can also record
+supported arithmetic on the GPU tape, keeping the complete words for values and gradients.
+This does not extend native optimizers or the full LibTorch operator catalogue to those formats.
 
 For an explicit training loop, take the parameter gradients returned by
 `nn.TypedGraphModel.vjp` and pass them to `nn.sgdStep model learningRate state gradient`.

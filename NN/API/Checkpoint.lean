@@ -28,7 +28,7 @@ trainers and data loaders.
 Both checkpoint formats preserve the model's shape-indexed state layout:
 
 - Native `Float32` modules use exact little-endian binary32 payloads on CPU and CUDA.
-- Binary64 `Float` modules use exact binary64 JSON on CPU and binary32 payloads on CUDA.
+- Binary64 `Float` modules use exact binary64 JSON on CPU and CUDA.
 - Streamed checkpoints write one tensor at a time instead of materializing a second host copy of a
   large device-resident model.
 
@@ -61,16 +61,12 @@ class Checkpointable (α : Type) [TorchLean.Storage α] where
   read : {shapes : List Shape} →
     Bool → System.FilePath → Runtime.Autograd.Torch.ParamList α shapes → IO Unit
 
-/-- Binary64 `Float` checkpoints keep exact binary64 values on CPU and binary32 values on CUDA. -/
+/-- Binary64 `Float` checkpoints keep exact values on CPU and CUDA. -/
 instance : Checkpointable Float where
-  write := fun {shapes} useCuda path state => do
-    if useCuda then
-      Runtime.Autograd.Model.StateIO.writeModuleStateFloat32
-        Float.toFloat32 (shapes := shapes) path state
-    else
-      let values ← Runtime.Autograd.Torch.ParamList.valuesSynced (α := Float)
-        (ss := shapes) state
-      Runtime.Autograd.Model.StateIO.writeStateBits (ss := shapes) path values
+  write := fun {shapes} _ path state => do
+    let values ← Runtime.Autograd.Torch.ParamList.valuesSynced (α := Float)
+      (ss := shapes) state
+    Runtime.Autograd.Model.StateIO.writeStateBits (ss := shapes) path values
   read := fun {shapes} useCuda path state => do
     if ← Runtime.Autograd.Model.StateIO.isModuleStateFloat32 path then
       Runtime.Autograd.Model.StateIO.readModuleStateFloat32Into
@@ -98,8 +94,8 @@ Save the current values of a TorchLean runtime module.
 
 The module's element type determines its persistence implementation. Native
 `Float32` modules preserve exact binary32 payloads on CPU and CUDA. Binary64
-`Float` modules preserve binary64 values on CPU and the runtime's binary32
-values on CUDA.
+`Float` modules preserve binary64 values on both devices. Binary32 files can also be loaded into
+binary64 modules, but cannot recover digits absent from the file.
 -/
 def save {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
     [Context α] [Checkpointable α]
@@ -149,7 +145,7 @@ def save
       throw <| IO.userError
         "Checkpoint: selected trainer does not expose backend-owned optimizer state"
 
-/-- Restore optimizer state and its random counter. Legacy files lacking the counter load with
+/-- Restore optimizer state and its random counter. Files lacking the counter load with
 a warning: their moments are recoverable, but they cannot reproduce a stochastic continuation. -/
 def load
     {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β] [Context α]

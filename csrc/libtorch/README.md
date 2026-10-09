@@ -13,6 +13,7 @@ The backend is built as one shared library:
 | `torchlean.cpp` | Runtime, ATen operation adapters, and generated-operation compilation/launch. |
 | `operations.h` | Shared list generating common operation exports for both build configurations. |
 | `torchlean_libtorch.h` | Buffer representation, Lean object and size helpers. |
+| `binary.h` | Bundled NVRTC header for configured binary arithmetic. |
 
 `unavailable.c` is linked instead when TorchLean is built without LibTorch. It exports the same
 symbols, reports `RuntimeStatus.notLinked`, and fails every buffer operation with a message that
@@ -77,8 +78,21 @@ with immutable inputs and a fresh output. Before returning, the bridge checks th
 record; a failed read becomes an IO error rather than exposing partially computed output.
 Compilation errors include NVRTC's diagnostic log. Empty outputs still validate compilation.
 
-Resident buffers use the existing binary32 ABI. The host-array interface also supports binary64,
-uploading and downloading through ATen. The [ordinary-Lean frontend](../../NN/Kernel/Function.lean)
+Resident buffers retain binary32 or binary64 throughout forward, local VJPs, gradient accumulation
+and optimizer updates. Allocation and transfer select the dtype explicitly; operation outputs
+inherit it. Checkpoints retain binary64 parameters and moments instead of narrowing them.
+Custom tensor computations use complete-word byte
+transfers through ATen, retaining those words for saved values and gradients on the same tape.
+Native binary32/binary64 retain hardware arithmetic; configured binary
+formats share the device implementation in [`binary.h`](binary.h). It selects compatible native
+IEEE operations from the complete format and GPU architecture, retaining integer-limb arithmetic
+for custom formats and half/bfloat16 division. NaN handling retains the configured payload rules.
+The bridge supplies it to NVRTC in memory; no source files are needed at execution time.
+The [Lean emitter](../../NN/Kernel/Cuda/Binary.lean) selects the format and emits exact literals.
+This preserves wide encodings, signed zeros
+and NaN metadata without narrowing wide values through native floats. Device arithmetic is tested
+against FloatLib, not proved by Lean, and does not add new dtypes to the model runner.
+The [ordinary-Lean frontend](../../NN/Kernel/Function.lean)
 recognizes a supported scalar subset; the [graph runner](../../NN/Kernel/Graph.lean) combines
 custom bodies with supported canonical IR operations. See the
 [custom tensor example](../../home_page/examples/custom-computations/index.md) for the public API
@@ -117,8 +131,10 @@ numerical primitives. Model composition and saved-buffer ownership stay with Tor
 The build selects the implementation behind those buffer symbols. The default build links
 `unavailable.c` and needs no LibTorch SDK. A `cuda=true` build links
 `libtorchlean_libtorch.so`, whose ATen calls use the selected SDK's CUDA implementation.
-The eager CUDA tape stores Float32 buffers; the separate DGEMM bridge handles Float64 matrix
-multiplication. Selecting CUDA does not move every scalar format onto the GPU.
+The eager CUDA tape retains binary32 for `Float32` and binary64 for `Float` through forward,
+backward, and optimizer updates. Ordinary model sessions use the CPU tape for other scalar
+formats without narrowing. Custom configured-binary arithmetic can record on the GPU tape;
+it does not add configured dtypes to native model operators or optimizer checkpoints.
 
 Current memory policy:
 
@@ -190,10 +206,9 @@ It checks exact finite results and signed zeros, reports NaN encoding difference
 staged Adam and no-autograd regressions. A different SDK needs its own audit and regression
 results.
 
-This is a focused runtime suite, not exhaustive operator coverage. The separate convolution,
-pooling, normalization, indexing, and positional-encoding CUDA fixtures have been removed.
-The library still supports those operations, but this suite no longer checks each one's GPU
-values and gradients independently.
+The suite covers the cases listed above. Convolution, pooling, normalization, indexing, and
+positional encoding use LibTorch implementations; their GPU values and gradients are not
+independently compared with the Lean reference in this suite.
 
 ## Review Notes
 

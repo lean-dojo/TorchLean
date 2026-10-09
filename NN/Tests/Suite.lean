@@ -8,8 +8,7 @@ module
 
 public import NN.Tests.Backend.Profile
 public import NN.Tests.IR.ShapeContracts
-public import NN.Tests.MLTheory.CROWNSoundnessGuardrails
-public import NN.Tests.MLTheory.CROWNTransferFailures
+public import NN.Tests.Verification.Crown
 public import NN.Tests.Verification.CameraCertificates
 public import NN.Tests.Verification.CertificateParsing
 public import NN.Tests.Verification.FiniteArtifact
@@ -65,8 +64,7 @@ def run : IO Unit := do
   | none =>
     IO.println "== TorchLean: curated tests =="
     NN.Tests.Backend.Profile.run
-    NN.Tests.MLTheory.CROWNSoundnessGuardrails.run
-    NN.Tests.MLTheory.CROWNTransferFailures.run
+    NN.Tests.Verification.Crown.run
     NN.Tests.Verification.CameraCertificates.run
     NN.Tests.Verification.CertificateParsing.run
     NN.Tests.Verification.FiniteArtifact.run

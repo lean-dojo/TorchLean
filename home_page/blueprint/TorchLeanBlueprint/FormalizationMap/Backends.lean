@@ -72,14 +72,16 @@ corresponding check for groups derived from its stored graph plan.
 :::
 
 :::definition "cuda_native_boundary" (parent := "backend_selection") (lean := "Runtime.Autograd.LibTorch.Buffer")
-`LibTorch.Buffer` is an opaque handle to a contiguous float32 buffer. A CUDA build stores
+`LibTorch.Buffer` is an opaque handle to a contiguous buffer retaining its binary32 or binary64
+dtype. A CUDA build stores
 an ATen tensor
 behind the handle. The default build reports `.notLinked` and rejects buffer operations. Lean code
 cannot inspect the native representation directly. TorchLean owns the differentiation tape and
 calls ATen with LibTorch autograd recording disabled.
 
 A typed shape supplies a logical element count; runtime validation compares it with the handle's
-reported length. This checks an observable interface condition without exposing the storage as a
+reported length. Gradient seeds and accumulated contributions must also retain the node's dtype.
+This checks observable interface conditions without exposing the storage as a
 Lean array or deriving its contents from the type.
 :::
 

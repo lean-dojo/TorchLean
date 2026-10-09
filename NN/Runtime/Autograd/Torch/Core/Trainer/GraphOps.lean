@@ -39,6 +39,7 @@ instance {α Δ : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape} :
   DataRef := fun β _ s => Δ → Tensor β s
   dataConst := fun x _ => x
   mapData := fun f x d => f (x d)
+  observe := fun _ => throw "autograd: input-dependent scalar control requires an eager tape"
   updateBuffers? := some fun refs input update => do
     let readState (getValue : ∀ {s : Shape}, Nat → IO (Tensor α s)) :=
       let rec read : {ss : List Shape} →
@@ -62,6 +63,8 @@ instance {α Δ : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape} :
   add := fun {s} a b => Runtime.Autograd.TypedGraph.GraphM.add (α := α) (Γ := Γ) (s := s) a b
   sub := fun {s} a b => Runtime.Autograd.TypedGraph.GraphM.sub (α := α) (Γ := Γ) (s := s) a b
   mul := fun {s} a b => Runtime.Autograd.TypedGraph.GraphM.mul (α := α) (Γ := Γ) (s := s) a b
+  div := fun {s} a b => Runtime.Autograd.TypedGraph.GraphM.div (α := α) (Γ := Γ) (s := s) a b
+  neg := fun {s} x => Runtime.Autograd.TypedGraph.GraphM.neg (α := α) (Γ := Γ) (s := s) x
   scale := fun {s} x c => Runtime.Autograd.TypedGraph.GraphM.scale (α := α) (Γ := Γ) (s := s) x c
   abs := fun {s} x => Runtime.Autograd.TypedGraph.GraphM.abs (α := α) (Γ := Γ) (s := s) x
   sqrt := fun {s} x => Runtime.Autograd.TypedGraph.GraphM.sqrt (α := α) (Γ := Γ) (s := s) x

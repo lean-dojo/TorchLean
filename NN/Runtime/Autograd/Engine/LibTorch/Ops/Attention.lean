@@ -24,19 +24,23 @@ open TorchLean TorchLean.Tensor
 
 namespace Buffer
 
-private def attentionDimensions (batch n d : UInt32) (scale : Float) :
+private def attentionDimensions (batch n d : UInt32) (scale : Float) (dtype : Dtype) :
     Except String (UInt32 × UInt32 × UInt32) := do
-  if !scale.toFloat32.isFinite then
-    throw "attention: scale must be finite and within the float32 range"
+  let effectiveScale := if dtype == .float32 then scale.toFloat32.toFloat else scale
+  if !effectiveScale.isFinite then
+    throw "attention: scale must remain finite in the buffer dtype"
   let rows ← AnyBuffer.natToU32Checked (batch.toNat * n.toNat)
   let values ← AnyBuffer.natToU32Checked (rows.toNat * d.toNat)
   let scores ← AnyBuffer.natToU32Checked (rows.toNat * n.toNat)
   pure (rows, values, scores)
 
-private def requireAttentionSize (label : String) (buffer : Buffer) (expected : UInt32) :
+private def requireAttentionSize (label : String) (buffer : Buffer) (expected : UInt32)
+    (dtype : Dtype) :
     Except String Unit := do
   if buffer.size != expected then
     throw s!"attention: {label} buffer size mismatch (expected {expected}, got {buffer.size})"
+  unless buffer.dtype == dtype do
+    throw s!"attention: {label} buffer dtype mismatch"
 
 /--
 Compose scaled dot-product attention from numerical buffer operations.
@@ -47,16 +51,16 @@ probabilities alive until backward. Blocked probabilities and fully blocked rows
 -/
 @[no_expose] def attentionForward (Q K V : Buffer) (mask : Option Buffer)
     (batch n d : UInt32) (scale : Float) : Except String (Buffer × Buffer) := do
-  let (rows, values, scores) ← attentionDimensions batch n d scale
+  let (rows, values, scores) ← attentionDimensions batch n d scale (Buffer.dtype Q)
   for (label, buffer) in #[("Q", Q), ("K", K), ("V", V)] do
-    requireAttentionSize label buffer values
+    requireAttentionSize label buffer values (Buffer.dtype Q)
   if let some allowed := mask then
-    requireAttentionSize "mask" allowed scores
+    requireAttentionSize "mask" allowed scores (Buffer.dtype Q)
   if values == 0 then
-    return (zeros values, zeros scores)
+    return (zeros values (Buffer.dtype Q), zeros scores (Buffer.dtype Q))
   -- Shrinking each operand avoids overflow in an otherwise finite scaled dot product.
   -- For growing scales, scale the product instead: enlarging K can overflow even when Q is zero.
-  -- As in math SDPA, split the Float64 scale before the primitives round its factors to float32.
+  -- As in math SDPA, split the host scale before rounding its factors in the buffer dtype.
   let logits := if scale.abs < 1.0 then
       let factor := scale.abs.sqrt
       let scaledQ := Buffer.scale Q (if scale < 0.0 then -factor else factor)
@@ -91,12 +95,13 @@ All arguments are borrowed. Fully blocked rows contribute zero even for nonfinit
 -/
 @[no_expose] def attentionBackward (Q K V probabilities dOut : Buffer)
     (batch n d : UInt32) (scale : Float) : Except String (Buffer × Buffer × Buffer) := do
-  let (rows, values, scores) ← attentionDimensions batch n d scale
+  let (rows, values, scores) ← attentionDimensions batch n d scale (Buffer.dtype Q)
   for (label, buffer) in #[("Q", Q), ("K", K), ("V", V), ("dOut", dOut)] do
-    requireAttentionSize label buffer values
-  requireAttentionSize "probabilities" probabilities scores
+    requireAttentionSize label buffer values (Buffer.dtype Q)
+  requireAttentionSize "probabilities" probabilities scores (Buffer.dtype Q)
   if values == 0 then
-    return (zeros values, zeros values, zeros values)
+    return (zeros values (Buffer.dtype Q), zeros values (Buffer.dtype Q),
+      zeros values (Buffer.dtype Q))
   let active := reduceSumByRow probabilities rows n
   let activeB := releaseThen active <| broadcastVecToCols active rows d
   let grad := Buffer.mask dOut activeB
@@ -189,7 +194,8 @@ def attention
     match mask with
     | none => none
     | some m =>
-        let mF := Buffer.ofFloatArray (Convert.flattenBoolMask (s := .dim n (.dim n .scalar)) m)
+        let mF := Buffer.ofFloatArray
+          (Convert.flattenBoolMask (s := .dim n (.dim n .scalar)) m) (Buffer.dtype Qh)
         let inDims : Array Nat := #[n, n]
         let outDims : Array Nat := #[batchHeads, n, n]
         let axisMap : Array Nat := #[0, 1, 2]

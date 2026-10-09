@@ -75,7 +75,7 @@ verification programs, and graph-lowering tools.
 -/
 
 export Runtime.Autograd.Torch
-  (const add sub mul scale abs sqrt clamp max min
+  (const add sub mul div neg scale abs sqrt clamp max min
    broadcastTo reshape reduceSum reduceMean select indexSelect scatterAdd
    matmul
    relu silu gelu sigmoid tanh softplus exp sin cos log inv safeLog

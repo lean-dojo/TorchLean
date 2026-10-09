@@ -51,12 +51,19 @@ class Ops (m : Type → Type) (α : Type) [Storage α] [Context α] where
     (TensorPack α ss → Tensor α s → IO (TensorPack α ss)) → m Unit) := none
   /-- Record a fixed tensor value. -/
   const : {s : Shape} → (t : Tensor α s) → m (Ref s)
+  /-- Inspect a scalar for eager control flow. The comparison is not differentiated; the tape
+  records only the selected branch. Static graph builders reject this dynamic observation. -/
+  observe : Ref Shape.scalar → m α
   /-- Add tensors elementwise. -/
   add : {s : Shape} → (a b : Ref s) → m (Ref s)
   /-- Subtract tensors elementwise. -/
   sub : {s : Shape} → (a b : Ref s) → m (Ref s)
   /-- Multiply tensors elementwise. -/
   mul : {s : Shape} → (a b : Ref s) → m (Ref s)
+  /-- Divide tensors elementwise, recording the quotient-rule VJP at nonzero denominators. -/
+  div : {s : Shape} → (a b : Ref s) → m (Ref s)
+  /-- Negate each element directly, preserving the scalar's signed-zero convention. -/
+  neg : {s : Shape} → (x : Ref s) → m (Ref s)
   /-- Multiply every element by a scalar. -/
   scale : {s : Shape} → (x : Ref s) → (c : α) → m (Ref s)
   /-- Take the elementwise absolute value. -/

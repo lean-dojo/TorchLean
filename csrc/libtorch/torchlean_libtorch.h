@@ -17,12 +17,15 @@
 #include <vector>
 
 // Native side of `NN.Runtime.Autograd.Engine.LibTorch.Buffer`. Lean owns an external object that points
-// at a `torchlean_cuda_buffer`; `size` counts float32 elements, not bytes. Callers validate shape
+// at a `torchlean_cuda_buffer`; `size` counts elements, not bytes. Callers validate shape
 // metadata before touching storage. This is a trusted boundary: Lean proves shape contracts around
 // these calls but cannot see tensor lifetimes or CUDA behavior.
 struct torchlean_cuda_buffer {
   size_t size;
   at::Tensor tensor;
+  // Encoded arithmetic stores complete scalar words in a byte tensor.
+  lean_object* format = nullptr;
+  size_t width = 1;
 };
 
 extern "C" {

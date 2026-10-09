@@ -70,8 +70,8 @@ local reverse programs in `Compiled`. Checked and pure VJP calls use this saved 
 through proved compiler simplifications; sessions and the typed trainer use it directly.
 :::
 
-:::theorem "typed_graph_compiled_forward_agreement" (parent := "autograd_execution") (lean := "Runtime.Autograd.TypedGraph.compileChecked_asLegacy")
-Mapping a {uses "runtime_typed_graph_compiled"}[compiled execution] through `Compiled.asLegacy`
+:::theorem "typed_graph_compiled_forward_agreement" (parent := "autograd_execution") (lean := "Runtime.Autograd.TypedGraph.compileChecked_eq_lowerToTapeChecked")
+Taking the tape and forward context from a {uses "runtime_typed_graph_compiled"}[compiled execution]
 gives the complete result of `lowerToTapeChecked`, including the same failures, runtime tape, and
 full primal context.
 :::

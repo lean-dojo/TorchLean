@@ -153,6 +153,12 @@ def sin : KernelCapsule := pointwiseCapsule .sin
 def cos : KernelCapsule := pointwiseCapsule .cos
 /-- Reference pointwise reciprocal. -/
 def inv : KernelCapsule := pointwiseCapsule .inv
+
+/-- Reference quotient arithmetic with the recorded quotient-rule VJP. -/
+def div : KernelCapsule := pointwiseCapsule .div
+
+/-- Reference scalar negation with the sign-reversing VJP. -/
+def neg : KernelCapsule := pointwiseCapsule .neg
 /-- Reference smooth logarithm surrogate `log (softplus x + epsilon)`. -/
 def safeLog : KernelCapsule := pointwiseCapsule .safeLog
 /-- Reference log-softmax reduction and normalization. -/
@@ -347,6 +353,8 @@ def capsules : Array KernelCapsule :=
   , sin
   , cos
   , inv
+  , div
+  , neg
   , safeLog
   , logSoftmax
   , softmax

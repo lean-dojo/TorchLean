@@ -60,13 +60,19 @@ device names currently have implementations.
 # Building With LibTorch
 
 An ordinary CPU build links one unavailable-backend shim and needs no LibTorch SDK.
-It lets CPU users import the same Lean modules, but rejects CUDA session creation.
+It lets CPU users import the same Lean modules, but cannot open native CUDA sessions.
 A CUDA build needs a CUDA-enabled LibTorch SDK:
 
 Use `device := gpu` in Lean and `--device gpu` on the command line.
-Currently these select CUDA through LibTorch, the supported GPU target. They fail when that
-runtime is unavailable rather than silently moving the computation to CPU. Use `cuda` when
-you want to name the device explicitly; the default plain build still runs on CPU.
+Currently these select CUDA through LibTorch, the supported GPU target. For a supported native
+scalar carrier, an unavailable runtime is an error. Ordinary model sessions use the CPU tape
+for carriers without native tensor support, with a diagnostic and without losing precision.
+Custom computations also support configured binary formats, including binary128 values and
+gradients recorded on the same GPU tape. The
+{ref "custom-computations"}[custom computations chapter] explains which operations we can record.
+Types outside the custom GPU interface use CPU with a diagnostic. Neither path hides compilation
+or execution errors behind a fallback.
+Use `cuda` to name the device explicitly; the default plain build still runs on CPU.
 
 ```terminal
 scripts/lake.sh -Kcuda=true \
@@ -115,7 +121,7 @@ For an unbatched input `x : [2]` and weight `W : [8,2]`, the eager CUDA path pro
 ```
 typed Tensor α [2]
     ↓ upload / existing CUDA handle
-opaque contiguous float32 buffer
+opaque contiguous buffer retaining its binary32 or binary64 dtype
     ↓ reshape and matrix-layout preparation
 libtorch.matmul
     ↓ broadcast bias [8] to output shape
@@ -508,8 +514,8 @@ and three-dimensional operator families. The adapter handles TorchLean's typed s
 then delegates the numerical work and explicit backward operation to ATen. It does not emulate
 higher-dimensional kernels or repair ATen's selection rules. Smooth-max pooling is the one
 deliberate composition here because PyTorch has no corresponding primitive; it uses the same
-one-to-three spatial-rank boundary and accepts finite nonzero Float32 values of $`\beta`, including
-negative values.
+one-to-three spatial-rank boundary and accepts finite nonzero values of $`\beta` in the input
+dtype, including negative values.
 
 This list does not mean every TorchLean operation has a CUDA implementation. Provider-aware
 wrappers reject unsupported capsules and shapes; they do not copy a tensor to CPU and continue
@@ -532,7 +538,7 @@ The registry gives the capsule count and identifies operations with no registere
 ```
 
 ```leanOutput gpuCudaRegistry (whitespace := lax)
-registered: 47
+registered: 49
 forward only: 2
   libtorch.rand_uniform
   libtorch.bernoulli_mask
@@ -590,7 +596,7 @@ batch.
 The verifier lowers batched attention to the per-sample graph, while CUDA executes one
 batch-aware tape node. Regression tests compare the batched forward value, input gradient, and
 shared weight gradients with repeated single-sample attention. The comparison is runtime evidence;
-the ATen calls and float32 behavior remain covered by the capsule's stated boundary.
+the ATen calls and native floating-point behavior remain covered by the capsule's stated boundary.
 
 Shared weights are the reason the comparison must inspect parameter gradients as well as output
 values. Each batch entry contributes to the same projection matrix. A backward implementation
@@ -627,7 +633,8 @@ same softmax values as forward. LibTorch executes the matrix products and numeri
 with gradient recording disabled; the tape owns and releases the saved buffers.
 
 This implementation materializes the full score and probability matrices. With B batch entries,
-H heads, and n tokens, P alone contains $`BHn^2` Float32 values, or $`4BHn^2` bytes. Scores,
+H heads, and n tokens, P alone contains $`BHn^2` values: $`4BHn^2` bytes for `Float32`, or
+$`8BHn^2` bytes for `Float`. Scores,
 backward temporaries, projections, and a mask add further storage. Doubling sequence length
 quadruples the probability storage. There is no fused attention selection or tiled-memory
 guarantee. Lean composition still needs value and VJP evidence for its native primitives.
@@ -807,7 +814,8 @@ def gpuConfigure : IO Unit := do
 
 The adapter initializes matrix multiplication and cuDNN convolution with IEEE precision requested.
 `setMatmulPrecision .tf32` and `setConvPrecision .tf32` permit TF32 for the corresponding
-operations. These are runtime permissions, not changes to the tensor's stored Float32 dtype.
+binary32 operations. These are runtime permissions, not changes to the tensor's stored dtype;
+binary64 buffers remain binary64.
 Neither `.ieee` nor `.tf32` establishes agreement with a FloatLib evaluation or fixes every
 intermediate rounding step. Arbitrary FloatLib formats remain available to the numerical
 specifications and interpreters; these controls do not make CUDA tensors arbitrary-precision.
@@ -846,7 +854,7 @@ A runtime setting must be read at the point where the program needs it. The publ
 Boolean setters also check the readback, so a rejected request cannot be reported as a successful
 configuration.
 
-Allocator telemetry follows the same rule. `Buffer.allocatorStats` observes the native counters
+Memory reporting follows the same rule. `Buffer.memory` observes the native counters
 when the action runs. Device selection is effectful too: `deviceCount` reports visible devices,
 `getDevice` reads the selected index, and `setDevice` selects a device for subsequent bridge work.
 The setter requires all existing buffer wrappers to be finalized, including empty and explicitly
@@ -862,9 +870,8 @@ Read both levels at the point in the workload whose lifetime matters:
 
 ```lean (name := gpuMemory)
 def gpuPrintMemory : IO Unit := do
-  let stats ←
-    Runtime.Autograd.LibTorch.Buffer.allocatorStats
-  IO.println stats.format
+  let memory ← Runtime.Autograd.LibTorch.Buffer.memory
+  IO.println memory.format
 ```
 
 `liveBytes` and `peakBytes` count logical payloads owned by TorchLean handles. A view can share
@@ -925,9 +932,9 @@ softmax, attention, selective scan, FFTs, parameter sharing, and a small trainin
 Attention checks inspect forward values and input cotangents, including hard masks and fully
 blocked rows. Each check covers its specific inputs and configuration.
 
-The suite no longer has dedicated CUDA parity checks for convolution, pooling, normalization,
-gather/scatter, or the other removed operation fixtures. Those operations remain available through
-LibTorch; availability must not be read as a passing CUDA comparison.
+Convolution, pooling, normalization, and gather/scatter use LibTorch implementations. The
+maintained suite does not independently compare their GPU values and gradients with the Lean
+reference.
 
 A capsule names its test source; it does not store a passing result for the current build. To
 assess a run, keep its complete test output with the revision, SDK, driver, GPU, and relevant

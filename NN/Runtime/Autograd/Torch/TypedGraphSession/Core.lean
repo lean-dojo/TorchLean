@@ -112,7 +112,9 @@ Create a new typed graph session.
 This allocates `IO.Ref`s for the session snapshot (`TypedGraphSessionState`) and the map from leaf
 identifiers to parameters. Call `resetTape` to begin a new graph recording phase.
 -/
-def new {α : Type} [TorchLean.Storage α] (options : Config := {}) : IO (TypedGraphSession α) := do
+def new {α : Type} [TorchLean.Storage α] [TensorTransfer α]
+    (options : Config := {}) : IO (TypedGraphSession α) := do
+  let options ← options.forScalar (α := α)
   unless options.device == .cpu do
     throw <| IO.userError
       s!"typed graph execution currently supports device `cpu`; requested `{options.deviceName}`"

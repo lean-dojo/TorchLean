@@ -33,7 +33,7 @@ https://docs.nvidia.com/cuda/cuda-math-api/index.html
 
 namespace NN.Kernel.Cuda
 
-/-- Native CUDA scalar formats. Other scalar representations must be rejected by the frontend. -/
+/-- Native Lean scalar formats; configured binary values use their complete-word emitter. -/
 inductive Format where
   | binary32 | binary64
   deriving Repr, DecidableEq
@@ -109,6 +109,12 @@ def Literal.render {format : Format} : Literal format → String
   | .binary64 bits => s!"__longlong_as_double((long long){bits.toNat}ULL)"
 
 namespace Internal
+
+/-- Scalar spellings shared by hardware and software arithmetic emitters. -/
+structure Dialect (α : Type) where
+  scalar : String
+  literal : α → Except String String
+  binary : ScalarOp → String
 
 /-- Remove an exact prefix and suffix, rejecting mismatched emitted syntax. -/
 def unframe (first last text : String) : Option String := do
@@ -653,51 +659,74 @@ def fresh (t : Ty) : Allocate (Name t) := do
   set (n + 1)
   return .temporary n
 
-def atom {α : Type} (format : Format) (bits : α → UInt64)
+@[reducible] def atomWith {α : Type} (dialect : Dialect α)
     {t : Ty} : Atom α Name t → Except String String
-  | .scalar value => do
-      return (← Literal.ofBits format (bits value)).render
+  | .scalar value => dialect.literal value
   | .index value => pure s!"{value.toNat}ULL"
   | .predicate value => pure (if value then "true" else "false")
   | .var name => pure name.render
 
+abbrev native {α : Type} (format : Format) (bits : α → UInt64) : Dialect α :=
+  ⟨Format.name format, fun value => (Literal.ofBits format (bits value)).map Literal.render,
+    Format.binary format⟩
+
+abbrev atom {α : Type} (format : Format) (bits : α → UInt64)
+    {t : Ty} (value : Atom α Name t) : Except String String :=
+  atomWith (native format bits) value
+
 /-- Emit a primitive expression. Loads require a separate bounds-check statement. -/
-def expression {α : Type} (format : Format) (bits : α → UInt64)
+@[reducible] def expressionWith {α : Type} (dialect : Dialect α)
     {t : Ty} : Primitive α Name t → Except String String
-  | .copy value => atom format bits value
+  | .copy value => atomWith dialect value
   | .load _ _ => .error "kernel: an input read requires a checked statement"
   | .binary op x y => do
-      let x ← atom format bits x
-      let y ← atom format bits y
-      return s!"{Format.binary format op}({x}, {y})"
+      let x ← atomWith dialect x
+      let y ← atomWith dialect y
+      return s!"{dialect.binary op}({x}, {y})"
   | .neg x => do
-      let x ← atom format bits x
+      let x ← atomWith dialect x
       return s!"(-{x})"
   | .unsigned value =>
-      value.render (atom format bits)
+      value.render (atomWith dialect)
   | .compare op x y => do
-      let x ← atom format bits x
-      let y ← atom format bits y
+      let x ← atomWith dialect x
+      let y ← atomWith dialect y
       return s!"({x} {comparison op} {y})"
   | .indexCompare op x y => do
-      let x ← atom format bits x
-      let y ← atom format bits y
+      let x ← atomWith dialect x
+      let y ← atomWith dialect y
       return s!"({x} {comparison op} {y})"
 
-def assignment {α : Type} (format : Format) (bits : α → UInt64) (inputs : Nat)
+abbrev expression {α : Type} (format : Format) (bits : α → UInt64)
+    {t : Ty} (value : Primitive α Name t) : Except String String :=
+  expressionWith (native format bits) value
+
+@[reducible] def Dialect.typeName {α : Type} (dialect : Dialect α) : Ty → String
+  | .scalar => dialect.scalar
+  | .index => "unsigned long long"
+  | .predicate => "bool"
+
+theorem typeName_native {α : Type} (format : Format) (bits : α → UInt64) (t : Ty) :
+    (native format bits).typeName t = typeName format t := by cases t <;> rfl
+
+@[reducible] def assignmentWith {α : Type} (dialect : Dialect α) (inputs : Nat)
     {t : Ty} (statement : Assignment α t) : Except String String := do
   let declaration (rhs : String) : String :=
-    s!"{typeName format t} {statement.name.render} = {rhs};\n"
+    s!"{dialect.typeName t} {statement.name.render} = {rhs};\n"
   match t, statement.operation with
   | .scalar, .load operand index => do
       if operand ≥ inputs then throw s!"kernel: input {operand} is not declared"
-      let i ← atom format bits index
+      let i ← atomWith dialect index
       let check := s!"if ({i} >= size{operand}) \{\n" ++
         s!"if (atomicCAS(error, 0ULL, 1ULL) == 0ULL) \{ " ++
         s!"error[1] = {operand}ULL; error[2] = {i}; error[3] = size{operand}; }\n" ++
         "return;\n}\n"
       return check ++ declaration s!"input{operand}[{i}]"
-  | _, operation => return declaration (← expression format bits operation)
+  | _, operation => return declaration (← expressionWith dialect operation)
+
+abbrev assignment {α : Type} (format : Format) (bits : α → UInt64) (inputs : Nat)
+    {t : Ty} (value : Assignment α t) : Except String String :=
+  assignmentWith (native format bits) inputs value
 
 def lower {α : Type} {Γ : List Ty} {t : Ty} (names : Names Γ) :
     Target.Block α Γ t → Allocate (Statement α × Name t)
@@ -727,26 +756,41 @@ def lower {α : Type} {Γ : List Ty} {t : Ty} (names : Names Γ) :
         (Names.push (t := .scalar) acc (Names.push (t := .index) i names)) body
       return (.loop acc i (Atom.lower names.get count) (Atom.lower names.get initial) bc next, acc)
 
-def render {α : Type} (format : Format) (bits : α → UInt64) (inputs : Nat) :
+@[reducible] def renderWith {α : Type} (dialect : Dialect α) (inputs : Nat) :
     Statement α → Except String String
   | .skip => pure ""
-  | .assign value => assignment format bits inputs value
+  | .assign value => assignmentWith dialect inputs value
   | .seq first second => do
-      return (← render format bits inputs first) ++ (← render format bits inputs second)
+      return (← renderWith dialect inputs first) ++ (← renderWith dialect inputs second)
   | .branch (t := t) name condition yes y no n => do
-      let p ← atom format bits condition
-      let yc ← render format bits inputs yes
-      let nc ← render format bits inputs no
-      return s!"{typeName format t} {name.render};\nif ({p}) \{\n" ++ yc ++
+      let p ← atomWith dialect condition
+      let yc ← renderWith dialect inputs yes
+      let nc ← renderWith dialect inputs no
+      return s!"{dialect.typeName t} {name.render};\nif ({p}) \{\n" ++ yc ++
         s!"{name.render} = {y.render};\n} else \{\n" ++ nc ++
         s!"{name.render} = {n.render};\n}\n"
   | .loop acc i count initial body next => do
-      let count ← atom format bits count
-      let initial ← atom format bits initial
-      let bc ← render format bits inputs body
-      return s!"{Format.name format} {acc.render} = {initial};\n" ++
+      let count ← atomWith dialect count
+      let initial ← atomWith dialect initial
+      let bc ← renderWith dialect inputs body
+      return s!"{dialect.scalar} {acc.render} = {initial};\n" ++
         s!"for (unsigned long long {i.render} = 0ULL; {i.render} < {count}; " ++
         s!"++{i.render}) \{\n" ++ bc ++ s!"{acc.render} = {next.render};\n}\n"
+
+abbrev render {α : Type} (format : Format) (bits : α → UInt64) (inputs : Nat)
+    (statement : Statement α) : Except String String :=
+  renderWith (native format bits) inputs statement
+
+/-- Shared signature, output guard and write for native and configured scalar arithmetic. -/
+def entrypoint (scalar : String) (inputs : Nat) (body : String) (result : Name .scalar) :
+    String :=
+  let arguments := (List.range inputs).map fun i =>
+    s!"const {scalar}* input{i}, unsigned long long size{i}"
+  let arguments := String.intercalate ", "
+    (arguments ++ [s!"{scalar}* output", "unsigned long long* error", "unsigned long long count"])
+  s!"extern \"C\" __global__ void torchlean_kernel({arguments}) \{\n" ++
+    "unsigned long long index = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;\n" ++
+    "if (index >= count) return;\n" ++ body ++ s!"output[index] = {result.render};\n}\n"
 
 end Internal
 
@@ -762,14 +806,7 @@ def source {α : Type} (format : Format) (bits : α → UInt64) (inputs : Nat)
     (expr : Expr α [.index] .scalar) : Except String Source := do
   let ((statement, result), _) := (lower Names.output (Target.lower expr)).run 0
   let body ← render format bits inputs statement
-  let arguments := (List.range inputs).map fun i =>
-    s!"const {Internal.Format.name format}* input{i}, unsigned long long size{i}"
-  let arguments := String.intercalate ", "
-    (arguments ++ [s!"{Internal.Format.name format}* output", "unsigned long long* error",
-      "unsigned long long count"])
-  let text := s!"extern \"C\" __global__ void torchlean_kernel({arguments}) \{\n" ++
-    "unsigned long long index = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;\n" ++
-    "if (index >= count) return;\n" ++ body ++ s!"output[index] = {result.render};\n}\n"
+  let text := entrypoint (Internal.Format.name format) inputs body result
   return { format, inputs, text }
 
 end NN.Kernel.Cuda

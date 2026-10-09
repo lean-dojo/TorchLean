@@ -61,8 +61,8 @@ def concat {n m : Nat} {s : Shape} (t : Tape) (aId bId : Nat) : Result (Tape × 
   unary (t := t) "slice" xId (.dim n s) (.dim len s)
     (forward := fun x => Buffer.sliceBuffer x nTot32 start32 len32)
     (backward := fun _x dLdy =>
-      let left := Buffer.zeros start32
-      let right := Buffer.zeros right32
+      let left := Buffer.zerosLike dLdy start32
+      let right := Buffer.zerosLike dLdy right32
       let tmp := Buffer.concatBuffers left dLdy start32 len32
       Buffer.releaseThen left <|
         Buffer.releaseThen right <|
@@ -138,7 +138,7 @@ end Indexing
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny outShape
-        let zeros := Buffer.zeros inputSize32
+        let zeros := Buffer.zeros inputSize32 (Buffer.dtype dLdy.buf)
         let scattered := Buffer.scatterAddRows zeros dLdy.buf rows32 cols32 indices one32
         let frontDx := Buffer.releaseThen zeros scattered
         let dx :=
@@ -175,7 +175,7 @@ end Indexing
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny outShape
         let movedGrad := Indexing.permuteBorrowed dLdy.buf outShape steps
-        let zeros := Buffer.zeros inputSize32
+        let zeros := Buffer.zeros inputSize32 (Buffer.dtype dLdy.buf)
         let scattered :=
           Buffer.scatterAddRows zeros movedGrad rows32 cols32 indexArray count32
         let frontDx := Buffer.releaseThen zeros scattered

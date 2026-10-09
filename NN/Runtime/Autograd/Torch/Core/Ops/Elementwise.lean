@@ -69,6 +69,25 @@ def mul {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Mul α]
       Runtime.Autograd.LibTorch.Tape.mul (t := t0) (s := sh) a.id b.id
   executeRecorded (α := α) s .mul #[a.identity?, b.identity?] cpu cuda
 
+/-- Record elementwise division without replacing it by multiplication by a reciprocal. -/
+def div {α : Type} [Storage α] (s : EagerSession α)
+    [Div α] [Mul α] [Sub α] [Zero α] {sh : Shape}
+    (a b : TensorRef α sh) : IO (TensorRef α sh) := do
+  let cpu := s.recordCpu fun t => keepTapeOnError t <|
+    Runtime.Autograd.Tape.div (t := t) (s := sh) a.id b.id
+  let cuda := s.recordCuda fun t => keepTapeOnError t <|
+    Runtime.Autograd.LibTorch.Tape.div (t := t) (s := sh) a.id b.id
+  executeRecorded s .div #[a.identity?, b.identity?] cpu cuda
+
+/-- Record direct scalar negation, preserving signed zero in the forward value. -/
+def neg {α : Type} [Storage α] (s : EagerSession α) [Neg α] {sh : Shape}
+    (x : TensorRef α sh) : IO (TensorRef α sh) := do
+  let cpu := s.recordCpu fun t => keepTapeOnError t <|
+    Runtime.Autograd.Tape.neg (t := t) (s := sh) x.id
+  let cuda := s.recordCuda fun t => keepTapeOnError t <|
+    Runtime.Autograd.LibTorch.Tape.neg (t := t) (s := sh) x.id
+  executeRecorded s .neg #[x.identity?] cpu cuda
+
 /-- Record scaling by a scalar constant. PyTorch: `x * c`. -/
 def scale {α : Type} [TorchLean.Storage α] [TensorTransfer α] (s : EagerSession α) [Mul α]
   {sh : Shape}
@@ -290,7 +309,7 @@ def inv {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
 Record `log(softplus(x) + ε)` and its derivative.
 
 Backward multiplies the incoming gradient by `sigmoid(x) / (softplus(x) + ε)`. CUDA converts
-`ε` to binary32; choose a value that stays positive after conversion if softplus can round to
+`ε` to the input dtype; choose a value that stays positive after conversion if softplus can round to
 zero. Neither backend checks positivity here or guarantees finite results for nonfinite inputs.
 -/
 def safeLog {α : Type} [TorchLean.Storage α] [TensorTransfer α] (s : EagerSession α)

@@ -48,6 +48,7 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
     (loss : ScalarLoss α δ paramShapes inputShapes dataInputShapes) :
     IO (ScalarTrainer α δ paramShapes inputShapes dataInputShapes) := do
   let session ← Internal.EagerSession.new (α := α) options
+  let options := session.options
   let adamStateRef ←
     IO.mkRef (Std.HashMap.emptyWithCapacity : Internal.EagerSession.CudaAdamState)
   let adamConfigRef ← IO.mkRef (none : Option Internal.EagerSession.CudaAdamConfig)
@@ -279,6 +280,7 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
             checkOptimizerPath .native
             Internal.EagerSession.loadAdam
               path adamSchema adamConfigRef adamStateRef (some session.rngCounter)
+                (← TensorTransfer.dtype (α := α))
             useOptimizerPath .native }
     else
       none

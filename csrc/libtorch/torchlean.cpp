@@ -1,5 +1,6 @@
 // Lean–LibTorch interface: ownership, operations, and explicit backward calls.
 #include "torchlean_libtorch.h"
+#include "binary.h"
 
 // Buffer ownership and runtime controls
 
@@ -51,9 +52,10 @@ std::atomic<int> selected_device{0};
 bool release_data(torchlean_cuda_buffer* buffer) {
   if (!buffer || !buffer->tensor.defined()) return false;
   const size_t size = buffer->size;
+  const size_t bytes = buffer->tensor.nbytes();
   buffer->tensor = at::Tensor();
   buffer->size = 0;
-  if (size != 0) payloads.remove(size * sizeof(float));
+  if (size != 0) payloads.remove(bytes);
   return size != 0;
 }
 
@@ -61,11 +63,19 @@ void finalize(void* pointer) {
   auto* buffer = static_cast<torchlean_cuda_buffer*>(pointer);
   if (!buffer) return;
   release_data(buffer);
+  if (buffer->format) lean_dec(buffer->format);
   delete buffer;
   wrappers.remove(1);
 }
 
-void foreach_reference(void*, b_lean_obj_arg) {}
+void foreach_reference(void* pointer, b_lean_obj_arg visitor) {
+  auto* buffer = static_cast<torchlean_cuda_buffer*>(pointer);
+  if (buffer && buffer->format) {
+    lean_inc(visitor);
+    lean_inc(buffer->format);
+    lean_dec(lean_apply_1(visitor, buffer->format));
+  }
+}
 
 lean_external_class* buffer_class() {
   static lean_external_class* result =
@@ -116,37 +126,45 @@ at::Tensor splitmix_draws(uint32_t n, uint64_t key, int64_t step = 1, int64_t of
   return at::bitwise_and(at::bitwise_xor(value, shift_right(value, 31)), INT64_C(0xffffffff));
 }
 
-at::Tensor uniform(uint32_t n, uint64_t key) {
-  return at::div(splitmix_draws(n, key).to(at::kDouble), 4294967296.0).to(at::kFloat);
+at::ScalarType scalar_type(uint8_t dtype) {
+  TORCH_CHECK(dtype <= 1, "LibTorch: unsupported buffer dtype");
+  return dtype == 0 ? at::kFloat : at::kDouble;
 }
 
-at::Tensor normal(uint32_t n, double mean, double deviation, uint64_t key) {
-  const auto first = splitmix_draws(n, key, 2, 0).to(at::kFloat);
+double rounded(double value, at::ScalarType dtype) {
+  return dtype == at::kFloat ? static_cast<double>(static_cast<float>(value)) : value;
+}
+
+at::Tensor uniform(uint32_t n, uint64_t key, at::ScalarType dtype) {
+  return at::div(splitmix_draws(n, key).to(at::kDouble), 4294967296.0).to(dtype);
+}
+
+at::Tensor normal(uint32_t n, double mean, double deviation, uint64_t key, at::ScalarType dtype) {
+  const auto first = splitmix_draws(n, key, 2, 0).to(dtype);
   const auto second = splitmix_draws(n, key, 2, 1);
-  const auto u1 = at::div(at::add(first, 1.0f), static_cast<float>(4294967297.0));
-  const auto u2 = at::div(second.to(at::kDouble), 4294967296.0).to(at::kFloat);
+  const auto u1 = at::div(at::add(first, 1.0), rounded(4294967297.0, dtype));
+  const auto u2 = at::div(second.to(at::kDouble), 4294967296.0).to(dtype);
   const auto radius = at::sqrt(at::mul(at::log(u1), -2.0f));
-  const auto angle = at::cos(at::mul(u2, static_cast<float>(6.2831853071795864769)));
+  const auto angle = at::cos(at::mul(u2, rounded(6.2831853071795864769, dtype)));
   const auto sample = at::mul(radius, angle);
-  return at::add(at::full_like(sample, static_cast<float>(mean)),
-                 sample, static_cast<float>(deviation));
+  return at::add(at::full_like(sample, rounded(mean, dtype)), sample, rounded(deviation, dtype));
 }
 
-at::Tensor bernoulli(uint32_t n, double probability, uint64_t key) {
-  const float p = static_cast<float>(probability);
-  if (!(p > 0.0f)) return at::zeros({n}, torchlean::options());
-  if (!(1.0f > p)) return at::ones({n}, torchlean::options());
-  return at::lt(uniform(n, key), p).to(at::kFloat);
+at::Tensor bernoulli(uint32_t n, double probability, uint64_t key, at::ScalarType dtype) {
+  const double p = rounded(probability, dtype);
+  if (!(p > 0.0)) return at::zeros({n}, torchlean::options().dtype(dtype));
+  if (!(1.0 > p)) return at::ones({n}, torchlean::options().dtype(dtype));
+  return at::lt(uniform(n, key, dtype), p).to(dtype);
 }
 
-at::Tensor upload(b_lean_obj_arg object) {
+at::Tensor upload(b_lean_obj_arg object, at::ScalarType dtype) {
   const size_t n = lean_sarray_size(object);
   TORCH_CHECK(n <= INT64_MAX, "LibTorch upload: input is too large");
-  if (n == 0) return at::empty({0}, torchlean::options());
+  if (n == 0) return at::empty({0}, torchlean::options().dtype(dtype));
   // The blocking copy ends before Lean can release or mutate the borrowed host array.
   auto host = at::from_blob(lean_float_array_cptr(object), {static_cast<int64_t>(n)},
                             at::TensorOptions().dtype(at::kDouble).device(at::kCPU));
-  return host.to(torchlean::options(), false, true);
+  return host.to(torchlean::options().dtype(dtype), false, true);
 }
 
 lean_obj_res download(b_lean_obj_arg object) {
@@ -209,8 +227,10 @@ std::shared_ptr<CompiledKernel> compile_kernel(const std::string& source) {
   }
 
   nvrtcProgram program = nullptr;
-  check_nvrtc(nvrtcCreateProgram(&program, source.c_str(), "torchlean_kernel.cu", 0,
-                               nullptr, nullptr));
+  const char* headers[] = {torchlean::binary_cuda};
+  const char* header_names[] = {"torchlean_binary.cuh"};
+  check_nvrtc(nvrtcCreateProgram(&program, source.c_str(), "torchlean_kernel.cu", 1,
+                               headers, header_names));
   struct ProgramGuard {
     nvrtcProgram* program;
     ~ProgramGuard() { nvrtcDestroyProgram(program); }
@@ -242,11 +262,15 @@ std::shared_ptr<CompiledKernel> compile_kernel(const std::string& source) {
 }
 
 at::Tensor run_kernel(b_lean_obj_arg source, const std::vector<at::Tensor>& inputs,
-                      at::ScalarType scalar, uint64_t count) {
+                      at::ScalarType scalar, uint64_t count, uint64_t stride = 1) {
+  TORCH_CHECK(stride > 0 && stride <= INT64_MAX && count <= INT64_MAX / stride,
+              "kernel: invalid scalar width or output extent");
   TORCH_CHECK(count <= INT64_MAX, "kernel: output size exceeds signed tensor size range");
-  TORCH_CHECK(count <= SIZE_MAX / c10::elementSize(scalar), "kernel: output byte size overflow");
+  TORCH_CHECK(count * stride <= SIZE_MAX / c10::elementSize(scalar),
+              "kernel: output byte size overflow");
   const auto kernel = compile_kernel(lean_string_cstr(source));
-  auto output = at::empty({static_cast<int64_t>(count)}, torchlean::options().dtype(scalar));
+  auto output = at::empty({static_cast<int64_t>(count * stride)},
+                          torchlean::options().dtype(scalar));
   auto error = at::zeros({4}, torchlean::options().dtype(at::kLong));
   if (count == 0) return output;
   constexpr uint64_t threads = 256;
@@ -263,7 +287,8 @@ at::Tensor run_kernel(b_lean_obj_arg source, const std::vector<at::Tensor>& inpu
     TORCH_CHECK(input.device() == output.device() && input.scalar_type() == scalar &&
                 input.is_contiguous(), "kernel: input device, dtype or layout mismatch");
     addresses[i] = reinterpret_cast<CUdeviceptr>(input.const_data_ptr());
-    sizes[i] = static_cast<uint64_t>(input.numel());
+    TORCH_CHECK(input.numel() % stride == 0, "kernel: truncated input scalar encoding");
+    sizes[i] = static_cast<uint64_t>(input.numel()) / stride;
     arguments.push_back(&addresses[i]);
     arguments.push_back(&sizes[i]);
   }
@@ -285,42 +310,50 @@ at::Tensor run_kernel(b_lean_obj_arg source, const std::vector<at::Tensor>& inpu
   return output;
 }
 
-uint32_t read_bits(const uint8_t* source) {
-  return uint32_t(source[0]) | (uint32_t(source[1]) << 8) |
-         (uint32_t(source[2]) << 16) | (uint32_t(source[3]) << 24);
-}
-
-void write_bits(uint8_t* destination, float value) {
-  uint32_t bits;
-  std::memcpy(&bits, &value, sizeof(bits));
-  for (size_t i = 0; i != 4; ++i) destination[i] = static_cast<uint8_t>(bits >> (8 * i));
-}
-
-at::Tensor upload_bytes(b_lean_obj_arg object) {
+at::Tensor upload_bytes(b_lean_obj_arg object, at::ScalarType dtype, at::ScalarType source_dtype) {
   const size_t bytes = lean_sarray_size(object);
-  TORCH_CHECK(bytes % sizeof(float) == 0,
-              "float32 checkpoint payload is not a multiple of four bytes");
-  const size_t n = bytes / sizeof(float);
-  auto host = at::empty({static_cast<int64_t>(n)}, at::TensorOptions().dtype(at::kFloat));
+  const size_t width = c10::elementSize(source_dtype);
+  TORCH_CHECK(bytes % width == 0, "checkpoint payload length does not match its dtype");
+  const size_t n = bytes / width;
+  auto host = at::empty({static_cast<int64_t>(n)}, at::TensorOptions().dtype(source_dtype));
   const auto* source = reinterpret_cast<const uint8_t*>(lean_sarray_cptr(object));
-  float* values = host.data_ptr<float>();
-  for (size_t i = 0; i != n; ++i) {
-    const uint32_t bits = read_bits(source + 4 * i);
-    std::memcpy(values + i, &bits, sizeof(bits));
+  auto* values = static_cast<uint8_t*>(host.data_ptr());
+  // Encoded arithmetic already supplies byte-ordered words, independent of host endianness.
+  if (width == 1) {
+    if (bytes) std::memcpy(values, source, bytes);
+  } else for (size_t i = 0; i != n; ++i) {
+    uint64_t bits = 0;
+    for (size_t j = 0; j != width; ++j) bits |= uint64_t(source[width * i + j]) << (8 * j);
+    if (width == 4) {
+      const uint32_t word = static_cast<uint32_t>(bits);
+      std::memcpy(values + width * i, &word, width);
+    } else std::memcpy(values + width * i, &bits, width);
   }
-  return host.to(torchlean::options(), false, true);
+  return host.to(torchlean::options().dtype(dtype), false, true);
 }
 
-lean_obj_res download_bytes(b_lean_obj_arg object) {
+lean_obj_res download_bytes(b_lean_obj_arg object, at::ScalarType dtype) {
   const auto* buffer = torchlean_cuda_buffer_unbox(object);
   const size_t bytes =
-      checked_bytes_size(buffer->size, sizeof(float), "float32 checkpoint size overflow");
+      checked_bytes_size(buffer->size, c10::elementSize(dtype), "checkpoint size overflow");
   at::Tensor host;
-  if (bytes != 0) host = torchlean::tensor(object).to(at::kCPU).contiguous();
+  if (bytes != 0)
+    host = torchlean::tensor(object).to(at::TensorOptions().device(at::kCPU).dtype(dtype))
+                                    .contiguous();
   lean_object* out = lean_alloc_sarray(1, bytes, bytes);
   auto* destination = reinterpret_cast<uint8_t*>(lean_sarray_cptr(out));
-  for (size_t i = 0; i != buffer->size; ++i)
-    write_bits(destination + 4 * i, host.const_data_ptr<float>()[i]);
+  const size_t width = c10::elementSize(dtype);
+  for (size_t i = 0; i != buffer->size; ++i) {
+    uint64_t bits = 0;
+    const auto* values = static_cast<const uint8_t*>(host.const_data_ptr());
+    if (width == 4) {
+      uint32_t word;
+      std::memcpy(&word, values + width * i, width);
+      bits = word;
+    } else std::memcpy(&bits, values + width * i, width);
+    for (size_t j = 0; j != width; ++j)
+      destination[width * i + j] = static_cast<uint8_t>(bits >> (8 * j));
+  }
   return out;
 }
 
@@ -375,8 +408,10 @@ at::TensorOptions options() {
 const at::Tensor& tensor(b_lean_obj_arg object) {
   const auto* buffer = torchlean_cuda_buffer_unbox(object);
   TORCH_CHECK(buffer->tensor.defined(), "LibTorch: buffer has been released");
-  TORCH_CHECK(buffer->tensor.is_cuda() && buffer->tensor.scalar_type() == at::kFloat,
-              "LibTorch: expected a CUDA float32 buffer");
+  TORCH_CHECK(buffer->tensor.is_cuda() &&
+              (buffer->tensor.scalar_type() == at::kFloat ||
+               buffer->tensor.scalar_type() == at::kDouble),
+              "LibTorch: expected a CUDA real buffer");
   TORCH_CHECK(!buffer->tensor.requires_grad(), "LibTorch: unexpected autograd tensor");
   TORCH_CHECK(buffer->tensor.numel() == static_cast<int64_t>(buffer->size),
               "LibTorch: buffer size disagrees with storage");
@@ -384,19 +419,36 @@ const at::Tensor& tensor(b_lean_obj_arg object) {
 }
 
 torchlean_cuda_buffer* owned(at::Tensor value) {
-  TORCH_CHECK(value.defined() && value.is_cuda() && value.scalar_type() == at::kFloat,
-              "LibTorch: expected a CUDA float32 result");
+  TORCH_CHECK(value.defined() && value.is_cuda() &&
+              (value.scalar_type() == at::kFloat || value.scalar_type() == at::kDouble),
+              "LibTorch: expected a CUDA real result");
   TORCH_CHECK(!value.requires_grad(), "LibTorch: native operations must not record autograd");
   auto buffer = std::make_unique<torchlean_cuda_buffer>();
   buffer->tensor = value.reshape({-1}).contiguous();
   buffer->size = static_cast<size_t>(buffer->tensor.numel());
-  checked_bytes_size(buffer->size, sizeof(float), "LibTorch buffer byte size overflow");
-  if (buffer->size != 0) payloads.add(buffer->size * sizeof(float));
+  const auto bytes = checked_bytes_size(buffer->size, buffer->tensor.element_size(),
+                                         "LibTorch buffer byte size overflow");
+  if (buffer->size != 0) payloads.add(bytes);
   return buffer.release();
 }
 
 lean_obj_res box(at::Tensor value) {
   return torchlean_cuda_buffer_box(owned(std::move(value)));
+}
+
+lean_obj_res encoded(at::Tensor value, b_lean_obj_arg format, size_t width) {
+  TORCH_CHECK(value.is_cuda() && value.scalar_type() == at::kByte && width > 0 &&
+              value.numel() % width == 0, "encoded buffer: invalid storage extent");
+  TORCH_CHECK(static_cast<uint64_t>(value.numel()) / width <= UINT32_MAX,
+              "encoded buffer: scalar count exceeds the tape ABI");
+  auto buffer = std::make_unique<torchlean_cuda_buffer>();
+  buffer->tensor = value.reshape({-1}).contiguous();
+  buffer->size = buffer->tensor.numel() / width;
+  buffer->width = width;
+  buffer->format = format;
+  lean_inc(format);
+  if (buffer->size) payloads.add(buffer->tensor.nbytes());
+  return torchlean_cuda_buffer_box(buffer.release());
 }
 
 }  // namespace torchlean
@@ -424,6 +476,7 @@ extern "C" torchlean_cuda_buffer* torchlean_cuda_buffer_alloc(size_t n) {
 extern "C" void torchlean_cuda_buffer_drop_unboxed(torchlean_cuda_buffer* buffer) {
   if (!buffer) return;
   release_data(buffer);
+  if (buffer->format) lean_dec(buffer->format);
   delete buffer;
 }
 
@@ -502,17 +555,78 @@ extern "C" LEAN_EXPORT uint32_t torchlean_runtime_collect_allocator(uint32_t) {
   extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_##NAME##_io PARAMETERS { \
     return io([&] { return torchlean::box(EXPRESSION); });                            \
   }
-TORCHLEAN_CONSTRUCTOR(zeros, (uint32_t n), at::zeros({n}, torchlean::options()))
-TORCHLEAN_CONSTRUCTOR(full, (uint32_t n, double v),
-                     at::full({n}, static_cast<float>(v), torchlean::options()))
-TORCHLEAN_CONSTRUCTOR(rand_uniform, (uint32_t n, uint64_t key), uniform(n, key))
-TORCHLEAN_CONSTRUCTOR(bernoulli_mask, (uint32_t n, double p, uint64_t key), bernoulli(n, p, key))
-TORCHLEAN_CONSTRUCTOR(of_float_array, (b_lean_obj_arg object), upload(object))
+TORCHLEAN_CONSTRUCTOR(zeros, (uint32_t n, uint8_t dtype),
+                     at::zeros({n}, torchlean::options().dtype(scalar_type(dtype))))
+TORCHLEAN_CONSTRUCTOR(full, (uint32_t n, double v, uint8_t dtype),
+                     at::full({n}, rounded(v, scalar_type(dtype)),
+                              torchlean::options().dtype(scalar_type(dtype))))
+TORCHLEAN_CONSTRUCTOR(rand_uniform, (uint32_t n, uint64_t key, uint8_t dtype),
+                     uniform(n, key, scalar_type(dtype)))
+TORCHLEAN_CONSTRUCTOR(bernoulli_mask, (uint32_t n, double p, uint64_t key, uint8_t dtype),
+                     bernoulli(n, p, key, scalar_type(dtype)))
+TORCHLEAN_CONSTRUCTOR(of_float_array, (b_lean_obj_arg object, uint8_t dtype),
+                     upload(object, scalar_type(dtype)))
 #undef TORCHLEAN_CONSTRUCTOR
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_normal(
-    uint32_t n, double mean, double deviation, uint64_t key) {
-  return torchlean::invoke([&] { return torchlean::box(normal(n, mean, deviation, key)); });
+    uint32_t n, double mean, double deviation, uint64_t key, uint8_t dtype) {
+  return torchlean::invoke([&] {
+    return torchlean::box(normal(n, mean, deviation, key, scalar_type(dtype)));
+  });
+}
+
+extern "C" LEAN_EXPORT uint8_t torchlean_cuda_buffer_dtype(b_lean_obj_arg object) {
+  return torchlean::invoke([&]() -> uint8_t {
+    const auto* buffer = torchlean_cuda_buffer_unbox(object);
+    if (buffer->format) {
+      TORCH_CHECK(buffer->tensor.defined(), "encoded buffer: released handle");
+      return 2;
+    }
+    return torchlean::tensor(object).scalar_type() == at::kFloat ? 0 : 1;
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_fail(b_lean_obj_arg message) {
+  return torchlean::invoke([&]() -> lean_obj_res {
+    TORCH_CHECK(false, lean_string_cstr(message));
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_zeros_like(
+    b_lean_obj_arg reference, uint32_t count) {
+  return torchlean::invoke([&] {
+    auto* buffer = torchlean_cuda_buffer_unbox(reference);
+    TORCH_CHECK(buffer->tensor.defined(), "zeros: released buffer");
+    const uint64_t width = buffer->format ? buffer->width : 1;
+    TORCH_CHECK(width > 0 && count <= INT64_MAX / width, "zeros: invalid extent");
+    auto value = at::zeros({static_cast<int64_t>(count * width)}, buffer->tensor.options());
+    return buffer->format ? torchlean::encoded(value, buffer->format, width) : torchlean::box(value);
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_copy(b_lean_obj_arg reference) {
+  return torchlean::invoke([&] {
+    auto* buffer = torchlean_cuda_buffer_unbox(reference);
+    TORCH_CHECK(buffer->tensor.defined(), "copy: released buffer");
+    auto value = buffer->tensor.clone();
+    return buffer->format ? torchlean::encoded(value, buffer->format, buffer->width)
+                          : torchlean::box(value);
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_duplicate(b_lean_obj_arg reference) {
+  return torchlean::invoke([&] {
+    auto* buffer = torchlean_cuda_buffer_unbox(reference);
+    TORCH_CHECK(buffer->tensor.defined(), "duplicate: released buffer");
+    auto first = buffer->tensor.clone();
+    auto second = buffer->tensor.clone();
+    auto* result = lean_alloc_ctor(0, 2, 0);
+    lean_ctor_set(result, 0, buffer->format
+      ? torchlean::encoded(first, buffer->format, buffer->width) : torchlean::box(first));
+    lean_ctor_set(result, 1, buffer->format
+      ? torchlean::encoded(second, buffer->format, buffer->width) : torchlean::box(second));
+    return result;
+  });
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_to_float_array(b_lean_obj_arg object) {
@@ -534,43 +648,95 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_kernel_run_buffer(
   });
 }
 
-extern "C" LEAN_EXPORT lean_obj_res torchlean_kernel_run_host(
-    b_lean_obj_arg source, uint32_t format, b_lean_obj_arg arrays, uint64_t count) {
+// The source's scalar layout and stride are generated together by Lean. Byte tensors
+// preserve wide words, signed zeros and NaN payloads without numerical conversion.
+extern "C" LEAN_EXPORT lean_obj_res torchlean_kernel_run_bytes(
+    b_lean_obj_arg source, uint32_t format, uint64_t width,
+    b_lean_obj_arg arrays, uint64_t count) {
   return io([&] {
-    TORCH_CHECK(format <= 1, "kernel: unsupported scalar format");
-    TORCH_CHECK(count <= SIZE_MAX / sizeof(double), "kernel: host output byte size overflow");
-    const auto scalar = format == 0 ? at::kFloat : at::kDouble;
+    TORCH_CHECK(format <= 2 && width > 0, "kernel: invalid encoded scalar layout");
+    const auto scalar = format == 0 ? at::kFloat : format == 1 ? at::kDouble : at::kByte;
+    TORCH_CHECK(format == 2 || width == c10::elementSize(scalar),
+                "kernel: native scalar width mismatch");
     std::vector<at::Tensor> inputs;
     inputs.reserve(lean_array_size(arrays));
     for (size_t i = 0; i < lean_array_size(arrays); ++i) {
       const auto object = lean_array_uget(arrays, i);
-      const size_t n = lean_sarray_size(object);
-      TORCH_CHECK(n <= INT64_MAX, "kernel: input size exceeds signed tensor size range");
-      if (n == 0) {
-        inputs.push_back(at::empty({0}, torchlean::options().dtype(scalar)));
-      } else {
-        const auto host = at::from_blob(lean_float_array_cptr(object),
-            {static_cast<int64_t>(n)}, at::TensorOptions().dtype(at::kDouble).device(at::kCPU));
+      const auto bytes = lean_sarray_size(object);
+      TORCH_CHECK(bytes <= INT64_MAX && bytes % width == 0,
+                  "kernel: invalid input byte extent");
+      const auto elements = bytes / c10::elementSize(scalar);
+      if (!bytes) inputs.push_back(at::empty({0}, torchlean::options().dtype(scalar)));
+      else {
+        const auto host = at::from_blob(lean_sarray_cptr(object),
+            {static_cast<int64_t>(elements)}, at::TensorOptions().dtype(scalar).device(at::kCPU));
         inputs.push_back(host.to(torchlean::options().dtype(scalar), false, true));
       }
     }
-    const auto result = run_kernel(source, inputs, scalar, count);
-    const auto host = result.to(at::TensorOptions().device(at::kCPU).dtype(at::kDouble))
-                            .contiguous();
-    auto output = lean_mk_empty_float_array(lean_box(static_cast<size_t>(count)));
-    lean_sarray_set_size(output, static_cast<size_t>(count));
-    if (count) std::memcpy(lean_float_array_cptr(output), host.const_data_ptr<double>(),
-                          static_cast<size_t>(count) * sizeof(double));
+    const auto result = run_kernel(source, inputs, scalar, count, format == 2 ? width : 1);
+    const auto host = result.to(at::kCPU).contiguous();
+    TORCH_CHECK(count <= SIZE_MAX / width, "kernel: host byte size overflow");
+    const auto bytes = static_cast<size_t>(count * width);
+    auto output = lean_alloc_sarray(1, bytes, bytes);
+    if (bytes) std::memcpy(lean_sarray_cptr(output), host.const_data_ptr(), bytes);
     return output;
   });
 }
 
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_to_float32_bytes_io(b_lean_obj_arg object) {
-  return io([&] { return download_bytes(object); });
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_format(b_lean_obj_arg object) {
+  auto* buffer = torchlean_cuda_buffer_unbox(object);
+  if (!buffer->format) return lean_box(0);
+  auto* result = lean_alloc_ctor(1, 1, 0);
+  lean_inc(buffer->format);
+  lean_ctor_set(result, 0, buffer->format);
+  return result;
 }
 
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_float32_bytes_io(b_lean_obj_arg object) {
-  return io([&] { return torchlean::box(upload_bytes(object)); });
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_encoded_io(
+    b_lean_obj_arg bytes, b_lean_obj_arg format, uint64_t width) {
+  return io([&] {
+    TORCH_CHECK(width && lean_sarray_size(bytes) % width == 0,
+                "encoded buffer: truncated scalar word");
+    return torchlean::encoded(upload_bytes(bytes, at::kByte, at::kByte), format, width);
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_to_encoded_io(
+    b_lean_obj_arg object) {
+  return io([&] {
+    auto* buffer = torchlean_cuda_buffer_unbox(object);
+    TORCH_CHECK(buffer->format && buffer->tensor.defined(), "encoded buffer: invalid handle");
+    const auto host = buffer->tensor.to(at::kCPU).contiguous();
+    const size_t bytes = host.nbytes();
+    auto* result = lean_alloc_sarray(1, bytes, bytes);
+    if (bytes) std::memcpy(lean_sarray_cptr(result), host.const_data_ptr(), bytes);
+    return result;
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_kernel_run_encoded(
+    b_lean_obj_arg source, b_lean_obj_arg objects, b_lean_obj_arg format,
+    uint64_t width, uint64_t count) {
+  return torchlean::invoke([&] {
+    std::vector<at::Tensor> inputs;
+    for (size_t i = 0; i < lean_array_size(objects); ++i) {
+      auto* buffer = torchlean_cuda_buffer_unbox(lean_array_uget(objects, i));
+      TORCH_CHECK(buffer->format && buffer->width == width && buffer->tensor.defined(),
+                  "encoded buffer: incompatible input storage");
+      inputs.push_back(buffer->tensor);
+    }
+    return torchlean::encoded(run_kernel(source, inputs, at::kByte, count, width), format, width);
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_to_bytes_io(
+    b_lean_obj_arg object, uint8_t dtype) {
+  return io([&] { return download_bytes(object, scalar_type(dtype)); });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_bytes_io(
+    b_lean_obj_arg object, uint8_t dtype, uint8_t source) {
+  return io([&] { return torchlean::box(upload_bytes(object, scalar_type(dtype), scalar_type(source))); });
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_version(uint32_t) {
@@ -701,6 +867,7 @@ at::Tensor flat(b_lean_obj_arg object) {
 
 void same_size(const at::Tensor& a, const at::Tensor& b, const char* message) {
   require(a.numel() == b.numel(), message);
+  require(a.scalar_type() == b.scalar_type(), "LibTorch buffer operation: dtype mismatch");
 }
 
 at::Tensor selected_sqrt(const at::Tensor& x) {
@@ -713,27 +880,27 @@ at::Tensor selected_relu(const at::Tensor& x) {
   return at::where(at::gt(x, 0.0f), x, 0.0f);
 }
 
-at::Tensor axpy(const at::Tensor& a, const at::Tensor& b, float c) {
+at::Tensor axpy(const at::Tensor& a, const at::Tensor& b, double c) {
   // PyTorch 0291f960b6 (a 2.12 nightly): CUDA DeviceAddCmulCdiv.cuh explicitly calls
   // std::fma(tensor1, tensor2, input) when addcmul's value is exactly one.
   // Place c in tensor2 (the supported CPU-scalar operand), NOT in value:
   // value != 1 first rounds tensor1*tensor2 before the final FMA.
   // This avoids depending on implicit contraction in the add(alpha) ufunc.
   const auto coefficient = at::scalar_tensor(
-      c, at::TensorOptions().dtype(at::kFloat).device(at::kCPU));
+      rounded(c, a.scalar_type()), at::TensorOptions().dtype(a.scalar_type()).device(at::kCPU));
   return at::addcmul(a, b, coefficient, 1.0f);
 }
 
-constexpr float kGeluCoeff = 0.044715f;
-constexpr float kSqrtTwoOverPi = 0.79788456080286535588f;
+constexpr double kGeluCoeff = 0.044715;
+constexpr double kSqrtTwoOverPi = 0.79788456080286535588;
 
 at::Tensor gelu_tanh_term(const at::Tensor& x) {
-  // Each ATen call materializes one specified rounded float32 stage.
-  const auto cubic0 = at::mul(x, kGeluCoeff);
+  // Each ATen call materializes one rounded stage in the input dtype.
+  const auto cubic0 = at::mul(x, rounded(kGeluCoeff, x.scalar_type()));
   const auto cubic1 = at::mul(cubic0, x);
   const auto cubic = at::mul(cubic1, x);
   const auto inner = at::add(x, cubic);
-  return at::tanh(at::mul(inner, kSqrtTwoOverPi));
+  return at::tanh(at::mul(inner, rounded(kSqrtTwoOverPi, x.scalar_type())));
 }
 
 at::Tensor staged_gelu(const at::Tensor& x) {
@@ -746,10 +913,11 @@ at::Tensor staged_gelu(const at::Tensor& x) {
 at::Tensor staged_gelu_backward(const at::Tensor& x, const at::Tensor& g) {
   const auto tanh_term = gelu_tanh_term(x);
   const auto sech_term = at::sub(at::ones_like(x), at::mul(tanh_term, tanh_term));
-  constexpr float scaled_coeff = 3.0f * kGeluCoeff;
+  const double scaled_coeff = rounded(3.0 * rounded(kGeluCoeff, x.scalar_type()), x.scalar_type());
   const auto quadratic0 = at::mul(x, scaled_coeff);
   const auto quadratic = at::mul(quadratic0, x);
-  const auto inner_deriv = at::mul(at::add(quadratic, 1.0f), kSqrtTwoOverPi);
+  const auto inner_deriv = at::mul(at::add(quadratic, 1.0f),
+                                  rounded(kSqrtTwoOverPi, x.scalar_type()));
   const auto derivative_term = at::mul(at::mul(x, sech_term), inner_deriv);
   const auto numerator = at::add(at::add(tanh_term, 1.0f), derivative_term);
   return at::mul(at::mul(numerator, 0.5f), g);
@@ -807,20 +975,25 @@ at::Tensor reduce_sum(const at::Tensor& x) {
 at::Tensor reduce_mean(const at::Tensor& x) {
   if (x.numel() == 0)
     return at::full({1}, std::numeric_limits<float>::quiet_NaN(), x.options());
-  // Preserve rounding of the complete sum before multiplication by the float32 reciprocal.
-  const float scale = 1.0f / static_cast<float>(x.numel());
+  // Preserve rounding of the complete sum before multiplication by the dtype-rounded reciprocal.
+  const double scale = rounded(1.0 / rounded(static_cast<double>(x.numel()), x.scalar_type()),
+                                x.scalar_type());
   return at::mul(reduce_sum(x), scale);
 }
 
 // All generated calls share conversion, validation, device selection, and result ownership.
 at::Tensor argument(b_lean_obj_arg object) { return flat(object); }
-float argument(double scalar) { return static_cast<float>(scalar); }
+double argument(double scalar) { return scalar; }
 
-void check_argument(int64_t& size, const at::Tensor& value) {
-  if (size < 0) size = value.numel();
+void check_argument(int64_t& size, at::ScalarType& dtype, const at::Tensor& value) {
+  if (size < 0) { size = value.numel(); dtype = value.scalar_type(); }
   require(value.numel() == size, "LibTorch buffer operation: size mismatch");
+  require(value.scalar_type() == dtype, "LibTorch buffer operation: dtype mismatch");
 }
-void check_argument(int64_t&, float) {}
+void check_argument(int64_t&, at::ScalarType&, double) {}
+
+const at::Tensor& rounded_argument(const at::Tensor& value, at::ScalarType) { return value; }
+double rounded_argument(double value, at::ScalarType dtype) { return rounded(value, dtype); }
 
 template <typename Function, typename... Args>
 lean_obj_res call_buffer(Function&& function, Args... args) {
@@ -828,8 +1001,9 @@ lean_obj_res call_buffer(Function&& function, Args... args) {
     auto converted = std::make_tuple(argument(args)...);
     return std::apply([&](const auto&... values) {
       int64_t size = -1;
-      (check_argument(size, values), ...);
-      return box(function(values...));
+      at::ScalarType dtype = at::kFloat;
+      (check_argument(size, dtype, values), ...);
+      return box(function(rounded_argument(values, dtype)...));
     }, converted);
   });
 }
@@ -851,11 +1025,11 @@ lean_obj_res call_buffer(Function&& function, Args... args) {
       (a, b), ([](const auto& a, const auto& b) { return EXPRESSION; }))
 #define TORCHLEAN_UNARY_SCALAR_EXPORT(NAME, EXPRESSION) \
   TORCHLEAN_BUFFER_EXPORT(NAME, (b_lean_obj_arg x, double scalar), \
-      (x, scalar), ([](const auto& x, float scalar) { return EXPRESSION; }))
+      (x, scalar), ([](const auto& x, double scalar) { return EXPRESSION; }))
 #define TORCHLEAN_BINARY_SCALAR_EXPORT(NAME, EXPRESSION) \
   TORCHLEAN_BUFFER_EXPORT(NAME, (b_lean_obj_arg a, b_lean_obj_arg b, double scalar), \
       (a, b, scalar), \
-      ([](const auto& a, const auto& b, float scalar) { return EXPRESSION; }))
+      ([](const auto& a, const auto& b, double scalar) { return EXPRESSION; }))
 #define TORCHLEAN_VJP_EXPORT(NAME, EXPRESSION) \
   TORCHLEAN_BUFFER_EXPORT(NAME##_bwd, (b_lean_obj_arg x, b_lean_obj_arg g), \
       (x, g), ([](const auto& x, const auto& g) { return EXPRESSION; }))
@@ -900,8 +1074,8 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_clamp(
     b_lean_obj_arg BObj, double lo, double hi) {
   return invoke([&]() {
     const auto x = flat(BObj);
-    const auto lower = at::scalar_tensor(static_cast<float>(lo), x.options());
-    const auto upper = at::scalar_tensor(static_cast<float>(hi), x.options());
+    const auto lower = at::scalar_tensor(rounded(lo, x.scalar_type()), x.options());
+    const auto upper = at::scalar_tensor(rounded(hi, x.scalar_type()), x.options());
     // fmin/fmax implement the selected NaN behavior, including NaN bounds and lo > hi.
     return box(at::fmin(at::fmax(x, lower), upper));
   });
@@ -914,7 +1088,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_clamp_bwd(
     const auto g = flat(GObj);
     same_size(x, g, "torchlean_cuda_buffer_clamp_bwd: size mismatch");
     const auto interior = at::logical_and(
-        at::gt(x, static_cast<float>(lo)), at::lt(x, static_cast<float>(hi)));
+        at::gt(x, rounded(lo, x.scalar_type())), at::lt(x, rounded(hi, x.scalar_type())));
     return box(at::where(interior, g, 0.0f));
   });
 }
@@ -977,17 +1151,17 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_adam_step(
     same_size(parameters, first_moment, "torchlean_cuda_buffer_adam_step: size mismatch");
     same_size(parameters, second_moment, "torchlean_cuda_buffer_adam_step: size mismatch");
 
-    // Keep all nine host-to-float32 conversions, including the independently
-    // supplied one-minus-beta values. Do not recompute them from rounded betas.
-    const float beta1_f = static_cast<float>(beta1);
-    const float one_minus_beta1_f = static_cast<float>(oneMinusBeta1);
-    const float beta2_f = static_cast<float>(beta2);
-    const float one_minus_beta2_f = static_cast<float>(oneMinusBeta2);
-    const float first_correction = static_cast<float>(firstMomentCorrection);
-    const float second_correction = static_cast<float>(secondMomentCorrection);
-    const float epsilon_f = static_cast<float>(epsilon);
-    const float decay_f = static_cast<float>(decay);
-    const float update_scale = static_cast<float>(updateScale);
+    // Preserve independent coefficients and round each in the parameter dtype.
+    const auto dtype = parameters.scalar_type();
+    const double beta1_f = rounded(beta1, dtype);
+    const double one_minus_beta1_f = rounded(oneMinusBeta1, dtype);
+    const double beta2_f = rounded(beta2, dtype);
+    const double one_minus_beta2_f = rounded(oneMinusBeta2, dtype);
+    const double first_correction = rounded(firstMomentCorrection, dtype);
+    const double second_correction = rounded(secondMomentCorrection, dtype);
+    const double epsilon_f = rounded(epsilon, dtype);
+    const double decay_f = rounded(decay, dtype);
+    const double update_scale = rounded(updateScale, dtype);
 
     const auto m_scaled = at::mul(first_moment, beta1_f);
     auto m = axpy(m_scaled, gradient, one_minus_beta1_f);
@@ -1253,7 +1427,7 @@ Tensor affine_scan(const Tensor& a, const Tensor& b, const Tensor& initial) {
     auto right = coefficients.narrow(0, stride, count);
     auto next_states =
         (right * states.narrow(0, 0, count).to(at::kDouble)
-         + states.narrow(0, stride, count).to(at::kDouble)).to(at::kFloat);
+         + states.narrow(0, stride, count).to(at::kDouble)).to(states.scalar_type());
     auto next_coefficients = right * coefficients.narrow(0, 0, count);
     // Both right-hand sides are materialized before either source is changed.
     states.narrow(0, stride, count).copy_(next_states);
@@ -1356,12 +1530,30 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_hard_masked_softmax_by
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_concat1d(
     b_lean_obj_arg first, b_lean_obj_arg second, uint32_t n, uint32_t m) {
-  return invoke([&] { return box(at::cat({checked(first, {n}), checked(second, {m})})); });
+  return invoke([&] {
+    auto* a = torchlean_cuda_buffer_unbox(first);
+    auto* b = torchlean_cuda_buffer_unbox(second);
+    if (a->format || b->format) {
+      require(a->format && b->format && a->width == b->width &&
+                a->tensor.defined() && b->tensor.defined() && a->size == n && b->size == m,
+              "concat: incompatible encoded buffers");
+      return encoded(at::cat({a->tensor, b->tensor}), a->format, a->width);
+    }
+    return box(at::cat({checked(first, {n}), checked(second, {m})}));
+  });
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_slice1d(
     b_lean_obj_arg input, uint32_t n, uint32_t start, uint32_t length) {
   return invoke([&] {
+    auto* buffer = torchlean_cuda_buffer_unbox(input);
+    if (buffer->format) {
+      require(buffer->tensor.defined() && buffer->size == n && start <= n && length <= n - start,
+                "slice: invalid encoded buffer or extent");
+      return encoded(buffer->tensor.narrow(0, static_cast<int64_t>(start * buffer->width),
+                        static_cast<int64_t>(length * buffer->width)).clone(),
+                     buffer->format, buffer->width);
+    }
     auto x = checked(input, {n});
     require(start <= n && length <= n - start, "slice1d: slice out of bounds");
     return box(x.narrow(0, start, length).clone());
@@ -1393,8 +1585,8 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_layer_norm_fwd(
     auto centered = x - x.sum({1}, true) / divisor;
     auto standard_deviation =
         (centered.square().sum({1}, true) / divisor + epsilon).sqrt();
-    auto normalized = (centered / standard_deviation).to(at::kFloat);
-    auto inverse = standard_deviation.reciprocal().to(at::kFloat);
+    auto normalized = (centered / standard_deviation).to(weight.scalar_type());
+    auto inverse = standard_deviation.reciprocal().to(weight.scalar_type());
     return triple(normalized * weight + bias, normalized, inverse);
   });
 }
@@ -1410,11 +1602,11 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_layer_norm_bwd(
     auto inverse = checked(invstd, {rows, 1});
     auto weight = checked(gamma, {cols});
     auto dxhat = dy * weight;
-    // Keep the supplied, float32-rounded scale parameters and saved xhat/rstd.
+    // Keep the supplied, dtype-rounded scale parameters and saved xhat/rstd.
     // Reconstructing native_layer_norm inputs would change this selected VJP.
-    auto centered = dxhat * static_cast<float>(colsScale) - dxhat.sum({1}, true);
+    auto centered = dxhat * rounded(colsScale, dxhat.scalar_type()) - dxhat.sum({1}, true);
     auto term = centered - xhat * (dxhat * xhat).sum({1}, true);
-    auto dx = (term * inverse) * static_cast<float>(invCols);
+    auto dx = (term * inverse) * rounded(invCols, dxhat.scalar_type());
     return triple(dx, (dy * xhat).sum(0), dy.sum(0));
   });
 }
@@ -1669,10 +1861,10 @@ static uint32_t outDimTranspose(uint32_t in, uint32_t k, uint32_t stride, uint32
   return static_cast<uint32_t>(out);
 }
 
-// Validate after the ABI's binary64-to-binary32 conversion: a finite nonzero Lean `Float` may
-// overflow to infinity or underflow to zero as a float32.
-static float checked_smoothmax_beta(double beta, const char* msg) {
-  const float betaF = static_cast<float>(beta);
+// Validate in the input dtype: a finite nonzero host coefficient can overflow or
+// underflow when a binary32 buffer requires conversion.
+static double checked_smoothmax_beta(double beta, at::ScalarType dtype, const char* msg) {
+  const double betaF = rounded(beta, dtype);
   torchlean::require(std::isfinite(betaF) && betaF != 0.0f, msg);
   return betaF;
 }
@@ -1943,7 +2135,7 @@ static at::Tensor avg_pool_backward(
 }
 
 static std::tuple<at::Tensor, at::Tensor> smooth_pool_statistics(
-    const at::Tensor& x, const Geometry& g, float beta) {
+    const at::Tensor& x, const Geometry& g, double beta) {
   const auto output_shape = with_channels(x.size(0), g.output);
   auto pivot = at::full(output_shape, beta > 0 ? -std::numeric_limits<float>::infinity()
                                              : std::numeric_limits<float>::infinity(), x.options());
@@ -1970,7 +2162,8 @@ static at::Tensor smooth_pool_forward(
     const at::Tensor& input, const Geometry& g, int64_t channels, double beta) {
   // Match the existing forward ABI: empty output does not evaluate beta.
   if (channels == 0 || g.output_volume == 0) return at::empty({0}, input.options());
-  const float b = checked_smoothmax_beta(beta, "torchlean smooth pool: beta must be finite and nonzero");
+  const double b = checked_smoothmax_beta(beta, input.scalar_type(),
+                                         "torchlean smooth pool: beta must be finite and nonzero");
   const auto x = input.reshape(with_channels(channels, g.input));
   const auto statistics = smooth_pool_statistics(x, g, b);
   return std::get<0>(statistics) + std::get<1>(statistics).log() / b;
@@ -1979,7 +2172,8 @@ static at::Tensor smooth_pool_forward(
 static at::Tensor smooth_pool_backward(
     const at::Tensor& input, const at::Tensor& gradient,
     const Geometry& g, int64_t channels, double beta) {
-  const float b = checked_smoothmax_beta(beta, "torchlean smooth pool: beta must be finite and nonzero");
+  const double b = checked_smoothmax_beta(beta, input.scalar_type(),
+                                         "torchlean smooth pool: beta must be finite and nonzero");
   if (gradient.numel() == 0) return at::zeros_like(input);
   const auto x = input.reshape(with_channels(channels, g.input));
   const auto grad = gradient.reshape(with_channels(channels, g.output));
@@ -2099,7 +2293,8 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_softmax_io(
   return io([&] {
     const auto shape = io_dimensions(dims);
     TORCH_CHECK(axis < shape.size(), "LibTorch softmax: axis out of range");
-    return torchlean::box(at::softmax(io_tensor(input, shape).reshape(shape), axis, at::kFloat));
+    const auto x = io_tensor(input, shape).reshape(shape);
+    return torchlean::box(at::softmax(x, axis, x.scalar_type()));
   });
 }
 

@@ -72,9 +72,9 @@ def evalLogSoftmax (device : NN.Backend.Device)
 /-- A rejected node or cotangent must not allocate native payloads or buffer wrappers. -/
 def Internal.assertRejectedWithoutAllocation {α : Type} (label : String)
     (action : Unit → Except String α) : IO Unit := do
-  let before ← LibTorch.Buffer.allocatorStats
+  let before ← LibTorch.Buffer.memory
   let result ← IO.lazyPure action
-  let after ← LibTorch.Buffer.allocatorStats
+  let after ← LibTorch.Buffer.memory
   match result with
   | .ok _ => throw <| IO.userError s!"{label}: unexpectedly accepted invalid input"
   | .error _ => pure ()
@@ -103,7 +103,7 @@ def Internal.checkDegenerateLast (s : Shape) (logarithmic : Bool) : IO Unit := d
     else LibTorch.Tape.softmaxLast (s := s) tape xId
   Internal.assertRejectedWithoutAllocation s!"{label} invalid node" fun _ =>
     applyOp LibTorch.Tape.empty 0
-  let baseline ← LibTorch.Buffer.allocatorStats
+  let baseline ← LibTorch.Buffer.memory
   let input ← LibTorch.Buffer.ofFloatArrayIO (Utils.floatArray (Array.replicate s.size 7.0))
   let (tape, xId) := LibTorch.Tape.empty.leaf { s := s, buf := input }
   let result ← IO.lazyPure fun _ => applyOp tape xId
@@ -120,7 +120,7 @@ def Internal.checkDegenerateLast (s : Shape) (logarithmic : Bool) : IO Unit := d
     unless output.get! i == expectedValue do
       throw <| IO.userError s!"{label}: unexpected scalar output"
   Internal.checkWrongUpstream label s node
-  let forward ← LibTorch.Buffer.allocatorStats
+  let forward ← LibTorch.Buffer.memory
   unless forward.liveBytes == baseline.liveBytes + (8 * s.size).toUInt64 do
     throw <| IO.userError s!"{label}: retained forward payloads"
   for pass in [0:3] do
@@ -133,14 +133,14 @@ def Internal.checkDegenerateLast (s : Shape) (logarithmic : Bool) : IO Unit := d
     Utils.assertTensorApprox s!"{label} backward {pass}"
       (← Utils.anyBufferToTensor (s := s) gradient) (Tensor.full s 0.0) (tol := 0.0)
     LibTorch.Tape.releaseSparseGrads gradients
-    let after ← LibTorch.Buffer.allocatorStats
+    let after ← LibTorch.Buffer.memory
     unless after.liveBytes == forward.liveBytes do
       throw <| IO.userError s!"{label}: backward retained temporary payloads"
   for node in tape.nodes do
     discard <| LibTorch.Buffer.releaseIO node.value.buf
     for buffer in node.cleanup do
       discard <| LibTorch.Buffer.releaseIO buffer
-  let retired ← LibTorch.Buffer.allocatorStats
+  let retired ← LibTorch.Buffer.memory
   unless retired.liveBytes == baseline.liveBytes do
     throw <| IO.userError s!"{label}: tape retirement retained payloads"
 
@@ -152,7 +152,7 @@ def checkScratchLifetime (logarithmic : Bool) : IO Unit := do
     else LibTorch.Tape.softmaxLast (s := [2, 3]) LibTorch.Tape.empty 0
   let x : Tensor Float [2, 3] := [[0.1, -0.2, 0.3], [0.05, 0.25, -0.15]]
   let upstream : Tensor Float [2, 3] := [[1.0, -2.0, 0.5], [0.25, 3.0, -1.0]]
-  let baseline ← Runtime.Autograd.LibTorch.Buffer.allocatorStats
+  let baseline ← Runtime.Autograd.LibTorch.Buffer.memory
   let input ← Runtime.Autograd.LibTorch.Buffer.ofFloatArrayIO
     (Runtime.Autograd.LibTorch.Convert.flattenFloat x)
   let (tape, xId) := Runtime.Autograd.LibTorch.Tape.empty.leaf { s := [2, 3], buf := input }
@@ -163,7 +163,7 @@ def checkScratchLifetime (logarithmic : Bool) : IO Unit := do
   let some node := tape.getNode? yId
     | throw <| IO.userError s!"{label}: missing output node"
   Internal.checkWrongUpstream label [2, 3] node
-  let forward ← Runtime.Autograd.LibTorch.Buffer.allocatorStats
+  let forward ← Runtime.Autograd.LibTorch.Buffer.memory
   -- Only the six input and six output elements may remain live.
   unless forward.liveBytes == baseline.liveBytes + 48 do
     throw <| IO.userError
@@ -182,14 +182,14 @@ def checkScratchLifetime (logarithmic : Bool) : IO Unit := do
     Utils.assertTensorApprox s!"{label} repeated backward {pass}"
       (← Utils.anyBufferToTensor (s := [2, 3]) gradient) expected (tol := 2e-3)
     Runtime.Autograd.LibTorch.Tape.releaseSparseGrads gradients
-    let after ← Runtime.Autograd.LibTorch.Buffer.allocatorStats
+    let after ← Runtime.Autograd.LibTorch.Buffer.memory
     unless after.liveBytes == forward.liveBytes do
       throw <| IO.userError s!"{label}: backward retained temporary payloads"
   for node in tape.nodes do
     discard <| Runtime.Autograd.LibTorch.Buffer.releaseIO node.value.buf
     for buffer in node.cleanup do
       discard <| Runtime.Autograd.LibTorch.Buffer.releaseIO buffer
-  let retired ← Runtime.Autograd.LibTorch.Buffer.allocatorStats
+  let retired ← Runtime.Autograd.LibTorch.Buffer.memory
   unless retired.liveBytes == baseline.liveBytes do
     throw <| IO.userError s!"{label}: tape retirement retained payloads"
 

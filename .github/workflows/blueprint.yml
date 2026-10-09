@@ -35,6 +35,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -138,6 +139,11 @@ jobs:
           working-directory: home_page
           ruby-version: "3.3"
           bundler-cache: true
+
+      - name: Refresh CI timing history
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/docs/ci_timings.py
 
       - name: Build website using Jekyll
         working-directory: home_page

@@ -6,6 +6,7 @@ Authors: TorchLean contributors
 module
 
 public import NN.Kernel.Cuda
+public import NN.Kernel.Cuda.Binary
 public import NN.Runtime.Autograd.Engine.LibTorch.Buffer
 
 /-!
@@ -31,35 +32,35 @@ open _root_.Runtime.Autograd.LibTorch
 private opaque executeBuffer (source : @& String) (inputs : @& Array Buffer)
     (count : UInt64) : IO Buffer
 
-@[never_extract, extern "torchlean_kernel_run_host"]
-private opaque executeHost (source : @& String) (format : UInt32)
-    (inputs : @& Array FloatArray) (count : UInt64) : IO FloatArray
+@[never_extract, extern "torchlean_kernel_run_bytes"]
+private opaque executeBytes (source : @& String) (format : UInt32) (width : UInt64)
+    (inputs : @& Array ByteArray) (count : UInt64) : IO ByteArray
+
+/-- Execute with complete scalar encodings. Wide binary values never pass through native floats. -/
+@[no_expose] def runBytes {α : Type} (scalar : Scalar α)
+    (expr : Expr α [.index] .scalar) (inputs : Array ByteArray) (count : UInt64) :
+    IO ByteArray := do
+  let (source, tag) ← match scalar.precision with
+    | .native format => do
+        let source ← IO.ofExcept (Cuda.source format (fun x => (scalar.encode x).toUInt64)
+          inputs.size expr)
+        pure (source.text, if format == .binary32 then (0 : UInt32) else 1)
+    | .binary format => do
+        let source ← IO.ofExcept (Cuda.binarySource format scalar.encode inputs.size expr)
+        pure (source, (2 : UInt32))
+  executeBytes source tag scalar.precision.bytes.toUInt64 inputs count
 
 /-- Run a generated operation on existing resident binary32 buffers.
 
 Inputs are borrowed and never mutated. Bounds errors and compilation failures are returned before
-an output buffer is exposed. Binary64 requires the host-array interface because the existing
-resident-buffer ABI stores binary32 values.
+an output buffer is exposed. This helper is binary32-specific; other precisions use tensor
+execution.
 -/
 @[no_expose] def runBuffers {α : Type} (format : Cuda.Format) (bits : α → UInt64)
     (expr : Expr α [.index] .scalar) (inputs : Array Buffer) (count : UInt64) : IO Buffer := do
   if format != .binary32 then
-    throw (IO.userError "kernel: resident buffers store binary32; use runHost for binary64")
+    throw (IO.userError "kernel: this operation requires binary32; use tensor execution otherwise")
   let source ← IO.ofExcept (Cuda.source format bits inputs.size expr)
   executeBuffer source.text inputs count
-
-/-- Upload inputs, execute a generated operation, and download the result.
-
-The selected format controls computation on the device. Host arrays contain Lean `Float` values;
-binary32 uploads round them once, while binary64 preserves them. Input reads and all generated
-arithmetic subsequently use the selected device format. This interface does not promise a theorem
-about that external execution.
--/
-@[no_expose] def runHost {α : Type} (format : Cuda.Format) (bits : α → UInt64)
-    (expr : Expr α [.index] .scalar) (inputs : Array FloatArray)
-    (count : UInt64) : IO FloatArray := do
-  let source ← IO.ofExcept (Cuda.source format bits inputs.size expr)
-  let format : UInt32 := match format with | .binary32 => 0 | .binary64 => 1
-  executeHost source.text format inputs count
 
 end NN.Kernel.Internal

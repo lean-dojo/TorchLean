@@ -27,8 +27,9 @@ open Spec
 namespace Buffer
 
 /-- Packed weights for a real-transform adjoint, repeated independently for each batch row. -/
-def realFFTAdjointWeights (batch n : UInt32) (inverse : Bool) : Buffer :=
-  ofFloatArray <| Id.run do
+def realFFTAdjointWeights (batch n : UInt32) (inverse : Bool)
+    (dtype : Dtype := .float32) : Buffer :=
+  ofFloatArray (Id.run do
     let mut values := FloatArray.empty
     for _ in [:batch.toNat] do
       for frequency in [:n.toNat / 2 + 1] do
@@ -37,7 +38,7 @@ def realFFTAdjointWeights (batch n : UInt32) (inverse : Bool) : Buffer :=
           else 1.0 / multiplicity
         values := values.push weight
         values := values.push (if RealFFT.isEndpoint n.toNat frequency then 0 else weight)
-    return values
+    return values) dtype
 
 /--
 Adjoint of the unnormalized real transform for arbitrary packed cotangents.
@@ -46,7 +47,7 @@ The weights compensate for the conjugate pairs inserted by the unnormalized inve
 temporary weights and weighted spectrum are released after the inverse has consumed them.
 -/
 def rfft1dAdjoint (gradient : Buffer) (batch n : UInt32) : Buffer :=
-  let weights := realFFTAdjointWeights batch n false
+  let weights := realFFTAdjointWeights batch n false (Buffer.dtype gradient)
   let weighted := mul gradient weights
   let result := irfft1dPackedUnnormalized weighted batch n
   releaseThen weights <| releaseThen weighted result
@@ -54,7 +55,7 @@ def rfft1dAdjoint (gradient : Buffer) (batch n : UInt32) : Buffer :=
 /-- Adjoint of the normalized inverse, including exact zero imaginary endpoint gradients. -/
 def irfft1dAdjoint (gradient : Buffer) (batch n : UInt32) : Buffer :=
   let transformed := rfft1dPacked gradient batch n
-  let weights := realFFTAdjointWeights batch n true
+  let weights := realFFTAdjointWeights batch n true (Buffer.dtype gradient)
   let result := mul transformed weights
   releaseThen transformed <| releaseThen weights result
 

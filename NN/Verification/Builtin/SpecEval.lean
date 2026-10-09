@@ -47,12 +47,15 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
   DataRef := fun β _ s => Tensor β s
 
   const := fun {_s} t => pure t
+  observe := fun x => pure x.item
   dataConst := fun t => t
   mapData := fun f t => f t
 
   add := fun {_s} a b => pure (Tensor.addSpec (α := α) a b)
   sub := fun {_s} a b => pure (Tensor.subSpec (α := α) a b)
   mul := fun {_s} a b => pure (Tensor.mulSpec (α := α) a b)
+  div := fun {_s} a b => pure (Tensor.divSpec (α := α) a b)
+  neg := fun {_s} x => pure (Tensor.negSpec (α := α) x)
   scale := fun {_s} x c => pure (Tensor.scaleSpec (α := α) x c)
   abs := fun {_s} x => pure (Tensor.absSpec (α := α) x)
   sqrt := fun {_s} x => pure (Tensor.sqrtSpec (α := α) x)

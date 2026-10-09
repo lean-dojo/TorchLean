@@ -174,6 +174,11 @@ The API post-processor removes local dependency pages and redirects their links 
 Its `--importgraph PAGE` option also handles the import viewer. The guide post-processor checks
 the KaTeX runtime, section anchors and page layout after polishing the generated HTML.
 
+The performance page reads `home_page/assets/ci-timings.json`, refreshed by the site build.
+For a Markdown-only preview, refresh it with `python3 scripts/docs/ci_timings.py` before Jekyll.
+The updater uses `GITHUB_TOKEN` or `GH_TOKEN` when available and keeps the saved snapshot if
+GitHub cannot be reached. Tokens stay in the build environment; visitors make no GitHub API calls.
+
 | Page | Source to edit |
 | --- | --- |
 | Home, installation and getting started | `home_page/index.md`, `home_page/installation/index.md`, `home_page/start/index.md`, shared CSS/JS/assets |

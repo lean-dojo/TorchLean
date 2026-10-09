@@ -162,10 +162,10 @@ def runReleaseStress : IO Unit := do
 def runWrapperLifetimeStress : IO Unit := do
   IO.println "== external buffer wrapper lifetime =="
 
-  let before ← Buffer.allocatorStats
+  let before ← Buffer.memory
   for i in [0:4096] do
     runWrapperLifetimeIteration i
-  let after ← Buffer.allocatorStats
+  let after ← Buffer.memory
 
   let allocated := after.wrapperAllocCount - before.wrapperAllocCount
   let finalized := after.wrapperFinalizeCount - before.wrapperFinalizeCount
@@ -375,7 +375,7 @@ def runConstantBranchGradientStress : IO Unit := do
 def runSparseLifetimeStress : IO Unit := do
   IO.println "== repeated sparse-backward ownership =="
 
-  let before ← Buffer.allocatorStats
+  let before ← Buffer.memory
   let s : Shape := [4]
   let x : Tensor Float s := (Tensor.from #[0.25, -0.50, 0.75, -1.00]).reshape [4] (by dsimp; decide)
   let t0 : LibTorch.Tape := LibTorch.Tape.empty
@@ -399,7 +399,7 @@ def runSparseLifetimeStress : IO Unit := do
   -- This test owns the tape and therefore retires its persistent forward values explicitly.
   for node in t2.nodes do
     discard <| Buffer.releaseIO node.value.buf
-  let after ← Buffer.allocatorStats
+  let after ← Buffer.memory
   if after.liveBytes > before.liveBytes then
     throw <| IO.userError
       s!"sparse backward ownership: live bytes grew from {before.liveBytes} to {after.liveBytes}"
@@ -529,7 +529,7 @@ def assertMemoryReadback (label : String) (buffer : Buffer) (n : Nat) (value : F
     Utils.assertApprox s!"{label}[{i}]" (actual.get! i) value (tol := 1e-5)
 
 /-- These inequalities concern native accounting, not a particular cache block size or policy. -/
-def assertNativeAccounting (label : String) (stats : Buffer.AllocatorStats) : IO Unit := do
+def assertNativeAccounting (label : String) (stats : Buffer.Memory) : IO Unit := do
   if stats.allocatedBytes > stats.reservedBytes then
     throw <| IO.userError s!"{label}: allocated bytes exceed reserved bytes"
   if stats.peakAllocatedBytes < stats.allocatedBytes ||
@@ -539,9 +539,9 @@ def assertNativeAccounting (label : String) (stats : Buffer.AllocatorStats) : IO
     throw <| IO.userError s!"{label}: logical peak is below live ownership"
 
 /-- Synchronize the selected device before taking a native allocator snapshot. -/
-def synchronizedStats : IO Buffer.AllocatorStats := do
+def synchronizedStats : IO Buffer.Memory := do
   Runtime.Autograd.LibTorch.synchronize
-  Buffer.allocatorStats
+  Buffer.memory
 
 /-- Warm initialization outside the measured ownership interval. -/
 @[noinline] def warmMemoryProbe : IO Unit := do
@@ -769,7 +769,7 @@ def runMemoryTests : IO Unit := do
   IO.println "== LibTorch memory accounting and OOM (isolated processes) =="
   match Buffer.runtimeStatus with
   | .notLinked =>
-      let stats ← Buffer.allocatorStats
+      let stats ← Buffer.memory
       if stats.allocatedBytes != 0 || stats.reservedBytes != 0 ||
           stats.peakAllocatedBytes != 0 || stats.peakReservedBytes != 0 ||
           stats.deviceFreeBytes != 0 || stats.deviceTotalBytes != 0 then

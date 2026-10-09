@@ -58,8 +58,8 @@ def broadcastScalarToShape (g : Buffer) (outShape : Shape) : Buffer :=
 
 /-- Numerically stable softplus: `max(x,0) + log(1 + exp(-abs(x)))`. -/
 def softplusBuf (x : Buffer) (n : UInt32) : Buffer :=
-  let zeros := Buffer.full n 0.0
-  let ones := Buffer.full n 1.0
+  let zeros := Buffer.full n 0.0 (Buffer.dtype x)
+  let ones := Buffer.full n 1.0 (Buffer.dtype x)
   let max0 := Buffer.max x zeros
   let absx := Buffer.abs x
   let negAbs := Buffer.scale absx (-1.0)

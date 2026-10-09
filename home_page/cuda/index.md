@@ -5,7 +5,7 @@ layout: default
 
 # CUDA
 
-LibTorch evaluates supported Float32 tensor operations on an NVIDIA GPU. TorchLean owns the
+LibTorch evaluates supported `Float32` and `Float` tensor operations on an NVIDIA GPU. TorchLean owns the
 differentiation tape, chooses the local backward operations, and manages their saved tensors.
 Model shapes and graph construction use the same Lean API as CPU execution.
 
@@ -47,9 +47,15 @@ an autograd graph. Model examples select this path with `--device cuda`.
 Attention materializes full score and probability matrices, so its memory use is quadratic in
 sequence length. It does not select a fused attention implementation.
 
+We can also run our own Lean calculations on GPU, including arithmetic in configured binary
+formats such as binary128. Supported calculations record values and gradients on the same tape
+without narrowing them. The [custom computations example]({{ '/examples/custom-computations/' | relative_url }})
+shows how to try this and which operations we can record. These formats do not extend the dtype
+support of LibTorch's model operators.
+
 ## Determinism
 
-Float32 addition is not associative, so a reduction's evaluation order can affect its result.
+Floating-point addition is not associative, so a reduction's evaluation order can affect its result.
 Request strict deterministic algorithms through the typed LibTorch controls:
 
 ```lean

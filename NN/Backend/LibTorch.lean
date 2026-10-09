@@ -74,7 +74,7 @@ def capsule
         evidence := .runtimeGuard "LibTorch bridge size/rank checks at the Lean/native boundary" }
     layoutContract :=
       { claim := .layoutCompatibility op .libTorchCudaView
-        summary := "CUDA buffers contain contiguous row-major LibTorch float32 tensors."
+        summary := "CUDA buffers retain their dtype in contiguous row-major LibTorch tensors."
         evidence := .runtimeGuard
           "LibTorch bridge dtype, device, contiguity, and element-count checks" }
     valueContract :=
@@ -202,6 +202,12 @@ def cos : KernelCapsule := pointwiseCapsule .cos .torchLeanTape
 def log : KernelCapsule := pointwiseCapsule .log .torchLeanTape
 /-- LibTorch CUDA pointwise reciprocal. -/
 def inv : KernelCapsule := pointwiseCapsule .inv .torchLeanTape
+
+/-- Native quotient arithmetic with TorchLean's quotient-rule VJP. -/
+def div : KernelCapsule := pointwiseCapsule .div .torchLeanTape
+
+/-- Native scalar negation with TorchLean's sign-reversing VJP. -/
+def neg : KernelCapsule := pointwiseCapsule .neg .torchLeanTape
 /-- LibTorch CUDA smooth logarithm surrogate `log (softplus x + epsilon)`. -/
 def safeLog : KernelCapsule := pointwiseCapsule .safeLog .torchLeanTape
 /-- LibTorch CUDA log-softmax reduction and normalization. -/
@@ -434,6 +440,8 @@ def capsules : Array KernelCapsule :=
   , cos
   , log
   , inv
+  , div
+  , neg
   , safeLog
   , logSoftmax
   , softmax

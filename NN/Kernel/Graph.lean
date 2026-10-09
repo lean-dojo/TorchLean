@@ -72,12 +72,13 @@ private def prepare (graph : Graph) (payload : Payload Float32) (node : Node) :
   | .custom name _ _ =>
       let some program := payload.custom? node.id |
         throw s!"IR native: custom {name}: missing checked body"
-      if program.format != .binary32 then
-        throw s!"IR native: custom {name}: resident buffers require binary32"
-      let _ ← NN.Kernel.Cuda.source program.format program.bits node.parents.size program.expression
+      let .native .binary32 := program.scalar.precision |
+        throw s!"IR native: custom {name}: resident buffers require native binary32"
+      let bits := fun x => (program.scalar.encode x).toUInt64
+      let _ ← NN.Kernel.Cuda.source .binary32 bits node.parents.size program.expression
       pure fun values => do
         let inputs ← node.parents.mapM fun index => do pure (← parent values index).buf
-        NN.Kernel.Internal.runBuffers program.format program.bits program.expression inputs
+        NN.Kernel.Internal.runBuffers .binary32 bits program.expression inputs
           node.outShape.size.toUInt64
   | .detach | .reshape _ _ | .flatten _ => unary id
   | .add => binary Buffer.add
@@ -204,6 +205,8 @@ def Graph.runBuffers (graph : Graph) (payload : Payload Float32)
       if value.s != node.outShape then
         throw (IO.userError s!"IR native: input shape mismatch at node {node.id}")
       let value ← IO.ofExcept (AnyBuffer.validate value)
+      unless Buffer.dtype value.buf == .float32 do
+        throw (IO.userError s!"IR native: input dtype must be binary32 at node {node.id}")
       actions := actions.push (fun _ => pure value.buf)
     else
       actions := actions.push (← IO.ofExcept (Internal.prepare graph payload node))

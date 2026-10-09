@@ -133,6 +133,31 @@ def mul {α : Type} {Δ : Type} [TorchLean.Storage α] [Mul α] [Add α] [Zero �
           (Contributions.single (α := α) (Γ := Γ ++ ss) (s := s) ib (mulSpec δ av)))
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
+/-- Quotient with JVP and VJP schedules matching the eager division node.
+The real derivative requires every denominator coordinate to be nonzero. -/
+def div {α Δ : Type} [Storage α] [Div α] [Mul α] [Sub α] [Add α] [Zero α]
+    {Γ : List Shape} {s : Shape} (a b : Var s) : MWith α Δ Γ (Var s) := do
+  let ⟨ss, graph, _⟩ ← get
+  let ia ← liftM (mkIdx (Γ := Γ) ss a)
+  let ib ← liftM (mkIdx (Γ := Γ) ss b)
+  let node : NodeData α Δ (Γ ++ ss) s :=
+    NodeData.ofLocalCompact (fun lookup => (lookup.read ia, lookup.read ib))
+      (forward := fun ctx _ => divSpec ctx.1 ctx.2)
+      (jvp := fun ctx tangent _ =>
+        subSpec (divSpec tangent.1 ctx.2)
+          (mulSpec tangent.2 (divSpec (divSpec ctx.1 ctx.2) ctx.2)))
+      (vjp := fun ctx _ seed =>
+        let da := divSpec seed ctx.2
+        let db := subSpec (Tensor.full s 0)
+          (mulSpec seed (divSpec (divSpec ctx.1 ctx.2) ctx.2))
+        Contributions.add (Contributions.single ia da) (Contributions.single ib db))
+  push graph node
+
+/-- Direct scalar negation with its sign-reversing JVP and VJP. -/
+def neg {α Δ : Type} [Storage α] [Neg α] [Zero α]
+    {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
+  Internal.unary x { forward := negSpec, backward := fun _ seed => negSpec seed }
+
 /-- Square `x ↦ x ⊙ x`. -/
 def square {α : Type} {Δ : Type} [TorchLean.Storage α] [Mul α] [Add α] [Zero α]
     {Γ : List Shape} {s : Shape}

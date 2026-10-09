@@ -205,11 +205,14 @@ the existing numerical primitives.
   output sizes must fit the `UInt32` FFI ABI. Native guards must also check dtype, device, and
   layout. A typed capsule/handler binding proves agreement of operation, provider, and device;
   it does not prove those native guards or arithmetic correct.
-- Eager CUDA buffers hold contiguous row-major LibTorch float32 tensors. Native handles and views
+- Native eager CUDA buffers hold contiguous row-major LibTorch binary32 or binary64 tensors.
+  Custom configured-binary arithmetic uses byte tensors carrying complete scalar encodings,
+  including saved values and gradients on the same tape. Native model operators do not accept
+  those encoded formats. Native handles and views
   follow LibTorch ownership; Lean finalizers release their tensor owners rather than specifying
   direct `cudaFree` behavior. Borrowed Lean arguments still use `@&`, and native calls must respect
-  that calling convention. Dtype-specific interfaces remain separate from FloatLib's configured
-  software formats.
+  that calling convention. Both native and encoded interfaces must preserve their dtype and
+  buffer-layout requirements.
 - Native buffer operations remain marked `@[never_extract]` where resource behavior prevents
   commoning or deletion. Effectful constructors and explicit release sequence allocation and
   destruction. A `Buffer` is still a copyable reference, not a linear capability: explicit release
@@ -264,15 +267,28 @@ the existing numerical primitives.
 
 ## Custom Tensor Computations
 
-`NN.Kernel` applies scalar functions to tensors on CPU or compiles supported FP32/FP64 functions
-to CUDA. `Program.correct`, `Program.lower_correct` and `Program.named_correct` prove source
+`NN.Kernel` applies scalar functions to tensors on CPU or compiles supported native and configured
+binary calculations to CUDA. `Program.correct`, `Program.lower_correct` and `Program.named_correct` prove source
 correspondence through the expression and statement representations. `Cuda.source_denotes`
 connects emitted source semantics under explicit arithmetic and reader contracts. These theorems
 do not verify NVRTC, the CUDA driver, hardware arithmetic, concurrent error recording or foreign
 memory. The native bridge checks reads, retains input owners until completion, and bounds its
 compiled-module cache; those checks remain native implementation obligations.
 
-CPU evaluates the original scalar function; GPU rejects unsupported source without a CPU fallback.
+Configured binary arithmetic uses complete encoded words in CUDA buffers, including saved values
+and gradients on the existing tape. Its generated arithmetic is compared with FloatLib, not
+verified by Lean's kernel. The format descriptor, byte transfer, slicing, concatenation and zero
+allocation are additional native implementation obligations. Encoded buffers cannot be used as
+native optimizer checkpoints or passed to unsupported ATen operations.
+
+Automatic recording checks the operation recipe against the original function. Scalar branches
+record only the selected path and synchronize to Lean for the decision. Fixed-parameter
+recurrences record their ordered steps. These source equalities do not establish differentiability
+at branch boundaries or turn floating-point VJPs into exact real derivatives; the existing
+derivative laws and their domain assumptions still apply.
+
+CPU evaluates the original scalar function. CPU-only carriers retain their type through a reported
+fallback; unsupported source for a GPU-capable carrier remains an error.
 Canonical IR stores a custom node's checked body separately from its shape signature. A source
 proof supplies neither a real-enclosure rule nor a derivative: IBP/CROWN, forward-only lowering
 and PyTorch export reject unsupported custom paths. See the

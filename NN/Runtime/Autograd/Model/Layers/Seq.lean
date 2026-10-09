@@ -219,7 +219,7 @@ def forward {σ τ : Shape} (model : Seq σ τ) (mode : Mode := .eval)
       -- The result has its own host storage. Retire the tape even if execution or readback throws,
       -- preserving shared parameter snapshots and reusable device blocks for the next call.
       sess.resetTape
-      if options.usesCuda then
+      if sess.options.usesCuda then
         Runtime.Autograd.LibTorch.Buffer.collectGarbage
 
   /--

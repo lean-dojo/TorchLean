@@ -3,12 +3,18 @@
   Formalizing Neural Networks in Lean
 </h1>
 
-TorchLean brings neural-network programming and formal reasoning into one Lean project. Tensor
-shapes are part of the types, models are executable Lean programs, and the same definitions can be
-used by training code, graph transformations, certificate checkers, and proofs. TorchLean owns
-automatic differentiation; its CUDA backend uses LibTorch's ATen operations to compute tensor
-values and local gradients. The Lean library records the mathematical meaning and assumptions
-attached to each execution path.
+TorchLean brings general tensor computations, machine learning, and mathematical proofs together
+in Lean. We can use its shape-checked tensors for linear algebra and numerical algorithms, write
+our own tensor functions, or build and train neural networks, from small examples to larger
+GPU-backed training runs. Lean is both a functional programming language and a theorem prover,
+so we can run a calculation and reason about it in the same language.
+
+We reuse model definitions for training, graph transformations, certificate checks, and proofs.
+The verification tools cover questions such as whether a classifier keeps its prediction across
+an input region. Through FloatLib, we can choose the numerical precision and prove bounds on
+rounding and numerical error under explicit assumptions. TorchLean owns automatic differentiation;
+on GPU, it calls LibTorch's ATen operations to compute tensor values and local gradients. The
+external GPU implementation remains a trust boundary, separate from the Lean proofs.
 
 ## Installation
 
@@ -142,9 +148,15 @@ def onGpu : IO (Tensor Float32 [3]) := square.run input (device := gpu)
 -- [1.000000, 4.000000, 9.000000]
 ```
 
-CPU runs the Lean function and is the default. The GPU path compiles a supported FP32/FP64
-subset through NVRTC; unsupported code or an unavailable GPU returns an error without a CPU
-fallback. It does not compile arbitrary Lean functions or derive custom gradients.
+CPU runs the Lean function and is the default. GPU compiles supported calculations through NVRTC,
+using native FP32/FP64 or configured binary arithmetic. A CPU-only scalar type or format retains
+its precision on CPU with a diagnostic. Unsupported code for a GPU-capable type, or an unavailable
+GPU, still returns an error. Functions can take runtime scalar parameters;
+`f.zip left right` combines two equally shaped tensors. Indexed programs support bounded loops and
+fixed-parameter numerical recurrences, with Lean-checked correspondence to the recursive equations.
+Whole-tensor functions use the same call: `f.run input`. Add `(grad := true)` to record supported
+operations on the existing autograd tape; the result has `.value` and `.backward`. Shapes and
+storage are inferred from the input. Arbitrary indexed bodies are not differentiated automatically.
 See the [custom-operation guide](NN/Kernel/README.md) for supported operations, indexed programs,
 lowering proofs, and the native execution boundary.
 
@@ -152,8 +164,15 @@ lowering proofs, and the native execution boundary.
 
 [FloatLib](https://github.com/lean-dojo/FloatLib) supplies configurable arithmetic and numerical
 proofs. TorchLean's CPU tensors and typed models can use binary32, binary128, or a custom binary
-format without converting through native floats. GPU providers support their documented formats,
-not every FloatLib scalar type.
+format without converting through native floats. Custom GPU computations also accept configured
+binary types, selecting compatible hardware operations automatically and using integer-limb
+software arithmetic for custom formats and precisions beyond native floats.
+The LibTorch tape retains binary32 for `Float32` and binary64 for `Float`, including gradients
+and optimizer state. Configured binary arithmetic also records on the GPU tape, retaining complete
+words for saved values and gradients. This supports the arithmetic operations described in the
+[custom-operation guide](NN/Kernel/README.md#recording-a-calculation-for-differentiation);
+native model operators and optimizer checkpoints still require native dtypes.
+Decimal and posit formats use CPU.
 
 See the [typed-training example](NN/Examples/Quickstart/TypedTraining.lean) for binary128 training
 and the [tensor guide](https://lean-dojo.github.io/TorchLean/blueprint/Building-Models/Tensors-That-Remember-Their-Shapes/)

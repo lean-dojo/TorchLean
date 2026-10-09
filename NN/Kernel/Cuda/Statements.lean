@@ -195,14 +195,14 @@ theorem Statement.denotes_render_seq (format : Format) (arithmetic : Arithmetic 
       ((Statement.seq first second).eval arithmetic read) := by
   cases hf : Internal.render format (fun x => (Literal.ofValue format x).bits) inputs first with
   | error error =>
-      simp [Internal.render, hf, bind, Except.bind] at h
+      simp [Internal.render, Internal.renderWith, hf, bind, Except.bind] at h
   | ok firstText =>
       cases hs : Internal.render format (fun x => (Literal.ofValue format x).bits)
           inputs second with
       | error error =>
-          simp [Internal.render, hf, hs, bind, Except.bind] at h
+          simp [Internal.render, Internal.renderWith, hf, hs, bind, Except.bind] at h
       | ok secondText =>
-          simp only [Internal.render, hf, hs] at h
+          simp only [Internal.render, Internal.renderWith, hf, hs] at h
           dsimp only [bind, Functor.map, Except.instMonad, Except.bind, Except.map,
             Except.pure] at h
           injection h with htext
@@ -232,22 +232,23 @@ theorem Statement.denotes_render_branch (format : Format) (arithmetic : Arithmet
       ((Statement.branch name condition yes y no n).eval arithmetic read) := by
   cases hp : Internal.atom format (fun x => (Literal.ofValue format x).bits) condition with
   | error error =>
-      simp [Internal.render, hp, bind, Except.bind] at h
+      simp [Internal.render, Internal.renderWith, hp, bind, Except.bind] at h
   | ok conditionText =>
       cases hy : Internal.render format (fun x => (Literal.ofValue format x).bits) inputs yes with
       | error error =>
-          simp [Internal.render, hp, hy, bind, Except.bind] at h
+          simp [Internal.render, Internal.renderWith, hp, hy, bind, Except.bind] at h
       | ok yesText =>
           cases hn : Internal.render format (fun x => (Literal.ofValue format x).bits)
               inputs no with
           | error error =>
-              simp [Internal.render, hp, hy, hn, bind, Except.bind] at h
+              simp [Internal.render, Internal.renderWith, hp, hy, hn, bind, Except.bind] at h
           | ok noText =>
-              simp only [Internal.render, hp, hy, hn] at h
+              simp only [Internal.render, Internal.renderWith, hp, hy, hn] at h
               dsimp only [bind, Functor.map, Except.instMonad, Except.bind, Except.map,
                 Except.pure] at h
               injection h with htext
               subst text
+              simp only [Internal.typeName_native]
               apply Statement.Denotes.branch name condition y n
                 (Internal.type_typeName format t) (Name.parse_render name) _
                 (Name.parse_render y) (Name.parse_render n) (hYes hy) (hNo hn)
@@ -284,16 +285,17 @@ theorem Statement.denotes_render_loop (format : Format) (arithmetic : Arithmetic
     Statement.Denotes format arithmetic inputs size load text
       ((Statement.loop acc counter count initial body next).eval arithmetic read) := by
   cases hc : Internal.atom format (fun x => (Literal.ofValue format x).bits) count with
-  | error error => simp [Internal.render, hc, bind, Except.bind] at h
+  | error error => simp [Internal.render, Internal.renderWith, hc, bind, Except.bind] at h
   | ok countText =>
       cases hv : Internal.atom format (fun x => (Literal.ofValue format x).bits) initial with
-      | error error => simp [Internal.render, hc, hv, bind, Except.bind] at h
+      | error error => simp [Internal.render, Internal.renderWith, hc, hv, bind, Except.bind] at h
       | ok initialText =>
           cases hb : Internal.render format (fun x => (Literal.ofValue format x).bits)
               inputs body with
-          | error error => simp [Internal.render, hc, hv, hb, bind, Except.bind] at h
+          | error error =>
+              simp [Internal.render, Internal.renderWith, hc, hv, hb, bind, Except.bind] at h
           | ok bodyText =>
-              simp only [Internal.render, hc, hv, hb] at h
+              simp only [Internal.render, Internal.renderWith, hc, hv, hb] at h
               dsimp only [bind, Functor.map, Except.instMonad, Except.bind, Except.map,
                 Except.pure] at h
               injection h with htext

@@ -321,7 +321,7 @@ directed endpoints.
 :::
 
 :::theorem "ibp_rounded_engine_sound" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.DirectedBackward.runIBP_encloses")
-This compatibility theorem covers the legacy `ibpForwardSupported` core: inputs, constants,
+This theorem covers the `ibpForwardSupported` core: inputs, constants,
 copies, `add`, `sub`, `mulElem`, `relu`, `linear`, unary `matmul`, `sum`, `exp`, `log`, `sqrt`,
 `inv`, `tanh`, `sigmoid`, `sin`, and `cos`. With `LawfulBoundOps` and
 `LawfulNonlinearBoundOps`, every box produced by the executable `runIBP` encloses the real value
@@ -388,7 +388,7 @@ exact. Structural operations use the same coordinate maps in both directions.
 
 :::proof "rounded_real_backward_equation"
 The convolution and structural bridges handle their respective operation kinds. The remaining
-cases follow from the corresponding clauses of `RealNodeEquation`. The legacy sum clause also
+cases follow from the corresponding clauses of `RealNodeEquation`. The backward sum clause also
 records the parent row width; the full forward theorem supplies this dimension agreement.
 :::
 

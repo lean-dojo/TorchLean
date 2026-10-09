@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Torch.Core.Session.State
+public import NN.Runtime.Autograd.Torch.Core.TensorTransfer
 
 /-!
 # Eager Session Lifecycle
@@ -17,13 +18,31 @@ use Lean reference counting so a reset or update in one session cannot invalidat
 
 public section
 
+namespace Runtime.Autograd.Torch.Config
+
+/-- Resolve a CPU-only scalar before creating either kind of recorded session.
+Native carriers retain the requested device, so runtime failures are not converted to fallbacks.
+Explicit backend profiles are still validated against the effective device. -/
+def forScalar {α : Type} [TorchLean.Storage α] [Runtime.Autograd.Torch.TensorTransfer α]
+    (options : Runtime.Autograd.Torch.Config) : IO Runtime.Autograd.Torch.Config := do
+  if options.device == TorchLean.gpu &&
+      !Runtime.Autograd.Torch.TensorTransfer.supportsGpu (α := α) then
+    IO.eprintln "autograd: this scalar type uses the CPU tape; keeping its type and precision"
+    return { options with device := TorchLean.cpu }
+  return options
+
+end Runtime.Autograd.Torch.Config
+
 namespace Runtime.Autograd.Torch.Internal
 
 open Spec TorchLean
 namespace EagerSession
 
-/-- Allocate a fresh eager session with an empty tape and empty side tables. -/
-def new {α : Type} [Storage α] (options : Config := {}) : IO (EagerSession α) := do
+/-- Allocate an eager session. A scalar carrier without native tensor support retains its
+arithmetic on CPU with a diagnostic. Native carriers still report GPU execution failures. -/
+def new {α : Type} [Storage α] [TensorTransfer α]
+    (options : Config := {}) : IO (EagerSession α) := do
+  let options ← options.forScalar (α := α)
   try
     options.validateForExecution
   catch e =>

@@ -158,7 +158,7 @@ def runSpectralConvIdentity : IO Unit := do
 results to zero. Exact powers of two make both range boundaries independent of decimal rounding. -/
 def runAdjointRange : IO Unit := do
   IO.println "== real FFT adjoint range =="
-  let before ← Buffer.allocatorStats
+  let before ← Buffer.memory
   for dc in #[Float.ofNat (2 ^ 126), 1.0 / Float.ofNat (2 ^ 149)] do
     let gradient ← Buffer.ofFloatArrayIO <| floatArray #[dc, 0.0, 0.0, 0.0, 0.0, 0.0]
     let result ← IO.lazyPure fun _ => Buffer.rfft1dAdjoint gradient 1 4
@@ -173,7 +173,7 @@ def runAdjointRange : IO Unit := do
   assertFloatArrayApprox "spectral zero forward" output (floatArray #[0.0, 0.0, 0.0, 0.0]) 0.0
   assertFloatArrayApprox "spectral finite large dX" dx
     (floatArray #[large, large, large, large]) 0.0
-  let after ← Buffer.allocatorStats
+  let after ← Buffer.memory
   unless after.liveBytes == before.liveBytes do
     throw <| IO.userError "FFT range checks retained tensor payloads"
 
@@ -186,9 +186,9 @@ def checkSpectralConvFiniteDiff (grid width modes : Nat)
   let eps := 1e-2
   let tol := 2e-2
 
-  let before ← Buffer.allocatorStats
+  let before ← Buffer.memory
   let (actual, dX, dWRe, dWIm) ← evaluateSpectralConv grid width modes x wRe wIm dY
-  let after ← Buffer.allocatorStats
+  let after ← Buffer.memory
   unless after.liveBytes == before.liveBytes do
     throw <| IO.userError "spectral composition retained tensor payloads after session reset"
   unless dX.size == x.size && dWRe.size == wRe.size && dWIm.size == wIm.size do

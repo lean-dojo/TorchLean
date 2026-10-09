@@ -107,7 +107,7 @@ def new
               Torch.Internal.EagerSession.getValue (α := α) sess outRef
             finally
               sess.resetTape
-              if options.usesCuda then
+              if sess.options.usesCuda then
                 Runtime.Autograd.LibTorch.Buffer.collectGarbage))
   pure { evaluate := evaluate }
 

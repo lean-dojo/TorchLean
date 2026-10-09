@@ -100,7 +100,7 @@ theorem Atom.parse_render (format : Format) {t : Ty} (value : Atom format.Value 
         some (.predicate value)
       cases value <;> simp [Atom.parse, Name.parse, Internal.unframe]
   | scalar value =>
-      simp only [Internal.atom]
+      simp only [Internal.atom, Internal.atomWith]
       rw [Literal.ofBits_ofValue]
       change Atom.parse format .scalar (Literal.ofValue format value).render = some (.scalar value)
       have hname : Name.parse .scalar (Literal.ofValue format value).render = none := by
@@ -342,21 +342,21 @@ theorem Primitive.denotes_expression (format : Format) (arithmetic : Arithmetic 
   | copy value =>
       exact Primitive.Denotes.copy value (atom_parse_of_render format value h)
   | load operand index =>
-      simp [Internal.expression] at h
+      simp [Internal.expression, Internal.expressionWith] at h
   | binary op x y =>
       cases hx : Internal.atom format (fun x => (Literal.ofValue format x).bits) x with
       | error error =>
-          simp only [Internal.expression, hx] at h
+          simp only [Internal.expression, Internal.expressionWith, hx] at h
           change Except.error error = Except.ok text at h
           contradiction
       | ok xt =>
         cases hy : Internal.atom format (fun x => (Literal.ofValue format x).bits) y with
         | error error =>
-            simp only [Internal.expression, hx, hy] at h
+            simp only [Internal.expression, Internal.expressionWith, hx, hy] at h
             change Except.error error = Except.ok text at h
             contradiction
         | ok yt =>
-          simp only [Internal.expression, hx, hy] at h
+          simp only [Internal.expression, Internal.expressionWith, hx, hy] at h
           dsimp only [bind, Functor.map, Except.instMonad, Except.bind, Except.map,
             Except.pure] at h
           injection h with htext
@@ -366,11 +366,11 @@ theorem Primitive.denotes_expression (format : Format) (arithmetic : Arithmetic 
   | neg x =>
       cases hx : Internal.atom format (fun x => (Literal.ofValue format x).bits) x with
       | error error =>
-          simp only [Internal.expression, hx] at h
+          simp only [Internal.expression, Internal.expressionWith, hx] at h
           change Except.error error = Except.ok text at h
           contradiction
       | ok xt =>
-          simp only [Internal.expression, hx] at h
+          simp only [Internal.expression, Internal.expressionWith, hx] at h
           change Except.ok s!"(-{xt})" = Except.ok text at h
           injection h with htext
           subst text
@@ -380,17 +380,17 @@ theorem Primitive.denotes_expression (format : Format) (arithmetic : Arithmetic 
   | compare op x y =>
       cases hx : Internal.atom format (fun x => (Literal.ofValue format x).bits) x with
       | error error =>
-          simp only [Internal.expression, hx] at h
+          simp only [Internal.expression, Internal.expressionWith, hx] at h
           change Except.error error = Except.ok text at h
           contradiction
       | ok xt =>
         cases hy : Internal.atom format (fun x => (Literal.ofValue format x).bits) y with
         | error error =>
-            simp only [Internal.expression, hx, hy] at h
+            simp only [Internal.expression, Internal.expressionWith, hx, hy] at h
             change Except.error error = Except.ok text at h
             contradiction
         | ok yt =>
-          simp only [Internal.expression, hx, hy] at h
+          simp only [Internal.expression, Internal.expressionWith, hx, hy] at h
           dsimp only [bind, Functor.map, Except.instMonad, Except.bind, Except.map,
             Except.pure] at h
           injection h with htext
@@ -400,17 +400,17 @@ theorem Primitive.denotes_expression (format : Format) (arithmetic : Arithmetic 
   | indexCompare op x y =>
       cases hx : Internal.atom format (fun x => (Literal.ofValue format x).bits) x with
       | error error =>
-          simp only [Internal.expression, hx] at h
+          simp only [Internal.expression, Internal.expressionWith, hx] at h
           change Except.error error = Except.ok text at h
           contradiction
       | ok xt =>
         cases hy : Internal.atom format (fun x => (Literal.ofValue format x).bits) y with
         | error error =>
-            simp only [Internal.expression, hx, hy] at h
+            simp only [Internal.expression, Internal.expressionWith, hx, hy] at h
             change Except.error error = Except.ok text at h
             contradiction
         | ok yt =>
-          simp only [Internal.expression, hx, hy] at h
+          simp only [Internal.expression, Internal.expressionWith, hx, hy] at h
           dsimp only [bind, Functor.map, Except.instMonad, Except.bind, Except.map,
             Except.pure] at h
           injection h with htext
@@ -527,23 +527,24 @@ theorem Assignment.denotes_render (format : Format) (arithmetic : Arithmetic for
   cases operation with
   | load operand index =>
       by_cases hOperand : operand ≥ inputs
-      · simp only [Internal.assignment, hOperand, ↓reduceIte] at h
+      · simp only [Internal.assignment, Internal.assignmentWith, hOperand, ↓reduceIte] at h
         change Except.error s!"kernel: input {operand} is not declared" = Except.ok text at h
         contradiction
       · have hDeclared : operand < inputs := Nat.lt_of_not_ge hOperand
         cases hi : Internal.atom format (fun x => (Literal.ofValue format x).bits) index with
         | error error =>
-            simp only [Internal.assignment, hOperand, ↓reduceIte, hi] at h
+            simp only [Internal.assignment, Internal.assignmentWith, hOperand, ↓reduceIte, hi] at h
             change Except.error error = Except.ok text at h
             contradiction
         | ok it =>
-            simp only [Internal.assignment, hOperand, ↓reduceIte, hi] at h
+            simp only [Internal.assignment, Internal.assignmentWith, hOperand, ↓reduceIte, hi] at h
             dsimp only [bind, Functor.map, Except.instMonad, Except.bind, Except.map,
               Except.pure] at h
             injection h with htext
             subst text
             simpa [Assignment.eval, Primitive.eval, hRead operand hDeclared,
-              toString, String.append_assoc] using
+              toString, String.append_assoc, Internal.Dialect.typeName, Internal.native,
+              Internal.typeName] using
               Assignment.Denotes.checkedLoad (format := format) (arithmetic := arithmetic)
                 (size := size) (load := load) (locals := locals) operand name index hDeclared
                 (Internal.type_typeName format .scalar) (Name.parse_render name)

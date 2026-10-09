@@ -55,15 +55,15 @@ Create a new unified session.
 The execution mode is selected by `options.execution`: `.eager` builds a dynamic tape, while
 `.typedGraph` records a shape-indexed typed SSA graph.
 -/
-def new {α : Type} [TorchLean.Storage α]
+def new {α : Type} [TorchLean.Storage α] [Runtime.Autograd.Torch.TensorTransfer α]
     (options : Runtime.Autograd.Torch.Config := {}) : IO (Session α) := do
   match options.execution with
   | .eager =>
       let s ← EagerSession.new (α := α) (options := options)
-      pure { options := options, state := .eager s }
+      pure { options := s.options, state := .eager s }
   | .typedGraph =>
       let s ← Runtime.Autograd.Torch.Internal.TypedGraphSession.new (α := α) (options := options)
-      pure { options := options, state := .typedGraph s }
+      pure { options := s.options, state := .typedGraph s }
 
 /-- Reset the autograd tape or begin a fresh typed-graph recording phase. -/
 def resetTape {α : Type} [TorchLean.Storage α] (s : Session α) : IO Unit := do

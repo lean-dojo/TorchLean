@@ -6,6 +6,7 @@ Authors: TorchLean contributors
 module
 
 public import NN.Kernel.Cuda.Correctness
+public import NN.Kernel.Scalar
 
 /-!
 # Certified custom-operation programs
@@ -48,8 +49,7 @@ def evaluate {α : Type} (arithmetic : Arithmetic α) (expr : Expr α [.index] .
 
 /-- A frontend result with its original Lean function and checked semantic correspondence. -/
 structure Program (α : Type) where
-  format : Cuda.Format
-  bits : α → UInt64
+  scalar : Scalar α
   arithmetic : Arithmetic α
   reference : Reader α → UInt64 → Except Error α
   expression : Expr α [.index] .scalar
@@ -61,6 +61,14 @@ structure Elementwise {α : Type} (f : α → α) where
   reference_eq : ∀ read index, program.reference read index = do
     let x ← read 0 index
     pure (f x)
+
+/-- A binary scalar function compiled with left-to-right reads of its two tensor inputs. -/
+structure Zip {α : Type} (f : α → α → α) where
+  program : Program α
+  reference_eq : ∀ read index, program.reference read index = do
+    let x ← read 0 index
+    let y ← read 1 index
+    pure (f x y)
 
 /-- The scoped target before CUDA name allocation preserves the original source function. -/
 theorem Program.lower_correct {α : Type} (program : Program α) (read : Reader α)

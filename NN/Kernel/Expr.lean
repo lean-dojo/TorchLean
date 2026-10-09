@@ -128,12 +128,56 @@ def iterate {α : Type} (step : UInt64 → α → Except Error α) :
       iterate step n (i + 1) acc
 
 /-- Equality of step functions preserves the full fold, including its failure behavior. -/
-theorem iterate_congr {α : Type} {f g : UInt64 → α → Except Error α}
+@[congr] theorem iterate_congr {α : Type} {f g : UInt64 → α → Except Error α}
     (h : ∀ i acc, f i acc = g i acc) (n : Nat) (i : UInt64) (acc : α) :
     iterate f n i acc = iterate g n i acc := by
   have : f = g := funext fun i => funext (h i)
   subst g
   rfl
+
+/-- Splitting off the last step preserves the order of all reads and arithmetic.
+The index conversion is modular, just like the unsigned counter used by `iterate`. -/
+theorem iterate_succ {α : Type} (step : UInt64 → α → Except Error α)
+    (n : Nat) (i : UInt64) (acc : α) :
+    iterate step (n + 1) i acc = (do
+      let value ← iterate step n i acc
+      step (i + n.toUInt64) value) := by
+  induction n generalizing i acc with
+  | zero =>
+      change (step i acc >>= fun value => Except.ok value) = step (i + 0) acc
+      rw [UInt64.add_zero]
+      simp only [Bind.bind, Except.bind]
+      cases step i acc <;> rfl
+  | succ n ih =>
+      change (step i acc >>= fun value => iterate step (n + 1) (i + 1) value) =
+        ((step i acc >>= fun value => iterate step n (i + 1) value) >>=
+          fun value => step (i + (n + 1).toUInt64) value)
+      cases h : step i acc with
+      | error e => simp [Bind.bind, Except.bind]
+      | ok value =>
+          simp only [Bind.bind, Except.bind]
+          rw [ih]
+          have hIndex : (i + 1) + n.toUInt64 = i + (n + 1).toUInt64 := by
+            simp only [Nat.toUInt64, UInt64.ofNat_add, UInt64.ofNat_one]
+            rw [UInt64.add_assoc, UInt64.add_comm 1]
+          rw [hIndex]
+          rfl
+
+/-- A recursive calculation can use the loop backend when its equations give a scalar recurrence.
+This includes failing input reads: neither later steps nor the final result mask an earlier error.
+No laws about the scalar arithmetic, and no reassociation of operations, are assumed. -/
+theorem iterate_eq_recurrence {α : Type} (f : Nat → Except Error α)
+    (step : UInt64 → α → Except Error α) (initial : Except Error α)
+    (hzero : f 0 = initial)
+    (hsucc : ∀ n, f (n + 1) = (do
+      let previous ← f n
+      step n.toUInt64 previous)) (n : Nat) :
+    (do let value ← initial; iterate step n 0 value) = f n := by
+  induction n with
+  | zero => cases initial <;> simp [iterate, hzero, Bind.bind, Except.bind]
+  | succ n ih =>
+      rw [hsucc, ← ih]
+      cases initial <;> simp [iterate_succ, Bind.bind, Except.bind]
 
 /-- Reference semantics: operands are evaluated left to right and folds are never reassociated. -/
 def Expr.eval {α : Type} (arithmetic : Arithmetic α) (read : Reader α)

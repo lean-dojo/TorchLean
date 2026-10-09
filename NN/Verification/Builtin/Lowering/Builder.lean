@@ -305,10 +305,16 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
   const := fun {_s} t => pure (.const t)
   dataConst := fun t => t
   mapData := fun f t => f t
+  observe := fun _ =>
+    fail (α := α) "TorchLean→IR: eager scalar control is outside the verifier IR fragment"
 
   add := fun {_s} a b => emitBinary (α := α) (kind := .add) (a := a) (b := b)
   sub := fun {_s} a b => emitBinary (α := α) (kind := .sub) (a := a) (b := b)
   mul := fun {_s} a b => emitBinary (α := α) (kind := .mulElem) (a := a) (b := b)
+  div := fun {_s} _a _b =>
+    fail (α := α) "TorchLean→IR: division is outside the verifier IR fragment"
+  neg := fun {_s} _x =>
+    fail (α := α) "TorchLean→IR: direct negation is outside the verifier IR fragment"
 
   scale := fun {s} x c => do
     -- IR has no dedicated `scale`; encode as elementwise mul with a constant tensor.

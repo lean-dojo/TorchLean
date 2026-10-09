@@ -40,7 +40,8 @@ def randUniform {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfer 
     let key ← nextRandomKey s seed
     let elementCount ← IO.ofExcept <|
       Runtime.Autograd.LibTorch.AnyBuffer.natToU32Checked (Spec.Shape.size sh)
-    let buf := Runtime.Autograd.LibTorch.Buffer.randUniform elementCount key
+    let dtype ← TensorTransfer.dtype (α := α)
+    let buf := Runtime.Autograd.LibTorch.Buffer.randUniform elementCount key dtype
     let any : Runtime.Autograd.LibTorch.AnyBuffer := { s := sh, buf := buf }
     let id ← s.recordCudaPure fun tape =>
       Runtime.Autograd.LibTorch.Tape.leaf (t := tape) (value := any) (name := name)
@@ -64,7 +65,9 @@ def bernoulliMask {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfe
     let elementCount ← IO.ofExcept <|
       Runtime.Autograd.LibTorch.AnyBuffer.natToU32Checked (Spec.Shape.size sh)
     let probabilityFloat ← TensorTransfer.toFloat (α := α) probability
-    let buf := Runtime.Autograd.LibTorch.Buffer.bernoulliMask elementCount probabilityFloat key
+    let dtype ← TensorTransfer.dtype (α := α)
+    let buf :=
+      Runtime.Autograd.LibTorch.Buffer.bernoulliMask elementCount probabilityFloat key dtype
     let any : Runtime.Autograd.LibTorch.AnyBuffer := { s := sh, buf := buf }
     let id ← s.recordCudaPure fun tape =>
       Runtime.Autograd.LibTorch.Tape.leaf (t := tape) (value := any) (name := name)

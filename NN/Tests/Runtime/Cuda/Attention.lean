@@ -89,7 +89,7 @@ def mask : Tensor Bool [n, n] :=
 /-- Saved probabilities and borrowed Q/K/V support repeated VJPs after output release.
 A fully blocked row contributes zero even when its cotangent is NaN. -/
 def checkSavedBuffers : IO Unit := do
-  let before ← Runtime.Autograd.LibTorch.Buffer.allocatorStats
+  let before ← Runtime.Autograd.LibTorch.Buffer.memory
   let q ← Runtime.Autograd.LibTorch.Buffer.zerosIO 2
   let k ← Runtime.Autograd.LibTorch.Buffer.ofFloatArrayIO <| FloatArray.mk #[1.0, -1.0]
   let v ← Runtime.Autograd.LibTorch.Buffer.ofFloatArrayIO <| FloatArray.mk #[2.0, 4.0]
@@ -200,13 +200,13 @@ def checkSavedBuffers : IO Unit := do
       discard <| Runtime.Autograd.LibTorch.Buffer.releaseIO result
     discard <| Runtime.Autograd.LibTorch.Buffer.releaseIO emptyProbabilities
   discard <| Runtime.Autograd.LibTorch.Buffer.releaseIO empty
-  let after ← Runtime.Autograd.LibTorch.Buffer.allocatorStats
+  let after ← Runtime.Autograd.LibTorch.Buffer.memory
   unless after.liveBytes == before.liveBytes do
     throw <| IO.userError "attention saved-buffer checks retained tensor payloads"
 
 /-- Discard masked overflow and avoid intermediate overflow for shrinking and growing scales. -/
 def checkFiniteInputRegressions : IO Unit := do
-  let before ← Runtime.Autograd.LibTorch.Buffer.allocatorStats
+  let before ← Runtime.Autograd.LibTorch.Buffer.memory
   let q ← Runtime.Autograd.LibTorch.Buffer.ofFloatArrayIO <| FloatArray.mk #[1e20, 1e20]
   let k ← Runtime.Autograd.LibTorch.Buffer.ofFloatArrayIO <| FloatArray.mk #[0.0, 1e20]
   let v ← Runtime.Autograd.LibTorch.Buffer.ofFloatArrayIO <| FloatArray.mk #[2.0, 3.0]
@@ -270,7 +270,7 @@ def checkFiniteInputRegressions : IO Unit := do
       discard <| Runtime.Autograd.LibTorch.Buffer.releaseIO buffer
   for buffer in #[q, k, v] do
     discard <| Runtime.Autograd.LibTorch.Buffer.releaseIO buffer
-  let after ← Runtime.Autograd.LibTorch.Buffer.allocatorStats
+  let after ← Runtime.Autograd.LibTorch.Buffer.memory
   unless after.liveBytes == before.liveBytes do
     throw <| IO.userError "attention scaling checks retained tensor payloads"
 

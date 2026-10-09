@@ -45,7 +45,8 @@ abbrev ChapterBinary32 :=
 
 Changing those two parameters selects a wider or custom format through the same arithmetic
 interface. The selected type can also be the element type of TorchLean's typed CPU tensors and
-model graphs. CUDA providers currently use native binary32 or binary64.
+model graphs. LibTorch providers use native binary32 or binary64. Custom scalar functions can
+also use configured binary arithmetic on CUDA; unsupported carriers retain their precision on CPU.
 
 The scalar examples only need FloatLib. TorchLean imports its definitions and proofs directly.
 Its dependency declaration follows FloatLib's `main` branch; the manifest records the exact
@@ -1259,6 +1260,31 @@ work can add packed int8 or int4
 storage without changing these scalar theorems.
 
 The zero point shifts the code grid; it does not remove the need to check for saturation.
+
+# Proving A Real Bound
+
+Sometimes we want a bound on a formula before choosing its floating-point implementation.
+For example, suppose a coordinate lies between one and two and we raise it to a real power.
+We can give FloatLib's `interval` tactic those assumptions and ask Lean to check an upper bound:
+
+```lean
+example (x y : ℝ)
+    (hx : x ∈ Set.Icc 1 2)
+    (hy : y ∈ Set.Icc (-2) 2) :
+    x ^ y < 5 := by
+  interval (depth := 0)
+```
+
+This proves the inequality for every pair in those ranges, not just sampled inputs. The same
+proof can be applied to tensor coordinates once we have their bounds. Real powers require a
+strictly positive base interval. FloatLib also provides `Real.logb` and inverse hyperbolic
+enclosures with their own domain checks.
+
+For a new named function, `@[interval_extension]` registers an executable enclosure together
+with its containment proof. The tactic evaluates that enclosure again when subdividing an input
+box. We use the upstream API directly rather than keeping a second registry in TorchLean.
+These proofs concern real expressions; relating them to a rounded tensor computation still
+requires the arithmetic and backend contracts below.
 
 # Native Backend Contracts
 

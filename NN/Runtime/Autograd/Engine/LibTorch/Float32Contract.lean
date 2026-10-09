@@ -12,7 +12,9 @@ public import NN.Proofs.RuntimeApprox.IEEE32.Arithmetic
 /-!
 # CUDA float32 contract
 
-TorchLean's eager CUDA runtime stores binary32 values in opaque LibTorch tensors. The Lean
+The binary32 path stores values in opaque LibTorch tensors. This module's agreement contracts
+concern binary32 only; the native tape also supports binary64, without deriving binary64
+agreement from these theorems. The Lean
 proofs do not inspect compiled ATen operations, their library dependencies, or the device.
 The native backend therefore remains an explicit implementation boundary.
 

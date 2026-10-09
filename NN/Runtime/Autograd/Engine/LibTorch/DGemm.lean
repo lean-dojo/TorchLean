@@ -6,8 +6,8 @@ Authors: TorchLean Team
 LibTorch FFI: host `FloatArray` DGEMM (FP64 / Lean `Float`).
 Implementation: `csrc/libtorch/torchlean.cpp` (ATen `matmul`).
 
-The FP32 matmul path lives in `Engine.LibTorch.Kernels` as `Buffer.bmm`, which uses CUDA buffers and
-ATen matrix multiplication.
+The resident matmul path lives in `Engine.LibTorch.Kernels` as `Buffer.bmm`, which uses CUDA buffers
+and ATen matrix multiplication.
 -/
 
 module
@@ -17,12 +17,12 @@ module
 
 Foreign-function declaration for host `FloatArray` FP64 matrix multiplication. The CUDA build
 uploads the arrays to the selected device, calls ATen `matmul`, and downloads the result.
-Without LibTorch the call fails with a rebuild hint. The float32 buffer matmul path lives in
+Without LibTorch the call fails with a rebuild hint. The resident buffer matmul path lives in
 `NN.Runtime.Autograd.Engine.LibTorch.Kernels`.
 
 This lives in its own small module instead of `LibTorch.Kernels`:
 
-- `LibTorch.Kernels` is the float32 `LibTorch.Buffer` surface used by the CUDA eager tape.
+- `LibTorch.Kernels` is the resident `LibTorch.Buffer` surface used by the CUDA eager tape.
 - `DGemm` is a host `FloatArray → FloatArray` bridge preserving Lean `Float` precision.
 
 -/

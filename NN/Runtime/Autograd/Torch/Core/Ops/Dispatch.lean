@@ -64,6 +64,12 @@ def execute {α : Type} [TorchLean.Storage α] {sh : Shape} (s : EagerSession α
         provider := .libTorch
         device := .cuda
         execute := fun _ => do
+          let tape ← s.cudaTape.get
+          if tape.nodes[0]?.any (fun node => (LibTorch.Buffer.format? node.value.buf).isSome) &&
+              !([.add, .sub, .mul, .div, .neg, .reshape, .slice, .concat] :
+                List NN.Backend.BackendOp).contains op then
+            throw <| IO.userError
+              s!"autograd: configured GPU arithmetic does not support `{op.name}`; use CPU"
           match ← cuda with
           | some result => pure result
           | none =>

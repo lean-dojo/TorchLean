@@ -211,15 +211,12 @@ namespace Tape
 /--
 One-, two-, or three-dimensional smooth max pooling.
 
-`beta` is checked after conversion to `Float32`, because conversion can underflow a nonzero `Float`
-to zero or overflow a finite one to infinity.
+`beta` is checked in the input dtype, where conversion can underflow a nonzero value to zero
+or overflow a finite value to infinity.
 -/
 @[inline] def smoothMaxPool
     {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
     (t : Tape) (xId : Nat) (beta : Float) : Result (Tape × Nat) := do
-  let beta32 := Float.toFloat32 beta
-  if !beta32.isFinite || beta32 == (0.0 : Float32) then
-    throw "autograd: cuda: smooth_max_pool: beta must be finite and nonzero"
   Internal.validateSpatialGeometry "smooth_max_pool" kernel stride
 
   let inC32 ← AnyBuffer.natToU32Checked C
@@ -236,6 +233,9 @@ to zero or overflow a finite one to infinity.
   let _ ← AnyBuffer.numelU32 outShape
 
   let xBuf ← requireValue (t := t) xId inputShape
+  let effectiveBeta := if Buffer.dtype xBuf == .float32 then beta.toFloat32.toFloat else beta
+  if !effectiveBeta.isFinite || effectiveBeta == 0 then
+    throw "autograd: cuda: smooth_max_pool: beta must be finite and nonzero"
   let y :=
     torchleanSmoothMaxPoolFwdCuda xBuf beta
       inSpatialArr kernelArr strideArr paddingArr

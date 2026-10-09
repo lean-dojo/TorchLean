@@ -46,6 +46,8 @@ inductive CudaAdamKind where
 
 /-- Hyperparameters that determine the meaning of retained Adam-family moments. -/
 structure CudaAdamConfig where
+  /-- Arithmetic and storage of the parameters and moments, not their host coefficient type. -/
+  dtype : Runtime.Autograd.LibTorch.Dtype := .float32
   kind : CudaAdamKind
   beta1 : Float
   beta2 : Float
@@ -60,7 +62,7 @@ namespace CudaAdamConfig
 
 /-- Compare configurations by exact floating-point bit pattern. -/
 def sameBits (left right : CudaAdamConfig) : Bool :=
-  left.kind == right.kind &&
+  left.dtype == right.dtype && left.kind == right.kind &&
     left.beta1.toBits == right.beta1.toBits &&
     left.beta2.toBits == right.beta2.toBits &&
     left.epsilon.toBits == right.epsilon.toBits &&
@@ -69,17 +71,22 @@ def sameBits (left right : CudaAdamConfig) : Bool :=
 /--
 Reject invalid Adam-family hyperparameters before updating or restoring device state.
 
-The denominator uses float32 arithmetic, so epsilon must remain finite and positive after the
-same conversion performed by the native kernel.
+Epsilon must remain finite and positive after conversion to the parameter dtype, as in the
+native kernel.
 -/
 def validate (config : CudaAdamConfig) : Except String Unit := do
+  if config.dtype == .encoded then
+    throw s!"{checkpointName}: configured formats require typed optimizer state"
   unless config.beta1.isFinite && 0.0 ≤ config.beta1 && config.beta1 < 1.0 do
     throw s!"{checkpointName}: `beta1` must be finite and lie in [0, 1)"
   unless config.beta2.isFinite && 0.0 ≤ config.beta2 && config.beta2 < 1.0 do
     throw s!"{checkpointName}: `beta2` must be finite and lie in [0, 1)"
-  let effectiveEpsilon := config.epsilon.toFloat32.toFloat
+  let effectiveEpsilon := match config.dtype with
+    | .float32 => config.epsilon.toFloat32.toFloat
+    | .float64 => config.epsilon
+    | .encoded => config.epsilon
   unless effectiveEpsilon.isFinite && 0.0 < effectiveEpsilon do
-    throw s!"{checkpointName}: `epsilon` must remain finite and positive in float32"
+    throw s!"{checkpointName}: `epsilon` must remain finite and positive in {repr config.dtype}"
   match config.kind with
   | .adam =>
       unless config.weightDecay == 0.0 do
@@ -104,6 +111,10 @@ def cudaAdamAliasCheckpointFormat : CheckpointIO.Format :=
 def cudaAdamRandomCheckpointFormat : CheckpointIO.Format :=
   { cudaAdamCheckpointFormat with version := 4 }
 
+/-- Version 5 retains the moment dtype and an optional random counter. Older files are binary32. -/
+def cudaAdamTypedCheckpointFormat : CheckpointIO.Format :=
+  { cudaAdamCheckpointFormat with version := 5 }
+
 /--
 Read a supported header and reject a legacy checkpoint when the destination shares parameters.
 
@@ -127,9 +138,10 @@ def readAdamFormat
       pure cudaAdamCheckpointFormat
   | 3 => pure cudaAdamAliasCheckpointFormat
   | 4 => pure cudaAdamRandomCheckpointFormat
+  | 5 => pure cudaAdamTypedCheckpointFormat
   | _ =>
       throw <| IO.userError
-        s!"{checkpointName}: unsupported format version {version}; expected 2, 3, or 4"
+        s!"{checkpointName}: unsupported format version {version}; expected 2 through 5"
 
 /-- Release every device buffer owned by an Adam state map. -/
 def releaseAdam (state : CudaAdamState) : IO Unit := do
@@ -169,7 +181,8 @@ def writeConfig (handle : IO.FS.Handle) (config : CudaAdamConfig) : IO Unit := d
 
 /-- Inverse of `writeConfig`. An unrecognized kind tag fails loudly rather than defaulting to Adam,
 since silently reading AdamW moments as Adam moments would corrupt training quietly. -/
-def readConfig (handle : IO.FS.Handle) : IO CudaAdamConfig := do
+def readConfig (handle : IO.FS.Handle)
+    (dtype : Runtime.Autograd.LibTorch.Dtype := .float32) : IO CudaAdamConfig := do
   let kind ← match ← CheckpointIO.readNat64 checkpointName handle with
     | 0 => pure CudaAdamKind.adam
     | 1 => pure CudaAdamKind.adamW
@@ -179,7 +192,7 @@ def readConfig (handle : IO.FS.Handle) : IO CudaAdamConfig := do
   let epsilon := Float.ofBits (UInt64.ofNat (← CheckpointIO.readNat64 checkpointName handle))
   let weightDecay :=
     Float.ofBits (UInt64.ofNat (← CheckpointIO.readNat64 checkpointName handle))
-  let config : CudaAdamConfig := { kind, beta1, beta2, epsilon, weightDecay }
+  let config : CudaAdamConfig := { dtype, kind, beta1, beta2, epsilon, weightDecay }
   IO.ofExcept config.validate
   pure config
 
@@ -188,9 +201,10 @@ Stream CUDA Adam or AdamW moments to disk.
 
 The file includes the optimizer configuration and the complete ordered parameter schema. Shared
 parameters use version 3 and one moment entry per representative; independent parameters keep the
-version 2 encoding. Supplying the session counter selects version 4, which retains both storage
-sharing and the next random key. Saving before the first Adam-family update is rejected because
-no optimizer state has yet been defined.
+version 2 encoding. For binary32, supplying the session counter selects version 4, which retains
+both storage sharing and the next random key. Binary64 uses version 5 to retain its dtype and
+eight-byte moments, with or without a random counter. Saving before the first Adam-family update
+is rejected because no optimizer state has yet been defined.
 -/
 def saveAdam
     (path : System.FilePath) (schema : OptimizerCheckpoint.ParameterSchema)
@@ -209,11 +223,17 @@ def saveAdam
       s!"{checkpointName}: expected {schema.optimizerStateCount} moment entries, got {state.size}"
   let entries := state.toList.mergeSort (fun left right => left.1 ≤ right.1)
   let format :=
-    if randomCounter.isSome then cudaAdamRandomCheckpointFormat
+    if config.dtype == .float64 then cudaAdamTypedCheckpointFormat
+    else if randomCounter.isSome then cudaAdamRandomCheckpointFormat
     else if schema.hasAliases then cudaAdamAliasCheckpointFormat else cudaAdamCheckpointFormat
   CheckpointIO.writeAtomically path fun handle => do
     CheckpointIO.writeFormat format handle
+    if format.version ≥ 5 then
+      CheckpointIO.writeNat64 checkpointName handle
+        (if config.dtype == .float32 then 0 else 1)
     writeConfig handle config
+    if format.version ≥ 5 then
+      CheckpointIO.writeNat64 checkpointName handle (if randomCounter.isSome then 1 else 0)
     if let some counter := randomCounter then
       CheckpointIO.writeNat64 checkpointName handle counter
     schema.write format handle
@@ -229,13 +249,16 @@ def saveAdam
       if entry.t == 0 then
         throw <| IO.userError s!"{checkpointName}: zero step counter for parameter {id}"
       let count := Spec.Shape.size shape
+      unless Runtime.Autograd.LibTorch.Buffer.dtype entry.m == config.dtype &&
+          Runtime.Autograd.LibTorch.Buffer.dtype entry.v == config.dtype do
+        throw <| IO.userError s!"{checkpointName}: moment dtype mismatch for parameter {id}"
       if (Runtime.Autograd.LibTorch.Buffer.size entry.m).toNat != count ||
           (Runtime.Autograd.LibTorch.Buffer.size entry.v).toNat != count then
         throw <| IO.userError s!"{checkpointName}: moment-size mismatch for parameter {id}"
-      let mBytes ← Runtime.Autograd.LibTorch.Buffer.toFloat32BytesIO entry.m
-      let vBytes ← Runtime.Autograd.LibTorch.Buffer.toFloat32BytesIO entry.v
-      if mBytes.size != count * 4 || vBytes.size != count * 4 then
-        throw <| IO.userError s!"{checkpointName}: invalid float32 payload for parameter {id}"
+      let mBytes ← Runtime.Autograd.LibTorch.Buffer.toBytesIO entry.m
+      let vBytes ← Runtime.Autograd.LibTorch.Buffer.toBytesIO entry.v
+      if mBytes.size != count * config.dtype.bytes || vBytes.size != count * config.dtype.bytes then
+        throw <| IO.userError s!"{checkpointName}: invalid moment payload for parameter {id}"
       CheckpointIO.writeNat64 checkpointName handle id
       CheckpointIO.writeNat64 checkpointName handle entry.t
       CheckpointIO.writeNat64 checkpointName handle count
@@ -248,15 +271,30 @@ The state is built in a local map and only installed once every parameter has be
 against `schema`, so a truncated file leaves the live optimizer untouched. -/
 def readCheckpoint
     (handle : IO.FS.Handle) (schema : OptimizerCheckpoint.ParameterSchema)
-    (expectedConfig : Option CudaAdamConfig := none) :
+    (expectedConfig : Option CudaAdamConfig := none)
+    (dtype : Runtime.Autograd.LibTorch.Dtype := .float32) :
     IO (CudaAdamConfig × CudaAdamState × Option Nat) := do
   unless schema.isWellFormed do
     throw <| IO.userError s!"{checkpointName}: malformed expected parameter schema"
   let mut replacement : CudaAdamState := Std.HashMap.emptyWithCapacity
   try
     let format ← readAdamFormat handle schema
-    let config ← readConfig handle
-    let randomCounter ← if format.version ≥ 4 then
+    let storedDtype ← if format.version ≥ 5 then do
+        match ← CheckpointIO.readNat64 checkpointName handle with
+        | 0 => pure Runtime.Autograd.LibTorch.Dtype.float32
+        | 1 => pure Runtime.Autograd.LibTorch.Dtype.float64
+        | _ => throw <| IO.userError s!"{checkpointName}: unsupported moment dtype"
+      else pure Runtime.Autograd.LibTorch.Dtype.float32
+    unless storedDtype == dtype do
+      throw <| IO.userError s!"{checkpointName}: moment dtype differs from the destination"
+    let config ← readConfig handle dtype
+    let hasCounter ← if format.version ≥ 5 then do
+        match ← CheckpointIO.readNat64 checkpointName handle with
+        | 0 => pure false
+        | 1 => pure true
+        | _ => throw <| IO.userError s!"{checkpointName}: invalid random-counter flag"
+      else pure (format.version ≥ 4)
+    let randomCounter ← if hasCounter then
         some <$> CheckpointIO.readNat64 checkpointName handle
       else pure none
     if let some expected := expectedConfig then
@@ -287,11 +325,11 @@ def readCheckpoint
         throw <| IO.userError <|
           s!"{checkpointName}: moment-size mismatch for parameter {id} " ++
             s!"(file={count}, expected={Spec.Shape.size shape})"
-      let mBytes ← CheckpointIO.readExact checkpointName handle (count * 4)
-      let vBytes ← CheckpointIO.readExact checkpointName handle (count * 4)
-      let m ← Runtime.Autograd.LibTorch.Buffer.ofFloat32BytesIO mBytes
+      let mBytes ← CheckpointIO.readExact checkpointName handle (count * dtype.bytes)
+      let vBytes ← CheckpointIO.readExact checkpointName handle (count * dtype.bytes)
+      let m ← Runtime.Autograd.LibTorch.Buffer.ofBytesIO mBytes dtype
       let v ← try
-        Runtime.Autograd.LibTorch.Buffer.ofFloat32BytesIO vBytes
+        Runtime.Autograd.LibTorch.Buffer.ofBytesIO vBytes dtype
       catch error =>
         releaseCudaBuffer m
         throw error
@@ -314,13 +352,14 @@ rejected.
 def loadAdam
     (path : System.FilePath) (schema : OptimizerCheckpoint.ParameterSchema)
     (configRef : IO.Ref (Option CudaAdamConfig)) (stateRef : IO.Ref CudaAdamState)
-    (rngCounter? : Option (IO.Ref Nat) := none) : IO Unit := do
+    (rngCounter? : Option (IO.Ref Nat) := none)
+    (dtype : Runtime.Autograd.LibTorch.Dtype := .float32) : IO Unit := do
   unless schema.isWellFormed do
     throw <| IO.userError s!"{checkpointName}: malformed in-memory parameter schema"
   let expectedConfig ← configRef.get
   let (config, replacement, randomCounter) ←
     IO.FS.withFile path IO.FS.Mode.read fun handle =>
-      readCheckpoint handle schema expectedConfig
+      readCheckpoint handle schema expectedConfig dtype
   if randomCounter.isSome && rngCounter?.isNone then
     releaseAdam replacement
     throw <| IO.userError s!"{checkpointName}: destination has no random-counter reference"

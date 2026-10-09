@@ -14,7 +14,7 @@ public import NN.Spec.Core.Tensor.SomeTensor
 /-!
 # CUDA Tensor Storage Bridge
 
-Adapt the public `TensorTransfer` capability to the float32 row-major storage owned by the eager
+Adapt the public `TensorTransfer` capability to dtype-carrying row-major storage owned by the eager
 CUDA tape.
 -/
 
@@ -29,17 +29,32 @@ open Spec TorchLean
 namespace Internal
 namespace CudaBridge
 
-/-- Upload a tensor to CUDA float32 storage through its runtime transfer representation. -/
+/-- Upload using the scalar's native dtype, preserving the tensor's shape. -/
 def toAnyBuffer {α : Type} [TorchLean.Storage α] [TensorTransfer α] {s : Shape}
     (tensor : Tensor α s) : IO Runtime.Autograd.LibTorch.AnyBuffer := do
+  if let some scalar := TensorTransfer.encoding? (α := α) then
+    if let .binary format := scalar.precision then
+      let bytes ← IO.ofExcept (scalar.pack tensor)
+      let buffer ← Runtime.Autograd.LibTorch.Buffer.ofEncodedIO bytes format
+        scalar.precision.bytes.toUInt64
+      return { s := s, buf := buffer }
   let host ← TensorTransfer.toFloatTensor tensor
   let values := Runtime.Autograd.LibTorch.Convert.flattenFloat host
-  let buffer ← Runtime.Autograd.LibTorch.Buffer.ofFloatArrayIO values
+  let dtype ← TensorTransfer.dtype (α := α)
+  let buffer ← Runtime.Autograd.LibTorch.Buffer.ofFloatArrayIO values dtype
   pure { s := s, buf := buffer }
 
 /-- Download a buffer with the requested shape, checking its element count. -/
 def ofBuffer {α : Type} [TorchLean.Storage α] [TensorTransfer α] {s : Shape}
     (buffer : Runtime.Autograd.LibTorch.Buffer) : IO (Tensor α s) := do
+  if let some scalar := TensorTransfer.encoding? (α := α) then
+    if let .binary format := scalar.precision then
+      unless Runtime.Autograd.LibTorch.Buffer.format? buffer == some format do
+        throw <| IO.userError "torch: buffer format does not match the requested scalar"
+      return ← IO.ofExcept <| scalar.unpack s
+        (← Runtime.Autograd.LibTorch.Buffer.toEncodedIO buffer)
+  unless Runtime.Autograd.LibTorch.Buffer.dtype buffer == (← TensorTransfer.dtype (α := α)) do
+    throw <| IO.userError "torch: native buffer dtype does not match the requested scalar"
   let values := Runtime.Autograd.LibTorch.Buffer.toFloatArray buffer
   match Runtime.Autograd.LibTorch.Convert.unflattenFloat? (s := s) values with
   | some tensor =>

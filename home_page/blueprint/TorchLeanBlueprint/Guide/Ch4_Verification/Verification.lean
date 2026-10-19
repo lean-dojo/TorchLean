@@ -6,7 +6,6 @@ import NN.MLTheory.CROWN.Proofs.GraphCrownCertSoundness
 import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness
 import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.EndToEnd
 import NN.Verification.Cert.CROWNNodeCert
-import NN.Verification.Cert.CROWNNodeCertAlphaBeta
 import NN.Verification.Cert.FiniteArtifactSemantics
 import NN.IR.ShapeSoundness
 -- The worked two-layer example below writes its input corners as tensor literals.
@@ -25,8 +24,7 @@ open NN.Verification.Builtin.Proved.Correctness
 open NN.MLTheory.CROWN.Graph.CertSoundness
 open NN.MLTheory.CROWN.Graph.CrownCertSoundness
 open NN.MLTheory.CROWN.Graph.AlphaCrownTransferSoundness
-open NN.Verification.Cert.CROWNNodeCert
-open NN.Verification.Cert.CROWNNodeCertAlphaBeta
+open NN.Verification.Cert
 
 -- The soundness statements printed below are wider than the 100 columns this file allows, so their
 -- expected output is rewrapped by hand and the blocks ask for `whitespace := lax`, which compares
@@ -120,14 +118,14 @@ The following illustrative values show how to read an abridged report. Rerun the
 to obtain the current workflow's output; this table does not establish agreement between backends:
 
 ```terminal +output
-avg_loss(on samples)=0.010960
-prediction at center=[1.885023, -3.156008]
-Alpha-CROWN (IBP phases) lower=[1.639539, -3.572599] upper=[2.130507, -2.739417] label=0
-  margin=4.378956 certified=true
+avg_loss(on samples)=0.011495
+prediction at center=[3.252241, -1.435592]
+CROWN lower=[2.956110, -1.593903] upper=[3.548373, -1.277281] label=0
+  margin=4.233391 certified=true
 ```
 
-The report lower-bounds class zero by `1.639539` and upper-bounds its only competitor by
-`-2.739417`. Their difference is the positive reported margin `4.378956`, so the chosen bound pass
+The report lower-bounds class zero by `2.956110` and upper-bounds its only competitor by
+`-1.277281`. Their difference is the positive reported margin `4.233391`, so the chosen bound pass
 reports `certified=true` for the requested input box. The semantic and arithmetic bridges below
 are required before interpreting that report as a theorem.
 
@@ -149,9 +147,9 @@ Using the displayed values gives:
 
 ```lean (name := marginEval)
 -- Use the unfavorable endpoint for each of the two classes.
-def certifiedLower : Float := 1.639539
+def certifiedLower : Float := 2.956110
 
-def competitorUpper : Float := -2.739417
+def competitorUpper : Float := -1.277281
 
 -- Reconstruct the margin from the six-decimal values in the
 -- report.
@@ -159,7 +157,7 @@ def competitorUpper : Float := -2.739417
 ```
 
 ```leanOutput marginEval
-4.378956
+4.233391
 ```
 
 The flag tests the computed margin. The six-decimal endpoints above have also been rounded for
@@ -756,8 +754,10 @@ and `algorithm`. A result obtained from `session.finish` uses the same snapshot 
 further training or loading a checkpoint into the session does not change the model it verifies.
 
 Import `NN.API.Verification` to use the `trained.verify` call shown above. The default method is
-fixed-relaxation Alpha-Beta-CROWN; `.ibp` and `.crown` are available for comparison. To inspect
-graph nodes and intermediate bounds, import `NN.API.Verification.Lowering`.
+`.alphaCrown`, fixed-relaxation alpha-CROWN with the ReLU phases IBP proves; `.ibp` and `.crown`
+are available for comparison. On a rounded scalar such as binary32, `.alphaCrown` runs directed
+CROWN, and the report names `CROWN` as the method. To inspect graph nodes and intermediate bounds,
+import `NN.API.Verification.Lowering`.
 
 This high-level verifier belongs to the ordinary binary32 training path. A session opened with
 `trainer.openTyped` preserves its chosen scalar in training and prediction, but supplies no
@@ -793,7 +793,7 @@ certificate predicates describe the evidence needed to justify them. Applying th
 the high-level Float report still requires proofs about the produced data and rounded arithmetic;
 the trust ledger below records those obligations.
 
-# CROWN, Alpha-CROWN, And Alpha-Beta-CROWN
+# CROWN And Alpha-CROWN
 
 CROWN {Informal.citep crown2018}[] propagates affine lower and upper forms rather than only boxes.
 Bounding a network by a convex outer approximation and then optimizing inside it predates
@@ -814,22 +814,22 @@ TorchLean's generic theorem `crown_checker_encloses_semantics` takes an exact
 theorems
 
 - `alphaCrown_transfer_sound`;
-- `alphaBetaCrown_transfer_sound`
+- `phasedCrown_transfer_sound`
 
-show that the proposition-level alpha and alpha-beta step functions satisfy
-`CrownTransferSound` under their explicit real-semantic and enclosure hypotheses. The alpha-beta
-step rejects phase choices inconsistent with the current IBP interval.
+show that the proposition-level alpha-CROWN step, without and with ReLU phases, satisfies
+`CrownTransferSound` under its explicit real-semantic and enclosure hypotheses. The phased step
+rejects phase choices inconsistent with the current IBP interval.
 
 The transfer theorems take the IBP boxes as an assumption, `IBPEnclosesVals`. The composed
 corollaries discharge it from the IBP soundness theorem. `alphaCrown_cert_encloses_semantics` and
-`alphaBetaCrown_cert_encloses_semantics` conclude enclosure from topological order, supported
+`phasedCrown_cert_encloses_semantics` conclude enclosure from topological order, supported
 operations, locally consistent boxes and values, enclosed inputs, valid slopes, and a certificate
 that replays the affine step; `alphaCrown_cert_encloses_evalGraphRec` fixes the boxes to `runIBP?`
 and the values to `evalGraphRec`, so only the graph, input, slope, and certificate hypotheses
 remain. These are the forms a caller should cite.
 
-The executable `outputBoxAlphaBetaCROWN?` seeds IBP with the requested input box. On backends that
-support exact affine reassociation, `runAlphaBetaCROWN` takes those intervals, infers every ReLU
+The executable `outputBoxPhasedCROWN?` seeds IBP with the requested input box. On backends that
+support exact affine reassociation, `runPhasedCROWN` takes those intervals, infers every ReLU
 phase they already force, and rechecks it while replaying affine bounds. Unstable phases remain
 unsplit and use the default alpha relaxation. Rounded scalar backends instead use directed CROWN;
 nearest-rounded affine coefficients cannot be treated as exact-real enclosures. Both paths are
@@ -842,18 +842,18 @@ distinct from the external Alpha-Beta-CROWN optimizer's branch-and-bound search.
 -- Establish that enclosure property for real alpha-CROWN
 -- transfers.
 #check @alphaCrown_transfer_sound
--- Include the phase information accepted by the real
--- alpha-beta transfer.
-#check @alphaBetaCrown_transfer_sound
+-- The same transfer with ReLU phases that the IBP
+-- intervals already justify.
+#check @phasedCrown_transfer_sound
 -- Compose alpha-CROWN with the real IBP and
 -- graph-consistency hypotheses.
 #check @alphaCrown_cert_encloses_semantics
 -- Fix the interval pass and evaluator, discharging their
 -- local-consistency premises.
 #check @alphaCrown_cert_encloses_evalGraphRec
--- Obtain the corresponding composed result for alpha-beta
--- certificate data.
-#check @alphaBetaCrown_cert_encloses_semantics
+-- The composed result for certificates with ReLU
+-- phases.
+#check @phasedCrown_cert_encloses_semantics
 ```
 ```leanOutput crownThms (whitespace := lax)
 crown_checker_encloses_semantics : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
@@ -890,11 +890,11 @@ alphaCrown_transfer_sound : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
             ibp alpha ctx) cert
 ```
 ```leanOutput crownThms (whitespace := lax)
-alphaBetaCrown_transfer_sound : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
+phasedCrown_transfer_sound : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
   NN.MLTheory.CROWN.Graph.ParamStore ℝ)
   (ibp : Array (Option (NN.MLTheory.CROWN.FlatBox ℝ))) (alpha : Array (Option
     (NN.MLTheory.CROWN.Graph.FlatTensor ℝ)))
-  (beta : Array (Option (Array ℤ))) (cert : Array (Option
+  (phases : Array (Option (Array ℤ))) (cert : Array (Option
     (NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ)))
   (inputs : Std.HashMap ℕ Val) (vals : Array (Option Val)) (ctx :
     NN.MLTheory.CROWN.Graph.AffineCtx)
@@ -903,8 +903,8 @@ alphaBetaCrown_transfer_sound : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
     SemLocalOK g ps inputs vals →
       InputsMatch inputs ctx x →
         IBPEnclosesVals ibp vals →
-          AlphaOK alpha → CrownTransferSound g ps inputs vals ctx x (stepAlphaBeta g
-            ps ibp alpha beta ctx) cert
+          AlphaOK alpha → CrownTransferSound g ps inputs vals ctx x (stepPhased g
+            ps ibp alpha phases ctx) cert
 ```
 ```leanOutput crownThms (whitespace := lax)
 alphaCrown_cert_encloses_semantics : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
@@ -946,11 +946,11 @@ alphaCrown_cert_encloses_evalGraphRec : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
                     v → EnclosesAtInput ctx x b v
 ```
 ```leanOutput crownThms (whitespace := lax)
-alphaBetaCrown_cert_encloses_semantics : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
+phasedCrown_cert_encloses_semantics : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
   NN.MLTheory.CROWN.Graph.ParamStore ℝ)
   (ibp : Array (Option (NN.MLTheory.CROWN.FlatBox ℝ))) (alpha : Array (Option
     (NN.MLTheory.CROWN.Graph.FlatTensor ℝ)))
-  (beta : Array (Option (Array ℤ))) (cert : Array (Option
+  (phases : Array (Option (Array ℤ))) (cert : Array (Option
     (NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ)))
   (inputs : Std.HashMap ℕ Val) (vals : Array (Option Val)) (ctx :
     NN.MLTheory.CROWN.Graph.AffineCtx)
@@ -962,14 +962,14 @@ alphaBetaCrown_cert_encloses_semantics : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
           InputsEnclosed g ps inputs →
             InputsMatch inputs ctx x →
               AlphaOK alpha →
-                CrownCertLocalOK g (stepAlphaBeta g ps ibp alpha beta ctx) cert →
+                CrownCertLocalOK g (stepPhased g ps ibp alpha phases ctx) cert →
                   ∀ id < g.nodes.size,
                     ∀ (b : NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ) (v : Val),
                       cert[id]! = some b → vals[id]! = some v → EnclosesAtInput ctx x b v
 ```
 
-The two transfer theorems have the same semantic hypotheses. The alpha-beta version adds a branch
-vector `beta` and uses `stepAlphaBeta`. It needs no extra domain premise because that step accepts
+The two transfer theorems have the same semantic hypotheses. The phased version adds per-node ReLU
+phases `phases` and uses `stepPhased`. It needs no extra domain premise because that step accepts
 only phases already justified by the supplied intervals. To assume a phase for an unstable ReLU,
 a theorem would also have to restrict the input domain to that branch.
 
@@ -977,17 +977,13 @@ The shared predicate `CrownTransferSound` states the local enclosure obligation.
 relaxation can use the generic checker theorem once its step function has a proof of that
 obligation.
 
-These theorems should not be confused with the JSON node-certificate checkers:
-
-- `checkCROWNNodeCertificate`;
-- `checkAlphaBetaCROWNNodeCertificate`.
-
-Those `IO Bool` functions parse finite decimal fields into FloatLib binary32, recompute the
-complete IBP
-trace from trusted inputs and parameters, and replay affine nodes from previously recomputed affine
-data. A serialized interval may be wider than the recomputed interval but may not move inward.
-Affine replay data must match exactly at the binary32 level. The alpha-beta checker also validates
-branch-vector lengths, entries, and phase consistency.
+These theorems should not be confused with the JSON node-certificate checker
+`CROWNNodeCert.check`. That `IO Bool` function parses finite decimal fields into FloatLib
+binary32, recomputes the complete IBP trace from trusted inputs and parameters, and replays affine
+nodes from previously recomputed affine data. A serialized interval may be wider than the
+recomputed interval but may not move inward. Affine replay data must match exactly at the binary32
+level. When the certificate gives ReLU phases, the checker also validates their lengths, entries,
+and consistency with IBP.
 
 The shared JSON boundary validates input regions before replay begins. Endpoint boxes require
 finite arrays of the declared dimension with `lo[i] <= hi[i]`; center-radius boxes additionally
@@ -995,61 +991,35 @@ require a finite nonnegative radius. Incomplete or mixed schemas are rejected. A
 that prescribe endpoints, including the alpha-beta-CROWN leaf format, request that exact schema
 rather than accepting the alternate center-radius notation.
 
-The final decisions are `CROWNNodeCert.certificateAccepts` and
-`CROWNNodeCertAlphaBeta.AlphaBetaCROWNNodeCertificate.accepts`. Their soundness theorems prove that
-acceptance supplies `CrownCertLocalOK` for the exact FloatLib binary32 replay function used by the
-checker.
+The final decision is `CROWNNodeCert.accepts`. Its soundness theorem proves that acceptance
+supplies `CrownCertLocalOK` for the exact FloatLib binary32 replay function used by the checker.
 
 ```lean (name := acceptThms)
 -- If the CROWN decision accepts, its stored affine entries
 -- satisfy the replay rule.
-#check @certificateAccepts_eq_true
--- The alpha-beta decision gives the same kind of result for
--- its phase-aware rule.
-#check @AlphaBetaCROWNNodeCertificate.accepts_eq_true
+#check @CROWNNodeCert.accepts_eq_true
 ```
 ```leanOutput acceptThms (whitespace := lax)
-certificateAccepts_eq_true : ∀ (cert : NN.Verification.Cert.NodeReplay.CROWNNodeCoreCertificate)
+CROWNNodeCert.accepts_eq_true : ∀ (cert : NodeReplay.CROWNCertificate)
   (g : NN.MLTheory.CROWN.Graph)
   (ps :
     NN.MLTheory.CROWN.Graph.ParamStore
       (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-        checkNodeEntries._proof_1
-        checkNodeEntries._proof_2 checkNodeEntries._proof_3 checkNodeEntries._proof_4))
+        CROWNNodeCert.checkNodeEntries._proof_1 CROWNNodeCert.checkNodeEntries._proof_2
+        CROWNNodeCert.checkNodeEntries._proof_3 CROWNNodeCert.checkNodeEntries._proof_4))
   (authoritativeIbp :
     Array
       (Option
         (NN.MLTheory.CROWN.FlatBox
           (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-            checkNodeEntries._proof_1 checkNodeEntries._proof_2 checkNodeEntries._proof_3
-              checkNodeEntries._proof_4))))
+            CROWNNodeCert.checkNodeEntries._proof_1 CROWNNodeCert.checkNodeEntries._proof_2
+            CROWNNodeCert.checkNodeEntries._proof_3 CROWNNodeCert.checkNodeEntries._proof_4))))
   (diagnosticsOk : Bool),
-  certificateAccepts cert g ps authoritativeIbp diagnosticsOk = true →
-    CrownCertLocalOK g (NN.Verification.Cert.CROWNNodeCert.replayStep g ps authoritativeIbp cert)
-      cert.crown
-```
-```leanOutput acceptThms (whitespace := lax)
-AlphaBetaCROWNNodeCertificate.accepts_eq_true : ∀ (cert : AlphaBetaCROWNNodeCertificate) (g :
-  NN.MLTheory.CROWN.Graph)
-  (ps :
-    NN.MLTheory.CROWN.Graph.ParamStore
-      (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-        replayStep._proof_1 replayStep._proof_2
-        replayStep._proof_3 replayStep._proof_4))
-  (authoritativeIbp :
-    Array
-      (Option
-        (NN.MLTheory.CROWN.FlatBox
-          (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-            replayStep._proof_1 replayStep._proof_2
-            replayStep._proof_3 replayStep._proof_4))))
-  (diagnosticsOk : Bool),
-  cert.accepts g ps authoritativeIbp diagnosticsOk = true →
-    CrownCertLocalOK g (NN.Verification.Cert.CROWNNodeCertAlphaBeta.replayStep g ps authoritativeIbp
-      cert) cert.crown
+  CROWNNodeCert.accepts cert g ps authoritativeIbp diagnosticsOk = true →
+    CrownCertLocalOK g (CROWNNodeCert.replayStep g ps authoritativeIbp cert) cert.crown
 ```
 
-The first output says: for any certificate, graph, parameter store, interval trace, and diagnostic
+The output says: for any certificate, graph, parameter store, interval trace, and diagnostic
 flag, *if this decision returns `true`, then the affine table in the certificate agrees with the
 specified replay rule*. The arrow before `CrownCertLocalOK` separates the assumption from the
 conclusion. There is no classifier margin in this statement yet.
@@ -1092,13 +1062,10 @@ as the graph's node array. At every valid node index, the table entry must equal
 exact comparison can reject it even when the decimal difference looks small. Since entries are
 optional, local consistency alone does not assert that every node has a bound.
 
-The second output has the same structure. Its certificate also supplies beta phase information,
-so it uses the alpha-beta `replayStep`. The dotted expression `cert.accepts ...` is the decision
-applied to that certificate. Both theorems connect an executable Boolean decision to a Lean
-proposition, which lets a later proof use the result without reasoning again about every
-componentwise comparison.
+The theorem connects an executable Boolean decision to a Lean proposition, which lets a later
+proof use the result without reasoning again about every componentwise comparison.
 
-There are two details to keep when applying either result. The pure theorem accepts the interval
+There are two details to keep when applying the result. The pure theorem accepts the interval
 trace as an argument; calling it `authoritativeIbp` does not prove where that trace came from.
 The wrapper supplies the recomputation. Likewise, the theorem does not interpret the individual
 diagnostics behind `diagnosticsOk`. Its conclusion is the stated local consistency property.
@@ -1413,7 +1380,7 @@ A verification report should make the following boundary visible:
   * enclosure from exact local IBP and semantic hypotheses
   * that a JSON/Float checker supplied those hypotheses
 *
-  * `alphaCrown_transfer_sound` / `alphaBetaCrown_transfer_sound`
+  * `alphaCrown_transfer_sound` / `phasedCrown_transfer_sound`
   * exact real local affine transfer soundness
   * approximate artifact-checker acceptance
 *
@@ -1423,7 +1390,7 @@ A verification report should make the following boundary visible:
     match a sequential FloatLib binary32 replay
   * exact-real CROWN soundness
 *
-  * alpha-beta leaf checker succeeds
+  * `abcrown-leaf` checker succeeds
   * represented boxes and witness fields pass structural/numeric checks
   * network-bound provenance; coverage is an executable check without a soundness theorem
 *

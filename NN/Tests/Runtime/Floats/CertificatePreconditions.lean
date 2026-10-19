@@ -21,8 +21,9 @@ Regression checks for the executable certificate boundary.
 
 These tests cover side conditions that are easy for an external producer to get wrong: α-CROWN
 slopes must be in $[0,1]$, binary elementwise bounds must have matching flattened dimensions, the
-true `log` relaxation must only be replayed on positive boxes, verification expressions must follow
-their documented power/negation semantics, and interval comparisons must reject non-finite values.
+true `log` relaxation must only be replayed on positive boxes, ReLU phases must be used and checked
+against IBP, verification expressions must follow their documented power/negation semantics, and
+interval comparisons must reject non-finite values.
 -/
 
 @[expose] public section
@@ -121,6 +122,13 @@ def logGraph : NN.IR.Graph :=
   { nodes := #[
       inputNode 0 2,
       { id := 1, parents := #[0], kind := .log, outShape := [2] }
+    ] }
+
+/-- One ReLU of one input, used for the phase checks. -/
+def reluGraph : NN.IR.Graph :=
+  { nodes := #[
+      inputNode 0 1,
+      { id := 1, parents := #[0], kind := .relu, outShape := [1] }
     ] }
 
 def run : IO Unit := do
@@ -347,25 +355,70 @@ def run : IO Unit := do
   let inward := flatBox (n := 2) (fun _ => 0.0) (fun _ => 0.999999)
   let outward := flatBox (n := 2) (fun _ => -0.000001) (fun _ => 1.000001)
   let inwardAccepted ←
-    NN.Verification.Cert.IBPNodeCert.checkIBPNode inputGraph #[some authoritative] #[some inward] 0
+    NN.Verification.Cert.IBPNodeCert.checkNode inputGraph #[some authoritative] #[some inward] 0
   expect "an inward-shrunk certificate interval was accepted" (!inwardAccepted)
   let outwardAccepted ←
-    NN.Verification.Cert.IBPNodeCert.checkIBPNode inputGraph #[some authoritative] #[some outward] 0
+    NN.Verification.Cert.IBPNodeCert.checkNode inputGraph #[some authoritative] #[some outward] 0
   expect "an outward-widened certificate interval was rejected" outwardAccepted
 
   let ctx : AffineCtx := { inputId := 0, inputDim := 2 }
-  let crownCert : CROWNNodeCoreCertificate :=
+  let crownCert : CROWNCertificate :=
     { ctx := ctx
       ibp := #[some authoritative]
       crown := #[some (boundsIdentity (α := (Binary 8 23)) 2)]
       alpha := #[none] }
   expect "a complete exact alpha-CROWN replay was rejected"
-    (NN.Verification.Cert.CROWNNodeCert.certificateAccepts crownCert inputGraph emptyStore
+    (NN.Verification.Cert.CROWNNodeCert.accepts crownCert inputGraph emptyStore
       #[some authoritative] true)
   let missingCrown := { crownCert with crown := #[none] }
   expect "an alpha-CROWN certificate with a missing affine entry was accepted"
-    (!(NN.Verification.Cert.CROWNNodeCert.certificateAccepts missingCrown inputGraph emptyStore
+    (!(NN.Verification.Cert.CROWNNodeCert.accepts missingCrown inputGraph emptyStore
       #[some authoritative] true))
+
+  -- ReLU phases. On the input box [0, 1] the ReLU is active with a zero lower endpoint, where
+  -- α-CROWN uses the slope α and an active phase fixes the slope at 1.
+  let unit := flatBox (n := 1) (fun _ => 0.0) (fun _ => 1.0)
+  let reluStore := emptyStore.seedInputBox 0 unit
+  let reluIbp := runIBP reluGraph reluStore
+  let zeroAlpha : FlatTensor (Binary 8 23) := { n := 1, v := (flatBox (n := 1) (fun _ => 0.0)
+    (fun _ => 0.0)).lo }
+  let unreplayed : CROWNCertificate :=
+    { ctx := { inputId := 0, inputDim := 1 }
+      ibp := reluIbp
+      crown := #[]
+      alpha := #[none, some zeroAlpha]
+      phases := #[none, some #[1]] }
+  let step := NN.Verification.Cert.CROWNNodeCert.replayStep reluGraph reluStore reluIbp unreplayed
+  let transcript := (List.range 2).foldl (fun acc id => acc.set! id (step acc id))
+    (Array.replicate 2 none)
+  let phased := { unreplayed with crown := transcript }
+  let acceptsReLU (cert : CROWNCertificate) :=
+    NN.Verification.Cert.CROWNNodeCert.accepts cert reluGraph reluStore reluIbp true
+  expect "a certificate replayed with its ReLU phases was rejected" (acceptsReLU phased)
+  expect "the replay ignored the ReLU phases at a zero lower endpoint"
+    (!(acceptsReLU { phased with phases := #[] }))
+  let inactive := { phased with phases := #[none, some #[-1]] }
+  expect "an inactive phase on a positive interval was replayed"
+    (NN.Verification.Cert.CROWNNodeCert.replayStep reluGraph reluStore reluIbp inactive
+      transcript 1).isNone
+  expect "an inactive phase on a positive interval was accepted" (!(acceptsReLU inactive))
+
+  let header := "{\"ctx\":{\"inputId\":0,\"inputDim\":1},\"ibp\":[null,null]," ++
+    "\"crown\":[null,null]"
+  let parsePhased (rest : String) : IO CROWNCertificate := do
+    let json ← parseJson! (header ++ rest)
+    parseCROWNCertificate reluGraph json
+  let parsed ← parsePhased ",\"phases\":[null,[1]]}"
+  expect "valid ReLU phases were not parsed" (parsed.phases == #[none, some #[1]])
+  let omitted ← parsePhased "}"
+  expect "omitted ReLU phases did not parse as absent"
+    (omitted.phases.size == 2 && omitted.phases.all (·.isNone))
+  expectRejected "a ReLU phase outside -1, 0, 1 was accepted"
+    (parsePhased ",\"phases\":[null,[2]]}")
+  expectRejected "ReLU phases of the wrong length were accepted"
+    (parsePhased ",\"phases\":[null,[1,1]]}")
+  expectRejected "the former field name beta was silently ignored"
+    (parsePhased ",\"beta\":[null,[1]]}")
 
   IO.println "certificate_preconditions: ok"
 

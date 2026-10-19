@@ -6,13 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Cert.AlphaCROWN
+public import NN.MLTheory.CROWN.Cert.PhasedCROWN
 public import NN.Verification.Cert.IBPNodeCert
 
 /-!
 # CROWNNodeCert
 
-Per-node α-CROWN certificate checking (graph dialect).
+Per-node α-CROWN certificate checking (graph dialect), with optional ReLU phases.
 
 This mirrors `NN.Verification.Cert.IBPNodeCert`, but for affine bounds produced by a CROWN/DeepPoly
 pass with optional α-parameters for the ReLU lower relaxation (α-CROWN).
@@ -31,9 +31,15 @@ Certificate JSON format:
       },
     ...
   ],
-  "alpha": [ null | [...], ... ] // optional per-node ReLU α vector
+  "alpha": [ null | [...], ... ],          // optional per-node ReLU α vector
+  "phases": [ null | [-1,0,1,...], ... ]  // optional per-node ReLU phases
 }
 ```
+
+A phase is `-1` (inactive, $z\leq0$), `0` (unconstrained) or `1` (active, $0\leq z$), and it is
+accepted only when the IBP pre-activation interval already proves it. Phases therefore carry no
+information beyond IBP: with none given the replay is plain α-CROWN, and with phases it is α-CROWN
+with those ReLUs fixed. No β multipliers or branch splits run.
 
 Trust boundary notes:
 - The certificate is untrusted; we accept it only if its binary32 affine transcript exactly
@@ -66,88 +72,86 @@ requirements. Acceptance proves local replay consistency, not a real-input enclo
 -/
 
 /-- Read a CROWN node certificate from JSON on disk. -/
-def readCROWNNodeCertificate (g : Graph) (path : String) : IO CROWNNodeCoreCertificate := do
+def read (g : Graph) (path : String) : IO CROWNCertificate := do
   let topObj ← readJsonObjectFile path
-  parseCROWNNodeCoreCertificate g topObj
+  parseCROWNCertificate g topObj
 
 /--
-The per-node part of a CROWN-family check, shared by α-CROWN and α/β-CROWN. Every supplied IBP box
-must contain Lean's authoritative interval, and every node's affine entry must equal the bound
-`step` replays from the nodes before it; `label` names the checker in its messages. The result is
-the `diagnosticsOk` input of the certificate's acceptance decision.
+The per-node part of the check. Every supplied IBP box must contain Lean's authoritative interval,
+and every node's affine entry must equal the bound `step` replays from the nodes before it; `label`
+names the checker in its messages. The result is the `diagnosticsOk` input of `accepts`.
 
-`checkCROWNNodeCertificate` passes `replayStep`, the function whose acceptance theorem is proved
-below, so this loop and the pure acceptance decision replay the same rule.
+`check` passes `replayStep`, the function whose acceptance theorem is proved below, so this loop
+and the pure acceptance decision replay the same rule.
 -/
 def checkNodeEntries (label : String) (g : Graph)
     (authoritativeIbp : Array (Option (FlatBox (ExecFloat.Binary 8 23))))
-    (cert : CROWNNodeCoreCertificate)
+    (cert : CROWNCertificate)
     (step : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) → Nat →
       Option (FlatAffineBounds (ExecFloat.Binary 8 23))) : IO Bool := do
   let mut authoritativeCrown : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) :=
     Array.replicate g.nodes.size none
   let mut ok := true
   for id in [0:g.nodes.size] do
-    let okIbp ← NN.Verification.Cert.IBPNodeCert.checkIBPNode g authoritativeIbp cert.ibp id
+    let okIbp ← NN.Verification.Cert.IBPNodeCert.checkNode g authoritativeIbp cert.ibp id
     let computed? := step authoritativeCrown id
-    let okCrown ← checkCROWNLikeNode label g authoritativeIbp authoritativeCrown cert.crown
+    let okCrown ← checkCROWNNode label g authoritativeIbp authoritativeCrown cert.crown
       cert.ctx id computed?
     authoritativeCrown := authoritativeCrown.set! id computed?
     ok := ok && okIbp && okCrown
   pure ok
 
-/-- The α-CROWN replay function associated with a parsed certificate. -/
+/-- The replay of a parsed certificate: α-CROWN, with the certificate's ReLU phases if any. -/
 def replayStep (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
     (authoritativeIbp : Array (Option (FlatBox (ExecFloat.Binary 8 23))))
-    (cert : CROWNNodeCoreCertificate) :
+    (cert : CROWNCertificate) :
     Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) → Nat →
       Option (FlatAffineBounds (ExecFloat.Binary 8 23)) :=
   fun replay id =>
-    alphaCrownStepNode? (α := (ExecFloat.Binary 8 23)) g.nodes ps authoritativeIbp cert.alpha replay
-      cert.ctx id
+    phasedCrownStepNode? (α := (ExecFloat.Binary 8 23)) g.nodes ps authoritativeIbp cert.alpha
+      cert.phases replay cert.ctx id
 
 /--
-The final in-memory acceptance decision for an α-CROWN artifact.
+The final in-memory acceptance decision.
 
 `diagnosticsOk` records parsing-independent IBP, shape, domain, and incremental-replay checks. The
 second conjunct establishes local replay consistency. Semantic enclosure additionally requires
 coverage of the relevant graph nodes and proved transfer rules for their operations.
 -/
-def certificateAccepts
-    (cert : CROWNNodeCoreCertificate) (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
+def accepts
+    (cert : CROWNCertificate) (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
     (authoritativeIbp : Array (Option (FlatBox (ExecFloat.Binary 8 23))))
     (diagnosticsOk : Bool) : Bool :=
   crownCertificateAccepts g (replayStep g ps authoritativeIbp cert) cert.crown diagnosticsOk
 
-/-- Acceptance of the concrete α-CROWN decision supplies graph-level local consistency. -/
-theorem certificateAccepts_eq_true
-    (cert : CROWNNodeCoreCertificate) (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
+/-- Acceptance supplies graph-level local consistency of the replay. -/
+theorem accepts_eq_true
+    (cert : CROWNCertificate) (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
     (authoritativeIbp : Array (Option (FlatBox (ExecFloat.Binary 8 23))))
     (diagnosticsOk : Bool)
-    (haccept : certificateAccepts cert g ps authoritativeIbp diagnosticsOk = true) :
+    (haccept : accepts cert g ps authoritativeIbp diagnosticsOk = true) :
     NN.MLTheory.CROWN.Graph.CrownCertSoundness.CrownCertLocalOK
       (g := g) (step := replayStep g ps authoritativeIbp cert) cert.crown :=
   crownCertificateAccepts_eq_true g (replayStep g ps authoritativeIbp cert) cert.crown
     diagnosticsOk haccept
 
 /--
-Check a per-node α-CROWN certificate against Lean's propagation rules.
+Check a per-node CROWN certificate against Lean's propagation rules.
 
 Returns `true` iff every supplied IBP box contains Lean's authoritative recomputation and every
-node's affine replay data agrees exactly with Lean's CROWN step.
+node's affine replay data agrees exactly with Lean's step.
 
 The per-node loop is part of the verdict: it checks IBP containment, parent coverage, shape and
-domain preconditions, and dimensions, which the pure replay in `certificateAccepts` does not. The
-pure replay runs only when the loop passes. The certificate's `ibp` boxes are only checked for
-containment; replay uses Lean's own IBP pass, so they add no information to the affine check.
+domain preconditions, and dimensions, which the pure replay in `accepts` does not. The pure replay
+runs only when the loop passes. The certificate's `ibp` boxes are only checked for containment;
+replay uses Lean's own IBP pass, so they add no information to the affine check.
 -/
-def checkCROWNNodeCertificate (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
-    (path : String) : IO Bool := do
-  let cert ← readCROWNNodeCertificate g path
+def check (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23)) (path : String) : IO Bool := do
+  let cert ← read g path
   let authoritativeIbp := runIBP (α := (ExecFloat.Binary 8 23)) g ps
   let ok ← checkNodeEntries "CROWNNodeCert" g authoritativeIbp cert
     (replayStep g ps authoritativeIbp cert)
-  let accepted := certificateAccepts cert g ps authoritativeIbp ok
+  let accepted := accepts cert g ps authoritativeIbp ok
   if accepted then
     IO.println "[CROWNNodeCert] artifact matched an authoritative Lean IBP and alpha-CROWN replay."
   pure accepted

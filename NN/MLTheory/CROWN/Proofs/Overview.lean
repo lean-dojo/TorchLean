@@ -20,8 +20,8 @@ dialect (`NN.MLTheory.CROWN.Graph`).
 The core pattern repeated throughout the development is:
 
 1. Define a *value semantics* for a supported graph dialect (typically over `ℝ`).
-2. Define a *bound-propagation step function* (IBP, CROWN, α-CROWN, α/β-CROWN) that computes a
-   certificate entry from parent certificate entries.
+2. Define a *bound-propagation step function* (IBP, CROWN, α-CROWN, α-CROWN with ReLU phases)
+   that computes a certificate entry from parent certificate entries.
 3. Prove a *transfer-rule soundness* lemma for the step function.
 4. Use a topological-order induction to obtain an end-to-end “checker implies enclosure” theorem.
 5. Connect the proof-side objects to the executable ones: `GraphRunibpEndToEnd` identifies the
@@ -52,9 +52,9 @@ and any external solver can be treated as an untrusted certificate producer.
 ## Status note
 
 `NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness` contains the (large) op-by-op
-transfer proofs for the concrete α-CROWN / α/β-CROWN step functions. It is not imported
-by this umbrella module so that the overview remains a fast orientation point; import it directly
-when you are working on those transfer proofs.
+transfer proofs for the concrete α-CROWN step functions, without and with ReLU phases. It is not
+imported by this umbrella module so that the overview remains a fast orientation point; import it
+directly when you are working on those transfer proofs.
 
 ## References (code)
 

@@ -8,6 +8,7 @@ module
 
 public import NN.Verification.Cert.CROWNQuery
 public import NN.Verification.Cert.NodeReplay
+public import NN.MLTheory.CROWN.Cert.PhasedCROWN
 public import NN.Tensor.Internal.Laws.Sequence
 
 /-!
@@ -160,13 +161,13 @@ structure Attached {n m : Nat} (program : Program n m) where
   sameProgram : chain.program = program
 
 /-- Read a mandatory finite affine entry for a covered graph node. -/
-def nodeBounds (cert : CROWNNodeCoreCertificate) (id n m : Nat) :
+def nodeBounds (cert : CROWNCertificate) (id n m : Nat) :
     Option (Bounds n m) := do
   let entry ← (cert.crown[id]?).join
   decodeBounds n m entry
 
 /-- Attach the actual per-node coefficients; a missing entry causes rejection. -/
-def attach (cert : CROWNNodeCoreCertificate) {n : Nat} (input : Box ℚ [n]) :
+def attach (cert : CROWNCertificate) {n : Nat} (input : Box ℚ [n]) :
     {m : Nat} → (program : Program n m) → Option (Attached program)
   | _, .input => do
       let bounds ← nodeBounds cert 0 n n
@@ -206,7 +207,7 @@ structure Decoded where
 
 /-- Decode the same graph, parameters, domain, artifact, and output query that acceptance checks. -/
 def decode (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
-    (cert : CROWNNodeCoreCertificate) (query : OutputQuery) : Option Decoded := do
+    (cert : CROWNCertificate) (query : OutputQuery) : Option Decoded := do
   let graph ← decodeGraph g ps
   if cert.ctx.inputId = 0 ∧ cert.ctx.inputDim = graph.inputDim ∧
       cert.crown.size = g.nodes.size ∧ graph.program.length = g.nodes.size ∧
@@ -234,16 +235,16 @@ def Decoded.check (decoded : Decoded) : Bool :=
 /-- Exact binary32 local replay of the same artifact. This is a diagnostic: it holds only when
 the artifact is bit-identical to Lean's own transcript, and `accepts` does not use it. -/
 def replayAccepts (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
-    (cert : CROWNNodeCoreCertificate) : Bool :=
+    (cert : CROWNCertificate) : Bool :=
   let ibp := runIBP g ps
   crownLocalReplayAccepts g
-    (fun replay id => NN.MLTheory.CROWN.Cert.alphaCrownStepNode?
-      g.nodes ps ibp cert.alpha replay cert.ctx id) cert.crown
+    (fun replay id => NN.MLTheory.CROWN.Cert.phasedCrownStepNode?
+      g.nodes ps ibp cert.alpha cert.phases replay cert.ctx id) cert.crown
 
 /-- Decode the covered program and run the exact-real dominance and margin checks. Any producer
 whose bounds dominate the exact transfers is accepted, whether or not they match binary32 replay. -/
 def accepts (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
-    (cert : CROWNNodeCoreCertificate) (query : OutputQuery) : Bool :=
+    (cert : CROWNCertificate) (query : OutputQuery) : Bool :=
   match decode g ps cert query with
   | none => false
   | some decoded => decoded.check

@@ -37,6 +37,12 @@ scheduler module, `Trainer.FixedSample`, and the packed `ScalarTrainer.step`. Ty
 for the autograd transforms and the proofs, and learning-rate schedules live in
 `Trainer.Scheduler`.
 
+The two CROWN node-certificate checkers are now one, `CROWNNodeCert.check`, and ReLU phases are
+an optional field of its certificate. TorchLean's phase variant of α-CROWN is called phased
+(`runPhasedCROWN`, `phasedCrown_transfer_sound`), since it has no β multipliers. The verifier's
+default selector is `.alphaCrown`, and a report names the method that ran: on a rounded scalar
+`.alphaCrown` runs directed CROWN, so the report says CROWN.
+
 Mixture of experts is new: `nn.moe` and `nn.moeMlp`, a `topKMask` IR operation with kernels on
 every backend, and PyTorch MoE import. The spec, `Spec.MoE`, comes with proofs that over `ℝ` the
 dense layer equals Mixtral's sparse block, and that a per-device capacity makes a token's output
@@ -44,7 +50,8 @@ depend on how the batch is split.
 
 Some files and flags no longer load. CUDA Adam checkpoints of versions 2 to 4 have to be saved
 again in version 5, camera certificates use `torchlean.camera.box3d.v2` with an explicit
-`point_count`, and `diffusion` takes `--dataset cifar10|imagenet64` only. The guide chapter on
+`point_count`, CROWN node certificates name their ReLU phases `phases` rather than `beta`, and
+`diffusion` takes `--dataset cifar10|imagenet64` only. The guide chapter on
 choosing a device and arithmetic is now Run Configuration.
 
   </div>
@@ -312,7 +319,7 @@ linear layers. `expectResultShape` and every `panic!` were removed from the IR e
 
 The real-valued CROWN transfer proofs now compose with IBP soundness. The transfer theorems used to
 assume `IBPEnclosesVals`, that the IBP boxes enclose the semantic values. `EndToEnd.lean` derives
-that premise from the IBP soundness theorem. `alphaCrown_cert_encloses_semantics` and the alpha-beta
+that premise from the IBP soundness theorem. `alphaCrown_cert_encloses_semantics` and its phased
 variant retain the graph support, topological ordering, input, local replay, and relaxation
 parameter hypotheses. Their conclusions concern nodes with both a certificate entry and a semantic
 value; the all-node variants require coverage. `runIBP_encloses_evalGraphRec` gives the corresponding
@@ -789,8 +796,8 @@ covers native execution and platform boundaries.
     <p>
       JSON certificate readers reject non-finite claims before array comparisons. IBP certificates
       are checked by recomputing the complete binary32 trace from the trusted graph,
-      parameters, and input box; an artifact may widen that trace but may not shrink it. CROWN and
-      $\alpha,\beta$-CROWN affine entries are compared exactly with a sequential replay instead of being
+      parameters, and input box; an artifact may widen that trace but may not shrink it. CROWN
+      affine entries, with or without ReLU phases, are compared exactly with a sequential replay instead of being
       propagated from certificate-supplied parents. A theorem turns successful exact replay into
       the local-consistency proposition used by the generic CROWN soundness development. Relating that
       binary32 replay to real-valued enclosure still requires the stated finite-precision refinement

@@ -30,11 +30,11 @@ inductive Algorithm where
   /-- CROWN output bounds: forward affine on exact backends, directed backward on rounded ones. -/
   | crown
   /--
-  Fixed-relaxation alpha-CROWN with ReLU phases taken from IBP. The constructor is named after
-  alpha-beta-CROWN, but a phase is accepted only when IBP already proves it, so no beta split and no
-  branch-and-bound search runs. Reports print it as `Alpha-CROWN (IBP phases)`.
+  Fixed-relaxation alpha-CROWN with the ReLU phases IBP proves. No phase beyond IBP is assumed, so
+  no beta split and no branch-and-bound search runs. Reports print it as `Alpha-CROWN (IBP phases)`.
+  On a rounded scalar it runs directed CROWN instead, and the report says `CROWN`.
   -/
-  | alphaBetaCrown
+  | alphaCrown
   deriving DecidableEq, Repr
 
 namespace Algorithm
@@ -43,7 +43,7 @@ namespace Algorithm
 def name : Algorithm → String
   | .ibp => "IBP"
   | .crown => "CROWN"
-  | .alphaBetaCrown => "Alpha-CROWN (IBP phases)"
+  | .alphaCrown => "Alpha-CROWN (IBP phases)"
 
 instance : ToString Algorithm where
   toString := name
@@ -212,7 +212,7 @@ The caller supplies the enclosure guarantee; these checks do not establish it.
 def fromBounds (radius : Float) (bounds : Bounds)
     (norm : Norm := .inf)
     (property : Property := .bounds)
-    (algorithm : Algorithm := .alphaBetaCrown) :
+    (algorithm : Algorithm := .alphaCrown) :
     Except String Report := do
   Internal.validateRadius radius
   let result ← Result.fromBounds property bounds

@@ -24,8 +24,8 @@ Training:
 
 Verification:
 - call `trained.verify` with `norm := .inf`
-- run fixed-relaxation α-CROWN with IBP-inferred ReLU phases over the trained parameters (the
-  API calls this algorithm `.alphaBetaCrown`; it has no β multipliers or branch splits)
+- run the default `.alphaCrown` method over the trained parameters; on the rounded scalars this
+  workflow uses, that is directed CROWN, and the report prints `CROWN`
 - report typed output bounds, the worst-case class margin, and the certification result
 
 Run:

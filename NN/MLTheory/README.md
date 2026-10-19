@@ -34,7 +34,7 @@ which object a theorem is about.
 
 | Folder | What it is for |
 | --- | --- |
-| `CROWN/` | Interval, affine, CROWN/LiRPA-style bound propagation, graph certificates, alpha/beta certificate structures, and Lyapunov certificate workflows. |
+| `CROWN/` | Interval, affine, CROWN/LiRPA-style bound propagation, graph certificates, alpha-CROWN certificates with ReLU phases, and Lyapunov certificate workflows. |
 | `Generative/` | Mathematical semantics for diffusion, VAE/VQ-VAE/GAN-style objectives, and the small identities used by the generative examples. |
 | `LearningTheory/` | Robustness, stability, differential privacy, and ridge-regression bridges between real-valued theory and executable IEEE32-style semantics. |
 | `Optimization/` | Optimizer equations, proof layer optimizer interfaces, Muon certificates, projected-gradient material, and exact real convergence theorems. |
@@ -45,7 +45,7 @@ which object a theorem is about.
 
 The CROWN material is the verification backbone. It contains the objects that a verifier actually
 manipulates: interval boxes, affine lower and upper forms, graph payloads, ReLU relaxations,
-alpha/beta phase information, and soundness statements for supported graph fragments.
+alpha slopes and ReLU phases, and soundness statements for supported graph fragments.
 
 The central distinction is producer versus checker:
 

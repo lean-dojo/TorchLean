@@ -170,7 +170,7 @@ theorem Decoded.check_nonempty (decoded : Decoded) (h : decoded.check = true) :
   exact of_decide_eq_true h.1.1.1
 
 /-- Attaching an artifact retains its final supplied entry. -/
-theorem attach_bounds (cert : NodeReplay.CROWNNodeCoreCertificate) {n m : Nat}
+theorem attach_bounds (cert : NodeReplay.CROWNCertificate) {n m : Nat}
     (input : Box ℚ [n]) (program : Program n m) (attached : Attached program)
     (h : attach cert input program = some attached) :
     nodeBounds cert (program.length - 1) n m = some attached.chain.bounds := by
@@ -199,7 +199,7 @@ theorem attach_bounds (cert : NodeReplay.CROWNNodeCoreCertificate) {n m : Nat}
 
 /-- Node-count and final-entry coverage, without an assertion about `Graph.denote`. -/
 theorem decode_coverage (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
-    (cert : NodeReplay.CROWNNodeCoreCertificate) (query : OutputQuery) (decoded : Decoded)
+    (cert : NodeReplay.CROWNCertificate) (query : OutputQuery) (decoded : Decoded)
     (h : decode g ps cert query = some decoded) :
     decodeGraph g ps = some decoded.graph ∧
       query.outputId + 1 = g.nodes.size ∧
@@ -224,7 +224,7 @@ theorem decode_coverage (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
 
 /-- Acceptance proves the decoded program's margins without caller-supplied semantic premises. -/
 theorem accepts_sound (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
-    (cert : NodeReplay.CROWNNodeCoreCertificate) (query : OutputQuery)
+    (cert : NodeReplay.CROWNCertificate) (query : OutputQuery)
     (h : accepts g ps cert query = true) :
     ∃ decoded, decode g ps cert query = some decoded ∧
       decodeGraph g ps = some decoded.graph ∧

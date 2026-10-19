@@ -7,19 +7,19 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Alpha
-public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.AlphaBeta.StepInversion
-public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.AlphaBeta.ReLUPhase
+public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Phased.StepInversion
+public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Phased.ReLUPhase
 
 /-!
-# α/β-CROWN Graph Transfer Soundness
+# Phased α-CROWN Graph Transfer Soundness
 
-Pointwise soundness theorem for the β-extended graph transfer rule.
+Pointwise soundness theorem for the phase-aware graph transfer rule.
 
-The proof is a dispatch over two cases. Every node that is not a ReLU carrying a β vector is
-handled by `alphaCrown_transfer_sound`, since `stepAlphaBeta` agrees with `stepAlpha` there
-(`stepAlphaBeta_eq_stepAlpha`). A ReLU node with a β vector is handled by inverting the step
-(`stepAlphaBeta_relu_beta_inv`), reading off the parent's value from the semantics, and applying
-the pointwise β-phase ReLU lemma `enclosesAtInput_relu_beta`.
+The proof is a dispatch over two cases. Every node that is not a ReLU carrying phases is
+handled by `alphaCrown_transfer_sound`, since `stepPhased` agrees with `stepAlpha` there
+(`stepPhased_eq_stepAlpha`). A ReLU node with phases is handled by inverting the step
+(`stepPhased_relu_phase_inv`), reading off the parent's value from the semantics, and applying
+the pointwise phased ReLU lemma `enclosesAtInput_relu_phase`.
 -/
 
 @[expose] public section
@@ -78,15 +78,15 @@ theorem enclosesBox_parent
 /-! ## Per-case soundness -/
 
 /--
-Soundness of `stepAlphaBeta` at every node handled by the α-CROWN rule: all non-ReLU kinds, and
-ReLU nodes with no β entry. The step is literally `stepAlpha` there, so this is
+Soundness of `stepPhased` at every node handled by the α-CROWN rule: all non-ReLU kinds, and
+ReLU nodes with no phases. The step is literally `stepAlpha` there, so this is
 `alphaCrown_transfer_sound` read at one node.
 -/
-theorem alphaBetaCrown_alpha_case_sound
+theorem phasedCrown_alpha_case_sound
     (g : Graph) (ps : ParamStore ℝ)
     (ibp : Array (Option (FlatBox ℝ)))
     (alpha : Array (Option (FlatTensor ℝ)))
-    (beta : Array (Option (Array Int)))
+    (phases : Array (Option (Array Int)))
     (cert : Array (Option (FlatAffineBounds ℝ)))
     (inputs : Std.HashMap Nat Val)
     (vals : Array (Option Val))
@@ -101,29 +101,29 @@ theorem alphaBetaCrown_alpha_case_sound
       match cert[p]!, vals[p]! with
       | some bp, some vp => EnclosesAtInput (α := ℝ) ctx x bp vp
       | _, _ => True)
-    (hnb : (g.nodes[id]!).kind = .relu → getBeta? (beta := beta) id = none)
+    (hnoPhases : (g.nodes[id]!).kind = .relu → getPhases? phases id = none)
     {b : FlatAffineBounds ℝ} {v : Val}
-    (hs : stepAlphaBeta g ps ibp alpha beta ctx cert id = some b)
+    (hs : stepPhased g ps ibp alpha phases ctx cert id = some b)
     (hv : vals[id]! = some v) :
     EnclosesAtInput (α := ℝ) ctx x b v := by
   have hA := alphaCrown_transfer_sound g ps ibp alpha cert inputs vals ctx x
     htopo hsem hinputs hibp halpha id hid hparents
-  rw [stepAlphaBeta_eq_stepAlpha g ps ibp alpha beta cert ctx id hnb] at hs
+  rw [stepPhased_eq_stepAlpha g ps ibp alpha phases cert ctx id hnoPhases] at hs
   rw [hs, hv] at hA
   exact hA
 
 /--
-Soundness of `stepAlphaBeta` at a ReLU node carrying a β vector.
+Soundness of `stepPhased` at a ReLU node carrying phases.
 
 The step inversion supplies the parent's certificate entry, its IBP box, the α vector used, and
 the accepted phase relaxations; the semantics supplies the parent's value;
-`enclosesAtInput_relu_beta` does the rest.
+`enclosesAtInput_relu_phase` does the rest.
 -/
-theorem alphaBetaCrown_relu_beta_case_sound
+theorem phasedCrown_relu_phase_case_sound
     (g : Graph) (ps : ParamStore ℝ)
     (ibp : Array (Option (FlatBox ℝ)))
     (alpha : Array (Option (FlatTensor ℝ)))
-    (beta : Array (Option (Array Int)))
+    (phases : Array (Option (Array Int)))
     (cert : Array (Option (FlatAffineBounds ℝ)))
     (inputs : Std.HashMap Nat Val)
     (vals : Array (Option Val))
@@ -137,56 +137,59 @@ theorem alphaBetaCrown_relu_beta_case_sound
       match cert[p]!, vals[p]! with
       | some bp, some vp => EnclosesAtInput (α := ℝ) ctx x bp vp
       | _, _ => True)
-    {phases : Array Int}
+    {nodePhases : Array Int}
     (hk : (g.nodes[id]!).kind = .relu)
-    (hbeta : getBeta? (beta := beta) id = some phases)
+    (hphases : getPhases? phases id = some nodePhases)
     {b : FlatAffineBounds ℝ} {v : Val}
-    (hs : stepAlphaBeta g ps ibp alpha beta ctx cert id = some b)
+    (hs : stepPhased g ps ibp alpha phases ctx cert id = some b)
     (hv : vals[id]! = some v) :
     EnclosesAtInput (α := ℝ) ctx x b v := by
   cases hps : NN.IR.unaryParent? (g.nodes[id]!).parents with
-  | none => simp [stepAlphaBeta, alphaBetaCrownStepNode?, hk, hbeta, hps] at hs
+  | none => simp [stepPhased, phasedCrownStepNode?, hk, hphases, hps] at hs
   | some p1 =>
   have hpMem : p1 ∈ (g.nodes[id]!).parents := NN.IR.mem_of_unaryParent?_eq_some hps
   obtain ⟨xin, preB, hout, αt, relaxLo, relaxHi, hxin, hpre, hαrange, hrelax, hb⟩ :=
-    stepAlphaBeta_relu_beta_inv g ps ibp alpha beta cert ctx id b phases p1 halpha hk hbeta hps hs
+    stepPhased_relu_phase_inv g ps ibp alpha phases cert ctx id b nodePhases p1 halpha hk hphases
+      hps hs
   obtain ⟨vp, hvp, hvEq⟩ := vals_relu_eq hsem hid hk hps hv
   have hpar : EnclosesAtInput (α := ℝ) ctx x xin vp :=
     Alpha.parentsEnclosed_of_match hparents p1 hpMem xin vp (getElem!_of_getAff?_eq_some hxin) hvp
   have hbox : EnclosesBox preB vp := enclosesBox_parent htopo hsem hibp hid hpMem hpre hvp
   subst hb hvEq
-  exact enclosesAtInput_relu_beta ctx x xin vp preB hout αt phases relaxLo relaxHi hαrange hrelax
-    hpar hbox
+  exact enclosesAtInput_relu_phase ctx x xin vp preB hout αt nodePhases relaxLo relaxHi hαrange
+    hrelax hpar hbox
 
 /-! ## Main transfer theorem -/
 
 /--
-Pointwise soundness of the graph-dialect α/β-CROWN transfer rule.
+Pointwise soundness of the graph-dialect phased α-CROWN transfer rule.
 
-This is the β-extended analog of `alphaCrown_transfer_sound`. The step function additionally
-receives a `beta` array of per-ReLU phase constraints (active, inactive, unstable). At a ReLU node
-with a β vector, `phaseRelaxVec?` checks each phase against the IBP pre-activation interval via
+This is the phase-aware analog of `alphaCrown_transfer_sound`. The step function additionally
+receives a `phases` array of per-ReLU phase constraints (active, inactive, unstable). At a ReLU node
+with phases, `phaseRelaxVec?` checks each phase against the IBP pre-activation interval via
 `phaseConsistentScalar?` (inactive needs `u ≤ 0`, active needs `0 ≤ l`) and, if every phase
 passes, uses the phase's exact affine rule for that unit; an inconsistent phase rejects the step
 rather than falling back to another relaxation. All other nodes use the α-CROWN rule.
 
-What the β relaxation contributes here, and what it does not. Because a phase is accepted only
-when the IBP interval already implies it, a β vector can never certify a sign that the supplied
+What the phases contribute here, and what they do not. Because a phase is accepted only when
+the IBP interval already implies it, the phases can never certify a sign that the supplied
 `ibp` box does not fix on its own; for such stable units the phase rule coincides with the
-standard relaxation. The theorem therefore establishes two things about β: the exact rules are
-sound whenever the consistency check passes, and inconsistent phase vectors are rejected. It does
-not model branch-and-bound split constraints. A split that tightens beyond IBP would have to be
+standard relaxation, except for an active phase with a zero lower endpoint, where the phase rule
+uses the identity and α-CROWN uses the slope α (or zero when the upper endpoint is zero too).
+The theorem therefore establishes two things about phases: the exact rules are sound whenever the
+consistency check passes, and inconsistent phases are rejected. It does not model branch-and-bound
+split constraints. A split that tightens beyond IBP would have to be
 reflected in a tighter `ibp` argument, which this theorem takes as given through
 `IBPEnclosesVals`.
 
 The theorem states that this concrete step function satisfies `CrownTransferSound`, and thus can
 be used as the trusted checker semantics in `crown_checker_encloses_semantics`.
 -/
-theorem alphaBetaCrown_transfer_sound
+theorem phasedCrown_transfer_sound
     (g : Graph) (ps : ParamStore ℝ)
     (ibp : Array (Option (FlatBox ℝ)))
     (alpha : Array (Option (FlatTensor ℝ)))
-    (beta : Array (Option (Array Int)))
+    (phases : Array (Option (Array Int)))
     (cert : Array (Option (FlatAffineBounds ℝ)))
     (inputs : Std.HashMap Nat Val)
     (vals : Array (Option Val))
@@ -199,24 +202,24 @@ theorem alphaBetaCrown_transfer_sound
     CrownTransferSound
       (g := g) (_ps := ps) (_inputs := inputs) (vals := vals)
       (ctx := ctx) (x := x)
-      (step := stepAlphaBeta g ps ibp alpha beta ctx) (cert := cert) := by
+      (step := stepPhased g ps ibp alpha phases ctx) (cert := cert) := by
   classical
   intro id hid hparents
-  cases hs : stepAlphaBeta g ps ibp alpha beta ctx cert id with
+  cases hs : stepPhased g ps ibp alpha phases ctx cert id with
   | none => trivial
   | some b =>
   cases hv : vals[id]! with
   | none => trivial
   | some v =>
-  cases hbeta : getBeta? (beta := beta) id with
+  cases hphases : getPhases? phases id with
   | none =>
-      exact alphaBetaCrown_alpha_case_sound g ps ibp alpha beta cert inputs vals ctx x
-        htopo hsem hinputs hibp halpha id hid hparents (fun _ => hbeta) hs hv
-  | some phases =>
+      exact phasedCrown_alpha_case_sound g ps ibp alpha phases cert inputs vals ctx x
+        htopo hsem hinputs hibp halpha id hid hparents (fun _ => hphases) hs hv
+  | some nodePhases =>
       by_cases hk : (g.nodes[id]!).kind = .relu
-      · exact alphaBetaCrown_relu_beta_case_sound g ps ibp alpha beta cert inputs vals ctx x
-          htopo hsem hibp halpha id hid hparents hk hbeta hs hv
-      · exact alphaBetaCrown_alpha_case_sound g ps ibp alpha beta cert inputs vals ctx x
+      · exact phasedCrown_relu_phase_case_sound g ps ibp alpha phases cert inputs vals ctx x
+          htopo hsem hibp halpha id hid hparents hk hphases hs hv
+      · exact phasedCrown_alpha_case_sound g ps ibp alpha phases cert inputs vals ctx x
           htopo hsem hinputs hibp halpha id hid hparents (fun h => absurd h hk) hs hv
 
 end
@@ -225,19 +228,19 @@ open CrownCertSoundness
 open CertSoundness
 
 /--
-A locally replayed α/β-CROWN certificate encloses every corresponding graph value, given IBP
+A locally replayed phased α-CROWN certificate encloses every corresponding graph value, given IBP
 boxes that enclose those values (`IBPEnclosesVals`).
 
-This is the composition of `alphaBetaCrown_transfer_sound` with the generic graph certificate
+This is the composition of `phasedCrown_transfer_sound` with the generic graph certificate
 checker; `EndToEnd` discharges `IBPEnclosesVals` to obtain the user-facing
-`alphaBetaCrown_cert_encloses_semantics`. The certificate producer remains untrusted: `hcert`
-requires its entries to agree node-by-node with TorchLean's α/β transfer function.
+`phasedCrown_cert_encloses_semantics`. The certificate producer remains untrusted: `hcert`
+requires its entries to agree node-by-node with TorchLean's phased transfer function.
 -/
-theorem alphaBetaCrown_cert_encloses_semantics_of_ibpEnclosesVals
+theorem phasedCrown_cert_encloses_semantics_of_ibpEnclosesVals
     (g : Graph) (ps : ParamStore ℝ)
     (ibp : Array (Option (FlatBox ℝ)))
     (alpha : Array (Option (FlatTensor ℝ)))
-    (beta : Array (Option (Array Int)))
+    (phases : Array (Option (Array Int)))
     (cert : Array (Option (FlatAffineBounds ℝ)))
     (inputs : Std.HashMap Nat Val)
     (vals : Array (Option Val))
@@ -247,18 +250,18 @@ theorem alphaBetaCrown_cert_encloses_semantics_of_ibpEnclosesVals
     (hinputs : InputsMatch (inputs := inputs) (ctx := ctx) x)
     (hibp : IBPEnclosesVals (ibp := ibp) (vals := vals))
     (halpha : AlphaOK (alpha := alpha))
-    (hcert : CrownCertLocalOK (g := g) (step := stepAlphaBeta g ps ibp alpha beta ctx) cert) :
+    (hcert : CrownCertLocalOK (g := g) (step := stepPhased g ps ibp alpha phases ctx) cert) :
     ∀ id : Nat, id < g.nodes.size →
       ∀ (b : FlatAffineBounds ℝ) (v : Val),
         cert[id]! = some b →
         vals[id]! = some v →
         EnclosesAtInput (α := ℝ) ctx x b v := by
   apply crown_checker_encloses_semantics
-    (g := g) (ps := ps) (step := stepAlphaBeta g ps ibp alpha beta ctx)
+    (g := g) (ps := ps) (step := stepPhased g ps ibp alpha phases ctx)
     (cert := cert) (inputs := inputs) (vals := vals) (ctx := ctx) (x := x)
     htopo hsem hcert
-  exact alphaBetaCrown_transfer_sound
-    (g := g) (ps := ps) (ibp := ibp) (alpha := alpha) (beta := beta) (cert := cert)
+  exact phasedCrown_transfer_sound
+    (g := g) (ps := ps) (ibp := ibp) (alpha := alpha) (phases := phases) (cert := cert)
     (inputs := inputs) (vals := vals) (ctx := ctx) (x := x)
     htopo hsem hinputs hibp halpha
 

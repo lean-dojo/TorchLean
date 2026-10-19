@@ -33,8 +33,8 @@ Scope boundaries in this MLP-focused module:
   graph-level certificate checker and `NN.MLTheory.CROWN.Proofs.GraphCrownCertSoundness` for the
   corresponding end-to-end soundness theorem.
 - Objective-dependent / backward CROWN slope optimization. The
-  certificate infrastructure for alpha-CROWN and alpha/beta-CROWN artifacts lives under
-  `NN.MLTheory.CROWN.Cert.AlphaCROWN` and `NN.MLTheory.CROWN.Cert.AlphaBetaCROWN`.
+  certificate infrastructure for alpha-CROWN, with and without ReLU phases, lives under
+  `NN.MLTheory.CROWN.Cert.AlphaCROWN` and `NN.MLTheory.CROWN.Cert.PhasedCROWN`.
 
 References:
 - CROWN: Zhang et al.,

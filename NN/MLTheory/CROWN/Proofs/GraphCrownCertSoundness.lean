@@ -31,8 +31,8 @@ This file is written in a producer/checker style that matches common workflows:
   denotation.
 
 We deliberately state the main theorem schematically in terms of an abstract `step` function:
-plain CROWN, α-CROWN, and α/β-CROWN can all share the same end-to-end checker theorem once their
-transfer rules are proved sound.
+plain CROWN and α-CROWN, with or without ReLU phases, can all share the same end-to-end checker
+theorem once their transfer rules are proved sound.
 
 ## Trust boundary for transcendental ops
 
@@ -129,7 +129,7 @@ backend or checker workflow.
 
 /-!
 `crownStepNode?` is a *parameter* to the checker theorem:
-different certificate formats (plain CROWN, α/β-CROWN, split certificates) can share the same
+different certificate formats (plain CROWN, phased α-CROWN, split certificates) can share the same
 end-to-end theorem as long as they provide a step function and discharge transfer soundness.
 -/
 

@@ -48,7 +48,7 @@ private def params : ParamStore (ExecFloat.Binary 8 23) :=
 
 private def replay (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
     (inputDim : Nat) (alpha : Array (Option (FlatTensor (ExecFloat.Binary 8 23)))) :
-    CROWNNodeCoreCertificate := Id.run do
+    CROWNCertificate := Id.run do
   let ibp := runIBP g ps
   let ctx : AffineCtx := ⟨0, inputDim⟩
   let mut crown := Array.replicate g.nodes.size none
@@ -56,9 +56,9 @@ private def replay (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
     let entry := NN.MLTheory.CROWN.Cert.alphaCrownStepNode?
       g.nodes ps ibp alpha crown ctx id
     crown := crown.set! id entry
-  return ⟨ctx, ibp, crown, alpha⟩
+  return { ctx, ibp, crown, alpha }
 
-private def certificate : CROWNNodeCoreCertificate :=
+private def certificate : CROWNCertificate :=
   replay graph params 1 #[none, none, some ⟨2, Tensor.full [2] 0.5⟩, none]
 
 private def query (bound : ExecFloat.Binary 8 23) (strict : Bool) : OutputQuery :=

@@ -88,21 +88,21 @@ Important examples include:
 
 - `NN.MLTheory.CROWN.Graph.CrownCertSoundness.CrownTransferSound` is the generic graph-CROWN
   transfer interface, the kernel of the certificate checker theorem. TorchLean proves it for the
-  concrete α-CROWN and α/β-CROWN transfer rules (`alphaCrown_transfer_sound`,
-  `alphaBetaCrown_transfer_sound`). Those
+  concrete α-CROWN transfer rule, with and without ReLU phases (`alphaCrown_transfer_sound`,
+  `phasedCrown_transfer_sound`). Those
   transfer theorems take the IBP boxes as a hypothesis (`IBPEnclosesVals`).
   `NN/MLTheory/CROWN/Proofs/GraphAlphaCrownTransferSoundness/EndToEnd.lean` discharges that
   hypothesis from the IBP soundness theorem `cert_encloses_semantics`
   (`ibp_encloses_vals_of_cert_local_ok`) and states the composed corollaries
-  `alphaCrown_cert_encloses_semantics`, `alphaBetaCrown_cert_encloses_semantics`, and
+  `alphaCrown_cert_encloses_semantics`, `phasedCrown_cert_encloses_semantics`, and
   `alphaCrown_cert_encloses_evalGraphRec`, which have no `IBPEnclosesVals` hypothesis.
   `NN/MLTheory/CROWN/Proofs/GraphRunibpEndToEnd.lean` connects the proof-side IBP pass to the
   engine's executable `runIBP` (`runIBP_eq_runIBP?`, `runIBP_encloses_evalGraphRec`). All of these
   are statements over `ℝ`. A new backend-dependent transfer rule must provide its own
   `CrownTransferSound` proof.
   The executable output-box APIs seed propagation with the requested input region. For rounded
-  scalar backends, `outputBoxAlphaBetaCROWN?` uses directed CROWN rather than reassociating rounded
-  affine coefficients through the exact-real α/β-CROWN rules. An exact-real transfer theorem
+  scalar backends, `outputBoxPhasedCROWN?` uses directed CROWN rather than reassociating rounded
+  affine coefficients through the exact-real phased α-CROWN rules. An exact-real transfer theorem
   alone does not justify such reassociation in binary32.
 - `NN.MLTheory.Proofs.UniversalApproximation.FloatIntervalApprox.OpsExact.Sound` packages local
   finite-IEEE32 interval obligations. Addition, multiplication, and ReLU have proved theorems and
@@ -184,13 +184,6 @@ Per-arena timer, purge-bitmap, and free-range operations retain their upstream o
 regressions exercise collection/free interleavings and check page release through ordinary
 collection. Those observations and the global memory-order argument do not constitute a Lean proof
 or a complete concurrency proof of mimalloc, its compiler output, or operating-system behavior.
-
-## Opaque Non-FFI Declarations
-
-- `NN.MLTheory.CROWN.betaAt` is an opaque executable wrapper around `Array.get!`. Its caller,
-  `phaseRelaxVec?`, checks the phase-array length before indexing. The wrapper alone is total and
-  would return `get!`'s fallback for an out-of-bounds index; its safety claim therefore belongs to
-  the caller's control flow.
 
 ## LibTorch CUDA Runtime
 

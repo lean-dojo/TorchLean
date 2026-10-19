@@ -6,13 +6,13 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.AlphaBeta
+public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Phased
 public import NN.MLTheory.CROWN.Proofs.GraphRunibpEndToEnd
 
 /-!
-# α-CROWN and α/β-CROWN End-to-End Enclosure
+# α-CROWN and Phased α-CROWN End-to-End Enclosure
 
-The transfer theorems `alphaCrown_transfer_sound` and `alphaBetaCrown_transfer_sound` take the
+The transfer theorems `alphaCrown_transfer_sound` and `phasedCrown_transfer_sound` take the
 IBP boxes as an assumption (`IBPEnclosesVals`): every IBP box present at a node must enclose the
 semantic value at that node. This file discharges that assumption from the IBP soundness theorem
 `CertSoundness.cert_encloses_semantics` and states the fully composed corollaries.
@@ -186,21 +186,21 @@ theorem alphaCrown_cert_encloses_evalGraphRec
     (evalGraphRec g ps inputs) ctx x htopo hsupp (runIBP?_CertLocalOK g ps htopo)
     (evalGraphRec_SemLocalOK g ps inputs htopo) hinputsEnc hinputs halpha hcert
 
-/-! ## α/β-CROWN -/
+/-! ## Phased α-CROWN -/
 
 /--
-A locally replayed α/β-CROWN certificate encloses every corresponding graph value, with the IBP
+A locally replayed phased α-CROWN certificate encloses every corresponding graph value, with the IBP
 boxes justified rather than assumed.
 
-This is `alphaBetaCrown_cert_encloses_semantics_of_ibpEnclosesVals` with `IBPEnclosesVals`
+This is `phasedCrown_cert_encloses_semantics_of_ibpEnclosesVals` with `IBPEnclosesVals`
 discharged from the IBP soundness theorem; see `alphaCrown_cert_encloses_semantics` for the
 hypothesis trade.
 -/
-theorem alphaBetaCrown_cert_encloses_semantics
+theorem phasedCrown_cert_encloses_semantics
     (g : Graph) (ps : ParamStore ℝ)
     (ibp : Array (Option (FlatBox ℝ)))
     (alpha : Array (Option (FlatTensor ℝ)))
-    (beta : Array (Option (Array Int)))
+    (phases : Array (Option (Array Int)))
     (cert : Array (Option (FlatAffineBounds ℝ)))
     (inputs : Std.HashMap Nat Val)
     (vals : Array (Option Val))
@@ -212,26 +212,26 @@ theorem alphaBetaCrown_cert_encloses_semantics
     (hinputsEnc : InputsEnclosed g ps inputs)
     (hinputs : InputsMatch (inputs := inputs) (ctx := ctx) x)
     (halpha : AlphaOK (alpha := alpha))
-    (hcert : CrownCertLocalOK (g := g) (step := stepAlphaBeta g ps ibp alpha beta ctx) cert) :
+    (hcert : CrownCertLocalOK (g := g) (step := stepPhased g ps ibp alpha phases ctx) cert) :
     ∀ id : Nat, id < g.nodes.size →
       ∀ (b : FlatAffineBounds ℝ) (v : Val),
         cert[id]! = some b →
         vals[id]! = some v →
         EnclosesAtInput (α := ℝ) ctx x b v :=
-  alphaBetaCrown_cert_encloses_semantics_of_ibpEnclosesVals g ps ibp alpha beta cert inputs vals
+  phasedCrown_cert_encloses_semantics_of_ibpEnclosesVals g ps ibp alpha phases cert inputs vals
     ctx x htopo hsem hinputs
     (ibp_encloses_vals_of_cert_local_ok g ps ibp inputs vals htopo hsupp hibp hsem hinputsEnc)
     halpha hcert
 
 /--
-Every node of a fully covered α/β-CROWN certificate is enclosed. See
+Every node of a fully covered phased α-CROWN certificate is enclosed. See
 `alphaCrown_cert_encloses_all_nodes` for the role of `CrownCertCovers`.
 -/
-theorem alphaBetaCrown_cert_encloses_all_nodes
+theorem phasedCrown_cert_encloses_all_nodes
     (g : Graph) (ps : ParamStore ℝ)
     (ibp : Array (Option (FlatBox ℝ)))
     (alpha : Array (Option (FlatTensor ℝ)))
-    (beta : Array (Option (Array Int)))
+    (phases : Array (Option (Array Int)))
     (cert : Array (Option (FlatAffineBounds ℝ)))
     (inputs : Std.HashMap Nat Val)
     (vals : Array (Option Val))
@@ -243,7 +243,7 @@ theorem alphaBetaCrown_cert_encloses_all_nodes
     (hinputsEnc : InputsEnclosed g ps inputs)
     (hinputs : InputsMatch (inputs := inputs) (ctx := ctx) x)
     (halpha : AlphaOK (alpha := alpha))
-    (hcert : CrownCertLocalOK (g := g) (step := stepAlphaBeta g ps ibp alpha beta ctx) cert)
+    (hcert : CrownCertLocalOK (g := g) (step := stepPhased g ps ibp alpha phases ctx) cert)
     (hcoverage : CrownCertCovers g cert vals) :
     ∀ id : Nat, id < g.nodes.size →
       ∃ b v, cert[id]! = some b ∧ vals[id]! = some v ∧
@@ -251,17 +251,17 @@ theorem alphaBetaCrown_cert_encloses_all_nodes
   intro id hid
   obtain ⟨b, v, hb, hv⟩ := hcoverage.2.2 id hid
   exact ⟨b, v, hb, hv,
-    alphaBetaCrown_cert_encloses_semantics g ps ibp alpha beta cert inputs vals ctx x
+    phasedCrown_cert_encloses_semantics g ps ibp alpha phases cert inputs vals ctx x
       htopo hsupp hibp hsem hinputsEnc hinputs halpha hcert id hid b v hb hv⟩
 
 /--
-α/β-CROWN enclosure against the total IBP pass and the total evaluator; see
+Phased α-CROWN enclosure against the total IBP pass and the total evaluator; see
 `alphaCrown_cert_encloses_evalGraphRec`.
 -/
-theorem alphaBetaCrown_cert_encloses_evalGraphRec
+theorem phasedCrown_cert_encloses_evalGraphRec
     (g : Graph) (ps : ParamStore ℝ)
     (alpha : Array (Option (FlatTensor ℝ)))
-    (beta : Array (Option (Array Int)))
+    (phases : Array (Option (Array Int)))
     (cert : Array (Option (FlatAffineBounds ℝ)))
     (inputs : Std.HashMap Nat Val)
     (ctx : AffineCtx) (x : Tensor ℝ [ctx.inputDim])
@@ -271,13 +271,13 @@ theorem alphaBetaCrown_cert_encloses_evalGraphRec
     (hinputs : InputsMatch (inputs := inputs) (ctx := ctx) x)
     (halpha : AlphaOK (alpha := alpha))
     (hcert :
-      CrownCertLocalOK (g := g) (step := stepAlphaBeta g ps (runIBP? g ps) alpha beta ctx) cert) :
+      CrownCertLocalOK (g := g) (step := stepPhased g ps (runIBP? g ps) alpha phases ctx) cert) :
     ∀ id : Nat, id < g.nodes.size →
       ∀ (b : FlatAffineBounds ℝ) (v : Val),
         cert[id]! = some b →
         (evalGraphRec g ps inputs)[id]! = some v →
         EnclosesAtInput (α := ℝ) ctx x b v :=
-  alphaBetaCrown_cert_encloses_semantics g ps (runIBP? g ps) alpha beta cert inputs
+  phasedCrown_cert_encloses_semantics g ps (runIBP? g ps) alpha phases cert inputs
     (evalGraphRec g ps inputs) ctx x htopo hsupp (runIBP?_CertLocalOK g ps htopo)
     (evalGraphRec_SemLocalOK g ps inputs htopo) hinputsEnc hinputs halpha hcert
 

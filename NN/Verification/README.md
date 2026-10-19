@@ -13,10 +13,10 @@ PINN/scientific ML checks, ODE and spline certificates, and graph-level IBP/CROW
   `TransformerIBPWorkflow`, `MlpTrainVerifyWorkflow`), the lowering from TorchLean model fragments
   to the verifier graph IR, and the `Proved/` subtree of theorem-backed lowering and evaluator
   fragments for supported forward programs.
-- `Cert/`: JSON certificate formats and executable recomputation checkers, including IBP, CROWN,
-  alpha-CROWN, and alpha-beta-CROWN-style local node artifacts. The alpha-beta-CROWN node format
-  adds ReLU phases that must already follow from IBP, so it replays alpha-CROWN bounds; it has no
-  beta multipliers or branch splits. `Cert/FiniteArtifact` checks binary32 affine bounds for
+- `Cert/`: JSON certificate formats and executable recomputation checkers, including IBP and
+  alpha-CROWN local node artifacts. A CROWN node certificate may add ReLU phases, which must
+  already follow from IBP, so it still replays alpha-CROWN bounds; it has no beta multipliers or
+  branch splits. `Cert/FiniteArtifact` checks binary32 affine bounds for
   linear/ReLU chains against exact rational transfers, and `FiniteArtifact.accepts_graph_sound`
   proves the requested output inequalities for the original graph under the exact real values of
   its binary32 parameters. It is a library API with no `scripts/lake.sh exe verify` command.
@@ -208,9 +208,11 @@ scripts/lake.sh exe verify -- torchlean-mlp-workflow
 These commands lower or build small TorchLean models, attach input regions, and run native bound
 passes. The MLP workflow trains a classifier and calls
 `trained.verify center (radius := 0.10) (norm := .inf) (property := .topLabel 0)`; its graph and
-bound state stay internal. The default algorithm, `.alphaBetaCrown`, is fixed-relaxation
-alpha-CROWN with ReLU phases inferred from IBP; it has no beta multipliers or branch splits. Use these commands when changing graph lowering, bound
-propagation, typed graph execution, or the verification API.
+bound state stay internal. The default algorithm, `.alphaCrown`, is fixed-relaxation
+alpha-CROWN with ReLU phases inferred from IBP; it has no beta multipliers or branch splits. On a
+rounded scalar, as in this workflow, it runs directed CROWN and the report prints `CROWN`. Use
+these commands when changing graph lowering, bound propagation, typed graph execution, or the
+verification API.
 
 Run a compact PINN certificate and residual-expression check:
 

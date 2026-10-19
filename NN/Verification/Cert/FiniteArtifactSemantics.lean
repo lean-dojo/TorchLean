@@ -225,7 +225,7 @@ theorem decodeGraph_denote (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
 
 /-- The requested margins hold for the original graph under its exactly decoded payload. -/
 theorem accepts_graph_sound (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
-    (cert : NodeReplay.CROWNNodeCoreCertificate) (query : OutputQuery)
+    (cert : NodeReplay.CROWNCertificate) (query : OutputQuery)
     (h : accepts g ps cert query = true) :
     ∃ decoded, decode g ps cert query = some decoded ∧
       nodeBounds cert query.outputId decoded.graph.inputDim decoded.graph.outputDim =

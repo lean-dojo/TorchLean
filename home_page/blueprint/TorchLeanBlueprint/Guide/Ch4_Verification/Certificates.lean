@@ -3,7 +3,6 @@ import NN.Verification.Cert.AbCrownLeafCert
 import NN.Verification.Cert.IBPCert
 import NN.Verification.Cert.IBPNodeCert
 import NN.Verification.Cert.CROWNNodeCert
-import NN.Verification.Cert.CROWNNodeCertAlphaBeta
 -- The parse layer demonstrated below lives here rather than in the checker file.
 import NN.Verification.Util.Json
 -- The interval pass exercised under "Three Levels Of Checking" needs the tensor literal
@@ -22,7 +21,6 @@ open Verso.Genre.Manual.InlineLean
 -- lets each `#check` fit on one line; the printed signatures use those open namespaces.
 open NN.Verification
 open NN.Verification.Cert
-open NN.Verification.Cert.CROWNNodeCertAlphaBeta
 open NN.Verification.Util (approxEq)
 open NN.Verification.Util.Tensor
 open TorchLean (Tensor)
@@ -692,8 +690,8 @@ fixes the reference binary32 operations for replay, but does not by itself provi
 
 The {ref "certificates"}[leaf artifact described here] carries no graph or transfer evidence, so
 this theorem cannot be applied to it
-directly. The CROWN and alpha-beta checkers do have acceptance theorems establishing local
-consistency of their binary32 replay. A real enclosure still needs the real transfer hypotheses and
+directly. The CROWN node checker does have an acceptance theorem establishing local
+consistency of its binary32 replay. A real enclosure still needs the real transfer hypotheses and
 a refinement argument from that replay to the real semantics.
 
 The last lines of the output are worth reading literally. Choose a valid node `id`, a box `B`,
@@ -730,14 +728,11 @@ those failure modes.
 #check @IBPCert.check
 -- Replay every supplied interval node using the binary32
 -- parameter store.
-#check @IBPNodeCert.checkIBPNodeCertificate
+#check @IBPNodeCert.check
 -- Add exact comparisons for the affine CROWN transcript.
-#check @CROWNNodeCert.checkCROWNNodeCertificate
--- This is the parsed alpha-beta certificate's data type.
-#check @AlphaBetaCROWNNodeCertificate
--- Read and check an alpha-beta transcript for a supplied
--- graph and parameters.
-#check @checkAlphaBetaCROWNNodeCertificate
+#check @CROWNNodeCert.check
+-- The parsed CROWN certificate, with optional ReLU phases.
+#check @NodeReplay.CROWNCertificate
 ```
 
 ```leanOutput nodeEntries (whitespace := lax)
@@ -747,16 +742,16 @@ those failure modes.
 ```
 
 ```leanOutput nodeEntries (whitespace := lax)
-IBPNodeCert.checkIBPNodeCertificate : NN.MLTheory.CROWN.Graph →
+IBPNodeCert.check : NN.MLTheory.CROWN.Graph →
   NN.MLTheory.CROWN.Graph.ParamStore
       (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-        IBPNodeCert.readIBPNodeCertificate._proof_1 IBPNodeCert.readIBPNodeCertificate._proof_2
-        IBPNodeCert.readIBPNodeCertificate._proof_3 IBPNodeCert.readIBPNodeCertificate._proof_4) →
+        IBPNodeCert.read._proof_1 IBPNodeCert.read._proof_2
+        IBPNodeCert.read._proof_3 IBPNodeCert.read._proof_4) →
     String → IO Bool
 ```
 
 ```leanOutput nodeEntries (whitespace := lax)
-CROWNNodeCert.checkCROWNNodeCertificate : NN.MLTheory.CROWN.Graph →
+CROWNNodeCert.check : NN.MLTheory.CROWN.Graph →
   NN.MLTheory.CROWN.Graph.ParamStore
       (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
         CROWNNodeCert.checkNodeEntries._proof_1 CROWNNodeCert.checkNodeEntries._proof_2
@@ -765,23 +760,13 @@ CROWNNodeCert.checkCROWNNodeCertificate : NN.MLTheory.CROWN.Graph →
 ```
 
 ```leanOutput nodeEntries
-AlphaBetaCROWNNodeCertificate : Type
+NodeReplay.CROWNCertificate : Type
 ```
 
-```leanOutput nodeEntries (whitespace := lax)
-checkAlphaBetaCROWNNodeCertificate : NN.MLTheory.CROWN.Graph →
-  NN.MLTheory.CROWN.Graph.ParamStore
-      (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-        replayStep._proof_1 replayStep._proof_2
-        replayStep._proof_3 replayStep._proof_4) →
-    String → IO Bool
-```
-
-All four node/output checkers receive a graph and parameter store, so they can recompute bounds
-for a supplied network. `IBPNodeCert`, `CROWNNodeCert`, and the alpha-beta variant use
-`ParamStore (ExecFloat.Binary 8 23)` and compare against a specified binary32 execution. A
-producer using
-different rounding or reduction rules may disagree with that replay.
+All three checkers receive a graph and parameter store, so they can recompute bounds for a
+supplied network. `IBPNodeCert` and `CROWNNodeCert` use `ParamStore (ExecFloat.Binary 8 23)` and
+compare against a specified binary32 execution. A producer using different rounding or reduction
+rules may disagree with that replay.
 
 `IBPCert.check` instead uses host `Float` and takes an output-node identifier. Its artifact stores
 an output box at that node, rather than a trace for every node.
@@ -789,36 +774,32 @@ an output box at that node, rather than a trace for every node.
 Here `String → IO Unit` means “given a path, perform an IO action with no returned value.”
 Success is communicated by completion and the printed summary; an exception signals failure.
 The node signatures instead end in `IO Bool`, so successful IO returns a Boolean verdict.
-The standalone `AlphaBetaCROWNNodeCertificate : Type` line describes a data type, not a checker
+The standalone `NodeReplay.CROWNCertificate : Type` line describes a data type, not a checker
 or a theorem. In `IBPCert.check`, `optParam ... none` displays a defaulted argument: callers
 may omit the optional refinement request. Reading the result type and arguments first makes
 the long namespace prefixes much less distracting.
 
-`checkAlphaBetaCROWNNodeCertificate` has the same type as `checkCROWNNodeCertificate`. Neither
-signature encodes an artifact kind. These node schemas do not require a distinguishing
-`format` field: the selected checker parses its fields and recomputes its own rules. Callers must
-choose the intended checker; shared or extra JSON fields do not establish that choice.
+`IBPNodeCert.check` has the same type as `CROWNNodeCert.check`. Neither signature encodes an
+artifact kind. These node schemas do not require a distinguishing `format` field: the selected
+checker parses its fields and recomputes its own rules. Callers must choose the intended checker;
+shared or extra JSON fields do not establish that choice.
 
 Use `abcrown-leaf` when the artifact is a branch-and-bound leaf summary. `IBPCert.check` checks
-a compact Float output-bound artifact against a supplied graph and parameter store.
-`IBPNodeCert` instead
-replays per-node interval data with FloatLib binary32. `CROWNNodeCert` adds affine CROWN data, and
-the
-alpha-beta variant adds ReLU phase tags already justified by the IBP intervals. It replays α-CROWN
-bounds, with no β multipliers or branch splits. These formats are related, but
-they are not interchangeable transcripts.
+a compact Float output-bound artifact against a supplied graph and parameter store. `IBPNodeCert`
+instead replays per-node interval data with FloatLib binary32. `CROWNNodeCert` adds affine CROWN
+data and optional ReLU phase tags already justified by the IBP intervals. It replays α-CROWN
+bounds, with no β multipliers or branch splits. These formats are related, but they are not
+interchangeable transcripts.
 
 When reporting an accepted artifact, name the checker and the condition it established:
 
 - `abcrown-leaf` checks a structural leaf artifact.
-- `checkIBPNodeCertificate` recomputes the authoritative binary32 interval trace and requires the
+- `IBPNodeCert.check` recomputes the authoritative binary32 interval trace and requires the
   imported node boxes to contain it.
-- `checkCROWNNodeCertificate` checks the additional affine transcript for the supported CROWN
-  fragment.
-- `checkAlphaBetaCROWNNodeCertificate` recomputes α-CROWN transfers and validates IBP-stable phase
-  tags, with exact binary32 transcript comparison. Parsed interval side data may widen the
-  recomputed boxes but may never shrink them; decimal endpoints are first rounded outward to
-  binary32.
+- `CROWNNodeCert.check` recomputes α-CROWN transfers for the supported CROWN fragment, validates
+  any IBP-stable phase tags, and compares the affine transcript exactly in binary32. Parsed
+  interval side data may widen the recomputed boxes but may never shrink them; decimal endpoints
+  are first rounded outward to binary32.
 - graph soundness theorems apply only when the certificate format and graph fragment supply the
   hypotheses those theorems demand.
 
@@ -863,7 +844,7 @@ Semantics:
   for a different witness. When `witness_margin` is present, it must accompany the index and agree
   with the recomputed margin up to the schema tolerance.
 
-The schema deliberately does not contain a neural-network graph, α slopes, β phases, or per-node
+The schema deliberately does not contain a neural-network graph, α slopes, ReLU phases, or per-node
 affine forms. It is therefore a *leaf artifact*, not a full proof certificate.
 The artifact records enough to check the terminal-domain bookkeeping exported by the producer; it
 does not replay the producer's bound propagation.

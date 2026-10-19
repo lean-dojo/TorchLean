@@ -8,7 +8,7 @@ module
 
 public import NN.API.Verification.Core
 public import NN.API.Trainer.Core
-public import NN.MLTheory.CROWN.Cert.AlphaBetaCROWN
+public import NN.MLTheory.CROWN.Cert.PhasedCROWN
 public import NN.API.Neural.Execution -- shake: keep
 public import NN.Verification.Builtin.Lowering -- shake: keep
 
@@ -65,7 +65,8 @@ Build the verification closure retained by an ordinary trained result.
 The closure captures the completed parameter snapshot, so subsequent updates to the training
 session cannot change the model being verified.
 The returned report describes the lowered graph; it does not resolve the source-correspondence
-restriction on its one-hot slicing and selection operations.
+restriction on its one-hot slicing and selection operations. It names the algorithm that ran:
+`.alphaCrown` on a rounded scalar runs directed CROWN, so the report says `.crown`.
 -/
 def forState {σ τ : Shape} {α : Type}
     [TorchLean.Storage α] [Context α]
@@ -105,17 +106,23 @@ def forState {σ τ : Shape} {α : Type}
           IO.ofExcept (lowered.outputBox? (lowered.runIBP parameters))
       | .crown =>
           IO.ofExcept (lowered.outputBoxCROWN? parameters inputBox)
-      | .alphaBetaCrown =>
+      | .alphaCrown =>
           let inputDim ← IO.ofExcept lowered.inputDim?
-          IO.ofExcept <| NN.MLTheory.CROWN.Cert.outputBoxAlphaBetaCROWN?
+          IO.ofExcept <| NN.MLTheory.CROWN.Cert.outputBoxPhasedCROWN?
             (α := α) lowered.graph parameters inputBox
             lowered.inputId lowered.outputId inputDim
 
+    let ran : Algorithm :=
+      if algorithm == .alphaCrown &&
+          !NN.MLTheory.CROWN.BoundOps.supportsExactAffineReassociation (α := α) then
+        .crown
+      else
+        algorithm
     let bounds ← readBounds outputBox
     IO.ofExcept <| Report.fromBounds radius bounds
       (norm := norm)
       (property := property)
-      (algorithm := algorithm)
+      (algorithm := ran)
 
 end Internal
 

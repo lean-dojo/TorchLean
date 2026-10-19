@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Extras.FP32
-public import NN.MLTheory.CROWN.Cert.AlphaBetaCROWN
+public import NN.MLTheory.CROWN.Cert.PhasedCROWN
 public import NN.MLTheory.CROWN.Models.Mlp
 public import NN.MLTheory.CROWN.Proofs.DirectedBackwardEvaluation
 public import NN.Tests.Utils
@@ -651,14 +651,14 @@ private def checkRequestedRegion : IO Unit := do
   let requested : FlatBox Float := { dim := 1, lo := [2], hi := [3] }
   let ps := ({} : ParamStore Float).seedInputBox 0 old
   for result in [outputBoxCROWN? graph ps requested 0 1 1,
-      Cert.outputBoxAlphaBetaCROWN? graph ps requested 0 1 1] do
+      Cert.outputBoxPhasedCROWN? graph ps requested 0 1 1] do
     let bounds ← IO.ofExcept result
     require (getAtOrZero bounds.lo [0] ≤ 2 && 3 ≤ getAtOrZero bounds.hi [0])
       "CROWN used the stored region instead of the requested region"
 
 /-- Nearest-rounded affine coefficients cancel the unit term and falsely certify class zero.
 The exact-real logits at input one are `[1/2, 1]`; directed propagation must not certify zero. -/
-private def checkRoundedAlphaBeta : IO Unit := do
+private def checkRoundedPhased : IO Unit := do
   let graph : NN.IR.Graph := { nodes := #[
     { id := 0, kind := .input, parents := #[], outShape := [1] },
     { id := 1, kind := .linear, parents := #[0], outShape := [3] },
@@ -669,9 +669,9 @@ private def checkRoundedAlphaBeta : IO Unit := do
     { linearWB := Std.HashMap.emptyWithCapacity
         |>.insert 1 { m := 3, n := 1, w := [[16777216], [1], [-16777216]], b := [0, 0, 0] }
         |>.insert 3 { m := 2, n := 1, w := [[0], [1]], b := [0.5, 0] } }
-  let bounds ← IO.ofExcept <| Cert.outputBoxAlphaBetaCROWN? graph ps region 0 3 1
+  let bounds ← IO.ofExcept <| Cert.outputBoxPhasedCROWN? graph ps region 0 3 1
   require (!NN.Verification.Robustness.TopLabel.check bounds.lo bounds.hi 0)
-    "rounded alpha/beta CROWN certified the losing exact-real class"
+    "rounded phased alpha-CROWN certified the losing exact-real class"
 
 /-- Exercise transfers whose malformed inputs or rounded accumulations defeat real-only tests. -/
 def run : IO Unit := do
@@ -682,7 +682,7 @@ def run : IO Unit := do
   checkIndependentConcat
   checkConvolutionDerivatives
   checkRequestedRegion
-  checkRoundedAlphaBeta
+  checkRoundedPhased
   IO.println "CROWN transfer: rounding, failure, shape and independent-input checks passed"
 
 end Transfers

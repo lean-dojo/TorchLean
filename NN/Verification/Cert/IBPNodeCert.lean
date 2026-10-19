@@ -31,7 +31,7 @@ Intended certificate JSON format:
 
 The array length must equal `g.nodes.size`. Every entry must be an object whose `lo` and `hi`
 arrays have length equal to that node's flattened output dimension `g.nodes[i]!.outShape.size`.
-The parser reads `null` as a missing entry, and `checkIBPNode` rejects it.
+The parser reads `null` as a missing entry, and `checkNode` rejects it.
 
 Trust boundary note:
 - The certificate is untrusted; we accept it only if Lean recomputation matches.
@@ -57,14 +57,14 @@ open TorchLean.Tensor
 open Lean Json
 
 /-- Read an IBP node certificate from JSON on disk. -/
-def readIBPNodeCertificate (g : Graph) (path : String) :
+def read (g : Graph) (path : String) :
     IO (Array (Option (FlatBox (ExecFloat.Binary 8 23)))) := do
   let topObj ← readJsonObjectFile path
   let arr ← expectFieldArray topObj "ibp" "top-level"
   parsePerNode g "ibp" arr fun node entry => parseFlatBox? node.outShape.size entry
 
 /-- Check one artifact entry against the authoritative Lean IBP trace. -/
-def checkIBPNode (g : Graph)
+def checkNode (g : Graph)
     (authoritative cert : Array (Option (FlatBox (ExecFloat.Binary 8 23)))) (id : Nat) :
     IO Bool := do
   let some node := g.nodes[id]?
@@ -105,13 +105,13 @@ Check a per-node IBP certificate against Lean's graph IBP propagation rules.
 Returns `true` iff every node's certificate interval contains the interval recomputed from trusted
 inputs and parameters.
 -/
-def checkIBPNodeCertificate (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
+def check (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
     (path : String) : IO Bool := do
-  let cert ← readIBPNodeCertificate g path
+  let cert ← read g path
   let authoritative := runIBP (α := (ExecFloat.Binary 8 23)) g ps
   let mut ok := true
   for id in [0:g.nodes.size] do
-    let okNode ← checkIBPNode g authoritative cert id
+    let okNode ← checkNode g authoritative cert id
     ok := ok && okNode
   if ok then
     IO.println "[IBPNodeCert] every artifact interval encloses the authoritative Lean trace."

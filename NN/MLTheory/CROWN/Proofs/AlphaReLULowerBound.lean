@@ -13,7 +13,7 @@ public import NN.Spec.Core.Context.Real
 # Scalar alpha-ReLU Lower Bounds
 
 Soundness of the scalar lower relaxation used by alpha-CROWN. Keeping this elementary fact in one
-module lets graph transfer proofs and alpha/beta phase proofs share the same argument.
+module lets graph transfer proofs and phased ReLU proofs share the same argument.
 -/
 
 @[expose] public section

@@ -8,7 +8,6 @@ module -- shake: keep-all (These imports define the CI build coverage.)
 
 import NN.Verification.Cert.AbCrownLeafCert
 import NN.Verification.Cert.CROWNNodeCert
-import NN.Verification.Cert.CROWNNodeCertAlphaBeta
 import NN.Verification.Cert.IBPCert
 import NN.Verification.ODE.Parse
 import NN.Verification.PINN.CLI

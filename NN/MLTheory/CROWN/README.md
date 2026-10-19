@@ -20,21 +20,21 @@ and Lyapunov/controller experiments.
    transfer, and `Graph/Engine/CROWN/` holds the affine rules.
 4. `Operators/Conv.lean`: CROWN-IBP bounds and an exact flattened affine map for
    arbitrary-dimensional convolution.
-5. `Cert/`: alpha-CROWN and alpha-beta-CROWN certificate data structures.
+5. `Cert/`: alpha-CROWN certificate data structures, with optional ReLU phases.
 6. `Proofs/`: theorem-backed pieces of the CROWN development. `GraphCertSoundness/` proves IBP
    certificate soundness, with `cert_encloses_semantics` dispatching over the operator files in
    `Main/`. `GraphAlphaCrownTransferSoundness/` proves `alphaCrown_transfer_sound` and
-   `alphaBetaCrown_transfer_sound` as short dispatches over `Alpha/` and `AlphaBeta/`; its
+   `phasedCrown_transfer_sound` as short dispatches over `Alpha/` and `Phased/`; its
    `EndToEnd.lean` discharges their `IBPEnclosesVals` hypothesis from the IBP theorem
    (`ibp_encloses_vals_of_cert_local_ok`) and states the composed corollaries
-   `alphaCrown_cert_encloses_semantics`, `alphaBetaCrown_cert_encloses_semantics`, and
+   `alphaCrown_cert_encloses_semantics`, `phasedCrown_cert_encloses_semantics`, and
    `alphaCrown_cert_encloses_evalGraphRec`. `GraphRunibpEndToEnd.lean` connects the proof-side
    IBP pass to the engine's executable `runIBP` (`runIBP_eq_runIBP?`,
    `runIBP_encloses_evalGraphRec`) and `GraphRuntimeBridge.lean` proves per-node agreement between
    the runtime evaluator and the semantics (`evalNode_bridge`), then composes it over a whole
    topologically ordered graph (`denoteAll_semLocalOK`).
-   `AlphaReLULowerBound.lean` is the shared scalar lower-bound theorem used by both alpha-CROWN and
-   alpha/beta-CROWN proofs.
+   `AlphaReLULowerBound.lean` is the shared scalar lower-bound theorem used by the alpha-CROWN and
+   phased alpha-CROWN proofs.
 7. `Runtime/Ops.lean`: the canonical executable ReLU relaxation definitions used by both the graph
    engine and MLP development, kept separate from heavier proof imports.
 
@@ -255,11 +255,11 @@ graph claims.
 
 ### Certificate acceptance
 
-Node certificates are checked by the library functions `checkCROWNNodeCertificate` and
-`checkAlphaBetaCROWNNodeCertificate`. `lake exe verify` has no command for them. Both finish with a
-pure complete replay. `certificateAccepts_eq_true` and
-`AlphaBetaCROWNNodeCertificate.accepts_eq_true` turn a successful binary32 replay into
-`CrownCertLocalOK`. The result is a theorem about the imported
+Node certificates are checked by the library functions `IBPNodeCert.check` and
+`CROWNNodeCert.check`; a CROWN certificate may carry ReLU phases, which only fix ReLUs whose IBP
+interval already proves the phase. `lake exe verify` has no command for them. The CROWN check
+finishes with a pure complete replay, and `CROWNNodeCert.accepts_eq_true` turns a successful
+binary32 replay into `CrownCertLocalOK`. The result is a theorem about the imported
 binary32 transcript. Applying a real-semantic enclosure theorem additionally requires the
 appropriate transfer and finite-precision refinement hypotheses.
 
@@ -279,7 +279,7 @@ a separate obligation.
 - Graph backward-objective propagation lives in `Graph/Engine/BackwardObjective.lean`. The
   canonical `IBP.matPos`/`IBP.matNeg` weight decomposition lives in `Core.lean` and is shared by
   interval and graph-CROWN linear rules.
-- `Cert/`: alpha/alpha-beta certificate structures.
+- `Cert/`: alpha-CROWN certificate structures.
 - `Lyapunov/`: controller and Lyapunov-oriented CROWN workflows. Imported numerical bounds support
   a theorem only after the caller proves `LyapunovCert.ValidFor`.
   The two Lean-executed pipelines share the lowered gradient search and the loss-box bound report

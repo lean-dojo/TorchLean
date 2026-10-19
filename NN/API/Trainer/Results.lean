@@ -131,7 +131,7 @@ opaque verify {σ τ : Shape}
     (radius : Float)
     (norm : Verification.Norm := .inf)
     (property : Verification.Property := .bounds)
-    (algorithm : Verification.Algorithm := .alphaBetaCrown) :
+    (algorithm : Verification.Algorithm := .alphaCrown) :
     IO Verification.Report :=
   match result.runVerification? with
   | some verify => verify center radius norm property algorithm

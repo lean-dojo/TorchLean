@@ -18,13 +18,12 @@ public import NN.Verification.Util.FloatApprox -- shake: keep
 
 Parsing, exact comparison, and local replay for node-wise verification certificates.
 
-The IBP, α-CROWN, and α/β-CROWN checkers all consume the same basic artifact shapes:
-flat interval boxes, affine lower/upper bounds, and optional per-node vectors.  We keep those
-format-level operations here so the individual checkers can focus on their propagation rule:
+The IBP and CROWN checkers consume the same basic artifact shapes: flat interval boxes, affine
+lower/upper bounds, and optional per-node vectors. We keep those format-level operations here so
+each checker can focus on its propagation rule:
 
 - `IBPNodeCert` checks interval propagation;
-- `CROWNNodeCert` checks affine CROWN propagation;
-- `CROWNNodeCertAlphaBeta` checks affine CROWN propagation with β phase information.
+- `CROWNNodeCert` checks affine α-CROWN propagation, with optional ReLU phases.
 
 The JSON artifact is always untrusted. These helpers only parse and compare data; acceptance still
 requires each checker to recompute the corresponding bound inside Lean. Interval claims are checked
@@ -367,12 +366,10 @@ def parsePerNode {β : Type} (g : Graph) (label : String) (arr : Array Json)
   (g.nodes.zip arr).mapM fun (node, entry) => parse node entry
 
 /--
-Shared in-memory representation for node-wise CROWN-style certificates.
-
-Plain α-CROWN uses these fields directly. α/β-CROWN extends the same core artifact with a β phase
-array, so parsing the common fields here keeps the two checkers from drifting apart.
+A node-wise CROWN certificate: the affine context, the interval and affine bounds per node, the
+optional α vectors of the ReLU lower relaxations, and optional ReLU phases.
 -/
-structure CROWNNodeCoreCertificate where
+structure CROWNCertificate where
   /-- Affine-propagation context, including the chosen input node and flattened input dimension. -/
   ctx : AffineCtx
   /-- Optional per-node interval bounds used by nonlinear CROWN steps. -/
@@ -381,16 +378,49 @@ structure CROWNNodeCoreCertificate where
   crown : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23)))
   /-- Optional per-node α values for ReLU lower relaxations. -/
   alpha : Array (Option (FlatTensor (ExecFloat.Binary 8 23)))
+  /-- Optional per-node ReLU phases: `-1` inactive, `0` unconstrained,
+  `1` active. A phase counts only when the IBP interval already proves it. -/
+  phases : Array (Option (Array Int)) := #[]
+
+/-- An integer from JSON, as a number or a string. -/
+def parseInt? (j : Json) : Option Int :=
+  match j with
+  | .num n => if n.exponent = 0 then some n.mantissa else none
+  | .str s => s.toInt?
+  | _ => none
+
+/-- One node's ReLU phases from JSON: `null`, or `dim` entries each `-1`, `0` or `1`. -/
+def parsePhases? (dim : Nat) (j : Json) : IO (Option (Array Int)) := do
+  match j with
+  | .null => pure none
+  | .arr xs =>
+      if hSize : xs.size = dim then
+        let mut out : Array Int := Array.mkEmpty dim
+        for k in List.finRange dim do
+          let h : k.val < xs.size := by
+            rw [hSize]
+            exact k.isLt
+          let some i := parseInt? (xs[k.val]'h)
+            | throw <| IO.userError s!"Invalid phases[i][{k.val}]: expected int"
+          if i = (-1) || i = 0 || i = 1 then
+            out := out.push i
+          else
+            throw <| IO.userError s!"Invalid phases[i][{k.val}]: expected -1/0/1"
+        pure (some out)
+      else
+        throw <| IO.userError s!"Invalid phases[i]: expected int array length {dim}"
+  | _ => throw <| IO.userError "Invalid phases[i]: expected null or int array"
 
 /--
-Parse the fields shared by α-CROWN and α/β-CROWN node certificates.
+Parse a CROWN node certificate.
 
-The producer may omit `"alpha"`; in that case we treat every node as having no custom α vector.
+The producer may omit `"alpha"` and `"phases"`; then no node has a custom α vector or a phase.
+The field `"beta"`, the former name of `"phases"`, is rejected rather than ignored, so an older
+certificate cannot silently lose its phases.
 Whenever α is present, `parseAlphaVec?` enforces the `[0,1]` side condition required by the ReLU
 relaxation proof.
 -/
-def parseCROWNNodeCoreCertificate (g : Graph) (topObj : Json) :
-    IO CROWNNodeCoreCertificate := do
+def parseCROWNCertificate (g : Graph) (topObj : Json) : IO CROWNCertificate := do
   let ctxObj ← expectFieldObject topObj "ctx" "top-level"
   let inputId ← expectFieldNat ctxObj "inputId" "ctx"
   let inputDim ← expectFieldNat ctxObj "inputDim" "ctx"
@@ -409,7 +439,15 @@ def parseCROWNNodeCoreCertificate (g : Graph) (topObj : Json) :
     parseAffineBounds? ctx.inputDim node.outShape.size entry
   let alpha ← parsePerNode g "alpha" alphaArr fun node entry =>
     parseAlphaVec? node.outShape.size entry
-  pure { ctx := ctx, ibp := ibp, crown := crown, alpha := alpha }
+  if (← optionalField? topObj "beta" "top-level").isSome then
+    throw <| IO.userError "Invalid top-level.beta: ReLU phases are now the field \"phases\""
+  let phasesArr ←
+    match ← optionalField? topObj "phases" "top-level" with
+    | none => pure (Array.replicate g.nodes.size Json.null)
+    | some phasesJ => expectArray phasesJ "top-level.phases"
+  let phases ← parsePerNode g "phases" phasesArr fun node entry =>
+    parsePhases? node.outShape.size entry
+  pure { ctx, ibp, crown, alpha, phases }
 
 /-- Check that an optional per-node certificate array contains all parents of node `id`. -/
 def parentsOk {β : Type} (g : Graph) (cert : Array (Option β)) (id : Nat) : Bool :=
@@ -492,13 +530,11 @@ def prettyAffineBounds (B : FlatAffineBounds (ExecFloat.Binary 8 23)) : String :
     s!"hiA={Spec.pretty B.hiAff.A}, hiC={Spec.pretty B.hiAff.c}"
 
 /--
-Common node-level checker for CROWN-style affine certificates.
-
-The only difference between α-CROWN and α/β-CROWN is how the candidate affine bound is recomputed.
-Everything after that point is the same: parent availability, IBP side conditions, dimensions,
-exact binary32 transcript equality, and diagnostic messages.
+Check one node of a CROWN affine certificate against the bound `computed?` that Lean replayed:
+parent availability, IBP side conditions, dimensions, exact binary32 transcript equality, and
+diagnostic messages.
 -/
-def checkCROWNLikeNode
+def checkCROWNNode
     (label : String) (g : Graph)
     (authoritativeIbp : Array (Option (FlatBox (ExecFloat.Binary 8 23))))
     (authoritativeCrown : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))))

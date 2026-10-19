@@ -6,19 +6,19 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Cert.AlphaBetaCROWN
+public import NN.MLTheory.CROWN.Cert.PhasedCROWN
 public import NN.MLTheory.CROWN.Proofs.AlphaReLULowerBound
 public import NN.MLTheory.CROWN.Proofs.ReLUUpperBound
 
 /-!
-# Scalar soundness for α/β-ReLU relaxations (over `ℝ`)
+# Scalar soundness for phased ReLU relaxations (over `ℝ`)
 
-This file proves the *operator-level* soundness facts used by α/β-CROWN at ReLU nodes:
+This file proves the *operator-level* soundness facts used by phased α-CROWN at ReLU nodes:
 
 * `phaseRelaxUpperScalar` is an upper bound on `relu` for any `x ∈ [l,u]`.
 * `phaseRelaxLowerScalar` is a lower bound on `relu` for any `x ∈ [l,u]` (with `0 ≤ α ≤ 1`).
 
-The β-phase cases (`inactive`/`active`) are exact, and the `unstable` case reduces to the
+The phase cases (`inactive`/`active`) are exact, and the `unstable` case reduces to the
 standard CROWN (upper) and α-CROWN (lower) relaxations.
 -/
 

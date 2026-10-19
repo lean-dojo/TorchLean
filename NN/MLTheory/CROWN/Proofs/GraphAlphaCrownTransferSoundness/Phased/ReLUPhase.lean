@@ -9,9 +9,9 @@ module
 public import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Common
 
 /-!
-# β-phase ReLU relaxations: pointwise soundness
+# Phased ReLU relaxations: pointwise soundness
 
-Analytic core of the β-extended ReLU transfer rule, stated without reference to graphs or step
+Analytic core of the phase-aware ReLU transfer rule, stated without reference to graphs or step
 functions.
 
 Given a pre-activation `z` enclosed both by an affine box (propagated from the parent's
@@ -38,7 +38,7 @@ open CrownCertSoundness
 open CertSoundness
 
 /--
-Index-wise bounds delivered by a β-consistent phase relaxation.
+Index-wise bounds delivered by a consistent phase relaxation.
 
 At index `i`, the lower relaxation applied to the affine lower bound sits below `relu (z i)`, and
 the upper relaxation applied to the affine upper bound sits above it. Both slopes are nonnegative,
@@ -108,13 +108,13 @@ theorem encloses_relu_propagateAffine {inDim n : Nat}
     hzIbp i
 
 /--
-Soundness of the β-phase ReLU rule at one node.
+Soundness of the phased ReLU rule at one node.
 
 The parent value `vp` is enclosed by its certificate entry `xin` (evaluated at `x`) and by its
 IBP box `preB`. The node's bounds are the phase relaxations for `preB` propagated through `xin`
 cast to `preB.dim`, and they enclose `relu vp`.
 -/
-theorem enclosesAtInput_relu_beta
+theorem enclosesAtInput_relu_phase
     (ctx : AffineCtx) (x : Tensor ℝ [ctx.inputDim])
     (xin : FlatAffineBounds ℝ) (vp : Val) (preB : FlatBox ℝ)
     (hout : xin.outDim = preB.dim)

@@ -22,10 +22,10 @@ import NN.MLTheory.CROWN.Proofs.DirectedIBPFullSoundness
 import NN.MLTheory.CROWN.Proofs.GraphRuntimeBridge
 import NN.MLTheory.CROWN.Proofs.GraphCrownCertSoundness
 import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Alpha
-import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.AlphaBeta
+import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.Phased
 import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.EndToEnd
-import NN.MLTheory.CROWN.Cert.AlphaBetaCROWN
-import NN.Verification.Cert.CROWNNodeCertAlphaBeta
+import NN.MLTheory.CROWN.Cert.PhasedCROWN
+import NN.Verification.Cert.CROWNNodeCert
 import NN.MLTheory.CROWN.Lyapunov.Certificate
 import NN.MLTheory.CROWN.Lyapunov.Verification
 import NN.MLTheory.Optimization.StronglyConvexGD
@@ -474,14 +474,14 @@ The proof checks the affine relaxation chosen for each supported operation again
 {uses "crown_transfer_contract"}[the generic transfer contract].
 :::
 
-:::theorem "alpha_beta_crown_transfer" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.AlphaCrownTransferSoundness.alphaBetaCrown_transfer_sound")
-Under the same graph, semantic, input, box, and slope hypotheses, the α/β-CROWN transfer step
-satisfies {uses "crown_transfer_contract"}[the transfer contract].
-Unchanged nodes reduce to {uses "alpha_crown_transfer"}[the α-CROWN transfer theorem].
+:::theorem "phased_crown_transfer" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.AlphaCrownTransferSoundness.phasedCrown_transfer_sound")
+Under the same graph, semantic, input, box, and slope hypotheses, the α-CROWN transfer step with
+ReLU phases satisfies {uses "crown_transfer_contract"}[the transfer contract]. Nodes without phases
+reduce to {uses "alpha_crown_transfer"}[the α-CROWN transfer theorem].
 :::
 
-:::proof "alpha_beta_crown_transfer"
-Split constraints are handled directly. The remaining operations reuse
+:::proof "phased_crown_transfer"
+ReLU nodes with phases are handled directly. The remaining nodes reuse
 {uses "alpha_crown_transfer"}[the α-CROWN transfer proof].
 :::
 
@@ -528,37 +528,38 @@ these lookup equalities, then evaluates the affine bound at the chosen enclosed 
 {uses "ibp_engine_end_to_end"}[the IBP end-to-end theorem].
 :::
 
-:::theorem "alpha_beta_crown_end_to_end" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.AlphaCrownTransferSoundness.alphaBetaCrown_cert_encloses_semantics")
-The α/β-CROWN analogue of {uses "alpha_crown_end_to_end"}[the α-CROWN corollary]: with a branch
-vector `beta` and a certificate replaying the α/β step, every certificate entry encloses the
-semantic value, with the IBP enclosure hypothesis discharged rather than assumed.
+:::theorem "phased_crown_end_to_end" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Graph.AlphaCrownTransferSoundness.phasedCrown_cert_encloses_semantics")
+The phased analogue of {uses "alpha_crown_end_to_end"}[the α-CROWN corollary]: with per-node ReLU
+phases and a certificate replaying the phased step, every certificate entry encloses the semantic
+value, with the IBP enclosure hypothesis discharged rather than assumed.
 :::
 
-:::proof "alpha_beta_crown_end_to_end"
-{uses "alpha_beta_crown_transfer"}[The α/β transfer theorem] composed with
+:::proof "phased_crown_end_to_end"
+{uses "phased_crown_transfer"}[The phased transfer theorem] composed with
 {uses "ibp_boxes_enclose_values"}[the enclosure lemma] through the generic checker theorem.
 :::
 
-:::definition "alpha_beta_crown_runner" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Cert.runAlphaBetaCROWN")
-The fixed-relaxation runner takes IBP bounds, infers stable ReLU phases, and replays the
-α/β-CROWN affine pass. Its `outputBoxAlphaBetaCROWN?` caller computes the IBP bounds first.
+:::definition "phased_crown_runner" (parent := "bound_propagation") (lean := "NN.MLTheory.CROWN.Cert.runPhasedCROWN")
+The fixed-relaxation runner takes IBP bounds, infers stable ReLU phases, and replays the phased
+α-CROWN affine pass. Its `outputBoxPhasedCROWN?` caller computes the IBP bounds first.
 Unstable phases remain unsplit; no β multipliers are optimized, and this runner does not implement
-the external optimizer's branch-and-bound search.
+the branch-and-bound search of the external alpha-beta-CROWN verifier.
 :::
 
-:::definition "alpha_beta_node_checker" (parent := "bound_propagation") (lean := "NN.Verification.Cert.CROWNNodeCertAlphaBeta.checkAlphaBetaCROWNNodeCertificate")
-The executable checker parses and replays a FloatLib binary32 node certificate. Its final acceptance
-decision has a proved bridge to the proposition-level local replay condition. Connecting that
-binary32 condition to the real enclosure in {bpref "crown_generic_checker_sound"}[] still requires
-the refinement assumptions for the operations in the graph.
+:::definition "crown_node_checker" (parent := "bound_propagation") (lean := "NN.Verification.Cert.CROWNNodeCert.check")
+The executable checker parses and replays a FloatLib binary32 node certificate, with or without
+ReLU phases. Its final acceptance decision has a proved bridge to the proposition-level local
+replay condition. Connecting that binary32 condition to the real enclosure in
+{bpref "crown_generic_checker_sound"}[] still requires the refinement assumptions for the
+operations in the graph.
 :::
 
-:::theorem "alpha_beta_node_acceptance" (parent := "bound_propagation") (lean := "NN.Verification.Cert.CROWNNodeCertAlphaBeta.AlphaBetaCROWNNodeCertificate.accepts_eq_true")
-Acceptance of the in-memory α/β-CROWN decision implies `CrownCertLocalOK` for the exact
-FloatLib binary32 replay step used by the checker.
+:::theorem "crown_node_acceptance" (parent := "bound_propagation") (lean := "NN.Verification.Cert.CROWNNodeCert.accepts_eq_true")
+Acceptance of the in-memory CROWN decision implies `CrownCertLocalOK` for the exact FloatLib
+binary32 replay step used by the checker.
 :::
 
-:::proof "alpha_beta_node_acceptance"
+:::proof "crown_node_acceptance"
 The checker compares every dependent affine record bit-for-bit. Soundness of the tensor, matrix,
 affine-vector, and optional-record comparisons turns the successful Boolean replay into equality at
 every graph node.

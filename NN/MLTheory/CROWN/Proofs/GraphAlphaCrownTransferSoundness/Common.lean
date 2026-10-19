@@ -8,13 +8,13 @@ module
 
 public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness
 public import NN.MLTheory.CROWN.Proofs.GraphCrownCertSoundness
-public import NN.MLTheory.CROWN.Proofs.AlphaBetaReLUScalarSoundness
+public import NN.MLTheory.CROWN.Proofs.PhasedReLUScalarSoundness
 public import NN.Proofs.Tensor.Basic
 
 /-!
 # Shared α-CROWN Transfer Lemmas
 
-Common definitions and local proof lemmas for the graph-dialect α-CROWN and α/β-CROWN transfer
+Common definitions and local proof lemmas for the graph-dialect α-CROWN and phased α-CROWN transfer
 rules over `ℝ`.  These facts connect affine bounds, IBP boxes, ReLU relaxations, dimension casts,
 and pointwise graph semantics.
 -/
@@ -452,7 +452,7 @@ theorem alphaRelaxLowerScalar_slope_nonneg (l u a : ℝ) (ha0 : 0 ≤ a) :
     · simp [hu, hlpos, ha0]
   · simp [hu]
 
-/-! ## ReLU relaxations used by α/β-CROWN (β phase constraints) -/
+/-! ## ReLU relaxations with phases -/
 
 /-- Nonnegative slope for the upper relaxation under any phase constraint. -/
 theorem phaseRelaxUpperScalar_slope_nonneg (l u : ℝ) (ph : ReLUPhase) :
@@ -558,7 +558,7 @@ theorem getScalar_affineEvalAt_relu_propagate_affine
   ring
 
 /-!
-β phase vectors (`AlphaBetaCROWN.phaseRelaxVec?`) are executable, so to reason about them we
+Phase relaxations (`phaseRelaxVec?`) are executable, so to reason about them we
 extract their per-index consequences from the fact they returned `some ...`.
 -/
 
@@ -588,7 +588,7 @@ theorem phaseRelaxVec?_some_getScalar {n : Nat}
     rcases hS with ⟨hOkAll, hLoEq, hHiEq⟩
     intro i
     have hpTrue := hOkAll i
-    cases hph : ReLUPhase.ofInt? (betaAt phases (↑i)) with
+    cases hph : ReLUPhase.ofInt? (phaseAt phases (↑i)) with
     | none =>
         have : False := by
           simp [hph] at hpTrue
@@ -806,14 +806,14 @@ def stepAlpha (g : Graph) (ps : ParamStore ℝ)
     Array (Option (FlatAffineBounds ℝ)) → Nat → Option (FlatAffineBounds ℝ) :=
   fun cert id => alphaCrownStepNode? (α := ℝ) g.nodes ps ibp alpha cert ctx id
 
-/-- Wrapper around `alphaBetaCrownStepNode?` in the `CrownTransferSound` “step function” shape. -/
-def stepAlphaBeta (g : Graph) (ps : ParamStore ℝ)
+/-- Wrapper around `phasedCrownStepNode?` in the `CrownTransferSound` “step function” shape. -/
+def stepPhased (g : Graph) (ps : ParamStore ℝ)
     (ibp : Array (Option (FlatBox ℝ)))
     (alpha : Array (Option (FlatTensor ℝ)))
-    (beta : Array (Option (Array Int)))
+    (phases : Array (Option (Array Int)))
     (ctx : AffineCtx) :
     Array (Option (FlatAffineBounds ℝ)) → Nat → Option (FlatAffineBounds ℝ) :=
-  fun cert id => alphaBetaCrownStepNode? (α := ℝ) g.nodes ps ibp alpha beta cert ctx id
+  fun cert id => phasedCrownStepNode? (α := ℝ) g.nodes ps ibp alpha phases cert ctx id
 
 end
 

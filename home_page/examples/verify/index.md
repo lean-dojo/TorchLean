@@ -6,6 +6,10 @@ Suppose we already have a tensor calculation in Python. We'd like to bring its
 operations into Lean without rewriting the model, inspect its precision changes,
 and ask which checks we can run on that graph.
 
+Pass the function and its tensor arguments directly. TorchLean captures the
+frontend graph, translates supported operations into its IR, and sends it to
+Lean automatically. Saving a graph file is optional.
+
 From the TorchLean repository, build the checker first:
 
 ```bash
@@ -141,6 +145,27 @@ different: for dual-valued scalars it must clear differentiation metadata too, s
 that operation retains its scalar-context semantics.
 
 ## Where the proofs enter
+
+Keep the same capture when we want to write a theorem about it:
+
+```python
+report = torchlean.verify(square, x, export="Proofs/Square.lean")
+```
+
+The generated module embeds the artifact and defines `Square.program` through the
+shared importer. `Square.program_imported` proves its connection to that artifact;
+`Square.program_checked` proves the shape, type and interface checks succeed.
+Open the file in Lean, or run `scripts/lake.sh env lean Proofs/Square.lean`, to
+check those proofs. Export itself writes the file without launching a compiler.
+Import `Proofs.Square` in a proof project to state mathematical properties of
+the program, reusing TorchLean's tensor lemmas and mathlib. A person or an agent can
+write those proofs; Lean checks them.
+
+The export uses the artifact from this call, not another run of the Python function.
+Its constants retain their complete element words. Existing files are never
+replaced. Use a `.json` filename instead when we only want the interchange artifact.
+Unsupported capture creates no export. A failed check can still leave an artifact
+for inspection, but an invalid graph will not pass the generated Lean proof.
 
 The graph is also an object we can state theorems about. The JAX example proves
 permutation invariance of the real-valued sum-of-squares graph for every vector

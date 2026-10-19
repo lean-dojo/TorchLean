@@ -131,7 +131,38 @@ def nameJson (name : Name) : Json :=
 /-- Component arrays are lossless; qualified strings are also accepted from frontend producers. -/
 def name (value : Json) : Except String Name := do
   match value with
-  | .str _ => Lean.fromJson? value
+  | .str text =>
+      if text == "[anonymous]" then return .anonymous
+      -- Keep Lean's identifier and escape rules, but bound recursion by the source length.
+      -- The core string-to-name parser is partial and cannot reduce in an import proof.
+      let rec parse : Nat → List Char → Name → Option Name
+        | 0, _, _ => none
+        | fuel + 1, chars, parent => do
+            let (component, rest) ← match chars with
+              | '«' :: chars =>
+                  let (part, rest) := chars.span (· != '»')
+                  match rest with
+                  | '»' :: rest => some (Name.str parent (String.ofList part), rest)
+                  | _ => none
+              | char :: chars =>
+                  if Lean.isIdFirst char then
+                    let (part, rest) := chars.span Lean.isIdRest
+                    some (Name.str parent (String.ofList (char :: part)), rest)
+                  else if char.isDigit then
+                    let (part, rest) := chars.span Char.isDigit
+                    let number := (char :: part).foldl
+                      (fun n digit => n * 10 + (digit.toNat - '0'.toNat)) 0
+                    some (Name.num parent number, rest)
+                  else none
+              | [] => none
+            match rest with
+            | [] => some component
+            | '.' :: rest => parse fuel rest component
+            | _ => none
+      let chars := text.toList
+      match parse (chars.length + 1) chars .anonymous with
+      | some name => pure name
+      | none => throw s!"expected a `Name`, got '{value}'"
   | .arr parts =>
       parts.foldlM (init := Name.anonymous) fun parent part => do
         match part with
@@ -140,9 +171,30 @@ def name (value : Json) : Except String Name := do
         | _ => throw "IR element type: a name component must be a string or natural number"
   | _ => throw "IR element type: expected a name string or component array"
 
-/-- Decode nested components with a budget derived from the JSON encoding, not a fixed depth. -/
+mutual
+  /-- JSON nesting depth, computed without the partial printer or proof-only `SizeOf` code. -/
+  def depth : Json → Nat
+    | .arr ⟨values⟩ => listDepth values + 1
+    | .obj ⟨⟨fields⟩⟩ => treeDepth fields + 1
+    | _ => 1
+  termination_by value => sizeOf value
+
+  /-- Maximum nesting among an array's entries. -/
+  def listDepth : List Json → Nat
+    | [] => 0
+    | value :: values => max (depth value) (listDepth values)
+  termination_by values => sizeOf values
+
+  /-- Maximum nesting among an object's values; keys do not add a component level. -/
+  def treeDepth : Std.DTreeMap.Internal.Impl String (fun _ => Json) → Nat
+    | .leaf => 0
+    | .inner _ _ value left right => max (depth value) (max (treeDepth left) (treeDepth right))
+  termination_by fields => sizeOf fields
+end
+
+/-- Decode nested components with a budget derived from the JSON structure, not a fixed depth. -/
 def read : Nat → Json → Except String DType
-  | 0, _ => .error "IR element type: nesting exceeds the descriptor's encoded size"
+  | 0, _ => .error "IR element type: nesting exceeds the descriptor's structural depth"
   | fuel + 1, value => do
       match value with
       | .str "context" => pure .context
@@ -227,7 +279,7 @@ def toJson : DType → Lean.Json
 
 /-- Decode and validate a descriptor without selecting a numerical implementation. -/
 def fromJson (value : Lean.Json) : Except String DType := do
-  let dtype ← Internal.read (value.compress.utf8ByteSize + 1) value
+  let dtype ← Internal.read (Internal.depth value + 1) value
   dtype.check
   pure dtype
 
@@ -235,7 +287,7 @@ def fromJson (value : Lean.Json) : Except String DType := do
 theorem fromJson_valid {value : Lean.Json} {dtype : DType}
     (h : fromJson value = .ok dtype) : dtype.valid = true := by
   unfold fromJson at h
-  cases hRead : Internal.read (value.compress.utf8ByteSize + 1) value with
+  cases hRead : Internal.read (Internal.depth value + 1) value with
   | error message => simp [hRead, Bind.bind, Except.bind] at h
   | ok parsed =>
       simp only [hRead, Bind.bind, Except.bind] at h

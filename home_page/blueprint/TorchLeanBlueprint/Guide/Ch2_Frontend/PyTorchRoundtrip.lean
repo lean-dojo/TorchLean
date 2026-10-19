@@ -47,7 +47,8 @@ parameters or a loss. Both capture adapters use this interface; operation covera
 the presence of a model class, determines what can be imported.
 
 The Python entry point `torchlean.verify(model, *inputs)` captures a PyTorch function or module,
-then asks the Lean IR checker to validate its structure and element types. Add
+translates its supported operations to TorchLean IR, and asks Lean to check its structure and
+element types. No manual graph export is needed. Add
 `checks=("structure", "types", "compare")` to compare CPU reference execution with the frontend
 on that input. Casts, tensor promotions, broadcasts, and binary constants remain explicit in the
 artifact. Linear parameters are loaded at their declared precision from complete binary words.
@@ -62,6 +63,14 @@ theorem, and an unsupported request cannot silently become a shape check. Fronte
 external kernels, and captured physical device/layout constraints remain outside these checks.
 The same entry point accepts `frontend="jax"` or a typed artifact dictionary from another producer.
 See the {src "home_page/examples/verify/index.md"}[captured-computation example] for runnable code.
+
+When we're ready to write a theorem, add `export="Proofs/Model.lean"` to that same call.
+The file embeds the captured artifact and defines `Model.program` through the shared importer.
+Lean checks its import and shape/type/interface proofs when we open or compile the module;
+export itself does not launch a compiler. We can import it and prove further properties, reusing the
+tensor semantics and existing operation lemmas. Those mathematical proofs are separate from
+the check report. The export does not capture the Python function again and never replaces an
+existing file. A `.json` filename saves the interchange artifact for inspection instead.
 
 Element descriptors preserve configured binary and decimal formats, integer and posit widths,
 complex component types, and named representations. The shared decoder validates their parameters;
@@ -80,8 +89,9 @@ same graph format used by the PyTorch and ONNX adapters. The Lean entry point is
 `Import.JAX.parseProgram`, from `NN.Runtime.JAX`. It checks a type for each node as well as
 dependencies and shapes. `Import.JAX.parseGraph` retains the homogeneous, scalar-polymorphic path.
 
-Arguments may have different shapes and element types. `export(function, *inputs)` and
-`torchlean.verify(function, *inputs, frontend="jax")` preserve their positional order.
+Use `torchlean.verify(function, *inputs, frontend="jax")` directly: it captures the Jaxpr and
+translates it to TorchLean IR inside the call. Arguments may have different shapes and element
+types, and the capture preserves their positional order.
 Version-two artifacts list those arguments in `input_ids`; one-input captures still use
 version one. The shared parser checks the complete interface, including unused arguments,
 and execution requires the declared number, shapes and types of tensor arguments.
@@ -95,8 +105,9 @@ is unchanged by any permutation of a vector's entries, for any vector length. It
 the graph evaluator to the tensor formula, then reuses the finite-sum reindexing theorem. This
 is a property of the graph's Lean semantics, not a proof of the Python translation or XLA kernels.
 
-The Python example captures a small MLP, sums, broadcasts, reshapes, a batched contraction,
-and several returned tensors, reporting unsupported entries separately. Capture it with
+The Python companion also saves artifacts for a small MLP, sums, broadcasts, reshapes, a batched
+contraction and several returned tensors, reporting unsupported entries separately. To inspect
+those captures independently, run
 `python3 NN/Examples/Interop/JAX/export.py /tmp/torchlean-jax-examples`, then run
 `scripts/lake.sh exe torchlean jaxpr /tmp/torchlean-jax-examples/mlp.json`.
 The runner checks the graph and compares homogeneous examples using native Lean binary64 arithmetic.

@@ -1,4 +1,4 @@
-name: Compile blueprint
+name: Publish documentation
 
 on:
   push:
@@ -30,7 +30,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.ref }}
+  group: documentation-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -50,7 +50,21 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Reuse generated documentation
+        id: generated_docs
+        uses: actions/cache@v4
+        with:
+          path: |
+            home_page/docs
+            _out/blueprint/html-multi
+            home_page/importgraph/index.html
+            home_page/graphs/dependency-audit.json
+          # Exact matches only: changed Lean, guide assets, dependencies or build tools
+          # must regenerate these pages. Ordinary Jekyll prose and styles can reuse them.
+          key: GeneratedDocs-v1-${{ runner.os }}-${{ hashFiles('**/*.lean', '**/lake-manifest.json', '**/lean-toolchain', 'csrc/**', 'scripts/**', 'home_page/blueprint/**', '.github/workflows/blueprint.yml') }}
+
       - name: Free runner disk space
+        if: steps.generated_docs.outputs.cache-hit != 'true'
         run: |
           df -h
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
@@ -59,16 +73,19 @@ jobs:
           df -h
 
       - name: Install elan
+        if: steps.generated_docs.outputs.cache-hit != 'true'
         run: |
           curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Get Mathlib cache
+        if: steps.generated_docs.outputs.cache-hit != 'true'
         run: |
           scripts/lake.sh -Kcuda=false exe cache get || true
           rm -f ~/.cache/mathlib/*.ltar || true
 
       - name: Cache API docs
+        if: steps.generated_docs.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -83,11 +100,13 @@ jobs:
           key: Docs-${{ hashFiles('lake-manifest.json') }}
 
       - name: Build project API documentation
+        if: steps.generated_docs.outputs.cache-hit != 'true'
         run: |
           rm -rf .lake/build/doc-data .lake/build/api-docs.db
           DISABLE_EQUATIONS=1 scripts/lake.sh -Kcuda=false -Kenv=dev build TorchLeanDocs:docs
 
       - name: Copy API documentation to `home_page/docs`
+        if: steps.generated_docs.outputs.cache-hit != 'true'
         run: |
           rm -rf home_page/docs
           cp -r .lake/build/doc home_page/docs
@@ -95,6 +114,7 @@ jobs:
           du -sh home_page/docs
 
       - name: Build Verso guide from `home_page/blueprint`
+        if: steps.generated_docs.outputs.cache-hit != 'true'
         run: |
           cd home_page/blueprint
           export TORCHLEAN_PACKAGE_ROOT="$PWD"
@@ -113,6 +133,7 @@ jobs:
           python3 scripts/docs/polish_verso_guide.py --guide _out/blueprint/html-multi
 
       - name: Trim Lake build metadata from docs
+        if: steps.generated_docs.outputs.cache-hit != 'true'
         run: |
           find home_page/docs -name "*.trace" -delete
           find home_page/docs -name "*.hash" -delete
@@ -121,6 +142,7 @@ jobs:
         run: rm -rf home_page/manual
 
       - name: Build dependency graph audit
+        if: steps.generated_docs.outputs.cache-hit != 'true'
         run: |
           python3 scripts/checks/dependency_audit.py \
             --root "$PWD" \
@@ -128,10 +150,19 @@ jobs:
             --fail-on-error
 
       - name: Build interactive import graph HTML
+        if: steps.generated_docs.outputs.cache-hit != 'true'
         run: |
           mkdir -p home_page/importgraph
           scripts/lake.sh -Kcuda=false exe graph --to NN home_page/importgraph/index.html
           python3 scripts/docs/polish_docgen.py --importgraph home_page/importgraph/index.html
+
+      - name: Check generated documentation is complete
+        run: |
+          test -s home_page/docs/index.html
+          test -s _out/blueprint/html-multi/-verso-data/blueprint-manifest.json
+          test -s _out/blueprint/html-multi/-verso-data/blueprint-html-cache.json
+          test -s home_page/importgraph/index.html
+          test -s home_page/graphs/dependency-audit.json
 
       - name: Bundle dependencies
         uses: ruby/setup-ruby@v1

@@ -174,6 +174,12 @@ The API post-processor removes local dependency pages and redirects their links 
 Its `--importgraph PAGE` option also handles the import viewer. The guide post-processor checks
 the KaTeX runtime, section anchors and page layout after polishing the generated HTML.
 
+Public-site CI caches the generated API reference, guide and import graphs against their Lean,
+dependency, guide-asset and build-tool inputs. With an exact cache hit, Markdown and CSS updates
+rebuild only Jekyll and run the link checks before deployment. A changed input or an unavailable
+cache runs the full documentation build; existing generated pages are never reused across a
+different input key. The first successful build seeds this cache.
+
 The performance page reads `home_page/assets/ci-timings.json`, refreshed by the site build.
 It shows the API documentation, guide, and website build times from the site workflow.
 For a Markdown-only preview, refresh it with `python3 scripts/docs/ci_timings.py` before Jekyll.

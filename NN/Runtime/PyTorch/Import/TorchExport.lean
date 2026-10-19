@@ -144,8 +144,14 @@ def typeError {α : Type} (ctx expected : String) (j : Json) : Except String α 
 /-- Interpret a JSON number as a natural number. -/
 def nat (ctx : String) : Json → Except String Nat
   | .num n =>
-      match n.toString.toNat? with
-      | some k => .ok k
+      let rec integral (value : Nat) : Nat → Option Nat
+        | 0 => some value
+        | places + 1 =>
+            if value = 0 then some 0
+            else if value % 10 = 0 then integral (value / 10) places
+            else none
+      match if n.mantissa < 0 then none else integral n.mantissa.toNat n.exponent with
+      | some value => .ok value
       | none => .error s!"PyTorch graph import: {ctx}: expected natural number, got {n}"
   | j => typeError ctx "natural number" j
 
@@ -277,7 +283,7 @@ def kind (ctx : String) (outShape : Shape) (o : StateDict) : Except String OpKin
       match o.get? "primitive" with
       | some (.str "cast") => pure (.custom "cast" [outShape] outShape)
       | some (.str "call") =>
-          let name ← Lean.Name.fromJson? (← field ctx "name" o)
+          let name ← DType.Internal.name (← field ctx "name" o)
           let inputShapes ← shapes ctx (← field ctx "input_shapes" o)
           pure (.custom name.toString inputShapes.toList outShape)
       | _ => throw s!"PyTorch graph import: {ctx}: custom computations need a checked Lean body"
@@ -411,14 +417,14 @@ def check (vg : CapturedValueGraph) (inputIds : Array Nat := #[vg.inputId]) :
   if inputCount != inputIds.size then
     throw <| s!"IR import: interface lists {inputIds.size} inputs, " ++
       s!"but the graph contains {inputCount} input nodes"
-  let mut inputs : Std.HashSet Nat := {}
+  let mut inputs := Array.replicate vg.nodes.size false
   for id in inputIds do
     let input ← get vg id
     if input.kind != Wire.tag .input then
       throw s!"IR import: argument {id} designates `{input.kind}`, not `input`"
-    if inputs.contains id then
+    if inputs[id]?.getD false then
       throw s!"IR import: repeated input node {id}"
-    inputs := inputs.insert id
+    inputs := inputs.set! id true
   for outputId in vg.outputIds do
     let _output ← get vg outputId
   pure ()
@@ -610,7 +616,9 @@ def lower (vg : CapturedValueGraph) (inputIds : Array Nat := #[vg.inputId]) :
           let mut remaining := axes
           let mut currentId := parentId
           let mut currentShape := parentNode.outShape
-          while !remaining.isEmpty do
+          -- Distinct axes give exactly this many reductions. Taking the greatest remaining
+          -- axis preserves the indices of all lower axes when a dimension is removed.
+          for _ in [:axes.size] do
             let axis := remaining.foldl Nat.max 0
             remaining := remaining.filter fun candidate => candidate != axis
             let dims := currentShape.toList
@@ -767,14 +775,18 @@ def parsePayload (j : Json) : Except String (Payload Float) := do
           else
             throw s!"PyTorch graph import: {ctx}: convolution input channels must be nonzero"
         else if raw.kind = Wire.tag .const then
-          -- Constants carry their values inline only when the producer wrote them (the ONNX
-          -- adapter does for initializers); otherwise the payload is supplied separately.
+          -- PyTorch writes shape-nested values; ONNX initializers may supply a flat vector.
+          -- Validate either encoding before converting to the shared row-major payload.
           if (raw.raw.get? "values").isSome then
             let some node := captured.graph.nodes[tensorId]?
               | throw s!"PyTorch graph import: {ctx}: const node is missing from the graph"
             let n := node.outShape.size
+            let values ← Internal.field ctx "values" raw.raw
+            let flat ← match Import.PyTorch.parseTensor node.outShape values with
+              | some tensor => pure (Tensor.flattenSpec tensor)
+              | none => Internal.tensorField ctx "values" [n] raw.raw
             constParams := constParams.set! tensorId
-              (some { n := n, v := ← Internal.tensorField ctx "values" [n] raw.raw })
+              (some { n := n, v := flat })
         else if raw.kind = Wire.tag .layernorm then
           let outShape ←
             match raw.valueShape with

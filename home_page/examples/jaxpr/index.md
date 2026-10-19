@@ -27,6 +27,17 @@ graphs also have Lean proofs, including the permutation theorem below. Importing
 a graph does not itself prove the translation faithful or verify the kernels that
 JAX or PyTorch executes.
 
+The numerical issues we found were in our translation and reference paths. For
+example, replacing division with multiplication by a rounded reciprocal can
+change the answer. We corrected those paths or rejected captures that would
+change the calculation. These examples have not identified a bug in JAX or XLA.
+
+For an ML engineer considering lower precision, this gives us a way to
+inspect where a captured model rounds its values and run that calculation in
+Lean. We can measure accuracy on test data, then state a separate mathematical
+property of the imported computation. The MNIST example below starts with that
+familiar train-and-evaluate workflow.
+
 Let's start with a JAX function we might already have in a project:
 
 ```python
@@ -43,28 +54,29 @@ every permutation, and prove it about the graph's Lean semantics.
 We'll start small so we can follow the whole computation. After that, we'll bring
 in a two-layer JAX network, including its weights and biases, through the same IR.
 
-## Capture the computation
+## Use the JAX function directly
 
-Let's capture it from the TorchLean repository, using our existing JAX environment.
-If JAX isn't installed yet, we can install the CPU package with
-`python3 -m pip install 'jax[cpu]'`.
+From the TorchLean checkout, build the checker once with
+`scripts/lake.sh build verify`. Then pass the function and its tensor arguments
+to `torchlean.verify`. Capture and translation happen inside that call; we don't
+need to export a file first.
 
 ```python
-import json
 import jax
 import jax.numpy as jnp
-from NN.Runtime.JAX.jaxpr import export
+import torchlean
 
 jax.config.update("jax_enable_x64", True)
 x = jnp.arange(1, 5, dtype=jnp.float64)
-graph = export(sum_squares, x)
-print(json.dumps(graph, indent=2))
+report = torchlean.verify(sum_squares, x, frontend="jax")
+print(report["ok"])
 ```
 
 [`jax.make_jaxpr`](https://docs.jax.dev/en/latest/_autosummary/jax.make_jaxpr.html)
-records a Jaxpr at this input shape. Our adapter reads its equations and emits
+records a Jaxpr at this input shape. TorchLean reads its equations and constructs
 three TorchLean IR nodes: the input, elementwise multiplication, and a scalar sum.
-Constants in other computations are serialized alongside the graph.
+It sends that graph to Lean for shape and type checks and returns their report.
+Constants in other computations travel with the graph.
 
 ```text
 input [4] → multiply input by itself [4] → sum []
@@ -85,13 +97,14 @@ Here's what we get back, depending on which steps we run:
 
 | Output | What we get |
 | --- | --- |
-| Graph artifact | The operations, dependencies, constants, tensor shapes, element types, explicit casts and designated outputs. |
+| Optional export | The operations, dependencies, constants, tensor shapes, element types, explicit casts and designated outputs, saved as JSON or embedded in a Lean module. |
 | Check report | Results for the requested checks, including failures and unsupported cases. A successful report applies to those checks. |
 | Reference results | Computed output tensors when evaluation is requested, with conversion flags on the configured binary path. Sample comparisons relate these results to recorded frontend outputs. |
 | Lean theorem | A separately written, kernel-checked proof about the graph's Lean meaning. Passing the checks does not generate this proof. |
 
-For our input `[1, 2, 3, 4]`, the sum-of-squares result is `30`. That's a concrete
-output we can compare with JAX. Later, we'll prove that reordering any real input
+For our input `[1, 2, 3, 4]`, the sum-of-squares result is `30`. Requesting `compare`
+also evaluates the IR and compares its output with JAX for these arguments.
+Later, we'll prove that reordering any real input
 vector leaves this graph's result unchanged. That lets us say something about
 inputs beyond the one we ran.
 
@@ -134,8 +147,7 @@ We'll pass the parameters as tensor arguments, so they remain visible in the
 captured interface. The same function works at different compatible widths;
 the dimensions below choose one example to capture.
 
-From the repository root, first build the checker with
-`scripts/lake.sh build verify`. Then run:
+Using the same checker, we can pass the network and all five tensor arguments:
 
 ```python
 import jax
@@ -182,8 +194,104 @@ tell us which calculation we imported.
 `import torchlean` currently uses the Python directory in this checkout; it is
 not a separately published package. The
 [captured-computation page]({{ '/examples/verify/' | relative_url }}) explains the
-individual report fields. We can still use `export(mlp, x, w1, b1, w2, b2)` when
-we want to save or inspect the artifact directly.
+individual report fields. If we want to keep this capture for a proof, add
+`export="Proofs/MLP.lean"` to the same call. No separate capture is needed.
+
+## Try a trained MNIST classifier
+
+The hand-written weights above let us follow a small graph. To try the same
+interface with learned weights, run the MNIST companion from the checkout.
+`uv run` installs the script's declared JAX and NumPy versions. Use a fresh output
+directory for each run:
+
+```bash
+uv run NN/Examples/Interop/JAX/mnist.py /tmp/torchlean-mnist \
+  --precision bfloat16 --epochs 3 --width 32 --batch 128 --seed 0
+```
+
+The script downloads MNIST if needed, trains on its 60,000 training images and
+evaluates on its separate 10,000-image test set. This two-layer classifier runs
+on CPU JAX. We keep the master parameters, SGD updates and loss in float32, and
+round the forward pass's inputs, weights, biases, hidden activations and logits
+to bfloat16. Fewer bits give us fewer representable numbers, so each cast rounds
+to one of them. Before each matrix product, we convert the rounded operands back
+to float32. This lets us study these rounding choices while keeping dot-product
+arithmetic in float32.
+
+JAX computes the training gradients through those casts; the Lean checks below
+do not verify its gradient rules. To train with float16 rounding instead, use
+`--precision float16`; `--precision float32` gives a baseline with no low-precision
+casts in the forward pass. After training, the script evaluates the same
+checkpoint in all three formats and measures accuracy on the test set.
+
+For replay, the script captures the first test image and the learned
+parameters for each format, then calls `torchlean.verify` on each artifact with
+`checks=("structure", "types", "execute")`. Those checks inspect the captured
+graph and run Lean's reference computation for that input. They do not prove the
+training procedure correct or bound the accuracy loss from changing precision.
+
+The output directory contains the checkpoint in `weights.npz` and the accuracies
+and run details in `summary.json`. For bfloat16, `bfloat16.json` keeps the capture,
+`bfloat16-checks.json` holds the structure, type and execution report, and
+`bfloat16-compare.json` holds the bitwise comparison. The other formats use the
+same naming pattern.
+
+The comparison checks every output bit. Matrix products can use different
+accumulation orders in JAX and the reference interpreter, so their final bits may
+differ. A mismatch needs investigation; it does not by itself identify a JAX bug.
+
+We ran three training jobs with the settings above, changing only `--precision`.
+Each cell gives the number of correct test predictions out of 10,000, using the
+same trained checkpoint across its row:
+
+| Training forward precision | Float32 evaluation | Float16 evaluation | Bfloat16 evaluation |
+| --- | --- | --- | --- |
+| Float32 | 9,350 | 9,350 | 9,352 |
+| Float16 | 9,354 | 9,353 | 9,352 |
+| Bfloat16 | 9,351 | 9,351 | 9,351 |
+
+All nine captures passed the structure, type and execution checks on the first
+test image, whose label is 7. Both JAX and Lean predicted 7 in every case. All
+float16 and bfloat16 sample comparisons matched exactly; all three float32
+comparisons detected different output bits. For the bfloat16-trained checkpoint,
+the largest float32 logit difference was `1/2097152`, while JAX's gap between its
+top two logits was `11263229/2097152`. That small difference left this prediction
+unchanged. These are measurements from these three runs and one captured test
+image per format; they do not establish an accuracy ranking between formats or
+a bound for other inputs.
+
+## Keep a computation for a proof
+
+Most calls only need the report. When we're ready to write a theorem, we can
+save the same capture as a Lean module:
+
+```python
+vector = jnp.arange(7, dtype=jnp.float64)
+report = torchlean.verify(
+    sum_squares, vector, frontend="jax", export="Proofs/SumSquares.lean",
+)
+```
+
+`SumSquares.artifact` contains the captured operations, shapes, types and constants.
+`SumSquares.program` is the shared importer's result for that artifact. The file
+includes proofs that the import succeeds and the program passes the shared checker.
+Lean checks those proofs when we open the module or compile it:
+
+```bash
+scripts/lake.sh env lean Proofs/SumSquares.lean
+```
+
+We can import `Proofs.SumSquares` in our proof project and state further properties
+about this program. The export never replaces an existing file, so rerunning a
+capture cannot overwrite a proof we've started writing.
+
+The module embeds JSON constructors rather than calling a file parser at runtime.
+The import and validation proofs use kernel reduction; no `native_decide` is used.
+These are import and validation proofs. The permutation argument below supplies
+the mathematical property, and more involved computations need their own arguments.
+
+For inspecting a capture in another tool, use `export="sum_squares.json"` instead.
+Both exports are optional and use the artifact already sent to the checker.
 
 ## What we have checked
 

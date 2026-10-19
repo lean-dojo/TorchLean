@@ -97,7 +97,7 @@ def parse (artifact : Json) : Except String
       | some (.str "cast") => pure (some (.cast (← Internal.rounding
           (← PyTorch.TorchExport.Internal.field "cast" "rounding" node.raw))))
       | some (.str "call") =>
-          let name ← Lean.Name.fromJson?
+          let name ← DType.Internal.name
             (← PyTorch.TorchExport.Internal.field "call" "name" node.raw)
           let signature ← (← (← PyTorch.TorchExport.Internal.field
             "call" "input_dtypes" node.raw).getArr?).mapM DType.fromJson

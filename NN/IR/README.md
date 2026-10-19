@@ -131,10 +131,17 @@ Supported array operations and numerical algorithms use the same shape and eleme
 as model computations. This is not a compiler for arbitrary Lean or Python programs; control flow
 and operations still need explicit lowering rules.
 
-From Python, `torchlean.verify(model, *inputs)` captures a supported PyTorch computation and
-requests the shared typed graph checks. Select `frontend="jax"` for Jaxpr capture, or pass a typed
-artifact dictionary from another producer. Optional execution and comparison concern only supplied
-arguments; this interface does not automatically produce proofs of arbitrary properties. See the
+From Python, `torchlean.verify(model, *inputs)` automatically captures a supported PyTorch
+computation, translates it to the shared IR, and requests the typed graph checks. Select
+`frontend="jax"` for Jaxpr capture. No manual export is required. Other producers can pass a typed
+artifact dictionary directly. Optional execution and comparison concern only supplied arguments.
+
+Add `export="Model.lean"` to retain that same capture as a self-contained Lean module. It embeds
+the artifact and defines `Model.program` through the shared importer. Lean checks the included
+import and shape/type/interface proofs by kernel reduction when the module is compiled; export
+does not launch a compiler. Mathematical properties can refer
+to that program and the embedded constants; they still require their own proofs. A `.json` export
+keeps the interchange artifact instead. Neither export replaces an existing file. See the
 [captured-computation example](../../home_page/examples/verify/index.md).
 
 There are several routes into the same graph language:
@@ -223,6 +230,8 @@ descriptors retain exponent width, fraction width, bias, and exceptional-value e
 descriptors retain FloatLib's declet count, exponent width, and signed bias. Integer widths,
 posit widths, complex component types, and named extensions are represented explicitly too.
 Named-type component arrays preserve qualified names without losing numeric or escaped components.
+Element descriptors and custom calls share the same total decoder for component arrays and Lean
+qualified names, including escaped components.
 `DType.fromJson_valid` proves that a successfully decoded descriptor passes its parameter checks.
 
 `Reference.read_write` proves lossless element-word decoding for every supported format and

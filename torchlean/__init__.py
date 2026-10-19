@@ -4,6 +4,10 @@
 types. Add ``checks=("structure", "types", "compare")`` to compare CPU reference
 IR execution with the frontend on that example. Neither result is a proof of
 frontend equivalence or correctness on every input.
+
+Capture and translation happen automatically. ``export="Model.lean"`` optionally
+keeps that same artifact in a self-contained Lean module for further proofs;
+``export="model.json"`` saves the interchange artifact instead.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 from collections.abc import Mapping, Sequence
+from decimal import Decimal
 from typing import Any
 
 
@@ -109,9 +114,103 @@ def _capture(model: Any, examples: tuple[Any, ...], frontend: str, command: list
     return artifact
 
 
+def _lean_string(value: str) -> str:
+    escapes = {'"': '\\"', '\\': '\\\\', '\n': '\\n', '\r': '\\r', '\t': '\\t'}
+    return '"' + ''.join(escapes.get(char, f"\\u{ord(char):04x}" if ord(char) < 32 else char)
+                         for char in value) + '"'
+
+
+def _lean_json(value: Any, indent: int = 2) -> str:
+    """Quote JSON constructors so Lean can reduce the importer inside proofs."""
+    if value is None:
+        return ".null"
+    if isinstance(value, bool):
+        return ".bool " + ("true" if value else "false")
+    if isinstance(value, (int, Decimal)):
+        number = Decimal(value)
+        sign, digits, exponent = number.as_tuple()
+        mantissa = int("".join(map(str, digits))) * (-1 if sign else 1)
+        if exponent > 0:
+            mantissa *= 10 ** exponent
+        return f".num ⟨{mantissa}, {max(0, -exponent)}⟩"
+    if isinstance(value, str):
+        return ".str " + _lean_string(value)
+    if isinstance(value, list):
+        opening = ".arr #["
+        entries = [_lean_json(item, indent + 2) for item in value]
+    else:
+        opening = "Lean.Json.mkObj ["
+        entries = [f"({_lean_string(key)}, {_lean_json(item, indent + 2)})"
+                   for key, item in value.items()]
+    inline = opening + ", ".join(entries) + "]"
+    if "\n" not in inline and len(inline) + indent <= 96:
+        return inline
+    padding = " " * (indent + 2)
+    return opening + "\n" + padding + (",\n" + padding).join(entries) + "\n" + " " * indent + "]"
+
+
+def _export(source: str, path: Path) -> None:
+    if path.suffix == ".json":
+        content = source
+    else:
+        # Json.parse is partial and cannot reduce in the kernel. Quote its data
+        # constructors, decoding decimal literals without another float conversion.
+        literal = _lean_json(json.loads(source, parse_float=Decimal))
+        content = f'''module
+
+public import NN.IR.Properties
+public import NN.Runtime.IR
+import all Lean.Data.Json.Basic
+import all Lean.Data.Name
+import all Init.Data.Ord.String
+import all Init.Data.Range.Basic
+import all Init.Prelude
+import all Init.Meta.Defs
+
+/-!
+# Captured tensor program
+
+This module embeds the artifact captured by `torchlean.verify`. The constants,
+types, casts and input/output order belong to the same capture as the check report.
+The import and validation proofs below do not prove frontend or kernel equivalence.
+Write further properties about `program` using its tensor semantics.
+-/
+
+@[expose] public section
+
+namespace «{path.stem}»
+
+/-- The captured artifact, including its exact element words and operation attributes. -/
+def artifact : Lean.Json :=
+  {literal}
+
+/-- The typed program obtained from this artifact by the shared importer. -/
+def program : NN.IR.Program :=
+  (Import.IR.parseProgram artifact).toOption.get (by decide +kernel)
+
+/-- The program is the importer's result for this exact artifact. -/
+theorem program_imported : Import.IR.parseProgram artifact = .ok program := by
+  have success : (Import.IR.parseProgram artifact).toOption.isSome := by decide +kernel
+  cases h : Import.IR.parseProgram artifact with
+  | error message => simp [h, Except.toOption] at success
+  | ok value => simp [program, h, Except.toOption]
+
+/-- The imported program passes the shared shape, type and interface checks. -/
+theorem program_checked : program.check = .ok () :=
+  Import.IR.parseProgram_checked program_imported
+
+end «{path.stem}»
+'''
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # An export may become a hand-written proof file. Never replace it on recapture.
+    with path.open("x", encoding="utf-8") as output:
+        output.write(content)
+
+
 def verify(model: Any, example: Any = None, *examples: Any, frontend: str = "pytorch",
            checks: Sequence[str] = ("structure", "types"),
-           checker: str | Path | Sequence[str] | None = None) -> dict[str, Any]:
+           checker: str | Path | Sequence[str] | None = None,
+           export: str | Path | None = None) -> dict[str, Any]:
     """Check a captured computation or an existing typed IR artifact.
 
     ``model`` is a PyTorch module, a JAX function with ``frontend="jax"``, or an
@@ -119,6 +218,15 @@ def verify(model: Any, example: Any = None, *examples: Any, frontend: str = "pyt
     ``verify(function, x, y)``. ``checks`` may request
     ``structure``, ``types``, ``execute`` or ``compare``. Unknown requests produce
     unsupported entries, not a pass.
+
+    Capture and translation are automatic. Optional ``export="model.json"`` saves
+    the exact artifact sent to Lean; ``export="Model.lean"`` embeds it in a Lean
+    module exposing ``Model.program`` and its import/validation proofs. Further
+    mathematical proofs can refer to this program without recapturing the function.
+    Export writes proof source; open or compile the Lean module to check its proofs.
+    The Lean filename must be an ASCII identifier. Existing files are never replaced.
+    Failed checks or checker errors still leave the capture for inspection; unsupported
+    capture creates no file. Invalid graphs cannot pass the generated Lean validation proof.
 
     ``checker`` is an executable path (the ``ir`` subcommand is appended), or a
     complete argument sequence already ending in the IR checker command. No shell
@@ -136,6 +244,17 @@ def verify(model: Any, example: Any = None, *examples: Any, frontend: str = "pyt
         raise ValueError("request at least one check")
     if isinstance(model, Mapping) and (example is not None or examples):
         raise ValueError("an artifact already contains its arguments; do not supply example tensors")
+    if export is not None and not isinstance(export, (str, Path)):
+        raise TypeError("export must be a .json or .lean file path")
+    destination = Path(export) if export is not None else None
+    if destination is not None:
+        if destination.suffix not in (".json", ".lean"):
+            raise ValueError("export must end in .json or .lean")
+        if destination.suffix == ".lean" and not (
+                destination.stem.isascii() and destination.stem.isidentifier()):
+            raise ValueError("a Lean export filename must be an ASCII identifier, such as Model.lean")
+        if destination.exists():
+            raise FileExistsError(f"refusing to replace existing export: {destination}")
     command = _command(checker)
     with tempfile.TemporaryDirectory(prefix="torchlean-verify-") as temporary:
         directory = Path(temporary)
@@ -152,7 +271,10 @@ def verify(model: Any, example: Any = None, *examples: Any, frontend: str = "pyt
                         frontend_device_layout_constraints="not_checked",
                         external_kernels="not_checked")
         path = directory / "artifact.json"
-        path.write_text(json.dumps(artifact, allow_nan=False), encoding="utf-8")
+        source = json.dumps(artifact, ensure_ascii=False, allow_nan=False) + "\n"
+        path.write_text(source, encoding="utf-8")
+        if destination is not None:
+            _export(source, destination)
         result = _run(command, [str(path), *checks], report=True)
         try:
             report = json.loads(result.stdout)

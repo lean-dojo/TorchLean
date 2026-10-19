@@ -106,16 +106,16 @@ def check (program : Program) : Except String Unit := do
     throw "IR types: primitive registrations must be empty or contain one entry per node"
   for node in program.graph.nodes do
     program.checkNodeTypes node
-  let mut inputs : Std.HashSet Nat := {}
+  let mut inputs := Array.replicate program.graph.nodes.size false
   for id in program.inputs do
     let node ← program.graph.getNode id
     unless node.kind = .input do
       throw s!"IR interface: argument {id} is not an input node"
-    if inputs.contains id then
+    if inputs[id]?.getD false then
       throw s!"IR interface: repeated input node {id}"
-    inputs := inputs.insert id
+    inputs := inputs.set! id true
   for node in program.graph.nodes do
-    if node.kind = .input && !inputs.contains node.id then
+    if node.kind = .input && !inputs[node.id]?.getD false then
       throw s!"IR interface: input node {node.id} is missing from the argument list"
   if program.outputs.isEmpty then
     throw "IR interface: a program must return at least one tensor"

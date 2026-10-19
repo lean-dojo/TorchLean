@@ -61,7 +61,7 @@ jobs:
             home_page/graphs/dependency-audit.json
           # Exact matches only: changed Lean, guide assets, dependencies or build tools
           # must regenerate these pages. Ordinary Jekyll prose and styles can reuse them.
-          key: GeneratedDocs-v1-${{ runner.os }}-${{ hashFiles('**/*.lean', '**/lake-manifest.json', '**/lean-toolchain', 'csrc/**', 'scripts/**', 'home_page/blueprint/**', '.github/workflows/blueprint.yml') }}
+          key: GeneratedDocs-v1-${{ runner.os }}-${{ hashFiles('**/*.lean', '**/lake-manifest.json', '**/lean-toolchain', 'csrc/**', 'scripts/**', 'home_page/blueprint/**', '.github/workflows/blueprint.yml', '!.lake/**', '!**/.lake/**', '!_out/**') }}
 
       - name: Free runner disk space
         if: steps.generated_docs.outputs.cache-hit != 'true'

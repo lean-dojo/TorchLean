@@ -18,8 +18,9 @@ bounded number of modules per process, keys them by source and context, and laun
 current stream. Input buffers and the module remain alive until the bounds record is checked.
 
 This is an explicit foreign-code boundary, not a Lean theorem about NVRTC or device execution.
-LibTorch continues to own tensor storage and its established numerical operations. CPU-only
-builds resolve the same extern symbols but report an ordinary IO error instead of executing CUDA.
+LibTorch continues to own tensor storage and its established numerical operations. Builds without
+LibTorch resolve the same extern symbols but report an ordinary IO error instead of executing CUDA,
+and so does the bridge on the host (a CPU-only SDK, or `TORCHLEAN_LIBTORCH_DEVICE=cpu`).
 -/
 
 @[expose] public section

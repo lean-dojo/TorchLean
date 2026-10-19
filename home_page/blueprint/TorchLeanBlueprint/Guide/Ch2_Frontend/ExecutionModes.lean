@@ -1174,16 +1174,17 @@ A CUDA build with no visible device:
 $ # Hide visible GPUs while keeping the native CUDA build to
 $ # isolate runtime availability.
 $ CUDA_VISIBLE_DEVICES="" scripts/lake.sh -K cuda=true exe torchlean quickstart_mlp --device cuda
-error: torch eager session: CUDA was requested and
-this is a CUDA build, but no usable CUDA device is visible
+error: torch eager session: the LibTorch bridge was requested and
+this is a LibTorch build, but no usable CUDA device is visible;
+TORCHLEAN_LIBTORCH_DEVICE=cpu selects the host instead
 ```
 
 That last message distinguishes the two failure modes it could be reporting. A build without
-LibTorch says so and tells you to rebuild with `-K cuda=true`; a real CUDA build with no
-device says that instead. Both refuse. Notice also where the second message came from: the typed
-graph rejection happened after the banner line had already printed, because it is raised when the
-session opens rather than when the flags are parsed. Session validation checks programmatic
-configurations as well as command-line requests.
+LibTorch says so and tells you to rebuild with `-K cuda=true`; a LibTorch build with no device says
+that instead, and names the way to run on the host. Both refuse. Notice also where the second
+message came from: the typed graph rejection happened after the banner line had already printed,
+because it is raised when the session opens rather than when the flags are parsed. Session
+validation checks programmatic configurations as well as command-line requests.
 
 The rejection is a value in Lean, so this page can exhibit it without a terminal:
 

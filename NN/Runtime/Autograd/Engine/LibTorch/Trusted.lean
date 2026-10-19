@@ -89,8 +89,9 @@ def Dtype.bytes : Dtype → Nat
   | .encoded => 0
 
 /--
-Opaque handle to a contiguous, dtype-carrying CUDA buffer in `csrc/libtorch/torchlean.cpp`.
-Builds without `-K cuda=true` cannot create one.
+Opaque handle to a contiguous, dtype-carrying buffer on the bridge's device (a CUDA device, or
+the host), implemented in `csrc/libtorch/torchlean.cpp`. Builds without `-K cuda=true` cannot
+create one.
 -/
 opaque BufferImpl : NonemptyType.{0}
 

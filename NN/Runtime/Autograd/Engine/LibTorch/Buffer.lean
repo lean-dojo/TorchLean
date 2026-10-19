@@ -11,10 +11,11 @@ public import NN.Runtime.Autograd.Engine.LibTorch.Trusted
 public import NN.Kernel.Cuda.Binary
 
 /-!
-# CUDA Buffers
+# LibTorch Buffers
 
-Low-level dtype-preserving operations for the LibTorch CUDA runtime. TorchLean retains its tape and
-selected local VJPs; native calls do not record a LibTorch autograd graph. CUDA builds use
+Low-level dtype-preserving operations for the LibTorch runtime, on a CUDA device or on the host
+(`Runtime.Autograd.LibTorch.deviceKind`). TorchLean retains its tape and selected local VJPs;
+native calls do not record a LibTorch autograd graph. `-K cuda=true` builds use
 `csrc/libtorch/torchlean.cpp`. Builds without LibTorch link `csrc/libtorch/unavailable.c`, which
 reports `.notLinked` and fails every buffer operation.
 -/
@@ -54,13 +55,15 @@ private opaque fail (message : @& String) : Buffer
 
 /-! ### Runtime Availability -/
 
-/-- What implementation sits behind the CUDA FFI symbols in the current process. -/
+/-- What implementation sits behind the buffer FFI symbols in the current process. -/
 inductive RuntimeStatus where
   /-- The default build does not link LibTorch; buffer operations fail. -/
   | notLinked
-  /-- The project was built with LibTorch CUDA and at least one CUDA device is visible. -/
+  /-- The project was built with LibTorch and the bridge selected a device: a CUDA device, or the
+  host (`Runtime.Autograd.LibTorch.deviceKind`). -/
   | nativeAvailable
-  /-- The project was built with LibTorch CUDA, but no usable CUDA device is visible. -/
+  /-- The project was built with LibTorch, but no usable device is selected: a CUDA-enabled SDK
+  with no visible CUDA device, unless `TORCHLEAN_LIBTORCH_DEVICE=cpu` selects the host. -/
   | nativeUnavailable
   deriving DecidableEq, Repr
 
@@ -68,24 +71,42 @@ inductive RuntimeStatus where
 @[never_extract, extern "torchlean_cuda_runtime_status"]
 private opaque runtimeStatusRaw (token : UInt32) : UInt32
 
-/-- Query whether LibTorch is linked and can see a CUDA device. -/
+/-- Query whether LibTorch is linked and has a device to run on. -/
 @[no_expose] def runtimeStatus (token : UInt32 := 0) : RuntimeStatus :=
   match runtimeStatusRaw token with
   | 0 => .notLinked
   | 1 => .nativeAvailable
   | _ => .nativeUnavailable
 
-/-- Require real CUDA execution for a user-selected CUDA session. -/
+/--
+Require the LibTorch bridge with a device selected: a CUDA device, or the host. This is the check
+for a session that needs the bridge whatever its device (the CLI's `cuda` device, a CPU-only SDK
+in CI, `TORCHLEAN_REQUIRE_NATIVE=1` for the test suite); `requireCudaDevice` is the check for a
+session that needs a CUDA device.
+-/
 def requireNativeRuntime : IO Unit :=
   match runtimeStatus with
   | .nativeAvailable => pure ()
   | .notLinked =>
       throw <| IO.userError
-        "CUDA was requested, but this executable was built without LibTorch; \
+        "the LibTorch bridge was requested, but this executable was built without LibTorch; \
           rebuild and run with `-K cuda=true`"
   | .nativeUnavailable =>
       throw <| IO.userError
-        "CUDA was requested and this is a CUDA build, but no usable CUDA device is visible"
+        "the LibTorch bridge was requested and this is a LibTorch build, but no usable CUDA \
+          device is visible; TORCHLEAN_LIBTORCH_DEVICE=cpu selects the host instead"
+
+/--
+Require the LibTorch bridge on a CUDA device. `requireNativeRuntime` is satisfied by the host, so a
+check that means "a GPU ran this" has to ask for the device kind as well: this is what
+`TORCHLEAN_REQUIRE_CUDA=1` means to the test suite.
+-/
+def requireCudaDevice : IO Unit := do
+  requireNativeRuntime
+  if (← deviceKind) == .host then
+    throw <| IO.userError
+      "a CUDA device was required, but the LibTorch bridge runs on the host: the SDK is CPU-only, \
+        or TORCHLEAN_LIBTORCH_DEVICE=cpu selected the host"
 
 /-! ### Allocator Telemetry -/
 

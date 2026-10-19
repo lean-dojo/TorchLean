@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 project(TorchLeanLibTorch LANGUAGES CXX)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  message(FATAL_ERROR "TorchLean's LibTorch CUDA backend currently requires Linux.")
+  message(FATAL_ERROR "TorchLean's LibTorch backend currently requires Linux.")
 endif()
 if(NOT EXISTS "${TORCHLEAN_LEAN_INCLUDE}/lean/lean.h")
   message(FATAL_ERROR "TORCHLEAN_LEAN_INCLUDE must name the pinned Lean include directory.")
@@ -16,9 +16,14 @@ set(Torch_DIR "${TORCHLEAN_LIBTORCH_HOME}/share/cmake/Torch")
 set(Caffe2_DIR "${TORCHLEAN_LIBTORCH_HOME}/share/cmake/Caffe2")
 list(PREPEND CMAKE_PREFIX_PATH "${TORCHLEAN_LIBTORCH_HOME}")
 find_package(Torch REQUIRED CONFIG PATHS "${Torch_DIR}" NO_DEFAULT_PATH)
-find_package(CUDAToolkit REQUIRED)
-if(NOT TARGET torch_cuda)
-  message(FATAL_ERROR "cuda=true requires a CUDA-enabled LibTorch SDK (torch_cuda is missing).")
+# A CUDA-enabled SDK exports `torch_cuda`; a CPU-only SDK does not, and the backend then runs on
+# the host. The source reads the choice as TORCHLEAN_LIBTORCH_CUDA. Runtime-compiled kernels
+# need NVRTC and the driver API, so only a CUDA-enabled SDK looks for the CUDA toolkit.
+if(TARGET torch_cuda)
+  set(TORCHLEAN_LIBTORCH_CUDA 1)
+  find_package(CUDAToolkit REQUIRED)
+else()
+  set(TORCHLEAN_LIBTORCH_CUDA 0)
 endif()
 
 get_target_property(torch_cxx_standard torch CXX_STANDARD)
@@ -55,17 +60,25 @@ endforeach()
 # This executable is built as a dependency of the backend and is never run.
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/sdk_link_check.cpp" [=[
   #include <ATen/ATen.h>
+  #if TORCHLEAN_LIBTORCH_CUDA
   #include <c10/cuda/CUDAFunctions.h>
+  #endif
   #include <torch/version.h>
   #include <string>
   int main() {
     const c10::Device device(std::string("cpu"));
     auto tensor = at::zeros({1}, at::TensorOptions().device(device));
+  #if TORCHLEAN_LIBTORCH_CUDA
     return tensor.numel() == 1 && c10::cuda::device_count() >= 0 ? 0 : 1;
+  #else
+    return tensor.numel() == 1 ? 0 : 1;
+  #endif
   }
 ]=])
 add_executable(torchlean_sdk_link_check EXCLUDE_FROM_ALL
   "${CMAKE_CURRENT_BINARY_DIR}/sdk_link_check.cpp")
+target_compile_definitions(torchlean_sdk_link_check PRIVATE
+  TORCHLEAN_LIBTORCH_CUDA=${TORCHLEAN_LIBTORCH_CUDA})
 target_link_libraries(torchlean_sdk_link_check PRIVATE ${TORCH_LIBRARIES})
 separate_arguments(torch_sdk_cxx_flags NATIVE_COMMAND "${TORCH_CXX_FLAGS}")
 target_compile_options(torchlean_sdk_link_check PRIVATE ${torch_sdk_cxx_flags})
@@ -75,14 +88,17 @@ add_library(torchlean_libtorch SHARED
   torchlean.cpp
 )
 add_dependencies(torchlean_libtorch torchlean_sdk_link_check)
-target_compile_definitions(torchlean_libtorch PRIVATE TORCHLEAN_LIBTORCH)
+target_compile_definitions(torchlean_libtorch PRIVATE
+  TORCHLEAN_LIBTORCH TORCHLEAN_LIBTORCH_CUDA=${TORCHLEAN_LIBTORCH_CUDA})
 target_compile_options(torchlean_libtorch PRIVATE ${torch_sdk_cxx_flags})
 target_include_directories(torchlean_libtorch PRIVATE
   "${TORCHLEAN_LEAN_INCLUDE}"
   "${CMAKE_CURRENT_SOURCE_DIR}"
 )
-target_link_libraries(torchlean_libtorch PRIVATE ${TORCH_LIBRARIES}
-  CUDA::nvrtc CUDA::cuda_driver)
+target_link_libraries(torchlean_libtorch PRIVATE ${TORCH_LIBRARIES})
+if(TORCHLEAN_LIBTORCH_CUDA)
+  target_link_libraries(torchlean_libtorch PRIVATE CUDA::nvrtc CUDA::cuda_driver)
+endif()
 set_target_properties(torchlean_libtorch PROPERTIES
   POSITION_INDEPENDENT_CODE ON
   LIBRARY_OUTPUT_DIRECTORY "${TORCHLEAN_OUTPUT_DIR}"
@@ -98,6 +114,7 @@ target_link_options(torchlean_libtorch PRIVATE "LINKER:--disable-new-dtags")
 file(WRITE "${CMAKE_BINARY_DIR}/sdk.txt"
   "Torch_VERSION=${torch_sdk_version}
 Torch_DIR=${Torch_DIR}
+TORCHLEAN_LIBTORCH_CUDA=${TORCHLEAN_LIBTORCH_CUDA}
 TORCH_CXX_FLAGS=${TORCH_CXX_FLAGS}
 TORCH_COMPILE_FEATURES=${torch_compile_features}
 TORCH_COMPILE_OPTIONS=${torch_compile_options}
@@ -108,5 +125,5 @@ CXX_COMPILER=${CMAKE_CXX_COMPILER}
 CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}
 CXX_COMPILER_VERSION=${CMAKE_CXX_COMPILER_VERSION}
 ")
-message(STATUS "TorchLean: LibTorch ${torch_sdk_version}, C++${CMAKE_CXX_STANDARD}")
+message(STATUS "TorchLean: LibTorch ${torch_sdk_version}, C++${CMAKE_CXX_STANDARD}, CUDA support ${TORCHLEAN_LIBTORCH_CUDA}")
 message(STATUS "TorchLean SDK flags: ${TORCH_CXX_FLAGS}; ${torch_compile_options}")

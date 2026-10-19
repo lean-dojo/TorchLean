@@ -10,6 +10,7 @@ public import NN.Tests.Runtime.ParameterAliases
 public import NN.Tests.Runtime.Cuda.Softmax
 public import NN.Tests.Runtime.Cuda.Elementwise
 public import NN.Tests.Runtime.Cuda.Attention
+public import NN.Tests.Runtime.Cuda.DeviceInfo
 public import NN.Tests.Runtime.Cuda.SelectiveScan
 public import NN.Tests.Runtime.Cuda.Fft
 public import NN.Tests.Runtime.Cuda.Stress

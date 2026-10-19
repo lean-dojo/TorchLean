@@ -735,13 +735,48 @@ private def checkCustomAutograd : IO Unit := do
   checkConfiguredAutograd
   checkRecordingBuffers
 
+/-- On the host a generated operation has no implementation: it must fail through `IO`, naming
+the requirement, before any CUDA call. Configured binary arithmetic, which only generated kernels
+compute, is refused when its tensor is uploaded, so a recording fails the same way. -/
+private def checkCustomComputationsOnHost : IO Unit := do
+  let input : Tensor Float32 [4] := [1, -2, 3, -4]
+  let outcome ← try
+    let _ ← square.run input (device := gpu)
+    pure (none : Option String)
+  catch error => pure (some (toString error))
+  match outcome with
+  | none => throw <| IO.userError "custom computation: a generated kernel ran on the host"
+  | some message =>
+      unless (message.splitOn "needs a CUDA device").length > 1 do
+        throw <| IO.userError s!"custom computation on the host: unexpected error: {message}"
+  let a : WideBinary := Rat.cast (1 + 1 / (2 ^ 100 : Nat) : Rat)
+  let configured : Tensor WideBinary [1] := Tensor.full [1] a
+  let recorded ← try
+    let _ ← (fun (x : WideBinary) => x * x).run configured (device := gpu) (grad := true)
+    pure (none : Option String)
+  catch error => pure (some (toString error))
+  match recorded with
+  | none => throw <| IO.userError "custom computation: configured arithmetic ran on the host"
+  | some message =>
+      unless (message.splitOn "needs a CUDA device").length > 1 do
+        throw <| IO.userError s!"configured arithmetic on the host: unexpected error: {message}"
+  IO.println "  custom computations: rejected on the host (generated kernels need a CUDA device)"
+
 /-- Exercise native elementwise VJPs, generated computations, and composed buffer operations. -/
 @[no_expose] def run : IO Unit := do
   IO.println "=== CUDA kernel coverage: elementwise ==="
   runActivationNumerics
   checkScaledProductExponential
-  checkCustomComputations
-  checkCustomAutograd
+  if (← Runtime.Autograd.LibTorch.deviceKind) == .cuda then
+    checkCustomComputations
+    checkCustomAutograd
+  else
+    checkCustomComputationsOnHost
+    -- Native-precision recordings and resident buffers need no generated kernel.
+    checkRecordedRecurrence 0
+    checkRecordedRecurrence 3
+    checkNativeAutograd
+    checkRecordingBuffers
 
   let s : Shape := [5]
   let a : Tensor Float s :=

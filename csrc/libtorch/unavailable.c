@@ -31,10 +31,17 @@ LEAN_EXPORT lean_obj_res torchlean_kernel_run_bytes(
   return unavailable_io();
 }
 
-// 0 = built without LibTorch, 1 = LibTorch with a visible device, 2 = LibTorch without one.
+// 0 = built without LibTorch, 1 = LibTorch with a selected device (CUDA, or the host),
+// 2 = LibTorch without one.
 LEAN_EXPORT uint32_t torchlean_cuda_runtime_status(uint32_t token) {
   (void)token;
   return 0u;
+}
+
+// The device kind (0 = host, 1 = CUDA) means nothing without LibTorch; `runtimeStatus` says so.
+LEAN_EXPORT uint32_t torchlean_libtorch_device_kind(uint32_t token) {
+  (void)token;
+  return 1u;
 }
 
 LEAN_EXPORT lean_obj_res torchlean_libtorch_version(uint32_t token) {
@@ -88,6 +95,15 @@ ZERO(uint64_t, torchlean_cuda_allocator_device_total_bytes)
   LEAN_EXPORT lean_obj_res NAME(__VA_ARGS__) { return unavailable_io(); }
 
 UNAVAILABLE_IO(torchlean_libtorch_set_device, uint32_t index)
+UNAVAILABLE_IO(torchlean_libtorch_device_name, uint32_t index)
+UNAVAILABLE_IO(torchlean_libtorch_device_capability, uint32_t index)
+UNAVAILABLE_IO(torchlean_libtorch_device_sm_count, uint32_t index)
+UNAVAILABLE_IO(torchlean_libtorch_device_clock_khz, uint32_t index)
+UNAVAILABLE_IO(torchlean_libtorch_device_mem_clock_khz, uint32_t index)
+UNAVAILABLE_IO(torchlean_libtorch_device_mem_bus_width, uint32_t index)
+UNAVAILABLE_IO(torchlean_libtorch_device_total_bytes, uint32_t index)
+UNAVAILABLE_IO(torchlean_libtorch_driver_version, uint32_t token)
+UNAVAILABLE_IO(torchlean_libtorch_runtime_version, uint32_t token)
 UNAVAILABLE_IO(torchlean_libtorch_set_setting, uint32_t setting, uint32_t enabled)
 UNAVAILABLE_IO(torchlean_libtorch_set_memory_fraction, double fraction)
 UNAVAILABLE_IO(torchlean_libtorch_synchronize, uint32_t token)

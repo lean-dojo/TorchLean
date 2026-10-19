@@ -14,6 +14,7 @@ public import NN.Runtime.Autograd.Engine.LibTorch.Float32Contract
 public import NN.Runtime.Autograd.Engine.LibTorch.KernelSpec
 public import NN.Runtime.Autograd.Engine.LibTorch.Kernels
 public import NN.Runtime.Autograd.Engine.LibTorch.Controls
+public import NN.Runtime.Autograd.Engine.LibTorch.DeviceInfo
 public import NN.Runtime.Autograd.Engine.LibTorch.Ops
 public import NN.Runtime.Autograd.Engine.LibTorch.Shape
 public import NN.Runtime.Autograd.Engine.LibTorch.Tape

@@ -7,12 +7,18 @@ Authors: TorchLean Team
 module
 
 /-!
-# LibTorch CUDA Runtime Controls
+# LibTorch Runtime Controls
 
 Effectful configuration and readback for TorchLean's LibTorch bridge. Configure these process-wide
 settings before concurrent runtime work. They are runtime requests, not numerical proof evidence:
 IEEE precision and strict determinism do not establish a reference reduction order, correct
 rounding of every operation, or FloatLib bit agreement.
+
+The bridge selects its device once, at its first call: a visible CUDA device when the SDK was
+built with CUDA support, or the host when the SDK is CPU-only. `TORCHLEAN_LIBTORCH_DEVICE=cpu`
+selects the host on any SDK and `TORCHLEAN_LIBTORCH_DEVICE=cuda` insists on a CUDA device; a CUDA
+SDK without a visible device never falls back to the host silently. `deviceKind` reports the
+choice; the CUDA-only controls below say what they do on the host.
 
 TorchLean owns its tape and selected local VJPs. These controls never enable LibTorch autograd.
 Native tensors retain their supported hardware dtypes; this API does not select arbitrary FloatLib
@@ -40,6 +46,9 @@ private opaque deviceCountRaw (token : UInt32) : UInt32
 
 @[never_extract, extern "torchlean_libtorch_get_device"]
 private opaque getDeviceRaw (token : UInt32) : UInt32
+
+@[never_extract, extern "torchlean_libtorch_device_kind"]
+private opaque deviceKindRaw (token : UInt32) : UInt32
 
 @[never_extract, extern "torchlean_libtorch_set_device"]
 private opaque setDeviceRaw (device : UInt32) : IO Unit
@@ -80,16 +89,30 @@ private opaque emptyCacheRaw (token : UInt32) : IO Unit
 @[no_expose] def version : IO String :=
   IO.lazyPure fun _ => versionRaw 0
 
-/-- Number of CUDA devices visible to the linked runtime; zero without LibTorch. -/
+/-- Number of CUDA devices visible to the linked runtime; zero without LibTorch and zero on a
+CPU-only SDK. A visible device is not necessarily the selected one: see `deviceKind`. -/
 @[no_expose] def deviceCount : IO UInt32 :=
   IO.lazyPure fun _ => deviceCountRaw 0
 
-/-- Device index selected by the bridge. This read alone does not establish availability. -/
+/-- The device the bridge runs on, as selected at its first call. -/
+inductive DeviceKind where
+  /-- A CUDA device. `Buffer.runtimeStatus` says whether one is usable. -/
+  | cuda
+  /-- The host: a CPU-only SDK, or `TORCHLEAN_LIBTORCH_DEVICE=cpu`. -/
+  | host
+  deriving DecidableEq, Repr
+
+/-- Which device the bridge selected. Meaningful only when LibTorch is linked: a build without it
+reads `.cuda` and `Buffer.runtimeStatus` reads `.notLinked`. -/
+@[no_expose] def deviceKind : IO DeviceKind :=
+  IO.lazyPure fun _ => if deviceKindRaw 0 == 0 then .host else .cuda
+
+/-- CUDA device index selected by the bridge. This read alone does not establish availability. -/
 @[no_expose] def getDevice : IO UInt32 :=
   IO.lazyPure fun _ => getDeviceRaw 0
 
 /--
-Select the device for subsequent bridge work.
+Select the CUDA device for subsequent bridge work; the host has no index and rejects the call.
 
 The native setter rejects changes while any buffer wrappers remain live, including released or
 empty wrappers. Retire those owners before switching devices; the call does not migrate tensors.
@@ -196,7 +219,7 @@ eligible choices causes a native execution error. Configure them before recordin
 Read the selected device's allocator memory fraction.
 
 This is a native allocator limit, not the fraction of memory currently free or a cache-only budget.
-Returns zero when LibTorch is not linked.
+Returns zero when LibTorch is not linked, and zero on the host, which has no such limit.
 -/
 @[no_expose] def getMemoryFraction : IO Float := do
   let fraction ← getMemoryFractionRaw 0
@@ -209,13 +232,15 @@ Set the selected device's allocator memory fraction to a finite value in `(0, 1]
 
 This configures native allocation policy; it does not release live tensors or reserve memory against
 other processes. Read back with `getMemoryFraction`; byte granularity may affect the observed limit.
+The host has no such limit and rejects the request.
 -/
 @[no_expose] def setMemoryFraction (fraction : Float) : IO Unit := do
   unless fraction.isFinite && 0.0 < fraction && fraction ≤ 1.0 do
     throw <| IO.userError "LibTorch: memory fraction must be finite and lie in (0, 1]"
   setMemoryFractionRaw fraction
 
-/-- Wait for the selected CUDA device's work, propagating native errors through `IO`. -/
+/-- Wait for the selected CUDA device's work, propagating native errors through `IO`. Host work
+is synchronous, so this returns at once there. -/
 @[no_expose] def synchronize : IO Unit :=
   synchronizeRaw 0
 
@@ -225,6 +250,7 @@ Release unused native allocator cache blocks.
 Live tensors, saved forward state, and library workspaces remain allocated. A cuBLAS workspace can
 outlive every TorchLean buffer, so both allocated and reserved bytes may remain after this call.
 Use the buffer ownership counters to distinguish those allocations from retained TorchLean owners.
+The host has no native cache, so this returns at once there.
 -/
 @[no_expose] def emptyCache : IO Unit :=
   emptyCacheRaw 0

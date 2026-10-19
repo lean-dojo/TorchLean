@@ -38,10 +38,6 @@ The modules are:
 The raw Tape engine materializes a full prefix contribution per node, so its dense backward
 can take quadratic time and allocation. Ordinary checked TypedGraph differentiation uses
 the compiled interface.
-
-Forward-only execution of the separate operation-tagged `NN.IR.Graph` representation lives under
-`NN.Runtime.Autograd.IRExec`. Its `ForwardGraph` stores only forward operations, so it cannot be
-mistaken for the differentiable typed graphs exposed here.
 -/
 
 @[expose] public section

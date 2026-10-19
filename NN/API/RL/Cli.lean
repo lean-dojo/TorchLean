@@ -56,7 +56,6 @@ def usage (exeName : String) (artifactOptions : Array String := #[]) : String :=
     "",
     "Runtime:",
     "  --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external",
-    "  --execution eager|typed-graph",
     "  --arithmetic native",
     "  --seed N --show-backend"
   ]).toList

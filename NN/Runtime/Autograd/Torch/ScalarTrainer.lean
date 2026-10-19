@@ -11,7 +11,7 @@ public import NN.Runtime.Autograd.Torch.Core.Trainer.Types
 /-!
 # Scalar Trainer Operations
 
-Packed loss, gradient, and update operations. Differentiable inputs use scalar type `α`;
+Packed loss and gradient operations. Differentiable inputs use scalar type `α`;
 non-differentiable data, such as token identifiers, labels, or masks, use a separate type `δ`.
 -/
 
@@ -64,32 +64,6 @@ def grad {α δ : Type} [Storage α] [Storage δ]
         let (lossValue, gradient) ← Curried.uncurry (α := δ) (ss := dataInputShapes)
           (β := IO (Tensor α .scalar × TensorPack α paramShapes)) withData dataInputs
         pure (gradient, lossValue)
-
-/--
-Apply the trainer's SGD update to packed inputs.
-
-Set `loss := true` to return the loss used for the update. The default uses the backend's
-update operation without reading the objective value back.
--/
-def step {α δ : Type} [Storage α] [Storage δ]
-    {paramShapes inputShapes dataInputShapes : List Shape}
-    (trainer : ScalarTrainer α δ paramShapes inputShapes dataInputShapes)
-    (learningRate : α) (inputs : TensorPack α inputShapes)
-    (dataInputs : TensorPack δ dataInputShapes) (loss : Bool := false) :
-    IO (match loss with | false => Unit | true => Tensor α .scalar) := by
-  cases loss with
-  | false =>
-      exact
-        let withData := Curried.uncurry (α := α) (ss := inputShapes)
-          (β := Curried.Function δ dataInputShapes (IO Unit)) (trainer.stepFn learningRate) inputs
-        Curried.uncurry (α := δ) (ss := dataInputShapes) (β := IO Unit) withData dataInputs
-  | true =>
-      exact
-        let withData := Curried.uncurry (α := α) (ss := inputShapes)
-          (β := Curried.Function δ dataInputShapes (IO (Tensor α .scalar)))
-          (trainer.stepWithLossFn learningRate) inputs
-        Curried.uncurry (α := δ) (ss := dataInputShapes)
-          (β := IO (Tensor α .scalar)) withData dataInputs
 
 end ScalarTrainer
 

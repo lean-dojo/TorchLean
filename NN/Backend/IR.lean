@@ -41,6 +41,7 @@ def op? : NN.IR.OpKind → Option BackendOp
   | .add => some .add
   | .sub => some .sub
   | .mulElem => some .mul
+  | .div => some .div
   | .abs => some .abs
   | .sqrt => some .sqrt
   | .inv => some .inv
@@ -67,10 +68,12 @@ def op? : NN.IR.OpKind → Option BackendOp
   | .sum => some .reduceSum
   | .softmax .. => some .softmax
   | .hardMaskedSoftmax .. => some .hardMaskedSoftmax
+  | .topKMask .. => some .topKMask
   | .layernorm .. => some .layerNorm
   | .reshape .. => some .reshape
   | .flatten .. => some .reshape
   | .concat .. => some .concat
+  | .slice .. => some .slice
   | .transpose .. => some .permute
   | .permute .. => some .permute
   | .batchNormEval .. => some .batchNorm

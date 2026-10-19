@@ -29,7 +29,7 @@ structure Flags where
   seed : Nat
   /-- Number of optimizer updates from `--steps`. -/
   steps : Nat
-  /-- Runtime settings from `--arithmetic`, `--execution`, `--device`, and `--show-backend`. -/
+  /-- Runtime settings from `--arithmetic`, `--device`, and `--show-backend`. -/
   runtime : Trainer.RunConfig
 
 /-- Parse `--seed`, `--steps`, and the runtime flags, rejecting anything else. -/

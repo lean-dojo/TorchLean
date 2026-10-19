@@ -15,6 +15,7 @@ public import NN.Spec.Core.Sequence
 public import NN.Spec.Core.Tensor.SomeTensor
 public import NN.Spec.Layers.Attention
 public import NN.Spec.Layers.Loss
+public import NN.Spec.Layers.MoE
 public import NN.Spec.Layers.Normalization.BatchNorm
 public import NN.IR.OpContracts
 public import NN.Spec.Core.TensorReductionShape.ConcatSlice
@@ -665,6 +666,24 @@ of Boolean, integer, symbolic, or user-defined elements. Numerical operators are
       let output ← permuteSomeTensor (α := α) parent perm
       let tensor ← expectShape (α := α) (expected := n.outShape) output
       pure (Spec.SomeTensor.mk (α := α) n.outShape tensor)
+  | .slice axis start length => do
+      let pId ← unaryParentId i n
+      let parent ← getParent pId
+      match Spec.Shape.axisInBounds? axis parent.shape with
+      | none =>
+          throw s!"IR eval: node {i}: slice: invalid axis {axis} for {repr parent.shape} \
+            ({n.summary})"
+      | some hAxis =>
+          letI : Spec.Shape.AxisInBounds axis parent.shape := hAxis.down
+          if hRange : start + length ≤ Spec.Shape.axisSize parent.shape axis then do
+            let output : Spec.SomeTensor α :=
+              Spec.SomeTensor.mk (α := α) (parent.shape.replaceAxis axis length)
+                (Tensor.sliceAxisRangeSpec axis parent.tensor start length hRange)
+            let tensor ← expectShape (α := α) (expected := n.outShape) output
+            pure (Spec.SomeTensor.mk (α := α) n.outShape tensor)
+          else
+            throw s!"IR eval: node {i}: slice: range {start}..{start + length} exceeds axis \
+              {axis} of {repr parent.shape} ({n.summary})"
   | _ => throw s!"IR eval: {n.kind.tag} requires a numerical or primitive implementation"
 
 /--
@@ -704,7 +723,7 @@ selected branch exactly as before the split.
           s!"IR eval: custom {name}: {repr error}"
         pure (Spec.SomeTensor.ofTensor result)
     | .permute _ | .broadcastTo _ _ | .reshape _ _ | .flatten _ |
-        .concat _ | .transpose _ _ =>
+        .concat _ | .transpose _ _ | .slice _ _ _ =>
         evalTransform vals i n
     | .detach => do
         let pId ← unaryParentId i n
@@ -745,6 +764,11 @@ selected branch exactly as before the split.
         let a ← expectShape (α := α) (expected := n.outShape) (← getParent aId)
         let b ← expectShape (α := α) (expected := n.outShape) (← getParent bId)
         pure (Spec.SomeTensor.mk (α := α) n.outShape (Tensor.mulSpec (α := α) a b))
+    | .div => do
+        let (aId, bId) ← binaryParentIds i n
+        let a ← expectShape (α := α) (expected := n.outShape) (← getParent aId)
+        let b ← expectShape (α := α) (expected := n.outShape) (← getParent bId)
+        pure (Spec.SomeTensor.mk (α := α) n.outShape (Tensor.divSpec (α := α) a b))
     | .abs => do
         let pId ← unaryParentId i n
         let p ← expectShape (α := α) (expected := n.outShape) (← getParent pId)
@@ -902,6 +926,10 @@ selected branch exactly as before the split.
               throw s!"IR eval: node {i}: hard_masked_softmax: {msg} ({n.summary})"
         pure <| Spec.SomeTensor.mk (α := α) n.outShape <|
           Spec.hardMaskedSoftmaxSpec scores allowed
+    | .topKMask k => do
+        let pId ← unaryParentId i n
+        let p ← expectShape (α := α) (expected := n.outShape) (← getParent pId)
+        pure (Spec.SomeTensor.mk (α := α) n.outShape (Spec.MoE.topKMaskSpec k p))
     | .layernorm axis => do
         let pId ← unaryParentId i n
         let x ← expectShape (α := α) (expected := n.outShape) (← getParent pId)

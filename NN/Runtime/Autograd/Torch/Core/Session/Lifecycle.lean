@@ -47,11 +47,9 @@ def new {α : Type} [Storage α] [TensorTransfer α]
     options.validateForExecution
   catch e =>
     throw <| IO.userError s!"torch eager session: {e.toString}"
-  let tape ← IO.mkRef Runtime.Autograd.Tape.empty
-  let cudaTape ← IO.mkRef Runtime.Autograd.LibTorch.Tape.empty
+  let tape ← IO.mkRef (SessionTape.empty (α := α) (Config.device options))
   let paramsByLeaf ← IO.mkRef (Std.HashMap.emptyWithCapacity)
   let parameterStorageByLeaf ← IO.mkRef (Std.HashMap.emptyWithCapacity)
-  let nats ← IO.mkRef #[]
   let rngCounter ← IO.mkRef 0
   let selectedBackends ← IO.mkRef (#[] : Array NN.Backend.AcceptedKernel)
   let refOwner ← RefIdentity.freshOwner
@@ -61,10 +59,8 @@ def new {α : Type} [Storage α] [TensorTransfer α]
   pure
     { options := options
       tape := tape
-      cudaTape := cudaTape
       paramsByLeaf := paramsByLeaf
       parameterStorageByLeaf := parameterStorageByLeaf
-      nats := nats
       rngCounter := rngCounter
       selectedBackends := selectedBackends
       refOwner := refOwner
@@ -85,7 +81,7 @@ abbrev CudaGradMap := Std.HashMap Nat Runtime.Autograd.LibTorch.AnyBuffer
 /-- Release owned intermediates while leaving shared parameter snapshots to reference counting. -/
 private def releaseCudaTapeValues {α : Type} [Storage α]
     (session : EagerSession α) : IO Unit := do
-  let tape ← session.cudaTape.get
+  let tape ← session.cudaTape
   let parameters ← session.paramsByLeaf.get
   for id in [0:tape.nodes.size] do
     match tape.nodes[id]? with
@@ -94,7 +90,7 @@ private def releaseCudaTapeValues {α : Type} [Storage α]
         if node.ownsValue && !parameters.contains id then
           releaseCudaAnyBuffer node.value
         for buffer in node.cleanup do
-          releaseCudaBuffer buffer
+          releaseCudaBuffer buffer.buf
 
 /-- Release a sparse CUDA gradient map after an optimizer has consumed it. -/
 def releaseCudaGradMap (xs : CudaGradMap) : IO Unit := do
@@ -138,11 +134,9 @@ empties LibTorch's allocator cache nor changes optimizer history.
 def resetTape {α : Type} [Storage α] (s : EagerSession α) : IO Unit := do
   if Config.device s.options == .cuda then
     releaseCudaTapeValues s
-  s.tape.set Runtime.Autograd.Tape.empty
-  s.cudaTape.set Runtime.Autograd.LibTorch.Tape.empty
+  s.tape.set (SessionTape.empty (Config.device s.options))
   s.paramsByLeaf.set (Std.HashMap.emptyWithCapacity)
   s.parameterStorageByLeaf.set (Std.HashMap.emptyWithCapacity)
-  s.nats.set #[]
   s.refGeneration.modify (fun generation => generation + 1)
 
 end EagerSession

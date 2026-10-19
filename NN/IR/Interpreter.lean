@@ -145,7 +145,7 @@ def evalNode (interpreter : Interpreter) (program : Program) (payload : Payload 
     | .custom _ _ _, some (.call name _ _) =>
         payload.call name dtype parents
     | .permute _, none | .broadcastTo _ _, none | .reshape _ _, none |
-        .flatten _, none | .concat _, none | .transpose _ _, none => do
+        .flatten _, none | .concat _, none | .transpose _ _, none | .slice _ _ _, none => do
         let typedParents ← parents.mapM (fun value => value.get dtype)
         let localNode : Node :=
           { id := node.id, parents := Array.range typedParents.size,

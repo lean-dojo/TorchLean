@@ -882,7 +882,7 @@ TorchLean calls the conversion to `NN.IR.Graph` *verification lowering*. Typed g
 separate path: it records a shape-indexed SSA graph whose nodes store forward and differentiation
 functions. Derivative correctness is established by separate theorems over proof-carrying nodes and
 graphs. Neither lowering path performs optimization, fusion, scheduling, or native code generation,
-so selecting typed graph execution does not imply a `torch.compile`-style compiler.
+so recording a typed graph does not imply a `torch.compile`-style compiler.
 
 # Checkpoints And Graph Import
 

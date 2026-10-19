@@ -43,7 +43,7 @@ def getValue {α : Type} [Storage α] [TensorTransfer α]
   (x : TensorRef α sh) : IO (Tensor α sh) := do
   s.validateTensorRef x
   if Config.device s.options == .cuda then
-    let tape ← s.cudaTape.get
+    let tape ← s.cudaTape
     let stored ← match tape.getValue? x.id with
       | some v => pure v
       | none => throw <| IO.userError "torch: invalid tensor id (missing CUDA value)"
@@ -55,7 +55,7 @@ def getValue {α : Type} [Storage α] [TensorTransfer α]
         s!"torch: shape mismatch when reading value (expected {Shape.pretty sh}, got "
           ++ s!"{Shape.pretty hostValue.shape})"
   else
-    let tape ← s.tape.get
+    let tape ← s.cpuTape
     let stored ← match tape.getValue? x.id with
       | some v => pure v
       | none => throw <| IO.userError "torch: invalid tensor id (missing value)"
@@ -106,27 +106,27 @@ def detach {α : Type} [Storage α] [Context α] [TensorTransfer α]
     (x : TensorRef α sh) (name : Option String := none) : IO (TensorRef α sh) := do
   s.validateTensorRef x
   if Config.device s.options == .cuda then
-    let tape ← s.cudaTape.get
+    let tape ← s.cudaTape
     let stored ← match tape.getValue? x.id with
       | some v => pure v
       | none => throw <| IO.userError "torch: detach: invalid tensor id (missing CUDA value)"
     if _h : stored.s = sh then
       let stored' : Runtime.Autograd.LibTorch.AnyBuffer := { s := sh, buf := stored.buf }
-      let node : Runtime.Autograd.LibTorch.Node :=
+      let node : Runtime.Autograd.Node Runtime.Autograd.LibTorch.AnyBuffer :=
         { name := name
           value := stored'
           ownsValue := false
           requiresGrad := false
           parents := #[x.id]
           backward := fun _ => .ok #[] }
-      let id ← s.recordCudaPure fun tape => Runtime.Autograd.LibTorch.Tape.addNode tape node
+      let id ← s.recordCudaPure fun tape => Runtime.Autograd.Tape.addNode tape node
       s.makeTensorRef id
     else
       throw <| IO.userError <|
         s!"torch: detach: shape mismatch (expected {Shape.pretty sh}, got {Shape.pretty stored.s})"
   else
     let value ← getValue (α := α) s (sh := sh) x
-    let node : Runtime.Autograd.Node α :=
+    let node : Runtime.Autograd.Node (Spec.SomeTensor α) :=
       { name := name
         value := Spec.SomeTensor.ofTensor (Tensor.detachSpec value)
         requiresGrad := false

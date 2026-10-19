@@ -49,13 +49,6 @@ namespace Optim
 
 /-! ## Generic optimizer interface -/
 
-/-- Optimizer state paired with the loss produced by the same training step. -/
-structure Report (α : Type) [TorchLean.Storage α] (OptimizerState : Type) where
-  /-- Optimizer state to use for the next training step. -/
-  optimizerState : OptimizerState
-  /-- Scalar loss whose backward pass produced this update. -/
-  loss : Tensor α (Shape.ofList [])
-
 set_option genSizeOf false in
 /--
 A shape-indexed list of optimizer state values.
@@ -88,44 +81,29 @@ structure Optimizer (α : Type) [TorchLean.Storage α] [Context α] (paramShapes
   place through `ParamList`, which is why only the state is returned. -/
   step : State → Torch.ParamList α paramShapes → TorchLean.TensorPack α paramShapes → IO State
   /--
-  Optional trainer-native step.
+  The update this state names among the trainer's native optimizers, if any. A trainer whose
+  backend keeps parameters, gradients and optimizer moments on the device (eager CUDA) runs it in
+  place of the generic `backward` + `step` path, and the state is then kept as is, since the moments
+  live on the device. `none` always takes the generic path.
+  -/
+  native? : State → Option (Torch.NativeOptimizer α) := fun _ => none
 
-  Most optimizers are implemented by first materializing a gradient `TorchLean.TensorPack` and then
-  updating host parameter tensors.  Some trainers can do better.  In eager CUDA mode, for example,
-  the trainer can
-  keep gradients and optimizer moments on device for SGD/Adam.  When this hook returns `some st'`,
-  callers should treat the step as complete and use `st'` as the next optimizer state.  Returning
-  `none` asks the caller to fall back to the generic `backward` + `step` path.
-  -/
-  trainerStep? : {β : Type} → [TorchLean.Storage β] →
-    {inputShapes dataInputShapes : List Shape} →
-    Torch.ScalarTrainer α β paramShapes inputShapes dataInputShapes → State →
-      TorchLean.TensorPack α inputShapes → TorchLean.TensorPack β dataInputShapes →
-      IO (Option State) :=
-    fun {_β} _ {_inputShapes _dataInputShapes} _tr _st _xs _dataInputs => pure none
-  /--
-  Optional trainer-native step that returns the loss used for the update.
-
-  This is the logging/inspection counterpart of `trainerStep?`. The returned scalar was evaluated
-  on the same tape that produced the gradients; `none` requests the generic
-  `lossAndBackward` + `step` path.
-  -/
-  trainerStepWithLoss? : {β : Type} → [TorchLean.Storage β] →
-    {inputShapes dataInputShapes : List Shape} →
-    Torch.ScalarTrainer α β paramShapes inputShapes dataInputShapes → State →
-      TorchLean.TensorPack α inputShapes → TorchLean.TensorPack β dataInputShapes →
-      IO (Option (Report α State)) :=
-    fun {_β} _ {_inputShapes _dataInputShapes} _tr _st _xs _dataInputs => pure none
-  /--
-  Optional native mean-gradient update. The outer option reports whether the backend handled
-  the update; the inner loss is present exactly when `readLoss` was requested.
-  -/
-  trainerBatchStep? : {β : Type} → [TorchLean.Storage β] →
-    {inputShapes dataInputShapes : List Shape} →
-    Torch.ScalarTrainer α β paramShapes inputShapes dataInputShapes → State →
-    Array (TorchLean.TensorPack α inputShapes × TorchLean.TensorPack β dataInputShapes) →
-    (readLoss : Bool) → IO (Option (State × Option (Tensor α []))) :=
-    fun {_β} _ {_inputShapes _dataInputShapes} _tr _st _batch _readLoss => pure none
+/--
+Run `optimizer`'s native update on a nonempty batch when both the optimizer and the trainer's
+backend have one; one sample is a batch of one. The outer option reports whether the native path
+ran, and the inner loss is present exactly when `readLoss` was requested.
+-/
+def Optimizer.nativeBatchStep? {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β] [Context α]
+    {paramShapes inputShapes dataInputShapes : List Shape}
+    (optimizer : Optimizer α paramShapes)
+    (trainer : Torch.ScalarTrainer α β paramShapes inputShapes dataInputShapes)
+    (state : optimizer.State)
+    (batch : Array (TorchLean.TensorPack α inputShapes ×
+      TorchLean.TensorPack β dataInputShapes))
+    (readLoss : Bool) : IO (Option (Option (Tensor α []))) :=
+  match optimizer.native? state, trainer.nativeBatchStep? with
+  | some native, some step => some <$> step native batch readLoss
+  | _, _ => pure none
 
 namespace Internal
 
@@ -147,19 +125,6 @@ def canonicalState
     pure (h ▸ entry.state)
   else
     throw <| IO.userError "torch: canonical optimizer state shape mismatch"
-
-/-- Invoke a backend batch update while retaining the wrapper's scheduled optimizer state. -/
-def nativeBatchStep {α β State : Type} [TorchLean.Storage α] [TorchLean.Storage β]
-    {paramShapes inputShapes dataInputShapes : List Shape}
-    (optimizer : Torch.NativeOptimizer α)
-    (trainer : Torch.ScalarTrainer α β paramShapes inputShapes dataInputShapes)
-    (state : State)
-    (batch : Array (TorchLean.TensorPack α inputShapes ×
-      TorchLean.TensorPack β dataInputShapes))
-    (readLoss : Bool) : IO (Option (State × Option (Tensor α []))) := do
-  match trainer.nativeBatchStep? with
-  | none => pure none
-  | some step => pure (some (state, ← step optimizer batch readLoss))
 
 /-- Read a shape-independent field from the first optimizer state, or use `fallback` when there
 are no parameters. -/
@@ -269,20 +234,8 @@ def sgd {α : Type} [TorchLean.Storage α] [Context α]
           Optim.SGD.update (α := α) (s := s)
             stOne parameters gradients)
         ps st grads
-    trainerStep? := fun {_β} _ {_inputShapes _dataInputShapes} tr st xs dataInputs => do
-      let currentLearningRate :=
-        Internal.firstStateValue learningRate (fun state => state.learningRate) st
-      Torch.ScalarTrainer.step tr currentLearningRate xs dataInputs
-      pure (some st)
-    trainerStepWithLoss? := fun {_β} _ {_inputShapes _dataInputShapes} tr st xs dataInputs => do
-      let currentLearningRate :=
-        Internal.firstStateValue learningRate (fun state => state.learningRate) st
-      let loss ← Torch.ScalarTrainer.step tr currentLearningRate xs dataInputs (loss := true)
-      pure (some { optimizerState := st, loss := loss })
-    trainerBatchStep? := fun tr st batch readLoss =>
-      Internal.nativeBatchStep
-        (.sgd (Internal.firstStateValue learningRate (fun state => state.learningRate) st))
-        tr st batch readLoss
+    native? := fun st =>
+      some (.sgd (Internal.firstStateValue learningRate (fun state => state.learningRate) st))
   }
 
 /--
@@ -365,36 +318,9 @@ def adam {α : Type} [TorchLean.Storage α] [Context α]
         (updateOne := fun {s} stOne params g => Optim.Adam.update (α := α) (s := s) stOne
           params g)
         ps st grads
-    trainerStep? := fun {_β} _ {_inputShapes _dataInputShapes} tr st xs dataInputs =>
-      match tr.adamStep? with
-      | none => pure none
-      | some step => do
-          let currentLearningRate :=
-            Internal.firstStateValue
-              learningRate (fun state => state.learningRate) st
-          let stepWithData := Torch.Curried.uncurry (α := α) (ss := _inputShapes)
-            (β := Torch.Curried.Function _ _ (IO Unit))
-            (step currentLearningRate beta1 beta2 epsilon) xs
-          Torch.Curried.uncurry (β := IO Unit) stepWithData dataInputs
-          pure (some st)
-    trainerStepWithLoss? := fun {_β} _ {_inputShapes _dataInputShapes} tr st xs dataInputs =>
-      match tr.adamStepWithLoss? with
-      | none => pure none
-      | some step => do
-          let currentLearningRate :=
-            Internal.firstStateValue
-              learningRate (fun state => state.learningRate) st
-          let stepWithData := Torch.Curried.uncurry (α := α) (ss := _inputShapes)
-            (β := Torch.Curried.Function _ _ (IO (Tensor α (Shape.ofList []))))
-            (step currentLearningRate beta1 beta2 epsilon) xs
-          let loss ← Torch.Curried.uncurry
-            (β := IO (Tensor α (Shape.ofList []))) stepWithData dataInputs
-          pure (some { optimizerState := st, loss := loss })
-    trainerBatchStep? := fun tr st batch readLoss =>
-      Internal.nativeBatchStep
-        (.adam (Internal.firstStateValue learningRate (fun state => state.learningRate) st)
-          beta1 beta2 epsilon)
-        tr st batch readLoss
+    native? := fun st =>
+      some (.adam (Internal.firstStateValue learningRate (fun state => state.learningRate) st)
+        beta1 beta2 epsilon)
   }
 
 /--
@@ -417,36 +343,9 @@ def adamw {α : Type} [TorchLean.Storage α] [Context α]
         (updateOne := fun {s} stOne params g => Optim.AdamW.update (α := α) (s := s) stOne
           params g)
         ps st grads
-    trainerStep? := fun {_β} _ {_inputShapes _dataInputShapes} tr st xs dataInputs =>
-      match tr.adamWStep? with
-      | none => pure none
-      | some step => do
-          let currentLearningRate :=
-            Internal.firstStateValue
-              learningRate (fun state => state.learningRate) st
-          let stepWithData := Torch.Curried.uncurry (α := α) (ss := _inputShapes)
-            (β := Torch.Curried.Function _ _ (IO Unit))
-            (step currentLearningRate weightDecay beta1 beta2 epsilon) xs
-          Torch.Curried.uncurry (β := IO Unit) stepWithData dataInputs
-          pure (some st)
-    trainerStepWithLoss? := fun {_β} _ {_inputShapes _dataInputShapes} tr st xs dataInputs =>
-      match tr.adamWStepWithLoss? with
-      | none => pure none
-      | some step => do
-          let currentLearningRate :=
-            Internal.firstStateValue
-              learningRate (fun state => state.learningRate) st
-          let stepWithData := Torch.Curried.uncurry (α := α) (ss := _inputShapes)
-            (β := Torch.Curried.Function _ _ (IO (Tensor α (Shape.ofList []))))
-            (step currentLearningRate weightDecay beta1 beta2 epsilon) xs
-          let loss ← Torch.Curried.uncurry
-            (β := IO (Tensor α (Shape.ofList []))) stepWithData dataInputs
-          pure (some { optimizerState := st, loss := loss })
-    trainerBatchStep? := fun tr st batch readLoss =>
-      Internal.nativeBatchStep
-        (.adamW (Internal.firstStateValue learningRate (fun state => state.learningRate) st)
-          weightDecay beta1 beta2 epsilon)
-        tr st batch readLoss
+    native? := fun st =>
+      some (.adamW (Internal.firstStateValue learningRate (fun state => state.learningRate) st)
+        weightDecay beta1 beta2 epsilon)
   }
 
 /--

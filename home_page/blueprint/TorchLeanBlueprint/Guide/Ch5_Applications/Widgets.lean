@@ -644,7 +644,7 @@ produced by scalar backprop, corresponding to a call to `loss.backward()` in PyT
 ```lean
 -- Record ab + b so the shared leaf b must receive two
 -- reverse contributions.
-def record : Result (Tape Float) := do
+def record : Result (Tape (Spec.SomeTensor Float)) := do
   let (t0, aId) :=
     Tape.leaf (α := Float) (t := Tape.empty)
       (value := Tensor.full [] 2.0) (name := some "a")
@@ -657,7 +657,7 @@ def record : Result (Tape Float) := do
     Tape.add (α := Float) (t := t2) (s := []) abId bId
   pure t3
 
-def tape : Tape Float :=
+def tape : Tape (Spec.SomeTensor Float) :=
   have succeeds : record.toOption.isSome = true := by decide
   record.toOption.get succeeds
 
@@ -680,7 +680,8 @@ reverse pass the widget runs:
 -- reverse pass rooted at node 3.
 def tapeLine
     (grads : Std.HashMap Nat (Spec.SomeTensor Float))
-    (id : Nat) (n : Node Float) : String :=
+    (id : Nat) (n : Node (Spec.SomeTensor Float)) :
+    String :=
   let grad :=
     match grads[id]? with
     | some v => s!"{v.tensor}"
@@ -734,7 +735,7 @@ that nothing consumes and the reverse pass never visits it:
 ```lean (name := wgStray)
 -- Add an unused leaf while keeping the reverse pass rooted
 -- at the original output.
-def strayLeafTape : Tape Float :=
+def strayLeafTape : Tape (Spec.SomeTensor Float) :=
   let (t0, _) :=
     Tape.leaf (α := Float) (t := tape)
       (value := Tensor.full [] 5.0) (name := some "c")

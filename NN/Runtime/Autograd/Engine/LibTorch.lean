@@ -9,7 +9,6 @@ module
 public import NN.Runtime.Autograd.Engine.LibTorch.Buffer
 public import NN.Runtime.Autograd.Engine.LibTorch.ConvPool
 public import NN.Runtime.Autograd.Engine.LibTorch.Convert
-public import NN.Runtime.Autograd.Engine.LibTorch.DGemm
 public import NN.Runtime.Autograd.Engine.LibTorch.Float32Contract
 public import NN.Runtime.Autograd.Engine.LibTorch.KernelSpec
 public import NN.Runtime.Autograd.Engine.LibTorch.Kernels
@@ -28,7 +27,7 @@ The modules separate native execution from the tape and proof-facing contracts:
 
 - `Trusted` and `Buffer` expose the opaque FFI buffer type and allocation/copy primitives.
 - `Controls` exposes precision, determinism, SDP, device, allocator, and version controls.
-- `Kernels`, `ConvPool`, and `DGemm` declare the LibTorch CUDA entrypoints.
+- `Kernels` and `ConvPool` declare the LibTorch CUDA entrypoints.
 - `Tape` and `Ops` build the CUDA reverse-mode tape over those buffers.
 - `Float32Contract` and `KernelSpec` state the proof layer reference contracts for native bits.
 

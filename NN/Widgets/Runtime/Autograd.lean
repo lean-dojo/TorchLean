@@ -43,9 +43,10 @@ open Runtime.Autograd
 open UI
 
 /-- Build an uncolored DOT view of the tape graph. -/
-private def tapeDot {α : Type} [TorchLean.Storage α] (t : Tape α) : String :=
+private def tapeDot {α : Type} [TorchLean.Storage α] (t : Tape (Spec.SomeTensor α)) : String :=
   let header := "digraph Tape {\n  rankdir=LR;\n  node [shape=box,fontname=\"monospace\"];\n"
-  let pairs : List (Nat × Node α) := List.zip (List.range t.nodes.size) t.nodes.toList
+  let pairs : List (Nat × Node (Spec.SomeTensor α)) := List.zip
+      (List.range t.nodes.size) t.nodes.toList
   let nodes : List String :=
     pairs.map (fun (i, n) =>
       let name := n.name.getD ""
@@ -56,13 +57,15 @@ private def tapeDot {α : Type} [TorchLean.Storage α] (t : Tape α) : String :=
   header ++ String.intercalate "\n" (nodes ++ edges) ++ "\n}\n"
 
 /-- Build a colored DOT view where output/gradient coverage is highlighted. -/
-private def tapeDotColored {α : Type} [TorchLean.Storage α] (t : Tape α) (outId : Nat)
+private def tapeDotColored {α : Type} [TorchLean.Storage α] (t : Tape (Spec.SomeTensor α)) (outId
+    : Nat)
     (hasGrad : Nat → Bool) : String :=
   let header :=
     "digraph Tape {\n" ++
     "  rankdir=LR;\n" ++
     "  node [shape=box,fontname=\"monospace\",style=filled,fillcolor=\"#f7f7f7\"];\n"
-  let pairs : List (Nat × Node α) := List.zip (List.range t.nodes.size) t.nodes.toList
+  let pairs : List (Nat × Node (Spec.SomeTensor α)) := List.zip
+      (List.range t.nodes.size) t.nodes.toList
   let nodes : List String :=
     pairs.map (fun (i, n) =>
       let name := n.name.getD ""
@@ -84,7 +87,7 @@ private def tapeDotColored {α : Type} [TorchLean.Storage α] (t : Tape α) (out
 
 /-- Render one tape node with metadata and forward tensor preview. -/
 private def nodeHtml {α : Type} [TorchLean.Storage α] [ToString α]
-    (id : Nat) (n : Node α) : ProofWidgets.Html :=
+    (id : Nat) (n : Node (Spec.SomeTensor α)) : ProofWidgets.Html :=
   <details style={json% {"margin": "6px 0"}}>
     <summary>
       {monospace (toString id ++ ": " ++ n.name.getD "(unnamed)")} {pill
@@ -98,7 +101,7 @@ private def nodeHtml {α : Type} [TorchLean.Storage α] [ToString α]
 
 /-- Render a tape as an HTML panel (nodes + DOT). -/
 def tapeHtml {α : Type} [TorchLean.Storage α] [ToString α]
-    (t : Tape α) (maxDotChars : Nat := 6000) : ProofWidgets.Html :=
+    (t : Tape (Spec.SomeTensor α)) (maxDotChars : Nat := 6000) : ProofWidgets.Html :=
   let dot := tapeDot t
   let dotPreview :=
     if dot.length <= maxDotChars then dot
@@ -135,7 +138,8 @@ def tapeHtml {α : Type} [TorchLean.Storage α] [ToString α]
   </div>
 
 /-- Render per-node gradient tensors from a completed backward pass. -/
-private def gradsTableHtml {α : Type} [TorchLean.Storage α] [ToString α] (t : Tape α)
+private def gradsTableHtml {α : Type} [TorchLean.Storage α] [ToString α] (t : Tape
+    (Spec.SomeTensor α))
     (grads : Std.HashMap Nat (Spec.SomeTensor α)) : ProofWidgets.Html :=
   let entries : Array (Nat × Spec.SomeTensor α) := grads.toArray;
   <div style={json% {"margin-top": "10px"}}>
@@ -166,9 +170,11 @@ private def listPreviewNat (maxElems : Nat) (xs : List Nat) : String :=
   "[" ++ String.intercalate ", " (head.map toString) ++ (if clipped then ", ..." else "") ++ "]"
 
 /-- Summarize gradient coverage over nodes that require gradients. -/
-private def gradCoverageHtml {α : Type} [TorchLean.Storage α] (t : Tape α) (outId : Nat)
+private def gradCoverageHtml {α : Type} [TorchLean.Storage α] (t : Tape (Spec.SomeTensor α)) (outId
+    : Nat)
     (grads : Std.HashMap Nat (Spec.SomeTensor α)) : ProofWidgets.Html :=
-  let pairs : List (Nat × Node α) := List.zip (List.range t.nodes.size) t.nodes.toList
+  let pairs : List (Nat × Node (Spec.SomeTensor α)) := List.zip
+      (List.range t.nodes.size) t.nodes.toList
   let req : List Nat := pairs.filter (fun (_, n) => n.requiresGrad) |>.map (·.1)
   let leaf : List Nat := pairs.filter (fun (_, n) => n.parents.isEmpty) |>.map (·.1)
   let hasGrad (i : Nat) : Bool := (grads.get? i).isSome
@@ -195,7 +201,7 @@ private def gradCoverageHtml {α : Type} [TorchLean.Storage α] (t : Tape α) (o
 
 /-- Render gradients from a scalar output id (like `loss.backward()`). -/
 def tapeGradsHtml {α : Type} [TorchLean.Storage α] [ToString α] [Add α] [One α]
-    (t : Tape α) (outId : Nat) : ProofWidgets.Html :=
+    (t : Tape (Spec.SomeTensor α)) (outId : Nat) : ProofWidgets.Html :=
   match Tape.backwardScalar (α := α) (t := t) outId with
   | .ok grads =>
       let hasGrad (i : Nat) : Bool := (grads.get? i).isSome
@@ -251,9 +257,9 @@ cotangent for display in reverse id order. It does not record intermediate accum
 /-- Show final cotangents and recomputed local VJPs from scalar output node `outId`.
 This is not a recording of intermediate gradient accumulation. -/
 def tapeTraceHtml {α : Type} [TorchLean.Storage α] [ToString α] [Add α] [One α]
-    (t : Tape α) (outId : Nat) : ProofWidgets.Html :=
+    (t : Tape (Spec.SomeTensor α)) (outId : Nat) : ProofWidgets.Html :=
   let seed : Spec.SomeTensor α := Spec.SomeTensor.ofTensor (Tensor.scalar (1 : α))
-  match Tape.backwardDense (α := α) (t := t) outId seed with
+  match Tape.backwardDense (V := Spec.SomeTensor α) (t := t) outId seed with
   | .error msg =>
       <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
         {tapeHtml (α := α) t}

@@ -130,6 +130,7 @@ inductive BackendOp where
   | logSoftmax
   | softmax
   | hardMaskedSoftmax
+  | topKMask
   | reduceSum
   | reduceMean
   | reshape
@@ -186,6 +187,7 @@ def name : BackendOp → String
   | .logSoftmax => "log_softmax"
   | .softmax => "softmax"
   | .hardMaskedSoftmax => "hard_masked_softmax"
+  | .topKMask => "top_k_mask"
   | .reduceSum => "reduce_sum"
   | .reduceMean => "reduce_mean"
   | .reshape => "reshape"
@@ -215,11 +217,12 @@ instance : ToString BackendOp where
 
 /-- Whether training through this operation requires a registered local VJP.
 
-Random sources create values but are not themselves differentiated. Every other backend-visible
-operation must provide a compatible VJP whenever gradient tracking is requested.
+Random sources create values but are not themselves differentiated, and neither is top-`k`
+routing, whose mask is constant away from ties. Every other backend-visible operation must provide
+a compatible VJP whenever gradient tracking is requested.
 -/
 def requiresVJP : BackendOp → Bool
-  | .randUniform | .bernoulliMask => false
+  | .randUniform | .bernoulliMask | .topKMask => false
   | _ => true
 
 end BackendOp

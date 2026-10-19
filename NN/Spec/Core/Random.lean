@@ -36,11 +36,11 @@ and keeps the semantic core pure.
 
 The module lives in the spec layer because the IR reference semantics (`NN.IR.Semantics`) needs
 `randUniform` and `bernoulliMask` nodes to denote pure tensors. Runtime code calls these same
-definitions directly; Session-level stochastic layers (for example `TorchLean.Session.dropout`)
-store RNG state in `NatRef`s and use these generators to build masks reproducibly.
+definitions directly: an eager session counts the random tensors it draws (`rngCounter`) and derives
+each one's key from that count, so its masks are reproducible.
 
-If you want PyTorch-like randomness at the boundary, prefer sampling an initial seed in `IO` and
-then using the seeded RNG from that point onward (`TorchLean.Session.initRngFromIO`).
+If you want PyTorch-like randomness at the boundary, sample an initial seed in `IO` once and pass
+it as the runtime `seed`; everything after that point is seeded.
 -/
 
 @[expose] public section

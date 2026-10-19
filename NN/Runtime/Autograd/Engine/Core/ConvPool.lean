@@ -39,8 +39,8 @@ The spatial rank and every geometric parameter are encoded by vectors of the sam
   {d inC outC : Nat}
   {kernel stride padding : TorchLean.Tensor Nat [d]}
   {inSpatial : TorchLean.Tensor Nat [d]}
-  (t : Tape α) (kernelId biasId inputId : Nat) (name : String := "conv") :
-  Result (Tape α × Nat) := do
+  (t : Tape (Spec.SomeTensor α)) (kernelId biasId inputId : Nat) (name : String := "conv") :
+  Result (Tape (Spec.SomeTensor α) × Nat) := do
   let k ← requireValue (α:=α) (t:=t)
     (s:=Shape.ofList (outC :: inC :: kernel.to (List Nat))) kernelId
   let b ← requireValue (α:=α) (t:=t) (s:=.dim outC .scalar) biasId
@@ -51,7 +51,7 @@ The spatial rank and every geometric parameter are encoded by vectors of the sam
   let y := Spec.convSpec (layer := layer) x
   let outSpatial := Spec.convOutSpatial inSpatial kernel stride padding
   let outSh : Shape := Shape.ofList (outC :: outSpatial.to (List Nat))
-  let node : Node α :=
+  let node : Node (Spec.SomeTensor α) :=
     { name := some name
       value := Spec.SomeTensor.ofTensor y
       requiresGrad :=
@@ -83,8 +83,9 @@ PyTorch comparison: `torch.nn.functional.conv_transpose{d}d` specialized to a si
   {d inC outC : Nat}
   {kernel stride padding : TorchLean.Tensor Nat [d]}
   {inSpatial : TorchLean.Tensor Nat [d]}
-  (t : Tape α) (kernelId biasId inputId : Nat) (name : String := "conv_transpose") :
-  Result (Tape α × Nat) := do
+  (t : Tape (Spec.SomeTensor α)) (kernelId biasId inputId : Nat) (name : String
+      := "conv_transpose") :
+  Result (Tape (Spec.SomeTensor α) × Nat) := do
   let w ← requireValue (α := α) (t := t)
     (s := Shape.ofList (inC :: outC :: kernel.to (List Nat))) kernelId
   let b ← requireValue (α := α) (t := t) (s := .dim outC .scalar) biasId
@@ -97,7 +98,7 @@ PyTorch comparison: `torch.nn.functional.conv_transpose{d}d` specialized to a si
   let outSpatial := Spec.convTransposeOutSpatial inSpatial kernel stride padding
   let outSh : Shape := Shape.ofList (outC :: outSpatial.to (List Nat))
 
-  let node : Node α :=
+  let node : Node (Spec.SomeTensor α) :=
     { name := some name
       value := Spec.SomeTensor.ofTensor y
       requiresGrad :=
@@ -124,7 +125,7 @@ every axis.
 -/
 @[inline] def maxPool {α : Type} [TorchLean.Storage α] [Context α]
   {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
-  (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
+  (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α) × Nat) := do
   let x ← requireValue (α:=α) (t:=t)
     (s:=Shape.ofList (C :: inSpatial.to (List Nat))) xId
   if hKernel : (∀ i : Fin d, kernel.getScalar i ≠ 0) then
@@ -133,7 +134,7 @@ every axis.
       let y := Spec.maxPoolSpec (layer := layer) x
       let outSpatial := Spec.poolOutSpatialPad inSpatial kernel stride padding
       let outSh : Shape := Shape.ofList (C :: outSpatial.to (List Nat))
-      let node : Node α :=
+      let node : Node (Spec.SomeTensor α) :=
         { name := some "max_pool"
           value := Spec.SomeTensor.ofTensor y
           requiresGrad := (t.getNode? xId).any (·.requiresGrad)
@@ -157,7 +158,7 @@ Padding is symmetric per-axis and uses zeros; pooling uses `count_include_pad=tr
 -/
 @[inline] def avgPool {α : Type} [TorchLean.Storage α] [Context α]
   {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
-  (t : Tape α) (xId : Nat) : Result (Tape α × Nat) := do
+  (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α) × Nat) := do
   let x ← requireValue (α:=α) (t:=t)
     (s:=Shape.ofList (C :: inSpatial.to (List Nat))) xId
   if hKernel : (∀ i : Fin d, kernel.getScalar i ≠ 0) then
@@ -166,7 +167,7 @@ Padding is symmetric per-axis and uses zeros; pooling uses `count_include_pad=tr
       let y := Spec.avgPoolSpec (layer := layer) x
       let outSpatial := Spec.poolOutSpatialPad inSpatial kernel stride padding
       let outSh : Shape := Shape.ofList (C :: outSpatial.to (List Nat))
-      let node : Node α :=
+      let node : Node (Spec.SomeTensor α) :=
         { name := some "avg_pool"
           value := Spec.SomeTensor.ofTensor y
           requiresGrad := (t.getNode? xId).any (·.requiresGrad)
@@ -191,7 +192,8 @@ infinity do not. At least one spatial dimension is required, matching the native
 -/
 @[inline] def smoothMaxPool {α : Type} [TorchLean.Storage α] [Context α] [DecidableEq α]
   {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
-  (t : Tape α) (xId : Nat) (beta : α) : Result (Tape α × Nat) := do
+  (t : Tape (Spec.SomeTensor α)) (xId : Nat) (beta : α) : Result (Tape (Spec.SomeTensor α) × Nat)
+      := do
   if beta == 0 then
     throw "autograd: smooth_max_pool requires finite nonzero beta"
   if hBeta : beta ≠ 0 then
@@ -207,7 +209,7 @@ infinity do not. At least one spatial dimension is required, matching the native
         let y := Spec.smoothMaxPoolSpec (layer := layer) (beta := beta) (hBeta := hBeta) x
         let outSpatial := Spec.poolOutSpatialPad inSpatial kernel stride padding
         let outSh : Shape := Shape.ofList (C :: outSpatial.to (List Nat))
-        let node : Node α :=
+        let node : Node (Spec.SomeTensor α) :=
           { name := some "smooth_max_pool"
             value := Spec.SomeTensor.ofTensor y
             requiresGrad := (t.getNode? xId).any (·.requiresGrad)

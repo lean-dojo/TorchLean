@@ -56,8 +56,8 @@ def assertActivationArray (label : String) (got expected : FloatArray)
 def checkActivation
     (label : String)
     (forward : Runtime.Autograd.LibTorch.Buffer → Runtime.Autograd.LibTorch.Buffer)
-    (record : (s : Shape) → Runtime.Autograd.LibTorch.Tape → Nat →
-      Result (Runtime.Autograd.LibTorch.Tape × Nat))
+    (record : (s : Shape) → Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer → Nat →
+      Result (Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer × Nat))
     (derivative : Float32 → Float32)
     (inputs expected seeds : Array Float) : IO Unit := do
   unless inputs.size == expected.size && inputs.size == seeds.size do
@@ -73,7 +73,7 @@ def checkActivation
     (← Runtime.Autograd.LibTorch.Buffer.toFloatArrayIO input) original
 
   let (t1, xId) := Runtime.Autograd.LibTorch.Tape.leaf
-    Runtime.Autograd.LibTorch.Tape.empty { s := s, buf := input }
+    Runtime.Autograd.Tape.empty { s := s, buf := input }
   let result ← IO.lazyPure fun _ => record s t1 xId
   let (t2, yId) ← IO.ofExcept result
   let some node := t2.getNode? yId
@@ -701,7 +701,7 @@ Its shared intermediate uses the ordinary multiplication VJP twice; cleanup stay
   let wrong ← Runtime.Autograd.LibTorch.Buffer.fullIO 1 1 .float32
   try
     let value : Runtime.Autograd.LibTorch.AnyBuffer := { s := [1], buf := buffer }
-    -- The canonical forward runner has a Float32 payload, unlike the dtype-general tape.
+    -- The resident custom-kernel graph runner has a Float32 payload, unlike the dtype-general tape.
     -- Reject mismatched input storage before any graph operation can consume it.
     let graph : NN.IR.Graph :=
       { nodes := #[{ id := 0, parents := #[], kind := .input, outShape := [1] }] }
@@ -714,7 +714,7 @@ Its shared intermediate uses the ordinary multiplication VJP twice; cleanup stay
     let seed : Runtime.Autograd.LibTorch.AnyBuffer := { s := [1], buf := wrong }
     let (tape, id) :=
       Runtime.Autograd.LibTorch.Tape.leaf .empty value (requiresGrad := true)
-    if let .ok _ := Runtime.Autograd.LibTorch.Tape.backwardDenseAll tape id seed then
+    if let .ok _ := Runtime.Autograd.Tape.backwardDenseAll tape id seed then
       throw <| IO.userError "custom calculation: mixed-dtype cotangent was accepted"
     let bytes ← Runtime.Autograd.LibTorch.Buffer.toBytesIO buffer
     let restored ← Runtime.Autograd.LibTorch.Buffer.ofBytesIO bytes .float64
@@ -755,7 +755,7 @@ private def checkCustomAutograd : IO Unit := do
   let eps : Float := 1e-6
 
   -- CPU tape
-  let t0 : Tape Float := Tape.empty
+  let t0 : Tape (Spec.SomeTensor Float) := Tape.empty
   let (t1, aId) := Tape.leaf (t := t0) a (name := some "a")
   let (t2, bId) := Tape.leaf (t := t1) b (name := some "b")
   let (t3, u1) ← IO.ofExcept (Tape.add (α := Float) (t := t2) (s := s) aId bId)
@@ -781,12 +781,13 @@ private def checkCustomAutograd : IO Unit := do
 
   let outCpu ← Utils.cpuValue (s := Shape.scalar) t22 outId
   let seedCpu : Spec.SomeTensor Float := Spec.SomeTensor.ofTensor (Tensor.scalar 1.0)
-  let gradsCpu ← IO.ofExcept (Tape.backwardDenseAll (α := Float) (t := t22) outId seedCpu)
+  let gradsCpu ← IO.ofExcept (Tape.backwardDenseAll (V := Spec.SomeTensor Float) (t
+      := t22) outId seedCpu)
   let dA_cpu ← Utils.cpuGrad (s := s) gradsCpu aId
   let dB_cpu ← Utils.cpuGrad (s := s) gradsCpu bId
 
   -- CUDA tape
-  let t0c : Runtime.Autograd.LibTorch.Tape := Runtime.Autograd.LibTorch.Tape.empty
+  let t0c : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer := Runtime.Autograd.Tape.empty
   let (t1c, aIdc) :=
     Runtime.Autograd.LibTorch.Tape.leaf (t := t0c) (Utils.tensorToAnyBuffer a) (name := some "a")
   let (t2c, bIdc) :=
@@ -824,7 +825,7 @@ private def checkCustomAutograd : IO Unit := do
   let seedCuda : Runtime.Autograd.LibTorch.AnyBuffer :=
     { s := Shape.scalar, buf := Runtime.Autograd.LibTorch.Buffer.full 1 1.0 }
   let gradsCuda ← IO.ofExcept
-    (Runtime.Autograd.LibTorch.Tape.backwardDenseAll (t := t22c) outIdc seedCuda)
+    (Runtime.Autograd.Tape.backwardDenseAll (t := t22c) outIdc seedCuda)
   let dA_cuda ← Utils.cudaGrad (s := s) gradsCuda aIdc
   let dB_cuda ← Utils.cudaGrad (s := s) gradsCuda bIdc
 
@@ -837,7 +838,7 @@ private def checkCustomAutograd : IO Unit := do
   let geluShape : Shape := [7]
   let geluInput : Tensor Float geluShape :=
     (Tensor.from #[-10.0, -3.0, -1.0, 0.0, 1.0, 3.0, 10.0]).reshape [7] (by dsimp; decide)
-  let geluCpu0 : Tape Float := Tape.empty
+  let geluCpu0 : Tape (Spec.SomeTensor Float) := Tape.empty
   let (geluCpu1, geluCpuInputId) :=
     Tape.leaf (t := geluCpu0) geluInput (name := some "gelu input")
   let (geluCpu2, geluCpuOutputId) ← IO.ofExcept <|
@@ -846,10 +847,11 @@ private def checkCustomAutograd : IO Unit := do
   let geluSeedCpu : Spec.SomeTensor Float :=
     Spec.SomeTensor.ofTensor (Tensor.full (α := Float) geluShape 1.0)
   let geluCpuGrads ← IO.ofExcept <|
-    Tape.backwardDenseAll (α := Float) (t := geluCpu2) geluCpuOutputId geluSeedCpu
+    Tape.backwardDenseAll (V := Spec.SomeTensor Float) (t := geluCpu2) geluCpuOutputId geluSeedCpu
   let geluCpuGrad ← Utils.cpuGrad (s := geluShape) geluCpuGrads geluCpuInputId
 
-  let geluCuda0 : Runtime.Autograd.LibTorch.Tape := Runtime.Autograd.LibTorch.Tape.empty
+  let geluCuda0 : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer
+      := Runtime.Autograd.Tape.empty
   let (geluCuda1, geluCudaInputId) :=
     Runtime.Autograd.LibTorch.Tape.leaf
       (t := geluCuda0) (Utils.tensorToAnyBuffer geluInput) (name := some "gelu input")
@@ -859,7 +861,7 @@ private def checkCustomAutograd : IO Unit := do
   let geluSeedCuda : Runtime.Autograd.LibTorch.AnyBuffer :=
     { s := geluShape, buf := Runtime.Autograd.LibTorch.Buffer.full 7 1.0 }
   let geluCudaGrads ← IO.ofExcept <|
-    Runtime.Autograd.LibTorch.Tape.backwardDenseAll
+    Runtime.Autograd.Tape.backwardDenseAll
       (t := geluCuda2) geluCudaOutputId geluSeedCuda
   let geluCudaGrad ← Utils.cudaGrad (s := geluShape) geluCudaGrads geluCudaInputId
 

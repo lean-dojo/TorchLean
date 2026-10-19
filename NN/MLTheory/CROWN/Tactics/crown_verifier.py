@@ -8,7 +8,7 @@ bounds enclose the supplied model.
 Usage:
   python crown_verifier.py verify --model path.pth --region "[-1,1]x[-1,1]" --dynamics van_der_pol
   python crown_verifier.py export --model path.pth --output network.json
-  python crown_verifier.py lean-cert --model path.pth --region "[-1,1]x[-1,1]" --dynamics van_der_pol
+  python crown_verifier.py verify --model path.pth --region "[-1,1]x[-1,1]" --dynamics van_der_pol --format lean-full
 
 The tool can emit a JSON certificate with V, gradient, and Vdot bounds, or Lean syntax for importing
 the data into a checked workflow.

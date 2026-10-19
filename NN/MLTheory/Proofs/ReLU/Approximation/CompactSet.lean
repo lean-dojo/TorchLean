@@ -599,7 +599,7 @@ theorem relu_mul_coord_universal_approximation_box
     simp [l1Coord, y, Tensor.matrix, Tensor.ofFn, Spec.get2, stdBasis,
       add_mul, Finset.sum_add_distrib, Fin.sum_univ_two]
   have heval : mlpEval l1Coord l2 x = mlpEval l1 l2 y := by
-    simp only [mlpEval, ReLUMlpBridge.mlp_forward_eq_linear_relu_linear, hlinear]
+    simp only [mlpEval, UniversalApproximation.mlp_forward_eq_linear_relu_linear, hlinear]
   rw [heval]
   simpa [mulFun, firstCoordinate, secondCoordinate, y, Tensor.ofFn] using happ y hy
 

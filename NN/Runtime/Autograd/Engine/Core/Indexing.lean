@@ -28,9 +28,9 @@ namespace Tape
 
 /-- Select one bounded coordinate from any tensor axis. -/
 @[inline] def select {α : Type} [TorchLean.Storage α] [Zero α]
-    {s : Shape} (t : Tape α) (xId : Nat) (axis : Nat)
+    {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) (axis : Nat)
     [Shape.AxisInBounds axis s] (index : Fin (Shape.axisSize s axis)) :
-    Result (Tape α × Nat) :=
+    Result (Tape (Spec.SomeTensor α) × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s.eraseAxis axis)
     s!"select(axis={axis}, index={index.val})" xId
     (forward := fun x => Tensor.selectSpec axis x index)
@@ -38,9 +38,10 @@ namespace Tape
 
 /-- Select several bounded coordinates from any tensor axis. -/
 @[inline] def indexSelect {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
-    {s : Shape} (t : Tape α) (xId : Nat) (axis count : Nat)
+    {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) (axis count : Nat)
     [Shape.AxisInBounds axis s]
-    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape α × Nat) :=
+    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape (Spec.SomeTensor α)
+        × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s.replaceAxis axis count)
     s!"index_select(axis={axis})" xId
     (forward := fun x => Tensor.indexSelectSpec axis x indices)
@@ -50,9 +51,10 @@ namespace Tape
 
 /-- Add indexed source slices into any tensor axis. -/
 @[inline] def scatterAdd {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
-    {s : Shape} (t : Tape α) (baseId sourceId : Nat) (axis count : Nat)
+    {s : Shape} (t : Tape (Spec.SomeTensor α)) (baseId sourceId : Nat) (axis count : Nat)
     [Shape.AxisInBounds axis s]
-    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape α × Nat) :=
+    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape (Spec.SomeTensor α)
+        × Nat) :=
   binary (α := α) (t := t) (σ₁ := s) (σ₂ := s.replaceAxis axis count) (τ := s)
     s!"scatter_add(axis={axis})" baseId sourceId
     (forward := fun base source => Tensor.scatterAddSpec axis base indices source)

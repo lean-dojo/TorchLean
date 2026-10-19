@@ -3,7 +3,7 @@
 `NN/Runtime` is the part of TorchLean that actually runs a model.
 
 The files here turn typed tensors and parameter lists into executable training loops, prediction
-calls, autograd tapes, typed graph executions, CUDA launches, PyTorch round trips, and
+calls, autograd tapes, typed graphs, CUDA launches, PyTorch round trips, and
 reinforcement-learning rollouts. The runtime is deliberately tied back to the spec and proof layers:
 the same model should be runnable as ordinary Lean code, lowerable into the graph IR, and usable as
 the object of a later verification statement.
@@ -22,8 +22,7 @@ Most downstream code should not import modules from this directory directly. Pre
 An ordinary training command follows this shape.
 
 1. A model is built from typed tensors, layers, parameters, and a loss.
-2. The public trainer chooses arithmetic semantics and an execution path, such as native eager,
-   native typed graph, or a CUDA-backed run.
+2. The public trainer chooses arithmetic semantics and a device, the CPU or CUDA.
 3. The autograd engine records the operations that need gradients and stores enough local data for
    the backward pass.
 4. The optimizer updates the parameter list using the same equations that appear in the optimizer
@@ -41,13 +40,11 @@ updates, and verification checkers.
 | Area | Role |
 | --- | --- |
 | `Autograd/Engine` | The small eager reverse-mode tape, closest to the local backward rules for primitive tensor operations. |
-| `Autograd/TypedGraph` | Typed SSA graph execution that runs through the same runtime values instead of becoming a detached interpreter. |
-| `Autograd/Model` | The TorchLean-native runtime used by the trainer: layer functions, modules, sessions, losses, metrics, training glue, and the `Runtime.Autograd.Model.Layers.Seq` model type. Random helpers are abbreviations for `Spec.Random` in `NN/Spec/Core/Random.lean`. |
-| `Autograd/IRExec` | Checked lowering from `NN.IR.Graph` to a forward-only shape-indexed `ForwardGraph`, with its correctness proofs under `IRExec/Correctness`. |
+| `Autograd/TypedGraph` | Typed SSA graphs recorded by the `autograd` transforms (gradients, JVPs, VJPs, HVPs) and used by the autograd proofs. |
+| `Autograd/Model` | The TorchLean-native runtime used by the trainer: layer functions, modules, losses, metrics, training glue, and the `Runtime.Autograd.Model.Layers.Seq` model type. Random helpers are abbreviations for `Spec.Random` in `NN/Spec/Core/Random.lean`. |
 | `Autograd/Batch.lean` | The shared recursion for mapping an operation over the outer axis of a shape-typed reference. |
-| `Autograd/Torch` | Lower-level imperative sessions used for PyTorch interop and typed graph recording. |
-| `Autograd/Train` | Deterministic datasets, step streams, loaders, losses, training loops, evaluation helpers, and optimizer integration. |
-| `Optim` | Executable optimizer equations and scheduler utilities. Public optimizer names are re-exported through `TorchLean.optim`. |
+| `Autograd/Torch` | The eager session and its tape on the CPU or CUDA, the scalar trainer, and the `Ops` instances for the tape and the typed-graph recorder. |
+| `Optim` | Executable optimizer equations. Public optimizer names are re-exported through `TorchLean.optim`; learning-rate schedules belong to `TorchLean.Trainer.Scheduler`. |
 | `PyTorch` | State-dict, Torch export, ONNX, and IR-to-PyTorch bridges used for round-trip checks and external model exchange. |
 | `RL` | Gymnasium sessions, typed environments, PPO/DQN helpers, rollouts, and boundary checks for reinforcement learning examples. |
 | `External` | Small process helpers for executable integrations that deliberately leave Lean's kernel. |
@@ -55,22 +52,21 @@ updates, and verification checkers.
 
 ## Execution Choices
 
-The public API should read like one model with different execution choices, not like several
-competing APIs. In ordinary code the user builds a trainer once and then selects the execution
-strategy, arithmetic semantics, and device:
+The public API should read like one model with different run choices, not like several competing
+APIs. In ordinary code the user builds a trainer once and then selects the arithmetic semantics and
+device:
 
 ```lean
 let trainer :=
   Trainer.new model
     { objective := .mse
-      execution := .typedGraph
       arithmetic := .ieee
       optimizer := optim.adam { learningRate := 0.001 } }
 let trained ← trainer.train data { steps := 200 }
 let prediction ← trained.predict input
 ```
 
-Eager mode executes through the dynamic tape. Typed graph mode records and reuses a typed SSA graph.
+Training opens one session and records each sample's operations on a fresh eager autograd tape.
 Device and provider choices are separate runtime settings; external bridges exchange data or run
 selected operations without changing the public model API.
 

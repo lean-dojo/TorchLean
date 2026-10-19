@@ -8,7 +8,7 @@ an untrusted external producer:
 1. download the WildDet3D Hugging Face Space source and model checkpoint;
 2. run one text-prompt monocular 3D detection pass;
 3. convert the selected predicted 3D box to eight camera-frame corners;
-4. export a `torchlean.camera.box3d.v1` JSON artifact; and
+4. export a `torchlean.camera.box3d.v2` JSON artifact; and
 5. optionally ask Lean to verify the exported projection contract.
 
 Lean does not trust WildDet3D, PyTorch, vis4d, or this exporter.  Lean only checks the final JSON:
@@ -34,7 +34,7 @@ from PIL import Image
 from safe_image_io import load_local_rgb_image, load_remote_rgb_image
 
 
-FORMAT = "torchlean.camera.box3d.v1"
+FORMAT = "torchlean.camera.box3d.v2"
 HF_MODEL_REPO = "allenai/WildDet3D"
 HF_SPACE_REPO = "allenai/WildDet3D"
 HF_CKPT_NAME = "wilddet3d_alldata_all_prompt_v1.0.pt"
@@ -308,6 +308,7 @@ def export_cert(args: argparse.Namespace) -> dict[str, Any]:
 
     return {
         "format": FORMAT,
+        "point_count": 8,
         "source": "WildDet3D monocular 3D detector exporter",
         "image_width": float(width),
         "image_height": float(height),

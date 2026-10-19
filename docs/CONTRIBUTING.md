@@ -47,10 +47,9 @@ verification, and proofs. Neither imports executable examples or tests.
 | `NNExamples` | Runnable examples and model commands |
 | `NNTests` | Test modules |
 | `NNCI` | Maintained modules outside the downstream umbrella |
-| `NNSlowProofs` | Proof-heavy IR semantic equivalence |
 | `TorchLeanDocs:docs` | Generated API documentation |
 
-For public API or proof changes, also run `scripts/lake.sh build NNCI NNSlowProofs`.
+For public API or proof changes, also run `scripts/lake.sh build NNCI`.
 These import targets check maintained library modules; examples and tests have their own targets.
 Large proofs may elaborate without intermediate progress output.
 
@@ -62,8 +61,8 @@ test module. Useful teaching examples belong in `NN/Examples`, not duplicated in
 
 ## Library and Examples
 
-Application examples use `open TorchLean` and named device, execution and arithmetic choices:
-`device := gpu`, `execution := eager`, and `arithmetic := ieee`. These names re-export the existing
+Application examples use `open TorchLean` and named device and arithmetic choices:
+`device := gpu` and `arithmetic := ieee`. These names re-export the existing
 constructors; they do not define different settings. For names shared by several APIs, open the
 specific namespace locally, such as `open Trainer.Objective (mse)`, or qualify the value.
 Do not remove dots from field access, method calls or constructor patterns mechanically.

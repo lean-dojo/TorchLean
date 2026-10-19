@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Proofs.Autograd.Runtime.Link.BackwardGraphData
+public import NN.Proofs.Autograd.Runtime.Link.BackwardGraph
 import NN.Tactic.Except
 
 /-!
@@ -33,8 +33,6 @@ Notes / trust boundaries:
 ## Main declarations
 
 - `NN.Runtime.Autograd.TypedGraph.GraphM` is the small authoring DSL for typed graphs.
-- `NN.Runtime.Autograd.IRExec` bridges `NN.IR.Graph` to executable graph data.
-- `NN.Runtime.Autograd.IRExec.Correctness` proves the forward-correctness lemmas.
 
 See also:
 - Equality between lowered-tape backprop and executable graph backprop:
@@ -61,7 +59,7 @@ def lowerToTapeChecked {α Δ : Type} [TorchLean.Storage α]
     {Γ ss : List Shape} (graph : Proofs.Autograd.Algebra.GraphData α Δ Γ ss)
     (inputs : TorchLean.TensorPack α Γ) (data : Δ) :
     Runtime.Autograd.Result
-      (Runtime.Autograd.Tape α × TorchLean.TensorPack α (Γ ++ ss)) :=
+      (Runtime.Autograd.Tape (Spec.SomeTensor α) × TorchLean.TensorPack α (Γ ++ ss)) :=
   match graph with
   | .nil =>
       pure (Graph.addLeaves Runtime.Autograd.Tape.empty inputs,
@@ -80,7 +78,7 @@ def lowerToTapeChecked {α Δ : Type} [TorchLean.Storage α]
 theorem lowerToTapeChecked_eq {α Δ : Type} [TorchLean.Storage α]
     {Γ ss : List Shape} (graph : Proofs.Autograd.Algebra.GraphData α Δ Γ ss)
     (inputs : TorchLean.TensorPack α Γ) (data : Δ)
-    (result : Runtime.Autograd.Tape α × TorchLean.TensorPack α (Γ ++ ss))
+    (result : Runtime.Autograd.Tape (Spec.SomeTensor α) × TorchLean.TensorPack α (Γ ++ ss))
     (checked : lowerToTapeChecked graph inputs data = .ok result) :
     result = Graph.lowerGraphDataToTape graph inputs data := by
   induction graph with
@@ -102,7 +100,8 @@ theorem lowerToTapeChecked_eq {α Δ : Type} [TorchLean.Storage α]
 
 /-- Record a prepared node, reusing the primal tensor computed after validation. -/
 def lowerPreparedNode {α : Type} [TorchLean.Storage α] {Γ : List Shape} {τ : Shape}
-    (prepared : PreparedNode α Γ τ) (value : Tensor α τ) : Runtime.Autograd.Node α :=
+    (prepared : PreparedNode α Γ τ) (value : Tensor α τ) : Runtime.Autograd.Node
+        (Spec.SomeTensor α) :=
   { name := some "typed-graph"
     value := Spec.SomeTensor.ofTensor value
     requiresGrad := true
@@ -125,7 +124,8 @@ def lowerPreparedNode {α : Type} [TorchLean.Storage α] {Γ : List Shape} {τ :
 def lowerToArrayChecked {α Δ : Type} [TorchLean.Storage α]
     {Γ ss : List Shape} (graph : Proofs.Autograd.Algebra.GraphData α Δ Γ ss)
     (inputs : TorchLean.TensorPack α Γ) (data : Δ) :
-    Runtime.Autograd.Result (Runtime.Autograd.Tape α × TensorContext α (Γ ++ ss)) :=
+    Runtime.Autograd.Result (Runtime.Autograd.Tape (Spec.SomeTensor α) × TensorContext α
+        (Γ ++ ss)) :=
   match graph with
   | .nil =>
       pure (Graph.addLeaves Runtime.Autograd.Tape.empty inputs,
@@ -172,7 +172,7 @@ def lowerToTapeCheckedArray {α Δ : Type} [TorchLean.Storage α]
     {Γ ss : List Shape} (graph : Proofs.Autograd.Algebra.GraphData α Δ Γ ss)
     (inputs : TorchLean.TensorPack α Γ) (data : Δ) :
     Runtime.Autograd.Result
-      (Runtime.Autograd.Tape α × TorchLean.TensorPack α (Γ ++ ss)) :=
+      (Runtime.Autograd.Tape (Spec.SomeTensor α) × TorchLean.TensorPack α (Γ ++ ss)) :=
   (lowerToArrayChecked graph inputs data).map (fun result => (result.1, result.2.toPack))
 
 /-- The compiler may replace checked pack lowering by its proved array implementation. -/
@@ -243,7 +243,7 @@ that every stored VJP maps a zero cotangent to zero.
 -/
 def backwardDenseAllFrom {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {Γ : List Shape} {ss : List Shape} {τ : Shape}
-    (t : Runtime.Autograd.Tape α) (output : Idx (Γ ++ ss) τ) (seed : Tensor α τ) :
+    (t : Runtime.Autograd.Tape (Spec.SomeTensor α)) (output : Idx (Γ ++ ss) τ) (seed : Tensor α τ) :
     Runtime.Autograd.Result (Array (Spec.SomeTensor α)) :=
   Runtime.Autograd.Tape.backwardDenseFrom (t := t)
     (grads0 := TorchLean.TensorPack.toShapeErasedArray

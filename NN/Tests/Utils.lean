@@ -55,16 +55,5 @@ def assertBoundAt {β : Type} (label : String) (values : Array (Option β)) (id 
   | some (some _) => pure ()
   | _ => throw <| IO.userError s!"{label}: expected node {id} to have a bound"
 
-/-- Parameter node identifiers shared by the floating-point and rational two-layer MLP tests. -/
-structure ParamIds where
-  /-- Tape id of the first layer's weight matrix. -/
-  hiddenWeightId : Nat
-  /-- Tape id of the first layer's bias vector. -/
-  hiddenBiasId : Nat
-  /-- Tape id of the second layer's weight matrix. -/
-  outputWeightId : Nat
-  /-- Tape id of the second layer's bias vector. -/
-  outputBiasId : Nat
-
 end Utils
 end Tests

@@ -10,7 +10,6 @@ public import NN.Proofs.Autograd.Runtime.Link.Accumulation
 public import NN.Proofs.Autograd.Runtime.Link.BackwardDense
 public import NN.Proofs.Autograd.Runtime.Link.BackwardDenseGraph
 public import NN.Proofs.Autograd.Runtime.Link.BackwardGraph
-public import NN.Proofs.Autograd.Runtime.Link.BackwardGraphData
 public import NN.Proofs.Autograd.Runtime.Link.BackwardLeaves
 public import NN.Proofs.Autograd.Runtime.Link.BackwardSnoc
 public import NN.Proofs.Autograd.Runtime.Link.Checked

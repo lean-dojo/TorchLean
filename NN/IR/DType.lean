@@ -85,11 +85,6 @@ def check (dtype : DType) : Except String Unit :=
   if dtype.valid then .ok ()
   else .error s!"invalid IR element type: {repr dtype}"
 
-/-- Whether the descriptor is still supplied by a homogeneous graph's scalar context. -/
-def isContext : DType → Bool
-  | .context => true
-  | _ => false
-
 /-- Compact type spelling for errors and graph displays, including custom format parameters. -/
 def describe : DType → String
   | .context => "context"

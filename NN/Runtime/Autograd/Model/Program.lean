@@ -17,7 +17,7 @@ public import NN.Tensor -- shake: keep
 
 `Program` is model code abstract over a tensor-operation interpreter. Supplying the eager
 interpreter executes operations immediately and records a dynamic tape; supplying the typed-graph
-interpreter records reusable shape-indexed SSA data.
+recorder, as the `autograd` transforms do, records reusable shape-indexed SSA data.
 
 `Program.Data` also accepts non-differentiable tensor inputs with their own element type, such as
 token indices. `map` applies an operation over a specified prefix shape; `linear`, convolution,
@@ -33,7 +33,7 @@ namespace Model
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
 
-export Runtime.Autograd.Torch (ExecutionMode Config Ops Ref RefList CurriedRef)
+export Runtime.Autograd.Torch (Config Ops Ref RefList CurriedRef)
 
 namespace Curried
 export Runtime.Autograd.Torch.Curried (Function curry uncurry)
@@ -47,7 +47,7 @@ namespace RefList
 export Runtime.Autograd.Torch.RefList (append)
 end RefList
 
-/-! The execution-polymorphic surface shared by eager and typed-graph execution. -/
+/-! The operation-polymorphic surface shared by the eager tape and the typed-graph recorder. -/
 export Runtime.Autograd.Torch
   (const add sub mul scale abs sqrt clamp max min
    broadcastTo reshape swapAdjacentAtDepth

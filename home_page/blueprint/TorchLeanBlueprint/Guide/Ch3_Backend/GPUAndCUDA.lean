@@ -538,19 +538,24 @@ The registry gives the capsule count and identifies operations with no registere
 ```
 
 ```leanOutput gpuCudaRegistry (whitespace := lax)
-registered: 49
-forward only: 2
+registered: 50
+forward only: 3
+  libtorch.top_k_mask
   libtorch.rand_uniform
   libtorch.bernoulli_mask
 ```
 
 The count includes attention alongside the other LibTorch operations.
 
-The two forward-only entries create random uniform buffers and Bernoulli masks from a seed.
-They have no differentiable tensor inputs. Selective scan has a backward recurrence for its
-coefficients, inputs, and initial state. When coefficients are shared across tokens, their
-gradients accumulate across time. The eager CUDA path records that recurrence on the tape;
-generic interpreters compose the differentiable scalar and tensor operations.
+Two of the forward-only entries create random uniform buffers and Bernoulli masks from a seed;
+they have no differentiable tensor inputs. The third is the top-k mask that routes tokens in a
+mixture of experts. It is piecewise constant, so its derivative is zero wherever it exists, and
+the gradient reaches the router through the kept probabilities instead.
+
+Selective scan has a backward recurrence for its coefficients, inputs, and initial state. When
+coefficients are shared across tokens, their gradients accumulate across time. The eager CUDA path
+records that recurrence on the tape; generic interpreters compose the differentiable scalar and
+tensor operations.
 
 For a diagonal scan, a time step has the form `h[t] = A[t] * h[t-1] + B[t] * x[t]`, with products
 taken coordinatewise. Backward must account for an input's immediate contribution and its effect

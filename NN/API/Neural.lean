@@ -11,6 +11,7 @@ module
 public import NN.API.Seeded
 public import NN.API.Neural.Execution
 public import NN.API.Neural.Layers
+public import NN.API.Neural.MoE
 public import NN.API.Neural.State
 public import NN.API.Neural.Summary
 public import NN.API.Neural.Training

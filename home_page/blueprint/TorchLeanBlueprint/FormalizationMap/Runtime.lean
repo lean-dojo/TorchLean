@@ -3,11 +3,9 @@ import VersoManual
 import VersoBlueprint
 import NN.Runtime.Autograd.Engine
 import NN.Runtime.Autograd.TypedGraph
-import NN.Runtime.Autograd.IRExec.Correctness.SemanticEquivalence
 import NN.Runtime.Autograd.Torch
-import NN.Runtime.Autograd.Torch.TypedGraphSession
 import NN.Runtime.Autograd.Model
-import NN.Proofs.Autograd.Runtime.Link.BackwardGraphData
+import NN.Proofs.Autograd.Runtime.Link.BackwardGraph
 import NN.Verification.Builtin.Proved.Correctness
 
 open Verso.Genre
@@ -17,18 +15,17 @@ open Informal
 #doc (Manual) "Autograd and Execution" =>
 
 The runtime has a dynamic tape for eager execution and a typed SSA builder for typed graph
-execution. Both sit below the layer API. A separate bridge executes `NN.IR.Graph` through a
-forward-only graph; its correctness theorem names its single remaining side condition.
+execution. Both sit below the layer API.
 
 :::group "autograd_execution"
-Programs, tapes, and typed graph execution.
+Programs, tapes, and typed graphs.
 :::
 
 :::definition "runtime_ops_program" (parent := "autograd_execution") (lean := "Runtime.Autograd.Model.Program")
 The operation interface describes programs over
 {uses "shape_indexed_tensors"}[shape-indexed tensors] and
-{uses "scalar_context"}[scalar operations] without choosing eager or typed graph execution at the
-call site.
+{uses "scalar_context"}[scalar operations] without choosing the eager tape or the typed graph
+recorder at the call site.
 :::
 
 :::definition "runtime_autograd_tape" (parent := "autograd_execution") (lean := "Runtime.Autograd.Tape")
@@ -67,7 +64,7 @@ loop accumulates each node's contribution.
 :::definition "runtime_typed_graph_compiled" (parent := "autograd_execution") (lean := "Runtime.Autograd.TypedGraph.compileChecked")
 Checked execution validates and evaluates each node while retaining an indexed primal context and
 local reverse programs in `Compiled`. Checked and pure VJP calls use this saved execution
-through proved compiler simplifications; sessions and the typed trainer use it directly.
+through proved compiler simplifications; the reverse-mode Jacobian transforms call it directly.
 :::
 
 :::theorem "typed_graph_compiled_forward_agreement" (parent := "autograd_execution") (lean := "Runtime.Autograd.TypedGraph.compileChecked_eq_lowerToTapeChecked")
@@ -108,54 +105,9 @@ last node in the graph. Selecting an input is meaningful too. The seed identifie
 being differentiated and the cotangent applied there, so both routes must seed the same reference.
 :::
 
-:::theorem "runtime_typed_graph_backprop_link" (parent := "autograd_execution") (lean := "Runtime.Autograd.Torch.Internal.TypedGraphSession.backwardDenseFrom_lowerGraphDataToTape_eq_backpropAllCtx")
-For the executable graph data in a typed-graph session snapshot, dense reverse accumulation on
-{uses "runtime_autograd_tape"}[the lowered tape] agrees with graph backpropagation. Runtime leaf
-names and `requiresGrad` masks are attached after this raw graph-data lowering theorem.
-:::
-
-:::proof "runtime_typed_graph_backprop_link"
-The typed-graph session theorem specializes
-{uses "typed_graph_backward_agreement"}[the graph-data backward theorem] to the session's graph,
-inputs, and auxiliary index environment.
-:::
-
 :::definition "runtime_layer_model" (parent := "autograd_execution") (lean := "Runtime.Autograd.Model.Layers.Seq")
 Layer definitions carry parameter and buffer initialization, training or evaluation mode, and
 shape-checked sequential composition. They build their computations through
 {uses "runtime_ops_program"}[the runtime operation interface].
 :::
 
-:::group "shared_ir_runtime"
-The executable path from the shared graph IR.
-:::
-
-:::definition "shared_ir_execution" (parent := "shared_ir_runtime") (lean := "Runtime.Autograd.IRExec.lowerToForwardGraph")
-After {uses "ir_structural_validation"}[structural validation], the supported shared IR operations
-are lowered to a shape-indexed `ForwardGraph` for forward evaluation. Its `ForwardData` contains
-only forward closures: there are no JVP or VJP fields to call. It is distinct from the reusable
-autograd `Torch.TypedGraph`.
-
-The correctness claim below consequently concerns forward values. It compares this lowered
-reference execution with the IR evaluator using the same inputs and payload. It does not certify
-native CPU or CUDA kernels, and this forward-only bridge provides no backward implementation to
-which the tape-agreement theorem could be applied.
-:::
-
-:::theorem "shared_ir_execution_correctness" (parent := "shared_ir_runtime") (lean := "Runtime.Autograd.IRExec.denoteAll_eq_of_lowerToForwardGraph")
-{uses "shared_ir_execution"}[Successful lowering] agrees with
-{uses "ir_denotation"}[IR denotation] on every input, provided `NoRawLog` excludes all raw `log`
-nodes. This restriction matters because the IR evaluator rejects nonpositive inputs to raw `log`,
-while the lowered closure applies the total spec logarithm. A theorem that admitted raw `log`
-would need per-node positivity hypotheses; this theorem instead excludes that operation.
-The supported built-in operations include `mseLoss`, `concat` along any axis, matmul with
-any shared leading shape, and batched linear layers. A custom operation that has no lowering
-is rejected; the theorem does not provide an implementation for it.
-:::
-
-:::proof "shared_ir_execution_correctness"
-After unfolding {uses "shared_ir_execution"}[IR lowering], the proof peels off
-{uses "ir_structural_validation"}[the structural check] and input node. The recursive lowering
-invariant then matches each forward-graph value with {uses "ir_denotation"}[the corresponding
-denotational value].
-:::

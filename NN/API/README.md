@@ -21,7 +21,7 @@ internals.
 | Training | `Trainer` | Configure an objective and optimizer, train, predict, and report results. |
 | Optimizers | `optim` | Select optimizer behavior and hyperparameters. |
 | Differentiation | `autograd`, `autograd.model` | Compute derivatives directly without running a training loop. |
-| Runtime choices | `Runtime` | Select arithmetic semantics, execution mode, device, and backend reporting. |
+| Runtime choices | `Runtime` | Select arithmetic semantics, device, and backend reporting. |
 | Configured precision | `FloatLib.Floats.ExecFloat.Binary` | Select exponent/fraction widths for CPU typed tensors, model state, and derivatives. |
 
 These are one lifecycle, not competing tensor or model systems:
@@ -127,8 +127,8 @@ The public API uses names that describe the boundary being crossed:
 Recursive representation constructors such as tensor shape nodes and tensor-pack cons cells belong
 to implementation code. Application examples use literals, records, and named operations instead,
 and tuple results are immediately bound to descriptive local names.
-`open TorchLean` exposes device and execution choices such as `cpu`, `gpu`, `eager`, `typedGraph`,
-`native`, and `ieee` without leading dots. For other choices, open their namespace explicitly,
+`open TorchLean` exposes device and arithmetic choices such as `cpu`, `gpu`, `native`, and `ieee`
+without leading dots. For other choices, open their namespace explicitly,
 as with `open Trainer.Objective (mse)` above. A method call such as `trainer.train` is different:
 the dot selects an operation on a value rather than an enum case.
 
@@ -193,12 +193,12 @@ be pulled back to the model input.
 `Trainer.RunConfig` keeps execution choices on the same model:
 
 - `arithmetic` selects native or configured software binary32 (`Float32` or `ExecFloat.Binary`);
-- `execution` selects eager tape execution or reusable typed-graph execution;
 - `device` selects the storage and kernel target;
 - `showBackend` reports accepted backend capsules.
 
-Typed graph execution records reusable forward/JVP/VJP structure. It is not native-code
-compilation and it is not the verification IR.
+Training runs on the eager autograd tape. Typed graphs belong to the transform API: `autograd`
+and `autograd.model` record them for gradients, JVPs, VJPs, and HVPs. A typed graph is not
+native-code compilation and not the verification IR.
 
 ## Configured Binary Precision
 
@@ -237,7 +237,6 @@ Advanced tools remain explicit:
 | Need | Import |
 | --- | --- |
 | Caller-driven optimizer loops | `trainer.open` (in `NN.API.Trainer`) |
-| Fixed-sample benchmark/diagnostic loops | `NN.API.Trainer.FixedSample` |
 | Train and check model robustness | `NN.API.Verification` |
 | Explicit verifier graph lowering and inspection | `NN.API.Verification.Lowering` |
 | Typed tensors/models with selected binary precision | `NN.API.Precision` |

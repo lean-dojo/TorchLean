@@ -5,7 +5,7 @@ import NN.Examples.BugZoo.ShapeAndBroadcast
 import NN.Examples.BugZoo.StableLoss
 import NN.Examples.BugZoo.IgnoredLabelLoss
 import NN.Examples.BugZoo.AutogradDomain
-import NN.Examples.BugZoo.CompilerBoundary
+import NN.Verification.Builtin.Proved.Correctness.Eval.Main
 import NN.Examples.BugZoo.FloatBoundary
 import NN.Examples.BugZoo.NormalizationState
 import NN.Examples.BugZoo.LayerNormDegenerateAxis
@@ -584,59 +584,49 @@ but make different choices for empty attention support.
 
 ## Compiler Boundary
 
-{src "NN/Examples/BugZoo/CompilerBoundary.lean"}[NN.Examples.BugZoo.CompilerBoundary source] is the
-wrong-code example. It is about optimized graphs that run, return tensors, and are nevertheless not
-the same computation as the source graph. [NNSmith](https://arxiv.org/abs/2207.13066) found
-compiler bugs across TVM, TensorRT, ONNXRuntime, and PyTorch,
+This entry is about optimized graphs that run, return tensors, and are nevertheless not the same
+computation as the source program. [NNSmith](https://arxiv.org/abs/2207.13066) found compiler bugs
+across TVM, TensorRT, ONNXRuntime, and PyTorch,
 [FreeFuzz](https://arxiv.org/abs/2201.06589) found framework and API bugs by mining real snippets,
 and a recent [PyTorch compiler correctness study](https://arxiv.org/abs/2604.08720) focuses directly
 on silent `torch.compile` wrong outputs.
 
-The local preservation theorem relates TorchLean's IR graph to the executable forward graph
-produced by lowering:
+The translation a verifier depends on is the lowering of a TorchLean forward program to the IR
+graph it bounds. Its preservation theorem is
+{src "NN/Verification/Builtin/Proved/Correctness/Eval/Main.lean"}[`runForwardIR_eq_evalForward`]:
 
 ```lean (name := bzLowering)
--- Read both lowering success and the raw-log exclusion
--- before using the equality.
-open CompilerBoundary in
-#check @lowering_preserves_denotation
+-- Lowering a typed forward program and running its IR
+-- gives the source program's result.
+open NN.Verification.Builtin.Proved.Correctness in
+#check @runForwardIR_eq_evalForward
 ```
 ```leanOutput bzLowering (whitespace := lax)
-@lowering_preserves_denotation :
-  ∀ {α : Type} [inst : Storage α] [inst_1 : Context α]
-    (graph : NN.IR.Graph) (payload : NN.IR.Payload α)
-    (executable : Runtime.Autograd.IRExec.ForwardGraph α),
-  Runtime.Autograd.IRExec.NoRawLog graph →
-  Runtime.Autograd.IRExec.lowerToForwardGraph graph
-        payload =
-      Except.ok executable →
-  ∀ (input : Tensor α executable.inShape),
-  graph.denoteAll payload
-        { shape := executable.inShape, tensor := input } =
-      Except.ok (executable.denoteAll input)
+@runForwardIR_eq_evalForward : ∀ {α : Type} [inst : Storage α]
+  [inst_1 : Context α] {paramShapes : List Shape}
+  {inShape outShape : Shape}
+  (p : NN.Verification.Builtin.Proved.ForwardProgram α
+    paramShapes inShape outShape)
+  (params : TensorPack α paramShapes) (x : Tensor α inShape),
+  NN.Verification.Builtin.runForwardIR
+      (NN.Verification.Builtin.Proved.lowerForwardProgramToIR
+        p params) x =
+    NN.Verification.Builtin.Proved.evalForward p params x
 ```
 
-There are two hypotheses: the graph contains no raw logarithm node, and lowering succeeds. Under
-both conditions, the source and lowered denotations agree for every input of the declared shape.
-The compared functions are Lean denotations; generated machine code and external kernels require
-separate conformance evidence.
+There is no success premise and no excluded operator. The equality is between two `Except`
+results, so it covers failures too: a raw logarithm of a nonpositive input fails the same way in
+the source and in the lowered graph. The compared functions are Lean denotations; generated machine
+code and external kernels require separate conformance evidence.
 
 The reusable statement is:
 
-$$`\operatorname{NoRawLog}(g)\;\land\;\operatorname{lower}(g)=\mathrm{ok}(e)
-\quad\Longrightarrow\quad
-\forall x,\; e(x)=g(x)`
+$$`\forall p\;\theta\;x,\quad
+\operatorname{runIR}(\operatorname{lower}(p,\theta),x)=\operatorname{eval}(p,\theta,x)`
 
-`NoRawLog` excludes graphs with a raw logarithm, whose domain treatment differs across the two
-paths. Successful lowering alone is insufficient to apply this theorem.
-
-The lowering theorem compares all intermediate node values, not only the final tensor. This
-makes it useful when a later proof depends on a hidden activation or when debugging the first
-point at which two evaluations diverge. The payload is part of the comparison: using a different
-constant or parameter tensor would describe a different source computation. The universal input
-quantifier is also stronger than checking a calibration batch. Once the two hypotheses are met,
-the equality applies to every input of the lowered graph's declared shape under the same scalar
-context and payload.
+The parameters are part of the comparison: lowering stores them in the graph's payload, and using a
+different constant or parameter tensor would describe a different source computation. The
+universal input quantifier is also stronger than checking a calibration batch.
 
 ## Float Boundary
 
@@ -1246,8 +1236,8 @@ A layout change also needs to preserve which axis represents queries and which r
 A fused attention implementation {Informal.citep flashattention2022}[] needs to preserve the chosen
 mask and normalization semantics. If a separate loss optimization combines softmax and logarithm,
 the stable-loss equation specifies its reference expression. For compiler lowering, the theorem
-above applies only under `NoRawLog` and successful lowering; for float32 execution, a numerical
-conformance argument must also account for rounding and the selected kernels.
+above covers the verifier's typed fragment; for float32 execution, a numerical conformance argument
+must also account for rounding and the selected kernels.
 
 After adding a catalog entry, import it in `All.lean` so the maintained catalog build includes it:
 

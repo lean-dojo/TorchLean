@@ -20,7 +20,6 @@ public import NN.Runtime.Autograd.Model.Module -- shake: keep
 public import NN.Runtime.Autograd.Model.Layers -- shake: keep
 public import NN.Runtime.Autograd.Model.Norm -- shake: keep
 public import NN.Runtime.Autograd.Model.Optim -- shake: keep
-public import NN.Runtime.Autograd.Model.Session -- shake: keep
 public import NN.Runtime.Autograd.Model.VqVae -- shake: keep
 
 /-!
@@ -30,12 +29,11 @@ TorchLean is the runtime front-end for training and execution.
 
 This module is the user-facing wrapper around the lower-level runtime session implementation:
 - write a model/loss once over a small `Ops` interface,
-- choose `execution := .eager` (dynamic tape) or `execution := .typedGraph` (typed SSA/DAG),
-- run `forward`, `backward`, and `step` with the same call shape.
+- run it on the autograd tape, on the CPU or on CUDA, with `forward`, `backward`, and `step`.
 
 `Runtime.Autograd.Model` is the stable runtime namespace re-exported by `NN.API.Runtime`.
 `Runtime.Autograd.Torch` remains available as the lower-level session layer used internally by
-TorchLean and by typed graph sessions.
+TorchLean.
 
 This umbrella does **not** own model catalogs or RL objectives. Runnable models live under
 `TorchLean.nn.models`, proof-oriented graph descriptions live under `NN.GraphSpec.Models`, and
@@ -55,10 +53,6 @@ namespace Model
 export Runtime.Autograd.Torch
   (TensorRef Param AnyParam
    ParamList ScalarTrainer scalarTrainer)
-
--- Unified imperative session (choose eager or typed graph execution at `new` time):
--- `TorchLean.Session` is defined in `NN.Runtime.Autograd.Model.Session` and is available
--- automatically via the import above.
 
 namespace Init
 export Runtime.Autograd.Torch.Init (Scheme tensor xavierUniform)

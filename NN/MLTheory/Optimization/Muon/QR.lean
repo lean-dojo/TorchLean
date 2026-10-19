@@ -56,15 +56,6 @@ theorem add_scaled_three_eq_scale_sum {m n : Nat}
   simp only [get2_addSpec, get2_scaleSpec]
   ring
 
-/--
-If three scaled copies of a matrix are added and the coefficients sum to one, the result is the
-original matrix.
--/
-theorem add_scaled_three_eq_self_of_coeff_sum_one {m n : Nat}
-    (Q : MatrixTensor ℝ m n) (a b c : ℝ) (hsum : a + b + c = 1) :
-    addSpec (addSpec (scaleSpec Q a) (scaleSpec Q b)) (scaleSpec Q c) = Q := by
-  rw [add_scaled_three_eq_scale_sum, hsum, scaleSpec_one]
-
 /-! ## Column Gram entries -/
 
 /-- Entries of the column Gram matrix are inner products of columns. -/

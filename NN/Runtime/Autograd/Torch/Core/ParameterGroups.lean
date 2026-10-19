@@ -85,16 +85,6 @@ def parameterOfStorage {α : Type} [Storage α] (storage : ParameterStorage α) 
     Param α storage.shape :=
   { value := storage.value, cudaValue := storage.cudaValue, hostCurrent := storage.hostCurrent }
 
-/-- Read current host storage, synchronizing a newer device mirror before a CPU update. -/
-def ParameterGroup.currentHostValue {α : Type} [Storage α] [TensorTransfer α]
-    (group : ParameterGroup α) : IO (Spec.SomeTensor α) := do
-  match group.storage? with
-  | none => group.parameter.get
-  | some storage =>
-      let parameter := parameterOfStorage storage
-      syncParamCudaToHost parameter
-      pure <| Spec.SomeTensor.ofTensor (← parameter.value.get)
-
 /-- Read the current parameter value used as the starting point of a CUDA update.
 
 Cotangents belong to the recorded computation, but an optimizer changes current parameter storage.
@@ -118,23 +108,6 @@ def ParameterGroup.currentCudaValue {α : Type} [Storage α] [TensorTransfer α]
     throw <| IO.userError "torch: current parameter storage has the wrong shape"
   checkCudaAnyBufferSize "current parameter storage" value
   pure value
-
-/-- Sum host cotangents for one parameter, retaining the original tensor for a singleton. -/
-def denseGroupGradient {α : Type} [Storage α] [Add α]
-    (group : ParameterGroup α) (gradients : Array (Spec.SomeTensor α)) :
-    IO (Spec.SomeTensor α) := do
-  let first ← match gradients[group.id]? with
-    | some gradient => pure gradient
-    | none => throw <| IO.userError "torch: gradient array out of bounds during grouped update"
-  unless first.shape == group.parameter.s do
-    throw <| IO.userError "torch: parameter gradient shape mismatch during grouped update"
-  let mut total := first
-  for id in group.leaves.toList.drop 1 do
-    let gradient ← match gradients[id]? with
-      | some gradient => pure gradient
-      | none => throw <| IO.userError "torch: gradient array out of bounds during grouped update"
-    total ← IO.ofExcept <| Runtime.Autograd.SomeTensor.add total gradient
-  pure total
 
 /-- Borrow a singleton CUDA gradient or own the temporary sum of shared-leaf cotangents.
 

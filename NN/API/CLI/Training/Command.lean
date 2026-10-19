@@ -18,26 +18,7 @@ Compose an application-specific data parser and training callback with common CL
 
 namespace TorchLean.CLI.Training.Command
 
-/-- Run a parsed training command and finish with access to runtime flags and the result. -/
-def runParsedWith {φ ρ : Type}
-    (exeName : String)
-    (args : List String)
-    (parseFlags : List String → Except String (φ × List String))
-    (banner : Runtime.Config → String)
-    (train : Runtime.Config → φ → IO ρ)
-    (finish : Runtime.Config → φ → ρ → IO Unit)
-    (usage? : Option String := none) :
-    IO UInt32 :=
-  Module.Command.run
-    (config := { banner? := some banner, usage?, printSuccess := true })
-    exeName args
-    (.native fun runtime rest => do
-      let (flags, rest) ← CLI.orThrow exeName <| parseFlags rest
-      CLI.requireNoArgs exeName rest
-      let result ← train runtime flags
-      finish runtime flags result)
-
-/-- Run a parsed training command whose final printer only needs the trained result. -/
+/-- Run a parsed training command and print the trained result. -/
 def runParsed {φ ρ : Type}
     (exeName : String)
     (args : List String)
@@ -47,7 +28,13 @@ def runParsed {φ ρ : Type}
     (print : ρ → IO Unit)
     (usage? : Option String := none) :
     IO UInt32 :=
-  runParsedWith exeName args parseFlags banner train (fun _ _ trained => print trained) usage?
+  Module.Command.run
+    (config := { banner? := some banner, usage?, printSuccess := true })
+    exeName args
+    (.native fun runtime rest => do
+      let (flags, rest) ← CLI.orThrow exeName <| parseFlags rest
+      CLI.requireNoArgs exeName rest
+      print (← train runtime flags))
 
 /--
 Shared command runner for training applications with a caller-defined data parser.
@@ -93,20 +80,17 @@ def usage {δ : Type} (config : Config δ) : String :=
     , ""
     , "Runtime:"
     , "  --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external"
-    , "  --execution eager|typed-graph"
     , "  --arithmetic native"
     , "  --show-backend     print backend capsules as they execute"
     ]).toList
 
 /-- Run a public native-arithmetic training command. -/
-def run {δ : Type} (config : Config δ) (args : List String) : IO UInt32 := do
-  if CLI.hasHelp args then
-    IO.println (usage config)
-    return 0
+def run {δ : Type} (config : Config δ) (args : List String) : IO UInt32 :=
   Module.Command.run
     (config := {
       banner? := some fun runtime =>
         s!"{config.exeName}: {config.description} (device={runtime.deviceName})"
+      usage? := some (usage config)
       printSuccess := true })
     config.exeName args
     (.native fun runtime rest => do

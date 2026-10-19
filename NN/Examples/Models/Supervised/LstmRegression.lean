@@ -171,7 +171,7 @@ def train (runtime : Runtime.Config)
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := flags.training.learningRate } })
         .mse
-        (seed := flags.data.seed)
+        (seed := runtime.seed)
   trainer.train
     (Data.fromSamples samples)
     (flags.training.trainOptions

@@ -7,12 +7,13 @@ Authors: TorchLean Team
 module
 
 public import NN.API
-public import NN.Runtime.Autograd.IRExec
+public import NN.IR.Infer
+public import NN.IR.Semantics
 
 /-!
 # IR axis operations
 
-Evaluate axis operations through the checked IR lowering.
+Evaluate axis operations with the IR semantics.
 
 This tutorial constructs and evaluates three IR operations with an explicit `axis`:
 
@@ -21,8 +22,8 @@ This tutorial constructs and evaluates three IR operations with an explicit `axi
 - `layernorm axis`
   PyTorch: `F.layer_norm(x, normalized_shape=x.shape[axis:])`
 
-The axis is part of each operation's meaning. The evaluator checks graph and input shapes, lowers
-the graph and computes its selected output with Lean tensor operations. This example does not
+The axis is part of each operation's meaning. The evaluator checks graph and input shapes, then
+computes the selected output with the IR semantics, in Lean tensor operations. This example does not
 dispatch to LibTorch or select a GPU device; `--arithmetic` chooses the scalar implementation.
 
 Run:
@@ -104,8 +105,9 @@ def print
     {α : Type} {σ : Shape} [Storage α] [Context α] [ToString α]
     (tag : String) (g : NN.IR.Graph) (payload : NN.IR.Payload α)
     (x : Tensor α σ) (outputId : Fin g.nodes.size) : IO Unit := do
+  CLI.orThrow tag g.checkShapes
   let ⟨shape, output⟩ ← CLI.orThrow tag <|
-    Runtime.Autograd.IRExec.evaluate g payload x outputId
+    NN.IR.Graph.denote g payload (Spec.SomeTensor.mk σ x) outputId
   IO.println s!"[{tag}] output shape: {repr shape}"
   IO.println s!"[{tag}] first scalars: {preview output}"
 

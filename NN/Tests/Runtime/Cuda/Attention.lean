@@ -316,7 +316,7 @@ def run : IO Unit := do
   let outShape : Shape := [n, dModel]
 
   -- CPU tape
-  let t0 : Tape Float := Tape.empty
+  let t0 : Tape (Spec.SomeTensor Float) := Tape.empty
   let (t1, wqId) := Tape.leaf (t := t0) wq (name := some "wq")
   let (t2, wkId) := Tape.leaf (t := t1) wk (name := some "wk")
   let (t3, wvId) := Tape.leaf (t := t2) wv (name := some "wv")
@@ -329,7 +329,8 @@ def run : IO Unit := do
   let yCpu ← Utils.cpuValue (s := outShape) t6 yId
   let seedCpu : Spec.SomeTensor Float :=
     Spec.SomeTensor.ofTensor (Tensor.full outShape (1.0 : Float))
-  let gradsCpu ← IO.ofExcept (Tape.backwardDenseAll (α := Float) (t := t6) yId seedCpu)
+  let gradsCpu ← IO.ofExcept (Tape.backwardDenseAll (V := Spec.SomeTensor Float) (t
+      := t6) yId seedCpu)
   let dxCpu ← Utils.cpuGrad (s := outShape) gradsCpu xId
   let dWqCpu ← Utils.cpuGrad (s := [dModel, projDim]) gradsCpu wqId
   let dWkCpu ← Utils.cpuGrad (s := [dModel, projDim]) gradsCpu wkId
@@ -337,7 +338,7 @@ def run : IO Unit := do
   let dWoCpu ← Utils.cpuGrad (s := [projDim, dModel]) gradsCpu woId
 
   -- CUDA tape
-  let t0c : Runtime.Autograd.LibTorch.Tape := Runtime.Autograd.LibTorch.Tape.empty
+  let t0c : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer := Runtime.Autograd.Tape.empty
   let (t1c, wqIdc) := Runtime.Autograd.LibTorch.Tape.leaf (t := t0c) (Utils.tensorToAnyBuffer wq)
     (name := some "wq")
   let (t2c, wkIdc) := Runtime.Autograd.LibTorch.Tape.leaf (t := t1c) (Utils.tensorToAnyBuffer wk)
@@ -357,7 +358,7 @@ def run : IO Unit := do
     { s := outShape,
       buf := Runtime.Autograd.LibTorch.Buffer.full (UInt32.ofNat (Spec.Shape.size outShape)) 1.0 }
   let gradsCuda ← IO.ofExcept
-    (Runtime.Autograd.LibTorch.Tape.backwardDenseAll (t := t6c) yIdc seedCuda)
+    (Runtime.Autograd.Tape.backwardDenseAll (t := t6c) yIdc seedCuda)
   let dxCuda ← Utils.cudaGrad (s := outShape) gradsCuda xIdc
   let dWqCuda ← Utils.cudaGrad (s := [dModel, projDim]) gradsCuda wqIdc
   let dWkCuda ← Utils.cudaGrad (s := [dModel, projDim]) gradsCuda wkIdc
@@ -386,7 +387,7 @@ def run : IO Unit := do
   let xBatch : Tensor Float [2, n, dModel] :=
     TorchLean.Tensor.stack 0 fun i => if i.val = 0 then xFirst else xSecond
   let batchShape : Shape := [2, n, dModel]
-  let tb0 : Runtime.Autograd.LibTorch.Tape := Runtime.Autograd.LibTorch.Tape.empty
+  let tb0 : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer := Runtime.Autograd.Tape.empty
   let (tb1, bwq) :=
     Runtime.Autograd.LibTorch.Tape.leaf (t := tb0) (Utils.tensorToAnyBuffer batchIdentity)
   let (tb2, bwk) :=
@@ -406,7 +407,7 @@ def run : IO Unit := do
       buf := Runtime.Autograd.LibTorch.Buffer.full
         (UInt32.ofNat (Spec.Shape.size batchShape)) 1.0 }
   let batchGrads ← IO.ofExcept
-    (Runtime.Autograd.LibTorch.Tape.backwardDenseAll (t := tb6) byId batchSeed)
+    (Runtime.Autograd.Tape.backwardDenseAll (t := tb6) byId batchSeed)
   let dxBatch ← Utils.cudaGrad (s := batchShape) batchGrads bx
   let dWqBatch ← Utils.cudaGrad (s := [dModel, projDim]) batchGrads bwq
   let dWkBatch ← Utils.cudaGrad (s := [dModel, projDim]) batchGrads bwk

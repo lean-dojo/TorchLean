@@ -147,14 +147,12 @@ The JSON artifacts go under `_external/geometry3d/realworld/`; the overlays and
 ## What A JSON Artifact Looks Like
 
 Here's the JSON we'll pass to the checker. We can use the same format with WildDet3D, Omni3D,
-or another detector that exports the camera and box fields. A `torchlean.camera.box3d.v1`
-artifact carries exactly eight corners, with `point_count` omitted or set to `8`. A
-`torchlean.camera.box3d.v2` artifact must declare a positive `point_count` that matches the number
-of triples in `corners3d`.
+or another detector that exports the camera and box fields. The artifact must declare a positive
+`point_count` that matches the number of triples in `corners3d`; a cuboid has eight.
 
 ```json
 {
-  "format": "torchlean.camera.box3d.v1",
+  "format": "torchlean.camera.box3d.v2",
   "image_width": 640.0,
   "image_height": 480.0,
   "tol": 1.0,

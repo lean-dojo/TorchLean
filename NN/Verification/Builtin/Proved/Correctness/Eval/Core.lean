@@ -44,10 +44,6 @@ def unaryGraphOut (kind : OpKind) (inShape outShape : Shape) : Graph :=
       unaryNodeOut kind outShape
     ] }
 
-/-- A unary node whose input and output share the same shape. -/
-def unaryNode (kind : OpKind) (s : Shape) : NN.IR.Node :=
-  unaryNodeOut kind s
-
 /-- A two-node graph for a unary op whose input and output share the same shape. -/
 def unaryGraph (kind : OpKind) (s : Shape) : Graph :=
   unaryGraphOut kind s s
@@ -63,10 +59,6 @@ def binaryGraphOut (kind : OpKind) (leftShape rightShape outShape : Shape) : Gra
       { id := 1, parents := #[], kind := .input, outShape := rightShape },
       binaryNodeOut kind outShape
     ] }
-
-/-- A binary node whose inputs and output share the same shape. -/
-def binaryNode (kind : OpKind) (s : Shape) : NN.IR.Node :=
-  binaryNodeOut kind s
 
 /-- A three-node graph for a binary op whose inputs and output share the same shape. -/
 def binaryGraph (kind : OpKind) (s : Shape) : Graph :=

@@ -82,7 +82,6 @@ record earlier runs; banners and results can change with the backend, seed, and 
 
 ```terminal +output
 [TorchLean] arithmetic: native binary32
-[TorchLean] execution: eager
 [TorchLean] device: cpu
 ppo_gridworld: PPO on Lean-native GridWorld (4x4, horizon=64) (device=cpu)
   env: pure Lean dynamics + boundary contract check + formal MDP validity proof available
@@ -1407,7 +1406,6 @@ $ torchlean ppo_cartpole --updates 30 --eval-every 5 \
     --eval-episodes 5 --eval-max-steps 200 \
     --log-json rl-cartpole-log.json
 [TorchLean] arithmetic: native binary32
-[TorchLean] execution: eager
 [TorchLean] device: cpu
 ppo_cartpole: PPO on CartPole-v1 (horizon=64) (device=cpu)
   env: Python Gymnasium subprocess (JSON-lines bridge)
@@ -1441,7 +1439,6 @@ package reports the following failure:
 ```terminal +output
 $ torchlean ppo_pong_ram --updates 1
 [TorchLean] arithmetic: native binary32
-[TorchLean] execution: eager
 [TorchLean] device: cpu
 ppo_pong_ram: PPO on ALE/Pong-v5
   (obs=ram, horizon=128) (device=cpu)

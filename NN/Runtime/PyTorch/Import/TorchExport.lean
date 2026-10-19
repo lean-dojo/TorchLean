@@ -321,11 +321,15 @@ def kind (ctx : String) (outShape : Shape) (o : StateDict) : Except String OpKin
   | .softmax => pure (.softmax (← natField ctx "axis" o))
   | .hardMaskedSoftmax =>
       throw s!"PyTorch graph import: {ctx}: `{tagString}` has no artifact encoding for its mask yet"
+  | .topKMask => pure (.topKMask (← natField ctx "k" o))
   | .layernorm => pure (.layernorm (← natField ctx "axis" o))
   | .reshape => pure (.reshape (← shapeField ctx "in_shape" o) (← shapeField ctx "out_shape" o))
   | .flatten => pure (.flatten (← shapeField ctx "value_shape" o))
   | .concat => pure (.concat (← natField ctx "axis" o))
-  | .input | .detach | .add | .sub | .mulElem | .abs | .sqrt | .inv | .maxElem | .minElem | .sum
+  | .slice =>
+      pure (.slice (← natField ctx "axis" o) (← natField ctx "start" o) (← natField ctx "length" o))
+  | .input | .detach | .add | .sub | .mulElem | .div | .abs | .sqrt | .inv | .maxElem | .minElem
+  | .sum
   | .matmul | .linear | .relu | .tanh | .sigmoid | .softplus | .safeLog
   | .exp | .log | .sin | .cos | .mseLoss =>
       match tag.toKind? with

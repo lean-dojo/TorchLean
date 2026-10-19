@@ -8,7 +8,6 @@ module -- shake: keep-all (These imports define the CI build coverage.)
 
 import NN.Kernel.Cuda.Source
 import NN.Runtime
-import NN.Runtime.Autograd.IRExec.Correctness
 import NN.Runtime.Training.Log
 
 /-!

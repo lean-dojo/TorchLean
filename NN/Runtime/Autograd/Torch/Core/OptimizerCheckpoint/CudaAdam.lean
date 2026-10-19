@@ -97,51 +97,22 @@ def validate (config : CudaAdamConfig) : Except String Unit := do
 
 end CudaAdamConfig
 
-/-- Version 2 header, retained for layouts with independent trainable parameters. -/
+/--
+The CUDA Adam checkpoint format: the moment dtype, the optimizer configuration, an optional random
+counter, the parameter schema with its storage sharing, then one moment pair per parameter that
+owns optimizer state.
+-/
 def cudaAdamCheckpointFormat : CheckpointIO.Format where
   name := checkpointName
   magic := "TLADAMF".toUTF8
-  version := 2
+  version := 5
 
-/-- Version 3 records storage sharing while retaining the original parameter-slot identifiers. -/
-def cudaAdamAliasCheckpointFormat : CheckpointIO.Format :=
-  { cudaAdamCheckpointFormat with version := 3 }
-
-/-- Version 4 also restores the eager session's random-operation counter. -/
-def cudaAdamRandomCheckpointFormat : CheckpointIO.Format :=
-  { cudaAdamCheckpointFormat with version := 4 }
-
-/-- Version 5 retains the moment dtype and an optional random counter. Older files are binary32. -/
-def cudaAdamTypedCheckpointFormat : CheckpointIO.Format :=
-  { cudaAdamCheckpointFormat with version := 5 }
-
-/--
-Read a supported header and reject a legacy checkpoint when the destination shares parameters.
-
-Version 2 contains no sharing information. Its per-slot histories cannot establish which moment
-pair belongs to shared storage, so an aliased trainer must start a fresh history or load version 3
-or later. Version 4 carries the random-operation counter as well.
-The check precedes config parsing and all device allocation.
--/
-def readAdamFormat
-    (handle : IO.FS.Handle) (schema : OptimizerCheckpoint.ParameterSchema) :
-    IO CheckpointIO.Format := do
-  let magic ← CheckpointIO.readExact checkpointName handle cudaAdamCheckpointFormat.magic.size
-  if magic != cudaAdamCheckpointFormat.magic then
-    throw <| IO.userError s!"{checkpointName}: unsupported checkpoint family"
-  let version ← CheckpointIO.readNat64 checkpointName handle
-  match version with
-  | 2 => do
-      if schema.hasAliases then
-        throw <| IO.userError
-          s!"{checkpointName}: version 2 cannot restore shared parameter histories"
-      pure cudaAdamCheckpointFormat
-  | 3 => pure cudaAdamAliasCheckpointFormat
-  | 4 => pure cudaAdamRandomCheckpointFormat
-  | 5 => pure cudaAdamTypedCheckpointFormat
-  | _ =>
-      throw <| IO.userError
-        s!"{checkpointName}: unsupported format version {version}; expected 2 through 5"
+/-- The recorded moment dtype: `0` binary32 and `1` binary64, the native code of each dtype.
+Encoded moments are never written. -/
+def dtypeCode : Runtime.Autograd.LibTorch.Dtype → Nat
+  | .float32 => 0
+  | .float64 => 1
+  | .encoded => 2
 
 /-- Release every device buffer owned by an Adam state map. -/
 def releaseAdam (state : CudaAdamState) : IO Unit := do
@@ -199,12 +170,10 @@ def readConfig (handle : IO.FS.Handle)
 /--
 Stream CUDA Adam or AdamW moments to disk.
 
-The file includes the optimizer configuration and the complete ordered parameter schema. Shared
-parameters use version 3 and one moment entry per representative; independent parameters keep the
-version 2 encoding. For binary32, supplying the session counter selects version 4, which retains
-both storage sharing and the next random key. Binary64 uses version 5 to retain its dtype and
-eight-byte moments, with or without a random counter. Saving before the first Adam-family update
-is rejected because no optimizer state has yet been defined.
+The file includes the moment dtype, the optimizer configuration, the random counter when one is
+supplied, and the complete ordered parameter schema with its storage sharing, followed by one moment
+entry per representative parameter. Saving before the first Adam-family update is rejected because
+no optimizer state has yet been defined.
 -/
 def saveAdam
     (path : System.FilePath) (schema : OptimizerCheckpoint.ParameterSchema)
@@ -222,23 +191,16 @@ def saveAdam
     throw <| IO.userError <|
       s!"{checkpointName}: expected {schema.optimizerStateCount} moment entries, got {state.size}"
   let entries := state.toList.mergeSort (fun left right => left.1 ≤ right.1)
-  let format :=
-    if config.dtype == .float64 then cudaAdamTypedCheckpointFormat
-    else if randomCounter.isSome then cudaAdamRandomCheckpointFormat
-    else if schema.hasAliases then cudaAdamAliasCheckpointFormat else cudaAdamCheckpointFormat
+  let format := cudaAdamCheckpointFormat
   CheckpointIO.writeAtomically path fun handle => do
     CheckpointIO.writeFormat format handle
-    if format.version ≥ 5 then
-      CheckpointIO.writeNat64 checkpointName handle
-        (if config.dtype == .float32 then 0 else 1)
+    CheckpointIO.writeNat64 checkpointName handle (dtypeCode config.dtype)
     writeConfig handle config
-    if format.version ≥ 5 then
-      CheckpointIO.writeNat64 checkpointName handle (if randomCounter.isSome then 1 else 0)
+    CheckpointIO.writeNat64 checkpointName handle (if randomCounter.isSome then 1 else 0)
     if let some counter := randomCounter then
       CheckpointIO.writeNat64 checkpointName handle counter
     schema.write format handle
-    if format.version ≥ 3 then
-      schema.writeRepresentatives format handle
+    schema.writeRepresentatives format handle
     CheckpointIO.writeNat64 checkpointName handle entries.length
     for (id, entry) in entries do
       let shape ← match schema.shapes[id]? with
@@ -278,22 +240,19 @@ def readCheckpoint
     throw <| IO.userError s!"{checkpointName}: malformed expected parameter schema"
   let mut replacement : CudaAdamState := Std.HashMap.emptyWithCapacity
   try
-    let format ← readAdamFormat handle schema
-    let storedDtype ← if format.version ≥ 5 then do
-        match ← CheckpointIO.readNat64 checkpointName handle with
-        | 0 => pure Runtime.Autograd.LibTorch.Dtype.float32
-        | 1 => pure Runtime.Autograd.LibTorch.Dtype.float64
-        | _ => throw <| IO.userError s!"{checkpointName}: unsupported moment dtype"
-      else pure Runtime.Autograd.LibTorch.Dtype.float32
+    let format := cudaAdamCheckpointFormat
+    CheckpointIO.readFormat format handle
+    let storedDtype ← match ← CheckpointIO.readNat64 checkpointName handle with
+      | 0 => pure Runtime.Autograd.LibTorch.Dtype.float32
+      | 1 => pure Runtime.Autograd.LibTorch.Dtype.float64
+      | _ => throw <| IO.userError s!"{checkpointName}: unsupported moment dtype"
     unless storedDtype == dtype do
       throw <| IO.userError s!"{checkpointName}: moment dtype differs from the destination"
     let config ← readConfig handle dtype
-    let hasCounter ← if format.version ≥ 5 then do
-        match ← CheckpointIO.readNat64 checkpointName handle with
-        | 0 => pure false
-        | 1 => pure true
-        | _ => throw <| IO.userError s!"{checkpointName}: invalid random-counter flag"
-      else pure (format.version ≥ 4)
+    let hasCounter ← match ← CheckpointIO.readNat64 checkpointName handle with
+      | 0 => pure false
+      | 1 => pure true
+      | _ => throw <| IO.userError s!"{checkpointName}: invalid random-counter flag"
     let randomCounter ← if hasCounter then
         some <$> CheckpointIO.readNat64 checkpointName handle
       else pure none
@@ -302,8 +261,7 @@ def readCheckpoint
         throw <| IO.userError <|
           s!"{checkpointName}: checkpoint belongs to a different optimizer configuration"
     schema.readAndCheck format handle
-    if format.version ≥ 3 then
-      schema.readAndCheckRepresentatives format handle
+    schema.readAndCheckRepresentatives format handle
     let entryCount ← CheckpointIO.readNat64 checkpointName handle
     if entryCount != schema.optimizerStateCount then
       throw <| IO.userError <|
@@ -376,7 +334,7 @@ def loadAdam
   match rngCounter?, randomCounter with
   | some counter, some value => counter.set value
   | some _, none =>
-      IO.eprintln s!"{checkpointName}: legacy checkpoint has no random counter; \
+      IO.eprintln s!"{checkpointName}: checkpoint has no random counter; \
         stochastic training cannot be resumed exactly"
   | _, _ => pure ()
   releaseAdam previous

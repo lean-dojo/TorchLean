@@ -63,10 +63,11 @@ def model : nn.Builder (nn.Sequential input output) :=
   ]
 
 /-- Public singleton dataset for compact CIFAR reconstruction. -/
-def data (flags : Support.Training.Options Support.Npy.Options) : Trainer.Dataset input output :=
+def data (flags : Support.Training.Options Support.Npy.Options) (seed : Nat) :
+    Trainer.Dataset input output :=
   RealData.cifarFeatureDataset batchSize modelConfig exeName
     (fun tensor ↦ { input := tensor, target := tensor })
-    flags.data.xPath flags.data.yPath flags.data.nRows flags.data.seed
+    flags.data.xPath flags.data.yPath flags.data.nRows seed
 
 /-- Train the compact autoencoder with the public `Trainer` surface. -/
 def train (runtime : Runtime.Config) (flags : Support.Training.Options Support.Npy.Options) :
@@ -81,9 +82,9 @@ def train (runtime : Runtime.Config) (flags : Support.Training.Options Support.N
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := flags.training.learningRate } })
         .mse
-        (seed := flags.data.seed)
+        (seed := runtime.seed)
   trainer.train
-    (data flags)
+    (data flags runtime.seed)
     (flags.training.trainOptions
       (logTitle := "Autoencoder CIFAR reconstruction")
       (logNotes := RealData.trainingNotes "cifar10" batchSize flags))

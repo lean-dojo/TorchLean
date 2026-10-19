@@ -14,7 +14,7 @@ public import NN.Spec.Core.Tensor.SomeTensor
 # Torch Runtime Types
 
 Public handles and options shared by the Torch runtime. Operation modules import their own
-backends, so using a handle does not require the typed-graph recorder or CUDA operation catalog.
+backends, so using a handle does not require the CUDA operation catalog.
 -/
 
 
@@ -27,32 +27,12 @@ namespace Torch
 open Spec TorchLean TorchLean.Tensor
 
 /--
-Execution mode for the Torch-style front-end.
-
-- `.eager`: execute operations immediately while building a dynamic autograd tape.
-- `.typedGraph`: build shape-indexed SSA data instead of using only the dynamic tape. High-level
-  trainers build their reusable graph once; the low-level session records graph data during a run.
-
-The second mode changes the representation used for execution. It is not an optimizing compiler,
-and graph construction alone does not prove the stored derivative rules correct.
-
-This is not a CUDA Graph selector. CUDA is controlled by `Config.device` on the
-eager execution path; CUDA Graph capture/replay will require a distinct persistent-buffer mode.
--/
-inductive ExecutionMode where
-  | eager
-  | typedGraph
-deriving Repr, DecidableEq
-
-/--
 Configuration controlling the behavior of the Torch-style front-end.
 
 PyTorch comparison: these are approximately session/global settings, such as the default
 `requiresGrad` value and requested execution device.
 -/
 structure Config where
-  /-- Choose immediate tape execution or shape-indexed typed graph execution. -/
-  execution : ExecutionMode := .eager
   /-- Device requested for execution. -/
   device : NN.Backend.Device := .cpu
   /-- Default `requiresGrad` value for parameters whose constructor omits it. Inputs default to
@@ -232,19 +212,6 @@ structure TensorRef (α : Type) (s : Shape) where
   id : Nat
   /-- Owning session and recording generation; absent only on internal, not-yet-committed
   handles. -/
-  identity? : Option RefIdentity := none
-deriving Repr
-
-/--
-Handle to a `Nat` stored in the session's non-differentiable environment.
-
-This is used to model index-like inputs (class labels, gather indices, etc.) which should not
-receive gradients.
--/
-structure NatRef where
-  /-- Index into the session's non-differentiable `Nat` environment. -/
-  id : Nat
-  /-- Owning session and recording generation. -/
   identity? : Option RefIdentity := none
 deriving Repr
 

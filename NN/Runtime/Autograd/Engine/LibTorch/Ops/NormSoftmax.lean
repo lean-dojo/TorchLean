@@ -40,8 +40,8 @@ input and inverse standard deviation saved by forward, so both passes use the ca
 -/
 @[inline]
 def layerNorm {seqLen embedDim : Nat} (h_seq_pos : seqLen > 0) (h_embed_pos : embedDim > 0)
-  (t : Tape) (xId gammaId betaId : Nat)
-  (epsilon : Float := TorchLean.normalizationEpsilon) : Result (Tape × Nat) := do
+  (t : Tape AnyBuffer) (xId gammaId betaId : Nat)
+  (epsilon : Float := TorchLean.normalizationEpsilon) : Result (Tape AnyBuffer × Nat) := do
   have _ := h_seq_pos
   have _ := h_embed_pos
   let rows32 ← AnyBuffer.natToU32Checked seqLen
@@ -53,14 +53,14 @@ def layerNorm {seqLen embedDim : Nat} (h_seq_pos : seqLen > 0) (h_embed_pos : em
   let (y, xHat, invStd) :=
     Buffer.layerNormFwd x gamma beta rows32 cols32 invCols epsilon
   let outShape : Shape := .dim seqLen (.dim embedDim .scalar)
-  let node : Node :=
+  let node : Node AnyBuffer :=
     { name := some "layer_norm"
       value := { s := outShape, buf := y }
       requiresGrad := (t.getNode? xId).any (·.requiresGrad) ||
         (t.getNode? gammaId).any (·.requiresGrad) ||
         (t.getNode? betaId).any (·.requiresGrad)
       parents := #[xId, gammaId, betaId]
-      cleanup := #[xHat, invStd]
+      cleanup := #[xHat, invStd].map AnyBuffer.ofWorkspace
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny outShape
         let (dx, dGamma, dBeta) :=
@@ -81,8 +81,8 @@ the storage layout, not a rank-specific implementation.
 -/
 @[inline] def batchNorm {channels : Nat} {spatial : Shape}
     (hWellFormed : (Shape.dim channels spatial).wellFormed)
-    (t : Tape) (xId gammaId betaId : Nat)
-    (epsilon : Float := TorchLean.normalizationEpsilon) : Result (Tape × Nat) := do
+    (t : Tape AnyBuffer) (xId gammaId betaId : Nat)
+    (epsilon : Float := TorchLean.normalizationEpsilon) : Result (Tape AnyBuffer × Nat) := do
   have _hChannels : channels > 0 := hWellFormed.1
   have _hSpatial : Shape.size spatial > 0 :=
     Shape.size_pos_of_well_formed hWellFormed.2
@@ -113,14 +113,14 @@ the storage layout, not a rank-specific implementation.
   let y := Buffer.releaseManyThen
     #[sum1, mean, meanB, centered, centered2, varSum, var, epsVec, varEps,
       stdB, betaB, xHatGamma] (Buffer.add xHatGamma betaB)
-  let node : Node :=
+  let node : Node AnyBuffer :=
     { name := some "batch_norm"
       value := { s := xShape, buf := y }
       requiresGrad := (t.getNode? xId).any (·.requiresGrad) ||
         (t.getNode? gammaId).any (·.requiresGrad) ||
         (t.getNode? betaId).any (·.requiresGrad)
       parents := #[xId, gammaId, betaId]
-      cleanup := #[std, xHat, gammaB]
+      cleanup := #[std, xHat, gammaB].map AnyBuffer.ofWorkspace
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny xShape
         -- dBeta / dGamma sum over spatial dimension (axis=1 of the folded matrix).
@@ -172,10 +172,10 @@ Record a row operation whose VJP uses the saved output.
 The scalar forward function runs only after input validation. Empty tensors are copied; for
 non-scalar, nonempty tensors, row-dimension validation precedes input lookup.
 -/
-@[inline] def Internal.rowOpLast {s : Shape} (t : Tape) (opName : String) (xId : Nat)
+@[inline] def Internal.rowOpLast {s : Shape} (t : Tape AnyBuffer) (opName : String) (xId : Nat)
     (scalarForward : Buffer → Buffer)
     (forward : Buffer → UInt32 → UInt32 → Buffer.WithWorkspace)
-    (backward : Buffer → Buffer → UInt32 → UInt32 → Buffer) : Result (Tape × Nat) := do
+    (backward : Buffer → Buffer → UInt32 → UInt32 → Buffer) : Result (Tape AnyBuffer × Nat) := do
   -- With no coordinates, both the result and its cotangent have the same empty shape.
   if Shape.size s == 0 then
     return ← unary t opName xId s s Buffer.copy (fun _ gradient => Buffer.copy gradient)
@@ -184,7 +184,7 @@ non-scalar, nonempty tensors, row-dimension validation precedes input lookup.
       let x ← requireValue (t := t) xId Shape.scalar
       let one32 : UInt32 := 1
       let y := scalarForward x
-      let node : Node :=
+      let node : Node AnyBuffer :=
         { name := some opName
           value := { s := Shape.scalar, buf := y }
           requiresGrad := (t.getNode? xId).any (·.requiresGrad)
@@ -199,7 +199,7 @@ non-scalar, nonempty tensors, row-dimension validation precedes input lookup.
       let x ← requireValue (t := t) xId s
       let yOwned := forward x rows32 cols32
       let y := yOwned.releaseWorkspaceThen yOwned.value
-      let node : Node :=
+      let node : Node AnyBuffer :=
         { name := some opName
           value := { s := s, buf := y }
           requiresGrad := (t.getNode? xId).any (·.requiresGrad)
@@ -211,12 +211,35 @@ non-scalar, nonempty tensors, row-dimension validation precedes input lookup.
       pure (t.addNode node)
 
 /-- Record a last-axis softmax on the tape, returning the extended tape and the new node id. -/
-@[inline] def softmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) :=
+@[inline] def softmaxLast {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer
+    × Nat) :=
   Internal.rowOpLast (s := s) t "softmax" xId (fun x => Buffer.full 1 1.0 (Buffer.dtype x))
     rowSoftmaxForward rowSoftmaxBwd
 
+/--
+The top-`k` mask along the last axis (`Spec.MoE.topKMaskSpec`), as a node that receives no
+gradient. A scalar is a row of one entry, kept when `0 < k`.
+-/
+@[inline] def topKMask {s : Shape} (t : Tape AnyBuffer) (k : Nat) (xId : Nat) : Result
+    (Tape AnyBuffer × Nat) := do
+  let x ← requireValue (t := t) xId s
+  let mask ←
+    if Shape.size s == 0 then pure (Buffer.copy x)
+    else match s with
+      | .scalar => pure (Buffer.full 1 (if 0 < k then 1.0 else 0.0) (Buffer.dtype x))
+      | _ => do
+          let (rows, cols) ← foldRowsColsLastAxis s
+          pure (Buffer.topKMaskByRow x rows cols (min k cols.toNat).toUInt32)
+  pure <| t.addNode
+    { name := some "top_k_mask"
+      value := { s := s, buf := mask }
+      requiresGrad := false
+      parents := #[xId]
+      backward := fun _ => .ok #[] }
+
 /-- Stable log-softmax along the last axis, implemented directly on CUDA buffers. -/
-@[inline] def logSoftmaxLast {s : Shape} (t : Tape) (xId : Nat) : Result (Tape × Nat) :=
+@[inline] def logSoftmaxLast {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer
+    × Nat) :=
   Internal.rowOpLast (s := s) t "log_softmax" xId (fun x => Buffer.zeros 1 (Buffer.dtype x))
     rowLogSoftmaxForward rowLogSoftmaxBwd
 

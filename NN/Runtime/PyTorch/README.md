@@ -61,7 +61,10 @@ marker also live in `Wire`.
 
 The PyTorch adapter matches complete ATen overload names and explicit FX callables or methods.
 For example, `aten.log.default` lowers to `log`; `log1p`, `log2`, and `log_softmax` need their own
-lowerings and are rejected. Mutating overloads, dtype changes, and unsupported tuple producers are
+lowerings and are rejected. `aten.div.Tensor` without a rounding mode lowers to `div` and
+`aten.slice.Tensor` with step one to `slice`. The mixture-of-experts routing idiom
+`torch.zeros_like(p).scatter(-1, torch.topk(p, k).indices, 1)` lowers to one `top_k_mask` node;
+the `topk` call and the zeros it scatters into must have no other users. Mutating overloads, dtype changes, and unsupported tuple producers are
 rejected before the adapter writes an artifact.
 
 ## Import

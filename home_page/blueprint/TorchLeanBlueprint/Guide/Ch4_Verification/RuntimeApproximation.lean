@@ -870,9 +870,10 @@ to produce nearly identical outputs on an ordinary test sentence.
 
 Convolution is parameterized by the number of spatial axes, with one kernel, stride, and padding
 entry for each axis. The same definition therefore describes sequence, image, volume, and
-higher-rank convolutions. Its typed lowering and executable IR semantics are connected by the
-{src "NN/Runtime/Autograd/IRExec/Correctness/Ops/Convolution.lean"}[convolution
-semantic-preservation proof].
+higher-rank convolutions. The verifier's lowering of a convolution node is connected to the IR
+semantics by its
+{src "NN/Verification/Builtin/Proved/Correctness/Eval/LoweredNodePayload.lean"}[convolution case]
+of the lowering-correctness proof.
 
 The ideal autograd proof is in
 {src "NN/Proofs/Autograd/Tape/Ops/Conv/FDeriv.lean"}[Convolution FDeriv].

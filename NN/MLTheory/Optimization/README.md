@@ -19,7 +19,7 @@ interfaces and proves facts about convergence, fallback cases, and optimizer ext
   compositional step-stream laws.
 - `Muon.lean`: umbrella for the Muon proof layer, which is split into
   - `Muon/Core.lean`: orthogonalizer contracts (exact and entrywise-approximate column Gram) and
-    the certified/checked backend records;
+    the checked backend records;
   - `Muon/Certificates.lean`: step certificates tying a backend contract to one executable Muon
     update;
   - `Muon/NewtonSchulz.lean`: the Newton-Schulz polynomial backend, its residual-checked

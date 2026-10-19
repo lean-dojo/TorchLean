@@ -20,8 +20,8 @@ not a proof tactic: it checks the pattern and shapes and emits the tensor comput
 
 Reusable proof tactics belong here. File-local helpers may stay beside the lemmas they use;
 moving those helpers would split a proof across files without making them more reusable.
-The external CROWN producer/inspection workflow stays with its Python integration under
-`NN/MLTheory/CROWN/Tactics/`; it loads reports rather than proving their claims.
+The Python CROWN producer, `NN/MLTheory/CROWN/Tactics/crown_verifier.py`, is not a tactic: the
+two-stage Lyapunov pipeline runs it to write certificates that Lean then checks.
 
 ## Derivatives
 
@@ -322,32 +322,23 @@ theorem, and fails if an obligation is unresolved. It does not optimize or mutat
 
 ### Lowering a program
 
-Import `NN.Tactic.Verify.Lowering` to use `verify` for graph lowering or a checked einsum plan.
-We keep this import separate because the end-to-end graph proof is a substantial dependency.
-For a graph, the tactic needs evidence that lowering succeeded and that the graph has no raw
-logarithm nodes. That restriction matters: the source evaluator rejects nonpositive raw-log
-inputs, whereas the executable graph totalizes them.
+Import `NN.Tactic.Verify.Lowering` to use `verify` for a checked einsum plan. The registered
+theorem relates the executable plan to an independent tensor denotation:
 
 ```lean
 import NN.Tactic.Verify.Lowering
 
-open TorchLean Runtime.Autograd.IRExec
+open TorchLean TorchLean.Tensor.Internal
 
-example {α : Type} [Storage α] [Context α]
-    (graph : NN.IR.Graph) (payload : NN.IR.Payload α) (exec : ForwardGraph α)
-    (hNoRawLog : NoRawLog graph)
-    (hLowered : lowerToForwardGraph graph payload = .ok exec)
-    (input : Tensor α exec.inShape) :
-    NN.IR.Graph.denoteAll (g := graph) (payload := payload)
-        (input := Spec.SomeTensor.mk exec.inShape input) =
-      .ok (ForwardGraph.denoteAll (e := exec) input) := by
+example {R : Type} [Storage R] [Add R] [Mul R] [OfNat R 0] [OfNat R 1]
+    (checked : Check.CheckedEinsum) (inputs : checked.InputTensors R) :
+    Lowering.einsumTensor checked inputs = Semantics.denoteEinsum checked inputs := by
   verify
 ```
 
-This is an equality of Lean semantics for every input, not a comparison of a few runs. For
-einsum, the registered theorem relates the checked plan to an independent tensor denotation.
-It does not say that every input string expresses the operation its author intended, or that
-native code and GPU kernels have been verified.
+This is an equality of Lean semantics for every input, not a comparison of a few runs. It does
+not say that every input string expresses the operation its author intended, or that native code
+and GPU kernels have been verified.
 
 ## Convergence
 

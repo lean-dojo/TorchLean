@@ -64,8 +64,9 @@ theorem backwardDenseFromStep_addLeaves_empty [Add α]
         ((TorchLean.TensorPack.toShapeErasedArray (α := α) (ss := Γ) x)[n]'(by
           simpa [TorchLean.TensorPack.size_toShapeErasedArray] using hn)).shape := by
     rw [shape_getElem_toShapeErasedArray seed hn, shape_getElem_toShapeErasedArray x hn]
-  simp only [Tape.backwardDenseFromStep, getNode?_addLeaves_empty x hn,
-    Array.getElem?_eq_getElem hidSeed, result_pure_eq_ok, result_bind_ok]
+  simp only [GradValue.shape_someTensor, GradValue.retag_someTensor, GradValue.check_someTensor,
+      Tape.backwardDenseFromStep, getNode?_addLeaves_empty x hn, Array.getElem?_eq_getElem hidSeed,
+      result_pure_eq_ok, result_bind_ok]
   simp [leafNodeOfSomeTensor, hshape, result_bind_ok]
   rfl
 

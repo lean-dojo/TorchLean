@@ -253,7 +253,7 @@ def bounds : NN.MLTheory.CROWN.Graph.PropState Float :=
     , { shape := [2], ibp? := some bOut, aff? := none }
     ] }
 
-private def record : Result (Tape Float) := do
+private def record : Result (Tape (Spec.SomeTensor Float)) := do
   let (t0, aId) := Tape.leaf (α := Float) (t := Tape.empty) (value := Tensor.full [] 2.0) (name :=
     some "a")
   let (t1, bId) := Tape.leaf (α := Float) (t := t0) (value := Tensor.full [] 3.0) (name := some "b")
@@ -266,7 +266,7 @@ A four-node autograd tape computing `a * b + b` at `a = 2`, `b = 3`.
 
 The `decide` establishes that recording succeeded, so the widget receives the complete tape.
 -/
-def tape : Tape Float :=
+def tape : Tape (Spec.SomeTensor Float) :=
   have succeeds : record.toOption.isSome = true := by decide
   record.toOption.get succeeds
 

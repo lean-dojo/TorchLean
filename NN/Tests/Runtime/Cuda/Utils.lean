@@ -18,7 +18,8 @@ Small helpers for CUDA kernel-coverage tests.
 
 These tests compare:
 - CPU eager tape results (`Runtime.Autograd.Tape`, `Float`), against
-- CUDA eager tape results (`Runtime.Autograd.LibTorch.Tape`, float32 buffers).
+- CUDA eager tape results
+    (`Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer`, float32 buffers).
 
 The curated runner skips this GPU suite in the default build, which does not link LibTorch;
 native coverage requires a CUDA build and a visible device.
@@ -83,11 +84,13 @@ def anyBufferToTensor {s : Shape} (ab : Runtime.Autograd.LibTorch.AnyBuffer) : I
     throw <| IO.userError "cuda test: AnyBuffer shape mismatch"
 
 /-- Read a typed CPU tape value from an id. -/
-def cpuValue {s : Shape} (t : Runtime.Autograd.Tape Float) (id : Nat) : IO (Tensor Float s) :=
+def cpuValue {s : Shape} (t : Runtime.Autograd.Tape (Spec.SomeTensor Float)) (id : Nat) : IO
+    (Tensor Float s) :=
   IO.ofExcept (Runtime.Autograd.Tape.requireValue (α := Float) (t := t) (s := s) id)
 
 /-- Read a typed CUDA tape value from an id. -/
-def cudaValue {s : Shape} (t : Runtime.Autograd.LibTorch.Tape) (id : Nat) : IO (Tensor
+def cudaValue {s : Shape} (t : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer) (id
+    : Nat) : IO (Tensor
   Float s) := do
   let b ← IO.ofExcept (Runtime.Autograd.LibTorch.Tape.requireValue (t := t) id s)
   bufferToTensor (s := s) b

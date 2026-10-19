@@ -22,8 +22,7 @@ What this is (and isn't):
 * This is an extraction/convenience layer used in round-trip examples: run/train in Python, then
   optionally import weights back to Lean.
 * This is **not** a formal proof of semantic equivalence between PyTorch execution and the Lean IR
-  denotation. The reference semantics remain the Lean definitions (`NN.IR.Graph.denote*`) and the
-  proved `IRExec.ForwardGraph` bridge.
+  denotation. The reference semantics remain the Lean definitions (`NN.IR.Graph.denote*`).
 
 Assumptions:
 
@@ -340,6 +339,24 @@ private def forward (g : NN.IR.Graph) (ps : ParamStore Float) (bindings : Bindin
     | .mulElem =>
         let (a, b) ← expectBinary id n.parents
         lines := lines ++ #[indent 4 s!"v{id} = v{a} * v{b}"]
+    | .div =>
+        let (a, b) ← expectBinary id n.parents
+        lines := lines ++ #[indent 4 s!"v{id} = v{a} / v{b}"]
+    | .topKMask k =>
+        -- `Spec.MoE.topKMaskSpec`: entry j beats entry i when it is larger, or when neither is
+        -- larger and j < i; an entry is kept when fewer than k entries beat it.
+        let p ← expectUnary id n.parents
+        lines := lines ++
+          #[ indent 4 s!"_xi{id} = v{p}.unsqueeze(-1)"
+          , indent 4 s!"_xj{id} = v{p}.unsqueeze(-2)"
+          , indent 4 s!"_ix{id} = torch.arange(v{p}.shape[-1], device=v{p}.device)"
+          , indent 4 (s!"_beats{id} = (_xj{id} > _xi{id}) | " ++
+              s!"((_ix{id}.unsqueeze(0) < _ix{id}.unsqueeze(1)) & ~(_xi{id} > _xj{id}))")
+          , indent 4 s!"v{id} = (_beats{id}.sum(-1) < {k}).to(v{p}.dtype)"
+          ]
+    | .slice axis start length =>
+        let p ← expectUnary id n.parents
+        lines := lines ++ #[indent 4 s!"v{id} = torch.narrow(v{p}, {axis}, {start}, {length})"]
     | .minElem =>
         let (a, b) ← expectBinary id n.parents
         lines := lines ++ #[indent 4 s!"v{id} = torch.minimum(v{a}, v{b})"]

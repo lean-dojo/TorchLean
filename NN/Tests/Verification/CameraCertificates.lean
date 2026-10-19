@@ -39,7 +39,7 @@ private def cuboid : BoxCameraCert Float :=
     bbox := [0, 0, 64, 64] }
 
 private def certificateJson (points : Lean.Json) (pointCount? : Option Lean.Json := none)
-    (format : String := formatStringPoints) : Lean.Json :=
+    (format : String := formatString) : Lean.Json :=
   Lean.Json.mkObj <|
     [("format", Lean.toJson format),
      ("image_width", Lean.toJson (64 : Nat)),
@@ -87,10 +87,7 @@ private def checkCount (count : Nat) (points : Array Float) (format : String)
 def run : IO Unit := do
   expect "eight-point default" (cuboid.pointCount == 8 && checkCert cuboid)
   for count in [1, 3, 8, 17] do
-    checkCount count (diagonalPoints count) formatStringPoints (some (Lean.toJson count))
-  -- The eight-corner format accepts an omitted or explicit count of eight.
-  for declared in [none, some (Lean.toJson (8 : Nat))] do
-    checkCount 8 (diagonalPoints 8) formatString declared
+    checkCount count (diagonalPoints count) formatString (some (Lean.toJson count))
   let single ←
     parseJsonCert (certificateJson (Lean.toJson (diagonalPoints 1)) (some (Lean.toJson 1)))
   expect "image dimensions are checked"
@@ -101,16 +98,11 @@ def run : IO Unit := do
     (certificateJson (Lean.toJson (#[] : Array Float)))
   expectRejected "zero points with a declared count"
     (certificateJson (Lean.toJson (#[] : Array Float)) (some (Lean.toJson (0 : Nat))))
-  expectRejected "zero points in the eight-corner format"
-    (certificateJson (Lean.toJson (#[] : Array Float)) none formatString)
-  expectRejected "eight-corner format with three points"
-    (certificateJson (Lean.toJson (diagonalPoints 3)) none formatString)
-  expectRejected "eight-corner format with a declared count of three"
-    (certificateJson (Lean.toJson (diagonalPoints 3)) (some (Lean.toJson (3 : Nat))) formatString)
-  expectRejected "point-count format without a declared count"
-    (certificateJson (Lean.toJson (diagonalPoints 3)))
+  expectRejected "eight points without a declared count"
+    (certificateJson (Lean.toJson (diagonalPoints 8)))
   expectRejected "unknown format"
-    (certificateJson (Lean.toJson (diagonalPoints 8)) none "torchlean.camera.box3d.v0")
+    (certificateJson (Lean.toJson (diagonalPoints 8)) (some (Lean.toJson (8 : Nat)))
+      "torchlean.camera.box3d.v1")
   expectRejected "incomplete triple"
     (certificateJson (Lean.toJson (#[1, 1, 1, 1] : Array Nat)) (some (Lean.toJson (1 : Nat))))
   expectRejected "declared count mismatch"

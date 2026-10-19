@@ -29,14 +29,14 @@ namespace Tape
 
 /-- Elementwise addition. PyTorch: `torch.add` / `+`. -/
 @[inline] def add {α : Type} [TorchLean.Storage α] [Add α] {s : Shape}
-  (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) :=
+  (t : Tape (Spec.SomeTensor α)) (aId bId : Nat) : Result (Tape (Spec.SomeTensor α) × Nat) :=
   binary (α := α) (t := t) (σ₁ := s) (σ₂ := s) (τ := s) "add" aId bId
     (forward := addSpec)
     (backward := fun _a _b dLdy => (dLdy, dLdy))
 
 /-- Elementwise subtraction. PyTorch: `torch.sub` / `-`. -/
 @[inline] def sub {α : Type} [TorchLean.Storage α] [Sub α] [Zero α] {s : Shape}
-  (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) :=
+  (t : Tape (Spec.SomeTensor α)) (aId bId : Nat) : Result (Tape (Spec.SomeTensor α) × Nat) :=
   binary (α := α) (t := t) (σ₁ := s) (σ₂ := s) (τ := s) "sub" aId bId
     (forward := subSpec)
     (backward := fun _a _b dLdy =>
@@ -45,7 +45,7 @@ namespace Tape
 
 /-- Elementwise multiplication. PyTorch: `torch.mul` / `*`. -/
 @[inline] def mul {α : Type} [TorchLean.Storage α] [Mul α] {s : Shape}
-  (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) :=
+  (t : Tape (Spec.SomeTensor α)) (aId bId : Nat) : Result (Tape (Spec.SomeTensor α) × Nat) :=
   binary (α := α) (t := t) (σ₁ := s) (σ₂ := s) (τ := s) "mul" aId bId
     (forward := mulSpec)
     (backward := fun a b dLdy =>
@@ -65,7 +65,7 @@ totalize or be backend-dependent at `b = 0`, but no real-valued gradient is impl
 The executable rule needs only division, multiplication, subtraction and zero; it does not require
 transcendental operations or an ordering on the scalar type. -/
 @[inline] def div {α : Type} [TorchLean.Storage α] [Div α] [Mul α] [Sub α] [Zero α] {s : Shape}
-  (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) :=
+  (t : Tape (Spec.SomeTensor α)) (aId bId : Nat) : Result (Tape (Spec.SomeTensor α) × Nat) :=
   binary (α := α) (t := t) (σ₁ := s) (σ₂ := s) (τ := s) "div" aId bId
     (forward := divSpec)
     (backward := fun a b dLdy =>
@@ -77,13 +77,13 @@ transcendental operations or an ordering on the scalar type. -/
 
 /-- Direct elementwise negation; unlike subtraction from zero, this preserves signed zero. -/
 @[inline] def neg {α : Type} [TorchLean.Storage α] [Neg α] {s : Shape}
-    (t : Tape α) (xId : Nat) : Result (Tape α × Nat) :=
+    (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α) × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "neg" xId
     (forward := negSpec) (backward := fun _ seed => negSpec seed)
 
 /-- Multiply a tensor by a scalar constant. PyTorch: `x * c` for Python scalar `c`. -/
 @[inline] def scale {α : Type} [TorchLean.Storage α] [Mul α] {s : Shape}
-  (t : Tape α) (xId : Nat) (c : α) : Result (Tape α × Nat) :=
+  (t : Tape (Spec.SomeTensor α)) (xId : Nat) (c : α) : Result (Tape (Spec.SomeTensor α) × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "scale" xId
     (forward := fun x => scaleSpec x c)
     (backward := fun _x dLdy => scaleSpec dLdy c)
@@ -96,7 +96,8 @@ PyTorch comparison: `torch.abs`.
 -/
 @[inline] def abs {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
-  {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) :=
+  {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α)
+      × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s)
     "abs" xId
     (forward := fun x => absSpec (α := α) (s := s) x)
@@ -112,7 +113,8 @@ PyTorch comparison: `torch.sqrt`.
 -/
 @[inline] def sqrt {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
-  {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) :=
+  {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α)
+      × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s)
     "sqrt" xId
     (forward := fun x => sqrtSpec (α := α) (s := s) x)
@@ -133,7 +135,8 @@ PyTorch comparison: `torch.clamp`.
 -/
 @[inline] def clamp {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
-  {s : Shape} (t : Tape α) (xId : Nat) (minVal maxVal : α) : Result (Tape α × Nat) :=
+  {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) (minVal maxVal : α) : Result (Tape
+      (Spec.SomeTensor α) × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s)
     "clamp" xId
     (forward := fun x => clampSpec (α := α) (s := s) x minVal maxVal)
@@ -151,7 +154,8 @@ PyTorch comparison: `torch.maximum`.
 -/
 @[inline] def max {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
-  {s : Shape} (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) :=
+  {s : Shape} (t : Tape (Spec.SomeTensor α)) (aId bId : Nat) : Result (Tape (Spec.SomeTensor α)
+      × Nat) :=
   binary (α := α) (t := t) (σ₁ := s) (σ₂ := s) (τ := s) "max" aId bId
     (forward := maxSpec (α := α) (s := s))
     (backward := fun a b dLdy =>
@@ -165,7 +169,8 @@ PyTorch comparison: `torch.minimum`.
 -/
 @[inline] def min {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
-  {s : Shape} (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) :=
+  {s : Shape} (t : Tape (Spec.SomeTensor α)) (aId bId : Nat) : Result (Tape (Spec.SomeTensor α)
+      × Nat) :=
   binary (α := α) (t := t) (σ₁ := s) (σ₂ := s) (τ := s) "min" aId bId
     (forward := minSpec (α := α) (s := s))
     (backward := fun a b dLdy =>
@@ -178,14 +183,16 @@ The tape retains the input for `cos(x) * dLdy`, so the backward pass uses the sa
 the forward pass even when different angles produce the same sine value.
 -/
 @[inline] def sin {α : Type} [TorchLean.Storage α] [Context α]
-    {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) :=
+    {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α)
+        × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "sin" xId
     (forward := (Spec.sinOp (α := α) (s := s)).forward)
     (backward := (Spec.sinOp (α := α) (s := s)).backward)
 
 /-- Record elementwise cosine with the VJP `-sin(x) * dLdy` from `Spec.cosOp`. -/
 @[inline] def cos {α : Type} [TorchLean.Storage α] [Context α]
-    {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) :=
+    {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α)
+        × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "cos" xId
     (forward := (Spec.cosOp (α := α) (s := s)).forward)
     (backward := (Spec.cosOp (α := α) (s := s)).backward)
@@ -198,7 +205,8 @@ PyTorch comparison: `torch.relu(x)` / `torch.nn.functional.relu(x)`.
 @[inline] def relu {α : Type} [TorchLean.Storage α]
   [Mul α] [Zero α] [Max α] [BEq α] [One α] [LT α]
   [DecidableRel ((· > ·) : α → α → Prop)]
-  {s : Shape} (t : Tape α) (xId : Nat) : Result (Tape α × Nat) :=
+  {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α)
+      × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "relu" xId
     (forward := fun x => Activation.reluSpec (α := α) x)
     (backward := fun x dLdy =>

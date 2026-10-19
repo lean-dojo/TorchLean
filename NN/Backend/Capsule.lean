@@ -25,23 +25,6 @@ handler whose operation, provider, and device must agree with the selected contr
 namespace NN
 namespace Backend
 
-/--
-Reference to a native/FFI symbol used by a backend capsule.
-
-The repository linter checks that `path` exists, that `symbol` occurs in that source file, and
-that `buildTarget?`, when present, names a Lake target in `lakefile.lean`.
--/
-structure NativeSymbolRef where
-  path : String
-  symbol : String
-  buildTarget? : Option String := none
-  deriving DecidableEq, BEq, Repr
-
-/-- Source-level provenance for a contract descriptor. Provenance is not correctness evidence. -/
-inductive ContractProvenance where
-  | nativeSymbol (ref : NativeSymbolRef)
-  deriving DecidableEq, BEq, Repr
-
 /-- Concrete tensor-layout convention named by a backend contract. -/
 inductive TensorLayout where
   /-- TorchLean's ordinary typed tensor representation. -/
@@ -107,7 +90,6 @@ structure ContractDescriptor where
   claim : ContractClaim
   summary : String
   evidence : ContractEvidence
-  provenance : Array ContractProvenance := #[]
   deriving DecidableEq
 
 instance : Repr ContractDescriptor where
@@ -116,27 +98,22 @@ instance : Repr ContractDescriptor where
 namespace ContractDescriptor
 
 /-- A contract claim enforced by a named runtime guard. -/
-def guarded (claim : ContractClaim) (summary guard : String)
-    (provenance : Array ContractProvenance := #[]) : ContractDescriptor :=
-  { claim, summary, evidence := .runtimeGuard guard, provenance }
+def guarded (claim : ContractClaim) (summary guard : String) : ContractDescriptor :=
+  { claim, summary, evidence := .runtimeGuard guard }
 
 /-- A contract claim covered by a named regression suite. -/
-def tested (claim : ContractClaim) (summary suite : String)
-    (provenance : Array ContractProvenance := #[]) : ContractDescriptor :=
-  { claim, summary, evidence := .testSuite suite, provenance }
+def tested (claim : ContractClaim) (summary suite : String) : ContractDescriptor :=
+  { claim, summary, evidence := .testSuite suite }
 
 /-- A contract claim delegated to an explicitly named trusted boundary. -/
-def trusted (claim : ContractClaim) (summary reason : String)
-    (provenance : Array ContractProvenance := #[]) : ContractDescriptor :=
-  { claim, summary, evidence := .trustedBoundary reason, provenance }
+def trusted (claim : ContractClaim) (summary reason : String) : ContractDescriptor :=
+  { claim, summary, evidence := .trustedBoundary reason }
 
 /-- Record that a forward-only capsule intentionally has no reverse-mode implementation. -/
-def vjpUnavailable (op : BackendOp) (summary : String)
-    (provenance : Array ContractProvenance := #[]) : ContractDescriptor :=
+def vjpUnavailable (op : BackendOp) (summary : String) : ContractDescriptor :=
   { claim := .vjpUnavailable op
     summary
-    evidence := .notApplicable
-    provenance }
+    evidence := .notApplicable }
 
 end ContractDescriptor
 

@@ -163,7 +163,6 @@ PUBLIC_NUMERICAL_SPEC_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 LEAN_TYPECHECK_ROOTS = {
     "NN",
     "NN.CI.All",
-    "NN.CI.SlowProofs",
     "NN.Docs",
     "NN.Verification.Main",
 }
@@ -228,14 +227,6 @@ BROAD_LOW_LEVEL_IMPORT_PREFIXES = (
     "NN.Spec.Core.Tensor.Internal.",
 )
 
-CONTRACT_SOURCE_FILE_RE = re.compile(
-    r"\.sourceFile\s*\{(?P<body>[^{}]*)\}",
-    flags=re.DOTALL,
-)
-CONTRACT_NATIVE_SYMBOL_RE = re.compile(
-    r"\.nativeSymbol\s*\{(?P<body>[^{}]*)\}",
-    flags=re.DOTALL,
-)
 CONTRACT_GUARD_SOURCE_PATH_RE = re.compile(
     r"\.runtimeGuard\s+\"[^\"]*\.(?:c|cc|cpp|cu|cuh|h|hpp)\"",
 )
@@ -358,7 +349,7 @@ def _check_lean_target_coverage(findings: list[Finding]) -> None:
                 path,
                 None,
                 None,
-                "maintained Lean module is not reachable from `NN`, `NNCI`, `NNSlowProofs`, "
+                "maintained Lean module is not reachable from `NN`, `NNCI`, "
                 "`TorchLeanDocs`, or an executable root, and is not covered by the `NNExamples` "
                 "or `NNTests` globs.",
             )
@@ -607,31 +598,12 @@ def _check_verso_math_roles(path: pathlib.Path, text: str, findings: list[Findin
             )
 
 
-def _lean_string_field(body: str, field: str) -> str | None:
-    m = re.search(rf"\b{re.escape(field)}\s*:=\s*\"([^\"]+)\"", body)
-    return m.group(1) if m else None
-
-
-def _lean_optional_string_field(body: str, field: str) -> str | None:
-    m = re.search(rf"\b{re.escape(field)}\s*:=\s*some\s+\"([^\"]+)\"", body)
-    return m.group(1) if m else None
-
-
-def _lake_declares_target(lake_text: str, target: str) -> bool:
-    return re.search(
-        rf"^\s*(?:target|lean_exe|lean_lib)\s+{re.escape(target)}\b",
-        lake_text,
-        flags=re.MULTILINE,
-    ) is not None
-
-
 def _check_backend_contract_refs(
     path: pathlib.Path,
     text: str,
-    lake_text: str,
     findings: list[Finding],
 ) -> None:
-    """Check structured backend contract references to local sources and native symbols."""
+    """Reject native source paths used as backend runtime-guard labels."""
 
     for m in CONTRACT_GUARD_SOURCE_PATH_RE.finditer(text):
         line, col = _line_col(text, m.start())
@@ -641,90 +613,14 @@ def _check_backend_contract_refs(
                 path,
                 line,
                 col,
-                "native source paths belong in structured `.sourceFile` or `.nativeSymbol` provenance, not a runtime-guard label.",
+                "a runtime-guard label names the guard, not a native source path.",
             )
         )
-
-    for m in CONTRACT_SOURCE_FILE_RE.finditer(text):
-        body = m.group("body")
-        raw_path = _lean_string_field(body, "path")
-        if raw_path is None:
-            line, col = _line_col(text, m.start())
-            findings.append(Finding("ERROR", path, line, col, "`.sourceFile` provenance is missing `path := ...`."))
-            continue
-        source = REPO_ROOT / raw_path
-        if not source.exists():
-            line, col = _line_col(text, m.start())
-            findings.append(
-                Finding(
-                    "ERROR",
-                    path,
-                    line,
-                    col,
-                    f"`.sourceFile` provenance points to missing source `{raw_path}`.",
-                )
-            )
-
-    for m in CONTRACT_NATIVE_SYMBOL_RE.finditer(text):
-        body = m.group("body")
-        raw_path = _lean_string_field(body, "path")
-        symbol = _lean_string_field(body, "symbol")
-        build_target = _lean_optional_string_field(body, "buildTarget?")
-        line, col = _line_col(text, m.start())
-        if raw_path is None:
-            findings.append(Finding("ERROR", path, line, col, "`.nativeSymbol` provenance is missing `path := ...`."))
-            continue
-        if symbol is None:
-            findings.append(Finding("ERROR", path, line, col, "`.nativeSymbol` provenance is missing `symbol := ...`."))
-            continue
-        source = REPO_ROOT / raw_path
-        if not source.exists():
-            findings.append(
-                Finding(
-                    "ERROR",
-                    path,
-                    line,
-                    col,
-                    f"`.nativeSymbol` provenance points to missing source `{raw_path}`.",
-                )
-            )
-            continue
-        try:
-            source_text = source.read_text(encoding="utf-8", errors="replace")
-        except OSError as e:
-            findings.append(Finding("ERROR", source, None, None, f"failed to read file: {e}"))
-            continue
-        if symbol not in source_text:
-            findings.append(
-                Finding(
-                    "ERROR",
-                    path,
-                    line,
-                    col,
-                    f"`.nativeSymbol` provenance names `{symbol}`, but it does not occur in `{raw_path}`.",
-                )
-            )
-        if build_target is not None and not _lake_declares_target(lake_text, build_target):
-            findings.append(
-                Finding(
-                    "ERROR",
-                    path,
-                    line,
-                    col,
-                    f"`.nativeSymbol` provenance names Lake target `{build_target}`, but `lakefile.lean` does not declare it.",
-                )
-            )
 
 
 def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
     """Run TorchLean's repository hygiene checks and return all findings."""
     findings: list[Finding] = []
-    try:
-        lake_text = (REPO_ROOT / "lakefile.lean").read_text(encoding="utf-8")
-    except OSError as e:
-        lake_text = ""
-        findings.append(Finding("ERROR", REPO_ROOT / "lakefile.lean", None, None, f"failed to read file: {e}"))
-
     if not LINT_SCOPE_SENTINEL.exists():
         findings.append(
             Finding(
@@ -903,7 +799,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
         _check_line_style(path, text, findings)
         _check_local_source_refs(path, text, findings)
         _check_lean_doc_math(path, text, findings)
-        _check_backend_contract_refs(path, text, lake_text, findings)
+        _check_backend_contract_refs(path, text, findings)
 
         if rel.startswith(("NN/API/", "NN/Examples/")):
             for match in re.finditer(r"_root_\.", masked):
@@ -1190,8 +1086,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     )
 
         is_shape_generic_public_api = (
-            rel == "NN/API/Tensor.lean"
-            or rel.startswith("NN/API/Models/")
+            rel.startswith("NN/API/Models/")
             or rel.startswith("NN/API/Neural/")
         )
         if is_shape_generic_public_api:

@@ -556,7 +556,7 @@ declarations such as:
 -- These declarations expose native ownership operations
 -- without exposing pointer storage.
 @[never_extract, extern "torchlean_cuda_buffer_of_float_array_io"]
-opaque ofFloatArrayIO (a : @& FloatArray) : IO Buffer
+opaque ofFloatArrayIO (a : @& FloatArray) (dtype : Dtype := .float32) : IO Buffer
 
 @[never_extract, extern "torchlean_cuda_buffer_to_float_array_io"]
 opaque toFloatArrayIO (b : @& Buffer) : IO FloatArray
@@ -599,7 +599,7 @@ open Runtime.Autograd.LibTorch in
 #check @AnyBuffer.validate
 ```
 ```leanOutput ffiValidate
-AnyBuffer.validate : AnyBuffer → Result AnyBuffer
+AnyBuffer.validate : AnyBuffer → Runtime.Autograd.Result AnyBuffer
 ```
 
 It returns a `Result`, not a `Prop` and not a `Bool`: a mismatch becomes an ordinary Lean error with

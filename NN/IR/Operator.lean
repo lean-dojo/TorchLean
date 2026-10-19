@@ -112,6 +112,8 @@ inductive OpKind where
       -- Elementwise subtraction.
   | mulElem
       -- Elementwise multiplication.
+  | div
+      -- Elementwise division.
   | abs
       -- Elementwise absolute value.
   | sqrt
@@ -157,6 +159,10 @@ inductive OpKind where
       -- Softmax along an axis.
   | hardMaskedSoftmax (mask : HardMask)
       -- Stable last-axis softmax with exactly zero mass at blocked entries.
+  | topKMask (k : Nat)
+      -- One for the `k` largest entries of every row along the last axis and zero for the
+      -- others, ties going to the lower index (`Spec.MoE.topKMaskSpec`): mixture-of-experts
+      -- routing.
   | layernorm (axis : Nat)
       -- LayerNorm over the suffix of dimensions starting at `axis`.
       -- PyTorch analogue: `F.layer_norm(x, normalized_shape=x.shape[axis:])`.
@@ -169,6 +175,8 @@ inductive OpKind where
       -- Flatten to a vector of length `Spec.Shape.size s`.
   | concat (axis : Nat)
       -- Concatenate along an axis (verifier/export may allow an arbitrary number of parents ≥ 2).
+  | slice (axis start length : Nat)
+      -- Entries `start, …, start + length - 1` along an axis (analogous to `torch.narrow`).
   | mseLoss
       -- Scalar mean squared error (used in some training/verification examples).
   deriving Repr, DecidableEq
@@ -192,12 +200,13 @@ structure OpMetadata where
 /-- Constructor identity of an `NN.IR.OpKind`, with the payload forgotten. -/
 inductive OpTag where
   | input | const | custom | permute | transpose | detach | randUniform | bernoulliMask
-  | add | sub | mulElem | abs | sqrt | inv | maxElem | minElem
+  | add | sub | mulElem | div | abs | sqrt | inv | maxElem | minElem
   | maxPool | avgPool | broadcastTo | reduceSum | reduceMean | sum
   | matmul | linear | conv | batchNormEval
   | relu | tanh | sigmoid | exp | log | sin | cos
   | softplus | safeLog
-  | softmax | hardMaskedSoftmax | layernorm | reshape | flatten | concat | mseLoss
+  | softmax | hardMaskedSoftmax | topKMask | layernorm | reshape | flatten | concat | slice
+  | mseLoss
   deriving DecidableEq, Repr, Inhabited
 
 namespace OpTag
@@ -205,12 +214,13 @@ namespace OpTag
 /-- Every semantic operator identity, in declaration order. -/
 def all : List OpTag :=
   [ .input, .const, .custom, .permute, .transpose, .detach, .randUniform, .bernoulliMask
-  , .add, .sub, .mulElem, .abs, .sqrt, .inv, .maxElem, .minElem
+  , .add, .sub, .mulElem, .div, .abs, .sqrt, .inv, .maxElem, .minElem
   , .maxPool, .avgPool, .broadcastTo, .reduceSum, .reduceMean, .sum
   , .matmul, .linear, .conv, .batchNormEval
   , .relu, .tanh, .sigmoid, .exp, .log, .sin, .cos
   , .softplus, .safeLog
-  , .softmax, .hardMaskedSoftmax, .layernorm, .reshape, .flatten, .concat, .mseLoss ]
+  , .softmax, .hardMaskedSoftmax, .topKMask, .layernorm, .reshape, .flatten, .concat, .slice
+  , .mseLoss ]
 
 /-- Every operator identity occurs in the enumeration. -/
 theorem mem_all (tag : OpTag) : tag ∈ all := by
@@ -232,6 +242,7 @@ def toKind? : OpTag → Option OpKind
   | .add => some .add
   | .sub => some .sub
   | .mulElem => some .mulElem
+  | .div => some .div
   | .abs => some .abs
   | .sqrt => some .sqrt
   | .inv => some .inv
@@ -258,10 +269,12 @@ def toKind? : OpTag → Option OpKind
   | .cos => some .cos
   | .softmax => none
   | .hardMaskedSoftmax => none
+  | .topKMask => none
   | .layernorm => none
   | .reshape => none
   | .flatten => none
   | .concat => none
+  | .slice => none
   | .mseLoss => some .mseLoss
 
 /-- Whether constructing the operation needs an axis, shape, or other static attributes. -/
@@ -282,6 +295,7 @@ def metadata : OpTag → OpMetadata
   | .add => ⟨"add", ⟨2, some 2⟩⟩
   | .sub => ⟨"sub", ⟨2, some 2⟩⟩
   | .mulElem => ⟨"mul_elem", ⟨2, some 2⟩⟩
+  | .div => ⟨"div", ⟨2, some 2⟩⟩
   | .abs => ⟨"abs", ⟨1, some 1⟩⟩
   | .sqrt => ⟨"sqrt", ⟨1, some 1⟩⟩
   | .inv => ⟨"inv", ⟨1, some 1⟩⟩
@@ -308,10 +322,12 @@ def metadata : OpTag → OpMetadata
   | .cos => ⟨"cos", ⟨1, some 1⟩⟩
   | .softmax => ⟨"softmax", ⟨1, some 1⟩⟩
   | .hardMaskedSoftmax => ⟨"hard_masked_softmax", ⟨1, some 1⟩⟩
+  | .topKMask => ⟨"top_k_mask", ⟨1, some 1⟩⟩
   | .layernorm => ⟨"layernorm", ⟨1, some 1⟩⟩
   | .reshape => ⟨"reshape", ⟨1, some 1⟩⟩
   | .flatten => ⟨"flatten", ⟨1, some 1⟩⟩
   | .concat => ⟨"concat", ⟨2, none⟩⟩
+  | .slice => ⟨"slice", ⟨1, some 1⟩⟩
   | .mseLoss => ⟨"mse_loss", ⟨2, some 2⟩⟩
 
 end OpTag
@@ -331,6 +347,7 @@ def opTag : OpKind → OpTag
   | .add => .add
   | .sub => .sub
   | .mulElem => .mulElem
+  | .div => .div
   | .abs => .abs
   | .sqrt => .sqrt
   | .inv => .inv
@@ -357,10 +374,12 @@ def opTag : OpKind → OpTag
   | .cos => .cos
   | .softmax .. => .softmax
   | .hardMaskedSoftmax .. => .hardMaskedSoftmax
+  | .topKMask .. => .topKMask
   | .layernorm .. => .layernorm
   | .reshape .. => .reshape
   | .flatten .. => .flatten
   | .concat .. => .concat
+  | .slice .. => .slice
   | .mseLoss => .mseLoss
 
 /-- Structural metadata. Custom arity comes from the declared input signature. -/
@@ -418,10 +437,12 @@ def describe : OpKind → String
   | .softmax axis => s!"softmax(axis={axis})"
   | .hardMaskedSoftmax mask =>
       s!"hard_masked_softmax(maskShape={repr mask.shape})"
+  | .topKMask k => s!"top_k_mask(k={k})"
   | .layernorm axis => s!"layernorm(axis={axis})"
   | .reshape inShape outShape => s!"reshape(from={repr inShape}, to={repr outShape})"
   | .flatten s => s!"flatten(shape={repr s})"
   | .concat axis => s!"concat(axis={axis})"
+  | .slice axis start length => s!"slice(axis={axis}, start={start}, length={length})"
   | kind => kind.tag
 
 end OpKind

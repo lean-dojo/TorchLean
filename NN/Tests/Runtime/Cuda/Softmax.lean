@@ -6,7 +6,9 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Runtime.Autograd.Model.Session
+public import NN.Runtime.Autograd.Model.Functional.ShapeOps
+public import NN.Runtime.Autograd.Torch.Core.BackwardOptim
+public import NN.Runtime.Autograd.Torch.Core.Trainer.EagerOps
 public import NN.Tests.Runtime.Cuda.Utils
 
 /-!
@@ -26,20 +28,26 @@ open Spec TorchLean
 open TorchLean TorchLean.Tensor
 open Runtime.Autograd
 
-/-- Exercise arbitrary-axis softmax through the public CUDA session, including its VJP. -/
+/-- Record one operation on a fresh eager session and return its value and its VJP. -/
+def Internal.valueAndVjp {s : Shape} (device : NN.Backend.Device) (name : String)
+    (op : Torch.TensorRef Float s → Torch.Internal.EagerM Float (Torch.TensorRef Float s))
+    (x upstream : Tensor Float s) : IO (Tensor Float s × Tensor Float s) := do
+  let sess ← Torch.Internal.EagerSession.new (α := Float) { device }
+  let xRef ← sess.input x (name := some name) (requiresGrad := true)
+  let yRef ← op xRef sess
+  let y ← sess.getValue yRef
+  let grads ← sess.backwardDenseAll yRef upstream
+  pure (y, ← Torch.Internal.EagerSession.grad grads xRef)
+
+/-- Exercise arbitrary-axis softmax through the CUDA session, including its VJP. -/
 def checkInteriorAxisSession : IO Unit := do
   let s : Shape := [2, 2, 2]
   let x : Tensor Float s :=
     (Tensor.from (#[0, 2, 1, 4, 3, 8, 7, 9] : Array Float)).reshape [2, 2, 2] (by dsimp; decide)
   let upstream : Tensor Float s :=
     (Tensor.from #[1.0, -2.0, 3.0, 4.0, -1.0, 2.0, 5.0, -3.0]).reshape [2, 2, 2] (by dsimp; decide)
-  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
-    { execution := .eager, device := .cuda }
-  let xRef ← Runtime.Autograd.Model.Session.input sess x
-    (name := some "interior_axis_input") (requiresGrad := true)
-  let yRef ← Runtime.Autograd.Model.Session.softmax sess 1 xRef
-  let actual ← Runtime.Autograd.Model.Session.getValue sess yRef
-  let gradient ← Runtime.Autograd.Model.Session.vjp sess yRef upstream xRef
+  let (actual, gradient) ← Internal.valueAndVjp .cuda "interior_axis_input"
+    (Model.F.softmax (m := Torch.Internal.EagerM Float) (α := Float) (s := s) 1) x upstream
   let expected := Activation.softmaxSpec (α := Float) 1 x
   let expectedGradient := Activation.softmaxBackwardSpec (α := Float) 1 x upstream
   Utils.assertTensorApprox (s := s) "softmax interior-axis forward" actual expected (tol := 2e-3)
@@ -47,27 +55,16 @@ def checkInteriorAxisSession : IO Unit := do
     (tol := 2e-3)
 
 def evalSoftmax (device : NN.Backend.Device) (x upstream : Tensor Float [2, 3]) :
-    IO (Tensor Float [2, 3] × Tensor Float [2, 3]) := do
-  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
-    { execution := .eager, device := device }
-  let xRef ← Runtime.Autograd.Model.Session.input sess x
-    (name := some "softmax_input") (requiresGrad := true)
-  let yRef ← Runtime.Autograd.Model.Session.softmax sess 1 xRef
-  let y ← Runtime.Autograd.Model.Session.getValue sess yRef
-  let gradient ← Runtime.Autograd.Model.Session.vjp sess yRef upstream xRef
-  pure (y, gradient)
+    IO (Tensor Float [2, 3] × Tensor Float [2, 3]) :=
+  Internal.valueAndVjp device "softmax_input"
+    (Model.F.softmax (m := Torch.Internal.EagerM Float) (α := Float) (s := [2, 3]) 1) x upstream
 
 def evalLogSoftmax (device : NN.Backend.Device)
     (x upstream : Tensor Float [2, 3]) :
-    IO (Tensor Float [2, 3] × Tensor Float [2, 3]) := do
-  let sess ← Runtime.Autograd.Model.Session.new (α := Float)
-    { execution := .eager, device := device }
-  let xRef ← Runtime.Autograd.Model.Session.input sess x
-    (name := some "log_softmax_input") (requiresGrad := true)
-  let yRef ← Runtime.Autograd.Model.Session.logSoftmax sess 1 xRef
-  let y ← Runtime.Autograd.Model.Session.getValue sess yRef
-  let gradient ← Runtime.Autograd.Model.Session.vjp sess yRef upstream xRef
-  pure (y, gradient)
+    IO (Tensor Float [2, 3] × Tensor Float [2, 3]) :=
+  Internal.valueAndVjp device "log_softmax_input"
+    (Model.F.logSoftmax (m := Torch.Internal.EagerM Float) (α := Float) (s := [2, 3]) 1)
+    x upstream
 
 /-- A rejected node or cotangent must not allocate native payloads or buffer wrappers. -/
 def Internal.assertRejectedWithoutAllocation {α : Type} (label : String)
@@ -83,7 +80,8 @@ def Internal.assertRejectedWithoutAllocation {α : Type} (label : String)
     throw <| IO.userError s!"{label}: allocated before rejecting invalid input"
 
 /-- Exercise the VJP closure itself, beyond the outer backward seed validation. -/
-def Internal.checkWrongUpstream (label : String) (s : Shape) (node : LibTorch.Node) :
+def Internal.checkWrongUpstream (label : String) (s : Shape) (node
+    : Runtime.Autograd.Node Runtime.Autograd.LibTorch.AnyBuffer) :
     IO Unit := do
   let seed ← LibTorch.Buffer.ofFloatArrayIO (Utils.floatArray (Array.replicate s.size 2.0))
   Internal.assertRejectedWithoutAllocation s!"{label} wrong upstream shape" fun _ =>
@@ -98,14 +96,16 @@ def Internal.checkWrongUpstream (label : String) (s : Shape) (node : LibTorch.No
 /-- Scalar and empty row operations preserve values, zero VJPs, and repeated-backward lifetime. -/
 def Internal.checkDegenerateLast (s : Shape) (logarithmic : Bool) : IO Unit := do
   let label := if logarithmic then "degenerate log_softmax" else "degenerate softmax"
-  let applyOp := fun (tape : LibTorch.Tape) (xId : Nat) =>
+  let applyOp := fun (tape : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer) (xId
+      : Nat) =>
     if logarithmic then LibTorch.Tape.logSoftmaxLast (s := s) tape xId
     else LibTorch.Tape.softmaxLast (s := s) tape xId
   Internal.assertRejectedWithoutAllocation s!"{label} invalid node" fun _ =>
-    applyOp LibTorch.Tape.empty 0
+    applyOp Runtime.Autograd.Tape.empty 0
   let baseline ← LibTorch.Buffer.memory
   let input ← LibTorch.Buffer.ofFloatArrayIO (Utils.floatArray (Array.replicate s.size 7.0))
-  let (tape, xId) := LibTorch.Tape.empty.leaf { s := s, buf := input }
+  let (tape, xId) := Runtime.Autograd.LibTorch.Tape.leaf Runtime.Autograd.Tape.empty { s := s, buf
+      := input }
   let result ← IO.lazyPure fun _ => applyOp tape xId
   let (tape, yId) ← IO.ofExcept result
   let some node := tape.getNode? yId
@@ -139,7 +139,7 @@ def Internal.checkDegenerateLast (s : Shape) (logarithmic : Bool) : IO Unit := d
   for node in tape.nodes do
     discard <| LibTorch.Buffer.releaseIO node.value.buf
     for buffer in node.cleanup do
-      discard <| LibTorch.Buffer.releaseIO buffer
+      discard <| LibTorch.Buffer.releaseIO buffer.buf
   let retired ← LibTorch.Buffer.memory
   unless retired.liveBytes == baseline.liveBytes do
     throw <| IO.userError s!"{label}: tape retirement retained payloads"
@@ -148,14 +148,15 @@ def Internal.checkDegenerateLast (s : Shape) (logarithmic : Bool) : IO Unit := d
 def checkScratchLifetime (logarithmic : Bool) : IO Unit := do
   let label := if logarithmic then "log_softmax" else "softmax"
   Internal.assertRejectedWithoutAllocation s!"{label} invalid node" fun _ =>
-    if logarithmic then LibTorch.Tape.logSoftmaxLast (s := [2, 3]) LibTorch.Tape.empty 0
-    else LibTorch.Tape.softmaxLast (s := [2, 3]) LibTorch.Tape.empty 0
+    if logarithmic then LibTorch.Tape.logSoftmaxLast (s := [2, 3]) Runtime.Autograd.Tape.empty 0
+    else LibTorch.Tape.softmaxLast (s := [2, 3]) Runtime.Autograd.Tape.empty 0
   let x : Tensor Float [2, 3] := [[0.1, -0.2, 0.3], [0.05, 0.25, -0.15]]
   let upstream : Tensor Float [2, 3] := [[1.0, -2.0, 0.5], [0.25, 3.0, -1.0]]
   let baseline ← Runtime.Autograd.LibTorch.Buffer.memory
   let input ← Runtime.Autograd.LibTorch.Buffer.ofFloatArrayIO
     (Runtime.Autograd.LibTorch.Convert.flattenFloat x)
-  let (tape, xId) := Runtime.Autograd.LibTorch.Tape.empty.leaf { s := [2, 3], buf := input }
+  let (tape, xId) :=
+    Runtime.Autograd.LibTorch.Tape.leaf Runtime.Autograd.Tape.empty { s := [2, 3], buf := input }
   let result ← IO.lazyPure fun _ =>
     if logarithmic then Runtime.Autograd.LibTorch.Tape.logSoftmaxLast (s := [2, 3]) tape xId
     else Runtime.Autograd.LibTorch.Tape.softmaxLast (s := [2, 3]) tape xId
@@ -188,7 +189,7 @@ def checkScratchLifetime (logarithmic : Bool) : IO Unit := do
   for node in tape.nodes do
     discard <| Runtime.Autograd.LibTorch.Buffer.releaseIO node.value.buf
     for buffer in node.cleanup do
-      discard <| Runtime.Autograd.LibTorch.Buffer.releaseIO buffer
+      discard <| Runtime.Autograd.LibTorch.Buffer.releaseIO buffer.buf
   let retired ← Runtime.Autograd.LibTorch.Buffer.memory
   unless retired.liveBytes == baseline.liveBytes do
     throw <| IO.userError s!"{label}: tape retirement retained payloads"

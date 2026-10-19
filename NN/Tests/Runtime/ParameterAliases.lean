@@ -9,7 +9,6 @@ module
 public import NN.Runtime.Autograd.Engine.LibTorch.Ops.Elementwise
 public import NN.Runtime.Autograd.Model.Optim
 public import NN.Runtime.Autograd.Torch.Core.BackwardOptim
-public import NN.Runtime.Autograd.Torch.TypedGraphSession.Autograd
 public import NN.Runtime.Autograd.Torch.Core.Trainer.CheckpointSchema
 public import NN.Runtime.Autograd.Torch.Core.Trainer.GraphOps
 public import NN.Tensor.Internal.Elab.TensorLiteral
@@ -88,8 +87,8 @@ def checkStorage : IO Unit := do
         #[some (descriptor fresh), some (descriptor other), some (descriptor fresh)]) ==
         #[some 0, some 1, some 0])
   let independentSchema ← checkpointParameterSchema independent
-  check "independent checkpoint keeps version-2 schema"
-    (independentSchema.isWellFormed && independentSchema.representatives.isNone)
+  check "independent checkpoint schema records no sharing"
+    (independentSchema.isWellFormed && !independentSchema.hasAliases)
   let tiedSchema ← checkpointParameterSchema params
   check "checkpoint slots agree with optimizer slots"
     (tiedSchema.isWellFormed &&
@@ -133,13 +132,6 @@ def checkSnapshots (device : NN.Backend.Device) : IO Unit := do
     (groups.map (·.leaves) == #[#[first.id, second.id]])
   check "first recording remains a snapshot" ((← session.getValue first).item == 1.0)
   check "second recording observes host mutation" ((← session.getValue second).item == 5.0)
-  let gradients := #[Spec.SomeTensor.ofTensor (Tensor.scalar (2.0 : Float)),
-    Spec.SomeTensor.ofTensor (Tensor.scalar (3.0 : Float))]
-  session.sgdStepAll 0.25 gradients
-  check "SGD updates current storage once with summed gradients"
-    ((← bits p) == (3.75 : Float).toBits)
-  check "update preserves first snapshot" ((← session.getValue first).item == 1.0)
-  check "update preserves second snapshot" ((← session.getValue second).item == 5.0)
   session.resetTape
   check "reset preserves other session snapshot" ((← observer.getValue observed).item == 1.0)
   observer.resetTape
@@ -176,22 +168,12 @@ def checkOptimizer
     check "tied optimizer parameter trajectory" ((← bits p) == (← bits referenceP))
     check "independent optimizer parameter trajectory" ((← bits q) == (← bits referenceQ))
 
-/-- Cotangent validation precedes mutation, including cross-shape alias-map corruption. -/
+/-- Summing the gradients of aliased slots rejects an alias map that joins different shapes. -/
 def checkGradientValidation : IO Unit := do
-  let p ← scalar
-  let q ← scalar
-  let session ← EagerSession.new (α := Float)
-  discard <| session.use p
-  discard <| session.use q
-  let malformed := #[Spec.SomeTensor.ofTensor (Tensor.scalar (1.0 : Float)),
-    Spec.SomeTensor.ofTensor ([3.0] : Tensor Float [1])]
-  rejects "gradient shape mismatch" (session.sgdStepAll 0.1 malformed)
-  check "gradient failure preserves first parameter" ((← bits p) == (2.0 : Float).toBits)
   let gradients : TensorPack Float [[], [1]] :=
     .cons (Tensor.scalar 1.0) (.cons ([3.0] : Tensor Float [1]) .nil)
   rejects "cross-shape canonical gradients"
     (discard <| ParamList.canonicalGradients #[some 0, some 0] gradients)
-  session.resetTape
 
 private def cudaGradients (a b c : Float) : IO CudaGradMap := do
   let first ← CudaBridge.toAnyBuffer (Tensor.scalar a)
@@ -385,47 +367,6 @@ def checkCudaCheckpoint : IO Unit := IO.FS.withTempDir fun directory => do
     releaseAdam (← state.get)
     releaseAdam (← restoredState.get)
 
-/-- Typed SGD follows eager recording-order addition, current storage, and validation atomicity. -/
-def checkTypedGraphSgd : IO Unit := do
-  let typed ← TypedGraphSession.new (α := Float)
-  let eager ← EagerSession.new (α := Float)
-  let p ← scalar 1.0
-  let reference ← scalar 1.0
-  let independent ← scalar 1.0
-  let independentReference ← scalar 1.0
-  let _ ← eager.use { reference with requiresGrad := false }
-  let _ ← eager.use reference
-  let _ ← eager.use { reference with name := some "alias" }
-  let _ ← eager.use reference
-  let _ ← eager.use independentReference
-  let _ ← typed.use { p with requiresGrad := false }
-  let first ← typed.use p
-  let _ ← typed.use { p with name := some "alias" }
-  let _ ← typed.use p
-  let _ ← typed.use independent
-  let gradients := #[0.0, 1.0e16, -1.0e16, 3.0, 2.0].map fun value =>
-    Spec.SomeTensor.ofTensor (Tensor.scalar value)
-  rejects "typed validates missing later gradient before mutation" <|
-    typed.sgdStepAll 1.0 (gradients.extract 0 4)
-  check "missing gradient did not change typed storage" ((← bits p) == (1.0 : Float).toBits)
-  let malformed := gradients.set! 4 (Spec.SomeTensor.ofTensor ([2.0] : Tensor Float [1]))
-  rejects "typed validates later gradient shape before mutation" <| typed.sgdStepAll 1.0 malformed
-  check "bad gradient shape did not change typed storage" ((← bits p) == (1.0 : Float).toBits)
-  setParamHostValue p (Tensor.scalar 5.0)
-  setParamHostValue reference (Tensor.scalar 5.0)
-  typed.sgdStepAll 1.0 gradients
-  eager.sgdStepAll 1.0 gradients
-  check "typed sums aliases in recording order before one update"
-    ((← bits p) == (2.0 : Float).toBits)
-  check "typed and eager shared update agree bitwise" ((← bits p) == (← bits reference))
-  check "equal values in independent storage remain independent"
-    ((← bits independent) == (← bits independentReference) &&
-      (← bits independent) == (-1.0 : Float).toBits)
-  check "typed update preserves the recorded snapshot"
-    ((← typed.getValue first).item.toBits == (1.0 : Float).toBits)
-  typed.resetTape
-  check "typed reset drops storage descriptors" ((← typed.parameterStorageByLeaf.get).isEmpty)
-
 /-- One observer preserves ordered writes, including repeated storage ids and empty state. -/
 def checkBufferWriteOrder : IO Unit := do
   let trace ← IO.mkRef (#[] : Array Nat)
@@ -472,7 +413,6 @@ def checkBufferWriteOrder : IO Unit := do
 def runCpu : IO Unit := do
   checkBufferWriteOrder
   checkStorage
-  checkTypedGraphSgd
   checkRegistrations
   checkSnapshots .cpu
   checkGradientValidation

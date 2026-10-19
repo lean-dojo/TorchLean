@@ -8,9 +8,6 @@ module
 
 public import NN.Runtime.Autograd.TypedGraph
 public import NN.Runtime.Autograd.Torch.Core.TypedGraph
-public import NN.Runtime.Autograd.Torch.TypedGraphSession.Autograd
-public import NN.Runtime.Autograd.Torch.TypedGraphSession.GraphOps
-public import NN.Runtime.Autograd.Torch.TypedGraphSession.Neural
 public import NN.Spec.Core.FloatInstances
 
 /-!
@@ -54,7 +51,7 @@ private def compare (label : String) (actual expected : Array (Spec.SomeTensor F
       (bits left == bits right)
 
 private def checkSeed {Γ ss : List Shape} (label : String) (compiled : Compiled Float32 Γ ss)
-    (reference : Tape Float32) (seed : TorchLean.TensorPack Float32 (Γ ++ ss)) :
+    (reference : Tape (Spec.SomeTensor Float32)) (seed : TorchLean.TensorPack Float32 (Γ ++ ss)) :
     IO (Array (Spec.SomeTensor Float32)) := do
   let expected ← IO.ofExcept (reference.backwardDenseFrom seed.toShapeErasedArray)
   let actual := compiled.backwardDenseFrom seed
@@ -191,12 +188,6 @@ private def checkDisconnected : IO Unit := do
   compare "unused overflowing exp: checked VJP" gradient.toShapeErasedArray expected
   expect "unused overflowing exp: forward output" (bits (Spec.SomeTensor.ofTensor output) ==
     Array.replicate 4 (2000.0 : Float32).toBits)
-  let session ← Torch.Internal.TypedGraphSession.new (α := Float32)
-  let x ← session.input (Tensor.full [4] (1000.0 : Float32)) (requiresGrad := true)
-  let _ ← session.exp x
-  let output ← session.scale x 2.0
-  let gradient ← session.backwardDenseAll output seed
-  compare "unused overflowing exp: session" (gradient.extract 0 1) expected
   -- Binary16's numerical equality identifies signed zeros and rejects NaN equality. The saved
   -- support program instead needs the decidable equality of FloatLib's encoded carrier.
   let program : GraphM.M (FloatLib.Floats.ExecFloat.Binary 5 10) [[1]] (GraphM.Var [1]) := do
@@ -228,32 +219,6 @@ private def checkValidation : IO Unit := do
   let (_, expected) ← IO.ofExcept (lowerToTapeChecked state.data inputs ())
   compare "valid logarithm forward" compiled.context.values expected.toShapeErasedArray
 
-private def checkSession : IO Unit := do
-  let session ← Torch.Internal.TypedGraphSession.new (α := Float32)
-  let x ← session.input (Tensor.full [4] (1.0 : Float32)) (requiresGrad := true)
-  let frozen ← session.input (Tensor.full [4] (2.0 : Float32)) (requiresGrad := false)
-  let repeated ← session.add x x
-  let output ← session.add repeated frozen
-  let state ← session.state.get
-  let reference ← IO.ofExcept (Torch.Internal.TypedGraphSession.lowerTape state)
-  let seed : Tensor Float32 [4] := Tensor.full [4] 1.0
-  let idx ← IO.ofExcept (Torch.Internal.TypedGraphSession.index
-    (Γ := state.Γ) (ss := state.ss) output.id [4])
-  let expected ← IO.ofExcept (backwardDenseAllFrom reference idx seed)
-  let actual ← session.backwardDenseAll output seed
-  compare "normal session with frozen input" actual expected
-  compare "normal session cached forward" #[Spec.SomeTensor.ofTensor (← session.getValue output)]
-    #[Spec.SomeTensor.ofTensor (Tensor.full [4] (4.0 : Float32))]
-  let frozenSeed : Tensor Float32 [4] := Tensor.Internal.Rep.ofArray
-    #[Float32.ofBits 0x80000000, Float32.ofBits 1, -2.0, 16777216.0] (by decide)
-  let frozenIdx ← IO.ofExcept (Torch.Internal.TypedGraphSession.index
-    (Γ := state.Γ) (ss := state.ss) frozen.id [4])
-  let expected ← IO.ofExcept (backwardDenseAllFrom reference frozenIdx frozenSeed)
-  let actual ← session.backwardDenseAll frozen frozenSeed
-  compare "explicit frozen leaf seed" actual expected
-  expect "the frozen leaf retains the seed's Float32.toBits observations"
-    (bits actual[frozen.id]! == (Storage.toArray frozenSeed.buffer).map Float32.toBits)
-
 def run : IO Unit := do
   checkBranch
   checkRepeatedParent
@@ -261,10 +226,9 @@ def run : IO Unit := do
   checkCustomDense
   checkDisconnected
   checkValidation
-  checkSession
   IO.println "TypedGraph scaling regressions passed: canonical FP32 toBits \
     (including signed zeros), branch order, repeated parents, \
     input/intermediate seeds, zero-cotangent singular/custom VJPs, validation, repeated backward, \
-    public checked/pure APIs, disconnected FP32/configured VJPs, session frozen leaves"
+    public checked/pure APIs, disconnected FP32/configured VJPs"
 
 end TypedGraphScalingRegression

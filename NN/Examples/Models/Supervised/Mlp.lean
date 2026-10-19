@@ -71,8 +71,8 @@ def model : nn.Builder (nn.Sequential input output) :=
 Auto MPG as a public TorchLean dataset.
 
 The only dataset-specific details here are the CSV path, header convention, batch size, and feature
-count. Runtime arithmetic selection stays inside `Trainer`, so the same dataset works for CPU,
-CUDA, typed graph, eager, and IEEE-reference modes.
+count. Runtime arithmetic and device selection stay inside `Trainer`, so the same dataset works
+on the CPU or CUDA, with native or IEEE-reference arithmetic.
 -/
 def data (path : System.FilePath) (seed : Nat) :
     Trainer.Dataset input output :=
@@ -90,9 +90,9 @@ def train (runtime : Runtime.Config) (flags : Support.Training.Options Support.C
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := flags.training.learningRate } })
         .mse
-        (seed := flags.data.seed)
+        (seed := runtime.seed)
   trainer.train
-    (data flags.data.path flags.data.seed)
+    (data flags.data.path runtime.seed)
     (flags.training.trainOptions
       (logTitle := "MLP tabular training")
       (logNotes := #[s!"dataset={flags.data.path}", s!"lr={flags.training.learningRate}",

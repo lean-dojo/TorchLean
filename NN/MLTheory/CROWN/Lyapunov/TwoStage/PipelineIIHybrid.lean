@@ -228,11 +228,12 @@ def run (width : Nat) (args : List String) : IO Unit := do
   let mod ← Runtime.Autograd.Model.Module.Objective.create
     (α := Scalar) (β := Unit) (stateShapes := Core.paramShapes width)
     (inputShapes := [Core.xShape]) (dataInputShapes := [])
-    (runtime := { execution := .typedGraph })
     (requiresGrad := Array.replicate (Core.paramShapes width).length true)
     (loss := Core.lossProgram width (β := Scalar))
     (initState := TorchLean.nn.State.Internal.toTensorPack initialState)
   let tr := Runtime.Autograd.Model.Module.Objective.trainer mod
+  let sgd ← Runtime.Autograd.Model.Module.bindOptimizer mod
+    (Runtime.Autograd.Model.Optim.sgd Execution.defaultLr)
 
   let cLoss ← Runtime.Autograd.Model.Autodiff.lowerToTypedGraph
     (α := Scalar) (paramShapes := Core.paramShapes width) (inputShapes := [Core.xShape])
@@ -258,7 +259,7 @@ def run (width : Nat) (args : List String) : IO Unit := do
         Runtime.Autograd.Torch.ScalarTrainer.loss tr xs .nil).item
       if (0 : Scalar) < lossFound then
         foundViolations := foundViolations + 1
-      Runtime.Autograd.Torch.ScalarTrainer.step tr Execution.defaultLr xs .nil
+      sgd.step xs .nil
       IO.println s!"[stage2] round {round}: lossBefore={lossBeforePgd} lossAfterPGD={lossFound}"
 
   let params := TorchLean.nn.State.Internal.fromTensorPack (← tr.getState)

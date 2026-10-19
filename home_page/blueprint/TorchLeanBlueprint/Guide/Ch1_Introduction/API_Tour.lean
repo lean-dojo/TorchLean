@@ -846,11 +846,10 @@ def atTrainer : Trainer [2] [1] :=
 prediction before training = [-0.088261]
 ```
 
-That number came from the seeded initial weights, with no training at all. The default execution
-profile is checked CPU with the eager runtime and native `Float32`; a configuration may instead
-select typed graph execution or the bit-level FloatLib binary32 reference, which
-{ref "execution-modes"}[the execution modes chapter] covers. Device and provider selection are
-runtime concerns and do not change the model's input and output shapes.
+That number came from the seeded initial weights, with no training at all. The default profile is
+checked CPU with native `Float32`; a configuration may instead select CUDA or the bit-level FloatLib
+binary32 reference, which {ref "run-configuration"}[Choosing How A Model Runs] covers. Device and
+provider selection are runtime concerns and do not change the model's input and output shapes.
 
 Training options belong to the call rather than to the trainer, because they describe one run:
 
@@ -1067,7 +1066,7 @@ scripts/lake.sh exe torchlean --help
 ```
 
 The top-level help lists the runnable model families and the common `--device`, `--arithmetic`,
-`--execution`, `--seed`, and `--show-backend` flags.
+`--seed`, and `--show-backend` flags.
 
 For exact names, the generated API page is the declaration index, and in a Lean file `#check` shows
 the elaborated type of any name while editor hover reveals its documentation and source.

@@ -16,8 +16,9 @@ public import NN.Runtime.Autograd.Engine.LibTorch.Ops.NormSoftmax
 /-!
 # Eager Tensor Operations
 
-PyTorch-style tensor operations backed by the eager CPU/CUDA tapes. These wrappers record runtime
-nodes, dispatch CUDA kernels when requested, and preserve the typed `TensorRef` surface.
+PyTorch-style tensor operations recorded on the session's tape. Each one runs the CPU or the CUDA
+kernel of the operation, as the session's device selects, and preserves the typed `TensorRef`
+surface.
 -/
 
 
@@ -155,12 +156,12 @@ def attention {α : Type} [TorchLean.Storage α] (s : EagerSession α)
           (fun sample => attentionCpu s h1 wq wk wv wo sample mask)
           samples
   let cuda := do
-    let t0 ← s.cudaTape.get
+    let t0 ← s.cudaTape
     let result ← Runtime.Autograd.LibTorch.Tape.attention (t := t0)
       (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
       h1 wq.id wk.id wv.id wo.id x.id mask (batch := batch) (hBatch := hBatch)
     let (t1, id) ← IO.ofExcept result
-    s.cudaTape.set t1
+    s.setCudaTape t1
     pure (some { id := id })
   execute (α := α) s .attention
     #[wq.identity?, wk.identity?, wv.identity?, wo.identity?, x.identity?] cpu cuda

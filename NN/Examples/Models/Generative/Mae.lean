@@ -187,10 +187,11 @@ Like the compact vector generative examples, the sample itself is loaded as `Flo
 data boundary, then cast into the runtime-selected arithmetic representation by the public dataset
 constructor.
 -/
-def data (flags : Support.Training.Options Support.Npy.Options) : Trainer.Dataset input output :=
+def data (flags : Support.Training.Options Support.Npy.Options) (seed : Nat) :
+    Trainer.Dataset input output :=
   Data.defer do
     let sampleBatch ←
-      RealData.loadCifarBatch exeName batchSize flags.data.nRows flags.data.seed
+      RealData.loadCifarBatch exeName batchSize flags.data.nRows seed
         flags.data.xPath flags.data.yPath
     let cropped ← CLI.orThrow exeName <|
       RealData.cropCifarBatch
@@ -214,9 +215,9 @@ def train (runtime : Runtime.Config) (flags : Support.Training.Options Support.N
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := flags.training.learningRate } })
         (.custom loss)
-        (seed := flags.data.seed)
+        (seed := runtime.seed)
   trainer.train
-    (data flags)
+    (data flags runtime.seed)
     (flags.training.trainOptions
       (logTitle := "MAE CIFAR masked reconstruction")
       (logNotes := RealData.trainingNotes "cifar10" batchSize flags

@@ -29,7 +29,7 @@ return a lowering error because the IR cannot conditionally clear their tangents
 
 Log-softmax returns a lowering error until the verifier IR has a faithful stable operation.
 Replacing it by softmax followed by log changes finite-precision results even when every
-probability is positive. Eager and typed-graph execution retain the stable source primitive.
+probability is positive. The eager runtime retains the stable source primitive.
 
 Softplus and `safeLog` have dedicated operations that retain the scalar specification's stable
 branch. SafeLog stores epsilon as a scalar constant parent, so its value, including any dual
@@ -332,7 +332,7 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
     | some _ =>
         fail (α := α)
           ("TorchLean→IR: clamp with scalar differentiation metadata is outside the " ++
-            "verifier IR fragment; use eager or typed-graph execution for conditional " ++
+            "verifier IR fragment; use eager execution for conditional " ++
             "tangent clearing.")
     | none =>
         -- Operand order matters for signed zeros, NaNs and arbitrary scalar min/max instances.
@@ -442,7 +442,7 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
   gelu := fun {_s} _x =>
     fail (α := α)
       ("TorchLean→IR: GELU is outside the verifier IR fragment; " ++
-        "use eager or typed-graph execution. The IR cannot yet preserve its gate division.")
+        "use eager execution. The IR cannot yet preserve its gate division.")
   softmaxLast := fun {s} x => do
     let axis :=
       match Spec.Shape.rank s with
@@ -452,7 +452,7 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
   logSoftmaxLast := fun {_s} _x =>
     fail (α := α)
       ("TorchLean→IR: stable log-softmax is outside the verifier IR fragment; " ++
-        "use eager or typed-graph execution. Softmax followed by log is not a faithful lowering.")
+        "use eager execution. Softmax followed by log is not a faithful lowering.")
   softplus := fun {s} x => emitUnary (α := α) (kind := .softplus) (x := x) (t := s)
   exp := fun {s} x => emitUnary (α := α) (kind := .exp) (x := x) (t := s)
   sin := fun {s} x => emitUnary (α := α) (kind := .sin) (x := x) (t := s)
@@ -460,6 +460,8 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
   log := fun {s} x => emitUnary (α := α) (kind := .log) (x := x) (t := s)
   inv := fun {s} x => emitUnary (α := α) (kind := .inv) (x := x) (t := s)
   detach := fun {s} x => emitUnary (α := α) (kind := .detach) (x := x) (t := s)
+  topKMask := fun {_s} _k _x =>
+    fail (α := α) "TorchLean→IR: top-k routing is outside the verifier IR fragment"
   safeLog := fun {s} x epsilon => do
     let px ← ensureNode (α := α) x
     let pe ← ensureNode (α := α) (.const (Tensor.scalar epsilon))

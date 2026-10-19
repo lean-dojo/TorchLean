@@ -43,13 +43,13 @@ This is the “runtime accumulation matches proved addition” bridge.
 -/
 theorem foldlM_addGradAll_toIndexedShapeErasedArray_eq_add {α : Type}
     [TorchLean.Storage α] [Add α]
-    (t : Runtime.Autograd.Tape α) :
+    (t : Runtime.Autograd.Tape (Spec.SomeTensor α)) :
     ∀ {ss : List Shape} (pref : Array (Spec.SomeTensor α))
       (seed contrib : TorchLean.TensorPack α ss)
       (suffix : Array (Spec.SomeTensor α)),
       (∀ i (hi : i < ss.length),
         let id := pref.size + i
-        ∃ node : Runtime.Autograd.Node α,
+        ∃ node : Runtime.Autograd.Node (Spec.SomeTensor α),
           t.getNode? id = some node ∧
             node.requiresGrad = true ∧
             node.value.shape =
@@ -160,9 +160,10 @@ theorem foldlM_addGradAll_toIndexedShapeErasedArray_eq_add {α : Type}
                 cases hshapeExisting
                 cases hshapeG
 
-                simp only [Runtime.Autograd.Tape.addGradAll, hnode0', hreq0,
-                  Bool.true_eq_false, ite_false, Bind.bind, Except.bind, Pure.pure,
-                  Except.pure]
+                simp only [GradValue.shape_someTensor, GradValue.retag_someTensor,
+                    GradValue.check_someTensor, GradValue.add_someTensor, GradValue.drop_someTensor,
+                    Runtime.Autograd.Tape.addGradAll, hnode0', hreq0, Bool.true_eq_false, ite_false,
+                    Bind.bind, Except.bind, Pure.pure, Except.pure]
                 rw [dite_eq_left (show contribHeadValue.shape = node0.value.shape from rfl)]
                 split
                 · rename_i hget
@@ -183,7 +184,7 @@ theorem foldlM_addGradAll_toIndexedShapeErasedArray_eq_add {α : Type}
           have hnodesTail :
               ∀ i (hi : i < ss.length),
                 let id := (pref.push newHeadValue).size + i
-                ∃ node : Runtime.Autograd.Node α,
+                ∃ node : Runtime.Autograd.Node (Spec.SomeTensor α),
                   t.getNode? id = some node ∧ node.requiresGrad = true ∧
                     node.value.shape =
                       ((TorchLean.TensorPack.toShapeErasedArray (α := α) (ss := ss) seedTail)[i]'(by
@@ -243,12 +244,13 @@ This is the structural property that lets the runtime reverse loop preserve arra
 -/
 theorem addGradAll_ok_size {α : Type}
     [TorchLean.Storage α] [Add α]
-    (t : Runtime.Autograd.Tape α) {grads : Array (Spec.SomeTensor α)} {id : Nat}
+    (t : Runtime.Autograd.Tape (Spec.SomeTensor α)) {grads : Array (Spec.SomeTensor α)} {id : Nat}
     {g : Spec.SomeTensor α} {grads' : Array (Spec.SomeTensor α)}
     (h : Runtime.Autograd.Tape.addGradAll (t := t) grads id g = .ok grads') :
     grads'.size = grads.size := by
-  simp only [Runtime.Autograd.Tape.addGradAll, Pure.pure, Except.pure, Bind.bind, Except.bind,
-    throw, throwThe, MonadExceptOf.throw] at h
+  simp only [GradValue.shape_someTensor, GradValue.retag_someTensor, GradValue.check_someTensor,
+      GradValue.add_someTensor, GradValue.drop_someTensor, Runtime.Autograd.Tape.addGradAll,
+      Pure.pure, Except.pure, Bind.bind, Except.bind, throw, throwThe, MonadExceptOf.throw] at h
   repeat' split at h
   all_goals simp_all
   subst grads'
@@ -262,7 +264,7 @@ control flow of `backwardDenseFromStep`.
 -/
 theorem backwardDenseFromStep_ok_size {α : Type}
     [TorchLean.Storage α] [Add α]
-    (t : Runtime.Autograd.Tape α) :
+    (t : Runtime.Autograd.Tape (Spec.SomeTensor α)) :
     ∀ {acc : Array (Spec.SomeTensor α)} {id : Nat} {acc' : Array (Spec.SomeTensor α)},
       Runtime.Autograd.Tape.backwardDenseFromStep (t := t) acc id = .ok acc' →
         acc'.size = acc.size := by
@@ -289,8 +291,9 @@ theorem backwardDenseFromStep_ok_size {α : Type}
               (by simpa [List.foldlM, hstep, Bind.bind, Except.bind] using hfold)
             exact htail.trans (addGradAll_ok_size (t := t) hstep)
 
-  simp only [Runtime.Autograd.Tape.backwardDenseFromStep, Pure.pure, Except.pure, Bind.bind,
-    Except.bind, throw, throwThe, MonadExceptOf.throw] at h
+  simp only [GradValue.shape_someTensor, GradValue.retag_someTensor, GradValue.check_someTensor,
+      Runtime.Autograd.Tape.backwardDenseFromStep, Pure.pure, Except.pure, Bind.bind, Except.bind,
+      throw, throwThe, MonadExceptOf.throw] at h
   repeat' split at h
   all_goals simp_all
   rw [← Array.foldlM_toList] at h

@@ -29,9 +29,9 @@ Keeping those dependencies separate limits what a training script needs to elabo
 module system determines which declarations are available in a file {Informal.citep lean4}[];
 the import list records those dependencies.
 
-Arithmetic and execution mode are separate choices in the trainer configuration. Importing
-`NN.API` leaves them open: we can keep a model's layers and shapes fixed while changing how a
-training run executes.
+Arithmetic and device are separate choices in the trainer configuration. Importing `NN.API` leaves
+them open: we can keep a model's layers and shapes fixed while changing how a training run
+executes.
 
 The XOR example below uses the same architecture and optimizer in TorchLean and
 PyTorch {Informal.citep pytorch2019}[]. Both fit the four training rows, yet predict differently
@@ -69,7 +69,7 @@ derivatives, and mathematical interfaces:
   * function and model derivatives
 *
   * `Runtime`
-  * arithmetic semantics, execution mode, device, and backend-contract selection
+  * arithmetic semantics, device, and backend-contract selection
 *
   * `Verification`
   * model-to-IR lowering and IBP/CROWN helpers
@@ -468,7 +468,6 @@ def apiTrainer :=
     { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       arithmetic := native
-      execution := eager
       seed := 2026 }
 
 #check apiData
@@ -704,26 +703,25 @@ or it does not, independently of whether any data was available.
 Persistent choices can be expressed as `Trainer.RunConfig`:
 
 ```
--- Keep optimizer and arithmetic fixed while selecting
--- execution mode or device profile.
-def eagerCpu : Trainer.RunConfig :=
+-- Keep the optimizer fixed while selecting arithmetic or
+-- the device profile.
+def nativeCpu : Trainer.RunConfig :=
   { optimizer := optim.adam { learningRate := 0.03 }
-    arithmetic := native
-    execution := eager }
+    arithmetic := native }
 
-def typedGraphCpu : Trainer.RunConfig :=
-  { eagerCpu with
-    execution := typedGraph
+def ieeeCpu : Trainer.RunConfig :=
+  { nativeCpu with
+    arithmetic := ieee
     device := cpu }
 
 def configuredTrainer :=
   Trainer.new model
     (Trainer.RunConfig.forObjective
-      typedGraphCpu .mse
+      ieeeCpu .mse
       (seed := 2026))
 ```
 
-`RunConfig` contains the optimizer, arithmetic semantics, execution mode, and backend profile. See
+`RunConfig` contains the optimizer, arithmetic semantics, device, and backend profile. See
 {ref "backend-selection"}[Backend Selection] for the
 profile's provider, VJP, and evidence rules.
 
@@ -764,7 +762,7 @@ mean-squared error, cross entropy, and custom losses. They do not snapshot optim
 loader state. Alternating two-model training rejects these single-path options because one path
 cannot represent both model states. `Trainer.RunConfig.withRuntime` overwrites the runtime dials of
 a configuration from a
-`Runtime.Config`, which is how a study varies execution mode or device without touching the
+`Runtime.Config`, which is how a study varies the device or device grid without touching the
 optimizer or the objective.
 
 # Runtime Arithmetic

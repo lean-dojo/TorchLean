@@ -41,7 +41,6 @@ def modelUsage
     "",
     "Runtime:",
     "  --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external",
-    "  --execution eager|typed-graph",
     "  --arithmetic native",
     "  --seed N --show-backend"
   ]).toList
@@ -73,9 +72,7 @@ def csv {Result : Type}
     (fun rest =>
       Support.Training.Options.parse exeName rest defaultLogPath defaultSteps defaultLearningRate
         (parseData := fun args => Support.Csv.Options.parse args defaultCsv))
-    banner (fun runtime flags => train runtime
-      { flags with data := { flags.data with seed := runtime.seed } })
-    report
+    banner train report
     (usage? := some <| optimizerUsage exeName #["  --csv PATH         supervised CSV file"])
 
 /-- NPY-backed training command. The caller chooses the objective and result reporting. -/
@@ -90,9 +87,7 @@ def npy {Result : Type}
     (report : Result → IO Unit)
     (target : String := "target") :
     IO UInt32 :=
-  CLI.Training.Command.runParsed exeName args parseFlags banner (fun runtime flags => train runtime
-      { flags with data := { flags.data with seed := runtime.seed } })
-    report
+  CLI.Training.Command.runParsed exeName args parseFlags banner train report
     (usage? := some <| optimizerUsage exeName #[
       "  --x PATH           feature/image NPY file",
       s!"  --y PATH           {target} NPY file",
@@ -111,9 +106,7 @@ def forecast {Result : Type}
       IO Result)
     (report : Result → IO Unit) :
     IO UInt32 :=
-  CLI.Training.Command.runParsed exeName args parseFlags banner (fun runtime flags => train runtime
-      { flags with data := { flags.data with seed := runtime.seed } })
-    report
+  CLI.Training.Command.runParsed exeName args parseFlags banner train report
     (usage? := some <| optimizerUsage exeName #[
       "  --x PATH           input-window NPY file",
       "  --y PATH           target-window NPY file",

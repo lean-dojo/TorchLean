@@ -50,7 +50,7 @@ trained.printSummary
 ```
 
 The training quickstart accepts `--steps N`, `--seed S`, and the runtime flags
-`--arithmetic native|ieee`, `--execution eager|typed-graph`, `--device cpu|cuda`, and
+`--arithmetic native|ieee`, `--device cpu|cuda`, and
 `--show-backend`. Training runs in binary32
 (`Float32` or FloatLib’s `ExecFloat.Binary 8 23`) even though the tensors in the signatures
 are `Tensor Float`;

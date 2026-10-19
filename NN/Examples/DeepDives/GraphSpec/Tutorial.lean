@@ -39,12 +39,11 @@ residual block remain architecture terms that graph passes, exporters, and proof
 Run:
 
 ```bash
-scripts/lake.sh exe torchlean graphspec --execution eager
-scripts/lake.sh exe torchlean graphspec --execution typed-graph
+scripts/lake.sh exe torchlean graphspec
 ```
 
-You can also pass the standard TorchLean runtime flags such as `--arithmetic ieee`,
-`--execution eager`, or `--execution typed-graph`.
+You can also pass the standard TorchLean runtime flags such as `--arithmetic ieee` or
+`--device cuda`.
 -/
 
 @[expose] public section
@@ -65,7 +64,6 @@ def usage : String :=
     , ""
     , "Options:"
     , "  --arithmetic native|ieee"
-    , "  --execution eager|typed-graph"
     , "  --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external"
     , "  --show-backend                    print backend capsules as they execute"
     ]

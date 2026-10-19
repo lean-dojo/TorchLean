@@ -283,7 +283,7 @@ a separate obligation.
   `Lyapunov/TwoStage/LossAnalysis.lean` (`projectedGradientStep` and `checkLossBox`).
 - `Proofs/`: soundness theorems and proof layer overviews; `Proofs/Overview.lean` is the map.
 - `Extras/`: optional helpers and proof toolboxes.
-- `Tactics/`: diagnostic commands for running an external producer and inspecting its certificates.
+- `Tactics/crown_verifier.py`: the Python CROWN producer that the two-stage Lyapunov pipeline runs.
 
 ## Optional Modules
 

@@ -31,7 +31,6 @@ def trainer :=
     { objective := mse
       optimizer := optim.adam { learningRate := 0.03 }
       device := cpu
-      execution := eager
       seed := 2026 }
 
 def data := Data.fromTensors inputs targets
@@ -83,8 +82,8 @@ ran.
 
 For a configured FloatLib scalar `α`, use
 `trainer.openTyped (α := α) (initialState? := some state)`. Inputs, predictions, losses, parameters,
-and the finished `Trainer.Result input output α` retain that scalar. Sessions support eager and
-graph CPU execution; CUDA and custom backend profiles are rejected. `session.save`, `session.load`,
+and the finished `Trainer.Result input output α` retain that scalar. Typed sessions run on the
+CPU; CUDA and custom backend profiles are rejected. `session.save`, `session.load`,
 and `trained.save` preserve the scalar's exact checkpoint encoding. `finish` captures a state
 snapshot, so later session updates do not change the result.
 
@@ -103,10 +102,7 @@ minibatch. For vectorized batching give the model a leading batch axis and build
 Each training forward updates running buffers from the same activations used for its gradients.
 For example, BatchNorm after dropout sees that forward's mask, not a separately replayed mask.
 This also holds inside residual and parallel blocks. Prediction uses evaluation mode and leaves
-the buffers unchanged.
-
-Eager sessions advance their seeded random stream between forwards. Typed-graph training replays
-the draws recorded in its fixed graph; it does not share the eager session's random schedule.
+the buffers unchanged. A session advances its seeded random stream between forwards.
 
 ## Saving And Restoring
 
@@ -147,7 +143,6 @@ and converted at the data boundary rather than passed to the one-hot objective a
 
 - `optimizer`;
 - `arithmetic`;
-- `execution`;
 - `device`;
 - optional backend-contract selection and reporting.
 
@@ -200,9 +195,6 @@ Use direct autograd when the goal is a derivative value rather than parameter up
 autograd.grad function input (value := true)
 autograd.model.grad model loss state input target (value := true)
 ```
-
-Import `NN.API.Trainer.FixedSample` only for benchmark or diagnostic loops that repeatedly update
-on one sample. It is not a second beginner training API.
 
 Runnable starting point:
 

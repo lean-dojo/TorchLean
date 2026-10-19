@@ -38,8 +38,9 @@ definitions, or `NN` when a file also needs the proof and verification layers.
 - `Autograd/`: spec-level reverse-mode building blocks (`OpSpec`) used by runtime AD wrappers and
   proof files.
 - `Module/`: module records that package layer specs with input/output shapes and export metadata.
-- `Models/`: model compositions such as MLP, CNN, Transformer, ResNet, ViT, Seq2Seq, UNet, GNN,
-  linear/logistic regression, gradient boosted trees, HMM/GMM/PCA, and state-space models.
+- `Models/`: model compositions such as MLP, CNN, Transformer, Seq2Seq, GNN, linear/logistic
+  regression, gradient boosted trees, HMM/GMM/PCA, and state-space models. ResNet, ViT, and U-Net
+  constructors live in `NN/API/Models`.
 - `Dynamics/`: pure dynamical-system and state-space recurrence specs (namespace
   `Spec.Dynamics`).
 - `Generative/`: diffusion and latent-variable objective specs.

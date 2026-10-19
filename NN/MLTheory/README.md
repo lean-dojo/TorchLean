@@ -80,9 +80,10 @@ Current coverage includes ordinary first-order optimizers and newer optimizer-ad
   separates the momentum buffer recurrence, the backend output used as the update direction, and
   the parameter update equation. A backend can provide an exact certificate such as
   $Q^\mathsf{T}Q=I$, or an approximate certificate bounding $Q^\mathsf{T}Q-I$ entrywise.
-- **GaLore.** GaLore is treated as projected-gradient machinery. The proof object names the
-  projection and also names the optimizer applied after projection, so the update equation remains
-  explicit.
+- **GaLore.** GaLore is treated as projected-gradient machinery. `Optim.GaLore.Projector` pairs a
+  `project` map with a `lift` map, `identityProjector` leaves gradients unchanged, and the
+  projected SGD update in `NN/Runtime/Optim/Optimizers.lean` subtracts the lifted projection of
+  the gradient.
 - **LoRA.** LoRA is adapter/parameterization structure. Its claims belong with adapter weights,
   parameterization, and model structure, rather than with optimizer state.
 

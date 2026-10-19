@@ -51,69 +51,75 @@ variable {α : Type} [TorchLean.Storage α]
 /-! ### Zero cotangents and totalization -/
 
 /-- The zero cotangent of a runtime node: an all-zero tensor of the node's value shape. -/
-def zeroCotangent [Zero α] (node : Runtime.Autograd.Node α) : Spec.SomeTensor α :=
+def zeroCotangent [Zero α] (node : Runtime.Autograd.Node (Spec.SomeTensor α)) : Spec.SomeTensor α :=
   Spec.SomeTensor.ofTensor (Tensor.full node.value.shape (0 : α))
 
 /-- A zero cotangent has the same shape as the node's value, by construction. -/
-@[simp] theorem shape_zeroCotangent [Zero α] (node : Runtime.Autograd.Node α) :
+@[simp] theorem shape_zeroCotangent [Zero α] (node : Runtime.Autograd.Node (Spec.SomeTensor α)) :
     (zeroCotangent node).shape = node.value.shape := rfl
 
 /--
 Totalize the optional gradient array of `backwardDense`: reached nodes keep their gradient, every
 other node gets its zero cotangent. This is exactly the post-processing `backwardDenseAll` does.
 -/
-def totalizeGrads [Zero α] (t : Tape α) (grads : Array (Option (Spec.SomeTensor α))) :
-    Array (Spec.SomeTensor α) :=
-  t.nodes.mapIdx fun id node =>
-    match grads[id]? with
-    | some (some grad) => grad
-    | _ => zeroCotangent node
+def totalizeGrads [Zero α] (t : Tape (Spec.SomeTensor α))
+    (grads : Array (Option (Spec.SomeTensor α))) : Array (Spec.SomeTensor α) :=
+  Tape.totalize t grads
 
 /-- The initial total gradient array of `backwardDenseFrom`: `seed` at `outId`, zeros elsewhere. -/
-def oneHotGrads [Zero α] (t : Tape α) (outId : Nat) (seed : Spec.SomeTensor α) :
+def oneHotGrads [Zero α] (t : Tape (Spec.SomeTensor α)) (outId : Nat) (seed : Spec.SomeTensor α) :
     Array (Spec.SomeTensor α) :=
   t.nodes.mapIdx fun id node => if id = outId then seed else zeroCotangent node
 
 /-- `backwardDenseAll` is `backwardDense` followed by `totalizeGrads`. -/
-theorem backwardDenseAll_eq_map_totalizeGrads [Add α] [Zero α] (t : Tape α) (outId : Nat)
+theorem backwardDenseAll_eq_map_totalizeGrads [Add α] [Zero α] (t : Tape (Spec.SomeTensor α))
+    (outId : Nat)
     (seed : Spec.SomeTensor α) :
     Tape.backwardDenseAll (t := t) outId seed =
       Except.map (totalizeGrads t) (Tape.backwardDense (t := t) outId seed) := by
-  unfold Tape.backwardDenseAll totalizeGrads zeroCotangent
+  unfold Tape.backwardDenseAll totalizeGrads
   cases Tape.backwardDense (t := t) outId seed <;> rfl
 
 /-- Totalization produces exactly one entry per tape node. -/
-@[simp] theorem size_totalizeGrads [Zero α] (t : Tape α)
+@[simp] theorem size_totalizeGrads [Zero α] (t : Tape (Spec.SomeTensor α))
     (grads : Array (Option (Spec.SomeTensor α))) :
     (totalizeGrads t grads).size = t.nodes.size := by
-  simp [totalizeGrads]
+  simp [totalizeGrads, Tape.totalize]
 
 /-- So does the one-hot seed array, which is why both can be indexed by node id without bounds
 checks in the invariants below. -/
-@[simp] theorem size_oneHotGrads [Zero α] (t : Tape α) (outId : Nat) (seed : Spec.SomeTensor α) :
+@[simp] theorem size_oneHotGrads [Zero α] (t : Tape (Spec.SomeTensor α)) (outId : Nat) (seed
+    : Spec.SomeTensor α) :
     (oneHotGrads t outId seed).size = t.nodes.size := by
   simp [oneHotGrads]
 
 /-- Entry `id` of the totalized array, expressed through `getNode?`. -/
-theorem getElem?_totalizeGrads [Zero α] (t : Tape α)
+theorem getElem?_totalizeGrads [Zero α] (t : Tape (Spec.SomeTensor α))
     (grads : Array (Option (Spec.SomeTensor α))) (id : Nat) :
     (totalizeGrads t grads)[id]? =
       (t.getNode? id).map fun node =>
         match grads[id]? with
         | some (some grad) => grad
         | _ => zeroCotangent node := by
-  simp [totalizeGrads, Array.getElem?_mapIdx, Tape.getNode?]
+  simp only [totalizeGrads, Tape.totalize, Array.getElem?_mapIdx, Tape.getNode?]
+  congr 1
+  funext node
+  cases grads[id]? with
+  | none => rfl
+  | some o => cases o <;> rfl
 
 /-- Entry `id` of the one-hot array, expressed through `getNode?`. -/
-theorem getElem?_oneHotGrads [Zero α] (t : Tape α) (outId : Nat) (seed : Spec.SomeTensor α)
+theorem getElem?_oneHotGrads [Zero α] (t : Tape (Spec.SomeTensor α)) (outId : Nat) (seed
+    : Spec.SomeTensor α)
     (id : Nat) :
     (oneHotGrads t outId seed)[id]? =
       (t.getNode? id).map fun node => if id = outId then seed else zeroCotangent node := by
   simp [oneHotGrads, Array.getElem?_mapIdx, Tape.getNode?]
 
 /-- A node that the backward pass reached keeps its computed gradient. -/
-theorem getElem?_totalizeGrads_of_some [Zero α] {t : Tape α}
-    {grads : Array (Option (Spec.SomeTensor α))} {id : Nat} {node : Runtime.Autograd.Node α}
+theorem getElem?_totalizeGrads_of_some [Zero α] {t : Tape (Spec.SomeTensor α)}
+    {grads : Array (Option (Spec.SomeTensor α))} {id : Nat} {node : Runtime.Autograd.Node
+        (Spec.SomeTensor α)}
     {g : Spec.SomeTensor α} (hnode : t.getNode? id = some node) (hg : grads[id]? = some (some g)) :
     (totalizeGrads t grads)[id]? = some g := by
   simp [getElem?_totalizeGrads, hnode, hg]
@@ -122,14 +128,16 @@ theorem getElem?_totalizeGrads_of_some [Zero α] {t : Tape α}
 
 Taken together, these two lemmas say totalization loses no information: `none` in the sparse array
 means the node genuinely received no contribution, so filling in zero is not an approximation. -/
-theorem getElem?_totalizeGrads_of_none [Zero α] {t : Tape α}
-    {grads : Array (Option (Spec.SomeTensor α))} {id : Nat} {node : Runtime.Autograd.Node α}
+theorem getElem?_totalizeGrads_of_none [Zero α] {t : Tape (Spec.SomeTensor α)}
+    {grads : Array (Option (Spec.SomeTensor α))} {id : Nat} {node : Runtime.Autograd.Node
+        (Spec.SomeTensor α)}
     (hnode : t.getNode? id = some node) (hg : grads[id]? = some none) :
     (totalizeGrads t grads)[id]? = some (zeroCotangent node) := by
   simp [getElem?_totalizeGrads, hnode, hg]
 
 /-- Totalization commutes with writing a present gradient. -/
-theorem totalizeGrads_set [Zero α] (t : Tape α) (grads : Array (Option (Spec.SomeTensor α)))
+theorem totalizeGrads_set [Zero α] (t : Tape (Spec.SomeTensor α)) (grads : Array (Option
+    (Spec.SomeTensor α)))
     (id : Nat) (g : Spec.SomeTensor α) (hid : id < grads.size) (hidt : id < t.nodes.size) :
     totalizeGrads t (grads.set id (some g) hid) =
       (totalizeGrads t grads).set id g (by simpa using hidt) := by
@@ -149,22 +157,24 @@ theorem totalizeGrads_set [Zero α] (t : Tape α) (grads : Array (Option (Spec.S
 Well-formedness of the optional accumulator used by `backwardDense`: one slot per tape node, and
 every present gradient has its node's value shape.
 -/
-structure OptGradsOk (t : Tape α) (grads : Array (Option (Spec.SomeTensor α))) : Prop where
+structure OptGradsOk (t : Tape (Spec.SomeTensor α)) (grads : Array (Option (Spec.SomeTensor α)))
+    : Prop where
   /-- One slot per tape node. -/
   size_eq : grads.size = t.nodes.size
   /-- Present gradients have the shape of their node's value. -/
   shape : ∀ id g, grads[id]? = some (some g) →
-    ∃ node : Runtime.Autograd.Node α, t.getNode? id = some node ∧ g.shape = node.value.shape
+    ∃ node : Runtime.Autograd.Node
+        (Spec.SomeTensor α), t.getNode? id = some node ∧ g.shape = node.value.shape
 
 /--
 Well-formedness of the total accumulator used by `backwardDenseFrom`: one slot per tape node, and
 every slot has its node's value shape.
 -/
-structure TotGradsOk (t : Tape α) (grads : Array (Spec.SomeTensor α)) : Prop where
+structure TotGradsOk (t : Tape (Spec.SomeTensor α)) (grads : Array (Spec.SomeTensor α)) : Prop where
   /-- One slot per tape node. -/
   size_eq : grads.size = t.nodes.size
   /-- Every slot has the shape of its node's value. -/
-  shape : ∀ id (node : Runtime.Autograd.Node α), t.getNode? id = some node →
+  shape : ∀ id (node : Runtime.Autograd.Node (Spec.SomeTensor α)), t.getNode? id = some node →
     ∃ g, grads[id]? = some g ∧ g.shape = node.value.shape
 
 /--
@@ -175,29 +185,31 @@ This is the exact condition under which skipping unreached nodes (`backwardDense
 every node (`backwardDenseFrom`) produce the same gradients. It holds for linear VJPs of correct
 parent shapes, in particular for every tape produced by `lowerGraphToTape`.
 -/
-structure ZeroPreserving [Zero α] (t : Tape α) : Prop where
+structure ZeroPreserving [Zero α] (t : Tape (Spec.SomeTensor α)) : Prop where
   /-- The VJP at the zero cotangent succeeds and emits only parent zero cotangents. -/
-  backward_zero : ∀ (id : Nat) (node : Runtime.Autograd.Node α),
+  backward_zero : ∀ (id : Nat) (node : Runtime.Autograd.Node (Spec.SomeTensor α)),
     t.getNode? id = some node → node.requiresGrad = true →
       ∃ contribs : Array (Nat × Spec.SomeTensor α),
         node.backward (zeroCotangent node) = .ok contribs ∧
         ∀ pid pg, (pid, pg) ∈ contribs →
-          ∃ pnode : Runtime.Autograd.Node α, t.getNode? pid = some pnode ∧ pg = zeroCotangent pnode
+          ∃ pnode : Runtime.Autograd.Node
+              (Spec.SomeTensor α), t.getNode? pid = some pnode ∧ pg = zeroCotangent pnode
 
 /-- A successful `getNode?` witnesses that the id is in range. -/
-theorem getNode?_lt_size {t : Tape α} {id : Nat} {node : Runtime.Autograd.Node α}
+theorem getNode?_lt_size {t : Tape (Spec.SomeTensor α)} {id : Nat} {node : Runtime.Autograd.Node
+    (Spec.SomeTensor α)}
     (h : t.getNode? id = some node) : id < t.nodes.size := by
   simp only [Tape.getNode?] at h
   exact (Array.getElem?_eq_some_iff.1 h).1
 
 /-- Conversely, any in-range id resolves to a node. The pair lets the invariants below be phrased in
 terms of `getNode?` alone, without carrying array bounds around. -/
-theorem getNode?_of_lt_size {t : Tape α} {id : Nat} (h : id < t.nodes.size) :
+theorem getNode?_of_lt_size {t : Tape (Spec.SomeTensor α)} {id : Nat} (h : id < t.nodes.size) :
     ∃ node, t.getNode? id = some node :=
   ⟨t.nodes[id], by simp [Tape.getNode?, Array.getElem?_eq_getElem h]⟩
 
 /-- Totalizing a well-formed optional accumulator yields a well-formed total accumulator. -/
-theorem totGradsOk_totalizeGrads [Zero α] {t : Tape α}
+theorem totGradsOk_totalizeGrads [Zero α] {t : Tape (Spec.SomeTensor α)}
     {grads : Array (Option (Spec.SomeTensor α))} (hok : OptGradsOk t grads) :
     TotGradsOk t (totalizeGrads t grads) := by
   refine ⟨by simp, ?_⟩
@@ -215,8 +227,8 @@ theorem totGradsOk_totalizeGrads [Zero α] {t : Tape α}
       exact ⟨g, rfl, hshape⟩
 
 /-- Writing a correctly shaped gradient preserves `OptGradsOk`. -/
-theorem optGradsOk_set {t : Tape α} {grads : Array (Option (Spec.SomeTensor α))}
-    (hok : OptGradsOk t grads) {id : Nat} {node : Runtime.Autograd.Node α}
+theorem optGradsOk_set {t : Tape (Spec.SomeTensor α)} {grads : Array (Option (Spec.SomeTensor α))}
+    (hok : OptGradsOk t grads) {id : Nat} {node : Runtime.Autograd.Node (Spec.SomeTensor α)}
     (hnode : t.getNode? id = some node) {g : Spec.SomeTensor α} (hg : g.shape = node.value.shape)
     (hid : id < grads.size) : OptGradsOk t (grads.set id (some g) hid) := by
   refine ⟨by simpa using hok.size_eq, ?_⟩
@@ -247,7 +259,8 @@ theorem addSpec_full_zero_right [AddZeroClass α] {s : Shape} (x : Tensor α s) 
   simp [addSpec, map2Spec, Tensor.full]
 
 /-- Accumulating onto a node's zero cotangent returns the contribution unchanged. -/
-theorem someTensor_add_zeroCotangent_left [AddZeroClass α] (node : Runtime.Autograd.Node α)
+theorem someTensor_add_zeroCotangent_left [AddZeroClass α] (node : Runtime.Autograd.Node
+    (Spec.SomeTensor α))
     (g : Spec.SomeTensor α) (h : g.shape = node.value.shape) :
     Runtime.Autograd.SomeTensor.add (zeroCotangent node) g = .ok g := by
   obtain ⟨s, gt⟩ := g
@@ -257,7 +270,8 @@ theorem someTensor_add_zeroCotangent_left [AddZeroClass α] (node : Runtime.Auto
     addSpec_full_zero_left]
 
 /-- Accumulating a node's zero cotangent onto an existing gradient leaves it unchanged. -/
-theorem someTensor_add_zeroCotangent_right [AddZeroClass α] (node : Runtime.Autograd.Node α)
+theorem someTensor_add_zeroCotangent_right [AddZeroClass α] (node : Runtime.Autograd.Node
+    (Spec.SomeTensor α))
     (g : Spec.SomeTensor α) (h : g.shape = node.value.shape) :
     Runtime.Autograd.SomeTensor.add g (zeroCotangent node) = .ok g := by
   obtain ⟨s, gt⟩ := g
@@ -267,8 +281,9 @@ theorem someTensor_add_zeroCotangent_right [AddZeroClass α] (node : Runtime.Aut
     addSpec_full_zero_right]
 
 /-- `addGradAll` with a parent's zero cotangent is the identity on a well-formed accumulator. -/
-theorem addGradAll_zeroCotangent [AddZeroClass α] {t : Tape α} {grads : Array (Spec.SomeTensor α)}
-    (hok : TotGradsOk t grads) {pid : Nat} {pnode : Runtime.Autograd.Node α}
+theorem addGradAll_zeroCotangent [AddZeroClass α] {t : Tape (Spec.SomeTensor α)} {grads : Array
+    (Spec.SomeTensor α)}
+    (hok : TotGradsOk t grads) {pid : Nat} {pnode : Runtime.Autograd.Node (Spec.SomeTensor α)}
     (hp : t.getNode? pid = some pnode) :
     Tape.addGradAll (t := t) grads pid (zeroCotangent pnode) = .ok grads := by
   obtain ⟨existing, hex, hexs⟩ := hok.shape pid pnode hp
@@ -281,8 +296,9 @@ theorem addGradAll_zeroCotangent [AddZeroClass α] {t : Tape α} {grads : Array 
     · subst hj
       simp [hex]
     · simp [hj]
-  simp only [Tape.addGradAll, hp, Bind.bind, Except.bind, Pure.pure, Except.pure, throw, throwThe,
-    MonadExceptOf.throw]
+  simp only [GradValue.shape_someTensor, GradValue.retag_someTensor, GradValue.check_someTensor,
+      GradValue.add_someTensor, GradValue.drop_someTensor, Tape.addGradAll, hp, Bind.bind,
+      Except.bind, Pure.pure, Except.pure, throw, throwThe, MonadExceptOf.throw]
   by_cases hreq : pnode.requiresGrad = false
   · simp [hreq]
   · have hreq' : pnode.requiresGrad = true := by simpa using hreq
@@ -300,10 +316,12 @@ theorem addGradAll_zeroCotangent [AddZeroClass α] {t : Tape α} {grads : Array 
       rw [hset]
 
 /-- Folding zero contributions through `addGradAll` is the identity on a well-formed accumulator. -/
-theorem foldlM_addGradAll_zero [AddZeroClass α] {t : Tape α} {grads : Array (Spec.SomeTensor α)}
+theorem foldlM_addGradAll_zero [AddZeroClass α] {t : Tape (Spec.SomeTensor α)} {grads : Array
+    (Spec.SomeTensor α)}
     (hok : TotGradsOk t grads) (contribs : List (Nat × Spec.SomeTensor α))
     (hz : ∀ pid pg, (pid, pg) ∈ contribs →
-      ∃ pnode : Runtime.Autograd.Node α, t.getNode? pid = some pnode ∧ pg = zeroCotangent pnode) :
+      ∃ pnode : Runtime.Autograd.Node
+          (Spec.SomeTensor α), t.getNode? pid = some pnode ∧ pg = zeroCotangent pnode) :
     contribs.foldlM (fun acc2 (pid, pg) => Tape.addGradAll (t := t) acc2 pid pg) grads =
       .ok grads := by
   induction contribs with
@@ -318,12 +336,15 @@ theorem foldlM_addGradAll_zero [AddZeroClass α] {t : Tape α} {grads : Array (S
 /-! ### One contribution: `addGradDense` simulates `addGradAll` -/
 
 /-- `addGradDense` preserves the optional accumulator invariant. -/
-theorem addGradDense_optGradsOk [Add α] {t : Tape α} {grads : Array (Option (Spec.SomeTensor α))}
+theorem addGradDense_optGradsOk [Add α] {t : Tape (Spec.SomeTensor α)} {grads : Array (Option
+    (Spec.SomeTensor α))}
     (hok : OptGradsOk t grads) {pid : Nat} {g : Spec.SomeTensor α}
     {grads' : Array (Option (Spec.SomeTensor α))}
     (h : Tape.addGradDense (t := t) grads pid g = .ok grads') : OptGradsOk t grads' := by
-  simp only [Tape.addGradDense, Bind.bind, Except.bind, Pure.pure, Except.pure, throw, throwThe,
-    MonadExceptOf.throw] at h
+  simp only [GradValue.shape_someTensor, GradValue.retag_someTensor, GradValue.check_someTensor,
+      GradValue.add_someTensor, GradValue.own_someTensor, GradValue.drop_someTensor,
+      Tape.addGradDense, Bind.bind, Except.bind, Pure.pure, Except.pure, throw, throwThe,
+      MonadExceptOf.throw] at h
   cases hnode : t.getNode? pid with
   | none => simp [hnode] at h
   | some node =>
@@ -365,13 +386,15 @@ theorem addGradDense_optGradsOk [Add α] {t : Tape α} {grads : Array (Option (S
       · simp [hg] at h
 
 /-- One `addGradDense` step, mapped through `totalizeGrads`, is the matching `addGradAll` step. -/
-theorem addGradDense_map_totalizeGrads [AddZeroClass α] {t : Tape α}
+theorem addGradDense_map_totalizeGrads [AddZeroClass α] {t : Tape (Spec.SomeTensor α)}
     {grads : Array (Option (Spec.SomeTensor α))} (hok : OptGradsOk t grads) (pid : Nat)
     (g : Spec.SomeTensor α) :
     Except.map (totalizeGrads t) (Tape.addGradDense (t := t) grads pid g) =
       Tape.addGradAll (t := t) (totalizeGrads t grads) pid g := by
-  simp only [Tape.addGradDense, Tape.addGradAll, Bind.bind, Except.bind, Pure.pure, Except.pure,
-    throw, throwThe, MonadExceptOf.throw]
+  simp only [GradValue.shape_someTensor, GradValue.retag_someTensor, GradValue.check_someTensor,
+      GradValue.add_someTensor, GradValue.own_someTensor, GradValue.drop_someTensor,
+      Tape.addGradDense, Tape.addGradAll, Bind.bind, Except.bind, Pure.pure, Except.pure, throw,
+      throwThe, MonadExceptOf.throw]
   cases hnode : t.getNode? pid with
   | none => rfl
   | some node =>
@@ -449,7 +472,7 @@ theorem except_map_bind {β γ : Type} (f : β → γ) {x : Result β} {y : Resu
     exact hk b rfl
 
 /-- Folding `addGradDense` preserves the optional accumulator invariant. -/
-theorem foldlM_addGradDense_optGradsOk [Add α] {t : Tape α}
+theorem foldlM_addGradDense_optGradsOk [Add α] {t : Tape (Spec.SomeTensor α)}
     (contribs : List (Nat × Spec.SomeTensor α)) :
     ∀ {grads grads' : Array (Option (Spec.SomeTensor α))}, OptGradsOk t grads →
       contribs.foldlM (fun acc2 (pid, pg) => Tape.addGradDense (t := t) acc2 pid pg) grads =
@@ -471,7 +494,7 @@ theorem foldlM_addGradDense_optGradsOk [Add α] {t : Tape α}
       exact ih (addGradDense_optGradsOk hok h1) h
 
 /-- Folding `addGradDense`, mapped through `totalizeGrads`, is folding `addGradAll`. -/
-theorem foldlM_addGradDense_map_totalizeGrads [AddZeroClass α] {t : Tape α}
+theorem foldlM_addGradDense_map_totalizeGrads [AddZeroClass α] {t : Tape (Spec.SomeTensor α)}
     (contribs : List (Nat × Spec.SomeTensor α)) :
     ∀ {grads : Array (Option (Spec.SomeTensor α))}, OptGradsOk t grads →
       Except.map (totalizeGrads t)
@@ -494,7 +517,7 @@ theorem foldlM_addGradDense_map_totalizeGrads [AddZeroClass α] {t : Tape α}
 open Runtime.Autograd.Tape (backwardDenseStep)
 
 /-- The executed step preserves the optional accumulator invariant. -/
-theorem backwardDenseStep_optGradsOk [Add α] {t : Tape α}
+theorem backwardDenseStep_optGradsOk [Add α] {t : Tape (Spec.SomeTensor α)}
     {grads grads' : Array (Option (Spec.SomeTensor α))} (hok : OptGradsOk t grads) {id : Nat}
     (h : backwardDenseStep t grads id = .ok grads') : OptGradsOk t grads' := by
   simp only [backwardDenseStep, Bind.bind, Except.bind, Pure.pure, Except.pure, throw, throwThe,
@@ -532,7 +555,7 @@ When the node was reached both sides run the same VJP on the same cotangent. Whe
 the executed side does nothing and the proved side runs the VJP on the zero cotangent, whose
 contributions are all zeros and therefore accumulate to nothing.
 -/
-theorem backwardDenseStep_map_totalizeGrads [AddZeroClass α] {t : Tape α}
+theorem backwardDenseStep_map_totalizeGrads [AddZeroClass α] {t : Tape (Spec.SomeTensor α)}
     (hzp : ZeroPreserving t) {grads : Array (Option (Spec.SomeTensor α))}
     (hok : OptGradsOk t grads) {id : Nat} (hid : id < t.nodes.size) :
     Except.map (totalizeGrads t) (backwardDenseStep t grads id) =
@@ -540,8 +563,9 @@ theorem backwardDenseStep_map_totalizeGrads [AddZeroClass α] {t : Tape α}
   have htot := totGradsOk_totalizeGrads hok
   obtain ⟨node, hnode⟩ := getNode?_of_lt_size hid
   have hidg : id < grads.size := hok.size_eq ▸ hid
-  simp only [backwardDenseStep, Tape.backwardDenseFromStep, Bind.bind, Except.bind, Pure.pure,
-    Except.pure, throw, throwThe, MonadExceptOf.throw, hnode]
+  simp only [GradValue.shape_someTensor, GradValue.retag_someTensor, GradValue.check_someTensor,
+      backwardDenseStep, Tape.backwardDenseFromStep, Bind.bind, Except.bind, Pure.pure, Except.pure,
+      throw, throwThe, MonadExceptOf.throw, hnode]
   cases hcur : grads[id]? with
   | none => exact absurd (Array.getElem?_eq_none_iff.1 hcur) (Nat.not_le.2 hidg)
   | some og =>
@@ -589,7 +613,7 @@ theorem foldlM_range_reverse_succ {m : Type → Type} [Monad m] {β : Type} (f :
 The executed reverse loop over the first `n` node ids, mapped through `totalizeGrads`, is the
 proved loop `backwardDenseFromLoop` over the same ids.
 -/
-theorem foldlM_backwardDenseStep_map_totalizeGrads [AddZeroClass α] {t : Tape α}
+theorem foldlM_backwardDenseStep_map_totalizeGrads [AddZeroClass α] {t : Tape (Spec.SomeTensor α)}
     (hzp : ZeroPreserving t) :
     ∀ (n : Nat), n ≤ t.nodes.size →
       ∀ {grads : Array (Option (Spec.SomeTensor α))}, OptGradsOk t grads →
@@ -611,7 +635,8 @@ theorem foldlM_backwardDenseStep_map_totalizeGrads [AddZeroClass α] {t : Tape �
 /-! ### Main theorem -/
 
 /-- The seeded optional accumulator `backwardDense` starts from. -/
-theorem optGradsOk_seed {t : Tape α} {outId : Nat} {outNode : Runtime.Autograd.Node α}
+theorem optGradsOk_seed {t : Tape (Spec.SomeTensor α)} {outId : Nat} {outNode
+    : Runtime.Autograd.Node (Spec.SomeTensor α)}
     (hout : t.getNode? outId = some outNode) {seed : Spec.SomeTensor α}
     (hseed : seed.shape = outNode.value.shape) (hlt : outId < t.nodes.size) :
     OptGradsOk t ((Array.replicate t.nodes.size (none : Option (Spec.SomeTensor α))).set outId
@@ -622,7 +647,8 @@ theorem optGradsOk_seed {t : Tape α} {outId : Nat} {outNode : Runtime.Autograd.
   split at h <;> simp at h
 
 /-- Totalizing the seeded optional accumulator gives the one-hot total accumulator. -/
-theorem totalizeGrads_seed [Zero α] (t : Tape α) (outId : Nat) (seed : Spec.SomeTensor α)
+theorem totalizeGrads_seed [Zero α] (t : Tape (Spec.SomeTensor α)) (outId : Nat) (seed
+    : Spec.SomeTensor α)
     (hlt : outId < t.nodes.size) :
     totalizeGrads t ((Array.replicate t.nodes.size (none : Option (Spec.SomeTensor α))).set outId
         (some seed) (by simpa using hlt)) =
@@ -641,17 +667,18 @@ theorem totalizeGrads_seed [Zero α] (t : Tape α) (outId : Nat) (seed : Spec.So
       simp [hjo, hjo', hj]
 
 /-- `backwardDense` is the reverse fold of `backwardDenseStep` from the seeded accumulator. -/
-theorem backwardDense_eq_foldlM [Add α] {t : Tape α} {outId : Nat}
-    {outNode : Runtime.Autograd.Node α} (hout : t.getNode? outId = some outNode)
+theorem backwardDense_eq_foldlM [Add α] {t : Tape (Spec.SomeTensor α)} {outId : Nat}
+    {outNode : Runtime.Autograd.Node (Spec.SomeTensor α)} (hout : t.getNode? outId = some outNode)
     {seed : Spec.SomeTensor α} (hseed : seed.shape = outNode.value.shape) :
     Tape.backwardDense (t := t) outId seed =
       (List.range t.nodes.size).reverse.foldlM (backwardDenseStep t)
         ((Array.replicate t.nodes.size (none : Option (Spec.SomeTensor α))).set outId (some seed)
           (by simpa using getNode?_lt_size hout)) := by
   have hlt : outId < t.nodes.size := getNode?_lt_size hout
-  simp only [Tape.backwardDense, hout, Bind.bind, Except.bind, Pure.pure, Except.pure, throw,
-    throwThe, MonadExceptOf.throw, dite_eq_left hseed, Array.size_replicate, dite_eq_left hlt,
-    Spec.SomeTensor.ofTensor_cast]
+  simp only [GradValue.shape_someTensor, GradValue.retag_someTensor, GradValue.check_someTensor,
+      Tape.backwardDense, hout, Bind.bind, Except.bind, Pure.pure, Except.pure, throw, throwThe,
+      MonadExceptOf.throw, dite_eq_left hseed, Array.size_replicate, dite_eq_left hlt,
+      Spec.SomeTensor.ofTensor_cast]
 
 /--
 **Executed backward pass = proved backward pass.** On a zero-preserving tape, the totalized
@@ -660,8 +687,10 @@ sweep `backwardDenseFrom` returns when started from the one-hot seed array, incl
 of the error cases. The hypotheses on `outId` and `seed` are the checks `backwardDense` performs
 before traversing; without them `backwardDense` fails while `backwardDenseFrom` may not.
 -/
-theorem backwardDenseAll_eq_backwardDenseFrom [AddZeroClass α] {t : Tape α} (hzp : ZeroPreserving t)
-    {outId : Nat} {outNode : Runtime.Autograd.Node α} (hout : t.getNode? outId = some outNode)
+theorem backwardDenseAll_eq_backwardDenseFrom [AddZeroClass α] {t : Tape (Spec.SomeTensor α)} (hzp
+    : ZeroPreserving t)
+    {outId : Nat} {outNode : Runtime.Autograd.Node (Spec.SomeTensor α)} (hout
+        : t.getNode? outId = some outNode)
     {seed : Spec.SomeTensor α} (hseed : seed.shape = outNode.value.shape) :
     Tape.backwardDenseAll (t := t) outId seed =
       Tape.backwardDenseFrom (t := t) (oneHotGrads t outId seed) := by

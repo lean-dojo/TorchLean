@@ -677,15 +677,10 @@ states and gradients supplied at every later step.
 # Runtime Optimizers And Proved Optimizer Contracts
 
 The executable training layer is broader than those three numerical contracts.
-`Runtime.Autograd.Train.Optim` implements parameter groups, learning-rate schedulers, shape-checked
-optimizer state, and updates for SGD, momentum/Nesterov, AdaGrad, RMSProp, Adam, AdamW, and
-Adadelta. `OptimStateDict` preserves the global step, per-parameter Adam steps, group configuration,
-and state buffers for save/restore.
-
-Conditional and sparse-gradient models require two counters. The global optimizer-call counter
-advances on every step, while an Adam-family parameter advances its bias-correction counter only
-when that parameter receives a gradient. Reloaded state and gradients are checked against the
-current parameter shape before an update.
+`Runtime.Autograd.Model.Optim` implements SGD, momentum SGD, AdaGrad, RMSProp, Adam, AdamW,
+Adadelta, projected SGD, and Muon over shape-indexed parameter lists, and `Trainer.Scheduler`
+adds the learning-rate schedules. The trainer saves Adam state with its checkpoints and rejects a
+checkpoint whose parameter layout does not match the model it is loaded into.
 
 The proved NF numerical contracts currently cover plain SGD, momentum SGD, and AdamW; AdamW also
 carries the positivity data needed for its square-root denominator. Runtime support for the other

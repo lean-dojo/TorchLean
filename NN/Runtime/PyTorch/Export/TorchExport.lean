@@ -391,6 +391,47 @@ def header : Array String :=
    , indent 4 "axis = kwargs.get(\"dim\", kwargs.get(\"axis\", None))"
    , indent 4 "if axis is None and len(args) > 1: axis = args[1]" ]
 
+/-- Mixture-of-experts routing written as `torch.zeros_like(p).scatter(-1, torch.topk(p, k,
+dim=-1).indices, 1.0)`, captured as one `top_k_mask` node over `p`. TorchLean's mask keeps ties for
+the lower index; `torch.topk` documents no tie order, so the two agree whenever the `k`-th and
+`k + 1`-th largest entries of a row differ. The `topk` call, its index projection and the zeros
+exist only to build the mask and are not exported. -/
+def routing : Array String :=
+  #[ "def _top_k_mask(node):"
+   , indent 4 "if not _is_op(node, ('aten.scatter.value',)): return None"
+   , indent 4 "base, dim, index, value = (list(node.args) + [None] * 4)[:4]"
+   , indent 4 "if value is None: value = node.kwargs.get('value')"
+   , indent 4 "if not isinstance(value, (int, float)) or float(value) != 1.0: return None"
+   , indent 4 "if not _is_getitem(index) or index.args[1] != 1: return None"
+   , indent 4 "topk = index.args[0]"
+   , indent 4 "if not _is_op(topk, ('aten.topk.default',)): return None"
+   , indent 4 "source, k = topk.args[0], topk.args[1]"
+   , indent 4 "rank = len(_shape_from_arg(source))"
+   , indent 4 "topk_dim = topk.args[2] if len(topk.args) > 2 else topk.kwargs.get('dim', -1)"
+   , indent 4 ("largest = topk.args[3] if len(topk.args) > 3 else " ++
+       "topk.kwargs.get('largest', True)")
+   , indent 4 ("if not largest or _normalize_axis(topk_dim, rank) != rank - 1 or " ++
+       "_normalize_axis(dim, rank) != rank - 1: return None")
+   , indent 4 "if not _is_op(base, ('aten.zeros_like.default',)): return None"
+   , indent 4 "if _shape_from_arg(base) != _shape_from_arg(source): return None"
+   , indent 4 "return source, int(k)"
+   , ""
+   , "def _routing_helpers(graph):"
+   , indent 4 "masks = [node for node in graph.nodes if _top_k_mask(node) is not None]"
+   , indent 4 "helpers = set()"
+   , indent 4 "for mask in masks:"
+   , indent 8 "base, index = mask.args[0], mask.args[2]"
+   , indent 8 "topk = index.args[0]"
+   , indent 8 ("helpers |= {base, index, topk} | {user for user in topk.users if " ++
+       "_is_getitem(user) and not user.users}")
+   , indent 4 "allowed = set(masks) | helpers"
+   , indent 4 "for helper in helpers:"
+   , indent 8 "if any(user not in allowed for user in helper.users):"
+   , indent 8 ("    raise NotImplementedError('torch.topk values, or zeros shared with other " ++
+       "operations, are outside the TorchLean routing idiom')")
+   , indent 4 "return helpers"
+   , "" ]
+
 /-- `_lower_kind` rules for `call_module` nodes, keyed on the `nn.Module` subclass. -/
 def modules : Array String :=
   #[ indent 4 "if node.op == \"call_module\" and model is not None:"
@@ -516,6 +557,14 @@ def elementwise : Array String :=
        "(operator.mul, torch.mul, torch.multiply), (\"mul\", \"multiply\")):" ] ++
     operands ++
   #[ "        return {\"kind\": " ++ Wire.quoted .mulElem ++ "}"
+   , "    if _is_op(node, (\"aten.div.Tensor\",), " ++
+       "(operator.truediv, torch.div, torch.true_divide), (\"div\", \"true_divide\")):" ] ++
+    operands ++
+  #[ "        if kwargs.get(\"rounding_mode\", None) is not None:"
+   , "            raise NotImplementedError(\"torch.div with a rounding mode is unsupported\")"
+   , "        return {\"kind\": " ++ Wire.quoted .div ++ "}"
+   , "    if _top_k_mask(node) is not None:"
+   , "        return {\"kind\": " ++ Wire.quoted .topKMask ++ ", \"k\": _top_k_mask(node)[1]}"
    , "    if _is_op(node, (\"aten.relu.default\",), (torch.relu, F.relu), (\"relu\",)):"
    , "        inplace = kwargs.get(\"inplace\", args[1] if len(args) > 1 else False)"
    , "        if inplace: raise " ++ "NotImplementedError(\"in-place relu is outside the " ++
@@ -619,6 +668,18 @@ def tensorOps : Array String :=
    , "        rank = len(_node_shape(node))"
    , "        dim = _normalize_axis(kwargs.get(\"dim\", args[1] if len(args) > 1 else 0), rank)"
    , "        return {\"kind\": " ++ Wire.quoted .concat ++ ", \"axis\": dim}"
+   , "    if _is_op(node, (\"aten.slice.Tensor\",)):"
+   , "        source = _shape_from_arg(args[0])"
+   , "        dim = args[1] if len(args) > 1 else kwargs.get('dim', 0)"
+   , "        dim = _normalize_axis(dim, len(source))"
+   , "        start = args[2] if len(args) > 2 else kwargs.get('start', None)"
+   , "        end = args[3] if len(args) > 3 else kwargs.get('end', None)"
+   , "        step = args[4] if len(args) > 4 else kwargs.get('step', 1)"
+   , "        if step != 1:"
+   , "            raise NotImplementedError('strided slices are outside the TorchLean IR subset')"
+   , "        start, end, _ = slice(start, end).indices(source[dim])"
+   , "        return {\"kind\": " ++ Wire.quoted .slice ++
+       ", \"axis\": dim, \"start\": start, \"length\": max(0, end - start)}"
    , "    if _is_op(node, (\"aten.transpose.int\",), (torch.transpose,), (\"transpose\",)):"
    , "        rank = len(_shape_from_arg(args[0]))"
    , "        d0 = _normalize_axis(kwargs.get(\"dim0\", args[1] if len(args) > 1 else None), rank)"
@@ -794,9 +855,11 @@ def coverage : Array String :=
    , indent 4 "        **{key: str(value) for key, value in node.kwargs.items()}}"
    , ""
    , "def _check_graph_operators(graph, model):"
+   , indent 4 "helpers = _routing_helpers(graph)"
    , indent 4 "for node in graph.nodes:"
    , indent 8 "if node.op in (\"placeholder\", \"get_attr\", \"output\"):"
    , indent 8 "    continue"
+   , indent 8 "if node in helpers or _zeros_like(node): continue"
    , indent 8 "if _metadata_constraint(node) is not None: continue"
    , indent 8 "if _tuple_shapes_of_node(node):"
    , indent 8 "    _tuple_kind(node, model)"
@@ -804,6 +867,9 @@ def coverage : Array String :=
    , indent 8 "    _lower_kind(node, model)"
    , indent 8 "else:"
    , indent 8 "    raise NotImplementedError(f\"unsupported FX node op: {node.op}\")"
+   , ""
+   , "def _zeros_like(node):"
+   , indent 4 "return _is_op(node, ('aten.zeros_like.default',)) and not node.kwargs.get('dtype')"
    , ""
    , "def _graph_is_lowerable(graph, model):"
    , indent 4 "try:"
@@ -881,7 +947,11 @@ def entrypoint (options : Options) : Array String :=
    , indent 4 "output_ids = None"
    , indent 4 "input_nodes = {}"
    , indent 4 "capture_constraints = []"
+   , indent 4 "helpers = _routing_helpers(graph)"
    , indent 4 "for node in graph.nodes:"
+   , indent 8 "if node in helpers:"
+   , indent 8 "    node_to_id[node] = None"
+   , indent 8 "    continue"
    , indent 8 "constraint = _metadata_constraint(node)"
    , indent 8 "if constraint is not None:"
    , indent 8 "    capture_constraints.append(constraint)"
@@ -900,6 +970,12 @@ def entrypoint (options : Options) : Array String :=
    , indent 8 ("    # instead of forcing every unused container projection to have a tensor " ++
        "lowering.")
    , indent 8 "    node_to_id[node] = None"
+   , indent 8 "    continue"
+   , indent 8 "if _zeros_like(node):"
+   , indent 8 "    value = node.meta.get('val', node.meta.get('tensor_meta'))"
+   , indent 8 "    node_to_id[node] = len(nodes)"
+   , indent 8 ("    nodes.append({'id': len(nodes), 'parents': [], **_constant(torch.zeros(" ++
+       "_node_shape(node), dtype=value.dtype))})")
    , indent 8 "    continue"
    , indent 8 "if node.op == 'get_attr' or (node.op == 'placeholder' and"
    , indent 8 "    not is_input):"
@@ -935,8 +1011,10 @@ def entrypoint (options : Options) : Array String :=
    , indent 8 "        bound = len(nodes)"
    , indent 8 "        nodes.append({'id': bound, 'parents': [], **_constant(value)})"
    , indent 8 "        parents = _node_refs((source,), node_to_id) + [bound]"
+   , indent 8 "    elif kind['kind'] == " ++ Wire.quoted .topKMask ++ ":"
+   , indent 8 "        parents = _node_refs((_top_k_mask(node)[0],), node_to_id)"
    , indent 8 ("    elif kind['kind'] in " ++
-       "('add', 'sub', 'mul_elem', 'max_elem', 'min_elem', 'matmul'):")
+       "('add', 'sub', 'mul_elem', 'div', 'max_elem', 'min_elem', 'matmul'):")
    , indent 8 ("        left = node.args[0] if node.args else " ++
        "node.kwargs.get('input', node.kwargs.get('self'))")
    , indent 8 ("        right = node.args[1] if len(node.args) > 1 else " ++
@@ -950,7 +1028,7 @@ def entrypoint (options : Options) : Array String :=
    , indent 8 "    raise NotImplementedError(f\"unsupported FX node op: {node.op}\")"
    , indent 8 "if not tuple_shapes:"
    , indent 8 "    dtype = _node_dtype(node)"
-   , indent 8 "    if kind['kind'] in ('add', 'sub', 'mul_elem', 'max_elem', 'min_elem'):"
+   , indent 8 "    if kind['kind'] in ('add', 'sub', 'mul_elem', 'div', 'max_elem', 'min_elem'):"
    , indent 8 "        promoted = []"
    , indent 8 "        for parent in parents:"
    , indent 8 "            source = nodes[parent]"
@@ -1043,8 +1121,9 @@ exposes enough static arguments. Linear layers can appear either as `aten.linear
 def script (options : Options := {}) : String :=
   joinLines <|
     Internal.imports ++ Internal.shapes ++ Internal.tupleKind ++ Internal.model ++
-      Internal.payload ++ Internal.axes ++ Internal.lower ++ Internal.coverage ++
-      Internal.capture options ++ Internal.entrypoint options ++ Internal.cli options
+      Internal.routing ++ Internal.payload ++ Internal.axes ++ Internal.lower ++
+      Internal.coverage ++ Internal.capture options ++ Internal.entrypoint options ++
+      Internal.cli options
 
 end TorchExport
 end PyTorch

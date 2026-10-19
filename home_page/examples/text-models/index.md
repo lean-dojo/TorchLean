@@ -123,7 +123,7 @@ let trained ← trainer.train (Data.fromStream samples)
 trained.printSummary
 ```
 
-`Trainer.RunConfig.fromRuntime` turns the parsed `--device`, `--arithmetic`, and `--execution`
+`Trainer.RunConfig.fromRuntime` turns the parsed `--device` and `--arithmetic`
 flags into a run configuration, and `forObjective` attaches the loss. `TrainOptions.steps` is
 required; `samplesPerStep` is the number of dataset items whose gradients are averaged before one
 update. The surrounding code builds a bank of token windows from the corpus, reports before/after

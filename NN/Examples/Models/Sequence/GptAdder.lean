@@ -442,7 +442,7 @@ def usage : String :=
     "  --steps N --lr X --log PATH|false --cuda-mem-watch N",
     "",
     "Runtime:",
-    "  --device cuda --execution eager --seed N --show-backend"
+    "  --device cuda --seed N --show-backend"
   ]
 
 /-- Default extra addition checks shown after training when `--probes` is omitted. -/
@@ -619,7 +619,7 @@ def main (args : List String) : IO UInt32 := do
       banner? := some <| Support.banner exeName "minGPT-style addition training"
       usage? := some Options.usage
       printSuccess := true
-      runtime := { device? := some .cuda, execution? := some .eager } })
+      runtime := { device? := some .cuda } })
     exeName args
     (.native fun runtime rest => do
       let (options, rest) ← CLI.orThrow exeName <| Options.parse rest

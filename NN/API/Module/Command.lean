@@ -25,8 +25,6 @@ namespace Module
 structure RuntimeSelection where
   /-- Arithmetic semantics for this execution. -/
   arithmetic : TorchLean.Runtime.Arithmetic := .native
-  /-- Immediate or typed-graph execution. -/
-  execution : Runtime.ExecutionMode := .eager
   /-- Requested execution device. -/
   device : NN.Backend.Device := .cpu
   /-- Whether to print each backend capsule when first used. -/
@@ -36,7 +34,7 @@ structure RuntimeSelection where
 namespace RuntimeSelection
 
 /--
-Parse the shared arithmetic, execution, device, and backend-reporting flags.
+Parse the shared arithmetic, precision, device, and backend-reporting flags.
 
 Named devices without an installed runtime remain parseable so diagnostics can report the intended
 target. `Runtime.Config.validateForExecution` rejects such a configuration before execution.
@@ -46,9 +44,6 @@ def parse
     Except String (RuntimeSelection × List String) := do
   let (arithmetic, arguments) ←
     TorchLean.Runtime.Arithmetic.parseAndStrip arguments (default := defaultArithmetic)
-  let (execution, arguments) ←
-    TorchLean.CLI.takeParsedFlag arguments "execution" (default := "eager")
-      TorchLean.Runtime.ExecutionMode.parse
   let rec go (device : NN.Backend.Device) (showBackend : Bool) (acc : List String) :
       List String → Except String (NN.Backend.Device × Bool × List String)
     | .nil => pure (device, showBackend, acc.reverse)
@@ -66,7 +61,7 @@ def parse
         else
           go device showBackend (arg :: acc) rest
   let (device, showBackend, remainingArguments) ← go .cpu false [] arguments
-  pure ({ arithmetic, execution, device, showBackend }, remainingArguments)
+  pure ({ arithmetic, device, showBackend }, remainingArguments)
 
 /-- Convert parsed command-line choices to an explicit runtime configuration. -/
 def toConfig (selection : RuntimeSelection) (seed : Nat := 0) :
@@ -75,17 +70,14 @@ def toConfig (selection : RuntimeSelection) (seed : Nat := 0) :
     throw (s!"device `{selection.device.cliName}` has no maintained runtime profile; "
       ++ "use a programmatic backend profile")
   pure
-    { execution := selection.execution
-      device := selection.device
+    { device := selection.device
       seed
       backendProfile? := none
       showBackend := selection.showBackend }
 
-/-- Print the selected arithmetic, execution strategy, and device. -/
+/-- Print the selected arithmetic and device. -/
 def log (selection : RuntimeSelection) : IO Unit := do
   TorchLean.Runtime.Arithmetic.log selection.arithmetic
-  IO.println
-    s!"[TorchLean] execution: {TorchLean.Runtime.ExecutionMode.cliName selection.execution}"
   IO.println s!"[TorchLean] device: {selection.device.cliName}"
 
 end RuntimeSelection
@@ -120,25 +112,17 @@ namespace TorchLean.Module.Command
 structure RuntimeRequirements where
   /-- Required execution device, or no device restriction. -/
   device? : Option NN.Backend.Device := none
-  /-- Required execution strategy, or no execution-strategy restriction. -/
-  execution? : Option Runtime.ExecutionMode := none
   deriving Inhabited
 
 namespace RuntimeRequirements
 
 /-- Supply required runtime flags only when the caller did not choose them explicitly. -/
 def applyDefaults (requirements : RuntimeRequirements) (arguments : List String) : List String :=
-  let arguments :=
-    match requirements.device? with
-    | none => arguments
-    | some device =>
-        if TorchLean.CLI.hasFlagValue arguments "device" then arguments
-        else "--device" :: device.cliName :: arguments
-  match requirements.execution? with
+  match requirements.device? with
   | none => arguments
-  | some execution =>
-      if TorchLean.CLI.hasFlagValue arguments "execution" then arguments
-      else "--execution" :: TorchLean.Runtime.ExecutionMode.cliName execution :: arguments
+  | some device =>
+      if TorchLean.CLI.hasFlagValue arguments "device" then arguments
+      else "--device" :: device.cliName :: arguments
 
 /-- Reject a parsed runtime selection that conflicts with the command's requirements. -/
 def validate (requirements : RuntimeRequirements) (runtime : Runtime.Config) :
@@ -149,13 +133,6 @@ def validate (requirements : RuntimeRequirements) (runtime : Runtime.Config) :
       unless runtime.device == required do
         throw (s!"this command requires --device {required.cliName}, "
           ++ s!"not --device {runtime.device.cliName}")
-  match requirements.execution? with
-  | none => pure ()
-  | some required =>
-      unless runtime.execution == required do
-        throw (s!"this command requires --execution "
-          ++ s!"{TorchLean.Runtime.ExecutionMode.cliName required}, not --execution "
-          ++ s!"{TorchLean.Runtime.ExecutionMode.cliName runtime.execution}")
 
 end RuntimeRequirements
 
@@ -169,7 +146,7 @@ structure Config where
   flush : Bool := true
   /-- Print `"{exeName}: ok"` after successful execution. -/
   printSuccess : Bool := false
-  /-- Device or execution-mode requirements imposed by this command. -/
+  /-- Device requirements imposed by this command. -/
   runtime : RuntimeRequirements := {}
 deriving Inhabited
 
@@ -217,8 +194,6 @@ def usage (exeName : String) : String :=
     , "      other names are planning targets and fail until a runtime is registered."
     , "  --arithmetic native|ieee|complex"
     , "      native is the default; ieee uses FloatLib's executable binary32 format."
-    , "  --execution eager|typed-graph"
-    , "      eager executes immediately; typed-graph records and reuses a shape-indexed SSA graph."
     , "  --seed N"
     , "  --show-backend"
     , "      print the backend capsules selected by the current device profile."
@@ -237,7 +212,7 @@ Run a TorchLean executable after parsing the shared seed and runtime flags.
 
 The selected seed initializes TorchLean's global random stream and is also stored in
 `Runtime.Config`, so
-model initialization and either execution mode observe the same seed.
+model initialization and training observe the same seed.
 -/
 def run
     (exeName : String)

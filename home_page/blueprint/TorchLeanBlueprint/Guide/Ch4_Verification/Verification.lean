@@ -1,6 +1,5 @@
 import VersoManual
 import NN.Verification.Builtin.Proved
-import NN.Runtime.Autograd.IRExec.Correctness.SemanticEquivalence
 import NN.MLTheory.CROWN.Proofs.GraphCertSoundness
 import NN.MLTheory.CROWN.Proofs.GraphRunibpEndToEnd
 import NN.MLTheory.CROWN.Proofs.GraphCrownCertSoundness
@@ -23,7 +22,6 @@ open Verso.Genre.Manual.InlineLean
 -- below fit on one line without losing any information: a printed signature always spells
 -- out the fully qualified name of everything it mentions.
 open NN.Verification.Builtin.Proved.Correctness
-open Runtime.Autograd.IRExec
 open NN.MLTheory.CROWN.Graph.CertSoundness
 open NN.MLTheory.CROWN.Graph.CrownCertSoundness
 open NN.MLTheory.CROWN.Graph.AlphaCrownTransferSoundness
@@ -183,7 +181,7 @@ The verifier operates on the canonical `NN.IR.Graph`. An interval or affine form
 relative to a denotation of that same graph, parameter store, and input box. A lowering theorem is
 therefore part of a source-model claim.
 
-TorchLean has two relevant forward correspondences. The typed first-order
+The forward correspondence is a lowering theorem. The typed first-order
 {src "NN/Verification/Builtin/Proved.lean"}[proved forward fragment]
 lowers `NN.Verification.Builtin.Proved.ForwardProgram` values. Its constructors cover constants,
 parameters, arithmetic, ReLU, `exp`, `log`, inverse, matrix products, reshapes and
@@ -193,13 +191,10 @@ loss.
 `Correctness.lowerForwardProgramToIR_wellFormed` proves structural well-formedness, while
 `Correctness.runForwardIR_eq_evalForward` proves equality with the typed program evaluator.
 
-The second correspondence starts from canonical IR rather than the typed source language.
-`denoteAll_eq_of_lowerToForwardGraph` proves that a successful lowering to the forward-only
-`IRExec.ForwardGraph` preserves denotation for every input, with `NoRawLog` as its only side
-condition. A third, smaller fact sits underneath both: `NN.IR.Graph.checkShapes_sound` proves that
-the shapes declared in an accepted graph are the shapes its denotation computes.
+A smaller fact sits underneath it: `NN.IR.Graph.checkShapes_sound` proves that the shapes
+declared in an accepted graph are the shapes its denotation computes.
 
-Both are Lean semantic equalities over an abstract scalar `Context`. They are not statements that a
+Both are Lean semantic statements over an abstract scalar `Context`. They are not statements that a
 PyTorch module, CUDA kernel, or vendor library agrees with the graph. General API lowering also
 does not inherit the typed-fragment theorem merely because it returns the same IR type.
 
@@ -213,9 +208,6 @@ They expose the scalar type, accepted fragment, and success conditions needed to
 -- Its graph evaluation agrees with evaluation of the
 -- original typed program.
 #check @runForwardIR_eq_evalForward
--- A successful IR-to-forward-graph lowering preserves
--- denotation under NoRawLog.
-#check @denoteAll_eq_of_lowerToForwardGraph
 -- Successful shape checking agrees with the shapes of
 -- successfully computed values.
 #check @NN.IR.Graph.checkShapes_sound
@@ -238,15 +230,6 @@ They expose the scalar type, accepted fragment, and success conditions needed to
     NN.Verification.Builtin.Proved.evalForward p params x
 ```
 ```leanOutput loweringThms (whitespace := lax)
-@denoteAll_eq_of_lowerToForwardGraph : ∀ {α : Type} [inst : TorchLean.Storage α] [inst_1 :
-  Context α] (g : NN.IR.Graph)
-  (payload : NN.IR.Payload α) (exec : ForwardGraph α),
-  NoRawLog g →
-    lowerToForwardGraph g payload = Except.ok exec →
-      ∀ (x : TorchLean.Tensor α exec.inShape),
-        g.denoteAll payload { shape := exec.inShape, tensor := x } = Except.ok (exec.denoteAll x)
-```
-```leanOutput loweringThms (whitespace := lax)
 @NN.IR.Graph.checkShapes_sound : ∀ {α : Type} [inst : TorchLean.Storage α] [inst_1 : Context α]
   (g : NN.IR.Graph)
   (payload : NN.IR.Payload α) (input : Spec.SomeTensor α) (vals : Array (Spec.SomeTensor α)),
@@ -266,15 +249,12 @@ In these signatures, `∀` means “for every,” `{...}` contains arguments Lea
 `[...]` requests an interface instance, such as the scalar operations in `Context α`. An arrow
 `P → Q` says that a proof of `P` yields a proof of `Q`. Long namespaces tell Lean which definition
 is meant; the important reading order is the objects, then the hypotheses, then the conclusion.
-For example, the third output needs both `NoRawLog g` and successful lowering before it gives
-equality for every input `x`.
+For example, the last output needs successful shape checking and successful denotation before it
+says anything about a value's shape.
 
 The typed-program results need no additional success premise: the program constructors, shapes,
-and scalar interfaces already restrict the objects they accept. The IR-to-forward-graph result
-instead assumes that lowering returns `Except.ok exec`. It also requires `NoRawLog g`, excluding
-all raw-log nodes, even those whose inputs would be positive. The canonical evaluator checks the
-logarithm's input domain, while the pure forward graph applies the total scalar operation. Public
-IO autograd performs its own domain validation; that does not change this pure theorem's premise.
+and scalar interfaces already restrict the objects they accept. The equality includes errors, so a
+raw logarithm of a nonpositive input fails in the same way on both sides.
 
 Shape soundness has a different role. Once shape checking and denotation both succeed, it identifies
 the shape of each computed value with the declaration at the corresponding node. It supplies no
@@ -1034,15 +1014,15 @@ certificateAccepts_eq_true : ∀ (cert : NN.Verification.Cert.NodeReplay.CROWNNo
   (ps :
     NN.MLTheory.CROWN.Graph.ParamStore
       (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-        checkCROWNNode._proof_1
-        checkCROWNNode._proof_2 checkCROWNNode._proof_3 checkCROWNNode._proof_4))
+        checkNodeEntries._proof_1
+        checkNodeEntries._proof_2 checkNodeEntries._proof_3 checkNodeEntries._proof_4))
   (authoritativeIbp :
     Array
       (Option
         (NN.MLTheory.CROWN.FlatBox
           (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-            checkCROWNNode._proof_1 checkCROWNNode._proof_2 checkCROWNNode._proof_3
-              checkCROWNNode._proof_4))))
+            checkNodeEntries._proof_1 checkNodeEntries._proof_2 checkNodeEntries._proof_3
+              checkNodeEntries._proof_4))))
   (diagnosticsOk : Bool),
   certificateAccepts cert g ps authoritativeIbp diagnosticsOk = true →
     CrownCertLocalOK g (NN.Verification.Cert.CROWNNodeCert.replayStep g ps authoritativeIbp cert)
@@ -1054,15 +1034,15 @@ AlphaBetaCROWNNodeCertificate.accepts_eq_true : ∀ (cert : AlphaBetaCROWNNodeCe
   (ps :
     NN.MLTheory.CROWN.Graph.ParamStore
       (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-        AlphaBetaCROWNNodeCertificate._proof_1 AlphaBetaCROWNNodeCertificate._proof_2
-        AlphaBetaCROWNNodeCertificate._proof_3 AlphaBetaCROWNNodeCertificate._proof_4))
+        replayStep._proof_1 replayStep._proof_2
+        replayStep._proof_3 replayStep._proof_4))
   (authoritativeIbp :
     Array
       (Option
         (NN.MLTheory.CROWN.FlatBox
           (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-            AlphaBetaCROWNNodeCertificate._proof_1 AlphaBetaCROWNNodeCertificate._proof_2
-            AlphaBetaCROWNNodeCertificate._proof_3 AlphaBetaCROWNNodeCertificate._proof_4))))
+            replayStep._proof_1 replayStep._proof_2
+            replayStep._proof_3 replayStep._proof_4))))
   (diagnosticsOk : Bool),
   cert.accepts g ps authoritativeIbp diagnosticsOk = true →
     CrownCertLocalOK g (NN.Verification.Cert.CROWNNodeCertAlphaBeta.replayStep g ps authoritativeIbp

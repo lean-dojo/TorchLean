@@ -114,14 +114,12 @@ def missingDataHint : String :=
 /--
 FNO Burgers command-line options: training flags, data paths, and artifact paths.
 
-The record keeps optimizer/log settings, reproducibility, tensor paths, and output artifacts as
+The record keeps optimizer/log settings, tensor paths, and output artifacts as
 separate named concerns.
 -/
 structure Options where
   /-- Optimizer, step, batching, and logging controls. -/
   training : CLI.Training.OptimizerOptions
-  /-- Seed used for initialization and training-row selection. -/
-  seed : Nat
   /-- Prepared train/test tensors and evaluation row counts. -/
   data : Support.Npy.SplitOptions
   /-- Output path for the prediction diagnostic. -/
@@ -137,14 +135,13 @@ namespace Options
 /-- Parse the FNO Burgers command-line options. -/
 def parse (args : List String) :
     Except String (Options × List String) := do
-  let (seed, args) ← CLI.takeSeed args (default := 0)
   let (training, args) ←
     CLI.Training.OptimizerOptions.parse exeName args defaultLogPath
       (defaultSteps := 50) (defaultLearningRate := 5e-3)
   let (data, args) ← Support.Npy.SplitOptions.parse exeName args
     trainXPath trainYPath testXPath testYPath defaultTrainRows defaultTestRows
   let (plotCsv, args) ← CLI.takePathFlag args "plot-csv" (default := defaultPlotCsv)
-  pure ({ training, seed, data, plotCsv }, args)
+  pure ({ training, data, plotCsv }, args)
 
 /-- Effective CUDA-memory-watch cadence for this run. -/
 def memoryCadence (config : Options) (runtime : Runtime.Config) : Nat :=
@@ -276,7 +273,7 @@ def run
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := config.training.learningRate } })
         .mse
-        (seed := config.seed)
+        (seed := runtime.seed)
   trainer.printSummary
   let historyRef ← IO.mkRef metrics
   let meanLoss (predict : Tensor Float input → IO (Tensor Float output))
@@ -296,7 +293,7 @@ def run
     historyRef.set (← record history step tag trainLoss testLoss)
   let progressEvery : Nat := Nat.max 1 (config.training.steps / 10)
   let trained ← trainer.trainStream runtime
-    (fun step => evaluation.next (config.seed + step))
+    (fun step => evaluation.next (runtime.seed + step))
     evaluation.sample
     (config.training.trainOptions (enableLog := false))
     (curveEvery := progressEvery)
@@ -310,15 +307,14 @@ def run
       (runtime.deviceName)
 
 /--
-Print the run's configuration: device, execution mode, model geometry, row counts and file paths.
+Print the run's configuration: device, model geometry, row counts and file paths.
 
 An FNO run that silently loaded the wrong split can look like a training problem.
 Printing the paths and row counts helps identify the data error.
 -/
 def printHeader (runtime : Runtime.Config) (config : Options) : IO Unit := do
   IO.println s!"{exeName}: native real-split FNO1D Burgers"
-  let executionName := Runtime.ExecutionMode.cliName runtime.execution
-  IO.println s!"  {Support.deviceNote runtime} execution={executionName}"
+  IO.println s!"  {Support.deviceNote runtime}"
   IO.println
     s!"  grid={gridSize} width={width} modes={modes} blocks={blocks}"
   IO.println (s!"  rows train={config.data.trainRows} test={config.data.testRows} "
@@ -347,7 +343,6 @@ def main (args : List String) : IO UInt32 := do
     exeName args
     (.native fun runtime rest => do
       let (config, rest) ← CLI.orThrow exeName <| Options.parse rest
-      let config := { config with seed := runtime.seed }
       CLI.requireNoArgs exeName rest
       printHeader runtime config
       run runtime config)

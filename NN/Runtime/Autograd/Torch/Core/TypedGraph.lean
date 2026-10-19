@@ -42,15 +42,10 @@ Checked compilation evaluates forward operations and saves their local reverse p
 Each new set of inputs needs a fresh compiled execution. The reusable object is the recorded
 graph; saved programs belong to the forward evaluation that created them.
 
-The pure entry points below assume each node's runtime preconditions. Checked IO autodiff and
-session execution use `TypedGraph.compileChecked` or `TypedGraph.jvpChecked` to report
-`NodeData.validate` failures before evaluating a node. The pure graph functions remain available
-for the semantic and proof layers.
-
-The imperative API records operations through `Runtime.Autograd.Model.Session`, which selects
-the eager runtime or `Internal.TypedGraphSession`. That session owns mutable recording state.
-Imported `NN.IR.Graph` programs use `Runtime.Autograd.IRExec.ForwardGraph`, whose nodes provide
-forward execution.
+The pure entry points below assume each node's runtime preconditions. Checked IO autodiff uses
+`TypedGraph.compileChecked` or `TypedGraph.jvpChecked` to report `NodeData.validate` failures
+before evaluating a node. The pure graph functions remain available for the semantic and proof
+layers.
 -/
 
 /--

@@ -11,12 +11,14 @@ public import NN.Runtime.Autograd.Engine.Core.ActivationsLoss
 public import NN.Runtime.Autograd.Engine.Core.Elementwise
 public import NN.Runtime.Autograd.Engine.LibTorch.Ops.Elementwise
 public import NN.Runtime.Autograd.Engine.LibTorch.Ops.NormSoftmax
+public import NN.Spec.Layers.MoE
 
 /-!
 # Eager Tensor Operations
 
-PyTorch-style tensor operations backed by the eager CPU/CUDA tapes. These wrappers record runtime
-nodes, dispatch CUDA kernels when requested, and preserve the typed `TensorRef` surface.
+PyTorch-style tensor operations recorded on the session's tape. Each one runs the CPU or the CUDA
+kernel of the operation, as the session's device selects, and preserves the typed `TensorRef`
+surface.
 -/
 
 
@@ -162,6 +164,34 @@ def min {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
     s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.LibTorch.Tape.min (t := t0) (s := sh) a.id b.id
   executeRecorded (α := α) s .min #[a.identity?, b.identity?] cpu cuda
+
+/--
+Record the top-`k` mask of `x` along its last axis (`Spec.MoE.topKMaskSpec`), a reference that
+receives no gradient. CUDA computes it with a comparison kernel; the CPU tape evaluates the spec.
+-/
+def topKMask {α : Type} [Storage α] [Context α] [TensorTransfer α]
+    (s : EagerSession α) {sh : Shape} (k : Nat)
+    (x : TensorRef α sh) : IO (TensorRef α sh) := do
+  s.validateTensorRef x
+  if Config.device s.options == .cuda then
+    let tape ← s.cudaTape
+    if let some stored := tape.getValue? x.id then
+      if (Runtime.Autograd.LibTorch.Buffer.format? stored.buf).isSome then
+        throw <| IO.userError
+          "autograd: configured GPU arithmetic does not support `top_k_mask`; use CPU"
+    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
+      Runtime.Autograd.LibTorch.Tape.topKMask (t := t0) (s := sh) k x.id
+    s.makeTensorRef id
+  else
+    let value ← getValue (α := α) s (sh := sh) x
+    let node : Runtime.Autograd.Node (Spec.SomeTensor α) :=
+      { name := some "top_k_mask"
+        value := Spec.SomeTensor.ofTensor (Spec.MoE.topKMaskSpec k value)
+        requiresGrad := false
+        parents := #[x.id]
+        backward := fun _ => .ok #[] }
+    let id ← s.recordCpuPure fun tape => Runtime.Autograd.Tape.addNode tape node
+    s.makeTensorRef id
 
 /-- Record elementwise ReLU. PyTorch: `torch.relu` / `torch.nn.functional.relu`. -/
 def relu {α : Type} [TorchLean.Storage α] (s : EagerSession α)

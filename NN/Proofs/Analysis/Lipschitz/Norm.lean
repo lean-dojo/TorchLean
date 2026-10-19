@@ -21,7 +21,7 @@ their algebraic properties. Neural-network Lipschitz bounds build on these facts
 - Everything here is **spec-level** and **real-valued** (`ℝ`), so we can freely use Mathlib's
   analysis and order theory.
 - `Tensor ℝ s` is an `InnerProductSpace ℝ` (see `NN.Proofs.Tensor.Euclidean`). The bridge lemmas
-  `tensorL2Norm_eq_norm`, `tensorL2Dist_eq_dist`, and `dot_eq_inner` identify
+  `tensorL2Norm_eq_norm`, `tensorL2Dist_eq_dist`, and `Spec.dot_eq_inner` identify
   `tensorL2Norm`, `tensorL2Dist`, and `Spec.dot` with `‖·‖`, `dist`, and `⟪·, ·⟫_ℝ`; every norm
   inequality below is then a direct instance of the Mathlib theorem.
 - `NN.MLTheory.Robustness.Spec` also has scalar-polymorphic norm definitions for runtime and
@@ -80,11 +80,6 @@ theorem tensorNormSquared_eq_sum {s : Shape} (t : Tensor ℝ s) :
     tensorNormSquared t = ∑ i, t i ^ 2 := by
   rw [tensorNormSquared, dot, sum_spec_eq_coord_sum]
   simp only [mulSpec, map2Spec_apply, sq]
-
-/-- `Spec.dot` is the Euclidean inner product. -/
-theorem dot_eq_inner {s : Shape} (x y : Tensor ℝ s) : dot x y = ⟪x, y⟫ := by
-  rw [dot, sum_spec_eq_coord_sum, Tensor.inner_eq_sum]
-  simp only [mulSpec, map2Spec_apply]
 
 /-- `tensorNormSquared` is the squared Euclidean norm. -/
 theorem tensorNormSquared_eq_norm_sq {s : Shape} (t : Tensor ℝ s) :

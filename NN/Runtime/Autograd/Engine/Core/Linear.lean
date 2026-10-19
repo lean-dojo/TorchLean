@@ -36,7 +36,7 @@ PyTorch comparison: `torch.nn.functional.linear`.
 -/
 @[inline] def linear {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
   {inDim outDim : Nat}
-  (t : Tape α) (wId bId xId : Nat) : Result (Tape α × Nat) := do
+  (t : Tape (Spec.SomeTensor α)) (wId bId xId : Nat) : Result (Tape (Spec.SomeTensor α) × Nat) := do
   let W ← requireValue (α:=α) (t:=t) (s:=.dim outDim (.dim inDim .scalar)) wId
   let b ← requireValue (α:=α) (t:=t) (s:=.dim outDim .scalar) bId
   let x ← requireValue (α:=α) (t:=t) (s:=.dim inDim .scalar) xId
@@ -45,7 +45,7 @@ PyTorch comparison: `torch.nn.functional.linear`.
   let weightGrad := (t.getNode? wId).any (·.requiresGrad)
   let biasGrad := (t.getNode? bId).any (·.requiresGrad)
   let inputGrad := (t.getNode? xId).any (·.requiresGrad)
-  let node : Node α :=
+  let node : Node (Spec.SomeTensor α) :=
     { name := some "linear"
       value := Spec.SomeTensor.ofTensor y
       requiresGrad := weightGrad || biasGrad || inputGrad
@@ -75,10 +75,10 @@ shape `batch ++ [m, p]`. The empty-prefix defaults preserve ordinary 2D matrix m
 PyTorch comparison: `torch.matmul(a, b)` for operands of rank at least two.
 -/
 @[inline] def matmul {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
-  {m n p : Nat} (t : Tape α) (aId bId : Nat)
+  {m n p : Nat} (t : Tape (Spec.SomeTensor α)) (aId bId : Nat)
   (batchA : Shape := .scalar) (batchB : Shape := .scalar) (batch : Shape := .scalar)
   [broadcastA : Shape.BroadcastTo batchA batch]
-  [broadcastB : Shape.BroadcastTo batchB batch] : Result (Tape α × Nat) :=
+  [broadcastB : Shape.BroadcastTo batchB batch] : Result (Tape (Spec.SomeTensor α) × Nat) :=
   binary (α := α) (t := t) (σ₁ := batchA.concat [m, n]) (σ₂ := batchB.concat [n, p])
     (τ := batch.concat [m, p]) "matmul" aId bId
     (forward := TorchLean.Tensor.matmulSpec broadcastA.proof broadcastB.proof)
@@ -90,7 +90,8 @@ Concatenate two tensors along dimension 0.
 PyTorch comparison: `torch.cat([a, b], dim=0)`.
 -/
 @[inline] def concat {α : Type} [TorchLean.Storage α]
-  {n m : Nat} {s : Shape} (t : Tape α) (aId bId : Nat) : Result (Tape α × Nat) :=
+  {n m : Nat} {s : Shape} (t : Tape (Spec.SomeTensor α)) (aId bId : Nat) : Result (Tape
+      (Spec.SomeTensor α) × Nat) :=
   binary (α := α) (t := t) (σ₁ := .dim n s) (σ₂ := .dim m s) (τ := .dim (n + m) s)
     "concat_leading_axis" aId bId
     (forward := TorchLean.Tensor.concatAxisSpec .scalar)
@@ -104,8 +105,9 @@ The proof argument `h` enforces bounds.
 PyTorch comparison: `x[start:start+len]` on tensors with a leading dimension.
 -/
 @[inline] def slice {α : Type} [TorchLean.Storage α] [Zero α]
-  {n : Nat} {s : Shape} (t : Tape α) (xId : Nat) (start len : Nat) (h : start + len ≤ n) :
-  Result (Tape α × Nat) :=
+  {n : Nat} {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) (start len : Nat) (h
+      : start + len ≤ n) :
+  Result (Tape (Spec.SomeTensor α) × Nat) :=
   unary (α := α) (t := t) (σ := .dim n s) (τ := .dim len s)
     "slice" xId
     (forward := fun x => Spec.sliceRangeSpec (α := α) (n := n) (shape := s) x start len h)

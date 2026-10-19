@@ -15,8 +15,9 @@ public import NN.Runtime.Autograd.Engine.LibTorch.Ops.Shape
 /-!
 # Eager Tensor Operations
 
-PyTorch-style tensor operations backed by the eager CPU/CUDA tapes. These wrappers record runtime
-nodes, dispatch CUDA kernels when requested, and preserve the typed `TensorRef` surface.
+PyTorch-style tensor operations recorded on the session's tape. Each one runs the CPU or the CUDA
+kernel of the operation, as the session's device selects, and preserves the typed `TensorRef`
+surface.
 -/
 
 
@@ -47,7 +48,7 @@ def matmul {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α] [Mu
       Runtime.Autograd.Tape.matmul (t := t0) (m := m) (n := n) (p := p) a.id b.id
         (batchA := batchA) (batchB := batchB) (batch := batch)
   let cuda := do
-    let t0 ← s.cudaTape.get
+    let t0 ← s.cudaTape
     let broadcastAFull :=
       TorchLean.Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [m, n] broadcastA.proof
     let broadcastBFull :=
@@ -68,7 +69,7 @@ def matmul {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α] [Mu
     let (t6, id) ← IO.ofExcept <|
       Runtime.Autograd.LibTorch.Tape.reshape (t := t5) flatOutId
         (TorchLean.Tensor.LinearAlgebra.Internal.flattenBatchMatrix_size batch m p).symm
-    s.cudaTape.set t6
+    s.setCudaTape t6
     pure id
   executeRecorded (α := α) s .matmul #[a.identity?, b.identity?] cpu cuda
 

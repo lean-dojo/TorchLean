@@ -184,9 +184,9 @@ def step {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
   cases loss with
   | false =>
       exact do
-        match ← opt.trainerStep? m.trainer st xs dataInputs with
-        | some st' =>
-            pure st'
+        match ← opt.nativeBatchStep? m.trainer st #[(xs, dataInputs)] false with
+        | some _ =>
+            pure st
         | none =>
             m.trainer.useOptimizerPath .generic
             let grads ← Torch.ScalarTrainer.grad (α := α)
@@ -198,9 +198,11 @@ def step {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]
             opt.step st m.trainer.state grads
   | true =>
       exact do
-        match ← opt.trainerStepWithLoss? m.trainer st xs dataInputs with
-        | some result =>
-            pure (result.optimizerState, result.loss)
+        match ← opt.nativeBatchStep? m.trainer st #[(xs, dataInputs)] true with
+        | some (some lossValue) =>
+            pure (st, lossValue)
+        | some none =>
+            throw <| IO.userError "torch: the native step returned no loss"
         | none =>
             m.trainer.useOptimizerPath .generic
             let (grads, lossValue) ← Torch.ScalarTrainer.grad (α := α)

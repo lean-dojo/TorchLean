@@ -95,14 +95,6 @@ theorem pullCLM_adjoint {source target : Shape}
   rw [ContinuousLinearMap.adjoint_inner_right, pullCLM_apply]
   exact inner_pull_sumFibers index x gradient
 
-/-- The real spec dot product uses the same inner product as tensor Fréchet derivatives. -/
-theorem dot_eq_inner {shape : Shape} (x y : Tensor ℝ shape) :
-    Spec.dot x y = inner ℝ x y := by
-  rw [Spec.dot, Spec.sum_spec_eq_coord_sum, Tensor.inner_eq_sum]
-  apply Finset.sum_congr rfl
-  intro coordinate _
-  exact Internal.Rep.zipWith_apply (· * ·) x y coordinate
-
 /-- The Euclidean inner product separates over the leading tensor axis. -/
 theorem inner_eq_sum_unstack {n : Nat} {shape : Shape}
     (x y : Tensor ℝ (.dim n shape)) :

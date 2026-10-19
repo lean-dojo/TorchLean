@@ -10,7 +10,7 @@ and try interval bound propagation:
 
 ```bash
 scripts/lake.sh build
-scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 10 --arithmetic ieee --execution eager
+scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 10 --arithmetic ieee
 scripts/lake.sh exe verify -- torchlean-ibp
 ```
 
@@ -63,12 +63,11 @@ def ys : Tensor Float [4, 1] :=
 def data : Trainer.Dataset [2] [1] := Data.fromTensors xs ys
 
 def trainOnce : IO Unit := do
-  -- Select the loss and train through a typed graph with FloatLib binary32 arithmetic.
+  -- Select the loss and train on the CPU with FloatLib binary32 arithmetic.
   let trainer :=
     Trainer.new model
       { objective := mse
         optimizer := optim.sgd { learningRate := 0.05 }
-        execution := typedGraph
         device := cpu
         arithmetic := ieee }
   -- Inspect the initialized model before any parameter updates.
@@ -146,7 +145,7 @@ running-statistics updates or extend the trainer's checkpoint interface.
 2. [Building Models]({{ '/blueprint/Building-Models/' | relative_url }}) introduces typed tensors,
    layers, parameter packs, datasets, losses, optimizers, and the trainer.
 3. [Runtime and Interop]({{ '/blueprint/Runtime___-Autograd___-and-Interop/' | relative_url }})
-   explains eager and typed graph execution, autograd, runtime artifacts, PyTorch interop boundaries,
+   explains the autograd tape, typed graphs, runtime artifacts, PyTorch interop boundaries,
    data streams, and backend selection.
 4. [Semantics and Graphs]({{ '/blueprint/Semantics-and-Graphs/' | relative_url }}) explains the
    graph IR, graph denotation, shape checks, named operations, and why verifiers reuse the same

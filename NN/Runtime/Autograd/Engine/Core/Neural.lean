@@ -37,14 +37,14 @@ PyTorch comparison: `torch.nn.LayerNorm(embedDim)` (applied per token) / `functi
 @[inline] def layerNorm {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {seqLen embedDim : Nat} (h_seq_pos : seqLen > 0) (h_embed_pos : embedDim > 0)
-  (t : Tape α) (xId gammaId betaId : Nat)
-  (epsilon : α := TorchLean.normalizationEpsilon) : Result (Tape α × Nat) := do
+  (t : Tape (Spec.SomeTensor α)) (xId gammaId betaId : Nat)
+  (epsilon : α := TorchLean.normalizationEpsilon) : Result (Tape (Spec.SomeTensor α) × Nat) := do
   let x ← requireValue (α:=α) (t:=t) (s:=.dim seqLen (.dim embedDim .scalar)) xId
   let gamma ← requireValue (α:=α) (t:=t) (s:=.dim embedDim .scalar) gammaId
   let beta ← requireValue (α:=α) (t:=t) (s:=.dim embedDim .scalar) betaId
   let y := Spec.layerNorm (x := x) (gamma := gamma) (beta := beta)
     h_seq_pos h_embed_pos (epsilon := epsilon)
-  let node : Node α :=
+  let node : Node (Spec.SomeTensor α) :=
     { name := some "layer_norm"
       value := Spec.SomeTensor.ofTensor y
       requiresGrad :=
@@ -72,14 +72,14 @@ PyTorch comparison: `torch.nn.LayerNorm(embedDim)` (applied per token) / `functi
   [DecidableRel ((· > ·) : α → α → Prop)]
   {channels : Nat} {sSpatial : Shape}
   (hWellFormed : (Shape.dim channels sSpatial).wellFormed)
-  (t : Tape α) (xId gammaId betaId : Nat)
-  (epsilon : α := TorchLean.normalizationEpsilon) : Result (Tape α × Nat) := do
+  (t : Tape (Spec.SomeTensor α)) (xId gammaId betaId : Nat)
+  (epsilon : α := TorchLean.normalizationEpsilon) : Result (Tape (Spec.SomeTensor α) × Nat) := do
   let _ : Shape.WellFormed (.dim channels sSpatial) := ⟨hWellFormed⟩
   let x ← requireValue (α:=α) (t:=t) (s:=.dim channels sSpatial) xId
   let gamma ← requireValue (α:=α) (t:=t) (s:=.dim channels .scalar) gammaId
   let beta ← requireValue (α:=α) (t:=t) (s:=.dim channels .scalar) betaId
   let y := Spec.batchNorm (x := x) (gamma := gamma) (beta := beta) (epsilon := epsilon)
-  let node : Node α :=
+  let node : Node (Spec.SomeTensor α) :=
     { name := some "batch_norm"
       value := Spec.SomeTensor.ofTensor y
       requiresGrad :=
@@ -111,9 +111,9 @@ PyTorch comparison: similar to `torch.nn.MultiheadAttention` / scaled dot-produc
 @[inline] def attention {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {n numHeads dModel headDim : Nat} (h1 : n ≠ 0)
-  (t : Tape α) (wqId wkId wvId woId xId : Nat)
+  (t : Tape (Spec.SomeTensor α)) (wqId wkId wvId woId xId : Nat)
   (mask : Option (Tensor Bool [n, n]) := none) :
-  Result (Tape α × Nat) := do
+  Result (Tape (Spec.SomeTensor α) × Nat) := do
   let wq ← requireValue (α:=α) (t:=t)
     (s:=.dim dModel (.dim (numHeads * headDim) .scalar)) wqId
   let wk ← requireValue (α:=α) (t:=t)
@@ -126,7 +126,7 @@ PyTorch comparison: similar to `torch.nn.MultiheadAttention` / scaled dot-produc
   let mha : Spec.MultiHeadAttention α numHeads dModel headDim :=
     { queryWeight := wq, keyWeight := wk, valueWeight := wv, outputWeight := wo }
   let y := Spec.MultiHeadAttention.forward (n := n) (h1 := h1) (mha := mha) (x := x) (mask := mask)
-  let node : Node α :=
+  let node : Node (Spec.SomeTensor α) :=
     { name := some "multi_head_attention"
       value := Spec.SomeTensor.ofTensor y
       requiresGrad :=

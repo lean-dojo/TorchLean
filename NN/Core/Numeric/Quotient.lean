@@ -158,9 +158,6 @@ variable {α : Type} [NativeFormat α] [BEq α] [LT α] [DecidableLT α] [Sub α
     zero x ^^^ 1
   else nonfiniteFlag x
 
-/-- Whether a native result is nonfinite or subnormal; its type selects the format. -/
-@[inline] def rangeLoss (x : α) : Bool := 0 < rangeFlags zeroFlag x
-
 -- Only predicates cross this boundary. Value-producing arithmetic remains inline.
 -- The open interval contains only finite values. Its branch needs zero checks;
 -- outside it, only nonfiniteness can raise a flag.

@@ -15,7 +15,7 @@ public import NN.Tests.Utils
 
 Shared helpers for the Float runtime checks.
 
-These helpers share array comparisons, JSON decoding, dependency checks, and checked tensor lookup.
+These helpers share array comparisons, JSON decoding, and dependency checks.
 -/
 
 @[expose] public section
@@ -51,17 +51,6 @@ def jsonFloatArrayField (j : Json) (key : String) : Except String (Array Float) 
 def pythonHasTorch : IO Bool := do
   Tests.Utils.checkInteropDependency "torch"
     (← TorchLean.External.Process.pythonCanImport #["torch"])
-
-/-- Read one scalar coordinate from a tensor of arbitrary rank.
-
-This helper is intentionally rank-neutral: tests pass the coordinates they are checking rather
-than introducing layout-specific accessors. An invalid coordinate is a test-authoring error and
-therefore fails immediately.
--/
-def tensorVal {s : Shape} (t : Tensor Float s) (indices : List Nat) : Float :=
-  match Spec.getSpec t indices with
-  | some value => value
-  | none => panic! s!"tensor coordinate {indices} is invalid for shape {repr s}"
 
 end Utils
 end Floats

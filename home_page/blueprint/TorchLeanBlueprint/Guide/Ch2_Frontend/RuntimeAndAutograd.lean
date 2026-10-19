@@ -3,7 +3,6 @@ import NN.API
 import NN.IR
 import NN.Backend
 import NN.Runtime.Autograd.Engine
-import NN.Runtime.Autograd.IRExec
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
 
@@ -27,7 +26,7 @@ contribution.
 The eager tape keeps the values and reverse rules from that execution. A typed graph lets us
 record the operation sequence once and supply new values later. Comparing the two shows what
 the public calls in {ref "autograd-walkthrough"}[Differentiation By Example] construct.
-{ref "execution-modes"}[Choosing How A Model Runs] explains how the trainer selects its path.
+{ref "run-configuration"}[Choosing How A Model Runs] explains how the trainer selects its path.
 
 The named Lean blocks are elaborated while this page is built, together with checks of their
 displayed outputs. The command-line and PyTorch transcripts record separate runs; they are not
@@ -35,8 +34,7 @@ executed by the page build.
 
 # API Entry Points And Runtime Artifacts
 
-An eager training step records a new tape; a typed-graph trainer reuses its recorded graph.
-A standalone `autograd.grad` call constructs its own computation:
+Training and a standalone `autograd.grad` call build different runtime artifacts:
 
 :::table +header
 *
@@ -44,24 +42,20 @@ A standalone `autograd.grad` call constructs its own computation:
   * What is built
   * Typical use
 *
-  * `Trainer` with `execution := eager`
-  * an eager tape per step
+  * `Trainer`
+  * one eager tape per sample in a reused session, on the CPU or CUDA
   * ordinary training
-*
-  * `Trainer` with `execution := typedGraph`
-  * one typed graph, reused
-  * ordinary training, fewer rebuilds
 *
   * `autograd.grad` and `autograd.vjp`
   * a typed graph for each transform invocation
   * differentiating a function or a loss
 *
-  * `Tape` and `TapeM`
+  * `Tape`
   * a tape you own, as pure data
   * inspection, tests, and this chapter
 :::
 
-The `autograd.*` transforms do not consult the trainer's execution setting. In
+The `autograd.*` transforms do not consult the trainer's settings. In
 {src "NN/Runtime/Autograd/Model/Autodiff.lean"}[`Autodiff.lean`], `gradients` uses the general
 `vjp` path with a unit scalar seed. That path calls `lowerToTypedGraph`, then `vjpChecked`, whose
 compiled implementation uses checked graph execution and saved reverse programs. A proved
@@ -69,8 +63,8 @@ compiler simplification replaces its raw-tape specification. Scalars use the sam
 lowering as other tensor outputs. The graph describes the reusable computation; each invocation
 supplies its own values and saved local rules.
 Higher-order transforms in the same file lower graphs to tapes over dual scalars, so the reverse
-calculation also carries directional derivatives. The trainer's execution choice is separate
-from these transforms.
+calculation also carries directional derivatives. The trainer does not use these transforms; it
+records an eager tape.
 
 Consequently, comparing `autograd.grad` with an eager training step compares two execution paths.
 A discrepancy could come from either path or from the state supplied to it. Inspecting only the
@@ -86,22 +80,17 @@ the representation stores internally:
 -- artifact.
 #check @Tape
 #check @Torch.TypedGraph
-#check @IRExec.ForwardGraph
 #check @NN.IR.Graph
 #check @NN.Backend.IR.GraphKernelPlan
 ```
 
 ```leanOutput rtTypes (whitespace := lax)
-Tape : (α : Type) → [Storage α] → Type
+Tape : Type → Type
 ```
 
 ```leanOutput rtTypes (whitespace := lax)
 Torch.TypedGraph : (α : Type) → [Storage α] →
   List Shape → Shape → Type
-```
-
-```leanOutput rtTypes (whitespace := lax)
-IRExec.ForwardGraph : (α : Type) → [Storage α] → Type
 ```
 
 ```leanOutput rtTypes (whitespace := lax)
@@ -112,19 +101,16 @@ NN.IR.Graph : Type
 NN.Backend.IR.GraphKernelPlan : Type
 ```
 
-`Tape α` takes an element type and nothing else. Each stored tensor still carries its own shape,
-but the tape's type does not record a context of node shapes. Agreement between a node and the
-parents named by its identifiers is checked at runtime. That is a deliberate trade, and we come
-back to it below.
+`Tape V` takes the type of the values it stores and nothing else: the CPU stores
+`Spec.SomeTensor α`, CUDA stores device buffers, and the nodes, parents, and reverse sweep are the
+same for both. Each stored value still carries its own shape, but the tape's type does not record a
+context of node shapes. Agreement between a node and the parents named by its identifiers is
+checked at runtime. That is a deliberate trade, and we come back to it below.
 
 `Torch.TypedGraph α Γ τ` carries a context `Γ : List Shape` and an output shape `τ`. A node cannot
 refer to a parent at the wrong shape, because the shape is part of the graph's type. This is the
 same trick the sequential architecture language uses in {ref "graphspec"}[GraphSpec: One
 Architecture, Several Meanings], applied one level lower.
-
-`IRExec.ForwardGraph α` looks like the tape again, but for a different reason: its shapes are stored
-in fields (`inShape`, `ss`) because the graph it was lowered from did not know them statically
-either.
 
 `NN.IR.Graph : Type` has no `α`. The canonical IR is not
 parameterized by a scalar type, so the same graph can be interpreted over the
@@ -151,10 +137,6 @@ Here is the same set with the two remaining columns filled in:
   * repeated runtime execution
   * shape-indexed forward, JVP, and VJP functions
 *
-  * `IRExec.ForwardGraph`
-  * execute a lowered `NN.IR.Graph`
-  * a forward-only shape-indexed node list
-*
   * `NN.IR.Graph`
   * inspection and verification
   * explicit operation tags and payload references
@@ -164,12 +146,12 @@ Here is the same set with the two remaining columns filled in:
   * source node ids and selected capsule metadata
 :::
 
-A CUDA Graph capture is a separate device launch-and-replay mechanism; TorchLean's `.typedGraph`
-setting does not select it. The other boundaries also require explicit connections. An accepted
+A CUDA Graph capture is a separate device launch-and-replay mechanism, and TorchLean does not use
+it. The other boundaries also require explicit connections. An accepted
 kernel plan needs runtime binding before it says anything about execution, and an IR semantics
 theorem needs a provider refinement result before it applies to a native tape node.
 
-The five type signatures divide the debugging problem into useful pieces. A wrong tensor value
+The four type signatures divide the debugging problem into useful pieces. A wrong tensor value
 belongs to an execution artifact such as the tape or evaluated graph context. A wrong operation
 tag belongs to the canonical IR. A surprising provider belongs to the kernel plan and its runtime
 binding. None of the last two objects contains the floating-point intermediate that caused a loss
@@ -183,9 +165,10 @@ values. Shape agreement survives that choice; numerical agreement requires a sep
 
 # Manual Tape Construction
 
-`Tape α` is a grow-only array of nodes; `TapeM α` is `StateT (Tape α) (Except String)`, so a
-tape-building computation is a pure function and its errors are values. To examine the node
-structure, record two elementwise products sharing the same input, followed by their sum:
+`Tape V` is a grow-only array of nodes. Each operation takes a tape and returns the extended tape
+with the new node's identifier, inside `Except String`, so building a tape is a pure computation and
+its errors are values. To examine the node structure, record two elementwise products sharing the
+same input, followed by their sum:
 
 $$`z = x \odot x + x \odot x, \qquad \ell = \textstyle\sum_i z_i`
 
@@ -196,14 +179,15 @@ $`\ell` reduces it to a scalar. The following code uses $`x=(3,-1.5)`:
 -- Record both square branches separately so their shared
 -- input is visible.
 /-- `z = x*x + x*x`, summed, built on the eager tape. -/
-def rtTwice : Result (Nat × Tape Float) :=
-  TapeM.run Tape.empty do
-    let x ← TapeM.leaf (α := Float) (s := [2])
-      [3.0, -1.5] (name := "x")
-    let a ← TapeM.mul (α := Float) (s := [2]) x x
-    let b ← TapeM.mul (α := Float) (s := [2]) x x
-    let z ← TapeM.add (α := Float) (s := [2]) a b
-    TapeM.sum (α := Float) (s := [2]) z
+def rtTwice :
+    Result (Nat × Tape (Spec.SomeTensor Float)) := do
+  let (t, x) := Tape.leaf (α := Float) (s := [2])
+    Tape.empty [3.0, -1.5] (name := "x")
+  let (t, a) ← Tape.mul (s := [2]) t x x
+  let (t, b) ← Tape.mul (s := [2]) t x x
+  let (t, z) ← Tape.add (s := [2]) t a b
+  let (t, out) ← Tape.sum (s := [2]) t z
+  pure (out, t)
 
 #eval rtTwice.map fun (out, tape) => (out, tape.size)
 ```
@@ -212,9 +196,10 @@ def rtTwice : Result (Nat × Tape Float) :=
 Except.ok (4, 5)
 ```
 
-Five nodes, and the scalar output is node `4`. Each `TapeM` operation appends exactly one node and
-returns its identifier, so identifiers are array indices and reverse-mode traversal is a loop from
-`size - 1` down to `0`. Nothing here is hidden state: the tape is the value returned by `run`.
+Five nodes, and the scalar output is node `4`. Each operation appends exactly one node and returns
+its identifier, so identifiers are array indices and reverse-mode traversal is a loop from
+`size - 1` down to `0`. Nothing here is hidden state: the tape is a value passed from one call to
+the next.
 
 Ask the tape what it recorded:
 
@@ -222,7 +207,7 @@ Ask the tape what it recorded:
 -- Print parent positions, including repeated uses of the
 -- same node.
 #eval rtTwice.map fun (_, tape) =>
-  tape.nodes.map fun (node : Node Float) =>
+  tape.nodes.map fun (node : Node _) =>
     (node.name, node.parents)
 ```
 
@@ -273,7 +258,8 @@ At `x = (3, -1.5)` that predicts `(12, -6)`. Seed the scalar with `1` and read n
 -- Recover the input cotangent only after checking its
 -- stored shape.
 /-- Seed the scalar output, then read the leaf gradient. -/
-def rtLeafGrad (built : Result (Nat × Tape Float)) :
+def rtLeafGrad
+    (built : Result (Nat × Tape (Spec.SomeTensor Float))) :
     Result (Tensor Float [2]) := do
   let (out, tape) ← built
   let grads ← Tape.backwardScalar (α := Float) tape out
@@ -360,28 +346,29 @@ The stop-gradient node, built the way the eager session
 builds it: the forward value is reused, the parent edge
 stays, and the local rule returns no contributions.
 -/
-def rtDetachNode (id : Nat) :
-    TapeM Float Nat := fun tape => do
+def rtDetachNode (tape : Tape (Spec.SomeTensor Float))
+    (id : Nat) :
+    Result (Tape (Spec.SomeTensor Float) × Nat) := do
   let value ←
     Tape.requireValue (α := Float) (t := tape) (s := [2]) id
-  let (tape', newId) := Tape.addNode tape
+  pure <| Tape.addNode tape
     { name := some "detach"
       value := Spec.SomeTensor.ofTensor value
       requiresGrad := false
       parents := #[id]
       backward := fun _ => .ok #[] }
-  pure (newId, tape')
 
 /-- The same computation, second branch stopped. -/
-def rtStopped : Result (Nat × Tape Float) :=
-  TapeM.run Tape.empty do
-    let x ← TapeM.leaf (α := Float) (s := [2])
-      [3.0, -1.5] (name := "x")
-    let a ← TapeM.mul (α := Float) (s := [2]) x x
-    let b ← TapeM.mul (α := Float) (s := [2]) x x
-    let bStop ← rtDetachNode b
-    let z ← TapeM.add (α := Float) (s := [2]) a bStop
-    TapeM.sum (α := Float) (s := [2]) z
+def rtStopped :
+    Result (Nat × Tape (Spec.SomeTensor Float)) := do
+  let (t, x) := Tape.leaf (α := Float) (s := [2])
+    Tape.empty [3.0, -1.5] (name := "x")
+  let (t, a) ← Tape.mul (s := [2]) t x x
+  let (t, b) ← Tape.mul (s := [2]) t x x
+  let (t, bStop) ← rtDetachNode t b
+  let (t, z) ← Tape.add (s := [2]) t a bStop
+  let (t, out) ← Tape.sum (s := [2]) t z
+  pure (out, t)
 
 #eval rtLeafGrad rtStopped
 ```
@@ -402,7 +389,7 @@ The node list makes the difference visible:
 -- Keep stopped forward nodes visible even though reverse
 -- propagation cannot cross them.
 #eval rtStopped.map fun (_, tape) =>
-  tape.nodes.map fun (node : Node Float) =>
+  tape.nodes.map fun (node : Node _) =>
     (node.name, node.parents)
 ```
 
@@ -542,8 +529,8 @@ current execution.
 # Typed Graph Execution
 
 Typed graph execution records the model's scalar loss once as a typed SSA graph. Nodes carry the
-forward behavior and the executable rules used for JVPs and VJPs. Each training step supplies
-current parameters and inputs and reuses that graph. A separate typed reference selects the result,
+forward behavior and the executable rules used for JVPs and VJPs. Each evaluation supplies
+current parameters and inputs to that recorded graph. A separate typed reference selects the result,
 so the graph may return an input or an earlier node without adding a dummy final operation, and
 forward and reverse execution read and seed that exact reference.
 
@@ -575,8 +562,9 @@ It introduces no additional runtime representation; the equality unfolds to `rfl
 {src "NN/Runtime/Autograd/TypedGraph/Compiled.lean"}[`Runtime.Autograd.TypedGraph.compileChecked`]
 returns a `Compiled` execution containing an indexed primal context and saved local VJP programs.
 `Compiled.backwardDenseFrom` accepts a seed pack for the complete context. The ordinary checked and
-pure TypedGraph VJP APIs use this path through proved compiler simplifications; sessions and the
-trainer use it directly. `Compiled.toTape` and `lowerToTapeChecked` retain the raw Tape interface.
+pure TypedGraph VJP APIs use this path through proved compiler simplifications; the reverse-mode
+Jacobian transforms in `Autodiff.lean` use it directly. `Compiled.toTape` and
+`lowerToTapeChecked` retain the raw Tape interface.
 The accompanying theorems identify the complete checked error/result and every dense gradient
 under `Storage` and `Add`, without assuming associative addition. They preserve the stored
 executable rules; mathematical derivative correctness and agreement with GPU kernels remain
@@ -605,9 +593,7 @@ including disposal took `953.07` ms. Whole-process peak memory, including constr
 `13,792.24` to `4,007.66` MiB. The faster reusable execution therefore does not imply a linear
 graph lifecycle or a general complexity theorem.
 
-The typed graph trainer currently supports CPU execution. A non-CPU request is rejected, so a
-successful run's execution label continues to identify the path being measured. Recording and
-lowering also do not imply the optimization, fusion, scheduling, or native code generation
+Recording and lowering do not imply the optimization, fusion, scheduling, or native code generation
 associated with a compiler such as `torch.compile`.
 
 # Canonical IR Representation
@@ -625,10 +611,9 @@ scalar-independent representation also permits several interpretations:
 one small graph and evaluates it over the reals, over intervals, and over IEEE binary32 scalars
 without touching the graph.
 
-The bridge from the canonical IR produces `IRExec.ForwardGraph`, not `Torch.TypedGraph`, and it is
-forward-only. The IR lowering theorem compares the lowered graph's value table with
-`NN.IR.Semantics`. This bridge supplies no JVP or VJP rules; differentiating an imported operation
-would require additional rules and corresponding correctness statements.
+The canonical IR is executed by its own semantics, `NN.IR.Semantics`, and it is forward-only. It
+supplies no JVP or VJP rules; differentiating an imported operation would require additional rules
+and corresponding correctness statements.
 
 Both paths honor the homogeneous-element contract from {ref "tensors-shapes"}[Tensors And Shapes]: a
 typed graph is parameterized by one `α`, and an IR denotation receives one payload over `α` and
@@ -647,7 +632,7 @@ A parameter pack holds differently shaped tensors that share one element type:
  bias2   : Tensor α [1]]
 ```
 
-The pack type preserves that dependent list. A tape cannot, because `Tape α` has no shape index, and
+The pack type preserves that dependent list. A tape cannot, because `Tape V` has no shape index, and
 neither can a registry that has to iterate over parameters by name. Both store `Spec.SomeTensor α`,
 a structure holding a shape and a tensor indexed by that shape. The collection can therefore hold
 different shapes while each entry retains its own shape-value relationship.
@@ -721,9 +706,9 @@ normalization may update running statistics during training and use stored stati
 `trained.predict` uses the retained runtime state in evaluation mode, and a `Trainer.Session`
 follows the same rule in a caller-driven loop, with `step` in training mode and `predict` and `loss`
 in evaluation mode. Mode is not a backend: one eager CUDA runner can switch modes without changing
-device or provider profile. {ref "execution-modes"}[Execution Modes] measures the size of
-the resulting difference, which is the part that matters when you are trying to tell a mode bug from
-rounding noise.
+device or provider profile. {ref "run-configuration"}[Choosing How A Model Runs] measures the size
+of the resulting difference, which is the part that matters when you are trying to tell a mode bug
+from rounding noise.
 
 For the tape, randomness raises a replay requirement. A stochastic forward pass and its reverse
 pass must use the same random draw, or the reverse pass computes the derivative of a function nobody
@@ -739,7 +724,8 @@ is still an obligation of the node implementation:
 ```leanOutput rtPure (whitespace := lax)
 @Tape.backwardScalar : {α : Type} →
   [inst : Storage α] → [Add α] → [One α] →
-  Tape α → ℕ → Result (Std.HashMap ℕ (Spec.SomeTensor α))
+  Tape (Spec.SomeTensor α) → ℕ →
+    Result (Std.HashMap ℕ (Spec.SomeTensor α))
 ```
 
 No `IO`: in the pure Lean model, replay depends on the tape and its stored closures rather than an
@@ -835,7 +821,7 @@ the recorded run, rewrapped to fit the page:
     vjp=torchlean-tape reduction=n/a
 ```
 
-{ref "execution-modes"}[Execution Modes] reads the full report, tabulates the seven
+{ref "run-configuration"}[Choosing How A Model Runs] reads the full report, tabulates the seven
 capsules a CPU run selects, and explains the evidence lines and the empty banners. The field
 `vjp=torchlean-tape` names which artifact owns the reverse rule for that operation. It connects
 the tape we built by hand to the selected kernel: the
@@ -868,15 +854,14 @@ views show both products contributing to the leaf. With `detach`, the second pro
 the forward graph but contributes nothing to the leaf's cotangent. See
 {ref "widgets"}[Interactive Widgets].
 
-# Eager And Typed Graph Training Comparison
+# Training Through The Trainer
 
 The same comparison can be made through the trainer, using a fixed seed, dataset, and arithmetic:
 
 ```terminal
-# Keep seed and data fixed for the two-step execution
-# comparison.
+# Keep seed and data fixed for a two-step run.
 scripts/lake.sh exe torchlean quickstart_mlp \
-  --device cpu --execution eager --steps 2 --seed 2026
+  --device cpu --steps 2 --seed 2026
 ```
 
 ```terminal +output
@@ -892,20 +877,14 @@ steps=2 arithmetic=native scalar=Float32
 trained(heldout) = [0.019031]
 ```
 
-The recorded comparison with `--execution typed-graph` has the same nine lines, digit for digit.
-For this model, changing the execution mode changes whether the loss is recorded once and
-reused or rebuilt each step. The architecture, seed, data, and arithmetic remain fixed. The
-matching transcript checks the displayed results of this run. The graph trainer constructs
-locally saved programs for the current parameters and inputs on each checked execution. This
-comparison does not measure their timing or allocations; the scaling report above measures a
-separate ReLU-chain workload. {ref "execution-modes"}[Execution Modes] explains that reuse and
-compares mode and arithmetic choices through their displayed results.
+Each step records a fresh tape for the current parameters and the step's sample, then runs it
+backward. {ref "run-configuration"}[Choosing How A Model Runs] compares arithmetic and device
+choices through their displayed results.
 
 The two-step log reports a dataset mean falling from `0.495227` to `0.392821`. Its `step 0` line
 is a single update loss, and the held-out value `0.019031` is a prediction with target `0.2`.
 These quantities should not be ranked against one another as if they were three estimates of the
-same loss. Matching their displayed values between execution modes checks several observable
-results while leaving internal values, timings, and behavior on other inputs unmeasured.
+same loss.
 
 # Runtime Debugging
 
@@ -913,7 +892,7 @@ A gradient discrepancy can originate in the mathematical reference, the recorded
 state supplied to it, or the provider that executes it. These checks separate those possibilities.
 
 1. Derive a small reference case, such as $`4x`, including the reduction and output seed.
-2. Print the arithmetic semantics, execution mode, device, and selected capsules, so you know which
+2. Print the arithmetic semantics, device, and selected capsules, so you know which
    artifacts are even in play.
 3. Inspect the forward tape and check that the branch you care about is reachable. A missing key in
    the gradient map and a zero value in it mean different things.
@@ -938,8 +917,8 @@ The hand-built tape also exposes cases that a successful scalar gradient does no
 3. Moving `rtDetachNode` from `b` to `a` preserves the reported cotangent because the products
    are equal, but changes the node identifiers on the surviving path.
 4. A scalar output independent of the leaf leaves node `0` absent from the gradient map.
-5. A `mul` node with incompatible operand shapes causes `TapeM.run` to return an error value
-   in `Except String`.
+5. A `mul` node with incompatible operand shapes makes `Tape.mul` return an error value in
+   `Except String`.
 6. Changing a constant only in `rtQuad` makes the typed graph represent a different function.
    Comparing its result with the unchanged tape then detects a construction mismatch.
 

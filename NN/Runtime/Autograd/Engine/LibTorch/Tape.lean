@@ -3,33 +3,27 @@ Copyright (c) 2026 TorchLean
 Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
 
-CUDA-native autograd tape (dtype-carrying buffers).
-
-This is the GPU/runtime analogue of `NN.Runtime.Autograd.Engine.Core`, but specialized to
-`Runtime.Autograd.LibTorch.Buffer` values plus runtime `Spec.Shape` metadata.
-
-Notes:
-- The tape is pure: we use `Except String` for errors (no `IO` exceptions).
-- Buffers retain their scalar dtype. Shape-erased inputs are checked against
-  `Spec.Shape.size s` before shape-derived indexing or reverse-mode propagation.
-- Backprop supports both a dense result for diagnostics and a sparse, explicitly owned result for
-  training paths that only retain parameter gradients.
-- This module contains tape machinery; differentiable CUDA ops live in
-  `NN.Runtime.Autograd.Engine.LibTorch.Ops`.
 -/
 
 module
 
 public import NN.Runtime.Autograd.Engine.LibTorch.Buffer
-public import NN.Spec.Core.Shape
+public import NN.Runtime.Autograd.Engine.Tape
 
 /-!
-# CUDA Autograd Tape
+# CUDA tape values
 
-Shape-erased CUDA tape machinery for dtype-carrying `LibTorch.Buffer` values. This is the
-GPU/runtime analogue
-of the CPU autograd tape: it records node ids, runtime shapes, parent links, and backward callbacks,
-then performs reverse-mode accumulation over buffers.
+The CUDA tape is `Tape AnyBuffer`: the one tape of `NN.Runtime.Autograd.Engine.Tape`, storing
+device buffers with their runtime shapes. This module gives those values their `GradValue`
+instance, whose accumulation also releases the device buffers it consumes, and the buffer-level
+constructors every CUDA operation is built from.
+
+Notes:
+- Buffers retain their scalar dtype. Shape-erased inputs are checked against
+  `Spec.Shape.size s` before shape-derived indexing or reverse-mode propagation.
+- Training uses `backwardSparse`, which keeps only the gradients the caller retains and releases
+  every other activation gradient during the traversal.
+- Differentiable CUDA ops live in `NN.Runtime.Autograd.Engine.LibTorch.Ops`.
 -/
 
 @[expose] public section
@@ -39,9 +33,6 @@ namespace Autograd
 namespace LibTorch
 
 open Spec TorchLean
-
-/-- Pure error monad for the CUDA tape. Mirrors `Engine/Core`. -/
-abbrev Result (α : Type) := Except String α
 
 /--
 Runtime, shape-erased CUDA buffer.
@@ -115,84 +106,30 @@ def add (a b : AnyBuffer) : Result AnyBuffer := do
 
 end AnyBuffer
 
+/-- A device workspace buffer kept on a node, shaped by its length. -/
+def AnyBuffer.ofWorkspace (buf : Buffer) : AnyBuffer :=
+  { s := [(Buffer.size buf).toNat], buf }
+
 /--
-CUDA tape node representing one recorded computation step.
-
-Fields mirror the CPU `Engine/Core` node:
-- `value` holds the forward buffer.
-- `parents` are tape node ids.
-- `backward` is a local VJP rule producing parent gradient contributions.
+CUDA gradients are device buffers. A sum consumes both of its inputs, and a contribution that no
+node keeps is released at once, so long training loops do not wait on finalizers.
 -/
-structure Node where
-  /-- Optional node name for debugging/pretty-printing. -/
-  name : Option String := none
-  /-- Forward value computed at this node. -/
-  value : AnyBuffer
-  /--
-  Whether this node owns its forward allocation.
+instance : GradValue AnyBuffer where
+  shape b := b.s
+  retag g v _ := { s := v.s, buf := g.buf }
+  check g v := do
+    AnyBuffer.checkDtype g v
+    discard <| AnyBuffer.validate { s := v.s, buf := g.buf }
+  add a b := do
+    let summed ← AnyBuffer.add a b
+    pure { summed with buf := Buffer.releaseThen a.buf <| Buffer.releaseThen b.buf summed.buf }
+  drop g rest := Buffer.releaseThen g.buf rest
 
-  Shape views and detached references borrow a parent's buffer. Releasing a borrowed value would
-  also invalidate the parent, including parameter mirrors that must survive a tape reset.
-  -/
-  ownsValue : Bool := true
-  /-- Whether reverse-mode propagation should visit this node. -/
-  requiresGrad : Bool := true
-  /-- Parent node ids (dependencies) in the tape. -/
-  parents : Array Nat := #[]
-  /--
-  Forward workspace buffers retained only because this node's backward closure may need them.
-
-  The eager runtime releases these buffers explicitly after backprop consumes the tape, so long CUDA
-  training loops do not wait on Lean external-object finalizers for large intermediate allocations.
-  -/
-  cleanup : Array Buffer := #[]
-  /--
-  Local VJP rule for this node.
-
-  Given an upstream cotangent for `value`, return an array of `(parentId, parentCotangent)`
-  contributions (one per parent, usually).
-  -/
-  backward : AnyBuffer → Result (Array (Nat × AnyBuffer))
-
-/-- CUDA autograd tape: a grow-only array of nodes. Node ids are array indices. -/
-structure Tape where
-  /-- Tape nodes in evaluation order (id = index). -/
-  nodes : Array Node := #[]
+/-- The CUDA zero gradient of a value. -/
+instance : GradZero AnyBuffer where
+  zerosLike v := { s := v.s, buf := Buffer.zerosLike v.buf }
 
 namespace Tape
-
-/-- Empty tape (no nodes). -/
-def empty : Tape := {}
-
-/-- Number of nodes stored in the tape. -/
-def size (t : Tape) : Nat := t.nodes.size
-
-/-- Read a node by id (returns `none` if out of bounds). -/
-def getNode? (t : Tape) (id : Nat) : Option Node :=
-  t.nodes[id]?
-
-/-- Read just the stored forward value for a node id. -/
-def getValue? (t : Tape) (id : Nat) : Option AnyBuffer :=
-  (t.getNode? id).map (·.value)
-
-/--
-Append a node and return its id.
-
-Invariant: the returned id is `t.size`, the pre-append size of the tape.
--/
-@[inline] def addNode (t : Tape) (node : Node) : Tape × Nat :=
-  let id := t.nodes.size
-  ({ nodes := t.nodes.push node }, id)
-
-/-- `addNode` returns the current tape size as the fresh node id. -/
-@[simp] theorem addNode_id (t : Tape) (node : Node) :
-    (t.addNode node).2 = t.size := by
-  simp [addNode, size]
-
-/-- Appending a node increases the tape size by one. -/
-@[simp] theorem size_addNode (t : Tape) (node : Node) :
-    (t.addNode node).1.size = t.size + 1 := by
-  simp [addNode, size]
 
 /--
 Add a leaf node (no parents).
@@ -203,8 +140,8 @@ This low-level constructor records `value` without validating its external buffe
 an externally supplied `Buffer` must call `AnyBuffer.validate` first; tape operations validate
 their operands again when they retrieve values.
 -/
-@[inline] def leaf (t : Tape) (value : AnyBuffer) (name : Option String := none)
-    (requiresGrad : Bool := true) : Tape × Nat :=
+@[inline] def leaf (t : Tape AnyBuffer) (value : AnyBuffer) (name : Option String := none)
+    (requiresGrad : Bool := true) : Tape AnyBuffer × Nat :=
   t.addNode
     { name := name
       value := value
@@ -221,7 +158,7 @@ Fails if:
 - the shape cannot be represented by the `UInt32` CUDA ABI, or
 - the native buffer length differs from `Shape.size s`.
 -/
-def requireValue (t : Tape) (id : Nat) (s : Shape) : Result Buffer := do
+def requireValue (t : Tape AnyBuffer) (id : Nat) (s : Shape) : Result Buffer := do
   match t.getValue? id with
   | none => throw "autograd: invalid node id"
   | some any =>
@@ -254,14 +191,14 @@ Shapes are explicit and checked dynamically. Reverse mode visits the result only
 requires gradients, so constant subexpressions do not execute their backward closures.
 -/
 @[inline] def unary
-    (t : Tape) (opName : String) (xId : Nat) (σ τ : Shape)
+    (t : Tape AnyBuffer) (opName : String) (xId : Nat) (σ τ : Shape)
     (forward : Buffer → Buffer)
     (backward : Buffer → Buffer → Buffer)
     (ownsValue : Bool := true) :
-    Result (Tape × Nat) := do
+    Result (Tape AnyBuffer × Nat) := do
   let x ← requireValue (t := t) xId σ
   let y := forward x
-  let node : Node :=
+  let node : Node AnyBuffer :=
     { name := some opName
       value := { s := τ, buf := y }
       ownsValue := ownsValue
@@ -284,16 +221,16 @@ You provide:
 Shapes are explicit and checked dynamically. The result requires gradients if either input does.
 -/
 @[inline] def binary
-    (t : Tape) (opName : String) (aId bId : Nat) (σ₁ σ₂ τ : Shape)
+    (t : Tape AnyBuffer) (opName : String) (aId bId : Nat) (σ₁ σ₂ τ : Shape)
     (forward : Buffer → Buffer → Buffer)
     (backward : Buffer → Buffer → Buffer → (Buffer × Buffer)) :
-    Result (Tape × Nat) := do
+    Result (Tape AnyBuffer × Nat) := do
   let a ← requireValue (t := t) aId σ₁
   let b ← requireValue (t := t) bId σ₂
   unless Buffer.dtype a == Buffer.dtype b && Buffer.format? a == Buffer.format? b do
     throw "autograd: binary operands have different dtypes"
   let y := forward a b
-  let node : Node :=
+  let node : Node AnyBuffer :=
     { name := some opName
       value := { s := τ, buf := y }
       requiresGrad :=
@@ -304,218 +241,6 @@ Shapes are explicit and checked dynamically. The result requires gradients if ei
         let (da, db) := backward a b dLdy.buf
         pure #[(aId, { s := σ₁, buf := da }), (bId, { s := σ₂, buf := db })] }
   pure (t.addNode node)
-
-/-
-Backpropagation (dense gradients)
--/
-
-/--
-Internal helper: add a gradient contribution `g` into the dense gradient array at `id`.
-
-This checks:
-- `id` is a valid node id,
-- the parent requires gradients,
-- the contribution shape matches the parent's value shape,
-then accumulates via `AnyBuffer.add`.
-
-When the parent does not require gradients, the contribution is not stored anywhere. We still have
-to release its device buffer. The release is threaded through the existing zero slot with
-`releaseThen`, so the cleanup is part of the returned gradient array instead of a dead pure call.
--/
-def addGradAll (t : Tape) (grads : Array AnyBuffer) (id : Nat) (g : AnyBuffer) :
-    Result (Array AnyBuffer) := do
-  let node ← match t.getNode? id with
-    | some n => pure n
-    | none => throw "autograd: invalid parent id during backward"
-  if node.requiresGrad = false then
-    if hid : id < grads.size then
-      let existing := grads[id]
-      let existing' : AnyBuffer :=
-        { existing with buf := Buffer.releaseThen g.buf existing.buf }
-      pure (grads.set id existing' (h := hid))
-    else
-      throw "autograd: internal error (gradient array out of bounds)"
-  else if decide (g.s = node.value.s) then
-    AnyBuffer.checkDtype g node.value
-    let g' : AnyBuffer := { s := node.value.s, buf := g.buf }
-    let expected := Spec.Shape.size node.value.s
-    let expectedU32 ← match AnyBuffer.numelU32 node.value.s with
-      | .ok expectedU32 => pure expectedU32
-      | .error _ => throw "autograd: tensor too large for CUDA gradient accumulation"
-    let gSize := Buffer.size g'.buf
-    if gSize != expectedU32 then
-      throw
-        s!"autograd: native gradient contribution size mismatch \
-           (parent id={id}, parent name={node.name}, shape elements={expected}, got={gSize.toNat})"
-    if hid : id < grads.size then
-      let existing := grads[id]
-      if decide (existing.s = node.value.s) then
-        let existing' : AnyBuffer := { s := node.value.s, buf := existing.buf }
-        let existingSize := Buffer.size existing'.buf
-        if existingSize != expectedU32 then
-          throw
-            s!"autograd: native accumulated gradient size mismatch \
-               (parent id={id}, parent name={node.name}, shape elements={expected}, \
-               got={existingSize.toNat})"
-        let summedRaw ← AnyBuffer.add existing' g'
-        let summed : AnyBuffer :=
-          { s := summedRaw.s
-            buf := Buffer.releaseThen existing'.buf <| Buffer.releaseThen g'.buf summedRaw.buf }
-        pure (grads.set id summed (h := hid))
-      else
-        throw "autograd: gradient array has wrong shape for node"
-    else
-      throw "autograd: internal error (gradient array out of bounds)"
-  else
-    throw "autograd: gradient contribution has wrong shape for parent"
-
-/--
-One reverse-mode backprop step at a single node id, updating the dense gradient array.
-
-The incoming array is total: every tape node has a gradient buffer, initialized to zero unless a
-later node has already contributed to it. That total representation is convenient for the CUDA
-runtime because every slot has a concrete device buffer that can be released deterministically.
--/
-def backwardDenseFromStep (t : Tape) (acc : Array AnyBuffer) (id : Nat) :
-    Result (Array AnyBuffer) := do
-    let node ← match t.getNode? id with
-      | some n => pure n
-      | none => throw "autograd: internal error (node missing)"
-    if node.requiresGrad = false then
-      pure acc
-    else
-      let dLdyAny ← match acc[id]? with
-        | some g => pure g
-        | none => throw "autograd: internal error (gradient array out of bounds)"
-      if decide (dLdyAny.s = node.value.s) then
-        AnyBuffer.checkDtype dLdyAny node.value
-        let dLdy : AnyBuffer := { s := node.value.s, buf := dLdyAny.buf }
-        let contribs ← node.backward dLdy
-        contribs.foldlM (fun acc2 (pid, pg) => addGradAll (t := t) acc2 pid pg) acc
-      else
-        throw "autograd: gradient array has wrong shape for node"
-
-/--
-Reverse-mode accumulation over the first `n` nodes in reverse order.
-
-The recursion visits `n-1, n-2, ..., 0`; using `n = t.size` runs the full tape. We keep this as a
-structural loop rather than a list fold so proof layer callers can reason about one node step at a
-time.
--/
-def backwardDenseFromLoop (t : Tape) : Nat → Array AnyBuffer → Result (Array AnyBuffer)
-  | 0, acc => pure acc
-  | n + 1, acc => do
-      let acc' ← backwardDenseFromStep (t := t) acc n
-      backwardDenseFromLoop (t := t) n acc'
-
-/--
-Reverse-mode accumulation starting from an explicit dense gradient array.
-
-This expects `grads0.size = t.size`. The function is useful for callers that already seeded
-multiple outputs or want to run a custom cotangent initialization. Before traversal, every slot is
-checked against its node's shape and native buffer length.
--/
-def backwardDenseFrom (t : Tape) (grads0 : Array AnyBuffer) : Result (Array AnyBuffer) := do
-  if grads0.size = t.nodes.size then
-    for i in [0:t.nodes.size] do
-      let node ← match t.getNode? i with
-        | some node => pure node
-        | none => throw "autograd: internal error (node missing)"
-      let grad ← match grads0[i]? with
-        | some grad => pure grad
-        | none => throw "autograd: internal error (gradient array out of bounds)"
-      if decide (grad.s = node.value.s) then
-        AnyBuffer.checkDtype grad node.value
-        let _ ← AnyBuffer.validate { s := node.value.s, buf := grad.buf }
-      else
-        throw "autograd: initial dense gradient has wrong shape for node"
-    backwardDenseFromLoop (t := t) t.nodes.size grads0
-  else
-    throw "autograd: initial dense gradient array has wrong length"
-
-/--
-Run one dense reverse step only when `id` has been reached from the selected output, and mark the
-parents that receive concrete VJP contributions. The gradient array remains total so consumed CUDA
-buffers continue to follow the ownership discipline in `addGradAll`.
--/
-def backwardDenseReachableStep
-    (t : Tape) (reachable : Array Bool) (grads : Array AnyBuffer) (id : Nat) :
-    Result (Array Bool × Array AnyBuffer) := do
-  let isReachable ← match reachable[id]? with
-    | some value => pure value
-    | none => throw "autograd: internal error (reachability array out of bounds)"
-  if !isReachable then
-    pure (reachable, grads)
-  else
-    let node ← match t.getNode? id with
-      | some n => pure n
-      | none => throw "autograd: internal error (node missing)"
-    if node.requiresGrad = false then
-      pure (reachable, grads)
-    else
-      let dLdyAny ← match grads[id]? with
-        | some g => pure g
-        | none => throw "autograd: internal error (gradient array out of bounds)"
-      if decide (dLdyAny.s = node.value.s) then
-        AnyBuffer.checkDtype dLdyAny node.value
-        let dLdy : AnyBuffer := { s := node.value.s, buf := dLdyAny.buf }
-        let contribs ← node.backward dLdy
-        let mut reachable' := reachable
-        let mut grads' := grads
-        for (parentId, contribution) in contribs do
-          grads' ← addGradAll (t := t) grads' parentId contribution
-          if hParent : parentId < reachable'.size then
-            reachable' := reachable'.set parentId true (h := hParent)
-          else
-            throw "autograd: internal error (reachability array out of bounds)"
-        pure (reachable', grads')
-      else
-        throw "autograd: gradient array has wrong shape for node"
-
-/-- Reverse traversal used by `backwardDenseAll`, carrying the set of reached node ids. -/
-def backwardDenseReachableLoop
-    (t : Tape) : Nat → Array Bool → Array AnyBuffer → Result (Array AnyBuffer)
-  | 0, _reachable, grads => pure grads
-  | n + 1, reachable, grads => do
-      let (reachable', grads') ←
-        backwardDenseReachableStep (t := t) reachable grads n
-      backwardDenseReachableLoop (t := t) n reachable' grads'
-
-/--
-Reverse-mode accumulation that returns a dense gradient buffer for every node id.
-
-All gradients are initialized to zeros (using each node's runtime `Shape`), then the output node is
-seeded and only nodes reached by VJP propagation are executed. Disconnected slots stay explicit
-zero buffers; their backward closures are not called.
--/
-def backwardDenseAll (t : Tape) (outId : Nat) (seed : AnyBuffer) : Result (Array AnyBuffer) := do
-  let outNode ← match t.getNode? outId with
-    | some n => pure n
-    | none => throw "autograd: invalid output id"
-  if decide (seed.s = outNode.value.s) then
-    AnyBuffer.checkDtype seed outNode.value
-    let _ ← AnyBuffer.validate outNode.value
-    let seed' ← AnyBuffer.validate { s := outNode.value.s, buf := seed.buf }
-    let mut grads : Array AnyBuffer := #[]
-    for node in t.nodes do
-      let _ ← AnyBuffer.validate node.value
-      let z : AnyBuffer := { s := node.value.s, buf := Buffer.zerosLike node.value.buf }
-      grads := grads.push z
-    if hout : outId < grads.size then
-      let previousSeedSlot := grads[outId]
-      let seed' : AnyBuffer :=
-        { seed' with buf := Buffer.releaseThen previousSeedSlot.buf seed'.buf }
-      grads := grads.set outId seed' (h := hout)
-      let mut reachable := Array.replicate t.nodes.size false
-      if hReachable : outId < reachable.size then
-        reachable := reachable.set outId true (h := hReachable)
-        backwardDenseReachableLoop (t := t) t.nodes.size reachable grads
-      else
-        throw "autograd: internal error (reachability array out of bounds)"
-    else
-      throw "autograd: invalid output id"
-  else
-    throw "autograd: seed gradient shape mismatch for output"
 
 /-!
 Sparse gradients
@@ -543,7 +268,7 @@ Insert or accumulate an owned VJP contribution into the sparse gradient map.
 CUDA backward rules return fresh contribution buffers. The sparse map copies a first contribution
 so its retained values have uniform ownership, then retires the consumed contribution immediately.
 -/
-def addSparseGrad (t : Tape) (gradsRef : IO.Ref SparseGradMap)
+def addSparseGrad (t : Tape AnyBuffer) (gradsRef : IO.Ref SparseGradMap)
     (id : Nat) (g : AnyBuffer) : IO Unit := do
   let node ← match t.getNode? id with
     | some node => pure node
@@ -597,7 +322,7 @@ This function consumes `seed`. The returned buffers are owned by the map and mus
 `releaseSparseGrads` after the optimizer has consumed them. All other activation gradients are
 retired during the traversal.
 -/
-def backwardSparse (t : Tape) (outId : Nat) (seed : AnyBuffer)
+def backwardSparse (t : Tape AnyBuffer) (outId : Nat) (seed : AnyBuffer)
     (retain : Nat → Bool) : IO SparseGradMap := do
   let outNode ← match t.getNode? outId with
     | some node => pure node

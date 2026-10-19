@@ -58,22 +58,6 @@ theorem relu_sub_relu_neg (u : ℝ) : relu u - relu (-u) = u := by
   simp only [relu, Activation.Math.reluSpec_eq_max]
   exact max_zero_sub_max_neg_zero_eq_self u
 
-/--
-Unfold `mlpForward` as
-$\operatorname{linear}\circ\operatorname{ReLU}\circ\operatorname{linear}$.
-
-This lemma is used as the standard normalization step in “network algebra” proofs.
--/
-theorem mlp_forward_eq_linear_relu_linear
-    {n hidDim : Nat}
-    (l1 : LinearSpec ℝ n hidDim) (l2 : LinearSpec ℝ hidDim 1)
-    (x : Tensor ℝ [n]) :
-    Examples.mlpForward l1 l2 x =
-      let z1 := Spec.linearSpec (α := ℝ) l1 x
-      let a1 := Activation.reluSpec z1
-      Spec.linearSpec (α := ℝ) l2 a1 := by
-  simpa [Examples.mlpForward] using (Examples.mlp_spec_forward_eq (α := ℝ) l1 l2 x)
-
 /-- Extract the unique entry from row `i` of an `(m×1)` tensor interpreted as a matrix. -/
 noncomputable def matDim1Get {m : Nat} (A : Tensor ℝ [m, 1]) (i : Fin m) : ℝ :=
   Spec.get2 A i ⟨0, by decide⟩

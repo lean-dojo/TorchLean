@@ -22,6 +22,6 @@ public import NN.Tactic.Verify
 * `verify` combines registered soundness theorems with kernel-checked evidence.
 
 The `?` variants explain the proof or tensor transformation. Import individual tactic modules when
-the other domains are not needed. `NN.Tactic.Verify.Lowering` separately loads graph-lowering
+the other domains are not needed. `NN.Tactic.Verify.Lowering` separately loads einsum-lowering
 correctness rules. Executable regression checks are separate from this proof collection.
 -/

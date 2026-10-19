@@ -168,7 +168,6 @@ that are not differentiation:
 
 - datasets and batching;
 - optimizer and scheduler state;
-- eager or typed-graph execution;
 - device selection;
 - checkpoints, logs, and reports.
 

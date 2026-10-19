@@ -223,6 +223,13 @@ def bernoulliMask : KernelCapsule :=
     .bernoulliMask
     "Reference deterministic Bernoulli masks follow the seeded spec/runtime contract."
 
+/-- Reference top-`k` routing mask. -/
+def topKMask : KernelCapsule :=
+  forwardOnlyCapsule
+    .topKMask
+    ("Reference top-k masks evaluate `Spec.MoE.topKMaskSpec`: comparisons and counts, ties to " ++
+      "the lower index.")
+
 /-- Reference matmul path. -/
 def matmul : KernelCapsule :=
   accumulationCapsule
@@ -359,6 +366,7 @@ def capsules : Array KernelCapsule :=
   , logSoftmax
   , softmax
   , hardMaskedSoftmax
+  , topKMask
   , reduceSum
   , reduceMean
   , reshape

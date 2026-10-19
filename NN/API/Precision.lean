@@ -68,7 +68,7 @@ if this tolerance rounds to zero in a tiny format, pass an explicit positive nor
 For example, with three exponent bits and two fraction bits, use
 `Spec.layerNorm ... (epsilon := Rat.cast (1 / 16 : Rat))`, or configure the model with
 `nn.layerNorm ... (eps := (1 / 16 : Rat))` before lowering it. The default instead gives a zero
-denominator for constant rows and can produce NaNs in typed-graph execution. Model validation checks
+denominator for constant rows and can produce NaNs at run time. Model validation checks
 the rational epsilon's positivity, not positivity after scalar conversion. A valid format does not
 guarantee finite or accurate results for every operation.
 -/

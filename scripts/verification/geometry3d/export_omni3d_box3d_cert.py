@@ -41,7 +41,7 @@ from typing import Any
 
 
 DEFAULT_OUT = Path("_external/geometry3d/omni3d_box3d_cert.json")
-FORMAT = "torchlean.camera.box3d.v1"
+FORMAT = "torchlean.camera.box3d.v2"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -173,6 +173,7 @@ def export_cert(payload: Any, args: argparse.Namespace) -> dict[str, Any]:
 
     return {
         "format": FORMAT,
+        "point_count": 8,
         "source": args.source,
         "image_width": width,
         "image_height": height,

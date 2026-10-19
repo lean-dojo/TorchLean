@@ -156,9 +156,8 @@ Distinct modules can still offer the same operation; the profile decides which o
 # Capsule Contracts And Evidence
 
 Each capsule has four obligations: shape, layout, forward value, and VJP. Each is a
-`ContractDescriptor`: a structured `ContractClaim`, a one-line summary for readers, the evidence
-behind the claim, and optional provenance (source paths and native symbols). Provenance identifies
-the implementation being discussed; it is not evidence of correctness.
+`ContractDescriptor`: a structured `ContractClaim`, a one-line summary for readers, and the evidence
+behind the claim.
 
 The claim is one of shape safety, compatibility with a named tensor layout, refinement of a forward
 specification, refinement of a VJP specification, or `vjpUnavailable` for a forward-only capsule.
@@ -379,7 +378,7 @@ The three standard Lean axioms, and no `sorryAx`. The companion theorem
 backward pass; both live in {src "NN/Spec/Layers/FlashAttention.lean"}[`FlashAttention.lean`].
 
 Those theorems compare two Lean specifications. The LibTorch attention capsule records the runtime
-guards, regression tests, source provenance, and `checked` trust level of the actual kernel.
+guards, regression tests, and `checked` trust level of the actual kernel.
 Connecting PTX or a library call all the way to the specification would require another refinement
 argument over Float32, layout, compiler, and hardware behavior, and no capsule field can stand in
 for it.
@@ -663,48 +662,42 @@ the policy permits.
 
 # Runtime Configuration
 
-The model API stays independent of these implementation details. The same builder is used for both
-execution modes, and the mode is an ordinary argument:
+The model API stays independent of these implementation details. The same builder is used on every
+device, and the device is an ordinary argument:
 
 ```lean (name := bsRuntime)
--- Changing execution does not alter the builder's input and
--- output shapes.
+-- Changing the device does not alter the builder's input
+-- and output shapes.
 def bsModel : nn.Builder (nn.Sequential [4] [1]) :=
   nn.Sequential![nn.linear 4 8, nn.relu, nn.linear 8 1]
 
-def bsTrainer (execution : Runtime.ExecutionMode) :=
+def bsTrainer (device : Runtime.Device) :=
   Trainer.new bsModel
     { objective := .mse
       optimizer := optim.adam { learningRate := 0.01 }
-      execution := execution }
+      device := device }
 
-#check bsTrainer eager
+#check bsTrainer .cuda
 ```
 ```leanOutput bsRuntime (whitespace := lax)
-bsTrainer eager : Trainer [4] [1]
+bsTrainer Device.cuda : Trainer [4] [1]
 ```
 
-The trainer's type is `Trainer [4] [1]` either way: the execution mode is not part of the model's
-interface, so switching it cannot change which inputs the model accepts. Device selection lives in
-the same configuration record:
+The trainer's type is `Trainer [4] [1]` on every device: the device is not part of the model's
+interface, so switching it cannot change which inputs the model accepts. The same holds for a
+bare runtime configuration:
 
 ```lean (name := bsConfig)
 -- Projecting a configuration field performs no runtime
 -- compatibility check.
-#eval ({ execution := typedGraph, device := .cuda :
-  Runtime.Config }).device.cliName
+#eval ({ device := .cuda : Runtime.Config }).device.cliName
 ```
 ```leanOutput bsConfig
 "cuda"
 ```
 
 This block only projects a field from the configuration; it does not validate or execute it.
-The current typed graph trainer rejects this CUDA combination when the session opens.
-
-Typed graph execution records and reuses a typed SSA graph. The execution chapter describes this
-lowering and its proof boundary; backend selection here determines which registered implementation
-may execute each operation. Graph construction alone is not an optimizing compiler and does not
-prove the stored derivative rules correct, which is why the two chapters stay separate.
+A build without LibTorch rejects this request when the session opens.
 
 # Graph Kernel Planning
 
@@ -913,7 +906,7 @@ evidence covers.
 
 # Related Chapters
 
-Read {ref "execution-modes"}[Execution Modes] for the runtime API, and
+Read {ref "run-configuration"}[Choosing How A Model Runs] for the runtime API, and
 {ref "gpu-and-cuda"}[GPU and CUDA] for the native implementation
 details. {ref "runtime-approximation"}[Runtime Approximation] is where reduction order and
 Float32 rounding are related back to real-valued specifications. The

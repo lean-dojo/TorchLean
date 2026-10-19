@@ -243,7 +243,8 @@ theorem lowerGraphToTape_zeroPreserving [CommSemiring α] {Δ : Type} {Γ ss : L
     refine ⟨fun id n hn _ => ?_⟩
     have hn' : ((TorchLean.TensorPack.toShapeErasedArray (α := α) (ss := Γ) x).map
         (leafNodeOfSomeTensor (α := α)))[id]? = some n := by
-      simpa [lowerGraphToTape, Tape.getNode?, nodes_addLeaves, Tape.empty] using hn
+      simpa [lowerGraphToTape, Graph.toData, lowerGraphDataToTape, Tape.getNode?, nodes_addLeaves,
+        Tape.empty] using hn
     rw [Array.getElem?_map] at hn'
     cases hx : (TorchLean.TensorPack.toShapeErasedArray (α := α) (ss := Γ) x)[id]? with
     | none => simp [hx] at hn'
@@ -257,19 +258,20 @@ theorem lowerGraphToTape_zeroPreserving [CommSemiring α] {Δ : Type} {Γ ss : L
     let prev := lowerGraphToTape (α := α) (Δ := Δ) (Γ := Γ) (ss := ssPrev) g x d0
     let tPrev := prev.1
     let ctxPrev := prev.2
-    let runtimeNode : Runtime.Autograd.Node α :=
-      lowerNode (some "proof-carrying-graph") node.toNodeData ctxPrev d0
+    let runtimeNode : Runtime.Autograd.Node (Spec.SomeTensor α) :=
+      lowerNode (some "typed-graph") node.toNodeData ctxPrev d0
     have hnNodes : (tPrev.nodes.push runtimeNode)[id]? = some n := by
-      simpa [lowerGraphToTape, prev, tPrev, runtimeNode, Tape.getNode?, Tape.addNode]
-        using hn
+      simpa [lowerGraphToTape, Graph.toData, lowerGraphDataToTape, prev, tPrev, ctxPrev,
+        runtimeNode, Tape.getNode?, Tape.addNode] using hn
     have hsizePrev : tPrev.nodes.size = (Γ ++ ssPrev).length := by
       simp [tPrev, prev, lowerGraphToTape_nodes_size, List.length_append]
     have hgetPrev : ∀ pid, pid < tPrev.nodes.size →
         (lowerGraphToTape (α := α) (Δ := Δ) (Γ := Γ) (ss := ssPrev ++ [τ]) (.snoc g node) x
           d0).1.getNode? pid = tPrev.getNode? pid := by
       intro pid hpid
-      simp [lowerGraphToTape, prev, tPrev, Tape.getNode?, Tape.addNode,
-        Array.getElem?_push, Nat.ne_of_lt hpid]
+      have hpid' : pid < (lowerGraphDataToTape g.toData x d0).1.nodes.size := hpid
+      simp [lowerGraphToTape, Graph.toData, lowerGraphDataToTape, prev, tPrev, Tape.getNode?,
+        Tape.addNode, Array.getElem?_push, Nat.ne_of_lt hpid']
     by_cases hlast : id = tPrev.nodes.size
     · subst hlast
       have hnEq : n = runtimeNode := by

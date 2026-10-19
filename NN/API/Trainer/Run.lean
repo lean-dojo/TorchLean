@@ -72,7 +72,6 @@ def withDevice (run : RunConfig) (device : Runtime.Device) : Except String RunCo
 /-- Apply runtime execution settings to a persistent trainer run configuration. -/
 def withRuntime (run : RunConfig) (runtime : Runtime.Config) : RunConfig :=
   { run with
-      execution := runtime.execution
       device := runtime.device
       backendProfile? := runtime.backendProfile?
       showBackend := runtime.showBackend }
@@ -83,8 +82,7 @@ def fromRuntime (runtime : Runtime.Config) (base : RunConfig := {}) : RunConfig 
 
 /-- Execution settings carried by this trainer configuration. -/
 def executionSettings (run : RunConfig) : Runtime.Config :=
-  { execution := run.execution
-    device := run.device
+  { device := run.device
     backendProfile? := run.backendProfile?
     showBackend := run.showBackend }
 

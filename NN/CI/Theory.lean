@@ -16,7 +16,6 @@ import NN.MLTheory.CROWN.Proofs.ConvEnclosure
 import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness
 import NN.MLTheory.CROWN.Proofs.Overview
 import NN.MLTheory.CROWN.Proofs.LayerNormEnclosure
-import NN.MLTheory.CROWN.Tactics.CertificateWorkflow
 import NN.MLTheory.LearningTheory.Stability.RidgeRegression1D.IEEE32Exec
 import NN.Proofs
 import NN.Proofs.Autograd.Overview

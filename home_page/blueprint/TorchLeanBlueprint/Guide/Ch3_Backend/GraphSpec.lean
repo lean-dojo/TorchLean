@@ -52,7 +52,6 @@ GraphSpec Chain / DAG ──┤
                                                 ├── typed graph lowering
                                                 └── broad verification lowering
                                                     ──> NN.IR.Graph
-                                                         ──> IRExec.ForwardGraph
 ```
 
 The upper branch reads the architecture as a pure tensor function. The lower branch constructs a
@@ -587,9 +586,8 @@ every parameter pack and input.
 The repository contains an executable GraphSpec tutorial:
 
 ```terminal
-# Run the GraphSpec example through its eager execution
-# interpretation.
-scripts/lake.sh exe torchlean graphspec --device cpu --execution eager
+# Run the GraphSpec example on the CPU.
+scripts/lake.sh exe torchlean graphspec --device cpu
 ```
 
 The recorded run prints:
@@ -622,8 +620,8 @@ would show a gap, as the case studies chapter does.
 The execution path is:
 
 ```
--- The chain fixes parameter order before the execution
--- backend is selected.
+-- The chain fixes parameter order before the device is
+-- selected.
 Models.mlp
    │ Chain ps [2] [1]
    ▼
@@ -635,27 +633,13 @@ Trainer.new
 eager runtime and autograd tape
 ```
 
-Now run it again on the other execution target:
+The command takes the standard runtime flags, `--arithmetic native|ieee`, `--device`, and
+`--show-backend`; see {ref "run-configuration"}[Choosing How A Model Runs] for what each target
+means.
 
-```terminal
-# Run the same example through the typed-graph
-# interpretation.
-scripts/lake.sh exe torchlean graphspec --device cpu --execution typed-graph
-```
-
-The recorded runs print the same losses. The runtime chooses a different interpreter for the
-polymorphic program: eager execution runs operations as encountered, while typed-graph execution
-records a shape-indexed graph for replay. The architecture, parameter ordering, and initializer stay
-fixed. Numerical differences still require investigation of reduction order and implementation;
-matching printed digits is not a universal equivalence result.
-
-The command takes the standard runtime flags, `--arithmetic native|ieee`,
-`--execution eager|typed-graph`, `--device`, and `--show-backend`; see
-{ref "execution-modes"}[the execution modes chapter] for what each target means.
-
-Matching the three-step trajectory checks the optimizer and execution route as well as the
-initial forward value. To reason about arbitrary parameters and inputs, we need the pure equality
-below and the separate evidence connecting each execution route to it.
+A three-step trajectory checks the optimizer and the tape as well as the initial forward value. To
+reason about arbitrary parameters and inputs, we need the pure equality below and the separate
+evidence connecting the runtime to it.
 
 # The Equivalence Theorem
 

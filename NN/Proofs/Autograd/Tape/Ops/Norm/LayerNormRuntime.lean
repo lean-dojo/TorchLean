@@ -40,7 +40,7 @@ variable {m n : Nat}
 
 The successful lookups retain the original scale and bias tensors and the configured epsilon. -/
 theorem eager_layerNorm_value (hm : 0 < m) (hn : 0 < n)
-    (t : Runtime.Autograd.Tape ℝ) (xId gammaId betaId : Nat)
+    (t : Runtime.Autograd.Tape (Spec.SomeTensor ℝ)) (xId gammaId betaId : Nat)
     (x : Tensor ℝ [m, n]) (gamma beta : Tensor ℝ [n]) (ε : ℝ)
     (hx : Runtime.Autograd.Tape.requireValue t xId = .ok x)
     (hgamma : Runtime.Autograd.Tape.requireValue t gammaId = .ok gamma)
@@ -61,7 +61,7 @@ the runtime parent ids, so the equality also checks the correspondence between a
 and cotangent destinations. -/
 theorem eager_layerNorm_backward_eq_adjoint_fderiv (hm : 0 < m) (hn : 0 < n)
     {ε : ℝ} (hε : 0 < ε)
-    (t : Runtime.Autograd.Tape ℝ) (xId gammaId betaId : Nat)
+    (t : Runtime.Autograd.Tape (Spec.SomeTensor ℝ)) (xId gammaId betaId : Nat)
     (x gradOutput : Tensor ℝ [m, n]) (gamma beta : Tensor ℝ [n])
     (hx : Runtime.Autograd.Tape.requireValue t xId = .ok x)
     (hgamma : Runtime.Autograd.Tape.requireValue t gammaId = .ok gamma)

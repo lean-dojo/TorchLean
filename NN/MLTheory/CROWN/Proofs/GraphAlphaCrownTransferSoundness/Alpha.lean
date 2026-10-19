@@ -112,7 +112,8 @@ theorem alphaCrown_transfer_sound
     | .inv | .maxElem | .minElem | .maxPool _ | .avgPool _ | .broadcastTo _ _ | .reduceSum _
     | .reduceMean _ | .batchNormEval _ _ | .tanh | .sigmoid | .softplus | .safeLog
     | .exp | .log | .sin | .cos
-    | .softmax _ | .hardMaskedSoftmax _ | .transpose _ _ | .mseLoss =>
+    | .softmax _ | .hardMaskedSoftmax _ | .transpose _ _ | .mseLoss | .div | .topKMask _
+    | .slice .. =>
       -- Unguarded IBP fallback.
       simp only [stepAlpha, alphaCrownStepNode?, hk] at hs
       split at hs

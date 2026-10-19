@@ -1,5 +1,6 @@
 {
-  "format": "torchlean.camera.box3d.v1",
+  "format": "torchlean.camera.box3d.v2",
+  "point_count": 8,
   "source": "runtime artifact for the Geometry3D CLI; not model output",
   "image_width": 640.0,
   "image_height": 480.0,

@@ -28,7 +28,7 @@ are separately recorded runs, with commands supplied for reproduction.
 # MLP Training
 
 From the repository root, train the model on the CPU for 200 updates. The fixed seed makes this
-run reproducible under the same arithmetic and execution settings:
+run reproducible under the same arithmetic and device:
 
 ```terminal
 # Fix the seed and update count for the MLP trace
@@ -134,7 +134,6 @@ def tfTrainer (seed : Nat) : Trainer [2] [1] :=
     { objective := .mse
       optimizer := optim.adam { learningRate := 0.03 }
       arithmetic := native
-      execution := eager
       seed := seed }
 ```
 
@@ -817,39 +816,6 @@ batched model answers it five times.
 This is a separate experiment from the grid above: its data and learning rate differ, despite
 the matching architecture.
 
-# Eager And Typed Graph Execution
-
-Compare:
-
-```terminal
-# Keep the run configuration fixed except for eager versus
-# typed graph execution.
-scripts/lake.sh exe torchlean quickstart_mlp \
-  --device cpu --execution eager --steps 20 --seed 2026
-
-scripts/lake.sh exe torchlean quickstart_mlp \
-  --device cpu --execution typed-graph --steps 20 --seed 2026
-```
-
-Both print the same three numbers:
-
-```terminal +output
-mean_loss(before training) = 0.495227
-mean_loss(after training) = 0.401184
-trained(heldout) = [0.365380]
-```
-
-The trainer method remains `train`; `execution := typedGraph` changes how that method runs without
-changing the model's `forward` definition. {ref "execution-modes"}[The execution chapter] develops
-the graph reuse and proof boundaries in detail.
-
-Agreement on twenty updates of a 33-parameter model is evidence, not proof. It is worth having
-anyway, because the two execution modes take different code paths through the runtime, and a
-disagreement deserves investigation of operations, reductions, and numeric tolerances.
-
-Typed graph trainer execution is currently CPU-only. A non-CPU typed graph request is rejected
-rather than silently falling back to a different semantics.
-
 # Device Selection And Backend Profiles
 
 Programmatically, `Trainer.Config` extends `Trainer.RunConfig`, so the device can be set in the
@@ -906,7 +872,7 @@ The common executable selections are:
 
 Native CPU arithmetic uses Lean's builtin `Float32` operations; `.ieee` uses FloatLib binary32,
 including its finite and exceptional cases. The checked comparisons in
-{ref "execution-modes"}[the execution chapter] run the same training problem through both
+{ref "run-configuration"}[Choosing How A Model Runs] run the same training problem through both
 implementations. Agreement in displayed losses alone would not establish agreement in their bits.
 Proof-level `Real` and rounded-real `FP32` are not executable trainer choices.
 `FP32` has binary32 precision and gradual-underflow parameters, but no upper exponent bound, NaN,
@@ -1010,7 +976,7 @@ save is written to a fresh sibling file before it replaces the destination.
 
 That optimizer file is still not a complete training snapshot. Replaying the next batch also needs
 the loader or stream position and any external generator state. The eager dropout counter is
-preserved by current optimizer files; legacy files without it load with a warning and cannot
+saved when the caller supplies it; a file saved without it loads with a warning and cannot
 reproduce stochastic continuation. Interpreting the result also needs the model, preprocessing,
 arithmetic semantics, backend profile, and device. A model-state
 checkpoint remains appropriate for inference or a fresh optimizer run. Pairing it with native
@@ -1141,7 +1107,7 @@ The exact rational comparison observes the small increment that a printed `Float
 the session leave that result unchanged. `session.save`, `session.load`, and the finished result's
 `save` use the selected scalar's exact checkpoint encoding.
 
-Typed sessions support eager and graph execution on CPU. Their optimizer and scheduler coefficients
+Typed sessions run on the CPU. Their optimizer and scheduler coefficients
 are configured as `Float` and converted into the selected scalar; the rate above is exactly
 representable in both. For a coefficient that itself needs extra precision, use `nn.sgdStep` with
 typed parameters and gradients as in the {ref "tensors-shapes"}[tensor chapter].

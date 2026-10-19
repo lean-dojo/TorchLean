@@ -172,28 +172,5 @@ def canonicalGradient {α : Type} [TorchLean.Storage α] (shape : Shape)
   else
     throw <| IO.userError "torch: canonical gradient shape mismatch"
 
-/--
-Apply one SGD update to each trainable storage, using the sum of its occurrence gradients.
-
-Storage aliases use the same canonical-slot map as generic optimizers and checkpoints.
-Only scalar addition, subtraction, and multiplication are needed; no neural activation or
-ordering operations are required.
--/
-def sgdStep {α : Type} [TorchLean.Storage α] [Add α] [Sub α] [Mul α] {ss : List Shape}
-    (parameters : ParamList α ss) (rate : α) (gradients : TorchLean.TensorPack α ss) :
-    IO Unit := do
-  let slots ← canonicalSlotIndices parameters
-  let sums ← canonicalGradients slots gradients
-  let rec update : {shapes : List Shape} → ParamList α shapes → Nat → IO Unit
-    | [], .nil, _ => pure ()
-    | shape :: _, .cons parameter rest, index => do
-        if slots[index]? == some (some index) then
-          let gradient ← canonicalGradient shape sums index
-          let value ← parameter.value.get
-          let updated := Tensor.map2Spec (fun x dx => x - rate * dx) value gradient
-          Internal.setParamHostValue parameter updated
-        update rest (index + 1)
-  update parameters 0
-
 end ParamList
 end Runtime.Autograd.Torch

@@ -418,14 +418,11 @@ on an interval makes it constant there. Discrete samples therefore need a real-v
 before applying the corridor theorem. Sample values and boxes alone do not establish its required
 clamped-ODE derivative identity.
 
-Two different lowerings must not be confused here. The lowering of the proof-layer `Graph` to the
-executable tape (`lowerGraphToTape` in `NN/Proofs/Autograd/Runtime/Link/`) has both forward and
-backward correspondence theorems, ending in `backwardDenseAll_lowerGraphToTape_adjoint_fderiv`
-over `ℝ`. The lowering of the canonical `NN.IR.Graph` to the forward-only `ForwardGraph`
-(`lowerToForwardGraph` in `NN/Runtime/Autograd/IRExec/`) proves forward semantic preservation only:
-`denoteAll_eq_of_lowerToForwardGraph` needs just the `NoRawLog` side condition and covers concat,
-rank four and higher matmul, and batched linear, but it is not an autograd theorem and must not be
-cited as a backward-certificate theorem.
+The lowering of the proof-layer `Graph` to the executable tape (`lowerGraphToTape` in
+`NN/Proofs/Autograd/Runtime/Link/`) has both forward and backward correspondence theorems, ending
+in `backwardDenseAll_lowerGraphToTape_adjoint_fderiv` over `ℝ`. The canonical `NN.IR.Graph` is
+run by its own semantics (`Graph.denoteAll`); IR results are forward statements, not autograd
+theorems.
 
 Use the float layers as follows:
 

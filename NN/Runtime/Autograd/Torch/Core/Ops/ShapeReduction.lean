@@ -14,8 +14,9 @@ public import NN.Runtime.Autograd.Engine.LibTorch.Ops.Shape
 /-!
 # Eager Tensor Operations
 
-PyTorch-style tensor operations backed by the eager CPU/CUDA tapes. These wrappers record runtime
-nodes, dispatch CUDA kernels when requested, and preserve the typed `TensorRef` surface.
+PyTorch-style tensor operations recorded on the session's tape. Each one runs the CPU or the CUDA
+kernel of the operation, as the session's device selects, and preserves the typed `TensorRef`
+surface.
 -/
 
 

@@ -157,23 +157,20 @@ structure Npy.Options where
   yPath : System.FilePath
   /-- Number of rows to read from the arrays. -/
   nRows : Nat
-  /-- Data-loader seed. -/
-  seed : Nat
 deriving Repr
 
 namespace Npy.Options
 
-/-- Parse `--seed`, `--n-total`, `--x`, and `--y` for an NPY-backed example. -/
+/-- Parse `--n-total`, `--x`, and `--y` for an NPY-backed example. -/
 def parse
     (args : List String)
     (defaultX defaultY : System.FilePath)
     (defaultRows : Nat) :
     Except String (Npy.Options × List String) := do
-  let (seed, args) ← CLI.takeSeed args (default := 0)
   let (nRows, args) ← CLI.takeNatFlag args "n-total" (default := defaultRows)
   let (xPath, args) ← CLI.takePathFlag args "x" (default := defaultX)
   let (yPath, args) ← CLI.takePathFlag args "y" (default := defaultY)
-  pure ({ xPath, yPath, nRows, seed }, args)
+  pure ({ xPath, yPath, nRows }, args)
 
 /-- Stable TrainLog metadata for an NPY-backed dataset branch. -/
 def logNotes (config : Npy.Options) (datasetName : String) : Array String :=
@@ -191,22 +188,13 @@ deriving Repr, BEq
 
 namespace Image.Dataset
 
-/-- Parse the dataset selector and reject ambiguous combinations. -/
+/-- Parse `--dataset cifar10|imagenet64`; without the flag the dataset is `imagenet64`. -/
 def parse (args : List String) : Except String (Image.Dataset × List String) := do
   let (dataset?, args) ← CLI.takeFlagValue? args "dataset"
-  let (cifarFlag, args) ← CLI.takeBoolFlag args "cifar10"
-  let (imagenetFlag, args) ← CLI.takeBoolFlag args "imagenet64"
-  match dataset?, cifarFlag, imagenetFlag with
-  | some _, true, _ | some _, _, true | none, true, true =>
-      throw "choose only one dataset selector: --dataset, --cifar10, or --imagenet64"
-  | some raw, false, false =>
-      match raw with
-      | "imagenet64" | "imagenet" | "imagenette64" => pure (.imagenet64, args)
-      | "cifar10" | "cifar" => pure (.cifar10, args)
-      | _ => throw s!"unknown --dataset {raw}; expected imagenet64 or cifar10"
-  | none, true, false => pure (.cifar10, args)
-  | none, false, true => pure (.imagenet64, args)
-  | none, false, false => pure (.imagenet64, args)
+  match dataset? with
+  | none | some "imagenet64" => pure (.imagenet64, args)
+  | some "cifar10" => pure (.cifar10, args)
+  | some raw => throw s!"unknown --dataset {raw}; expected imagenet64 or cifar10"
 
 end Image.Dataset
 
@@ -220,8 +208,6 @@ structure Forecast.Options where
   windows : Nat
   /-- Window index used for before/after forecast display. -/
   reportOffset : Nat
-  /-- Data-loader seed. -/
-  seed : Nat
 deriving Repr
 
 namespace Forecast.Options
@@ -273,16 +259,13 @@ namespace Csv
 structure Options where
   /-- CSV file containing model inputs and targets. -/
   path : System.FilePath
-  /-- Seed used for model initialization and data shuffling. -/
-  seed : Nat
 deriving Repr
 
-/-- Parse the CSV path and seed, leaving training and runtime options to their parsers. -/
+/-- Parse the CSV path, leaving training and runtime options to their parsers. -/
 def Options.parse (args : List String) (defaultPath : System.FilePath) :
     Except String (Options × List String) := do
   let (path, args) ← CLI.takePathFlag args "csv" (default := defaultPath)
-  let (seed, args) ← CLI.takeSeed args (default := 0)
-  pure ({ path, seed }, args)
+  pure ({ path }, args)
 
 end Csv
 

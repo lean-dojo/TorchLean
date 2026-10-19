@@ -71,24 +71,30 @@ def readCROWNNodeCertificate (g : Graph) (path : String) : IO CROWNNodeCoreCerti
   parseCROWNNodeCoreCertificate g topObj
 
 /--
-Compare one certificate entry with the locally replayed CROWN bound.
+The per-node part of a CROWN-family check, shared by α-CROWN and α/β-CROWN. Every supplied IBP box
+must contain Lean's authoritative interval, and every node's affine entry must equal the bound
+`step` replays from the nodes before it; `label` names the checker in its messages. The result is
+the `diagnosticsOk` input of the certificate's acceptance decision.
 
-`step` recomputes the candidate affine bound from the bounds replayed so far.
 `checkCROWNNodeCertificate` passes `replayStep`, the function whose acceptance theorem is proved
-below, so the diagnostic loop and the pure acceptance decision replay the same rule.
+below, so this loop and the pure acceptance decision replay the same rule.
 -/
-def checkCROWNNode (g : Graph)
+def checkNodeEntries (label : String) (g : Graph)
     (authoritativeIbp : Array (Option (FlatBox (ExecFloat.Binary 8 23))))
     (cert : CROWNNodeCoreCertificate)
     (step : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) → Nat →
-      Option (FlatAffineBounds (ExecFloat.Binary 8 23)))
-    (authoritativeCrown : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))))
-    (id : Nat) : IO (Bool × Option (FlatAffineBounds (ExecFloat.Binary 8 23))) := do
-  let computed? := step authoritativeCrown id
-  let ok ←
-    checkCROWNLikeNode "CROWNNodeCert" g authoritativeIbp authoritativeCrown cert.crown cert.ctx id
-      computed?
-  pure (ok, computed?)
+      Option (FlatAffineBounds (ExecFloat.Binary 8 23))) : IO Bool := do
+  let mut authoritativeCrown : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) :=
+    Array.replicate g.nodes.size none
+  let mut ok := true
+  for id in [0:g.nodes.size] do
+    let okIbp ← NN.Verification.Cert.IBPNodeCert.checkIBPNode g authoritativeIbp cert.ibp id
+    let computed? := step authoritativeCrown id
+    let okCrown ← checkCROWNLikeNode label g authoritativeIbp authoritativeCrown cert.crown
+      cert.ctx id computed?
+    authoritativeCrown := authoritativeCrown.set! id computed?
+    ok := ok && okIbp && okCrown
+  pure ok
 
 /-- The α-CROWN replay function associated with a parsed certificate. -/
 def replayStep (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 23))
@@ -139,15 +145,8 @@ def checkCROWNNodeCertificate (g : Graph) (ps : ParamStore (ExecFloat.Binary 8 2
     (path : String) : IO Bool := do
   let cert ← readCROWNNodeCertificate g path
   let authoritativeIbp := runIBP (α := (ExecFloat.Binary 8 23)) g ps
-  let step := replayStep g ps authoritativeIbp cert
-  let mut authoritativeCrown : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) :=
-    Array.replicate g.nodes.size none
-  let mut ok := true
-  for id in [0:g.nodes.size] do
-    let okIbp ← NN.Verification.Cert.IBPNodeCert.checkIBPNode g authoritativeIbp cert.ibp id
-    let (okCrown, computed?) ← checkCROWNNode g authoritativeIbp cert step authoritativeCrown id
-    authoritativeCrown := authoritativeCrown.set! id computed?
-    ok := ok && okIbp && okCrown
+  let ok ← checkNodeEntries "CROWNNodeCert" g authoritativeIbp cert
+    (replayStep g ps authoritativeIbp cert)
   let accepted := certificateAccepts cert g ps authoritativeIbp ok
   if accepted then
     IO.println "[CROWNNodeCert] artifact matched an authoritative Lean IBP and alpha-CROWN replay."

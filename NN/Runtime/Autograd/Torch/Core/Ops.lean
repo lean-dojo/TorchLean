@@ -17,6 +17,7 @@ public import NN.Runtime.Autograd.Torch.Core.Ops.ShapeReduction
 /-!
 # Eager Tensor Operations
 
-Typed eager operations record CPU or CUDA tape nodes through a shared dispatch layer. The focused
+Typed eager operations record nodes on the session's tape through a shared dispatch layer, which
+runs the CPU or the CUDA kernel of each operation. The focused
 modules group operations by behavior; this umbrella preserves the complete eager operation API.
 -/

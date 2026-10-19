@@ -32,10 +32,9 @@ make independently allocated parameters aliases.
 def checkpointParameterSchema {α : Type} [TorchLean.Storage α] {shapes : List Spec.Shape}
     (parameters : ParamList α shapes) : IO OptimizerCheckpoint.ParameterSchema := do
   let representatives ← ParamList.canonicalSlotIndices parameters
-  let schema : OptimizerCheckpoint.ParameterSchema :=
-    { shapes := shapes.toArray, requiresGrad := ParamList.requiresGradArray parameters,
+  pure
+    { shapes := shapes.toArray
+      requiresGrad := ParamList.requiresGradArray parameters
       representatives := some representatives }
-  -- Independent layouts retain the version 2 representation and its existing checkpoint bytes.
-  return if schema.hasAliases then schema else { schema with representatives := none }
 
 end Runtime.Autograd.Torch.Internal

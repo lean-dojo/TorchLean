@@ -5,7 +5,6 @@ import NN.Backend
 import NN.Runtime.Autograd.Engine
 import NN.Runtime.Autograd.Torch
 import NN.Runtime.Autograd.Model
-import NN.Runtime.Autograd.Train
 import NN.API.Trainer.Session
 import NN.API.Trainer.Scheduler
 import NN.Runtime.PyTorch
@@ -136,11 +135,12 @@ fixed. It does not cache tensor results or cotangents: later calls still execute
 inputs, and the operation remains responsible for recording dependencies on those inputs.
 :::
 
-:::definition "cuda_autograd_tape" (parent := "backend_selection") (lean := "Runtime.Autograd.LibTorch.Tape")
-The CUDA tape stores {uses "cuda_native_boundary"}[device buffers], parent ids, and local VJP
-closures in evaluation order. `requireValue`, `requireGrad`, and backward accumulation check shape
-tags and native buffer lengths. Dense backward returns one buffer per node; sparse backward retains
-owned buffers only for selected node ids and requires the caller to release them.
+:::definition "cuda_autograd_tape" (parent := "backend_selection") (lean := "Runtime.Autograd.Tape")
+On CUDA the tape stores {uses "cuda_native_boundary"}[device buffers], parent ids, and local VJP
+closures in evaluation order; it is the same tape as on the CPU, over another value type.
+`requireValue`, `requireGrad`, and backward accumulation check shape tags and native buffer
+lengths. Dense backward returns one buffer per node; sparse backward retains owned buffers only
+for selected node ids and requires the caller to release them.
 :::
 
 :::theorem "cuda_execution_contracts" (parent := "backend_selection") (lean := "Runtime.Autograd.LibTorch.Float32Contract.native_add_eq_reference_of_isFinite")
@@ -167,8 +167,8 @@ Scalar objectives and stateful supervised updates.
 :::definition "runtime_module_training" (parent := "training_runtime") (lean := "Runtime.Autograd.Model.Module.Objective")
 `Objective` wraps a scalar trainer, its runtime options, and the selected host/device tensor
 conversion. The trainer owns a shape-indexed mutable parameter pack and runs its scalar-loss
-{uses "runtime_ops_program"}[program] through {uses "backend_eager_dispatch"}[eager execution] or
-{uses "runtime_typed_graph_autograd"}[typed graph execution]. Gradients are returned to callers;
+{uses "runtime_ops_program"}[program] through {uses "backend_eager_dispatch"}[eager execution].
+Gradients are returned to callers;
 generic optimizer state is passed to and returned from update methods rather than stored here.
 
 State shapes include persistent model buffers as well as trainable parameters. Differentiability

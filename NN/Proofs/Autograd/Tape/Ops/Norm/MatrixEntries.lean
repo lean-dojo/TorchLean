@@ -169,16 +169,6 @@ theorem tensorToVec_vec {k : Nat} (v : Tensor ℝ [k]) (p : Fin (Spec.Shape.size
 
 /-! ## Pointwise operations on matrices and vectors -/
 
-/-- Entries of a matrix sum. -/
-theorem get2_addSpec (a b : Tensor ℝ [m, n]) (i : Fin m) (j : Fin n) :
-    Spec.get2 (addSpec a b) i j = Spec.get2 a i j + Spec.get2 b i j := by
-  simp [addSpec]
-
-/-- Entries of a matrix difference. -/
-theorem get2_subSpec (a b : Tensor ℝ [m, n]) (i : Fin m) (j : Fin n) :
-    Spec.get2 (subSpec a b) i j = Spec.get2 a i j - Spec.get2 b i j := by
-  simp [subSpec]
-
 /-- Entries of a pointwise matrix product. -/
 theorem get2_mulSpec (a b : Tensor ℝ [m, n]) (i : Fin m) (j : Fin n) :
     Spec.get2 (mulSpec a b) i j = Spec.get2 a i j * Spec.get2 b i j := by

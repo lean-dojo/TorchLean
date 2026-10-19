@@ -381,7 +381,6 @@ scripts/lake.sh exe torchlean ppo_gridworld \
 ```
 
 ```terminal +output
-[TorchLean] execution: eager
 [TorchLean] device: cpu
 ppo_gridworld: PPO on Lean-native GridWorld (4x4, horizon=64) (device=cpu)
   env: pure Lean dynamics + boundary contract check + formal MDP validity proof available
@@ -429,9 +428,6 @@ The common runtime parser recognizes:
   * `--arithmetic native|ieee|complex`
   * arithmetic runtime, where the command supports it
 *
-  * `--execution eager|typed-graph`
-  * eager autograd or shape-indexed typed graph host path where supported
-*
   * `--seed N`
   * explicit random seed
 *
@@ -465,7 +461,6 @@ Training:
 
 Runtime:
   --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external
-  --execution eager|typed-graph
   --arithmetic native
   --seed N --show-backend
 ```
@@ -612,7 +607,7 @@ complex-valued training API
 ```
 
 The shared parser recognizes names across commands. Each selected command still checks whether it
-supports the requested arithmetic, device, and execution mode.
+supports the requested arithmetic and device.
 
 For complex training, the explicit-state example has its own command:
 
@@ -625,32 +620,13 @@ held-out complex prediction. The optional checkpoint is reloaded and checked wit
 either component. Its coordinate-forward gradient is intended for small models, not as a native
 complex GPU training benchmark.
 
-Device, arithmetic, and execution mode describe three choices: where tensor operations run,
-how scalar arithmetic is implemented, and how the program is evaluated. They are useful to
+Device and arithmetic describe two choices: where tensor operations run and how scalar arithmetic
+is implemented. They are useful to
 record separately even when only some combinations are implemented. The two commands above
 make a deliberately small comparison with the same training arguments. Reading a numerical
 difference as an arithmetic effect requires keeping the initialization, data, optimizer settings,
 and number of updates fixed as well. A completed command establishes that its selected path ran;
 the printed loss describes that run's objective.
-
-# Execution Modes
-
-`--execution typed-graph` selects the shape-indexed graph host path for commands that implement it.
-Compare it with eager execution using the same MLP quickstart arguments:
-
-```terminal
-# Keep the training arguments fixed while comparing the two
-# execution modes.
-scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 1 --seed 2026 --execution eager
-scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 1 --seed 2026 \
-  --execution typed-graph
-```
-
-The initial loss, final loss, and held-out prediction let you compare the two paths on one update.
-The flag selects a shape-indexed host execution
-path; it does not request CUDA graph capture, compiler optimization, or a derivative proof.
-Some specialized CUDA applications require eager execution.
-{ref "execution-modes"}[Execution Modes] compares the paths.
 
 # The Interactive Device Chooser
 
@@ -666,7 +642,7 @@ scripts/lake.sh exe torchlean --choose quickstart_mlp --steps 1
 TorchLean runtime chooser
 Runtime device:
   1) CPU    portable default
-  2) CUDA   GPU runtime, requires `scripts/lake.sh -R -K cuda=true exe ...`
+  2) CUDA   GPU runtime, requires `scripts/lake.sh -K cuda=true exe ...`
 Select device [1]:
 ```
 
@@ -1136,8 +1112,8 @@ still makes sense with them.
 
 # Command Exercises
 
-1. Run `scripts/lake.sh exe torchlean --list | wc -l` and account for the commands across the nine
-   groups in `--help`.
+1. Run `scripts/lake.sh exe torchlean --list | wc -l` and account for the commands across the
+   groups shown by `--help`.
 2. Pick any training command and pass a flag from a different one. Read the message and identify
    which parser rejected it.
 3. Run one command twice with `--seed 1` and `--seed 2`, then twice with the same seed, and confirm

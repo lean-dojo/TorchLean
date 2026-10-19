@@ -112,7 +112,7 @@ def usage : String :=
     "  --prompt TEXT --generate N --interactive",
     "",
     "Runtime:",
-    "  --device cuda --execution eager|typed-graph --seed N --show-backend"
+    "  --device cuda --seed N --show-backend"
   ]
 
 /-- Parse the complete option surface owned by the `text_gpt2` executable. -/

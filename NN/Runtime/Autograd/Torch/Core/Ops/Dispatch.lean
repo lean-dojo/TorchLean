@@ -11,8 +11,9 @@ public import NN.Runtime.Autograd.Torch.Core.Session
 /-!
 # Eager Tensor Operations
 
-PyTorch-style tensor operations backed by the eager CPU/CUDA tapes. These wrappers record runtime
-nodes, dispatch CUDA kernels when requested, and preserve the typed `TensorRef` surface.
+PyTorch-style tensor operations recorded on the session's tape. Each one runs the CPU or the CUDA
+kernel of the operation, as the session's device selects, and preserves the typed `TensorRef`
+surface.
 -/
 
 
@@ -31,11 +32,11 @@ namespace EagerSession
 /-!
 ## Tensor ops (eager tape wrappers)
 
-The following definitions are the eager front-end for `Runtime.Autograd.Tape.*` primitives.
-Each one:
-- reads the current tape from `s.tape`,
-- appends a new node/leaf via a `Tape.*` constructor,
-- writes the updated tape back, and
+The following definitions are the eager front-end for the tape constructors. Each one:
+- takes the session's tape out of `s.tape`,
+- appends a new node with the CPU constructor (`Runtime.Autograd.Tape.*`) or the CUDA one
+  (`Runtime.Autograd.LibTorch.Tape.*`), as the session's device selects,
+- writes the extended tape back, and
 - returns a fresh `TensorRef` pointing to the new node id.
 
 PyTorch comparison: this is the standard eager autograd mechanism (a dynamic tape of ops).
@@ -64,7 +65,7 @@ def execute {α : Type} [TorchLean.Storage α] {sh : Shape} (s : EagerSession α
         provider := .libTorch
         device := .cuda
         execute := fun _ => do
-          let tape ← s.cudaTape.get
+          let tape ← s.cudaTape
           if tape.nodes[0]?.any (fun node => (LibTorch.Buffer.format? node.value.buf).isSome) &&
               !([.add, .sub, .mul, .div, .neg, .reshape, .slice, .concat] :
                 List NN.Backend.BackendOp).contains op then

@@ -66,16 +66,6 @@ Output is length `rows` (sum across the columns for each row).
 opaque reduceSumByRow (b : @& Buffer) (rows cols : UInt32) : Buffer
 
 /--
-Maximum down the rows of a 2D row-major buffer.
-
-Input `b` has shape `(rows, cols)` and is stored as length `rows*cols`.
-Output is length `cols` (max down the rows for each column).
-When `rows = 0`, the result contains `cols` zeros by TorchLean's native compatibility convention.
--/
-@[never_extract, extern "torchlean_cuda_buffer_reduce_max_by_column"]
-opaque reduceMaxByColumn (b : @& Buffer) (rows cols : UInt32) : Buffer
-
-/--
 Maximum across the columns of a 2D row-major buffer.
 
 Input `b` has shape `(rows, cols)` and is stored as length `rows*cols`.
@@ -84,6 +74,14 @@ When `cols = 0`, the result contains `rows` zeros by TorchLean's native compatib
 -/
 @[never_extract, extern "torchlean_cuda_buffer_reduce_max_by_row"]
 opaque reduceMaxByRow (b : @& Buffer) (rows cols : UInt32) : Buffer
+
+/--
+One for the `k` entries of each row of a flat `(rows, cols)` buffer that fewer than `k` entries of
+the row beat, and zero for the others (`Spec.MoE.kept`). Entry `j` beats entry `i` when it is
+larger, or when neither is larger and `j < i`. The kernel compares and counts, so it is exact.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_top_k_mask_by_row"]
+opaque topKMaskByRow (b : @& Buffer) (rows cols k : UInt32) : Buffer
 
 /--
 Stable row-wise hard-masked softmax for flat `(rows, cols)` buffers.

@@ -58,7 +58,6 @@ Example:
 def settings : Trainer.RunConfig :=
   { optimizer := optim.sgd { learningRate := 0.01, momentum := 0.9 }
     arithmetic := native
-    execution := eager
     device := cpu }
 ```
 -/
@@ -73,8 +72,6 @@ structure RunConfig where
   `.complex`. `trainer.openTyped` instead uses its explicit scalar parameter.
   -/
   arithmetic : Runtime.Arithmetic := .native
-  /-- Immediate tape execution or reusable typed-graph execution. -/
-  execution : Runtime.ExecutionMode := .eager
   /-- Device used for execution. -/
   device : Runtime.Device := .cpu
   /-- Optional advanced override for provider, assurance, and VJP policy. -/

@@ -192,7 +192,7 @@ namespace Forecast.Options
 /--
 Parse the shared flags for household-power forecasting windows.
 
-Forecasting commands share `--data-dir`, `--x`, `--y`, `--windows`, `--report-offset`, and `--seed`.
+Forecasting commands share `--data-dir`, `--x`, `--y`, `--windows`, and `--report-offset`.
 -/
 def parse
     (exeName : String)
@@ -202,7 +202,6 @@ def parse
     Except String (Support.Forecast.Options × List String) := do
   let (dataDir, args) ← TorchLean.CLI.takePathFlag args "data-dir"
     (default := NN.Examples.Data.RealPaths.defaultDataDir)
-  let (seed, args) ← CLI.takeSeed args (default := 0)
   let (windows, args) ← CLI.takePositiveNatFlag args exeName "windows" (default := defaultWindows)
   let (reportOffset, args) ← CLI.takeNatFlag args "report-offset" (default := defaultReportOffset)
   let (xPath, args) ←
@@ -212,8 +211,7 @@ def parse
   pure ({ xPath := xPath
           yPath := yPath
           windows := windows
-          reportOffset := reportOffset
-          seed := seed }, args)
+          reportOffset := reportOffset }, args)
 
 end Forecast.Options
 
@@ -279,7 +277,7 @@ def trainCifarClassifier (batchSize cropHeight cropWidth : Nat)
     (runtime : Runtime.Config) (flags : Support.Training.Options Support.Npy.Options)
     (extraNotes : Array String := #[]) : IO Trainer.Report := do
   let batches ←
-    loadCifarBatches exeName batchSize flags.data.nRows flags.data.seed
+    loadCifarBatches exeName batchSize flags.data.nRows runtime.seed
       flags.data.xPath flags.data.yPath
   let batches ← batches.mapM fun sample =>
     CLI.orThrow exeName <| cropCifarBatch batchSize cropHeight cropWidth sample
@@ -289,7 +287,7 @@ def trainCifarClassifier (batchSize cropHeight cropWidth : Nat)
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := flags.training.learningRate } })
         (.oneHotCrossEntropy 1)
-        (seed := flags.data.seed)
+        (seed := runtime.seed)
   let trained ← trainer.train
     (Data.fromSamples batches)
     (flags.training.trainOptions

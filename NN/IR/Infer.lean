@@ -107,7 +107,7 @@ def nodeOutShape (n : Node) (parentShapes : Array Shape) : Except String Shape :
       match ← expectUnaryParent "bernoulli_mask" parentShapes with
       | .scalar => pure n.outShape
       | s => throw s!"bernoulli_mask: expected scalar keepProb parent, got {repr s}"
-  | .add | .sub | .mulElem | .maxElem | .minElem =>
+  | .add | .sub | .mulElem | .div | .maxElem | .minElem =>
       let (a, b) ← expectBinaryParents n.kind.tag parentShapes
       if a = b then pure a
       else throw s!"{n.kind.tag}: shape mismatch: {repr a} vs {repr b}"
@@ -176,6 +176,8 @@ def nodeOutShape (n : Node) (parentShapes : Array Shape) : Except String Shape :
       let s ← expectUnaryParent "hard_masked_softmax" parentShapes
       let _ ← NN.IR.HardMask.validateAs mask s
       pure s
+  | .topKMask _ =>
+      expectUnaryParent "top_k_mask" parentShapes
   | .layernorm axis =>
       let s ← expectUnaryParent "layernorm" parentShapes
       let _ ← OpContracts.layerNormMatrixDims axis s
@@ -194,6 +196,14 @@ def nodeOutShape (n : Node) (parentShapes : Array Shape) : Except String Shape :
       pure (ShapeUtil.flattenOutShape s)
   | .concat axis =>
       OpContracts.inferConcatOutShape axis parentShapes
+  | .slice axis start length =>
+      let s ← expectUnaryParent "slice" parentShapes
+      match Spec.Shape.axisInBounds? axis s with
+      | none => throw s!"slice: axis {axis} is out of range for shape {repr s}"
+      | some hAxis =>
+          letI : Spec.Shape.AxisInBounds axis s := hAxis.down
+          if start + length ≤ Spec.Shape.axisSize s axis then pure (s.replaceAxis axis length)
+          else throw s!"slice: range {start}..{start + length} exceeds axis {axis} of {repr s}"
   | .mseLoss =>
       let (a, b) ← expectBinaryParents "mse_loss" parentShapes
       if a = b then pure .scalar

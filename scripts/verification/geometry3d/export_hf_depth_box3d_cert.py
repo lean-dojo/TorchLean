@@ -33,7 +33,7 @@ from transformers import pipeline
 from safe_image_io import load_local_rgb_image, load_remote_rgb_image
 
 
-FORMAT = "torchlean.camera.box3d.v1"
+FORMAT = "torchlean.camera.box3d.v2"
 DEFAULT_IMAGE_URL = (
     "https://images.cocodataset.org/val2017/000000039769.jpg"
 )
@@ -261,6 +261,7 @@ def export_cert(
 
     return {
         "format": FORMAT,
+        "point_count": 8,
         "source": "HF object detection + Depth Anything V2 real-image exporter",
         "image_width": float(width),
         "image_height": float(height),

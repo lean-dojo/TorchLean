@@ -168,10 +168,6 @@ lean_lib NNTests where
 lean_lib NNCI where
   roots := #[`NN.CI.All]
 
-/-- Proof-heavy modules typechecked by the docs build or an explicit local target. -/
-lean_lib NNSlowProofs where
-  roots := #[`NN.CI.SlowProofs]
-
 /-- Complete maintained API documentation surface. -/
 lean_lib TorchLeanDocs where
   roots := #[`NN.Docs]

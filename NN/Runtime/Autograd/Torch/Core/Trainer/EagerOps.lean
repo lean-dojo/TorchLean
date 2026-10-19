@@ -154,6 +154,8 @@ instance {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfer α] :
   log := fun {s} x => fun sess => Internal.EagerSession.log (α := α) sess (sh := s) x
   inv := fun {s} x => fun sess => Internal.EagerSession.inv (α := α) sess (sh := s) x
   detach := fun {s} x => fun sess => Internal.EagerSession.detach (α := α) sess (sh := s) x
+  topKMask := fun {s} k x => fun sess =>
+    Internal.EagerSession.topKMask (α := α) sess (sh := s) k x
   safeLog := fun {s} x ε => fun sess => Internal.EagerSession.safeLog (α := α) sess (sh := s) x (ε
     := ε)
   sum := fun {s} x => fun sess => Internal.EagerSession.sum (α := α) sess (sh := s) x

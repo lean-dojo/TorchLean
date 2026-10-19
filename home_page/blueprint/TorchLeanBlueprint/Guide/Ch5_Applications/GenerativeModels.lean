@@ -618,7 +618,6 @@ scripts/lake.sh exe torchlean diffusion --device cpu \
 
 ```terminal +output
 [TorchLean] arithmetic: native binary32
-[TorchLean] execution: eager
 [TorchLean] device: cpu
 diffusion: diffusion trainer (device=cpu)
 model:
@@ -741,7 +740,6 @@ scripts/lake.sh exe torchlean autoencoder --device cpu \
 
 ```terminal +output
 [TorchLean] arithmetic: native binary32
-[TorchLean] execution: eager
 [TorchLean] device: cpu
 autoencoder: CIFAR vector reconstruction (device=cpu)
 dataset size = 1
@@ -1323,7 +1321,6 @@ scripts/lake.sh exe torchlean mae --device cpu --steps 1 --n-total 1 --log false
 
 ```terminal +output
 [TorchLean] arithmetic: native binary32
-[TorchLean] execution: eager
 [TorchLean] device: cpu
 mae: CIFAR masked reconstruction (device=cpu)
 dataset size = 1

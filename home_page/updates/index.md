@@ -3,6 +3,7 @@ title: Updates
 ---
 
 <nav class="timeline-nav" aria-label="TorchLean update timeline">
+  <a href="#october-2026-eager-training">Eager training</a>
   <a href="#october-2026-lean-435">Lean 4.35 and numerical fixes</a>
   <a href="#october-2026-custom-computations">Custom computations</a>
   <a href="#september-2026-libtorch">LibTorch backend</a>
@@ -22,6 +23,19 @@ title: Updates
 </nav>
 
 <div class="updates-timeline">
+
+<article class="update-card" id="october-2026-eager-training" markdown="1">
+  <div class="update-date">October 19, 2026</div>
+  <div class="update-body" markdown="1">
+
+## Training on the Eager Tape
+
+Training now always runs on the eager autograd tape, on the CPU or CUDA as `device` selects. We
+removed the execution-mode selector and `Trainer.FixedSample`. Typed graphs remain for the
+autograd transforms and the proofs.
+
+  </div>
+</article>
 
 <article class="update-card" id="october-2026-lean-435" markdown="1">
   <div class="update-date">October 2026</div>
@@ -562,9 +576,8 @@ results.
 
 The public neural-network API has one owner. Seeded layer builders and model-zoo constructors are
 declared under `TorchLean.nn`; `NN.API` gathers them without redeclaring their names.
-Fixed-sample training lives under `TorchLean.Trainer.FixedSample`. Inside the runtime, mutable
-parameter storage and optimizer checkpoint schemas have their own modules, separate from trainer
-execution and CUDA Adam serialization.
+Inside the runtime, mutable parameter storage and optimizer checkpoint schemas have their own
+modules, separate from trainer execution and CUDA Adam serialization.
 
 <div class="update-grid">
   <section>

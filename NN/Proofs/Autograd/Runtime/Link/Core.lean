@@ -59,7 +59,8 @@ Each leaf has `requiresGrad = true` and an empty backward contribution array, so
 treats them as gradient accumulation slots but never produces parent contributions from them.
 -/
 def addLeaves {α : Type} [Storage α]
-    (t : Tape α) : {Γ : List Shape} → TorchLean.TensorPack α Γ → Tape α
+    (t : Tape (Spec.SomeTensor α)) : {Γ : List Shape} → TorchLean.TensorPack α Γ → Tape
+        (Spec.SomeTensor α)
   | [], .nil => t
   | _ :: Γ, .cons x xs =>
       let (t', _id) := Tape.leaf (t := t) x
@@ -72,7 +73,7 @@ This is the node-level counterpart of `addLeaves`: it has no parents and contrib
 backward.
 -/
 def leafNodeOfSomeTensor {α : Type} [TorchLean.Storage α]
-    (v : Spec.SomeTensor α) : Runtime.Autograd.Node α :=
+    (v : Spec.SomeTensor α) : Runtime.Autograd.Node (Spec.SomeTensor α) :=
   { name := none
     value := v
     requiresGrad := true
@@ -117,8 +118,8 @@ Backward closures of `t` only point backwards: every contribution emitted by the
 reverse loop well-founded; `lowerGraphToTape_backward_pids_lt_id` and its `GraphData` counterpart
 establish it for lowered tapes.
 -/
-def BackwardPidsLt {α : Type} [Storage α] (t : Tape α) : Prop :=
-  ∀ id (n : Runtime.Autograd.Node α), t.getNode? id = some n →
+def BackwardPidsLt {α : Type} [Storage α] (t : Tape (Spec.SomeTensor α)) : Prop :=
+  ∀ id (n : Runtime.Autograd.Node (Spec.SomeTensor α)), t.getNode? id = some n →
     ∀ (d : Spec.SomeTensor α) (contribs : Array (Nat × Spec.SomeTensor α)),
       n.backward d = .ok contribs →
         ∀ {pid : Nat} {pg : Spec.SomeTensor α}, (pid, pg) ∈ contribs → pid < id
@@ -133,7 +134,7 @@ theorem shape_getElem_toShapeErasedArray {α : Type} [Storage α] {ss : List Sha
     (TorchLean.TensorPack.get_toShapeErasedArray (α := α) (ss := ss) xs ⟨i, hi⟩)
 
 /-- `addLeaves` grows the tape by exactly `Γ.length` nodes. -/
-theorem size_addLeaves {α : Type} [Storage α] (t : Tape α) :
+theorem size_addLeaves {α : Type} [Storage α] (t : Tape (Spec.SomeTensor α)) :
     {Γ : List Shape} → (x : TorchLean.TensorPack α Γ) →
       (addLeaves (α := α) (t := t) (Γ := Γ) x).nodes.size = t.nodes.size + Γ.length
   | [], .nil => by simp [addLeaves]
@@ -143,7 +144,7 @@ theorem size_addLeaves {α : Type} [Storage α] (t : Tape α) :
         Nat.add_assoc, Nat.add_comm, Array.size_push]
 
 /-- `addLeaves` appends `leafNodeOfSomeTensor` nodes for each input tensor, in order. -/
-theorem nodes_addLeaves {α : Type} [Storage α] (t : Tape α) :
+theorem nodes_addLeaves {α : Type} [Storage α] (t : Tape (Spec.SomeTensor α)) :
     {Γ : List Shape} → (x : TorchLean.TensorPack α Γ) →
       (addLeaves (α := α) (t := t) (Γ := Γ) x).nodes =
         t.nodes ++
@@ -160,7 +161,7 @@ theorem nodes_addLeaves {α : Type} [Storage α] (t : Tape α) :
 
 /-- Value projection of `nodes_addLeaves`: `node.value` agrees with `toShapeErasedArray` for added
 leaves. -/
-theorem addLeaves_values {α : Type} [Storage α] (t : Tape α) {Γ : List Shape}
+theorem addLeaves_values {α : Type} [Storage α] (t : Tape (Spec.SomeTensor α)) {Γ : List Shape}
     (x : TorchLean.TensorPack α Γ) :
     (addLeaves (α := α) (t := t) (Γ := Γ) x).nodes.map (fun node => node.value) =
       t.nodes.map (fun node => node.value) ++
@@ -177,7 +178,7 @@ node's input context, indexed from `0`. The `name` only serves debugging output.
 -/
 def lowerNode {α : Type} {Δ : Type} [Storage α] {Γ : List Shape} {τ : Shape}
     (name : Option String) (node : NodeData α Δ Γ τ) (ctx : TorchLean.TensorPack α Γ)
-    (d : Δ) : Runtime.Autograd.Node α :=
+    (d : Δ) : Runtime.Autograd.Node (Spec.SomeTensor α) :=
   { name := name
     value := Spec.SomeTensor.ofTensor (node.forward ctx d)
     requiresGrad := true
@@ -230,7 +231,7 @@ cotangent.
 -/
 def lowerGraphDataToTape {α : Type} {Δ : Type} [Storage α]
   {Γ : List Shape} {ss : List Shape} (g : GraphData α Δ Γ ss) (x : TorchLean.TensorPack α Γ)
-  (d : Δ) : Tape α × TorchLean.TensorPack α (Γ ++ ss) :=
+  (d : Δ) : Tape (Spec.SomeTensor α) × TorchLean.TensorPack α (Γ ++ ss) :=
   match g with
   | .nil =>
       let t := addLeaves (α := α) (t := Tape.empty) (Γ := Γ) x
@@ -301,80 +302,40 @@ theorem lowerGraphDataToTape_nodes_size {α : Type} {Δ : Type}
       simp [lowerGraphDataToTape, Runtime.Autograd.Tape.addNode, ih, Array.size_push, Nat.add_assoc]
 
 /--
-Lower a proved graph (`Graph`) to a runtime tape by evaluating forward nodes and storing each
-node’s proved `vjp`.
-
-Both lowering functions pass a payload `Δ` through the graph. This interface also carries local
-adjointness proofs and labels its runtime nodes as proof-carrying; `GraphData` stores the functions
-without those proofs.
+Lower a proved graph (`Graph`) to a runtime tape: the tape `lowerGraphDataToTape` builds for the
+executable graph `g.toData`. Both interfaces share one lowering; the local adjointness proofs a
+`Graph` carries are used only by the theorems about the tape.
 -/
-def lowerGraphToTape {α : Type} {Δ : Type}
-    [Storage α] [CommSemiring α]
-  {Γ : List Shape} {ss : List Shape} (g : Graph (α := α) Δ Γ ss)
-  (x : TorchLean.TensorPack α Γ)
-  (d : Δ) : Tape α × TorchLean.TensorPack α (Γ ++ ss) :=
-  match g with
-  | .nil =>
-      let t := addLeaves (α := α) (t := Tape.empty) (Γ := Γ) x
-      (t, TorchLean.TensorPack.cast (α := α) (h := (List.append_nil Γ).symm) x)
-  | .snoc (ss := ssPrev) (τ := τ) g node =>
-      let (tPrev, ctxPrev) := lowerGraphToTape (α := α) (Δ := Δ) (Γ := Γ) (ss := ssPrev) g x d
-      let y := node.forward ctxPrev d
-      let (tNext, _id) :=
-        Tape.addNode (t := tPrev)
-          (lowerNode (some "proof-carrying-graph") node.toNodeData ctxPrev d)
-      let ctxNext :=
-        TorchLean.TensorPack.cast (α := α) (h := List.append_assoc Γ ssPrev [τ])
-          (TorchLean.TensorPack.snoc (α := α) (ss := Γ ++ ssPrev) (τ := τ) ctxPrev y)
-      (tNext, ctxNext)
+def lowerGraphToTape {α : Type} {Δ : Type} [Storage α] [CommSemiring α]
+    {Γ : List Shape} {ss : List Shape} (g : Graph (α := α) Δ Γ ss) (x : TorchLean.TensorPack α Γ)
+    (d : Δ) : Tape (Spec.SomeTensor α) × TorchLean.TensorPack α (Γ ++ ss) :=
+  lowerGraphDataToTape g.toData x d
 
 /-- The context returned by `lowerGraphToTape` agrees with the proved `Graph.eval`. -/
-theorem lowerGraphToTape_ctx_eq_eval {α : Type} {Δ : Type}
-    [Storage α] [CommSemiring α]
-    {Γ : List Shape} {ss : List Shape} (g : Graph (α := α) Δ Γ ss)
-    (x : TorchLean.TensorPack α Γ)
+theorem lowerGraphToTape_ctx_eq_eval {α : Type} {Δ : Type} [Storage α] [CommSemiring α]
+    {Γ : List Shape} {ss : List Shape} (g : Graph (α := α) Δ Γ ss) (x : TorchLean.TensorPack α Γ)
     (d : Δ) :
     (lowerGraphToTape (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) g x d).2 =
-      Graph.eval (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) g x d := by
-  induction g with
-  | nil =>
-      simp [lowerGraphToTape, Graph.eval, Graph.toData, GraphData.eval]
-  | snoc g node ih =>
-      rename_i ssPrev τ
-      simp [lowerGraphToTape, Graph.eval, Graph.toData, GraphData.eval, ih]
+      Graph.eval (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) g x d :=
+  lowerGraphDataToTape_ctx_eq_eval g.toData x d
 
 /-- The lowered tape's `.value` array is `Graph.eval` with shapes erased in the same order. -/
-theorem lowerGraphToTape_values_eq {α : Type} {Δ : Type}
-    [Storage α] [CommSemiring α]
-    {Γ : List Shape} {ss : List Shape} (g : Graph (α := α) Δ Γ ss)
-    (x : TorchLean.TensorPack α Γ)
+theorem lowerGraphToTape_values_eq {α : Type} {Δ : Type} [Storage α] [CommSemiring α]
+    {Γ : List Shape} {ss : List Shape} (g : Graph (α := α) Δ Γ ss) (x : TorchLean.TensorPack α Γ)
     (d : Δ) :
     (lowerGraphToTape (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) g x d).1.nodes.map
       (fun node => node.value) =
       TorchLean.TensorPack.toShapeErasedArray (α := α) (ss := Γ ++ ss)
-        (lowerGraphToTape (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) g x d).2 := by
-  induction g with
-  | nil =>
-      -- only leaves
-      simp [lowerGraphToTape, addLeaves_values, Runtime.Autograd.Tape.empty]
-  | snoc g node ih =>
-      rename_i ssPrev τ
-      simp [lowerGraphToTape, Runtime.Autograd.Tape.addNode, ih]
+        (lowerGraphToTape (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) g x d).2 :=
+  lowerGraphDataToTape_values_eq g.toData x d
 
 /-- Size bookkeeping: `lowerGraphToTape` produces `Γ.length + ss.length` runtime nodes. -/
-theorem lowerGraphToTape_nodes_size {α : Type} {Δ : Type}
-    [Storage α] [CommSemiring α]
-    {Γ : List Shape} {ss : List Shape} (g : Graph (α := α) Δ Γ ss)
-    (x : TorchLean.TensorPack α Γ)
+theorem lowerGraphToTape_nodes_size {α : Type} {Δ : Type} [Storage α] [CommSemiring α]
+    {Γ : List Shape} {ss : List Shape} (g : Graph (α := α) Δ Γ ss) (x : TorchLean.TensorPack α Γ)
     (d : Δ) :
     (lowerGraphToTape (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) g x d).1.nodes.size =
-      Γ.length + ss.length := by
-  induction g with
-  | nil =>
-      simp [lowerGraphToTape, size_addLeaves, Runtime.Autograd.Tape.empty]
-  | snoc g node ih =>
-      rename_i ssPrev τ
-      simp [lowerGraphToTape, Runtime.Autograd.Tape.addNode, ih, Array.size_push, Nat.add_assoc]
+      Γ.length + ss.length :=
+  lowerGraphDataToTape_nodes_size g.toData x d
 
 end Graph
 

@@ -8,6 +8,7 @@ module
 
 public import Mathlib.Analysis.InnerProductSpace.PiL2
 public import NN.Spec.Core.Tensor -- shake: keep
+public import NN.Proofs.Tensor.Basic.Folds
 
 /-!
 # Real tensors as Euclidean space
@@ -17,7 +18,8 @@ the Euclidean inner-product structure of `EuclideanSpace ℝ s.Coord` along the 
 that `Tensor ℝ s` is a `NormedAddCommGroup` and an `InnerProductSpace ℝ` with
 
 - `‖x‖ = √(∑ i, x i ^ 2)` (`TorchLean.Tensor.norm_eq_sqrt_sum`),
-- `⟪x, y⟫_ℝ = ∑ i, x i * y i` (`TorchLean.Tensor.inner_eq_sum`).
+- `⟪x, y⟫_ℝ = ∑ i, x i * y i` (`TorchLean.Tensor.inner_eq_sum`), which is `Spec.dot x y`
+  (`Spec.dot_eq_inner`).
 
 All Mathlib facts about inner product spaces (Cauchy-Schwarz, the triangle inequality,
 `norm_smul`, `LipschitzWith`, finite dimensionality) then apply to real tensors directly. The
@@ -143,3 +145,14 @@ theorem continuous_vectorEquiv_symm (n : Nat) :
   (vectorLinearEquiv n).symm.toLinearMap.continuous_of_finiteDimensional
 
 end TorchLean.Tensor
+
+namespace Spec
+
+/-- `Spec.dot` is the Euclidean inner product. -/
+theorem dot_eq_inner {s : Shape} (x y : Tensor ℝ s) : dot x y = ⟪x, y⟫ := by
+  rw [dot, sum_spec_eq_coord_sum, Tensor.inner_eq_sum]
+  apply Finset.sum_congr rfl
+  intro coordinate _
+  exact TorchLean.Tensor.Internal.Rep.zipWith_apply (· * ·) x y coordinate
+
+end Spec

@@ -783,8 +783,8 @@ $$`(a+bi)(c+di)=(ac-bd)+(ad+bc)i,`
 
 and the inverse transform recombines them. This layer expresses complex arithmetic through real
 tensor operations. Its default `spectralPath := .automatic` transforms each spatial axis in turn:
-eager CUDA execution uses LibTorch FFT operations, while CPU and typed-graph execution use
-dense per-axis operations.
+CUDA execution uses LibTorch FFT operations, while CPU execution and typed graphs use dense
+per-axis operations.
 Choosing `spectralPath := .denseReference` instead constructs the full-grid cosine and sine
 matrices. The two choices use exactly the same state shapes and learned weights.
 

@@ -85,9 +85,9 @@ def train (runtime : Runtime.Config) (flags : Support.Training.Options Support.C
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := flags.training.learningRate } })
         .mse
-        (seed := flags.data.seed)
+        (seed := runtime.seed)
   trainer.train
-    (data flags.data.path flags.data.seed)
+    (data flags.data.path runtime.seed)
     (flags.training.trainOptions
       (logTitle := "KAN Auto MPG regression")
       (logNotes := #[Support.deviceNote runtime, s!"data={flags.data.path}",

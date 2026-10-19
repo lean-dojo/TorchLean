@@ -962,9 +962,9 @@ either the kernel or the theorem, and is precisely why they are counted as diffe
 First-order `autograd` helpers lower to a typed graph: forward-mode queries use its checked JVP
 rules, and reverse-mode queries use a seeded pullback. HVPs evaluate a reverse pass over dual
 scalars; the tangent parts of the returned gradients give the curvature product. These helpers
-also use the tape lowering described in the runtime chapter. A trainer's choice between
-eager and typed-graph execution, and its selection of native kernels, are separate decisions
-described in {ref "execution-modes"}[Execution Modes] and
+also use the tape lowering described in the runtime chapter. A trainer's device and arithmetic,
+and its selection of native kernels, are separate decisions described in
+{ref "run-configuration"}[Choosing How A Model Runs] and
 {ref "backend-selection"}[Backend Selection]. Primals, cotangents, parameters, and returned
 derivatives all follow the scalar contract from {ref "tensors-shapes"}[Tensors And Shapes].
 

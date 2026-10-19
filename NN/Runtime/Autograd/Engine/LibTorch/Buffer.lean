@@ -265,7 +265,8 @@ opaque toFloatArrayIO (b : @& Buffer) : IO FloatArray
 
 /--
 Copy a buffer to little-endian scalar words. By default its dtype is preserved; an explicit
-different dtype requests conversion, as when exporting a legacy binary32 checkpoint.
+different dtype requests conversion, as when the streamed float32 state format writes binary64
+storage.
 
 This is primarily used by streaming checkpoints. Unlike `toFloatArrayIO`, it does not widen every
 element to Lean `Float`, so a large CUDA parameter can be written without constructing a second
@@ -278,10 +279,9 @@ opaque toBytesIO (b : @& Buffer) (dtype : Dtype := Buffer.dtype b) : IO ByteArra
 Upload little-endian scalar words to a fresh device buffer.
 
 `source` describes the payload; `dtype` selects storage. They agree by default. A different
-source is an explicit conversion, used to load legacy binary32 files into binary64 storage.
-Native allocation failures return
-`IO.Error.resourceExhausted` before a buffer is returned. The borrowed byte payload remains
-available to the caller.
+source is an explicit conversion, used to load streamed float32 state files into binary64
+storage. Native allocation failures return `IO.Error.resourceExhausted` before a buffer is
+returned. The borrowed byte payload remains available to the caller.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_of_bytes_io"]
 opaque ofBytesIO (bytes : @& ByteArray) (dtype : Dtype := .float32)
@@ -333,13 +333,14 @@ returned buffer.
   pure <| releaseWithToken b (UInt32.ofNat token)
 
 /--
-Release `workspace` and return `keep`.
+Release `workspace` and return `keep`, which may be any value: a buffer computed from the workspace,
+or the gradient array the autograd tape continues with after retiring a contribution no node keeps.
 
-This exists for pure CUDA tape code: because the returned buffer is used downstream, Lean cannot
+This exists for pure CUDA tape code: because the returned value is used downstream, Lean cannot
 erase the native release call as dead code.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_release_then"]
-opaque releaseThen (workspace keep : @& Buffer) : Buffer
+def releaseThen {β : Type} (_workspace : @& Buffer) (keep : @& β) : β := keep
 
 /--
 Release a collection of workspace buffers and return `keep`.

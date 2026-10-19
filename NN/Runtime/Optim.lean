@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Optim.Optimizers
-public import NN.Runtime.Optim.Schedulers
 
 /-!
 # Runtime Optim
@@ -18,7 +17,6 @@ This subsystem contains pure, tensor-level pieces:
 
 - `NN.Runtime.Optim.Optimizers` defines per-parameter update equations such as SGD, Adam,
   AdamW, AdaGrad, RMSProp, Adadelta, GaLore-style projected SGD, and Muon-style updates.
-- `NN.Runtime.Optim.Schedulers` defines deterministic learning-rate schedule state machines.
 
 What this file does **not** contain:
 

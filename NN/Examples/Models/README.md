@@ -25,8 +25,8 @@ scripts/lake.sh exe torchlean --list
 scripts/lake.sh exe torchlean mlp --help
 ```
 
-`--help` lists commands with descriptions; `--list` prints their names for scripts. Each command's
-own `--help` explains its data and runtime options.
+`--help` lists commands with descriptions; `--list` prints their names for scripts. Each model
+command's own `--help` explains its data and runtime options.
 
 ## Normal Training Path
 

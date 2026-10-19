@@ -30,8 +30,8 @@ structure ParameterSchema where
   /--
   First trainable slot sharing each parameter's storage; frozen slots contain `none`.
 
-  An absent map describes independent parameters, as in version 2 checkpoints. An explicit map
-  retains the original slot numbers: `[p, p, q]` has representatives `[0, 0, 2]`, so its moment
+  An absent map describes independent parameters. An explicit map retains the original slot
+  numbers: `[p, p, q]` has representatives `[0, 0, 2]`, so its moment
   entries have keys `0` and `2`. The trainer constructs this map from storage identity.
   -/
   representatives : Option (Array (Option Nat)) := none
@@ -83,7 +83,7 @@ def hasAliases (schema : ParameterSchema) : Bool :=
     | some representative => representative != index
 
 /--
-Write the version 3 sharing map after the ordinary shape/trainability schema.
+Write the storage-sharing map after the ordinary shape/trainability schema.
 
 Each slot uses one unsigned 64-bit field: zero for a frozen parameter and `representative + 1`
 otherwise. The preceding schema already fixes the number of fields and their parameter order.

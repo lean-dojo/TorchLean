@@ -14,7 +14,6 @@ public import NN.Verification.PINN
 public import NN.Verification.Robustness
 public import NN.Verification.Splines
 public import NN.Verification.Builtin.Lowering
-public import NN.Verification.Builtin.ExecutableLowering
 public import NN.Verification.Builtin.Proved
 public import NN.Verification.Util.Json
 public import NN.Verification.Util.TextCursor

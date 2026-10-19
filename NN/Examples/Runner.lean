@@ -203,7 +203,7 @@ def commandGroupUsage (group : CommandGroup) : List String :=
   [ "", group.title ++ ":" ] ++
     group.commands.map fun command => s!"  {command.name} - {command.description}"
 
-/-- Every registered subcommand name, used by `--list` and by the shell completion helper. -/
+/-- Every registered subcommand name, used by `--list`. -/
 def commandNames : List String :=
   commandGroups.flatMap fun group => group.commands.map (·.name)
 
@@ -230,19 +230,18 @@ def usage : String :=
     , "      execution backends: CPU and CUDA; other parsed device names are not implemented"
     , "  --arithmetic native|ieee|complex"
     , "      arithmetic availability depends on the example; check its --help"
-    , "  --execution eager|typed-graph"
     , "  --seed N"
     , "  --show-backend"
     , ""
     , "Verification commands live under `scripts/lake.sh exe verify -- list`."
-    , "Use `scripts/lake.sh exe torchlean <example> --help` for command-specific flags."
+    , "Use `scripts/lake.sh exe torchlean <example> --help` for command-specific flags;"
+    , "`jaxpr` has no --help and takes only artifact paths."
     ])
 
 /-- Runtime flags that consume the following command-line token. -/
 def prefixFlagTakesValue (a : String) : Bool :=
   a == "--device" ||
   a == "--arithmetic" ||
-  a == "--execution" ||
   a == "--seed"
 
 /--

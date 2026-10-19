@@ -49,8 +49,6 @@ Why each optimizer has its own `State` structure:
 The generic abstraction lives one layer up:
 - `Runtime.Autograd.Model.Optim.Optimizer` packages `init`/`step` for shape-indexed parameter
   lists, like a typed analogue of a PyTorch optimizer object.
-- `Runtime.Autograd.Train.OptimizerState` handles dynamic parameter groups and checkpoint-style
-  maps for the training-loop API.
 
 The result is a collection of canonical state records rather than an inheritance hierarchy.
 

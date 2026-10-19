@@ -24,7 +24,7 @@ Run:
 - `scripts/lake.sh exe torchlean quickstart_mlp`
 - `scripts/lake.sh exe torchlean quickstart_mlp --steps 20 --seed 3`
 
-Flags: `--steps N`, `--seed S`, `--arithmetic`, `--execution`, `--device`, and `--show-backend`.
+Flags: `--steps N`, `--seed S`, `--arithmetic`, `--device`, and `--show-backend`.
 -/
 
 @[expose] public section
@@ -61,7 +61,7 @@ def usage : String :=
     , ""
     , "Usage:"
     , "  scripts/lake.sh exe torchlean quickstart_mlp [--steps N] [--seed S]"
-    , "    [--arithmetic native|ieee] [--execution eager|typed-graph] [--device cpu|cuda]"
+    , "    [--arithmetic native|ieee] [--device cpu|cuda]"
     , "    [--show-backend]"
     ]
 

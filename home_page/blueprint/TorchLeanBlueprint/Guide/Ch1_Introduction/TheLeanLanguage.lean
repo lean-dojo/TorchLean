@@ -838,7 +838,7 @@ Missing cases:
 Reduction.sum
 ```
 
-TorchLean's execution modes and graph operations are inductive types too. Adding a constructor
+TorchLean's devices and graph operations are inductive types too. Adding a constructor
 exposes matches that listed only the old cases. A wildcard branch remains exhaustive, so its
 fallback behavior needs review when the alternatives change.
 
@@ -1067,7 +1067,7 @@ Their return values hide the storage difference: one loop replaces its current t
 other repeatedly updates from an original it must preserve.
 
 To measure that difference, time both with `IO.monoNanosNow`, repeat with a smaller tensor, and
-report the execution mode and update count. `#eval` and a compiled executable can have different
+report the device and update count. `#eval` and a compiled executable can have different
 costs. These loops provide an experiment, not a timing result; changing the tensor size helps reveal
 whether a measured cost grows with the amount of data that must be copied.
 

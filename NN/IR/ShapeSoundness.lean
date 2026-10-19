@@ -361,14 +361,14 @@ variable {payload : Payload α} {input : Spec.SomeTensor α} {vals : Array (Spec
 variable {i : Nat} {n : Node} {parentShapes : Array Shape} {inferred : Shape}
 variable {v : Spec.SomeTensor α}
 
-/-- Binary elementwise operations (`add`, `sub`, `mulElem`, `maxElem`, `minElem`). -/
+/-- Binary elementwise operations (`add`, `sub`, `mulElem`, `div`, `maxElem`, `minElem`). -/
 theorem evalNodeRaw_shape_binary_elementwise
-    (hk : n.kind ∈ [OpKind.add, .sub, .mulElem, .maxElem, .minElem])
+    (hk : n.kind ∈ [OpKind.add, .sub, .mulElem, .div, .maxElem, .minElem])
     (hParents : ParentShapesOf vals n.parents parentShapes)
     (hInfer : Infer.nodeOutShape n parentShapes = .ok inferred)
     (hEval : evalNodeRaw payload input vals i n = .ok v) : v.shape = inferred := by
   simp only [List.mem_cons, List.mem_nil_iff, or_false] at hk
-  rcases hk with hk | hk | hk | hk | hk <;>
+  rcases hk with hk | hk | hk | hk | hk | hk <;>
   · simp only [Infer.nodeOutShape, hk] at hInfer
     simp only [evalNodeRaw, hk] at hEval
     peel_ok hInfer
@@ -435,6 +435,18 @@ theorem evalNodeRaw_shape_unary_elementwise
     obtain ⟨pId, hPid, p0, hP, p, hE, hv⟩ := hEval
     subst hv
     rw [unary_parent_shape hParents hPid hP hInfer, shape_eq_of_expectShape_ok hE]
+
+/-- `topKMask`: shape preserving, reading one parent at the declared shape. -/
+theorem evalNodeRaw_shape_topKMask {k : Nat} (hk : n.kind = .topKMask k)
+    (hParents : ParentShapesOf vals n.parents parentShapes)
+    (hInfer : Infer.nodeOutShape n parentShapes = .ok inferred)
+    (hEval : evalNodeRaw payload input vals i n = .ok v) : v.shape = inferred := by
+  simp only [Infer.nodeOutShape, hk] at hInfer
+  simp only [evalNodeRaw, hk] at hEval
+  peel_ok hEval
+  obtain ⟨pId, hPid, p0, hP, p, hE, hv⟩ := hEval
+  subst hv
+  rw [unary_parent_shape hParents hPid hP hInfer, shape_eq_of_expectShape_ok hE]
 
 /-- `log`: like the other unary operations, plus the data-dependent positivity check. -/
 theorem evalNodeRaw_shape_log (hk : n.kind = .log)
@@ -703,6 +715,22 @@ theorem evalNodeRaw_shape_declared
     subst hv
     exact hShape
 
+/-- `slice`: the evaluator checks the sliced shape against the declared one. -/
+theorem evalNodeRaw_shape_slice {axis start length : Nat}
+    (hk : n.kind = .slice axis start length)
+    (hEval : evalNodeRaw payload input vals i n = .ok v) : v.shape = n.outShape := by
+  simp only [evalNodeRaw, evalTransform, hk] at hEval
+  peel_ok hEval
+  obtain ⟨_, _, _, _, hEval⟩ := hEval
+  split at hEval
+  · cases hEval
+  · split at hEval
+    · peel_ok hEval
+      obtain ⟨_, _, hv⟩ := hEval
+      subst hv
+      rfl
+    · cases hEval
+
 /--
 Node-level soundness of shape inference.
 
@@ -730,6 +758,8 @@ theorem evalNodeRaw_shape_of_infer
   | add => exact hDecl ▸ evalNodeRaw_shape_binary_elementwise (by simp [hk]) hParents hInfer hEval
   | sub => exact hDecl ▸ evalNodeRaw_shape_binary_elementwise (by simp [hk]) hParents hInfer hEval
   | mulElem =>
+      exact hDecl ▸ evalNodeRaw_shape_binary_elementwise (by simp [hk]) hParents hInfer hEval
+  | div =>
       exact hDecl ▸ evalNodeRaw_shape_binary_elementwise (by simp [hk]) hParents hInfer hEval
   | abs => exact hDecl ▸ evalNodeRaw_shape_unary_elementwise (by simp [hk]) hParents hInfer hEval
   | sqrt => exact hDecl ▸ evalNodeRaw_shape_unary_elementwise (by simp [hk]) hParents hInfer hEval
@@ -772,6 +802,7 @@ theorem evalNodeRaw_shape_of_infer
   | hardMaskedSoftmax mask =>
       exact hDecl ▸ evalNodeRaw_shape_normalization (Or.inr (Or.inl ⟨mask, hk⟩)) hParents hInfer
         hEval
+  | topKMask k => exact hDecl ▸ evalNodeRaw_shape_topKMask hk hParents hInfer hEval
   | layernorm axis =>
       exact hDecl ▸ evalNodeRaw_shape_normalization (Or.inr (Or.inr ⟨axis, hk⟩)) hParents hInfer
         hEval
@@ -779,6 +810,7 @@ theorem evalNodeRaw_shape_of_infer
       exact hDecl ▸ evalNodeRaw_shape_shape_op (Or.inr (Or.inl ⟨inS, outS, hk⟩)) hInfer hEval
   | flatten s => exact hDecl ▸ evalNodeRaw_shape_shape_op (Or.inr (Or.inr ⟨s, hk⟩)) hInfer hEval
   | concat axis => exact hDecl ▸ evalNodeRaw_shape_concat ⟨axis, hk⟩ hParents hInfer hEval
+  | slice axis start length => exact evalNodeRaw_shape_slice hk hEval
   | mseLoss => exact hDecl ▸ evalNodeRaw_shape_linear_loss (Or.inr hk) hInfer hEval
 
 end Families

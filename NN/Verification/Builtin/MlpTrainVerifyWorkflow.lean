@@ -82,7 +82,7 @@ def run {α : Type} [Storage α] [Context α] [ToString α]
 
   IO.println "== Train and verify classifier (2 → 8 → 2) =="
   IO.println
-    s!"Training with execution={reprStr options.execution}, device={options.device.cliName}"
+    s!"Training on device={options.device.cliName}"
   let trained ← trainer.train dataset { steps := 120 }
   IO.println s!"avg_loss(on samples)={trained.report.loss.after}"
   let center : Tensor Float [2] := [1.5, 0.0]
@@ -101,11 +101,6 @@ CLI entry point for the native TorchLean MLP workflow.
 This is wired into `scripts/lake.sh exe verify -- torchlean-mlp-workflow`.
 -/
 def main (args : List String) : IO Unit := do
-  let args :=
-    if CLI.hasFlagValue args "execution" then
-      args
-    else
-      "--execution=typed-graph" :: args
   Module.withSelectedRuntime args
     (fun {α} _ _ _ _ _cast options rest => do
       CLI.requireNoArgs "torchlean-mlp-workflow" rest

@@ -363,11 +363,10 @@ def runDataset {c h w : Nat} [NeZero c] [NeZero h] [NeZero w]
     (loadBatches : System.FilePath → System.FilePath → Nat → Nat →
       IO ((count : Nat) × Tensor Float ((output c h w).prependDim count))) : IO Unit := do
   let (data, args) ← CLI.orThrow exeName <| parseData args
-  let data := { data with seed := runtime.seed }
   let (config, rest) ← CLI.orThrow exeName <| Options.parse args
   CLI.requireNoArgs exeName rest
   let sourceNotes := Support.Npy.Options.logNotes data datasetName
-  let load := loadBatches data.xPath data.yPath data.nRows data.seed
+  let load := loadBatches data.xPath data.yPath data.nRows runtime.seed
   let curve ← train runtime load config
   Training.Curve.writeLog curve config.training.logDestination "Diffusion training" "loss"
     (notes := config.logNotes datasetName runtime sourceNotes)
@@ -375,7 +374,7 @@ def runDataset {c h w : Nat} [NeZero c] [NeZero h] [NeZero w]
 /--
 Executable entrypoint for diffusion training.
 
-The runtime parser selects CPU/CUDA and eager/typed-graph settings first; the remaining arguments
+The runtime parser selects the CPU or CUDA first; the remaining arguments
 select the dataset branch and diffusion training configuration.
 -/
 def main (args : List String) : IO UInt32 := do

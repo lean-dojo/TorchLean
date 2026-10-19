@@ -31,12 +31,6 @@ namespace NN.Verification.Json
 open Lean
 open Json
 
-/-- Turn an `Except String α` parser result into `IO`, preserving the parser's error text. -/
-def fromExcept {α : Type} (x : Except String α) : IO α := do
-  match x with
-  | .ok a => pure a
-  | .error e => throw <| IO.userError e
-
 /--
 Read and parse a JSON verification artifact from disk.
 
@@ -65,20 +59,20 @@ def readJsonObjectFile (path : String) (ctx : String := "top-level") : IO Json :
 
 /-- Extract an optional field from a JSON object. -/
 def optionalField? (j : Json) (k : String) (ctx : String) : IO (Option Json) := do
-  let o ← fromExcept <| TorchLean.Json.expectObject ctx j
+  let o ← IO.ofExcept <| TorchLean.Json.expectObject ctx j
   pure <| Std.TreeMap.Raw.get? o k
 
 /-- Require a JSON string in an `IO` parser, preserving contextual error messages. -/
 def expectString (j : Json) (ctx : String) : IO String :=
-  fromExcept <| TorchLean.Json.expectString ctx j
+  IO.ofExcept <| TorchLean.Json.expectString ctx j
 
 /-- Require a natural number, accepting either JSON numeric syntax or a decimal string. -/
 def expectNat (j : Json) (ctx : String) : IO Nat :=
-  fromExcept <| TorchLean.Json.expectNat ctx j
+  IO.ofExcept <| TorchLean.Json.expectNat ctx j
 
 /-- Require a JSON array and return its entries. -/
 def expectArray (j : Json) (ctx : String) : IO (Array Json) :=
-  fromExcept <| TorchLean.Json.expectArray ctx j
+  IO.ofExcept <| TorchLean.Json.expectArray ctx j
 
 /-- Parse a `Nat` from a JSON number or decimal string. -/
 def asNat? (j : Json) : Option Nat :=
@@ -250,7 +244,7 @@ def parseBool? (j : Json) : Option Bool :=
 
 /-- Require a finite floating-point value, accepting JSON numbers and string-encoded numbers. -/
 def expectFiniteFloat (j : Json) (ctx : String) : IO Float :=
-  fromExcept (parseFiniteFloat ctx j)
+  IO.ofExcept (parseFiniteFloat ctx j)
 
 /-- Require a JSON boolean and report `ctx` on mismatch. -/
 def expectBool (j : Json) (ctx : String) : IO Bool := do
@@ -260,7 +254,7 @@ def expectBool (j : Json) (ctx : String) : IO Bool := do
 
 /-- Require a JSON array of finite floats with contextual errors. -/
 def expectFiniteFloatArray (j : Json) (ctx : String) : IO (Array Float) :=
-  fromExcept (parseFiniteFloatArray ctx j)
+  IO.ofExcept (parseFiniteFloatArray ctx j)
 
 /-- Parse a JSON matrix whose entries are all finite floats. -/
 def expectFiniteFloatMatrix (j : Json) (ctx : String) : IO (Array (Array Float)) := do

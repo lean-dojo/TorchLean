@@ -1,9 +1,9 @@
 # `NN/IR`
 
 `NN.IR` is TorchLean's shape-annotated, op-tagged topological DAG interchange representation. It is
-the small shared graph language used by model lowering, verification, export, widgets, and checked
-forward execution. It is distinct from the dependent `GraphData` representation recorded by the
-differentiable typed-graph session.
+the small shared graph language used by model lowering, verification, export, widgets, and forward
+execution by its semantics. It is distinct from the dependent `GraphData` representation that the
+`autograd` transforms record.
 
 For public use, prefer the broad library import or the IR entrypoint. Internal code that only needs
 one IR component should import the focused leaf directly.
@@ -65,7 +65,7 @@ Typed `Program` extensions use the same custom-node shape contract, with their e
 and implementation supplied separately. A typed cast must run through a typed interpreter;
 extracting `program.graph` and interpreting it homogeneously is not mixed-precision execution.
 
-Reshape, flatten, broadcast, permutation, transpose and concatenation need tensor storage, not
+Reshape, flatten, broadcast, permutation, transpose, concatenation and slicing need tensor storage, not
 scalar arithmetic. Their shared evaluator works unchanged for Boolean, integer, rational, symbolic
 and user-defined elements when the interpreter supplies their representation. `Interpreter.reference`
 supplies Boolean and fixed-width integer storage alongside FloatLib binary arithmetic. The
@@ -85,6 +85,7 @@ both passes call it on the same inputs:
 | `reduceSum`, `reduceMean` | `OpContracts.checkReductionAxis` (a nonempty axis, as the typed reductions require) and `Tensor.shapeAfterSum` |
 | `flatten` | `ShapeUtil.flattenOutShape` |
 | `concat` | `OpContracts.inferConcatOutShape`, recomputed by the evaluator on the parent values |
+| `slice` | `Spec.Shape.replaceAxis` after an axis and range check; the evaluator applies `Tensor.sliceAxisRangeSpec` and checks the declared shape |
 | `conv`, `batchNormEval`, `broadcastTo`, `layernorm`, `transpose` | `inferConvConfigOutShape`, `inferBatchNormEvalOutShape`, the decidable `Spec.Shape.CanBroadcastTo`, `layerNormMatrixDims`, `transposePerm` |
 
 The permute rule is `Spec.Shape.permute?`; the evaluator realizes the permutation by adjacent
@@ -162,6 +163,14 @@ There are several routes into the same graph language:
 - Verification examples can build small graphs directly when the graph itself is the artifact under
   study.
 
+Mixture-of-experts routing is one operation, `top_k_mask k`, whose meaning is
+`Spec.MoE.topKMaskSpec`: one for the `k` largest entries of every row, ties to the lower index. The
+PyTorch adapter captures the usual idiom `torch.zeros_like(p).scatter(-1, torch.topk(p, k).indices,
+1)` as that node; `torch.topk` leaves the order of ties unspecified, so the two agree whenever the
+`k`-th and `k + 1`-th largest entries of a row differ. `NN/Tests/IR/MoEImport.lean` exports a
+Mixtral-style block from PyTorch and checks that the imported graph computes `Spec.MoE.forwardSpec`
+bit for bit.
+
 Frontend coverage is narrower than the graph's operator vocabulary. JAX division is rejected
 until its arithmetic schedule has a direct lowering; JAX mean and LayerNorm expansions therefore
 remain unsupported. Square root needs a structurally nonnegative argument to agree with the
@@ -177,7 +186,7 @@ Direct `Node` construction is useful for developing IR consumers and certificate
 
 | Consumer | How it uses IR |
 | --- | --- |
-| Checked IR execution | `IRExec` validates and lowers supported IR nodes to a forward-only, shape-indexed `ForwardGraph`. The differentiable typed-graph session records `GraphData` directly instead. |
+| Execution | `Graph.denote` and `Graph.denoteAll` run a graph by its semantics, and the typed interpreter in `Interpreter.lean` runs it at runtime precision. |
 | Verification | Runs IBP/CROWN-style passes, margin checks, and certificate replay over node ids and payloads. |
 | TorchLean lowering fragments | Prove that supported source fragments lower to IR with the same denotation. |
 | PyTorch/ONNX/export paths | Use a small graph format to make parameter order and tensor shapes explicit at the boundary. |
@@ -187,8 +196,7 @@ Direct `Node` construction is useful for developing IR consumers and certificate
 
 The IR is the object shared by proofs and runtime code, but proof coverage is still named
 fragment-by-fragment. Current theorem work covers supported evaluator bridges, graph well-formedness
-conditions, selected checked IR-to-`ForwardGraph` lowering fragments, and verification-oriented
-bound propagation. Separately, `GraphData` lowers to the autograd tape; that typed lowering is not
+conditions, and verification-oriented bound propagation. Separately, `GraphData` lowers to the autograd tape; that typed lowering is not
 an assertion that every `NN.IR` node is differentiable. A new
 operator should therefore add three things in the right places:
 

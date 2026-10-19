@@ -34,7 +34,7 @@ theorem vjpChecked_eq {α Δ : Type} [Storage α] [Add α] [Zero α]
     {Γ : List Shape} {τ : Shape}
     (graph : TypedGraphWithData α Δ Γ τ) (inputs : TensorPack α Γ) (data : Δ)
     (seed : Tensor α τ)
-    (result : Runtime.Autograd.Tape α × TensorPack α (Γ ++ graph.nodeShapes))
+    (result : Runtime.Autograd.Tape (Spec.SomeTensor α) × TensorPack α (Γ ++ graph.nodeShapes))
     (checked : Runtime.Autograd.TypedGraph.lowerToTapeChecked graph.data inputs data =
       .ok result) :
     graph.vjpChecked inputs data seed =

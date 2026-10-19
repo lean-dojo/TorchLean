@@ -754,44 +754,25 @@ theorem Verified3DBox.projected_corner_in_claimed_bbox {α : Type} [TorchLean.St
 /-! ## Float JSON checker for exported artifacts -/
 
 /--
-Schema string for eight-point cuboid artifacts. A `v1` artifact carries exactly eight corners;
-`point_count` may be omitted or set to `8`.
+Schema string for camera-box artifacts. An artifact declares `point_count`, which must be positive
+and match the number of triples in `corners3d`; a cuboid declares `8`.
 -/
-def formatString : String := "torchlean.camera.box3d.v1"
-
-/--
-Schema string for artifacts with an explicit point count. A `v2` artifact must declare
-`point_count`, which must be positive and match the number of triples in `corners3d`.
--/
-def formatStringPoints : String := "torchlean.camera.box3d.v2"
+def formatString : String := "torchlean.camera.box3d.v2"
 
 /--
 Parse a certificate, rejecting malformed tensor dimensions and non-finite values.
 
-A `v1` artifact must carry exactly eight corners. A `v2` artifact must declare a positive
-`point_count` with `corners3d.size = 3 * point_count`. An artifact with no points is rejected,
-since every pointwise condition would hold vacuously.
+The artifact must declare a positive `point_count` with `corners3d.size = 3 * point_count`. An
+artifact with no points is rejected, since every pointwise condition would hold vacuously.
 -/
 def parseJsonCert (j : Lean.Json) : IO (BoxCameraCert Float) := do
   let fmt ← expectFieldString j "format" "top-level"
-  let declared? ← match ← optionalField? j "point_count" "top-level" with
-    | some count => some <$> expectNat count "top-level.point_count"
-    | none => pure none
-  let pointCount ←
-    if fmt == formatString then
-      match declared? with
-      | none | some 8 => pure 8
-      | some n => throw <| IO.userError <|
-          s!"top-level.point_count: `{formatString}` requires 8 points, got {n}; " ++
-            s!"use `{formatStringPoints}`"
-    else if fmt == formatStringPoints then
-      match declared? with
-      | some n => pure n
-      | none => throw <| IO.userError <|
-          s!"top-level.point_count: required by `{formatStringPoints}`"
-    else
-      throw <| IO.userError <| s!"top-level.format: unsupported format `{fmt}` " ++
-        s!"(expected `{formatString}` or `{formatStringPoints}`)"
+  unless fmt == formatString do
+    throw <| IO.userError <|
+      s!"top-level.format: unsupported format `{fmt}` (expected `{formatString}`)"
+  let pointCount ← match ← optionalField? j "point_count" "top-level" with
+    | some count => expectNat count "top-level.point_count"
+    | none => throw <| IO.userError s!"top-level.point_count: required by `{formatString}`"
   if pointCount = 0 then
     throw <| IO.userError "top-level.point_count: a certificate must carry at least one point"
   let width ← expectFiniteFloat (← expectField j "image_width" "top-level") "top-level.image_width"

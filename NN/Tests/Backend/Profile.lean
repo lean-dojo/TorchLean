@@ -274,7 +274,7 @@ def checkLibTorchLocalVJPs : IO Unit := do
   let nativeBackward : Array BackendOp :=
     #[.relu, .gelu, .abs, .sqrt, .clamp, .max, .min, .broadcast, .layerNorm,
       .conv, .convTranspose, .maxPool, .smoothMaxPool, .avgPool, .selectiveScan]
-  let forwardOnly : Array BackendOp := #[.randUniform, .bernoulliMask]
+  let forwardOnly : Array BackendOp := #[.randUniform, .bernoulliMask, .topKMask]
   let classifications :=
     #[(VJPMode.torchLeanTape, leanComposed), (.backendVJP, nativeBackward), (.none, forwardOnly)]
   for capsule in LibTorch.capsules do

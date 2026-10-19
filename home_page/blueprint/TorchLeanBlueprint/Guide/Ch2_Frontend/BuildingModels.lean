@@ -863,7 +863,6 @@ The recorded run reports:
 
 ```terminal +output
 [TorchLean] arithmetic: native binary32
-[TorchLean] execution: eager
 [TorchLean] device: cpu
 transformer: Causal Transformer next-byte model (device=cpu)
 dataset size = 16
@@ -873,7 +872,7 @@ steps=1 arithmetic=native scalar=Float32 loss=1.836619 -> 1.773165
 transformer: ok
 ```
 
-The log identifies the arithmetic, execution mode, and device chosen for this run. The next runtime
+The log identifies the arithmetic and device chosen for this run. The next runtime
 chapters explain how those choices are made.
 
 This transcript comes from the causal next-byte example, not the standalone encoder block above.

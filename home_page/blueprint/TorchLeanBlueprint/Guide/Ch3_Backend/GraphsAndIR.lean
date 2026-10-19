@@ -2,8 +2,6 @@ import VersoManual
 import NN.API
 import NN.IR
 import NN.Backend
-import NN.Runtime.Autograd.IRExec
-import NN.Runtime.Autograd.IRExec.Correctness.SemanticEquivalence
 import NN.MLTheory.CROWN.Extras.FP32
 import NN.MLTheory.CROWN.Proofs.GraphRunibpEndToEnd
 import NN.Examples.DeepDives.OneSemanticUniverse
@@ -16,7 +14,6 @@ open TorchLean
 open NN.IR
 open NN.MLTheory.CROWN (NonlinearBoundOps)
 open NN.MLTheory.CROWN.Graph (runIBP)
-open Runtime.Autograd.IRExec
 open NN.Examples.DeepDives.OneSemanticUniverse
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
@@ -46,11 +43,9 @@ you inspect the graph and compare its interpretations in your build.
 
 `Torch.TypedGraph` stores shape-indexed executable functions for
 forward evaluation, JVPs, and VJPs, together with a typed reference selecting its output. The
-supported canonical IR fragment lowers instead to `Runtime.Autograd.IRExec.ForwardGraph`, a
-forward-only shape-indexed form. Importing forward semantics does not supply a derivative rule, so
-the two executable graph types remain separate. {ref "runtime-autograd"}[Runtime and Autograd]
-prints
-the type constructors side by side and explains what each one can therefore justify.
+canonical IR has no second executable form: `Graph.denoteAll` runs it directly, by its semantics.
+Importing forward semantics does not supply a derivative rule, so the IR stays a forward object.
+{ref "runtime-autograd"}[Runtime and Autograd] explains what the typed graph can justify.
 
 The principal executable paths are:
 
@@ -66,23 +61,22 @@ GraphSpec.Chain ── toProgram ──> TorchLean.Program
                                              └── Verification.lowerForwardToIR
                                                  ──> NN.IR.Graph
                                                        │
-                                                       └── IRExec.lowerToForwardGraph
-                                                           ──> IRExec.ForwardGraph
-                                                                (forward only)
+                                                       └── Graph.denoteAll
+                                                            (forward only)
 
 NN.IR.Graph ── kernel selection ──> GraphKernelPlan
                                      (metadata only)
 ```
 
 The diagram separates forward execution from execution with derivative rules. The `TypedGraph`
-branch records forward, JVP, and VJP operations; the IR branch reaches a forward-only executable.
+branch records forward, JVP, and VJP operations; the IR branch is evaluated by its semantics.
 The kernel-selection branch produces metadata that must later be connected to runtime handlers.
 
 `TorchLean.Program` is an operation-polymorphic function, not a stored graph. The
 broad `lowerForwardToIR` pass executes that function with an IR-building interpreter and validates
 the graph it produces. It does not by itself carry an end-to-end source-lowering theorem.
 Stable log-softmax and GELU currently return lowering errors, rather than replacing them with
-numerically different expansions. Eager and typed-graph execution still support both operations.
+numerically different expansions. The eager runtime still supports both operations.
 
 The theorem-backed source path is deliberately separate:
 
@@ -961,111 +955,17 @@ hypotheses.
 
 # Executable Coverage And Proof Coverage
 
-`Runtime.Autograd.IRExec.lowerToForwardGraph` validates the graph and lowers supported operations:
-elementwise arithmetic, seeded masks, broadcasting, reductions,
-matrix multiplication with vector promotion and broadcast batch shapes, linear layers over any
-leading batch shape, convolution payloads, pooling, normalization, reshape and permutation,
-concatenation along any axis, and scalar MSE. Lowering rejects a shape or axis that the IR semantics
-itself rejects. Custom nodes currently return an error requiring checked execution; they have no
-total forward lowering. Recognizing their IR tag is not enough to execute them.
-
-On our graph it succeeds, and the result records the input shape and one shape per lowered node:
-
-```lean (name := irLower)
--- Expose the input shape and the sequence of intermediate
--- shapes recovered by lowering.
-#eval (lowerToForwardGraph (α := Float) graph
-  (payload parameters)).map fun exec =>
-    (exec.inShape, exec.ss)
-```
-
-```leanOutput irLower (whitespace := lax)
-Except.ok ([4], [[5], [5], [3], [], []])
-```
-
-`[4]` is the input shape; the five entries in `exec.ss` are the shapes of nodes 1 through 5.
-Together they retain the original node order in a typed SSA context, where later operations select
-previously computed values with known shapes.
-
-The semantic-equivalence theorem covers every operation the lowering accepts, with one named side
-condition:
-
-```lean (name := irEquiv)
--- Inspect the no-raw-log condition and the universal
--- quantifier over shaped inputs.
-#check @denoteAll_eq_of_lowerToForwardGraph
-```
-
-```leanOutput irEquiv (whitespace := lax)
-@denoteAll_eq_of_lowerToForwardGraph : ∀ {α : Type}
-  [inst : Storage α] [inst_1 : Context α] (g : Graph)
-  (payload : Payload α) (exec : ForwardGraph α),
-  NoRawLog g →
-    lowerToForwardGraph g payload = Except.ok exec →
-      ∀ (x : Tensor α exec.inShape),
-        g.denoteAll payload
-            { shape := exec.inShape, tensor := x } =
-          Except.ok (exec.denoteAll x)
-```
-
-`NoRawLog g` excludes raw-log nodes from the graph altogether. It is not a positivity predicate
-on a particular input. The IR evaluator rejects nonpositive raw-log inputs while the lowered
-closure uses a total specification logarithm; this theorem avoids that difference by excluding the
-operation. A theorem admitting raw log on positive intermediates would need a different hypothesis.
-
-For a concrete graph the condition is decidable, and discharging it is one line:
-
-```lean (name := irNoLog)
--- Discharge the graph-specific side condition before
--- applying semantic preservation.
-/-- Our six nodes contain no raw logarithm. -/
-theorem irNoRawLog : NoRawLog graph :=
-  noRawLog_of_forall_mem (by decide)
-
-/--
-Therefore the six-node graph is inside the fragment the
-lowering theorem covers: whatever the lowering returns
-agrees with IR denotation on every input.
--/
-theorem irLoweringAgrees (exec : ForwardGraph Float)
-    (h : lowerToForwardGraph (α := Float) graph
-      (payload parameters) = .ok exec)
-    (x : Tensor Float exec.inShape) :
-    Graph.denoteAll (α := Float) (g := graph)
-        (payload := payload parameters)
-        (input :=
-          { shape := exec.inShape, tensor := x }) =
-      .ok (exec.denoteAll x) :=
-  denoteAll_eq_of_lowerToForwardGraph graph
-    (payload parameters) exec irNoRawLog h x
-```
-
-`decide` checks the concrete node array for raw-log operations. The resulting proof discharges
-`NoRawLog graph`, allowing the equivalence theorem to apply to every input whenever lowering
-succeeds. Per-operation lemmas
-live under `NN.Runtime.Autograd.IRExec.Correctness.Ops`, and
-{src "NN/Runtime/Autograd/IRExec/Correctness/Common.lean"}[`Common.lean`] carries
-`noRawLog_of_forall_mem` precisely so that every caller does not redo the same case analysis inline.
-
-For this graph, the successful lowering supplies a typed executable, and `irNoRawLog` supplies
-the side condition needed to identify its full value table with IR denotation on every input.
-Keeping the condition attached to the executable follows the proof-carrying-code principle:
-the consumer needs evidence about the particular code it receives
-({Informal.citet necula1997}[]).
+`Graph.denoteAll` is defined for every operation kind, so there is nothing to lower before a graph
+runs: the value table shown earlier is the execution. It returns an error on a shape or axis that
+its operation does not accept, and on a raw logarithm of a nonpositive input, rather than a NaN.
+A custom node runs only when the payload supplies its checked body; recognizing its tag is not
+enough to execute it.
 
 The proof-bearing source lowering under `NN.Verification.Builtin.Proved` relates its first-order
-source evaluator to IR denotation, and its theorem is likewise not a wildcard over every
-`TorchLean.Program` or every `OpKind` the broad executable lowering accepts.
+source evaluator to IR denotation, including errors. Its theorem is not a wildcard over every
+`TorchLean.Program` or every `OpKind` the broad lowering accepts.
 
-The compiled IRExec lowering loop stores shape prefixes in reverse order, sharing the previous
-prefix at each step, and checks parent references through a shape array. It constructs the
-chronological shape list once when lowering finishes.
-`Internal.buildFrom_eq_buildFromWithArray` in
-{src "NN/Runtime/Autograd/IRExec/Lowering.lean"}[`Lowering.lean`] is the kernel-checked equality
-used by compiler simplification to select this implementation. It preserves both successful
-lowerings and errors; it does not change operation closures or their summation order.
-
-The equality theorem proves semantic preservation, including error results. It does not prove an
+The equality theorems prove semantic preservation, including error results. They do not prove an
 asymptotic complexity bound. Native graph evaluation still uses recursion and depends on stack
 capacity.
 
@@ -1096,9 +996,9 @@ PyTorch meaning: normalized_shape = x.shape[axis:] = [3,4]
 [concat_middle_axis] output shape: [2, 8, 4]
 ```
 
-The full transcript also prints the leading scalars. The example calls
-`Runtime.Autograd.IRExec.evaluate`, which checks the graph and input shapes, lowers the graph,
-and returns the selected output. The tutorial supplies the graphs and prints the results;
+The full transcript also prints the leading scalars. The example checks the graph's shapes with
+`Graph.checkShapes`, then calls `Graph.denote`, which checks the input shape and returns the
+selected output. The tutorial supplies the graphs and prints the results;
 validation and execution live in the runtime library. This is the Lean tensor evaluator, not
 LibTorch dispatch. Choose the scalar with `--arithmetic native`, `ieee`, or `complex`; this command
 does not accept device, execution-mode, or backend-reporting flags.
@@ -1145,11 +1045,9 @@ to `none`, as it does for `.const` and `.detach`. Notice also that the `.sum` ta
 both a full sum and an axis reduction.
 
 A `KernelCapsule` describes the selected contract. It contains no executable closure, so planning
-node 1 for `libtorch` does not call ATen.
-Eager execution must bind the selected capsule to a typed handler with the same operation, provider,
-and device before that handler can run, and the current typed graph trainer does not consume a plan
-at all. {ref "backend-selection"}[Backend Selection] follows the selection and assurance
-model in detail.
+node 1 for `libtorch` does not call ATen. Eager execution must bind the selected capsule to a typed
+handler with the same operation, provider, and device before that handler can run.
+{ref "backend-selection"}[Backend Selection] follows the selection and assurance model in detail.
 
 The distinction prevents a common architecture mistake:
 
@@ -1217,8 +1115,6 @@ The source map is:
   denotation agree on shapes;
 - {src "NN/IR/Pretty.lean"}[`Pretty.lean`] for the listing and the GraphViz output;
 - {src "NN/Backend/IR.lean"}[`Backend/IR.lean`] for capsule planning;
-- {srcDir "NN/Runtime/Autograd/IRExec"}[`IRExec`] for the forward lowering and its correctness
-  proofs;
 - {src "NN/Examples/DeepDives/OneSemanticUniverse.lean"}[`OneSemanticUniverse.lean`] for the
   complete six-node experiment.
 
@@ -1236,7 +1132,7 @@ Changing one field at a time isolates the checks and interpretations used above.
    from the instance definitions rather than from the numbers.
 5. Replace it with `.abs` instead, which has a real interval rule at FloatLib binary32, and see the
    output interval become informative again.
-6. Add a `.log` node and try to reprove `irNoRawLog` with `by decide`. The failure is the side
-   condition doing its job.
+6. Add a `.log` node after the final `.tanh` and evaluate the graph. Find the input coordinates
+   that make the evaluation fail, and read the message.
 7. Plan the graph with a policy asking for a provider this build does not have, and read the error.
    It comes from the backend boundary, not from the graph.

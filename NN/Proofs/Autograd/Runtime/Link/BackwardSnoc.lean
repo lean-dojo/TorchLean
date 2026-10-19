@@ -50,7 +50,8 @@ variable {α : Type} [TorchLean.Storage α] [Add α]
 
 omit [Add α] in
 /-- Appending a node does not change the nodes stored at existing ids. -/
-theorem getNode?_addNode_of_lt (t : Tape α) (nd : Runtime.Autograd.Node α) {id : Nat}
+theorem getNode?_addNode_of_lt (t : Tape (Spec.SomeTensor α)) (nd : Runtime.Autograd.Node
+    (Spec.SomeTensor α)) {id : Nat}
     (hid : id < t.nodes.size) :
     (t.addNode nd).1.getNode? id = t.getNode? id := by
   simp [Tape.getNode?, Tape.addNode, Array.getElem?_push_lt hid, Array.getElem?_eq_getElem hid]
@@ -61,21 +62,23 @@ theorem getNode?_addNode_of_lt (t : Tape α) (nd : Runtime.Autograd.Node α) {id
 On the tape extended by `nd` and an accumulator extended by `v`, accumulating into an id of the
 prefix range acts exactly as on the prefix tape and accumulator, and `v` is carried along.
 -/
-theorem addGradAll_addNode_push (t : Tape α) (nd : Runtime.Autograd.Node α)
+theorem addGradAll_addNode_push (t : Tape (Spec.SomeTensor α)) (nd : Runtime.Autograd.Node
+    (Spec.SomeTensor α))
     (v : Spec.SomeTensor α) (acc : Array (Spec.SomeTensor α)) (hacc : acc.size = t.nodes.size)
     (pid : Nat) (pg : Spec.SomeTensor α) (hpid : pid < t.nodes.size) :
     Tape.addGradAll (t := (t.addNode nd).1) (acc.push v) pid pg =
       Except.map (fun a => a.push v) (Tape.addGradAll (t := t) acc pid pg) := by
   have hpidAcc : pid < acc.size := by simpa [hacc] using hpid
-  let nodeAt : Runtime.Autograd.Node α := t.nodes[pid]'hpid
+  let nodeAt : Runtime.Autograd.Node (Spec.SomeTensor α) := t.nodes[pid]'hpid
   have hnodePrev : Tape.getNode? (t := t) pid = some nodeAt := by
     simp [Tape.getNode?, nodeAt, Array.getElem?_eq_getElem hpid]
   have hnodeNext : Tape.getNode? (t := (t.addNode nd).1) pid = some nodeAt := by
     rw [getNode?_addNode_of_lt t nd hpid, hnodePrev]
   have hgetPrev : acc[pid]? = some (acc[pid]'hpidAcc) := Array.getElem?_eq_getElem hpidAcc
   have hgetNext : (acc.push v)[pid]? = some (acc[pid]'hpidAcc) := Array.getElem?_push_lt hpidAcc
-  simp only [Tape.addGradAll, hnodePrev, hnodeNext, Bind.bind, Except.bind,
-    Pure.pure, Except.pure, throw, throwThe, MonadExceptOf.throw]
+  simp only [GradValue.shape_someTensor, GradValue.retag_someTensor, GradValue.check_someTensor,
+      GradValue.add_someTensor, GradValue.drop_someTensor, Tape.addGradAll, hnodePrev, hnodeNext,
+      Bind.bind, Except.bind, Pure.pure, Except.pure, throw, throwThe, MonadExceptOf.throw]
   by_cases hreq : nodeAt.requiresGrad = false
   · simp [hreq, Except.map]
   · simp only [ite_eq_right hreq]
@@ -117,7 +120,8 @@ theorem addGradAll_addNode_push (t : Tape α) (nd : Runtime.Autograd.Node α)
 Folding `addGradAll` over a contribution list commutes with pushing an unused last slot, as long
 as every contribution targets the prefix range.
 -/
-theorem foldlM_addGradAll_addNode_push (t : Tape α) (nd : Runtime.Autograd.Node α)
+theorem foldlM_addGradAll_addNode_push (t : Tape (Spec.SomeTensor α)) (nd : Runtime.Autograd.Node
+    (Spec.SomeTensor α))
     (v : Spec.SomeTensor α) :
     ∀ (cs : List (Nat × Spec.SomeTensor α)) (acc : Array (Spec.SomeTensor α)),
       acc.size = t.nodes.size →
@@ -150,12 +154,13 @@ theorem foldlM_addGradAll_addNode_push (t : Tape α) (nd : Runtime.Autograd.Node
 The `BackwardPidsLt` invariant guarantees that all contributions emitted by the visited node also
 stay in the prefix range.
 -/
-theorem backwardDenseFromStep_addNode_push (t : Tape α) (nd : Runtime.Autograd.Node α)
+theorem backwardDenseFromStep_addNode_push (t : Tape (Spec.SomeTensor α)) (nd
+    : Runtime.Autograd.Node (Spec.SomeTensor α))
     (v : Spec.SomeTensor α) (hpids : BackwardPidsLt t) {id : Nat} (hid : id < t.nodes.size)
     (acc : Array (Spec.SomeTensor α)) (hacc : acc.size = t.nodes.size) :
     Tape.backwardDenseFromStep (t := (t.addNode nd).1) (acc.push v) id =
       Except.map (fun a => a.push v) (Tape.backwardDenseFromStep (t := t) acc id) := by
-  let nodeAt : Runtime.Autograd.Node α := t.nodes[id]'hid
+  let nodeAt : Runtime.Autograd.Node (Spec.SomeTensor α) := t.nodes[id]'hid
   have hnodePrev : Tape.getNode? (t := t) id = some nodeAt := by
     simp [Tape.getNode?, nodeAt, Array.getElem?_eq_getElem hid]
   have hnodeNext : Tape.getNode? (t := (t.addNode nd).1) id = some nodeAt := by
@@ -171,9 +176,10 @@ theorem backwardDenseFromStep_addNode_push (t : Tape α) (nd : Runtime.Autograd.
       by_cases hshape : (acc[id]'hidAcc).shape = nodeAt.value.shape
       · cases hback : nodeAt.backward (Spec.SomeTensor.ofTensor ((acc[id]'hidAcc).cast hshape)) with
         | error e =>
-            simp only [Tape.backwardDenseFromStep, hnodePrev, hnodeNext, hreq, hgetAcc, hgetAccPush,
-              hshape, hback, result_pure_eq_ok, result_bind_ok, result_bind_error, result_map_error,
-              dite_true, Bool.true_eq_false, ite_false]
+            simp only [GradValue.shape_someTensor, GradValue.retag_someTensor,
+                GradValue.check_someTensor, Tape.backwardDenseFromStep, hnodePrev, hnodeNext, hreq,
+                hgetAcc, hgetAccPush, hshape, hback, result_pure_eq_ok, result_bind_ok,
+                result_bind_error, result_map_error, dite_true, Bool.true_eq_false, ite_false]
         | ok contribs =>
             have hpids_list : ∀ {pid : Nat} {pg : Spec.SomeTensor α},
                 (pid, pg) ∈ contribs.toList → pid < t.nodes.size := by
@@ -182,15 +188,17 @@ theorem backwardDenseFromStep_addNode_push (t : Tape α) (nd : Runtime.Autograd.
                 (hpids id nodeAt hnodePrev _ contribs hback (by simpa using hmem)) hid
             have hfold := foldlM_addGradAll_addNode_push t nd v contribs.toList acc hacc hpids_list
             simp only [Array.foldlM_toList] at hfold
-            simp only [Tape.backwardDenseFromStep, hnodePrev, hnodeNext, hreq, hgetAcc, hgetAccPush,
-              hshape, hback, result_pure_eq_ok, result_bind_ok, dite_true, Bool.true_eq_false,
-              ite_false]
+            simp only [GradValue.shape_someTensor, GradValue.retag_someTensor,
+                GradValue.check_someTensor, Tape.backwardDenseFromStep, hnodePrev, hnodeNext, hreq,
+                hgetAcc, hgetAccPush, hshape, hback, result_pure_eq_ok, result_bind_ok, dite_true,
+                Bool.true_eq_false, ite_false]
             exact hfold
       · simp [Tape.backwardDenseFromStep, hnodePrev, hnodeNext, hreq, hgetAcc, hgetAccPush,
           hshape, result_map_error, result_throw_eq_error]
 
 /-- `backwardDenseFromLoop` over the prefix range commutes with pushing an unused last slot. -/
-theorem backwardDenseFromLoop_addNode_push (t : Tape α) (nd : Runtime.Autograd.Node α)
+theorem backwardDenseFromLoop_addNode_push (t : Tape (Spec.SomeTensor α)) (nd
+    : Runtime.Autograd.Node (Spec.SomeTensor α))
     (v : Spec.SomeTensor α) (hpids : BackwardPidsLt t) :
     ∀ (m : Nat), m ≤ t.nodes.size → ∀ (acc : Array (Spec.SomeTensor α)),
       acc.size = t.nodes.size →
@@ -218,13 +226,14 @@ stores a node that requires gradients and whose value has the shape of the seed 
 
 This is the hypothesis of `foldlM_addGradAll_toIndexedShapeErasedArray_eq_add` with `pref = #[]`.
 -/
-theorem addNode_prefix_node_spec (t : Tape α) (nd : Runtime.Autograd.Node α) {ss : List Shape}
+theorem addNode_prefix_node_spec (t : Tape (Spec.SomeTensor α)) (nd : Runtime.Autograd.Node
+    (Spec.SomeTensor α)) {ss : List Shape}
     (ctx seed : TorchLean.TensorPack α ss) (hsize : t.nodes.size = ss.length)
     (hreq : ∀ i (hi : i < t.nodes.size), (t.nodes[i]'hi).requiresGrad = true)
     (hvals : t.nodes.map (fun n => n.value) =
       TorchLean.TensorPack.toShapeErasedArray (α := α) (ss := ss) ctx) :
     ∀ i (hi : i < ss.length),
-      ∃ node : Runtime.Autograd.Node α,
+      ∃ node : Runtime.Autograd.Node (Spec.SomeTensor α),
         (t.addNode nd).1.getNode? i = some node ∧ node.requiresGrad = true ∧
           node.value.shape =
             ((TorchLean.TensorPack.toShapeErasedArray (α := α) (ss := ss) seed)[i]'(by
@@ -249,7 +258,7 @@ prefix gradients, which is `TensorPack.add` after shape erasure, and leaves the 
 untouched.
 -/
 theorem backwardDenseFromStep_addNode_lowerNode_last {Δ : Type} {ss : List Shape} {τ : Shape}
-    (t : Tape α) (name : Option String) (node : NodeData α Δ ss τ)
+    (t : Tape (Spec.SomeTensor α)) (name : Option String) (node : NodeData α Δ ss τ)
     (ctx : TorchLean.TensorPack α ss) (d : Δ) (seedPrev : TorchLean.TensorPack α ss)
     (seedOut : Tensor α τ) (hsize : t.nodes.size = ss.length)
     (hreq : ∀ i (hi : i < t.nodes.size), (t.nodes[i]'hi).requiresGrad = true)
@@ -304,8 +313,9 @@ theorem backwardDenseFromStep_addNode_lowerNode_last {Δ : Type} {ss : List Shap
         simpa using hspec i hi)
     simpa [Array.append_assoc, Array.append_empty, Array.empty_append, Array.append_singleton]
       using hfold
-  simp only [Tape.backwardDenseFromStep, hnodeLast, haccLast, hreqNd, result_pure_eq_ok,
-    result_bind_ok, Bool.true_eq_false, ite_false]
+  simp only [GradValue.shape_someTensor, GradValue.retag_someTensor, GradValue.check_someTensor,
+      Tape.backwardDenseFromStep, hnodeLast, haccLast, hreqNd, result_pure_eq_ok, result_bind_ok,
+      Bool.true_eq_false, ite_false]
   rw [dite_eq_left hshapeNode, Spec.SomeTensor.ofTensor_cast, hbackLast, result_bind_ok]
   exact hfoldLast
 
@@ -320,7 +330,7 @@ This is the shared content of `backwardDenseFrom_lowerGraphToTape_eq_backpropAll
 `GraphData` variant: the `snoc` cases of `backpropAllCtx` unfold to exactly this shape.
 -/
 theorem backwardDenseFrom_addNode_lowerNode {Δ : Type} {ss : List Shape} {τ : Shape}
-    (t : Tape α) (name : Option String) (node : NodeData α Δ ss τ)
+    (t : Tape (Spec.SomeTensor α)) (name : Option String) (node : NodeData α Δ ss τ)
     (ctx : TorchLean.TensorPack α ss) (d : Δ)
     (bp : TorchLean.TensorPack α ss → TorchLean.TensorPack α ss)
     (hsize : t.nodes.size = ss.length)

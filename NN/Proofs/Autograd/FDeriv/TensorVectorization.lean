@@ -35,13 +35,13 @@ def tensorVecEquiv (shape : Shape) : Tensor ℝ shape ≃L[ℝ] Vec (Shape.size 
         apply ext_inner_left ℝ
         intro v
         obtain ⟨c, rfl⟩ := Function.RightInverse.surjective tensorToVec_vecToTensor v
-        simp only [inner_add_right, ← dot_eq_inner_tensorToVec, Reindex.dot_eq_inner]
+        simp only [inner_add_right, ← dot_eq_inner_tensorToVec, Spec.dot_eq_inner]
       map_smul' := by
         intro r a
         apply ext_inner_left ℝ
         intro v
         obtain ⟨c, rfl⟩ := Function.RightInverse.surjective tensorToVec_vecToTensor v
-        simp only [inner_smul_right, ← dot_eq_inner_tensorToVec, Reindex.dot_eq_inner]
+        simp only [inner_smul_right, ← dot_eq_inner_tensorToVec, Spec.dot_eq_inner]
         rfl }
   exact (LinearEquiv.ofBijective linear
     ⟨Function.LeftInverse.injective vecToTensor_tensorToVec,

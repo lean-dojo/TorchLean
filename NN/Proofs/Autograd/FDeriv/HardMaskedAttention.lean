@@ -56,13 +56,13 @@ theorem dot_backward_comm {nQ nK : Nat} (scores dx gradient : Tensor ℝ [nQ, nK
       (Spec.hardMaskedSoftmaxSpec scores mask) dx) gradient =
         Spec.dot dx (Spec.softmaxBackwardFromWeightsSpec
           (Spec.hardMaskedSoftmaxSpec scores mask) gradient) := by
-  rw [Reindex.dot_eq_inner, Reindex.dot_eq_inner,
+  rw [Spec.dot_eq_inner, Spec.dot_eq_inner,
     Reindex.inner_eq_sum_unstack, Reindex.inner_eq_sum_unstack]
   apply Finset.sum_congr rfl
   intro i _
   simp only [unstack_softmaxBackwardFromWeightsSpec,
     unstack_hardMaskedSoftmaxSpec]
-  rw [← Reindex.dot_eq_inner, ← Reindex.dot_eq_inner,
+  rw [← Spec.dot_eq_inner, ← Spec.dot_eq_inner,
     dot_eq_inner_vec, dot_eq_inner_vec,
     HardMaskedSoftmax.backward_eq_derivative, HardMaskedSoftmax.backward_eq_derivative]
   exact HardMaskedSoftmax.inner_derivative

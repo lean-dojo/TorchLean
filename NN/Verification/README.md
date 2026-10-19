@@ -79,9 +79,9 @@ by the PyTorch/ONNX path.
 
 The broader `lowerForwardToIR` builder is not covered wholesale by that theorem. It rejects stable
 log-softmax until the IR supports the operation faithfully: taking the logarithm of computed
-softmax probabilities changes rounding even without underflow. Eager and typed-graph execution
-still support stable log-softmax. GELU is also rejected by this lowering until the IR can preserve
-its gate division and cubic association; runtime and typed-graph GELU remain available.
+softmax probabilities changes rounding even without underflow. The eager runtime still supports
+stable log-softmax. GELU is also rejected by this lowering until the IR can preserve
+its gate division and cubic association; the runtime's GELU remains available.
 Slicing uses one-hot matrix multiplication rather than direct indexing, so graph shape checks
 alone do not establish numerical equivalence for that encoding.
 Clamp preserves its source min/max operand order for ordinary numeric contexts. Contexts with
@@ -270,10 +270,9 @@ scripts/lake.sh exe verify -- camera-box3d-cert
 ```
 
 `BoxCameraCert.pointCount` fixes the number of supplied points; its tensor has shape
-`[pointCount, 3]`. A `torchlean.camera.box3d.v1` artifact carries exactly eight corners, with
-`point_count` omitted or set to `8`. A `torchlean.camera.box3d.v2` artifact must declare a positive
-`point_count` that matches the number of triples in `corners3d`. The parser rejects an artifact
-with no points in either format. Acceptance checks projection, positive depth, and image/box
+`[pointCount, 3]`. A `torchlean.camera.box3d.v2` artifact must declare a positive `point_count`
+that matches the number of triples in `corners3d` (`8` for a cuboid), so the parser rejects an
+artifact with no points. Acceptance checks projection, positive depth, and image/box
 containment for each supplied point. It does not establish that those points form a cuboid or
 correspond to an object in an image.
 

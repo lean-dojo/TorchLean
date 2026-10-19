@@ -176,11 +176,12 @@ def Internal.tryNativeBatchStep {α β : Type} [TorchLean.Storage α] [TorchLean
     (optimizer : Runtime.Autograd.Model.Optim.Optimizer α stateShapes)
     (optimizerState : optimizer.State)
     (batch : Array (Arguments α inputShapes × Arguments β dataInputShapes))
-    (readLoss : Bool) : IO (Option (optimizer.State × Option (Tensor α []))) :=
-  optimizer.trainerBatchStep? (Internal.runtime module).trainer optimizerState
+    (readLoss : Bool) : IO (Option (optimizer.State × Option (Tensor α []))) := do
+  let stepped ← optimizer.nativeBatchStep? (Internal.runtime module).trainer optimizerState
     (batch.map fun (inputs, dataInputs) =>
       (Arguments.Internal.toTensorPack inputs, Arguments.Internal.toTensorPack dataInputs))
     readLoss
+  pure (stepped.map (optimizerState, ·))
 
 /--
 Apply a generic optimizer update from an already-computed, shape-aligned state gradient.

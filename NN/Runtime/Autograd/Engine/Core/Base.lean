@@ -6,15 +6,15 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Runtime.Autograd.Engine.Tape
 public import NN.Spec.Core.Tensor.SomeTensor
 
 /-!
-# Engine Core
+# CPU tape values
 
-A small dynamic (DAG) autograd engine.
-
-This is intended to be the "runtime" counterpart to `Spec.OpSpec`: instead of manually writing
-backward passes end-to-end, you build a tape during a forward pass and then call `backward`.
+The CPU tape is `Tape (Spec.SomeTensor α)`: the one tape of `NN.Runtime.Autograd.Engine.Tape`,
+storing shape-erased CPU tensors. This module gives those values their `GradValue` instance and
+the typed constructors that every CPU operation is built from.
 
 Design goals:
 - Works for arbitrary `Tensor α s` shapes using `Spec.SomeTensor` values.
@@ -43,25 +43,6 @@ namespace Autograd
 open Spec TorchLean
 open TorchLean TorchLean.Tensor
 
-/-!
-## Core Types
-
-The eager autograd engine is built out of a few small pieces:
-
-* `Result`: a pure error monad used throughout the tape API.
-* `Spec.SomeTensor`: a shape-erased tensor used to store heterogeneous node values on one tape.
-* `Node`: one recorded computation step, with a local backward (VJP) rule.
-* `Tape`: a grow-only array of nodes; reverse-mode traversals walk it in reverse order.
--/
-
-/--
-Runtime error monad for the eager autograd engine.
-
-We use plain `Except String` (instead of `IO` exceptions) so the tape constructors remain pure and
-easy to test. Front-ends that prefer exceptions can use Lean's `IO.ofExcept`.
--/
-abbrev Result (α : Type) := Except String α
-
 namespace SomeTensor
 
 /--
@@ -80,101 +61,47 @@ def add {α : Type} [TorchLean.Storage α] [Add α]
 
 end SomeTensor
 
-/--
-A tape node representing a single tensor value in the recorded computation graph.
+/-- CPU gradients are shape-erased tensors; ownership needs no bookkeeping. -/
+instance {α : Type} [TorchLean.Storage α] [Add α] : GradValue (Spec.SomeTensor α) where
+  shape v := v.shape
+  retag g _ h := Spec.SomeTensor.ofTensor (g.cast h)
+  add := SomeTensor.add
 
-Fields:
-- `value`: the forward value (shape-erased).
-- `parents`: ids of parent nodes in the tape.
-- `backward`: a local VJP rule. Given an upstream cotangent for `value`, it returns an array of
-  `(parentId, parentCotangent)` contributions (one per parent, usually).
+/-- The CPU zero gradient of a value. -/
+instance {α : Type} [TorchLean.Storage α] [Zero α] : GradZero (Spec.SomeTensor α) where
+  zerosLike v := Spec.SomeTensor.ofTensor (Tensor.full v.shape (0 : α))
 
-PyTorch comparison: analogous to an autograd `Function` instance + saved tensors, but here we store
-the backward closure directly.
--/
-structure Node (α : Type) [TorchLean.Storage α] where
-  /-- Optional node name used for debugging and pretty-printing. -/
-  name : Option String := none
-  /-- Forward value computed at this node (shape-erased). -/
-  value : Spec.SomeTensor α
-  /--
-  Whether reverse-mode propagation should visit this node.
+@[simp] theorem GradValue.shape_someTensor {α : Type} [TorchLean.Storage α] [Add α]
+    (v : Spec.SomeTensor α) : GradValue.shape v = v.shape := rfl
 
-  If `false`, reverse-mode traversal skips this node and does not accumulate gradients into it.
-  Eager operations inherit the disjunction of their differentiable parents' flags; leaves retain
-  the caller's explicit flag.
-  -/
-  requiresGrad : Bool := true
-  /-- Parent node ids (dependencies) in the tape. -/
-  parents : Array Nat := #[]
-  /--
-  Local VJP rule for this node.
+@[simp] theorem GradValue.retag_someTensor {α : Type} [TorchLean.Storage α] [Add α]
+    (g v : Spec.SomeTensor α) (h : GradValue.shape g = GradValue.shape v) :
+    GradValue.retag g v h = Spec.SomeTensor.ofTensor (g.cast h) := rfl
 
-  Given an upstream cotangent for `value`, return an array of `(parentId, parentCotangent)`
-  contributions. If multiple children contribute to the same parent, the engine will sum
-  contributions via `SomeTensor.add`.
-  -/
-  backward : Spec.SomeTensor α → Result (Array (Nat × Spec.SomeTensor α))
+@[simp] theorem GradValue.check_someTensor {α : Type} [TorchLean.Storage α] [Add α]
+    (g v : Spec.SomeTensor α) : GradValue.check g v = .ok () := rfl
 
-/--
-Autograd tape: a grow-only array of nodes.
+@[simp] theorem GradValue.add_someTensor {α : Type} [TorchLean.Storage α] [Add α]
+    (a b : Spec.SomeTensor α) : GradValue.add a b = SomeTensor.add a b := rfl
 
-Node ids are array indices (`Nat`). All ops append exactly one node and return its id.
-This makes it easy to implement reverse-mode by traversing ids in reverse order.
--/
-structure Tape (α : Type) [TorchLean.Storage α] where
-  /--
-  Tape nodes in evaluation order.
+@[simp] theorem GradValue.own_someTensor {α : Type} [TorchLean.Storage α] [Add α]
+    (g : Spec.SomeTensor α) : GradValue.own g = g := rfl
 
-  Node ids are array indices (`Nat`). Each tape op appends exactly one node and returns its id.
-  -/
-  nodes : Array (Node α) := #[]
+@[simp] theorem GradValue.drop_someTensor {α β : Type} [TorchLean.Storage α] [Add α]
+    (g : Spec.SomeTensor α) (rest : β) : GradValue.drop g rest = rest := rfl
+
+@[simp] theorem GradZero.zerosLike_someTensor {α : Type} [TorchLean.Storage α] [Zero α]
+    (v : Spec.SomeTensor α) :
+    GradZero.zerosLike v = Spec.SomeTensor.ofTensor (Tensor.full v.shape (0 : α)) := rfl
 
 /-!
 ## Tape Construction
 
 The `Tape` namespace provides *pure* constructors for building a recorded computation graph.
 Each op appends exactly one node and returns the updated tape plus the new node id.
-
-If you prefer an implicit tape-threading style, see `NN.Runtime.Autograd.Engine.TapeM`.
 -/
 
 namespace Tape
-
-variable {α : Type} [TorchLean.Storage α]
-
-/-- Empty tape (no nodes). -/
-def empty : Tape α := {}
-
-/-- Number of nodes stored in the tape. -/
-def size (t : Tape α) : Nat := t.nodes.size
-
-/-- Read a node by id (returns `none` if out of bounds). -/
-def getNode? (t : Tape α) (id : Nat) : Option (Node α) :=
-  t.nodes[id]?
-
-/-- Read just the stored forward value for a node id. -/
-def getValue? (t : Tape α) (id : Nat) : Option (Spec.SomeTensor α) :=
-  (t.getNode? id).map (·.value)
-
-/--
-Append a node and return its id.
-
-Invariant: the returned id is `t.size`, the pre-append size of the tape.
--/
-def addNode (t : Tape α) (node : Node α) : Tape α × Nat :=
-  let id := t.nodes.size
-  ({ nodes := t.nodes.push node }, id)
-
-/-- `addNode` returns the current tape size as the fresh node id. -/
-@[simp] theorem addNode_id (t : Tape α) (node : Node α) :
-    (t.addNode node).2 = t.size := by
-  simp [addNode, size]
-
-/-- Appending a node increases the tape size by one. -/
-@[simp] theorem size_addNode (t : Tape α) (node : Node α) :
-    (t.addNode node).1.size = t.size + 1 := by
-  simp [addNode, size]
 
 /--
 Add a leaf node (no parents).
@@ -182,8 +109,9 @@ Add a leaf node (no parents).
 PyTorch comparison: a tensor that enters the graph as a leaf (e.g. input or parameter value).
 -/
 def leaf {α : Type} [TorchLean.Storage α] {s : Shape}
-  (t : Tape α) (value : Tensor α s) (name : Option String := none) (requiresGrad : Bool := true) :
-  Tape α × Nat :=
+  (t : Tape (Spec.SomeTensor α)) (value : Tensor α s) (name : Option String := none) (requiresGrad
+      : Bool := true) :
+  Tape (Spec.SomeTensor α) × Nat :=
   t.addNode {
     name := name,
     value := Spec.SomeTensor.ofTensor value,
@@ -200,7 +128,7 @@ This is the main "dynamic check" boundary in the eager runtime:
 - fails if the stored runtime shape doesn't match the expected dependent shape `s`.
 -/
 def requireValue {α : Type} [TorchLean.Storage α] {s : Shape}
-  (t : Tape α) (id : Nat) : Result (Tensor α s) := by
+  (t : Tape (Spec.SomeTensor α)) (id : Nat) : Result (Tensor α s) := by
   match t.getValue? id with
   | none => exact .error "autograd: invalid node id"
   | some any =>
@@ -233,13 +161,13 @@ The returned node inherits the parent's gradient flag and stores the forward val
 closure that checks the upstream gradient's shape and returns the parent contribution.
 -/
 @[inline] def unary {α : Type} [TorchLean.Storage α] {σ τ : Shape}
-  (t : Tape α) (opName : String) (xId : Nat)
+  (t : Tape (Spec.SomeTensor α)) (opName : String) (xId : Nat)
   (forward : Tensor α σ → Tensor α τ)
   (backward : Tensor α σ → Tensor α τ → Tensor α σ) :
-  Result (Tape α × Nat) := do
+  Result (Tape (Spec.SomeTensor α) × Nat) := do
   let x ← requireValue (α:=α) (t:=t) (s:=σ) xId
   let y := forward x
-  let node : Node α :=
+  let node : Node (Spec.SomeTensor α) :=
     { name := some opName
       value := Spec.SomeTensor.ofTensor y
       requiresGrad := (t.getNode? xId).any (·.requiresGrad)
@@ -258,14 +186,14 @@ Input lookup, parent metadata, and backward contributions all follow the order `
 The backward function runs after the upstream shape check and receives both saved inputs.
 -/
 @[inline] def binary {α : Type} [TorchLean.Storage α] {σ₁ σ₂ τ : Shape}
-    (t : Tape α) (opName : String) (aId bId : Nat)
+    (t : Tape (Spec.SomeTensor α)) (opName : String) (aId bId : Nat)
     (forward : Tensor α σ₁ → Tensor α σ₂ → Tensor α τ)
     (backward : Tensor α σ₁ → Tensor α σ₂ → Tensor α τ →
-      Tensor α σ₁ × Tensor α σ₂) : Result (Tape α × Nat) := do
+      Tensor α σ₁ × Tensor α σ₂) : Result (Tape (Spec.SomeTensor α) × Nat) := do
   let a ← requireValue (α := α) (t := t) (s := σ₁) aId
   let b ← requireValue (α := α) (t := t) (s := σ₂) bId
   let y := forward a b
-  let node : Node α :=
+  let node : Node (Spec.SomeTensor α) :=
     { name := some opName
       value := Spec.SomeTensor.ofTensor y
       requiresGrad :=

@@ -31,7 +31,6 @@ struct torchlean_cuda_buffer {
 extern "C" {
 torchlean_cuda_buffer* torchlean_cuda_buffer_unbox(b_lean_obj_arg obj);
 lean_obj_res torchlean_cuda_buffer_box(torchlean_cuda_buffer* b);
-torchlean_cuda_buffer* torchlean_cuda_buffer_alloc(size_t n);
 void torchlean_cuda_buffer_drop_unboxed(torchlean_cuda_buffer* b);
 LEAN_EXPORT uint32_t torchlean_cuda_buffer_release(b_lean_obj_arg object);
 

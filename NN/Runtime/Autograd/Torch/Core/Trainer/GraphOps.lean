@@ -133,6 +133,8 @@ instance {α Δ : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape} :
   log := fun {s} x => Runtime.Autograd.TypedGraph.GraphM.log (α := α) (Γ := Γ) (s := s) x
   inv := fun {s} x => Runtime.Autograd.TypedGraph.GraphM.inv (α := α) (Γ := Γ) (s := s) x
   detach := fun {s} x => Runtime.Autograd.TypedGraph.GraphM.detach (α := α) (Γ := Γ) (s := s) x
+  topKMask := fun {s} k x =>
+    Runtime.Autograd.TypedGraph.GraphM.topKMask (α := α) (Γ := Γ) (s := s) k x
   safeLog := fun {s} x ε => Runtime.Autograd.TypedGraph.GraphM.safeLog (α := α) (Γ := Γ) (s := s) x
     (ε := ε)
   sum := fun {s} x => Runtime.Autograd.TypedGraph.GraphM.sum (α := α) (Γ := Γ) (s := s) x

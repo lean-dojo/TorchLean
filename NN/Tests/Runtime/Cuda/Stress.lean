@@ -186,14 +186,14 @@ def runGradientAliasingStress : IO Unit := do
   let s : Shape := [4]
   let x : Tensor Float s := (Tensor.from #[0.25, -0.50, 0.75, -1.00]).reshape [4] (by dsimp; decide)
 
-  let t0 : LibTorch.Tape := LibTorch.Tape.empty
+  let t0 : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer := Runtime.Autograd.Tape.empty
   let (t1, xId) := LibTorch.Tape.leaf (t := t0) (Utils.tensorToAnyBuffer x) (name := some "x")
   -- `x + x` sends the same upstream gradient to both parents of an add node. This checks
   -- accumulated-gradient aliasing in add nodes.
   let (t2, yId) ← IO.ofExcept (LibTorch.Tape.add (t := t1) (s := s) xId xId)
   let (t3, outId) ← IO.ofExcept (LibTorch.Tape.sum (t := t2) (s := s) yId)
   let seed : LibTorch.AnyBuffer := { s := Shape.scalar, buf := Buffer.full 1 1.0 }
-  let grads ← IO.ofExcept (LibTorch.Tape.backwardDenseAll (t := t3) outId seed)
+  let grads ← IO.ofExcept (Runtime.Autograd.Tape.backwardDenseAll (t := t3) outId seed)
   let dx ← Utils.cudaGrad (s := s) grads xId
   let expected : Tensor Float s :=
     (Tensor.from #[2.0, 2.0, 2.0, 2.0]).reshape [4] (by dsimp; decide)
@@ -211,7 +211,8 @@ def runMalformedBufferValidationStress : IO Unit := do
       throw <| IO.userError "AnyBuffer.validate accepted a native buffer shorter than its shape"
   | .error _ => pure ()
 
-  let (malformedTape, malformedId) := LibTorch.Tape.empty.leaf malformed
+  let (malformedTape, malformedId)
+      := Runtime.Autograd.LibTorch.Tape.leaf Runtime.Autograd.Tape.empty malformed
   match LibTorch.Tape.sum (t := malformedTape) (s := vectorShape) malformedId with
   | .ok _ =>
       throw <| IO.userError "CUDA tape accepted a malformed leaf buffer"
@@ -220,10 +221,11 @@ def runMalformedBufferValidationStress : IO Unit := do
 
   let scalarBuffer ← Buffer.fullIO 1 2.0
   let singleElementValue : LibTorch.AnyBuffer := { s := Shape.scalar, buf := scalarBuffer }
-  let (scalarTape, scalarId) := LibTorch.Tape.empty.leaf singleElementValue
+  let (scalarTape, scalarId)
+      := Runtime.Autograd.LibTorch.Tape.leaf Runtime.Autograd.Tape.empty singleElementValue
   let badSeedBuffer ← Buffer.fullIO 2 1.0
   let badSeed : LibTorch.AnyBuffer := { s := Shape.scalar, buf := badSeedBuffer }
-  match LibTorch.Tape.backwardDenseAll scalarTape scalarId badSeed with
+  match Runtime.Autograd.Tape.backwardDenseAll scalarTape scalarId badSeed with
   | .ok _ =>
       throw <| IO.userError "dense CUDA backward accepted a wrong-length output seed"
   | .error _ => pure ()
@@ -242,10 +244,11 @@ def runMalformedBufferValidationStress : IO Unit := do
 
   let vectorBuffer ← Buffer.fullIO 4 2.0
   let vectorValue : LibTorch.AnyBuffer := { s := vectorShape, buf := vectorBuffer }
-  let (vectorTape, _vectorId) := LibTorch.Tape.empty.leaf vectorValue
+  let (vectorTape, _vectorId)
+      := Runtime.Autograd.LibTorch.Tape.leaf Runtime.Autograd.Tape.empty vectorValue
   let shortGradBuffer ← Buffer.fullIO 3 0.0
   let shortGrad : LibTorch.AnyBuffer := { s := vectorShape, buf := shortGradBuffer }
-  match LibTorch.Tape.backwardDenseFrom vectorTape #[shortGrad] with
+  match Runtime.Autograd.Tape.backwardDenseFrom vectorTape #[shortGrad] with
   | .ok _ =>
       throw <| IO.userError "dense CUDA backward accepted a malformed initial gradient"
   | .error _ => pure ()
@@ -274,14 +277,14 @@ def runDisconnectedDenseGradientStress : IO Unit := do
   let scalarShape : Shape := Shape.scalar
   let zero : Tensor Float scalarShape := Tensor.scalar 0.0
   let output : Tensor Float scalarShape := Tensor.scalar 3.0
-  let t0 : LibTorch.Tape := LibTorch.Tape.empty
+  let t0 : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer := Runtime.Autograd.Tape.empty
   let (t1, xId) := LibTorch.Tape.leaf (t := t0) (Utils.tensorToAnyBuffer zero) (name := some "x")
   let (t2, outId) :=
     LibTorch.Tape.leaf (t := t1) (Utils.tensorToAnyBuffer output) (name := some "output")
   let (t3, invId) ← IO.ofExcept <|
     LibTorch.Tape.inv (t := t2) (s := scalarShape) xId
   let seed : LibTorch.AnyBuffer := { s := scalarShape, buf := Buffer.full 1 1.0 }
-  let grads ← IO.ofExcept <| LibTorch.Tape.backwardDenseAll (t := t3) outId seed
+  let grads ← IO.ofExcept <| Runtime.Autograd.Tape.backwardDenseAll (t := t3) outId seed
   unless grads.size = t3.nodes.size do
     throw <| IO.userError "disconnected CUDA dense gradient: result length mismatch"
   let xGrad := Tensor.item (← Utils.cudaGrad (s := scalarShape) grads xId)
@@ -307,34 +310,35 @@ def runConstantBranchGradientStress : IO Unit := do
       let p ← Buffer.fullIO 1 probability
       let mask ← Buffer.bernoulliMaskIO 4 (1.0 - probability) key
       let ones ← Buffer.fullIO 4 1.0
-      let (t1, xId) := LibTorch.Tape.empty.leaf { s := vector, buf := x }
-      let (t2, pId) := t1.leaf { s := scalar, buf := p } (requiresGrad := trainable)
-      let (t3, maskId) := t2.leaf { s := vector, buf := mask } (requiresGrad := false)
-      let (t4, onesId) := t3.leaf { s := vector, buf := ones } (requiresGrad := false)
+      let (t1, xId) := LibTorch.Tape.leaf Runtime.Autograd.Tape.empty { s := vector, buf := x }
+      let (t2, pId) := LibTorch.Tape.leaf t1 { s := scalar, buf := p } (requiresGrad := trainable)
+      let (t3, maskId) := LibTorch.Tape.leaf t2 { s := vector, buf := mask } (requiresGrad := false)
+      let (t4, onesId) := LibTorch.Tape.leaf t3 { s := vector, buf := ones } (requiresGrad := false)
       let (t5, broadcastId) ← IO.ofExcept <|
-        t4.broadcastTo (Shape.CanBroadcastTo.scalarTo vector) pId
-      let (t6, retainedId) ← IO.ofExcept <| t5.mul (s := vector) broadcastId maskId
-      let (t7, denominatorId) ← IO.ofExcept <| t6.sub (s := vector) onesId retainedId
-      let (t8, inverseId) ← IO.ofExcept <| t7.inv (s := vector) denominatorId
+        LibTorch.Tape.broadcastTo t4 (Shape.CanBroadcastTo.scalarTo vector) pId
+      let (t6, retainedId) ← IO.ofExcept <| LibTorch.Tape.mul t5 (s := vector) broadcastId maskId
+      let (t7, denominatorId) ← IO.ofExcept <| LibTorch.Tape.sub t6 (s := vector) onesId retainedId
+      let (t8, inverseId) ← IO.ofExcept <| LibTorch.Tape.inv t7 (s := vector) denominatorId
       for id in #[broadcastId, retainedId, denominatorId, inverseId] do
         unless (t8.getNode? id).any (fun node => node.requiresGrad == trainable) do
           throw <| IO.userError "dropout probability gradient flag was not propagated"
       -- A failing closure detects accidental traversal independently of the numerical assertions.
-      let t8 : LibTorch.Tape := if trainable then t8 else
+      let t8 : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer
+          := if trainable then t8 else
         { nodes := t8.nodes.mapIdx fun id node =>
             if id == broadcastId then
               { node with backward := fun _ => .error "constant probability was differentiated" }
             else node }
-      let (t9, maskedId) ← IO.ofExcept <| t8.mul (s := vector) xId maskId
-      let (t10, yId) ← IO.ofExcept <| t9.mul (s := vector) maskedId inverseId
-      let (tape, outId) ← IO.ofExcept <| t10.sum (s := vector) yId
+      let (t9, maskedId) ← IO.ofExcept <| LibTorch.Tape.mul t8 (s := vector) xId maskId
+      let (t10, yId) ← IO.ofExcept <| LibTorch.Tape.mul t9 (s := vector) maskedId inverseId
+      let (tape, outId) ← IO.ofExcept <| LibTorch.Tape.sum t10 (s := vector) yId
       let expectedValue := if probability == 0.0 then 10.0 else
         if probability == 0.5 then 6.0 else 0.0
       let expectedInput := FloatArray.mk <| if probability == 0.0 then #[1.0, 1.0, 1.0, 1.0]
         else if probability == 0.5 then #[0.0, 0.0, 2.0, 0.0] else #[0.0, 0.0, 0.0, 0.0]
       let expectedProbability := if probability == 0.0 then 10.0 else
         if probability == 0.5 then 12.0 else 0.0
-      let output ← IO.ofExcept <| tape.requireValue outId scalar
+      let output ← IO.ofExcept <| LibTorch.Tape.requireValue tape outId scalar
       assertFloatArrayEq "dropout forward value"
         (← Buffer.toFloatArrayIO output) (FloatArray.mk #[expectedValue])
       let denseSeed : LibTorch.AnyBuffer := { s := scalar, buf := ← Buffer.fullIO 1 1.0 }
@@ -348,7 +352,8 @@ def runConstantBranchGradientStress : IO Unit := do
       for gradient in dense do
         discard <| Buffer.releaseIO gradient.buf
       let sparseSeed : LibTorch.AnyBuffer := { s := scalar, buf := ← Buffer.fullIO 1 1.0 }
-      let sparse ← tape.backwardSparse outId sparseSeed (fun id => id == xId || id == pId)
+      let sparse ← LibTorch.Tape.backwardSparse tape outId sparseSeed
+          (fun id => id == xId || id == pId)
       try
         let inputGradient ← match sparse.get? xId with
           | some gradient => pure gradient
@@ -370,7 +375,7 @@ def runConstantBranchGradientStress : IO Unit := do
           if node.ownsValue then
             discard <| Buffer.releaseIO node.value.buf
           for buffer in node.cleanup do
-            discard <| Buffer.releaseIO buffer
+            discard <| Buffer.releaseIO buffer.buf
 
 def runSparseLifetimeStress : IO Unit := do
   IO.println "== repeated sparse-backward ownership =="
@@ -378,7 +383,7 @@ def runSparseLifetimeStress : IO Unit := do
   let before ← Buffer.memory
   let s : Shape := [4]
   let x : Tensor Float s := (Tensor.from #[0.25, -0.50, 0.75, -1.00]).reshape [4] (by dsimp; decide)
-  let t0 : LibTorch.Tape := LibTorch.Tape.empty
+  let t0 : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer := Runtime.Autograd.Tape.empty
   let (t1, xId) := LibTorch.Tape.leaf (t := t0) (Utils.tensorToAnyBuffer x) (name := some "x")
   let (t2, outId) ← IO.ofExcept (LibTorch.Tape.sum (t := t1) (s := s) xId)
 
@@ -503,7 +508,7 @@ def runMatmulStress : IO Unit := do
   Utils.assertTensorApprox (s := sY1) "matmul stress case1 fp64" yFp641 yRef1 (tol := 1e-9)
 
   -- Dot-product-shaped case: small but asymmetric enough to exercise the degenerate leading
-  -- dimensions in the binary64 matmul bridge.
+  -- dimensions in the binary64 product.
   let sA2 : Shape := [1, 7]
   let sB2 : Shape := [7, 1]
   let sY2 : Shape := [1, 1]

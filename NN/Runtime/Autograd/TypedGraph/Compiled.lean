@@ -27,7 +27,7 @@ variable {α : Type} [Storage α] {Γ : List Shape}
 
 /-- Adapt saved programs to the runtime tape representation. -/
 def toTape {ss : List Shape} (saved : SavedGraph α Γ ss)
-    (inputs : TorchLean.TensorPack α Γ) : Runtime.Autograd.Tape α :=
+    (inputs : TorchLean.TensorPack α Γ) : Runtime.Autograd.Tape (Spec.SomeTensor α) :=
   match saved with
   | .nil => Graph.addLeaves Runtime.Autograd.Tape.empty inputs
   | .snoc previous prepared value =>
@@ -92,7 +92,7 @@ namespace Compiled
 variable {α : Type} [Storage α] {Γ ss : List Shape}
 
 /-- Materialize the runtime tape when required by another engine consumer. -/
-def toTape (compiled : Compiled α Γ ss) : Tape α :=
+def toTape (compiled : Compiled α Γ ss) : Tape (Spec.SomeTensor α) :=
   compiled.saved.toTape compiled.inputs
 
 /-- Compute every gradient from a typed seed pack, retaining the dense floating-point order. -/

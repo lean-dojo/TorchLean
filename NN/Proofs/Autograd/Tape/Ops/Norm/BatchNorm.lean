@@ -175,7 +175,7 @@ theorem normalizedJvp_normalizedBackward_adjoint
   simp only [Spec.BatchNorm.normalizedBackward]
   rw [dot_mat_eq_sum, dot_vec_eq_sum, dot_vec_eq_sum]
   simp only [Spec.BatchNorm.normalizedJvp]
-  simp only [Norm.get2_addSpec, Norm.get2_subSpec, Norm.get2_mulSpec,
+  simp only [get2_addSpec, get2_subSpec, Norm.get2_mulSpec,
     Norm.get2_broadcastAfterSum_one, Norm.getScalar_reduceMean_one, Norm.getScalar_reduceSum_one]
   rw [← Finset.sum_add_distrib, ← Finset.sum_add_distrib]
   apply Finset.sum_congr rfl

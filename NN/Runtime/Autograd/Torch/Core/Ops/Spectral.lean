@@ -29,7 +29,9 @@ open Spec TorchLean
 /-- Record a LibTorch tape operation only for a CUDA session, preserving reference identity. -/
 @[inline] def recordCudaOp? {α : Type} [Storage α] {shape : Shape} (s : EagerSession α)
     (op : NN.Backend.BackendOp) (refs : Array (Option RefIdentity))
-    (record : LibTorch.Tape → Result (LibTorch.Tape × Nat)) : IO (Option (TensorRef α shape)) := do
+    (record : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer → Result
+        (Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer × Nat)) : IO (Option
+            (TensorRef α shape)) := do
   if Config.device s.options != .cuda then return none
   let cpu : IO (TensorRef α shape) :=
     throw <| IO.userError "torch: LibTorch tape hook requires a CUDA session"

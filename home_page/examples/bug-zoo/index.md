@@ -62,12 +62,7 @@ Adding epsilon shifts a denominator; it does not make every input safe, since a 
 Real-number proofs do not automatically describe a binary32 run.
 [`FloatBoundary.lean`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/BugZoo/FloatBoundary.lean)
 uses FloatLib's native import/export, finite-input addition/subtraction, and square-root theorems
-directly. `CompilerBoundary.lean` proves that successful lowering of
-the supported IR fragment preserves node denotations in a Lean reference evaluator. Its hypothesis
-excludes raw logarithm nodes. Lowering also rejects GELU and log-softmax rather than replacing
-their numerical formulas. These restrictions concern the canonical-IR forward lowering; the
-ordinary eager and typed-graph model paths still support both. External compiler and native-kernel
-conformance remain separate obligations.
+directly. External compiler and native-kernel conformance remain separate obligations.
 
 The final geometry case starts from tensors exported by a detector. Lean recomputes camera
 projection and positive depth, then checks that the reported two-dimensional box, expanded by its
@@ -108,7 +103,6 @@ The source files and the contracts they expose are listed below.
 | `AutogradDomain.lean` | Masking after undefined division | The reference expression shifts the denominator by epsilon before masking. |
 | `StableLoss.lean` | Numerically unstable losses and domain-sensitive ops | Logit losses use the stable log-softmax path. |
 | `ShapeAndBroadcast.lean` | Missing axes and silent broadcasts | Dimension changes are explicit terms with shape evidence. |
-| `CompilerBoundary.lean` | Optimized graphs silently changing semantics | Successful supported IR lowering preserves reference node denotations, assuming no raw logarithm nodes. |
 | `FloatBoundary.lean` | Real-valued reasoning applied to Float32 runs | FloatLib proves native round trips, finite-input add/sub agreement, and total square-root agreement through native export; configured division has a separate software-model refinement. |
 | `Geometry3DProjection.lean` | Camera convention, depth, layout, and projection-box errors | The checker recomputes projection, positive depth, and 2D box enclosure up to the declared tolerance. |
 

@@ -15,7 +15,7 @@ import TorchLeanBlueprint.Guide.Ch2_Frontend.BuildingModels
 import TorchLeanBlueprint.Guide.Ch2_Frontend.DataAndLoaders
 import TorchLeanBlueprint.Guide.Ch2_Frontend.TrainingFromScratch
 import TorchLeanBlueprint.Guide.Ch2_Frontend.TorchLeanAPI
-import TorchLeanBlueprint.Guide.Ch2_Frontend.ExecutionModes
+import TorchLeanBlueprint.Guide.Ch2_Frontend.RunConfiguration
 import TorchLeanBlueprint.Guide.Ch2_Frontend.CustomComputations
 import TorchLeanBlueprint.Guide.Ch2_Frontend.BackendSelection
 import TorchLeanBlueprint.Guide.Ch2_Frontend.AutogradWalkthrough
@@ -190,9 +190,8 @@ Training changes the parameters in the forward map
 $$`f_\theta(x)=W_2\,\operatorname{ReLU}(W_1x+b_1)+b_2`.
 
 To compute an update, reverse mode needs intermediate values from the forward pass, and the
-optimizer may need state from earlier updates. Eager execution and typed graph execution retain
-that information differently. CUDA and LibTorch add a choice of implementation for the numerical
-operations.
+optimizer may need state from earlier updates. The autograd tape retains that information as the
+model runs. CUDA and LibTorch add a choice of implementation for the numerical operations.
 
 At the ReLU, reverse mode needs to know which pre-activations were positive. At a linear layer,
 it needs the input to form the weight gradient and the weight matrix to propagate sensitivity
@@ -206,7 +205,7 @@ definition of the loss. Interoperation adds another concrete question: whether t
 weights, layouts, and operation conventions describe the same model. Following one forward
 and backward calculation through these interfaces makes their roles easier to distinguish.
 
-{include 2 TorchLeanBlueprint.Guide.Ch2_Frontend.ExecutionModes}
+{include 2 TorchLeanBlueprint.Guide.Ch2_Frontend.RunConfiguration}
 
 {include 2 TorchLeanBlueprint.Guide.Ch2_Frontend.CustomComputations}
 

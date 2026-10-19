@@ -30,7 +30,7 @@ For library build targets and contribution checks, see
 
 ## CPU checks
 
-The default build provides the `pureLean` and `portableCPU` runtimes. It needs no LibTorch SDK or
+The default build provides the CPU runtime. It needs no LibTorch SDK or
 CUDA toolkit, and the GPU buffer symbols fail with a message to rebuild.
 Hosted CI selects `cuda=false` explicitly;
 its results establish CPU behavior and do not establish GPU correctness.

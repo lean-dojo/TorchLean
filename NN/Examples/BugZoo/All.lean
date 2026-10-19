@@ -11,7 +11,6 @@ public import NN.Examples.BugZoo.StableLoss
 public import NN.Examples.BugZoo.IgnoredLabelLoss
 public import NN.Examples.BugZoo.AutogradDomain
 public import NN.Examples.BugZoo.AttentionMask
-public import NN.Examples.BugZoo.CompilerBoundary
 public import NN.Examples.BugZoo.FloatBoundary
 public import NN.Examples.BugZoo.NormalizationState
 public import NN.Examples.BugZoo.LayerNormDegenerateAxis

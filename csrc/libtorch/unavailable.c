@@ -118,8 +118,6 @@ UNAVAILABLE_IO(torchlean_cuda_buffer_conv_io,
 #define UNAVAILABLE(TYPE, NAME, ...) \
   LEAN_EXPORT TYPE NAME(__VA_ARGS__) { lean_internal_panic(TORCHLEAN_UNAVAILABLE_MESSAGE); }
 
-UNAVAILABLE(lean_obj_res, torchlean_dgemm_cuda,
-    b_lean_obj_arg AObj, b_lean_obj_arg BObj, uint32_t m, uint32_t n, uint32_t p)
 UNAVAILABLE(lean_obj_res, torchlean_cuda_conv_fwd,
     b_lean_obj_arg inputObj, b_lean_obj_arg kernelObj, b_lean_obj_arg biasObj,
     b_lean_obj_arg inSpatialObj, b_lean_obj_arg kernelSpatialObj, b_lean_obj_arg strideObj,
@@ -156,10 +154,10 @@ UNAVAILABLE(lean_obj_res, torchlean_cuda_smooth_maxpool_bwd,
     b_lean_obj_arg kernelObj, b_lean_obj_arg strideObj, b_lean_obj_arg paddingObj, uint32_t inC)
 UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_reduce_sum_by_row,
     b_lean_obj_arg BObj, uint32_t rows, uint32_t cols)
-UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_reduce_max_by_column,
-    b_lean_obj_arg BObj, uint32_t rows, uint32_t cols)
 UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_reduce_max_by_row,
     b_lean_obj_arg BObj, uint32_t rows, uint32_t cols)
+UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_top_k_mask_by_row,
+    b_lean_obj_arg BObj, uint32_t rows, uint32_t cols, uint32_t k)
 UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_hard_masked_softmax_by_row,
     b_lean_obj_arg ScoresObj, b_lean_obj_arg MaskObj, uint32_t rows, uint32_t cols)
 UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_concat1d,

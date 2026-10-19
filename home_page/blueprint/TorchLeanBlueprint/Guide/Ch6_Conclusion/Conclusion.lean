@@ -266,8 +266,8 @@ scripts/lake.sh exe torchlean quickstart_autograd
 # budget.
 scripts/lake.sh exe torchlean quickstart_mlp \
   --device cpu --steps 200 --seed 2026
-# Exercise eager execution of a graph-based model on CPU.
-scripts/lake.sh exe torchlean graphspec --device cpu --execution eager
+# Train a GraphSpec model on the CPU.
+scripts/lake.sh exe torchlean graphspec --device cpu
 # Compare evaluation and bounds attached to one operation
 # graph.
 scripts/lake.sh exe torchlean one_semantic_universe
@@ -895,7 +895,6 @@ parameter shapes
 loss
 data source and preprocessing
 arithmetic
-execution mode
 device and selected providers
 forward and backward implementation responsibility
 available theorem or checker

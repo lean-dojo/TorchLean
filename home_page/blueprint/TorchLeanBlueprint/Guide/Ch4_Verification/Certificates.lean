@@ -28,7 +28,7 @@ open NN.Verification.Util.Tensor
 open TorchLean (Tensor)
 -- Two named imports rather than the whole `Json` namespace: the JSON helpers share short
 -- names like `expectString` with the checker's own vocabulary, and only these two are used.
-open NN.Verification.Json (fromExcept parseEndpointBoxRegion)
+open NN.Verification.Json (parseEndpointBoxRegion)
 
 -- One signature below prints wider than this file's 100-column limit, so its `leanOutput` block
 -- asks for `whitespace := lax` and is wrapped in the source. The rendered page still shows the
@@ -363,7 +363,7 @@ def tryLeaf (label text : String) : IO Unit := do
   | .ok value =>
     try
       let box ←
-        fromExcept (parseEndpointBoxRegion "leaf" value)
+        IO.ofExcept (parseEndpointBoxRegion "leaf" value)
       let lb ←
         NN.Verification.Json.expectFieldFiniteFloatArray
           value "lb" "leaf"
@@ -759,8 +759,8 @@ IBPNodeCert.checkIBPNodeCertificate : NN.MLTheory.CROWN.Graph →
 CROWNNodeCert.checkCROWNNodeCertificate : NN.MLTheory.CROWN.Graph →
   NN.MLTheory.CROWN.Graph.ParamStore
       (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-        CROWNNodeCert.checkCROWNNode._proof_1 CROWNNodeCert.checkCROWNNode._proof_2
-        CROWNNodeCert.checkCROWNNode._proof_3 CROWNNodeCert.checkCROWNNode._proof_4) →
+        CROWNNodeCert.checkNodeEntries._proof_1 CROWNNodeCert.checkNodeEntries._proof_2
+        CROWNNodeCert.checkNodeEntries._proof_3 CROWNNodeCert.checkNodeEntries._proof_4) →
     String → IO Bool
 ```
 
@@ -772,8 +772,8 @@ AlphaBetaCROWNNodeCertificate : Type
 checkAlphaBetaCROWNNodeCertificate : NN.MLTheory.CROWN.Graph →
   NN.MLTheory.CROWN.Graph.ParamStore
       (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-        AlphaBetaCROWNNodeCertificate._proof_1 AlphaBetaCROWNNodeCertificate._proof_2
-        AlphaBetaCROWNNodeCertificate._proof_3 AlphaBetaCROWNNodeCertificate._proof_4) →
+        replayStep._proof_1 replayStep._proof_2
+        replayStep._proof_3 replayStep._proof_4) →
     String → IO Bool
 ```
 

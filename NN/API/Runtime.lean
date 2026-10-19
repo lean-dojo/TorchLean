@@ -16,7 +16,7 @@ public import NN.Runtime.Autograd.Torch.Core.TensorTransfer -- shake: keep
 /-!
 # Runtime Selection
 
-Arithmetic semantics, execution mode, device, and backend-contract inspection.
+Arithmetic semantics, device, and backend-contract inspection.
 
 `map batchShape input f` applies a reference-valued operation to each sample without fixing
 the batch rank. `linear (batchShape := ...)` applies an affine map to the final feature axis.
@@ -24,7 +24,7 @@ the batch rank. `linear (batchShape := ...)` applies an affine map to the final 
 
 @[expose] public section
 
-/-- Arithmetic semantics, execution mode, and device for a run. The record is defined with the
+/-- Arithmetic semantics and device for a run. The record is defined with the
 Torch runtime; this is the name the public API uses, so user code never spells
 `Runtime.Autograd.Torch` to configure a run. -/
 abbrev TorchLean.Runtime.Config := Runtime.Autograd.Torch.Config
@@ -84,25 +84,6 @@ export Runtime.Autograd.Model
   (map maxPool avgPool smoothMaxPool layerNorm attention conv convTranspose)
 export Runtime.Autograd.Model.F (permute softmax logSoftmax)
 
-export Runtime.Autograd.Torch (ExecutionMode)
-
-namespace ExecutionMode
-
-export Runtime.Autograd.Torch.ExecutionMode (eager typedGraph)
-
-/-- Stable command-line spelling of an execution mode. -/
-def cliName : ExecutionMode → String
-  | .eager => "eager"
-  | .typedGraph => "typed-graph"
-
-/-- Parse the stable command-line spelling of an execution mode. -/
-def parse (value : String) : Except String ExecutionMode :=
-  match value with
-  | "eager" => pure .eager
-  | "typed-graph" => pure .typedGraph
-  | _ => throw s!"unknown execution mode `{value}` (supported: eager | typed-graph)"
-
-end ExecutionMode
 
 export NN.Backend (Device)
 
@@ -129,8 +110,5 @@ def planReport (config : Config) (ops : Array NN.Backend.BackendOp) : Except Str
 end BackendContracts
 
 end Runtime
-
--- Execution choices share the application namespace with device selection.
-export Runtime.ExecutionMode (eager typedGraph)
 
 end TorchLean

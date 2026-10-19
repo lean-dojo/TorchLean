@@ -58,7 +58,7 @@ def evaluateSpectralConv (grid width modes : Nat) (x wRe wIm dY : Array Float)
     unless x.size == grid * width && dY.size == grid * width &&
         wRe.size == modes * width * width && wIm.size == modes * width * width do
       throw <| IO.userError "spectral test input shape mismatch"
-    let session ← Torch.Internal.EagerSession.new (α := Float) { device, execution := .eager }
+    let session ← Torch.Internal.EagerSession.new (α := Float) { device }
     try
       let xRef ← session.input
         (Tensor.generateFlat [grid, width] fun i => x[i]!) (requiresGrad := backward)
@@ -70,7 +70,7 @@ def evaluateSpectralConv (grid width modes : Nat) (x wRe wIm dY : Array Float)
         valid.1 valid.2.1 valid.2.2 xRef realRef imagRef path) session
       let output := floatArray ((← session.getValue outputRef).to (Array Float))
       if device == .cuda then
-        let tape ← session.cudaTape.get
+        let tape ← session.cudaTape
         let forwardCount := (tape.nodes.filter fun node => node.name == some "rfft1d").size
         let inverseCount := (tape.nodes.filter fun node => node.name == some "irfft1d").size
         let expected := if path == .automatic then 1 else 0

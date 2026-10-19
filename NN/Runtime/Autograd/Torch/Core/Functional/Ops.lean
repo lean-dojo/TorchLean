@@ -183,6 +183,12 @@ class Ops (m : Type → Type) (α : Type) [Storage α] [Context α] where
   /-- Keep the value and stop gradients through this reference. -/
   detach : {s : Shape} → (x : Ref s) → m (Ref s)
   /--
+  One for the `k` largest entries of every row along the last axis and zero for the others, with
+  ties going to the lower index (`Spec.MoE.topKMaskSpec`). The mask is constant away from ties and
+  no gradient flows through it; a router learns through the gates the mask selects.
+  -/
+  topKMask : {s : Shape} → (k : Nat) → (x : Ref s) → m (Ref s)
+  /--
   Apply `log(softplus(x) + epsilon)` elementwise.
 
   The derivative is `sigmoid(x) / (softplus(x) + epsilon)`, with `epsilon` held fixed. Over the

@@ -34,6 +34,8 @@ Files:
   embeddings (`oneHot @ W`) and the corresponding VJP.
 - `PositionalEncoding.lean`: learnable/sinusoidal positional encodings and RoPE style rotations.
 - `Dropout.lean`: deterministic inference and mask-driven training dropout specs.
+- `MoE.lean`: mixture of experts: top-`k` routing with ties to the lower index, Mixtral's gates, and
+  the gated sum in increasing expert index.
 - `Loss.lean`: common scalar losses and their derivatives.
 - `Gnn.lean`: a compact GCN-style graph layer and backward rules.
 - `Rnn.lean`, `Lstm.lean`, `Gru.lean`: recurrent layers and BPTT-style backwards.

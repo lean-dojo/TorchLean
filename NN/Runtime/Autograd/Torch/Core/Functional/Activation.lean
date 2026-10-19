@@ -23,7 +23,7 @@ open Spec TorchLean TorchLean.Tensor
 
 -- Re-export the capability operations; only argument adapters and compositions need bodies.
 export Ops
-  (relu sigmoid tanh softmaxLast softplus exp sin cos log inv logSoftmaxLast gelu)
+  (relu sigmoid tanh softmaxLast softplus exp sin cos log inv logSoftmaxLast gelu topKMask)
 
 variable {m : Type → Type} {α : Type} [Storage α] [Context α] [Monad m]
     [Ops (m := m) (α := α)]

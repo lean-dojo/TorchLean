@@ -47,6 +47,4 @@ let trained ← session.finish { before, after }
 ```
 
 `trainer.train` is exactly this pattern with dataset cycling, logging, and checkpoints added.
-Benchmark and diagnostic code that repeatedly trains one sample should import
-`NN.API.Trainer.FixedSample` explicitly.
 -/

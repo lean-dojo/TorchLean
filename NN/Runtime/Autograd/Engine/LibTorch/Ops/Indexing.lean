@@ -31,7 +31,8 @@ namespace Tape
 
 /-- Concatenate along the leading dimension, preserving the common trailing shape. -/
 @[inline]
-def concat {n m : Nat} {s : Shape} (t : Tape) (aId bId : Nat) : Result (Tape × Nat) := do
+def concat {n m : Nat} {s : Shape} (t : Tape AnyBuffer) (aId bId : Nat) : Result (Tape AnyBuffer
+    × Nat) := do
   let inner : Nat := Spec.Shape.size s
   let nLen : Nat := n * inner
   let mLen : Nat := m * inner
@@ -46,8 +47,8 @@ def concat {n m : Nat} {s : Shape} (t : Tape) (aId bId : Nat) : Result (Tape × 
       (dA, dB))
 
 /-- Slice along the leading dimension: `x[start:start+len]`. -/
-@[inline] def slice {n : Nat} {s : Shape} (t : Tape) (xId : Nat) (start len : Nat)
-    (_h : start + len ≤ n) : Result (Tape × Nat) := do
+@[inline] def slice {n : Nat} {s : Shape} (t : Tape AnyBuffer) (xId : Nat) (start len : Nat)
+    (_h : start + len ≤ n) : Result (Tape AnyBuffer × Nat) := do
   let inner : Nat := Spec.Shape.size s
   let nTot : Nat := n * inner
   let startOff : Nat := start * inner
@@ -116,9 +117,9 @@ def finTensorToIndexArray {n count : Nat}
 end Indexing
 
 /-- Select one bounded coordinate from any tensor axis. -/
-@[inline] def select {s : Shape} (t : Tape) (xId : Nat) (axis : Nat)
+@[inline] def select {s : Shape} (t : Tape AnyBuffer) (xId : Nat) (axis : Nat)
     [Shape.AxisInBounds axis s] (index : Fin (Shape.axisSize s axis)) :
-    Result (Tape × Nat) := do
+    Result (Tape AnyBuffer × Nat) := do
   let outShape := s.eraseAxis axis
   let x ← requireValue (t := t) xId s
   let rows32 ← AnyBuffer.natToU32Checked (Shape.axisSize s axis)
@@ -131,7 +132,7 @@ end Indexing
   let moved := Indexing.permuteBorrowed x s steps
   let gathered := Buffer.gatherRows moved rows32 cols32 indices one32
   let y := Indexing.releasePermutedThen steps moved gathered
-  let node : Node :=
+  let node : Node AnyBuffer :=
     { name := some s!"select(axis={axis}, index={index.val})"
       value := { s := outShape, buf := y }
       requiresGrad := (t.getNode? xId).any (·.requiresGrad)
@@ -147,9 +148,9 @@ end Indexing
   pure (t.addNode node)
 
 /-- Select several bounded coordinates from any tensor axis. -/
-@[inline] def indexSelect {s : Shape} (t : Tape) (xId : Nat) (axis count : Nat)
+@[inline] def indexSelect {s : Shape} (t : Tape AnyBuffer) (xId : Nat) (axis count : Nat)
     [Shape.AxisInBounds axis s]
-    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape × Nat) := do
+    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape AnyBuffer × Nat) := do
   let outShape := s.replaceAxis axis count
   let tailShape := s.eraseAxis axis
   let frontInputShape := .dim (Shape.axisSize s axis) tailShape
@@ -167,7 +168,7 @@ end Indexing
   let gathered := Buffer.gatherRows moved rows32 cols32 indexArray count32
   let frontY := Indexing.releasePermutedThen steps moved gathered
   let y := Indexing.permuteOwned frontY frontOutputShape reverseSteps
-  let node : Node :=
+  let node : Node AnyBuffer :=
     { name := some s!"index_select(axis={axis})"
       value := { s := outShape, buf := y }
       requiresGrad := (t.getNode? xId).any (·.requiresGrad)
@@ -185,9 +186,9 @@ end Indexing
   pure (t.addNode node)
 
 /-- Add indexed source slices into any tensor axis. -/
-@[inline] def scatterAdd {s : Shape} (t : Tape) (baseId sourceId : Nat) (axis count : Nat)
+@[inline] def scatterAdd {s : Shape} (t : Tape AnyBuffer) (baseId sourceId : Nat) (axis count : Nat)
     [Shape.AxisInBounds axis s]
-    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape × Nat) := do
+    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape AnyBuffer × Nat) := do
   let sourceShape := s.replaceAxis axis count
   let tailShape := s.eraseAxis axis
   let frontInputShape := .dim (Shape.axisSize s axis) tailShape
@@ -208,7 +209,7 @@ end Indexing
   let frontY := Indexing.releasePermutedThen steps movedSource scattered
   let frontY := Indexing.releasePermutedThen steps movedBase frontY
   let y := Indexing.permuteOwned frontY frontInputShape reverseSteps
-  let node : Node :=
+  let node : Node AnyBuffer :=
     { name := some s!"scatter_add(axis={axis})"
       value := { s := s, buf := y }
       requiresGrad := (t.getNode? baseId).any (·.requiresGrad) ||

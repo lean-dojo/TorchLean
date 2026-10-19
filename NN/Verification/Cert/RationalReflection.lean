@@ -122,10 +122,6 @@ private theorem cast_foldl {ι : Type} (xs : List ι)
 noncomputable def realBox {s : Shape} (b : Box ℚ s) : Box ℝ s :=
   ⟨realTensor b.lo, realTensor b.hi⟩
 
-/-- Interpret a dimension-carrying rational box over the reals. -/
-noncomputable def realFlatBox (b : FlatBox ℚ) : FlatBox ℝ :=
-  ⟨b.dim, realTensor b.lo, realTensor b.hi⟩
-
 /-- Interpret the coefficients of an exact affine form. -/
 noncomputable def realAffine {n m : Nat} (a : AffineVec ℚ n m) : AffineVec ℝ n m :=
   ⟨realTensor a.A, realTensor a.c⟩

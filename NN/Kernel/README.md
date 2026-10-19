@@ -201,8 +201,9 @@ retains Lean's wraparound and division-by-zero conventions.
 `Program.eval` is the pure checked evaluator. `Program.eval_eq_reference` proves agreement with
 the source calculation for every set of tensor arguments and output shape, including failures.
 Host arrays and resident buffers stay inside the native bridge; callers use `.run` with tensors.
-The autograd tape retains native binary32/binary64 or complete configured words. The separate canonical
-`Graph.runBuffers` forward runner still requires binary32 inputs and payloads.
+The autograd tape retains native binary32/binary64 or complete configured words.
+`Graph.runBuffers`, the resident CUDA runner for custom-kernel graphs, requires binary32 inputs and
+payloads.
 
 ## What is proved
 

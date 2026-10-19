@@ -29,8 +29,8 @@ do not record gradients. LayerNorm continues to use the existing normalization p
 
 ## Build selection
 
-`scripts/lake.sh build` selects the default `pureLean`/`portableCPU` build, without an SDK or
-toolkit. `cuda=true` requires the complete LibTorch CUDA backend.
+`scripts/lake.sh build` selects the default build, which provides the CPU runtime without an SDK
+or toolkit. `cuda=true` requires the complete LibTorch CUDA backend.
 
 See the [LibTorch build instructions](../../scripts/README.md#libtorch-cuda-build) for SDK
 selection, prerequisites, compiler controls, cache selection, and build/test commands.
@@ -146,8 +146,7 @@ Current memory policy:
 - the native allocator exposes a collection hook used after large eager CUDA training steps.
 
 This reduces accidental lifetime extension from Lean external object finalizers. Execution
-remains eager. `--execution typed-graph` selects TorchLean's proof/SSA graph backend; CUDA Graph
-capture/replay is not implemented.
+remains eager; CUDA Graph capture/replay is not implemented.
 
 ## Sanitizer Harness
 

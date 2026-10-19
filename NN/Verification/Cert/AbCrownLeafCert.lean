@@ -119,7 +119,7 @@ def checkAbCrownLeafArtifact (path : String) : IO Unit := do
   let inputDim ← expectFieldNat topObj "input_dim" "top-level"
 
   let rootObj ← expectFieldObject topObj "root" "top-level"
-  let root ← fromExcept <| parseEndpointBoxRegion "root" rootObj
+  let root ← IO.ofExcept <| parseEndpointBoxRegion "root" rootObj
   if root.dim ≠ inputDim then
     throw <| IO.userError
       s!"root dimension mismatch: input_dim={inputDim}, endpoints={root.dim}"
@@ -137,7 +137,7 @@ def checkAbCrownLeafArtifact (path : String) : IO Unit := do
   let mut boxes : Array (Array Float × Array Float) := #[]
   for leaf in leaves do
     let leafObj ← expectObject leaf "leaf"
-    let region ← fromExcept <| parseEndpointBoxRegion "leaf" leafObj
+    let region ← IO.ofExcept <| parseEndpointBoxRegion "leaf" leafObj
     let lb ← expectFieldFiniteFloatArray leafObj "lb" "leaf"
     let thr ← expectFieldFiniteFloatArray leafObj "threshold" "leaf"
     if region.dim ≠ inputDim then
@@ -201,7 +201,7 @@ def checkAbCrownLeafArtifact (path : String) : IO Unit := do
   IO.println s!"[artifact] Checked {leaves.size} leaves: ok={okCount}, bad={badCount}"
   if badCount > 0 then
     throw <| IO.userError s!"Artifact failed checks for {badCount} leaves"
-  unless ← fromExcept (leavesCoverRoot root.lo root.hi boxes) do
+  unless ← IO.ofExcept (leavesCoverRoot root.lo root.hi boxes) do
     throw <| IO.userError "Artifact failed: the leaf boxes do not cover the root box"
   IO.println "[artifact] consistent: the leaves cover the root and every leaf clears its threshold."
   IO.println <| "[artifact] The lower bounds are the producer's claims; " ++

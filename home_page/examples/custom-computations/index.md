@@ -431,8 +431,8 @@ integer and other CPU-only forward types likewise use a reported CPU fallback wh
 An unavailable GPU, a failed compilation or an invalid read is still an error, not a fallback.
 Boolean or integer computations do not acquire an analytic derivative simply because they run on CPU.
 
-The separate canonical `Graph.runBuffers` forward runner still requires binary32 inputs and
-payloads. Its format restriction does not apply to the standalone `.run` examples above.
+`Graph.runBuffers`, the resident CUDA runner for graphs with custom kernels, requires binary32
+inputs and payloads. Its format restriction does not apply to the standalone `.run` examples above.
 
 The [blueprint chapter]({{ '/blueprint/Runtime___-Autograd___-and-Interop/Custom-Tensor-Computations/' | relative_url }})
 checks the examples above during the guide build. For the API, see

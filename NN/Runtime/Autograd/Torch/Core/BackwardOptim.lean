@@ -42,10 +42,10 @@ def backwardDenseAllCuda {α : Type} [TorchLean.Storage α] [TensorTransfer α]
   IO (Array Runtime.Autograd.LibTorch.AnyBuffer) := do
   if Config.device s.options != .cuda then
     throw <| IO.userError "torch: backwardDenseAllCuda called on non-CUDA eager session"
-  let t ← s.cudaTape.get
+  let t ← s.cudaTape
   let seedAny ← CudaBridge.toAnyBuffer (α := α) (s := sh) seed
   IO.ofExcept <|
-    Runtime.Autograd.LibTorch.Tape.backwardDenseAll (t := t) (outId := out.id) (seed := seedAny)
+    Runtime.Autograd.Tape.backwardDenseAll (t := t) (outId := out.id) (seed := seedAny)
 
 /--
 Run scalar-loss CUDA backprop and return gradients only for trainable parameter leaves.
@@ -67,7 +67,7 @@ def backwardScalarParamGradsCuda {α : Type} [TorchLean.Storage α] [TensorTrans
     (loss : TensorRef α Shape.scalar) (seed : α := 1) : IO CudaGradMap := do
   if Config.device s.options != .cuda then
     throw <| IO.userError "torch: backwardScalarParamGradsCuda called on non-CUDA eager session"
-  let t ← s.cudaTape.get
+  let t ← s.cudaTape
   let params ← s.paramsByLeaf.get
   let seedAny ← CudaBridge.toAnyBuffer (α := α) (s := Shape.scalar) (Tensor.scalar seed)
   checkCudaAnyBufferSize "scalar CUDA backward seed" seedAny
@@ -117,7 +117,7 @@ def backwardDenseAll {α : Type} [TorchLean.Storage α] [TensorTransfer α]
     let gradsDev ← backwardDenseAllCuda (α := α) s (sh := sh) out seed
     gradsDev.mapM (fun g => CudaBridge.ofAnyBuffer (α := α) g)
   else
-    let t ← s.tape.get
+    let t ← s.cpuTape
     IO.ofExcept (Runtime.Autograd.Tape.backwardDenseAll (t := t) (outId := out.id)
       (seed := Spec.SomeTensor.ofTensor seed))
 
@@ -136,63 +136,13 @@ def grad {α : Type} [TorchLean.Storage α] {sh : Shape}
       s!"torch: grad shape mismatch (expected {Shape.pretty sh}, got {Shape.pretty gAny.shape})"
 
 /--
-Apply an SGD update to all parameters recorded via `use`.
-
-PyTorch comparison: `for p in params: p.data -= lr * p.grad`.
--/
-def sgdStepAll {α : Type} [TorchLean.Storage α] [TensorTransfer α] (s : EagerSession α)
-  [Sub α] [Mul α] [Add α] [Zero α]
-  (lr : α) (grads : Array (Spec.SomeTensor α)) : IO Unit := do
-  let groups ← parameterGroups s
-  -- Validate and combine all leaf cotangents before changing any parameter.
-  let prepared ← groups.mapM fun group => do
-    pure (group, ← denseGroupGradient group grads)
-  if Config.device s.options == .cuda then
-    let lrF ← TensorTransfer.toFloat (α := α) lr
-    let t0 ← s.cudaTape.get
-    for group in groups do
-      for id in group.leaves do
-        let value ← IO.ofExcept <|
-          Runtime.Autograd.LibTorch.Tape.requireValue (t := t0) (id := id) (s := group.parameter.s)
-        checkCudaAnyBufferSize "SGD parameter value" { s := group.parameter.s, buf := value }
-    let currentValues ← groups.mapM ParameterGroup.currentCudaValue
-    for ((group, gAny), currentValue) in prepared.zip currentValues do
-      let p := group.parameter
-      if hs : gAny.shape = p.s then
-        let gT : Tensor α p.s := gAny.cast hs
-        let gDev ← CudaBridge.toAnyBuffer (α := α) (s := p.s) gT
-        try
-          let updatedDev : Runtime.Autograd.LibTorch.AnyBuffer :=
-            { s := p.s
-              buf := Runtime.Autograd.LibTorch.Buffer.axpy currentValue.buf gDev.buf (-lrF) }
-          p.setCuda updatedDev
-        finally
-          releaseCudaAnyBuffer gDev
-      else
-        throw <| IO.userError "torch: internal grad shape mismatch during SGD"
-  else
-    for (group, gAny) in prepared do
-      let p := group.parameter
-      if hs : gAny.shape = p.s then
-        let pv ← group.currentHostValue
-        if hp : pv.shape = p.s then
-          let pvT : Tensor α p.s := pv.cast hp
-          let gT : Tensor α p.s := gAny.cast hs
-          let updated : Tensor α p.s :=
-            subSpec pvT (scaleSpec (α := α) (s := p.s) gT lr)
-          p.set (Spec.SomeTensor.ofTensor updated)
-        else
-          throw <| IO.userError "torch: internal param shape mismatch"
-      else
-        throw <| IO.userError "torch: internal grad shape mismatch during SGD"
-
-/--
 Check every trainable parameter, gradient, tape value, and optional Adam state before an optimizer
 changes a parameter. This prevents a malformed gradient map or checkpoint state from producing a
 partially applied update.
 -/
 def checkCudaOptimizerInputs {α : Type} [TorchLean.Storage α] (operation : String)
-    (tape : Runtime.Autograd.LibTorch.Tape) (params : Std.HashMap Nat (AnyParam α))
+    (tape : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer) (params : Std.HashMap Nat
+        (AnyParam α))
     (grads : CudaGradMap) (state : Option CudaAdamState := none) : IO Unit := do
   for (id, param) in params.toList.filter (fun entry => entry.2.requiresGrad) do
     let grad ← match grads.get? id with
@@ -258,7 +208,7 @@ def sgdStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
     throw <| IO.userError "torch: sgdStepAllCudaMap called on non-CUDA eager session"
   let lrF ← TensorTransfer.toFloat (α := α) lr
   checkCudaLearningRate "CUDA SGD" lrF
-  let t0 ← s.cudaTape.get
+  let t0 ← s.cudaTape
   let params ← s.paramsByLeaf.get
   checkCudaOptimizerInputs "CUDA SGD" t0 params grads
   let groups ← parameterGroups s
@@ -289,7 +239,7 @@ def applyCudaAdamUpdate {α : Type} [TorchLean.Storage α]
   let epsF := config.epsilon
   let oneMinusBeta1 := 1.0 - beta1F
   let oneMinusBeta2 := 1.0 - beta2F
-  let t0 ← s.cudaTape.get
+  let t0 ← s.cudaTape
   let params ← s.paramsByLeaf.get
   let mut state ← stateRef.get
   checkCudaOptimizerInputs operation t0 params grads (some state)

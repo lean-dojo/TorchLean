@@ -31,13 +31,13 @@ TorchLean's backend architecture, see the [Installation guide](https://lean-dojo
 ## Quickstart
 
 ```bash
-scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 10 --arithmetic ieee --execution eager
-scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 10 --execution eager
+scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 10 --arithmetic ieee
+scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 10
 
 # Optional GPU run with a CUDA-enabled LibTorch SDK, matching toolkit, and NVIDIA GPU:
 export TORCHLEAN_LIBTORCH_HOME=/absolute/path/to/libtorch
 scripts/lake.sh -Kcuda=true build
-scripts/lake.sh -Kcuda=true exe torchlean quickstart_mlp --device cuda --steps 10 --execution eager
+scripts/lake.sh -Kcuda=true exe torchlean quickstart_mlp --device cuda --steps 10
 ```
 
 The first quickstart uses [FloatLib](https://github.com/lean-dojo/FloatLib)'s binary32 arithmetic.
@@ -74,12 +74,11 @@ def ys : Tensor Float [4, 1] :=
 def data : Trainer.Dataset [2] [1] := Data.fromTensors xs ys
 
 def trainOnce : IO Unit := do
-  -- Select the loss and train through a typed graph with FloatLib binary32 arithmetic.
+  -- Select the loss and train on the CPU with FloatLib binary32 arithmetic.
   let trainer :=
     Trainer.new model
       { objective := mse
         optimizer := optim.sgd { learningRate := 0.05 }
-        execution := typedGraph
         device := cpu
         arithmetic := ieee }
   -- Inspect the initialized model before any parameter updates.

@@ -77,7 +77,7 @@ private def evaluate {sA sB sOut : Shape} (device : NN.Backend.Device)
     (equation : String) (a : Tensor Float sA) (b : Tensor Float sB)
     (seed : Tensor Float sOut) (expectFast : Bool) (maxElements : Nat) :
     IO (Array Float × Array Float × Array Float) := do
-  let session ← Torch.Internal.EagerSession.new (α := Float) { device, execution := .eager }
+  let session ← Torch.Internal.EagerSession.new (α := Float) { device }
   try
     let ar ← session.input a (requiresGrad := true)
     let br ← session.input b (requiresGrad := true)
@@ -88,9 +88,9 @@ private def evaluate {sA sB sOut : Shape} (device : NN.Backend.Device)
     if h : shape = sOut then
       let output : Torch.TensorRef Float sOut := h ▸ output
       let nodes : Array (Option String × Shape) ← if device == NN.Backend.Device.cuda then
-          pure <| (← session.cudaTape.get).nodes.map fun node => (node.name, node.value.s)
+          pure <| (← session.cudaTape).nodes.map fun node => (node.name, node.value.s)
         else
-          pure <| (← session.tape.get).nodes.map fun node => (node.name, node.value.shape)
+          pure <| (← session.cpuTape).nodes.map fun node => (node.name, node.value.shape)
       let matmuls := nodes.filter fun node =>
         node.1 == some "matmul" || node.1 == some "bmm"
       check s!"{equation}: matrix dispatch" (matmuls.size == if expectFast then 1 else 0)
@@ -150,7 +150,7 @@ private def checkLargeCuda : IO Unit := do
   let bShape : Shape := [8, 16, 64, 128]
   let outShape : Shape := [8, 16, 128, 128]
   let session ← Torch.Internal.EagerSession.new (α := Float)
-    { device := .cuda, execution := .eager }
+    { device := .cuda }
   try
     let a ← session.input (Tensor.ones (α := Float) aShape) (requiresGrad := true)
     let b ← session.input (Tensor.ones (α := Float) bShape) (requiresGrad := true)
@@ -174,7 +174,7 @@ private def checkLargeCuda : IO Unit := do
     let values := value.to (Array Float)
     check "large CUDA output length" (values.size == outShape.size)
     check "large CUDA all-one contraction values" (values.all fun x => x == 64.0)
-    check "large CUDA tape remains live" (!(← session.cudaTape.get).nodes.isEmpty)
+    check "large CUDA tape remains live" (!(← session.cudaTape).nodes.isEmpty)
   finally session.resetTape
 
 private def checkRejected (device : NN.Backend.Device) : IO Unit := do
@@ -191,7 +191,7 @@ private def checkRejected (device : NN.Backend.Device) : IO Unit := do
        ("ii,ij->j", [[1, 2], [2, 3]]),
        ("ii->i", [[0, 0]]),
        ("i,i->", [[0], [0]])] do
-    let session ← Torch.Internal.EagerSession.new (α := Float) { device, execution := .eager }
+    let session ← Torch.Internal.EagerSession.new (α := Float) { device }
     try
       let mut inputs : Array (Σ s : Shape, Torch.TensorRef Float s) := #[]
       for shape in shapes do
@@ -204,7 +204,7 @@ private def checkRejected (device : NN.Backend.Device) : IO Unit := do
 
 /-- Three operands must still use the general contraction and accumulate every leaf's VJP. -/
 private def checkThreeInputs (device : NN.Backend.Device) : IO Unit := do
-  let session ← Torch.Internal.EagerSession.new (α := Float) { device, execution := .eager }
+  let session ← Torch.Internal.EagerSession.new (α := Float) { device }
   try
     let a ← session.input ([2.0, 3.0] : Tensor Float [2]) (requiresGrad := true)
     let b ← session.input ([5.0, 7.0] : Tensor Float [2]) (requiresGrad := true)

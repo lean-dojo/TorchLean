@@ -1,8 +1,9 @@
 # Runtime Optimizers
 
-This folder owns the executable optimizer and scheduler equations used by TorchLean training loops.
+This folder owns the executable optimizer equations used by TorchLean training loops.
 The formulas are pure functions over typed tensors; runtime training code lifts them to parameter
-lists, optimizer state maps, checkpoints, and public trainer configuration.
+lists, optimizer state maps, checkpoints, and public trainer configuration. Learning-rate schedules
+belong to `TorchLean.Trainer.Scheduler`, in `NN/API/Trainer/Scheduler.lean`.
 
 The design is data-first rather than inheritance-first. Each optimizer carries exactly the state its
 update equation needs: SGD stores a learning rate, momentum SGD stores a buffer, Adam/AdamW store
@@ -21,13 +22,6 @@ used by their square-root and denominator calculations.
 
 - `Optimizers.lean`: per-tensor update equations for SGD, momentum SGD, AdaGrad, RMSProp, Adam,
   AdamW, Adadelta, Muon-style orthogonalized momentum, and GaLore-style projected updates.
-- `Schedulers.lean` and `Schedulers/`: deterministic learning-rate schedules. `Native.lean` holds
-  constant, step, exponential, cosine, cyclic, and one-cycle schedules; `PyTorch.lean` holds the
-  `Optim.Scheduler.PyTorch.CosineAnnealing` and `Optim.Scheduler.PyTorch.OneCycle` variants,
-  whose step-count conventions follow PyTorch. Training wraps these with
-  `LearningRateScheduler.torchCosineAnnealing` and `LearningRateScheduler.torchOneCycle`.
-  The native `StepDecay` also matches PyTorch's
-  step decay, so it has no separate compatibility variant.
 
 ## Public API
 

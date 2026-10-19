@@ -9,6 +9,7 @@ module
 public import NN.Proofs.Autograd.Tape.Algebra.Soundness
 public import NN.Runtime.Autograd.Engine.Core.Base
 public import NN.Spec.Core.Random
+public import NN.Spec.Layers.MoE
 
 /-!
 # GraphM Core
@@ -237,8 +238,8 @@ Deterministic `{0,1}` mask generator (seeded, pure).
 
 Note: for differentiation purposes, this node is treated as a **stop-gradient** op:
 `jvp = 0` and `vjp = 0` for all inputs (including `keepProb`). This matches the intended use in
-dropout where the probability is a hyperparameter (not differentiated), while keeping execution
-deterministic in `.typedGraph` execution.
+dropout where the probability is a hyperparameter (not differentiated), while keeping recorded
+graphs deterministic.
 -/
 def bernoulliMask {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape}
@@ -272,6 +273,22 @@ def detach {α : Type} [TorchLean.Storage α] [Context α]
   let node : NodeData α Δ (Γ ++ ss) s :=
     NodeData.ofLocalCompact (fun lookup => lookup.read ix)
       (forward := fun ctx _d => Tensor.detachSpec (ctx))
+      (jvp := fun _ctx _dctx _d => Tensor.full s (0 : α))
+      (vjp := fun _ctx _d _δ => Contributions.zero (α := α) (shapes := Γ ++ ss))
+  push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
+
+/--
+One for the `k` largest entries of every row along the last axis and zero elsewhere
+(`Spec.MoE.topKMaskSpec`). The mask is constant away from ties, so graph JVP and VJP are zero.
+-/
+def topKMask {α : Type} [TorchLean.Storage α] [Context α]
+    {Δ : Type} {Γ : List Shape} {s : Shape}
+    (k : Nat) (x : Var s) : MWith α Δ Γ (Var s) := do
+  let ⟨ss, g, _⟩ ← get
+  let ix ← liftM (mkIdx (Γ := Γ) ss x)
+  let node : NodeData α Δ (Γ ++ ss) s :=
+    NodeData.ofLocalCompact (fun lookup => lookup.read ix)
+      (forward := fun ctx _d => Spec.MoE.topKMaskSpec k ctx)
       (jvp := fun _ctx _dctx _d => Tensor.full s (0 : α))
       (vjp := fun _ctx _d _δ => Contributions.zero (α := α) (shapes := Γ ++ ss))
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node

@@ -21,7 +21,7 @@ scripts/lake.sh -Kcuda=true build
 Run a small CUDA example with a built-in dataset:
 
 ```bash
-scripts/lake.sh -Kcuda=true exe torchlean quickstart_mlp --device cuda --execution eager --steps 100
+scripts/lake.sh -Kcuda=true exe torchlean quickstart_mlp --device cuda --steps 100
 ```
 
 Run the maintained numerical and native-boundary suite:

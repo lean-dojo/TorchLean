@@ -156,9 +156,9 @@ namespace Internal
 def attention
   {n numHeads dModel headDim : Nat} (_hSeq : n ≠ 0)
   (batch : Nat) (_hBatch : batch ≠ 0) (inputShape : Shape)
-  (t : Tape) (wqId wkId wvId woId xId : Nat)
+  (t : Tape AnyBuffer) (wqId wkId wvId woId xId : Nat)
   (mask : Option (Tensor Bool [n, n]) := none) :
-  IO (Result (Tape × Nat)) := (do
+  IO (Result (Tape AnyBuffer × Nat)) := (do
   let one32 : UInt32 := 1
   let depth1 : UInt32 := 1
   let n32 ← ExceptT.mk (pure <| AnyBuffer.natToU32Checked n)
@@ -215,7 +215,7 @@ def attention
   let concat := Buffer.releaseThen outHeads <|
     Buffer.swapAdjacentAtDepth outHeads dimsHead depth1
   let y := Buffer.bmm concat wo one32 rows32 proj32 dModel32
-  let node : Node :=
+  let node : Node AnyBuffer :=
     { name := some "attention"
       value := { s := inputShape, buf := y }
       requiresGrad := (t.getNode? wqId).any (·.requiresGrad) ||
@@ -224,7 +224,7 @@ def attention
         (t.getNode? woId).any (·.requiresGrad) ||
         (t.getNode? xId).any (·.requiresGrad)
       parents := #[wqId, wkId, wvId, woId, xId]
-      cleanup := #[Qh, Kh, Vh, probabilities, concat]
+      cleanup := #[Qh, Kh, Vh, probabilities, concat].map AnyBuffer.ofWorkspace
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny inputShape
         -- Backprop through output projection: y = concat @ wo
@@ -263,7 +263,7 @@ def attention
           (wvId, { s := .dim dModel (.dim projDim .scalar), buf := dWv }),
           (woId, { s := .dim projDim (.dim dModel .scalar), buf := dWo })
         ] }
-  pure (t.addNode node) : ExceptT String IO (Tape × Nat)).run
+  pure (t.addNode node) : ExceptT String IO (Tape AnyBuffer × Nat)).run
 
 end Internal
 
@@ -275,10 +275,10 @@ The head count is `numHeads`, including one for single-head attention.
 -/
 def attention
   {n numHeads dModel headDim : Nat} (h1 : n ≠ 0)
-  (t : Tape) (wqId wkId wvId woId xId : Nat)
+  (t : Tape AnyBuffer) (wqId wkId wvId woId xId : Nat)
   (mask : Option (Tensor Bool [n, n]) := none)
   (batch : Option Nat := none) (hBatch : batch.getD 1 ≠ 0 := by decide) :
-  IO (Result (Tape × Nat)) :=
+  IO (Result (Tape AnyBuffer × Nat)) :=
   let shape := match batch with
     | none => Shape.dim n (.dim dModel .scalar)
     | some b => Shape.dim b (.dim n (.dim dModel .scalar))

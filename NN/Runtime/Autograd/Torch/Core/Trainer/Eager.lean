@@ -119,23 +119,6 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
     | .adamW learningRate weightDecay beta1 beta2 epsilon =>
       Internal.EagerSession.adamWStepAllCudaMap (α := α) session
         adamConfigRef adamStateRef learningRate weightDecay beta1 beta2 epsilon gradients
-  -- The callback reads the loss before the update only when the caller needs it.
-  let nativeStep {result : Type} (optimizer : NativeOptimizer α)
-      (readOutput : IO (Tensor α []) → IO result) :
-      Curried.Function α inputShapes (Curried.Function δ dataInputShapes (IO result)) :=
-    Curried.curry (α := α) (ss := inputShapes)
-      (β := Curried.Function δ dataInputShapes (IO result)) fun inputs =>
-        Curried.curry (α := δ) (ss := dataInputShapes) (β := IO result) fun dataInputs => do
-          checkOptimizerPath .native
-          try
-            let (lossRef, _) ← recordLoss inputs dataInputs
-            let output ← readOutput (Internal.EagerSession.getValue (α := α) session lossRef)
-            let gradients ←
-              Internal.EagerSession.backwardScalarParamGradsCuda (α := α) session lossRef
-            Internal.EagerSession.withCudaGradMap gradients (applyNativeGradient optimizer)
-            pure output
-          finally
-            finishRecording
   let nativeBatchStep (optimizer : NativeOptimizer α)
       (batch : Array
         (TorchLean.TensorPack α inputShapes × TorchLean.TensorPack δ dataInputShapes))
@@ -152,7 +135,7 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
         let (lossRef, _) ← recordLoss inputs dataInputs
         if readLoss then
           -- Weight before adding: finite losses can overflow an unnormalized batch sum.
-          let tape ← session.cudaTape.get
+          let tape ← session.cudaTape
           let sampleLoss ← IO.ofExcept <|
             Runtime.Autograd.LibTorch.Tape.requireValue tape lossRef.id []
           let previous ← lossAccumulator.get
@@ -225,50 +208,6 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
               backwardParameterGradients lossRef parameterRefs
             finally
               finishRecording))
-  let stepWithLoss (learningRate : α) :
-      Curried.Function α inputShapes (Curried.Function δ dataInputShapes (IO (Tensor α []))) :=
-    if options.usesCuda then nativeStep (.sgd learningRate) id
-    else
-      Curried.curry (α := α) (ss := inputShapes)
-        (β := Curried.Function δ dataInputShapes (IO (Tensor α []))) fun inputs =>
-          Curried.curry (α := δ) (ss := dataInputShapes) (β := IO (Tensor α []))
-            fun dataInputs => do
-              let diffForData := Curried.uncurry (α := α) (ss := inputShapes)
-                (β := Curried.Function δ dataInputShapes
-                  (IO (Tensor α [] × TorchLean.TensorPack α paramShapes))) diff inputs
-              let (lossValue, gradients) ← Curried.uncurry (α := δ) (ss := dataInputShapes)
-                (β := IO (Tensor α [] × TorchLean.TensorPack α paramShapes)) diffForData dataInputs
-              ParamList.sgdStep (α := α) (ss := paramShapes) parameters learningRate gradients
-              pure lossValue
-  let step (learningRate : α) :
-      Curried.Function α inputShapes (Curried.Function δ dataInputShapes (IO Unit)) :=
-    if options.usesCuda then nativeStep (.sgd learningRate) (fun _ => pure ())
-    else
-      Curried.curry (α := α) (ss := inputShapes)
-        (β := Curried.Function δ dataInputShapes (IO Unit)) fun inputs =>
-          Curried.curry (α := δ) (ss := dataInputShapes) (β := IO Unit) fun dataInputs => do
-            let gradForData := Curried.uncurry (α := α) (ss := inputShapes)
-              (β := Curried.Function δ dataInputShapes (IO (TorchLean.TensorPack α paramShapes)))
-              grad inputs
-            let gradients ← Curried.uncurry (α := δ) (ss := dataInputShapes)
-              (β := IO (TorchLean.TensorPack α paramShapes)) gradForData dataInputs
-            ParamList.sgdStep (α := α) (ss := paramShapes) parameters learningRate gradients
-  let adamStep? := if options.usesCuda then
-      some fun learningRate beta1 beta2 epsilon =>
-        nativeStep (.adam learningRate beta1 beta2 epsilon) (fun _ => pure ())
-    else none
-  let adamStepWithLoss? := if options.usesCuda then
-      some fun learningRate beta1 beta2 epsilon =>
-        nativeStep (.adam learningRate beta1 beta2 epsilon) id
-    else none
-  let adamWStep? := if options.usesCuda then
-      some fun learningRate weightDecay beta1 beta2 epsilon =>
-        nativeStep (.adamW learningRate weightDecay beta1 beta2 epsilon) (fun _ => pure ())
-    else none
-  let adamWStepWithLoss? := if options.usesCuda then
-      some fun learningRate weightDecay beta1 beta2 epsilon =>
-        nativeStep (.adamW learningRate weightDecay beta1 beta2 epsilon) id
-    else none
   let optimizerStateCheckpoint? : Option OptimizerStateCheckpoint :=
     if options.usesCuda then
       some
@@ -289,12 +228,6 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
       lossFn := lossFn
       diffFn := diff
       gradFn := grad
-      stepWithLossFn := stepWithLoss
-      stepFn := step
-      adamStep? := adamStep?
-      adamStepWithLoss? := adamStepWithLoss?
-      adamWStep? := adamWStep?
-      adamWStepWithLoss? := adamWStepWithLoss?
       nativeBatchStep? := if options.usesCuda then some nativeBatchStep else none
       optimizerStateCheckpoint? := optimizerStateCheckpoint?
       resetOptimizerState := resetOptimizerState

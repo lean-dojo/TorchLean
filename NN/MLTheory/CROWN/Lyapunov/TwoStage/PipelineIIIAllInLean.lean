@@ -103,8 +103,10 @@ def run (width : Nat) (args : List String) : IO Unit := do
   let mod ← Runtime.Autograd.Model.Module.ObjectiveDef.instantiate (α := Scalar)
     (objectiveDef width) (fun x => (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary64
       FloatFormat.binary32 (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))) :
-      ExecFloat.Binary 8 23)) { execution := .typedGraph }
+      ExecFloat.Binary 8 23))
   let tr := mod.trainer
+  let sgd ← Runtime.Autograd.Model.Module.bindOptimizer mod
+    (Runtime.Autograd.Model.Optim.sgd Execution.defaultLr)
   let cLoss ← Runtime.Autograd.Model.Autodiff.lowerToTypedGraph
     (α := Scalar) (paramShapes := Core.paramShapes width) (inputShapes := [Core.xShape])
       (Core.lossProgram width)
@@ -117,7 +119,7 @@ def run (width : Nat) (args : List String) : IO Unit := do
     let xs := TorchLean.TensorPack.singleton x
     let currentLoss := (←
       Runtime.Autograd.Torch.ScalarTrainer.loss tr xs .nil).item
-    Runtime.Autograd.Torch.ScalarTrainer.step tr Execution.defaultLr xs .nil
+    sgd.step xs .nil
     if i % 5 = 0 then
       IO.println s!"[stage1] step {i}: loss={currentLoss}"
 
@@ -133,7 +135,7 @@ def run (width : Nat) (args : List String) : IO Unit := do
     let xs := TorchLean.TensorPack.singleton x
     let lossFound := (←
       Runtime.Autograd.Torch.ScalarTrainer.loss tr xs .nil).item
-    Runtime.Autograd.Torch.ScalarTrainer.step tr Execution.defaultLr xs .nil
+    sgd.step xs .nil
     IO.println s!"[stage2] round {round}: loss={lossFound}"
 
   let params := TorchLean.nn.State.Internal.fromTensorPack (← tr.getState)

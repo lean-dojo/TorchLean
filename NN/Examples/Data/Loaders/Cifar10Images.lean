@@ -149,7 +149,6 @@ def usage : String :=
     , "  --lr LR"
     , "  --check-only"
     , "  --arithmetic native|ieee"
-    , "  --execution eager|typed-graph"
     , "  --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external"
     , "  --show-backend                    print backend capsules as they execute"
     ]

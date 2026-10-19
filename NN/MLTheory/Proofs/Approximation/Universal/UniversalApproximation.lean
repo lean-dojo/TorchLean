@@ -71,8 +71,8 @@ noncomputable def mlpEvalScalar (hidDim : ℕ)
 TorchLean's MLP forward pass is exactly
 $\operatorname{linear}\circ\operatorname{ReLU}\circ\operatorname{linear}$.
 -/
-theorem mlp_forward_eq_linear_relu_linear {hidDim : ℕ}
-    (l1 : LinearSpec ℝ 1 hidDim) (l2 : LinearSpec ℝ hidDim 1) (x : Tensor ℝ [1]) :
+theorem mlp_forward_eq_linear_relu_linear {n hidDim : ℕ}
+    (l1 : LinearSpec ℝ n hidDim) (l2 : LinearSpec ℝ hidDim 1) (x : Tensor ℝ [n]) :
     Examples.mlpForward l1 l2 x =
       let z1 := Spec.linearSpec (α := ℝ) l1 x
       let a1 := Activation.reluSpec z1

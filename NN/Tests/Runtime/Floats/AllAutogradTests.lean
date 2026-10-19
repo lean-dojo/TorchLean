@@ -9,7 +9,6 @@ module
 public import NN.Runtime.Autograd.TypedGraph.GraphM
 public import NN.API.Neural.Execution
 public import NN.API.Optim
-public import NN.Runtime.Autograd.Train
 public import NN.Spec.Models.Mlp
 public import NN.Tests.Runtime.Floats.Utils
 public import NN.Tests.Runtime.TypedGraphScalingRegression
@@ -26,6 +25,20 @@ disconnected nonfinite nodes, and native optimizer/cache behavior.
 
 @[expose] public section
 
+
+namespace Tests.Floats
+
+/-- Read one leaf gradient from a tape's gradient map at a known shape. -/
+def gradAt {s : Spec.Shape} (tag : String)
+    (grads : Std.HashMap Nat (Spec.SomeTensor Float)) (id : Nat) :
+    Runtime.Autograd.Result (TorchLean.Tensor Float s) :=
+  match grads.get? id with
+  | none => .error s!"{tag}: missing gradient for node id {id}"
+  | some packed =>
+      if h : packed.shape = s then .ok (packed.cast h)
+      else .error s!"{tag}: gradient shape mismatch for node id {id}"
+
+end Tests.Floats
 
 /-! ## MLP tape gradients -/
 
@@ -45,7 +58,6 @@ abbrev outDim := 1
 
 abbrev tag : String := "autograd_engine_test"
 
-open Tests.Utils (ParamIds)
 
 /-! ### Fixed inputs and parameters -/
 def hiddenWeight : Tensor Float [hidDim, inDim] :=
@@ -77,39 +89,25 @@ def expected :=
 /-! ### Comparison with the hand-derived backward pass -/
 def checkMlpGrads :
   Runtime.Autograd.Result Bool := do
-  let t0 : Tape Float := Tape.empty
-
-  let m : TapeM Float _ := do
-    let hiddenWeightId ← Train.TapeM.param hiddenWeight (name := some "hiddenWeight")
-    let hiddenBiasId ← Train.TapeM.param hiddenBias (name := some "hiddenBias")
-    let outputWeightId ← Train.TapeM.param outputWeight (name := some "outputWeight")
-    let outputBiasId ← Train.TapeM.param outputBias (name := some "outputBias")
-    let xId ← Train.TapeM.const x (name := some "x")
-
-    let z1Id ← TapeM.linear (inDim:=inDim) (outDim:=hidDim) hiddenWeightId hiddenBiasId xId
-    let a1Id ← TapeM.relu (s := [hidDim]) z1Id
-    let yId ← TapeM.linear (inDim:=hidDim) (outDim:=outDim) outputWeightId outputBiasId a1Id
-
-    let t ← get
-    let grads ← liftM (Tape.backward (t:=t) yId (Spec.SomeTensor.ofTensor dLdy))
-
-    let ids : ParamIds :=
-      { hiddenWeightId := hiddenWeightId, hiddenBiasId := hiddenBiasId,
-        outputWeightId := outputWeightId, outputBiasId := outputBiasId }
-    pure (ids, grads)
-
-  let ((ids, grads), _) ← TapeM.run t0 m
+  let t : Tape (Spec.SomeTensor Float) := Tape.empty
+  let (t, hiddenWeightId) := Tape.leaf (t := t) hiddenWeight (name := some "hiddenWeight")
+  let (t, hiddenBiasId) := Tape.leaf (t := t) hiddenBias (name := some "hiddenBias")
+  let (t, outputWeightId) := Tape.leaf (t := t) outputWeight (name := some "outputWeight")
+  let (t, outputBiasId) := Tape.leaf (t := t) outputBias (name := some "outputBias")
+  let (t, xId) := Tape.leaf (t := t) x (name := some "x") (requiresGrad := false)
+  let (t, z1Id) ← Tape.linear (t := t) (inDim := inDim) (outDim := hidDim)
+    hiddenWeightId hiddenBiasId xId
+  let (t, a1Id) ← Tape.relu (t := t) (s := [hidDim]) z1Id
+  let (t, yId) ← Tape.linear (t := t) (inDim := hidDim) (outDim := outDim)
+    outputWeightId outputBiasId a1Id
+  let grads ← Tape.backward (t := t) yId (Spec.SomeTensor.ofTensor dLdy)
 
   let (dW1_exp, db1_exp, dW2_exp, db2_exp, _dX_exp) := expected
 
-  let dW1_dyn ← Train.requireGradTensor (tag := tag)
-    (s := [hidDim, inDim]) grads ids.hiddenWeightId
-  let db1_dyn ← Train.requireGradTensor (tag := tag)
-    (s := [hidDim]) grads ids.hiddenBiasId
-  let dW2_dyn ← Train.requireGradTensor (tag := tag)
-    (s := [outDim, hidDim]) grads ids.outputWeightId
-  let db2_dyn ← Train.requireGradTensor (tag := tag)
-    (s := [outDim]) grads ids.outputBiasId
+  let dW1_dyn ← gradAt (s := [hidDim, inDim]) tag grads hiddenWeightId
+  let db1_dyn ← gradAt (s := [hidDim]) tag grads hiddenBiasId
+  let dW2_dyn ← gradAt (s := [outDim, hidDim]) tag grads outputWeightId
+  let db2_dyn ← gradAt (s := [outDim]) tag grads outputBiasId
 
   -- Compare the coordinates directly; formatted tensors can hide small gradient errors.
   let close {s : Shape} (actual expected : Tensor Float s) : Bool :=
@@ -160,27 +158,23 @@ def checkLayerNormGrads :
   Runtime.Autograd.Result
     (Float × Tensor Float [seqLen, embedDim] × Tensor Float [embedDim] ×
       Tensor Float [embedDim]) := do
-  let t0 : Tape Float := Tape.empty
-  let m : TapeM Float _ := do
-    let xId ← Train.TapeM.param x (name := some "x")
-    let gammaId ← Train.TapeM.param gamma (name := some "gamma")
-    let betaId ← Train.TapeM.param beta (name := some "beta")
-    let yId ← TapeM.layerNorm (seqLen := seqLen) (embedDim := embedDim) (by decide) (by decide) xId
-      gammaId betaId
-    let lossId ← TapeM.sum (s := [seqLen, embedDim]) yId
-    let t ← get
-    let lossVal ← liftM (Train.requireScalarValue (tag := "layer_norm") t lossId)
-    let grads ← liftM (Tape.backwardScalar (t := t) lossId)
-    pure (xId, gammaId, betaId, lossVal, grads)
+  let t : Tape (Spec.SomeTensor Float) := Tape.empty
+  let (t, xId) := Tape.leaf (t := t) x (name := some "x")
+  let (t, gammaId) := Tape.leaf (t := t) gamma (name := some "gamma")
+  let (t, betaId) := Tape.leaf (t := t) beta (name := some "beta")
+  let (t, yId) ← Tape.layerNorm (t := t) (seqLen := seqLen) (embedDim := embedDim)
+    (by decide) (by decide) xId gammaId betaId
+  let (t, lossId) ← Tape.sum (t := t) (s := [seqLen, embedDim]) yId
+  let lossVal ← match t.nodes[lossId]? with
+    | some node =>
+        if h : node.value.shape = Shape.scalar then .ok (Tensor.item (node.value.cast h))
+        else .error "layer_norm: loss is not a scalar"
+    | none => .error "layer_norm: missing loss node"
+  let grads ← Tape.backwardScalar (t := t) lossId
 
-  let ((xId, gammaId, betaId, lossVal, grads), _) ← TapeM.run t0 m
-
-  let dX ← Train.requireGradTensor (tag := "layer_norm")
-    (s := [seqLen, embedDim]) grads xId
-  let dGamma ← Train.requireGradTensor (tag := "layer_norm")
-    (s := [embedDim]) grads gammaId
-  let dBeta ← Train.requireGradTensor (tag := "layer_norm")
-    (s := [embedDim]) grads betaId
+  let dX ← gradAt (s := [seqLen, embedDim]) "layer_norm" grads xId
+  let dGamma ← gradAt (s := [embedDim]) "layer_norm" grads gammaId
+  let dBeta ← gradAt (s := [embedDim]) "layer_norm" grads betaId
 
   pure (lossVal, dX, dGamma, dBeta)
 
@@ -252,24 +246,17 @@ def input : Tensor Float [inC, inH, inW] :=
 def checkConvGrads :
   Runtime.Autograd.Result
     (Tensor Float [outC, inC, kH, kW] × Tensor Float [outC]) := do
-  let t0 : Tape Float := Tape.empty
-  let m : TapeM Float _ := do
-    let kId ← Train.TapeM.param kernel (name := some "kernel")
-    let bId ← Train.TapeM.param bias (name := some "bias")
-    let xId ← Train.TapeM.const input (name := some "input")
-    let yId ← TapeM.conv (d := 2) (inC := inC) (outC := outC)
-      (kernel := [kH, kW]) (stride := [stride, stride])
-      (padding := [padding, padding]) (inSpatial := [inH, inW]) kId bId xId
-    let lossId ← TapeM.sum (s := [outC, outH, outW]) yId
-    let t ← get
-    let grads ← liftM (Tape.backwardScalar (t := t) lossId)
-    pure (kId, bId, grads)
-
-  let ((kId, bId, grads), _) ← TapeM.run t0 m
-  let dK ← Train.requireGradTensor (tag := "conv")
-    (s := [outC, inC, kH, kW]) grads kId
-  let dB ← Train.requireGradTensor (tag := "conv")
-    (s := [outC]) grads bId
+  let t : Tape (Spec.SomeTensor Float) := Tape.empty
+  let (t, kId) := Tape.leaf (t := t) kernel (name := some "kernel")
+  let (t, bId) := Tape.leaf (t := t) bias (name := some "bias")
+  let (t, xId) := Tape.leaf (t := t) input (name := some "input") (requiresGrad := false)
+  let (t, yId) ← Tape.conv (t := t) (d := 2) (inC := inC) (outC := outC)
+    (kernel := [kH, kW]) (stride := [stride, stride])
+    (padding := [padding, padding]) (inSpatial := [inH, inW]) kId bId xId
+  let (t, lossId) ← Tape.sum (t := t) (s := [outC, outH, outW]) yId
+  let grads ← Tape.backwardScalar (t := t) lossId
+  let dK ← gradAt (s := [outC, inC, kH, kW]) "conv" grads kId
+  let dB ← gradAt (s := [outC]) "conv" grads bId
   pure (dK, dB)
 
 def run : IO Unit := do
@@ -459,7 +446,7 @@ open Runtime.Autograd
 
 /-- A disconnected reciprocal at zero must not turn an unrelated leaf gradient into `NaN`. -/
 def run : IO Unit := do
-  let t0 : Tape Float := Tape.empty
+  let t0 : Tape (Spec.SomeTensor Float) := Tape.empty
   let (t1, xId) := Tape.leaf (t := t0) (Tensor.scalar 0.0) (name := some "x")
   let (t2, outId) := Tape.leaf (t := t1) (Tensor.scalar 3.0) (name := some "output")
   let (t3, invId) ← IO.ofExcept <|
@@ -486,7 +473,7 @@ end DisconnectedDenseGradient
 end Floats
 end Tests
 
-/-! ## Optimizer and scheduler edge-case regressions -/
+/-! ## Optimizer edge-case regressions -/
 
 namespace Tests
 namespace Floats
@@ -497,168 +484,6 @@ open Runtime.Autograd
 /-- Finite approximate equality used by the optimizer numerical regressions. -/
 def close (x y : Float) (tol : Float := 1e-5) : Bool :=
   x.isFinite && y.isFinite && (x - y).abs ≤ tol
-
-/-- Construct one scalar parameter for a compact optimizer test. -/
-def scalarParameter (id : Nat) (value : Float) : Train.Parameter Float :=
-  Train.Parameter.create id (Tensor.scalar value)
-
-/-- Construct a one-entry scalar gradient map. -/
-def scalarGradient (id : Nat) (value : Float) : Std.HashMap Nat (Spec.SomeTensor Float) :=
-  ({} : Std.HashMap Nat (Spec.SomeTensor Float)).insert id
-    (Spec.SomeTensor.ofTensor (Tensor.scalar value))
-
-/-- Read a scalar parameter while preserving the runtime's error reporting. -/
-def scalarParameterValue (tag : String) (parameters : Train.ParameterTable Float) (id : Nat) :
-    Runtime.Autograd.Result Float := do
-  let value ← Train.ParameterTable.get (tag := tag) (s := .scalar) parameters id
-  pure value.item
-
-/-- Adam bias correction advances only when that particular parameter receives a gradient. -/
-def checkSparseAdamSteps : Runtime.Autograd.Result Bool := do
-  let initialOptimizerState : Train.OptimizerState Float :=
-    { algorithm := .adam
-      parameterGroups :=
-        #[{ parameterIds := #[0, 1]
-            learningRate := 0.1
-            beta1 := 0.9
-            beta2 := 0.999
-            epsilon := 1e-8 }] }
-  let initialParameters : Train.ParameterTable Float :=
-    #[scalarParameter 0 1.0, scalarParameter 1 1.0]
-  let firstStep ← Train.Optimizer.step initialOptimizerState initialParameters
-    (scalarGradient 0 1.0)
-  let secondStep ← Train.Optimizer.step firstStep.optimizerState firstStep.parameters
-    (scalarGradient 1 1.0)
-  let firstParameter ← scalarParameterValue "sparse Adam" secondStep.parameters 0
-  let secondParameter ← scalarParameterValue "sparse Adam" secondStep.parameters 1
-  let restored := Train.OptimizerState.restore secondStep.optimizerState.snapshot
-  pure <|
-    close firstParameter 0.9 && close secondParameter 0.9 &&
-      secondStep.optimizerState.stepCount == 2 &&
-      secondStep.optimizerState.parameterStepCount? 0 == some 1 &&
-      secondStep.optimizerState.parameterStepCount? 1 == some 1 &&
-      restored.parameterStepCount? 0 == some 1 &&
-      restored.parameterStepCount? 1 == some 1 &&
-      restored.parameterGroups.any (fun group =>
-        (group.adamPowers.get? 0).map (·.1) == some 1 &&
-          (group.adamPowers.get? 1).map (·.1) == some 1)
-
-/-- Recomputing powers after clearing the cache preserves a changed beta's dual tangent.
-This fixture clears the cache explicitly; it does not test automatic invalidation. -/
-def checkAdamDualCoefficientChange : Bool :=
-  let beta : Model.Dual Float := ⟨0.9, 0.0⟩
-  let betaWithTangent : Model.Dual Float := ⟨0.9, 1.0⟩
-  let group : Train.ParameterGroup (Model.Dual Float) :=
-    { parameterIds := #[0], learningRate := ⟨0.01, 0.0⟩, beta1 := beta }
-  let cachedPowers :=
-    group.adamPowers.insert 0 ⟨5, Optim.AdamPowers.compute group.beta1 group.beta2 5⟩
-  let cached := { group with adamPowers := cachedPowers }
-  let changed := { cached with beta1 := betaWithTangent, adamPowers := ∅ }
-  let powers := Train.Optimizer.Internal.adamPowers changed 0 5
-  let expected := Optim.scalarPowNat betaWithTangent 5
-  beta == betaWithTangent &&
-    powers.first.re.toBits == expected.re.toBits &&
-    powers.first.du.toBits == expected.du.toBits &&
-    powers.first.du != 0.0
-
-/-- Compare Adam moments and counters without relying on scalar Boolean equality. -/
-def sameAdamBuffers (first second : Train.OptimizerState Float) (id : Nat) : Bool :=
-  match first.parameterStates.get? id, second.parameterStates.get? id with
-  | none, none => true
-  | some ⟨s₁, .adam t₁ m₁ v₁⟩, some ⟨s₂, .adam t₂ m₂ v₂⟩ =>
-      if h₁ : s₁ = .scalar then
-        if h₂ : s₂ = .scalar then
-          t₁ == t₂ &&
-            (Tensor.castShape m₁ h₁).item.toBits == (Tensor.castShape m₂ h₂).item.toBits &&
-            (Tensor.castShape v₁ h₁).item.toBits == (Tensor.castShape v₂ h₂).item.toBits
-        else false
-      else false
-  | _, _ => false
-
-/--
-Cached Adam/AdamW agree bit for bit with reconstructed powers after sparse updates, snapshots,
-coefficient changes, and a restored parameter-local counter.
--/
-def checkAdamCacheLifecycle (algorithm : Train.OptimizerAlgorithm) :
-    Runtime.Autograd.Result Bool := do
-  let mut optimizerState : Train.OptimizerState Float :=
-    { algorithm := algorithm
-      parameterGroups :=
-        #[{ parameterIds := #[0, 1]
-            learningRate := 0.01
-            weightDecay := 0.02
-            beta1 := 0.9
-            beta2 := 0.999
-            epsilon := 1e-8 }] }
-  let mut parameters : Train.ParameterTable Float :=
-    #[scalarParameter 0 1.0, scalarParameter 1 (-0.5)]
-  for step in [:64] do
-    if step == 8 then
-      let some group := optimizerState.parameterGroups[0]?
-        | return false
-      let nextGroup := { group with learningRate := 0.005 }
-      if group.adamPowers.size == 0 || nextGroup.adamPowers.size != group.adamPowers.size then
-        return false
-      optimizerState := { optimizerState with parameterGroups := #[nextGroup] }
-    if step == 16 then
-      optimizerState := Train.OptimizerState.restore optimizerState.snapshot
-    if step == 24 then
-      optimizerState := { optimizerState with
-        parameterGroups := optimizerState.parameterGroups.map fun group =>
-          { group with beta1 := 0.8, beta2 := 0.99, adamPowers := ∅ } }
-    if step == 32 || step == 40 then
-      if let some ⟨shape, .adam _ firstMoment secondMoment⟩ :=
-          optimizerState.parameterStates.get? 0 then
-        optimizerState := { optimizerState with
-          parameterStates := optimizerState.parameterStates.insert 0
-            ⟨shape, .adam (if step == 32 then 7 else 53) firstMoment secondMoment⟩ }
-    if step == 48 then
-      let some group := optimizerState.parameterGroups[0]?
-        | return false
-      optimizerState := { optimizerState with parameterGroups :=
-        #[{ group with parameterIds := #[1] },
-          { group with parameterIds := #[0], beta1 := 0.7, adamPowers := ∅ }] }
-    let gradient := scalarGradient (step % 2) (if step % 3 == 0 then -0.25 else 0.5)
-    let referenceState := { optimizerState with
-      parameterGroups := optimizerState.parameterGroups.map fun group =>
-        { group with adamPowers := ∅ } }
-    let reference ← Train.Optimizer.step referenceState parameters gradient
-    let cached ← Train.Optimizer.step optimizerState parameters gradient
-    let updatedId := step % 2
-    let some group := cached.optimizerState.parameterGroups.find?
-        (fun group => group.parameterIds.contains updatedId)
-      | return false
-    let some ⟨cachedStep, _⟩ := group.adamPowers.get? updatedId
-      | return false
-    if cached.optimizerState.parameterStepCount? updatedId != some cachedStep then
-      return false
-    for id in [:2] do
-      let expected ← scalarParameterValue "Adam reconstructed powers" reference.parameters id
-      let actual ← scalarParameterValue "Adam cached powers" cached.parameters id
-      if actual.toBits != expected.toBits ||
-          !sameAdamBuffers cached.optimizerState reference.optimizerState id then
-        return false
-    optimizerState := cached.optimizerState
-    parameters := cached.parameters
-  pure true
-
-/-- Momentum dampening does not scale the first buffer, matching the standard SGD convention. -/
-def checkMomentumInitialization : Runtime.Autograd.Result Bool := do
-  let initialOptimizerState : Train.OptimizerState Float :=
-    { algorithm := .momentum
-      parameterGroups :=
-        #[{ parameterIds := #[0]
-            learningRate := 0.1
-            momentum := 0.9
-            dampening := 0.5 }] }
-  let initialParameters : Train.ParameterTable Float := #[scalarParameter 0 1.0]
-  let firstStep ← Train.Optimizer.step initialOptimizerState initialParameters
-    (scalarGradient 0 2.0)
-  let first ← scalarParameterValue "momentum initialization" firstStep.parameters 0
-  let secondStep ← Train.Optimizer.step firstStep.optimizerState firstStep.parameters
-    (scalarGradient 0 2.0)
-  let second ← scalarParameterValue "momentum initialization" secondStep.parameters 0
-  pure (close first 0.8 && close second 0.52)
 
 /-- Adadelta's update accumulator stores the unscaled update, independently of the learning rate. -/
 def checkAdadeltaAccumulator : Bool :=
@@ -691,21 +516,6 @@ def checkAdadeltaFastPath : Bool :=
   (List.finRange 3).all fun i =>
     (result.parameters.getScalar i).toBits == (reference.getScalar i).toBits
 
-/-- Warmup-cosine decay remains at zero after its finite schedule has ended. -/
-def checkWarmupCosineStops : Bool :=
-  let base : Optim.Scheduler.WarmupCosine Float :=
-    Optim.Scheduler.WarmupCosine.create 1.0 2 10
-  let atEnd := { base with currentStep := 10 }
-  let afterEnd := { base with currentStep := 20 }
-  atEnd.current == 0.0 && afterEnd.current == 0.0
-
-/-- Native one-cycle ends at `initial_lr / final_div_factor`, PyTorch's `OneCycleLR` endpoint. -/
-def checkOneCycleEndpoints : Bool :=
-  let base : Optim.Scheduler.OneCycle Float :=
-    Optim.Scheduler.OneCycle.create 1.0 10 25.0 0.3 1.0e4
-  let finished := { base with currentStep := 10 }
-  base.current == 1.0 / 25.0 && finished.current == (1.0 / 25.0) / 1.0e4
-
 /-- Public optimizer configurations reject domains that make their updates undefined. -/
 def checkPublicOptimizerValidation : Bool :=
   (TorchLean.optim.adam { learningRate := 1e-3 }).validate.isOk &&
@@ -715,34 +525,15 @@ def checkPublicOptimizerValidation : Bool :=
     (!(TorchLean.optim.sgd
       { learningRate := 0.1, momentum := Float.ofBits 0x7ff8000000000000 }).validate.isOk)
 
-/-- Run the optimizer and scheduler edge-case regressions. -/
+/-- Run the optimizer edge-case regressions. -/
 def run : IO Unit := do
-  match checkSparseAdamSteps with
-  | .error msg => throw <| IO.userError s!"optimizer numerics (sparse Adam): {msg}"
-  | .ok false => throw <| IO.userError "optimizer numerics (sparse Adam): FAILED"
-  | .ok true => pure ()
-  unless checkAdamDualCoefficientChange do
-    throw <| IO.userError "optimizer numerics (Adam dual coefficient change): FAILED"
-  for algorithm in [Train.OptimizerAlgorithm.adam, .adamw] do
-    match checkAdamCacheLifecycle algorithm with
-    | .error msg => throw <| IO.userError s!"optimizer numerics (Adam power cache): {msg}"
-    | .ok false => throw <| IO.userError "optimizer numerics (Adam power cache): FAILED"
-    | .ok true => pure ()
-  match checkMomentumInitialization with
-  | .error msg => throw <| IO.userError s!"optimizer numerics (momentum): {msg}"
-  | .ok false => throw <| IO.userError "optimizer numerics (momentum): FAILED"
-  | .ok true => pure ()
   unless checkAdadeltaAccumulator do
     throw <| IO.userError "optimizer numerics (Adadelta accumulator): FAILED"
   unless checkAdadeltaFastPath do
     throw <| IO.userError "optimizer numerics (Adadelta fast path): FAILED"
-  unless checkWarmupCosineStops do
-    throw <| IO.userError "optimizer numerics (warmup cosine): FAILED"
-  unless checkOneCycleEndpoints do
-    throw <| IO.userError "optimizer numerics (one-cycle endpoints): FAILED"
   unless checkPublicOptimizerValidation do
     throw <| IO.userError "optimizer configuration validation: FAILED"
-  IO.println "optimizer and scheduler edge cases (Float): OK"
+  IO.println "optimizer edge cases (Float): OK"
 
 end OptimizerNumerics
 end Floats

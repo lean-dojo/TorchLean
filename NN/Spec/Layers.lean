@@ -17,6 +17,7 @@ public import NN.Spec.Layers.Gru
 public import NN.Spec.Layers.Linear
 public import NN.Spec.Layers.Loss
 public import NN.Spec.Layers.Lstm
+public import NN.Spec.Layers.MoE
 public import NN.Spec.Layers.Normalization
 public import NN.Spec.Layers.Pooling
 public import NN.Spec.Layers.PositionalEncoding

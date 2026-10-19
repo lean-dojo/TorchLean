@@ -565,7 +565,7 @@ private def backwardNode (dir : BackwardDir)
         addCoeff (α:=α) st1 p2 { n := aY.n, v := Tensor.scaleSpec aY.v (-1) }
       | _ => st.fail
     | .randUniform _ | .bernoulliMask _ | .abs | .sqrt | .sin | .cos | .maxElem |
-      .minElem | .hardMaskedSoftmax _
+      .minElem | .hardMaskedSoftmax _ | .div | .topKMask _ | .slice ..
     | .maxPool .. | .avgPool ..
     | .broadcastTo .. | .reduceSum .. | .reduceMean .. => consumeCurrent
     | .custom .. => st.fail

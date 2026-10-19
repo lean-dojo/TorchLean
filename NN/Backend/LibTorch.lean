@@ -40,6 +40,7 @@ def coverage (op : BackendOp) (vjp : Bool := false) : Option String :=
       some "NN.Tests.Runtime.Cuda.Elementwise"
   | .softmax | .logSoftmax => some "NN.Tests.Runtime.Cuda.Softmax"
   | .matmul | .hardMaskedSoftmax => some "NN.Tests.Runtime.Cuda.Attention"
+  | .topKMask => if vjp then none else some "NN.Tests.Runtime.MoE"
   | .selectiveScan => some "NN.Tests.Runtime.Cuda.SelectiveScan"
   | .fftFno => some "NN.Tests.Runtime.Cuda.Fft"
   | .linear | .mseLoss => some "NN.Tests.Runtime.Cuda.Trainer"
@@ -238,6 +239,13 @@ def hardMaskedSoftmax : KernelCapsule :=
     ("The local VJP uses the softmax Jacobian evaluated at the masked output; blocked " ++
       "coordinates therefore receive zero gradient.")
     .torchLeanTape
+
+/-- LibTorch CUDA top-`k` routing mask. -/
+def topKMask : KernelCapsule :=
+  forwardOnlyCapsule
+    .topKMask
+    ("The kernel compares every pair of entries in a row and counts, so the mask is exact and " ++
+      "equals `Spec.MoE.topKMaskSpec`, ties to the lower index.")
 
 /-- LibTorch CUDA sum reduction. -/
 def reduceSum : KernelCapsule := reductionCapsule .reduceSum .torchLeanTape
@@ -446,6 +454,7 @@ def capsules : Array KernelCapsule :=
   , logSoftmax
   , softmax
   , hardMaskedSoftmax
+  , topKMask
   , reduceSum
   , reduceMean
   , reshape

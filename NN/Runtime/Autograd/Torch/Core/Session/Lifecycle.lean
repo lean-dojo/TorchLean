@@ -75,9 +75,6 @@ def releaseCudaBuffer (b : Runtime.Autograd.LibTorch.Buffer) : IO Unit := do
 def releaseCudaAnyBuffer (b : Runtime.Autograd.LibTorch.AnyBuffer) : IO Unit :=
   releaseCudaBuffer b.buf
 
-/-- Device-resident gradients keyed by parameter leaf ids, with each leaf's shape. -/
-abbrev CudaGradMap := Std.HashMap Nat Runtime.Autograd.LibTorch.AnyBuffer
-
 /-- Release owned intermediates while leaving shared parameter snapshots to reference counting. -/
 private def releaseCudaTapeValues {α : Type} [Storage α]
     (session : EagerSession α) : IO Unit := do
@@ -92,22 +89,18 @@ private def releaseCudaTapeValues {α : Type} [Storage α]
         for buffer in node.cleanup do
           releaseCudaBuffer buffer.buf
 
-/-- Release a sparse CUDA gradient map after an optimizer has consumed it. -/
-def releaseCudaGradMap (xs : CudaGradMap) : IO Unit := do
-  for (_id, x) in xs.toList do
-    releaseCudaAnyBuffer x
-
 /--
 Run an action that borrows a sparse CUDA gradient map, then release every buffer in the map.
 
 The action must not retain a gradient buffer after it returns. Cleanup also runs when the action
 throws, which keeps optimizer failures from leaking device memory.
 -/
-def withCudaGradMap {β : Type} (xs : CudaGradMap) (action : CudaGradMap → IO β) : IO β := do
+def withSparseGrads {β : Type} (xs : LibTorch.Tape.SparseGradMap)
+    (action : LibTorch.Tape.SparseGradMap → IO β) : IO β := do
   try
     action xs
   finally
-    releaseCudaGradMap xs
+    LibTorch.Tape.releaseSparseGrads xs
 
 /-- Check that a shape-erased CUDA buffer has the number of elements promised by its shape. -/
 def checkCudaAnyBufferSize (where_ : String)

@@ -450,7 +450,7 @@ def hmmForwardSpec
       steps.data.foldl (fun acc step => acc * step.scale) 1
 
 /-- Batched forward pass with statically matched batch and sequence dimensions. -/
-def hmmBatchedForwardSpec {nStates nObservations batch length : Nat}
+def batchHmmForwardSpec {nStates nObservations batch length : Nat}
   (m : HMMSpec α nStates nObservations)
   (observations : Tensor (Fin nObservations) [batch, length]) :
   Tensor α [batch] :=

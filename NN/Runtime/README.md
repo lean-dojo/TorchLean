@@ -41,7 +41,7 @@ updates, and verification checkers.
 | --- | --- |
 | `Autograd/Engine` | The small eager reverse-mode tape, closest to the local backward rules for primitive tensor operations. |
 | `Autograd/TypedGraph` | Typed SSA graphs recorded by the `autograd` transforms (gradients, JVPs, VJPs, HVPs) and used by the autograd proofs. |
-| `Autograd/Model` | The TorchLean-native runtime used by the trainer: layer functions, modules, losses, metrics, training glue, and the `Runtime.Autograd.Model.Layers.Seq` model type. Random helpers are abbreviations for `Spec.Random` in `NN/Spec/Core/Random.lean`. |
+| `Autograd/Model` | The TorchLean-native runtime used by the trainer: layer functions, modules, losses, metrics, training glue, and the `Runtime.Autograd.Model.Layers.Seq` model type. The random helpers `randUniform` and `bernoulliMask` are the re-exported Torch operations. In eager mode each call advances the session's random-operation counter and derives its key with `Spec.Random.keyOf seed invocation` (`NN/Runtime/Autograd/Torch/Core/Session/Random.lean`), so two calls with the same seed draw different samples. The samplers are in `NN/Spec/Core/Random.lean`. |
 | `Autograd/Batch.lean` | The shared recursion for mapping an operation over the outer axis of a shape-typed reference. |
 | `Autograd/Torch` | The eager session and its tape on the CPU or CUDA, the scalar trainer, and the `Ops` instances for the tape and the typed-graph recorder. |
 | `Optim` | Executable optimizer equations. Public optimizer names are re-exported through `TorchLean.optim`; learning-rate schedules belong to `TorchLean.Trainer.Scheduler`. |

@@ -19,15 +19,6 @@ open Runtime.Autograd.Torch.Internal (EagerSession)
 
 namespace Tests.Floats.SessionRefIdentity
 
-def expectFailure {α : Type} (label : String) (action : IO α) : IO Unit := do
-  let failed ← try
-    let _ ← action
-    pure false
-  catch _ =>
-    pure true
-  unless failed do
-    throw <| IO.userError s!"{label}: expected failure"
-
 /-- Observe recording and cache counters without evaluating or changing the session. -/
 def recordingState (state : EagerSession Float) : IO (Array Nat) := do
   pure #[(← state.tape.get).size,

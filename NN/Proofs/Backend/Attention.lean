@@ -33,8 +33,8 @@ theorem checkedCuda_attention_choice :
     KernelCapsule.admissible, KernelCapsule.contractsAligned,
     KernelCapsule.allowedBy, KernelCapsule.matchesPreference, KernelCapsule.matchesDevice,
     KernelCapsule.matchesVJP, ContractClaim.matchesObligation, ContractDescriptor.guarded,
-    ContractDescriptor.tested, AssurancePolicy.checked, AssurancePolicy.acceptsTrust,
-    BackendOp.requiresVJP]
+    LibTorch.Internal.trustLevel, LibTorch.Internal.evidence, LibTorch.Internal.coverage,
+    AssurancePolicy.checked, AssurancePolicy.acceptsTrust, BackendOp.requiresVJP]
 
 /-- A successful default attention plan retains exactly the selected Lean-composed capsule. -/
 theorem checkedCuda_attention_plan

@@ -6,10 +6,12 @@ be.
 
 Many ML bugs are not crashes. The code still returns tensors, logits, losses, or tokens, but the
 computation no longer means what the user intended. BugZoo turns those cases into small artifacts: a
-shape contract, a mask theorem, a cache invariant, a tokenizer boundary, a Float32 bridge, or a
-compiler-preservation obligation.
+shape contract, a mask theorem, a cache invariant, a tokenizer boundary, or a Float32 bridge.
+Compiler preservation is covered by the Compiler Boundary section of the
+[BugZoo guide chapter](../../../home_page/blueprint/TorchLeanBlueprint/Guide/Ch5_Applications/BugZooCatalog.lean),
+through the verifier's lowering theorem `runForwardIR_eq_evalForward`.
 
-Build all fifteen case studies from the repository root with:
+Build every case study from the repository root with:
 
 ```bash
 scripts/lake.sh build NN.Examples.BugZoo.All

@@ -14,9 +14,12 @@ and Lyapunov/controller experiments.
    the canonical executable ReLU relaxations from `Runtime/Ops.lean` together with its IBP bounds
    and model-specific affine composition.
 3. `Graph.lean` and `Graph/`: graph-based LiRPA over TorchLean's op-tagged IR graphs. The graph
-   engine stores per-node interval boxes, affine forms, parameter stores, and transfer state.
-4. `Operators.lean` and `Operators/`: transfer rules for ReLU-family activations, arithmetic,
-   convolution, pooling, batch normalization, reductions, slicing, and trigonometric operations.
+   engine stores per-node interval boxes, affine forms, parameter stores, and transfer state. Its
+   box transfers for arithmetic, activations, pooling, normalization, and reductions are in
+   `Graph/Engine/Base.lean`; `Graph/Engine/IBP.lean` dispatches each operation to its interval
+   transfer, and `Graph/Engine/CROWN/` holds the affine rules.
+4. `Operators/Conv.lean`: CROWN-IBP bounds and an exact flattened affine map for
+   arbitrary-dimensional convolution.
 5. `Cert/`: alpha-CROWN and alpha-beta-CROWN certificate data structures.
 6. `Proofs/`: theorem-backed pieces of the CROWN development. `GraphCertSoundness/` proves IBP
    certificate soundness, with `cert_encloses_semantics` dispatching over the operator files in
@@ -272,15 +275,15 @@ a separate obligation.
 ## Subfolders
 
 - `Graph/`: graph engine, backward propagation, and graph-level theorem statements.
-- `Operators/`: op-specific IBP and affine transfer rules.
+- `Operators/`: convolution bounds (`Conv.lean`).
 - Graph backward-objective propagation lives in `Graph/Engine/BackwardObjective.lean`. The
   canonical `IBP.matPos`/`IBP.matNeg` weight decomposition lives in `Core.lean` and is shared by
   interval and graph-CROWN linear rules.
 - `Cert/`: alpha/alpha-beta certificate structures.
 - `Lyapunov/`: controller and Lyapunov-oriented CROWN workflows. Imported numerical bounds support
   a theorem only after the caller proves `LyapunovCert.ValidFor`.
-  The two Lean-executed pipelines share lowered gradient search and loss-box verification through
-  `Lyapunov/TwoStage/LossAnalysis.lean` (`projectedGradientStep` and `checkLossBox`).
+  The two Lean-executed pipelines share the lowered gradient search and the loss-box bound report
+  in `Lyapunov/TwoStage/LossAnalysis.lean` (`projectedGradientAscentStep` and `reportLossBox`).
 - `Proofs/`: soundness theorems and proof layer overviews; `Proofs/Overview.lean` is the map.
 - `Extras/`: optional helpers and proof toolboxes.
 - `Tactics/crown_verifier.py`: the Python CROWN producer that the two-stage Lyapunov pipeline runs.

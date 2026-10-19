@@ -73,10 +73,10 @@ binary-only interpreter remains available separately. `detach` remains on the sc
 because dual-valued tensors
 must also clear differentiation metadata, rather than merely copy their stored values.
 
-`Infer.nodeOutShape` and `Graph.evalNodeRaw` are both matches over `OpKind`, but they do not
-contain two copies of the shape arithmetic. Every operation whose output shape is not simply a
-parent shape or a shape written in the operation goes through a single rule in `OpContracts`, and
-both passes call it on the same inputs:
+`Infer.nodeOutShape` and `Graph.evalNodeRaw` are both matches over `OpKind`. Apart from `slice`,
+they do not contain two copies of the shape arithmetic: every operation whose output shape is not
+simply a parent shape or a shape written in the operation goes through a single rule in
+`OpContracts`, and both passes call it on the same inputs:
 
 | Operation | Shared rule |
 | --- | --- |
@@ -85,7 +85,7 @@ both passes call it on the same inputs:
 | `reduceSum`, `reduceMean` | `OpContracts.checkReductionAxis` (a nonempty axis, as the typed reductions require) and `Tensor.shapeAfterSum` |
 | `flatten` | `ShapeUtil.flattenOutShape` |
 | `concat` | `OpContracts.inferConcatOutShape`, recomputed by the evaluator on the parent values |
-| `slice` | `Spec.Shape.replaceAxis` after an axis and range check; the evaluator applies `Tensor.sliceAxisRangeSpec` and checks the declared shape |
+| `slice` | `Spec.Shape.replaceAxis` after an axis and range check that each pass makes itself; the evaluator applies `Tensor.sliceAxisRangeSpec` and checks the declared shape |
 | `conv`, `batchNormEval`, `broadcastTo`, `layernorm`, `transpose` | `inferConvConfigOutShape`, `inferBatchNormEvalOutShape`, the decidable `Spec.Shape.CanBroadcastTo`, `layerNormMatrixDims`, `transposePerm` |
 
 The permute rule is `Spec.Shape.permute?`; the evaluator realizes the permutation by adjacent
@@ -106,8 +106,8 @@ family (`Graph.evalNodeRaw_shape_*`) plus a lockstep induction over the node arr
   declared shape of its node. The `checkShapes` hypothesis is not needed for this conclusion
   because `evalNode` normalizes; the previous theorem is where it does work.
 
-For `permute`, `transpose`, and `conv` the evaluator compares the shape it realizes with the
-declared shape, so soundness holds through that comparison; proving that the adjacent-swap
+For `permute`, `transpose`, `conv`, and `slice` the evaluator compares the shape it realizes with
+the declared shape, so soundness holds through that comparison; proving that the adjacent-swap
 lowering realizes `Shape.permute?`, and that the convolution contract's list arithmetic equals
 `Spec.convOutSpatialDilated`, are separate lemmas not attempted here.
 
@@ -164,7 +164,9 @@ There are several routes into the same graph language:
   study.
 
 Mixture-of-experts routing is one operation, `top_k_mask k`, whose meaning is
-`Spec.MoE.topKMaskSpec`: one for the `k` largest entries of every row, ties to the lower index. The
+`Spec.MoE.topKMaskSpec`: one for the `k` largest entries of every row, ties to the lower index.
+A row of `E` totally ordered scores (no NaN) gets `min k E` ones. With NaN the pairwise comparison
+can cycle, so `[0, NaN, 1]` keeps no entry for `k = 1` and all three for `k = 2`. The
 PyTorch adapter captures the usual idiom `torch.zeros_like(p).scatter(-1, torch.topk(p, k).indices,
 1)` as that node; `torch.topk` leaves the order of ties unspecified, so the two agree whenever the
 `k`-th and `k + 1`-th largest entries of a row differ. `NN/Tests/IR/MoEImport.lean` exports a

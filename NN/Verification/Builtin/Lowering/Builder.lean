@@ -22,8 +22,9 @@ The builder handles arithmetic, shape operations, common activations, pooling, l
 and arbitrary-rank convolution. Composite operations such as multi-head attention produce several
 IR nodes. Training BatchNorm, transposed convolution, smooth max-pooling, tensor-valued
 gather/scatter indices, and selection on an inner axis return lowering errors.
-GELU also returns an error until the IR can retain its cubic association and gate division;
-expanding it into a different multiplication schedule can overflow a finite source result.
+GELU also returns an error. A faithful lowering must keep its cubic association and its gate
+division, and the verifier fragment has no lowering or IBP/CROWN transfer for division. Expanding
+GELU into a different multiplication schedule can overflow a finite source result.
 Clamp retains the source's min/max operand order. Scalar contexts with differentiation metadata
 return a lowering error because the IR cannot conditionally clear their tangents at clamp bounds.
 
@@ -442,7 +443,7 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
   gelu := fun {_s} _x =>
     fail (α := α)
       ("TorchLean→IR: GELU is outside the verifier IR fragment; " ++
-        "use eager execution. The IR cannot yet preserve its gate division.")
+        "use eager execution. The verifier fragment cannot lower its gate division.")
   softmaxLast := fun {s} x => do
     let axis :=
       match Spec.Shape.rank s with

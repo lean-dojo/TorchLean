@@ -39,7 +39,7 @@ def coverage (op : BackendOp) (vjp : Bool := false) : Option String :=
     | .sigmoid | .tanh | .gelu | .softplus | .exp | .log | .inv | .safeLog | .reduceSum =>
       some "NN.Tests.Runtime.Cuda.Elementwise"
   | .softmax | .logSoftmax => some "NN.Tests.Runtime.Cuda.Softmax"
-  | .matmul | .hardMaskedSoftmax => some "NN.Tests.Runtime.Cuda.Attention"
+  | .matmul | .hardMaskedSoftmax | .attention => some "NN.Tests.Runtime.Cuda.Attention"
   | .topKMask => if vjp then none else some "NN.Tests.Runtime.MoE"
   | .selectiveScan => some "NN.Tests.Runtime.Cuda.SelectiveScan"
   | .fftFno => some "NN.Tests.Runtime.Cuda.Fft"
@@ -56,6 +56,14 @@ def evidence (op : BackendOp) (vjp : Bool := false) : ContractEvidence :=
       s!"LibTorch `{op.name}` implementation; no retained dedicated CUDA " ++
         (if vjp then "VJP parity check" else "forward parity check")
 
+/-- `checked` when the forward pass, and the VJP if there is one, have a retained CUDA comparison;
+otherwise an explicit trusted boundary. -/
+def trustLevel (op : BackendOp) (vjpMode : VJPMode) : TrustLevel :=
+  if (coverage op).isSome && (vjpMode == .none || (coverage op (vjp := true)).isSome) then
+    .checked
+  else
+    .trustedExternal
+
 /-- Describe a maintained LibTorch primitive and the evidence required by its runtime contract. -/
 def capsule
     (name : String) (op : BackendOp) (valueSummary vjpSummary : String)
@@ -64,9 +72,7 @@ def capsule
     op
     provider := .libTorch
     device := .cuda
-    trustLevel := if (coverage op).isSome &&
-        (vjpMode == .none || (coverage op (vjp := true)).isSome) then
-      .checked else .trustedExternal
+    trustLevel := trustLevel op vjpMode
     supportsForward := true
     vjpMode
     shapeContract :=
@@ -399,7 +405,7 @@ def attention : KernelCapsule :=
     op := .attention
     provider := .libTorch
     device := .cuda
-    trustLevel := .checked
+    trustLevel := Internal.trustLevel .attention .torchLeanTape
     supportsForward := true
     vjpMode := .torchLeanTape
     shapeContract :=
@@ -413,14 +419,15 @@ def attention : KernelCapsule :=
         "Row-major LibTorch tensors; the folded batch-head axis is the kernel batch axis."
         "LibTorch bridge dtype, device, contiguity, and element-count checks"
     valueContract :=
-      ContractDescriptor.tested (.valueRefinement .attention)
-        "Lean-composed attention with hard-mask zero numerators and zero fully blocked rows."
-        "NN.Tests.Runtime.Cuda.Attention"
+      { claim := .valueRefinement .attention
+        summary :=
+          "Lean-composed attention with hard-mask zero numerators and zero fully blocked rows."
+        evidence := Internal.evidence .attention }
     vjpContract :=
-      ContractDescriptor.tested
-        (.vjpRefinement .attention .torchLeanTape)
-        "Lean composes matrix products and the softmax VJP over saved probabilities for dQ/dK/dV."
-        "NN.Tests.Runtime.Cuda.Attention"
+      { claim := .vjpRefinement .attention .torchLeanTape
+        summary :=
+          "Lean composes matrix products and the softmax VJP over saved probabilities for dQ/dK/dV."
+        evidence := Internal.evidence .attention (vjp := true) }
     numericalPolicy := { reduction := .implementationDefined } }
 
 /-- LibTorch CUDA primitive contracts. -/

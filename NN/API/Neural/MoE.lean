@@ -20,7 +20,10 @@ expert index, each weighted by its probability divided by the total probability 
 experts. Over `ℝ` this is Mixtral's sparse block (`NN.Proofs.Models.MoE`).
 
 Every expert runs on every token and the experts that are not kept get gate zero, so all shapes
-are static and a token's output depends only on that token, whatever else is in its batch.
+are static. When the router and the experts act on each token separately, as linear layers and
+MLPs over the token axis do, a token's output depends only on that token, whatever else is in its
+batch; `nn.moe` accepts any `[tokens, width]` networks, and one that mixes tokens, such as
+attention, gives up that independence.
 
 `nn.moeMlp` is the same layer for the common case where every expert is a two-layer MLP. It
 keeps the experts' weights in single tensors and runs them all with one batched product per
@@ -129,9 +132,9 @@ def Internal.moeGates {α : Type} [TorchLean.Storage α] [Context α] {m : Type 
     (s₂ := [tokens, E + 1]) (Spec.Shape.BroadcastTo.proof) total
   Runtime.Autograd.Torch.div (m := m) (α := α) kept totalB
 
-/-- The `nn.moeMlp` layer. Its parameters are the router's weight `[E, width]` and bias `[E]`, the
-experts' first weights `[E, width, hidden]` and biases `[E, hidden]`, and their second weights
-`[E, hidden, width]` and biases `[E, width]`. -/
+/-- The `nn.moeMlp` layer with `E + 1` experts. Its parameters are the router's weight
+`[E + 1, width]` and bias `[E + 1]`, the experts' first weights `[E + 1, width, hidden]` and biases
+`[E + 1, hidden]`, and their second weights `[E + 1, hidden, width]` and biases `[E + 1, width]`. -/
 def Layer.moeMlp {tokens width E : Nat} (k hidden : Nat) (activation : MoeMlp.Activation)
     (routerSeed firstSeed secondSeed : Nat) : Layer [tokens, width] [tokens, width] :=
   let shapes : List Spec.Shape :=
@@ -206,24 +209,29 @@ def Layer.moeMlp {tokens width E : Nat} (k hidden : Nat) (activation : MoeMlp.Ac
             m (TorchLean.Runtime.ValueRef (m := m) (α := α) [tokens, width])) }
 
 /--
-A mixture of `E + 1` two-layer MLP experts over the tokens of a `[tokens, width]` input, with a
+A mixture of `experts` two-layer MLP experts over the tokens of a `[tokens, width]` input, with a
 linear router; `k` experts are kept per token. The layer computes `Spec.MoE.forwardSpec` on every
-token, as `nn.moe` with the same router and experts does, with all experts batched.
+token, as `nn.moe` with the same router and experts does, with all experts batched. `experts` must
+be positive.
 
 Example:
 ```lean
 -- Eight experts of 32-64-32, two kept per token, on sequences of 16 tokens.
 def model : nn.Builder (nn.Sequential [16, 32] [16, 32]) :=
-  nn.moeMlp (tokens := 16) (width := 32) (experts := 7) 2 64
+  nn.moeMlp (tokens := 16) (width := 32) (experts := 8) 2 64
 ```
 -/
 def moeMlp {tokens width : Nat} (experts k hidden : Nat)
     (activation : MoeMlp.Activation := .relu) :
     Builder (Sequential [tokens, width] [tokens, width]) :=
   withSeed fun routerSeed => withSeed fun firstSeed => withSeed fun secondSeed =>
+    let layer := Layer.moeMlp (tokens := tokens) (width := width) (E := experts - 1) k hidden
+      activation routerSeed firstSeed secondSeed
     pure <| nn.Sequential.fromLayer
-      (Layer.moeMlp (tokens := tokens) (width := width) (E := experts) k hidden activation
-        routerSeed firstSeed secondSeed)
+      { layer with
+        validateConfig := do
+          if experts = 0 then throw "MoeMlp: a mixture needs at least one expert"
+          layer.validateConfig }
 
 end nn
 end TorchLean

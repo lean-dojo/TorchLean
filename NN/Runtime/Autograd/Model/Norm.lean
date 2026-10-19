@@ -107,7 +107,7 @@ Divide each final-axis vector by `sqrt(sum(x * x) + epsilon)`.
 before the square root, so its effect follows this formula even for vectors whose norm is very
 small. An empty leading axis produces an empty output of the same shape.
 -/
-def l2Normalize {α : Type} [TorchLean.Storage α] [Context α]
+def normalizeL2Regularized {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {leading : Shape} {width : Nat} (hWidth : width > 0)
     (x : Ref (m := m) (α := α) (leading.appendDim width))

@@ -90,16 +90,19 @@ def writeFormat (format : Format) (handle : IO.FS.Handle) : IO Unit := do
 Read and validate a binary checkpoint header.
 
 A wrong magic identifies a different file family. A matching magic with a different version gives
-an explicit version diagnostic instead of being misreported as malformed payload data.
+an explicit version diagnostic instead of being misreported as malformed payload data;
+`olderVersionHint?` is appended when the file is older than the format, to say what to do instead.
 -/
-def readFormat (format : Format) (handle : IO.FS.Handle) : IO Unit := do
+def readFormat (format : Format) (handle : IO.FS.Handle)
+    (olderVersionHint? : Option String := none) : IO Unit := do
   let magic ← readExact format.name handle format.magic.size
   if magic != format.magic then
     throw <| IO.userError s!"{format.name}: unsupported checkpoint family"
   let version ← readNat64 format.name handle
   if version != format.version then
+    let hint := if version < format.version then olderVersionHint?.elim "" (" " ++ ·) else ""
     throw <| IO.userError <|
-      s!"{format.name}: unsupported format version {version}; expected {format.version}"
+      s!"{format.name}: unsupported format version {version}; expected {format.version}.{hint}"
 
 /-- Test whether a file belongs to a binary checkpoint family, without checking its version. -/
 def hasFormatMagic (format : Format) (path : System.FilePath) : IO Bool :=

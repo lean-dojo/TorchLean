@@ -394,8 +394,10 @@ def header : Array String :=
 /-- Mixture-of-experts routing written as `torch.zeros_like(p).scatter(-1, torch.topk(p, k,
 dim=-1).indices, 1.0)`, captured as one `top_k_mask` node over `p`. TorchLean's mask keeps ties for
 the lower index; `torch.topk` documents no tie order, so the two agree whenever the `k`-th and
-`k + 1`-th largest entries of a row differ. The `topk` call, its index projection and the zeros
-exist only to build the mask and are not exported. -/
+`k + 1`-th largest entries of a row differ. The zeros and the mask must have `p`'s dtype, since the
+mask node inherits it; any other dtype is left to the ordinary operator checks, which reject a
+`zeros_like` dtype override. The `topk` call, its index projection and the zeros exist only to
+build the mask and are not exported. -/
 def routing : Array String :=
   #[ "def _top_k_mask(node):"
    , indent 4 "if not _is_op(node, ('aten.scatter.value',)): return None"
@@ -412,8 +414,10 @@ def routing : Array String :=
        "topk.kwargs.get('largest', True)")
    , indent 4 ("if not largest or _normalize_axis(topk_dim, rank) != rank - 1 or " ++
        "_normalize_axis(dim, rank) != rank - 1: return None")
-   , indent 4 "if not _is_op(base, ('aten.zeros_like.default',)): return None"
-   , indent 4 "if _shape_from_arg(base) != _shape_from_arg(source): return None"
+   , indent 4 ("if not _zeros_like(base) or " ++
+       "_shape_from_arg(base) != _shape_from_arg(source): return None")
+   , indent 4 ("if _node_dtype(base) != _node_dtype(source) or " ++
+       "_node_dtype(node) != _node_dtype(source): return None")
    , indent 4 "return source, int(k)"
    , ""
    , "def _routing_helpers(graph):"

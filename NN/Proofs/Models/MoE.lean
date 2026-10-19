@@ -13,7 +13,7 @@ import Mathlib.Algebra.BigOperators.Field
 /-!
 # Mixture of experts
 
-The facts behind the choices in `NN.Spec.Layers.MoE`, in five groups.
+The facts behind the choices in `NN.Spec.Layers.MoE`, in four groups.
 
 * Routing keeps exactly `min k E` experts, and every kept expert beats every expert it displaces
   (`card_kept`, `beats_of_kept`), whenever the comparison of the scores is a strict weak order

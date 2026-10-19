@@ -18,7 +18,8 @@ public import NN.Verification.IR
 
 Mixtral's MoE block in static-shape form, written in ordinary PyTorch (`torch.topk` and `scatter`
 for the routing, a slice of the gates per expert), is captured with `torch.export` by the
-generated adapter and imported as TorchLean IR, where the routing becomes one `top_k_mask` node.
+generated adapter and imported as TorchLean IR, where the routing becomes one `top_k_mask` node. A
+mask built from float64 zeros over float32 scores has no such encoding, and export refuses it.
 
 * Lean's reference interpreter, which evaluates binary32 as IEEE 754 prescribes, agrees with
   PyTorch's output to within a few units in the last place of the largest output; entries near
@@ -80,6 +81,17 @@ def driverScript : String := "\n".intercalate
   , "artifact['arguments'] = [tensor(x)]"
   , "artifact['reference_outputs'] = [tensor(model(x))]"
   , "path.write_text(json.dumps(artifact))"
+  , "class WideMask(DenseMoE):"
+  , "    def forward(self, x):"
+  , "        probabilities = F.softmax(self.gate(x), dim=-1)"
+  , "        _, chosen = torch.topk(probabilities, self.k, dim=-1)"
+  , "        zeros = torch.zeros_like(probabilities, dtype=torch.float64)"
+  , "        return zeros.scatter(-1, chosen, 1.0)"
+  , "try:"
+  , "    adapter.export_torchlean_graph_json(WideMask().eval(), x, str(work / 'wide.json'), True)"
+  , "    (work / 'wide_mask.txt').write_text('accepted')"
+  , "except Exception as error:"
+  , "    (work / 'wide_mask.txt').write_text(f'rejected: {error}')"
   ]
 
 def readJson (path : System.FilePath) : IO Json := do
@@ -120,6 +132,10 @@ def run : IO Unit := do
   discard <| TorchLean.External.Process.run "MoE export" "python3"
     #[(workDir / "make_moe.py").toString, workDir.toString]
   let artifact ← readJson (workDir / "moe.json")
+  -- Routing whose zeros are wider than the scores has no `top_k_mask` encoding; export refuses it.
+  let wide ← IO.FS.readFile (workDir / "wide_mask.txt")
+  unless wide.startsWith "rejected" do
+    throw <| IO.userError "MoE import: a float64 mask over float32 scores was exported"
   -- The routing is one top-2 mask.
   let captured ← IO.ofExcept (Import.PyTorch.TorchExport.parseGraph artifact)
   let masks := captured.graph.nodes.filter fun node => node.kind == .topKMask 2

@@ -21,7 +21,7 @@ public import NN.Verification.Builtin.TransformerIBPWorkflow
 public import NN.Verification.Builtin.MlpTrainVerifyWorkflow
 public import NN.Verification.Robustness.Digits
 public import NN.Verification.Robustness.MarginCertCLI
-public import NN.Verification.Splines.PiecewiseLinearCLI
+public import NN.Verification.Splines.PiecewisePolyCLI
 public import NN.Verification.VNNComp.MnistFC
 public import NN.MLTheory.CROWN.Lyapunov.TwoStage.PipelineIPythonOnly
 public import NN.MLTheory.CROWN.Lyapunov.TwoStage.PipelineIIHybrid
@@ -156,9 +156,9 @@ def otherTools : List Tool :=
         NN.Verification.PINN.Certificate.verifyCert path }
   , { name := "spline-cert"
       description := "piecewise-polynomial certificate checker (optional Julia regen)"
-      defaultArg := some NN.Verification.Splines.PiecewiseLinearCLI.defaultCertPath
+      defaultArg := some NN.Verification.Splines.PiecewisePolyCLI.defaultCertPath
       run := fun args =>
-        NN.Verification.Splines.PiecewiseLinearCLI.main args }
+        NN.Verification.Splines.PiecewisePolyCLI.main args }
   , { name := "pinn-cli"
       description := "interactive PINN residual-bounding CLI"
       includeInAll := false

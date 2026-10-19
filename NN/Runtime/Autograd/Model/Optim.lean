@@ -20,8 +20,8 @@ training structures (`Torch.ParamList` + gradient `TorchLean.TensorPack`).
 Design notes:
 - Optimizer state is stored in a shape-indexed list aligned with the parameter shapes.
 - Trainable storage aliases share one history and one update from their summed gradients.
-- Updates run on *plain tensors* (not via the autograd tape), so they work the same for eager and
-  typed graph training loops.
+- Updates run on *plain tensors* after the backward pass, so they are not recorded on the
+  autograd tape.
 - Parameters marked `requiresGrad := false` are left unchanged (state is preserved).
 
 ### PyTorch references

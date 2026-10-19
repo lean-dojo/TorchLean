@@ -25,36 +25,6 @@ namespace NN.Examples.Models.TrainCommand
 
 open TorchLean
 
-/-- Help text for model commands with caller-supplied data and training options. -/
-def modelUsage
-    (exeName : String)
-    (dataOptions trainingOptions : Array String)
-    (extraSections : Array String := #[]) : String :=
-  String.intercalate "\n" <| (#[
-    s!"Usage: scripts/lake.sh exe torchlean {exeName} [options]",
-    "",
-    "Data:"
-  ] ++ dataOptions ++ #[
-    "",
-    "Training:"
-  ] ++ trainingOptions ++ extraSections ++ #[
-    "",
-    "Runtime:",
-    "  --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external",
-    "  --arithmetic native",
-    "  --seed N --show-backend"
-  ]).toList
-
-/-- Standard optimizer and logging flags accepted by most model commands. -/
-def optimizerUsage (exeName : String) (dataOptions : Array String) : String :=
-  modelUsage exeName dataOptions #[
-    "  --steps N          optimizer updates",
-    "  --batch-size N     dataset items accumulated per update",
-    "  --lr X             learning rate",
-    "  --log PATH|false   write a TrainLog JSON, or disable logging",
-    "  --cuda-mem-watch N sample CUDA allocator state every N updates"
-  ]
-
 /-- CSV-backed training command. The caller chooses the objective and result reporting. -/
 def csv {Result : Type}
     (exeName : String)
@@ -73,7 +43,8 @@ def csv {Result : Type}
       Support.Training.Options.parse exeName rest defaultLogPath defaultSteps defaultLearningRate
         (parseData := fun args => Support.Csv.Options.parse args defaultCsv))
     banner train report
-    (usage? := some <| optimizerUsage exeName #["  --csv PATH         supervised CSV file"])
+    (usage? := some <|
+      CLI.Training.Command.helpText exeName #["  --csv PATH         supervised CSV file"])
 
 /-- NPY-backed training command. The caller chooses the objective and result reporting. -/
 def npy {Result : Type}
@@ -88,7 +59,7 @@ def npy {Result : Type}
     (target : String := "target") :
     IO UInt32 :=
   CLI.Training.Command.runParsed exeName args parseFlags banner train report
-    (usage? := some <| optimizerUsage exeName #[
+    (usage? := some <| CLI.Training.Command.helpText exeName #[
       "  --x PATH           feature/image NPY file",
       s!"  --y PATH           {target} NPY file",
       "  --n-total N        rows to load"
@@ -107,7 +78,7 @@ def forecast {Result : Type}
     (report : Result → IO Unit) :
     IO UInt32 :=
   CLI.Training.Command.runParsed exeName args parseFlags banner train report
-    (usage? := some <| optimizerUsage exeName #[
+    (usage? := some <| CLI.Training.Command.helpText exeName #[
       "  --x PATH           input-window NPY file",
       "  --y PATH           target-window NPY file",
       "  --windows N        windows to load",

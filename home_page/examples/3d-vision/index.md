@@ -148,7 +148,10 @@ The JSON artifacts go under `_external/geometry3d/realworld/`; the overlays and
 
 Here's the JSON we'll pass to the checker. We can use the same format with WildDet3D, Omni3D,
 or another detector that exports the camera and box fields. The artifact must declare a positive
-`point_count` that matches the number of triples in `corners3d`; a cuboid has eight.
+`point_count` that matches the number of triples in `corners3d`; a cuboid has eight. The checker
+rejects `torchlean.camera.box3d.v1` artifacts. Regenerate them with the current exporters, or retag
+an eight-corner v1 file by setting `"format"` to `torchlean.camera.box3d.v2` and adding
+`"point_count": 8`.
 
 ```json
 {

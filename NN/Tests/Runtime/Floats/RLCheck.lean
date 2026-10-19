@@ -78,7 +78,7 @@ def checkVector {α : Type} [TorchLean.Storage α] [Context α] : IO Unit := do
     let graph ← Autodiff.lowerToTypedGraph (α := α)
       (paramShapes := [Shape.ofList [7]]) (inputShapes := [Shape.ofList [7]])
       (vectorLoss 2 reduction)
-    let (gradients, loss) ← Autodiff.Impl.pullback graph
+    let (gradients, loss) ← Autodiff.Internal.pullback graph
       (.cons prediction (.cons target .nil)) (Tensor.scalar (1 : α))
     expect "Huber value with delta two" (close (loss.getFlat ⟨0, by decide⟩) (17 / divisor))
     let expected := ([-2, -2, -1, 0, 1, 2, 2] : Tensor α [7]).map (· / divisor)
@@ -95,7 +95,7 @@ def checkActions {α : Type} [TorchLean.Storage α] [Context α] : IO Unit := do
   let graph ← Autodiff.lowerToTypedGraph (α := α)
     (paramShapes := [Shape.ofList [2, 3]])
     (inputShapes := [Shape.ofList [2, 3], Shape.ofList [2]]) actionLoss
-  let (gradients, loss) ← Autodiff.Impl.pullback graph
+  let (gradients, loss) ← Autodiff.Internal.pullback graph
     (.cons prediction (.cons actions (.cons target .nil))) (Tensor.scalar (1 : α))
   expect "mean over transitions" (close (loss.getFlat ⟨0, by decide⟩) (21 / 16))
   let expected : Tensor α [2, 3] := [[-1 / 2, 0, 0], [0, 1 / 4, 0]]
@@ -420,7 +420,7 @@ def checkPPORatioAtIdenticalParams : IO Unit := do
   let graph ← Runtime.Autograd.Model.Autodiff.lowerToTypedGraph (α := Float)
     (paramShapes := [Shape.ofList [2, 3]])
     (inputShapes := [Shape.ofList [2, 3], Shape.ofList [2], Shape.ofList [2]]) ppoMeanObjective
-  let (_, objective) ← Runtime.Autograd.Model.Autodiff.Impl.pullback graph
+  let (_, objective) ← Runtime.Autograd.Model.Autodiff.Internal.pullback graph
     (.cons logits (.cons actions (.cons oldLogProb (.cons advantage .nil))))
     (Tensor.scalar (1 : Float))
   -- With ratio 1 and unit advantages every per-sample objective is exactly 1.
@@ -444,7 +444,7 @@ def checkPPOTailOutsideClamp : IO Unit := do
   let graph ← Runtime.Autograd.Model.Autodiff.lowerToTypedGraph (α := Float)
     (paramShapes := [Shape.ofList [2, 3]])
     (inputShapes := [Shape.ofList [2, 3], Shape.ofList [2], Shape.ofList [2]]) ppoMeanObjective
-  let (_, objective) ← Runtime.Autograd.Model.Autodiff.Impl.pullback graph
+  let (_, objective) ← Runtime.Autograd.Model.Autodiff.Internal.pullback graph
     (.cons logits (.cons actions (.cons oldLogProb (.cons advantage .nil))))
     (Tensor.scalar (1 : Float))
   assertApprox "PPO raw cached tail gives clipped nonunit objective" objective.item 1.2 1e-12
@@ -467,7 +467,7 @@ def checkPPONegativeInfinityLogit : IO Unit := do
   let graph ← Runtime.Autograd.Model.Autodiff.lowerToTypedGraph (α := Float)
     (paramShapes := [Shape.ofList [2, 3]])
     (inputShapes := [Shape.ofList [2, 3], Shape.ofList [2], Shape.ofList [2]]) ppoMeanObjective
-  let (gradients, objective) ← Runtime.Autograd.Model.Autodiff.Impl.pullback graph
+  let (gradients, objective) ← Runtime.Autograd.Model.Autodiff.Internal.pullback graph
     (.cons logits (.cons actions (.cons oldLogProb (.cons advantage .nil))))
     (Tensor.scalar (1 : Float))
   let value := objective.getFlat ⟨0, by decide⟩
@@ -506,7 +506,7 @@ def checkEntropyZeroProbability : IO Unit := do
   for tail in [-(1.0 / 0.0), -1000.0, -1.0e40, 0.0] do
     let logits : Tensor Float [1, 2] :=
       (Tensor.ofFn fun i : Fin 2 => if i.val == 0 then 0.0 else tail).reshape [1, 2] (by decide)
-    let (gradients, entropy) ← Runtime.Autograd.Model.Autodiff.Impl.pullback graph
+    let (gradients, entropy) ← Runtime.Autograd.Model.Autodiff.Internal.pullback graph
       (.cons logits .nil) (Tensor.scalar (1 : Float))
     let expected := if tail == 0 then Float.log 2.0 else 0.0
     assertBool "entropy must be finite" entropy.item.isFinite
@@ -523,7 +523,7 @@ def checkEntropyAtNegativeInfinity {α : Type} [TorchLean.Storage α] [Context �
   let logits : Tensor α [1, 2] :=
     (Tensor.ofFn fun i : Fin 2 => if i.val == 0 then 0 else negativeInfinity).reshape
       [1, 2] (by decide)
-  let (gradients, entropy) ← Runtime.Autograd.Model.Autodiff.Impl.pullback graph
+  let (gradients, entropy) ← Runtime.Autograd.Model.Autodiff.Internal.pullback graph
     (.cons logits .nil) (Tensor.scalar (1 : α))
   assertBool s!"{label} zero-probability entropy" (isZero entropy.item)
   let .cons gradient .nil := gradients

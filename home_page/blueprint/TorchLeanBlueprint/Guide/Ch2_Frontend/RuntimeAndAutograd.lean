@@ -26,7 +26,8 @@ contribution.
 The eager tape keeps the values and reverse rules from that execution. A typed graph lets us
 record the operation sequence once and supply new values later. Comparing the two shows what
 the public calls in {ref "autograd-walkthrough"}[Differentiation By Example] construct.
-{ref "run-configuration"}[Choosing How A Model Runs] explains how the trainer selects its path.
+{ref "run-configuration"}[Choosing How A Model Runs] explains how a trainer's arithmetic and device
+are chosen.
 
 The named Lean blocks are elaborated while this page is built, together with checks of their
 displayed outputs. The command-line and PyTorch transcripts record separate runs; they are not
@@ -856,7 +857,7 @@ the forward graph but contributes nothing to the leaf's cotangent. See
 
 # Training Through The Trainer
 
-The same comparison can be made through the trainer, using a fixed seed, dataset, and arithmetic:
+This command makes a reproducible eager training run, with a fixed seed, dataset, and arithmetic:
 
 ```terminal
 # Keep seed and data fixed for a two-step run.

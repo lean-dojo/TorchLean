@@ -142,14 +142,10 @@ def IsExponentiallyStable {s : Shape}
       M * (MathFunctions.exp (-decayRate * n)) * tensorDistance norm equilibrium x₀
 
 /--
-Global attraction: every initial condition converges to `equilibrium`.
-
-The established name `IsGloballyStable` denotes convergence only; it does not also require the
-Lyapunov-stability predicate.
-
-This is stated as convergence in the distance induced by `norm`.
+Global attraction: every initial condition converges to `equilibrium`, in the distance induced by
+`norm`. Lyapunov stability is a separate property; global asymptotic stability needs both.
 -/
-def IsGloballyStable {s : Shape}
+def IsGloballyAttractive {s : Shape}
     (f : Tensor α s → Tensor α s)
     (norm : ∀ {s : Shape}, Tensor α s → α)
     (equilibrium : Tensor α s) : Prop :=
@@ -157,9 +153,7 @@ def IsGloballyStable {s : Shape}
     tensorDistance norm equilibrium (iterate f n x₀) < ε
 
 /--
-Input-to-state stability (ISS) for an input-driven system $x_{t+1}=f(x_t,u_t)$.
-
-This is the standard bound
+The input-to-state bound for an input-driven system $x_{t+1}=f(x_t,u_t)$:
 
 $$
 \lVert x_t\rVert
@@ -168,10 +162,10 @@ $$
 $$
 
 packaged as a `Prop`. The maximum includes an initial zero and inputs at indices `k < t`,
-which are the inputs used to reach state `t`. This predicate does not require the usual class-KL
-conditions on `β` or class-K conditions on `γ`; those must be supplied separately for standard ISS.
+which are the inputs used to reach state `t`. With a class-KL `β` and a class-K `γ`, supplied
+separately, the bound is input-to-state stability.
 -/
-def IsInputToStateStable {s₁ s₂ : Shape}
+def SatisfiesInputToStateBound {s₁ s₂ : Shape}
     (f : Tensor α s₁ → Tensor α s₂ → Tensor α s₁)
     (norm : ∀ {s : Shape}, Tensor α s → α)
     (β : α → α → α) (γ : α → α) : Prop :=
@@ -187,10 +181,11 @@ where
     (List.finRange t).foldl (fun acc i => max acc (norm (inputSeq i))) 0
 
 /--
-A fixed-bound input/output implication: inputs of norm at most `bound` have outputs of norm
-at most the same `bound`. This is not the general BIBO quantification over input and output bounds.
+A fixed-bound input/output implication: inputs of norm at most `bound` have outputs of norm at
+most the same `bound`. Bounded-input bounded-output stability quantifies over separate input and
+output bounds instead.
 -/
-def IsBiboStable {s₁ s₂ : Shape}
+def PreservesNormBound {s₁ s₂ : Shape}
     (f : Tensor α s₁ → Tensor α s₂)
     (norm₁ : ∀ {s : Shape}, Tensor α s → α)
     (norm₂ : ∀ {s : Shape}, Tensor α s → α)
@@ -230,11 +225,9 @@ def IsPracticallyStable {s : Shape}
     tensorDistance norm equilibrium (iterate f t x₀) ≤ ultimateBound
 
 /--
-One-step monotonicity of a training loss under an update rule.
-
-This is the “training stability” predicate used as a spec for decreasing-loss update rules.
+One update does not increase the loss at `parameters`.
 -/
-def IsTrainingStable {s : Shape}
+def LossNonincreasingAt {s : Shape}
     (updateRule : Tensor α s → Tensor α s)
     (loss : Tensor α s → α)
     (parameters : Tensor α s) : Prop :=

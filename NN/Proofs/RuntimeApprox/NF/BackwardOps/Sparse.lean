@@ -39,7 +39,7 @@ def setIdx {α : Type} [TorchLean.Storage α] [Zero α] :
   | [], _, idx, _t => nomatch idx.i
   | s0 :: Γ, s, ⟨⟨0, _⟩, hshape⟩, t =>
       let t0 : Tensor α s0 :=
-        Spec.tensorCast (α := α) (source := s) s0 (by simpa using hshape.symm) t
+        Tensor.castShape t (by simpa using hshape.symm)
       .cons t0 (TorchLean.TensorPack.zero (α := α) (ss := Γ))
   | s0 :: Γ, s, ⟨⟨Nat.succ i, hi⟩, hshape⟩, t =>
       .cons (Tensor.full s0 (0 : α))
@@ -53,18 +53,18 @@ def set2Idx {α : Type} [TorchLean.Storage α] [Zero α] [Add α] :
   | [], _, _, idx, _t₁, _jdx, _t₂ => nomatch idx.i
   | s0 :: Γ, s₁, s₂, ⟨⟨0, _⟩, h₁⟩, t₁, ⟨⟨0, _⟩, h₂⟩, t₂ =>
       let t₁0 : Tensor α s0 :=
-        Spec.tensorCast (α := α) (source := s₁) s0 (by simpa using h₁.symm) t₁
+        Tensor.castShape t₁ (by simpa using h₁.symm)
       let t₂0 : Tensor α s0 :=
-        Spec.tensorCast (α := α) (source := s₂) s0 (by simpa using h₂.symm) t₂
+        Tensor.castShape t₂ (by simpa using h₂.symm)
       .cons (addSpec t₁0 t₂0) (TorchLean.TensorPack.zero (α := α) (ss := Γ))
   | s0 :: Γ, s₁, s₂, ⟨⟨0, _⟩, h₁⟩, t₁, ⟨⟨Nat.succ j, hj⟩, h₂⟩, t₂ =>
       let t₁0 : Tensor α s0 :=
-        Spec.tensorCast (α := α) (source := s₁) s0 (by simpa using h₁.symm) t₁
+        Tensor.castShape t₁ (by simpa using h₁.symm)
       .cons t₁0
         (setIdx (α := α) (Γ := Γ) (s := s₂) ⟨⟨j, Nat.lt_of_succ_lt_succ hj⟩, by simpa using h₂⟩ t₂)
   | s0 :: Γ, s₁, s₂, ⟨⟨Nat.succ i, hi⟩, h₁⟩, t₁, ⟨⟨0, _⟩, h₂⟩, t₂ =>
       let t₂0 : Tensor α s0 :=
-        Spec.tensorCast (α := α) (source := s₂) s0 (by simpa using h₂.symm) t₂
+        Tensor.castShape t₂ (by simpa using h₂.symm)
       .cons t₂0
         (setIdx (α := α) (Γ := Γ) (s := s₁) ⟨⟨i, Nat.lt_of_succ_lt_succ hi⟩, by simpa using h₁⟩ t₁)
   | s0 :: Γ, s₁, s₂, ⟨⟨Nat.succ i, hi⟩, h₁⟩, t₁, ⟨⟨Nat.succ j, hj⟩, h₂⟩, t₂ =>

@@ -17,7 +17,8 @@ public import NN.Verification.Builtin.Lowering
 # Lowered Loss Analysis for Two-Stage Lyapunov Workflows
 
 The executable operations shared by the hybrid and all-in-Lean pipelines: projected gradient
-ascent on the lowered loss and an IBP/CROWN check of that loss over an input box.
+ascent on the lowered loss, and a report of that loss's IBP and CROWN bounds over an input box.
+The report prints the bounds; it decides nothing.
 -/
 
 @[expose] public section
@@ -47,7 +48,7 @@ Take one projected gradient-ascent step on the state input of a lowered scalar l
 Only the state gradient is retained; parameters remain fixed. The result is projected back into
 the coordinate box `[-radius, radius]`.
 -/
-def projectedGradientStep
+def projectedGradientAscentStep
     (width : Nat)
     (lossGraph : Runtime.Autograd.Torch.TypedGraph Scalar (LossInputs width) [])
     (parameters : TorchLean.nn.State Scalar (Core.paramShapes width))
@@ -102,11 +103,11 @@ def projectedGradientStep
 /--
 Lower the shared scalar loss and report its IBP and CROWN bounds on an origin-centered box.
 -/
-def checkLossBox
+def reportLossBox
     (width : Nat)
     (parameters : TorchLean.nn.State Scalar (Core.paramShapes width))
     (epsilon : Scalar) : IO Unit := do
-  IO.println "Stage 2 check: IBP + CROWN on the scalar loss over a small box"
+  IO.println "Stage 2 report: IBP and CROWN bounds of the scalar loss over a small box"
   let lowered ← IO.ofExcept (lowerLossToIR width parameters)
 
   IO.println s!"lowered IR nodes: {lowered.graph.nodes.size}"

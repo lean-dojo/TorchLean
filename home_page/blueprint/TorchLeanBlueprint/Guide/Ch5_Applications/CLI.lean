@@ -454,7 +454,7 @@ Data:
 
 Training:
   --steps N          optimizer updates
-  --batch-size N     dataset items accumulated per update
+  --batch-size N     dataset items accumulated per update (default: 1)
   --lr X             learning rate
   --log PATH|false   write a TrainLog JSON, or disable logging
   --cuda-mem-watch N sample CUDA allocator state every N updates
@@ -462,7 +462,8 @@ Training:
 Runtime:
   --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external
   --arithmetic native
-  --seed N --show-backend
+  --seed N           runtime seed (default: 0)
+  --show-backend     print backend capsules as they execute
 ```
 
 Read the `Runtime:` block as this command's contract, not as a copy of the global list.

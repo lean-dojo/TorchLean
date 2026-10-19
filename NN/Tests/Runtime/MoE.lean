@@ -185,7 +185,14 @@ def checkStacked (device : NN.Backend.Device) : IO Unit := do
     unless sameBits predicted expected do
       throw <| IO.userError "nn.moeMlp on the CPU tape differs from Spec.MoE.forwardSpec"
 
+/-- `nn.moeMlp (experts := 3)` builds three experts: the router weight is `[3, width]`. -/
+def checkExpertCount : IO Unit := do
+  let model := nn.build 0 (nn.moeMlp (tokens := 3) (width := 4) (experts := 3) 2 5)
+  unless model.stateShapes.head? == some [3, 4] do
+    throw <| IO.userError s!"nn.moeMlp (experts := 3) has router weight {model.stateShapes.head?}"
+
 def run (device : NN.Backend.Device := .cpu) : IO Unit := do
+  checkExpertCount
   checkStacked device
   if device == .cuda then
     checkCudaMask

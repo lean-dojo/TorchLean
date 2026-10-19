@@ -115,8 +115,8 @@ theorem result_map_error {β γ : Type} (f : β → γ) (e : String) :
 /--
 Backward closures of `t` only point backwards: every contribution emitted by the node stored at
 `id` targets a node id strictly smaller than `id`. This is the invariant that makes the dense
-reverse loop well-founded; `lowerGraphToTape_backward_pids_lt_id` and its `GraphData` counterpart
-establish it for lowered tapes.
+reverse loop well-founded; `lowerGraphDataToTape_backward_pids_lt_id` establishes it for lowered
+tapes, including those of proved graphs, which lower through `Graph.toData`.
 -/
 def BackwardPidsLt {α : Type} [Storage α] (t : Tape (Spec.SomeTensor α)) : Prop :=
   ∀ id (n : Runtime.Autograd.Node (Spec.SomeTensor α)), t.getNode? id = some n →

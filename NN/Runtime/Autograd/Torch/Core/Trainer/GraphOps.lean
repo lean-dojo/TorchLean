@@ -14,8 +14,9 @@ public import NN.Runtime.Autograd.TypedGraph.GraphM.Pooling
 /-!
 # Graph Operations
 
-Interpret `Ops` programs as typed graph nodes. This instance is shared by graph evaluation
-and training; it does not allocate trainer state.
+Interpret `Ops` programs as typed graph nodes. The recorded graphs serve evaluation, the autograd
+transforms and their proofs. Training does not use this instance: each trainer step records an
+eager tape.
 -/
 
 @[expose] public section

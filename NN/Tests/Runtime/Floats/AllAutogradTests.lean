@@ -11,7 +11,7 @@ public import NN.API.Neural.Execution
 public import NN.API.Optim
 public import NN.Spec.Models.Mlp
 public import NN.Tests.Runtime.Floats.Utils
-public import NN.Tests.Runtime.TypedGraphScalingRegression
+public import NN.Tests.Runtime.TypedGraphSemanticRegression
 import NN.Kernel
 import NN.API.Autograd.Function
 import NN.API.Precision
@@ -646,7 +646,7 @@ private def checkCustomAutograd : IO Unit := do
   TypedGraphOutputReference.run
   TypedGraphSmoothMaxDomain.run
   DisconnectedDenseGradient.run
-  TypedGraphScalingRegression.run
+  TypedGraphSemanticRegression.run
   OptimizerNumerics.run
   checkCustomAutograd
   IO.println "=== Autograd test suite completed ==="

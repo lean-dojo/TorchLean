@@ -15,9 +15,10 @@ public import NN.Proofs.Autograd.Tape.Ops.Norm.RowNormalization
 
 The normalization specs are written with `reduceMean`, `reduceVar`, `broadcastAfterSum`,
 `broadcastTo`, and pointwise tensor arithmetic on `[m, n]` matrices. This file records what each
-of those operations does to a single entry `get2 t i j`, and how `tensorToVec` indexes a matrix,
-so that the LayerNorm and BatchNorm proofs can work with plain real sums. Entries of filled
-tensors are `TorchLean.Tensor.getScalar_full` and `Spec.get2_full`.
+of those operations does to a single entry `get2 t i j`, so that the LayerNorm and BatchNorm
+proofs can work with plain real sums. Entries of filled tensors are
+`TorchLean.Tensor.getScalar_full` and `Spec.get2_full`; `tensorToVec` of a matrix is read at
+`idxMN i j` by `TapeNodes.Matmul.tensorToVec_idxMN`.
 -/
 
 @[expose] public section
@@ -36,40 +37,6 @@ noncomputable section
 variable {m n : Nat}
 
 /-! ## Matrix vectorization -/
-
-/-- `tensorToVec` of a matrix at the flattened index `(i, j)` is the matrix entry. -/
-theorem tensorToVec_idxMN (A : Tensor ℝ [m, n]) (i : Fin m) (j : Fin n) :
-    tensorToVec (t := A) (TapeNodes.Matmul.idxMN (m := m) (n := n) i j) = Spec.get2 A i j := by
-  change
-    TorchLean.Tensor.getScalar (TorchLean.Tensor.flattenSpec A)
-        (TapeNodes.Matmul.idxMN (m := m) (n := n) i j) =
-      Spec.get2 A i j
-  rw [TorchLean.Tensor.getScalar_eq_apply]
-  unfold TorchLean.Tensor.flattenSpec Spec.get2 TorchLean.Tensor.getScalar Spec.get
-    TorchLean.Tensor.unstack TorchLean.Tensor.item
-  rw [TorchLean.Tensor.Internal.Rep.reshape_apply_coordEquiv]
-  rw [TorchLean.Tensor.Internal.Rep.unstack_apply,
-    TorchLean.Tensor.Internal.Rep.unstack_apply]
-  apply congrArg A
-  apply TorchLean.Tensor.Internal.Coord.linearize_injective
-  apply Fin.ext
-  rw [TorchLean.Tensor.reshapeCoordEquiv_linearize_val]
-  rw [TorchLean.Tensor.vectorCoordinate_linearize_val]
-  have hlinearize :
-      (TorchLean.Tensor.Internal.Coord.linearize (s := [m, n])
-        (i, j, PUnit.unit)).val =
-        j.val + n * i.val := by
-    calc
-      _ =
-          (TorchLean.Tensor.Internal.Coord.linearize (s := [n])
-            (j, PUnit.unit)).val +
-            TorchLean.Tensor.Internal.Shape.size [n] * i.val :=
-        TorchLean.Tensor.Internal.Coord.linearize_cons_val (s := [n]) i (j, PUnit.unit)
-      _ = j.val + n * i.val := by
-        rw [TorchLean.Tensor.vectorCoordinate_linearize_val]
-        simp
-  rw [hlinearize]
-  simp [TapeNodes.Matmul.idxMN, finProdFinEquiv_apply_val]
 
 /-- Two flattened matrices agree once they agree at every `idxMN i j`. -/
 theorem vec_ext_idxMN {u v : Vec (TapeNodes.Matmul.matSize m n)}

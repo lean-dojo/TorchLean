@@ -226,7 +226,7 @@ def checkAdamEpsilon : IO Unit := do
     let state ← IO.mkRef (Std.HashMap.emptyWithCapacity : CudaAdamState)
     discard <| session.use parameter
     let zero ← Runtime.Autograd.LibTorch.Buffer.zerosIO 1
-    let gradients := (Std.HashMap.emptyWithCapacity : CudaGradMap)
+    let gradients := (Std.HashMap.emptyWithCapacity : Runtime.Autograd.LibTorch.Tape.SparseGradMap)
       |>.insert 0 { s := [], buf := zero }
     let step := fun (epsilon : Float) =>
       match kind with
@@ -261,7 +261,7 @@ def checkAdamEpsilon : IO Unit := do
           throw <| IO.userError "CUDA Adam zero-gradient update produced invalid moments"
     finally
       session.resetTape
-      releaseCudaGradMap gradients
+      Runtime.Autograd.LibTorch.Tape.releaseSparseGrads gradients
       releaseAdam (← state.get)
 
 /-- Checkpoint decoding applies the same effective-epsilon check before allocating replacements. -/

@@ -17,9 +17,11 @@ the bits of the result, and this file makes each of them definite.
 
 * Ties. Expert `j` *beats* expert `i` when its score is larger, or when neither score is larger
   and `j` has the smaller index. Expert `i` is kept when fewer than `k` experts beat it (`kept`),
-  so ties go to the lower index, as in `argmax`. The test needs only the comparison `>` and a
-  count, so a device can decide it exactly for every entry at once. `torch.topk` documents that the
-  indices of tied elements may vary across invocations.
+  so ties go to the lower index, as in `argmax`. With totally ordered scores (no NaN) this keeps
+  `min k E` experts. With NaN among the scores `beats` can cycle: for `[0, NaN, 1]` every expert
+  is beaten once, so `k = 1` keeps none and `k = 2` keeps all three. The test needs only the
+  comparison `>` and a count, so a device can decide it exactly for every entry at once.
+  `torch.topk` documents that the indices of tied elements may vary across invocations.
 * Gates. As in Mixtral, the router's logits go through a softmax, the `k` largest probabilities
   are kept, and the kept ones are divided by their sum (`gatesVecSpec`). Over `ℝ` the experts kept
   are those with the largest logits and the gates are the softmax of their logits
@@ -66,7 +68,7 @@ def keptExperts {E : Nat} (k : Nat) (scores : Fin E → α) : List (Fin E) :=
 
 variable [TorchLean.Storage α]
 
-/-- One for the `k` kept entries of a vector of scores and zero for the others. -/
+/-- One for the entries of a vector of scores that `kept k` keeps and zero for the others. -/
 def topKMaskVecSpec {E : Nat} (k : Nat) (scores : Tensor α [E]) : Tensor α [E] :=
   Tensor.dim fun i =>
     Tensor.scalar (if kept k (fun j => scores.getScalar j) i then 1 else 0)
@@ -81,9 +83,10 @@ def topKMaskSpec (k : Nat) : {s : Shape} → Tensor α s → Tensor α s
 
 /-! ## The layer -/
 
-/-- Mixtral's gates for one token: the softmax of the router's logits, kept for the `k` experts
-with the largest probabilities and divided by the sum of the kept probabilities, and zero for the
-other experts. With `k = 0` nothing is kept and the division is `0 / 0`. -/
+/-- Mixtral's gates for one token: the softmax of the router's logits, kept for the experts
+`topKMaskVecSpec` keeps (the `k` largest probabilities when none is NaN) and divided by the sum of
+the kept probabilities, and zero for the other experts. With `k = 0` nothing is kept and the
+division is `0 / 0`. -/
 def gatesVecSpec {E : Nat} (k : Nat) (logits : Tensor α [E]) : Tensor α [E] :=
   let probabilities := Activation.softmaxVecSpec logits
   let keptProbabilities := mulSpec probabilities (topKMaskVecSpec k probabilities)

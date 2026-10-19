@@ -13,7 +13,7 @@ public import NN.Verification.PINN.Certificate
 public import NN.Verification.PINN.DatasetCheck
 public import NN.Verification.Robustness.Digits
 public import NN.Verification.Robustness.MarginCertCLI
-public import NN.Verification.Splines.PiecewiseLinearCLI
+public import NN.Verification.Splines.PiecewisePolyCLI
 public import NN.Verification.Builtin.CrownOpsWorkflow
 public import NN.Verification.Builtin.IBPWorkflow
 public import NN.Verification.Builtin.MlpTrainVerifyWorkflow

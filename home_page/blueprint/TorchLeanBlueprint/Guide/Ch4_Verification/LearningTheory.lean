@@ -1044,13 +1044,12 @@ practical stability, finite-time stability, and one-step training stability. The
 {src "NN/MLTheory/LearningTheory/Stability/Dynamics/Runtime.lean"}[Dynamics.Runtime] provides
 `Float` diagnostics.
 
-Read these predicate names with their actual hypotheses. `IsInputToStateStable` currently asks for
-an inequality with supplied comparison functions but does not impose the usual class-K/class-KL
-conditions, and its input bound uses indices strictly before the current time. The real
-`stabilityMargin` uses a supremum; without nonemptiness and boundedness assumptions it need not
-represent an attained or usable radius. `IsBiboStable` is a fixed-bound implication: input norm
-at most `bound` implies output norm at most that same bound; it does not quantify over separate
-input and output bounds.
+`SatisfiesInputToStateBound` asks for the input-to-state inequality with supplied comparison
+functions; standard input-to-state stability also needs the class-K/class-KL conditions, and the
+input bound uses indices strictly before the current time. The real `stabilityMargin` uses a
+supremum; without nonemptiness and boundedness assumptions it need not represent an attained or
+usable radius. `PreservesNormBound` is a fixed-bound implication: input norm at most `bound`
+implies output norm at most that same bound.
 
 This vocabulary is here because neural-network learning theory is not limited to static supervised
 learning: recurrent models, samplers, controllers, RL policies interacting with state, and learned

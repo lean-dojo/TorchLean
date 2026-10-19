@@ -184,8 +184,9 @@ class Ops (m : Type → Type) (α : Type) [Storage α] [Context α] where
   detach : {s : Shape} → (x : Ref s) → m (Ref s)
   /--
   One for the `k` largest entries of every row along the last axis and zero for the others, with
-  ties going to the lower index (`Spec.MoE.topKMaskSpec`). The mask is constant away from ties and
-  no gradient flows through it; a router learns through the gates the mask selects.
+  ties going to the lower index (`Spec.MoE.topKMaskSpec`); a row with NaN can keep a different
+  number of entries. The mask is constant away from ties and no gradient flows through it; a
+  router learns through the gates the mask selects.
   -/
   topKMask : {s : Shape} → (k : Nat) → (x : Ref s) → m (Ref s)
   /--

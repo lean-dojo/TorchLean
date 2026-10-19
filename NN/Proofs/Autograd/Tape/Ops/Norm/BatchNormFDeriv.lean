@@ -254,7 +254,7 @@ theorem get2_flat (t : Tensor ℝ (.dim channels sSpatial)) (c : Fin channels)
     (p : Fin (positions sSpatial)) :
     Spec.get2 (flat t) c p =
       matVec (tensorToVec t) (idxMN (m := channels) (n := positions sSpatial) c p) := by
-  rw [← Norm.tensorToVec_idxMN, flat, tensorToVec_reshapeSpec, matVec, castVec_apply]
+  rw [← TapeNodes.Matmul.tensorToVec_idxMN, flat, tensorToVec_reshapeSpec, matVec, castVec_apply]
 
 /-- Entries of the flattened input tensor are coordinates of `matVec`. -/
 theorem get2_flat_vecToTensor (v : Vec (Spec.Shape.size (.dim channels sSpatial)))
@@ -300,7 +300,7 @@ theorem bnVec_eq_bnClosed [Shape.WellFormed (.dim channels sSpatial)] {ε : ℝ}
             (vecToTensor (s := .dim channels .scalar) q.2.2) ε)
           (size_flat channels sSpatial))
         (rowIdx k) (colIdx k) := by
-    rw [← Norm.tensorToVec_idxMN, ← cast_eq_idxMN, tensorToVec_reshapeSpec]
+    rw [← TapeNodes.Matmul.tensorToVec_idxMN, ← cast_eq_idxMN, tensorToVec_reshapeSpec]
     rfl
   rw [hL, get2_flat_batchNorm, get2_flat_vecToTensor, rowMeanE_flat, rowVarE_flat,
     tensorToVec_vecToTensor, getScalar_chan, getScalar_chan, tensorToVec_vecToTensor,
@@ -442,7 +442,7 @@ theorem bnD_tensors [Shape.WellFormed (.dim channels sSpatial)] {ε : ℝ} (hε 
       Spec.get2
         (reshapeSpec (Spec.batchNormJvp x dx gamma dgamma beta dbeta ε)
           (size_flat channels sSpatial)) (rowIdx k) (colIdx k) := by
-    rw [← Norm.tensorToVec_idxMN, ← cast_eq_idxMN, tensorToVec_reshapeSpec]
+    rw [← TapeNodes.Matmul.tensorToVec_idxMN, ← cast_eq_idxMN, tensorToVec_reshapeSpec]
     rfl
   rw [hRHS, get2_flat_batchNormJvp hε, bnD_apply, nrmJvpCLM_apply, rowOf_idxMN, colOf_idxMN,
     getScalar_chan, getScalar_chan, getScalar_chan]

@@ -53,26 +53,20 @@ def cliName : Device → String
   | .custom => "custom"
   | .external => "external"
 
-/-- Parse an explicit backend device name. CLI layers may resolve policy names such as `auto`
-before calling this function. -/
-def parse? : String → Option Device
-  | "cpu" => some .cpu
-  | "cuda" => some .cuda
-  | "gpu" => some .gpu
-  | "rocm" => some .rocm
-  | "metal" => some .metal
-  | "wasm" => some .wasm
-  | "tpu" => some .tpu
-  | "trainium" => some .trainium
-  | "custom" => some .custom
-  | "external" => some .external
-  | _ => none
-
-/-- Parse an explicit backend device name or return a diagnostic suitable for command-line use. -/
-def parse (value : String) : Except String Device :=
-  match parse? value with
-  | some device => pure device
-  | none =>
+/-- Parse an explicit backend device name, with a diagnostic suitable for command-line use. CLI
+layers resolve policy names such as `auto` before calling this function. -/
+def parse : String → Except String Device
+  | "cpu" => pure .cpu
+  | "cuda" => pure .cuda
+  | "gpu" => pure .gpu
+  | "rocm" => pure .rocm
+  | "metal" => pure .metal
+  | "wasm" => pure .wasm
+  | "tpu" => pure .tpu
+  | "trainium" => pure .trainium
+  | "custom" => pure .custom
+  | "external" => pure .external
+  | value =>
       throw <| s!"unknown device {value} (known targets: cpu | gpu | cuda | rocm | metal " ++
         "| wasm | tpu | trainium | custom | external)"
 

@@ -60,29 +60,41 @@ structure Config (δ : Type) where
   /-- Run the actual training body after data, device, and training flags have been parsed. -/
   train : Runtime.Config → δ → CLI.Training.OptimizerOptions → IO Unit
 
+/-- The training flags `CLI.Training.OptimizerOptions.parse` accepts, with defaults when given. -/
+def trainingFlags (defaultSteps? : Option Nat := none)
+    (defaultLearningRate? : Option Float := none) : Array String :=
+  let steps := defaultSteps?.elim "" fun steps => s!" (default: {steps})"
+  let rate := defaultLearningRate?.elim "" fun rate => s!" (default: {rate})"
+  #[ s!"  --steps N          optimizer updates{steps}"
+   , "  --batch-size N     dataset items accumulated per update (default: 1)"
+   , s!"  --lr X             learning rate{rate}"
+   , "  --log PATH|false   write a TrainLog JSON, or disable logging"
+   , "  --cuda-mem-watch N sample CUDA allocator state every N updates" ]
+
+/--
+Help text for a training command: its usage line, its data flags, the training flags, and the
+runtime flags the shared runner parses. Every training command prints this layout.
+-/
+def helpText (exeName : String) (dataOptions : Array String)
+    (trainingOptions : Array String := trainingFlags) (description? : Option String := none) :
+    String :=
+  let title := description?.elim #[] fun description => #[s!"{exeName}: {description}", ""]
+  let dataSection := if dataOptions.isEmpty then #[] else #["", "Data:"] ++ dataOptions
+  String.intercalate "\n" <|
+    (title ++ #[s!"Usage: scripts/lake.sh exe torchlean {exeName} [options]"] ++ dataSection ++
+      #["", "Training:"] ++ trainingOptions ++
+      #[ ""
+       , "Runtime:"
+       , "  --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external"
+       , "  --arithmetic native"
+       , "  --seed N           runtime seed (default: 0)"
+       , "  --show-backend     print backend capsules as they execute" ]).toList
+
 /-- Usage text for training applications using the shared runner. -/
 def usage {δ : Type} (config : Config δ) : String :=
-  let dataSection :=
-    if config.dataOptions.isEmpty then #[]
-    else #["", "Data:"] ++ config.dataOptions
-  String.intercalate "\n" <|
-    (#[ s!"{config.exeName}: {config.description}"
-    , ""
-    , "Usage:"
-    , s!"  {config.exeName} [options]"
-    ] ++ dataSection ++
-    #[ ""
-    , "Training:"
-    , s!"  --steps N          optimizer updates (default: {config.defaultSteps})"
-    , s!"  --lr X             learning rate (default: {config.defaultLearningRate})"
-    , "  --batch-size N     dataset items accumulated per optimizer update (default: 1)"
-    , "  --log PATH|false   write a TrainLog JSON, or disable logging"
-    , ""
-    , "Runtime:"
-    , "  --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external"
-    , "  --arithmetic native"
-    , "  --show-backend     print backend capsules as they execute"
-    ]).toList
+  helpText config.exeName config.dataOptions
+    (trainingFlags (some config.defaultSteps) (some config.defaultLearningRate))
+    (description? := some config.description)
 
 /-- Run a public native-arithmetic training command. -/
 def run {δ : Type} (config : Config δ) (args : List String) : IO UInt32 :=

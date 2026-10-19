@@ -1497,9 +1497,10 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_max_by_row(
   });
 }
 
-// One for the k entries of each row that fewer than k entries of the row beat, zero elsewhere
+// One for the entries of each row that fewer than k entries of the row beat, zero elsewhere
 // (`Spec.MoE.kept`): entry j beats entry i when x_j > x_i, or when neither is larger and j < i.
-// Comparisons and integer counts only, so every device and run gives the same mask.
+// Without NaN that keeps min(k, cols) entries. Comparisons and integer counts only, so every
+// device and run gives the same mask.
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_top_k_mask_by_row(
     b_lean_obj_arg input, uint32_t rows, uint32_t cols, uint32_t k) {
   return invoke([&] {

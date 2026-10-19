@@ -40,7 +40,8 @@ When adding a new model, aim to make it clear how someone else can:
 
 1. understand the shapes and dataflow,
 2. reuse it as a building block,
-3. run it on an executable backend (`Float` or IEEE32Exec),
+3. run it on an executable backend (`Float`, or binary32 as `FloatLib.Floats.ExecFloat.Binary 8 23`
+   in software arithmetic on the CPU),
 4. optionally train it (explicit backward/VJP) without re-deriving gradients.
 
 Practical checklist:

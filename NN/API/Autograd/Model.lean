@@ -173,7 +173,7 @@ def grad {σ τ υ : Shape}
             (TorchLean.TensorPack.pair input target)
 
         let (allGradients, lossValue) ←
-          Runtime.Autograd.Model.Autodiff.Impl.pullback
+          Runtime.Autograd.Model.Autodiff.Internal.pullback
             graph arguments (Tensor.scalar (1 : α))
 
         let (grad, _) :=

@@ -291,8 +291,8 @@ def addSparseGrad (t : Tape AnyBuffer) (gradsRef : IO.Ref SparseGradMap)
     let grads ← gradsRef.get
     match grads.get? id with
     | none =>
-        -- VJP rules may pass through an upstream handle. Copy-on-insert gives the map an
-        -- unambiguous owner independently of local aliasing inside a backward rule.
+        -- Backward rules return fresh buffers, so the copy consumes the contribution and leaves
+        -- the map the only owner of what it keeps.
         let owned : AnyBuffer := {
           s := contribution.s
           buf := Buffer.copyAndRelease contribution.buf }

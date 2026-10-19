@@ -60,20 +60,17 @@ Given `a : Idx Γ s₁`, `b : Idx Γ s₂`, and `h : a.i = b.i`, this produces a
 -/
 def tensorCastOfIdxEq {α : Type} [TorchLean.Storage α] {Γ : List Shape} {s₁ s₂ : Shape}
     (a : Idx Γ s₁) (b : Idx Γ s₂) (h : a.i = b.i) : Tensor α s₂ → Tensor α s₁ :=
-  Spec.tensorCast (α := α) s₁
-    (idx_shape_eq_of_i_eq (Γ := Γ) (a := a) (b := b) h).symm
+  fun tensor => Tensor.castShape tensor (idx_shape_eq_of_i_eq (Γ := Γ) (a := a) (b := b) h).symm
 
 omit [ValidExp fexp] [ValidRndToNearest rnd] in
 /-- Approximation is stable under transporting both tensors along the same shape equality. -/
-theorem approxTensor_tensor_cast {s t : Shape} (h : s = t)
+theorem approxTensor_cast_shape {s t : Shape} (h : s = t)
     {xS : SpecTensor s} {xR : Tensor R s} {eps : ℝ}
     (hx : approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR eps) :
     approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-      (Spec.tensorCast (α := SpecScalar) t h xS)
-      (Spec.tensorCast (α := R) t h xR)
-      eps := by
+      (Tensor.castShape xS h) (Tensor.castShape xR h) eps := by
   cases h
-  simpa [Spec.tensorCast] using hx
+  simpa using hx
 
 /-- The all-zero context approximates the all-zero context, at zero error.
 

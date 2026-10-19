@@ -80,7 +80,7 @@ imported there is not covered by this build command. The contracts describe Torc
 objects; external framework conformance requires a separate importer, refinement theorem, or
 explicit assumption.
 
-This chapter imports the fourteen non-attention entries individually. The attention entry also
+This chapter imports each non-attention entry individually. The attention entry also
 states $`\exp(-\infty)=0` in `EReal`; the chapter uses the real-valued hard-mask theorem directly,
 through
 {lean}`NN.Proofs.Models.Attention.hardMaskedSoftmaxSpec_causal_future_zero`, which needs no extended

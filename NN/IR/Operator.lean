@@ -162,7 +162,8 @@ inductive OpKind where
   | topKMask (k : Nat)
       -- One for the `k` largest entries of every row along the last axis and zero for the
       -- others, ties going to the lower index (`Spec.MoE.topKMaskSpec`): mixture-of-experts
-      -- routing.
+      -- routing. A row of `E` totally ordered scores (no NaN) gets `min k E` ones. With NaN the
+      -- pairwise comparison can cycle: `[0, NaN, 1]` keeps none for `k = 1`, all three for `k = 2`.
   | layernorm (axis : Nat)
       -- LayerNorm over the suffix of dimensions starting at `axis`.
       -- PyTorch analogue: `F.layer_norm(x, normalized_shape=x.shape[axis:])`.

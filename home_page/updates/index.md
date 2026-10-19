@@ -3,7 +3,7 @@ title: Updates
 ---
 
 <nav class="timeline-nav" aria-label="TorchLean update timeline">
-  <a href="#october-2026-eager-training">Eager training</a>
+  <a href="#october-2026-one-tape">One tape and MoE</a>
   <a href="#october-2026-lean-435">Lean 4.35 and numerical fixes</a>
   <a href="#october-2026-custom-computations">Custom computations</a>
   <a href="#september-2026-libtorch">LibTorch backend</a>
@@ -24,15 +24,28 @@ title: Updates
 
 <div class="updates-timeline">
 
-<article class="update-card" id="october-2026-eager-training" markdown="1">
+<article class="update-card" id="october-2026-one-tape" markdown="1">
   <div class="update-date">October 19, 2026</div>
   <div class="update-body" markdown="1">
 
-## Training on the Eager Tape
+## One Tape, One Training Path, and Mixture of Experts
 
-Training now always runs on the eager autograd tape, on the CPU or CUDA as `device` selects. We
-removed the execution-mode selector and `Trainer.FixedSample`. Typed graphs remain for the
-autograd transforms and the proofs.
+The CPU and CUDA now share one autograd tape and one reverse sweep, and every trainer records on
+it, on the CPU or CUDA as `device` selects. We removed the second ways of doing the same things:
+the typed-graph training mode and its `--execution` flag, a second executor for the IR, the old
+scheduler module, `Trainer.FixedSample`, and the packed `ScalarTrainer.step`. Typed graphs remain
+for the autograd transforms and the proofs, and learning-rate schedules live in
+`Trainer.Scheduler`.
+
+Mixture of experts is new: `nn.moe` and `nn.moeMlp`, a `topKMask` IR operation with kernels on
+every backend, and PyTorch MoE import. The spec, `Spec.MoE`, comes with proofs that over `ℝ` the
+dense layer equals Mixtral's sparse block, and that a per-device capacity makes a token's output
+depend on how the batch is split.
+
+Some files and flags no longer load. CUDA Adam checkpoints of versions 2 to 4 have to be saved
+again in version 5, camera certificates use `torchlean.camera.box3d.v2` with an explicit
+`point_count`, and `diffusion` takes `--dataset cifar10|imagenet64` only. The guide chapter on
+choosing a device and arithmetic is now Run Configuration.
 
   </div>
 </article>

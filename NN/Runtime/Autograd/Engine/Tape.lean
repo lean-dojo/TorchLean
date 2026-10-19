@@ -55,8 +55,9 @@ What the reverse sweep needs from the values a tape stores.
 
 A gradient for a node has the node's shape. `retag` re-expresses a gradient whose shape has been
 checked against a value, `check` performs any further device check (CUDA compares dtypes and
-buffer lengths), and `add` sums two gradients of one node. `own` and `drop` describe ownership: CUDA
-copies a first contribution before keeping it and releases a contribution that no node keeps.
+buffer lengths), and `add` sums two gradients of one node. Backward rules return fresh
+contributions, so a node keeps its first contribution as it is; `drop` retires one that no node
+keeps, which on CUDA releases the device buffer at once.
 -/
 class GradValue (V : Type) where
   /-- Runtime shape of a value. -/
@@ -67,8 +68,6 @@ class GradValue (V : Type) where
   check : (g v : V) → Result Unit := fun _ _ => pure ()
   /-- Sum two gradients of one node. -/
   add : V → V → Result V
-  /-- Take ownership of the first contribution a node keeps. -/
-  own : V → V := id
   /-- Retire a contribution that no node keeps, then continue with `rest`. -/
   drop {β : Type} : V → β → β := fun _ rest => rest
 
@@ -171,8 +170,8 @@ variable [GradValue V]
 /--
 Add one parent contribution into the optional gradient array.
 
-The entry is `none` until the sweep first reaches the node. A first contribution is kept (after
-`GradValue.own`); later ones are summed in, in the order the sweep produces them.
+The entry is `none` until the sweep first reaches the node. A first contribution is kept as it is;
+later ones are summed in, in the order the sweep produces them.
 -/
 def addGradDense (t : Tape V) (grads : Array (Option V)) (id : Nat) (g : V) :
     Result (Array (Option V)) := do
@@ -187,7 +186,7 @@ def addGradDense (t : Tape V) (grads : Array (Option V)) (id : Nat) (g : V) :
     if hid : id < grads.size then
       match grads[id]'hid with
       | none =>
-          pure (grads.set id (some (GradValue.own g')) (h := hid))
+          pure (grads.set id (some g') (h := hid))
       | some existing =>
           let summed ← GradValue.add existing g'
           pure (grads.set id (some summed) (h := hid))

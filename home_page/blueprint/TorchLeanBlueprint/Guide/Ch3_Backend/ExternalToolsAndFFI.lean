@@ -809,7 +809,7 @@ A useful boundary report may say:
 - *layout:* guarded by length and row-major checks;
 - *value:* compared by a regression suite;
 - *VJP:* delegated to a trusted external provider;
-- *provenance:* native symbol `torchlean_cuda_buffer_matmul`.
+- *provenance:* native symbol `torchlean_cuda_buffer_bmm_with_transpose`.
 
 A proof of shape safety supplies no arithmetic conclusion, and a source-file link identifies an
 implementation without validating its behavior. Recording evidence field by field keeps each

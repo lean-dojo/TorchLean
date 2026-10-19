@@ -21,7 +21,9 @@ not a proof tactic: it checks the pattern and shapes and emits the tensor comput
 Reusable proof tactics belong here. File-local helpers may stay beside the lemmas they use;
 moving those helpers would split a proof across files without making them more reusable.
 The Python CROWN producer, `NN/MLTheory/CROWN/Tactics/crown_verifier.py`, is not a tactic: the
-two-stage Lyapunov pipeline runs it to write certificates that Lean then checks.
+two-stage Lyapunov pipeline runs it to write Lean certificate data. A separate replay must then
+establish `LyapunovCert.ValidFor` before the Lyapunov theorems apply
+(`NN/MLTheory/CROWN/Lyapunov/TwoStage/PipelineIPythonOnly.lean`).
 
 ## Derivatives
 

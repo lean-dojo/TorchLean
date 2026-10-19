@@ -128,7 +128,7 @@ def grad {σ : Shape} (f : Function σ [])
         let arguments : TorchLean.TensorPack α [σ] :=
           TorchLean.TensorPack.singleton input
         let (gradients, functionValue) ←
-          Runtime.Autograd.Model.Autodiff.Impl.pullback
+          Runtime.Autograd.Model.Autodiff.Internal.pullback
             graph arguments (Tensor.scalar (1 : α))
         pure (TorchLean.TensorPack.head gradients, functionValue)
 

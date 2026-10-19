@@ -25,7 +25,7 @@ public section
 
 namespace NN.Tests.Runtime.ParameterAliases
 
-open TorchLean Runtime.Autograd.Torch Runtime.Autograd.Torch.Internal
+open TorchLean Runtime.Autograd Runtime.Autograd.Torch Runtime.Autograd.Torch.Internal
 open Runtime.Autograd.Torch.Internal.EagerSession
 
 private def check (label : String) (condition : Bool) : IO Unit := do
@@ -118,7 +118,8 @@ def checkRegistrations : IO Unit := do
   check "descriptor failure does not mutate parameter" ((← bits p) == (2.0 : Float).toBits)
   session.resetTape
 
-/-- Recorded values survive mutation and updates; cotangents update current storage once. -/
+/-- A recording snapshots the parameter's value across host mutation, repeated reads of one
+parameter form one storage group, and resetting one session keeps another session's snapshots. -/
 def checkSnapshots (device : NN.Backend.Device) : IO Unit := do
   let p ← scalar 1.0
   let session ← EagerSession.new (α := Float) { device }
@@ -175,11 +176,11 @@ def checkGradientValidation : IO Unit := do
   rejects "cross-shape canonical gradients"
     (discard <| ParamList.canonicalGradients #[some 0, some 0] gradients)
 
-private def cudaGradients (a b c : Float) : IO CudaGradMap := do
+private def cudaGradients (a b c : Float) : IO LibTorch.Tape.SparseGradMap := do
   let first ← CudaBridge.toAnyBuffer (Tensor.scalar a)
   let second ← CudaBridge.toAnyBuffer (Tensor.scalar b)
   let third ← CudaBridge.toAnyBuffer (Tensor.scalar c)
-  pure <| (Std.HashMap.emptyWithCapacity : CudaGradMap)
+  pure <| (Std.HashMap.emptyWithCapacity : LibTorch.Tape.SparseGradMap)
     |>.insert 0 first |>.insert 1 second |>.insert 2 third
 
 private def recordTriple (session : EagerSession Float) (p q : Param Float []) : IO Unit := do
@@ -205,9 +206,9 @@ def checkCudaRetie : IO Unit := do
     discard <| session.use q
     let first ← CudaBridge.toAnyBuffer (Tensor.scalar (1.0 : Float))
     let second ← CudaBridge.toAnyBuffer (Tensor.scalar (3.0 : Float))
-    let gradients := (Std.HashMap.emptyWithCapacity : CudaGradMap)
+    let gradients := (Std.HashMap.emptyWithCapacity : LibTorch.Tape.SparseGradMap)
       |>.insert 0 first |>.insert 1 second
-    withCudaGradMap gradients fun gradients =>
+    withSparseGrads gradients fun gradients =>
       session.adamWStepAllCudaMap config state 0.1 0.05 0.8 0.9 1e-8 gradients
     let before ← bits p
     let beforeState ← state.get
@@ -218,9 +219,9 @@ def checkCudaRetie : IO Unit := do
     discard <| session.use p
     let first ← CudaBridge.toAnyBuffer (Tensor.scalar (1.0 : Float))
     let second ← CudaBridge.toAnyBuffer (Tensor.scalar (3.0 : Float))
-    let gradients := (Std.HashMap.emptyWithCapacity : CudaGradMap)
+    let gradients := (Std.HashMap.emptyWithCapacity : LibTorch.Tape.SparseGradMap)
       |>.insert 0 first |>.insert 1 second
-    withCudaGradMap gradients fun gradients =>
+    withSparseGrads gradients fun gradients =>
       rejects "retied CUDA layout with separate histories"
         (session.adamWStepAllCudaMap config state 0.1 0.05 0.8 0.9 1e-8 gradients)
     check "rejected retie preserves parameter" ((← bits p) == before)
@@ -238,7 +239,7 @@ def checkCudaRetie : IO Unit := do
 private def cudaStep (session : EagerSession Float)
     (config : IO.Ref (Option CudaAdamConfig)) (state : IO.Ref CudaAdamState) : IO Unit := do
   let gradients ← cudaGradients 1.0 5.0 3.0
-  withCudaGradMap gradients fun gradients =>
+  withSparseGrads gradients fun gradients =>
     session.adamWStepAllCudaMap config state 0.1 0.05 0.8 0.9 1e-8 gradients
 
 private def sameCudaState (left right : CudaAdamState) : IO Bool := do
@@ -274,13 +275,13 @@ def checkCudaOptimizer : IO Unit := do
       let b := (step + 3).toFloat
       let c := (step + 5).toFloat
       let gradients ← cudaGradients a b c
-      withCudaGradMap gradients fun gradients =>
+      withSparseGrads gradients fun gradients =>
         session.adamWStepAllCudaMap config state 0.1 0.05 0.8 0.9 1e-8 gradients
       let first ← CudaBridge.toAnyBuffer (Tensor.scalar (a + c))
       let second ← CudaBridge.toAnyBuffer (Tensor.scalar b)
-      let referenceGradients := (Std.HashMap.emptyWithCapacity : CudaGradMap)
+      let referenceGradients := (Std.HashMap.emptyWithCapacity : LibTorch.Tape.SparseGradMap)
         |>.insert 0 first |>.insert 1 second
-      withCudaGradMap referenceGradients fun gradients =>
+      withSparseGrads referenceGradients fun gradients =>
         reference.adamWStepAllCudaMap referenceConfig referenceState
           0.1 0.05 0.8 0.9 1e-8 gradients
       check "CUDA tied AdamW trajectory" ((← bits p) == (← bits referenceP))

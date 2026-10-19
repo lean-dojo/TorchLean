@@ -161,35 +161,6 @@ theorem mat_vec_mul_full_one_castDimScalar {n n' : Nat} (h : n = n') (v : Tensor
   cases h
   simp [castDimScalar]
 
-/-- `affineEvalAt` commutes with casting the output dimension of an affine form. -/
-theorem affineEvalAt_castAffineOut {inDim outDim outDim' : Nat}
-    (h : outDim = outDim') (aff : AffineVec ℝ inDim outDim) (x : Tensor ℝ [inDim]) :
-    CrownCertSoundness.affineEvalAt (α := ℝ) (inDim := inDim) (outDim := outDim')
-        (NN.MLTheory.CROWN.Graph.castAffineOut (α := ℝ) (n := inDim) (m := outDim) (m' := outDim') h
-          aff) x
-      =
-      castDimScalar (α := ℝ) h
-        (CrownCertSoundness.affineEvalAt (α := ℝ) (inDim := inDim) (outDim := outDim) aff x) := by
-  cases h
-  rfl
-
-/-- `boundsEvalAt` commutes with casting the output dimension of affine bounds. -/
-theorem boundsEvalAt_castAffineOut (xin : FlatAffineBounds ℝ) {outDim' : Nat}
-    (h : xin.outDim = outDim') (x : Tensor ℝ [xin.inDim]) :
-    CrownCertSoundness.boundsEvalAt (α := ℝ)
-        { inDim := xin.inDim
-          outDim := outDim'
-          loAff := NN.MLTheory.CROWN.Graph.castAffineOut (α := ℝ) (n := xin.inDim) (m := xin.outDim)
-            (m' := outDim') h xin.loAff
-          hiAff := NN.MLTheory.CROWN.Graph.castAffineOut (α := ℝ) (n := xin.inDim) (m := xin.outDim)
-            (m' := outDim') h xin.hiAff } x
-      =
-      { dim := outDim'
-        lo := castDimScalar (α := ℝ) h (CrownCertSoundness.boundsEvalAt (α := ℝ) xin x).lo
-        hi := castDimScalar (α := ℝ) h (CrownCertSoundness.boundsEvalAt (α := ℝ) xin x).hi } := by
-  cases h
-  rfl
-
 /-- `EnclosesAtInput` is preserved under casting the output dimension of bounds and value payloads.
   -/
 theorem enclosesAtInput_castOut (ctx : AffineCtx) (x : Tensor ℝ [ctx.inputDim])

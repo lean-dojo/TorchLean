@@ -609,21 +609,6 @@ theorem getAtOrZero_eq_get2 {α : Type} [TorchLean.Storage α] [Zero α]
   rw [get_at_or_zero_dim_cons, dite_eq_left row.isLt, getAtOrZero_eq_getScalar]
   rfl
 
-/-- Cast a tensor along a shape equality. -/
-def tensorCast {α : Type} [TorchLean.Storage α]
-    {source : Shape} (target : Shape) (h : source = target) :
-    Tensor α source → Tensor α target :=
-  fun tensor => Tensor.castShape tensor h
-
-/-- `tensorCast` is `castShape` with the target shape written first. -/
-@[simp] theorem tensor_cast_eq_cast_shape {α : Type}
-    [TorchLean.Storage α] {source target : Shape}
-    (h : source = target) (tensor : Tensor α source) :
-    tensorCast target h tensor = Tensor.castShape tensor h :=
-  rfl
-
-attribute [grind =] tensor_cast_eq_cast_shape
-
 /-- Replicate a scalar tensor to any shape. -/
 def replicate {α : Type} [TorchLean.Storage α] :
     {shape : Shape} → Tensor α .scalar → Tensor α shape

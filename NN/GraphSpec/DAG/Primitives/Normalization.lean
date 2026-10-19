@@ -120,24 +120,24 @@ def rmsNorm (leading : Shape) (width : Nat) (hWidth : 0 < width) :
   rfl
 
 /-- Apply regularized L2 normalization over the final axis of an arbitrary tensor. -/
-def l2NormalizeSpec {α : Type} [TorchLean.Storage α] [Context α] (leading : Shape)
-    {width : Nat} (epsilon : α) : TorchLean.Tensor α (leading.appendDim width) →
+def normalizeL2RegularizedLastAxisSpec {α : Type} [TorchLean.Storage α] [Context α]
+    (leading : Shape) {width : Nat} (epsilon : α) : TorchLean.Tensor α (leading.appendDim width) →
       TorchLean.Tensor α (leading.appendDim width) :=
   Internal.mapFinalAxis leading (fun input => Spec.normalizeL2RegularizedSpec input epsilon)
 
 /-- With no batch axes left, the graph node is the regularized L2 normalization spec. -/
-@[simp] theorem l2NormalizeSpec_scalar {α : Type} [TorchLean.Storage α] [Context α]
-    {width : Nat} (epsilon : α) (values : TorchLean.Tensor α [width]) :
-    l2NormalizeSpec .scalar epsilon values =
+@[simp] theorem normalizeL2RegularizedLastAxisSpec_scalar {α : Type} [TorchLean.Storage α]
+    [Context α] {width : Nat} (epsilon : α) (values : TorchLean.Tensor α [width]) :
+    normalizeL2RegularizedLastAxisSpec .scalar epsilon values =
       Spec.normalizeL2RegularizedSpec values epsilon := by
   rfl
 
 /-- Batch axes distribute over L2 normalization. -/
-@[simp] theorem l2NormalizeSpec_dim {α : Type} [TorchLean.Storage α] [Context α]
+@[simp] theorem normalizeL2RegularizedLastAxisSpec_dim {α : Type} [TorchLean.Storage α] [Context α]
     {count width : Nat} {rest : Shape} (epsilon : α)
     (values : Fin count → TorchLean.Tensor α (rest.appendDim width)) :
-    l2NormalizeSpec (.dim count rest) epsilon (.dim values) =
-      .dim (fun index => l2NormalizeSpec rest epsilon (values index)) := by
+    normalizeL2RegularizedLastAxisSpec (.dim count rest) epsilon (.dim values) =
+      .dim (fun index => normalizeL2RegularizedLastAxisSpec rest epsilon (values index)) := by
   exact Internal.mapFinalAxis_dim _ values
 
 /-- Normalize the final axis by `sqrt(sum (x * x) + epsilon)`.
@@ -149,29 +149,29 @@ The stabilizer is a scalar graph input rather than a declaration parameter. This
 numerical convention visible in captured graphs and permits architectures to select their own
 positive epsilon without adding another primitive.
 -/
-def l2Normalize (leading : Shape) (width : Nat) (hWidth : 0 < width) :
+def normalizeL2Regularized (leading : Shape) (width : Nat) (hWidth : 0 < width) :
     PrimOp [leading.appendDim width, .scalar] (leading.appendDim width) :=
-  { name := s!"l2Normalize({width})"
+  { name := s!"normalizeL2Regularized({width})"
     specFwd := fun {_α} _storage _ctx xs =>
       match xs with
       | .cons input (.cons epsilon .nil) =>
-          l2NormalizeSpec leading epsilon.item input
+          normalizeL2RegularizedLastAxisSpec leading epsilon.item input
     program := fun {α} _ _ =>
       fun {m} _ _ => fun input epsilon =>
-        (Runtime.Autograd.Model.Norm.l2Normalize (m := m) (α := α)
+        (Runtime.Autograd.Model.Norm.normalizeL2Regularized (m := m) (α := α)
           (leading := leading) (width := width) hWidth input epsilon :
           m (Runtime.Autograd.Model.Ref (m := m) (α := α)
             (leading.appendDim width))) }
 
 /-- Pure evaluation of final-axis regularized L2 normalization. -/
-@[simp] theorem l2Normalize_specFwd {leading : Shape} {width : Nat}
+@[simp] theorem normalizeL2Regularized_specFwd {leading : Shape} {width : Nat}
     (hWidth : 0 < width) {α : Type} [TorchLean.Storage α] [Context α]
     (input : TorchLean.Tensor α (leading.appendDim width)) (epsilon : α) :
-    (l2Normalize leading width hWidth).specFwd
+    (normalizeL2Regularized leading width hWidth).specFwd
         (.cons input (.cons (.scalar epsilon) .nil)) =
-      l2NormalizeSpec leading epsilon input := by
-  change l2NormalizeSpec leading (Tensor.scalar epsilon).item input =
-    l2NormalizeSpec leading epsilon input
+      normalizeL2RegularizedLastAxisSpec leading epsilon input := by
+  change normalizeL2RegularizedLastAxisSpec leading (Tensor.scalar epsilon).item input =
+    normalizeL2RegularizedLastAxisSpec leading epsilon input
   rw [Tensor.item_scalar]
 
 

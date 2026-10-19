@@ -130,7 +130,7 @@ def run (width : Nat) (args : List String) : IO Unit := do
     let params := TorchLean.nn.State.Internal.fromTensorPack (← tr.getState)
     let mut x := x0
     for _k in [0:pgdSteps] do
-      x := LossAnalysis.projectedGradientStep
+      x := LossAnalysis.projectedGradientAscentStep
         width cLoss params x Execution.defaultPgdStepSize Execution.defaultRad
     let xs := TorchLean.TensorPack.singleton x
     let lossFound := (←
@@ -139,7 +139,7 @@ def run (width : Nat) (args : List String) : IO Unit := do
     IO.println s!"[stage2] round {round}: loss={lossFound}"
 
   let params := TorchLean.nn.State.Internal.fromTensorPack (← tr.getState)
-  LossAnalysis.checkLossBox width params Execution.defaultEpsCheck
+  LossAnalysis.reportLossBox width params Execution.defaultEpsCheck
 
 /-- Default hidden width used by the Pipeline III all-in-Lean workflow. -/
 def defaultWidth : Nat := 100

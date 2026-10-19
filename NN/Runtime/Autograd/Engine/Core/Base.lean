@@ -84,9 +84,6 @@ instance {α : Type} [TorchLean.Storage α] [Zero α] : GradZero (Spec.SomeTenso
 @[simp] theorem GradValue.add_someTensor {α : Type} [TorchLean.Storage α] [Add α]
     (a b : Spec.SomeTensor α) : GradValue.add a b = SomeTensor.add a b := rfl
 
-@[simp] theorem GradValue.own_someTensor {α : Type} [TorchLean.Storage α] [Add α]
-    (g : Spec.SomeTensor α) : GradValue.own g = g := rfl
-
 @[simp] theorem GradValue.drop_someTensor {α β : Type} [TorchLean.Storage α] [Add α]
     (g : Spec.SomeTensor α) (rest : β) : GradValue.drop g rest = rest := rfl
 

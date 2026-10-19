@@ -96,12 +96,6 @@ def asFiniteFloat? (j : Json) : Option Float := do
   else
     none
 
-/-- Parse a floating-point value with contextual errors. -/
-def parseFloat (ctx : String) (j : Json) : Except String Float :=
-  match asFloat? j with
-  | some x => pure x
-  | none => throw s!"{ctx}: expected float"
-
 /-- Parse a finite floating-point value with contextual errors. -/
 def parseFiniteFloat (ctx : String) (j : Json) : Except String Float :=
   match asFiniteFloat? j with

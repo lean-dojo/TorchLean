@@ -226,11 +226,8 @@ def colOf (ip : Fin (matSize m n)) : Fin n :=
 
 /-- Every flattened coordinate is `idxMN` of its row and column. -/
 theorem idxMN_rowOf_colOf (ip : Fin (matSize m n)) :
-    idxMN (m := m) (n := n) (rowOf ip) (colOf ip) = ip := by
-  apply Fin.ext
-  change (ip.modNat (m := m) (n := vecSize n)).val +
-      vecSize n * (ip.divNat (m := m) (n := vecSize n)).val = ip.val
-  exact Nat.mod_add_div _ _
+    idxMN (m := m) (n := n) (rowOf ip) (colOf ip) = ip :=
+  idxMN_divNat_modNat ip
 
 /-- Row of the flattened coordinate `idxMN i j`. -/
 theorem rowOf_idxMN (i : Fin m) (j : Fin n) : rowOf (idxMN (m := m) (n := n) i j) = i := by

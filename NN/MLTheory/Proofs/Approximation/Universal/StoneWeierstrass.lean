@@ -23,8 +23,10 @@ What we *do* prove here is a standard expressivity theorem in approximation theo
 Equivalently: functions on a compact set can be uniformly approximated by polynomial expressions in
 the coordinates (Stone–Weierstrass).
 
-We phrase this for TorchLean’s rank-one tensors `Tensor ℝ [n]` with their Euclidean topology, using
-the equivalence `Tensor.vectorEquiv` as a homeomorphism onto the standard product topology.
+We phrase this for TorchLean’s rank-one tensors `Tensor ℝ [n]` with the Euclidean metric topology
+from `NN.Proofs.Tensor.Euclidean`; no separate induced topology is installed. The coordinate
+projections are read through the linear equivalence `Tensor.vectorEquiv`, which is continuous by
+`Tensor.continuous_vectorEquiv`.
 
 This module is therefore a topology/approximation bridge, not a claim about one particular neural
 architecture.  The cited classical lineage is Stone--Weierstrass for polynomial density, with the
@@ -39,23 +41,6 @@ namespace NN.MLTheory.Proofs.UniversalApproximation
 
 open Spec TorchLean
 open TorchLean.Tensor
-
-namespace VectorTensor
-
-/-!
-The topology on `Tensor ℝ [n]` is the Euclidean metric topology from `NN.Proofs.Tensor.Euclidean`.
-The coordinate view `Tensor.vectorEquiv` is a linear equivalence between finite-dimensional real
-normed spaces, hence a homeomorphism; no separate induced topology is installed here.
--/
-
-/-- Homeomorphism between rank-one tensors and coordinate functions
-$\operatorname{Fin}(n)\to\mathbb{R}$. -/
-noncomputable def homeomorph (n : Nat) : Tensor ℝ [n] ≃ₜ (Fin n → ℝ) where
-  toEquiv := Tensor.vectorEquiv (α := ℝ) n
-  continuous_toFun := Tensor.continuous_vectorEquiv n
-  continuous_invFun := Tensor.continuous_vectorEquiv_symm n
-
-end VectorTensor
 
 namespace StoneWeierstrass
 

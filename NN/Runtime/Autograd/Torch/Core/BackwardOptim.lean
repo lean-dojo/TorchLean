@@ -64,7 +64,7 @@ gradient is an error, as before.
 def backwardScalarParamGradsCuda {α : Type} [TorchLean.Storage α] [TensorTransfer α]
     (s : EagerSession α)
     [One α]
-    (loss : TensorRef α Shape.scalar) (seed : α := 1) : IO CudaGradMap := do
+    (loss : TensorRef α Shape.scalar) (seed : α := 1) : IO LibTorch.Tape.SparseGradMap := do
   if Config.device s.options != .cuda then
     throw <| IO.userError "torch: backwardScalarParamGradsCuda called on non-CUDA eager session"
   let t ← s.cudaTape
@@ -91,8 +91,8 @@ Add borrowed sample gradients into an owned accumulator without downloading them
 The accumulator owns every inserted buffer. Its caller must release it on success and failure.
 Parameter leaf ids are stable across recordings by `scalarTrainer`.
 -/
-def accumulateCudaGradMap (accumulator : IO.Ref CudaGradMap)
-    (sample : CudaGradMap) : IO Unit := do
+def accumulateSparseGrads (accumulator : IO.Ref LibTorch.Tape.SparseGradMap)
+    (sample : LibTorch.Tape.SparseGradMap) : IO Unit := do
   for (id, gradient) in sample.toList do
     let current ← accumulator.get
     let summed ← match current.get? id with
@@ -143,7 +143,7 @@ partially applied update.
 def checkCudaOptimizerInputs {α : Type} [TorchLean.Storage α] (operation : String)
     (tape : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer) (params : Std.HashMap Nat
         (AnyParam α))
-    (grads : CudaGradMap) (state : Option CudaAdamState := none) : IO Unit := do
+    (grads : LibTorch.Tape.SparseGradMap) (state : Option CudaAdamState := none) : IO Unit := do
   for (id, param) in params.toList.filter (fun entry => entry.2.requiresGrad) do
     let grad ← match grads.get? id with
       | some grad => pure grad
@@ -203,7 +203,7 @@ zero gradients for every forward activation in the tape.
 -/
 def sgdStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
     (s : EagerSession α)
-    (lr : α) (grads : CudaGradMap) : IO Unit := do
+    (lr : α) (grads : LibTorch.Tape.SparseGradMap) : IO Unit := do
   if Config.device s.options != .cuda then
     throw <| IO.userError "torch: sgdStepAllCudaMap called on non-CUDA eager session"
   let lrF ← TensorTransfer.toFloat (α := α) lr
@@ -233,7 +233,7 @@ def applyCudaAdamUpdate {α : Type} [TorchLean.Storage α]
     (s : EagerSession α) (operation : String)
     (configRef : IO.Ref (Option CudaAdamConfig)) (stateRef : IO.Ref CudaAdamState)
     (config : CudaAdamConfig) (lrF : Float) (decayStep : Unit → Float)
-    (grads : CudaGradMap) : IO Unit := do
+    (grads : LibTorch.Tape.SparseGradMap) : IO Unit := do
   let beta1F := config.beta1
   let beta2F := config.beta2
   let epsF := config.epsilon
@@ -293,7 +293,7 @@ def adamStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
     (s : EagerSession α)
     (configRef : IO.Ref (Option CudaAdamConfig)) (stateRef : IO.Ref CudaAdamState)
     (lr beta1 beta2 epsilon : α)
-    (grads : CudaGradMap) : IO Unit := do
+    (grads : LibTorch.Tape.SparseGradMap) : IO Unit := do
   if Config.device s.options != .cuda then
     throw <| IO.userError "torch: adamStepAllCudaMap called on non-CUDA eager session"
   let lrF ← TensorTransfer.toFloat (α := α) lr
@@ -317,7 +317,7 @@ def adamWStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
     (s : EagerSession α)
     (configRef : IO.Ref (Option CudaAdamConfig)) (stateRef : IO.Ref CudaAdamState)
     (lr weightDecay beta1 beta2 epsilon : α)
-    (grads : CudaGradMap) : IO Unit := do
+    (grads : LibTorch.Tape.SparseGradMap) : IO Unit := do
   if Config.device s.options != .cuda then
     throw <| IO.userError "torch: adamWStepAllCudaMap called on non-CUDA eager session"
   let lrF ← TensorTransfer.toFloat (α := α) lr

@@ -11,12 +11,12 @@ public import NN.API.CLI
 public import NN.Verification.Splines.PiecewisePolyCert
 
 /-!
-# Piecewise-linear spline certificate CLI
+# Piecewise-polynomial spline certificate CLI
 
 The workflow follows the “external producer, Lean checker” pattern:
 
 - Julia acts as an *untrusted producer* that emits a small JSON certificate describing a
-  piecewise-polynomial (piecewise-linear) interpolant of a small dataset.
+  piecewise-polynomial interpolant of a small dataset; the bundled example is piecewise linear.
 - Lean parses and checks the certificate exactly over `Rat` using
   `NN.Verification.Splines.PiecewisePolyCert`.
 
@@ -41,7 +41,7 @@ References:
 
 @[expose] public section
 
-namespace NN.Verification.Splines.PiecewiseLinearCLI
+namespace NN.Verification.Splines.PiecewisePolyCLI
 
 open Lean
 open Json
@@ -67,7 +67,7 @@ def defaultCertPath : String :=
 def defaultJuliaScript : String :=
   "scripts/verification/splines/fit_piecewise_linear.jl"
 
-/-- Help text for the piecewise-linear certificate command. -/
+/-- Help text for the piecewise-polynomial certificate command. -/
 def usage : String :=
   String.intercalate "\n" [
     "Usage:",
@@ -120,4 +120,4 @@ def main (args : List String) : IO Unit := do
       NN.Verification.Json.readJsonFile certPath
   check j
 
-end NN.Verification.Splines.PiecewiseLinearCLI
+end NN.Verification.Splines.PiecewisePolyCLI

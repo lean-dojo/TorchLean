@@ -63,7 +63,8 @@ open DGraph
 abbrev XShape (n dModel : Nat) : Shape := .dim n (.dim dModel .scalar)
 
 /-- Concatenated-head representation `n×(numHeads*headDim)`. -/
-abbrev BigShape (n numHeads headDim : Nat) : Shape := .dim n (.dim (numHeads * headDim) .scalar)
+abbrev FlatHeadsShape (n numHeads headDim : Nat) : Shape :=
+  .dim n (.dim (numHeads * headDim) .scalar)
 
 /-- Split-head representation `(numHeads)×n×headDim`. -/
 abbrev HeadsShape (n numHeads headDim : Nat) : Shape :=
@@ -82,30 +83,30 @@ abbrev SwappedShape (n numHeads headDim : Nat) : Shape :=
 
 /-- Intermediate node output shapes (tape “saved tensors”) for the MHA graph. -/
 abbrev ssMHA (n dModel numHeads headDim : Nat) : List Shape :=
-  [ BigShape n numHeads headDim
+  [ FlatHeadsShape n numHeads headDim
   , HeadsShape n numHeads headDim
-  , BigShape n numHeads headDim
+  , FlatHeadsShape n numHeads headDim
   , HeadsShape n numHeads headDim
   , KtShape n numHeads headDim
-  , BigShape n numHeads headDim
+  , FlatHeadsShape n numHeads headDim
   , HeadsShape n numHeads headDim
   , ScoresShape n numHeads
   , ScoresShape n numHeads
   , ScoresShape n numHeads
   , HeadsShape n numHeads headDim
   , SwappedShape n numHeads headDim
-  , BigShape n numHeads headDim
+  , FlatHeadsShape n numHeads headDim
   , XShape n dModel
   ]
 
 /-- Saved tensors produced while projecting the input into query, key, and value heads. -/
 abbrev ssMHAProjections (n numHeads headDim : Nat) : List Shape :=
-  [ BigShape n numHeads headDim
+  [ FlatHeadsShape n numHeads headDim
   , HeadsShape n numHeads headDim
-  , BigShape n numHeads headDim
+  , FlatHeadsShape n numHeads headDim
   , HeadsShape n numHeads headDim
   , KtShape n numHeads headDim
-  , BigShape n numHeads headDim
+  , FlatHeadsShape n numHeads headDim
   , HeadsShape n numHeads headDim
   ]
 
@@ -170,8 +171,8 @@ element count.
 
 The graph's reshape node preserves flat coordinate order. This count equality does not provide
 the token/head axis permutation used by `Spec.splitHeadsSpec`. -/
-theorem size_big_to_heads (n numHeads headDim : Nat) :
-    Spec.Shape.size (BigShape n numHeads headDim) =
+theorem size_flatHeads_to_heads (n numHeads headDim : Nat) :
+    Spec.Shape.size (FlatHeadsShape n numHeads headDim) =
       Spec.Shape.size (HeadsShape n numHeads headDim) := by
   -- `Spec.Shape.size` multiplies dimension sizes; the remaining goal is a commutative-monoid
   -- identity.
@@ -181,7 +182,7 @@ theorem size_big_to_heads (n numHeads headDim : Nat) :
 /-- The same count equality in the direction used when concatenating heads back together. -/
 theorem size_swap_to_concat (n numHeads headDim : Nat) :
     Spec.Shape.size (SwappedShape n numHeads headDim) =
-      Spec.Shape.size (BigShape n numHeads headDim) := by
+      Spec.Shape.size (FlatHeadsShape n numHeads headDim) := by
   simp [Spec.Shape.size]
 
 /-- Append a constant scaling node for the most recently saved tensor. -/
@@ -217,7 +218,7 @@ def mhaProjectionDGraph {n dModel numHeads headDim : Nat} :
 
   -- 1) Qbig := x * Wq
   let nodeQbig :
-      Node (ΓMHA n dModel numHeads headDim) (BigShape n numHeads headDim) :=
+      Node (ΓMHA n dModel numHeads headDim) (FlatHeadsShape n numHeads headDim) :=
     TapeNodes.matmul (Γ := ΓMHA n dModel numHeads headDim)
       (m := n) (n := dModel) (p := numHeads * headDim)
       (A := idxX (n := n) (dModel := dModel) (numHeads := numHeads) (headDim := headDim) (ss := []))
@@ -235,81 +236,87 @@ def mhaProjectionDGraph {n dModel numHeads headDim : Nat} :
 
   -- 2) Qheads := reshape Qbig to (numHeads, n, headDim)
   let idxQbig :
-      Idx (ΓMHA n dModel numHeads headDim ++ [BigShape n numHeads headDim]) (BigShape n numHeads
-        headDim) :=
-    Idx.last (Γ := ΓMHA n dModel numHeads headDim) (ss := []) (τ := BigShape n numHeads headDim)
+      Idx (ΓMHA n dModel numHeads headDim ++ [FlatHeadsShape n numHeads headDim])
+        (FlatHeadsShape n numHeads headDim) :=
+    Idx.last (Γ := ΓMHA n dModel numHeads headDim) (ss := [])
+      (τ := FlatHeadsShape n numHeads headDim)
   let nodeQheads :
-      Node (ΓMHA n dModel numHeads headDim ++ [BigShape n numHeads headDim]) (HeadsShape n numHeads
-        headDim) :=
-    reshape (Γ := ΓMHA n dModel numHeads headDim ++ [BigShape n numHeads headDim])
-      (s₁ := BigShape n numHeads headDim) (s₂ := HeadsShape n numHeads headDim)
-      idxQbig (size_big_to_heads (n := n) (numHeads := numHeads) (headDim := headDim))
+      Node (ΓMHA n dModel numHeads headDim ++ [FlatHeadsShape n numHeads headDim])
+        (HeadsShape n numHeads headDim) :=
+    reshape (Γ := ΓMHA n dModel numHeads headDim ++ [FlatHeadsShape n numHeads headDim])
+      (s₁ := FlatHeadsShape n numHeads headDim) (s₂ := HeadsShape n numHeads headDim)
+      idxQbig (size_flatHeads_to_heads (n := n) (numHeads := numHeads) (headDim := headDim))
   let dg2 :=
     DGraph.snoc (dg := dg1) (node := nodeQheads)
       (hn := reshapeFderiv
-        (Γ := ΓMHA n dModel numHeads headDim ++ [BigShape n numHeads headDim])
-        (s₁ := BigShape n numHeads headDim) (s₂ := HeadsShape n numHeads headDim)
-        idxQbig (size_big_to_heads (n := n) (numHeads := numHeads) (headDim := headDim)))
+        (Γ := ΓMHA n dModel numHeads headDim ++ [FlatHeadsShape n numHeads headDim])
+        (s₁ := FlatHeadsShape n numHeads headDim) (s₂ := HeadsShape n numHeads headDim)
+        idxQbig (size_flatHeads_to_heads (n := n) (numHeads := numHeads) (headDim := headDim)))
 
   -- 3) Kbig := x * Wk
   let nodeKbig :
-      Node (ΓMHA n dModel numHeads headDim ++ [BigShape n numHeads headDim, HeadsShape n numHeads
-        headDim])
-        (BigShape n numHeads headDim) :=
-    TapeNodes.matmul (Γ := ΓMHA n dModel numHeads headDim ++ [BigShape n numHeads headDim,
+      Node
+        (ΓMHA n dModel numHeads headDim ++
+          [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim])
+        (FlatHeadsShape n numHeads headDim) :=
+    TapeNodes.matmul (Γ := ΓMHA n dModel numHeads headDim ++ [FlatHeadsShape n numHeads headDim,
       HeadsShape n numHeads headDim])
       (m := n) (n := dModel) (p := numHeads * headDim)
       (A := idxX (n := n) (dModel := dModel) (numHeads := numHeads) (headDim := headDim)
-        (ss := [BigShape n numHeads headDim, HeadsShape n numHeads headDim]))
+        (ss := [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim]))
       (B := idxWk (n := n) (dModel := dModel) (numHeads := numHeads) (headDim := headDim)
-        (ss := [BigShape n numHeads headDim, HeadsShape n numHeads headDim]))
+        (ss := [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim]))
   let dg3 :=
     DGraph.snoc (dg := dg2) (node := nodeKbig)
       (hn := TapeNodes.matmulFderiv
-        (Γ := ΓMHA n dModel numHeads headDim ++ [BigShape n numHeads headDim, HeadsShape n numHeads
-          headDim])
+        (Γ := ΓMHA n dModel numHeads headDim ++
+          [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim])
         (m := n) (n := dModel) (p := numHeads * headDim)
         (A := idxX (n := n) (dModel := dModel) (numHeads := numHeads) (headDim := headDim)
-          (ss := [BigShape n numHeads headDim, HeadsShape n numHeads headDim]))
+          (ss := [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim]))
         (B := idxWk (n := n) (dModel := dModel) (numHeads := numHeads) (headDim := headDim)
-          (ss := [BigShape n numHeads headDim, HeadsShape n numHeads headDim])))
+          (ss := [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim])))
 
   -- 4) Kheads := reshape Kbig
   let idxKbig :
       Idx
         (ΓMHA n dModel numHeads headDim ++
-          [BigShape n numHeads headDim, HeadsShape n numHeads headDim, BigShape n numHeads headDim])
-        (BigShape n numHeads headDim) :=
+          [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim,
+            FlatHeadsShape n numHeads headDim])
+        (FlatHeadsShape n numHeads headDim) :=
     Idx.last (Γ := ΓMHA n dModel numHeads headDim)
-      (ss := [BigShape n numHeads headDim, HeadsShape n numHeads headDim]) (τ := BigShape n numHeads
-        headDim)
+      (ss := [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim])
+      (τ := FlatHeadsShape n numHeads headDim)
   let nodeKheads :
       Node
         (ΓMHA n dModel numHeads headDim ++
-          [BigShape n numHeads headDim, HeadsShape n numHeads headDim, BigShape n numHeads headDim])
+          [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim,
+            FlatHeadsShape n numHeads headDim])
         (HeadsShape n numHeads headDim) :=
     reshape (Γ := ΓMHA n dModel numHeads headDim ++
-          [BigShape n numHeads headDim, HeadsShape n numHeads headDim, BigShape n numHeads headDim])
-      (s₁ := BigShape n numHeads headDim) (s₂ := HeadsShape n numHeads headDim)
-      idxKbig (size_big_to_heads (n := n) (numHeads := numHeads) (headDim := headDim))
+          [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim,
+            FlatHeadsShape n numHeads headDim])
+      (s₁ := FlatHeadsShape n numHeads headDim) (s₂ := HeadsShape n numHeads headDim)
+      idxKbig (size_flatHeads_to_heads (n := n) (numHeads := numHeads) (headDim := headDim))
   let dg4 :=
     DGraph.snoc (dg := dg3) (node := nodeKheads)
       (hn := reshapeFderiv
         (Γ := ΓMHA n dModel numHeads headDim ++
-          [BigShape n numHeads headDim, HeadsShape n numHeads headDim, BigShape n numHeads headDim])
-        (s₁ := BigShape n numHeads headDim) (s₂ := HeadsShape n numHeads headDim)
-        idxKbig (size_big_to_heads (n := n) (numHeads := numHeads) (headDim := headDim)))
+          [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim,
+            FlatHeadsShape n numHeads headDim])
+        (s₁ := FlatHeadsShape n numHeads headDim) (s₂ := HeadsShape n numHeads headDim)
+        idxKbig (size_flatHeads_to_heads (n := n) (numHeads := numHeads) (headDim := headDim)))
 
   -- 5) Kᵀ (per head): exchange the sequence and feature axes of `Kheads`.
   let idxKheads :
       Idx
         (ΓMHA n dModel numHeads headDim ++
-          [BigShape n numHeads headDim, HeadsShape n numHeads headDim, BigShape n numHeads headDim,
-            HeadsShape n numHeads headDim])
+          [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim,
+            FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim])
         (HeadsShape n numHeads headDim) :=
     Idx.last (Γ := ΓMHA n dModel numHeads headDim)
-      (ss := [BigShape n numHeads headDim, HeadsShape n numHeads headDim, BigShape n numHeads
-        headDim])
+      (ss := [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim,
+        FlatHeadsShape n numHeads headDim])
       (τ := HeadsShape n numHeads headDim)
   let transposeKeys :
       Fin (Spec.Shape.size (HeadsShape n numHeads headDim)) ≃
@@ -319,13 +326,13 @@ def mhaProjectionDGraph {n dModel numHeads headDim : Nat} :
   let nodeKt :
       Node
         (ΓMHA n dModel numHeads headDim ++
-          [BigShape n numHeads headDim, HeadsShape n numHeads headDim, BigShape n numHeads headDim,
-            HeadsShape n numHeads headDim])
+          [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim,
+            FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim])
         (KtShape n numHeads headDim) :=
     reindex
       (Γ := ΓMHA n dModel numHeads headDim ++
-        [BigShape n numHeads headDim, HeadsShape n numHeads headDim, BigShape n numHeads headDim,
-          HeadsShape n numHeads headDim])
+        [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim,
+          FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim])
       (source := HeadsShape n numHeads headDim)
       (target := KtShape n numHeads headDim)
       idxKheads transposeKeys
@@ -333,8 +340,8 @@ def mhaProjectionDGraph {n dModel numHeads headDim : Nat} :
     DGraph.snoc (dg := dg4) (node := nodeKt)
       (hn := reindexFderiv
         (Γ := ΓMHA n dModel numHeads headDim ++
-          [BigShape n numHeads headDim, HeadsShape n numHeads headDim, BigShape n numHeads headDim,
-            HeadsShape n numHeads headDim])
+          [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim,
+            FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim])
         (source := HeadsShape n numHeads headDim)
         (target := KtShape n numHeads headDim)
         idxKheads transposeKeys)
@@ -343,49 +350,49 @@ def mhaProjectionDGraph {n dModel numHeads headDim : Nat} :
   let nodeVbig :
       Node
         (ΓMHA n dModel numHeads headDim ++
-          [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-          , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+          [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+          , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
           , KtShape n numHeads headDim
           ])
-        (BigShape n numHeads headDim) :=
+        (FlatHeadsShape n numHeads headDim) :=
     TapeNodes.matmul
       (Γ := ΓMHA n dModel numHeads headDim ++
-        [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-        , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+        [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+        , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
         , KtShape n numHeads headDim
         ])
       (m := n) (n := dModel) (p := numHeads * headDim)
       (A := idxX (n := n) (dModel := dModel) (numHeads := numHeads) (headDim := headDim)
         (ss :=
-          [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-          , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+          [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+          , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
           , KtShape n numHeads headDim
           ]))
       (B := idxWv (n := n) (dModel := dModel) (numHeads := numHeads) (headDim := headDim)
         (ss :=
-          [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-          , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+          [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+          , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
           , KtShape n numHeads headDim
           ]))
   let dg6 :=
     DGraph.snoc (dg := dg5) (node := nodeVbig)
       (hn := TapeNodes.matmulFderiv
         (Γ := ΓMHA n dModel numHeads headDim ++
-          [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-          , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+          [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+          , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
           , KtShape n numHeads headDim
           ])
         (m := n) (n := dModel) (p := numHeads * headDim)
         (A := idxX (n := n) (dModel := dModel) (numHeads := numHeads) (headDim := headDim)
           (ss :=
-            [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-            , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+            [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+            , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
             , KtShape n numHeads headDim
             ]))
         (B := idxWv (n := n) (dModel := dModel) (numHeads := numHeads) (headDim := headDim)
           (ss :=
-            [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-            , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+            [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+            , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
             , KtShape n numHeads headDim
             ])))
 
@@ -393,49 +400,49 @@ def mhaProjectionDGraph {n dModel numHeads headDim : Nat} :
   let idxVbig :
       Idx
         (ΓMHA n dModel numHeads headDim ++
-          [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-          , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+          [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+          , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
           , KtShape n numHeads headDim
-          , BigShape n numHeads headDim
+          , FlatHeadsShape n numHeads headDim
           ])
-        (BigShape n numHeads headDim) :=
+        (FlatHeadsShape n numHeads headDim) :=
     Idx.last
       (Γ := ΓMHA n dModel numHeads headDim)
       (ss :=
-        [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-        , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+        [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+        , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
         , KtShape n numHeads headDim
         ])
-      (τ := BigShape n numHeads headDim)
+      (τ := FlatHeadsShape n numHeads headDim)
   let nodeVheads :
       Node
         (ΓMHA n dModel numHeads headDim ++
-          [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-          , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+          [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+          , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
           , KtShape n numHeads headDim
-          , BigShape n numHeads headDim
+          , FlatHeadsShape n numHeads headDim
           ])
         (HeadsShape n numHeads headDim) :=
     reshape
       (Γ := ΓMHA n dModel numHeads headDim ++
-        [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-        , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+        [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+        , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
         , KtShape n numHeads headDim
-        , BigShape n numHeads headDim
+        , FlatHeadsShape n numHeads headDim
         ])
-      (s₁ := BigShape n numHeads headDim) (s₂ := HeadsShape n numHeads headDim)
-      idxVbig (size_big_to_heads (n := n) (numHeads := numHeads) (headDim := headDim))
+      (s₁ := FlatHeadsShape n numHeads headDim) (s₂ := HeadsShape n numHeads headDim)
+      idxVbig (size_flatHeads_to_heads (n := n) (numHeads := numHeads) (headDim := headDim))
   let dg7 :=
     DGraph.snoc (dg := dg6) (node := nodeVheads)
       (hn := reshapeFderiv
         (Γ := ΓMHA n dModel numHeads headDim ++
-          [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-          , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+          [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+          , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
           , KtShape n numHeads headDim
-          , BigShape n numHeads headDim
+          , FlatHeadsShape n numHeads headDim
           ])
-        (s₁ := BigShape n numHeads headDim) (s₂ := HeadsShape n numHeads headDim)
-        idxVbig (size_big_to_heads (n := n) (numHeads := numHeads) (headDim := headDim)))
+        (s₁ := FlatHeadsShape n numHeads headDim) (s₂ := HeadsShape n numHeads headDim)
+        idxVbig (size_flatHeads_to_heads (n := n) (numHeads := numHeads) (headDim := headDim)))
 
   exact dg7
 
@@ -448,43 +455,44 @@ def mhaScoresDGraph {n dModel numHeads headDim : Nat} (c : ℝ) :
   -- 8) scores := Qheads * Kᵀ (batched matmul)
   let ss7 := ssMHAProjections n numHeads headDim
   let idxQheads0 :
-      Idx (ΓMHA n dModel numHeads headDim ++ [BigShape n numHeads headDim, HeadsShape n numHeads
-        headDim])
+      Idx
+        (ΓMHA n dModel numHeads headDim ++
+          [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim])
         (HeadsShape n numHeads headDim) :=
-    Idx.last (Γ := ΓMHA n dModel numHeads headDim) (ss := [BigShape n numHeads headDim])
+    Idx.last (Γ := ΓMHA n dModel numHeads headDim) (ss := [FlatHeadsShape n numHeads headDim])
       (τ := HeadsShape n numHeads headDim)
   let idxQheads7 :
       Idx (ΓMHA n dModel numHeads headDim ++ ss7) (HeadsShape n numHeads headDim) :=
     Proofs.Idx.weaken
-      (Γ := ΓMHA n dModel numHeads headDim ++ [BigShape n numHeads headDim, HeadsShape n numHeads
-        headDim])
+      (Γ := ΓMHA n dModel numHeads headDim ++
+        [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim])
       idxQheads0
-      (rest := [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
+      (rest := [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
                , KtShape n numHeads headDim
-               , BigShape n numHeads headDim, HeadsShape n numHeads headDim ])
+               , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim ])
   let idxKt0 :
       Idx
         (ΓMHA n dModel numHeads headDim ++
-          [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-          , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+          [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+          , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
           , KtShape n numHeads headDim
           ])
         (KtShape n numHeads headDim) :=
     Idx.last
       (Γ := ΓMHA n dModel numHeads headDim)
-      (ss := [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-             , BigShape n numHeads headDim, HeadsShape n numHeads headDim ])
+      (ss := [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+             , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim ])
       (τ := KtShape n numHeads headDim)
   let idxKt7 :
       Idx (ΓMHA n dModel numHeads headDim ++ ss7) (KtShape n numHeads headDim) :=
     Proofs.Idx.weaken
       (Γ := ΓMHA n dModel numHeads headDim ++
-        [ BigShape n numHeads headDim, HeadsShape n numHeads headDim
-        , BigShape n numHeads headDim, HeadsShape n numHeads headDim
+        [ FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
+        , FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim
         , KtShape n numHeads headDim
         ])
       idxKt0
-      (rest := [BigShape n numHeads headDim, HeadsShape n numHeads headDim])
+      (rest := [FlatHeadsShape n numHeads headDim, HeadsShape n numHeads headDim])
   let nodeScores :
       Node (ΓMHA n dModel numHeads headDim ++ ss7) (ScoresShape n numHeads) :=
     TapeNodes.Batched.matmul
@@ -526,12 +534,12 @@ def mhaAttentionDGraph {n dModel numHeads headDim : Nat} (c : ℝ) :
     Idx.last
       (Γ := ΓMHA n dModel numHeads headDim)
       (ss :=
-        [ BigShape n numHeads headDim
+        [ FlatHeadsShape n numHeads headDim
         , HeadsShape n numHeads headDim
-        , BigShape n numHeads headDim
+        , FlatHeadsShape n numHeads headDim
         , HeadsShape n numHeads headDim
         , KtShape n numHeads headDim
-        , BigShape n numHeads headDim
+        , FlatHeadsShape n numHeads headDim
         ])
       (τ := HeadsShape n numHeads headDim)
   let idxVheads10 :
@@ -624,12 +632,12 @@ def mhaDGraph {n dModel numHeads headDim : Nat} (c : ℝ) :
       Node
         (ΓMHA n dModel numHeads headDim ++ ss10 ++
           [HeadsShape n numHeads headDim, SwappedShape n numHeads headDim])
-        (BigShape n numHeads headDim) :=
+        (FlatHeadsShape n numHeads headDim) :=
     reshape
       (Γ := ΓMHA n dModel numHeads headDim ++ ss10 ++
         [HeadsShape n numHeads headDim, SwappedShape n numHeads headDim])
       (s₁ := SwappedShape n numHeads headDim)
-      (s₂ := BigShape n numHeads headDim)
+      (s₂ := FlatHeadsShape n numHeads headDim)
       idxSwapped (size_swap_to_concat (n := n) (numHeads := numHeads) (headDim := headDim))
   let dg13 :=
     DGraph.snoc (dg := dg12) (node := nodeConcat)
@@ -637,7 +645,7 @@ def mhaDGraph {n dModel numHeads headDim : Nat} (c : ℝ) :
         (Γ := ΓMHA n dModel numHeads headDim ++ ss10 ++
           [HeadsShape n numHeads headDim, SwappedShape n numHeads headDim])
         (s₁ := SwappedShape n numHeads headDim)
-        (s₂ := BigShape n numHeads headDim)
+        (s₂ := FlatHeadsShape n numHeads headDim)
         idxSwapped (size_swap_to_concat (n := n) (numHeads := numHeads) (headDim := headDim)))
 
   -- 14) out := concat * Wo
@@ -645,25 +653,25 @@ def mhaDGraph {n dModel numHeads headDim : Nat} (c : ℝ) :
       Idx (ΓMHA n dModel numHeads headDim ++ ss10 ++
         [ HeadsShape n numHeads headDim
         , SwappedShape n numHeads headDim
-        , BigShape n numHeads headDim
+        , FlatHeadsShape n numHeads headDim
         ])
-        (BigShape n numHeads headDim) :=
+        (FlatHeadsShape n numHeads headDim) :=
     Idx.last
       (Γ := ΓMHA n dModel numHeads headDim)
       (ss := ss10 ++ [HeadsShape n numHeads headDim, SwappedShape n numHeads headDim])
-      (τ := BigShape n numHeads headDim)
+      (τ := FlatHeadsShape n numHeads headDim)
   let nodeOut :
       Node (ΓMHA n dModel numHeads headDim ++ ss10 ++
         [ HeadsShape n numHeads headDim
         , SwappedShape n numHeads headDim
-        , BigShape n numHeads headDim
+        , FlatHeadsShape n numHeads headDim
         ])
         (XShape n dModel) :=
     TapeNodes.matmul
       (Γ := ΓMHA n dModel numHeads headDim ++ ss10 ++
         [ HeadsShape n numHeads headDim
         , SwappedShape n numHeads headDim
-        , BigShape n numHeads headDim
+        , FlatHeadsShape n numHeads headDim
         ])
       (m := n) (n := numHeads * headDim) (p := dModel)
       (A := idxConcat)
@@ -671,7 +679,7 @@ def mhaDGraph {n dModel numHeads headDim : Nat} (c : ℝ) :
         (ss := ss10 ++
           [ HeadsShape n numHeads headDim
           , SwappedShape n numHeads headDim
-          , BigShape n numHeads headDim
+          , FlatHeadsShape n numHeads headDim
           ]))
   let dg14 :=
     DGraph.snoc (dg := dg13) (node := nodeOut)
@@ -679,7 +687,7 @@ def mhaDGraph {n dModel numHeads headDim : Nat} (c : ℝ) :
         (Γ := ΓMHA n dModel numHeads headDim ++ ss10 ++
           [ HeadsShape n numHeads headDim
           , SwappedShape n numHeads headDim
-          , BigShape n numHeads headDim
+          , FlatHeadsShape n numHeads headDim
           ])
         (m := n) (n := numHeads * headDim) (p := dModel)
         (A := idxConcat)
@@ -687,7 +695,7 @@ def mhaDGraph {n dModel numHeads headDim : Nat} (c : ℝ) :
           (ss := ss10 ++
             [ HeadsShape n numHeads headDim
             , SwappedShape n numHeads headDim
-            , BigShape n numHeads headDim
+            , FlatHeadsShape n numHeads headDim
             ])))
 
   exact dg14

@@ -227,7 +227,7 @@ Batched forward pass: apply `gmmForwardSpec` to each sample in a batch.
 
 Invalid model parameters return `none`, including for an empty batch.
 -/
-def gmmBatchedForwardSpec {batch nComponents nFeatures : Nat}
+def batchGmmForwardSpec {batch nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
   (input : Tensor α [batch, nFeatures]) :
   Option (Tensor α [batch, nComponents]) :=
@@ -494,7 +494,7 @@ Batched responsibilities: apply `gmmExpectationSpec` to each sample.
 
 Invalid model parameters return `none`, including for an empty dataset.
 -/
-def gmmResponsibilitiesBatchedSpec {nSamples nComponents nFeatures : Nat}
+def batchGmmResponsibilitiesSpec {nSamples nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
   (data : Tensor α [nSamples, nFeatures])
   (hK : nComponents ≠ 0) :
@@ -518,7 +518,7 @@ def gmmEmStepSpec {nSamples nComponents nFeatures : Nat}
   if _hN : nSamples = 0 then
     if gmmParametersValidSpec m then some m else none
   else do
-    let resp ← gmmResponsibilitiesBatchedSpec (α := α) (nSamples := nSamples)
+    let resp ← batchGmmResponsibilitiesSpec (α := α) (nSamples := nSamples)
       (nComponents := nComponents) (nFeatures := nFeatures) m data hK
 
     -- N_k = Σ_i r_{ik}
@@ -587,7 +587,7 @@ Sum of negative `gmmLogLikelihoodSpec` scores over the dataset.
 
 An empty dataset has score zero for a valid model; invalid parameters still return `none`.
 -/
-def gmmNegLogLikelihoodBatchedSpec {nSamples nComponents nFeatures : Nat}
+def batchGmmNegLogLikelihoodSpec {nSamples nComponents nFeatures : Nat}
   (m : GMMSpec α nComponents nFeatures)
   (data : Tensor α [nSamples, nFeatures])
   (hK : nComponents ≠ 0) : Option α :=

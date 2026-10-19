@@ -45,7 +45,7 @@ def firstDuplicateModuleName? (modules : Array CapsuleModule) : Option String :=
       none
 
 /-- First repeated capsule identity after flattening, if one exists. -/
-def firstDuplicateCapsuleName? (capsules : Array KernelCapsule) : Option String :=
+def firstDuplicateCapsuleIdentity? (capsules : Array KernelCapsule) : Option String :=
   capsules.findSome? fun capsule =>
     if 1 < capsules.countP capsule.sameIdentity then
       some capsule.name
@@ -61,7 +61,7 @@ named module twice or repeating the same capsule name, operation, provider, and 
 def validateModules (modules : Array CapsuleModule) : Except String Unit := do
   if let some name := firstDuplicateModuleName? modules then
     throw s!"duplicate backend capsule module `{name}`"
-  if let some name := firstDuplicateCapsuleName? (flatten modules) then
+  if let some name := firstDuplicateCapsuleIdentity? (flatten modules) then
     throw s!"duplicate backend capsule identity `{name}`"
 
 /-- Maintained operation/provider modules. A new architecture does not modify this list; only a new

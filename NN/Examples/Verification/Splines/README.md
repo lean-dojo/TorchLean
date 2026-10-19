@@ -17,4 +17,4 @@ floating-point tolerance. A changed endpoint or coefficient that breaks an equal
 This establishes consistency of the represented pieces and endpoints. It does not bound the
 interior of a higher-degree polynomial or prove that the spline approximates a neural network.
 The implementation and optional binary32 cross-check are documented in
-`NN/Verification/Splines/PiecewisePolyCert.lean`; `PiecewiseLinearCLI.lean` supplies the command.
+`NN/Verification/Splines/PiecewisePolyCert.lean`; `PiecewisePolyCLI.lean` supplies the command.

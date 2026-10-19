@@ -33,8 +33,9 @@ Torch-style runtime front-end for eager execution, typed graphs, and training he
 - `Core.TypedGraph`: reusable shape-indexed graph wrappers.
 - `Core.Functional`: operation-generic `Ops` interface and curried syntax.
 - `Core.Trainer.Types`: scalar trainer contracts without backend construction.
-- `Core.Trainer`: construct eager or graph trainers.
-- `Core.Trainer.EagerOps` / `GraphOps`: backend instances for `Ops`.
+- `Core.Trainer`: construct scalar trainers; each training step records an eager tape.
+- `Core.Trainer.EagerOps` / `GraphOps`: `Ops` instances that record an eager tape or a typed
+  graph. Typed graphs feed the autograd transforms and proofs.
 
 This facade re-exports the complete runtime. Library code should import the part it uses:
 `Functional.Ops` for generic operators, `Trainer.Types` for trainer consumers, and the relevant

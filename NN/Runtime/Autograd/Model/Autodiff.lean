@@ -37,7 +37,7 @@ open Proofs.Autograd.Algebra
 
 namespace Autodiff
 
-namespace Impl
+namespace Internal
 
 /-- Return the seeded input gradients and forward result, reporting domain errors through IO. -/
 def pullback {α : Type} [Storage α] [Add α] [Zero α]
@@ -47,9 +47,9 @@ def pullback {α : Type} [Storage α] [Add α] [Zero α]
     IO (TorchLean.TensorPack α shapes × Tensor α output) :=
   IO.ofExcept <| graph.vjpChecked inputs () seed
 
-end Impl
+end Internal
 
-open Impl
+open Runtime.Autograd.Model.Autodiff.Internal (pullback)
 
 /--
 Lower a TorchLean program to a reusable `TypedGraph`.
@@ -208,7 +208,7 @@ def jvpLossParams {α : Type} [TorchLean.Storage α] [Context α]
   pure (Proofs.getIdx tangentContext c.output)
 
 /-- Reverse-mode gradients over dual-valued arguments, shared by both HVP projections. -/
-def Impl.dualGradients {α : Type} [TorchLean.Storage α] [Context α]
+def Internal.dualGradients {α : Type} [TorchLean.Storage α] [Context α]
     {paramShapes inputShapes : List Shape}
     (loss : ∀ {β : Type}, [TorchLean.Storage β] → [Context β] →
       Runtime.Autograd.Model.Program β (paramShapes ++ inputShapes) Shape.scalar)
@@ -247,7 +247,7 @@ def hvpParams {α : Type} [TorchLean.Storage α] [Context α]
   let argsD : TorchLean.TensorPack αD Γ :=
     TorchLean.TensorPack.append (α := αD) (ss₁ := paramShapes) (ss₂ := inputShapes) paramsD xsD
 
-  let gradsD ← dualGradients loss argsD
+  let gradsD ← Internal.dualGradients loss argsD
   let gradsParamsD : TorchLean.TensorPack αD paramShapes :=
     (TorchLean.TensorPack.split (α := αD) (ss₁ := paramShapes) (ss₂ := inputShapes) gradsD).1
 
@@ -282,7 +282,7 @@ def hvpInputs {α : Type} [TorchLean.Storage α] [Context α]
   let argsD : TorchLean.TensorPack αD Γ :=
     TorchLean.TensorPack.append (α := αD) (ss₁ := paramShapes) (ss₂ := inputShapes) paramsD xsD
 
-  let gradsD ← dualGradients loss argsD
+  let gradsD ← Internal.dualGradients loss argsD
   let gradsInputsD : TorchLean.TensorPack αD inputShapes :=
     (TorchLean.TensorPack.split (α := αD) (ss₁ := paramShapes) (ss₂ := inputShapes) gradsD).2
 

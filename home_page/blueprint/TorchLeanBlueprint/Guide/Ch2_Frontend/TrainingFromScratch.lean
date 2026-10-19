@@ -972,7 +972,10 @@ moment-defining hyperparameters, every parameter shape, the `requiresGrad` mask,
 session's random counter. Loading rejects
 a different optimizer configuration or parameter schema instead of silently attaching moments to
 the wrong model. Integer metadata and float32 payloads use explicit little-endian encodings, and a
-save is written to a fresh sibling file before it replaces the destination.
+save is written to a fresh sibling file before it replaces the destination. The format is version
+5, and optimizer files written before version 5 are rejected. Resuming from such a run means
+loading only its model state, which starts a fresh optimizer without the old moments and step
+counter.
 
 That optimizer file is still not a complete training snapshot. Replaying the next batch also needs
 the loader or stream position and any external generator state. The eager dropout counter is

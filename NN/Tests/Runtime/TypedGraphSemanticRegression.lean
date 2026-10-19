@@ -28,7 +28,7 @@ open Spec TorchLean Runtime.Autograd
 open Runtime.Autograd.TypedGraph
 open Proofs.Autograd.Algebra
 
-namespace TypedGraphScalingRegression
+namespace TypedGraphSemanticRegression
 
 private instance : Inhabited (Spec.SomeTensor Float32) :=
   ⟨Spec.SomeTensor.ofTensor (Tensor.scalar (0.0 : Float32))⟩
@@ -226,9 +226,9 @@ def run : IO Unit := do
   checkCustomDense
   checkDisconnected
   checkValidation
-  IO.println "TypedGraph scaling regressions passed: canonical FP32 toBits \
+  IO.println "TypedGraph semantic regressions passed: canonical FP32 toBits \
     (including signed zeros), branch order, repeated parents, \
     input/intermediate seeds, zero-cotangent singular/custom VJPs, validation, repeated backward, \
     public checked/pure APIs, disconnected FP32/configured VJPs"
 
-end TypedGraphScalingRegression
+end TypedGraphSemanticRegression

@@ -34,7 +34,7 @@ namespace TorchLean.Tensor
 
 -- Expose the semantic accessors and constructors through the canonical tensor API.
 export Spec (shapeOf getSpec get get2 getAtOrZero
-  tensorCast replicate
+  replicate
   sliceRangeSpec
   singleton padLeft
   identityTensorSpec matMulSpec matVecMulSpec vecMatMulSpec outerProductSpec)

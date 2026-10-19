@@ -241,7 +241,9 @@ def readCheckpoint
   let mut replacement : CudaAdamState := Std.HashMap.emptyWithCapacity
   try
     let format := cudaAdamCheckpointFormat
-    CheckpointIO.readFormat format handle
+    CheckpointIO.readFormat format handle (olderVersionHint? := some <|
+      "Optimizer checkpoints written before version 5 cannot be read; load the model state " ++
+        "alone to continue with a fresh optimizer, whose moments start at zero.")
     let storedDtype ← match ← CheckpointIO.readNat64 checkpointName handle with
       | 0 => pure Runtime.Autograd.LibTorch.Dtype.float32
       | 1 => pure Runtime.Autograd.LibTorch.Dtype.float64

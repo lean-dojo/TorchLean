@@ -381,7 +381,7 @@ def main (args : List String) : IO UInt32 := do
   Module.Command.run
     (config := {
       banner? := some <| Support.banner exeName "diffusion trainer"
-      usage? := some <| TrainCommand.optimizerUsage exeName #[
+      usage? := some <| CLI.Training.Command.helpText exeName #[
         "  --dataset cifar10|imagenet64",
         "  --x PATH           image NPY file",
         "  --y PATH           label NPY file",

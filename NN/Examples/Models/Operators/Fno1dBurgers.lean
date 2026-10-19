@@ -329,7 +329,7 @@ def main (args : List String) : IO UInt32 := do
   Module.Command.run
     (config := {
       banner? := some <| Support.banner exeName "native FNO1D Burgers"
-      usage? := some <| TrainCommand.optimizerUsage exeName #[
+      usage? := some <| CLI.Training.Command.helpText exeName #[
         "  --x PATH           training input NPY file",
         "  --y PATH           training target NPY file",
         "  --test-x PATH      held-out input NPY file",

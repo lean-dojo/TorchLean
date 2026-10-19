@@ -69,8 +69,9 @@ The usual chain is:
 Boolean attention masks use the hard-mask meaning: blocked positions contribute exactly zero
 softmax numerator. An additive
 attention bias is a different operation and must not be used as an approximation to that mask.
-Similarly, a real-valued layer spec, an executable `IEEE32Exec` path, and
-a CUDA `Float32` kernel are related objects, not interchangeable words.
+Similarly, a real-valued layer spec, the same spec run in binary32 through
+`FloatLib.Floats.ExecFloat.Binary 8 23`, and a CUDA `Float32` kernel are related objects, not
+interchangeable words.
 
 When adding a new spec, keep the reference behavior small and explicit. Put runtime shortcuts,
 foreign-library assumptions, tolerances, and file-format details in the runtime, verification, or

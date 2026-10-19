@@ -44,15 +44,6 @@ theorem rowEncloses_flatten_iff {s : Shape} {lo hi : Tensor α s} {f : Nat → �
     simpa only [← Spec.getScalar_flattenSpec_linearize,
       Shape.Coord.linearize_unlinearize] using hi
 
-omit [Context α] [BoundOps α] [LawfulBoundOps α] in
-/-- The checked unflattening operation reads the same flat storage coordinate. -/
-theorem ibpUnflatten_apply {s : Shape} {d : Nat} (t : Tensor α [d]) (h : d = s.size)
-    (c : s.Coord) :
-    ibpUnflatten d t h c = t.getScalar (Fin.cast h.symm (Shape.Coord.linearize c)) := by
-  subst d
-  change (Tensor.unflattenSpec s t) c = t.getScalar (Shape.Coord.linearize c)
-  rw [← Spec.getScalar_flattenSpec_linearize, Tensor.flattenSpec_unflattenSpec]
-
 /-- A flat parent enclosure supplies the coordinates of every checked tensor view. This is the
 coordinatewise form of `tensorEncloses_ibpUnflatten`. -/
 theorem rowEncloses_unflatten {s : Shape} {B : FlatBox α} {f : Nat → ℝ}

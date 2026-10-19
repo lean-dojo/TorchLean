@@ -29,6 +29,11 @@ python3 scripts/datasets/torchlean_data_convert.py image-folder \
   --height 64 --width 64 --labels-from-dirs --limit 800
 ```
 
+The diffusion command selects its data with `--dataset cifar10` or `--dataset imagenet64`. Its
+older spellings were removed in October 2026: `--cifar10` and `--dataset cifar` become
+`--dataset cifar10`, and `--imagenet64`, `--dataset imagenet`, and `--dataset imagenette64` become
+`--dataset imagenet64`. The downloader's own `--cifar10` flag above is unchanged.
+
 ## Commands
 
 Quick CPU checks:

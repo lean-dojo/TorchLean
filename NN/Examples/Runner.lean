@@ -49,8 +49,9 @@ structure Command where
   description : String
   /-- The example's entry point; the returned code becomes the process exit status. -/
   run : List String → IO UInt32
-  /-- Whether the example accepts `--device`, allowing the chooser to supply a missing value. -/
-  supportsDevice : Bool := false
+  /-- Whether the interactive chooser asks for a device: the example accepts `--device` and runs on
+  more than one. CUDA-only examples take `--device cuda` themselves. -/
+  offersDeviceChoice : Bool := false
 
 /-- A titled section of the usage listing, so related examples appear together. -/
 structure CommandGroup where
@@ -63,8 +64,8 @@ structure CommandGroup where
 Wrap an example whose `main` returns `Unit`: finishing without an exception counts as success.
 -/
 def unitCommand (name description : String) (run : List String → IO Unit)
-    (supportsDevice : Bool := false) : Command :=
-  { name, description, supportsDevice
+    (offersDeviceChoice : Bool := false) : Command :=
+  { name, description, offersDeviceChoice
     run := fun args => do
       run args
       pure 0 }
@@ -73,8 +74,8 @@ def unitCommand (name description : String) (run : List String → IO Unit)
 Wrap an example that reports its own exit status, typically because it can fail a numeric check.
 -/
 def statusCommand (name description : String) (run : List String → IO UInt32)
-    (supportsDevice : Bool := false) : Command :=
-  { name, description, run, supportsDevice }
+    (offersDeviceChoice : Bool := false) : Command :=
+  { name, description, run, offersDeviceChoice }
 
 /-- The full example catalogue.
 
@@ -89,54 +90,54 @@ def commandGroups : List CommandGroup :=
         , unitCommand "quickstart_autograd" "differentiate tensor functions and model losses"
             NN.Examples.Quickstart.AutogradBasics.main
         , unitCommand "quickstart_mlp" "train and evaluate a small regression MLP"
-            NN.Examples.Quickstart.SimpleMlpTrain.main (supportsDevice := true)
+            NN.Examples.Quickstart.SimpleMlpTrain.main (offersDeviceChoice := true)
         ] }
   , { title := "Supervised and vision"
       commands :=
         [ statusCommand "mlp" "train an MLP on supervised CSV data"
-            NN.Examples.Models.Supervised.Mlp.main (supportsDevice := true)
+            NN.Examples.Models.Supervised.Mlp.main (offersDeviceChoice := true)
         , statusCommand "kan" "train a Kolmogorov-Arnold network on CSV data"
-            NN.Examples.Models.Supervised.Kan.main (supportsDevice := true)
+            NN.Examples.Models.Supervised.Kan.main (offersDeviceChoice := true)
         , statusCommand "lstm_regression" "forecast a scalar sequence with an LSTM"
-            NN.Examples.Models.Supervised.LstmRegression.main (supportsDevice := true)
+            NN.Examples.Models.Supervised.LstmRegression.main (offersDeviceChoice := true)
         , statusCommand "cnn" "train a convolutional image classifier"
-            NN.Examples.Models.Vision.Cnn.main (supportsDevice := true)
+            NN.Examples.Models.Vision.Cnn.main (offersDeviceChoice := true)
         , statusCommand "resnet" "train a residual image classifier"
-            NN.Examples.Models.Vision.ResNet.main (supportsDevice := true)
+            NN.Examples.Models.Vision.ResNet.main (offersDeviceChoice := true)
         , statusCommand "vit" "train a compact vision transformer"
-            NN.Examples.Models.Vision.Vit.main (supportsDevice := true)
+            NN.Examples.Models.Vision.Vit.main (offersDeviceChoice := true)
         ] }
   , { title := "Sequence"
       commands :=
         [ statusCommand "rnn" "train a vanilla recurrent text model"
-            NN.Examples.Models.Sequence.Rnn.main (supportsDevice := true)
+            NN.Examples.Models.Sequence.Rnn.main (offersDeviceChoice := true)
         , statusCommand "lstm" "train an LSTM text model"
-            NN.Examples.Models.Sequence.Lstm.main (supportsDevice := true)
+            NN.Examples.Models.Sequence.Lstm.main (offersDeviceChoice := true)
         , statusCommand "transformer" "train a small transformer text model"
-            NN.Examples.Models.Sequence.Transformer.main (supportsDevice := true)
+            NN.Examples.Models.Sequence.Transformer.main (offersDeviceChoice := true)
         , statusCommand "chargpt" "train an indexed character-level GPT"
-            NN.Examples.Models.Sequence.CharGpt.main (supportsDevice := true)
+            NN.Examples.Models.Sequence.CharGpt.main (offersDeviceChoice := true)
         , statusCommand "gpt2" "train and sample a byte-level GPT"
-            NN.Examples.Models.Sequence.Gpt2.main (supportsDevice := true)
+            NN.Examples.Models.Sequence.Gpt2.main (offersDeviceChoice := true)
         , statusCommand "gpt2_saved" "load a saved GPT checkpoint and generate text"
-            NN.Examples.Models.Sequence.Gpt2Saved.main (supportsDevice := true)
+            NN.Examples.Models.Sequence.Gpt2Saved.main (offersDeviceChoice := true)
         , statusCommand "text_gpt2" "train byte or BPE GPT models on a text corpus"
-            NN.Examples.Models.Sequence.TextGpt2.main (supportsDevice := true)
+            NN.Examples.Models.Sequence.TextGpt2.main
         , statusCommand "gpt_adder" "train a GPT on digit addition"
-            NN.Examples.Models.Sequence.GptAdder.main (supportsDevice := true)
+            NN.Examples.Models.Sequence.GptAdder.main
         , statusCommand "mamba" "train a compact Mamba-style sequence model"
-            NN.Examples.Models.Sequence.Mamba.main (supportsDevice := true)
+            NN.Examples.Models.Sequence.Mamba.main (offersDeviceChoice := true)
         ] }
   , { title := "Generative and operator learning"
       commands :=
         [ statusCommand "autoencoder" "reconstruct a compact vector of CIFAR values"
-            NN.Examples.Models.Generative.Autoencoder.main (supportsDevice := true)
+            NN.Examples.Models.Generative.Autoencoder.main (offersDeviceChoice := true)
         , statusCommand "mae" "train a masked image autoencoder"
-            NN.Examples.Models.Generative.Mae.main (supportsDevice := true)
+            NN.Examples.Models.Generative.Mae.main (offersDeviceChoice := true)
         , statusCommand "diffusion" "train and sample an image diffusion model"
-            NN.Examples.Models.Generative.Diffusion.main (supportsDevice := true)
+            NN.Examples.Models.Generative.Diffusion.main (offersDeviceChoice := true)
         , statusCommand "fno1d_burgers" "learn the one-dimensional Burgers operator"
-            NN.Examples.Models.Operators.Fno1dBurgers.main (supportsDevice := true)
+            NN.Examples.Models.Operators.Fno1dBurgers.main (offersDeviceChoice := true)
         , unitCommand "pinn" "train a neural field from an equation and boundary conditions"
             NN.Examples.Models.Operators.Pinn.main
         , unitCommand "complex_regression" "fit complex parameters using a real loss"
@@ -145,11 +146,11 @@ def commandGroups : List CommandGroup :=
   , { title := "Reinforcement learning"
       commands :=
         [ statusCommand "ppo_cartpole" "train and evaluate PPO on CartPole"
-            NN.Examples.Models.RL.PPOCartPole.main (supportsDevice := true)
+            NN.Examples.Models.RL.PPOCartPole.main (offersDeviceChoice := true)
         , statusCommand "ppo_gridworld" "train PPO against a checked GridWorld contract"
-            NN.Examples.Models.RL.PPOGridWorld.main (supportsDevice := true)
+            NN.Examples.Models.RL.PPOGridWorld.main (offersDeviceChoice := true)
         , statusCommand "ppo_pong_ram" "train PPO on Pong RAM observations"
-            NN.Examples.Models.RL.PPOPongRam.main (supportsDevice := true)
+            NN.Examples.Models.RL.PPOPongRam.main (offersDeviceChoice := true)
         , statusCommand "dqn_replay" "inspect checked DQN replay-buffer behavior"
             NN.Examples.Models.RL.DqnReplay.main
         ] }
@@ -163,11 +164,11 @@ def commandGroups : List CommandGroup :=
   , { title := "Data"
       commands :=
         [ unitCommand "data_csv" "load and validate supervised CSV tensors"
-            NN.Examples.Data.Loaders.Csv.main (supportsDevice := true)
+            NN.Examples.Data.Loaders.Csv.main (offersDeviceChoice := true)
         , unitCommand "data_npy" "load and validate NumPy tensor files"
-            NN.Examples.Data.Loaders.Npy.main (supportsDevice := true)
+            NN.Examples.Data.Loaders.Npy.main (offersDeviceChoice := true)
         , unitCommand "data_cifar10" "load prepared CIFAR-10 image tensors"
-            NN.Examples.Data.Loaders.Cifar10Images.main (supportsDevice := true)
+            NN.Examples.Data.Loaders.Cifar10Images.main (offersDeviceChoice := true)
         ] }
   , { title := "Numerical checks"
       commands :=
@@ -187,8 +188,8 @@ def commandGroups : List CommandGroup :=
         , statusCommand "numerical_certificate" "check a graph-level numerical certificate"
             NN.Examples.DeepDives.Floats.GraphNumericalCertificate.main
         , unitCommand "graphspec" "build and inspect a typed graph specification"
-            NN.Examples.DeepDives.GraphSpec.Tutorial.main (supportsDevice := true)
-        , unitCommand "ir_axis_ops" "lower axis operations into executable graph IR"
+            NN.Examples.DeepDives.GraphSpec.Tutorial.main (offersDeviceChoice := true)
+        , unitCommand "ir_axis_ops" "evaluate axis operations with the IR semantics"
             NN.Examples.DeepDives.IRAxisOps.main
         , unitCommand "one_semantic_universe"
             "relate executable and proof-oriented scalar semantics"
@@ -318,7 +319,7 @@ def needsDeviceChoice (args : List String) : Bool :=
     | some (_, name, _) =>
         match findCommand name commandGroups with
         | none => false
-        | some command => command.supportsDevice
+        | some command => command.offersDeviceChoice
 
 /-- Add a chooser response only where the selected command accepts a missing device flag. -/
 def applyDeviceChoice (args deviceArgs : List String) : List String :=

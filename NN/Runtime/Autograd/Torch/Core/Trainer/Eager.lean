@@ -108,7 +108,7 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
         lossRef (Tensor.scalar (1 : α))
       Internal.gradsOfRefs (α := α) gradients parameterRefs
   let applyNativeGradient (optimizer : NativeOptimizer α)
-      (gradients : Internal.EagerSession.CudaGradMap) : IO Unit := do
+      (gradients : LibTorch.Tape.SparseGradMap) : IO Unit := do
     useOptimizerPath .native
     match optimizer with
     | .sgd learningRate =>
@@ -127,7 +127,7 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
       throw <| IO.userError "torch: native optimizer batch must be nonempty"
     checkOptimizerPath .native
     let accumulator ← IO.mkRef
-      (Std.HashMap.emptyWithCapacity : Internal.EagerSession.CudaGradMap)
+      (Std.HashMap.emptyWithCapacity : LibTorch.Tape.SparseGradMap)
     let lossAccumulator ← IO.mkRef (none : Option Runtime.Autograd.LibTorch.Buffer)
     let sampleWeight := 1.0 / batch.size.toFloat
     try
@@ -150,8 +150,8 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
         let gradients ←
           Internal.EagerSession.backwardScalarParamGradsCuda
             (α := α) session lossRef (seed := 1 / (batch.size : α))
-        Internal.EagerSession.withCudaGradMap gradients fun gradients =>
-          Internal.EagerSession.accumulateCudaGradMap accumulator gradients
+        Internal.EagerSession.withSparseGrads gradients fun gradients =>
+          Internal.EagerSession.accumulateSparseGrads accumulator gradients
       let gradients ← accumulator.get
       applyNativeGradient optimizer gradients
       match ← lossAccumulator.get with
@@ -162,7 +162,7 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
       -- The batch owns these buffers beyond the lifetime of any individual sample tape.
       -- Release them before allocator maintenance, including when a later sample is rejected.
       try
-        Internal.EagerSession.releaseCudaGradMap (← accumulator.get)
+        LibTorch.Tape.releaseSparseGrads (← accumulator.get)
         if let some total ← lossAccumulator.get then
           Internal.EagerSession.releaseCudaBuffer total
       finally

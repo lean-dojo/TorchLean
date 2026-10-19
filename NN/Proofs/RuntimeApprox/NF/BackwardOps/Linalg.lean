@@ -43,32 +43,6 @@ variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
 local notation "R" => NF β fexp rnd
 
-namespace Impl
-
-/-- Internal spelling of axis-one insertion used repeatedly in outer-product formulas. -/
-def unsqueezeAfterLeading {α : Type} [TorchLean.Storage α] {n : Nat} {s : Shape}
-    (tensor : Tensor α (.dim n s)) : Tensor α (.dim n (.dim 1 s)) :=
-  Tensor.dim fun i => Tensor.dim fun _ => tensor.unstack i
-
-end Impl
-
-open Impl
-
-omit [ValidExp fexp] [ValidRndToNearest rnd] in
-/-- The internal axis-one spelling is an exact shape operation. -/
-theorem approxTensor_unsqueezeAfterLeading {n : Nat} {s : Shape}
-    {xS : SpecTensor (.dim n s)} {xR : Tensor R (.dim n s)} {eps : ℝ}
-    (hx : approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-      xS xR eps) :
-    approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-      (unsqueezeAfterLeading xS) (unsqueezeAfterLeading xR) eps := by
-  have heps : 0 ≤ eps := approxTensor_eps_nonneg hx
-  apply approxTensor_dim_of_forall heps
-  intro i
-  apply approxTensor_dim_of_forall heps
-  intro _
-  simpa [unsqueezeAfterLeading] using (approxTensor_unstack hx i)
-
 -- ---------------------------------------------------------------------------
 -- Linear algebra reverse nodes (`mat_vec_mul_spec`, `mat_mul_spec`)
 -- ---------------------------------------------------------------------------
@@ -87,8 +61,8 @@ def matVecMulRevNode {Γ : List Shape} {m n : Nat}
     { toFwdNode := matVecMulNode (β := β) (fexp := fexp) (rnd := rnd) (Γ := Γ) (m := m) (n := n) A v
       vjpSpec := fun ctx δ =>
         let vS := getIdx (α := SpecScalar) ctx v
-        let δcol := unsqueezeAfterLeading (α := SpecScalar) (n := m) (s := Shape.scalar) δ
-        let vcol := unsqueezeAfterLeading (α := SpecScalar) (n := n) (s := Shape.scalar) vS
+        let δcol := Tensor.unsqueezeSpec δ 1 le_rfl
+        let vcol := Tensor.unsqueezeSpec vS 1 le_rfl
         let dA :=
           Spec.matMulSpec (α := SpecScalar)
             δcol (TorchLean.Tensor.swapAdjacentAxes (depth := 0) vcol)
@@ -101,8 +75,8 @@ def matVecMulRevNode {Γ : List Shape} {m n : Nat}
           (s₂ := (.dim n .scalar)) A dA v dV
       vjpRuntime := fun ctx δ =>
         let vR := getIdx (α := R) ctx v
-        let δcol := unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δ
-        let vcol := unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) vR
+        let δcol := Tensor.unsqueezeSpec δ 1 le_rfl
+        let vcol := Tensor.unsqueezeSpec vR 1 le_rfl
         let dA :=
           Spec.matMulSpec (α := R)
             δcol (TorchLean.Tensor.swapAdjacentAxes (depth := 0) vcol)
@@ -114,8 +88,8 @@ def matVecMulRevNode {Γ : List Shape} {m n : Nat}
           (s₂ := (.dim n .scalar)) A dA v dV
       vjpBound := fun epsCtx ctxR epsδ δR =>
         let vR := getIdx (α := R) ctxR v
-        let δcolR := unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δR
-        let vcolR := unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) vR
+        let δcolR := Tensor.unsqueezeSpec δR 1 le_rfl
+        let vcolR := Tensor.unsqueezeSpec vR 1 le_rfl
         let vrowR := TorchLean.Tensor.swapAdjacentAxes (depth := 0) vcolR
         let epsV := getIdxEps (Γ := Γ) (s := (.dim n .scalar)) epsCtx v
         let epsA := getIdxEps (Γ := Γ) (s := (.dim m (.dim n .scalar))) epsCtx A
@@ -143,28 +117,24 @@ def matVecMulRevNode {Γ : List Shape} {m n : Nat}
   -- `dA = mat_mul (expand δ) (transpose (expand v))`.
   have hδcol :
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-        (unsqueezeAfterLeading (α := SpecScalar) (n := m) (s := Shape.scalar) δS)
-        (unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δR)
+        (Tensor.unsqueezeSpec δS 1 le_rfl)
+        (Tensor.unsqueezeSpec δR 1 le_rfl)
         epsδ :=
-    approxTensor_unsqueezeAfterLeading hδ
+    approxTensor_unsqueeze_spec 1 le_rfl hδ
 
   have hvcol :
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
-        (unsqueezeAfterLeading (α := SpecScalar) (n := n) (s := Shape.scalar) (getIdx (α :=
-          SpecScalar) ctxS v))
-        (unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) (getIdx (α := R) ctxR
-          v))
+        (Tensor.unsqueezeSpec (getIdx (α := SpecScalar) ctxS v) 1 le_rfl)
+        (Tensor.unsqueezeSpec (getIdx (α := R) ctxR v) 1 le_rfl)
         (getIdxEps (Γ := Γ) (s := .dim n .scalar) epsCtx v) :=
-    approxTensor_unsqueezeAfterLeading hv
+    approxTensor_unsqueeze_spec 1 le_rfl hv
 
   have hvrow :
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
         (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
-          (unsqueezeAfterLeading (α := SpecScalar) (n := n) (s := Shape.scalar) (getIdx (α
-            := SpecScalar) ctxS v)))
+          (Tensor.unsqueezeSpec (getIdx (α := SpecScalar) ctxS v) 1 le_rfl))
         (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
-          (unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) (getIdx (α := R)
-            ctxR v)))
+          (Tensor.unsqueezeSpec (getIdx (α := R) ctxR v) 1 le_rfl))
         (getIdxEps (Γ := Γ) (s := .dim n .scalar) epsCtx v) :=
     approxTensor_swapAdjacentAxes (depth := 0) (β := β) (fexp := fexp) (rnd := rnd) (xS := _)
       (xR := _) (eps := getIdxEps (Γ := Γ) (s := .dim n .scalar) epsCtx v) hvcol
@@ -172,33 +142,28 @@ def matVecMulRevNode {Γ : List Shape} {m n : Nat}
   have hdA :
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
         (Spec.matMulSpec (α := SpecScalar)
-          (unsqueezeAfterLeading (α := SpecScalar) (n := m) (s := Shape.scalar) δS)
+          (Tensor.unsqueezeSpec δS 1 le_rfl)
           (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
-            (unsqueezeAfterLeading (α := SpecScalar) (n := n) (s := Shape.scalar) (getIdx
-              (α := SpecScalar) ctxS v))))
+            (Tensor.unsqueezeSpec (getIdx (α := SpecScalar) ctxS v) 1 le_rfl)))
         (Spec.matMulSpec (α := R)
-          (unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δR)
+          (Tensor.unsqueezeSpec δR 1 le_rfl)
           (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
-            (unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) (getIdx (α := R)
-              ctxR v))))
+            (Tensor.unsqueezeSpec (getIdx (α := R) ctxR v) 1 le_rfl)))
         (linfNorm
           (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
             (m := m) (n := 1) (p := n)
             epsδ (getIdxEps (Γ := Γ) (s := .dim n .scalar) epsCtx v)
-            (unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δR)
+            (Tensor.unsqueezeSpec δR 1 le_rfl)
             (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
-              (unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) (getIdx (α := R)
-                ctxR v))))) := by
+              (Tensor.unsqueezeSpec (getIdx (α := R) ctxR v) 1 le_rfl)))) := by
     simpa using
       (approxTensor_mat_mul_spec (β := β) (fexp := fexp) (rnd := rnd) (m := m) (n := 1) (p := n)
-        (AS := unsqueezeAfterLeading (α := SpecScalar) (n := m) (s := Shape.scalar) δS)
+        (AS := Tensor.unsqueezeSpec δS 1 le_rfl)
         (BS := TorchLean.Tensor.swapAdjacentAxes (depth := 0)
-          (unsqueezeAfterLeading (α := SpecScalar) (n := n) (s := Shape.scalar) (getIdx (α
-            := SpecScalar) ctxS v)))
-        (AR := unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δR)
+          (Tensor.unsqueezeSpec (getIdx (α := SpecScalar) ctxS v) 1 le_rfl))
+        (AR := Tensor.unsqueezeSpec δR 1 le_rfl)
         (BR := TorchLean.Tensor.swapAdjacentAxes (depth := 0)
-          (unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) (getIdx (α := R)
-            ctxR v)))
+          (Tensor.unsqueezeSpec (getIdx (α := R) ctxR v) 1 le_rfl))
         (epsA := epsδ) (epsB := getIdxEps (Γ := Γ) (s := .dim n .scalar) epsCtx v) hδcol hvrow)
 
   -- `dV = mat_vec_mul (transpose A) δ`.
@@ -246,20 +211,18 @@ def matVecMulRevNode {Γ : List Shape} {m n : Nat}
       (Γ := Γ) (s₁ := (.dim m (.dim n .scalar))) (s₂ := (.dim n .scalar)) A v
       (t₁S :=
         Spec.matMulSpec (α := SpecScalar)
-          (unsqueezeAfterLeading (α := SpecScalar) (n := m) (s := Shape.scalar) δS)
+          (Tensor.unsqueezeSpec δS 1 le_rfl)
           (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
-            (unsqueezeAfterLeading (α := SpecScalar) (n := n) (s := Shape.scalar) (getIdx
-              (α := SpecScalar) ctxS v))))
+            (Tensor.unsqueezeSpec (getIdx (α := SpecScalar) ctxS v) 1 le_rfl)))
       (t₁R :=
         Spec.matMulSpec (α := R)
-          (unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δR)
+          (Tensor.unsqueezeSpec δR 1 le_rfl)
           (TorchLean.Tensor.swapAdjacentAxes (depth := 0)
-            (unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) (getIdx (α := R)
-              ctxR v))))
+            (Tensor.unsqueezeSpec (getIdx (α := R) ctxR v) 1 le_rfl)))
       (eps₁ :=
         let vR := getIdx (α := R) ctxR v
-        let δcolR := unsqueezeAfterLeading (α := R) (n := m) (s := Shape.scalar) δR
-        let vcolR := unsqueezeAfterLeading (α := R) (n := n) (s := Shape.scalar) vR
+        let δcolR := Tensor.unsqueezeSpec δR 1 le_rfl
+        let vcolR := Tensor.unsqueezeSpec vR 1 le_rfl
         let vrowR := TorchLean.Tensor.swapAdjacentAxes (depth := 0) vcolR
         linfNorm
           (matMulBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
@@ -453,7 +416,7 @@ def matMulRevNode {Γ : List Shape} {m n p : Nat}
               (TorchLean.Tensor.swapAdjacentAxes (depth := 0) (getIdx (α := R) ctxR
                 A)) δR)) := by
       simpa [tensorCastOfIdxEq, idx_shape_eq_of_i_eq] using
-        (approxTensor_tensor_cast (β := β) (fexp := fexp) (rnd := rnd)
+        (approxTensor_cast_shape (β := β) (fexp := fexp) (rnd := rnd)
           (h := (idx_shape_eq_of_i_eq (Γ := Γ) (a := A) (b := B) hEq).symm)
           (xS :=
             Spec.matMulSpec (α := SpecScalar)

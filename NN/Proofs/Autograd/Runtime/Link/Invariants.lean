@@ -13,7 +13,7 @@ public import NN.Proofs.Autograd.Runtime.Link.Core
 
 Lowering a graph marks every runtime node as a gradient accumulation slot and only emits backward
 contributions to earlier node ids (`BackwardPidsLt`). The dense reverse sweep proofs in
-`BackwardGraph` consumes both invariants.
+`BackwardGraph` consume both invariants.
 -/
 
 @[expose] public section
@@ -164,35 +164,6 @@ theorem lowerGraphDataToTape_backward_pids_lt_id {α : Type} {Δ : Type}
             simpa [Array.getElem?_push, hlast] using hnNodes
           simpa [Runtime.Autograd.Tape.getNode?, tPrev] using this
         exact ih id n (by simpa [prev, tPrev] using hnPrev) d contribs hback hmem
-
-/-- All nodes produced by `lowerGraphToTape` have `requiresGrad = true`. -/
-theorem lowerGraphToTape_all_requires_grad_true {α : Type} {Δ : Type}
-    [TorchLean.Storage α] [CommSemiring α]
-    {Γ : List Shape} {ss : List Shape} (g : Graph (α := α) Δ Γ ss)
-    (x : TorchLean.TensorPack α Γ)
-    (d0 : Δ) :
-    ((lowerGraphToTape (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) g x d0).1.nodes.all (fun n =>
-      n.requiresGrad)) = true :=
-  lowerGraphDataToTape_all_requires_grad_true g.toData x d0
-
-/-- Pointwise form of `lowerGraphToTape_all_requires_grad_true`. -/
-theorem lowerGraphToTape_requires_grad_true {α : Type} {Δ : Type}
-    [TorchLean.Storage α] [CommSemiring α]
-    {Γ : List Shape} {ss : List Shape} (g : Graph (α := α) Δ Γ ss)
-    (x : TorchLean.TensorPack α Γ)
-    (d0 : Δ) :
-    let t := (lowerGraphToTape (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) g x d0).1
-    ∀ i (hi : i < t.nodes.size), (t.nodes[i]'hi).requiresGrad = true :=
-  lowerGraphDataToTape_requires_grad_true g.toData x d0
-
-/-- Backward closure safety for `lowerGraphToTape`: every parent id is smaller than its node id. -/
-theorem lowerGraphToTape_backward_pids_lt_id {α : Type} {Δ : Type}
-    [TorchLean.Storage α] [CommSemiring α]
-    {Γ : List Shape} {ss : List Shape} (g : Graph (α := α) Δ Γ ss)
-    (x : TorchLean.TensorPack α Γ)
-    (d0 : Δ) :
-    BackwardPidsLt (lowerGraphToTape (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) g x d0).1 :=
-  lowerGraphDataToTape_backward_pids_lt_id g.toData x d0
 
 end Graph
 

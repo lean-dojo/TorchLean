@@ -65,7 +65,7 @@ def linearRegressionForwardSpec {inDim : Nat}
   addSpec (Tensor.scalar dotProduct) model.bias
 
 /-- Batched forward pass, applied independently to each input row. -/
-def linearRegressionBatchedForwardSpec {batch inDim : Nat}
+def batchLinearRegressionForwardSpec {batch inDim : Nat}
   (model : LinearRegressionSpec α inDim)
   (input : Tensor α [batch, inDim]) :
   Tensor α [batch] :=
@@ -100,7 +100,7 @@ def linearRegressionBackwardSpec {inDim : Nat}
 This aggregates parameter gradients across the batch (a sum over `batch`), matching PyTorch's
 default behavior for loss reductions like `"mean"` when you subsequently scale appropriately.
 -/
-def linearRegressionBatchedBackwardSpec {batch inDim : Nat}
+def batchLinearRegressionBackwardSpec {batch inDim : Nat}
   (model : LinearRegressionSpec α inDim)
   (input : Tensor α [batch, inDim])
   (gradOutput : Tensor α [batch]) (h : batch ≠ 0) :
@@ -130,7 +130,7 @@ def mseLossSpec {batch inDim : Nat}
   (input : Tensor α [batch, inDim])
   (target : Tensor α [batch]) (h : batch ≠ 0) :
   Tensor α .scalar :=
-  let predictions := linearRegressionBatchedForwardSpec model input
+  let predictions := batchLinearRegressionForwardSpec model input
   let errors := subSpec predictions target
   let leadingAxis := (Shape.hasNonemptyAxisZeroOfNe h).proof
   let squaredSum := reduceSum 0 (squareSpec errors) leadingAxis
@@ -173,12 +173,12 @@ def linearRegressionTrainStepSpec {batch inDim : Nat}
   (learningRate : α) (h : batch ≠ 0) :
   (Tensor α .scalar × LinearRegressionSpec α inDim) :=
   -- Forward pass
-  let predictions := linearRegressionBatchedForwardSpec model input
+  let predictions := batchLinearRegressionForwardSpec model input
   -- Compute loss
   let loss := mseLossSpec model input target h
   -- Compute gradients
   let gradPredictions := mseLossGradSpec predictions target
-  let gradients := linearRegressionBatchedBackwardSpec model input gradPredictions h
+  let gradients := batchLinearRegressionBackwardSpec model input gradPredictions h
   -- Update parameters
   let newWeights :=
     subSpec model.weights (scaleSpec gradients.weightGradient learningRate)
@@ -212,7 +212,7 @@ def rSquaredSpec {batch inDim : Nat}
   (input : Tensor α [batch, inDim])
   (target : Tensor α [batch]) (h : batch ≠ 0) :
   Tensor α .scalar :=
-  let predictions := linearRegressionBatchedForwardSpec model input
+  let predictions := batchLinearRegressionForwardSpec model input
   let leadingAxis : Shape.HasNonemptyAxis 0 (Shape.dim batch Shape.scalar) :=
     Shape.hasNonemptyAxisZeroOfNe h
   let targetMean := reduceMean 0 target leadingAxis.proof

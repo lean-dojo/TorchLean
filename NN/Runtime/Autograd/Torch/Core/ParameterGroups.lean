@@ -115,7 +115,7 @@ The input map remains borrowed throughout. Intermediate sums and the final sum a
 both success and failure; the optimizer action must not retain that temporary gradient.
 -/
 def withCudaGroupGradient {α β : Type} [Storage α]
-    (group : ParameterGroup α) (gradients : CudaGradMap)
+    (group : ParameterGroup α) (gradients : LibTorch.Tape.SparseGradMap)
     (action : Runtime.Autograd.LibTorch.AnyBuffer → IO β) : IO β := do
   let first ← match gradients.get? group.id with
     | some gradient => pure gradient

@@ -52,7 +52,12 @@ def usage : String :=
     ]
 
 def run : IO Unit := do
+  -- `TORCHLEAN_REQUIRE_CUDA=1` means a GPU ran this: the bridge on the host does not satisfy it.
+  -- `TORCHLEAN_REQUIRE_NATIVE=1` means the bridge ran this, on whichever device it selected: the
+  -- check for a CPU-only SDK session, which must not pass on the unlinked default backend.
   if (← IO.getEnv "TORCHLEAN_REQUIRE_CUDA") == some "1" then
+    Runtime.Autograd.LibTorch.Buffer.requireCudaDevice
+  if (← IO.getEnv "TORCHLEAN_REQUIRE_NATIVE") == some "1" then
     Runtime.Autograd.LibTorch.Buffer.requireNativeRuntime
   -- Fresh subprocesses isolate native memory accounting and restore allocator limits on exit.
   -- These probes are selected before the ordinary suite to avoid unrelated live GPU owners.
@@ -80,11 +85,20 @@ def run : IO Unit := do
     | .notLinked =>
         IO.println "  CUDA kernels: skipped (LibTorch not linked)"
     | .nativeAvailable =>
+        -- The selected device must agree with what the bridge can see and what was asked for.
+        let kind ← Runtime.Autograd.LibTorch.deviceKind
+        let count ← Runtime.Autograd.LibTorch.deviceCount
+        let requested ← IO.getEnv "TORCHLEAN_LIBTORCH_DEVICE"
+        if kind == .cuda && count == 0 then
+          throw <| IO.userError "LibTorch selected a CUDA device while none is visible"
+        if requested == some "cpu" && kind != .host then
+          throw <| IO.userError "TORCHLEAN_LIBTORCH_DEVICE=cpu did not select the host"
+        IO.println s!"  LibTorch device: {match kind with | .cuda => "cuda" | .host => "host"}"
         NN.Tests.Runtime.EinsumDynamic.run .cuda
         Tests.Cuda.run
     | .nativeUnavailable =>
         throw <| IO.userError
-          "TorchLean was built with CUDA, but no usable CUDA device is visible"
+          "TorchLean was built with LibTorch, but no usable device is selected"
     IO.println "== TorchLean: all curated tests passed =="
 
 def main (args : List String) : IO Unit := do

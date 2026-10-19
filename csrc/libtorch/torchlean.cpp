@@ -4,18 +4,27 @@
 
 // Buffer ownership and runtime controls
 
+// TORCHLEAN_LIBTORCH_CUDA is 1 for an SDK that exports `torch_cuda` and 0 for a CPU-only SDK;
+// CMake sets it from the selected SDK. The bridge then runs on a CUDA device or on the host.
+#ifndef TORCHLEAN_LIBTORCH_CUDA
+#define TORCHLEAN_LIBTORCH_CUDA 1
+#endif
+
 #include <ATen/Context.h>
+#if TORCHLEAN_LIBTORCH_CUDA
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #include <c10/cuda/CUDAFunctions.h>
 #include <c10/cuda/CUDAStream.h>
-#include <lean/mimalloc.h>
-#include <torch/version.h>
 #include <cuda.h>
 #include <nvrtc.h>
+#endif
+#include <lean/mimalloc.h>
+#include <torch/version.h>
 
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <list>
@@ -48,6 +57,51 @@ Counter payloads;
 Counter wrappers;
 std::once_flag initialization;
 std::atomic<int> selected_device{0};
+
+// Where the bridge runs, decided once by `torchlean::initialize` (see `select_device`): a CUDA
+// device, the host, or nothing usable.
+enum class Selection { cuda, host, unavailable };
+Selection selection = Selection::unavailable;
+
+uint32_t cuda_device_count() {
+#if TORCHLEAN_LIBTORCH_CUDA
+  return static_cast<uint32_t>(c10::cuda::device_count());
+#else
+  return 0;
+#endif
+}
+
+// `TORCHLEAN_LIBTORCH_DEVICE` selects "cuda" or "cpu" explicitly. Unset, a visible CUDA device
+// is selected when the SDK has CUDA support; otherwise the host is selected only when the SDK
+// has no CUDA support at all. A CUDA SDK without a visible device stays unavailable rather than
+// silently running on the host.
+Selection select_device() {
+  const char* requested = std::getenv("TORCHLEAN_LIBTORCH_DEVICE");
+  const std::string value = requested ? requested : "";
+  if (value == "cpu") return Selection::host;
+  if (value == "cuda") return cuda_device_count() > 0 ? Selection::cuda : Selection::unavailable;
+  if (!value.empty()) {
+    std::fprintf(stderr,
+                 "LibTorch: TORCHLEAN_LIBTORCH_DEVICE=\"%s\" is neither \"cuda\" nor \"cpu\"; "
+                 "no device selected\n",
+                 value.c_str());
+    return Selection::unavailable;
+  }
+  if (cuda_device_count() > 0) return Selection::cuda;
+  return TORCHLEAN_LIBTORCH_CUDA ? Selection::unavailable : Selection::host;
+}
+
+// An entry point with no host implementation calls this before anything else, so that it fails
+// with a message naming the feature rather than with a CUDA call on a CPU tensor. Code that needs
+// the CUDA headers to compile sits under TORCHLEAN_LIBTORCH_CUDA; code that merely needs the CUDA
+// device selected calls this.
+void require_cuda(const char* feature) {
+  TORCH_CHECK(selection != Selection::host, "LibTorch: ", feature,
+              " needs a CUDA device, but the bridge runs on the host (a CPU-only SDK, or "
+              "TORCHLEAN_LIBTORCH_DEVICE=cpu)");
+  TORCH_CHECK(selection == Selection::cuda, "LibTorch: ", feature,
+              " needs a CUDA device, but none is selected");
+}
 
 bool release_data(torchlean_cuda_buffer* buffer) {
   if (!buffer || !buffer->tensor.defined()) return false;
@@ -181,6 +235,8 @@ lean_obj_res download(b_lean_obj_arg object) {
   return out;
 }
 
+#if TORCHLEAN_LIBTORCH_CUDA
+// Runtime-compiled kernels: NVRTC and the CUDA driver API come with a CUDA-enabled SDK only.
 void check_driver(CUresult result) {
   if (result == CUDA_SUCCESS) return;
   const char* message = nullptr;
@@ -263,6 +319,8 @@ std::shared_ptr<CompiledKernel> compile_kernel(const std::string& source) {
 
 at::Tensor run_kernel(b_lean_obj_arg source, const std::vector<at::Tensor>& inputs,
                       at::ScalarType scalar, uint64_t count, uint64_t stride = 1) {
+  // A generated kernel reads device pointers: the host has no implementation of it.
+  require_cuda("a runtime-compiled kernel");
   TORCH_CHECK(stride > 0 && stride <= INT64_MAX && count <= INT64_MAX / stride,
               "kernel: invalid scalar width or output extent");
   TORCH_CHECK(count <= INT64_MAX, "kernel: output size exceeds signed tensor size range");
@@ -309,6 +367,15 @@ at::Tensor run_kernel(b_lean_obj_arg source, const std::vector<at::Tensor>& inpu
               static_cast<uint64_t>(record[3]));
   return output;
 }
+#else
+// A CPU-only SDK has no NVRTC: a runtime-compiled kernel fails at its entry.
+at::Tensor run_kernel(b_lean_obj_arg, const std::vector<at::Tensor>&, at::ScalarType, uint64_t,
+                      uint64_t = 1) {
+  require_cuda("a runtime-compiled kernel");
+  TORCH_CHECK(false, "LibTorch: a runtime-compiled kernel needs a CUDA-enabled SDK");
+  return at::Tensor();
+}
+#endif
 
 at::Tensor upload_bytes(b_lean_obj_arg object, at::ScalarType dtype, at::ScalarType source_dtype) {
   const size_t bytes = lean_sarray_size(object);
@@ -357,16 +424,29 @@ lean_obj_res download_bytes(b_lean_obj_arg object, at::ScalarType dtype) {
   return out;
 }
 
-auto allocator_stats() {
-  return c10::cuda::CUDACachingAllocator::getDeviceStats(torchlean::device().index());
+// Native allocator and driver counters exist for the CUDA device only; the host reads zero.
+#if TORCHLEAN_LIBTORCH_CUDA
+template <typename F>
+uint64_t allocator_stat(F&& field) {
+  return torchlean::invoke([&]() -> uint64_t {
+    if (selection != Selection::cuda) return 0;
+    return field(c10::cuda::CUDACachingAllocator::getDeviceStats(torchlean::device().index()));
+  });
 }
+#endif
 
 uint64_t memory_info(bool total) {
+#if TORCHLEAN_LIBTORCH_CUDA
   return torchlean::invoke([&]() -> uint64_t {
+    if (selection != Selection::cuda) return 0;
     size_t free_bytes = 0, total_bytes = 0;
     C10_CUDA_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
     return total ? total_bytes : free_bytes;
   });
+#else
+  (void)total;
+  return 0;
+#endif
 }
 
 // Initial policy from TORCHLEAN_CUDA_DETERMINISTIC_REDUCTIONS: unset, empty, or "0" means off.
@@ -393,11 +473,13 @@ void initialize() {
     const bool deterministic = deterministic_reductions_requested();
     context.setDeterministicAlgorithms(deterministic, false);
     context.setDeterministicCuDNN(deterministic);
-    context.lazyInitDevice(c10::kCUDA);
+    selection = select_device();
+    if (selection == Selection::cuda) context.lazyInitDevice(c10::kCUDA);
   });
 }
 
 c10::Device device() {
+  if (selection == Selection::host) return c10::Device(c10::kCPU);
   return c10::Device(c10::kCUDA, static_cast<c10::DeviceIndex>(selected_device.load()));
 }
 
@@ -408,10 +490,10 @@ at::TensorOptions options() {
 const at::Tensor& tensor(b_lean_obj_arg object) {
   const auto* buffer = torchlean_cuda_buffer_unbox(object);
   TORCH_CHECK(buffer->tensor.defined(), "LibTorch: buffer has been released");
-  TORCH_CHECK(buffer->tensor.is_cuda() &&
+  TORCH_CHECK(buffer->tensor.device().type() == device().type() &&
               (buffer->tensor.scalar_type() == at::kFloat ||
                buffer->tensor.scalar_type() == at::kDouble),
-              "LibTorch: expected a CUDA real buffer");
+              "LibTorch: expected a real buffer on the selected device");
   TORCH_CHECK(!buffer->tensor.requires_grad(), "LibTorch: unexpected autograd tensor");
   TORCH_CHECK(buffer->tensor.numel() == static_cast<int64_t>(buffer->size),
               "LibTorch: buffer size disagrees with storage");
@@ -419,9 +501,9 @@ const at::Tensor& tensor(b_lean_obj_arg object) {
 }
 
 torchlean_cuda_buffer* owned(at::Tensor value) {
-  TORCH_CHECK(value.defined() && value.is_cuda() &&
+  TORCH_CHECK(value.defined() && value.device().type() == device().type() &&
               (value.scalar_type() == at::kFloat || value.scalar_type() == at::kDouble),
-              "LibTorch: expected a CUDA real result");
+              "LibTorch: expected a real result on the selected device");
   TORCH_CHECK(!value.requires_grad(), "LibTorch: native operations must not record autograd");
   auto buffer = std::make_unique<torchlean_cuda_buffer>();
   buffer->tensor = value.reshape({-1}).contiguous();
@@ -437,7 +519,8 @@ lean_obj_res box(at::Tensor value) {
 }
 
 lean_obj_res encoded(at::Tensor value, b_lean_obj_arg format, size_t width) {
-  TORCH_CHECK(value.is_cuda() && value.scalar_type() == at::kByte && width > 0 &&
+  TORCH_CHECK(value.device().type() == device().type() && value.scalar_type() == at::kByte &&
+              width > 0 &&
               value.numel() % width == 0, "encoded buffer: invalid storage extent");
   TORCH_CHECK(static_cast<uint64_t>(value.numel()) / width <= UINT32_MAX,
               "encoded buffer: scalar count exceeds the tape ABI");
@@ -480,8 +563,24 @@ extern "C" void torchlean_cuda_buffer_drop_unboxed(torchlean_cuda_buffer* buffer
   delete buffer;
 }
 
+// 1 = a device is selected (CUDA, or the host), 2 = nothing usable; `unavailable.c` reports 0.
 extern "C" LEAN_EXPORT uint32_t torchlean_cuda_runtime_status(uint32_t) {
-  return c10::cuda::device_count() > 0 ? 1 : 2;
+  try {
+    torchlean::initialize();
+  } catch (const std::exception&) {
+    return 2;
+  }
+  return selection == Selection::unavailable ? 2 : 1;
+}
+
+// 0 = the host, 1 = CUDA (a CUDA device is selected, or none is usable on a CUDA SDK).
+extern "C" LEAN_EXPORT uint32_t torchlean_libtorch_device_kind(uint32_t) {
+  try {
+    torchlean::initialize();
+  } catch (const std::exception&) {
+    return 1;
+  }
+  return selection == Selection::host ? 0 : 1;
 }
 
 #define TORCHLEAN_COUNTER(NAME, VALUE)                                             \
@@ -506,10 +605,15 @@ extern "C" LEAN_EXPORT uint64_t torchlean_cuda_allocator_device_total_bytes(uint
   return memory_info(true);
 }
 
+#if TORCHLEAN_LIBTORCH_CUDA
 #define TORCHLEAN_ALLOCATOR_STAT(NAME, FIELD, WHICH)                                \
   extern "C" LEAN_EXPORT uint64_t torchlean_libtorch_##NAME(uint32_t) {             \
-    return torchlean::invoke([]() -> uint64_t { return allocator_stats().FIELD[0].WHICH; }); \
+    return allocator_stat([](const auto& stats) -> uint64_t { return stats.FIELD[0].WHICH; }); \
   }
+#else
+#define TORCHLEAN_ALLOCATOR_STAT(NAME, FIELD, WHICH)                                \
+  extern "C" LEAN_EXPORT uint64_t torchlean_libtorch_##NAME(uint32_t) { return 0; }
+#endif
 TORCHLEAN_ALLOCATOR_STAT(allocated_bytes, allocated_bytes, current)
 TORCHLEAN_ALLOCATOR_STAT(reserved_bytes, reserved_bytes, current)
 TORCHLEAN_ALLOCATOR_STAT(peak_allocated_bytes, allocated_bytes, peak)
@@ -695,6 +799,9 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_format(b_lean_obj_arg 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_encoded_io(
     b_lean_obj_arg bytes, b_lean_obj_arg format, uint64_t width) {
   return io([&] {
+    // Only runtime-compiled kernels compute on encoded words, and the tape reaches them through
+    // pure entry points, where an error would end the process: refuse the upload instead.
+    require_cuda("configured binary arithmetic");
     TORCH_CHECK(width && lean_sarray_size(bytes) % width == 0,
                 "encoded buffer: truncated scalar word");
     return torchlean::encoded(upload_bytes(bytes, at::kByte, at::kByte), format, width);
@@ -744,7 +851,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_version(uint32_t) {
 }
 
 extern "C" LEAN_EXPORT uint32_t torchlean_libtorch_device_count(uint32_t) {
-  return static_cast<uint32_t>(c10::cuda::device_count());
+  return cuda_device_count();
 }
 
 extern "C" LEAN_EXPORT uint32_t torchlean_libtorch_get_device(uint32_t) {
@@ -753,8 +860,8 @@ extern "C" LEAN_EXPORT uint32_t torchlean_libtorch_get_device(uint32_t) {
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_set_device(uint32_t index) {
   return io([&] {
-    TORCH_CHECK(index < static_cast<uint32_t>(c10::cuda::device_count()),
-                "LibTorch: selected CUDA device does not exist");
+    require_cuda("device selection");
+    TORCH_CHECK(index < cuda_device_count(), "LibTorch: selected CUDA device does not exist");
     TORCH_CHECK(wrappers.live.load() == 0,
                 "LibTorch: select the device before creating tensor buffers");
     selected_device.store(static_cast<int>(index));
@@ -816,8 +923,12 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_set_setting(
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_get_memory_fraction(uint32_t) {
   return io([] {
-    return lean_box_float(
-        c10::cuda::CUDACachingAllocator::getMemoryFraction(torchlean::device().index()));
+    double fraction = 0.0;
+#if TORCHLEAN_LIBTORCH_CUDA
+    if (selection == Selection::cuda)
+      fraction = c10::cuda::CUDACachingAllocator::getMemoryFraction(torchlean::device().index());
+#endif
+    return lean_box_float(fraction);
   });
 }
 
@@ -825,21 +936,29 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_set_memory_fraction(doubl
   return io([&] {
     TORCH_CHECK(std::isfinite(fraction) && fraction > 0.0 && fraction <= 1.0,
                 "LibTorch: memory fraction must be finite and in (0, 1]");
+    require_cuda("the allocator memory fraction");
+#if TORCHLEAN_LIBTORCH_CUDA
     c10::cuda::CUDACachingAllocator::setMemoryFraction(fraction, torchlean::device().index());
+#endif
     return lean_box(0);
   });
 }
 
+// Host work is synchronous and has no native cache to release: both are no-ops there.
 extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_synchronize(uint32_t) {
   return io([] {
-    c10::cuda::device_synchronize();
+#if TORCHLEAN_LIBTORCH_CUDA
+    if (selection == Selection::cuda) c10::cuda::device_synchronize();
+#endif
     return lean_box(0);
   });
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_empty_cache(uint32_t) {
   return io([] {
-    c10::cuda::CUDACachingAllocator::emptyCache();
+#if TORCHLEAN_LIBTORCH_CUDA
+    if (selection == Selection::cuda) c10::cuda::CUDACachingAllocator::emptyCache();
+#endif
     return lean_box(0);
   });
 }

@@ -276,7 +276,8 @@ scripts/lake.sh exe verify --help
 
 For CUDA, rebuild with `scripts/lake.sh -Kcuda=true build`, then run the suite with
 `TORCHLEAN_REQUIRE_CUDA=1 scripts/lake.sh -Kcuda=true exe nn_tests_suite`. The environment
-variable makes an unavailable CUDA runtime a failure instead of allowing CUDA tests to skip.
+variable makes an unavailable CUDA runtime, or the bridge running on the host, a failure instead
+of allowing CUDA tests to skip or to pass on the CPU.
 
 For a complete account of Lean axioms, executable checkers, CUDA and FFI code, external artifact
 producers, and floating-point assumptions, read

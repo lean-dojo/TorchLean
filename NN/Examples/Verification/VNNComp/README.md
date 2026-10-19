@@ -27,8 +27,7 @@ scripts/lake.sh exe verify -- vnncomp-mnistfc \
   --max=2
 ```
 
-If the artifacts live somewhere else, pass `--weights=...`, `--suite=...`, and optionally
-`--alphas=...`.
+If the artifacts live somewhere else, pass `--weights=...` and `--suite=...`.
 
 The checked object is the exported suite item: network weights, input region, expected label or
 margin property, and any optional bound data attached to the item. The external preparation step is

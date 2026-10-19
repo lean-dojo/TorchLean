@@ -47,8 +47,6 @@ inductive Mode where
   | crown
   /-- Backward CROWN objective pass for each VNNLIB row. -/
   | crownObj
-  /-- Backward CROWN objective pass with imported ReLU slopes. -/
-  | crownObjAlpha
   deriving DecidableEq, Repr
 
 namespace Mode
@@ -58,7 +56,6 @@ def toString : Mode → String
   | .ibp => "ibp"
   | .crown => "crown"
   | .crownObj => "crownobj"
-  | .crownObjAlpha => "crownobj-alpha"
 
 instance : ToString Mode where
   toString := toString
@@ -69,8 +66,7 @@ def parse (s : String) : Except String Mode :=
   | "ibp" => pure .ibp
   | "crown" => pure .crown
   | "crownobj" => pure .crownObj
-  | "crownobj-alpha" => pure .crownObjAlpha
-  | _ => throw s!"--mode: expected ibp, crown, crownobj, or crownobj-alpha; got `{s}`"
+  | _ => throw s!"--mode: expected ibp, crown, or crownobj; got `{s}`"
 
 end Mode
 
@@ -99,12 +95,8 @@ structure Options where
   - `ibp`: IBP only (fast, loose)
   - `crown`: forward CROWN (still produces just an output box)
   - `crownobj`: backward objective pass for each spec row
-  - `crownobj-alpha`: objective pass with precomputed ReLU slopes (`--alphas`); the directed Float
-    backend rejects imported slopes
   -/
   mode    : Mode := .ibp
-  /-- Path to exported alpha slopes JSON (required for `mode = crownobj-alpha`). -/
-  alphas  : String := ""
   deriving Repr
 
 /-- Usage text printed by this tool (returned as an error message on `--help`). -/
@@ -113,8 +105,7 @@ def usage : String :=
     "Usage:",
     "  lake exe verify -- vnncomp-mnistfc",
     ("    [--weights=PATH.json] [--suite=PATH.json] [--max=30] " ++
-      "[--mode=ibp|crown|crownobj|crownobj-alpha]"),
-    "    [--alphas=PATH.json]   (required for crownobj-alpha)",
+      "[--mode=ibp|crown|crownobj]"),
     "",
     "Default inputs (ignored local artifacts):",
     s!"  {defaultWeightsPath}",
@@ -133,9 +124,8 @@ def parseArgs (args : List String) : Except String Options := do
   let (suite, args) ← TorchLean.CLI.takeFlagValue args "suite" (default := defaultSuitePath)
   let (max, args) ← TorchLean.CLI.takeNatFlag args "max" (default := 30)
   let (mode, args) ← TorchLean.CLI.takeParsedFlag args "mode" (default := "ibp") Mode.parse
-  let (alphas, args) ← TorchLean.CLI.takeFlagValue args "alphas" (default := "")
   TorchLean.CLI.checkNoArgs args
-  pure { weights := weights, suite := suite, max := max, mode := mode, alphas := alphas }
+  pure { weights := weights, suite := suite, max := max, mode := mode }
 
 /--
 Fail early with a helpful message when an external artifact is missing.
@@ -213,41 +203,6 @@ def loadWeights (path : String) : IO (Array LayerWB) := do
         throw <| IO.userError "Internal error while validating the layer chain"
 
   pure layers
-
-/--
-One set of precomputed ReLU alpha slopes for `crownobj-alpha` mode.
-
-This checker assumes the MNIST-FC graph has ReLU nodes at fixed ids (`2` and `4`), so we store the
-alpha vectors in a format that can be mapped back to those nodes.
--/
-structure AlphaEntry where
-  /-- Instance id this alpha payload applies to. -/
-  id : Nat
-  /-- Alpha vectors for ReLU node 2, indexed by disjunct term. -/
-  alpha2 : Array (Array Float)
-  /-- Alpha vectors for ReLU node 4, indexed by disjunct term. -/
-  alpha4 : Array (Array Float)
-
-/--
-Load the exported alpha slopes database (for `mode = crownobj-alpha`).
-
-This expects the `mnist_fc_crownobj_alpha_v0_1` format produced by the Python export script.
--/
-def loadAlphas (path : String) : IO (Array AlphaEntry) := do
-  let top ← readJsonObjectFile path
-  expectFormat top "mnist_fc_crownobj_alpha_v0_1"
-  let instArr ← expectFieldArray top "instances" "top-level"
-  let mut out : Array AlphaEntry := #[]
-  for ex in instArr do
-    let exo ← expectObject ex "alpha instance"
-    let id ← expectFieldNat exo "id" "alpha instance"
-    let alphaObj ← expectFieldObject exo "alpha" "alpha instance"
-    let a2J ← expectField alphaObj "2" "alpha"
-    let a4J ← expectField alphaObj "4" "alpha"
-    let a2 ← NN.Verification.Json.expectFiniteFloatMatrix a2J "alpha.2"
-    let a4 ← NN.Verification.Json.expectFiniteFloatMatrix a4J "alpha.4"
-    out := out.push { id := id, alpha2 := a2, alpha4 := a4 }
-  pure out
 
 /--
 Lower the loaded weights into a CROWN `Graph` + `ParamStore`.
@@ -369,31 +324,6 @@ def refutesRowByCROWNObjective
   pure (lo > rhs)
 
 /--
-Like `refutesRowByCROWNObjective`, but use precomputed ReLU alpha slopes.
-
-This is a workflow hook for comparing against "fixed alpha" CROWN objective bounds exported from a
-reference implementation.
--/
-def refutesRowByCROWNObjectiveWithReluAlpha
-    (g : Graph) (ps : ParamStore Float) (xB : FlatBox Float)
-    (ibp : Array (Option (FlatBox Float))) (inId outId inDim outDim : Nat)
-    (row : Tensor Float [outDim]) (rhs : Float)
-    (reluAlpha : Array (Option (FlatTensor Float))) : IO Bool := do
-  let obj : FlatTensor Float := { n := outDim, v := row }
-  let ctx : AffineCtx := { inputId := inId, inputDim := inDim }
-  let some loAff := runCROWNBackwardObjectiveLowerWithReluAlpha (α := Float) g ps ctx ibp outId obj
-    reluAlpha
-    | throw <| IO.userError <|
-        "crownobj-alpha: the Float backend's directed CROWN pass has no ReLU relaxation, so " ++
-        "imported slopes cannot be used; run with --mode=crownobj"
-  if hXB : xB.dim = inDim then
-    let loBox := loAff.evalOnFlatBox xB hXB
-    let lo := getAtOrZero loBox.lo [0]
-    pure (lo > rhs)
-  else
-    throw <| IO.userError "Input box dim mismatch"
-
-/--
 Refute a VNNLIB disjunction-of-conjunctions spec using per-row CROWN objective bounds.
 
 Each row is bounded directly, avoiding some correlations lost when evaluating a row over an
@@ -422,58 +352,6 @@ def vnnlibRefutedByCROWNObjectives
   return true
 
 /--
-Refute a VNNLIB spec using CROWN objectives with externally-provided ReLU alphas.
-
-The artifact supplies slopes for fixed ReLU node ids `2` and `4`. The current directed Float
-backend rejects imported slopes, so this interface does not provide a working alpha-CROWN
-comparison mode for that backend.
--/
-def vnnlibRefutedByCROWNObjectivesAlpha
-    (g : Graph) (ps : ParamStore Float) (xB : FlatBox Float)
-    (inId outId inDim outDim : Nat)
-    (spec : NN.Verification.VNNComp.VNNLib.Spec)
-    (alphas : AlphaEntry) (hid1 hid2 : Nat) : IO Bool := do
-  let ibp ← boxesForObjective g ps xB inId inDim
-  for termIdx in List.finRange spec.size do
-    let term := spec[termIdx.val]'termIdx.isLt
-    if hCols : term.cols = outDim then
-      -- Build per-node α vector for this disjunct term (objective index = termIdx).
-      let a2Row? := alphas.alpha2[termIdx.val]?
-      let a4Row? := alphas.alpha4[termIdx.val]?
-      let mut reluAlpha : Array (Option (FlatTensor Float)) := Array.replicate g.nodes.size none
-      match a2Row?, a4Row? with
-      | some a2Row, some a4Row =>
-        let some a2T := NN.Verification.Util.Tensor.ofArray? [hid1] a2Row
-          | throw <| IO.userError s!"Alpha dim mismatch for node 2 (expected {hid1})"
-        let some a4T := NN.Verification.Util.Tensor.ofArray? [hid2] a4Row
-          | throw <| IO.userError s!"Alpha dim mismatch for node 4 (expected {hid2})"
-        if 2 < g.nodes.size then
-          reluAlpha := reluAlpha.set! 2 (some { n := hid1, v := a2T })
-        else
-          throw <| IO.userError "Graph too small for ReLU node 2"
-        if 4 < g.nodes.size then
-          reluAlpha := reluAlpha.set! 4 (some { n := hid2, v := a4T })
-        else
-          throw <| IO.userError "Graph too small for ReLU node 4"
-      | _, _ =>
-        throw <| IO.userError s!"Missing alphas for instance {alphas.id} termIdx={termIdx.val}"
-
-      let mut termRefuted := false
-      for i in List.finRange term.rows do
-        let row : Tensor Float [outDim] := hCols ▸ term.mat.unstack i
-        let rhsVal := term.rhs.getScalar i
-        let ok ← refutesRowByCROWNObjectiveWithReluAlpha g ps xB ibp inId outId inDim outDim row
-          rhsVal reluAlpha
-        if ok then
-          termRefuted := true
-          break
-      if !termRefuted then
-        return false
-    else
-      return false
-  return true
-
-/--
 CLI entry point.
 
 This is wired into `scripts/lake.sh exe verify -- vnncomp-mnistfc`.
@@ -486,19 +364,10 @@ def main (args : List String) : IO Unit := do
   let options ← IO.ofExcept (parseArgs args)
   requireArtifact "weights JSON" options.weights
   requireArtifact "suite JSON" options.suite
-  if options.mode = .crownObjAlpha then
-    if options.alphas.isEmpty then
-      throw <| IO.userError "--alphas is required for --mode=crownobj-alpha"
-    requireArtifact "alpha-slope JSON" options.alphas
   IO.println "== TorchLean VNN-COMP mini-suite: MNIST-FC (vnncomp2022) =="
   let layers ← loadWeights options.weights
   let instances0 ← NN.Verification.VNNComp.VNNLib.loadSuite options.suite
   let instances := instances0.take options.max
-  let alphaDB? ←
-    if options.mode = .crownObjAlpha then
-      pure (some (← loadAlphas options.alphas))
-    else
-      pure none
   let (g, baseParams, inDim, outDim, outId) ← buildGraphAndParams layers
   let inId := 0
   IO.println s!"[mnist_fc] layers={layers.size} nodes={g.nodes.size} inDim={inDim} outDim={outDim}"
@@ -514,17 +383,6 @@ def main (args : List String) : IO Unit := do
     let isRefuted ←
       if options.mode = .crownObj then
         vnnlibRefutedByCROWNObjectives g ps xB inId outId inDim outDim inst.spec
-      else if options.mode = .crownObjAlpha then
-        let some alphaDB := alphaDB?
-          | throw <| IO.userError "internal: alphaDB missing"
-        let some entry := alphaDB.find? (fun e => e.id = inst.id)
-          | throw <| IO.userError s!"No alpha entry for instance id {inst.id}"
-        let (hid1, hid2) ←
-          match layers[0]?, layers[1]? with
-          | some l0, some l1 => pure (l0.outDim, l1.outDim)
-          | _, _ => throw <| IO.userError "Need at least 2 hidden layers for MNIST-FC"
-        vnnlibRefutedByCROWNObjectivesAlpha g ps xB inId outId inDim outDim inst.spec entry hid1
-          hid2
       else
         let box ←
           if options.mode = .crown then

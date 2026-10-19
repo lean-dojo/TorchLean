@@ -95,8 +95,8 @@ let trained ← trainer.train dataset { steps := 120 }
 -- the input box.
 let report ← trained.verify center
   (radius := 0.10)
-  (norm := .inf)
-  (property := .topLabel 0)
+  (norm := linf)
+  (property := topLabel 0)
 report.printSummary
 ```
 
@@ -137,7 +137,7 @@ each score as the input varies. To protect class zero, the unfavorable compariso
 lowest allowed score and class one's highest allowed score. Comparing the two center scores
 would miss that variation.
 
-Here `.inf` means that each input coordinate may move independently by at most the radius.
+Here `linf` means that each input coordinate may move independently by at most the radius.
 In real coordinates the intended region is `[1.4, 1.6] × [-0.1, 0.1]`. This geometric meaning
 is part of the verification request; the representation and rounding of its endpoints still
 belong to the arithmetic obligations below.
@@ -754,8 +754,8 @@ and `algorithm`. A result obtained from `session.finish` uses the same snapshot 
 further training or loading a checkpoint into the session does not change the model it verifies.
 
 Import `NN.API.Verification` to use the `trained.verify` call shown above. The default method is
-`.alphaCrown`, fixed-relaxation alpha-CROWN with the ReLU phases IBP proves; `.ibp` and `.crown`
-are available for comparison. On a rounded scalar such as binary32, `.alphaCrown` runs directed
+`alphaCrown`, fixed-relaxation alpha-CROWN with the ReLU phases IBP proves; `ibp` and `crown`
+are available for comparison. On a rounded scalar such as binary32, `alphaCrown` runs directed
 CROWN, and the report names `CROWN` as the method. To inspect graph nodes and intermediate bounds,
 import `NN.API.Verification.Lowering`.
 

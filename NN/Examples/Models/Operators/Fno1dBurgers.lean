@@ -272,7 +272,7 @@ def run
       Trainer.RunConfig.forObjective
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := config.training.learningRate } })
-        .mse
+        mse
         (seed := runtime.seed)
   trainer.printSummary
   let historyRef ← IO.mkRef metrics
@@ -341,7 +341,7 @@ def main (args : List String) : IO UInt32 := do
       ]
       printSuccess := true })
     exeName args
-    (.native fun runtime rest => do
+    (fun runtime rest => do
       let (config, rest) ← CLI.orThrow exeName <| Options.parse rest
       CLI.requireNoArgs exeName rest
       printHeader runtime config

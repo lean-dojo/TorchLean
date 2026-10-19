@@ -78,7 +78,7 @@ def main (args : List String) : IO Unit := do
 
   let trainer := Trainer.new model
     { flags.runtime with
-        objective := .mse
+        objective := mse
         optimizer := optim.adam { learningRate := 0.03 }
         seed := flags.seed }
 

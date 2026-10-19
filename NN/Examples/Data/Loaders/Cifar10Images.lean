@@ -200,7 +200,7 @@ def main (args : List String) : IO Unit := do
     { optimizer := optim.adam { learningRate := lr } }
   let trainer := Trainer.new (model (batchSize := training.batchSize)) <|
     Trainer.RunConfig.forObjective run
-      (.oneHotCrossEntropy 1)
+      (oneHotCrossEntropy 1)
       (seed := seed)
 
   IO.println "== CIFAR10-style NPY CNN tutorial =="

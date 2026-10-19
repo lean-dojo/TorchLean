@@ -320,7 +320,7 @@ end ExperimentLog
 ## Logging Destinations
 
 Examples should make logging explicit. `LogDestination.disabled` is the local equivalent of
-`wandb disabled`; `LogDestination.json path` writes the standard TorchLean JSON artifact.
+`wandb disabled`; `LogDestination.jsonFile path` writes the standard TorchLean JSON artifact.
 -/
 
 /-- Where a training routine should send its log artifact. -/
@@ -328,25 +328,25 @@ inductive LogDestination where
   /-- Do not write a log artifact. Useful for tests, CI, and runs where metrics are printed only. -/
   | disabled
   /-- Write a local JSON artifact to the given path. -/
-  | json (path : System.FilePath)
+  | jsonFile (path : System.FilePath)
   deriving Inhabited, Repr, BEq
 
 instance : ToString LogDestination where
   toString
     | .disabled => "disabled"
-    | .json path => path.toString
+    | .jsonFile path => path.toString
 
 namespace LogDestination
 
 /-- Is logging enabled for this destination? -/
 def isEnabled : LogDestination → Bool
   | .disabled => false
-  | .json _ => true
+  | .jsonFile _ => true
 
 /-- Return the JSON path when this destination writes one. -/
 def path? : LogDestination → Option System.FilePath
   | .disabled => none
-  | .json path => some path
+  | .jsonFile path => some path
 
 /--
 Parse a CLI logging value.
@@ -360,7 +360,7 @@ def parse (raw : String) : LogDestination :=
       lower = "disabled" then
     .disabled
   else
-    .json (System.FilePath.mk raw)
+    .jsonFile (System.FilePath.mk raw)
 
 /-- Resolve an optional CLI value, preserving `default` when no override is supplied. -/
 def resolve (default : LogDestination) (value? : Option String) : LogDestination :=
@@ -650,7 +650,7 @@ namespace LogDestination
 def writeTrainLog (dest : LogDestination) (log : TrainLog) (pretty : Bool := true) : IO Unit := do
   match dest with
   | .disabled => pure ()
-  | .json path => TrainLog.writeJson path log pretty
+  | .jsonFile path => TrainLog.writeJson path log pretty
 
 end LogDestination
 

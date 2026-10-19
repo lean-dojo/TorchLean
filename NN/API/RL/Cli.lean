@@ -87,7 +87,7 @@ def parse (exeName : String) (arguments : List String)
       arguments exeName "eval-max-steps" (default := defaultMaximumEvaluationSteps)
 
   let logDestination :=
-    Runtime.Training.LogDestination.resolve (.json defaultLogPath) logRaw?
+    Runtime.Training.LogDestination.resolve (.jsonFile defaultLogPath) logRaw?
   pure
     ({ updateCount
        evaluationInterval

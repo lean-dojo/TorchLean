@@ -12,7 +12,7 @@ public import NN.Tensor
 # Verification
 
 The public vocabulary used by trained-model verification. Ordinary code calls
-`trained.verify center (radius := r) (norm := .inf)` and adds named choices only when needed.
+`trained.verify center (radius := r) (norm := linf)` and adds named choices only when needed.
 `Report` retains those choices with the returned bounds; explicit graph lowering is intentionally
 separate in `NN.API.Verification.Lowering`.
 -/
@@ -53,25 +53,25 @@ end Algorithm
 /--
 Norm of the input region requested for verification.
 
-The current native CROWN path implements `.inf`; the other cases remain part of the request
+The current native CROWN path implements `linf`; the other cases remain part of the request
 language so adding a non-box region does not require another public API.
 -/
 inductive Norm where
   /-- L1 input ball. -/
-  | one
+  | l1
   /-- L2 input ball. -/
-  | two
+  | l2
   /-- L-infinity input ball. -/
-  | inf
+  | linf
   deriving DecidableEq, Repr
 
 namespace Norm
 
 /-- Human-readable norm name used in reports and diagnostics. -/
 def name : Norm → String
-  | .one => "L1"
-  | .two => "L2"
-  | .inf => "Linf"
+  | .l1 => "L1"
+  | .l2 => "L2"
+  | .linf => "Linf"
 
 instance : ToString Norm where
   toString := name
@@ -81,12 +81,12 @@ end Norm
 /--
 Property evaluated from output bounds.
 
-`.bounds` returns the complete output enclosure. `.topLabel label` additionally asks whether one
+`outputBounds` returns the complete output enclosure. `topLabel label` additionally asks whether one
 flattened output stays strictly above every competing output.
 -/
 inductive Property where
   /-- Return the output enclosure without an additional assertion. -/
-  | bounds
+  | outputBounds
   /-- Check that `label` remains the unique largest flattened output. -/
   | topLabel (label : Nat)
   deriving DecidableEq, Repr
@@ -95,7 +95,7 @@ namespace Property
 
 /-- Human-readable property description used in reports. -/
 def name : Property → String
-  | .bounds => "output bounds"
+  | .outputBounds => "output bounds"
   | .topLabel label => s!"top label {label}"
 
 instance : ToString Property where
@@ -172,7 +172,7 @@ instance : ToString Result where
 def fromBounds (property : Property) (bounds : Bounds) : Except String Result := do
   bounds.validate
   match property with
-  | .bounds => pure .bounds
+  | .outputBounds => pure .bounds
   | .topLabel label =>
       let index : Fin bounds.size ←
         if h : label < bounds.size then pure ⟨label, h⟩
@@ -210,8 +210,8 @@ Build a report after checking the radius and consistency of the supplied output 
 The caller supplies the enclosure guarantee; these checks do not establish it.
 -/
 def fromBounds (radius : Float) (bounds : Bounds)
-    (norm : Norm := .inf)
-    (property : Property := .bounds)
+    (norm : Norm := .linf)
+    (property : Property := .outputBounds)
     (algorithm : Algorithm := .alphaCrown) :
     Except String Report := do
   Internal.validateRadius radius
@@ -239,5 +239,8 @@ end Report
 
 end Verification
 
+export Verification.Algorithm (ibp crown alphaCrown)
+export Verification.Norm (l1 l2 linf)
+export Verification.Property (outputBounds topLabel)
 
 end TorchLean

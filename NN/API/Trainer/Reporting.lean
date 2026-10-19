@@ -90,3 +90,9 @@ def MetricHistory.writeLog (history : MetricHistory) (destination : LogDestinati
   TorchLean.Training.writeLog destination (history.toTrainLog (title := title) (notes := notes))
 
 end TorchLean.Training
+
+namespace TorchLean
+
+export Runtime.Training.LogDestination (jsonFile)
+
+end TorchLean

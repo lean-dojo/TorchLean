@@ -113,7 +113,7 @@ abbrev modelConfig : nn.models.ViT.Config 2 :=
     headWidth := attentionHeadWidth
     feedForwardWidth := feedForwardWidth
     layerCount := transformerLayers
-    pooling := .cls }
+    pooling := cls }
 
 /-- Batch shape used by this training example. -/
 abbrev batch : Shape := [batchSize]

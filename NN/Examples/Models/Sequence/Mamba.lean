@@ -175,7 +175,7 @@ def train (runtime : Runtime.Config) (corpus : String)
   let run := Trainer.RunConfig.fromRuntime runtime
     { optimizer := optim.adam { learningRate := options.training.learningRate } }
   let trainer := Trainer.new model <|
-    Trainer.RunConfig.forObjective run (.oneHotCrossEntropy 1) (seed := runtime.seed)
+    Trainer.RunConfig.forObjective run (oneHotCrossEntropy 1) (seed := runtime.seed)
   let cudaMemorySampleEvery :=
     Trainer.Memory.cadence runtime options.training.steps options.training.cudaMemorySampleEvery
   let beforeLogits ← trainer.predict reportSample.input
@@ -207,7 +207,7 @@ def main (args : List String) : IO UInt32 := do
       usage? := some usage
       printSuccess := true })
     exeName args
-    (.native fun runtime rest => do
+    (fun runtime rest => do
       let (corpus, rest) ← CLI.orThrow exeName <| RealData.Corpus.parse rest
       let (options, rest) ← CLI.orThrow exeName <|
         Options.parse rest

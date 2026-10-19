@@ -23,7 +23,7 @@ change signed zeros and exceptional values, including in multi-sample attention.
 report to the original execution needs that separate correspondence argument.
 
 Applications should import `NN.API.Verification` and call
-`trained.verify center (radius := r) (norm := .inf)`. Direct verifier graph construction remains
+`trained.verify center (radius := r) (norm := linf)`. Direct verifier graph construction remains
 in `NN.API.Verification.Lowering`.
 -/
 
@@ -66,7 +66,7 @@ The closure captures the completed parameter snapshot, so subsequent updates to 
 session cannot change the model being verified.
 The returned report describes the lowered graph; it does not resolve the source-correspondence
 restriction on its one-hot slicing and selection operations. It names the algorithm that ran:
-`.alphaCrown` on a rounded scalar runs directed CROWN, so the report says `.crown`.
+`alphaCrown` on a rounded scalar runs directed CROWN, so the report says `crown`.
 -/
 def forState {σ τ : Shape} {α : Type}
     [TorchLean.Storage α] [Context α]
@@ -85,13 +85,13 @@ def forState {σ τ : Shape} {α : Type}
     IO.ofExcept (validateRadius radius)
 
     match norm with
-    | .inf => pure ()
-    | .one =>
+    | .linf => pure ()
+    | .l1 =>
         throw <| IO.userError
-          "L1 verification is not implemented by the current box-based verifier; use norm := .inf"
-    | .two =>
+          "L1 verification is not implemented by the current box-based verifier; use norm := linf"
+    | .l2 =>
         throw <| IO.userError
-          "L2 verification is not implemented by the current box-based verifier; use norm := .inf"
+          "L2 verification is not implemented by the current box-based verifier; use norm := linf"
 
     let lowered ← IO.ofExcept <|
       NN.Verification.Builtin.lowerForwardToIR

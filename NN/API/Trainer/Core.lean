@@ -19,7 +19,7 @@ Create a trainer from a checked model, choose its loss and optimizer, then train
 
 ```lean
 let trainer := Trainer.new model
-  { objective := .mse
+  { objective := mse
     optimizer := optim.adam { learningRate := 0.03 } }
 let y0 ← trainer.predict x
 let trained ← trainer.train data { steps := 200, samplesPerStep := 16, logEvery := 25 }
@@ -28,7 +28,7 @@ trained.save "model.state"
 ```
 
 `trainer.train` and `trainer.open` accept `Tensor Float` values and execute in the selected
-binary32 scalar: `Float32` for `.native` or FloatLib's `ExecFloat.Binary 8 23` for `.ieee`.
+binary32 scalar: `Float32` for `native` or FloatLib's `ExecFloat.Binary 8 23` for `ieee`.
 Results record that selection and read the binary32 values back to `Float`.
 
 For a different scalar, `trainer.openTyped (α := α)` keeps inputs, parameters, predictions, and
@@ -67,9 +67,9 @@ structure RunConfig where
   /--
   Arithmetic semantics selected by `trainer.open` and the managed training methods.
 
-  `.native` trains in Lean's `Float32` and `.ieee` in FloatLib's `ExecFloat.Binary 8 23`.
+  `native` trains in Lean's `Float32` and `ieee` in FloatLib's `ExecFloat.Binary 8 23`.
   Both are binary32; `Tensor Float` values are converted at the boundary. These methods reject
-  `.complex`. `trainer.openTyped` instead uses its explicit scalar parameter.
+  `complex`. `trainer.openTyped` instead uses its explicit scalar parameter.
   -/
   arithmetic : Runtime.Arithmetic := .native
   /-- Device used for execution. -/
@@ -88,10 +88,10 @@ becomes a scalar objective; it does not need a separate input-shape index.
 Example:
 ```lean
 -- Regression scores a prediction against a target tensor.
-def regression : Trainer.Objective [1] := .mse
+def regression : Trainer.Objective [1] := mse
 
 -- Classification needs the axis the logits live on, here the only axis of a ten-class output.
-def classification : Trainer.Objective [10] := .oneHotCrossEntropy 0
+def classification : Trainer.Objective [10] := oneHotCrossEntropy 0
 ```
 -/
 inductive Objective (output : Shape) where
@@ -112,7 +112,8 @@ namespace Objective
 Lower an objective for a checked model into the runtime module definition that the trainer
 instantiates.
 
-Training mode is the default; `.eval` builds the graph that stateful layers use for inference.
+Training mode is the default; `nn.Mode.eval` builds the graph that stateful layers use for
+inference.
 -/
 def definition {σ τ : Shape} (objective : Objective τ)
     (model : TorchLean.nn.Sequential σ τ) (mode : nn.Mode := .train) :
@@ -176,5 +177,7 @@ def printSummary {σ τ : Shape}
   IO.println details
 
 end Trainer
+
+export Trainer.Objective (mse oneHotCrossEntropy custom)
 
 end TorchLean

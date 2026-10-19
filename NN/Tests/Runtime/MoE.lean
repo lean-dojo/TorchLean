@@ -109,7 +109,7 @@ def tiedRows : Tensor Float [64, 6] :=
 /-- The CUDA mask has the spec's bits for every `k`, on rows of ties, signed zeros and NaNs. -/
 def checkCudaMask : IO Unit := do
   for k in List.range 8 do
-    let session ← EagerSession.new (α := Float) { device := .cuda }
+    let session ← EagerSession.new (α := Float) { device := gpu }
     let x ← session.input tiedRows
     let mask ← session.getValue (← session.topKMask k x)
     unless sameBits mask (Spec.MoE.topKMaskSpec k tiedRows) do
@@ -137,7 +137,7 @@ def checkRoundedTie (device : NN.Backend.Device) : IO Unit := do
       Spec.MoE.kept 1 (fun j => close.getScalar j) 1 do
     throw <| IO.userError "MoE: routing on binary32 probabilities should keep expert 0"
   if device == .cuda then
-    let session ← EagerSession.new (α := Float32) { device := .cuda }
+    let session ← EagerSession.new (α := Float32) { device := gpu }
     let x ← session.input close
     let p ← session.softmaxLast x
     let mask ← session.getValue (← session.topKMask 1 p)
@@ -145,7 +145,16 @@ def checkRoundedTie (device : NN.Backend.Device) : IO Unit := do
       throw <| IO.userError "MoE: CUDA routing on binary32 probabilities should keep expert 0"
 
 /-- Four stacked experts of 4-5-4, two kept per token, on three tokens, with fixed seeds. -/
-def stackedLayer : nn.Layer [3, 4] [3, 4] := nn.Layer.moeMlp (E := 3) 2 5 .relu 11 12 13
+def stackedLayer (activation : Activation.Kind) : nn.Layer [3, 4] [3, 4] :=
+  nn.Layer.moeMlp (E := 3) 2 5 activation 11 12 13
+
+/-- The tensor specification of each expert activation. -/
+def activationSpec {s : Shape} : Activation.Kind → Tensor Float32 s → Tensor Float32 s
+  | .relu => Activation.reluSpec
+  | .gelu => Activation.geluSpec
+  | .silu => Activation.swishSpec
+  | .tanh => Activation.tanhSpec
+  | .sigmoid => Activation.sigmoidSpec
 
 /-- A row vector as a one-row matrix, and back. -/
 def asRow {α : Type} [Storage α] {n : Nat} (v : Tensor α [n]) : Tensor α [1, n] :=
@@ -157,9 +166,9 @@ def ofRow {α : Type} [Storage α] {n : Nat} (A : Tensor α [1, n]) : Tensor α 
 router and the experts written as the spec's matrix products. The trainer runs in binary32, so the
 spec runs there too, on the weights and input rounded once as the trainer rounds them: bit for bit
 on the CPU tape, and within rounding on CUDA. -/
-def checkStacked (device : NN.Backend.Device) : IO Unit := do
+def checkStacked (device : NN.Backend.Device) (activation : Activation.Kind) : IO Unit := do
   let weights : TensorPack Float [[4, 4], [4], [4, 4, 5], [4, 5], [4, 5, 4], [4, 4]] :=
-    stackedLayer.initState
+    (stackedLayer activation).initState
   let .cons wr (.cons br (.cons w1 (.cons b1 (.cons w2 (.cons b2 .nil))))) := weights
   let r {s : Shape} (t : Tensor Float s) : Tensor Float32 s := Tensor.map Float.toFloat32 t
   let wrT : Tensor Float32 [4, 4] := Tensor.dim fun j => Tensor.dim fun e =>
@@ -167,7 +176,7 @@ def checkStacked (device : NN.Backend.Device) : IO Unit := do
   let router (v : Tensor Float32 [4]) : Tensor Float32 [4] :=
     addSpec (ofRow (matMulSpec (asRow v) wrT)) (r br)
   let expert (e : Fin 4) (v : Tensor Float32 [4]) : Tensor Float32 [4] :=
-    let h := Activation.reluSpec
+    let h := activationSpec activation
       (addSpec (ofRow (matMulSpec (asRow v) (Tensor.unstack (r w1) e))) (Tensor.unstack (r b1) e))
     addSpec (ofRow (matMulSpec (asRow h) (Tensor.unstack (r w2) e))) (Tensor.unstack (r b2) e)
   let x : Tensor Float [3, 4] := Tensor.dim fun t => Tensor.dim fun j =>
@@ -175,15 +184,17 @@ def checkStacked (device : NN.Backend.Device) : IO Unit := do
   let expected : Tensor Float [3, 4] := Tensor.map Float32.toFloat <| Tensor.dim fun t =>
     Spec.MoE.forwardSpec 2 router expert (Tensor.unstack (r x) t)
   let model : nn.Builder (nn.Sequential [3, 4] [3, 4]) :=
-    pure (nn.Sequential.fromLayer stackedLayer)
+    pure (nn.Sequential.fromLayer (stackedLayer activation))
   let trainer := TorchLean.Trainer.new model { device }
   let session ← trainer.open
   let predicted ← session.predict x
   if device == .cuda then
-    Tests.Cuda.Utils.assertTensorApprox "nn.moeMlp on CUDA" predicted expected (tol := 1e-5)
+    Tests.Cuda.Utils.assertTensorApprox s!"nn.moeMlp {reprStr activation} on CUDA" predicted
+      expected (tol := 1e-5)
   else
     unless sameBits predicted expected do
-      throw <| IO.userError "nn.moeMlp on the CPU tape differs from Spec.MoE.forwardSpec"
+      throw <| IO.userError
+        s!"nn.moeMlp {reprStr activation} on the CPU tape differs from Spec.MoE.forwardSpec"
 
 /-- `nn.moeMlp (experts := 3)` builds three experts: the router weight is `[3, width]`. -/
 def checkExpertCount : IO Unit := do
@@ -193,7 +204,8 @@ def checkExpertCount : IO Unit := do
 
 def run (device : NN.Backend.Device := .cpu) : IO Unit := do
   checkExpertCount
-  checkStacked device
+  for activation in [.relu, .gelu, .silu, .tanh, .sigmoid] do
+    checkStacked device activation
   if device == .cuda then
     checkCudaMask
     checkCudaMix

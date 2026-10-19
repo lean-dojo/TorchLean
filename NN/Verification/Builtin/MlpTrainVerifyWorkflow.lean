@@ -23,8 +23,8 @@ Training:
 - train it with one-hot cross-entropy
 
 Verification:
-- call `trained.verify` with `norm := .inf`
-- run the default `.alphaCrown` method over the trained parameters; on the rounded scalars this
+- call `trained.verify` with `norm := linf`
+- run the default `alphaCrown` method over the trained parameters; on the rounded scalars this
   workflow uses, that is directed CROWN, and the report prints `CROWN`
 - report typed output bounds, the worst-case class margin, and the certification result
 
@@ -91,8 +91,8 @@ def run {α : Type} [Storage α] [Context α] [ToString α]
   IO.println "Checking class 0 throughout ||x - center||_∞ ≤ 0.10"
   let report ← trained.verify center
     (radius := 0.10)
-    (norm := .inf)
-    (property := .topLabel 0)
+    (norm := linf)
+    (property := topLabel 0)
   report.printSummary
 
 /--

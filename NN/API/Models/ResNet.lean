@@ -189,4 +189,6 @@ def resnet {d : Nat} (config : ResNet.Config d) (batchShape : Shape := []) :
 
 end models
 end nn
+export nn.models.ResNet.Shortcut (projection)
+
 end TorchLean

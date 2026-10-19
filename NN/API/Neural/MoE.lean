@@ -107,11 +107,6 @@ def moe {tokens width outWidth E : Nat} (k : Nat)
     Sequential [tokens, width] [tokens, outWidth] :=
   nn.Sequential.fromLayer (Layer.moe k router experts)
 
-/-- The experts' activation in `nn.moeMlp`. -/
-inductive MoeMlp.Activation where
-  | relu | gelu | silu
-  deriving Repr, DecidableEq, Inhabited
-
 /--
 The gates of `nn.moe` for every token of `logits`: `Spec.MoE.gatesVecSpec k` on each row. The kept
 probabilities of a row are summed by one product with a column of ones, a left fold from zero as
@@ -135,7 +130,7 @@ def Internal.moeGates {α : Type} [TorchLean.Storage α] [Context α] {m : Type 
 /-- The `nn.moeMlp` layer with `E + 1` experts. Its parameters are the router's weight
 `[E + 1, width]` and bias `[E + 1]`, the experts' first weights `[E + 1, width, hidden]` and biases
 `[E + 1, hidden]`, and their second weights `[E + 1, hidden, width]` and biases `[E + 1, width]`. -/
-def Layer.moeMlp {tokens width E : Nat} (k hidden : Nat) (activation : MoeMlp.Activation)
+def Layer.moeMlp {tokens width E : Nat} (k hidden : Nat) (activation : Activation.Kind)
     (routerSeed firstSeed secondSeed : Nat) : Layer [tokens, width] [tokens, width] :=
   let shapes : List Spec.Shape :=
     [[E + 1, width], [E + 1], [E + 1, width, hidden], [E + 1, hidden],
@@ -187,6 +182,8 @@ def Layer.moeMlp {tokens width E : Nat} (k hidden : Nat) (activation : MoeMlp.Ac
               | .relu => Runtime.Autograd.Torch.relu (m := m) (α := α) preActivation
               | .gelu => Runtime.Autograd.Torch.gelu (m := m) (α := α) preActivation
               | .silu => Runtime.Autograd.Torch.silu (m := m) (α := α) preActivation
+              | .tanh => Runtime.Autograd.Torch.tanh (m := m) (α := α) preActivation
+              | .sigmoid => Runtime.Autograd.Torch.sigmoid (m := m) (α := α) preActivation
             let secondProduct ← Runtime.Autograd.Torch.matmul (m := m) (α := α)
               (batchA := [E + 1]) (batchB := [E + 1]) (batch := [E + 1]) (mDim := tokens)
               (nDim := hidden) (pDim := width) hiddenValues secondWeight
@@ -222,7 +219,7 @@ def model : nn.Builder (nn.Sequential [16, 32] [16, 32]) :=
 ```
 -/
 def moeMlp {tokens width : Nat} (experts k hidden : Nat)
-    (activation : MoeMlp.Activation := .relu) :
+    (activation : Activation.Kind := .relu) :
     Builder (Sequential [tokens, width] [tokens, width]) :=
   withSeed fun routerSeed => withSeed fun firstSeed => withSeed fun secondSeed =>
     let layer := Layer.moeMlp (tokens := tokens) (width := width) (E := experts - 1) k hidden

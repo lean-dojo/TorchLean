@@ -286,7 +286,7 @@ def trainCifarClassifier (batchSize cropHeight cropWidth : Nat)
       Trainer.RunConfig.forObjective
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := flags.training.learningRate } })
-        (.oneHotCrossEntropy 1)
+        (oneHotCrossEntropy 1)
         (seed := runtime.seed)
   let trained ← trainer.train
     (Data.fromSamples batches)

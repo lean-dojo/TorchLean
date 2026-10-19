@@ -207,8 +207,8 @@ scripts/lake.sh exe verify -- torchlean-mlp-workflow
 
 These commands lower or build small TorchLean models, attach input regions, and run native bound
 passes. The MLP workflow trains a classifier and calls
-`trained.verify center (radius := 0.10) (norm := .inf) (property := .topLabel 0)`; its graph and
-bound state stay internal. The default algorithm, `.alphaCrown`, is fixed-relaxation
+`trained.verify center (radius := 0.10) (norm := linf) (property := topLabel 0)`; its graph and
+bound state stay internal. The default algorithm, `alphaCrown`, is fixed-relaxation
 alpha-CROWN with ReLU phases inferred from IBP; it has no beta multipliers or branch splits. On a
 rounded scalar, as in this workflow, it runs directed CROWN and the report prints `CROWN`. Use
 these commands when changing graph lowering, bound propagation, typed graph execution, or the

@@ -131,7 +131,7 @@ n_t = \tanh\!\left(W_{nx}x_t + W_{nh}(r_t \odot h_{t-1}) + b_n\right),
 \qquad h_t = (1-z_t)\odot n_t + z_t\odot h_{t-1}.
 $$
 
-Choose `convention := .resetAfter` for PyTorch's candidate equation:
+Choose `convention := resetAfter` for PyTorch's candidate equation:
 
 $$
 n_t = \tanh\!\left(W_{nx}x_t + b_{nx} + r_t\odot(W_{nh}h_{t-1} + b_{nh})\right).

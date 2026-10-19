@@ -312,4 +312,7 @@ def concatBranches {σ s : Spec.Shape} {n m : Nat}
   nn.Sequential.fromLayer (Layer.concatBranches f g)
 
 end nn
+
+export Activation.Kind (relu gelu silu tanh sigmoid)
+
 end TorchLean

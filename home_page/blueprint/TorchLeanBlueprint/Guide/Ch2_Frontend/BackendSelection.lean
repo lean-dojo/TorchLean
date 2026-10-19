@@ -673,14 +673,14 @@ def bsModel : nn.Builder (nn.Sequential [4] [1]) :=
 
 def bsTrainer (device : Runtime.Device) :=
   Trainer.new bsModel
-    { objective := .mse
+    { objective := mse
       optimizer := optim.adam { learningRate := 0.01 }
       device := device }
 
-#check bsTrainer .cuda
+#check bsTrainer gpu
 ```
 ```leanOutput bsRuntime (whitespace := lax)
-bsTrainer Device.cuda : Trainer [4] [1]
+bsTrainer gpu : Trainer [4] [1]
 ```
 
 The trainer's type is `Trainer [4] [1]` on every device: the device is not part of the model's
@@ -690,7 +690,7 @@ bare runtime configuration:
 ```lean (name := bsConfig)
 -- Projecting a configuration field performs no runtime
 -- compatibility check.
-#eval ({ device := .cuda : Runtime.Config }).device.cliName
+#eval ({ device := gpu : Runtime.Config }).device.cliName
 ```
 ```leanOutput bsConfig
 "cuda"

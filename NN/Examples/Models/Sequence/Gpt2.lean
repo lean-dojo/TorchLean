@@ -311,7 +311,7 @@ def trainAndDecode (runtime : Runtime.Config) (corpus : String)
       (α := Float) batchSize contextLength vocabularySize byteIndex options.generation.prompt
   let run := Trainer.RunConfig.fromRuntime runtime
     { optimizer := optim.adam { learningRate := options.training.learningRate } }
-  let objective : Trainer.Objective output := .oneHotCrossEntropy 2
+  let objective : Trainer.Objective output := oneHotCrossEntropy 2
   let trainer := Trainer.new model <|
     Trainer.RunConfig.forObjective run objective (seed := runtime.seed)
   trainer.printSummary
@@ -327,7 +327,6 @@ def trainAndDecode (runtime : Runtime.Config) (corpus : String)
     { steps := options.training.steps
       samplesPerStep := options.training.batchSize
       cudaMemorySampleEvery := options.training.cudaMemorySampleEvery
-      logDestination := .disabled
       loadCheckpoint? := options.checkpoint.loadCheckpoint?
       saveCheckpoint? := options.checkpoint.saveCheckpoint? }
   trained.printSummary
@@ -367,7 +366,7 @@ def main (args : List String) : IO UInt32 := do
       usage? := some usage
       printSuccess := true })
     exeName args
-    (.native fun runtime rest => do
+    (fun runtime rest => do
       let (corpus, rest) ← takeInputText rest
       let defaultSteps : Nat := if runtime.usesCuda then 1 else 0
       let (train, rest) ← CLI.orThrow exeName <|

@@ -270,7 +270,7 @@ abbrev mmDownsample : nn.models.ResNet.Stage.Config 2 :=
     second :=
       { outChannels := 32, kernelSize := [3, 3]
         padding := [1, 1] }
-    shortcut := .projection
+    shortcut := projection
       { outChannels := 32, kernelSize := [1, 1]
         stride := [2, 2] } }
 
@@ -397,7 +397,7 @@ abbrev mmVit : nn.models.ViT.Config 2 :=
     headWidth := 16
     feedForwardWidth := 128
     layerCount := 2
-    pooling := .cls
+    pooling := cls
     classCount := 10 }
 
 #eval (mmVit.toEncoderConfig.patchGrid.to Shape,
@@ -1156,8 +1156,8 @@ print([i for i in range(16) if abs(int(freqs[i])) < 4 or int(freqs[i]) == -4])
 ```
 
 The public constructor transforms each spatial axis separately. With
-`spectralPath := .automatic`, eager CUDA execution uses LibTorch FFTs and other interpreters use
-dense per-axis operations. Setting `spectralPath := .denseReference` selects full-grid DFT matrices
+`spectralPath := automatic`, eager CUDA execution uses LibTorch FFTs and other interpreters use
+dense per-axis operations. Setting `spectralPath := denseReference` selects full-grid DFT matrices
 without changing the weights or checkpoint layout. Both paths compute the same full-spectrum
 model, up to floating-point differences in their transform algorithms.
 

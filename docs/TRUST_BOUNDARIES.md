@@ -315,7 +315,7 @@ and PyTorch export reject unsupported custom paths. See the
   results do not provide a verifier. Seeded initialization and optimizer/scheduler coefficients
   still start from `Float`; supply typed initial state when those extra digits matter.
   The ordinary `trainer.open` interface retains `Float` input/result boundaries and uses
-  `.arithmetic := .ieee` to select binary32 internally. Native GPU dtype support does not provide
+  `arithmetic := ieee` to select binary32 internally. Native GPU dtype support does not provide
   execution of arbitrary FloatLib formats.
 - Lean defines ordinary `Float32` addition, subtraction, multiplication, division, negation,
   absolute value, square root, bit conversion, comparison, and classification through the

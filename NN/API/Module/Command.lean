@@ -34,7 +34,7 @@ structure RuntimeSelection where
 namespace RuntimeSelection
 
 /--
-Parse the shared arithmetic, precision, device, and backend-reporting flags.
+Parse the shared arithmetic, device, and backend-reporting flags.
 
 Named devices without an installed runtime remain parseable so diagnostics can report the intended
 target. `Runtime.Config.validateForExecution` rejects such a configuration before execution.
@@ -163,21 +163,6 @@ def printBanner (config : Config) (runtime : Runtime.Config) : IO Unit := do
 
 end Config
 
-/-- How an executable command chooses its arithmetic semantics. -/
-inductive Action where
-  /-- Allow arithmetic selection; the continuation must work for every executable backend. -/
-  | selectedArithmetic
-      (continuation :
-        ∀ {α : Type}, [TorchLean.Storage α] → [Context α] →
-          [ToString α] →
-          [TorchLean.Runtime.FromFloat α] →
-          (cast : Float → α) → (runtime : Runtime.Config) →
-          (remainingArguments : List String) → IO Unit)
-  /-- Run a command fixed to native arithmetic rather than exposing arithmetic selection. -/
-  | native
-      (continuation :
-        (runtime : Runtime.Config) → (remainingArguments : List String) → IO Unit)
-
 /-- Generic help text for executables built on `TorchLean.Module.Command.run`. -/
 def usage (exeName : String) : String :=
   String.intercalate "\n"
@@ -192,8 +177,8 @@ def usage (exeName : String) : String :=
     , "  --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external"
     , "      cpu and cuda are implemented by the current eager runtime;"
     , "      other names are planning targets and fail until a runtime is registered."
-    , "  --arithmetic native|ieee|complex"
-    , "      native is the default; ieee uses FloatLib's executable binary32 format."
+    , "  --arithmetic native"
+    , "      these programs run in native binary32 only."
     , "  --seed N"
     , "  --show-backend"
     , "      print the backend capsules selected by the current device profile."
@@ -217,7 +202,7 @@ model initialization and training observe the same seed.
 def run
     (exeName : String)
     (arguments : List String)
-    (action : Action)
+    (action : (runtime : Runtime.Config) → (remainingArguments : List String) → IO Unit)
     (config : Config := {}) :
     IO UInt32 := do
   let arguments := TorchLean.CLI.dropDashDash arguments
@@ -234,27 +219,16 @@ def run
     if config.printSuccess then
       IO.println s!"{exeName}: ok"
 
-  match action with
-  | .selectedArithmetic continuation =>
-      withSelectedRuntime arguments
-        (fun {α} _ _ _ _ cast runtime remainingArguments => do
-        let runtime : Runtime.Config := { runtime with seed := seed }
-        TorchLean.CLI.orThrow exeName (config.runtime.validate runtime)
-        config.printBanner runtime
-        continuation (α := α) cast runtime remainingArguments
-        printSuccess)
-      pure 0
-  | .native continuation =>
-      let (selection, remainingArguments) ← IO.ofExcept (RuntimeSelection.parse arguments)
-      if selection.arithmetic != .native then
-        throw <| IO.userError s!"{exeName}: this program only supports `--arithmetic native`"
-      RuntimeSelection.log selection
-      let runtime ← IO.ofExcept (RuntimeSelection.toConfig selection seed)
-      runtime.validateForExecution
-      TorchLean.CLI.orThrow exeName (config.runtime.validate runtime)
-      config.printBanner runtime
-      continuation runtime remainingArguments
-      printSuccess
-      pure 0
+  let (selection, remainingArguments) ← IO.ofExcept (RuntimeSelection.parse arguments)
+  if selection.arithmetic != .native then
+    throw <| IO.userError s!"{exeName}: this program only supports `--arithmetic native`"
+  RuntimeSelection.log selection
+  let runtime ← IO.ofExcept (RuntimeSelection.toConfig selection seed)
+  runtime.validateForExecution
+  TorchLean.CLI.orThrow exeName (config.runtime.validate runtime)
+  config.printBanner runtime
+  action runtime remainingArguments
+  printSuccess
+  pure 0
 
 end TorchLean.Module.Command

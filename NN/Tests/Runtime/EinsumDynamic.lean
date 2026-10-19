@@ -150,7 +150,7 @@ private def checkLargeCuda : IO Unit := do
   let bShape : Shape := [8, 16, 64, 128]
   let outShape : Shape := [8, 16, 128, 128]
   let session ← Torch.Internal.EagerSession.new (α := Float)
-    { device := .cuda }
+    { device := gpu }
   try
     let a ← session.input (Tensor.ones (α := Float) aShape) (requiresGrad := true)
     let b ← session.input (Tensor.ones (α := Float) bShape) (requiresGrad := true)
@@ -222,7 +222,7 @@ private def checkThreeInputs (device : NN.Backend.Device) : IO Unit := do
       ((← Torch.Internal.EagerSession.grad gradients c).to (Array Float)) #[20, 42] 1e-6
   finally session.resetTape
 
-/-- Run on CPU by default; `.cuda` exercises the same values, VJPs, and dispatch on LibTorch. -/
+/-- Run on CPU by default; `gpu` exercises the same values, VJPs, and dispatch on LibTorch. -/
 def run (device : NN.Backend.Device := .cpu) : IO Unit := do
   checkLargeGraph
   if device == .cuda then checkLargeCuda

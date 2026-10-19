@@ -73,7 +73,7 @@ their own sample logic while still returning a standard `Trainer.Dataset`.
 Example:
 ```lean
 -- Samples built in Lean instead of read from disk. `α` stays abstract, so one builder serves a
--- `.native` run and an `.ieee` run.
+-- `native` run and an `ieee` run.
 def dataset : Trainer.Dataset [1] [1] :=
   Data.generate fun {_α} _ _ _ =>
     Array.ofFn (n := 8) fun (i : Fin 8) =>

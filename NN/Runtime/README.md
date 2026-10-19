@@ -59,8 +59,8 @@ device:
 ```lean
 let trainer :=
   Trainer.new model
-    { objective := .mse
-      arithmetic := .ieee
+    { objective := mse
+      arithmetic := ieee
       optimizer := optim.adam { learningRate := 0.001 } }
 let trained ← trainer.train data { steps := 200 }
 let prediction ← trained.predict input

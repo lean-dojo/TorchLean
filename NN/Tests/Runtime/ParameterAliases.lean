@@ -198,7 +198,7 @@ private def firstMomentBytes (state : CudaAdamState) (index : Nat) : IO ByteArra
 def checkCudaRetie : IO Unit := do
   let p ← scalar
   let q ← scalar
-  let session ← EagerSession.new (α := Float) { device := .cuda }
+  let session ← EagerSession.new (α := Float) { device := gpu }
   let config ← IO.mkRef (none : Option CudaAdamConfig)
   let state ← IO.mkRef (Std.HashMap.emptyWithCapacity : CudaAdamState)
   try
@@ -259,8 +259,8 @@ def checkCudaOptimizer : IO Unit := do
   let q ← scalar
   let referenceP ← scalar
   let referenceQ ← scalar
-  let session ← EagerSession.new (α := Float) { device := .cuda }
-  let reference ← EagerSession.new (α := Float) { device := .cuda }
+  let session ← EagerSession.new (α := Float) { device := gpu }
+  let reference ← EagerSession.new (α := Float) { device := gpu }
   let config ← IO.mkRef (none : Option CudaAdamConfig)
   let state ← IO.mkRef (Std.HashMap.emptyWithCapacity : CudaAdamState)
   let referenceConfig ← IO.mkRef (none : Option CudaAdamConfig)
@@ -300,12 +300,12 @@ Restore tied AdamW state byte-for-byte, reject retied destinations, then match t
 def checkCudaCheckpoint : IO Unit := IO.FS.withTempDir fun directory => do
   let p ← scalar
   let q ← scalar
-  let session ← EagerSession.new (α := Float) { device := .cuda }
+  let session ← EagerSession.new (α := Float) { device := gpu }
   let config ← IO.mkRef (none : Option CudaAdamConfig)
   let state ← IO.mkRef (Std.HashMap.emptyWithCapacity : CudaAdamState)
   let restoredConfig ← IO.mkRef (none : Option CudaAdamConfig)
   let restoredState ← IO.mkRef (Std.HashMap.emptyWithCapacity : CudaAdamState)
-  let resumed ← EagerSession.new (α := Float) { device := .cuda }
+  let resumed ← EagerSession.new (α := Float) { device := gpu }
   try
     for _ in [:4] do
       recordTriple session p q
@@ -426,7 +426,7 @@ def runCpu : IO Unit := do
 /-- Native division retains the eager successive-division VJP at binary32 extremes. -/
 def checkCudaDivisionSchedule : IO Unit := do
   for (a, b) in [(1.0e30, 1.0e20), (1.0e-30, 1.0e-25)] do
-    let session ← EagerSession.new (α := Float32) (options := { device := .cuda })
+    let session ← EagerSession.new (α := Float32) (options := { device := gpu })
     let x ← session.input (Tensor.scalar a.toFloat32) (requiresGrad := true)
     let y ← session.input (Tensor.scalar b.toFloat32) (requiresGrad := true)
     let quotientId ← session.recordCuda fun tape => keepTapeOnError tape <|

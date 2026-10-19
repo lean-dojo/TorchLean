@@ -131,7 +131,7 @@ def main (args : List String) : IO UInt32 := do
       banner? := some fun _ => s!"{exeName}: sample from a model checkpoint"
       printSuccess := true })
     exeName args
-    (.native fun runtime rest => do
+    (fun runtime rest => do
       let (load, rest) ← CLI.orThrow exeName <|
         Options.parse rest
           { prompt := "First Citizen:"

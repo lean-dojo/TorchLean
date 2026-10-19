@@ -253,7 +253,7 @@ The trainer combines the model, objective, optimizer, seed, and runtime choices:
 -- the training objective and optimizer.
 def trainer := Trainer.new model
   { flags.runtime with
-      objective := .mse
+      objective := mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := flags.seed }
 ```

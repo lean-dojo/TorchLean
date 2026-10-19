@@ -468,7 +468,7 @@ def trainCorpus (runtime : Runtime.Config)
   let run :=
     Trainer.RunConfig.fromRuntime runtime { optimizer := optim.adam { learningRate := 1e-3 } }
   let trainer := Trainer.new ByteModel.model <|
-    Trainer.RunConfig.forObjective run (.oneHotCrossEntropy 2) (seed := runtime.seed)
+    Trainer.RunConfig.forObjective run (oneHotCrossEntropy 2) (seed := runtime.seed)
   trainer.printSummary
   /-
   Each optimizer step consumes `batchSize` deterministic corpus windows. Indexing that
@@ -479,7 +479,6 @@ def trainCorpus (runtime : Runtime.Config)
     (Data.fromStream trainSamples)
     { steps := totalSteps
       samplesPerStep := trainOpts.training.batchSize
-      logDestination := .disabled
       logEvery := Nat.max 1 (totalSteps / 10)
       cudaMemorySampleEvery := trainOpts.training.cudaMemorySampleEvery }
   trained.printSummary
@@ -577,7 +576,7 @@ def trainBpeCorpus {tokenCount : Nat} (runtime : Runtime.Config)
   let run :=
     Trainer.RunConfig.fromRuntime runtime { optimizer := optim.adam { learningRate := 1e-3 } }
   let trainer := Trainer.new BpeModel.model <|
-    Trainer.RunConfig.forObjective run (.oneHotCrossEntropy 2) (seed := runtime.seed)
+    Trainer.RunConfig.forObjective run (oneHotCrossEntropy 2) (seed := runtime.seed)
   trainer.printSummary
   /-
   BPE mode uses the real GPT-2 tokenizer but a compact local output vocabulary. The public trainer
@@ -588,7 +587,6 @@ def trainBpeCorpus {tokenCount : Nat} (runtime : Runtime.Config)
     (Data.fromStream samples)
     { steps := totalSteps
       samplesPerStep := trainOpts.training.batchSize
-      logDestination := .disabled
       logEvery := Nat.max 1 (totalSteps / 10)
       cudaMemorySampleEvery := trainOpts.training.cudaMemorySampleEvery }
   trained.printSummary
@@ -618,9 +616,9 @@ def main (args : List String) : IO UInt32 := do
       banner? := some <| Support.banner exeName "GPU corpus trainer"
       usage? := some Options.usage
       printSuccess := true
-      runtime := { device? := some .cuda } })
+      runtime := { device? := some gpu } })
     exeName args
-    (.native fun runtime rest => do
+    (fun runtime rest => do
       let (trainOpts, rest) ← CLI.orThrow exeName <|
         Options.parse rest
       CLI.requireNoArgs exeName rest

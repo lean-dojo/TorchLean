@@ -177,7 +177,7 @@ private def transformerModel := by
     { headCount := transformerHeadCount
       headWidth := transformerModelWidth / transformerHeadCount
       feedForwardWidth := transformerFeedForwardWidth
-      activation := .relu }
+      activation := relu }
 
 /-! ## Small IO helpers -/
 

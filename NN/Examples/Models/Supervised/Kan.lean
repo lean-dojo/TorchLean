@@ -24,7 +24,7 @@ $\mathtt{inputScale}=\mathtt{gridSize}-1$ to spread its knots across the data in
 
 ```lean
 let trainer := Trainer.new model
-  { objective := .mse, optimizer := optim.adam { learningRate := 1e-3 } }
+  { objective := mse, optimizer := optim.adam { learningRate := 1e-3 } }
 ```
 
 The edge basis is a normal config field. This example uses triangular piecewise-linear hats; a
@@ -84,7 +84,7 @@ def train (runtime : Runtime.Config) (flags : Support.Training.Options Support.C
       Trainer.RunConfig.forObjective
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := flags.training.learningRate } })
-        .mse
+        mse
         (seed := runtime.seed)
   trainer.train
     (data flags.data.path runtime.seed)

@@ -492,7 +492,7 @@ TorchLean's trainer packages the same lifecycle:
 -- definition configures a trainer.
 def tpTrainer :=
   Trainer.new tpModel
-    { objective := .oneHotCrossEntropy 0
+    { objective := oneHotCrossEntropy 0
       optimizer := optim.adam
         { learningRate := 0.001 }
       seed := 2026 }
@@ -742,7 +742,7 @@ def tpCudaOnCpuBuild : BackendProfile :=
     name := "cuda_request_cpu_build"
     policy :=
       { BackendProfile.checkedCpu.policy with
-        device := .cuda } }
+        device := gpu } }
 
 #eval show IO Unit from do
   let l ← IO.ofExcept

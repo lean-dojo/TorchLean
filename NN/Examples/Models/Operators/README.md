@@ -86,9 +86,9 @@ python3 NN/Examples/Data/plot_fno1d_burgers.py \
 
 This example trains the shared `nn.models.fno` model on a one-dimensional Burgers grid. The model
 supports arbitrary spatial rank and batch shape; the dataset determines the dimensions used here.
-Its default `spectralPath := .automatic` transforms each spatial axis separately, calling LibTorch
+Its default `spectralPath := automatic` transforms each spatial axis separately, calling LibTorch
 FFT operations in eager CUDA execution and dense per-axis operations otherwise. Set
-`spectralPath := .denseReference` in the model configuration to use full-grid DFT matrices instead.
+`spectralPath := denseReference` in the model configuration to use full-grid DFT matrices instead.
 Both paths share weights and checkpoint layout. The spectral-convolution checks in
 [`NN/Tests/Runtime/Cuda/Fft.lean`](../../../Tests/Runtime/Cuda/Fft.lean) compare forward values,
 input gradients, and real/imaginary spectral-weight gradients against the dense reference. These

@@ -100,7 +100,7 @@ def train (runtime : Runtime.Config) (data : RealData.Corpus.Options)
       Trainer.RunConfig.forObjective
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.sgd { learningRate := flags.learningRate } })
-        (.oneHotCrossEntropy 1) (seed := runtime.seed)
+        (oneHotCrossEntropy 1) (seed := runtime.seed)
   let trainData := Data.fromStream (samples corpus data.windows)
   let trained ← trainer.train
     trainData

@@ -71,7 +71,9 @@ Execution mode for layers that branch between training-time and inference-time b
 PyTorch analogy: `model.train()` / `model.eval()` (affects dropout, batchnorm, etc.).
 -/
 inductive Mode where
+  /-- Training behavior: dropout is active and batch normalization uses batch statistics. -/
   | train
+  /-- Inference behavior: dropout is off and batch normalization uses its running statistics. -/
   | eval
 deriving Repr, DecidableEq
 

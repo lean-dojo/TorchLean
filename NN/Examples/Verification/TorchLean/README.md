@@ -43,8 +43,8 @@ Implementation map:
 - `torchlean-crown-ops`: `NN.Verification.Builtin.CrownOpsWorkflow`
 - `torchlean-transformer-ibp`: `NN.Verification.Builtin.TransformerIBPWorkflow`
 - `torchlean-mlp-workflow`: trains a classifier, then calls
-  `trained.verify center (radius := 0.10) (norm := .inf) (property := .topLabel 0)`
-  with the default `.alphaCrown` method, which is fixed-relaxation alpha-CROWN with ReLU phases
+  `trained.verify center (radius := 0.10) (norm := linf) (property := topLabel 0)`
+  with the default `alphaCrown` method, which is fixed-relaxation alpha-CROWN with ReLU phases
   taken from IBP (printed as `Alpha-CROWN (IBP phases)`); on a rounded scalar it runs directed
   CROWN and the report prints `CROWN`
 

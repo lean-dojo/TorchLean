@@ -504,7 +504,7 @@ variance start at one, while bias and running mean start at zero.
 Example:
 ```lean
 -- Shape in equals shape out. What changes is the running mean and variance this layer keeps as
--- persistent buffers, updated in `.train` mode and only read in `.eval` mode.
+-- persistent buffers, updated in training mode and only read in eval mode.
 def model : nn.Builder (nn.Sequential [3, 8, 8] [3, 8, 8]) :=
   nn.batchNorm [8, 8] (momentum := 0.1) (channels := 3)
 ```
@@ -842,7 +842,7 @@ Build dropout, consuming a key only when a random training mask is possible.
 
 Example:
 ```lean
--- Active in `.train` mode and the identity in `.eval` mode, which the trainer selects for you.
+-- Active in training mode and the identity in eval mode, which the trainer selects for you.
 def model : nn.Builder (nn.Sequential [64] [64]) :=
   nn.dropout 0.1
 ```
@@ -911,7 +911,7 @@ Example:
 ```lean
 -- `16 -> 32 -> 32 -> 1`, ReLU between hidden layers, dropout after each one.
 def model : nn.Builder (nn.Sequential [16] [1]) :=
-  nn.mlp 16 1 { hiddenWidths := [32, 32], activation := .relu, dropout? := some 0.1 }
+  nn.mlp 16 1 { hiddenWidths := [32, 32], activation := relu, dropout? := some 0.1 }
 ```
 -/
 def mlp (inputWidth outputWidth : Nat) (config : MLP.Config := {})
@@ -1003,5 +1003,8 @@ def withModel {σ τ : Shape} {β : Type}
   continuation built.model
 
 end nn
+
+export Runtime.Autograd.Model.F.SpectralPath (automatic denseReference)
+export Spec.GRUConvention (resetBefore resetAfter)
 
 end TorchLean

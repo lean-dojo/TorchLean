@@ -244,7 +244,7 @@ def Training.run
       Trainer.RunConfig.forObjective
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := config.training.learningRate } })
-        .mse
+        mse
         (seed := runtime.seed)
   trainer.printSummary
   let curveEvery : Nat := Nat.max 1 (config.training.steps / 50)
@@ -396,7 +396,7 @@ def main (args : List String) : IO UInt32 := do
       ]
       printSuccess := true })
     exeName args
-    (.native fun runtime rest => do
+    (fun runtime rest => do
       let (choice, rest) ← CLI.orThrow exeName <| Support.Image.Dataset.parse rest
       match choice with
       | .imagenet64 =>

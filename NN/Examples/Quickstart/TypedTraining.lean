@@ -39,7 +39,7 @@ def fit {α : Type} [Storage α] [Context α]
     (initial : nn.State α (nn.stateShapes model))
     (input target : Tensor α [1]) (learningRate : α) (steps : Nat) :
     IO (nn.State α (nn.stateShapes model)) := do
-  let graph ← nn.lowerToTypedGraph model (α := α) (mode := .train)
+  let graph ← nn.lowerToTypedGraph model (α := α) (mode := nn.Mode.train)
   let mut state := initial
   for _ in [:steps] do
     let prediction := nn.TypedGraphModel.forward graph state input

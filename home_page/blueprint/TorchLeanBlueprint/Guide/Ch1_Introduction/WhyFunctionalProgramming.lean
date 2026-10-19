@@ -419,11 +419,11 @@ initialized. Compare these two calls:
 -- model that is already initialized.
 def wfFromBuilder :=
   Trainer.new wfMlp
-    { objective := .mse, seed := 2026 }
+    { objective := mse, seed := 2026 }
 
 def wfFromValue :=
   Trainer.new wfInit
-    { objective := .mse, seed := 999 }
+    { objective := mse, seed := 999 }
 
 example : Tensor Float [2] → IO (Tensor Float [1]) :=
   wfFromBuilder.predict

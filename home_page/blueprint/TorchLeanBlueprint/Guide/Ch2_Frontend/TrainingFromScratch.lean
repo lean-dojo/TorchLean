@@ -131,7 +131,7 @@ rewriting its forward computation or changing what counts as a well-shaped input
 -- seed to one reusable trainer.
 def tfTrainer (seed : Nat) : Trainer [2] [1] :=
   Trainer.new tfModel
-    { objective := .mse
+    { objective := mse
       optimizer := optim.adam { learningRate := 0.03 }
       arithmetic := native
       seed := seed }
@@ -169,7 +169,7 @@ L(\theta;x,y)
 \left(F_\theta(x)_i-y_i\right)^2.
 `
 
-Changing `.mse` to `.oneHotCrossEntropy axis` changes the objective and target
+Changing `mse` to `oneHotCrossEntropy axis` changes the objective and target
 convention without changing the architecture. The zero-based `axis` may name any output dimension;
 opening the trainer validates the objective and rejects an axis outside the output shape.
 A custom objective supplies a checked scalar loss program.
@@ -397,7 +397,7 @@ once so that the restored report carries the mean loss of the restored parameter
 copied number.
 
 `trained.report.loss.before` and `trained.report.loss.after` are ordinary host `Float` values. The
-model still executes with the arithmetic selected by the trainer, including `.ieee`.
+model still executes with the arithmetic selected by the trainer, including `ieee`.
 `session.loss stream (batch := true)` converts per-item losses to host `Float` before averaging;
 the result stores those before/after means. Callers can therefore compare, serialize, or plot
 losses directly without parsing printed backend values.
@@ -751,7 +751,7 @@ Training it is the same call, and the summary tells us that the batch axis cost 
 -- batched training run starts.
 #eval show IO Unit from do
   let trainer := Trainer.new tfBatchedModel
-    { objective := .mse
+    { objective := mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := 2026 }
   trainer.printSummary "batched model"
@@ -870,7 +870,7 @@ The common executable selections are:
 --arithmetic ieee
 ```
 
-Native CPU arithmetic uses Lean's builtin `Float32` operations; `.ieee` uses FloatLib binary32,
+Native CPU arithmetic uses Lean's builtin `Float32` operations; `ieee` uses FloatLib binary32,
 including its finite and exceptional cases. The checked comparisons in
 {ref "run-configuration"}[Choosing How A Model Runs] run the same training problem through both
 implementations. Agreement in displayed losses alone would not establish agreement in their bits.
@@ -1078,7 +1078,7 @@ abbrev TrainingScalar :=
 def tfWideStep : IO (Option Rat) := do
   let model := nn.build 0 (nn.linear 1 1)
   let trainer := Trainer.new model
-    { objective := .mse
+    { objective := mse
       optimizer := optim.sgd { learningRate := 0.0625 } }
   let a : TrainingScalar :=
     Rat.cast (1 + 1 / (2 ^ 100 : Nat) : Rat)
@@ -1350,7 +1350,7 @@ Keep the model, seed, dataset, and step count fixed and change only the optimize
 -- same number of updates.
 def tfSgdTrainer : Trainer [2] [1] :=
   Trainer.new tfModel
-    { objective := .mse
+    { objective := mse
       optimizer := optim.sgd { learningRate := 0.03 }
       seed := 2026 }
 

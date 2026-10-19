@@ -54,7 +54,7 @@ def parse
   if batchSize = 0 then
     throw s!"{exeName}: --batch-size must be > 0"
   let logDestination :=
-    Runtime.Training.LogDestination.resolve (.json defaultLogPath) logRaw?
+    Runtime.Training.LogDestination.resolve (.jsonFile defaultLogPath) logRaw?
   pure
     ({ steps, batchSize, logDestination,
        cudaMemorySampleEvery := cudaMemorySampleEvery?.getD 0 }, arguments)

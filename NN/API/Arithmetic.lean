@@ -140,9 +140,9 @@ parametric in the element type `α`.
 
 Unlike a PyTorch per-tensor dtype, this choice fixes one arithmetic semantics for the complete run:
 
-- `.native` uses Lean's native `Float32` operations on CPU and binary32 CUDA storage on GPU,
-- `.ieee` uses FloatLib's configured software IEEE-754 binary32 arithmetic,
-- `.complex` uses TorchLean's complex representation with binary32 real and imaginary components.
+- `native` uses Lean's native `Float32` operations on CPU and binary32 CUDA storage on GPU,
+- `ieee` uses FloatLib's configured software IEEE-754 binary32 arithmetic,
+- `complex` uses TorchLean's complex representation with binary32 real and imaginary components.
 -/
 inductive Arithmetic where
   | native
@@ -205,6 +205,6 @@ end Arithmetic
 end Runtime
 
 -- Export the existing constructors so application settings need no leading dot.
-export Runtime.Arithmetic (native ieee)
+export Runtime.Arithmetic (native ieee complex)
 
 end TorchLean

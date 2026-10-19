@@ -40,8 +40,8 @@ for the autograd transforms and the proofs, and learning-rate schedules live in
 The two CROWN node-certificate checkers are now one, `CROWNNodeCert.check`, and ReLU phases are
 an optional field of its certificate. TorchLean's phase variant of α-CROWN is called phased
 (`runPhasedCROWN`, `phasedCrown_transfer_sound`), since it has no β multipliers. The verifier's
-default selector is `.alphaCrown`, and a report names the method that ran: on a rounded scalar
-`.alphaCrown` runs directed CROWN, so the report says CROWN.
+default selector is `alphaCrown`, and a report names the method that ran: on a rounded scalar
+`alphaCrown` runs directed CROWN, so the report says CROWN.
 
 Mixture of experts is new: `nn.moe` and `nn.moeMlp`, a `topKMask` IR operation with kernels on
 every backend, and PyTorch MoE import. The spec, `Spec.MoE`, comes with proofs that over `ℝ` the

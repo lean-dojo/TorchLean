@@ -605,7 +605,7 @@ using Mathlib's Fréchet derivative and adjoint ({Informal.citep mathlib2020}[])
   (x : Vec inDim) (t : Vec outDim),
   (ContinuousLinearMap.adjoint
       (fderiv ℝ
-        (fun W2 => mse t (mlpVecMat W1 b1 W2 b2 x)) W2))
+        (fun W2 => Proofs.Autograd.mse t (mlpVecMat W1 b1 W2 b2 x)) W2))
       1 =
     outer (mseGrad (mlpOutput W1 b1 W2 b2 x) t) (mlpHidden W1 b1 x)
 ```
@@ -669,7 +669,7 @@ The theorem for a first-layer bias makes the smoothness requirement explicit:
   (∀ (i : Fin hidDim), (mlpPreActivation W1 b1 x).ofLp i ≠ 0) →
     (ContinuousLinearMap.adjoint
         (fderiv ℝ
-          (fun b1 => mse t (mlpVecMat W1 b1 W2 b2 x)) b1))
+          (fun b1 => Proofs.Autograd.mse t (mlpVecMat W1 b1 W2 b2 x)) b1))
         1 =
       (reluDerivCLM (mlpPreActivation W1 b1 x))
         ((ContinuousLinearMap.adjoint

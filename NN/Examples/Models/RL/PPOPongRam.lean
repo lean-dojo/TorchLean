@@ -249,7 +249,7 @@ def main (args : List String) : IO UInt32 := do
             (details := some "  env: Python Gymnasium subprocess (ALE) + Lean boundary contract")
           printSuccess := true })
         exeName args
-        (.native fun _opts rest => do
+        (fun _opts rest => do
           CLI.orThrow exeName <| CLI.checkNoArgs rest
           checkEnvOnly)
   Module.Command.run
@@ -260,7 +260,7 @@ def main (args : List String) : IO UInt32 := do
         (details := some "  env: Python Gymnasium subprocess (ALE) + Lean boundary contract")
       printSuccess := true })
     exeName args
-    (.native fun runtime rest => do
+    (fun runtime rest => do
       let (ppo, rest) ← CLI.orThrow exeName <|
         rl.cli.Options.parse
           exeName rest (Runtime.RL.Artifacts.path "ppo_pong_ram")

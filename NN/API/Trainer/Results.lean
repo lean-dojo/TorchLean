@@ -129,8 +129,8 @@ opaque verify {σ τ : Shape}
     (result : Result σ τ α)
     (center : Tensor Float σ)
     (radius : Float)
-    (norm : Verification.Norm := .inf)
-    (property : Verification.Property := .bounds)
+    (norm : Verification.Norm := .linf)
+    (property : Verification.Property := .outputBounds)
     (algorithm : Verification.Algorithm := .alphaCrown) :
     IO Verification.Report :=
   match result.runVerification? with

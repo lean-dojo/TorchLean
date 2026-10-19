@@ -238,7 +238,7 @@ def main (args : List String) : IO UInt32 := do
       banner? := some fun _ => s!"{exeName}: char-level GPT training"
       printSuccess := true })
     exeName args
-    (.native fun runtime rest => do
+    (fun runtime rest => do
       let (corpus, rest) ← takeInputText rest
       let (presetName?, rest) ← CLI.orThrow exeName <|
         TorchLean.CLI.takeFlagValue? rest "preset"
@@ -314,7 +314,7 @@ def main (args : List String) : IO UInt32 := do
             headWidth := headWidthValue
             feedForwardWidth := 4 * modelWidth
             layerCount := transformerLayers
-            activation := .relu
+            activation := relu
             dropout? := if dropoutProbability == 0.0 then none else some dropoutProbability
             normalizeFirst := true
             attentionOutputBias := true
@@ -346,7 +346,7 @@ def main (args : List String) : IO UInt32 := do
             text.Corpus.randomTokenBatch valTokens batchSize contextLength
               (runtime.seed + 1000003) step unknownTokenId
         let trainDef := nn.models.CausalTransformer.objective config model
-        let evalDef := nn.models.CausalTransformer.objective config model (mode := .eval)
+        let evalDef := nn.models.CausalTransformer.objective config model (mode := nn.Mode.eval)
         let module ← TorchLean.Module.instantiate trainDef runtime
         match train.checkpoint.loadCheckpoint? with
         | none => pure ()

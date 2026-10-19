@@ -195,7 +195,7 @@ Then we pass it to the trainer:
 let run := Trainer.RunConfig.fromRuntime runtime
   { optimizer := optim.adam { learningRate := options.training.learningRate } }
 let trainer := Trainer.new model <|
-  Trainer.RunConfig.forObjective run (.oneHotCrossEntropy 1) (seed := runtime.seed)
+  Trainer.RunConfig.forObjective run (oneHotCrossEntropy 1) (seed := runtime.seed)
 let trained ← trainer.train (Data.fromStream samples) (options.training.trainOptions)
 trained.printSummary
 ```

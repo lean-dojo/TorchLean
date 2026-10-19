@@ -38,15 +38,15 @@ different part of the computation:
   * What it decides
 *
   * arithmetic
-  * `.native`, `.ieee`
+  * `native`, `ieee`
   * which binary32 semantics every scalar operation obeys
 *
   * device and providers
-  * `.cpu`, `.cuda`, a full profile
+  * `cpu`, `gpu`, a full profile
   * which implementation of each operation is selected, and what evidence backs it
 *
   * train or evaluation mode
-  * `.train`, `.eval`
+  * `nn.Mode.train`, `nn.Mode.eval`
   * how mode-sensitive layers such as dropout behave
 :::
 
@@ -380,7 +380,7 @@ def runPoint : Tensor Float [2] := [0.25, -0.75]
 def trainerOn (arithmetic : Runtime.Arithmetic)
     (device : Runtime.Device) : Trainer [2] [1] :=
   Trainer.new runModel
-    { objective := .mse
+    { objective := mse
       optimizer := optim.adam { learningRate := 0.03 }
       arithmetic := arithmetic
       device := device
@@ -496,7 +496,7 @@ scripts/lake.sh exe torchlean quickstart_mlp \
   --seed 2026
 ```
 
-The `.ieee` path evaluates addition and multiplication with FloatLib binary32. Comparing the two
+The `ieee` path evaluates addition and multiplication with FloatLib binary32. Comparing the two
 implementations can expose errors
 in rounding or exceptional-value handling that a comparison of decimal output alone may miss.
 Formal floating-point models make these rules explicit
@@ -521,8 +521,8 @@ the seed and dataset fixed. It also checks prediction equality:
 #eval do
   let opts : Trainer.TrainOptions :=
     { steps := 200, logEvery := 0 }
-  let native ← (trainerOn .native .cpu).train runData opts
-  let ieee ← (trainerOn .ieee .cpu).train runData opts
+  let native ← (trainerOn native cpu).train runData opts
+  let ieee ← (trainerOn ieee cpu).train runData opts
   IO.println s!"native = {native.summary}"
   IO.println s!"ieee   = {ieee.summary}"
   let a ← native.predict runPoint
@@ -593,13 +593,13 @@ def runIeeeCpu : Trainer.RunConfig :=
   { runCpu with arithmetic := ieee }
 
 def runCuda : Trainer.RunConfig :=
-  { runCpu with device := .cuda }
+  { runCpu with device := gpu }
 
 /-- Bind a run configuration to an objective and a seed. -/
 def trainerFromRun (run : Trainer.RunConfig) :
     Trainer [2] [1] :=
   Trainer.new runModel
-    (run.forObjective .mse 2026)
+    (run.forObjective mse 2026)
 
 #eval do
   let runs := [runCpu, runIeeeCpu, runCuda]
@@ -786,7 +786,7 @@ def runDropoutModel (p : Float) :
 
 def runDropoutTrainer (p : Float) : Trainer [2] [1] :=
   Trainer.new (runDropoutModel p)
-    { objective := .mse
+    { objective := mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := 2026 }
 
@@ -1004,7 +1004,7 @@ when the session opens:
 #eval do
   try
     let trainer := Trainer.new runModel
-      { objective := .mse, arithmetic := .complex,
+      { objective := mse, arithmetic := complex,
         seed := 2026 }
     let _ ← trainer.train runData
       { steps := 1, logEvery := 0 }

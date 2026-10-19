@@ -419,10 +419,11 @@ implementations may still specialize how they execute batched operations.
 Dot syntax is used when the value before the dot is the natural subject of the operation:
 `tensor.reshape`, `module.forward`, `trainer.train`, `trained.predict`, and
 `result.printSummary`. The reshape above was written `apiV1.reshape [3, 1]` for exactly that
-reason. Lean also accepts a leading dot for a constructor whose expected type is known, such as
-`.native`, `.eager`, or `.mse`. Application code can use the exported `native`, `eager`, `cpu`,
-and `gpu` names after `open TorchLean`. For other choices, open the owning namespace locally
-or qualify the name when that makes the call clearer.
+reason. The common choices are plain names after `open TorchLean`: devices `cpu` and `gpu`,
+arithmetic `native`, `ieee` and `complex`, losses `mse` and `oneHotCrossEntropy`, activations such
+as `relu`, and the verifier's `ibp`, `crown`, `alphaCrown`, `linf` and `topLabel`. A choice whose
+word is generic is written with its type instead, such as `nn.Mode.eval` or
+`Loss.Reduction.sum`, so that it cannot capture a variable of the same name.
 
 Ordinary application code does not construct shapes through recursive representation constructors;
 it writes `[]`, `[width]`, or `[batch, width]`. It also does not inspect public results through
@@ -465,7 +466,7 @@ def apiData := Data.fromTensors apiXs apiYs
 
 def apiTrainer :=
   Trainer.new apiModel
-    { objective := .mse
+    { objective := mse
       optimizer := optim.adam { learningRate := 0.03 }
       arithmetic := native
       seed := 2026 }
@@ -717,7 +718,7 @@ def ieeeCpu : Trainer.RunConfig :=
 def configuredTrainer :=
   Trainer.new model
     (Trainer.RunConfig.forObjective
-      ieeeCpu .mse
+      ieeeCpu mse
       (seed := 2026))
 ```
 
@@ -768,8 +769,8 @@ optimizer or the objective.
 # Runtime Arithmetic
 
 `Runtime.Arithmetic` is not a storage dtype. It chooses the arithmetic for an executable run.
-`.native` selects Lean's native binary32 `Float32`; `.ieee` selects FloatLib binary32;
-`.complex` selects complex numbers over FloatLib binary32. The choice changes the meaning of
+`native` selects Lean's native binary32 `Float32`; `ieee` selects FloatLib binary32;
+`complex` selects complex numbers over FloatLib binary32. The choice changes the meaning of
 arithmetic operations rather than
 attaching a label to an untyped buffer. This is why the scratch run above reported
 `arithmetic=native scalar=Float32` in its summary line: the run states its own semantics.
@@ -782,7 +783,7 @@ For a different precision, choose a FloatLib binary format directly in typed ten
 graphs. The CPU path supports binary128 and custom valid binary widths through `nn.sgdStep`
 or a supervised `trainer.openTyped (α := α)` session. Typed sessions preserve samples, state,
 losses, predictions, and checkpoint encodings. Supply typed `initialState?` when the parameters
-need digits beyond the model's stored seeded `Float` values. The ordinary trainer's `.ieee`
+need digits beyond the model's stored seeded `Float` values. The ordinary trainer's `ieee`
 setting selects binary32; it does not select an arbitrary width.
 
 Proofs choose `ℝ` or `TorchLean.Floats.FP32` directly. They are not runtime modes because
@@ -798,7 +799,7 @@ Try `scripts/lake.sh exe torchlean complex_regression` for a complete complex bi
 It fits a weight and bias against a real squared-residual loss and prints a held-out prediction.
 
 The direct tensor calculations earlier in this chapter use the `Float` written in their
-annotations. They are not silently redirected through a trainer's `.native` setting. The same is
+annotations. They are not silently redirected through a trainer's `native` setting. The same is
 true of the explicit derivative example below, whose input is a `Tensor Float [3]`. The conversion
 to native `Float32` belongs to the high-level training boundary. Keeping that boundary visible
 avoids

@@ -581,7 +581,7 @@ The public `nn.functional.rfft` and `nn.functional.irfft` operations transform t
 preserve any leading batch dimensions. For example, a real tensor with shape `[2, 3, 5]` produces
 packed coefficients with shape `[2, 3, 3, 2]`: there are six independent length-five transforms,
 each storing three complex bins. Pass `batch := [2, 3]` and the positive-length witness; the inverse
-also takes `n := 5`. Both operations accept `path := .denseReference` when you want the dense
+also takes `n := 5`. Both operations accept `path := denseReference` when you want the dense
 calculation explicitly. An empty batch is allowed, but the transform length must be positive.
 
 # Batched Attention

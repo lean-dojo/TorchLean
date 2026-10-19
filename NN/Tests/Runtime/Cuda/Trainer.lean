@@ -45,7 +45,7 @@ identity and therefore has mean-squared error four against the zero target.
 -/
 def checkEvaluationMode : IO Unit := do
   let trainer := TorchLean.Trainer.new dropoutModel
-    { device := .cuda }
+    { device := gpu }
   let session ← trainer.open
   let prediction ← session.predict sample.input
   let evaluationLoss ← session.loss sample
@@ -82,7 +82,7 @@ def checkParameterViews : IO Unit := do
     let parameter ← Runtime.Autograd.Torch.Param.Internal.create
       ([1.0, 2.0] : Tensor Float [2]) (requiresGrad := requiresGrad)
     let session ← Runtime.Autograd.Torch.Internal.EagerSession.new (α := Float)
-      { device := .cuda }
+      { device := gpu }
     for _ in [0:3] do
       let reference ← session.use parameter
       let detached ← session.detach reference
@@ -99,7 +99,7 @@ must therefore follow the same parameter trajectory when batch sizes and loss re
 -/
 def checkMixedBatchOptimizer (optimizer : optim.Optimizer) : IO Unit := do
   let trainer := TorchLean.Trainer.new (nn.linear 1 1)
-    { device := .cuda, optimizer, seed := 37 }
+    { device := gpu, optimizer, seed := 37 }
   let reference ← trainer.open
   let mixed ← trainer.open
   for i in [0:8] do
@@ -127,7 +127,7 @@ def checkMixedBatchOptimizer (optimizer : optim.Optimizer) : IO Unit := do
 def checkLargeBatchMean : IO Unit := do
   let makeTrainer := Runtime.Autograd.Torch.scalarTrainer
     (α := Float) (δ := Float) (paramShapes := [[]]) (inputShapes := [])
-    (dataInputShapes := []) (options := { device := .cuda })
+    (dataInputShapes := []) (options := { device := gpu })
     (loss := fun {m} _ _ parameter =>
       (show m (Runtime.Autograd.Torch.Ops.Ref m Float []) from do
         let large ← Runtime.Autograd.Torch.Ops.const
@@ -149,7 +149,7 @@ def checkLargeBatchMean : IO Unit := do
 def checkBatchNormState : IO Unit := do
   let model := nn.batchNorm (batchShape := [1]) (channels := 1) ([2] : Tensor Nat [1])
     (momentum := 0.5)
-  let trainer := TorchLean.Trainer.new model { device := .cuda }
+  let trainer := TorchLean.Trainer.new model { device := gpu }
   let session ← trainer.open
   let sample : Sample.Supervised Float [1, 1, 2] [1, 1, 2] :=
     { input := [[[1, 3]]], target := Tensor.zeros [1, 1, 2] }
@@ -169,7 +169,7 @@ def quadraticObjective (initial : Float) :
     IO (Module.Objective Float Float [[]] []) := do
   let objective ← Runtime.Autograd.Model.Module.Objective.create
     (α := Float) (β := Float) (stateShapes := [[]]) (inputShapes := [])
-    (dataInputShapes := []) (runtime := { device := .cuda })
+    (dataInputShapes := []) (runtime := { device := gpu })
     (loss := fun {m} _ _ parameter =>
       Runtime.Autograd.Torch.Ops.mul (m := m) parameter parameter)
     (initState := .cons (Tensor.scalar initial) .nil)
@@ -221,7 +221,7 @@ def checkAdamEpsilon : IO Unit := do
       (.adam, 1e-8), (.adam, 1e-45), (.adamW, 1e-8), (.adamW, 1e-45)] :
       Array (CudaAdamKind × Float)) do
     let parameter ← Runtime.Autograd.Torch.Param.Internal.create (Tensor.scalar (2.0 : Float32))
-    let session ← EagerSession.new (α := Float32) { device := .cuda }
+    let session ← EagerSession.new (α := Float32) { device := gpu }
     let config ← IO.mkRef (none : Option CudaAdamConfig)
     let state ← IO.mkRef (Std.HashMap.emptyWithCapacity : CudaAdamState)
     discard <| session.use parameter
@@ -322,7 +322,7 @@ def checkAdamCheckpointEpsilon : IO Unit := do
 /-- A CUDA result owns its parameter snapshot after the live trainer moves on. -/
 def checkSnapshot : IO Unit := do
   let trainer := TorchLean.Trainer.new (nn.linear 1 1)
-    { device := .cuda
+    { device := gpu
       optimizer := optim.adam { learningRate := 0.1 }, seed := 37 }
   let session ← trainer.open
   let sample : Sample.Supervised Float [1] [1] := { input := [1.0], target := [4.0] }

@@ -227,7 +227,7 @@ end KAN
 Build a KAN over any `batchShape`.
 
 Task semantics are deliberately not baked into the model name: use `Trainer.new` with
-`objective := .mse`, `.oneHotCrossEntropy axis`, or `.custom ...` with the same KAN
+`objective := mse`, `oneHotCrossEntropy axis`, or `custom ...` with the same KAN
 constructor.
 -/
 def kan (config : KAN.Config) (batchShape : Shape := []) :

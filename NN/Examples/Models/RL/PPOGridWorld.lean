@@ -366,7 +366,7 @@ def main (args : List String) : IO UInt32 := do
       ]
       printSuccess := true })
     exeName args
-    (.native fun runtime rest => do
+    (fun runtime rest => do
       let (policyPath, rest) ← CLI.orThrow exeName <|
         CLI.takePathFlag rest "policy"
           (default := Runtime.RL.Artifacts.path "ppo_gridworld" "policy")

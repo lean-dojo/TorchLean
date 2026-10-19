@@ -164,7 +164,7 @@ def adderLoss {α : Type} [Storage α] [Context α]
     (logits targetOneHot : Runtime.ValueRef (m := m) (α := α) output) :
     m (Runtime.ValueRef (m := m) (α := α) ([] : Shape)) := do
   let summed ← Loss.oneHotCrossEntropy
-    (m := m) (α := α) (s := output) 2 logits targetOneHot (reduction := .sum)
+    (m := m) (α := α) (s := output) 2 logits targetOneHot (reduction := Loss.Reduction.sum)
   Runtime.scale (m := m) (α := α) (s := ([] : Shape))
     summed ((1 : α) / (activeTargetCount : α))
 
@@ -572,7 +572,7 @@ def train (runtime : Runtime.Config) (options : Options) :
       Trainer.RunConfig.forObjective
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := options.optim.configure options.training.learningRate })
-        (.custom adderLossProgram) (seed := runtime.seed)
+        (custom adderLossProgram) (seed := runtime.seed)
   IO.println (s!"  mode=adder operandDigits={operandDigits} vocabularySize={vocabularySize} "
     ++ s!"contextLength={contextLength} steps={options.training.steps}")
   trainer.printSummary
@@ -619,9 +619,9 @@ def main (args : List String) : IO UInt32 := do
       banner? := some <| Support.banner exeName "minGPT-style addition training"
       usage? := some Options.usage
       printSuccess := true
-      runtime := { device? := some .cuda } })
+      runtime := { device? := some gpu } })
     exeName args
-    (.native fun runtime rest => do
+    (fun runtime rest => do
       let (options, rest) ← CLI.orThrow exeName <| Options.parse rest
       CLI.requireNoArgs exeName rest
       train runtime options)

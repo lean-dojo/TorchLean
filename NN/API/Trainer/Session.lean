@@ -339,8 +339,8 @@ caller.
 
 The trainer's optimizer is bound immediately; `scheduler` optionally adjusts its learning rate by
 completed step. Optimizer and scheduler settings must remain valid after binary32 conversion and
-are checked before the model is instantiated. CUDA execution requires `.native` arithmetic, and
-`.complex` arithmetic is not supported by supervised training.
+are checked before the model is instantiated. CUDA execution requires `native` arithmetic, and
+`complex` arithmetic is not supported by supervised training.
 
 Example:
 ```lean

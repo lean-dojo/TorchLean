@@ -278,7 +278,7 @@ Pair an immutable sequential model with a scalar loss.
 
 The resulting definition initializes the model's complete parameter-and-buffer state and computes
 the loss from one `(input, target)` pair. Training mode is the default; pass
-`mode := .eval` when evaluating a mode-sensitive model.
+`mode := nn.Mode.eval` when evaluating a mode-sensitive model.
 -/
 def fromLoss {σ τ : Shape} (model : Seq σ τ)
     (loss : ∀ {α : Type}, [TorchLean.Storage α] → [Context α] →

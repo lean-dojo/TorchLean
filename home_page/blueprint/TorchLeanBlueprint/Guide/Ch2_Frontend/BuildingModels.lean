@@ -193,7 +193,7 @@ nn.withModel model fun checked => do
 
 The module owns parameters, persistent buffers, and its train/eval mode. It begins in training
 mode. `forward` executes without a backward tape and respects the current mode. Passing
-`(mode := some .eval)` selects evaluation for one call without changing the stored mode.
+`(mode := some nn.Mode.eval)` selects evaluation for one call without changing the stored mode.
 Instantiation uses native `Float32` by default; code that needs
 another executable or proof-facing representation selects it directly with `(α := ...)`. The
 immutable `checked` value is still the object passed to `nn.lowerToTypedGraph` or a proof-facing
@@ -496,7 +496,7 @@ The trainer takes the same seed through its configuration:
 -- reuse one architecture declaration.
 def trainer (seed : Nat) :=
   Trainer.new model
-    { objective := .mse
+    { objective := mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := seed }
 ```
@@ -1119,9 +1119,9 @@ TorchLean therefore writes:
 ```
 -- The objective interprets model outputs and targets; it
 -- does not alter the layer architecture.
-Trainer.new model { objective := .mse }
-Trainer.new model { objective := .oneHotCrossEntropy 0 }
-Trainer.new model { objective := .custom lossProgram }
+Trainer.new model { objective := mse }
+Trainer.new model { objective := oneHotCrossEntropy 0 }
+Trainer.new model { objective := custom lossProgram }
 ```
 
 Mean-squared error is the default objective. Classification variants specify their target

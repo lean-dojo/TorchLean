@@ -55,7 +55,7 @@ structure ViT.EncoderConfig (d : Nat) where
   feedForwardDropout? : Option Float := none
   /-- Enable trainable query, key, and value biases. -/
   attentionInputBias : Bool := false
-  /-- Classifier readout; `.cls` also prepends a learned class token. -/
+  /-- Classifier readout; `cls` also prepends a learned class token. -/
   pooling : ViT.Pooling := .mean
 
 /-- Configuration for a vision Transformer classifier. -/
@@ -369,4 +369,6 @@ def vit {d : Nat} (config : ViT.Config d) (batchShape : Shape := []) :
 
 end models
 end nn
+export nn.models.ViT.Pooling (cls)
+
 end TorchLean

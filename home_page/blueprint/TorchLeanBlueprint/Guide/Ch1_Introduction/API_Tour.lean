@@ -142,7 +142,7 @@ Custom widths use that API too, subject to its width and bias constraints.
 parameters, output, and derivatives. That CPU path also supports `nn.sgdStep` in the selected
 type. `trainer.openTyped` preserves the selected scalar through supervised samples, reports, and
 model-state checkpoints on CPU. Supply typed initial state to retain the extra digits from the
-start. The ordinary trainer's `.ieee` arithmetic setting still selects binary32; it is not a width
+start. The ordinary trainer's `ieee` arithmetic setting still selects binary32; it is not a width
 parameter.
 
 There is also `Tensor ℝ`, used in specifications and proofs. Mathlib constructs real numbers from
@@ -832,7 +832,7 @@ dataset.
 -- before any optimizer step.
 def atTrainer : Trainer [2] [1] :=
   Trainer.new atSmall
-    { objective := .mse
+    { objective := mse
       optimizer := optim.adam { learningRate := 0.03 }
       seed := 2026 }
 

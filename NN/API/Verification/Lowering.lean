@@ -17,7 +17,7 @@ public import NN.Verification.Builtin.Lowering -- shake: keep
 
 Low-level access to TorchLean's verifier graph. Most applications should import
 `NN.API.Verification`, train with `trainer.train`, then call
-`trained.verify center (radius := r) (norm := .inf)`; import this module only when constructing or
+`trained.verify center (radius := r) (norm := linf)`; import this module only when constructing or
 inspecting graph-level IBP/CROWN workflows directly.
 
 These entry points check the generated graph's structure and shapes, not its numerical equality

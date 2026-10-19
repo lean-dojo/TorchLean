@@ -793,13 +793,13 @@ The same record syntax lets us configure a trainer:
 ```
 -- Set the loss, Adam learning rate, and initialization seed
 -- in a configuration record.
-{ objective := .mse
+{ objective := mse
   optimizer := optim.adam { learningRate := 0.03 }
   seed := 2026 }
 ```
 
-Lean recovers this literal's type from the expected type at the call site. That also tells it
-which type `.mse` belongs to.
+Lean recovers this literal's type from the expected type at the call site. `mse` is one of the
+loss choices that `open TorchLean` brings into scope, as it does `gpu` and `native`.
 
 # Inductive Types
 

@@ -132,14 +132,15 @@ def predict {σ τ inputShape : Shape}
 /--
 Train the model with the loss and runtime settings stored in `trainer`.
 
-The signature uses `Tensor Float`, but the run itself executes in binary32: `.native` arithmetic
-instantiates the model over `Float32` and `.ieee` over `ExecFloat.Binary 8 23`. Dataset samples are
+The signature uses `Tensor Float`, but the run itself executes in binary32: `native` arithmetic
+instantiates the model over `Float32` and `ieee` over `ExecFloat.Binary 8 23`. Dataset samples are
 converted into that scalar as they are used, and results are read back to `Float`.
 
 The result stores the trained parameters together with prediction, reporting, state access, and
-verification methods. `trained.verify center (radius := r) (norm := .inf)` checks the model that
-was actually trained. Add `(property := .topLabel label)` when the verification goal is a class
-label. `trained.save path` writes the parameters; `trainer.load path data` restores them.
+verification methods. `trained.verify center (radius := r) (norm := linf)` bounds the verifier
+graph lowered from the trained parameters. Add `(property := topLabel label)` when the
+verification goal is a class label. `trained.save path` writes the parameters;
+`trainer.load path data` restores them.
 
 A positive step count requires a nonempty materialized dataset.
 

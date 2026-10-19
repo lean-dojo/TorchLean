@@ -84,7 +84,7 @@ or ask the trainer to initialize and execute it:
 -- training step.
 def trainer :=
   Trainer.new model
-    { objective := .mse
+    { objective := mse
       optimizer := optim.adam
         { learningRate := 0.03 }
       seed := 2026 }

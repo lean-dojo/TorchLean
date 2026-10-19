@@ -31,7 +31,7 @@ def runParsed {φ ρ : Type}
   Module.Command.run
     (config := { banner? := some banner, usage?, printSuccess := true })
     exeName args
-    (.native fun runtime rest => do
+    (fun runtime rest => do
       let (flags, rest) ← CLI.orThrow exeName <| parseFlags rest
       CLI.requireNoArgs exeName rest
       print (← train runtime flags))
@@ -105,7 +105,7 @@ def run {δ : Type} (config : Config δ) (args : List String) : IO UInt32 :=
       usage? := some (usage config)
       printSuccess := true })
     config.exeName args
-    (.native fun runtime rest => do
+    (fun runtime rest => do
       let (dataArgs, rest) ← CLI.orThrow config.exeName <| config.parseData rest
       let (train, rest) ← CLI.orThrow config.exeName <|
         CLI.Training.OptimizerOptions.parse config.exeName rest config.defaultLogPath

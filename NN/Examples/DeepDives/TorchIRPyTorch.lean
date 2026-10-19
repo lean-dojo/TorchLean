@@ -85,7 +85,7 @@ def transformer :
     { headCount := 1
     , headWidth := 2
     , feedForwardWidth := 2
-    , activation := .relu }
+    , activation := relu }
     (batchShape := [1]) (sequenceLength := 2) (modelWidth := 2)
 
 /-! ## CLI parsing -/

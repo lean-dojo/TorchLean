@@ -124,7 +124,7 @@ def dpSmoke : nn.models.CausalTransformer.Config :=
   { sequenceLength := 16, vocabularySize := 65
     headCount := 4, headWidth := 8
     feedForwardWidth := 128, layerCount := 2
-    activation := .relu
+    activation := relu
     parameterInitialization? := some (.normal 0.0 0.02) }
 ```
 
@@ -340,7 +340,7 @@ The final layer normalization and linear projection produce logits
 $$`\operatorname{logits}\in\mathbb{R}^{B\times T\times V}.`
 
 Here $`\rho` is ReLU. CharGPT selects it explicitly to follow the lecture architecture, while
-the shared `Config` defaults to GELU. The `activation := .relu` field in the configuration above
+the shared `Config` defaults to GELU. The `activation := relu` field in the configuration above
 records the choice that determines the block's nonlinear computation.
 
 The training target is the same token window shifted by one position. Cross entropy at location
@@ -782,10 +782,10 @@ assembled from four real matrix products,
 $$`(a+bi)(c+di)=(ac-bd)+(ad+bc)i,`
 
 and the inverse transform recombines them. This layer expresses complex arithmetic through real
-tensor operations. Its default `spectralPath := .automatic` transforms each spatial axis in turn:
+tensor operations. Its default `spectralPath := automatic` transforms each spatial axis in turn:
 CUDA execution uses LibTorch FFT operations, while CPU execution and typed graphs use dense
 per-axis operations.
-Choosing `spectralPath := .denseReference` instead constructs the full-grid cosine and sine
+Choosing `spectralPath := denseReference` instead constructs the full-grid cosine and sine
 matrices. The two choices use exactly the same state shapes and learned weights.
 
 For a grid with axis lengths $`n_1,\ldots,n_d`, the phase is

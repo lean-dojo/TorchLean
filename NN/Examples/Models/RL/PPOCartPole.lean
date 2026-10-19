@@ -218,7 +218,7 @@ def main (args : List String) : IO UInt32 := do
       usage? := some <| rl.cli.Options.usage exeName
       printSuccess := true })
     exeName args
-    (.native fun runtime rest => do
+    (fun runtime rest => do
       let (ppo, rest) ← CLI.orThrow exeName <|
         rl.cli.Options.parse
           exeName rest (Runtime.RL.Artifacts.path "ppo_cartpole")

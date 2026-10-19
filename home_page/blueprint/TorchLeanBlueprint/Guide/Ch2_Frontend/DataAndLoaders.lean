@@ -1181,8 +1181,8 @@ Training can write a JSON `TrainLog`:
 -- identifies this dataset and run.
 let trained ← trainer.train data
   { steps := 200
-    log := .json outPath
-    title := "small regression" }
+    logDestination := jsonFile outPath
+    logTitle := "small regression" }
 ```
 
 Keep the log with the source identity and configuration above. If the CSV and NPY runs diverge,

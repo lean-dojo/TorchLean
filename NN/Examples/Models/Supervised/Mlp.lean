@@ -89,7 +89,7 @@ def train (runtime : Runtime.Config) (flags : Support.Training.Options Support.C
       Trainer.RunConfig.forObjective
         (Trainer.RunConfig.fromRuntime runtime
           { optimizer := optim.adam { learningRate := flags.training.learningRate } })
-        .mse
+        mse
         (seed := runtime.seed)
   trainer.train
     (data flags.data.path runtime.seed)

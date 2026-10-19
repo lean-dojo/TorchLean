@@ -64,21 +64,21 @@ end Buffer
 namespace Tape
 
 /-- Record a native packed real transform and its real-linear adjoint. -/
-@[inline] def rfft1d {batch n : Nat} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer
+@[inline] def rfft1d {batch n : Nat} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer
     × Nat) := do
   if n = 0 then throw "autograd: rfft1d: transform length must be positive"
-  let batch32 ← AnyBuffer.natToU32Checked batch
-  let n32 ← AnyBuffer.natToU32Checked n
+  let batch32 ← SomeBuffer.natToU32Checked batch
+  let n32 ← SomeBuffer.natToU32Checked n
   unary t "rfft1d" xId [batch, n] [batch, n / 2 + 1, 2]
     (fun x => Buffer.rfft1dPacked x batch32 n32)
     (fun _ gradient => Buffer.rfft1dAdjoint gradient batch32 n32)
 
 /-- Record a normalized native inverse with its output length and packed-coordinate adjoint. -/
-@[inline] def irfft1d {batch n : Nat} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer
+@[inline] def irfft1d {batch n : Nat} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer
     × Nat) := do
   if n = 0 then throw "autograd: irfft1d: transform length must be positive"
-  let batch32 ← AnyBuffer.natToU32Checked batch
-  let n32 ← AnyBuffer.natToU32Checked n
+  let batch32 ← SomeBuffer.natToU32Checked batch
+  let n32 ← SomeBuffer.natToU32Checked n
   unary t "irfft1d" xId [batch, n / 2 + 1, 2] [batch, n]
     (fun x => Buffer.irfft1dPacked x batch32 n32)
     (fun _ gradient => Buffer.irfft1dAdjoint gradient batch32 n32)

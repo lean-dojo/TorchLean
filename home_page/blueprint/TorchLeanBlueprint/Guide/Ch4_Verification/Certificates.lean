@@ -710,11 +710,11 @@ leaf entry point takes a file path:
 ```lean (name := leafEntry)
 -- This checker receives a path; the leaf format supplies no
 -- network graph.
-#check @Cert.AbCrownLeafCert.checkAbCrownLeafArtifact
+#check @Cert.AbCrownLeafCert.check
 ```
 
 ```leanOutput leafEntry
-AbCrownLeafCert.checkAbCrownLeafArtifact : String → IO Unit
+AbCrownLeafCert.check : String → IO Unit
 ```
 
 The leaf CLI prints counts and raises `IO.userError` if any leaf fails, producing an unsuccessful

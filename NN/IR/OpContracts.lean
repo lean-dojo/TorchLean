@@ -8,7 +8,7 @@ module
 
 public import NN.IR.Graph
 public import NN.Tensor.Conversion
-public import NN.Spec.Layers.Pooling.Spatial
+public import NN.Spec.Layers.Pooling
 
 /-!
 # Operation Contracts

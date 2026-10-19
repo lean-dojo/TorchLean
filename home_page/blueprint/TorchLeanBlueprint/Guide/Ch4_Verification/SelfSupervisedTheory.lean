@@ -1,5 +1,5 @@
 import VersoManual
-import NN.API.SelfSupervised.BlockMask
+import NN.API.SelfSupervised
 import NN.MLTheory.SelfSupervised.JEPA
 import NN.MLTheory.SelfSupervised.MAE
 import NN.MLTheory.SelfSupervised.Masking
@@ -982,7 +982,7 @@ objective adds that penalty to the unchanged predictive term.
 # Block Masks And Tensor Objectives
 
 The executable block masker supplies the index arrays used by the finite loss:
-{src "NN/API/SelfSupervised/BlockMask.lean"}[`NN/API/SelfSupervised/BlockMask.lean`]
+{src "NN/API/SelfSupervised.lean"}[`NN/API/SelfSupervised.lean`]
 describes a mask by a rank-indexed policy tensor, applies it to a tensor with scalar storage and a
 zero value, and hands the
 hidden positions back as the exact `Array (Fin n)` the theory expects.

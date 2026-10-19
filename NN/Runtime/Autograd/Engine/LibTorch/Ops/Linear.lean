@@ -30,11 +30,11 @@ namespace Tape
 namespace Internal
 
 /-- Backend matrix kernel for a single pair of matrices. -/
-@[inline] def matmul {m n p : Nat} (t : Tape AnyBuffer) (aId bId : Nat) : Result (Tape AnyBuffer
+@[inline] def matmul {m n p : Nat} (t : Tape SomeBuffer) (aId bId : Nat) : Result (Tape SomeBuffer
     × Nat) := do
-  let m32 ← AnyBuffer.natToU32Checked m
-  let n32 ← AnyBuffer.natToU32Checked n
-  let p32 ← AnyBuffer.natToU32Checked p
+  let m32 ← SomeBuffer.natToU32Checked m
+  let n32 ← SomeBuffer.natToU32Checked n
+  let p32 ← SomeBuffer.natToU32Checked p
   let one32 : UInt32 := 1
   let leftShape : Shape := [m, n]
   let rightShape : Shape := [n, p]
@@ -48,12 +48,12 @@ namespace Internal
 
 /-- Backend matrix kernel over a flattened leading shape. -/
 @[inline]
-def matmulFlattened {batch m n p : Nat} (t : Tape AnyBuffer) (aId bId : Nat) : Result
-    (Tape AnyBuffer × Nat) := do
-  let b32 ← AnyBuffer.natToU32Checked batch
-  let m32 ← AnyBuffer.natToU32Checked m
-  let n32 ← AnyBuffer.natToU32Checked n
-  let p32 ← AnyBuffer.natToU32Checked p
+def matmulFlattened {batch m n p : Nat} (t : Tape SomeBuffer) (aId bId : Nat) : Result
+    (Tape SomeBuffer × Nat) := do
+  let b32 ← SomeBuffer.natToU32Checked batch
+  let m32 ← SomeBuffer.natToU32Checked m
+  let n32 ← SomeBuffer.natToU32Checked n
+  let p32 ← SomeBuffer.natToU32Checked p
   let σ₁ : Shape := .dim batch (.dim m (.dim n .scalar))
   let σ₂ : Shape := .dim batch (.dim n (.dim p .scalar))
   let τ : Shape := .dim batch (.dim m (.dim p .scalar))
@@ -71,24 +71,24 @@ end Internal
 -/
 
 /-- Linear layer: `y = W·x + b` with `W : (outDim,inDim)`, `x : inDim`, `b : outDim`. -/
-@[inline] def linear {outDim inDim : Nat} (t : Tape AnyBuffer) (wId bId xId : Nat) : Result
-    (Tape AnyBuffer × Nat) := do
-  let out32 ← AnyBuffer.natToU32Checked outDim
-  let in32 ← AnyBuffer.natToU32Checked inDim
+@[inline] def linear {outDim inDim : Nat} (t : Tape SomeBuffer) (wId bId xId : Nat) : Result
+    (Tape SomeBuffer × Nat) := do
+  let out32 ← SomeBuffer.natToU32Checked outDim
+  let in32 ← SomeBuffer.natToU32Checked inDim
   let one32 : UInt32 := 1
   let wBuf ← requireValue (t := t) wId (.dim outDim (.dim inDim .scalar))
   let bBuf ← requireValue (t := t) bId (.dim outDim .scalar)
   let xBuf ← requireValue (t := t) xId (.dim inDim .scalar)
   let wx := Buffer.bmm wBuf xBuf one32 out32 in32 one32
   let yBuf := Buffer.add wx bBuf
-  let node : Node AnyBuffer :=
+  let node : Node SomeBuffer :=
     { name := some "linear"
       value := { s := .dim outDim .scalar, buf := yBuf }
       requiresGrad := (t.getNode? wId).any (·.requiresGrad) ||
         (t.getNode? bId).any (·.requiresGrad) ||
         (t.getNode? xId).any (·.requiresGrad)
       parents := #[wId, bId, xId]
-      cleanup := #[wx].map AnyBuffer.ofWorkspace
+      cleanup := #[wx].map SomeBuffer.ofWorkspace
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny (.dim outDim .scalar)
         let g := dLdy.buf
@@ -102,8 +102,8 @@ end Internal
   pure (t.addNode node)
 
 /-- Mean-squared-error loss with `"mean"` reduction (single scalar output). -/
-@[inline] def mseLoss {s : Shape} (t : Tape AnyBuffer) (yhatId targetId : Nat) : Result
-    (Tape AnyBuffer × Nat) := do
+@[inline] def mseLoss {s : Shape} (t : Tape SomeBuffer) (yhatId targetId : Nat) : Result
+    (Tape SomeBuffer × Nat) := do
   let yhat ← requireValue (t := t) yhatId s
   let target ← requireValue (t := t) targetId s
   let diff := Buffer.sub yhat target
@@ -111,13 +111,13 @@ end Internal
   let sum := Buffer.reduceSum squared
   let denom : Float := Float.ofNat (Spec.Shape.size s)
   let mean := Buffer.scale sum (1.0 / denom)
-  let node : Node AnyBuffer :=
+  let node : Node SomeBuffer :=
     { name := some "mse_loss"
       value := { s := Shape.scalar, buf := mean }
       requiresGrad := (t.getNode? yhatId).any (·.requiresGrad) ||
         (t.getNode? targetId).any (·.requiresGrad)
       parents := #[yhatId, targetId]
-      cleanup := #[diff, squared, sum].map AnyBuffer.ofWorkspace
+      cleanup := #[diff, squared, sum].map SomeBuffer.ofWorkspace
       backward := fun dLdyAny => do
         let dLdy ← requireGrad dLdyAny Shape.scalar
         let gBroad := broadcastScalarToShape dLdy.buf s

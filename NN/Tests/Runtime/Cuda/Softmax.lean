@@ -81,7 +81,7 @@ def Internal.assertRejectedWithoutAllocation {α : Type} (label : String)
 
 /-- Exercise the VJP closure itself, beyond the outer backward seed validation. -/
 def Internal.checkWrongUpstream (label : String) (s : Shape) (node
-    : Runtime.Autograd.Node Runtime.Autograd.LibTorch.AnyBuffer) :
+    : Runtime.Autograd.Node Runtime.Autograd.LibTorch.SomeBuffer) :
     IO Unit := do
   let seed ← LibTorch.Buffer.ofFloatArrayIO (Utils.floatArray (Array.replicate s.size 2.0))
   Internal.assertRejectedWithoutAllocation s!"{label} wrong upstream shape" fun _ =>
@@ -96,7 +96,7 @@ def Internal.checkWrongUpstream (label : String) (s : Shape) (node
 /-- Scalar and empty row operations preserve values, zero VJPs, and repeated-backward lifetime. -/
 def Internal.checkDegenerateLast (s : Shape) (logarithmic : Bool) : IO Unit := do
   let label := if logarithmic then "degenerate log_softmax" else "degenerate softmax"
-  let applyOp := fun (tape : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer) (xId
+  let applyOp := fun (tape : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.SomeBuffer) (xId
       : Nat) =>
     if logarithmic then LibTorch.Tape.logSoftmaxLast (s := s) tape xId
     else LibTorch.Tape.softmaxLast (s := s) tape xId
@@ -131,7 +131,7 @@ def Internal.checkDegenerateLast (s : Shape) (logarithmic : Bool) : IO Unit := d
     let some gradient := gradients.get? xId
       | throw <| IO.userError s!"{label}: missing gradient on pass {pass}"
     Utils.assertTensorApprox s!"{label} backward {pass}"
-      (← Utils.anyBufferToTensor (s := s) gradient) (Tensor.full s 0.0) (tol := 0.0)
+      (← Utils.someBufferToTensor (s := s) gradient) (Tensor.full s 0.0) (tol := 0.0)
     LibTorch.Tape.releaseSparseGrads gradients
     let after ← LibTorch.Buffer.memory
     unless after.liveBytes == forward.liveBytes do
@@ -181,7 +181,7 @@ def checkScratchLifetime (logarithmic : Bool) : IO Unit := do
     let some gradient := gradients.get? xId
       | throw <| IO.userError s!"{label}: missing input gradient on pass {pass}"
     Utils.assertTensorApprox s!"{label} repeated backward {pass}"
-      (← Utils.anyBufferToTensor (s := [2, 3]) gradient) expected (tol := 2e-3)
+      (← Utils.someBufferToTensor (s := [2, 3]) gradient) expected (tol := 2e-3)
     Runtime.Autograd.LibTorch.Tape.releaseSparseGrads gradients
     let after ← Runtime.Autograd.LibTorch.Buffer.memory
     unless after.liveBytes == forward.liveBytes do

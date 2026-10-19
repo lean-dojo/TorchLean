@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Spec.Core.TensorReductionShape.Reductions
-public import NN.Spec.Layers.Pooling.Spatial
+public import NN.Spec.Layers.Pooling
 public import NN.Tensor.Conversion
 public import NN.Runtime.Autograd.Torch.Core.Functional.Curried
 

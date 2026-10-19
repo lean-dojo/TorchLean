@@ -25,7 +25,7 @@ open Spec TorchLean
 /-- Parameter leaves in recording order, with the first leaf retained as the optimizer key. -/
 structure ParameterGroup (α : Type) [Storage α] where
   id : Nat
-  parameter : AnyParam α
+  parameter : SomeParam α
   leaves : Array Nat
   storage? : Option (ParameterStorage α)
 
@@ -35,10 +35,10 @@ The same reference index serves eager updates, generic optimizers, and checkpoin
 A singleton group borrows its gradient unchanged; only an actual shared parameter requires
 gradient addition. The first leaf remains the optimizer key, preserving ordered parameter slots.
 Entries inserted directly into the internal parameter map without a storage descriptor stay
-separate, because there is no sound alias test for an arbitrary `AnyParam` closure.
+separate, because there is no sound alias test for an arbitrary `SomeParam` closure.
 -/
 def groupParameterRegistrations {α : Type} [Storage α]
-    (parameters : Std.HashMap Nat (AnyParam α))
+    (parameters : Std.HashMap Nat (SomeParam α))
     (storages : Std.HashMap Nat (ParameterStorage α)) :
     IO (Array (ParameterGroup α)) := do
   let ordered := ((parameters.toList.filter fun entry => entry.2.requiresGrad).mergeSort
@@ -92,21 +92,21 @@ That storage can differ from every leaf snapshot if the parameter changed after 
 Ordinary registrations share their current mirror here; only an empty cache requires an upload.
 
 An internal registration without a storage descriptor supplies its current host value through
-`AnyParam.get`. Its custom getter must honor that contract; a tape leaf is not a substitute.
+`SomeParam.get`. Its custom getter must honor that contract; a tape leaf is not a substitute.
 -/
 def ParameterGroup.currentCudaValue {α : Type} [Storage α] [TensorTransfer α]
-    (group : ParameterGroup α) : IO Runtime.Autograd.LibTorch.AnyBuffer := do
+    (group : ParameterGroup α) : IO Runtime.Autograd.LibTorch.SomeBuffer := do
   let value ← match group.storage? with
     | some storage => getParamCudaValue (parameterOfStorage storage)
     | none => do
         let host ← group.parameter.get
         if h : host.shape = group.parameter.s then
-          CudaBridge.toAnyBuffer (α := α) (s := group.parameter.s) (host.cast h)
+          CudaBridge.toSomeBuffer (α := α) (s := group.parameter.s) (host.cast h)
         else
           throw <| IO.userError "torch: current parameter getter returned the wrong shape"
   unless value.s == group.parameter.s do
     throw <| IO.userError "torch: current parameter storage has the wrong shape"
-  checkCudaAnyBufferSize "current parameter storage" value
+  checkCudaSomeBufferSize "current parameter storage" value
   pure value
 
 /-- Borrow a singleton CUDA gradient or own the temporary sum of shared-leaf cotangents.
@@ -116,29 +116,29 @@ both success and failure; the optimizer action must not retain that temporary gr
 -/
 def withCudaGroupGradient {α β : Type} [Storage α]
     (group : ParameterGroup α) (gradients : LibTorch.Tape.SparseGradMap)
-    (action : Runtime.Autograd.LibTorch.AnyBuffer → IO β) : IO β := do
+    (action : Runtime.Autograd.LibTorch.SomeBuffer → IO β) : IO β := do
   let first ← match gradients.get? group.id with
     | some gradient => pure gradient
     | none => throw <| IO.userError "torch: missing CUDA gradient during grouped update"
   if group.leaves.size == 1 then
     action first
   else
-    let owned ← IO.mkRef (none : Option Runtime.Autograd.LibTorch.AnyBuffer)
+    let owned ← IO.mkRef (none : Option Runtime.Autograd.LibTorch.SomeBuffer)
     try
       let mut total := first
       for id in group.leaves.toList.drop 1 do
         let gradient ← match gradients.get? id with
           | some gradient => pure gradient
           | none => throw <| IO.userError "torch: missing shared CUDA gradient"
-        let next ← IO.ofExcept <| Runtime.Autograd.LibTorch.AnyBuffer.add total gradient
+        let next ← IO.ofExcept <| Runtime.Autograd.LibTorch.SomeBuffer.add total gradient
         let previous ← owned.swap (some next)
         if let some previous := previous then
-          releaseCudaAnyBuffer previous
-        checkCudaAnyBufferSize "shared parameter gradient sum" next
+          releaseCudaSomeBuffer previous
+        checkCudaSomeBufferSize "shared parameter gradient sum" next
         total := next
       action total
     finally
       if let some value ← owned.get then
-        releaseCudaAnyBuffer value
+        releaseCudaSomeBuffer value
 
 end Runtime.Autograd.Torch.Internal.EagerSession

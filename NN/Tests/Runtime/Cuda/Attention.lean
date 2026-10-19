@@ -338,23 +338,24 @@ def run : IO Unit := do
   let dWoCpu ← Utils.cpuGrad (s := [projDim, dModel]) gradsCpu woId
 
   -- CUDA tape
-  let t0c : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer := Runtime.Autograd.Tape.empty
-  let (t1c, wqIdc) := Runtime.Autograd.LibTorch.Tape.leaf (t := t0c) (Utils.tensorToAnyBuffer wq)
+  let t0c : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.SomeBuffer :=
+    Runtime.Autograd.Tape.empty
+  let (t1c, wqIdc) := Runtime.Autograd.LibTorch.Tape.leaf (t := t0c) (Utils.tensorToSomeBuffer wq)
     (name := some "wq")
-  let (t2c, wkIdc) := Runtime.Autograd.LibTorch.Tape.leaf (t := t1c) (Utils.tensorToAnyBuffer wk)
+  let (t2c, wkIdc) := Runtime.Autograd.LibTorch.Tape.leaf (t := t1c) (Utils.tensorToSomeBuffer wk)
     (name := some "wk")
-  let (t3c, wvIdc) := Runtime.Autograd.LibTorch.Tape.leaf (t := t2c) (Utils.tensorToAnyBuffer wv)
+  let (t3c, wvIdc) := Runtime.Autograd.LibTorch.Tape.leaf (t := t2c) (Utils.tensorToSomeBuffer wv)
     (name := some "wv")
-  let (t4c, woIdc) := Runtime.Autograd.LibTorch.Tape.leaf (t := t3c) (Utils.tensorToAnyBuffer wo)
+  let (t4c, woIdc) := Runtime.Autograd.LibTorch.Tape.leaf (t := t3c) (Utils.tensorToSomeBuffer wo)
     (name := some "wo")
-  let (t5c, xIdc) := Runtime.Autograd.LibTorch.Tape.leaf (t := t4c) (Utils.tensorToAnyBuffer x)
+  let (t5c, xIdc) := Runtime.Autograd.LibTorch.Tape.leaf (t := t4c) (Utils.tensorToSomeBuffer x)
     (name := some "x")
   let directResult ← Runtime.Autograd.LibTorch.Tape.attention (t := t5c)
       (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
       (h1 := n_ne_zero) wqIdc wkIdc wvIdc woIdc xIdc (mask := some mask)
   let (t6c, yIdc) ← IO.ofExcept directResult
   let yCuda ← Utils.cudaValue (s := outShape) t6c yIdc
-  let seedCuda : Runtime.Autograd.LibTorch.AnyBuffer :=
+  let seedCuda : Runtime.Autograd.LibTorch.SomeBuffer :=
     { s := outShape,
       buf := Runtime.Autograd.LibTorch.Buffer.full (UInt32.ofNat (Spec.Shape.size outShape)) 1.0 }
   let gradsCuda ← IO.ofExcept
@@ -387,22 +388,23 @@ def run : IO Unit := do
   let xBatch : Tensor Float [2, n, dModel] :=
     TorchLean.Tensor.stack 0 fun i => if i.val = 0 then xFirst else xSecond
   let batchShape : Shape := [2, n, dModel]
-  let tb0 : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer := Runtime.Autograd.Tape.empty
+  let tb0 : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.SomeBuffer :=
+    Runtime.Autograd.Tape.empty
   let (tb1, bwq) :=
-    Runtime.Autograd.LibTorch.Tape.leaf (t := tb0) (Utils.tensorToAnyBuffer batchIdentity)
+    Runtime.Autograd.LibTorch.Tape.leaf (t := tb0) (Utils.tensorToSomeBuffer batchIdentity)
   let (tb2, bwk) :=
-    Runtime.Autograd.LibTorch.Tape.leaf (t := tb1) (Utils.tensorToAnyBuffer batchIdentity)
+    Runtime.Autograd.LibTorch.Tape.leaf (t := tb1) (Utils.tensorToSomeBuffer batchIdentity)
   let (tb3, bwv) :=
-    Runtime.Autograd.LibTorch.Tape.leaf (t := tb2) (Utils.tensorToAnyBuffer batchIdentity)
+    Runtime.Autograd.LibTorch.Tape.leaf (t := tb2) (Utils.tensorToSomeBuffer batchIdentity)
   let (tb4, bwo) :=
-    Runtime.Autograd.LibTorch.Tape.leaf (t := tb3) (Utils.tensorToAnyBuffer batchIdentity)
-  let (tb5, bx) := Runtime.Autograd.LibTorch.Tape.leaf (t := tb4) (Utils.tensorToAnyBuffer xBatch)
+    Runtime.Autograd.LibTorch.Tape.leaf (t := tb3) (Utils.tensorToSomeBuffer batchIdentity)
+  let (tb5, bx) := Runtime.Autograd.LibTorch.Tape.leaf (t := tb4) (Utils.tensorToSomeBuffer xBatch)
   let batchResult ← Runtime.Autograd.LibTorch.Tape.attention (t := tb5)
     (batch := some 2) (n := n) (numHeads := numHeads) (dModel := dModel) (headDim := headDim)
     (hBatch := by decide) n_ne_zero bwq bwk bwv bwo bx (mask := some mask)
   let (tb6, byId) ← IO.ofExcept batchResult
   let yBatch ← Utils.cudaValue (s := batchShape) tb6 byId
-  let batchSeed : Runtime.Autograd.LibTorch.AnyBuffer :=
+  let batchSeed : Runtime.Autograd.LibTorch.SomeBuffer :=
     { s := batchShape,
       buf := Runtime.Autograd.LibTorch.Buffer.full
         (UInt32.ofNat (Spec.Shape.size batchShape)) 1.0 }

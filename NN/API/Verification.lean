@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Verification.Core
-public import NN.API.Trainer.Train.Loop
+public import NN.API.Trainer.Train
 public import NN.API.Verification.Execution
 
 /-!

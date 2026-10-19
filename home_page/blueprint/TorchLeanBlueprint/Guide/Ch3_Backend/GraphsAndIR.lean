@@ -52,7 +52,7 @@ The principal executable paths are:
 ```
 -- Follow the executable export route separately from its
 -- semantic evidence.
-GraphSpec.Chain ── toProgram ──> TorchLean.Program
+GraphSpec.Chain ── toProgram ──> TorchLean.Runtime.Program
                                              │
                                              ├── Autodiff.lowerToTypedGraph
                                              │   ──> Torch.TypedGraph
@@ -72,7 +72,7 @@ The diagram separates forward execution from execution with derivative rules. Th
 branch records forward, JVP, and VJP operations; the IR branch is evaluated by its semantics.
 The kernel-selection branch produces metadata that must later be connected to runtime handlers.
 
-`TorchLean.Program` is an operation-polymorphic function, not a stored graph. The
+`TorchLean.Runtime.Program` is an operation-polymorphic function, not a stored graph. The
 broad `lowerForwardToIR` pass executes that function with an IR-building interpreter and validates
 the graph it produces. It does not by itself carry an end-to-end source-lowering theorem.
 Stable log-softmax and GELU currently return lowering errors, rather than replacing them with
@@ -90,7 +90,7 @@ Proved.ForwardProgram ── Proved.lowerForwardProgramToIR ──> NN.IR.Graph
 ```
 
 `Proved.ForwardProgram` is a smaller first-order let-chain whose constructors expose the fragment
-covered by the theorem. It is not an alias for the general `TorchLean.Program` interface.
+covered by the theorem. It is not an alias for the general `TorchLean.Runtime.Program` interface.
 
 # MLP Graph Structure
 
@@ -963,7 +963,7 @@ enough to execute it.
 
 The proof-bearing source lowering under `NN.Verification.Builtin.Proved` relates its first-order
 source evaluator to IR denotation, including errors. Its theorem is not a wildcard over every
-`TorchLean.Program` or every `OpKind` the broad lowering accepts.
+`TorchLean.Runtime.Program` or every `OpKind` the broad lowering accepts.
 
 The equality theorems prove semantic preservation, including error results. They do not prove an
 asymptotic complexity bound. Native graph evaluation still uses recursion and depends on stack

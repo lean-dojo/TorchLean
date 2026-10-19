@@ -33,7 +33,7 @@ open Spec TorchLean Runtime.Autograd.LibTorch
 
 namespace Internal
 
-private def parent (values : Array AnyBuffer) (index : Nat) : IO AnyBuffer :=
+private def parent (values : Array SomeBuffer) (index : Nat) : IO SomeBuffer :=
   match values[index]? with
   | some value => pure value
   | none => throw (IO.userError s!"IR native: missing parent {index}")
@@ -43,7 +43,7 @@ private def upload {s : Shape} (tensor : Tensor Float32 s) : IO Buffer := do
   Buffer.ofFloatArrayIO (Convert.flattenFloat host)
 
 private def broadcast (source target : Shape) : Except String (Buffer → Buffer) := do
-  let _ ← AnyBuffer.numelU32 target
+  let _ ← SomeBuffer.numelU32 target
   if h : Shape.CanBroadcastTo source target then
     if source = target then pure id
     else pure fun value =>
@@ -51,14 +51,14 @@ private def broadcast (source target : Shape) : Except String (Buffer → Buffer
   else throw s!"IR native: cannot broadcast {repr source} to {repr target}"
 
 private def prepare (graph : Graph) (payload : Payload Float32) (node : Node) :
-    Except String (Array AnyBuffer → IO Buffer) := do
-  let _ ← AnyBuffer.numelU32 node.outShape
+    Except String (Array SomeBuffer → IO Buffer) := do
+  let _ ← SomeBuffer.numelU32 node.outShape
   let parents ← node.parents.mapM fun index => graph.getNode index
-  let unary (op : Buffer → Buffer) : Except String (Array AnyBuffer → IO Buffer) := do
+  let unary (op : Buffer → Buffer) : Except String (Array SomeBuffer → IO Buffer) := do
     let first ← Infer.expectUnaryParent node.kind.tag node.parents
     pure fun values => do pure (op (← parent values first).buf)
   let binary (op : Buffer → Buffer → Buffer) :
-      Except String (Array AnyBuffer → IO Buffer) := do
+      Except String (Array SomeBuffer → IO Buffer) := do
     let (first, second) ← Infer.expectBinaryParents node.kind.tag node.parents
     pure fun values => do pure (op (← parent values first).buf (← parent values second).buf)
   match node.kind with
@@ -97,14 +97,14 @@ private def prepare (graph : Graph) (payload : Payload Float32) (node : Node) :
   | .cos => unary Buffer.cos
   | .softmax axis =>
       let first ← Infer.expectUnaryParent "softmax" node.parents
-      let axis ← AnyBuffer.natToU32Checked axis
+      let axis ← SomeBuffer.natToU32Checked axis
       pure fun values => do
         Buffer.softmax (← parent values first).buf node.outShape.toArray axis
   | .layernorm axis =>
       let first ← Infer.expectUnaryParent "layernorm" node.parents
       let (rows, cols) ← OpContracts.layerNormMatrixDims axis node.outShape
-      let rows ← AnyBuffer.natToU32Checked rows
-      let cols ← AnyBuffer.natToU32Checked cols
+      let rows ← SomeBuffer.natToU32Checked rows
+      let cols ← SomeBuffer.natToU32Checked cols
       let affine ← match payload.layerNorm? node.id with
         | none => pure (do
             let gamma ← Buffer.fullIO cols 1
@@ -131,15 +131,15 @@ private def prepare (graph : Graph) (payload : Payload Float32) (node : Node) :
       let leading := Shape.ofList (first.outShape.toList.take config.channelAxis)
       if params.input leading != first.outShape then
         throw s!"IR native: conv {node.id}: payload input shape mismatch"
-      let _ ← AnyBuffer.natToU32Checked leading.size
-      let groups ← AnyBuffer.natToU32Checked config.groups
+      let _ ← SomeBuffer.natToU32Checked leading.size
+      let groups ← SomeBuffer.natToU32Checked config.groups
       let kernelShape := Shape.ofList
         (config.outChannels :: config.inChannels :: Tensor.to config.kernel (List Nat))
-      let _ ← AnyBuffer.numelU32 kernelShape
+      let _ ← SomeBuffer.numelU32 kernelShape
       for geometry in [config.kernel, config.stride, config.padding,
           config.paddingAfter, config.dilation] do
         for extent in Tensor.to geometry (List Nat) do
-          let _ ← AnyBuffer.natToU32Checked extent
+          let _ ← SomeBuffer.natToU32Checked extent
       let input ← Infer.expectUnaryParent "conv" node.parents
       pure fun values => do
         Buffer.conv (← parent values input).buf (← upload params.spec.kernel)
@@ -155,15 +155,15 @@ private def prepare (graph : Graph) (payload : Payload Float32) (node : Node) :
       let first ← Infer.expectUnaryParent node.kind.tag parents
       let plan ← OpContracts.planPool node.kind.tag config first.outShape
       -- Flatten only the preserved prefix; each spatial window remains independent.
-      let channels ← AnyBuffer.natToU32Checked plan.leading.size
+      let channels ← SomeBuffer.natToU32Checked plan.leading.size
       let spatial := (Tensor.to plan.spatial (List Nat)).toArray
       let kernel := (Tensor.to config.kernel (List Nat)).toArray
       let stride := (Tensor.to config.stride (List Nat)).toArray
       let padding := (Tensor.to config.padding (List Nat)).toArray
       for dimensions in [spatial, kernel, stride, padding] do
         for extent in dimensions do
-          let _ ← AnyBuffer.natToU32Checked extent
-      let _ ← AnyBuffer.numelU32 (Shape.ofList kernel.toList)
+          let _ ← SomeBuffer.natToU32Checked extent
+      let _ ← SomeBuffer.numelU32 (Shape.ofList kernel.toList)
       if node.kind matches .avgPool _ then
         unary fun input => torchleanAvgPoolFwdCuda input spatial kernel stride padding channels
       else
@@ -171,10 +171,10 @@ private def prepare (graph : Graph) (payload : Payload Float32) (node : Node) :
   | .matmul =>
       let (left, right) ← Infer.expectBinaryParents "matmul" parents
       let dims ← OpContracts.matmulDims left.outShape right.outShape
-      let batch ← AnyBuffer.natToU32Checked dims.leading.size
-      let rows ← AnyBuffer.natToU32Checked dims.rows
-      let inner ← AnyBuffer.natToU32Checked dims.inner
-      let cols ← AnyBuffer.natToU32Checked dims.cols
+      let batch ← SomeBuffer.natToU32Checked dims.leading.size
+      let rows ← SomeBuffer.natToU32Checked dims.rows
+      let inner ← SomeBuffer.natToU32Checked dims.inner
+      let cols ← SomeBuffer.natToU32Checked dims.cols
       let leftShape := dims.leftLeading.concat (Shape.ofList [dims.rows, dims.inner])
       let rightShape := dims.rightLeading.concat (Shape.ofList [dims.inner, dims.cols])
       let leftBroadcast ← broadcast leftShape
@@ -194,28 +194,28 @@ LibTorch FFI trust and failure policy; custom compilation and checked-read failu
 This runner neither records a differentiation tape nor invents gradients for custom bodies.
 -/
 def Graph.runBuffers (graph : Graph) (payload : Payload Float32)
-    (inputs : Nat → Option AnyBuffer) : IO (Array AnyBuffer) := do
+    (inputs : Nat → Option SomeBuffer) : IO (Array SomeBuffer) := do
   IO.ofExcept graph.checkShapes
   Buffer.requireNativeRuntime
-  let mut actions : Array (Array AnyBuffer → IO Buffer) := #[]
+  let mut actions : Array (Array SomeBuffer → IO Buffer) := #[]
   for node in graph.nodes do
     if node.kind matches .input then
       let some value := inputs node.id |
         throw (IO.userError s!"IR native: missing input at node {node.id}")
       if value.s != node.outShape then
         throw (IO.userError s!"IR native: input shape mismatch at node {node.id}")
-      let value ← IO.ofExcept (AnyBuffer.validate value)
+      let value ← IO.ofExcept (SomeBuffer.validate value)
       unless Buffer.dtype value.buf == .float32 do
         throw (IO.userError s!"IR native: input dtype must be binary32 at node {node.id}")
       actions := actions.push (fun _ => pure value.buf)
     else
       actions := actions.push (← IO.ofExcept (Internal.prepare graph payload node))
-  let mut values : Array AnyBuffer := #[]
+  let mut values : Array SomeBuffer := #[]
   for node in graph.nodes do
     let some action := actions[node.id]? |
       throw (IO.userError s!"IR native: missing prepared node {node.id}")
-    let result : AnyBuffer := { s := node.outShape, buf := ← action values }
-    values := values.push (← IO.ofExcept (AnyBuffer.validate result))
+    let result : SomeBuffer := { s := node.outShape, buf := ← action values }
+    values := values.push (← IO.ofExcept (SomeBuffer.validate result))
   pure values
 
 end NN.IR

@@ -492,9 +492,10 @@ case or a directional check before comparing two execution routes that reuse the
 
 The reason the same source text can be executed eagerly or recorded into a graph is not a flag
 inside the runtime. It is two instances of one class. `Ops` is the operation interface that
-`Torch.mul`, `Torch.add` and the rest are defined against, and
-{src "NN/Runtime/Autograd/Torch/Core/Trainer.lean"}[`Core/Trainer.lean`] provides two instances of
-it. The difference between them is visible in a single field, `Ref`, which says what a handle to an
+`Torch.mul`, `Torch.add` and the rest are defined against, and the trainer provides two instances
+of it, in {src "NN/Runtime/Autograd/Torch/Core/Trainer/EagerOps.lean"}[`Trainer/EagerOps.lean`] and
+{src "NN/Runtime/Autograd/Torch/Core/Trainer/GraphOps.lean"}[`Trainer/GraphOps.lean`]. The
+difference between them is visible in a single field, `Ref`, which says what a handle to an
 intermediate value actually is:
 
 ```lean (name := rtRefs)

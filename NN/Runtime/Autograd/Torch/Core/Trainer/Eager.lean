@@ -25,12 +25,12 @@ open Spec TorchLean TorchLean.Tensor
 
 /-- Download dense CUDA gradients in reference order, retaining each buffer's stored shape. -/
 private def Internal.gradsOfRefsCuda {α : Type} [TorchLean.Storage α] [TensorTransfer α] :
-    {ss : List Shape} → Array Runtime.Autograd.LibTorch.AnyBuffer → RefList (TensorRef α) ss →
+    {ss : List Shape} → Array Runtime.Autograd.LibTorch.SomeBuffer → RefList (TensorRef α) ss →
     IO (TorchLean.TensorPack α ss)
   | .nil, _, .nil => pure .nil
   | s :: ss, gradients, .cons ref refs => do
       let gradient ← match gradients[ref.id]? with
-        | some stored => Internal.CudaBridge.ofAnyBuffer (α := α) stored
+        | some stored => Internal.CudaBridge.ofSomeBuffer (α := α) stored
         | none => throw <| IO.userError "torch: gradient array out of bounds"
       if h : gradient.shape = s then
         let rest ← Internal.gradsOfRefsCuda (α := α) (ss := ss) gradients refs

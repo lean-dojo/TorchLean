@@ -39,11 +39,11 @@ host. This is primarily useful for implementing GPU-native optimizer steps.
 def backwardDenseAllCuda {α : Type} [TorchLean.Storage α] [TensorTransfer α]
     (s : EagerSession α)
   {sh : Shape} (out : TensorRef α sh) (seed : Tensor α sh) :
-  IO (Array Runtime.Autograd.LibTorch.AnyBuffer) := do
+  IO (Array Runtime.Autograd.LibTorch.SomeBuffer) := do
   if Config.device s.options != .cuda then
     throw <| IO.userError "torch: backwardDenseAllCuda called on non-CUDA eager session"
   let t ← s.cudaTape
-  let seedAny ← CudaBridge.toAnyBuffer (α := α) (s := sh) seed
+  let seedAny ← CudaBridge.toSomeBuffer (α := α) (s := sh) seed
   IO.ofExcept <|
     Runtime.Autograd.Tape.backwardDenseAll (t := t) (outId := out.id) (seed := seedAny)
 
@@ -69,10 +69,10 @@ def backwardScalarParamGradsCuda {α : Type} [TorchLean.Storage α] [TensorTrans
     throw <| IO.userError "torch: backwardScalarParamGradsCuda called on non-CUDA eager session"
   let t ← s.cudaTape
   let params ← s.paramsByLeaf.get
-  let seedAny ← CudaBridge.toAnyBuffer (α := α) (s := Shape.scalar) (Tensor.scalar seed)
-  checkCudaAnyBufferSize "scalar CUDA backward seed" seedAny
+  let seedAny ← CudaBridge.toSomeBuffer (α := α) (s := Shape.scalar) (Tensor.scalar seed)
+  checkCudaSomeBufferSize "scalar CUDA backward seed" seedAny
   if loss.id ≥ t.nodes.size then
-    releaseCudaAnyBuffer seedAny
+    releaseCudaSomeBuffer seedAny
     throw <| IO.userError "torch: scalar CUDA backward seed id out of bounds"
   let retain (id : Nat) : Bool :=
     match params.get? id with
@@ -99,10 +99,10 @@ def accumulateSparseGrads (accumulator : IO.Ref LibTorch.Tape.SparseGradMap)
       | none =>
           pure { gradient with buf := Runtime.Autograd.LibTorch.Buffer.copy gradient.buf }
       | some old =>
-          IO.ofExcept (Runtime.Autograd.LibTorch.AnyBuffer.add old gradient)
+          IO.ofExcept (Runtime.Autograd.LibTorch.SomeBuffer.add old gradient)
     accumulator.set (current.insert id summed)
     if let some old := current.get? id then
-      releaseCudaAnyBuffer old
+      releaseCudaSomeBuffer old
 
 /--
 Run reverse-mode backprop and return a dense gradient array for all tape entries.
@@ -115,7 +115,7 @@ def backwardDenseAll {α : Type} [TorchLean.Storage α] [TensorTransfer α]
   IO (Array (Spec.SomeTensor α)) := do
   if Config.device s.options == .cuda then
     let gradsDev ← backwardDenseAllCuda (α := α) s (sh := sh) out seed
-    gradsDev.mapM (fun g => CudaBridge.ofAnyBuffer (α := α) g)
+    gradsDev.mapM (fun g => CudaBridge.ofSomeBuffer (α := α) g)
   else
     let t ← s.cpuTape
     IO.ofExcept (Runtime.Autograd.Tape.backwardDenseAll (t := t) (outId := out.id)
@@ -141,8 +141,8 @@ changes a parameter. This prevents a malformed gradient map or checkpoint state 
 partially applied update.
 -/
 def checkCudaOptimizerInputs {α : Type} [TorchLean.Storage α] (operation : String)
-    (tape : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.AnyBuffer) (params : Std.HashMap Nat
-        (AnyParam α))
+    (tape : Runtime.Autograd.Tape Runtime.Autograd.LibTorch.SomeBuffer) (params : Std.HashMap Nat
+        (SomeParam α))
     (grads : LibTorch.Tape.SparseGradMap) (state : Option CudaAdamState := none) : IO Unit := do
   for (id, param) in params.toList.filter (fun entry => entry.2.requiresGrad) do
     let grad ← match grads.get? id with
@@ -150,13 +150,13 @@ def checkCudaOptimizerInputs {α : Type} [TorchLean.Storage α] (operation : Str
       | none => throw <| IO.userError s!"torch: gradient map missing parameter during {operation}"
     unless grad.s == param.s do
       throw <| IO.userError s!"torch: gradient shape mismatch during {operation}"
-    checkCudaAnyBufferSize s!"{operation} gradient for parameter leaf {id}" grad
+    checkCudaSomeBufferSize s!"{operation} gradient for parameter leaf {id}" grad
     let value ← IO.ofExcept <|
       Runtime.Autograd.LibTorch.Tape.requireValue (t := tape) (id := id) (s := param.s)
     unless Runtime.Autograd.LibTorch.Buffer.dtype grad.buf ==
         Runtime.Autograd.LibTorch.Buffer.dtype value do
       throw <| IO.userError s!"torch: gradient dtype mismatch during {operation}"
-    checkCudaAnyBufferSize s!"{operation} value for parameter leaf {id}"
+    checkCudaSomeBufferSize s!"{operation} value for parameter leaf {id}"
       { s := param.s, buf := value }
     match state with
     | none => pure ()
@@ -217,7 +217,7 @@ def sgdStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
     let p := group.parameter
     withCudaGroupGradient group grads fun gAny => do
       if _hs : gAny.s = p.s then
-        let updatedDev : Runtime.Autograd.LibTorch.AnyBuffer :=
+        let updatedDev : Runtime.Autograd.LibTorch.SomeBuffer :=
           { s := p.s
             buf := Runtime.Autograd.LibTorch.Buffer.axpy currentValue.buf gAny.buf (-lrF) }
         p.setCuda updatedDev
@@ -270,7 +270,7 @@ def applyCudaAdamUpdate {α : Type} [TorchLean.Storage α]
           pBuf gAny.buf st.m st.v
           beta1F oneMinusBeta1 beta2F oneMinusBeta2
           mHatScale vHatScale epsF (decayStep ()) (-lrF)
-        let updatedDev : Runtime.Autograd.LibTorch.AnyBuffer :=
+        let updatedDev : Runtime.Autograd.LibTorch.SomeBuffer :=
           { s := p.s, buf := updated }
         p.setCuda updatedDev
         releaseCudaBuffer st.m

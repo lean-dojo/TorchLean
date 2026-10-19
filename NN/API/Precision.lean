@@ -40,7 +40,7 @@ This import supplies `Context` and the public typed tensor/model operations:
 * Inspect finite results with `ExecFloat.Binary.toRat?`, or preserve the entire encoding with
   `ExecFloat.Binary.toNatBits`. Converting through `Float` can discard additional precision.
 
-Typed sessions use the maintained CPU runtime, in eager or graph mode. They reject CUDA, other
+Typed sessions use the maintained CPU runtime. They reject CUDA, other
 devices, and custom backend profiles explicitly. The ordinary `trainer.open` and `trainer.train`
 paths retain their runtime-selected binary32 execution and `Float` boundary. Typed results do not
 provide a verifier; calling `Result.verify` fails explicitly.

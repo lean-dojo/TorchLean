@@ -44,7 +44,7 @@ def MatmulPrecision.dtype : MatmulPrecision → Runtime.Autograd.LibTorch.Dtype
   | .fp32 => .float32
   | .fp64 => .float64
 
-open Runtime.Autograd.LibTorch (AnyBuffer Buffer)
+open Runtime.Autograd.LibTorch (SomeBuffer Buffer)
 
 namespace Internal
 
@@ -70,8 +70,8 @@ def matmul (precision : MatmulPrecision) {m n p : Nat}
     Buffer.ofFloatArray
       (LibTorch.Convert.flattenFloat (s := .dim r (.dim c .scalar)) x) precision.dtype
   let cBuf := Buffer.bmm (upload a) (upload b)
-    1 (← AnyBuffer.natToU32Checked m) (← AnyBuffer.natToU32Checked n)
-    (← AnyBuffer.natToU32Checked p)
+    1 (← SomeBuffer.natToU32Checked m) (← SomeBuffer.natToU32Checked n)
+    (← SomeBuffer.natToU32Checked p)
   Internal.unflatten s!"ATen {repr precision} bmm" (Buffer.toFloatArray cBuf)
 
 end Tests.Cuda.MatmulSupport

@@ -8,7 +8,7 @@ module
 
 public import NN.Runtime.Autograd.TypedGraph.GraphM.Core
 public import NN.Tensor.Conversion
-public import NN.Spec.Layers.Pooling.Spatial
+public import NN.Spec.Layers.Pooling
 
 /-!
 # GraphM Pooling Ops

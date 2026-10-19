@@ -1277,7 +1277,7 @@ therefore also requires a separately constructed `ProvedRealEnclosure`, whose fi
 real denotation and enclosure proof. See the runtime-approximation section for the complete
 boundary.
 
-The external alpha-beta-CROWN leaf checker `checkAbCrownLeafArtifact` validates the JSON schema,
+The external alpha-beta-CROWN leaf checker `AbCrownLeafCert.check` validates the JSON schema,
 finite ordered root and leaf boxes, dimensions, containment of each represented leaf in the root,
 and the exported lower-bound witness relative to its threshold. It also checks root coverage using
 the closed grid cut by leaf and root endpoints, returning an error above one million cells. This

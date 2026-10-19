@@ -36,7 +36,7 @@ def matmul (batchA batchB batch : Shape) (mDim nDim pDim : Nat)
     specFwd := fun {α} _ _ xs =>
       match xs with
       | .cons a (.cons b .nil) =>
-          _root_.TorchLean.Tensor.matmulSpec broadcastA broadcastB a b
+          _root_.TorchLean.Tensor.batchMatmulSpec broadcastA broadcastB a b
     program := fun {α} _ _ =>
       fun {m} _ _ => fun a b => by
         letI : Shape.BroadcastTo batchA batch := ⟨broadcastA⟩
@@ -55,7 +55,7 @@ def matmul (batchA batchB batch : Shape) (mDim nDim pDim : Nat)
     (right : _root_.TorchLean.Tensor α (batchB.concat [nDim, pDim])) :
     (matmul batchA batchB batch mDim nDim pDim broadcastA broadcastB).specFwd
         (.cons left (.cons right .nil)) =
-      _root_.TorchLean.Tensor.matmulSpec broadcastA broadcastB left right := by
+      _root_.TorchLean.Tensor.batchMatmulSpec broadcastA broadcastB left right := by
   rfl
 
 namespace Internal

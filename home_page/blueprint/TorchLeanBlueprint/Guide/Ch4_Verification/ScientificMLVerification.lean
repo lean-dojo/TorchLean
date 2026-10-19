@@ -930,7 +930,7 @@ rationals:
 ```
 
 ```leanOutput splineSigs
-checkCertificateRat : PiecewisePolyCertificate → IO Unit
+checkCertificateRat : Certificate → IO Unit
 ```
 
 `evalPolyHorner` asks only for `Zero`, `Add`, and `Mul`, which is what lets the same evaluation run
@@ -993,7 +993,7 @@ accepted. Calling the checker directly confirms the endpoint equalities without 
 ```lean (name := bumpCheck)
 -- Construct the complete one-piece certificate and check
 -- its endpoint equations.
-def bumpCert : PiecewisePolyCertificate where
+def bumpCert : Certificate where
   degree := 2
   n := 2
   xs := TorchLean.Tensor.from #[(0 : ℚ), 1]
@@ -1034,7 +1034,7 @@ Changing the right knot value while retaining the polynomial produces an endpoin
 -- polynomial coefficients.
 def tamperedYs : Array ℚ := #[0, 1]
 
-def tamperedCert : PiecewisePolyCertificate :=
+def tamperedCert : Certificate :=
   { bumpCert with
     ys := TorchLean.Tensor.from tamperedYs }
 ```

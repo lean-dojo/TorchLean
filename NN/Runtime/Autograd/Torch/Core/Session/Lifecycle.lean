@@ -69,10 +69,10 @@ def new {α : Type} [Storage α] [TensorTransfer α]
 /-- Release a CUDA allocation; repeated release and later finalization are safe. -/
 def releaseCudaBuffer (b : Runtime.Autograd.LibTorch.Buffer) : IO Unit := do
   let released ← Runtime.Autograd.LibTorch.Buffer.releaseIO b
-  AnyParam.observeCudaCleanupFlag released
+  SomeParam.observeCudaCleanupFlag released
 
 /-- Force-release a shape-erased CUDA buffer. -/
-def releaseCudaAnyBuffer (b : Runtime.Autograd.LibTorch.AnyBuffer) : IO Unit :=
+def releaseCudaSomeBuffer (b : Runtime.Autograd.LibTorch.SomeBuffer) : IO Unit :=
   releaseCudaBuffer b.buf
 
 /-- Release owned intermediates while leaving shared parameter snapshots to reference counting. -/
@@ -85,7 +85,7 @@ private def releaseCudaTapeValues {α : Type} [Storage α]
     | none => pure ()
     | some node =>
         if node.ownsValue && !parameters.contains id then
-          releaseCudaAnyBuffer node.value
+          releaseCudaSomeBuffer node.value
         for buffer in node.cleanup do
           releaseCudaBuffer buffer.buf
 
@@ -103,8 +103,8 @@ def withSparseGrads {β : Type} (xs : LibTorch.Tape.SparseGradMap)
     LibTorch.Tape.releaseSparseGrads xs
 
 /-- Check that a shape-erased CUDA buffer has the number of elements promised by its shape. -/
-def checkCudaAnyBufferSize (where_ : String)
-    (x : Runtime.Autograd.LibTorch.AnyBuffer) : IO Unit := do
+def checkCudaSomeBufferSize (where_ : String)
+    (x : Runtime.Autograd.LibTorch.SomeBuffer) : IO Unit := do
   let expected := Spec.Shape.size x.s
   if _hExpected : expected < UInt32.size then
     let got := Runtime.Autograd.LibTorch.Buffer.size x.buf

@@ -10,7 +10,7 @@ public import NN.Runtime.Autograd.TypedGraph
 public import NN.Runtime.Autograd.Engine
 public import NN.Runtime.Autograd.Torch
 public import NN.Runtime.Autograd.Model
-public import NN.Runtime.External
+public import NN.Runtime.External.Julia
 public import NN.Runtime.PyTorch
 public import NN.Runtime.JAX
 public import NN.Runtime.Optim

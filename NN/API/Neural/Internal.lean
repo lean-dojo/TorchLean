@@ -17,17 +17,17 @@ public import NN.Runtime.Autograd.Model.Layers.Mamba
 
 Explicit-seed layer constructors behind the public `nn.*` builders in `NN.API.Seeded`.
 
-Only `NN.API.Seeded` imports this module. Every constructor here takes its initialization seeds as
-ordinary arguments; the public builders draw those seeds from `nn.Builder` and are the supported
-way to construct layers. The bodies stay exposed so that downstream proofs can unfold a built model
-through the public builders.
+Every constructor here takes its initialization seeds as ordinary arguments; the public builders
+in `NN.API.Seeded` draw those seeds from `nn.Builder` and are the supported way to construct
+layers. A few model builders, such as FNO and MoE, call these constructors directly. The bodies
+stay exposed so that downstream proofs can unfold a built model through the public builders.
 -/
 
 @[expose] public section
 
 namespace TorchLean
 namespace nn
-namespace Impl
+namespace Internal
 
 /-!
 ## Leading dimensions
@@ -1038,6 +1038,6 @@ def affineHead (batchShape : Spec.Shape := []) {featureShape : Spec.Shape}
     linear featureShape.size outputWidth
       (weightSeed := weightSeed) (biasSeed := 0) (batchShape := batchShape)]
 
-end Impl
+end Internal
 end nn
 end TorchLean

@@ -36,7 +36,7 @@ Instantiate an `ObjectiveDef` under a runtime scalar and configuration.
 An explicit `initialState?` is used directly, without a `Float` intermediate. Otherwise the model's
 stored Float initializers are converted with `cast`.
 
-`runtime` selects the device, execution mode and arithmetic policy. Its default uses the standard
+`runtime` selects the device and arithmetic policy. Its default uses the standard
 runtime settings.
 -/
 def instantiate {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]

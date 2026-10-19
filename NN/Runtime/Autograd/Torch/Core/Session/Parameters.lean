@@ -38,7 +38,7 @@ def syncParamCudaToHost {α : Type} [Storage α] [TensorTransfer α]
     | none =>
         p.hostCurrent.set true
     | some any =>
-        let hostValue ← CudaBridge.ofAnyBuffer (α := α) any
+        let hostValue ← CudaBridge.ofSomeBuffer (α := α) any
         if h : hostValue.shape = sh then
           p.value.set (hostValue.cast h)
           p.hostCurrent.set true
@@ -54,7 +54,7 @@ The incoming buffer must not remain subject to another scope's explicit release;
 owned tape intermediate requires a copy or transfer of that scope's release responsibility.
 -/
 def setParamCudaValue {α : Type} [Storage α] {sh : Shape} (p : Param α sh)
-    (any : Runtime.Autograd.LibTorch.AnyBuffer) : IO Unit := do
+    (any : Runtime.Autograd.LibTorch.SomeBuffer) : IO Unit := do
   if _h : any.s = sh then
     p.cudaValue.set (some { s := sh, buf := any.buf })
     p.hostCurrent.set false
@@ -66,7 +66,7 @@ def setParamCudaValue {α : Type} [Storage α] {sh : Shape} (p : Param α sh)
 /-- Overwrite a host parameter value and invalidate any stale CUDA mirror. -/
 def setParamHostValue {α : Type} [Storage α] {sh : Shape}
     (p : Param α sh) (v : Tensor α sh) : IO Unit := do
-  AnyParam.releaseCachedCudaValue p
+  SomeParam.releaseCachedCudaValue p
   p.value.set v
   p.hostCurrent.set true
 
@@ -77,19 +77,19 @@ replacing the cache later drops only the parameter's reference. A cache with the
 an absent cache paired with a stale host value, has no justified current value to use.
 -/
 def getParamCudaValue {α : Type} [Storage α] [TensorTransfer α] {sh : Shape}
-    (p : Param α sh) : IO Runtime.Autograd.LibTorch.AnyBuffer := do
+    (p : Param α sh) : IO Runtime.Autograd.LibTorch.SomeBuffer := do
   match ← p.cudaValue.get with
   | some stored =>
       unless stored.s == sh do
         throw <| IO.userError "torch: current CUDA parameter mirror has the wrong shape"
-      match Runtime.Autograd.LibTorch.AnyBuffer.validate stored with
+      match Runtime.Autograd.LibTorch.SomeBuffer.validate stored with
       | .ok value => pure value
       | .error message => throw <| IO.userError message
   | none =>
       unless ← p.hostCurrent.get do
         throw <| IO.userError
           "torch: CUDA parameter has neither a current mirror nor a current host value"
-      let uploaded ← CudaBridge.toAnyBuffer (α := α) (s := sh) (← p.value.get)
+      let uploaded ← CudaBridge.toSomeBuffer (α := α) (s := sh) (← p.value.get)
       p.cudaValue.set (some uploaded)
       pure uploaded
 

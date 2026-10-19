@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Engine.LibTorch.Ops.Core
-public import NN.Spec.Layers.Pooling.Spatial
+public import NN.Spec.Layers.Pooling
 public import NN.Tensor.Conversion
 public import NN.Runtime.Autograd.Engine.LibTorch.ConvPool
 
@@ -56,8 +56,8 @@ namespace Tape
   validateU32Dimensions opName kernelDims
   validateU32Dimensions opName strides
   validateU32Dimensions opName pads
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (inSpatial.to (List Nat)))
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (kernel.to (List Nat)))
+  let _ ← SomeBuffer.numelU32 (Shape.ofList (inSpatial.to (List Nat)))
+  let _ ← SomeBuffer.numelU32 (Shape.ofList (kernel.to (List Nat)))
   pure (inputDims, kernelDims, strides, pads)
 
 /-- One-, two-, or three-dimensional convolution through LibTorch. -/
@@ -65,12 +65,12 @@ namespace Tape
   {d inC outC : Nat}
   {kernel stride padding : TorchLean.Tensor Nat [d]}
   {inSpatial : TorchLean.Tensor Nat [d]}
-  (t : Tape AnyBuffer) (kernelId biasId inputId : Nat) :
-  Result (Tape AnyBuffer × Nat) := do
+  (t : Tape SomeBuffer) (kernelId biasId inputId : Nat) :
+  Result (Tape SomeBuffer × Nat) := do
   Internal.validateSpatialGeometry "conv" kernel stride
 
-  let inC32 ← AnyBuffer.natToU32Checked inC
-  let outC32 ← AnyBuffer.natToU32Checked outC
+  let inC32 ← SomeBuffer.natToU32Checked inC
+  let outC32 ← SomeBuffer.natToU32Checked outC
   let (inSpatialArr, kernelSpatialArr, strideArr, paddingArr) ←
     Internal.spatialMetadata "conv" inSpatial kernel stride padding
 
@@ -80,10 +80,10 @@ namespace Tape
     Shape.ofList (inC :: inSpatial.to (List Nat))
   let outSpatial : TorchLean.Tensor Nat [d] :=
     Spec.convOutSpatial inSpatial kernel stride padding
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (outSpatial.to (List Nat)))
+  let _ ← SomeBuffer.numelU32 (Shape.ofList (outSpatial.to (List Nat)))
   let outShape : Shape :=
     Shape.ofList (outC :: outSpatial.to (List Nat))
-  let _ ← AnyBuffer.numelU32 outShape
+  let _ ← SomeBuffer.numelU32 outShape
 
   let kernelBuf ← requireValue (t := t) kernelId kernelShape
   let biasBuf ← requireValue (t := t) biasId (.dim outC .scalar)
@@ -93,9 +93,9 @@ namespace Tape
     torchleanConvFwdCuda inputBuf kernelBuf biasBuf
       inSpatialArr kernelSpatialArr strideArr paddingArr
       inC32 outC32
-  let output ← AnyBuffer.validate { s := outShape, buf := y }
+  let output ← SomeBuffer.validate { s := outShape, buf := y }
 
-  let node : Node AnyBuffer :=
+  let node : Node SomeBuffer :=
     { name := some "conv"
       value := output
       requiresGrad := (t.getNode? kernelId).any (·.requiresGrad) ||
@@ -120,12 +120,12 @@ namespace Tape
   {d inC outC : Nat}
   {kernel stride padding : TorchLean.Tensor Nat [d]}
   {inSpatial : TorchLean.Tensor Nat [d]}
-  (t : Tape AnyBuffer) (kernelId biasId inputId : Nat) :
-  Result (Tape AnyBuffer × Nat) := do
+  (t : Tape SomeBuffer) (kernelId biasId inputId : Nat) :
+  Result (Tape SomeBuffer × Nat) := do
   Internal.validateSpatialGeometry "conv_transpose" kernel stride
 
-  let inC32 ← AnyBuffer.natToU32Checked inC
-  let outC32 ← AnyBuffer.natToU32Checked outC
+  let inC32 ← SomeBuffer.natToU32Checked inC
+  let outC32 ← SomeBuffer.natToU32Checked outC
   let (inSpatialArr, kernelSpatialArr, strideArr, paddingArr) ←
     Internal.spatialMetadata "conv_transpose" inSpatial kernel stride padding
 
@@ -136,10 +136,10 @@ namespace Tape
     Shape.ofList (inC :: inSpatial.to (List Nat))
   let outSpatial : TorchLean.Tensor Nat [d] :=
     Spec.convTransposeOutSpatial inSpatial kernel stride padding
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (outSpatial.to (List Nat)))
+  let _ ← SomeBuffer.numelU32 (Shape.ofList (outSpatial.to (List Nat)))
   let outShape : Shape :=
     Shape.ofList (outC :: outSpatial.to (List Nat))
-  let _ ← AnyBuffer.numelU32 outShape
+  let _ ← SomeBuffer.numelU32 outShape
 
   let kernelBuf ← requireValue (t := t) kernelId kernelShape
   let biasBuf ← requireValue (t := t) biasId (.dim outC .scalar)
@@ -149,9 +149,9 @@ namespace Tape
     torchleanConvTransposeFwdCuda inputBuf kernelBuf biasBuf
       inSpatialArr kernelSpatialArr strideArr paddingArr
       inC32 outC32
-  let output ← AnyBuffer.validate { s := outShape, buf := y }
+  let output ← SomeBuffer.validate { s := outShape, buf := y }
 
-  let node : Node AnyBuffer :=
+  let node : Node SomeBuffer :=
     { name := some "conv_transpose"
       value := output
       requiresGrad := (t.getNode? kernelId).any (·.requiresGrad) ||
@@ -174,10 +174,10 @@ namespace Tape
 /-- One-, two-, or three-dimensional max pooling through LibTorch. -/
 @[inline] def maxPool
     {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
-    (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat) := do
+    (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat) := do
   Internal.validateSpatialGeometry "max_pool" kernel stride
 
-  let inC32 ← AnyBuffer.natToU32Checked C
+  let inC32 ← SomeBuffer.natToU32Checked C
   let (inSpatialArr, kernelArr, strideArr, paddingArr) ←
     Internal.spatialMetadata "max_pool" inSpatial kernel stride padding
 
@@ -185,17 +185,17 @@ namespace Tape
     Shape.ofList (C :: inSpatial.to (List Nat))
   let outSpatial : TorchLean.Tensor Nat [d] :=
     Spec.poolOutSpatialPad inSpatial kernel stride padding
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (outSpatial.to (List Nat)))
+  let _ ← SomeBuffer.numelU32 (Shape.ofList (outSpatial.to (List Nat)))
   let outShape : Shape :=
     Shape.ofList (C :: outSpatial.to (List Nat))
-  let _ ← AnyBuffer.numelU32 outShape
+  let _ ← SomeBuffer.numelU32 outShape
 
   let xBuf ← requireValue (t := t) xId inputShape
   let y :=
     torchleanMaxPoolFwdCuda xBuf inSpatialArr kernelArr strideArr paddingArr inC32
-  let output ← AnyBuffer.validate { s := outShape, buf := y }
+  let output ← SomeBuffer.validate { s := outShape, buf := y }
 
-  let node : Node AnyBuffer :=
+  let node : Node SomeBuffer :=
     { name := some "max_pool"
       value := output
       requiresGrad := (t.getNode? xId).any (·.requiresGrad)
@@ -216,10 +216,10 @@ or overflow a finite value to infinity.
 -/
 @[inline] def smoothMaxPool
     {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
-    (t : Tape AnyBuffer) (xId : Nat) (beta : Float) : Result (Tape AnyBuffer × Nat) := do
+    (t : Tape SomeBuffer) (xId : Nat) (beta : Float) : Result (Tape SomeBuffer × Nat) := do
   Internal.validateSpatialGeometry "smooth_max_pool" kernel stride
 
-  let inC32 ← AnyBuffer.natToU32Checked C
+  let inC32 ← SomeBuffer.natToU32Checked C
   let (inSpatialArr, kernelArr, strideArr, paddingArr) ←
     Internal.spatialMetadata "smooth_max_pool" inSpatial kernel stride padding
 
@@ -227,10 +227,10 @@ or overflow a finite value to infinity.
     Shape.ofList (C :: inSpatial.to (List Nat))
   let outSpatial : TorchLean.Tensor Nat [d] :=
     Spec.poolOutSpatialPad inSpatial kernel stride padding
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (outSpatial.to (List Nat)))
+  let _ ← SomeBuffer.numelU32 (Shape.ofList (outSpatial.to (List Nat)))
   let outShape : Shape :=
     Shape.ofList (C :: outSpatial.to (List Nat))
-  let _ ← AnyBuffer.numelU32 outShape
+  let _ ← SomeBuffer.numelU32 outShape
 
   let xBuf ← requireValue (t := t) xId inputShape
   let effectiveBeta := if Buffer.dtype xBuf == .float32 then beta.toFloat32.toFloat else beta
@@ -240,9 +240,9 @@ or overflow a finite value to infinity.
     torchleanSmoothMaxPoolFwdCuda xBuf beta
       inSpatialArr kernelArr strideArr paddingArr
       inC32
-  let output ← AnyBuffer.validate { s := outShape, buf := y }
+  let output ← SomeBuffer.validate { s := outShape, buf := y }
 
-  let node : Node AnyBuffer :=
+  let node : Node SomeBuffer :=
     { name := some "smooth_max_pool"
       value := output
       requiresGrad := (t.getNode? xId).any (·.requiresGrad)
@@ -259,10 +259,10 @@ or overflow a finite value to infinity.
 /-- One-, two-, or three-dimensional average pooling through LibTorch. -/
 @[inline] def avgPool
     {d C : Nat} {inSpatial kernel stride padding : TorchLean.Tensor Nat [d]}
-    (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat) := do
+    (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat) := do
   Internal.validateSpatialGeometry "avg_pool" kernel stride
 
-  let inC32 ← AnyBuffer.natToU32Checked C
+  let inC32 ← SomeBuffer.natToU32Checked C
   let (inSpatialArr, kernelArr, strideArr, paddingArr) ←
     Internal.spatialMetadata "avg_pool" inSpatial kernel stride padding
 
@@ -270,19 +270,19 @@ or overflow a finite value to infinity.
     Shape.ofList (C :: inSpatial.to (List Nat))
   let outSpatial : TorchLean.Tensor Nat [d] :=
     Spec.poolOutSpatialPad inSpatial kernel stride padding
-  let _ ← AnyBuffer.numelU32 (Shape.ofList (outSpatial.to (List Nat)))
+  let _ ← SomeBuffer.numelU32 (Shape.ofList (outSpatial.to (List Nat)))
   let outShape : Shape :=
     Shape.ofList (C :: outSpatial.to (List Nat))
-  let _ ← AnyBuffer.numelU32 outShape
+  let _ ← SomeBuffer.numelU32 outShape
 
   let xBuf ← requireValue (t := t) xId inputShape
   let y :=
     torchleanAvgPoolFwdCuda xBuf
       inSpatialArr kernelArr strideArr paddingArr
       inC32
-  let output ← AnyBuffer.validate { s := outShape, buf := y }
+  let output ← SomeBuffer.validate { s := outShape, buf := y }
 
-  let node : Node AnyBuffer :=
+  let node : Node SomeBuffer :=
     { name := some "avg_pool"
       value := output
       requiresGrad := (t.getNode? xId).any (·.requiresGrad)

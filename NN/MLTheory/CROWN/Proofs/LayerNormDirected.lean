@@ -6,7 +6,8 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.CROWN.Graph.Engine.Enclosure
+public import NN.MLTheory.CROWN.BoundOps.Lawful
+public import NN.MLTheory.CROWN.Graph.Engine.Base
 public import NN.MLTheory.CROWN.Extras.IntervalLemmas
 
 /-!

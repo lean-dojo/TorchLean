@@ -575,7 +575,7 @@ def matmulRightOp {batchA batchB batch : Shape} {m n p : Nat}
     (broadcastB : Shape.CanBroadcastTo batchB batch)
     (B : Tensor α (batchB.concat [n, p])) :
     OpSpec α (batchA.concat [m, n]) (batch.concat [m, p]) :=
-{ forward := fun A => matmulSpec broadcastA broadcastB A B
+{ forward := fun A => batchMatmulSpec broadcastA broadcastB A B
 , backward := fun A dLdz => (matmulBackwardSpec broadcastA broadcastB A B dLdz).1 }
 
 /-- Matrix-rank multiplication with a captured left operand and broadcasted batch prefixes. -/
@@ -584,7 +584,7 @@ def matmulLeftOp {batchA batchB batch : Shape} {m n p : Nat}
     (broadcastB : Shape.CanBroadcastTo batchB batch)
     (A : Tensor α (batchA.concat [m, n])) :
     OpSpec α (batchB.concat [n, p]) (batch.concat [m, p]) :=
-{ forward := fun B => matmulSpec broadcastA broadcastB A B
+{ forward := fun B => batchMatmulSpec broadcastA broadcastB A B
 , backward := fun B dLdz => (matmulBackwardSpec broadcastA broadcastB A B dLdz).2 }
 
 /-- One-hot embedding as an OpSpec over the one-hot input. Parameter gradients stay outside

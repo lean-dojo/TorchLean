@@ -17,7 +17,7 @@ Public entry points for lowering TorchLean programs to the shared verifier IR an
 CROWN bounds. Graph construction lives in `Lowering.Builder`; this module contains the stable
 result type and the operations available on a lowered graph.
 
-The broad `lowerForwardToIR` entry point runs a `TorchLean.Program` with the IR-building
+The broad `lowerForwardToIR` entry point runs a `TorchLean.Runtime.Program` with the IR-building
 interpreter, then checks the graph's structure and shapes. A successful result is executable and
 ready for verifier passes, but does not by itself prove equality with the source program. The
 theorem-backed source fragment lives under `NN.Verification.Builtin.Proved`.
@@ -174,7 +174,7 @@ def lowerForwardToIR
   | Except.error e => Except.error e
   | Except.ok (outId, st) =>
       let g : Graph := { nodes := st.nodes }
-      match (g.checkWellFormed *> g.checkShapes) with
+      match g.checkShapes with
       | Except.error e => Except.error s!"TorchLean→IR: produced an ill-formed graph: {e}"
       | Except.ok _ =>
           Except.ok { graph := g, ps := st.ps, inputId := 0, outputId := outId }

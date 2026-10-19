@@ -589,17 +589,18 @@ unique ownership. Cleanup also needs a live result dependency or an explicit eff
 
 ## Checking Shape Metadata Against Storage
 
-The shape-erased tape does not trust a shape tag by itself. `AnyBuffer` carries a shape and a native
-buffer as separate fields, so nothing structural forces them to agree, and the check is explicit:
+The shape-erased tape does not trust a shape tag by itself. `SomeBuffer` carries a shape and a
+native buffer as separate fields, so nothing structural forces them to agree, and the check is
+explicit:
 
 ```lean (name := ffiValidate)
 -- Check the native allocation length against the
 -- shape-erased metadata.
 open Runtime.Autograd.LibTorch in
-#check @AnyBuffer.validate
+#check @SomeBuffer.validate
 ```
 ```leanOutput ffiValidate
-AnyBuffer.validate : AnyBuffer → Runtime.Autograd.Result AnyBuffer
+SomeBuffer.validate : SomeBuffer → Runtime.Autograd.Result SomeBuffer
 ```
 
 It returns a `Result`, not a `Prop` and not a `Bool`: a mismatch becomes an ordinary Lean error with
@@ -614,7 +615,7 @@ These checks turn malformed runtime values into ordinary Lean errors. They estab
 between the shape metadata and storage size. A buffer of the right length can still contain
 incorrect values, so numerical refinement remains a separate obligation.
 
-`AnyBuffer.validate` returns the accepted buffer for downstream use. A `[2, 3]` tag requires six
+`SomeBuffer.validate` returns the accepted buffer for downstream use. A `[2, 3]` tag requires six
 native elements; that count cannot establish their row-major layout or the allocation's lifetime.
 Those parts of the native contract remain necessary even after the size check succeeds.
 

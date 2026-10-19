@@ -8,7 +8,7 @@ floating-point bridges.
 The recommended import is:
 
 ```lean
-import NN.MLTheory.API
+import NN.MLTheory
 ```
 
 Most users should not need to import individual theory files directly. The subdirectories are still

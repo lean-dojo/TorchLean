@@ -54,7 +54,7 @@ def checkStorage : IO Unit := do
   let p ← scalar
   let q ← scalar
   let value ← IO.mkRef (Tensor.scalar 2.0)
-  let cudaValue ← IO.mkRef (none : Option Runtime.Autograd.LibTorch.AnyBuffer)
+  let cudaValue ← IO.mkRef (none : Option Runtime.Autograd.LibTorch.SomeBuffer)
   let hostCurrent ← IO.mkRef true
   let vector ← Param.Internal.create ([2.0] : Tensor Float [1])
   let entries := #[
@@ -100,11 +100,11 @@ def checkRegistrations : IO Unit := do
   let q ← scalar
   let session ← EagerSession.new (α := Float)
   session.paramsByLeaf.set <|
-    (Std.HashMap.emptyWithCapacity : Std.HashMap Nat (AnyParam Float))
-      |>.insert 40 (AnyParam.ofParam p)
-      |>.insert 10 (AnyParam.ofParam q)
-      |>.insert 20 (AnyParam.ofParam p)
-      |>.insert 30 (AnyParam.ofParam p)
+    (Std.HashMap.emptyWithCapacity : Std.HashMap Nat (SomeParam Float))
+      |>.insert 40 (SomeParam.ofParam p)
+      |>.insert 10 (SomeParam.ofParam q)
+      |>.insert 20 (SomeParam.ofParam p)
+      |>.insert 30 (SomeParam.ofParam p)
   session.parameterStorageByLeaf.set <|
     (Std.HashMap.emptyWithCapacity : Std.HashMap Nat (ParameterStorage Float))
       |>.insert 40 (descriptor p) |>.insert 20 (descriptor p)
@@ -177,9 +177,9 @@ def checkGradientValidation : IO Unit := do
     (discard <| ParamList.canonicalGradients #[some 0, some 0] gradients)
 
 private def cudaGradients (a b c : Float) : IO LibTorch.Tape.SparseGradMap := do
-  let first ← CudaBridge.toAnyBuffer (Tensor.scalar a)
-  let second ← CudaBridge.toAnyBuffer (Tensor.scalar b)
-  let third ← CudaBridge.toAnyBuffer (Tensor.scalar c)
+  let first ← CudaBridge.toSomeBuffer (Tensor.scalar a)
+  let second ← CudaBridge.toSomeBuffer (Tensor.scalar b)
+  let third ← CudaBridge.toSomeBuffer (Tensor.scalar c)
   pure <| (Std.HashMap.emptyWithCapacity : LibTorch.Tape.SparseGradMap)
     |>.insert 0 first |>.insert 1 second |>.insert 2 third
 
@@ -204,8 +204,8 @@ def checkCudaRetie : IO Unit := do
   try
     discard <| session.use p
     discard <| session.use q
-    let first ← CudaBridge.toAnyBuffer (Tensor.scalar (1.0 : Float))
-    let second ← CudaBridge.toAnyBuffer (Tensor.scalar (3.0 : Float))
+    let first ← CudaBridge.toSomeBuffer (Tensor.scalar (1.0 : Float))
+    let second ← CudaBridge.toSomeBuffer (Tensor.scalar (3.0 : Float))
     let gradients := (Std.HashMap.emptyWithCapacity : LibTorch.Tape.SparseGradMap)
       |>.insert 0 first |>.insert 1 second
     withSparseGrads gradients fun gradients =>
@@ -217,8 +217,8 @@ def checkCudaRetie : IO Unit := do
     session.resetTape
     discard <| session.use p
     discard <| session.use p
-    let first ← CudaBridge.toAnyBuffer (Tensor.scalar (1.0 : Float))
-    let second ← CudaBridge.toAnyBuffer (Tensor.scalar (3.0 : Float))
+    let first ← CudaBridge.toSomeBuffer (Tensor.scalar (1.0 : Float))
+    let second ← CudaBridge.toSomeBuffer (Tensor.scalar (3.0 : Float))
     let gradients := (Std.HashMap.emptyWithCapacity : LibTorch.Tape.SparseGradMap)
       |>.insert 0 first |>.insert 1 second
     withSparseGrads gradients fun gradients =>
@@ -277,8 +277,8 @@ def checkCudaOptimizer : IO Unit := do
       let gradients ← cudaGradients a b c
       withSparseGrads gradients fun gradients =>
         session.adamWStepAllCudaMap config state 0.1 0.05 0.8 0.9 1e-8 gradients
-      let first ← CudaBridge.toAnyBuffer (Tensor.scalar (a + c))
-      let second ← CudaBridge.toAnyBuffer (Tensor.scalar b)
+      let first ← CudaBridge.toSomeBuffer (Tensor.scalar (a + c))
+      let second ← CudaBridge.toSomeBuffer (Tensor.scalar b)
       let referenceGradients := (Std.HashMap.emptyWithCapacity : LibTorch.Tape.SparseGradMap)
         |>.insert 0 first |>.insert 1 second
       withSparseGrads referenceGradients fun gradients =>

@@ -598,15 +598,15 @@ def matmul {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zer
       (forward := fun ctx _d =>
         let av := ctx.1
         let bv := ctx.2
-        TorchLean.Tensor.matmulSpec broadcastA.proof broadcastB.proof av bv)
+        TorchLean.Tensor.batchMatmulSpec broadcastA.proof broadcastB.proof av bv)
       (jvp := fun ctx dctx _d =>
         let av := ctx.1
         let bv := ctx.2
         let da := dctx.1
         let db := dctx.2
         addSpec
-          (TorchLean.Tensor.matmulSpec broadcastA.proof broadcastB.proof da bv)
-          (TorchLean.Tensor.matmulSpec broadcastA.proof broadcastB.proof av db))
+          (TorchLean.Tensor.batchMatmulSpec broadcastA.proof broadcastB.proof da bv)
+          (TorchLean.Tensor.batchMatmulSpec broadcastA.proof broadcastB.proof av db))
       (vjp := fun ctx _d dLdy =>
         let av := ctx.1
         let bv := ctx.2

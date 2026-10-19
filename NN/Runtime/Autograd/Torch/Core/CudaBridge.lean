@@ -30,8 +30,8 @@ namespace Internal
 namespace CudaBridge
 
 /-- Upload complete configured words or the scalar's native dtype, preserving the tensor's shape. -/
-def toAnyBuffer {α : Type} [TorchLean.Storage α] [TensorTransfer α] {s : Shape}
-    (tensor : Tensor α s) : IO Runtime.Autograd.LibTorch.AnyBuffer := do
+def toSomeBuffer {α : Type} [TorchLean.Storage α] [TensorTransfer α] {s : Shape}
+    (tensor : Tensor α s) : IO Runtime.Autograd.LibTorch.SomeBuffer := do
   if let some scalar := TensorTransfer.encoding? (α := α) then
     if let .binary format := scalar.precision then
       let bytes ← IO.ofExcept (scalar.pack tensor)
@@ -65,8 +65,8 @@ def ofBuffer {α : Type} [TorchLean.Storage α] [TensorTransfer α] {s : Shape}
           s!"got {values.size})"
 
 /-- Download a shape-erased buffer through the scalar type's runtime transfer representation. -/
-def ofAnyBuffer {α : Type} [TorchLean.Storage α] [TensorTransfer α]
-    (stored : Runtime.Autograd.LibTorch.AnyBuffer) : IO (Spec.SomeTensor α) := do
+def ofSomeBuffer {α : Type} [TorchLean.Storage α] [TensorTransfer α]
+    (stored : Runtime.Autograd.LibTorch.SomeBuffer) : IO (Spec.SomeTensor α) := do
   pure <| Spec.SomeTensor.ofTensor (← ofBuffer (α := α) (s := stored.s) stored.buf)
 
 end CudaBridge

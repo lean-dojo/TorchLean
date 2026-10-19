@@ -29,9 +29,9 @@ namespace Internal
 
 /-- Common recording and shape checks for the two diagonal-scan coefficient layouts. -/
 @[inline] def diagonalScan (variableCoefficients : Bool) {seqLen state : Nat}
-    (t : Tape AnyBuffer) (aId bId xId initialId : Nat) : Result (Tape AnyBuffer × Nat) := do
-  let time32 ← AnyBuffer.natToU32Checked seqLen
-  let state32 ← AnyBuffer.natToU32Checked state
+    (t : Tape SomeBuffer) (aId bId xId initialId : Nat) : Result (Tape SomeBuffer × Nat) := do
+  let time32 ← SomeBuffer.natToU32Checked seqLen
+  let state32 ← SomeBuffer.natToU32Checked state
   let sequenceShape : Shape := [seqLen, state]
   let coefficientShape : Shape := if variableCoefficients then sequenceShape else [state]
   let a ← requireValue t aId coefficientShape
@@ -41,7 +41,7 @@ namespace Internal
   let output := if variableCoefficients
     then Buffer.selectiveScanDiagVarFwd a b x initial time32 state32
     else Buffer.selectiveScanDiagFwd a b x initial time32 state32
-  let node : Node AnyBuffer :=
+  let node : Node SomeBuffer :=
     { name := some (if variableCoefficients then "selectiveScanDiagVar" else "selectiveScanDiag")
       value := { s := sequenceShape, buf := output }
       requiresGrad := (t.getNode? aId).any (·.requiresGrad) ||
@@ -64,15 +64,15 @@ namespace Internal
 end Internal
 
 /-- Record the recurrence with coefficient vectors shared across time. -/
-@[inline] def selectiveScanDiag {seqLen state : Nat} (t : Tape AnyBuffer) (aId bId xId initialId
+@[inline] def selectiveScanDiag {seqLen state : Nat} (t : Tape SomeBuffer) (aId bId xId initialId
     : Nat) :
-    Result (Tape AnyBuffer × Nat) :=
+    Result (Tape SomeBuffer × Nat) :=
   Internal.diagonalScan false (seqLen := seqLen) (state := state) t aId bId xId initialId
 
 /-- Record the recurrence with independent coefficient rows for every token. -/
-@[inline] def selectiveScanDiagVar {seqLen state : Nat} (t : Tape AnyBuffer) (aId bId xId initialId
+@[inline] def selectiveScanDiagVar {seqLen state : Nat} (t : Tape SomeBuffer) (aId bId xId initialId
     : Nat) :
-    Result (Tape AnyBuffer × Nat) :=
+    Result (Tape SomeBuffer × Nat) :=
   Internal.diagonalScan true (seqLen := seqLen) (state := state) t aId bId xId initialId
 
 end Runtime.Autograd.LibTorch.Tape

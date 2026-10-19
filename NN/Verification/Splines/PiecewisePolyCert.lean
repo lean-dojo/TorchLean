@@ -97,7 +97,7 @@ Parsed certificate payload for `piecewise_poly_v0`.
 
 `degree` is redundant (it should equal `coeffs.size - 1`), but it is useful for fast validation.
 -/
-structure PiecewisePolyCertificate where
+structure Certificate where
   /-- Polynomial degree `d` (so each piece has `d+1` coefficients). -/
   degree : Nat
   /-- Number of knot points. -/
@@ -160,7 +160,7 @@ def requireArrayEntry {α : Type} (ctx : String) (xs : Array α) (i : Nat) : IO 
   | none => throw <| IO.userError s!"{ctx}: missing entry at index {i} (size={xs.size})"
 
 /-- Parse the `piecewise_poly_v0` JSON payload into a structured certificate. -/
-def parsePiecewisePolyCertificate (j : Json) : IO PiecewisePolyCertificate := do
+def parse (j : Json) : IO Certificate := do
   let top ← expectObject j "top-level"
   expectFormat top "piecewise_poly_v0"
   let degree ← expectFieldNat top "degree" "top-level"
@@ -197,7 +197,7 @@ def parsePiecewisePolyCertificate (j : Json) : IO PiecewisePolyCertificate := do
 namespace Internal
 
 /-- Validate the knot partition and polynomial metadata, including for direct in-memory callers. -/
-def checkStructure (cert : PiecewisePolyCertificate) : IO Unit := do
+def checkStructure (cert : Certificate) : IO Unit := do
   let n := cert.n
   let xs := Tensor.to cert.xs (Array Rat)
   if n < 2 then
@@ -235,7 +235,7 @@ This is the smallest checker core for this format: it validates the structure an
 rational arithmetic with no tolerances, so a passing check means the certificate's equalities
 hold exactly as stated.
 -/
-def checkCertificateRat (cert : PiecewisePolyCertificate) : IO Unit := do
+def checkCertificateRat (cert : Certificate) : IO Unit := do
   Internal.checkStructure cert
   let xs := Tensor.to cert.xs (Array Rat)
   let ys := Tensor.to cert.ys (Array Rat)
@@ -259,7 +259,7 @@ Check a `piecewise_poly_v0` certificate payload.
 Raises `IO.userError` on the first mismatch; prints a short success message otherwise.
 -/
 def checkJson (j : Json) : IO Unit := do
-  let cert ← parsePiecewisePolyCertificate j
+  let cert ← parse j
   checkCertificateRat cert
   IO.println "Piecewise polynomial certificate verified."
 
@@ -301,7 +301,7 @@ The check is deliberately strict:
 - every rational in the cert must be exactly representable as a finite `ExecFloat.Binary 8 23`,
 - comparisons use IEEE-style `BEq` (so `+0 == -0`, and NaNs never compare equal).
 -/
-def checkCertificateIEEE32ExecExact (cert : PiecewisePolyCertificate) : IO Unit := do
+def checkCertificateIEEE32ExecExact (cert : Certificate) : IO Unit := do
   Internal.checkStructure cert
   let xsQ := Tensor.to cert.xs (Array Rat)
   let ysQ := Tensor.to cert.ys (Array Rat)
@@ -341,7 +341,7 @@ def checkCertificateIEEE32ExecExact (cert : PiecewisePolyCertificate) : IO Unit 
 /-- Check a piecewise-polynomial certificate stored as JSON, including `ExecFloat.Binary 8 23`
 semantics. -/
 def checkJsonIEEE32ExecExact (j : Json) : IO Unit := do
-  let cert ← parsePiecewisePolyCertificate j
+  let cert ← parse j
   checkCertificateRat cert
   IO.println "Piecewise polynomial certificate verified."
   checkCertificateIEEE32ExecExact cert

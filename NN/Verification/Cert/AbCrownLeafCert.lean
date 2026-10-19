@@ -113,7 +113,7 @@ three failure modes call for different responses: a leaf outside the root box me
 built the wrong region, a failed prune inequality means the producer's bound does not clear the
 threshold, and a stale `witness_margin` means the document disagrees with itself.
 -/
-def checkAbCrownLeafArtifact (path : String) : IO Unit := do
+def check (path : String) : IO Unit := do
   let topObj ← readJsonObjectFile path
   expectFormat topObj "abcrown_leaf_artifact_v0_1"
   let inputDim ← expectFieldNat topObj "input_dim" "top-level"
@@ -235,6 +235,6 @@ def run (args : List String) : IO Unit := do
   match TorchLean.CLI.checkNoArgs rest with
   | .ok () => pure ()
   | .error e => throw <| IO.userError s!"{e}\n\n{usage}"
-  checkAbCrownLeafArtifact path
+  check path
 
 end NN.Verification.Cert.AbCrownLeafCert

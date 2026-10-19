@@ -132,10 +132,6 @@ def byteDecodeBytes? (s : String) : Option ByteArray :=
       some (acc.push b))
     (some ByteArray.empty)
 
-/-- Decode GPT-2 byte-to-unicode escaped text strictly as UTF-8. -/
-def byteDecode? (s : String) : Option String := do
-  String.fromUTF8? (← byteDecodeBytes? s)
-
 /-- Display a token prefix even when it ends partway through a Unicode character.
 Malformed bytes become replacement characters; complete valid characters are retained. -/
 def displayBytes (bytes : ByteArray) : String := Id.run do

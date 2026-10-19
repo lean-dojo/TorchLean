@@ -226,7 +226,7 @@ the existing numerical primitives.
   theorems retain their domain and no-tie hypotheses.
 - Max pooling skips padded cells and sends each output cotangent to the first row-major finite
   maximum at ties. NaNs propagate, with the last encountered NaN selected by both forward and
-  backward (`NN/Spec/Layers/Pooling/Spatial.lean`). Average pooling counts padded cells as
+  backward (`NN/Spec/Layers/Pooling.lean`). Average pooling counts padded cells as
   zero in the whole-window denominator. Implementation-defined accumulation order does not permit
   changing these selection or padding conventions.
 - Seeded random operations must preserve the documented seeded-runtime contract or reject an

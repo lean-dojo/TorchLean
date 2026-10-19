@@ -31,14 +31,14 @@ namespace Tape
 
 /-- Concatenate along the leading dimension, preserving the common trailing shape. -/
 @[inline]
-def concat {n m : Nat} {s : Shape} (t : Tape AnyBuffer) (aId bId : Nat) : Result (Tape AnyBuffer
+def concat {n m : Nat} {s : Shape} (t : Tape SomeBuffer) (aId bId : Nat) : Result (Tape SomeBuffer
     × Nat) := do
   let inner : Nat := Spec.Shape.size s
   let nLen : Nat := n * inner
   let mLen : Nat := m * inner
-  let nLen32 ← AnyBuffer.natToU32Checked nLen
-  let mLen32 ← AnyBuffer.natToU32Checked mLen
-  let nmLen32 ← AnyBuffer.natToU32Checked (nLen + mLen)
+  let nLen32 ← SomeBuffer.natToU32Checked nLen
+  let mLen32 ← SomeBuffer.natToU32Checked mLen
+  let nmLen32 ← SomeBuffer.natToU32Checked (nLen + mLen)
   binary (t := t) "concat_leading_axis" aId bId (.dim n s) (.dim m s) (.dim (n + m) s)
     (forward := fun a b => Buffer.concatBuffers a b nLen32 mLen32)
     (backward := fun _a _b dLdy =>
@@ -47,18 +47,18 @@ def concat {n m : Nat} {s : Shape} (t : Tape AnyBuffer) (aId bId : Nat) : Result
       (dA, dB))
 
 /-- Slice along the leading dimension: `x[start:start+len]`. -/
-@[inline] def slice {n : Nat} {s : Shape} (t : Tape AnyBuffer) (xId : Nat) (start len : Nat)
-    (_h : start + len ≤ n) : Result (Tape AnyBuffer × Nat) := do
+@[inline] def slice {n : Nat} {s : Shape} (t : Tape SomeBuffer) (xId : Nat) (start len : Nat)
+    (_h : start + len ≤ n) : Result (Tape SomeBuffer × Nat) := do
   let inner : Nat := Spec.Shape.size s
   let nTot : Nat := n * inner
   let startOff : Nat := start * inner
   let lenTot : Nat := len * inner
   let rightTot : Nat := nTot - (startOff + lenTot)
-  let nTot32 ← AnyBuffer.natToU32Checked nTot
-  let start32 ← AnyBuffer.natToU32Checked startOff
-  let len32 ← AnyBuffer.natToU32Checked lenTot
-  let right32 ← AnyBuffer.natToU32Checked rightTot
-  let midLen32 ← AnyBuffer.natToU32Checked (startOff + lenTot)
+  let nTot32 ← SomeBuffer.natToU32Checked nTot
+  let start32 ← SomeBuffer.natToU32Checked startOff
+  let len32 ← SomeBuffer.natToU32Checked lenTot
+  let right32 ← SomeBuffer.natToU32Checked rightTot
+  let midLen32 ← SomeBuffer.natToU32Checked (startOff + lenTot)
   unary (t := t) "slice" xId (.dim n s) (.dim len s)
     (forward := fun x => Buffer.sliceBuffer x nTot32 start32 len32)
     (backward := fun _x dLdy =>
@@ -86,7 +86,7 @@ def moveAxisToFrontDepths (axis : Nat) : List Nat :=
 /-- Check each adjacent-swap depth before it crosses the CUDA ABI. -/
 def checkedSwapSteps (depths : List Nat) : Result (List SwapStep) :=
   depths.mapM fun depth => do
-    let depth32 ← AnyBuffer.natToU32Checked depth
+    let depth32 ← SomeBuffer.natToU32Checked depth
     pure (depth, depth32)
 
 /-- Apply swaps to an owned buffer, releasing each consumed intermediate. -/
@@ -117,14 +117,14 @@ def finTensorToIndexArray {n count : Nat}
 end Indexing
 
 /-- Select one bounded coordinate from any tensor axis. -/
-@[inline] def select {s : Shape} (t : Tape AnyBuffer) (xId : Nat) (axis : Nat)
+@[inline] def select {s : Shape} (t : Tape SomeBuffer) (xId : Nat) (axis : Nat)
     [Shape.AxisInBounds axis s] (index : Fin (Shape.axisSize s axis)) :
-    Result (Tape AnyBuffer × Nat) := do
+    Result (Tape SomeBuffer × Nat) := do
   let outShape := s.eraseAxis axis
   let x ← requireValue (t := t) xId s
-  let rows32 ← AnyBuffer.natToU32Checked (Shape.axisSize s axis)
-  let cols32 ← AnyBuffer.numelU32 outShape
-  let inputSize32 ← AnyBuffer.numelU32 s
+  let rows32 ← SomeBuffer.natToU32Checked (Shape.axisSize s axis)
+  let cols32 ← SomeBuffer.numelU32 outShape
+  let inputSize32 ← SomeBuffer.numelU32 s
   let steps ← Indexing.checkedSwapSteps (Indexing.moveAxisToFrontDepths axis)
   let reverseSteps := steps.reverse
   let one32 : UInt32 := 1
@@ -132,7 +132,7 @@ end Indexing
   let moved := Indexing.permuteBorrowed x s steps
   let gathered := Buffer.gatherRows moved rows32 cols32 indices one32
   let y := Indexing.releasePermutedThen steps moved gathered
-  let node : Node AnyBuffer :=
+  let node : Node SomeBuffer :=
     { name := some s!"select(axis={axis}, index={index.val})"
       value := { s := outShape, buf := y }
       requiresGrad := (t.getNode? xId).any (·.requiresGrad)
@@ -148,19 +148,19 @@ end Indexing
   pure (t.addNode node)
 
 /-- Select several bounded coordinates from any tensor axis. -/
-@[inline] def indexSelect {s : Shape} (t : Tape AnyBuffer) (xId : Nat) (axis count : Nat)
+@[inline] def indexSelect {s : Shape} (t : Tape SomeBuffer) (xId : Nat) (axis count : Nat)
     [Shape.AxisInBounds axis s]
-    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape AnyBuffer × Nat) := do
+    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape SomeBuffer × Nat) := do
   let outShape := s.replaceAxis axis count
   let tailShape := s.eraseAxis axis
   let frontInputShape := .dim (Shape.axisSize s axis) tailShape
   let frontOutputShape := .dim count tailShape
   let x ← requireValue (t := t) xId s
-  let rows32 ← AnyBuffer.natToU32Checked (Shape.axisSize s axis)
-  let cols32 ← AnyBuffer.numelU32 tailShape
-  let count32 ← AnyBuffer.natToU32Checked count
-  let inputSize32 ← AnyBuffer.numelU32 s
-  let _ ← AnyBuffer.numelU32 outShape
+  let rows32 ← SomeBuffer.natToU32Checked (Shape.axisSize s axis)
+  let cols32 ← SomeBuffer.numelU32 tailShape
+  let count32 ← SomeBuffer.natToU32Checked count
+  let inputSize32 ← SomeBuffer.numelU32 s
+  let _ ← SomeBuffer.numelU32 outShape
   let steps ← Indexing.checkedSwapSteps (Indexing.moveAxisToFrontDepths axis)
   let reverseSteps := steps.reverse
   let indexArray := Indexing.finTensorToIndexArray indices
@@ -168,7 +168,7 @@ end Indexing
   let gathered := Buffer.gatherRows moved rows32 cols32 indexArray count32
   let frontY := Indexing.releasePermutedThen steps moved gathered
   let y := Indexing.permuteOwned frontY frontOutputShape reverseSteps
-  let node : Node AnyBuffer :=
+  let node : Node SomeBuffer :=
     { name := some s!"index_select(axis={axis})"
       value := { s := outShape, buf := y }
       requiresGrad := (t.getNode? xId).any (·.requiresGrad)
@@ -186,19 +186,19 @@ end Indexing
   pure (t.addNode node)
 
 /-- Add indexed source slices into any tensor axis. -/
-@[inline] def scatterAdd {s : Shape} (t : Tape AnyBuffer) (baseId sourceId : Nat) (axis count : Nat)
-    [Shape.AxisInBounds axis s]
-    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape AnyBuffer × Nat) := do
+@[inline] def scatterAdd {s : Shape} (t : Tape SomeBuffer) (baseId sourceId : Nat)
+    (axis count : Nat) [Shape.AxisInBounds axis s]
+    (indices : Tensor (Fin (Shape.axisSize s axis)) [count]) : Result (Tape SomeBuffer × Nat) := do
   let sourceShape := s.replaceAxis axis count
   let tailShape := s.eraseAxis axis
   let frontInputShape := .dim (Shape.axisSize s axis) tailShape
   let frontSourceShape := .dim count tailShape
   let base ← requireValue (t := t) baseId s
   let source ← requireValue (t := t) sourceId sourceShape
-  let rows32 ← AnyBuffer.natToU32Checked (Shape.axisSize s axis)
-  let cols32 ← AnyBuffer.numelU32 tailShape
-  let count32 ← AnyBuffer.natToU32Checked count
-  let _ ← AnyBuffer.numelU32 s
+  let rows32 ← SomeBuffer.natToU32Checked (Shape.axisSize s axis)
+  let cols32 ← SomeBuffer.numelU32 tailShape
+  let count32 ← SomeBuffer.natToU32Checked count
+  let _ ← SomeBuffer.numelU32 s
   let steps ← Indexing.checkedSwapSteps (Indexing.moveAxisToFrontDepths axis)
   let reverseSteps := steps.reverse
   let indexArray := Indexing.finTensorToIndexArray indices
@@ -209,7 +209,7 @@ end Indexing
   let frontY := Indexing.releasePermutedThen steps movedSource scattered
   let frontY := Indexing.releasePermutedThen steps movedBase frontY
   let y := Indexing.permuteOwned frontY frontInputShape reverseSteps
-  let node : Node AnyBuffer :=
+  let node : Node SomeBuffer :=
     { name := some s!"scatter_add(axis={axis})"
       value := { s := s, buf := y }
       requiresGrad := (t.getNode? baseId).any (·.requiresGrad) ||

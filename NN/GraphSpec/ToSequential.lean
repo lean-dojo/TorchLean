@@ -17,7 +17,7 @@ This module converts a GraphSpec `Chain` to a TorchLean `NN.Seq` when every prim
 parameter ABI expected by the sequential trainer.
 
 This is a partial adapter, not the general GraphSpec execution path. `Chain.toProgram` interprets
-every supported GraphSpec primitive through the operation-polymorphic `TorchLean.Program`
+every supported GraphSpec primitive through the operation-polymorphic `TorchLean.Runtime.Program`
 interface, including primitives with no `Layer`. By contrast, `ToSequential.toSeq` returns
 `Except String` and rejects a chain at the first primitive without a sequential-layer view.
 

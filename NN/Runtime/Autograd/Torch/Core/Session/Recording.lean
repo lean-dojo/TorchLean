@@ -47,7 +47,7 @@ def getValue {α : Type} [Storage α] [TensorTransfer α]
     let stored ← match tape.getValue? x.id with
       | some v => pure v
       | none => throw <| IO.userError "torch: invalid tensor id (missing CUDA value)"
-    let hostValue ← CudaBridge.ofAnyBuffer (α := α) stored
+    let hostValue ← CudaBridge.ofSomeBuffer (α := α) stored
     if h : hostValue.shape = sh then
       pure (hostValue.cast h)
     else
@@ -78,7 +78,7 @@ def input {α : Type} [Storage α] [TensorTransfer α]
   IO (TensorRef α sh) := do
   let requiresGrad := s.options.gradEnabled && requiresGrad
   if Config.device s.options == .cuda then
-    let buffer ← CudaBridge.toAnyBuffer (α := α) (s := sh) v
+    let buffer ← CudaBridge.toSomeBuffer (α := α) (s := sh) v
     let id ← s.recordCudaPure fun tape =>
       Runtime.Autograd.LibTorch.Tape.leaf (t := tape) (value := buffer)
         (name := name) (requiresGrad := requiresGrad)
@@ -111,8 +111,8 @@ def detach {α : Type} [Storage α] [Context α] [TensorTransfer α]
       | some v => pure v
       | none => throw <| IO.userError "torch: detach: invalid tensor id (missing CUDA value)"
     if _h : stored.s = sh then
-      let stored' : Runtime.Autograd.LibTorch.AnyBuffer := { s := sh, buf := stored.buf }
-      let node : Runtime.Autograd.Node Runtime.Autograd.LibTorch.AnyBuffer :=
+      let stored' : Runtime.Autograd.LibTorch.SomeBuffer := { s := sh, buf := stored.buf }
+      let node : Runtime.Autograd.Node Runtime.Autograd.LibTorch.SomeBuffer :=
         { name := name
           value := stored'
           ownsValue := false
@@ -164,7 +164,7 @@ def use {α : Type} [Storage α] [TensorTransfer α]
       s.recordCpuPure fun tape =>
         Runtime.Autograd.Tape.leaf (t := tape) (s := sh)
           (value := v) (name := p.name) (requiresGrad := requiresGrad)
-  s.paramsByLeaf.modify (fun m => m.insert id (AnyParam.ofParam p))
+  s.paramsByLeaf.modify (fun m => m.insert id (SomeParam.ofParam p))
   s.parameterStorageByLeaf.modify fun m =>
     m.insert id
       { shape := sh

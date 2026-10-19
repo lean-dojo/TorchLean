@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.API.Neural.Blocks
-public import NN.API.Neural.Impl
+public import NN.API.Neural.Internal
 public import NN.API.Seeded
 
 /-!
@@ -43,10 +43,11 @@ branch order. -/
 def stackBranches {σ τ : Spec.Shape} :
     (E : Nat) → (Fin (E + 1) → Sequential σ τ) → Sequential σ (τ.prependDim (E + 1))
   | 0, branches =>
-      Runtime.Autograd.Model.Layers.Seq.comp (branches 0) (Impl.reshape τ (τ.prependDim 1))
+      Runtime.Autograd.Model.Layers.Seq.comp (branches 0) (nn.Internal.reshape τ (τ.prependDim 1))
   | E + 1, branches =>
       Nat.add_comm 1 (E + 1) ▸ concatBranches
-        (Runtime.Autograd.Model.Layers.Seq.comp (branches 0) (Impl.reshape τ (τ.prependDim 1)))
+        (Runtime.Autograd.Model.Layers.Seq.comp (branches 0)
+          (nn.Internal.reshape τ (τ.prependDim 1)))
         (stackBranches E fun i => branches i.succ)
 
 /--

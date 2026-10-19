@@ -48,7 +48,7 @@ def foldRowsColsLastAxis (s : Shape) : Result (UInt32 × UInt32) := do
       else if rowsFold = 0 then
         throw "autograd: softmax: folded leading dimension is 0"
       else
-        pure (← AnyBuffer.natToU32Checked rowsFold, ← AnyBuffer.natToU32Checked cols)
+        pure (← SomeBuffer.natToU32Checked rowsFold, ← SomeBuffer.natToU32Checked cols)
 
 /-- Broadcast a scalar CUDA buffer to `outShape`. Used by scalar reductions during backprop. -/
 def broadcastScalarToShape (g : Buffer) (outShape : Shape) : Buffer :=

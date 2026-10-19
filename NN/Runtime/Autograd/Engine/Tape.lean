@@ -12,7 +12,7 @@ public import NN.Spec.Core.Shape
 # The autograd tape
 
 One tape serves every device. A `Tape V` is a grow-only array of nodes whose forward values have
-type `V`: the CPU stores `Spec.SomeTensor α`, CUDA stores `LibTorch.AnyBuffer`. Each node keeps its
+type `V`: the CPU stores `Spec.SomeTensor α`, CUDA stores `LibTorch.SomeBuffer`. Each node keeps its
 parents and a local VJP, and the reverse sweeps below walk node ids from last to first, summing the
 contributions that several children send to one parent.
 

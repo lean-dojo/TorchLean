@@ -9,7 +9,7 @@ Authors: TorchLean Team
 module -- shake: keep-downstream
 
 public import NN.API.Rand -- shake: keep
-public import NN.API.Neural.Impl -- shake: keep
+public import NN.API.Neural.Internal -- shake: keep
 public import NN.Runtime.Autograd.Model.Functional.SelectiveScan
 public import NN.Runtime.Autograd.Model.Functional.Spectral
 public import NN.Runtime.Autograd.Model.Functional.Fourier.Transform
@@ -23,8 +23,8 @@ namespace TorchLean
 
 Every public layer constructor lives here and returns `nn.Builder`, drawing deterministic
 initialization seeds from an explicit seed stream. The explicit-seed implementations behind these
-builders live in `NN.API.Neural.Impl`, which only this module imports; `nn.build seed` is the way to
-turn a builder into a model with fixed seeds.
+builders live in `nn.Internal` (`NN.API.Neural.Internal`); `nn.build seed` is the way to turn a
+builder into a model with fixed seeds.
 
 `nn.Sequential` lives in `Type 1` because every layer stores an execution-polymorphic forward
 program, so it cannot be returned directly from `IO`. We draw a base seed in `IO`, then use
@@ -104,7 +104,7 @@ def withOptionalDropoutSeed {α : Type u}
 ## Layer constructors
 
 Each builder validates its configuration, consumes exactly the seeds its stochastic initializers
-need, and delegates to `nn.Impl`.
+need, and delegates to `nn.Internal`.
 -/
 
 /--
@@ -123,7 +123,7 @@ def globalAvgPool {d channels : Nat}
     Builder (Sequential
       (batchShape.concat ((spatial.to Shape).prependDim channels))
       (batchShape.appendDim channels)) :=
-  pure <| Impl.globalAvgPool batchShape (channels := channels) spatial
+  pure <| nn.Internal.globalAvgPool batchShape (channels := channels) spatial
 
 namespace heads
 
@@ -143,7 +143,7 @@ def classifier {featureShape : Shape} (classCount : Nat)
       "Classifier: class count must be positive"
   else
     withSeed fun weightSeed =>
-      pure <| Impl.affineHead batchShape classCount weightSeed
+      pure <| nn.Internal.affineHead batchShape classCount weightSeed
 
 /-- Build a regression head that flattens the feature suffix and seeds its weight. -/
 def regressor {featureShape : Shape} (outputWidth : Nat := 1)
@@ -161,7 +161,7 @@ def regressor {featureShape : Shape} (outputWidth : Nat := 1)
       "Regressor: output width must be positive"
   else
     withSeed fun weightSeed =>
-      pure <| Impl.affineHead batchShape outputWidth weightSeed
+      pure <| nn.Internal.affineHead batchShape outputWidth weightSeed
 
 end heads
 
@@ -197,25 +197,25 @@ def model : nn.Builder (nn.Sequential [10] [10]) :=
 -/
 def softmax {shape : Shape} (axis : Nat) :
     Builder (Sequential shape shape) :=
-  pure (Impl.softmax (s := shape) axis)
+  pure (nn.Internal.softmax (s := shape) axis)
 
 /-- Build a stable log-softmax layer along any valid tensor dimension without consuming a seed. -/
 def logSoftmax {shape : Shape} (axis : Nat) :
     Builder (Sequential shape shape) :=
-  pure (Impl.logSoftmax (s := shape) axis)
+  pure (nn.Internal.logSoftmax (s := shape) axis)
 
 /-- Build a reduction that sums every tensor entry to a scalar. -/
 def sum {shape : Shape} : Builder (Sequential shape []) :=
-  pure (Impl.sum (s := shape))
+  pure (nn.Internal.sum (s := shape))
 
 /-- Build a layer that flattens the entire input shape into one vector. -/
 def flatten {shape : Shape} : Builder (Sequential shape [shape.size]) :=
-  pure <| Impl.flatten (s := shape)
+  pure <| nn.Internal.flatten (s := shape)
 
 /-- Build a reshape that is rejected by model validation when the element counts differ. -/
 def reshape (source target : Shape) :
     Builder (Sequential source target) :=
-  pure (Impl.reshape source target)
+  pure (nn.Internal.reshape source target)
 
 /-- Flatten each tensor after an arbitrary batch shape. -/
 def flattenAfter (batchShape : Shape := []) {shape : Shape} :
@@ -223,7 +223,7 @@ def flattenAfter (batchShape : Shape := []) {shape : Shape} :
       (Sequential
         (batchShape.concat shape)
         (batchShape.appendDim shape.size)) :=
-  pure (Impl.flattenAfter batchShape (shape := shape))
+  pure (nn.Internal.flattenAfter batchShape (shape := shape))
 
 /--
 Build max pooling over arbitrary spatial rank using the supplied pooling configuration.
@@ -254,7 +254,7 @@ def maxPool {d channels : Nat} (spatial : Tensor Nat [d])
           (((config.outputSpatial spatial).to Shape).prependDim channels))
         "MaxPool" message
   | .ok () =>
-      pure (Impl.maxPool batchShape (channels := channels) spatial config)
+      pure (nn.Internal.maxPool batchShape (channels := channels) spatial config)
 
 /-- Build average pooling over arbitrary spatial rank using the supplied pooling configuration. -/
 def avgPool {d channels : Nat} (spatial : Tensor Nat [d])
@@ -271,7 +271,7 @@ def avgPool {d channels : Nat} (spatial : Tensor Nat [d])
           (((config.outputSpatial spatial).to Shape).prependDim channels))
         "AvgPool" message
   | .ok () =>
-      pure (Impl.avgPool batchShape (channels := channels) spatial config)
+      pure (nn.Internal.avgPool batchShape (channels := channels) spatial config)
 
 /-- Build a transpose convolution over arbitrary spatial rank. -/
 def convTranspose {d : Nat} {inputChannels : Nat}
@@ -290,7 +290,7 @@ def convTranspose {d : Nat} {inputChannels : Nat}
         "ConvTranspose" message
   | .ok () =>
       withInitializationSeed config.weightInitialization fun kernelSeed =>
-        pure <| Impl.convTranspose batchShape spatial config kernelSeed
+        pure <| nn.Internal.convTranspose batchShape spatial config kernelSeed
 
 /--
 Build an affine layer, consuming seeds only for stochastic initializers.
@@ -326,7 +326,7 @@ def linear (inputWidth outputWidth : Nat) (batchShape : Shape := [])
         config.weightInitialization?.getD (.xavierUniform inputWidth outputWidth)
       withInitializationSeed weightInitialization fun weightSeed =>
         withInitializationSeed config.biasInitialization fun biasSeed =>
-          pure <| Impl.linear inputWidth outputWidth weightSeed biasSeed
+          pure <| nn.Internal.linear inputWidth outputWidth weightSeed biasSeed
             (batchShape := batchShape) (config := config)
 
 /--
@@ -348,8 +348,8 @@ def rnn (sequenceLength inputWidth hiddenWidth : Nat) (batchShape : Shape := [])
       pure <| nn.Internal.invalidConfiguration input output "RNN" message
   | .ok () =>
       withSeed fun weightSeed =>
-        pure <| Impl.batchedRecurrent batchShape
-          (Impl.rnn sequenceLength inputWidth hiddenWidth weightSeed)
+        pure <| nn.Internal.batchedRecurrent batchShape
+          (nn.Internal.rnn sequenceLength inputWidth hiddenWidth weightSeed)
 
 /--
 Build a seeded GRU, shared over every index in `batchShape`.
@@ -375,13 +375,13 @@ def gru (sequenceLength inputWidth hiddenWidth : Nat) (batchShape : Shape := [])
           withSeed fun resetWeightSeed =>
             withSeed fun updateWeightSeed =>
               withSeed fun candidateWeightSeed =>
-                pure <| Impl.batchedRecurrent batchShape
-                  (Impl.gru sequenceLength inputWidth hiddenWidth
+                pure <| nn.Internal.batchedRecurrent batchShape
+                  (nn.Internal.gru sequenceLength inputWidth hiddenWidth
                     resetWeightSeed updateWeightSeed candidateWeightSeed)
       | .resetAfter =>
           withSeed fun inputWeightSeed =>
             withSeed fun hiddenWeightSeed =>
-              pure <| Impl.batchedRecurrent batchShape
+              pure <| nn.Internal.batchedRecurrent batchShape
                 (Sequential.fromLayer <| Runtime.Autograd.Model.Layers.gruResetAfter
                   sequenceLength inputWidth hiddenWidth inputWeightSeed hiddenWeightSeed)
 
@@ -402,8 +402,8 @@ def mamba (sequenceLength inputWidth hiddenWidth : Nat) (batchShape : Shape := [
       withSeed fun inputWeightSeed =>
         withSeed fun stateWeightSeed =>
           withSeed fun gateWeightSeed =>
-            pure <| Impl.batchedRecurrent batchShape
-              (Impl.mamba sequenceLength inputWidth hiddenWidth
+            pure <| nn.Internal.batchedRecurrent batchShape
+              (nn.Internal.mamba sequenceLength inputWidth hiddenWidth
                  inputWeightSeed stateWeightSeed gateWeightSeed (options := options))
 
 /--
@@ -431,8 +431,8 @@ def lstm (sequenceLength inputWidth hiddenWidth : Nat) (batchShape : Shape := []
         withSeed fun inputWeightSeed =>
           withSeed fun candidateWeightSeed =>
             withSeed fun outputWeightSeed =>
-              pure <| Impl.batchedRecurrent batchShape
-                (Impl.lstm sequenceLength inputWidth hiddenWidth
+              pure <| nn.Internal.batchedRecurrent batchShape
+                (nn.Internal.lstm sequenceLength inputWidth hiddenWidth
                   forgetWeightSeed inputWeightSeed candidateWeightSeed outputWeightSeed)
 
 /--
@@ -466,7 +466,7 @@ def conv {d : Nat} {inputChannels : Nat} (spatial : Tensor Nat [d])
         "Conv" message
   | .ok () =>
       withInitializationSeed config.weightInitialization fun kernelSeed =>
-        pure <| Impl.conv batchShape (inputChannels := inputChannels) spatial config
+        pure <| nn.Internal.conv batchShape (inputChannels := inputChannels) spatial config
           kernelSeed
 
 /--
@@ -515,7 +515,7 @@ def batchNorm {d channels : Nat}
     Builder (Sequential
       (batchShape.concat ((spatial.to Shape).prependDim channels))
       (batchShape.concat ((spatial.to Shape).prependDim channels))) :=
-  pure <| Impl.batchNorm batchShape spatial (momentum := momentum) (eps := eps)
+  pure <| nn.Internal.batchNorm batchShape spatial (momentum := momentum) (eps := eps)
 
 /--
 Build instance normalization using each sample and channel's spatial mean and variance.
@@ -531,7 +531,7 @@ def instanceNorm {d channels : Nat}
     Builder (Sequential
       (batchShape.concat ((spatial.to Shape).prependDim channels))
       (batchShape.concat ((spatial.to Shape).prependDim channels))) :=
-  pure <| Impl.instanceNorm batchShape spatial (eps := eps) (affine := affine) (bias := bias)
+  pure <| nn.Internal.instanceNorm batchShape spatial (eps := eps) (affine := affine) (bias := bias)
 
 /--
 Build group normalization with equal, contiguous groups of channels.
@@ -547,7 +547,8 @@ def groupNorm {d channels : Nat}
     Builder (Sequential
       (batchShape.concat ((spatial.to Shape).prependDim channels))
       (batchShape.concat ((spatial.to Shape).prependDim channels))) :=
-  pure <| Impl.groupNorm batchShape spatial groups (eps := eps) (affine := affine) (bias := bias)
+  pure <| nn.Internal.groupNorm batchShape spatial groups (eps := eps) (affine := affine)
+    (bias := bias)
 
 /--
 Build an embedding layer for dense vocabulary weights.
@@ -569,7 +570,7 @@ def oneHotEmbedding (vocabularySize embeddingWidth : Nat)
         "OneHotEmbedding" message
   | .ok () =>
       withInitializationSeed config.weightInitialization fun seed =>
-        pure <| Impl.oneHotEmbedding vocabularySize embeddingWidth config seed
+        pure <| nn.Internal.oneHotEmbedding vocabularySize embeddingWidth config seed
           (batchShape := batchShape)
 
 /--
@@ -593,7 +594,7 @@ def embedding (vocabularySize embeddingWidth : Nat) (config : Embedding.Config :
       pure <| Embedding.Internal.invalid vocabularySize embeddingWidth message
   | .ok () =>
       withInitializationSeed config.weightInitialization fun seed =>
-        pure <| Impl.embedding vocabularySize embeddingWidth config seed
+        pure <| nn.Internal.embedding vocabularySize embeddingWidth config seed
 
 /-- Build deterministic sinusoidal positional encoding over a sequence suffix. -/
 def sinusoidalPositionalEncoding (batchShape : Shape := [])
@@ -608,7 +609,7 @@ def sinusoidalPositionalEncoding (batchShape : Shape := [])
       pure <| nn.Internal.invalidConfiguration
         shape shape "SinusoidalPositionalEncoding" message
   | .ok () =>
-      pure <| Impl.sinusoidalPositionalEncoding batchShape
+      pure <| nn.Internal.sinusoidalPositionalEncoding batchShape
         (sequenceLength := sequenceLength) (embeddingWidth := embeddingWidth) config
 
 /-- Build deterministic rotary positional encoding for multi-head sequence features. -/
@@ -622,7 +623,7 @@ def rope (batchShape : Shape := []) {sequenceLength headWidth : Nat}
       let shape := batchShape.concat [sequenceLength, headWidth]
       pure <| nn.Internal.invalidConfiguration shape shape "RoPE" message
   | .ok () =>
-      pure <| Impl.rope batchShape
+      pure <| nn.Internal.rope batchShape
         (sequenceLength := sequenceLength) (headWidth := headWidth) config
 
 /-- Build learned positional embeddings, consuming a seed only for stochastic initialization. -/
@@ -639,7 +640,7 @@ def learnedPositionalEmbedding (batchShape : Shape := [])
         shape shape "LearnedPositionalEmbedding" message
   | .ok () =>
       withInitializationSeed config.initialization fun positionSeed =>
-        pure <| Impl.learnedPositionalEmbedding batchShape
+        pure <| nn.Internal.learnedPositionalEmbedding batchShape
           (sequenceLength := sequenceLength) (embeddingWidth := embeddingWidth)
           config (positionSeed := positionSeed)
 
@@ -666,7 +667,8 @@ def model : nn.Builder (nn.Sequential [16, 64] [16, 64]) :=
 def layerNorm (batchShape : Shape := []) {width : Nat}
     (eps : Rat := 1e-5) (affine bias : Bool := true) :
     Builder (Sequential (batchShape.appendDim width) (batchShape.appendDim width)) :=
-  pure <| Impl.layerNorm batchShape (width := width) (eps := eps) (affine := affine) (bias := bias)
+  pure <| nn.Internal.layerNorm batchShape (width := width) (eps := eps) (affine := affine)
+    (bias := bias)
 
 /--
 Build RMS normalization over the final axis.
@@ -680,7 +682,7 @@ zero input can produce NaNs; pass a representable positive `eps` before lowering
 def rmsNorm (batchShape : Shape := []) {width : Nat}
     (eps : Rat := 1e-5) (affine : Bool := true) :
     Builder (Sequential (batchShape.appendDim width) (batchShape.appendDim width)) :=
-  pure <| Impl.rmsNorm batchShape (width := width) (eps := eps) (affine := affine)
+  pure <| nn.Internal.rmsNorm batchShape (width := width) (eps := eps) (affine := affine)
 
 /--
 Build seeded multi-head self-attention with an optional fixed attention mask.
@@ -723,7 +725,7 @@ def attention {sequenceLength modelWidth : Nat}
           withInitializationSeed projectionInitialization fun valueWeightSeed =>
             withInitializationSeed outputInitialization fun outputWeightSeed =>
               withOptionalDropoutSeed config.dropout? fun dropoutSeed =>
-                pure <| Impl.attention batchShape
+                pure <| nn.Internal.attention batchShape
                   (sequenceLength := sequenceLength) (modelWidth := modelWidth)
                   config
                   (queryWeightSeed := queryWeightSeed)
@@ -795,7 +797,7 @@ def transformerEncoderBlock {sequenceLength modelWidth : Nat}
                           fun attentionProbabilityDropoutSeed =>
                         withOptionalDropoutSeed config.feedForwardDropout?
                             fun feedForwardHiddenDropoutSeed =>
-                          pure <| Impl.transformerEncoderBlock batchShape
+                          pure <| nn.Internal.transformerEncoderBlock batchShape
                             (sequenceLength := sequenceLength) (modelWidth := modelWidth)
                             config
                             (queryWeightSeed := queryWeightSeed)
@@ -850,7 +852,7 @@ def model : nn.Builder (nn.Sequential [64] [64]) :=
 def dropout {shape : Shape} (p : Float) : Builder (Sequential shape shape) :=
   if p.isFinite && 0.0 <= p && p <= 1.0 then
     withDropoutSeed p fun seed =>
-      pure <| Impl.dropout (s := shape) p (seed := seed)
+      pure <| nn.Internal.dropout (s := shape) p (seed := seed)
   else
     pure <| nn.Internal.invalidConfiguration shape shape "Dropout"
       s!"Dropout: probability must be finite and in [0, 1], got {p}"
@@ -875,7 +877,7 @@ def convBlock {d : Nat} {inputChannels : Nat}
   | .ok () =>
       withInitializationSeed config.convolution.weightInitialization fun kernelSeed =>
         withOptionalDropoutSeed config.dropout? fun dropoutSeed =>
-          pure <| Impl.convBlock batchShape spatial config kernelSeed dropoutSeed
+          pure <| nn.Internal.convBlock batchShape spatial config kernelSeed dropoutSeed
 
 /-- Build a seeded convolution/activation block followed by max pooling. -/
 def convPoolBlock {d : Nat} {inputChannels : Nat}

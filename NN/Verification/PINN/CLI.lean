@@ -9,7 +9,7 @@ module
 public import NN.Verification.PINN.Core
 public import NN.Verification.PINN.PdeParse
 public import NN.API.CLI -- shake: keep
-public import NN.Verification.PINN.PyTorch -- shake: keep
+public import NN.Verification.PINN.PyTorch.ParamStore -- shake: keep
 
 /-!
 # PINN CLI

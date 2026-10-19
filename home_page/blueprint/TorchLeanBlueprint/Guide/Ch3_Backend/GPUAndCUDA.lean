@@ -142,7 +142,7 @@ they can observe:
 - every shape axis, runtime index, and element count fits the `UInt32` CUDA ABI;
 - ranks, axes, strides, and operation-specific dimensions are supported.
 
-Shape-erased values, output seeds, and supplied gradients pass through `AnyBuffer.validate` before
+Shape-erased values, output seeds, and supplied gradients pass through `SomeBuffer.validate` before
 shape-derived indexing. Convolution and pooling also check spatial products independently, so a
 zero channel dimension cannot hide an overflowing spatial shape. Their forward wrappers validate
 the native output length immediately after the FFI returns, before storing the result on the tape.

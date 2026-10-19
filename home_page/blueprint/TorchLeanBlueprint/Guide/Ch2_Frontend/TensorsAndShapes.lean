@@ -1169,7 +1169,7 @@ returns the corresponding tensor value. It has no meaning in another session and
 tensor datatype. Session-backed runtime handles carry an owner token and recording generation;
 operations reject handles from another session and handles retained across `resetTape`.
 
-The maintained CUDA execution path uses a separate physical representation. An `AnyBuffer`
+The maintained CUDA execution path uses a separate physical representation. An `SomeBuffer`
 contains a runtime shape and a native device buffer in contiguous row-major order. Upload and
 download functions connect it to `Tensor`; CUDA tape operations validate the stored shape and buffer
 size before dispatch. Proofs about graph evaluation and explicit kernel contracts cover the

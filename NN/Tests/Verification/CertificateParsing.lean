@@ -117,25 +117,25 @@ open TorchLean
 
 private def splineCertificates : IO Unit := do
   let piece : PolynomialPiece := { lo := 0, hi := 1, coeffs := #[0, 1] }
-  let linear : PiecewisePolyCertificate :=
+  let linear : Certificate :=
     { degree := 1, n := 2, xs := Tensor.from (#[0, 1] : Array Rat),
       ys := Tensor.from (#[0, 1] : Array Rat), pieces := #[piece] }
-  let constant : PiecewisePolyCertificate :=
+  let constant : Certificate :=
     { linear with
       degree := 0
       ys := Tensor.from (#[2, 2] : Array Rat)
       pieces := #[{ piece with coeffs := #[2] }] }
-  let multi : PiecewisePolyCertificate :=
+  let multi : Certificate :=
     { degree := 1, n := 3, xs := Tensor.from (#[0, 1, 2] : Array Rat),
       ys := Tensor.from (#[0, 1, 2] : Array Rat),
       pieces := #[piece, { lo := 1, hi := 2, coeffs := #[1, 1] }] }
-  let empty : PiecewisePolyCertificate :=
+  let empty : Certificate :=
     { degree := 0, n := 0, xs := Tensor.from (#[] : Array Rat),
       ys := Tensor.from (#[] : Array Rat), pieces := #[] }
-  let singleton : PiecewisePolyCertificate :=
+  let singleton : Certificate :=
     { degree := 0, n := 1, xs := Tensor.from (#[0] : Array Rat),
       ys := Tensor.from (#[0] : Array Rat), pieces := #[] }
-  let invalid : Array (String × String × PiecewisePolyCertificate) := #[
+  let invalid : Array (String × String × Certificate) := #[
     ("empty knots", "length ≥ 2", empty),
     ("one knot", "length ≥ 2", singleton),
     ("missing piece", "pieces length mismatch", { linear with pieces := #[] }),
@@ -162,13 +162,13 @@ private def splineCertificates : IO Unit := do
       expectFailure s!"{backend}: {name}" fragment (checker cert)
 
   -- Direct IEEE checking retains its own endpoint semantics.
-  let rounded : PiecewisePolyCertificate :=
+  let rounded : Certificate :=
     { linear with
       ys := Tensor.from (#[16777216, 16777216] : Array Rat)
       pieces := #[{ piece with coeffs := #[16777216, 1] }] }
   checkCertificateIEEE32ExecExact rounded
   expectFailure "exact endpoint disagreement" "endpoint mismatch" (checkCertificateRat rounded)
-  let nondyadic : PiecewisePolyCertificate :=
+  let nondyadic : Certificate :=
     { constant with
       ys := Tensor.from (#[1/3, 1/3] : Array Rat)
       pieces := #[{ piece with coeffs := #[1/3] }] }
@@ -184,7 +184,7 @@ private def splineCertificates : IO Unit := do
   let missingJson ← IO.ofExcept <| Json.parse
     r#"{"format":"piecewise_poly_v0","degree":1,"xs":["0","1"],"ys":["0","1"],"pieces":[]}"#
   expectFailure "JSON missing piece" "pieces length mismatch"
-    (discard <| parsePiecewisePolyCertificate missingJson)
+    (discard <| NN.Verification.Splines.PiecewisePolyCert.parse missingJson)
 
 def run : IO Unit := do
   boxRegions

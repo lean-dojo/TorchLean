@@ -81,7 +81,7 @@ PyTorch comparison: `torch.matmul(a, b)` for operands of rank at least two.
   [broadcastB : Shape.BroadcastTo batchB batch] : Result (Tape (Spec.SomeTensor α) × Nat) :=
   binary (α := α) (t := t) (σ₁ := batchA.concat [m, n]) (σ₂ := batchB.concat [n, p])
     (τ := batch.concat [m, p]) "matmul" aId bId
-    (forward := TorchLean.Tensor.matmulSpec broadcastA.proof broadcastB.proof)
+    (forward := TorchLean.Tensor.batchMatmulSpec broadcastA.proof broadcastB.proof)
     (backward := TorchLean.Tensor.matmulBackwardSpec broadcastA.proof broadcastB.proof)
 
 /--

@@ -46,7 +46,7 @@ operation does:
 -- different proof obligations.
                          ┌── Interp.spec ──> pure tensor function
 GraphSpec Chain / DAG ──┤
-                         └── toProgram ────> TorchLean.Program
+                         └── toProgram ────> TorchLean.Runtime.Program
                                                 │
                                                 ├── eager execution
                                                 ├── typed graph lowering

@@ -32,14 +32,14 @@ returned buffers are owned by the tape/gradient accumulator; workspace buffers a
 -/
 
 /-- Pointwise addition node for two tensors with the same shape. -/
-@[inline] def add {s : Shape} (t : Tape AnyBuffer) (aId bId : Nat) : Result (Tape AnyBuffer
+@[inline] def add {s : Shape} (t : Tape SomeBuffer) (aId bId : Nat) : Result (Tape SomeBuffer
     × Nat) :=
   binary (t := t) "add" aId bId s s s
     (forward := Buffer.add)
     (backward := fun _a _b dLdy => Buffer.duplicate dLdy)
 
 /-- Pointwise subtraction node for two tensors with the same shape. -/
-@[inline] def sub {s : Shape} (t : Tape AnyBuffer) (aId bId : Nat) : Result (Tape AnyBuffer
+@[inline] def sub {s : Shape} (t : Tape SomeBuffer) (aId bId : Nat) : Result (Tape SomeBuffer
     × Nat) :=
   binary (t := t) "sub" aId bId s s s
     (forward := Buffer.sub)
@@ -48,59 +48,59 @@ returned buffers are owned by the tape/gradient accumulator; workspace buffers a
       (Buffer.copy dLdy, Buffer.releaseThen zeros (Buffer.sub zeros dLdy)))
 
 /-- Pointwise multiplication node for two tensors with the same shape. -/
-@[inline] def mul {s : Shape} (t : Tape AnyBuffer) (aId bId : Nat) : Result (Tape AnyBuffer
+@[inline] def mul {s : Shape} (t : Tape SomeBuffer) (aId bId : Nat) : Result (Tape SomeBuffer
     × Nat) :=
   binary (t := t) "mul" aId bId s s s
     (forward := Buffer.mul)
     (backward := fun a b dLdy => (Buffer.mul dLdy b, Buffer.mul dLdy a))
 
 /-- Direct pointwise negation and its sign-reversing pullback. -/
-@[inline] def neg {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat) :=
+@[inline] def neg {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat) :=
   unary (t := t) "neg" xId s s
     (forward := Buffer.neg) (backward := fun _ seed => Buffer.neg seed)
 
 /-- Multiply by a scalar constant. -/
-@[inline] def scale {s : Shape} (t : Tape AnyBuffer) (xId : Nat) (c : Float) : Result
-    (Tape AnyBuffer × Nat) :=
+@[inline] def scale {s : Shape} (t : Tape SomeBuffer) (xId : Nat) (c : Float) : Result
+    (Tape SomeBuffer × Nat) :=
   unary (t := t) "scale" xId s s
     (forward := fun x => Buffer.scale x c)
     (backward := fun _x dLdy => Buffer.scale dLdy c)
 
 /-- Pointwise absolute-value node. -/
-@[inline] def abs {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat) :=
+@[inline] def abs {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat) :=
   unary (t := t) "abs" xId s s
     (forward := Buffer.abs)
     (backward := fun x dLdy => Buffer.absBwd x dLdy)
 
 /-- Pointwise square-root node using the CUDA buffer derivative convention. -/
-@[inline] def sqrt {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat) :=
+@[inline] def sqrt {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat) :=
   unary (t := t) "sqrt" xId s s
     (forward := Buffer.sqrt)
     (backward := fun x dLdy => Buffer.sqrtBwd x dLdy)
 
 /-- Clamp each element to `[lo, hi]`. -/
-@[inline] def clamp {s : Shape} (t : Tape AnyBuffer) (xId : Nat) (lo hi : Float) : Result
-    (Tape AnyBuffer × Nat) :=
+@[inline] def clamp {s : Shape} (t : Tape SomeBuffer) (xId : Nat) (lo hi : Float) : Result
+    (Tape SomeBuffer × Nat) :=
   unary (t := t) "clamp" xId s s
     (forward := fun x => Buffer.clamp x lo hi)
     (backward := fun x dLdy => Buffer.clampBwd x dLdy lo hi)
 
 /-- Pointwise maximum node; the backward rule splits ties according to `Buffer.maxBwd`. -/
-@[inline] def max {s : Shape} (t : Tape AnyBuffer) (aId bId : Nat) : Result (Tape AnyBuffer
+@[inline] def max {s : Shape} (t : Tape SomeBuffer) (aId bId : Nat) : Result (Tape SomeBuffer
     × Nat) :=
   binary (t := t) "max" aId bId s s s
     (forward := Buffer.max)
     (backward := fun a b dLdy => Buffer.maxBwd a b dLdy)
 
 /-- Pointwise minimum node; the backward rule splits ties according to `Buffer.minBwd`. -/
-@[inline] def min {s : Shape} (t : Tape AnyBuffer) (aId bId : Nat) : Result (Tape AnyBuffer
+@[inline] def min {s : Shape} (t : Tape SomeBuffer) (aId bId : Nat) : Result (Tape SomeBuffer
     × Nat) :=
   binary (t := t) "min" aId bId s s s
     (forward := Buffer.min)
     (backward := fun a b dLdy => Buffer.minBwd a b dLdy)
 
 /-- Pointwise division node with the usual quotient-rule backward closure. -/
-@[inline] def div {s : Shape} (t : Tape AnyBuffer) (aId bId : Nat) : Result (Tape AnyBuffer
+@[inline] def div {s : Shape} (t : Tape SomeBuffer) (aId bId : Nat) : Result (Tape SomeBuffer
     × Nat) :=
   binary (t := t) "div" aId bId s s s
     (forward := Buffer.div)
@@ -117,13 +117,13 @@ returned buffers are owned by the tape/gradient accumulator; workspace buffers a
       (da, db))
 
 /-- Pointwise ReLU node with zero derivative on the nonpositive branch. -/
-@[inline] def relu {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat) :=
+@[inline] def relu {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat) :=
   unary (t := t) "relu" xId s s
     (forward := Buffer.relu)
     (backward := fun x dLdy => Buffer.reluBwd x dLdy)
 
 /-- Pointwise exponential node; backward recomputes `exp x` as local workspace. -/
-@[inline] def exp {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat) :=
+@[inline] def exp {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat) :=
   unary (t := t) "exp" xId s s
     (forward := Buffer.exp)
     (backward := fun x dLdy =>
@@ -136,7 +136,7 @@ Elementwise sine with VJP `cos(x) * dLdy`.
 The cosine buffer belongs to this backward call and is released after multiplication. The input
 and upstream gradient remain owned by the tape.
 -/
-@[inline] def sin {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat) :=
+@[inline] def sin {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat) :=
   unary (t := t) "sin" xId s s
     (forward := Buffer.sin)
     (backward := fun x dLdy =>
@@ -144,7 +144,7 @@ and upstream gradient remain owned by the tape.
       Buffer.releaseThen derivative <| Buffer.mul derivative dLdy)
 
 /-- Elementwise cosine with VJP `-sin(x) * dLdy`, releasing both temporary buffers. -/
-@[inline] def cos {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat) :=
+@[inline] def cos {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat) :=
   unary (t := t) "cos" xId s s
     (forward := Buffer.cos)
     (backward := fun x dLdy =>
@@ -153,13 +153,13 @@ and upstream gradient remain owned by the tape.
       Buffer.releaseThen sine <| Buffer.releaseThen derivative <| Buffer.mul derivative dLdy)
 
 /-- Pointwise natural-log node; callers are responsible for the positive-domain convention. -/
-@[inline] def log {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat) :=
+@[inline] def log {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat) :=
   unary (t := t) "log" xId s s
     (forward := Buffer.log)
     (backward := fun x dLdy => Buffer.div dLdy x)
 
 /-- Elementwise reciprocal `1/x`. -/
-@[inline] def inv {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat) :=
+@[inline] def inv {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat) :=
   unary (t := t) "inv" xId s s
     (forward := Buffer.inv)
     (backward := fun x dLdy =>
@@ -174,9 +174,9 @@ The caller must choose `ε` positive after conversion to binary32 to keep a roun
 away from `log(0)`. This operation does not validate `ε` or guarantee finite results for nonfinite
 inputs.
 -/
-@[inline] def safeLog {s : Shape} (t : Tape AnyBuffer) (xId : Nat) (ε : Float) : Result
-    (Tape AnyBuffer × Nat) := do
-  let n ← AnyBuffer.numelU32 s
+@[inline] def safeLog {s : Shape} (t : Tape SomeBuffer) (xId : Nat) (ε : Float) : Result
+    (Tape SomeBuffer × Nat) := do
+  let n ← SomeBuffer.numelU32 s
   unary (t := t) "safe_log" xId s s
     (forward := fun x =>
       let epsBuf := Buffer.full n ε (Buffer.dtype x)
@@ -194,9 +194,9 @@ inputs.
         Buffer.releaseThen sig <| Buffer.releaseThen dlog <| Buffer.mul dLdy dlog)
 
 /-- Direct sigmoid values with TorchLean's VJP `dLdy * (y * (1 - y))`. -/
-@[inline] def sigmoid {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat)
+@[inline] def sigmoid {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat)
     := do
-  let n ← AnyBuffer.numelU32 s
+  let n ← SomeBuffer.numelU32 s
   unary (t := t) "sigmoid" xId s s
     (forward := Buffer.sigmoid)
     (backward := fun x dLdy =>
@@ -208,9 +208,9 @@ inputs.
         Buffer.releaseThen dy <| Buffer.mul dLdy dy)
 
 /-- Direct hyperbolic tangent values with TorchLean's VJP `dLdy * (1 - y * y)`. -/
-@[inline] def tanh {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat)
+@[inline] def tanh {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat)
     := do
-  let n ← AnyBuffer.numelU32 s
+  let n ← SomeBuffer.numelU32 s
   unary (t := t) "tanh" xId s s
     (forward := Buffer.tanh)
     (backward := fun x dLdy =>
@@ -228,15 +228,15 @@ The adapter evaluates the staged pointwise formula with ATen operations. TorchLe
 node and owns its VJP rule through `Activation.geluDerivSpec`; one tape node does not imply one
 GPU kernel launch.
 -/
-@[inline] def gelu {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat) :=
+@[inline] def gelu {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat) :=
   unary (t := t) "gelu" xId s s
     (forward := Buffer.gelu)
     (backward := fun x dLdy => Buffer.geluBwd x dLdy)
 
 /-- Pointwise softplus node with sigmoid derivative. -/
-@[inline] def softplus {s : Shape} (t : Tape AnyBuffer) (xId : Nat) : Result (Tape AnyBuffer × Nat)
-    := do
-  let n ← AnyBuffer.numelU32 s
+@[inline] def softplus {s : Shape} (t : Tape SomeBuffer) (xId : Nat) :
+    Result (Tape SomeBuffer × Nat) := do
+  let n ← SomeBuffer.numelU32 s
   unary (t := t) "softplus" xId s s
     (forward := fun x => softplusBuf x n)
     (backward := fun x dLdy =>

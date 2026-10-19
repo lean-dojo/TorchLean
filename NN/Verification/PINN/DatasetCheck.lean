@@ -10,7 +10,7 @@ public import NN.Verification.PINN.Core
 public import NN.Verification.PINN.Dataset
 public import NN.API.CLI -- shake: keep
 public import NN.MLTheory.CROWN.Graph -- shake: keep
-public import NN.Verification.PINN.PyTorch -- shake: keep
+public import NN.Verification.PINN.PyTorch.ParamStore -- shake: keep
 
 /-!
 # PINN Dataset Check

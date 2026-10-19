@@ -191,7 +191,7 @@ end LinearAlgebra
 
 `A` has shape `batchA ++ [m, n]`, `B` has shape `batchB ++ [n, p]`, and both batch
 prefixes broadcast to `batch`. The result has shape `batch ++ [m, p]`. -/
-def matmulSpec {α : Type} [TorchLean.Storage α]
+def batchMatmulSpec {α : Type} [TorchLean.Storage α]
     [Add α] [Mul α] [Zero α]
     {batchA batchB batch : Shape} {m n p : Nat}
     (broadcastA : Shape.CanBroadcastTo batchA batch)

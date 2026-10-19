@@ -117,7 +117,7 @@ def fno {d : Nat} (config : FNO.Config d) (batchShape : Spec.Shape := []) :
               grid config.width config.outputFeatures.size projectWeightSeed
           let model :=
             Runtime.Autograd.Model.Layers.Seq.comp
-              (nn.Impl.reshape (config.inputShape []) [grid, config.inputFeatures.size]) <|
+              (nn.Internal.reshape (config.inputShape []) [grid, config.inputFeatures.size]) <|
             Runtime.Autograd.Model.Layers.Seq.cons lift <|
             Runtime.Autograd.Model.Layers.Seq.cons
               (Runtime.Autograd.Model.Layers.FNO.Internal.restoreSpatial config.spatial) <|
@@ -125,7 +125,7 @@ def fno {d : Nat} (config : FNO.Config d) (batchShape : Spec.Shape := []) :
             Runtime.Autograd.Model.Layers.Seq.cons
               (Runtime.Autograd.Model.Layers.FNO.Internal.flattenSpatial config.spatial) <|
             Runtime.Autograd.Model.Layers.Seq.cons project <|
-              nn.Impl.reshape [grid, config.outputFeatures.size] (config.outputShape [])
+              nn.Internal.reshape [grid, config.outputFeatures.size] (config.outputShape [])
           pure (nn.mapLeading batchShape model)
 
 end TorchLean.nn.models

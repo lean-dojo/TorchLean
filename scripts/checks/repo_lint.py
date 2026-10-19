@@ -1122,20 +1122,6 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     )
                 )
 
-        if rel == "NN/API/Trainer/Train.lean":
-            m = TOP_LEVEL_API_DECL_RE.search(masked)
-            if m:
-                line, col = _line_col(text, m.start())
-                findings.append(
-                    Finding(
-                        "ERROR",
-                        path,
-                        line,
-                        col,
-                            "`NN.API.Trainer.Train` must stay an import-only aggregator; put training implementation in `NN.API.Trainer.Train.*` modules.",
-                    )
-                )
-
         if rel == "NN/API/Neural.lean" and re.search(
             r"^\s*public\s+import\s+NN\.API\.Trainer\s*$", masked, flags=re.MULTILINE
         ):

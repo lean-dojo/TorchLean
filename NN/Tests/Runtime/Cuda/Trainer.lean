@@ -67,7 +67,7 @@ def checkEvaluationMode : IO Unit := do
 /-- Reject a shape whose element count wraps to zero in the CUDA size ABI. -/
 def checkBufferSizeBoundary : IO Unit := do
   let buffer := Runtime.Autograd.LibTorch.Buffer.zeros 0
-  let check := Runtime.Autograd.Torch.Internal.EagerSession.checkCudaAnyBufferSize
+  let check := Runtime.Autograd.Torch.Internal.EagerSession.checkCudaSomeBufferSize
   check "empty buffer" { s := [0], buf := buffer }
   let rejected ← try
     check "oversized buffer" { s := [UInt32.size], buf := buffer }

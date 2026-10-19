@@ -79,8 +79,8 @@ stated before any runtime evidence is interpreted.
 # Differential Privacy
 
 The core privacy definitions live in
-{src "NN/MLTheory/LearningTheory/DifferentialPrivacy/Core.lean"}[
-NN.MLTheory.LearningTheory.DifferentialPrivacy.Core API]. Here is the central definition, printed
+{src "NN/MLTheory/LearningTheory/DifferentialPrivacy.lean"}[
+NN.MLTheory.LearningTheory.DifferentialPrivacy API]. Here is the central definition, printed
 by Lean rather than paraphrased:
 
 ```lean (name := dpDef)

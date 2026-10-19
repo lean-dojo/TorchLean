@@ -70,11 +70,11 @@ def checkCudaCacheClear : IO Unit := do
   let hostCurrent ← IO.mkRef true
   let param : Torch.Param Float Shape.scalar :=
     { value, cudaValue, hostCurrent, requiresGrad := true }
-  Torch.AnyParam.releaseCachedCudaValue param
+  Torch.SomeParam.releaseCachedCudaValue param
   match ← cudaValue.get with
   | none => pure ()
   | some _ => throw <| IO.userError "CUDA cache release did not clear cudaValue"
-  Torch.AnyParam.releaseCachedCudaValue param
+  Torch.SomeParam.releaseCachedCudaValue param
 
 def run : IO Unit := do
   checkReferences

@@ -11,9 +11,9 @@ public import NN.GraphSpec.Chain.Syntax
 /-!
 # Executable lowering of sequential GraphSpec chains
 
-This module lowers a chain directly to an execution-polymorphic `TorchLean.Program`. Parameters
-remain ordered by the chain's type-level ABI and are split at the same structural boundaries as in
-the pure interpreter.
+This module lowers a chain directly to an execution-polymorphic `TorchLean.Runtime.Program`.
+Parameters remain ordered by the chain's type-level ABI and are split at the same structural
+boundaries as in the pure interpreter.
 -/
 
 @[expose] public section

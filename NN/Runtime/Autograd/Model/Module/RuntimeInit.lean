@@ -274,7 +274,7 @@ def floatArrayOf (n : Nat) (init : FloatInit) : IO FloatArray := do
 
 /-- Checked conversion to the current CUDA buffer API's `UInt32` element count. -/
 def natToU32Checked (ctx : String) (n : Nat) : IO UInt32 := do
-  IO.ofExcept <| (Runtime.Autograd.LibTorch.AnyBuffer.natToU32Checked n).mapError fun _ =>
+  IO.ofExcept <| (Runtime.Autograd.LibTorch.SomeBuffer.natToU32Checked n).mapError fun _ =>
     s!"{ctx}: tensor too large for CUDA buffer API ({n} elements)"
 
 /--

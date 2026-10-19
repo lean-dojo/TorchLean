@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module -- shake: keep-all (These imports define the CI build coverage.)
 
-import NN.MLTheory.API
+import NN.MLTheory
 import NN.MLTheory.CROWN.Extras.FP32
 import NN.MLTheory.CROWN.Lyapunov.TwoStage.Execution
 import NN.MLTheory.CROWN.Graph.Proofs.LayerNormDerivativeEnclosure
@@ -19,7 +19,6 @@ import NN.MLTheory.CROWN.Proofs.LayerNormEnclosure
 import NN.MLTheory.LearningTheory.Stability.RidgeRegression1D.IEEE32Exec
 import NN.Proofs
 import NN.Proofs.Autograd.Overview
-import NN.MLTheory.CROWN.Graph.Engine.Enclosure
 import NN.API.RL.Core
 
 /-!

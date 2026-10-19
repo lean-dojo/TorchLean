@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import Mathlib.Analysis.SpecialFunctions.Log.Deriv
-public import NN.Proofs.RuntimeApprox.Rounding.RoundingApprox
+public import NN.Proofs.RuntimeApprox.Rounding
 public import NN.Spec.Core.FloatInstances.NF
 public import NN.Proofs.RuntimeApprox.NF.Ops.Plumbing -- shake: keep
 

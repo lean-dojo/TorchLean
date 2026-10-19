@@ -29,7 +29,7 @@ import NN.Verification.Cert.CROWNNodeCert
 import NN.MLTheory.CROWN.Lyapunov.Certificate
 import NN.MLTheory.CROWN.Lyapunov.Verification
 import NN.MLTheory.Optimization.StronglyConvexGD
-import NN.MLTheory.LearningTheory.DifferentialPrivacy.Core
+import NN.MLTheory.LearningTheory.DifferentialPrivacy
 import NN.MLTheory.Proofs.Approximation.Universal.UniversalApproximationRounded
 import NN.MLTheory.Proofs.Approximation.Universal.UniversalApproximationBinaryExec
 import NN.MLTheory.Proofs.Approximation.Universal.UniversalApproximationBinaryExecTwoLayerMlp

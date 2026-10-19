@@ -25,7 +25,7 @@ Files:
 - `Conv.lean`: rank-polymorphic convolution and transposed-convolution specs with explicit
   backward rules, including grouped and dilated convolution in both the block-diagonal dense and
   the PyTorch packed weight layouts.
-- `Pooling.lean` and `Pooling/Spatial.lean`: max/avg pooling, padded pooling, adaptive pooling, and
+- `Pooling.lean`: max/avg pooling, padded pooling, adaptive pooling, and
   smooth max pooling surrogates for arbitrary spatial rank, including backward/JVP rules. Max-pool
   rules follow the first selected maximum at ties.
 - `Normalization.lean`, `Normalization/Core.lean`, `Normalization/BatchNorm.lean`: LayerNorm,

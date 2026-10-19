@@ -234,7 +234,7 @@ structure Param (α : Type) [Storage α] (s : Shape) where
   `value` remains the public source for CPU runs and exact/symbolic scalar instantiations.  When a
   caller explicitly reads parameters after CUDA training, the device mirror is copied back here.
   -/
-  cudaValue : IO.Ref (Option Runtime.Autograd.LibTorch.AnyBuffer)
+  cudaValue : IO.Ref (Option Runtime.Autograd.LibTorch.SomeBuffer)
   /--
   Whether `value` is known to match `cudaValue`.
 
@@ -250,7 +250,7 @@ def Param.Internal.create {α : Type} [Storage α] {shape : Shape}
     (initial : Tensor α shape) (name : Option String := none) (requiresGrad : Bool := true) :
     IO (Param α shape) := do
   let value ← IO.mkRef initial
-  let cudaValue ← IO.mkRef (none : Option Runtime.Autograd.LibTorch.AnyBuffer)
+  let cudaValue ← IO.mkRef (none : Option Runtime.Autograd.LibTorch.SomeBuffer)
   let hostCurrent ← IO.mkRef true
   pure { name, value, cudaValue, hostCurrent, requiresGrad }
 
@@ -260,7 +260,7 @@ Type-erased parameter wrapper.
 This exists so session code can store heterogeneous parameter shapes in a single `HashMap` keyed
 by leaf id (used for SGD updates).
 -/
-structure AnyParam (α : Type) [Storage α] where
+structure SomeParam (α : Type) [Storage α] where
   /-- Runtime shape of the erased parameter. -/
   s : Shape
   /-- Whether the underlying parameter receives optimizer updates. -/
@@ -276,9 +276,9 @@ structure AnyParam (α : Type) [Storage α] where
   intermediate needs an independent copy or a transfer of that scope's release responsibility before
   installation.
   -/
-  setCuda : Runtime.Autograd.LibTorch.AnyBuffer → IO Unit
+  setCuda : Runtime.Autograd.LibTorch.SomeBuffer → IO Unit
 
-namespace AnyParam
+namespace SomeParam
 
 /--
 Make the result of a native CUDA cleanup call observable in `IO`.
@@ -306,12 +306,12 @@ def releaseCachedCudaValue {α : Type} [Storage α] {s : Shape} (p : Param α s)
   p.cudaValue.set none
 
 /--
-Package a typed `Param α s` as an `AnyParam α`, checking shape on `set`.
+Package a typed `Param α s` as an `SomeParam α`, checking shape on `set`.
 
 This is the bridge that allows generic optimizers/update routines to operate over heterogeneous
 parameter packs.
 -/
-def ofParam {α : Type} [Storage α] {s : Shape} (p : Param α s) : AnyParam α :=
+def ofParam {α : Type} [Storage α] {s : Shape} (p : Param α s) : SomeParam α :=
   { s := s
     requiresGrad := p.requiresGrad
     get := do
@@ -336,7 +336,7 @@ def ofParam {α : Type} [Storage α] {s : Shape} (p : Param α s) : AnyParam α 
             ++ s!"(expected {Shape.pretty s}, got {Shape.pretty v.s})"
           }
 
-end AnyParam
+end SomeParam
 end Torch
 end Autograd
 end Runtime

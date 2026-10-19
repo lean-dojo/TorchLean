@@ -51,7 +51,7 @@ namespace Autograd
 namespace Model
 
 export Runtime.Autograd.Torch
-  (TensorRef Param AnyParam
+  (TensorRef Param SomeParam
    ParamList ScalarTrainer scalarTrainer)
 
 namespace Init

@@ -276,11 +276,9 @@ def run
   let evaluation ← prepare config data
   let trainer :=
     Trainer.new model <|
-      Trainer.RunConfig.forObjective
-        (Trainer.RunConfig.fromRuntime runtime
-          { optimizer := optim.adam { learningRate := config.training.learningRate } })
-        mse
-        (seed := runtime.seed)
+      { runtime with
+          optimizer := optim.adam { learningRate := config.training.learningRate }
+          objective := mse }
   trainer.printSummary
   let historyRef ← IO.mkRef metrics
   let meanLoss (predict : Tensor Float input → IO (Tensor Float output))

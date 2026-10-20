@@ -102,9 +102,11 @@ end Device
 
 namespace BackendContracts
 
-/-- Plan operations under the runtime-selected backend-contract profile. -/
-def planReport (config : Config) (ops : Array NN.Backend.BackendOp) : Except String String := do
-  let profile ← config.effectiveBackendProfile
+/-- Plan operations under the runtime-selected backend-contract profile; inference planning
+passes `gradEnabled := false`. -/
+def planReport (config : Config) (ops : Array NN.Backend.BackendOp) (gradEnabled : Bool := true) :
+    Except String String := do
+  let profile ← config.effectiveBackendProfile gradEnabled
   profile.planReport ops
 
 end BackendContracts

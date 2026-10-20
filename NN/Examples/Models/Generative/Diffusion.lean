@@ -241,11 +241,9 @@ def Training.run
         (step := evalStep)
   let trainer :=
     Trainer.new (model c h w config.hiddenChannels) <|
-      Trainer.RunConfig.forObjective
-        (Trainer.RunConfig.fromRuntime runtime
-          { optimizer := optim.adam { learningRate := config.training.learningRate } })
-        mse
-        (seed := runtime.seed)
+      { runtime with
+          optimizer := optim.adam { learningRate := config.training.learningRate }
+          objective := mse }
   trainer.printSummary
   let curveEvery : Nat := Nat.max 1 (config.training.steps / 50)
   let trained ← trainer.trainStream runtime

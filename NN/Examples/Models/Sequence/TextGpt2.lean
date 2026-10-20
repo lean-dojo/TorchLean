@@ -465,10 +465,10 @@ def trainCorpus (runtime : Runtime.Config)
     | some _ => trainOpts.finetune.steps
   let trainSamples := if allSamples.size == 0 then
     Data.SampleStream.fromFunction 1 (fun _ => sample0) else allSamples
-  let run :=
-    Trainer.RunConfig.fromRuntime runtime { optimizer := optim.adam { learningRate := 1e-3 } }
   let trainer := Trainer.new ByteModel.model <|
-    Trainer.RunConfig.forObjective run (oneHotCrossEntropy 2) (seed := runtime.seed)
+    { runtime with
+        optimizer := optim.adam { learningRate := 1e-3 }
+        objective := oneHotCrossEntropy 2 }
   trainer.printSummary
   /-
   Each optimizer step consumes `batchSize` deterministic corpus windows. Indexing that
@@ -573,10 +573,10 @@ def trainBpeCorpus {tokenCount : Nat} (runtime : Runtime.Config)
   let scheduledSamples := pretrainSamples.append finetuneSamples
   let samples := if scheduledSamples.size == 0 then
     Data.SampleStream.fromFunction 1 (fun _ => sample0) else scheduledSamples
-  let run :=
-    Trainer.RunConfig.fromRuntime runtime { optimizer := optim.adam { learningRate := 1e-3 } }
   let trainer := Trainer.new BpeModel.model <|
-    Trainer.RunConfig.forObjective run (oneHotCrossEntropy 2) (seed := runtime.seed)
+    { runtime with
+        optimizer := optim.adam { learningRate := 1e-3 }
+        objective := oneHotCrossEntropy 2 }
   trainer.printSummary
   /-
   BPE mode uses the real GPT-2 tokenizer but a compact local output vocabulary. The public trainer

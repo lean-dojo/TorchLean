@@ -569,10 +569,9 @@ def train (runtime : Runtime.Config) (options : Options) :
   let curriculum := Curriculum.select options
   let trainer :=
     Trainer.new model <|
-      Trainer.RunConfig.forObjective
-        (Trainer.RunConfig.fromRuntime runtime
-          { optimizer := options.optim.configure options.training.learningRate })
-        (custom adderLossProgram) (seed := runtime.seed)
+      { runtime with
+          optimizer := options.optim.configure options.training.learningRate
+          objective := custom adderLossProgram }
   IO.println (s!"  mode=adder operandDigits={operandDigits} vocabularySize={vocabularySize} "
     ++ s!"contextLength={contextLength} steps={options.training.steps}")
   trainer.printSummary

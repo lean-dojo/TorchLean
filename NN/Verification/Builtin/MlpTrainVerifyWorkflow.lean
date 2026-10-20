@@ -76,10 +76,10 @@ def run {α : Type} [Storage α] [Context α] [ToString α]
     [Runtime.FromFloat α] (options : Runtime.Config) : IO Unit := do
   let dataset := Data.fromTensors inputs labels
   let trainer := Trainer.new model <|
-    Trainer.RunConfig.forObjective
-      (Trainer.RunConfig.fromRuntime options { optimizer := optim.sgd { learningRate := 0.1 } })
-      (.oneHotCrossEntropy 0)
-
+    { options with
+        optimizer := optim.sgd { learningRate := 0.1 }
+        objective := oneHotCrossEntropy 0
+        seed := 0 }
   IO.println "== Train and verify classifier (2 → 8 → 2) =="
   IO.println
     s!"Training on device={options.device.cliName}"

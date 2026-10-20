@@ -172,10 +172,10 @@ def train (runtime : Runtime.Config) (corpus : String)
   let reportSample := sample <|
     text.tokenWindow tokenizer (contextLength + 1) options.generation.prompt
       (paddingTokenId := paddingByte)
-  let run := Trainer.RunConfig.fromRuntime runtime
-    { optimizer := optim.adam { learningRate := options.training.learningRate } }
   let trainer := Trainer.new model <|
-    Trainer.RunConfig.forObjective run (oneHotCrossEntropy 1) (seed := runtime.seed)
+    { runtime with
+        optimizer := optim.adam { learningRate := options.training.learningRate }
+        objective := oneHotCrossEntropy 1 }
   let cudaMemorySampleEvery :=
     Trainer.Memory.cadence runtime options.training.steps options.training.cudaMemorySampleEvery
   let beforeLogits ← trainer.predict reportSample.input

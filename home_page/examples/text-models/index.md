@@ -110,11 +110,10 @@ With the model defined, we can train it using the same API as the quickstarts. T
 use the constants and options declared in the linked example source:
 
 ```lean
-let run := Trainer.RunConfig.fromRuntime runtime
-  { optimizer := optim.adam { learningRate := options.training.learningRate } }
-let objective : Trainer.Objective output := Trainer.Objective.oneHotCrossEntropy 2
 let trainer := Trainer.new model <|
-  Trainer.RunConfig.forObjective run objective (seed := runtime.seed)
+  { runtime with
+      optimizer := optim.adam { learningRate := options.training.learningRate }
+      objective := oneHotCrossEntropy 2 }
 let trained ← trainer.train (Data.fromStream samples)
   { steps := options.training.steps
     samplesPerStep := options.training.batchSize
@@ -123,8 +122,8 @@ let trained ← trainer.train (Data.fromStream samples)
 trained.printSummary
 ```
 
-`Trainer.RunConfig.fromRuntime` turns the parsed `--device` and `--arithmetic`
-flags into a run configuration, and `forObjective` attaches the loss. `TrainOptions.steps` is
+The record update starts from the parsed `--device` and `--seed` flags and adds the optimizer and
+the loss. `TrainOptions.steps` is
 required; `samplesPerStep` is the number of dataset items whose gradients are averaged before one
 update. The surrounding code builds a bank of token windows from the corpus, reports before/after
 predictions, saves checkpoints when requested, and samples text from the trained prediction closure.
@@ -192,10 +191,10 @@ def model : nn.Builder (nn.Sequential input output) :=
 Then we pass it to the trainer:
 
 ```lean
-let run := Trainer.RunConfig.fromRuntime runtime
-  { optimizer := optim.adam { learningRate := options.training.learningRate } }
 let trainer := Trainer.new model <|
-  Trainer.RunConfig.forObjective run (oneHotCrossEntropy 1) (seed := runtime.seed)
+  { runtime with
+      optimizer := optim.adam { learningRate := options.training.learningRate }
+      objective := oneHotCrossEntropy 1 }
 let trained ← trainer.train (Data.fromStream samples) (options.training.trainOptions)
 trained.printSummary
 ```

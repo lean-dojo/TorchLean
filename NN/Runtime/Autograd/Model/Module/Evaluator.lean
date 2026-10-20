@@ -80,8 +80,7 @@ def new
     (validateDataInputs : TorchLean.TensorPack β dataInputShapes → Except String Unit :=
       fun _ => pure ()) (rngCounter : Option (IO.Ref Nat) := none) :
     IO (Evaluator α β stateShapes inputShapes dataInputShapes outputShape) := do
-  let options := { options with gradEnabled := false }
-  let sess ← Torch.Internal.EagerSession.new (α := α) options
+  let sess ← Torch.Internal.EagerSession.new (α := α) options (gradEnabled := false)
   let sess := match rngCounter with
     | some counter => { sess with rngCounter := counter }
     | none => sess

@@ -57,9 +57,8 @@ The traversal is the engine's sparse CUDA sweep `LibTorch.Tape.backwardSparse`, 
 ids in reverse, runs a node's VJP only when that node has received a cotangent, retires every
 activation cotangent as soon as it has been propagated, and keeps owned device buffers only for
 the ids selected by `retain`. Here `retain` selects exactly the trainable parameter leaves, so the
-returned map has one entry per trainable parameter and optimizer updates stay on device without
-paying hash-table costs at every intermediate node. A trainable parameter that receives no
-gradient is an error, as before.
+returned map has one entry per trainable parameter and optimizer updates stay on device. A
+trainable parameter that receives no gradient is an error, as before.
 -/
 def backwardScalarParamGradsCuda {α : Type} [TorchLean.Storage α] [TensorTransfer α]
     (s : EagerSession α)

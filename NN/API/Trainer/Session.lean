@@ -288,7 +288,7 @@ def openSession {σ τ : Shape} {α β : Type}
       Verification.Algorithm → IO Verification.Report) := none) :
     IO (Session trainer β) := do
   let runner ← Runner.instantiate trainer.model trainer.objective
-    trainer.runtime.executionSettings (α := α) (initialState? := initialState?)
+    trainer.runtime.toConfig (α := α) (initialState? := initialState?)
   let stepper ← runner.stepper trainer.runtime.optimizer scheduler
   let cast (sample : Sample.Supervised β σ τ) : Sample.Supervised α σ τ :=
     Sample.map (Tensor.map toRuntime) (Tensor.map toRuntime) sample
@@ -307,7 +307,7 @@ def openSession {σ τ : Shape} {α β : Type}
     let evaluator ← Runtime.Autograd.Model.Module.Evaluator.new
       (β := Unit) (stateShapes := nn.stateShapes trainer.model) (inputShapes := [σ])
       (dataInputShapes := []) (nn.forward trainer.model (α := α) (mode := .eval))
-      trainer.runtime.executionSettings parameters
+      trainer.runtime.toConfig parameters
     let frozenPredict := fun input => do
       let output ← evaluator.run (TensorPack.singleton (Tensor.map toRuntime input)) .nil
       readTensor output
@@ -361,7 +361,7 @@ def «open» {σ τ : Shape} (trainer : TorchLean.Trainer σ τ)
   | some schedule =>
       IO.ofExcept <| schedule.validate (round := fun value => value.toFloat32.toFloat)
   | none => pure ()
-  if trainer.runtime.executionSettings.usesCuda && trainer.runtime.arithmetic != .native then
+  if trainer.runtime.toConfig.usesCuda && trainer.runtime.arithmetic != .native then
     throw <| IO.userError
       "TorchLean.Trainer: CUDA execution currently requires --arithmetic native"
   match trainer.runtime.arithmetic with

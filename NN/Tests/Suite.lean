@@ -16,6 +16,7 @@ public import NN.Tests.Verification.FiniteArtifact
 public import NN.Tests.Verification.GraphNumericalCertificate
 public import NN.Tests.Runtime.EinsumDynamic
 public import NN.Tests.Runtime.MoE
+public import NN.Tests.Runtime.Scheduler
 public import NN.Tests.Runtime.Floats.Suite
 public import NN.Tests.Runtime.Cuda.Suite
 public import NN.Tests.Tensor.Lexer
@@ -74,6 +75,7 @@ def run : IO Unit := do
     NN.Tests.Verification.GraphNumericalCertificate.run
     NN.Tests.Runtime.EinsumDynamic.run
     NN.Tests.Runtime.MoE.run
+    NN.Tests.Runtime.Scheduler.run
     NN.Tests.Tensor.Lexer.run
     NN.Tests.Tensor.NumericContracts.run
     NN.Tests.Tensor.Operations.run
@@ -86,6 +88,7 @@ def run : IO Unit := do
     | .nativeAvailable =>
         NN.Tests.Runtime.EinsumDynamic.run .cuda
         NN.Tests.Runtime.MoE.run .cuda
+        NN.Tests.Runtime.Scheduler.run .cuda
         Tests.Cuda.run
     | .nativeUnavailable =>
         throw <| IO.userError

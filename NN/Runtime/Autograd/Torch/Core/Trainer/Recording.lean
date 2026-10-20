@@ -25,15 +25,20 @@ open Spec TorchLean TorchLean.Tensor
 
 namespace Internal
 
+/-- Read one tensor per recorded reference, in reference order. -/
+def readRefs {α : Type} [TorchLean.Storage α]
+    (read : {s : Shape} → TensorRef α s → IO (Tensor α s)) :
+    {ss : List Shape} → RefList (TensorRef α) ss → IO (TorchLean.TensorPack α ss)
+  | .nil, .nil => pure .nil
+  | _ :: _, .cons ref refs => do
+      let value ← read ref
+      pure (.cons value (← readRefs read refs))
+
 /-- Read parameter gradients in the same order as the recorded references. -/
-def gradsOfRefs {α : Type} [TorchLean.Storage α] :
-    {ss : List Shape} → Array (Spec.SomeTensor α) → RefList (TensorRef α) ss →
-    IO (TorchLean.TensorPack α ss)
-  | .nil, _, .nil => pure .nil
-  | s :: ss, gradients, .cons ref refs => do
-      let gradient ← Internal.EagerSession.grad (α := α) (sh := s) gradients ref
-      let rest ← gradsOfRefs (α := α) (ss := ss) gradients refs
-      pure (.cons gradient rest)
+def gradsOfRefs {α : Type} [TorchLean.Storage α] {ss : List Shape}
+    (gradients : Array (Spec.SomeTensor α)) (refs : RefList (TensorRef α) ss) :
+    IO (TorchLean.TensorPack α ss) :=
+  readRefs (fun {s} ref => Internal.EagerSession.grad (α := α) (sh := s) gradients ref) refs
 
 /-- Record parameter leaves in pack order, preserving each parameter's gradient setting. -/
 def useParams {α : Type} [TorchLean.Storage α] [TensorTransfer α] :

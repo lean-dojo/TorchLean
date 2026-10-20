@@ -205,86 +205,20 @@ def withBoundOptimizer {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ 
     (continuation :
       (optimizer : Runtime.Autograd.Model.Optim.Optimizer α (TorchLean.nn.stateShapes model)) →
       optimizer.State → (Nat → optimizer.State → optimizer.State) → IO β) : IO β := do
-  IO.ofExcept (config.validateFor (α := α))
   match scheduler with
   | some schedule => do
       IO.ofExcept <| schedule.validate
         (round := TorchLean.Runtime.FromFloat.roundForValidation (α := α))
   | none => pure ()
-  let objective := Runner.objectiveModule runner
   let rate (step : Nat) : Float :=
     scheduler.map (fun config => config.rate step)
       |>.getD config.learningRate
-  let rec mapStateList
-      {State : (α : Type) → [TorchLean.Storage α] → Spec.Shape → Type} :
-      {shapes : List Spec.Shape} →
-      ({s : Spec.Shape} → State α s → State α s) →
-      Runtime.Autograd.Model.Optim.StateList State α shapes →
-      Runtime.Autograd.Model.Optim.StateList State α shapes :=
-    fun {_shapes} transform states =>
-      match states with
-      | Runtime.Autograd.Model.Optim.StateList.nil =>
-          Runtime.Autograd.Model.Optim.StateList.nil
-      | Runtime.Autograd.Model.Optim.StateList.cons shapeState remainingStates =>
-          Runtime.Autograd.Model.Optim.StateList.cons
-            (transform shapeState) (mapStateList transform remainingStates)
-  let shapes := TorchLean.nn.stateShapes model
-  -- Every optimizer state stores its learning rate per shape; `setRate` names that field.
-  let scheduled {State : (α : Type) → [TorchLean.Storage α] → Spec.Shape → Type}
-      (setRate : {s : Spec.Shape} → α → State α s → State α s) (step : Nat) :
-      Runtime.Autograd.Model.Optim.StateList State α shapes →
-      Runtime.Autograd.Model.Optim.StateList State α shapes :=
-    mapStateList (setRate (TorchLean.Runtime.ofFloat (rate step)))
-  match TorchLean.optim.Optimizer.Internal.view config with
-  | .sgd learningRate momentum =>
-      if momentum == 0.0 then
-        let optimizer := Runtime.Autograd.Model.Optim.sgd (α := α) (paramShapes := shapes)
-          (TorchLean.Runtime.ofFloat learningRate)
-        let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-        continuation optimizer state
-          (scheduled fun rate shapeState => { shapeState with learningRate := rate })
-      else
-        let optimizer := Runtime.Autograd.Model.Optim.momentumSGD
-          (α := α) (paramShapes := shapes)
-          (TorchLean.Runtime.ofFloat learningRate) (TorchLean.Runtime.ofFloat momentum)
-        let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-        continuation optimizer state
-          (scheduled fun rate shapeState => { shapeState with learningRate := rate })
-  | .adaGrad learningRate epsilon =>
-      let optimizer := Runtime.Autograd.Model.Optim.adagrad (α := α) (paramShapes := shapes)
-        (TorchLean.Runtime.ofFloat learningRate) (TorchLean.Runtime.ofFloat epsilon)
-      let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-      continuation optimizer state
-        (scheduled fun rate shapeState => { shapeState with learningRate := rate })
-  | .rmsProp learningRate decay epsilon =>
-      let optimizer := Runtime.Autograd.Model.Optim.rmsprop (α := α) (paramShapes := shapes)
-        (TorchLean.Runtime.ofFloat learningRate) (TorchLean.Runtime.ofFloat decay)
-        (TorchLean.Runtime.ofFloat epsilon)
-      let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-      continuation optimizer state
-        (scheduled fun rate shapeState => { shapeState with learningRate := rate })
-  | .adam learningRate beta1 beta2 epsilon =>
-      let optimizer := Runtime.Autograd.Model.Optim.adam (α := α) (paramShapes := shapes)
-        (TorchLean.Runtime.ofFloat learningRate) (TorchLean.Runtime.ofFloat beta1)
-        (TorchLean.Runtime.ofFloat beta2) (TorchLean.Runtime.ofFloat epsilon)
-      let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-      continuation optimizer state
-        (scheduled fun rate shapeState => { shapeState with learningRate := rate })
-  | .adamW learningRate weightDecay beta1 beta2 epsilon =>
-      let optimizer := Runtime.Autograd.Model.Optim.adamw (α := α) (paramShapes := shapes)
-        (TorchLean.Runtime.ofFloat learningRate) (TorchLean.Runtime.ofFloat weightDecay)
-        (TorchLean.Runtime.ofFloat beta1) (TorchLean.Runtime.ofFloat beta2)
-        (TorchLean.Runtime.ofFloat epsilon)
-      let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-      continuation optimizer state
-        (scheduled fun rate shapeState => { shapeState with learningRate := rate })
-  | .adaDelta learningRate rho epsilon =>
-      let optimizer := Runtime.Autograd.Model.Optim.adadelta (α := α) (paramShapes := shapes)
-        (TorchLean.Runtime.ofFloat learningRate) (TorchLean.Runtime.ofFloat rho)
-        (TorchLean.Runtime.ofFloat epsilon)
-      let state ← TorchLean.Module.Objective.initOptimizer objective optimizer
-      continuation optimizer state
-        (scheduled fun rate shapeState => { shapeState with learningRate := rate })
+  TorchLean.Module.Internal.withConfiguredOptimizer (α := α)
+    (stateShapes := TorchLean.nn.stateShapes model) (Runner.runtime runner) config
+    fun optimizer => do
+      let state ← TorchLean.Module.Objective.initOptimizer (Runner.objectiveModule runner) optimizer
+      continuation optimizer state fun step state =>
+        optimizer.setLearningRate (TorchLean.Runtime.ofFloat (rate step)) state
 
 /-! ## Gradient accumulation and optimizer updates -/
 

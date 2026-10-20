@@ -80,6 +80,9 @@ structure Optimizer (α : Type) [TorchLean.Storage α] [Context α] (paramShapes
   /-- One update: state, parameters and gradients in, new state out. Parameters are updated in
   place through `ParamList`, which is why only the state is returned. -/
   step : State → Torch.ParamList α paramShapes → TorchLean.TensorPack α paramShapes → IO State
+  /-- The same state with every parameter's learning rate set to the given value; schedules use it
+  between steps. -/
+  setLearningRate : α → State → State
   /--
   The update this state names among the trainer's native optimizers, if any. A trainer whose
   backend keeps parameters, gradients and optimizer moments on the device (eager CUDA) runs it in
@@ -135,6 +138,15 @@ def firstStateValue
     {ss : List Shape} → StateList State α ss → β
   | [], .nil => fallback
   | _ :: _, .cons st _ => get st
+
+/-- Apply `f` to every per-parameter optimizer state. -/
+def mapStateList
+    {State : (α : Type) → [TorchLean.Storage α] → Shape → Type}
+    {α : Type} [TorchLean.Storage α]
+    (f : {s : Shape} → State α s → State α s) :
+    {ss : List Shape} → StateList State α ss → StateList State α ss
+  | [], .nil => .nil
+  | _ :: _, .cons st rest => .cons (f st) (mapStateList f rest)
 
 /--
 Initialize once per trainable storage and copy that immutable state into its alias slots.
@@ -234,6 +246,9 @@ def sgd {α : Type} [TorchLean.Storage α] [Context α]
           Optim.SGD.update (α := α) (s := s)
             stOne parameters gradients)
         ps st grads
+    setLearningRate := fun rate st =>
+      Internal.mapStateList (State := Optim.SGD.State)
+        (fun stOne => { stOne with learningRate := rate }) st
     native? := fun st =>
       some (.sgd (Internal.firstStateValue learningRate (fun state => state.learningRate) st))
   }
@@ -256,6 +271,9 @@ def momentumSGD {α : Type} [TorchLean.Storage α] [Context α]
         (updateOne := fun {s} stOne params g => Optim.MomentumSGD.update (α := α) (s := s)
           stOne params g)
         ps st grads
+    setLearningRate := fun rate st =>
+      Internal.mapStateList (State := Optim.MomentumSGD.State)
+        (fun stOne => { stOne with learningRate := rate }) st
   }
 
 /--
@@ -276,6 +294,9 @@ def adagrad {α : Type} [TorchLean.Storage α] [Context α]
         (updateOne := fun {s} stOne params g => Optim.AdaGrad.update (α := α) (s := s) stOne
           params g)
         ps st grads
+    setLearningRate := fun rate st =>
+      Internal.mapStateList (State := Optim.AdaGrad.State)
+        (fun stOne => { stOne with learningRate := rate }) st
   }
 
 /--
@@ -297,6 +318,9 @@ def rmsprop {α : Type} [TorchLean.Storage α] [Context α]
         (updateOne := fun {s} stOne params g => Optim.RMSProp.update (α := α) (s := s) stOne
           params g)
         ps st grads
+    setLearningRate := fun rate st =>
+      Internal.mapStateList (State := Optim.RMSProp.State)
+        (fun stOne => { stOne with learningRate := rate }) st
   }
 
 /--
@@ -318,6 +342,9 @@ def adam {α : Type} [TorchLean.Storage α] [Context α]
         (updateOne := fun {s} stOne params g => Optim.Adam.update (α := α) (s := s) stOne
           params g)
         ps st grads
+    setLearningRate := fun rate st =>
+      Internal.mapStateList (State := fun _ _ => Optim.Adam.State α)
+        (fun stOne => { stOne with learningRate := rate }) st
     native? := fun st =>
       some (.adam (Internal.firstStateValue learningRate (fun state => state.learningRate) st)
         beta1 beta2 epsilon)
@@ -343,6 +370,9 @@ def adamw {α : Type} [TorchLean.Storage α] [Context α]
         (updateOne := fun {s} stOne params g => Optim.AdamW.update (α := α) (s := s) stOne
           params g)
         ps st grads
+    setLearningRate := fun rate st =>
+      Internal.mapStateList (State := fun _ _ => Optim.AdamW.State α)
+        (fun stOne => { stOne with learningRate := rate }) st
     native? := fun st =>
       some (.adamW (Internal.firstStateValue learningRate (fun state => state.learningRate) st)
         weightDecay beta1 beta2 epsilon)
@@ -367,6 +397,9 @@ def adadelta {α : Type} [TorchLean.Storage α] [Context α]
         (updateOne := fun {s} stOne params g => Optim.Adadelta.update (α := α) (s := s) stOne
           params g)
         ps st grads
+    setLearningRate := fun rate st =>
+      Internal.mapStateList (State := Optim.Adadelta.State)
+        (fun stOne => { stOne with learningRate := rate }) st
   }
 
 /-! ## Optimizer extension points -/
@@ -399,6 +432,9 @@ def projectedSGD {α : Type} [TorchLean.Storage α] [Context α]
           Optim.GaLore.update
             (α := α) (full := s) (low := s) stOne parameters gradients)
         ps st grads
+    setLearningRate := fun rate st =>
+      Internal.mapStateList (State := fun α _ s => Optim.GaLore.SGDState α s s)
+        (fun stOne => { stOne with learningRate := rate }) st
   }
 
 /--
@@ -424,6 +460,9 @@ def muon {α : Type} [TorchLean.Storage α] [Context α]
         (updateOne := fun {s} stOne params g =>
           Optim.Muon.update (α := α) (s := s) stOne params g)
         ps st grads
+    setLearningRate := fun rate st =>
+      Internal.mapStateList (State := Optim.Muon.State)
+        (fun stOne => { stOne with learningRate := rate }) st
   }
 
 end Optim

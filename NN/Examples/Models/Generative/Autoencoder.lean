@@ -78,11 +78,9 @@ def train (runtime : Runtime.Config) (flags : Support.Training.Options Support.N
     RealData.missingCifarHint
   let trainer :=
     Trainer.new model <|
-      Trainer.RunConfig.forObjective
-        (Trainer.RunConfig.fromRuntime runtime
-          { optimizer := optim.adam { learningRate := flags.training.learningRate } })
-        mse
-        (seed := runtime.seed)
+      { runtime with
+          optimizer := optim.adam { learningRate := flags.training.learningRate }
+          objective := mse }
   trainer.train
     (data flags runtime.seed)
     (flags.training.trainOptions

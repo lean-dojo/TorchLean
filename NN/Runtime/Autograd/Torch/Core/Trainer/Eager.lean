@@ -23,22 +23,20 @@ namespace Runtime.Autograd.Torch
 
 open Spec TorchLean TorchLean.Tensor
 
-/-- Download dense CUDA gradients in reference order, retaining each buffer's stored shape. -/
-private def Internal.gradsOfRefsCuda {α : Type} [TorchLean.Storage α] [TensorTransfer α] :
-    {ss : List Shape} → Array Runtime.Autograd.LibTorch.SomeBuffer → RefList (TensorRef α) ss →
-    IO (TorchLean.TensorPack α ss)
-  | .nil, _, .nil => pure .nil
-  | s :: ss, gradients, .cons ref refs => do
-      let gradient ← match gradients[ref.id]? with
-        | some stored => Internal.CudaBridge.ofSomeBuffer (α := α) stored
-        | none => throw <| IO.userError "torch: gradient array out of bounds"
-      if h : gradient.shape = s then
-        let rest ← Internal.gradsOfRefsCuda (α := α) (ss := ss) gradients refs
-        pure (.cons (gradient.cast h) rest)
-      else
-        throw <| IO.userError <|
-          s!"torch: grad shape mismatch (expected {Shape.pretty s}, " ++
-            s!"got {Shape.pretty gradient.shape})"
+/-- Download dense CUDA gradients in reference order, checking each buffer's stored shape. -/
+private def Internal.gradsOfRefsCuda {α : Type} [TorchLean.Storage α] [TensorTransfer α]
+    {ss : List Shape} (gradients : Array Runtime.Autograd.LibTorch.SomeBuffer)
+    (refs : RefList (TensorRef α) ss) : IO (TorchLean.TensorPack α ss) :=
+  Internal.readRefs (fun {s} ref => do
+    let gradient ← match gradients[ref.id]? with
+      | some stored => Internal.CudaBridge.ofSomeBuffer (α := α) stored
+      | none => throw <| IO.userError "torch: gradient array out of bounds"
+    if h : gradient.shape = s then
+      pure (gradient.cast h)
+    else
+      throw <| IO.userError <|
+        s!"torch: grad shape mismatch (expected {Shape.pretty s}, " ++
+          s!"got {Shape.pretty gradient.shape})") refs
 
 /-- Construct the eager CPU or CUDA backend for a scalar trainer. -/
 def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean.Storage δ]

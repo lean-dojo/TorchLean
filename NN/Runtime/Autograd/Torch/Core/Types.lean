@@ -29,15 +29,12 @@ open Spec TorchLean TorchLean.Tensor
 /--
 Configuration controlling the behavior of the Torch-style front-end.
 
-PyTorch comparison: these are approximately session/global settings, such as the default
-`requiresGrad` value and requested execution device.
+PyTorch comparison: these are approximately session/global settings, such as the requested
+execution device and the run's seed.
 -/
 structure Config where
   /-- Device requested for execution. -/
   device : NN.Backend.Device := .cpu
-  /-- Default `requiresGrad` value for parameters whose constructor omits it. Inputs default to
-  false. -/
-  requiresGradByDefault : Bool := true
   /--
   Global deterministic seed for runtime randomness.
 
@@ -50,15 +47,6 @@ structure Config where
   PyTorch analogue: `torch.manual_seed(seed)`.
   -/
   seed : Nat := 0
-  /--
-  Enable gradient tracking for newly recorded leaves.
-
-  Inference helpers set this to `false`: forward values are still materialized so they can be read
-  back, but parameter/input leaves are recorded with `requiresGrad = false`. The tape may still
-  exist as a runtime value store; this flag controls whether newly recorded leaves participate in
-  backward. It does not control whether forward execution may allocate intermediate values.
-  -/
-  gradEnabled : Bool := true
   /--
   Optional backend-contract profile selected for this run.
 
@@ -135,18 +123,20 @@ def validateForExecution (config : Config) : IO Unit := do
 def deviceName (config : Config) : String :=
   config.device.cliName
 
-/-- Effective backend-contract profile after applying inference-only VJP policy. -/
-def effectiveBackendProfile (config : Config) : Except String NN.Backend.BackendProfile := do
+/-- Effective backend-contract profile; without gradients (`gradEnabled := false`, as inference
+uses) no operation needs a VJP. -/
+def effectiveBackendProfile (config : Config) (gradEnabled : Bool := true) :
+    Except String NN.Backend.BackendProfile := do
   let profile ← config.resolveBackendProfile
-  pure <| if config.gradEnabled then
+  pure <| if gradEnabled then
     profile
   else
     { profile with policy := { profile.policy with vjpMode := .none } }
 
 /-- Select a backend capsule for one operation under this runtime configuration. -/
-def planBackendOp (config : Config) (op : NN.Backend.BackendOp) :
+def planBackendOp (config : Config) (op : NN.Backend.BackendOp) (gradEnabled : Bool := true) :
     Except String NN.Backend.AcceptedKernel := do
-  let profile ← config.effectiveBackendProfile
+  let profile ← config.effectiveBackendProfile gradEnabled
   let plan ← profile.planOps #[op]
   match plan.kernels[0]? with
   | some k =>

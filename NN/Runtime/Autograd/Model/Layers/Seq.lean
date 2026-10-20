@@ -197,8 +197,8 @@ def forward {σ τ : Shape} (model : Seq σ τ) (mode : Mode := .eval)
     IO.ofExcept (validate model)
     -- Inference still uses the eager session machinery so it can select native kernels, but its
     -- leaves are deliberately non-differentiable and the transient tape is released before return.
-    let options := { options with gradEnabled := false }
     let sess ← Runtime.Autograd.Torch.Internal.EagerSession.new (α := α) options
+      (gradEnabled := false)
     let sess := match rngCounter with
       | some counter => { sess with rngCounter := counter }
       | none => sess

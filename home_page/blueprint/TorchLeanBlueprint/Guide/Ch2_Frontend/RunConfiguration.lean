@@ -599,14 +599,13 @@ def runCuda : Trainer.RunConfig :=
 def trainerFromRun (run : Trainer.RunConfig) :
     Trainer [2] [1] :=
   Trainer.new runModel
-    (run.forObjective mse 2026)
+    { run with objective := mse, seed := 2026 }
 
 #eval do
   let runs := [runCpu, runIeeeCpu, runCuda]
   runs.forM fun (run : Trainer.RunConfig) => do
-    let settings := run.executionSettings
     IO.println
-      s!"{settings.deviceName} {run.arithmetic.cliName}"
+      s!"{run.toConfig.deviceName} {run.arithmetic.cliName}"
 ```
 
 ```leanOutput runConfigs (whitespace := lax)
@@ -617,16 +616,16 @@ cuda native
 
 The record update syntax makes `runIeeeCpu` and `runCuda` each differ from `runCpu` in exactly one
 field.
-`RunConfig` carries the runtime choices and optimizer; `forObjective` adds the objective and seed
-to produce a full `Trainer.Config`. This permits reuse of one runtime configuration across
-several objectives. `executionSettings` projects out the
+`RunConfig` extends `Runtime.Config` with the optimizer and arithmetic, and `Trainer.Config`
+extends `RunConfig` with the objective, so one record update such as
+`{ run with objective := mse, seed := 2026 }` produces a full `Trainer.Config`. This permits
+reuse of one runtime configuration across several objectives. `run.toConfig` is the
 `Runtime.Config` that the session layer actually validates, which is the value that
 `validateForExecution` inspects.
 
-`RunConfig.withRuntime` goes the other way: it takes a `Runtime.Config` and overwrites exactly the
-device, backend-profile and reporting fields of a configuration, leaving the optimizer and the
-rest alone. A sweep therefore declares the model once, keeps one base `RunConfig`, and derives
-each cell of the sweep from it.
+The same syntax goes the other way: `{ runtime with optimizer := ... }` starts a `RunConfig` from a
+`Runtime.Config` parsed from the command line. A sweep therefore declares the model once, keeps
+one base `RunConfig`, and derives each cell of the sweep from it.
 
 Constructing `runCuda` does not open CUDA. These labels print only the device and arithmetic fields
 of each record; they omit optimizer settings and provider overrides. Save those fields too when
@@ -1078,7 +1077,6 @@ controlled experiments are needed to explain them.
 Sources:
 
 - {src "NN/API/Trainer/Core.lean"}[Trainer/Core.lean], the `RunConfig` record;
-- {src "NN/API/Trainer/Run.lean"}[Run.lean], `forObjective` and `executionSettings`;
 - {src "NN/API/Trainer/Session.lean"}[Session.lean], the single session choke point;
 - {src "NN/Runtime/Autograd/Torch/Core/Types.lean"}[Types.lean], `validateForExecution`;
 - {src "NN/Runtime/Autograd/Torch/Core/Session.lean"}[Session.lean], capsule reporting;

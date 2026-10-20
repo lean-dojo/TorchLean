@@ -716,13 +716,11 @@ def ieeeCpu : Trainer.RunConfig :=
     device := cpu }
 
 def configuredTrainer :=
-  Trainer.new model
-    (Trainer.RunConfig.forObjective
-      ieeeCpu mse
-      (seed := 2026))
+  Trainer.new model { ieeeCpu with objective := mse, seed := 2026 }
 ```
 
-`RunConfig` contains the optimizer, arithmetic semantics, device, and backend profile. See
+`RunConfig` adds the optimizer and arithmetic semantics to the `Runtime.Config` fields: device,
+seed, and backend profile. See
 {ref "backend-selection"}[Backend Selection] for the
 profile's provider, VJP, and evidence rules.
 
@@ -753,18 +751,17 @@ The available optimizers are `optim.sgd` (with optional heavy-ball momentum
 records at this layer; the update rules themselves live in the runtime and are stated as
 specifications in the training chapter.
 
-Executable frontends can convert already-parsed common runtime flags with
-`Trainer.RunConfig.fromRuntime`. Command-line applications use
+Executable frontends start from already-parsed common runtime flags with
+`{ runtime with optimizer := ... }`. Command-line applications use
 `TorchLean.CLI.Trainer.parseCommandLine` to parse these flags into a training runtime configuration.
 
 Per-call `TrainOptions` controls step count, sample grouping, logging cadence, and artifact fields.
 `loadCheckpoint?` and `saveCheckpoint?` load or save model state around ordinary training, for
 mean-squared error, cross entropy, and custom losses. They do not snapshot optimizer moments or
 loader state. Alternating two-model training rejects these single-path options because one path
-cannot represent both model states. `Trainer.RunConfig.withRuntime` overwrites the runtime dials of
-a configuration from a
-`Runtime.Config`, which is how a study varies the device or device grid without touching the
-optimizer or the objective.
+cannot represent both model states. `{ run with toConfig := runtime }` replaces the runtime fields
+of a configuration from a `Runtime.Config`, which is how a study varies the device or device grid
+without touching the optimizer or the objective.
 
 # Runtime Arithmetic
 

@@ -107,8 +107,7 @@ def sampleCheckpoint
     (load : Options) (runtime : Runtime.Config := {}) :
     IO String := do
   let trainer := Trainer.new NN.Examples.Models.Sequence.Gpt2.model
-    (Trainer.RunConfig.forObjective (Trainer.RunConfig.fromRuntime runtime)
-      (seed := runtime.seed))
+    { runtime with objective := mse }
   let session ← trainer.open
   session.load load.checkpointPath
   let predict : NN.Examples.Models.Sequence.Gpt2.Predictor := session.predict

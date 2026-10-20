@@ -819,8 +819,9 @@ the matching architecture.
 # Device Selection And Backend Profiles
 
 Programmatically, `Trainer.Config` extends `Trainer.RunConfig`, so the device can be set in the
-same record as the objective and seed. `RunConfig.withDevice` checks the device against the table of
-maintained backend profiles and returns an `Except`:
+same record as the objective and seed. `withDevice`, inherited from `Runtime.Config`, checks the
+device against the table of maintained backend profiles and returns the checked `Runtime.Config`
+or the reason; `{ run with toConfig := checked }` puts an accepted one back into the run:
 
 ```lean (name := tfDevices)
 -- Profile lookup returns either an accepted configuration
@@ -830,7 +831,10 @@ maintained backend profiles and returns an `Except`:
     { optimizer := optim.adam { learningRate := 0.03 } }
   for device in [Runtime.Device.cpu, .cuda, .metal] do
     match run.withDevice device with
-    | .ok _ => IO.println s!"{device.cliName}: accepted"
+    | .ok checked =>
+        let onDevice : Trainer.RunConfig :=
+          { run with toConfig := checked }
+        IO.println s!"{onDevice.device.cliName}: accepted"
     | .error message =>
         IO.println s!"{device.cliName}: {message}"
 ```
@@ -839,7 +843,7 @@ maintained backend profiles and returns an `Except`:
 cpu: accepted
 cuda: accepted
 metal: device `metal` has no maintained runtime profile;
-  provide an explicit backend profile
+  provide a backend profile with executable capsules
 ```
 
 The CPU-only guide build still accepts `cuda` at this stage. `withDevice` checks whether a

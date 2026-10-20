@@ -167,11 +167,9 @@ def train (runtime : Runtime.Config)
   let reportProbe := probe probeSample probeIndex
   let trainer :=
     Trainer.new model <|
-      Trainer.RunConfig.forObjective
-        (Trainer.RunConfig.fromRuntime runtime
-          { optimizer := optim.adam { learningRate := flags.training.learningRate } })
-        mse
-        (seed := runtime.seed)
+      { runtime with
+          optimizer := optim.adam { learningRate := flags.training.learningRate }
+          objective := mse }
   trainer.train
     (Data.fromSamples samples)
     (flags.training.trainOptions

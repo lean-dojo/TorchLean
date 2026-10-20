@@ -51,6 +51,10 @@ universe u
 /--
 Runtime, device, arithmetic, and optimizer settings for a trainer or one training call.
 
+The runtime fields (`device`, `seed`, `backendProfile?`, `showBackend`) are those of
+`Runtime.Config`, which this record extends, so `{ runtime with optimizer := ... }` builds one
+from a runtime configuration.
+
 Example:
 ```lean
 -- The defaults train on the CPU in Lean's `Float32`. `ieee` swaps in the bit-level reference
@@ -61,7 +65,7 @@ def settings : Trainer.RunConfig :=
     device := cpu }
 ```
 -/
-structure RunConfig where
+structure RunConfig extends Runtime.Autograd.Torch.Config where
   /-- Optimizer used unless a training call supplies another run configuration. -/
   optimizer : optim.Optimizer := optim.sgd { learningRate := 0.01 }
   /--
@@ -72,12 +76,6 @@ structure RunConfig where
   `complex`. `trainer.openTyped` instead uses its explicit scalar parameter.
   -/
   arithmetic : Runtime.Arithmetic := .native
-  /-- Device used for execution. -/
-  device : Runtime.Device := .cpu
-  /-- Optional advanced override for provider, assurance, and VJP policy. -/
-  backendProfile? : Option NN.Backend.BackendProfile := none
-  /-- Print each accepted backend capsule when it is first used. -/
-  showBackend : Bool := false
 
 /--
 Loss used to train a model.
@@ -140,8 +138,6 @@ explicit scalar and preserves it in the session and its finished result.
 structure Config (input output : Shape) extends RunConfig where
   /-- Training objective attached to this trainer. -/
   objective : Objective output := .mse
-  /-- Seed used when the model is still a seedable `TorchLean.nn.Builder` builder. -/
-  seed : Nat := 0
 
 end Trainer
 
@@ -156,10 +152,9 @@ structure Trainer (input output : Shape) where
   model : TorchLean.nn.Sequential input output
   /-- Supervised objective used by `train`. -/
   objective : Trainer.Objective output
-  /-- Runtime, backend-contract, and optimizer choices carried by this trainer. -/
+  /-- Runtime, backend-contract, and optimizer choices carried by this trainer. Its `seed` built
+  the model when the model was a `TorchLean.nn.Builder`; changing it later does not rebuild it. -/
   runtime : Trainer.RunConfig := {}
-  /-- Seed used to build this trainer when the input was a `TorchLean.nn.Builder` model builder. -/
-  seed : Nat := 0
 
 namespace Trainer
 

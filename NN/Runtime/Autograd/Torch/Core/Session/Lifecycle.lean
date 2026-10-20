@@ -41,7 +41,7 @@ namespace EagerSession
 /-- Allocate an eager session. A scalar carrier without native tensor support retains its
 arithmetic on CPU with a diagnostic. Native carriers still report GPU execution failures. -/
 def new {α : Type} [Storage α] [TensorTransfer α]
-    (options : Config := {}) : IO (EagerSession α) := do
+    (options : Config := {}) (gradEnabled : Bool := true) : IO (EagerSession α) := do
   let options ← options.forScalar (α := α)
   try
     options.validateForExecution
@@ -58,6 +58,7 @@ def new {α : Type} [Storage α] [TensorTransfer α]
     IO.println "[TorchLean] backend capsules used:"
   pure
     { options := options
+      gradEnabled := gradEnabled
       tape := tape
       paramsByLeaf := paramsByLeaf
       parameterStorageByLeaf := parameterStorageByLeaf

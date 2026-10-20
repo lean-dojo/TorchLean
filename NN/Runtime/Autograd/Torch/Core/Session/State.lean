@@ -137,6 +137,12 @@ advances `refGeneration`, but keeps the owner id, random counter, and backend se
 structure EagerSession (α : Type) [Storage α] where
   /-- Session options controlling backend/device/kernel behavior. -/
   options : Config
+  /--
+  Whether newly recorded leaves track gradients. Inference sessions set this to `false`: forward
+  values are still materialized so they can be read back, but parameter and input leaves are
+  recorded with `requiresGrad = false`, and backend planning asks for no VJP.
+  -/
+  gradEnabled : Bool := true
   /-- The session's tape, on the device `options` selects. -/
   tape : IO.Ref (SessionTape α)
   /-- Map from tape leaf ids to parameter objects, including frozen snapshot owners. -/

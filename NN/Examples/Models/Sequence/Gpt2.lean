@@ -309,11 +309,10 @@ def trainAndDecode (runtime : Runtime.Config) (corpus : String)
   let reportSample :=
     Data.CausalLM.byteBatch
       (α := Float) batchSize contextLength vocabularySize byteIndex options.generation.prompt
-  let run := Trainer.RunConfig.fromRuntime runtime
-    { optimizer := optim.adam { learningRate := options.training.learningRate } }
-  let objective : Trainer.Objective output := oneHotCrossEntropy 2
   let trainer := Trainer.new model <|
-    Trainer.RunConfig.forObjective run objective (seed := runtime.seed)
+    { runtime with
+        optimizer := optim.adam { learningRate := options.training.learningRate }
+        objective := oneHotCrossEntropy 2 }
   trainer.printSummary
 
   /-

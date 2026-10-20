@@ -58,43 +58,6 @@ def tensor {σ : Shape} (name : String) (input : Tensor Float σ)
 
 end Probe
 
-namespace RunConfig
-
-/-- Override the execution device using a maintained backend profile. -/
-def withDevice (run : RunConfig) (device : Runtime.Device) : Except String RunConfig := do
-  match NN.Backend.BackendProfile.maintainedForDevice? device with
-  | some _ => pure { run with device := device, backendProfile? := none }
-  | none =>
-      throw <|
-        s!"device `{device.cliName}` has no maintained runtime profile; " ++
-          "provide an explicit backend profile"
-
-/-- Apply runtime execution settings to a persistent trainer run configuration. -/
-def withRuntime (run : RunConfig) (runtime : Runtime.Config) : RunConfig :=
-  { run with
-      device := runtime.device
-      backendProfile? := runtime.backendProfile?
-      showBackend := runtime.showBackend }
-
-/-- Build a trainer run configuration from a runtime configuration and trainer choices. -/
-def fromRuntime (runtime : Runtime.Config) (base : RunConfig := {}) : RunConfig :=
-  base.withRuntime runtime
-
-/-- Execution settings carried by this trainer configuration. -/
-def executionSettings (run : RunConfig) : Runtime.Config :=
-  { device := run.device
-    backendProfile? := run.backendProfile?
-    showBackend := run.showBackend }
-
-/-- Attach a training objective and initialization seed to these run settings. -/
-def forObjective {σ τ : Shape}
-    (run : RunConfig)
-    (objective : Objective τ := .mse)
-    (seed : Nat := 0) :
-    Config σ τ :=
-  { run with objective := objective, seed := seed }
-
-end RunConfig
 
 /--
 Per-training-call options for the trainer API.

@@ -135,7 +135,7 @@ def run (args : List String) : IO Unit := do
       { optimizer := optim.sgd { learningRate := 0.1 } }
     let trainer :=
       Trainer.new network <|
-      Trainer.RunConfig.forObjective runConfig mse
+      { runConfig with objective := mse }
     trainer.printSummary
     let trained ← trainer.train dataset { steps := 3, logTitle := "GraphSpec tutorial" }
     IO.println "forward: GraphSpec MLP lowered to TorchLean and executed"

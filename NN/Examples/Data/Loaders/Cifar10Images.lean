@@ -199,9 +199,7 @@ def main (args : List String) : IO Unit := do
   let run ← TorchLean.CLI.Trainer.parseCommandLine exeName args
     { optimizer := optim.adam { learningRate := lr } }
   let trainer := Trainer.new (model (batchSize := training.batchSize)) <|
-    Trainer.RunConfig.forObjective run
-      (oneHotCrossEntropy 1)
-      (seed := seed)
+    { run with objective := oneHotCrossEntropy 1, seed }
 
   IO.println "== CIFAR10-style NPY CNN tutorial =="
   IO.println s!"data_dir   = {dataDir}"

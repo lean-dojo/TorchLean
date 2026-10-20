@@ -38,7 +38,7 @@ def selectedCapsule {α : Type} [Storage α]
   | some accepted => return accepted.capsule
   | none => pure ()
   let planned ←
-    match s.options.planBackendOp op with
+    match s.options.planBackendOp op s.gradEnabled with
     | .ok planned => pure planned
     | .error msg => throw <| IO.userError s!"torch: kernel selection failed for `{op.name}`: {msg}"
   let capsule := planned.capsule

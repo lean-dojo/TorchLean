@@ -28,10 +28,10 @@ Create a mutable parameter object (not yet on the tape).
 
 Call `use` to record its current value as a leaf.
 -/
-def param {α : Type} [Storage α] (s : EagerSession α) {sh : Shape}
+def param {α : Type} [Storage α] (_session : EagerSession α) {sh : Shape}
   (init : Tensor α sh) (name : Option String := none) (requiresGrad : Option Bool := none) :
   IO (Param α sh) :=
-  Param.Internal.create init name (requiresGrad.getD s.options.requiresGradByDefault)
+  Param.Internal.create init name (requiresGrad.getD true)
 
 /--
 Read back the concrete tensor value stored at a `TensorRef`.
@@ -76,7 +76,7 @@ def input {α : Type} [Storage α] [TensorTransfer α]
     (s : EagerSession α) {sh : Shape}
   (v : Tensor α sh) (name : Option String := none) (requiresGrad : Bool := false) :
   IO (TensorRef α sh) := do
-  let requiresGrad := s.options.gradEnabled && requiresGrad
+  let requiresGrad := s.gradEnabled && requiresGrad
   if Config.device s.options == .cuda then
     let buffer ← CudaBridge.toSomeBuffer (α := α) (s := sh) v
     let id ← s.recordCudaPure fun tape =>
@@ -146,7 +146,7 @@ these shared snapshots too.
 def use {α : Type} [Storage α] [TensorTransfer α]
     (s : EagerSession α) {sh : Shape}
   (p : Param α sh) : IO (TensorRef α sh) := do
-  let requiresGrad := s.options.gradEnabled && p.requiresGrad
+  let requiresGrad := s.gradEnabled && p.requiresGrad
   let id ←
     if Config.device s.options == .cuda then
       let buffer ← getParamCudaValue p

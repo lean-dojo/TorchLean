@@ -75,8 +75,7 @@ def new {Model : Type u} {σ τ : Shape}
   let builtModel := ToModel.build config.seed model
   { model := builtModel
     objective := config.objective
-    runtime := config.toRunConfig
-    seed := config.seed }
+    runtime := config.toRunConfig }
 
 end Trainer
 

@@ -114,9 +114,9 @@ def planOrThrow (tag : String) (profile : BackendProfile) (ops : Array BackendOp
   | .ok plan => pure plan
   | .error msg => throw <| IO.userError s!"{tag}: planning failed: {msg}"
 
-def profileOrThrow (tag : String) (options : Runtime.Autograd.Torch.Config) :
-    IO BackendProfile := do
-  let profile ← match options.effectiveBackendProfile with
+def profileOrThrow (tag : String) (options : Runtime.Autograd.Torch.Config)
+    (gradEnabled : Bool := true) : IO BackendProfile := do
+  let profile ← match options.effectiveBackendProfile gradEnabled with
     | .ok profile => pure profile
     | .error msg => throw <| IO.userError s!"{tag}: profile resolution failed: {msg}"
   unless profile.hasDeviceCapsule do
@@ -339,12 +339,10 @@ def run : IO Unit := do
   let replaced ← planOrThrow "replacement capsule module" replacementProfile #[.relu]
   expectCapsules "replacement capsule module is selected" replaced.capsuleNames
     #["replacement.relu"]
-  let inferenceOpts : Runtime.Autograd.Torch.Config := { gradEnabled := false }
-  let inferenceProfile ← profileOrThrow "no-grad default profile" inferenceOpts
+  let inferenceProfile ← profileOrThrow "no-grad default profile" {} (gradEnabled := false)
   expect "no-grad runtime planning requests no VJP"
     (inferenceProfile.policy.vjpMode == .none)
-  let trainingOpts : Runtime.Autograd.Torch.Config := { gradEnabled := true }
-  let trainingProfile ← profileOrThrow "training default profile" trainingOpts
+  let trainingProfile ← profileOrThrow "training default profile" {}
   expect "training runtime planning requests the TorchLean tape"
     (trainingProfile.policy.vjpMode == .torchLeanTape)
   expect "cpu availability rejects external device capsule"

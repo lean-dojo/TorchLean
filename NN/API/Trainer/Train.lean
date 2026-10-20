@@ -83,7 +83,7 @@ updates without a host readback. CUDA allocator state is sampled at the configur
 def runSteps {σ τ : Shape} {trainer : TorchLean.Trainer σ τ}
     (session : Session trainer) (options : TrainOptions)
     (samples : Data.SampleStream (Sample.Supervised Float σ τ)) : IO Unit := do
-  let runtime := trainer.runtime.executionSettings
+  let runtime := trainer.runtime.toConfig
   let watchEvery := Memory.cadence runtime options.steps options.cudaMemorySampleEvery
   let mut memorySample? ← Memory.sample runtime watchEvery options.steps 0 none
   unless samples.isEmpty do
@@ -107,7 +107,7 @@ def trainerConfig {σ τ : Shape} (trainer : TorchLean.Trainer σ τ) (name : St
   #[entry "optimizer" (toString trainer.runtime.optimizer),
     entry "arithmetic" (toString trainer.runtime.arithmetic),
     entry "device" trainer.runtime.device.cliName,
-    entry "seed" (toString trainer.seed)]
+    entry "seed" (toString trainer.runtime.seed)]
 
 /-- The loss curve as a one-series metric history. -/
 def lossHistory (curve : Training.Curve) : Training.MetricHistory :=
@@ -292,7 +292,9 @@ def trainStream {σ τ : Shape}
     IO (StreamResult σ τ) := do
   IO.ofExcept trainOptions.validate
   let configured : TorchLean.Trainer σ τ :=
-    { trainer with runtime := trainer.runtime.withRuntime options }
+    { trainer with
+      runtime :=
+        { trainer.runtime with toConfig := { options with seed := trainer.runtime.seed } } }
   let session ← configured.open trainOptions.scheduler
   Internal.loadCheckpoint session trainOptions.loadCheckpoint?
   let lossBefore ← session.loss evalSample
@@ -302,7 +304,7 @@ def trainStream {σ τ : Shape}
   let mut currentLoss := lossBefore
   let steps := trainOptions.steps
   let every : Nat := if curveEvery = 0 then Nat.max 1 (steps / 50) else curveEvery
-  let runtime := configured.runtime.executionSettings
+  let runtime := configured.runtime.toConfig
   let watchEvery := Memory.cadence runtime steps trainOptions.cudaMemorySampleEvery
   let mut memorySample? ← Memory.sample runtime watchEvery steps 0 none
   for stepIndex in [0:steps] do
@@ -363,9 +365,11 @@ def trainAlternating {σ₁ τ₁ σ₂ τ₂ : Shape}
       throw <| IO.userError
         "Trainer.trainAlternating: one checkpoint path cannot represent two model states"
   let firstConfigured : TorchLean.Trainer σ₁ τ₁ :=
-    { first with runtime := first.runtime.withRuntime options }
+    { first with
+      runtime := { first.runtime with toConfig := { options with seed := first.runtime.seed } } }
   let secondConfigured : TorchLean.Trainer σ₂ τ₂ :=
-    { second with runtime := second.runtime.withRuntime options }
+    { second with
+      runtime := { second.runtime with toConfig := { options with seed := second.runtime.seed } } }
   if firstConfigured.runtime.arithmetic != secondConfigured.runtime.arithmetic then
     throw <| IO.userError
       "Trainer.trainAlternating: both trainers must use the same arithmetic"
@@ -377,7 +381,7 @@ def trainAlternating {σ₁ τ₁ σ₂ τ₂ : Shape}
   let mut currentLoss := lossBefore
   let steps := trainOptions.steps
   let every := Nat.max 1 curveEvery
-  let runtime := firstConfigured.runtime.executionSettings
+  let runtime := firstConfigured.runtime.toConfig
   let watchEvery := Memory.cadence runtime steps trainOptions.cudaMemorySampleEvery
   let mut memorySample? ← Memory.sample runtime watchEvery steps 0 none
   for stepIndex in [0:steps] do

@@ -109,14 +109,14 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
       (gradients : LibTorch.Tape.SparseGradMap) : IO Unit := do
     useOptimizerPath .native
     match optimizer with
-    | .sgd learningRate =>
-      Internal.EagerSession.sgdStepAllCudaMap (α := α) session learningRate gradients
-    | .adam learningRate beta1 beta2 epsilon =>
+    | .sgd lr =>
+      Internal.EagerSession.sgdStepAllCudaMap (α := α) session lr gradients
+    | .adam lr beta1 beta2 epsilon =>
       Internal.EagerSession.adamStepAllCudaMap (α := α) session
-        adamConfigRef adamStateRef learningRate beta1 beta2 epsilon gradients
-    | .adamW learningRate weightDecay beta1 beta2 epsilon =>
+        adamConfigRef adamStateRef lr beta1 beta2 epsilon gradients
+    | .adamW lr weightDecay beta1 beta2 epsilon =>
       Internal.EagerSession.adamWStepAllCudaMap (α := α) session
-        adamConfigRef adamStateRef learningRate weightDecay beta1 beta2 epsilon gradients
+        adamConfigRef adamStateRef lr weightDecay beta1 beta2 epsilon gradients
   let nativeBatchStep (optimizer : NativeOptimizer α)
       (batch : Array
         (TorchLean.TensorPack α inputShapes × TorchLean.TensorPack δ dataInputShapes))

@@ -20,7 +20,7 @@ Create a trainer from a checked model, choose its loss and optimizer, then train
 ```lean
 let trainer := Trainer.new model
   { objective := mse
-    optimizer := optim.adam { learningRate := 0.03 } }
+    optimizer := optim.adam { lr := 0.03 } }
 let y0 ← trainer.predict x
 let trained ← trainer.train data { steps := 200, samplesPerStep := 16, logEvery := 25 }
 trained.printSummary
@@ -60,14 +60,14 @@ Example:
 -- The defaults train on the CPU in Lean's `Float32`. `ieee` swaps in the bit-level reference
 -- semantics, which is the setting to reach for when a result looks like a rounding artifact.
 def settings : Trainer.RunConfig :=
-  { optimizer := optim.sgd { learningRate := 0.01, momentum := 0.9 }
+  { optimizer := optim.sgd { lr := 0.01, momentum := 0.9 }
     arithmetic := native
     device := cpu }
 ```
 -/
 structure RunConfig extends Runtime.Autograd.Torch.Config where
   /-- Optimizer used unless a training call supplies another run configuration. -/
-  optimizer : optim.Optimizer := optim.sgd { learningRate := 0.01 }
+  optimizer : optim.Optimizer := optim.sgd { lr := 0.01 }
   /--
   Arithmetic semantics selected by `trainer.open` and the managed training methods.
 

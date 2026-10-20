@@ -56,71 +56,71 @@ section ConcreteOptimizers
 variable [DecidableRel ((· > ·) : α → α → Prop)]
 
 /-- Package plain SGD as a `TensorOptimizer`. -/
-def sgd (learningRate : α) : TensorOptimizer α :=
+def sgd (lr : α) : TensorOptimizer α :=
   { State := SGD.State α
     init := fun {s} parameters =>
-      SGD.init (α := α) (s := s) learningRate parameters
+      SGD.init (α := α) (s := s) lr parameters
     update := fun {_s} state parameters gradients =>
       SGD.update (α := α) state parameters gradients }
 
 /-- Package momentum SGD as a `TensorOptimizer`. -/
-def momentumSGD (learningRate momentum : α) : TensorOptimizer α :=
+def momentumSGD (lr momentum : α) : TensorOptimizer α :=
   { State := MomentumSGD.State α
     init := fun {s} parameters =>
-      MomentumSGD.init (α := α) (s := s) learningRate momentum parameters
+      MomentumSGD.init (α := α) (s := s) lr momentum parameters
     update := fun {_s} state parameters gradients =>
       MomentumSGD.update (α := α) state parameters gradients }
 
 /-- Package AdaGrad as a `TensorOptimizer`. -/
-def adagrad (learningRate epsilon : α) : TensorOptimizer α :=
+def adagrad (lr epsilon : α) : TensorOptimizer α :=
   { State := AdaGrad.State α
     init := fun {s} parameters =>
-      AdaGrad.init (α := α) (s := s) learningRate epsilon parameters
+      AdaGrad.init (α := α) (s := s) lr epsilon parameters
     update := fun {_s} state parameters gradients =>
       AdaGrad.update (α := α) state parameters gradients }
 
 /-- Package RMSProp as a `TensorOptimizer`. -/
-def rmsprop (learningRate decay epsilon : α) : TensorOptimizer α :=
+def rmsprop (lr decay epsilon : α) : TensorOptimizer α :=
   { State := RMSProp.State α
     init := fun {s} parameters =>
-      RMSProp.init (α := α) (s := s) learningRate decay epsilon parameters
+      RMSProp.init (α := α) (s := s) lr decay epsilon parameters
     update := fun {_s} state parameters gradients =>
       RMSProp.update (α := α) state parameters gradients }
 
 /-- Package Adam as a `TensorOptimizer`. -/
-def adam (learningRate beta1 beta2 epsilon : α) : TensorOptimizer α :=
+def adam (lr beta1 beta2 epsilon : α) : TensorOptimizer α :=
   { State := Adam.State α
     init := fun {s} parameters =>
-      Adam.init (α := α) (s := s) learningRate beta1 beta2 epsilon parameters
+      Adam.init (α := α) (s := s) lr beta1 beta2 epsilon parameters
     update := fun {_s} state parameters gradients =>
       Adam.update (α := α) state parameters gradients }
 
 /-- Package AdamW as a `TensorOptimizer`. -/
-def adamw (learningRate weightDecay beta1 beta2 epsilon : α) : TensorOptimizer α :=
+def adamw (lr weightDecay beta1 beta2 epsilon : α) : TensorOptimizer α :=
   { State := AdamW.State α
     init := fun {s} parameters =>
       AdamW.init
-        (α := α) (s := s) learningRate weightDecay beta1 beta2 epsilon parameters
+        (α := α) (s := s) lr weightDecay beta1 beta2 epsilon parameters
     update := fun {_s} state parameters gradients =>
       AdamW.update (α := α) state parameters gradients }
 
 /-- Package Adadelta as a `TensorOptimizer`. -/
-def adadelta (learningRate rho epsilon : α) : TensorOptimizer α :=
+def adadelta (lr rho epsilon : α) : TensorOptimizer α :=
   { State := Adadelta.State α
     init := fun {s} parameters =>
-      Adadelta.init (α := α) (s := s) learningRate rho epsilon parameters
+      Adadelta.init (α := α) (s := s) lr rho epsilon parameters
     update := fun {_s} state parameters gradients =>
       Adadelta.update (α := α) state parameters gradients }
 
 /-- Package Muon-style orthogonalized momentum as a `TensorOptimizer`. -/
-def muon (learningRate momentum : α)
+def muon (lr momentum : α)
     (orthogonalizer : {s : Shape} → Muon.Orthogonalizer α s :=
       fun {s} => Muon.identityOrthogonalizer (α := α) (s := s)) :
     TensorOptimizer α :=
   { State := Muon.State α
     init := fun {s} parameters =>
       Muon.init
-        (α := α) (s := s) learningRate momentum
+        (α := α) (s := s) lr momentum
         (orthogonalizer (s := s)) parameters
     update := fun {_s} state parameters gradients =>
       Muon.update (α := α) state parameters gradients }
@@ -264,7 +264,7 @@ theorem update_params_eq_momentumSGD_of_apply_eq {s : Shape}
         updateMomentumBuffer state.momentumBuffer state.momentum gradients) :
     (update state parameters gradients).parameters =
       (MomentumSGD.update
-        ({ learningRate := state.learningRate
+        ({ lr := state.lr
            momentum := state.momentum
            momentumBuffer := state.momentumBuffer } :
           MomentumSGD.State α s)
@@ -275,19 +275,19 @@ theorem update_params_eq_momentumSGD_of_apply_eq {s : Shape}
 Initialized version of `update_params_eq_momentumSGD_of_apply_eq`.
 -/
 theorem init_update_params_eq_momentumSGD_of_apply_eq {s : Shape}
-    (learningRate momentum : α) (orthogonalizer : Orthogonalizer α s)
+    (lr momentum : α) (orthogonalizer : Orthogonalizer α s)
     (parameters gradients : Tensor α s)
     (happly :
       orthogonalizer.apply (updateMomentumBuffer (Tensor.full s 0) momentum gradients) =
         updateMomentumBuffer (Tensor.full s 0) momentum gradients) :
     (update
-      (init learningRate momentum orthogonalizer parameters)
+      (init lr momentum orthogonalizer parameters)
       parameters gradients).parameters =
     (MomentumSGD.update
-      (MomentumSGD.init learningRate momentum parameters)
+      (MomentumSGD.init lr momentum parameters)
       parameters gradients).parameters := by
   exact update_params_eq_momentumSGD_of_apply_eq
-    (state := init learningRate momentum orthogonalizer parameters)
+    (state := init lr momentum orthogonalizer parameters)
     (parameters := parameters) (gradients := gradients) happly
 
 end Muon

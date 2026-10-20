@@ -211,7 +211,7 @@ open Optim.AdamW in
 ```leanOutput otAdamwThm (whitespace := lax)
 @update_weight_decay_zero_parameters_eq_adam_real : ∀ {s : Shape} (state : AdamW.State ℝ s)
   (parameters gradients : Tensor ℝ s), state.weightDecay = 0 → (AdamW.update state parameters
-  gradients).parameters = (Adam.update { learningRate := state.learningRate, beta1 :=
+  gradients).parameters = (Adam.update { lr := state.lr, beta1 :=
   state.beta1, beta2 := state.beta2, epsilon := state.epsilon, firstMoment := state.firstMoment,
   secondMoment := state.secondMoment, stepCount := state.stepCount } parameters
   gradients).parameters
@@ -544,12 +544,12 @@ The next theorem derives a Gram bound from the success predicate of a
 
 ```leanOutput otChecked (whitespace := lax)
 @checkedBackend_updateDirection_hasApproxColumnGram : ∀ {α : Type} [inst : Storage α] [inst_1 :
-  Context α] {m n : ℕ} {eps : α} (backend : CheckedApproxOrthogonalizer α m n eps) (learningRate
+  Context α] {m n : ℕ} {eps : α} (backend : CheckedApproxOrthogonalizer α m n eps) (lr
   momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n), backend.Success
-  (update { learningRate := learningRate, momentum := momentum, momentumBuffer :=
+  (update { lr := lr, momentum := momentum, momentumBuffer :=
   momentumBuffer, orthogonalizer := backend.orthogonalizer } parameters
   gradients).optimizerState.momentumBuffer → HasApproxColumnGram eps
-  (backend.orthogonalizer.apply (update { learningRate := learningRate, momentum := momentum,
+  (backend.orthogonalizer.apply (update { lr := lr, momentum := momentum,
   momentumBuffer := momentumBuffer, orthogonalizer := backend.orthogonalizer } parameters
   gradients).optimizerState.momentumBuffer)
 ```
@@ -604,13 +604,13 @@ open NN.Examples.Optimization.MuonCertificates in
 ```
 
 ```leanOutput otQrCert (whitespace := lax)
-@qr_update_step_direction_has_exact_gram : ∀ {m n : ℕ} (learningRate momentum : ℝ)
+@qr_update_step_direction_has_exact_gram : ∀ {m n : ℕ} (lr momentum : ℝ)
   (momentumBuffer parameters gradients : Tensor ℝ [m, n]), HasPositiveQRPivots (update {
-  learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+  lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
   orthogonalizer := qrOrthogonalizer } parameters gradients).optimizerState.momentumBuffer → ∃
-  direction, HasExactColumnGram direction ∧ (update { learningRate := learningRate, momentum :=
+  direction, HasExactColumnGram direction ∧ (update { lr := lr, momentum :=
   momentum, momentumBuffer := momentumBuffer, orthogonalizer := qrOrthogonalizer } parameters
-  gradients).parameters = parameters.subSpec (direction.scaleSpec learningRate)
+  gradients).parameters = parameters.subSpec (direction.scaleSpec lr)
 ```
 
 ```leanOutput otQrCert (whitespace := lax)

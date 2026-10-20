@@ -794,7 +794,7 @@ The same record syntax lets us configure a trainer:
 -- Set the loss, Adam learning rate, and initialization seed
 -- in a configuration record.
 { objective := mse
-  optimizer := optim.adam { learningRate := 0.03 }
+  optimizer := optim.adam { lr := 0.03 }
   seed := 2026 }
 ```
 

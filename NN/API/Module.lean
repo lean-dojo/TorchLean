@@ -485,25 +485,25 @@ def Internal.withConfiguredOptimizer {α Result : Type}
     IO.ofExcept (config.validateFor (α := Float32) (scalarName := "binary32"))
   let cast := Runtime.ofFloat (α := α)
   match optim.Optimizer.Internal.view config with
-  | .sgd learningRate momentum =>
+  | .sgd lr momentum =>
       if momentum == 0.0 then
-        continuation (Runtime.Autograd.Model.Optim.sgd (cast learningRate))
+        continuation (Runtime.Autograd.Model.Optim.sgd (cast lr))
       else
-        continuation (Runtime.Autograd.Model.Optim.momentumSGD (cast learningRate) (cast momentum))
-  | .adaGrad learningRate epsilon =>
-      continuation (Runtime.Autograd.Model.Optim.adagrad (cast learningRate) (cast epsilon))
-  | .rmsProp learningRate decay epsilon =>
+        continuation (Runtime.Autograd.Model.Optim.momentumSGD (cast lr) (cast momentum))
+  | .adaGrad lr epsilon =>
+      continuation (Runtime.Autograd.Model.Optim.adagrad (cast lr) (cast epsilon))
+  | .rmsProp lr decay epsilon =>
       continuation (Runtime.Autograd.Model.Optim.rmsprop
-        (cast learningRate) (cast decay) (cast epsilon))
-  | .adam learningRate beta1 beta2 epsilon =>
+        (cast lr) (cast decay) (cast epsilon))
+  | .adam lr beta1 beta2 epsilon =>
       continuation (Runtime.Autograd.Model.Optim.adam
-        (cast learningRate) (cast beta1) (cast beta2) (cast epsilon))
-  | .adaDelta learningRate rho epsilon =>
+        (cast lr) (cast beta1) (cast beta2) (cast epsilon))
+  | .adaDelta lr rho epsilon =>
       continuation (Runtime.Autograd.Model.Optim.adadelta
-        (cast learningRate) (cast rho) (cast epsilon))
-  | .adamW learningRate weightDecay beta1 beta2 epsilon =>
+        (cast lr) (cast rho) (cast epsilon))
+  | .adamW lr weightDecay beta1 beta2 epsilon =>
       continuation (Runtime.Autograd.Model.Optim.adamw
-        (cast learningRate) (cast weightDecay) (cast beta1) (cast beta2) (cast epsilon))
+        (cast lr) (cast weightDecay) (cast beta1) (cast beta2) (cast epsilon))
 
 /--
 Create a one-step update function for any typed module input pack from the public optimizer config

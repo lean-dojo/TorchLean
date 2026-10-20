@@ -47,11 +47,11 @@ structure OptimizerStateCheckpoint where
 /-- Optimizer settings supported by device-native scalar training. -/
 inductive NativeOptimizer (α : Type) where
   /-- SGD without momentum. -/
-  | sgd (learningRate : α)
+  | sgd (lr : α)
   /-- Adam with device-resident moments. -/
-  | adam (learningRate beta1 beta2 epsilon : α)
+  | adam (lr beta1 beta2 epsilon : α)
   /-- Adam with decoupled weight decay and device-resident moments. -/
-  | adamW (learningRate weightDecay beta1 beta2 epsilon : α)
+  | adamW (lr weightDecay beta1 beta2 epsilon : α)
 
 /-- Where optimizer history is maintained for a trainer's updates. -/
 inductive OptimizerUpdatePath where

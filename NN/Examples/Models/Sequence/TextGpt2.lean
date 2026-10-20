@@ -467,7 +467,7 @@ def trainCorpus (runtime : Runtime.Config)
     Data.SampleStream.fromFunction 1 (fun _ => sample0) else allSamples
   let trainer := Trainer.new ByteModel.model <|
     { runtime with
-        optimizer := optim.adam { learningRate := 1e-3 }
+        optimizer := optim.adam { lr := 1e-3 }
         objective := oneHotCrossEntropy 2 }
   trainer.printSummary
   /-
@@ -575,7 +575,7 @@ def trainBpeCorpus {tokenCount : Nat} (runtime : Runtime.Config)
     Data.SampleStream.fromFunction 1 (fun _ => sample0) else scheduledSamples
   let trainer := Trainer.new BpeModel.model <|
     { runtime with
-        optimizer := optim.adam { learningRate := 1e-3 }
+        optimizer := optim.adam { lr := 1e-3 }
         objective := oneHotCrossEntropy 2 }
   trainer.printSummary
   /-

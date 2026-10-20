@@ -101,7 +101,7 @@ def train (runtime : Runtime.Config) (data : RealData.Corpus.Options)
   let trainer :=
     Trainer.new model <|
       { runtime with
-          optimizer := optim.sgd { learningRate := flags.learningRate }
+          optimizer := optim.sgd { lr := flags.lr }
           objective := oneHotCrossEntropy 1 }
   let trainData := Data.fromStream (samples corpus data.windows)
   let trained ← trainer.train
@@ -117,7 +117,7 @@ def main (args : List String) : IO UInt32 := do
     { exeName := exeName
       defaultLogPath := defaultLogPath
       defaultSteps := 1
-      defaultLearningRate := 1e-2
+      defaultLr := 1e-2
       description := "LSTM"
       dataOptions := RealData.Corpus.Options.help defaultWindows
       parseData := RealData.Corpus.Options.parse exeName defaultWindows

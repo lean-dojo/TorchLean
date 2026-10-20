@@ -323,7 +323,7 @@ def checkAdamCheckpointEpsilon : IO Unit := do
 def checkSnapshot : IO Unit := do
   let trainer := TorchLean.Trainer.new (nn.linear 1 1)
     { device := gpu
-      optimizer := optim.adam { learningRate := 0.1 }, seed := 37 }
+      optimizer := optim.adam { lr := 0.1 }, seed := 37 }
   let session ← trainer.open
   let sample : Sample.Supervised Float [1] [1] := { input := [1.0], target := [4.0] }
   let before ← session.loss sample
@@ -347,8 +347,8 @@ def run : IO Unit := do
   checkEvaluationMode
   checkBufferSizeBoundary
   checkParameterViews
-  checkMixedBatchOptimizer (optim.adam { learningRate := 0.03 })
-  checkMixedBatchOptimizer (optim.adamW { learningRate := 0.03, weightDecay := 0.1 })
+  checkMixedBatchOptimizer (optim.adam { lr := 0.03 })
+  checkMixedBatchOptimizer (optim.adamW { lr := 0.03, weightDecay := 0.1 })
   checkLargeBatchMean
   checkBatchNormState
   checkOptimizerReset

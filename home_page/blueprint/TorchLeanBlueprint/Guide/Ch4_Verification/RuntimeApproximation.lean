@@ -962,17 +962,17 @@ approximation budgets for the state and derived scalars, and a margin for divisi
     [ValidRndToNearest rnd]
   {s : Spec.Shape} {stateS : Optim.SGD.State ℝ s} {stateR : Optim.SGD.State
     (NF β fexp rnd) s}
-  {learningRateError : ℝ} {exactParameters : TorchLean.Tensor ℝ s}
+  {lrError : ℝ} {exactParameters : TorchLean.Tensor ℝ s}
   {runtimeParameters : TorchLean.Tensor (NF β fexp rnd) s} {parameterError : ℝ}
   {exactGradients : TorchLean.Tensor ℝ s} {runtimeGradients : TorchLean.Tensor
     (NF β fexp rnd) s}
   {gradientError : ℝ},
-  sgdStateApprox stateS stateR learningRateError →
+  sgdStateApprox stateS stateR lrError →
     approxTensor toSpec exactParameters runtimeParameters parameterError →
       approxTensor toSpec exactGradients runtimeGradients gradientError →
         approxTensor toSpec (Optim.SGD.update stateS exactParameters exactGradients).parameters
           (Optim.SGD.update stateR runtimeParameters runtimeGradients).parameters
-          (sgdStepError learningRateError parameterError gradientError stateR runtimeParameters
+          (sgdStepError lrError parameterError gradientError stateR runtimeParameters
               runtimeGradients).parameterError
 ```
 ```leanOutput optimizers (whitespace := lax)
@@ -1019,8 +1019,8 @@ approximation budgets for the state and derived scalars, and a margin for divisi
               |toSpec (1 / (1 - Optim.scalarPowNat stateR.beta2 (stateR.stepCount + 1))) -
                       1 / (1 - Optim.scalarPowNat stateS.beta2 (stateS.stepCount + 1))| ≤
                   derivedErrors.secondMomentBiasInverse →
-                |toSpec (stateR.learningRate * stateR.weightDecay) -
-                  stateS.learningRate * stateS.weightDecay| ≤
+                |toSpec (stateR.lr * stateR.weightDecay) -
+                  stateS.lr * stateS.weightDecay| ≤
                     derivedErrors.decayScale →
                   (have nextStepCount := stateS.stepCount + 1;
                     have moment2 :=
@@ -1043,8 +1043,8 @@ approximation budgets for the state and derived scalars, and a margin for divisi
                             adamWStateApprox (Optim.AdamW.update
                               stateS paramsS gradsS).optimizerState
                                 (Optim.AdamW.update stateR paramsR gradsR).optimizerState
-                                { learningRate :=
-                                  stateError.learningRate, beta1
+                                { lr :=
+                                  stateError.lr, beta1
                                   := stateError.beta1,
                                   beta2 := stateError.beta2, epsilon := stateError.epsilon,
                                   weightDecay :=
@@ -1073,7 +1073,7 @@ step's hypothesis.
 AdamW keeps two buffers, a step counter, and a bias correction, and its statement is by far the
 longest in the chapter. Five of its hypotheses are error budgets for quantities Adam derives rather
 than stores: `1 - beta1`, `1 - beta2`, and the two bias-correction reciprocals
-`1 / (1 - beta^(t+1))` , together with `learningRate * weightDecay` . Those are computed in floating
+`1 / (1 - beta^(t+1))` , together with `lr * weightDecay` . Those are computed in floating
 point on every step, so they carry their own
 rounding, including the arithmetic used for the powers. The `Tensor.Forall` hypothesis bounds
 every entry of the exact denominator, `sqrt(max correctedSecondMoment 0) + epsilon`, from below

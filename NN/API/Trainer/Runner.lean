@@ -212,13 +212,13 @@ def withBoundOptimizer {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ 
   | none => pure ()
   let rate (step : Nat) : Float :=
     scheduler.map (fun config => config.rate step)
-      |>.getD config.learningRate
+      |>.getD config.lr
   TorchLean.Module.Internal.withConfiguredOptimizer (α := α)
     (stateShapes := TorchLean.nn.stateShapes model) (Runner.runtime runner) config
     fun optimizer => do
       let state ← TorchLean.Module.Objective.initOptimizer (Runner.objectiveModule runner) optimizer
       continuation optimizer state fun step state =>
-        optimizer.setLearningRate (TorchLean.Runtime.ofFloat (rate step)) state
+        optimizer.setLr (TorchLean.Runtime.ofFloat (rate step)) state
 
 /-! ## Gradient accumulation and optimizer updates -/
 

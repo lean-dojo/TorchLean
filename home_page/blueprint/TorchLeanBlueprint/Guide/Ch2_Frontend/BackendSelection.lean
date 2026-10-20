@@ -674,7 +674,7 @@ def bsModel : nn.Builder (nn.Sequential [4] [1]) :=
 def bsTrainer (device : Runtime.Device) :=
   Trainer.new bsModel
     { objective := mse
-      optimizer := optim.adam { learningRate := 0.01 }
+      optimizer := optim.adam { lr := 0.01 }
       device := device }
 
 #check bsTrainer gpu

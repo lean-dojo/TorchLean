@@ -78,7 +78,7 @@ def trainOnce : IO Unit := do
   let trainer :=
     Trainer.new model
       { objective := mse
-        optimizer := optim.sgd { learningRate := 0.05 }
+        optimizer := optim.sgd { lr := 0.05 }
         device := cpu
         arithmetic := ieee }
   -- Inspect the initialized model before any parameter updates.

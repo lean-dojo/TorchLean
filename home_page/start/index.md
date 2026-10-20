@@ -67,7 +67,7 @@ def trainOnce : IO Unit := do
   let trainer :=
     Trainer.new model
       { objective := mse
-        optimizer := optim.sgd { learningRate := 0.05 }
+        optimizer := optim.sgd { lr := 0.05 }
         device := cpu
         arithmetic := ieee }
   -- Inspect the initialized model before any parameter updates.
@@ -131,7 +131,7 @@ supported arithmetic on the GPU tape, keeping the complete words for values and 
 This does not extend native optimizers or the full LibTorch operator catalogue to those formats.
 
 For an explicit training loop, take the parameter gradients returned by
-`nn.TypedGraphModel.vjp` and pass them to `nn.sgdStep model learningRate state gradient`.
+`nn.TypedGraphModel.vjp` and pass them to `nn.sgdStep model lr state gradient`.
 The learning rate, state, and updates use the selected scalar. The
 [typed training example](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Quickstart/TypedTraining.lean)
 shows this loop for half squared error. It uses immutable CPU state, preserves frozen entries,

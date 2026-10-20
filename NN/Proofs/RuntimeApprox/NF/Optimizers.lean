@@ -52,19 +52,19 @@ abbrev SGDStateError := ℝ
 /-- Exact/runtime relation for SGD state. -/
 def sgdStateApprox {s : Shape} (stateS : Optim.SGD.State ℝ s)
     (stateR : Optim.SGD.State R s) (error : SGDStateError) : Prop :=
-  abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) stateR.learningRate -
-    stateS.learningRate) ≤ error
+  abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) stateR.lr -
+    stateS.lr) ≤ error
 
 /-- Parameter error after one SGD update, expressed using the rounded-real tensors. -/
-def sgdStepError {s : Shape} (learningRateError parameterError gradientError : ℝ)
+def sgdStepError {s : Shape} (lrError parameterError gradientError : ℝ)
     (runtimeState : Optim.SGD.State R s)
     (runtimeParameters runtimeGradients : Tensor R s) :
     StepError (fun _ => SGDStateError) s :=
   let scaledGradientError := linfNorm
     (scaleApproxBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-      gradientError learningRateError runtimeState.learningRate runtimeGradients)
-  let scaledRuntimeGradient := scaleSpec runtimeGradients runtimeState.learningRate
-  { optimizerStateError := learningRateError
+      gradientError lrError runtimeState.lr runtimeGradients)
+  let scaledRuntimeGradient := scaleSpec runtimeGradients runtimeState.lr
+  { optimizerStateError := lrError
     parameterError := linfNorm
       (subBoundTensor (β := β) (fexp := fexp)
         parameterError scaledGradientError runtimeParameters scaledRuntimeGradient) }
@@ -80,19 +80,19 @@ def sgdContract : NumericalStepContract R (toSpec (β := β) (fexp := fexp) (rnd
   assumptionsHold := fun _ _ _ _ _ _ _ _ _ _ => True
   updateExact := Optim.SGD.update
   updateRuntime := Optim.SGD.update
-  nextError := fun learningRateError parameterError gradientError state parameters gradients _ =>
+  nextError := fun lrError parameterError gradientError state parameters gradients _ =>
     sgdStepError (β := β) (fexp := fexp) (rnd := rnd)
-      learningRateError parameterError gradientError state parameters gradients
-  stateErrorReport := fun learningRateError => #[("learning rate", learningRateError)]
+      lrError parameterError gradientError state parameters gradients
+  stateErrorReport := fun lrError => #[("learning rate", lrError)]
   assumptionReport := fun _ => #[]
   updateApprox := by
-    intro s exactState runtimeState learningRateError
+    intro s exactState runtimeState lrError
       exactParameters runtimeParameters parameterError
       exactGradients runtimeGradients gradientError
       _assumptions hstate hparams hgrads _assumptionsHold
     have hscaled := approxTensor_scale_spec_of_approx
       (β := β) (fexp := fexp) (rnd := rnd)
-      exactState.learningRate runtimeState.learningRate hgrads hstate
+      exactState.lr runtimeState.lr hgrads hstate
     have hnext := approxTensor_sub_spec
       (β := β) (fexp := fexp) (rnd := rnd) hparams hscaled
     constructor
@@ -105,11 +105,11 @@ This is the parameter component of `sgdContract.updateApprox`; the learning rate
 unchanged, so the contract's state component is just `hstate`. -/
 theorem approxTensor_sgd_update {s : Shape}
     {stateS : Optim.SGD.State ℝ s} {stateR : Optim.SGD.State R s}
-    {learningRateError : ℝ}
+    {lrError : ℝ}
     {exactParameters : Tensor ℝ s} {runtimeParameters : Tensor R s} {parameterError : ℝ}
     {exactGradients : Tensor ℝ s} {runtimeGradients : Tensor R s} {gradientError : ℝ}
     (hstate : sgdStateApprox (β := β) (fexp := fexp) (rnd := rnd)
-      stateS stateR learningRateError)
+      stateS stateR lrError)
     (hparams : approxTensor (α := R)
       (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
       exactParameters runtimeParameters parameterError)
@@ -120,10 +120,10 @@ theorem approxTensor_sgd_update {s : Shape}
       (Optim.SGD.update stateS exactParameters exactGradients).parameters
       (Optim.SGD.update stateR runtimeParameters runtimeGradients).parameters
       (sgdStepError (β := β) (fexp := fexp) (rnd := rnd)
-        learningRateError parameterError gradientError
+        lrError parameterError gradientError
         stateR runtimeParameters runtimeGradients).parameterError :=
   ((sgdContract (β := β) (fexp := fexp) (rnd := rnd)).updateApprox
-    stateS stateR learningRateError exactParameters runtimeParameters parameterError
+    stateS stateR lrError exactParameters runtimeParameters parameterError
     exactGradients runtimeGradients gradientError () hstate hparams hgrads trivial).2
 
 /-! ## Momentum SGD -/
@@ -131,7 +131,7 @@ theorem approxTensor_sgd_update {s : Shape}
 /-- Error budgets for momentum SGD's scalar hyperparameters and momentum buffer. -/
 structure MomentumSGDStateError (s : Shape) where
   /-- Learning-rate error. -/
-  learningRate : ℝ
+  lr : ℝ
   /-- Momentum-coefficient error. -/
   momentum : ℝ
   /-- Infinity-norm error in the stored momentum buffer. -/
@@ -140,8 +140,8 @@ structure MomentumSGDStateError (s : Shape) where
 /-- Exact/runtime relation for momentum SGD state. -/
 def momentumSGDStateApprox {s : Shape} (stateS : Optim.MomentumSGD.State ℝ s)
     (stateR : Optim.MomentumSGD.State R s) (error : MomentumSGDStateError s) : Prop :=
-  abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) stateR.learningRate -
-    stateS.learningRate) ≤ error.learningRate ∧
+  abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) stateR.lr -
+    stateS.lr) ≤ error.lr ∧
   abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) stateR.momentum - stateS.momentum) ≤
     error.momentum ∧
   approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))
@@ -163,13 +163,13 @@ def momentumSGDStepError {s : Shape} (stateError : MomentumSGDStateError s)
       scaledBufferError gradientError scaledRuntimeBuffer runtimeGradients)
   let scaledUpdateError := linfNorm
     (scaleApproxBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-      nextBufferError stateError.learningRate
-      runtimeState.learningRate nextRuntimeBuffer)
+      nextBufferError stateError.lr
+      runtimeState.lr nextRuntimeBuffer)
   { optimizerStateError := { stateError with momentumBuffer := nextBufferError }
     parameterError := linfNorm
       (subBoundTensor (β := β) (fexp := fexp)
         parameterError scaledUpdateError runtimeParameters
-        (scaleSpec nextRuntimeBuffer runtimeState.learningRate)) }
+        (scaleSpec nextRuntimeBuffer runtimeState.lr)) }
 
 /-- Numerical refinement contract for momentum SGD with arbitrary-rank parameter tensors. -/
 def momentumSGDContract :
@@ -187,7 +187,7 @@ def momentumSGDContract :
     momentumSGDStepError (β := β) (fexp := fexp) (rnd := rnd)
       stateError parameterError gradientError state parameters gradients
   stateErrorReport := fun error =>
-    #[("learning rate", error.learningRate), ("momentum", error.momentum),
+    #[("learning rate", error.lr), ("momentum", error.momentum),
       ("momentum buffer", error.momentumBuffer)]
   assumptionReport := fun _ => #[]
   updateApprox := by
@@ -201,7 +201,7 @@ def momentumSGDContract :
       (β := β) (fexp := fexp) (rnd := rnd) hscaledBuf hgrads
     have hscaledUpdate := approxTensor_scale_spec_of_approx
       (β := β) (fexp := fexp) (rnd := rnd)
-      stateS.learningRate stateR.learningRate hnewBuf hlr
+      stateS.lr stateR.lr hnewBuf hlr
     have hnextParams := approxTensor_sub_spec
       (β := β) (fexp := fexp) (rnd := rnd) hparams hscaledUpdate
     constructor
@@ -249,7 +249,7 @@ theorem approxTensor_momentumSGD_update {s : Shape}
 /-- Error budgets relating exact and rounded AdamW state. -/
 structure AdamWStateError (s : Shape) where
   /-- Error in the stored learning rate. -/
-  learningRate : ℝ
+  lr : ℝ
   /-- Error in the first-moment decay coefficient. -/
   beta1 : ℝ
   /-- Error in the second-moment decay coefficient. -/
@@ -266,8 +266,8 @@ structure AdamWStateError (s : Shape) where
 /-- Exact/runtime relation for the persistent AdamW state. -/
 def adamWStateApprox {s : Shape} (stateS : Optim.AdamW.State ℝ s)
     (stateR : Optim.AdamW.State R s) (error : AdamWStateError s) : Prop :=
-  abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) stateR.learningRate -
-    stateS.learningRate) ≤ error.learningRate ∧
+  abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) stateR.lr -
+    stateS.lr) ≤ error.lr ∧
   abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) stateR.beta1 - stateS.beta1) ≤ error.beta1 ∧
   abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) stateR.beta2 - stateS.beta2) ≤ error.beta2 ∧
   abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) stateR.epsilon - stateS.epsilon) ≤
@@ -313,7 +313,7 @@ structure AdamWStepErrorTrace where
   /-- Error after adding epsilon to the square-root denominator. -/
   denominator : ℝ
   /-- Error in the elementwise adaptive learning rate. -/
-  adaptiveLearningRate : ℝ
+  adaptiveLr : ℝ
   /-- Error in the Adam update before subtraction from parameters. -/
   adaptiveUpdate : ℝ
   /-- Error in the decoupled weight-decay update. -/
@@ -389,18 +389,18 @@ def adamWStepErrorTrace {s : Shape} (stateError : AdamWStateError s)
   let denominatorError := linfNorm
     (addBoundTensor (β := β) (fexp := fexp)
       standardDeviationError stateError.epsilon standardDeviation epsilon)
-  let learningRate := Tensor.full s runtimeState.learningRate
-  let adaptiveLearningRate := divSpec learningRate denominator
-  let adaptiveLearningRateError := linfNorm
+  let lr := Tensor.full s runtimeState.lr
+  let adaptiveLr := divSpec lr denominator
+  let adaptiveLrError := linfNorm
     (divPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-      minimumDenominator stateError.learningRate
-      denominatorError learningRate denominator)
-  let adaptiveUpdate := mulSpec adaptiveLearningRate correctedFirstMoment
+      minimumDenominator stateError.lr
+      denominatorError lr denominator)
+  let adaptiveUpdate := mulSpec adaptiveLr correctedFirstMoment
   let adaptiveUpdateError := linfNorm
     (mulBoundTensor (β := β) (fexp := fexp)
-      adaptiveLearningRateError correctedFirstMomentError
-      adaptiveLearningRate correctedFirstMoment)
-  let decayScale := runtimeState.learningRate * runtimeState.weightDecay
+      adaptiveLrError correctedFirstMomentError
+      adaptiveLr correctedFirstMoment)
+  let decayScale := runtimeState.lr * runtimeState.weightDecay
   let decayUpdate := scaleSpec runtimeParameters decayScale
   let decayUpdateError := linfNorm
     (scaleApproxBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
@@ -419,7 +419,7 @@ def adamWStepErrorTrace {s : Shape} (stateError : AdamWStateError s)
     correctedSecondMoment := correctedSecondMomentError
     standardDeviation := standardDeviationError
     denominator := denominatorError
-    adaptiveLearningRate := adaptiveLearningRateError
+    adaptiveLr := adaptiveLrError
     adaptiveUpdate := adaptiveUpdateError
     decayUpdate := decayUpdateError
     decayedParameters := decayedParametersError
@@ -456,8 +456,8 @@ theorem approxTensor_adamW_update {s : Shape}
       (1 / (1 - Optim.scalarPowNat stateS.beta2 (stateS.stepCount + 1)))) ≤
         derivedErrors.secondMomentBiasInverse)
     (hdecay : abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-      (stateR.learningRate * stateR.weightDecay) -
-      stateS.learningRate * stateS.weightDecay) ≤ derivedErrors.decayScale)
+      (stateR.lr * stateR.weightDecay) -
+      stateS.lr * stateS.weightDecay) ≤ derivedErrors.decayScale)
     (hDenominatorLower :
       let nextStepCount := stateS.stepCount + 1
       let moment2 := addSpec (scaleSpec stateS.secondMoment stateS.beta2)
@@ -538,8 +538,8 @@ theorem approxTensor_adamW_update {s : Shape}
     (β := β) (fexp := fexp) (rnd := rnd) hadaptive hmHat
   have hdecayUpdate := approxTensor_scale_spec_of_approx
     (β := β) (fexp := fexp) (rnd := rnd)
-    (stateS.learningRate * stateS.weightDecay)
-    (stateR.learningRate * stateR.weightDecay) hparams hdecay
+    (stateS.lr * stateS.weightDecay)
+    (stateR.lr * stateR.weightDecay) hparams hdecay
   have hdecayed := approxTensor_sub_spec
     (β := β) (fexp := fexp) (rnd := rnd) hparams hdecayUpdate
   have hnext := approxTensor_sub_spec
@@ -550,7 +550,7 @@ theorem approxTensor_adamW_update {s : Shape}
     · simpa [Optim.AdamW.update, Optim.Adam.update, trace, adamWStepErrorTrace, vS, vR] using hv'
     · simpa [Optim.AdamW.update, Optim.Adam.update] using ht
   · simpa [trace, adamWStepErrorTrace, Optim.AdamW.update, Optim.Adam.update,
-      Optim.adaptiveLearningRate, mS, mR, vS, vR, mHatS, mHatR,
+      Optim.adaptiveLr, mS, mR, vS, vR, mHatS, mHatR,
       vHatS, vHatR, bias1S, bias1R, bias2S, bias2R] using hnext
 
 /-! ## AdamW contract instance -/
@@ -582,8 +582,8 @@ def adamWAssumptionsHold {s : Shape}
       (1 / (1 - Optim.scalarPowNat stateS.beta2 (stateS.stepCount + 1)))) ≤
     assumptions.derivedErrors.secondMomentBiasInverse ∧
   abs (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-      (stateR.learningRate * stateR.weightDecay) -
-      stateS.learningRate * stateS.weightDecay) ≤
+      (stateR.lr * stateR.weightDecay) -
+      stateS.lr * stateS.weightDecay) ≤
     assumptions.derivedErrors.decayScale ∧
   (let nextStepCount := stateS.stepCount + 1
    let moment2 := addSpec (scaleSpec stateS.secondMoment stateS.beta2)
@@ -631,7 +631,7 @@ def adamWContract : NumericalStepContract R
     adamWStepError (β := β) (fexp := fexp) (rnd := rnd)
       stateError parameterError gradientError state parameters gradients assumptions
   stateErrorReport := fun error =>
-    #[("learning rate", error.learningRate), ("beta1", error.beta1), ("beta2", error.beta2),
+    #[("learning rate", error.lr), ("beta1", error.beta1), ("beta2", error.beta2),
       ("epsilon", error.epsilon), ("weight decay", error.weightDecay),
       ("first moment", error.firstMoment), ("second moment", error.secondMoment)]
   assumptionReport := fun assumptions =>

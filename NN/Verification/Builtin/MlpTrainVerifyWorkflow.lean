@@ -77,7 +77,7 @@ def run {α : Type} [Storage α] [Context α] [ToString α]
   let dataset := Data.fromTensors inputs labels
   let trainer := Trainer.new model <|
     { options with
-        optimizer := optim.sgd { learningRate := 0.1 }
+        optimizer := optim.sgd { lr := 0.1 }
         objective := oneHotCrossEntropy 0
         seed := 0 }
   IO.println "== Train and verify classifier (2 → 8 → 2) =="

@@ -84,14 +84,14 @@ def displayName : Algorithm → String
   | .adaDelta => "Adadelta"
 
 /-- Configure the selected algorithm with its command-line learning rate and defaults. -/
-def configure (algorithm : Algorithm) (learningRate : Float) : Optimizer :=
+def configure (algorithm : Algorithm) (lr : Float) : Optimizer :=
   match algorithm with
-  | .sgd => optim.sgd { learningRate }
-  | .adaGrad => optim.adaGrad { learningRate }
-  | .rmsProp => optim.rmsProp { learningRate }
-  | .adam => optim.adam { learningRate, beta2 := 0.95 }
-  | .adamW => optim.adamW { learningRate, weightDecay := 0.1, beta2 := 0.95 }
-  | .adaDelta => optim.adaDelta { learningRate }
+  | .sgd => optim.sgd { lr }
+  | .adaGrad => optim.adaGrad { lr }
+  | .rmsProp => optim.rmsProp { lr }
+  | .adam => optim.adam { lr, beta2 := 0.95 }
+  | .adamW => optim.adamW { lr, weightDecay := 0.1, beta2 := 0.95 }
+  | .adaDelta => optim.adaDelta { lr }
 
 end Algorithm
 
@@ -107,13 +107,13 @@ backend. The default identity backend supports proofs and fallback behavior; pro
 pass a matrix-shaped orthogonalizer.
 -/
 def optimizer {α : Type} [TorchLean.Storage α] [Context α]
-    (learningRate momentum : α)
+    (lr momentum : α)
     (orthogonalizer : {s : Shape} → Orthogonalizer α s :=
       fun {s} => Optim.Muon.identityOrthogonalizer (α := α) (s := s))
     {paramShapes : List Shape} :
     Runtime.Autograd.Model.Optim.Optimizer α paramShapes :=
   Runtime.Autograd.Model.Optim.muon
-    (α := α) learningRate momentum orthogonalizer (paramShapes := paramShapes)
+    (α := α) lr momentum orthogonalizer (paramShapes := paramShapes)
 
 end muon
 
@@ -129,13 +129,13 @@ constructs and refreshes low-rank projectors for matrix parameters; this constru
 verified update boundary once a same-shape projector is supplied.
 -/
 def sgd {α : Type} [TorchLean.Storage α] [Context α]
-    (learningRate : α)
+    (lr : α)
     (projector : {s : Shape} → Projector α s s :=
       fun {s} => Optim.GaLore.identityProjector (α := α) (s := s))
     {paramShapes : List Shape} :
     Runtime.Autograd.Model.Optim.Optimizer α paramShapes :=
   Runtime.Autograd.Model.Optim.projectedSGD
-    (α := α) learningRate projector (paramShapes := paramShapes)
+    (α := α) lr projector (paramShapes := paramShapes)
 
 end galore
 

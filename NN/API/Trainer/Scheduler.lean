@@ -41,21 +41,21 @@ and `config.rate stepIndex` computes the learning rate at that optimizer step or
 warm-up followed by cosine decay to a nonzero floor.
 -/
 inductive Config where
-  | constant (learningRate : Float)
-  | step (baseLearningRate : Float) (stepSize : Nat) (decayFactor : Float := 0.1)
-  | exponential (baseLearningRate : Float) (decayFactor : Float)
+  | constant (lr : Float)
+  | step (baseLr : Float) (stepSize : Nat) (decayFactor : Float := 0.1)
+  | exponential (baseLr : Float) (decayFactor : Float)
   /--
-  Linearly warm up to `peakLearningRate`, then follow a cosine curve down to
-  `minimumLearningRate`.
+  Linearly warm up to `peakLr`, then follow a cosine curve down to
+  `minLr`.
 
   `warmupSteps` counts optimizer updates. The first update uses
-  `peakLearningRate / warmupSteps`, and the last warm-up update reaches `peakLearningRate`. Once
-  `totalSteps` updates have been scheduled, the learning rate remains at `minimumLearningRate`.
+  `peakLr / warmupSteps`, and the last warm-up update reaches `peakLr`. Once
+  `totalSteps` updates have been scheduled, the learning rate remains at `minLr`.
   A warm-up longer than the run is clamped to `totalSteps`. When `totalSteps = 0`, no update belongs
-  to the schedule and `Config.rate` returns `minimumLearningRate`.
+  to the schedule and `Config.rate` returns `minLr`.
   -/
   | warmupCosine
-      (peakLearningRate minimumLearningRate : Float) (warmupSteps totalSteps : Nat)
+      (peakLr minLr : Float) (warmupSteps totalSteps : Nat)
   deriving Repr
 
 export Config (constant step exponential warmupCosine)
@@ -83,20 +83,20 @@ decay factors in `[0, 1]`; a zero step size is rejected instead of silently chan
 to a constant rate.
 -/
 def Internal.validate : Config → Except String Unit
-  | .constant learningRate =>
-      Internal.requireRate "learning rate" learningRate
-  | .step baseLearningRate stepSize decayFactor => do
-      Internal.requireRate "base learning rate" baseLearningRate
+  | .constant lr =>
+      Internal.requireRate "learning rate" lr
+  | .step baseLr stepSize decayFactor => do
+      Internal.requireRate "base learning rate" baseLr
       unless stepSize > 0 do
         throw "scheduler: step size must be positive"
       Internal.requireDecay "decay factor" decayFactor
-  | .exponential baseLearningRate decayFactor => do
-      Internal.requireRate "base learning rate" baseLearningRate
+  | .exponential baseLr decayFactor => do
+      Internal.requireRate "base learning rate" baseLr
       Internal.requireDecay "decay factor" decayFactor
-  | .warmupCosine peakLearningRate minimumLearningRate _ _ => do
-      Internal.requireRate "peak learning rate" peakLearningRate
-      Internal.requireRate "minimum learning rate" minimumLearningRate
-      unless minimumLearningRate <= peakLearningRate do
+  | .warmupCosine peakLr minLr _ _ => do
+      Internal.requireRate "peak learning rate" peakLr
+      Internal.requireRate "minimum learning rate" minLr
+      unless minLr <= peakLr do
         throw "scheduler: minimum learning rate must not exceed peak learning rate"
 
 /--
@@ -119,32 +119,32 @@ def Config.validate (config : Config) (round : Float → Float := id) :
 
 /-- Learning rate at a given step or epoch index. -/
 def Config.rate : Config → Nat → Float
-  | .constant learningRate, _ => learningRate
-  | .step baseLearningRate stepSize decayFactor, stepIndex =>
+  | .constant lr, _ => lr
+  | .step baseLr stepSize decayFactor, stepIndex =>
       if stepSize = 0 then
-        baseLearningRate
+        baseLr
       else
         let decayCount := stepIndex / stepSize
-        baseLearningRate * (Float.pow decayFactor (Float.ofNat decayCount))
-  | .exponential baseLearningRate decayFactor, stepIndex =>
-      baseLearningRate * (Float.pow decayFactor (Float.ofNat stepIndex))
-  | .warmupCosine peakLearningRate minimumLearningRate warmupSteps totalSteps, stepIndex =>
+        baseLr * (Float.pow decayFactor (Float.ofNat decayCount))
+  | .exponential baseLr decayFactor, stepIndex =>
+      baseLr * (Float.pow decayFactor (Float.ofNat stepIndex))
+  | .warmupCosine peakLr minLr warmupSteps totalSteps, stepIndex =>
       if totalSteps = 0 then
-        minimumLearningRate
+        minLr
       else if stepIndex >= totalSteps then
-        minimumLearningRate
+        minLr
       else
         let warmupSteps := Nat.min warmupSteps totalSteps
         if stepIndex < warmupSteps then
-          peakLearningRate * (Float.ofNat (stepIndex + 1) / Float.ofNat warmupSteps)
+          peakLr * (Float.ofNat (stepIndex + 1) / Float.ofNat warmupSteps)
         else
           let decaySteps := totalSteps - warmupSteps
           if decaySteps = 0 then
-            minimumLearningRate
+            minLr
           else
             let progress := Float.ofNat (stepIndex - warmupSteps) / Float.ofNat decaySteps
             let cosine := (1.0 + Float.cos (3.141592653589793 * progress)) / 2.0
-            minimumLearningRate + (peakLearningRate - minimumLearningRate) * cosine
+            minLr + (peakLr - minLr) * cosine
 
 end Scheduler
 end Trainer

@@ -100,7 +100,7 @@ structure GradientBoostedTreesSpec (α : Type) (nFeatures nTrees maxDepth : Nat)
   /-- The boosted regression trees, applied in order and summed. -/
   trees : Tensor (DecisionTreeSpec α nFeatures maxDepth) [nTrees]
   /-- The shrinkage factor multiplying each tree's contribution. -/
-  learningRate : α
+  lr : α
   /-- The constant base prediction that the trees correct. -/
   initialPrediction : α
 
@@ -136,7 +136,7 @@ def decisionTreeForwardLeadingSpec (leading : Shape) {maxDepth nFeatures : Nat}
 Forward pass for a gradient boosted ensemble on a single input.
 
 Starting at `initialPrediction`, visit trees in index order and update
-`acc := acc + learningRate * tree_i(x)`. Shrinkage is applied before each addition; rounded
+`acc := acc + lr * tree_i(x)`. Shrinkage is applied before each addition; rounded
 arithmetic does not in general permit factoring it out of the sum.
 -/
 def gradientBoostedTreesForwardSpec {nTrees maxDepth nFeatures : Nat}
@@ -148,7 +148,7 @@ def gradientBoostedTreesForwardSpec {nTrees maxDepth nFeatures : Nat}
       let tree := model.trees.getScalar ⟨i, h⟩
       let treePrediction := decisionTreeForwardSpec (α := α) (maxDepth := maxDepth)
         (nFeatures := nFeatures) tree input
-      accumulate_trees (i + 1) (acc + model.learningRate * treePrediction)
+      accumulate_trees (i + 1) (acc + model.lr * treePrediction)
     else acc
   let ensemblePrediction := accumulate_trees 0 model.initialPrediction
   Tensor.scalar ensemblePrediction

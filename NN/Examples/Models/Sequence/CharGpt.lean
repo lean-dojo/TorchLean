@@ -86,7 +86,7 @@ structure Preset where
   trainingSteps : Nat
   batchSize : Nat
   contextLength : Nat
-  learningRate : Float
+  lr : Float
   evalEvery : Nat
   evaluationBatches : Nat
   generationLength : Nat
@@ -103,7 +103,7 @@ def smoke : Preset :=
     trainingSteps := 2
     batchSize := 2
     contextLength := 16
-    learningRate := 3e-4
+    lr := 3e-4
     evalEvery := 1
     evaluationBatches := 1
     generationLength := 32 }
@@ -117,7 +117,7 @@ def karpathy : Preset :=
     trainingSteps := 5000
     batchSize := 64
     contextLength := 256
-    learningRate := 3e-4
+    lr := 3e-4
     evalEvery := 500
     evaluationBatches := 200
     generationLength := 500 }
@@ -188,7 +188,7 @@ def parse (args : List String) (defaults : Preset)
   let (training, args) ←
     CLI.Training.OptimizerOptions.parse exeName args defaultLogPath
       (defaultSteps := defaults.trainingSteps)
-      (defaultLearningRate := defaults.learningRate)
+      (defaultLr := defaults.lr)
       (defaultBatchSize := defaults.batchSize)
       (allowZeroSteps := true)
   let (generation, args) ← text.GenerationOptions.parse exeName args generationDefaults
@@ -354,7 +354,7 @@ def main (args : List String) : IO UInt32 := do
             Checkpoint.load module path
             IO.println s!"  loaded checkpoint: {path}"
         let trainStep ← module.dataStep <|
-          optim.adamW { learningRate := train.training.learningRate }
+          optim.adamW { lr := train.training.lr }
         let storedScalarCount :=
           model.stateShapes.foldl
             (fun total shape => total + Shape.size shape) 0

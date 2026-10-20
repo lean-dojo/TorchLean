@@ -39,7 +39,7 @@ theorem update_weight_decay_zero_parameters_eq_adam_real {s : Shape}
     (state : State ℝ s) (parameters gradients : Tensor ℝ s) (hwd : state.weightDecay = 0) :
     (update state parameters gradients).parameters =
       (Adam.update
-          ({ learningRate := state.learningRate
+          ({ lr := state.lr
              beta1 := state.beta1
              beta2 := state.beta2
              epsilon := state.epsilon

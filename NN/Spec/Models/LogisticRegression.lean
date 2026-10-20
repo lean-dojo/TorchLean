@@ -134,7 +134,7 @@ The objective is a sum over observations, so duplicating the dataset doubles the
 An empty dataset has zero gradient and returns the zero initial parameters.
 -/
 def fitLogistic {n p : ℕ} (X : Tensor α [n, p]) (y : Tensor α [n])
-    (learningRate : α) (iterations : Nat) :
+    (lr : α) (iterations : Nat) :
     Except LogisticRegression.FitError (LogisticRegression p α) := do
   for i in List.finRange n do
     let label := Tensor.getScalar y i
@@ -153,7 +153,7 @@ def fitLogistic {n p : ℕ} (X : Tensor α [n, p]) (y : Tensor α [n])
     | 0 => weights
     | Nat.succ k =>
         let gradient := computeLogGradient augmentedInputs y weights
-        let scaledGradient := scaleSpec gradient learningRate
+        let scaledGradient := scaleSpec gradient lr
         let newWeights := subSpec weights scaledGradient
         gradientDescent k newWeights
 

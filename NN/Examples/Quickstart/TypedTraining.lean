@@ -37,7 +37,7 @@ def model : nn.Sequential [1] [1] :=
 /-- Reuse one typed graph for several SGD updates of half squared error on one sample. -/
 def fit {α : Type} [Storage α] [Context α]
     (initial : nn.State α (nn.stateShapes model))
-    (input target : Tensor α [1]) (learningRate : α) (steps : Nat) :
+    (input target : Tensor α [1]) (lr : α) (steps : Nat) :
     IO (nn.State α (nn.stateShapes model)) := do
   let graph ← nn.lowerToTypedGraph model (α := α) (mode := nn.Mode.train)
   let mut state := initial
@@ -45,7 +45,7 @@ def fit {α : Type} [Storage α] [Context α]
     let prediction := nn.TypedGraphModel.forward graph state input
     let residual := Tensor.sub prediction target
     let (gradient, _) := nn.TypedGraphModel.vjp graph state input residual
-    state ← IO.ofExcept (nn.sgdStep model learningRate state gradient)
+    state ← IO.ofExcept (nn.sgdStep model lr state gradient)
   return state
 
 /-- Train from a coefficient that cannot be represented in binary64, then print exact rationals. -/

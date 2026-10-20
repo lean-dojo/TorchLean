@@ -833,7 +833,7 @@ dataset.
 def atTrainer : Trainer [2] [1] :=
   Trainer.new atSmall
     { objective := mse
-      optimizer := optim.adam { learningRate := 0.03 }
+      optimizer := optim.adam { lr := 0.03 }
       seed := 2026 }
 
 #eval do

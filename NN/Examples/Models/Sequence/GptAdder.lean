@@ -456,7 +456,7 @@ def parse (args : List String) : Except String (Options × List String) := do
       ++ "the complete typed model batch")
   let (training, args) ←
     CLI.Training.OptimizerOptions.parse exeName args defaultLogPath
-      (defaultSteps := 1000) (defaultLearningRate := 5e-4)
+      (defaultSteps := 1000) (defaultLr := 5e-4)
   let (interactive, args) ← CLI.takeBoolFlag args "interactive"
   let (optim, args) ← CLI.takeParsedFlag args "optim" (default := "adamw") optim.Algorithm.parse
   let (a, args) ← CLI.takeNatFlag args "a" (default := 7)
@@ -482,7 +482,7 @@ def parse (args : List String) : Except String (Options × List String) := do
 /-- Standard TrainLog notes for the adder training loop. -/
 def logNotes (config : Options) (runtime : Runtime.Config) : Array String :=
   #[s!"optimizer={optim.Algorithm.displayName config.optim}",
-    s!"lr={config.training.learningRate}", Support.deviceNote runtime]
+    s!"lr={config.training.lr}", Support.deviceNote runtime]
 
 end Options
 
@@ -570,7 +570,7 @@ def train (runtime : Runtime.Config) (options : Options) :
   let trainer :=
     Trainer.new model <|
       { runtime with
-          optimizer := options.optim.configure options.training.learningRate
+          optimizer := options.optim.configure options.training.lr
           objective := custom adderLossProgram }
   IO.println (s!"  mode=adder operandDigits={operandDigits} vocabularySize={vocabularySize} "
     ++ s!"contextLength={contextLength} steps={options.training.steps}")
@@ -579,7 +579,7 @@ def train (runtime : Runtime.Config) (options : Options) :
     ++ s!"modelWidth={modelWidth} feedForwardWidth={feedForwardWidth} "
     ++ s!"activeTargets/step={activeTargetCount}")
   IO.println (s!"  optimizer={optim.Algorithm.displayName options.optim} "
-    ++ s!"lr={options.training.learningRate}")
+    ++ s!"lr={options.training.lr}")
   IO.println s!"  minGPT encoding example 8+7 -> {
     renderExample 8 7} (sum digits reversed)"
   IO.println <| Curriculum.intro curriculum options

@@ -497,7 +497,7 @@ The trainer takes the same seed through its configuration:
 def trainer (seed : Nat) :=
   Trainer.new model
     { objective := mse
-      optimizer := optim.adam { learningRate := 0.03 }
+      optimizer := optim.adam { lr := 0.03 }
       seed := seed }
 ```
 

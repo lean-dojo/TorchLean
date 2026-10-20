@@ -284,7 +284,7 @@ def trainCifarClassifier (batchSize cropHeight cropWidth : Nat)
   let trainer :=
     Trainer.new model <|
       { runtime with
-          optimizer := optim.adam { learningRate := flags.training.learningRate }
+          optimizer := optim.adam { lr := flags.training.lr }
           objective := oneHotCrossEntropy 1 }
   let trained ← trainer.train
     (Data.fromSamples batches)

@@ -859,7 +859,7 @@ parameter gradients are $`6a` and $`3a`. With learning rate $`1/8`, one SGD upda
 $`w'=a/4`, $`b'=5a/8`, and prediction $`9a/8`. These dyadic values still fit in binary128.
 
 Pass the prediction residual to `nn.TypedGraphModel.vjp` to obtain the state gradient, then call
-`nn.sgdStep wideAffine learningRate state gradient`. The result has type
+`nn.sgdStep wideAffine lr state gradient`. The result has type
 `Except String (nn.State TensorBinary128 (nn.stateShapes wideAffine))`: handle a model-validation
 error or continue with the new immutable state. The learning rate is a `TensorBinary128`, so this
 update need not pass through a native `Float`. The maintained typed training

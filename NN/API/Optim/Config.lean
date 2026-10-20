@@ -26,13 +26,13 @@ namespace Optimizer.Internal
 Closed optimizer representation used only when lowering the public configuration to a runtime.
 -/
 inductive View where
-  | sgd (learningRate : Float) (momentum : Float)
-  | adaGrad (learningRate : Float) (epsilon : Float)
-  | rmsProp (learningRate : Float) (decay : Float) (epsilon : Float)
-  | adam (learningRate : Float) (beta1 : Float) (beta2 : Float) (epsilon : Float)
-  | adamW (learningRate : Float) (weightDecay : Float)
+  | sgd (lr : Float) (momentum : Float)
+  | adaGrad (lr : Float) (epsilon : Float)
+  | rmsProp (lr : Float) (decay : Float) (epsilon : Float)
+  | adam (lr : Float) (beta1 : Float) (beta2 : Float) (epsilon : Float)
+  | adamW (lr : Float) (weightDecay : Float)
       (beta1 : Float) (beta2 : Float) (epsilon : Float)
-  | adaDelta (learningRate : Float) (rho : Float) (epsilon : Float)
+  | adaDelta (lr : Float) (rho : Float) (epsilon : Float)
 deriving Repr
 
 end Optimizer.Internal
@@ -50,7 +50,7 @@ structure Optimizer where
 /-- Public SGD optimizer configuration. -/
 structure SGD.Config where
   /-- Learning rate. -/
-  learningRate : Float
+  lr : Float
   /-- Momentum coefficient. -/
   momentum : Float := 0.0
 deriving Repr
@@ -58,7 +58,7 @@ deriving Repr
 /-- Public AdaGrad optimizer configuration. -/
 structure AdaGrad.Config where
   /-- Learning rate. -/
-  learningRate : Float
+  lr : Float
   /-- Numerical stabilizer. -/
   epsilon : Float := 1e-10
 deriving Repr
@@ -66,7 +66,7 @@ deriving Repr
 /-- Public RMSProp optimizer configuration. -/
 structure RMSProp.Config where
   /-- Learning rate. -/
-  learningRate : Float
+  lr : Float
   /-- Decay coefficient for the running average of squared gradients. -/
   decay : Float := 0.99
   /-- Numerical stabilizer. -/
@@ -76,7 +76,7 @@ deriving Repr
 /-- Public Adam optimizer configuration. -/
 structure Adam.Config where
   /-- Learning rate. -/
-  learningRate : Float
+  lr : Float
   /-- First moment coefficient. -/
   beta1 : Float := 0.9
   /-- Second moment coefficient. -/
@@ -94,7 +94,7 @@ deriving Repr
 /-- Public Adadelta optimizer configuration. -/
 structure AdaDelta.Config where
   /-- Learning rate. -/
-  learningRate : Float := 1.0
+  lr : Float := 1.0
   /-- Decay coefficient for gradient/update accumulators. -/
   rho : Float := 0.9
   /-- Numerical stabilizer. -/
@@ -146,55 +146,55 @@ SGD optimizer config, optionally with momentum.
 Example:
 ```lean
 -- `torch.optim.SGD(params, lr=0.01)`, then the same with heavy-ball momentum.
-def plain : optim.Optimizer := optim.sgd { learningRate := 0.01 }
+def plain : optim.Optimizer := optim.sgd { lr := 0.01 }
 
 def withMomentum : optim.Optimizer :=
-  optim.sgd { learningRate := 0.01, momentum := 0.9 }
+  optim.sgd { lr := 0.01, momentum := 0.9 }
 ```
 -/
 def sgd (config : SGD.Config) : Optimizer :=
-  Optimizer.Internal.create (.sgd config.learningRate config.momentum)
+  Optimizer.Internal.create (.sgd config.lr config.momentum)
 
-/-- AdaGrad optimizer config, written `optim.adaGrad { learningRate := 0.05 }`. -/
+/-- AdaGrad optimizer config, written `optim.adaGrad { lr := 0.05 }`. -/
 def adaGrad (config : AdaGrad.Config) : Optimizer :=
-  Optimizer.Internal.create (.adaGrad config.learningRate config.epsilon)
+  Optimizer.Internal.create (.adaGrad config.lr config.epsilon)
 
-/-- RMSProp optimizer config, written `optim.rmsProp { learningRate := 1e-3 }`. -/
+/-- RMSProp optimizer config, written `optim.rmsProp { lr := 1e-3 }`. -/
 def rmsProp (config : RMSProp.Config) : Optimizer :=
-  Optimizer.Internal.create (.rmsProp config.learningRate config.decay config.epsilon)
+  Optimizer.Internal.create (.rmsProp config.lr config.decay config.epsilon)
 
 /--
-Adam optimizer config, written `optim.adam { learningRate := 1e-3 }`.
+Adam optimizer config, written `optim.adam { lr := 1e-3 }`.
 
 Example:
 ```lean
 -- `torch.optim.Adam(params, lr=1e-3)`: same default moments, same stabilizer
 -- (Kingma and Ba, "Adam: A Method for Stochastic Optimization", ICLR 2015).
-def optimizer : optim.Optimizer := optim.adam { learningRate := 1e-3 }
+def optimizer : optim.Optimizer := optim.adam { lr := 1e-3 }
 ```
 -/
 def adam (config : Adam.Config) : Optimizer :=
   Optimizer.Internal.create
-    (.adam config.learningRate config.beta1 config.beta2 config.epsilon)
+    (.adam config.lr config.beta1 config.beta2 config.epsilon)
 
 /--
-AdamW optimizer config, written `optim.adamW { learningRate := 1e-3 }`.
+AdamW optimizer config, written `optim.adamW { lr := 1e-3 }`.
 
 Example:
 ```lean
 -- Decoupled weight decay, so the penalty does not travel through the adaptive moments
 -- (Loshchilov and Hutter, "Decoupled Weight Decay Regularization", ICLR 2019).
 def optimizer : optim.Optimizer :=
-  optim.adamW { learningRate := 1e-3, weightDecay := 0.01 }
+  optim.adamW { lr := 1e-3, weightDecay := 0.01 }
 ```
 -/
 def adamW (config : AdamW.Config) : Optimizer :=
   Optimizer.Internal.create
-    (.adamW config.learningRate config.weightDecay config.beta1 config.beta2 config.epsilon)
+    (.adamW config.lr config.weightDecay config.beta1 config.beta2 config.epsilon)
 
 /-- AdaDelta optimizer config, written `optim.adaDelta {}`. -/
 def adaDelta (config : AdaDelta.Config) : Optimizer :=
-  Optimizer.Internal.create (.adaDelta config.learningRate config.rho config.epsilon)
+  Optimizer.Internal.create (.adaDelta config.lr config.rho config.epsilon)
 
 namespace Optimizer
 
@@ -205,22 +205,22 @@ NaNs follow Lean's canonicalization. -/
 def describe (optimizer : Optimizer) : String :=
   let render := Internal.formatScalar
   match Internal.view optimizer with
-  | .sgd learningRate momentum =>
-      s!"optim.sgd \{ learningRate := {render learningRate}, momentum := {render momentum} }"
-  | .adaGrad learningRate epsilon =>
-      s!"optim.adaGrad \{ learningRate := {render learningRate}, epsilon := {render epsilon} }"
-  | .rmsProp learningRate decay epsilon =>
-      s!"optim.rmsProp \{ learningRate := {render learningRate}, decay := {render decay}, "
+  | .sgd lr momentum =>
+      s!"optim.sgd \{ lr := {render lr}, momentum := {render momentum} }"
+  | .adaGrad lr epsilon =>
+      s!"optim.adaGrad \{ lr := {render lr}, epsilon := {render epsilon} }"
+  | .rmsProp lr decay epsilon =>
+      s!"optim.rmsProp \{ lr := {render lr}, decay := {render decay}, "
         ++ s!"epsilon := {render epsilon} }"
-  | .adam learningRate beta1 beta2 epsilon =>
-      s!"optim.adam \{ learningRate := {render learningRate}, beta1 := {render beta1}, "
+  | .adam lr beta1 beta2 epsilon =>
+      s!"optim.adam \{ lr := {render lr}, beta1 := {render beta1}, "
         ++ s!"beta2 := {render beta2}, epsilon := {render epsilon} }"
-  | .adamW learningRate weightDecay beta1 beta2 epsilon =>
-      s!"optim.adamW \{ learningRate := {render learningRate}, "
+  | .adamW lr weightDecay beta1 beta2 epsilon =>
+      s!"optim.adamW \{ lr := {render lr}, "
         ++ s!"weightDecay := {render weightDecay}, beta1 := {render beta1}, "
         ++ s!"beta2 := {render beta2}, epsilon := {render epsilon} }"
-  | .adaDelta learningRate rho epsilon =>
-      s!"optim.adaDelta \{ learningRate := {render learningRate}, rho := {render rho}, "
+  | .adaDelta lr rho epsilon =>
+      s!"optim.adaDelta \{ lr := {render lr}, rho := {render rho}, "
         ++ s!"epsilon := {render epsilon} }"
 
 instance : ToString Optimizer where
@@ -230,14 +230,14 @@ instance : Repr Optimizer where
   reprPrec optimizer _ := Std.Format.text optimizer.describe
 
 /-- Return the base learning rate encoded in an optimizer configuration. -/
-def learningRate (optimizer : Optimizer) : Float :=
+def lr (optimizer : Optimizer) : Float :=
   match Internal.view optimizer with
-  | .sgd learningRate _ => learningRate
-  | .adaGrad learningRate _ => learningRate
-  | .rmsProp learningRate _ _ => learningRate
-  | .adam learningRate _ _ _ => learningRate
-  | .adamW learningRate _ _ _ _ => learningRate
-  | .adaDelta learningRate _ _ => learningRate
+  | .sgd lr _ => lr
+  | .adaGrad lr _ => lr
+  | .rmsProp lr _ _ => lr
+  | .adam lr _ _ _ => lr
+  | .adamW lr _ _ _ _ => lr
+  | .adaDelta lr _ _ => lr
 
 namespace Internal
 
@@ -281,45 +281,45 @@ hyperparameters alone do not guarantee finite updates.
 -/
 def validate (optimizer : Optimizer) : Except String Unit :=
   match Internal.view optimizer with
-  | .sgd learningRate momentum => do
-      Internal.requireFiniteNonnegative "learning rate" learningRate
+  | .sgd lr momentum => do
+      Internal.requireFiniteNonnegative "learning rate" lr
       Internal.requireUnitInterval "momentum" momentum
-  | .adaGrad learningRate epsilon => do
-      Internal.requireFiniteNonnegative "learning rate" learningRate
+  | .adaGrad lr epsilon => do
+      Internal.requireFiniteNonnegative "learning rate" lr
       Internal.requireFinitePositive "epsilon" epsilon
-  | .rmsProp learningRate decay epsilon => do
-      Internal.requireFiniteNonnegative "learning rate" learningRate
+  | .rmsProp lr decay epsilon => do
+      Internal.requireFiniteNonnegative "learning rate" lr
       Internal.requireUnitInterval "decay" decay
       Internal.requireFinitePositive "epsilon" epsilon
-  | .adam learningRate beta1 beta2 epsilon => do
-      Internal.requireFiniteNonnegative "learning rate" learningRate
+  | .adam lr beta1 beta2 epsilon => do
+      Internal.requireFiniteNonnegative "learning rate" lr
       Internal.requireUnitInterval "beta1" beta1
       Internal.requireUnitInterval "beta2" beta2
       Internal.requireFinitePositive "epsilon" epsilon
-  | .adamW learningRate weightDecay beta1 beta2 epsilon => do
-      Internal.requireFiniteNonnegative "learning rate" learningRate
+  | .adamW lr weightDecay beta1 beta2 epsilon => do
+      Internal.requireFiniteNonnegative "learning rate" lr
       Internal.requireFiniteNonnegative "weight decay" weightDecay
       Internal.requireUnitInterval "beta1" beta1
       Internal.requireUnitInterval "beta2" beta2
       Internal.requireFinitePositive "epsilon" epsilon
-  | .adaDelta learningRate rho epsilon => do
-      Internal.requireFiniteNonnegative "learning rate" learningRate
+  | .adaDelta lr rho epsilon => do
+      Internal.requireFiniteNonnegative "learning rate" lr
       Internal.requireUnitInterval "rho" rho
       Internal.requireFinitePositive "epsilon" epsilon
 
 /-- Transform every scalar in a configuration for validation after conversion. -/
 def Internal.mapScalars (cast : Float → Float) (optimizer : Optimizer) : Optimizer :=
   Internal.create <| match Internal.view optimizer with
-  | .sgd learningRate momentum => .sgd (cast learningRate) (cast momentum)
-  | .adaGrad learningRate epsilon => .adaGrad (cast learningRate) (cast epsilon)
-  | .rmsProp learningRate decay epsilon =>
-      .rmsProp (cast learningRate) (cast decay) (cast epsilon)
-  | .adam learningRate beta1 beta2 epsilon =>
-      .adam (cast learningRate) (cast beta1) (cast beta2) (cast epsilon)
-  | .adamW learningRate weightDecay beta1 beta2 epsilon =>
-      .adamW (cast learningRate) (cast weightDecay) (cast beta1) (cast beta2) (cast epsilon)
-  | .adaDelta learningRate rho epsilon =>
-      .adaDelta (cast learningRate) (cast rho) (cast epsilon)
+  | .sgd lr momentum => .sgd (cast lr) (cast momentum)
+  | .adaGrad lr epsilon => .adaGrad (cast lr) (cast epsilon)
+  | .rmsProp lr decay epsilon =>
+      .rmsProp (cast lr) (cast decay) (cast epsilon)
+  | .adam lr beta1 beta2 epsilon =>
+      .adam (cast lr) (cast beta1) (cast beta2) (cast epsilon)
+  | .adamW lr weightDecay beta1 beta2 epsilon =>
+      .adamW (cast lr) (cast weightDecay) (cast beta1) (cast beta2) (cast epsilon)
+  | .adaDelta lr rho epsilon =>
+      .adaDelta (cast lr) (cast rho) (cast epsilon)
 
 end Optimizer
 end optim

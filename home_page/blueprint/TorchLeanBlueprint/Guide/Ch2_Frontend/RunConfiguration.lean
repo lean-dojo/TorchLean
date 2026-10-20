@@ -381,7 +381,7 @@ def trainerOn (arithmetic : Runtime.Arithmetic)
     (device : Runtime.Device) : Trainer [2] [1] :=
   Trainer.new runModel
     { objective := mse
-      optimizer := optim.adam { learningRate := 0.03 }
+      optimizer := optim.adam { lr := 0.03 }
       arithmetic := arithmetic
       device := device
       seed := 2026 }
@@ -587,7 +587,7 @@ Matching the public input type alone does not establish matching internal arithm
 def runCpu : Trainer.RunConfig :=
   { arithmetic := native
     device := cpu
-    optimizer := optim.adam { learningRate := 0.03 } }
+    optimizer := optim.adam { lr := 0.03 } }
 
 def runIeeeCpu : Trainer.RunConfig :=
   { runCpu with arithmetic := ieee }
@@ -786,7 +786,7 @@ def runDropoutModel (p : Float) :
 def runDropoutTrainer (p : Float) : Trainer [2] [1] :=
   Trainer.new (runDropoutModel p)
     { objective := mse
-      optimizer := optim.adam { learningRate := 0.03 }
+      optimizer := optim.adam { lr := 0.03 }
       seed := 2026 }
 
 #eval do

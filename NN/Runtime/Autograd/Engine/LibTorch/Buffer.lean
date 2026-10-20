@@ -696,7 +696,7 @@ opaque axpy (a b : @& Buffer) (c : Float) : Buffer
 Perform one Adam-family update through LibTorch tensor operations.
 
 The result is `(parameters, firstMoment, secondMoment)`. Passing `decay = 0` gives Adam; passing
-`decay = -(learningRate * weightDecay)` gives AdamW's decoupled parameter decay. The caller
+`decay = -(lr * weightDecay)` gives AdamW's decoupled parameter decay. The caller
 computes the two bias-correction scales from the step counter, exactly as in `Optim.Adam.update`
 and `Optim.AdamW.update`.
 

@@ -250,7 +250,7 @@ hinge objective. `LinearSVM.objective` and `LinearSVM.backward` remain explicit 
 mathematical work with a supplied parameter record.
 -/
 def fitLinearSVM {n p : ℕ} (X : Tensor α [n, p]) (y : Tensor α [n])
-    (learningRate : α) (lambda : α) (iterations : Nat) :
+    (lr : α) (lambda : α) (iterations : Nat) :
     Except SVM.FitError (SVM p n α) := do
   for i in List.finRange n do
     let label := Tensor.getScalar y i
@@ -268,8 +268,8 @@ def fitLinearSVM {n p : ℕ} (X : Tensor α [n, p]) (y : Tensor α [n])
     | Nat.succ k =>
         let m : LinearSVM p α := { w := weights, b := bias }
         let (gradW, gradB, _dX) := LinearSVM.backward (n := n) (p := p) (lambda := lambda) m X y
-        let newWeights := subSpec weights (scaleSpec gradW learningRate)
-        let newBias := bias - learningRate * gradB
+        let newWeights := subSpec weights (scaleSpec gradW lr)
+        let newBias := bias - lr * gradB
         gradientDescent k newWeights newBias
 
   -- Run gradient descent

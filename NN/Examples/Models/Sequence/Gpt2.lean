@@ -168,7 +168,7 @@ def parse (args : List String) (defaultSteps : Nat) :
     Except String (Options × List String) := do
   let (training, args) ←
     CLI.Training.OptimizerOptions.parse exeName args defaultLogPath
-      (defaultSteps := defaultSteps) (defaultLearningRate := 0.001)
+      (defaultSteps := defaultSteps) (defaultLr := 0.001)
       (allowZeroSteps := true)
   let (windows, args) ← CLI.takePositiveNatFlag args exeName "windows" (default := 1)
   let (generation, args) ← text.GenerationOptions.parse exeName args
@@ -311,7 +311,7 @@ def trainAndDecode (runtime : Runtime.Config) (corpus : String)
       (α := Float) batchSize contextLength vocabularySize byteIndex options.generation.prompt
   let trainer := Trainer.new model <|
     { runtime with
-        optimizer := optim.adam { learningRate := options.training.learningRate }
+        optimizer := optim.adam { lr := options.training.lr }
         objective := oneHotCrossEntropy 2 }
   trainer.printSummary
 

@@ -190,11 +190,11 @@ enough to certify a Newton-Schulz Muon update exactly.
 -/
 theorem update_has_exact_certified_step_newtonSchulz_exact_gram_checked {m n : Nat}
     (coeffs : NewtonSchulzCoeffs ℝ) (steps : Nat)
-    (learningRate momentum : ℝ) (momentumBuffer parameters gradients : MatrixTensor ℝ m n)
+    (lr momentum : ℝ) (momentumBuffer parameters gradients : MatrixTensor ℝ m n)
     (hgram :
       HasExactColumnGram
         (update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer :=
               newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps } :
             State ℝ (.dim m (.dim n .scalar)))
@@ -202,7 +202,7 @@ theorem update_has_exact_certified_step_newtonSchulz_exact_gram_checked {m n : N
     (hsum : coeffs.a + coeffs.b + coeffs.c = 1) :
     ∃ direction : MatrixTensor ℝ m n,
       ExactCertifiedStep
-        ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+        ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
            orthogonalizer :=
             newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps } :
           State ℝ (.dim m (.dim n .scalar)))
@@ -210,12 +210,12 @@ theorem update_has_exact_certified_step_newtonSchulz_exact_gram_checked {m n : N
   exact exactCertifiedStep_of_checkedBackend
     (backend := newtonSchulzFixedPointCheckedExactOrthogonalizer
       (α := ℝ) (m := m) (n := n) coeffs steps)
-    (learningRate := learningRate) (momentum := momentum) (momentumBuffer := momentumBuffer)
+    (lr := lr) (momentum := momentum) (momentumBuffer := momentumBuffer)
     (parameters := parameters) (gradients := gradients)
     (newtonSchulzFixedPointCheckedExact_success_of_coeff_sum_one
       coeffs steps
       (update
-        ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+        ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
            orthogonalizer :=
             newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps } :
           State ℝ (.dim m (.dim n .scalar)))
@@ -227,11 +227,11 @@ $Q^\mathsf{T}Q=I$ for the actual Newton-Schulz update direction.
 -/
 theorem update_newtonSchulz_exact_gram_direction_has_exact_column_gram_checked {m n : Nat}
     (coeffs : NewtonSchulzCoeffs ℝ) (steps : Nat)
-    (learningRate momentum : ℝ) (momentumBuffer parameters gradients : MatrixTensor ℝ m n)
+    (lr momentum : ℝ) (momentumBuffer parameters gradients : MatrixTensor ℝ m n)
     (hgram :
       HasExactColumnGram
         (update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer :=
               newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps } :
             State ℝ (.dim m (.dim n .scalar)))
@@ -240,7 +240,7 @@ theorem update_newtonSchulz_exact_gram_direction_has_exact_column_gram_checked {
     HasExactColumnGram
       ((newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps).apply
         (update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer :=
               newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps } :
             State ℝ (.dim m (.dim n .scalar)))
@@ -248,12 +248,12 @@ theorem update_newtonSchulz_exact_gram_direction_has_exact_column_gram_checked {
   exact checkedBackend_updateDirection_hasExactColumnGram
     (backend := newtonSchulzFixedPointCheckedExactOrthogonalizer
       (α := ℝ) (m := m) (n := n) coeffs steps)
-    (learningRate := learningRate) (momentum := momentum) (momentumBuffer := momentumBuffer)
+    (lr := lr) (momentum := momentum) (momentumBuffer := momentumBuffer)
     (parameters := parameters) (gradients := gradients)
     (newtonSchulzFixedPointCheckedExact_success_of_coeff_sum_one
       coeffs steps
       (update
-        ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+        ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
            orthogonalizer :=
             newtonSchulzOrthogonalizer (α := ℝ) (m := m) (n := n) coeffs steps } :
           State ℝ (.dim m (.dim n .scalar)))
@@ -288,23 +288,23 @@ Concrete QR-backed Muon step theorem: if the fresh momentum buffer has positive 
 executable Muon update has a certified exact step.
 -/
 theorem update_has_exact_certified_step_qr {m n : Nat}
-    (learningRate momentum : ℝ) (momentumBuffer parameters gradients : MatrixTensor ℝ m n)
+    (lr momentum : ℝ) (momentumBuffer parameters gradients : MatrixTensor ℝ m n)
     (hpivots :
       HasPositiveQRPivots
         (update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := qrOrthogonalizer (m := m) (n := n) } :
             State ℝ (.dim m (.dim n .scalar)))
           parameters gradients).optimizerState.momentumBuffer) :
     ∃ direction : MatrixTensor ℝ m n,
       ExactCertifiedStep
-        ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+        ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
            orthogonalizer := qrOrthogonalizer (m := m) (n := n) } :
           State ℝ (.dim m (.dim n .scalar)))
         parameters gradients direction := by
   exact exactCertifiedStep_of_checkedBackend
     (backend := qrCheckedExactOrthogonalizer (m := m) (n := n))
-    (learningRate := learningRate) (momentum := momentum) (momentumBuffer := momentumBuffer)
+    (lr := lr) (momentum := momentum) (momentumBuffer := momentumBuffer)
     (parameters := parameters) (gradients := gradients)
     hpivots
 
@@ -313,24 +313,24 @@ Concrete QR-backed direction theorem: if the fresh momentum buffer has positive 
 actual direction used by the Muon update has column Gram $I$.
 -/
 theorem update_qr_direction_has_exact_column_gram {m n : Nat}
-    (learningRate momentum : ℝ) (momentumBuffer parameters gradients : MatrixTensor ℝ m n)
+    (lr momentum : ℝ) (momentumBuffer parameters gradients : MatrixTensor ℝ m n)
     (hpivots :
       HasPositiveQRPivots
         (update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := qrOrthogonalizer (m := m) (n := n) } :
             State ℝ (.dim m (.dim n .scalar)))
           parameters gradients).optimizerState.momentumBuffer) :
     HasExactColumnGram
       ((qrOrthogonalizer (m := m) (n := n)).apply
         (update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := qrOrthogonalizer (m := m) (n := n) } :
             State ℝ (.dim m (.dim n .scalar)))
           parameters gradients).optimizerState.momentumBuffer) := by
   exact checkedBackend_updateDirection_hasExactColumnGram
     (backend := qrCheckedExactOrthogonalizer (m := m) (n := n))
-    (learningRate := learningRate) (momentum := momentum) (momentumBuffer := momentumBuffer)
+    (lr := lr) (momentum := momentum) (momentumBuffer := momentumBuffer)
     (parameters := parameters) (gradients := gradients)
     hpivots
 

@@ -168,7 +168,7 @@ def train (runtime : Runtime.Config)
   let trainer :=
     Trainer.new model <|
       { runtime with
-          optimizer := optim.adam { learningRate := flags.training.learningRate }
+          optimizer := optim.adam { lr := flags.training.lr }
           objective := mse }
   trainer.train
     (Data.fromSamples samples)

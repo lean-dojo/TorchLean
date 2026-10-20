@@ -43,7 +43,7 @@ Read them in the order of the table.
 ```lean
 let trainer := Trainer.new model
   { objective := mse
-    optimizer := optim.adam { learningRate := 0.03 }
+    optimizer := optim.adam { lr := 0.03 }
     seed := 0 }
 let trained ← trainer.train data { steps := 200, logEvery := 25 }
 trained.printSummary

@@ -242,7 +242,7 @@ def Training.run
   let trainer :=
     Trainer.new (model c h w config.hiddenChannels) <|
       { runtime with
-          optimizer := optim.adam { learningRate := config.training.learningRate }
+          optimizer := optim.adam { lr := config.training.lr }
           objective := mse }
   trainer.printSummary
   let curveEvery : Nat := Nat.max 1 (config.training.steps / 50)
@@ -319,7 +319,7 @@ def parse (args : List String) :
     Except String (Options × List String) := do
   let (train, rest) ←
     CLI.Training.OptimizerOptions.parse exeName args defaultLogPath
-      (defaultSteps := 50) (defaultLearningRate := 1e-3)
+      (defaultSteps := 50) (defaultLr := 1e-3)
   let (hiddenChannels, rest) ←
     CLI.takePositiveNatFlag rest exeName "hidden-c" (default := 16)
   let (schedule, rest) ← Support.Schedule.Options.parse rest
@@ -339,7 +339,7 @@ def logNotes
   sourceNotes ++
     #[s!"dataset={dataset}",
       Support.deviceNote runtime,
-      s!"lr={config.training.learningRate}",
+      s!"lr={config.training.lr}",
       s!"hiddenChannels={config.hiddenChannels}"] ++
     Support.Schedule.Options.logNotes config.schedule ++
     Support.Image.OutputOptions.logNotes config.artifacts

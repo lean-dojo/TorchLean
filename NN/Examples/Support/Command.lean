@@ -242,13 +242,13 @@ def Options.parse {Data : Type}
     (args : List String)
     (defaultLogPath : System.FilePath)
     (defaultSteps : Nat := 1)
-    (defaultLearningRate : Float := 1e-3)
+    (defaultLr : Float := 1e-3)
     (parseData : List String → Except String (Data × List String)) :
     Except String (Options Data × List String) := do
   let (data, rest) ← parseData args
   let (training, rest) ←
     TorchLean.CLI.Training.OptimizerOptions.parse exeName rest defaultLogPath
-      (defaultSteps := defaultSteps) (defaultLearningRate := defaultLearningRate)
+      (defaultSteps := defaultSteps) (defaultLr := defaultLr)
   pure ({ training, data }, rest)
 
 end Training

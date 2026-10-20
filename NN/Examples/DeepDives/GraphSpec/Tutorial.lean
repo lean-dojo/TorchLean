@@ -132,7 +132,7 @@ def run (args : List String) : IO Unit := do
   | .ok network =>
     let runConfig ← TorchLean.CLI.Trainer.parseCommandLine "graphspec"
       (CLI.dropDashDash args)
-      { optimizer := optim.sgd { learningRate := 0.1 } }
+      { optimizer := optim.sgd { lr := 0.1 } }
     let trainer :=
       Trainer.new network <|
       { runConfig with objective := mse }

@@ -132,7 +132,7 @@ rewriting its forward computation or changing what counts as a well-shaped input
 def tfTrainer (seed : Nat) : Trainer [2] [1] :=
   Trainer.new tfModel
     { objective := mse
-      optimizer := optim.adam { learningRate := 0.03 }
+      optimizer := optim.adam { lr := 0.03 }
       arithmetic := native
       seed := seed }
 ```
@@ -185,11 +185,11 @@ The optimizer can print its configuration in the syntax you would use to constru
 ```lean (name := tfOptim)
 -- Print the Adam configuration, including defaults omitted
 -- from the constructor call.
-#eval (optim.adam { learningRate := 0.03 }).describe
+#eval (optim.adam { lr := 0.03 }).describe
 ```
 
 ```leanOutput tfOptim (whitespace := lax)
-"optim.adam { learningRate := 2.9999999999999999e-2,
+"optim.adam { lr := 2.9999999999999999e-2,
   beta1 := 9.0000000000000002e-1,
   beta2 := 9.9900000000000000e-1,
   epsilon := 1.0000000000000000e-8 }"
@@ -544,7 +544,7 @@ uses this interface in
 -- floating-point logits at the prediction
 -- boundary.
 let trainStep ← module.dataStep <|
-  optim.adamW { learningRate := train.training.learningRate }
+  optim.adamW { lr := train.training.lr }
 let evaluateLoss ← module.dataLossEvaluator evalDef
 let predict ← module.indexedPredictor model
 ```
@@ -752,7 +752,7 @@ Training it is the same call, and the summary tells us that the batch axis cost 
 #eval show IO Unit from do
   let trainer := Trainer.new tfBatchedModel
     { objective := mse
-      optimizer := optim.adam { learningRate := 0.03 }
+      optimizer := optim.adam { lr := 0.03 }
       seed := 2026 }
   trainer.printSummary "batched model"
   let trained ← trainer.train tfBatchedData { steps := 40 }
@@ -828,7 +828,7 @@ or the reason; `{ run with toConfig := checked }` puts an accepted one back into
 -- or the reason no profile was found.
 #eval show IO Unit from do
   let run : Trainer.RunConfig :=
-    { optimizer := optim.adam { learningRate := 0.03 } }
+    { optimizer := optim.adam { lr := 0.03 } }
   for device in [Runtime.Device.cpu, .cuda, .metal] do
     match run.withDevice device with
     | .ok checked =>
@@ -1083,7 +1083,7 @@ def tfWideStep : IO (Option Rat) := do
   let model := nn.build 0 (nn.linear 1 1)
   let trainer := Trainer.new model
     { objective := mse
-      optimizer := optim.sgd { learningRate := 0.0625 } }
+      optimizer := optim.sgd { lr := 0.0625 } }
   let a : TrainingScalar :=
     Rat.cast (1 + 1 / (2 ^ 100 : Nat) : Rat)
   let state : nn.State TrainingScalar
@@ -1355,7 +1355,7 @@ Keep the model, seed, dataset, and step count fixed and change only the optimize
 def tfSgdTrainer : Trainer [2] [1] :=
   Trainer.new tfModel
     { objective := mse
-      optimizer := optim.sgd { learningRate := 0.03 }
+      optimizer := optim.sgd { lr := 0.03 }
       seed := 2026 }
 
 #eval show IO Unit from do

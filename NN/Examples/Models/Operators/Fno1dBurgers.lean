@@ -137,7 +137,7 @@ def parse (args : List String) :
     Except String (Options × List String) := do
   let (training, args) ←
     CLI.Training.OptimizerOptions.parse exeName args defaultLogPath
-      (defaultSteps := 50) (defaultLearningRate := 5e-3)
+      (defaultSteps := 50) (defaultLr := 5e-3)
   let (data, args) ← Support.Npy.SplitOptions.parse exeName args
     trainXPath trainYPath testXPath testYPath defaultTrainRows defaultTestRows
   let (plotCsv, args) ← CLI.takePathFlag args "plot-csv" (default := defaultPlotCsv)
@@ -165,7 +165,7 @@ def experiment (config : Options) (spectralPath device : String)
           entry "modes" (toString modes),
           entry "blocks" (toString blocks),
           entry "steps" (toString config.training.steps),
-          entry "lr" (toString config.training.learningRate)] }
+          entry "lr" (toString config.training.lr)] }
     history
     notes := Support.Npy.SplitOptions.logNotes config.data }
 
@@ -277,7 +277,7 @@ def run
   let trainer :=
     Trainer.new model <|
       { runtime with
-          optimizer := optim.adam { learningRate := config.training.learningRate }
+          optimizer := optim.adam { lr := config.training.lr }
           objective := mse }
   trainer.printSummary
   let historyRef ← IO.mkRef metrics

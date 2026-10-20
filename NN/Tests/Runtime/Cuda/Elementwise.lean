@@ -892,7 +892,7 @@ private def checkCustomAutograd : IO Unit := do
   let firstMomentCorrection : Float := 1.0 / (1.0 - beta1)
   let secondMomentCorrection : Float := 1.0 / (1.0 - beta2)
   let epsilon : Float := 1e-8
-  let learningRate : Float := 3e-4
+  let lr : Float := 3e-4
   let weightDecay : Float := 0.1
 
   let mScaled := Runtime.Autograd.LibTorch.Buffer.scale firstMomentBuf beta1
@@ -907,14 +907,14 @@ private def checkCustomAutograd : IO Unit := do
   let denominator := Runtime.Autograd.LibTorch.Buffer.add sqrtVHat epsilonBuf
   let normalizedUpdate := Runtime.Autograd.LibTorch.Buffer.div mHat denominator
   let decayedParams :=
-    Runtime.Autograd.LibTorch.Buffer.axpy paramsBuf paramsBuf (-(learningRate * weightDecay))
+    Runtime.Autograd.LibTorch.Buffer.axpy paramsBuf paramsBuf (-(lr * weightDecay))
   let expectedParams :=
-    Runtime.Autograd.LibTorch.Buffer.axpy decayedParams normalizedUpdate (-learningRate)
+    Runtime.Autograd.LibTorch.Buffer.axpy decayedParams normalizedUpdate (-lr)
   let (gotParams, gotM, gotV) := Runtime.Autograd.LibTorch.Buffer.adamStep
     paramsBuf gradientBuf firstMomentBuf secondMomentBuf
     beta1 oneMinusBeta1 beta2 oneMinusBeta2
     firstMomentCorrection secondMomentCorrection epsilon
-    (-(learningRate * weightDecay)) (-learningRate)
+    (-(lr * weightDecay)) (-lr)
 
   Utils.assertTensorApprox (s := optimShape) "fused AdamW parameters"
     (← Utils.bufferToTensor gotParams) (← Utils.bufferToTensor expectedParams) (tol := 1e-6)

@@ -170,7 +170,7 @@ def linearRegressionTrainStepSpec {batch inDim : Nat}
   (model : LinearRegressionSpec α inDim)
   (input : Tensor α [batch, inDim])
   (target : Tensor α [batch])
-  (learningRate : α) (h : batch ≠ 0) :
+  (lr : α) (h : batch ≠ 0) :
   (Tensor α .scalar × LinearRegressionSpec α inDim) :=
   -- Forward pass
   let predictions := batchLinearRegressionForwardSpec model input
@@ -181,8 +181,8 @@ def linearRegressionTrainStepSpec {batch inDim : Nat}
   let gradients := batchLinearRegressionBackwardSpec model input gradPredictions h
   -- Update parameters
   let newWeights :=
-    subSpec model.weights (scaleSpec gradients.weightGradient learningRate)
-  let newBias := subSpec model.bias (scaleSpec gradients.biasGradient learningRate)
+    subSpec model.weights (scaleSpec gradients.weightGradient lr)
+  let newBias := subSpec model.bias (scaleSpec gradients.biasGradient lr)
   let updatedModel := { model with weights := newWeights, bias := newBias }
   (loss, updatedModel)
 

@@ -126,7 +126,7 @@ def discountFactor : Float := 0.99
 def gaeLambda : Float := 0.95
 
 /-- Adam learning rate used for the GridWorld actor-critic update. -/
-def learningRate : Float := 3e-3
+def lr : Float := 3e-3
 
 /-- Number of PPO optimization epochs per collected rollout batch. -/
 def updateEpochs : Nat := 8
@@ -403,7 +403,7 @@ def main (args : List String) : IO UInt32 := do
 
       let stepSample ←
         m.bind
-          (optim.adam { learningRate := learningRate })
+          (optim.adam { lr := lr })
 
 
       -- Training curve: greedy-policy return before training, then at each evaluation checkpoint.
@@ -507,7 +507,7 @@ def main (args : List String) : IO UInt32 := do
           s!"horizon={horizon}",
           s!"gamma={discountFactor}",
           s!"lambda={gaeLambda}",
-          s!"lr={learningRate}",
+          s!"lr={lr}",
           s!"updates={ppo.updateCount}",
           s!"eval_every={ppo.evaluationInterval}",
           s!"eval_episodes={ppo.evaluationEpisodes}",

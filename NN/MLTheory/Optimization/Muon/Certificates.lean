@@ -71,7 +71,7 @@ structure ExactCertifiedStep {m n : Nat}
   /-- Parameter equation for the certified update direction. -/
   parameters_eq :
     (update state parameters gradients).parameters =
-      subSpec parameters (scaleSpec direction state.learningRate)
+      subSpec parameters (scaleSpec direction state.lr)
 
 /-- The residual-bounded counterpart of `ExactCertifiedStep`. -/
 structure ApproxCertifiedStep {m n : Nat} (eps : α)
@@ -89,7 +89,7 @@ structure ApproxCertifiedStep {m n : Nat} (eps : α)
   /-- Parameter equation for the certified update direction. -/
   parameters_eq :
     (update state parameters gradients).parameters =
-      subSpec parameters (scaleSpec direction state.learningRate)
+      subSpec parameters (scaleSpec direction state.lr)
 
 /-- A local exact backend fact for the fresh buffer produces a certified Muon step. -/
 theorem exactCertifiedStep_of_buffer {m n : Nat}
@@ -119,22 +119,22 @@ its success predicate holds on the fresh momentum buffer.
 -/
 @[verify] theorem exactCertifiedStep_of_checkedBackend {m n : Nat}
     (backend : CheckedExactOrthogonalizer α m n)
-    (learningRate momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
+    (lr momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
     (hsuccess :
       backend.Success
         (update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := backend.orthogonalizer } :
             State α (.dim m (.dim n .scalar)))
           parameters gradients).optimizerState.momentumBuffer) :
     ∃ direction : MatrixTensor α m n,
       ExactCertifiedStep
-        ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+        ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
            orthogonalizer := backend.orthogonalizer } :
           State α (.dim m (.dim n .scalar)))
         parameters gradients direction := by
   let state : State α (.dim m (.dim n .scalar)) :=
-    { learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+    { lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
       orthogonalizer := backend.orthogonalizer }
   exact exactCertifiedStep_of_buffer state parameters gradients
     (backend.certified (update state parameters gradients).optimizerState.momentumBuffer hsuccess)
@@ -145,22 +145,22 @@ the requested Gram-residual bound on the fresh momentum buffer.
 -/
 @[verify] theorem approxCertifiedStep_of_checkedBackend {m n : Nat} {eps : α}
     (backend : CheckedApproxOrthogonalizer α m n eps)
-    (learningRate momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
+    (lr momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
     (hsuccess :
       backend.Success
         (update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := backend.orthogonalizer } :
             State α (.dim m (.dim n .scalar)))
           parameters gradients).optimizerState.momentumBuffer) :
     ∃ direction : MatrixTensor α m n,
       ApproxCertifiedStep eps
-        ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+        ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
            orthogonalizer := backend.orthogonalizer } :
           State α (.dim m (.dim n .scalar)))
         parameters gradients direction := by
   let state : State α (.dim m (.dim n .scalar)) :=
-    { learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+    { lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
       orthogonalizer := backend.orthogonalizer }
   exact approxCertifiedStep_of_buffer state parameters gradients
     (backend.certified (update state parameters gradients).optimizerState.momentumBuffer hsuccess)
@@ -168,18 +168,18 @@ the requested Gram-residual bound on the fresh momentum buffer.
 /-- A checked exact backend gives $Q^\mathsf{T}Q=I$ for the direction used by an update. -/
 theorem checkedBackend_updateDirection_hasExactColumnGram {m n : Nat}
     (backend : CheckedExactOrthogonalizer α m n)
-    (learningRate momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
+    (lr momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
     (hsuccess :
       backend.Success
         (update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := backend.orthogonalizer } :
             State α (.dim m (.dim n .scalar)))
           parameters gradients).optimizerState.momentumBuffer) :
     HasExactColumnGram
       (backend.orthogonalizer.apply
         (update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := backend.orthogonalizer } :
             State α (.dim m (.dim n .scalar)))
           parameters gradients).optimizerState.momentumBuffer) :=
@@ -188,18 +188,18 @@ theorem checkedBackend_updateDirection_hasExactColumnGram {m n : Nat}
 /-- A checked approximate backend gives its residual bound for the direction used by an update. -/
 theorem checkedBackend_updateDirection_hasApproxColumnGram {m n : Nat} {eps : α}
     (backend : CheckedApproxOrthogonalizer α m n eps)
-    (learningRate momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
+    (lr momentum : α) (momentumBuffer parameters gradients : MatrixTensor α m n)
     (hsuccess :
       backend.Success
         (update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := backend.orthogonalizer } :
             State α (.dim m (.dim n .scalar)))
           parameters gradients).optimizerState.momentumBuffer) :
     HasApproxColumnGram eps
       (backend.orthogonalizer.apply
         (update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := backend.orthogonalizer } :
             State α (.dim m (.dim n .scalar)))
           parameters gradients).optimizerState.momentumBuffer) :=

@@ -212,7 +212,7 @@ def train (runtime : Runtime.Config) (flags : Support.Training.Options Support.N
   let trainer :=
     Trainer.new model <|
       { runtime with
-          optimizer := optim.adam { learningRate := flags.training.learningRate }
+          optimizer := optim.adam { lr := flags.training.lr }
           objective := custom loss }
   trainer.train
     (data flags runtime.seed)

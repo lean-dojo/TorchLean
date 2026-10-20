@@ -467,7 +467,7 @@ def apiData := Data.fromTensors apiXs apiYs
 def apiTrainer :=
   Trainer.new apiModel
     { objective := mse
-      optimizer := optim.adam { learningRate := 0.03 }
+      optimizer := optim.adam { lr := 0.03 }
       arithmetic := native
       seed := 2026 }
 
@@ -707,7 +707,7 @@ Persistent choices can be expressed as `Trainer.RunConfig`:
 -- Keep the optimizer fixed while selecting arithmetic or
 -- the device profile.
 def nativeCpu : Trainer.RunConfig :=
-  { optimizer := optim.adam { learningRate := 0.03 }
+  { optimizer := optim.adam { lr := 0.03 }
     arithmetic := native }
 
 def ieeeCpu : Trainer.RunConfig :=
@@ -730,10 +730,10 @@ the constructor and configuration:
 ```lean (name := apiDescribe)
 -- The text includes the Adam defaults that were not
 -- repeated in the constructor.
-#eval (optim.adam { learningRate := 0.03 }).describe
+#eval (optim.adam { lr := 0.03 }).describe
 ```
 ```leanOutput apiDescribe (whitespace := lax)
-"optim.adam { learningRate := 2.9999999999999999e-2,
+"optim.adam { lr := 2.9999999999999999e-2,
   beta1 := 9.0000000000000002e-1,
   beta2 := 9.9900000000000000e-1,
   epsilon := 1.0000000000000000e-8 }"

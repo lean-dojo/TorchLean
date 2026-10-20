@@ -197,7 +197,7 @@ def main (args : List String) : IO Unit := do
       requestedTrainSize
   let trainSteps : Nat := training.epochs * (trainSize / training.batchSize)
   let run ← TorchLean.CLI.Trainer.parseCommandLine exeName args
-    { optimizer := optim.adam { learningRate := lr } }
+    { optimizer := optim.adam { lr := lr } }
   let trainer := Trainer.new (model (batchSize := training.batchSize)) <|
     { run with objective := oneHotCrossEntropy 1, seed }
 

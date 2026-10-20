@@ -494,7 +494,7 @@ def tpTrainer :=
   Trainer.new tpModel
     { objective := oneHotCrossEntropy 0
       optimizer := optim.adam
-        { learningRate := 0.001 }
+        { lr := 0.001 }
       seed := 2026 }
 ```
 
@@ -630,7 +630,7 @@ def tpAdamSteps (n : Nat) : Tensor Float [3] :=
 
 For a constant gradient and initially zero moments, bias correction makes the ideal first
 moment equal to `g` and the ideal second moment equal to `g^2`. The normalized update is therefore
-`learningRate * g / (abs g + epsilon)`. Coordinates with different nonzero gradient magnitudes
+`lr * g / (abs g + epsilon)`. Coordinates with different nonzero gradient magnitudes
 move by nearly the same amount. This cancellation depends on holding the gradient fixed.
 
 With this constant nonzero gradient, each coordinate moves approximately $`0.1` per step, in the

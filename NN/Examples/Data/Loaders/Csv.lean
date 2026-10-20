@@ -115,7 +115,7 @@ def main (args : List String) : IO Unit := do
 
   let network := model (batchSize := batchSize)
   let run ← TorchLean.CLI.Trainer.parseCommandLine exeName args
-    { optimizer := optim.adam { learningRate := 0.05 } }
+    { optimizer := optim.adam { lr := 0.05 } }
   let trainer := Trainer.new network <|
     { run with objective := mse, seed }
 

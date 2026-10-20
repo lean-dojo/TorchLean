@@ -512,18 +512,18 @@ def checkAdadeltaFastPath : Bool :=
       (sqrtSpec (addSpec nextAverage epsilon))
   let reference :=
     subSpec first.parameters
-      (scaleSpec (mulSpec ratio gradients) state.learningRate)
+      (scaleSpec (mulSpec ratio gradients) state.lr)
   (List.finRange 3).all fun i =>
     (result.parameters.getScalar i).toBits == (reference.getScalar i).toBits
 
 /-- Public optimizer configurations reject domains that make their updates undefined. -/
 def checkPublicOptimizerValidation : Bool :=
-  (TorchLean.optim.adam { learningRate := 1e-3 }).validate.isOk &&
-    (!(TorchLean.optim.adam { learningRate := 1e-3, beta1 := 1.0 }).validate.isOk) &&
-    (!(TorchLean.optim.adamW { learningRate := 1e-3, weightDecay := -0.1 }).validate.isOk) &&
-    (!(TorchLean.optim.rmsProp { learningRate := 1e-3, epsilon := 0.0 }).validate.isOk) &&
+  (TorchLean.optim.adam { lr := 1e-3 }).validate.isOk &&
+    (!(TorchLean.optim.adam { lr := 1e-3, beta1 := 1.0 }).validate.isOk) &&
+    (!(TorchLean.optim.adamW { lr := 1e-3, weightDecay := -0.1 }).validate.isOk) &&
+    (!(TorchLean.optim.rmsProp { lr := 1e-3, epsilon := 0.0 }).validate.isOk) &&
     (!(TorchLean.optim.sgd
-      { learningRate := 0.1, momentum := Float.ofBits 0x7ff8000000000000 }).validate.isOk)
+      { lr := 0.1, momentum := Float.ofBits 0x7ff8000000000000 }).validate.isOk)
 
 /-- Run the optimizer edge-case regressions. -/
 def run : IO Unit := do

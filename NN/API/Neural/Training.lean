@@ -37,7 +37,7 @@ The learning rate is passed directly to the canonical SGD kernel. There is no tr
 share optimizer history, or implement the mutable runtime optimizer's storage-alias contract.
 -/
 def sgdStep {σ τ : Shape} {α : Type} [Storage α] [Context α]
-    (model : Sequential σ τ) (learningRate : α)
+    (model : Sequential σ τ) (lr : α)
     (state gradients : State α (stateShapes model)) :
     Except String (State α (stateShapes model)) := do
   validate model
@@ -55,7 +55,7 @@ def sgdStep {σ τ : Shape} {α : Type} [Storage α] [Context α]
           | throw "nn.sgdStep: trainable flags do not match the state layout"
         let next :=
           if trainable then
-            (Optim.SGD.update (Optim.SGD.init learningRate parameter) parameter gradient).parameters
+            (Optim.SGD.update (Optim.SGD.init lr parameter) parameter gradient).parameters
           else parameter
         return .cons next (← update rest restGradients (index + 1))
   let tensors ← update

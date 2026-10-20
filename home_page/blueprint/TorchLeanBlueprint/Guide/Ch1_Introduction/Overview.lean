@@ -86,7 +86,7 @@ def trainer :=
   Trainer.new model
     { objective := mse
       optimizer := optim.adam
-        { learningRate := 0.03 }
+        { lr := 0.03 }
       seed := 2026 }
 ```
 

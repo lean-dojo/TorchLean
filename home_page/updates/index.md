@@ -25,7 +25,7 @@ title: Updates
 <div class="updates-timeline">
 
 <article class="update-card" id="october-2026-one-tape" markdown="1">
-  <div class="update-date">October 19, 2026</div>
+  <div class="update-date">October 20, 2026</div>
   <div class="update-body" markdown="1">
 
 ## One Tape, One Training Path, and Mixture of Experts
@@ -43,6 +43,14 @@ an optional field of its certificate. TorchLean's phase variant of α-CROWN is c
 default selector is `alphaCrown`, and a report names the method that ran: on a rounded scalar
 `alphaCrown` runs directed CROWN, so the report says CROWN.
 
+Common choices read as plain names after `open TorchLean`, the way `device := gpu` already did:
+`objective := mse`, `arithmetic := ieee`, `activation := relu`, `algorithm := crown`,
+`norm := linf`. Optimizers take `lr`, as PyTorch and the `--lr` flag do, so a configuration reads
+`optim.adam { lr := 0.03 }`, and schedules take `baseLr`, `peakLr` and `minLr`.
+`Trainer.RunConfig` extends `Runtime.Config`, so `{ runtime with optimizer := ..., objective := ... }`
+turns parsed command-line flags into a trainer configuration, and every training log records the
+run's settings as an `ExperimentLog`.
+
 Mixture of experts is new: `nn.moe` and `nn.moeMlp`, a `topKMask` IR operation with kernels on
 every backend, and PyTorch MoE import. The spec, `Spec.MoE`, comes with proofs that over `ℝ` the
 dense layer equals Mixtral's sparse block, and that a per-device capacity makes a token's output
@@ -50,8 +58,9 @@ depend on how the batch is split.
 
 Some files and flags no longer load. CUDA Adam checkpoints of versions 2 to 4 have to be saved
 again in version 5, camera certificates use `torchlean.camera.box3d.v2` with an explicit
-`point_count`, CROWN node certificates name their ReLU phases `phases` rather than `beta`, and
-`diffusion` takes `--dataset cifar10|imagenet64` only. The guide chapter on
+`point_count`, CROWN node certificates name their ReLU phases `phases` rather than `beta`, graph
+artifacts are `torchlean.ir.v2` with an `input_ids` list, and `diffusion` takes
+`--dataset cifar10|imagenet64` only. The guide chapter on
 choosing a device and arithmetic is now Run Configuration.
 
   </div>

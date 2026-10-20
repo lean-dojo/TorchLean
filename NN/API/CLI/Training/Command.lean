@@ -50,7 +50,7 @@ structure Config (δ : Type) where
   /-- Default number of optimizer steps when `--steps` is omitted. -/
   defaultSteps : Nat
   /-- Learning rate used when `--lr` is omitted. -/
-  defaultLearningRate : Float
+  defaultLr : Float
   /-- Model description used in banners. -/
   description : String
   /-- Command-specific data flags, rendered by `--help`. -/
@@ -62,9 +62,9 @@ structure Config (δ : Type) where
 
 /-- The training flags `CLI.Training.OptimizerOptions.parse` accepts, with defaults when given. -/
 def trainingFlags (defaultSteps? : Option Nat := none)
-    (defaultLearningRate? : Option Float := none) : Array String :=
+    (defaultLr? : Option Float := none) : Array String :=
   let steps := defaultSteps?.elim "" fun steps => s!" (default: {steps})"
-  let rate := defaultLearningRate?.elim "" fun rate => s!" (default: {rate})"
+  let rate := defaultLr?.elim "" fun rate => s!" (default: {rate})"
   #[ s!"  --steps N          optimizer updates{steps}"
    , "  --batch-size N     dataset items accumulated per update (default: 1)"
    , s!"  --lr X             learning rate{rate}"
@@ -93,7 +93,7 @@ def helpText (exeName : String) (dataOptions : Array String)
 /-- Usage text for training applications using the shared runner. -/
 def usage {δ : Type} (config : Config δ) : String :=
   helpText config.exeName config.dataOptions
-    (trainingFlags (some config.defaultSteps) (some config.defaultLearningRate))
+    (trainingFlags (some config.defaultSteps) (some config.defaultLr))
     (description? := some config.description)
 
 /-- Run a public native-arithmetic training command. -/
@@ -110,7 +110,7 @@ def run {δ : Type} (config : Config δ) (args : List String) : IO UInt32 :=
       let (train, rest) ← CLI.orThrow config.exeName <|
         CLI.Training.OptimizerOptions.parse config.exeName rest config.defaultLogPath
           (defaultSteps := config.defaultSteps)
-          (defaultLearningRate := config.defaultLearningRate)
+          (defaultLr := config.defaultLr)
       CLI.requireNoArgs config.exeName rest
       config.train runtime dataArgs train)
 

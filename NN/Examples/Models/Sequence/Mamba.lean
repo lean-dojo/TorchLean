@@ -110,7 +110,7 @@ namespace Options
 def parse (args : List String) : Except String (Options × List String) := do
   let (training, args) ←
     CLI.Training.OptimizerOptions.parse exeName args defaultLogPath
-      (defaultSteps := 1) (defaultLearningRate := 0.002)
+      (defaultSteps := 1) (defaultLr := 0.002)
   let (windows, args) ← CLI.takePositiveNatFlag args exeName "windows" (default := 1)
   let (generation, args) ← text.GenerationOptions.parse exeName args
     { prompt := "First Citizen:"
@@ -174,7 +174,7 @@ def train (runtime : Runtime.Config) (corpus : String)
       (paddingTokenId := paddingByte)
   let trainer := Trainer.new model <|
     { runtime with
-        optimizer := optim.adam { learningRate := options.training.learningRate }
+        optimizer := optim.adam { lr := options.training.lr }
         objective := oneHotCrossEntropy 1 }
   let cudaMemorySampleEvery :=
     Trainer.Memory.cadence runtime options.training.steps options.training.cudaMemorySampleEvery
@@ -216,7 +216,7 @@ def main (args : List String) : IO UInt32 := do
       let (lossBefore, lossAfter, generated) ← train runtime corpusText options
       let extraNotes :=
         #[s!"data={corpus}", Support.deviceNote runtime,
-          s!"windows={options.windows}", s!"lr={options.training.learningRate}",
+          s!"windows={options.windows}", s!"lr={options.training.lr}",
           Support.cudaMemoryNote runtime options.training.steps
             options.training.cudaMemorySampleEvery]
       text.Log.writeGeneration

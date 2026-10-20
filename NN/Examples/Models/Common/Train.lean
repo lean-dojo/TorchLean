@@ -32,7 +32,7 @@ def csv {Result : Type}
     (defaultCsv : System.FilePath)
     (defaultLogPath : System.FilePath)
     (defaultSteps : Nat := 1)
-    (defaultLearningRate : Float := 1e-3)
+    (defaultLr : Float := 1e-3)
     (banner : Runtime.Config → String)
     (train : Runtime.Config → Support.Training.Options Support.Csv.Options →
       IO Result)
@@ -40,7 +40,7 @@ def csv {Result : Type}
     IO UInt32 :=
   CLI.Training.Command.runParsed exeName args
     (fun rest =>
-      Support.Training.Options.parse exeName rest defaultLogPath defaultSteps defaultLearningRate
+      Support.Training.Options.parse exeName rest defaultLogPath defaultSteps defaultLr
         (parseData := fun args => Support.Csv.Options.parse args defaultCsv))
     banner train report
     (usage? := some <|

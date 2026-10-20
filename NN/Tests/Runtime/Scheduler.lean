@@ -12,7 +12,7 @@ public import NN.API.Trainer.Session
 /-!
 # Learning-rate schedules
 
-A schedule reaches the optimizer through `Optimizer.setLearningRate` before each update. Each
+A schedule reaches the optimizer through `Optimizer.setLr` before each update. Each
 check compares the final loss of a scheduled run exactly with an unscheduled one: a zero rate
 freezes the parameters, a constant rate equal to the configured one changes nothing, and a step
 schedule that drops to zero after the first update matches a single unscheduled update. SGD and
@@ -55,8 +55,8 @@ def check (device : NN.Backend.Device) (name : String) (optimizer : optim.Optimi
     fail s!"a rate that drops to zero after one update gave {dropped}, not {oneStep}"
 
 def run (device : NN.Backend.Device := .cpu) : IO Unit := do
-  check device "sgd" (optim.sgd { learningRate := 0.1 })
-  check device "adam" (optim.adam { learningRate := 0.1 })
+  check device "sgd" (optim.sgd { lr := 0.1 })
+  check device "adam" (optim.adam { lr := 0.1 })
   IO.println s!"learning-rate schedules ({device.cliName}): zero, constant and step: ok"
 
 end NN.Tests.Runtime.Scheduler

@@ -82,7 +82,7 @@ structure Optimizer (α : Type) [TorchLean.Storage α] [Context α] (paramShapes
   step : State → Torch.ParamList α paramShapes → TorchLean.TensorPack α paramShapes → IO State
   /-- The same state with every parameter's learning rate set to the given value; schedules use it
   between steps. -/
-  setLearningRate : α → State → State
+  setLr : α → State → State
   /--
   The update this state names among the trainer's native optimizers, if any. A trainer whose
   backend keeps parameters, gradients and optimizer moments on the device (eager CUDA) runs it in
@@ -234,23 +234,23 @@ Stochastic gradient descent.
 PyTorch analogy: `torch.optim.SGD(lr=lr)` without momentum.
 -/
 def sgd {α : Type} [TorchLean.Storage α] [Context α]
-    (learningRate : α) {paramShapes : List Shape} : Optimizer α paramShapes :=
+    (lr : α) {paramShapes : List Shape} : Optimizer α paramShapes :=
   { State := StateList Optim.SGD.State α paramShapes
     init := fun ps =>
       Internal.initStateList (α := α) (State := Optim.SGD.State)
         (initOne := fun {s} t =>
-          Optim.SGD.init (α := α) (s := s) learningRate t) ps
+          Optim.SGD.init (α := α) (s := s) lr t) ps
     step := fun st ps grads =>
       Internal.stepStateList (α := α) (State := Optim.SGD.State)
         (updateOne := fun {s} stOne parameters gradients =>
           Optim.SGD.update (α := α) (s := s)
             stOne parameters gradients)
         ps st grads
-    setLearningRate := fun rate st =>
+    setLr := fun rate st =>
       Internal.mapStateList (State := Optim.SGD.State)
-        (fun stOne => { stOne with learningRate := rate }) st
+        (fun stOne => { stOne with lr := rate }) st
     native? := fun st =>
-      some (.sgd (Internal.firstStateValue learningRate (fun state => state.learningRate) st))
+      some (.sgd (Internal.firstStateValue lr (fun state => state.lr) st))
   }
 
 /--
@@ -259,21 +259,21 @@ SGD with classical momentum.
 PyTorch analogy: `torch.optim.SGD(lr=lr, momentum=momentum)`.
 -/
 def momentumSGD {α : Type} [TorchLean.Storage α] [Context α]
-    (learningRate momentum : α) {paramShapes : List Shape} : Optimizer α paramShapes :=
+    (lr momentum : α) {paramShapes : List Shape} : Optimizer α paramShapes :=
   { State := StateList Optim.MomentumSGD.State α paramShapes
     init := fun ps =>
       Internal.initStateList (α := α) (State := Optim.MomentumSGD.State)
         (initOne := fun {s} t =>
           Optim.MomentumSGD.init
-            (α := α) (s := s) learningRate momentum t) ps
+            (α := α) (s := s) lr momentum t) ps
     step := fun st ps grads =>
       Internal.stepStateList (α := α) (State := Optim.MomentumSGD.State)
         (updateOne := fun {s} stOne params g => Optim.MomentumSGD.update (α := α) (s := s)
           stOne params g)
         ps st grads
-    setLearningRate := fun rate st =>
+    setLr := fun rate st =>
       Internal.mapStateList (State := Optim.MomentumSGD.State)
-        (fun stOne => { stOne with learningRate := rate }) st
+        (fun stOne => { stOne with lr := rate }) st
   }
 
 /--
@@ -282,21 +282,21 @@ AdaGrad (per-parameter learning rate scaling by accumulated squared gradients).
 PyTorch analogy: `torch.optim.Adagrad(lr=lr, eps=epsilon)`.
 -/
 def adagrad {α : Type} [TorchLean.Storage α] [Context α]
-    (learningRate epsilon : α) {paramShapes : List Shape} : Optimizer α paramShapes :=
+    (lr epsilon : α) {paramShapes : List Shape} : Optimizer α paramShapes :=
   { State := StateList Optim.AdaGrad.State α paramShapes
     init := fun ps =>
       Internal.initStateList (α := α) (State := Optim.AdaGrad.State)
         (initOne := fun {s} t =>
           Optim.AdaGrad.init
-            (α := α) (s := s) learningRate epsilon t) ps
+            (α := α) (s := s) lr epsilon t) ps
     step := fun st ps grads =>
       Internal.stepStateList (α := α) (State := Optim.AdaGrad.State)
         (updateOne := fun {s} stOne params g => Optim.AdaGrad.update (α := α) (s := s) stOne
           params g)
         ps st grads
-    setLearningRate := fun rate st =>
+    setLr := fun rate st =>
       Internal.mapStateList (State := Optim.AdaGrad.State)
-        (fun stOne => { stOne with learningRate := rate }) st
+        (fun stOne => { stOne with lr := rate }) st
   }
 
 /--
@@ -306,21 +306,21 @@ PyTorch analogy: `torch.optim.RMSprop(lr=lr, alpha=decay, eps=epsilon)` (we use 
 `decay` for `alpha`).
 -/
 def rmsprop {α : Type} [TorchLean.Storage α] [Context α]
-    (learningRate decay epsilon : α) {paramShapes : List Shape} : Optimizer α paramShapes :=
+    (lr decay epsilon : α) {paramShapes : List Shape} : Optimizer α paramShapes :=
   { State := StateList Optim.RMSProp.State α paramShapes
     init := fun ps =>
       Internal.initStateList (α := α) (State := Optim.RMSProp.State)
         (initOne := fun {s} t =>
           Optim.RMSProp.init
-            (α := α) (s := s) learningRate decay epsilon t) ps
+            (α := α) (s := s) lr decay epsilon t) ps
     step := fun st ps grads =>
       Internal.stepStateList (α := α) (State := Optim.RMSProp.State)
         (updateOne := fun {s} stOne params g => Optim.RMSProp.update (α := α) (s := s) stOne
           params g)
         ps st grads
-    setLearningRate := fun rate st =>
+    setLr := fun rate st =>
       Internal.mapStateList (State := Optim.RMSProp.State)
-        (fun stOne => { stOne with learningRate := rate }) st
+        (fun stOne => { stOne with lr := rate }) st
   }
 
 /--
@@ -329,24 +329,24 @@ Adam (first/second moment estimates).
 PyTorch analogy: `torch.optim.Adam(lr=lr, betas=(beta1,beta2), eps=epsilon)`.
 -/
 def adam {α : Type} [TorchLean.Storage α] [Context α]
-    (learningRate beta1 beta2 epsilon : α)
+    (lr beta1 beta2 epsilon : α)
     {paramShapes : List Shape} : Optimizer α paramShapes :=
   { State := StateList (fun _ _ => Optim.Adam.State α) α paramShapes
     init := fun ps =>
       Internal.initStateList (α := α) (State := fun _ _ => Optim.Adam.State α)
         (initOne := fun {s} t =>
           Optim.Adam.init
-            (α := α) (s := s) learningRate beta1 beta2 epsilon t) ps
+            (α := α) (s := s) lr beta1 beta2 epsilon t) ps
     step := fun st ps grads =>
       Internal.stepStateList (α := α) (State := fun _ _ => Optim.Adam.State α)
         (updateOne := fun {s} stOne params g => Optim.Adam.update (α := α) (s := s) stOne
           params g)
         ps st grads
-    setLearningRate := fun rate st =>
+    setLr := fun rate st =>
       Internal.mapStateList (State := fun _ _ => Optim.Adam.State α)
-        (fun stOne => { stOne with learningRate := rate }) st
+        (fun stOne => { stOne with lr := rate }) st
     native? := fun st =>
-      some (.adam (Internal.firstStateValue learningRate (fun state => state.learningRate) st)
+      some (.adam (Internal.firstStateValue lr (fun state => state.lr) st)
         beta1 beta2 epsilon)
   }
 
@@ -357,24 +357,24 @@ PyTorch analogy: `torch.optim.AdamW(lr=lr, weight_decay=weightDecay, betas=(beta
   eps=epsilon)`.
 -/
 def adamw {α : Type} [TorchLean.Storage α] [Context α]
-    (learningRate weightDecay beta1 beta2 epsilon : α)
+    (lr weightDecay beta1 beta2 epsilon : α)
     {paramShapes : List Shape} : Optimizer α paramShapes :=
   { State := StateList (fun _ _ => Optim.AdamW.State α) α paramShapes
     init := fun ps =>
       Internal.initStateList (α := α) (State := fun _ _ => Optim.AdamW.State α)
         (initOne := fun {s} t =>
           Optim.AdamW.init
-            (α := α) (s := s) learningRate weightDecay beta1 beta2 epsilon t) ps
+            (α := α) (s := s) lr weightDecay beta1 beta2 epsilon t) ps
     step := fun st ps grads =>
       Internal.stepStateList (α := α) (State := fun _ _ => Optim.AdamW.State α)
         (updateOne := fun {s} stOne params g => Optim.AdamW.update (α := α) (s := s) stOne
           params g)
         ps st grads
-    setLearningRate := fun rate st =>
+    setLr := fun rate st =>
       Internal.mapStateList (State := fun _ _ => Optim.AdamW.State α)
-        (fun stOne => { stOne with learningRate := rate }) st
+        (fun stOne => { stOne with lr := rate }) st
     native? := fun st =>
-      some (.adamW (Internal.firstStateValue learningRate (fun state => state.learningRate) st)
+      some (.adamW (Internal.firstStateValue lr (fun state => state.lr) st)
         weightDecay beta1 beta2 epsilon)
   }
 
@@ -384,22 +384,22 @@ AdaDelta (adaptive learning rate method similar to RMSProp but with a running RM
 PyTorch analogy: `torch.optim.Adadelta(lr=lr, rho=rho, eps=epsilon)`.
 -/
 def adadelta {α : Type} [TorchLean.Storage α] [Context α]
-    (learningRate rho epsilon : α)
+    (lr rho epsilon : α)
     {paramShapes : List Shape} : Optimizer α paramShapes :=
   { State := StateList Optim.Adadelta.State α paramShapes
     init := fun ps =>
       Internal.initStateList (α := α) (State := Optim.Adadelta.State)
         (initOne := fun {s} t =>
           Optim.Adadelta.init
-            (α := α) (s := s) learningRate rho epsilon t) ps
+            (α := α) (s := s) lr rho epsilon t) ps
     step := fun st ps grads =>
       Internal.stepStateList (α := α) (State := Optim.Adadelta.State)
         (updateOne := fun {s} stOne params g => Optim.Adadelta.update (α := α) (s := s) stOne
           params g)
         ps st grads
-    setLearningRate := fun rate st =>
+    setLr := fun rate st =>
       Internal.mapStateList (State := Optim.Adadelta.State)
-        (fun stOne => { stOne with learningRate := rate }) st
+        (fun stOne => { stOne with lr := rate }) st
   }
 
 /-! ## Optimizer extension points -/
@@ -415,7 +415,7 @@ matrix-specific state and SVD/randomized-SVD infrastructure, so they are not hid
 inside this generic constructor.
 -/
 def projectedSGD {α : Type} [TorchLean.Storage α] [Context α]
-    (learningRate : α)
+    (lr : α)
     (projector : {s : Shape} → Optim.GaLore.Projector α s s :=
       fun {s} => Optim.GaLore.identityProjector (α := α) (s := s))
     {paramShapes : List Shape} : Optimizer α paramShapes :=
@@ -424,7 +424,7 @@ def projectedSGD {α : Type} [TorchLean.Storage α] [Context α]
       Internal.initStateList (α := α)
         (State := fun α _ s => Optim.GaLore.SGDState α s s)
         (initOne := fun {s} _t =>
-          { learningRate := learningRate, projector := projector (s := s) }) ps
+          { lr := lr, projector := projector (s := s) }) ps
     step := fun st ps grads =>
       Internal.stepStateList (α := α)
         (State := fun α _ s => Optim.GaLore.SGDState α s s)
@@ -432,9 +432,9 @@ def projectedSGD {α : Type} [TorchLean.Storage α] [Context α]
           Optim.GaLore.update
             (α := α) (full := s) (low := s) stOne parameters gradients)
         ps st grads
-    setLearningRate := fun rate st =>
+    setLr := fun rate st =>
       Internal.mapStateList (State := fun α _ s => Optim.GaLore.SGDState α s s)
-        (fun stOne => { stOne with learningRate := rate }) st
+        (fun stOne => { stOne with lr := rate }) st
   }
 
 /--
@@ -444,7 +444,7 @@ Using the identity backend gives ordinary momentum-SGD behavior. A production Mu
 provide a matrix-specific Newton-Schulz orthogonalizer and optional CUDA kernels.
 -/
 def muon {α : Type} [TorchLean.Storage α] [Context α]
-    (learningRate momentum : α)
+    (lr momentum : α)
     (orthogonalizer : {s : Shape} → Optim.Muon.Orthogonalizer α s :=
       fun {s} => Optim.Muon.identityOrthogonalizer (α := α) (s := s))
     {paramShapes : List Shape} : Optimizer α paramShapes :=
@@ -453,16 +453,16 @@ def muon {α : Type} [TorchLean.Storage α] [Context α]
       Internal.initStateList (α := α) (State := Optim.Muon.State)
         (initOne := fun {s} t =>
           Optim.Muon.init
-            (α := α) (s := s) learningRate momentum
+            (α := α) (s := s) lr momentum
             (orthogonalizer (s := s)) t) ps
     step := fun st ps grads =>
       Internal.stepStateList (α := α) (State := Optim.Muon.State)
         (updateOne := fun {s} stOne params g =>
           Optim.Muon.update (α := α) (s := s) stOne params g)
         ps st grads
-    setLearningRate := fun rate st =>
+    setLr := fun rate st =>
       Internal.mapStateList (State := Optim.Muon.State)
-        (fun stOne => { stOne with learningRate := rate }) st
+        (fun stOne => { stOne with lr := rate }) st
   }
 
 end Optim

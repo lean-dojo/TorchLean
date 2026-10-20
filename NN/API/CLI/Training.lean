@@ -64,7 +64,7 @@ end RunOptions
 /-- Training command options that also select a learning rate. -/
 structure OptimizerOptions extends RunOptions where
   /-- Learning rate passed to the command's optimizer constructor. -/
-  learningRate : Float
+  lr : Float
 deriving Repr
 
 namespace OptimizerOptions
@@ -75,7 +75,7 @@ def parse
     (arguments : List String)
     (defaultLogPath : System.FilePath)
     (defaultSteps : Nat := 1)
-    (defaultLearningRate : Float := 1e-3)
+    (defaultLr : Float := 1e-3)
     (defaultBatchSize : Nat := 1)
     (allowZeroSteps : Bool := false) :
     Except String (OptimizerOptions × List String) := do
@@ -84,10 +84,10 @@ def parse
       (defaultSteps := defaultSteps)
       (defaultBatchSize := defaultBatchSize)
       (allowZeroSteps := allowZeroSteps)
-  let (learningRate, arguments) ←
-    CLI.takePositiveFloatFlag arguments exeName "lr" (default := defaultLearningRate)
+  let (lr, arguments) ←
+    CLI.takePositiveFloatFlag arguments exeName "lr" (default := defaultLr)
   pure
-    ({ toRunOptions := run, learningRate }, arguments)
+    ({ toRunOptions := run, lr }, arguments)
 
 end OptimizerOptions
 

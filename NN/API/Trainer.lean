@@ -24,7 +24,7 @@ The main training interface:
 ```lean
 let trainer := Trainer.new model
   { objective := mse
-    optimizer := optim.adam { learningRate := 0.03 } }
+    optimizer := optim.adam { lr := 0.03 } }
 let y0 ← trainer.predict x
 let trained ← trainer.train data { steps := 200, samplesPerStep := 16, logEvery := 25 }
 trained.printSummary

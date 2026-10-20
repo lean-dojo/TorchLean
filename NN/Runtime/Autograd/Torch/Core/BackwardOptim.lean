@@ -175,8 +175,8 @@ def checkCudaOptimizerInputs {α : Type} [TorchLean.Storage α] (operation : Str
                 s!"torch: CUDA Adam state size mismatch for parameter leaf {id}"
 
 /-- Reject a non-finite or negative learning rate before an optimizer mutates device state. -/
-def checkCudaLearningRate (operation : String) (learningRate : Float) : IO Unit := do
-  unless learningRate.isFinite && 0.0 ≤ learningRate do
+def checkCudaLr (operation : String) (lr : Float) : IO Unit := do
+  unless lr.isFinite && 0.0 ≤ lr do
     throw <| IO.userError s!"torch: {operation} learning rate must be finite and nonnegative"
 
 /-- A shared parameter has one optimizer history, keyed by its first recorded leaf.
@@ -206,7 +206,7 @@ def sgdStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
   if Config.device s.options != .cuda then
     throw <| IO.userError "torch: sgdStepAllCudaMap called on non-CUDA eager session"
   let lrF ← TensorTransfer.toFloat (α := α) lr
-  checkCudaLearningRate "CUDA SGD" lrF
+  checkCudaLr "CUDA SGD" lrF
   let t0 ← s.cudaTape
   let params ← s.paramsByLeaf.get
   checkCudaOptimizerInputs "CUDA SGD" t0 params grads
@@ -299,7 +299,7 @@ def adamStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
   let beta1F ← TensorTransfer.toFloat (α := α) beta1
   let beta2F ← TensorTransfer.toFloat (α := α) beta2
   let epsF ← TensorTransfer.toFloat (α := α) epsilon
-  checkCudaLearningRate "CUDA Adam" lrF
+  checkCudaLr "CUDA Adam" lrF
   let config : CudaAdamConfig :=
     { dtype := ← TensorTransfer.dtype (α := α)
       kind := .adam, beta1 := beta1F, beta2 := beta2F, epsilon := epsF, weightDecay := 0.0 }
@@ -324,7 +324,7 @@ def adamWStepAllCudaMap {α : Type} [TorchLean.Storage α] [TensorTransfer α]
   let beta1F ← TensorTransfer.toFloat (α := α) beta1
   let beta2F ← TensorTransfer.toFloat (α := α) beta2
   let epsF ← TensorTransfer.toFloat (α := α) epsilon
-  checkCudaLearningRate "CUDA AdamW" lrF
+  checkCudaLr "CUDA AdamW" lrF
   let config : CudaAdamConfig :=
     { dtype := ← TensorTransfer.dtype (α := α)
       kind := .adamW, beta1 := beta1F, beta2 := beta2F, epsilon := epsF, weightDecay := wdF }

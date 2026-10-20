@@ -60,7 +60,7 @@ def model : nn.Builder (nn.Sequential [2] [1]) :=
 def trainer : TorchLean.Trainer [2] [1] :=
   Trainer.new model
     { objective := mse
-      optimizer := optim.adam { learningRate := 0.03 }
+      optimizer := optim.adam { lr := 0.03 }
       seed := 7 }
 
 -- An already-built model is accepted too, and then the seed has nothing left to decide.

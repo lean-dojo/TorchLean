@@ -13,7 +13,7 @@ public import NN.Tensor
 # What a Muon Step Certificate Says
 
 A Muon update first forms a momentum buffer, then chooses a matrix direction `Q`, and finally
-updates parameters by `P' = P - learningRate * Q`. An **exact step certificate** proves that the
+updates parameters by `P' = P - lr * Q`. An **exact step certificate** proves that the
 chosen direction has orthonormal columns (`QᵀQ = I`) and is the direction actually used in that
 update. It also records the new momentum state.
 
@@ -116,7 +116,7 @@ theorem step_certified :
   · rfl
   · change subSpec parameters
       (scaleSpec (Optim.Muon.update state parameters direction).optimizerState.momentumBuffer
-        state.learningRate) = _
+        state.lr) = _
     rw [fresh_buffer_eq_direction]
 
 /-- Consuming the certificate gives `(2, 3)ᵀ - (1/10) * (3/5, 4/5)ᵀ = (97/50, 73/25)ᵀ`. -/
@@ -147,26 +147,26 @@ Using the QR checked backend, a positive-pivot proof gives a certified step; fro
 recover both the exact Gram certificate for the direction and the parameter-update equation.
 -/
 theorem qr_update_step_direction_has_exact_gram {m n : Nat}
-    (learningRate momentum : ℝ) (momentumBuffer parameters gradients : Tensor ℝ [m, n])
+    (lr momentum : ℝ) (momentumBuffer parameters gradients : Tensor ℝ [m, n])
     (hpivots :
       Optim.Muon.HasPositiveQRPivots
         (Optim.Muon.update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := Optim.Muon.qrOrthogonalizer (m := m) (n := n) } :
             Optim.Muon.State ℝ [m, n])
           parameters gradients).optimizerState.momentumBuffer) :
     ∃ direction : Tensor ℝ [m, n],
       Optim.Muon.HasExactColumnGram direction ∧
       (Optim.Muon.update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer := Optim.Muon.qrOrthogonalizer (m := m) (n := n) } :
             Optim.Muon.State ℝ [m, n])
           parameters gradients).parameters =
         Tensor.subSpec parameters
-          (Tensor.scaleSpec direction learningRate) := by
+          (Tensor.scaleSpec direction lr) := by
   obtain ⟨direction, hstep⟩ :=
     Optim.Muon.update_has_exact_certified_step_qr
-      learningRate momentum momentumBuffer parameters gradients hpivots
+      lr momentum momentumBuffer parameters gradients hpivots
   exact ⟨direction,
     hstep.hasExactColumnGram,
     hstep.parameters_eq⟩
@@ -178,12 +178,12 @@ step; from that step we can recover the residual-bound certificate and the param
 theorem newtonSchulz_update_step_direction_has_approx_gram
     {α : Type} [Storage α] [Context α] {m n : Nat} {eps : α}
     (coeffs : Optim.Muon.NewtonSchulzCoeffs α) (steps : Nat)
-    (learningRate momentum : α) (momentumBuffer parameters gradients : Tensor α [m, n])
+    (lr momentum : α) (momentumBuffer parameters gradients : Tensor α [m, n])
     (hresidual :
       Optim.Muon.ApproxOrthogonalizesBuffer eps
         (Optim.Muon.newtonSchulzOrthogonalizer (α := α) (m := m) (n := n) coeffs steps)
         (Optim.Muon.update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer :=
               Optim.Muon.newtonSchulzOrthogonalizer (α := α) (m := m) (n := n) coeffs steps } :
             Optim.Muon.State α [m, n])
@@ -191,18 +191,18 @@ theorem newtonSchulz_update_step_direction_has_approx_gram
     ∃ direction : Tensor α [m, n],
       Optim.Muon.HasApproxColumnGram eps direction ∧
       (Optim.Muon.update
-          ({ learningRate := learningRate, momentum := momentum, momentumBuffer := momentumBuffer,
+          ({ lr := lr, momentum := momentum, momentumBuffer := momentumBuffer,
              orthogonalizer :=
               Optim.Muon.newtonSchulzOrthogonalizer (α := α) (m := m) (n := n) coeffs steps } :
             Optim.Muon.State α [m, n])
           parameters gradients).parameters =
         Tensor.subSpec parameters
-          (Tensor.scaleSpec direction learningRate) := by
+          (Tensor.scaleSpec direction lr) := by
   obtain ⟨direction, hstep⟩ :=
     Optim.Muon.approxCertifiedStep_of_checkedBackend
       (backend := Optim.Muon.newtonSchulzResidualCheckedOrthogonalizer
         (α := α) (m := m) (n := n) coeffs steps eps)
-      learningRate momentum momentumBuffer parameters gradients hresidual
+      lr momentum momentumBuffer parameters gradients hresidual
   exact ⟨direction,
     hstep.hasApproxColumnGram,
     hstep.parameters_eq⟩

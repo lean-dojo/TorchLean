@@ -112,7 +112,7 @@ use the constants and options declared in the linked example source:
 ```lean
 let trainer := Trainer.new model <|
   { runtime with
-      optimizer := optim.adam { learningRate := options.training.learningRate }
+      optimizer := optim.adam { lr := options.training.lr }
       objective := oneHotCrossEntropy 2 }
 let trained ← trainer.train (Data.fromStream samples)
   { steps := options.training.steps
@@ -193,7 +193,7 @@ Then we pass it to the trainer:
 ```lean
 let trainer := Trainer.new model <|
   { runtime with
-      optimizer := optim.adam { learningRate := options.training.learningRate }
+      optimizer := optim.adam { lr := options.training.lr }
       objective := oneHotCrossEntropy 1 }
 let trained ← trainer.train (Data.fromStream samples) (options.training.trainOptions)
 trained.printSummary

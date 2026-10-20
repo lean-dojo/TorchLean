@@ -61,11 +61,32 @@ marker also live in `Wire`.
 
 The PyTorch adapter matches complete ATen overload names and explicit FX callables or methods.
 For example, `aten.log.default` lowers to `log`; `log1p`, `log2`, and `log_softmax` need their own
-lowerings and are rejected. `aten.div.Tensor` without a rounding mode lowers to `div` and
-`aten.slice.Tensor` with step one to `slice`. The mixture-of-experts routing idiom
-`torch.zeros_like(p).scatter(-1, torch.topk(p, k).indices, 1)` lowers to one `top_k_mask` node;
-the `topk` call and the zeros it scatters into must have no other users. Mutating overloads, dtype changes, and unsupported tuple producers are
-rejected before the adapter writes an artifact.
+lowerings and are rejected. `aten.slice.Tensor` with step one lowers to `slice`. The
+mixture-of-experts routing idiom `torch.zeros_like(p).scatter(-1, torch.topk(p, k).indices, 1)`
+lowers to one `top_k_mask` node; the `topk` call and the zeros it scatters into must have no other
+users. Mutating overloads, `view(dtype)` reinterpretation, `dtype` arguments of reductions and
+softmax, and unsupported tuple producers are rejected before the adapter writes an artifact.
+
+The core ATen pointwise operators `neg`, `rsqrt`, `erf` and `gelu`, every core overload of `div` and
+`pow`, and `clamp_min` with a scalar bound become IR pointwise nodes in the arithmetic of the
+vectorized loops of PyTorch's CPU kernels. Binary16 and bfloat16 inputs are widened to binary32
+where those loops compute in binary32. Reduced-precision division and multiplication do so only for
+a one-element right operand, and `pow` with a scalar exponent follows PyTorch's dispatch on the
+exponent rounded to the tensor's dtype. Conversions follow `c10::convert`, which makes binary16 and
+bfloat16 values from binary32, so an integer, Boolean or binary64 source becomes two IR casts. A
+Python scalar operand, of these operators or of `add`, `sub` and `mul`, and the bound of `clamp_min`
+become constants converted from the int64, uint64, binary64 or Boolean value PyTorch wraps them in.
+An integer beyond `2^53` therefore rounds once to binary32 or binary64, and twice, through binary32,
+to bfloat16 or binary16. The bound of `clamp_min` is converted to the operation's result type, so an
+int32 tensor clamped at `0.5` gives binary32. Like PyTorch's kernel, `clamp_min` returns the bound
+where the tensor is below it and keeps the tensor's value elsewhere, so `clamp_min(-0.0, 0)` is
+`-0.0`, and a NaN bound gives NaNs. The IR's `relu` returns `+0.0` at `-0.0`, where eager PyTorch
+returns `-0.0`. A scalar on the left of an explicit `torch.mul(s, x)` is converted to the tensor's
+dtype, while Python's `s * x` is `x * s`. The tanh GELU follows PyTorch's CPU kernels at their AVX2
+and AVX-512 capability levels, which fuse `x + κ x³` on x86-64. At the DEFAULT level, which
+`ATEN_CPU_CAPABILITY=default` selects, PyTorch rounds that sum twice, and other processors and CUDA
+were not measured. The [IR guide](../../IR/README.md#frontend-lowering) lists the rules and the
+elements that PyTorch's scalar loop computes differently.
 
 ## Import
 
@@ -100,7 +121,7 @@ capture, validation, and reference comparisons through the shared IR.
 - Capture supported PyTorch `nn.Module` graphs as TorchLean IR JSON and validate them in Lean.
 - Lower a conservative ONNX static graph fragment into the same TorchLean IR JSON path. Graph
   validation and payload loading stay separate: imported Conv/Gemm/BatchNorm structure can be
-  checked as IR, while execution still needs the corresponding payload store.
+  checked as IR, while execution needs the corresponding payload store.
 - Reuse the Lean IR semantics after import. Elementwise ops, reshape/flatten/broadcast/sum, direct
   leading-axis concat plus generic concat through the shared evaluator, axis reductions, axis
   permutation, supported transpose forms, matrix and batched matrix multiplication, arbitrary-axis

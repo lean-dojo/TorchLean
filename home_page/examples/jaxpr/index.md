@@ -318,21 +318,34 @@ of `0.000000` in the diagnostic output is not a claim of bitwise equality.
 We also checked captured PyTorch LayerNorm and a matrix-product/softmax attention
 calculation on supplied inputs. Those passed sample comparisons through the
 [same verification interface]({{ '/examples/verify/' | relative_url }}).
-JAX expands those operations differently: its LayerNorm needs division, and its
-softmax needs `reduce_max`, which this Jaxpr adapter does not yet lower. A passing
+JAX expands those operations differently. A LayerNorm written with `jnp.mean` and
+`lax.rsqrt` imports and executes through division and the reciprocal square root,
+but softmax needs `reduce_max`, which this Jaxpr adapter does not lower. A passing
 PyTorch example therefore does not imply that the corresponding JAX function can
-already be imported. The batched-contraction example covers attention's dot-product
+be imported. The batched-contraction example covers attention's dot-product
 linear algebra, not a complete Transformer.
 
 ## Numerical differences we found
 
 Inspecting the captured operations helped us catch assumptions that shapes alone
-would miss. We corrected the adapter to reject several unsafe arithmetic rewrites.
-Replacing `x / y` with `x * (1 / y)` introduces another rounding step and can change
-exceptional values. Replacing `-x` with `0 - x` changes signed-zero behavior.
-Expanding a general integer power into another multiplication schedule can change
-rounding too. These captures now report an unsupported operation rather than
-silently choose a different calculation.
+would miss. The adapter gives each primitive its JAX meaning. Division and negation
+import as the IR's own `div` and `neg`: replacing `x / y` with `x * (1 / y)` adds a
+rounding step and can change exceptional values, and `0 - x` changes the sign of
+zero. An integer power imports as the multiplications XLA performs, square-and-multiply
+in JAX's order, because a correctly rounded power can differ from that product in
+the last bit.
+
+XLA's compiled CPU code does not always keep that meaning. It multiplies by the
+rounded reciprocal of a broadcast divisor, so its `x / 3.0` differs from the IEEE
+quotient on 1382 of 4096 binary32 samples. It also flushes subnormal values to zero,
+approximates the reciprocal square root, and under `jax.jit` rewrites some divisions
+and constant powers. The adapter does not copy these rewrites; it records whether the
+function is one `jax.jit` call. A comparison that finds different words fails. The
+checker then runs the program again as XLA computes it, and only if that run reproduces
+the reference does the failure list the documented behaviour it is consistent with. A
+wrong operand order next to the division by `3.0` lists nothing. The
+[IR guide](https://github.com/lean-dojo/TorchLean/blob/main/NN/IR/README.md#frontend-lowering)
+lists what we measured.
 
 Precision labels also need executable meaning. We changed a multiplication's
 declared output to float64 while leaving its operands float32; the type checker
@@ -417,12 +430,17 @@ Close over parameter tensors or pass them as runtime arguments with
 returned tensors may also have different shapes and dtypes. The artifact records the
 argument order in `input_ids`. A nested input pytree needs a container interface and is rejected.
 Dynamic control flow, effects, gather/scatter, and primitives without a lowering are rejected
-by name. Division is also rejected: replacing `x / y` with `x * (1 / y)` changes rounding and
-exceptional values. This currently excludes JAX's mean and LayerNorm expansions.
-Negation and integer powers other than 0, 1, and 2 are also rejected; their lowering needs
-explicit operators rather than arithmetic rewrites that can change floating-point results.
-Square root requires a structurally nonnegative operand, because the existing IR square root
-clamps negative inputs. The capture input alone cannot establish that condition for every input.
+by name. `div`, `pow`, `neg`, `rsqrt` and `erf` import as IR pointwise operators, so JAX's mean
+and LayerNorm expansions import; integer division rounds toward zero, as `lax.div` does.
+In binary16 and bfloat16, `pow`, `rsqrt` and `erf` are computed in binary32 and rounded once,
+as XLA's CPU backend computes them. A conversion of an integer, Boolean or binary64 value to
+binary16 or bfloat16 imports as two casts, through binary32, as XLA converts it.
+`integer_pow` imports as XLA's multiplication schedule.
+The reference interpreter has no binary error function, so a graph using `erf` passes its
+structure and type checks but does not execute, and JAX's exact GELU uses `erfc`, which has no
+IR operator. Square root requires a structurally nonnegative operand, because the existing IR
+square root clamps negative inputs. The capture input alone cannot establish that condition for
+every input.
 The adapter does not import JAX's full softmax expansion, which includes `reduce_max` and
 non-finite constants, so a conventional attention function using that expansion is unsupported.
 

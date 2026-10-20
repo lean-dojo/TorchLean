@@ -264,6 +264,32 @@ def valueShape (ctx : String) (o : StateDict) : Except String ValueShape := do
   | some bad => typeError s!"{ctx}.value_kind" "string" bad
 
 /--
+Parse a pointwise operator from its kind and attribute field.
+
+A GELU must state its `approximate` string. A division without a `rounding_mode` field, or with a
+JSON `null`, is true division, as in PyTorch.
+-/
+def pointwise (ctx tagString : String) (o : StateDict) : Except String OpKind := do
+  let value ←
+    match Wire.pointwiseAttributeField tagString with
+    | none => pure none
+    | some key =>
+        match o.get? key with
+        | none | some .null => pure none
+        | some (.str value) => pure (some value)
+        | some bad => typeError s!"{ctx}.{key}" "string or null" bad
+  match Wire.parsePointwise? tagString value with
+  | some op => pure (.pointwise op)
+  | none =>
+      match Wire.pointwiseAttributeField tagString, value with
+      | some key, some value =>
+          throw s!"PyTorch graph import: {ctx}: unsupported `{tagString}` {key} `{value}`"
+      | some key, none =>
+          throw s!"PyTorch graph import: {ctx}: `{tagString}` needs its `{key}` field"
+      | none, _ =>
+          throw s!"PyTorch graph import: {ctx}: unsupported TorchLean IR op kind `{tagString}`"
+
+/--
 Parse a TorchLean IR op kind.
 
 The schema uses a stable string tag plus op-specific scalar fields. The tag is resolved through
@@ -275,7 +301,7 @@ these TorchLean tags.
 def kind (ctx : String) (outShape : Shape) (o : StateDict) : Except String OpKind := do
   let tagString ← string s!"{ctx}.kind" (← field ctx "kind" o)
   let some tag := Wire.parseTag? tagString
-    | throw s!"PyTorch graph import: {ctx}: unsupported TorchLean IR op kind `{tagString}`"
+    | pointwise ctx tagString o
   match tag with
   | .custom =>
       -- A typed cast carries its element rule in `IR.Program`, not a homogeneous body.
@@ -328,7 +354,10 @@ def kind (ctx : String) (outShape : Shape) (o : StateDict) : Except String OpKin
   | .concat => pure (.concat (← natField ctx "axis" o))
   | .slice =>
       pure (.slice (← natField ctx "axis" o) (← natField ctx "start" o) (← natField ctx "length" o))
-  | .input | .detach | .add | .sub | .mulElem | .div | .abs | .sqrt | .inv | .maxElem | .minElem
+  | .pointwise =>
+      throw <| s!"PyTorch graph import: {ctx}: pointwise operators are spelled by operator, " ++
+        "such as `div`"
+  | .input | .detach | .add | .sub | .mulElem | .abs | .sqrt | .inv | .maxElem | .minElem
   | .sum
   | .matmul | .linear | .relu | .tanh | .sigmoid | .softplus | .safeLog
   | .exp | .log | .sin | .cos | .mseLoss =>

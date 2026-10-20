@@ -6,6 +6,7 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Spec.Core.Pointwise
 public import NN.Spec.Core.Tensor.Core
 
 /-!
@@ -18,6 +19,10 @@ parent count can ask for it without inventing an axis, shape, or convolution con
 Tensor parameters stay in the graph's external payload store. For example, `.linear` has no static
 attributes here, but its weight and bias still come from that store. The parent count describes
 dataflow: a linear node has one parent for its input tensor.
+
+Pointwise operators from PyTorch's core ATen vocabulary share one constructor,
+`.pointwise op`, because they share one shape rule; `Spec.PointwiseOp` carries the operator and its
+attributes. A parent count then comes from the operator: `.pointwise (.div .floor)` has two.
 
 `NN.IR.Graph` adds node identities, dependency edges, and declared output shapes. The fixed
 `torchlean.ir.v2` spelling of each constructor is defined separately in `NN.Runtime.PyTorch.Wire`.
@@ -112,8 +117,6 @@ inductive OpKind where
       -- Elementwise subtraction.
   | mulElem
       -- Elementwise multiplication.
-  | div
-      -- Elementwise division.
   | abs
       -- Elementwise absolute value.
   | sqrt
@@ -180,6 +183,9 @@ inductive OpKind where
       -- Entries `start, …, start + length - 1` along an axis (analogous to `torch.narrow`).
   | mseLoss
       -- Scalar mean squared error (used in some training/verification examples).
+  | pointwise (op : Spec.PointwiseOp)
+      -- A pointwise operator of the core ATen family: `op.arity` parents and the result share one
+      -- shape. Broadcasting is explicit via `broadcastTo`, as for `add`.
   deriving Repr, DecidableEq
 
 /-- Permitted parent-count interval for an IR operation. -/
@@ -201,13 +207,14 @@ structure OpMetadata where
 /-- Constructor identity of an `NN.IR.OpKind`, with the payload forgotten. -/
 inductive OpTag where
   | input | const | custom | permute | transpose | detach | randUniform | bernoulliMask
-  | add | sub | mulElem | div | abs | sqrt | inv | maxElem | minElem
+  | add | sub | mulElem | abs | sqrt | inv | maxElem | minElem
   | maxPool | avgPool | broadcastTo | reduceSum | reduceMean | sum
   | matmul | linear | conv | batchNormEval
   | relu | tanh | sigmoid | exp | log | sin | cos
   | softplus | safeLog
   | softmax | hardMaskedSoftmax | topKMask | layernorm | reshape | flatten | concat | slice
   | mseLoss
+  | pointwise
   deriving DecidableEq, Repr, Inhabited
 
 namespace OpTag
@@ -215,13 +222,13 @@ namespace OpTag
 /-- Every semantic operator identity, in declaration order. -/
 def all : List OpTag :=
   [ .input, .const, .custom, .permute, .transpose, .detach, .randUniform, .bernoulliMask
-  , .add, .sub, .mulElem, .div, .abs, .sqrt, .inv, .maxElem, .minElem
+  , .add, .sub, .mulElem, .abs, .sqrt, .inv, .maxElem, .minElem
   , .maxPool, .avgPool, .broadcastTo, .reduceSum, .reduceMean, .sum
   , .matmul, .linear, .conv, .batchNormEval
   , .relu, .tanh, .sigmoid, .exp, .log, .sin, .cos
   , .softplus, .safeLog
   , .softmax, .hardMaskedSoftmax, .topKMask, .layernorm, .reshape, .flatten, .concat, .slice
-  , .mseLoss ]
+  , .mseLoss, .pointwise ]
 
 /-- Every operator identity occurs in the enumeration. -/
 theorem mem_all (tag : OpTag) : tag ∈ all := by
@@ -243,7 +250,6 @@ def toKind? : OpTag → Option OpKind
   | .add => some .add
   | .sub => some .sub
   | .mulElem => some .mulElem
-  | .div => some .div
   | .abs => some .abs
   | .sqrt => some .sqrt
   | .inv => some .inv
@@ -277,6 +283,7 @@ def toKind? : OpTag → Option OpKind
   | .concat => none
   | .slice => none
   | .mseLoss => some .mseLoss
+  | .pointwise => none
 
 /-- Whether constructing the operation needs an axis, shape, or other static attributes. -/
 def hasAttributes (tag : OpTag) : Bool := tag.toKind?.isNone
@@ -296,7 +303,6 @@ def metadata : OpTag → OpMetadata
   | .add => ⟨"add", ⟨2, some 2⟩⟩
   | .sub => ⟨"sub", ⟨2, some 2⟩⟩
   | .mulElem => ⟨"mul_elem", ⟨2, some 2⟩⟩
-  | .div => ⟨"div", ⟨2, some 2⟩⟩
   | .abs => ⟨"abs", ⟨1, some 1⟩⟩
   | .sqrt => ⟨"sqrt", ⟨1, some 1⟩⟩
   | .inv => ⟨"inv", ⟨1, some 1⟩⟩
@@ -330,6 +336,7 @@ def metadata : OpTag → OpMetadata
   | .concat => ⟨"concat", ⟨2, none⟩⟩
   | .slice => ⟨"slice", ⟨1, some 1⟩⟩
   | .mseLoss => ⟨"mse_loss", ⟨2, some 2⟩⟩
+  | .pointwise => ⟨"pointwise", ⟨1, some 2⟩⟩
 
 end OpTag
 
@@ -348,7 +355,6 @@ def opTag : OpKind → OpTag
   | .add => .add
   | .sub => .sub
   | .mulElem => .mulElem
-  | .div => .div
   | .abs => .abs
   | .sqrt => .sqrt
   | .inv => .inv
@@ -382,11 +388,14 @@ def opTag : OpKind → OpTag
   | .concat .. => .concat
   | .slice .. => .slice
   | .mseLoss => .mseLoss
+  | .pointwise .. => .pointwise
 
-/-- Structural metadata. Custom arity comes from the declared input signature. -/
+/-- Structural metadata. Custom arity comes from the declared input signature, and pointwise
+arity and diagnostic name from the operator. -/
 def metadata (kind : OpKind) : OpMetadata :=
   match kind with
   | .custom _ inputs _ => ⟨"custom", ⟨inputs.length, some inputs.length⟩⟩
+  | .pointwise op => ⟨op.name, ⟨op.arity, some op.arity⟩⟩
   | _ => kind.opTag.metadata
 
 /-- Forgetting attributes and reconstructing an attribute-free operation preserves it. -/
@@ -444,6 +453,7 @@ def describe : OpKind → String
   | .flatten s => s!"flatten(shape={repr s})"
   | .concat axis => s!"concat(axis={axis})"
   | .slice axis start length => s!"slice(axis={axis}, start={start}, length={length})"
+  | .pointwise op => op.describe
   | kind => kind.tag
 
 end OpKind

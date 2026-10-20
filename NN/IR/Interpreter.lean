@@ -23,6 +23,9 @@ custom operations are dispatched separately, with the result's scalar type fixed
 by the program's type assignment. Unsupported types and operations return errors.
 No cast is implemented by relabeling a tensor or converting through host `Float`.
 Layout operations reuse `Graph.evalTransform` and need only storage, not arithmetic.
+Pointwise operators reuse `Graph.evalPointwise`, which also needs only storage: a type with an
+arithmetic dictionary takes their meanings from `Spec.PointwiseOp.meaning`, and a type without
+one, such as an integer type, from the interpreter's own `pointwise` table.
 -/
 
 @[expose] public section
@@ -46,6 +49,9 @@ structure Interpreter where
   /-- Convert one element, retaining flags; failures are explicit. -/
   cast : (source target : DType) → IEEERoundingMode → Scalar source →
     Except String (Scalar target × ConversionStatus)
+  /-- Pointwise operators for element types without an arithmetic dictionary, such as integers.
+  Types with a dictionary use `Spec.PointwiseOp.meaning` instead; the default lists none. -/
+  pointwise : (dtype : DType) → Spec.PointwiseTable (Scalar dtype) := fun _ _ => none
 
 namespace Interpreter
 
@@ -144,6 +150,20 @@ def evalNode (interpreter : Interpreter) (program : Program) (payload : Payload 
         pure (Spec.SomeTensor.ofTensor converted, flags)
     | .custom _ _ _, some (.call name _ _) =>
         payload.call name dtype parents
+    | .pointwise op, none => do
+        let meaning : Option (Spec.PointwiseFn (interpreter.Scalar dtype) op.arity) :=
+          match interpreter.arithmetic dtype with
+          | some arithmetic =>
+              letI := arithmetic
+              Spec.PointwiseOp.meaning op
+          | none => interpreter.pointwise dtype op
+        if meaning.isNone then
+          throw s!"IR interpreter: {op.describe} has no implementation for {dtype}"
+        let typedParents ← parents.mapM (fun value => value.get dtype)
+        let localNode : Node :=
+          { id := node.id, parents := Array.range typedParents.size,
+            kind := node.kind, outShape := node.outShape }
+        pure (← Graph.evalPointwise typedParents node.id localNode op meaning, {})
     | .permute _, none | .broadcastTo _ _, none | .reshape _ _, none |
         .flatten _, none | .concat _, none | .transpose _ _, none | .slice _ _ _, none => do
         let typedParents ← parents.mapM (fun value => value.get dtype)

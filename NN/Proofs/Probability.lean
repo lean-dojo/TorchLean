@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Probability.DiffusionForward
+public import NN.Proofs.Probability.NormalCdf
 public import NN.Proofs.Probability.RandomSupport
 
 /-!
@@ -18,7 +19,8 @@ This bundle contains the Mathlib-backed forward diffusion noising kernel. The mo
 specification remains in the generative/diffusion spec layer; this proof layer records measure- and
 kernel-level facts such as Gaussianity and Markov-kernel structure.
 It also proves coordinate support and probability-endpoint behavior for the seeded uniform and
-mask generators.
+mask generators, and identifies the factor of the exact GELU with the distribution function of the
+standard normal law.
 -/
 
 @[expose] public section

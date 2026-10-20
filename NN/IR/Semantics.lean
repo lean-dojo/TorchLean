@@ -17,6 +17,7 @@ public import NN.Spec.Layers.Attention
 public import NN.Spec.Layers.Loss
 public import NN.Spec.Layers.MoE
 public import NN.Spec.Layers.Normalization.BatchNorm
+public import NN.Spec.Layers.Pointwise
 public import NN.IR.OpContracts
 public import NN.Spec.Core.TensorReductionShape.ConcatSlice
 
@@ -38,7 +39,9 @@ payloads (`const` flat length, `linear` dimensions, `conv` geometry, `batchNormE
 `layernorm` normalized suffix), and on malformed hard-mask shapes or flat lengths. `.log` rejects
 an input tensor containing an entry `<= 0` (or NaN),
 because the spec logarithm is undefined there. A custom computation can also reject a missing
-operand, an out-of-bounds read, or an output count beyond its index range. The remaining
+operand, an out-of-bounds read, or an output count beyond its index range. A pointwise operator
+fails where its meaning at the scalar type rejects an entry, such as a zero divisor over the reals,
+and where the scalar type has no meaning for it, such as `erf` in binary arithmetic. The remaining
 operations are total on well-shaped inputs; `reduceMean` and `layernorm` divide by extents that
 the shape rules already require to be positive, and `mseLoss` divides by the totalized
 `TorchLean.Tensor.meanDenominator` rather than by the raw element count.
@@ -686,6 +689,28 @@ of Boolean, integer, symbolic, or user-defined elements. Numerical operators are
               {axis} of {repr parent.shape} ({n.summary})"
   | _ => throw s!"IR eval: {n.kind.tag} requires a numerical or primitive implementation"
 
+/-- Evaluate a pointwise operator from its meaning at the scalar type.
+
+Every parent is read at the node's declared shape, and the meaning is applied to corresponding
+entries in row-major order. A missing meaning, a wrong parent count, or a meaning that rejects an
+entry is an error; the first rejected entry stops evaluation.
+-/
+def evalPointwise {α : Type} [TorchLean.Storage α]
+    (vals : Array (Spec.SomeTensor α)) (i : Nat) (n : Node) (op : Spec.PointwiseOp)
+    (meaning : Option (Spec.PointwiseFn α op.arity)) : Except String (Spec.SomeTensor α) := do
+  let some f := meaning
+    | throw s!"IR eval: node {i}: {op.describe} has no implementation for this scalar type"
+  let operands ← n.parents.mapM fun pid => do
+    expectShape (α := α) (expected := n.outShape) (← getParentValue vals i n pid)
+  if hSize : operands.size = op.arity then
+    let result ← Tensor.generateFlatM n.outShape fun index =>
+      (f fun k => Tensor.Internal.Rep.getFlat (operands[k.val]'(by rw [hSize]; exact k.isLt))
+          (index.cast (Spec.Shape.internalSize_eq n.outShape).symm)).mapError
+        fun message => s!"IR eval: node {i}: {message}"
+    pure (Spec.SomeTensor.mk (α := α) n.outShape result)
+  else
+    throw s!"IR eval: node {i}: {op.describe} expects {op.arity} parents ({n.summary})"
+
 /--
 Evaluate a known node from its already computed parent values, without the final declared-shape
 normalization.
@@ -764,11 +789,6 @@ selected branch exactly as before the split.
         let a ← expectShape (α := α) (expected := n.outShape) (← getParent aId)
         let b ← expectShape (α := α) (expected := n.outShape) (← getParent bId)
         pure (Spec.SomeTensor.mk (α := α) n.outShape (Tensor.mulSpec (α := α) a b))
-    | .div => do
-        let (aId, bId) ← binaryParentIds i n
-        let a ← expectShape (α := α) (expected := n.outShape) (← getParent aId)
-        let b ← expectShape (α := α) (expected := n.outShape) (← getParent bId)
-        pure (Spec.SomeTensor.mk (α := α) n.outShape (Tensor.divSpec (α := α) a b))
     | .abs => do
         let pId ← unaryParentId i n
         let p ← expectShape (α := α) (expected := n.outShape) (← getParent pId)
@@ -954,6 +974,8 @@ selected branch exactly as before the split.
     | .mseLoss => do
         let (yId, tId) ← binaryParentIds i n
         mseLossSomeTensor (α := α) i (← getParent yId) (← getParent tId)
+    | .pointwise op =>
+        evalPointwise vals i n op (Spec.PointwiseOp.meaning op)
 
 /--
 Evaluate a known node from its already computed parent values.

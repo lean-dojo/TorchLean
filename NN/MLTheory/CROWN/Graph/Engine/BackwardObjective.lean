@@ -565,10 +565,10 @@ private def backwardNode (dir : BackwardDir)
         addCoeff (α:=α) st1 p2 { n := aY.n, v := Tensor.scaleSpec aY.v (-1) }
       | _ => st.fail
     | .randUniform _ | .bernoulliMask _ | .abs | .sqrt | .sin | .cos | .maxElem |
-      .minElem | .hardMaskedSoftmax _ | .div | .topKMask _ | .slice ..
+      .minElem | .hardMaskedSoftmax _ | .topKMask _ | .slice ..
     | .maxPool .. | .avgPool ..
     | .broadcastTo .. | .reduceSum .. | .reduceMean .. => consumeCurrent
-    | .custom .. => st.fail
+    | .custom .. | .pointwise _ => st.fail
     | .batchNormEval channelAxis _ =>
       match node.parents with
       | #[p1] =>
@@ -812,7 +812,7 @@ private def runBackwardObjectiveDirWithReluAlpha
         | some By => consumeDirectedObjective (α := α) st aY By
         | none => st.fail
       match node.kind with
-      | .custom .. => st.fail
+      | .custom .. | .pointwise _ => st.fail
       | .input =>
           if node.id = ctx.inputId then
             st

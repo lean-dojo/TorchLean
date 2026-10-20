@@ -339,9 +339,6 @@ private def forward (g : NN.IR.Graph) (ps : ParamStore Float) (bindings : Bindin
     | .mulElem =>
         let (a, b) ← expectBinary id n.parents
         lines := lines ++ #[indent 4 s!"v{id} = v{a} * v{b}"]
-    | .div =>
-        let (a, b) ← expectBinary id n.parents
-        lines := lines ++ #[indent 4 s!"v{id} = v{a} / v{b}"]
     | .topKMask k =>
         -- `Spec.MoE.topKMaskSpec`: entry j beats entry i when it is larger, or when neither is
         -- larger and j < i; an entry is kept when fewer than k entries beat it.
@@ -589,6 +586,30 @@ private def forward (g : NN.IR.Graph) (ps : ParamStore Float) (bindings : Bindin
     | .mseLoss =>
         let (a, b) ← expectBinary id n.parents
         lines := lines ++ #[indent 4 s!"v{id} = F.mse_loss(v{a}, v{b}, reduction='mean')"]
+    | .pointwise op =>
+        let expression ←
+          match op with
+          | .neg => do pure s!"torch.neg(v{← expectUnary id n.parents})"
+          | .rsqrt => do pure s!"torch.rsqrt(v{← expectUnary id n.parents})"
+          | .erf => do pure s!"torch.erf(v{← expectUnary id n.parents})"
+          | .gelu approximate => do
+              let p ← expectUnary id n.parents
+              let mode := match approximate with | .none => "none" | .tanh => "tanh"
+              pure s!"F.gelu(v{p}, approximate='{mode}')"
+          | .div rounding => do
+              let (a, b) ← expectBinary id n.parents
+              match rounding with
+              | .none => pure s!"torch.div(v{a}, v{b})"
+              | .trunc => pure s!"torch.div(v{a}, v{b}, rounding_mode='trunc')"
+              | .floor => pure s!"torch.div(v{a}, v{b}, rounding_mode='floor')"
+          | .pow => do
+              let (a, b) ← expectBinary id n.parents
+              pure s!"torch.pow(v{a}, v{b})"
+          | .clampMin => do
+              -- `torch.clamp_min` with a tensor bound is IEEE maximum, unlike the scalar bound.
+              let (a, b) ← expectBinary id n.parents
+              pure s!"torch.where(torch.isnan(v{b}), v{b}, torch.where(v{a} < v{b}, v{b}, v{a}))"
+        lines := lines ++ #[indent 4 s!"v{id} = {expression}"]
 
   lines := lines ++ #[indent 4 s!"return v{outputId}"]
   pure lines

@@ -156,6 +156,7 @@ theorem backwardNode_preserves
       cases hkind : nodes[k]!.kind <;> dsimp only
       all_goals try exact hconsume
       case custom => exact hfail
+      case pointwise => exact hfail
       case input =>
         simp only [point.node_id k hk, hinput, ↓reduceIte]
         exact hconsume

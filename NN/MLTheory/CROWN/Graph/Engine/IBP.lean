@@ -37,9 +37,9 @@ open BoundOps
   let get (pid : Nat) := (boxes[pid]?).join
   match node.kind with
   | .input => ps.inputBoxes[id]?
-  | .custom .. => none
-  -- No interval transfer yet for division or for top-k routing.
-  | .div | .topKMask _ | .slice .. => none
+  | .custom .. | .pointwise _ => none
+  -- No interval transfer yet for top-k routing or slicing.
+  | .topKMask _ | .slice .. => none
   | .const _ => do
     let v ← ps.constVals[id]?
     some { dim := v.n, lo := v.v, hi := v.v }

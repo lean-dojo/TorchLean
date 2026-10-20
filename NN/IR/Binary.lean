@@ -20,6 +20,8 @@ destination format. Neither constants nor conversions pass through binary64.
 This is CPU software execution of the IR, not a reproduction of XLA or LibTorch
 kernel schedules. In particular, reduction order belongs to the IR semantics.
 Elementary functions use the approximations supplied by FloatLib's `Context`.
+Pointwise operators use the dictionary's `Context.pointwise` entries; FloatLib has
+no error function, so `erf` and the exact GELU are reported as unsupported.
 -/
 
 @[expose] public section

@@ -2,8 +2,9 @@
 
 ``verify(model, example)`` checks the captured graph's declared structure and
 types. Add ``checks=("structure", "types", "compare")`` to compare CPU reference
-IR execution with the frontend on that example. Neither result is a proof of
-frontend equivalence or correctness on every input.
+IR execution with the frontend on that example, or ``compare_bitwise`` to compare
+NaN words too. Neither result is a proof of frontend equivalence or correctness on
+every input.
 
 Capture and translation happen automatically. ``export="Model.lean"`` optionally
 keeps that same artifact in a self-contained Lean module for further proofs;
@@ -54,13 +55,12 @@ def _run(command: list[str], arguments: Sequence[str], *, report: bool = False
 
 def _capture(model: Any, examples: tuple[Any, ...], frontend: str, command: list[str],
              directory: Path, checks: Sequence[str]) -> dict[str, Any]:
-    compare = "compare" in checks
+    compare = "compare" in checks or "compare_bitwise" in checks
     execute = compare or "execute" in checks
     if not examples or examples[0] is None:
         raise ValueError("capturing a computation requires example tensors")
     if frontend == "jax":
-        import jax
-        from NN.Runtime.JAX.jaxpr import Unsupported, encode, export
+        from NN.Runtime.JAX.jaxpr import Unsupported, encode, export, references
 
         try:
             artifact = export(model, *examples)
@@ -69,8 +69,7 @@ def _capture(model: Any, examples: tuple[Any, ...], frontend: str, command: list
         if execute:
             artifact["arguments"] = [encode(value) for value in examples]
         if compare:
-            artifact["reference_outputs"] = [encode(value)
-                                             for value in jax.tree.leaves(model(*examples))]
+            artifact.update(references(model, *examples))
         return artifact
     if frontend != "pytorch":
         raise ValueError(f"unknown frontend {frontend!r}; use pytorch, jax, or pass an artifact")
@@ -215,9 +214,10 @@ def verify(model: Any, example: Any = None, *examples: Any, frontend: str = "pyt
 
     ``model`` is a PyTorch module, a JAX function with ``frontend="jax"``, or an
     artifact mapping. Both frontends accept positional tensor arguments, as in
-    ``verify(function, x, y)``. ``checks`` may request
-    ``structure``, ``types``, ``execute`` or ``compare``. Unknown requests produce
-    unsupported entries, not a pass.
+    ``verify(function, x, y)``. ``checks`` may request ``structure``, ``types``,
+    ``execute``, ``compare`` or ``compare_bitwise``. ``compare`` lets two NaN results
+    agree whatever their sign and payload; ``compare_bitwise`` compares their words.
+    Unknown requests produce unsupported entries, not a pass.
 
     Capture and translation are automatic. Optional ``export="model.json"`` saves
     the exact artifact sent to Lean; ``export="Model.lean"`` embeds it in a Lean
@@ -233,9 +233,25 @@ def verify(model: Any, example: Any = None, *examples: Any, frontend: str = "pyt
     is used. Omitting it uses ``TORCHLEAN_VERIFY`` or the local built executable.
 
     The returned ``ok`` covers only the requested checks. Inspect ``checks`` for
-    their scope. In particular, a bitwise sample comparison is not an all-input
-    theorem, and a mismatch may reflect different reduction or transcendental
-    implementations rather than a frontend bug.
+    their scope. In particular, a sample comparison is not an all-input theorem,
+    and a mismatch may reflect different reduction or transcendental
+    implementations rather than a frontend bug. PyTorch's tanh GELU depends on the
+    CPU capability level its kernel runs at. The IR follows the AVX2 and AVX-512
+    kernels, which fuse ``x + kappa x^3`` on x86-64; the DEFAULT level rounds that
+    sum twice, and other processors and CUDA were not measured.
+
+    For JAX, the reference is ``model(*examples)``, which the artifact records as
+    ``reference_execution``: ``"jit"`` for a ``jax.jit`` function, ``"eager"`` otherwise, with
+    the platform that computed it and the jaxlib version. When ``jax.jit`` compiles any part of
+    the function, the artifact also holds the outputs of evaluating it one primitive at a time.
+    Every mismatch fails. When the reference came from XLA's CPU backend and re-running the
+    program as XLA's CPU code computes it, as far as that is exactly emulable, reproduces every
+    differing element, the failed entry lists those documented behaviours in
+    ``consistent_with``; under ``jax.jit`` this also needs the primitive-by-primitive outputs to
+    agree with the IR or to be reproduced the same way. The field is advice: an importer error
+    with the same effect cannot be ruled out, and some coincide with XLA's own rewrites. The
+    checker trusts the recorded execution, platform and outputs, so a forged record can at most
+    add this advice to a failure.
     """
     if (isinstance(checks, str) or not isinstance(checks, Sequence)
             or not all(isinstance(name, str) for name in checks)):

@@ -56,7 +56,8 @@ Each requested check has its own result:
 | `structure` | The typed artifact passes the shared dependency, arity, and shape checks. |
 | `types` | Operand/result types, explicit casts, and the program interface are consistent. |
 | `execute` | CPU reference execution completed for the supplied arguments. |
-| `compare` | Its output types, shapes, and complete binary words match the supplied reference for those arguments. |
+| `compare` | Its output types, shapes, and complete binary words match the supplied reference for those arguments. Two NaN results match whatever their sign and payload, which the IR leaves unspecified. |
+| `compare_bitwise` | As `compare`, with NaN words compared too. |
 
 The default requests are `structure` and `types`. They don't run a sample comparison
 or establish a mathematical property. Unknown requests are returned as `unsupported`
@@ -77,6 +78,21 @@ PyTorch and the CPU reference interpreter can disagree on reduction order,
 elementary-function approximations, or domain guards. For example, the IR's `log`
 rejects nonpositive inputs. A failed comparison identifies a
 difference on that input; it does not tell us the cause without further analysis.
+
+For JAX, the IR gives each primitive its JAX meaning, and XLA's compiled CPU code departs from
+it in documented ways: it multiplies by the rounded reciprocal of a broadcast divisor, under
+`jax.jit` rewrites some divisions and constant powers, approximates the reciprocal square root,
+and flushes subnormal values to zero. Every mismatch fails. When XLA's CPU backend computed the
+reference, the checker then runs the program again the way XLA's code computes it, and if that run
+reproduces every differing element, the failed entry lists those behaviours in `consistent_with`.
+That list is advice, not an excuse. An importer error with the same effect cannot be ruled out,
+and some give exactly XLA's words, such as a wrong operand order that a `jax.jit` rewrite undoes.
+For a function that uses `jax.jit`, `torchlean.verify` also records the outputs of evaluating it
+one primitive at a time, without the rewrites, and nothing is listed unless the IR agrees with
+those too or differs from them in the same documented ways. An importer bug next to a division by
+`3.0` lists nothing. The
+[IR guide](https://github.com/lean-dojo/TorchLean/blob/main/NN/IR/README.md#frontend-lowering)
+gives the measured differences and the rule.
 The report explicitly leaves frontend equivalence, external kernels, and captured
 device/layout constraints unchecked.
 

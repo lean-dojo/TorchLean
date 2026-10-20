@@ -8,6 +8,7 @@ module
 
 public import NN.Core.Numeric
 public import NN.Core.Numeric.Quotient
+public import NN.Spec.Core.Pointwise
 
 /-!
 # `Context α`: scalar interface for models + proofs
@@ -68,6 +69,9 @@ transcendental functions (exp/tanh/log/sqrt) used by activations and losses.
   `NN.Spec.Core.Context.Rational`. FloatLib's shared elementary-function class already imports real
   analysis; selecting a context does not add an accuracy theorem for finite-precision arithmetic.
 - For executable examples, `Context.gtBool` converts `x > y` into a printable `Bool`.
+- `Context.pointwise` lists the pointwise operators of `Spec.PointwiseOp` whose meaning depends on
+  the scalar type, such as `torch.div` and `torch.erf`. The default lists none, so a graph
+  evaluator reports them as unsupported for that type.
 - Interval backends supply their own order/comparison operations; `Context` does not require a
   linear order or agreement between these operations and real-number comparisons.
 -/
@@ -106,6 +110,15 @@ class Context (α : Type) extends
   leave the detached value's forward tangent available to later operations.
   -/
   stopGradient? : Option (α → α) := none
+  /--
+  Pointwise operators whose meaning depends on the scalar type, with that meaning.
+
+  Each entry returns the result or the reason why the scalar type has none. Exact carriers give the
+  reason at poles and outside the real domain, where IEEE arithmetic returns an infinity or a NaN
+  in every format. A real result too large for a binary format is still a result. An omitted
+  operator is unsupported for the type: evaluators report it and never substitute an approximation.
+  -/
+  pointwise : Spec.PointwiseTable α := fun _ => none
 
 namespace Context
 
@@ -201,14 +214,46 @@ attribute [simp] LawfulContext.add_eq LawfulContext.mul_eq LawfulContext.sub_eq
   LawfulContext.lt_iff LawfulContext.le_iff LawfulContext.max_eq LawfulContext.min_eq
   LawfulContext.beq_iff LawfulContext.natCast_eq LawfulContext.abs_eq
 
+namespace Context
+
+/-- Host binary64 meanings of the pointwise operators the native runtime provides directly.
+
+Division and square root are the correctly rounded IEEE operations, and the truncating quotient
+rounds the IEEE quotient toward zero, as PyTorch does. `pow` is the C library's power function.
+Flooring division needs an exact remainder and `erf` needs an error function, neither of which
+the host interface provides, so both are unsupported here.
+-/
+def floatPointwise : Spec.PointwiseTable Float
+  | .rsqrt => some (Spec.PointwiseFn.unary fun x => .ok (1 / x.sqrt))
+  | .div .none => some (Spec.PointwiseFn.binary fun x y => .ok (x / y))
+  | .div .trunc => some (Spec.PointwiseFn.binary fun x y =>
+      let q := x / y
+      .ok (if q < 0 then q.ceil else q.floor))
+  | .pow => some (Spec.PointwiseFn.binary fun x y => .ok (x ^ y))
+  | _ => none
+
+/-- Host binary32 meanings of the pointwise operators, as `floatPointwise` describes them. -/
+def float32Pointwise : Spec.PointwiseTable Float32
+  | .rsqrt => some (Spec.PointwiseFn.unary fun x => .ok (1 / x.sqrt))
+  | .div .none => some (Spec.PointwiseFn.binary fun x y => .ok (x / y))
+  | .div .trunc => some (Spec.PointwiseFn.binary fun x y =>
+      let q := x / y
+      .ok (if q < 0 then q.ceil else q.floor))
+  | .pow => some (Spec.PointwiseFn.binary fun x y => .ok (x ^ y))
+  | _ => none
+
+end Context
+
 /-- Full `Context` instance for `Float` (runtime backend). -/
 @[inline] instance : Context Float where
   defaultEpsilon := 1e-6
   decidableGT := inferInstance
   ratCast value := TorchLean.Numeric.QuotientArithmetic.round value
+  pointwise := Context.floatPointwise
 /-- Full `Context` instance for native binary32 execution. -/
 @[inline] instance : Context Float32 where
   defaultEpsilon := (1e-6 : Float).toFloat32
   decidableGT := inferInstance
   ratCast value :=
     TorchLean.Numeric.QuotientArithmetic.round value
+  pointwise := Context.float32Pointwise

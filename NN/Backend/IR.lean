@@ -25,11 +25,13 @@ namespace Backend
 namespace IR
 
 /--
-Backend operation tag for an IR op.
+Backend operation tag for an IR op, or `none` for a node that needs no backend kernel.
 
 These tags are the same vocabulary used by backend capsules and runtime reports.
 If an op maps to a tag that has no capsule for the selected profile, planning fails at the backend
-boundary instead of silently using a broader bucket.
+boundary instead of silently using a broader bucket. Pointwise operators map only to a backend
+operation with the same meaning: negation, true division and the tanh GELU. `planNode?` rejects
+the others.
 -/
 def op? : NN.IR.OpKind → Option BackendOp
   | .input => none
@@ -41,7 +43,6 @@ def op? : NN.IR.OpKind → Option BackendOp
   | .add => some .add
   | .sub => some .sub
   | .mulElem => some .mul
-  | .div => some .div
   | .abs => some .abs
   | .sqrt => some .sqrt
   | .inv => some .inv
@@ -77,6 +78,10 @@ def op? : NN.IR.OpKind → Option BackendOp
   | .transpose .. => some .permute
   | .permute .. => some .permute
   | .batchNormEval .. => some .batchNorm
+  | .pointwise .neg => some .neg
+  | .pointwise (.div .none) => some .div
+  | .pointwise (.gelu .tanh) => some .gelu
+  | .pointwise _ => none
 
 /-- Backend choice for one concrete IR node. -/
 structure PlannedNodeKernel where
@@ -110,7 +115,11 @@ planner filters once rather than once per node. -/
 def planNode? (policy : KernelPolicy) (available : Array KernelCapsule) (n : NN.IR.Node) :
     Except String (Option PlannedNodeKernel) := do
   match op? n.kind with
-  | none => pure none
+  | none =>
+      -- Pointwise operators are always runtime work; one without a backend operation fails here.
+      if let .pointwise op := n.kind then
+        throw s!"backend planning: node {n.id}: {op.describe} has no backend operation"
+      pure none
   | some op =>
       let k ← planOp policy available op
       pure <| some

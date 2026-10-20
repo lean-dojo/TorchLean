@@ -19,6 +19,8 @@ public import NN.Spec.Layers.Loss
 public import NN.Spec.Layers.Lstm
 public import NN.Spec.Layers.MoE
 public import NN.Spec.Layers.Normalization
+public import NN.Spec.Layers.Pointwise
+public import NN.Spec.Layers.Pointwise.Real
 public import NN.Spec.Layers.Pooling
 public import NN.Spec.Layers.PositionalEncoding
 public import NN.Spec.Layers.Rnn

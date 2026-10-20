@@ -56,7 +56,7 @@ def propagateCROWNNode
       | some B => bounds.set! id (some (boundsConst (α:=α) ctx.inputDim B.dim B.lo B.hi))
       | none => bounds
     match node.kind with
-    | .custom .. => bounds.set! id none
+    | .custom .. | .pointwise _ => bounds.set! id none
     | .input =>
       match (ibp[id]?).join with
       | some box =>
@@ -83,7 +83,7 @@ def propagateCROWNNode
         | none => bounds
       | _ => bounds
     | .randUniform _ | .bernoulliMask _ | .abs | .sqrt | .maxElem | .minElem | .sin |
-      .cos | .hardMaskedSoftmax _ | .div | .topKMask _ | .slice ..
+      .cos | .hardMaskedSoftmax _ | .topKMask _ | .slice ..
     | .maxPool .. | .avgPool ..
     | .broadcastTo .. | .reduceSum .. | .reduceMean .. => ibpFallback
     | .add =>

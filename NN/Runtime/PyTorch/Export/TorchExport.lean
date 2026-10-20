@@ -29,7 +29,9 @@ The importer then checks the graph's edges, shapes, and operation attributes.
 
 Tensor entries also retain their dtypes. Binary constants and linear parameters carry complete
 interchange words for `Import.IR.parseProgram` and its typed payload loader. Conversions and
-pointwise tensor promotions become explicit cast nodes; pointwise broadcasting is explicit too.
+pointwise tensor promotions become explicit cast nodes, two of them when an integer, Boolean or
+binary64 value becomes binary16 or bfloat16, which `c10::convert` makes from binary32. Pointwise
+broadcasting is explicit too.
 Metadata assertions supported by capture are retained as `capture_constraints`. Physical device
 and layout constraints are not validated by the CPU reference interpreter.
 
@@ -42,6 +44,16 @@ Returned containers are flattened to tensor leaves; non-tensor leaves are reject
 Operator matching uses exact callable or ATen identities. For example, `torch.log` can become an
 IR `.log` node, while `torch.log1p` needs a different formula and is rejected. Similar names and
 matching output shapes are insufficient to identify the computation.
+
+Pointwise operators from the core ATen vocabulary (`neg`, `rsqrt`, `erf`, `gelu`, `div`, `pow` and
+`clamp_min` with a scalar bound) become IR pointwise nodes in the arithmetic of the vectorized loops
+of PyTorch's CPU kernels.
+Operands are converted as PyTorch converts them, Python scalars included, and binary16 and bfloat16
+values are widened to binary32 where those loops compute in binary32. A Python scalar operand of
+`add`, `sub` or `mul` becomes a constant in the same way. For bfloat16 and binary16,
+a scalar exponent of `pow` is rounded to the tensor's dtype before PyTorch's dispatch compares it.
+Exponent `3` is `x * x * x`, not a rounded cube. The frontend-lowering section of
+`NN/IR/README.md` states the rules and the elements PyTorch computes differently.
 
 The script is assembled from one definition per Python section so each piece can be read and
 changed on its own. Every `"kind"` string it writes comes from `NN.Runtime.PyTorch.Wire`, the
@@ -265,7 +277,9 @@ def payload : Array String :=
    , indent 4 ("result = {" ++ Wire.field .const ++
        ", 'shape': list(value.shape), 'value_kind': 'tensor',")
    , indent 4 "          'dtype': _dtype_of(value), 'bits': _tensor_bits(value)}"
-   , indent 4 "if torch.isfinite(value).all(): result['values'] = _tensor_values(value)"
+   , indent 4 "# Flat row-major values, as the payload loader reads them for every constant rank."
+   , indent 4 ("if torch.isfinite(value).all(): " ++
+       "result['values'] = value.detach().cpu().reshape(-1).tolist()")
    , indent 4 "return result"
    , ""
    , "_TENSOR_VALUES = {}"
@@ -379,6 +393,323 @@ def axes : Array String :=
    , indent 8 "raise NotImplementedError(f\"{op_name} has duplicate reduction axes {axes}\")"
    , indent 4 "return axes"
    , "" ]
+
+/-- Python block with `@NAME@` placeholders replaced by wire spellings. -/
+def pythonBlock (source : String) (substitutions : List (String × String)) : Array String :=
+  let text := substitutions.foldl
+    (fun text (key, value) => text.replace ("@" ++ key ++ "@") value) source
+  (text.splitOn "\n").toArray
+
+/-- Python dictionary from pointwise plan names to their wire kinds. -/
+def pointwiseKinds : String :=
+  let entries := [("neg", Spec.PointwiseOp.neg), ("rsqrt", .rsqrt), ("erf", .erf),
+    ("gelu", .gelu .none), ("div", .div .none), ("pow", .pow), ("clamp_min", .clampMin)]
+  "{" ++ ", ".intercalate (entries.map fun (name, op) =>
+    s!"'{name}': \"{Wire.pointwiseTag op}\"") ++ "}"
+
+/--
+Pointwise operators: recognition, validation, and emission as IR nodes.
+
+`_pointwise_plan` identifies the operator, its attributes and its operands, which may be Python
+scalars. `_arithmetic_kind` does the same for `add`, `sub` and `mul` with a scalar operand, and
+the dtype conversion rule plans a conversion. `_emit_pointwise` appends the nodes the vectorized
+loops of PyTorch's CPU kernels compute: scalar constants, conversions to the common dtype and to
+the computation type, explicit broadcasts, the reduced-precision division and multiplication paths
+for a one-element right operand, and PyTorch's dispatch of `pow` with a scalar exponent.
+-/
+def pointwise : Array String :=
+  pythonBlock r#"_POINTWISE_KINDS = @KINDS@
+_GELU_FIELD = "@GELU_FIELD@"
+_DIV_FIELD = "@DIV_FIELD@"
+_REDUCED_FLOATS = ('bfloat16', 'float16')
+_ARITHMETIC_KINDS = {'add': @ADD@, 'sub': @SUB@, 'mul': @MUL@}
+
+def _torch_dtype(dtype):
+    if isinstance(dtype, str):
+        return getattr(torch, dtype)
+    return getattr(torch, ('int' if dtype['signed'] else 'uint') + str(dtype['width']))
+
+def _argument(node, position, *names):
+    if len(node.args) > position:
+        return node.args[position]
+    for name in names:
+        if name in node.kwargs:
+            return node.kwargs[name]
+    return None
+
+def _pointwise_plan(node, model=None):
+    # The pointwise operator a call computes, with its attributes and operands, or None.
+    if node.op == 'call_module':
+        mod = model.get_submodule(str(node.target)) if model is not None else None
+        if isinstance(mod, nn.GELU):
+            return {'op': 'gelu', 'approximate': mod.approximate, 'operands': [node.args[0]]}
+        return None
+    first = _argument(node, 0, 'input', 'self')
+    second = _argument(node, 1, 'other')
+    if _is_op(node, ('aten.neg.default',), (torch.neg, torch.negative, operator.neg),
+              ('neg', 'negative')):
+        return {'op': 'neg', 'operands': [first]}
+    if _is_op(node, ('aten.rsqrt.default',), (torch.rsqrt,), ('rsqrt',)):
+        return {'op': 'rsqrt', 'operands': [first]}
+    if _is_op(node, ('aten.erf.default',), (torch.erf, torch.special.erf), ('erf',)):
+        return {'op': 'erf', 'operands': [first]}
+    if _is_op(node, ('aten.gelu.default',), (F.gelu,), ()):
+        return {'op': 'gelu', 'approximate': node.kwargs.get('approximate', 'none'),
+                'operands': [first]}
+    if _is_op(node, ('aten.div.Tensor', 'aten.div.Scalar', 'aten.div.Tensor_mode',
+                     'aten.div.Scalar_mode'),
+              (torch.div, torch.divide, torch.true_divide, operator.truediv),
+              ('div', 'divide', 'true_divide')):
+        if node.target is operator.truediv and not isinstance(first, torch.fx.Node):
+            # Python's reflected division: Tensor.__rtruediv__ is reciprocal(x) * scalar.
+            return {'op': 'rdiv', 'operands': [second, first]}
+        return {'op': 'div', 'rounding_mode': node.kwargs.get('rounding_mode'),
+                'operands': [first, second]}
+    if _is_op(node, ('aten.floor_divide.default', 'aten.floor_divide.Scalar'),
+              (torch.floor_divide, operator.floordiv),
+              ('floor_divide',)):
+        return {'op': 'div', 'rounding_mode': 'floor', 'operands': [first, second]}
+    if _is_op(node, ('aten.pow.Tensor_Tensor', 'aten.pow.Tensor_Scalar', 'aten.pow.Scalar'),
+              (torch.pow, operator.pow), ('pow',)):
+        return {'op': 'pow', 'operands': [first, _argument(node, 1, 'exponent')]}
+    if _is_op(node, ('aten.clamp_min.default',), (torch.clamp_min,), ('clamp_min',)):
+        bound = _argument(node, 1, 'min')
+        if not isinstance(bound, (bool, int, float)):
+            # clamp_min.Tensor is IEEE maximum, unlike the scalar bound's kernel.
+            raise NotImplementedError('clamp_min requires a scalar bound')
+        return {'op': 'clamp_min', 'operands': [first, bound]}
+    return None
+
+def _pointwise_kind(node, model=None):
+    plan = _pointwise_plan(node, model)
+    if plan is None:
+        return None
+    operands = plan['operands']
+    if not any(isinstance(value, torch.fx.Node) for value in operands):
+        raise NotImplementedError('a pointwise operation needs a tensor operand')
+    for value in operands:
+        if not isinstance(value, (torch.fx.Node, bool, int, float)):
+            raise NotImplementedError(f'unsupported pointwise operand {value!r}')
+    if plan['op'] == 'gelu' and plan['approximate'] not in ('none', 'tanh'):
+        raise NotImplementedError(f"gelu has no approximate={plan['approximate']!r} mode")
+    if plan['op'] == 'div' and plan['rounding_mode'] not in (None, 'trunc', 'floor'):
+        raise NotImplementedError(f"div has no rounding_mode={plan['rounding_mode']!r}")
+    dtype = _node_dtype(node)
+    if plan['op'] == 'pow' and not isinstance(operands[1], torch.fx.Node):
+        exponent = operands[1]
+        if isinstance(dtype, dict) and exponent < 0:
+            raise NotImplementedError('PyTorch rejects negative integer powers of integers')
+        if (dtype in ('float32', 'float64', 'bfloat16') and exponent == 0.5
+                and not _nonnegative(operands[0], model)):
+            raise NotImplementedError('pow(x, 0.5) is PyTorch sqrt; TorchLean sqrt clamps '
+                                      'negative inputs, so the base must be nonnegative')
+    return {'kind': plan['op'], '_plan': plan}
+
+def _append_node(nodes, entry):
+    entry['id'] = len(nodes)
+    nodes.append(entry)
+    return entry['id']
+
+def _cast_to(nodes, parent, dtype):
+    if nodes[parent]['dtype'] == dtype:
+        return parent
+    return _append_node(nodes, {'kind': @CAST@, 'parents': [parent],
+                                'shape': nodes[parent]['shape'], 'dtype': dtype,
+                                'primitive': 'cast', 'rounding': 'nearestEven'})
+
+def _convert(nodes, parent, dtype):
+    # Tensor conversion as c10::convert performs it: binary16 and bfloat16 values are made from
+    # binary32, so an integer, Boolean or binary64 source becomes two IR casts and rounds twice.
+    if dtype in _REDUCED_FLOATS and nodes[parent]['dtype'] not in (dtype, 'float32'):
+        parent = _cast_to(nodes, parent, 'float32')
+    return _cast_to(nodes, parent, dtype)
+
+def _broadcast_to(nodes, parent, shape):
+    source = nodes[parent]['shape']
+    if source == shape:
+        return parent
+    return _append_node(nodes, {'kind': @BROADCAST@, 'parents': [parent], 'shape': shape,
+                                'dtype': nodes[parent]['dtype'], 'from_shape': source,
+                                'to_shape': shape})
+
+def _scalar_tensor(value, dtype):
+    # A Python number converted to `dtype` as PyTorch converts a wrapped scalar operand. PyTorch
+    # wraps a bool as a Boolean, an int as int64 (uint64 from 2 ** 63) and a float as binary64,
+    # and c10::convert then rounds that value once, through binary32 for binary16 and bfloat16.
+    # An int beyond 2 ** 53 therefore rounds once to binary32, not through binary64.
+    if isinstance(value, bool):
+        wrapped = torch.tensor(value, dtype=torch.bool)
+    elif isinstance(value, int):
+        if not -2 ** 63 <= value < 2 ** 64:
+            raise NotImplementedError(f'PyTorch cannot wrap the Python int {value} as a scalar')
+        wrapped = torch.tensor(value, dtype=torch.int64 if value < 2 ** 63 else torch.uint64)
+    else:
+        wrapped = torch.tensor(value, dtype=torch.float64)
+    if dtype in _REDUCED_FLOATS:
+        wrapped = wrapped.to(torch.float32)
+    return wrapped.to(_torch_dtype(dtype))
+
+def _scalar_constant(nodes, value, dtype):
+    return _append_node(nodes, {'parents': [], **_constant(_scalar_tensor(value, dtype))})
+
+def _one_element(value, dtype):
+    # Whether TensorIterator's is_scalar(2) holds for this right operand when the common dtype
+    # is `dtype`: a Python scalar, a one-element tensor, or a view with stride 0 along every
+    # dimension longer than one. Conversion to the common dtype copies a longer operand to
+    # contiguous storage, so such a view qualifies only when it already has that dtype.
+    if not isinstance(value, torch.fx.Node):
+        return True
+    meta = value.meta.get('val', value.meta.get('tensor_meta'))
+    if not hasattr(meta, 'shape'):
+        raise NotImplementedError('a binary operation needs the shape of its right operand')
+    sizes = [int(size) for size in meta.shape]
+    if all(size == 1 for size in sizes):
+        return True
+    strides = meta.stride() if callable(getattr(meta, 'stride', None)) else meta.stride
+    return _dtype_of(meta) == dtype and all(
+        size == 1 or int(step) == 0 for size, step in zip(sizes, strides))
+
+def _arithmetic_kind(node, op):
+    # `add`, `sub` or `mul`. With two tensor operands this is the ordinary IR node. A Python
+    # scalar operand becomes a constant: add and sub convert it to the result dtype, while
+    # mul_kernel's reduced-float path multiplies by a right scalar's own value in binary32, as it
+    # does for a one-element right operand of another dtype. Python's `s * x` calls
+    # `x.__rmul__(s)`, which is `x * s`; FX records it as operator.mul(s, x) and torch.export as
+    # mul.Tensor(x, s). An explicit torch.mul(s, x) keeps the scalar on the left, where
+    # mul_kernel converts it to the tensor's dtype and multiplies there.
+    left, right = _argument(node, 0, 'input', 'self'), _argument(node, 1, 'other')
+    scalars = [not isinstance(value, torch.fx.Node) for value in (left, right)]
+    for value, scalar in zip((left, right), scalars):
+        if scalar and not isinstance(value, (bool, int, float)):
+            raise NotImplementedError(f'unsupported {op} operand {value!r}')
+    if all(scalars):
+        raise NotImplementedError(f'{op} needs a tensor operand')
+    if op == 'mul' and scalars[0] and node.target is operator.mul:
+        left, right = right, left
+    dtype = _node_dtype(node)
+    wide = (op == 'mul' and dtype in _REDUCED_FLOATS and _one_element(right, dtype)
+            and (not isinstance(right, torch.fx.Node) or _node_dtype(right) != dtype))
+    if not any(scalars) and not wide:
+        return {'kind': _ARITHMETIC_KINDS[op]}
+    return {'kind': _ARITHMETIC_KINDS[op],
+            '_plan': {'op': op, 'wide': wide, 'operands': [left, right]}}
+
+def _pointwise_node(nodes, kind, parents):
+    first = nodes[parents[0]]
+    return _append_node(nodes, {**kind, 'parents': parents, 'shape': first['shape'],
+                                'dtype': first['dtype']})
+
+def _emit_pointwise(plan, nodes, node_to_id, shape, dtype):
+    # Append the IR nodes the vectorized loops of PyTorch's CPU kernels compute for one pointwise
+    # call, conversion, or arithmetic with a Python scalar, and return the last. Binary16 and
+    # bfloat16 compute rsqrt, erf, gelu and pow in binary32 (PyTorch's opmath type), and division
+    # and multiplication too when the right operand is one broadcast element.
+    op, operands = plan['op'], plan['operands']
+    reduced = dtype in _REDUCED_FLOATS
+    opmath = 'float32' if reduced else dtype
+    def operand(value, *dtypes):
+        # A tensor converted to each dtype in turn, or a Python scalar made at the first one.
+        if isinstance(value, torch.fx.Node):
+            parent = node_to_id.get(value)
+            if parent is None:
+                raise NotImplementedError('pointwise operand has no tensor lowering')
+        else:
+            parent = _scalar_constant(nodes, value, dtypes[0])
+        for target in dtypes:
+            parent = _convert(nodes, parent, target)
+        return _broadcast_to(nodes, parent, shape)
+    def apply(name, parents, **attributes):
+        kind = {'kind': _POINTWISE_KINDS[name]}
+        kind.update({key: value for key, value in attributes.items() if value is not None})
+        return _pointwise_node(nodes, kind, parents)
+    def other(kind, parents):
+        return _pointwise_node(nodes, {'kind': kind}, parents)
+    if op == 'convert':
+        return operand(operands[0], dtype)
+    if op in _ARITHMETIC_KINDS:
+        left, right = operands
+        if plan['wide']:
+            # mul_kernel's reduced-float path: the left operand in the common dtype and the right
+            # operand's own value, both in binary32, with the product rounded once.
+            parents = [operand(left, dtype, opmath), operand(right, opmath)]
+            return _cast_to(nodes, other(_ARITHMETIC_KINDS[op], parents), dtype)
+        return other(_ARITHMETIC_KINDS[op], [operand(left, dtype), operand(right, dtype)])
+    if op == 'neg':
+        return apply('neg', [operand(operands[0], dtype)])
+    if op == 'clamp_min':
+        # The tensor and the bound in the result dtype, which clamp_min promotes: an int32 tensor
+        # with bound 0.5 is clamped in binary32. The kernel returns the bound where the tensor is
+        # below it and keeps the tensor's value, a negative zero included, everywhere else.
+        return apply('clamp_min', [operand(operands[0], dtype), operand(operands[1], dtype)])
+    if op in ('rsqrt', 'erf', 'gelu'):
+        attributes = {_GELU_FIELD: plan['approximate']} if op == 'gelu' else {}
+        result = apply(op, [operand(operands[0], dtype, opmath)], **attributes)
+        return _cast_to(nodes, result, dtype)
+    if op == 'div':
+        dividend, divisor = operands
+        mode = {_DIV_FIELD: plan['rounding_mode']}
+        if reduced and _one_element(divisor, dtype):
+            # The reduced-float path of div_true_kernel, div_trunc_kernel and div_floor_kernel:
+            # the dividend in the common dtype, the divisor's original value, both in binary32.
+            parents = [operand(dividend, dtype, opmath), operand(divisor, opmath)]
+            return _cast_to(nodes, apply('div', parents, **mode), dtype)
+        return apply('div', [operand(dividend, dtype), operand(divisor, dtype)], **mode)
+    if op == 'rdiv':
+        # Tensor.__rtruediv__ is reciprocal(x) * scalar, and mul_kernel multiplies a reduced-float
+        # tensor by the scalar's original value in binary32.
+        tensor, scalar = operands
+        reciprocal = other(@INV@, [operand(tensor, dtype)])
+        product = other(@MUL@, [_cast_to(nodes, reciprocal, opmath), operand(scalar, opmath)])
+        return _cast_to(nodes, product, dtype)
+    base, exponent = operands
+    if isinstance(exponent, torch.fx.Node):
+        if not isinstance(base, (torch.fx.Node, bool)) and base == 1:
+            # pow_Scalar_out fills ones for the base 1.
+            return _broadcast_to(nodes, _scalar_constant(nodes, 1, dtype), shape)
+        # pow.Tensor_Tensor, which pow.Scalar calls with its base as a wrapped scalar: both
+        # operands in the common dtype, then in the opmath type.
+        result = apply('pow', [operand(base, dtype, opmath), operand(exponent, dtype, opmath)])
+        return _cast_to(nodes, result, dtype)
+    # pow.Tensor_Scalar. pow_Tensor_Scalar_out fills ones for the exponent 0 and copies for 1.
+    # PowKernel computes 0.5, -0.5 and -1 with the sqrt, rsqrt and reciprocal kernels in binary32,
+    # binary64 and bfloat16. These comparisons use the Python value.
+    if exponent == 0:
+        return _broadcast_to(nodes, _scalar_constant(nodes, 1, dtype), shape)
+    x = operand(base, dtype)
+    if exponent == 1:
+        return x
+    if isinstance(dtype, dict):
+        return apply('pow', [x, operand(exponent, dtype)])
+    special = dtype in ('float32', 'float64', 'bfloat16')
+    if special and exponent == 0.5:
+        return other(@SQRT@, [x])
+    if special and exponent == -0.5:
+        return _cast_to(nodes, apply('rsqrt', [_cast_to(nodes, x, opmath)]), dtype)
+    if special and exponent == -1:
+        return other(@INV@, [x])
+    # PowKernel then works with the exponent in the tensor dtype for bfloat16 and binary16. It
+    # computes 2, 3 and -2 by multiplication in binary32, binary64 and bfloat16, and calls pow in
+    # the opmath type otherwise.
+    rounded = _scalar_tensor(exponent, dtype).item() if reduced else exponent
+    if special and rounded == 2:
+        return other(@MUL@, [x, x])
+    if special and rounded == 3:
+        return other(@MUL@, [other(@MUL@, [x, x]), x])
+    if special and rounded == -2:
+        return other(@INV@, [other(@MUL@, [x, x])])
+    result = apply('pow', [_cast_to(nodes, x, opmath), operand(exponent, dtype, opmath)])
+    return _cast_to(nodes, result, dtype)
+"#
+    [("KINDS", pointwiseKinds), ("GELU_FIELD", Wire.geluApproximateField),
+      ("DIV_FIELD", Wire.divRoundingField), ("CAST", Wire.quoted .custom),
+      ("BROADCAST", Wire.quoted .broadcastTo), ("INV", Wire.quoted .inv),
+      ("MUL", Wire.quoted .mulElem), ("SQRT", Wire.quoted .sqrt), ("ADD", Wire.quoted .add),
+      ("SUB", Wire.quoted .sub)]
+
+/-- `_lower_kind` rule for pointwise operators, checked before every other rule. -/
+def pointwiseRule : Array String :=
+  #[ indent 4 "pointwise = _pointwise_kind(node, model)"
+   , indent 4 "if pointwise is not None: return pointwise" ]
 
 /-- Opening of `_lower_kind`: target name, argument, and axis extraction shared by all rules. -/
 def header : Array String :=
@@ -530,43 +861,30 @@ def modules : Array String :=
        "mod.stride if mod.stride is not None else mod.kernel_size, rank, 1), " ++
        "\"padding\": padding}") ]
 
-/-- Reject scalar operands until they have explicit constant/broadcast lowering. -/
-def operands : Array String :=
-  #[ "        operands = (args[0] if args else kwargs.get(\"input\"),"
-   , "                    args[1] if len(args) > 1 else kwargs.get(\"other\"))"
-   , "        if not all(isinstance(x, torch.fx.Node) for x in operands):"
-   , "            raise NotImplementedError(\"scalar operands need constant/broadcast lowering\")" ]
+/-- `_lower_kind` rules for elementwise `aten`/functional targets that carry no payload.
 
-/-- `_lower_kind` rules for elementwise `aten`/functional targets that carry no payload. -/
+A dtype conversion and arithmetic with a Python scalar operand return a plan for
+`_emit_pointwise`, which writes the conversions and constants PyTorch computes. -/
 def elementwise : Array String :=
   #[ "    if _is_op(node, ('aten._to_copy.default', 'aten.to.dtype'), (),"
    , "              ('to', 'float', 'double', 'half', 'bfloat16')):"
    , "        if _node_dtype(node) == _node_dtype(args[0]): return " ++ Wire.object .detach
    , "        return {" ++ Wire.field .custom ++
-       ", 'primitive': 'cast', 'rounding': 'nearestEven'}"
-   , "    if _is_op(node, (\"aten.add.Tensor\",), (operator.add, torch.add), (\"add\",)):" ] ++
-    operands ++
-  #[ "        alpha = kwargs.get(\"alpha\", args[2] if len(args) > 2 else 1)"
+       ", '_plan': {'op': 'convert', 'operands': [args[0]]}}"
+   , "    if _is_op(node, (\"aten.add.Tensor\",), (operator.add, torch.add), (\"add\",)):"
+   , "        alpha = kwargs.get(\"alpha\", args[2] if len(args) > 2 else 1)"
    , "        if alpha != 1:"
    , "            raise NotImplementedError(\"torch.add with alpha != 1 is unsupported\")"
-   , "        return {\"kind\": " ++ Wire.quoted .add ++ "}"
+   , "        return _arithmetic_kind(node, 'add')"
    , "    if _is_op(node, (\"aten.sub.Tensor\",), " ++
-       "(operator.sub, torch.sub, torch.subtract), (\"sub\", \"subtract\")):" ] ++
-    operands ++
-  #[ "        alpha = kwargs.get(\"alpha\", args[2] if len(args) > 2 else 1)"
+       "(operator.sub, torch.sub, torch.subtract), (\"sub\", \"subtract\")):"
+   , "        alpha = kwargs.get(\"alpha\", args[2] if len(args) > 2 else 1)"
    , "        if alpha != 1:"
    , "            raise NotImplementedError(\"torch.sub with alpha != 1 is unsupported\")"
-   , "        return {\"kind\": " ++ Wire.quoted .sub ++ "}"
+   , "        return _arithmetic_kind(node, 'sub')"
    , "    if _is_op(node, (\"aten.mul.Tensor\",), " ++
-       "(operator.mul, torch.mul, torch.multiply), (\"mul\", \"multiply\")):" ] ++
-    operands ++
-  #[ "        return {\"kind\": " ++ Wire.quoted .mulElem ++ "}"
-   , "    if _is_op(node, (\"aten.div.Tensor\",), " ++
-       "(operator.truediv, torch.div, torch.true_divide), (\"div\", \"true_divide\")):" ] ++
-    operands ++
-  #[ "        if kwargs.get(\"rounding_mode\", None) is not None:"
-   , "            raise NotImplementedError(\"torch.div with a rounding mode is unsupported\")"
-   , "        return {\"kind\": " ++ Wire.quoted .div ++ "}"
+       "(operator.mul, torch.mul, torch.multiply), (\"mul\", \"multiply\")):"
+   , "        return _arithmetic_kind(node, 'mul')"
    , "    if _top_k_mask(node) is not None:"
    , "        return {\"kind\": " ++ Wire.quoted .topKMask ++ ", \"k\": _top_k_mask(node)[1]}"
    , "    if _is_op(node, (\"aten.relu.default\",), (torch.relu, F.relu), (\"relu\",)):"
@@ -595,12 +913,6 @@ def elementwise : Array String :=
    , indent 12 ("raise NotImplementedError('raw sqrt requires a structurally nonnegative " ++
        "operand; TorchLean sqrt clamps negative values')")
    , "        return {\"kind\": " ++ Wire.quoted .sqrt ++ "}"
-   , indent 4 ("if _is_op(node, ('aten.clamp_min.default',), " ++
-       "(torch.clamp_min,), ('clamp_min',)):")
-   , "        lower = args[1] if len(args) > 1 else kwargs.get('min')"
-   , indent 8 ("if not isinstance(lower, (int, float)): " ++
-       "raise NotImplementedError('clamp_min requires a scalar bound')")
-   , "        return {\"kind\": " ++ Wire.quoted .maxElem ++ ", 'clamp_min': float(lower)}"
    , "    if _is_op(node, (\"aten.reciprocal.default\",), (torch.reciprocal,), (\"reciprocal\",)):"
    , "        return {\"kind\": " ++ Wire.quoted .inv ++ "}"
    , "    if _is_op(node, (\"aten.maximum.default\",), (torch.maximum,), (\"maximum\",)):"
@@ -838,7 +1150,7 @@ def spatial : Array String :=
 
 /-- The complete `_lower_kind` function. -/
 def lower : Array String :=
-  header ++ modules ++ elementwise ++ tensorOps ++
+  header ++ pointwiseRule ++ modules ++ elementwise ++ tensorOps ++
     layers ++ spatial
 
 /-- Check captured operations before dropping unused values.
@@ -1007,18 +1319,20 @@ def entrypoint (options : Options) : Array String :=
    , indent 8 "                         node_to_id)"
    , indent 8 "elif node.op in (\"call_function\", \"call_method\", \"call_module\"):"
    , indent 8 "    kind = _lower_kind(node, model)"
+   , indent 8 "    if '_plan' in kind:"
+   , indent 8 "        first = len(nodes)"
+   , indent 8 ("        result = _emit_pointwise(kind['_plan'], nodes, node_to_id, shape, " ++
+       "_node_dtype(node))")
+   , indent 8 ("        if " ++ boolLiteral options.includeDebugTargets ++
+       " and result >= first:")
+   , indent 8 "            nodes[result]['debug_target'] = _target_name(node.target)"
+   , indent 8 "        node_to_id[node] = result"
+   , indent 8 "        continue"
    , indent 8 "    parents = _node_refs((node.args, node.kwargs), node_to_id)"
-   , indent 8 "    if 'clamp_min' in kind:"
-   , indent 8 ("        source = node.args[0] if node.args else " ++
-       "node.kwargs.get('input', node.kwargs.get('self'))")
-   , indent 8 "        value = _resolve_tensor(source).new_full(shape, kind.pop('clamp_min'))"
-   , indent 8 "        bound = len(nodes)"
-   , indent 8 "        nodes.append({'id': bound, 'parents': [], **_constant(value)})"
-   , indent 8 "        parents = _node_refs((source,), node_to_id) + [bound]"
-   , indent 8 "    elif kind['kind'] == " ++ Wire.quoted .topKMask ++ ":"
+   , indent 8 "    if kind['kind'] == " ++ Wire.quoted .topKMask ++ ":"
    , indent 8 "        parents = _node_refs((_top_k_mask(node)[0],), node_to_id)"
    , indent 8 ("    elif kind['kind'] in " ++
-       "('add', 'sub', 'mul_elem', 'div', 'max_elem', 'min_elem', 'matmul'):")
+       "('add', 'sub', 'mul_elem', 'max_elem', 'min_elem', 'matmul'):")
    , indent 8 ("        left = node.args[0] if node.args else " ++
        "node.kwargs.get('input', node.kwargs.get('self'))")
    , indent 8 ("        right = node.args[1] if len(node.args) > 1 else " ++
@@ -1039,11 +1353,8 @@ def entrypoint (options : Options) : Array String :=
    , indent 8 "            if source['dtype'] != dtype:"
    , indent 8 "                key = (parent, json.dumps(dtype, sort_keys=True))"
    , indent 8 "                if key not in promotion_cache:"
-   , indent 8 ("                    nodes.append({'id': len(nodes), " ++ Wire.field .custom ++
-       ", 'parents': [parent],")
-   , indent 8 "                                  'shape': source['shape'], 'dtype': dtype,"
-   , indent 8 "                                  'primitive': 'cast', 'rounding': 'nearestEven'})"
-   , indent 8 "                    promotion_cache[key] = len(nodes) - 1"
+   , indent 8 "                    # As c10::convert, through binary32 for binary16 and bfloat16."
+   , indent 8 "                    promotion_cache[key] = _convert(nodes, parent, dtype)"
    , indent 8 "                parent = promotion_cache[key]"
    , indent 8 "            if source['shape'] != shape:"
    , indent 8 "                key = (parent, tuple(shape))"
@@ -1123,9 +1434,9 @@ exposes enough static arguments. Linear layers can appear either as `aten.linear
 def script (options : Options := {}) : String :=
   joinLines <|
     Internal.imports ++ Internal.shapes ++ Internal.tupleKind ++ Internal.model ++
-      Internal.routing ++ Internal.payload ++ Internal.axes ++ Internal.lower ++
-      Internal.coverage ++ Internal.capture options ++ Internal.entrypoint options ++
-      Internal.cli options
+      Internal.routing ++ Internal.payload ++ Internal.axes ++ Internal.pointwise ++
+      Internal.lower ++ Internal.coverage ++ Internal.capture options ++
+      Internal.entrypoint options ++ Internal.cli options
 
 end TorchExport
 end PyTorch

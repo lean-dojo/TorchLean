@@ -201,6 +201,18 @@ theorem expectBinaryParents_ok {tag : String} {ps : Array Shape} {s₁ s₂ : Sh
       Array.getElem?_eq_getElem (by simp [hSize])⟩
   · cases h
 
+/-- The same-shape inference rule returns the first parent's shape. -/
+theorem expectSameShapeParents_ok {tag : String} {arity : Nat} {ps : Array Shape} {s : Shape}
+    (h : Infer.expectSameShapeParents tag arity ps = .ok s) : ps[0]? = some s := by
+  unfold Infer.expectSameShapeParents at h
+  split at h
+  · rename_i first hFirst
+    split at h
+    · cases h
+      exact hFirst
+    · cases h
+  · cases h
+
 /-! ## Parent-shape correspondence -/
 
 /--
@@ -361,14 +373,14 @@ variable {payload : Payload α} {input : Spec.SomeTensor α} {vals : Array (Spec
 variable {i : Nat} {n : Node} {parentShapes : Array Shape} {inferred : Shape}
 variable {v : Spec.SomeTensor α}
 
-/-- Binary elementwise operations (`add`, `sub`, `mulElem`, `div`, `maxElem`, `minElem`). -/
+/-- Binary elementwise operations (`add`, `sub`, `mulElem`, `maxElem`, `minElem`). -/
 theorem evalNodeRaw_shape_binary_elementwise
-    (hk : n.kind ∈ [OpKind.add, .sub, .mulElem, .div, .maxElem, .minElem])
+    (hk : n.kind ∈ [OpKind.add, .sub, .mulElem, .maxElem, .minElem])
     (hParents : ParentShapesOf vals n.parents parentShapes)
     (hInfer : Infer.nodeOutShape n parentShapes = .ok inferred)
     (hEval : evalNodeRaw payload input vals i n = .ok v) : v.shape = inferred := by
   simp only [List.mem_cons, List.mem_nil_iff, or_false] at hk
-  rcases hk with hk | hk | hk | hk | hk | hk <;>
+  rcases hk with hk | hk | hk | hk | hk <;>
   · simp only [Infer.nodeOutShape, hk] at hInfer
     simp only [evalNodeRaw, hk] at hEval
     peel_ok hInfer
@@ -731,6 +743,44 @@ theorem evalNodeRaw_shape_slice {axis start length : Nat}
       rfl
     · cases hEval
 
+omit [Context α] in
+/-- A successful pointwise evaluation read its first parent at the declared shape, and its value has
+that shape. -/
+theorem evalPointwise_ok {op : Spec.PointwiseOp} {meaning : Option (Spec.PointwiseFn α op.arity)}
+    (h : evalPointwise vals i n op meaning = .ok v) :
+    v.shape = n.outShape ∧ ∃ (h0 : 0 < n.parents.size) (pv : Spec.SomeTensor α),
+      vals[n.parents[0]]? = some pv ∧ pv.shape = n.outShape := by
+  unfold evalPointwise at h
+  rcases meaning with _ | f
+  · cases h
+  · simp only at h
+    peel_ok h
+    obtain ⟨operands, hOperands, hSize, result, _, hv⟩ := h
+    subst hv
+    obtain ⟨hLength, hEach⟩ := array_mapM_ok hOperands
+    have h0 : 0 < n.parents.size := by
+      rw [← hLength, hSize]
+      exact op.arity_pos
+    refine ⟨rfl, h0, ?_⟩
+    have hFirst := hEach 0 h0 (by rw [hLength]; exact h0)
+    peel_ok hFirst
+    obtain ⟨pv, hPv, hShape⟩ := hFirst
+    exact ⟨pv, getParentValue_ok hPv, shape_eq_of_expectShape_ok hShape⟩
+
+/-- Pointwise operators: inference returns the shape of the first parent, which the evaluator reads
+at the declared shape, and the result has that shape too. -/
+theorem evalNodeRaw_shape_pointwise {op : Spec.PointwiseOp} (hk : n.kind = .pointwise op)
+    (hParents : ParentShapesOf vals n.parents parentShapes)
+    (hInfer : Infer.nodeOutShape n parentShapes = .ok inferred)
+    (hEval : evalNodeRaw payload input vals i n = .ok v) : v.shape = inferred := by
+  simp only [Infer.nodeOutShape, hk] at hInfer
+  simp only [evalNodeRaw, hk] at hEval
+  obtain ⟨hv, h0, pv, hPv, hShape⟩ := evalPointwise_ok hEval
+  have hInferred := expectSameShapeParents_ok hInfer
+  have hSeen := hParents.2 0 h0 pv hPv
+  rw [hInferred] at hSeen
+  rw [hv, ← hShape, Option.some.inj hSeen]
+
 /--
 Node-level soundness of shape inference.
 
@@ -758,8 +808,6 @@ theorem evalNodeRaw_shape_of_infer
   | add => exact hDecl ▸ evalNodeRaw_shape_binary_elementwise (by simp [hk]) hParents hInfer hEval
   | sub => exact hDecl ▸ evalNodeRaw_shape_binary_elementwise (by simp [hk]) hParents hInfer hEval
   | mulElem =>
-      exact hDecl ▸ evalNodeRaw_shape_binary_elementwise (by simp [hk]) hParents hInfer hEval
-  | div =>
       exact hDecl ▸ evalNodeRaw_shape_binary_elementwise (by simp [hk]) hParents hInfer hEval
   | abs => exact hDecl ▸ evalNodeRaw_shape_unary_elementwise (by simp [hk]) hParents hInfer hEval
   | sqrt => exact hDecl ▸ evalNodeRaw_shape_unary_elementwise (by simp [hk]) hParents hInfer hEval
@@ -812,6 +860,7 @@ theorem evalNodeRaw_shape_of_infer
   | concat axis => exact hDecl ▸ evalNodeRaw_shape_concat ⟨axis, hk⟩ hParents hInfer hEval
   | slice axis start length => exact evalNodeRaw_shape_slice hk hEval
   | mseLoss => exact hDecl ▸ evalNodeRaw_shape_linear_loss (Or.inr hk) hInfer hEval
+  | pointwise op => exact hDecl ▸ evalNodeRaw_shape_pointwise hk hParents hInfer hEval
 
 end Families
 

@@ -74,4 +74,26 @@ example :
       false := by
   decide
 
+/-! Pointwise operators: `op.arity` parents of one shape, which is the result shape. -/
+
+example :
+    Infer.nodeOutShape (node (.pointwise (.div .floor)) (.dim 2 .scalar))
+        #[.dim 2 .scalar, .dim 2 .scalar] =
+      .ok (.dim 2 .scalar) := by
+  rfl
+
+example :
+    (Infer.nodeOutShape (node (.pointwise .pow) (.dim 2 .scalar))
+        #[.dim 2 .scalar, .scalar]).isOk = false := by
+  decide
+
+example :
+    (Infer.nodeOutShape (node (.pointwise .neg) (.dim 2 .scalar))
+        #[.dim 2 .scalar, .dim 2 .scalar]).isOk = false := by
+  decide
+
+example :
+    (Infer.nodeOutShape (node (.pointwise (.gelu .tanh)) .scalar) #[]).isOk = false := by
+  decide
+
 end NN.Tests.IR.ShapeContracts

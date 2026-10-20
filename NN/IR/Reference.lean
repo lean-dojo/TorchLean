@@ -15,7 +15,10 @@ public import NN.IR.BinaryProofs
 Binary arithmetic reuses FloatLib at the declared precision. Boolean and fixed-width integer
 values can also pass through the shared storage-only tensor operations. Integers of any positive
 width use Lean's `BitVec`; their signedness remains in `DType`, rather than in a second carrier.
-No integer arithmetic or cross-type integer conversion is inferred from that representation.
+Integers also implement PyTorch's integer pointwise operators: two's-complement negation,
+truncating and flooring division, and powers with wrapping multiplication. Other integer
+arithmetic is not inferred from the representation. Integers and Booleans convert to binary
+formats by rounding their exact value once; no other cross-type conversion is implemented.
 
 Element words are unsigned, including signed integer encodings. Boolean words are canonically
 zero or one. Loading rejects excessive words, invalid descriptors and incompatible tensor sizes;
@@ -68,15 +71,28 @@ def write : (dtype : DType) → scalar dtype → Except String Nat
       pure value.toNat
   | dtype, _ => .error s!"reference IR: no word representation for {dtype}"
 
-/-- Reuse directed binary conversion; nonbinary conversions currently require identical types.
+/-- Round an exact integer once to a binary format, reporting inexactness and overflow. -/
+def integerToBinary (target : FloatFormat) (rounding : Model.IEEERoundingMode) (value : Int) :
+    Binary.Scalar target × ExecFloat.ConversionStatus :=
+  let rounded := Model.roundRatQWithRounding target rounding value
+  (ExecFloat.Binary.ofModel rounded,
+    { inexact := Model.toRat? rounded != some (value : Rat)
+      overflow := Model.isInf rounded })
 
-Binary conversions still use FloatLib when the formats are equal, since exceptional-value
-handling and flags belong to the conversion semantics, not to a tensor relabeling.
+/-- Reuse directed binary conversion; integers and Booleans round their exact value once.
+
+Other nonbinary conversions require identical types. Binary conversions still use
+FloatLib when the formats are equal, since exceptional-value handling and flags belong to the
+conversion semantics, not to a tensor relabeling.
 -/
 def cast (source target : DType) (rounding : Model.IEEERoundingMode)
     (value : scalar source) : Except String (scalar target × ExecFloat.ConversionStatus) :=
   match source, target with
   | .binary src, .binary dst => Binary.cast (.binary src) (.binary dst) rounding value
+  | .integer signed (some width), .binary dst => do
+      (DType.integer signed (some width)).check
+      pure (integerToBinary dst rounding (if signed then value.toInt else value.toNat))
+  | .bool, .binary dst => pure (integerToBinary dst rounding (if value then 1 else 0))
   | source, target =>
       if supported source && supported target then
         if h : source = target then by
@@ -118,6 +134,48 @@ theorem read_write (dtype : DType) (word : Nat) (value : scalar dtype)
               · cases h
   | context | rational | real | decimal _ | posit _ | complex _ | named _ _ => cases value
 
+/-- Two's-complement power by repeated squaring, the loop of PyTorch's `powi_impl`. -/
+def powWrapping {width : Nat} (base : BitVec width) (exponent : Nat) : BitVec width :=
+  if _h : exponent = 0 then 1
+  else
+    let rest := powWrapping (base * base) (exponent / 2)
+    if exponent % 2 = 1 then base * rest else rest
+termination_by exponent
+decreasing_by omega
+
+/--
+PyTorch's integer meanings of the pointwise operators.
+
+Negation and powers wrap in two's complement. Division by zero is an error, as PyTorch raises
+`RuntimeError: ZeroDivisionError`. The most negative value divided by `-1` wraps to itself, which
+PyTorch returns in flooring division and in truncating division up to 16 bits; its truncating
+division of 32- and 64-bit integers traps there with `SIGFPE`. A negative exponent gives `1` for
+base `1`, `±1` for base `-1` and `0` otherwise, as PyTorch's `powi` does for tensor exponents.
+`clamp_min` returns the bound where the operand is below it, as eager PyTorch does for a scalar
+bound. True division, `rsqrt`, `erf` and GELU are absent: PyTorch promotes integer operands to
+floating point for them, so a frontend inserts explicit casts.
+-/
+def integerPointwise (signed : Bool) (width : Nat) : Spec.PointwiseTable (BitVec width)
+  | .neg => some (Spec.PointwiseFn.unary fun x => .ok (-x))
+  | .div .trunc => some (Spec.PointwiseFn.binary fun x y =>
+      if y = 0 then .error "div: integer division by zero (PyTorch raises ZeroDivisionError)"
+      else .ok (if signed then x.sdiv y else x.udiv y))
+  | .div .floor => some (Spec.PointwiseFn.binary fun x y =>
+      if y = 0 then .error "div: integer division by zero (PyTorch raises ZeroDivisionError)"
+      else .ok (if signed then BitVec.ofInt width (x.toInt.fdiv y.toInt) else x.udiv y))
+  | .pow => some (Spec.PointwiseFn.binary fun x y =>
+      if signed && y.toInt < 0 then
+        .ok (if x = 1 then 1 else if x = -1 then (if y.toInt % 2 = 0 then 1 else -1) else 0)
+      else .ok (powWrapping x y.toNat))
+  | .clampMin => some (Spec.PointwiseFn.binary fun x bound =>
+      .ok (if (if signed then x.slt bound else x.ult bound) then bound else x))
+  | .div .none | .rsqrt | .erf | .gelu _ => none
+
+/-- Pointwise operators of element types without an arithmetic dictionary. -/
+def pointwise : (dtype : DType) → Spec.PointwiseTable (scalar dtype)
+  | .integer signed (some width) => integerPointwise signed width
+  | _ => fun _ => none
+
 /-- The binary part of reference conversion satisfies the same FloatLib specification. -/
 theorem cast_binary_value (source target : FloatFormat) (rounding : Model.IEEERoundingMode)
     (value : Binary.Scalar source) (converted : Binary.Scalar target)
@@ -144,6 +202,7 @@ def reference : Interpreter where
     | .binary format => some (inferInstanceAs (Context (Binary.Scalar format)))
     | _ => none
   cast := Reference.cast
+  pointwise := Reference.pointwise
 
 end NN.IR.Interpreter
 

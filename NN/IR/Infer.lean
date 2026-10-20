@@ -76,6 +76,17 @@ def expectBinaryParents {α : Type} (tag : String) (parents : Array α) : Except
   else
     .error s!"{tag}: expected 2 parents"
 
+/-- Read the parents of an operation whose operands all have the result's shape.
+
+The result is the first parent's shape; every other parent must have the same one. -/
+def expectSameShapeParents (tag : String) (arity : Nat) (parents : Array Shape) :
+    Except String Shape :=
+  match parents[0]? with
+  | some first =>
+      if parents.size = arity ∧ parents.toList.all (· == first) then .ok first
+      else .error s!"{tag}: expected {arity} parents of one shape, got {repr parents}"
+  | none => .error s!"{tag}: expected {arity} parents"
+
 /--
 Infer the output shape of a node from its kind + parent shapes.
 
@@ -107,7 +118,7 @@ def nodeOutShape (n : Node) (parentShapes : Array Shape) : Except String Shape :
       match ← expectUnaryParent "bernoulli_mask" parentShapes with
       | .scalar => pure n.outShape
       | s => throw s!"bernoulli_mask: expected scalar keepProb parent, got {repr s}"
-  | .add | .sub | .mulElem | .div | .maxElem | .minElem =>
+  | .add | .sub | .mulElem | .maxElem | .minElem =>
       let (a, b) ← expectBinaryParents n.kind.tag parentShapes
       if a = b then pure a
       else throw s!"{n.kind.tag}: shape mismatch: {repr a} vs {repr b}"
@@ -208,6 +219,8 @@ def nodeOutShape (n : Node) (parentShapes : Array Shape) : Except String Shape :
       let (a, b) ← expectBinaryParents "mse_loss" parentShapes
       if a = b then pure .scalar
       else throw s!"mse_loss: yhat/target shape mismatch: {repr a} vs {repr b}"
+  | .pointwise op =>
+      expectSameShapeParents op.describe op.arity parentShapes
 
 end Infer
 

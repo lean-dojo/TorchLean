@@ -19,6 +19,12 @@ Exporters and importers use the same table.
 The tag round trip is proved for every constructor. Static attributes are parsed separately;
 `parse?` constructs only operations that need none. Tuple projections and supported container
 nodes belong to the external value graph, not the tensor graph's semantic operator vocabulary.
+
+Pointwise operators are spelled by operator rather than by their shared constructor: `"div"`,
+`"pow"`, `"neg"`, `"rsqrt"`, `"erf"`, `"gelu"` and `"clamp_min"`. GELU writes PyTorch's
+`"approximate"` string, and a rounded division writes its `"rounding_mode"`; true division has no
+such field. The family spelling `"pointwise"` names the constructor in diagnostics and is not an
+artifact kind.
 -/
 
 @[expose] public section
@@ -48,7 +54,6 @@ def tag : OpTag → String
   | .add => "add"
   | .sub => "sub"
   | .mulElem => "mul_elem"
-  | .div => "div"
   | .abs => "abs"
   | .sqrt => "sqrt"
   | .inv => "inv"
@@ -83,6 +88,7 @@ def tag : OpTag → String
   | .slice => "slice"
   | .mseLoss => "mse_loss"
   | .custom => "custom"
+  | .pointwise => "pointwise"
 
 /-- Parse a v1 constructor spelling into its semantic identity. -/
 def parseTag? (s : String) : Option OpTag :=
@@ -106,7 +112,66 @@ def set : List OpTag → String
   | [] => "set()"
   | tags@(_ :: _) => "{" ++ String.intercalate ", " (tags.map quoted) ++ "}"
 
-/-- Every v1 tag parses back to its identity: the codec is complete and collision free. -/
+/-- Fixed wire kind of a pointwise operator; its attribute is a separate field. -/
+def pointwiseTag : Spec.PointwiseOp → String
+  | .neg => "neg"
+  | .rsqrt => "rsqrt"
+  | .erf => "erf"
+  | .gelu _ => "gelu"
+  | .div _ => "div"
+  | .pow => "pow"
+  | .clampMin => "clamp_min"
+
+/-- Attribute field of `gelu`: PyTorch's `approximate` argument. -/
+def geluApproximateField : String := "approximate"
+
+/-- Attribute field of a rounded `div`: PyTorch's `rounding_mode` argument. -/
+def divRoundingField : String := "rounding_mode"
+
+/-- Name of the attribute field written with a pointwise kind, if that kind has one. -/
+def pointwiseAttributeField (kind : String) : Option String :=
+  if kind == pointwiseTag (.gelu .none) then some geluApproximateField
+  else if kind == pointwiseTag (.div .none) then some divRoundingField
+  else none
+
+/-- Value of a pointwise operator's attribute field, using PyTorch's strings. -/
+def pointwiseAttribute : Spec.PointwiseOp → Option String
+  | .gelu .none => some "none"
+  | .gelu .tanh => some "tanh"
+  | .div .trunc => some "trunc"
+  | .div .floor => some "floor"
+  | .neg | .rsqrt | .erf | .div .none | .pow | .clampMin => none
+
+/-- Parse a pointwise operator from its kind and the value of its attribute field. -/
+def parsePointwise? (kind : String) (value : Option String) : Option Spec.PointwiseOp :=
+  Spec.PointwiseOp.all.find? fun op =>
+    pointwiseTag op == kind && pointwiseAttribute op == value
+
+/-- JSON or Python object holding a pointwise operator's kind and attribute fields. -/
+def pointwiseObject (op : Spec.PointwiseOp) : String :=
+  let kind := "\"kind\": \"" ++ pointwiseTag op ++ "\""
+  match pointwiseAttributeField (pointwiseTag op), pointwiseAttribute op with
+  | some key, some value => "{" ++ kind ++ ", \"" ++ key ++ "\": \"" ++ value ++ "\"}"
+  | _, _ => "{" ++ kind ++ "}"
+
+/-- No pointwise kind collides with an ordinary constructor spelling. -/
+theorem parseTag_pointwiseTag (op : Spec.PointwiseOp) : parseTag? (pointwiseTag op) = none := by
+  cases op <;> rfl
+
+/-- Every pointwise operator parses back from its kind and attribute: the codec is complete and
+collision free. -/
+theorem parse_pointwise (op : Spec.PointwiseOp) :
+    parsePointwise? (pointwiseTag op) (pointwiseAttribute op) = some op := by
+  rcases op with _ | _ | _ | approximate | rounding | _ | _
+  · rfl
+  · rfl
+  · rfl
+  · cases approximate <;> rfl
+  · cases rounding <;> rfl
+  · rfl
+  · rfl
+
+/-- Every tag parses back to its identity: the codec is complete and collision free. -/
 theorem parse_op_tag (tag : OpTag) : parseTag? (Wire.tag tag) = some tag := by
   cases tag <;> rfl
 

@@ -52,9 +52,8 @@ The same typed override is available in `Module.instantiate`, `nn.Module.instant
 `Float` and are validated after conversion into `α`; use `nn.sgdStep` when the coefficient itself
 must be specified in `α`. Dataset constructors backed by Float observations
 also retain that source precision; typed samples supplied to a session avoid this boundary.
-Structured typed reports preserve their losses; the existing `Report.toTrainLog` renderer accepts
-`Float` reports. FloatLib's elementary approximations do not gain a general error theorem merely by
-selecting a wider format.
+Structured typed reports preserve their losses. FloatLib's elementary approximations do not gain a
+general error theorem merely by selecting a wider format.
 
 `Context.defaultEpsilon` rounds the exact rational `1/1000000` once. If it becomes zero, the
 adapter uses the smallest positive subnormal. This can be large in a tiny format (for widths

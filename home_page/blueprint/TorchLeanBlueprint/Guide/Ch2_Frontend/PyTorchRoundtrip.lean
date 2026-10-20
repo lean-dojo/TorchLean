@@ -92,10 +92,9 @@ dependencies and shapes. `Import.JAX.parseGraph` retains the homogeneous, scalar
 Use `torchlean.verify(function, *inputs, frontend="jax")` directly: it captures the Jaxpr and
 translates it to TorchLean IR inside the call. Arguments may have different shapes and element
 types, and the capture preserves their positional order.
-Version-two artifacts list those arguments in `input_ids`; one-input captures still use
-version one. The shared parser checks the complete interface, including unused arguments,
-and execution requires the declared number, shapes and types of tensor arguments.
-This interface is independent of the model architecture. Nested input containers require
+The artifact lists those arguments in `input_ids`. The shared parser checks the complete interface,
+including unused arguments, and execution requires the declared number, shapes and types of tensor
+arguments. This interface is independent of the model architecture. Nested input containers require
 their own explicit type rules.
 
 For example, `jnp.sum(x * x)` becomes an input, an elementwise multiplication, and a scalar sum.

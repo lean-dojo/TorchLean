@@ -27,7 +27,7 @@ execution provider described in the
 - `Export/IRPyTorch.lean` is the general model code path: it exports an `NN.IR.Graph` plus a
   parameter store into a standalone PyTorch module.
 - `Export/ONNX.lean` emits a conservative Python adapter that reads an ONNX graph and writes the
-  same `torchlean.ir.v1` JSON artifact used by the graph importer. It includes static-shape
+  same `torchlean.ir.v2` JSON artifact used by the graph importer. It includes static-shape
   lowerings for common tensor ops plus Conv/Gemm/BatchNorm graph structure where the current IR can
   represent it. Use `Export.PyTorch.ONNX.script` with `ONNX.Options` to generate the adapter.
 - `Export/TorchExport.lean` emits a Python adapter that captures a PyTorch `nn.Module` with
@@ -42,7 +42,7 @@ execution provider described in the
 `OpTag.metadata` gives the parent count and diagnostic name without constructing a dummy operator.
 `OpTag.toKind?` reconstructs operations whose tags supply all their static information.
 
-`Wire.lean` assigns each tag its fixed spelling in `torchlean.ir.v1`. Both Python-emitting adapters
+`Wire.lean` assigns each tag its fixed spelling in `torchlean.ir.v2`. Both Python-emitting adapters
 write through `Wire.tag`, and `Import/TorchExport.lean` reads through `Wire.parseTag?`.
 The v1 strings have their own table, so changing a diagnostic name does not change existing files.
 The round trips are proved in Lean:

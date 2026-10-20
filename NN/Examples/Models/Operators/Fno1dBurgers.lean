@@ -147,19 +147,27 @@ def parse (args : List String) :
 def memoryCadence (config : Options) (runtime : Runtime.Config) : Nat :=
   Trainer.Memory.cadence runtime config.training.steps config.training.cudaMemorySampleEvery
 
-/-- TrainLog metadata for the model, dataset, and selected runtime. -/
-def logNotes (config : Options) (spectralPath : String) (device : String) : Array String :=
-  #[
-    s!"model=fno",
-    s!"spectral_path={spectralPath}",
-    s!"device={device}",
-    s!"grid={gridSize}",
-    s!"width={width}",
-    s!"modes={modes}",
-    s!"blocks={blocks}",
-    s!"steps={config.training.steps}",
-    s!"lr={config.training.learningRate}"
-  ] ++ Support.Npy.SplitOptions.logNotes config.data
+/--
+The experiment record of one run: the model and run settings as config entries, the train and test
+curves, and the dataset files as notes.
+-/
+def experiment (config : Options) (spectralPath device : String)
+    (history : Training.MetricHistory) : Training.ExperimentLog :=
+  let entry (key value : String) : Training.ConfigEntry := { key, value }
+  { run :=
+      { name := "FNO1D Burgers (TorchLean)"
+        tags := #["fno", "burgers"]
+        config := #[
+          entry "spectral_path" spectralPath,
+          entry "device" device,
+          entry "grid" (toString gridSize),
+          entry "width" (toString width),
+          entry "modes" (toString modes),
+          entry "blocks" (toString blocks),
+          entry "steps" (toString config.training.steps),
+          entry "lr" (toString config.training.learningRate)] }
+    history
+    notes := Support.Npy.SplitOptions.logNotes config.data }
 
 end Options
 
@@ -202,11 +210,10 @@ def metrics : Training.MetricHistory :=
     ("test_mse", "#f28e2b")
   ]
 
-/-- Persist the train/test MSE history with model/data metadata attached. -/
+/-- Persist the train/test MSE history as an experiment record. -/
 def writeLog (destination : Training.LogDestination) (history : Training.MetricHistory)
     (config : Options) (spectralPath device : String) : IO Unit := do
-  Training.MetricHistory.writeLog history destination "FNO1D Burgers (TorchLean)"
-    (config.logNotes spectralPath device)
+  Training.writeLog destination (config.experiment spectralPath device history).toTrainLog
 
 /-- Loaded train/test splits before evaluation prefixes and cycling streams are derived. -/
 structure Splits where

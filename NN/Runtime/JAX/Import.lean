@@ -13,7 +13,7 @@ public import NN.Runtime.IR
 # Jaxpr graph import
 
 `NN/Runtime/JAX/jaxpr.py` lowers captured JAX computations to the shared graph schema.
-Version two lists positional tensor inputs; version one retains the single-input interface.
+The artifact lists the positional tensor inputs in `input_ids`.
 We reuse the existing graph parser and shape checker. `parseProgram` imports
 per-node types and explicit casts; `parseBinaryPayload` loads exact binary words.
 `parseGraph` retains the scalar-polymorphic path and rejects mixed precision.

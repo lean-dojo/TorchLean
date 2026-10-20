@@ -257,7 +257,7 @@ def trainingNotes (dataset : String) (batchSize : Nat)
     (flags : Support.Training.Options Support.Npy.Options) (extra : Array String := #[]) :
     Array String :=
   Support.Npy.Options.logNotes flags.data dataset ++
-  #[s!"lr={flags.training.learningRate}", s!"steps={flags.training.steps}", s!"batch={batchSize}"]
+  #[s!"batch={batchSize}"]
   ++ extra
 
 /-- Load one shuffled epoch of full CIFAR-10 minibatches from prepared `.npy` arrays. -/

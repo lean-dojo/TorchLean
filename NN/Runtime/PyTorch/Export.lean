@@ -24,7 +24,7 @@ This umbrella provides graph adapters and model-family exporters:
 - `Export.PyTorch` provides shared Python string-generation utilities.
 - `Export.IRPyTorch` lowers a TorchLean `NN.IR.Graph` plus parameters into readable PyTorch
   `nn.Module` source.
-- `Export.PyTorch.ONNX` emits a conservative ONNX-to-`torchlean.ir.v1` adapter for static graph
+- `Export.PyTorch.ONNX` emits a conservative ONNX-to-`torchlean.ir.v2` adapter for static graph
   fragments, including expanded graph lowerings for common Conv/Gemm/BatchNorm patterns.
 - `Export.PyTorch.TorchExport` emits the Python graph-capture adapter for PyTorch `nn.Module` →
   TorchLean IR JSON.
@@ -32,7 +32,7 @@ This umbrella provides graph adapters and model-family exporters:
   `TorchExport` and `ONNX` adapters and by the importer.
 
 For ONNX workflows, the architecture is the same: the Python-side adapter reads ONNX and emits
-`torchlean.ir.v1`; Lean then accepts or rejects the result through
+`torchlean.ir.v2`; Lean then accepts or rejects the result through
 `NN.Runtime.PyTorch.Import.TorchExport`. That keeps graph import tied to the same checked IR
 contracts used by `torch.export`/FX capture. The adapter validates graph structure and shapes;
 runtime execution of imported parameterized nodes still needs the matching payload store.

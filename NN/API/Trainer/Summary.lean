@@ -64,18 +64,6 @@ def printSummary {α : Type} [ToString α] (report : Report α) : IO Unit :=
 instance {α : Type} [ToString α] : ToString (Report α) where
   toString := summary
 
-/-- Convert a `Float` report into the standard two-point training log. -/
-def toTrainLog (title : String) (notes : Array String) (report : Report) :
-    Training.TrainLog :=
-  Runtime.Training.TrainLog.lossComparison
-    title report.steps report.loss.before report.loss.after notes
-
-/-- Write this report to a log destination when logging is enabled. -/
-def writeLog (destination : Training.LogDestination) (title : String) (notes : Array String)
-    (report : Report) : IO Unit := do
-  if destination.isEnabled then
-    Training.writeLog destination (report.toTrainLog title notes)
-
 end Report
 
 end Trainer

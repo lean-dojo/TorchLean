@@ -156,7 +156,7 @@ exercise the native boundary and SDK on tested paths; a pass is not a proof of m
 
 For performance work, pair the correctness suite with NVIDIA Nsight Systems for end-to-end runtime
 traces and Nsight Compute for individual kernel profiles. Those tools are not pass/fail tests, so
-they stay outside the default CI gate. Invoke them directly on the executable being investigated:
+they stay outside the test suite. Invoke them directly on the executable being investigated:
 
 ```bash
 scripts/lake.sh -R -K cuda=true build nn_tests_suite
@@ -172,7 +172,7 @@ Nsight Compute can be slow on the full suite; use a focused executable for kerne
 
 The CUDA regression suite lives in `NN/Tests/Runtime/Cuda`. The tests compare the Lean CPU eager
 tape against the CUDA eager tape on small examples. They run only with `-Kcuda=true`; the default
-build skips them, so CPU hosted CI does not validate GPU execution.
+build skips them, so a CPU build does not validate GPU execution.
 
 Current CUDA coverage:
 

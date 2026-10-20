@@ -18,7 +18,7 @@ tensor-graph artifact. The Lean importer checks it before evaluation:
 ```text
 PyTorch nn.Module
   --torch.export / FX capture-->
-TorchLean graph JSON (`torchlean.ir.v1` or `torchlean.ir.v2`)
+TorchLean graph JSON (`torchlean.ir.v2`)
   --Import.IR.parseProgram-->
 NN.IR.Program
 ```
@@ -36,7 +36,7 @@ and layout constraints are not validated by the CPU reference interpreter.
 `example` may be one tensor or a tuple of positional tensors. Argument order comes from
 `torch.export`'s graph signature, not from parameter placeholder order. Unused user arguments
 remain in the interface; dead parameter values and dead intermediate nodes may be omitted.
-One input uses version one's `input_id`; multiple inputs use version two's `input_ids`.
+The artifact lists every input in `input_ids`, in argument order.
 Returned containers are flattened to tensor leaves; non-tensor leaves are rejected.
 
 Operator matching uses exact callable or ATen identities. For example, `torch.log` can become an
@@ -1066,10 +1066,8 @@ def entrypoint (options : Options) : Array String :=
    , indent 4 "if len(input_nodes) != len(user_input_names) or output_ids is None:"
    , indent 8 "raise RuntimeError(\"could not identify graph input/output\")"
    , indent 4 "input_ids = [input_nodes[name] for name in user_input_names]"
-   , indent 4 ("payload = {\"format\": FORMAT if len(input_ids) == 1 else \"torchlean.ir.v2\", " ++
-       "\"frontend\": \"pytorch\", \"output_ids\": output_ids, \"nodes\": nodes}")
-   , indent 4 "if len(input_ids) == 1: payload['input_id'] = input_ids[0]"
-   , indent 4 "else: payload['input_ids'] = input_ids"
+   , indent 4 ("payload = {\"format\": FORMAT, \"frontend\": \"pytorch\", " ++
+       "\"input_ids\": input_ids, \"output_ids\": output_ids, \"nodes\": nodes}")
    , indent 4 "payload['capture_constraints'] = capture_constraints"
    , indent 4 "try:"
    , indent 8 "text = json.dumps(payload, indent=2, sort_keys=True, allow_nan=False)"

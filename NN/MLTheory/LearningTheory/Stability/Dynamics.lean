@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-public import NN.MLTheory.LearningTheory.Stability.Dynamics.Spec
 public import NN.MLTheory.LearningTheory.Stability.Dynamics.Runtime
 
 /-!
@@ -15,10 +14,9 @@ public import NN.MLTheory.LearningTheory.Stability.Dynamics.Runtime
 This entrypoint collects the discrete-time stability layer for maps of the form
 $x_{t+1}=f(x_t)$ and input-driven systems $x_{t+1}=f(x_t,u_t)$.
 
-The spec file states the mathematical predicates: Lyapunov stability, asymptotic stability,
-exponential stability, input-to-state stability, BIBO stability, practical stability,
-finite-time stability, and one-step training stability. The runtime file provides `Float`
-diagnostics for concrete systems. As with robustness, the diagnostic layer is empirical unless a
+The stability predicates themselves (contractivity, Lyapunov, asymptotic and global stability)
+are `Spec.Dynamics` in `NN.Spec.Dynamics.System`. The runtime file provides `Float` diagnostics
+for concrete systems. As with robustness, the diagnostic layer is empirical unless a
 separate theorem connects it to a certified bound.
 
 References:

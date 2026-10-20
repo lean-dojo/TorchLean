@@ -324,10 +324,8 @@ def lower(closed_jaxpr: Any) -> dict[str, Any]:
     output_ids = builder.body(closed_jaxpr, input_ids)
     if not output_ids:
         raise Unsupported("Jaxpr import needs at least one tensor output")
-    interface = dict(input_id=input_ids[0]) if len(input_ids) == 1 else dict(input_ids=input_ids)
-    return dict(format="torchlean.ir.v1" if len(input_ids) == 1 else "torchlean.ir.v2",
-                frontend="jaxpr", dtype=builder.dtype, **interface,
-                output_ids=output_ids, nodes=builder.nodes)
+    return dict(format="torchlean.ir.v2", frontend="jaxpr", dtype=builder.dtype,
+                input_ids=input_ids, output_ids=output_ids, nodes=builder.nodes)
 
 
 def export(function: Callable[..., Any], *examples: Any) -> dict[str, Any]:

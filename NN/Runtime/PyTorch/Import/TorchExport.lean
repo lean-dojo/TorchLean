@@ -28,8 +28,8 @@ The runtime bridge therefore uses a small, explicit JSON format:
 
 ```json
 {
-  "format": "torchlean.ir.v1",
-  "input_id": 0,
+  "format": "torchlean.ir.v2",
+  "input_ids": [0],
   "output_ids": [1],
   "nodes": [
     {"id": 0, "kind": "input", "parents": [], "shape": [1, 4]},
@@ -249,7 +249,7 @@ def shapes (ctx : String) (j : Json) : Except String (Array Shape) := do
 /--
 Parse the value-level shape metadata emitted by the Python bridge.
 
-`torchlean.ir.v1` artifacts without `value_kind` are interpreted as tensor-valued nodes with a
+A node without `value_kind` is tensor-valued and has a
 required `shape` field. The explicit form uses `value_kind = "tensor"` or
 `value_kind = "tuple"` explicitly.
 -/
@@ -267,7 +267,7 @@ def valueShape (ctx : String) (o : StateDict) : Except String ValueShape := do
 Parse a TorchLean IR op kind.
 
 The schema uses a stable string tag plus op-specific scalar fields. The tag is resolved through
-`Wire.parseTag?`, which recognizes the fixed v1 spellings. This function then reads the
+`Wire.parseTag?`, which recognizes the fixed spellings. This function then reads the
 attributes each constructor needs. We avoid trying to parse raw PyTorch operator
 names here; the Python adapter is responsible for translating `torch.ops.aten.*` / FX targets into
 these TorchLean tags.
@@ -346,27 +346,18 @@ def node (j : Json) : Except String CapturedValueNode := do
   let valueShape ← valueShape ctx o
   pure { id := id, parents := parents, kind := kind, valueShape := valueShape, raw := o }
 
-/-- Read the ordered tensor interface. Version one has one input; version two lists all inputs.
-
-An artifact must use the interface of its declared version. Keeping these fields
-exclusive prevents two readers from assigning different argument orders to the same graph.
--/
+/-- Read the ordered tensor interface: `input_ids` lists every runtime input in argument order. -/
 def inputs (j : Json) : Except String (Array Nat) := do
   let o ← object "root" j
   let format ← string "root.format" (← field "root" "format" o)
-  if format == Wire.format then
-    if (o.get? "input_ids").isSome then
-      throw "IR import: version one uses input_id, not input_ids"
-    pure #[← natField "root" "input_id" o]
-  else if format == "torchlean.ir.v2" then
-    if (o.get? "input_id").isSome then
-      throw "IR import: version two uses input_ids, not input_id"
-    let ids ← natArrayField "root" "input_ids" o
-    if ids.isEmpty then
-      throw "IR import: input_ids must contain at least one input"
-    pure ids
-  else
-    throw s!"IR import: unsupported format `{format}`"
+  if format != Wire.format then
+    throw s!"IR import: unsupported format `{format}`; expected `{Wire.format}`"
+  if (o.get? "input_id").isSome then
+    throw "IR import: `input_id` is not part of the format; list the inputs in `input_ids`"
+  let ids ← natArrayField "root" "input_ids" o
+  if ids.isEmpty then
+    throw "IR import: input_ids must contain at least one input"
+  pure ids
 
 /-- Parse the value-level graph, retaining the first argument for single-input consumers. -/
 def graph (j : Json) : Except String CapturedValueGraph := do

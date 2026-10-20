@@ -152,11 +152,11 @@ There are several routes into the same graph language:
 - GraphSpec models can be lowered when the architecture needs explicit sharing and
   named parameter layouts.
 - PyTorch `torch.export` records positional tensor arguments, including unused arguments, from
-  its graph signature. One input uses version one; multiple inputs use version two's `input_ids`.
-  The ONNX adapter emits version one. Lean parses and validates the resulting tensor graphs.
+  its graph signature and lists them in `input_ids`, as the ONNX adapter does. Lean parses and
+  validates the resulting tensor graphs.
 - The Jaxpr adapter in `NN/Runtime/JAX/jaxpr.py` lowers static tensor computations to the same
-  format. Multiple tensor arguments use version two's ordered `input_ids`; each input has its
-  own shape and dtype. `Import.JAX.parseProgram` checks per-node types and explicit casts.
+  format. Its tensor arguments are listed in order in `input_ids`; each input has its own shape
+  and dtype. `Import.JAX.parseProgram` checks per-node types and explicit casts.
   `Interpreter.binary` uses FloatLib for mixed binary precision; the homogeneous graph path remains
   scalar-polymorphic. Structured control flow is not yet lowered; see the
   [JAX example](../../home_page/examples/jaxpr/index.md).

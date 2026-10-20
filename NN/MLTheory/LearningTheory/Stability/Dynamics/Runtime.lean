@@ -11,8 +11,8 @@ public import NN.MLTheory.LearningTheory.Robustness.Runtime
 /-!
 # `NN.MLTheory.Stability.Runtime`
 
-Executable Float-specialized diagnostics for the stability specifications in
-`NN.MLTheory.Stability.Spec`.
+Executable Float-specialized diagnostics for the stability specifications in `Spec.Dynamics`
+(`NN.Spec.Dynamics.System`).
 -/
 
 @[expose] public section
@@ -34,7 +34,7 @@ All routines in this file are **runtime diagnostics**:
 
 They are factually correct as *computations*: “this inequality held on these sampled points for
 this many steps.” The corresponding theorem statements live in the `Prop` definitions in
-`NN.MLTheory.Stability.Spec`.
+`Spec.Dynamics`.
 
 In other words:
 

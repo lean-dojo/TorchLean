@@ -237,7 +237,7 @@ localize structural and finite-value failures before such a theorem is considere
 # PyTorch Graph Capture
 
 The reusable exporter asks Python and `torch.export` or FX to capture a supported `nn.Module`
-{Informal.citep pytorch2019}[] and emit `torchlean.ir.v1` JSON. Lean then parses the document,
+{Informal.citep pytorch2019}[] and emit `torchlean.ir.v2` JSON. Lean then parses the document,
 lowers supported values to `NN.IR.Graph`, and runs the graph validators.
 
 The parser's structural theorem is `parseGraph_wellShaped`. The examples below inspect that
@@ -257,8 +257,8 @@ elementwise, preserving that shape. The third sums all four entries to a scalar,
 -- Record input, shape-preserving activation, and scalar
 -- reduction as separate nodes.
 def ffiGood : String := "{
-  \"format\": \"torchlean.ir.v1\",
-  \"input_id\": 0,
+  \"format\": \"torchlean.ir.v2\",
+  \"input_ids\": [0],
   \"output_ids\": [2],
   \"nodes\": [
     {\"id\": 0, \"kind\": \"input\",
@@ -426,7 +426,7 @@ to the check responsible for it:
 -- each rejection.
 #eval show IO Unit from do
   IO.println (ffiParse
-    (ffiGood.replace "ir.v1" "ir.v2"))
+    (ffiGood.replace "ir.v2" "ir.v1"))
   IO.println (ffiParse
     (ffiGood.replace "\"relu\"" "\"sort\""))
   IO.println (ffiParse
@@ -436,7 +436,8 @@ to the check responsible for it:
     (ffiGood.replace "\"parents\": [0]" "\"parents\": [2]"))
 ```
 ```leanOutput ffiReject (whitespace := lax)
-rejected: IR import: version two uses input_ids, not input_id
+rejected: IR import: unsupported format `torchlean.ir.v1`; expected
+  `torchlean.ir.v2`
 rejected: PyTorch graph import: node[1]: unsupported TorchLean IR op
   kind `sort`
 rejected: IR graph: node 1: outShape mismatch: inferred=[1, 4],
@@ -446,8 +447,8 @@ rejected: PyTorch graph import: node[1]: parent id 2 is not < 1
 
 The errors identify four stages of validation:
 
-- the *schema* rejection comes before any node is looked at: changing the version to `v2`
-  also requires changing the singular `input_id` field to `input_ids`;
+- the *schema* rejection comes before any node is looked at: an artifact in another format
+  version is not read at all;
 - the *op kind* rejection comes from the conservative operator table, which is why adding
   `torch.sort` to the Python side without touching the Lean parser produces an explicit
   unsupported-operation failure rather than a partial import;
@@ -535,7 +536,7 @@ fragment. The producer handles elementwise operations, vector and broadcast matm
 softmax, reshape and flatten, concat, transposes, `Gemm`, and inference BatchNorm. Convolution
 records groups, dilation, stride, and explicit asymmetric padding. Its importer accepts a
 channels-first sample or a batch of one; larger batches still need producer support even though
-the IR convolution contract can represent them. It writes the same `torchlean.ir.v1` document
+the IR convolution contract can represent them. It writes the same `torchlean.ir.v2` document
 consumed by `parseGraph`, so both producers use the same Lean parser and structural checks.
 
 ONNX protobuf parsing and shape inference therefore remain outside Lean. Lean checks the smaller IR

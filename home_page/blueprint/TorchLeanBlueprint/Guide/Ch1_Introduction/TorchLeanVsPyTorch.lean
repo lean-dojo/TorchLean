@@ -892,7 +892,7 @@ named tensor data as plain JSON. Lean then parses each requested tensor into a s
 shape.
 
 Graph import is separate. A generated adapter uses `torch.export` or FX to emit the
-`torchlean.ir.v1` format, which Lean parses into `NN.IR.Graph`. The ONNX adapter lowers supported
+`torchlean.ir.v2` format, which Lean parses into `NN.IR.Graph`. The ONNX adapter lowers supported
 static nodes to the same format.
 
 Parsing checks the JSON schema and requested tensor shapes; graph checks validate node references

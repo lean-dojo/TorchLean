@@ -245,7 +245,7 @@ def main (args : List String) : IO Unit := do
         logNotes :=
           #[s!"x={xPath}", s!"y={yPath}", s!"rows={rowCount}",
             s!"train_size={trainSize}", s!"test_size={testSamples.size}",
-            s!"epochs={training.epochs}", s!"batch={training.batchSize}", s!"lr={lr}"] }
+            s!"epochs={training.epochs}", s!"batch={training.batchSize}"] }
     trained.printSummary
     let blank : Tensor Float [inputChannels, imageHeight, imageWidth] :=
       Tensor.full [inputChannels, imageHeight, imageWidth] 0.0

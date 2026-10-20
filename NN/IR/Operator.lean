@@ -20,7 +20,7 @@ attributes here, but its weight and bias still come from that store. The parent 
 dataflow: a linear node has one parent for its input tensor.
 
 `NN.IR.Graph` adds node identities, dependency edges, and declared output shapes. The fixed
-`torchlean.ir.v1` spelling of each constructor is defined separately in `NN.Runtime.PyTorch.Wire`.
+`torchlean.ir.v2` spelling of each constructor is defined separately in `NN.Runtime.PyTorch.Wire`.
 -/
 
 @[expose] public section

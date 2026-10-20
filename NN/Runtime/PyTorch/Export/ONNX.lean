@@ -15,7 +15,7 @@ public import NN.Runtime.PyTorch.Wire
 This module emits a Python-side ONNX adapter for TorchLean graph import.
 
 The adapter does not give ONNX a separate Lean semantics. It reads an ONNX model, lowers the
-supported static graph fragment to the same `torchlean.ir.v1` JSON used by the `torch.export`/FX
+supported static graph fragment to the same `torchlean.ir.v2` JSON used by the `torch.export`/FX
 bridge, and then the Lean side should call `Import.PyTorch.TorchExport.parseGraph`.
 
 That boundary is intentional: ONNX parsing, protobuf handling, and shape inference stay outside
@@ -563,7 +563,7 @@ def entrypoint (options : Options) : Array String :=
    , indent 4 "output_name = model.graph.output[0].name"
    , indent 4 "if output_name not in name_to_id:"
    , indent 8 "raise RuntimeError(f\"ONNX graph output {output_name} was not produced\")"
-   , indent 4 ("artifact = {\"format\": FORMAT, \"input_id\": name_to_id[input_name], " ++
+   , indent 4 ("artifact = {\"format\": FORMAT, \"input_ids\": [name_to_id[input_name]], " ++
        "\"output_ids\": [name_to_id[output_name]], \"nodes\": nodes}")
    , indent 4 "try:"
    , indent 8 "text = json.dumps(artifact, indent=2, allow_nan=False)"
@@ -590,7 +590,7 @@ def cli (options : Options) : Array String :=
 end Internal
 
 /--
-Emit a Python script that lowers a conservative ONNX fragment to `torchlean.ir.v1`.
+Emit a Python script that lowers a conservative ONNX fragment to `torchlean.ir.v2`.
 
 Supported first-pass ops are tensor ops that map to current `NN.IR.OpKind`: elementwise
 arithmetic/activations, `MatMul`, `ReduceSum`, `ReduceMean`, `Softmax`, `Reshape`, `Flatten`,

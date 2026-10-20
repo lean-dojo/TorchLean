@@ -177,8 +177,7 @@ def train (runtime : Runtime.Config)
     (flags.training.trainOptions
       (logTitle := "LSTM seasonal regression")
       (logNotes := Support.Forecast.Options.logNotes flags.data ++
-        #[s!"lr={flags.training.learningRate}",
-          s!"cuda_mem_watch={flags.training.cudaMemorySampleEvery}",
+        #[s!"cuda_mem_watch={flags.training.cudaMemorySampleEvery}",
           "task=next-step household power forecasting"] ++
         dataTags flags.data.xPath flags.data.yPath))
     #[reportProbe]

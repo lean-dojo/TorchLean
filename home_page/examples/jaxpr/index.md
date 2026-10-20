@@ -414,9 +414,8 @@ forward bodies; this does not verify their custom derivative rules.
 
 Close over parameter tensors or pass them as runtime arguments with
 `export(function, *inputs)`. Each argument keeps its own shape and dtype; the
-returned tensors may also have different shapes and dtypes. Version-two artifacts
-record the argument order in `input_ids`. Existing one-input captures continue to
-use version one. A nested input pytree needs a container interface and is rejected.
+returned tensors may also have different shapes and dtypes. The artifact records the
+argument order in `input_ids`. A nested input pytree needs a container interface and is rejected.
 Dynamic control flow, effects, gather/scatter, and primitives without a lowering are rejected
 by name. Division is also rejected: replacing `x / y` with `x * (1 / y)` changes rounding and
 exceptional values. This currently excludes JAX's mean and LayerNorm expansions.

@@ -17,9 +17,9 @@ also declares `dtype`; a custom node with `primitive = "cast"` declares an expli
 rounding mode. Constants for binary execution carry complete unsigned words in
 `bits`, so parsing never loses precision through JSON floating-point numbers.
 
-Version two records all runtime inputs in `input_ids`, in argument order. Each
-input has its own shape and element type. Version-one single-input artifacts remain
-accepted. Typed container lowering still needs explicit container type rules.
+An artifact records all runtime inputs in `input_ids`, in argument order. Each
+input has its own shape and element type. Typed container lowering still needs explicit
+container type rules.
 -/
 
 @[expose] public section

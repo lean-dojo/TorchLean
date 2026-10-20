@@ -95,8 +95,7 @@ def train (runtime : Runtime.Config) (flags : Support.Training.Options Support.C
     (data flags.data.path runtime.seed)
     (flags.training.trainOptions
       (logTitle := "MLP tabular training")
-      (logNotes := #[s!"dataset={flags.data.path}", s!"lr={flags.training.learningRate}",
-        s!"steps={flags.training.steps}", s!"batch={batchSize}"]))
+      (logNotes := #[s!"dataset={flags.data.path}", s!"batch={batchSize}"]))
 
 /-- CLI entrypoint for Auto MPG regression on CPU or CUDA. -/
 def main (args : List String) : IO UInt32 :=

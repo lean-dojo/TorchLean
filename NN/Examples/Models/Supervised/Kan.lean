@@ -90,9 +90,8 @@ def train (runtime : Runtime.Config) (flags : Support.Training.Options Support.C
     (data flags.data.path runtime.seed)
     (flags.training.trainOptions
       (logTitle := "KAN Auto MPG regression")
-      (logNotes := #[Support.deviceNote runtime, s!"data={flags.data.path}",
-        s!"lr={flags.training.learningRate}", s!"steps={flags.training.steps}",
-        s!"batch={batchSize}", s!"edge={modelConfig.edge.name}"]))
+      (logNotes := #[s!"data={flags.data.path}", s!"batch={batchSize}",
+        s!"edge={modelConfig.edge.name}"]))
 
 /-- CLI entrypoint for Auto MPG regression with a KAN model. -/
 def main (args : List String) : IO UInt32 :=

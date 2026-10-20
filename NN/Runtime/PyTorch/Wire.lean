@@ -12,7 +12,7 @@ public import NN.IR.Operator
 # Graph wire format
 
 `NN.IR.OpTag` identifies semantic operators. This module assigns each identity its fixed spelling in
-`torchlean.ir.v1`: for example, `.mulElem` is written as `"mul_elem"`. Keeping this table separate
+`torchlean.ir.v2`: for example, `.mulElem` is written as `"mul_elem"`. Keeping this table separate
 from diagnostic names lets us improve an error message while keeping existing graphs readable.
 Exporters and importers use the same table.
 
@@ -28,7 +28,7 @@ namespace Interop.PyTorch.Wire
 open NN.IR
 
 /-- Format marker written to the root `format` field. -/
-def format : String := "torchlean.ir.v1"
+def format : String := "torchlean.ir.v2"
 
 /-- Projection of one component out of a tuple-valued FX node. -/
 def projection : String := "tuple_getitem"
@@ -36,7 +36,7 @@ def projection : String := "tuple_getitem"
 /-- Container-valued `nn.MultiheadAttention` call kept in the value graph. -/
 def attention : String := "multihead_attention"
 
-/-- Fixed constructor spelling in the `torchlean.ir.v1` artifact. -/
+/-- Fixed constructor spelling in the `torchlean.ir.v2` artifact. -/
 def tag : OpTag → String
   | .input => "input"
   | .const => "const"

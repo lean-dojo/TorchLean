@@ -21,7 +21,7 @@ Training curves, metric histories, and logs produced by `Trainer` runs.
 namespace TorchLean.Training
 
 export Runtime.Training
-  (Curve TrainLog ExperimentLog LogDestination MetricHistory)
+  (Curve TrainLog ExperimentLog RunInfo ConfigEntry Artifact LogDestination MetricHistory)
 
 namespace MetricHistory
 

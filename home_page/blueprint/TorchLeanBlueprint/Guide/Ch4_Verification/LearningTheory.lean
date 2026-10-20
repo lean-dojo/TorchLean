@@ -1037,19 +1037,11 @@ the replacement execution uncontrolled.
 The stability entrypoint also imports
 {src "NN/MLTheory/LearningTheory/Stability/Dynamics.lean"}[
 NN.MLTheory.LearningTheory.Stability.Dynamics API], which covers recurrences $`x_{t+1}=f(x_t)` and
-input-driven systems. The spec file
-{src "NN/MLTheory/LearningTheory/Stability/Dynamics/Spec.lean"}[Dynamics.Spec] names Lyapunov
-stability, asymptotic stability, exponential stability, input-to-state stability, BIBO stability,
-practical stability, finite-time stability, and one-step training stability. The runtime file
+input-driven systems. The predicates are
+{src "NN/Spec/Dynamics/System.lean"}[`Spec.Dynamics`]: contractivity, Lyapunov stability,
+asymptotic stability, and global stability. The runtime file
 {src "NN/MLTheory/LearningTheory/Stability/Dynamics/Runtime.lean"}[Dynamics.Runtime] provides
 `Float` diagnostics.
-
-`SatisfiesInputToStateBound` asks for the input-to-state inequality with supplied comparison
-functions; standard input-to-state stability also needs the class-K/class-KL conditions, and the
-input bound uses indices strictly before the current time. The real `stabilityMargin` uses a
-supremum; without nonemptiness and boundedness assumptions it need not represent an attained or
-usable radius. `PreservesNormBound` is a fixed-bound implication: input norm at most `bound`
-implies output norm at most that same bound.
 
 This vocabulary is here because neural-network learning theory is not limited to static supervised
 learning: recurrent models, samplers, controllers, RL policies interacting with state, and learned
@@ -1153,10 +1145,10 @@ hypotheses have been stated.
 
 For robustness the split is `Robustness.Spec` versus `Robustness.Runtime`, and the proofs that join
 them live in a third place, `NN.MLTheory.Proofs.Verification.Robustness`. For dynamical stability it
-is `Stability.Dynamics.Spec` versus `Stability.Dynamics.Runtime`, with the joining theorems still
-missing. For ridge regression, `RidgeRegression1D.Real` proves ideal stability, while
-the ridge-regression bridge connects one executable binary32 expression to an FP32 expression.
-That finite-evaluation bridge does not yet transfer the real stability bound.
+is `Spec.Dynamics` versus `Stability.Dynamics.Runtime`, with the joining theorems still missing. For
+ridge regression, `RidgeRegression1D.Real` proves ideal stability, while the ridge-regression bridge
+connects one executable binary32 expression to an FP32 expression. That finite-evaluation bridge
+does not yet transfer the real stability bound.
 
 # Learning Theory Assumptions And Evidence
 
@@ -1206,8 +1198,8 @@ The gaps in this layer are specific enough to name:
 - *Stability*: the only proved bound is for the closed-form one-dimensional ridge estimator. An
   iterative solver, a minibatch trainer, or an early-stopped run needs its own argument, and the
   generalization consequence of stability is not formalized here at all.
-- *Dynamics*: every predicate in `Dynamics.Spec` is currently a definition without a theorem, and
-  the trajectory tests are finite-horizon diagnostics. Individual functions accept thresholds;
-  the aggregate `analyzeStability` uses fixed defaults.
+- *Dynamics*: no theorem yet connects the `Spec.Dynamics` stability predicates to the runtime
+  diagnostics, and the trajectory tests are finite-horizon diagnostics. Individual functions accept
+  thresholds; the aggregate `analyzeStability` uses fixed defaults.
 - *Numerics*: the ridge bridge gives agreement under a finite-evaluation hypothesis, not an error
   bound, so the float32 fit is not yet connected to the real stability constant.

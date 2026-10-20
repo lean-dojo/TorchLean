@@ -32,8 +32,8 @@ For library build targets and contribution checks, see
 
 The default build provides the CPU runtime. It needs no LibTorch SDK or
 CUDA toolkit, and the GPU buffer symbols fail with a message to rebuild.
-Hosted CI selects `cuda=false` explicitly;
-its results establish CPU behavior and do not establish GPU correctness.
+The commands below select `cuda=false` explicitly; their results establish CPU behavior and do not
+establish GPU correctness.
 
 Install the pinned Python dependencies for CPU interoperability checks:
 
@@ -45,7 +45,7 @@ TORCHLEAN_REQUIRE_INTEROP=1 scripts/lake.sh -Kcuda=false test
 scripts/lake.sh -Kcuda=false lint
 ```
 
-That requirements file pins CPU PyTorch 2.8.0 for hosted interoperability checks. It does not
+That requirements file pins CPU PyTorch 2.8.0 for the interoperability checks. It does not
 select the LibTorch backend SDK. Use a separate Python environment for these dependencies;
 installing the CPU requirements into a GPU SDK environment can replace its CUDA PyTorch package.
 
@@ -159,7 +159,7 @@ scripts/checks/cuda.sh sanitize --libtorch-home "$TORCHLEAN_LIBTORCH_HOME"
 scripts/checks/cuda.sh sanitize --libtorch-home "$TORCHLEAN_LIBTORCH_HOME" --all-tools
 ```
 
-The C++ regression runs separately from `lake test` and hosted CPU CI. The wrapper uses a temporary
+The C++ regression runs separately from `lake test`. The wrapper uses a temporary
 build directory so generating the CPU Lean reference can switch profiles. Keep manual CMake test
 builds outside the `.lake/build` symlink and pass an absolute backend path.
 See [the harness README](../csrc/libtorch/tests/elementwise/README.md) for coverage and direct CMake

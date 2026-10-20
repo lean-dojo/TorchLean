@@ -28,7 +28,7 @@ For graphs, the matching path is:
 
 1. PyTorch captures an `nn.Module` with the adapter emitted by
    `Export.PyTorch.TorchExport.script`.
-2. `Import.PyTorch.TorchExport.parseGraph` reads the `torchlean.ir.v1` JSON into `NN.IR.Graph`.
+2. `Import.PyTorch.TorchExport.parseGraph` reads the `torchlean.ir.v2` JSON into `NN.IR.Graph`.
 3. The parser runs the shared IR well-formedness and shape checkers before accepting the graph.
 
 For per-node element types and explicit binary casts, use `Import.IR.parseProgram` from
@@ -41,7 +41,7 @@ the exporters write with; parsing a serialized operator tag recovers its `NN.IR.
 
 This is the supported graph-import path today. The ONNX adapter emitted by
 `Export.PyTorch.ONNX.script` follows the same rule: lower ONNX nodes into the
-`torchlean.ir.v1` artifact, then reuse this parser and the shared IR validators. Keeping the
+`torchlean.ir.v2` artifact, then reuse this parser and the shared IR validators. Keeping the
 artifact boundary explicit avoids a second, looser graph semantics.
 
 Graph import and payload import remain separate phases. A Conv/Gemm/BatchNorm graph can be

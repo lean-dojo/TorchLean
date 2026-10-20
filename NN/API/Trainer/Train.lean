@@ -100,6 +100,45 @@ def runSteps {σ τ : Shape} {trainer : TorchLean.Trainer σ τ}
       memorySample? ←
         Memory.sample runtime watchEvery options.steps completedSteps memorySample?
 
+/-- A trainer's settings as experiment config entries, each key prefixed with `name`. -/
+def trainerConfig {σ τ : Shape} (trainer : TorchLean.Trainer σ τ) (name : String := "") :
+    Array Training.ConfigEntry :=
+  let entry (key value : String) : Training.ConfigEntry := { key := name ++ key, value }
+  #[entry "optimizer" (toString trainer.runtime.optimizer),
+    entry "arithmetic" (toString trainer.runtime.arithmetic),
+    entry "device" trainer.runtime.device.cliName,
+    entry "seed" (toString trainer.seed)]
+
+/-- The loss curve as a one-series metric history. -/
+def lossHistory (curve : Training.Curve) : Training.MetricHistory :=
+  { steps := curve.steps
+    series := #[{ name := "loss", values := curve.values, color := "#4e79a7" }] }
+
+/--
+Write the training log when `options` enables one: an experiment record of the trainers' settings
+and the training options, the checkpoint files, the caller's notes, and the loss curve.
+-/
+def writeExperimentLog (config : Array Training.ConfigEntry) (options : TrainOptions)
+    (curve : Training.Curve) : IO Unit := do
+  if options.logDestination.isEnabled then
+    let entry (key value : String) : Training.ConfigEntry := { key, value }
+    let schedule := match options.scheduler with
+      | some scheduler => #[entry "scheduler" (reprStr scheduler)]
+      | none => #[]
+    let checkpoint (name : String) : Option System.FilePath → Array Training.Artifact
+      | some path => #[{ name, path, kind := "model" }]
+      | none => #[]
+    let experiment : Training.ExperimentLog :=
+      { run :=
+          { name := options.logTitle
+            config := config ++ #[entry "steps" (toString options.steps),
+              entry "samplesPerStep" (toString options.samplesPerStep)] ++ schedule }
+        history := lossHistory curve
+        artifacts := checkpoint "initial_checkpoint" options.loadCheckpoint? ++
+          checkpoint "checkpoint" options.saveCheckpoint?
+        notes := options.logNotes }
+    Training.writeLog options.logDestination (experiment.toTrainLog options.logTitle)
+
 end Internal
 
 /--
@@ -185,8 +224,8 @@ def train {σ τ : Shape}
   Internal.printProbes session probes "predictions after training"
   Internal.saveCheckpoint session trainOptions.saveCheckpoint?
   let result ← session.finish { before, after }
-  result.report.writeLog
-    trainOptions.logDestination trainOptions.logTitle trainOptions.logNotes
+  Internal.writeExperimentLog (Internal.trainerConfig trainer) trainOptions
+    (({} : Training.Curve).push 0 before |>.push trainOptions.steps after)
   pure result
 
 /--
@@ -288,9 +327,7 @@ def trainStream {σ τ : Shape}
   onEval steps "after training" session.predict
   Internal.saveCheckpoint session trainOptions.saveCheckpoint?
   let trained ← session.finish { before := lossBefore, after := currentLoss }
-  if trainOptions.logDestination.isEnabled then
-    Training.writeLog trainOptions.logDestination
-      (curve.toTrainLog trainOptions.logTitle "loss" (notes := trainOptions.logNotes))
+  Internal.writeExperimentLog (Internal.trainerConfig configured) trainOptions curve
   pure { trained := trained, curve := curve }
 
 /--
@@ -366,9 +403,8 @@ def trainAlternating {σ₁ τ₁ σ₂ τ₂ : Shape}
   let progress : Training.LossProgress Float := { before := lossBefore, after := currentLoss }
   let firstResult ← firstSession.finish progress
   let secondResult ← secondSession.finish progress
-  if trainOptions.logDestination.isEnabled then
-    Training.writeLog trainOptions.logDestination
-      (curve.toTrainLog trainOptions.logTitle "loss" (notes := trainOptions.logNotes))
+  Internal.writeExperimentLog (Internal.trainerConfig firstConfigured "first." ++
+    Internal.trainerConfig secondConfigured "second.") trainOptions curve
   pure { first := firstResult, second := secondResult, curve := curve }
 
 end Trainer

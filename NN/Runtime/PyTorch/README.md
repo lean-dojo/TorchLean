@@ -35,7 +35,7 @@ execution provider described in the
   emitted by `Export.PyTorch.TorchExport.script`, configured with `TorchExport.Options`.
   Python-generation sections live under `TorchExport.Internal`.
 
-## Semantic operators and v1 wire strings
+## Semantic operators and wire strings
 
 `NN/IR/Operator.lean` defines `OpKind`, its static attributes, and the constructor identities in
 `NN.IR.OpTag`. For example, `(.softmax 1).opTag` is `.softmax`; its axis belongs to `OpKind`.
@@ -43,9 +43,11 @@ execution provider described in the
 `OpTag.toKind?` reconstructs operations whose tags supply all their static information.
 
 `Wire.lean` assigns each tag its fixed spelling in `torchlean.ir.v2`. Both Python-emitting adapters
-write through `Wire.tag`, and `Import/TorchExport.lean` reads through `Wire.parseTag?`.
-The v1 strings have their own table, so changing a diagnostic name does not change existing files.
-The round trips are proved in Lean:
+write through `Wire.tag`, and `Import/TorchExport.lean` reads through `Wire.parseTag?`. Pointwise
+operators are written by operator instead (`Wire.pointwiseTag`, with an attribute field such as
+`rounding_mode`) and read with `Wire.parsePointwise?`; no pointwise spelling collides with a
+constructor's. The wire strings have their own table, so changing a diagnostic name does not change
+existing files. The round trips are proved in Lean:
 
 ```lean
 theorem Wire.parse_op_tag (tag : OpTag) :

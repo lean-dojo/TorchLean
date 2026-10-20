@@ -301,7 +301,7 @@ This fixture exercises the parser directly from a Lean string without starting P
 capture, the Python producer translates raw
 FX or ATen names into stable TorchLean tags. The Lean parser recognizes a conservative list,
 parses operation-specific fields, constructs candidate nodes, and validates the result. The op
-kind strings come from the fixed v1 table in `NN.Runtime.PyTorch.Wire`. Its round-trip theorem says
+kind strings come from the fixed table in `NN.Runtime.PyTorch.Wire`. Its round-trip theorem says
 that reading the spelling of an operator recovers its `NN.IR.OpTag` identity.
 
 The complete path separates external capture from the checks Lean performs on its result:

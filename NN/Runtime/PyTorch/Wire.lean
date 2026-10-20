@@ -90,7 +90,7 @@ def tag : OpTag → String
   | .custom => "custom"
   | .pointwise => "pointwise"
 
-/-- Parse a v1 constructor spelling into its semantic identity. -/
+/-- Parse a constructor spelling into its semantic identity. -/
 def parseTag? (s : String) : Option OpTag :=
   OpTag.all.find? fun op => tag op == s
 
@@ -180,7 +180,7 @@ theorem parse_op_kind_tag (kind : OpKind) :
     parseTag? (tag kind.opTag) = some kind.opTag :=
   parse_op_tag kind.opTag
 
-/-- The attribute-free v1 round trip reconstructs the original operation. -/
+/-- The attribute-free round trip reconstructs the original operation. -/
 theorem parse_op_kind (kind : OpKind) (h : kind.opTag.hasAttributes = false) :
     parse? (tag kind.opTag) = some kind := by
   rw [parse?, parse_op_tag]

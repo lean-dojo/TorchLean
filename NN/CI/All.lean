@@ -16,7 +16,7 @@ import NN.CI.Verification
 # Complete CI Import Surface
 
 This CI-only umbrella imports maintained library modules that are intentionally absent from the
-downstream `NN` umbrella. Examples, tests, and the end-to-end IR proof have their own Lake targets.
+downstream `NN` umbrella. Examples and tests have their own Lake targets.
 
 ```bash
 scripts/lake.sh build NN.CI.All

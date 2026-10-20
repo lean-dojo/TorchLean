@@ -34,8 +34,8 @@ Propagate a single node’s *affine bounds* (lower/upper) given parent bounds.
 
 This is the CROWN/DeepPoly-style transfer step used by `runCROWN`. For node kinds without a
 dedicated rule, we fall back to the IBP enclosure (turned into a constant affine bound), except
-custom computations. Those clear the node's bound until an enclosure rule is available; a supplied
-IBP box or a previously stored bound does not make an unsupported custom body certifiable.
+custom computations and pointwise operators. Those clear the node's bound until an enclosure rule is
+available; a supplied IBP box or a previously stored bound does not make them certifiable.
 -/
 def propagateCROWNNode
   (nodes : Array Node) (ps : ParamStore α)

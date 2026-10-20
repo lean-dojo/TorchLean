@@ -28,7 +28,7 @@ This umbrella provides graph adapters and model-family exporters:
   fragments, including expanded graph lowerings for common Conv/Gemm/BatchNorm patterns.
 - `Export.PyTorch.TorchExport` emits the Python graph-capture adapter for PyTorch `nn.Module` →
   TorchLean IR JSON.
-- `NN.Runtime.PyTorch.Wire` defines the fixed v1 constructor spellings shared by the
+- `NN.Runtime.PyTorch.Wire` defines the fixed constructor spellings shared by the
   `TorchExport` and `ONNX` adapters and by the importer.
 
 For ONNX workflows, the architecture is the same: the Python-side adapter reads ONNX and emits

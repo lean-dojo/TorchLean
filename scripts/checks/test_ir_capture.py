@@ -25,6 +25,9 @@ sys.path.insert(0, str(ROOT))
 
 import torchlean  # noqa: E402
 
+# The JAX cases compare against XLA's CPU code, so select the CPU before JAX is imported.
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
 
 def _checker():
     path = os.environ.get("TORCHLEAN_VERIFY") or str(ROOT / ".lake/build/bin/verify")
@@ -34,6 +37,14 @@ def _checker():
 CHECKER = _checker()
 HAS_TORCH = importlib.util.find_spec("torch") is not None
 HAS_JAX = importlib.util.find_spec("jax") is not None
+# Strict interop runs (`TORCHLEAN_REQUIRE_INTEROP=1`) must exercise the PyTorch captures, and the
+# JAX ones too under `TORCHLEAN_REQUIRE_JAX=1`, instead of skipping them.
+if os.environ.get("TORCHLEAN_REQUIRE_INTEROP") == "1" and not (CHECKER and HAS_TORCH):
+    raise SystemExit("test_ir_capture: TORCHLEAN_REQUIRE_INTEROP=1 needs PyTorch and the built "
+                     "verify executable (scripts/lake.sh build verify)")
+if os.environ.get("TORCHLEAN_REQUIRE_JAX") == "1" and not (CHECKER and HAS_JAX):
+    raise SystemExit("test_ir_capture: TORCHLEAN_REQUIRE_JAX=1 needs JAX and the built verify "
+                     "executable")
 EXECUTE = ("structure", "types", "execute")
 COMPARE = ("structure", "types", "execute", "compare")
 

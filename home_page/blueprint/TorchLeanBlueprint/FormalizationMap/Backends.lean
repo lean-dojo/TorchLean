@@ -198,7 +198,7 @@ Checked import of captured PyTorch graph artifacts and the operation wire format
 :::
 
 :::definition "pytorch_op_wire_format" (parent := "external_graph_bridges") (lean := "Interop.PyTorch.Wire.parseTag?")
-`NN.IR.OpTag` identifies each IR operation constructor. `Wire.tag` gives its fixed v1 `kind`
+`NN.IR.OpTag` identifies each IR operation constructor. `Wire.tag` gives its fixed `kind`
 string, and `Wire.parseTag?` reads that string back into a tag.
 :::
 

@@ -343,13 +343,18 @@ private def forward (g : NN.IR.Graph) (ps : ParamStore Float) (bindings : Bindin
         -- `Spec.MoE.topKMaskSpec`: entry j beats entry i when it is larger, or when neither is
         -- larger and j < i; an entry is kept when fewer than k entries beat it.
         let p ← expectUnary id n.parents
+        -- A scalar is its own only entry: kept exactly when `k > 0`.
+        let scalarMask := if k > 0 then "ones_like" else "zeros_like"
         lines := lines ++
-          #[ indent 4 s!"_xi{id} = v{p}.unsqueeze(-1)"
-          , indent 4 s!"_xj{id} = v{p}.unsqueeze(-2)"
-          , indent 4 s!"_ix{id} = torch.arange(v{p}.shape[-1], device=v{p}.device)"
-          , indent 4 (s!"_beats{id} = (_xj{id} > _xi{id}) | " ++
+          #[ indent 4 s!"if v{p}.dim() == 0:"
+          , indent 4 s!"    v{id} = torch.{scalarMask}(v{p})"
+          , indent 4 "else:"
+          , indent 4 s!"    _xi{id} = v{p}.unsqueeze(-1)"
+          , indent 4 s!"    _xj{id} = v{p}.unsqueeze(-2)"
+          , indent 4 s!"    _ix{id} = torch.arange(v{p}.shape[-1], device=v{p}.device)"
+          , indent 4 (s!"    _beats{id} = (_xj{id} > _xi{id}) | " ++
               s!"((_ix{id}.unsqueeze(0) < _ix{id}.unsqueeze(1)) & ~(_xi{id} > _xj{id}))")
-          , indent 4 s!"v{id} = (_beats{id}.sum(-1) < {k}).to(v{p}.dtype)"
+          , indent 4 s!"    v{id} = (_beats{id}.sum(-1) < {k}).to(v{p}.dtype)"
           ]
     | .slice axis start length =>
         let p ← expectUnary id n.parents

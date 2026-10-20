@@ -109,8 +109,9 @@ its `rounding_mode`, `pow`, and `clamp_min` with a scalar bound.
 The family has the one shape rule in the table above, and broadcasting is an explicit
 `broadcastTo`, as for `add`. One evaluator, `Graph.evalPointwise`, applies the operator's scalar
 meaning entry by entry, and one lemma, `Graph.evalNodeRaw_shape_pointwise`, proves that inference
-and evaluation agree for every operator of the family. Consumers without rules for the family,
-such as the CROWN passes, IR lowering and backend planning, reject it with one case each.
+and evaluation agree for every operator of the family. Consumers without rules for the family, such
+as the CROWN passes and IR lowering, reject it with one case each; backend planning maps negation,
+true division and the tanh GELU to their kernels and rejects the other operators.
 
 Adding an operator to the family adds these pieces and nothing else:
 

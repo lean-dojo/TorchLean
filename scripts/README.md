@@ -40,13 +40,15 @@ Install the pinned Python dependencies for CPU interoperability checks:
 ```bash
 python3 -m pip install -r scripts/checks/requirements-interop.txt
 python3 -c 'import torch, numpy, onnx; print(torch.__version__, numpy.__version__, onnx.__version__)'
-scripts/lake.sh -Kcuda=false build NN.CI.All
+scripts/lake.sh -Kcuda=false build NN.CI.All verify
 TORCHLEAN_REQUIRE_INTEROP=1 scripts/lake.sh -Kcuda=false test
 scripts/lake.sh -Kcuda=false lint
 ```
 
-That requirements file pins CPU PyTorch 2.8.0 for the interoperability checks. It does not
-select the LibTorch backend SDK. Use a separate Python environment for these dependencies;
+That requirements file pins CPU PyTorch 2.8.0 for the interoperability checks. The live operator
+captures in `scripts/checks/test_ir_capture.py` also need the `verify` executable built above; their
+JAX cases run only where JAX is installed, and `TORCHLEAN_REQUIRE_JAX=1` turns a missing JAX into an
+error. The requirements file does not select the LibTorch backend SDK. Use a separate Python environment for these dependencies;
 installing the CPU requirements into a GPU SDK environment can replace its CUDA PyTorch package.
 
 On Linux, the build links a private allocator object rather than modifying the installed Lean

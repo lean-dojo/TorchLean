@@ -35,7 +35,7 @@ An immutable scalar-objective definition:
 - `initState` stores initial trainable parameters and persistent buffers as `Float` tensors,
 - `loss` is *polymorphic in the scalar backend* (same code works for Float/configured binary32/…).
 
-You can instantiate this definition as an `Objective` under a chosen execution mode and scalar.
+You can instantiate this definition as an `Objective` with the chosen runtime settings and scalar.
 -/
 structure ObjectiveDef (β : Type) [TorchLean.Storage β] (stateShapes inputShapes : List Shape)
     (dataInputShapes : List Shape := []) where

@@ -849,54 +849,6 @@ input.search-input[type="search"] {
   margin-top: 0;
 }
 
-.update-kicker {
-  margin: 0 0 0.45rem;
-  color: var(--tl-subtle);
-  font-size: 0.86rem;
-  font-weight: 760;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.update-summary {
-  margin: 0 0 0.85rem;
-  color: var(--tl-muted);
-  font-size: var(--tl-copy-size);
-}
-
-.update-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.8rem;
-  margin: 1rem 0;
-  min-width: 0;
-}
-
-.update-grid section {
-  min-width: 0;
-  border: 1px solid var(--tl-border);
-  border-radius: 8px;
-  padding: 0.85rem;
-  background: var(--tl-soft);
-}
-
-.update-grid h3 {
-  margin: 0 0 0.38rem;
-  font-size: 1rem;
-}
-
-.update-grid p,
-.update-grid ul {
-  margin: 0;
-  color: var(--tl-muted);
-  font-size: var(--tl-small-size);
-  line-height: 1.5;
-}
-
-.update-grid ul {
-  padding-left: 1.05rem;
-}
-
 .update-body code {
   overflow-wrap: anywhere;
 }
@@ -1527,8 +1479,7 @@ input.search-input[type="search"] {
     font-size: 0.96rem;
   }
 
-  .update-card,
-  .update-grid {
+  .update-card {
     grid-template-columns: 1fr;
   }
 

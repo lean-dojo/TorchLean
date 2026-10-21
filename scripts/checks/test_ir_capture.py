@@ -13,6 +13,7 @@ Cases skip when the checker has not been built or a frontend is not installed.
 
 import copy
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -119,6 +120,39 @@ class PyTorchCaptureTests(CheckerCase):
                     -a, torch.pow(a, 3), torch.div(a, b))
 
         self.assert_passes(self.verify(integers, a, b, checks=COMPARE))
+
+    def test_top_k_capture_keeps_unchecked_cutoff_assumption(self):
+        # Tied scores can change which experts PyTorch selects. Preserve the lowering's
+        # assumption in both artifact and report, even if this example happens to agree.
+        # Empty and full masks are independent of the tie rule.
+        torch = self.torch
+
+        def masks(x):
+            return tuple(torch.zeros_like(x).scatter(
+                -1, torch.topk(x, k, dim=-1).indices, 1.0) for k in (0, 2, 4))
+
+        with tempfile.TemporaryDirectory() as directory:
+            for values in ([1.0, 1.0, 1.0, 1.0], [3.0, 3.0, 1.0, 0.0]):
+                with self.subTest(values=values):
+                    path = Path(directory) / ("tied.json" if values[0] == 1 else "gap.json")
+                    report = torchlean.verify(masks, torch.tensor([values]), checks=EXECUTE,
+                                              checker=CHECKER, export=path)
+                    self.assert_passes(report)
+                    artifact = json.loads(path.read_text(encoding="utf-8"))
+                    constraints = artifact["capture_constraints"]
+                    self.assertEqual(len(constraints), 1)
+                    constraint = constraints[0]
+                    self.assertEqual(constraint["kind"], "top_k_mask_agreement")
+                    self.assertEqual(constraint["k"], 2)
+                    self.assertEqual(constraint["axis"], 1)
+                    self.assertEqual(constraint["status"], "not_checked")
+                    self.assertEqual(constraint["assumptions"],
+                                     ["finite_scores", "strict_cutoff_gap"])
+                    node = artifact["nodes"][constraint["node"]]
+                    self.assertEqual(node["kind"], "top_k_mask")
+                    self.assertEqual(node["parents"], [constraint["value_id"]])
+                    self.assertEqual(report["capture_constraints"], constraints)
+                    self.assertEqual(report["capture_constraints_status"], "not_checked")
 
     def test_reduced_division_and_product_match_eager_words(self):
         # Reduced-precision division and multiplication run in binary32 when the right operand is

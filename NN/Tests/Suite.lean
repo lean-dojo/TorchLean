@@ -24,7 +24,6 @@ public import NN.Tests.Tensor.Lexer
 public import NN.Tests.Tensor.NumericContracts
 public import NN.Tests.Tensor.Operations
 public import NN.Tests.Tensor.Storage
-public import NN.Tests.Tensor.Stack
 
 /-!
 # Suite
@@ -82,7 +81,6 @@ def run : IO Unit := do
     NN.Tests.Tensor.NumericContracts.run
     NN.Tests.Tensor.Operations.run
     NN.Tests.Tensor.Storage.run
-    NN.Tests.Tensor.Stack.run
     Tests.Floats.run
     match Runtime.Autograd.LibTorch.Buffer.runtimeStatus with
     | .notLinked =>

@@ -69,10 +69,10 @@ layout: null
     "text": "CUDA GPU LibTorch ATen numerical primitives Lean attention native runtime trust boundary memcheck device buffers"
   },
   {
-    "title": "Backend Selection and Trust",
+    "title": "Run Configuration",
     "url": "{{ '/blueprint/Runtime___-Autograd___-and-Interop/Choosing-How-A-Model-Runs/' | relative_url }}",
     "section": "Guide",
-    "text": "backend eager typed graph lowering CUDA LibTorch ATen PyTorch runtime provider tape backward trust boundary"
+    "text": "runtime configuration CPU GPU arithmetic native IEEE seed training evaluation mode CUDA LibTorch providers backend contracts autograd tape"
   },
   {
     "title": "Floating-Point Semantics",
@@ -162,6 +162,6 @@ layout: null
     "title": "Updates",
     "url": "{{ '/updates/' | relative_url }}",
     "section": "News",
-    "text": "updates release notes recent work roadmap status refactor backward sweep Frechet derivative shape inference soundness CROWN end to end samplesPerStep nn.compose nn.Sequential Verification.Builtin Autograd.Model"
+    "text": "updates Lean 4.35 autograd tape mixture experts MoE topKMask phased CROWN numerical fixes custom tensor computations LibTorch FloatLib precision"
   }
 ]

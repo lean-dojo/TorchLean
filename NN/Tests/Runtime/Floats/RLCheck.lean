@@ -561,9 +561,6 @@ def checkStateSplit : IO Unit := do
   let input : Tensor Float [1] := [4]
   assertBool "critic reads its state after the actor state" (value input == 10)
 
-/-- The scalar adapter cannot accept empty or multi-element outputs. -/
-example : ¬ (Shape.size [0] = 1) ∧ ¬ (Shape.size [1, 2, 1] = 1) := by decide
-
 /-- Run the complete RL runtime check suite. -/
 def run : IO Unit := do
   IO.println "rl_check: begin"

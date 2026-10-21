@@ -499,8 +499,10 @@ Mixture-of-experts routing is one operation, `top_k_mask k`, whose meaning is
 A row of `E` totally ordered scores (no NaN) gets `min k E` ones. With NaN the pairwise comparison
 can cycle, so `[0, NaN, 1]` keeps no entry for `k = 1` and all three for `k = 2`. The
 PyTorch adapter captures the usual idiom `torch.zeros_like(p).scatter(-1, torch.topk(p, k).indices,
-1)` as that node; `torch.topk` leaves the order of ties unspecified, so the two agree whenever the
-`k`-th and `k + 1`-th largest entries of a row differ. `NN/Tests/IR/MoEImport.lean` exports a
+1)` as that node. For `0 < k < E`, agreement requires finite scores and a strict gap between the
+`k`-th and `k + 1`-th largest entries; `torch.topk` leaves ties unspecified. Capture records these
+assumptions without checking them. Empty and full masks need no cutoff rule.
+`NN/Tests/IR/MoEImport.lean` exports a
 Mixtral-style block from PyTorch and checks that the imported graph computes `Spec.MoE.forwardSpec`
 bit for bit.
 
@@ -528,11 +530,11 @@ Direct `Node` construction is useful for developing IR consumers and certificate
 ## Proof And Runtime Status
 
 The IR is the object shared by proofs and runtime code, but proof coverage is named fragment by
-fragment. Current theorem work covers supported evaluator bridges, graph well-formedness
-conditions, selected checked IR-to-`ForwardGraph` lowering fragments, and verification-oriented
-bound propagation. Separately, `GraphData` lowers to the autograd tape; that typed lowering is not
-an assertion that every `NN.IR` node is differentiable. A new
-operator should therefore add three things in the right places:
+fragment. Current theorem work covers shape soundness, typed interpreter casts, relational
+execution rules, supported source-to-IR lowering fragments, and verification-oriented bound
+propagation. Separately, `GraphData` lowers to the autograd tape; that typed lowering is not an
+assertion that every `NN.IR` node is differentiable. A new operator should therefore add three
+things in the right places:
 
 - its shape contract in `OpContracts`/`Infer`;
 - its semantics in `Semantics` or a documented payload-backed evaluator;

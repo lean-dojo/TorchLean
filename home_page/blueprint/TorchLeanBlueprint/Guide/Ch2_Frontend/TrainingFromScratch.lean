@@ -977,9 +977,7 @@ session's random counter. Loading rejects
 a different optimizer configuration or parameter schema instead of silently attaching moments to
 the wrong model. Integer metadata and float32 payloads use explicit little-endian encodings, and a
 save is written to a fresh sibling file before it replaces the destination. The format is version
-5, and optimizer files written before version 5 are rejected. Resuming from such a run means
-loading only its model state, which starts a fresh optimizer without the old moments and step
-counter.
+5.
 
 That optimizer file is still not a complete training snapshot. Replaying the next batch also needs
 the loader or stream position and any external generator state. The eager dropout counter is
@@ -1123,8 +1121,9 @@ Without the explicit initial state, seeded initialization still starts with the 
 
 ## Learning-rate schedules
 
-`Trainer.Scheduler.Config` has constant, step-decay, exponential, and warmup-cosine schedules. Here
-a rate of `0.1` is halved after every three step indices:
+`Trainer.Scheduler.Config` provides constant rates, step and exponential decay, linear warm-up,
+cosine decay, cyclic triangles, one-cycle schedules, and warm-up followed by cosine decay. Here
+a step schedule halves a rate of `0.1` after every three completed optimizer updates:
 
 ```lean (name := tfDecay)
 -- Index the schedule by completed updates, including zero

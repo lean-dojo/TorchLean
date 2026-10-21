@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Engine.LibTorch.Ops
-public import NN.Tests.Runtime.Cuda.MatmulSupport
 public import NN.Spec.Core.Random
 public import NN.Tensor
 public import NN.Tests.Runtime.Cuda.Utils
@@ -481,6 +480,22 @@ def runLargeBufferStress : IO Unit := do
 def runMatmulStress : IO Unit := do
   IO.println "== ATen matmul reference parity stress =="
 
+  -- Preserve binary64 uploads and reject dimensions or result sizes outside the ABI contract.
+  let matmul (dtype : LibTorch.Dtype) {m n p : Nat}
+      (a : Tensor Float [m, n]) (b : Tensor Float [n, p]) :
+      Result (Tensor Float [m, p]) := do
+    let rows ← SomeBuffer.natToU32Checked m
+    let inner ← SomeBuffer.natToU32Checked n
+    let columns ← SomeBuffer.natToU32Checked p
+    let upload {r c : Nat} (x : Tensor Float [r, c]) :=
+      Buffer.ofFloatArray (LibTorch.Convert.flattenFloat x) dtype
+    let flat := Buffer.toFloatArray (Buffer.bmm (upload a) (upload b) 1 rows inner columns)
+    match LibTorch.Convert.unflattenFloat? (s := [m, p]) flat with
+    | some tensor => pure tensor
+    | none =>
+        throw s!"autograd: native matmul: ATen {repr dtype} bmm returned {flat.size} elements, \
+          expected {m * p}"
+
   -- Rectangular case: catches row-major/column-major leading-dimension mistakes that square
   -- matrices can accidentally hide.
   let sA1 : Shape := [3, 4]
@@ -501,9 +516,9 @@ def runMatmulStress : IO Unit := do
     ]).reshape [4, 5] (by dsimp; decide)
   let yRef1 := Tensor.matmul (α := Float) (m := 3) (n := 4) (p := 5) a1 b1
   let yFp321 ← IO.ofExcept
-    (MatmulSupport.matmul .fp32 (m := 3) (n := 4) (p := 5) a1 b1)
+    (matmul .float32 (m := 3) (n := 4) (p := 5) a1 b1)
   let yFp641 ← IO.ofExcept
-    (MatmulSupport.matmul .fp64 (m := 3) (n := 4) (p := 5) a1 b1)
+    (matmul .float64 (m := 3) (n := 4) (p := 5) a1 b1)
   Utils.assertTensorApprox (s := sY1) "matmul stress case1 fp32" yFp321 yRef1 (tol := 7e-3)
   Utils.assertTensorApprox (s := sY1) "matmul stress case1 fp64" yFp641 yRef1 (tol := 1e-9)
 
@@ -518,9 +533,9 @@ def runMatmulStress : IO Unit := do
     (Tensor.from #[0.10, 0.20, -0.30, 0.40, -0.50, 0.60, -0.70]).reshape [7, 1] (by dsimp; decide)
   let yRef2 := Tensor.matmul (α := Float) (m := 1) (n := 7) (p := 1) a2 b2
   let yFp322 ← IO.ofExcept
-    (MatmulSupport.matmul .fp32 (m := 1) (n := 7) (p := 1) a2 b2)
+    (matmul .float32 (m := 1) (n := 7) (p := 1) a2 b2)
   let yFp642 ← IO.ofExcept
-    (MatmulSupport.matmul .fp64 (m := 1) (n := 7) (p := 1) a2 b2)
+    (matmul .float64 (m := 1) (n := 7) (p := 1) a2 b2)
   Utils.assertTensorApprox (s := sY2) "matmul stress case2 fp32" yFp322 yRef2 (tol := 7e-3)
   Utils.assertTensorApprox (s := sY2) "matmul stress case2 fp64" yFp642 yRef2 (tol := 1e-9)
 

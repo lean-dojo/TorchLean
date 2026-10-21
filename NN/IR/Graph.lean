@@ -17,7 +17,7 @@ Today it is used as the shared target for:
 - TorchLean to verifier lowering (`NN/Verification/Builtin/Lowering.lean`),
 - bound-propagation / verification tooling (CROWN/LiRPA) (`NN/MLTheory/CROWN/Graph.lean`),
 - IR → PyTorch emission (`NN/Runtime/PyTorch/Export/IRPyTorch.lean`),
-- compact example graphs (e.g. `NN/Examples/DeepDives/GraphSpec/Tutorial.lean`).
+- compact example graphs (e.g. `NN/Examples/DeepDives/IRAxisOps.lean`).
 
 `NN.IR.Operator` defines the operations and their static attributes. This file adds node identities,
 dependencies, and declared output shapes. Parameter payloads (weights, biases, and constants) live

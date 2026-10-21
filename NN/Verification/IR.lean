@@ -17,6 +17,9 @@ arguments or compares supplied reference outputs. The result states the scope of
 each check. Passing these checks is not a theorem about all inputs, a proof of the
 frontend translation, or a validation of external kernels.
 
+The report preserves the artifact's `capture_constraints` as unchecked metadata. Structure,
+type and example-execution checks do not establish these conditions for all inputs.
+
 `compare` treats two NaN results as equal whatever their sign and payload, which the IR leaves
 unspecified; `compare_bitwise` requires equal words for NaNs too. Any other difference between the
 IR's results and the reference fails. For a Jaxpr artifact whose reference XLA's CPU backend
@@ -1065,6 +1068,8 @@ def check (artifact : Json) (requests : Array String := #["structure", "types"])
   return Json.mkObj [
     ("format", toJson "torchlean.verification.v1"), ("ok", toJson ok),
     ("checks", toJson findings), ("outputs", outputs), ("conversion_flags", conversionFlags),
+    ("capture_constraints", (artifact.getObjVal? "capture_constraints").toOption.getD (.arr #[])),
+    ("capture_constraints_status", toJson "not_checked"),
     ("frontend_equivalence", toJson "not_checked"),
     ("frontend_device_layout_constraints", toJson "not_checked"),
     ("external_kernels", toJson "not_checked")]

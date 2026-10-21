@@ -66,7 +66,14 @@ For example, `aten.log.default` lowers to `log`; `log1p`, `log2`, and `log_softm
 lowerings and are rejected. `aten.slice.Tensor` with step one lowers to `slice`. The
 mixture-of-experts routing idiom `torch.zeros_like(p).scatter(-1, torch.topk(p, k).indices, 1)`
 lowers to one `top_k_mask` node; the `topk` call and the zeros it scatters into must have no other
-users. Mutating overloads, `view(dtype)` reinterpretation, `dtype` arguments of reductions and
+users. For partial selection (`0 < k < width`), the artifact's `capture_constraints` records the
+assumption that each score row is finite and its `k`-th largest score is strictly above its
+`(k+1)`-th. Without that gap, PyTorch may select different tied experts from the IR's lower-index
+rule. Selecting zero or all entries needs no gap. The check report preserves these constraints
+with `capture_constraints_status="not_checked"`; a successful structure, type or sample check
+does not prove them for other inputs.
+
+Mutating overloads, `view(dtype)` reinterpretation, `dtype` arguments of reductions and
 softmax, and unsupported tuple producers are rejected before the adapter writes an artifact.
 
 The core ATen pointwise operators `neg`, `rsqrt`, `erf` and `gelu`, every core overload of `div` and

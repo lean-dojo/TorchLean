@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.API
-public import NN.Examples.Quickstart.Common
 
 /-!
 # Quickstart: Training a Small MLP
@@ -74,21 +73,24 @@ def main (args : List String) : IO Unit := do
   if CLI.hasHelp args then
     IO.println usage
     return
-  let flags ← parseFlags exeName args (defaultSteps := 200)
+  let (seed, args) ← CLI.orThrow exeName <| CLI.takeSeed args
+  let (steps, args) ← CLI.orThrow exeName <|
+    CLI.takePositiveNatFlag args exeName "steps" 200
+  let runtime ← CLI.Trainer.parseCommandLine exeName args
 
   let trainer := Trainer.new model
-    { flags.runtime with
+    { runtime with
         objective := mse
         optimizer := optim.adam { lr := 0.03 }
-        seed := flags.seed }
+        seed := seed }
 
-  IO.println s!"== Quickstart: simple MLP training (seed={flags.seed}, steps={flags.steps}) =="
+  IO.println s!"== Quickstart: simple MLP training (seed={seed}, steps={steps}) =="
   let heldout : Tensor Float [2] := [0.25, -0.75]
   IO.println s!"target(heldout)    = {reprStr (target heldout)}"
   let untrained ← trainer.predict heldout
   IO.println s!"untrained(heldout) = {reprStr untrained}"
 
-  let trained ← trainer.train data { steps := flags.steps, logEvery := 25 }
+  let trained ← trainer.train data { steps := steps, logEvery := 25 }
   trained.printSummary
   trained.printPrediction "trained(heldout)" heldout
 

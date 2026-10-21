@@ -32,8 +32,10 @@ interchange words for `Import.IR.parseProgram` and its typed payload loader. Con
 pointwise tensor promotions become explicit cast nodes, two of them when an integer, Boolean or
 binary64 value becomes binary16 or bfloat16, which `c10::convert` makes from binary32. Pointwise
 broadcasting is explicit too.
-Metadata assertions supported by capture are retained as `capture_constraints`. Physical device
-and layout constraints are not validated by the CPU reference interpreter.
+Metadata assertions and assumptions needed by a lowering are retained as `capture_constraints`.
+For example, partial top-k routing assumes finite scores and a strict gap at the cutoff;
+capturing one example does not establish those conditions for every input. The CPU reference
+interpreter does not validate these assumptions or physical device and layout constraints.
 
 `example` may be one tensor or a tuple of positional tensors. Argument order comes from
 `torch.export`'s graph signature, not from parameter placeholder order. Unused user arguments
@@ -724,9 +726,11 @@ def header : Array String :=
 
 /-- Mixture-of-experts routing written as `torch.zeros_like(p).scatter(-1, torch.topk(p, k,
 dim=-1).indices, 1.0)`, captured as one `top_k_mask` node over `p`. TorchLean's mask keeps ties for
-the lower index; `torch.topk` documents no tie order, so the two agree whenever the `k`-th and
-`k + 1`-th largest entries of a row differ. The zeros and the mask must have `p`'s dtype, since the
-mask node inherits it; any other dtype is left to the ordinary operator checks, which reject a
+the lower index; `torch.topk` documents no tie order. For `0 < k < width`, agreement assumes finite
+scores and different `k`-th and `k + 1`-th largest entries in each row. The artifact records these
+conditions as unchecked `capture_constraints`; keeping no entries or every entry needs neither
+condition. The zeros and the mask must have `p`'s dtype, since the mask node inherits it;
+any other dtype is left to the ordinary operator checks, which reject a
 `zeros_like` dtype override. The `topk` call, its index projection and the zeros exist only to
 build the mask and are not exported. -/
 def routing : Array String :=
@@ -1330,7 +1334,19 @@ def entrypoint (options : Options) : Array String :=
    , indent 8 "        continue"
    , indent 8 "    parents = _node_refs((node.args, node.kwargs), node_to_id)"
    , indent 8 "    if kind['kind'] == " ++ Wire.quoted .topKMask ++ ":"
-   , indent 8 "        parents = _node_refs((_top_k_mask(node)[0],), node_to_id)"
+   , indent 8 "        source, k = _top_k_mask(node)"
+   , indent 8 "        parents = _node_refs((source,), node_to_id)"
+   , indent 8 "        source_shape = _shape_from_arg(source)"
+   , indent 8 "        width = source_shape[-1] if source_shape else 1"
+   , indent 8 "        if 0 < k < width:"
+   , indent 8 "            capture_constraints.append({"
+   , indent 8 "                'kind': 'top_k_mask_agreement', 'node': node_id,"
+   , indent 8 "                'value': source.name, 'value_id': parents[0], 'k': k,"
+   , indent 8 "                'axis': len(source_shape) - 1, 'status': 'not_checked',"
+   , indent 8 "                'assumptions': ['finite_scores', 'strict_cutoff_gap'],"
+   , indent 8 "                'message': 'Each score row is finite, with its k-th largest score '"
+   , indent 8 "                           'strictly above its (k+1)-th. PyTorch tie selection may '"
+   , indent 8 "                           'otherwise differ from the IR lower-index rule.'})"
    , indent 8 ("    elif kind['kind'] in " ++
        "('add', 'sub', 'mul_elem', 'max_elem', 'min_elem', 'matmul'):")
    , indent 8 ("        left = node.args[0] if node.args else " ++

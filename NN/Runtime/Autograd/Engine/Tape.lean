@@ -16,10 +16,10 @@ type `V`: the CPU stores `Spec.SomeTensor α`, CUDA stores `LibTorch.SomeBuffer`
 parents and a local VJP, and the reverse sweeps below walk node ids from last to first, summing the
 contributions that several children send to one parent.
 
-The sweep is written once. What differs between devices is how a gradient is checked against the
-value it belongs to, how two gradients are added, and, on CUDA, who owns a device buffer; the
-`GradValue` class collects exactly those operations. The CPU instance leaves ownership alone, so on
-the CPU every hook is a pure tensor operation.
+The dense sweeps are shared between devices. `GradValue` supplies device-specific gradient checks,
+addition, and buffer ownership; the CPU hooks are pure tensor operations. CUDA training also uses
+the sparse `LibTorch.Tape.backwardSparse` traversal in
+`NN.Runtime.Autograd.Engine.LibTorch.Tape`, which releases unretained gradients in `IO`.
 
 Two traversals live here, and it matters which one a caller runs:
 * `backwardDense` (and its totalized form `backwardDenseAll`) keeps an `Option` per node and runs a

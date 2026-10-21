@@ -50,7 +50,7 @@ scripts/lake.sh -Kcuda=true exe torchlean ppo_cartpole --device cuda \
 Artifacts:
 - The executable writes a widget-friendly training curve JSON to
   `data/rl/ppo_cartpole_trainlog.json` (override with `--log <path>`).
-- Visualize it in the editor via `NN/Examples/Models/RL/Views/PPOCartPole.lean`.
+- Inspect it with `#train_log_file_view`; see the artifact examples in this directory's README.
 
 ## What this run does (and does not) guarantee
 

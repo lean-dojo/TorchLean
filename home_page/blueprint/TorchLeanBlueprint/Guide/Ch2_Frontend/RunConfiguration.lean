@@ -233,7 +233,6 @@ target(heldout)    = [0.200000]
 untrained(heldout) = [-0.088261]
 dataset size = 25
 mean_loss(before training) = 0.495227
-step 0: loss=0.250488
 mean_loss(after training) = 0.401184
 steps=20 arithmetic=native scalar=Float32 loss=0.495227 -> 0.401184
 trained(heldout) = [0.365380]

@@ -47,7 +47,6 @@ updates, and verification checkers.
 | `Optim` | Executable optimizer equations. Public optimizer names are re-exported through `TorchLean.optim`; learning-rate schedules belong to `TorchLean.Trainer.Scheduler`. |
 | `PyTorch` | State-dict, Torch export, ONNX, and IR-to-PyTorch bridges used for round-trip checks and external model exchange. |
 | `RL` | Gymnasium sessions, typed environments, PPO/DQN helpers, rollouts, and boundary checks for reinforcement learning examples. |
-| `External` | Small process helpers for executable integrations that deliberately leave Lean's kernel. |
 | `Training` | Training-log records shared by examples, plots, widgets, and command-line runs. |
 
 ## Execution Choices

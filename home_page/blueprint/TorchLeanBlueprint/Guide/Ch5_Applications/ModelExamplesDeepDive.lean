@@ -834,8 +834,7 @@ Bins 24 through 31 are frequencies $`-8` through $`-1`, so the retained set is e
 frequencies with $`|k|\le 8`, minus the positive $`8`. A real input has a conjugate-symmetric
 spectrum, but this retained set omits positive frequency
 8 while retaining -8, and the learned complex weights are independent. The portable layer takes the
-real part of its inverse transform; keeping two bands alone does not establish conjugate symmetry
-or equivalence to the retained-bin real-FFT parameterization used by older CUDA runs.
+real part of its inverse transform; keeping two bands alone does not establish conjugate symmetry.
 
 At `modes=16`, the bands meet and retain the whole axis. Each frequency has its own learned
 channel map; this does not mix distinct frequency bins. The
@@ -855,7 +854,7 @@ of the portable path's 4,193 stored numbers have zero data-loss gradient on fini
 An optimizer with weight decay or existing momentum can still change them; zero loss gradient is
 not the same as immutable state.
 
-CPU and GPU now use the same full-spectrum model and checkpoint layout.
+CPU and GPU use the same full-spectrum model and checkpoint layout.
 The full-spectrum construction supports any number of spatial axes with a uniform representation,
 at the cost of unused weight slices. For $`N=\prod_a n_a` spatial points, its full-grid dense
 reference takes
@@ -876,9 +875,7 @@ are independent of the selected device. There is no separate FNO-specific CUDA t
 
 TorchLean owns the tape, optimizer, and explicit gradient rules on both devices.
 
-Older runs of this example used a retained-bin real-FFT model on CUDA. That representation had
-different parameters; its weights are not interchangeable with this full-spectrum model.
-New CPU/GPU runs can share the model layout, but floating-point reduction order and rounding
+CPU/GPU runs share the model layout, but floating-point reduction order and rounding
 can still differ. Numerical comparisons need tolerances and aligned optimizer state; speed
 comparisons need matched workloads and measurements on the target device.
 

@@ -14,7 +14,7 @@ the panel identifies any checker it runs.
 | `RL` | GridWorld policies/paths, PPO rollouts, transition contracts |
 | `Interop` | PyTorch constructor recognition and model sketches |
 
-Start with `NN/Examples/Quickstart/Widgets.lean` or `NN/Examples/DeepDives/Widgets.lean`.
+Start with the [widget gallery](../Examples/DeepDives/Widgets.lean).
 File-backed views show an error panel for missing or malformed artifacts.
 
 Training and text models share `#train_log_view` and `#train_log_file_view`; multiline notes retain

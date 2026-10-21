@@ -17,6 +17,8 @@ These tests pin down both sides of the public tensor contract:
 * mixed-element arithmetic promotes once into the inferred output storage.
 
 The buffer witnesses below fail to typecheck if instance selection regresses.
+Compiled stacking uses the unproved `stackFast` implementation, so its values are compared
+with coordinate construction, including signed zeros, NaN payloads, and empty tensors.
 -/
 
 @[expose] public section
@@ -106,10 +108,40 @@ def checkRationalPromotion : IO Unit := do
     let converted := tensor.cast Float
     expect "rational Float rounding" ((converted.getScalar 0).toBits == expected)
 
+/-- Compare compiled stacking with coordinate construction on packed and boxed storage. -/
+def checkStack : IO Unit := do
+  let components : Fin 5 → Tensor Float [2, 3] := fun i =>
+    Tensor.generateFlat [2, 3] fun index =>
+      if index % 3 = 0 then
+        if index = 0 then -0.0 else Float.ofBits 0x7ff8000000000017
+      else (i.val * 10 + index).toFloat
+  let actual := TorchLean.Tensor.Internal.Rep.stack components
+  let expected : Tensor Float [5, 2, 3] :=
+    TorchLean.Tensor.Internal.Rep.ofFn fun coordinate => components coordinate.1 coordinate.2
+  expect "Float stacking agrees bit for bit with coordinate construction"
+    (Tensor.foldl (· && ·) true
+      (TorchLean.Tensor.Internal.Rep.zipWith (fun x y => x.toBits == y.toBits) actual expected))
+  let boxed : Fin 4 → Tensor Nat [3] := fun i =>
+    Tensor.ofFn fun j => i.val * 100 + j.val
+  let boxedActual := TorchLean.Tensor.Internal.Rep.stack boxed
+  let boxedExpected : Tensor Nat [4, 3] :=
+    TorchLean.Tensor.Internal.Rep.ofFn fun coordinate => boxed coordinate.1 coordinate.2
+  expect "boxed stacking agrees with coordinate construction"
+    (Tensor.foldl (· && ·) true
+      (TorchLean.Tensor.Internal.Rep.zipWith (· == ·) boxedActual boxedExpected))
+  let emptyTail := TorchLean.Tensor.Internal.Rep.stack
+    (fun (_ : Fin 6) => Tensor.full [0] (0 : Float))
+  let emptyHead := TorchLean.Tensor.Internal.Rep.stack
+    (fun (i : Fin 0) => (nomatch i : Tensor Float [3]))
+  expect "stacking preserves empty outputs"
+    (Tensor.foldl (fun count _ => count + 1) (0 : Nat) emptyTail == 0 &&
+      Tensor.foldl (fun count _ => count + 1) (0 : Nat) emptyHead == 0)
+
 /--
 Check native slice bounds, aliasing, scalar conversion, and mixed-element arithmetic.
 -/
 def run : IO Unit := do
+  checkStack
   checkRationalPromotion
   checkByteSliceBounds
   let emptyRow : Tensor Nat [0] := Tensor.from (#[] : Array Nat)

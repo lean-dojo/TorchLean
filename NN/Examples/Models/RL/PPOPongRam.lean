@@ -52,7 +52,7 @@ installation. It is available through the runner but is not part of the default 
 
 Artifacts:
 - Writes `data/rl/ppo_pong_ram_trainlog.json` by default (override with `--log`).
-- Visualize it in the editor via `NN/Examples/Models/RL/Views/PPOPongRam.lean`.
+- Inspect it with `#train_log_file_view`; see the artifact examples in this directory's README.
 
 References (primary):
 - Schulman et al., "Proximal Policy Optimization Algorithms" (2017):

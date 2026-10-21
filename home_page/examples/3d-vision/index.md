@@ -36,8 +36,9 @@ Lean checks that image dimensions are positive, the box is ordered and inside th
 supplied points have positive projected depth, every projected point is inside the image, and
 every projected point is enclosed by the claimed 2D box expanded by `tol` in each direction.
 The tolerance must be nonnegative. It does not relax the positive-depth or image-bound checks. These checks do not establish that the
-points form a cuboid or that a detector found the right object. For an empty point set, the
-pointwise conditions are vacuous; the image and box checks still apply.
+points form a cuboid or that a detector found the right object. The Lean structure permits an
+empty point set, for which the pointwise conditions are vacuous; the JSON importer requires at
+least one point.
 
 We'll collect these tensors in a camera certificate. The excerpts below use the
 `NN.Verification.Geometry3D.Box3D` namespace and omit the surrounding scalar-instance parameters:
@@ -148,10 +149,8 @@ The JSON artifacts go under `_external/geometry3d/realworld/`; the overlays and
 
 Here's the JSON we'll pass to the checker. We can use the same format with WildDet3D, Omni3D,
 or another detector that exports the camera and box fields. The artifact must declare a positive
-`point_count` that matches the number of triples in `corners3d`; a cuboid has eight. The checker
-rejects `torchlean.camera.box3d.v1` artifacts. Regenerate them with the current exporters, or retag
-an eight-corner v1 file by setting `"format"` to `torchlean.camera.box3d.v2` and adding
-`"point_count": 8`.
+`point_count` that matches the number of triples in `corners3d`; a cuboid has eight. Its `format`
+is `torchlean.camera.box3d.v2`.
 
 ```json
 {

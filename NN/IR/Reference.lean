@@ -75,9 +75,13 @@ def write : (dtype : DType) → scalar dtype → Except String Nat
 def integerToBinary (target : FloatFormat) (rounding : Model.IEEERoundingMode) (value : Int) :
     Binary.Scalar target × ExecFloat.ConversionStatus :=
   let rounded := Model.roundRatQWithRounding target rounding value
+  let status := Model.dyadicRoundingStatus target rounding
+    (FloatLib.Numerics.Dyadic.ofScaledInt value 0) rounded
   (ExecFloat.Binary.ofModel rounded,
-    { inexact := Model.toRat? rounded != some (value : Rat)
-      overflow := Model.isInf rounded })
+    { inexact := status.inexact
+      overflow := status.overflow
+      underflow := status.underflow
+      invalid := status.invalid })
 
 /-- Reuse directed binary conversion; integers and Booleans round their exact value once.
 

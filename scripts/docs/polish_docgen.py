@@ -1424,10 +1424,15 @@ def polish_importgraph(page: Path) -> None:
     html = page.read_text(encoding="utf-8")
     html = html.replace('  <link rel="stylesheet" href="style.css" />\n', "")
     html = html.replace(
-        'var docs_url = params.get("docs_url") || '
-        '"https://leanprover-community.github.io/mathlib4_docs/";',
-        'var docs_url = params.get("docs_url") || '
-        'new URL("../docs/", window.location.href).href;',
+        'var doc_url = "https://leanprover-community.github.io/mathlib4_docs/";',
+        'var doc_url = new URL("../docs/", window.location.href).href;',
+    )
+    # The graph includes dependencies whose pages we publish at their upstream site.
+    html = html.replace(
+        'window.open(doc_url + path.join(\'/\') + ".html");',
+        f'const upstream = {json.dumps(sorted(DOCGEN_DEPENDENCY_MODULES))};\n'
+        f'    const base = upstream.includes(path[0]) ? "{UPSTREAM_DOCGEN_BASE}" : doc_url;\n'
+        '    window.open(base + path.join(\'/\') + ".html");',
     )
     if 'id="torchlean-importgraph-controls"' not in html:
         controls = """<style id="torchlean-importgraph-controls">

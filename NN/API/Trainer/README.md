@@ -144,12 +144,44 @@ and converted at the data boundary rather than passed to the one-hot objective a
 - `optimizer`;
 - `arithmetic`;
 - `device`;
+- `seed`;
 - optional backend-contract selection and reporting.
 
-`Trainer.Config` extends `RunConfig` with `objective` and `seed`, so the same field names work in
+`Trainer.Config` extends `RunConfig` with `objective`, so the runtime field names work in
 `Trainer.new` and in a stored `RunConfig`. These settings change how the same checked model runs.
 They do not create separate model types or separate training methods. Command-line parsing of the
 runtime flags lives in `NN.API.CLI.Trainer`, shared by application commands and examples.
+
+## Learning-Rate Schedules
+
+Pass `scheduler := some schedule` in `TrainOptions`, or when opening a session. The schedule uses
+the number of completed optimizer updates: the first update reads `schedule.rate 0`. Its arithmetic
+uses `Float`, and each rate is converted to the optimizer's scalar before the update.
+
+`Trainer.Scheduler` provides constant, step and exponential decay, linear warm-up, cosine decay,
+cyclic triangles, one-cycle schedules, and warm-up followed by cosine decay. For example:
+
+```lean
+open Trainer.Scheduler
+
+def decay : Config := warmupCosine 0.001 0.00001 100 1000
+def cycling : Config := cyclic 0.0001 0.001 100 (cycleDecay := 0.5)
+def onePass : Config := oneCycle 0.0001 0.001 0.00001 100 1000
+```
+
+`linearWarmup start peak steps` reaches the peak at `steps` and holds it. `cosine base min steps`
+holds the minimum after `steps`; `periodic := true` repeats a full cosine every `2 * steps`.
+`cyclic` repeats equal-length linear rises and falls, scaling the amplitude by `cycleDecay` after
+each cycle. `oneCycle` reaches its peak at `riseSteps`, reaches its final rate at `totalSteps`, and
+holds that final rate. Its default interpolation is cosine; `annealing := Annealing.linear` selects
+linear phases. These integer phase boundaries do not reproduce PyTorch's fractional OneCycleLR convention.
+Only learning rates change; these schedules do not cycle momentum or Adam's beta coefficients.
+
+Sessions validate rates, endpoint ordering, phase lengths and the largest rate after scalar
+conversion before attaching a schedule. Zero-duration linear warm-up selects the peak immediately;
+zero-duration cosine selects the minimum. Cyclic half-cycles and both one-cycle phases must be
+positive. The existing `warmupCosine` convention uses a positive first warm-up rate,
+`peak / warmupSteps`, while `linearWarmup` starts at its explicit starting rate.
 
 ## Driving The Loop Yourself
 

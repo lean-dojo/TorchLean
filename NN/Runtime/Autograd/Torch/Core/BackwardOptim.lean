@@ -40,6 +40,7 @@ def backwardDenseAllCuda {α : Type} [TorchLean.Storage α] [TensorTransfer α]
     (s : EagerSession α)
   {sh : Shape} (out : TensorRef α sh) (seed : Tensor α sh) :
   IO (Array Runtime.Autograd.LibTorch.SomeBuffer) := do
+  s.validateTensorRef out
   if Config.device s.options != .cuda then
     throw <| IO.userError "torch: backwardDenseAllCuda called on non-CUDA eager session"
   let t ← s.cudaTape
@@ -64,6 +65,7 @@ def backwardScalarParamGradsCuda {α : Type} [TorchLean.Storage α] [TensorTrans
     (s : EagerSession α)
     [One α]
     (loss : TensorRef α Shape.scalar) (seed : α := 1) : IO LibTorch.Tape.SparseGradMap := do
+  s.validateTensorRef loss
   if Config.device s.options != .cuda then
     throw <| IO.userError "torch: backwardScalarParamGradsCuda called on non-CUDA eager session"
   let t ← s.cudaTape
@@ -112,6 +114,7 @@ def backwardDenseAll {α : Type} [TorchLean.Storage α] [TensorTransfer α]
     (s : EagerSession α) [Add α] [Zero α]
   {sh : Shape} (out : TensorRef α sh) (seed : Tensor α sh) :
   IO (Array (Spec.SomeTensor α)) := do
+  s.validateTensorRef out
   if Config.device s.options == .cuda then
     let gradsDev ← backwardDenseAllCuda (α := α) s (sh := sh) out seed
     gradsDev.mapM (fun g => CudaBridge.ofSomeBuffer (α := α) g)
@@ -122,6 +125,10 @@ def backwardDenseAll {α : Type} [TorchLean.Storage α] [TensorTransfer α]
 
 /--
 Extract the gradient for a particular `TensorRef` from a dense gradient array.
+
+`grads` must come from the same recording as `x`. The array stores tensor values without session
+identity, so this function checks only the index and shape. A saved array can still be read with
+its original references after the session is reset.
 -/
 def grad {α : Type} [TorchLean.Storage α] {sh : Shape}
   (grads : Array (Spec.SomeTensor α)) (x : TensorRef α sh) : IO (Tensor α sh) := do

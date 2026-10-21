@@ -97,34 +97,23 @@ def main (args : List String) : IO Unit := do
   if CLI.hasHelp args then
     IO.println usage
     return
-  let flags ← parseFlags exeName args (defaultSteps := 200)
+  let (seed, args) ← CLI.orThrow exeName <| CLI.takeSeed args
+  let (steps, args) ← CLI.orThrow exeName <|
+    CLI.takePositiveNatFlag args exeName "steps" 200
+  let runtime ← CLI.Trainer.parseCommandLine exeName args
 
   let trainer := Trainer.new model
-    { flags.runtime with
+    { runtime with
         objective := mse
         optimizer := optim.adam { lr := 0.03 }
-        seed := flags.seed }
+        seed := seed }
   ...
 ```
 
 The command drops a leading `--`, answers `--help` if present, and parses the remaining arguments
 before constructing the trainer. The full file is
-{src "NN/Examples/Quickstart/SimpleMlpTrain.lean"}[`SimpleMlpTrain.lean`]. Its `parseFlags`
-helper in
-{src "NN/Examples/Quickstart/Common.lean"}[`Common.lean`] passes each parser the previous remainder:
-
-```
--- Each parser consumes its own flag and passes the
--- remainder to the next parser.
-def parseFlags (exeName : String) (args : List String) (defaultSteps : Nat) : IO Flags := do
-  let (seed, args) ← CLI.orThrow exeName <| CLI.takeSeed args
-  let (steps, args) ← CLI.orThrow exeName <|
-    CLI.takePositiveNatFlag args exeName "steps" defaultSteps
-  let runtime ← CLI.Trainer.parseCommandLine exeName args
-  pure { seed, steps, runtime }
-```
-
-Each binding of `args` contains only the arguments left by the previous parser. After consuming
+{src "NN/Examples/Quickstart/SimpleMlpTrain.lean"}[`SimpleMlpTrain.lean`]. Each binding of `args`
+contains only the arguments left by the previous parser. After consuming
 `--seed` and `--steps`, `CLI.Trainer.parseCommandLine` handles runtime flags and checks for anything
 left over. The shared functions in {src "NN/API/CLI.lean"}[`NN/API/CLI.lean`] expose this remainder
 in their return types:

@@ -1001,7 +1001,7 @@ The full transcript also prints the leading scalars. The example checks the grap
 selected output. The tutorial supplies the graphs and prints the results;
 validation and execution live in the runtime library. This is the Lean tensor evaluator, not
 LibTorch dispatch. Choose the scalar with `--arithmetic native`, `ieee`, or `complex`; this command
-does not accept device, execution-mode, or backend-reporting flags.
+does not accept device or backend-reporting flags.
 
 Change the graph's `concat (axis := 1)` to an out-of-range axis in
 {src "NN/Examples/DeepDives/IRAxisOps.lean"}[`IRAxisOps.lean`] and shape inference rejects the node

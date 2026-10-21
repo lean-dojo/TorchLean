@@ -172,17 +172,15 @@ receives no gradient. CUDA computes it with a comparison kernel; the CPU tape ev
 def topKMask {α : Type} [Storage α] [Context α] [TensorTransfer α]
     (s : EagerSession α) {sh : Shape} (k : Nat)
     (x : TensorRef α sh) : IO (TensorRef α sh) := do
-  s.validateTensorRef x
-  if Config.device s.options == .cuda then
+  let cuda := do
     let tape ← s.cudaTape
     if let some stored := tape.getValue? x.id then
       if (Runtime.Autograd.LibTorch.Buffer.format? stored.buf).isSome then
         throw <| IO.userError
           "autograd: configured GPU arithmetic does not support `top_k_mask`; use CPU"
-    let id ← s.recordCuda fun t0 => keepTapeOnError t0 <|
+    s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.LibTorch.Tape.topKMask (t := t0) (s := sh) k x.id
-    s.makeTensorRef id
-  else
+  let cpu := do
     let value ← getValue (α := α) s (sh := sh) x
     let node : Runtime.Autograd.Node (Spec.SomeTensor α) :=
       { name := some "top_k_mask"
@@ -190,8 +188,8 @@ def topKMask {α : Type} [Storage α] [Context α] [TensorTransfer α]
         requiresGrad := false
         parents := #[x.id]
         backward := fun _ => .ok #[] }
-    let id ← s.recordCpuPure fun tape => Runtime.Autograd.Tape.addNode tape node
-    s.makeTensorRef id
+    s.recordCpuPure fun tape => Runtime.Autograd.Tape.addNode tape node
+  executeRecorded s .topKMask #[x.identity?] cpu cuda
 
 /-- Record elementwise ReLU. PyTorch: `torch.relu` / `torch.nn.functional.relu`. -/
 def relu {α : Type} [TorchLean.Storage α] (s : EagerSession α)

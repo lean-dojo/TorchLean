@@ -21,6 +21,11 @@ says how to rebuild. The Lean tape owns differentiation; native calls use a no-g
 CPU evaluation dynamic library is loaded for native CPU `#eval` calls. GPU tests run as
 compiled executables.
 
+On Linux, interpreted GPU calls can load Lean's bundled exception unwinder alongside a
+GCC-built SDK's unwinder. If a caught SDK exception instead aborts under `#eval` or `lean --run`,
+select the SDK's `libgcc_s.so.1` with `LD_PRELOAD` for that process only. The C++ regression
+harness selects the host unwinder explicitly when linking. Do not set this override globally.
+
 The canonical mixed-graph runner uses IO primitives for axis-aware softmax and grouped convolution.
 Convolution folds leading axes into a batch, packs the dense group-diagonal IR weights into ATen's
 layout, and supports dilation and independent zero padding on each side. Both interfaces validate

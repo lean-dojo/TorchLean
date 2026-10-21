@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import NN.Examples.Models.Common
+public import NN.Examples.Models.Common.RealData
 public import NN.Examples.Models.Supervised
 public import NN.Examples.Models.Vision
 public import NN.Examples.Models.Sequence

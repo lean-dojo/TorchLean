@@ -117,10 +117,11 @@ namespace ObjectiveDef
 /--
 Create a reusable no-gradient evaluator over an existing live parameter list.
 
-This is useful when two definitions share the same parameter layout but differ in execution mode,
-for example training and evaluation losses for a model containing dropout. The evaluator shares
-the parameter objects and their current backend storage with the training module. Its eager session
-is reset after every call, so repeated validation does not retain one execution graph per batch.
+This is useful when two definitions share the same parameter layout but differ in train/eval
+behavior, for example training and evaluation losses for a model containing dropout. The evaluator
+shares the parameter objects and their current backend storage with the training module. Its eager
+session is reset after every call, so repeated validation does not retain one execution graph per
+batch.
 -/
 def evaluator
     {α β : Type} [TorchLean.Storage α] [TorchLean.Storage β]

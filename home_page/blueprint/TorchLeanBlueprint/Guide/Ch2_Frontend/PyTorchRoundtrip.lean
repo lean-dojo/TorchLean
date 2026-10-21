@@ -214,7 +214,7 @@ Epoch 150, Loss: 0.000000
 Final output: tensor([[1.0000]], grad_fn=<AddmmBackward0>)
 Saved trained weights to .../NN/Examples/Interop/PyTorch/MLP/mlp.json
 Original (fresh init) output: tensor([[-0.0945]], grad_fn=<AddmmBackward0>)
-Training improved output by: 1.094462
+Output change from initialization: 1.094462
 ```
 
 This run fits one input-target pair, $`x=(0.5,0.8)` and $`y=1`, using two hundred SGD steps at
@@ -279,11 +279,9 @@ The decimal strings retain enough significant digits for finite binary32 values 
 values, while `meta.dtype` separately records their source dtype. The importer still constructs
 host `Float` tensors; source dtype metadata does not select the arithmetic of the Lean forward pass.
 
-The retained transcript's last label says `Training improved output by`. The current script labels
-that same absolute change `Output change from initialization`. It is a change in a prediction,
-not a validation score: moving a prediction by a larger amount is only helpful relative to the
-chosen target. The initial and final values above make that interpretation possible without relying
-on the older label.
+`Output change from initialization` measures the absolute change in the prediction. Its usefulness
+depends on the chosen target; the initial and final values above show that this prediction moved
+toward `1`.
 
 # Import Validation
 
@@ -301,7 +299,7 @@ JSON object order is irrelevant: the importer looks up names and constructs a fi
 For a `params` wrapper, the family loaders validate a supplied `meta.dtype` or per-tensor dtype
 metadata as float32.
 `meta.format` is not an architecture proof, and extra parameter keys are ignored. An absent
-`meta` is accepted; the older bare-payload format bypasses this wrapper metadata check. Imported
+`meta` is accepted; a bare payload has no wrapper metadata to check. Imported
 numbers become host `Float` values, so this format does not preserve exact binary32 payload bits.
 
 ## Parser Examples

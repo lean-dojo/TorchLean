@@ -47,7 +47,7 @@ runs another. The binding proves only that identity agreement; it does not prove
 arithmetic, FFI code, compiler output, driver, or hardware. Those obligations retain the evidence
 and trust level stated by the capsule. CUDA primitives are registered under `Provider.libTorch`,
 with names such as `libtorch.matmul`. The single GPU attention implementation is
-`libtorch.direct_attention`: this retained capsule identity now describes forward and local VJP
+`libtorch.direct_attention`: this capsule describes forward and local VJP
 composition in Lean over LibTorch numerical primitives. The tape owns its saved buffers.
 
 The default `libTorchCuda` profile prefers LibTorch and retains TorchLean's global tape. It admits
@@ -338,8 +338,8 @@ and PyTorch export reject unsupported custom paths. See the
   endpoints, rejects non-finite replay values, and re-runs backend planning before accepting the
   embedded execution audit. A `RegistryCheckedCertificate` stores the exact graph checked, and
   `executeIEEE32` can replay only that stored graph. This is FloatLib reference execution, not a
-  replay of the selected LibTorch kernels. Changing provider/capsule identities changes the audit;
-  certificates containing old identities must be regenerated and checked. The audit is planning
+  replay of the selected LibTorch kernels. The certificate's provider/capsule identities must match
+  the recomputed audit. The audit is planning
   data, not proof of which implementation produced an imported tensor.
 - Transcendental functions such as `exp`, `log`, and `tanh` are deterministic approximations unless
   a file states a stronger theorem for a specific operation.

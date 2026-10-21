@@ -275,9 +275,7 @@ scripts/lake.sh exe verify -- camera-box3d-cert
 `BoxCameraCert.pointCount` fixes the number of supplied points; its tensor has shape
 `[pointCount, 3]`. A `torchlean.camera.box3d.v2` artifact must declare a positive `point_count`
 that matches the number of triples in `corners3d` (`8` for a cuboid), so the parser rejects an
-artifact with no points. It also rejects `torchlean.camera.box3d.v1` artifacts; regenerate them
-with the current exporters, or retag an eight-corner v1 file as `torchlean.camera.box3d.v2` with
-`"point_count": 8`. Acceptance checks projection, positive depth, and image/box
+artifact with no points. Acceptance checks projection, positive depth, and image/box
 containment for each supplied point. It does not establish that those points form a cuboid or
 correspond to an object in an image.
 

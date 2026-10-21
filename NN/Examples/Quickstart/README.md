@@ -15,8 +15,6 @@ open TorchLean
 | `AutogradBasics.lean` | `autograd.grad` for tensor functions, `autograd.model.grad` for models. |
 | `SimpleMlpTrain.lean` | Model, dataset, `Trainer.new`, `trainer.train`, prediction. |
 | `Proofs.lean` | Shapes, loss derivatives with `autograd`, and quadratic convergence with `converges`. |
-| `Widgets.lean` | Optional editor panels for tensors and training logs. |
-| `Common.lean` | Training quickstart flag parsing; not part of the API. |
 
 For explicit scalar formats, continue with `Precision.lean` and `TypedTraining.lean`. Open either
 file in Lean and evaluate its `run` definition with `#eval run` inside the example's namespace.
@@ -31,8 +29,8 @@ scripts/lake.sh exe torchlean quickstart_mlp --steps 20
 ```
 
 The wrapper uses the pinned Lean toolchain and keeps CPU/CUDA build profiles separate.
-`Proofs.lean` builds with `scripts/lake.sh build NN.Examples.Quickstart.Proofs`;
-`Widgets.lean` is meant to be opened in the editor.
+`Proofs.lean` builds with `scripts/lake.sh build NN.Examples.Quickstart.Proofs`.
+For optional editor panels, open the [widget gallery](../DeepDives/Widgets.lean).
 
 Read them in the order of the table.
 

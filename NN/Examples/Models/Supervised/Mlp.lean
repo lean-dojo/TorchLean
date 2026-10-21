@@ -11,7 +11,7 @@ Device-agnostic real-data example:
 
 module
 
-public import NN.Examples.Models.Common
+public import NN.Examples.Models.Common.RealData
 
 /-!
 # MLP Tabular Regression

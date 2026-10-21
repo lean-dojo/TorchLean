@@ -288,7 +288,7 @@ def conversionCases : List ConversionCase :=
       bfloat16 := [16256, 49024, 16256, 15821], bfloat16Once := [16257, 49025, 16256, 15821],
       float16 := [15364, 48132, 15360, 11878], float16Once := [15364, 48132, 15361, 11878] } ]
 
-/-- Run each conversion as two casts through binary32 and as one cast. -/
+/-- Check one- and two-rounding conversions, and directed overflow with finite results. -/
 def runConversions : IO Unit := do
   for case in conversionCases do
     for (name, twice, once) in [("bfloat16", case.bfloat16, case.bfloat16Once),
@@ -297,6 +297,21 @@ def runConversions : IO Unit := do
         (castChain case.source [float32, Json.str name] case.words) twice (floating := false)
       expectWords s!"{case.name} to {name} in one cast"
         (castChain case.source [Json.str name] case.words) once (floating := false)
+  -- Directed overflow can return the largest finite value rather than infinity.
+  for (rounding, words) in [("nearestEven", [31744, 64512]), ("towardZero", [31743, 64511]),
+      ("towardPositiveInfinity", [31744, 64511]),
+      ("towardNegativeInfinity", [31743, 64512])] do
+    let artifact := program
+      [ nodeJson 0 [("kind", "input")] [] 2 (signed 32)
+      , nodeJson 1 [("kind", "custom"), ("primitive", "cast"), ("rounding", Json.str rounding)]
+          [0] 2 "float16" ] 1 [tensorJson (signed 32) [65536, 4294901760]]
+    expectWords s!"int32 to float16 overflow ({rounding})" artifact words (floating := false)
+    let flags := (report artifact).getObjValD "conversion_flags"
+    unless flags.getObjValD "overflow" == .bool true &&
+        flags.getObjValD "inexact" == .bool true &&
+        flags.getObjValD "underflow" == .bool false &&
+        flags.getObjValD "invalid" == .bool false do
+      throw <| IO.userError s!"pointwise cast ({rounding}): wrong overflow flags: {flags.compress}"
 
 /-! ## Exact real meanings -/
 

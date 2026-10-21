@@ -2,8 +2,8 @@
 
 A corridor gives lower and upper functions around a proposed ODE solution. The checker compares
 their values at the initial time, their ordering, and their derivative bounds against the ODE's
-right-hand side on time intervals. This folder contains both a passing fixture and candidates that
-illustrate why those inequalities can remain unproved.
+right-hand side on time intervals. The bundled examples use constant corridors for the zero and
+logistic equations.
 
 The reusable verifier lives under `NN/Verification/ODE`. This folder contains small JSON artifacts
 for examples and regression checks:
@@ -13,11 +13,9 @@ for examples and regression checks:
 | `sample_ode_cert.json` | The constant zero solution of `u′ = 0`, using a one-layer MLP. | Accepts with its pinned IEEE arithmetic. Start here. |
 | `sin_cert.json` | The same zero function through a sine-activation network. | Accepts with `--arithmetic ieee`; native outward rounding cannot close the zero-slack initial bound. |
 | `logistic_trivial_cert.json` | The coarse corridor `0 ≤ u ≤ 1` for `u′ = u(1-u)`, starting at `0.1`. | Accepts with `--model=direct --arithmetic ieee`; the native graph path cannot close its zero-slack differential inequality. |
-| `logistic_learned_cert.json` | Learned lower/upper candidates for the logistic equation. | Rejects: the propagated initial lower-function interval does not establish the required inequality. |
 
 `zero_mlp.json`, `one_mlp.json`, and `zero_siren.json` encode the constant functions used by the
-first three rows. `logistic_lower_learned.json` and `logistic_upper_learned.json` are the learned
-candidate weights; having exported weights does not make their corridor certified.
+three rows.
 
 Check a bundled certificate directly with:
 
@@ -40,7 +38,6 @@ scripts/lake.sh exe verify -- ode --model=direct --arithmetic ieee \
 These commands retain zero slack. Switching arithmetic/backend changes the computation used to
 check the candidate, so cite that choice when reporting the result. A rejection means these bounds
 did not establish the required inequality; it is not by itself a counterexample to the ODE claim.
-In particular, the learned candidate is useful for seeing where training and verification diverge.
 
 The time partitioner seeds each input box directly from its endpoints. It avoids reconstructing
 those endpoints from a rounded center and radius. Failed interval checks subdivide until both halves

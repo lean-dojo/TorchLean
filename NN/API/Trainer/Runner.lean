@@ -74,7 +74,7 @@ opaque objectiveModule {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ 
   match runner with
   | ⟨runtimeObjective, _, _, _⟩ => runtimeObjective
 
-/-- The reusable no-gradient evaluator for one execution mode. -/
+/-- The reusable no-gradient evaluator for training or evaluation behavior. -/
 opaque predictor {σ τ : Spec.Shape} {model : TorchLean.nn.Sequential σ τ}
     {α : Type} [TorchLean.Storage α] [Context α]
     (runner : Runner α model) (mode : nn.Mode) :

@@ -33,17 +33,25 @@ namespace Import.JAX
 
 open Lean
 
-/-- Import a Jaxpr with per-node precision and explicit binary conversions. -/
-def parseProgram (artifact : Json) : Except String NN.IR.Program := do
+namespace Internal
+
+/-- Check the frontend marker before using the shared IR readers. -/
+def checkFrontend (artifact : Json) : Except String Unit := do
   let frontend ← (← artifact.getObjVal? "frontend").getStr?
   unless frontend == "jaxpr" do
     throw s!"Jaxpr import: expected frontend `jaxpr`, got `{frontend}`"
+
+end Internal
+
+/-- Import a Jaxpr with per-node precision and explicit binary conversions. -/
+def parseProgram (artifact : Json) : Except String NN.IR.Program := do
+  Internal.checkFrontend artifact
   Import.IR.parseProgram artifact
 
 /-- Load binary constants without converting their values through native binary64. -/
 def parseBinaryPayload (artifact : Json) :
     Except String (NN.IR.Interpreter.Payload NN.IR.Interpreter.binary) := do
-  let _ ← parseProgram artifact
+  Internal.checkFrontend artifact
   Import.IR.parsePayload NN.IR.Interpreter.binary (fun dtype shape words => do
     let .binary format := dtype
       | throw s!"binary IR: no representation for {dtype}"
@@ -53,9 +61,7 @@ namespace Internal
 
 /-- Check that dtype metadata does not claim a cast the homogeneous IR cannot represent. -/
 def checkPrecision (artifact : Json) : Except String Unit := do
-  let frontend ← (← artifact.getObjVal? "frontend").getStr?
-  unless frontend == "jaxpr" do
-    throw s!"Jaxpr import: expected frontend `jaxpr`, got `{frontend}`"
+  checkFrontend artifact
   let dtype ← (← artifact.getObjVal? "dtype").getStr?
   unless #["float16", "bfloat16", "float32", "float64"].contains dtype do
     throw s!"Jaxpr import: unsupported element type `{dtype}`"

@@ -21,7 +21,7 @@ loss = Loss.mse yhat y
 loss = Loss.mse yhat y (reduction := .sum)
 ```
 
-They are execution-mode generic: eager tape and typed SSA/DAG both work.
+They use the shared operation interface, so the eager tape and typed SSA/DAG recorder both work.
 
 ### PyTorch references
 

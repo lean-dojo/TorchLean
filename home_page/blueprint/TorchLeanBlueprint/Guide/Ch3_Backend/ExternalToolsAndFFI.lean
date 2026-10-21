@@ -426,7 +426,7 @@ to the check responsible for it:
 -- each rejection.
 #eval show IO Unit from do
   IO.println (ffiParse
-    (ffiGood.replace "ir.v2" "ir.v1"))
+    (ffiGood.replace "torchlean.ir.v2" "unrecognized"))
   IO.println (ffiParse
     (ffiGood.replace "\"relu\"" "\"sort\""))
   IO.println (ffiParse
@@ -436,7 +436,7 @@ to the check responsible for it:
     (ffiGood.replace "\"parents\": [0]" "\"parents\": [2]"))
 ```
 ```leanOutput ffiReject (whitespace := lax)
-rejected: IR import: unsupported format `torchlean.ir.v1`; expected
+rejected: IR import: unsupported format `unrecognized`; expected
   `torchlean.ir.v2`
 rejected: PyTorch graph import: node[1]: unsupported TorchLean IR op
   kind `sort`
@@ -447,8 +447,8 @@ rejected: PyTorch graph import: node[1]: parent id 2 is not < 1
 
 The errors identify four stages of validation:
 
-- the *schema* rejection comes before any node is looked at: an artifact in another format
-  version is not read at all;
+- the *schema* rejection comes before any node is looked at: an artifact in an unrecognized
+  format is not read at all;
 - the *op kind* rejection comes from the conservative operator table, which is why adding
   `torch.sort` to the Python side without touching the Lean parser produces an explicit
   unsupported-operation failure rather than a partial import;

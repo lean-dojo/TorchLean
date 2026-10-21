@@ -679,8 +679,10 @@ states and gradients supplied at every later step.
 The executable training layer is broader than those three numerical contracts.
 `Runtime.Autograd.Model.Optim` implements SGD, momentum SGD, AdaGrad, RMSProp, Adam, AdamW,
 Adadelta, projected SGD, and Muon over shape-indexed parameter lists, and `Trainer.Scheduler`
-adds the learning-rate schedules. The trainer saves Adam state with its checkpoints and rejects a
-checkpoint whose parameter layout does not match the model it is loaded into.
+adds the learning-rate schedules. Trainer checkpoints save model state and reject a checkpoint
+whose parameter layout does not match the model it is loaded into. CUDA Adam and AdamW moments
+and step counters use the separate `Checkpoint.Optimizer.save` and `Checkpoint.Optimizer.load`
+interfaces.
 
 The proved NF numerical contracts currently cover plain SGD, momentum SGD, and AdamW; AdamW also
 carries the positivity data needed for its square-root denominator. Runtime support for the other

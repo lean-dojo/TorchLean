@@ -58,6 +58,8 @@ def mix (device : NN.Backend.Device) (k : Nat) :
   let l ← session.input logits (requiresGrad := true)
   let o ← session.input outputs (requiresGrad := true)
   let y ← (nn.Internal.moeMix (m := EagerM Float) (α := Float) k l o).run session
+  unless (← session.backendSelections).any (fun selected => selected.op == .topKMask) do
+    throw <| IO.userError "MoE routing bypassed backend selection and audit"
   let value ← session.getValue y
   let grads ← session.backwardDenseAll y (Tensor.full [3, 2] 1.0)
   pure (value, ← EagerSession.grad grads l, ← EagerSession.grad grads o)

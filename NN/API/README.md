@@ -35,9 +35,7 @@ Tensor -> nn model -> Trainer -> Trainer.Result
 ## Stability Boundary
 
 `NN.API` is the canonical import for application code. `NN.Tensor` is the smaller tensor-only
-import, while verification, proof, and backend internals remain focused imports. Redundant import
-routes are removed instead of re-exported under old names; the update guide records the required
-source changes.
+import, while verification, proof, and backend internals remain focused imports.
 
 The external example regression checks the application umbrella independently.
 
@@ -132,12 +130,11 @@ without leading dots. For other choices, open their namespace explicitly,
 as with `open Trainer.Objective (mse)` above. A method call such as `trainer.train` is different:
 the dot selects an operation on a value rather than an enum case.
 
-When updating older model code, add the `Shape` suffix to configuration shape accessors.
 For causal transformers, use `tokenShape`, `vocabularyShape`, and `embeddingShape` for the
 three input representations. ViT's encoder uses `patchGrid` for spatial extents,
 `patchShape` for patch features, `patchTokenShape` before adding a class token, and
 `outputShape` for the encoded sequence. Parser results without an executable-name prefix
-now use Lean's `IO.ofExcept`; `CLI.orThrow` still adds that prefix when needed.
+use Lean's `IO.ofExcept`; `CLI.orThrow` adds that prefix when needed.
 
 Stateful objects use `state` to read their current tensors and `setState` to replace them in
 memory. `save` and `load` are reserved for checkpoint and external-data boundaries; for example:

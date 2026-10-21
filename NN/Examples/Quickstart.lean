@@ -12,7 +12,6 @@ public import NN.Examples.Quickstart.SimpleMlpTrain
 public import NN.Examples.Quickstart.Precision
 public import NN.Examples.Quickstart.TypedTraining
 public import NN.Examples.Quickstart.Proofs
-public import NN.Examples.Quickstart.Widgets
 
 /-!
 # Quickstart
@@ -26,14 +25,13 @@ examples:
 - one tensor-function and one model-state gradient,
 - an end-to-end MLP training command,
 - typed model execution at a caller-selected binary precision,
-- an explicit typed SGD loop that preserves the selected precision,
-- small proofs over TorchLean definitions, and
-- optional editor widgets.
+- an explicit typed SGD loop that preserves the selected precision, and
+- small proofs over TorchLean definitions.
 
-Data loading, CNNs, larger models, advanced autograd transforms, interoperability, and verification
-live in their focused example directories. `Quickstart` is a learning path, not a model catalog.
-The `torchlean` executable imports the three runnable quickstarts directly; proof and widget
-modules are only included in this source umbrella.
+Data loading, CNNs, larger models, editor widgets, advanced autograd transforms, interoperability,
+and verification live in their focused example directories. `Quickstart` is a learning path, not a
+model catalog. The `torchlean` executable imports the three runnable quickstarts directly; precision
+and proof modules are only included in this source umbrella.
 -/
 
 @[expose] public section

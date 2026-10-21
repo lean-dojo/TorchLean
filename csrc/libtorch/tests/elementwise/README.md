@@ -28,7 +28,7 @@ After building `nn_tests_suite` with the native LibTorch configuration, run the
 isolated Lean memory probes against that same executable:
 
 ```bash
-for probe in accounting attention-context oom-recovery; do
+for probe in accounting attention-buffers oom-recovery; do
   TORCHLEAN_REQUIRE_CUDA=1 TORCHLEAN_LIBTORCH_MEMORY_PROBE="$probe" \
     scripts/lake.sh -Kcuda=true env .lake/build/bin/nn_tests_suite
 done
@@ -37,7 +37,7 @@ done
 The ordinary `Stress.run` also launches these three fresh subprocesses. They
 check real readback, logical ownership versus native allocated/reserved/peak
 accounting, live tensors across `emptyCache`, saved attention inputs across
-release/backward, output-context finalization, and `resourceExhausted` recovery
+release/backward, buffer finalization, and `resourceExhausted` recovery
 under a temporary allocator memory fraction. No assertion pins an SDK cache
 block size or an exact number of bytes returned to the driver. Builds without
 LibTorch check that native counters are zero and skip the GPU memory probes.

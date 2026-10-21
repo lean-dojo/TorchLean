@@ -580,20 +580,9 @@ does not require raw NaN sign or payload identity. Custom nodes without certifie
 or compact contributions retain materializing adapters, and noncompressible histories can require
 quadratic replay. The raw Tape adapter also retains full prefix contributions.
 
-The 2026-09-25 scaling measurements compare baseline
-`0f845313` with implementation `8d9d99eb`, using Lean 4.34.0 and the original dependency cache on
-an Intel Xeon Platinum 8275CL CPU. For 16,000 native binary64 `Float` ReLU nodes of shape `[4]`,
-checked lowering fell from `32,312.11` to `25.33` ms and retained backward from `124,642.42` to
-`44.41` ms. A public checked VJP, including fresh forward evaluation, took `46.07` ms.
-These are individual measurements on a shared host, not medians. Full-context primal and gradient
-`Float.toBits` hashes matched the baseline across the 1,000–16,000-node fixtures, which contain no
-NaNs. JVP scaling was not measured.
-
-Construction and final disposal remain quadratic because the graph representation retains full
-shape-prefix lists. At 16,000 nodes, changed construction took `3,013.47` ms, and the final backward
-including disposal took `953.07` ms. Whole-process peak memory, including construction, fell from
-`13,792.24` to `4,007.66` MiB. The faster reusable execution therefore does not imply a linear
-graph lifecycle or a general complexity theorem.
+Construction and final disposal can require quadratic work because the graph representation
+retains full shape-prefix lists. Efficient reusable execution does not imply a linear graph
+lifecycle or a general complexity theorem.
 
 Recording and lowering do not imply the optimization, fusion, scheduling, or native code generation
 associated with a compiler such as `torch.compile`.
@@ -872,7 +861,6 @@ target(heldout)    = [0.200000]
 untrained(heldout) = [-0.088261]
 dataset size = 25
 mean_loss(before training) = 0.495227
-step 0: loss=0.250488
 mean_loss(after training) = 0.392821
 steps=2 arithmetic=native scalar=Float32
   loss=0.495227 -> 0.392821
@@ -883,10 +871,8 @@ Each step records a fresh tape for the current parameters and the step's sample,
 backward. {ref "run-configuration"}[Choosing How A Model Runs] compares arithmetic and device
 choices through their displayed results.
 
-The two-step log reports a dataset mean falling from `0.495227` to `0.392821`. Its `step 0` line
-is a single update loss, and the held-out value `0.019031` is a prediction with target `0.2`.
-These quantities should not be ranked against one another as if they were three estimates of the
-same loss.
+The two-step log reports a dataset mean falling from `0.495227` to `0.392821`.
+The held-out value `0.019031` is a prediction with target `0.2`, not another loss measurement.
 
 # Runtime Debugging
 

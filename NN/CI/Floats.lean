@@ -13,8 +13,8 @@ import NN.Proofs.RuntimeApprox.FP32
 /-!
 # Additional Floating-Point Modules
 
-Ordinary CI checks the shared FloatLib interface, its optional binary elementary functions, and
-TorchLean's runtime approximation proofs before documentation generation.
+This target checks the shared FloatLib interface, its optional binary elementary functions, and
+TorchLean's runtime approximation proofs.
 -/
 
 @[expose] public section

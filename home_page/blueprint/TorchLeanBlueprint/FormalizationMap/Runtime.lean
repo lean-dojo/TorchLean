@@ -110,4 +110,3 @@ Layer definitions carry parameter and buffer initialization, training or evaluat
 shape-checked sequential composition. They build their computations through
 {uses "runtime_ops_program"}[the runtime operation interface].
 :::
-

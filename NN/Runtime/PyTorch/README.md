@@ -30,6 +30,11 @@ execution provider described in the
   same `torchlean.ir.v2` JSON artifact used by the graph importer. It includes static-shape
   lowerings for common tensor ops plus Conv/Gemm/BatchNorm graph structure where the current IR can
   represent it. Use `Export.PyTorch.ONNX.script` with `ONNX.Options` to generate the adapter.
+  This adapter loads homogeneous floating-point data into the `Float` graph interpreter; it is
+  not a source-precision replay. It rejects integer/Boolean data and custom operator domains.
+  Integer shape and reduction-axis initializers remain valid metadata. Square roots, including
+  BatchNorm's variance calculation, need structurally nonnegative operands because the IR's
+  square root clamps negative inputs.
 - `Export/TorchExport.lean` emits a Python adapter that captures a PyTorch `nn.Module` with
   `torch.export`/FX and writes TorchLean IR JSON for the supported op subset. The script is
   emitted by `Export.PyTorch.TorchExport.script`, configured with `TorchExport.Options`.

@@ -1,7 +1,6 @@
 import VersoManual
 import NN.API
 import NN.Spec.Layers.Attention
-import Mathlib.Tactic.Linarith
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
 

@@ -64,7 +64,7 @@ LibTorch check that native counters are zero and skip the GPU memory probes.
 - A split float32 multiply/add must return zero on the cancellation discriminator.
   A float64 multiply/add must return the **wrong** upper float32 neighbor on the
   double-rounding discriminator. These are negative controls, not accepted fallbacks.
-- All 32 arithmetic exports run under both ambient GradMode settings. An ATen
+- The listed arithmetic exports run under both ambient GradMode settings. An ATen
   RecordFunction callback checks that operations execute
   with GradMode disabled inside the export, and that results have no `grad_fn` or
   `requires_grad`. The observer is calibrated against an ordinary graph-recording
@@ -84,6 +84,9 @@ LibTorch check that native counters are zero and skip the GPU memory probes.
   (one 64 MiB input). Mean must round the full sum before multiplying by its
   rounded reciprocal; `[7, 0, 0]` distinguishes this from direct division.
   Empty inputs, signed zero, subnormals, and overflow remain explicit.
+- Running batch means retain identical maximum finite FP32/FP64 samples without overflow,
+  handle opposite-sign extremes, and preserve NaN/infinity propagation. These use the separate
+  running-mean primitive, not the sum-then-scale tensor reduction above.
 
 Finite sweeps provide validation evidence. Run the selected-gradient, tape traversal,
 deterministic reduction, GELU, and end-to-end Lean suites as well.

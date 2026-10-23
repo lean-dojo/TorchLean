@@ -17,6 +17,9 @@ scripts/lake.sh test
 scripts/lake.sh lint
 ```
 
+The GitHub Actions workflow publishes documentation; it does not run the runtime test suite.
+Run the CPU and CUDA checks before merging runtime changes.
+
 The wrapper requires Bash and Python 3. It keeps each pinned toolchain's `cpu` and `cuda-libtorch`
 builds in separate local cache directories and holds a checkout lock while Lake runs. Use it consistently
 when switching profiles; direct `lake` commands do not acquire that lock. Blueprint builds select

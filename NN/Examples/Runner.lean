@@ -11,9 +11,9 @@ public import NN.Examples.DeepDives.AutogradTransforms
 public import NN.Examples.DeepDives.Floats.ArbIEEEExecCompare
 public import NN.Examples.DeepDives.Floats.Float32Semantics
 public import NN.Examples.DeepDives.Floats.GraphNumericalCertificate
+public import NN.Examples.DeepDives.GraphSemantics
 public import NN.Examples.DeepDives.GraphSpec.Tutorial
 public import NN.Examples.DeepDives.IRAxisOps
-public import NN.Examples.DeepDives.OneSemanticUniverse
 public import NN.Examples.DeepDives.TorchIRPyTorch
 public import NN.Examples.Quickstart.AutogradBasics
 public import NN.Examples.Quickstart.SimpleMlpTrain
@@ -191,9 +191,9 @@ def commandGroups : List CommandGroup :=
             NN.Examples.DeepDives.GraphSpec.Tutorial.main (offersDeviceChoice := true)
         , unitCommand "ir_axis_ops" "evaluate axis operations with the IR semantics"
             NN.Examples.DeepDives.IRAxisOps.main
-        , unitCommand "one_semantic_universe"
+        , unitCommand "graph_semantics"
             "relate executable and proof-oriented scalar semantics"
-            NN.Examples.DeepDives.OneSemanticUniverse.main
+            NN.Examples.DeepDives.GraphSemantics.main
         , unitCommand "torch_ir_pytorch" "export TorchLean IR for PyTorch execution"
             NN.Examples.DeepDives.TorchIRPyTorch.main
         ] }

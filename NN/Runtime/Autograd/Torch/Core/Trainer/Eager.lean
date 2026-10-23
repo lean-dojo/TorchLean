@@ -127,29 +127,30 @@ def Internal.eagerScalarTrainer {α δ : Type} [TorchLean.Storage α] [TorchLean
     let accumulator ← IO.mkRef
       (Std.HashMap.emptyWithCapacity : LibTorch.Tape.SparseGradMap)
     let lossAccumulator ← IO.mkRef (none : Option Runtime.Autograd.LibTorch.Buffer)
-    let sampleWeight := 1.0 / batch.size.toFloat
     try
+      let mut sampleCount := 0
       for (inputs, dataInputs) in batch do
+        sampleCount := sampleCount + 1
+        let sampleWeight := 1.0 / sampleCount.toFloat
         let (lossRef, _) ← recordLoss inputs dataInputs
         if readLoss then
-          -- Weight before adding: finite losses can overflow an unnormalized batch sum.
+          -- A running mean also avoids overflow from rounding a sum of preweighted samples.
           let tape ← session.cudaTape
           let sampleLoss ← IO.ofExcept <|
             Runtime.Autograd.LibTorch.Tape.requireValue tape lossRef.id []
           let previous ← lossAccumulator.get
-          let weighted := Runtime.Autograd.LibTorch.Buffer.scale sampleLoss sampleWeight
-          let summed := match previous with
-            | none => weighted
-            | some total => Runtime.Autograd.LibTorch.Buffer.add total weighted
-          lossAccumulator.set (some summed)
+          let mean := match previous with
+            | none => Runtime.Autograd.LibTorch.Buffer.copy sampleLoss
+            | some total =>
+                Runtime.Autograd.LibTorch.Buffer.meanUpdate total sampleLoss sampleWeight
+          lossAccumulator.set (some mean)
           if let some previous := previous then
             Internal.EagerSession.releaseCudaBuffer previous
-            Internal.EagerSession.releaseCudaBuffer weighted
         let gradients ←
           Internal.EagerSession.backwardScalarParamGradsCuda
-            (α := α) session lossRef (seed := 1 / (batch.size : α))
+            (α := α) session lossRef
         Internal.EagerSession.withSparseGrads gradients fun gradients =>
-          Internal.EagerSession.accumulateSparseGrads accumulator gradients
+          Internal.EagerSession.accumulateMeanGradients accumulator gradients sampleWeight
       let gradients ← accumulator.get
       applyNativeGradient optimizer gradients
       match ← lossAccumulator.get with

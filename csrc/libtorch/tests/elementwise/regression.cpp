@@ -14,6 +14,7 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -57,6 +58,7 @@ DECLARE_BINARY(gelu_bwd)
 #undef DECLARE_UNARY
 extern "C" lean_obj_res torchlean_cuda_buffer_scale(b_lean_obj_arg, double);
 extern "C" lean_obj_res torchlean_cuda_buffer_axpy(b_lean_obj_arg, b_lean_obj_arg, double);
+extern "C" lean_obj_res torchlean_cuda_buffer_mean_update(b_lean_obj_arg, b_lean_obj_arg, double);
 extern "C" lean_obj_res torchlean_cuda_buffer_scaled_prod_exp(
     b_lean_obj_arg, b_lean_obj_arg, double);
 extern "C" lean_obj_res torchlean_cuda_buffer_clamp(b_lean_obj_arg, double, double);
@@ -451,6 +453,39 @@ struct Observer {
   ~Observer() { at::removeCallback(handle); }
 };
 
+void running_mean_regressions() {
+  for (const auto dtype : {at::kFloat, at::kDouble}) {
+    const double limit = dtype == at::kFloat ? std::numeric_limits<float>::max()
+                                            : std::numeric_limits<double>::max();
+    const auto options = at::TensorOptions().dtype(dtype).device(at::kCUDA);
+    const auto sample = at::full({1}, limit, options);
+    auto mean = sample;
+    for (unsigned count = 2; count <= 10; ++count) {
+      const Object old(mean), next(sample);
+      const Object updated(torchlean_cuda_buffer_mean_update(old, next, 1.0 / count));
+      mean = updated.tensor();
+      check(mean.item<double>() == limit, "running mean overflowed equal finite samples");
+    }
+    const Object positive(sample), negative(at::neg(sample));
+    const Object midpoint(torchlean_cuda_buffer_mean_update(positive, negative, 0.5));
+    check(midpoint.tensor().item<double>() == 0.0, "opposite-sign mean overflowed subtraction");
+
+    const double inf = std::numeric_limits<double>::infinity();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const auto a = at::tensor({nan, inf, inf, -inf}, at::TensorOptions().dtype(at::kDouble))
+                       .to(options);
+    const auto b = at::tensor({1.0, inf, -inf, inf}, at::TensorOptions().dtype(at::kDouble))
+                       .to(options);
+    const Object left(a), right(b);
+    const Object result(torchlean_cuda_buffer_mean_update(left, right, 0.5));
+    const auto expected = at::add(at::mul(a, 0.5), at::mul(b, 0.5));
+    check(at::equal(at::isnan(result.tensor()), at::isnan(expected)),
+          "running mean masked a NaN");
+    check(at::equal(at::isinf(result.tensor()), at::isinf(expected)),
+          "running mean changed infinity propagation");
+  }
+}
+
 void no_graph(lean_object* object, const std::string& label) {
   const auto& value = torchlean::tensor(object);
   check(!value.requires_grad(), label + ": result requires gradients");
@@ -535,6 +570,7 @@ void no_autograd_regressions() {
 #undef CHECK_VJP
     run("scale", [&] { return torchlean_cuda_buffer_scale(x, 0.25); });
     run("axpy", [&] { return torchlean_cuda_buffer_axpy(x, y, 0.25); });
+    run("mean_update", [&] { return torchlean_cuda_buffer_mean_update(x, y, 0.25); });
     run("scaled_prod_exp", [&] { return torchlean_cuda_buffer_scaled_prod_exp(x, y, 0.25); });
     run("clamp", [&] { return torchlean_cuda_buffer_clamp(x, 0.0, 1.0); });
     run("clamp_bwd", [&] { return torchlean_cuda_buffer_clamp_bwd(x, g, 0.0, 1.0); });
@@ -543,7 +579,7 @@ void no_autograd_regressions() {
     run("adam_step", [&] { return adam(x, g, x, y, {1, 0, 1, 0, 1, 1, 0, 0, 1}); }, 3);
     const Object copied(on_device({0x3f800000}));
     run("copy_and_release", [&] { return torchlean_cuda_buffer_copy_and_release(copied); });
-    check(export_count == 32, "noAutograd export coverage changed");
+    check(export_count == 33, "noAutograd export coverage changed");
     check(!x.tensor().requires_grad() && !y.tensor().requires_grad() && !g.tensor().requires_grad(),
           "export mutated an input's requires_grad flag");
     const auto old_deterministic = get_setting(kDeterministic);
@@ -566,7 +602,7 @@ void no_autograd_regressions() {
     restore_settings();
     check(at::GradMode::is_enabled() == ambient_grad,
           "LibTorch settings changed caller GradMode");
-    std::cout << "noAutograd: 32 exports plus both reduction paths, ambient="
+    std::cout << "noAutograd: " << export_count << " calls across both reduction modes, ambient="
               << ambient_grad << '\n';
   }
 }
@@ -667,6 +703,7 @@ int main(int argc, char** argv) {
       fused_discriminators();
       adam_regressions();
       deterministic_reduction_regressions();
+      running_mean_regressions();
       lean_primitive_parity(reference_path);
     }
     no_autograd_regressions();

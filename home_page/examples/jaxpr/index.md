@@ -424,6 +424,9 @@ transpose, concatenation, sums, and `dot_general` contractions. Contractions exp
 their batch and contracted axes using permutations and reshapes before the existing
 IR matrix product. Supported `jit` and custom-JVP wrappers are inlined using their
 forward bodies; this does not verify their custom derivative rules.
+Nondefault dot precision and algorithm choices are rejected for now. FP32 inputs and outputs
+can still use BF16 or TF32 multiplication internally; we must represent that choice before
+accepting it, rather than silently turning it into an ordinary FP32 matrix product.
 
 Close over parameter tensors or pass them as runtime arguments with
 `export(function, *inputs)`. Each argument keeps its own shape and dtype; the

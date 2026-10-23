@@ -25,6 +25,7 @@ TORCHLEAN_BINARY_EXPORT(mask, at::where(at::ne(b, 0.0f), a, 0.0f))
 
 TORCHLEAN_UNARY_SCALAR_EXPORT(scale, at::mul(x, scalar))
 TORCHLEAN_BINARY_SCALAR_EXPORT(axpy, axpy(a, b, scalar))
+TORCHLEAN_BINARY_SCALAR_EXPORT(mean_update, mean_update(a, b, scalar))
 // Preserve left association and use the same exp operation as the composed path.
 TORCHLEAN_BINARY_SCALAR_EXPORT(scaled_prod_exp, at::exp(at::mul(at::mul(a, scalar), b)))
 

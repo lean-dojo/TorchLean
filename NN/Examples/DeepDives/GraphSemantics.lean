@@ -10,9 +10,10 @@ public import NN.API
 public import NN.MLTheory.CROWN.Extras.FP32
 
 /-!
-# One semantic universe
+# One graph, several scalar interpretations
 
-End-to-end “one semantic universe” tutorial (single graph, many semantics, one checker).
+Evaluate the same graph over exact reals, rounded reals, and executable binary32 values,
+then propagate intervals through its operations.
 
 This tutorial lives under `NN/Examples/DeepDives` because it connects execution, interval semantics,
 and checker soundness in one graph.
@@ -38,7 +39,7 @@ Notes:
   consistency check.
 
 Run:
-  `scripts/lake.sh exe torchlean one_semantic_universe --samples 50`
+  `scripts/lake.sh exe torchlean graph_semantics --samples 50`
 -/
 
 @[expose] public section
@@ -55,15 +56,15 @@ open NN.MLTheory.CROWN.Graph
 
 open TorchLean.Floats
 
-namespace NN.Examples.DeepDives.OneSemanticUniverse
+namespace NN.Examples.DeepDives.GraphSemantics
 
-/-- Command-line help for the one-semantics tutorial. -/
+/-- Command-line help for the graph-semantics tutorial. -/
 def usage : String :=
   String.intercalate "\n"
-    [ "TorchLean one semantic universe tutorial"
+    [ "TorchLean graph semantics tutorial"
     , ""
     , "Usage:"
-    , "  scripts/lake.sh exe torchlean one_semantic_universe [options]"
+    , "  scripts/lake.sh exe torchlean graph_semantics [options]"
     , ""
     , "Options:"
     , "  --samples N"
@@ -283,7 +284,7 @@ Run the tutorial: evaluate at the centre, propagate bounds, then check that rand
 from the input box land inside the propagated output interval.
 -/
 def run (samples : Nat) : IO Unit := do
-  IO.println "== One semantic universe tutorial =="
+  IO.println "== Graph semantics tutorial =="
   IO.println s!"graph nodes = {graph.nodes.size}"
 
   let ieeeParameters : Parameters (Binary 8 23) := parameters.map Runtime.ofFloat
@@ -335,9 +336,9 @@ def main (args : List String) : IO Unit := do
   if CLI.hasHelp args then
     IO.println usage
     return
-  let (samples?, rest) ← CLI.orThrow "OneSemanticUniverse" <| CLI.takeNatFlag? args
+  let (samples?, rest) ← CLI.orThrow "graph_semantics" <| CLI.takeNatFlag? args
     "samples"
-  CLI.requireNoArgs "OneSemanticUniverse" rest
+  CLI.requireNoArgs "graph_semantics" rest
   run (samples := samples?.getD 50)
 
-end NN.Examples.DeepDives.OneSemanticUniverse
+end NN.Examples.DeepDives.GraphSemantics

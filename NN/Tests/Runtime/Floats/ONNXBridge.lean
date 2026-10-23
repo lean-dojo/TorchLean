@@ -17,7 +17,9 @@ public import NN.Tests.Utils
 Export one small Conv → BatchNorm → Softmax model to ONNX, run the generated bridge, and load its
 graph and payload through Lean's checked importer. Compare the resulting tensor with ONNX's
 reference evaluator. Unequal channel and spatial extents make a misplaced normalization axis
-visible. This covers the generated adapter, not a general import-equivalence theorem.
+visible. Rejection checks cover domains, integer data, and square-root preconditions, while
+integer shape/axis metadata remains accepted. This covers the generated adapter, not a general
+import-equivalence theorem.
 -/
 
 public section
@@ -29,7 +31,7 @@ open TorchLean
 private def workDir : System.FilePath := TorchLean.External.Process.directory "onnx_bridge_check"
 
 private def modelScript : String := "\n".intercalate
-  [ "import json, sys"
+  [ "import importlib.util, json, sys"
   , "from pathlib import Path"
   , "import numpy as np"
   , "import onnx"
@@ -60,6 +62,64 @@ private def modelScript : String := "\n".intercalate
   , "assert [n.op_type for n in loaded.graph.node] == ['Conv', 'BatchNormalization', 'Softmax']"
   , "(y,) = ReferenceEvaluator(loaded).run(None, {'x': x})"
   , "(work / 'reference.json').write_text(json.dumps({'input': x.tolist(), 'output': y.tolist()}))"
+  , "spec = importlib.util.spec_from_file_location('onnx_bridge', work / 'onnx_to_torchlean_ir.py')"
+  , "bridge = importlib.util.module_from_spec(spec)"
+  , "spec.loader.exec_module(bridge)"
+  , "def check_case(label, nodes, *, dtype=TensorProto.FLOAT, shape=(1,),"
+  , "               initializers=(), domain=None, opset=17, output_dtype=None, error=None):"
+  , "    graph = helper.make_graph(nodes, label,"
+  , "        [helper.make_tensor_value_info('x', dtype, shape)],"
+  , "        [helper.make_tensor_value_info('y', output_dtype or dtype, shape)],"
+  , "        initializer=initializers)"
+  , "    opsets = [helper.make_operatorsetid('', opset)]"
+  , "    if domain: opsets.append(helper.make_operatorsetid(domain, 1))"
+  , "    model = helper.make_model(graph, opset_imports=opsets)"
+  , "    onnx.checker.check_model(model, full_check=True)"
+  , "    path = work / (label + '.onnx')"
+  , "    onnx.save(model, path)"
+  , "    try:"
+  , "        artifact = bridge.export_onnx_torchlean_graph_json(path, work / (label + '.json'))"
+  , "    except RuntimeError as exc:"
+  , "        assert error and error in str(exc), (label, str(exc))"
+  , "    else:"
+  , "        assert error is None, label + ': unsupported semantics were accepted'"
+  , "        return artifact"
+  , "check_case('raw_sqrt', [helper.make_node('Sqrt', ['x'], ['y'])],"
+  , "           error='structurally nonnegative')"
+  , "check_case('integer_add', [helper.make_node('Add', ['x', 'x'], ['y'])],"
+  , "           dtype=TensorProto.UINT8, error='only floating-point data')"
+  , "check_case('integer_direct_output', [], output_dtype=TensorProto.INT64,"
+  , "    initializers=[numpy_helper.from_array(np.array([9007199254740993], dtype=np.int64),"
+  , "                                         name='y')], error='only floating-point data')"
+  , "check_case('custom_add',"
+  , "    [helper.make_node('Add', ['x', 'x'], ['y'], domain='custom.example')],"
+  , "           domain='custom.example', error='registered semantics')"
+  , "check_case('safe_sqrt', [helper.make_node('Abs', ['x'], ['a']),"
+  , "                         helper.make_node('Sqrt', ['a'], ['y'])])"
+  , "for op, name, value in [('Reshape', 'shape', [1]), ('ReduceSum', 'axes', [0])]:"
+  , "    metadata = numpy_helper.from_array(np.asarray(value, dtype=np.int64), name=name)"
+  , "    check_case('integer_metadata_' + op, [helper.make_node(op, ['x', name], ['y'])],"
+  , "               initializers=[metadata])"
+  , "check_case('negative_variance',"
+  , "    [helper.make_node('BatchNormalization', ['x', 'scale', 'bias', 'mean', 'var'], ['y'])],"
+  , "    shape=(1, 1), initializers=[constant('scale', [1]), constant('bias', [0]),"
+  , "        constant('mean', [0]), constant('var', [-1])], error='structurally nonnegative')"
+  , "for is_test in (0, 1):"
+  , "    check_case('legacy_batchnorm_' + str(is_test),"
+  , "        [helper.make_node('BatchNormalization', ['x', 'scale', 'bias', 'mean', 'var'],"
+  , "                          ['y'], is_test=is_test)], shape=(1, 1), opset=6,"
+  , "        initializers=[constant('scale', [1]), constant('bias', [0]),"
+  , "                      constant('mean', [0]), constant('var', [1])],"
+  , "        error='legacy training mode' if not is_test else None)"
+  , "collision = check_case('helper_name_collision', ["
+  , "    helper.make_node('Add', ['x', 'x'], ['g__torchlean_gemm_matmul']),"
+  , "    helper.make_node('Gemm', ['x', 'weight', 'bias'], ['g']),"
+  , "    helper.make_node('Add', ['g__torchlean_gemm_matmul', 'g'], ['y'])],"
+  , "    shape=(1, 1), initializers=[constant('weight', [[3]]), constant('bias', [[1]])])"
+  , "original = next(n for n in collision['nodes']"
+  , "                if n['kind'] == 'add' and n['parents'] == [0, 0])"
+  , "result = collision['nodes'][collision['output_ids'][0]]"
+  , "assert result['parents'][0] == original['id'], 'generated helper shadowed a source value'"
   ]
 
 private def readJson (path : System.FilePath) : IO Lean.Json := do

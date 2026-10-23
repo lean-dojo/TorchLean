@@ -23,7 +23,7 @@ scripts/lake.sh build NN.Examples.DeepDives
 | `GraphSpec/Tutorial.lean` | `scripts/lake.sh exe torchlean graphspec` | Authoring a small graph-style architecture and lowering it into the public trainer path. |
 | `IRAxisOps.lean` | `scripts/lake.sh exe torchlean ir_axis_ops` | Middle-axis softmax, LayerNorm, and concatenation through the checked Lean IR evaluator on CPU; `--arithmetic` selects the scalar, not a device. |
 | `TorchIRPyTorch.lean` | `scripts/lake.sh exe torchlean torch_ir_pytorch --arch mlp > exported_model.py` | Emitting readable PyTorch code from a TorchLean IR graph and payload shape. |
-| `OneSemanticUniverse.lean` | `scripts/lake.sh exe torchlean one_semantic_universe --samples 50` | One IR graph interpreted through execution, interval bounds, and checker-facing semantics. |
+| `GraphSemantics.lean` | `scripts/lake.sh exe torchlean graph_semantics --samples 50` | One IR graph interpreted through execution, interval bounds, and checker-facing semantics. |
 | `Widgets.lean` | open in an editor with the Lean infoview | Tensor, graph, Float32, CROWN, autograd, training, and runtime-context widgets. |
 
 ## Topics
@@ -39,7 +39,7 @@ Each file isolates one boundary:
 - `GraphSpec/` shows architecture-level graph authoring before runtime execution.
 - `IRAxisOps.lean` and `TorchIRPyTorch.lean` show the lower-level IR artifact that exporters,
   widgets, and verifiers inspect.
-- `OneSemanticUniverse.lean` ties a single graph to multiple semantic views, making clear which
+- `GraphSemantics.lean` ties a single graph to multiple semantic views, making clear which
   objects are executable checks and which objects are Lean statements.
 - `Widgets.lean` renders Lean objects for human inspection without making the widget output a proof.
 

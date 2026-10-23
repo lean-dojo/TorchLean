@@ -11,9 +11,9 @@ public import NN.Examples.DeepDives.Floats.ArbIEEEExecCompare
 public import NN.Examples.DeepDives.Floats.EffectiveRounding
 public import NN.Examples.DeepDives.Floats.Float32Semantics
 public import NN.Examples.DeepDives.Floats.GraphNumericalCertificate
+public import NN.Examples.DeepDives.GraphSemantics
 public import NN.Examples.DeepDives.GraphSpec.Tutorial
 public import NN.Examples.DeepDives.IRAxisOps
-public import NN.Examples.DeepDives.OneSemanticUniverse
 public import NN.Examples.DeepDives.TensorOperations
 public import NN.Examples.DeepDives.TorchIRPyTorch
 public import NN.Examples.DeepDives.Widgets
@@ -29,7 +29,7 @@ These files are not beginner introductory examples. They cover cross-cutting bou
 - float/runtime semantics, numerical certificates, and Arb-backed interval comparison;
 - GraphSpec lowering into the training API;
 - IR axis semantics and PyTorch export;
-- the “one semantic universe” contract connecting execution, CROWN/IBP, and widgets;
+- shared graph interpretations for execution and interval propagation;
 - tensor operations, indexing, reshaping, `einsum`, and editor-only widget panels.
 
 Rule of thumb for this folder: examples may contain small concrete graphs, parameters, and display

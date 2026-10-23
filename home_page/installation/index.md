@@ -200,6 +200,16 @@ Add TorchLean to the downstream project's `lakefile.lean`:
 require TorchLean from git "https://github.com/lean-dojo/TorchLean.git" @ "main"
 ```
 
+For `#eval` and editor evaluation, add the CPU tensor library to your existing package declaration:
+
+```lean
+package MyProject where
+  dynlibs := #[`@TorchLean/torchlean_tensor_cpu_shared]
+```
+
+Compiled executables link this library automatically; the `dynlibs` entry also loads it in Lean's
+interpreter.
+
 Then update and build from the downstream project's root using its own Lake configuration:
 
 ```bash

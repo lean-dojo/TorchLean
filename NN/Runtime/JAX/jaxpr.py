@@ -221,6 +221,13 @@ class _Builder:
 
     def dot(self, left: int, right: int, params: dict[str, Any], shape: list[int]) -> int:
         """Expose batch, free, and contracted axes before a shared IR matmul."""
+        precision = params.get("precision")
+        defaults = (None, (jax.lax.Precision.DEFAULT, jax.lax.Precision.DEFAULT),
+                    jax.lax.DotAlgorithmPreset.DEFAULT)
+        if precision not in defaults:
+            raise Unsupported("dot_general: an explicit precision or dot algorithm needs an "
+                              "operand/accumulator arithmetic rule; the IR matmul does not "
+                              f"implement {precision}")
         (lc, rc), (lb, rb) = params["dimension_numbers"]
         lc, rc, lb, rb = map(list, (lc, rc, lb, rb))
         ls, rs = self.shape(left), self.shape(right)
@@ -399,6 +406,7 @@ def lower(closed_jaxpr: Any) -> dict[str, Any]:
     Square roots need structurally nonnegative operands, since the existing IR clamps
     negative inputs. Control flow is rejected. Custom JVP wrappers contribute their
     forward body only, not a proof of their derivative rule.
+    Nondefault dot precision and algorithm choices are rejected rather than erased.
 
     The artifact records how XLA compiles the function for the checker's ``compare``:
     ``reference_execution`` is ``"jit"`` when the Jaxpr is one ``jax.jit`` call, otherwise

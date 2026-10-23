@@ -431,7 +431,7 @@ def checkCudaDivisionSchedule : IO Unit := do
     let y ← session.input (Tensor.scalar b.toFloat32) (requiresGrad := true)
     let quotientId ← session.recordCuda fun tape => keepTapeOnError tape <|
       Runtime.Autograd.LibTorch.Tape.div (s := []) tape x.id y.id
-    let quotient : TensorRef Float32 [] := { id := quotientId }
+    let quotient : TensorRef Float32 [] ← session.makeTensorRef quotientId
     let gradients ← session.backwardDenseAll quotient (Tensor.scalar 1)
     let db ← EagerSession.grad gradients y
     let expected := (-((a.toFloat32 / b.toFloat32) / b.toFloat32)).toFloat

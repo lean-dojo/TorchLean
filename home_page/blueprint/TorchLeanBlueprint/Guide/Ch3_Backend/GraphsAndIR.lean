@@ -4,7 +4,7 @@ import NN.IR
 import NN.Backend
 import NN.MLTheory.CROWN.Extras.FP32
 import NN.MLTheory.CROWN.Proofs.GraphRunibpEndToEnd
-import NN.Examples.DeepDives.OneSemanticUniverse
+import NN.Examples.DeepDives.GraphSemantics
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
 
@@ -14,7 +14,7 @@ open TorchLean
 open NN.IR
 open NN.MLTheory.CROWN (NonlinearBoundOps)
 open NN.MLTheory.CROWN.Graph (runIBP)
-open NN.Examples.DeepDives.OneSemanticUniverse
+open NN.Examples.DeepDives.GraphSemantics
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
 open FloatLib.Floats (ExecFloat)
@@ -32,7 +32,7 @@ known to be valid. `NN.IR.Graph` is that representation, an array of operation n
 traversed, serialized, checked, and assigned to kernels.
 
 I'll keep the six-node network from
-{src "NN/Examples/DeepDives/OneSemanticUniverse.lean"}[`OneSemanticUniverse.lean`] fixed as we
+{src "NN/Examples/DeepDives/GraphSemantics.lean"}[`GraphSemantics.lean`] fixed as we
 change its parameter payload and scalar interpretation. We can then compare the computed values,
 propagated intervals, and kernel plan for the same nodes. A PyTorch trace provides a second view
 of their connections. Every Lean
@@ -867,7 +867,7 @@ The whole experiment is one command:
 ```terminal
 # Check sampled executions against the intervals derived for
 # this example.
-scripts/lake.sh exe torchlean one_semantic_universe --samples 50
+scripts/lake.sh exe torchlean graph_semantics --samples 50
 ```
 
 The command evaluates the center input in FloatLib binary32, propagates an output interval, and
@@ -1115,7 +1115,7 @@ The source map is:
   denotation agree on shapes;
 - {src "NN/IR/Pretty.lean"}[`Pretty.lean`] for the listing and the GraphViz output;
 - {src "NN/Backend/IR.lean"}[`Backend/IR.lean`] for capsule planning;
-- {src "NN/Examples/DeepDives/OneSemanticUniverse.lean"}[`OneSemanticUniverse.lean`] for the
+- {src "NN/Examples/DeepDives/GraphSemantics.lean"}[`GraphSemantics.lean`] for the
   complete six-node experiment.
 
 # Variations On The Six-Node Graph

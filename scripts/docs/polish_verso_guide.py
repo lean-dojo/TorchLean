@@ -634,10 +634,19 @@ main p > img:only-child {
   display: flex;
   align-items: center;
   flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
   gap: 0.4rem;
   margin-left: 0.2rem;
   padding: 0 0.7rem 0 0;
   white-space: nowrap;
+}
+
+@media screen and (min-width: 701px) {
+  header #search-wrapper .combobox .cb_edit {
+    width: clamp(8rem, 18vw, 24rem);
+  }
 }
 
 .tl-guide-nav a {
@@ -1639,6 +1648,22 @@ class _GuideHtmlIds(HTMLParser):
             self.ids.add(data["name"])
 
 
+def normalize_source_locations(root: Path) -> None:
+    """Publish package-relative Lean locations, not the builder's checkout paths."""
+    source_path = re.compile(
+        r'("path"\s*:\s*")[^"\n]*[/\\](TorchLeanBlueprint[/\\][^"\n]*\.lean")'
+    )
+    paths = [*root.rglob("*.html"), root / "xref.json",
+             root / "-verso-data/blueprint-manifest.json"]
+    for path in paths:
+        if not path.is_file():
+            continue
+        text = path.read_text()
+        portable = source_path.sub(r"\1\2", text)
+        if portable != text:
+            path.write_text(portable)
+
+
 def add_fragment_aliases(root: Path) -> None:
     """Add only the page-title anchors identified by Verso's cross-reference data.
 
@@ -1881,6 +1906,7 @@ def main() -> int:
     repair_generated_table_css(args.guide)
     select_formalization_group_view(args.guide)
     rewrite_repository_links(args.guide)
+    normalize_source_locations(args.guide)
     add_fragment_aliases(args.guide)
     remove_stale_search_shards(args.guide)
     inject_favicon(args.guide)

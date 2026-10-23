@@ -884,6 +884,26 @@ at::Tensor axpy(const at::Tensor& a, const at::Tensor& b, double c) {
   return at::addcmul(a, b, coefficient, 1.0f);
 }
 
+at::Tensor mean_update(const at::Tensor& mean, const at::Tensor& sample, double weight) {
+  require(std::isfinite(weight) && weight > 0.0 && weight <= 1.0,
+          "LibTorch running mean: weight must be finite and in (0, 1]");
+  const double previous_weight = rounded(1.0 - weight, mean.scalar_type());
+  auto weighted = at::mul(mean, previous_weight);
+  weighted.add_(at::mul(sample, weight));
+  // Subtraction is safe for same-sign finite values; opposite-sign weighted terms cannot
+  // overflow their sum. Bound the finite result by its operands to contain rounding overshoot.
+  at::Tensor candidate;
+  {
+    auto shifted = at::sub(sample, mean);
+    shifted.mul_(weight).add_(mean);
+    candidate = at::where(at::eq(at::signbit(mean), at::signbit(sample)), shifted, weighted);
+  }
+  // Only fresh workspaces are mutated; keep peak storage bounded for large parameter tensors.
+  at::maximum_out(candidate, candidate, at::minimum(mean, sample));
+  at::minimum_out(candidate, candidate, at::maximum(mean, sample));
+  return at::where(at::logical_and(at::isfinite(mean), at::isfinite(sample)), candidate, weighted);
+}
+
 constexpr double kGeluCoeff = 0.044715;
 constexpr double kSqrtTwoOverPi = 0.79788456080286535588;
 

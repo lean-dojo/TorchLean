@@ -510,6 +510,31 @@ class JaxCaptureTests(CheckerCase):
 
         self.assert_passes(self.verify(exact, self.x, self.y, checks=COMPARE))
 
+    def test_dot_algorithms_are_not_erased(self):
+        # All operands and the result may be FP32 even when the selected algorithm multiplies
+        # in BF16. Shape/dtype checks cannot recover that lost arithmetic choice.
+        jax = self.jax
+        x = self.jnp.array([[1.001, 1.003]], dtype=self.jnp.float32)
+        y = self.jnp.array([[1.005], [1.007]], dtype=self.jnp.float32)
+
+        def dot(precision):
+            return lambda a, b: jax.lax.dot_general(
+                a, b, (((1,), (0,)), ((), ())), precision=precision)
+
+        for precision in (None, jax.lax.Precision.DEFAULT, jax.lax.DotAlgorithmPreset.DEFAULT):
+            with self.subTest(precision=precision):
+                self.assert_passes(self.verify(dot(precision), x, y))
+        for precision in (jax.lax.Precision.HIGH, jax.lax.Precision.HIGHEST,
+                          jax.lax.DotAlgorithmPreset.BF16_BF16_F32,
+                          jax.lax.DotAlgorithmPreset.TF32_TF32_F32):
+            with self.subTest(precision=precision):
+                report = self.verify(dot(precision), x, y)
+                self.assertFalse(report["ok"])
+                self.assertEqual(report["checker"], "not_run")
+                for check in report["checks"]:
+                    self.assertEqual(check["status"], "unsupported")
+                    self.assertIn("operand/accumulator arithmetic rule", check["message"])
+
     def test_division_by_a_constant_keeps_the_ieee_quotient(self):
         # The importer gives lax.div its IEEE meaning. XLA's CPU code multiplies by binary32
         # 1/3 instead, so its x / 3.0 differs from the quotient: compare fails and lists the

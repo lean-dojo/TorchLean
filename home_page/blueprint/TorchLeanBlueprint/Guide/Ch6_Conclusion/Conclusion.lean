@@ -270,7 +270,7 @@ scripts/lake.sh exe torchlean quickstart_mlp \
 scripts/lake.sh exe torchlean graphspec --device cpu
 # Compare evaluation and bounds attached to one operation
 # graph.
-scripts/lake.sh exe torchlean one_semantic_universe
+scripts/lake.sh exe torchlean graph_semantics
 # Compare native Float32 values and derivatives with the
 # executable reference.
 scripts/lake.sh exe torchlean float32_semantics
@@ -322,7 +322,7 @@ shape, `[1, 2]` for the weight and `[1]` for the bias, because a gradient in thi
 shaped object rather than a flat vector; {ref "autograd-walkthrough"}[the autograd walkthrough]
 takes that structure apart.
 
-`graphspec` and `one_semantic_universe` then show why lowering matters: the same operation graph can
+`graphspec` and `graph_semantics` then show why lowering matters: the same operation graph can
 be evaluated for values or interpreted for bounds.
 
 The first evaluates a graph and checks sampled values against an interval. A final $`\tanh`

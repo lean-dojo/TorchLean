@@ -319,6 +319,10 @@ power differs from it. The IR has no binary `erf`, so a graph using it does not 
 `integer_pow` becomes the products XLA computes, square-and-multiply in JAX's order with a final
 division for a negative exponent; on 4096 samples XLA's `integer_pow` for the exponents 3, 5, 7 and
 -3 equals that schedule rounded at each step in bfloat16, binary16 and binary32.
+Nondefault dot precision and algorithms are rejected: a declared FP32 input and result do not
+specify whether the multiplications use BF16, TF32 or FP32, and the current matmul node has no
+separate operand/accumulator arithmetic rule. Default matmul capture still does not establish
+XLA's reduction order or backend equivalence.
 
 XLA's compiled CPU code departs from these meanings in the following ways, and the importer does
 not follow it. Eager JAX compiles each primitive, and each nested `jax.jit` call, as a computation

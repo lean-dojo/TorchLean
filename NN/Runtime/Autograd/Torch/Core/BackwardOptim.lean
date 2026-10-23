@@ -51,8 +51,8 @@ def backwardDenseAllCuda {α : Type} [TorchLean.Storage α] [TensorTransfer α]
 /--
 Run scalar-loss CUDA backprop and return gradients only for trainable parameter leaves.
 
-`seed` scales the loss cotangent. Batch training uses `1 / batch.size` so it can accumulate the
-mean directly, without first forming a larger unnormalized sum.
+`seed` scales the loss cotangent. Native batch training uses unscaled sample gradients and
+combines them in a running mean, without forming a larger unnormalized sum.
 
 The traversal is the engine's sparse CUDA sweep `LibTorch.Tape.backwardSparse`, which walks node
 ids in reverse, runs a node's VJP only when that node has received a cotangent, retires every
@@ -87,21 +87,27 @@ def backwardScalarParamGradsCuda {α : Type} [TorchLean.Storage α] [TensorTrans
   pure grads
 
 /--
-Add borrowed sample gradients into an owned accumulator without downloading them.
+Combine borrowed sample gradients into an owned running mean without downloading them.
 
 The accumulator owns every inserted buffer. Its caller must release it on success and failure.
-Parameter leaf ids are stable across recordings by `scalarTrainer`.
+`weight` is the reciprocal of the number of samples seen, including this one. Parameter leaf ids
+are stable across recordings by `scalarTrainer`.
 -/
-def accumulateSparseGrads (accumulator : IO.Ref LibTorch.Tape.SparseGradMap)
-    (sample : LibTorch.Tape.SparseGradMap) : IO Unit := do
+def accumulateMeanGradients (accumulator : IO.Ref LibTorch.Tape.SparseGradMap)
+    (sample : LibTorch.Tape.SparseGradMap) (weight : Float) : IO Unit := do
   for (id, gradient) in sample.toList do
     let current ← accumulator.get
-    let summed ← match current.get? id with
+    let mean ← match current.get? id with
       | none =>
           pure { gradient with buf := Runtime.Autograd.LibTorch.Buffer.copy gradient.buf }
       | some old =>
-          IO.ofExcept (Runtime.Autograd.LibTorch.SomeBuffer.add old gradient)
-    accumulator.set (current.insert id summed)
+          unless old.s == gradient.s do
+            throw <| IO.userError "torch: batch gradient shape mismatch"
+          IO.ofExcept <| Runtime.Autograd.LibTorch.SomeBuffer.checkDtype old gradient
+          discard <| IO.ofExcept (Runtime.Autograd.LibTorch.SomeBuffer.validate old)
+          discard <| IO.ofExcept (Runtime.Autograd.LibTorch.SomeBuffer.validate gradient)
+          pure { old with buf := LibTorch.Buffer.meanUpdate old.buf gradient.buf weight }
+    accumulator.set (current.insert id mean)
     if let some old := current.get? id then
       releaseCudaSomeBuffer old
 

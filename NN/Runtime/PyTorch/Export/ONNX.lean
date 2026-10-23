@@ -62,7 +62,7 @@ def imports : Array String :=
    , "FORMAT = \"" ++ Wire.format ++ "\""
    , "" ]
 
-/-- Static shape collection and attribute readers. -/
+/-- Static tensor metadata, arithmetic preconditions, and attribute readers. -/
 def shapes : Array String :=
   #[ "def _shape_size(shape):"
    , indent 4 "n = 1"
@@ -84,15 +84,46 @@ def shapes : Array String :=
    , indent 8 "raise RuntimeError(f\"missing shape for value {value_info.name}\")"
    , indent 4 "return [_dim_value(d) for d in tt.shape.dim]"
    , ""
-   , "def _collect_shapes(model):"
+   , "def _collect_metadata(model):"
    , indent 4 "shapes = {}"
+   , indent 4 "element_types = {}"
    , indent 4 ("for vi in list(model.graph.input) + list(model.graph.value_info) + " ++
        "list(model.graph.output):")
    , indent 8 "if vi.type.HasField(\"tensor_type\"):"
    , indent 8 "    shapes[vi.name] = _shape_from_value_info(vi)"
+   , indent 8 "    element_types[vi.name] = vi.type.tensor_type.elem_type"
    , indent 4 "for init in model.graph.initializer:"
    , indent 8 "shapes[init.name] = [int(x) for x in init.dims]"
-   , indent 4 "return shapes"
+   , indent 8 "element_types[init.name] = init.data_type"
+   , indent 4 "return shapes, element_types"
+   , ""
+   , "def _check_element_types(names, output, element_types):"
+   , indent 4 ("floating = {onnx.TensorProto.FLOAT16, onnx.TensorProto.BFLOAT16, " ++
+       "onnx.TensorProto.FLOAT, onnx.TensorProto.DOUBLE}")
+   , indent 4 "target = element_types.get(output)"
+   , indent 4 "for name in [*names, output]:"
+   , indent 8 "dtype = element_types.get(name)"
+   , indent 8 "if dtype not in floating:"
+   , indent 8 ("    raise RuntimeError(f\"ONNX tensor {name}: only floating-point data " ++
+       "is supported; integer and Boolean arithmetic must not be relabeled as Float\")")
+   , indent 8 "if dtype != target:"
+   , indent 8 ("    raise RuntimeError(f\"ONNX tensor {name}: mixed element types need " ++
+       "explicit operand/accumulator rules\")")
+   , ""
+   , "def _nonnegative(nodes, index):"
+   , indent 4 "node = nodes[index]"
+   , indent 4 "kind, parents = node['kind'], node['parents']"
+   , indent 4 "if kind == 'const':"
+   , indent 8 "values = node.get('values')"
+   , indent 8 ("return values is not None and all(x >= 0 and not np.signbit(x) " ++
+       "for x in values)")
+   , indent 4 "if kind in {'abs', 'exp', 'relu', 'sigmoid', 'softplus', 'sqrt'}: return True"
+   , indent 4 "if kind in {'reshape', 'permute', 'transpose', 'broadcast_to', 'reduce_sum'}:"
+   , indent 8 "return _nonnegative(nodes, parents[0])"
+   , indent 4 "if kind == 'add': return all(_nonnegative(nodes, p) for p in parents)"
+   , indent 4 "if kind == 'mul_elem':"
+   , indent 8 "return parents[0] == parents[1] or all(_nonnegative(nodes, p) for p in parents)"
+   , indent 4 "return False"
    , ""
    , "def _attr(node, name, default=None):"
    , indent 4 "for a in node.attribute:"
@@ -266,7 +297,8 @@ def parents : Array String :=
    , indent 4 "return extra"
    , ""
    , "def _shape_name(base, suffix):"
-   , indent 4 "return f\"{base}__torchlean_{suffix}\""
+   , indent 4 "# ONNX value names are strings; private tuple keys cannot shadow them."
+   , indent 4 "return (base, suffix)"
    , "" ]
 
 /-- `_conv_payload`: the dense weight and the bias of a `Conv` whose parameters are initializers.
@@ -415,12 +447,14 @@ Each per-channel `[C]` tensor is reshaped to `[C, 1, ..., 1]` before broadcastin
 -/
 def batchNorm : Array String :=
   #[ ("def _lower_batchnorm(node, out_name, out_shape, input_names, input_shapes, name_to_id, " ++
-       "add_node, include_debug):")
+       "add_node, include_debug, nodes, opset):")
    , indent 4 "if len(input_names) < 5:"
    , indent 8 ("raise RuntimeError(\"BatchNormalization: expected x, scale, bias, mean," ++
        " variance\")")
    , indent 4 "if int(_attr(node, \"training_mode\", 0)) != 0:"
    , indent 8 "raise RuntimeError(\"BatchNormalization: training_mode is not supported\")"
+   , indent 4 "if opset < 7 and not int(_attr(node, 'is_test', 0)):"
+   , indent 8 "raise RuntimeError(\"BatchNormalization: legacy training mode is not supported\")"
    , indent 4 "x, scale, bias, mean, var = input_names[:5]"
    , indent 4 "x_shape = input_shapes[0]"
    , indent 4 "if len(x_shape) < 2:"
@@ -461,6 +495,9 @@ def batchNorm : Array String :=
        "channel_shape, \"values\": [eps_value for _ in range(channels)]})")
    , indent 4 ("add_node(" ++ Wire.quoted .add ++
        ", var_eps, [name_to_id[var], name_to_id[eps]], channel_shape, {})")
+   , indent 4 "if not _nonnegative(nodes, name_to_id[var_eps]):"
+   , indent 8 ("raise RuntimeError(\"BatchNormalization: variance plus epsilon needs a " ++
+       "structurally nonnegative expression for the IR square root\")")
    , indent 4 ("add_node(" ++ Wire.quoted .sqrt ++
        ", std, [name_to_id[var_eps]], channel_shape, {})")
    , indent 4 ("add_node(" ++ Wire.quoted .inv ++
@@ -489,8 +526,9 @@ def entrypoint (options : Options) : Array String :=
       "name_to_id, add_node, " ++ debug ++ ")")
   #[ "def " ++ options.functionName ++ "(onnx_path, out_json_path):"
    , indent 4 "model = onnx.load(str(onnx_path))"
+   , indent 4 "onnx.checker.check_model(model, full_check=True)"
    , indent 4 "model = shape_inference.infer_shapes(model)"
-   , indent 4 "shapes = _collect_shapes(model)"
+   , indent 4 "shapes, element_types = _collect_metadata(model)"
    , indent 4 "opset = _opset(model)"
    , indent 4 "initializers = {init.name: init for init in model.graph.initializer}"
    , indent 4 "initializer_names = set(initializers.keys())"
@@ -508,6 +546,7 @@ def entrypoint (options : Options) : Array String :=
    , indent 8 "name_to_id[name] = node[\"id\"]"
    , indent 8 "return node[\"id\"]"
    , indent 4 "input_name = graph_inputs[0].name"
+   , indent 4 "_check_element_types([], input_name, element_types)"
    , indent 4 ("add_node(" ++ Wire.quoted .input ++ ", input_name, [], shapes[input_name])")
    , indent 4 "for name, init in initializers.items():"
    , indent 8 "arr = numpy_helper.to_array(init)"
@@ -516,6 +555,9 @@ def entrypoint (options : Options) : Array String :=
        ", name, [], shape, {\"value_shape\": " ++
        "shape, \"values\": _flat_float_values(arr)})")
    , indent 4 "for node in model.graph.node:"
+   , indent 8 "if node.domain not in ('', 'ai.onnx'):"
+   , indent 8 ("    raise RuntimeError(f\"ONNX domain {node.domain!r}: operator " ++
+       "{node.op_type} needs its own registered semantics\")")
    , indent 8 "if len(node.output) != 1:"
    , indent 8 ("    raise RuntimeError(f\"ONNX node {node.name or node.op_type} has multiple " ++
        "outputs; tuple lowering is not implemented\")")
@@ -532,6 +574,13 @@ def entrypoint (options : Options) : Array String :=
    , indent 8 "    input_names.append(x)"
    , indent 8 "    input_shapes.append(shapes[x])"
    , indent 8 "out_shape = shapes[out_name]"
+   , indent 8 ("data_inputs = input_names[:1] if node.op_type in " ++
+       "('Reshape', 'ReduceSum', 'ReduceMean') else input_names")
+   , indent 8 "_check_element_types(data_inputs, out_name, element_types)"
+   , indent 8 ("if node.op_type == 'Sqrt' and not " ++
+       "_nonnegative(nodes, name_to_id[input_names[0]]):")
+   , indent 8 ("    raise RuntimeError(\"Sqrt: the IR square root clamps negative inputs; " ++
+       "the source argument needs a structurally nonnegative expression\")")
    , indent 8 "if node.op_type == \"Conv\":"
    , indent 8 ("    _lower_conv(node, out_name, out_shape, input_names, input_shapes, " ++
        "name_to_id, add_node, " ++ debug ++ ", initializers)")
@@ -540,7 +589,8 @@ def entrypoint (options : Options) : Array String :=
    , lowering "_lower_gemm"
    , indent 8 "    continue"
    , indent 8 "if node.op_type == \"BatchNormalization\":"
-   , lowering "_lower_batchnorm"
+   , indent 8 ("    _lower_batchnorm(node, out_name, out_shape, input_names, input_shapes, " ++
+       "name_to_id, add_node, " ++ debug ++ ", nodes, opset)")
    , indent 8 "    continue"
    , indent 8 "if node.op_type == \"Softmax\" and opset < 13:"
    , lowering "_lower_softmax_coerced"
@@ -561,6 +611,7 @@ def entrypoint (options : Options) : Array String :=
    , indent 8 ("raise RuntimeError(\"TorchLean ONNX import currently expects exactly one" ++
        " graph output\")")
    , indent 4 "output_name = model.graph.output[0].name"
+   , indent 4 "_check_element_types([], output_name, element_types)"
    , indent 4 "if output_name not in name_to_id:"
    , indent 8 "raise RuntimeError(f\"ONNX graph output {output_name} was not produced\")"
    , indent 4 ("artifact = {\"format\": FORMAT, \"input_ids\": [name_to_id[input_name]], " ++
@@ -599,6 +650,9 @@ channels-first `Conv`. `Flatten` becomes the 2-D reshape ONNX specifies, and `So
 opset 13 is lowered through the same 2-D coercion. Graph initializers become constant nodes whose
 values `Import.PyTorch.TorchExport.parsePayload` reads back. A `Conv` node carries its dense weight
 and bias in the payload, so its weight and optional bias must be initializers.
+Only homogeneous floating-point data from the standard ONNX operator domain is accepted.
+Integer shape and reduction-axis initializers remain metadata, not floating-point operands.
+Square roots require structurally nonnegative operands; the same check applies inside BatchNorm.
 NaN or infinite values are rejected because the JSON artifact cannot represent them.
 -/
 def script (options : Options := {}) : String :=

@@ -123,27 +123,37 @@ def checkMixedBatchOptimizer (optimizer : optim.Optimizer) : IO Unit := do
           s!"CUDA mixed batch optimizer diverged at update {i}: \
             got {actual[0]}, expected {expected[0]}"
 
-/-- Average large finite losses and gradients without overflowing their unnormalized sums. -/
-def checkLargeBatchMean : IO Unit := do
+/-- Keep both the reported loss and parameter update finite at a native format's range limit. -/
+def checkLargeBatchMeanAt {α : Type} [Storage α] [Context α]
+    [Runtime.Autograd.Torch.TensorTransfer α] (large rate : α) : IO Unit := do
   let makeTrainer := Runtime.Autograd.Torch.scalarTrainer
-    (α := Float) (δ := Float) (paramShapes := [[]]) (inputShapes := [])
+    (α := α) (δ := α) (paramShapes := [[]]) (inputShapes := [])
     (dataInputShapes := []) (options := { device := gpu })
     (loss := fun {m} _ _ parameter =>
-      (show m (Runtime.Autograd.Torch.Ops.Ref m Float []) from do
-        let large ← Runtime.Autograd.Torch.Ops.const
-          (m := m) (α := Float) (Tensor.scalar 2e38)
-        let product ← Runtime.Autograd.Torch.Ops.mul (m := m) parameter large
-        Runtime.Autograd.Torch.Ops.add (m := m) large product))
-  let trainer ← makeTrainer (Tensor.scalar 0.0)
+      (show m (Runtime.Autograd.Torch.Ops.Ref m α []) from do
+        let value ← Runtime.Autograd.Torch.Ops.const
+          (m := m) (α := α) (Tensor.scalar large)
+        let product ← Runtime.Autograd.Torch.Ops.mul (m := m) parameter value
+        Runtime.Autograd.Torch.Ops.add (m := m) value product))
+  let trainer ← makeTrainer (Tensor.scalar 0)
   let some step := trainer.nativeBatchStep?
     | throw <| IO.userError "CUDA trainer omitted native batch update"
-  let some mean ← step (.sgd 2e-38) #[(.nil, .nil), (.nil, .nil)] true
+  let some mean ← step (.sgd rate) (Array.replicate 10 (.nil, .nil)) true
     | throw <| IO.userError "CUDA trainer omitted requested batch loss"
-  unless Float.abs (mean.item / 2e38 - 1.0) < 1e-5 do
-    throw <| IO.userError s!"CUDA batch mean overflowed: {mean.item}"
+  let magnitude ← Runtime.Autograd.Torch.TensorTransfer.toFloat large
+  let actualMean ← Runtime.Autograd.Torch.TensorTransfer.toFloat mean.item
+  unless actualMean.isFinite && Float.abs (actualMean / magnitude - 1.0) < 1e-5 do
+    throw <| IO.userError s!"CUDA batch mean overflowed: {actualMean}"
   let .cons parameter .nil ← trainer.getState
-  unless Float.abs (parameter.item + 4.0) < 1e-5 do
-    throw <| IO.userError s!"CUDA batch gradient overflowed: {parameter.item}"
+  let actualParameter ← Runtime.Autograd.Torch.TensorTransfer.toFloat parameter.item
+  let expectedStep := magnitude * (← Runtime.Autograd.Torch.TensorTransfer.toFloat rate)
+  unless actualParameter.isFinite && Float.abs (actualParameter + expectedStep) < 1e-5 do
+    throw <| IO.userError s!"CUDA batch gradient overflowed: {actualParameter}"
+
+/-- A finite batch mean must not overflow, including after rounding preweighted samples. -/
+def checkLargeBatchMean : IO Unit := do
+  checkLargeBatchMeanAt (α := Float32) (Float32.ofBits 0x7f7fffff) 1e-38
+  checkLargeBatchMeanAt (α := Float) (Float.ofBits 0x7fefffffffffffff) 1e-308
 
 /-- Running statistics survive single-sample and accumulated native updates on one GPU. -/
 def checkBatchNormState : IO Unit := do

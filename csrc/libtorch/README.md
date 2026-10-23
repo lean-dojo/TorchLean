@@ -86,6 +86,10 @@ Compilation errors include NVRTC's diagnostic log. Empty outputs still validate 
 Resident buffers retain binary32 or binary64 throughout forward, local VJPs, gradient accumulation
 and optimizer updates. Allocation and transfer select the dtype explicitly; operation outputs
 inherit it. Checkpoints retain binary64 parameters and moments instead of narrowing them.
+Native batch training combines unscaled sample losses and gradients in running means. For finite
+operands, the update chooses a sign-safe formula and bounds rounding overshoot by the two values;
+it does not sum preweighted samples, which can still overflow near the dtype's range limit.
+Nonfinite inputs propagate through the weighted arithmetic rather than being clipped away.
 Custom tensor computations use complete-word byte
 transfers through ATen, retaining those words for saved values and gradients on the same tape.
 Native binary32/binary64 retain hardware arithmetic; configured binary
@@ -189,7 +193,7 @@ Current CUDA coverage:
 | `NN/Tests/Runtime/Cuda/SelectiveScan.lean` | Diagonal selective-scan buffer primitives used by the Mamba/SSM runtime path. |
 | `NN/Tests/Runtime/Cuda/Fft.lean` | Packed real FFT, inverse FFT, spectral convolution, and finite-difference gradient checks. |
 | `NN/Tests/Runtime/Cuda/Stress.lean` | RNG determinism, explicit release, duplicate-parent gradient accumulation, large buffers, reductions, and rectangular matmul. |
-| `NN/Tests/Runtime/Cuda/Trainer.lean` | Training state, frozen parameters, optimizer history, and failure without state mutation. |
+| `NN/Tests/Runtime/Cuda/Trainer.lean` | Training state, frozen parameters, optimizer history, finite batch means at FP32/FP64 range limits, and failure without state mutation. |
 | `NN/Tests/Runtime/Cuda/Suite.lean` | The unified entrypoint imported by the repository-level test suite. |
 
 Elementwise arithmetic, activations, and whole-buffer reductions share the operation list in

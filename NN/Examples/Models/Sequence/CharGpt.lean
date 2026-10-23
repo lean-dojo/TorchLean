@@ -123,7 +123,7 @@ def karpathy : Preset :=
     generationLength := 500 }
 
 /--
-Resolve a `--preset` name. `smoke` is the fast configuration used in CI; `karpathy` reproduces the
+Resolve a `--preset` name. `smoke` is a short local run; `karpathy` reproduces the
 hyperparameters from the nanoGPT character-level Shakespeare run.
 -/
 def parse (name : String) : Except String Preset :=
@@ -144,8 +144,11 @@ def usage : String :=
         ++ "--preset PRESET [flags]"
     , ""
     , "Presets:"
-    , "  smoke       two-update end-to-end CUDA check"
+    , "  smoke       two-update training run"
     , "  karpathy    full Tiny Shakespeare lecture experiment"
+    , ""
+    , "Corpus:"
+    , "  --data-file PATH | --tiny-shakespeare"
     , ""
     , "Architecture:"
     , "  --width N       embedding width"
@@ -160,6 +163,11 @@ def usage : String :=
     , "  --eval-iters N  batches averaged at each validation point"
     , "  --load-checkpoint P restore model state before training"
     , "  --save-checkpoint P save final model state"
+    , ""
+    , "Generation:"
+    , "  --prompt TEXT --generate N --temperature X --top-k N"
+    , "  --repeat-penalty X --repeat-window N --sample-seed N"
+    , "  --ascii-only [true|false]"
     , ""
     , "Notes:"
     , "  - Training and validation use disjoint 90/10 corpus splits."

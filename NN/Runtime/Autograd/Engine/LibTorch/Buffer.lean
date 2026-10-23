@@ -731,6 +731,17 @@ opaque reduceSum (b : @& Buffer) : Buffer
 @[never_extract, extern "torchlean_cuda_buffer_reduce_mean"]
 opaque reduceMean (b : @& Buffer) : Buffer
 
+/-- Combine a running mean with one sample, weighted by `1 / sampleCount`.
+
+The weight must remain finite and in `(0, 1]` in the buffer dtype. Same-sign finite values use
+`mean + (sample - mean) * weight`; opposite signs use weighted terms. The result is bounded by
+the two finite operands, avoiding overflow from either a raw sum or accumulated rounding.
+Nonfinite inputs retain the weighted arithmetic's NaN/infinity propagation. Both buffers have
+the same native dtype and length; this primitive does not implement configured-word arithmetic.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_mean_update"]
+opaque meanUpdate (mean sample : @& Buffer) (weight : Float) : Buffer
+
 end Buffer
 
 end LibTorch

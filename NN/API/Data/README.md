@@ -91,6 +91,12 @@ def matrix : IO (Tensor Float [2, 3]) :=
 
 The file metadata must match `[2, 3]`; otherwise `Tensor.load` raises a descriptive `IO` error.
 
+NPY payloads are decoded into unboxed `FloatArray` storage and wrapped as tensors without a boxed
+intermediate. The low-level `TorchLean.Data.IO.readNpyBlocks` and `parseNpyBlocks` readers can decode
+C-order leading-axis blocks concurrently, with an explicit `Parallelism` setting. They return the
+blocks in file order; scalar and Fortran-order files use the ordinary full reader instead.
+Signed zeros and finite values are preserved; Lean's float conversion canonicalizes NaNs.
+
 A concrete supervised sample is a named tensor record:
 
 ```lean

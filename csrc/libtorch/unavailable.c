@@ -210,6 +210,10 @@ UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_gather_rows,
 UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_scatter_add_rows,
     b_lean_obj_arg MObj, b_lean_obj_arg ValuesObj, uint32_t rows, uint32_t cols,
     b_lean_obj_arg IdxObj, uint32_t k)
+UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_gather_at,
+    b_lean_obj_arg TableObj, uint32_t size, b_lean_obj_arg PositionsObj, uint32_t count)
+UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_scatter_add_at,
+    uint32_t size, b_lean_obj_arg PositionsObj, b_lean_obj_arg ValuesObj, uint32_t count)
 UNAVAILABLE(uint32_t, torchlean_cuda_buffer_size, b_lean_obj_arg BObj)
 UNAVAILABLE(uint8_t, torchlean_cuda_buffer_dtype, b_lean_obj_arg BObj)
 UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_format, b_lean_obj_arg buffer)

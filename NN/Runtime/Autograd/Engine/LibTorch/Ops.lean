@@ -15,6 +15,7 @@ public import NN.Runtime.Autograd.Engine.LibTorch.Ops.Linear
 public import NN.Runtime.Autograd.Engine.LibTorch.Ops.NormSoftmax
 public import NN.Runtime.Autograd.Engine.LibTorch.Ops.SelectiveScan
 public import NN.Runtime.Autograd.Engine.LibTorch.Ops.Shape
+public import NN.Runtime.Autograd.Engine.LibTorch.Ops.TableLookup
 
 /-!
 CUDA operation dispatch surface.

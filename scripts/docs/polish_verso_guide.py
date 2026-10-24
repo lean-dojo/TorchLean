@@ -1651,7 +1651,8 @@ class _GuideHtmlIds(HTMLParser):
 def normalize_source_locations(root: Path) -> None:
     """Publish package-relative Lean locations, not the builder's checkout paths."""
     source_path = re.compile(
-        r'("path"\s*:\s*")[^"\n]*[/\\](TorchLeanBlueprint[/\\][^"\n]*\.lean")'
+        r'("(?:path|sourcePath)"\s*:\s*")[^"\n]*[/\\]'
+        r'((?:TorchLeanBlueprint|NN|FloatLib)[/\\][^"\n]*\.lean")'
     )
     paths = [*root.rglob("*.html"), root / "xref.json",
              root / "-verso-data/blueprint-manifest.json"]

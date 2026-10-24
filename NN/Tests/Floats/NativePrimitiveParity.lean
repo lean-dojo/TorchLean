@@ -124,12 +124,12 @@ def modelDiv (x y : UInt32) : UInt32 :=
 
 @[inherit_doc modelAdd]
 def modelSqrt (x : UInt32) : UInt32 :=
-  Binary.toBits32 (Binary.sqrtWithRounding (rounding := .nearestEven) (ofBits32 x))
+  Binary.toBits32 (Binary.sqrt (mode := .nearest) (ofBits32 x))
 
 @[inherit_doc modelAdd]
 def modelFma (x y z : UInt32) : UInt32 :=
   Binary.toBits32
-    (Binary.fmaWithRounding (rounding := .nearestEven) (ofBits32 x) (ofBits32 y) (ofBits32 z))
+    (Binary.fma (mode := .nearest) (ofBits32 x) (ofBits32 y) (ofBits32 z))
 
 /-- The same expression with two roundings, used to show what a missing `fma` would return. -/
 def modelMulThenAdd (x y z : UInt32) : UInt32 :=

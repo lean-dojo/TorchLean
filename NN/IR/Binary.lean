@@ -50,7 +50,8 @@ def cast (source target : DType) (rounding : Model.IEEERoundingMode)
     (value : scalar source) : Except String (scalar target × ExecFloat.ConversionStatus) :=
   match source, target with
   | .binary src, .binary dst =>
-      let outcome := Model.castWithStatus src dst (ExecFloat.Binary.toModel value) rounding
+      let outcome := Model.cast src dst (ExecFloat.Binary.toModel value)
+        (mode := rounding) (status := true)
       .ok (ExecFloat.Binary.ofModel outcome.value,
         { inexact := outcome.status.inexact
           overflow := outcome.status.overflow

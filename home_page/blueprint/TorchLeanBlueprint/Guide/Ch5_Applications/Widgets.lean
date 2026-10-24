@@ -223,7 +223,8 @@ not reveal every difference introduced by binary32 conversion:
 -- Put the binary32 bits beside rounded decimal text to
 -- expose hidden differences.
 def compareLine (x : Float) : String :=
-  let r := (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32) x
+  let r : FloatLib.Floats.Binary32 :=
+    ExecFloat.Binary.ofFloat32 x.toFloat32
   let bits := String.ofList
     (Nat.toDigits 16 (ExecFloat.Binary.toBits32 r).toNat)
   let decimal := (ExecFloat.Binary.toFloat32 r).toFloat
@@ -489,8 +490,8 @@ which binary32 pattern is chosen?
 -- Recover the exact dyadic value behind the six-decimal
 -- display.
 #eval do
-  let r := (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32)
-    decimalTenth
+  let r : FloatLib.Floats.Binary32 :=
+    ExecFloat.Binary.ofFloat32 decimalTenth.toFloat32
   IO.println s!"rounded value = {
     (ExecFloat.Binary.toFloat32 r).toFloat}"
   let d := repr

@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Text.DecimalFormatting
+public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Text.Formatting
 public import FloatLib.Floats.Formats.BinaryInterchange.Format.Catalog
 
 /-!
@@ -128,7 +128,7 @@ def formatScalar (value : Float) : String :=
   else
     let model :=
       FloatLib.Floats.Formats.BinaryInterchange.Model.ofNatBits (fmt := .binary64) bits.toNat
-    let text := model.formatScientific 16
+    let text := model.format (style := .scientific 16)
     let negative := text.startsWith "-"
     let magnitude := if negative then (text.drop 1).toString else text
     match Lean.Syntax.decodeScientificLitVal? magnitude with

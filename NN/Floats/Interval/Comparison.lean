@@ -40,10 +40,12 @@ namespace TorchLean.Floats.Interval.Comparison
 def formatConfigured {fmt : FloatFormat} {plan : Configured.StoragePlan fmt}
     {code : Type} [ExecFloat.ModelCodec plan (Model fmt) code]
     (I : Interval (ExecFloat (Configured.Family fmt code plan))) : String :=
-  let lo := ExecFloat.Binary.toFloat <| ExecFloat.Binary.ofModel <|
-    Model.cast fmt FloatFormat.binary64 (ExecFloat.Binary.toModel I.lo)
-  let hi := ExecFloat.Binary.toFloat <| ExecFloat.Binary.ofModel <|
-    Model.cast fmt FloatFormat.binary64 (ExecFloat.Binary.toModel I.hi)
+  let lo := ExecFloat.Binary.toFloat (ExecFloat.Binary.ofModel
+    (Model.cast fmt FloatFormat.binary64 (ExecFloat.Binary.toModel I.lo)) :
+    FloatLib.Floats.Binary64)
+  let hi := ExecFloat.Binary.toFloat (ExecFloat.Binary.ofModel
+    (Model.cast fmt FloatFormat.binary64 (ExecFloat.Binary.toModel I.hi)) :
+    FloatLib.Floats.Binary64)
   s!"[{lo} (bits={ExecFloat.Binary.toNatBits I.lo}), " ++
     s!"{hi} (bits={ExecFloat.Binary.toNatBits I.hi})]"
 

@@ -74,7 +74,7 @@ def write : (dtype : DType) → scalar dtype → Except String Nat
 /-- Round an exact integer once to a binary format, reporting inexactness and overflow. -/
 def integerToBinary (target : FloatFormat) (rounding : Model.IEEERoundingMode) (value : Int) :
     Binary.Scalar target × ExecFloat.ConversionStatus :=
-  let rounded := Model.roundRatQWithRounding target rounding value
+  let rounded := Model.ofRat target (value : Rat) (mode := rounding)
   let status := Model.dyadicRoundingStatus target rounding
     (FloatLib.Numerics.Dyadic.ofScaledInt value 0) rounded
   (ExecFloat.Binary.ofModel rounded,
@@ -186,7 +186,7 @@ theorem cast_binary_value (source target : FloatFormat) (rounding : Model.IEEERo
     (flags : ExecFloat.ConversionStatus)
     (h : cast (.binary source) (.binary target) rounding value = .ok (converted, flags)) :
     ExecFloat.Binary.toModel converted =
-      Model.castWithRounding source target (ExecFloat.Binary.toModel value) rounding :=
+      Model.cast source target (ExecFloat.Binary.toModel value) (mode := rounding) :=
   Binary.cast_value source target rounding value converted flags h
 
 end NN.IR.Reference

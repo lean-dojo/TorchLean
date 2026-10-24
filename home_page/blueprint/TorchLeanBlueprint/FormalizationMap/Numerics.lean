@@ -125,7 +125,7 @@ Finite source tensors alone do not establish this: addition or multiplication of
 can overflow before the final output is formed.
 :::
 
-:::theorem "directed_addition_lower_bound" (parent := "binary32_semantics") (lean := "FloatLib.Floats.Formats.BinaryInterchange.Model.toEReal_addDown_le")
+:::theorem "directed_addition_lower_bound" (parent := "binary32_semantics") (lean := "FloatLib.Floats.Formats.BinaryInterchange.Model.toEReal_add_down_le")
 For finite inputs, downward-rounded {uses "executable_binary32"}[binary32 addition] is no greater
 than the exact real sum, including overflow to negative infinity.
 :::
@@ -135,7 +135,7 @@ The proof decodes the finite {uses "executable_binary32"}[inputs] to dyadics, co
 dyadic sum, and applies soundness of downward rounding in the extended reals.
 :::
 
-:::theorem "directed_addition_upper_bound" (parent := "binary32_semantics") (lean := "FloatLib.Floats.Formats.BinaryInterchange.Model.le_toEReal_addUp")
+:::theorem "directed_addition_upper_bound" (parent := "binary32_semantics") (lean := "FloatLib.Floats.Formats.BinaryInterchange.Model.le_toEReal_add_up")
 For finite inputs, the exact real sum is no greater than upward-rounded
 {uses "executable_binary32"}[binary32 addition], including overflow to positive infinity.
 :::

@@ -191,11 +191,14 @@ operations shown here, the sum and the literal round to the same value:
 ```lean (name := fpsFolklore)
 -- Check both equality and exact decoding for this
 -- precision-dependent decimal example.
-#eval ofFloat32 0.1 + ofFloat32 0.2 == ofFloat32 0.3
+#eval
+  (ofFloat32 0.1 : FloatLib.Floats.Binary32) +
+    ofFloat32 0.2 == ofFloat32 0.3
 #eval Model.toDyadic? (ExecFloat.Binary.toModel
-  (ofFloat32 0.1 + ofFloat32 0.2))
+  ((ofFloat32 0.1 : FloatLib.Floats.Binary32) +
+    ofFloat32 0.2))
 #eval Model.toDyadic? (ExecFloat.Binary.toModel
-  (ofFloat32 0.3))
+  (ofFloat32 0.3 : FloatLib.Floats.Binary32))
 ```
 
 ```leanOutput fpsFolklore (whitespace := lax)

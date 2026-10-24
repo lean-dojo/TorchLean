@@ -38,7 +38,7 @@ open Spec
 inductive Primitive where
   /-- Convert one tensor to the node's result type, with an explicit rounding direction. -/
   | cast (rounding : FloatLib.Floats.Formats.BinaryInterchange.Model.IEEERoundingMode :=
-      .nearestEven)
+      .nearest)
   /-- A registered operation with an explicit, possibly heterogeneous element-type signature. -/
   | call (name : Lean.Name) (inputs : Array DType) (output : DType)
   deriving DecidableEq, Repr
@@ -145,7 +145,7 @@ is the primitive's explicit attribute. Existing custom-node shape checks remain 
 -/
 def cast (program : Program) (input : Nat) (target : DType)
     (rounding : FloatLib.Floats.Formats.BinaryInterchange.Model.IEEERoundingMode :=
-      .nearestEven) : Except String (Program × Nat) := do
+      .nearest) : Except String (Program × Nat) := do
   unless program.dtypes.size == program.graph.nodes.size do
     throw "IR builder: incomplete type assignment"
   unless program.primitives.isEmpty || program.primitives.size == program.graph.nodes.size do

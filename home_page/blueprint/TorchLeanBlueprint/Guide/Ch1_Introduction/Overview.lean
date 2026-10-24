@@ -696,15 +696,15 @@ Now compute $`a \cdot a + b` with separate operations and with a fused operation
 -- Compare two rounding schedules by equality, encoded
 -- words, and their scaled difference.
 #eval (ovA * ovA + ovB) ==
-  ExecFloat.Binary.fmaWithRounding ovA ovA ovB .nearestEven
+  ExecFloat.Binary.fma ovA ovA ovB .nearest
 #eval (ExecFloat.Binary.toBits32 (ovA * ovA + ovB),
   ExecFloat.Binary.toBits32
-    (ExecFloat.Binary.fmaWithRounding
-      ovA ovA ovB .nearestEven))
+    (ExecFloat.Binary.fma
+      ovA ovA ovB .nearest))
 #eval
   ((ExecFloat.Binary.toFloat32
-      (ExecFloat.Binary.fmaWithRounding
-        ovA ovA ovB .nearestEven)).toFloat
+      (ExecFloat.Binary.fma
+        ovA ovA ovB .nearest)).toFloat
     - (ExecFloat.Binary.toFloat32
       (ovA * ovA + ovB)).toFloat) * 1000000000.0
 ```

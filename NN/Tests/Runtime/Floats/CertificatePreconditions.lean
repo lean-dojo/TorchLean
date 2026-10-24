@@ -30,8 +30,6 @@ interval comparisons must reject non-finite values.
 
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.ExecFloat (Binary)
-open FloatLib.Floats.ExecFloat.Binary (ofModel toModel)
-open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 open Spec TorchLean
 open Lean
@@ -103,10 +101,10 @@ def evalPDEAtTwo (source : String) : Option (Float × Float) := do
 
 def flatBox {n : Nat} (lo hi : Fin n → Float) : FlatBox (Binary 8 23) :=
   { dim := n
-    lo := TorchLean.Tensor.map (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel
-      (Binary.ofFloat x))) : Binary 8 23)) (TorchLean.Tensor.ofFn lo)
-    hi := TorchLean.Tensor.map (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel
-      (Binary.ofFloat x))) : Binary 8 23)) (TorchLean.Tensor.ofFn hi) }
+    lo := TorchLean.Tensor.map (fun x => (Binary.ofFloat x : Binary 8 23))
+      (TorchLean.Tensor.ofFn lo)
+    hi := TorchLean.Tensor.map (fun x => (Binary.ofFloat x : Binary 8 23))
+      (TorchLean.Tensor.ofFn hi) }
 
 def inputNode (id dim : Nat) : NN.IR.Node :=
   { id := id, parents := #[], kind := .input, outShape := [dim] }

@@ -563,6 +563,37 @@ private def customObjective {shape : Shape} : autograd.Function shape [] := fun 
 
 private abbrev Wide := FloatLib.Floats.ExecFloat.Binary 15 112
 
+/-- Typed derivatives and ordinary recording retain digits beyond native binary32 and binary64. -/
+private def checkCustomPrecision : IO Unit := do
+  let wide : Tensor Wide [1] := Tensor.full [1] 2
+  let wideGradient ← autograd.grad customObjective wide
+  unless FloatLib.Floats.ExecFloat.Binary.toRat? wideGradient[0] == some 32 do
+    throw <| IO.userError "custom calculation: binary128 gradient changed precision"
+  let small : Rat := 1 / (2 ^ 100 : Nat)
+  let precise : Tensor Wide [1] :=
+    Tensor.full [1] (Rat.cast (1 + small))
+  let preciseGradient ← autograd.grad customObjective precise
+  unless FloatLib.Floats.ExecFloat.Binary.toRat? preciseGradient[0] == some (4 + 12 * small) do
+    throw <| IO.userError "custom calculation: gradient lost digits beyond binary64"
+  -- CPU recording also retains digits that would disappear in a binary32 transfer.
+  let native : Tensor Float [1] := Tensor.full [1] (Float.ofBits 0x3ff0000000001000)
+  let nativeResult ← (fun (x : Float) => x * x).run native (grad := true)
+  let nativeGradient ← nativeResult.backward
+  unless nativeResult.device == cpu &&
+      nativeResult.value[0].toBits == (native[0] * native[0]).toBits &&
+      nativeGradient[0].toBits == (2 * native[0]).toBits do
+    throw <| IO.userError "custom calculation: binary64 recording narrowed to binary32"
+  -- Configured GPU recording is checked separately in the CUDA suite.
+  let recordedWide ← polynomial.run precise (grad := true)
+  try
+    unless recordedWide.device == cpu do
+      throw <| IO.userError "custom calculation: CPU recording selected a different device"
+    let gradient ← recordedWide.backward
+    unless FloatLib.Floats.ExecFloat.Binary.toRat? gradient[0] == some (4 + 12 * small) do
+      throw <| IO.userError "custom calculation: CPU recording narrowed its gradient"
+  finally
+    recordedWide.close
+
 /-- Frontend wiring is checked separately from the primitive derivative theorems: shared uses,
 reverse/forward mode, nested differentiation and wide scalar storage all use the same program. -/
 private def checkCustomAutograd : IO Unit := do
@@ -607,35 +638,7 @@ private def checkCustomAutograd : IO Unit := do
       hessian[0][0] == 12 && hessian[1][1] == 48 &&
       hessian[0][1] == 0 && hessian[1][0] == 0 do
     throw <| IO.userError "custom calculation: recorded derivative programs disagree"
-  let wide : Tensor Wide [1] := Tensor.full [1] 2
-  let wideGradient ← autograd.grad customObjective wide
-  unless FloatLib.Floats.ExecFloat.Binary.toRat? wideGradient[0] == some 32 do
-    throw <| IO.userError "custom calculation: binary128 gradient changed precision"
-  let small : Rat := 1 / (2 ^ 100 : Nat)
-  let precise : Tensor Wide [1] :=
-    Tensor.full [1] (Rat.cast (1 + small))
-  let preciseGradient ← autograd.grad customObjective precise
-  unless FloatLib.Floats.ExecFloat.Binary.toRat? preciseGradient[0] == some (4 + 12 * small) do
-    throw <| IO.userError "custom calculation: gradient lost digits beyond binary64"
-  -- CPU recording also retains digits that would disappear in a binary32 transfer.
-  let native : Tensor Float [1] := Tensor.full [1] (Float.ofBits 0x3ff0000000001000)
-  let nativeResult ← (fun (x : Float) => x * x).run native (grad := true)
-  let nativeGradient ← nativeResult.backward
-  unless nativeResult.device == cpu &&
-      nativeResult.value[0].toBits == (native[0] * native[0]).toBits &&
-      nativeGradient[0].toBits == (2 * native[0]).toBits do
-    throw <| IO.userError "custom calculation: binary64 recording narrowed to binary32"
-  -- Ordinary CPU recording retains the same wide digits as the typed derivative above.
-  -- Configured GPU recording is checked separately in the CUDA suite.
-  let recordedWide ← polynomial.run precise (grad := true)
-  try
-    unless recordedWide.device == cpu do
-      throw <| IO.userError "custom calculation: CPU recording selected a different device"
-    let gradient ← recordedWide.backward
-    unless FloatLib.Floats.ExecFloat.Binary.toRat? gradient[0] == some (4 + 12 * small) do
-      throw <| IO.userError "custom calculation: CPU recording narrowed its gradient"
-  finally
-    recordedWide.close
+  checkCustomPrecision
 
 @[no_expose] def runAllAutogradTests : IO Unit := do
   IO.println "=== Runtime autograd test suite (Float) ==="

@@ -36,10 +36,10 @@ open PyTorch.TorchExport.Internal
 /-- Decode one explicit rounding direction; unknown policies are not silently defaulted. -/
 def rounding (value : Json) : Except String Model.IEEERoundingMode := do
   match ← value.getStr? with
-  | "nearestEven" => pure .nearestEven
+  | "nearestEven" => pure .nearest
   | "towardZero" => pure .towardZero
-  | "towardPositiveInfinity" => pure .towardPositiveInfinity
-  | "towardNegativeInfinity" => pure .towardNegativeInfinity
+  | "towardPositiveInfinity" => pure .up
+  | "towardNegativeInfinity" => pure .down
   | name => throw s!"IR import: unsupported rounding direction {name}"
 
 /-- Read a parameter at its declared element type through the selected tensor decoder. -/

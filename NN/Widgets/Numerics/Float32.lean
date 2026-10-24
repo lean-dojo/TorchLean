@@ -114,8 +114,7 @@ def html (x : ExecFloat.Binary 8 23) : ProofWidgets.Html :=
   let e := (ExecFloat.Binary.toModel x).expField
   let f := (ExecFloat.Binary.toModel x).fracField
   let cls := classify x
-  let f64 := ExecFloat.Binary.toFloat <| ExecFloat.Binary.ofModel <|
-    Model.cast FloatFormat.binary32 FloatFormat.binary64 (ExecFloat.Binary.toModel x)
+  let f64 := ExecFloat.Binary.toFloat x
   let dyadic? := (ExecFloat.Binary.toModel x).toDyadic?
   let signBits := if s then "1" else "0"
   let expBits := bitsFixed 8 e
@@ -178,8 +177,7 @@ instance : TensorElemView (ExecFloat.Binary 8 23) :=
   ⟨fun x =>
     let b := ExecFloat.Binary.toBits32 x
     let cls := classify x
-    let v := ExecFloat.Binary.toFloat <| ExecFloat.Binary.ofModel <|
-      Model.cast FloatFormat.binary32 FloatFormat.binary64 (ExecFloat.Binary.toModel x)
+    let v := ExecFloat.Binary.toFloat x
     let title := s!"class={cls}\nbits={hex b.toBitVec}\ndisplay(binary64)={toString v}";
     <span title={title}>{monospace (toString v)}</span>⟩
 
@@ -217,9 +215,8 @@ def roundHtml (x : Float) : ProofWidgets.Html :=
   let b64 : UInt64 := x.toBits
   let x32 : ExecFloat.Binary 8 23 := ExecFloat.Binary.ofModel <|
     Model.cast FloatFormat.binary64 FloatFormat.binary32
-      (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))
-  let y := ExecFloat.Binary.toFloat <| ExecFloat.Binary.ofModel <|
-    Model.cast FloatFormat.binary32 FloatFormat.binary64 (ExecFloat.Binary.toModel x32)
+      (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x : FloatLib.Floats.Binary64))
+  let y := ExecFloat.Binary.toFloat x32
   let err : Float := y - x;
   <span style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
     <span style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap"}}>

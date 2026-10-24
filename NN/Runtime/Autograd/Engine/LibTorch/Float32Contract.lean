@@ -91,7 +91,8 @@ Lean `Float` is binary64. The CUDA buffer path casts host doubles to native `flo
 contract for that cast is round-to-nearest-even binary32, implemented by FloatLib’s `Model.cast`.
 -/
 @[inline] def fromLeanFloat (x : Float) : RefScalar :=
-  (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat x))) : Binary 8 23)
+  (ofModel (Model.cast .binary64 .binary32
+    (toModel (Binary.ofFloat x : FloatLib.Floats.Binary64))) : Binary 8 23)
 
 /-- Bit patterns survive a round trip through the reference scalar type. -/
 @[simp] theorem toNativeBits_fromNativeBits (bits : UInt32) :
@@ -107,13 +108,13 @@ whatever the kernel writes back can be read as the same value we would have comp
 /-- Host `Float` upload is exactly the FloatLib model cast to the buffer format. -/
 theorem fromLeanFloat_eq_cast (x : Float) :
     fromLeanFloat x = (ofModel (Model.cast .binary64 .binary32
-      (toModel (Binary.ofFloat x))) : Binary 8 23) := by
+      (toModel (Binary.ofFloat x : FloatLib.Floats.Binary64))) : Binary 8 23) := by
   rfl
 
 /-- The upload bit pattern is the bit pattern of the reference model cast. -/
 theorem fromLeanFloat_bits_eq_cast_bits (x : Float) :
     toNativeBits (fromLeanFloat x) = toBits32 (ofModel (Model.cast .binary64 .binary32
-      (toModel (Binary.ofFloat x))) : Binary 8 23) := by
+      (toModel (Binary.ofFloat x : FloatLib.Floats.Binary64))) : Binary 8 23) := by
   rfl
 
 /-- Reinterpreting native `Float32` bits agrees with FloatLib's native-value conversion. -/
@@ -179,9 +180,9 @@ structure NativePrimitiveAgreement (native : NativePrimitiveBits) : Prop where
   mul_bits : ∀ x y, AgreeUpToNaN (native.mulBits x y) (toNativeBits (ExecFloat.mul x y))
   div_bits : ∀ x y, AgreeUpToNaN (native.divBits x y) (toNativeBits (ExecFloat.div x y))
   fma_bits : ∀ x y z, AgreeUpToNaN (native.fmaBits x y z)
-    (toNativeBits ((Binary.fmaWithRounding (rounding := .nearestEven)) x y z))
+    (toNativeBits ((Binary.fma (mode := .nearest)) x y z))
   sqrt_bits : ∀ x, AgreeUpToNaN (native.sqrtBits x)
-    (toNativeBits ((Binary.sqrtWithRounding (rounding := .nearestEven)) x))
+    (toNativeBits ((Binary.sqrt (mode := .nearest)) x))
 
 /-- Reference scalars are determined by their bits, `NaN` payloads included.
 
@@ -229,7 +230,7 @@ theorem native_fma_eq_reference_of_isFinite
     (h : NativePrimitiveAgreement native) (x y z : RefScalar)
     (hfin : Binary.isFinite (fromNativeBits (native.fmaBits x y z)) = true) :
     fromNativeBits (native.fmaBits x y z) =
-      (Binary.fmaWithRounding (rounding := .nearestEven)) x y z := by
+      (Binary.fma (mode := .nearest)) x y z := by
   apply ref_ext
   simp [fromNativeBits, toNativeBits, (h.fma_bits x y z).eq_of_isFinite hfin]
 
@@ -237,7 +238,7 @@ theorem native_fma_eq_reference_of_isFinite
 theorem native_sqrt_eq_reference_of_isFinite (h : NativePrimitiveAgreement native) (x : RefScalar)
     (hfin : Binary.isFinite (fromNativeBits (native.sqrtBits x)) = true) :
     fromNativeBits (native.sqrtBits x) =
-      (Binary.sqrtWithRounding (rounding := .nearestEven)) x := by
+      (Binary.sqrt (mode := .nearest)) x := by
   apply ref_ext
   simp [fromNativeBits, toNativeBits, (h.sqrt_bits x).eq_of_isFinite hfin]
 
@@ -311,7 +312,7 @@ theorem native_fma_abs_error_of_isFinite
       Model.epsilonAt FloatFormat.binary32
         ((toModel x).toReal * (toModel y).toReal + (toModel z).toReal) := by
   have hx : fromNativeBits (native.fmaBits x y z) =
-      (Binary.fmaWithRounding (rounding := .nearestEven)) x y z :=
+      (Binary.fma (mode := .nearest)) x y z :=
     native_fma_eq_reference_of_isFinite h x y z hfin
   rw [hx] at hfin ⊢
   rw [IEEE32Exec.toReal_fma_eq_round_of_isFinite x y z hfin]
@@ -330,7 +331,7 @@ theorem native_sqrt_abs_error_of_isFinite
           Real.sqrt ((toModel x).toReal)) ≤
       Model.epsilonAt FloatFormat.binary32 (Real.sqrt ((toModel x).toReal)) := by
   have hx : fromNativeBits (native.sqrtBits x) =
-      (Binary.sqrtWithRounding (rounding := .nearestEven)) x :=
+      (Binary.sqrt (mode := .nearest)) x :=
     native_sqrt_eq_reference_of_isFinite h x hfin
   rw [hx] at hfin ⊢
   rw [IEEE32Exec.toReal_sqrt_eq_round_of_isFinite x hfin]

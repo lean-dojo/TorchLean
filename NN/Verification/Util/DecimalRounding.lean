@@ -20,9 +20,9 @@ A JSON number is an exact decimal `mantissa / 10^exponent`. Reading it through
 directed. The helpers here round the exact decimal once, in the requested direction, directly into
 binary32 or binary64.
 
-Certificate parsers use `.towardNegativeInfinity` for lower endpoints and
-`.towardPositiveInfinity` for upper endpoints, so the parsed box contains the decimal box that the
-artifact states. Transcript entries that must equal a replayed value use `.nearestEven`.
+Certificate parsers use `.down` for lower endpoints and
+`.up` for upper endpoints, so the parsed box contains the decimal box that the
+artifact states. Transcript entries that must equal a replayed value use `.nearest`.
 -/
 
 @[expose] public section
@@ -37,8 +37,7 @@ open Lean
 
 /-- Round an exact JSON decimal once into `fmt`. -/
 def roundDecimal (fmt : FloatFormat) (mode : IEEERoundingMode) (n : JsonNumber) : Model fmt :=
-  Model.roundRatWithRounding fmt mode (decide (n.mantissa < 0)) n.mantissa.natAbs
-    (10 ^ n.exponent)
+  Model.ofRat fmt ((n.mantissa : Rat) / (10 ^ n.exponent : Rat)) (mode := mode)
 
 /-- Round an exact JSON decimal once into the executable format `fmt`. -/
 def binary (fmt : FloatFormat) (mode : IEEERoundingMode) (n : JsonNumber) :
@@ -48,7 +47,8 @@ def binary (fmt : FloatFormat) (mode : IEEERoundingMode) (n : JsonNumber) :
 
 /-- Round an exact JSON decimal once into host binary64. -/
 def float (mode : IEEERoundingMode) (n : JsonNumber) : Float :=
-  ExecFloat.Binary.toFloat (ExecFloat.Binary.ofModel (roundDecimal FloatFormat.binary64 mode n))
+  ExecFloat.Binary.toFloat (ExecFloat.Binary.ofModel
+    (roundDecimal FloatFormat.binary64 mode n) : FloatLib.Floats.Binary64)
 
 /-- Read a JSON array of exactly `n` numbers. -/
 def numbers? (n : Nat) (j : Json) : Option (Fin n → JsonNumber) := do

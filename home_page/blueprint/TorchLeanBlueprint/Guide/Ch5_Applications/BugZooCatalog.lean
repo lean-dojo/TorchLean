@@ -648,7 +648,8 @@ open FloatLib.Floats in
 def bzBits (a b : Float32) : UInt32 × UInt32 :=
   ((a + b).toBits,
     ExecFloat.Binary.toBits32
-      (ExecFloat.Binary.ofFloat32 a +
+      ((ExecFloat.Binary.ofFloat32 a :
+          FloatLib.Floats.Binary32) +
         ExecFloat.Binary.ofFloat32 b))
 
 #eval bzBits 0.1 0.2
@@ -666,10 +667,12 @@ addition and subtraction, including the finite-input hypotheses:
 open FloatLib.Floats in
 example (a b : Float32)
     (ha : a.isFinite = true) (hb : b.isFinite = true) :
-    ExecFloat.Binary.ofFloat32 (a + b) =
+    (ExecFloat.Binary.ofFloat32 (a + b) :
+      FloatLib.Floats.Binary32) =
         ExecFloat.Binary.ofFloat32 a +
           ExecFloat.Binary.ofFloat32 b ∧
-      ExecFloat.Binary.ofFloat32 (a - b) =
+      (ExecFloat.Binary.ofFloat32 (a - b) :
+        FloatLib.Floats.Binary32) =
         ExecFloat.Binary.ofFloat32 a -
           ExecFloat.Binary.ofFloat32 b :=
   ⟨ExecFloat.Binary.ofFloat32_add_of_isFinite a b ha hb,

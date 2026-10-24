@@ -137,7 +137,7 @@ def assertBool (msg : String) (b : Bool) : IO Unit := do
 
 /-- Widen a configured binary32 value through its binary64 model for host assertions. -/
 def toHostFloat (value : Binary 8 23) : Float :=
-  Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel value)))
+  Binary.toFloat value
 
 /-- Check discounted returns in host, executable float32, and interval semantics. -/
 def checkReturns : IO Unit := do

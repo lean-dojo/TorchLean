@@ -102,8 +102,8 @@ def check (g : Graph) (ps : ParamStore Float) (outId : Nat) (path : String)
     | throw <| IO.userError "Missing/invalid result.lo"
   let some hiNums := DecimalRounding.numbers? n hiJ
     | throw <| IO.userError "Missing/invalid result.hi"
-  let loVec i := DecimalRounding.float .towardNegativeInfinity (loNums i)
-  let hiVec i := DecimalRounding.float .towardPositiveInfinity (hiNums i)
+  let loVec i := DecimalRounding.float .down (loNums i)
+  let hiVec i := DecimalRounding.float .up (hiNums i)
   unless (List.finRange n).all (fun i => (loVec i).isFinite && (hiVec i).isFinite) do
     throw <| IO.userError "Invalid result bounds: every value must be finite"
 

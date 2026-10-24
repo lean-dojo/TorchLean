@@ -629,9 +629,10 @@ binary32 semantics, and report the difference in units of $`10^{-9}`:
 /-- The readout at binary64, at binary32, and the gap. -/
 def ccSemantics (x : Float) : Float × Float × Float :=
   let binary64 := ccScalar x
-  let f32 := (ExecFloat.Binary.toFloat32
-    (ccScalar
-      (ExecFloat.Binary.ofFloat32 x.toFloat32))).toFloat
+  let input : FloatLib.Floats.Binary32 :=
+    ExecFloat.Binary.ofFloat32 x.toFloat32
+  let f32 :=
+    (ExecFloat.Binary.toFloat32 (ccScalar input)).toFloat
   (binary64, f32, (f32 - binary64) * 1000000000)
 
 #eval ccSemantics 1.1

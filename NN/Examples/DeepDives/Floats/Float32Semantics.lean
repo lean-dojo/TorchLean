@@ -44,7 +44,6 @@ visualization only; the actual tutorial code uses ordinary `def` and `IO` defini
 
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.ExecFloat (Binary)
-open FloatLib.Floats.ExecFloat.Binary (ofModel toModel)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
 open Spec TorchLean
@@ -277,7 +276,7 @@ def main (args : List String) : IO Unit := do
   let r32F : Result Float :=
     r32.map fun {_shape} t =>
       Tensor.map (α := Binary 8 23)
-        (fun x => Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel x)))) t
+        (fun x => Binary.toFloat x) t
 
   let diff := maxAbsDiff rNativeF r32F
   IO.println s!"max_abs_diff(Float32 vs configured binary32) = {diff.toStringFull}"

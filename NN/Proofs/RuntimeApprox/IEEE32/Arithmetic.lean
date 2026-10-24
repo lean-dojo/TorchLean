@@ -47,15 +47,15 @@ theorem isFinite_eq_true_of_toDyadic?_some {x : ExecFloat.Binary 8 23} {d :
 
 /-- Configured nearest-even FMA decodes to the model's single-rounding FMA. -/
 @[simp] theorem toModel_fma (x y z : ExecFloat.Binary 8 23) :
-    toModel ((ExecFloat.Binary.fmaWithRounding (rounding := .nearestEven)) x y z) =
+    toModel ((ExecFloat.Binary.fma (mode := .nearest)) x y z) =
       Model.fma (toModel x) (toModel y) (toModel z) :=
-  FloatLib.Floats.ExecFloat.Binary.toModel_fmaWithRounding x y z .nearestEven
+  FloatLib.Floats.ExecFloat.Binary.toModel_fma x y z .nearest
 
 /-- Configured nearest-even square root decodes to the model square root. -/
 @[simp] theorem toModel_sqrt (x : ExecFloat.Binary 8 23) :
-    toModel ((ExecFloat.Binary.sqrtWithRounding (rounding := .nearestEven)) x) =
+    toModel ((ExecFloat.Binary.sqrt (mode := .nearest)) x) =
       Model.sqrt (toModel x) :=
-  FloatLib.Floats.ExecFloat.Binary.toModel_sqrtWithRounding x .nearestEven
+  FloatLib.Floats.ExecFloat.Binary.toModel_sqrt x .nearest
 
 /-- The binary32 zero literal denotes real zero. -/
 @[simp] theorem toReal_zero : (toModel (0 : ExecFloat.Binary 8 23)).toReal = 0 :=
@@ -93,13 +93,13 @@ theorem toReal_roundDyadic_eq_round {d : FloatLib.Numerics.Dyadic}
 /-- Finite square-root evaluation excludes negative nonzero inputs and refines real rounding. -/
 theorem toReal_sqrt_eq_round {x : ExecFloat.Binary 8 23} {dx : FloatLib.Numerics.Dyadic}
     (hx : (toModel x).toDyadic? = some dx)
-    (hfin : isFinite ((ExecFloat.Binary.sqrtWithRounding (rounding := .nearestEven)) x) = true) :
-    (toModel ((ExecFloat.Binary.sqrtWithRounding (rounding := .nearestEven)) x)).toReal =
+    (hfin : isFinite ((ExecFloat.Binary.sqrt (mode := .nearest)) x) = true) :
+    (toModel ((ExecFloat.Binary.sqrt (mode := .nearest)) x)).toReal =
       Model.roundAt FloatFormat.binary32 (Real.sqrt ((toModel x).toReal)) := by
   have hxfinite := Model.isFinite_eq_true_of_toDyadic?_some hx
   have hmodel : Model.isFinite (Model.sqrt (toModel x)) = true := by
     change Model.isFinite (toModel
-      (ExecFloat.Binary.sqrtWithRounding x .nearestEven)) = true at hfin
+      (ExecFloat.Binary.sqrt x .nearest)) = true at hfin
     simpa only [toModel_sqrt] using hfin
   have hdomain : Model.isZero (toModel x) = true ∨ Model.signBit (toModel x) = false := by
     by_cases hzero : Model.isZero (toModel x) = true
@@ -183,14 +183,14 @@ private theorem model_finite_operands_of_fma (x y z : Binary32Model)
 
 /-- Fused multiply-add refinement packaged for total reasoning. -/
 theorem toReal_fma_eq_round_of_isFinite (x y z : ExecFloat.Binary 8 23)
-    (hfin : isFinite ((ExecFloat.Binary.fmaWithRounding (rounding := .nearestEven)) x y z) = true) :
-    (toModel ((ExecFloat.Binary.fmaWithRounding (rounding := .nearestEven)) x y z)).toReal =
+    (hfin : isFinite ((ExecFloat.Binary.fma (mode := .nearest)) x y z) = true) :
+    (toModel ((ExecFloat.Binary.fma (mode := .nearest)) x y z)).toReal =
       Model.roundAt FloatFormat.binary32
         ((toModel x).toReal * (toModel y).toReal + (toModel z).toReal) := by
   have hmodel :
       Model.isFinite (Model.fma (toModel x) (toModel y) (toModel z)) = true := by
     change Model.isFinite
-      (toModel ((ExecFloat.Binary.fmaWithRounding (rounding := .nearestEven)) x y z)) = true at hfin
+      (toModel ((ExecFloat.Binary.fma (mode := .nearest)) x y z)) = true at hfin
     simpa only [toModel_fma] using hfin
   obtain ⟨hx, hy, hz⟩ := model_finite_operands_of_fma (toModel x) (toModel y) (toModel z) hmodel
   rw [toModel_fma]
@@ -199,12 +199,12 @@ theorem toReal_fma_eq_round_of_isFinite (x y z : ExecFloat.Binary 8 23)
 
 /-- Square-root refinement packaged for total reasoning. -/
 theorem toReal_sqrt_eq_round_of_isFinite (x : ExecFloat.Binary 8 23)
-    (hfin : isFinite ((ExecFloat.Binary.sqrtWithRounding (rounding := .nearestEven)) x) = true) :
-    (toModel ((ExecFloat.Binary.sqrtWithRounding (rounding := .nearestEven)) x)).toReal =
+    (hfin : isFinite ((ExecFloat.Binary.sqrt (mode := .nearest)) x) = true) :
+    (toModel ((ExecFloat.Binary.sqrt (mode := .nearest)) x)).toReal =
       Model.roundAt FloatFormat.binary32 (Real.sqrt ((toModel x).toReal)) := by
   have hmodel : Model.isFinite (Model.sqrt (toModel x)) = true := by
     change Model.isFinite (toModel
-      (ExecFloat.Binary.sqrtWithRounding x .nearestEven)) = true at hfin
+      (ExecFloat.Binary.sqrt x .nearest)) = true at hfin
     simpa only [toModel_sqrt] using hfin
   rw [Model.Proof.sqrt_eq_spec] at hmodel
   cases hchoose : Model.chooseNaN1 (toModel x) with

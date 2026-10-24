@@ -24,6 +24,10 @@ namespace NN.Kernel
 def Env.output {α : Type} (index : UInt64) : Env α [.index] :=
   ⟨fun v => match v with | .zero => index | .succ v => nomatch v⟩
 
+/-- The output environment binds its only variable to the output index. -/
+@[simp] theorem Env.get_output {α : Type} (index : UInt64) :
+    (Env.output (α := α) index).get Var.zero = index := rfl
+
 /-- Evaluate one output element using a supplied arithmetic implementation and input reader. -/
 def evaluate {α : Type} (arithmetic : Arithmetic α) (expr : Expr α [.index] .scalar)
     (read : Reader α) (index : UInt64) : Except Error α :=

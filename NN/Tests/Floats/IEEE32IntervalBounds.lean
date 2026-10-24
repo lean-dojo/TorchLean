@@ -29,7 +29,7 @@ namespace NN.Tests.Floats.IEEE32IntervalBounds
 private abbrev Endpoint := Binary 8 23
 
 private def binary32 (q : ℚ) : Endpoint :=
-  Binary.ofModel (Model.roundRatQ FloatFormat.binary32 q)
+  Binary.ofModel (Model.ofRat FloatFormat.binary32 q)
 
 private def decodedBounds? (result : Option (Endpoint × Endpoint)) :
     Option RationalInterval :=

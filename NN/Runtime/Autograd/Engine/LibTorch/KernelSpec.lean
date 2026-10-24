@@ -127,7 +127,7 @@ def divSpec {n : Nat} : FlatBuffer n → FlatBuffer n → FlatBuffer n :=
 
 /-- Elementwise square-root reference spec. -/
 def sqrtSpec {n : Nat} : FlatBuffer n → FlatBuffer n :=
-  mapSpec (Binary.sqrtWithRounding (rounding := .nearestEven))
+  mapSpec (Binary.sqrt (mode := .nearest))
 
 /--
 If every native result bit agrees with reference addition, the whole native elementwise-add buffer
@@ -169,7 +169,7 @@ Elementwise square-root version of `fromNativeBitsBuffer_eq_addSpec_of_bits`.
 theorem fromNativeBitsBuffer_eq_sqrtSpec_of_bits
     {n : Nat} {bits : NativeBitsBuffer n} {x : FlatBuffer n}
     (hbits : ∀ i, bits i =
-      toNativeBits ((Binary.sqrtWithRounding (rounding := .nearestEven)) (x i))) :
+      toNativeBits ((Binary.sqrt (mode := .nearest)) (x i))) :
     fromNativeBitsBuffer bits = sqrtSpec x := by
   funext i
   apply ref_ext
@@ -236,7 +236,7 @@ Pointwise real-error bound inherited by a native elementwise-square-root buffer 
 theorem native_sqrt_pointwise_abs_error_of_bits
     {n : Nat} {bits : NativeBitsBuffer n} {x : FlatBuffer n}
     (hbits : ∀ i, bits i =
-      toNativeBits ((Binary.sqrtWithRounding (rounding := .nearestEven)) (x i)))
+      toNativeBits ((Binary.sqrt (mode := .nearest)) (x i)))
     (i : Fin n)
     (hfin : Binary.isFinite (fromNativeBits (bits i)) = true) :
     abs
@@ -244,7 +244,7 @@ theorem native_sqrt_pointwise_abs_error_of_bits
           Real.sqrt ((toModel (x i)).toReal)) ≤
       Model.epsilonAt .binary32 (Real.sqrt ((toModel (x i)).toReal)) := by
   have hx : fromNativeBits (bits i) =
-      (Binary.sqrtWithRounding (rounding := .nearestEven)) (x i) := by
+      (Binary.sqrt (mode := .nearest)) (x i) := by
     apply ref_ext
     simp [hbits i]
   rw [hx] at hfin ⊢

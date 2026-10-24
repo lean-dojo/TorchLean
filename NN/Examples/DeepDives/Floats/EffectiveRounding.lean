@@ -209,23 +209,22 @@ theorem one_add_min_subnormal_rounds_to_one :
 
 /-- The public mode API avoids passing a raw integer-rounding function at each call site. -/
 noncomputable def oneThirdDown : ℝ :=
-  RoundingMode.towardNegative.round
-    (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) (1 / 3)
+  Model.roundAt FloatFormat.binary32 (1 / 3) (mode := .down)
 
 /-- Directed rounding gives a certified lower endpoint, not merely a differently named value. -/
 theorem oneThirdDown_le : oneThirdDown ≤ 1 / 3 := by
-  simpa [oneThirdDown, RoundingMode.round, RoundingMode.roundingFunction] using
+  simpa [oneThirdDown, Model.roundAt] using
     (round_floor_le (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) (1 / 3))
 
 /-- A concrete fused multiply-add lower endpoint, computed directly from binary32 inputs. -/
 def fusedLower : Binary 8 23 :=
-  Binary.fmaWithRounding (1 : Binary 8 23) (ofBits32 0x40000000) (ofBits32 0x3e800000)
-    .towardNegativeInfinity
+  Binary.fma (1 : Binary 8 23) (ofBits32 0x40000000) (ofBits32 0x3e800000)
+    .down
 
 /-- The corresponding upper endpoint. -/
 def fusedUpper : Binary 8 23 :=
-  Binary.fmaWithRounding (1 : Binary 8 23) (ofBits32 0x40000000) (ofBits32 0x3e800000)
-    .towardPositiveInfinity
+  Binary.fma (1 : Binary 8 23) (ofBits32 0x40000000) (ofBits32 0x3e800000)
+    .up
 
 /-- The executable directed FMA endpoints enclose the exact single-rounding expression. -/
 theorem fused_enclosure :
@@ -253,27 +252,29 @@ theorem fused_enclosure :
 
 /-- Directed binary32 square-root endpoints for the exact input `2`. -/
 def sqrtLower : Binary 8 23 :=
-  (Binary.sqrtWithRounding (rounding := .towardNegativeInfinity)) (ofBits32 0x40000000)
+  (Binary.sqrt (mode := .down)) (ofBits32 0x40000000)
 
 /-- The upper endpoint, rounded away from zero, so the pair brackets the exact `sqrt 2`. -/
 def sqrtUpper : Binary 8 23 :=
-  (Binary.sqrtWithRounding (rounding := .towardPositiveInfinity)) (ofBits32 0x40000000)
+  (Binary.sqrt (mode := .up)) (ofBits32 0x40000000)
 
 /-- The executable endpoints enclose the exact real value `sqrt 2`. -/
 theorem sqrt_enclosure :
     (toModel sqrtLower).toEReal ≤ (Real.sqrt ((toModel (ofBits32 0x40000000)).toReal) : EReal) ∧
       (Real.sqrt ((toModel (ofBits32 0x40000000)).toReal) : EReal) ≤
         (toModel sqrtUpper).toEReal := by
-  have hlo : toModel sqrtLower = Model.sqrtDown (toModel (ofBits32 0x40000000)) :=
-    Binary.toModel_sqrtWithRounding (ofBits32 0x40000000) .towardNegativeInfinity
-  have hhi : toModel sqrtUpper = Model.sqrtUp (toModel (ofBits32 0x40000000)) :=
-    Binary.toModel_sqrtWithRounding (ofBits32 0x40000000) .towardPositiveInfinity
+  have hlo : toModel sqrtLower =
+      Model.sqrt (toModel (ofBits32 0x40000000)) (mode := .down) :=
+    Binary.toModel_sqrt (ofBits32 0x40000000) .down
+  have hhi : toModel sqrtUpper =
+      Model.sqrt (toModel (ofBits32 0x40000000)) (mode := .up) :=
+    Binary.toModel_sqrt (ofBits32 0x40000000) .up
   constructor
   · rw [hlo]
-    exact Model.toEReal_sqrtDown_le (toModel (ofBits32 0x40000000))
+    exact Model.toEReal_sqrt_down_le (toModel (ofBits32 0x40000000))
       (by decide) (by decide) (by decide)
   · rw [hhi]
-    exact Model.le_toEReal_sqrtUp (toModel (ofBits32 0x40000000))
+    exact Model.le_toEReal_sqrt_up (toModel (ofBits32 0x40000000))
       (by decide) (by decide) (by decide)
 
 /-! ## Fixed grids, quantization, and double rounding -/
@@ -337,10 +338,10 @@ theorem quarterGrid_double_rounding_safe (extra : ℕ) (x : ℝ) :
 
 /-- The status-bearing API records division by zero separately from invalid operation. -/
 theorem one_div_zero_status :
-    (Binary.divWithStatus (1 : Binary 8 23) (Binary.zero false : Binary 8 23)
-      .nearestEven).2.divideByZero = true ∧
-      (Binary.divWithStatus (1 : Binary 8 23) (Binary.zero false : Binary 8 23)
-        .nearestEven).2.invalid = false := by
+    (Binary.div (1 : Binary 8 23) (Binary.zero false : Binary 8 23)
+      (status := true)).status.divideByZero = true ∧
+      (Binary.div (1 : Binary 8 23) (Binary.zero false : Binary 8 23)
+        (status := true)).status.invalid = false := by
   decide
 
 /-! ## A training-shaped reduction -/

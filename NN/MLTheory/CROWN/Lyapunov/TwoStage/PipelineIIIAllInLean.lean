@@ -102,7 +102,8 @@ def run (width : Nat) (args : List String) : IO Unit := do
 
   let mod ← Runtime.Autograd.Model.Module.ObjectiveDef.instantiate (α := Scalar)
     (objectiveDef width) (fun x => (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary64
-      FloatFormat.binary32 (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x))) :
+      FloatFormat.binary32 (ExecFloat.Binary.toModel
+        (ExecFloat.Binary.ofFloat x : FloatLib.Floats.Binary64))) :
       ExecFloat.Binary 8 23))
   let tr := mod.trainer
   let sgd ← Runtime.Autograd.Model.Module.bindOptimizer mod

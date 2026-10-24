@@ -39,23 +39,17 @@ variable {format : FloatFormat} {plan : Configured.StoragePlan format} {code : T
 /-- Packing the downward rational conversion preserves its extended-real lower bound. -/
 theorem toEReal_roundRatQDown_le (q : Rat) (hformat : format.isIEEE = true) :
     (Binary.toModel
-      (Binary.ofModel (plan := plan) (code := code) (Model.roundRatQDown format q))).toEReal ≤
+      (Binary.ofModel (plan := plan) (code := code)
+        (Model.ofRat format q (mode := .down)))).toEReal ≤
         ((q : ℝ) : EReal) := by
-  simpa only [Binary.toModel_ofModel] using Model.toEReal_roundRatQDown_le format q hformat
+  simpa only [Binary.toModel_ofModel] using Model.toEReal_ofRat_down_le format q hformat
 
 /-- Packing the upward rational conversion preserves its extended-real upper bound. -/
 theorem toEReal_roundRatQUp_ge (q : Rat) (hformat : format.isIEEE = true) :
     ((q : ℝ) : EReal) ≤ (Binary.toModel
-      (Binary.ofModel (plan := plan) (code := code) (Model.roundRatQUp format q))).toEReal := by
-  rw [Binary.toModel_ofModel]
-  have hcast : (q : ℝ) = Model.signedScaledRatToReal (q.num < 0) q.num.natAbs q.den 0 := by
-    rw [Rat.cast_def]
-    by_cases h : q.num < 0
-    · simp [Model.signedScaledRatToReal, Model.scaledRatToReal, h, abs_of_neg h, neg_div]
-    · simp [Model.signedScaledRatToReal, Model.scaledRatToReal,
-        h, abs_of_nonneg (le_of_not_gt h)]
-  rw [hcast]
-  exact Model.le_toEReal_roundRatUp format (q.num < 0) q.num.natAbs q.den hformat q.den_nz
+      (Binary.ofModel (plan := plan) (code := code)
+        (Model.ofRat format q (mode := .up)))).toEReal := by
+  simpa only [Binary.toModel_ofModel] using Model.le_toEReal_ofRat_up format q hformat
 
 /-- Decode an endpoint exactly as a rational, failing on NaN or infinity. -/
 def finite (x : ExecFloat (Configured.Family format code plan)) (label : String) :
@@ -93,7 +87,7 @@ def unary (func : String) (X : Interval (ExecFloat (Configured.Family format cod
     (precBits digits : Nat := 200) :
     IO (Interval (ExecFloat (Configured.Family format code plan))) := do
   let (lo, hi) ← bounds func X (precBits := precBits) (digits := digits)
-  pure ⟨Binary.ofModel (Model.roundRatQDown format lo),
-    Binary.ofModel (Model.roundRatQUp format hi)⟩
+  pure ⟨Binary.ofModel (Model.ofRat format lo (mode := .down)),
+    Binary.ofModel (Model.ofRat format hi (mode := .up))⟩
 
 end TorchLean.Floats.Interval.Arb

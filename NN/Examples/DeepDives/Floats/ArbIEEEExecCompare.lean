@@ -146,7 +146,7 @@ def compare (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit :=
       | "exp"  => endpoints FloatLib.Floats.ExecFloat.Binary.exp lo32 hi32
       | "log"  => endpoints FloatLib.Floats.ExecFloat.Binary.log lo32 hi32
       | "sqrt" =>
-          endpoints (Binary.sqrtWithRounding (rounding := .nearestEven)) lo32 hi32
+          endpoints (Binary.sqrt (mode := .nearest)) lo32 hi32
       | _      => ⟨(Binary.canonicalNaN : Binary 8 23), (Binary.canonicalNaN : Binary 8 23)⟩
     IO.println s!"  configured binary32:{formatConfigured I}"
 
@@ -203,7 +203,7 @@ def compare (func : String) (lo hi : Float) (precBits digits : Nat) : IO Unit :=
     let X : Interval (Binary 8 23) := ⟨lo32, hi32⟩
     let coefficient (value : Float) : Interval (Binary 8 23) :=
       Binary.Interval.point (ofModel (Model.cast .binary64 .binary32
-        (toModel (Binary.ofFloat value))))
+        (toModel (Binary.ofFloat value : FloatLib.Floats.Binary64))))
     let c01 := coefficient 0.1
     let c05 := coefficient 0.5
     -- p(x) = x*x + 0.1*x - 0.5
@@ -323,7 +323,7 @@ def signedZero : IO Unit := do
   let numer32 : Interval (Binary 8 23) := ⟨one32, one32⟩
   let q32 := Binary.Interval.div numer32 denom32
   let qPoint32 := ExecFloat.div one32 negZ32
-  let hostQuotient := Binary.toFloat (ofModel (Model.cast .binary32 .binary64 (toModel qPoint32)))
+  let hostQuotient := Binary.toFloat qPoint32
 
   IO.println "func=div_signed_zero (widening from signed-zero containment)"
   IO.println ("  PyTorch analogue: torch.tensor(1.0, dtype=torch.float32) "

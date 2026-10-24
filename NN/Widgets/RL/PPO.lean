@@ -67,8 +67,7 @@ class ToVizFloat (α : Type) where
 
 instance : ToVizFloat Float := ⟨fun x => x⟩
 instance : ToVizFloat (ExecFloat.Binary 8 23) :=
-  ⟨(fun x => ExecFloat.Binary.toFloat (ExecFloat.Binary.ofModel (Model.cast FloatFormat.binary32
-    FloatFormat.binary64 (ExecFloat.Binary.toModel x))))⟩
+  ⟨ExecFloat.Binary.toFloat⟩
 
 /--
 Convert a length-`n` scalar tensor to an `Array Float` for plotting.

@@ -956,7 +956,7 @@ private def verifySegmentWith {α : Type} [TorchLean.Storage α] [Context α] [B
 private def toBinary32 (x : Float) : ExecFloat.Binary 8 23 :=
   ExecFloat.Binary.ofModel
     (Model.cast FloatFormat.binary64 FloatFormat.binary32
-      (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x)))
+      (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat x : FloatLib.Floats.Binary64)))
 
 /-- Verify every segment under the configured arithmetic. Checking continues past a failing
 segment so that all failures are reported before the overall verdict. -/

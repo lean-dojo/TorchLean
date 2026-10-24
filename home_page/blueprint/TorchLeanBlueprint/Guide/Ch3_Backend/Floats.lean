@@ -797,9 +797,10 @@ can lose many small contributions even though each addition is correctly rounded
 the unit increment in the opening example.
 
 The value-only operations have status-bearing variants. FloatLib's configured
-`ExecFloat.Binary.IEEEOutcome` is a pair: the result value followed by an `IEEEStatus` containing
-the invalid, divide-by-zero, overflow, underflow, and inexact flags. These calls take an explicit
-rounding direction. Underflow follows the documented tininess-after-rounding policy and is raised
+`ExecFloat.Binary.IEEEOutcome` contains the result `value`, its exception `status`, and a
+`ternary` comparison with the exact result. The status records invalid, divide-by-zero, overflow,
+underflow, and inexact flags. These calls default to nearest-even rounding. Underflow follows
+the documented tininess-after-rounding policy and is raised
 only for an inexact tiny result. We project the result's `UInt32` encoding for display:
 
 For $`1` divided by $`+0`, the IEEE rule returns positive infinity and raises the divide-by-zero
@@ -809,9 +810,10 @@ flag:
 -- A nonzero numerator divided by zero raises divide-by-zero
 -- status.
 #eval
-  let (value, status) := ExecFloat.Binary.divWithStatus
-    (1 : ChapterBinary32) (0 : ChapterBinary32) .nearestEven
-  (ExecFloat.Binary.toBits32 value, status)
+  let result := ExecFloat.Binary.div
+    (1 : ChapterBinary32) (0 : ChapterBinary32)
+    (status := true)
+  (ExecFloat.Binary.toBits32 result.value, result.status)
 ```
 ```leanOutput divByZero (whitespace := lax)
 (2139095040,
@@ -825,9 +827,10 @@ For $`0` divided by $`+0`, it returns the canonical NaN and raises `invalid`:
 -- Zero divided by zero instead takes the invalid-operation
 -- branch.
 #eval
-  let (value, status) := ExecFloat.Binary.divWithStatus
-    (0 : ChapterBinary32) (0 : ChapterBinary32) .nearestEven
-  (ExecFloat.Binary.toBits32 value, status)
+  let result := ExecFloat.Binary.div
+    (0 : ChapterBinary32) (0 : ChapterBinary32)
+    (status := true)
+  (ExecFloat.Binary.toBits32 result.value, result.status)
 ```
 ```leanOutput zeroByZero (whitespace := lax)
 (2143289344,
@@ -864,7 +867,8 @@ same logical value:
 ```lean (name := nativeRoundTripProof)
 example (a : Float32) :
     ExecFloat.Binary.toFloat32
-      (ExecFloat.Binary.ofFloat32 a) = a :=
+      (ExecFloat.Binary.ofFloat32 a :
+        ChapterBinary32) = a :=
   ExecFloat.Binary.toFloat32_ofFloat32 a
 ```
 
@@ -878,7 +882,7 @@ Addition has a different domain from the round trip. Both operands must be finit
 ```lean (name := nativeFiniteAddProof)
 example (a b : Float32)
     (ha : a.isFinite = true) (hb : b.isFinite = true) :
-    ExecFloat.Binary.ofFloat32 (a + b) =
+    (ExecFloat.Binary.ofFloat32 (a + b) : ChapterBinary32) =
       ExecFloat.Binary.ofFloat32 a +
         ExecFloat.Binary.ofFloat32 b :=
   ExecFloat.Binary.ofFloat32_add_of_isFinite a b ha hb
@@ -990,7 +994,7 @@ Float32.Model operation
 Lean defines the first equality. FloatLib proves operation-specific forms of the second between
 pure Lean algorithms. Its square-root theorem accounts for NaNs through canonicalization; its
 native addition and subtraction theorems require finite inputs. A theorem refining configured
-division to `Model.divWithRounding` has a different scope: it does not identify arbitrary native
+division to `Model.div` has a different scope: it does not identify arbitrary native
 `Float32` division with that operation.
 
 Integer conversion has its own policy. FloatLib's constructor proofs round arbitrary `Nat` and
@@ -1153,9 +1157,9 @@ def three : ChapterBinary32 :=
 -- Inspect both the exact difference and the absence of an
 -- inexact flag.
 #eval
-  let (value, status) :=
-    ExecFloat.Binary.subWithStatus three two .nearestEven
-  (ExecFloat.Binary.toBits32 value, status)
+  let result := ExecFloat.Binary.sub three two
+    (status := true)
+  (ExecFloat.Binary.toBits32 result.value, result.status)
 ```
 ```leanOutput sterbenzEval (whitespace := lax)
 (1065353216,

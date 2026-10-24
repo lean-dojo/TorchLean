@@ -6,6 +6,7 @@ Authors: TorchLean contributors
 module
 
 public import NN.Kernel.Program
+public import FloatLib.Floats.ExecFloat.Proof.Arithmetic
 public meta import NN.Kernel.Expr
 public meta import Lean.Elab.Tactic.Omega
 public meta import Lean.Elab.Tactic.Split
@@ -408,11 +409,38 @@ def elaborate (source : Syntax) (expectedType? : Option Lean.Expr) : TermElabM L
       synthesizeSyntheticMVarsNoPostponing
       let arithmetic ← instantiateMVars arithmetic
       let deviceArithmetic ← mkAppOptM ``Scalar.arithmetic #[some α, some scalar]
-      unless ← isDefEq arithmetic deviceArithmetic do
-        throwError "Program.of: source arithmetic differs from the selected GPU arithmetic; \
-          use CPU execution for overridden operations"
-      let native ← mkExpectedTypeHint (← mkEqRefl arithmetic)
-        (← mkEq arithmetic deviceArithmetic)
+      let nativeType ← mkEq arithmetic deviceArithmetic
+      let native ← if ← isDefEq arithmetic deviceArithmetic then
+          mkEqRefl arithmetic
+        else do
+          -- Planned and generic kernels share a specification, not necessarily a definition.
+          let saved ← saveState
+          try
+            let goal ← mkFreshExprSyntheticOpaqueMVar nativeType
+            let remaining ← Lean.Elab.Tactic.run goal.mvarId! <|
+              Lean.Elab.Tactic.withoutRecover do
+                Lean.Elab.Tactic.evalTactic (← `(tactic| (
+                  dsimp only [Scalar.arithmetic, instScalarConfigured, Arithmetic.ofOps]
+                  congr 1
+                  funext operation x y
+                  cases operation <;>
+                    simp only [FloatLib.Floats.ExecFloat.Proof.add_notation_eq_spec,
+                      FloatLib.Floats.ExecFloat.Proof.sub_notation_eq_spec,
+                      FloatLib.Floats.ExecFloat.Proof.mul_notation_eq_spec,
+                      FloatLib.Floats.ExecFloat.Proof.div_notation_eq_spec,
+                      FloatLib.Floats.ExecFloat.Spec.add, FloatLib.Floats.ExecFloat.Spec.sub,
+                      FloatLib.Floats.ExecFloat.Spec.mul, FloatLib.Floats.ExecFloat.Spec.div,
+                      FloatLib.Floats.ExecFloat.Add.spec, FloatLib.Floats.ExecFloat.Sub.spec,
+                      FloatLib.Floats.ExecFloat.Mul.spec, FloatLib.Floats.ExecFloat.Div.spec] <;>
+                    rfl)))
+            unless remaining.isEmpty do throwError "arithmetic specifications differ"
+            -- Depth specialization must apply this certificate, not unfold its proof again.
+            mkAuxTheorem nativeType (← instantiateMVars goal) (zetaDelta := true)
+          catch _ =>
+            saved.restore
+            throwError "Program.of: source arithmetic differs from the selected GPU arithmetic; \
+              use CPU execution for overridden operations"
+      let native ← mkExpectedTypeHint native nativeType
       let evaluation ← mkAppM ``evaluate #[arithmetic, expression, read, index]
       let equality ← mkEq evaluation body
       -- Recursive equations provide the proof without speculative definitional evaluation.
@@ -424,10 +452,12 @@ def elaborate (source : Syntax) (expectedType? : Option Lean.Expr) : TermElabM L
           let bridges ← bridges.mapM fun bridge => do
             let term ← exprToSyntax bridge
             `(Parser.Tactic.simpLemma| $term:term)
+          -- Lookup lemmas keep dependent environments and captured scalar values opaque.
           let remaining ← withTransparency .reducible <| Lean.Elab.Tactic.run goal.mvarId! do
             Lean.Elab.Tactic.evalTactic (← `(tactic|
-              simp (config := { implicitDefEqProofs := false })
-                [evaluate, Expr.eval, Env.output, Env.push, Arithmetic.ofOps,
+              simp only
+                [evaluate, Expr.eval, Env.get_output, Env.get_push_zero, Env.get_push_succ,
+                Arithmetic.ofOps,
                 Compare.index, IndexOp.eval, Bind.bind, Pure.pure,
                 Except.instMonad, Except.bind, Except.pure, BEq.beq, instBEqOfDecidableEq,
                 Bool.cond_decide, apply_ite, $[$bridges],*] <;>

@@ -111,11 +111,13 @@ instance (priority := 100) configuredBinaryFromFloat
     FromFloat (ExecFloat (Configured.Family format code plan)) :=
   let convert : Float → ExecFloat (Configured.Family format code plan) := fun value =>
     ExecFloat.Binary.ofModel
-      (Model.cast _ format (ExecFloat.Binary.toModel (ExecFloat.Binary.ofFloat value)))
+      (Model.cast _ format (ExecFloat.Binary.toModel
+        (ExecFloat.Binary.ofFloat value : FloatLib.Floats.Binary64)))
   { ofFloat := convert
     roundForValidation value :=
       ExecFloat.Binary.toFloat (ExecFloat.Binary.ofModel
-        (Model.cast format _ (ExecFloat.Binary.toModel (convert value)))) }
+        (Model.cast format .binary64 (ExecFloat.Binary.toModel (convert value))) :
+        FloatLib.Floats.Binary64) }
 
 /--
 Inject binary64 literals into the dual-number backend used by the runtime autograd engine.

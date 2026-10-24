@@ -264,7 +264,7 @@ def binary32Vec (ctx : String) (mode : Model.IEEERoundingMode) (dim : Nat) (j : 
 /-- Read a `rows × cols` JSON matrix into binary32, rounding each exact decimal once. -/
 def binary32Matrix (ctx : String) (rows cols : Nat) (j : Json) :
     IO (Tensor (ExecFloat.Binary 8 23) [rows, cols]) := do
-  let some t := DecimalRounding.matrix? FloatFormat.binary32 .nearestEven rows cols j
+  let some t := DecimalRounding.matrix? FloatFormat.binary32 .nearest rows cols j
     | throw <| IO.userError s!"Invalid {ctx}: expected numeric matrix {rows}x{cols}"
   pure t
 
@@ -292,8 +292,8 @@ def parseFlatBox? (dim : Nat) (j : Json) : IO (Option (FlatBox (ExecFloat.Binary
         throw <| IO.userError "Invalid ibp[i]: interval bounds must be finite"
       unless (List.finRange dim).all (fun i => decide (loVec i <= hiVec i)) do
         throw <| IO.userError "Invalid ibp[i]: every lower bound must be <= its upper bound"
-      let loT ← binary32Vec "ibp[i].lo" .towardNegativeInfinity dim loJ
-      let hiT ← binary32Vec "ibp[i].hi" .towardPositiveInfinity dim hiJ
+      let loT ← binary32Vec "ibp[i].lo" .down dim loJ
+      let hiT ← binary32Vec "ibp[i].hi" .up dim hiJ
       pure (some { dim := dim, lo := loT, hi := hiT })
 
 /--
@@ -317,7 +317,7 @@ def parseAlphaVec? (dim : Nat) (j : Json) (ctx : String := "alpha[i]") :
         if !a.isFinite || a < 0.0 || a > 1.0 then
           throw <| IO.userError
             s!"Invalid {ctx}[{k.val}]: α-CROWN requires 0 ≤ alpha ≤ 1, got {a}"
-      let t ← binary32Vec ctx .nearestEven dim j
+      let t ← binary32Vec ctx .nearest dim j
       pure (some { n := dim, v := t })
 
 /--
@@ -349,10 +349,10 @@ def parseAffineBounds? (inDim outDim : Nat) (j : Json) :
         throw <| IO.userError "Invalid crown[i]: affine bounds must be finite"
       let loAff : AffineVec (ExecFloat.Binary 8 23) inDim outDim :=
         { A := ← binary32Matrix "crown[i].loA" outDim inDim loAJ
-          c := ← binary32Vec "crown[i].loC" .nearestEven outDim loCJ }
+          c := ← binary32Vec "crown[i].loC" .nearest outDim loCJ }
       let hiAff : AffineVec (ExecFloat.Binary 8 23) inDim outDim :=
         { A := ← binary32Matrix "crown[i].hiA" outDim inDim hiAJ
-          c := ← binary32Vec "crown[i].hiC" .nearestEven outDim hiCJ }
+          c := ← binary32Vec "crown[i].hiC" .nearest outDim hiCJ }
       pure (some { inDim := inDim, outDim := outDim, loAff := loAff, hiAff := hiAff })
 
 /--

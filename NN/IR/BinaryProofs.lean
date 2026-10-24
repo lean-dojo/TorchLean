@@ -31,12 +31,12 @@ theorem cast_value (source target : FloatFormat) (rounding : Model.IEEERoundingM
     (value : Scalar source) (converted : Scalar target) (flags : ExecFloat.ConversionStatus)
     (h : cast (.binary source) (.binary target) rounding value = .ok (converted, flags)) :
     ExecFloat.Binary.toModel converted =
-      Model.castWithRounding source target (ExecFloat.Binary.toModel value) rounding := by
+      Model.cast source target (ExecFloat.Binary.toModel value) (mode := rounding) := by
   simp only [cast, Except.ok.injEq] at h
   have hValue := congrArg (fun pair => ExecFloat.Binary.toModel pair.1) h
   dsimp only at hValue
   simp only [ExecFloat.Binary.toModel_ofModel] at hValue
   exact hValue.symm.trans
-    (Model.castWithStatus_value source target (ExecFloat.Binary.toModel value) rounding)
+    (Model.value_cast source target (ExecFloat.Binary.toModel value) rounding)
 
 end NN.IR.Binary

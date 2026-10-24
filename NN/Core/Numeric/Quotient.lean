@@ -124,18 +124,20 @@ class NativeFormat (α : Type) where
   minNormal := Float.ofBits 0x0010000000000000
   negMinNormal := Float.ofBits 0x8010000000000000
   round value := FloatLib.Floats.ExecFloat.Binary.toFloat <|
-    FloatLib.Floats.ExecFloat.Binary.ofModel <|
-      FloatLib.Floats.Formats.BinaryInterchange.Model.roundRatQ
-        FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary64 value
+    (FloatLib.Floats.ExecFloat.Binary.ofModel
+      (FloatLib.Floats.Formats.BinaryInterchange.Model.ofRat
+        FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary64 value) :
+      FloatLib.Floats.Binary64)
 
 @[noinline] instance : NativeFormat Float32 where
   zero := Float32.ofBits 0
   minNormal := Float32.ofBits 0x00800000
   negMinNormal := Float32.ofBits 0x80800000
   round value := FloatLib.Floats.ExecFloat.Binary.toFloat32 <|
-    FloatLib.Floats.ExecFloat.Binary.ofModel <|
-      FloatLib.Floats.Formats.BinaryInterchange.Model.roundRatQ
-        FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary32 value
+    (FloatLib.Floats.ExecFloat.Binary.ofModel
+      (FloatLib.Floats.Formats.BinaryInterchange.Model.ofRat
+        FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary32 value) :
+      FloatLib.Floats.Binary32)
 
 export NativeFormat (round)
 
@@ -207,7 +209,8 @@ end Native
   mulWithFlags x y := Native.mulWithFlags x y
   divWithFlags x y := Native.divWithFlags x y
   encode x := (FloatLib.Floats.ExecFloat.Binary.toRat?
-    (FloatLib.Floats.ExecFloat.Binary.ofFloat x)).map QuotientCoefficients.scalar
+    (FloatLib.Floats.ExecFloat.Binary.ofFloat x :
+      FloatLib.Floats.Binary64)).map QuotientCoefficients.scalar
   decode | .scalar x => some (round x)
   copyPrimal x _ := x
 
@@ -218,7 +221,8 @@ end Native
   mulWithFlags x y := Native.mulWithFlags x y
   divWithFlags x y := Native.divWithFlags x y
   encode x := (FloatLib.Floats.ExecFloat.Binary.toRat?
-    (FloatLib.Floats.ExecFloat.Binary.ofFloat x.toFloat)).map QuotientCoefficients.scalar
+    (FloatLib.Floats.ExecFloat.Binary.ofFloat x.toFloat :
+      FloatLib.Floats.Binary64)).map QuotientCoefficients.scalar
   decode | .scalar x => some (round x)
   copyPrimal x _ := x
 
@@ -239,13 +243,17 @@ IEEE underflow requires inexactness. An exact subnormal intermediate must also t
 since subsequent multiplication or division can lose coefficients. Ordinary inexact rounding
 alone does not trigger replay.
 -/
-def configuredFlags (outcome : Value × Model.IEEEStatus) : UInt8 :=
-  let (value, status) := outcome
+def configuredFlags (outcome : ExecFloat.Binary.IEEEOutcome
+    (format := format) (plan := plan) (code := code)) : UInt8 :=
+  let value := outcome.value
+  let status := outcome.status
   (status.invalid || status.divideByZero || status.overflow || status.underflow ||
     !ExecFloat.Binary.isFinite value || ExecFloat.Binary.isSubnormal value).toUInt8
 
 /--
 Configured IEEE values use FloatLib's nearest-even operations and exact finite decoder.
+Status is computed on the descriptor model and repacked through the codec, independently of
+the selected arithmetic backend.
 
 The complete derivative tree is replayed by the recursive `Dual` instance. Every coefficient is
 rounded independently to the original descriptor and storage plan, including formats wider than
@@ -255,23 +263,27 @@ derivative contract. True coefficients outside the IEEE range may still round to
 instance configured : QuotientArithmetic Value where
   supported := format.isIEEE
   addWithFlags x y :=
-    let outcome := ExecFloat.Binary.addWithStatus x y .nearestEven
-    (outcome.1, configuredFlags outcome)
+    let outcome := ExecFloat.Binary.IEEEOutcome.ofModel <|
+      Model.add (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel y) (status := true)
+    (outcome.value, configuredFlags outcome)
   subWithFlags x y :=
-    let outcome := ExecFloat.Binary.subWithStatus x y .nearestEven
-    (outcome.1, configuredFlags outcome)
+    let outcome := ExecFloat.Binary.IEEEOutcome.ofModel <|
+      Model.sub (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel y) (status := true)
+    (outcome.value, configuredFlags outcome)
   mulWithFlags x y :=
-    let outcome := ExecFloat.Binary.mulWithStatus x y .nearestEven
-    let lostZero := ExecFloat.Binary.isZero outcome.1 &&
+    let outcome := ExecFloat.Binary.IEEEOutcome.ofModel <|
+      Model.mul (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel y) (status := true)
+    let lostZero := ExecFloat.Binary.isZero outcome.value &&
       !ExecFloat.Binary.isZero x && !ExecFloat.Binary.isZero y
-    (outcome.1, configuredFlags outcome ||| lostZero.toUInt8)
+    (outcome.value, configuredFlags outcome ||| lostZero.toUInt8)
   divWithFlags x y :=
-    let outcome := ExecFloat.Binary.divWithStatus x y .nearestEven
-    let lostZero := ExecFloat.Binary.isZero outcome.1 && !ExecFloat.Binary.isZero x
-    (outcome.1, configuredFlags outcome ||| lostZero.toUInt8)
+    let outcome := ExecFloat.Binary.IEEEOutcome.ofModel <|
+      Model.div (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel y) (status := true)
+    let lostZero := ExecFloat.Binary.isZero outcome.value && !ExecFloat.Binary.isZero x
+    (outcome.value, configuredFlags outcome ||| lostZero.toUInt8)
   encode x := (ExecFloat.Binary.toRat? x).map QuotientCoefficients.scalar
   decode
-    | .scalar x => some <| ExecFloat.Binary.ofModel <| Model.roundRatQ format x
+    | .scalar x => some <| ExecFloat.Binary.ofModel <| Model.ofRat format x
   copyPrimal x _ := x
 
 end Configured

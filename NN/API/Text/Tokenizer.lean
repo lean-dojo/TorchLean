@@ -36,6 +36,9 @@ namespace text
 
 open Spec TorchLean.Tensor
 
+-- Runtime lookup must use Lean's Char hash, not Mathlib's meta-only instance.
+attribute [local instance 2000] instHashableChar
+
 /-! ## Tokenizers -/
 
 /-- Tokenizer interface (encode/decode). -/

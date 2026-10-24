@@ -46,8 +46,7 @@ state encodings, policies, and rollout traces in the infoview.
 
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.ExecFloat (Binary)
-open FloatLib.Floats.ExecFloat.Binary (ofBits32 ofModel toModel)
-open FloatLib.Floats.Formats.BinaryInterchange (Model)
+open FloatLib.Floats.ExecFloat.Binary (ofBits32)
 
 namespace Gallery
 
@@ -165,11 +164,9 @@ The same four values in the bit-level binary32 model, where the rounding is visi
 -/
 def ieee : Tensor (Binary 8 23) [4] :=
   [ (1 : Binary 8 23)
-  , (fun x => (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat x))) : Binary 8 23))
-    2.0
-  , (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat decimalTenth))) : Binary 8 23)
-  , (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat third))) : Binary 8
-    23) ]
+  , Binary.ofFloat 2.0
+  , Binary.ofFloat decimalTenth
+  , Binary.ofFloat third ]
 
 /--
 A rank-three tensor built by adding `decimalTenth` to coordinate-derived values and dividing by
@@ -180,8 +177,7 @@ def cube : Tensor (Binary 8 23) [2, 2, 3] :=
     -- Small tensor whose values make the bit patterns interesting.
     let base : Float := Float.ofNat
       (coordinates.getD 0 0 * 100 + coordinates.getD 1 0 * 10 + coordinates.getD 2 0)
-    (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat ((base + decimalTenth) /
-      7.0)))) : Binary 8 23)
+    Binary.ofFloat ((base + decimalTenth) / 7.0)
 
 /-- A small integer matrix, to show the viewer with no rounding to worry about. -/
 def matrix : Tensor Int [2, 4] :=

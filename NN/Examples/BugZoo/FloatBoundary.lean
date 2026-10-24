@@ -42,7 +42,7 @@ open ExecFloat.Binary
 
 -- Importing and exporting a logical native value recovers it exactly.
 example (a : Float32) :
-    toFloat32 (ofFloat32 a) = a :=
+    toFloat32 (ofFloat32 a : Binary32) = a :=
   toFloat32_ofFloat32 a
 
 -- Encoded NaN payloads are canonicalized by the logical native boundary.
@@ -52,23 +52,23 @@ example (x : Model FloatFormat.binary32) :
 
 -- Finite operands include signed zeros; the result may overflow.
 example (a b : Float32) (ha : a.isFinite = true) (hb : b.isFinite = true) :
-    ofFloat32 (a + b) = ofFloat32 a + ofFloat32 b :=
+    (ofFloat32 (a + b) : Binary32) = ofFloat32 a + ofFloat32 b :=
   ofFloat32_add_of_isFinite a b ha hb
 
 example (a b : Float32) (ha : a.isFinite = true) (hb : b.isFinite = true) :
-    ofFloat32 (a - b) = ofFloat32 a - ofFloat32 b :=
+    (ofFloat32 (a - b) : Binary32) = ofFloat32 a - ofFloat32 b :=
   ofFloat32_sub_of_isFinite a b ha hb
 
 -- Configured division refines its model for every encoded pair and the selected rounding mode.
 example (x y : ExecFloat.Binary 8 23) :
-    toModel (ExecFloat.Binary.divWithRounding x y .nearestEven) =
-      Model.divWithRounding .nearestEven (toModel x) (toModel y) :=
-  ExecFloat.Binary.toModel_divWithRounding x y .nearestEven
+    toModel (ExecFloat.Binary.div x y .nearest) =
+      Model.div (toModel x) (toModel y) (mode := .nearest) :=
+  ExecFloat.Binary.toModel_div x y .nearest
 
 -- Square root agreement also covers negative inputs, signed zeros, infinities, and NaNs.
 example (a : Float32) :
-    toModel (ofFloat32 a.sqrt) =
-      Model.canonicalizeModel (Model.sqrt (toModel (ofFloat32 a))) :=
+    toModel (ofFloat32 a.sqrt : Binary32) =
+      Model.canonicalizeModel (Model.sqrt (toModel (ofFloat32 a : Binary32))) :=
   toModel_ofFloat32_sqrt a
 
 end NN.Examples.BugZoo.FloatBoundary

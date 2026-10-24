@@ -83,8 +83,8 @@ quotient, as Python's `//` does; `1 // 0.1` is `9`, while the floor of the round
 `1 / 0.1 = 10` would be `10`. A zero result takes the sign of the IEEE quotient.
 -/
 def divFloor (dividend divisor : Value) : Value :=
-  Spec.divFloorSchedule fmod (ExecFloat.Binary.roundToIntegral · .towardNegativeInfinity)
-    (ExecFloat.Binary.copySign 0) (ExecFloat.Binary.ofModel (Model.roundRatQ format (1 / 2 : Rat)))
+  Spec.divFloorSchedule fmod (ExecFloat.Binary.roundToIntegral · .down)
+    (ExecFloat.Binary.copySign 0) (ExecFloat.Binary.ofModel (Model.ofRat format (1 / 2 : Rat)))
     dividend divisor
 
 /--
@@ -99,10 +99,10 @@ nearest `√(2 / π)` and `0.044715`, each rounded once to the format as the ker
 computation type does.
 -/
 def geluTanh (x : Value) : Value :=
-  let constant (value : Rat) : Value := ExecFloat.Binary.ofModel (Model.roundRatQ format value)
+  let constant (value : Rat) : Value := ExecFloat.Binary.ofModel (Model.ofRat format value)
   let beta := constant (7186705221432913 / 9007199254740992)
   let kappa := constant (6444110634811895 / 144115188075855872)
-  let inner := beta * ExecFloat.Binary.fmaWithRounding kappa (x * x * x) x .nearestEven
+  let inner := beta * ExecFloat.Binary.fma kappa (x * x * x) x .nearest
   constant (1 / 2) * x * (constant 1 + MathFunctions.tanh inner)
 
 /-- FloatLib meanings of the pointwise operators that depend on the scalar type. -/
@@ -128,12 +128,12 @@ Such a large safeguard can materially change a guarded formula. This is a nonzer
 machine epsilon or an error bound; callers should choose tolerances for their format and problem.
 -/
 instance configuredBinaryContext : Context Value where
-  natCast n := ExecFloat.Binary.ofModel (Model.roundRatQ format (n : Rat))
-  ratCast value := ExecFloat.Binary.ofModel (Model.roundRatQ format value)
+  natCast n := ExecFloat.Binary.ofModel (Model.ofRat format (n : Rat))
+  ratCast value := ExecFloat.Binary.ofModel (Model.ofRat format value)
   pow := ConfiguredBinary.pow
   defaultEpsilon :=
     let candidate : Value := ExecFloat.Binary.ofModel
-      (Model.roundRatQ format (1 / 1000000 : Rat))
+      (Model.ofRat format (1 / 1000000 : Rat))
     if ExecFloat.Binary.isZero candidate then ExecFloat.Binary.ofNatBits 1 else candidate
   decidableGT := fun x y => inferInstanceAs (Decidable (x > y))
   pointwise := ConfiguredBinary.pointwise

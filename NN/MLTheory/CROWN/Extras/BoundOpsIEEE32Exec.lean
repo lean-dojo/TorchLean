@@ -33,12 +33,12 @@ namespace NN.MLTheory.CROWN
 /-- `BoundOps` for `ExecFloat.Binary 8 23`, using the executable directed-rounding endpoint
 primitives. -/
 instance (priority := 1000) : BoundOps (ExecFloat.Binary 8 23) where
-  addDown := Binary.addWithRounding (rounding := .towardNegativeInfinity)
-  addUp := Binary.addWithRounding (rounding := .towardPositiveInfinity)
-  subDown := Binary.subWithRounding (rounding := .towardNegativeInfinity)
-  subUp := Binary.subWithRounding (rounding := .towardPositiveInfinity)
-  mulDown := Binary.mulWithRounding (rounding := .towardNegativeInfinity)
-  mulUp := Binary.mulWithRounding (rounding := .towardPositiveInfinity)
+  addDown := Binary.add (mode := .down)
+  addUp := Binary.add (mode := .up)
+  subDown := Binary.sub (mode := .down)
+  subUp := Binary.sub (mode := .up)
+  mulDown := Binary.mul (mode := .down)
+  mulUp := Binary.mul (mode := .up)
 
 namespace IEEE32ExecBounds
 

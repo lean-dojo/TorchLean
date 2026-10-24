@@ -670,8 +670,8 @@ implementation, select FloatLib arithmetic for the same model and box:
 scripts/lake.sh exe verify -- torchlean-ibp --arithmetic ieee
 ```
 
-FloatLib exposes directed addition and multiplication through `ExecFloat.Binary.addWithRounding`
-and `ExecFloat.Binary.mulWithRounding` with `.towardPositiveInfinity`. On the finite real branch,
+FloatLib exposes directed addition and multiplication through `ExecFloat.Binary.add`
+and `ExecFloat.Binary.mul` with `.up`. On the finite real branch,
 these choose the smallest representable upper result, rather than always widening a nearest-rounded
 result. The interval rules also account for exceptional endpoints. The native path widens a
 nearest-rounded result, while the reference path computes directed rounding in Lean. The arithmetic

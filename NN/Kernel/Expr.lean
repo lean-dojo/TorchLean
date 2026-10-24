@@ -53,6 +53,16 @@ def Env.push {α : Type} {Γ : List Ty} {t : Ty}
     | .zero => value
     | .succ v => env.get v⟩
 
+/-- The newest variable reads the value just bound. -/
+@[simp] theorem Env.get_push_zero {α : Type} {Γ : List Ty} {t : Ty}
+    (value : t.Value α) (env : Env α Γ) :
+    (env.push value).get Var.zero = value := rfl
+
+/-- Introducing a binding leaves every older variable unchanged. -/
+@[simp] theorem Env.get_push_succ {α : Type} {Γ : List Ty} {s t : Ty}
+    (value : s.Value α) (env : Env α Γ) (v : Var Γ t) :
+    (env.push value).get v.succ = env.get v := rfl
+
 /-- Floating-point operations are kept separate: multiplication followed by addition is not FMA. -/
 inductive ScalarOp where
   | add | sub | mul | div

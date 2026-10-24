@@ -301,7 +301,7 @@ def emit (kind : OpKind) (parents : Array Nat) (shape : Spec.Shape) (dtype : DTy
 
 /-- The word of the integer `n` rounded once to `format`. -/
 def integerWord (format : FloatFormat) (n : Int) : Nat :=
-  FloatLib.Floats.ExecFloat.Binary.toNatBits (Reference.integerToBinary format .nearestEven n).1
+  FloatLib.Floats.ExecFloat.Binary.toNatBits (Reference.integerToBinary format .nearest n).1
 
 /-- A constant of ones. -/
 def ones (dtype : DType) (shape : Spec.Shape) (site : Site) : Build Nat := do
@@ -314,7 +314,7 @@ def ones (dtype : DType) (shape : Spec.Shape) (site : Site) : Build Nat := do
 def castTo (id : Nat) (target : DType) (site : Site) : Build Nat := do
   let some node := (← get).nodes[id]? | throw s!"XLA emulation: missing node {id}"
   emit (.custom "cast" [node.outShape] node.outShape) #[id] node.outShape target site
-    (primitive := some (.cast .nearestEven))
+    (primitive := some (.cast .nearest))
 
 /-- Formats in which `jax.jit` rewrites quotients of quotients and quotients by quotients, each
 step rounded to the format. XLA computes bfloat16 in binary32, where the conversions between

@@ -29,6 +29,9 @@ than Lean's ASCII-oriented `Char.isAlpha` / `Char.isDigit` helpers.
 
 @[expose] public section
 
+-- Runtime lookup must use Lean's Char hash, not Mathlib's meta-only instance.
+attribute [local instance 2000] instHashableChar
+
 namespace TorchLean
 namespace text
 namespace GPT2BPE

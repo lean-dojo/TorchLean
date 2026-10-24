@@ -174,9 +174,9 @@ private theorem toReal_posZero :
 
 private theorem toReal_posOne : (ExecFloat.Binary.toModel (1 : Binary 8 23)).toReal = 1 := by
   have hmodel : ExecFloat.Binary.toModel (1 : Binary 8 23) =
-      Model.roundRatQ FloatFormat.binary32 1 :=
+      Model.ofRat FloatFormat.binary32 1 :=
     ExecFloat.Binary.toModel_ofModel _
-  have hone : Model.roundRatQ FloatFormat.binary32 1 = Model.posOne FloatFormat.binary32 := by
+  have hone : Model.ofRat FloatFormat.binary32 1 = Model.posOne FloatFormat.binary32 := by
     decide
   exact (congrArg Model.toReal (hmodel.trans hone)).trans (Model.toReal_posOne _)
 

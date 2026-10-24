@@ -193,10 +193,10 @@ theorem toReal_sub_eq_round_of_isFinite (hformat : format.isIEEE = true) {x y : 
 
 /-- The configured zero literal decodes to positive model zero. -/
 @[simp] theorem toModel_zero : toModel (0 : Value) = Model.zero format false := by
-  change toModel (ofModel (Model.roundRatQ format 0) : Value) = _
+  change toModel (ofModel (Model.ofRat format 0) : Value) = _
   rw [ExecFloat.Binary.toModel_ofModel]
-  simp [Model.roundRatQ, Model.roundRatQWithRounding, Model.roundRatWithRounding,
-    Model.roundRatWithRoundingScaled]
+  simp [Model.ofRat, Model.Internal.Directed.roundRat,
+    Model.Internal.Directed.roundRatScaled]
 
 /-- The configured zero literal denotes real zero. -/
 @[simp] theorem toReal_zero : (toModel (0 : Value)).toReal = 0 := by

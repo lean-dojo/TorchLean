@@ -54,7 +54,8 @@ This is intended as a “second boundary check” after `Runtime.RL.Boundary` va
 -/
 def ofFloatChecked (x : Float) : Except String (Binary 8 23) :=
   let y : Binary 8 23 :=
-    ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat x)))
+    ofModel (Model.cast .binary64 .binary32
+      (toModel (Binary.ofFloat x : FloatLib.Floats.Binary64)))
   if Binary.isFinite y = true then
     .ok y
   else
@@ -68,7 +69,8 @@ def castTensorChecked {s : Shape} (t : Tensor Float s) :
     Except String (Tensor (Binary 8 23) s) :=
   let t32 : Tensor (Binary 8 23) s :=
     TorchLean.Tensor.map (fun x =>
-      (ofModel (Model.cast .binary64 .binary32 (toModel (Binary.ofFloat x))) : Binary 8 23)) t
+      (ofModel (Model.cast .binary64 .binary32
+        (toModel (Binary.ofFloat x : FloatLib.Floats.Binary64))) : Binary 8 23)) t
   if Boundary.tensorAll (α := Binary 8 23) (s := s)
       (fun x => Binary.isFinite x) t32 then
     .ok t32

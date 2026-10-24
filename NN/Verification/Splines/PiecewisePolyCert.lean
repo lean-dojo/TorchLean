@@ -275,9 +275,9 @@ Implementation note:
 -/
 def ratToIEEE32ExecExact (ctx : String) (q : Rat) : IO (ExecFloat.Binary 8 23) := do
   let lo : ExecFloat.Binary 8 23 :=
-    ExecFloat.Binary.ofModel (Model.roundRatQDown FloatFormat.binary32 q)
+    ExecFloat.Binary.ofModel (Model.ofRat FloatFormat.binary32 q (mode := .down))
   let hi : ExecFloat.Binary 8 23 :=
-    ExecFloat.Binary.ofModel (Model.roundRatQUp FloatFormat.binary32 q)
+    ExecFloat.Binary.ofModel (Model.ofRat FloatFormat.binary32 q (mode := .up))
   unless lo == hi do
     throw <|
       IO.userError

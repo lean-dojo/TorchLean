@@ -708,7 +708,7 @@ amounts of work, and they land in different places:
 -- samplesPerStep = 1
 dataset size = 25
 mean_loss(before training) = 0.495227
-mean_loss(after training) = 0.335392
+mean_loss(after training) = 0.335391
 -- samplesPerStep = 4
 dataset size = 25
 mean_loss(before training) = 0.495227

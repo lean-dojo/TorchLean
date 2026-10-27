@@ -51,6 +51,7 @@ def op? : NN.IR.OpKind → Option BackendOp
   | .relu => some .relu
   | .tanh => some .tanh
   | .sigmoid => some .sigmoid
+  | .silu => some .silu
   | .softplus => some .softplus
   | .safeLog => some .safeLog
   | .exp => some .exp
@@ -59,6 +60,7 @@ def op? : NN.IR.OpKind → Option BackendOp
   | .cos => some .cos
   | .mseLoss => some .mseLoss
   | .matmul => some .matmul
+  | .scaledMatmul => some .scaledMatmul
   | .linear => some .linear
   | .conv .. => some .conv
   | .maxPool .. => some .maxPool

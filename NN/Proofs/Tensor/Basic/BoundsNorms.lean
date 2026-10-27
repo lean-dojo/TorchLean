@@ -10,6 +10,7 @@ module
 -- instance only through this public import, so keep it even though nothing here names it.
 public import NN.Spec.Core.Context.Real -- shake: keep-downstream
 public import NN.Proofs.Tensor.Basic.LinearAlgebra
+public import NN.Spec.Core.Tensor.Numerics
 
 /-!
 Bounds and norm facts for dependent tensors.
@@ -97,5 +98,43 @@ theorem tensor_norm_squared_zero_iff {s : Shape} (tensor : Tensor ℝ s) :
   · intro hZero
     subst tensor
     simp [Tensor.full, mulSpec, map2Spec]
+
+/-- Scaling the vector and epsilon together preserves the regularized real normalization.
+The same identity covers RMS normalization when `mean` is true. -/
+theorem normalizeL2Regularized_eq {n : Nat} (x : Tensor ℝ [n]) (epsilon : ℝ)
+    (hepsilon : 0 < epsilon) (mean : Bool := false) :
+    normalizeL2RegularizedSpec x epsilon (mean := mean) =
+      Tensor.map (fun value => value / Real.sqrt
+        ((if mean then meanSpec (squareSpec x) else sumSpec (squareSpec x)) + epsilon)) x := by
+  let scale := max (Tensor.maxAbs x) (Real.sqrt |epsilon|)
+  have hs : 0 < scale := lt_of_lt_of_le
+    (Real.sqrt_pos.2 (abs_pos.2 hepsilon.ne')) (le_max_right _ _)
+  let scaled := Tensor.map (fun value => value / scale) x
+  have hsum : sumSpec (squareSpec scaled) = sumSpec (squareSpec x) / scale ^ 2 := by
+    rw [sum_spec_vec, sum_spec_vec, Finset.sum_div]
+    apply Finset.sum_congr rfl
+    intro i _
+    simp only [scaled, squareSpec, getScalar_map]
+    ring
+  have hnorm : (if mean then meanSpec (squareSpec scaled) else sumSpec (squareSpec scaled)) =
+      (if mean then meanSpec (squareSpec x) else sumSpec (squareSpec x)) / scale ^ 2 := by
+    cases mean <;> simp only [Bool.false_eq_true, reduceIte, meanSpec, hsum]
+    ring
+  apply Tensor.ext_vector
+  intro i
+  simp only [normalizeL2RegularizedSpec, getScalar_map, Context.stopGradient,
+    Context.stopGradient?, MathFunctions.sqrt, MathFunctions.abs]
+  change (x.getScalar i / scale) / Real.sqrt
+      ((if mean then meanSpec (squareSpec scaled) else sumSpec (squareSpec scaled)) +
+        (epsilon / scale) / scale) = _
+  rw [hnorm]
+  let total := if mean then meanSpec (squareSpec x) else sumSpec (squareSpec x)
+  have hinside : total / scale ^ 2 + (epsilon / scale) / scale =
+      (total + epsilon) / scale ^ 2 := by ring
+  change (x.getScalar i / scale) /
+    Real.sqrt (total / scale ^ 2 + (epsilon / scale) / scale) = _
+  -- The positive scale comes out of the square root and cancels the input scaling.
+  rw [hinside, Real.sqrt_div' _ (sq_nonneg scale), Real.sqrt_sq hs.le]
+  exact div_div_div_cancel_right₀ hs.ne' _ _
 
 end Spec

@@ -351,7 +351,8 @@ With `LawfulBoundOps`, `LawfulNonlinearBoundOps`, and `LawfulMinBoundOps`, and a
 interpretation of the backend's fixed `normalizationEpsilon`, every successful
 `ibpStepNodeAt?` transfer encloses the node's real value. Its parent boxes must agree with the
 reference IBP array and enclose their values, inputs must lie in their seed boxes, and the node
-must obey {uses "rounded_real_node_equation"}[its real equation]. Every operation kind is covered.
+must obey {uses "rounded_real_node_equation"}[its real equation]. Unsupported transfers are
+rejected; the theorem constrains boxes returned by successful transfers.
 :::
 
 :::proof "ibp_rounded_all_step_sound"
@@ -401,7 +402,7 @@ input, output, and objective dimensions; the supplied input box must enclose the
 The rounded-real `FP32` instance satisfies the scalar requirements.
 
 Forward IBP, directed backward propagation, interval fallbacks, and final affine-bound evaluation
-are covered for every operation kind. There is no intermediate enclosure hypothesis or second
+are composed in this result. There is no intermediate enclosure hypothesis or second
 node equation to assume. The theorem concerns a successful `.ok` result; it does not guarantee
 that every query succeeds or yields a tighter bound than IBP.
 :::

@@ -152,7 +152,7 @@ def alphaCrownStepNode?
     (ctx : AffineCtx) (id : Nat) : Option (FlatAffineBounds α) :=
   let node := nodes[id]!
   match node.kind with
-  | .custom .. => none
+  | .custom .. | .scaledMatmul => none
   | .input =>
       if id = ctx.inputId then
         some (boundsIdentity (α := α) ctx.inputDim)

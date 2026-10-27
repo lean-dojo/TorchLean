@@ -437,7 +437,8 @@ They use the same SplitMix64-style mixing as `TorchLean.Random` so results are
 deterministic given `(seed, counter)` and a row-major linear index.
 -/
 
-/-- Deterministic `U[0,1)` generator in the requested dtype, keyed by `key`. -/
+/-- Round a deterministic 32-bit unit-grid draw into the requested native dtype.
+The key fixes each draw; rounding can produce the upper endpoint `1`. -/
 @[never_extract, extern "torchlean_cuda_buffer_rand_uniform"]
 opaque randUniform (n : UInt32) (key : UInt64) (dtype : Dtype := .float32) : Buffer
 
@@ -488,7 +489,9 @@ opaque sqrt (b : @& Buffer) : Buffer
 /--
 Backward for `sqrt`.
 
-Uses the TorchLean convention: `dx = dLdy * (1 / (2*sqrt(x)))` for `x > 0`, else `0`.
+Divides the upstream value by twice the root for `x > 0`, without rounding a reciprocal first.
+The CUDA rule selects literal zero otherwise, even for a nonfinite upstream value; the CPU
+specification instead multiplies a selected zero factor by that value.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_sqrt_bwd"]
 opaque sqrtBwd (x dLdy : @& Buffer) : Buffer
@@ -519,6 +522,10 @@ opaque log (b : @& Buffer) : Buffer
 /-- Elementwise `log(1 + x)` without losing a small positive `x` in the addition. -/
 @[never_extract, extern "torchlean_cuda_buffer_log1p"]
 opaque log1p (b : @& Buffer) : Buffer
+
+/-- Elementwise `exp(x) - 1`, retaining small arguments near zero. -/
+@[never_extract, extern "torchlean_cuda_buffer_expm1"]
+opaque expm1 (b : @& Buffer) : Buffer
 
 /-- Reciprocal: `1/x`. -/
 @[never_extract, extern "torchlean_cuda_buffer_inv"]
@@ -597,27 +604,46 @@ opaque relu (b : @& Buffer) : Buffer
 opaque reluBwd (x dLdy : @& Buffer) : Buffer
 
 /--
-Elementwise logistic sigmoid through `at::sigmoid`, retaining the input dtype.
+Elementwise logistic sigmoid with branch-stable ATen arithmetic, retaining the input dtype.
 
-The input is borrowed; TorchLean's tape owns the `y * (1 - y)` derivative. Values follow ATen's
-rounding and saturation in that dtype, including zero when the negative-tail exponential overflows.
+The input is borrowed; TorchLean's tape evaluates the slope from the input's decaying exponential
+rather than subtracting the rounded output from one. The native helper uses only nonpositive
+exponential arguments. ATen's elementary operations and their rounding remain a native boundary.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_sigmoid"]
 opaque sigmoid (x : @& Buffer) : Buffer
+
+/-- Sigmoid's weighted pullback. Range repairs retain the incoming gradient's magnitude;
+ordinary values and nonfinite inputs keep the input-based exponential-ratio rule. -/
+@[never_extract, extern "torchlean_cuda_buffer_sigmoid_bwd"]
+opaque sigmoidBwd (x seed : @& Buffer) : Buffer
 
 /--
 Elementwise hyperbolic tangent through `at::tanh`, retaining the input dtype.
 
 Direct evaluation avoids cancellation near zero and preserves signed zero. The input is borrowed;
-TorchLean's tape owns the `1 - y * y` derivative.
+TorchLean's tape evaluates its derivative from the input's scaled reciprocal cosh.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_tanh"]
 opaque tanh (x : @& Buffer) : Buffer
+
+/-- Tanh's weighted pullback, with a scaled-exponential repair for intermediate underflow.
+ATen arithmetic remains a native boundary; this does not establish correct rounding. -/
+@[never_extract, extern "torchlean_cuda_buffer_tanh_bwd"]
+opaque tanhBwd (x seed : @& Buffer) : Buffer
 
 /-- Tanh-approximate GELU evaluated through staged ATen operations.
 The arithmetic ordering follows TorchLean's activation specification. -/
 @[never_extract, extern "torchlean_cuda_buffer_gelu"]
 opaque gelu (x : @& Buffer) : Buffer
+
+/-- SiLU with a split exponential on the negative branch, retaining the input dtype. -/
+@[never_extract, extern "torchlean_cuda_buffer_silu"]
+opaque silu (x : @& Buffer) : Buffer
+
+/-- SiLU VJP evaluated from its input rather than a rounded sigmoid output. -/
+@[never_extract, extern "torchlean_cuda_buffer_silu_bwd"]
+opaque siluBwd (x dLdy : @& Buffer) : Buffer
 
 /-- Backward for tanh-approximate GELU using `Activation.geluDerivSpec`. -/
 @[never_extract, extern "torchlean_cuda_buffer_gelu_bwd"]
@@ -697,8 +723,12 @@ Perform one Adam-family update through LibTorch tensor operations.
 
 The result is `(parameters, firstMoment, secondMoment)`. Passing `decay = 0` gives Adam; passing
 `decay = -(lr * weightDecay)` gives AdamW's decoupled parameter decay. The caller
-computes the two bias-correction scales from the step counter, exactly as in `Optim.Adam.update`
-and `Optim.AdamW.update`.
+supplies the two denominators `1 - beta^t` from the step counter. The native bridge computes
+reciprocals in host `Float` and rounds them in the parameter dtype. If a reciprocal does not fit,
+it divides the moment directly; the corrected RMS also avoids an unnecessary squared overflow.
+Exceptional weighted quotients use power-of-two rescaling, including the parameter addition;
+ordinary entries retain the fused update. This is not the CPU's exact-coefficient replay.
+This native schedule is not a bit-for-bit refinement of every scalar-polymorphic instantiation.
 
 The caller must validate that `epsilon` remains finite and positive in the parameter dtype.
 The native eager optimizer and its checkpoint reader share that validation.
@@ -710,7 +740,7 @@ expressions and returns the updated parameter and moment buffers.
 opaque adamStep
     (parameters gradient firstMoment secondMoment : @& Buffer)
     (beta1 oneMinusBeta1 beta2 oneMinusBeta2 : Float)
-    (firstMomentCorrection secondMomentCorrection epsilon : Float)
+    (firstMomentDenominator secondMomentDenominator epsilon : Float)
     (decay updateScale : Float) :
     Buffer × Buffer × Buffer
 

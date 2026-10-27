@@ -568,7 +568,7 @@ private def backwardNode (dir : BackwardDir)
       .minElem | .hardMaskedSoftmax _ | .topKMask _ | .slice ..
     | .maxPool .. | .avgPool ..
     | .broadcastTo .. | .reduceSum .. | .reduceMean .. => consumeCurrent
-    | .custom .. | .pointwise _ => st.fail
+    | .custom .. | .pointwise _ | .scaledMatmul => st.fail
     | .batchNormEval channelAxis _ =>
       match node.parents with
       | #[p1] =>
@@ -640,7 +640,7 @@ private def backwardNode (dir : BackwardDir)
         st.fail
       else
         consumeCurrent
-    | .relu | .exp | .log | .inv | .sigmoid | .tanh | .softplus | .safeLog | .softmax _ =>
+    | .relu | .exp | .log | .inv | .sigmoid | .silu | .tanh | .softplus | .safeLog | .softmax _ =>
       -- The value pass has already applied the scalar backend's directed nonlinear capabilities.
       -- The default backward pass consumes that box rather than rebuilding a relaxation with
       -- exact-real algebra. The alpha-specific entry point below retains its explicit ReLU rule.
@@ -812,7 +812,7 @@ private def runBackwardObjectiveDirWithReluAlpha
         | some By => consumeDirectedObjective (α := α) st aY By
         | none => st.fail
       match node.kind with
-      | .custom .. | .pointwise _ => st.fail
+      | .custom .. | .pointwise _ | .scaledMatmul => st.fail
       | .input =>
           if node.id = ctx.inputId then
             st

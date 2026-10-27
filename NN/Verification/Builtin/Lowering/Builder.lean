@@ -51,6 +51,10 @@ transfer rules.
 
 PyTorch weight and graph import is implemented under `NN.Runtime.PyTorch.Import`.
 
+IR random nodes derive keys from node positions, while eager and typed execution count random
+calls. Lowering rejects random calls rather than silently choosing another draw. Evaluation-mode
+dropout emits no random call and is unaffected.
+
 References (informal):
 - IBP: Gowal et al. (2018).
 - CROWN / DeepPoly-style linear relaxations: Zhang et al. (2018).
@@ -149,13 +153,27 @@ def emitBinary {α : Type} [TorchLean.Storage α] [Context α]
 
 /-- Emit a matrix-multiplication IR node whose `outShape` is the typed result shape `sOut`. -/
 def emitMatmul {α : Type} [TorchLean.Storage α] [Context α]
-    {sA sB sOut : Shape} (a : Ref α sA) (b : Ref α sB) : BuildM α (Ref α sOut) := do
+    {sA sB sOut : Shape} (a : Ref α sA) (b : Ref α sB)
+    (scale : Option α := none) : BuildM α (Ref α sOut) := do
   let pa ← ensureNode (α := α) a
   let pb ← ensureNode (α := α) b
+  let grouped := scale.isSome && (inferInstance : Numeric.QuotientArithmetic α).supported
+  let kind := if grouped then OpKind.scaledMatmul else .matmul
+  let parents ← if grouped then do
+      let some scale := scale | fail "scaled_matmul: missing fixed scale"
+      let scalar ← ensureNode (α := α) (.const (Tensor.scalar scale))
+      pure #[pa, pb, scalar]
+    else pure #[pa, pb]
   let id ← freshId (α := α)
-  let node : Node := { id := id, parents := #[pa, pb], kind := .matmul, outShape := sOut }
+  let node : Node := { id := id, parents := parents, kind := kind, outShape := sOut }
   pushNode (α := α) node
-  pure (.node id)
+  if grouped then pure (.node id)
+  else match scale with
+    | none => pure (.node id)
+    | some scale =>
+        -- Unsupported carriers use precisely this expression in scaledProducts. In particular,
+        -- real-valued verification keeps its existing matrix and multiplication transfer rules.
+        emitBinary (α := α) (kind := .mulElem) (.node id) (.const (Tensor.full sOut scale))
 
 /-- Emit the designated verifier input node.  We keep this at id `0` for bound seeding. -/
 def emitInput {α : Type} [TorchLean.Storage α] [Context α] {s : Shape} : BuildM α (Ref α s) := do
@@ -213,12 +231,9 @@ def Internal.emitAttention {α : Type} [TorchLean.Storage α] [Context α]
   let sKt : Shape := .dim numHeads (.dim headDim (.dim n .scalar))
   let Kt : Ref α sKt ← emitUnary (α := α) (kind := .transpose 1 2) (x := Kh) (t := sKt)
   let sScores : Shape := .dim numHeads (.dim n (.dim n .scalar))
-  let scores : Ref α sScores ← emitMatmul (α := α) (a := Qh) (b := Kt) (sOut := sScores)
-
   let invScale : α := 1 / Spec.attentionScaleDenom (α := α) headDim
-  let scaleTensor : Tensor α sScores := Tensor.full (α := α) sScores invScale
-  let scaledScores ←
-    emitBinary (α := α) (kind := .mulElem) (a := scores) (b := .const scaleTensor)
+  let scaledScores : Ref α sScores ← emitMatmul (α := α) (a := Qh) (b := Kt)
+    (sOut := sScores) (scale := some invScale)
 
   -- A blocked mask entry has exactly zero numerator. No finite sentinel is introduced here.
   let attn : Ref α sScores ←
@@ -401,9 +416,9 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
   scatterAdd := fun {_s} _axis _count _axisInBounds _base _source _indices =>
     fail (α := α) "TorchLean→IR: scatterAdd is outside the verifier IR fragment"
 
-  matmul := fun {_batchA _batchB batch mDim _nDim pDim} _broadcastA _broadcastB a b => do
+  matmul := fun {_batchA _batchB batch mDim _nDim pDim} _broadcastA _broadcastB a b scale => do
     let out : Shape := batch.concat [mDim, pDim]
-    emitMatmul (α := α) (a := a) (b := b) (sOut := out)
+    emitMatmul (α := α) (a := a) (b := b) (sOut := out) (scale := scale)
 
   concat := fun {_nDim _mDim} {_s} a b =>
     emitConcat (α := α) a b
@@ -439,6 +454,7 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
 
   relu := fun {s} x => emitUnary (α := α) (kind := .relu) (x := x) (t := s)
   sigmoid := fun {s} x => emitUnary (α := α) (kind := .sigmoid) (x := x) (t := s)
+  silu := fun {s} x => emitUnary (α := α) (kind := .silu) (x := x) (t := s)
   tanh := fun {s} x => emitUnary (α := α) (kind := .tanh) (x := x) (t := s)
   gelu := fun {_s} _x =>
     fail (α := α)
@@ -450,6 +466,21 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
       | 0 => 0
       | Nat.succ r => r
     emitUnary (α := α) (kind := .softmax axis) (x := x) (t := s)
+  softmaxMatmul := fun {batch rows keys width} scores value multiplier mask => do
+    let shape := batch.concat [rows, keys]
+    let weights ← match mask with
+      | none => do
+          emitUnary (α := α) (kind := .softmax (Spec.Shape.rank shape - 1))
+            (x := scores) (t := shape)
+      | some mask => do
+          let rec repeatMask (batch : Shape) : Tensor Bool (batch.concat [rows, keys]) :=
+            match batch with
+            | .scalar => mask
+            | .dim _ inner => Tensor.dim (fun _ => repeatMask inner)
+          emitUnary (α := α) (kind := .hardMaskedSoftmax (NN.IR.HardMask.ofTensor
+            (repeatMask batch))) (x := scores) (t := shape)
+    let weighted ← emitBinary (α := α) (kind := .mulElem) (a := weights) (b := multiplier)
+    emitMatmul (α := α) (a := weighted) (b := value) (sOut := batch.concat [rows, width])
   logSoftmaxLast := fun {_s} _x =>
     fail (α := α)
       ("TorchLean→IR: stable log-softmax is outside the verifier IR fragment; " ++
@@ -487,6 +518,10 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
     pushNode (α := α) node
     pure (.node id)
 
+  crossEntropy := fun {_s} _axis _ _logits _target _mean =>
+    fail (α := α) "TorchLean→IR: weighted logits cross-entropy is outside the verifier IR fragment"
+  distill := fun {_s} _axis _ _student _teacher =>
+    fail (α := α) "TorchLean→IR: distill is outside the verifier IR fragment"
   mseLoss := fun {s} yhat target => do
     let yId ← ensureNode (α := α) (s := s) yhat
     let tId ← ensureNode (α := α) (s := s) target
@@ -572,17 +607,10 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
       _b _x =>
     fail (α := α) "TorchLean→IR: conv_transpose is outside the verifier IR fragment"
 
-  randUniform := fun {s} seed => do
-    let id ← freshId (α := α)
-    let node : Node := { id := id, parents := #[], kind := .randUniform seed, outShape := s }
-    pushNode (α := α) node
-    pure (.node id)
+  randUniform := fun {_s} _seed =>
+    fail "TorchLean→IR: random invocation keys are not represented by node-indexed IR randomness"
 
-  bernoulliMask := fun {s} keepProb seed => do
-    let pId ← ensureNode (α := α) keepProb
-    let id ← freshId (α := α)
-    let node : Node := { id := id, parents := #[pId], kind := .bernoulliMask seed, outShape := s }
-    pushNode (α := α) node
-    pure (.node id)
+  bernoulliMask := fun {_s} _keepProb _seed =>
+    fail "TorchLean→IR: random invocation keys are not represented by node-indexed IR randomness"
 
 end NN.Verification.Builtin

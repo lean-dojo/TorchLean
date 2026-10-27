@@ -157,6 +157,7 @@ theorem backwardNode_preserves
       all_goals try exact hconsume
       case custom => exact hfail
       case pointwise => exact hfail
+      case scaledMatmul => exact hfail
       case input =>
         simp only [point.node_id k hk, hinput, ↓reduceIte]
         exact hconsume

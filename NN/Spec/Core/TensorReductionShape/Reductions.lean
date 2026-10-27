@@ -31,6 +31,15 @@ def foldlSpec {α β : Type} [TorchLean.Storage α]
     (f : β → α → β) (init : β) {s : Shape} (tensor : Tensor α s) : β :=
   tensor.foldl f init
 
+/-- Largest absolute entry, or zero for an empty tensor. Self-unequal values are propagated:
+for IEEE scalars this prevents a NaN from being hidden by the scalar `max` operation. -/
+def maxAbs {α : Type} [TorchLean.Storage α] [MathFunctions α] [BEq α] [Max α] [Zero α]
+    {shape : Shape} (tensor : Tensor α shape) : α :=
+  foldlSpec (fun largest value =>
+    if !(largest == largest) then largest
+    else if !(value == value) then value
+    else max largest (MathFunctions.abs value)) 0 tensor
+
 /-- Folding a scalar tensor visits its single element once. -/
 @[simp] theorem foldlSpec_scalar {α β : Type} [TorchLean.Storage α]
     (f : β → α → β) (init : β) (value : α) :

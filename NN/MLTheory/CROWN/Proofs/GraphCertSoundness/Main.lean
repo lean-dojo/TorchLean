@@ -54,7 +54,7 @@ def Supported (g : Graph) : Prop :=
     | .input | .const _ | .detach
     | .add | .sub | .mulElem | .relu
     | .linear | .matmul | .concat _ | .conv _
-    | .tanh | .sigmoid | .softplus | .safeLog | .sin | .cos => True
+    | .tanh | .sigmoid | .silu | .softplus | .safeLog | .sin | .cos => True
     | _ => False
 
 /-- Inputs are well-formed if every `.input` node has a value, and that value is enclosed by
@@ -106,6 +106,7 @@ theorem node_encloses_of_parents
   case relu => exact relu_node_encloses hkKind hcertStep hvalStep hpe
   case tanh => exact tanh_node_encloses hkKind hcertStep hvalStep hpe
   case sigmoid => exact sigmoid_node_encloses hkKind hcertStep hvalStep hpe
+  case silu => exact silu_node_encloses hkKind hcertStep hvalStep hpe
   case softplus => exact softplus_node_encloses hkKind hcertStep hvalStep hpe
   case safeLog => exact safeLog_node_encloses hkKind hcertStep hvalStep hpe
   case sin => exact sin_node_encloses hkKind hcertStep hvalStep hpe

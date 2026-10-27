@@ -108,7 +108,8 @@ PyTorch comparison: `torch.abs`.
 /--
 Elementwise square root.
 
-Backward uses `1 / (2 * sqrt(x))` for `x > 0` and `0` otherwise (totalized).
+Uses the shared square-root specification and its range-checked weighted backward rule.
+Outside the positive region, the local zero factor still multiplies the upstream value.
 PyTorch comparison: `torch.sqrt`.
 -/
 @[inline] def sqrt {α : Type} [TorchLean.Storage α] [Context α]
@@ -117,15 +118,8 @@ PyTorch comparison: `torch.sqrt`.
       × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s)
     "sqrt" xId
-    (forward := fun x => sqrtSpec (α := α) (s := s) x)
-    (backward := fun x dLdy =>
-      let dsqrt : Tensor α s :=
-        Tensor.map (α := α) (shape := s) (fun v =>
-          if v > 0 then
-            (1 : α) / (((2 : Nat) : α) * MathFunctions.sqrt v)
-          else
-            (0 : α)) x
-      mulSpec dsqrt dLdy)
+    (forward := (Spec.sqrtOp (α := α) (s := s)).forward)
+    (backward := (Spec.sqrtOp (α := α) (s := s)).backward)
 
 /--
 Elementwise clamp to `[minVal, maxVal]`.
@@ -150,31 +144,50 @@ PyTorch comparison: `torch.clamp`.
 Elementwise maximum.
 
 Tie-breaking: when `a = b`, the upstream gradient is split evenly (`0.5`) between both inputs.
+When both arguments name the same node, range-checked carriers combine its two contributions
+before graph accumulation. This avoids rounding a representable gradient to zero in each half.
+Other carriers retain the separate-contribution schedule.
 PyTorch comparison: `torch.maximum`.
 -/
 @[inline] def max {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {s : Shape} (t : Tape (Spec.SomeTensor α)) (aId bId : Nat) : Result (Tape (Spec.SomeTensor α)
       × Nat) :=
-  binary (α := α) (t := t) (σ₁ := s) (σ₂ := s) (τ := s) "max" aId bId
-    (forward := maxSpec (α := α) (s := s))
-    (backward := fun a b dLdy =>
-      ((Spec.maxOp b).backward a dLdy, (Spec.maxOp a).backward b dLdy))
+  if aId == bId && (inferInstance : Numeric.QuotientArithmetic α).supported then
+    unary (α := α) (t := t) (σ := s) (τ := s) "max" aId
+      (forward := fun x => maxSpec x x)
+      (backward := fun x seed => map2Spec (fun value gradient =>
+        if value > value then (1 : α) * gradient + (1 : α) * gradient
+        else Numeric.Internal.average gradient gradient) x seed)
+  else
+    binary (α := α) (t := t) (σ₁ := s) (σ₂ := s) (τ := s) "max" aId bId
+      (forward := maxSpec (α := α) (s := s))
+      (backward := fun a b dLdy =>
+        ((Spec.maxOp b).backward a dLdy, (Spec.maxOp a).backward b dLdy))
 
 /--
 Elementwise minimum.
 
 Tie-breaking: when `a = b`, the upstream gradient is split evenly (`0.5`) between both inputs.
+Repeated references use the same coalesced-contribution convention as `Tape.max` on range-checked
+carriers; distinct nodes retain their separate halves.
 PyTorch comparison: `torch.minimum`.
 -/
 @[inline] def min {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {s : Shape} (t : Tape (Spec.SomeTensor α)) (aId bId : Nat) : Result (Tape (Spec.SomeTensor α)
       × Nat) :=
-  binary (α := α) (t := t) (σ₁ := s) (σ₂ := s) (τ := s) "min" aId bId
-    (forward := minSpec (α := α) (s := s))
-    (backward := fun a b dLdy =>
-      ((Spec.minOp b).backward a dLdy, (Spec.minOp a).backward b dLdy))
+  if aId == bId && (inferInstance : Numeric.QuotientArithmetic α).supported then
+    unary (α := α) (t := t) (σ := s) (τ := s) "min" aId
+      (forward := fun x => minSpec x x)
+      (backward := fun x seed => map2Spec (fun value gradient =>
+        if value > value then (1 : α) * gradient + (1 : α) * gradient
+        else Numeric.Internal.average gradient gradient) x seed)
+  else
+    binary (α := α) (t := t) (σ₁ := s) (σ₂ := s) (τ := s) "min" aId bId
+      (forward := minSpec (α := α) (s := s))
+      (backward := fun a b dLdy =>
+        ((Spec.minOp b).backward a dLdy, (Spec.minOp a).backward b dLdy))
 
 /--
 Record elementwise sine with the VJP from `Spec.sinOp`.

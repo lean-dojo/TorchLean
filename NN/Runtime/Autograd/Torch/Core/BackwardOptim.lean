@@ -276,12 +276,12 @@ def applyCudaAdamUpdate {α : Type} [TorchLean.Storage α]
                   (Runtime.Autograd.LibTorch.Buffer.dtype pBuf)
                 t := 0 }
         let t' := st.t + 1
-        let mHatScale := 1.0 / (1.0 - Float.pow beta1F (Float.ofNat t'))
-        let vHatScale := 1.0 / (1.0 - Float.pow beta2F (Float.ofNat t'))
+        let firstDenominator := 1.0 - Float.pow beta1F (Float.ofNat t')
+        let secondDenominator := 1.0 - Float.pow beta2F (Float.ofNat t')
         let (updated, m', v') := Runtime.Autograd.LibTorch.Buffer.adamStep
           pBuf gAny.buf st.m st.v
           beta1F oneMinusBeta1 beta2F oneMinusBeta2
-          mHatScale vHatScale epsF (decayStep ()) (-lrF)
+          firstDenominator secondDenominator epsF (decayStep ()) (-lrF)
         let updatedDev : Runtime.Autograd.LibTorch.SomeBuffer :=
           { s := p.s, buf := updated }
         p.setCuda updatedDev

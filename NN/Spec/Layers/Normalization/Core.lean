@@ -385,7 +385,10 @@ Compared to LayerNorm, RMSNorm skips subtracting the mean and normalizes by:
 
 `rms(x) = sqrt(mean(x^2) + eps)`.
 
-This shows up in many Transformer-style models as a cheaper alternative to LayerNorm.
+We scale each row and epsilon together before squaring, preserving this real formula while
+avoiding the direct sum of unscaled squares. The finite-precision reduction can still overflow
+for a sufficiently large row in a narrow format. Nonfinite inputs have no real normalization
+guarantee, and scaling can change which output coordinates become NaN.
 -/
 def rmsNorm {seqLen embedDim : Nat}
   (x : Tensor α [seqLen, embedDim])
@@ -394,34 +397,21 @@ def rmsNorm {seqLen embedDim : Nat}
   (h_embed_pos : embedDim > 0 := by norm_num)
   (epsilon : α := TorchLean.normalizationEpsilon) :
   Tensor α [seqLen, embedDim] :=
-  -- Compute RMS along last dimension
-  let squared := squareSpec x
-
-  -- Proofs
-  let _ : Shape.WellFormed (.dim seqLen (.dim embedDim .scalar)) :=
-  ⟨⟨h_seq_pos, ⟨h_embed_pos, trivial⟩⟩⟩
-  let s := Shape.dim seqLen (Shape.dim embedDim Shape.scalar)
-  let h_rank : Spec.Shape.rank s > 0 := by simp [s, Spec.Shape.rank]
-  let h_valid : Shape.HasNonemptyAxis (Spec.Shape.rank s - 1) s :=
-    Shape.inferNonemptyAxis (Nat.sub_lt h_rank Nat.zero_lt_one)
-
-  -- Compute mean along last dimension (dim = 1)
-  let meanSquared := reduceMean (Spec.Shape.rank s - 1) squared h_valid.proof
-  let rms := sqrtSpec (addSpec meanSquared (Tensor.full (.dim seqLen .scalar) epsilon))
-  -- shape: [seqLen]
-
-  -- Normalize by RMS
-  let rmsBroadcast := broadcastAfterSum s (Spec.Shape.rank s - 1) rms
-  let normalized := divSpec x rmsBroadcast
-
-  have h_gamma_broadcast : Shape.CanBroadcastTo (Shape.dim embedDim Shape.scalar) (Shape.dim seqLen
-    (.dim embedDim .scalar)) := by
-    apply Shape.CanBroadcastTo.expand_dims
-    apply Shape.CanBroadcastTo.dim_eq
-    exact Shape.CanBroadcastTo.scalar
-
-  -- Scale
-  let gammaBroadcast := broadcastTo h_gamma_broadcast gamma
+  let s : Shape := [seqLen, embedDim]
+  let _ : Shape.WellFormed s := ⟨⟨h_seq_pos, ⟨h_embed_pos, trivial⟩⟩⟩
+  let hAxis : Shape.HasNonemptyAxis 1 s := Shape.inferNonemptyAxis (by simp [s])
+  let regularizer := Tensor.full [seqLen] epsilon
+  let largest := reduceDim (fun row => Tensor.maxAbs row) 1 x
+  let scale := Tensor.map Context.stopGradient
+    (maxSpec largest (sqrtSpec (absSpec regularizer)))
+  let scaled := divSpec x (broadcastAfterSum s 1 scale)
+  let meanSquared := reduceMean 1 (squareSpec scaled) hAxis.proof
+  let epsilonScaled := divSpec (divSpec regularizer scale) scale
+  let denominator := sqrtSpec (addSpec meanSquared epsilonScaled)
+  let normalized := divSpec scaled (broadcastAfterSum s 1 denominator)
+  let gammaBroadcast : Tensor α [seqLen, embedDim] := broadcastTo
+    (Shape.CanBroadcastTo.expand_dims
+      (Shape.CanBroadcastTo.dim_eq Shape.CanBroadcastTo.scalar)) gamma
   mulSpec normalized gammaBroadcast
 
 end Spec

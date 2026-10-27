@@ -7,7 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.BoundOps.Lawful
-public import NN.MLTheory.CROWN.Graph.Engine.Base
+public import NN.MLTheory.CROWN.Graph.Engine.IBP
 
 /-!
 # IBP Certificate Step
@@ -110,6 +110,9 @@ def certStepNode? (nodes : Array Node) (ps : ParamStore ℝ) (cert : Array (Opti
               some (toFlatBox (α := ℝ) Xin.dim yB)
           | none => none
       | none => none
+  | .silu => do
+      let p ← NN.IR.unaryParent? node.parents
+      ibpSilu? (← getBox? cert p)
   | .sigmoid =>
       match NN.IR.unaryParent? node.parents with
       | some p1 =>

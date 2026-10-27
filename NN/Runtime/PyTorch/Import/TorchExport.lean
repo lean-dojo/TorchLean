@@ -357,9 +357,11 @@ def kind (ctx : String) (outShape : Shape) (o : StateDict) : Except String OpKin
   | .pointwise =>
       throw <| s!"PyTorch graph import: {ctx}: pointwise operators are spelled by operator, " ++
         "such as `div`"
+  | .scaledMatmul =>
+      throw s!"PyTorch graph import: {ctx}: scaled contraction needs a matching replay rule"
   | .input | .detach | .add | .sub | .mulElem | .abs | .sqrt | .inv | .maxElem | .minElem
   | .sum
-  | .matmul | .linear | .relu | .tanh | .sigmoid | .softplus | .safeLog
+  | .matmul | .linear | .relu | .tanh | .sigmoid | .silu | .softplus | .safeLog
   | .exp | .log | .sin | .cos | .mseLoss =>
       match tag.toKind? with
       | some kind => pure kind

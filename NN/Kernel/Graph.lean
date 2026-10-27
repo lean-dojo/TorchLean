@@ -12,6 +12,7 @@ import NN.Kernel.Runtime
 import NN.Runtime.Autograd.Engine.LibTorch.Convert
 import NN.Runtime.Autograd.Engine.LibTorch.ConvPool
 import NN.Runtime.Autograd.Engine.LibTorch.Kernels
+import NN.Runtime.Autograd.Engine.LibTorch.Ops.Attention
 import NN.Runtime.Autograd.Engine.LibTorch.Shape
 import NN.Runtime.Autograd.Torch.Core.TensorTransfer
 
@@ -88,6 +89,7 @@ private def prepare (graph : Graph) (payload : Payload Float32) (node : Node) :
   | .sqrt => unary Buffer.sqrt
   | .relu => unary Buffer.relu
   | .sigmoid => unary Buffer.sigmoid
+  | .silu => unary Buffer.silu
   | .tanh => unary Buffer.tanh
   | .exp => unary Buffer.exp
   | .log =>
@@ -168,8 +170,15 @@ private def prepare (graph : Graph) (payload : Payload Float32) (node : Node) :
         unary fun input => torchleanAvgPoolFwdCuda input spatial kernel stride padding channels
       else
         unary fun input => torchleanMaxPoolFwdCuda input spatial kernel stride padding channels
-  | .matmul =>
-      let (left, right) ← Infer.expectBinaryParents "matmul" parents
+  | .matmul | .scaledMatmul =>
+      let (left, right, coefficient) ← if node.kind == .scaledMatmul then do
+          let (left, right, scale) ← Infer.expectTernaryParents "scaled_matmul" parents
+          unless scale.outShape == [] do
+            throw "IR native: scaled_matmul requires a scalar third operand"
+          pure (left, right, some scale.id)
+        else do
+          let (left, right) ← Infer.expectBinaryParents "matmul" parents
+          pure (left, right, none)
       let dims ← OpContracts.matmulDims left.outShape right.outShape
       let batch ← SomeBuffer.natToU32Checked dims.leading.size
       let rows ← SomeBuffer.natToU32Checked dims.rows
@@ -181,7 +190,19 @@ private def prepare (graph : Graph) (payload : Payload Float32) (node : Node) :
         (dims.leading.concat (Shape.ofList [dims.rows, dims.inner]))
       let rightBroadcast ← broadcast rightShape
         (dims.leading.concat (Shape.ofList [dims.inner, dims.cols]))
-      binary fun a b => Buffer.bmm (leftBroadcast a) (rightBroadcast b) batch rows inner cols
+      pure fun values => do
+        let a ← parent values left.id
+        let b ← parent values right.id
+        match coefficient with
+        | none => pure (Buffer.bmm (leftBroadcast a.buf) (rightBroadcast b.buf)
+            batch rows inner cols)
+        | some id =>
+            let scalar ← parent values id
+            let scale ← Buffer.toFloatArrayIO scalar.buf
+            unless scale.size == 1 do
+              throw (IO.userError "IR native: scaled_matmul scale buffer is not scalar")
+            pure (Buffer.scaledProduct (leftBroadcast a.buf) (rightBroadcast b.buf)
+              batch rows inner cols (scale.get! 0))
   | _ => throw s!"IR native: node {node.id}: unsupported operation {node.kind.tag}"
 
 end Internal

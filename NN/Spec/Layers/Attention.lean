@@ -135,9 +135,10 @@ structure AttentionContext (α : Type) [TorchLean.Storage α]
 Standard attention requires a positive feature dimension and divides scores by `sqrt(dModel)`.
 TorchLean's tensor shapes also admit zero dimensions. In that degenerate case the result has no
 feature coordinates, so choosing denominator `1` gives the unique empty-feature result without
-introducing a division by zero. -/
+introducing a division by zero. The scalar context constructs the root from the count: binary
+backends can recover a finite root even when casting the dimension itself would overflow. -/
 def attentionScaleDenom (dModel : Nat) : α :=
-  if dModel = 0 then 1 else MathFunctions.sqrt (dModel : α)
+  if dModel = 0 then 1 else Context.sqrtNat dModel
 
 /-!
 ## Exact hard masking
@@ -190,8 +191,7 @@ def hardMaskedSoftmaxVecSpec {n : Nat}
           (fun score allowed =>
             if allowed then MathFunctions.exp (score - rowMax) else 0)
           scores mask
-      let denom : α := sumSpec numerators
-      divSpec numerators (replicate (Tensor.scalar denom))
+      Activation.Internal.normalizeWeights numerators
 
 /-- Hard-masked softmax along the innermost axis of an arbitrary tensor. -/
 def hardMaskedSoftmaxSpec : {s : Shape} → Tensor α s → Tensor Bool s → Tensor α s
@@ -210,16 +210,435 @@ For ordinary softmax, `weights = softmax(scores)`. For hard-masked softmax over 
 Exceptional floating-point operands need not satisfy that zero-product conclusion:
 
 `dScores = weights ⊙ (dWeights - Σⱼ dWeightsⱼ * weightsⱼ)`.
+
+Attention uses `center := true`: subtract the upstream coordinate at a maximal weight before
+taking the weighted sum. For normalized real weights this leaves the derivative unchanged; for
+an all-zero row both formulas return zero. In floating point it retains a small dominant-logit
+gradient after its probability rounds to one. The default retains the uncentered algebraic
+formula for arbitrary supplied weights, whose sum need not be one.
 -/
-def softmaxBackwardFromWeightsSpec : {s : Shape} → Tensor α s → Tensor α s → Tensor α s
-  | .scalar, _weights, _dWeights => Tensor.scalar 0
-  | .dim _n .scalar, weights, dWeights =>
-      let rowDot : α := sumSpec (mulSpec dWeights weights)
-      mulSpec weights (subSpec dWeights (replicate (Tensor.scalar rowDot)))
-  | .dim n inner, weights, dWeights =>
+def softmaxBackwardFromWeightsSpec {s : Shape} (weights dWeights : Tensor α s)
+    (center : Bool := false) : Tensor α s :=
+  match s with
+  | .scalar => Tensor.scalar 0
+  | .dim 0 .scalar => dWeights
+  | .dim (Nat.succ n) .scalar =>
+      if center then
+        let pivot : Fin (Nat.succ n) :=
+          Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) weights)
+        Activation.Internal.softmaxPullback weights dWeights (dWeights.getScalar pivot)
+      else
+        let rowDot : α := sumSpec (mulSpec dWeights weights)
+        mulSpec weights (subSpec dWeights (replicate (Tensor.scalar rowDot)))
+  | .dim n inner =>
       Tensor.dim (fun i : Fin n =>
         softmaxBackwardFromWeightsSpec (s := inner)
-          (Tensor.unstack weights i) (Tensor.unstack dWeights i))
+          (Tensor.unstack weights i) (Tensor.unstack dWeights i) (center := center))
+
+namespace Internal
+
+/-- Reconstruct a complete finite scaled contraction without rounding its coefficients. -/
+@[noinline] def productCoefficients? {α : Type} [Storage α] [Context α]
+    {m n p groups : Nat} (left : Fin groups → Tensor α [m, n])
+    (right : Fin groups → Tensor α [n, p]) (scale : α)
+    (row : Fin m) (column : Fin p) :
+    Option (Numeric.QuotientCoefficients (Numeric.QuotientArithmetic.depth α)) := do
+  let ops := (inferInstance : Numeric.QuotientArithmetic α)
+  let coefficient ← ops.encode scale
+  let zero ← ops.encode (0 : α)
+  let total ← (List.finRange groups).foldl (fun accumulated group => do
+    let initial ← accumulated
+    (List.finRange n).foldl (fun accumulated index => do
+      let total ← accumulated
+      let a ← ops.encode (get2 (left group) row index)
+      let b ← ops.encode (get2 (right group) index column)
+      pure (Numeric.QuotientCoefficients.add total (Numeric.QuotientCoefficients.mul a b)))
+      (some initial)) (some zero)
+  pure (Numeric.QuotientCoefficients.mul total coefficient)
+
+/-- Round a finite contraction only after reconstructing every original coefficient. -/
+@[noinline] def replayProducts? {α : Type} [Storage α] [Context α]
+    {m n p groups : Nat} (left : Fin groups → Tensor α [m, n])
+    (right : Fin groups → Tensor α [n, p]) (scale ordinary : α)
+    (row : Fin m) (column : Fin p) : Option α := do
+  let ops := (inferInstance : Numeric.QuotientArithmetic α)
+  let result ← productCoefficients? left right scale row column
+  let rounded ← ops.decode result
+  pure <| if result.primal == 0 && ordinary == 0 then ops.copyPrimal ordinary rounded else rounded
+
+/-- Scaled sums of matrix products used by attention's forward and differential rules.
+
+One product serves the forward or VJP; two products retain the JVP's joint contraction. Within
+and between products, checked arithmetic follows the original left-fold schedule. `scaleFirst`
+keeps the VJP's input-scaling convention. Range loss or an absorbed nonzero term replays all
+original finite coefficient trees, including the scale, before rounding. Missing finite input
+encodings retain the ordinary result. Unsupported carriers use the original expression directly.
+
+This is a reference scalar repair, not a numerical contract for an expanded IR or foreign kernel.
+-/
+def scaledProducts {α : Type} [Storage α] [Context α]
+    {m n p groups : Nat} (left : Fin groups → Tensor α [m, n])
+    (right : Fin groups → Tensor α [n, p]) (scale : α) (scaleFirst : Bool := false) :
+    Tensor α [m, p] :=
+  let ops := (inferInstance : Numeric.QuotientArithmetic α)
+  if !ops.supported then
+    let combined := match groups, left, right with
+      | 0, _, _ => Tensor.zeros [m, p]
+      | groups + 1, left, right =>
+          let product := fun group => matMulSpec
+            (if scaleFirst then scaleSpec (left group) scale else left group) (right group)
+          (List.finRange groups).foldl (fun total group =>
+            addSpec total (product group.succ)) (product 0)
+    if scaleFirst then combined else scaleSpec combined scale
+  else
+    Tensor.Internal.Rep.ofFn fun coordinate =>
+      let (total, flags) := match groups, left, right with
+        | 0, _, _ => (0, 0)
+        | groups + 1, left, right =>
+          let product := fun group => (List.finRange n).foldl (fun (total, flags) index =>
+            let a := get2 (left group) coordinate.1 index
+            let (a, inputFlags) := if scaleFirst then ops.mulWithFlags a scale else (a, 0)
+            let (value, productFlags) := ops.mulWithFlags a
+              (get2 (right group) index coordinate.2.1)
+            let (next, sumFlags) := ops.addWithFlags total value
+            let stalled := (value != 0 && next == total).toUInt8
+            (next, flags ||| inputFlags ||| productFlags ||| sumFlags ||| stalled))
+            ((0 : α), (0 : UInt8))
+          (List.finRange groups).foldl (fun (total, flags) group =>
+              let (part, partFlags) := product group.succ
+              let (next, sumFlags) := ops.addWithFlags total part
+              let stalled := (part != 0 && next == total).toUInt8
+              (next, flags ||| partFlags ||| sumFlags ||| stalled)) (product 0)
+      let (ordinary, scaleFlags) := if scaleFirst then (total, 0)
+        else ops.mulWithFlags total scale
+      if flags ||| scaleFlags == 0 then ordinary else
+        (replayProducts? left right scale ordinary coordinate.1 coordinate.2.1).getD ordinary
+
+/-- Scaled contractions over a shared batch prefix, without materializing an unscaled product. -/
+def scaledBatchProducts {α : Type} [Storage α] [Context α]
+    {batch : Shape} {m n p groups : Nat}
+    (left : Fin groups → Tensor α (batch.concat [m, n]))
+    (right : Fin groups → Tensor α (batch.concat [n, p])) (scale : α) :
+    Tensor α (batch.concat [m, p]) :=
+  match batch with
+  | .scalar => scaledProducts left right scale
+  | .dim _ _ => Tensor.dim fun index =>
+      scaledBatchProducts (fun group => (left group).unstack index)
+        (fun group => (right group).unstack index) scale
+
+/-- A scaled matrix product with broadcast batch prefixes and one retained contraction boundary. -/
+def scaledMatmul {α : Type} [Storage α] [Context α]
+    {batchA batchB batch : Shape} {m n p : Nat}
+    (broadcastA : Shape.CanBroadcastTo batchA batch)
+    (broadcastB : Shape.CanBroadcastTo batchB batch)
+    (left : Tensor α (batchA.concat [m, n]))
+    (right : Tensor α (batchB.concat [n, p])) (scale : α) :
+    Tensor α (batch.concat [m, p]) :=
+  let a := broadcastTo (Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [m, n] broadcastA) left
+  let b := broadcastTo (Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [n, p] broadcastB) right
+  scaledBatchProducts (fun _ : Fin 1 => a) (fun _ => b) scale
+
+/-- The two product-rule terms share one replay boundary, so large opposite tangents can cancel. -/
+def scaledMatmulJvp {α : Type} [Storage α] [Context α]
+    {batchA batchB batch : Shape} {m n p : Nat}
+    (broadcastA : Shape.CanBroadcastTo batchA batch)
+    (broadcastB : Shape.CanBroadcastTo batchB batch)
+    (left deltaLeft : Tensor α (batchA.concat [m, n]))
+    (right deltaRight : Tensor α (batchB.concat [n, p])) (scale : α) :
+    Tensor α (batch.concat [m, p]) :=
+  let a := broadcastTo (Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [m, n] broadcastA) left
+  let da := broadcastTo (Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [m, n] broadcastA)
+    deltaLeft
+  let b := broadcastTo (Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [n, p] broadcastB) right
+  let db := broadcastTo (Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [n, p] broadcastB)
+    deltaRight
+  scaledBatchProducts (fun group : Fin 2 => if group.val == 0 then da else a)
+    (fun group => if group.val == 0 then b else db) scale
+
+/-- Cotangents of a scaled, broadcast matrix product, retaining its fixed scale in each product. -/
+def scaledMatmulBackward {α : Type} [Storage α] [Context α]
+    {batchA batchB batch : Shape} {m n p : Nat}
+    (broadcastA : Shape.CanBroadcastTo batchA batch)
+    (broadcastB : Shape.CanBroadcastTo batchB batch)
+    (left : Tensor α (batchA.concat [m, n]))
+    (right : Tensor α (batchB.concat [n, p])) (gradient : Tensor α (batch.concat [m, p]))
+    (scale : α) : Tensor α (batchA.concat [m, n]) × Tensor α (batchB.concat [n, p]) :=
+  let a := broadcastTo (Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [m, n] broadcastA) left
+  let b := broadcastTo (Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [n, p] broadcastB) right
+  let bt : Tensor α (batch.concat [p, n]) := by
+    simpa using swapAdjacentAxes b batch.rank
+  let transposed : Tensor α (batch.concat [n, m]) := by
+    simpa using swapAdjacentAxes a batch.rank
+  (reduceFromBroadcastTo (Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [m, n] broadcastA)
+      (scaledBatchProducts (fun _ : Fin 1 => gradient) (fun _ => bt) scale),
+    reduceFromBroadcastTo (Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [n, p] broadcastB)
+      (scaledBatchProducts (fun _ : Fin 1 => transposed) (fun _ => gradient) scale))
+
+/-- Replay one softmax row from retained finite cotangent coefficients. -/
+def replayPullbackCoefficientsRow? {α : Type} [Storage α] [Context α] {p : Nat}
+    (weights ordinary : Tensor α [p])
+    (coefficients : Fin p → Option
+      (Numeric.QuotientCoefficients (Numeric.QuotientArithmetic.depth α))) :
+    Option (Tensor α [p]) :=
+  match p, weights, ordinary, coefficients with
+  | 0, _, ordinary, _ => some ordinary
+  | p + 1, weights, ordinary, coefficients =>
+      let pivot : Fin (p + 1) := Fin.cast (by simp [Shape.size])
+        (Tensor.argmax (by simp [Shape.size]) weights)
+      Activation.Internal.replaySoftmaxPullback? weights ordinary coefficients (coefficients pivot)
+
+/-- Replay one softmax row from its original gradient contractions and saved weights. -/
+def replayPullbackProductsRow? {α : Type} [Storage α] [Context α] {m n p groups : Nat}
+    (weights ordinary : Tensor α [p]) (left : Fin groups → Tensor α [m, n])
+    (right : Fin groups → Tensor α [n, p]) (scale : α) (row : Fin m) :
+    Option (Tensor α [p]) :=
+  replayPullbackCoefficientsRow? weights ordinary (productCoefficients? left right scale row)
+
+/-- Multiply a retained contraction by one coordinate's factor before encoding its result. -/
+def weightedProductCoefficients? {α : Type} [Storage α] [Context α] {m n p : Nat}
+    (left : Tensor α [m, n]) (right : Tensor α [n, p])
+    (factor : Tensor α [m, p]) (row : Fin m) (column : Fin p) :
+    Option (Numeric.QuotientCoefficients (Numeric.QuotientArithmetic.depth α)) := do
+  let ops := (inferInstance : Numeric.QuotientArithmetic α)
+  let product ← productCoefficients? (fun _ : Fin 1 => left) (fun _ => right) 1 row column
+  let coefficient ← ops.encode (get2 factor row column)
+  pure (Numeric.QuotientCoefficients.mul product coefficient)
+
+/-- Retain both pointwise factors through the transposed value-gradient contraction. -/
+def weightedValueCoefficients? {α : Type} [Storage α] [Context α] {rows keys width : Nat}
+    (weights multiplier : Tensor α [rows, keys]) (gradient : Tensor α [rows, width])
+    (key : Fin keys) (column : Fin width) :
+    Option (Numeric.QuotientCoefficients (Numeric.QuotientArithmetic.depth α)) := do
+  let ops := (inferInstance : Numeric.QuotientArithmetic α)
+  let zero ← ops.encode (0 : α)
+  (List.finRange rows).foldl (fun accumulated row => do
+    let total ← accumulated
+    let p ← ops.encode (get2 weights row key)
+    let m ← ops.encode (get2 multiplier row key)
+    let g ← ops.encode (get2 gradient row column)
+    pure (Numeric.QuotientCoefficients.add total
+      (Numeric.QuotientCoefficients.mul (Numeric.QuotientCoefficients.mul p m) g))) (some zero)
+
+/-- Conservative range guard for an ordinary product whose coefficients must survive another map.
+Only flags escape this check; the caller keeps the original value-producing schedule. -/
+def productsLoseRange {α : Type} [Storage α] [Context α] {m n p : Nat}
+    (left : Tensor α [m, n]) (right : Tensor α [n, p]) : Bool := Id.run do
+  let ops := (inferInstance : Numeric.QuotientArithmetic α)
+  if !ops.supported then return false
+  for row in List.finRange m do
+    for column in List.finRange p do
+      let mut total : α := 0
+      for index in List.finRange n do
+        let (product, productFlags) := ops.mulWithFlags (get2 left row index)
+          (get2 right index column)
+        let (next, sumFlags) := ops.addWithFlags total product
+        if productFlags != 0 || sumFlags != 0 || (product != 0 && next == total) then
+          return true
+        total := next
+  return false
+
+/-- Retain the original gradient contractions through the centered softmax pullback.
+
+The ordinary tensor calculation is unchanged unless an output coefficient loses range. Replaying
+the contraction and pullback together can recover a finite result even when the intervening
+gradient tensor cannot represent it. This uses the same coefficient replay as ordinary softmax.
+-/
+def pullbackProducts {α : Type} [Storage α] [Context α] {m n p groups : Nat}
+    (weights gradient : Tensor α [m, p]) (left : Fin groups → Tensor α [m, n])
+    (right : Fin groups → Tensor α [n, p]) (scale : α) : Tensor α [m, p] :=
+  let ordinary := softmaxBackwardFromWeightsSpec weights gradient (center := true)
+  let ops := (inferInstance : Numeric.QuotientArithmetic α)
+  if !ops.supported then ordinary
+  else match p, ordinary, weights, right with
+  | 0, ordinary, _, _ => ordinary
+  | p + 1, ordinary, weights, right => Tensor.dim fun row =>
+      let values := ordinary.unstack row
+      if !(List.finRange (p + 1)).any (fun i =>
+          (ops.addWithFlags (values.getScalar i) 0).2 != 0) then values
+      else
+        (replayPullbackProductsRow? (weights.unstack row) values left right scale row).getD values
+
+end Internal
+
+/-- Row normalization followed by a differentiable multiplier and a value contraction.
+The forward schedule is deliberately the ordinary softmax, pointwise product, then matrix product.
+The compound boundary matters for derivatives, where the unweighted cotangent can overflow. -/
+def softmaxMatmulWeights {α : Type} [Storage α] [Context α]
+    {batch : Shape} {rows keys : Nat} (scores : Tensor α (batch.concat [rows, keys]))
+    (mask : Option (Tensor Bool [rows, keys]) := none) :
+    Tensor α (batch.concat [rows, keys]) :=
+  match batch, scores with
+  | .scalar, scores => match mask with
+      | none => Activation.Internal.softmaxInnermostSpec scores
+      | some mask => hardMaskedSoftmaxSpec scores mask
+  | .dim _ _, scores => Tensor.dim fun i => softmaxMatmulWeights (scores.unstack i) mask
+
+/-- Mix value rows from saved weights, keeping pointwise multiplication before the contraction. -/
+def Internal.softmaxMatmulFromWeights {α : Type} [Storage α] [Context α]
+    {batch : Shape} {rows keys width : Nat}
+    (weights : Tensor α (batch.concat [rows, keys]))
+    (value : Tensor α (batch.concat [keys, width]))
+    (multiplier : Tensor α (batch.concat [rows, keys])) :
+    Tensor α (batch.concat [rows, width]) :=
+  match batch, weights, value, multiplier with
+  | .scalar, weights, value, multiplier => matMulSpec (mulSpec weights multiplier) value
+  | .dim _ _, weights, value, multiplier => Tensor.dim fun i =>
+      Internal.softmaxMatmulFromWeights (weights.unstack i) (value.unstack i)
+        (multiplier.unstack i)
+
+/-- Forward value of the normalized matrix product, without changing its association. -/
+def softmaxMatmul {α : Type} [Storage α] [Context α]
+    {batch : Shape} {rows keys width : Nat}
+    (scores : Tensor α (batch.concat [rows, keys]))
+    (value : Tensor α (batch.concat [keys, width]))
+    (multiplier : Tensor α (batch.concat [rows, keys]))
+    (mask : Option (Tensor Bool [rows, keys]) := none) :
+    Tensor α (batch.concat [rows, width]) :=
+  Internal.softmaxMatmulFromWeights (softmaxMatmulWeights scores mask) value multiplier
+
+/-- Cotangents of normalized scores, values and their differentiable multiplier.
+Finite coefficient replay keeps the original output cotangent and values through both the
+multiplier and centered softmax. Unsupported scalar carriers use the ordinary local formula. -/
+def softmaxMatmulBackward {α : Type} [Storage α] [Context α]
+    {batch : Shape} {rows keys width : Nat}
+    (weights : Tensor α (batch.concat [rows, keys]))
+    (value : Tensor α (batch.concat [keys, width]))
+    (multiplier : Tensor α (batch.concat [rows, keys]))
+    (gradient : Tensor α (batch.concat [rows, width])) :
+    Tensor α (batch.concat [rows, keys]) × Tensor α (batch.concat [keys, width]) ×
+      Tensor α (batch.concat [rows, keys]) :=
+  match batch, weights, value, multiplier, gradient with
+  | .dim _ _, weights, value, multiplier, gradient =>
+      let result := fun i => softmaxMatmulBackward (weights.unstack i) (value.unstack i)
+        (multiplier.unstack i) (gradient.unstack i)
+      (Tensor.dim fun i => (result i).1, Tensor.dim fun i => (result i).2.1,
+        Tensor.dim fun i => (result i).2.2)
+  | .scalar, weights, value, multiplier, gradient =>
+      let ops := (inferInstance : Numeric.QuotientArithmetic α)
+      let active := fun row => !(List.finRange keys).all fun key =>
+        Context.isZero (get2 weights row key)
+      let gradient := if ops.supported then
+        Tensor.dim fun row =>
+          if active row then gradient.unstack row else Tensor.zeros [width]
+        else gradient
+      let transposed := swapAdjacentAxes value 0
+      let upstream := matMulSpec gradient transposed
+      let upstream := if ops.supported then
+        Tensor.dim fun row =>
+          if active row then upstream.unstack row else Tensor.zeros [keys]
+        else upstream
+      let ordinary := softmaxBackwardFromWeightsSpec weights (mulSpec upstream multiplier)
+        (center := true)
+      let multiplierGradient := mulSpec weights upstream
+      let contractionRisk := Internal.productsLoseRange gradient transposed
+      let scoreGradient := if !ops.supported then ordinary else Tensor.dim fun row =>
+        let previous := ordinary.unstack row
+        let coefficient := Internal.weightedProductCoefficients? gradient transposed multiplier row
+        if !contractionRisk && !(List.finRange keys).any (fun column =>
+            previous.getScalar column == 0 ||
+              (ops.addWithFlags (previous.getScalar column) 0).2 != 0 ||
+              (ops.mulWithFlags (get2 upstream row column) (get2 multiplier row column)).2 != 0)
+          then previous
+        else (Internal.replayPullbackCoefficientsRow? (weights.unstack row) previous coefficient)
+          |>.getD previous
+      let multiplierGradient := if !ops.supported then multiplierGradient else
+        Tensor.dim fun row => Tensor.dim fun column => Tensor.scalar <|
+          let previous := get2 multiplierGradient row column
+          if !contractionRisk && previous != 0 && (ops.addWithFlags previous 0).2 == 0 &&
+              (ops.mulWithFlags (get2 weights row column) (get2 upstream row column)).2 == 0
+            then previous else
+            (do
+              let result ← Internal.weightedProductCoefficients? gradient transposed weights
+                row column
+              let rounded ← ops.decode result
+              pure <| if result.primal == 0 && previous == 0 then
+                ops.copyPrimal previous rounded else rounded)
+            |>.getD previous
+      let valueGradient := Internal.scaledProducts
+        (fun _ : Fin 1 => swapAdjacentAxes (mulSpec weights multiplier) 0) (fun _ => gradient) 1
+      let valueGradient := if !ops.supported then valueGradient else
+        Tensor.dim fun key => Tensor.dim fun column => Tensor.scalar <|
+          let previous := get2 valueGradient key column
+          let factorRisk := (List.finRange rows).any fun row =>
+            (ops.mulWithFlags (get2 weights row key) (get2 multiplier row key)).2 != 0
+          if !factorRisk && previous != 0 && (ops.addWithFlags previous 0).2 == 0 then previous else
+            (do
+              let total ← Internal.weightedValueCoefficients? weights multiplier gradient key column
+              let rounded ← ops.decode total
+              pure <| if total.primal == 0 && previous == 0 then
+                ops.copyPrimal previous rounded else rounded) |>.getD previous
+      (scoreGradient, valueGradient, multiplierGradient)
+
+/-- Product-rule tangent of the normalized matrix product, using its saved row weights. -/
+def softmaxMatmulJvp {α : Type} [Storage α] [Context α]
+    {batch : Shape} {rows keys width : Nat}
+    (weights : Tensor α (batch.concat [rows, keys]))
+    (value : Tensor α (batch.concat [keys, width]))
+    (multiplier deltaScores : Tensor α (batch.concat [rows, keys]))
+    (deltaValue : Tensor α (batch.concat [keys, width]))
+    (deltaMultiplier : Tensor α (batch.concat [rows, keys])) :
+    Tensor α (batch.concat [rows, width]) :=
+  match batch, weights, value, multiplier, deltaScores, deltaValue, deltaMultiplier with
+  | .dim _ _, weights, value, multiplier, deltaScores, deltaValue, deltaMultiplier =>
+      Tensor.dim fun i => softmaxMatmulJvp (weights.unstack i) (value.unstack i)
+        (multiplier.unstack i) (deltaScores.unstack i) (deltaValue.unstack i)
+        (deltaMultiplier.unstack i)
+  | .scalar, weights, value, multiplier, deltaScores, deltaValue, deltaMultiplier =>
+      let deltaWeights := softmaxBackwardFromWeightsSpec weights deltaScores (center := true)
+      let deltaMixed := addSpec (mulSpec deltaWeights multiplier) (mulSpec weights deltaMultiplier)
+      let ordinary := Internal.scaledProducts
+        (fun group : Fin 2 => if group.val == 0 then deltaMixed else mulSpec weights multiplier)
+        (fun group => if group.val == 0 then value else deltaValue) 1
+      let ops := (inferInstance : Numeric.QuotientArithmetic α)
+      if !ops.supported then ordinary else
+        match keys, weights, value, multiplier, deltaScores, deltaValue, deltaMultiplier,
+            deltaWeights with
+        | 0, _, _, _, _, _, _, _ => ordinary
+        | keys + 1, weights, value, multiplier, deltaScores, deltaValue, deltaMultiplier,
+            deltaWeights =>
+          Tensor.dim fun row =>
+            let probabilities := weights.unstack row
+            let pivot : Fin (keys + 1) := Fin.cast (by simp [Shape.size])
+              (Tensor.argmax (by simp [Shape.size]) probabilities)
+            let incoming := fun key => ops.encode (get2 deltaScores row key)
+            let normalized := Activation.Internal.softmaxPullbackCoefficients?
+              probabilities incoming (incoming pivot)
+            let factorRisk := (List.finRange (keys + 1)).any fun key =>
+              let dp := get2 deltaWeights row key
+              let p := get2 weights row key
+              let m := get2 multiplier row key
+              let dm := get2 deltaMultiplier row key
+              let (first, firstFlags) := ops.mulWithFlags dp m
+              let (second, secondFlags) := ops.mulWithFlags p dm
+              firstFlags != 0 || secondFlags != 0 ||
+                (ops.addWithFlags first second).2 != 0 ||
+                (ops.mulWithFlags p m).2 != 0 || (ops.addWithFlags dp 0).2 != 0
+            Tensor.dim fun column => Tensor.scalar <|
+              let previous := get2 ordinary row column
+              if !factorRisk && previous != 0 && (ops.addWithFlags previous 0).2 == 0
+                then previous else
+                (do
+                  let dp ← normalized
+                  let zero ← ops.encode (0 : α)
+                  let total ← (List.finRange (keys + 1)).foldl (fun accumulated key => do
+                    let total ← accumulated
+                    let p ← ops.encode (get2 weights row key)
+                    let m ← ops.encode (get2 multiplier row key)
+                    let v ← ops.encode (get2 value key column)
+                    let dm ← ops.encode (get2 deltaMultiplier row key)
+                    let dv ← ops.encode (get2 deltaValue key column)
+                    let dp ← dp key
+                    let mixed := Numeric.QuotientCoefficients.add
+                      (Numeric.QuotientCoefficients.mul dp m)
+                      (Numeric.QuotientCoefficients.mul p dm)
+                    let first := Numeric.QuotientCoefficients.mul mixed v
+                    let second := Numeric.QuotientCoefficients.mul
+                      (Numeric.QuotientCoefficients.mul p m) dv
+                    pure (Numeric.QuotientCoefficients.add total
+                      (Numeric.QuotientCoefficients.add first second))) (some zero)
+                  let rounded ← ops.decode total
+                  pure <| if total.primal == 0 && previous == 0 then
+                    ops.copyPrimal previous rounded else rounded) |>.getD previous
 
 /-- Scaled dot-product attention (forward).
 
@@ -244,6 +663,11 @@ Over real scalars, each unmasked attention row sums to `1`; a masked row with at
 key has the same normalization. These equalities are not promised for arbitrary numeric contexts.
 A fully blocked row returns all-zero weights directly, avoiding a `0/0` result.
 
+The ordinary matrix product and scaling order is retained. Finite-coefficient backends replay
+the complete scaled contraction after range loss or an absorbed nonzero term. This prevents an
+unscaled score overflow from poisoning otherwise representable scaled scores, without pre-scaling
+tiny queries to zero. Scalar conversion and native execution remain separate trust obligations.
+
 PyTorch analogy: `torch.softmax(scores.masked_fill(~mask, -torch.inf), dim=-1)` row-wise, then a
 final matrix multiply by `V`.
 -/
@@ -252,8 +676,8 @@ def scaledDotProductAttention
   (ctx : AttentionContext α nQ nK dModel h1 h2) :
   Tensor α [nQ, dModel] :=
   let scale := attentionScaleDenom (α := α) dModel
-  let scores := matMulSpec ctx.Q (swapAdjacentAxes ctx.K 0)
-  let scaledScores := scaleSpec scores (1 / scale)
+  let scaledScores := Internal.scaledProducts (fun _ : Fin 1 => ctx.Q)
+    (fun _ => swapAdjacentAxes ctx.K 0) (1 / scale)
   let attentionWeights :=
     match ctx.mask with
     | none => Activation.softmaxSpec 1 scaledScores
@@ -268,7 +692,9 @@ We recompute the forward intermediates locally so this spec stays self-contained
 on a global tape.
 
 Over real scalars, masked calls use the VJP for hard masking: blocked logits have zero forward
-weight and therefore zero gradient. The executable formula retains backend exception behavior.
+weight and therefore zero gradient. Finite-coefficient replay retains `dOut` and `V` through the
+centered pullback: their matrix product can overflow even when the score cotangent is finite.
+Nonfinite original operands retain the ordinary backend arithmetic.
  -/
 def scaledDotProductAttentionBackward
   {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
@@ -278,8 +704,8 @@ def scaledDotProductAttentionBackward
    Tensor α [nK, dModel] ×
    Tensor α [nK, dModel]) :=
   let scale := attentionScaleDenom (α := α) dModel
-  let scores := matMulSpec ctx.Q (swapAdjacentAxes ctx.K 0)
-  let scaledScores := scaleSpec scores (1 / scale)
+  let scaledScores := Internal.scaledProducts (fun _ : Fin 1 => ctx.Q)
+    (fun _ => swapAdjacentAxes ctx.K 0) (1 / scale)
   let attentionWeights :=
     match ctx.mask with
     | none => Activation.softmaxSpec 1 scaledScores
@@ -289,15 +715,16 @@ def scaledDotProductAttentionBackward
   let dAttentionWeights := matMulSpec dOut (swapAdjacentAxes ctx.V 0)
   let dV := matMulSpec (swapAdjacentAxes attentionWeights 0) dOut
 
-  -- Backprop through row normalization using the forward weights.
-  let dScaledScores := softmaxBackwardFromWeightsSpec attentionWeights dAttentionWeights
+  -- Center before the weighted sum, not after a dominant weight has rounded to one.
+  let dScaledScores :=
+    Internal.pullbackProducts attentionWeights dAttentionWeights (fun _ : Fin 1 => dOut)
+      (fun _ => swapAdjacentAxes ctx.V 0) 1
 
-  -- Backprop through scaling: `scaledScores = scores * (1 / scale)`.
-  let dScores := scaleSpec dScaledScores (1 / scale)
-
-  -- Backprop through `scores = Q Kᵀ`.
-  let dQ := matMulSpec dScores ctx.K
-  let dK := matMulSpec (swapAdjacentAxes dScores 0) ctx.Q
+  -- Keep the score scale inside the replay boundary for both cotangent contractions.
+  let dQ := Internal.scaledProducts (fun _ : Fin 1 => dScaledScores)
+    (fun _ => ctx.K) (1 / scale) (scaleFirst := true)
+  let dK := Internal.scaledProducts (fun _ : Fin 1 => swapAdjacentAxes dScaledScores 0)
+    (fun _ => ctx.Q) (1 / scale) (scaleFirst := true)
 
   (dQ, dK, dV)
 
@@ -310,9 +737,13 @@ This differentiates the pure attention equation
 
 in the direction `(dQ,dK,dV)`. Over real scalars, hard-masked blocked logits have zero
 forward weight,
-so their tangent contribution is zero in `softmaxBackwardFromWeightsSpec`. The row-wise softmax
-Jacobian is symmetric, so the same formula serves as both VJP and JVP once the forward weights are
-known.
+so their tangent contribution is zero in `softmaxBackwardFromWeightsSpec`. Upstream centering
+preserves that zero-row convention. The row-wise softmax Jacobian is symmetric, so the same
+centered formula serves as both VJP and JVP once the forward weights are known.
+
+When a tangent contraction overflows before normalization, finite-coefficient replay carries both
+original product terms through the pullback. This also preserves zero tangents for a singleton
+softmax without rounding an unrepresentable intermediate tangent to infinity first.
 -/
 def scaledDotProductAttentionJvp
   {nQ nK dModel : Nat} {h1 : nQ ≠ 0} {h2 : nK ≠ 0}
@@ -321,19 +752,22 @@ def scaledDotProductAttentionJvp
   (dK dV : Tensor α [nK, dModel]) :
   Tensor α [nQ, dModel] :=
   let scale := attentionScaleDenom (α := α) dModel
-  let scores := matMulSpec ctx.Q (swapAdjacentAxes ctx.K 0)
-  let dScores :=
-    addSpec
-      (matMulSpec dQ (swapAdjacentAxes ctx.K 0))
-      (matMulSpec ctx.Q (swapAdjacentAxes dK 0))
-  let scaledScores := scaleSpec scores (1 / scale)
-  let dScaledScores := scaleSpec dScores (1 / scale)
+  let scaledScores := Internal.scaledProducts (fun _ : Fin 1 => ctx.Q)
+    (fun _ => swapAdjacentAxes ctx.K 0) (1 / scale)
+  -- Enclose both terms together: either unscaled tangent product may overflow on its own.
+  let dScaledScores := Internal.scaledProducts
+    (fun i : Fin 2 => if i.val == 0 then dQ else ctx.Q)
+    (fun i => if i.val == 0 then swapAdjacentAxes ctx.K 0 else swapAdjacentAxes dK 0)
+    (1 / scale)
   let attentionWeights :=
     match ctx.mask with
     | none => Activation.softmaxSpec 1 scaledScores
     | some m => hardMaskedSoftmaxSpec scaledScores m
   let dAttentionWeights :=
-    softmaxBackwardFromWeightsSpec attentionWeights dScaledScores
+    Internal.pullbackProducts attentionWeights dScaledScores
+      (fun i : Fin 2 => if i.val == 0 then dQ else ctx.Q)
+      (fun i => if i.val == 0 then swapAdjacentAxes ctx.K 0 else swapAdjacentAxes dK 0)
+      (1 / scale)
   addSpec (matMulSpec dAttentionWeights ctx.V) (matMulSpec attentionWeights dV)
 
 

@@ -7,17 +7,24 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.Autograd.Dual
+import Mathlib.Analysis.SpecialFunctions.Complex.LogDeriv
+import Mathlib.Analysis.SpecialFunctions.Pow.Deriv
 
 /-!
-# Higher derivatives on local domains
+# Derivative rules on local domains
 
-Division, logarithms, and square roots need not be smooth everywhere. Their jet laws use smoothness
+Logarithms and square roots need not be smooth everywhere. Their jet laws use smoothness
 near the evaluation point and a nonzero denominator or argument there. Continuity gives the same
 domain condition nearby, where mathlib's derivative rules identify the remaining jet coefficients.
 
-The quotient proof follows the runtime implementation, including its floating-point safeguards.
-Over exact reals, the checks for non-finite intermediate values are always false; no floating-point
-execution is identified with exact-real arithmetic here.
+The quotient law in `NN.Proofs.Autograd.Dual` supplies their division prerequisite and follows the
+runtime's arithmetic safeguards. These theorems concern exact-real coefficients, not native
+floating-point execution.
+
+The principal angle is the imaginary part of the complex logarithm. Its dual tangent agrees with
+the classical derivative on the slit plane, away from the origin and negative real axis.
+Constant powers use the polynomial rule instead of an unused logarithm, including at zero when
+the exponent permits a derivative there.
 -/
 
 public section
@@ -27,97 +34,6 @@ open scoped ContDiff Topology
 namespace Runtime.Autograd.Model.Dual
 
 variable {E : Type*} [NormedAddCommGroup E] [NormedSpace ℝ E]
-
-/-- Runtime comparisons inspect the primal value, not its derivative coefficients. -/
-theorem jet_beq_zero {n : Nat} (directions : Fin n → E) (f : E → ℝ) (x : E) :
-    (jet directions f x == 0) = (f x == 0) := by
-  induction n with
-  | zero => rfl
-  | succ n ih => exact ih (Fin.init directions)
-
-private theorem nested_unsupported (n : Nat) :
-    TorchLean.Numeric.QuotientArithmetic.supported (α := Nested ℝ n) = false := by
-  induction n with
-  | zero => rfl
-  | succ n ih => exact ih
-
-private theorem nested_sub_self_beq_zero {n : Nat} (a : Nested ℝ n) : (a - a == 0) = true := by
-  induction n with
-  | zero =>
-    have h : ∀ r : ℝ, (r - r == 0) = true := by
-      intro r
-      simp
-    exact h a
-  | succ n ih => exact ih a.re
-
-private theorem div_mk {n : Nat} (a b da db : Nested ℝ n)
-    (hz : (b * b == 0) = false) :
-    (Dual.mk a da / Dual.mk b db : Nested ℝ (n + 1)) =
-      Dual.mk (a / b) ((da * b - a * db) / (b * b)) := by
-  change (if TorchLean.Numeric.QuotientArithmetic.supported
-    (α := Dual (Nested ℝ n)) then _ else _) = _
-  have hs : TorchLean.Numeric.QuotientArithmetic.supported
-      (α := Dual (Nested ℝ n)) = false := nested_unsupported n
-  simp only [hs, Bool.false_eq_true, ↓reduceIte, hz, nested_sub_self_beq_zero,
-    Bool.not_true, Bool.or_self, Bool.false_and]
-
-private theorem fderiv_div_apply {f g : E → ℝ} {x : E}
-    (hf : DifferentiableAt ℝ f x) (hg : DifferentiableAt ℝ g x)
-    (hzero : g x ≠ 0) (v : E) :
-    fderiv ℝ (fun y => f y / g y) x v =
-      (fderiv ℝ f x v * g x - f x * fderiv ℝ g x v) / (g x * g x) := by
-  simp only [div_eq_mul_inv]
-  rw [fderiv_fun_mul hf (hg.fun_inv hzero)]
-  have hinv := ((hasDerivAt_inv hzero).comp_hasFDerivAt x hg.hasFDerivAt).fderiv
-  dsimp only [Function.comp_def] at hinv
-  rw [hinv]
-  simp only [add_apply, smul_apply, smul_eq_mul]
-  field_simp
-  ring
-
-/-- The runtime quotient rule preserves every derivative coefficient away from a zero denominator.
-Both functions need be smooth only near the evaluation point. -/
-theorem jet_div_at {n : Nat} (directions : Fin n → E) {f g : E → ℝ} {x : E}
-    (hf : ContDiffAt ℝ n f x) (hg : ContDiffAt ℝ n g x) (hzero : g x ≠ 0) :
-    jet directions (fun y => f y / g y) x = jet directions f x / jet directions g x := by
-  induction n generalizing f g with
-  | zero => rfl
-  | succ n ih =>
-    let ds := Fin.init directions
-    let v := directions (Fin.last n)
-    let df := fun y => fderiv ℝ f y v
-    let dg := fun y => fderiv ℝ g y v
-    have hfn : ContDiffAt ℝ n f x := hf.of_le (by simp)
-    have hgn : ContDiffAt ℝ n g x := hg.of_le (by simp)
-    have hdf : ContDiffAt ℝ n df x :=
-      (hf.fderiv_right (by simp)).clm_apply contDiffAt_const
-    have hdg : ContDiffAt ℝ n dg x :=
-      (hg.fderiv_right (by simp)).clm_apply contDiffAt_const
-    have hden := hgn.mul hgn
-    have hnum := (hdf.mul hgn).sub (hfn.mul hdg)
-    have hden0 := mul_ne_zero hzero hzero
-    have hdenjet : jet ds (fun y => g y * g y) x = jet ds g x * jet ds g x :=
-      jet_mul_at ds hgn hgn
-    have htan : jet ds (fun y => (df y * g y - f y * dg y) / (g y * g y)) x =
-        (jet ds df x * jet ds g x - jet ds f x * jet ds dg x) /
-          (jet ds g x * jet ds g x) := by
-      rw [ih _ hnum hden hden0, jet_sub_at _ (hdf.mul hgn) (hfn.mul hdg),
-        jet_mul_at _ hdf hgn, jet_mul_at _ hfn hdg, hdenjet]
-    have hz : (jet ds g x * jet ds g x == 0) = false := by
-      rw [← hdenjet, jet_beq_zero]
-      simpa only [beq_eq_false_iff_ne] using hden0
-    have heq : (fun y => fderiv ℝ (fun z => f z / g z) y v) =ᶠ[𝓝 x]
-        fun y => (df y * g y - f y * dg y) / (g y * g y) := by
-      filter_upwards [hf.eventually (by simp), hg.eventually (by simp),
-        hg.continuousAt.eventually_ne hzero] with y hfy hgy hy
-      exact fderiv_div_apply (hfy.differentiableAt (by simp))
-        (hgy.differentiableAt (by simp)) hy v
-    change Dual.mk _ _ = Dual.mk (jet ds f x) (jet ds df x) /
-      Dual.mk (jet ds g x) (jet ds dg x)
-    rw [div_mk _ _ _ _ hz]
-    congr 1
-    · exact ih ds hfn hgn hzero
-    · exact (jet_congr ds heq).trans htan
 
 /-- The runtime logarithm preserves mixed derivatives at nonzero inputs.
 This uses mathlib's real logarithm, which is smooth for negative as well as positive inputs. -/
@@ -154,13 +70,6 @@ theorem jet_one_div {n : Nat} (directions : Fin n → ℝ) {x : ℝ} (hx : x ≠
   simpa only [jet_one, jet_id] using jet_div_at directions
     (f := fun _ : ℝ => 1) (g := fun y => y) contDiffAt_const contDiffAt_id hx
 
-/-- The square-root branch depends only on the primal input. -/
-theorem jet_pos {n : Nat} (directions : Fin n → E) (f : E → ℝ) (x : E) :
-    0 < jet directions f x ↔ 0 < f x := by
-  induction n with
-  | zero => rfl
-  | succ n ih => exact ih (Fin.init directions)
-
 private theorem ofPrimal_natCast (n k : Nat) :
     Nested.ofPrimal n (k : ℝ) = (k : Nested ℝ n) := by
   induction n with
@@ -187,6 +96,13 @@ theorem jet_sqrt_comp_at {n : Nat} (directions : Fin n → E) {f : E → ℝ} {x
     · simp only [jet_pos]
       by_cases hpos : 0 < f x
       · simp only [hpos, ↓reduceIte]
+        have hUnsupported (depth : Nat) :
+            TorchLean.Numeric.QuotientArithmetic.supported (α := Nested ℝ depth) = false := by
+          induction depth with
+          | zero => rfl
+          | succ depth ih => exact ih
+        simp only [TorchLean.Numeric.Internal.sqrtBackward, hUnsupported, Bool.not_false,
+          ↓reduceIte]
         have heq : (fun y => fderiv ℝ (fun z => Real.sqrt (f z)) y v) =ᶠ[𝓝 x]
             fun y => fderiv ℝ f y v / (2 * Real.sqrt (f y)) := by
           filter_upwards [hf.eventually (by simp), hf.continuousAt.eventually_ne hzero]
@@ -213,5 +129,91 @@ theorem jet_sqrt_comp_at {n : Nat} (directions : Fin n → E) {f : E → ℝ} {x
 theorem jet_sqrt {n : Nat} (directions : Fin n → ℝ) {x : ℝ} (hx : x ≠ 0) :
     jet directions Real.sqrt x = MathFunctions.sqrt (Nested.seed directions x) := by
   simpa only [jet_id] using jet_sqrt_comp_at directions (f := fun y => y) contDiffAt_id hx
+
+/-- The actual constant-exponent dual rule agrees with mathlib's real-power derivative.
+
+At zero, the exponent must be zero or at least one. Positive integer powers therefore include
+zero and negative inputs without passing through a logarithm. This concerns exact-real
+coefficients; it does not assert an error bound for floating-point powers. -/
+theorem hasDerivAt_pow_const {f : ℝ → ℝ} {df point exponent : ℝ}
+    (hf : HasDerivAt f df point) (h : exponent = 0 ∨ f point ≠ 0 ∨ 1 ≤ exponent) :
+    HasDerivAt (fun t => (f t) ^ exponent)
+      (((⟨f point, df⟩ : Dual ℝ) ^ (⟨exponent, 0⟩ : Dual ℝ)).du) point := by
+  change HasDerivAt _ ((if Context.isZero (0 : ℝ) then
+    (if Context.isZero exponent then 0 else exponent * f point ^ (exponent - 1)) * df
+    else _)) point
+  by_cases he : exponent = 0
+  · subst exponent
+    simpa [Context.isZero] using (hasDerivAt_const point (1 : ℝ))
+  · simpa [Context.isZero, he, mul_comm, mul_left_comm, mul_assoc] using
+      hf.rpow_const (h.resolve_left he)
+
+/-- The actual dual power rule differentiates a positive base and a varying exponent together.
+
+Both input curves may vary. Positivity is the domain of the logarithmic formula; the selected
+constant-exponent branch agrees with the same derivative when the exponent direction is zero.
+This is an exact-real statement, not a rounding theorem for a floating-point implementation.
+-/
+theorem hasDerivAt_pow {f g : ℝ → ℝ} {df dg point : ℝ}
+    (hf : HasDerivAt f df point) (hg : HasDerivAt g dg point) (h : 0 < f point) :
+    HasDerivAt (fun t => (f t) ^ (g t))
+      (((⟨f point, df⟩ : Dual ℝ) ^ (⟨g point, dg⟩ : Dual ℝ)).du) point := by
+  have hmath := hf.rpow hg h
+  change HasDerivAt _ (if Context.isZero dg then
+    (if Context.isZero (g point) then 0 else g point * f point ^ (g point - 1)) * df
+    else f point ^ g point * (dg * Real.log (f point) + g point * (df / f point))) point
+  by_cases hdy : dg = 0
+  · subst dg
+    by_cases he : g point = 0
+    · simpa [Context.isZero, he] using hmath
+    · simpa [Context.isZero, he, mul_comm, mul_left_comm, mul_assoc] using hmath
+  · have hformula :
+        f point ^ g point * (dg * Real.log (f point) + g point * (df / f point)) =
+          df * g point * f point ^ (g point - 1) +
+            dg * f point ^ g point * Real.log (f point) := by
+      rw [Real.rpow_sub_one h.ne']
+      ring
+    rw [← hformula] at hmath
+    simpa [Context.isZero, hdy] using hmath
+
+private theorem angle_tangent_real (x y dx dy : ℝ) (h : (⟨x, y⟩ : ℂ) ≠ 0) :
+    TorchLean.Numeric.Internal.angleTangent x y dx dy =
+      (x * dy - y * dx) / (x * x + y * y) := by
+  have hs : max |x| |y| ≠ 0 := by
+    intro hs
+    have hx : x = 0 := abs_nonpos_iff.mp (by simpa [hs] using le_max_left |x| |y|)
+    have hy : y = 0 := abs_nonpos_iff.mp (by simpa [hs] using le_max_right |x| |y|)
+    exact h (_root_.Complex.ext hx hy)
+  have unsupported : TorchLean.Numeric.QuotientArithmetic.supported (α := ℝ) = false := rfl
+  simp only [TorchLean.Numeric.Internal.angleTangent, unsupported, Bool.not_false, ↓reduceIte]
+  change (if max |x| |y| == 0 then 0 else _) = _
+  simp only [beq_iff_eq, hs, ↓reduceIte]
+  simp only [div_mul_div_comm, ← sub_div, ← add_div]
+  exact div_div_div_cancel_right₀ (mul_ne_zero hs hs) _ _
+
+/-- The actual dual angle rule differentiates two real curves away from the branch cut.
+
+The slit-plane hypothesis excludes the origin and negative real axis. This is an exact-real
+result, not an accuracy theorem for floating-point execution. -/
+theorem hasDerivAt_atan2 {f g : ℝ → ℝ} {df dg point : ℝ}
+    (hf : HasDerivAt f df point) (hg : HasDerivAt g dg point)
+    (h : (⟨g point, f point⟩ : ℂ) ∈ _root_.Complex.slitPlane) :
+    HasDerivAt (fun t => Atan2.atan2 (f t) (g t))
+      (Atan2.atan2 (⟨f point, df⟩ : Dual ℝ) ⟨g point, dg⟩).du point := by
+  have hcurve : HasDerivAt (fun t => (⟨g t, f t⟩ : ℂ)) ⟨dg, df⟩ point := by
+    simpa only [_root_.Complex.mk_eq_add_mul_I] using!
+      hg.ofReal_comp.add (hf.ofReal_comp.mul_const _root_.Complex.I)
+  have hlog := hcurve.clog_real h
+  have him := _root_.Complex.imCLM.hasFDerivAt.comp_hasDerivAt point hlog
+  have hcoefficient :
+      (Atan2.atan2 (⟨f point, df⟩ : Dual ℝ) ⟨g point, dg⟩).du =
+        ((⟨dg, df⟩ : ℂ) / ⟨g point, f point⟩).im := by
+    change TorchLean.Numeric.Internal.angleTangent (g point) (f point) dg df = _
+    rw [angle_tangent_real _ _ _ _ (_root_.Complex.slitPlane_ne_zero h)]
+    simp [_root_.Complex.div_im, _root_.Complex.normSq_apply, mul_comm, sub_div]
+  rw [hcoefficient]
+  change HasDerivAt (fun t => _root_.Complex.arg ⟨g t, f t⟩) _ point
+  change HasDerivAt (fun t => (_root_.Complex.log ⟨g t, f t⟩).im) _ point at him
+  simpa only [_root_.Complex.imCLM_apply, _root_.Complex.log_im] using him
 
 end Runtime.Autograd.Model.Dual

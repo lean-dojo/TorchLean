@@ -25,8 +25,8 @@ open Spec TorchLean TorchLean.Tensor
 -- Re-export the capability operations; only argument adapters and compositions need bodies.
 export Ops
   (dataConst mapData const add sub mul div neg scale abs sqrt clamp max min broadcastTo reshape
-    swapAdjacentAtDepth reduceSum matmul concat slice detach randUniform bernoulliMask sum
-    flatten)
+    swapAdjacentAtDepth reduceSum matmul softmaxMatmul concat slice detach randUniform bernoulliMask
+    sum flatten)
 
 variable {m : Type → Type} {α : Type} [Storage α] [Context α] [Monad m]
     [Ops (m := m) (α := α)]

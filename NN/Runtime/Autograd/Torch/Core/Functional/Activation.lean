@@ -11,8 +11,7 @@ public import NN.Runtime.Autograd.Torch.Core.Functional.Tensor
 /-!
 # Activations over Backend References
 
-Elementwise nonlinearities and final-axis softmax through `Ops`. SiLU composes sigmoid and
-multiplication.
+Elementwise nonlinearities and final-axis softmax through `Ops`.
 -/
 
 @[expose] public section
@@ -23,7 +22,7 @@ open Spec TorchLean TorchLean.Tensor
 
 -- Re-export the capability operations; only argument adapters and compositions need bodies.
 export Ops
-  (relu sigmoid tanh softmaxLast softplus exp sin cos log inv logSoftmaxLast gelu topKMask)
+  (relu sigmoid silu tanh softmaxLast softplus exp sin cos log inv logSoftmaxLast gelu topKMask)
 
 variable {m : Type → Type} {α : Type} [Storage α] [Context α] [Monad m]
     [Ops (m := m) (α := α)]
@@ -32,10 +31,5 @@ variable {m : Type → Type} {α : Type} [Storage α] [Context α] [Monad m]
 def safeLog {s : Shape} (x : Ref (m := m) (α := α) s) (ε : α := Context.defaultEpsilon) :
     m (Ref (m := m) (α := α) s) :=
   Ops.safeLog (m := m) (α := α) (s := s) x ε
-
-/-- SiLU (swish): `x * sigmoid(x)`. -/
-def silu {s : Shape} (x : Ref (m := m) (α := α) s) : m (Ref (m := m) (α := α) s) := do
-  let sx ← sigmoid (m := m) (α := α) (s := s) x
-  mul (m := m) (α := α) (s := s) x sx
 
 end Runtime.Autograd.Torch

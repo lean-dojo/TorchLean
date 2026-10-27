@@ -91,7 +91,7 @@ theorem ibpStepNodeAt?_all_encloses
     henc p hp B ((hagree p hp).symm.trans hB)
   cases hk : nodes[id]!.kind <;> simp only [RealNodeEquation, hk] at heq
   case custom => simp [ibpStepNodeAt?, hk] at hstep
-  case topKMask | slice | pointwise => simp [ibpStepNodeAt?, hk] at hstep
+  case topKMask | slice | pointwise | scaledMatmul => simp [ibpStepNodeAt?, hk] at hstep
   case sum =>
     apply ibpStepNodeAt?_encloses
       (by simp only [ibpForwardSupportedNode, hk]) hinput ?_ hagree henc hstep

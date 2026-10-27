@@ -271,12 +271,9 @@ def gru (sequenceLength inputWidth hiddenWidth : Nat)
             Tensor.full (α := α) ([hiddenWidth]) (0 : α)
           let out0T : Tensor α [sequenceLength, hiddenWidth] :=
             Tensor.full (α := α) ([sequenceLength, hiddenWidth]) (0 : α)
-          let onesT : Tensor α [hiddenWidth] :=
-            Tensor.full (α := α) ([hiddenWidth]) (1 : α)
           let h0 ← Runtime.Autograd.Model.const (m := m) (α := α) (s := [hiddenWidth]) h0T
           let out0 ← Runtime.Autograd.Model.const (m := m) (α := α)
             (s := [sequenceLength, hiddenWidth]) out0T
-          let ones ← Runtime.Autograd.Model.const (m := m) (α := α) (s := [hiddenWidth]) onesT
           Internal.unrollLeading (m := m) (α := α) out0 h0 (fun t hPrev => do
             let x_t ← Runtime.Autograd.Model.select (m := m) (α := α)
               (s := [sequenceLength, inputWidth]) 0 xs t
@@ -297,7 +294,10 @@ def gru (sequenceLength inputWidth hiddenWidth : Nat)
               (inDim := inputWidth + hiddenWidth) (outDim := hiddenWidth)
               wNew bNew concat2
             let n ← Runtime.Autograd.Model.tanh (m := m) (α := α) (s := [hiddenWidth]) n_pre
-            let oneMinusZ ← Runtime.Autograd.Model.sub (m := m) (α := α) (s := [hiddenWidth]) ones z
+            let complementPre ← Runtime.Autograd.Torch.neg (m := m) (α := α)
+              (s := [hiddenWidth]) z_pre
+            let oneMinusZ ← Runtime.Autograd.Model.sigmoid (m := m) (α := α)
+              (s := [hiddenWidth]) complementPre
             let newContrib ← Runtime.Autograd.Model.mul (m := m) (α := α) (s := [hiddenWidth])
               oneMinusZ n
             let hiddenContrib ← Runtime.Autograd.Model.mul (m := m) (α := α) (s := [hiddenWidth])
@@ -348,8 +348,10 @@ def gruResetAfterCell {α : Type} [TorchLean.Storage α] [Context α]
   let resetCandidate ← mul (m := m) (α := α) (s := [hiddenWidth]) reset hiddenCandidate
   let candidatePre ← add (m := m) (α := α) (s := [hiddenWidth]) inputCandidate resetCandidate
   let candidate ← tanh (m := m) (α := α) (s := [hiddenWidth]) candidatePre
-  let ones ← const (m := m) (α := α) (Tensor.full [hiddenWidth] (1 : α))
-  let oneMinusUpdate ← sub (m := m) (α := α) (s := [hiddenWidth]) ones update
+  -- Use the opposite preactivation rather than subtracting a rounded update gate from one.
+  let complementPre ← Runtime.Autograd.Torch.neg (m := m) (α := α)
+    (s := [hiddenWidth]) updatePre
+  let oneMinusUpdate ← sigmoid (m := m) (α := α) (s := [hiddenWidth]) complementPre
   let candidateContribution ← mul (m := m) (α := α) (s := [hiddenWidth]) oneMinusUpdate candidate
   let previousContribution ← mul (m := m) (α := α) (s := [hiddenWidth]) update previous
   add (m := m) (α := α) (s := [hiddenWidth]) candidateContribution previousContribution

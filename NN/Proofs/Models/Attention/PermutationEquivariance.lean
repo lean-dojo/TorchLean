@@ -449,6 +449,13 @@ theorem selfAttention_reindexOuter
 
         -- We avoid simp-loops by rewriting the intermediates explicitly.
         simp only [Spec.scaledDotProductAttention, ctxσ, ctx]
+        have hreference (a : Tensor ℝ [Nat.succ n', projDim])
+            (b : Tensor ℝ [projDim, Nat.succ n']) (c : ℝ) :
+            Spec.Internal.scaledProducts (fun _ : Fin 1 => a) (fun _ => b) c =
+              scaleSpec (matMulSpec a b) c := by
+          have unsupported : Numeric.QuotientArithmetic.supported (α := ℝ) = false := rfl
+          simp [Spec.Internal.scaledProducts, unsupported]
+        simp only [hreference]
         simp only [one_div]
         rw [hScores]
         rw [hScaledScores]

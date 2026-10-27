@@ -68,31 +68,49 @@ def Scheme.validate : Scheme → Except String Unit
       unless 0.0 ≤ std do
         throw "initialization: normal standard deviation must be nonnegative"
 
+namespace Internal
+
+/-- Preserve the ordinary bound unless converting the fan count erased a nonzero root.
+
+The denominator retains each scheme's original casting and addition order. On range loss,
+FloatLib rounds the square root of the exact rational ratio without casting the count first. -/
+def uniformLimit (fan : Nat) (denominator : Float) : Float :=
+  if fan = 0 then 0
+  else
+    let ordinary := Float.sqrt (6.0 / denominator)
+    if ordinary == 0 then
+      FloatLib.Floats.ExecFloat.Binary.toFloat <|
+        (FloatLib.Floats.ExecFloat.Binary.ofModel
+          (FloatLib.Floats.Formats.BinaryInterchange.Model.AlgebraicRounding.sqrtRat
+            FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary64 false
+            (6 / (fan : Rat))) : FloatLib.Floats.Binary64)
+    else ordinary
+
+end Internal
+
 /--
 Xavier/Glorot uniform bound.
 
 The zero-fan case has no meaningful random interval. Returning zero keeps direct scheme use finite
-and agrees with the empty-tensor behavior expected when a weight has no elements.
+and agrees with the empty-tensor behavior expected when a weight has no elements. A count that
+overflows binary64 is handled before rounding the root, which may still be representable.
 -/
 def xavierUniformLimit (fanIn fanOut : Nat) : Float :=
-  if fanIn + fanOut = 0 then
-    0.0
-  else
-    Float.sqrt (6.0 / (Float.ofNat fanIn + Float.ofNat fanOut))
+  Internal.uniformLimit (fanIn + fanOut) (Float.ofNat fanIn + Float.ofNat fanOut)
 
 /--
 Kaiming/He uniform bound.
 
 A zero fan-in uses the degenerate interval `[0, 0]`, avoiding infinities and `NaN` in host and
-runtime initialization paths.
+runtime initialization paths. Overflowing counts use the same exact-root recovery as Xavier.
 -/
 def kaimingUniformLimit (fanIn : Nat) : Float :=
-  if fanIn = 0 then
-    0.0
-  else
-    Float.sqrt (6.0 / Float.ofNat fanIn)
+  Internal.uniformLimit fanIn (Float.ofNat fanIn)
 
-/-- Return sample `idx` from `sch`, using the counter-based stream determined by `seed`. -/
+/-- Return sample `idx` from `sch`, using the counter-based stream determined by `seed`.
+
+Uniform sampling keeps the ordinary affine formula unless the span of two finite bounds
+overflows. Interpolating the endpoints separately then avoids materializing that span. -/
 def sampleAt (sch : Scheme) (seed idx : Nat) : Float :=
   let key := Spec.Random.keyOf seed 0
   let denominator : Nat := (2 : Nat) ^ 32
@@ -102,7 +120,9 @@ def sampleAt (sch : Scheme) (seed idx : Nat) : Float :=
   | .zeros => 0.0
   | .ones => 1.0
   | .uniform lo hi =>
-      lo + unit * (hi - lo)
+      let width := hi - lo
+      if width.isFinite || !(lo.isFinite && hi.isFinite) then lo + unit * width
+      else (1.0 - unit) * lo + unit * hi
   | .normal mean std =>
       mean + std * Spec.Random.normalScalar key idx
   | .xavierUniform fanIn fanOut =>

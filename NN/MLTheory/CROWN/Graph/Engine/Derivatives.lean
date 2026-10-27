@@ -81,6 +81,17 @@ private def sigmoidSecondDerivBox (dim : Nat) : FlatBox α :=
     lo := Tensor.full (α := α) (.dim dim .scalar) (-1)
     hi := Tensor.full (α := α) (.dim dim .scalar) 1 }
 
+/-- The product rule gives `σ(x) + x σ'(x)`, without assuming SiLU is monotone. -/
+private def siluSlope? (input : FlatBox α) : Option (FlatBox α) := do
+  let gate ← boxUnaryEnclosure? NonlinearBoundOps.sigmoidBounds input
+  return boxAdd gate (← boxMulElem input (sigmoidDerivBox (α := α) input.dim))
+
+/-- Differentiating the product rule once more gives `2 σ'(x) + x σ''(x)`. -/
+private def siluCurvature? (input : FlatBox α) : Option (FlatBox α) := do
+  let first := sigmoidDerivBox (α := α) input.dim
+  let second := sigmoidSecondDerivBox (α := α) input.dim
+  return boxAdd (boxAdd first first) (← boxMulElem input second)
+
 /-- Bounds for `δᵢⱼ - yⱼ` within one softmax normalization row. -/
 private def softmaxRowDeltaMinus {n : Nat} (y : Fin n → α × α)
     (i j : Fin n) : α × α :=
@@ -224,8 +235,8 @@ private def runFirstDerivativeWithSeed
       let d := node.outShape.size
       let z := Tensor.full (α:=α) (.dim d .scalar) 0
       drs.set! id (some { dim := d, lo := z, hi := z })
-    | .custom .. | .maxPool .. | .avgPool .. | .softplus | .safeLog | .topKMask _ | .slice ..
-      | .pointwise _ =>
+    | .custom .. | .scaledMatmul | .maxPool .. | .avgPool .. | .softplus | .safeLog
+      | .topKMask _ | .slice .. | .pointwise _ =>
       -- Not supported by the derivative-bound passes (used by PINN tooling).
       drs
     | .hardMaskedSoftmax _ =>
@@ -302,6 +313,14 @@ private def runFirstDerivativeWithSeed
           | none => drs
         | none => drs
       | _ => drs
+    | .silu =>
+      let result := do
+        let parent ← unaryParent? node.parents
+        let input ← (ibp[parent]?).join
+        let direction ← (drs[parent]?).join
+        let slope ← siluSlope? input
+        boxMulElem slope direction
+      drs.set! id result
     | .softmax axis =>
       if !NonlinearBoundOps.supportsIdealCoupledDerivatives (α := α) then drs else
       let result := do
@@ -482,8 +501,8 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
       let d := node.outShape.size
       let z := Tensor.full (α:=α) (.dim d .scalar) 0
       d2s.set! id (some { dim := d, lo := z, hi := z })
-    | .custom .. | .maxPool .. | .avgPool .. | .softplus | .safeLog | .topKMask _ | .slice ..
-      | .pointwise _ =>
+    | .custom .. | .scaledMatmul | .maxPool .. | .avgPool .. | .softplus | .safeLog
+      | .topKMask _ | .slice .. | .pointwise _ =>
       -- Not supported by the second-derivative bound pass.
       d2s
     | .hardMaskedSoftmax _ =>
@@ -634,6 +653,20 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
             | _, _ => d2s
         | _, _, _ => d2s
       | _ => d2s
+    | .silu =>
+      let result := do
+        let parent ← unaryParent? node.parents
+        let input ← (ibp[parent]?).join
+        let left ← (dLeft[parent]?).join
+        let right ← (dRight[parent]?).join
+        let second ← (d2s[parent]?).join
+        let slope ← siluSlope? input
+        let curvature ← siluCurvature? input
+        let product ← boxMulElem left right
+        let firstTerm ← boxMulElem curvature product
+        let secondTerm ← boxMulElem slope second
+        return boxAdd firstTerm secondTerm
+      d2s.set! id result
     | .exp =>
       match node.parents with
       | #[p1] =>

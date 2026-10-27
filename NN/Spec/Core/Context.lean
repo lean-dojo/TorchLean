@@ -9,6 +9,7 @@ module
 public import NN.Core.Numeric
 public import NN.Core.Numeric.Quotient
 public import NN.Spec.Core.Pointwise
+public import FloatLib.Floats.Formats.BinaryInterchange.Algebraic.Rounding.SqrtRuntime
 
 /-!
 # `Context α`: scalar interface for models + proofs
@@ -69,6 +70,8 @@ transcendental functions (exp/tanh/log/sqrt) used by activations and losses.
   `NN.Spec.Core.Context.Rational`. FloatLib's shared elementary-function class already imports real
   analysis; selecting a context does not add an accuracy theorem for finite-precision arithmetic.
 - For executable examples, `Context.gtBool` converts `x > y` into a printable `Bool`.
+- `Context.isZero` includes differentiation metadata, unlike the primal-only comparisons of dual
+  numbers. Composite carriers lift this test through every component.
 - `Context.pointwise` lists the pointwise operators of `Spec.PointwiseOp` whose meaning depends on
   the scalar type, such as `torch.div` and `torch.erf`. The default lists none, so a graph
   evaluator reports them as unsupported for that type.
@@ -97,10 +100,31 @@ class Context (α : Type) extends
       | .ofNat n => (n : α)
       | .negSucc n => -((n + 1 : Nat) : α)
     numerator / (value.den : α)
+  /-- Construct a square-root constant from a natural count.
+
+  The default takes the square root after casting. Binary backends retain that path when the cast
+  does not overflow, but use FloatLib's exact rational-root algorithm otherwise. A dimension can
+  exceed the scalar range even when its square root is representable. -/
+  sqrtNat (value : Nat) : α := MathFunctions.sqrt (value : α)
+  /-- Test for zero including differentiation metadata.
+
+  Ordinary scalars use Boolean equality. Dual and compound scalars must inspect every component:
+  a zero primal with a nonzero tangent is not a constant zero in a differentiated expression. -/
+  isZero (value : α) : Bool := value == 0
   /-- Backend-selected safeguard used by default in guarded formulas; not machine epsilon. -/
   defaultEpsilon : α
   /-- Decision procedure for the scalar type's strict order. -/
   decidableGT : DecidableRel (· > · : α → α → Prop)
+  /-- Branch-stable sigmoid. Differentiation carriers apply its complete weighted chain rule. -/
+  sigmoid : α → α :=
+    letI : DecidableRel ((· > ·) : α → α → Prop) := decidableGT
+    TorchLean.Numeric.sigmoid
+  /-- Compensated `log(1 + x)`. Differentiation carriers supply its analytic chain rule. -/
+  log1p : α → α := TorchLean.Numeric.log1p
+  /-- Compensated `exp x - 1`. Differentiation carriers supply its analytic chain rule. -/
+  expm1 : α → α :=
+    letI : DecidableRel ((· > ·) : α → α → Prop) := decidableGT
+    TorchLean.Numeric.expm1
   /--
   Remove differentiation metadata from a scalar at a `detach` boundary.
 
@@ -246,14 +270,29 @@ end Context
 
 /-- Full `Context` instance for `Float` (runtime backend). -/
 @[inline] instance : Context Float where
+  toRatCast := inferInstance
+  sqrtNat n :=
+    let input : Float := n
+    if input.isFinite then MathFunctions.sqrt input else
+      FloatLib.Floats.ExecFloat.Binary.toFloat <|
+        (FloatLib.Floats.ExecFloat.Binary.ofModel
+          (FloatLib.Floats.Formats.BinaryInterchange.Model.AlgebraicRounding.sqrtRat
+            FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary64 false (n : Rat)) :
+          FloatLib.Floats.Binary64)
   defaultEpsilon := 1e-6
   decidableGT := inferInstance
-  ratCast value := TorchLean.Numeric.QuotientArithmetic.round value
   pointwise := Context.floatPointwise
 /-- Full `Context` instance for native binary32 execution. -/
 @[inline] instance : Context Float32 where
+  toRatCast := inferInstance
+  sqrtNat n :=
+    let input : Float32 := n
+    if input.isFinite then MathFunctions.sqrt input else
+      FloatLib.Floats.ExecFloat.Binary.toFloat32 <|
+        (FloatLib.Floats.ExecFloat.Binary.ofModel
+          (FloatLib.Floats.Formats.BinaryInterchange.Model.AlgebraicRounding.sqrtRat
+            FloatLib.Floats.Formats.BinaryInterchange.FloatFormat.binary32 false (n : Rat)) :
+          FloatLib.Floats.Binary32)
   defaultEpsilon := (1e-6 : Float).toFloat32
   decidableGT := inferInstance
-  ratCast value :=
-    TorchLean.Numeric.QuotientArithmetic.round value
   pointwise := Context.float32Pointwise

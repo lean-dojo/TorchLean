@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.IR.HardMask
+public import NN.IR.Infer
 public import NN.IR.Payload
 public import NN.Kernel.Tensor
 public import NN.Tensor.ShapeErasure
@@ -260,6 +261,27 @@ private theorem foldl_range_eq_fold {β : Type} (f : β → Nat → β) (init : 
   else
     Tensor.unflattenSpec dims.outShape
       (matmulFlat dims (Tensor.flattenSpec left) (Tensor.flattenSpec right))
+
+/-- Evaluate a scaled contraction while retaining the original operands for coefficient replay. -/
+def scaledMatmulWithDims {α : Type} [Storage α] [Context α]
+    (dims : OpContracts.MatmulDims) (left : Tensor α dims.leftShape)
+    (right : Tensor α dims.rightShape) (scale : α) : Tensor α dims.outShape :=
+  if h : dims.leftShape = dims.leading.concat [dims.rows, dims.inner] ∧
+      dims.rightShape = dims.leading.concat [dims.inner, dims.cols] ∧
+      dims.outShape = dims.leading.concat [dims.rows, dims.cols] then
+    Tensor.castShape
+      (Spec.Internal.scaledBatchProducts (fun _ : Fin 1 => Tensor.castShape left h.1)
+        (fun _ => Tensor.castShape right h.2.1) scale) h.2.2.symm
+  else
+    let a := Tensor.flattenSpec left
+    let b := Tensor.flattenSpec right
+    Tensor.unflattenSpec dims.outShape <| Tensor.ofFn fun output =>
+      let row : Tensor α [1, dims.inner] := Tensor.dim fun _ => Tensor.dim fun index =>
+        Tensor.scalar (getAtOrZero a [dims.leftIndex output.val index.val])
+      let column : Tensor α [dims.inner, 1] := Tensor.dim fun index => Tensor.dim fun _ =>
+        Tensor.scalar (getAtOrZero b [dims.rightIndex output.val index.val])
+      Tensor.get2 (Spec.Internal.scaledProducts (fun _ : Fin 1 => row)
+        (fun _ => column) scale) 0 0
 
 /--
 Evaluate a `const` node from the external payload.
@@ -851,6 +873,18 @@ selected branch exactly as before the split.
             let bT ← expectShape (α := α) (expected := dims.rightShape) bV
             let y : Tensor α dims.outShape := matmulWithDims dims aT bT
             pure (Spec.SomeTensor.ofTensor y : Spec.SomeTensor α)
+    | .scaledMatmul => do
+        let (aId, bId, scaleId) ← Infer.expectTernaryParents "scaled_matmul" n.parents
+        let aV ← getParent aId
+        let bV ← getParent bId
+        let scaleV ← getParent scaleId
+        let scale ← expectShape (α := α) (expected := []) scaleV
+        match OpContracts.matmulDims aV.shape bV.shape with
+        | .error msg => throw s!"IR eval: node {i}: {msg}"
+        | .ok dims =>
+            let aT ← expectShape (α := α) (expected := dims.leftShape) aV
+            let bT ← expectShape (α := α) (expected := dims.rightShape) bV
+            pure (Spec.SomeTensor.ofTensor (scaledMatmulWithDims dims aT bT scale.item))
     | .linear => do
         let pId ← unaryParentId i n
         evalLinear (α := α) (payload := payload) (id := n.id) (x := ← getParent pId) (outShape :=
@@ -893,6 +927,10 @@ selected branch exactly as before the split.
         let pId ← unaryParentId i n
         let p ← expectShape (α := α) (expected := n.outShape) (← getParent pId)
         pure (Spec.SomeTensor.mk (α := α) n.outShape (Activation.sigmoidSpec (α := α) p))
+    | .silu => do
+        let pId ← unaryParentId i n
+        let p ← expectShape (α := α) (expected := n.outShape) (← getParent pId)
+        pure (Spec.SomeTensor.mk (α := α) n.outShape (Activation.swishSpec p))
     | .softplus => do
         let pId ← unaryParentId i n
         let p ← expectShape (α := α) (expected := n.outShape) (← getParent pId)

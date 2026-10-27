@@ -9,6 +9,7 @@ module
 public import NN.Runtime.Autograd.TypedGraph.GraphM.Core
 public import NN.Spec.Autograd.Ops
 public import NN.Spec.Core.TensorReductionShape.ConcatSlice
+public import NN.Spec.Layers.Attention
 
 /-!
 # GraphM Elementwise And Scalar Ops
@@ -50,7 +51,7 @@ used for operations whose two derivative programs already agree. -/
 def Internal.unary {α Δ : Type} [TorchLean.Storage α] [Zero α]
     {Γ : List Shape} {s : Shape} (x : Var s) (op : Spec.OpSpec α s s) :
     MWith α Δ Γ (Var s) := do
-  let ⟨ss, graph, _⟩ ← get
+  let ⟨ss, graph, _, _⟩ ← get
   let ix ← liftM (mkIdx (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     NodeData.ofLocalCompact (fun lookup => lookup.read ix)
@@ -68,7 +69,7 @@ PyTorch comparison: `torch.add(a, b)`.
 def add {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {Γ : List Shape} {s : Shape}
     (a b : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ia ← liftM (mkIdx (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (Γ := Γ) ss b)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -90,7 +91,7 @@ PyTorch comparison: `torch.sub(a, b)`.
 def sub {α : Type} {Δ : Type} [TorchLean.Storage α] [Sub α] [Add α] [Zero α]
     {Γ : List Shape} {s : Shape}
     (a b : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ia ← liftM (mkIdx (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (Γ := Γ) ss b)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -113,7 +114,7 @@ PyTorch comparison: `torch.mul(a, b)`.
 def mul {α : Type} {Δ : Type} [TorchLean.Storage α] [Mul α] [Add α] [Zero α]
     {Γ : List Shape} {s : Shape}
     (a b : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ia ← liftM (mkIdx (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (Γ := Γ) ss b)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -137,7 +138,7 @@ def mul {α : Type} {Δ : Type} [TorchLean.Storage α] [Mul α] [Add α] [Zero �
 The real derivative requires every denominator coordinate to be nonzero. -/
 def div {α Δ : Type} [Storage α] [Div α] [Mul α] [Sub α] [Add α] [Zero α]
     {Γ : List Shape} {s : Shape} (a b : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, graph, _⟩ ← get
+  let ⟨ss, graph, _, _⟩ ← get
   let ia ← liftM (mkIdx (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (Γ := Γ) ss b)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -211,13 +212,14 @@ Elementwise maximum.
 
 At ties we split the gradient equally (`0.5` / `0.5`), matching the tie-handling documented in
 the eager tape (`NN.Runtime.Autograd.Engine.Core`).
+The JVP averages the two supplied tangents together; the VJP rounds each input's half separately.
 
 PyTorch comparison: `torch.maximum(a, b)`.
 -/
 def max {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (a b : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ia ← liftM (mkIdx (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (Γ := Γ) ss b)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -229,7 +231,10 @@ def max {α : Type} [TorchLean.Storage α] [Context α]
         let bv := ctx.2
         let da := dctx.1
         let db := dctx.2
-        addSpec ((Spec.maxOp bv).backward av da) ((Spec.maxOp av).backward bv db))
+        let ordinary := addSpec ((Spec.maxOp bv).backward av da) ((Spec.maxOp av).backward bv db)
+        Tensor.Internal.Rep.ofFn fun coordinate =>
+          if av coordinate > bv coordinate ∨ bv coordinate > av coordinate then ordinary coordinate
+          else Numeric.Internal.average (da coordinate) (db coordinate))
       (vjp := fun ctx _d δ =>
         let av := ctx.1
         let bv := ctx.2
@@ -244,13 +249,14 @@ def max {α : Type} [TorchLean.Storage α] [Context α]
 Elementwise minimum.
 
 At ties we split the gradient equally (`0.5` / `0.5`).
+The JVP uses the same checked tangent average as dual-number minimum.
 
 PyTorch comparison: `torch.minimum(a, b)`.
 -/
 def min {α : Type} [TorchLean.Storage α] [Context α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {Δ : Type} {Γ : List Shape} {s : Shape} (a b : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ia ← liftM (mkIdx (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (Γ := Γ) ss b)
   let node : NodeData α Δ (Γ ++ ss) s :=
@@ -262,7 +268,10 @@ def min {α : Type} [TorchLean.Storage α] [Context α]
         let bv := ctx.2
         let da := dctx.1
         let db := dctx.2
-        addSpec ((Spec.minOp bv).backward av da) ((Spec.minOp av).backward bv db))
+        let ordinary := addSpec ((Spec.minOp bv).backward av da) ((Spec.minOp av).backward bv db)
+        Tensor.Internal.Rep.ofFn fun coordinate =>
+          if av coordinate > bv coordinate ∨ bv coordinate > av coordinate then ordinary coordinate
+          else Numeric.Internal.average (da coordinate) (db coordinate))
       (vjp := fun ctx _d δ =>
         let av := ctx.1
         let bv := ctx.2
@@ -288,6 +297,11 @@ def relu {α : Type} [TorchLean.Storage α]
 def sigmoid {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
   Internal.unary x Spec.sigmoidOp
+
+/-- SiLU as one node, retaining its input for the split-exponential JVP and VJP. -/
+def silu {α : Type} [TorchLean.Storage α] [Context α]
+    {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) :=
+  Internal.unary x Spec.siluOp
 
 /-- Elementwise tanh. PyTorch comparison: `torch.tanh(x)`. -/
 def tanh {α : Type} [TorchLean.Storage α] [Context α]
@@ -332,7 +346,7 @@ execution and eager CUDA share the same PyTorch-style numerical contract.
 -/
 def logSoftmaxLast {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ix ← liftM (mkIdx (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     NodeData.ofLocalCompact (fun lookup => lookup.read ix)
@@ -356,7 +370,7 @@ def logSoftmaxLast {α : Type} [TorchLean.Storage α] [Context α]
 def logSoftmax {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
     (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ix ← liftM (mkIdx (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     NodeData.ofLocalCompact (fun lookup => lookup.read ix)
@@ -404,7 +418,7 @@ def cos {α : Type} [TorchLean.Storage α] [Context α]
 /-- Elementwise natural logarithm. PyTorch comparison: `torch.log(x)`. -/
 def log {α : Type} [TorchLean.Storage α] [Context α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ix ← liftM (mkIdx (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     NodeData.ofLocalCompact (fun lookup => lookup.read ix)
@@ -463,7 +477,7 @@ PyTorch comparison: `torch.sum(x)`.
 -/
 def sum {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (x : Var s) : MWith α Δ Γ (Var Shape.scalar) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ix ← liftM (mkIdx (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) Shape.scalar :=
     NodeData.ofLocalCompact (fun lookup => lookup.read ix)
@@ -484,7 +498,7 @@ def mseLoss {α : Type} [TorchLean.Storage α]
   [Add α] [Sub α] [Mul α] [Div α] [Zero α] [One α] [NatCast α]
   {Δ : Type} {Γ : List Shape} {s : Shape} (yhat target : Var s) : MWith α Δ Γ (Var Shape.scalar) :=
     do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let iyhat ← liftM (mkIdx (Γ := Γ) ss yhat)
   let itarget ← liftM (mkIdx (Γ := Γ) ss target)
   let node : NodeData α Δ (Γ ++ ss) Shape.scalar :=
@@ -523,6 +537,43 @@ def mseLoss {α : Type} [TorchLean.Storage α]
           (Contributions.single (α := α) (Γ := Γ ++ ss) (s := s) itarget dTarget))
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := Shape.scalar) g node
 
+/-- Record weighted logits cross-entropy, including derivatives of the target weights. -/
+def crossEntropy {α Δ : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape}
+    {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s] (logits target : Var s)
+    (mean : Bool := true) :
+    MWith α Δ Γ (Var Shape.scalar) := do
+  let ⟨ss, graph, _, _⟩ ← get
+  let input ← liftM (mkIdx (Γ := Γ) ss logits)
+  let weights ← liftM (mkIdx (Γ := Γ) ss target)
+  let node : NodeData α Δ (Γ ++ ss) Shape.scalar :=
+    NodeData.ofLocalCompact (fun lookup => (lookup.read input, lookup.read weights))
+      (forward := fun ctx _ => Tensor.scalar (Spec.crossEntropyLogitsSpec axis ctx.1 ctx.2 mean))
+      (jvp := fun ctx tangent _ => Tensor.scalar
+        (dotSpec (Spec.crossEntropyLogitsDerivSpec axis ctx.1 ctx.2 mean) tangent.1 +
+          Spec.crossEntropyLogitsSpec axis ctx.1 tangent.2 mean))
+      (vjp := fun ctx _ seed => Contributions.add
+        (Contributions.single input
+          (scaleSpec (Spec.crossEntropyLogitsDerivSpec axis ctx.1 ctx.2 mean) seed.item))
+        (Contributions.single weights
+          (Spec.CrossEntropy.targetGradient axis ctx.1 seed.item mean)))
+  push graph node
+
+/-- Record fixed-teacher cross-entropy with the shared student gradient in both modes. -/
+def distill {α Δ : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape}
+    {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s] (student teacher : Var s) :
+    MWith α Δ Γ (Var Shape.scalar) := do
+  let ⟨ss, graph, _, _⟩ ← get
+  let input ← liftM (mkIdx (Γ := Γ) ss student)
+  let target ← liftM (mkIdx (Γ := Γ) ss teacher)
+  let node : NodeData α Δ (Γ ++ ss) Shape.scalar :=
+    NodeData.ofLocalCompact (fun lookup => (lookup.read input, lookup.read target))
+      (forward := fun ctx _ => Tensor.scalar (Spec.distillSpec axis ctx.1 ctx.2))
+      (jvp := fun ctx tangent _ =>
+        Tensor.scalar (dotSpec (Spec.distillDerivSpec axis ctx.1 ctx.2) tangent.1))
+      (vjp := fun ctx _ seed => Contributions.single input
+        (scaleSpec (Spec.distillDerivSpec axis ctx.1 ctx.2) seed.item))
+  push graph node
+
 /--
 Affine layer `y = W x + b` in the typed graph.
 
@@ -536,7 +587,7 @@ def linear {α : Type} {Δ : Type} [TorchLean.Storage α]
     (w : Var (.dim outDim (.dim inDim .scalar)))
     (b : Var (.dim outDim .scalar))
     (x : Var (.dim inDim .scalar)) : MWith α Δ Γ (Var (.dim outDim .scalar)) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let iW ← liftM (mkIdx (Γ := Γ) ss w)
   let ib ← liftM (mkIdx (Γ := Γ) ss b)
   let ix ← liftM (mkIdx (Γ := Γ) ss x)
@@ -587,7 +638,7 @@ def matmul {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zer
     [broadcastB : Shape.BroadcastTo batchB batch]
     (a : Var (batchA.concat [m, n])) (b : Var (batchB.concat [n, p])) :
     MWith α Δ Γ (Var (batch.concat [m, p])) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ia ← liftM (mkIdx (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (Γ := Γ) ss b)
   let aShape := batchA.concat [m, n]
@@ -617,6 +668,32 @@ def matmul {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zer
           (Contributions.single (α := α) (Γ := Γ ++ ss) (s := bShape) ib dB))
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := outShape) g node
 
+/-- Record a fixed scaled product without an unscaled intermediate tensor.
+Forward and both cotangents use the reference finite-coefficient contraction. -/
+def scaledMatmul {α Δ : Type} [Storage α] [Context α]
+    {Γ : List Shape} {batchA batchB batch : Shape} {m n p : Nat}
+    [broadcastA : Shape.BroadcastTo batchA batch]
+    [broadcastB : Shape.BroadcastTo batchB batch]
+    (a : Var (batchA.concat [m, n])) (b : Var (batchB.concat [n, p])) (scale : α) :
+    MWith α Δ Γ (Var (batch.concat [m, p])) := do
+  let ⟨ss, g, _, _⟩ ← get
+  let ia ← liftM (mkIdx (Γ := Γ) ss a)
+  let ib ← liftM (mkIdx (Γ := Γ) ss b)
+  let node : NodeData α Δ (Γ ++ ss) (batch.concat [m, p]) :=
+    NodeData.ofLocalCompact (fun lookup => (lookup.read ia, lookup.read ib))
+      (forward := fun ctx _ =>
+        Spec.Internal.scaledMatmul broadcastA.proof broadcastB.proof ctx.1 ctx.2 scale)
+      (jvp := fun ctx direction _ =>
+        Spec.Internal.scaledMatmulJvp broadcastA.proof broadcastB.proof
+          ctx.1 direction.1 ctx.2 direction.2 scale)
+      (vjp := fun ctx _ gradient =>
+        let (da, db) := Spec.Internal.scaledMatmulBackward
+          broadcastA.proof broadcastB.proof ctx.1 ctx.2 gradient scale
+        Contributions.add (α := α) (shapes := Γ ++ ss)
+          (Contributions.single (α := α) (Γ := Γ ++ ss) (s := batchA.concat [m, n]) ia da)
+          (Contributions.single (α := α) (Γ := Γ ++ ss) (s := batchB.concat [n, p]) ib db))
+  push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := batch.concat [m, p]) g node
+
 /--
 Concatenate along the leading dimension (`dim=0`) for tensors of shape `.dim n s`.
 
@@ -626,7 +703,7 @@ def concat {α : Type} {Δ : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {Γ : List Shape} {n m : Nat} {s : Shape}
     (a : Var (.dim n s)) (b : Var (.dim m s)) :
     MWith α Δ Γ (Var (.dim (n + m) s)) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ia ← liftM (mkIdx (Γ := Γ) ss a)
   let ib ← liftM (mkIdx (Γ := Γ) ss b)
   let outS : Shape := .dim (n + m) s
@@ -661,7 +738,7 @@ def slice {α : Type} {Δ : Type} [TorchLean.Storage α] [Zero α]
     {Γ : List Shape} {n : Nat} {s : Shape}
     (x : Var (.dim n s)) (start len : Nat) (h : start + len ≤ n) :
     MWith α Δ Γ (Var (.dim len s)) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ix ← liftM (mkIdx (Γ := Γ) ss x)
   let outS : Shape := .dim len s
   let inS : Shape := .dim n s

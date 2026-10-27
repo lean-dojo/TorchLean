@@ -92,11 +92,16 @@ instance {α Δ : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape} :
     Runtime.Autograd.TypedGraph.GraphM.scatterAdd
       (α := α) (Γ := Γ) (s := s) axis count base source indices
   matmul := fun {batchA batchB batch : Shape} {mDim nDim pDim : Nat}
-      {broadcastA} {broadcastB} a b =>
-    Runtime.Autograd.TypedGraph.GraphM.matmul (α := α) (Γ := Γ)
-      (batchA := batchA) (batchB := batchB) (batch := batch)
-      (m := mDim) (n := nDim) (p := pDim)
-      (broadcastA := broadcastA) (broadcastB := broadcastB) a b
+      {broadcastA} {broadcastB} a b scale =>
+    match scale with
+    | none => Runtime.Autograd.TypedGraph.GraphM.matmul (α := α) (Γ := Γ)
+        (batchA := batchA) (batchB := batchB) (batch := batch)
+        (m := mDim) (n := nDim) (p := pDim)
+        (broadcastA := broadcastA) (broadcastB := broadcastB) a b
+    | some scale => Runtime.Autograd.TypedGraph.GraphM.scaledMatmul (α := α) (Γ := Γ)
+        (batchA := batchA) (batchB := batchB) (batch := batch)
+        (m := mDim) (n := nDim) (p := pDim)
+        (broadcastA := broadcastA) (broadcastB := broadcastB) a b scale
   concat := fun {nDim mDim} {s} a b =>
     Runtime.Autograd.TypedGraph.GraphM.concat (α := α) (Γ := Γ) (n := nDim) (m := mDim)
       (s := s) a b
@@ -121,8 +126,13 @@ instance {α Δ : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape} :
       x beta
   relu := fun {s} x => Runtime.Autograd.TypedGraph.GraphM.relu (α := α) (Γ := Γ) (s := s) x
   sigmoid := fun {s} x => Runtime.Autograd.TypedGraph.GraphM.sigmoid (α := α) (Γ := Γ) (s := s) x
+  silu := fun {s} x => Runtime.Autograd.TypedGraph.GraphM.silu (α := α) (Γ := Γ) (s := s) x
   tanh := fun {s} x => Runtime.Autograd.TypedGraph.GraphM.tanh (α := α) (Γ := Γ) (s := s) x
   gelu := fun {s} x => Runtime.Autograd.TypedGraph.GraphM.gelu (α := α) (Γ := Γ) (s := s) x
+  softmaxMatmul := fun {batch rows keys width} scores value multiplier mask =>
+    Runtime.Autograd.TypedGraph.GraphM.softmaxMatmul (α := α) (Γ := Γ)
+      (batch := batch) (rows := rows) (keys := keys) (width := width)
+      scores value multiplier mask
   softmaxLast := fun {s} x =>
     Runtime.Autograd.TypedGraph.GraphM.softmaxLast (α := α) (Γ := Γ) (s := s) x
   logSoftmaxLast := fun {s} x =>
@@ -145,6 +155,11 @@ instance {α Δ : Type} [TorchLean.Storage α] [Context α] {Γ : List Shape} :
       w b x
   mseLoss := fun {s} yhat target =>
     Runtime.Autograd.TypedGraph.GraphM.mseLoss (α := α) (Γ := Γ) (s := s) yhat target
+  crossEntropy := fun {s} axis _ logits target mean =>
+    Runtime.Autograd.TypedGraph.GraphM.crossEntropy
+      (α := α) (Γ := Γ) (s := s) axis logits target mean
+  distill := fun {s} axis _ student teacher =>
+    Runtime.Autograd.TypedGraph.GraphM.distill (α := α) (Γ := Γ) (s := s) axis student teacher
   layerNorm := fun {seqLen embedDim} hSeq hEmb x gamma beta epsilon =>
     Runtime.Autograd.TypedGraph.GraphM.layerNorm (α := α) (Γ := Γ) (seqLen := seqLen) (embedDim :=
       embedDim)

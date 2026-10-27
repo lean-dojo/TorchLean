@@ -306,6 +306,8 @@ private def forward (g : NN.IR.Graph) (ps : ParamStore Float) (bindings : Bindin
         lines := lines ++ #[indent 4 s!"v{id} = x"]
     | .custom name .. =>
         throw s!"PyTorch export: custom {name} at node {id} has no Python body translation"
+    | .scaledMatmul =>
+        throw s!"PyTorch export: scaled contraction at node {id} needs a matching replay rule"
     | .const _ =>
         let e ← constant bindings id
         lines := lines ++ #[indent 4 s!"v{id} = {e}"]
@@ -501,7 +503,23 @@ private def forward (g : NN.IR.Graph) (ps : ParamStore Float) (bindings : Bindin
         lines := lines ++ #[indent 4 s!"v{id} = torch.cos(v{p})"]
     | .sigmoid =>
         let p ← expectUnary id n.parents
-        lines := lines ++ #[indent 4 s!"v{id} = torch.sigmoid(v{p})"]
+        -- Select the exponent before exp: abs would give the emitted autograd program
+        -- a zero slope at the origin.
+        lines := lines ++ #[
+          indent 4 s!"_x = v{p}",
+          indent 4 "_z = torch.exp(torch.where(_x > 0, -_x, _x))",
+          indent 4 s!"v{id} = torch.where(_x > 0, 1 / (1 + _z), _z / (1 + _z))"
+        ]
+    | .silu =>
+        let p ← expectUnary id n.parents
+        -- A minimum with zero would split the gradient at a tie and change higher derivatives.
+        lines := lines ++ #[
+          indent 4 s!"_x = v{p}",
+          indent 4 "_r = torch.exp(torch.where(_x > 0, torch.zeros_like(_x), _x) * 0.5)",
+          indent 4 "_d = 1 + _r * _r",
+          indent 4 "_z = torch.exp(torch.where(_x > 0, -_x, _x))",
+          indent 4 s!"v{id} = torch.where(_x > 0, _x * (1 / (1 + _z)), ((_x * _r) * _r) / _d)"
+        ]
     | .softplus =>
         let p ← expectUnary id n.parents
         -- Select the exponent's argument before calling exp. Both tensor branches may be

@@ -90,7 +90,7 @@ theorem alphaCrown_transfer_sound
       lt_of_lt_of_eq (lt_trans (htopo id hid p hp) hid) hsem.1.symm
     -- Split by node kind, mirroring `alphaCrownStepNode?`.
     match hk : (g.nodes[id]!).kind with
-    | .custom .. => simp [stepAlpha, alphaCrownStepNode?, hk] at hs
+    | .custom .. | .scaledMatmul => simp [stepAlpha, alphaCrownStepNode?, hk] at hs
     | .input => exact Alpha.input_sound hk hs hEvalSome hinputs
     | .const _ => exact Alpha.const_sound hk hs hEvalSome
     | .detach => exact Alpha.detach_sound hk hs hEvalSome hpar
@@ -110,7 +110,7 @@ theorem alphaCrown_transfer_sound
       · cases hs
     | .permute _ | .randUniform _ | .bernoulliMask _ | .add | .sub | .mulElem | .abs | .sqrt
     | .inv | .maxElem | .minElem | .maxPool _ | .avgPool _ | .broadcastTo _ _ | .reduceSum _
-    | .reduceMean _ | .batchNormEval _ _ | .tanh | .sigmoid | .softplus | .safeLog
+    | .reduceMean _ | .batchNormEval _ _ | .tanh | .sigmoid | .silu | .softplus | .safeLog
     | .exp | .log | .sin | .cos
     | .softmax _ | .hardMaskedSoftmax _ | .transpose _ _ | .mseLoss | .topKMask _
     | .slice .. | .pointwise _ =>

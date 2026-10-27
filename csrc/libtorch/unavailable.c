@@ -156,6 +156,17 @@ UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_reduce_sum_by_row,
     b_lean_obj_arg BObj, uint32_t rows, uint32_t cols)
 UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_reduce_max_by_row,
     b_lean_obj_arg BObj, uint32_t rows, uint32_t cols)
+UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_argmax_mask_by_row,
+    b_lean_obj_arg BObj, uint32_t rows, uint32_t cols)
+UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_distill,
+    b_lean_obj_arg student, b_lean_obj_arg teacher, b_lean_obj_arg dimensions,
+    uint32_t axis, uint8_t gradient)
+UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_cross_entropy,
+    b_lean_obj_arg logits, b_lean_obj_arg target, b_lean_obj_arg dimensions,
+    uint32_t axis, uint8_t mean)
+UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_cross_entropy_bwd,
+    b_lean_obj_arg logits, b_lean_obj_arg target, b_lean_obj_arg seed,
+    b_lean_obj_arg dimensions, uint32_t axis, uint8_t mean)
 UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_top_k_mask_by_row,
     b_lean_obj_arg BObj, uint32_t rows, uint32_t cols, uint32_t k)
 UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_hard_masked_softmax_by_row,
@@ -175,6 +186,9 @@ UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_layer_norm_bwd,
 UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_bmm_with_transpose,
     b_lean_obj_arg AObj, b_lean_obj_arg BObj, uint32_t batch, uint32_t m, uint32_t n, uint32_t p,
     uint32_t transposeA, uint32_t transposeB)
+UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_scaled_bmm,
+    b_lean_obj_arg AObj, b_lean_obj_arg BObj, uint32_t batch, uint32_t m, uint32_t n, uint32_t p,
+    uint32_t transposeA, uint32_t transposeB, double scale)
 UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_rfft1d_packed,
     b_lean_obj_arg XObj, uint32_t batch, uint32_t n)
 UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_irfft1d_packed,
@@ -246,7 +260,7 @@ UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_copy_and_release, b_lean_obj_arg
 UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_adam_step,
     b_lean_obj_arg ParametersObj, b_lean_obj_arg GradientObj, b_lean_obj_arg FirstMomentObj,
     b_lean_obj_arg SecondMomentObj, double beta1, double oneMinusBeta1, double beta2,
-    double oneMinusBeta2, double firstMomentCorrection, double secondMomentCorrection,
+    double oneMinusBeta2, double firstMomentDenominator, double secondMomentDenominator,
     double epsilon, double decay, double updateScale)
 // The same list generates the signatures for both backend configurations.
 #define TORCHLEAN_UNARY_EXPORT(NAME, EXPRESSION) \

@@ -31,13 +31,21 @@ variable [NonlinearBoundOps α]
 
 open BoundOps
 
+/-- Enclose real SiLU by multiplying the input box and its sigmoid enclosure.
+
+This is a real-function enclosure, not a bound on the rounding error of a native SiLU kernel.
+-/
+@[expose] def ibpSilu? (input : FlatBox α) : Option (FlatBox α) := do
+  let gate ← boxUnaryEnclosure? NonlinearBoundOps.sigmoidBounds input
+  boxMulElem input gate
+
 /-- Compute one interval transfer. Missing parents and unavailable transfers return `none`. -/
 @[expose] def ibpStepNodeAt? (nodes : Array Node) (ps : ParamStore α)
     (boxes : Array (Option (FlatBox α))) (id : Nat) (node : Node) : Option (FlatBox α) := do
   let get (pid : Nat) := (boxes[pid]?).join
   match node.kind with
   | .input => ps.inputBoxes[id]?
-  | .custom .. | .pointwise _ => none
+  | .custom .. | .pointwise _ | .scaledMatmul => none
   -- No interval transfer yet for top-k routing or slicing.
   | .topKMask _ | .slice .. => none
   | .const _ => do
@@ -150,6 +158,9 @@ open BoundOps
       (OpContracts.inferBatchNormEvalOutShape channelAxis channels parent.outShape).toOption
     if expected != node.outShape || config.c != channels then none else
       ibpBatchNormEval? parent.outShape channelAxis config (← get p)
+  | .silu => do
+    let p ← unaryParent? node.parents
+    ibpSilu? (← get p)
   | .exp => do
     let p ← unaryParent? node.parents
     boxUnaryEnclosure? NonlinearBoundOps.expBounds (← get p)

@@ -24,6 +24,11 @@ In PyTorch you'll often see two layers:
 
 TorchLean's spec layer mirrors that idea: most definitions are written as an elementwise formula
 followed by a global mean over the shape.
+
+The teacher-logit gradient uses logit differences, centering, and a residual correction as in
+Barron, Gnanapragasam and Tschannen, "A Fix for Softmax and Cross-Entropy"
+(https://arxiv.org/abs/2610.31642). Its near-field expression retains small gradients that would
+be lost by subtracting two separately rounded probability vectors.
 -/
 
 @[expose] public section
@@ -36,6 +41,15 @@ open TorchLean TorchLean.Tensor
 open MathFunctions
 
 variable {α : Type} [TorchLean.Storage α] [Context α]
+
+/-- Weight a difference, distributing the multiplication when subtraction overflows.
+Ordinary finite differences keep their evaluation order. For opposite-sign finite operands,
+weighting each operand first can keep the result representable without halving small tangents. -/
+def weightedDifference {α : Type} [Zero α] [Sub α] [Mul α] [BEq α]
+    (weight left right : α) : α :=
+  let difference := left - right
+  if difference - difference == 0 then weight * difference
+  else weight * left - weight * right
 
 /-- Totalized denominator for a mean over slices orthogonal to `axis`.
 
@@ -95,16 +109,26 @@ Then we take a mean over all elements.
 
 This is PyTorch's `HuberLoss` convention. It differs from `SmoothL1Loss` by a factor of `delta`.
 The Huber interpretation requires `delta > 0`.
+
+The quadratic branch halves before squaring. If a finite prediction and target have an
+overflowing difference, the linear branch instead weights both operands before subtraction.
+Nonfinite inputs and genuinely unrepresentable losses or reductions can still overflow.
 -/
 def huberSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) (delta : α := (1 : α)) : α
   :=
-  let diff := subSpec predicted target
-  let abs_diff := absSpec diff
-  let per_elem := Tensor.map (fun x =>
+  let per_elem := map2Spec (fun p t =>
+    let difference := p - t
+    let x := MathFunctions.abs difference
     if x < delta then
-      (x * x) / 2
+      -- Halve before squaring so a representable half-square need not overflow first.
+      (x / 2) * x
     else
-      delta * (x - delta / 2)) abs_diff
+      let direct := delta * (x - delta / 2)
+      if difference - difference == 0 || !(delta > 0) then direct
+      else
+        let weighted := MathFunctions.abs (weightedDifference delta p t)
+        if weighted - weighted == 0 then weighted - (delta / 2) * delta
+        else direct) predicted target
   meanSpec per_elem
 
 /-- Derivative of `huberSpec` w.r.t. `predicted`. -/
@@ -168,8 +192,45 @@ def crossEntropyDerivSpec {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
       0) predicted target
   scaleSpec grad (1 / (axisMeanDenom s axis : α))
 
+namespace CrossEntropy
+
+/-- Weighted log-probabilities for one class vector. Keep the original logits available to
+reconstruct a weighted term when the unweighted log-probability overflows. -/
+def vectorTerms {n : Nat} (logits target : Tensor α [n]) : Tensor α [n] :=
+  match n with
+  | 0 => logits
+  | n + 1 =>
+      let logp := Activation.logSoftmaxVecSpec logits
+      let pivot : Fin (n + 1) :=
+        Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) logits)
+      let largest := logits.getScalar pivot
+      let normalizer := -logp.getScalar pivot
+      Tensor.ofFn fun i =>
+        let weight := target.getScalar i
+        let value := logp.getScalar i
+        if value - value == 0 then weight * value
+        else -(weight * normalizer + weightedDifference weight largest (logits.getScalar i))
+
+/-- Apply the weighted-log-probability calculation independently to each final-axis vector. -/
+def innermostTerms : {s : Shape} → Tensor α s → Tensor α s → Tensor α s
+  | .scalar, _, _ => Tensor.scalar 0
+  | .dim _ .scalar, logits, target => vectorTerms logits target
+  | .dim _ inner, logits, target => Tensor.dim fun i =>
+      innermostTerms (s := inner) (Tensor.unstack logits i) (Tensor.unstack target i)
+
+/-- Weighted log-probabilities along `axis`, restored to the original tensor layout before
+the loss reduction. This preserves the existing accumulation order for non-trailing axes. -/
+def terms {s : Shape} (axis : Nat) (logits target : Tensor α s) : Tensor α s :=
+  let swaps := Shape.moveAxisToInnermostSwaps s.rank axis
+  let values := innermostTerms (Tensor.permuteByAdjacentSwaps logits swaps)
+    (Tensor.permuteByAdjacentSwaps target swaps)
+  let restored := Tensor.permuteByAdjacentSwaps values swaps.reverse
+  Shape.applyAdjacentSwaps_reverse s swaps ▸ restored
+
+end CrossEntropy
+
 /--
-Cross-entropy on logits (stable log-softmax form).
+Cross-entropy on logits, retaining the original logits when a weighted term needs rescaling.
 
 This matches the common PyTorch decomposition:
 
@@ -183,17 +244,20 @@ where the dimension selected by `axis` contains classes and `r` ranges over the 
 dimensions. This is PyTorch's `reduction="mean"` convention for one-hot or soft distribution
 targets.
 
-Unlike `crossEntropySpec`, this takes *logits* and uses `Activation.logSoftmaxSpec` for
-numerical stability.
+Unlike `crossEntropySpec`, this takes *logits* and uses `Activation.logSoftmaxSpec`. Ordinary
+finite log-probabilities are multiplied as usual. When a log-probability is nonfinite, its
+weighted term is reconstructed from the shifted normalizer and a rescaled logit difference.
+Thus zero or small weights need not multiply an overflowing unweighted difference. No target
+mask discards target derivatives. Nonfinite inputs or overflowing reductions can still yield NaN.
 
 Probability targets usually sum to one along `axis`, as in one-hot or label-smoothed targets.
 The same formula also accepts arbitrary target weights. Their sum scales the contribution of
-that slice; the reduction still divides by the number of slices, not by the total target weight. -/
+that slice; the mean still divides by the number of slices, not by the total target weight.
+Set `mean := false` to sum the contributions without averaging. -/
 def crossEntropyLogitsSpec {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
-    (logits : Tensor α s) (target : Tensor α s) : α :=
-  let logp := Activation.logSoftmaxSpec (α := α) (s := s) axis logits
-  let total := sumSpec (mulSpec target logp)
-  meanOverAxisSlices (s := s) axis (-total)
+    (logits : Tensor α s) (target : Tensor α s) (mean : Bool := true) : α :=
+  let total := sumSpec (CrossEntropy.terms axis logits target)
+  if mean then meanOverAxisSlices (s := s) axis (-total) else -total
 
 /-- Derivative of `crossEntropyLogitsSpec` with respect to the logits.
 
@@ -201,17 +265,66 @@ For each class slice, differentiating the log-normalizer contributes
 `softmax(logits) * sum(target)`. The direct logit term contributes `-target`. Keeping that
 slice sum makes the derivative agree with the loss for weighted, unnormalized, and zero targets.
 For a probability target, its sum is one and the familiar `softmax(logits) - target` follows.
+Evaluation uses the shared log-softmax VJP rather than forming this difference directly;
+the pivot's complementary probability is retained when its exponential rounds to one.
 
 The reduction drops the class axis and then restores that exact axis. Ordinary trailing-axis
 broadcasting would mix slices when classes occupy an outer or middle dimension. Empty class
 axes use the same zero-sum convention as the loss. -/
 def crossEntropyLogitsDerivSpec {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
-    (logits : Tensor α s) (target : Tensor α s) :
+    (logits : Tensor α s) (target : Tensor α s) (mean : Bool := true) :
     Tensor α s :=
-  let probs := Activation.softmaxSpec (α := α) (s := s) axis logits
-  let targetMass := reduceDim sumSpec axis target
-  let grad := subSpec (mulSpec probs (broadcastAfterSum s axis targetMass)) target
-  scaleSpec grad (1 / (axisMeanDenom s axis : α))
+  let logp := Activation.logSoftmaxSpec (α := α) (s := s) axis logits
+  let grad := Activation.logSoftmaxBackwardSpec axis logp (Tensor.map (fun x => -x) target)
+  if mean then scaleSpec grad (1 / (axisMeanDenom s axis : α)) else grad
+
+/-- Target-weight derivative of logits cross-entropy, multiplied by an upstream scalar seed.
+Reconstructing the weighted log-probability before reduction also handles zero or small seeds
+without first materializing a possibly overflowing unweighted target derivative. -/
+def CrossEntropy.targetGradient {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
+    (logits : Tensor α s) (seed : α := 1) (mean : Bool := true) : Tensor α s :=
+  let terms := CrossEntropy.terms axis logits (Tensor.full s seed)
+  if mean then Tensor.map (fun value => -value / (axisMeanDenom s axis : α)) terms
+  else negSpec terms
+
+/-- Cross-entropy against a fixed teacher's logits, averaged over class slices.
+
+Unlike probability targets, teacher logits retain the information needed to compute small
+student–teacher gradient differences. Zero teacher weights contribute zero even when a student
+log-probability overflows to negative infinity. The teacher is held fixed during differentiation.
+-/
+def distillSpec {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
+    (student teacher : Tensor α s) : α :=
+  let p := Activation.softmaxSpec axis teacher
+  let logq := Activation.logSoftmaxSpec axis student
+  let terms := map2Spec (fun weight logp => if weight == 0 then 0 else weight * logp) p logq
+  meanOverAxisSlices (s := s) axis (-sumSpec terms)
+
+/-- Student gradient of `distillSpec`, evaluated from logit differences.
+
+Center the difference under the teacher distribution, then compute its log-normalizer with
+`expm1` and `log1p`. Near equal logits this avoids subtracting rounded probabilities. Coordinates
+far from the teacher use the ordinary probability difference instead, avoiding `0 * ∞` in a
+small teacher weight times a large exponential. The final correction removes reduction residuals.
+The mean uses the same class-slice denominator as `crossEntropyLogitsSpec`.
+-/
+def distillDerivSpec {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
+    (student teacher : Tensor α s) : Tensor α s :=
+  let p := Activation.softmaxSpec axis teacher
+  let q := Activation.softmaxSpec axis student
+  let delta := subSpec student teacher
+  let center := broadcastAfterSum s axis (reduceDim sumSpec axis (mulSpec p delta))
+  let d := subSpec delta center
+  let correction := Tensor.map Activation.Math.log1pSpec
+    (reduceDim sumSpec axis (mulSpec p (Tensor.map Activation.Math.expm1Spec d)))
+  let logRatio := subSpec d (broadcastAfterSum s axis correction)
+  let near := map2Spec (fun weight ratio =>
+    if MathFunctions.abs ratio < 1 then weight * Activation.Math.expm1Spec ratio else 0) p logRatio
+  let far := map2Spec (fun ratio difference =>
+    if MathFunctions.abs ratio < 1 then 0 else difference) logRatio (subSpec q p)
+  let difference := addSpec near far
+  let residual := broadcastAfterSum s axis (reduceDim sumSpec axis difference)
+  scaleSpec (subSpec difference (mulSpec q residual)) (1 / (axisMeanDenom s axis : α))
 
 /--
 Hinge loss (binary margin loss), elementwise then mean-reduced:
@@ -260,19 +373,32 @@ def poissonDerivSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s
   let grad := subSpec exp_pred target
   scaleSpec grad (1 / (meanDenominator s : α))
 
-/-- Cosine similarity loss: `1 - cos(predicted, target)` (reduced-to-scalar). -/
+namespace cosineSimilaritySpec
+
+/-- Scale and scaled, epsilon-clipped norm. For positive epsilon over the reals, both are
+positive and their product is the clipped L2 norm. Numerical callers divide by them separately. -/
+def normFactors {s : Shape} (x : Tensor α s) (epsilon : α) : α × α :=
+  let scale := Context.stopGradient (max (Tensor.maxAbs x) (MathFunctions.abs epsilon))
+  let squared := Tensor.map (fun value => let scaled := value / scale; scaled * scaled) x
+  let norm := MathFunctions.sqrt (sumSpec squared)
+  let cutoff := epsilon / scale
+  (scale, if norm > cutoff then norm else cutoff)
+
+end cosineSimilaritySpec
+
+/-- Cosine similarity loss: `1 - cos(predicted, target)` (reduced-to-scalar).
+
+Normalize each tensor before the dot product, using a shared scale before squaring. This avoids
+forming raw dot products or products of large norms. The norm floor remains `epsilon`, not an
+additive regularizer. Pass a positive, finite epsilon representable in the scalar type.
+Nonfinite inputs and an overflowing scaled reduction can still produce nonfinite results. -/
 def cosineSimilaritySpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s)
     (epsilon : α := Context.defaultEpsilon) : α :=
-  let dot_product := mulSpec predicted target
-  let pred_squared := mulSpec predicted predicted
-  let target_squared := mulSpec target target
-  let dot_sum := sumSpec dot_product
-  let pred_norm := MathFunctions.sqrt (sumSpec pred_squared)
-  let target_norm := MathFunctions.sqrt (sumSpec target_squared)
-  let pred_norm_safe := if pred_norm > epsilon then pred_norm else epsilon
-  let target_norm_safe := if target_norm > epsilon then target_norm else epsilon
-  let cosine_sim := dot_sum / (pred_norm_safe * target_norm_safe)
-  (1 : α) - cosine_sim
+  let (predScale, predNorm) := cosineSimilaritySpec.normFactors predicted epsilon
+  let (targetScale, targetNorm) := cosineSimilaritySpec.normFactors target epsilon
+  let normalizedPred := Tensor.map (fun value => (value / predScale) / predNorm) predicted
+  let normalizedTarget := Tensor.map (fun value => (value / targetScale) / targetNorm) target
+  (1 : α) - sumSpec (mulSpec normalizedPred normalizedTarget)
 
 /--
 Derivative of `cosineSimilaritySpec` w.r.t. `predicted`.
@@ -286,29 +412,21 @@ $$
  -\frac{1}{\lVert p\rVert\lVert t\rVert}t.
 $$
 
-We use `epsilon` to avoid division by zero (similar to common "eps" handling in PyTorch code).
+The shared scaled norms avoid forming the fourth-degree denominator in this expression.
+When the predicted norm is at or below `epsilon`, its clipped denominator is held constant
+and the radial term is zero. The same positive, finite epsilon requirement applies as above.
 -/
 def cosineSimilarityDerivSpec {s : Shape}
   (predicted : Tensor α s) (target : Tensor α s) (epsilon : α := Context.defaultEpsilon) :
     Tensor α s :=
-  let dot_sum := sumSpec (mulSpec predicted target)
-  let pred_sq_sum := sumSpec (mulSpec predicted predicted)
-  let target_sq_sum := sumSpec (mulSpec target target)
-  let pred_norm := MathFunctions.sqrt pred_sq_sum
-  let target_norm := MathFunctions.sqrt target_sq_sum
-  let pred_norm_safe := if pred_norm > epsilon then pred_norm else epsilon
-  let target_norm_safe := if target_norm > epsilon then target_norm else epsilon
-  let denom := pred_norm_safe * target_norm_safe
-  -- When `pred_norm ≤ epsilon`, the denominator selected by the forward pass is locally constant
-  -- with respect to `predicted`; the radial derivative term is therefore zero on that branch.
-  let c1 :=
-    if pred_norm > epsilon then
-      dot_sum / (pred_norm_safe * pred_norm_safe * pred_norm_safe * target_norm_safe)
-    else
-      0
-  let term1 := scaleSpec predicted c1
-  let term2 := scaleSpec target (1 / denom)
-  subSpec term1 term2
+  let (predScale, predNorm) := cosineSimilaritySpec.normFactors predicted epsilon
+  let (targetScale, targetNorm) := cosineSimilaritySpec.normFactors target epsilon
+  let normalizedPred := Tensor.map (fun value => (value / predScale) / predNorm) predicted
+  let normalizedTarget := Tensor.map (fun value => (value / targetScale) / targetNorm) target
+  let similarity := sumSpec (mulSpec normalizedPred normalizedTarget)
+  map2Spec (fun x t =>
+    let radial := if predNorm > epsilon / predScale then similarity * x else 0
+    ((radial - t) / predNorm) / predScale) normalizedPred normalizedTarget
 
 /-- Log-cosh loss (reduced-to-scalar): `log(cosh(predicted - target))`. -/
 def logCoshSpec {s : Shape} (predicted : Tensor α s) (target : Tensor α s) : α :=
@@ -345,14 +463,19 @@ $$
 $$
 
 Assumption: `target` is in `[0, 1]`. We do not clip the target; we only clip `predicted`.
+The safeguard must remain positive in the chosen scalar type. At the upper clamp, retain it
+directly as the complementary probability: subtracting `1 - epsilon` from one could otherwise
+produce zero when the upper clamp rounds to one. Inside the interval, `log1p (-p)` retains the
+negative-class loss when `1 - p` would round to one.
 -/
 def binaryCrossEntropySpec (predicted : α) (target : α)
     (epsilon : α := Context.defaultEpsilon) : α :=
   let p := if predicted > epsilon then predicted else epsilon
-  let p := if p < (1 : α) - epsilon then p else (1 : α) - epsilon
+  let (p, logComplement) :=
+    if p < (1 : α) - epsilon then (p, Context.log1p (-p))
+    else ((1 : α) - epsilon, MathFunctions.log epsilon)
   let log_p := MathFunctions.log p
-  let log_one_minus_p := MathFunctions.log ((1 : α) - p)
-  let t := target * log_p + ((1 : α) - target) * log_one_minus_p
+  let t := target * log_p + ((1 : α) - target) * logComplement
   (0 : α) - t
 
 /-- Selected derivative of `binaryCrossEntropySpec` w.r.t. `predicted`.

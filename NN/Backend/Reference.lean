@@ -139,6 +139,11 @@ def max : KernelCapsule := pointwiseCapsule .max
 def min : KernelCapsule := pointwiseCapsule .min
 /-- Reference pointwise sigmoid. -/
 def sigmoid : KernelCapsule := pointwiseCapsule .sigmoid
+/-- SiLU calls the canonical value and VJP directly, without an intermediate sigmoid tensor. -/
+def silu : KernelCapsule :=
+  { pointwiseCapsule .silu with
+    valueContract.evidence := .sharedDefinition "Activation.swishSpec"
+    vjpContract.evidence := .sharedDefinition "Activation.swishDerivSpec" }
 /-- Reference pointwise hyperbolic tangent. -/
 def tanh : KernelCapsule := pointwiseCapsule .tanh
 /-- Reference pointwise softplus. -/
@@ -238,6 +243,37 @@ def matmul : KernelCapsule :=
     "Portable matmul follows the spec-level matrix product contract."
     "TorchLean tape supplies the VJP."
 
+/-- Reference scaled contraction, distinguished from fixed-left ordinary matrix multiplication. -/
+def scaledMatmul : KernelCapsule :=
+  { capsule "reference.scaled_matmul" .scaledMatmul
+      "A fixed scale remains inside the matrix contraction's finite-coefficient replay boundary."
+      "TorchLean records the scaled contraction's local cotangents." with
+    valueContract :=
+      { claim := .valueRefinement .scaledMatmul
+        summary := "CPU tape and IR evaluation reuse the canonical scaled contraction."
+        evidence := .sharedDefinition "Spec.Internal.scaledProducts" }
+    vjpContract :=
+      { claim := .vjpRefinement .scaledMatmul .torchLeanTape
+        summary := "Both cotangents retain the fixed scale through coefficient replay."
+        evidence := .sharedDefinition "Spec.Internal.scaledMatmulBackward" }
+    numericalPolicy := { reduction := .fixedLeftOrExact } }
+
+/-- A compound pullback keeps original cotangents through row normalization. -/
+def softmaxMatmul : KernelCapsule :=
+  { capsule "reference.softmax_matmul" .softmaxMatmul
+      "Row softmax, a pointwise multiplier, then ordinary matrix multiplication."
+      "The centered pullback retains original contraction coefficients." with
+    valueContract :=
+      { claim := .valueRefinement .softmaxMatmul
+        summary := "The CPU tape reuses the normalized matrix-product specification."
+        evidence := .sharedDefinition
+          "Spec.softmaxMatmulWeights; Spec.Internal.softmaxMatmulFromWeights" }
+    vjpContract :=
+      { claim := .vjpRefinement .softmaxMatmul .torchLeanTape
+        summary := "The CPU tape reuses the retained centered pullback."
+        evidence := .sharedDefinition "Spec.softmaxMatmulBackward" }
+    numericalPolicy := { reduction := .implementationDefined } }
+
 /-- Reference linear layer. -/
 def linear : KernelCapsule :=
   accumulationCapsule
@@ -253,6 +289,23 @@ def mseLoss : KernelCapsule :=
     .mseLoss
     "Reference MSE follows the mean squared residual contract."
     "TorchLean tape supplies the VJP."
+
+/-- Weighted logits cross-entropy with both pullbacks supplied by the shared specification. -/
+def crossEntropy : KernelCapsule :=
+  { Internal.accumulationCapsule "reference.cross_entropy" .crossEntropy
+      "Spec.crossEntropyLogitsSpec retains original logits for overflowing weighted terms."
+      "The shared logits and target-weight derivatives supply both pullbacks." with
+    valueContract.evidence := .sharedDefinition "Spec.crossEntropyLogitsSpec"
+    vjpContract.evidence := .sharedDefinition
+      "Spec.crossEntropyLogitsDerivSpec and Spec.CrossEntropy.targetGradient" }
+
+/-- Fixed-teacher cross-entropy using the shared loss and cancellation-resistant gradient. -/
+def distill : KernelCapsule :=
+  { Internal.accumulationCapsule "reference.distill" .distill
+      "Spec.distillSpec evaluates cross-entropy from teacher logits."
+      "Spec.distillDerivSpec supplies the student VJP; the teacher is fixed." with
+    valueContract.evidence := .sharedDefinition "Spec.distillSpec"
+    vjpContract.evidence := .sharedDefinition "Spec.distillDerivSpec" }
 
 /-- Reference layer normalization. -/
 def layerNorm : KernelCapsule :=
@@ -310,7 +363,7 @@ def avgPool : KernelCapsule :=
     "Reference average-pooling follows the channel-first window contract."
     "TorchLean tape supplies the VJP."
 
-/-- Reference attention path using the composed TorchLean expression. -/
+/-- Reference attention with fixed-order arithmetic and finite-coefficient range repair. -/
 def attention : KernelCapsule :=
   { name := "reference.attention"
     op := .attention
@@ -326,21 +379,26 @@ def attention : KernelCapsule :=
       (.layoutCompatibility .attention .canonicalTensor)
       "Reference attention uses TorchLean tensor semantics rather than a foreign layout."
       "typed tensor layout"
-    valueContract := ContractDescriptor.tested
-      (.valueRefinement .attention)
-      "Composed reference attention uses hard-mask zero-numerator semantics."
-      "NN.Tests.Runtime.Floats.Suite"
-    vjpContract := ContractDescriptor.tested
-      (.vjpRefinement .attention .torchLeanTape)
-      "TorchLean tape supplies the composed VJP."
-      "NN.Tests.Runtime.Floats.Suite"
-    numericalPolicy := { reduction := .fixedLeft } }
+    valueContract :=
+      { claim := .valueRefinement .attention
+        summary := "Composed reference attention uses hard-mask zero numerators and replays " ++
+          "complete finite scaled contractions after range loss or an absorbed nonzero term."
+        evidence := .sharedDefinition "Spec.MultiHeadAttention.forward" }
+    vjpContract :=
+      { claim := .vjpRefinement .attention .torchLeanTape
+        summary := "TorchLean tape supplies the composed VJP."
+        evidence := .sharedDefinition "Spec.multiHeadAttentionBackward" }
+    numericalPolicy := { reduction := .implementationDefined } }
 
 /-- Cross-platform reference capsules. -/
 def capsules : Array KernelCapsule :=
   #[ matmul
+  , scaledMatmul
+  , softmaxMatmul
   , linear
   , mseLoss
+  , crossEntropy
+  , distill
   , relu
   , gelu
   , add
@@ -353,6 +411,7 @@ def capsules : Array KernelCapsule :=
   , max
   , min
   , sigmoid
+  , silu
   , tanh
   , softplus
   , exp

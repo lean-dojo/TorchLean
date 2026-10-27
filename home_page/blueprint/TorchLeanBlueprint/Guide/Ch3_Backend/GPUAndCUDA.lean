@@ -538,7 +538,7 @@ The registry gives the capsule count and identifies operations with no registere
 ```
 
 ```leanOutput gpuCudaRegistry (whitespace := lax)
-registered: 50
+registered: 55
 forward only: 3
   libtorch.top_k_mask
   libtorch.rand_uniform

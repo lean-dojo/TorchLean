@@ -135,6 +135,67 @@ def AdamPowers.advance {α : Type} [One α] [Mul α] {beta1 beta2 : α}
 
 /-! ## Shared equations -/
 
+namespace Internal
+
+/-- Weight squared entries before an overflowing square loses their finite contribution.
+Finite squares keep their usual multiplication order. -/
+def weightedSquare {α : Type} [Storage α] [Zero α] [Sub α] [Mul α] [BEq α]
+    {s : Shape} (values : Tensor α s) (weight : α) : Tensor α s :=
+  Tensor.map (fun x =>
+    let squared := x * x
+    if squared - squared == 0 then squared * weight else (x * weight) * x) values
+
+/-- Correct a moment without requiring the reciprocal correction to fit the scalar format. -/
+def correctMoment {α : Type} [Storage α] [Context α] {s : Shape}
+    (moment : Tensor α s) (denominator : α) : Tensor α s :=
+  let inverse := 1 / denominator
+  if inverse - inverse == 0 then scaleSpec moment inverse
+  else Tensor.map (fun x => x / denominator) moment
+
+/-- Take the corrected RMS without requiring the corrected second moment to be representable.
+The fallback requires a positive correction denominator and preserves the clamped-root
+convention. -/
+def correctedRms {α : Type} [Storage α] [Context α] {s : Shape}
+    (moment : Tensor α s) (denominator : α) : Tensor α s :=
+  let corrected := correctMoment moment denominator
+  map2Spec (fun x v =>
+    if v - v == 0 || !(denominator > 0) then MathFunctions.sqrt (Max.max v 0)
+    else MathFunctions.sqrt (Max.max x 0) / MathFunctions.sqrt denominator) moment corrected
+
+/-- Normalize before applying the learning rate, replaying detected range loss when supported.
+
+Replay uses the original finite coefficient trees and the scalar's checked rounding. It can
+recover an update lost by either association of the product and quotient, including its dual
+coefficients. Nonfinite inputs, zero divisors and unsupported carriers retain ordinary arithmetic;
+rounding before the supplied inputs were formed is not reversed.
+-/
+def normalizedUpdate {α : Type} [Storage α] [Context α] {s : Shape}
+    (lr epsilon : α) (moment standardDeviation : Tensor α s) : Tensor α s :=
+  let ops : Numeric.QuotientArithmetic α := inferInstance
+  map2Spec (fun x root =>
+    let denominator := root + epsilon
+    if !ops.supported then (x / denominator) * lr
+    else
+      let (quotient, divisionFlags) := ops.divWithFlags x denominator
+      let (ordinary, productFlags) := ops.mulWithFlags quotient lr
+      if divisionFlags ||| productFlags == 0 then ordinary
+      else
+        match ops.encode x, ops.encode lr, ops.encode denominator with
+        | some a, some b, some c =>
+            if c.primal == 0 then ordinary
+            else
+              let coefficients := Numeric.QuotientCoefficients.div
+                (Numeric.QuotientCoefficients.mul a b) c
+              match ops.decode coefficients with
+              | some repaired =>
+                  if coefficients.primal == 0 then
+                    ops.copyPrimal ((x * lr) / denominator) repaired
+                  else repaired
+              | none => ordinary
+        | _, _, _ => ordinary) moment standardDeviation
+
+end Internal
+
 /-- Next momentum buffer $b\mu+g$, preserving the scalar order used by tensor scaling. -/
 def updateMomentumBuffer {α : Type} [TorchLean.Storage α] [Add α] [Mul α] {s : Shape}
     (momentumBuffer : Tensor α s) (momentum : α)
@@ -145,7 +206,8 @@ def updateMomentumBuffer {α : Type} [TorchLean.Storage α] [Add α] [Mul α] {s
 Elementwise adaptive learning-rate tensor
 $\mathtt{lr}/(\sqrt{\mathtt{denominator}}+\varepsilon)$.
 
-This is shared by AdaGrad/RMSProp/Adam-style optimizers.
+This factor can underflow before a later gradient multiplication. Optimizer updates instead use
+`Internal.normalizedUpdate`, which applies the learning rate after normalization.
 -/
 def adaptiveLr {α : Type} [TorchLean.Storage α] [Context α]
     [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
@@ -264,10 +326,10 @@ def AdaGrad.update {α : Type} [TorchLean.Storage α] [Context α]
     Step α s (AdaGrad.State α s) :=
   let squaredGradients := squareSpec gradients
   let nextSquaredGradientSum := addSpec state.squaredGradientSum squaredGradients
-  let effectiveLr :=
-    adaptiveLr state.lr state.epsilon nextSquaredGradientSum
   { optimizerState := { state with squaredGradientSum := nextSquaredGradientSum }
-    parameters := subSpec parameters (mulSpec effectiveLr gradients) }
+    parameters := subSpec parameters
+      (Internal.normalizedUpdate state.lr state.epsilon gradients
+        (sqrtSpec nextSquaredGradientSum)) }
 
 /-! ## RMSProp -/
 
@@ -299,14 +361,13 @@ def RMSProp.update {α : Type} [TorchLean.Storage α] [Context α]
     [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
     (state : RMSProp.State α s) (parameters gradients : Tensor α s) :
     Step α s (RMSProp.State α s) :=
-  let squaredGradients := squareSpec gradients
   let nextSquaredGradientAverage := addSpec
     (scaleSpec state.squaredGradientAverage state.decay)
-    (scaleSpec squaredGradients (1 - state.decay))
-  let effectiveLr :=
-    adaptiveLr state.lr state.epsilon nextSquaredGradientAverage
+    (Internal.weightedSquare gradients (1 - state.decay))
   { optimizerState := { state with squaredGradientAverage := nextSquaredGradientAverage }
-    parameters := subSpec parameters (mulSpec effectiveLr gradients) }
+    parameters := subSpec parameters
+      (Internal.normalizedUpdate state.lr state.epsilon gradients
+        (sqrtSpec nextSquaredGradientAverage)) }
 
 /-! ## Adam -/
 
@@ -361,6 +422,10 @@ Equations (elementwise):
 - $p\gets p-\mathtt{lr}\,\widehat m/(\sqrt{\widehat v}+\varepsilon)$.
 
 The $\varepsilon$ placement matches Kingma and Ba: it is added after $\sqrt{\widehat v}$.
+Weighted squares, moment corrections and the corrected square root avoid unnecessary overflow.
+The learning rate is applied after normalization; supported scalars replay finite coefficient
+trees if that product or quotient loses range. Stored moments and final updates can still exceed
+the chosen scalar format.
 -/
 def Adam.update {α : Type} [TorchLean.Storage α] [Context α]
     [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
@@ -373,13 +438,11 @@ def Adam.update {α : Type} [TorchLean.Storage α] [Context α]
       (scaleSpec gradients (1 - state.beta1))
   let nextSecondMoment :=
     addSpec (scaleSpec state.secondMoment state.beta2)
-      (scaleSpec (squareSpec gradients) (1 - state.beta2))
+      (Internal.weightedSquare gradients (1 - state.beta2))
   let correctedFirstMoment :=
-    scaleSpec nextFirstMoment (1 / (1 - nextPowers.first))
-  let correctedSecondMoment :=
-    scaleSpec nextSecondMoment (1 / (1 - nextPowers.second))
-  let effectiveLr :=
-    adaptiveLr state.lr state.epsilon correctedSecondMoment
+    Internal.correctMoment nextFirstMoment (1 - nextPowers.first)
+  let correctedRoot :=
+    Internal.correctedRms nextSecondMoment (1 - nextPowers.second)
   { optimizerState :=
       { state with
         firstMoment := nextFirstMoment
@@ -387,7 +450,8 @@ def Adam.update {α : Type} [TorchLean.Storage α] [Context α]
         stepCount := nextStepCount
         powers := nextPowers }
     parameters :=
-      subSpec parameters (mulSpec effectiveLr correctedFirstMoment) }
+      subSpec parameters
+        (Internal.normalizedUpdate state.lr state.epsilon correctedFirstMoment correctedRoot) }
 
 /-- Adam increments its step counter by one on every update. -/
 @[simp] theorem Adam.update_stepCount {α : Type} [TorchLean.Storage α] [Context α]
@@ -529,10 +593,9 @@ def Adadelta.update {α : Type} [TorchLean.Storage α] [Context α]
     [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
     (state : Adadelta.State α s) (parameters gradients : Tensor α s) :
     Step α s (Adadelta.State α s) :=
-  let squaredGradients := squareSpec gradients
   let nextSquaredGradientAverage :=
     addSpec (scaleSpec state.squaredGradientAverage state.rho)
-      (scaleSpec squaredGradients (1 - state.rho))
+      (Internal.weightedSquare gradients (1 - state.rho))
 
   let rms := fun v : α => MathFunctions.sqrt (Max.max (v + state.epsilon) 0)
   let gradientRms := Tensor.map rms nextSquaredGradientAverage
@@ -545,7 +608,7 @@ def Adadelta.update {α : Type} [TorchLean.Storage α] [Context α]
 
   let nextSquaredUpdateAverage :=
     addSpec (scaleSpec state.squaredUpdateAverage state.rho)
-      (scaleSpec (squareSpec parameterUpdate) (1 - state.rho))
+      (Internal.weightedSquare parameterUpdate (1 - state.rho))
   { optimizerState :=
       { state with
         squaredGradientAverage := nextSquaredGradientAverage

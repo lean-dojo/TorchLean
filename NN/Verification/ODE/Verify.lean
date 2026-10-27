@@ -308,6 +308,20 @@ private def buildDerivativeGraph1D {α : Type} [TorchLean.Storage α] [Context �
               let did ← pushNode #[yFac, d1] .mulElem outShape
               setDerivativeId i did
           | _ => throw <| IO.userError s!"buildDerivativeGraph1D: bad arity at sigmoid node {i}"
+      | .silu =>
+          match NN.IR.unaryParent? node.parents with
+          | some parent =>
+              let st ← get
+              let direction ← derivativeId st i parent
+              let gate ← pushNode #[parent] .sigmoid outShape
+              let zeros ← mkConstFill outShape 0
+              let negative ← pushNode #[zeros, parent] .sub outShape
+              let complement ← pushNode #[negative] .sigmoid outShape
+              let correction ← pushNode #[i, complement] .mulElem outShape
+              let slope ← pushNode #[gate, correction] .add outShape
+              let result ← pushNode #[slope, direction] .mulElem outShape
+              setDerivativeId i result
+          | _ => throw <| IO.userError s!"buildDerivativeGraph1D: bad arity at silu node {i}"
       | .exp =>
           match NN.IR.unaryParent? node.parents with
           | some p1 =>

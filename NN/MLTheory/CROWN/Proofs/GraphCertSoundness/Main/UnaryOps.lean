@@ -11,11 +11,12 @@ public import NN.MLTheory.CROWN.Extras.IntervalLemmas
 public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.IntervalLemmas
 public import NN.MLTheory.CROWN.Proofs.GraphCertSoundness.NonlinearOps
 public import NN.Proofs.Gradients.Activation
+public import NN.MLTheory.CROWN.Proofs.DirectedIBPBasic
 
 /-!
 # Certificate Soundness: Elementwise Activation Nodes
 
-Operator cases `relu`, `tanh`, `sigmoid`, `sin`, and `cos` of the IBP certificate induction.
+Operator cases `relu`, `tanh`, `sigmoid`, `silu`, `sin`, and `cos` of the IBP certificate induction.
 `tanh` and `sigmoid` share one box-level lemma about `Runtime.Ops.IBP.mapMinmax` for monotone
 scalar maps; `sin` and `cos` use the Lipschitz enclosures from `NonlinearOps`.
 -/
@@ -181,6 +182,48 @@ theorem sigmoid_node_encloses {nodes : Array Node} {ps : ParamStore ℝ}
   obtain rfl := Option.some.inj hvalStep
   obtain rfl := Option.some.inj hcertStep
   exact enclosesBox_ibp_sigmoid h1
+
+/-- Certificate soundness at SiLU, reusing the directed input-times-sigmoid transfer. -/
+theorem silu_node_encloses {nodes : Array Node} {ps : ParamStore ℝ}
+    {cert : Array (Option (FlatBox ℝ))} {inputs : Std.HashMap Nat Val} {vals : Array (Option Val)}
+    {k : Nat} {B : FlatBox ℝ} {v : Val}
+    (hkKind : (nodes[k]!).kind = .silu)
+    (hcertStep : certStepNode? nodes ps cert k = some B)
+    (hvalStep : evalNode? nodes ps inputs vals k = some v)
+    (hpe : ParentsEnclosed nodes cert vals k) : EnclosesBox B v := by
+  simp only [certStepNode?, hkKind] at hcertStep
+  simp only [evalNode?, hkKind] at hvalStep
+  rcases hp : NN.IR.unaryParent? (nodes[k]!).parents with _ | p <;>
+    simp only [hp, Option.bind_eq_bind, Option.bind_none, Option.bind_some,
+      reduceCtorEq] at hcertStep hvalStep
+  rcases hb : getBox? cert p with _ | parent <;>
+    simp only [hb, Option.bind_none, Option.bind_some,
+      reduceCtorEq] at hcertStep
+  rcases hv : getVal? vals p with _ | input <;>
+    simp only [hv, reduceCtorEq] at hvalStep
+  obtain rfl := Option.some.inj hvalStep
+  obtain ⟨hd, hx⟩ := parents_enclosed_unary hpe hp hb hv
+  obtain ⟨n, lo, hi⟩ := parent
+  obtain ⟨m, x⟩ := input
+  simp only at hd
+  subst hd
+  simp only [castDimScalar_self] at hx
+  have hrow : DirectedBackward.RowEncloses
+      { dim := n, lo := lo, hi := hi } n (fun i => Spec.getAtOrZero x [i]) := by
+    refine ⟨rfl, ?_⟩
+    intro i
+    simpa only [Spec.getAtOrZero_eq_getScalar, LawfulBoundOps.toReal,
+      instLawfulBoundOpsReal, id_eq] using hx i
+  obtain ⟨hd, hbound⟩ := DirectedBackward.ibpSilu?_encloses hrow hcertStep
+  obtain ⟨d, lower, upper⟩ := B
+  change d = n at hd
+  subst hd
+  refine ⟨rfl, ?_⟩
+  simp only [castDimScalar_self]
+  intro i
+  simpa only [Activation.swishSpec, getScalar_map, Proofs.swish_spec_eq_mul_sigmoid,
+    Proofs.sigmoid_eq_inv_exp, one_div, Spec.getAtOrZero_eq_getScalar,
+    LawfulBoundOps.toReal, instLawfulBoundOpsReal, id_eq] using hbound i
 
 /-- Certificate soundness at a `sin` node. -/
 theorem sin_node_encloses {nodes : Array Node} {ps : ParamStore ℝ}

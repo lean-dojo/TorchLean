@@ -16,6 +16,8 @@ import NN.Examples.BugZoo.RoPEPosition
 import NN.Examples.BugZoo.TokenizerBoundary
 import NN.Examples.BugZoo.Geometry3DProjection
 import NN.Proofs.Models.Attention.CausalMask
+import NN.Proofs.Autograd.FDeriv.SoftmaxSpec
+import NN.Proofs.Analysis.Normalization
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
 
@@ -271,11 +273,77 @@ of that operation agree. Neither chooses the modeling intention on the author's 
 
 ## Stable Loss
 
+Max shifting prevents a large exponential, but it does not prevent every rounding failure.
+For binary32 logits `[9, -9, -9]`, the two small exponentials survive while adding them to `1`
+loses them. A direct `log` of that rounded normalizer then returns zero. Our log-softmax sums
+the non-pivot exponentials separately and uses `log1p`; its backward rule also keeps the small
+complement instead of subtracting a rounded probability from one.
+
+Distillation has a different cancellation problem: subtracting independently rounded student
+and teacher probabilities can erase a small gradient. `TorchLean.Loss.distill` accepts their
+logits, holds the teacher fixed, and computes the student gradient from logit differences.
+The shared specification supports configurable scalar precision; the native CUDA tape uses
+binary32 or binary64. The real derivative theorem is
+`Proofs.Autograd.hasFDerivAt_distillSpec_vec` for nonempty class vectors. It does not assert a
+rounding-error bound for every format or verify ATen's execution.
+
+These numerical issues and the logit-difference formulation are discussed in
+[A Fix for Softmax and Cross-Entropy](https://arxiv.org/abs/2610.31642).
+
+Long rows can also exhaust the denominator's precision. Adding `1` repeatedly in binary16
+stops changing the sum at `2048`, so a left-fold softmax over `4096` equal logits would return
+twice the correct probability. A format with a small exponent range can overflow the sum even
+earlier. The masked and unmasked specifications share a normalizer that detects range loss or
+a swallowed nonzero term, then reconstructs the sum and quotients from the finite input
+coefficients before rounding the outputs. It cannot recover an exponential that was already
+rounded to zero. These summation limitations are discussed by
+[Blanchard, Higham and Higham](https://arxiv.org/abs/1909.03469); they are separate from backward
+cancellation.
+
+Activation derivatives need the same care. We keep their inputs available: sigmoid uses a decaying
+exponential ratio, and tanh squares a scaled reciprocal cosh instead of subtracting its rounded
+output's square from one. GELU's tanh-approximation gate is evaluated as an equivalent sigmoid;
+ELU uses `expm1` near zero. SiLU splits its negative exponential into two factors and multiplies
+by the input before the second factor: the product can remain representable even when the
+sigmoid alone underflows. GRUs compute complementary update gates as `sigmoid (-x)` instead of
+`1 - sigmoid x`, so rounding the update gate to one need not erase the candidate contribution.
+These changes preserve the real functions and their proved derivatives
+while retaining small floating-point results that direct subtraction can lose.
+
+The incoming gradient matters too. For binary32, the derivative of `tanh 60` rounds to zero on
+its own, but multiplying the exact derivative by an incoming gradient of `1e30` gives about
+$`3.067 \times 10^{-22}`, which is representable. Forming the rounded slope first loses that
+answer. The sigmoid and tanh pullbacks keep the incoming gradient inside their range repair;
+the CPU tape, forward-mode rules and recurrent gates share those pullbacks. Standalone slope
+functions use the same repair without inserting a multiplication by one. Native GPU calls
+use scaled exponentials for the same purpose. Configured precision moves these boundaries but
+does not remove them. Near zero, differentiating an exponential quotient can also subtract nearly
+equal terms, even when none of them underflows. Nested floating-point derivatives use reciprocal
+cosh identities instead: their odd coefficients retain the small input through `sinh`. They check
+the input, hyperbolic factor and slope for range loss. A factor rounded to one also requires a
+complete enclosure; a product of small directions can vanish even at a zero input. When an
+intermediate loses range, scalar and CPU
+pullbacks can enclose the complete expression from the original finite inputs. A cheap exponential
+bound first checks whether every coefficient must underflow. Otherwise, they refine the working
+precision and approximation degree, accepting only matching finite rounded coefficient bounds.
+Each candidate carries a Lean proof of real containment for every coefficient. Final codec
+rounding and correspondence with each caller's derivative remain separate obligations.
+An inconclusive search retains the staged calculation. This additional path does not verify
+the GPU implementation or assert correct rounding for every transcendental call.
+
 {src "NN/Examples/BugZoo/StableLoss.lean"}[NN.Examples.BugZoo.StableLoss source] is about losses
 that look mathematically harmless but fail numerically. One example is `softmax` followed by
 `log`: if a probability rounds to zero, the log path can produce infinities and downstream NaNs.
-TorchLean keeps two APIs separate. Logits should use `crossEntropyLogitsSpec`, which unfolds through
-the log-softmax; probability inputs use the clipped probability form `crossEntropySpec`.
+TorchLean keeps two APIs separate. Logits use `crossEntropyLogitsSpec`, which retains the original
+logits alongside log-softmax; probability inputs use the clipped probability form
+`crossEntropySpec`.
+
+For probability-based binary cross-entropy, even a nonzero input can lose its loss before the
+logarithm. With target zero, the term is $`-\log(1-p)`: a sufficiently small positive $`p` leaves
+`1 - p` rounded to one. `binaryCrossEntropySpec` uses `log1p (-p)` inside the clipping interval
+to retain that term. At the upper clamp it keeps epsilon as the complementary probability.
+The clipping thresholds and selected gradients are unchanged; epsilon must still be positive
+and suitable for the chosen format.
 
 The logits below make two of the three probabilities underflow in binary64. Direct log-softmax
 retains finite log-probabilities:
@@ -304,29 +372,42 @@ Computing the probabilities first loses that information before the logarithm ru
 
 For finite real logits, the two formulas define the same function. In this computation, however,
 the probability path has already rounded two entries to zero. Applying `log` gives $`-\infty`;
-multiplying such an entry by a zero target can then produce NaN. The logits-loss contract fixes the
-log-softmax expression used by the reference implementation:
+multiplying such an entry by a zero target can then produce NaN.
 
-```lean (name := bzCEUnfold)
--- Expose the log-softmax expression and the reduction used
--- by logits cross-entropy.
-#check @StableLoss.crossEntropyLogits_uses_logSoftmax
+Even direct log-softmax has a finite-range limit. The difference between two finite logits can
+overflow, although a zero or small target would make its weighted loss contribution representable.
+For those entries, we keep the original logits and weight each operand before subtracting them.
+Ordinary finite log-probabilities keep the existing multiplication.
+
+```lean (name := bzExtremeCE)
+/-- Finite logits with an overflowing class difference. -/
+def bzExtremeLogits : Tensor Float32 [3] :=
+  [3e38, 3e38, -3e38]
+
+#eval (Spec.crossEntropyLogitsSpec 0 bzExtremeLogits
+  (Tensor.from (#[1, 0, 0] : Array Float32))).toFloat
 ```
-```leanOutput bzCEUnfold (whitespace := lax)
-@StableLoss.crossEntropyLogits_uses_logSoftmax :
-  ∀ {s : Shape} (axis : ℕ)
-    [inst : Shape.AxisInBounds axis s] {α : Type}
-    [inst_1 : Storage α] [inst_2 : Context α]
-    (logits target : Tensor α s),
-  Spec.crossEntropyLogitsSpec axis logits target =
-    have logp := Activation.logSoftmaxSpec axis logits;
-    have total := (target.mulSpec logp).sumSpec;
-    Spec.meanOverAxisSlices axis (-total)
+```leanOutput bzExtremeCE (whitespace := lax)
+0.693147
 ```
 
-This unfolding lemma exposes the equation a replacement implementation must preserve.
-`crossEntropyProbabilities_clips_before_log` records the corresponding choice for probability
-inputs. Neither equation by itself proves conformance of a fused runtime kernel.
+This loss is about $`\log 2`, rather than NaN. A zero-target mask could produce the right loss
+while discarding a valid derivative with respect to that target weight. We retain both pullbacks:
+
+```lean
+open Proofs.Autograd in
+#check crossEntropyLogitsSpec_eq_dot
+open Proofs.Autograd in
+#check hasFDerivAt_crossEntropyLogitsSpec_vec
+open Proofs.Autograd in
+#check hasFDerivAt_crossEntropyTargets_vec
+```
+
+These theorems state the real formula and its logits and target-weight derivatives for class
+vectors, without assuming the weights sum to one. They do not assert bitwise equivalence with the
+old floating-point expression or prove ATen's execution. Overflowing reductions and nonfinite
+inputs still need separate treatment. Related zero-weight failures have been
+[reported in Optax](https://github.com/google-deepmind/optax/issues/896).
 
 This example is motivated by [TensorFuzz](https://proceedings.mlr.press/v97/odena19a.html), which
 targeted rare numerical failures, and by
@@ -340,6 +421,102 @@ original value. Keeping the logits until log-softmax avoids that particular loss
 The theorem's final reduction also matters: it states how target-weighted log-probabilities become
 a scalar, so changing a sum into a different mean would change the loss contract even if every
 individual log-probability remained correct.
+
+The backward calculation matters in attention too. TorchLean centers the incoming gradient before
+its weighted softmax reduction, so a dominant probability rounded to one need not erase its logit
+gradient. Both attention derivatives use that calculation, including Boolean masks. Fully blocked
+rows and rows with one allowed key have zero key derivative over the reals. If large finite
+incoming gradients overflow during centering, supported CPU scalars replay the complete weighted
+calculation from finite coefficients. This still uses the supplied weights: it cannot reconstruct
+a probability already rounded to zero. The rounded-real error bound includes the centering
+subtraction; native GPU execution remains a separate boundary.
+
+### Squaring before scaling
+
+Cosine loss compares directions. Multiplying a nonzero vector by a positive scalar should not
+change its angle, but squaring large coordinates can overflow before we have a chance to normalize
+them. TorchLean scales before squaring, normalizes each tensor, and then takes their dot product.
+The epsilon floor is scaled too; it still clips the norm rather than adding to its square.
+
+```lean (name := bzCosine)
+def bzLargeVector : Tensor Float32 [2] := [3e20, 4e20]
+
+#eval (Spec.cosineSimilaritySpec bzLargeVector
+  (Tensor.from (#[1, 0] : Array Float32))).toFloat
+```
+```leanOutput bzCosine (whitespace := lax)
+0.400000
+```
+
+Computing the raw squares first would give a loss of `1` for this input, rather than `0.4`.
+The pullback also uses normalized coordinates and separate divisions: a product of large norms
+can overflow and erase a representable gradient even when the forward loss looks reasonable.
+The real identities cover any tensor shape and preserve the clipped branch, including at its
+epsilon floor:
+
+```lean
+open Proofs.Normalization in
+#check cosineSimilarity_eq
+open Proofs.Normalization in
+#check cosineSimilarityDeriv_eq
+```
+
+Normalizing before the dot product is established practice; PyTorch explains the same issue in its
+[source](https://github.com/pytorch/pytorch/blob/v2.11.0/aten/src/ATen/native/Distance.cpp).
+Scaling the norm calculation additionally keeps large coordinates from being squared directly.
+These real identities are not a bound on all floating-point errors or a proof of external kernels.
+
+Huber's quadratic branch has a smaller ordering trap. An FP32 residual of $`2^{64}` has a
+representable half-square, $`2^{127}`, although its square overflows. We compute `(x / 2) * x`,
+not `(x * x) / 2`. Its linear branch also keeps the prediction and target available: if their
+difference overflows, a small positive `delta` can still make the weighted loss representable.
+We weight each operand before subtracting, then retain the quadratic offset. The Huber branch
+condition, mean reduction, and selected gradient are unchanged. Genuine result overflow and
+overflowing reductions still need separate treatment.
+
+### Correcting an optimizer moment
+
+Adam averages squared gradients and then corrects the initial bias in that average. These are
+two opportunities to overflow before a representable update. Let's take a single FP32 gradient
+of $`2^{68}` and set both decay coefficients to $`1-2^{-10}`:
+
+```lean (name := bzAdamRange)
+#eval do
+  let parameters : Tensor Float32 [1] := [0]
+  let g : Float32 := Rat.cast (2^68 : Rat)
+  let gradients := Tensor.full [1] g
+  let beta : Float32 := Rat.cast (1023/1024 : Rat)
+  let state := Optim.Adam.init 1 beta beta 1 parameters
+  let next := Optim.Adam.update state parameters gradients
+  return (next.parameters.getScalar ⟨0, by decide⟩).toFloat
+```
+```leanOutput bzAdamRange (whitespace := lax)
+-1.000000
+```
+
+The gradient's square, $`2^{136}`, does not fit. Its weighted contribution, $`2^{126}`, does,
+so we apply the weight before a square that would overflow. Bias correction would restore the
+unrepresentable $`2^{136}`, but the update only needs its square root, $`2^{68}`. In that case,
+we divide the square root of the stored moment by the square root of its correction denominator.
+If a correction reciprocal itself overflows, we divide the moment directly instead.
+
+There is a different trap at small learning rates. In binary16, a gradient of $`256`, the same
+decay coefficients, epsilon $`1`, and learning rate $`2^{-19}` should produce a nonzero update.
+Dividing the learning rate by the corrected RMS first rounds that factor to zero. Adam, RMSProp
+and AdaGrad now normalize the moment or gradient before applying the learning rate. If the
+supported scalar's checked operations detect range loss, the CPU update replays that weighted
+quotient from its finite input coefficients and rounds it in the selected format. This also
+handles the opposite case, where the unscaled quotient overflows before a small rate is applied.
+It cannot restore information lost before those inputs were formed.
+
+These are evaluation-order changes to the [Adam equations](https://arxiv.org/abs/1412.6980),
+not a different optimizer. RMSProp and Adadelta share the weighted-square calculation. The
+rounded-real AdamW theorem follows the actual normalized-moment calculation, with a revised
+parameter-error budget for division followed by learning-rate scaling. That model has no upper
+exponent limit, and its scalar context does not enable finite-coefficient replay. Its theorem
+does not establish the external GPU adapter's execution. Stored moments, parameter updates
+and their sums can still overflow; this example is not a guarantee that every finite gradient
+produces a finite optimizer state.
 
 ## Ignored Labels
 
@@ -582,6 +759,54 @@ polarity from score scaling and normalization. A fully blocked row adds the deno
 case. Keeping that case explicit is necessary when comparing APIs that share a Boolean mask type
 but make different choices for empty attention support.
 
+Finite arithmetic adds another difficulty. A dot product can overflow before division by
+$`\sqrt{d}`, even when the scaled score fits. Pre-scaling the queries avoids some overflows, but
+can instead round a tiny query to zero before it meets a large key. The reference attention
+calculation keeps its ordinary order and, when checked operations lose range or absorb a nonzero
+term, reconstructs the complete scaled contraction from its original finite coefficients.
+The model-operation interface `Ops.matmul` accepts a fixed `scale`, so biased and dropout attention
+can keep that scale inside the score contraction too. Its IR node and backend audit distinguish
+this calculation from an ordinary fixed-left matrix product followed by multiplication.
+
+The native GPU contraction uses a conservative range flag. A flagged call can download the
+original finite operands and run the same coefficient recovery on CPU before returning a GPU
+buffer. The buffer interface keeps its binary64 scale even for binary32 operands: narrowing
+$`10^{-46}` first would turn it into zero before large inputs could amplify it.
+Reading the flag synchronizes the device; exact-zero and orthogonal products can also
+take this recovery path. Original nonfinite inputs retain the native result without this transfer.
+This is not a proof of ATen or of correctly rounded softmax: later native exponential, division
+and aggregation stages still round. The grouped IR operation has a separate numerical range rule.
+Its scale is an ordinary scalar parent, so source-range and payload checks bind it just like a
+weight. The rule encloses the exact-real contraction and includes the finite staged interval when
+available. Its reference policy records the choice between fixed-left arithmetic and exact
+coefficient replay; it does not accept an implementation-defined native reduction. Concrete
+binary32 execution must still pass the node-by-node interval replay.
+
+Even constructing the denominator needs care: FP16 cannot represent $`65536`, but its square
+root is $`256`. Casting first would give infinity and erase the score scale. `Context.sqrtNat`
+keeps the ordinary calculation when the count cast does not overflow, and otherwise asks
+FloatLib to round the exact rational root directly in the chosen format. Dual and complex
+contexts lift this same constant construction from their component scalar type.
+
+The same boundary matters in backward mode. The product $`dO\,V^\top` can overflow before the
+softmax pullback cancels it. A fully blocked row should have zero gradient; a singleton softmax
+should have zero score tangent. The fused reference pullback retains the original contractions
+rather than trying to recover them from an already infinite intermediate tensor. This repair uses
+the existing scalar coefficient interface, including configured binary precisions and nested duals.
+Biased and dropout attention use `Ops.softmaxMatmul` to keep that boundary intact on the existing
+tape. Its multiplier can carry gradients too; a sampled dropout mask follows the existing
+stop-gradient convention. Both the JVP and VJP retain the original contraction terms, so recovery
+can also handle cancellation between large tangent terms or a tiny intermediate amplified later.
+The real-valued proofs in
+{src "NN/Proofs/Autograd/FDeriv/HardMaskedAttention.lean"}[`HardMaskedAttention`] differentiate
+this forward function and show that its JVP and backward rule are adjoint for a fixed optional mask,
+including fully blocked rows.
+The native GPU backward checks the contraction and centered pullback. When recovery is needed,
+it can bring the original finite coefficients to CPU and return the recovered gradient to GPU.
+This includes the native attention adapter; it does not prove the ATen kernels or a numerical
+error bound for every native execution. Fully blocked rows discard their incoming cotangent;
+the reference rule checks all scalar metadata before treating a weight row as zero.
+
 ## Compiler Boundary
 
 This entry is about optimized graphs that run, return tensors, and are nevertheless not the same
@@ -695,7 +920,104 @@ when Lean's canonical NaN is constructed. A property about payload preservation 
 more precise relation. Likewise, a theorem about one addition does not fix the order in which a
 network's long reduction performs many additions; that order belongs to the surrounding computation.
 
+The conversion into a scalar type matters too. A uniform draw of $`2^{30}/2^{32}` is just $`1/4`,
+but casting its numerator and denominator separately to FP16 gives infinity divided by infinity.
+That NaN can turn a valid dropout keep decision into a dropped entry. `Spec.Random.sampleUnit`
+forms the exact rational fraction first and uses the scalar context's cast. It keeps the same
+integer generator, seed and counter; the chosen precision rounds the resulting fraction, which
+can still round up to $`1` at the top of the grid.
+
+Parameter initialization has a related range boundary. Two finite uniform bounds can have an
+infinite difference: the interval from minus the largest binary64 value to that value is one
+example. The CPU and CUDA initializers keep their ordinary affine formulas when the width is
+finite in the destination type; CUDA retains its fused multiply-add. If the width overflows,
+they instead form the convex combination of the two finite endpoints, avoiding that intermediate
+infinity.
+
+Xavier and He bounds can lose range in the fan count rather than the root. Casting an enormous
+count to infinity makes $`\sqrt{6/\mathrm{fan}}` zero, even when the bound is representable.
+Their shared initializer preserves the ordinary formula for nonzero bounds; otherwise it asks
+FloatLib to round the square root of the exact rational ratio. This also handles bounds in the
+binary64 subnormal range without first rounding the ratio to zero.
+
+At a minimum or maximum tie, TorchLean selects an equal split between the inputs. Its JVP
+therefore averages their supplied tangents. Halving two smallest subnormal values separately
+would give zero, although their average is still representable. Dual numbers and typed graphs
+use the same checked average: if halving loses range, they combine the finite coefficients
+before rounding the result. The half constant is cast from an exact rational, so the rule also
+works in configured formats that cannot represent `2`. Reverse mode still rounds distinct input
+nodes' cotangents separately; a half that is itself unrepresentable cannot be stored in that
+scalar type. When both arguments refer to the same tape node, the checked CPU path and native
+GPU path combine its contributions before graph accumulation. This retains a smallest-subnormal
+gradient for $`\max(x,x)` or $`\min(x,x)`. It also makes the accumulation convention explicit:
+the combined contribution is added once, rather than adding two separately rounded halves.
+Unsupported coefficient carriers accumulate the two contributions separately.
+
+Square-root gradients need the upstream value too. Forming $`1/(2\sqrt{x})` first can lose range
+before multiplication by that value, and some configured formats cannot represent `2` at all.
+Dual numbers, typed graphs and the CPU tape share a weighted quotient that replays finite
+coefficients when a checked intermediate loses range. It uses the root already rounded by the
+forward arithmetic; it does not claim correctly rounded evaluation of the unrounded analytic
+derivative. The existing zero-factor convention outside the positive region is unchanged.
+The CUDA bridge uses direct division by twice the root, avoiding a separately rounded
+reciprocal. It retains its literal-zero branch outside the positive region; unlike multiplying
+by a zero factor, this branch also returns zero for a nonfinite upstream value.
+
+The angle in a complex logarithm has a related cancellation. Moving radially should leave the
+angle unchanged. Scaling tiny coordinates can nevertheless make both tangent terms infinite,
+turning their zero difference into NaN. The dual angle rule checks the scaled calculation and,
+after range loss or cancellation, reconstructs the whole finite quotient from the original
+coordinates and direction. It leaves the primal angle and the origin's selected zero tangent
+unchanged. A principal angle still has a branch cut; this rule does not make it differentiable
+across that cut. The {src "NN/Proofs/Autograd/Dual/Domain.lean"}[real-valued derivative proof]
+uses Mathlib's derivative of the complex logarithm away from the cut.
+
+Powers have a domain issue as well. Applying the logarithmic derivative formula to $`x^2` at
+zero or a negative input evaluates a logarithm or quotient that the polynomial does not need.
+The dual rule uses $`yx^{y-1}x'` when the exponent tangent is identically zero. Its zero tests
+inspect every nested coefficient; an active mixed derivative must not disappear just because
+its primal is zero. The same test guards the captured-exponent VJP. The
+{src "NN/Proofs/Autograd/Dual/Domain.lean"}[constant-power derivative theorem] checks the actual
+dual rule over the reals. It is not a floating-point accuracy theorem: a staged power or slope
+can still lose range before multiplication by the incoming derivative. For example, with
+$`x=2^{100}` and incoming derivative $`2^{-100}`, the cubic's weighted derivative is the finite
+binary32 number $`3\cdot 2^{100}`, although the local factor $`3x^2` overflows. The dual rule and
+captured-exponent VJP check these intermediates. For a constant exponent, they can refine the
+whole weighted expression from its original inputs using FloatLib's logarithm and exponential
+enclosures. With a varying exponent and a positive base, recovery instead encloses the complete
+expression $`\exp(y\log x)(y'\log x+yx'/x)`. Keeping both terms together matters: an overflowing
+quotient can be multiplied by an underflowed power even when the final derivative fits.
+Recovery requires every lower and upper derivative coefficient to round alike, including mixed
+coefficients of nested duals. Refinement has a bounded work budget based on the input encodings;
+it declines oversized exponential arguments before evaluating them. Nonfinite inputs, unsupported
+domains and inconclusive bounds retain the ordinary result. The real-valued derivative theorem
+checks the varying-exponent rule on positive bases; neither it nor the recovery routine verifies
+native power evaluation.
+
+For a mean, we must choose the accumulation precision as well. A left-to-right sum of 65,536 FP16
+ones loses increments, and the FP16 conversion of the element count overflows. The same-precision
+mean returns zero although the exact mean is one. TorchLean keeps this scalar policy explicit:
+{src "NN/Tensor/Reductions.lean"}[`Tensor.foldl`] lets us convert each entry into a wider
+accumulator without allocating a second tensor. Converting the tensor before calling `mean` is
+another option. Both give one for this example with a binary32 accumulator; neither promises exact
+arithmetic or prevents overflow for every input. The ordinary `mean` keeps its reference definition
+and does not silently promote the scalar type.
+
 ## Normalization State
+
+Normalization also needs care before the square root. In binary32, squaring `[3e20, 4e20]`
+overflows even though its normalized entries are ordinary numbers. RMSNorm and regularized L2
+normalization scale the input before squaring and divide epsilon by the same scale twice.
+Scaling only the input would change the model's epsilon. The scale is detached because it
+cancels from the real function; the existing tape records the remaining operations as usual.
+`Spec.normalizeL2Regularized_eq` checks that real identity, including the mean-square variant,
+for positive epsilon. It is not a floating-point error bound.
+
+Safe norm scaling is established numerical analysis, not a new failure mechanism; see
+[Algorithm 978](https://doi.org/10.1145/3061665) and
+[PyTorch's notes](https://docs.pytorch.org/docs/stable/notes/numerical_accuracy.html).
+The chosen format still limits the reduction and gradients, and nonfinite inputs can propagate
+NaN differently from the unscaled formula.
 
 {src "NN/Examples/BugZoo/NormalizationState.lean"}[NN.Examples.BugZoo.NormalizationState source]
 covers BatchNorm style bugs where the formula or the state is wrong but the layer still emits a

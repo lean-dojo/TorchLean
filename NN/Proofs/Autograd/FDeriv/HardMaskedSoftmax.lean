@@ -209,23 +209,38 @@ theorem hasFDerivAt_spec {n : Nat} (mask : Tensor Bool [n]) (x : Vec n) :
 
 /-- The implementation's weighted-centering helper evaluates the derivative itself. -/
 theorem backward_eq_derivative {n : Nat} (scores gradient : Tensor ℝ [n])
-    (mask : Tensor Bool [n]) :
+    (mask : Tensor Bool [n]) (center : Bool := false) :
     getScalarE (Spec.softmaxBackwardFromWeightsSpec
-      (Spec.hardMaskedSoftmaxVecSpec scores mask) gradient) =
+      (Spec.hardMaskedSoftmaxVecSpec scores mask) gradient (center := center)) =
         derivative mask (getScalarE scores) (getScalarE gradient) := by
   have hw (i : Fin n) :
       (Spec.hardMaskedSoftmaxVecSpec scores mask).getScalar i =
         weights mask (getScalarE scores) i :=
     getScalar_hardMaskedSoftmaxVecSpec scores mask i
+  have hmass : (∑ j, (Spec.hardMaskedSoftmaxVecSpec scores mask).getScalar j) = 1 ∨
+      ∀ j, (Spec.hardMaskedSoftmaxVecSpec scores mask).getScalar j = 0 := by
+    by_cases hallowed : ∃ j, mask.getScalar j = true
+    · left
+      simp_rw [hw]
+      change (∑ j, numerator mask (getScalarE scores) j /
+        denominator mask (getScalarE scores)) = 1
+      rw [← Finset.sum_div]
+      exact div_self (ne_of_gt (denominator_pos mask (getScalarE scores) hallowed))
+    · right
+      have hall (j : Fin n) : mask.getScalar j = false := by
+        cases hj : mask.getScalar j
+        · rfl
+        · exact (hallowed ⟨j, hj⟩).elim
+      intro j
+      simp [hw, weights, numerator, hall]
+  have hzero : subSpec gradient (Spec.replicate (Tensor.scalar (0 : ℝ))) = gradient := by
+    apply Tensor.ext_vector
+    intro i
+    simp [subSpec, Spec.replicate]
+  rw [Proofs.softmax_backward_from_weights_shift _ gradient 0 hmass center, hzero]
   ext i
-  simp only [getScalarE_ofLp, Spec.softmaxBackwardFromWeightsSpec,
-    Spec.getScalar_mul_spec, subSpec, getScalar_map2Spec, Spec.sum_spec_vec,
-    Spec.getScalar_replicate, Tensor.item_scalar, hw, derivative_apply]
-  congr 1
-  congr 1
-  apply Finset.sum_congr rfl
-  intro j _
-  rw [mul_comm]
+  simp only [getScalarE_ofLp, Proofs.getScalar_softmaxBackwardFromWeightsSpec,
+    hw, derivative_apply]
 
 /-- The row derivative is self-adjoint, including rows whose weights are all zero. -/
 theorem inner_derivative {n : Nat} (mask : Tensor Bool [n]) (x dx gradient : Vec n) :
@@ -258,13 +273,14 @@ theorem inner_derivative {n : Nat} (mask : Tensor Bool [n]) (x dx gradient : Vec
 This is stronger than an algebraic JVP/VJP pairing: `hasFDerivAt_spec` supplies the analytic
 derivative, and the equality below identifies the helper called by attention with its adjoint. -/
 theorem backward_eq_adjoint_fderiv {n : Nat} (scores gradient : Tensor ℝ [n])
-    (mask : Tensor Bool [n]) :
+    (mask : Tensor Bool [n]) (center : Bool := false) :
     getScalarE (Spec.softmaxBackwardFromWeightsSpec
-      (Spec.hardMaskedSoftmaxVecSpec scores mask) gradient) =
+      (Spec.hardMaskedSoftmaxVecSpec scores mask) gradient (center := center)) =
       (fderiv ℝ
         (fun x : Vec n => getScalarE (Spec.hardMaskedSoftmaxVecSpec (ofFnE x) mask))
         (getScalarE scores)).adjoint (getScalarE gradient) := by
-  rw [(hasFDerivAt_spec mask (getScalarE scores)).fderiv, backward_eq_derivative]
+  rw [(hasFDerivAt_spec mask (getScalarE scores)).fderiv,
+    backward_eq_derivative (center := center)]
   apply ext_inner_left ℝ
   intro dx
   rw [ContinuousLinearMap.adjoint_inner_right]

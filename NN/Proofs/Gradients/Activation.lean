@@ -134,6 +134,20 @@ theorem cosh_deriv_correct (x : ℝ) :
   change HasDerivAt (fun y : ℝ => Real.cosh y) (Real.sinh x) x
   exact Real.hasDerivAt_cosh x
 
+/-- The compensated exponential difference agrees with `exp x - 1` over the reals. -/
+theorem expm1_spec_eq_exp_sub_one (x : ℝ) :
+    Activation.Math.expm1Spec x = Real.exp x - 1 := by
+  simp only [Activation.Math.expm1Spec, Context.expm1, TorchLean.Numeric.expm1,
+    MathFunctions.exp, MathFunctions.log]
+  split_ifs with hnear h₁ h₂
+  · have hx : x = 0 := by
+      simpa only [Real.log_exp, Real.log_one] using congrArg Real.log (beq_iff_eq.mp h₁)
+    simp [hx]
+  · exact (Real.exp_ne_zero x (beq_iff_eq.mp h₂)).elim
+  · have hx : x ≠ 0 := by intro h; simp [h] at h₁
+    simp [Real.log_exp, hx]
+  · rfl
+
 /--
 Correctness of the ELU derivative spec away from the kink at `0`.
 
@@ -145,6 +159,9 @@ theorem elu_deriv_correct (x α : ℝ) (h : x ≠ 0) :
     HasDerivAt (fun y : ℝ => Activation.Math.eluSpec y α)
       (Activation.Math.eluDerivSpec x α) x := by
   unfold Activation.Math.eluSpec Activation.Math.eluDerivSpec
+  have hexpm1 : (Context.expm1 : ℝ → ℝ) = fun y => Real.exp y - 1 :=
+    funext expm1_spec_eq_exp_sub_one
+  simp only [hexpm1]
   by_cases hx : 0 < x
   · simp only [ite_eq_left hx]
     apply (hasDerivAt_id' x).congr_of_eventuallyEq
@@ -165,14 +182,16 @@ theorem elu_deriv_correct (x α : ℝ) (h : x ≠ 0) :
     apply hscaled'.congr_of_eventuallyEq
     filter_upwards [Iio_mem_nhds hx'] with y hy
     have hy' : y < 0 := hy
-    simp [not_lt.mpr (le_of_lt hy')]
+    simp [not_lt.mpr (le_of_lt hy'), mathfunc_exp_eq_rexp]
 
 /-- Both evaluation branches of sigmoid define `(1 + exp (-x))⁻¹` over the reals.
 
 The negative branch multiplies numerator and denominator by `exp x`. This identity lets the
 calculus proofs use one smooth expression, including at the branch boundary `x = 0`. -/
 theorem sigmoid_eq_inv_exp (x : ℝ) : Activation.Math.sigmoidSpec x = (1 + Real.exp (-x))⁻¹ := by
-  simp only [Activation.Math.sigmoidSpec, mathfunc_exp_eq_rexp]
+  have unsupported : TorchLean.Numeric.QuotientArithmetic.supported (α := ℝ) = false := rfl
+  simp only [Activation.Math.sigmoidSpec, Context.sigmoid, TorchLean.Numeric.sigmoid,
+    unsupported, Bool.not_false, ↓reduceIte, mathfunc_exp_eq_rexp]
   split_ifs
   · exact one_div _
   · rw [Real.exp_neg]
@@ -203,6 +222,25 @@ theorem sigmoid_eq_exp_div (x : ℝ) :
   field_simp [hexp, hden]
   ring
 
+/-- The decaying-exponential slope is the usual real sigmoid derivative. -/
+theorem sigmoid_deriv_spec_eq (x : ℝ) : Activation.Math.sigmoidDerivSpec x =
+    Activation.Math.sigmoidSpec x * (1 - Activation.Math.sigmoidSpec x) := by
+  unfold Activation.Math.sigmoidDerivSpec TorchLean.Numeric.sigmoidDeriv
+  have unsupported : TorchLean.Numeric.QuotientArithmetic.supported (α := ℝ) = false := rfl
+  simp only [TorchLean.Numeric.Internal.applySlope, unsupported, Bool.false_and, Bool.not_false,
+    Bool.false_eq_true, ↓reduceIte]
+  by_cases hx : x > 0
+  · rw [ite_eq_left hx, sigmoid_eq_inv_exp]
+    simp only [MathFunctions.exp]
+    have hden : (1 : ℝ) + Real.exp (-x) ≠ 0 := by positivity
+    field_simp
+    ring
+  · rw [ite_eq_right hx, sigmoid_eq_exp_div]
+    simp only [MathFunctions.exp]
+    have hden : (1 : ℝ) + Real.exp x ≠ 0 := by positivity
+    field_simp
+    ring
+
 /--
 Correctness of the sigmoid derivative spec.
 
@@ -212,7 +250,7 @@ theorem sigmoid_deriv_correct (x : ℝ) :
   HasDerivAt Activation.Math.sigmoidSpec (Activation.Math.sigmoidDerivSpec x) x := by
   have hs : (Activation.Math.sigmoidSpec : ℝ → ℝ) = Real.sigmoid :=
     funext fun y => by rw [sigmoid_eq_inv_exp, Real.sigmoid_def]
-  simpa only [Activation.Math.sigmoidDerivSpec, hs] using Real.hasDerivAt_sigmoid x
+  simpa only [sigmoid_deriv_spec_eq, hs] using Real.hasDerivAt_sigmoid x
 
 /-- Differentiating `σ(x)(1 - σ(x))` gives `σ'(x)(1 - 2σ(x))`.
 
@@ -236,10 +274,10 @@ theorem sigmoid_deriv_spec_deriv_correct (x : ℝ) :
           Activation.Math.sigmoidSpec x * -Activation.Math.sigmoidDerivSpec x =
         Activation.Math.sigmoidDerivSpec x * (1 - 2 * Activation.Math.sigmoidSpec x) := by
     ring
-  exact hproduct.congr_deriv hderiv
+  simpa only [← sigmoid_deriv_spec_eq] using hproduct.congr_deriv hderiv
 
-/-- Over the reals the logistic formula `exp x / (exp x + 1)` is the sigmoid; the two specs differ
-only in the order of the summands in the denominator. -/
+/-- Over the reals the logistic formula `exp x / (exp x + 1)` is the sigmoid, despite their
+different floating-point evaluation schedules. -/
 theorem logisticSpec_eq_sigmoidSpec (x : ℝ) :
     Activation.Math.logisticSpec x = Activation.Math.sigmoidSpec x := by
   unfold Activation.Math.logisticSpec
@@ -251,8 +289,8 @@ Correctness of the derivative spec for `Activation.Math.logisticSpec`.
 This is the scalar logistic formula `exp x / (exp x + 1)`. It is not named
 `softmax`: a one-entry softmax is always `1`, while TorchLean's actual axis-normalizing softmax is
 the tensor-level `Activation.softmaxSpec` in `NN/Spec/Layers/Activation.lean`. Over the reals it
-is the sigmoid (`logisticSpec_eq_sigmoidSpec`), and `logisticDerivSpec` is the same output-form
-expression as `sigmoidDerivSpec`, so the derivative is inherited from `sigmoid_deriv_correct`.
+is the sigmoid (`logisticSpec_eq_sigmoidSpec`). Its output-form derivative equals the input-based
+sigmoid slope by `sigmoid_deriv_spec_eq`, so correctness follows from `sigmoid_deriv_correct`.
 -/
 theorem logistic_deriv_correct (x : ℝ) :
     HasDerivAt Activation.Math.logisticSpec (Activation.Math.logisticDerivSpec x) x := by
@@ -260,6 +298,7 @@ theorem logistic_deriv_correct (x : ℝ) :
     funext logisticSpec_eq_sigmoidSpec
   unfold Activation.Math.logisticDerivSpec
   rw [hfun]
+  rw [← sigmoid_deriv_spec_eq]
   exact sigmoid_deriv_correct x
 
 /-- Real tanh is smooth at every order because its cosh denominator never vanishes. -/
@@ -277,6 +316,29 @@ theorem tanh_exp_eq (x : ℝ) :
   rw [Real.tanh_eq_sinh_div_cosh, Real.sinh_eq, Real.cosh_eq,
     div_div_div_cancel_right₀ (two_ne_zero : (2 : ℝ) ≠ 0)]
 
+/-- Squaring the scaled reciprocal cosh preserves the exact real tanh derivative. -/
+theorem tanh_deriv_spec_eq (x : ℝ) :
+    Activation.Math.tanhDerivSpec x = 1 - Real.tanh x * Real.tanh x := by
+  unfold Activation.Math.tanhDerivSpec TorchLean.Numeric.tanhDeriv
+  have unsupported : TorchLean.Numeric.QuotientArithmetic.supported (α := ℝ) = false := rfl
+  simp only [TorchLean.Numeric.Internal.applySlope, unsupported, Bool.false_and, Bool.not_false,
+    Bool.false_eq_true, ↓reduceIte]
+  have he : Real.exp x ≠ 0 := Real.exp_ne_zero x
+  have hn : Real.exp (-x) ≠ 0 := Real.exp_ne_zero (-x)
+  have hd : Real.exp x + Real.exp (-x) ≠ 0 := by positivity
+  have hdn : (1 : ℝ) + Real.exp (-x) * Real.exp (-x) ≠ 0 := by positivity
+  have hdp : (1 : ℝ) + Real.exp x * Real.exp x ≠ 0 := by positivity
+  rw [tanh_exp_eq]
+  split_ifs
+  · simp only [MathFunctions.exp]
+    rw [Real.exp_neg]
+    field_simp
+    ring
+  · simp only [MathFunctions.exp]
+    rw [Real.exp_neg]
+    field_simp
+    ring
+
 /--
 Correctness of the tanh derivative spec.
 
@@ -293,8 +355,7 @@ theorem tanh_deriv_correct (x : ℝ) :
   have hderiv :
       (Real.cosh x * Real.cosh x - Real.sinh x * Real.sinh x) / Real.cosh x ^ 2 =
         Activation.Math.tanhDerivSpec x := by
-    unfold Activation.Math.tanhDerivSpec
-    rw [mathfunc_tanh_eq_rtanh, Real.tanh_eq_sinh_div_cosh]
+    rw [tanh_deriv_spec_eq, Real.tanh_eq_sinh_div_cosh]
     field_simp
   rw [hfun, ← hderiv]
   exact (Real.hasDerivAt_sinh x).div (Real.hasDerivAt_cosh x) hcosh
@@ -303,7 +364,7 @@ theorem tanh_deriv_correct (x : ℝ) :
 theorem _root_.HasDerivAt.tanh {f : ℝ → ℝ} {f' x : ℝ} (hf : HasDerivAt f f' x) :
     HasDerivAt (fun y => Real.tanh (f y))
       ((1 - Real.tanh (f x) * Real.tanh (f x)) * f') x := by
-  simpa only [Function.comp_def, Activation.Math.tanhSpec, Activation.Math.tanhDerivSpec,
+  simpa only [Function.comp_def, Activation.Math.tanhSpec, tanh_deriv_spec_eq,
     Proofs.mathfunc_tanh_eq_rtanh] using (Proofs.tanh_deriv_correct (f x)).comp x hf
 
 /--
@@ -316,6 +377,17 @@ the product rule for
 theorem gelu_deriv_correct (x : ℝ) :
     HasDerivAt Activation.Math.geluSpec (Activation.Math.geluDerivSpec x) x := by
   unfold Activation.Math.geluSpec Activation.Math.geluDerivSpec
+  have hgate (a : ℝ) : Activation.Math.sigmoidSpec (a + a) =
+      (1 + MathFunctions.tanh a) / ((1 : ℝ) + 1) := by
+    rw [sigmoid_eq_exp_div, Real.exp_add, mathfunc_tanh_eq_rtanh,
+      tanh_exp_eq, Real.exp_neg]
+    have he := Real.exp_ne_zero a
+    have hd : (1 : ℝ) + Real.exp a * Real.exp a ≠ 0 := by positivity
+    field_simp
+    ring
+  have hscale (a : ℝ) : ((1 : ℝ) + 1) * ((1 + a) / ((1 : ℝ) + 1)) = 1 + a := by
+    ring
+  simp_rw [hgate, hscale]
   let two : ℝ := (1 : ℝ) + (1 : ℝ)
   let three : ℝ := (1 : ℝ) + (1 : ℝ) + (1 : ℝ)
   let pi : ℝ := MathFunctions.pi
@@ -323,7 +395,7 @@ theorem gelu_deriv_correct (x : ℝ) :
   let coeff : ℝ := Activation.Math.geluTanhCoeff
   let u : ℝ → ℝ := fun y => sqrt_two_over_pi * (y + coeff * y * y * y)
   let tanh_term : ℝ := MathFunctions.tanh (u x)
-  let sech_term : ℝ := (1 : ℝ) - tanh_term * tanh_term
+  let sech_term : ℝ := Activation.Math.tanhDerivSpec (u x)
   let inner_deriv : ℝ := sqrt_two_over_pi * ((1 : ℝ) + three * coeff * x * x)
   have hid : HasDerivAt (fun y : ℝ => y) (1 : ℝ) x := hasDerivAt_id' x
 
@@ -356,7 +428,7 @@ theorem gelu_deriv_correct (x : ℝ) :
   have htanh : HasDerivAt (fun y : ℝ => Activation.Math.tanhSpec (u y))
       (sech_term * inner_deriv) x := by
     have h := htanh0.comp x hu
-    simpa [Function.comp_def, Activation.Math.tanhDerivSpec, sech_term, tanh_term] using h
+    simpa [Function.comp_def, sech_term] using h
   have hA : HasDerivAt (fun y : ℝ => (1 : ℝ) + Activation.Math.tanhSpec (u y))
       (sech_term * inner_deriv) x := by
     simpa using htanh.const_add (1 : ℝ)
@@ -395,7 +467,8 @@ theorem gelu_deriv_correct (x : ℝ) :
 /-- The compensated formula agrees with `log(1 + x)` over the reals. -/
 theorem log1p_spec_eq_log_one_add (x : ℝ) :
     Activation.Math.log1pSpec x = Real.log (1 + x) := by
-  simp only [Activation.Math.log1pSpec, MathFunctions.log]
+  simp only [Activation.Math.log1pSpec, Context.log1p, TorchLean.Numeric.log1p,
+    MathFunctions.log]
   split_ifs with h₁ h₂
   · have hzero : x = 0 := by have := beq_iff_eq.mp h₁; linarith
     simp [hzero]
@@ -459,32 +532,51 @@ theorem softplus_deriv_spec_deriv_correct (x : ℝ) :
     HasDerivAt Activation.Math.softplusDerivSpec (Activation.Math.sigmoidDerivSpec x) x := by
   exact sigmoid_deriv_correct x
 
-/--
-Correctness of the SiLU derivative spec.
+/-- Splitting the negative exponential does not change the real SiLU function. -/
+theorem swish_spec_eq_mul_sigmoid (x : ℝ) :
+    Activation.Math.swishSpec x = x * Activation.Math.sigmoidSpec x := by
+  unfold Activation.Math.swishSpec
+  split_ifs
+  · rfl
+  · have hr : Real.exp (x / 2) * Real.exp (x / 2) = Real.exp x := by
+      rw [← Real.exp_add]
+      congr 1
+      ring
+    simp only [MathFunctions.exp]
+    rw [mul_assoc x, hr, sigmoid_eq_exp_div]
+    ring
+
+/-- The split-exponential slope is the real product-rule derivative of SiLU. -/
+theorem swish_deriv_spec_eq (x : ℝ) :
+    Activation.Math.swishDerivSpec x =
+      Activation.Math.sigmoidSpec x + x * Activation.Math.sigmoidDerivSpec x := by
+  unfold Activation.Math.swishDerivSpec
+  split_ifs
+  · rfl
+  · have hr : Real.exp (x / 2) * Real.exp (x / 2) = Real.exp x := by
+      rw [← Real.exp_add]
+      congr 1
+      ring
+    simp only [MathFunctions.exp]
+    rw [mul_assoc (x + _), hr, sigmoid_deriv_spec_eq, sigmoid_eq_exp_div]
+    have hd : (1 : ℝ) + Real.exp x ≠ 0 := by positivity
+    field_simp
+    ring
+
+/-- Correctness of the SiLU derivative spec.
 
 `silu(x) = x * sigmoid(x)`, so the proof is just the product rule plus the already-proved
 sigmoid derivative. This is the scalar calculus fact used by the tensor-level VJP proof bridge.
 -/
 theorem silu_deriv_correct (x : ℝ) :
     HasDerivAt Activation.Math.swishSpec (Activation.Math.swishDerivSpec x) x := by
-  unfold Activation.Math.swishSpec Activation.Math.swishDerivSpec
+  rw [show Activation.Math.swishSpec = (fun y : ℝ => y * Activation.Math.sigmoidSpec y)
+    from funext swish_spec_eq_mul_sigmoid, swish_deriv_spec_eq]
   have hid : HasDerivAt (fun y : ℝ => y) (1 : ℝ) x := hasDerivAt_id' x
-  have hsig : HasDerivAt Activation.Math.sigmoidSpec
-      (Activation.Math.sigmoidDerivSpec x) x :=
-    sigmoid_deriv_correct x
-  have hprod := hid.mul hsig
-  have hprod' :
-      HasDerivAt (fun y : ℝ => y * Activation.Math.sigmoidSpec y)
-        (1 * Activation.Math.sigmoidSpec x + x * Activation.Math.sigmoidDerivSpec x) x := by
-    change HasDerivAt ((fun y : ℝ => y) * Activation.Math.sigmoidSpec)
-      (1 * Activation.Math.sigmoidSpec x + x * Activation.Math.sigmoidDerivSpec x) x
-    exact hprod
-  have hderiv :
-      1 * Activation.Math.sigmoidSpec x + x * Activation.Math.sigmoidDerivSpec x =
-        (let s := Activation.Math.sigmoidSpec x; s + x * s * (1 - s)) := by
-    simp [Activation.Math.sigmoidDerivSpec]
-    ring
-  exact hprod'.congr_deriv hderiv
+  have hprod : HasDerivAt (fun y : ℝ => y * Activation.Math.sigmoidSpec y)
+      (1 * Activation.Math.sigmoidSpec x + x * Activation.Math.sigmoidDerivSpec x) x :=
+    hid.mul (sigmoid_deriv_correct x)
+  simpa only [one_mul] using hprod
 
 /--
 Correctness of the `safeLog` derivative spec (a smooth log surrogate).

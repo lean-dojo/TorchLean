@@ -41,6 +41,10 @@ spec layer.
 `GRUResetAfterSpec` applies it to the recurrent affine output and retains both bias vectors.
 Use that second specification for PyTorch parameters; the two candidate equations are different
 functions for general recurrent matrices, so changing tensor layout cannot convert between them.
+
+Both conventions evaluate the complementary update gate as `sigmoid (-preUpdate)`, rather than
+subtracting its rounded output from one. The candidate and its gradient can remain nonzero even
+after the update gate itself has rounded to one.
 -/
 
 @[expose] public section
@@ -117,10 +121,12 @@ def gruResetAfterCellSpec {inputSize hiddenSize : Nat}
       simpa [Nat.add_mul] using
         Nat.mul_le_mul_right hiddenSize (Nat.succ_le_of_lt index.isLt))
   let reset := sigmoidSpec (addSpec (gate inputGates 0) (gate hiddenGates 0))
-  let update := sigmoidSpec (addSpec (gate inputGates 1) (gate hiddenGates 1))
+  let updatePre := addSpec (gate inputGates 1) (gate hiddenGates 1)
+  let update := sigmoidSpec updatePre
+  let complement := sigmoidSpec (Tensor.map (fun x => -x) updatePre)
   let candidate := tanhSpec (addSpec (gate inputGates 2) (mulSpec reset (gate hiddenGates 2)))
   addSpec
-    (mulSpec (subSpec (Tensor.full [hiddenSize] 1) update) candidate)
+    (mulSpec complement candidate)
     (mulSpec update prevHidden)
 
 /-- Unroll the reset-after cell from the supplied initial state, returning every hidden state. -/
@@ -203,8 +209,8 @@ def gruCellSpecWithIntermediates {inputSize hiddenSize : Nat}
     gru.resetBias)
 
   -- Update gate: z_t = σ(W_z @ [x_t; h_{t-1}] + b_z)
-  let updateGate := sigmoidSpec (addSpec (matVecMulSpec gru.updateWeight concat)
-    gru.updateBias)
+  let updatePre := addSpec (matVecMulSpec gru.updateWeight concat) gru.updateBias
+  let updateGate := sigmoidSpec updatePre
 
   -- Reset hidden state: h_reset = r_t ⊙ h_{t-1}
   let reset_hidden := mulSpec resetGate prevHidden
@@ -217,7 +223,8 @@ def gruCellSpecWithIntermediates {inputSize hiddenSize : Nat}
     gru.candidateBias)
 
   -- Final hidden state: h_t = (1 - z_t) ⊙ n_t + z_t ⊙ h_{t-1}.
-  let oneMinusUpdate := subSpec (Tensor.full (.dim hiddenSize .scalar) 1) updateGate
+  -- The complementary gate can remain representable after the update gate rounds to one.
+  let oneMinusUpdate := sigmoidSpec (Tensor.map (fun x => -x) updatePre)
   let newContribution := mulSpec oneMinusUpdate newCandidate
   let hiddenContribution := mulSpec updateGate prevHidden
   let newHidden := addSpec newContribution hiddenContribution
@@ -350,17 +357,18 @@ def gruCellBackwardSpec {inputSize hiddenSize : Nat}
   --   d n      = d h ⊙ (1 - z)
   --   d z      = d h ⊙ (h_prev - n)
   --   d h_prev (direct) = d h ⊙ z
-  let one_minus_z := subSpec (Tensor.full (.dim hiddenSize .scalar) 1) updateGate
+  let preUpdate := addSpec (matVecMulSpec gru.updateWeight concat) gru.updateBias
+  let one_minus_z := sigmoidSpec (Tensor.map (fun x => -x) preUpdate)
   let dHtilde := mulSpec gradOutput one_minus_z
   let dZ := mulSpec gradOutput (subSpec prevHidden newCandidate)
   let dPrevDirect := mulSpec gradOutput updateGate
 
-  -- tanh preactivation derivative using output newCandidate = tanh(pre_h)
-  let dPreH := mulSpec dHtilde (Activation.tanhOutputDerivSpec newCandidate)
-
   -- h_reset = r ⊙ h_prev, resetConcat = [x; h_reset]
   let reset_hidden := mulSpec resetGate prevHidden
   let resetConcat := concatAxisSpec .scalar input reset_hidden
+  -- Gate outputs alone lose the tails of their derivatives after rounding to zero or one.
+  let preCandidate := addSpec (matVecMulSpec gru.candidateWeight resetConcat) gru.candidateBias
+  let dPreH := Activation.tanhBackwardSpec preCandidate dHtilde
 
   -- New gate grads.
   let dNewW := outerProductSpec dPreH resetConcat
@@ -375,7 +383,8 @@ def gruCellBackwardSpec {inputSize hiddenSize : Nat}
   let dPrevFromReset := mulSpec dHreset resetGate
 
   -- Reset gate grads: r = sigmoid(pre_r)
-  let dPreR := mulSpec dRFromReset (Activation.sigmoidOutputDerivSpec resetGate)
+  let preReset := addSpec (matVecMulSpec gru.resetWeight concat) gru.resetBias
+  let dPreR := Activation.sigmoidBackwardSpec preReset dRFromReset
   let dResetW := outerProductSpec dPreR concat
   let dConcatFromR := vecMatMulSpec dPreR gru.resetWeight
   let dXFromR := sliceRangeSpec dConcatFromR 0 inputSize (by
@@ -384,7 +393,7 @@ def gruCellBackwardSpec {inputSize hiddenSize : Nat}
     simp)
 
   -- Update gate grads: z = sigmoid(pre_z)
-  let dPreZ := mulSpec dZ (Activation.sigmoidOutputDerivSpec updateGate)
+  let dPreZ := Activation.sigmoidBackwardSpec preUpdate dZ
   let dUpdateW := outerProductSpec dPreZ concat
   let dConcatFromZ := vecMatMulSpec dPreZ gru.updateWeight
   let dXFromZ := sliceRangeSpec dConcatFromZ 0 inputSize (by

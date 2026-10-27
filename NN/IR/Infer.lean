@@ -87,6 +87,14 @@ def expectSameShapeParents (tag : String) (arity : Nat) (parents : Array Shape) 
       else .error s!"{tag}: expected {arity} parents of one shape, got {repr parents}"
   | none => .error s!"{tag}: expected {arity} parents"
 
+/-- Read three parents without discarding or inventing an operand. -/
+def expectTernaryParents {α : Type} (tag : String) (parents : Array α) :
+    Except String (α × α × α) :=
+  if h : parents.size = 3 then
+    .ok (parents[0]'(by simp [h]), parents[1]'(by simp [h]), parents[2]'(by simp [h]))
+  else
+    .error s!"{tag}: expected 3 parents"
+
 /--
 Infer the output shape of a node from its kind + parent shapes.
 
@@ -150,6 +158,11 @@ def nodeOutShape (n : Node) (parentShapes : Array Shape) : Except String Shape :
   | .matmul =>
       let (a, b) ← expectBinaryParents "matmul" parentShapes
       OpContracts.inferMatmulOutShape a b
+  | .scaledMatmul =>
+      let (a, b, scale) ← expectTernaryParents "scaled_matmul" parentShapes
+      unless scale == [] do
+        throw "scaled_matmul: third operand must be a scalar"
+      OpContracts.inferMatmulOutShape a b
   | .linear =>
       -- `OpKind.linear` does not record dimensions. PyTorch's `F.linear` acts on the last
       -- dimension and preserves any leading batch/sequence dimensions, so the shape checker
@@ -173,7 +186,7 @@ def nodeOutShape (n : Node) (parentShapes : Array Shape) : Except String Shape :
   | .batchNormEval channelAxis channels =>
       OpContracts.inferBatchNormEvalOutShape channelAxis channels
         (← expectUnaryParent "batch_norm_eval" parentShapes)
-  | .relu | .tanh | .sigmoid | .softplus | .exp | .log | .inv | .sin | .cos =>
+  | .relu | .tanh | .sigmoid | .silu | .softplus | .exp | .log | .inv | .sin | .cos =>
       expectUnaryParent n.kind.tag parentShapes
   | .safeLog =>
       let (s, epsilonShape) ← expectBinaryParents "safe_log" parentShapes

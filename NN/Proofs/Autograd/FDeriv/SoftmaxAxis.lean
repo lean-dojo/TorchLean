@@ -188,12 +188,15 @@ theorem softmaxInnermostBackwardSpec_apply {s : Shape}
           simpa only [getScalarE_ofLp, Tensor.getScalar_eq_apply] using
             congrArg (fun v : Vec n => v j) (getScalarE_softmaxBackwardSpec x dx)
       | dim m s =>
-          rw [rowVector_unstack, rowVector_unstack]
-          change Tensor.dim
-            (fun i => Activation.Internal.softmaxInnermostBackwardSpec
-              (x.unstack i) (dx.unstack i)) p = _
-          simp only [Tensor.dim, TorchLean.Tensor.Internal.Rep.stack_apply]
-          exact ih (x.unstack p.1) (dx.unstack p.1) p.2
+          cases n with
+          | zero => exact p.1.elim0
+          | succ n =>
+              rw [rowVector_unstack, rowVector_unstack]
+              change Tensor.dim
+                (fun i => Activation.Internal.softmaxInnermostBackwardSpec
+                  (x.unstack i) (dx.unstack i)) p = _
+              simp only [Tensor.dim, TorchLean.Tensor.Internal.Rep.stack_apply]
+              exact ih (x.unstack p.1) (dx.unstack p.1) p.2
 
 /-- Applying the analytic derivative computes the actual specification's backward formula. -/
 theorem innermostDeriv_apply {s : Shape} (x dx : Shape.Coord s → ℝ) :
@@ -236,16 +239,19 @@ theorem dot_softmaxInnermostBackwardSpec {s : Shape} (x dx δ : Tensor ℝ s) :
             getScalarE_softmaxBackwardSpec, getScalarE_softmaxBackwardSpec]
           exact inner_softmaxJvp_comm (getScalarE x) (getScalarE dx) (getScalarE δ)
       | dim m s =>
-          change Spec.dot
-            (Tensor.dim fun i =>
-              Activation.Internal.softmaxInnermostBackwardSpec (x.unstack i) (dx.unstack i))
-            δ = Spec.dot dx
-              (Tensor.dim fun i =>
-                Activation.Internal.softmaxInnermostBackwardSpec (x.unstack i) (δ.unstack i))
-          simp only [dot_eq_sum_unstack, Tensor.unstack_dim]
-          refine Finset.sum_congr rfl fun i _ => ?_
-          simpa only [dot_eq_sum_unstack] using
-            ih (x.unstack i) (dx.unstack i) (δ.unstack i)
+          cases n with
+          | zero => simp [dot_eq_sum_unstack]
+          | succ n =>
+              change Spec.dot
+                (Tensor.dim fun i =>
+                  Activation.Internal.softmaxInnermostBackwardSpec (x.unstack i) (dx.unstack i))
+                δ = Spec.dot dx
+                  (Tensor.dim fun i =>
+                    Activation.Internal.softmaxInnermostBackwardSpec (x.unstack i) (δ.unstack i))
+              simp only [dot_eq_sum_unstack, Tensor.unstack_dim]
+              refine Finset.sum_congr rfl fun i _ => ?_
+              simpa only [dot_eq_sum_unstack] using
+                ih (x.unstack i) (dx.unstack i) (δ.unstack i)
 
 end
 

@@ -29,14 +29,15 @@ theorem sampleNat_lt (key : UInt64) (linearIndex : Nat) {denom : Nat} (hdenom : 
   Nat.mod_lt _ hdenom
 
 /-- Converting a natural draw to a real quotient gives a nonnegative value. -/
-theorem sampleUnit_nonneg (u denom : Nat) : 0 ≤ sampleUnit (α := ℝ) u denom :=
-  div_nonneg (Nat.cast_nonneg _) (Nat.cast_nonneg _)
+theorem sampleUnit_nonneg (u denom : Nat) : 0 ≤ sampleUnit (α := ℝ) u denom := by
+  simpa [sampleUnit, Rat.cast_div] using
+    (div_nonneg (Nat.cast_nonneg u) (Nat.cast_nonneg denom) : 0 ≤ (u : ℝ) / (denom : ℝ))
 
 /-- A valid draw is strictly below one when the quotient is evaluated in the reals. -/
 theorem sampleUnit_lt_one {u denom : Nat} (hu : u < denom) :
     sampleUnit (α := ℝ) u denom < 1 := by
   have hdenom : (0 : ℝ) < denom := Nat.cast_pos.mpr (Nat.zero_lt_of_lt hu)
-  exact (div_lt_one hdenom).mpr (Nat.cast_lt.mpr hu)
+  simpa [sampleUnit, Rat.cast_div] using (div_lt_one hdenom).mpr (Nat.cast_lt.mpr hu)
 
 /-- Every branch of the source keep decision returns either zero or one. -/
 theorem keepBit_eq_zero_or_eq_one {α : Type} [Context α] (keepProb : α) (u denom : Nat) :

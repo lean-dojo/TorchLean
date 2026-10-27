@@ -28,12 +28,42 @@ open TorchLean TorchLean.Tensor
 
 namespace Tape
 
+/-- Record weighted logits cross-entropy and both pullbacks on the existing tape. -/
+def crossEntropy {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+    (axis : Nat) [Shape.AxisInBounds axis s]
+    (t : Tape (Spec.SomeTensor α)) (logitsId targetId : Nat) (mean : Bool := true) :
+    Result (Tape (Spec.SomeTensor α) × Nat) :=
+  binary (σ₁ := s) (σ₂ := s) (τ := Shape.scalar) t "cross_entropy" logitsId targetId
+    (fun logits target => Tensor.scalar (Spec.crossEntropyLogitsSpec axis logits target mean))
+    (fun logits target seed =>
+      (scaleSpec (Spec.crossEntropyLogitsDerivSpec axis logits target mean) seed.item,
+        Spec.CrossEntropy.targetGradient axis logits seed.item mean))
+
+/-- Cross-entropy from a fixed teacher's logits. The student uses the cancellation-resistant
+shared gradient; the teacher is a forward dependency, not a differentiable parent. -/
+def distill {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
+    (axis : Nat) [Shape.AxisInBounds axis s]
+    (t : Tape (Spec.SomeTensor α)) (studentId teacherId : Nat) :
+    Result (Tape (Spec.SomeTensor α) × Nat) := do
+  let student ← requireValue (α := α) (t := t) (s := s) studentId
+  let teacher ← requireValue (α := α) (t := t) (s := s) teacherId
+  let node : Node (Spec.SomeTensor α) :=
+    { name := some "distill"
+      value := Spec.SomeTensor.ofTensor (Tensor.scalar (Spec.distillSpec axis student teacher))
+      requiresGrad := (t.getNode? studentId).any (·.requiresGrad)
+      parents := #[studentId, teacherId]
+      backward := fun seed => do
+        let seed ← requireGrad (α := α) (τ := Shape.scalar) seed
+        let gradient := scaleSpec (Spec.distillDerivSpec axis student teacher) seed.item
+        pure #[(studentId, Spec.SomeTensor.ofTensor gradient)] }
+  pure (t.addNode node)
+
 /--
 Elementwise logistic sigmoid activation.
 
  This builds a tape node whose forward pass is `Activation.sigmoidSpec`, and whose backward pass
- multiplies the upstream gradient by `Activation.sigmoidDerivSpec` (i.e. `σ(x) * (1 - σ(x))`,
- pointwise).
+ applies `Activation.sigmoidBackwardSpec`. It uses the preactivation and retains the incoming
+ gradient when repairing a local slope that would round to zero on its own.
 
  PyTorch comparison: `torch.sigmoid` / `torch.nn.functional.sigmoid`.
  Reference: https://pytorch.org/docs/stable/generated/torch.sigmoid.html
@@ -43,15 +73,13 @@ Elementwise logistic sigmoid activation.
       × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "sigmoid" xId
     (forward := fun x => Activation.sigmoidSpec (α := α) x)
-    (backward := fun x dLdy =>
-      let dsig := Activation.sigmoidDerivSpec (α := α) x
-      mulSpec dsig dLdy)
+    (backward := Activation.sigmoidBackwardSpec)
 
 /--
  Elementwise hyperbolic tangent activation.
 
- Forward uses `Activation.tanhSpec`; backward uses `Activation.tanhDerivSpec` (pointwise
- derivative, usually `1 - tanh(x)^2`).
+ Forward uses `Activation.tanhSpec`; backward uses `Activation.tanhBackwardSpec`, retaining the
+ incoming gradient through the local slope's range repair.
 
  PyTorch comparison: `torch.tanh`.
  Reference: https://pytorch.org/docs/stable/generated/torch.tanh.html
@@ -61,9 +89,15 @@ Elementwise logistic sigmoid activation.
       × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "tanh" xId
     (forward := fun x => Activation.tanhSpec (α := α) x)
-    (backward := fun x dLdy =>
-      let dtanh := Activation.tanhDerivSpec (α := α) x
-      mulSpec dtanh dLdy)
+    (backward := Activation.tanhBackwardSpec)
+
+/-- Elementwise SiLU, using the shared split-exponential value and derivative specifications. -/
+@[inline] def silu {α : Type} [TorchLean.Storage α] [Context α]
+    {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) :
+    Result (Tape (Spec.SomeTensor α) × Nat) :=
+  unary (α := α) (t := t) (σ := s) (τ := s) "silu" xId
+    (forward := Activation.swishSpec)
+    (backward := fun x seed => mulSpec (Activation.swishDerivSpec x) seed)
 
 /--
 Elementwise tanh-approximate GELU.
@@ -101,9 +135,9 @@ without changing this tape-level rule.
 /--
 Stable log-softmax along the last axis.
 
-Unlike `log (softmax x)`, this uses the max-shifted
-`x - max(x) - log(sum(exp(x - max(x))))` formulation.  That matches the numerical contract of
-`torch.nn.functional.log_softmax` and is the right primitive for cross-entropy on logits.
+The shared specification separates one maximal exponential from the sum and uses a compensated
+`log1p` for the remaining tail. Backward retains the same tail through `expm1`, rather than
+subtracting a rounded unit probability from one. This is the primitive used by cross-entropy.
 -/
 @[inline] def logSoftmaxLast {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α) × Nat)

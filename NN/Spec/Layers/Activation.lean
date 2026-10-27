@@ -20,6 +20,10 @@ The formulas and conventions follow these references:
 
 - PyTorch activations: https://pytorch.org/docs/stable/nn.functional.html
 - PyTorch `torch.softmax`: https://pytorch.org/docs/stable/generated/torch.softmax.html
+- Blanchard, Higham and Higham, "Accurate Computation of the Log-Sum-Exp and Softmax Functions":
+  https://arxiv.org/abs/1909.03469
+- Barron, Gnanapragasam and Tschannen, "A Fix for Softmax and Cross-Entropy":
+  https://arxiv.org/abs/2610.31642
 - ReLU: Vinod Nair and Geoffrey Hinton,
   "Rectified Linear Units Improve Restricted Boltzmann Machines" (ICML 2010)
 - ELU: Djork-Arne Clevert et al.,
@@ -112,24 +116,17 @@ denominator can produce `NaN`, even when the sigmoid value has rounded to zero.
 PyTorch analogy: `torch.nn.functional.sigmoid` (or `torch.sigmoid`).
 -/
 def sigmoidSpec (x : α) : α :=
-  if x > 0 then
-    1 / (1 + MathFunctions.exp (-x))
-  else
-    let z := MathFunctions.exp x
-    z / (1 + z)
+  Context.sigmoid x
 
 /-- Derivative of sigmoid:
 
 $\operatorname{sigmoid}'(x)=\sigma(x)(1-\sigma(x))$.
 
-The sigmoid value uses the stable branch above, so negative tails retain their small positive
-derivatives until the exponential itself underflows. On the positive side, the derivative becomes
-zero once the sigmoid value rounds to one; this is the output-based derivative used by the graph
-VJP as well.
+We evaluate the equivalent exponential ratio directly, rather than subtracting a rounded sigmoid
+value from one. This retains representable derivatives on both tails.
 -/
 def sigmoidDerivSpec (x : α) : α :=
-  let s := sigmoidSpec x
-  s * (1 - s)
+  TorchLean.Numeric.sigmoidDeriv x
 
 /-- Hyperbolic tangent: `tanh(x)`.  PyTorch analogy: `torch.tanh`. -/
 def tanhSpec (x : α) : α :=
@@ -138,9 +135,11 @@ def tanhSpec (x : α) : α :=
 /-- Derivative of tanh:
 
 $\tanh'(x)=1-\tanh^2(x)$.
+
+The runtime squares a scaled reciprocal cosh instead of subtracting rounded squares from one.
 -/
 def tanhDerivSpec (x : α) : α :=
-  1 - ((MathFunctions.tanh x) * (MathFunctions.tanh x))
+  TorchLean.Numeric.tanhDeriv x
 
 /-- Leaky ReLU:
 
@@ -196,10 +195,12 @@ def logisticDerivSpec (x : α) : α :=
 $\operatorname{ELU}(x;\alpha)=x$ if $x>0$, else $\alpha(\exp(x)-1)$.
 
 PyTorch analogy: `torch.nn.functional.elu` with `alpha = α`.
+
+The negative branch uses the scalar context's compensated exponential difference, so small inputs
+do not disappear when `exp x` rounds to one. Differentiation carriers supply its chain rule.
 -/
-def eluSpec {α : Type} [Zero α] [One α] [LT α] [DecidableRel ((· > ·) : α → α → Prop)]
-  [MathFunctions α] [Sub α] [Mul α] (x : α) (alpha : α) : α :=
-  if x > 0 then x else alpha * (MathFunctions.exp x - 1)
+def eluSpec {α : Type} [Context α] (x : α) (alpha : α) : α :=
+  if x > 0 then x else alpha * Context.expm1 x
 
 /-- Derivative of ELU:
 
@@ -219,16 +220,20 @@ def geluTanhCoeff {α : Type} [RatCast α] : α :=
 /-- GELU (approximate): the common tanh-based approximation used in many Transformer codebases.
 
 PyTorch analogy: `torch.nn.functional.gelu(x, approximate="tanh")`. This is not PyTorch's default
-`nn.GELU()`, which uses the exact erf form; TorchLean has no erf primitive, so only the tanh
-approximation is specified.
+`nn.GELU()`, which uses the exact erf form. This activation selects the tanh approximation;
+the separate pointwise `erf` operation depends on the scalar context's supported operations.
+
+We evaluate the gate as `sigmoid (2 * inner)`, the same real function as `(1 + tanh inner) / 2`.
+This avoids cancelling the negative tail when tanh rounds to minus one; it is not a different
+approximation to the Gaussian CDF.
 -/
 def geluSpec {α : Type} [TorchLean.Storage α] [Context α] (x : α) : α :=
   let two : α := (1 : α) + (1 : α)
   let pi : α := MathFunctions.pi
   let sqrtTwoOverPi := MathFunctions.sqrt (two / pi)
   let coeff : α := geluTanhCoeff
-  let gate := ((1 : α) +
-    MathFunctions.tanh (sqrtTwoOverPi * (x + coeff * x * x * x))) / two
+  let inner := sqrtTwoOverPi * (x + coeff * x * x * x)
+  let gate := sigmoidSpec (inner + inner)
   x * gate
 
 /-- GELU derivative for the tanh-based approximation. -/
@@ -238,39 +243,55 @@ def geluDerivSpec {α : Type} [TorchLean.Storage α] [Context α] (x : α) : α 
   let pi : α := MathFunctions.pi
   let sqrtTwoOverPi := MathFunctions.sqrt (two / pi)
   let coeff : α := geluTanhCoeff
-  let tanhTerm := MathFunctions.tanh (sqrtTwoOverPi * (x + coeff * x * x * x))
-  let sechTerm := (1 : α) - tanhTerm * tanhTerm
+  let inner := sqrtTwoOverPi * (x + coeff * x * x * x)
+  let sechTerm := tanhDerivSpec inner
   let innerDeriv := sqrtTwoOverPi * ((1 : α) + three * coeff * x * x)
   let correction := if sechTerm == 0 then 0 else x * sechTerm * innerDeriv
-  ((1 : α) + tanhTerm + correction) / two
+  (two * sigmoidSpec (inner + inner) + correction) / two
 
 /-- Swish / SiLU:
 
 $\operatorname{swish}(x)=x\operatorname{sigmoid}(x)$.
 
 PyTorch analogy: `torch.nn.functional.silu`.
+
+On the negative branch, split the exponential and multiply by `x` before its second small
+factor. The product can remain representable after `exp x`, and hence sigmoid itself, underflows.
 -/
 def swishSpec (x : α) : α :=
-  x * sigmoidSpec x
+  if x > 0 then x * sigmoidSpec x
+  else
+    let r := MathFunctions.exp (x / 2)
+    ((x * r) * r) / (1 + r * r)
 
 /-- Derivative of Swish / SiLU.
 
-Written in terms of `sigmoid(x)` for the same reason as `sigmoidDerivSpec`: this is the form
-used by AD systems and is convenient to reuse in proofs.
+The negative branch groups `x + denominator` before multiplying the split exponential factors.
+Forming sigmoid and its slope separately could underflow both before multiplying by `x`.
 -/
 def swishDerivSpec (x : α) : α :=
-  let s := sigmoidSpec x
-  s + x * s * (1 - s)
+  if x > 0 then sigmoidSpec x + x * sigmoidDerivSpec x
+  else
+    let r := MathFunctions.exp (x / 2)
+    let denominator := 1 + r * r
+    (((x + denominator) * r) * r) / (denominator * denominator)
 
 /-- `log(1 + x)` with compensation for rounding in the addition.
 When `1 + x` rounds to one, return `x` rather than losing the small term. Equality, not order,
 selects this case so the same formula also works for complex scalars. This is not a
 correct-rounding guarantee for the backend's logarithm. -/
 def log1pSpec (x : α) : α :=
-  let shifted := 1 + x
-  if shifted == 1 then x
-  else if shifted == x then MathFunctions.log shifted
-  else MathFunctions.log shifted * (x / (shifted - 1))
+  Context.log1p x
+
+/-- `exp(x) - 1`, retaining small arguments when the exponential rounds to one.
+
+Near zero, the logarithmic correction accounts for rounding in `exp(x)`. Outside the unit
+neighborhood we use direct subtraction, avoiding a logarithm's branch ambiguity for complex
+scalars. The zero-exponential branch handles underflow. As with `log1pSpec`, accuracy still
+depends on the scalar implementation of `exp` and `log`.
+-/
+def expm1Spec (x : α) : α :=
+  Context.expm1 x
 
 /-- Softplus, evaluated without a large positive exponential:
 
@@ -362,17 +383,22 @@ def reluDerivSpec {α : Type} [TorchLean.Storage α] [Zero α] [One α] [LT α]
 def sigmoidDerivSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
   Tensor.map Activation.Math.sigmoidDerivSpec t
 
+/-- Apply sigmoid's pointwise pullback while retaining the incoming gradient in range repairs. -/
+def sigmoidBackwardSpec {s : Shape} (x seed : Tensor α s) : Tensor α s :=
+  map2Spec TorchLean.Numeric.sigmoidBackward x seed
+
 /--
 Derivative of sigmoid when the sigmoid output has already been computed.
 
-Recurrent layers save gate activations during the forward pass, so their backward specs should use
-this shared helper instead of re-defining `s * (1 - s)` locally.
+This output-only formula cannot recover a small slope once the activation has rounded to one.
+Use `sigmoidDerivSpec` on the preactivation when that value is available.
 -/
 def sigmoidOutputDerivSpec {α : Type} [TorchLean.Storage α] [One α] [Sub α] [Mul α]
     {s : Shape} (sigmoidOutput : Tensor α s) : Tensor α s :=
   mulSpec sigmoidOutput (subSpec (Tensor.full s 1) sigmoidOutput)
 
-/-- Derivative of tanh from its cached output, shared by recurrent gate backward passes. -/
+/-- Derivative of tanh from its cached output. At rounded endpoints this may lose a representable
+slope; `tanhDerivSpec` uses the preactivation instead. -/
 def tanhOutputDerivSpec {α : Type} [TorchLean.Storage α] [One α] [Sub α] [Mul α]
     {s : Shape} (tanhOutput : Tensor α s) : Tensor α s :=
   subSpec (Tensor.full s 1) (mulSpec tanhOutput tanhOutput)
@@ -380,6 +406,10 @@ def tanhOutputDerivSpec {α : Type} [TorchLean.Storage α] [One α] [Sub α] [Mu
 /-- Tensor-level tanh derivative (pointwise). -/
 def tanhDerivSpec {s : Shape} (t : Tensor α s) : Tensor α s :=
   Tensor.map Activation.Math.tanhDerivSpec t
+
+/-- Apply tanh's pointwise pullback without separately rounding away a recoverable local slope. -/
+def tanhBackwardSpec {s : Shape} (x seed : Tensor α s) : Tensor α s :=
+  map2Spec TorchLean.Numeric.tanhBackward x seed
 
 /-- Apply a parameter-free pointwise activation to a tensor. -/
 def Kind.applySpec {s : Shape} : Kind → Tensor α s → Tensor α s
@@ -423,6 +453,46 @@ def maxShiftedExpVecSpec {n : Nat}
     (t : Tensor α [Nat.succ n]) : Tensor α [Nat.succ n] :=
   expSpec (subSpec t (replicate (maxVecSpec t)))
 
+/-- Normalize finite weights without requiring their sum to fit in the output format.
+
+The ordinary left fold is retained unless it loses range or swallows a nonzero term. In that
+case, the complete sum and quotients are replayed over finite rational coefficient trees before
+rounding each output. This also retains derivatives carried by nested scalars. Nonfinite inputs
+and carriers without coefficient conversion keep the ordinary formula; a genuine zero sum is
+not repaired. Information lost while constructing the weights cannot be recovered here.
+-/
+def Internal.normalizeWeights {n : Nat} (values : Tensor α [n]) : Tensor α [n] :=
+  let ops := (inferInstance : Numeric.QuotientArithmetic α)
+  if !ops.supported then
+    divSpec values (replicate (Tensor.scalar (sumSpec values)))
+  else
+    let (denominator, stalled) := foldlSpec (fun (accumulator, stalled) value =>
+      let next := accumulator + value
+      (next, stalled || (value != 0 && next == accumulator))) (0, false) values
+    let ordinary := divSpec values (replicate (Tensor.scalar denominator))
+    let (_, flags) := ops.addWithFlags denominator 0
+    if !stalled && flags == 0 && denominator != 0 then ordinary
+    else
+      let repaired : Option (Tensor α [n]) := do
+        let zero ← ops.encode (0 : α)
+        let total ← foldlSpec (fun accumulated value => do
+          let total ← accumulated
+          let term ← ops.encode value
+          pure (Numeric.QuotientCoefficients.add total term)) (some zero) values
+        if total.primal == 0 then none
+        else
+          pure (Tensor.ofFn fun i =>
+            let original := ordinary.getScalar i
+            match ops.encode (values.getScalar i) with
+            | none => original
+            | some value =>
+                let coefficients := Numeric.QuotientCoefficients.div value total
+                let candidate := (ops.decode coefficients).getD original
+                if coefficients.primal == 0 && original == 0 then
+                  ops.copyPrimal original candidate
+                else candidate)
+      repaired.getD ordinary
+
 /-- Softmax on a length-`n` vector.
 
 This is the "real" softmax, not the scalar logistic helper in `Activation.Math.logisticSpec`.
@@ -431,16 +501,15 @@ Numerical stability:
 
 We implement the standard stabilized form
 $\operatorname{softmax}(x)_i=\exp(x_i-m)/\sum_j\exp(x_j-m)$, where
-$m=\max_i x_i$. Subtracting the max avoids overflow in typical floating-point backends, and it is
-also a nice canonical form to reference in proofs.
+$m=\max_i x_i$. Subtracting the maximum bounds the exponentials by one. The shared normalizer
+also handles an overflowing or stagnating denominator when finite coefficient conversion is
+available; shifting alone does not protect that reduction in low precision.
 -/
 def softmaxVecSpec {n : Nat} (t : Tensor α [n]) : Tensor α [n] :=
   match n with
   | 0 => t
   | Nat.succ _ =>
-      let ex := maxShiftedExpVecSpec t
-      let denom : α := sumSpec ex
-      divSpec ex (replicate (Tensor.scalar denom))
+      Internal.normalizeWeights (maxShiftedExpVecSpec t)
 
 /-- Softmax along the last axis (recurses over outer dimensions).
 
@@ -465,6 +534,74 @@ def Internal.softmaxInnermostSpec : {s : Shape} → Tensor α s → Tensor α s
     Tensor.dim (fun i => softmaxVecSpec (Tensor.unstack tensor i)) by rfl]
   simp
 
+/-- Form a centered softmax pullback from finite, unrounded gradient coefficients.
+
+Attention can supply the original contraction instead of encoding an already overflowed tensor.
+The caller retains its ordinary result if the original inputs cannot be encoded. -/
+@[noinline] def Internal.softmaxPullbackCoefficients? {n : Nat}
+    (weights : Tensor α [n])
+    (gradient : Fin n →
+      Option (Numeric.QuotientCoefficients (Numeric.QuotientArithmetic.depth α)))
+    (origin : Option (Numeric.QuotientCoefficients (Numeric.QuotientArithmetic.depth α))) :
+    Option (Fin n → Option
+      (Numeric.QuotientCoefficients (Numeric.QuotientArithmetic.depth α))) := do
+  let ops := (inferInstance : Numeric.QuotientArithmetic α)
+  let origin ← origin
+  let zero ← ops.encode (0 : α)
+  let total ← (List.finRange n).foldl (fun accumulated i => do
+    let total ← accumulated
+    let weight ← ops.encode (weights.getScalar i)
+    let upstream ← gradient i
+    pure (Numeric.QuotientCoefficients.add total
+      (Numeric.QuotientCoefficients.mul
+        (Numeric.QuotientCoefficients.sub upstream origin) weight))) (some zero)
+  pure fun i => do
+    let weight ← ops.encode (weights.getScalar i)
+    let upstream ← gradient i
+    let difference := Numeric.QuotientCoefficients.sub
+      (Numeric.QuotientCoefficients.sub upstream origin) total
+    pure (Numeric.QuotientCoefficients.mul weight difference)
+
+/-- Decode a centered softmax pullback only after combining all finite coefficients. -/
+@[noinline] def Internal.replaySoftmaxPullback? {n : Nat}
+    (weights ordinary : Tensor α [n])
+    (gradient : Fin n →
+      Option (Numeric.QuotientCoefficients (Numeric.QuotientArithmetic.depth α)))
+    (origin : Option (Numeric.QuotientCoefficients (Numeric.QuotientArithmetic.depth α))) :
+    Option (Tensor α [n]) := do
+  let ops := (inferInstance : Numeric.QuotientArithmetic α)
+  let result ← Internal.softmaxPullbackCoefficients? weights gradient origin
+  pure (Tensor.ofFn fun i =>
+    match result i with
+    | some coefficients =>
+        let original := ordinary.getScalar i
+        let candidate := (ops.decode coefficients).getD original
+        if coefficients.primal == 0 && original == 0 then
+          ops.copyPrimal original candidate
+        else candidate
+    | none => ordinary.getScalar i)
+
+/-- Apply a weighted, centered softmax Jacobian to one row.
+
+Finite input coefficients are replayed only when the ordinary result loses range. In particular,
+the difference of two finite incoming gradients may overflow even when every final component
+fits. Replaying the whole contraction avoids both that intermediate and spurious `0 * ∞` at
+blocked weights. Nonfinite inputs and unsupported carriers retain the ordinary formula.
+-/
+def Internal.softmaxPullback {n : Nat} (weights gradient : Tensor α [n])
+    (anchor : α) : Tensor α [n] :=
+  let centered := subSpec gradient (replicate (Tensor.scalar anchor))
+  let mean := sumSpec (mulSpec centered weights)
+  let ordinary := mulSpec weights (subSpec centered (replicate (Tensor.scalar mean)))
+  let ops := (inferInstance : Numeric.QuotientArithmetic α)
+  if !ops.supported then ordinary
+  else if !(List.finRange n).any (fun i =>
+      let (_, flags) := ops.addWithFlags (ordinary.getScalar i) 0
+      flags != 0) then ordinary
+  else
+    (Internal.replaySoftmaxPullback? weights ordinary
+      (fun i => ops.encode (gradient.getScalar i)) (ops.encode anchor)).getD ordinary
+
 /-- Backward/VJP for last-axis softmax.
 
 If $y=\operatorname{softmax}(x)$ and we are given an upstream gradient $\partial L/\partial y$,
@@ -478,15 +615,19 @@ $$
 \right).
 $$
 
-This is the standard Jacobian-vector product for softmax, written in a way that avoids materializing
-the full `n×n` Jacobian.
+Before taking the weighted mean, subtract the upstream value at a maximal logit from every
+upstream coordinate. This leaves the real VJP unchanged, avoids materializing a Jacobian, and
+retains small derivatives when the dominant probability has rounded to one. Constant upstream
+vectors become exactly zero before either multiplication or reduction.
 -/
 def Internal.softmaxInnermostBackwardSpec : {s : Shape} → Tensor α s → Tensor α s → Tensor α s
   | .scalar, _x, _dY => Tensor.scalar 0
-  | .dim n .scalar, x, dY =>
-      let y := softmaxVecSpec (α := α) (n := n) x
-      let s : α := sumSpec (mulSpec dY y)
-      mulSpec y (subSpec dY (replicate (Tensor.scalar s)))
+  | .dim 0 .scalar, _x, dY => dY
+  | .dim (Nat.succ n) .scalar, x, dY =>
+      let pivot : Fin (Nat.succ n) :=
+        Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) x)
+      let y := softmaxVecSpec x
+      Internal.softmaxPullback y dY (dY.getScalar pivot)
   | .dim n inner, x, dY =>
       Tensor.dim fun i : Fin n =>
         Internal.softmaxInnermostBackwardSpec (s := inner)
@@ -527,16 +668,22 @@ We define it with the same max-shift trick as `softmaxVecSpec`, but return log-p
 directly to avoid ever computing `log(0)` when `exp` underflows.
 -/
 
-/-- Log-softmax on a length-`n` vector. -/
+/-- Log-softmax on a length-`n` vector.
+
+One maximal entry supplies the unit term of the normalizer. We sum the other exponentials
+separately and use `log1pSpec`, so a small tail is not lost in an addition to one. Exactly one
+entry is omitted, including when several entries tie for the maximum.
+-/
 def logSoftmaxVecSpec {n : Nat} (t : Tensor α [n]) : Tensor α [n] :=
   match n with
   | 0 => t
   | Nat.succ n' =>
-      let maxT : Tensor α .scalar := maxVecSpec t
-      let shifted : Tensor α [Nat.succ n'] := subSpec t (replicate maxT)
-      let ex := maxShiftedExpVecSpec t
-      let denom : α := sumSpec ex
-      let logDenom : α := MathFunctions.log denom
+      let pivot : Fin (Nat.succ n') :=
+        Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) t)
+      let shifted := subSpec t (replicate (Tensor.scalar (t.getScalar pivot)))
+      let tail : Tensor α [Nat.succ n'] := Tensor.ofFn fun i =>
+        if i = pivot then 0 else MathFunctions.exp (shifted.getScalar i)
+      let logDenom := Math.log1pSpec (sumSpec tail)
       subSpec shifted (replicate (Tensor.scalar logDenom))
 
 /-- Log-softmax along the last axis (recurses over outer dimensions). -/
@@ -555,18 +702,48 @@ $dy=dx-\operatorname{replicate}(\langle\exp(y),dx\rangle)$.
 
 Unlike the VJP below, the subtracted scalar is replicated uniformly across the slice; the
 softmax probabilities occur only inside the dot product. Taking the already-computed output `y`
-also avoids recomputing the stable forward pass.
+also avoids recomputing the stable forward pass. The pivot's contribution is separated with
+`expm1Spec`, retaining its small complementary probability in forward mode as well.
 -/
 def Internal.logSoftmaxInnermostJvpSpec : {s : Shape} → Tensor α s → Tensor α s → Tensor α s
   | .scalar, _y, _dx => Tensor.scalar 0
-  | .dim _n .scalar, y, dx =>
-      let probs := expSpec y
-      let directionalMean : α := dotSpec probs dx
-      subSpec dx (replicate (Tensor.scalar directionalMean))
+  | .dim 0 .scalar, _y, dx => dx
+  | .dim (Nat.succ n) .scalar, y, dx =>
+      let pivot : Fin (Nat.succ n) :=
+        Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) y)
+      let anchor := dx.getScalar pivot
+      let others : Tensor α [Nat.succ n] := Tensor.ofFn fun i =>
+        if i = pivot then 0 else MathFunctions.exp (y.getScalar i) * dx.getScalar i
+      let correction := Math.expm1Spec (y.getScalar pivot) * anchor + sumSpec others
+      subSpec (subSpec dx (replicate (Tensor.scalar anchor)))
+        (replicate (Tensor.scalar correction))
   | .dim n inner, y, dx =>
       Tensor.dim fun i : Fin n =>
         Internal.logSoftmaxInnermostJvpSpec (s := inner)
           (Tensor.unstack y i) (Tensor.unstack dx i)
+
+/-- Vector log-softmax VJP, keeping the pivot's small complementary probability.
+
+For the largest log-probability, `1 - exp(y)` is evaluated as `-expm1(y)`. Its own upstream
+coordinate is separated from the remaining sum before multiplying. Thus a one-hot loss does
+not subtract two values that have already rounded to one. The other coordinates use the usual
+linear-time VJP. This formula also retains the meaning of arbitrary, unnormalized upstream values.
+-/
+def Internal.logSoftmaxVecBackwardSpec {n : Nat} (y dY : Tensor α [n]) : Tensor α [n] :=
+  match n with
+  | 0 => dY
+  | Nat.succ n' =>
+      let pivot : Fin (Nat.succ n') :=
+        Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) y)
+      let others : Tensor α [Nat.succ n'] := Tensor.ofFn fun i =>
+        if i = pivot then 0 else dY.getScalar i
+      let rowSum := sumSpec dY
+      let otherSum := sumSpec others
+      Tensor.ofFn fun i =>
+        let p := MathFunctions.exp (y.getScalar i)
+        if i = pivot then
+          -(Math.expm1Spec (y.getScalar i)) * dY.getScalar i - p * otherSum
+        else dY.getScalar i - p * rowSum
 
 /-- Backward/VJP for last-axis log-softmax.
 
@@ -579,17 +756,13 @@ $$
  -\operatorname{softmax}(x)\sum_i\frac{\partial L}{\partial y_i}.
 $$
 
-This is the same formula used by PyTorch's stable `log_softmax` backward path.  We take the
-already-computed output `y` rather than the logits `x`, so runtime backends can avoid recomputing
-the max-shifted forward pass during backprop.
+We take the already-computed output `y` rather than the logits `x`. The vector implementation
+rearranges the pivot coordinate to avoid cancellation when its probability is close to one.
 -/
 def Internal.logSoftmaxInnermostBackwardSpec :
     {s : Shape} → Tensor α s → Tensor α s → Tensor α s
   | .scalar, _y, _dY => Tensor.scalar 0
-  | .dim _n .scalar, y, dY =>
-      let probs := expSpec y
-      let rowSum : α := sumSpec dY
-      subSpec dY (mulSpec probs (replicate (Tensor.scalar rowSum)))
+  | .dim _n .scalar, y, dY => Internal.logSoftmaxVecBackwardSpec y dY
   | .dim n inner, y, dY =>
       Tensor.dim fun i : Fin n =>
         Internal.logSoftmaxInnermostBackwardSpec (s := inner)
@@ -637,8 +810,7 @@ def leakyReluDerivSpec {α : Type} [TorchLean.Storage α] [Zero α] [One α] [LT
   Tensor.map (fun x => Activation.Math.leakyReluDerivSpec x αₗ) t
 
 /-- Tensor-level ELU (pointwise).  PyTorch analogy: `torch.nn.functional.elu`. -/
-def eluSpec {α : Type} [TorchLean.Storage α] [Zero α] [One α] [LT α]
-    [DecidableRel ((· > ·) : α → α → Prop)] [MathFunctions α] [Sub α] [Mul α]
+def eluSpec {α : Type} [TorchLean.Storage α] [Context α]
     {s : Shape} (t : Tensor α s) (alpha : α) : Tensor α s :=
   Tensor.map (fun x => Activation.Math.eluSpec x alpha) t
 

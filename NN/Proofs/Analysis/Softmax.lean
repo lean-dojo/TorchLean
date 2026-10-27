@@ -9,7 +9,9 @@ module
 import Mathlib.Algebra.BigOperators.Field
 public import NN.Proofs.Tensor.Basic.LinearAlgebra
 public import NN.Proofs.Utils.MathFunctions
+public import NN.Proofs.Gradients.Activation
 public import NN.Spec.Layers.Activation
+public import NN.Spec.Layers.Attention
 public import NN.Spec.Core.Context.Real
 
 /-!
@@ -239,21 +241,45 @@ theorem getScalar_logSoftmaxVecSpec_eq_sub_log {n : Nat}
     TorchLean.Tensor.getScalar (Activation.logSoftmaxVecSpec (α := ℝ) (n := Nat.succ n) t) i =
       TorchLean.Tensor.getScalar t i -
         Real.log (∑ j, Real.exp (TorchLean.Tensor.getScalar t j)) := by
+  let pivot : Fin (Nat.succ n) :=
+    Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) t)
+  let m := t.getScalar pivot
+  let shifted := subSpec t (Spec.replicate (Tensor.scalar m))
+  let tail : Tensor ℝ [Nat.succ n] := Tensor.ofFn fun j =>
+    if j = pivot then 0 else MathFunctions.exp (shifted.getScalar j)
+  have hshift (j : Fin (Nat.succ n)) : shifted.getScalar j = t.getScalar j - m := by
+    simp [shifted, subSpec, Spec.replicate]
+  have hpartition : 1 + TorchLean.Tensor.sumSpec tail =
+      ∑ j, Real.exp (t.getScalar j - m) := by
+    rw [Spec.sum_spec_vec]
+    simp only [tail, TorchLean.Tensor.getScalar_ofFn, hshift, MathFunctions.exp]
+    calc
+      1 + ∑ j, (if j = pivot then 0 else Real.exp (t.getScalar j - m)) =
+          ∑ j, ((if j = pivot then 1 else 0) +
+            (if j = pivot then 0 else Real.exp (t.getScalar j - m))) := by
+        rw [Finset.sum_add_distrib]
+        simp
+      _ = _ := by
+        apply Finset.sum_congr rfl
+        intro j _
+        by_cases h : j = pivot <;> simp [h, m]
+  have hweight : (∑ j, Real.exp (t.getScalar j - m)) =
+      (∑ j, Real.exp (t.getScalar j)) * Real.exp (-m) := by
+    simp_rw [sub_eq_add_neg, Real.exp_add]
+    rw [Finset.sum_mul]
   have hsumPos : 0 < ∑ j, Real.exp (TorchLean.Tensor.getScalar t j) :=
     Finset.sum_pos (fun j _ => Real.exp_pos _) Finset.univ_nonempty
-  have hlog : MathFunctions.log (TorchLean.Tensor.sumSpec (Activation.maxShiftedExpVecSpec t)) =
+  have hlog : Activation.Math.log1pSpec (TorchLean.Tensor.sumSpec tail) =
       Real.log (∑ j, Real.exp (TorchLean.Tensor.getScalar t j)) -
-        Tensor.item (Activation.maxVecSpec t) := by
-    change Real.log _ = _
-    rw [sum_spec_maxShiftedExpVecSpec, Real.log_mul (ne_of_gt hsumPos) (Real.exp_ne_zero _),
+        m := by
+    rw [log1p_spec_eq_log_one_add, hpartition, hweight,
+      Real.log_mul (ne_of_gt hsumPos) (Real.exp_ne_zero _),
       Real.log_exp, sub_eq_add_neg]
   change TorchLean.Tensor.getScalar
-    (TorchLean.Tensor.map2Spec (· - ·)
-      (TorchLean.Tensor.map2Spec (· - ·) t (Spec.replicate (Activation.maxVecSpec t)))
-      (Spec.replicate (Tensor.scalar
-        (MathFunctions.log (TorchLean.Tensor.sumSpec (Activation.maxShiftedExpVecSpec t)))))) i = _
-  rw [TorchLean.Tensor.getScalar_map2Spec, TorchLean.Tensor.getScalar_map2Spec, hlog]
-  simp only [Spec.replicate, TorchLean.Tensor.getScalar_const, Tensor.item_scalar]
+    (subSpec shifted (Spec.replicate (Tensor.scalar
+      (Activation.Math.log1pSpec (TorchLean.Tensor.sumSpec tail))))) i = _
+  simp only [subSpec, TorchLean.Tensor.getScalar_map2Spec, hshift, hlog,
+    Spec.replicate, TorchLean.Tensor.getScalar_const, Tensor.item_scalar]
   ring
 
 /-! ## Axis softmax on vectors and matrices
@@ -262,6 +288,89 @@ The axis-parametric operators move the selected axis to the innermost position a
 vector (axis `0`) and for the key axis of a matrix (axis `1`) no permutation is needed, so the
 operators reduce definitionally to the vector kernels. These lemmas record that reduction so that
 downstream files do not depend on how the permutation bookkeeping is implemented. -/
+
+/-- The cancellation-resistant vector VJP preserves the real linear map for every upstream
+vector, without requiring normalized log-probabilities. -/
+theorem logSoftmaxVecBackwardSpec_eq {n : Nat} (y dY : Tensor ℝ [n]) :
+    Activation.Internal.logSoftmaxVecBackwardSpec y dY =
+      subSpec dY (mulSpec (expSpec y)
+        (Spec.replicate (Tensor.scalar (TorchLean.Tensor.sumSpec dY)))) := by
+  cases n with
+  | zero =>
+      apply Tensor.ext_vector
+      intro i
+      exact i.elim0
+  | succ n =>
+      let pivot : Fin (Nat.succ n) :=
+        Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) y)
+      let others : Tensor ℝ [Nat.succ n] := Tensor.ofFn fun i =>
+        if i = pivot then 0 else dY.getScalar i
+      have hsum : TorchLean.Tensor.sumSpec dY =
+          dY.getScalar pivot + TorchLean.Tensor.sumSpec others := by
+        simp only [Spec.sum_spec_vec, others, Tensor.getScalar_ofFn]
+        calc
+          (∑ i, dY.getScalar i) = ∑ i, ((if i = pivot then dY.getScalar pivot else 0) +
+              (if i = pivot then 0 else dY.getScalar i)) := by
+            apply Finset.sum_congr rfl
+            intro i _
+            by_cases h : i = pivot <;> simp [h]
+          _ = _ := by rw [Finset.sum_add_distrib]; simp
+      apply Tensor.ext_vector
+      intro i
+      simp only [Activation.Internal.logSoftmaxVecBackwardSpec, Tensor.getScalar_ofFn]
+      change (if i = pivot then
+          -(Activation.Math.expm1Spec (y.getScalar i)) * dY.getScalar i -
+            MathFunctions.exp (y.getScalar i) * TorchLean.Tensor.sumSpec others
+        else dY.getScalar i - MathFunctions.exp (y.getScalar i) *
+          TorchLean.Tensor.sumSpec dY) = _
+      simp only [subSpec, Tensor.getScalar_map2Spec, Spec.getScalar_mul_spec,
+        expSpec, Tensor.getScalar_map, Spec.replicate, Tensor.getScalar_const, Tensor.item_scalar]
+      split_ifs with hi
+      · rw [expm1_spec_eq_exp_sub_one, hsum, hi]
+        simp only [MathFunctions.exp]
+        ring
+      · rfl
+
+/-- Separating the pivot's complementary probability preserves the real log-softmax JVP,
+even when the supplied log-probabilities are not normalized. -/
+theorem logSoftmaxInnermostJvpSpec_eq {n : Nat} (y dx : Tensor ℝ [n]) :
+    Activation.Internal.logSoftmaxInnermostJvpSpec y dx =
+      subSpec dx (Spec.replicate (Tensor.scalar (dotSpec (expSpec y) dx))) := by
+  classical
+  cases n with
+  | zero =>
+      apply Tensor.ext_vector
+      intro i
+      exact i.elim0
+  | succ n =>
+      let pivot : Fin (n + 1) :=
+        Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) y)
+      let others : Tensor ℝ [n + 1] := Tensor.ofFn fun i =>
+        if i = pivot then 0 else MathFunctions.exp (y.getScalar i) * dx.getScalar i
+      have hsum : dotSpec (expSpec y) dx =
+          MathFunctions.exp (y.getScalar pivot) * dx.getScalar pivot + sumSpec others := by
+        simp only [dotSpec, Spec.sum_spec_vec, Spec.getScalar_mul_spec,
+          expSpec, Tensor.getScalar_map, others, Tensor.getScalar_ofFn]
+        calc
+          (∑ i, MathFunctions.exp (y.getScalar i) * dx.getScalar i) =
+              ∑ i, ((if i = pivot then
+                MathFunctions.exp (y.getScalar pivot) * dx.getScalar pivot else 0) +
+                (if i = pivot then 0 else
+                  MathFunctions.exp (y.getScalar i) * dx.getScalar i)) := by
+            apply Finset.sum_congr rfl
+            intro i _
+            by_cases h : i = pivot <;> simp [h]
+          _ = _ := by rw [Finset.sum_add_distrib]; simp
+      apply Tensor.ext_vector
+      intro i
+      change (subSpec (subSpec dx (Spec.replicate (Tensor.scalar (dx.getScalar pivot))))
+        (Spec.replicate (Tensor.scalar
+          (Activation.Math.expm1Spec (y.getScalar pivot) * dx.getScalar pivot +
+            sumSpec others)))).getScalar i = _
+      rw [hsum, expm1_spec_eq_exp_sub_one]
+      simp only [subSpec, Tensor.getScalar_map2Spec, Spec.replicate,
+        Tensor.getScalar_const, Tensor.item_scalar, MathFunctions.exp]
+      ring
 
 /-- Axis-`0` softmax on a vector is the vector kernel. -/
 theorem softmaxSpec_zero_vec {n : Nat} (t : Tensor ℝ [n]) :
@@ -336,26 +445,33 @@ theorem softmax_vec_spec_mem_unitInterval {n : Nat}
 
 /-- Coordinate formula for the innermost stable softmax VJP: with `y = softmaxVecSpec x`, the
 `i`-th input gradient is `yᵢ (dYᵢ - ∑ⱼ yⱼ dYⱼ)`. Both conservation theorems below start here. -/
-private theorem getScalar_softmaxInnermostBackwardSpec {n : Nat}
+theorem getScalar_softmaxInnermostBackwardSpec {n : Nat}
     (x dY : Tensor ℝ [Nat.succ n]) (i : Fin (Nat.succ n)) :
     TorchLean.Tensor.getScalar (Activation.Internal.softmaxInnermostBackwardSpec x dY) i =
       TorchLean.Tensor.getScalar (Activation.softmaxVecSpec x) i *
         (TorchLean.Tensor.getScalar dY i -
           ∑ j, TorchLean.Tensor.getScalar (Activation.softmaxVecSpec x) j *
             TorchLean.Tensor.getScalar dY j) := by
-  have hs :
-      TorchLean.Tensor.sumSpec (TorchLean.Tensor.mulSpec dY (Activation.softmaxVecSpec x)) =
-        ∑ j, TorchLean.Tensor.getScalar (Activation.softmaxVecSpec x) j *
-          TorchLean.Tensor.getScalar dY j := by
+  let pivot : Fin (Nat.succ n) :=
+    Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) x)
+  let anchor := dY.getScalar pivot
+  let y := Activation.softmaxVecSpec x
+  let centered := subSpec dY (Spec.replicate (Tensor.scalar anchor))
+  have hcoord (j : Fin (Nat.succ n)) : centered.getScalar j = dY.getScalar j - anchor := by
+    simp [centered, subSpec, Spec.replicate]
+  have hmass : (∑ j, y.getScalar j) = 1 := by
+    simpa [Spec.sum_spec_vec, y] using sum_spec_softmax_vec_spec x
+  have hs : TorchLean.Tensor.sumSpec (mulSpec centered y) =
+      (∑ j, y.getScalar j * dY.getScalar j) - anchor := by
     rw [Spec.sum_spec_vec]
-    exact Finset.sum_congr rfl fun j _ => by rw [Spec.getScalar_mul_spec, mul_comm]
-  rw [show Activation.Internal.softmaxInnermostBackwardSpec x dY =
-      TorchLean.Tensor.mulSpec (Activation.softmaxVecSpec x)
-        (TorchLean.Tensor.subSpec dY (Spec.replicate (Tensor.scalar (TorchLean.Tensor.sumSpec
-          (TorchLean.Tensor.mulSpec dY (Activation.softmaxVecSpec x)))))) by
-        simp [Activation.Internal.softmaxInnermostBackwardSpec],
-    Spec.getScalar_mul_spec, hs, TorchLean.Tensor.subSpec, TorchLean.Tensor.getScalar_map2Spec]
-  simp [Spec.replicate]
+    simp_rw [Spec.getScalar_mul_spec, hcoord, mul_comm (_ - anchor), mul_sub]
+    rw [Finset.sum_sub_distrib, ← Finset.sum_mul, hmass, one_mul]
+  change (mulSpec y (subSpec centered (Spec.replicate
+    (Tensor.scalar (TorchLean.Tensor.sumSpec (mulSpec centered y)))))).getScalar i = _
+  rw [Spec.getScalar_mul_spec, subSpec, Tensor.getScalar_map2Spec, hcoord, hs]
+  simp only [Spec.replicate, Tensor.getScalar_const, Tensor.item_scalar]
+  change y.getScalar i * (_ - _) = y.getScalar i * _
+  ring
 
 /-- The concrete stable softmax backward is tangent to the probability simplex.
 
@@ -435,5 +551,73 @@ theorem sum_spec_softmax_spec_row {nQ nK : Nat} (hK : nK ≠ 0)
   | succ nK' =>
       rw [get_softmaxSpec_one]
       exact sum_spec_softmax_vec_spec (Spec.get scores i)
+
+/-- Coordinate formula for the weighted softmax Jacobian, without a normalization assumption. -/
+theorem getScalar_softmaxBackwardFromWeightsSpec {n : Nat}
+    (weights gradient : Tensor ℝ [n]) (i : Fin n) :
+    (Spec.softmaxBackwardFromWeightsSpec weights gradient).getScalar i =
+      weights.getScalar i *
+        (gradient.getScalar i - ∑ j, weights.getScalar j * gradient.getScalar j) := by
+  cases n with
+  | zero => exact Fin.elim0 i
+  | succ n =>
+      simp only [Spec.softmaxBackwardFromWeightsSpec, Bool.false_eq_true, ↓reduceIte,
+        Spec.getScalar_mul_spec, subSpec, Tensor.getScalar_map2Spec,
+        Spec.getScalar_replicate, Tensor.item_scalar, Spec.sum_spec_vec]
+      congr 2
+      exact Finset.sum_congr rfl fun j _ => mul_comm _ _
+
+/-- Upstream shifts cancel for normalized weights and for an all-zero masked row.
+
+The anchor may be chosen from the rounded execution, independently of the exact weights' maximum.
+This lets numerical bounds charge the actual centering subtraction rather than assume the two
+executions select the same coordinate.
+-/
+theorem softmax_backward_from_weights_shift {n : Nat}
+    (weights gradient : Tensor ℝ [n]) (anchor : ℝ)
+    (hmass : (∑ j, weights.getScalar j) = 1 ∨ ∀ j, weights.getScalar j = 0)
+    (center : Bool := false) :
+    Spec.softmaxBackwardFromWeightsSpec weights gradient (center := center) =
+      Spec.softmaxBackwardFromWeightsSpec weights
+        (subSpec gradient (Spec.replicate (Tensor.scalar anchor))) := by
+  cases n with
+  | zero =>
+      apply Tensor.ext_vector
+      intro i
+      exact Fin.elim0 i
+  | succ n =>
+      let formula (a : ℝ) := mulSpec weights
+        (subSpec (subSpec gradient (Spec.replicate (Tensor.scalar a)))
+          (Spec.replicate (Tensor.scalar (TorchLean.Tensor.sumSpec
+            (mulSpec (subSpec gradient (Spec.replicate (Tensor.scalar a))) weights)))))
+      have hformula (a : ℝ) : formula a =
+          Spec.softmaxBackwardFromWeightsSpec weights gradient := by
+        apply Tensor.ext_vector
+        intro i
+        rw [getScalar_softmaxBackwardFromWeightsSpec]
+        simp only [formula, Spec.getScalar_mul_spec, subSpec,
+          Tensor.getScalar_map2Spec, Spec.getScalar_replicate, Tensor.item_scalar,
+          Spec.sum_spec_vec]
+        rcases hmass with hmass | hzero
+        · simp_rw [sub_mul]
+          rw [Finset.sum_sub_distrib, ← Finset.mul_sum, hmass, mul_one]
+          have hcomm : (∑ j, gradient.getScalar j * weights.getScalar j) =
+              ∑ j, weights.getScalar j * gradient.getScalar j :=
+            Finset.sum_congr rfl fun j _ => mul_comm _ _
+          rw [hcomm]
+          ring
+        · rw [hzero i]
+          simp
+      have hright :
+          Spec.softmaxBackwardFromWeightsSpec weights
+            (subSpec gradient (Spec.replicate (Tensor.scalar anchor))) = formula anchor := by
+        rfl
+      rw [hright, hformula anchor]
+      cases center with
+      | false => rfl
+      | true =>
+          let pivot : Fin (Nat.succ n) :=
+            Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) weights)
+          exact hformula (gradient.getScalar pivot)
 
 end Proofs

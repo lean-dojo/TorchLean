@@ -62,7 +62,7 @@ inductive FloatInit where
   | zeros
   /-- Fill with ones. PyTorch analogue: `torch.nn.init.ones_`. -/
   | ones
-  /-- Uniform distribution over `[lo, hi)`, using TorchLean's deterministic runtime RNG. -/
+  /-- Seeded uniform interpolation between `lo` and `hi`, rounded in the parameter dtype. -/
   | uniform (lo hi : Float) (seed : Nat := 0)
   /-- Normal distribution with explicit mean and standard deviation. -/
   | normal (mean std : Float) (seed : Nat := 0)
@@ -278,10 +278,11 @@ def natToU32Checked (ctx : String) (n : Nat) : IO UInt32 := do
     s!"{ctx}: tensor too large for CUDA buffer API ({n} elements)"
 
 /--
-Allocate a CUDA buffer filled with `U(lo, hi)`.
+Allocate a CUDA buffer of seeded uniform draws between `lo` and `hi`.
 
-The implementation keeps all element generation on the runtime side: first create a CUDA uniform
-buffer in `[0,1)`, then perform `lo + (hi-lo) * u` with CUDA buffer ops.
+Element generation stays on the device. A representable span keeps the ordinary fused affine
+formula. If the span overflows in the destination dtype while both endpoints remain finite,
+interpolate the endpoints separately instead.
 -/
 def cudaUniformBuffer (n : Nat) (lo hi : Float) (seed : Nat)
     (dtype : Runtime.Autograd.LibTorch.Dtype := .float32) :
@@ -289,10 +290,20 @@ def cudaUniformBuffer (n : Nat) (lo hi : Float) (seed : Nat)
   let n32 ← natToU32Checked "torch.runtimeInit" n
   let key := Spec.Random.keyOf seed 0
   let u := Runtime.Autograd.LibTorch.Buffer.randUniform n32 key dtype
-  let shift := Runtime.Autograd.LibTorch.Buffer.full n32 lo dtype
-  let out := Runtime.Autograd.LibTorch.Buffer.axpy shift u (hi - lo)
-  pure <| Runtime.Autograd.LibTorch.Buffer.releaseThen u <|
-    Runtime.Autograd.LibTorch.Buffer.releaseThen shift out
+  let finite (value : Float) : Bool :=
+    if dtype == .float32 then value.toFloat32.isFinite else value.isFinite
+  let width := hi - lo
+  if finite width || !(finite lo && finite hi) then
+    let shift := Runtime.Autograd.LibTorch.Buffer.full n32 lo dtype
+    let out := Runtime.Autograd.LibTorch.Buffer.axpy shift u width
+    pure <| Runtime.Autograd.LibTorch.Buffer.releaseThen u <|
+      Runtime.Autograd.LibTorch.Buffer.releaseThen shift out
+  else
+    let one := Runtime.Autograd.LibTorch.Buffer.full n32 1 dtype
+    let complement := Runtime.Autograd.LibTorch.Buffer.sub one u
+    let left := Runtime.Autograd.LibTorch.Buffer.scale complement lo
+    let out := Runtime.Autograd.LibTorch.Buffer.axpy left u hi
+    pure <| Runtime.Autograd.LibTorch.Buffer.releaseManyThen #[u, one, complement, left] out
 
 /--
 Allocate a CUDA buffer for a `FloatInit`.

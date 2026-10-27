@@ -106,7 +106,9 @@ def mseWeighted {α : Type} [TorchLean.Storage α] [Context α]
   let weighted ← mul (m := m) (α := α) (s := s) squared weights
   sum (m := m) (α := α) (s := s) weighted
 
-/-- Negative log-likelihood (one-hot targets), assuming inputs are log-probabilities. -/
+/-- Negative log-likelihood (one-hot targets), assuming inputs are log-probabilities.
+This raw multiplication cannot recover a weighted term after a log-probability has overflowed.
+Use `oneHotCrossEntropy` when the original logits are available. -/
 def nllOneHot {α : Type} [TorchLean.Storage α] [Context α]
     {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
     {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
@@ -126,11 +128,12 @@ def nllOneHot {α : Type} [TorchLean.Storage α] [Context α]
       scale (m := m) (α := α) (s := Shape.scalar) avgAll (Shape.axisSize s axis)
 
 /--
-Cross-entropy (one-hot targets), computed using the backend's log-softmax and `nllOneHot`.
-The eager and typed-graph backends use stable log-softmax rather than taking the logarithm of
-rounded probabilities. `reduction` selects the sum or mean over samples.
+Cross-entropy on logits with one-hot targets. Eager and typed-graph backends keep the original
+logits inside the loss, so a zero target need not multiply an overflowing log-probability.
+The same weighted formula accepts soft targets; both inputs retain their gradients.
+`reduction` selects the sum or mean over samples, without normalizing target weights.
 
-Note: this is one-hot only. For integer class labels, use `crossEntropy`, whose
+For integer class labels, use `crossEntropy`, whose
 `Fin classes` target tensor records the class bound in its element type.
 -/
 def oneHotCrossEntropy {α : Type} [TorchLean.Storage α] [Context α]
@@ -139,8 +142,25 @@ def oneHotCrossEntropy {α : Type} [TorchLean.Storage α] [Context α]
     (logits targetOneHot : Ref (m := m) (α := α) s)
     (reduction : Reduction := .mean) :
     m (Ref (m := m) (α := α) Shape.scalar) := do
-  let logp ← F.logSoftmax (m := m) (α := α) (s := s) axis logits
-  nllOneHot (m := m) (α := α) (s := s) axis logp targetOneHot (reduction := reduction)
+  Ops.crossEntropy axis logits targetOneHot (mean := reduction == .mean)
+
+/-- Cross-entropy from a fixed teacher's logits along `axis`.
+
+Use this rather than first rounding the teacher's predictions to probabilities: the loss keeps
+logit differences available for a cancellation-resistant student gradient. The teacher is detached
+in both forward and reverse mode. `mean` averages class slices, not individual class entries.
+Eager CPU, LibTorch CUDA, and typed graphs implement this loss; canonical IR export is not provided.
+-/
+def distill {α : Type} [TorchLean.Storage α] [Context α]
+    {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
+    {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
+    (student teacher : Ref (m := m) (α := α) s) (reduction : Reduction := .mean) :
+    m (Ref (m := m) (α := α) Shape.scalar) := do
+  let teacher ← Runtime.Autograd.Torch.detach teacher
+  let loss ← Ops.distill axis student teacher
+  match reduction with
+  | .mean => pure loss
+  | .sum => scale loss (Spec.axisMeanDenom s axis : α)
 
 /--
 Unreduced indexed negative log-likelihood along an arbitrary class axis.

@@ -83,14 +83,14 @@ variable [Context α]
 PyTorch analogy: `torch.sigmoid(x)`. -/
 def sigmoidOp {s : Shape} : OpSpec α s s :=
 { forward      := Tensor.map (α:=α) (shape :=s) Activation.Math.sigmoidSpec
-, backward     := liftElementwiseBackward (α:=α) (s:=s) Activation.Math.sigmoidDerivSpec }
+, backward     := Activation.sigmoidBackwardSpec }
 
 /-- Elementwise tanh OpSpec on any shape.
 
 PyTorch analogy: `torch.tanh(x)`. -/
 def tanhOp {s : Shape} : OpSpec α s s :=
 { forward      := Tensor.map (α:=α) (shape :=s) Activation.Math.tanhSpec
-, backward     := liftElementwiseBackward (α:=α) (s:=s) Activation.Math.tanhDerivSpec }
+, backward     := Activation.tanhBackwardSpec }
 
 /-- Elementwise softplus OpSpec on any shape.
 
@@ -256,7 +256,9 @@ Elementwise square root.
 
 The forward pass evaluates `sqrt (max x 0)`. The backward pass uses the local factor
 $1/(2\sqrt{x})$ when `x > 0`, and zero otherwise, then multiplies that factor by the upstream
-value. Over the reals this gives a zero VJP for $x\le0$. On IEEE backends, a zero factor
+value. Checked scalar backends replay the complete weighted quotient if an intermediate loses
+range, using the root rounded by that backend. Over the reals this gives a zero VJP for
+$x\le0$. On IEEE backends, a zero factor
 multiplied by an infinite or NaN upstream value need not produce zero.
 
 PyTorch analogy: `torch.sqrt(x)` on the positive region, with an explicit TorchLean subgradient
@@ -265,15 +267,13 @@ choice outside the classical domain.
 def sqrtOp  {s : Shape} : OpSpec α s s :=
 { forward := fun x => sqrtSpec x
 , backward := fun x dLdy =>
-    -- Select the local factor before multiplying by the upstream value.
-    -- The false branch also covers unordered IEEE comparisons.
-    let dsqrt : Tensor α s :=
-      Tensor.map (α := α) (shape := s) (fun v =>
-        if v > 0 then
-          (1 : α) / (2 * MathFunctions.sqrt v)
-        else
-          (0 : α)) x
-    mulSpec dsqrt dLdy
+    map2Spec (fun value seed =>
+      if value > 0 then
+        TorchLean.Numeric.Internal.sqrtBackward (MathFunctions.sqrt value) seed
+          (factorFirst := true)
+      else
+        -- Preserve zero times a nonfinite upstream value, including unordered inputs.
+        (0 : α) * seed) x dLdy
 }
 
 /-- Elementwise square, $x^2$. -/
@@ -284,13 +284,17 @@ def squareOp {s : Shape} : OpSpec α s s :=
 /-- Elementwise power with a captured RHS exponent tensor.
 
 This is the VJP with respect to the base $x$ for $x^{\mathtt{rhs}}$. Domain restrictions are the
-usual ones for the scalar backend's power operation. -/
+usual ones for the scalar backend's power operation. The zero-exponent branch tests all
+differentiation coefficients, so a zero exponent primal does not erase mixed derivatives.
+For a constant exponent, checked range loss refines the complete weighted derivative instead of
+rounding an unrepresentable local factor before applying the incoming gradient. -/
 def powOp {s : Shape} (rhs : Tensor α s) : OpSpec α s s :=
 { forward := fun x => powSpec x rhs
 , backward := fun x dLdy =>
-    let localGrad := map2Spec (fun base exponent =>
-      if exponent == 0 then 0 else exponent * base ^ (exponent - 1)) x rhs
-    mulSpec localGrad dLdy }
+    Tensor.Internal.Rep.ofFlatFn fun index =>
+      TorchLean.Numeric.Internal.powerBackward Context.isZero
+        (Tensor.Internal.Rep.getFlat x index) (Tensor.Internal.Rep.getFlat rhs index)
+        (Tensor.Internal.Rep.getFlat dLdy index) }
 
 /--
 Elementwise reciprocal, $1/x$.
@@ -370,11 +374,12 @@ gradient to the remaining input. A zero mask can still produce NaN with a nonfin
 
 Away from ties this is the usual derivative. At a tie, minimum is not differentiable, and the
 half-gradient is the convention used by the runtime.
+The half is a rational constant, so constructing it does not require a representable `2`.
 -/
 def minOp {s : Shape} (rhs : Tensor α s) : OpSpec α s s :=
 { forward      := fun x => minSpec x rhs
 , backward     := fun x dLdy =>
-    let half : α := (1 : α) / ((2 : Nat) : α)
+    let half : α := Rat.cast (1 / 2 : Rat)
     let mask := map2Spec (fun a b =>
       if b > a then (1 : α) else if a > b then (0 : α) else half) x rhs
     mulSpec mask dLdy
@@ -393,7 +398,7 @@ fallback when neither comparison holds.
 def maxOp {s : Shape} (rhs : Tensor α s) : OpSpec α s s :=
 { forward      := fun x => maxSpec x rhs
 , backward     := fun x dLdy =>
-    let half : α := (1 : α) / ((2 : Nat) : α)
+    let half : α := Rat.cast (1 / 2 : Rat)
     let mask := map2Spec (fun a b =>
       if a > b then (1 : α) else if b > a then (0 : α) else half) x rhs
     mulSpec mask dLdy

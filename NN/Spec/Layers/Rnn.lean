@@ -155,7 +155,6 @@ Backward/VJP for a single RNN cell.
 
 Inputs:
 - `x_t`, `h_{t-1}`,
-- the cached forward output `h_t` (so we can write `tanh'` in terms of `h_t`),
 - an upstream gradient `dL/dh_t`.
 
 Outputs:
@@ -165,14 +164,13 @@ def rnnCellBackwardSpec {inputSize hiddenSize : Nat}
   (rnn : RNNSpec α inputSize hiddenSize)
   (input : Tensor α [inputSize])
   (prevHidden : Tensor α [hiddenSize])
-  (hidden : Tensor α [hiddenSize])
   (gradHidden : Tensor α [hiddenSize]) :
   RNNCellGradients α inputSize hiddenSize :=
   let concat := concatAxisSpec .scalar input prevHidden
 
-  -- tanh'(z) = 1 - tanh(z)^2, and tanh(z) = hidden
-  let tanhDeriv := subSpec (Tensor.full (.dim hiddenSize .scalar) 1) (mulSpec hidden hidden)
-  let gradPreact := mulSpec gradHidden tanhDeriv
+  -- Recompute the preactivation: a rounded hidden output cannot recover a small tanh slope.
+  let preactivation := addSpec (matVecMulSpec rnn.weights concat) rnn.bias
+  let gradPreact := Activation.tanhBackwardSpec preactivation gradHidden
 
   let gradWeights := outerProductSpec gradPreact concat
   let gradBias := gradPreact
@@ -264,7 +262,6 @@ def rnnSequenceBackwardSpec {seqLen inputSize hiddenSize : Nat}
   let (result, dInputs) := Sequence.mapAccumRight seqLen initial fun index state =>
     let (dHiddenNext, accumulated) := state
     let input := get inputs index
-    let hidden := get hiddens index
     let previous :=
       if h : index.val > 0 then
         have hp : index.val - 1 < seqLen := by grind
@@ -272,7 +269,7 @@ def rnnSequenceBackwardSpec {seqLen inputSize hiddenSize : Nat}
       else
         initialHidden
     let totalGradient := addSpec (get gradHiddens index) dHiddenNext
-    let step := rnnCellBackwardSpec rnn input previous hidden totalGradient
+    let step := rnnCellBackwardSpec rnn input previous totalGradient
     ((step.previousHidden, accumulated.add step.parameters), step.input)
   let (dInitialHidden, parameterGradients) := result
   { parameters := parameterGradients

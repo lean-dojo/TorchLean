@@ -34,8 +34,9 @@ Propagate a single node’s *affine bounds* (lower/upper) given parent bounds.
 
 This is the CROWN/DeepPoly-style transfer step used by `runCROWN`. For node kinds without a
 dedicated rule, we fall back to the IBP enclosure (turned into a constant affine bound), except
-custom computations and pointwise operators. Those clear the node's bound until an enclosure rule is
-available; a supplied IBP box or a previously stored bound does not make them certifiable.
+custom computations, pointwise operators, and scaled matrix products. Those clear the node's bound
+until an enclosure rule is available; a supplied IBP box or a previously stored bound does not make
+them certifiable.
 -/
 def propagateCROWNNode
   (nodes : Array Node) (ps : ParamStore α)
@@ -56,7 +57,7 @@ def propagateCROWNNode
       | some B => bounds.set! id (some (boundsConst (α:=α) ctx.inputDim B.dim B.lo B.hi))
       | none => bounds
     match node.kind with
-    | .custom .. | .pointwise _ => bounds.set! id none
+    | .custom .. | .pointwise _ | .scaledMatmul => bounds.set! id none
     | .input =>
       match (ibp[id]?).join with
       | some box =>
@@ -170,7 +171,7 @@ def propagateCROWNNode
       -- Computing the crossing-zero ReLU slope involves division. Until an affine-rounding
       -- capability supplies directed coefficients, retain the checked IBP enclosure.
       ibpFallback
-    | .exp | .log | .inv | .sigmoid | .tanh | .softplus | .safeLog =>
+    | .exp | .log | .inv | .sigmoid | .silu | .tanh | .softplus | .safeLog =>
       -- Executable nonlinear bounds come from the directed IBP pass. Turning that box into a
       -- constant affine form is less precise than an analytic relaxation, but it does not recompute
       -- transcendental values with unqualified host arithmetic.

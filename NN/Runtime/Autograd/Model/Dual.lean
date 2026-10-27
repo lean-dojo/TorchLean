@@ -24,9 +24,13 @@ tensor clamp selects zero tangent at either endpoint. These choices agree with t
 rules.
 
 `detach` removes the tangent and recursively clears differentiation metadata from the primal,
-so nested dual computations respect the same boundary. The power rule uses
-$d(x^y)=x^y(y'\log x+yx'/x)$ and requires the logarithm and quotient to be defined. Mathematical
-derivative theorems state their domain assumptions in the separate `fderiv` proof layer.
+so nested dual computations respect the same boundary. A power with a constant exponent uses
+$yx^{y-1}x'$, without evaluating a logarithm. A varying exponent uses
+$x^y(y'\log x+yx'/x)$ on its domain. Mathematical derivative theorems state their domain
+assumptions in the separate `fderiv` proof layer.
+
+Compensated `log1p` and `expm1` use analytic chain rules rather than differentiating their
+rounding-dependent branches. This also preserves higher derivatives when dual numbers are nested.
 -/
 
 @[expose] public section
@@ -186,16 +190,16 @@ instance {α : Type} [LE α] : LE (Dual α) where
 
 /--
 Take the larger primal and its tangent. Equal primals split the tangent equally between the two
-arguments, matching the graph's elementwise maximum rule. Each tangent is scaled before the sum:
-adding two large finite tangents first can overflow even when their average is representable.
+arguments, matching the graph's elementwise maximum rule. The shared average scales before adding
+and replays finite coefficients if halving loses range. Neither an overflowing raw sum nor two
+rounded-zero halves should erase a representable average.
 -/
 instance {α : Type} [TorchLean.Storage α] [Context α] : Max (Dual α) where
   max x y :=
     if x.re > y.re then x
     else if y.re > x.re then y
     else
-      let half : α := 1 / 2
-      ⟨Max.max x.re y.re, half * x.du + half * y.du⟩
+      ⟨Max.max x.re y.re, TorchLean.Numeric.Internal.average x.du y.du⟩
 
 /-- Elementwise minimum uses the same equal split at a tie as the graph's minimum rule. -/
 instance {α : Type} [TorchLean.Storage α] [Context α] : Min (Dual α) where
@@ -203,8 +207,7 @@ instance {α : Type} [TorchLean.Storage α] [Context α] : Min (Dual α) where
     if x.re < y.re then x
     else if y.re < x.re then y
     else
-      let half : α := 1 / 2
-      ⟨Min.min x.re y.re, half * x.du + half * y.du⟩
+      ⟨Min.min x.re y.re, TorchLean.Numeric.Internal.average x.du y.du⟩
 
 /-- Coerce naturals into dual numbers with zero tangent. -/
 instance {α : Type} [TorchLean.Storage α] [Context α] : NatCast (Dual α) where
@@ -217,8 +220,7 @@ instance {α : Type} [TorchLean.Storage α] [Context α] : MathFunctions (Dual �
     ⟨ex, ex * x.du⟩
   tanh x :=
     let th := MathFunctions.tanh x.re
-    -- d/dx tanh = 1 - tanh^2
-    ⟨th, (1 - th * th) * x.du⟩
+    ⟨th, TorchLean.Numeric.tanhBackward x.re x.du⟩
   cosh x :=
     let ch := MathFunctions.cosh x.re
     ⟨ch, MathFunctions.sinh x.re * x.du⟩
@@ -227,7 +229,7 @@ instance {α : Type} [TorchLean.Storage α] [Context α] : MathFunctions (Dual �
     ⟨sh, MathFunctions.cosh x.re * x.du⟩
   sqrt x :=
     let r := MathFunctions.sqrt x.re
-    ⟨r, if x.re > 0 then x.du / (((2 : Nat) : α) * r) else 0⟩
+    ⟨r, if x.re > 0 then TorchLean.Numeric.Internal.sqrtBackward r x.du else 0⟩
   abs x :=
     ⟨MathFunctions.abs x.re,
       if x.re > 0 then x.du else if x.re < 0 then -x.du else 0⟩
@@ -242,38 +244,47 @@ instance {α : Type} [TorchLean.Storage α] [Context α] : MathFunctions (Dual �
 /--
 Power rule for `x^y` over dual numbers.
 
-We use the standard identity $d(x^y)=x^y(y'\log x+yx'/x)$, which is mathematically
-justified only on domains where the right-hand side is defined.
+If the exponent tangent is identically zero, use $yx^{y-1}x'$ instead of evaluating an unused
+logarithm or dividing by the base. This includes polynomial derivatives at zero and negative
+inputs. The zero test inspects all nested coefficients, not just their primals. A varying
+exponent uses the logarithmic rule on the scalar backend's domain. When its arithmetic loses
+range, a bounded positive-base enclosure combines both directions before rounding.
 -/
 instance {α : Type} [TorchLean.Storage α] [Context α] : Pow (Dual α) (Dual α) where
   pow x y :=
-    -- d (x^y) = x^y * (y' * log x + y * x'/x)
     let r : α := x.re ^ y.re
-    let dr : α := r * (y.du * MathFunctions.log x.re + y.re * (x.du / x.re))
+    let dr : α :=
+      if Context.isZero y.du then
+        Numeric.Internal.powerBackward Context.isZero x.re y.re x.du
+      else
+        Numeric.Internal.powerTangent x.re y.re r x.du y.du
     ⟨r, dr⟩
 
 /-- Lift a scalar `Context` to dual numbers by deciding comparisons on primals. -/
 instance {α : Type} [TorchLean.Storage α] [Context α] : Context (Dual α) where
+  sqrtNat n := ⟨Context.sqrtNat (α := α) n, 0⟩
+  isZero x := Context.isZero x.re && Context.isZero x.du
   defaultEpsilon := ⟨Context.defaultEpsilon (α := α), 0⟩
   decidableGT := fun x y => (Context.decidableGT) x.re y.re
   stopGradient? := some fun x => ⟨Context.stopGradient x.re, 0⟩
   ratCast value := ⟨(value : α), 0⟩
+  -- Differentiate the mathematical functions, not their rounding-compensation branches.
+  sigmoid x := ⟨Context.sigmoid x.re, TorchLean.Numeric.sigmoidBackward x.re x.du⟩
+  log1p x := ⟨Context.log1p x.re, x.du / (1 + x.re)⟩
+  expm1 x := ⟨Context.expm1 x.re, MathFunctions.exp x.re * x.du⟩
 
 /--
 Differentiate the polar angle in real coordinates away from the origin and branch cut.
 
 Scaling both coordinates avoids squaring a large magnitude. At the origin we select zero tangent,
 where the angle has no classical derivative. The primal retains the component backend's signed-zero
-and branch-cut convention.
+and branch-cut convention. The shared tangent rule combines the original finite coefficients if
+scaled seeds lose range or their products cancel.
 -/
 instance {α : Type} [TorchLean.Storage α] [Context α] [Atan2 α] : Atan2 (Dual α) where
   atan2 y x :=
-    let scale := Max.max (MathFunctions.abs x.re) (MathFunctions.abs y.re)
-    let tangent := if scale == 0 then 0 else
-      let a := x.re / scale
-      let b := y.re / scale
-      (a * (y.du / scale) - b * (x.du / scale)) / (a * a + b * b)
-    ⟨Atan2.atan2 y.re x.re, tangent⟩
+    ⟨Atan2.atan2 y.re x.re,
+      TorchLean.Numeric.Internal.angleTangent x.re y.re x.du y.du⟩
 
 end Dual
 

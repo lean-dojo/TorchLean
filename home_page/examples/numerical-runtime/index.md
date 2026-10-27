@@ -85,6 +85,13 @@ The selected numerical policy must be supported by the range rule. For example, 
 left-to-right accumulation cannot be used for a provider that advertises a different reduction
 order. The audit records the selected plan; it does not prove that native kernels executed it.
 
+Scaled matrix products have a separate rule because multiplying only after the dot product can
+overflow before a small scale brings the result back into range. The scale is a scalar graph
+operand, checked against its source range during replay. The reference policy allows the ordinary
+left fold or recovery from the original finite coefficients; an implementation-defined native
+reduction does not satisfy that policy. As with the other rules, real enclosure evidence and the
+concrete binary32 replay are separate checks.
+
 ### 4. Check the certificate
 
 `generateChecked` generates a certificate and checks it immediately. The checker compares the

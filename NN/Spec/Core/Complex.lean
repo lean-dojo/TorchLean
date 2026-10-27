@@ -211,6 +211,8 @@ instance [Context α] [Atan2 α] : Pow (Complex α) (Complex α) where
 
 /-- Lift a scalar `Context` to TorchLean complex scalars. -/
 instance [Context α] [Atan2 α] : Context (Complex α) where
+  sqrtNat n := ofReal (Context.sqrtNat (α := α) n)
+  isZero z := Context.isZero z.re && Context.isZero z.im
   defaultEpsilon := ofReal (Context.defaultEpsilon (α := α))
   decidableGT := fun x y => (Context.decidableGT) x.re y.re
   stopGradient? := (Context.stopGradient? (α := α)).map fun clear z =>

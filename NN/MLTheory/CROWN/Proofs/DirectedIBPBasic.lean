@@ -172,6 +172,19 @@ theorem boxUnaryEnclosure?_encloses [NonlinearBoundOps α]
       have hi := Tensor.Internal.sequenceFinM_get_of_eq_some hb i
       simpa only [getScalar_ofFn] using hF hi (hx i).1 (hx i).2
 
+/-- The input-times-sigmoid transfer encloses real SiLU, without a monotonicity assumption. -/
+theorem ibpSilu?_encloses [NonlinearBoundOps α] [LawfulNonlinearBoundOps α]
+    {x box : FlatBox α} {n : Nat} {f : Nat → ℝ}
+    (hx : RowEncloses x n f) (hbox : ibpSilu? x = some box) :
+    RowEncloses box n (fun i => f i * (1 / (1 + Real.exp (-f i)))) := by
+  unfold ibpSilu? at hbox
+  cases hg : boxUnaryEnclosure? NonlinearBoundOps.sigmoidBounds x with
+  | none => simp [hg] at hbox
+  | some gate =>
+      simp only [hg, Option.bind_eq_bind, Option.bind_some] at hbox
+      exact boxMulElem_encloses hx
+        (boxUnaryEnclosure?_encloses LawfulNonlinearBoundOps.sigmoidBounds_enclosure hx hg) hbox
+
 /-- Reciprocal bounds are the division law with numerator `1`. -/
 theorem unaryEnclosure_inv [NonlinearBoundOps α] [LawfulNonlinearBoundOps α] :
     UnaryEnclosure (α := α) (·⁻¹) (fun lo hi => NonlinearBoundOps.divBounds 1 1 lo hi) := by

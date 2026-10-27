@@ -357,11 +357,13 @@ Every box the executable `runIBP` returns encloses the real value of its node, p
 precede their consumers, the seed boxes contain the real inputs, and the real point satisfies
 `RealNodeEquation` at each node. These equations use the actual coordinate maps, reductions,
 normalization formulas, and real interpretations of stored parameters; convolution uses the
-exact spatial operation. The theorem covers every operation kind, including convolution, binary
-matrix multiplication, structural operations, and normalization. It derives all intermediate
-enclosures by induction.
+exact spatial operation. Supported transfers include convolution, binary matrix multiplication,
+structural operations, and normalization. The proof derives their intermediate enclosures by
+induction.
 Invalid shapes, missing parameters, and unavailable arithmetic transfers can still leave an entry
 as `none`; the theorem establishes enclosure whenever a box is returned.
+Grouped scaled contractions have a separate numerical-certificate range rule; the direct IBP and
+CROWN passes currently reject them.
 
 Random nodes use the actual real `Spec.Random.uniform` and `Spec.Random.mask` values at
 `Spec.Random.keyOf seed id` and the node's row-major coordinate. Uniform nodes have no parents;
@@ -371,6 +373,9 @@ uniform value lies in $`[0,1)` and each mask value is zero or one, with keep pro
 one giving the corresponding constant masks. Support follows from these seeded source equations.
 Agreement with a separate rounded or native random implementation remains a numerical
 correspondence question.
+These are the IR's own random-node semantics. Model lowering currently rejects runtime random
+draws because their keys count random calls rather than IR nodes; it must not silently substitute
+a different mask. Deterministic evaluation-mode dropout does not draw a mask.
 
 `GraphPoint.ofRunIBPAll` feeds these bounds to the backward proof and derives its node equations
 from `RealNodeEquation`. For checked convolution, positive dilation makes each affine coefficient
@@ -380,8 +385,8 @@ same coordinate maps in both directions.
 
 The public theorem `backwardObjectiveBox_encloses_runIBP_all` in
 {src "NN/MLTheory/CROWN/Proofs/DirectedBackwardEvaluation.lean"}[`DirectedBackwardEvaluation`]
-then covers forward IBP, directed backward propagation, and final interval evaluation for every
-operation kind. It requires exact affine reassociation to be disabled, as it is for `FP32`,
+then connects successful forward IBP, directed backward propagation, and final interval evaluation.
+It requires exact affine reassociation to be disabled, as it is for `FP32`,
 consistent node identifiers, valid input and output dimensions, an objective of the output
 dimension, and an enclosing input box. Every successful `.ok` query contains the real objective.
 No intermediate enclosure or additional backward node equation is assumed.
@@ -1181,7 +1186,8 @@ covers coefficient propagation, the output-box fallback, and final interval eval
 `backwardObjectiveBox_encloses_runIBP_all` uses `GraphPoint.ofRunIBPAll` to derive the
 intermediate enclosures and backward node equations from the input boxes and `RealNodeEquation`.
 Its scalar laws, nonnegative default epsilon, graph-order and dimension premises, and successful
-result hypothesis are the ones described above; every operation kind is covered.
+result hypothesis are the ones described above. A returned result is sound under these premises;
+unsupported transfers can still prevent success.
 ReLU, LayerNorm, and the other nonlinear nodes have no coefficient transfer on rounded backends,
 so they pass through their IBP box as well, and a rounded MLP "CROWN" bound is IBP at every ReLU.
 Relating these bounds to a separate native execution additionally requires a runtime-approximation

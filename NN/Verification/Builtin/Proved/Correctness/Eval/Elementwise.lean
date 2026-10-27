@@ -112,6 +112,8 @@ inductive UnaryElementwiseOp where
   | tanh
   /-- Logistic sigmoid. -/
   | sigmoid
+  /-- SiLU with a split exponential on the negative branch. -/
+  | silu
   /-- Stable softplus. -/
   | softplus
   /-- Elementwise exponential. -/
@@ -129,6 +131,7 @@ def UnaryElementwiseOp.toOpKind : UnaryElementwiseOp → OpKind
   | .relu => .relu
   | .tanh => .tanh
   | .sigmoid => .sigmoid
+  | .silu => .silu
   | .softplus => .softplus
   | .exp => .exp
   | .sin => .sin
@@ -145,6 +148,7 @@ def UnaryElementwiseOp.denote
   | .relu => Activation.reluSpec x
   | .tanh => Activation.tanhSpec x
   | .sigmoid => Activation.sigmoidSpec x
+  | .silu => Activation.swishSpec x
   | .softplus => Activation.softplusSpec x
   | .exp => Tensor.expSpec x
   | .sin => Tensor.map (fun v => MathFunctions.sin v) x

@@ -24,6 +24,38 @@ open TorchLean TorchLean.Tensor
 
 namespace Tape
 
+/-- Record weighted logits cross-entropy and its two native numerical pullbacks. -/
+def crossEntropy {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
+    (t : Tape SomeBuffer) (logitsId targetId : Nat) (mean : Bool := true) :
+    Result (Tape SomeBuffer × Nat) := do
+  validateU32Dimensions "cross_entropy" s.toArray
+  let axis32 ← SomeBuffer.natToU32Checked axis
+  binary t "cross_entropy" logitsId targetId s s Shape.scalar
+    (fun logits target => Buffer.crossEntropy logits target s.toArray axis32 mean)
+    (fun logits target seed => Buffer.crossEntropyBwd logits target seed s.toArray axis32 mean)
+
+/-- Record mean teacher-logit cross-entropy. The existing tape owns the student pullback;
+ATen evaluates its numerical formula without native graph recording. -/
+def distill {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
+    (t : Tape SomeBuffer) (studentId teacherId : Nat) : Result (Tape SomeBuffer × Nat) := do
+  validateU32Dimensions "distill" s.toArray
+  let axis32 ← SomeBuffer.natToU32Checked axis
+  let student ← requireValue (t := t) studentId s
+  let teacher ← requireValue (t := t) teacherId s
+  let loss := Buffer.distill student teacher s.toArray axis32
+  let node : Node SomeBuffer :=
+    { name := some "distill"
+      value := { s := Shape.scalar, buf := loss }
+      requiresGrad := (t.getNode? studentId).any (·.requiresGrad)
+      parents := #[studentId, teacherId]
+      backward := fun seed => do
+        let seed ← requireGrad seed Shape.scalar
+        let gradient := Buffer.distill student teacher s.toArray axis32 (gradient := true)
+        let scale := broadcastScalarToShape seed.buf s
+        let result := Buffer.releaseManyThen #[gradient, scale] (Buffer.mul gradient scale)
+        pure #[(studentId, { s := s, buf := result })] }
+  pure (t.addNode node)
+
 /-!
 ## Normalization
 -/

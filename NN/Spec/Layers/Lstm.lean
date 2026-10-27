@@ -243,11 +243,10 @@ def lstmCellBackwardSpec {inputSize hiddenSize : Nat}
   let concat := concatAxisSpec .scalar input prevState.hidden
 
   let tanhC := tanhSpec state.cell
-  let tanhCDeriv := Activation.tanhOutputDerivSpec tanhC
 
   -- h = o ⊙ tanh(c)
   let dO := mulSpec gradHidden tanhC
-  let dCFromH := mulSpec (mulSpec gradHidden outputGate) tanhCDeriv
+  let dCFromH := Activation.tanhBackwardSpec state.cell (mulSpec gradHidden outputGate)
   let dC := addSpec gradCell dCFromH
 
   -- c = f ⊙ c_prev + i ⊙ g
@@ -256,11 +255,15 @@ def lstmCellBackwardSpec {inputSize hiddenSize : Nat}
   let dG := mulSpec dC inputGate
   let dCPrev := mulSpec dC forgetGate
 
-  -- preactivation gradients
-  let dFPre := mulSpec dF (Activation.sigmoidOutputDerivSpec forgetGate)
-  let dIPre := mulSpec dI (Activation.sigmoidOutputDerivSpec inputGate)
-  let dOPre := mulSpec dO (Activation.sigmoidOutputDerivSpec outputGate)
-  let dGPre := mulSpec dG (Activation.tanhOutputDerivSpec candidate)
+  -- Recompute the affine inputs; rounded gate outputs cannot recover their derivative tails.
+  let preF := addSpec (matVecMulSpec lstm.forgetWeight concat) lstm.forgetBias
+  let preI := addSpec (matVecMulSpec lstm.inputWeight concat) lstm.inputBias
+  let preO := addSpec (matVecMulSpec lstm.outputWeight concat) lstm.outputBias
+  let preG := addSpec (matVecMulSpec lstm.candidateWeight concat) lstm.candidateBias
+  let dFPre := Activation.sigmoidBackwardSpec preF dF
+  let dIPre := Activation.sigmoidBackwardSpec preI dI
+  let dOPre := Activation.sigmoidBackwardSpec preO dO
+  let dGPre := Activation.tanhBackwardSpec preG dG
 
   let dWf := outerProductSpec dFPre concat
   let dWi := outerProductSpec dIPre concat

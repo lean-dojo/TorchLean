@@ -192,6 +192,13 @@ def evalNode? (nodes : Array Node) (ps : ParamStore ℝ) (inputs : Std.HashMap N
           | some x => some { n := x.n, v := Activation.sigmoidSpec (α := ℝ) x.v }
           | none => none
       | _ => none
+  | .silu =>
+      match NN.IR.unaryParent? node.parents with
+      | some p1 =>
+          match getVal? vals p1 with
+          | some x => some { n := x.n, v := Activation.swishSpec (α := ℝ) x.v }
+          | none => none
+      | _ => none
   | .softplus =>
       match NN.IR.unaryParent? node.parents with
       | some p1 =>

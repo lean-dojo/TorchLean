@@ -936,10 +936,11 @@ addition, subtraction, elementwise multiplication, ReLU, linear layers, matrix m
 concatenation, convolution, softplus, and safe log.
 It excludes both `sum` and `tanh`, which occur at nodes 4 and 5. Consequently this theorem does not
 cover the six-node graph as written, even after changing its scalar type to `ℝ`.
-The separate `runIBP_encloses_all` theorem covers these operations and every other operation kind
+The separate `runIBP_encloses_all` theorem applies to successful transfers for these operations
 under `RealNodeEquation` and the lawful arithmetic requirements described in
 {ref "verification"}[Verification And Certificates]. The reals and rounded-real `FP32` satisfy
 its scalar requirements; that result does not supply a global law for the FloatLib IEEE carrier.
+Unsupported transfers, including grouped scaled contractions, can still fail.
 
 The scalar in the theorem is `ParamStore ℝ`, whereas the command above uses FloatLib binary32.
 Relating that rounded propagation to real arithmetic requires another argument, developed in

@@ -26,6 +26,9 @@ field lifts FloatLib's model operation without converting through a native `Floa
 transcendentals are deterministic approximations; this dictionary adds no general accuracy or
 correct-rounding theorem for them.
 
+Dimension roots use the ordinary cast-then-root schedule unless the count overflows. That branch
+rounds the exact rational square root directly, so a representable root is not lost with the cast.
+
 The operations in this instance use FloatLib's CPU software arithmetic. Custom computations
 can select configured GPU arithmetic through `NN.Kernel`; this dictionary alone supplies
 neither that execution path nor a `LawfulContext` or trainer/checkpoint encoding.
@@ -55,6 +58,17 @@ instance configuredBinaryStorage : Storage Value :=
   { instArrayStorage Value with decEq? := some inferInstance }
 
 namespace ConfiguredBinary
+
+/-- A count whose cast overflows can still have a representable square root.
+
+Keep the ordinary cast-then-root schedule otherwise. FloatLib rounds the exact rational root
+directly in the exceptional branch, including custom exponent biases and finite encodings. -/
+def sqrtNat (n : Nat) : Value :=
+  let input := Model.ofRat format (n : Rat) (status := true)
+  if input.status.overflow then
+    ExecFloat.Binary.ofModel (Model.AlgebraicRounding.sqrtRat format false (n : Rat))
+  else
+    ExecFloat.Binary.ofModel (Model.sqrt input.value)
 
 /-- FloatLib's power function, the dictionary's `pow`. -/
 def pow (base exponent : Value) : Value :=
@@ -130,6 +144,7 @@ machine epsilon or an error bound; callers should choose tolerances for their fo
 instance configuredBinaryContext : Context Value where
   natCast n := ExecFloat.Binary.ofModel (Model.ofRat format (n : Rat))
   ratCast value := ExecFloat.Binary.ofModel (Model.ofRat format value)
+  sqrtNat := ConfiguredBinary.sqrtNat
   pow := ConfiguredBinary.pow
   defaultEpsilon :=
     let candidate : Value := ExecFloat.Binary.ofModel

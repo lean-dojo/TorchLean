@@ -23,6 +23,10 @@ single infinity-norm budget assembled from transpose, sequential matrix multipli
 coefficient-aware scaling, and row-softmax contracts. The current statements use the same feature
 width for queries, keys, and values; they do not prove a native or fused attention kernel.
 
+`NF` keeps the ordinary rounded-real expression. Finite IEEE carriers can additionally replay
+scaled contractions and pullbacks from their original coefficients after range loss or absorption.
+The statements here do not establish that separate finite-codec execution path.
+
 The theorem keeps the rounded coefficient error explicit. A caller may obtain it from the concrete
 construction of `1 / sqrt(d)` or another proved coefficient bound. Backend metadata alone does
 not establish this hypothesis. Hiding the error would treat a rounded scale as an exact constant.
@@ -53,6 +57,13 @@ variable {β : Radix} {fexp : ℤ -> ℤ} [ValidExp fexp]
 variable {rnd : ℝ -> ℤ} [ValidRndToNearest rnd]
 
 local notation "R" => NF β fexp rnd
+
+private theorem scaled_product_reference {α : Type} [Storage α] [Context α]
+    (h : Numeric.QuotientArithmetic.supported (α := α) = false) {m n p : Nat}
+    (a : Tensor α [m, n]) (b : Tensor α [n, p]) (c : α) :
+    Spec.Internal.scaledProducts (fun _ : Fin 1 => a) (fun _ => b) c =
+      scaleSpec (matMulSpec a b) c := by
+  simp [Spec.Internal.scaledProducts, h]
 
 /-! ## The canonical `1 / sqrt(d)` coefficient -/
 
@@ -429,7 +440,10 @@ theorem approxTensor_scaledDotProductAttention_unmasked {nQ nK d : Nat}
     (scaleS := 1 / Spec.attentionScaleDenom (α := ℝ) d)
     (scaleR := 1 / Spec.attentionScaleDenom (α := R) d)
     hq hk hv hscale hdenom
-  simpa only [Spec.scaledDotProductAttention, hmaskS, hmaskR] using hcore
+  have hreal : Numeric.QuotientArithmetic.supported (α := ℝ) = false := rfl
+  have hnf : Numeric.QuotientArithmetic.supported (α := R) = false := rfl
+  simpa only [Spec.scaledDotProductAttention, hmaskS, hmaskR,
+    scaled_product_reference hreal, scaled_product_reference hnf] using hcore
 
 /-- Canonical TorchLean attention corollary for a shared hard mask.
 
@@ -481,7 +495,10 @@ theorem approxTensor_scaledDotProductAttention_masked {nQ nK d : Nat}
     (scaleS := 1 / Spec.attentionScaleDenom (α := ℝ) d)
     (scaleR := 1 / Spec.attentionScaleDenom (α := R) d)
     hq hk hv hscale evidence
-  simpa only [Spec.scaledDotProductAttention, hmaskS, hmaskR] using hcore
+  have hreal : Numeric.QuotientArithmetic.supported (α := ℝ) = false := rfl
+  have hnf : Numeric.QuotientArithmetic.supported (α := R) = false := rfl
+  simpa only [Spec.scaledDotProductAttention, hmaskS, hmaskR,
+    scaled_product_reference hreal, scaled_product_reference hnf] using hcore
 
 /-- Fully instantiated unmasked attention theorem for a positive feature dimension.
 

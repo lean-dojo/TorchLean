@@ -67,6 +67,26 @@ values, log-cosh stays finite for large residuals, and the log and reciprocal gr
 unnecessary overflow in intermediate expressions. Integer-to-binary casts report overflow even
 when directed rounding returns a finite value, using FloatLib's status classifier.
 
+Power derivatives keep the original inputs when an intermediate overflows or underflows. For a
+positive base, this includes derivatives where both the base and exponent vary. The recovery uses
+FloatLib enclosures and accepts a result only when both bounds round to the same value, including
+every coefficient of a nested dual. It has a bounded refinement budget; unsupported domains and
+inconclusive bounds keep the ordinary result.
+
+Attention backward retains the original contractions through softmax, including the biased and
+dropout paths, rather than trying to recover a finite gradient from an already infinite tensor.
+The compound operation has real-valued derivative and JVP/VJP adjoint proofs. Native recovery can
+transfer finite operands to CPU; these proofs do not verify the external GPU kernels.
+
+Numerical certificates now cover the reference scaled matrix product, including recovery when the
+unscaled contraction overflows. The scale is a checked scalar operand. The range rule has a
+real-enclosure proof, and binary32 replay checks the concrete execution separately. Native
+implementation-defined reduction policies are still rejected by this rule.
+
+Typed graphs now count random draws rather than tensor nodes, matching the eager seed stream.
+This changes masks from earlier seeded typed-graph runs. Verifier IR lowering currently rejects
+random draws instead of substituting a different mask; eager and typed-graph dropout remain available.
+
 Rounded CROWN uses directed bounds and starts propagation from the requested input box.
 ODE corridor endpoints and time bounds round outward. Eager single-output backward passes skip
 unreached nodes, so an unused singular calculation cannot contaminate a gradient. Reached nodes still

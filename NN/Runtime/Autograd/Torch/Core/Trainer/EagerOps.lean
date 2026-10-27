@@ -115,10 +115,10 @@ instance {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfer α] :
   scatterAdd := fun {s} axis count _axisInBounds base source indices => fun sess =>
     Internal.EagerSession.scatterAdd (α := α) sess (shape := s) axis count base source indices
   matmul := fun {batchA batchB batch : Shape} {mDim nDim pDim : Nat}
-      {broadcastA} {broadcastB} a b => fun sess =>
+      {broadcastA} {broadcastB} a b scale => fun sess =>
     Internal.EagerSession.matmul (α := α) sess (batchA := batchA) (batchB := batchB)
       (batch := batch) (m := mDim) (n := nDim) (p := pDim)
-      (broadcastA := broadcastA) (broadcastB := broadcastB) a b
+      (broadcastA := broadcastA) (broadcastB := broadcastB) a b (scale := scale)
   concat := fun {nDim mDim} {s} a b => fun sess =>
     Internal.EagerSession.concat (α := α) sess (n := nDim) (m := mDim) (sh := s) a b
   slice := fun {nDim} {s} start len h x => fun sess =>
@@ -141,8 +141,13 @@ instance {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfer α] :
       x beta
   relu := fun {s} x => fun sess => Internal.EagerSession.relu (α := α) sess (sh := s) x
   sigmoid := fun {s} x => fun sess => Internal.EagerSession.sigmoid (α := α) sess (sh := s) x
+  silu := fun {s} x => fun sess => Internal.EagerSession.silu (α := α) sess (sh := s) x
   tanh := fun {s} x => fun sess => Internal.EagerSession.tanh (α := α) sess (sh := s) x
   gelu := fun {s} x => fun sess => Internal.EagerSession.gelu (α := α) sess (sh := s) x
+  softmaxMatmul := fun {batch rows keys width} scores value multiplier mask sess =>
+    Internal.EagerSession.softmaxMatmul (α := α) sess
+      (batch := batch) (rows := rows) (keys := keys) (width := width)
+      scores value multiplier mask
   softmaxLast := fun {s} x => fun sess =>
     Internal.EagerSession.softmaxLast (α := α) sess (sh := s) x
   logSoftmaxLast := fun {s} x => fun sess =>
@@ -164,6 +169,10 @@ instance {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfer α] :
     Internal.EagerSession.linear (α := α) sess (inDim := inDim) (outDim := outDim) w b x
   mseLoss := fun {s} yhat target => fun sess => Internal.EagerSession.mseLoss (α := α) sess (sh :=
     s) yhat target
+  crossEntropy := fun {s} axis _ logits target mean session =>
+    Internal.EagerSession.crossEntropy (s := s) session axis logits target mean
+  distill := fun {s} axis _ student teacher session =>
+    Internal.EagerSession.distill (s := s) session axis student teacher
   layerNorm := fun {seqLen embedDim} hSeq hEmb x gamma beta epsilon => fun sess =>
     Internal.EagerSession.layerNorm (α := α) sess (seqLen := seqLen) (embedDim := embedDim)
       (h_seq_pos := hSeq) (h_embed_pos := hEmb) x gamma beta (epsilon := epsilon)

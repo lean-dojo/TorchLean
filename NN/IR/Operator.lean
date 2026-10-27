@@ -142,6 +142,9 @@ inductive OpKind where
   | matmul
       -- Matrix multiply over the final two axes, broadcasting leading batch axes and promoting
       -- 1D operands as `torch.matmul` does.
+  | scaledMatmul
+      -- The third parent is a scalar scale retained inside the complete matrix contraction.
+      -- Model lowering supplies it as a constant node, checked like every other graph value.
   | linear
       -- Affine layer `y = W x + b`. Parameters live in an external store keyed by node id;
       -- the sole parent is the activation input `x`.
@@ -151,7 +154,7 @@ inductive OpKind where
   | batchNormEval (channelAxis channels : Nat)
       -- Eval-mode BatchNorm along an explicit channel axis. Affine parameters and running
       -- statistics live in an external store keyed by node id.
-  | relu | tanh | sigmoid | exp | log | sin | cos
+  | relu | tanh | sigmoid | silu | exp | log | sin | cos
       -- Common elementwise activations / nonlinearities.
   | softplus
       -- Stable pointwise softplus, using the scalar specification's sign branch.
@@ -209,8 +212,8 @@ inductive OpTag where
   | input | const | custom | permute | transpose | detach | randUniform | bernoulliMask
   | add | sub | mulElem | abs | sqrt | inv | maxElem | minElem
   | maxPool | avgPool | broadcastTo | reduceSum | reduceMean | sum
-  | matmul | linear | conv | batchNormEval
-  | relu | tanh | sigmoid | exp | log | sin | cos
+  | matmul | scaledMatmul | linear | conv | batchNormEval
+  | relu | tanh | sigmoid | silu | exp | log | sin | cos
   | softplus | safeLog
   | softmax | hardMaskedSoftmax | topKMask | layernorm | reshape | flatten | concat | slice
   | mseLoss
@@ -224,8 +227,8 @@ def all : List OpTag :=
   [ .input, .const, .custom, .permute, .transpose, .detach, .randUniform, .bernoulliMask
   , .add, .sub, .mulElem, .abs, .sqrt, .inv, .maxElem, .minElem
   , .maxPool, .avgPool, .broadcastTo, .reduceSum, .reduceMean, .sum
-  , .matmul, .linear, .conv, .batchNormEval
-  , .relu, .tanh, .sigmoid, .exp, .log, .sin, .cos
+  , .matmul, .scaledMatmul, .linear, .conv, .batchNormEval
+  , .relu, .tanh, .sigmoid, .silu, .exp, .log, .sin, .cos
   , .softplus, .safeLog
   , .softmax, .hardMaskedSoftmax, .topKMask, .layernorm, .reshape, .flatten, .concat, .slice
   , .mseLoss, .pointwise ]
@@ -262,12 +265,14 @@ def toKind? : OpTag → Option OpKind
   | .reduceMean => none
   | .sum => some .sum
   | .matmul => some .matmul
+  | .scaledMatmul => some .scaledMatmul
   | .linear => some .linear
   | .conv => none
   | .batchNormEval => none
   | .relu => some .relu
   | .tanh => some .tanh
   | .sigmoid => some .sigmoid
+  | .silu => some .silu
   | .softplus => some .softplus
   | .safeLog => some .safeLog
   | .exp => some .exp
@@ -315,12 +320,14 @@ def metadata : OpTag → OpMetadata
   | .reduceMean => ⟨"reduce_mean", ⟨1, some 1⟩⟩
   | .sum => ⟨"sum", ⟨1, some 1⟩⟩
   | .matmul => ⟨"matmul", ⟨2, some 2⟩⟩
+  | .scaledMatmul => ⟨"scaled_matmul", ⟨3, some 3⟩⟩
   | .linear => ⟨"linear", ⟨1, some 1⟩⟩
   | .conv => ⟨"conv", ⟨1, some 1⟩⟩
   | .batchNormEval => ⟨"batch_norm_eval", ⟨1, some 1⟩⟩
   | .relu => ⟨"relu", ⟨1, some 1⟩⟩
   | .tanh => ⟨"tanh", ⟨1, some 1⟩⟩
   | .sigmoid => ⟨"sigmoid", ⟨1, some 1⟩⟩
+  | .silu => ⟨"silu", ⟨1, some 1⟩⟩
   | .softplus => ⟨"softplus", ⟨1, some 1⟩⟩
   | .safeLog => ⟨"safe_log", ⟨2, some 2⟩⟩
   | .exp => ⟨"exp", ⟨1, some 1⟩⟩
@@ -367,12 +374,14 @@ def opTag : OpKind → OpTag
   | .reduceMean .. => .reduceMean
   | .sum => .sum
   | .matmul => .matmul
+  | .scaledMatmul => .scaledMatmul
   | .linear => .linear
   | .conv .. => .conv
   | .batchNormEval .. => .batchNormEval
   | .relu => .relu
   | .tanh => .tanh
   | .sigmoid => .sigmoid
+  | .silu => .silu
   | .softplus => .softplus
   | .safeLog => .safeLog
   | .exp => .exp

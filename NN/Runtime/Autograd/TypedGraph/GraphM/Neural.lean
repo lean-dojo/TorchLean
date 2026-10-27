@@ -37,6 +37,30 @@ open Proofs.Autograd.Algebra
 -- `Idx` and `getIdx` are defined.
 open Proofs (Idx getIdx)
 
+/-- Normalize score rows and mix values, retaining the multiplier in both differential rules. -/
+def softmaxMatmul {α Δ : Type} [Storage α] [Context α]
+    {Γ : List Shape} {batch : Shape} {rows keys width : Nat}
+    (scores : Var (batch.concat [rows, keys])) (value : Var (batch.concat [keys, width]))
+    (multiplier : Var (batch.concat [rows, keys]))
+    (mask : Option (Tensor Bool [rows, keys]) := none) :
+    MWith α Δ Γ (Var (batch.concat [rows, width])) := do
+  let ⟨ss, graph, _, _⟩ ← get
+  let scoreIndex ← liftM (mkIdx (Γ := Γ) ss scores)
+  let iv ← liftM (mkIdx (Γ := Γ) ss value)
+  let im ← liftM (mkIdx (Γ := Γ) ss multiplier)
+  let node : NodeData α Δ (Γ ++ ss) (batch.concat [rows, width]) :=
+    NodeData.ofLocalCompact (fun lookup => (lookup.read scoreIndex, lookup.read iv, lookup.read im))
+      (forward := fun ctx _ => Spec.softmaxMatmul ctx.1 ctx.2.1 ctx.2.2 mask)
+      (jvp := fun ctx tangent _ =>
+        Spec.softmaxMatmulJvp (Spec.softmaxMatmulWeights ctx.1 mask) ctx.2.1 ctx.2.2
+          tangent.1 tangent.2.1 tangent.2.2)
+      (vjp := fun ctx _ seed =>
+        let (ds, dv, dm) := Spec.softmaxMatmulBackward
+          (Spec.softmaxMatmulWeights ctx.1 mask) ctx.2.1 ctx.2.2 seed
+        Contributions.add (Contributions.single scoreIndex ds)
+          (Contributions.add (Contributions.single iv dv) (Contributions.single im dm)))
+  push graph node
+
 /--
 Layer normalization (sequence-first), producing the same shape as the input.
 
@@ -54,7 +78,7 @@ def layerNorm {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
   (beta : Var (.dim embedDim .scalar))
   (epsilon : α := TorchLean.normalizationEpsilon) :
   MWith α Δ Γ (Var (.dim seqLen (.dim embedDim .scalar))) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ix ← liftM (mkIdx (Γ := Γ) ss x)
   let ig ← liftM (mkIdx (Γ := Γ) ss gamma)
   let ib ← liftM (mkIdx (Γ := Γ) ss beta)
@@ -106,7 +130,7 @@ def batchNorm {α : Type} {Δ : Type} [TorchLean.Storage α] [Context α]
   (epsilon : α := TorchLean.normalizationEpsilon) :
   MWith α Δ Γ (Var (.dim channels sSpatial)) := do
   let _ : Shape.WellFormed (.dim channels sSpatial) := ⟨hWellFormed⟩
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ix ← liftM (mkIdx (Γ := Γ) ss x)
   let ig ← liftM (mkIdx (Γ := Γ) ss gamma)
   let ib ← liftM (mkIdx (Γ := Γ) ss beta)
@@ -163,7 +187,7 @@ def Internal.attentionNode {α : Type} {Δ : Type} [TorchLean.Storage α] [Conte
   (x : Var (.dim n (.dim dModel .scalar)))
   (mask : Option (Tensor Bool [n, n]) := none) :
   MWith α Δ Γ (Var (.dim n (.dim dModel .scalar))) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let iwq ← liftM (mkIdx (Γ := Γ) ss wq)
   let iwk ← liftM (mkIdx (Γ := Γ) ss wk)
   let iwv ← liftM (mkIdx (Γ := Γ) ss wv)

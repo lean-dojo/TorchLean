@@ -36,6 +36,23 @@ namespace EagerSession
 
 /-! ## Neural-network layers -/
 
+/-- Normalize score rows and aggregate values, retaining the compound local pullback. -/
+def softmaxMatmul {α : Type} [Storage α] [Context α] (session : EagerSession α)
+    {batch : Shape} {rows keys width : Nat}
+    (scores : TensorRef α (batch.concat [rows, keys]))
+    (value : TensorRef α (batch.concat [keys, width]))
+    (multiplier : TensorRef α (batch.concat [rows, keys]))
+    (mask : Option (Tensor Bool [rows, keys]) := none) :
+    IO (TensorRef α (batch.concat [rows, width])) := do
+  let cpu := session.recordCpu fun tape => keepTapeOnError tape <|
+    Runtime.Autograd.Tape.softmaxMatmul (batch := batch) (rows := rows) (keys := keys)
+      (width := width) tape scores.id value.id multiplier.id mask
+  let cuda := session.recordCuda fun tape => keepTapeOnError tape <|
+    Runtime.Autograd.LibTorch.Tape.softmaxMatmul (batch := batch) (rows := rows) (keys := keys)
+      (width := width) tape scores.id value.id multiplier.id mask
+  executeRecorded session .softmaxMatmul
+    #[scores.identity?, value.identity?, multiplier.identity?] cpu cuda
+
 /-- Fully-connected linear layer `y = w x + b`. PyTorch: `torch.nn.functional.linear`. -/
 def linear {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Inhabited α] [Add α]
   [Mul α] [Zero α]
@@ -63,6 +80,26 @@ def mseLoss {α : Type} [TorchLean.Storage α] (s : EagerSession α)
     s.recordCuda fun t0 => keepTapeOnError t0 <|
       Runtime.Autograd.LibTorch.Tape.mseLoss (t := t0) (s := sh) yhat.id target.id
   executeRecorded (α := α) s .mseLoss #[yhat.identity?, target.identity?] cpu cuda
+
+/-- Mean weighted logits cross-entropy, recorded on the selected backend's existing tape. -/
+def crossEntropy {α : Type} [TorchLean.Storage α] [Context α] (session : EagerSession α)
+    {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
+    (logits target : TensorRef α s) (mean : Bool := true) : IO (TensorRef α Shape.scalar) := do
+  let cpu := session.recordCpu fun tape => keepTapeOnError tape <|
+    Runtime.Autograd.Tape.crossEntropy (s := s) axis tape logits.id target.id mean
+  let cuda := session.recordCuda fun tape => keepTapeOnError tape <|
+    Runtime.Autograd.LibTorch.Tape.crossEntropy (s := s) axis tape logits.id target.id mean
+  executeRecorded session .crossEntropy #[logits.identity?, target.identity?] cpu cuda
+
+/-- Mean teacher-logit cross-entropy, recorded on the selected backend's existing tape. -/
+def distill {α : Type} [TorchLean.Storage α] [Context α] (session : EagerSession α)
+    {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
+    (student teacher : TensorRef α s) : IO (TensorRef α Shape.scalar) := do
+  let cpu := session.recordCpu fun tape => keepTapeOnError tape <|
+    Runtime.Autograd.Tape.distill (s := s) axis tape student.id teacher.id
+  let cuda := session.recordCuda fun tape => keepTapeOnError tape <|
+    Runtime.Autograd.LibTorch.Tape.distill (s := s) axis tape student.id teacher.id
+  executeRecorded session .distill #[student.identity?, teacher.identity?] cpu cuda
 
 /-- Layer normalization over embedding dimension. PyTorch: `nn.LayerNorm` / `functional.layer_norm`.
   -/

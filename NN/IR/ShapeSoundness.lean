@@ -435,12 +435,13 @@ theorem evalNodeRaw_shape_source
 /-- Unary shape-preserving operations that only read one parent at the declared shape. -/
 theorem evalNodeRaw_shape_unary_elementwise
     (hk : n.kind ∈
-      [OpKind.abs, .sqrt, .inv, .relu, .tanh, .sigmoid, .softplus, .exp, .sin, .cos, .detach])
+      [OpKind.abs, .sqrt, .inv, .relu, .tanh, .sigmoid, .silu, .softplus,
+        .exp, .sin, .cos, .detach])
     (hParents : ParentShapesOf vals n.parents parentShapes)
     (hInfer : Infer.nodeOutShape n parentShapes = .ok inferred)
     (hEval : evalNodeRaw payload input vals i n = .ok v) : v.shape = inferred := by
   simp only [List.mem_cons, List.mem_nil_iff, or_false] at hk
-  rcases hk with hk | hk | hk | hk | hk | hk | hk | hk | hk | hk | hk <;>
+  rcases hk with hk | hk | hk | hk | hk | hk | hk | hk | hk | hk | hk | hk <;>
   · simp only [Infer.nodeOutShape, hk] at hInfer
     simp only [evalNodeRaw, hk] at hEval
     peel_ok hEval
@@ -617,6 +618,56 @@ theorem evalNodeRaw_shape_matmul (hk : n.kind = .matmul)
   rename_i dims hDims
   obtain ⟨aT, _, bT, _, hv⟩ := hEval
   obtain ⟨hs₁, hs₂⟩ := binary_parent_shapes hParents hIds hA hB hShapes
+  simp only at hs₁ hs₂ hDims'
+  subst hs₁ hs₂
+  rw [hDims] at hDims'
+  cases hDims'
+  subst hv hInferred
+  rfl
+
+/-- The shapes of three operands agree across successful inference and value lookup. -/
+private theorem ternary_parent_shapes {α : Type} [TorchLean.Storage α]
+    {vals : Array (Spec.SomeTensor α)} {i : Nat} {n : Node} {parentShapes : Array Shape}
+    (hParents : ParentShapesOf vals n.parents parentShapes)
+    {a b c : Nat}
+    (hIds : Infer.expectTernaryParents "scaled_matmul" n.parents = .ok (a, b, c))
+    {av bv cv : Spec.SomeTensor α}
+    (hA : getParentValue vals i n a = .ok av)
+    (hB : getParentValue vals i n b = .ok bv)
+    (hC : getParentValue vals i n c = .ok cv)
+    {s₁ s₂ s₃ : Shape}
+    (hInfer : Infer.expectTernaryParents "scaled_matmul" parentShapes = .ok (s₁, s₂, s₃)) :
+    s₁ = av.shape ∧ s₂ = bv.shape ∧ s₃ = cv.shape := by
+  unfold Infer.expectTernaryParents at hIds hInfer
+  split at hIds
+  next hsize =>
+    split at hInfer
+    next hshapes =>
+      cases hIds
+      cases hInfer
+      have ha := hParents.2 0 (by omega) av (getParentValue_ok hA)
+      have hb := hParents.2 1 (by omega) bv (getParentValue_ok hB)
+      have hc := hParents.2 2 (by omega) cv (getParentValue_ok hC)
+      rw [Array.getElem?_eq_getElem (by omega)] at ha hb hc
+      exact ⟨Option.some.inj ha, Option.some.inj hb, Option.some.inj hc⟩
+    next => cases hInfer
+  next => cases hIds
+
+/-- A scalar scale operand changes a contraction's arithmetic, not its output shape. -/
+theorem evalNodeRaw_shape_scaled_matmul (hk : n.kind = .scaledMatmul)
+    (hParents : ParentShapesOf vals n.parents parentShapes)
+    (hInfer : Infer.nodeOutShape n parentShapes = .ok inferred)
+    (hEval : evalNodeRaw payload input vals i n = .ok v) : v.shape = inferred := by
+  simp only [Infer.nodeOutShape, hk, OpContracts.inferMatmulOutShape] at hInfer
+  simp only [evalNodeRaw, hk] at hEval
+  peel_ok hInfer
+  peel_ok hEval
+  obtain ⟨⟨s₁, s₂, s₃⟩, hShapes, _, dims', hDims', hInferred⟩ := hInfer
+  obtain ⟨⟨a, b, c⟩, hIds, aV, hA, bV, hB, cV, hC, scale, _, hEval⟩ := hEval
+  split at hEval <;> peel_ok hEval
+  rename_i dims hDims
+  obtain ⟨aT, _, bT, _, hv⟩ := hEval
+  obtain ⟨hs₁, hs₂, _⟩ := ternary_parent_shapes hParents hIds hA hB hC hShapes
   simp only at hs₁ hs₂ hDims'
   subst hs₁ hs₂
   rw [hDims] at hDims'
@@ -828,6 +879,7 @@ theorem evalNodeRaw_shape_of_infer
       exact hDecl ▸ evalNodeRaw_shape_reduction (Or.inr (Or.inl ⟨axis, hk⟩)) hParents hInfer hEval
   | sum => exact hDecl ▸ evalNodeRaw_shape_reduction (Or.inr (Or.inr hk)) hParents hInfer hEval
   | matmul => exact hDecl ▸ evalNodeRaw_shape_matmul hk hParents hInfer hEval
+  | scaledMatmul => exact hDecl ▸ evalNodeRaw_shape_scaled_matmul hk hParents hInfer hEval
   | linear => exact hDecl ▸ evalNodeRaw_shape_linear_loss (Or.inl hk) hInfer hEval
   | conv config => exact evalNodeRaw_shape_declared (Or.inr (Or.inr ⟨config, hk⟩)) hEval
   | batchNormEval channelAxis channels =>
@@ -835,6 +887,8 @@ theorem evalNodeRaw_shape_of_infer
   | relu => exact hDecl ▸ evalNodeRaw_shape_unary_elementwise (by simp [hk]) hParents hInfer hEval
   | tanh => exact hDecl ▸ evalNodeRaw_shape_unary_elementwise (by simp [hk]) hParents hInfer hEval
   | sigmoid =>
+      exact hDecl ▸ evalNodeRaw_shape_unary_elementwise (by simp [hk]) hParents hInfer hEval
+  | silu =>
       exact hDecl ▸ evalNodeRaw_shape_unary_elementwise (by simp [hk]) hParents hInfer hEval
   | softplus =>
       exact hDecl ▸ evalNodeRaw_shape_unary_elementwise (by simp [hk]) hParents hInfer hEval

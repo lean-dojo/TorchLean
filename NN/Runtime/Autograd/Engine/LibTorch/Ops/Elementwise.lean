@@ -85,19 +85,31 @@ returned buffers are owned by the tape/gradient accumulator; workspace buffers a
     (forward := fun x => Buffer.clamp x lo hi)
     (backward := fun x dLdy => Buffer.clampBwd x dLdy lo hi)
 
-/-- Pointwise maximum node; the backward rule splits ties according to `Buffer.maxBwd`. -/
+/-- Pointwise maximum node. Distinct parents split ties according to `Buffer.maxBwd`.
+Repeated references contribute the upstream value once, before graph accumulation. -/
 @[inline] def max {s : Shape} (t : Tape SomeBuffer) (aId bId : Nat) : Result (Tape SomeBuffer
     × Nat) :=
-  binary (t := t) "max" aId bId s s s
-    (forward := Buffer.max)
-    (backward := fun a b dLdy => Buffer.maxBwd a b dLdy)
+  if aId == bId then
+    unary (t := t) "max" aId s s
+      (forward := fun x => Buffer.max x x)
+      (backward := fun _ seed => Buffer.scale seed 1.0)
+  else
+    binary (t := t) "max" aId bId s s s
+      (forward := Buffer.max)
+      (backward := fun a b dLdy => Buffer.maxBwd a b dLdy)
 
-/-- Pointwise minimum node; the backward rule splits ties according to `Buffer.minBwd`. -/
+/-- Pointwise minimum node. Distinct parents split ties according to `Buffer.minBwd`.
+Repeated references use the coalesced-contribution convention of `Tape.max`. -/
 @[inline] def min {s : Shape} (t : Tape SomeBuffer) (aId bId : Nat) : Result (Tape SomeBuffer
     × Nat) :=
-  binary (t := t) "min" aId bId s s s
-    (forward := Buffer.min)
-    (backward := fun a b dLdy => Buffer.minBwd a b dLdy)
+  if aId == bId then
+    unary (t := t) "min" aId s s
+      (forward := fun x => Buffer.min x x)
+      (backward := fun _ seed => Buffer.scale seed 1.0)
+  else
+    binary (t := t) "min" aId bId s s s
+      (forward := Buffer.min)
+      (backward := fun a b dLdy => Buffer.minBwd a b dLdy)
 
 /-- Pointwise division node with the usual quotient-rule backward closure. -/
 @[inline] def div {s : Shape} (t : Tape SomeBuffer) (aId bId : Nat) : Result (Tape SomeBuffer
@@ -193,33 +205,25 @@ inputs.
       Buffer.releaseThen epsBuf <| Buffer.releaseThen sp <| Buffer.releaseThen denom <|
         Buffer.releaseThen sig <| Buffer.releaseThen dlog <| Buffer.mul dLdy dlog)
 
-/-- Direct sigmoid values with TorchLean's VJP `dLdy * (y * (1 - y))`. -/
+/-- Direct sigmoid values and the input-based weighted pullback. -/
 @[inline] def sigmoid {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat)
     := do
-  let n ← SomeBuffer.numelU32 s
   unary (t := t) "sigmoid" xId s s
     (forward := Buffer.sigmoid)
-    (backward := fun x dLdy =>
-      let y := Buffer.sigmoid x
-      let ones := Buffer.full n 1.0 (Buffer.dtype x)
-      let oneMinusY := Buffer.sub ones y
-      let dy := Buffer.mul y oneMinusY
-      Buffer.releaseThen y <| Buffer.releaseThen ones <| Buffer.releaseThen oneMinusY <|
-        Buffer.releaseThen dy <| Buffer.mul dLdy dy)
+    (backward := Buffer.sigmoidBwd)
 
-/-- Direct hyperbolic tangent values with TorchLean's VJP `dLdy * (1 - y * y)`. -/
+/-- Direct tanh values and the input-based weighted pullback. -/
 @[inline] def tanh {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat)
     := do
-  let n ← SomeBuffer.numelU32 s
   unary (t := t) "tanh" xId s s
     (forward := Buffer.tanh)
-    (backward := fun x dLdy =>
-      let y := Buffer.tanh x
-      let ones := Buffer.full n 1.0 (Buffer.dtype x)
-      let y2 := Buffer.mul y y
-      let dy := Buffer.sub ones y2
-      Buffer.releaseThen y <| Buffer.releaseThen ones <| Buffer.releaseThen y2 <|
-        Buffer.releaseThen dy <| Buffer.mul dLdy dy)
+    (backward := Buffer.tanhBwd)
+
+/-- SiLU as one CUDA tape node. ATen evaluates the split-exponential value and local VJP. -/
+@[inline] def silu {s : Shape} (t : Tape SomeBuffer) (xId : Nat) : Result (Tape SomeBuffer × Nat) :=
+  unary (t := t) "silu" xId s s
+    (forward := Buffer.silu)
+    (backward := fun x seed => Buffer.siluBwd x seed)
 
 /--
 Tanh-approximate GELU as one CUDA tape node.

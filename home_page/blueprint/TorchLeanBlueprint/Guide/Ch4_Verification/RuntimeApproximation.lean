@@ -495,8 +495,10 @@ real value and the interpreted IEEE value lie between the same two endpoints; th
 therefore at most the upper endpoint minus the lower endpoint. This argument requires enclosure of
 both values. Checking the rounded replay alone leaves the real half of the argument unproved.
 
-Reduction order is read from the selected capsule. The portable reference capsules advertise the
-fixed left fold used by the canonical tensor semantics. LibTorch CUDA accumulations are
+Reduction order is read from the selected capsule. Ordinary reference matrix products and sums
+advertise the fixed left fold used by the canonical tensor semantics. Grouped scaled products
+instead advertise `fixedLeftOrExact`, matching their staged-or-exact recovery; their certificate
+rule requires that policy. LibTorch CUDA accumulations are
 marked implementation-defined, so a fixed-left certificate cannot accidentally certify a cuBLAS,
 cuDNN, fused-attention, or parallel-reduction schedule. Those paths require the order-independent
 reduction bounds described in the floating-point chapter or a stronger backend-specific contract.

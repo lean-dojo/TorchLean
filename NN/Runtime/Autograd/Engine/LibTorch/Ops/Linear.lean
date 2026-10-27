@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Engine.LibTorch.Ops.Core
+public import NN.Runtime.Autograd.Engine.LibTorch.Ops.Attention
 
 /-!
 # CUDA Tape Operations: Matrix and Loss Nodes
@@ -48,7 +49,8 @@ namespace Internal
 
 /-- Backend matrix kernel over a flattened leading shape. -/
 @[inline]
-def matmulFlattened {batch m n p : Nat} (t : Tape SomeBuffer) (aId bId : Nat) : Result
+def matmulFlattened {batch m n p : Nat} (t : Tape SomeBuffer) (aId bId : Nat)
+    (scale : Option Float := none) : Result
     (Tape SomeBuffer × Nat) := do
   let b32 ← SomeBuffer.natToU32Checked batch
   let m32 ← SomeBuffer.natToU32Checked m
@@ -58,10 +60,16 @@ def matmulFlattened {batch m n p : Nat} (t : Tape SomeBuffer) (aId bId : Nat) : 
   let σ₂ : Shape := .dim batch (.dim n (.dim p .scalar))
   let τ : Shape := .dim batch (.dim m (.dim p .scalar))
   binary (t := t) "bmm" aId bId σ₁ σ₂ τ
-    (forward := fun a b => Buffer.bmm a b b32 m32 n32 p32)
+    (forward := fun a b => match scale with
+      | none => Buffer.bmm a b b32 m32 n32 p32
+      | some scale => Buffer.scaledProduct a b b32 m32 n32 p32 scale)
     (backward := fun a b dLdy =>
-      let dA := Buffer.bmmRightTranspose dLdy b b32 m32 p32 n32
-      let dB := Buffer.bmmLeftTranspose a dLdy b32 n32 m32 p32
+      let dA := match scale with
+        | none => Buffer.bmmRightTranspose dLdy b b32 m32 p32 n32
+        | some scale => Buffer.scaledProduct dLdy b b32 m32 p32 n32 scale (transposeB := true)
+      let dB := match scale with
+        | none => Buffer.bmmLeftTranspose a dLdy b32 n32 m32 p32
+        | some scale => Buffer.scaledProduct a dLdy b32 n32 m32 p32 scale (transposeA := true)
       (dA, dB))
 
 end Internal

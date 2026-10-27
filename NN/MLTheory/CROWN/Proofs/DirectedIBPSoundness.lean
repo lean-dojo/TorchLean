@@ -18,8 +18,8 @@ encloses the real value of its node, provided the real point satisfies the node 
 
 The proof covers the node kinds accepted by `ibpForwardSupportedNode`: inputs, constants, copies,
 `add`, `sub`, `mulElem`, `relu`, `linear`, unary `matmul`, `sum`, and the pointwise `exp`, `log`,
-`sqrt`, `inv`, `tanh`, `sigmoid`, `sin`, and `cos`. On such graphs `GraphPoint.ofRunIBP` builds the
-`GraphPoint` that the backward theorems take, so their IBP hypothesis is discharged. The
+`sqrt`, `inv`, `tanh`, `sigmoid`, `silu`, `sin`, and `cos`. On such graphs `GraphPoint.ofRunIBP`
+builds the `GraphPoint` that the backward theorems take, so their IBP hypothesis is discharged. The
 corollaries `runCROWNBackwardObjective_encloses_runIBP` and `directedNodeBounds_encloses_runIBP`
 state the resulting end-to-end guarantees.
 
@@ -55,7 +55,7 @@ def ibpForwardSupportedNode (node : Node) : Bool :=
   match node.kind with
   | .input | .const _ | .detach | .reshape .. | .flatten ..
   | .add | .sub | .mulElem | .relu | .linear | .sum
-  | .exp | .log | .sqrt | .inv | .tanh | .sigmoid | .sin | .cos => true
+  | .exp | .log | .sqrt | .inv | .tanh | .sigmoid | .silu | .sin | .cos => true
   | .matmul => node.parents.size == 1
   | _ => false
 
@@ -212,6 +212,10 @@ theorem ibpStepNodeAt?_encloses
       unary_lookup (k := boxUnaryEnclosure? NonlinearBoundOps.sigmoidBounds) hstep
     exact unary_step (fun hB hb => boxUnaryEnclosure?_encloses
       LawfulNonlinearBoundOps.sigmoidBounds_enclosure hB hb) (heq p hp) (hunary hp B hB) hbox
+  case silu =>
+    obtain ⟨p, B, hp, hB, hbox⟩ := unary_lookup (k := ibpSilu?) hstep
+    exact unary_step (fun hB hb => ibpSilu?_encloses hB hb)
+      (heq p hp) (hunary hp B hB) hbox
   case sin =>
     obtain ⟨p, B, hp, hB, hbox⟩ :=
       unary_lookup (k := boxUnaryEnclosure? NonlinearBoundOps.sinBounds) hstep

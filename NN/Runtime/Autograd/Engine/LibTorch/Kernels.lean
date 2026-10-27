@@ -44,6 +44,24 @@ It does not record an autograd graph. Invalid dimensions, axes and device failur
 @[never_extract, extern "torchlean_cuda_buffer_softmax_io"]
 opaque softmax (input : @& Buffer) (dims : @& Array Nat) (axis : UInt32) : IO Buffer
 
+/-- Mean weighted logits cross-entropy. Original logits remain available for a weighted term
+whose unweighted log-probability overflows. The foreign routine does not record autograd. -/
+@[never_extract, extern "torchlean_cuda_buffer_cross_entropy"]
+opaque crossEntropy (logits target : @& Buffer) (dims : @& Array Nat) (axis : UInt32)
+    (mean : Bool := true) : Buffer
+
+/-- Local logits and target-weight pullbacks, in that order, multiplied by a scalar seed. -/
+@[never_extract, extern "torchlean_cuda_buffer_cross_entropy_bwd"]
+opaque crossEntropyBwd (logits target seed : @& Buffer) (dims : @& Array Nat)
+    (axis : UInt32) (mean : Bool := true) : Buffer × Buffer
+
+/-- Fixed-teacher mean cross-entropy, or its student gradient when `gradient` is true.
+ATen evaluates the shared logit-difference formula without recording an autograd graph. The
+result is scalar for the loss and has the input shape for the gradient. -/
+@[never_extract, extern "torchlean_cuda_buffer_distill"]
+opaque distill (student teacher : @& Buffer) (dims : @& Array Nat) (axis : UInt32)
+    (gradient : Bool := false) : Buffer
+
 /-- Grouped convolution over a spatial suffix, with dilation and asymmetric zero padding.
 
 Axes before the channel axis are folded into a batch. `kernelDims` describes the dense
@@ -74,6 +92,11 @@ When `cols = 0`, the result contains `rows` zeros by TorchLean's native compatib
 -/
 @[never_extract, extern "torchlean_cuda_buffer_reduce_max_by_row"]
 opaque reduceMaxByRow (b : @& Buffer) (rows cols : UInt32) : Buffer
+
+/-- One at the first maximal coordinate in each nonempty row and zero elsewhere.
+Empty rows return an empty buffer. The mask retains the input dtype. -/
+@[never_extract, extern "torchlean_cuda_buffer_argmax_mask_by_row"]
+opaque argmaxMaskByRow (b : @& Buffer) (rows cols : UInt32) : Buffer
 
 /--
 One for the `k` entries of each row of a flat `(rows, cols)` buffer that fewer than `k` entries of
@@ -149,6 +172,16 @@ LibTorch accepts these views. In particular, backward rules can request `Aᵀ B`
 -/
 @[never_extract, extern "torchlean_cuda_buffer_bmm_with_transpose"]
 opaque bmmWithTranspose (A B : @& Buffer) (batch m n p transposeA transposeB : UInt32) : Buffer
+
+/-- Scaled batched product and a range-loss flag for its original operands.
+
+The native path splits a shrinking scale between the operands. Conservative product-range checks,
+tiny or zero results, and nonfinite intermediates request replay from the original buffers. Exact
+zero contractions can also request replay; this is not a certified error bound. Reading the
+combined flag synchronizes the device once. The caller owns the returned buffer. -/
+@[never_extract, extern "torchlean_cuda_buffer_scaled_bmm"]
+opaque scaledBmm (A B : @& Buffer) (batch m n p transposeA transposeB : UInt32)
+    (scale : Float) : Buffer × Bool
 
 /-- Batched matrix multiplication `A B` for ordinary row-major operands. -/
 def bmm (A B : Buffer) (batch m n p : UInt32) : Buffer :=

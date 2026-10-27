@@ -226,6 +226,15 @@ def tanh {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
       Runtime.Autograd.LibTorch.Tape.tanh (t := t0) (s := sh) x.id
   executeRecorded (α := α) s .tanh #[x.identity?] cpu cuda
 
+/-- Record SiLU as one operation; the input is retained for its negative-tail VJP. -/
+def silu {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
+    {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do
+  let cpu := s.recordCpu fun tape => keepTapeOnError tape <|
+    Runtime.Autograd.Tape.silu (s := sh) tape x.id
+  let cuda := s.recordCuda fun tape => keepTapeOnError tape <|
+    Runtime.Autograd.LibTorch.Tape.silu (s := sh) tape x.id
+  executeRecorded (α := α) s .silu #[x.identity?] cpu cuda
+
 /-- Record tanh-approximate GELU as one tape operation. -/
 def gelu {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Context α]
   {sh : Shape} (x : TensorRef α sh) : IO (TensorRef α sh) := do

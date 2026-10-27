@@ -79,14 +79,14 @@ and a linear index. -/
 def sampleNat (key : UInt64) (linearIndex : Nat) (denom : Nat := (2:Nat) ^ 32) : Nat :=
   (splitmix64 (key + UInt64.ofNat linearIndex)).toNat % denom
 
-/-- Convert `u/denom` into `α` using backend arithmetic.
+/-- Round the exact sampling fraction into the selected scalar type.
 
-The numerator and denominator are cast separately before division. Even when `u < denom`,
-rounding can make the result equal to `1`; a format that cannot represent the denominator can
-also produce zero or NaN. This is the sampling grid's existing arithmetic contract, rather than
-an exact rational cast. -/
+Forming the fraction before casting avoids overflowing either integer in a low-precision format.
+Rounding can still send a draw below `1` to the upper endpoint `1`. A zero denominator retains
+the backend's division behavior; generators use a positive denominator. -/
 def sampleUnit {α : Type} [Context α] (u denom : Nat) : α :=
-  (u : α) / (denom : α)
+  if denom = 0 then (u : α) / (denom : α)
+  else Rat.cast ((u : Rat) / (denom : Rat))
 
 /-- Decide whether to keep an element given `keepProb` and a sample `u ∈ [0, denom)`.
 
@@ -113,7 +113,7 @@ namespace Internal
 /-- Fill a tensor with deterministic unit draws.
 
 Each coordinate gets its own counter value. The integer draw depends only on `key` and the linear
-coordinate; conversion and division use the selected backend. Reusing those inputs on the same
+coordinate; its exact fraction is cast to the selected backend. Reusing those inputs on the same
 backend reproduces the result, which can round to the upper endpoint `1`. -/
 def uniform {α : Type} [TorchLean.Storage α] [Context α] (key : UInt64)
     {s : Shape} (linearOffset : Nat) : Tensor α s :=

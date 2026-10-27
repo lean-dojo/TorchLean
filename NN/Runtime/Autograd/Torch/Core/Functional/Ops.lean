@@ -107,12 +107,20 @@ class Ops (m : Type → Type) (α : Type) [Storage α] [Context α] where
   scatterAdd {s : Shape} (axis count : Nat) [Shape.AxisInBounds axis s] :
       Ref s → Ref (s.replaceAxis axis count) →
         DataRef (Fin (Shape.axisSize s axis)) [count] → m (Ref s)
-  /-- Multiply matrices after broadcasting their batch prefixes to a common shape. -/
+  /-- Multiply matrices after broadcasting their batch prefixes to a common shape.
+  A fixed `scale` stays inside the contraction, including its local derivatives. -/
   matmul {batchA batchB batch : Shape} {mDim nDim pDim : Nat}
       [Shape.BroadcastTo batchA batch] [Shape.BroadcastTo batchB batch] :
       (a : Ref (batchA.concat [mDim, nDim])) →
-      (b : Ref (batchB.concat [nDim, pDim])) →
+      (b : Ref (batchB.concat [nDim, pDim])) → (scale : Option α := none) →
       m (Ref (batch.concat [mDim, pDim]))
+  /-- Normalize score rows, apply a differentiable multiplier, and mix value rows.
+  The pullback retains the value contraction through normalization instead of requiring its
+  intermediate cotangent to fit the scalar format. The optional mask excludes keys exactly. -/
+  softmaxMatmul {batch : Shape} {rows keys width : Nat} :
+      Ref (batch.concat [rows, keys]) → Ref (batch.concat [keys, width]) →
+      Ref (batch.concat [rows, keys]) → (mask : Option (Tensor Bool [rows, keys]) := none) →
+      m (Ref (batch.concat [rows, width]))
   /-- Concatenate tensors along their leading axis. -/
   concat {nDim mDim : Nat} {s : Shape} :
       (a : Ref (s.prependDim nDim)) →
@@ -145,6 +153,8 @@ class Ops (m : Type → Type) (α : Type) [Storage α] [Context α] where
   relu : {s : Shape} → (x : Ref s) → m (Ref s)
   /-- Apply the logistic sigmoid elementwise. -/
   sigmoid : {s : Shape} → (x : Ref s) → m (Ref s)
+  /-- Apply SiLU with its input-based value and VJP, retaining representable negative tails. -/
+  silu : {s : Shape} → (x : Ref s) → m (Ref s)
   /-- Apply the hyperbolic tangent elementwise. -/
   tanh : {s : Shape} → (x : Ref s) → m (Ref s)
   /--
@@ -161,8 +171,9 @@ class Ops (m : Type → Type) (α : Type) [Storage α] [Context α] where
   /--
   Apply stable log-softmax over the final tensor dimension.
 
-  Use `x - max(x) - log(sum(exp(x - max(x))))`. Arbitrary-axis operations move their selected
-  axis to the final position before calling this primitive.
+  Separate one maximal exponential and normalize the remaining tail with `log1p`.
+  Arbitrary-axis operations move their selected axis to the final position before calling
+  this primitive. Backward must preserve small complementary probabilities near one.
   -/
   logSoftmaxLast : {s : Shape} → (x : Ref s) → m (Ref s)
   /-- Apply `log(1 + exp(x))` elementwise. -/
@@ -209,6 +220,14 @@ class Ops (m : Type → Type) (α : Type) [Storage α] [Context α] where
       m (Ref [outDim])
   /-- Average the squared elementwise difference between prediction and target. -/
   mseLoss : {s : Shape} → (yhat target : Ref s) → m (Ref Shape.scalar)
+  /-- Cross-entropy from logits and target weights along `axis`. Both inputs receive gradients.
+  The default mean divides by class slices, not target mass; `mean := false` keeps the sum. -/
+  crossEntropy : {s : Shape} → (axis : Nat) → [Shape.AxisInBounds axis s] →
+    (logits target : Ref s) → (mean : Bool := true) → m (Ref Shape.scalar)
+  /-- Mean cross-entropy from teacher logits along `axis`. Only the student receives gradients;
+  callers detach the teacher to clear forward-mode metadata as well. -/
+  distill : {s : Shape} → (axis : Nat) → [Shape.AxisInBounds axis s] →
+    (student teacher : Ref s) → m (Ref Shape.scalar)
   /--
   Normalize each row over its embedding axis, then apply scale and bias.
 

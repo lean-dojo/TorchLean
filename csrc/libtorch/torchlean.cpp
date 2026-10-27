@@ -884,6 +884,11 @@ at::Tensor axpy(const at::Tensor& a, const at::Tensor& b, double c) {
   return at::addcmul(a, b, coefficient, 1.0f);
 }
 
+// Native buffers are real: an ordered magnitude bound rejects both infinities and NaNs.
+at::Tensor finite(const at::Tensor& x) {
+  return at::lt(at::abs(x), std::numeric_limits<double>::infinity());
+}
+
 at::Tensor mean_update(const at::Tensor& mean, const at::Tensor& sample, double weight) {
   require(std::isfinite(weight) && weight > 0.0 && weight <= 1.0,
           "LibTorch running mean: weight must be finite and in (0, 1]");
@@ -907,24 +912,85 @@ at::Tensor mean_update(const at::Tensor& mean, const at::Tensor& sample, double 
 constexpr double kGeluCoeff = 0.044715;
 constexpr double kSqrtTwoOverPi = 0.79788456080286535588;
 
-at::Tensor gelu_tanh_term(const at::Tensor& x) {
+at::Tensor stable_sigmoid(const at::Tensor& x) {
+  const auto z = at::exp(at::neg(at::abs(x)));
+  const auto denominator = at::add(z, 1.0f);
+  return at::where(at::gt(x, 0.0f), at::reciprocal(denominator), at::div(z, denominator));
+}
+
+at::Tensor activation_backward(const at::Tensor& x, const at::Tensor& g, bool is_tanh) {
+  const auto magnitude = at::abs(x);
+  const auto z = at::exp(at::neg(magnitude));
+  const auto denominator = at::add(is_tanh ? at::mul(z, z) : z, 1.0f);
+  at::Tensor slope;
+  if (is_tanh) {
+    const auto reciprocal_cosh = at::div(at::add(z, z), denominator);
+    slope = at::mul(reciprocal_cosh, reciprocal_cosh);
+  } else {
+    slope = at::div(z, at::mul(denominator, denominator));
+  }
+  const auto ordinary = at::mul(slope, g);
+
+  // Share the incoming magnitude between the exponential factors before squaring. The final
+  // weighted gradient can fit even when a separately rounded local slope would be zero.
+  const auto q = at::exp(at::mul(magnitude, -0.5f));
+  const auto gradient_magnitude = at::abs(g);
+  auto amplitude = at::mul(at::sqrt(gradient_magnitude), q);
+  if (is_tanh) amplitude = at::mul(at::mul(amplitude, q), 2.0f);
+  amplitude = at::div(amplitude, denominator);
+  const auto repaired = at::copysign(at::mul(amplitude, amplitude), g);
+  const double min_normal = x.scalar_type() == at::kFloat
+      ? std::numeric_limits<float>::min() : std::numeric_limits<double>::min();
+  const auto lost_range = at::logical_or(at::lt(at::abs(slope), min_normal),
+                                       at::lt(at::abs(ordinary), min_normal));
+  const auto finite_gradient = at::lt(gradient_magnitude, std::numeric_limits<double>::infinity());
+  const auto repair = at::logical_and(lost_range, at::logical_and(finite(x), finite_gradient));
+  return at::where(repair, repaired, ordinary);
+}
+
+at::Tensor staged_silu(const at::Tensor& x) {
+  // Bound the inactive exponential before evaluating either ATen branch.
+  const auto negative = at::minimum(x, at::zeros_like(x));
+  const auto r = at::exp(at::mul(negative, 0.5f));
+  const auto denominator = at::add(at::mul(r, r), 1.0f);
+  const auto tail = at::div(at::mul(at::mul(x, r), r), denominator);
+  return at::where(at::gt(x, 0.0f), at::mul(x, stable_sigmoid(x)), tail);
+}
+
+at::Tensor staged_silu_backward(const at::Tensor& x, const at::Tensor& g) {
+  const auto negative = at::minimum(x, at::zeros_like(x));
+  const auto r = at::exp(at::mul(negative, 0.5f));
+  const auto denominator = at::add(at::mul(r, r), 1.0f);
+  const auto tail = at::div(at::mul(at::mul(at::add(x, denominator), r), r),
+                            at::mul(denominator, denominator));
+  const auto z = at::exp(at::neg(at::abs(x)));
+  const auto positive_denominator = at::add(z, 1.0f);
+  const auto positive_slope = at::div(z, at::mul(positive_denominator, positive_denominator));
+  const auto positive = at::add(at::reciprocal(positive_denominator), at::mul(x, positive_slope));
+  return at::mul(at::where(at::gt(x, 0.0f), positive, tail), g);
+}
+
+at::Tensor gelu_inner(const at::Tensor& x) {
   // Each ATen call materializes one rounded stage in the input dtype.
   const auto cubic0 = at::mul(x, rounded(kGeluCoeff, x.scalar_type()));
   const auto cubic1 = at::mul(cubic0, x);
   const auto cubic = at::mul(cubic1, x);
   const auto inner = at::add(x, cubic);
-  return at::tanh(at::mul(inner, rounded(kSqrtTwoOverPi, x.scalar_type())));
+  return at::mul(inner, rounded(kSqrtTwoOverPi, x.scalar_type()));
 }
 
 at::Tensor staged_gelu(const at::Tensor& x) {
-  const auto tanh_term = gelu_tanh_term(x);
-  const auto gate = at::mul(at::add(tanh_term, 1.0f), 0.5f);
+  const auto inner = gelu_inner(x);
+  const auto gate = stable_sigmoid(at::add(inner, inner));
   return at::mul(x, gate);
 }
 
 at::Tensor staged_gelu_backward(const at::Tensor& x, const at::Tensor& g) {
-  const auto tanh_term = gelu_tanh_term(x);
-  const auto sech_term = at::sub(at::ones_like(x), at::mul(tanh_term, tanh_term));
+  const auto inner = gelu_inner(x);
+  const auto gate = stable_sigmoid(at::add(inner, inner));
+  const auto z = at::exp(at::neg(at::abs(inner)));
+  const auto reciprocal_cosh = at::div(at::add(z, z), at::add(at::mul(z, z), 1.0f));
+  const auto sech_term = at::mul(reciprocal_cosh, reciprocal_cosh);
   const double scaled_coeff = rounded(3.0 * rounded(kGeluCoeff, x.scalar_type()), x.scalar_type());
   const auto quadratic0 = at::mul(x, scaled_coeff);
   const auto quadratic = at::mul(quadratic0, x);
@@ -932,7 +998,7 @@ at::Tensor staged_gelu_backward(const at::Tensor& x, const at::Tensor& g) {
                                   rounded(kSqrtTwoOverPi, x.scalar_type()));
   const auto derivative_term = at::where(at::eq(sech_term, 0.0f), at::zeros_like(x),
                                        at::mul(at::mul(x, sech_term), inner_deriv));
-  const auto numerator = at::add(at::add(tanh_term, 1.0f), derivative_term);
+  const auto numerator = at::add(at::add(gate, gate), derivative_term);
   return at::mul(at::mul(numerator, 0.5f), g);
 }
 
@@ -1078,8 +1144,8 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_sqrt_bwd(
     same_size(x, g, "torchlean_cuda_buffer_sqrt_bwd: size mismatch");
     const auto positive = at::gt(x, 0.0f);
     const auto root = at::sqrt(at::where(positive, x, 1.0f));
-    const auto factor = at::reciprocal(at::mul(root, 2.0f));
-    return box(at::where(positive, at::mul(g, factor), 0.0f));
+    // Rounding a reciprocal first can change the final rounding of a subnormal gradient.
+    return box(at::where(positive, at::div(g, at::mul(root, 2.0f)), 0.0f));
   });
 }
 
@@ -1150,8 +1216,8 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_adam_step(
     double oneMinusBeta1,
     double beta2,
     double oneMinusBeta2,
-    double firstMomentCorrection,
-    double secondMomentCorrection,
+    double firstMomentDenominator,
+    double secondMomentDenominator,
     double epsilon,
     double decay,
     double updateScale) {
@@ -1170,8 +1236,8 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_adam_step(
     const double one_minus_beta1_f = rounded(oneMinusBeta1, dtype);
     const double beta2_f = rounded(beta2, dtype);
     const double one_minus_beta2_f = rounded(oneMinusBeta2, dtype);
-    const double first_correction = rounded(firstMomentCorrection, dtype);
-    const double second_correction = rounded(secondMomentCorrection, dtype);
+    const double first_correction = rounded(1.0 / firstMomentDenominator, dtype);
+    const double second_correction = rounded(1.0 / secondMomentDenominator, dtype);
     const double epsilon_f = rounded(epsilon, dtype);
     const double decay_f = rounded(decay, dtype);
     const double update_scale = rounded(updateScale, dtype);
@@ -1180,17 +1246,67 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_adam_step(
     auto m = axpy(m_scaled, gradient, one_minus_beta1_f);
     const auto g2 = at::mul(gradient, gradient);
     const auto v_scaled = at::mul(second_moment, beta2_f);
-    auto v = axpy(v_scaled, g2, one_minus_beta2_f);
-    const auto m_hat = at::mul(m, first_correction);
-    const auto v_hat = at::mul(v, second_correction);
+    const auto weighted_square = at::mul(at::mul(gradient, one_minus_beta2_f), gradient);
+    auto v = at::where(at::lt(g2, std::numeric_limits<double>::infinity()),
+                       axpy(v_scaled, g2, one_minus_beta2_f),
+                       at::add(v_scaled, weighted_square));
+    // Retain the ordinary host-computed reciprocal, but do not require it to fit the dtype.
+    const auto correct_moment = [&](const at::Tensor& moment, double inverse, double divisor) {
+      if (std::isfinite(inverse)) return at::mul(moment, inverse);
+      return at::div(moment, at::full_like(moment, rounded(divisor, dtype)));
+    };
+    const auto m_hat = correct_moment(m, first_correction, firstMomentDenominator);
+    const auto v_hat = correct_moment(v, second_correction, secondMomentDenominator);
     // Adam specifies the raw IEEE square root; Buffer.sqrt has a selected nonpositive branch.
     // A negative v_hat must therefore remain NaN rather than being clamped.
-    const auto denominator = at::add(at::sqrt(v_hat), epsilon_f);
+    auto corrected_root = at::sqrt(v_hat);
+    const double second_divisor = rounded(secondMomentDenominator, dtype);
+    if (second_divisor > 0) {
+      const auto correction_root = at::sqrt(at::full({}, second_divisor, v.options()));
+      const auto scaled_root = at::div(at::sqrt(v),
+          correction_root);
+      corrected_root = at::where(finite(v_hat), corrected_root, scaled_root);
+    }
+    const auto denominator = at::add(corrected_root, epsilon_f);
     // Keep a tensor denominator: ATen's scalar-divisor optimization uses a
     // rounded reciprocal followed by multiplication, which can change bits.
     const auto normalized_update = at::div(m_hat, denominator);
     const auto decayed_parameters = axpy(parameters, parameters, decay_f);
     auto updated = axpy(decayed_parameters, normalized_update, update_scale);
+    // A finite weighted update can survive an unrepresentable unscaled quotient.
+    // Keep the ordinary FMA above; rescale exceptional entries by exact powers of two.
+    if (std::isfinite(update_scale)) {
+      const double min_normal = dtype == at::kFloat
+          ? std::numeric_limits<float>::min() : std::numeric_limits<double>::min();
+      const auto quotient_magnitude = at::abs(normalized_update);
+      const auto quotient_finite = at::lt(quotient_magnitude,
+          std::numeric_limits<double>::infinity());
+      const auto range_loss = at::logical_or(at::logical_not(quotient_finite),
+          at::logical_and(at::lt(quotient_magnitude, min_normal), at::ne(m_hat, 0)));
+      const auto largest_input = at::maximum(at::maximum(at::abs(decayed_parameters),
+          at::abs(m_hat)), at::abs(denominator));
+      const auto finite_inputs = at::logical_and(
+          at::lt(largest_input, std::numeric_limits<double>::infinity()), at::ne(denominator, 0));
+      const auto repair = at::logical_and(range_loss, finite_inputs);
+      if (update_scale == 0) {
+        // Multiplying finite inputs first also preserves the sign of a zero update.
+        const auto zero_update = at::div(at::mul(m_hat, update_scale), denominator);
+        updated = at::where(repair, at::add(decayed_parameters, zero_update), updated);
+      } else {
+        const auto [m_fraction, m_exponent] = at::frexp(m_hat);
+        const auto [d_fraction, d_exponent] = at::frexp(denominator);
+        int scale_exponent = 0;
+        const double scale_fraction = std::frexp(update_scale, &scale_exponent);
+        const auto fraction = at::mul(at::div(m_fraction, d_fraction), scale_fraction);
+        const auto exponent = at::add(at::sub(m_exponent, d_exponent), scale_exponent);
+        const auto scaled_parameters = at::ldexp(decayed_parameters, at::neg(exponent));
+        const auto rescaled = at::ldexp(at::add(scaled_parameters, fraction), exponent);
+        // If this scaling overflows, the parameter dwarfs the update at its own precision.
+        const auto recovered = at::where(finite(scaled_parameters),
+            rescaled, decayed_parameters);
+        updated = at::where(repair, recovered, updated);
+      }
+    }
     return triple(std::move(updated), std::move(m), std::move(v));
   });
 }
@@ -1277,6 +1393,28 @@ Tensor column_sum(const Tensor& matrix, bool ordered) {
 
 Tensor max_ignoring_nan(const Tensor& input, int64_t axis, bool keepdim = false) {
   return input.masked_fill(input.isnan(), kNegativeInfinity).amax({axis}, keepdim);
+}
+
+Tensor log_normalizer(const Tensor& shifted, const Tensor& pivot, int64_t axis) {
+  return at::log1p(shifted.exp().scatter(axis, pivot, 0).sum(axis, true));
+}
+
+Tensor weighted_log_softmax(const Tensor& x, const Tensor& weights, int64_t axis) {
+  const auto pivot = x.argmax(axis, true);
+  const auto largest = x.gather(axis, pivot);
+  const auto shifted = x - largest;
+  const auto normalizer = log_normalizer(shifted, pivot, axis);
+  const auto logp = shifted - normalizer;
+  const auto finite = at::isfinite(logp);
+  const auto direct = weights * at::where(finite, logp, at::zeros_like(logp));
+  const auto difference = largest - x;
+  const auto finite_difference = at::isfinite(difference);
+  // Weight opposite-sign finite operands before an overflowing subtraction. This also avoids
+  // halving a small derivative contribution. Nonfinite original inputs still propagate NaN.
+  const auto gap = at::where(finite_difference,
+      weights * at::where(finite_difference, difference, at::zeros_like(difference)),
+      weights * largest - weights * x);
+  return at::where(finite, direct, -(weights * normalizer + gap));
 }
 
 struct BroadcastShape {
@@ -1517,6 +1655,93 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_max_by_row(
   });
 }
 
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_argmax_mask_by_row(
+    b_lean_obj_arg input, uint32_t rows, uint32_t cols) {
+  return invoke([&] {
+    const auto x = checked(input, {rows, cols});
+    auto mask = at::zeros_like(x);
+    if (rows != 0 && cols != 0) mask.scatter_(1, x.argmax(1, true), 1);
+    return box(mask);
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_distill(
+    b_lean_obj_arg student, b_lean_obj_arg teacher, b_lean_obj_arg dimensions,
+    uint32_t axis, uint8_t gradient) {
+  return invoke([&] {
+    const auto shape = shape_array(dimensions);
+    require(axis < shape.size(), "distill: class axis out of range");
+    const auto x = checked(student, shape);
+    const auto t = checked(teacher, shape);
+    require(x.scalar_type() == t.scalar_type(), "distill: student/teacher dtype mismatch");
+    if (x.numel() == 0) {
+      return box(gradient ? at::zeros_like(x) : at::zeros({}, x.options()));
+    }
+    const auto samples = x.numel() / shape[axis];
+    const auto p = at::softmax(t, axis, t.scalar_type());
+    if (!gradient) {
+      const auto pivot = x.argmax(axis, true);
+      const auto shifted = x - x.gather(axis, pivot);
+      const auto logq = shifted - log_normalizer(shifted, pivot, axis);
+      // A zero teacher weight must not multiply an infinite student log-probability.
+      const auto safe = at::where(p == 0, at::zeros_like(logq), logq);
+      return box(-(p * safe).sum() / samples);
+    }
+    const auto q = at::softmax(x, axis, x.scalar_type());
+    const auto delta = x - t;
+    const auto centered = delta - (p * delta).sum(axis, true);
+    const auto ratio = centered - at::log1p((p * at::expm1(centered)).sum(axis, true));
+    const auto close = at::abs(ratio) < 1;
+    // Mask before expm1 as well: the inactive near-field branch must not overflow.
+    const auto safe = at::where(close, ratio, at::zeros_like(ratio));
+    const auto difference = at::where(close, p * at::expm1(safe), q - p);
+    return box((difference - q * difference.sum(axis, true)) / samples);
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_cross_entropy(
+    b_lean_obj_arg logits, b_lean_obj_arg target, b_lean_obj_arg dimensions,
+    uint32_t axis, uint8_t mean) {
+  return invoke([&] {
+    const auto shape = shape_array(dimensions);
+    require(axis < shape.size(), "cross_entropy: class axis out of range");
+    const auto x = checked(logits, shape);
+    const auto weights = checked(target, shape);
+    require(x.scalar_type() == weights.scalar_type(), "cross_entropy: dtype mismatch");
+    if (x.numel() == 0) return box(at::zeros({}, x.options()));
+    const auto samples = mean ? x.numel() / shape[axis] : 1;
+    return box(-weighted_log_softmax(x, weights, axis).sum() / samples);
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_cross_entropy_bwd(
+    b_lean_obj_arg logits, b_lean_obj_arg target, b_lean_obj_arg seed,
+    b_lean_obj_arg dimensions, uint32_t axis, uint8_t mean) {
+  return invoke([&] {
+    const auto shape = shape_array(dimensions);
+    require(axis < shape.size(), "cross_entropy: class axis out of range");
+    const auto x = checked(logits, shape);
+    const auto weights = checked(target, shape);
+    const auto g = checked(seed, {});
+    require(x.scalar_type() == weights.scalar_type() && x.scalar_type() == g.scalar_type(),
+            "cross_entropy: dtype mismatch");
+    if (x.numel() == 0) return pair(at::zeros_like(x), at::zeros_like(weights));
+    const auto samples = mean ? x.numel() / shape[axis] : 1;
+    const auto pivot = x.argmax(axis, true);
+    const auto shifted = x - x.gather(axis, pivot);
+    const auto logp = shifted - log_normalizer(shifted, pivot, axis);
+    const auto probabilities = logp.exp();
+    const auto upstream = -weights;
+    const auto others = upstream.scatter(axis, pivot, 0);
+    const auto regular = upstream - probabilities * upstream.sum(axis, true);
+    const auto diagonal = -at::expm1(logp.gather(axis, pivot)) * upstream.gather(axis, pivot) -
+                          probabilities.gather(axis, pivot) * others.sum(axis, true);
+    const auto dx = regular.scatter(axis, pivot, diagonal) / samples * g;
+    const auto dt = -weighted_log_softmax(x, g.expand_as(x), axis) / samples;
+    return pair(dx, dt);
+  });
+}
+
 // One for the entries of each row that fewer than k entries of the row beat, zero elsewhere
 // (`Spec.MoE.kept`): entry j beats entry i when x_j > x_i, or when neither is larger and j < i.
 // Without NaN that keeps min(k, cols) entries. Comparisons and integer counts only, so every
@@ -1646,6 +1871,75 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_bmm_with_transpose(
                         : checked(second, {batch, n, p});
     element_count({batch, m, p});
     return box(at::bmm(a, b));
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_scaled_bmm(
+    b_lean_obj_arg first, b_lean_obj_arg second, uint32_t batch,
+    uint32_t m, uint32_t n, uint32_t p, uint32_t transposeA, uint32_t transposeB,
+    double scale) {
+  return invoke([&] {
+    require(transposeA <= 1 && transposeB <= 1, "scaledBmm: invalid transpose flag");
+    auto a = transposeA ? checked(first, {batch, n, m}).transpose(1, 2)
+                        : checked(first, {batch, m, n});
+    auto b = transposeB ? checked(second, {batch, p, n}).transpose(1, 2)
+                        : checked(second, {batch, n, p});
+    element_count({batch, m, p});
+    require(a.scalar_type() == b.scalar_type(), "scaledBmm: dtype mismatch");
+    const auto minimum = a.scalar_type() == at::kFloat
+        ? static_cast<double>(std::numeric_limits<float>::min())
+        : std::numeric_limits<double>::min();
+    const auto maximum = a.scalar_type() == at::kFloat
+        ? static_cast<double>(std::numeric_limits<float>::max())
+        : std::numeric_limits<double>::max();
+    auto risky = at::zeros({}, a.options().dtype(at::kBool));
+    if (a.numel() != 0 && b.numel() != 0) {
+      const auto abs_a = a.abs();
+      const auto abs_b = b.abs();
+      const auto least_a = at::where(abs_a != 0, abs_a,
+          at::full_like(abs_a, std::numeric_limits<double>::infinity())).amin();
+      const auto least_b = at::where(abs_b != 0, abs_b,
+          at::full_like(abs_b, std::numeric_limits<double>::infinity())).amin();
+      // Conservative bounds may request replay for products from different contraction rows.
+      // They also catch products rounded to zero before a growing scale can recover them.
+      risky = at::logical_or(least_a * least_b < minimum,
+                            abs_a.amax() * abs_b.amax() > maximum);
+    }
+    // A zero original row or column has no nonzero finite product to recover. Padding must not
+    // alone force a host replay of the matrix; nonzero orthogonal rows remain conservative.
+    const auto contributes = at::logical_and((a != 0).any(2, true), (b != 0).any(1, true));
+    at::Tensor value;
+    if (scale != 0.0 && std::abs(scale) < 1.0) {
+      const auto factor = std::sqrt(std::abs(scale));
+      const auto left = at::mul(a, scale < 0.0 ? -factor : factor);
+      const auto right = at::mul(b, factor);
+      // Zero is included: a nonzero original operand can disappear before the contraction.
+      risky = at::logical_or(risky,
+          at::logical_or(at::logical_and(a != 0, left.abs() < minimum).any(),
+                         at::logical_and(b != 0, right.abs() < minimum).any()));
+      value = at::bmm(left, right);
+    } else {
+      const auto product = at::bmm(a, b);
+      // Cancellation can leave a tiny or zero sum even when every constituent product is normal.
+      // A growing scale must see that original contraction, not its already rounded result.
+      risky = at::logical_or(risky,
+          at::logical_or(at::logical_not(at::isfinite(product)),
+              at::logical_and(contributes, product.abs() < minimum)).any());
+      value = scale == 1.0 ? product : at::mul(product, scale);
+    }
+    risky = at::logical_or(risky,
+        at::logical_or(at::logical_not(at::isfinite(value)),
+            at::logical_and(contributes, value.abs() < minimum)).any());
+    // Keep the native buffer itself for nonfinite originals. Downloading a NaN through a
+    // widened host FloatArray could change its payload even when no coefficient can be replayed.
+    risky = at::logical_and(risky,
+        at::logical_and(at::isfinite(a).all(), at::isfinite(b).all()));
+    // One scalar read gates host recovery. The conservative guard also includes exact zeros.
+    const bool replay = std::isfinite(scale) && risky.item<bool>();
+    auto* result = lean_alloc_ctor(0, 2, 0);
+    lean_ctor_set(result, 0, box(value));
+    lean_ctor_set(result, 1, lean_box(replay));
+    return result;
   });
 }
 

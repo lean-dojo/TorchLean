@@ -27,7 +27,11 @@ failures: invalid domains for `log`, `sqrt`, division, `exp`, and related math A
 TorchLean cannot repair an arbitrary hand-written unstable loss after the fact. The design instead
 gives stable primitives and domain-aware variants a named place in the spec. For example,
 `crossEntropyLogitsSpec` is the logits API users should reach for: it is defined through
-`logSoftmaxSpec`, rather than through a fragile `softmax` followed by `log`. Likewise, `safedivSpec`
+`logSoftmaxSpec` and keeps the original logits for weighted terms that overflow. This avoids
+the fragile `softmax` followed by `log`, and zero-times-infinity from an overflowing logit
+difference. Its real formula and both derivatives are proved in
+`NN.Proofs.Autograd.FDeriv.SoftmaxSpec`; real equivalence is not bitwise floating-point equality.
+Likewise, `safedivSpec`
 and `safeDivOp` make epsilon-protected division explicit in the graph.
 
 Bug-shaped PyTorch sketches:
@@ -37,7 +41,7 @@ Bug-shaped PyTorch sketches:
 probs = torch.softmax(logits, dim=-1)
 loss = -(target * torch.log(probs)).sum()
 
-# Safer: PyTorch's cross_entropy/log_softmax path.
+# Avoids probability underflow, but a log-probability can still overflow on extreme logits.
 loss = -(target * torch.log_softmax(logits, dim=-1)).sum()
 ```
 
@@ -72,45 +76,6 @@ open TorchLean
 namespace NN.Examples.BugZoo.StableLoss
 
 open TorchLean.Tensor
-
-/--
-The logits cross-entropy spec is exactly the log-softmax form.
-
-It weights log probabilities by targets, then averages over non-class dimensions.
--/
-theorem crossEntropyLogits_uses_logSoftmax {s : Spec.Shape} (axis : Nat)
-    [Spec.Shape.AxisInBounds axis s]
-    {α : Type} [Storage α] [Context α]
-    (logits target : Tensor α s) :
-    Spec.crossEntropyLogitsSpec axis logits target =
-      let logp := Activation.logSoftmaxSpec (α := α) (s := s) axis logits
-      let total := Tensor.sumSpec (Tensor.mulSpec target logp)
-      Spec.meanOverAxisSlices (s := s) axis (-total) := by
-  rfl
-
-/--
-The logits-loss gradient keeps the total target weight in each class slice.
-
-For weights `t`, the formula is `softmax(logits) * sum(t) - t`, averaged over the non-class
-dimensions. Probability targets have total weight one and give the familiar `softmax - target`.
-An all-zero target gives a zero loss and zero gradient. The same formula also handles weighted
-targets without normalizing them or changing the loss.
-
-This theorem unfolds the supplied gradient spec. The reduction drops the selected class axis, and
-`broadcastAfterSum` restores that same axis before multiplying by the probabilities.
--/
-theorem crossEntropyLogitsDeriv_uses_target_mass {s : Spec.Shape} (axis : Nat)
-    [Spec.Shape.AxisInBounds axis s]
-    {α : Type} [Storage α] [Context α]
-    (logits target : Tensor α s) :
-    Spec.crossEntropyLogitsDerivSpec axis logits target =
-      Tensor.scaleSpec
-        (Tensor.subSpec
-          (Tensor.mulSpec (Activation.softmaxSpec (α := α) (s := s) axis logits)
-            (Tensor.broadcastAfterSum s axis (Tensor.reduceDim Tensor.sumSpec axis target)))
-          target)
-        (1 / (Spec.axisMeanDenom s axis : α)) := by
-  rfl
 
 /--
 Probability-space cross entropy clips the predicted probability before taking `log`.

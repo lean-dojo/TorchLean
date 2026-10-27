@@ -52,14 +52,51 @@ def broadcast {α : Type} [TorchLean.Storage α] [Context α]
   Runtime.Autograd.Torch.broadcastAfterSum
     (m := m) (α := α) (.dim batch (.dim channels (.dim spatialSize .scalar))) 0 acrossSpatial
 
+/-- Normalize final-axis vectors after scaling both the input and its regularizer.
+The selected scale is detached because it cancels from the real function. -/
+def normalize {α : Type} [TorchLean.Storage α] [Context α]
+    {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
+    {leading : Shape} {width : Nat} (hWidth : 0 < width)
+    (x : Ref (m := m) (α := α) (leading.appendDim width))
+    (epsilon : Ref (m := m) (α := α) .scalar) (mean : Bool := false) :
+    m (Ref (m := m) (α := α) (leading.appendDim width)) := by
+  by_cases hLeading : Shape.size leading = 0
+  · exact const (Tensor.zeros (leading.appendDim width))
+  · exact do
+      let s := leading.appendDim width
+      let _ : Shape.WellFormed s := ⟨Shape.wellFormed_of_size_pos (by
+        simpa [s, Shape.size_appendDim] using
+          Nat.mul_pos (Nat.pos_of_ne_zero hLeading) hWidth)⟩
+      let axis := s.rank - 1
+      let _ : Shape.HasNonemptyAxis axis s :=
+        Shape.inferNonemptyAxis (by simp [axis, s])
+      let reduced := shapeAfterSum s axis
+      let magnitude ← abs x
+      let selected ← Runtime.Autograd.Torch.topKMask 1 magnitude
+      let largest ← reduceSum axis (← mul magnitude selected)
+      let epsilon ← broadcastTo (Shape.CanBroadcastTo.scalarTo reduced) epsilon
+      let epsilonScale ← sqrt (← abs epsilon)
+      let scale ← detach (← max largest epsilonScale)
+      let expanded ← Runtime.Autograd.Torch.broadcastAfterSum s axis scale
+      let scaled ← Runtime.Autograd.Torch.Ops.div x expanded
+      let squares ← mul scaled scaled
+      let squaredNorm ← if mean then reduceMean axis squares else reduceSum axis squares
+      let regularizer ← Runtime.Autograd.Torch.Ops.div
+        (← Runtime.Autograd.Torch.Ops.div epsilon scale) scale
+      let denominator ← sqrt (← add squaredNorm regularizer)
+      let denominator ← Runtime.Autograd.Torch.broadcastAfterSum s axis denominator
+      Runtime.Autograd.Torch.Ops.div scaled denominator
+
 end Internal
 
 /--
 Normalize each final-axis vector by its root mean square, then apply `gamma`.
 
 For each leading index, we compute `meanSq = mean(x * x)` and divide its vector by
-`sqrt(max(meanSq, 0) + ε)`. The scale `gamma` has shape `[width]` and is broadcast across the
-leading axes. We square the entries of `x` directly, without first subtracting their mean.
+`sqrt(meanSq + ε)`. Before squaring, we scale the input and epsilon together to keep large or
+small finite squares in range. `gamma` has shape `[width]` and is broadcast across leading axes.
+The reduction and its gradients still have the chosen scalar's finite range; this is not a
+correct-rounding guarantee. Nonfinite inputs need not retain the direct formula's NaN pattern.
 
 `width` must be positive. If a leading axis is empty, the result is an empty tensor of the same
 shape, so we return it before constructing the reduction.
@@ -76,24 +113,8 @@ def rmsNorm {α : Type} [TorchLean.Storage α] [Context α]
       (Tensor.full (leading.appendDim width) (0 : α))
   · exact do
       let s := leading.appendDim width
-      let hSize : 0 < Shape.size s := by
-        simpa [s, Shape.size_appendDim] using
-          Nat.mul_pos (Nat.pos_of_ne_zero hLeading) hWidth
-      let _ : Shape.WellFormed s := ⟨Shape.wellFormed_of_size_pos hSize⟩
-      let sq ← F.square (m := m) (α := α) (s := s) x
-      let axis := Shape.rank s - 1
-      let _ : Shape.HasNonemptyAxis axis s :=
-        Shape.inferNonemptyAxis (by simp [axis, s])
-      let meanSq ← reduceMean (m := m) (α := α) (s := s) axis sq
-      let meanSqShape := shapeAfterSum s axis
-      let zero ← const (m := m) (α := α) (s := meanSqShape) (Tensor.full meanSqShape (0 : α))
-      let meanSqClamped ← max (m := m) (α := α) (s := meanSqShape) meanSq zero
-      let epsT ← const (m := m) (α := α) (s := meanSqShape) (Tensor.full meanSqShape ε)
-      let denom ← sqrt (m := m) (α := α) (s := meanSqShape)
-        (← add (m := m) (α := α) (s := meanSqShape) meanSqClamped epsT)
-      let denomB ← Runtime.Autograd.Torch.broadcastAfterSum
-        (m := m) (α := α) s axis denom
-      let normalized ← Runtime.Autograd.Torch.Ops.div (m := m) (α := α) (s := s) x denomB
+      let epsT ← const (Tensor.scalar ε)
+      let normalized ← Internal.normalize hWidth x epsT (mean := true)
       let gammaB ← broadcastTo (m := m) (α := α) (s₁ := .dim width .scalar) (s₂ := s)
         (by
           simpa [s, Shape.appendDim_eq_concat] using
@@ -112,29 +133,8 @@ def normalizeL2Regularized {α : Type} [TorchLean.Storage α] [Context α]
     {leading : Shape} {width : Nat} (hWidth : width > 0)
     (x : Ref (m := m) (α := α) (leading.appendDim width))
     (epsilon : Ref (m := m) (α := α) .scalar) :
-    m (Ref (m := m) (α := α) (leading.appendDim width)) := by
-  by_cases hLeading : Shape.size leading = 0
-  · exact const (m := m) (α := α) (s := leading.appendDim width)
-      (Tensor.full (leading.appendDim width) (0 : α))
-  · exact do
-      let s := leading.appendDim width
-      let hSize : 0 < Shape.size s := by
-        simpa [s, Shape.size_appendDim] using
-          Nat.mul_pos (Nat.pos_of_ne_zero hLeading) hWidth
-      let _ : Shape.WellFormed s := ⟨Shape.wellFormed_of_size_pos hSize⟩
-      let squared ← mul (m := m) (α := α) (s := s) x x
-      let axis := Shape.rank s - 1
-      let _ : Shape.HasNonemptyAxis axis s :=
-        Shape.inferNonemptyAxis (by simp [axis, s])
-      let normSquared ← reduceSum (m := m) (α := α) (s := s) axis squared
-      let reducedShape := shapeAfterSum s axis
-      let epsilonB ← broadcastTo (m := m) (α := α) (s₁ := .scalar) (s₂ := reducedShape)
-        (Shape.CanBroadcastTo.scalarTo reducedShape) epsilon
-      let denominator ← sqrt (m := m) (α := α) (s := reducedShape)
-        (← add (m := m) (α := α) (s := reducedShape) normSquared epsilonB)
-      let denominatorB ← Runtime.Autograd.Torch.broadcastAfterSum
-        (m := m) (α := α) s axis denominator
-      Runtime.Autograd.Torch.Ops.div (m := m) (α := α) (s := s) x denominatorB
+    m (Ref (m := m) (α := α) (leading.appendDim width)) :=
+  Internal.normalize hWidth x epsilon
 
 /--
 Normalize each sample and channel using its own spatial mean and variance.

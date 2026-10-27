@@ -264,7 +264,8 @@ def expectCudaSessionMatchesRuntime : IO Unit := do
 def checkLibTorchLocalVJPs : IO Unit := do
   -- These groups follow the backward closures in Engine.LibTorch.Ops.
   let leanComposed : Array BackendOp :=
-    #[.attention, .matmul, .linear, .mseLoss, .add, .sub, .mul, .div, .neg, .scale, .sigmoid,
+    #[.attention, .matmul, .scaledMatmul, .softmaxMatmul, .linear, .mseLoss,
+      .add, .sub, .mul, .div, .neg, .scale, .sigmoid,
       .tanh, .softplus, .exp, .sin, .cos, .log, .inv, .safeLog, .logSoftmax,
       .softmax, .hardMaskedSoftmax, .reduceSum, .reduceMean, .reshape, .permute,
       .concat, .slice, .gather, .scatterAdd, .batchNorm, .fftFno]
@@ -272,7 +273,8 @@ def checkLibTorchLocalVJPs : IO Unit := do
   -- broadcast/scale closures for sum and mean. LayerNorm likewise calls layerNormBwd,
   -- whereas batchNorm composes its derivative in Lean.
   let nativeBackward : Array BackendOp :=
-    #[.relu, .gelu, .abs, .sqrt, .clamp, .max, .min, .broadcast, .layerNorm,
+    #[.relu, .gelu, .silu, .crossEntropy, .distill, .abs, .sqrt, .clamp, .max, .min,
+      .broadcast, .layerNorm,
       .conv, .convTranspose, .maxPool, .smoothMaxPool, .avgPool, .selectiveScan]
   let forwardOnly : Array BackendOp := #[.randUniform, .bernoulliMask, .topKMask]
   let classifications :=

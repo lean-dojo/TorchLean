@@ -107,6 +107,7 @@ namespace ContractEvidence
 
 /-- Concise description of the evidence attached to a contract claim. -/
 def label : ContractEvidence → String
+  | .sharedDefinition name => s!"uses canonical definition {name} directly"
   | .runtimeGuard name => s!"guarded at runtime by {name}"
   | .testSuite name => s!"covered by test suite {name}"
   | .trustedBoundary reason => s!"trusted boundary: {reason}"

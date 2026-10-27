@@ -10,6 +10,8 @@ public import NN.Proofs.Analysis.Softmax
 public import NN.Backend.Profile -- shake: keep
 public import NN.IR.Semantics -- shake: keep
 public import NN.Spec.Core.FloatInstances -- shake: keep
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Interval.Outward
+public import FloatLib.Numerics.Enclosure.Interval.Real
 
 /-!
 # Numerical certificate enclosures
@@ -35,6 +37,7 @@ open NN.Backend
 open NN.IR
 open Spec TorchLean
 open FloatLib.Floats.Formats.BinaryInterchange
+open scoped BigOperators
 
 /-! ## Raw and checked source assumptions -/
 
@@ -109,6 +112,23 @@ def RealEncloses (interval : Interval (Binary 8 23)) (value : Real) : Prop :=
   value ∈ Set.Icc ((ExecFloat.Binary.toModel interval.lo).toReal) ((ExecFloat.Binary.toModel
     interval.hi).toReal)
 
+/-- Finite rational endpoint decoding agrees with the model's real interpretation. -/
+theorem realEncloses_of_containsReal {interval : Interval (Binary 8 23)} {value : ℝ}
+    (h : interval.ContainsReal Binary.toRat? value) : RealEncloses interval value := by
+  rcases h with ⟨lo, hi, hlo, hhi, hxlo, hxhi⟩
+  cases ha : Binary.toRat? interval.lo with
+  | none => simp [ha] at hlo
+  | some a =>
+    cases hb : Binary.toRat? interval.hi with
+    | none => simp [hb] at hhi
+    | some b =>
+      simp [ha] at hlo
+      simp [hb] at hhi
+      subst lo hi
+      change Binary.toReal interval.lo ≤ value ∧ value ≤ Binary.toReal interval.hi
+      rw [Binary.toReal_of_toRat?_eq_some ha, Binary.toReal_of_toRat?_eq_some hb]
+      exact ⟨hxlo, hxhi⟩
+
 /-- Sound real enclosure for the canonical addition transfer. -/
 theorem add_realEncloses {a b : Interval (Binary 8 23)} {x y : Real}
     (ha : Binary.Interval.Valid a) (hb : Binary.Interval.Valid b)
@@ -136,6 +156,99 @@ theorem mul_realEncloses {a b : Interval (Binary 8 23)} {x y : Real}
   (Binary.Interval.eRealMem_coe_iff_of_valid hout _).mp
     (Binary.Interval.mul_sound a b (by decide) ha hb hx hy)
 
+/-- Outward left-fold enclosure, starting from the tensor reduction's positive zero. -/
+def sumLeftRange (count : Nat) (range : Interval (Binary 8 23)) : Interval (Binary 8 23) :=
+  (List.range count).foldl
+    (fun acc _ => Binary.Interval.add acc range)
+    (Binary.Interval.point (ExecFloat.Binary.zero false : Binary 8 23))
+
+/-- Enclose a scaled contraction without requiring its unscaled product to fit binary32.
+
+The rational calculation rounds only its final endpoints. When the ordinary staged enclosure is
+finite, its endpoints widen this enclosure too. IEEE execution is still checked separately against
+the returned interval; this transfer does not identify a native kernel with the reference rule.
+-/
+def scaledContractionRange? (count : Nat) (left right scale : Interval (Binary 8 23)) :
+    Option (Interval (Binary 8 23)) := do
+  let a ← left.decode? Binary.toRat?
+  let b ← right.decode? Binary.toRat?
+  let c ← scale.decode? Binary.toRat?
+  let product ← Interval.mul? Interval.Internal.rationalOutwardRounding a b
+  let sum : Interval Rat := ⟨count * product.lo, count * product.hi⟩
+  let weighted ← Interval.mul? Interval.Internal.rationalOutwardRounding sum c
+  let staged := Binary.Interval.mul
+    (sumLeftRange count (Binary.Interval.mul left right)) scale
+  let bounds := match staged.decode? Binary.toRat? with
+    | none => weighted
+    | some previous => ⟨min weighted.lo previous.lo, max weighted.hi previous.hi⟩
+  Interval.encloseInterval? Binary.intervalRounding bounds
+
+/-- The grouped transfer contains the exact real scaled sum for every choice of its summands.
+
+The successful outward-rounding hypothesis is essential: an unavailable finite enclosure is not a
+certificate. This theorem concerns the real expression; concrete IEEE values must also pass replay.
+-/
+theorem scaledContractionRange?_contains {count : Nat}
+    {left right scale output : Interval (Binary 8 23)}
+    (h : scaledContractionRange? count left right scale = some output)
+    (x y : Fin count → ℝ) (coefficient : ℝ)
+    (hx : ∀ i, left.ContainsReal Binary.toRat? (x i))
+    (hy : ∀ i, right.ContainsReal Binary.toRat? (y i))
+    (hc : scale.ContainsReal Binary.toRat? coefficient) :
+    output.ContainsReal Binary.toRat? ((∑ i, x i * y i) * coefficient) := by
+  simp only [scaledContractionRange?, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain ⟨a, ha, b, hb, c, hc', product, hp, weighted, hw, hout⟩ := h
+  have hproduct (i : Fin count) :
+      (product.lo : ℝ) ≤ x i * y i ∧ x i * y i ≤ (product.hi : ℝ) := by
+    apply (Interval.containsReal_some_iff product _).1
+    exact Interval.containsReal_mul? Interval.Internal.rationalOutwardRounding hp
+      ((Interval.containsReal_some_iff _ _).2
+        ((Interval.containsReal_iff_of_decode? ha _).1 (hx i)))
+      ((Interval.containsReal_some_iff _ _).2
+        ((Interval.containsReal_iff_of_decode? hb _).1 (hy i)))
+  have hsum : (⟨count * product.lo, count * product.hi⟩ : Interval Rat).ContainsReal some
+      (∑ i, x i * y i) := by
+    rw [Interval.containsReal_some_iff]
+    constructor
+    · simpa using Finset.sum_le_sum (fun i (_ : i ∈ Finset.univ) => (hproduct i).1)
+    · simpa using Finset.sum_le_sum (fun i (_ : i ∈ Finset.univ) => (hproduct i).2)
+  have hweighted : weighted.ContainsReal some ((∑ i, x i * y i) * coefficient) :=
+    Interval.containsReal_mul? Interval.Internal.rationalOutwardRounding hw hsum
+      ((Interval.containsReal_some_iff _ _).2
+        ((Interval.containsReal_iff_of_decode? hc' _).1 hc))
+  apply Interval.containsReal_encloseInterval? Binary.intervalRounding hout
+  cases hstaged : (Binary.Interval.mul
+      (sumLeftRange count (Binary.Interval.mul left right)) scale).decode? Binary.toRat? with
+  | none => simpa [hstaged] using (Interval.containsReal_some_iff _ _).1 hweighted
+  | some previous =>
+      have hw := (Interval.containsReal_some_iff _ _).1 hweighted
+      simp only [Rat.cast_min, Rat.cast_max]
+      exact ⟨(min_le_left _ _).trans hw.1, hw.2.trans (le_max_left _ _)⟩
+
+/-- The enclosure transfer bounds each entry of the actual real grouped matrix specification.
+No equality between rounded staged multiplication and coefficient replay is used. -/
+theorem scaledProducts_real_contains {m n p : Nat}
+    {left right scale output : Interval (Binary 8 23)}
+    (h : scaledContractionRange? n left right scale = some output)
+    (a : Tensor ℝ [m, n]) (b : Tensor ℝ [n, p]) (coefficient : ℝ)
+    (ha : ∀ i k, left.ContainsReal Binary.toRat? (get2 a i k))
+    (hb : ∀ k j, right.ContainsReal Binary.toRat? (get2 b k j))
+    (hc : scale.ContainsReal Binary.toRat? coefficient) (i : Fin m) (j : Fin p) :
+    output.ContainsReal Binary.toRat?
+      (get2 (Spec.Internal.scaledProducts (fun _ : Fin 1 => a) (fun _ => b) coefficient) i j) := by
+  have hreference :
+      Spec.Internal.scaledProducts (fun _ : Fin 1 => a) (fun _ => b) coefficient =
+        TorchLean.Tensor.scaleSpec (matMulSpec a b) coefficient := by
+    have unsupported : Numeric.QuotientArithmetic.supported (α := ℝ) = false := rfl
+    simp [Spec.Internal.scaledProducts, unsupported]
+  rw [hreference]
+  have hentry : get2 (TorchLean.Tensor.scaleSpec (matMulSpec a b) coefficient) i j =
+      (∑ k, get2 a i k * get2 b k j) * coefficient := by
+    simp [TorchLean.Tensor.scaleSpec, Spec.get2_mat_mul_spec]
+  rw [hentry]
+  exact scaledContractionRange?_contains h (fun k => get2 a i k) (fun k => get2 b k j)
+    coefficient (ha i) (fun k => hb k j) hc
+
 /-- Sound real enclosure for the canonical reciprocal transfer. -/
 theorem inv_realEncloses {a : Interval (Binary 8 23)} {x : Real}
     (ha : Binary.Interval.Valid a) (hout : Binary.Interval.Valid (Binary.Interval.inv a))
@@ -151,6 +264,19 @@ def TensorEnclosed (interval : Interval (Binary 8 23)) :
     {shape : Shape} -> Tensor Real shape -> Prop
   | .scalar, tensor => RealEncloses interval tensor.item
   | .dim _ _, tensor => ∀ i, TensorEnclosed interval (tensor.unstack i)
+
+/-- The grouped real matrix result satisfies the tensor enclosure used by graph certificates. -/
+theorem scaledProducts_tensorEnclosed {m n p : Nat}
+    {left right scale output : Interval (Binary 8 23)}
+    (h : scaledContractionRange? n left right scale = some output)
+    (a : Tensor ℝ [m, n]) (b : Tensor ℝ [n, p]) (coefficient : ℝ)
+    (ha : ∀ i k, left.ContainsReal Binary.toRat? (get2 a i k))
+    (hb : ∀ k j, right.ContainsReal Binary.toRat? (get2 b k j))
+    (hc : scale.ContainsReal Binary.toRat? coefficient) :
+    TensorEnclosed output
+      (Spec.Internal.scaledProducts (fun _ : Fin 1 => a) (fun _ => b) coefficient) := by
+  intro i j
+  exact realEncloses_of_containsReal (scaledProducts_real_contains h a b coefficient ha hb hc i j)
 
 /-- The exact executable interval `[0,1]`. -/
 def unitInterval : Interval (Binary 8 23) :=

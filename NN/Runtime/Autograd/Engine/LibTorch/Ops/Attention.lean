@@ -8,6 +8,8 @@ module
 
 public import NN.Runtime.Autograd.Engine.LibTorch.Ops.Core
 public import NN.Runtime.Autograd.Engine.LibTorch.Convert
+public import NN.Spec.Core.FloatInstances
+public import NN.Spec.Layers.Attention
 
 /-!
 # CUDA Tape Operations: Attention
@@ -42,6 +44,217 @@ private def requireAttentionSize (label : String) (buffer : Buffer) (expected : 
   unless buffer.dtype == dtype do
     throw s!"attention: {label} buffer dtype mismatch"
 
+private def matrixFromArray {α : Type} [Storage α] (encode : Float → α) (values : FloatArray)
+    (offset rows columns : Nat) (transpose : Bool := false) : Tensor α [rows, columns] :=
+  Tensor.dim fun row => Tensor.dim fun column =>
+    Tensor.scalar <| encode <| values.get! <| offset +
+      (if transpose then column.val * rows + row.val else row.val * columns + column.val)
+
+private def replayBmm {α : Type} [Storage α] [Context α]
+    (encode : Float → α) (decode : α → Float) (left right ordinary : FloatArray)
+    (batch m n p : Nat) (transposeA transposeB : Bool) (scale : Float) : FloatArray := Id.run do
+  let ops := (inferInstance : Numeric.QuotientArithmetic α)
+  let scaleCoefficient := (inferInstance : Numeric.QuotientArithmetic Float).encode scale
+  let mut output := FloatArray.emptyWithCapacity (batch * m * p)
+  for group in [:batch] do
+    let a := matrixFromArray encode left (group * m * n) m n transposeA
+    let b := matrixFromArray encode right (group * n * p) n p transposeB
+    for row in List.finRange m do
+      for column in List.finRange p do
+        let previous := ordinary.get! (group * m * p + row.val * p + column.val)
+        let candidate := do
+          let coefficient ← scaleCoefficient
+          let products ← Spec.Internal.productCoefficients?
+            (fun _ : Fin 1 => a) (fun _ => b) (1 : α) row column
+          -- The buffer ABI supplies a Float64 scale even when its operands are Float32.
+          let result := Numeric.QuotientCoefficients.map (· * coefficient.primal) products
+          let rounded ← ops.decode result
+          pure <| if result.primal == 0 && encode previous == 0 then
+            ops.copyPrimal (encode previous) rounded else rounded
+        output := output.push (candidate.map decode |>.getD previous)
+  return output
+
+/-- Keep the original matrices available when scaling a native contraction loses range.
+
+One device flag gates the host transfer. A flagged call downloads its original operands and reuses
+the reference contraction's finite-coefficient replay, in the buffer's actual precision. The guard
+is conservative: zero contractions, including exact orthogonality, can also take this CPU path.
+Nonfinite inputs retain the native result. This is range recovery, not a proof of ATen. -/
+@[no_expose] def scaledProduct (left right : Buffer) (batch m n p : UInt32)
+    (scale : Float) (transposeA transposeB : Bool := false) : Buffer :=
+  let (ordinary, recover) := scaledBmm left right batch m n p
+    (if transposeA then 1 else 0) (if transposeB then 1 else 0) scale
+  if !recover then ordinary
+  else
+    let a := toFloatArray left
+    let b := toFloatArray right
+    let previous := toFloatArray ordinary
+    let values := match Buffer.dtype left with
+      | .float32 => replayBmm Float.toFloat32 Float32.toFloat a b previous
+          batch.toNat m.toNat n.toNat p.toNat transposeA transposeB scale
+      | .float64 => replayBmm id id a b previous
+          batch.toNat m.toNat n.toNat p.toNat transposeA transposeB scale
+      | .encoded => previous
+    releaseThen ordinary <| ofFloatArray values (Buffer.dtype left)
+
+private def replaySoftmaxProduct {α : Type} [Storage α] [Context α]
+    (encode : Float → α) (decode : α → Float)
+    (weights gradient value ordinary : FloatArray) (batch rows keys width : Nat)
+    (multiplier : Option FloatArray := none) : FloatArray :=
+  Id.run do
+    let mut output := FloatArray.emptyWithCapacity (batch * rows * keys)
+    for group in [:batch] do
+      let p := matrixFromArray encode weights (group * rows * keys) rows keys
+      let g := matrixFromArray encode gradient (group * rows * width) rows width
+      let v := matrixFromArray encode value (group * keys * width) width keys true
+      let previous := matrixFromArray encode ordinary (group * rows * keys) rows keys
+      let factor := multiplier.map fun values =>
+        matrixFromArray encode values (group * rows * keys) rows keys
+      for row in List.finRange rows do
+        let coefficients := match factor with
+          | none => Spec.Internal.productCoefficients? (fun _ : Fin 1 => g) (fun _ => v) 1 row
+          | some factor => Spec.Internal.weightedProductCoefficients? g v factor row
+        let recovered := (Spec.Internal.replayPullbackCoefficientsRow? (p.unstack row)
+          (previous.unstack row) coefficients)
+          |>.getD (previous.unstack row)
+        for column in List.finRange keys do
+          output := output.push (decode (recovered.getScalar column))
+    return output
+
+private def replayWeightedProducts {α : Type} [Storage α] [Context α]
+    (encode : Float → α) (decode : α → Float)
+    (weights gradient value ordinary : FloatArray) (batch rows keys width : Nat) : FloatArray :=
+  Id.run do
+    let ops := (inferInstance : Numeric.QuotientArithmetic α)
+    let mut output := FloatArray.emptyWithCapacity (batch * rows * keys)
+    for group in [:batch] do
+      let p := matrixFromArray encode weights (group * rows * keys) rows keys
+      let g := matrixFromArray encode gradient (group * rows * width) rows width
+      let v := matrixFromArray encode value (group * keys * width) width keys true
+      for row in List.finRange rows do
+        for column in List.finRange keys do
+          let previous := ordinary.get! (group * rows * keys + row.val * keys + column.val)
+          let recovered := do
+            let coefficient ← Spec.Internal.weightedProductCoefficients? g v p row column
+            let candidate ← ops.decode coefficient
+            pure <| if coefficient.primal == 0 && encode previous == 0 then
+              ops.copyPrimal (encode previous) candidate else candidate
+          output := output.push (recovered.map decode |>.getD previous)
+    return output
+
+private def replayValueProducts {α : Type} [Storage α] [Context α]
+    (encode : Float → α) (decode : α → Float)
+    (weights multiplier gradient ordinary : FloatArray) (batch rows keys width : Nat) :
+    FloatArray := Id.run do
+  let ops := (inferInstance : Numeric.QuotientArithmetic α)
+  let mut output := FloatArray.emptyWithCapacity (batch * keys * width)
+  for group in [:batch] do
+    let p := matrixFromArray encode weights (group * rows * keys) rows keys
+    let m := matrixFromArray encode multiplier (group * rows * keys) rows keys
+    let g := matrixFromArray encode gradient (group * rows * width) rows width
+    for key in List.finRange keys do
+      for column in List.finRange width do
+        let previous := ordinary.get! (group * keys * width + key.val * width + column.val)
+        let recovered := do
+          let coefficient ← Spec.Internal.weightedValueCoefficients? p m g key column
+          let candidate ← ops.decode coefficient
+          pure <| if coefficient.primal == 0 && encode previous == 0 then
+            ops.copyPrimal (encode previous) candidate else candidate
+        output := output.push (recovered.map decode |>.getD previous)
+  return output
+
+private def hasNonfinite (buffer : Buffer) : Bool :=
+  if buffer.size == 0 then false else
+    let magnitude := Buffer.abs buffer
+    let largest := releaseThen magnitude <| reduceMaxByRow magnitude 1 buffer.size
+    let observed := toFloatArray largest
+    releaseThen largest <| !((observed.get! 0).isFinite)
+
+/-- Apply the centered softmax VJP without discarding the original matrix cotangent.
+
+Contraction range loss or a nonfinite centered result triggers recovery; otherwise the ordinary
+GPU operations are retained. A flagged finite contraction is reconstructed through the pullback
+using the saved probabilities, rather than first rounding `gradient @ valueᵀ` to infinity.
+Nonfinite original operands or saved probabilities retain the ordinary native buffer. -/
+@[no_expose] def softmaxProductBackward (weights gradient value : Buffer)
+    (batch rows keys width : UInt32) : Buffer :=
+  let (dp, recover) := scaledBmm gradient value batch rows width keys 0 1 1
+  let allowed := releaseThen dp <| Buffer.mask dp weights
+  let ordinary := releaseThen allowed <| Tape.rowSoftmaxBwd weights allowed (batch * rows) keys
+  let nonfinite := hasNonfinite ordinary
+  if !recover && !nonfinite then ordinary
+  else
+    let probabilities := toFloatArray weights
+    if !probabilities.toList.all Float.isFinite then ordinary
+    else
+      let g := toFloatArray gradient
+      let v := toFloatArray value
+      if !g.toList.all Float.isFinite || !v.toList.all Float.isFinite then ordinary
+      else
+        let previous := toFloatArray ordinary
+        let recovered := match Buffer.dtype weights with
+          | .float32 => replaySoftmaxProduct Float.toFloat32 Float32.toFloat
+              probabilities g v previous batch.toNat rows.toNat keys.toNat width.toNat
+          | .float64 => replaySoftmaxProduct id id
+              probabilities g v previous batch.toNat rows.toNat keys.toNat width.toNat
+          | .encoded => previous
+        releaseThen ordinary <| ofFloatArray recovered (Buffer.dtype weights)
+
+/-- The normalized product's local pullback, including its differentiable multiplier.
+Recovery uses the actual saved probabilities and retains the original contraction through the
+multiplier. The existing scalar-product guard also checks the pointwise factors, requiring a
+device-flag synchronization in addition to the output-finiteness checks. Fully blocked rows suppress
+their upstream values. Elsewhere nonfinite originals keep native results rather than round-trip
+NaN payloads. -/
+@[no_expose] def softmaxMatmulBackward (weights value multiplier gradient : Buffer)
+    (batch rows keys width : UInt32) : Buffer × Buffer × Buffer :=
+  let active := reduceSumByRow weights (batch * rows) keys
+  let activeColumns := broadcastVecToCols active (batch * rows) width
+  let gradient := releaseThen activeColumns <| Buffer.mask gradient activeColumns
+  let (dp, rangeLoss) := scaledBmm gradient value batch rows width keys 0 1 1
+  let activeScores := releaseThen active <| broadcastVecToCols active (batch * rows) keys
+  let dp := releaseThen dp <| releaseThen activeScores <| Buffer.mask dp activeScores
+  let (productProbe, multiplierLoss) := scaledBmm weights multiplier weights.size 1 1 1 0 0 1
+  let mixed := releaseThen productProbe <| Buffer.mul weights multiplier
+  let dv := releaseThen mixed <|
+    scaledProduct mixed gradient batch keys rows width 1 (transposeA := true)
+  let allowed := Buffer.mask dp weights
+  let dm := Buffer.mul dp weights
+  let weighted := Buffer.mul allowed multiplier
+  let ds := releaseThen weighted <| Tape.rowSoftmaxBwd weights weighted (batch * rows) keys
+  let recover := rangeLoss || multiplierLoss || hasNonfinite ds || hasNonfinite dm ||
+    hasNonfinite dv
+  releaseThen gradient <| releaseThen dp <| releaseThen allowed <|
+    if !recover then (ds, dv, dm) else
+      let p := toFloatArray weights
+      let g := toFloatArray gradient
+      let v := toFloatArray value
+      let factor := toFloatArray multiplier
+      if !#[p, g, v, factor].all (fun values => values.toList.all Float.isFinite) then (ds, dv, dm)
+      else
+        let dsValues := toFloatArray ds
+        let dmValues := toFloatArray dm
+        let dvValues := toFloatArray dv
+        let result := match Buffer.dtype weights with
+          | .float32 =>
+              (replaySoftmaxProduct Float.toFloat32 Float32.toFloat p g v dsValues
+                batch.toNat rows.toNat keys.toNat width.toNat (some factor),
+               replayWeightedProducts Float.toFloat32 Float32.toFloat p g v dmValues
+                batch.toNat rows.toNat keys.toNat width.toNat,
+               replayValueProducts Float.toFloat32 Float32.toFloat p factor g dvValues
+                batch.toNat rows.toNat keys.toNat width.toNat)
+          | .float64 =>
+              (replaySoftmaxProduct id id p g v dsValues
+                batch.toNat rows.toNat keys.toNat width.toNat (some factor),
+               replayWeightedProducts id id p g v dmValues
+                batch.toNat rows.toNat keys.toNat width.toNat,
+               replayValueProducts id id p factor g dvValues
+                batch.toNat rows.toNat keys.toNat width.toNat)
+          | .encoded => (dsValues, dmValues, dvValues)
+        (releaseThen ds <| ofFloatArray result.1 (Buffer.dtype weights),
+          releaseThen dv <| ofFloatArray result.2.2 (Buffer.dtype weights),
+          releaseThen dm <| ofFloatArray result.2.1 (Buffer.dtype weights))
+
 /--
 Compose scaled dot-product attention from numerical buffer operations.
 
@@ -58,18 +271,7 @@ probabilities alive until backward. Blocked probabilities and fully blocked rows
     requireAttentionSize "mask" allowed scores (Buffer.dtype Q)
   if values == 0 then
     return (zeros values (Buffer.dtype Q), zeros scores (Buffer.dtype Q))
-  -- Shrinking each operand avoids overflow in an otherwise finite scaled dot product.
-  -- For growing scales, scale the product instead: enlarging K can overflow even when Q is zero.
-  -- As in math SDPA, split the host scale before rounding its factors in the buffer dtype.
-  let logits := if scale.abs < 1.0 then
-      let factor := scale.abs.sqrt
-      let scaledQ := Buffer.scale Q (if scale < 0.0 then -factor else factor)
-      let scaledK := Buffer.scale K factor
-      releaseThen scaledQ <| releaseThen scaledK <|
-        bmmRightTranspose scaledQ scaledK batch n d n
-    else
-      let products := bmmRightTranspose Q K batch n d n
-      releaseThen products <| Buffer.scale products scale
+  let logits := scaledProduct Q K batch n d n scale (transposeB := true)
   let probabilities := match mask with
     | some allowed =>
         releaseThen logits <| hardMaskedSoftmaxByRow logits allowed rows n
@@ -89,9 +291,16 @@ probabilities alive until backward. Blocked probabilities and fully blocked rows
 /--
 Attention's local VJP, composed in Lean from the saved probabilities and numerical primitives.
 
-`dP = dOut Vᵀ`, `dS = P * (dP - sum(P * dP))`,
+`dP = dOut Vᵀ`. For each row, choose a maximal-probability coordinate and subtract its
+`dP` value: `centered = dP - anchor`, `dS = P * (centered - sum(P * centered))`.
+For normalized exact-real probabilities this is the usual softmax VJP; rounded probabilities
+need not sum exactly to one, so the centered and uncentered computations can differ.
 `dQ = scale * dS K`, `dK = scale * dSᵀ Q`, and `dV = Pᵀ dOut`.
 All arguments are borrowed. Fully blocked rows contribute zero even for nonfinite cotangents.
+
+The contraction check can replay finite `dOut` and `V` through the complete centered pullback
+using the actual saved probabilities. This can recover a finite score cotangent even when `dP`
+cannot be represented on its own. Native operations, transfers, and codecs remain trust boundaries.
 -/
 @[no_expose] def attentionBackward (Q K V probabilities dOut : Buffer)
     (batch n d : UInt32) (scale : Float) : Except String (Buffer × Buffer × Buffer) := do
@@ -107,24 +316,10 @@ All arguments are borrowed. Fully blocked rows contribute zero even for nonfinit
   let grad := Buffer.mask dOut activeB
   -- A zero dS does not suppress a nonfinite query through multiplication alone.
   let maskedQ := Buffer.mask Q activeB
-  let dp := bmmRightTranspose grad V batch n d n
-  let allowedDP := releaseThen dp <| Buffer.mask dp probabilities
-  let ds := releaseThen allowedDP <|
-    Tape.rowSoftmaxBwd probabilities allowedDP rows n
-  let (dq, dk) := if scale.abs < 1.0 then
-      let factor := scale.abs.sqrt
-      let queryFactor := if scale < 0.0 then -factor else factor
-      let scaledQ := releaseThen maskedQ <| Buffer.scale maskedQ queryFactor
-      let scaledK := Buffer.scale K factor
-      let dq := releaseThen scaledK <| bmm ds scaledK batch n n d
-      let dk := releaseThen scaledQ <| bmmLeftTranspose ds scaledQ batch n n d
-      (releaseThen dq <| Buffer.scale dq queryFactor,
-        releaseThen ds <| releaseThen dk <| Buffer.scale dk factor)
-    else
-      let dq := bmm ds K batch n n d
-      let dk := releaseThen maskedQ <| bmmLeftTranspose ds maskedQ batch n n d
-      (releaseThen dq <| Buffer.scale dq scale,
-        releaseThen ds <| releaseThen dk <| Buffer.scale dk scale)
+  let ds := softmaxProductBackward probabilities grad V batch n n d
+  let dq := scaledProduct ds K batch n n d scale
+  let dk := releaseThen maskedQ <| releaseThen ds <|
+    scaledProduct ds maskedQ batch n n d scale (transposeA := true)
   let dv := releaseThen grad <| bmmLeftTranspose probabilities grad batch n n d
   -- Nonfinite keys can produce 0 * infinity in a fully blocked row's dQ.
   let dq := releaseThen activeB <| releaseThen dq <| Buffer.mask dq activeB
@@ -133,6 +328,57 @@ All arguments are borrowed. Fully blocked rows contribute zero even for nonfinit
 end Buffer
 
 namespace Tape
+
+/-- Record a row-normalized matrix product on the existing native tape.
+Only saved probabilities are workspace; input buffers remain borrowed tape parents. -/
+def softmaxMatmul {batch : Shape} {rows keys width : Nat} (t : Tape SomeBuffer)
+    (scoresId valueId multiplierId : Nat)
+    (mask : Option (Tensor Bool [rows, keys]) := none) : Result (Tape SomeBuffer × Nat) := do
+  let b ← SomeBuffer.natToU32Checked batch.size
+  let r ← SomeBuffer.natToU32Checked rows
+  let k ← SomeBuffer.natToU32Checked keys
+  let w ← SomeBuffer.natToU32Checked width
+  let rowCount ← SomeBuffer.natToU32Checked (batch.size * rows)
+  let scoreCount ← SomeBuffer.natToU32Checked (batch.size * rows * keys)
+  let _ ← SomeBuffer.natToU32Checked (batch.size * keys * width)
+  let outputCount ← SomeBuffer.natToU32Checked (batch.size * rows * width)
+  let scoreShape := batch.concat [rows, keys]
+  let valueShape := batch.concat [keys, width]
+  let outputShape := batch.concat [rows, width]
+  let scores ← requireValue (t := t) scoresId scoreShape
+  let value ← requireValue (t := t) valueId valueShape
+  let multiplier ← requireValue (t := t) multiplierId scoreShape
+  unless scores.dtype == value.dtype && scores.dtype == multiplier.dtype do
+    throw "softmaxMatmul: inputs must have the same buffer dtype"
+  let probabilities := if scoreCount == 0 then Buffer.zeros scoreCount scores.dtype else
+    match mask with
+    | none =>
+        let normalized := rowSoftmaxForward scores rowCount k
+        normalized.releaseWorkspaceThen normalized.value
+    | some mask =>
+        let source := Buffer.ofFloatArray (Convert.flattenBoolMask mask) scores.dtype
+        let allowed := Buffer.broadcastTo source #[rows, keys] #[batch.size, rows, keys] #[1, 2]
+        Buffer.releaseThen source <| Buffer.releaseThen allowed <|
+          Buffer.hardMaskedSoftmaxByRow scores allowed rowCount k
+  let mixed := Buffer.mul probabilities multiplier
+  let output := Buffer.releaseThen mixed <|
+    if outputCount == 0 then Buffer.zeros outputCount scores.dtype else
+      Buffer.bmm mixed value b r k w
+  let node : Node SomeBuffer :=
+    { name := some "softmax_matmul"
+      value := { s := outputShape, buf := output }
+      requiresGrad := #[scoresId, valueId, multiplierId].any fun id =>
+        (t.getNode? id).any (·.requiresGrad)
+      parents := #[scoresId, valueId, multiplierId]
+      cleanup := #[SomeBuffer.ofWorkspace probabilities]
+      backward := fun seed => do
+        let gradient ← requireGrad seed outputShape
+        let (ds, dv, dm) := Buffer.softmaxMatmulBackward probabilities value multiplier
+          gradient.buf b r k w
+        pure #[(scoresId, { s := scoreShape, buf := ds }),
+          (valueId, { s := valueShape, buf := dv }),
+          (multiplierId, { s := scoreShape, buf := dm })] }
+  pure (t.addNode node)
 
 /-!
 ## Multi-head self-attention

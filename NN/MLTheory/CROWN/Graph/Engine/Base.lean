@@ -299,7 +299,7 @@ def crownNodeSemanticsSupported (nodes : Array Node) (ps : ParamStore α) (id : 
   | none => false
   | some node =>
       match node.kind with
-      | .custom .. => false
+      | .custom .. | .scaledMatmul => false
       | .conv configuration =>
           match node.parents with
           | #[parentId] =>

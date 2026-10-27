@@ -51,6 +51,7 @@ inductive RangeRule where
   | sumLeft (parent count : Nat)
   | meanLeft (parent count : Nat)
   | matmulLeft (left right innerDim : Nat)
+  | scaledMatmul (left right scale innerDim : Nat)
   | averageWindowLeft (parent windowSize : Nat) (includesPadding : Bool)
   | mseLeft (prediction target count : Nat)
   | layerNormLeft (parent axis normalizedSize : Nat)
@@ -193,13 +194,6 @@ def parentNodeRange (ranges : Array CheckedNodeRange) (nodeId : Nat) :
 def parentRange (ranges : Array CheckedNodeRange) (nodeId : Nat) :
     Except String (Interval (Binary 8 23)) :=
   (·.enclosure) <$> parentNodeRange ranges nodeId
-
-/-- Outward-rounded left-fold range for a sum of `count` values from one enclosure. The initial
-point interval at positive zero matches `Tensor.sumSpec`. -/
-def sumLeftRange (count : Nat) (range : Interval (Binary 8 23)) : Interval (Binary 8 23) :=
-  (List.range count).foldl
-    (fun acc _ => Binary.Interval.add acc range)
-    (Binary.Interval.point (ExecFloat.Binary.zero false : Binary 8 23))
 
 /-- Left-fold mean range, using the same binary32 conversion of the divisor as the tensor
 context. -/
@@ -563,6 +557,28 @@ def matmulContract : GraphRangeContract where
         pure (.matmulLeft left right innerDim, sumLeftRange innerDim product)
     | _ => throw (arityError "matrix multiplication" node "two parents")
 
+/-- Grouped contractions require the reference's checked fixed-left-or-exact policy.
+An implementation-defined native schedule is not admitted by this transfer. -/
+def scaledMatmulContract : GraphRangeContract where
+  key := .backend .scaledMatmul
+  name := "checked scaled matrix contraction"
+  derive := fun context node => do
+    match nodeNumericalPolicy context.plan node.id with
+    | some policy =>
+        unless policy.reduction == .fixedLeftOrExact do
+          throw s!"numerical certificate: node {node.id}: fixedLeftOrExact is required"
+    | none => throw s!"numerical certificate: node {node.id}: missing numerical policy"
+    let (left, right, coefficient) ← Infer.expectTernaryParents "scaled_matmul" node.parents
+    let a ← parentNodeRange context.ranges left
+    let b ← parentNodeRange context.ranges right
+    let c ← parentNodeRange context.ranges coefficient
+    unless c.outShape == [] do
+      throw s!"numerical certificate: node {node.id}: scaled_matmul scale must be scalar"
+    let dims ← OpContracts.matmulDims a.outShape b.outShape
+    let some enclosure := scaledContractionRange? dims.inner a.enclosure b.enclosure c.enclosure
+      | throw s!"numerical certificate: node {node.id}: no finite scaled contraction enclosure"
+    pure (.scaledMatmul left right coefficient dims.inner, enclosure)
+
 /-- Mean-squared-error contract with nonnegativity restored after dependent squaring. -/
 def mseContract : GraphRangeContract where
   key := .backend .mseLoss
@@ -647,6 +663,18 @@ def reluContract : GraphRangeContract where
         pure (.relu parent, (Binary.Interval.relu input))
     | _ => throw (arityError "ReLU" node "one parent")
 
+/-- Real SiLU lies between its input and zero. IEEE replay still checks each rounded result. -/
+def siluContract : GraphRangeContract where
+  key := .backend .silu
+  name := "SiLU input-zero hull"
+  derive := fun context node =>
+    match node.parents with
+    | #[parent] => do
+        let input ← parentRange context.ranges parent
+        pure (.hullZero parent, Binary.Interval.hull input
+          (Binary.Interval.point (ExecFloat.Binary.zero false : Binary 8 23)))
+    | _ => throw (arityError "SiLU" node "one parent")
+
 /-- Absolute-value interval contract. -/
 def absContract : GraphRangeContract where
   key := .backend .abs
@@ -704,10 +732,12 @@ def defaultContracts : Array GraphRangeContract :=
   , axisReductionContract false
   , axisReductionContract true
   , matmulContract
+  , scaledMatmulContract
   , mseContract
   , layerNormContract
   , softmaxContract
   , reluContract
+  , siluContract
   , absContract
   , sqrtContract
   , boundedUnaryContract .sigmoid .unitBound unitInterval

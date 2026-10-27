@@ -16,7 +16,7 @@ public import NN.Spec.Layers.Attention
 # Axis softmax
 
 This file collects the mathematical facts needed by numerical bounds for the coupled, vector-valued
-softmax used in attention. It is deliberately separate from the older NF scalar logistic helper:
+softmax used in attention. It is separate from the NF scalar logistic helper:
 axis softmax has a shared denominator and a dense Jacobian, while logistic acts independently on
 each tensor entry.
 
@@ -188,6 +188,14 @@ def softmaxErrorBound {n : Nat} (eps : ℝ)
     (xR : Tensor R [Nat.succ n]) : ℝ :=
   linfNorm (softmaxBoundTensor (β := β) (fexp := fexp) (rnd := rnd) eps xR)
 
+-- Select the ordinary branch before instantiating the full rounded-real scalar dictionary.
+private theorem normalizeWeights_eq_of_unsupported {α : Type} [Storage α] [Context α]
+    {n : Nat} (values : Tensor α [n])
+    (h : Numeric.QuotientArithmetic.supported (α := α) = false) :
+    Activation.Internal.normalizeWeights values =
+      divSpec values (Tensor.replicate (Tensor.scalar (sumSpec values))) := by
+  simp only [Activation.Internal.normalizeWeights, h, Bool.not_false, ↓reduceIte]
+
 /-- The max-shifted `NF` implementation approximates real vector softmax.
 
 The theorem follows the rounded-real stages: maximum, subtraction, exponential, sequential sum,
@@ -288,20 +296,24 @@ theorem approxTensor_softmaxVecSpec {n : Nat}
   have hsoftS :
       (Activation.softmaxVecSpec xS).unstack i =
         Tensor.scalar (numS / denomS) := by
+    change (Activation.Internal.normalizeWeights exS).unstack i = _
+    rw [normalizeWeights_eq_of_unsupported _ (by rfl)]
     apply TorchLean.Tensor.Internal.Rep.ext
     intro coordinate
     cases coordinate
-    simp [Activation.softmaxVecSpec, exS, denomS, numS,
+    simp [exS, denomS, numS,
       TorchLean.Tensor.divSpec, TorchLean.Tensor.replicate,
       TorchLean.Tensor.map2Spec, Tensor.item, Tensor.unstack, Tensor.scalar,
       TorchLean.Tensor.Internal.Rep.unstack_apply]
   have hsoftR :
       (Activation.softmaxVecSpec xR).unstack i =
         Tensor.scalar (numR / denomR) := by
+    change (Activation.Internal.normalizeWeights exR).unstack i = _
+    rw [normalizeWeights_eq_of_unsupported _ (by rfl)]
     apply TorchLean.Tensor.Internal.Rep.ext
     intro coordinate
     cases coordinate
-    simp [Activation.softmaxVecSpec, exR, denomR, numR,
+    simp [exR, denomR, numR,
       TorchLean.Tensor.divSpec, TorchLean.Tensor.replicate,
       TorchLean.Tensor.map2Spec, Tensor.item, Tensor.unstack, Tensor.scalar,
       TorchLean.Tensor.Internal.Rep.unstack_apply]
@@ -536,6 +548,8 @@ theorem approxTensor_hardMaskedSoftmaxVecSpec_of_max {n : Nat}
   simp only [Spec.hardMaskedSoftmaxVecSpec, hmaxS, hmaxR]
   rw [← hardMaskedNumerators_eq_fused scoresS mask rowMaxS,
     ← hardMaskedNumerators_eq_fused scoresR mask rowMaxR]
+  rw [normalizeWeights_eq_of_unsupported _ (by rfl),
+    normalizeWeights_eq_of_unsupported _ (by rfl)]
   simpa [
     hardMaskedSoftmaxBoundTensor, hardMaskedNumerators,
     hardMaskedShiftError, hardMaskedNumeratorError, hardMaskedDenominatorError,
@@ -692,15 +706,30 @@ def vjpCenteredError {n : Nat} (epsDY epsY : ℝ)
     epsDY (vjpDotError (β := β) (fexp := fexp) (rnd := rnd) epsDY epsY dYR yR)
     dYR dotRepR)
 
-/-- End-to-end infinity-norm budget for the rounded softmax VJP. -/
+/-- End-to-end infinity-norm budget for the rounded softmax VJP.
+
+Supplying `center` includes the subtraction of that upstream coordinate before the weighted
+reduction. Selecting a coordinate introduces no rounding, but subtracting it does; both upstream
+values carry the original error budget. Omitting it describes the uncentered formula used for
+arbitrary already-supplied weights. Attention opts into the centered formula.
+-/
 def softmaxVjpErrorBound {n : Nat} (epsDY epsY : ℝ)
-    (dYR yR : Tensor R [Nat.succ n]) : ℝ :=
-  let dotR : R := sumSpec (mulSpec dYR yR)
-  let centeredR := subSpec dYR
-    (Tensor.replicate (Tensor.scalar dotR) : Tensor R [Nat.succ n])
-  linfNorm (NFBackend.mulBoundTensor (β := β) (fexp := fexp)
-    epsY (vjpCenteredError (β := β) (fexp := fexp) (rnd := rnd) epsDY epsY dYR yR)
-    yR centeredR)
+    (dYR yR : Tensor R [Nat.succ n]) (center : Option (Fin (Nat.succ n)) := none) : ℝ :=
+  let uncentered (eps : ℝ) (upstream : Tensor R [Nat.succ n]) :=
+    let dotR : R := sumSpec (mulSpec upstream yR)
+    let centeredR := subSpec upstream
+      (Tensor.replicate (Tensor.scalar dotR) : Tensor R [Nat.succ n])
+    linfNorm (NFBackend.mulBoundTensor (β := β) (fexp := fexp)
+      epsY (vjpCenteredError (β := β) (fexp := fexp) (rnd := rnd) eps epsY upstream yR)
+      yR centeredR)
+  match center with
+  | none => uncentered epsDY dYR
+  | some i =>
+      let anchor : Tensor R [Nat.succ n] := Tensor.replicate (Tensor.scalar (dYR.getScalar i))
+      let centered := subSpec dYR anchor
+      let eps := linfNorm (NFBackend.subBoundTensor (β := β) (fexp := fexp)
+        epsDY epsDY dYR anchor)
+      uncentered eps centered
 
 /-- Rounded VJP theorem for any already-certified softmax weight vector.
 
@@ -760,12 +789,105 @@ theorem approxTensor_softmaxBackwardFromWeightsVecSpec {n : Nat}
   simpa [Spec.softmaxBackwardFromWeightsSpec, productS, productR, dotS, dotR,
     dotRepS, dotRepR, centeredS, centeredR, epsCentered, softmaxVjpErrorBound] using hout
 
-/-- Error theorem for the rounded-real softmax VJP.
+-- Rewrite the unsupported branch abstractly, before instantiating its scalar dictionary with NF.
+-- Reducing the concrete dictionary through the complete replay body makes kernel checking costly.
+private theorem softmaxPullback_eq_of_unsupported {α : Type} [Storage α] [Context α]
+    {n : Nat} (weights gradient : Tensor α [n]) (anchor : α)
+    (h : Numeric.QuotientArithmetic.supported (α := α) = false) :
+    Activation.Internal.softmaxPullback weights gradient anchor =
+      let centered := subSpec gradient (Tensor.replicate (Tensor.scalar anchor))
+      let mean := sumSpec (mulSpec centered weights)
+      mulSpec weights (subSpec centered (Tensor.replicate (Tensor.scalar mean))) := by
+  simp only [Activation.Internal.softmaxPullback, h, Bool.not_false, ↓reduceIte]
 
-This is the training counterpart of `approxTensor_softmaxVecSpec`. It follows the implementation's
-factorization `y * (dY - sum (dY * y))`; the proof never materializes a dense Jacobian and reuses
-the rounded multiplication, reduction, replication, and subtraction contracts. It does not
-establish that a native backend uses this arithmetic schedule.
+/-- Numerical bound for the centered helper used by attention's JVP and VJP.
+
+The exact row must be normalized or identically zero. The rounded weights select the anchor;
+the exact weights need not select the same maximum. The budget includes both copies of the
+upstream-coordinate error and the actual rounded subtraction before the weighted reduction.
+No native backend schedule is inferred from this rounded-real statement.
+-/
+theorem approxTensor_softmaxBackwardFromWeightsVecSpec_centered {n : Nat}
+    {yS dYS : SpecTensor [Nat.succ n]}
+    {yR dYR : Tensor R [Nat.succ n]} {epsY epsDY : ℝ}
+    (hy : approxTensor (α := R)
+      (toSpec := NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd)) yS yR epsY)
+    (hdY : approxTensor (α := R)
+      (toSpec := NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd)) dYS dYR epsDY)
+    (hmass : (∑ j, yS.getScalar j) = 1 ∨ ∀ j, yS.getScalar j = 0) :
+    let center : Fin (Nat.succ n) :=
+      Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) yR)
+    approxTensor (α := R)
+      (toSpec := NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd))
+      (Spec.softmaxBackwardFromWeightsSpec yS dYS (center := true))
+      (Spec.softmaxBackwardFromWeightsSpec yR dYR (center := true))
+      (softmaxVjpErrorBound (β := β) (fexp := fexp) (rnd := rnd)
+        epsDY epsY dYR yR (center := some center)) := by
+  dsimp only
+  let center : Fin (Nat.succ n) :=
+    Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) yR)
+  have hanchor : approxTensor (α := R)
+      (toSpec := NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd))
+      (Tensor.scalar (dYS.getScalar center)) (Tensor.scalar (dYR.getScalar center)) epsDY := by
+    apply approxTensor_scalar_iff.mpr
+    have hi := approxTensor_unstack hdY center
+    have hscalar := approxTensor_scalar_item_iff.mp hi
+    simpa [Tensor.getScalar, Spec.get] using hscalar
+  let anchorS : SpecTensor [Nat.succ n] := Tensor.replicate (Tensor.scalar (dYS.getScalar center))
+  let anchorR : Tensor R [Nat.succ n] := Tensor.replicate (Tensor.scalar (dYR.getScalar center))
+  let shiftedS := subSpec dYS anchorS
+  let shiftedR := subSpec dYR anchorR
+  let epsShifted := linfNorm
+    (NFBackend.subBoundTensor (β := β) (fexp := fexp) epsDY epsDY dYR anchorR)
+  have hshifted : approxTensor (α := R)
+      (toSpec := NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd))
+      shiftedS shiftedR epsShifted :=
+    NFBackend.approxTensor_sub_spec hdY (NFBackend.approxTensor_replicate hanchor)
+  have hout := approxTensor_softmaxBackwardFromWeightsVecSpec
+    (β := β) (fexp := fexp) (rnd := rnd) hy hshifted
+  have hruntime : Spec.softmaxBackwardFromWeightsSpec yR dYR (center := true) =
+      Spec.softmaxBackwardFromWeightsSpec yR shiftedR := by
+    change Activation.Internal.softmaxPullback yR dYR (dYR.getScalar center) = _
+    rw [softmaxPullback_eq_of_unsupported _ _ _ (by rfl)]
+    rfl
+  rw [Proofs.softmax_backward_from_weights_shift yS dYS (dYS.getScalar center) hmass
+    (center := true), hruntime]
+  exact hout
+
+-- In real arithmetic the upstream shift cancels because the softmax weights sum to one.
+-- Its value need not come from the real argmax: the numerical proof uses the rounded pivot.
+private theorem softmax_backward_centered {n : Nat} (x dY : Tensor ℝ [Nat.succ n])
+    (anchor : ℝ) :
+    Activation.softmaxBackwardSpec 0 x dY =
+      softmaxBackwardFromWeightsSpec (Activation.softmaxVecSpec x)
+        (subSpec dY (Spec.replicate (Tensor.scalar anchor))) := by
+  let y := Activation.softmaxVecSpec x
+  let shifted := subSpec dY (Spec.replicate (Tensor.scalar anchor))
+  have hcoord (j : Fin (Nat.succ n)) : shifted.getScalar j = dY.getScalar j - anchor := by
+    simp [shifted, subSpec, Spec.replicate]
+  have hmass : (∑ j, y.getScalar j) = 1 := by
+    simpa [sum_spec_vec, y] using Proofs.sum_spec_softmax_vec_spec x
+  have hdot : sumSpec (mulSpec shifted y) =
+      (∑ j, y.getScalar j * dY.getScalar j) - anchor := by
+    rw [sum_spec_vec]
+    simp_rw [getScalar_mul_spec, hcoord, mul_comm (_ - anchor), mul_sub]
+    rw [Finset.sum_sub_distrib, ← Finset.sum_mul, hmass, one_mul]
+  apply Tensor.ext_vector
+  intro i
+  rw [Proofs.softmaxBackwardSpec_zero_vec, Proofs.getScalar_softmaxInnermostBackwardSpec]
+  change _ = (mulSpec y (subSpec shifted
+    (Spec.replicate (Tensor.scalar (sumSpec (mulSpec shifted y)))))).getScalar i
+  rw [getScalar_mul_spec, subSpec, Tensor.getScalar_map2Spec, hcoord, hdot]
+  simp only [Spec.replicate, Tensor.getScalar_const, Tensor.item_scalar]
+  change y.getScalar i * _ = y.getScalar i * _
+  ring
+
+/-- Error theorem for the rounded-real softmax VJP, including its upstream centering.
+
+This is the training counterpart of `approxTensor_softmaxVecSpec`. The rounded argmax selects
+the upstream anchor; it need not agree with the exact argmax. Coordinate selection adds no
+rounding, while the first subtraction is charged to the budget before applying the existing
+weighted-reduction theorem. This does not establish a native backend's arithmetic schedule.
 -/
 theorem approxTensor_softmaxBackwardVecSpec {n : Nat}
     {xS dYS : SpecTensor [Nat.succ n]}
@@ -775,20 +897,18 @@ theorem approxTensor_softmaxBackwardVecSpec {n : Nat}
     (hdY : approxTensor (α := R)
       (toSpec := NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd)) dYS dYR epsDY)
     (hdenom : denominatorErrorBound (β := β) (fexp := fexp) (rnd := rnd) epsX xR < 1) :
+    let center : Fin (Nat.succ n) :=
+      Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) xR)
     let yR := Activation.softmaxVecSpec xR
     approxTensor (α := R)
       (toSpec := NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd))
       (Activation.softmaxBackwardSpec 0 xS dYS) (Activation.softmaxBackwardSpec 0 xR dYR)
       (softmaxVjpErrorBound (β := β) (fexp := fexp) (rnd := rnd)
-        epsDY (softmaxErrorBound (β := β) (fexp := fexp) (rnd := rnd) epsX xR) dYR yR) := by
+        epsDY (softmaxErrorBound (β := β) (fexp := fexp) (rnd := rnd) epsX xR)
+        dYR yR (center := some center)) := by
   dsimp only
-  change approxTensor
-    (toSpec := NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd))
-    (Activation.Internal.softmaxInnermostBackwardSpec xS dYS)
-    (Activation.Internal.softmaxInnermostBackwardSpec xR dYR)
-    (softmaxVjpErrorBound (β := β) (fexp := fexp) (rnd := rnd)
-      epsDY (softmaxErrorBound (β := β) (fexp := fexp) (rnd := rnd) epsX xR) dYR
-      (Activation.softmaxVecSpec xR))
+  let center : Fin (Nat.succ n) :=
+    Fin.cast (by simp [Shape.size]) (Tensor.argmax (by simp [Shape.size]) xR)
   let yS := Activation.softmaxVecSpec xS
   let yR := Activation.softmaxVecSpec xR
   let epsY := softmaxErrorBound (β := β) (fexp := fexp) (rnd := rnd) epsX xR
@@ -796,11 +916,32 @@ theorem approxTensor_softmaxBackwardVecSpec {n : Nat}
       (toSpec := NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd)) yS yR epsY := by
     simpa [yS, yR, epsY] using
       (approxTensor_softmaxVecSpec (β := β) (fexp := fexp) (rnd := rnd) hx hdenom)
+  have hanchor : approxTensor (α := R)
+      (toSpec := NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd))
+      (Tensor.scalar (dYS.getScalar center)) (Tensor.scalar (dYR.getScalar center)) epsDY := by
+    apply approxTensor_scalar_iff.mpr
+    have hi := approxTensor_unstack hdY center
+    have hscalar := approxTensor_scalar_item_iff.mp hi
+    simpa [Tensor.getScalar, Spec.get] using hscalar
+  let anchorS : SpecTensor [Nat.succ n] := Tensor.replicate (Tensor.scalar (dYS.getScalar center))
+  let anchorR : Tensor R [Nat.succ n] := Tensor.replicate (Tensor.scalar (dYR.getScalar center))
+  let shiftedS := subSpec dYS anchorS
+  let shiftedR := subSpec dYR anchorR
+  let epsShifted := linfNorm
+    (NFBackend.subBoundTensor (β := β) (fexp := fexp) epsDY epsDY dYR anchorR)
+  have hshifted : approxTensor (α := R)
+      (toSpec := NFBackend.toSpec (β := β) (fexp := fexp) (rnd := rnd))
+      shiftedS shiftedR epsShifted :=
+    NFBackend.approxTensor_sub_spec hdY (NFBackend.approxTensor_replicate hanchor)
   have hout := approxTensor_softmaxBackwardFromWeightsVecSpec
-    (β := β) (fexp := fexp) (rnd := rnd) hy hdY
-  simpa [Activation.Internal.softmaxInnermostBackwardSpec,
-    Spec.softmaxBackwardFromWeightsSpec, yS, yR, epsY]
-    using hout
+    (β := β) (fexp := fexp) (rnd := rnd) hy hshifted
+  have hruntime : Activation.softmaxBackwardSpec 0 xR dYR =
+      Spec.softmaxBackwardFromWeightsSpec yR shiftedR := by
+    change Activation.Internal.softmaxPullback yR dYR (dYR.getScalar center) = _
+    rw [softmaxPullback_eq_of_unsupported _ _ _ (by rfl)]
+    rfl
+  rw [softmax_backward_centered xS dYS (dYS.getScalar center), hruntime]
+  exact hout
 
 /-- The analytic softmax on a nonempty vector sums to one. -/
 theorem sum_softmaxVec {n : Nat} (x : Vec (Nat.succ n)) :

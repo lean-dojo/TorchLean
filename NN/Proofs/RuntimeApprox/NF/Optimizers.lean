@@ -44,6 +44,49 @@ variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
 local notation "R" => NF β fexp rnd
 
+-- NF has no upper exponent bound: these guards preserve the original rounded schedule.
+omit [ValidRndToNearest rnd] in
+private theorem nf_sub_self_beq (x : R) : (x - x == 0) = true := by
+  have h : x - x = 0 := by
+    change NF.ofReal (x.val - x.val) = NF.ofReal 0
+    rw [sub_self]
+  rw [h]
+  exact beq_self_eq_true _
+
+private theorem weightedSquare_eq {α : Type} [Storage α] [Context α]
+    (finite : ∀ x : α, (x - x == 0) = true) {s : Shape}
+    (values : Tensor α s) (weight : α) :
+    Optim.Internal.weightedSquare values weight = scaleSpec (squareSpec values) weight := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simp [Optim.Internal.weightedSquare, scaleSpec, squareSpec, Tensor.map, finite]
+
+private theorem correctMoment_eq {α : Type} [Storage α] [Context α]
+    (finite : ∀ x : α, (x - x == 0) = true) {s : Shape}
+    (moment : Tensor α s) (denominator : α) :
+    Optim.Internal.correctMoment moment denominator = scaleSpec moment (1 / denominator) := by
+  simp [Optim.Internal.correctMoment, finite]
+
+private theorem correctedRms_eq {α : Type} [Storage α] [Context α]
+    (finite : ∀ x : α, (x - x == 0) = true) {s : Shape}
+    (moment : Tensor α s) (denominator : α) :
+    Optim.Internal.correctedRms moment denominator =
+      sqrtSpec (scaleSpec moment (1 / denominator)) := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simp [Optim.Internal.correctedRms, correctMoment_eq finite, sqrtSpec, map2Spec,
+    Tensor.map, finite]
+
+private theorem normalizedUpdate_eq {α : Type} [Storage α] [Context α]
+    (unsupported : (inferInstance : Numeric.QuotientArithmetic α).supported = false)
+    {s : Shape} (lr epsilon : α) (moment root : Tensor α s) :
+    Optim.Internal.normalizedUpdate lr epsilon moment root =
+      scaleSpec (divSpec moment (addSpec root (Tensor.full s epsilon))) lr := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro coordinate
+  simp [Optim.Internal.normalizedUpdate, unsupported, scaleSpec, divSpec, addSpec,
+    Tensor.full, map2Spec, Tensor.map]
+
 /-! ## SGD -/
 
 /-- Error in the runtime learning-rate scalar stored by SGD. -/
@@ -312,8 +355,8 @@ structure AdamWStepErrorTrace where
   standardDeviation : ℝ
   /-- Error after adding epsilon to the square-root denominator. -/
   denominator : ℝ
-  /-- Error in the elementwise adaptive learning rate. -/
-  adaptiveLr : ℝ
+  /-- Error in the first moment divided by the epsilon-shifted RMS. -/
+  normalizedMoment : ℝ
   /-- Error in the Adam update before subtraction from parameters. -/
   adaptiveUpdate : ℝ
   /-- Error in the decoupled weight-decay update. -/
@@ -389,17 +432,15 @@ def adamWStepErrorTrace {s : Shape} (stateError : AdamWStateError s)
   let denominatorError := linfNorm
     (addBoundTensor (β := β) (fexp := fexp)
       standardDeviationError stateError.epsilon standardDeviation epsilon)
-  let lr := Tensor.full s runtimeState.lr
-  let adaptiveLr := divSpec lr denominator
-  let adaptiveLrError := linfNorm
+  let normalizedMoment := divSpec correctedFirstMoment denominator
+  let normalizedMomentError := linfNorm
     (divPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
-      minimumDenominator stateError.lr
-      denominatorError lr denominator)
-  let adaptiveUpdate := mulSpec adaptiveLr correctedFirstMoment
+      minimumDenominator correctedFirstMomentError
+      denominatorError correctedFirstMoment denominator)
+  let adaptiveUpdate := scaleSpec normalizedMoment runtimeState.lr
   let adaptiveUpdateError := linfNorm
-    (mulBoundTensor (β := β) (fexp := fexp)
-      adaptiveLrError correctedFirstMomentError
-      adaptiveLr correctedFirstMoment)
+    (scaleApproxBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
+      normalizedMomentError stateError.lr runtimeState.lr normalizedMoment)
   let decayScale := runtimeState.lr * runtimeState.weightDecay
   let decayUpdate := scaleSpec runtimeParameters decayScale
   let decayUpdateError := linfNorm
@@ -419,7 +460,7 @@ def adamWStepErrorTrace {s : Shape} (stateError : AdamWStateError s)
     correctedSecondMoment := correctedSecondMomentError
     standardDeviation := standardDeviationError
     denominator := denominatorError
-    adaptiveLr := adaptiveLrError
+    normalizedMoment := normalizedMomentError
     adaptiveUpdate := adaptiveUpdateError
     decayUpdate := decayUpdateError
     decayedParameters := decayedParametersError
@@ -482,6 +523,10 @@ theorem approxTensor_adamW_update {s : Shape}
         (Optim.AdamW.update stateR paramsR gradsR).parameters
         trace.parameterError := by
   dsimp only
+  have finiteReal (x : ℝ) : (x - x == 0) = true := by simp
+  have finiteNF (x : R) : (x - x == 0) = true := nf_sub_self_beq x
+  have realReplay : (inferInstance : Numeric.QuotientArithmetic ℝ).supported = false := rfl
+  have nfReplay : (inferInstance : Numeric.QuotientArithmetic R).supported = false := rfl
   rcases hstate with ⟨hlr, hbeta1, hbeta2, hepsilon, hweightDecay, hm, hv, ht⟩
   let mS := addSpec (scaleSpec stateS.firstMoment stateS.beta1)
     (scaleSpec gradsS (1 - stateS.beta1))
@@ -529,13 +574,11 @@ theorem approxTensor_adamW_update {s : Shape}
   have hdenominatorLower : Tensor.Forall (fun z : ℝ => η ≤ z)
       (addSpec (sqrtSpec vHatS) (Tensor.full s stateS.epsilon)) := by
     simpa [vHatS, vS, bias2S] using hDenominatorLower
-  have hlrFill := approxTensor_full_const
-    (β := β) (fexp := fexp) (rnd := rnd) hlr (s := s)
-  have hadaptive := approxTensor_div_spec_of_pos_lb
+  have hnormalized := approxTensor_div_spec_of_pos_lb
     (β := β) (fexp := fexp) (rnd := rnd) η
-    hlrFill hdenominator hdenominatorLower hDenominatorMargin
-  have hadamUpdate := approxTensor_mul_spec
-    (β := β) (fexp := fexp) (rnd := rnd) hadaptive hmHat
+    hmHat hdenominator hdenominatorLower hDenominatorMargin
+  have hadamUpdate := approxTensor_scale_spec_of_approx
+    (β := β) (fexp := fexp) (rnd := rnd) stateS.lr stateR.lr hnormalized hlr
   have hdecayUpdate := approxTensor_scale_spec_of_approx
     (β := β) (fexp := fexp) (rnd := rnd)
     (stateS.lr * stateS.weightDecay)
@@ -547,11 +590,16 @@ theorem approxTensor_adamW_update {s : Shape}
   constructor
   · refine ⟨hlr, hbeta1, hbeta2, hepsilon, hweightDecay, ?_, ?_, ?_⟩
     · simpa [Optim.AdamW.update, Optim.Adam.update, trace, adamWStepErrorTrace, mS, mR] using hm'
-    · simpa [Optim.AdamW.update, Optim.Adam.update, trace, adamWStepErrorTrace, vS, vR] using hv'
+    · simpa [Optim.AdamW.update, Optim.Adam.update, trace, adamWStepErrorTrace, vS, vR,
+        weightedSquare_eq finiteReal, weightedSquare_eq finiteNF] using hv'
     · simpa [Optim.AdamW.update, Optim.Adam.update] using ht
   · simpa [trace, adamWStepErrorTrace, Optim.AdamW.update, Optim.Adam.update,
-      Optim.adaptiveLr, mS, mR, vS, vR, mHatS, mHatR,
-      vHatS, vHatR, bias1S, bias1R, bias2S, bias2R] using hnext
+      mS, mR, vS, vR, mHatS, mHatR,
+      vHatS, vHatR, bias1S, bias1R, bias2S, bias2R,
+      weightedSquare_eq finiteReal, weightedSquare_eq finiteNF,
+      correctMoment_eq finiteReal, correctMoment_eq finiteNF,
+      correctedRms_eq finiteReal, correctedRms_eq finiteNF,
+      normalizedUpdate_eq realReplay, normalizedUpdate_eq nfReplay] using hnext
 
 /-! ## AdamW contract instance -/
 

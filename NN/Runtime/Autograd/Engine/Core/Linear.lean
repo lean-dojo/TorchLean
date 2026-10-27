@@ -10,6 +10,7 @@ module
 public import NN.Runtime.Autograd.Engine.Core.Base
 public import NN.Spec.Core.TensorReductionShape.ConcatSlice
 public import NN.Spec.Layers.Linear
+public import NN.Spec.Layers.Attention
 
 /-!
 Linear-algebra operations for the eager engine.
@@ -83,6 +84,18 @@ PyTorch comparison: `torch.matmul(a, b)` for operands of rank at least two.
     (τ := batch.concat [m, p]) "matmul" aId bId
     (forward := TorchLean.Tensor.batchMatmulSpec broadcastA.proof broadcastB.proof)
     (backward := TorchLean.Tensor.matmulBackwardSpec broadcastA.proof broadcastB.proof)
+
+/-- Matrix multiplication with a fixed scale retained through each local contraction. -/
+def scaledMatmul {α : Type} [Storage α] [Context α] {m n p : Nat}
+    (t : Tape (Spec.SomeTensor α)) (aId bId : Nat) (scale : α)
+    (batchA : Shape := .scalar) (batchB : Shape := .scalar) (batch : Shape := .scalar)
+    [broadcastA : Shape.BroadcastTo batchA batch]
+    [broadcastB : Shape.BroadcastTo batchB batch] : Result (Tape (Spec.SomeTensor α) × Nat) :=
+  binary (α := α) (t := t) (σ₁ := batchA.concat [m, n]) (σ₂ := batchB.concat [n, p])
+    (τ := batch.concat [m, p]) "matmul" aId bId
+    (forward := fun a b => Spec.Internal.scaledMatmul broadcastA.proof broadcastB.proof a b scale)
+    (backward := fun a b gradient =>
+      Spec.Internal.scaledMatmulBackward broadcastA.proof broadcastB.proof a b gradient scale)
 
 /--
 Concatenate two tensors along dimension 0.

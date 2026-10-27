@@ -36,18 +36,23 @@ namespace EagerSession
 /-! ## Linear algebra and concatenation -/
 
 /-- Matrix multiplication with PyTorch-style broadcasting across batch prefixes. -/
-def matmul {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α] [Mul α] [Zero α]
+def matmul {α : Type} [TorchLean.Storage α] [Context α] [TensorTransfer α]
+  (s : EagerSession α)
   {batchA batchB batch : Shape} {m n p : Nat}
   [broadcastA : Shape.BroadcastTo batchA batch]
   [broadcastB : Shape.BroadcastTo batchB batch]
   (a : TensorRef α (batchA.concat [m, n]))
-  (b : TensorRef α (batchB.concat [n, p])) :
+  (b : TensorRef α (batchB.concat [n, p])) (scale : Option α := none) :
   IO (TensorRef α (batch.concat [m, p])) := do
   let cpu := do
     s.recordCpu fun t0 => keepTapeOnError t0 <|
-      Runtime.Autograd.Tape.matmul (t := t0) (m := m) (n := n) (p := p) a.id b.id
-        (batchA := batchA) (batchB := batchB) (batch := batch)
+      match scale with
+      | none => Runtime.Autograd.Tape.matmul (t := t0) (m := m) (n := n) (p := p) a.id b.id
+          (batchA := batchA) (batchB := batchB) (batch := batch)
+      | some scale => Runtime.Autograd.Tape.scaledMatmul (t := t0) (m := m) (n := n) (p := p)
+          a.id b.id scale (batchA := batchA) (batchB := batchB) (batch := batch)
   let cuda := do
+    let nativeScale ← scale.mapM fun value => TensorTransfer.toFloat (α := α) value
     let t0 ← s.cudaTape
     let broadcastAFull :=
       TorchLean.Tensor.LinearAlgebra.Internal.extendBroadcastSuffix [m, n] broadcastA.proof
@@ -65,13 +70,14 @@ def matmul {α : Type} [TorchLean.Storage α] (s : EagerSession α) [Add α] [Mu
         (TorchLean.Tensor.LinearAlgebra.Internal.flattenBatchMatrix_size batch n p)
     let (t5, flatOutId) ← IO.ofExcept <|
       Runtime.Autograd.LibTorch.Tape.Internal.matmulFlattened (t := t4) (batch := batch.size)
-        (m := m) (n := n) (p := p) flatAId flatBId
+        (m := m) (n := n) (p := p) flatAId flatBId (scale := nativeScale)
     let (t6, id) ← IO.ofExcept <|
       Runtime.Autograd.LibTorch.Tape.reshape (t := t5) flatOutId
         (TorchLean.Tensor.LinearAlgebra.Internal.flattenBatchMatrix_size batch m p).symm
     s.setCudaTape t6
     pure id
-  executeRecorded (α := α) s .matmul #[a.identity?, b.identity?] cpu cuda
+  let op := if scale.isSome then NN.Backend.BackendOp.scaledMatmul else .matmul
+  executeRecorded (α := α) s op #[a.identity?, b.identity?] cpu cuda
 
 /-- Concatenate along dim 0 for tensors with leading dimension. PyTorch: `torch.cat(..., dim=0)`. -/
 def concat {α : Type} [TorchLean.Storage α] (s : EagerSession α)

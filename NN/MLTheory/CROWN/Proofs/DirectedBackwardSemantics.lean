@@ -140,6 +140,9 @@ def NodeEquation (nodes : Array Node) (ps : ParamStore α)
   | .sigmoid =>
       ∀ p, unaryParent? node.parents = some p →
         UnaryEquation dims v id p (fun x => 1 / (1 + Real.exp (-x)))
+  | .silu =>
+      ∀ p, unaryParent? node.parents = some p →
+        UnaryEquation dims v id p (fun x => x * (1 / (1 + Real.exp (-x))))
   | .softplus =>
       ∀ p, unaryParent? node.parents = some p →
         UnaryEquation dims v id p (fun x => Real.log (1 + Real.exp x))

@@ -28,7 +28,16 @@ if [ "${SKIP_DOCGEN:-0}" = "1" ]; then
   echo "    Reusing .lake/build/doc"
 else
   rm -rf "$build_dir/doc" "$build_dir/doc-data" "$build_dir/api-docs.db"
-  DISABLE_EQUATIONS=1 "$LAKE" -Kenv=dev build TorchLeanDocs:docs
+  # API docstrings link to these modules without importing them through NN.Docs.
+  # Include their data and pages so those links resolve.
+  DISABLE_EQUATIONS=1 "$LAKE" -Kenv=dev build TorchLeanDocs:docInfo \
+    +NN.Examples.RunnerMain:docInfo \
+    +NN.MLTheory.LearningTheory.Stability.RidgeRegression1D.IEEE32Exec:docInfo \
+    +FloatLib:docInfo
+  DISABLE_EQUATIONS=1 "$LAKE" -Kenv=dev exe doc-gen4 fromDb \
+    --build "$build_dir" --manifest "$build_dir/doc-manifest.json" \
+    "$build_dir/api-docs.db" NN.Docs FloatLib NN.Examples.RunnerMain \
+    NN.MLTheory.LearningTheory.Stability.RidgeRegression1D.IEEE32Exec Init Std Lake Lean
 fi
 
 echo "==> Copying DocGen output"

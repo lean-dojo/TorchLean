@@ -16,8 +16,9 @@ import NN.API.Precision
 # CUDA Kernel Coverage: Elementwise Ops
 
 Focused activation value/VJP regressions and a composite forward/backward test cover
-(`add/sub/mul/scale/abs/sqrt/clamp/max/min/relu/sigmoid/tanh/gelu/softplus/exp/log/inv/safe_log`)
-plus `sum`. Generated custom computations also exercise NVRTC, scalar precision, lazy branches,
+`add`, `sub`, `mul`, `scale`, `abs`, `sqrt`, `clamp`, `max`, `min`, `relu`, `sigmoid`, `silu`,
+`tanh`, `gelu`, `softplus`, `exp`, `log`, `inv`, `safe_log`, and `sum`.
+Generated custom computations also exercise NVRTC, scalar precision, lazy branches,
 sequential accumulation, empty tensors and checked native reads.
 -/
 
@@ -44,7 +45,9 @@ def assertActivationValue (label : String) (got expected : Float)
   else
     -- No absolute floor: replacing a tiny representable result with zero must fail.
     unless !got.isNaN && !got.isInf && (got - expected).abs ≤ rtol * expected.abs do
-      throw <| IO.userError s!"{label}: got {got}, expected {expected} (rtol {rtol})"
+      throw <| IO.userError
+        (s!"{label}: got {got} (bits {got.toBits}), expected {expected} " ++
+          s!"(bits {expected.toBits}, rtol {rtol})")
 
 def assertActivationArray (label : String) (got expected : FloatArray)
     (rtol : Float := 3e-6) : IO Unit := do
@@ -53,12 +56,14 @@ def assertActivationArray (label : String) (got expected : FloatArray)
   for i in [:expected.size] do
     assertActivationValue s!"{label}[{i}]" (got.get! i) (expected.get! i) rtol
 
+/-- Compare direct values and repeated taped VJPs. The reference derivative takes the original
+input, not the rounded activation output. -/
 def checkActivation
     (label : String)
     (forward : Runtime.Autograd.LibTorch.Buffer → Runtime.Autograd.LibTorch.Buffer)
     (record : (s : Shape) → Runtime.Autograd.Tape Runtime.Autograd.LibTorch.SomeBuffer → Nat →
       Result (Runtime.Autograd.Tape Runtime.Autograd.LibTorch.SomeBuffer × Nat))
-    (derivative : Float32 → Float32)
+    (derivative : Float32 → Float)
     (inputs expected seeds : Array Float) : IO Unit := do
   unless inputs.size == expected.size && inputs.size == seeds.size do
     throw <| IO.userError s!"{label}: inconsistent test data"
@@ -83,8 +88,12 @@ def checkActivation
     throw <| IO.userError s!"{label}: expected one owned, differentiable unary node"
   assertActivationArray s!"{label} tape"
     (← Runtime.Autograd.LibTorch.Buffer.toFloatArrayIO node.value.buf) (FloatArray.mk expected)
-  let expectedGrad := FloatArray.mk <| expected.mapIdx fun i y =>
-    (seeds[i]!.toFloat32 * derivative y.toFloat32).toFloat
+  let expectedGrad := FloatArray.mk <| inputs.mapIdx fun i x =>
+    let seed := seeds[i]!.toFloat32
+    let slope := derivative x.toFloat32
+    -- Finite cotangents round after weighting; nonfinite ones keep the ordinary IEEE route.
+    if seed.isNaN || seed.isInf then (seed * slope.toFloat32).toFloat
+    else (seed.toFloat * slope).toFloat32.toFloat
   let retained ← Runtime.Autograd.LibTorch.Buffer.memory
   for pass in [:2] do
     let seed ← Runtime.Autograd.LibTorch.Buffer.ofFloatArrayIO (FloatArray.mk seeds)
@@ -144,20 +153,38 @@ def runActivationNumerics : IO Unit := do
   let tanhValues := inputs.map fun x => (MathFunctions.tanh x).toFloat32.toFloat
   let tanhNode := fun s t id => Runtime.Autograd.LibTorch.Tape.tanh (s := s) t id
   let sigmoidNode := fun s t id => Runtime.Autograd.LibTorch.Tape.sigmoid (s := s) t id
-  let tanhDerivative := fun (y : Float32) => 1 - y * y
-  let sigmoidDerivative := fun (y : Float32) => y * (1 - y)
+  -- Wider input-based references must not inherit cancellation from a rounded activation.
+  let tanhDerivative := fun (x : Float32) =>
+    let z := Float.exp (-x.toFloat.abs)
+    let c := (z + z) / (1 + z * z)
+    c * c
+  let sigmoidDerivative := fun (x : Float32) =>
+    let z := Float.exp (-x.toFloat.abs)
+    z / ((1 + z) * (1 + z))
   checkActivation "tanh tiny/center/tails" Runtime.Autograd.LibTorch.Buffer.tanh tanhNode
     tanhDerivative inputs tanhValues seeds
 
-  -- Test normal negative-tail values separately from ATen's saturated float32 tail.
   let sigmoidInputs := inputs ++ #[-80.0, -20.0, 20.0, 80.0]
-  let sigmoidValues := sigmoidInputs.map fun x =>
-    if x == -100.0 then 0.0 else (Activation.Math.sigmoidSpec x).toFloat32.toFloat
+  let sigmoidValues := sigmoidInputs.map fun x => (Activation.Math.sigmoidSpec x).toFloat32.toFloat
   let sigmoidSeeds := sigmoidInputs.mapIdx fun i _ => seedPattern[i % seedPattern.size]!
   checkActivation "sigmoid tiny/center/tails" Runtime.Autograd.LibTorch.Buffer.sigmoid sigmoidNode
     sigmoidDerivative sigmoidInputs sigmoidValues sigmoidSeeds
 
-  -- Infinite cotangents at saturated outputs still multiply by zero and produce NaN.
+  let siluNode := fun s t id => Runtime.Autograd.LibTorch.Tape.silu (s := s) t id
+  let siluDerivative := fun (x : Float32) =>
+    let z := Float.exp (-x.toFloat.abs)
+    let d := 1 + z
+    let gate := if x > 0 then 1 / d else z / d
+    gate + x.toFloat * (z / (d * d))
+  let siluInputs := (tiny ++ #[0.0, -0.0] ++ central ++
+    #[-104.0, -80.0, 20.0, 100.0, -inf, inf, nan]).map
+      (fun (x : Float) => x.toFloat32.toFloat)
+  let siluValues := siluInputs.map fun x => (Activation.Math.swishSpec x).toFloat32.toFloat
+  -- A unit seed isolates the representable subnormal tail from cotangent underflow.
+  checkActivation "silu tiny/center/tails" Runtime.Autograd.LibTorch.Buffer.silu siluNode
+    siluDerivative siluInputs siluValues (siluInputs.map fun _ => 1)
+
+  -- Infinite seeds multiply by the input-based slope, not by a rounded output's apparent slope.
   let specialInputs : Array Float :=
     #[0.0, -0.0, 1.0, -1.0, 100.0, -100.0, inf, -inf, nan, 0.5, -100.0]
   let specialSeeds : Array Float :=
@@ -167,13 +194,18 @@ def runActivationNumerics : IO Unit := do
     specialSeeds
   checkActivation "sigmoid nonfinite VJP" Runtime.Autograd.LibTorch.Buffer.sigmoid sigmoidNode
     sigmoidDerivative specialInputs
-    (specialInputs.map fun x =>
-      if x == -100.0 then 0.0 else (Activation.Math.sigmoidSpec x).toFloat32.toFloat)
+    (specialInputs.map fun x => (Activation.Math.sigmoidSpec x).toFloat32.toFloat)
     specialSeeds
   checkActivation "tanh empty" Runtime.Autograd.LibTorch.Buffer.tanh tanhNode
     tanhDerivative #[] #[] #[]
   checkActivation "sigmoid empty" Runtime.Autograd.LibTorch.Buffer.sigmoid sigmoidNode
     sigmoidDerivative #[] #[] #[]
+  checkActivation "silu nonfinite VJP" Runtime.Autograd.LibTorch.Buffer.silu siluNode
+    siluDerivative specialInputs
+    (specialInputs.map fun x => (Activation.Math.swishSpec x).toFloat32.toFloat)
+    specialSeeds
+  checkActivation "silu empty" Runtime.Autograd.LibTorch.Buffer.silu siluNode
+    siluDerivative #[] #[] #[]
 
 private def square := fun (x : Float32) => x * x
 private def positiveSquare := fun (x : Float32) => if x < 0 then 0 else x * x
@@ -913,7 +945,7 @@ private def checkCustomAutograd : IO Unit := do
   let (gotParams, gotM, gotV) := Runtime.Autograd.LibTorch.Buffer.adamStep
     paramsBuf gradientBuf firstMomentBuf secondMomentBuf
     beta1 oneMinusBeta1 beta2 oneMinusBeta2
-    firstMomentCorrection secondMomentCorrection epsilon
+    (1.0 - beta1) (1.0 - beta2) epsilon
     (-(lr * weightDecay)) (-lr)
 
   Utils.assertTensorApprox (s := optimShape) "fused AdamW parameters"

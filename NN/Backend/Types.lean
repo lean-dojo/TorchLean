@@ -113,6 +113,7 @@ inductive BackendOp where
   | relu
   | gelu
   | sigmoid
+  | silu
   | tanh
   | softplus
   | exp
@@ -135,8 +136,12 @@ inductive BackendOp where
   | gather
   | scatterAdd
   | matmul
+  | scaledMatmul
+  | softmaxMatmul
   | linear
   | mseLoss
+  | crossEntropy
+  | distill
   | layerNorm
   | batchNorm
   | conv
@@ -170,6 +175,7 @@ def name : BackendOp → String
   | .relu => "relu"
   | .gelu => "gelu"
   | .sigmoid => "sigmoid"
+  | .silu => "silu"
   | .tanh => "tanh"
   | .softplus => "softplus"
   | .exp => "exp"
@@ -192,8 +198,12 @@ def name : BackendOp → String
   | .gather => "gather"
   | .scatterAdd => "scatter_add"
   | .matmul => "matmul"
+  | .scaledMatmul => "scaled_matmul"
+  | .softmaxMatmul => "softmax_matmul"
   | .linear => "linear"
   | .mseLoss => "mse_loss"
+  | .crossEntropy => "cross_entropy"
+  | .distill => "distill"
   | .layerNorm => "layer_norm"
   | .batchNorm => "batch_norm"
   | .conv => "conv"

@@ -28,6 +28,30 @@ open TorchLean TorchLean.Tensor
 
 namespace Tape
 
+/-- Normalized matrix product whose tape retains the original value contraction in backward. -/
+def softmaxMatmul {α : Type} [Storage α] [Context α]
+    {batch : Shape} {rows keys width : Nat} (t : Tape (Spec.SomeTensor α))
+    (scoresId valueId multiplierId : Nat)
+    (mask : Option (Tensor Bool [rows, keys]) := none) :
+    Result (Tape (Spec.SomeTensor α) × Nat) := do
+  let scores ← requireValue (t := t) (s := batch.concat [rows, keys]) scoresId
+  let value ← requireValue (t := t) (s := batch.concat [keys, width]) valueId
+  let multiplier ← requireValue (t := t) (s := batch.concat [rows, keys]) multiplierId
+  let weights := Spec.softmaxMatmulWeights scores mask
+  let y := Spec.Internal.softmaxMatmulFromWeights weights value multiplier
+  let node : Node (Spec.SomeTensor α) :=
+    { name := some "softmax_matmul"
+      value := Spec.SomeTensor.ofTensor y
+      requiresGrad := #[scoresId, valueId, multiplierId].any fun id =>
+        (t.getNode? id).any (·.requiresGrad)
+      parents := #[scoresId, valueId, multiplierId]
+      backward := fun seed => do
+        let gradient ← requireGrad (τ := batch.concat [rows, width]) seed
+        let (ds, dv, dm) := Spec.softmaxMatmulBackward weights value multiplier gradient
+        pure #[(scoresId, Spec.SomeTensor.ofTensor ds), (valueId, Spec.SomeTensor.ofTensor dv),
+          (multiplierId, Spec.SomeTensor.ofTensor dm)] }
+  pure (t.addNode node)
+
 /--
 Layer normalization for `(seqLen, embedDim)` tensors.
 

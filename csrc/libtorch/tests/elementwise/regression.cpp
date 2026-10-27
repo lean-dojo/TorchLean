@@ -53,6 +53,8 @@ DECLARE_BINARY(mul)
 DECLARE_BINARY(abs_bwd)
 DECLARE_BINARY(sqrt_bwd)
 DECLARE_BINARY(relu_bwd)
+DECLARE_BINARY(sigmoid_bwd)
+DECLARE_BINARY(tanh_bwd)
 DECLARE_BINARY(gelu_bwd)
 #undef DECLARE_BINARY
 #undef DECLARE_UNARY
@@ -147,6 +149,37 @@ struct Object {
   operator lean_object*() const { return value; }
   const at::Tensor& tensor() const { return torchlean::tensor(value); }
 };
+
+void activation_regressions() {
+  // These weighted tails fit even though the local derivative does not. A wider host
+  // expression checks the production ABI independently of its range-repair implementation.
+  for (const auto dtype : {at::kFloat, at::kDouble}) {
+    const auto options = at::TensorOptions().device(at::kCUDA).dtype(dtype);
+    const double epsilon = dtype == at::kFloat ? std::numeric_limits<float>::epsilon()
+                                              : std::numeric_limits<double>::epsilon();
+    for (const bool tanh : {false, true}) {
+      const double input = dtype == at::kFloat ? (tanh ? 60 : 120) : (tanh ? 400 : 800);
+      const double seed = dtype == at::kFloat ? 1e30 : 1e200;
+      for (const double input_sign : {-1., 1.}) {
+        for (const double seed_sign : {-1., 1.}) {
+          const Object x(at::full({1}, input_sign * input, options));
+          const Object g(at::full({1}, seed_sign * seed, options));
+          const Object result(tanh ? torchlean_cuda_buffer_tanh_bwd(x, g)
+                                   : torchlean_cuda_buffer_sigmoid_bwd(x, g));
+          const long double upstream = g.tensor().item<double>();
+          const long double z = std::exp(-static_cast<long double>(input));
+          const long double expected = tanh
+              ? upstream / std::pow(std::cosh(static_cast<long double>(input)), 2)
+              : upstream * z / ((1 + z) * (1 + z));
+          const double actual = result.tensor().item<double>();
+          check(std::isfinite(actual) && actual != 0 &&
+                std::abs(actual - expected) <= 8 * epsilon * std::abs(expected),
+                "activation weighted tail lost before applying the incoming gradient");
+        }
+      }
+    }
+  }
+}
 
 // Setting IDs are the current LibTorch control ABI, shared with LibTorch.
 constexpr uint32_t kDeterministic = 2;
@@ -261,17 +294,40 @@ using AdamScalars = std::array<double, 9>;
 std::array<float, 3> adam_oracle(float p, float g, float m0, float v0, const AdamScalars& s) {
   const float b1 = static_cast<float>(s[0]), omb1 = static_cast<float>(s[1]);
   const float b2 = static_cast<float>(s[2]), omb2 = static_cast<float>(s[3]);
-  const float c1 = static_cast<float>(s[4]), c2 = static_cast<float>(s[5]);
+  const float c1 = static_cast<float>(1.0 / s[4]), c2 = static_cast<float>(1.0 / s[5]);
   const float eps = static_cast<float>(s[6]), decay = static_cast<float>(s[7]);
   const float update = static_cast<float>(s[8]);
   const float m = std::fma(omb1, g, rounded_mul(m0, b1));
   const float g2 = rounded_mul(g, g);
-  const float v = std::fma(omb2, g2, rounded_mul(v0, b2));
-  const float m_hat = rounded_mul(m, c1), v_hat = rounded_mul(v, c2);
-  const float denom = rounded_add(rounded_sqrt(v_hat), eps);
+  const float v = std::isfinite(g2) ? std::fma(omb2, g2, rounded_mul(v0, b2))
+      : rounded_add(rounded_mul(v0, b2), rounded_mul(rounded_mul(g, omb2), g));
+  const float d1 = static_cast<float>(s[4]), d2 = static_cast<float>(s[5]);
+  const float m_hat = std::isfinite(c1) ? rounded_mul(m, c1) : rounded_div(m, d1);
+  const float v_hat = std::isfinite(c2) ? rounded_mul(v, c2) : rounded_div(v, d2);
+  const float root = std::isfinite(v_hat) || !(d2 > 0) ? rounded_sqrt(v_hat)
+      : rounded_div(rounded_sqrt(v), rounded_sqrt(d2));
+  const float denom = rounded_add(root, eps);
   const float normalized = rounded_div(m_hat, denom);
   const float decayed = std::fma(decay, p, p);
-  return {std::fma(update, normalized, decayed), m, v};
+  float next = std::fma(update, normalized, decayed);
+  if (std::isfinite(update) && std::isfinite(m_hat) && std::isfinite(denom) &&
+      denom != 0 && std::isfinite(decayed) &&
+      (!std::isfinite(normalized) || (m_hat != 0 &&
+        std::abs(normalized) < std::numeric_limits<float>::min()))) {
+    if (update == 0) {
+      next = rounded_add(decayed, rounded_div(rounded_mul(m_hat, update), denom));
+    } else {
+      int me = 0, de = 0, se = 0;
+      const float mf = std::frexp(m_hat, &me), df = std::frexp(denom, &de);
+      const float sf = std::frexp(update, &se);
+      const float fraction = rounded_mul(rounded_div(mf, df), sf);
+      const int exponent = me - de + se;
+      const float scaled = std::ldexp(decayed, -exponent);
+      next = std::isfinite(scaled)
+          ? std::ldexp(rounded_add(scaled, fraction), exponent) : decayed;
+    }
+  }
+  return {next, m, v};
 }
 
 lean_obj_res adam(const Object& p, const Object& g, const Object& m, const Object& v,
@@ -322,6 +378,23 @@ void adam_regressions() {
                {1, 0, 1, 1, 1, 1, 1, 0, 0}, {0, 0, 0});
   adam_fixture("Adam raw sqrt remains NaN", {0, 0, 0x3f800000, 0xbf800000},
                {1, 0, 1, 0, 1, 1, 0, 0, 1}, {0x7fc00000, 0x3f800000, 0xbf800000});
+  // g=2^68 has no finite square, but (1-beta)*g^2=2^126 and the update both fit.
+  adam_fixture("weighted square and corrected RMS", {0, 0x61800000, 0, 0},
+               {1023.0/1024, 0x1p-10, 1023.0/1024, 0x1p-10, 0x1p-10, 0x1p-10, 1, 0, -1},
+               {0xbf800000, 0x5c800000, 0x7e800000});
+  // The reciprocal of 2^-130 overflows; dividing equal moments gives exactly one.
+  adam_fixture("correction reciprocal overflow", {0, 0, 0x00080000, 0x00080000},
+               {1, 0, 1, 0, 0x1p-130, 0x1p-130, 1, 0, -1},
+               {0xbf000000, 0x00080000, 0x00080000});
+  // The second step of beta1=1/2, beta2=0 retains m=1/16 after v vanishes.
+  adam_fixture("retained momentum with a tiny denominator",
+               {0x80000001, 0, 0x3e000000, 0x3d800000},
+               {0.5, 0.5, 0, 1, 0.75, 1, 0x1p-149, 0, -0x1p-149},
+               {0xbdaaaaab, 0x3d800000, 0});
+  adam_fixture("weighted update overflow cancellation", {0xff7fffff, 0, 0x7f000000, 0x3e800000},
+               {1, 0, 1, 0, 1, 1, 0, 0, 1.5}, {0x7f000001, 0x7f000000, 0x3e800000});
+  adam_fixture("zero rate after quotient overflow", {0x3f800000, 0, 0x7f000000, 0x3e800000},
+               {1, 0, 1, 0, 1, 1, 0, 0, 0}, {0x3f800000, 0x7f000000, 0x3e800000});
 
   constexpr size_t count = 1024;
   std::array<std::vector<uint32_t>, 4> input;
@@ -337,8 +410,8 @@ void adam_regressions() {
   const Object p(on_device(input[0])), g(on_device(input[1]));
   const Object m(on_device(input[2])), v(on_device(input[3]));
   const AdamScalars ordinary{0.9, 0.1, 0.999, 0.001, 1.25, 1.5, 1e-8, -0.01, -0.001};
-  // Independently perturb each double scalar across a binary32 midpoint. This also prevents
-  // recomputing oneMinusBeta from beta or moving the host conversion past arithmetic.
+  // Independently perturb each host scalar. Correction denominators are inverted on the host;
+  // the other coefficients round directly, independently of beta and oneMinusBeta.
   for (size_t variant = 0; variant <= ordinary.size(); ++variant) {
     auto scalars = ordinary;
     if (variant != 0) scalars[variant - 1] = 1.0 + 0x1p-24;
@@ -566,6 +639,8 @@ void no_autograd_regressions() {
     CHECK_VJP(abs)
     CHECK_VJP(sqrt)
     CHECK_VJP(relu)
+    CHECK_VJP(sigmoid)
+    CHECK_VJP(tanh)
     CHECK_VJP(gelu)
 #undef CHECK_VJP
     run("scale", [&] { return torchlean_cuda_buffer_scale(x, 0.25); });
@@ -579,7 +654,7 @@ void no_autograd_regressions() {
     run("adam_step", [&] { return adam(x, g, x, y, {1, 0, 1, 0, 1, 1, 0, 0, 1}); }, 3);
     const Object copied(on_device({0x3f800000}));
     run("copy_and_release", [&] { return torchlean_cuda_buffer_copy_and_release(copied); });
-    check(export_count == 33, "noAutograd export coverage changed");
+    check(export_count == 35, "noAutograd export coverage changed");
     check(!x.tensor().requires_grad() && !y.tensor().requires_grad() && !g.tensor().requires_grad(),
           "export mutated an input's requires_grad flag");
     const auto old_deterministic = get_setting(kDeterministic);
@@ -701,6 +776,7 @@ int main(int argc, char** argv) {
     {
       at::NoGradGuard no_grad;
       fused_discriminators();
+      activation_regressions();
       adam_regressions();
       deterministic_reduction_regressions();
       running_mean_regressions();

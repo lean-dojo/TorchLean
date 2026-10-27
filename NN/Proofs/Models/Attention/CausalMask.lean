@@ -98,7 +98,8 @@ theorem hardMaskedSoftmaxVecSpec_blocked_eq_zero
   unfold Spec.hardMaskedSoftmaxVecSpec
   split
   · simp [Spec.replicate]
-  · simp [TorchLean.Tensor.getScalar_eq_apply, divSpec, map2Spec, Spec.replicate, hblocked']
+  · change TorchLean.Tensor.getScalar (divSpec _ _) j = 0
+    simp [TorchLean.Tensor.getScalar_eq_apply, divSpec, map2Spec, Spec.replicate, hblocked']
 
 /-- Any blocked coordinate of a row-wise hard-masked softmax matrix has exactly zero weight. -/
 theorem hardMaskedSoftmaxSpec_blocked_eq_zero

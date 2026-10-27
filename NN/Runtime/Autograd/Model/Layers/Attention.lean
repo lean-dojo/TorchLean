@@ -28,46 +28,6 @@ namespace Layers
 namespace Attention
 
 /--
-Softmax over the visible keys of each attention row.
-
-The mask uses `true` for a visible key. Gathering those keys before softmax keeps masked scores
-out of both the row maximum and its denominator. An entirely masked row stays zero. In particular,
-we do not approximate exclusion with a large negative constant, whose behavior depends on the
-score scale and cannot represent an empty row.
--/
-def probabilities {α : Type} [Storage α] [Context α]
-    {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
-    {batch heads n : Nat}
-    (scores : Ref (m := m) (α := α) [batch, heads, n, n])
-    (mask : Option (Tensor Bool [n, n])) :
-    m (Ref (m := m) (α := α) [batch, heads, n, n]) := do
-  match mask with
-  | none => softmaxLast (m := m) (α := α) (s := [batch, heads, n, n]) scores
-  | some mask =>
-      let empty ← const (m := m) (α := α) (Tensor.zeros (α := α) [batch, heads, n, n])
-      (List.finRange n).foldlM (init := empty) fun result query => do
-        let visible := (List.finRange n).filter fun key => get2 mask query key
-        let indices : Tensor (Fin n) [visible.length] :=
-          Tensor.dim fun index => Tensor.scalar (visible[index.val]'index.isLt)
-        let indicesRef := Runtime.Autograd.Torch.dataConst (m := m) (α := α) indices
-        let row ← select (m := m) (α := α) (s := [batch, heads, n, n]) 2 scores query
-        let selected ← indexSelect (m := m) (α := α) (s := [batch, heads, n])
-          2 visible.length row indicesRef
-        -- An empty gather keeps a zero-gradient edge to the scores without reading their values.
-        let normalized ← if visible.isEmpty then pure selected else
-          softmaxLast (m := m) (α := α) (s := [batch, heads, visible.length]) selected
-        let rowZero ← const (m := m) (α := α)
-          (Tensor.zeros (α := α) [batch, heads, n])
-        let restored ← scatterAdd (m := m) (α := α) (s := [batch, heads, n])
-          2 visible.length rowZero normalized indicesRef
-        let source ← reshape (m := m) (α := α)
-          (s₁ := [batch, heads, n]) (s₂ := [batch, heads, 1, n]) restored
-          (by simp [Shape.size])
-        let queryIndex : Tensor (Fin n) [1] := Tensor.ofFn fun _ => query
-        scatterAdd (m := m) (α := α) (s := [batch, heads, n, n]) 2 1 result source
-          (Runtime.Autograd.Torch.dataConst (m := m) (α := α) queryIndex)
-
-/--
 Attention with optional affine projection biases and dropout on softmax probabilities.
 
 The operation order is projection, head splitting, scaled dot products, masked softmax,
@@ -108,21 +68,18 @@ def forward {α : Type} [Storage α] [Context α]
   let value ← project valueWeight valueBias
   let keyTranspose ← swapAdjacentAtDepth (m := m) (α := α)
     (s := [batch, heads, n, headWidth]) 2 key
-  let dotProducts ← matmul (m := m) (α := α)
+  let scores ← matmul (m := m) (α := α)
     (batchA := [batch, heads]) (batchB := [batch, heads]) (batch := [batch, heads])
     (mDim := n) (nDim := headWidth) (pDim := n) query keyTranspose
-  let scores ← scale (m := m) (α := α) (s := [batch, heads, n, n]) dotProducts
-    ((1 : α) / MathFunctions.sqrt (headWidth : α))
-  let weights ← probabilities (m := m) (α := α)
-    (batch := batch) (heads := heads) (n := n) scores mask
-  let weights ← match probability with
-    | none => pure weights
+    (scale := some ((1 : α) / Spec.attentionScaleDenom headWidth))
+  let ones ← const (m := m) (α := α) (Tensor.full [batch, heads, n, n] (1 : α))
+  let multiplier ← match probability with
+    | none => pure ones
     | some probability =>
         F.dropoutRefSeeded (m := m) (α := α) (s := [batch, heads, n, n])
-          weights probability seed training
-  let attended ← matmul (m := m) (α := α)
-    (batchA := [batch, heads]) (batchB := [batch, heads]) (batch := [batch, heads])
-    (mDim := n) (nDim := n) (pDim := headWidth) weights value
+          ones probability seed training
+  let attended ← Torch.softmaxMatmul (m := m) (α := α) (batch := [batch, heads])
+    (rows := n) (keys := n) (width := headWidth) scores value multiplier mask
   let tokenMajor ← swapAdjacentAtDepth (m := m) (α := α)
     (s := [batch, heads, n, headWidth]) 1 attended
   let joined ← reshape (m := m) (α := α)

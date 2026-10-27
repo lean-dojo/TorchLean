@@ -749,12 +749,19 @@ theorem approx_sigmoid_nf {x : ℝ} {xR : R} {eps : ℝ}
           (Activation.Math.sigmoidSpec (α := R) xR) -
         Activation.Math.sigmoidSpec (α := ℝ) x) ≤
       sigmoidBoundScalar (β := β) (fexp := fexp) (rnd := rnd) eps xR := by
+  have unsupported : TorchLean.Numeric.QuotientArithmetic.supported (α := R) = false := rfl
+  have hvalue : Activation.Math.sigmoidSpec (α := R) xR =
+      if xR > 0 then reciprocalSigmoidR xR else expRatioSigmoidR xR := by
+    by_cases hpos : xR > 0
+    · simp [Activation.Math.sigmoidSpec, Context.sigmoid, TorchLean.Numeric.sigmoid,
+        unsupported, hpos, reciprocalSigmoidR]
+    · simp [Activation.Math.sigmoidSpec, Context.sigmoid, TorchLean.Numeric.sigmoid,
+        unsupported, hpos, expRatioSigmoidR]
+  rw [hvalue]
   by_cases hpos : xR > 0
-  · simpa only [Activation.Math.sigmoidSpec, ite_eq_left hpos, sigmoidBoundScalar,
-      reciprocalSigmoidR] using
+  · simpa only [sigmoidBoundScalar, ite_eq_left hpos] using
       (approx_reciprocal_sigmoid_nf (β := β) (fexp := fexp) (rnd := rnd) hx)
-  · simpa only [Activation.Math.sigmoidSpec, ite_eq_right hpos, sigmoidBoundScalar,
-      expRatioSigmoidR] using
+  · simpa only [sigmoidBoundScalar, ite_eq_right hpos] using
       (approx_exp_ratio_sigmoid_nf (β := β) (fexp := fexp) (rnd := rnd) hx)
 
 /-- Shape-generic approximation certificate for the public sigmoid. Its per-entry budgets cover

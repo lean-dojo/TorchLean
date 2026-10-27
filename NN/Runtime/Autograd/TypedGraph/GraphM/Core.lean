@@ -90,6 +90,8 @@ structure StateWith (α : Type) [TorchLean.Storage α] (Δ : Type) (Γ : List Sh
   data : GraphData α Δ Γ nodeShapes
   /-- Buffer observers to execute against the completed runtime tape. -/
   bufferUpdates : Array (BufferUpdate α) := #[]
+  /-- Seed-stream position, advanced only by random operations, not deterministic graph nodes. -/
+  randomCounter : Nat := 0
 
 /-- Default `GraphM` state with no extra environment (`Δ := Unit`). -/
 abbrev State (α : Type) [TorchLean.Storage α] (Γ : List Shape) : Type :=
@@ -106,7 +108,7 @@ abbrev M (α : Type) [TorchLean.Storage α] (Γ : List Shape) : Type → Type :=
 /-- Empty builder state; the runtime environment is inferred from the expected state type. -/
 def empty {α : Type} [TorchLean.Storage α]
     {Δ : Type} {Γ : List Shape} : StateWith α Δ Γ :=
-  ⟨[], .nil, #[]⟩
+  ⟨[], .nil, #[], 0⟩
 
 /-- Run a `GraphM` program from an empty state. -/
 def run {α : Type} [TorchLean.Storage α] {Δ : Type} {Γ : List Shape} {β : Type}
@@ -158,7 +160,8 @@ def push {α : Type} [TorchLean.Storage α]
   modify fun state =>
     { nodeShapes := ss ++ [s]
       data := .snoc g node
-      bufferUpdates := state.bufferUpdates }
+      bufferUpdates := state.bufferUpdates
+      randomCounter := state.randomCounter }
   pure { id := Γ.length + ss.length }
 
 /--
@@ -216,7 +219,7 @@ PyTorch comparison: a constant literal captured into a traced/typed graph.
 def const {α : Type} [TorchLean.Storage α]
     {Δ : Type} [Zero α] {Γ : List Shape} {s : Shape} (t : Tensor α s) :
     MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let node : NodeData α Δ (Γ ++ ss) s :=
     NodeData.ofLocalCompact (fun _ => ())
       (forward := fun _ctx _d => t)
@@ -224,12 +227,18 @@ def const {α : Type} [TorchLean.Storage α]
       (vjp := fun _ctx _d _δ => Contributions.zero (α := α) (shapes := Γ ++ ss))
   push (α := α) (Δ := Δ) (Γ := Γ) (ss := ss) (s := s) g node
 
-/-- Deterministic `U[0,1)` tensor generator (seeded, pure). -/
+/-- Advance the builder's invocation stream, independently of deterministic graph nodes. -/
+def Internal.nextRandomKey {α : Type} [Storage α] {Δ : Type} {Γ : List Shape}
+    (seed : Nat) : MWith α Δ Γ UInt64 := do
+  let counter := (← get).randomCounter
+  modify fun state => { state with randomCounter := counter + 1 }
+  pure (Spec.Random.keyOf seed counter)
+
+/-- Deterministic `U[0,1)` tensor generator.
+Only random operations advance the seed stream, matching the eager session convention. -/
 def randUniform {α : Type} [TorchLean.Storage α] [Context α] {Δ : Type} {Γ : List Shape} {s : Shape}
     (seed : Nat) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, _, _⟩ ← get
-  let counter := ss.length
-  let key := Spec.Random.keyOf seed counter
+  let key ← Internal.nextRandomKey seed
   let t : Tensor α s := Spec.Random.uniform (α := α) key (s := s)
   const (α := α) (Δ := Δ) (Γ := Γ) t
 
@@ -245,9 +254,8 @@ def bernoulliMask {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape}
     (keepProb : Var Shape.scalar) (seed : Nat) :
     MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
-  let counter := ss.length
-  let key := Spec.Random.keyOf seed counter
+  let key ← Internal.nextRandomKey seed
+  let ⟨ss, g, _, _⟩ ← get
   let ikp ← liftM (mkIdx (Γ := Γ) ss keepProb)
   let node : NodeData α Δ (Γ ++ ss) s :=
     NodeData.ofLocalCompact (fun lookup => lookup.read ikp)
@@ -268,7 +276,7 @@ runs over dual numbers, so a later reverse rule cannot recover a dependency from
 def detach {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape}
     (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ix ← liftM (mkIdx (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     NodeData.ofLocalCompact (fun lookup => lookup.read ix)
@@ -284,7 +292,7 @@ One for the `k` largest entries of every row along the last axis and zero elsewh
 def topKMask {α : Type} [TorchLean.Storage α] [Context α]
     {Δ : Type} {Γ : List Shape} {s : Shape}
     (k : Nat) (x : Var s) : MWith α Δ Γ (Var s) := do
-  let ⟨ss, g, _⟩ ← get
+  let ⟨ss, g, _, _⟩ ← get
   let ix ← liftM (mkIdx (Γ := Γ) ss x)
   let node : NodeData α Δ (Γ ++ ss) s :=
     NodeData.ofLocalCompact (fun lookup => lookup.read ix)

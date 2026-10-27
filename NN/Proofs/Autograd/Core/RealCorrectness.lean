@@ -150,6 +150,26 @@ private theorem dot_elemwise_adjoint {s : Shape}
 
 -- Primitive operation correctness lemmas for the real-valued autograd semantics.
 
+private theorem sigmoid_backward_real {s : Shape} (x seed : Tensor ℝ s) :
+    Activation.sigmoidBackwardSpec x seed = mulSpec (Activation.sigmoidDerivSpec x) seed := by
+  have unsupported : Numeric.QuotientArithmetic.supported (α := ℝ) = false := rfl
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro i
+  simp [Activation.sigmoidBackwardSpec, Activation.sigmoidDerivSpec,
+    Activation.Math.sigmoidDerivSpec, TorchLean.Numeric.sigmoidBackward,
+    TorchLean.Numeric.sigmoidDeriv,
+    TorchLean.Numeric.Internal.applySlope, unsupported, mulSpec, map2Spec, Tensor.map]
+
+private theorem tanh_backward_real {s : Shape} (x seed : Tensor ℝ s) :
+    Activation.tanhBackwardSpec x seed = mulSpec (Activation.tanhDerivSpec x) seed := by
+  have unsupported : Numeric.QuotientArithmetic.supported (α := ℝ) = false := rfl
+  apply TorchLean.Tensor.Internal.Rep.ext
+  intro i
+  simp [Activation.tanhBackwardSpec, Activation.tanhDerivSpec,
+    Activation.Math.tanhDerivSpec, TorchLean.Numeric.tanhBackward,
+    TorchLean.Numeric.tanhDeriv,
+    TorchLean.Numeric.Internal.applySlope, unsupported, mulSpec, map2Spec, Tensor.map]
+
 /--
 Correctness of ReLU’s backward rule.
 
@@ -180,7 +200,7 @@ def sigmoidCorrect {s : Shape} :
   jvp := fun x dx => mulSpec dx (Activation.sigmoidDerivSpec (α:=ℝ) (s:=s) x)
   correct := by
     intro x dx δ
-    simpa [Spec.sigmoidOp, Spec.liftElementwiseBackward,
+    simpa [Spec.sigmoidOp, sigmoid_backward_real,
       Activation.sigmoidDerivSpec] using (dot_elemwise_adjoint (dx:=dx)
         (df:=Activation.sigmoidDerivSpec (α:=ℝ) (s:=s) x) (δ:=δ))
 }
@@ -197,7 +217,7 @@ def tanhCorrect {s : Shape} :
   jvp := fun x dx => mulSpec dx (Activation.tanhDerivSpec (α:=ℝ) (s:=s) x)
   correct := by
     intro x dx δ
-    simpa [Spec.tanhOp, Spec.liftElementwiseBackward,
+    simpa [Spec.tanhOp, tanh_backward_real,
       Activation.tanhDerivSpec] using (dot_elemwise_adjoint (dx:=dx)
         (df:=Activation.tanhDerivSpec (α:=ℝ) (s:=s) x) (δ:=δ))
 }

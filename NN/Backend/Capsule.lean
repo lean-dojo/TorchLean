@@ -63,6 +63,9 @@ These constructors record engineering evidence and explicit trust boundaries. Th
 foreign implementation into a proved refinement.
 -/
 inductive ContractEvidence where
+  /-- The reference implementation calls the named canonical definition directly.
+  This records shared code, not a separate floating-point accuracy guarantee. -/
+  | sharedDefinition (name : String)
   | runtimeGuard (name : String)
   | testSuite (name : String)
   | trustedBoundary (reason : String)
@@ -71,6 +74,7 @@ inductive ContractEvidence where
 
 instance : Repr ContractEvidence where
   reprPrec evidence _ := Std.Format.text <| match evidence with
+    | .sharedDefinition name => s!"sharedDefinition({name})"
     | .runtimeGuard name => s!"runtimeGuard({name})"
     | .testSuite name => s!"testSuite({name})"
     | .trustedBoundary reason => s!"trustedBoundary({reason})"
@@ -81,7 +85,7 @@ namespace AssurancePolicy
 /-- Whether the policy admits contract evidence of this kind. -/
 def acceptsEvidence (policy : AssurancePolicy) : ContractEvidence → Bool
   | .trustedBoundary _ => policy.allowTrustedExternal
-  | .runtimeGuard _ | .testSuite _ | .notApplicable => true
+  | .sharedDefinition _ | .runtimeGuard _ | .testSuite _ | .notApplicable => true
 
 end AssurancePolicy
 
@@ -124,6 +128,8 @@ the same left fold as the canonical tensor semantics.
 -/
 inductive ReductionPolicy where
   | fixedLeft
+  /-- Preserve fixed-left arithmetic unless its checked arithmetic selects exact replay. -/
+  | fixedLeftOrExact
   | implementationDefined
   | notApplicable
   deriving DecidableEq, Repr
@@ -133,6 +139,7 @@ namespace ReductionPolicy
 /-- Stable report label for reduction order. -/
 def label : ReductionPolicy → String
   | .fixedLeft => "fixed-left"
+  | .fixedLeftOrExact => "fixed-left-or-exact"
   | .implementationDefined => "implementation-defined"
   | .notApplicable => "n/a"
 

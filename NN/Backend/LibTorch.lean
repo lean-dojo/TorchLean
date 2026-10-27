@@ -36,7 +36,7 @@ namespace Internal
 def coverage (op : BackendOp) (vjp : Bool := false) : Option String :=
   match op with
   | .add | .sub | .mul | .scale | .abs | .sqrt | .clamp | .max | .min | .relu
-    | .sigmoid | .tanh | .gelu | .softplus | .exp | .log | .inv | .safeLog | .reduceSum =>
+    | .sigmoid | .silu | .tanh | .gelu | .softplus | .exp | .log | .inv | .safeLog | .reduceSum =>
       some "NN.Tests.Runtime.Cuda.Elementwise"
   | .softmax | .logSoftmax => some "NN.Tests.Runtime.Cuda.Softmax"
   | .matmul | .hardMaskedSoftmax | .attention => some "NN.Tests.Runtime.Cuda.Attention"
@@ -157,6 +157,25 @@ def matmul : KernelCapsule :=
     "Backward products are checked through autograd/runtime parity."
     .torchLeanTape
 
+/-- Scaled CUDA contractions with conservative range recovery from the original operands.
+
+The recovery path synchronizes a flag and may run reference coefficient arithmetic on CPU.
+Neither this mixed execution path nor its VJP promises a fixed-left accumulation schedule. -/
+def scaledMatmul : KernelCapsule :=
+  accumulationCapsule
+    "libtorch.scaled_matmul"
+    .scaledMatmul
+    "ATen evaluates scaled matrix products; flagged range loss replays original finite operands."
+    "TorchLean records scaled matrix cotangents with the same range-recovery boundary."
+    .torchLeanTape
+
+/-- Lean-recorded normalized matrix product with conservative host range recovery. -/
+def softmaxMatmul : KernelCapsule :=
+  accumulationCapsule "libtorch.softmax_matmul" .softmaxMatmul
+    "ATen executes row softmax, a multiplier and matrix multiplication."
+    "TorchLean retains saved probabilities and original cotangents through the centered pullback."
+    .torchLeanTape
+
 /-- LibTorch CUDA ReLU activation. -/
 def relu : KernelCapsule :=
   capsule
@@ -195,6 +214,8 @@ def max : KernelCapsule := pointwiseCapsule .max .backendVJP
 def min : KernelCapsule := pointwiseCapsule .min .backendVJP
 /-- LibTorch CUDA pointwise sigmoid. -/
 def sigmoid : KernelCapsule := pointwiseCapsule .sigmoid .torchLeanTape
+/-- SiLU value and local gradient use the shared ATen adapter; TorchLean owns traversal. -/
+def silu : KernelCapsule := pointwiseCapsule .silu .backendVJP
 /-- LibTorch CUDA pointwise hyperbolic tangent. -/
 def tanh : KernelCapsule := pointwiseCapsule .tanh .torchLeanTape
 /-- LibTorch CUDA pointwise softplus. -/
@@ -372,6 +393,21 @@ def mseLoss : KernelCapsule :=
     "MSE VJP is checked by CUDA runtime coverage."
     .torchLeanTape
 
+/-- Weighted logits cross-entropy and both local VJPs, evaluated without LibTorch autograd. -/
+def crossEntropy : KernelCapsule :=
+  Internal.accumulationCapsule "libtorch.cross_entropy" .crossEntropy
+    "Weighted log-probabilities retain original logits for overflow reconstruction."
+    "TorchLean selects both pullbacks; ATen evaluates their numerical formulas."
+    .backendVJP
+
+/-- Teacher-logit cross-entropy and its student VJP, evaluated with ATen operations under
+TorchLean's tape. No LibTorch autograd graph is recorded. -/
+def distill : KernelCapsule :=
+  Internal.accumulationCapsule "libtorch.distill" .distill
+    "Teacher-logit cross-entropy with a separated log-softmax normalizer."
+    "Student VJP uses logit differences near the teacher and a far-field probability difference."
+    .backendVJP
+
 /-- LibTorch numerical FFTs with Lean adjoints and spectral-layer composition. -/
 def fftFno : KernelCapsule :=
   accumulationCapsule
@@ -434,8 +470,12 @@ def attention : KernelCapsule :=
 def capsules : Array KernelCapsule :=
   #[ attention
   , matmul
+  , scaledMatmul
+  , softmaxMatmul
   , linear
   , mseLoss
+  , crossEntropy
+  , distill
   , relu
   , gelu
   , add
@@ -448,6 +488,7 @@ def capsules : Array KernelCapsule :=
   , max
   , min
   , sigmoid
+  , silu
   , tanh
   , softplus
   , exp

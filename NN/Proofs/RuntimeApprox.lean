@@ -6,6 +6,7 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Proofs.RuntimeApprox.Constants
 public import NN.Proofs.RuntimeApprox.Core
 public import NN.Proofs.RuntimeApprox.FP32
 public import NN.Proofs.RuntimeApprox.FP32.CROWN
@@ -25,6 +26,7 @@ Umbrella import for TorchLean's runtime approximation contracts and composition 
 
 The runtime-approximation library is intentionally layered:
 - `Core`: tolerance objects and scalar/tensor approximation predicates;
+- `Constants`: configured dimension roots that avoid an overflowing integer cast;
 - `Rounding`: scalar FloatLib rounding-error lemmas;
 - `Graph`: forward and reverse graph composition theorems;
 - `NF`: proof-relevant rounded tensor/operator backend;

@@ -190,7 +190,17 @@ L2-normalize a vector with an additive regularizer under the square root.
 
 The denominator is
 
-`sqrt (sumᵢ vector[i] ^ 2 + regularizer)`.
+`sqrt (sumᵢ vector[i] ^ 2 + regularizer)`, or the mean square when `mean := true`.
+
+Divide by a shared positive scale before squaring, and scale the regularizer by the same square.
+For a nonzero finite scale, the scaled entries have magnitude at most one before squaring.
+The scale is detached: its value cancels from the real function, so it need not contribute
+derivatives or introduce a max-selection kink.
+
+Safe scaling of sums of squares is classical; see Anderson's
+[Algorithm 978](https://doi.org/10.1145/3061665). Here the regularizer is scaled too, to preserve
+the epsilon-bearing formula. This does not guarantee finite output for every format: the
+reduction, its element-count cast, or a gradient can still exceed that format's range.
 
 This operation has no zero-norm branch. Callers are responsible for
 choosing a regularizer that makes the denominator meaningful in their scalar context. This is the
@@ -198,10 +208,15 @@ normalization convention used by several attention and recurrent architectures, 
 regularizer is part of the model specification.
 -/
 def normalizeL2RegularizedSpec {n : Nat}
-    (vector : Tensor α [n]) (regularizer : α) :
+    (vector : Tensor α [n]) (regularizer : α) (mean : Bool := false) :
     Tensor α [n] :=
-  let norm := MathFunctions.sqrt (sumSpec (squareSpec vector) + regularizer)
-  Tensor.map (fun value => value / norm) vector
+  let scale := Context.stopGradient
+    (max (Tensor.maxAbs vector) (MathFunctions.sqrt (MathFunctions.abs regularizer)))
+  let scaled := Tensor.map (fun value => value / scale) vector
+  let squares := squareSpec scaled
+  let squaredNorm := if mean then meanSpec squares else sumSpec squares
+  let norm := MathFunctions.sqrt (squaredNorm + (regularizer / scale) / scale)
+  Tensor.map (fun value => value / norm) scaled
 
 /--
 Z-score normalization: subtract the mean and divide by the population standard deviation.

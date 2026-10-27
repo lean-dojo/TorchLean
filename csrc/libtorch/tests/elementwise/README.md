@@ -44,15 +44,24 @@ LibTorch check that native counters are zero and skip the GPU memory probes.
 
 ## Coverage
 
+- Sigmoid and tanh weighted pullbacks check representable tails whose local derivatives would
+  round to zero, in native binary32/64 and with both input and gradient signs. These compare the
+  production C ABI with wider host arithmetic using an explicit tolerance, not bitwise equality.
 - `NN/Runtime/Autograd/Engine/LibTorch/Float32Contract.lean` defines exact finite bits
   and `AgreeUpToNaN`, with no finite tolerance. This regression follows that relation
   and separately counts differing NaN encodings.
 - Adam's three outputs are checked bitwise with hand-derived fixtures and
   10 × 1024 staged host-oracle cases. The fixtures isolate both moment FMAs, parameter decay, the final
-  update FMA, and the separately rounded initial moment products and gradient square.
+  update FMA, and the separately rounded initial moment products and finite gradient square.
+  Range fixtures cover weighting before an overflowing square, taking the corrected RMS
+  without an overflowing second moment, and dividing without an overflowing reciprocal.
+  Retained momentum with a tiny denominator, cancellation of an overflowing weighted update,
+  and a zero learning rate exercise the power-of-two rescaling path. Ordinary entries retain
+  their staged FMA schedule; exceptional entries are checked against independent host scaling.
   A negative second moment confirms that Adam retains raw IEEE sqrt, including NaN.
-  Each of the nine double scalar arguments is independently varied across a
-  binary32 rounding midpoint. The cancellation residual `2^-46` detects changes
+  Each of the nine host scalar arguments is independently perturbed; correction denominators
+  are inverted on the host before rounding, while other coefficients round directly.
+  The cancellation residual `2^-46` detects changes
   that a `1e-6` tolerance would accept.
 - The Lean reference file validates production add/mul/div/scalar AXPY and upstream
   tensor `addcmul`/raw sqrt. Buffer.sqrt also runs against the same file with its

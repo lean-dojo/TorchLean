@@ -2102,6 +2102,44 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_scatter_add_rows(
   });
 }
 
+namespace {
+
+// Positions computed on device arrive as float32 values, so no host round trip selects them.
+// A NaN position reads as the first entry; every position is then clamped into the table and
+// truncated, which floors a non-integral value and keeps each selection in bounds without a
+// device-side assertion. The float32 clamp alone does not keep it in bounds: above 2^24 the
+// bound `size - 1` has no float32 representation and rounds up to `size` (16777219 reads as
+// 16777220), so an infinite or oversize position would select one past the end. The clamp is
+// therefore repeated on the integer index, where every table index is exact.
+Tensor table_positions(const Tensor& positions, uint32_t size) {
+  const double last = static_cast<double>(size) - 1.0;
+  const auto clamped = at::clamp(at::nan_to_num(positions, 0.0, last, 0.0), 0.0, last);
+  return at::clamp(clamped.to(at::kLong), int64_t{0}, static_cast<int64_t>(size) - 1);
+}
+
+}  // namespace
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_gather_at(
+    b_lean_obj_arg table, uint32_t size, b_lean_obj_arg positions, uint32_t count) {
+  return invoke([&] {
+    require(size > 0, "LibTorch kernels: gather_at needs a nonempty table");
+    const auto index = table_positions(checked(positions, {count}), size);
+    return box(checked(table, {size}).index_select(0, index));
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_scatter_add_at(
+    uint32_t size, b_lean_obj_arg positions, b_lean_obj_arg values, uint32_t count) {
+  return invoke([&] {
+    require(size > 0, "LibTorch kernels: scatter_add_at needs a nonempty table");
+    const auto index = table_positions(checked(positions, {count}), size);
+    const auto source = checked(values, {count});
+    auto result = at::zeros({static_cast<int64_t>(size)}, source.options());
+    result.index_add_(0, index, source);
+    return box(result);
+  });
+}
+
 }  // namespace torchlean::operators
 
 // Convolution and pooling

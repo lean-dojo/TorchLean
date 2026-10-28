@@ -298,6 +298,23 @@ def scatterAddSpec {n k : Nat} (x : FlatBuffer n) (values : FlatBuffer k)
       (fun acc j => if idx j = i then ExecFloat.add acc (values j) else acc)
       (x i)
 
+/-! ## Table lookup -/
+
+/--
+Piecewise-linear table lookup reference: `v₀ + (v₁ - v₀) · w` with one rounding per operation.
+
+`lower` and `upper` are the sample positions each element interpolates between and `weight` is
+its interpolation weight. `Buffer.tableLookupForward` composes exactly this sequence of float32
+primitives, so a native result that agrees with this spec bit for bit inherits the scalar facts
+of `Float32Contract`.
+-/
+def tableLookupSpec {size k : Nat} (table : FlatBuffer size)
+    (lower upper : Fin k → Fin size) (weight : FlatBuffer k) : FlatBuffer k :=
+  fun i =>
+    let lowerSample := table (lower i)
+    ExecFloat.add lowerSample
+      (ExecFloat.mul (ExecFloat.sub (table (upper i)) lowerSample) (weight i))
+
 /-! ## Batched row-major matrix multiplication -/
 
 /-- Linear index for either BMM input, viewed as row-major `(batch, rows, cols)` storage. -/

@@ -10,6 +10,7 @@ public import NN.Tests.Runtime.ParameterAliases
 public import NN.Tests.Runtime.Cuda.Softmax
 public import NN.Tests.Runtime.Cuda.Elementwise
 public import NN.Tests.Runtime.Cuda.Attention
+public import NN.Tests.Runtime.Cuda.TableLookup
 public import NN.Tests.Runtime.Cuda.SelectiveScan
 public import NN.Tests.Runtime.Cuda.Fft
 public import NN.Tests.Runtime.Cuda.Stress
@@ -37,6 +38,7 @@ def run : IO Unit := do
   Softmax.run
   Elementwise.run
   Attention.run
+  TableLookup.run
   SelectiveScan.run
   Fft.run
   Stress.run

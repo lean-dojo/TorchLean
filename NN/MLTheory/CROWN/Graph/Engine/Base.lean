@@ -158,6 +158,97 @@ def concatNodeBoxes? (nodes : Array Node) (boxes : Array (Option (FlatBox α)))
   let inputs ← node.parents.mapM fun parent => (boxes[parent]?).join
   concatFlatBoxes? layout inputs
 
+/-- Checked geometry for a contiguous slice along one tensor axis. -/
+structure SliceLayout where
+  sourceShape : Shape
+  axis : Nat
+  start : Nat
+  length : Nat
+  axisInBounds : Shape.AxisInBounds axis sourceShape
+  rangeInBounds : start + length ≤ @Shape.axisSize sourceShape axis axisInBounds
+
+namespace SliceLayout
+
+/-- Shape after replacing the selected axis by the slice length. -/
+@[expose, reducible]
+def outputShape (layout : SliceLayout) : Shape :=
+  layout.sourceShape.replaceAxis layout.axis layout.length
+
+/-- Each output scalar reads one source scalar through the source slice coordinate map. -/
+@[expose]
+def flatIndex (layout : SliceLayout) (i : Fin layout.outputShape.size) :
+    Fin layout.sourceShape.size :=
+  letI := layout.axisInBounds
+  Shape.Coord.linearize <|
+    Tensor.sliceAxisRangeCoordinate layout.axis layout.start layout.length layout.rangeInBounds
+      (Shape.Coord.unlinearize i)
+
+/-- Copy the selected entries without scalar arithmetic. -/
+@[expose]
+def pull {α : Type} [Storage α] (layout : SliceLayout)
+    (value : Tensor α [layout.sourceShape.size]) : Tensor α [layout.outputShape.size] :=
+  Tensor.ofFn fun i => value.getScalar (layout.flatIndex i)
+
+/-- Route slice coefficients back to their source coordinates, filling unused entries with zero. -/
+@[expose]
+def scatter {α : Type} [Storage α] [Zero α] (layout : SliceLayout)
+    (value : Tensor α [layout.outputShape.size]) : Tensor α [layout.sourceShape.size] :=
+  Tensor.flattenSpec <|
+    @Tensor.sliceAxisRangeBackwardSpec α _ _ layout.axis layout.sourceShape layout.axisInBounds
+      layout.start layout.length layout.rangeInBounds
+      (Tensor.unflattenSpec layout.outputShape value)
+
+end SliceLayout
+
+/-- Validate the slice axis, range, and declared output shape. -/
+@[expose]
+def sliceLayout? (axis start length : Nat) (sourceShape outputShape : Shape) :
+    Option SliceLayout := do
+  let ⟨hAxis⟩ ← Shape.axisInBounds? axis sourceShape
+  letI := hAxis
+  if hRange : start + length ≤ sourceShape.axisSize axis then
+    if sourceShape.replaceAxis axis length = outputShape then
+      some { sourceShape, axis, start, length, axisInBounds := hAxis, rangeInBounds := hRange }
+    else none
+  else none
+
+/-- Read and validate a slice's sole parent before any payload lookup. -/
+@[expose]
+def sliceNodeLayout? (nodes : Array Node) (node : Node) (axis start length : Nat) :
+    Option SliceLayout := do
+  let parentId ← unaryParent? node.parents
+  let parent ← nodes[parentId]?
+  sliceLayout? axis start length parent.outShape node.outShape
+
+/-- Slice both interval endpoints through the value coordinate map. -/
+@[expose]
+def sliceFlatBoxes? (layout : SliceLayout) (input : FlatBox α) : Option (FlatBox α) :=
+  if h : input.dim = layout.sourceShape.size then
+    some
+      { dim := layout.outputShape.size
+        lo := layout.pull (h ▸ input.lo)
+        hi := layout.pull (h ▸ input.hi) }
+  else none
+
+/-- Shared slice rule for value, first-derivative and mixed-second-derivative interval passes. -/
+@[expose]
+def sliceNodeBoxes? (nodes : Array Node) (boxes : Array (Option (FlatBox α)))
+    (node : Node) (axis start length : Nat) : Option (FlatBox α) := do
+  let layout ← sliceNodeLayout? nodes node axis start length
+  let parent ← unaryParent? node.parents
+  let input ← (boxes[parent]?).join
+  sliceFlatBoxes? layout input
+
+/-- Route interval objective coefficients through a slice without rounding their entries. -/
+@[expose]
+def scatterSliceFlatBoxes? (layout : SliceLayout) (input : FlatBox α) : Option (FlatBox α) :=
+  if h : input.dim = layout.outputShape.size then
+    some
+      { dim := layout.sourceShape.size
+        lo := layout.scatter (h ▸ input.lo)
+        hi := layout.scatter (h ▸ input.hi) }
+  else none
+
 /--
 Parameters for a linear layer `y = W*x + b` in flattened form.
 
@@ -311,6 +402,8 @@ def crownNodeSemanticsSupported (nodes : Array Node) (ps : ParamStore α) (id : 
           | _ => false
       | .concat axis =>
           (concatNodeLayout? nodes node axis).isSome
+      | .slice axis start length =>
+          (sliceNodeLayout? nodes node axis start length).isSome
       | .matmul =>
           match node.parents with
           | #[leftId, rightId] =>

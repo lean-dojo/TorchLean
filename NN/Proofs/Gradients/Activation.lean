@@ -468,7 +468,7 @@ theorem gelu_deriv_correct (x : ℝ) :
 theorem log1p_spec_eq_log_one_add (x : ℝ) :
     Activation.Math.log1pSpec x = Real.log (1 + x) := by
   simp only [Activation.Math.log1pSpec, Context.log1p, TorchLean.Numeric.log1p,
-    MathFunctions.log]
+    MathFunctions.log, sub_self, beq_self_eq_true, ↓reduceIte]
   split_ifs with h₁ h₂
   · have hzero : x = 0 := by have := beq_iff_eq.mp h₁; linarith
     simp [hzero]

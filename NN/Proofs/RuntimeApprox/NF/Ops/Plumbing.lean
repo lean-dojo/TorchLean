@@ -34,7 +34,7 @@ Composed operators often prove a row- or coordinate-level estimate and then embe
 infinity-norm budget. This lemma records that monotonicity once, without unfolding the tensor
 distance predicate at every use site.
 -/
-theorem approxTensor_mono {α : Type} {toSpec : α → SpecScalar} {s : Shape}
+theorem approxTensor_mono {α : Type} [Storage α] {toSpec : α → SpecScalar} {s : Shape}
     {xS : SpecTensor s} {xR : Tensor α s} {eps eps' : SpecScalar}
     (h : approxTensor (α := α) (toSpec := toSpec) xS xR eps) (hle : eps ≤ eps') :
     approxTensor (α := α) (toSpec := toSpec) xS xR eps' :=
@@ -78,8 +78,8 @@ Scalar characterization of `approxTensor` on scalar tensors.
 This rewrites `approxTensor (Tensor.scalar x) (Tensor.scalar xR) eps` into the usual absolute-error
 inequality `|toSpec xR - x| ≤ eps`.
 -/
-theorem approxTensor_scalar_iff {α : Type} {toSpec : α → SpecScalar} {x : SpecScalar} {xR : α}
-    {eps : SpecScalar} :
+theorem approxTensor_scalar_iff {α : Type} [Storage α] {toSpec : α → SpecScalar}
+    {x : SpecScalar} {xR : α} {eps : SpecScalar} :
     approxTensor (α := α) (toSpec := toSpec) (Tensor.scalar x) (Tensor.scalar xR) eps ↔
       abs (toSpec xR - x) ≤ eps := by
   -- `tensor_distance linf_norm` is `|x - toSpec xR|` on scalar tensors.
@@ -98,12 +98,14 @@ theorem approxTensor_scalar_iff {α : Type} {toSpec : α → SpecScalar} {x : Sp
       TorchLean.Tensor.map2Spec_scalar, Tensor.item, MathFunctions.abs] using h'
 
 /-- Scalar characterization of `approxTensor` stated for arbitrary rank-zero tensors. -/
-theorem approxTensor_scalar_item_iff {α : Type} {toSpec : α → SpecScalar}
+theorem approxTensor_scalar_item_iff {α : Type} [Storage α] {toSpec : α → SpecScalar}
     {x : SpecTensor .scalar} {xR : Tensor α .scalar} {eps : SpecScalar} :
     approxTensor (α := α) (toSpec := toSpec) x xR eps ↔
       abs (toSpec xR.item - x.item) ≤ eps := by
   rw [← Tensor.scalar_item x, ← Tensor.scalar_item xR]
-  exact approxTensor_scalar_iff
+  simpa only [Tensor.item_scalar] using
+    (approxTensor_scalar_iff (α := α) (toSpec := toSpec)
+      (x := x.item) (xR := xR.item) (eps := eps))
 
 /--
 Projection lemma for `approxTensor` on dimensioned tensors.
@@ -111,7 +113,7 @@ Projection lemma for `approxTensor` on dimensioned tensors.
 If `xS` approximates `xR` within `eps`, then each slice `xS.unstack i` approximates
 `xR.unstack i` within `eps`.
 -/
-theorem approxTensor_unstack {α : Type} {toSpec : α → SpecScalar} {n : Nat} {s : Shape}
+theorem approxTensor_unstack {α : Type} [Storage α] {toSpec : α → SpecScalar} {n : Nat} {s : Shape}
     {xS : SpecTensor (.dim n s)} {xR : Tensor α (.dim n s)} {eps : SpecScalar}
     (h : approxTensor (α := α) (toSpec := toSpec) xS xR eps) (i : Fin n) :
     approxTensor (α := α) (toSpec := toSpec)
@@ -129,12 +131,25 @@ theorem approxTensor_unstack {α : Type} {toSpec : α → SpecScalar} {n : Nat} 
     TorchLean.Tensor.Internal.Rep.map_unstack,
     TorchLean.Tensor.Internal.Rep.zipWith_unstack] using hResult
 
+/-- Read a scalar error bound from the existing tensor approximation, for any shape and storage. -/
+theorem approxTensor_apply {α : Type} [Storage α] {toSpec : α → SpecScalar} {s : Shape}
+    {xS : SpecTensor s} {xR : Tensor α s} {eps : SpecScalar}
+    (h : approxTensor (toSpec := toSpec) xS xR eps) (index : s.Coord) :
+    |toSpec (xR index) - xS index| ≤ eps := by
+  induction s with
+  | scalar =>
+      cases index
+      exact (approxTensor_scalar_item_iff (toSpec := toSpec)).mp h
+  | dim n s ih =>
+      simpa only [Tensor.unstack, Tensor.Internal.Rep.unstack_apply] using
+        ih (approxTensor_unstack h index.1) index.2
+
 /-- Every valid tensor approximation has a nonnegative error budget.
 
 This fact is independent of the executable scalar type.  Keeping it at the plumbing layer avoids
 repeating the same norm argument in each backend-specific development.
 -/
-theorem approxTensor_eps_nonneg {α : Type} {toSpec : α → SpecScalar} {s : Shape}
+theorem approxTensor_eps_nonneg {α : Type} [Storage α] {toSpec : α → SpecScalar} {s : Shape}
     {xS : SpecTensor s} {xR : Tensor α s} {eps : SpecScalar}
     (hx : approxTensor (α := α) (toSpec := toSpec) xS xR eps) : 0 ≤ eps := by
   have h0 :
@@ -152,7 +167,8 @@ The premise uses one common infinity-norm budget for every component.  This is t
 `approxTensor_unstack` and is deliberately polymorphic in the runtime element representation, so NF,
 IEEE execution, interval, and future quantized backends can share the same structural proof.
 -/
-theorem approxTensor_dim_of_forall {α : Type} {toSpec : α → SpecScalar} {n : Nat} {s : Shape}
+theorem approxTensor_dim_of_forall {α : Type} [Storage α] {toSpec : α → SpecScalar}
+    {n : Nat} {s : Shape}
     {xS : SpecTensor (.dim n s)} {xR : Tensor α (.dim n s)} {eps : SpecScalar}
     (hε : 0 ≤ eps)
     (h : ∀ i : Fin n,
@@ -198,7 +214,7 @@ The predicate is carried by `Tensor.Forall`, so callers can certify operations s
 once at the scalar level without rebuilding an elementwise tensor proof for every operation.
 -/
 theorem approxTensor_map_spec_of_scalar_bound_of_forall
-    {α : Type} {toSpec : α → SpecScalar} {s : Shape}
+    {α : Type} [Storage α] {toSpec : α → SpecScalar} {s : Shape}
     (predicate : SpecScalar → Prop)
     (fS : SpecScalar → SpecScalar) (fR : α → α)
     (bnd : SpecScalar → SpecScalar → SpecScalar) :
@@ -219,6 +235,7 @@ theorem approxTensor_map_spec_of_scalar_bound_of_forall
   induction s with
   | scalar =>
       rw [← Tensor.scalar_item xS, ← Tensor.scalar_item xR] at hx ⊢
+      rw [Tensor.map_scalar, Tensor.map_scalar]
       have hx' :=
         (approxTensor_scalar_iff (α := α) (toSpec := toSpec)
           (x := xS.item) (xR := xR.item) (eps := eps)).1 hx
@@ -273,7 +290,8 @@ and an input approximation `approxTensor xS xR eps`, this produces an approximat
 `map_spec fS xS` vs `map_spec fR xR`, with an output epsilon computed by taking the `linfNorm` of
 the pointwise bound. It is the domain-restricted lifting at the trivial predicate.
 -/
-theorem approxTensor_map_spec_of_scalar_bound {α : Type} {toSpec : α → SpecScalar} {s : Shape}
+theorem approxTensor_map_spec_of_scalar_bound {α : Type} [Storage α] {toSpec : α → SpecScalar}
+    {s : Shape}
     (fS : SpecScalar → SpecScalar) (fR : α → α) (bnd : SpecScalar → SpecScalar → SpecScalar) :
     ∀ {xS : SpecTensor s} {xR : Tensor α s} {eps : SpecScalar},
       approxTensor (α := α) (toSpec := toSpec) xS xR eps →
@@ -297,7 +315,7 @@ This variant is useful when the certified budget observes representation-specifi
 intermediates that cannot be reconstructed from `toSpec xR`.
 -/
 theorem approxTensor_map_spec_of_runtime_scalar_bound
-    {α : Type} {toSpec : α → SpecScalar} {s : Shape}
+    {α : Type} [Storage α] {toSpec : α → SpecScalar} {s : Shape}
     (fS : SpecScalar → SpecScalar) (fR : α → α)
     (bnd : α → SpecScalar → SpecScalar) :
     ∀ {xS : SpecTensor s} {xR : Tensor α s} {eps : SpecScalar},
@@ -313,6 +331,7 @@ theorem approxTensor_map_spec_of_runtime_scalar_bound
   induction s with
   | scalar =>
       rw [← Tensor.scalar_item xS, ← Tensor.scalar_item xR] at hx ⊢
+      rw [Tensor.map_scalar, Tensor.map_scalar]
       have hx' :=
         (approxTensor_scalar_iff (α := α) (toSpec := toSpec)
           (x := xS.item) (xR := xR.item) (eps := eps)).1 hx
@@ -356,7 +375,8 @@ Lift a scalar approximation bound to an elementwise `map2Spec`.
 This is the binary analogue of `approxTensor_map_spec_of_scalar_bound`, used for elementwise
 arithmetic (`add`, `sub`, `mulElem`, etc.).
 -/
-theorem approxTensor_map2_spec_of_scalar_bound {α : Type} {toSpec : α → SpecScalar} {s : Shape}
+theorem approxTensor_map2_spec_of_scalar_bound {α : Type} [Storage α] {toSpec : α → SpecScalar}
+    {s : Shape}
     (fS : SpecScalar → SpecScalar → SpecScalar) (fR : α → α → α)
     (bnd : SpecScalar → SpecScalar → SpecScalar → SpecScalar → SpecScalar) :
     ∀ {xS yS : SpecTensor s} {xR yR : Tensor α s} {epsx epsy : SpecScalar},
@@ -380,6 +400,7 @@ theorem approxTensor_map2_spec_of_scalar_bound {α : Type} {toSpec : α → Spec
       rw [← Tensor.scalar_item yS, ← Tensor.scalar_item yR] at hy
       rw [← Tensor.scalar_item xS, ← Tensor.scalar_item yS,
         ← Tensor.scalar_item xR, ← Tensor.scalar_item yR]
+      rw [Tensor.map2Spec_scalar, Tensor.map2Spec_scalar]
       have hx' :=
         (approxTensor_scalar_iff (α := α) (toSpec := toSpec)
           (x := xS.item) (xR := xR.item) (eps := epsx)).1 hx

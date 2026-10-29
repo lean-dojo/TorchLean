@@ -278,6 +278,20 @@ def softmaxReplay : Except String RangeCheckedExecution := do
 invalid-domain, or wrong-reduction-policy cases should be `false`. This array exercises range
 reconstruction and IEEE replay; it does not construct the separate exact-real enclosure proof. -/
 def exampleChecks : Array (String × Bool) :=
+  -- Selection needs registry coverage and replay after dropping its singleton axis.
+  let sliceReplay : Except String RangeCheckedExecution := do
+    let graph : NN.IR.Graph :=
+      { nodes := #[
+          { id := 0, parents := #[], kind := .input, outShape := [2, 3] },
+          { id := 1, parents := #[0], kind := .slice 1 1 1, outShape := [2, 1] },
+          { id := 2, parents := #[1], kind := .reshape [2, 1] [2], outShape := [2] }
+        ] }
+    let sources : Array SourceRange :=
+      #[{ nodeId := 0, enclosure := interval 0x00000000 0x40a00000 }]
+    let certificate ← generateChecked NN.Backend.BackendProfile.checkedCpu graph sources
+    let input := Tensor.unflattenSpec ([2, 3] : Shape)
+      ([0, 1, 2, 3, 4, 5] : Tensor (Binary 8 23) [6])
+    executeIEEE32 {} (Spec.SomeTensor.ofTensor input) certificate
   NN.Examples.DeepDives.Floats.GraphNumericalCertificate.checks ++
   #[ ("misplaced source rejected", !accepted misplacedSourceCheck)
   , ("duplicate contract rejected", !accepted duplicateContractCheck)
@@ -292,6 +306,7 @@ def exampleChecks : Array (String × Bool) :=
   , ("portable LayerNorm", accepted layerNormReplay)
   , ("CUDA LayerNorm policy rejected", !accepted cudaLayerNormCertificate)
   , ("stable softmax", accepted softmaxReplay)
+  , ("native slice and selection replay", accepted sliceReplay)
   ]
 
 /-- Every positive case must succeed and every invalid artifact must be rejected. -/

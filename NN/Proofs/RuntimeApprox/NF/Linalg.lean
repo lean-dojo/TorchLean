@@ -186,60 +186,19 @@ private theorem approx_dot_list {n : Nat} (l : List (Fin n))
           l.foldl (fun acc k => acc + aS k * bS k) accS) ≤
       (l.foldl (dotStep (β := β) (fexp := fexp) (rnd := rnd) epsa epsb aR bR)
         (accR, epsAcc)).2 := by
-  induction l generalizing accS accR epsAcc with
-  | nil =>
-      simpa using hAcc
-  | cons k tl ih =>
-      have hProd :
-          abs
-              (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k * bR k) - aS k * bS k) ≤
-            ((abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k)) + epsa) * epsb +
-              (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) + epsb) * epsa +
-              ulp β fexp
-                  (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k) *
-                    toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) / 2) := by
-        exact approx_mul_nf (β := β) (fexp := fexp) (rnd := rnd) (x := aS k) (y := bS k)
-          (xR := aR k) (yR := bR k) (epsx := epsa) (epsy := epsb) (ha k) (hb k)
-
-      have hStep :
-          abs
-              (toSpec (β := β) (fexp := fexp) (rnd := rnd) (accR + aR k * bR k) -
-                (accS + aS k * bS k)) ≤
-            epsAcc +
-              ((abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k)) + epsa) * epsb +
-                (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) + epsb) * epsa +
-                ulp β fexp
-                    (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k) *
-                      toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) / 2) +
-              ulp β fexp
-                  (toSpec (β := β) (fexp := fexp) (rnd := rnd) accR +
-                    toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k * bR k)) / 2 := by
-        have := approx_add_nf (β := β) (fexp := fexp) (rnd := rnd)
-          (x := accS) (y := aS k * bS k) (xR := accR) (yR := aR k * bR k)
-          (epsx := epsAcc)
-          (epsy :=
-            ((abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k)) + epsa) * epsb +
-              (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) + epsb) * epsa +
-              ulp β fexp
-                  (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k) *
-                    toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) / 2))
-          hAcc hProd
-        simpa [add_assoc, add_left_comm, add_comm] using this
-
-      have ih' :=
-        ih (accS := accS + aS k * bS k) (accR := accR + aR k * bR k)
-          (epsAcc :=
-            epsAcc +
-              ((abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k)) + epsa) * epsb +
-                (abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) + epsb) * epsa +
-                ulp β fexp
-                    (toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k) *
-                      toSpec (β := β) (fexp := fexp) (rnd := rnd) (bR k)) / 2) +
-              ulp β fexp
-                  (toSpec (β := β) (fexp := fexp) (rnd := rnd) accR +
-                    toSpec (β := β) (fexp := fexp) (rnd := rnd) (aR k * bR k)) / 2)
-          hStep
-      simpa [List.foldl, dotStep, add_assoc, add_left_comm, add_comm] using ih'
+  have values := List.foldl_hom (Prod.fst : R × ℝ → R)
+    (g₁ := dotStep (β := β) (fexp := fexp) (rnd := rnd) epsa epsb aR bR)
+    (g₂ := fun acc k => acc + aR k * bR k) (l := l) (init := (accR, epsAcc))
+    (fun _ _ => rfl)
+  rw [values]
+  apply List.foldl_rel (l := l)
+    (f := dotStep (β := β) (fexp := fexp) (rnd := rnd) epsa epsb aR bR)
+    (g := fun acc k => acc + aS k * bS k)
+    (r := fun (state : R × ℝ) reference => |toSpec state.1 - reference| ≤ state.2) hAcc
+  rintro k _ ⟨value, error⟩ reference hstate
+  simpa only [dotStep] using
+    (approx_add_nf (β := β) (fexp := fexp) (rnd := rnd) hstate
+      (approx_mul_nf (β := β) (fexp := fexp) (rnd := rnd) (ha k) (hb k)))
 
 /--
 Dot-product approximation bound specialized to `List.finRange n`.
@@ -317,25 +276,12 @@ theorem approxTensor_mat_vec_mul_spec {m n : Nat} :
       abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (Spec.get2 AR i k) -
         Spec.get2 AS i k) ≤ epsA := by
     intro k
-    change abs
-      (toSpec (β := β) (fexp := fexp) (rnd := rnd) ((AR.unstack i).unstack k).item -
-        ((AS.unstack i).unstack k).item) ≤ epsA
-    have hEntry := approxTensor_unstack
-      (approxTensor_unstack (α := R)
-        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hA i) k
-    exact (approxTensor_scalar_iff (α := R)
-      (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).1 hEntry
+    simpa only [Spec.get2_eq_apply] using approxTensor_apply hA (i, k, PUnit.unit)
   have hvk : ∀ k : Fin n,
       abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (vR.getScalar k) -
         vS.getScalar k) ≤ epsV := by
     intro k
-    change abs
-      (toSpec (β := β) (fexp := fexp) (rnd := rnd) (vR.unstack k).item -
-        (vS.unstack k).item) ≤ epsV
-    have hEntry := approxTensor_unstack (α := R)
-      (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hv k
-    exact (approxTensor_scalar_iff (α := R)
-      (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).1 hEntry
+    simpa only [Tensor.getScalar_eq_apply] using approxTensor_apply hv (k, PUnit.unit)
   have hdot :=
     approx_dot_finRange (β := β) (fexp := fexp) (rnd := rnd) (n := n)
       (aS := fun k => Spec.get2 AS i k)
@@ -350,12 +296,7 @@ theorem approxTensor_mat_vec_mul_spec {m n : Nat} :
     simpa [bnd, matVecMulBoundTensor, dotBound, B, linfNorm,
       RuntimeApprox.linfNorm, tensorLinfNorm, Numerics.MathFunctions.abs, SpecScalar] using
       linfNorm_unstack_le (t := bnd) i
-  have hBound :
-      dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsV
-        (fun k => Spec.get2 AR i k)
-        (fun k => vR.getScalar k) ≤ B :=
-    le_trans (le_abs_self _) hEntryAbs
-  have hOutput := le_trans hdot hBound
+  have hOutput := hdot.trans ((le_abs_self _).trans hEntryAbs)
   rw [← getScalar_matVecMulSpec AR vR i, ← getScalar_matVecMulSpec AS vS i] at hOutput
   change abs
     (toSpec (β := β) (fexp := fexp) (rnd := rnd)
@@ -389,9 +330,7 @@ private theorem get2_matMulSpec {α : Type} [TorchLean.Storage α] [Add α] [Mul
     Spec.get2 (Spec.matMulSpec A B) i j =
       (List.finRange n).foldl
         (fun acc k => acc + Spec.get2 A i k * Spec.get2 B k j) (0 : α) := by
-  simp only [Spec.matMulSpec, Spec.get2, Tensor.getScalar, Spec.get,
-    Tensor.unstack, Tensor.item, TorchLean.Tensor.Internal.Rep.unstack_apply,
-    TorchLean.Tensor.Internal.Rep.get_ofFn]
+  simp only [Spec.get2_eq_apply, Spec.matMulSpec, TorchLean.Tensor.Internal.Rep.get_ofFn]
 
 /--
 Forward approximation bound for matrix-matrix multiplication.
@@ -428,26 +367,12 @@ theorem approxTensor_mat_mul_spec {m n p : Nat} :
       abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (Spec.get2 AR i k) -
         Spec.get2 AS i k) ≤ epsA := by
     intro k
-    change abs
-      (toSpec (β := β) (fexp := fexp) (rnd := rnd) ((AR.unstack i).unstack k).item -
-        ((AS.unstack i).unstack k).item) ≤ epsA
-    have hEntry := approxTensor_unstack
-      (approxTensor_unstack (α := R)
-        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hA i) k
-    exact (approxTensor_scalar_iff (α := R)
-      (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).1 hEntry
+    simpa only [Spec.get2_eq_apply] using approxTensor_apply hA (i, k, PUnit.unit)
   have hBkj : ∀ k : Fin n,
       abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) (Spec.get2 BR k j) -
         Spec.get2 BS k j) ≤ epsB := by
     intro k
-    change abs
-      (toSpec (β := β) (fexp := fexp) (rnd := rnd) ((BR.unstack k).unstack j).item -
-        ((BS.unstack k).unstack j).item) ≤ epsB
-    have hEntry := approxTensor_unstack
-      (approxTensor_unstack (α := R)
-        (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) hB k) j
-    exact (approxTensor_scalar_iff (α := R)
-      (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd))).1 hEntry
+    simpa only [Spec.get2_eq_apply] using approxTensor_apply hB (k, j, PUnit.unit)
   have hdot :=
     approx_dot_finRange (β := β) (fexp := fexp) (rnd := rnd) (n := n)
       (aS := fun k => Spec.get2 AS i k)
@@ -466,12 +391,7 @@ theorem approxTensor_mat_mul_spec {m n p : Nat} :
     simpa [bnd, matMulBoundTensor, dotBound, B, linfNorm,
       RuntimeApprox.linfNorm, tensorLinfNorm, Numerics.MathFunctions.abs, SpecScalar]
       using hEntryNorm
-  have hBound :
-      dotBound (β := β) (fexp := fexp) (rnd := rnd) (n := n) epsA epsB
-        (fun k => Spec.get2 AR i k)
-        (fun k => Spec.get2 BR k j) ≤ B :=
-    le_trans (le_abs_self _) hEntryAbs
-  have hOutput := le_trans hdot hBound
+  have hOutput := hdot.trans ((le_abs_self _).trans hEntryAbs)
   rw [← get2_matMulSpec AR BR i j, ← get2_matMulSpec AS BS i j] at hOutput
   change abs
     (toSpec (β := β) (fexp := fexp) (rnd := rnd)

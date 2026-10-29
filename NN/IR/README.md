@@ -35,8 +35,8 @@ smallest `NN.IR.*` dependency they need.
   fail.
 - `Binary.lean` and `BinaryProofs.lean`: FloatLib-backed binary execution at each node's precision
   and the theorem relating interpreter casts to FloatLib's directed conversions.
-- `Properties.lean`: induction and relational rules for proving properties through the existing
-  typed interpreter, including its accumulated conversion flags and designated outputs.
+- `Properties.lean`: shape/type preservation for successful typed execution, plus induction and
+  relational rules including accumulated conversion flags and designated outputs.
 - `Reference.lean`: the same binary arithmetic plus Boolean and arbitrary-width integer storage
   for layout operations, with checked complete-word encoding and a lossless decoding theorem.
   Integers also implement PyTorch's integer pointwise operators, and integers and Booleans convert
@@ -308,9 +308,10 @@ square root to the reduced format before dividing in bfloat16 and binary16 `rsqr
 `pow` from the C library instead of SLEEF. For these operators the eager result, and a sample
 comparison with it, can depend on tensor length and layout.
 
-The JAX importer gives each primitive its JAX meaning, as the PyTorch capture gives eager PyTorch's:
-`lax.div` is IEEE division, `rsqrt` is `1 / sqrt x` rounded twice, as in the IR, and results
-underflow gradually. `div`, `pow`, `neg`, `rsqrt` and `erf` map to IR operators; integer `div`
+The JAX importer records supported operations, shapes, dtypes and casts. Reference execution
+uses TorchLean and FloatLib arithmetic: division is IEEE division, `rsqrt` is `1 / sqrt x`
+rounded twice, and results underflow gradually. `div`, `pow`, `neg`, `rsqrt` and `erf` map to
+IR operators; integer `div`
 rounds toward zero. Binary16 and bfloat16 `pow`, `rsqrt` and `erf` are computed in binary32 and
 rounded once, as XLA computes them. On 8192 samples per operator and format, the IR returns XLA's
 words for every binary16 `pow` and `rsqrt` sample and every bfloat16 `rsqrt` sample, and for 8191
@@ -467,13 +468,25 @@ Supported array operations and numerical algorithms use the same shape and eleme
 as model computations. This is not a compiler for arbitrary Lean or Python programs; control flow
 and operations without an explicit lowering rule are rejected.
 
-From Python, `torchlean.verify(model, *inputs)` automatically captures a supported PyTorch
-computation, translates it to the shared IR, and requests the typed graph checks. Select
-`frontend="jax"` for Jaxpr capture. No manual export is required. Other producers can pass a typed
-artifact dictionary directly. Optional execution and comparison concern only supplied arguments.
+From Python, decorate a function or PyTorch module class with `@torchlean.compile`, or wrap an
+existing module with `model = torchlean.compile(model)`, then call it normally. Capture is lazy:
+PyTorch supplies a guarded FX graph, or JAX supplies a traced Jaxpr; the model and tensor
+arguments select the frontend automatically. A call captures the whole tensor or batch, without
+a separate check loop over its entries. TorchLean lowers that graph to the shared IR and requests
+structure and type checks.
+The framework executes the captured computation, retaining its device and automatic
+differentiation. The callable's `.torchlean.artifact` and `.torchlean.report` expose the most
+recently compiled graph and its check result; `.torchlean.graphs` retains all successfully checked
+specializations. A cached call can reuse an earlier specialization without changing the latest
+capture. Unsupported capture or failed checks raise. These checks do not prove frontend equivalence
+or correctness on every input.
 
-Add `export="Model.lean"` to retain that same capture as a self-contained Lean module. It embeds
-the artifact and defines `Model.program` through the shared importer. Lean checks the included
+Use `torchlean.verify(model, *inputs)` for explicit checks, including sample execution and
+comparison. It also selects the frontend automatically. Other producers can pass a typed artifact
+dictionary directly. Optional execution and comparison concern only supplied arguments.
+
+Add `export="Model.lean"` to `verify` to retain that same capture as a self-contained Lean module.
+It embeds the artifact and defines `Model.program` through the shared importer. Lean checks the included
 import and shape/type/interface proofs by kernel reduction when the module is compiled; export
 does not launch a compiler. Mathematical properties can refer
 to that program and the embedded constants; they still require their own proofs. A `.json` export
@@ -553,6 +566,9 @@ An imported `Program` already has Lean semantics. A proof can work with those op
 without first identifying the graph as an MLP, transformer, or another named architecture.
 `NN.IR.Properties` provides the common traversal argument:
 
+- `Interpreter.run_types` proves that every computed tensor has its declared element type and
+  shape, with exactly one value per node in graph order. `Interpreter.eval_types` gives the same
+  guarantee for designated results, preserving their order and repeated result ids.
 - `Interpreter.run_induction` carries a predicate on intermediate values and conversion flags.
   To establish a bound, prove it for the initial state and show that each successful operation
   preserves the predicate.

@@ -10,6 +10,7 @@ public import NN.Spec.Core.Context.Rational
 public import NN.Spec.Core.FloatInstances
 public import NN.Spec.Models.Svm
 public import NN.Spec.Module.GruModels
+public import NN.Runtime.Autograd.Model.Dual
 public import NN.Tensor
 
 /-!
@@ -31,6 +32,26 @@ open scoped Spec.RationalAlgebraic
 def expect (label : String) (condition : Bool) : IO Unit := do
   unless condition do
     throw <| IO.userError s!"numeric contract: {label}"
+
+/-- A finite logarithm and tangent must survive an unrepresentable intermediate sum.
+The second format cannot represent `2`, so a repair cannot divide by a scalar `2` either. -/
+def checkLog1pRange : IO Unit := do
+  let value : ExecFloat.Binary 2 1 := Context.log1p 3
+  expect "tiny log1p keeps the certified finite result"
+    (ExecFloat.Binary.toRat? value == some (3 / 2 : Rat))
+  let differentiated : Runtime.Autograd.Model.Dual (ExecFloat.Binary 2 1) := Context.log1p ⟨3, 2⟩
+  expect "tiny log1p chain rule replays the complete denominator"
+    (ExecFloat.Binary.toRat? differentiated.re == some (3 / 2 : Rat) &&
+      ExecFloat.Binary.toRat? differentiated.du == some (1 / 2 : Rat))
+  let biased : Runtime.Autograd.Model.Dual (ExecFloat.Binary 2 1 (bias := 2)) :=
+    Context.log1p ⟨1, 1⟩
+  expect "log1p handles a custom bias without representing two"
+    (ExecFloat.Binary.toRat? biased.re == some (3 / 4 : Rat) &&
+      ExecFloat.Binary.toRat? biased.du == some (1 / 2 : Rat))
+  let small : Float32 := 0.00000001
+  expect "log1p retains its small-argument path" ((Context.log1p small).toBits == small.toBits)
+  expect "log1p keeps invalid real arguments invalid"
+    (ExecFloat.Binary.isNaN (Context.log1p (-2 : ExecFloat.Binary 2 1)))
 
 /-- Binary16 must round the coefficient itself, without first overflowing its denominator. -/
 def checkGeluCoefficient : IO Unit := do
@@ -147,6 +168,7 @@ def checkGruInitialState : IO Unit := do
       zeroGradient.cell.candidateWeight.to (Array Float) == #[0.0, 0.0])
 
 def run : IO Unit := do
+  checkLog1pRange
   checkGeluCoefficient
   checkActivationArguments
   checkSvmDenominator

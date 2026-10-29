@@ -1,5 +1,6 @@
 import VersoManual
 import NN.API
+import NN.Proofs.Text.Bpe
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
 
@@ -803,7 +804,8 @@ Encoding has four visible stages. It applies the GPT-2 pre-tokenizer, converts e
 bytes through GPT-2's reversible byte-to-Unicode table, repeatedly applies the best-ranked adjacent
 merge, and finally looks up every piece in `vocab.json`. `GPT2BPE.encode` returns an error when a
 piece has no id. `GPT2BPE.decode` performs the inverse vocabulary lookup and byte decoding, and
-reports an unknown id or invalid UTF-8 rather than inventing text.
+rejects unknown ids and invalid byte escapes. Its default display mode replaces malformed UTF-8
+with replacement characters. Set `strict := true` when malformed UTF-8 should be an error.
 
 Here is a direct round-trip, which runs from the repository root once a matching tokenizer pair sits
 at the shown paths. It is written with accented text on purpose, because that is where a byte-level
@@ -823,14 +825,23 @@ def inspectBpe : IO Unit := do
   | .error e => throw <| IO.userError e
   | .ok ids =>
       IO.println s!"ids = {repr ids}"
-      match GPT2BPE.decode tok ids with
+      match GPT2BPE.decode tok ids (strict := true) with
       | .error e => throw <| IO.userError e
       | .ok decoded => IO.println s!"decoded = {decoded}"
 ```
 
-Use the error-reporting `GPT2BPE.encode` and `GPT2BPE.decode` functions at the artifact-validation
+Use `GPT2BPE.encode` and strict `GPT2BPE.decode` at the artifact-validation
 boundary. An encoding failure does not represent an empty text sample; it must be handled before
 the resulting identifiers enter a dataset.
+
+Merging changes the token boundaries, so it should preserve every piece of the text. The
+{src "NN/Proofs/Text/Bpe.lean"}[BPE proofs] establish this for the production merge loop and show
+that its iteration budget is sufficient. `best_merge_spec` also proves that the chosen pair is
+adjacent and has the lowest available rank. For a successful fragment encoding,
+`encode_fragment_spec` relates each returned id to the vocabulary lookup of its piece. Joining
+those pieces recovers exactly the fragment's byte-escaped text, and no ranked merge remains.
+These are fragment-encoding guarantees; pre-tokenization and encode/decode agreement require
+additional proofs.
 
 ## Unicode Tables And Tokenizer Reproducibility
 

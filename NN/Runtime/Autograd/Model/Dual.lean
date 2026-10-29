@@ -270,7 +270,7 @@ instance {α : Type} [TorchLean.Storage α] [Context α] : Context (Dual α) whe
   ratCast value := ⟨(value : α), 0⟩
   -- Differentiate the mathematical functions, not their rounding-compensation branches.
   sigmoid x := ⟨Context.sigmoid x.re, TorchLean.Numeric.sigmoidBackward x.re x.du⟩
-  log1p x := ⟨Context.log1p x.re, x.du / (1 + x.re)⟩
+  log1p x := ⟨Context.log1p x.re, TorchLean.Numeric.log1pBackward x.re x.du⟩
   expm1 x := ⟨Context.expm1 x.re, MathFunctions.exp x.re * x.du⟩
 
 /--

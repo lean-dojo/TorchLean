@@ -236,7 +236,7 @@ private def runFirstDerivativeWithSeed
       let z := Tensor.full (α:=α) (.dim d .scalar) 0
       drs.set! id (some { dim := d, lo := z, hi := z })
     | .custom .. | .scaledMatmul | .maxPool .. | .avgPool .. | .softplus | .safeLog
-      | .topKMask _ | .slice .. | .pointwise _ =>
+      | .topKMask _ | .pointwise _ =>
       -- Not supported by the derivative-bound passes (used by PINN tooling).
       drs
     | .hardMaskedSoftmax _ =>
@@ -425,6 +425,8 @@ private def runFirstDerivativeWithSeed
       drs.set! id (permuteDerivativeBox? (α := α) g.nodes drs node)
     | .concat axis =>
       drs.set! id (concatNodeBoxes? (α := α) g.nodes drs node axis)
+    | .slice axis start length =>
+      drs.set! id (sliceNodeBoxes? (α := α) g.nodes drs node axis start length)
     | .abs | .sqrt | .inv | .maxElem | .minElem | .broadcastTo .. | .reduceSum .. | .reduceMean
       .. =>
       drs
@@ -502,7 +504,7 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
       let z := Tensor.full (α:=α) (.dim d .scalar) 0
       d2s.set! id (some { dim := d, lo := z, hi := z })
     | .custom .. | .scaledMatmul | .maxPool .. | .avgPool .. | .softplus | .safeLog
-      | .topKMask _ | .slice .. | .pointwise _ =>
+      | .topKMask _ | .pointwise _ =>
       -- Not supported by the second-derivative bound pass.
       d2s
     | .hardMaskedSoftmax _ =>
@@ -716,6 +718,8 @@ def runMixedSecondDerivative (g : Graph) (ps : ParamStore α)
       d2s.set! id (permuteDerivativeBox? (α := α) g.nodes d2s node)
     | .concat axis =>
       d2s.set! id (concatNodeBoxes? (α := α) g.nodes d2s node axis)
+    | .slice axis start length =>
+      d2s.set! id (sliceNodeBoxes? (α := α) g.nodes d2s node axis start length)
     | .mseLoss => d2s
     | .softmax axis =>
       -- The ideal coupled formula remains unavailable to finite-precision backends.

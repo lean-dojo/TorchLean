@@ -31,7 +31,7 @@ noncomputable section
 /-- The structural, axis-reduction, and pooling operation family, at every configuration. -/
 def ibpStructuralSupportedNode (node : Node) : Bool :=
   match node.kind with
-  | .concat _ | .transpose .. | .permute _ | .broadcastTo ..
+  | .concat _ | .slice .. | .transpose .. | .permute _ | .broadcastTo ..
   | .reduceSum _ | .reduceMean _ | .maxPool _ | .avgPool _ => true
   | _ => false
 
@@ -56,6 +56,9 @@ def StructuralRealNodeEquation (nodes : Array Node) (dims : Nat → Nat)
   | .concat axis =>
       ∀ layout, concatNodeLayout? nodes node axis = some layout →
         ConcatRealEquation node layout dims v id
+  | .slice axis start length =>
+      ∀ layout, sliceNodeLayout? nodes node axis start length = some layout →
+        SliceEquation node layout dims v id
   | .transpose axis₁ axis₂ =>
       ShapedUnaryRealEquation nodes node dims v id (transposeTensor axis₁ axis₂)
   | .permute perm =>
@@ -101,6 +104,51 @@ private theorem shapedUnary_lookup {β γ : Type}
   exact ⟨p, parent, input, hp, hparent, hinput, h⟩
 
 variable {α : Type} [Storage α] [Context α] [BoundOps α] [LawfulBoundOps α]
+
+/-- Copying checked slice endpoints preserves every parent coordinate enclosure. -/
+theorem sliceFlatBoxes?_encloses {layout : SliceLayout}
+    {input box : FlatBox α} {f : Nat → ℝ}
+    (hinput : RowEncloses input layout.sourceShape.size f)
+    (hbox : sliceFlatBoxes? layout input = some box) :
+    RowEncloses box layout.outputShape.size
+      (fun i => if hi : i < layout.outputShape.size then
+        f (layout.flatIndex ⟨i, hi⟩).val else 0) := by
+  obtain ⟨dim, lo, hi⟩ := input
+  obtain ⟨hdim, hinput⟩ := hinput
+  dsimp only at hdim
+  subst dim
+  simp only [sliceFlatBoxes?, ↓reduceDIte, Option.some.injEq] at hbox
+  subst box
+  rw [rowEncloses_iff]
+  intro i
+  simpa only [SliceLayout.pull, Tensor.getScalar_ofFn, dite_eq_left i.isLt,
+    Spec.getAtOrZero_eq_getScalar] using
+    hinput (layout.flatIndex i)
+
+/-- A native slice step encloses the real source entries specified by its coordinate map. -/
+theorem sliceNodeBoxes?_encloses
+    {nodes : Array Node} {node : Node} {boxes : Array (Option (FlatBox α))}
+    {dims : Nat → Nat} {v : Nat → Nat → ℝ} {id axis start length : Nat}
+    {box : FlatBox α}
+    (heq : ∀ layout, sliceNodeLayout? nodes node axis start length = some layout →
+      SliceEquation node layout dims v id)
+    (hparents : ∀ p ∈ node.parents, ∀ B, (boxes[p]?).join = some B →
+      RowEncloses B (dims p) (v p))
+    (hbox : sliceNodeBoxes? nodes boxes node axis start length = some box) :
+    RowEncloses box (dims id) (v id) := by
+  unfold sliceNodeBoxes? at hbox
+  obtain ⟨layout, hlayout, hbox⟩ := Option.bind_eq_some_iff.mp hbox
+  obtain ⟨parent, hparent, hbox⟩ := Option.bind_eq_some_iff.mp hbox
+  obtain ⟨input, hinput, hbox⟩ := Option.bind_eq_some_iff.mp hbox
+  obtain ⟨hout, hsource⟩ := heq layout hlayout
+  obtain ⟨hdim, hcoords⟩ := hsource parent hparent
+  have h := hparents parent (mem_of_unaryParent?_eq_some hparent) input hinput
+  rw [hdim] at h
+  have hresult := sliceFlatBoxes?_encloses h hbox
+  rw [hout]
+  apply hresult.congr
+  intro i
+  simpa only [dite_eq_left i.isLt] using hcoords i
 
 private theorem shapedUnary_monotone_step
     {nodes : Array Node} {node : Node} {boxes : Array (Option (FlatBox α))}
@@ -156,6 +204,8 @@ theorem ibpStepNodeAt?_structural_encloses
     rw [hk] at hstep <;> dsimp only at hstep
   case concat axis =>
     exact concatNodeBoxes?_encloses heq hget hstep
+  case slice axis start length =>
+    exact sliceNodeBoxes?_encloses heq hget hstep
   case transpose axis₁ axis₂ =>
     exact shapedUnary_monotone_step (transposeTensor_encloses axis₁ axis₂) heq hget hstep
   case permute perm =>

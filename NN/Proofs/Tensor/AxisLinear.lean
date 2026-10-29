@@ -40,26 +40,15 @@ abbrev swapCoordinate (s : Shape) (depth : Nat) :
   TorchLean.Tensor.Internal.swapAdjacentAxesCoordinate s depth
 
 /-- Source coordinate read after a sequence of adjacent-axis swaps. -/
-def permutedCoordinate : (s : Shape) → (swaps : List Nat) →
-    Shape.Coord (s.applyAdjacentSwaps swaps) → Shape.Coord s
-  | _, [], p => p
-  | s, depth :: swaps, p =>
-      swapCoordinate s depth
-        (permutedCoordinate (s.swapAdjacentAtDepth depth) swaps p)
+abbrev permutedCoordinate (s : Shape) (swaps : List Nat) :
+    Shape.Coord (s.applyAdjacentSwaps swaps) → Shape.Coord s :=
+  TorchLean.Tensor.Internal.permutedCoordinate s swaps
 
 /-- The coordinate description follows the actual tensor permutation at every rank. -/
 theorem permuteByAdjacentSwaps_apply {α : Type} [TorchLean.Storage α] {s : Shape}
     (x : Tensor α s) (swaps : List Nat) (p : Shape.Coord (s.applyAdjacentSwaps swaps)) :
-    permuteByAdjacentSwaps x swaps p = x (permutedCoordinate s swaps p) := by
-  induction swaps generalizing s with
-  | nil => rfl
-  | cons depth swaps ih =>
-      change Shape.Coord ((s.swapAdjacentAtDepth depth).applyAdjacentSwaps swaps) at p
-      change permuteByAdjacentSwaps (swapAdjacentAxes x depth) swaps p =
-        x (swapCoordinate s depth
-          (permutedCoordinate (s.swapAdjacentAtDepth depth) swaps p))
-      exact (ih (swapAdjacentAxes x depth) p).trans
-        (TorchLean.Tensor.swapAdjacentAxes_apply x depth _)
+    permuteByAdjacentSwaps x swaps p = x (permutedCoordinate s swaps p) :=
+  TorchLean.Tensor.permuteByAdjacentSwaps_apply x swaps p
 
 /-- Axis permutation on finite coordinate functions, bundled as a continuous linear map.
 

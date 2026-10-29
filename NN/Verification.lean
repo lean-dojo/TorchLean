@@ -9,6 +9,7 @@ module
 public import NN.Verification.Cert
 public import NN.Verification.Geometry3D
 public import NN.Verification.Monotonicity.Json
+public import NN.Verification.Numerical
 public import NN.Verification.ODE
 public import NN.Verification.PINN
 public import NN.Verification.Robustness
@@ -24,7 +25,8 @@ public import NN.Verification.VNNComp
 
 Import this file for TorchLean’s verification infrastructure: JSON utilities, certificate formats,
 ODE/PINN-style checkers, proof-backed certificate soundness, and proof-backed TorchLean-to-IR
-forward lowering.
+forward lowering. `NN.Verification.Numerical` checks error budgets and prediction margins by
+re-executing captured typed graphs at their supplied arguments.
 
 Their expression parsers share the fuel-bounded byte cursor and decimal scanners from
 `NN.Verification.Util.TextCursor`; each verifier keeps only its grammar and AST-specific logic.

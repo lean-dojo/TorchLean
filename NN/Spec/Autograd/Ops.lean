@@ -13,32 +13,15 @@ public import NN.Spec.Layers.Linear
 public import NN.Spec.Layers.Loss
 
 /-!
-# Autograd OpSpecs (spec layer)
+# Tensor operations and pullbacks
 
-This file defines small `OpSpec` building blocks (forward + VJP) for common tensor operations.
-The definitions are intentionally direct mathematical contracts and live purely in the spec layer.
+An `OpSpec` pairs a pure forward computation with an input-gradient pullback. Both functions use
+the tensor's scalar type and storage. Derivative and numerical-error theorems establish properties
+of these functions under their stated assumptions.
 
-The declarations follow a uniform pattern:
-
-- Each operation below is an `OpSpec`: a pure `forward` plus a pure VJP `backward`.
-- Most ops here package `*Spec` and derivative-spec definitions from `NN/Spec/*`.
-
-Where this sits in TorchLean:
-
-- `NN.Spec.*` files define pure denotational semantics: what tensors/layers mean.
-- This file packages some of those pure definitions as unary `OpSpec`s: `forward` plus VJP.
-- `NN.Runtime.Autograd.*` executes programs, tracks parameters, manages tapes/sessions, dispatches
-  CUDA kernels, handles RNG, and lowers graphs for reusable typed execution.
-
-This file adapts operations whose input-gradient VJP is naturally expressed as a single `OpSpec`.
-Larger multi-input or parameterized layers (convolution, attention, batchnorm, pooling, RNG)
-still have precise specs and runtime implementations, but their full backward state usually belongs
-in layer/runtime code rather than in this compact unary interface.
-
-PyTorch analogy (approximately):
-
-- A spec `OpSpec` is like a compact `torch.autograd.Function` where we write down the VJP directly.
-- We do not model PyTorch's mutable `ctx`; the spec layer receives the input tensor `x` directly.
+This unary interface can capture a right-hand tensor as a constant; its gradient is then omitted.
+Operations with several differentiable inputs or mutable state use the typed graph and runtime
+interfaces. `NN.Runtime.Autograd` handles recording, sessions, and execution.
 -/
 
 @[expose] public section
@@ -55,21 +38,14 @@ variable {α : Type} [TorchLean.Storage α]
 
 /-! ## Elementwise lifting helpers -/
 
-/-- Lift an elementwise backward using the chain rule:
-$\frac{\partial L}{\partial x}=f'(x)\frac{\partial L}{\partial y}$ pointwise.
-
-This is the standard VJP pattern for elementwise ops.
-
-PyTorch analogy: the "local backward" rule for a pointwise op multiplies by the derivative mask. -/
+/-- Multiply the incoming gradient by `df` at each input coordinate. -/
 def liftElementwiseBackward [Mul α] {s : Shape}
   (df : α → α) : Tensor α s → Tensor α s → Tensor α s :=
   fun x dLdy =>
     let gx := Tensor.map df x
     mulSpec gx dLdy
 
-/-- Elementwise ReLU OpSpec on any shape.
-
-PyTorch analogy: `torch.relu(x)` / `torch.nn.functional.relu(x)`. -/
+/-- Elementwise ReLU and its input-gradient pullback. -/
 def reluOp [Mul α] [One α] [Zero α] [Max α] [BEq α] [LT α]
   [DecidableRel ((· > ·) : α → α → Prop)]
   {s : Shape} : OpSpec α s s :=
@@ -78,30 +54,22 @@ def reluOp [Mul α] [One α] [Zero α] [Max α] [BEq α] [LT α]
 
 variable [Context α]
 
-/-- Elementwise sigmoid OpSpec on any shape.
-
-PyTorch analogy: `torch.sigmoid(x)`. -/
+/-- Elementwise sigmoid and its input-gradient pullback. -/
 def sigmoidOp {s : Shape} : OpSpec α s s :=
 { forward      := Tensor.map (α:=α) (shape :=s) Activation.Math.sigmoidSpec
 , backward     := Activation.sigmoidBackwardSpec }
 
-/-- Elementwise tanh OpSpec on any shape.
-
-PyTorch analogy: `torch.tanh(x)`. -/
+/-- Elementwise tanh and its input-gradient pullback. -/
 def tanhOp {s : Shape} : OpSpec α s s :=
 { forward      := Tensor.map (α:=α) (shape :=s) Activation.Math.tanhSpec
 , backward     := Activation.tanhBackwardSpec }
 
-/-- Elementwise softplus OpSpec on any shape.
-
-PyTorch analogy: `torch.nn.functional.softplus(x)`. -/
+/-- Elementwise softplus and its input-gradient pullback. -/
 def softplusOp {s : Shape} : OpSpec α s s :=
 { forward      := Tensor.map (α:=α) (shape :=s) Activation.Math.softplusSpec
 , backward     := liftElementwiseBackward (α:=α) (s:=s) Activation.Math.softplusDerivSpec }
 
-/-- Elementwise SiLU (also called Swish) OpSpec on any shape.
-
-PyTorch analogy: `torch.nn.functional.silu(x)`. -/
+/-- Elementwise SiLU (Swish) and its input-gradient pullback. -/
 def siluOp {s : Shape} : OpSpec α s s :=
 { forward      := fun x => Activation.swishSpec (α := α) (s := s) x
 , backward     := fun x dLdy => mulSpec (Activation.swishDerivSpec (α := α) (s := s) x) dLdy }
@@ -112,9 +80,7 @@ def eluOp {s : Shape} (eluAlpha : α) : OpSpec α s s :=
 , backward     := fun x dLdy =>
     mulSpec (Activation.eluDerivSpec (α := α) (s := s) x eluAlpha) dLdy }
 
-/-- Elementwise tanh-approximate GELU OpSpec on any shape.
-
-PyTorch analogy: `torch.nn.functional.gelu(x, approximate="tanh")`. -/
+/-- Elementwise tanh-approximate GELU and its input-gradient pullback. -/
 def geluOp {s : Shape} : OpSpec α s s :=
 { forward      := fun x => Activation.geluSpec (α := α) (s := s) x
 , backward     := fun x dLdy => mulSpec (Activation.geluDerivSpec (α := α) (s := s) x) dLdy }
@@ -129,9 +95,7 @@ def coshOp {s : Shape} : OpSpec α s s :=
 { forward      := fun x => coshSpec (α := α) (s := s) x
 , backward     := liftElementwiseBackward (α:=α) (s:=s) MathFunctions.sinh }
 
-/-- Softmax `OpSpec` along an explicitly selected tensor dimension.
-
-PyTorch analogy: `torch.softmax(x, dim=axis)`. -/
+/-- Softmax and its input-gradient pullback along `axis`. -/
 def softmaxOp {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s] : OpSpec α s s :=
 { forward      := fun x => Activation.softmaxSpec (α := α) (s := s) axis x
 , backward     := fun x dLdy =>
@@ -149,14 +113,8 @@ def logSoftmaxOp {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s] : OpSpec �
 
 /-! ## Linear layers -/
 
-/-- Linear layer as an OpSpec: $y=Wx+b$.
-
-This `OpSpec` only returns the input gradient $\partial L/\partial x$. Parameter gradients for
-$W$ and $b$
-are not part of `OpSpec` (those live at the graph/runtime level).
-
-PyTorch analogy: `torch.nn.functional.linear` forward, with autograd producing gradients for
-`x`, `W`, and `b`. -/
+/-- The affine map $y=Wx+b$ with captured parameters and an input-gradient pullback.
+Parameter gradients are handled by the graph and runtime interfaces. -/
 def linearOp {α : Type} [TorchLean.Storage α]
     [Add α] [Mul α] [Zero α] [One α] {inDim outDim : Nat}
   (m : LinearSpec α inDim outDim) :
@@ -164,13 +122,8 @@ def linearOp {α : Type} [TorchLean.Storage α]
 { forward      := fun x => linearSpec (α:=α) m x
 , backward     := fun _x dLdy => linearInputDerivSpec (α:=α) m.weights dLdy }
 
-/-- Generic elementwise binary OpSpec with captured right-hand tensor and `d/dx`.
-
-This is a "closure style" op: we treat the RHS tensor as a captured constant and only return
-the VJP with respect to the LHS input.
-
-PyTorch analogy: in a tape/graph, `rhs` is typically another node; here we are writing the
-"lhs-only" derivative for convenience. -/
+/-- Apply `f` with a captured right operand. The pullback multiplies the incoming gradient
+by `dfdx` at each coordinate and returns only the left input's gradient. -/
 def binaryElemOp
   {s : Shape}
   (rhs : Tensor α s)
@@ -182,9 +135,7 @@ def binaryElemOp
     mulSpec gx dLdy
 }
 
-/-- Scale by constant scalar.
-
-PyTorch analogy: `x * c` where `c` is a scalar constant. -/
+/-- Scale by a captured scalar. -/
 def scaleOp {s : Shape} (c : α) : OpSpec α s s :=
 { forward      := fun x => scaleSpec x c
 , backward     := fun _x dLdy => scaleSpec dLdy c }
@@ -196,9 +147,7 @@ def negOp   {s : Shape} : OpSpec α s s :=
 { forward := fun x => negSpec x
 , backward := fun _x dLdy => negSpec dLdy }
 
-/-- Absolute value (uses `signSpec` for the subgradient).
-
-PyTorch analogy: `torch.abs(x)`. At $x=0$ we pick the subgradient $0$. -/
+/-- Absolute value, choosing subgradient zero at the origin. -/
 def absOp   {s : Shape} : OpSpec α s s :=
 { forward := fun x => absSpec x
 , backward := fun x dLdy =>
@@ -206,20 +155,14 @@ def absOp   {s : Shape} : OpSpec α s s :=
     mulSpec sgn dLdy
 }
 
-/-- Smooth absolute value (a differentiable surrogate for `abs`).
-
-This is useful when you want to avoid a kink at 0 in optimization.
-PyTorch analogy: there is no single canonical `smoothAbs`, but it is similar in spirit to
-$\sqrt{x^2+\varepsilon}$-style smoothings. -/
+/-- Smooth absolute value with the derivative of the same scalar formula. -/
 def smoothAbsOp {s : Shape} (ε : α := Context.defaultEpsilon) : OpSpec α s s :=
 { forward      := Tensor.map (α:=α) (shape :=s) (fun x => Activation.Math.smoothAbsSpec (α := α)
   x ε)
 , backward     := liftElementwiseBackward (α:=α) (s:=s) (fun x =>
   Activation.Math.smoothAbsDerivSpec (α := α) x ε) }
 
-/-- Elementwise exp.
-
-PyTorch analogy: `torch.exp(x)`. -/
+/-- Elementwise exponential and its input-gradient pullback. -/
 def expOp   {s : Shape} : OpSpec α s s :=
 { forward := fun x => expSpec x
 , backward := fun x dLdy => mulSpec (expSpec x) dLdy }
@@ -230,9 +173,7 @@ Elementwise natural logarithm.
 Domain discipline: this is the raw mathematical/PyTorch-style rule. The VJP divides by `x`,
 so callers should use it only when the input is strictly positive. Runtime backends are allowed to
 reject nonpositive inputs rather than silently manufacture a gradient. Use `safeLogOp` when the
-intended model is the smooth surrogate $\log(\operatorname{softplus}(x)+\varepsilon)$.
-
-PyTorch analogy: `torch.log(x)`. -/
+intended model is the smooth surrogate $\log(\operatorname{softplus}(x)+\varepsilon)$. -/
 def logOp   {s : Shape} : OpSpec α s s :=
 { forward := fun x => logSpec x
 , backward := fun x dLdy => divSpec dLdy x }
@@ -261,8 +202,7 @@ range, using the root rounded by that backend. Over the reals this gives a zero 
 $x\le0$. On IEEE backends, a zero factor
 multiplied by an infinite or NaN upstream value need not produce zero.
 
-PyTorch analogy: `torch.sqrt(x)` on the positive region, with an explicit TorchLean subgradient
-choice outside the classical domain.
+Positive inputs agree with `torch.sqrt`; nonpositive inputs use the stated subgradient.
 -/
 def sqrtOp  {s : Shape} : OpSpec α s s :=
 { forward := fun x => sqrtSpec x
@@ -297,13 +237,9 @@ def powOp {s : Shape} (rhs : Tensor α s) : OpSpec α s s :=
         (Tensor.Internal.Rep.getFlat dLdy index) }
 
 /--
-Elementwise reciprocal, $1/x$.
-
-Domain discipline: this is the raw reciprocal. Its VJP is $-1/x^2$, so callers should use it only
-when zero is excluded by the surrounding invariant. Use `safeInvOp` when the intended model is
-$1/(x+\varepsilon)$.
-
-PyTorch analogy: `torch.reciprocal(x)` or `1 / x`. -/
+Elementwise reciprocal, $1/x$, with pullback `(-seed / x) / x`.
+The successive divisions avoid a separate reciprocal or squared denominator. A numerical
+comparison with real division requires nonzero `x`. `safeInvOp` instead uses $1/(x+\varepsilon)$. -/
 def invOp   {s : Shape} : OpSpec α s s :=
 { forward := fun x => invSpec x
 , backward := fun x dLdy =>
@@ -316,8 +252,6 @@ Elementwise epsilon-shifted reciprocal, $1/(x+\varepsilon)$.
 The forward pass delegates to `safedivSpec` with unit numerator, and the VJP uses the derivative
 of the same shifted expression. The shift alone does not exclude a zero denominator: over
 the reals, `x = -Context.defaultEpsilon` makes it zero.
-
-PyTorch analogy: usually written manually as `1.0 / (x + eps)`.
 -/
 def safeInvOp {s : Shape} : OpSpec α s s :=
 { forward := fun x => safedivSpec (Tensor.full _ (1 : α)) x
@@ -344,25 +278,21 @@ def mulOp  {s : Shape} (rhs : Tensor α s) : OpSpec α s s :=
 /--
 Elementwise divide by a captured RHS tensor.
 
-Domain discipline: this is the raw division rule. The VJP multiplies by `1/rhs`, so callers should
-only use it when the captured denominator is known nonzero. Use `safeDivOp` when the
-intended model is `x/(rhs+ε)`.
+The VJP divides the upstream gradient by `rhs` directly, avoiding an overflowing intermediate
+reciprocal when the weighted result is finite. Comparison with real division requires nonzero `rhs`.
+Use `safeDivOp` for the shifted formula `x/(rhs+ε)`.
 -/
 def divOp  {s : Shape} (rhs : Tensor α s) : OpSpec α s s :=
-  binaryElemOp (α:=α) rhs (· / ·) (fun _ y => (1 : α) / y)
+{ forward := fun x => divSpec x rhs
+, backward := fun _ seed => divSpec seed rhs }
 
 /--
 Elementwise epsilon-shifted division by a captured RHS tensor,
 $x/(\mathtt{rhs}+\varepsilon)$. The shift does not guarantee a nonzero denominator or finite output.
-
-PyTorch analogy: usually written manually as `x / (rhs + eps)`.
 -/
 def safeDivOp {s : Shape} (rhs : Tensor α s) : OpSpec α s s :=
-{ forward      := fun x => safedivSpec x rhs
-, backward     := fun _x dLdy =>
-    let denomInv := Tensor.map (fun y => (1 : α) / (y + Context.defaultEpsilon)) rhs
-    mulSpec denomInv dLdy
-}
+{ forward := fun x => safedivSpec x rhs
+, backward := fun _ seed => safedivSpec seed rhs }
 
 /-- Elementwise minimum with a captured right-hand tensor.
 
@@ -404,9 +334,7 @@ def maxOp {s : Shape} (rhs : Tensor α s) : OpSpec α s s :=
     mulSpec mask dLdy
 }
 
-/-- Leaky ReLU with slope parameter.
-
-PyTorch analogy: `torch.nn.functional.leaky_relu(x, negative_slope=alpha_l)`. -/
+/-- Leaky ReLU with a captured negative slope. -/
 def leakyReluOp {s : Shape} (αₗ : α) : OpSpec α s s :=
 { forward      := fun x => Activation.leakyReluSpec x αₗ
 , backward     := fun x dLdy =>
@@ -424,16 +352,8 @@ def clampOp {s : Shape} (minVal maxVal : α) : OpSpec α s s :=
 
 /-! ## Loss OpSpecs -/
 
-/-
-These loss ops:
-
-- capture the `target` tensor (so the op is a function of predictions only),
-- return a scalar tensor (`Shape.scalar`),
-- scale the per-element gradient by the upstream scalar `dL/dy`.
-
-PyTorch analogy: `torch.nn.functional.*_loss(reduction="mean")` returns a scalar, and the upstream
-gradient is a scalar too. (Our exact loss semantics live in `NN/Spec/Layers/Loss.lean`.)
--/
+/- The losses capture their targets, return scalar tensors, and scale the prediction gradient
+by the incoming scalar. Their formulas and reduction conventions are defined in `Layers.Loss`. -/
 
 /-- MSE loss (returns a scalar), capturing the target. -/
 def mseLossOp {s : Shape} (target : Tensor α s) : OpSpec α s Shape.scalar :=
@@ -529,9 +449,7 @@ def logCoshLossOp {s : Shape} (target : Tensor α s) : OpSpec α s Shape.scalar 
 
 /-! ## Shape/structure ops -/
 
-/-- Reshape op (requires a size-equality proof).
-
-PyTorch analogy: `x.reshape(...)` (or `view`), but here the shape relationship is explicit. -/
+/-- Reshape between equal-size tensors; the pullback restores the input shape. -/
 def reshapeOp {s t : Shape}
   (h : s.size = t.size) : OpSpec α s t :=
 { forward      := fun x => reshapeSpec (α := α) (source := s) (target := t) x h
@@ -546,25 +464,18 @@ def swapAdjacentAxesOp {s : Shape} (depth : Nat) :
     Tensor.castShape (swapAdjacentAxes dLdz depth)
       (by simp) }
 
-/-- Fill a tensor with a constant (ignores input).
-
-PyTorch analogy: `torch.full_like(x, value)` (but here we keep the input only to fit the `OpSpec`
-shape, and ignore its content). -/
+/-- Ignore the input, return a constant tensor, and return a zero input gradient. -/
 def constantOp {s : Shape} (value : α) : OpSpec α s s :=
 { forward      := fun _x => Tensor.full s value
 , backward     := fun x _d => Tensor.map (fun _ => 0) x }
 
-/-- Replicate a scalar to any shape; backward sums gradients back to a scalar.
-
-PyTorch analogy: broadcasting a scalar in arithmetic, and in backward accumulating by sum. -/
+/-- Replicate a scalar; the pullback sums the incoming tensor gradient. -/
 def scalarToShapeOp {s : Shape} :
   OpSpec α Shape.scalar s :=
 { forward      := fun a => replicate (α := α) (shape := s) a
 , backward     := fun _a dLdy => Tensor.scalar (sumSpec (α:=α) dLdy) }
 
-/-- Apply boolean mask: keep where mask true, else set 0.
-
-PyTorch analogy: `torch.where(mask, x, 0)`. -/
+/-- Keep values where the mask is true and set the others to zero, in both passes. -/
 def applyMaskOp {s : Shape} (mask : Tensor Bool s) : OpSpec α s s :=
 { forward      := fun x => map2Spec (fun v b => if b then v else 0) x mask
 , backward     := fun _x dLdy => map2Spec (fun g b => if b then g else 0) dLdy mask }
@@ -575,7 +486,8 @@ def dropoutMaskedOp {s : Shape} (p : α) (mask : Tensor Bool s) : OpSpec α s s 
 , backward     := fun _x dLdy => dropoutMaskedBackwardSpec (α:=α) p mask dLdy }
 
 /-- Matrix-rank multiplication with a captured right operand and broadcasted batch prefixes. -/
-def matmulRightOp {batchA batchB batch : Shape} {m n p : Nat}
+def matmulRightOp {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
+    {batchA batchB batch : Shape} {m n p : Nat}
     (broadcastA : Shape.CanBroadcastTo batchA batch)
     (broadcastB : Shape.CanBroadcastTo batchB batch)
     (B : Tensor α (batchB.concat [n, p])) :
@@ -584,7 +496,8 @@ def matmulRightOp {batchA batchB batch : Shape} {m n p : Nat}
 , backward := fun A dLdz => (matmulBackwardSpec broadcastA broadcastB A B dLdz).1 }
 
 /-- Matrix-rank multiplication with a captured left operand and broadcasted batch prefixes. -/
-def matmulLeftOp {batchA batchB batch : Shape} {m n p : Nat}
+def matmulLeftOp {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
+    {batchA batchB batch : Shape} {m n p : Nat}
     (broadcastA : Shape.CanBroadcastTo batchA batch)
     (broadcastB : Shape.CanBroadcastTo batchB batch)
     (A : Tensor α (batchA.concat [m, n])) :
@@ -609,9 +522,7 @@ def sliceAxisRangeOp {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
 
 /-! ## Reductions and broadcasting -/
 
-/-- Reduce-sum along axis using a `NonemptyAxis` proof; backward broadcasts back.
-
-PyTorch analogy: `torch.sum(x, dim=axis)` (with `keepdim=false`). -/
+/-- Sum along `axis`; the pullback broadcasts the incoming gradient to the input shape. -/
 def reduceSumOp {s : Shape} (axis : Nat)
   [_valid : Shape.HasNonemptyAxis axis s]
   [_wf : Shape.WellFormed s]
@@ -621,17 +532,8 @@ def reduceSumOp {s : Shape} (axis : Nat)
 , backward     := fun _x dLdz => broadcastAfterSum s axis dLdz
 }
 
-/-- Generic broadcasting-aware binary OpSpec.
-
-The caller supplies:
-
-- explicit broadcast proofs (`CanBroadcastTo`) for both sides, and
-- a `reduceBack` map that takes a gradient in the broadcasted shape `t` and reduces it back to
-  the left shape `s1`.
-
-PyTorch analogy: this is where PyTorch's implicit broadcasting rules and reduction-of-broadcasted
-gradients ("sum over broadcasted dimensions") happen. In TorchLean we keep those shape relations
-explicit. -/
+/-- Broadcast both operands to `t` and apply `f` pointwise. The pullback multiplies by `dfdx`
+and uses the supplied `reduceBack` to accumulate the left input's gradient over broadcast axes. -/
 def binaryBroadcastOp {s1 s2 t : Shape}
   (rhs : Tensor α s2)
   (cbx : Shape.CanBroadcastTo s1 t)

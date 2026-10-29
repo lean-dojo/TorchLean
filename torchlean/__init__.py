@@ -1,4 +1,9 @@
-"""Capture tensor computations and request explicit checks from TorchLean.
+"""Compile framework graphs to TorchLean IR, or check a concrete capture explicitly.
+
+``@torchlean.compile`` selects PyTorch or JAX on a normal call, lowers the
+framework's captured graph, and checks its structure and types. Framework
+execution and automatic differentiation are preserved. ``.torchlean`` provides
+the captured IR and the check reports.
 
 ``verify(model, example)`` checks the captured graph's declared structure and
 types. Add ``checks=("structure", "types", "compare")`` to compare CPU reference
@@ -9,6 +14,9 @@ every input.
 Capture and translation happen automatically. ``export="Model.lean"`` optionally
 keeps that same artifact in a self-contained Lean module for further proofs;
 ``export="model.json"`` saves the interchange artifact instead.
+
+The optional native Python binding calls the same checker in process. Explicit
+``checker=`` or ``TORCHLEAN_VERIFY`` settings select an executable instead.
 """
 
 from __future__ import annotations
@@ -16,100 +24,229 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
-import os
 from pathlib import Path
-import subprocess
+import random
+import sys
 import tempfile
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from decimal import Decimal
 from typing import Any
 
-
-def _command(checker: str | Path | Sequence[str] | None) -> list[str]:
-    if isinstance(checker, (str, Path)):
-        return [str(checker), "ir"]
-    if checker is not None:
-        if (not isinstance(checker, Sequence) or not checker
-                or not all(isinstance(argument, str) for argument in checker)):
-            raise TypeError("checker must be a path or a nonempty sequence of command arguments")
-        return list(checker)
-    path = os.environ.get("TORCHLEAN_VERIFY")
-    if path:
-        return [path, "ir"]
-    executable = Path(__file__).resolve().parent.parent / ".lake/build/bin/verify"
-    if not executable.is_file():
-        raise FileNotFoundError(
-            "Build the TorchLean `verify` executable first, or supply checker= with "
-            "a command ending in `verify ir`. Verification does not start a build implicitly."
-        )
-    return [str(executable), "ir"]
+from ._checker import Checker
 
 
-def _run(command: list[str], arguments: Sequence[str], *, report: bool = False
-         ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(command + list(arguments), capture_output=True, text=True, check=False)
-    if result.returncode not in ((0, 1) if report else (0,)):
-        raise RuntimeError(f"TorchLean checker exited with {result.returncode}: {result.stderr.strip()}")
-    return result
+_NO_EXAMPLE = object()
 
 
-def _capture(model: Any, examples: tuple[Any, ...], frontend: str, command: list[str],
-             directory: Path, checks: Sequence[str]) -> dict[str, Any]:
-    compare = "compare" in checks or "compare_bitwise" in checks
-    execute = compare or "execute" in checks
-    if not examples or examples[0] is None:
-        raise ValueError("capturing a computation requires example tensors")
-    if frontend == "jax":
-        from NN.Runtime.JAX.jaxpr import Unsupported, encode, export, references
+def _detect_frontend(model: Any, examples: tuple[Any, ...],
+                     kwargs: Mapping[str, Any] | None = None, frontend: str = "auto") -> str:
+    """Identify framework values without importing either optional dependency."""
+    if frontend not in ("auto", "pytorch", "jax"):
+        raise ValueError(f"unknown frontend {frontend!r}; use auto, pytorch, or jax")
+    if frontend != "auto":
+        return frontend
+    found: set[str] = set()
+    numpy_input = False
 
-        try:
-            artifact = export(model, *examples)
-        except Unsupported as error:
-            raise NotImplementedError(str(error)) from error
-        if execute:
-            artifact["arguments"] = [encode(value) for value in examples]
-        if compare:
-            artifact.update(references(model, *examples))
-        return artifact
-    if frontend != "pytorch":
-        raise ValueError(f"unknown frontend {frontend!r}; use pytorch, jax, or pass an artifact")
-    import torch
+    def inspect(value: Any) -> None:
+        nonlocal numpy_input
+        modules = {base.__module__.split(".")[0] for base in type(value).__mro__}
+        if "torch" in modules:
+            found.add("pytorch")
+        if modules & {"jax", "jaxlib"}:
+            found.add("jax")
+        numpy_input |= "numpy" in modules
+        if isinstance(value, Mapping):
+            for item in value.values():
+                inspect(item)
+        elif isinstance(value, (tuple, list)):
+            for item in value:
+                inspect(item)
 
-    if not all(isinstance(value, torch.Tensor) for value in examples):
-        raise NotImplementedError("PyTorch capture requires positional tensor arguments")
+    arguments = (examples, dict(kwargs or {}))
+    inspect(arguments)
+    # Registered pytree nodes can hide all of a call's tensor arguments. Use
+    # frameworks the caller already imported, so a plain PyTorch call still
+    # neither imports JAX nor depends on its optional installation. Inspect both
+    # registries even after finding a tensor to reject mixed-framework trees.
+    for module_name, flatten_name in (("torch.utils._pytree", "tree_leaves"),
+                                      ("jax.tree_util", "tree_leaves")):
+        module = sys.modules.get(module_name)
+        flatten = getattr(module, flatten_name, None)
+        if flatten is not None:
+            for value in flatten(arguments):
+                inspect(value)
+    inspect(getattr(model, "__self__", model))
+    if len(found) > 1:
+        raise NotImplementedError("mixed PyTorch and JAX tensor arguments are unsupported")
+    if len(found) == 1:
+        return found.pop()
+    if numpy_input:
+        return "jax"
+    raise NotImplementedError("cannot detect a frontend; supply PyTorch or JAX example tensors")
 
+
+@contextmanager
+def _preserve_random_state():
+    """Tracing and sample checks must not consume the caller's host RNG streams."""
+    state = random.getstate()
+    numpy = sys.modules.get("numpy")
+    numpy_state = numpy.random.get_state() if numpy is not None else None
+    try:
+        yield
+    finally:
+        random.setstate(state)
+        if numpy_state is not None:
+            numpy.random.set_state(numpy_state)
+
+
+def _load_pytorch_adapter(checker: Checker, directory: Path) -> Any:
     path = directory / "capture.py"
-    _run(command, ["--export-pytorch", str(path)])
+    checker.write_adapter(path)
     spec = importlib.util.spec_from_file_location("torchlean_capture", path)
     if spec is None or spec.loader is None:
         raise RuntimeError("could not load the emitted PyTorch adapter")
     adapter = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(adapter)
-    # Capture and ShapeProp may execute code. Keep the caller's model and input
+    return adapter
+
+
+def _lower_pytorch_graph(adapter: Any, model: Any, graph: Any, input_names: Sequence[str],
+                         directory: Path, *,
+                         tensor_values: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Reuse the emitted lowerer on an already captured framework graph."""
+    adapter._TENSOR_VALUES = dict(tensor_values or {})
+    for node in graph.nodes:
+        if node.op == "get_attr":
+            value = model
+            for part in str(node.target).split("."):
+                value = getattr(value, part)
+            if isinstance(value, adapter.torch.Tensor):
+                adapter._TENSOR_VALUES[node.name] = value
+    adapter._check_graph_operators(graph, model)
+    adapter._capture = lambda *args, **keywords: (graph, list(input_names))
+    return adapter.export_torchlean_graph_json(
+        model, (), str(directory / "graph.json"), require_torch_export=True)
+
+
+def _capture(model: Any, examples: tuple[Any, ...], frontend: str, checker: Checker,
+             directory: Path, checks: Sequence[str], *,
+             kwargs: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Lower a framework trace, retaining its flat tensor input order.
+
+    Container structure and scalar leaves are specialized to this call. The input
+    tensors remain dynamic IR inputs, including unused tensor arguments.
+    """
+    compare = "compare" in checks or "compare_bitwise" in checks
+    execute = compare or "execute" in checks
+    kwargs = dict(kwargs or {})
+    frontend = _detect_frontend(model, examples, kwargs, frontend)
+    original = getattr(model, "__torchlean_original__", None)
+    if original is not None:
+        owner = getattr(model, "__self__", None)
+        model = original.__get__(owner, type(owner)) if owner is not None else original
+    if frontend == "jax":
+        import jax
+        from NN.Runtime.JAX.jaxpr import Unsupported, encode, lower, references
+
+        leaves, structure = jax.tree.flatten(copy.deepcopy((examples, kwargs)))
+        tensors = [value for value in leaves if hasattr(value, "shape")
+                   and hasattr(value, "dtype")]
+        if not tensors:
+            raise NotImplementedError("JAX capture requires at least one tensor argument")
+        if any(not (hasattr(value, "shape") and hasattr(value, "dtype"))
+               and type(value) not in (type(None), bool, int, float, str) for value in leaves):
+            raise NotImplementedError("JAX static arguments must be None, bool, int, float or str")
+        dynamic = [hasattr(value, "shape") and hasattr(value, "dtype") for value in leaves]
+        function = copy.deepcopy(model)
+
+        def flattened(*inputs):
+            inputs = iter(inputs)
+            values = [next(inputs) if is_tensor else value
+                      for value, is_tensor in zip(leaves, dynamic)]
+            args, keywords = jax.tree.unflatten(structure, values)
+            return function(*args, **keywords)
+
+        try:
+            with _preserve_random_state():
+                artifact = lower(jax.make_jaxpr(flattened)(*tensors))
+                if execute:
+                    artifact["arguments"] = [encode(value) for value in tensors]
+                if compare:
+                    artifact.update(references(flattened, *tensors))
+        except Unsupported as error:
+            raise NotImplementedError(str(error)) from error
+        return artifact
+    import torch
+    from ._compiler import _capture_scope
+
+    adapter = _load_pytorch_adapter(checker, directory)
+    # Capture may execute code. Keep the caller's model and input
     # intact; arbitrary external effects in user Python remain outside this API.
     if not isinstance(model, torch.nn.Module):
         if not callable(model):
             raise TypeError("PyTorch capture requires a module or callable")
-        function = model
 
         class Function(torch.nn.Module):
-            def forward(self, *inputs):
-                return function(*inputs)
+            def __init__(self, function):
+                super().__init__()
+                self.function = function
 
-        model = Function()
-    model = copy.deepcopy(model)
-    examples = tuple(value.detach().clone().requires_grad_(value.requires_grad)
-                     for value in examples)
-    artifact = adapter.export_torchlean_graph_json(
-        model, examples, str(directory / "graph.json"), require_torch_export=True)
-    if execute:
-        artifact["arguments"] = [adapter._constant(value) for value in examples]
-    if compare:
-        with torch.no_grad():
-            outputs, _ = torch.utils._pytree.tree_flatten(model(*examples))
-        if not all(isinstance(value, torch.Tensor) for value in outputs):
-            raise ValueError("sample comparison requires tensor outputs")
-        artifact["reference_outputs"] = [adapter._constant(value) for value in outputs]
+            def forward(self, *inputs, **keywords):
+                return self.function(*inputs, **keywords)
+
+        model = Function(model)
+    memo: dict[int, Any] = {}
+    model = copy.deepcopy(model, memo)
+    leaves, structure = torch.utils._pytree.tree_flatten((examples, kwargs))
+    if any(not isinstance(value, torch.Tensor)
+           and type(value) not in (type(None), bool, int, float, str) for value in leaves):
+        raise NotImplementedError("PyTorch static arguments must be None, bool, int, float or str")
+    for value in leaves:
+        if isinstance(value, torch.Tensor) and id(value) not in memo:
+            # clone() compacts non-dense views and can change a layout-dependent
+            # branch. Tensor's deepcopy preserves strides and shared storage;
+            # detaching first also accepts non-leaf arguments without their tape.
+            memo[id(value)] = copy.deepcopy(value.detach(), memo).requires_grad_(value.requires_grad)
+    tensors = [memo[id(value)] for value in leaves if isinstance(value, torch.Tensor)]
+    if not tensors:
+        raise NotImplementedError("PyTorch capture requires at least one tensor argument")
+    copied = [memo[id(value)] if isinstance(value, torch.Tensor) else value for value in leaves]
+    examples, kwargs = torch.utils._pytree.tree_unflatten(copied, structure)
+    devices = list(range(torch.cuda.device_count())) if torch.cuda.is_initialized() else []
+    with _capture_scope(), _preserve_random_state(), torch.random.fork_rng(devices=devices):
+        exported = torch.export.export(model, examples, kwargs=kwargs)
+        if any(spec.kind.name != "USER_OUTPUT" for spec in exported.graph_signature.output_specs):
+            raise NotImplementedError(
+                "exported mutation/effects are outside the pure graph contract")
+        names = []
+        tensor_values = {}
+        state = dict(exported.state_dict)
+        constants = dict(exported.constants)
+        for input_spec in exported.graph_signature.input_specs:
+            if input_spec.kind.name == "USER_INPUT":
+                if isinstance(input_spec.arg, torch.export.graph_signature.TensorArgument):
+                    names.append(input_spec.arg.name)
+                elif not isinstance(input_spec.arg, torch.export.graph_signature.ConstantArgument):
+                    raise NotImplementedError("exported non-tensor dynamic inputs are unsupported")
+            else:
+                value = state.get(input_spec.target, constants.get(input_spec.target))
+                if isinstance(value, torch.Tensor):
+                    tensor_values[input_spec.arg.name] = value
+        if len(names) != len(tensors):
+            raise NotImplementedError(
+                "exported tensor input order does not match the example pytree")
+        artifact = _lower_pytorch_graph(adapter, model, exported.graph, names, directory,
+                                       tensor_values=tensor_values)
+        if execute:
+            artifact["arguments"] = [adapter._constant(value) for value in tensors]
+        if compare:
+            with torch.no_grad():
+                outputs, _ = torch.utils._pytree.tree_flatten(model(*examples, **kwargs))
+            if not all(isinstance(value, torch.Tensor) for value in outputs):
+                raise ValueError("sample comparison requires tensor outputs")
+            artifact["reference_outputs"] = [adapter._constant(value) for value in outputs]
     return artifact
 
 
@@ -206,15 +343,19 @@ end «{path.stem}»
         output.write(content)
 
 
-def verify(model: Any, example: Any = None, *examples: Any, frontend: str = "pytorch",
+def verify(model: Any, example: Any = _NO_EXAMPLE, *examples: Any, frontend: str = "auto",
            checks: Sequence[str] = ("structure", "types"),
            checker: str | Path | Sequence[str] | None = None,
-           export: str | Path | None = None) -> dict[str, Any]:
+           export: str | Path | None = None,
+           example_kwargs: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Check a captured computation or an existing typed IR artifact.
 
-    ``model`` is a PyTorch module, a JAX function with ``frontend="jax"``, or an
-    artifact mapping. Both frontends accept positional tensor arguments, as in
-    ``verify(function, x, y)``. ``checks`` may request ``structure``, ``types``,
+    ``model`` is a PyTorch module, a JAX function, or an artifact mapping. The
+    frontend is detected from the example tensors; ``frontend`` may select it
+    explicitly. Both frontends accept tensor pytrees, as in ``verify(function, x, y)``
+    or ``verify(function, {"x": x}, example_kwargs={"y": y})``. Scalar arguments
+    (None, bool, int, float and str) specialize the capture to their supplied values.
+    ``checks`` may request ``structure``, ``types``,
     ``execute``, ``compare`` or ``compare_bitwise``. ``compare`` lets two NaN results
     agree whatever their sign and payload; ``compare_bitwise`` compares their words.
     Unknown requests produce unsupported entries, not a pass.
@@ -230,7 +371,9 @@ def verify(model: Any, example: Any = None, *examples: Any, frontend: str = "pyt
 
     ``checker`` is an executable path (the ``ir`` subcommand is appended), or a
     complete argument sequence already ending in the IR checker command. No shell
-    is used. Omitting it uses ``TORCHLEAN_VERIFY`` or the local built executable.
+    is used. Omitting it uses ``TORCHLEAN_VERIFY``, the optional native extension,
+    or the local built executable, in that order. An installed extension's errors
+    propagate instead of retrying through a different checker.
 
     The returned ``ok`` covers only the requested checks. Inspect ``checks`` for
     their scope. In particular, a sample comparison is not an all-input theorem,
@@ -258,7 +401,12 @@ def verify(model: Any, example: Any = None, *examples: Any, frontend: str = "pyt
         raise TypeError("checks must be a sequence of names, not a single string")
     if not checks:
         raise ValueError("request at least one check")
-    if isinstance(model, Mapping) and (example is not None or examples):
+    if example_kwargs is not None and (
+            not isinstance(example_kwargs, Mapping)
+            or not all(isinstance(key, str) for key in example_kwargs)):
+        raise TypeError("example_kwargs must be a mapping with string argument names")
+    if isinstance(model, Mapping) and (
+            (example is not _NO_EXAMPLE and example is not None) or examples or example_kwargs):
         raise ValueError("an artifact already contains its arguments; do not supply example tensors")
     if export is not None and not isinstance(export, (str, Path)):
         raise TypeError("export must be a .json or .lean file path")
@@ -271,12 +419,13 @@ def verify(model: Any, example: Any = None, *examples: Any, frontend: str = "pyt
             raise ValueError("a Lean export filename must be an ASCII identifier, such as Model.lean")
         if destination.exists():
             raise FileExistsError(f"refusing to replace existing export: {destination}")
-    command = _command(checker)
+    runner = Checker(checker)
     with tempfile.TemporaryDirectory(prefix="torchlean-verify-") as temporary:
         directory = Path(temporary)
         try:
+            arguments = () if example is _NO_EXAMPLE else (example, *examples)
             artifact = dict(model) if isinstance(model, Mapping) else _capture(
-                model, (example, *examples), frontend, command, directory, checks)
+                model, arguments, frontend, runner, directory, checks, kwargs=example_kwargs)
         except NotImplementedError as error:
             # No Lean checks ran. Keep every request visible rather than fabricating
             # a successful result for a smaller graph or a different frontend.
@@ -286,27 +435,12 @@ def verify(model: Any, example: Any = None, *examples: Any, frontend: str = "pyt
                         outputs=None, conversion_flags=None, frontend_equivalence="not_checked",
                         frontend_device_layout_constraints="not_checked",
                         external_kernels="not_checked")
-        path = directory / "artifact.json"
         source = json.dumps(artifact, ensure_ascii=False, allow_nan=False) + "\n"
-        path.write_text(source, encoding="utf-8")
         if destination is not None:
             _export(source, destination)
-        result = _run(command, [str(path), *checks], report=True)
-        try:
-            report = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
-            raise RuntimeError(
-                f"checker did not produce a JSON report: {result.stderr.strip()}") from error
-        if not isinstance(report, dict) or report.get("format") != "torchlean.verification.v1":
-            raise RuntimeError("checker returned an unknown verification report format")
-        findings = report.get("checks")
-        if (not isinstance(findings, list) or not all(isinstance(item, dict) for item in findings)
-                or [item.get("name") for item in findings] != list(checks)
-                or type(report.get("ok")) is not bool):
-            raise RuntimeError("checker report does not cover the requested checks")
-        if (result.returncode == 0) != report["ok"]:
-            raise RuntimeError("checker exit status conflicts with its verification report")
-        return report
+        return runner.check(source, checks, directory)
 
 
-__all__ = ["verify"]
+from ._compiler import compile
+
+__all__ = ["compile", "verify"]

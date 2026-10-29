@@ -8,7 +8,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Runtime.Autograd.Engine.Core.Base
-public import NN.Spec.Layers.Loss
+public import NN.Spec.Autograd.Ops
 
 /-!
 # Core Tape Activations and Losses
@@ -58,46 +58,31 @@ def distill {α : Type} [TorchLean.Storage α] [Context α] {s : Shape}
         pure #[(studentId, Spec.SomeTensor.ofTensor gradient)] }
   pure (t.addNode node)
 
-/--
-Elementwise logistic sigmoid activation.
-
- This builds a tape node whose forward pass is `Activation.sigmoidSpec`, and whose backward pass
- applies `Activation.sigmoidBackwardSpec`. It uses the preactivation and retains the incoming
- gradient when repairing a local slope that would round to zero on its own.
-
- PyTorch comparison: `torch.sigmoid` / `torch.nn.functional.sigmoid`.
- Reference: https://pytorch.org/docs/stable/generated/torch.sigmoid.html
- -/
+/-- Elementwise sigmoid. The shared pullback uses the preactivation and retains the incoming
+gradient when repairing a local slope that would round to zero on its own. -/
 @[inline] def sigmoid {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α)
       × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "sigmoid" xId
-    (forward := fun x => Activation.sigmoidSpec (α := α) x)
-    (backward := Activation.sigmoidBackwardSpec)
+    (forward := (Spec.sigmoidOp (α := α) (s := s)).forward)
+    (backward := (Spec.sigmoidOp (α := α) (s := s)).backward)
 
-/--
- Elementwise hyperbolic tangent activation.
-
- Forward uses `Activation.tanhSpec`; backward uses `Activation.tanhBackwardSpec`, retaining the
- incoming gradient through the local slope's range repair.
-
- PyTorch comparison: `torch.tanh`.
- Reference: https://pytorch.org/docs/stable/generated/torch.tanh.html
- -/
+/-- Elementwise tanh. The shared pullback retains the incoming gradient through the local
+slope's range repair. -/
 @[inline] def tanh {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α)
       × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "tanh" xId
-    (forward := fun x => Activation.tanhSpec (α := α) x)
-    (backward := Activation.tanhBackwardSpec)
+    (forward := (Spec.tanhOp (α := α) (s := s)).forward)
+    (backward := (Spec.tanhOp (α := α) (s := s)).backward)
 
 /-- Elementwise SiLU, using the shared split-exponential value and derivative specifications. -/
 @[inline] def silu {α : Type} [TorchLean.Storage α] [Context α]
     {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) :
     Result (Tape (Spec.SomeTensor α) × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "silu" xId
-    (forward := Activation.swishSpec)
-    (backward := fun x seed => mulSpec (Activation.swishDerivSpec x) seed)
+    (forward := (Spec.siluOp (α := α) (s := s)).forward)
+    (backward := (Spec.siluOp (α := α) (s := s)).backward)
 
 /--
 Elementwise tanh-approximate GELU.
@@ -110,10 +95,8 @@ without changing this tape-level rule.
   {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α)
       × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "gelu" xId
-    (forward := fun x => Activation.geluSpec (α := α) x)
-    (backward := fun x dLdy =>
-      let dgelu := Activation.geluDerivSpec (α := α) x
-      mulSpec dgelu dLdy)
+    (forward := (Spec.geluOp (α := α) (s := s)).forward)
+    (backward := (Spec.geluOp (α := α) (s := s)).backward)
 
 /--
  Softmax along the last axis (recursing over outer dimensions).
@@ -157,47 +140,24 @@ subtracting a rounded unit probability from one. This is the primitive used by c
     }
   pure (t.addNode node)
 
-/--
- Elementwise softplus activation.
-
- Forward uses `Activation.softplusSpec`; backward uses `Activation.softplusDerivSpec`.
-
- PyTorch comparison: `torch.nn.functional.softplus`.
- Reference: https://pytorch.org/docs/stable/generated/torch.nn.functional.softplus.html
- -/
+/-- Elementwise softplus with the shared value and derivative implementations. -/
 @[inline] def softplus {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α)
       × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "softplus" xId
-    (forward := fun x => Activation.softplusSpec (α := α) x)
-    (backward := fun x dLdy =>
-      let dsoft := Activation.softplusDerivSpec (α := α) x
-      mulSpec dsoft dLdy)
+    (forward := (Spec.softplusOp (α := α) (s := s)).forward)
+    (backward := (Spec.softplusOp (α := α) (s := s)).backward)
 
-/--
- Elementwise exponential.
-
- Forward uses `expSpec`; backward multiplies by `exp(x)` (pointwise), i.e. `d/dx exp(x) = exp(x)`.
-
- PyTorch comparison: `torch.exp`.
- Reference: https://pytorch.org/docs/stable/generated/torch.exp.html
- -/
+/-- Elementwise exponential; the pullback multiplies the upstream gradient by `exp(x)`. -/
 @[inline] def exp {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α)
       × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "exp" xId
-    (forward := fun x => expSpec (α := α) x)
-    (backward := fun x dLdy => mulSpec (expSpec (α := α) x) dLdy)
+    (forward := (Spec.expOp (α := α) (s := s)).forward)
+    (backward := (Spec.expOp (α := α) (s := s)).backward)
 
-/--
- Elementwise natural logarithm.
-
- Forward uses `logSpec`; backward divides the incoming gradient by `x` (pointwise)
- (on its mathematical domain; this runtime does not model NaNs/Infs explicitly).
-
- PyTorch comparison: `torch.log`.
- Reference: https://pytorch.org/docs/stable/generated/torch.log.html
- -/
+/-- Elementwise logarithm, checking positivity before recording. The pullback divides the
+upstream gradient by the input directly. -/
 @[inline] def log {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α) × Nat)
       := do
@@ -208,7 +168,8 @@ subtracting a rounded unit probability from one. This is the primitive used by c
   if !(allSpec (α := α) (s := s) (fun v => decide (v > (0 : α))) x) then
     throw "autograd: log: input contains values <= 0 (or NaN); \
       `safe_log` computes log(softplus(x) + eps) and accepts every input"
-  let y := logSpec (α:=α) x
+  let operation := Spec.logOp (α := α) (s := s)
+  let y := operation.forward x
   let node : Node (Spec.SomeTensor α) :=
     { name := some "log"
       value := Spec.SomeTensor.ofTensor y
@@ -216,26 +177,18 @@ subtracting a rounded unit probability from one. This is the primitive used by c
       parents := #[xId]
       backward := fun dLdyAny => do
         let dLdy ← requireGrad (α := α) (τ := s) dLdyAny
-        pure #[(xId, Spec.SomeTensor.ofTensor (divSpec dLdy x))]
+        pure #[(xId, Spec.SomeTensor.ofTensor (operation.backward x dLdy))]
     }
   pure (t.addNode node)
 
-/--
- Elementwise reciprocal `x ↦ 1/x`.
-
- Backward implements `d/dx (x⁻¹) = -(x⁻¹)²` (pointwise).
-
- PyTorch comparison: `torch.reciprocal`.
- Reference: https://pytorch.org/docs/stable/generated/torch.reciprocal.html
- -/
+/-- Elementwise reciprocal. The pullback evaluates `(-gradient / x) / x`, avoiding an
+intermediate reciprocal or square that could overflow. -/
 @[inline] def inv {α : Type} [TorchLean.Storage α] [Context α]
   {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α)
       × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "inv" xId
-    (forward := fun x => invSpec (α := α) x)
-    (backward := fun x dLdy =>
-      -- Successive divisions avoid overflowing a reciprocal or squaring a large denominator.
-      divSpec (divSpec (negSpec dLdy) x) x)
+    (forward := (Spec.invOp (α := α) (s := s)).forward)
+    (backward := (Spec.invOp (α := α) (s := s)).backward)
 
 /--
  Elementwise `log(softplus(x) + ε)`.
@@ -253,20 +206,11 @@ subtracting a rounded unit probability from one. This is the primitive used by c
   {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) (ε : α := Context.defaultEpsilon) :
     Result (Tape (Spec.SomeTensor α) × Nat) :=
   unary (α := α) (t := t) (σ := s) (τ := s) "safe_log" xId
-    (forward := fun x => Activation.safeLogSpec (α := α) x ε)
-    (backward := fun x dLdy =>
-      let dlog := Activation.safeLogDerivSpec (α := α) x ε
-      mulSpec dlog dLdy)
+    (forward := (Spec.safeLogOp (α := α) (s := s) ε).forward)
+    (backward := (Spec.safeLogOp (α := α) (s := s) ε).backward)
 
-/--
- Reduce-sum over all entries, producing a scalar node.
-
- Backward replicates the upstream scalar gradient to every entry of the input tensor (i.e.
- `d/dx Σ_i x_i = 1` per coordinate).
-
- PyTorch comparison: `torch.sum(x)` with `dim=None`.
- Reference: https://pytorch.org/docs/stable/generated/torch.sum.html
- -/
+/-- Sum every entry into a scalar node. The pullback replicates the upstream scalar across
+the input shape. -/
 @[inline] def sum {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
   {s : Shape} (t : Tape (Spec.SomeTensor α)) (xId : Nat) : Result (Tape (Spec.SomeTensor α)
       × Nat) :=

@@ -98,6 +98,79 @@ theorem foldl_eq_fin_foldl {α β : Type u} [Storage α] {s : Shape}
   rw [hData, Array.toList_ofFn, List.ofFn_eq_map, List.foldl_map,
     ← Fin.foldl_eq_foldl_finRange]
 
+/-- Interpret a reduction without changing its traversal or the order of its operations.
+The state and tensor elements may have different representations on the two sides. -/
+theorem map_foldl {α β γ δ : Type u} [Storage α] [Storage β] {s : Shape}
+    (input : Rep α s) (step : γ → α → γ) (initial : γ)
+    (element : α → β) (state : γ → δ) (step' : δ → β → δ)
+    (hstep : ∀ accumulator value,
+      state (step accumulator value) = step' (state accumulator) (element value)) :
+    state (input.foldl step initial) = (input.map element).foldl step' (state initial) := by
+  simp only [foldl_eq_fin_foldl, Fin.foldl_eq_foldl_finRange]
+  symm
+  apply List.foldl_hom state
+  intro accumulator index
+  simpa only [map, getFlat_ofFlatFn] using (hstep accumulator (input.getFlat index)).symm
+
+/-- Fuse an elementwise map into a reduction without changing its evaluation order. -/
+theorem foldl_map {α β γ : Type u} [Storage α] [Storage β] {s : Shape}
+    (f : α → β) (input : Rep α s) (step : γ → β → γ) (initial : γ) :
+    (input.map f).foldl step initial =
+      input.foldl (fun state value => step state (f value)) initial := by
+  simpa using (map_foldl input (fun state value => step state (f value)) initial
+    f id step (fun _ _ => rfl)).symm
+
+/-- Proof-facing coordinates in the same row-major order as a tensor reduction. -/
+def coordinates (shape : Shape) : Rep (Coord shape) shape := ofFn id
+
+/-- Flat and structured coordinates observe the same stored entry. -/
+theorem getFlat_eq_get {α : Type u} [Storage α] {shape : Shape}
+    (input : Rep α shape) (index : Fin (Shape.size shape)) :
+    input.getFlat index = input.get (Coord.unlinearize index) := by
+  simp only [get, Coord.linearize_unlinearize]
+
+/-- Traverse the same entries through their row-major coordinates. This exposes a producer's
+scalar computation without treating its already-computed output as a new source tensor. -/
+theorem foldl_eq_coordinates {α β : Type} [Storage α] {shape : Shape}
+    (step : β → α → β) (initial : β) (input : Rep α shape) :
+    input.foldl step initial =
+      (coordinates shape).foldl
+        (fun state coordinate => step state (input coordinate)) initial := by
+  simp only [foldl_eq_fin_foldl, coordinates, ofFn, getFlat_ofFlatFn, id_eq,
+    get, Coord.linearize_unlinearize]
+
+/-- Expose a generator's arithmetic without evaluating or unrolling its entries. -/
+theorem ofFn_eq_map_coordinates {α : Type} [Storage α] {shape : Shape}
+    (values : Coord shape → α) :
+    ofFn values = (coordinates shape).map values := by
+  apply Rep.ext
+  intro coordinate
+  simp [coordinates]
+
+/-- Tensor inputs share the same coordinate traversal even when their storage differs. -/
+theorem zipWith_eq_map_coordinates {α β γ : Type} [Storage α] [Storage β] [Storage γ]
+    {shape : Shape} (f : α → β → γ) (left : Rep α shape) (right : Rep β shape) :
+    zipWith f left right = (coordinates shape).map (fun i => f (left i) (right i)) := by
+  apply Rep.ext
+  intro coordinate
+  simp [coordinates]
+
+/-- Lift a step invariant through two tensor reductions with the same row-major traversal.
+The relation may include an error budget or additional range information. -/
+theorem foldl_rel {α β γ δ : Type u} [Storage α] [Storage β] {s : Shape}
+    (input : Rep α s) (input' : Rep β s) (step : γ → α → γ) (step' : δ → β → δ)
+    (relation : γ → δ → Prop) (initial : γ) (initial' : δ)
+    (hinit : relation initial initial')
+    (hstep : ∀ (index : Coord s) accumulator accumulator',
+      relation accumulator accumulator' →
+        relation (step accumulator (input index)) (step' accumulator' (input' index))) :
+    relation (input.foldl step initial) (input'.foldl step' initial') := by
+  simp only [foldl_eq_fin_foldl, Fin.foldl_eq_foldl_finRange]
+  apply List.foldl_rel hinit
+  intro index _ accumulator accumulator' hacc
+  simpa only [get, Coord.linearize_unlinearize] using
+    hstep (Coord.unlinearize index) accumulator accumulator' hacc
+
 /-- Flat lookup into a stack selects the corresponding row and inner flat index. -/
 theorem getFlat_stack_product {α : Type u} [Storage α] {n : Nat} {s : Shape}
     (components : Fin n → Rep α s) (outer : Fin n)

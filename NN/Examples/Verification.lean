@@ -19,6 +19,7 @@ public import NN.Verification.Builtin.IBPWorkflow
 public import NN.Verification.Builtin.MlpTrainVerifyWorkflow
 public import NN.Verification.Builtin.TransformerIBPWorkflow
 public import NN.Verification.VNNComp.MnistFC
+public import NN.Examples.Verification.Robustness.Mlp
 
 /-!
 # Verification Examples

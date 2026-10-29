@@ -8,9 +8,9 @@ module
 
 public import FloatLib.Numerics.Enclosure.Elementary.BinaryGridRuntime
 public import FloatLib.Numerics.Enclosure.Interval.Hyperbolic
+public import FloatLib.Numerics.Enclosure.Interval.Real
 public import NN.Core.Numeric.Quotient
 import FloatLib.Numerics.Enclosure.Elementary.BinaryGridProof
-import FloatLib.Numerics.Enclosure.Interval.Real
 import Mathlib.Algebra.Ring.Int.Parity
 import Mathlib.Analysis.SpecialFunctions.Pow.Real
 
@@ -26,8 +26,8 @@ Each candidate carries a proof that it encloses the real coefficient expression 
 codec rounds it. This does not by itself prove the final codec's rounding law, identify that
 expression with every caller's derivative, or verify a native GPU implementation.
 
-The proof fields are erased from execution. Only the internal replay entrypoints are exported;
-tensors, model composition and differentiation traversal remain in their own modules.
+`enclosedSlope?_eq_some` links a successful replay to its input and seed encodings, certified
+bounds, and returned endpoint. The proof fields are erased from execution.
 -/
 
 namespace TorchLean.Numeric.Internal
@@ -35,7 +35,7 @@ namespace TorchLean.Numeric.Internal
 open TorchLean.Numeric
 open QuotientCoefficients
 
-def Related {α β : Type} (R : α → β → Prop) :
+@[expose] public def Related {α β : Type} (R : α → β → Prop) :
     {n : Nat} → QuotientCoefficients n α → QuotientCoefficients n β → Prop
   | _, .scalar a, .scalar b => R a b
   | _, .dual a da, .dual b db => Related R a b ∧ Related R da db
@@ -99,7 +99,8 @@ theorem related_exp {α β : Type} [Add α] [Add β] [Mul α] [Mul β] {R : α �
     exact ⟨ih ha.1, related_mul hadd hmul (ih ha.1) ha.2⟩
 
 /-- Lift a logarithm through the existing coefficient quotient rule. -/
-def logarithm {α : Type} [Add α] [Sub α] [Mul α] [Div α] (evaluate : α → α) :
+@[expose] public def logarithm {α : Type} [Add α] [Sub α] [Mul α] [Div α]
+    (evaluate : α → α) :
     {n : Nat} → QuotientCoefficients n α → QuotientCoefficients n α
   | _, .scalar x => .scalar (evaluate x)
   | _, .dual x dx => .dual (logarithm evaluate x) (div dx x)
@@ -485,10 +486,32 @@ def slopeRaw {n : Nat} (x seed : QuotientCoefficients n) (isTanh : Bool)
   let z := exp (fun input => input.bind evaluate) input
   weighted (point 1) (map point seed) z isTanh
 
-noncomputable def idealSlope {n : Nat} (x seed : QuotientCoefficients n) (isTanh : Bool) :
+public noncomputable def idealSlope {n : Nat}
+    (x seed : QuotientCoefficients n) (isTanh : Bool) :
     QuotientCoefficients n ℝ :=
   let z := exp Real.exp (map (fun q : Rat => (q : ℝ)) (argument x isTanh))
   weighted 1 (map (fun q : Rat => (q : ℝ)) seed) z isTanh
+
+/-- The scalar coefficient has the same decaying-exponential formula on either sign branch. -/
+public theorem idealSlope_scalar (input seed : Rat) (isTanh : Bool) :
+    (idealSlope (.scalar input) (.scalar seed) isTanh).primal =
+      let tail := Real.exp (-(if isTanh then (2 : ℝ) else 1) * |(input : ℝ)|)
+      let numerator := (seed : ℝ) * tail
+      (if isTanh then (numerator + numerator) + (numerator + numerator) else numerator) /
+        ((1 + tail) * (1 + tail)) := by
+  by_cases positive : (0 : Rat) < input
+  · have realPositive : (0 : ℝ) < (input : ℝ) := by exact_mod_cast positive
+    cases isTanh <;>
+      simp [idealSlope, argument, weighted, QuotientCoefficients.exp,
+        QuotientCoefficients.map, QuotientCoefficients.mul, QuotientCoefficients.add,
+        QuotientCoefficients.div, QuotientCoefficients.ofScalar,
+        QuotientCoefficients.primal, positive, abs_of_pos realPositive]
+  · have realNonpositive : (input : ℝ) ≤ 0 := by exact_mod_cast le_of_not_gt positive
+    cases isTanh <;>
+      simp [idealSlope, argument, weighted, QuotientCoefficients.exp,
+        QuotientCoefficients.map, QuotientCoefficients.mul, QuotientCoefficients.add,
+        QuotientCoefficients.div, QuotientCoefficients.ofScalar,
+        QuotientCoefficients.primal, positive, abs_of_nonpos realNonpositive]
 
 theorem related_slopeRaw {n : Nat} (x seed : QuotientCoefficients n) (isTanh : Bool)
     (evaluate : Interval Rat → Bounds)
@@ -573,6 +596,19 @@ private theorem holds_logLeaf (degree precision : Nat) {input : Bounds} {x : ℝ
       have hout : result.val = output := by simpa [logLeaf, hl] using h
       subst output
       exact result.property x (hx input rfl)
+
+/-- Enclose a logarithm and all of its nested quotient-rule coefficients. -/
+def logarithmBounds {n : Nat} (input : QuotientCoefficients n) (degree precision : Nat) :
+    Option { bounds : QuotientCoefficients n (Interval Rat) //
+      Related (Interval.ContainsReal some) bounds
+        (logarithm Real.log (map (fun q : Rat => (q : ℝ)) input)) } :=
+  let raw := logarithm (logLeaf degree precision)
+    (map (fun q => some (Interval.point q)) input)
+  match h : mapM id raw with
+  | none => none
+  | some bounds => some ⟨bounds, related_collect
+      (related_logarithm holds_add holds_sub holds_mul holds_div _ _
+        (holds_logLeaf degree precision) (related_map _ _ holds_point input)) h⟩
 
 /-- Joint power tangent formed from one shared logarithm and the full exponential expression. -/
 def powerDirectional {α : Type} [Add α] [Sub α] [Mul α] [Div α]
@@ -663,7 +699,44 @@ private def roundBounds? {α : Type} [ops : QuotientArithmetic α]
   let upperCoefficients ← ops.encode upper
   if lowerCoefficients == upperCoefficients then some lower else none
 
-private def refinePowerBounds? {α : Type} [ops : QuotientArithmetic α] (budget : Nat)
+private theorem coefficients_eq_of_beq {n : Nat} {left right : QuotientCoefficients n}
+    (equal : (left == right) = true) : left = right := by
+  induction n with
+  | zero =>
+      cases left with | scalar left =>
+        cases right with | scalar right =>
+          change (left == right) = true at equal
+          exact congrArg Coefficients.scalar (beq_iff_eq.mp equal)
+  | succ n ih =>
+      cases left with | dual left leftDirection =>
+        cases right with | dual right rightDirection =>
+          change ((left == right) && (leftDirection == rightDirection)) = true at equal
+          simp only [Bool.and_eq_true] at equal
+          obtain ⟨valueEqual, directionEqual⟩ := equal
+          rw [ih valueEqual, ih directionEqual]
+
+/-- Acceptance returns the decoded lower endpoints and agrees on every encoded coefficient. -/
+private theorem roundBounds?_eq_some {α : Type} [ops : QuotientArithmetic α]
+    {bounds : QuotientCoefficients ops.depth (Interval Rat)} {result : α}
+    (accepted : roundBounds? bounds = some result) :
+    ops.decode (map (·.lo) bounds) = some result ∧
+      ∃ upper shared, ops.decode (map (·.hi) bounds) = some upper ∧
+        ops.encode result = some shared ∧ ops.encode upper = some shared := by
+  unfold roundBounds? at accepted
+  obtain ⟨lower, lowerDecoded, accepted⟩ := Option.bind_eq_some_iff.mp accepted
+  obtain ⟨upper, upperDecoded, accepted⟩ := Option.bind_eq_some_iff.mp accepted
+  obtain ⟨lowerCoefficients, lowerEncoded, accepted⟩ := Option.bind_eq_some_iff.mp accepted
+  obtain ⟨upperCoefficients, upperEncoded, accepted⟩ := Option.bind_eq_some_iff.mp accepted
+  split at accepted
+  · rename_i agree
+    have coefficientsEqual := coefficients_eq_of_beq agree
+    have resultEqual := Option.some.inj accepted
+    subst result
+    exact ⟨lowerDecoded, upper, lowerCoefficients, upperDecoded, lowerEncoded,
+      coefficientsEqual.symm ▸ upperEncoded⟩
+  · cases accepted
+
+private def refineBounds? {α : Type} [ops : QuotientArithmetic α] (budget : Nat)
     (enclose : Nat → Nat → Option (QuotientCoefficients ops.depth (Interval Rat))) : Option α :=
   let rec search (degree precision : Nat) (previousWidth : Option Rat) : Nat → Option α
     | 0 => none
@@ -679,13 +752,65 @@ private def refinePowerBounds? {α : Type} [ops : QuotientArithmetic α] (budget
           search (2 * degree) (precision + 1) (some width) steps
   search 8 budget none 8
 
+private theorem refineBounds_search_eq_some {α : Type} [ops : QuotientArithmetic α]
+    (enclose : Nat → Nat → Option (QuotientCoefficients ops.depth (Interval Rat)))
+    (degree precision : Nat) (previousWidth : Option Rat) (steps : Nat) {result : α}
+    (accepted : refineBounds?.search enclose degree precision previousWidth steps = some result) :
+    ∃ degree precision bounds,
+      enclose degree precision = some bounds ∧ roundBounds? bounds = some result := by
+  induction steps generalizing degree precision previousWidth with
+  | zero =>
+      simp only [refineBounds?.search] at accepted
+      cases accepted
+  | succ steps ih =>
+      simp only [refineBounds?.search] at accepted
+      obtain ⟨bounds, enclosed, accepted⟩ := Option.bind_eq_some_iff.mp accepted
+      cases rounded : roundBounds? bounds with
+      | some value =>
+          simp only [rounded] at accepted
+          cases Option.some.inj accepted
+          exact ⟨degree, precision, bounds, enclosed, rounded⟩
+      | none =>
+          simp only [rounded] at accepted
+          split at accepted <;> exact ih _ _ _ accepted
+
+/-- Refine a logarithm from finite coefficients before rounding through the selected codec.
+
+This accepts rational arguments outside the scalar format's range. The domain is positive and
+all nested coefficients must have agreeing rounded enclosure endpoints. -/
+@[noinline] public def enclosedLogarithm? {α : Type} [ops : QuotientArithmetic α]
+    (input : QuotientCoefficients ops.depth) : Option α :=
+  if input.primal ≤ 0 then none else
+    let budget := 64 + (ops.depth + 1) * coefficientSize input
+    refineBounds? budget fun degree precision =>
+      (logarithmBounds input degree precision).map Subtype.val
+
+/-- A successful logarithm replay retains its enclosure and both endpoint roundings.
+No finiteness or rounding law for an arbitrary codec is inferred from mere decoding success. -/
+public theorem enclosedLogarithm?_eq_some {α : Type} [ops : QuotientArithmetic α]
+    (input : QuotientCoefficients ops.depth) {result : α}
+    (accepted : enclosedLogarithm? input = some result) :
+    ∃ bounds, Related (Interval.ContainsReal some) bounds
+        (logarithm Real.log (map (fun q : Rat => (q : ℝ)) input)) ∧
+      ops.decode (map (·.lo) bounds) = some result ∧
+      ∃ upper shared, ops.decode (map (·.hi) bounds) = some upper ∧
+        ops.encode result = some shared ∧ ops.encode upper = some shared := by
+  unfold enclosedLogarithm? at accepted
+  split at accepted
+  · cases accepted
+  · obtain ⟨degree, precision, bounds, enclosed, rounded⟩ :=
+      refineBounds_search_eq_some _ _ _ _ _ accepted
+    obtain ⟨certified, certifiedAt, same⟩ := Option.map_eq_some_iff.mp enclosed
+    cases same
+    exact ⟨certified.val, certified.property, roundBounds?_eq_some rounded⟩
+
 private def directionalReplay? {α : Type} [ops : QuotientArithmetic α]
     (base exponent baseDirection exponentDirection : QuotientCoefficients ops.depth) : Option α :=
   if base.primal ≤ 0 then none else
     let budget := 64 + (ops.depth + 1) *
       (coefficientSize base + coefficientSize exponent +
         coefficientSize baseDirection + coefficientSize exponentDirection)
-    refinePowerBounds? budget fun degree precision =>
+    refineBounds? budget fun degree precision =>
       (directionalBounds base exponent baseDirection exponentDirection
         degree precision budget).map Subtype.val
 
@@ -731,6 +856,97 @@ differing derivative bounds.
   let precision := 64 + coefficientBits upstream + ops.depth * coefficientBits input
   (underflow (min limit precision) 16).orElse fun _ => search 8 precision none 16
 
+private theorem enclosedSlope_underflow_eq_some {α : Type} [ops : QuotientArithmetic α]
+    (isTanh : Bool) (input upstream : QuotientCoefficients ops.depth)
+    (limit bits steps : Nat) {result : α}
+    (accepted : enclosedSlope?.underflow isTanh input upstream limit bits steps = some result) :
+    ∃ bounds, Related (Interval.ContainsReal some) bounds (idealSlope input upstream isTanh) ∧
+      roundBounds? bounds = some result := by
+  induction steps generalizing bits with
+  | zero =>
+      simp only [enclosedSlope?.underflow] at accepted
+      cases accepted
+  | succ steps ih =>
+      simp only [enclosedSlope?.underflow] at accepted
+      obtain ⟨certified, _, accepted⟩ := Option.bind_eq_some_iff.mp accepted
+      cases rounded : roundBounds? certified.val with
+      | some value =>
+          simp only [rounded] at accepted
+          have resultEqual := Option.some.inj accepted
+          subst result
+          exact ⟨certified.val, certified.property, rounded⟩
+      | none =>
+          simp only [rounded] at accepted
+          split at accepted
+          · exact ih _ accepted
+          · cases accepted
+
+private theorem enclosedSlope_search_eq_some {α : Type} [ops : QuotientArithmetic α]
+    (isTanh : Bool) (input upstream : QuotientCoefficients ops.depth)
+    (degree precision : Nat) (previousWidth : Option Rat) (steps : Nat) {result : α}
+    (accepted : enclosedSlope?.search isTanh input upstream degree precision previousWidth steps =
+      some result) :
+    ∃ bounds, Related (Interval.ContainsReal some) bounds (idealSlope input upstream isTanh) ∧
+      roundBounds? bounds = some result := by
+  induction steps generalizing degree precision previousWidth with
+  | zero =>
+      simp only [enclosedSlope?.search] at accepted
+      cases accepted
+  | succ steps ih =>
+      simp only [enclosedSlope?.search] at accepted
+      obtain ⟨certified, _, accepted⟩ := Option.bind_eq_some_iff.mp accepted
+      cases rounded : roundBounds? certified.val with
+      | some value =>
+          simp only [rounded] at accepted
+          have resultEqual := Option.some.inj accepted
+          subst result
+          exact ⟨certified.val, certified.property, rounded⟩
+      | none =>
+          simp only [rounded] at accepted
+          split at accepted <;> exact ih _ _ _ accepted
+
+/-- A successful recovery returns a rounded lower endpoint of a certified enclosure.
+Both endpoint roundings have the same complete coefficient encoding. The witnesses retain the
+original input and seed conversions; numerical interpretation uses the selected codec's laws. -/
+public theorem enclosedSlope?_eq_some {α : Type} [ops : QuotientArithmetic α]
+    (x : α) (seed : Option α) (isTanh : Bool) {result : α}
+    (accepted : enclosedSlope? x seed isTanh = some result) :
+    ∃ (input upstream : QuotientCoefficients ops.depth)
+        (bounds : QuotientCoefficients ops.depth (Interval Rat)),
+      ops.encode x = some input ∧
+      (match seed with
+        | none => some (ofScalar ops.depth (1 : Rat))
+        | some value => ops.encode value) = some upstream ∧
+      Related (Interval.ContainsReal some) bounds (idealSlope input upstream isTanh) ∧
+      ops.decode (map (·.lo) bounds) = some result ∧
+      ∃ upper shared, ops.decode (map (·.hi) bounds) = some upper ∧
+        ops.encode result = some shared ∧ ops.encode upper = some shared := by
+  unfold enclosedSlope? at accepted
+  obtain ⟨input, inputEncoded, accepted⟩ := Option.bind_eq_some_iff.mp accepted
+  let replay := fun upstream : QuotientCoefficients ops.depth =>
+    let magnitude := if input.primal > 0 then input.primal else -input.primal
+    let limit := Nat.floor ((if isTanh then 2 else 1) * magnitude)
+    let precision := 64 + coefficientBits upstream + ops.depth * coefficientBits input
+    (enclosedSlope?.underflow isTanh input upstream limit (min limit precision) 16).orElse
+      fun _ => enclosedSlope?.search isTanh input upstream 8 precision none 16
+  have replayed : (match seed with
+      | none => some (ofScalar ops.depth (1 : Rat))
+      | some value => ops.encode value).bind replay = some result := by
+    cases seed <;> exact accepted
+  obtain ⟨upstream, upstreamEncoded, accepted⟩ := Option.bind_eq_some_iff.mp replayed
+  have enclosed : ∃ bounds,
+      Related (Interval.ContainsReal some) bounds (idealSlope input upstream isTanh) ∧
+        roundBounds? bounds = some result := by
+    rcases (Option.orElse_eq_some _ _ _).mp accepted with returned | ⟨_, returned⟩
+    · exact enclosedSlope_underflow_eq_some _ _ _ _ _ _ returned
+    · exact enclosedSlope_search_eq_some _ _ _ _ _ _ _ returned
+  obtain ⟨bounds, contained, rounded⟩ := enclosed
+  obtain ⟨decoded, upper, shared, upperDecoded, resultEncoded, upperEncoded⟩ :=
+    roundBounds?_eq_some rounded
+  refine ⟨input, upstream, bounds, inputEncoded, ?_, contained, decoded,
+    upper, shared, upperDecoded, resultEncoded, upperEncoded⟩
+  cases seed <;> exact upstreamEncoded
+
 /-- Refine the complete weighted power coefficient tree for a fixed outer exponent direction.
 
 An exponent constant in every encoded direction uses the polynomial rule, including supported
@@ -752,7 +968,7 @@ a work budget derived from the original coefficient sizes before its enclosure i
   else
     let budget := 64 + (ops.depth + 1) *
       (coefficientSize input + coefficientSize exponent + coefficientSize upstream)
-    refinePowerBounds? budget fun degree precision =>
+    refineBounds? budget fun degree precision =>
       (powerBounds input upstream exponent.primal degree precision budget).map Subtype.val
 
 /-- Enclose a joint power tangent from the original positive base, exponent, and both directions.

@@ -131,6 +131,118 @@ theorem evalAt_sum_eq
         (Spec.SomeTensor.mk (α := α) .scalar (Tensor.scalar (Tensor.sumSpec (α := α) x))) := by
   exact evalAt_shapeOperation_eq (.sum s) x
 
+/-- A checked native slice evaluates to the source coordinate slice for every valid axis. -/
+theorem evalAt_slice_eq {α : Type} [TorchLean.Storage α] [Context α]
+    {s : Shape} (axis start length : Nat) [hAxis : Shape.AxisInBounds axis s]
+    (x : Tensor α s) (hRange : start + length ≤ Shape.axisSize s axis) :
+    Graph.evalAt (α := α)
+        (g := unaryGraphOut (.slice axis start length) s (s.replaceAxis axis length))
+        (payload := {}) (input := Spec.SomeTensor.mk s x)
+        (vals := #[Spec.SomeTensor.mk s x]) (i := 1) =
+      .ok (Spec.SomeTensor.mk (s.replaceAxis axis length)
+        (Tensor.sliceAxisRangeSpec axis x start length hRange)) := by
+  simp [Graph.evalAt, Graph.evalNode, unaryGraphOut, unaryNodeOut, Graph.getNode,
+    Graph.expectShape, Graph.unaryParentId, unaryParent?, Shape.axisInBounds?, hAxis.proof,
+    hRange, Bind.bind, Except.bind, Pure.pure, Except.pure]
+
+private theorem reshapeSpec_dim {α : Type} [TorchLean.Storage α]
+    {n : Nat} {s t : Shape} (h : s.size = t.size) (values : Fin n → Tensor α s) :
+    Tensor.reshapeSpec (target := .dim n t) (Tensor.dim values)
+        (by simpa only [Shape.size] using congrArg (n * ·) h) =
+      Tensor.dim (fun i => Tensor.reshapeSpec (values i) h) := by
+  apply TorchLean.Tensor.Internal.Rep.ext
+  rintro ⟨i, coordinate⟩
+  have hOuter : (Shape.dim n s).size = (Shape.dim n t).size := by
+    simpa only [Shape.size] using congrArg (n * ·) h
+  have hCoordinate :
+      TorchLean.Tensor.Internal.Rep.reshapeCoordEquiv
+          (Shape.internalSize_congr hOuter) (i, coordinate) =
+        (i, TorchLean.Tensor.Internal.Rep.reshapeCoordEquiv
+          (Shape.internalSize_congr h) coordinate) := by
+    apply TorchLean.Tensor.Internal.Coord.linearize_injective
+    apply Fin.ext
+    rw [Tensor.reshapeCoordEquiv_linearize_val,
+      TorchLean.Tensor.Internal.Coord.linearize_cons_val,
+      TorchLean.Tensor.Internal.Coord.linearize_cons_val,
+      Tensor.reshapeCoordEquiv_linearize_val]
+    simp only [Shape.internalSize_eq, h]
+  simp only [Tensor.reshapeSpec, Tensor.dim,
+    TorchLean.Tensor.Internal.Rep.reshape_apply_coordEquiv,
+    hCoordinate, TorchLean.Tensor.Internal.Rep.stack_apply]
+
+/-- Dropping any singleton slice axis agrees with selection without scalar arithmetic.
+
+The reshape only removes the length-one axis; all remaining coordinates keep their row-major
+order, including shapes with empty leading or trailing axes.
+-/
+theorem reshape_sliceAxisRangeSpec_one_eq_selectSpec {α : Type} [TorchLean.Storage α] :
+    (axis : Nat) → {shape : Shape} → [_hAxis : Shape.AxisInBounds axis shape] →
+      (x : Tensor α shape) → (index : Fin (Shape.axisSize shape axis)) →
+      Tensor.reshapeSpec
+          (Tensor.sliceAxisRangeSpec axis x index.val 1 (Nat.succ_le_of_lt index.isLt))
+          (Tensor.size_shapeAfterSumKeepDim shape axis) =
+        Tensor.selectSpec axis x index
+  | 0, .dim n s, _, x, index => by
+      have hRange : index.val + 1 ≤ Shape.axisSize (.dim n s) 0 :=
+        Nat.succ_le_of_lt index.isLt
+      have hSlice : Tensor.sliceAxisRangeSpec 0 x index.val 1 hRange =
+          Tensor.dim (fun _ : Fin 1 => Tensor.selectSpec 0 x index) := by
+        apply TorchLean.Tensor.Internal.Rep.ext
+        rintro ⟨i, j⟩
+        have hCoordinate :
+            Tensor.sliceAxisRangeCoordinate 0 (shape := .dim n s) index.val 1
+              hRange (i, j) = (index, j) := by
+          apply Prod.ext
+          · apply Fin.ext
+            simp [Tensor.sliceAxisRangeCoordinate]
+          · rfl
+        calc
+          Tensor.sliceAxisRangeSpec 0 x index.val 1 hRange (i, j) =
+              x (Tensor.sliceAxisRangeCoordinate 0 index.val 1 hRange (i, j)) :=
+            Tensor.sliceAxisRangeSpec_apply 0 x index.val 1 hRange (i, j)
+          _ = x (index, j) := congrArg x hCoordinate
+          _ = Tensor.dim (fun _ : Fin 1 => Tensor.selectSpec 0 x index) (i, j) := by
+            exact (TorchLean.Tensor.Internal.Rep.unstack_apply x index j).symm.trans
+              (TorchLean.Tensor.Internal.Rep.stack_apply
+                (fun _ : Fin 1 => Tensor.unstack x index) (i, j)).symm
+      let hSize : (Shape.dim 1 s).size = s.size := by simp [Shape.size]
+      change Tensor.reshapeSpec (Tensor.sliceAxisRangeSpec 0 x index.val 1 hRange) hSize = _
+      rw [hSlice]
+      dsimp only [Shape.replaceAxis]
+      have hStack : Tensor.dim (fun _ : Fin 1 => Tensor.selectSpec 0 x index) =
+          Tensor.reshapeSpec (Tensor.selectSpec 0 x index) hSize.symm := by
+        exact (TorchLean.Tensor.Internal.Rep.reshape_one_cons _ _).symm
+      rw [hStack, Tensor.reshapeSpec_roundtrip]
+  | axis + 1, .dim n s, hAxis, x, index => by
+      let innerAxis : Shape.AxisInBounds axis s := ⟨by
+        have := hAxis.proof
+        simp only [Shape.rank] at this
+        omega⟩
+      let := innerAxis
+      have hRange : index.val + 1 ≤ Shape.axisSize s axis :=
+        Nat.succ_le_of_lt index.isLt
+      have hSlice : Tensor.sliceAxisRangeSpec (axis + 1) x index.val 1
+            (Nat.succ_le_of_lt index.isLt) =
+          Tensor.dim (fun outer =>
+            Tensor.sliceAxisRangeSpec axis (Tensor.unstack x outer) index.val 1 hRange) := by
+        dsimp only [Tensor.sliceAxisRangeSpec, Shape.replaceAxis, Tensor.dim, Tensor.unstack]
+        apply TorchLean.Tensor.Internal.Rep.ext
+        rintro ⟨outer, coordinate⟩
+        simp only [TorchLean.Tensor.Internal.Rep.pull_apply, Tensor.sliceAxisRangeCoordinate,
+          TorchLean.Tensor.Internal.Rep.stack_apply,
+          TorchLean.Tensor.Internal.Rep.unstack_apply]
+        exact TorchLean.Tensor.Internal.Rep.pull_apply _ _ _
+      rw [hSlice]
+      change Tensor.reshapeSpec (target := .dim n (s.eraseAxis axis))
+          (Tensor.dim (fun outer =>
+            Tensor.sliceAxisRangeSpec axis (Tensor.unstack x outer) index.val 1 hRange))
+          (by simpa only [Shape.size, Tensor.shapeAfterSumKeepDim, Tensor.shapeAfterSum] using
+            congrArg (n * ·) (Tensor.size_shapeAfterSumKeepDim s axis)) = _
+      rw [reshapeSpec_dim]
+      congr 1
+      funext outer
+      exact reshape_sliceAxisRangeSpec_one_eq_selectSpec axis (Tensor.unstack x outer) index
+
 end IRStep
 
 end Correctness

@@ -144,7 +144,9 @@ target torchlean_allocator pkg : FilePath := do
 @[default_target]
 lean_lib NN where
   moreLinkObjs :=
-    (if Platform.isLinux then (#[torchlean_allocator] : TargetArray FilePath) else #[]) ++
+    -- Embedders linking Lean's shared runtime must use that runtime's allocator as well.
+    (if Platform.isLinux && (get_config? sharedRuntime).getD "false" != "true" then
+      (#[torchlean_allocator] : TargetArray FilePath) else #[]) ++
     (#[torchlean_tensor_cpu] : TargetArray FilePath) ++
       if cudaEnabled then
         (#[torchlean_libtorch] : TargetArray FilePath)

@@ -20,11 +20,11 @@ Low-level access to TorchLean's verifier graph. Most applications should import
 `trained.verify center (radius := r) (norm := linf)`; import this module only when constructing or
 inspecting graph-level IBP/CROWN workflows directly.
 
-These entry points check the generated graph's structure and shapes, not its numerical equality
-with the source model. Slicing and leading-axis selection currently become one-hot matrix
-products; they can change signed zeros or propagate an unselected NaN or infinity. Multi-sample
-attention uses those slices. Bounds on the resulting graph need a separate source correspondence
-argument before being used as guarantees about the original finite-precision execution.
+These entry points check the generated graph's structure and shapes. Slicing and axis selection
+copy source entries through native slice and reshape operations, preserving their floating-point
+words. Local evaluator theorems establish that correspondence. The broad lowering still needs a
+source correspondence argument for the complete model before its bounds can be applied to the
+original finite-precision execution.
 -/
 
 @[expose] public section
@@ -36,7 +36,7 @@ export NN.MLTheory.CROWN (FlatBox)
 export NN.MLTheory.CROWN.Graph (ParamStore AffineCtx FlatAffine FlatAffineBounds)
 
 /-- Lower a sequential model into structurally checked verifier IR with one distinguished input.
-This does not establish finite-precision source equivalence; see the slicing restriction above. -/
+Numerical equivalence with the complete source model requires a separate proof. -/
 def lowerForwardToIR {α : Type} [TorchLean.Storage α] [Context α]
     {σ τ : Shape}
     (model : TorchLean.nn.Sequential σ τ)

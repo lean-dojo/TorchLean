@@ -260,6 +260,16 @@ theorem eqRec_eq_cast_shape {α : Type} [TorchLean.Storage α]
   cases h
   rfl
 
+/-- Reading through a tensor type equality transports the coordinate through the given shape
+equality. The type-equality proof may come from elaboration or simplification. -/
+theorem eq_mp_apply {α : Type} [TorchLean.Storage α] {source target : Shape}
+    (tensor : Tensor α source) (typeEqual : Tensor α source = Tensor α target)
+    (shapeEqual : source = target) (coordinate : Shape.Coord target) :
+    (Eq.mp typeEqual tensor) coordinate =
+      tensor (_root_.cast (congrArg Shape.Coord shapeEqual.symm) coordinate) := by
+  cases shapeEqual
+  simp only [_root_.eq_mp_eq_cast, _root_.cast_eq]
+
 /-- `cast_shape_proof_irrel` in `▸` form, for goals the elaborator produced. -/
 theorem eqRec_proof_irrel {α : Type} [TorchLean.Storage α]
     {source target : Shape} (tensor : Tensor α source)

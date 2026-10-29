@@ -184,9 +184,10 @@ EOF
 }
 
 use_build_dir "$repo_root" "$build_dir"
-if [[ "$repo_root" == "$default_repo_root/home_page/blueprint" ]]; then
-  # The blueprint's path dependency explicitly requests cuda=false. Its default buildDir uses
-  # this symlink, which may still point at CUDA artifacts from the last root-package invocation.
+if [[ "$repo_root" == "$default_repo_root/home_page/blueprint" ||
+      "$repo_root" == "$default_repo_root/bindings/python" ]]; then
+  # These path dependencies explicitly request cuda=false. Their default buildDir uses this
+  # symlink, which may still point at CUDA artifacts from the last root-package invocation.
   use_build_dir "$default_repo_root" "$(build_dir_for "$default_repo_root" cpu)"
 fi
 

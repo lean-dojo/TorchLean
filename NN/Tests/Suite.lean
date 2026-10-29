@@ -16,6 +16,7 @@ public import NN.Tests.Verification.CameraCertificates
 public import NN.Tests.Verification.CertificateParsing
 public import NN.Tests.Verification.FiniteArtifact
 public import NN.Tests.Verification.GraphNumericalCertificate
+public import NN.Tests.Verification.Roundoff
 public import NN.Tests.Runtime.EinsumDynamic
 public import NN.Tests.Runtime.MoE
 public import NN.Tests.Runtime.Scheduler

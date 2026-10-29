@@ -95,6 +95,53 @@ def exp {α : Type} [Add α] [Mul α] (evaluate : α → α) : {n : Nat} →
       let value := exp evaluate x
       .dual value (mul value dx)
 
+/-- The primal coefficient of a sum. -/
+theorem primal_add {α : Type} [Add α] {n : Nat} (left right : QuotientCoefficients n α) :
+    primal (add left right) = primal left + primal right := by
+  induction n with
+  | zero => cases left; cases right; rfl
+  | succ n ih =>
+      cases left with | dual left leftDirection =>
+        cases right with | dual right rightDirection => exact ih left right
+
+/-- The primal coefficient of a difference. -/
+theorem primal_sub {α : Type} [Sub α] {n : Nat} (left right : QuotientCoefficients n α) :
+    primal (sub left right) = primal left - primal right := by
+  induction n with
+  | zero => cases left; cases right; rfl
+  | succ n ih =>
+      cases left with | dual left leftDirection =>
+        cases right with | dual right rightDirection => exact ih left right
+
+/-- The primal coefficient of a product. -/
+theorem primal_mul {α : Type} [Add α] [Mul α] {n : Nat}
+    (left right : QuotientCoefficients n α) :
+    primal (mul left right) = primal left * primal right := by
+  induction n with
+  | zero => cases left; cases right; rfl
+  | succ n ih =>
+      cases left with | dual left leftDirection =>
+        cases right with | dual right rightDirection => exact ih left right
+
+/-- The primal coefficient of a quotient. -/
+theorem primal_div {α : Type} [Add α] [Sub α] [Mul α] [Div α] {n : Nat}
+    (left right : QuotientCoefficients n α) :
+    primal (div left right) = primal left / primal right := by
+  induction n with
+  | zero => cases left; cases right; rfl
+  | succ n ih =>
+      cases left with | dual left leftDirection =>
+        cases right with | dual right rightDirection => exact ih left right
+
+/-- Mapping the leaf values commutes with taking the primal coefficient. -/
+theorem primal_map {α β : Type} (function : α → β) {n : Nat}
+    (coefficients : QuotientCoefficients n α) :
+    primal (map function coefficients) = function (primal coefficients) := by
+  induction n with
+  | zero => cases coefficients; rfl
+  | succ n ih =>
+      cases coefficients with | dual coefficients direction => exact ih coefficients
+
 end QuotientCoefficients
 
 /--

@@ -84,7 +84,7 @@ def propagateCROWNNode
         | none => bounds
       | _ => bounds
     | .randUniform _ | .bernoulliMask _ | .abs | .sqrt | .maxElem | .minElem | .sin |
-      .cos | .hardMaskedSoftmax _ | .topKMask _ | .slice ..
+      .cos | .hardMaskedSoftmax _ | .topKMask _
     | .maxPool .. | .avgPool ..
     | .broadcastTo .. | .reduceSum .. | .reduceMean .. => ibpFallback
     | .add =>
@@ -211,6 +211,13 @@ def propagateCROWNNode
         let layout ← concatNodeLayout? nodes node axis
         let parents ← node.parents.mapM fun parent => (bounds[parent]?).join
         concatFlatAffineBounds? (α := α) layout parents
+      bounds.set! id result
+    | .slice axis start length =>
+      let result := do
+        let layout ← sliceNodeLayout? nodes node axis start length
+        let parent ← unaryParent? node.parents
+        let input ← (bounds[parent]?).join
+        sliceFlatAffineBounds? layout input
       bounds.set! id result
     | .transpose axis₁ axis₂ =>
       match node.parents with

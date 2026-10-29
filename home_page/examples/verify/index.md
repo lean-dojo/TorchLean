@@ -6,9 +6,12 @@ Suppose we already have a tensor calculation in Python. We'd like to bring its
 operations into Lean without rewriting the model, inspect its precision changes,
 and ask which checks we can run on that graph.
 
-Pass the function and its tensor arguments directly. TorchLean captures the
-frontend graph, translates supported operations into its IR, and sends it to
-Lean automatically. Saving a graph file is optional.
+Put `@torchlean.compile` on the model class or function, then call it as usual.
+TorchLean detects PyTorch or JAX from the model and its tensor arguments. The first
+call captures the computation for the whole tensor or batch; we don't need a loop
+that checks samples one at a time. TorchLean translates supported operations into
+its IR and checks the graph in Lean. The framework executes the captured computation
+on its device, retaining its automatic differentiation.
 
 From the TorchLean repository, build the checker first:
 
@@ -16,17 +19,75 @@ From the TorchLean repository, build the checker first:
 scripts/lake.sh build verify
 ```
 
+The [optional Python binding](https://github.com/lean-dojo/TorchLean/tree/main/bindings/python)
+calls the same checker inside Python. Once installed, `compile` and `verify` select it
+automatically; an explicit `checker=` argument selects an executable.
+
 Then try this Python example from the repository root:
 
 ```python
 import torch
 import torchlean
 
+@torchlean.compile
 def square(x):
     y = x.float()
     return (y * y).half()
 
 x = torch.tensor([1.25, 2.5], dtype=torch.float64)
+y = square(x)
+print(y)
+print(square.torchlean.report["ok"])
+print(square.torchlean.report["checks"])
+```
+
+The captured graph retains the binary64 input, the cast to binary32, the
+multiplication, and the cast to binary16. PyTorch supplies its guarded FX graph,
+and JAX supplies its traced Jaxpr. The tensor arguments select the frontend
+automatically.
+
+Put the same tag on a model class:
+
+```python
+@torchlean.compile
+class MLP(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.layers = torch.nn.Sequential(
+            torch.nn.Linear(2, 8), torch.nn.ReLU(), torch.nn.Linear(8, 1)
+        )
+
+    def forward(self, inputs):
+        return self.layers(inputs)
+
+model = MLP()
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+batch = torch.ones(32, 2)
+prediction = model(batch)
+prediction.sum().backward()
+optimizer.step()
+print(model.torchlean.report["ok"])
+```
+
+For an existing model, use `model = torchlean.compile(model)` and keep calling
+the model on a batch. Its `parameters`, `train`, `eval`, and `state_dict` methods remain
+available. If its class overrides `__call__`, decorate the class instead so that the
+override is captured too. Compatible calls reuse the captured graph; changes that require a new
+specialization are captured and checked automatically. The linear layers above keep
+their weights and biases as live graph inputs, so optimizer updates reach subsequent
+calls. Parameterized convolution and
+normalization currently raise during compilation; their live-state lowering is not
+implemented.
+
+The callable's `.torchlean.artifact` and `.torchlean.report` describe the most
+recently compiled graph. A later call can reuse a different specialization without
+changing these fields. Inspect `.torchlean.graphs` for all successfully checked
+specializations, in capture order.
+
+The default checks validate structure and types. To compare the IR's CPU reference
+execution with PyTorch on specific arguments, use `verify` explicitly:
+
+```python
 report = torchlean.verify(
     square, x, checks=("structure", "types", "compare")
 )
@@ -34,15 +95,14 @@ print(report["ok"])
 print(report["checks"])
 ```
 
-We get four IR nodes: a binary64 input, a cast to binary32, a multiplication,
-and a cast to binary16. FloatLib executes the casts and arithmetic at those
+For this comparison, FloatLib executes the casts and arithmetic at their
 declared precisions. The comparison checks the complete binary words against
 PyTorch's output for `x`, not just numbers printed to a few decimal places.
 
 `verify` accepts an ordinary function or an `nn.Module`. It copies the module and
 input before capture so that the caller's tensors, parameters, and training mode
 are preserved. It cannot isolate arbitrary external effects in Python code.
-Capture uses `torch.export`, not the compiled backend's generated machine code.
+This explicit capture uses `torch.export`; it does not inspect generated machine code.
 Returned containers contribute an ordered list of tensor leaves. Their Python
 container structure is not part of the IR interface. A non-tensor return leaf is
 rejected during capture.
@@ -59,15 +119,17 @@ Each requested check has its own result:
 | `compare` | Its output types, shapes, and complete binary words match the supplied reference for those arguments. Two NaN results match whatever their sign and payload, which the IR leaves unspecified. |
 | `compare_bitwise` | As `compare`, with NaN words compared too. |
 
-The default requests are `structure` and `types`. They don't run a sample comparison
-or establish a mathematical property. Unknown requests are returned as `unsupported`
+`compile` runs `structure` and `types`; these are also `verify`'s default requests.
+They don't run a sample comparison, prove frontend equivalence, or establish a
+mathematical property for every input. Unknown `verify` requests are returned as `unsupported`
 and make `report["ok"]` false; asking for a property must never silently become a
 shape check.
 
-If capture encounters an unsupported operation or element type, the report marks
-every request `unsupported` and sets `checker` to `not_run`. No Lean check ran in
-that case. Missing dependencies and invalid API arguments remain ordinary Python
-errors.
+`compile` raises if capture or lowering is unsupported, or if a required check
+fails. It does not run an unchecked fallback. For explicit `verify` calls,
+unsupported capture instead marks every request `unsupported` and sets `checker`
+to `not_run`; no Lean check ran in that case. Missing dependencies and invalid API
+arguments remain ordinary Python errors.
 
 Try changing a cast in an exported artifact to an identity while leaving its
 output type unchanged. The type checker rejects it. Changing one reference output
@@ -79,8 +141,9 @@ elementary-function approximations, or domain guards. For example, the IR's `log
 rejects nonpositive inputs. A failed comparison identifies a
 difference on that input; it does not tell us the cause without further analysis.
 
-For JAX, the IR gives each primitive its JAX meaning, and XLA's compiled CPU code departs from
-it in documented ways: it multiplies by the rounded reciprocal of a broadcast divisor, under
+The JAX importer records supported operations with their shapes, dtypes and casts.
+The CPU reference evaluates them with TorchLean and FloatLib arithmetic. XLA's compiled
+CPU code can differ: it multiplies by the rounded reciprocal of a broadcast divisor, under
 `jax.jit` rewrites some divisions and constant powers, approximates the reciprocal square root,
 and flushes subnormal values to zero. Every mismatch fails. When XLA's CPU backend computed the
 reference, the checker then runs the program again the way XLA's code computes it, and if that run
@@ -103,32 +166,38 @@ an ordinary tensor function without defining layers or a model class. Inputs,
 constants, array operations, and outputs go through the same checks as a network.
 What matters is whether the frontend can lower the operations involved.
 
-The same checker also accepts a JAX function:
+Use the same decorator for a JAX function:
 
 ```python
 import jax.numpy as jnp
 import torchlean
 
+@torchlean.compile
 def sum_squares(x):
     return jnp.sum(x * x)
 
-report = torchlean.verify(
-    sum_squares, jnp.array([1., 2., 3.], dtype=jnp.float32),
-    frontend="jax", checks=("structure", "types", "compare")
-)
+value = sum_squares(jnp.array([1., 2., 3.], dtype=jnp.float32))
+print(sum_squares.torchlean.report["ok"])
 ```
+
+JAX uses `jit` semantics for pure functions. Pass changing weights as tensor or
+pytree arguments; mutating a closed-over value alone does not refresh a cached
+specialization.
 
 Or pass a typed artifact dictionary directly to `torchlean.verify(artifact)`. A
 producer does not need to know anything about PyTorch: the boundary is a graph
 with explicit shapes, element types, casts, and constant words. Its operations
 must have an IR lowering and an implementation in the selected interpreter.
 
-Both capture adapters accept positional tensor arguments with independent shapes and dtypes:
-`torchlean.verify(function, *inputs)` for PyTorch, or add `frontend="jax"` for JAX.
-Argument order is recorded
-in the artifact, including unused arguments. The shared parser checks the whole
+Both capture adapters accept tensor arguments with independent shapes and dtypes,
+including arguments inside built-in lists, tuples, and dictionaries. Call a compiled
+function with its usual positional and keyword arguments. For an explicit check,
+use `torchlean.verify(function, *inputs, example_kwargs={...})`; it selects the
+frontend automatically too. `verify` records tensor argument order in the artifact,
+including unused arguments. The shared parser checks the whole
 interface; execution rejects missing arguments, extra arguments, and tensors with
-the wrong shape or dtype. Nested input containers need explicit container rules.
+the wrong shape or dtype. Scalar arguments specialize the capture to their supplied
+values.
 
 JAX supports
 the fragment described in [JAX Computations and Lean Proofs](../jaxpr/); the PyTorch
@@ -139,8 +208,9 @@ types need their own exact payload loaders before execution can run them.
 The default CPU reference also loads Boolean and fixed-width integer tensors, so
 their reshape, broadcast, permutation, transpose, flatten and concatenation can
 be executed and compared. Integers retain their complete words at any positive
-declared width; signedness stays in the type. Integer arithmetic and casts between
-different integer types are not implemented by this reference. Complex descriptors
+declared width; signedness stays in the type. The reference supports integer negation,
+truncating and floor division, wrapping powers, and `clamp_min`. Casts between different
+integer types are not implemented. Complex descriptors
 can pass structural/type checks, but complex execution still needs an implementation.
 
 Other producers can describe configured binary and decimal formats, integer
@@ -162,7 +232,7 @@ that operation retains its scalar-context semantics.
 
 ## Where the proofs enter
 
-Keep the same capture when we want to write a theorem about it:
+Use `verify` to capture and export a graph when we want to write a theorem about it:
 
 ```python
 report = torchlean.verify(square, x, export="Proofs/Square.lean")
@@ -214,9 +284,10 @@ an executable path, or pass `checker="/path/to/verify"`. It never launches a bui
 implicitly. A complete command can also be supplied as an argument list:
 
 ```python
+artifact = square.torchlean.artifact
 report = torchlean.verify(
     artifact,
-    checker=["scripts/lake.sh", "exe", "verify", "--", "ir"]
+    checker=[".lake/build/bin/verify", "ir"]
 )
 ```
 

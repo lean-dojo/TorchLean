@@ -13,7 +13,7 @@ public import NN.MLTheory.CROWN.Proofs.DirectedIBPAxisSemantics
 # Structural real semantics and the backward interface
 
 The checked backward concat layout preserves the forward layout. Transpose and permutation use
-the coordinate bijection of the exact tensor evaluator. These facts derive the legacy backward
+the coordinate bijection of the exact tensor evaluator. These facts derive the backward
 equations from the actual real semantics, without a second semantic assumption.
 -/
 
@@ -81,6 +81,15 @@ theorem StructuralRealNodeEquation.concat_nodeEquation
   exact ⟨hd, hsize, fun p => (hcoords p _ (hparent p)).1,
     fun p => (hcoords p _ (hparent p)).2⟩
 
+/-- The same slice coordinates supply the forward and backward value equations. -/
+theorem StructuralRealNodeEquation.slice_nodeEquation
+    {nodes : Array Node} {ps : ParamStore α} {ibp : Array (Option (FlatBox α))}
+    {dims : Nat → Nat} {v : Nat → Nat → ℝ} {id axis start length : Nat}
+    (h : StructuralRealNodeEquation nodes dims v id)
+    (hkind : nodes[id]!.kind = .slice axis start length) :
+    NodeEquation nodes ps ibp dims v id := by
+  simpa only [NodeEquation, StructuralRealNodeEquation, hkind] using h
+
 /-- Exact real permutation semantics supplies the backward permutation equation. -/
 theorem StructuralRealNodeEquation.permute_nodeEquation
     {nodes : Array Node} {ps : ParamStore α} {ibp : Array (Option (FlatBox α))}
@@ -135,6 +144,7 @@ theorem StructuralRealNodeEquation.nodeEquation
     simp only [ibpStructuralSupportedNode, hkind, Bool.false_eq_true] at hsupported
   all_goals first
     | exact heq.concat_nodeEquation hkind
+    | exact heq.slice_nodeEquation hkind
     | exact heq.permute_nodeEquation hkind hparents
     | exact heq.transpose_nodeEquation hkind hparents
     | simp only [NodeEquation, hkind]

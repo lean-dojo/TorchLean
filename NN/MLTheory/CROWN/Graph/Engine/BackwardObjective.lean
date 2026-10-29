@@ -366,6 +366,13 @@ private def backwardConcatSplit (layout : ConcatLayout) (aY : FlatTensor α) :
   else
     none
 
+/-- Route each slice coefficient to its source coordinate without multiplying it by a selector. -/
+private def backwardSlice (layout : SliceLayout) (aY : FlatTensor α) :
+    Option (FlatTensor α) :=
+  if h : aY.n = layout.outputShape.size then
+    some { n := layout.sourceShape.size, v := layout.scatter (h ▸ aY.v) }
+  else none
+
 /-- Check parent boxes as well as graph geometry before routing a concat objective. -/
 @[expose] def Internal.concatBackwardLayout? (nodes : Array Node) (ibp : Array (Option (FlatBox α)))
     (node : Node) (axis : Nat) : Option ConcatLayout := do
@@ -565,7 +572,7 @@ private def backwardNode (dir : BackwardDir)
         addCoeff (α:=α) st1 p2 { n := aY.n, v := Tensor.scaleSpec aY.v (-1) }
       | _ => st.fail
     | .randUniform _ | .bernoulliMask _ | .abs | .sqrt | .sin | .cos | .maxElem |
-      .minElem | .hardMaskedSoftmax _ | .topKMask _ | .slice ..
+      .minElem | .hardMaskedSoftmax _ | .topKMask _
     | .maxPool .. | .avgPool ..
     | .broadcastTo .. | .reduceSum .. | .reduceMean .. => consumeCurrent
     | .custom .. | .pointwise _ | .scaledMatmul => st.fail
@@ -684,6 +691,17 @@ private def backwardNode (dir : BackwardDir)
       | some parents =>
         parents.foldl (fun state (parent, coefficient) =>
           addCoeff (α := α) state parent coefficient) st
+      | none => st.fail
+    | .slice axis start length =>
+      let contribution := do
+        let layout ← sliceNodeLayout? nodes node axis start length
+        let parent ← unaryParent? node.parents
+        let input ← (ibp[parent]?).join
+        unless input.dim == layout.sourceShape.size do failure
+        let coefficient ← backwardSlice layout aY
+        pure (parent, coefficient)
+      match contribution with
+      | some (parent, coefficient) => addCoeff st parent coefficient
       | none => st.fail
     | .transpose axis₁ axis₂ =>
       match node.parents with
@@ -911,6 +929,17 @@ private def runBackwardObjectiveDirWithReluAlpha
           | some parents =>
               parents.foldl (fun state (parent, coefficient) =>
                 addDirectedCoeff (α := α) state parent coefficient) st
+          | none => st.fail
+      | .slice axis start length =>
+          let contribution := do
+            let layout ← sliceNodeLayout? nodes node axis start length
+            let parent ← unaryParent? node.parents
+            let input ← (ibp[parent]?).join
+            unless input.dim == layout.sourceShape.size do failure
+            let coefficient ← scatterSliceFlatBoxes? layout aY
+            pure (parent, coefficient)
+          match contribution with
+          | some (parent, coefficient) => addDirectedCoeff st parent coefficient
           | none => st.fail
       | .transpose axis₁ axis₂ =>
           match unaryParent? node.parents with

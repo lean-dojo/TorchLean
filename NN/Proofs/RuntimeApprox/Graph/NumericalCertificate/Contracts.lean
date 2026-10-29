@@ -717,6 +717,7 @@ def defaultContracts : Array GraphRangeContract :=
   , preserveContract .permute
   , preserveContract .broadcast
   , preserveContract .reshape
+  , preserveContract .slice
   , maxPoolContract
   , maxPoolPadContract
   , averagePoolContract false

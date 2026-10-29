@@ -73,6 +73,14 @@ def PermutationEquation (dims : Nat → Nat) (v : Nat → Nat → ℝ) (id pid :
         Function.Bijective perm ∧
           ∀ i : Fin (dims id), v id (perm i).val = v pid i.val
 
+/-- A slice reads the source coordinate named by its checked layout. -/
+def SliceEquation (node : Node) (layout : SliceLayout)
+    (dims : Nat → Nat) (v : Nat → Nat → ℝ) (id : Nat) : Prop :=
+  dims id = layout.outputShape.size ∧
+    ∀ p, unaryParent? node.parents = some p →
+      dims p = layout.sourceShape.size ∧
+        ∀ i : Fin layout.outputShape.size, v id i.val = v p (layout.flatIndex i).val
+
 /-- Real coordinate equations for a node, using the same successful parameter/layout lookups as
 the executable dispatcher. Failed lookups require no equation because they reject the sweep.
 Pointwise nonlinear nodes state their real function. Inputs, random nodes, and the operations
@@ -123,6 +131,9 @@ def NodeEquation (nodes : Array Node) (ps : ParamStore α)
             dims (node.parents[parent.val]!) = (layout.parentShape parent).size) ∧
           ∀ (parent : Fin layout.lengths.length) (i : Fin (layout.parentShape parent).size),
             v id (layout.flatEquiv ⟨parent, i⟩).val = v (node.parents[parent.val]!) i.val
+  | .slice axis start length =>
+      ∀ layout, sliceNodeLayout? nodes node axis start length = some layout →
+        SliceEquation node layout dims v id
   | .transpose axis₁ axis₂ =>
       ∀ p, unaryParent? node.parents = some p →
         ∀ perm,

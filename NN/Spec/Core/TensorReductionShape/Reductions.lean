@@ -9,6 +9,7 @@ module
 public import NN.Spec.Core.TensorReductionShape.ShapeChange
 public import NN.Spec.Core.TensorOps
 public import NN.Tensor.Internal.Representation.Basic.Traversal
+public import Mathlib.Logic.Equiv.Prod
 
 @[expose] public section
 
@@ -245,6 +246,31 @@ theorem shapeAfterSumKeepDimBroadcast : (s : Shape) → (axis : Nat) →
         ⟨rank_shapeAfterSumKeepDim inner axis⟩
       .dim_eq (shapeAfterSumKeepDimBroadcast inner axis)
 
+namespace Internal
+
+/-- Separate the selected axis coordinate from the coordinates retained by reduction.
+The relative order of the retained axes does not change. -/
+def axisCoordinateEquiv :
+    (axis : Nat) → {shape : Spec.Shape} → [_h : Spec.Shape.AxisInBounds axis shape] →
+      Spec.Shape.Coord shape ≃
+        Fin (Spec.Shape.axisSize shape axis) × Spec.Shape.Coord (Spec.Shape.eraseAxis shape axis)
+  | 0, Spec.Shape.dim n inner, _ => Equiv.refl (Fin n × Spec.Shape.Coord inner)
+  | axis + 1, Spec.Shape.dim n inner, h => by
+      let innerAxis : Spec.Shape.AxisInBounds axis inner := ⟨by
+        have valid := h.proof
+        simp only [Spec.Shape.rank] at valid
+        omega⟩
+      letI := innerAxis
+      let selected := Fin (Spec.Shape.axisSize inner axis)
+      let retained := Spec.Shape.Coord (Spec.Shape.eraseAxis inner axis)
+      exact
+        (Equiv.prodCongr (Equiv.refl (Fin n)) (@axisCoordinateEquiv axis inner innerAxis)).trans
+          ((Equiv.prodAssoc (Fin n) selected retained).symm.trans
+            ((Equiv.prodCongr (Equiv.prodComm (Fin n) selected) (Equiv.refl retained)).trans
+              (Equiv.prodAssoc selected (Fin n) retained)))
+
+end Internal
+
 /-- Reinsert an axis dropped by `shapeAfterSum`, repeating the reduced tensor along that axis.
 
 This is deliberately separate from `broadcastTo`. Generic broadcasting aligns dimensions from the
@@ -256,6 +282,29 @@ def broadcastAfterSum {α : Type} [TorchLean.Storage α] :
   | .dim _ inner, Nat.succ axis, tensor =>
       Tensor.dim (fun i =>
         broadcastAfterSum inner axis (Tensor.unstack tensor i))
+
+/-- A reduction's backward broadcast drops the restored axis when reading its input.
+This copies coefficients exactly and applies no scalar arithmetic. -/
+theorem broadcastAfterSum_apply {α : Type} [Storage α] :
+    (axis : Nat) → {shape : Shape} → [_h : Shape.AxisInBounds axis shape] →
+      (input : Tensor α (shapeAfterSum shape axis)) → (coordinate : shape.Coord) →
+      broadcastAfterSum shape axis input coordinate =
+        input ((Internal.axisCoordinateEquiv axis (shape := shape) coordinate).2)
+  | 0, .dim _ _, _, input, ⟨_, coordinate⟩ => by
+      simp only [broadcastAfterSum, Tensor.dim, Internal.Rep.stack_apply,
+        Internal.axisCoordinateEquiv]
+      rfl
+  | axis + 1, .dim _ inner, h, input, ⟨outer, coordinate⟩ => by
+      let innerAxis : Shape.AxisInBounds axis inner := ⟨by
+        have valid := h.proof
+        simp only [Shape.rank] at valid
+        omega⟩
+      let := innerAxis
+      simp only [broadcastAfterSum, Tensor.dim, Internal.Rep.stack_apply]
+      exact
+        (@broadcastAfterSum_apply α _ axis inner innerAxis
+          (Tensor.unstack input outer) coordinate).trans
+            (Internal.Rep.unstack_apply input outer _)
 
 -- Reducers parameterized by the scalar aggregation operation.
 
@@ -285,6 +334,33 @@ def reduceOuterAxis {α : Type} [TorchLean.Storage α]
     (tensor : Tensor α [n]) :
     reduceOuterAxis f tensor = Tensor.scalar (f tensor) := by
   rfl
+
+/-- Apply the original aggregator to one ordered input column. This needs no algebraic law
+for the scalar type or aggregation function. -/
+theorem reduceOuterAxis_apply {α : Type} [Storage α]
+    (f : ∀ {sliceShape : Shape}, Tensor α sliceShape → α)
+    {n : Nat} {inner : Shape} (input : Tensor α (.dim n inner))
+    (coordinate : inner.Coord) :
+    reduceOuterAxis f input coordinate =
+      f (Tensor.ofFn fun index : Fin n => input (index, coordinate)) := by
+  induction inner generalizing n with
+  | scalar =>
+      cases coordinate
+      simp only [reduceOuterAxis, Tensor.scalar_apply]
+      congr 1
+      apply Tensor.Internal.Rep.ext
+      rintro ⟨index, tailCoordinate⟩
+      cases tailCoordinate
+      simp only [Tensor.ofFn_apply]
+  | dim m inner ih =>
+      rcases coordinate with ⟨column, coordinate⟩
+      simp only [reduceOuterAxis, Tensor.dim, Tensor.Internal.Rep.stack_apply]
+      rw [ih]
+      congr 1
+      apply Tensor.Internal.Rep.ext
+      rintro ⟨index, tailCoordinate⟩
+      simp only [Tensor.ofFn_apply, Tensor.Internal.Rep.stack_apply,
+        Spec.get, Tensor.unstack, Tensor.Internal.Rep.unstack_apply]
 
 end Internal
 end Reduction
@@ -324,6 +400,24 @@ def reduceFromBroadcastTo {α : Type} [TorchLean.Storage α] [Add α] [Zero α] 
       else
         reduceFromBroadcastTo ((Shape.canBroadcastTo_dim_dim_of_rank_ne hRank).mp h)
           (Reduction.Internal.reduceOuterAxis (fun {sliceShape} => sumSpec (s := sliceShape)) t)
+
+/-- Reducing back to the same shape leaves values unchanged, including zero-sized axes.
+No addition is executed in this case. -/
+theorem reduceFromBroadcastTo_self {α : Type} [Storage α] [Add α] [Zero α] :
+    {shape : Shape} → (broadcast : Shape.CanBroadcastTo shape shape) →
+      (input : Tensor α shape) → reduceFromBroadcastTo broadcast input = input
+  | .scalar, _, _ => rfl
+  | .dim _ inner, broadcast, input => by
+      rw [reduceFromBroadcastTo, dite_eq_left rfl, dite_eq_left rfl]
+      apply Internal.Rep.ext
+      rintro ⟨outer, coordinate⟩
+      rw [Tensor.dim, Internal.Rep.stack_apply]
+      let tailBroadcast : Shape.CanBroadcastTo inner inner :=
+        ((Shape.canBroadcastTo_dim_dim_of_rank_eq rfl).mp broadcast).2
+      change (reduceFromBroadcastTo tailBroadcast (Tensor.unstack input outer)) coordinate =
+        input (outer, coordinate)
+      rw [@reduceFromBroadcastTo_self α _ _ _ inner tailBroadcast (Tensor.unstack input outer)]
+      exact Internal.Rep.unstack_apply input outer coordinate
 
 namespace Reduction
 namespace Internal
@@ -387,6 +481,40 @@ def reduceDim
     (x : Tensor α s) : Tensor α (shapeAfterSum s axis) :=
   Reduction.Internal.reduceDimCore f s axis x
 
+/-- Reading an axis reduction exposes the original aggregator on the input entries in increasing
+axis-index order. An empty axis supplies an empty vector, so nonemptiness is not required. -/
+theorem reduceDim_apply {α : Type} [Storage α]
+    (f : ∀ {sliceShape : Shape}, Tensor α sliceShape → α) :
+    (axis : Nat) → {shape : Shape} → [_h : Shape.AxisInBounds axis shape] →
+      (input : Tensor α shape) → (coordinate : (shapeAfterSum shape axis).Coord) →
+      reduceDim f axis input coordinate =
+        f (Tensor.ofFn fun index : Fin (Shape.axisSize shape axis) =>
+          input ((Internal.axisCoordinateEquiv axis (shape := shape)).symm (index, coordinate)))
+  | 0, .dim _ _, _, input, coordinate => by
+      change Reduction.Internal.reduceOuterAxis f input coordinate =
+        f (Tensor.ofFn fun index => input (index, coordinate))
+      exact Reduction.Internal.reduceOuterAxis_apply f input coordinate
+  | axis + 1, .dim outerSize inner, h, input, ⟨outer, coordinate⟩ => by
+      let innerAxis : Shape.AxisInBounds axis inner := ⟨by
+        have valid := h.proof
+        simp only [Shape.rank] at valid
+        omega⟩
+      let := innerAxis
+      simp only [reduceDim, Reduction.Internal.reduceDimCore,
+        Tensor.dim, Internal.Rep.stack_apply]
+      change reduceDim f axis (Tensor.unstack input outer) coordinate = _
+      rw [@reduceDim_apply α _ f axis inner innerAxis (Tensor.unstack input outer) coordinate]
+      congr 1
+      apply Internal.Rep.ext
+      rintro ⟨index, tailCoordinate⟩
+      simp only [Tensor.ofFn, Internal.Rep.get_ofFn, Tensor.unstack,
+        Internal.Rep.unstack_apply]
+      exact (Internal.Rep.get_ofFn
+        (fun pair : Internal.Coord [Shape.axisSize inner axis] =>
+          input ((Internal.axisCoordinateEquiv (axis + 1)
+            (shape := .dim outerSize inner)).symm (pair.1, outer, coordinate)))
+        (index, tailCoordinate)).symm
+
 /-- Sum-reduction along a given axis.
 
 The evidence matches `IR.OpContracts.checkReductionAxis`, which rejects invalid axes and
@@ -396,6 +524,17 @@ def reduceSum {α : Type} [TorchLean.Storage α] [Add α] [Zero α]
     {s : Shape} (axis : Nat) (t : Tensor α s) (_h : Shape.NonemptyAxis axis s) :
     Tensor α (shapeAfterSum s axis) :=
   reduceDim sumSpec axis t
+
+/-- The public sum's nonempty-axis evidence also locates its original ordered slice. -/
+theorem reduceSum_apply {α : Type} [Storage α] [Add α] [Zero α] {shape : Shape}
+    (axis : Nat) (input : Tensor α shape) (nonempty : Shape.NonemptyAxis axis shape)
+    (coordinate : (shapeAfterSum shape axis).Coord) :
+    letI : Shape.AxisInBounds axis shape := nonempty.toAxisInBounds
+    reduceSum axis input nonempty coordinate =
+      sumSpec (Tensor.ofFn fun index : Fin (Shape.axisSize shape axis) =>
+        input ((Internal.axisCoordinateEquiv axis (shape := shape)).symm (index, coordinate))) := by
+  let : Shape.AxisInBounds axis shape := nonempty.toAxisInBounds
+  exact reduceDim_apply sumSpec axis input coordinate
 
 /-- Mean-reduction along a given axis. -/
 def reduceMean {α : Type} [TorchLean.Storage α] [Add α] [Zero α] [Div α] [NatCast α]

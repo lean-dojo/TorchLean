@@ -1,4 +1,4 @@
-"""Capture pointwise operators from PyTorch and JAX and check them with ``verify ir``.
+"""Capture framework computations and check them with ``verify ir``.
 
 Each case captures a tiny computation, then requests structure, type and execution checks
 from the built ``verify`` executable. Operations whose IR arithmetic is PyTorch's or XLA's also
@@ -426,6 +426,23 @@ class PyTorchCaptureTests(CheckerCase):
         torch = self.torch
         model = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.GELU(approximate="tanh"))
         self.assert_passes(self.verify(model.eval(), self.x))
+
+    def test_capture_preserves_non_dense_layout_and_argument_aliases(self):
+        # A compact clone changes the branch and lets comparison validate the
+        # wrong capture. The input is also a non-leaf view with a nonzero offset.
+        torch = self.torch
+        base = torch.arange(12., requires_grad=True)
+        view = base.reshape(3, 4)[:, 1::2]
+
+        def layout(a, b):
+            same = a is b and a.stride() == (4, 2) and a.storage_offset() == 1
+            return a + 1 if same else a + 2
+
+        report = self.verify(layout, view, view, checks=COMPARE)
+        self.assert_passes(report)
+        expected = layout(view, view).detach().flatten().view(torch.int32).tolist()
+        self.assertEqual(report["outputs"][0]["bits"], expected)
+        torch.testing.assert_close(base, torch.arange(12.))
 
     def test_error_function_needs_an_implementation(self):
         torch = self.torch
@@ -872,6 +889,233 @@ class JaxCaptureTests(CheckerCase):
     def test_error_function_needs_an_implementation(self):
         report = self.verify(self.jax.lax.erf, self.x)
         self.assert_unsupported_execution(report, "has no implementation for float32")
+
+
+@unittest.skipUnless(CHECKER and HAS_TORCH, "needs the built verify executable and PyTorch")
+class PyTorchCompilationTests(CheckerCase):
+    # Lean's graph proofs do not cover Dynamo's guards, Python descriptors or live
+    # Parameter bindings. These checks pin that compiler boundary, not the algebra.
+    def test_model_decorator_preserves_training_and_specializations(self):
+        import torch
+
+        @torchlean.compile(checker=CHECKER)
+        class Network(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear = torch.nn.Linear(2, 1)
+                self.scale = 2.0
+
+            def forward(self, x):
+                y = self.linear(x) * self.scale
+                return y if self.training else y + 1
+
+        model = Network()
+        parameters = tuple(model.parameters())
+        keys = tuple(model.state_dict())
+        optimizer = torch.optim.SGD(parameters, lr=0.1)
+        x = torch.ones(1, 2)
+        initial = model(x).detach()
+        model(x).sum().backward()
+        optimizer.step()
+        self.assertFalse(torch.equal(model(x).detach(), initial))
+        self.assertEqual(len(model.torchlean.graphs), 1)
+        self.assertEqual(tuple(model.state_dict()), keys)
+        self.assertTrue(all(a is b for a, b in zip(parameters, model.parameters())))
+        self.assertEqual(len(model.torchlean.artifact["input_ids"]), 3)
+        model.scale = 3.0
+        model(x)
+        model.eval()
+        model(x)
+        model.train()
+        model(x)
+        self.assertEqual(len(model.torchlean.graphs), 3)
+        self.assertIsNone(Network().torchlean.report)
+        # Backend identity must not consume a Dynamo cache slot per instance.
+        for _ in range(12):
+            other = Network()
+            other(x)
+            self.assert_passes(other.torchlean.report)
+            self.assertEqual(len(other.torchlean.graphs), 1)
+
+    def test_existing_module_copy_keeps_its_own_parameters(self):
+        import inspect
+        import torch
+
+        model = torch.nn.Linear(2, 1)
+        signature = inspect.signature(model.forward)
+        self.assertIs(torchlean.compile(model, checker=CHECKER), model)
+        self.assertEqual(inspect.signature(model.forward), signature)
+        x = torch.ones(1, 2)
+        original = model(x).detach()
+        copied = copy.deepcopy(model)
+        self.assertIsNone(copied.torchlean.report)
+        copied.bias.data.add_(2)
+        torch.testing.assert_close(copied(x), original + 2)
+        self.assert_passes(copied.torchlean.report)
+        torch.testing.assert_close(model(x), original)
+
+    def test_hooks_are_captured_and_later_changes_invalidate_the_graph(self):
+        import torch
+
+        @torchlean.compile(checker=CHECKER)
+        class Square(torch.nn.Module):
+            def forward(self, inputs):
+                return inputs * inputs
+
+        for model in (Square(), torchlean.compile(torch.nn.Linear(2, 2), checker=CHECKER)):
+            with self.subTest(model=type(model).__name__):
+                inputs = torch.ones(3, 2)
+                initial = model(inputs).detach()
+                hook = model.register_forward_hook(lambda _, args, output: output + 1)
+                torch.testing.assert_close(model(inputs), initial + 1)
+                self.assertEqual(len(model.torchlean.graphs), 2)
+                hook.remove()
+                torch.testing.assert_close(model(inputs), initial)
+                model.register_forward_hook(lambda _, args, output: torch.sort(output).values)
+                with self.assertRaises(Exception):
+                    model(inputs)
+                self.assertEqual(len(model.torchlean.graphs), 2)
+
+    def test_call_interface_aliases_and_metadata(self):
+        import torch
+
+        @torchlean.compile(checker=CHECKER)
+        def function(values, *, bias, scale=2):
+            y = values["x"] * scale + bias
+            return {"value": y, "square": (y * y,)}
+
+        x = torch.ones(2, requires_grad=True)
+        result = function({"x": x}, bias=x)
+        result["value"].sum().backward()
+        torch.testing.assert_close(x.grad, torch.full_like(x, 3))
+        self.assert_passes(function.torchlean.report)
+        copied = function.torchlean.report
+        copied["ok"] = False
+        self.assertTrue(function.torchlean.report["ok"])
+        self.assert_passes(torchlean.verify(function, {"x": x}, example_kwargs={"bias": x},
+                                           checks=COMPARE, checker=CHECKER))
+
+        @torchlean.compile(checker=CHECKER)
+        def alias(a, b):
+            return a + b if a is b else a - b
+
+        torch.testing.assert_close(alias(x, x), x + x)
+        torch.testing.assert_close(alias(x, x.clone()), x - x)
+        self.assertEqual(len(alias.torchlean.graphs), 2)
+
+    def test_no_unchecked_compiler_fallback(self):
+        import torch
+
+        @torchlean.compile(checker=CHECKER)
+        def unsupported(x):
+            return torch.sort(x).values
+
+        with self.assertRaises(Exception):
+            unsupported(torch.ones(2))
+        self.assertEqual(unsupported.torchlean.graphs, ())
+
+        @torchlean.compile(checker=CHECKER)
+        def no_tensor_graph(x):
+            return x.shape[0]
+
+        with self.assertRaises(NotImplementedError):
+            no_tensor_graph(torch.ones(2))
+        self.assertIsNone(no_tensor_graph.torchlean.report)
+
+        @torchlean.compile(checker=CHECKER)
+        def square(x):
+            return x * x
+
+        external = torch.compile(square, backend="eager", fullgraph=True)
+        with self.assertRaises(Exception):
+            external(torch.ones(2))
+        self.assertIsNone(square.torchlean.report)
+
+    def test_registered_pytree_selects_pytorch(self):
+        import torch
+
+        class Box:
+            def __init__(self, value):
+                self.value = value
+
+        torch.utils._pytree.register_pytree_node(
+            Box, lambda box: ([box.value], None), lambda values, _: Box(values[0]))
+
+        @torchlean.compile(checker=CHECKER)
+        def square(box):
+            return box.value * box.value
+
+        torch.testing.assert_close(square(Box(torch.full((3,), 2.))), torch.full((3,), 4.))
+        self.assert_passes(square.torchlean.report)
+
+
+@unittest.skipUnless(CHECKER and HAS_JAX, "needs the built verify executable and JAX")
+class JAXCompilationTests(CheckerCase):
+    def test_registered_pytree_selects_jax(self):
+        import jax
+        import jax.numpy as jnp
+
+        @jax.tree_util.register_pytree_node_class
+        class Box:
+            def __init__(self, value):
+                self.value = value
+
+            def tree_flatten(self):
+                return (self.value,), None
+
+            @classmethod
+            def tree_unflatten(cls, _, values):
+                return cls(values[0])
+
+        @torchlean.compile(checker=CHECKER)
+        def square(box):
+            return box.value * box.value
+
+        self.assertTrue(bool(jnp.all(square(Box(jnp.full(3, 2.))) == 4)))
+        self.assert_passes(square.torchlean.report)
+
+    def test_pytree_parameters_kwargs_and_native_gradients(self):
+        import jax
+        import jax.numpy as jnp
+
+        @torchlean.compile(checker=CHECKER)
+        def function(params, x, *, bias):
+            y = params["scale"] * x + bias
+            return {"value": y, "square": (y * y,)}
+
+        x = jnp.ones(2)
+        params = {"scale": x}
+        self.assertTrue(bool(jnp.all(function(params, x, bias=x)["value"] == 2)))
+        function({"scale": x * 2}, x, bias=x)
+        self.assertEqual(len(function.torchlean.graphs), 1)
+        gradient = jax.grad(lambda p: function(p, x, bias=x)["value"].sum())(params)
+        self.assertTrue(bool(jnp.all(gradient["scale"] == 1)))
+        function({"scale": jnp.ones(3)}, jnp.ones(3), bias=jnp.ones(3))
+        self.assertEqual(len(function.torchlean.graphs), 2)
+        self.assert_passes(function.torchlean.report)
+        self.assert_passes(torchlean.verify(function, params, x, example_kwargs={"bias": x},
+                                           checks=COMPARE, checker=CHECKER))
+
+    def test_static_specialization_and_unsupported_graph(self):
+        import jax.numpy as jnp
+
+        @torchlean.compile(checker=CHECKER)
+        def evolve(x, steps=2):
+            for _ in range(steps):
+                x = x * x + 1
+            return x
+
+        self.assertTrue(bool(jnp.all(evolve(jnp.ones(2)) == 5)))
+        self.assertTrue(bool(jnp.all(evolve(jnp.ones(2), steps=1) == 2)))
+        self.assertEqual(len(evolve.torchlean.graphs), 2)
+
+        @torchlean.compile(checker=CHECKER)
+        def unsupported(x):
+            return jnp.sort(x)
+
+        with self.assertRaises(Exception):
+            unsupported(jnp.ones(2))
+        self.assertEqual(unsupported.torchlean.graphs, ())
 
 
 if __name__ == "__main__":

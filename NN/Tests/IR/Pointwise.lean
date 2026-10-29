@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.Verification.IR
+public import NN.Verification.Numerical
 public import NN.Spec.Core.Context.Real
 
 /-!
@@ -672,13 +673,43 @@ def runCaptures : IO Unit := do
     throw <| IO.userError s!"pointwise captures failed:\n{out.stderr}"
   IO.println s!"  PyTorch and JAX captures: {" ".intercalate summary}"
 
-/-- Run every pointwise case. -/
+/-- Concrete error certificates must execute their graphs and reject invalid budgets and values.
+The supplied reference-output recording is deliberately forged: the checker must ignore it. -/
+def runNumericalCertificates : IO Unit := do
+  let artifact (words : List Nat) :=
+    program [nodeJson 0 [("kind", "input")] [] words.length float32] 1
+      [tensorJson float32 words]
+  let reference := artifact [0x3f800000, 0x40000000] -- 1, 2
+  let nearby := artifact [0x3fa00000, 0x40000000] -- 1.25, 2
+  let changed := artifact [0x40400000, 0x40000000] -- 3, 2
+  let forged := reference.setObjVal! "reference_outputs"
+    (toJson [tensorJson float32 [0x7fc00000, 0x7f800000]])
+  let check := NN.Verification.Numerical.checkError
+  let stable := NN.Verification.Numerical.checkPrediction
+  for (name, actual, expected) in #[
+      ("finite budget", check reference nearby (1 / 4), true),
+      ("insufficient budget", check reference nearby (1 / 8), false),
+      ("negative budget", check reference reference (-1), false),
+      ("shape mismatch", check reference (artifact [0x3f800000]) 1, false),
+      ("NaN rejected", check reference (artifact [0x7fc00000, 0x40000000]) 100, false),
+      ("infinity rejected", check reference (artifact [0x7f800000, 0x40000000]) 100, false),
+      ("recordings ignored", check reference forged 0, true),
+      ("winner preserved", stable reference nearby (1 / 4) 0 1, true),
+      ("half-margin boundary", stable reference reference (1 / 2) 0 1, false),
+      ("invalid winner", stable reference reference 0 0 2, false),
+      ("changed winner", stable reference changed 2 0 1, false)] do
+    unless actual == expected do
+      throw <| IO.userError s!"numerical execution certificate: {name}: got {actual}"
+  IO.println "  numerical execution certificates: bounds, margins and rejection checks passed"
+
+/-- Run every pointwise case and the shared numerical certificate checks. -/
 def run : IO Unit := do
   IO.println "== pointwise operators through the typed IR checker =="
   runBinary
   runInteger
   runConversions
   runComparisons
+  runNumericalCertificates
   runCaptures
 
 end NN.Tests.IR.Pointwise

@@ -316,6 +316,39 @@ theorem backwardNode_preserves
                   hdims ha' hy hc
                 right
                 simpa only [← hdy, sub_add_cancel] using hr
+      case slice axis start length =>
+        simp only [NodeEquation, hkind] at heq
+        cases hl : sliceNodeLayout? nodes nodes[k]! axis start length with
+        | none =>
+            simpa only [hl, Option.bind_eq_bind, Option.bind_none] using hfail
+        | some layout =>
+            simp only [Option.bind_eq_bind, Option.bind_some]
+            cases hp : unaryParent? nodes[k]!.parents with
+            | none =>
+                simpa only [hp, Option.bind_none] using hfail
+            | some p =>
+                simp only [Option.bind_some]
+                cases hb : (ibp[p]?).join with
+                | none =>
+                    simpa only [hb, Option.bind_none] using hfail
+                | some box =>
+                    simp only [Option.bind_some]
+                    by_cases hwidth : box.dim = layout.sourceShape.size
+                    · simp only [hwidth, beq_self_eq_true, ↓reduceIte]
+                      cases hc : scatterSliceFlatBoxes? layout aB with
+                      | none =>
+                          simpa only [hc, Option.bind_none] using hfail
+                      | some aX =>
+                          simp only [Option.bind_some, Option.pure_def]
+                          obtain ⟨hdy, hsource⟩ := heq layout hl
+                          obtain ⟨hdp, hy⟩ := hsource p hp
+                          have hp' := hparent p (mem_of_unaryParent?_eq_some hp)
+                          have ha' : RowEncloses aB layout.outputShape.size a := by
+                            simpa only [hdy] using ha
+                          have hr := represents_slice hbase hp'.1 hp'.2 layout hdp ha' hy hc
+                          right
+                          simpa only [← hdy, sub_add_cancel] using hr
+                    · simpa [hwidth] using hfail
       case layernorm axis =>
         split
         · exact hfail

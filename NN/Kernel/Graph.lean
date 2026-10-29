@@ -13,6 +13,7 @@ import NN.Runtime.Autograd.Engine.LibTorch.Convert
 import NN.Runtime.Autograd.Engine.LibTorch.ConvPool
 import NN.Runtime.Autograd.Engine.LibTorch.Kernels
 import NN.Runtime.Autograd.Engine.LibTorch.Ops.Attention
+import NN.Runtime.Autograd.Engine.LibTorch.Ops.Indexing
 import NN.Runtime.Autograd.Engine.LibTorch.Shape
 import NN.Runtime.Autograd.Torch.Core.TensorTransfer
 
@@ -82,6 +83,39 @@ private def prepare (graph : Graph) (payload : Payload Float32) (node : Node) :
         NN.Kernel.Internal.runBuffers .binary32 bits program.expression inputs
           node.outShape.size.toUInt64
   | .detach | .reshape _ _ | .flatten _ => unary id
+  | .slice axis start length =>
+      let source ← Infer.expectUnaryParent "slice" parents
+      let some hAxis := Shape.axisInBounds? axis source.outShape |
+        throw s!"IR native: slice {node.id}: invalid axis {axis}"
+      letI := hAxis.down
+      unless start + length ≤ source.outShape.axisSize axis do
+        throw s!"IR native: slice {node.id}: range exceeds axis {axis}"
+      unless source.outShape.replaceAxis axis length == node.outShape do
+        throw s!"IR native: slice {node.id}: output shape mismatch"
+      let inputSize ← SomeBuffer.numelU32 source.outShape
+      if node.outShape.size == 0 then
+        pure fun values => do
+          pure (Buffer.sliceBuffer (← parent values source.id).buf inputSize 0 0)
+      else if axis == 0 then
+        let block := (source.outShape.eraseAxis 0).size
+        let offset ← SomeBuffer.natToU32Checked (start * block)
+        let count ← SomeBuffer.natToU32Checked (length * block)
+        pure fun values => do
+          pure (Buffer.sliceBuffer (← parent values source.id).buf inputSize offset count)
+      else
+        let rows ← SomeBuffer.natToU32Checked
+          (@Shape.axisSize source.outShape axis hAxis.down)
+        let cols ← SomeBuffer.numelU32 (source.outShape.eraseAxis axis)
+        let count ← SomeBuffer.natToU32Checked length
+        let steps ← Tape.Indexing.checkedSwapSteps (Tape.Indexing.moveAxisToFrontDepths axis)
+        let indices := Array.ofFn fun i : Fin length => start + i.val
+        pure fun values => do
+          let input ← parent values source.id
+          let moved := Tape.Indexing.permuteBorrowed input.buf source.outShape steps
+          let selected := Buffer.gatherRows moved rows cols indices count
+          let front := Tape.Indexing.releasePermutedThen steps moved selected
+          pure (Tape.Indexing.permuteOwned front
+            (.dim length (source.outShape.eraseAxis axis)) steps.reverse)
   | .add => binary Buffer.add
   | .sub => binary Buffer.sub
   | .mulElem => binary Buffer.mul

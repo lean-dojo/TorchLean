@@ -91,9 +91,10 @@ theorem divOp_backward_eq_adjoint {s : Shape} (rhs : Tensor ℝ s)
     (x : Vec (Shape.size s)) (δ : Tensor ℝ s) :
     tensorToVec ((Spec.divOp rhs).backward (vecToTensor x) δ) =
       (fderiv ℝ (fun y => tensorToVec ((Spec.divOp rhs).forward (vecToTensor y)))
-        x).adjoint (tensorToVec δ) :=
-  binaryElemOp_backward_eq_adjoint rhs (· / ·) (fun _ y => 1 / y) x
-    (fun i => (hasDerivAt_id (x i)).div_const (tensorToVec rhs i)) δ
+        x).adjoint (tensorToVec δ) := by
+  rw [(divOp_hasFDerivAt rhs x).fderiv, coordinateDeriv_adjoint_apply]
+  ext i
+  simp [Spec.divOp, Tensor.divSpec, div_eq_mul_inv, mul_comm]
 
 /-- The epsilon shift belongs to the fixed denominator, so it does not contribute a derivative. -/
 theorem safeDivOp_hasFDerivAt {s : Shape} (rhs : Tensor ℝ s)
@@ -117,7 +118,7 @@ theorem safeDivOp_backward_eq_adjoint {s : Shape} (rhs : Tensor ℝ s)
         x).adjoint (tensorToVec δ) := by
   rw [(safeDivOp_hasFDerivAt rhs x).fderiv, coordinateDeriv_adjoint_apply]
   ext i
-  simp [Spec.safeDivOp]
+  simp [Spec.safeDivOp, Tensor.safedivSpec, div_eq_mul_inv, mul_comm]
 
 end
 

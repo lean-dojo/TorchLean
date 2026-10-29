@@ -117,6 +117,22 @@ def parse (artifact : Json) : Except String
 
 end Internal
 
+/-- Read a shaped tensor from its declared element type and complete interchange words.
+The selected decoder, rather than JSON decimal values, determines its scalar representation. -/
+def parseValue (interpreter : Interpreter)
+    (load : DType → Spec.Shape → Array Nat → Except String (Interpreter.Value interpreter))
+    (value : Json) : Except String (Interpreter.Value interpreter) := do
+  let dtype ← DType.fromJson (← value.getObjVal? "dtype")
+  let shape ← PyTorch.TorchExport.Internal.shape "tensor.shape" (← value.getObjVal? "shape")
+  let words ← PyTorch.TorchExport.Internal.nats "tensor.bits" (← value.getObjVal? "bits")
+  load dtype shape words
+
+/-- Read the concrete arguments of an artifact, preserving their positional order. -/
+def parseArguments (interpreter : Interpreter)
+    (load : DType → Spec.Shape → Array Nat → Except String (Interpreter.Value interpreter))
+    (artifact : Json) : Except String (Array (Interpreter.Value interpreter)) := do
+  (← (← artifact.getObjVal? "arguments").getArr?).mapM (parseValue interpreter load)
+
 /-- Import element types and explicit casts using the existing tensor graph lowering. -/
 def parseProgram (artifact : Json) : Except String Program := do
   let (_, _, program) ← Internal.parse artifact

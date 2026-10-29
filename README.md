@@ -90,6 +90,49 @@ def trainOnce : IO Unit := do
   trained.printSummary
 ```
 
+### Compile a Python model
+
+From the repository root, build the checker with `scripts/lake.sh build verify`, then
+put `@torchlean.compile` on a model class:
+
+```python
+import torch
+import torchlean
+
+@torchlean.compile
+class MLP(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.layers = torch.nn.Sequential(
+            torch.nn.Linear(2, 8), torch.nn.ReLU(), torch.nn.Linear(8, 1)
+        )
+
+    def forward(self, inputs):
+        return self.layers(inputs)
+
+model = MLP()
+batch = torch.ones(32, 2)
+prediction = model(batch)
+prediction.sum().backward()
+print(model.torchlean.report["ok"])
+```
+
+TorchLean detects PyTorch or JAX automatically. The first call captures the computation
+for the whole batch and checks its IR structure and types; later compatible calls reuse
+that graph. There is no extra loop over samples. The framework executes the captured
+computation, retaining its device and automatic differentiation. Use the same decorator
+on an ordinary PyTorch or JAX function, or use
+`model = torchlean.compile(model)` for an existing PyTorch module; its parameters and
+training methods remain available. For a class that overrides `__call__`, put the
+decorator on the class. Unsupported captures and failed checks raise.
+
+These checks concern the imported graph. They do not prove frontend equivalence or
+correctness for every input. See the [captured-computation guide](https://lean-dojo.github.io/TorchLean/examples/verify/)
+for graph inspection, sample comparisons, and Lean proof exports.
+
+An [optional Python binding](bindings/python/README.md) calls the same checker inside Python.
+Installing it keeps the `torchlean.compile` and `torchlean.verify` interfaces unchanged.
+
 ## Commands
 
 ```bash

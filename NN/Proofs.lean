@@ -67,6 +67,7 @@ public import NN.Proofs.RL.MarkovMDP
 public import NN.Proofs.RL.Replay
 public import NN.Proofs.RuntimeApprox
 public import NN.Proofs.Tensor
+public import NN.Proofs.Text.Bpe
 public import NN.Proofs.Verification
 
 /-!

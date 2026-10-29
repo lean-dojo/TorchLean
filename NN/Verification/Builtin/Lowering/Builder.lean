@@ -21,7 +21,7 @@ their transfer rules support its operations and parameter payloads.
 The builder handles arithmetic, shape operations, common activations, pooling, linear layers,
 and arbitrary-rank convolution. Composite operations such as multi-head attention produce several
 IR nodes. Training BatchNorm, transposed convolution, smooth max-pooling, tensor-valued
-gather/scatter indices, and selection on an inner axis return lowering errors.
+gather/scatter indices return lowering errors.
 GELU also returns an error. A faithful lowering must keep its cubic association and its gate
 division, and the verifier fragment has no lowering or IBP/CROWN transfer for division. Expanding
 GELU into a different multiplication schedule can overflow a finite source result.
@@ -44,8 +44,9 @@ payload. Last-axis IBP and CROWN value bounds use directed arithmetic for the no
 affine transform. The derivative passes leave these payloads unresolved until their rules account
 for the supplied parameters and the specification's variance calculation.
 
-Leading-axis `select` receives a `Fin` index while constructing the graph. Reading coordinate zero
-of a state vector therefore becomes a constant one-hot projection followed by a reshape.
+`select` receives a `Fin` index while constructing the graph. Selecting an axis coordinate becomes
+a length-one slice followed by a reshape that drops that axis. Both operations preserve entries
+without scalar arithmetic, including exceptional floating-point values.
 `indexSelect` and `scatterAdd` receive their indices as tensor data and need separate lowering and
 transfer rules.
 
@@ -254,30 +255,11 @@ def Internal.emitAttention {α : Type} [TorchLean.Storage α] [Context α]
     emitUnary (α := α) (kind := .reshape sProjected sBig) (x := swapped) (t := sBig)
   emitMatmul (α := α) (a := concat) (b := wo) (sOut := sX)
 
-/-- Leading-axis slice encoded as a one-hot affine matrix followed by a reshape.
-
-The matrix representation selects the intended coordinates over exact arithmetic. It also
-evaluates zero products and a reduction, unlike direct indexing; exceptional floating-point values
-and signed zeros can therefore behave differently.
--/
+/-- Emit a leading-axis slice that reads source entries without scalar arithmetic. -/
 def emitSlice {α : Type} [TorchLean.Storage α] [Context α]
     {n len : Nat} {s : Shape} (start : Nat) (_h : start + len ≤ n)
-    (x : Ref α (.dim n s)) : BuildM α (Ref α (.dim len s)) := do
-  let block : Nat := Spec.Shape.size s
-  let xMat : Ref α (.dim n (.dim block .scalar)) ←
-    emitUnary (α := α)
-      (kind := .reshape (.dim n s) (.dim n (.dim block .scalar)))
-      (x := x) (t := .dim n (.dim block .scalar))
-  let selector : Tensor α [len, n] :=
-    Tensor.dim (fun row =>
-      Tensor.dim (fun col =>
-        Tensor.scalar (if col.val = start + row.val then (1 : α) else (0 : α))))
-  let yMat : Ref α (.dim len (.dim block .scalar)) ←
-    emitMatmul (α := α) (a := .const selector) (b := xMat)
-      (sOut := .dim len (.dim block .scalar))
-  emitUnary (α := α)
-    (kind := .reshape (.dim len (.dim block .scalar)) (.dim len s))
-    (x := yMat) (t := .dim len s)
+    (x : Ref α (.dim n s)) : BuildM α (Ref α (.dim len s)) :=
+  emitUnary (α := α) (kind := .slice 0 start len) (x := x) (t := .dim len s)
 
 /-- Emit a verifier-IR concatenation along the leading axis. -/
 def emitConcat {α : Type} [TorchLean.Storage α] [Context α]
@@ -387,30 +369,14 @@ instance {α : Type} [TorchLean.Storage α] [Context α] :
     let out : Shape := TorchLean.Tensor.shapeAfterSum s axis
     emitUnary (α := α) (kind := .reduceMean axis) (x := x) (t := out)
 
-  -- A `select` with a statically known index is a constant one-hot projection, not a data-dependent
-  -- gather, so it does belong to the verifier fragment: we reuse the same selector-matmul encoding
-  -- that `slice` uses and then drop the length-one axis with a reshape. Only the
-  -- leading axis is handled. An inner axis would need the projection applied under the outer
-  -- dimensions, which the fragment cannot express without a stack/unstack pair, so that case still
-  -- reports a fragment error rather than silently lowering to something else.
-  select := fun {s} axis _axisInBounds x index =>
-    -- Read the index out as a plain `Nat` before matching on the shape: its `Fin` type mentions
-    -- both `s` and `axis`, and a `match` on those two does not refine it.
-    let idx : Nat := index.val
-    match s, axis with
-    | .dim n rest, 0 =>
-        if h : idx + 1 ≤ n then do
-          let sliced : Ref α (.dim 1 rest) ←
-            emitSlice (α := α) (n := n) (len := 1) (s := rest) idx h x
-          emitUnary (α := α) (kind := .reshape (.dim 1 rest) rest) (x := sliced) (t := rest)
-        else
-          -- Unreachable: `index : Fin (axisSize s 0)` already bounds `idx` by `n`.
-          fail (α := α) s!"TorchLean→IR: select index {idx} out of range for leading axis {n}"
-    | _, _ + 1 =>
-        fail (α := α)
-          "TorchLean→IR: select on a non-leading axis is outside the verifier IR fragment"
-    | .scalar, _ =>
-        fail (α := α) "TorchLean→IR: select needs a positive-rank input shape"
+  -- The Fin index and axis witness supply the slice bounds. Replacing the selected dimension
+  -- by one preserves the element count of the result with that dimension removed.
+  select := fun {s} axis _axisInBounds x index => do
+    let slicedShape := s.replaceAxis axis 1
+    let outputShape := s.eraseAxis axis
+    let sliced : Ref α slicedShape ←
+      emitUnary (α := α) (kind := .slice axis index.val 1) (x := x) (t := slicedShape)
+    emitUnary (α := α) (kind := .reshape slicedShape outputShape) (x := sliced) (t := outputShape)
   indexSelect := fun {_s} _axis _count _axisInBounds _x _indices =>
     fail (α := α) "TorchLean→IR: indexSelect is outside the verifier IR fragment"
   scatterAdd := fun {_s} _axis _count _axisInBounds _base _source _indices =>

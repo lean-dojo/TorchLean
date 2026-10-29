@@ -8,6 +8,7 @@ module
 
 public import NN.Spec.Core.TensorReductionShape.Broadcasting
 public import NN.Spec.Core.TensorReductionShape.Reductions
+public import NN.Tensor.Internal.Representation.Segment
 
 @[expose] public section
 
@@ -112,6 +113,34 @@ def permuteByAdjacentSwaps {β : Type} [TorchLean.Storage β]
   | depth :: depths =>
       permuteByAdjacentSwaps (swapAdjacentAxes tensor depth) depths
 
+namespace Internal
+
+/-- Source coordinate read after a sequence of adjacent-axis swaps. -/
+def permutedCoordinate : (shape : Spec.Shape) → (swaps : List Nat) →
+    (shape.applyAdjacentSwaps swaps).Coord → shape.Coord
+  | _, [], coordinate => coordinate
+  | shape, depth :: swaps, coordinate =>
+      swapAdjacentAxesCoordinate shape depth
+        (permutedCoordinate (shape.swapAdjacentAtDepth depth) swaps coordinate)
+
+end Internal
+
+/-- An output entry reads the input at its permuted coordinate. -/
+theorem permuteByAdjacentSwaps_apply {α : Type} [TorchLean.Storage α] {shape : Shape}
+    (tensor : Tensor α shape) (swaps : List Nat)
+    (coordinate : (shape.applyAdjacentSwaps swaps).Coord) :
+    permuteByAdjacentSwaps tensor swaps coordinate =
+      tensor (Internal.permutedCoordinate shape swaps coordinate) := by
+  induction swaps generalizing shape with
+  | nil => rfl
+  | cons depth swaps ih =>
+      change ((shape.swapAdjacentAtDepth depth).applyAdjacentSwaps swaps).Coord at coordinate
+      change permuteByAdjacentSwaps (swapAdjacentAxes tensor depth) swaps coordinate =
+        tensor (Internal.swapAdjacentAxesCoordinate shape depth
+          (Internal.permutedCoordinate (shape.swapAdjacentAtDepth depth) swaps coordinate))
+      exact (ih (swapAdjacentAxes tensor depth) coordinate).trans
+        (swapAdjacentAxes_apply tensor depth _)
+
 /-- Swapping at depth zero exchanges the two leading axes. -/
 theorem swapAdjacentAxes_zero {β : Type} [TorchLean.Storage β]
     {m n : Nat} {s : Shape}
@@ -183,6 +212,49 @@ def matmulCommonBatchSpec {α : Type} [TorchLean.Storage α]
     matmulCommonBatchSpec (batch := .dim count rest) (.dim left) (.dim right) =
       .dim (fun index => matmulCommonBatchSpec (left index) (right index)) := by
   simp [matmulCommonBatchSpec]
+
+open TorchLean.Tensor.Internal
+
+/-- A batched matrix-product entry traverses the contracted dimension in its original order,
+reading both operands at the same batch coordinate. -/
+theorem matmulCommonBatchSpec_apply {α : Type} [Storage α] [Add α] [Mul α] [Zero α]
+    {batch : Spec.Shape} {m n p : Nat}
+    (left : Tensor α (batch.concat [m, n]))
+    (right : Tensor α (batch.concat [n, p]))
+    (coordinate : (batch.concat [m, p]).Coord) :
+    matmulCommonBatchSpec left right coordinate =
+      let split := Coord.appendEquiv batch [m, p]
+        (_root_.cast (congrArg Coord (Spec.Shape.concat_eq_append batch [m, p])) coordinate)
+      (List.finRange n).foldl
+        (fun total k => total +
+          left (_root_.cast (congrArg Coord (Spec.Shape.concat_eq_append batch [m, n]).symm)
+            ((Coord.appendEquiv batch [m, n]).symm
+              (split.1, split.2.1, k, PUnit.unit))) *
+          right (_root_.cast (congrArg Coord (Spec.Shape.concat_eq_append batch [n, p]).symm)
+            ((Coord.appendEquiv batch [n, p]).symm
+              (split.1, k, split.2.2.1, PUnit.unit)))) 0 := by
+  -- Shape transport keeps the outer coordinate and transports only the tail.
+  have cast_cons {source target : TorchLean.Tensor.Internal.Shape} {count : Nat}
+      (equal : source = target) (index : Coord (count :: source)) :
+      _root_.cast (congrArg Coord (congrArg (List.cons count) equal)) index =
+        (index.1, _root_.cast (congrArg Coord equal) index.2) := by
+    cases equal
+    rfl
+  induction batch with
+  | scalar =>
+      change matMulSpec left right coordinate = _
+      simp only [matMulSpec, Rep.get_ofFn, Spec.get2_eq_apply]
+      rfl
+  | dim count batch ih =>
+      change (Tensor.dim fun outer =>
+        matmulCommonBatchSpec (Tensor.unstack left outer)
+          (Tensor.unstack right outer)) coordinate = _
+      rw [Tensor.dim, Rep.stack_apply, ih]
+      simp only [Tensor.unstack, Rep.unstack_apply,
+        cast_cons (count := count) (Spec.Shape.concat_eq_append batch [m, p]),
+        cast_cons (count := count) (Spec.Shape.concat_eq_append batch [m, n]).symm,
+        cast_cons (count := count) (Spec.Shape.concat_eq_append batch [n, p]).symm]
+      rfl
 
 end Internal
 end LinearAlgebra

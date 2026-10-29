@@ -638,19 +638,18 @@ explains the further connection between the bit-level and rounded-real models.
 The stage-two loss reads coordinates out of the state vector, `x₁` and `x₂` for the van der Pol
 dynamics, with `Model.select`. The lowering in
 {src "NN/Verification/Builtin/Lowering/Builder.lean"}[`Lowering/Builder.lean`]
-handles `select` on the leading axis by reading the supplied `Fin` index
-while constructing the graph. The index is fixed for that graph; having type `Fin` alone does not
-mean a value must be known at elaboration time. Selecting one coordinate becomes a constant one-hot
-projection: take a leading slice of length one, then reshape to remove that axis.
+handles `select` along any valid axis. The supplied `Fin` index is fixed when we construct the
+graph. Selection emits a native slice of length one along that axis, followed by a reshape that
+removes the singleton dimension.
 
-The slice is encoded as a one-hot matrix multiplication with reshapes. This agrees with selection
-over exact real arithmetic, but it also evaluates zero products and an accumulation. NaN,
-infinity, and signed-zero behavior need not match direct floating-point indexing.
+The graph copies the selected entries directly, preserving their floating-point words, including
+NaNs, infinities and signed zeros. Interval and CROWN transfers use the same coordinate map to
+route bounds and coefficients. The source correspondence and directed-bound proofs establish
+these properties for valid slice geometry.
 
 `indexSelect` and `scatterAdd` take tensor-valued indices and remain outside this lowering fragment.
 That is a limit of the implemented translation and transfer rules, not a claim that indexed
-operations cannot be bounded. Selection on an inner axis is also rejected by this builder. The
-leading-axis case is sufficient for the state coordinates used by these two loss programs.
+operations cannot be bounded.
 
 # Lyapunov Certificate Validity
 

@@ -38,7 +38,7 @@ local notation "value" => LawfulBoundOps.toReal (α := α)
 
 /-- Real node semantics supplies each equation consumed by the backward sweep.
 
-The legacy sum equation also records parent row widths. `hdims` supplies this shape fact;
+The sum equation also records parent row widths. `hdims` supplies this shape fact;
 `GraphPoint.ofRunIBPAll` derives it from the completed forward pass. -/
 theorem RealNodeEquation.nodeEquation
     {nodes : Array Node} {ps : ParamStore α} {ibp : Array (Option (FlatBox α))}
@@ -55,7 +55,8 @@ theorem RealNodeEquation.nodeEquation
     exact ⟨h1, (hdims p (mem_of_unaryParent?_eq_some hp) box hbox).symm, hv⟩
   case conv configuration => exact heq.nodeEquation hk
   case matmul => exact heq.1
-  case concat | transpose | permute | broadcastTo | reduceSum | reduceMean | maxPool | avgPool =>
+  case concat | slice | transpose | permute | broadcastTo | reduceSum | reduceMean | maxPool |
+      avgPool =>
     exact StructuralRealNodeEquation.nodeEquation
       (by simp only [ibpStructuralSupportedNode, hk]) heq hparents
   case softmax | hardMaskedSoftmax | layernorm | batchNormEval

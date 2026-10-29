@@ -881,6 +881,11 @@ class HasNonemptyAxis (axis : Nat) (s : Shape) : Prop where
   /-- The selected dimension has positive extent. -/
   proof : NonemptyAxis axis s
 
+/-- A positive-length axis is a valid axis, without requiring positivity of the other axes. -/
+instance axisInBoundsOfHasNonemptyAxis {axis : Nat} {shape : Shape}
+    [h : HasNonemptyAxis axis shape] : AxisInBounds axis shape :=
+  h.proof.toAxisInBounds
+
 /-- Instance: axis `0` is valid for any positive outer dimension. -/
 instance hasNonemptyAxisZero {n s} : HasNonemptyAxis 0 (.dim (n + 1) s) :=
   ⟨NonemptyAxis.zero⟩

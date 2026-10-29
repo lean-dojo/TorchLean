@@ -83,8 +83,10 @@ softmax probabilities changes rounding even without underflow. The eager runtime
 stable log-softmax. GELU is also rejected. A faithful lowering must keep its gate division and
 cubic association; the IR has an elementwise division, but the verifier fragment has no lowering
 or IBP/CROWN transfer for it. The runtime's GELU remains available.
-Slicing uses one-hot matrix multiplication rather than direct indexing, so graph shape checks
-alone do not establish numerical equivalence for that encoding.
+Slicing uses native indexing, and selection along any valid axis adds a reshape that removes
+its singleton dimension. Local evaluator theorems in `Correctness/Eval/ShapeOps.lean` establish
+the correspondence with the source tensor operations, preserving the selected entries without
+scalar arithmetic.
 Clamp preserves its source min/max operand order for ordinary numeric contexts. Contexts with
 `stopGradient?` metadata clearing are rejected by this lowering because the IR cannot yet perform
 the conditional clearing required at and outside the clamp bounds.

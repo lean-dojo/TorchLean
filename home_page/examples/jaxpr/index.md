@@ -200,9 +200,9 @@ individual report fields. If we want to keep this capture for a proof, add
 ## Try a trained MNIST classifier
 
 The hand-written weights above let us follow a small graph. To try the same
-interface with learned weights, run the MNIST companion from the checkout.
-`uv run` installs the script's declared JAX and NumPy versions. Use a fresh output
-directory for each run:
+interface with learned weights, run the MNIST companion from the checkout after
+building `verify`. `uv run` installs the script's declared JAX and NumPy versions.
+Use a fresh output directory for each run:
 
 ```bash
 uv run NN/Examples/Interop/JAX/mnist.py /tmp/torchlean-mnist \
@@ -231,14 +231,70 @@ graph and run Lean's reference computation for that input. They do not prove the
 training procedure correct or bound the accuracy loss from changing precision.
 
 The output directory contains the checkpoint in `weights.npz` and the accuracies
-and run details in `summary.json`. For bfloat16, `bfloat16.json` keeps the capture,
-`bfloat16-checks.json` holds the structure, type and execution report, and
-`bfloat16-compare.json` holds the bitwise comparison. The other formats use the
-same naming pattern.
+and run details in `summary.json`. For bfloat16, `bfloat16.json` keeps the capture
+and its input words, `bfloat16-checks.json` holds the structure, type and execution
+report, and `bfloat16-compare.json` holds the bitwise comparison. The other formats
+use the same naming pattern. The capture also records the JAX execution platform
+and jaxlib version.
+Use `--image-index 42` to capture a different test image with the same training
+settings. `--width`, `--batch`, `--epochs`, `--seed` and `--rate` control the
+training run.
 
 The comparison checks every output bit. Matrix products can use different
 accumulation orders in JAX and the reference interpreter, so their final bits may
 differ. A mismatch needs investigation; it does not by itself identify a JAX bug.
+
+What if the bits differ but the prediction stays the same? Let $m$ be the gap
+between the largest and second-largest JAX logits, and let $\delta$ be the
+largest absolute difference between corresponding JAX and IR logits. If
+$2\delta < m$, no competitor can overtake the winner.
+
+The script writes a Lean proof of this calculation and checks it before reporting
+`decision certificate=proved`. For example, `Float32Decision.lean` contains the
+two recorded logit vectors as exact rational values, proves their margin and
+distance bound, and applies TorchLean's existing classifier-margin theorem.
+`candidate_prediction` proves that the IR logits select the same winning class.
+`prediction_stable` also covers any logit vector whose distance from the recorded
+JAX vector is less than half that margin. We can open the generated file in Lean
+or check it again with:
+
+```bash
+scripts/lake.sh --no-build env lean /tmp/torchlean-mnist/Float32Decision.lean
+```
+
+This proves a property of the recorded output vectors. It does not prove that the
+frontend or interpreter produced those recordings, or give a rounding-error bound
+for every input. An end-to-end numerical theorem would need those connections too.
+If the measured drift reaches half the margin, the script reports an inconclusive
+decision check instead of generating a stability proof.
+
+We also compare the float32 IR output with the float16 and bfloat16 IR outputs
+for the same image and checkpoint. This asks a different question from replay:
+does changing forward precision leave this prediction unchanged? The files
+`Float16GraphBound.lean` and `Bfloat16GraphBound.lean` contain the captured programs,
+input and parameter words. They do not contain reference output recordings. Lean
+re-executes both graphs, checks a proposed absolute error budget on every output
+coordinate, and then checks whether the float32 margin exceeds twice that budget.
+The generic soundness theorem connects acceptance to those actual executions:
+
+```lean
+theorem execution_error :
+    NN.Verification.Numerical.ErrorBound reference candidate errorBudget :=
+  NN.Verification.Numerical.checkError_sound reference candidate errorBudget error_accepted
+```
+
+`error_accepted` uses `native_decide`, so these numerical certificates additionally
+trust Lean's compiler and native evaluation. The checkpoint's large argument arrays
+are parsed from embedded JSON during that evaluation. This differs from the
+kernel-reduced import proofs later on this page.
+
+The error budget is proposed from the reports, but a wrong proposal cannot pass by
+changing those reports: the proof replays the programs. This is still a concrete-input
+certificate, not an operation-level error bound over an input box. It does not verify
+JAX's translation or XLA's kernels. Measurements, proof status and the separate
+classification result appear under `precision_comparisons` in `summary.json`.
+An inconclusive classification result means the margin argument did not settle the
+question; the execution-error certificate can still succeed.
 
 We ran three training jobs with the settings above, changing only `--precision`.
 Each cell gives the number of correct test predictions out of 10,000, using the
@@ -259,6 +315,25 @@ top two logits was `11263229/2097152`. That small difference left this predictio
 unchanged. These are measurements from these three runs and one captured test
 image per format; they do not establish an accuracy ranking between formats or
 a bound for other inputs.
+
+For that same checkpoint and image, changing the IR forward precision from
+float32 to float16 changed each logit by at most about `0.0024252`; changing it
+to bfloat16 gave about `0.017474`. Both were below half the float32 margin,
+about `2.6853631`. Both generated precision certificates passed Lean checking.
+
+We also replayed all 10,000 test images from the bfloat16-trained checkpoint in
+the IR, using batches of 128. The IR and JAX predictions agreed within each
+precision setting. Bfloat16 outputs agreed bit for bit; float32 and float16 had
+some differing logits. Switching from float32 to bfloat16 changed three predictions,
+despite both runs getting 9,351 images right. One image changed from a correct 8
+to an incorrect 1; another changed from an incorrect 5 to the correct 8.
+These full-test-set results are execution comparisons, not 10,000 Lean proofs.
+
+For the first image, a separate actual-graph certificate checked the simple budget
+`1/32 = 0.03125` and proved that 7 remains the winner. For image 1968, the same
+budget bounded the two graph executions, but the stability check rejected it:
+the reference margin was too small. A bound on the score difference alone does
+not guarantee that the predicted class stays the same.
 
 ## Keep a computation for a proof
 
@@ -498,9 +573,11 @@ accumulator precision are rejected until their input and accumulation rules are
 represented explicitly. Jaxpr capture also preserves Boolean, integer and complex
 component types and exact constant words. Complex words alternate real and imaginary
 components. The default `torchlean.verify` reference can execute Boolean and fixed-width
-integer layout operations, using the same shared tensor transformations. Their arithmetic
-and cross-type integer casts remain unsupported, as does complex execution. The explicit
-`Interpreter.binary` used above remains binary-only.
+integer layout operations, using the same shared tensor transformations. Integers also support
+negation, truncating and flooring division, wrapping powers, and `clamp_min`. Integer and
+Boolean values can be cast to binary formats. Other integer arithmetic, conversions between
+distinct integer types, binary-to-integer casts, and complex execution remain unsupported.
+The explicit `Interpreter.binary` used above remains binary-only.
 
 The proofs on this page concern the accepted graph's Lean semantics. The Python
 translation and the link to XLA execution remain outside those proofs.

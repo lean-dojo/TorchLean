@@ -6,6 +6,8 @@ Authors: TorchLean Team
 
 module
 
+public import NN.Proofs.Autograd.Tape.Algebra.SavedBackward
+public import NN.Proofs.RuntimeApprox.Automation
 public import NN.Proofs.RuntimeApprox.Constants
 public import NN.Proofs.RuntimeApprox.Core
 public import NN.Proofs.RuntimeApprox.FP32
@@ -28,6 +30,7 @@ The runtime-approximation library is intentionally layered:
 - `Core`: tolerance objects and scalar/tensor approximation predicates;
 - `Constants`: configured dimension roots that avoid an overflowing integer cast;
 - `Rounding`: scalar FloatLib rounding-error lemmas;
+- `Automation`: `roundoff` derives error bounds and exact FloatLib interpretations from Lean code;
 - `Graph`: forward and reverse graph composition theorems;
 - `NF`: proof-relevant rounded tensor/operator backend;
 - `FP32`: convenient FP32-specialized layer/MLP/CROWN statements;
@@ -41,3 +44,18 @@ Native-runtime agreement still requires the provider assumptions stated by the r
 -/
 
 @[expose] public section
+
+-- Use the proved compiler replacements to analyze indexed forward and saved reverse execution
+-- through their source programs, including the original gradient-accumulation order.
+attribute [roundoff_rule]
+  Proofs.Autograd.Algebra.GraphData.eval_eq_array
+  Proofs.Autograd.Algebra.GraphData.backpropCtx_eq_saved
+  Proofs.Autograd.Algebra.TensorContext.toPack_ofPack
+  Proofs.Autograd.Algebra.TensorContext.toPack_cast
+  Proofs.Autograd.Algebra.TensorContext.toPack_push
+  Proofs.Autograd.Algebra.SavedGraph.toPack_backpropStored
+  Proofs.Autograd.Algebra.GradientContext.toPack_ofPack
+  Proofs.Autograd.Algebra.GradientContext.toPack_cast
+  Proofs.Autograd.Algebra.GradientContext.toPack_addDense
+  Proofs.Autograd.Algebra.GradientContext.toPack_addContributions
+  Proofs.Autograd.Algebra.GradientContext.toPack_pop

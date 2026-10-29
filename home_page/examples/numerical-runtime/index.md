@@ -68,8 +68,8 @@ missing, it reports the node id and operation name and stops.
 
 We supply binary32 intervals for the input and each parameter tensor. These intervals are our
 assumed ranges for their values. Matrix multiplication uses outward-rounded products and a
-declared accumulation order. Addition uses
-directed endpoints. ReLU restores the nonnegative lower bound of the hidden activation.
+declared accumulation order. Addition uses directed endpoints. ReLU restores the nonnegative
+lower bound of the hidden activation.
 
 The resulting range trace contains one row for every node. A row records the node id, operation,
 input enclosures, and derived output enclosure.
@@ -115,10 +115,54 @@ same graph, with its own input, payload, and node trace. Paired with the checked
 pointwise error bounds from the shared interval widths. A guarantee over an entire source region
 would need this evidence for every admissible real input; this example does not construct it.
 
+## Error Bounds from the Code
+
+A small gradient makes the choice of guarantee matter. If its value is about $2\times10^{-9}$,
+returning zero can still pass an absolute-error tolerance of $10^{-7}$.
+
+`roundoff` builds numerical-error proofs from the existing Lean computation. It follows tensor
+operations and reductions into their scalar arithmetic, and uses FloatLib's proved numerical
+rules to compose the errors. We can apply it directly to an autograd operation's backward function:
+
+```lean
+import NN.Proofs.RuntimeApprox.Automation
+import NN.Spec.Autograd.Ops
+import NN.Spec.Core.FloatInstances
+
+open TorchLean
+open FloatLib.Floats
+
+roundoff theorem gradient_error :=
+  fun {shape : Spec.Shape} (input upstream : Tensor Binary32 shape) (index : shape.Coord) =>
+    ExecFloat.Binary.toReal (Spec.squareOp.backward input upstream index)
+```
+
+This generates a conditional theorem for every coordinate of the tensor. Its statement contains
+the real reference, error budget, and required range conditions. Applying it requires proving
+those conditions. The operation code stays polymorphic over the scalar type, and the numerical
+laws retain their format parameters. Here we choose binary32; the underlying IEEE rules state
+their format and finiteness assumptions explicitly.
+
+The regressions also derive conditional bounds for scaled vector normalization and the public
+RMSNorm and LayerNorm forward functions, retaining their reduction order and precision conversions.
+
+The [log-softmax proofs](https://github.com/lean-dojo/TorchLean/blob/main/NN/Tests/Verification/Roundoff.lean)
+check why this matters. For logits $[0,-20]$ and upstream gradient $[1,0]$, the stable backward
+code retains a gradient of about $2.06\times10^{-9}$ where the conventional subtraction returns
+zero. We compare the public backward operation with the real gradient at the original logits,
+$\exp(-20)/(1+\exp(-20))$. The stable result has absolute error at most $10^{-16}$ and relative
+error at most $10^{-7}$, and is strictly positive. FloatLib's exponential enclosure supplies
+the real-number bounds; Lean checks the concrete floating-point result and the rational comparisons.
+
+These are proofs about the Lean computations and their selected scalar implementations. Real
+derivative theorems establish what the backward formula differentiates; correspondence with a
+native kernel needs its own evidence. Operator coverage is still growing, and a missing numerical
+rule stops the analyzer.
+
 ## Forward, Backward, and the Optimizer
 
-So far, we've checked a forward run. To reason about rounding errors in both the forward and
-backward calculations, we'll look at the theorems for `RevGraph`. Each node carries:
+To compose forward, backward, and optimizer bounds across a graph, we use the theorems for
+`RevGraph`. Each node carries:
 
 - exact and rounded forward functions;
 - exact and rounded vector–Jacobian products (VJPs), which propagate output gradients to inputs;
@@ -141,11 +185,12 @@ import NN.Proofs.RuntimeApprox.NF.EndToEnd
 SGD, momentum SGD, and AdamW use that one optimizer interface. AdamW contributes error budgets
 for bias correction and a lower bound for the complete denominator, including epsilon. Its
 square-root estimate remains valid when the second moment is zero.
-`trainingStepTrace` returns forward bounds, backward bounds, the selected parameter-gradient bound,
-the next parameter bound, and optimizer-state bounds.
+`trainingStepTrace` collects the forward, backward, parameter-gradient, parameter-update, and
+optimizer-state budgets in a noncomputable report. The preceding theorem proves the error bounds.
 
-The MLP example checks the forward calculation. The backward and optimizer theorems use a
-supplied `RevGraph` with proved local VJPs and error bounds. TorchLean's current `NN.IR.Graph`
+The MLP example checks the forward calculation. `roundoff` can also analyze supported typed-graph
+forward and VJP computations directly from their Lean code. The end-to-end optimizer theorems above
+use a supplied `RevGraph` with proved local VJPs and error bounds. TorchLean's current `NN.IR.Graph`
 lowering preserves forward semantics, but does not automatically construct that proof-bearing
 reverse graph for every model.
 

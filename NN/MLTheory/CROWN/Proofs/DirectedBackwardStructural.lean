@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import NN.MLTheory.CROWN.Proofs.DirectedBackwardSemantics
+public import NN.Proofs.Tensor.Slice
 
 /-!
 # Structural transfers in the directed backward sweep
@@ -38,6 +39,111 @@ def extendFin {n : Nat} (f : Fin n → ℝ) (i : Nat) : ℝ :=
 /-- The extension agrees with the finite vector at every valid coordinate. -/
 @[simp] theorem extendFin_val {n : Nat} (f : Fin n → ℝ) (i : Fin n) :
     extendFin f i.val = f i := by simp [extendFin, i.isLt]
+
+/-- A native slice never aliases distinct output coordinates. -/
+theorem slice_flatIndex_injective (layout : SliceLayout) :
+    Function.Injective layout.flatIndex := by
+  intro i j h
+  have hcoord := congrArg (fun k : Fin layout.sourceShape.size => Shape.Coord.unlinearize k) h
+  simp only [SliceLayout.flatIndex, Shape.Coord.unlinearize_linearize] at hcoord
+  have hout := @Tensor.sliceAxisRangeCoordinate_injective layout.axis layout.sourceShape
+    layout.axisInBounds layout.start layout.length layout.rangeInBounds _ _ hcoord
+  simpa only [Shape.Coord.linearize_unlinearize] using
+    congrArg (fun c : layout.outputShape.Coord => Shape.Coord.linearize c) hout
+
+/-- Slice scatter copies a coefficient exactly at the source coordinate it belongs to. -/
+theorem slice_scatter_selected {β : Type} [Storage β] [Zero β] (layout : SliceLayout)
+    (coefficient : Tensor β [layout.outputShape.size]) (i : Fin layout.outputShape.size) :
+    (layout.scatter coefficient).getScalar (layout.flatIndex i) = coefficient.getScalar i := by
+  unfold SliceLayout.scatter SliceLayout.flatIndex
+  rw [Spec.getScalar_flattenSpec_linearize,
+    Tensor.sliceAxisRangeBackwardSpec_apply_coordinate]
+  rw [← Spec.getScalar_flattenSpec_linearize, Tensor.flattenSpec_unflattenSpec,
+    Shape.Coord.linearize_unlinearize]
+
+/-- Unused source coordinates receive zero, without evaluating any selected coefficient. -/
+theorem slice_scatter_outside {β : Type} [Storage β] [Zero β] (layout : SliceLayout)
+    (coefficient : Tensor β [layout.outputShape.size]) (i : Fin layout.sourceShape.size)
+    (hOutside : i ∉ Set.range layout.flatIndex) :
+    (layout.scatter coefficient).getScalar i = 0 := by
+  have hCoordinate : Shape.Coord.unlinearize i ∉
+      Set.range (@Tensor.sliceAxisRangeCoordinate layout.axis layout.sourceShape
+        layout.axisInBounds layout.start layout.length layout.rangeInBounds) := by
+    rintro ⟨c, hc⟩
+    apply hOutside
+    refine ⟨Shape.Coord.linearize c, ?_⟩
+    simpa only [SliceLayout.flatIndex, Shape.Coord.unlinearize_linearize,
+      Shape.Coord.linearize_unlinearize] using
+      congrArg (fun c : layout.sourceShape.Coord => Shape.Coord.linearize c) hc
+  unfold SliceLayout.scatter
+  have hread := Spec.getScalar_flattenSpec_linearize
+    (@Tensor.sliceAxisRangeBackwardSpec β _ _ layout.axis layout.sourceShape layout.axisInBounds
+      layout.start layout.length layout.rangeInBounds
+      (Tensor.unflattenSpec layout.outputShape coefficient)) (Shape.Coord.unlinearize i)
+  rw [Shape.Coord.linearize_unlinearize] at hread
+  rw [hread]
+  exact @Tensor.sliceAxisRangeBackwardSpec_apply_eq_zero β _ _ layout.axis layout.sourceShape
+    layout.axisInBounds layout.start layout.length layout.rangeInBounds
+      (Tensor.unflattenSpec layout.outputShape coefficient) _ hCoordinate
+
+/-- The zero-filled slice scatter preserves the exact real objective. -/
+theorem dot_slice (layout : SliceLayout) (a y source : Nat → ℝ)
+    (hy : ∀ i : Fin layout.outputShape.size, y i.val = source (layout.flatIndex i).val) :
+    dot layout.outputShape.size a y =
+      dot layout.sourceShape.size
+        (extendFin fun i =>
+          (layout.scatter (Tensor.ofFn fun j => a j.val)).getScalar i) source := by
+  unfold dot
+  apply Fintype.sum_of_injective layout.flatIndex (slice_flatIndex_injective layout)
+  · intro i hi
+    simp only [extendFin_val, slice_scatter_outside layout _ i hi, zero_mul]
+  · intro i
+    simp only [extendFin_val, slice_scatter_selected, Tensor.getScalar_ofFn, hy i]
+
+/-- Native slice scatter encloses the same zero-filled real coefficient vector. -/
+theorem scatterSliceFlatBoxes?_encloses (layout : SliceLayout)
+    {input output : FlatBox α} {a : Nat → ℝ}
+    (ha : RowEncloses input layout.outputShape.size a)
+    (houtput : scatterSliceFlatBoxes? layout input = some output) :
+    RowEncloses output layout.sourceShape.size
+      (extendFin fun i =>
+        (layout.scatter (Tensor.ofFn fun j => a j.val)).getScalar i) := by
+  obtain ⟨dim, lo, hi⟩ := input
+  obtain ⟨hdim, ha⟩ := ha
+  dsimp only at hdim
+  subst dim
+  simp only [scatterSliceFlatBoxes?, ↓reduceDIte, Option.some.injEq] at houtput
+  subst output
+  refine ⟨rfl, ?_⟩
+  intro i
+  simp only [Spec.getAtOrZero_eq_getScalar, extendFin_val]
+  by_cases hInside : i ∈ Set.range layout.flatIndex
+  · obtain ⟨j, rfl⟩ := hInside
+    simpa only [slice_scatter_selected, Tensor.getScalar_ofFn,
+      Spec.getAtOrZero_eq_getScalar] using ha j
+  · simp only [slice_scatter_outside layout _ i hInside, LawfulBoundOps.toReal_zero,
+      le_refl, and_self]
+
+/-- Restoring a sliced objective adds its exact contribution at the parent frontier. -/
+theorem represents_slice {dims : Nat → Nat} {v : Nat → Nat → ℝ} {input k id p : Nat}
+    {st : DirectedBackwardState α} {z : ℝ}
+    (h : Represents dims v input k st z) (hp : p < st.coeffs.size)
+    (hlive : p ∈ pending input k) (layout : SliceLayout)
+    (hdim : dims p = layout.sourceShape.size)
+    {aB aX : FlatBox α} {a : Nat → ℝ}
+    (ha : RowEncloses aB layout.outputShape.size a)
+    (hy : ∀ i : Fin layout.outputShape.size, v id i.val = v p (layout.flatIndex i).val)
+    (hresult : scatterSliceFlatBoxes? layout aB = some aX) :
+    Represents dims v input k (addDirectedCoeff st p aX)
+      (z + dot layout.outputShape.size a (v id)) := by
+  have hbox := scatterSliceFlatBoxes?_encloses layout ha hresult
+  have hbox' : RowEncloses aX (dims p)
+      (extendFin fun i =>
+        (layout.scatter (Tensor.ofFn fun j => a j.val)).getScalar i) := by
+    simpa only [hdim] using hbox
+  have hrep := represents_add h p hp hlive aX _ hbox'
+  rw [hdim, ← dot_slice layout a (v id) (v p) hy] at hrep
+  exact hrep
 
 /-- Copying a coefficient to a value-preserving parent preserves its exact contribution. -/
 theorem represents_copy {dims : Nat → Nat} {v : Nat → Nat → ℝ} {input k id pid : Nat}

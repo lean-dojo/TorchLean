@@ -46,8 +46,7 @@ This is a real-function enclosure, not a bound on the rounding error of a native
   match node.kind with
   | .input => ps.inputBoxes[id]?
   | .custom .. | .pointwise _ | .scaledMatmul => none
-  -- No interval transfer yet for top-k routing or slicing.
-  | .topKMask _ | .slice .. => none
+  | .topKMask _ => none
   | .const _ => do
     let v ← ps.constVals[id]?
     some { dim := v.n, lo := v.v, hi := v.v }
@@ -172,6 +171,7 @@ This is a real-function enclosure, not a bound on the rounding error of a native
       boxUnaryEnclosure? NonlinearBoundOps.logBounds input
     else none
   | .concat axis => concatNodeBoxes? nodes boxes node axis
+  | .slice axis start length => sliceNodeBoxes? nodes boxes node axis start length
   | .layernorm axis => do
     if !crownNodeSemanticsSupported (α := α) nodes ps id then none else do
       let p ← unaryParent? node.parents

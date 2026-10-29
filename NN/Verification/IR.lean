@@ -56,13 +56,8 @@ def finding (name status message : String) (extra : List (String × Json) := [])
     extra)
 
 /-- Read a supported tensor from complete element words, with no host-float conversion. -/
-def value (json : Json) : Except String (Interpreter.Value Interpreter.reference) := do
-  let dtype ← DType.fromJson (← json.getObjVal? "dtype")
-  let shape ← Import.PyTorch.TorchExport.Internal.shape "tensor.shape"
-    (← json.getObjVal? "shape")
-  let words ← Import.PyTorch.TorchExport.Internal.nats "tensor.bits"
-    (← json.getObjVal? "bits")
-  Reference.load dtype shape words
+def value (json : Json) : Except String (Interpreter.Value Interpreter.reference) :=
+  Import.IR.parseValue Interpreter.reference Reference.load json
 
 /-- FloatLib's classification of one binary word: whether it is a NaN and whether it is
 subnormal, under the format's exceptional-value encoding. -/

@@ -382,14 +382,49 @@ Nested carriers share the reciprocal-cosh calculation and range checks with `sig
 /-- Compensate rounding in `1 + x` before taking its logarithm.
 
 This retains a small argument when the addition rounds to one. Accuracy still depends on the
-scalar logarithm; the formula is not a correct-rounding guarantee.
+scalar logarithm; the formula is not a correct-rounding guarantee. If finite inputs overflow
+the addition, enclose the logarithm of their exact coefficient sum before rounding. An
+unsupported codec or inconclusive search retains ordinary arithmetic, which may be nonfinite.
 -/
 @[expose] def log1p {α : Type} [One α] [Add α] [Sub α] [Mul α] [Div α] [BEq α]
-    [MathFunctions α] (x : α) : α :=
+    [MathFunctions α] [ops : QuotientArithmetic α] (x : α) : α :=
   let shifted := 1 + x
+  let ordinary := fun (_ : Unit) => MathFunctions.log shifted * (x / (shifted - 1))
   if shifted == 1 then x
   else if shifted == x then MathFunctions.log shifted
-  else MathFunctions.log shifted * (x / (shifted - 1))
+  else if shifted - shifted == (1 : α) - 1 then ordinary ()
+  else
+    match ops.encode x, ops.encode (1 : α) with
+    | some input, some one =>
+        match Internal.enclosedLogarithm? (QuotientCoefficients.add one input) with
+        | some recovered => recovered
+        | none => ordinary ()
+    | _, _ => ordinary ()
+
+/-- Apply the logarithm's chain rule without first overflowing `1 + x`.
+
+The ordinary quotient keeps its arithmetic order. Range loss replays the complete denominator
+and incoming gradient from finite coefficients, including nested differentiation metadata.
+-/
+@[expose] def log1pBackward {α : Type} [Zero α] [One α] [Add α] [Div α] [BEq α]
+    [ops : QuotientArithmetic α] (x seed : α) : α :=
+  if !ops.supported then seed / (1 + x)
+  else
+    let (denominator, sumFlags) := ops.addWithFlags 1 x
+    let (ordinary, quotientFlags) := ops.divWithFlags seed denominator
+    if sumFlags ||| quotientFlags == 0 then ordinary
+    else
+      match ops.encode (1 : α), ops.encode x, ops.encode seed with
+      | some one, some input, some upstream =>
+          let denominator := QuotientCoefficients.add one input
+          if denominator.primal == 0 then ordinary
+          else
+            match ops.decode (QuotientCoefficients.div upstream denominator) with
+            | none => ordinary
+            | some recovered =>
+                if ordinary == 0 && recovered == 0 then ops.copyPrimal ordinary recovered
+                else recovered
+      | _, _, _ => ordinary
 
 /-- Evaluate `exp x - 1` without losing small arguments to subtraction.
 

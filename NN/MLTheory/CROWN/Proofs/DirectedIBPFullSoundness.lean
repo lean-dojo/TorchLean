@@ -58,7 +58,7 @@ def RealNodeEquation (nodes : Array Node) (ps : ParamStore α)
   | .conv configuration => ConvolutionNodeEquation nodes ps dims v id configuration
   | .matmul =>
       NodeEquation nodes ps ibp dims v id ∧ BinaryMatmulNodeEquation nodes dims v id
-  | .concat _ | .transpose .. | .permute _ | .broadcastTo ..
+  | .concat _ | .slice .. | .transpose .. | .permute _ | .broadcastTo ..
   | .reduceSum _ | .reduceMean _ | .maxPool _ | .avgPool _ =>
       StructuralRealNodeEquation nodes dims v id
   | .softmax _ | .hardMaskedSoftmax _ | .layernorm _ | .batchNormEval .. =>
@@ -91,7 +91,7 @@ theorem ibpStepNodeAt?_all_encloses
     henc p hp B ((hagree p hp).symm.trans hB)
   cases hk : nodes[id]!.kind <;> simp only [RealNodeEquation, hk] at heq
   case custom => simp [ibpStepNodeAt?, hk] at hstep
-  case topKMask | slice | pointwise | scaledMatmul => simp [ibpStepNodeAt?, hk] at hstep
+  case topKMask | pointwise | scaledMatmul => simp [ibpStepNodeAt?, hk] at hstep
   case sum =>
     apply ibpStepNodeAt?_encloses
       (by simp only [ibpForwardSupportedNode, hk]) hinput ?_ hagree henc hstep
@@ -107,7 +107,8 @@ theorem ibpStepNodeAt?_all_encloses
     · exact ibpStep_binaryMatmul_encloses hk hparents heq.2 hget hstep
   case conv configuration =>
     exact ibpStep_convolution_encloses hk heq hget hstep
-  case concat | transpose | permute | broadcastTo | reduceSum | reduceMean | maxPool | avgPool =>
+  case concat | slice | transpose | permute | broadcastTo | reduceSum | reduceMean | maxPool |
+      avgPool =>
     exact ibpStepNodeAt?_structural_encloses
       (by simp only [ibpStructuralSupportedNode, hk]) heq hagree henc hstep
   case softmax | hardMaskedSoftmax | layernorm | batchNormEval =>

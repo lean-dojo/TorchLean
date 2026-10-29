@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 public import NN.Proofs.RuntimeApprox.NF.Ops.Scalar
-public import NN.Proofs.Tensor.Basic.Folds
 
 /-!
 # NF Sum Reduction Bounds
@@ -40,18 +39,8 @@ variable {rnd : ℝ → ℤ} [ValidRndToNearest rnd]
 
 local notation "R" => NF β fexp rnd
 
--- ---------------------------------------------------------------------------
--- Sum reduction bound (fold with rounded addition)
--- ---------------------------------------------------------------------------
-
-/--
-One fold step for `sumSpec` that tracks an explicit forward error budget.
-
-State is `(accR, epsAcc)` where `accR` is the runtime accumulator and `epsAcc` bounds the absolute
-error `|toSpec accR - accS|` for the corresponding spec accumulator `accS`. Each step adds:
-- the incoming per-element budget `epsElem`;
-- one rounding-ULP term for the addition.
--/
+/-- Accumulate a sum and its absolute-error budget. Each addition contributes the incoming
+element's error and one rounding allowance, in addition to the accumulator's existing error. -/
 def sumStep (epsElem : ℝ) : (R × ℝ) → R → (R × ℝ)
   | (accR, epsAcc), xR =>
       let epsAcc' : ℝ :=
@@ -61,89 +50,29 @@ def sumStep (epsElem : ℝ) : (R × ℝ) → R → (R × ℝ)
                 toSpec (β := β) (fexp := fexp) (rnd := rnd) xR) / 2
       (accR + xR, epsAcc')
 
-/--
-Fold `sumStep` over a tensor via `foldlSpec`.
-
-This is the shared helper behind `sumBound` and `approxTensor_sum_spec`: it simultaneously
-computes the runtime sum (in `.1`) and the accumulated error bound (in `.2`).
--/
+/-- Fold over the original tensor, carrying the rounded sum and its error budget together. -/
 def sumFoldState {s : Shape} (epsElem : ℝ) (st : R × ℝ) (tR : Tensor R s) : (R × ℝ) :=
   foldlSpec (sumStep (β := β) (fexp := fexp) (rnd := rnd) epsElem) st tR
 
-/--
-Forward absolute-error bound for `sumSpec`.
-
-Assumes each element is approximated within `epsElem`. The budget starts with a conservative
+/-- Absolute-error budget for `sumSpec`, given an elementwise bound `epsElem`.
+It starts with a conservative
 half ULP at zero and adds one rounding term per sequential addition; it is not a tight bound
-for an empty tensor, whose sum is exactly zero.
--/
+for an empty tensor, whose sum is exactly zero. -/
 def sumBound {s : Shape} (epsElem : ℝ) (tR : Tensor R s) : ℝ :=
   (sumFoldState (β := β) (fexp := fexp) (rnd := rnd) (s := s) epsElem
     ((0 : R), ulp β fexp 0 / 2) tR).2
 
 omit [ValidRndToNearest rnd] in
-/--
-The accumulator component of `sumFoldState` matches the plain spec fold.
-
-The error bookkeeping does not change the accumulator's values or addition order.
--/
+/-- Error bookkeeping preserves the sum's values and addition order. -/
 private theorem sumFoldState_fst_eq {s : Shape} (epsElem : ℝ) (st : R × ℝ) (tR : Tensor R s) :
     (sumFoldState (β := β) (fexp := fexp) (rnd := rnd) (s := s) epsElem st tR).1 =
       foldlSpec (· + ·) st.1 tR := by
-  induction s generalizing st with
-  | scalar =>
-      rw [← Tensor.scalar_item tR]
-      cases st with
-      | mk accR epsAcc =>
-          rw [sumFoldState, foldlSpec_scalar, foldlSpec_scalar]
-          rfl
-  | dim n s ih =>
-      let valuesR := Tensor.unstack tR
-      rw [show tR = Tensor.dim valuesR from (Tensor.dim_unstack tR).symm]
-      -- Compare the `go` loops for the pair-valued fold vs the scalar fold.
-      have go_fst :
-          ∀ k (st : R × ℝ), k ≤ n →
-            (foldlSpec.go (sumStep (β := β) (fexp := fexp) (rnd := rnd) epsElem) n s
-              valuesR k st).1 =
-              foldlSpec.go (· + ·) n s valuesR k st.1 := by
-        intro k st hk
-        induction hn : n - k generalizing k st with
-        | zero =>
-            have hk' : k = n := by omega
-            subst k
-            simp [Spec.foldlSpec_go_of_not_lt]
-        | succ m ih_go =>
-            have hlt : k < n := by omega
-            have hk1 : k + 1 ≤ n := Nat.succ_le_of_lt hlt
-            rw [Spec.foldlSpec_go_of_lt
-              (f := sumStep (β := β) (fexp := fexp) (rnd := rnd) epsElem)
-              (values := valuesR) (k := k) (acc := st) hlt]
-            rw [Spec.foldlSpec_go_of_lt (f := (· + ·)) (values := valuesR) (k := k)
-              (acc := st.1) hlt]
-            have h_next : n - (k + 1) = m := by omega
-            -- The recursive fold over the sub-tensor updates only the accumulator in `.1`.
-            have h_step :
-                (foldlSpec (sumStep (β := β) (fexp := fexp) (rnd := rnd) epsElem) st
-                    (valuesR ⟨k, hlt⟩)).1 =
-                  foldlSpec (· + ·) st.1 (valuesR ⟨k, hlt⟩) := by
-              simpa [sumFoldState] using
-                ih (st := st) (tR := valuesR ⟨k, hlt⟩)
-            have := ih_go (k := k + 1)
-              (st := foldlSpec (sumStep (β := β) (fexp := fexp) (rnd := rnd) epsElem)
-                st
-                (valuesR ⟨k, hlt⟩)) hk1
-            simpa [h_next, h_step] using this
-      have h0 := go_fst (k := 0) (st := st) (Nat.zero_le n)
-      rw [sumFoldState, foldlSpec_dim, foldlSpec_dim]
-      exact h0
+  simpa only [sumFoldState, foldlSpec, Tensor.Internal.Rep.map_id] using
+    Tensor.Internal.Rep.map_foldl tR
+      (sumStep (β := β) (fexp := fexp) (rnd := rnd) epsElem) st
+      id Prod.fst (· + ·) (fun _ _ => rfl)
 
-/--
-Core summation induction: `sumFoldState` preserves a forward bound.
-
-If the current accumulator `st.1` approximates a spec value `accS` within `st.2`, and each tensor
-entry is approximated within `epsElem`, then folding `sumFoldState` over the tensor produces an
-accumulator whose spec value is within the final `.2` budget of the corresponding spec fold.
--/
+/-- The scalar addition bound is a fold invariant, for arbitrary tensor shapes. -/
 private theorem approx_sumFoldState {s : Shape} :
     ∀ {xS : SpecTensor s} {xR : Tensor R s} {accS : ℝ} {st : R × ℝ} {epsElem : ℝ},
       abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) st.1 - accS) ≤ st.2 →
@@ -154,81 +83,17 @@ private theorem approx_sumFoldState {s : Shape} :
               foldlSpec (· + ·) accS xS) ≤
           (sumFoldState (β := β) (fexp := fexp) (rnd := rnd) (s := s) epsElem st xR).2 := by
   intro xS xR accS st epsElem hAcc hx
-  induction s generalizing accS st with
-  | scalar =>
-      rw [← Tensor.scalar_item xS, ← Tensor.scalar_item xR] at hx ⊢
-      cases st with
-      | mk accR epsAcc =>
-          have hx' :=
-            (approxTensor_scalar_iff (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-              rnd))
-              (x := xS.item) (xR := xR.item) (eps := epsElem)).1 hx
-          have h :=
-            approx_add_nf (β := β) (fexp := fexp) (rnd := rnd)
-              (x := accS) (y := xS.item) (xR := accR) (yR := xR.item)
-              (epsx := epsAcc) (epsy := epsElem) hAcc hx'
-          rw [sumFoldState, foldlSpec_scalar, foldlSpec_scalar]
-          simpa [sumStep, add_assoc, add_left_comm,
-            add_comm] using h
-  | dim n s ih =>
-      let valuesS := Tensor.unstack xS
-      let valuesR := Tensor.unstack xR
-      rw [show xS = Tensor.dim valuesS from (Tensor.dim_unstack xS).symm,
-        show xR = Tensor.dim valuesR from (Tensor.dim_unstack xR).symm] at hx ⊢
-      -- Prove the accumulator/error invariant for the recursive fold loops.
-      have go_sound :
-          ∀ k (accS : ℝ) (st : R × ℝ), k ≤ n →
-            abs (toSpec (β := β) (fexp := fexp) (rnd := rnd) st.1 - accS) ≤ st.2 →
-              abs
-                  (toSpec (β := β) (fexp := fexp) (rnd := rnd)
-                      (foldlSpec.go
-                          (sumStep (β := β) (fexp := fexp) (rnd := rnd) epsElem) n s
-                            valuesR k st).1 -
-                    foldlSpec.go (· + ·) n s valuesS k accS) ≤
-                (foldlSpec.go
-                    (sumStep (β := β) (fexp := fexp) (rnd := rnd) epsElem) n s valuesR k
-                      st).2 := by
-        intro k accS st hk hAcc
-        induction hn : n - k generalizing k accS st with
-        | zero =>
-            have hk' : k = n := by omega
-            subst k
-            simpa [Spec.foldlSpec_go_of_not_lt] using hAcc
-        | succ m ih_go =>
-            have hlt : k < n := by omega
-            have hk1 : k + 1 ≤ n := Nat.succ_le_of_lt hlt
-            rw [Spec.foldlSpec_go_of_lt
-              (f := sumStep (β := β) (fexp := fexp) (rnd := rnd) epsElem)
-              (values := valuesR) (k := k) (acc := st) hlt]
-            rw [Spec.foldlSpec_go_of_lt (f := (· + ·)) (values := valuesS) (k := k)
-              (acc := accS) hlt]
-            have h_next : n - (k + 1) = m := by omega
-            have hx_k :=
-              approxTensor_unstack (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd :=
-                rnd))
-                (xS := Tensor.dim valuesS) (xR := Tensor.dim valuesR) (eps := epsElem) hx
-                  ⟨k, hlt⟩
-            have h_step :=
-              ih (xS := valuesS ⟨k, hlt⟩) (xR := valuesR ⟨k, hlt⟩) (accS := accS) (st := st)
-                hAcc (by simpa only [Tensor.unstack_dim] using hx_k)
-            have htail :=
-              ih_go (k := k + 1)
-                (accS := foldlSpec (· + ·) accS (valuesS ⟨k, hlt⟩))
-                (st := foldlSpec
-                  (sumStep (β := β) (fexp := fexp) (rnd := rnd) epsElem) st (valuesR ⟨k,
-                    hlt⟩))
-                hk1 (by simpa [h_next, sumFoldState] using h_step)
-            simpa [h_next] using htail
-      have h0 := go_sound (k := 0) (accS := accS) (st := st) (Nat.zero_le n) hAcc
-      rw [sumFoldState, foldlSpec_dim, foldlSpec_dim]
-      exact h0
+  exact Tensor.Internal.Rep.foldl_rel xR xS
+    (sumStep (β := β) (fexp := fexp) (rnd := rnd) epsElem) (· + ·)
+    (fun state reference => |toSpec state.1 - reference| ≤ state.2) st accS hAcc
+    (fun index state reference hstate => by
+      simpa only [sumStep] using
+        approx_add_nf (β := β) (fexp := fexp) (rnd := rnd)
+          (x := reference) (y := xS index) (xR := state.1) (yR := xR index)
+          hstate (approxTensor_apply hx index))
 
-/--
-Forward approximation bound for `sumSpec` over an arbitrary tensor shape.
-
-If `xR` approximates `xS` elementwise within `eps`, then the scalar sums `sumSpec xR` and
-`sumSpec xS` differ by at most `sumBound eps xR`.
--/
+/-- The rounded and real sums differ by at most `sumBound eps xR`, when the inputs are
+elementwise within `eps`. -/
 theorem approxTensor_sum_spec {s : Shape} :
     ∀ {xS : SpecTensor s} {xR : Tensor R s} {eps : ℝ},
       approxTensor (α := R) (toSpec := toSpec (β := β) (fexp := fexp) (rnd := rnd)) xS xR eps →

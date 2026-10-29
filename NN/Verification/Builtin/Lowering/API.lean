@@ -23,8 +23,9 @@ ready for verifier passes, but does not by itself prove equality with the source
 theorem-backed source fragment lives under `NN.Verification.Builtin.Proved`.
 
 GELU and stable log-softmax are rejected rather than replaced by numerically different
-expansions. The one-hot matrix encoding of slicing performs arithmetic instead of direct indexing;
-structural validation does not establish numerical equivalence for that encoding.
+expansions. Leading-axis slicing uses the native indexing operation; selection adds a reshape to
+drop its length-one axis. These operations preserve source entries without scalar arithmetic.
+Their verifier transfers copy the selected bounds and coefficients through the same coordinate map.
 Clamp preserves the source operand order, but rejects scalar contexts whose `stopGradient?`
 requires conditional differentiation-metadata clearing at the bounds.
 -/

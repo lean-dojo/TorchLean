@@ -44,6 +44,24 @@ def permuteFlatAffineBounds? (sourceShape : Shape) (perm : Array Nat)
       loAff := permuteAffineOut (α := α) flatPerm bounds.loAff
       hiAff := permuteAffineOut (α := α) flatPerm bounds.hiAff }
 
+/-- Copy affine rows selected by the native slice coordinate map. -/
+def sliceAffineOut {inDim : Nat} (layout : SliceLayout)
+    (aff : AffineVec α inDim layout.sourceShape.size) :
+    AffineVec α inDim layout.outputShape.size :=
+  { A := Tensor.matrix fun i j => Spec.get2 aff.A (layout.flatIndex i) j
+    c := layout.pull aff.c }
+
+/-- Transfer slice bounds without products, reductions, or coefficient rounding. -/
+def sliceFlatAffineBounds? (layout : SliceLayout) (bounds : FlatAffineBounds α) :
+    Option (FlatAffineBounds α) :=
+  if h : bounds.outDim = layout.sourceShape.size then
+    some
+      { inDim := bounds.inDim
+        outDim := layout.outputShape.size
+        loAff := sliceAffineOut layout (castAffineOut h bounds.loAff)
+        hiAff := sliceAffineOut layout (castAffineOut h bounds.hiAff) }
+  else none
+
 /-- Transfer affine rows through a concat without changing coefficients or constants. -/
 def concatFlatAffineBounds? (layout : ConcatLayout) (bounds : Array (FlatAffineBounds α)) :
     Option (FlatAffineBounds α) := do

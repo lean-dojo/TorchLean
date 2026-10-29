@@ -210,11 +210,37 @@ inductive Network : Nat → Nat → Type where
   | relu {n : Nat} (alpha : Tensor ℚ [n]) : Network n n
   | comp {n m k : Nat} : Network n m → Network m k → Network n k
 
-/-- Use the same linear and activation modules as ordinary TorchLean models. -/
-noncomputable def Network.model {n m : Nat} : Network n m → Module.Chain ℝ [n] [m]
-  | .linear layer => .single (Module.linear ⟨realTensor layer.weights, realTensor layer.bias⟩)
+/-- Build the same linear and activation modules at the caller's scalar type.
+
+Rational weights are converted using that type's cast. Rationals give exact execution, native
+floats give rounded execution, and real numbers give the semantics used by the soundness theorem.
+-/
+def Network.model {α : Type} [Storage α] [Add α] [Mul α] [Zero α] [Max α] [BEq α]
+    [RatCast α] {n m : Nat} : Network n m → Module.Chain α [n] [m]
+  | .linear layer => .single (Module.linear
+      ⟨Tensor.map (fun q : ℚ => (q : α)) layer.weights,
+        Tensor.map (fun q : ℚ => (q : α)) layer.bias⟩)
   | .relu _ => .single (Module.relu [n])
   | .comp first rest => .comp first.model rest.model
+
+/-- Exact rational execution agrees with the real-valued model after interpreting its output. -/
+theorem Network.realTensor_forward {n m : Nat} (net : Network n m) (x : Tensor ℚ [n]) :
+    realTensor ((net.model (α := ℚ)).forward x) =
+      (net.model (α := ℝ)).forward (realTensor x) := by
+  have cast_id {s : Shape} (t : Tensor ℚ s) : Tensor.map (fun q : ℚ => q) t = t := by
+    apply Tensor.Internal.Rep.ext
+    intro coordinate
+    simp only [Tensor.map, Tensor.Internal.Rep.map_apply]
+  induction net with
+  | linear layer =>
+      simp only [model, Module.Chain.forward, Module.linear, linearSpec,
+        Rat.cast_id, cast_id, realTensor_add, realTensor_matVecMul]
+      rfl
+  | relu alpha =>
+      simpa only [model, Module.Chain.forward, Module.relu] using realTensor_relu x
+  | comp first rest hf hr =>
+      simp only [model, Module.Chain.forward]
+      rw [hr, hf]
 
 /-- Recompute affine bounds with existing CROWN transfers and exact rational arithmetic. -/
 def Network.propagate {n m k : Nat} (net : Network m k) (b : Bounds n m)

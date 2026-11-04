@@ -87,6 +87,7 @@ def run : IO Unit := do
     match Runtime.Autograd.LibTorch.Buffer.runtimeStatus with
     | .notLinked =>
         IO.println "  CUDA kernels: skipped (LibTorch not linked)"
+        Tests.Cuda.MX.checkNotLinked
     | .nativeAvailable =>
         NN.Tests.Runtime.EinsumDynamic.run .cuda
         NN.Tests.Runtime.MoE.run .cuda

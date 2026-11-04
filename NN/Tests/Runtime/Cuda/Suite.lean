@@ -12,6 +12,7 @@ public import NN.Tests.Runtime.Cuda.Elementwise
 public import NN.Tests.Runtime.Cuda.Attention
 public import NN.Tests.Runtime.Cuda.SelectiveScan
 public import NN.Tests.Runtime.Cuda.Fft
+public import NN.Tests.Runtime.Cuda.MX
 public import NN.Tests.Runtime.Cuda.Stress
 public import NN.Tests.Runtime.Cuda.Trainer
 
@@ -39,6 +40,7 @@ def run : IO Unit := do
   Attention.run
   SelectiveScan.run
   Fft.run
+  MX.run
   Stress.run
   Trainer.run
   IO.println "=== CUDA checks completed ==="

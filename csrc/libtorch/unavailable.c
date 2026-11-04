@@ -112,6 +112,18 @@ UNAVAILABLE_IO(torchlean_cuda_buffer_conv_io,
     b_lean_obj_arg input_dims, b_lean_obj_arg kernel_dims, b_lean_obj_arg stride,
     b_lean_obj_arg padding_before, b_lean_obj_arg padding_after, b_lean_obj_arg dilation,
     uint32_t groups)
+UNAVAILABLE_IO(torchlean_mx_upload_io,
+    uint8_t profile, uint32_t rows, uint32_t columns, b_lean_obj_arg codes,
+    b_lean_obj_arg scales)
+UNAVAILABLE_IO(torchlean_mx_download_io, b_lean_obj_arg handle)
+UNAVAILABLE_IO(torchlean_mx_decode_io,
+    b_lean_obj_arg handle, uint8_t profile, uint32_t rows, uint32_t columns,
+    b_lean_obj_arg table)
+UNAVAILABLE_IO(torchlean_mx_quantize_io,
+    b_lean_obj_arg input, uint8_t profile, uint32_t rows, uint32_t columns, uint8_t max_power,
+    b_lean_obj_arg values, b_lean_obj_arg positive, b_lean_obj_arg negative, double bound,
+    uint8_t inclusive, uint8_t overflow_positive, uint8_t overflow_negative, uint8_t native,
+    uint8_t caller_scales, b_lean_obj_arg scales)
 #undef UNAVAILABLE_IO
 
 // Reached only through a buffer, and no buffer exists in this build.

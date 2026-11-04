@@ -29,7 +29,7 @@ The modules separate native execution from the tape and proof-facing contracts:
 - `Trusted` and `Buffer` expose the opaque FFI buffer type and allocation/copy primitives.
 - `Controls` exposes precision, determinism, SDP, device, allocator, and version controls.
 - `Kernels` and `ConvPool` declare the LibTorch CUDA entrypoints.
-- `MX` states the shapes and byte layout of tensors in the OCP Microscaling (MX) formats.
+- `MX` declares tensors in the OCP Microscaling (MX) formats and their CUDA operations.
 - `Tape` and `Ops` build the CUDA reverse-mode tape over those buffers.
 - `Float32Contract` and `KernelSpec` state the proof layer reference contracts for native bits.
 

@@ -2750,3 +2750,265 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_smooth_maxpool_bwd(
       input, gradient, beta, spatial, kernel, stride, padding, channels,
       torchlean::conv_pool::Pool::smooth, true);
 }
+
+// OCP MX tensors (`NN.Runtime.Autograd.Engine.LibTorch.MX`).
+//
+// A handle owns two byte tensors on the device, the element codes and the E8M0 scales, laid out as
+// the Lean module states: blocks of 32 consecutive elements along each row, E2M1 codes two to a
+// byte with element 0 in the low four bits, FP6 codes in a byte's low six bits. Lean passes each
+// profile's values from FloatLib (decoded values, rounding candidates, the FP8 OVF bound and words,
+// the largest power-of-two exponent). This code implements the rest of FloatLib's rules itself: the
+// E8M0 scale's value, the scale selection of OCP MX 1.0 section 6.3, the NaN block and the order
+// FloatLib's `roundingKey` gives ties. Only the CUDA check of `NN/Tests/Runtime/Cuda/MX.lean` ties
+// them to FloatLib. Profiles are indexed E5M2, E4M3, E3M2, E2M3, E2M1, INT8 from 0.
+
+namespace {
+
+struct torchlean_mx_tensor {
+  uint8_t profile = 0;
+  uint32_t rows = 0;
+  uint32_t columns = 0;
+  at::Tensor codes;
+  at::Tensor scales;
+};
+
+int64_t mx_width(uint8_t profile) {
+  return profile == 4 ? 4 : (profile == 2 || profile == 3) ? 6 : 8;
+}
+
+struct MXShape {
+  int64_t elements;
+  int64_t code_bytes;
+  int64_t blocks;
+};
+
+MXShape mx_shape(uint8_t profile, uint32_t rows, uint32_t columns) {
+  TORCH_CHECK(profile <= 5, "MX: unknown profile");
+  TORCH_CHECK(columns > 0 && columns % 32 == 0,
+              "MX: the column count must be a positive multiple of 32");
+  const uint64_t elements = static_cast<uint64_t>(rows) * columns;
+  TORCH_CHECK(elements <= UINT32_MAX, "MX: the element count exceeds a buffer's UInt32 size");
+  const auto n = static_cast<int64_t>(elements);
+  return {n, profile == 4 ? n / 2 : n, n / 32};
+}
+
+uint64_t mx_bytes(const torchlean_mx_tensor& tensor) {
+  return static_cast<uint64_t>(tensor.codes.nbytes() + tensor.scales.nbytes());
+}
+
+void mx_finalize(void* pointer) {
+  auto* tensor = static_cast<torchlean_mx_tensor*>(pointer);
+  if (!tensor) return;
+  if (const auto bytes = mx_bytes(*tensor)) payloads.remove(bytes);
+  delete tensor;
+  wrappers.remove(1);
+}
+
+void mx_foreach_reference(void*, b_lean_obj_arg) {}
+
+lean_external_class* mx_class() {
+  static lean_external_class* result =
+      lean_register_external_class(mx_finalize, mx_foreach_reference);
+  return result;
+}
+
+lean_obj_res mx_box(std::unique_ptr<torchlean_mx_tensor> tensor) {
+  const auto bytes = mx_bytes(*tensor);
+  auto* result = lean_alloc_external(mx_class(), tensor.release());
+  if (bytes) payloads.add(bytes);
+  wrappers.add(1);
+  return result;
+}
+
+torchlean_mx_tensor& mx_unbox(b_lean_obj_arg object, uint8_t profile, uint32_t rows,
+                              uint32_t columns) {
+  TORCH_CHECK(lean_is_external(object) && lean_get_external_class(object) == mx_class(),
+              "MX: expected an MX tensor handle");
+  auto& tensor = *static_cast<torchlean_mx_tensor*>(lean_get_external_data(object));
+  TORCH_CHECK(tensor.profile == profile && tensor.rows == rows && tensor.columns == columns,
+              "MX: the handle's profile or shape differs from the tensor's");
+  return tensor;
+}
+
+at::Tensor mx_upload(const uint8_t* bytes, size_t size, at::ScalarType dtype = at::kByte) {
+  auto host = at::empty({static_cast<int64_t>(size)}, at::TensorOptions().dtype(at::kByte));
+  if (size) std::memcpy(host.data_ptr(), bytes, size);
+  return host.to(torchlean::options().dtype(at::kByte)).to(dtype);
+}
+
+at::Tensor mx_upload_doubles(b_lean_obj_arg values) {
+  const auto size = static_cast<int64_t>(lean_sarray_size(values));
+  auto host = at::empty({size}, at::TensorOptions().dtype(at::kDouble));
+  if (size) std::memcpy(host.data_ptr(), lean_float_array_cptr(values), size * sizeof(double));
+  return host.to(torchlean::options().dtype(at::kDouble));
+}
+
+lean_obj_res mx_download(const at::Tensor& host) {
+  const size_t bytes = host.nbytes();
+  auto* result = lean_alloc_sarray(1, bytes, bytes);
+  if (bytes) std::memcpy(lean_sarray_cptr(result), host.const_data_ptr(), bytes);
+  return result;
+}
+
+// A power of two as the binary64 word of its exponent, `exponent` within [-1022, 1023].
+at::Tensor mx_power(const at::Tensor& exponent) {
+  return at::bitwise_left_shift(exponent.to(at::kLong) + 1023, 52).view(at::kDouble);
+}
+
+}  // namespace
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_mx_upload_io(
+    uint8_t profile, uint32_t rows, uint32_t columns, b_lean_obj_arg codes,
+    b_lean_obj_arg scales) {
+  return io([&] {
+    const auto shape = mx_shape(profile, rows, columns);
+    const auto* code_bytes = lean_sarray_cptr(codes);
+    TORCH_CHECK(lean_sarray_size(codes) == static_cast<size_t>(shape.code_bytes),
+                "MX: the code bytes do not match the shape");
+    TORCH_CHECK(lean_sarray_size(scales) == static_cast<size_t>(shape.blocks),
+                "MX: the scale bytes do not match the shape");
+    if (mx_width(profile) == 6) {
+      for (int64_t i = 0; i < shape.code_bytes; ++i) {
+        TORCH_CHECK((code_bytes[i] & 0xC0) == 0, "MX: an FP6 code has one of its byte's top two bits set");
+      }
+    }
+    auto tensor = std::make_unique<torchlean_mx_tensor>();
+    tensor->profile = profile;
+    tensor->rows = rows;
+    tensor->columns = columns;
+    tensor->codes = mx_upload(code_bytes, shape.code_bytes);
+    tensor->scales = mx_upload(lean_sarray_cptr(scales), shape.blocks);
+    return mx_box(std::move(tensor));
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_mx_download_io(b_lean_obj_arg handle) {
+  return io([&] {
+    TORCH_CHECK(lean_is_external(handle) && lean_get_external_class(handle) == mx_class(),
+                "MX: expected an MX tensor handle");
+    const auto& tensor = *static_cast<torchlean_mx_tensor*>(lean_get_external_data(handle));
+    const auto codes = tensor.codes.to(at::kCPU).contiguous();
+    const auto scales = tensor.scales.to(at::kCPU).contiguous();
+    return torchlean::cons(mx_download(codes), mx_download(scales));
+  });
+}
+
+// Each element's binary32 value, from Lean's table, times its block's power 2^(s - 127) built
+// from its binary32 bits: code s >= 1 is `s << 23`, code 0 the subnormal 2^-127 = 2^22 * 2^-149,
+// code 255 a quiet NaN. The one multiplication is exact within binary32's finite range
+// (`decodeLane_binary32`) and overflows to infinity beyond it.
+extern "C" LEAN_EXPORT lean_obj_res torchlean_mx_decode_io(
+    b_lean_obj_arg handle, uint8_t profile, uint32_t rows, uint32_t columns,
+    b_lean_obj_arg table) {
+  return io([&] {
+    const auto shape = mx_shape(profile, rows, columns);
+    const auto& tensor = mx_unbox(handle, profile, rows, columns);
+    TORCH_CHECK(lean_sarray_size(table) == (size_t{1} << mx_width(profile)),
+                "MX: the decoding table does not match the profile");
+    const auto values = mx_upload_doubles(table).to(at::kFloat);
+    auto codes = tensor.codes.to(at::kLong);
+    if (profile == 4) {
+      codes = at::stack({at::bitwise_and(codes, 15), at::bitwise_right_shift(codes, 4)}, 1);
+    }
+    const auto lanes = values.index_select(0, codes.reshape({-1}));
+    const auto scales = tensor.scales.to(at::kInt);
+    const auto bits = at::where(scales == 255, at::full_like(scales, 0x7FC00000),
+                                at::where(scales == 0, at::full_like(scales, 0x00400000),
+                                          at::bitwise_left_shift(scales, 23)));
+    const auto power = bits.view(at::kFloat).reshape({shape.blocks, 1});
+    return torchlean::box(at::mul(lanes.reshape({shape.blocks, 32}), power).reshape({-1}));
+  });
+}
+
+// FloatLib's `quantize` and `quantizeAt`, in binary64, where a binary32 input times any power of
+// two from 2^-127 to 2^127 is exact. The block's exponent is floor(log2 amax), frexp's exponent
+// less one, minus the profile's largest power-of-two exponent; an all-zero block takes 0, an
+// exponent below -127 clamps, and one above 127 or a non-finite lane gives the NaN block (scale
+// 255, codes 0). Each scaled lane rounds to the nearest of Lean's sorted finite values by
+// comparison with the exact midpoints between neighbours, so no inexact subtraction enters; at a
+// midpoint the two neighbours' codes are ordered by FloatLib's `roundingKey`, an even code first
+// and then the input's sign. Beyond the last midpoint a lane saturates to the endpoint; under OVF
+// an FP8 lane past Lean's bound takes Lean's overflow word instead.
+extern "C" LEAN_EXPORT lean_obj_res torchlean_mx_quantize_io(
+    b_lean_obj_arg input, uint8_t profile, uint32_t rows, uint32_t columns, uint8_t max_power,
+    b_lean_obj_arg values, b_lean_obj_arg positive, b_lean_obj_arg negative, double bound,
+    uint8_t inclusive, uint8_t overflow_positive, uint8_t overflow_negative, uint8_t native,
+    uint8_t caller_scales, b_lean_obj_arg scales) {
+  return io([&] {
+    const auto shape = mx_shape(profile, rows, columns);
+    const auto& x = torchlean::tensor(input);
+    TORCH_CHECK(x.scalar_type() == at::kFloat, "MX: conversion takes a binary32 buffer");
+    TORCH_CHECK(x.numel() == shape.elements, "MX: the buffer's size differs from the shape's");
+    const auto count = static_cast<int64_t>(lean_sarray_size(values));
+    TORCH_CHECK(count >= 2 && lean_sarray_size(positive) == static_cast<size_t>(count) &&
+                    lean_sarray_size(negative) == static_cast<size_t>(count),
+                "MX: the rounding table does not match");
+    const auto candidates = mx_upload_doubles(values);
+    const auto positive_codes = mx_upload(lean_sarray_cptr(positive), count, at::kLong);
+    const auto negative_codes = mx_upload(lean_sarray_cptr(negative), count, at::kLong);
+    const auto midpoints =
+        at::div(at::add(candidates.slice(0, 0, count - 1), candidates.slice(0, 1, count)), 2.0);
+
+    const auto lanes = x.to(at::kDouble).reshape({shape.blocks, 32});
+    const auto finite = at::isfinite(lanes).all(1);
+    at::Tensor exponent;
+    at::Tensor nan_block;
+    if (caller_scales) {
+      TORCH_CHECK(lean_sarray_size(scales) == static_cast<size_t>(shape.blocks),
+                  "MX: the scale bytes do not match the shape");
+      const auto given = mx_upload(lean_sarray_cptr(scales), shape.blocks, at::kLong);
+      nan_block = at::logical_or(given == 255, at::logical_not(finite));
+      exponent = given - 127;
+    } else {
+      const auto amax = at::where(finite.unsqueeze(1), lanes.abs(), at::zeros_like(lanes)).amax(1);
+      const auto binade = std::get<1>(at::frexp(amax)).to(at::kLong) - 1;
+      const auto requested =
+          at::where(amax == 0, at::zeros_like(binade), binade - static_cast<int64_t>(max_power));
+      nan_block = at::logical_or(requested > 127, at::logical_not(finite));
+      exponent = requested.clamp_min(-127);
+    }
+    exponent = at::where(nan_block, at::zeros_like(exponent), exponent);
+
+    const auto scaled =
+        at::where(finite.unsqueeze(1), lanes, at::zeros_like(lanes)) *
+        mx_power(-exponent).unsqueeze(1);
+    const auto flat = scaled.reshape({-1});
+    const auto sign = at::signbit(flat);
+    const auto index = at::searchsorted(midpoints, flat).clamp_max(count - 1);
+    const auto next = (index + 1).clamp_max(count - 1);
+    const auto tie = at::logical_and(
+        index < count - 1, flat == midpoints.index_select(0, index.clamp_max(count - 2)));
+    const auto code_of = [&](const at::Tensor& at_index) {
+      return at::where(sign, negative_codes.index_select(0, at_index),
+                       positive_codes.index_select(0, at_index));
+    };
+    const auto key = [&](const at::Tensor& code) {
+      const auto code_sign = at::bitwise_and(at::bitwise_right_shift(code, mx_width(profile) - 1), 1);
+      return 2 * at::bitwise_and(code, 1) + (code_sign != sign.to(at::kLong)).to(at::kLong);
+    };
+    const auto lower = code_of(index);
+    const auto upper = code_of(next);
+    auto chosen = at::where(at::logical_and(tie, key(upper) < key(lower)), upper, lower);
+    if (native && bound > 0) {
+      const auto magnitude = flat.abs();
+      const auto out = inclusive ? magnitude >= bound : magnitude > bound;
+      chosen = at::where(out, at::where(sign, at::full_like(chosen, overflow_negative),
+                                        at::full_like(chosen, overflow_positive)),
+                         chosen);
+    }
+    auto codes = at::where(nan_block.unsqueeze(1), at::zeros_like(chosen).reshape({shape.blocks, 32}),
+                           chosen.reshape({shape.blocks, 32})).reshape({-1});
+    if (profile == 4) {
+      const auto pairs = codes.reshape({-1, 2});
+      codes = at::bitwise_or(pairs.select(1, 0), at::bitwise_left_shift(pairs.select(1, 1), 4));
+    }
+    auto tensor = std::make_unique<torchlean_mx_tensor>();
+    tensor->profile = profile;
+    tensor->rows = rows;
+    tensor->columns = columns;
+    tensor->codes = codes.to(at::kByte).contiguous();
+    tensor->scales = at::where(nan_block, at::full_like(exponent, 255), exponent + 127)
+                         .to(at::kByte).contiguous();
+    return mx_box(std::move(tensor));
+  });
+}

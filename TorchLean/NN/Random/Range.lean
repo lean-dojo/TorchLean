@@ -1,0 +1,104 @@
+/-
+Copyright (c) 2026 TorchLean
+Released under MIT license as described in the file LICENSE.
+Authors: TorchLean Team
+-/
+
+module
+
+public import TorchLean.Tensor.Context.Real
+public import TorchLean.Tensor.Random
+
+/-!
+# Support of seeded random tensors
+
+Each coordinate of a seeded Spec random tensor is drawn from the generator's key and the
+coordinate's row-major index. Masks contain only zero and one for every scalar type. Over the
+reals, uniform draws lie in `[0, 1)`, and the keep probabilities zero and one give constant masks.
+-/
+
+@[expose] public section
+
+open TorchLean.Shape.Coord (linearize)
+
+namespace TorchLean.Random
+
+open Shape (Coord)
+
+/-- Reducing the generator word modulo a positive denominator gives a valid draw. -/
+theorem sampleNat_lt (key : UInt64) (linearIndex : Nat) {denom : Nat} (hdenom : 0 < denom) :
+    sampleNat key linearIndex denom < denom :=
+  Nat.mod_lt _ hdenom
+
+/-- Converting a natural draw to a real quotient gives a nonnegative value. -/
+theorem sampleUnit_nonneg (u denom : Nat) : 0 ≤ sampleUnit (α := ℝ) u denom := by
+  simpa [sampleUnit, Rat.cast_div] using
+    (div_nonneg (Nat.cast_nonneg u) (Nat.cast_nonneg denom) : 0 ≤ (u : ℝ) / (denom : ℝ))
+
+/-- A valid draw is strictly below one when the quotient is evaluated in the reals. -/
+theorem sampleUnit_lt_one {u denom : Nat} (hu : u < denom) :
+    sampleUnit (α := ℝ) u denom < 1 := by
+  have hdenom : (0 : ℝ) < denom := Nat.cast_pos.mpr (Nat.zero_lt_of_lt hu)
+  simpa [sampleUnit, Rat.cast_div] using (div_lt_one hdenom).mpr (Nat.cast_lt.mpr hu)
+
+/-- Every branch of the keep decision `keepBit` returns zero or one. -/
+theorem keepBit_eq_zero_or_eq_one {α : Type} [Context α] (keepProb : α) (u denom : Nat) :
+    keepBit keepProb u denom = 0 ∨ keepBit keepProb u denom = 1 := by
+  unfold keepBit
+  split
+  · split
+    · split <;> simp
+    · simp
+  · simp
+
+/-- A zero keep probability drops every draw. -/
+@[simp] theorem keepBit_zero (u denom : Nat) : keepBit (0 : ℝ) u denom = 0 := by
+  simp [keepBit]
+
+/-- A unit keep probability keeps every draw, including at the sampling boundary. -/
+@[simp] theorem keepBit_one (u denom : Nat) : keepBit (1 : ℝ) u denom = 1 := by
+  simp [keepBit]
+
+/-- A uniform tensor coordinate is the source draw at its row-major index. -/
+theorem uniform_apply {α : Type} [Storage α] [Context α] (key : UInt64) {s : Shape}
+    (c : s.Coord) :
+    uniform (α := α) key c =
+      sampleUnit (sampleNat key (Coord.linearize c).val) (2 ^ 32) := by
+  exact Tensor.Rep.get_ofFn _ c
+
+/-- Every seeded real uniform coordinate belongs to the half-open unit interval. -/
+theorem uniform_mem_Ico (key : UInt64) {s : Shape} (c : s.Coord) :
+    uniform (α := ℝ) key c ∈ Set.Ico (0 : ℝ) 1 := by
+  rw [uniform_apply]
+  exact ⟨sampleUnit_nonneg _ _, sampleUnit_lt_one (sampleNat_lt _ _ (by positivity))⟩
+
+/-- A mask coordinate is the source keep decision at its row-major index. -/
+theorem mask_apply {α : Type} [Storage α] [Context α] (key : UInt64) (keepProb : α)
+    {s : Shape} (c : s.Coord) :
+    mask key keepProb c =
+      keepBit keepProb (sampleNat key (Coord.linearize c).val) (2 ^ 32) := by
+  exact Tensor.Rep.get_ofFn _ c
+
+/-- Every seeded mask coordinate is binary, for every keep probability. -/
+theorem mask_eq_zero_or_eq_one {α : Type} [Storage α] [Context α]
+    (key : UInt64) (keepProb : α) {s : Shape} (c : s.Coord) :
+    mask key keepProb c = 0 ∨ mask key keepProb c = 1 := by
+  rw [mask_apply]
+  exact keepBit_eq_zero_or_eq_one _ _ _
+
+/-- Every seeded real mask coordinate lies in the closed unit interval. -/
+theorem mask_mem_Icc (key : UInt64) (keepProb : ℝ) {s : Shape} (c : s.Coord) :
+    mask key keepProb c ∈ Set.Icc (0 : ℝ) 1 := by
+  rcases mask_eq_zero_or_eq_one key keepProb c with h | h <;> simp [h]
+
+/-- A seeded real mask at keep probability zero drops every coordinate. -/
+@[simp] theorem mask_zero_apply (key : UInt64) {s : Shape} (c : s.Coord) :
+    mask key (0 : ℝ) c = 0 := by
+  simp only [mask_apply, keepBit_zero]
+
+/-- A seeded real mask at keep probability one keeps every coordinate. -/
+@[simp] theorem mask_one_apply (key : UInt64) {s : Shape} (c : s.Coord) :
+    mask key (1 : ℝ) c = 1 := by
+  simp only [mask_apply, keepBit_one]
+
+end TorchLean.Random

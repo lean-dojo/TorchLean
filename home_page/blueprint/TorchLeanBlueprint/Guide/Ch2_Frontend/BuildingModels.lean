@@ -1,7 +1,39 @@
 import VersoManual
-import NN.API
+import TorchLean.NN.LoRA
+import TorchLean.NN.Autograd.Function
+import TorchLean.NN.Autograd.Frontend
+import TorchLean.NN.Autograd.Differential
+import TorchLean.NN.Autograd.Complex
+import TorchLean.NN.CLI.Training.Command
+import TorchLean.NN.Data.Synthetic
+import TorchLean.NN.Data.CausalLM
+import TorchLean.NN.Models.KAN
+import TorchLean.NN.Models.CNN
+import TorchLean.NN.Models.ResNet
+import TorchLean.NN.Models.UNet
+import TorchLean.NN.Models.Recurrent
+import TorchLean.NN.Models.CausalTransformer.LanguageModel
+import TorchLean.NN.Models.Mamba
+import TorchLean.NN.Models.MaskedPatchReconstructor
+import TorchLean.NN.Models.Diffusion.NoisePredictor
+import TorchLean.NN.Models.FNO
+import TorchLean.NN.Models.PPO
+import TorchLean.NN.Builder.MoE
+import TorchLean.NN.Sequential.Training
+import TorchLean.NN.RL.CLI
+import TorchLean.NN.RL.PPO.ActorCritic
+import TorchLean.NN.SelfSupervised
+import TorchLean.NN.Text.Vocabulary
+import TorchLean.NN.Text.GPT2BPE
+import TorchLean.NN.Text.Generation
+import TorchLean.NN.Trainer.Constructor
+import TorchLean.NN.Trainer.Train
+import TorchLean.NN.Data.Image
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
+import TorchLean.NN.Loss
+import TorchLean.NN.Session.Random
+import TorchLean.Verify.Trainer
 
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
@@ -21,17 +53,17 @@ be initialized twice with different seeds or interpreted by different runtimes.
 
 I'll start with a $`2\to8\to1` regression MLP and follow the tensor through each layer. Its hidden
 width determines two weight matrices, so changing that one number changes both the intermediate
-shape and the parameter count. The same reasoning applies to the convolutional classifier and
+shape and the parameter count. That reasoning carries over to the convolutional classifier and
 transformer encoder block {Informal.citep transformer2017}[] below.
 
-The Lean summaries expose each parameter shape alongside its count. Comparing those shapes with
-PyTorch {Informal.citep pytorch2019}[] reveals a detail a total can hide: the transformer examples
-use different attention-bias conventions. Later, masking changes the model's input while a
+Each Lean summary exposes every parameter shape alongside its count, and comparing those shapes
+with PyTorch {Informal.citep pytorch2019}[] reveals a detail a total can hide: the transformer
+examples use different attention-bias conventions. Later, masking changes the model's input while a
 low-rank adapter changes a projection's weights.
 
 # Layer Types And Shape Checking
 
-The layer type is:
+A layer's type is:
 
 ```
 -- A layer names the shape it consumes and the shape it
@@ -47,8 +79,8 @@ A sequential model has:
 nn.Sequential input output
 ```
 
-The input and output shapes are indices of the type, so composition requires equality at the
-boundary. If:
+Input and output shapes are indices of the type, so composition requires equality at the boundary.
+If:
 
 $$`f:s_0\to s_1`
 
@@ -59,8 +91,8 @@ $$`g:s_1\to s_2`,
 then $`g` may follow $`f`. A layer expecting $`s_3` cannot be inserted there merely because the two
 shapes contain the same number of values.
 
-For the MLP, `[8]` and `[2, 4]` have the same scalar count but different layer interfaces.
-Changing between them requires an explicit reshape; sequential composition will not invent one.
+For the MLP, `[8]` and `[2, 4]` have the same scalar count but different layer interfaces. Changing
+between them requires an explicit reshape (sequential composition won't invent one).
 
 Model builders use:
 
@@ -111,10 +143,10 @@ execution:
   * the execution-polymorphic tensor program from `σ` to `τ`
 :::
 
-The forward program receives model state followed by the layer input. Its input shape list is
-`stateShapes ++ [σ]`, and its result has shape `τ`. The initializer and forward program share the
-same dependent shape list. This catches swaps between different shapes; two entries with equal
-shapes can still be exchanged incorrectly.
+A layer's forward program receives model state followed by the layer input. Its input shape list is
+`stateShapes ++ [σ]`, and its result has shape `τ`. Because the initializer and the forward program
+share the same dependent shape list, swapping two entries of different shapes is caught. But two
+entries with equal shapes can still be exchanged incorrectly.
 
 `validateConfig` handles facts that equality of shapes does not express. A dropout probability
 can be outside its allowed interval even though the layer preserves its input shape perfectly.
@@ -139,11 +171,11 @@ def bmTiny (seed : Nat) : nn.Sequential [2] [1] :=
 ```
 
 Weight first, then bias, in that order, with the weight stored as $`[\mathrm{out},\mathrm{in}]`.
-Both entries are trainable. For this layer, the weight has two entries and the bias has one,
-giving three scalar parameters. The two entries in `requiresGrad` below refer to those two
-tensors, rather than to the three individual scalars. This convention scales to a large matrix
-without storing a separate flag for every coordinate. Its position in the flag array follows
-the same weight-then-bias order as the state list:
+Both entries are trainable. For this layer the weight has two entries and the bias has one, giving
+three scalar parameters, but the two entries in `requiresGrad` below refer to those two tensors,
+not to the three individual scalars. That convention scales to a large matrix without storing a
+separate flag for every coordinate. In the flag array, positions follow the same weight-then-bias
+order as the state list:
 
 ```lean (name := bmGrad)
 -- The two flags belong to whole state tensors: the weight
@@ -155,28 +187,27 @@ the same weight-then-bias order as the state list:
 ```
 
 A frozen embedding table or a running batch-norm statistic is the case where one of those flags is
-`false` while the shape stays in the list. That is why `requiresGrad` is a separate flag list rather
-than a shorter shape list: the value is still state the module owns and a checkpoint must carry, it
-just does not receive a gradient.
+`false` while the shape stays in the list. That's why `requiresGrad` is a separate flag list rather
+than a shorter shape list: the value is still state the module owns and a checkpoint must carry. It
+just doesn't receive a gradient.
 
-Sequential composition is correspondingly small. The internal type is `Seq`, exported to
-application code as `nn.Sequential`:
+Sequential composition is correspondingly small. The model type is `nn.Sequential`:
 
 ```
 -- The shared τ makes the first layer output exactly the
 -- next sequence input.
-inductive Seq : Shape → Shape → Type
-  | id (s : Shape) : Seq s s
-  | cons : nn.Layer σ τ → Seq τ υ → Seq σ υ
+inductive Sequential : Shape → Shape → Type 1
+  | id (s : Shape) : Sequential s s
+  | cons : nn.Layer σ τ → Sequential τ υ → Sequential σ υ
 ```
 
-The middle shape `τ` appears on both sides of `cons`. This is the check performed by
-`nn.Sequential!`; the macro saves syntax but does not weaken the type.
+Here the middle shape `τ` appears on both sides of `cons`, and that is the check `nn.Sequential!`
+performs. The macro saves syntax but doesn't weaken the type.
 
 # Model Definitions And Runtime State
 
 `nn.Sequential` is an immutable model definition. It contains the checked layer composition,
-parameter layout, initializers, and forward program; it does not hide mutable weights inside the
+parameter layout, initializers, and forward program, but it doesn't hide mutable weights inside the
 value used by proofs and graph lowering.
 
 Manual runtime code can instantiate that definition as a live module:
@@ -184,33 +215,33 @@ Manual runtime code can instantiate that definition as a live module:
 ```
 -- The same parameters can run in training mode and then
 -- evaluation mode through the module.
-nn.withModel model fun checked => do
-  let module ← nn.Module.instantiate checked { device := cpu }
-  let trainingOutput ← module.forward input
-  module.eval
-  let evaluationOutput ← module.forward input
+let checked := (← nn.buildIO model).model
+let module ← nn.Module.instantiate checked { device := .cpu }
+let trainingOutput ← module.forward input
+module.eval
+let evaluationOutput ← module.forward input
 ```
 
-The module owns parameters, persistent buffers, and its train/eval mode. It begins in training
-mode. `forward` executes without a backward tape and respects the current mode. Passing
-`(mode := some nn.Mode.eval)` selects evaluation for one call without changing the stored mode.
-Instantiation uses native `Float32` by default; code that needs
-another executable or proof-facing representation selects it directly with `(α := ...)`. The
-immutable `checked` value is still the object passed to `nn.lowerToTypedGraph` or a proof-facing
-interpretation.
+Once instantiated, the module owns parameters, persistent buffers, and its train/eval mode,
+starting in training mode. `forward` executes without a backward tape and respects the current
+mode. Passing `(mode := some nn.Mode.eval)` selects evaluation for one call without changing the
+stored mode. Instantiation uses native `Float32` by default, and code that needs another executable
+or proof-facing representation selects it with `(α := ...)`. `nn.Sequential.lowerToTypedGraph` and
+proof-facing interpretations receive the immutable `checked` value.
 
-This distinction is intentional. Mutating an `nn.Sequential` or `nn.Layer` would make the meaning
-of a lowered graph depend on hidden state. Mutation belongs to the instantiated `nn.Module`; the
-definition passed to lowering and proofs remains an ordinary Lean value.
+We made this distinction on purpose. Mutating an `nn.Sequential` or `nn.Layer` would make the
+meaning of a lowered graph depend on hidden state. Mutation belongs to the instantiated
+`nn.Module`, while the definition passed to lowering and proofs remains an ordinary Lean value.
 
-For a plain linear/ReLU MLP, training and evaluation use the same forward formula. Dropout and
-normalization depend on the mode; `module.eval` changes their behavior without replacing weights.
+For a plain linear/ReLU MLP, training and evaluation use the same forward formula. But dropout and
+normalization depend on the mode, and `module.eval` changes their behavior without replacing
+weights.
 
 # Token Models And Bounded Indices
 
-Token models use the same split without turning indices into floating-point tensors. The untrusted
-boundary is explicit: raw identifiers arrive as a `Tensor Nat`, and one checked step turns them into
-bounded indices.
+Token models use the same split without turning indices into floating-point tensors. Their
+untrusted boundary is explicit: raw identifiers arrive as a `Tensor Nat`, and one checked step
+turns them into bounded indices.
 
 ```lean (name := bmIndices)
 -- Check the vocabulary bound without changing the [1, 3]
@@ -226,8 +257,8 @@ def bmBadIds : Tensor Nat [1, 3] := [[0, 2, 9]]
 true
 ```
 
-An identifier outside the vocabulary is rejected, with a message rather than a silent clamp or a
-wrapped index:
+An identifier outside the vocabulary is rejected with a message (no silent clamp, no wrapped
+index):
 
 ```lean (name := bmBadIndices)
 -- The value nine cannot inhabit Fin 5, so conversion
@@ -241,12 +272,12 @@ wrapped index:
 "tensor contains an index outside the valid range [0, 5)"
 ```
 
-After the check, the identifiers have type `Tensor (Fin 5) [1, 3]`, and the embedding lookup can no
-longer be handed an out-of-range row. The table itself is built like any other model, and its type
-records the whole lookup:
+After the check, the identifiers have type `Tensor (Fin 5) [1, 3]`, so the embedding lookup can't
+be handed an out-of-range row. We build the table like any other model, and its type records the
+whole lookup:
 
 ```lean (name := bmEmbedding)
--- Embedding appends width three to the token shape; each
+-- Embedding appends width three to the token shape. Each
 -- token selects one learned row.
 def bmTable := nn.build 2026 (nn.embedding 5 3)
 
@@ -254,13 +285,13 @@ def bmTable := nn.build 2026 (nn.embedding 5 3)
 ```
 ```leanOutput bmEmbedding (whitespace := lax)
 bmTable.model [1, 3] :
-  nn.IndexedModel [1, 3] (Shape.appendDim [1, 3] 3)
+  nn.IndexedModel [1, 3] ([1, 3] ++ [3])
     (Fin 5)
 ```
 
 Reading that type left to right: token identifiers of shape `[1, 3]` map to vectors of shape
-`[1, 3, 3]`, and the index type is `Fin 5`. The vocabulary bound is part of the model type, not a
-comment. In runtime code the pieces fit together as:
+`[1, 3, 3]`, and the index type is `Fin 5`. So the vocabulary bound is part of the model type, not
+a comment. In runtime code the pieces fit together as:
 
 ```
 -- Validate token bounds before running the indexed module
@@ -268,14 +299,14 @@ comment. In runtime code the pieces fit together as:
 let table := nn.build 2026 <| nn.embedding vocab embedDim
 let tokenShape := [batch, seqLen]
 let tokenIds ← Tensor.checkIndices vocab rawTokenIds
-let module ← nn.IndexedModule.instantiate (table.model tokenShape) { device := cpu }
+let module ← nn.IndexedModule.instantiate (table.model tokenShape) { device := .cpu }
 let vectors ← module.forward tokenIds (mode := some .eval)
 ```
 
 Repeated identifiers select the same row and therefore accumulate into the same weight gradient.
 Fresh tables use a seeded normal sampler with the standard-normal initialization convention of
-`torch.nn.Embedding`; matching distributions does not imply matching generated values. Architectures
-may replace that default, and GPT-2 uses its smaller initialization scale.
+`torch.nn.Embedding`, though matching distributions doesn't imply matching generated values.
+Architectures may replace that default (GPT-2 uses its smaller initialization scale).
 
 To start from an existing table, use the tensor itself:
 
@@ -286,16 +317,16 @@ let table := nn.Embedding.fromWeight weight
 let frozenTable := nn.Embedding.fromWeight weight (freeze := true)
 ```
 
-The type of `weight` fixes the vocabulary and embedding dimensions. The first table participates in
-reverse mode; the second remains part of module state but receives no parameter gradient, which is
-the `requiresGrad := false` case from the field list above. Current embedding modules use dense row
-lookup and scatter-add gradients. Options that change PyTorch's forward or backward semantics, such
-as `padding_idx`, `max_norm`, frequency-scaled gradients, and sparse gradients, require their own
-checked definitions and are not accepted as ignored flags.
+Here the type of `weight` fixes the vocabulary and embedding dimensions. Of the two tables, the
+first participates in reverse mode, while the second remains part of module state but receives no
+parameter gradient (the `requiresGrad := false` case from the field list above). Current embedding
+modules use dense row lookup and scatter-add gradients. Options that change PyTorch's forward or
+backward semantics, such as `padding_idx`, `max_norm`, frequency-scaled gradients, and sparse
+gradients, require their own checked definitions and aren't accepted as ignored flags.
 
 # MLP Architecture
 
-The regression MLP uses two linear layers separated by a ReLU. Making its hidden width an argument
+Our regression MLP uses two linear layers separated by a ReLU. Making its hidden width an argument
 lets us compare parameter layouts while keeping the external input and output shapes fixed:
 
 ```lean (name := bmMlp)
@@ -307,7 +338,7 @@ def bmMlp (width : Nat) :
     nn.Builder (nn.Sequential [2] [1]) :=
   nn.Sequential![
     nn.linear 2 width,
-    nn.relu,
+    nn.op .relu,
     nn.linear width 1
   ]
 
@@ -316,13 +347,12 @@ def bmMlp (width : Nat) :
 ```leanOutput bmMlp (whitespace := lax)
 Sequential: [2] -> [1], layers=3, params=33, state=33
   [0] Linear(2, 8): [2] -> [8] params=24, state=24 [[8, 2], [8]]
-  [1] ReLU: [8] -> [8] params=0, state=0 []
+  [1] relu: [8] -> [8] params=0, state=0 []
   [2] Linear(8, 1): [8] -> [1] params=9, state=9 [[1, 8], [1]]
 ```
 
-That summary is the counterpart of `print(model)` together with `torchinfo.summary`, and it is
-printed from the immutable definition rather than from an instantiated module. Read the macro from
-top to bottom:
+That summary is the counterpart of `print(model)` together with `torchinfo.summary`, and it comes
+from the immutable definition, without instantiating a module. Read the macro from top to bottom:
 
 ```
 -- ReLU preserves the hidden shape; only the linear maps
@@ -336,11 +366,11 @@ hidden [8]
 output [1]
 ```
 
-`ReLU` is shape-preserving, which the summary shows as `[8] -> [8]` with `params=0`. The two linear
-layers each change the final feature axis. The macro checks that the chain is composable and returns
-one `Sequential [2] [1]`.
+`ReLU` is shape-preserving (the summary shows it as `[8] -> [8]` with `params=0`). Both linear
+layers change the final feature axis. The macro checks that the chain is composable and returns one
+`Sequential [2] [1]`.
 
-The parameter layout follows PyTorch's linear-layer convention:
+Its parameter layout follows PyTorch's linear-layer convention:
 
 $$`
 W:\operatorname{Tensor}\;\alpha\;[\mathrm{out},\mathrm{in}],
@@ -358,10 +388,10 @@ $$`8\cdot2+8+1\cdot8+1=33`.
 mlp params      : 33
 ```
 
-The counts agree because both models store a weight and a bias for each linear layer, with the same
-dimensions. Comparing the individual shapes also checks the weight orientation. A matching total
-alone would not establish that correspondence; the transformer example below shows how a bias
-convention changes it.
+Those counts agree because both models store a weight and a bias for each linear layer, with the
+same dimensions. Comparing the individual shapes also checks the weight orientation. A matching
+total alone wouldn't establish that correspondence, and the transformer example below shows how a
+bias convention changes it.
 
 Change the width and the layout changes with it:
 
@@ -373,7 +403,7 @@ Change the width and the layout changes with it:
 ```leanOutput bmMlp16 (whitespace := lax)
 Sequential: [2] -> [1], layers=3, params=65, state=65
   [0] Linear(2, 16): [2] -> [16] params=48, state=48 [[16, 2], [16]]
-  [1] ReLU: [16] -> [16] params=0, state=0 []
+  [1] relu: [16] -> [16] params=0, state=0 []
   [2] Linear(16, 1): [16] -> [1] params=17, state=17 [[1, 16], [1]]
 ```
 
@@ -383,16 +413,16 @@ $`h+1`, giving $`4h+1` in total. Widths `2`, `16`, and `64` therefore give `9`, 
 parameters. Inserting another hidden `linear` and `relu` pair also preserves the external map
 $`[2] \to [1]`, while changing the internal shape chain and parameter payload.
 
-Parameter order is part of the typed model interface. A pack with the two bias tensors exchanged
-does not match the expected dependent list. The dependent pack records a list of shapes and follows
+Parameter order is part of the typed model interface, so a pack with the two bias tensors exchanged
+doesn't match the expected dependent list. A dependent pack records a list of shapes and follows
 the homogeneous-element rule developed in *Tensors And Shapes*. Executing the model at another `α`
 reuses the architecture without changing the ordered parameter layout.
 
 # Composition Errors And Architecture Changes
 
-Two kinds of mistake are possible in a model definition, and TorchLean reports them in two different
-places. The first kind breaks composition, so it is a type error. Insert a layer whose input width
-does not match the previous output:
+Two kinds of mistake are possible in a model definition, and TorchLean reports them in two
+different places. Mistakes of the first kind break composition, so they're type errors. Insert a
+layer whose input width doesn't match the previous output:
 
 ```lean +error -keep (name := bmMiddle)
 -- The inserted layer expects nine hidden entries, but its
@@ -402,7 +432,7 @@ def bmMiddle :
   nn.Sequential![
     nn.linear 2 8,
     nn.linear 9 4,
-    nn.relu,
+    nn.op .relu,
     nn.linear 4 1
   ]
 ```
@@ -411,7 +441,7 @@ nn.Sequential!: layer 2 expects input shape [9], but layer 1 outputs [8].
 Change layer 2's input shape or insert a layer that converts [8] to [9].
 ```
 
-The message names the incompatible entries: layer 2 expects width `9`, while layer 1 produces `8`.
+That message names the incompatible entries: layer 2 expects width `9`, while layer 1 produces `8`.
 It appears at the definition. No data, parameters, or device are needed to expose it. The
 {ref "torchlean-api"}[API chapter] shows the same failure at the last layer instead of the middle.
 
@@ -426,7 +456,7 @@ def bmWider :
   nn.Sequential![
     nn.linear 2 8,
     nn.linear 8 8,
-    nn.relu,
+    nn.op .relu,
     nn.linear 8 1
   ]
 
@@ -436,43 +466,42 @@ def bmWider :
 Sequential: [2] -> [1], layers=4, params=105, state=105
   [0] Linear(2, 8): [2] -> [8] params=24, state=24 [[8, 2], [8]]
   [1] Linear(8, 8): [8] -> [8] params=72, state=72 [[8, 8], [8]]
-  [2] ReLU: [8] -> [8] params=0, state=0 []
+  [2] relu: [8] -> [8] params=0, state=0 []
   [3] Linear(8, 1): [8] -> [1] params=9, state=9 [[1, 8], [1]]
 ```
 
 This version compiles because the shapes compose, and the summary shows what it really is: a
 different architecture with another weight matrix and bias, 105 parameters instead of 33, and two
-consecutive linear layers with no activation between them. Composing two affine maps gives an affine
-map, so those two layers have the expressive power of one. Shape safety prevents malformed
-composition; it does not declare two well-shaped networks equivalent, and it does not tell you that
-an architecture suits the learning problem.
+consecutive linear layers with no activation between them. Composing two affine maps gives an
+affine map, so those two layers have the expressive power of one. Shape safety prevents malformed
+composition. But it doesn't declare two well-shaped networks equivalent, and it doesn't tell you
+that an architecture suits the learning problem.
 
 Although the consecutive affine layers can be combined in exact arithmetic, training their
 factors separately gives a different parameterization and optimizer state. Rounded evaluation
 can also depend on the sequence of operations.
 
-The second kind of mistake is arithmetic on shapes rather than composition of them, and it is
-reported by validation rather than by the type checker. We meet it in the convolutional section
-below.
+Mistakes of the second kind involve arithmetic on shapes, not their composition, and validation
+reports them instead of the type checker. We meet them in the convolutional section below.
 
 # Parameter Initialization
 
-The model declaration describes how parameters should be created. Building it supplies the seed, and
+A model declaration describes how parameters should be created. Building it supplies the seed, and
 the initial values are ordinary data we can print:
 
 ```lean (name := bmInit)
--- The same seed fixes both weight entries; the separately
--- stored bias starts at zero.
+-- The same seed fixes both weight entries, and the
+-- separately stored bias starts at zero.
 #eval (bmTiny 2026).initState
 ```
 ```leanOutput bmInit (whitespace := lax)
 [[1, 2]: [[-0.616737, 0.962068]], [1]: [0.000000]]
 ```
 
-Each entry is labeled with its shape. The weight was drawn from the layer's initialization scheme at
-seed `2026`; TorchLean's bias starts at exactly zero. PyTorch's default `Linear` bias instead uses
-a uniform random initialization. Matching parameter counts does not match initializers. Change only
-the seed:
+Each entry is labeled with its shape. At seed `2026` the weight is drawn from the layer's
+initialization scheme, while TorchLean's bias starts at exactly zero (PyTorch's default `Linear`
+bias instead uses a uniform random initialization). Matching parameter counts doesn't mean matching
+initializers. Change only the seed:
 
 ```lean (name := bmInit1)
 -- Changing the seed changes initialized weights without
@@ -489,26 +518,26 @@ code can advance. Changing only the seed is therefore a controlled experiment, a
 a log reconstructs the starting point only together with the architecture, initializer settings,
 and implementation version.
 
-The trainer takes the same seed through its configuration:
+A trainer takes the same seed through its configuration:
 
 ```
 -- Keep seed choice at construction so repeated runs can
 -- reuse one architecture declaration.
 def trainer (seed : Nat) :=
-  Trainer.new model
-    { objective := mse
+  Trainer.create model
+    { objective := .mse
       optimizer := optim.adam { lr := 0.03 }
       seed := seed }
 ```
 
-The seed now sits beside the objective and optimizer in the trainer configuration. We can
-initialize the same architecture at another seed without rewriting the layer list.
+In that configuration the seed sits beside the objective and optimizer, so we can initialize the
+same architecture at another seed without rewriting the layer list.
 
 # Prefix Shapes And Shared Parameters
 
-Linear layers act on the final dimension and preserve everything in front of it. The batch shape is
-an argument to the layer, so lifting the model to a fixed batch means passing that prefix rather
-than reshaping data:
+Linear layers act on the final dimension and preserve everything in front of it. Since the batch
+shape is an argument to the layer, lifting the model to a fixed batch means passing that prefix
+instead of reshaping data:
 
 ```lean (name := bmBatched)
 -- Both linear layers share their parameters across all rows
@@ -518,7 +547,7 @@ def bmBatched (batch : Nat) :
       (nn.Sequential [batch, 2] [batch, 1]) :=
   nn.Sequential![
     nn.linear 2 8 [batch],
-    nn.relu,
+    nn.op .relu,
     nn.linear 8 1 [batch]
   ]
 
@@ -527,19 +556,18 @@ def bmBatched (batch : Nat) :
 ```leanOutput bmBatched (whitespace := lax)
 Sequential: [4, 2] -> [4, 1], layers=3, params=33, state=33
   [0] Linear(2, 8): [4, 2] -> [4, 8] params=24, state=24 [[8, 2], [8]]
-  [1] ReLU: [4, 8] -> [4, 8] params=0, state=0 []
+  [1] relu: [4, 8] -> [4, 8] params=0, state=0 []
   [2] Linear(8, 1): [4, 8] -> [4, 1] params=9, state=9 [[1, 8], [1]]
 ```
 
-The per-layer shapes now carry the prefix, while the parameter count remains `33`. The same four
-parameter tensors apply to every sample in the batch. The prefix changes the activation shapes
-without introducing a separate set of weights for each sample.
+In this summary the per-layer shapes carry the prefix, while the parameter count remains `33`. And
+the same four parameter tensors apply to every sample in the batch.
 
 During training, contributions from the rows accumulate into gradients of those shared weights.
 
-The batch prefix must be passed to each parameterized layer. It is an ordinary
-argument with a default of `[]`, and the default is inserted before the composition is checked. The
-error you get is the composition mismatch from the previous section.
+You must pass the batch prefix to each parameterized layer. It's an ordinary argument with a
+default of `[]`, and the default is inserted before the composition is checked. The error you get
+is the composition mismatch from the previous section.
 
 Nothing in `nn.linear` calls the prefix “batch.” It could equally be `[time]`, `[batch, time]`, or a
 higher-rank collection. The operation's contract is:
@@ -556,8 +584,9 @@ the chosen batch size.
 
 # A Rank-Generic Convolutional Model
 
-TorchLean does not need separate tensor types for signals, images, and volumes. A convolution is
-parameterized by a vector of spatial sizes. The length of that vector determines the spatial rank.
+TorchLean doesn't need separate tensor types for signals, images, and volumes. A convolution is
+parameterized by a vector of spatial sizes, and the length of that vector determines the spatial
+rank.
 
 For a two-dimensional input, the conventional shape is:
 
@@ -572,11 +601,11 @@ $$`
 `
 
 The public layer surface uses `nn.conv`, `nn.convTranspose`, `nn.maxPool`, `nn.avgPool`,
-`nn.globalAvgPool`, and the rank-polymorphic channel-normalization constructors. The length of each
-spatial tensor determines the rank. `nn.models.CNN.Config` records the input channels, spatial
+`nn.globalAvgPool`, and the rank-polymorphic channel-normalization constructors, and the length of
+each spatial tensor determines the rank. `nn.CNN.Config` records the input channels, spatial
 sizes, an ordered list of feature stages, and the class count. Each stage chooses its own
-convolution, activation, optional dropout, and pooling. Start with one stage so that we can
-account for every parameter:
+convolution, activation, optional dropout, and pooling. Start with one stage so that we can account
+for every parameter:
 
 ```lean (name := bmCnn)
 -- The convolution and pooling geometries determine the
@@ -590,23 +619,23 @@ def bmCnnStage : nn.ConvPoolBlock.Config 2 :=
       { kernelSize := [2, 2], stride := [2, 2] } }
 
 /-- Three channels, 8 by 8, one stage, ten classes. -/
-def bmCnnConfig : nn.models.CNN.Config 2 :=
+def bmCnnConfig : nn.CNN.Config 2 :=
   { inputChannels := 3
     spatial := [8, 8]
     stages := [bmCnnStage]
     classCount := 10 }
 
 #eval nn.printSummary
-  (nn.build 2026 (nn.models.cnn bmCnnConfig [1]))
+  (nn.build 2026 (nn.cnn bmCnnConfig [1]))
 ```
 ```leanOutput bmCnn (whitespace := lax)
 Sequential: [1, 3, 8, 8] -> [1, 10], layers=5, params=482, state=482
   [0] Conv(rank=2, in=3, out=4): [1, 3, 8, 8] -> [1, 4, 6, 6]
     params=112, state=112 [[4, 3, 3, 3], [4]]
-  [1] ReLU: [1, 4, 6, 6] -> [1, 4, 6, 6] params=0, state=0 []
+  [1] relu: [1, 4, 6, 6] -> [1, 4, 6, 6] params=0, state=0 []
   [2] MaxPool(rank=2): [1, 4, 6, 6] -> [1, 4, 3, 3]
     params=0, state=0 []
-  [3] FlattenAfter: [1, 4, 3, 3] -> [1, 36] params=0, state=0 []
+  [3] reshape: [1, 4, 3, 3] -> [1, 36] params=0, state=0 []
   [4] Linear(36, 10): [1, 36] -> [1, 10]
     params=370, state=370 [[10, 36], [10]]
 ```
@@ -619,7 +648,7 @@ and both steps are computable on their own:
 ```lean (name := bmGeom)
 -- Compute the spatial dimensions after convolution before
 -- flattening any activations.
-#eval bmCnnStage.block.convolution.outputSpatial
+#eval bmCnnStage.block.convolution.convOutputSpatial
   bmCnnConfig.spatial
 ```
 ```leanOutput bmGeom (whitespace := lax)
@@ -629,8 +658,8 @@ and both steps are computable on their own:
 ```lean (name := bmGeom2)
 -- Pooling consumes the convolution output dimensions, not
 -- the original image dimensions.
-#eval bmCnnStage.pooling.outputSpatial
-  (bmCnnStage.block.convolution.outputSpatial
+#eval bmCnnStage.pooling.poolOutputSpatial
+  (bmCnnStage.block.convolution.convOutputSpatial
     bmCnnConfig.spatial)
 ```
 ```leanOutput bmGeom2 (whitespace := lax)
@@ -652,9 +681,9 @@ Identical count and identical output shape, which is the check worth running whe
 convention is in doubt.
 
 With several stages, each consumes the channels and spatial grid produced by the previous one.
-The stages can have different widths, kernels, strides, and pooling choices; the linear head
+Stages can have different widths, kernels, strides, and pooling choices, while the linear head
 always consumes the final feature map. An empty `stages` list flattens the input directly and
-attaches that head; input channels, spatial extents, and class count must still be positive.
+attaches that head, but input channels, spatial extents, and class count must still be positive.
 Parameters follow stage order, then the head's weight and bias.
 
 ## Validating Spatial Geometry
@@ -701,15 +730,15 @@ Except.error "CNN: class count must be positive"
 ```
 
 These checks concern inequalities between computed extents. Requiring a proof at every call would
-also require callers to construct that proof for dimensions read from a command line. The
-configuration API instead reports invalid geometry through `Except` at the boundary where those
+also require callers to construct that proof for dimensions read from a command line, so the
+configuration API reports invalid geometry through `Except` instead, at the boundary where those
 dimensions arrive. The resulting layer types still record the computed shapes and check their
 composition.
 
 ## CIFAR-10 Training Example
 
-The maintained example trains a convolutional classifier on prepared CIFAR-10 images; its
-configuration and image dimensions differ from the small summary above:
+TorchLean's maintained example trains a convolutional classifier on prepared CIFAR-10 images, and
+its configuration and image dimensions differ from the small summary above:
 
 ```terminal
 # Use one downloaded CIFAR-10 example to exercise the
@@ -719,19 +748,19 @@ scripts/lake.sh -Kcuda=false exe torchlean cnn \
   --device cpu --n-total 1 --steps 1 --seed 2026
 ```
 
-Uniform ten-class probabilities give loss $`\ln 10 \approx 2.303`; an arbitrary untrained
-classifier need not be uniform. The leading dimension of the input is an ordinary tensor
-prefix preserved by the layers, not a separate image or batch container.
+Uniform ten-class probabilities give loss $`\ln 10 \approx 2.303`, but an arbitrary untrained
+classifier need not be uniform. The input's leading dimension is an ordinary tensor prefix
+preserved by the layers, not a separate image or batch container.
 
-This one-image run exercises data loading, loss evaluation, and one parameter update. The
-`TrainLog` records that execution; assessing classification accuracy would require predictions
+This one-image run exercises data loading, loss evaluation, and one parameter update. Its
+`TrainLog` records that execution, but assessing classification accuracy would require predictions
 on an evaluation set.
 
 The relevant source files are:
 
-- [`Cnn.lean`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Models/Vision/Cnn.lean);
-- [`Cnn.lean`](https://github.com/lean-dojo/TorchLean/blob/main/NN/API/Models/Cnn.lean);
-- [`ResNet.lean`](https://github.com/lean-dojo/TorchLean/blob/main/NN/API/Models/ResNet.lean).
+- {src "TorchLeanExamples/Models/Vision/CNN.lean"}[`CNN.lean`]
+- [`CNN.lean`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/NN/Models/CNN.lean)
+- {src "TorchLean/NN/Models/ResNet.lean"}[`ResNet.lean`].
 
 Residual blocks require their main and skip paths to return the same shape before addition
 {Informal.citep resnet2016}[]. A projection shortcut is therefore an explicit layer, not a runtime
@@ -753,7 +782,7 @@ One block, small enough to read every parameter shape:
 /-- Two heads of width four over a model width of eight. -/
 def bmBlock :
     nn.Builder (nn.Sequential [1, 4, 8] [1, 4, 8]) :=
-  nn.transformerEncoderBlock
+  nn.transformerBlock
     { headCount := 2
       headWidth := 4
       feedForwardWidth := 32 }
@@ -772,19 +801,19 @@ Sequential: [1, 4, 8] -> [1, 4, 8], layers=4, params=840, state=840
   [3] LayerNorm: [1, 4, 8] -> [1, 4, 8] params=16, state=16 [[8], [8]]
 ```
 
-The architecture is visible in four rows: attention inside a residual connection, a layer
-normalization, the position-wise feed-forward network inside another residual connection, and a
-second normalization. The first `Residual` holds four $`8\times8` matrices, which are the query,
-key, value, and output projections. The second holds $`[32,8]`, $`[32]`, $`[8,32]`, $`[8]`: the
-feed-forward network expands to `32` and comes back, with biases. Both normalizations hold a scale
-and a shift of width `8`.
+Four rows show the architecture: attention inside a residual connection, a layer normalization, the
+position-wise feed-forward network inside another residual connection, and a second normalization.
+The first `Residual` holds four $`8\times8` matrices, which are the query, key, value, and output
+projections. The second holds $`[32,8]`, $`[32]`, $`[8,32]`, $`[8]`: the feed-forward network
+expands to `32` and comes back, with biases. Both normalizations hold a scale and a shift of width
+`8`.
 
-Within attention, the four sequence positions acquire query, key, and value representations.
-Two heads split the projected features into groups of four, and attention combines positions
-before the output projection restores the model width. The residual addition requires that
-width to match the incoming eight features. The feed-forward branch then acts on each position's
-features, expanding eight to thirty-two and returning to eight. This explains why a block can
-change the representation substantially while keeping its external shape `[1, 4, 8]`.
+Within attention, the four sequence positions acquire query, key, and value representations. Two
+heads split the projected features into groups of four, and attention combines positions before the
+output projection restores the model width (the residual addition requires that width to match the
+incoming eight features). Then the feed-forward branch acts on each position's features, expanding
+eight to thirty-two and returning to eight. That's why a block can change the representation
+substantially while keeping its external shape `[1, 4, 8]`.
 
 ## PyTorch Transformer Parameter Comparison
 
@@ -815,20 +844,20 @@ packed $`[24,8]` query/key/value projection is TorchLean's three separate $`[8,8
 the two normalizations agree exactly.
 
 Set `attentionInputBias := true` and `attentionOutputBias := true` to include those 32 parameters
-in the TorchLean block. A port must also match activation, normalization, dropout, and mask choices;
-matching the parameter count alone does not establish forward agreement.
+in the TorchLean block. A port must also match activation, normalization, dropout, and mask
+choices, because matching the parameter count alone doesn't establish forward agreement.
 
 ## Block Structure And Masks
 
-The block constructor's configuration validates before any state is allocated. Zero sequence, model,
-head, or feed-forward widths are rejected, in the same `Except` style as the convolutional
-configuration above. The head configuration may use an internal projection width distinct from
-`modelWidth`; `headCount * headWidth` is the projection width, and it equals `modelWidth` in the
+Before any state is allocated, the block constructor's configuration is validated. Zero sequence,
+model, head, or feed-forward widths are rejected (in the same `Except` style as the convolutional
+configuration above). The head configuration may use an internal projection width distinct from
+`modelWidth`: `headCount * headWidth` is the projection width, and it equals `modelWidth` in the
 example above only because we chose two heads of width four.
 
 Post-normalization is the default, matching the original block. In the two displays below, each
-arrow uses $`x` for the representation entering that stage; the second stage receives the result
-of the first:
+arrow uses $`x` for the representation entering that stage, and the second stage receives the
+result of the first:
 
 $$`
 x \mapsto \mathrm{LayerNorm}(x + \mathrm{MHA}(x))
@@ -843,7 +872,7 @@ x \mapsto x + \mathrm{MHA}(\mathrm{LayerNorm}(x))
 \mapsto x + \mathrm{FFN}(\mathrm{LayerNorm}(x)).
 `
 
-The parameter count is identical for the two variants; only the composition order changes.
+Both variants have the same parameter count: only the composition order changes.
 
 Boolean masks are explicit and use hard-mask semantics: blocked positions have zero softmax
 numerator. TorchLean does not silently replace that mathematical operation with a finite additive
@@ -855,25 +884,29 @@ Run one optimizer step of the maintained example:
 ```terminal
 # This command trains the complete sequence example, not
 # just the isolated encoder block above.
+# It reads the tiny-shakespeare corpus that the first line
+# downloads.
+python3 scripts/datasets/download_example_data.py --tiny-shakespeare
+
 scripts/lake.sh exe torchlean transformer \
   --device cpu --steps 1 --log false
 ```
 
-The recorded run reports:
+Here's what the recorded run reports:
 
 ```terminal +output
 [TorchLean] arithmetic: native binary32
 [TorchLean] device: cpu
 transformer: Causal Transformer next-byte model (device=cpu)
 dataset size = 16
-mean_loss(before training) = 1.836619
-mean_loss(after training) = 1.773165
-steps=1 arithmetic=native scalar=Float32 loss=1.836619 -> 1.773165
+mean_loss(before training) = 1.759758
+mean_loss(after training) = 1.725778
+steps=1 arithmetic=native scalar=Float32 loss=1.759758 -> 1.725778
 transformer: ok
 ```
 
-The log identifies the arithmetic and device chosen for this run. The next runtime
-chapters explain how those choices are made.
+That log identifies the arithmetic and device chosen for this run (the runtime chapters that follow
+explain how those choices are made).
 
 This transcript comes from the causal next-byte example, not the standalone encoder block above.
 Its dataset and loss belong to that complete training task.
@@ -884,22 +917,22 @@ KANs, GPT-style language models, vision transformers {Informal.citep vit2021}[],
 state-space models {Informal.citep mamba2024}[], neural operators {Informal.citep fno2021}[],
 autoencoders, diffusion models, and reinforcement-learning policies all build from the same shape,
 parameter, and runtime interfaces. They use the shared tensor type. `nn.printSummary` inspects
-models represented as `nn.Sequential`; indexed token models have their own module interface.
+models represented as `nn.Sequential`, while indexed token models have their own module interface.
 
-For example, `nn.models.KAN.Config` records input/output widths, hidden widths, and an edge basis
+For example, `nn.KAN.Config` records input/output widths, hidden widths, and an edge basis
 family. The basis is explicit because a KAN edge performs a learned scalar function rather than an
 ordinary affine weight. It still returns a seeded model builder that can be trained through the
 same trainer boundary.
 
 A Fourier neural operator uses spectral transforms and mode truncation, but its input and output
-remain general tensors. The Burgers example later in the guide shows how a PDE trajectory dataset,
+remain general tensors. Later in the guide, the Burgers example shows how a PDE trajectory dataset,
 FNO model, exported prediction, and Lean-checkable residual artifact fit together.
 
 # Masked Inputs And Reconstruction Targets
 
 Self-supervised learning changes the training problem more than it changes the tensor foundation
 {Informal.citep mae2022}[]. For a sequence of eight sensor readings, a block mask exposes
-alternating pairs and hides the remaining pairs. The reconstruction target must retain the
+alternating pairs and hides the remaining pairs. But the reconstruction target must retain the
 original readings:
 
 ```lean (name := bmMask)
@@ -911,21 +944,21 @@ def bmSignal : Tensor Float [8] :=
 /-- One policy entry per axis: blocks of width two. -/
 def bmBlocks : Tensor (Option Nat) [1] := [some 2]
 
-#eval ssl.BlockMask.apply bmSignal bmBlocks 2 0
+#eval SelfSupervised.BlockMask.apply bmSignal bmBlocks 2 0
 ```
 ```leanOutput bmMask (whitespace := lax)
 [0.000000, 0.000000, 3.000000, 4.000000,
  0.000000, 0.000000, 7.000000, 8.000000]
 ```
 
-`some 2` divides the participating axis into blocks of width two. The period `2` and offset `0` hide
-block indices congruent to zero modulo two, hence the first and third blocks. Change the offset and
-the complement is hidden instead:
+`some 2` divides the participating axis into blocks of width two. With period `2` and offset `0`,
+block indices congruent to zero modulo two are hidden (the first and third blocks). Change the
+offset and the complement is hidden instead:
 
 ```lean (name := bmMask1)
 -- Keep the number of hidden blocks fixed and change which
 -- blocks the offset selects.
-#eval ssl.BlockMask.apply bmSignal bmBlocks 2 1
+#eval SelfSupervised.BlockMask.apply bmSignal bmBlocks 2 1
 ```
 ```leanOutput bmMask1 (whitespace := lax)
 [1.000000, 2.000000, 0.000000, 0.000000,
@@ -938,15 +971,15 @@ readings disappear:
 ```lean (name := bmMask4)
 -- Period four hides the first block, replacing its two
 -- signal values with zero.
-#eval ssl.BlockMask.apply bmSignal bmBlocks 4 0
+#eval SelfSupervised.BlockMask.apply bmSignal bmBlocks 4 0
 ```
 ```leanOutput bmMask4 (whitespace := lax)
 [0.000000, 0.000000, 3.000000, 4.000000,
  5.000000, 6.000000, 7.000000, 8.000000]
 ```
 
-An axis marked `none` is left out of the block index; an image policy such as
-`[none, some 4, some 4]` therefore repeats the same 4-by-4 spatial mask across channels.
+An axis marked `none` is left out of the block index, so an image policy such as
+`[none, some 4, some 4]` repeats the same 4-by-4 spatial mask across channels.
 
 The loss needs to know which coordinates were hidden, and that is a separate query against the same
 policy rather than a second convention to keep in sync:
@@ -954,7 +987,7 @@ policy rather than a second convention to keep in sync:
 ```lean (name := bmHidden)
 -- List the coordinates the reconstruction objective must
 -- recover from the original target.
-#eval ssl.BlockMAE.hiddenIndices
+#eval SelfSupervised.BlockMAE.hiddenIndices
   (dataShape := [8]) bmBlocks 2 0
 ```
 ```leanOutput bmHidden (whitespace := lax)
@@ -962,8 +995,8 @@ policy rather than a second convention to keep in sync:
 ```
 
 Those are exactly the flattened positions that came back zero in the first transcript. For training,
-`ssl.BlockMAE.sample` pairs the masked batch with a row-major prefix of the original, unmasked
-batch:
+`SelfSupervised.BlockMAE.sample` pairs the masked batch with a row-major prefix of the original,
+unmasked batch:
 
 ```lean (name := bmSample)
 -- Build a supervised pair whose input is masked and whose
@@ -972,7 +1005,8 @@ def bmBatchedSignal : Tensor Float [1, 8] :=
   [[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]]
 
 #eval
-  match ssl.BlockMAE.sample [1] (dataShape := [8]) 8
+  match SelfSupervised.BlockMAE.sample [1]
+      (dataShape := [8]) 8
       bmBlocks 2 0 bmBatchedSignal with
   | .error message => s!"rejected: {message}"
   | .ok sample =>
@@ -985,27 +1019,26 @@ def bmBatchedSignal : Tensor Float [1, 8] :=
  6.000000, 7.000000, 8.000000]]"
 ```
 
-The input is masked and the target is not. Choosing which reconstructed coordinates contribute to
-the loss is a separate part of the masked-reconstruction objective. The reconstruction width appears
-in the target shape; an oversized prefix is reported as an
-ordinary construction error rather than truncated. `hiddenIndices` returns the flattened coordinates
-selected by the same mask, so a weighted loss can exclude visible coordinates without duplicating
-the mask convention.
+Here the input is masked and the target is not. Choosing which reconstructed coordinates contribute
+to the loss is a separate part of the masked-reconstruction objective. The reconstruction width
+appears in the target shape, and an oversized prefix is reported as an ordinary construction error
+(it isn't truncated). `hiddenIndices` returns the flattened coordinates selected by the same mask,
+so a weighted loss can exclude visible coordinates without duplicating the mask convention.
 
 For the first mask, reconstruction errors at positions zero, one, four, and five concern hidden
 readings. Errors at positions two, three, six, and seven concern readings the model could already
-see. Summing both groups would train a different objective from summing only hidden positions.
-The unchanged target in the transcript is essential in either case: replacing it with the masked
-input would reward reproducing the inserted zeros. Shape agreement cannot catch that mistake
-because masked and original tensors have identical dimensions.
+see. Summing both groups would train a different objective from summing only hidden positions. In
+either case the unchanged target in the transcript is essential: replacing it with the masked input
+would reward reproducing the inserted zeros. Shape agreement cannot catch that mistake because
+masked and original tensors have identical dimensions.
 
-The mask is deterministic. In the typed `BlockMask.apply` call, the policy and tensor ranks already
-agree by construction, because the policy's length is `shape.rank`. A zero period or zero block
-width hides nothing; the lower-level coordinate helpers likewise treat a rank mismatch or an
-out-of-bounds coordinate as visible rather than sampling a fallback mask. Randomized mask selection
-should choose the period/offset or another explicit mask from recorded generator state. The
-coordinate theorems `TorchLean.ssl.BlockMask.hidden_scalar_eq_zero` and
-`TorchLean.ssl.BlockMask.visible_scalar_eq_input` then describe exactly what the executable
+Block masks are deterministic. In the typed `BlockMask.apply` call, the policy and tensor ranks
+already agree by construction, because the policy's length is `shape.rank`. A zero period or zero
+block width hides nothing, and the lower-level coordinate helpers likewise treat a rank mismatch or
+an out-of-bounds coordinate as visible rather than sampling a fallback mask. Randomized mask
+selection should choose the period/offset or another explicit mask from recorded generator state.
+Then the coordinate theorems `SelfSupervised.BlockMask.hidden_scalar_eq_zero` and
+`SelfSupervised.BlockMask.visible_scalar_eq_input` describe exactly what the executable
 transformation did: the transcripts above are instances of those two statements.
 
 # Low-Rank Linear Adapters
@@ -1013,10 +1046,10 @@ transformation did: the transcripts above are instances of those two statements.
 Masks change which data reaches the model. A low-rank adapter instead changes a parameterized
 projection without replacing its base weight {Informal.citep lora2022}[].
 
-`NN.API` also exports the LoRA tensor helpers as `TorchLean.Adapters.LoRA`. An input whose final
-axis has size `inputWidth` multiplies a base weight of shape `[inputWidth, outputWidth]` on the
-right. Every leading axis is preserved, so the same definition handles a vector, a batch, or several
-leading axes. An adapter stores
+The LoRA tensor helpers live in `TorchLean.NN.LoRA`, under `LoRA`. An
+input whose final axis has size `inputWidth` multiplies a base weight of shape
+`[inputWidth, outputWidth]` on the right. Every leading axis is preserved, so the same definition
+handles a vector, a batch, or several leading axes. An adapter stores
 
 $$`
 A:\operatorname{Tensor}\;\alpha\;[\mathrm{inputWidth},\mathrm{rank}],
@@ -1035,11 +1068,11 @@ and contributes $`\mathrm{scale}\cdot(AB)` to the base weight. This helper uses
 def bmBase : Tensor Float [3, 2] :=
   [[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]
 
-def bmAdapter : Adapters.LoRA.Parameters Float 3 1 2 :=
+def bmAdapter : LoRA.Parameters Float 3 1 2 :=
   { inputFactor := [[1.0], [0.0], [2.0]]
     outputFactor := [[1.0, 3.0]] }
 
-#eval Adapters.LoRA.weightUpdate bmAdapter (0.5 : Float)
+#eval LoRA.weightUpdate bmAdapter (0.5 : Float)
 ```
 ```leanOutput bmLora (whitespace := lax)
 [[0.500000, 1.500000], [0.000000, 0.000000],
@@ -1052,7 +1085,7 @@ the base weight gives the weight the adapted layer actually applies:
 ```lean (name := bmLoraWeight)
 -- Materialize the effective weight to see which entries the
 -- rank-one update changes.
-#eval Adapters.LoRA.effectiveWeight bmBase bmAdapter
+#eval LoRA.effectiveWeight bmBase bmAdapter
   (0.5 : Float)
 ```
 ```leanOutput bmLoraWeight (whitespace := lax)
@@ -1060,17 +1093,17 @@ the base weight gives the weight the adapted layer actually applies:
  [1.000000, 3.000000]]
 ```
 
-The third row was all zeros in the base weight and now carries $`(1,3)`: the adapter gave the layer
-a use for a coordinate it previously discarded. Applying it to two input rows:
+In the base weight the third row was all zeros, and in the effective weight it carries $`(1,3)`:
+the adapter gave the layer a use for a coordinate that the base weight discarded. Applying it to
+two input rows:
 
 ```lean (name := bmLoraApply)
--- Apply the same effective projection to both rows;
--- batching does not duplicate adapter
--- weights.
+-- Apply the same effective projection to both rows.
+-- Batching does not duplicate adapter weights.
 def bmRows : Tensor Float [2, 3] :=
   [[1.0, 1.0, 1.0], [1.0, 0.0, 0.0]]
 
-#eval Adapters.LoRA.linear (batchShape := [2])
+#eval LoRA.linear (batchShape := [2])
   bmRows bmBase bmAdapter (0.5 : Float)
 ```
 ```leanOutput bmLoraApply (whitespace := lax)
@@ -1088,26 +1121,25 @@ Against the base weight alone:
 [[1.000000, 1.000000], [1.000000, 0.000000]]
 ```
 
-Both rows moved. The adapter reads a combination of the first and third coordinates; the first row
-has an additional contribution from its nonzero third coordinate. Note the explicit
-`(batchShape := [2])` : the input type is
-`Tensor α (batchShape.appendDim inputWidth)`, and Lean will not invert that from a literal shape
-`[2, 3]` on its own.
+Both rows moved. The adapter reads a combination of the first and third coordinates, and the first
+row has an additional contribution from its nonzero third coordinate. The call spells out
+`(batchShape := [2])` because the input type is `Tensor α (batchShape ++ [inputWidth])`, and
+Lean won't invert that from a literal shape `[2, 3]` on its own.
 
-The two rows also separate the adapter's contributions. The first row multiplies every row of
-the effective weight, so its outputs add to `(2.5, 5.5)`. The second row selects only the first
-weight row, giving `(1.5, 1.5)`. Keeping the base result beside the adapted result makes the change
-visible independently of any training procedure. The chosen rank restricts how the weight update
-is factored. Here we supplied both factors by hand, so the outputs show their effect before
-any training.
+The two rows also separate the adapter's contributions: the first row multiplies every row of the
+effective weight, so its outputs add to `(2.5, 5.5)`, and the second selects only the first weight
+row, giving `(1.5, 1.5)`. Keeping the base result beside the adapted result makes the change
+visible independently of any training procedure. The chosen rank restricts how the weight update is
+factored. Here we supplied both factors by hand, so the outputs show their effect before any
+training.
 
 Keeping `scale` explicit supports the usual $`\alpha/\mathrm{rank}` choice as well as scheduled
 or experimental scales.
 
-These are pure tensor definitions, not yet a trainer-integrated LoRA workflow. They do not insert
-an adapter into an `nn.Sequential`, initialize its factors, freeze the base weight, or tell an
-optimizer to update only $`A` and $`B`. A training experiment must currently wire those choices into
-its parameter pack and forward/loss program explicitly.
+These are pure tensor definitions, not a trainer-integrated LoRA workflow. They don't insert an
+adapter into an `nn.Sequential`, initialize its factors, freeze the base weight, or tell an
+optimizer to update only $`A` and $`B`. A training experiment has to wire those choices into its
+parameter pack and forward/loss program itself.
 
 # Trainer Objectives
 
@@ -1119,9 +1151,9 @@ TorchLean therefore writes:
 ```
 -- The objective interprets model outputs and targets; it
 -- does not alter the layer architecture.
-Trainer.new model { objective := mse }
-Trainer.new model { objective := oneHotCrossEntropy 0 }
-Trainer.new model { objective := custom lossProgram }
+Trainer.create model { objective := .mse }
+Trainer.create model { objective := .oneHotCrossEntropy 0 }
+Trainer.create model { objective := .custom lossProgram }
 ```
 
 Mean-squared error is the default objective. Classification variants specify their target
@@ -1130,6 +1162,5 @@ convention and the zero-based class dimension. For example, `[batch, classes]` u
 program. This makes the loss visible in the training configuration rather than baking it into the
 model architecture.
 
-The next chapters pair the model with data and a loss, then instantiate the mutable state needed
-for training. Graph lowering later consumes the same immutable definition, including its shapes
-and parameter order.
+Training pairs the model with data and a loss, then instantiates the mutable state it needs. Graph
+lowering later consumes the same immutable definition, including its shapes and parameter order.

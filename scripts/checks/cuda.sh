@@ -21,7 +21,7 @@ Usage: scripts/checks/cuda.sh parity [options]
 
 Run on a CUDA host against the already-built production LibTorch backend.
 Compare add/mul/div/sqrt/fma with the existing Lean binary32 reference stream.
-Finite values and signed zeros must match exactly; both NaNs satisfy AgreeUpToNaN.
+Finite values and signed zeros must match exactly, and both NaNs satisfy EqUpToNaN.
 NaN encoding differences are counted separately. A finite sweep is validation, not a proof.
 
 The C++ harness batches add/mul/div and raw IEEE sqrt through ATen. It also checks the
@@ -147,7 +147,7 @@ Options:
                         Default: application-only.
   --skip-build         Do not rebuild before running sanitizer.
   --sanitizer PATH     CUDA sanitizer executable name/path.
-                        Default: compute-sanitizer if available, otherwise cuda-memcheck.
+                        Default: compute-sanitizer on PATH or in /usr/local/cuda/bin.
   --                  Remaining arguments are passed to the test executable.
   -h, --help           Show this help message.
 
@@ -278,9 +278,7 @@ fi
 if [[ -z "$sanitizer" ]]; then
   for candidate in \
       compute-sanitizer \
-      /usr/local/cuda/bin/compute-sanitizer \
-      cuda-memcheck \
-      /usr/local/cuda/bin/cuda-memcheck; do
+      /usr/local/cuda/bin/compute-sanitizer; do
     if command -v "$candidate" >/dev/null 2>&1; then
       sanitizer="$candidate"
       break
@@ -303,7 +301,7 @@ if [[ -n "$cuda_home" ]]; then
 fi
 
 run() {
-  # Print commands exactly as executed so sanitizer failures are easy to rerun.
+  # Print each command as it runs, so that a sanitizer failure is easy to rerun.
   printf '\n==>'
   for arg in "$@"; do
     printf ' %q' "$arg"
@@ -317,12 +315,11 @@ if [[ "$skip_build" == false ]]; then
 fi
 
 for tool in "${tools[@]}"; do
-  # `--error-exitcode` converts sanitizer findings into a nonzero process exit,
-  # which lets CI fail even when the test binary itself exits successfully.
-  # Repeat the profile flags because scripts/lake.sh selects `.lake/build`
-  # under the checkout lock on every invocation.
-  # Check the executable only after Lake has selected the requested profile. With --skip-build,
-  # .lake/build can still point at the CPU cache when this script starts.
+  # `--error-exitcode` turns sanitizer findings into a nonzero exit, so CI fails even when the
+  # test binary itself exits successfully. The profile flags are repeated because scripts/lake.sh
+  # selects `.lake/build` under the checkout lock on every invocation. The executable is checked
+  # only after Lake has selected the requested profile: with --skip-build, .lake/build can point
+  # at the CPU cache when this script starts.
   run "$LAKE" "${lake_flags[@]}" env bash -c '
     target="$1"
     shift

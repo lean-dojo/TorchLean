@@ -1,15 +1,49 @@
 import VersoManual
-import NN.API
-import NN.Proofs.Autograd.Core.RealCorrectness
-import NN.Proofs.Autograd.FDeriv.MlpMse
+import TorchLean.NN.LoRA
+import TorchLean.NN.Autograd.Function
+import TorchLean.NN.Autograd.Frontend
+import TorchLean.NN.Autograd.Differential
+import TorchLean.NN.Autograd.Complex
+import TorchLean.NN.CLI.Training.Command
+import TorchLean.NN.Data.Synthetic
+import TorchLean.NN.Data.CausalLM
+import TorchLean.NN.Models.KAN
+import TorchLean.NN.Models.CNN
+import TorchLean.NN.Models.ResNet
+import TorchLean.NN.Models.UNet
+import TorchLean.NN.Models.Recurrent
+import TorchLean.NN.Models.CausalTransformer.LanguageModel
+import TorchLean.NN.Models.Mamba
+import TorchLean.NN.Models.MaskedPatchReconstructor
+import TorchLean.NN.Models.Diffusion.NoisePredictor
+import TorchLean.NN.Models.FNO
+import TorchLean.NN.Models.PPO
+import TorchLean.NN.Builder.MoE
+import TorchLean.NN.Sequential.Training
+import TorchLean.NN.RL.CLI
+import TorchLean.NN.RL.PPO.ActorCritic
+import TorchLean.NN.SelfSupervised
+import TorchLean.NN.Text.Vocabulary
+import TorchLean.NN.Text.GPT2BPE
+import TorchLean.NN.Text.Generation
+import TorchLean.NN.Trainer.Constructor
+import TorchLean.NN.Trainer.Train
+import TorchLean.NN.Data.Image
+import TorchLean.NN.AdjointOp
+import TorchLean.NN.FDeriv
+import TorchLean.NN.Gradients.Linear
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
+import TorchLean.NN.Loss
+import TorchLean.NN.Session.Random
+import TorchLean.Verify.Trainer
 
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 open TorchLean
-open Runtime.Autograd.Torch (Ops)
-open Proofs.Autograd
+open TorchLean (Ops)
+open AdjointOp Tape
+open Tensor.Rep (dot)
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
 #doc (Manual) "Differentiation" =>
@@ -18,16 +52,15 @@ tag := "autograd-walkthrough"
 file := "Differentiation-By-Example"
 %%%
 
-Squaring two coordinates gives two outputs. To differentiate their sum, reverse mode starts
-with weight one on each output; to give the second output ten times the influence, we change
-that weight to ten. Those weights form the output cotangent. Together with the function and its
-input, they determine the vector-Jacobian product.
+Squaring two coordinates gives two outputs. To differentiate their sum, reverse mode starts with
+weight one on each output, and to give the second output ten times the influence, we change that
+weight to ten. Those weights form the output cotangent. Together with the function and its input,
+they determine the vector-Jacobian product.
 
-I'll keep the input fixed while changing the derivative query, then apply the same reasoning to
-an affine model with every parameter stated explicitly. We can calculate its loss, parameter
-gradient, and curvature by hand before comparing the returned tensors. Named Lean blocks and
-their outputs are checked when this page is built; shell and PyTorch transcripts record separate
-runs.
+I'll keep the input fixed while changing the derivative query, then apply the same reasoning to an
+affine model with every parameter spelled out, so we can calculate its loss, parameter gradient,
+and curvature by hand before comparing the returned tensors. Named Lean blocks and their outputs
+are checked when this page is built, while shell and PyTorch transcripts record separate runs.
 
 After the command-line examples, the tensor calculations use:
 
@@ -35,7 +68,7 @@ $$`x=(0.5,\,-1.2).`
 
 # Runnable Differentiation Examples
 
-The two runnable examples are:
+There are two runnable examples:
 
 ```terminal
 # Compare tensor differentiation with differentiation of a
@@ -73,39 +106,39 @@ mixed input derivative of tanh at zero: [0.000000, 0.000000] (expected [0, 0])
 third input derivative along [1, 0]: [-2.000000, 0.000000] (expected [-2, 0])
 ```
 
-Their sources are {src "NN/Examples/Quickstart/AutogradBasics.lean"}[`AutogradBasics.lean`] and
-{src "NN/Examples/DeepDives/AutogradTransforms.lean"}[`AutogradTransforms.lean`].
+Their sources are {src "TorchLeanExamples/Quickstart/Autograd.lean"}[`Autograd.lean`]
+and {src "TorchLeanExamples/DeepDives/AutogradTransforms.lean"}[`AutogradTransforms.lean`].
 
-The first transcript uses $`x=(1,2,3)`: `mean(x^2) = 4.666667` is $`(1+4+9)/3`, and the gradient
-is $`2x/3`. Its model result also depends on the weights drawn by `nn.build 0 (nn.linear 2 1)`.
-Reproducing `-0.877432` by hand would require those weights, the sample, and the loss. In the model
-calculations below, we set every parameter to a stated constant so the output and each derivative
-can be derived directly.
+The first transcript uses $`x=(1,2,3)`: `mean(x^2) = 4.666667` is $`(1+4+9)/3`, and the gradient is
+$`2x/3`. Its model result also depends on the weights drawn by `nn.build 0 (nn.linear 2 1)`.
+Reproducing `-0.877432` by hand would require those weights, the sample, and the loss. We set every
+parameter to a stated constant in the model calculations below, so the output and each derivative
+can be derived from those constants.
 
-In the second transcript, the Jacobian has one row per output of the square function. Its first
-row says that changing the first input changes only the first output; the second row says the
-same for the second coordinate, with a negative slope at $`-1.2`. The Hessian columns describe a
-different function, the scalar mean of those squares. The identity matrix means its gradient
-changes by exactly the perturbation applied to the input. The final zero pack belongs to the
-detached loss, so it should be compared with the ordinary model gradient, not with a zero forward
-loss. These distinctions matter when several derivative objects appear in one log.
+In the second transcript, the Jacobian has one row per output of the square function. Its first row
+says that changing the first input changes only the first output, and the second row says the same
+for the second coordinate (with a negative slope at $`-1.2`). But the Hessian columns describe a
+different function, the scalar mean of those squares. Since that Hessian is the identity matrix,
+the mean's gradient changes by exactly the perturbation applied to the input. The final zero pack
+belongs to the detached loss, so compare it with the ordinary model gradient, not with a zero
+forward loss. These distinctions matter when several derivative objects appear in one log.
 
-The last two calls differentiate model inputs, not parameters. The model applies $`\tanh` to
+The last two calls differentiate model inputs, not parameters. Here the model applies $`\tanh` to
 each coordinate independently, so its mixed derivative in the two coordinate directions is zero.
-Repeating the first direction three times gives $`\tanh'''(0)=-2` in the first output and zero
-in the second. `autograd.model.derivative` takes one tensor of directions; its leading axis chooses
-the derivative order. Two directions of shape `[2]` therefore form a tensor of shape `[2, 2]`.
+Repeating the first direction three times gives $`\tanh'''(0)=-2` in the first output and zero in
+the second. `autograd.model.derivative` takes one tensor of directions, whose leading axis chooses
+the derivative order. So two directions of shape `[2]` form a tensor of shape `[2, 2]`.
 
-The affine model's initial state is seeded, whereas `agState` below replaces that state with
-constants. This explains why its directional derivative is `0.011629` and the later fixed-state
-calculation gives `-0.004200`.
+In that transcript, the affine model's initial state is seeded, whereas `agState` below replaces
+that state with constants. That's why its directional derivative is `0.011629` and the later
+fixed-state calculation gives `-0.004200`.
 
 # The Differentiable Program Type
 
-The type being differentiated is not `Tensor α σ → Tensor α τ`:
+What gets differentiated isn't a `Tensor α σ → Tensor α τ`:
 
 ```lean (name := agFnType)
--- The two shapes describe the input and output; the
+-- The two shapes describe the input and output, and the
 -- interpreter is quantified inside.
 #check @autograd.Function
 ```
@@ -114,56 +147,56 @@ The type being differentiated is not `Tensor α σ → Tensor α τ`:
 autograd.Function : Shape → Shape → Type 1
 ```
 
-It abbreviates this:
+That declaration abbreviates this:
 
 ```
 -- Scalar and interpreter choices remain arguments of the
 -- program.
 abbrev Function (σ τ : Shape) :=
   ∀ {α : Type}, [TorchLean.Storage α] → [Context α] → {m : Type → Type} → [Monad m] →
-      [Runtime.Autograd.Torch.Ops (m := m) (α := α)] →
-      TorchLean.Runtime.ValueRef (m := m) (α := α) σ →
-      m (TorchLean.Runtime.ValueRef (m := m) (α := α) τ)
+      [TorchLean.Ops (m := m) (α := α)] →
+      TorchLean.Ops.Ref (m := m) (α := α) σ →
+      m (TorchLean.Ops.Ref (m := m) (α := α) τ)
 ```
 
 The quantifiers separate the program from the scalar representation and execution machinery.
 
-`{α : Type}` with `[Storage α]` and `[Context α]` means the function does not know its scalar type.
-The same source text runs at `Float`, at software binary32, and at `ℝ` for proofs.
+`{α : Type}` with `[Storage α]` and `[Context α]` means the function doesn't know its scalar type:
+the same source text runs at `Float`, at software binary32, and at `ℝ` for proofs.
 
-`{m : Type → Type}` with `[Monad m]` means it does not know how operations are being recorded. It
+`{m : Type → Type}` with `[Monad m]` means it doesn't know how operations are being recorded. It
 could be building an eager tape, or a typed graph, or nothing at all.
 
-`[Ops (m := m) (α := α)]` is the operation vocabulary, a class with one field per primitive: `add`,
-`mul`, `matmul`, `relu`, `reduceSum`, `detach`, and so on. A `Function` may only call those fields.
+`[Ops (m := m) (α := α)]` is the operation interface: `Ops.apply` runs or records a registered
+operator (`Op.add`, `Op.matmul`, `Op.relu`, `Op.detach`, and so on) on its arguments, at a scalar
+with the capability the operator needs. An interpreter can still refuse an operator it doesn't
+implement: the typed graph refuses one without a forward-mode rule, such as `Op.square`. A
+`Function` may only call operators through `Ops.apply`.
 
-`ValueRef … σ` is a handle with a shape in its type, not a tensor. The body can pass handles around
-but cannot look inside one.
+`Ops.Ref … σ` is a handle with a shape in its type, not a tensor. A function's
+body can pass handles around but can't look inside one.
 
 A `Function` is a shape-correct program written against an abstract interpreter: a typed
-tagless-final encoding ({Informal.citet kiselyov2012}[]). This means
-that `autograd.grad` does not inspect Lean source syntax. It applies the function to a
-graph-building
-interpreter, recording supported operations for differentiation. That is the same reason JAX made
-differentiation a
-function on functions rather than a method on a tensor ({Informal.citep jax2018}[]), reached by a
-different route: JAX traces a Python function into a jaxpr, whereas here the polymorphism is in the
-type and Lean's elaborator does the work.
+tagless-final encoding {Informal.citep kiselyov2012}[]. So `autograd.grad` doesn't inspect Lean
+source syntax. It applies the function to a graph-building interpreter, recording supported
+operations for differentiation. That's the same reason JAX made differentiation a function on
+functions instead of a method on a tensor {Informal.citep jax2018}[], reached by a different
+route: JAX traces a Python function into a jaxpr, whereas here the polymorphism is in the type and
+Lean's elaborator does the work.
 
-Because a `Function` is universally quantified over `α`, it
-lives in `Type 1`, so it cannot be stored in an `IO` reference or returned from `IO` without care,
-and it cannot branch on the numeric value of an intermediate tensor. Data-dependent control flow has
-to be expressed as an operation (a `clamp`, a mask, a `max`) rather than as an `if`. That
-restriction is what makes the same text differentiable, provable, and executable at three scalar
-types.
+Because a `Function` is universally quantified over `α`, it lives in `Type 1`, so it can't be
+stored in an `IO` reference or returned from `IO` without care, and it can't branch on the numeric
+value of an intermediate tensor. Data-dependent control flow has to be expressed as an operation (a
+`clamp`, a mask, a `max`), not as an `if`. That restriction is what makes the same text
+differentiable, provable, and executable at three scalar types.
 
-A shape index tells the interpreter which kind of handle it must return. For `agSumSq`, the
-input handle has shape `[2]`, squaring preserves that shape, and reduction returns shape `[]`.
-That empty shape denotes one scalar value; it does not denote an empty tensor. The body never
-needs to extract a host array to make the reduction. Consequently, a recorder can retain the
-connection from the scalar result to both input coordinates. Extracting numbers and computing
-with ordinary host arithmetic would require a different interface and would lose that recorded
-connection unless a derivative rule were supplied for the new operation.
+A shape index tells the interpreter which kind of handle it must return. For `agSumSq`, the input
+handle has shape `[2]`, squaring preserves that shape, and reduction returns shape `[]`. That empty
+shape denotes one scalar value, not an empty tensor. The body never needs to extract a host array
+to make the reduction, so a recorder can retain the connection from the scalar result to both input
+coordinates. Extracting numbers and computing with ordinary host arithmetic would require a
+different interface and would lose that recorded connection unless a derivative rule were supplied
+for the new operation.
 
 # Scalar Gradients
 
@@ -221,16 +254,15 @@ The signature explains the `(value := true)`:
 ```
 
 The return type is computed from `value`. With its default `false`, the result is just the
-input-shaped gradient. With `true`, it is a pair containing that gradient and the scalar forward
-value, often called the primal. The caller can request both results from one evaluation, and the
+input-shaped gradient. With `true`, it's a pair containing that gradient and the scalar forward
+value (often called the primal). A caller can request both results from one evaluation, and the
 type records which form was requested.
 
-The order of the pair is worth following at the call site: `(gradient, value)`, with the
-input-shaped object first. The `IO` in the signature allows the helper to construct and execute
-its recorded computation and report failures. It does not make the tensor itself a mutable
-gradient container. Nor does the polymorphic `Function` signature promise that every backend
-implements every primitive: the selected interpreter still has to support the operations the
-function calls.
+Watch the order of the pair at the call site: `(gradient, value)`, with the input-shaped object
+first. `IO` in the signature lets the helper construct and execute its recorded computation and
+report failures, but it doesn't make the tensor itself a mutable gradient container. Nor does the
+polymorphic `Function` signature promise that every backend implements every primitive: the
+selected interpreter has to support the operations the function calls.
 
 ## PyTorch Gradients
 
@@ -248,20 +280,20 @@ print("%.6f" % y.item(), g.tolist())
 0.845000 [0.5, -1.2000000476837158]
 ```
 
-The value matches. The gradient's second component does not print the same way, and the reason is
-not automatic differentiation at all: `torch.tensor([0.5, -1.2])` is float32, and `-1.2` is not a
+The value matches. But the gradient's second component doesn't print the same way, and the reason
+isn't automatic differentiation at all: `torch.tensor([0.5, -1.2])` is float32, and `-1.2` isn't a
 binary fraction, so the stored number is `-1.2000000476837158`. TorchLean's `Float` is binary64
-here, where the same literal rounds to something that prints as `-1.200000`. Neither library made an
-arithmetic mistake; they were asked to differentiate at slightly different points
-({Informal.citep goldberg1991}[]). {ref "floats"}[Floating-Point Semantics] is where this stops
+here, where the same literal rounds to something that prints as `-1.200000`. Neither library made
+an arithmetic mistake: they were asked to differentiate at slightly different points
+{Informal.citep goldberg1991}[]. {ref "floats"}[Floating-Point Semantics] is where this stops
 being a printing curiosity, and {ref "tensors-shapes"}[Tensors And Shapes] states which scalar
 contract each entry point uses.
 
 For a numerical comparison, first align the input dtype and then compare the stored values.
 Printing both answers to six places hides the distinction in this example, while printing many
 digits exposes it. Neither choice changes the derivative program. A tolerance comparison asks
-whether the numerical answers are sufficiently close for a stated purpose; a bit comparison
-asks whether the representations agree exactly. Those are useful but different questions even
+whether the numerical answers are sufficiently close for a stated purpose, and a bit comparison
+asks whether the representations agree exactly. Those are useful but different questions, even
 before a reduction tree or a GPU kernel enters the calculation.
 
 # Vector-Jacobian Products
@@ -279,7 +311,7 @@ The cotangent assigns a weight to each output component. Holding those weights f
 the input gradient of their weighted sum. No Jacobian is built. One reverse traversal costs about
 what one forward evaluation costs, whatever
 $`n` is, which is the fact that makes training large models possible at all
-({Informal.citep baydin2018}[]).
+{Informal.citep baydin2018}[].
 
 Take the elementwise square
 
@@ -313,7 +345,7 @@ $`J_g(x)^{\mathsf T}(1,1)=(2\cdot0.5,\,2\cdot(-1.2))=(1,-2.4)`, and scaling the 
 component by ten scales the second output by ten. PyTorch reports the same two vectors from
 `torch.autograd.grad(out, x, grad_outputs=seed)`.
 
-`autograd.vjp` takes this cotangent explicitly, with the output shape:
+`autograd.vjp` takes this cotangent as an argument, with the output shape:
 
 ```lean (name := agVjpSig)
 -- The seed has output shape, while the returned sensitivity
@@ -331,19 +363,19 @@ component by ten scales the second output by ten. PyTorch reports the same two v
 Input, output cotangent, and result: `Tensor α σ`, `Tensor α τ`, `Tensor α σ`. Handing in a seed of
 the wrong shape is a compile error, not a runtime broadcast.
 
-A scalar gradient is the special case in which the output has one coordinate and its cotangent
-is one. In the real linear pullback, a zero cotangent returns zero even when the function itself
-is sensitive to its inputs. Executable rules at singular or nonfinite values need separate care:
-an intermediate expression such as `0 * Inf` can produce NaN. This is why the seed belongs in the
-meaning of a VJP rather than being an incidental implementation argument. It also explains why
-an output-shaped seed is enough: the reverse traversal combines its weights with local rules
-without allocating a matrix with one entry for every input/output pair.
+A scalar gradient is the special case in which the output has one coordinate and its cotangent is
+one. In the real linear pullback, a zero cotangent returns zero even when the function itself is
+sensitive to its inputs. Executable rules at singular or nonfinite values need separate care (an
+intermediate expression such as `0 * Inf` can produce NaN). So the seed is part of the meaning of a
+VJP, not an incidental implementation argument. That role also explains why an output-shaped seed
+is enough: the reverse traversal combines its weights with local rules without allocating a matrix
+with one entry for every input/output pair.
 
 # Full Jacobians And Signed Zero
 
 Sometimes the whole Jacobian is what you want. TorchLean builds it both ways:
 
-- `jacfwd` runs forward mode once per input coordinate;
+- `jacfwd` runs forward mode once per input coordinate.
 - `jacrev` runs reverse mode once per output coordinate.
 
 Both return a tensor whose output axes come first, followed by the input axes.
@@ -363,14 +395,13 @@ jacfwd [[1.000000, 0.000000], [-0.000000, -2.400000]]
 jacrev [[1.000000, 0.000000], [0.000000, -2.400000]]
 ```
 
-Both recover $`\operatorname{diag}(1,-2.4)` as a `Tensor Float [2, 2]`. For higher-rank inputs
-and outputs, the concatenated shape preserves their axes.
+Both transforms recover $`\operatorname{diag}(1,-2.4)` as a `Tensor Float [2, 2]`. For higher-rank
+inputs and outputs, the concatenated shape preserves their axes.
 
-Now look at the first column: `-0.000000`. The off-diagonal entry is negative zero, and it is
-negative because forward mode computed $`2x_1\cdot 0 = 2\cdot(-1.2)\cdot 0`, whose IEEE 754 result
-is $`-0` . Reverse-mode accumulation can add a $`-0` contribution to an initial $`+0` , producing
-$`+0` .
-Reversing the order of multiplication alone would not change its sign. PyTorch does the same thing
+Look at the first column: `-0.000000`. That off-diagonal entry is negative zero, and it's negative
+because forward mode computed $`2x_1\cdot 0 = 2\cdot(-1.2)\cdot 0`, whose IEEE 754 result is $`-0`.
+Reverse-mode accumulation can add a $`-0` contribution to an initial $`+0`, producing $`+0`.
+Reversing the order of multiplication alone wouldn't change its sign. PyTorch does the same thing
 with the following signed-zero entries:
 
 ```
@@ -379,9 +410,8 @@ jacrev = [[1.0, -0.0], [0.0, -2.4000000953674316]]
 ```
 
 IEEE equality treats `-0.0` and `0.0` as equal, but their bits differ. Operations such as
-reciprocal,
-copy-sign, and some elementary functions expose that distinction; even adding a signed zero can
-change a zero result's sign. The real-valued Jacobian does not record it.
+reciprocal, copy-sign, and some elementary functions expose that distinction, and even adding a
+signed zero can change a zero result's sign. Over the reals, the Jacobian doesn't record it.
 {ref "floats"}[Floating-Point Semantics] explains why numerical equality and bit equality must be
 reported separately.
 
@@ -392,11 +422,11 @@ choosing the cheaper mode takes $`\min(n,m)` directional passes, with storage fo
 Most scalar-loss training needs only one VJP instead.
 
 For this two-coordinate function, the full Jacobian occupies four entries although only two are
-nonzero. A function from an image tensor to ten scores would retain the image axes after a
-leading score axis, so materializing the Jacobian would store ten image-sized arrays. If the
-next computation only needs a weighted sum of those scores, one VJP computes precisely that
-combination. The choice is about the derivative information the caller needs, as well as which
-mode takes fewer passes.
+nonzero. A function from an image tensor to ten scores would retain the image axes after a leading
+score axis, so materializing the Jacobian would store ten image-sized arrays. If the next
+computation only needs a weighted sum of those scores, one VJP computes precisely that combination.
+So the choice depends on the derivative information the caller needs, as well as on which mode
+takes fewer passes.
 
 # Gradient Return Values And Accumulation
 
@@ -422,31 +452,28 @@ after two backwards: [1.0, -2.4000000953674316]
 after zeroing      : [0.5, -1.2000000476837158]
 ```
 
-The second reverse pass did not report the second gradient. It added to the first one, because
-`.grad` is a mutable buffer that `backward` accumulates into. That behaviour is deliberate and
-useful in PyTorch: it is how gradient accumulation over microbatches works, and how a parameter
-shared between two subgraphs collects both contributions ({Informal.citep pytorch2019}[]). It is
-also a source of training mistakes, such as a forgotten
-`optimizer.zero_grad()`, which does not crash and does not warn. It quietly trains a different
-model.
+The second reverse pass didn't report the second gradient. It added to the first one, because
+`.grad` is a mutable buffer that `backward` accumulates into. That behavior is deliberate and
+useful in PyTorch: it's how gradient accumulation over microbatches works, and how a parameter
+shared between two subgraphs collects both contributions {Informal.citep pytorch2019}[]. But it's
+also a source of training mistakes, such as a forgotten `optimizer.zero_grad()`, which doesn't
+crash and doesn't warn. It quietly trains a different model.
 
-TorchLean's transforms return the derivative as a value. There is no `.grad` field to clear, and
-repeating this fixed square query returns a fresh result rather than adding to a retained gradient.
-Stochastic programs also require the same random state for a reproducibility comparison.
-Accumulation across microbatches is an explicit addition of returned packs.
+TorchLean's transforms return the derivative as a value. There's no `.grad` field to clear, and
+repeating this fixed square query returns a fresh result instead of adding to a retained gradient.
+Stochastic programs also require the same random state for a reproducibility comparison. To
+accumulate across microbatches, you add the returned packs yourself.
 
-The caller supplies the function to differentiate and passes the resulting gradient to its
-consumer. In a language where values are immutable and
-sharing is managed by reference counting ({Informal.citep immutablebeans2019}[]), returning the pack
-can avoid a copy when ownership permits buffer reuse; actual allocation cost depends on the
-operations that build and consume the pack.
-{ref "runtime-autograd"}[Runtime and Autograd] shows the tape underneath, where accumulation across
-several consumers of one value is still exactly the addition PyTorch performs, just at a different
-level.
+You supply the function to differentiate and pass the resulting gradient to its consumer. In a
+language where values are immutable and sharing is managed by reference counting
+{Informal.citep immutablebeans2019}[], returning the pack can avoid a copy when ownership permits
+buffer reuse. But the actual allocation cost depends on the operations that build and consume the
+pack. {ref "runtime-autograd"}[Runtime and Autograd] shows the tape underneath, where accumulation
+across several consumers of one value is the same addition PyTorch performs, at a different level.
 
 # Parameter VJPs
 
-Now the affine model
+Take the affine model
 
 $$`y=Wx+b,\qquad W\in\mathbb R^{3\times2},\ b\in\mathbb R^3,`
 
@@ -476,7 +503,7 @@ def agModel : nn.Sequential [2] [3] :=
 /-- Every weight and bias pinned to `0.1`, so the numbers
 below can be checked by hand. -/
 def agState : autograd.model.State agModel Float :=
-  nn.State.full 0.1
+  .fill 0.1
 
 def agIn : Tensor Float [2] := [0.5, -1.2]
 
@@ -499,7 +526,7 @@ All three predictions, from one call. PyTorch's
 `torch.autograd.grad(out, [lin.weight, lin.bias, xi], grad_outputs=torch.ones(3))` returns the same
 three objects with the same numbers.
 
-The printed shape tags correspond to the return type:
+Those printed shape tags correspond to the return type:
 
 ```lean (name := agModelVjpSig)
 -- One reverse pass returns both model-state and input
@@ -516,23 +543,22 @@ The printed shape tags correspond to the return type:
   IO (autograd.model.State model α × Tensor α σ)
 ```
 
-The returned state gradient has type `autograd.model.State model α`, the same type as the
-parameters that went in. The pack checks their ordered shape list, but it cannot detect a
-semantic swap between gradients for two parameters with equal shapes. The input gradient is
-returned alongside
-the state gradient, so both results come from the same reverse pass.
+The returned state gradient has type `autograd.model.State model α` (the same type as the
+parameters that went in). That pack checks the parameters' ordered shape list, but it can't detect
+a semantic swap between gradients for two parameters with equal shapes. And since the input
+gradient is returned alongside the state gradient, both results come from the same reverse pass.
 
 For a model with persistent state, `State` can also include buffers. The model transform computes
-sensitivities for the state entries; the optimizer's trainability mask separately determines
-which entries it updates. A derivative result by itself is not an instruction to modify every
-state tensor.
+sensitivities for the state entries, while the optimizer's trainability mask separately determines
+which entries it updates. A derivative result by itself isn't an instruction to modify every state
+tensor.
 
 # Loss And Parameter Gradients
 
-A loss determines the output cotangent. Write the model output as $`\widehat y=F_\theta(x)` and
-the target as $`y`, with the same shape. The Jacobian $`J_{F_\theta}^{\theta}(x)` measures how
-that output changes with the parameters $`\theta`. The chain rule pulls the loss's output
-gradient back through this Jacobian:
+A loss determines the output cotangent. Write the model output as $`\widehat y=F_\theta(x)` and the
+target as $`y`, with the same shape. The Jacobian $`J_{F_\theta}^{\theta}(x)` measures how that
+output changes with the parameters $`\theta`, and the chain rule pulls the loss's output gradient
+back through this Jacobian:
 
 $$`
 \nabla_\theta L
@@ -575,54 +601,47 @@ gradient = [[3, 2]: [[-0.223333, 0.536000],
 
 PyTorch's `mse_loss` and `torch.autograd.grad` return `0.244900` and the same two arrays.
 
-The bias gradient is the output gradient. Each weight row is the
-corresponding bias gradient times $`x`: $`-0.446\overline6\cdot0.5=-0.223\overline3` and
-$`-0.446\overline6\cdot(-1.2)=0.536`. That is $`\bar W=\bar y\,x^{\mathsf T}` again, now with
-$`\bar y` supplied by the loss instead of by us.
+Here the bias gradient is the output gradient. Each weight row is the corresponding bias gradient
+times $`x`: $`-0.446\overline6\cdot0.5=-0.223\overline3` and $`-0.446\overline6\cdot(-1.2)=0.536`.
+That's $`\bar W=\bar y\,x^{\mathsf T}` again, this time with $`\bar y` supplied by the loss instead
+of by us.
 
 ## The Outer-Product Gradient Theorem
 
-The same outer-product rule describes the final layer of a two-layer ReLU network.
-Write $`a_1=\operatorname{ReLU}(W_1x+b_1)` for the hidden activation and
-$`y=W_2a_1+b_2` for the output. For the derivative with respect to $`W_2`,
-$`a_1` is fixed: it plays the role that $`x` played in our affine example. The
-mean squared error supplies the output gradient $`\bar y`, giving
+That outer-product rule also describes the final layer of a two-layer ReLU network. Write
+$`a_1=\operatorname{ReLU}(W_1x+b_1)` for the hidden activation and $`y=W_2a_1+b_2` for the output.
+For the derivative with respect to $`W_2`, $`a_1` is fixed (it plays the role that $`x` played in
+our affine example). Then the mean squared error supplies the output gradient $`\bar y`, giving
 $`\bar W_2=\bar y\,a_1^{\mathsf T}`.
 
-{src "NN/Proofs/Autograd/FDeriv/MlpMse.lean"}[`MlpMse.lean`] proves this identity
-using Mathlib's Fréchet derivative and adjoint ({Informal.citep mathlib2020}[]):
+{src "TorchLean/NN/Gradients/Linear.lean"}[`Linear.lean`] states this rule for the
+derivative specification of a linear layer, with the layer input in the role of $`a_1`:
 
 ```lean (name := agFDeriv)
--- This is the real-valued outer-product theorem,
+-- The outer-product rule of the derivative specification,
 -- independent of a floating-point run.
-#check @Proofs.Autograd.grad_W2_mse
+#check @Linear.weightsDeriv_apply
 ```
 
 ```leanOutput agFDeriv (whitespace := lax)
-@grad_W2_mse : ∀ {inDim hidDim outDim : ℕ}
-  (W1 : Mat hidDim inDim) (b1 : Vec hidDim)
-  (W2 : Mat outDim hidDim) (b2 : Vec outDim)
-  (x : Vec inDim) (t : Vec outDim),
-  (ContinuousLinearMap.adjoint
-      (fderiv ℝ
-        (fun W2 => Proofs.Autograd.mse t (mlpVecMat W1 b1 W2 b2 x)) W2))
-      1 =
-    outer (mseGrad (mlpOutput W1 b1 W2 b2 x) t) (mlpHidden W1 b1 x)
+@Linear.weightsDeriv_apply :
+  ∀ {inDim outDim : ℕ} (x : Tensor ℝ [inDim])
+    (δ : Tensor ℝ [outDim]) (i : Fin outDim) (j : Fin inDim),
+  (Linear.weightsDeriv x δ).get2 i j = δ.getScalar i * x.getScalar j
 ```
 
-Read the right-hand side: `outer` of the output gradient with the hidden activation, which is
-$`\bar y\,a_1^{\mathsf T}`. The left-hand side is the adjoint of the Fréchet derivative of
-the scalar loss, applied to the seed $`1`. The theorem is stated over real-valued vectors and
-matrices, independently of a tape or floating-point evaluation.
+Entry $`(i,j)` of the weight gradient is $`\delta_i x_j`. With $`\delta=\bar y` and $`x=a_1`, that
+is $`\bar W_2=\bar y\,a_1^{\mathsf T}`. It is an identity of the specification, not a statement
+about a derivative. The derivative theorems use Mathlib's Fréchet derivative and adjoint
+{Informal.citep mathlib2020}[]. `VJPOp.mlp_backward_eq_fderiv`, shown below,
+equates the spec-level backward pass of a two-layer ReLU network with the adjoint of its
+derivative. `Tape.Graph.backwardDenseAll_eq_fderiv` proves the same identity for the
+executed backward sweep on a lowered graph, at an input where the graph's nodes are differentiable.
 
-The runtime printed `-0.223333` for one input; the theorem establishes the outer-product formula
-for all inputs over `ℝ`. Connecting a floating-point execution to this real-valued statement also
-requires a refinement argument about rounding, developed in
-{ref "fp32-soundness"}[Float32 Soundness].
-
-The seed `1` on the theorem's left is the same scalar cotangent used by `grad`. The adjoint
-converts a linear map from weight perturbations to loss perturbations into a gradient in weight
-space. That is why the result has matrix shape even though the loss is scalar.
+For one input the runtime printed `-0.223333`, while the theorem establishes the outer-product
+formula for all inputs over `ℝ`. Connecting a floating-point execution to this real-valued
+statement also requires a refinement argument about rounding (developed in
+{ref "fp32-soundness"}[Float32 Soundness]).
 
 # ReLU Derivatives At Zero
 
@@ -632,7 +651,7 @@ ReLU has no derivative at zero, but autograd still has to return something. Torc
 -- Include a zero input to distinguish the selected ReLU
 -- rule from its smooth branches.
 def agRelu : autograd.Function [3] [3] := fun x =>
-  Ops.relu x
+  Ops.apply .relu (x, ())
 
 #eval show IO Unit from do
   let z : Tensor Float [3] := [-1.0, 0.0, 1.0]
@@ -645,52 +664,47 @@ def agRelu : autograd.Function [3] [3] := fun x =>
 relu vjp at (-1, 0, 1) = [0.000000, 0.000000, 1.000000]
 ```
 
-PyTorch prints `[0.0, 0.0, 1.0]` for the same input, so the convention agrees, and it is a
+PyTorch prints `[0.0, 0.0, 1.0]` for the same input, so the convention agrees, and it's a
 convention: $`0`, $`1`, and $`\tfrac12` are all defensible choices at the kink, and different
-libraries have shipped different ones. The modern justification for treating the returned value as a
-real derivative object rather than as an error is Bolte and Pauwels' conservative-field model
-({Informal.citet bolte2020}[]), which provides a framework for nonsmooth differentiation and
-convergence results under explicit
-hypotheses; it is not an unconditional convergence guarantee for arbitrary selections or training.
+libraries have shipped different ones. Bolte and Pauwels' conservative-field model
+{Informal.citep bolte2020}[] is the modern justification for treating the returned value as a
+real derivative object, not as an error. It provides a framework for nonsmooth differentiation and
+convergence results under stated hypotheses, but it isn't an unconditional convergence guarantee
+for arbitrary selections or training.
 
-The theorem for a first-layer bias makes the smoothness requirement explicit:
+For the two-layer network, the theorem states the smoothness requirement as a hypothesis:
 
 ```lean (name := agKinkThm)
 -- The nonzero-preactivation hypothesis is needed when the
 -- derivative crosses ReLU.
-#check @Proofs.Autograd.grad_b1_mse
+#check @VJPOp.mlp_backward_eq_fderiv
 ```
 
 ```leanOutput agKinkThm (whitespace := lax)
-@grad_b1_mse : ∀ {inDim hidDim outDim : ℕ}
-  (W1 : Mat hidDim inDim) (b1 : Vec hidDim)
-  (W2 : Mat outDim hidDim) (b2 : Vec outDim)
-  (x : Vec inDim) (t : Vec outDim),
-  (∀ (i : Fin hidDim), (mlpPreActivation W1 b1 x).ofLp i ≠ 0) →
-    (ContinuousLinearMap.adjoint
-        (fderiv ℝ
-          (fun b1 => Proofs.Autograd.mse t (mlpVecMat W1 b1 W2 b2 x)) b1))
-        1 =
-      (reluDerivCLM (mlpPreActivation W1 b1 x))
-        ((ContinuousLinearMap.adjoint
-            (matCLM (toMatrix W2)))
-          (mseGrad (mlpOutput W1 b1 W2 b2 x) t))
+@VJPOp.mlp_backward_eq_fderiv : ∀ {inDim hidDim outDim : ℕ}
+  (l1 : Linear ℝ inDim hidDim)
+  (l2 : Linear ℝ hidDim outDim) (x : Tensor ℝ [inDim]),
+  (∀ (i : Fin hidDim),
+      have W1 := (Tensor.Rep.matrixEquiv ℝ hidDim inDim) l1.weights;
+      have b1 := l1.bias.getScalarE;
+      (Vec.affine W1 b1 x.getScalarE).ofLp i ≠ 0) →
+    ∀ (δ : Tensor ℝ [outDim]),
+      ((mlp l1 l2).op.backward x δ).getScalarE =
+        (ContinuousLinearMap.adjoint (fderiv ℝ (Vec.mlp l1 l2) x.getScalarE))
+          δ.getScalarE
 ```
 
-The hypothesis `∀ i, (mlpPreActivation W1 b1 x).ofLp i ≠ 0` says no hidden pre-activation sits
-exactly on the kink. The gradient with respect to the first-layer bias passes through the ReLU
-derivative, so the theorem is stated only where that derivative exists. Compare it with
-`grad_W2_mse` above, which
-needs no such hypothesis: the second-layer weight sits after the activation, so it never sees the
-nonsmooth point.
+The hypothesis says that no hidden pre-activation $`W_1x+b_1` sits exactly on the kink. Because the
+backward pass sends the cotangent through the ReLU derivative, the theorem is stated only where
+that derivative exists.
 
-The gradient's shape does not establish differentiability. Here the theorem excludes hidden
-pre-activations at zero; a theorem covering those points would need to state which generalized
+A gradient's shape doesn't establish differentiability. Here the theorem excludes hidden
+pre-activations at zero. A theorem covering those points would need to state which generalized
 derivative it describes.
 
 In the three-entry ReLU output, the negative input contributes zero because changing it slightly
-still leaves the activation at zero. The positive input contributes one because ReLU is locally
-the identity there. The middle zero comes from the selected rule at the boundary. A finite
+still leaves the activation at zero. The positive input contributes one because ReLU is locally the
+identity there. But the middle zero comes from the selected rule at the boundary. A finite
 difference centered on that boundary can average behavior from both sides and report a different
 number. Such a comparison must account for nonsmoothness before diagnosing the local rule as an
 implementation error.
@@ -711,7 +725,7 @@ the two paths each contribute $`x`, so the gradient must be $`2x`:
 def agTwice : autograd.Function [2] [] := fun x => do
   let a ← nn.functional.square x
   let b ← nn.functional.square x
-  let s ← Ops.add a b
+  let s ← Ops.apply .add (a, b, ())
   nn.functional.mean s
 
 #eval show IO Unit from do
@@ -726,27 +740,27 @@ grad of mean(x^2 + x^2) = [1.000000, -2.400000]
 Exactly twice the `[0.500000, -1.200000]` from the single-path version. A tape that overwrote one
 parent contribution instead of adding would print `[0.500000, -1.200000]` here and would be wrong
 while every local rule was right. This accumulation occurs within one reverse pass, whenever a
-value has several consumers. It is separate from retaining gradients across successive backward
-calls, as PyTorch's `.grad` buffers do.
+value has several consumers, and it's separate from retaining gradients across successive backward
+calls (as PyTorch's `.grad` buffers do).
 
-The split into local rules plus a global traversal is also how the proofs are organized. The
-algebraic property each local rule must satisfy is adjointness of its forward and reverse
-derivatives:
+Our proofs follow the same split into local rules plus a global traversal. The algebraic property
+each local rule must satisfy is adjointness of its forward and reverse derivatives:
 
 ```lean (name := agVjpCorrect)
 -- Read the three functions as the forward map, its chosen
 -- JVP, and its chosen VJP.
-#check @Proofs.Autograd.VJPCorrect
+#check @Tape.IsAdjointPair
 ```
 
 ```leanOutput agVjpCorrect (whitespace := lax)
-@VJPCorrect : {σ τ : Shape} →
-  (Tensor ℝ σ → Tensor ℝ τ) →
-  (Tensor ℝ σ → Tensor ℝ σ → Tensor ℝ τ) →
-  (Tensor ℝ σ → Tensor ℝ τ → Tensor ℝ σ) → Prop
+@IsAdjointPair : {α : Type} →
+  [inst : Storage α] → [CommSemiring α] → {σ τ : Shape} →
+  (Tensor α σ → Tensor α τ) →
+  (Tensor α σ → Tensor α σ → Tensor α τ) →
+  (Tensor α σ → Tensor α τ → Tensor α σ) → Prop
 ```
 
-Unfolded, it is
+The scalars `α` form any commutative semiring, and the rules below take `α := ℝ`. Unfolded, it is
 
 $$`
 \bigl\langle \operatorname{JVP}(x,dx),\,\delta\bigr\rangle
@@ -755,14 +769,14 @@ $$`
 \quad\text{for all }x,\ dx,\ \delta,
 `
 
-with $`\langle\cdot,\cdot\rangle` the tensor dot product. This says forward mode and reverse mode
-are adjoint to each other. Identifying the chosen JVP with the analytic derivative requires
-a separate result; once that is established, this is the Jacobian-transpose law
-$`\langle J\,dx,\delta\rangle=\langle dx,J^{\mathsf T}\delta\rangle`. It is chosen deliberately in
-preference to "the VJP equals the analytic Jacobian transpose": it is provable by algebra for
-elementwise rules, it is exactly what the reverse pass needs in order to compose, and it makes sense
-for rules whose local derivative is a chosen mask rather than a classical derivative
-({Informal.citet pearlmutter2008}[]).
+with $`\langle\cdot,\cdot\rangle` the tensor dot product. In words, forward mode and reverse mode
+are adjoint to each other. Identifying the chosen JVP with the analytic derivative requires a
+separate result. Once that's established, this is the Jacobian-transpose law
+$`\langle J\,dx,\delta\rangle=\langle dx,J^{\mathsf T}\delta\rangle`. We chose this adjointness
+form deliberately in preference to "the VJP equals the analytic Jacobian transpose": it's provable
+by algebra for elementwise rules, it's what the reverse pass needs in order to compose, and it
+makes sense for rules whose local derivative is a chosen mask instead of a classical derivative
+{Informal.citep pearlmutter2008}[].
 
 A proved-correct operation bundles the forward map, the reverse rule, the forward rule, and the
 proof:
@@ -770,21 +784,22 @@ proof:
 ```lean (name := agOpSpec)
 -- This bundle stores local derivative rules together with
 -- their adjointness proof.
-#check @Proofs.Autograd.OpSpecCorrect
+#check @Tape.AdjointOp
 ```
 
 ```leanOutput agOpSpec (whitespace := lax)
-OpSpecCorrect : Shape → Shape → Type
+AdjointOp : (α : Type) → [Storage α] → [CommSemiring α] →
+  Shape → Shape → Type
 ```
 
 ```lean (name := agSquareCorrect)
 -- The square rule preserves shape and supplies an
 -- adjointness proof at every shape.
-#check @Proofs.Autograd.squareCorrect
+#check @AdjointOp.square
 ```
 
 ```leanOutput agSquareCorrect (whitespace := lax)
-@squareCorrect : {s : Shape} → OpSpecCorrect s s
+@square : {s : Shape} → AdjointOp ℝ s s
 ```
 
 The bundled proof specializes to the shape used in this example:
@@ -794,10 +809,10 @@ The bundled proof specializes to the shape used in this example:
 -- derivative assumption.
 /-- Adjointness for `square`, at the shape we use. -/
 theorem agSquareAdjoint (x dx delta : Tensor ℝ [2]) :
-    Spec.dot ((squareCorrect (s := [2])).jvp x dx) delta =
-      Spec.dot dx
-        ((squareCorrect (s := [2])).op.backward x delta) :=
-  (squareCorrect (s := [2])).correct x dx delta
+    dot ((square (s := [2])).jvp x dx) delta =
+      dot dx
+        ((square (s := [2])).op.backward x delta) :=
+  (square (s := [2])).isAdjointPair x dx delta
 ```
 
 And the reverse-mode chain rule is a function on those bundles:
@@ -805,13 +820,14 @@ And the reverse-mode chain rule is a function on those bundles:
 ```lean (name := agCompose)
 -- The intermediate shape is shared by the first output and
 -- the second input.
-#check @Proofs.Autograd.OpSpecCorrect.compose
+#check @AdjointOp.compose
 ```
 
 ```leanOutput agCompose (whitespace := lax)
-@OpSpecCorrect.compose : {σ τ υ : Shape} →
-  OpSpecCorrect σ τ → OpSpecCorrect τ υ →
-  OpSpecCorrect σ υ
+@AdjointOp.compose : {α : Type} →
+  [inst : Storage α] → [inst_1 : CommSemiring α] → {σ τ υ : Shape} →
+  AdjointOp α σ τ → AdjointOp α τ υ →
+  AdjointOp α σ υ
 ```
 
 Composing two proved operations produces a proved operation, with no new obligation for the caller:
@@ -820,26 +836,32 @@ Composing two proved operations produces a proved operation, with no new obligat
 -- Composition carries the adjointness evidence through both
 -- chosen local rules.
 /-- ReLU followed by squaring, carrying its own proof. -/
-noncomputable def agReluSquare : OpSpecCorrect [2] [2] :=
-  (reluCorrect (s := [2])).compose
-    (squareCorrect (s := [2]))
+noncomputable def agReluSquare :
+    Tape.AdjointOp ℝ [2] [2] :=
+  (AdjointOp.relu (α := ℝ) (s := [2])).compose
+    (square (s := [2]))
 
 /-- The composite obeys the same law. Nothing to prove here:
 `compose` already did it. -/
 theorem agChainAdjoint (x dx delta : Tensor ℝ [2]) :
-    Spec.dot (agReluSquare.jvp x dx) delta =
-      Spec.dot dx (agReluSquare.op.backward x delta) :=
-  agReluSquare.correct x dx delta
+    dot (agReluSquare.jvp x dx) delta =
+      dot dx (agReluSquare.op.backward x delta) :=
+  agReluSquare.isAdjointPair x dx delta
 ```
 
-Primitive rules establish adjointness, `compose` establishes that composition preserves it, and
-the tape soundness results in
-{ref "autograd-proofs"}[Autograd Correctness] connect a recorded traversal to that composition.
-{src "NN/Proofs/Autograd/Core/RealCorrectness.lean"}[`RealCorrectness.lean`] carries the bundles for
-ReLU, sigmoid, tanh, softplus, SiLU, GELU, ELU, exp, log, the epsilon-protected logarithm, smooth
-absolute value, sinh, cosh, square, linear layers, and reductions. Its companion
-`SemiringCorrectness.lean` keeps the algebraic ones generic over a commutative semiring so exact
-backends such as `ℚ` can use them without dragging in real analysis.
+Primitive rules establish adjointness, `compose` establishes that composition preserves it, and the
+tape soundness results in {ref "autograd-proofs"}[Autograd Correctness] connect a recorded
+traversal to that composition.
+{src "TorchLean/NN/Tape/AdjointOp.lean"}[`AdjointOp.lean`]
+holds the interface, `compose`, and the bundles that need only commutative semiring algebra: ReLU
+and linear layers. Exact backends such as `ℚ` use them without real analysis.
+{src "TorchLean/NN/AdjointOp.lean"}[`AdjointOp.lean`] carries the
+bundles over `ℝ`: sigmoid, tanh, exp, square, and the total sum. The bundles for ReLU,
+sigmoid, tanh, exp, the total sum, softmax, log-softmax and the linear layer are also registered on
+the operator table the CPU tape records with: an `op_cert` certificate in
+{src "TorchLean/NN/Op/Certificates.lean"}[`Certificates.lean`] (such as
+`AdjointOp.relu_op`) states that the bundle's forward map and backward rule are those
+of the operator's rule in `Op.rule?` over the reals, at the bundle's shapes.
 
 # `detach` And Gradient Flow
 
@@ -864,30 +886,30 @@ detached gradient = [[3, 2]: [[0.000000, 0.000000],
   [3]: [0.000000, 0.000000, 0.000000]]
 ```
 
-The loss remains `0.244900`, while every parameter gradient is zero. Both results matter: detach
-must preserve the forward value and remove the derivative contribution along this path.
+Detaching leaves the loss at `0.244900`, while every parameter gradient is zero. Both results
+matter: detach must preserve the forward value and remove the derivative contribution along this
+path.
 
-Detach is used in target networks, stop-gradient estimators, contrastive objectives, and
-statistics that must not receive gradients. It changes the update rule without changing the forward
-scalar value. The resulting vector field
-need not be the gradient of any scalar objective, so adding a detach requires mathematical intent.
-{ref "runtime-autograd"}[Runtime and Autograd] shows the same idea one level down, where detach is a
-tape node that the reverse traversal simply never crosses.
+Detach is used in target networks, stop-gradient estimators, contrastive objectives, and statistics
+that must not receive gradients. It changes the update rule without changing the forward scalar
+value. The resulting vector field need not be the gradient of any scalar objective, so adding a
+detach requires mathematical intent. {ref "runtime-autograd"}[Runtime and Autograd] shows the same
+idea one level down, where detach is a tape node that the reverse traversal never crosses.
 
-This zero gradient does not establish that the original, undetached loss is at a stationary point.
+This zero gradient doesn't establish that the original, undetached loss is at a stationary point.
 
 # JVPs And Hessian-Vector Products
 
 Forward mode computes $`J_f(x)v`, and composing it with reverse mode gives a Hessian-vector product
 $`H_f(x)v` without ever forming $`H_f(x)`, which is Pearlmutter's trick
-({Informal.citep pearlmutter2008}[]). For model parameters:
+{Informal.citep pearlmutter2008}[]. For model parameters:
 
 ```lean (name := agHvp)
 -- Use one state-shaped direction for both the loss slope
 -- and the change in its gradient.
 #eval show IO Unit from do
   let direction : autograd.model.State agModel Float :=
-    nn.State.full 0.1
+    .fill 0.1
   let d ←
     autograd.model.jvp agModel agMse agState agIn agTarget
       direction
@@ -905,16 +927,15 @@ Hessian-vector product = [[3, 2]: [[0.010000, -0.024000],
   [3]: [0.020000, 0.020000, 0.020000]]
 ```
 
-Both numbers are checkable, which is the reason for pinning the parameters. The direction sets every
-entry to $`0.1`, so its effect on each output component is
-$`0.1\cdot0.5+0.1\cdot(-1.2)+0.1=0.03`. The mean squared error contributes a factor $`\tfrac23`, so
-the bias block of $`Hv` is $`\tfrac23\cdot0.03=0.02` and each weight row is
-$`0.02\,x=(0.01,-0.024)`. The directional derivative is the dot product of the earlier gradient with
-the direction, which is $`0.1\cdot0.098-0.1\cdot0.14=-0.0042` in exact arithmetic. For this model
-the Hessian is
-exactly $`\tfrac23 J^{\mathsf T}J` , because the output is linear in the parameters. Nonlinear
-dependence on parameters can add second-order
-terms; the transform must also support the operations and derivative rules used.
+Both numbers are checkable, which is why we pinned the parameters. The direction sets every entry
+to $`0.1`, so its effect on each output component is $`0.1\cdot0.5+0.1\cdot(-1.2)+0.1=0.03`. With
+the factor $`\tfrac23` that the mean squared error contributes, the bias block of $`Hv` is
+$`\tfrac23\cdot0.03=0.02` and each weight row is $`0.02\,x=(0.01,-0.024)`. The directional
+derivative is the dot product of the earlier gradient with the direction, which is
+$`0.1\cdot0.098-0.1\cdot0.14=-0.0042` (in exact arithmetic). For this model the Hessian is exactly
+$`\tfrac23 J^{\mathsf T}J`, because the output is linear in the parameters. Nonlinear dependence on
+parameters can add second-order terms, and the transform must also support the operations and
+derivative rules used.
 
 For a scalar function of a small input, the full Hessian is also available, and for
 $`f(x)=\tfrac12(x_0^2+x_1^2)` it should be the identity:
@@ -938,35 +959,35 @@ Cost is the reason `hvp` exists next to `hessian`. A Hessian-vector product is a
 passes. A full Hessian for a model with $`p` parameters is $`p` of them, and $`p^2` numbers to
 store.
 
-The Hessian-vector product has the same two blocks as the parameter direction, so it can be
-paired with that direction or passed to an iterative curvature method without flattening the
-state. Its positive and negative entries reflect the signs of the two input coordinates; they
-do not by themselves say the Hessian is indefinite. For this affine squared-loss example the
-quadratic form is nonnegative over the reals because it is a scaled squared norm of `Jv`.
-That conclusion uses the stated model and loss, rather than the signs of a printed vector.
+The Hessian-vector product has the same two blocks as the parameter direction, so it can be paired
+with that direction or passed to an iterative curvature method without flattening the state. Its
+positive and negative entries reflect the signs of the two input coordinates, but they don't by
+themselves say the Hessian is indefinite. For this affine squared-loss example the quadratic form
+is nonnegative over the reals because it's a scaled squared norm of `Jv`. That conclusion comes
+from the stated model and loss, not from the signs of a printed vector.
 
 # Runtime Derivatives And Mathematical Derivatives
 
 Differentiation connects three distinct objects:
 
-1. the calculus derivative of the ideal real-valued operation;
-2. the derivative program TorchLean's transform builds;
+1. the calculus derivative of the ideal real-valued operation
+2. the derivative program TorchLean's transform builds
 3. the numbers a CPU, a CUDA kernel, or an external provider produces when it runs.
 
-Claims 1 and 2 are related by Lean theorems for supported primitives and well-formed graphs; this
-chapter showed both halves of that, the adjointness bundles and the `fderiv` results. Claim 3 needs
-a rounding argument or an explicit backend boundary. A CUDA kernel may implement the same formal VJP
-equation with a different reduction tree and produce different last bits, which is not a bug in
-either the kernel or the theorem, and is precisely why they are counted as different claims.
+Claims 1 and 2 are related by Lean theorems for supported primitives and well-formed graphs, and
+this chapter showed both halves of that (the adjointness bundles and the `fderiv` results). Claim 3
+needs a rounding argument or an explicit backend boundary. A CUDA kernel may implement the same
+formal VJP equation with a different reduction tree and produce different last bits, which isn't a
+bug in either the kernel or the theorem, and is precisely why they're counted as different claims.
 
 First-order `autograd` helpers lower to a typed graph: forward-mode queries use its checked JVP
 rules, and reverse-mode queries use a seeded pullback. HVPs evaluate a reverse pass over dual
-scalars; the tangent parts of the returned gradients give the curvature product. These helpers
-also use the tape lowering described in the runtime chapter. A trainer's device and arithmetic,
-and its selection of native kernels, are separate decisions described in
-{ref "run-configuration"}[Choosing How A Model Runs] and
-{ref "backend-selection"}[Backend Selection]. Primals, cotangents, parameters, and returned
-derivatives all follow the scalar contract from {ref "tensors-shapes"}[Tensors And Shapes].
+scalars, and the tangent parts of the returned gradients give the curvature product. These helpers
+also use the tape lowering described in the runtime chapter. A trainer's device and arithmetic (and
+its selection of native kernels) are separate decisions described in
+{ref "run-configuration"}[Choosing How A Model Runs] and {ref "backend-selection"}[Backend
+Selection]. Primals, cotangents, parameters, and returned derivatives all follow the scalar
+contract from {ref "tensors-shapes"}[Tensors And Shapes].
 
 # Tape Inspection In VS Code
 
@@ -980,10 +1001,10 @@ Place the cursor on one of:
 #tape_trace_view ...
 ```
 
-For `agTwice`, inspect the two square nodes and the cotangents that meet at their shared input.
-For the detached loss, inspect where the reverse path stops. The views also identify parameter
-leaves and show the accumulated gradient at each reached node.
-{ref "widgets"}[Interactive Widgets] documents the controls.
+For `agTwice`, inspect the two square nodes and the cotangents that meet at their shared input. For
+the detached loss, inspect where the reverse path stops. Those views also identify parameter leaves
+and show the accumulated gradient at each reached node. {ref "widgets"}[Interactive Widgets]
+documents the controls.
 
 # API Summary
 
@@ -1033,27 +1054,28 @@ The transforms differ in what they seed and what they return:
 :::
 
 Namespace completion after `autograd.` lists the function transforms, and after `autograd.model.`
-the model transforms and the loss namespace. Named options such as `value` live in the signature
-rather than spawning a second declaration per variant.
+the model transforms and the loss namespace. Named options such as `value` live in the signature,
+so there's no second declaration per variant.
 
 # Differentiation Experiments
 
-The examples isolate several aspects of the derivative rules. Small changes let us check each
+Our examples isolate several aspects of the derivative rules, and small changes let you check each
 one independently:
 
 1. Replacing `nn.functional.mean` with a sum in `agSumSq` doubles the gradient by removing the
    division by two.
-2. The seed $`(0,1)` in `autograd.vjp agSquare` selects the second Jacobian row.
-3. Setting `agState` to `nn.State.full 0.2` changes the loss through the
-   affine model output. The same residual calculation predicts the new value.
+2. In `autograd.vjp agSquare`, the seed $`(0,1)` selects the second Jacobian row.
+3. Setting `agState` to `.fill 0.2` changes the loss through the affine model output, and the same
+   residual calculation predicts the new value.
 4. Setting one coordinate of `agIn` to $`0` makes the corresponding weight-gradient column zero.
 5. Evaluating `agRelu` at `[-1.0, 1.0e-30, 1.0]` and then at `[-1.0, -1.0e-30, 1.0]` crosses the
-   kink.
-   The reported derivative jumps between $`0` and $`1` across a distance of $`2\cdot10^{-30}`.
-6. Replacing `reluCorrect` in `agReluSquare` with `tanhCorrect` preserves the adjointness proof
-   through `compose`. Operations whose intermediate shapes disagree cannot be composed.
-7. Adding a third `nn.functional.square` path to `agTwice` adds one more copy of the
-   single-path gradient.
+   kink, and the reported derivative jumps between $`0` and $`1` across a distance of
+   $`2\cdot10^{-30}`.
+6. Replacing `AdjointOp.relu (α := ℝ)` in `agReluSquare` with `AdjointOp.tanh` preserves the
+   adjointness proof through `compose`, but operations whose intermediate shapes disagree can't be
+   composed.
+7. Adding a third `nn.functional.square` path to `agTwice` adds one more copy of the single-path
+   gradient.
 
 The next page applies these transforms to a scientific equation, using input derivatives to build
 a differential-equation residual.

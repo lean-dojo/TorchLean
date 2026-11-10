@@ -10,9 +10,9 @@ title: Graphs
 Search the Lean import graph by module name to inspect its dependencies, reverse dependencies, and
 the part of the source tree affected by a change.
 
-FloatLib supplies the generic scalar formats and numerical theory; `NN.Floats` contains
-TorchLean's adapters. External imports appear in the explorer, but their source trees are not
-expanded here.
+FloatLib supplies the generic scalar formats and numerical theory, and
+`TorchLean.Verify.Floats.FP32` and `TorchLean.Verify.Floats.IEEE754` adapt them to
+TorchLean. External imports appear in the explorer, but their source trees aren't expanded here.
 
 <div class="dep-dashboard" id="dep-dashboard">
   <section class="dep-panel dep-summary graph-overview">
@@ -32,7 +32,7 @@ expanded here.
     <p class="dep-panel-intro">
       The site build reads these counts from the TorchLean checkout, including tests and guide
       sources. Dependency sources, including FloatLib, are excluded. Declaration headers measure
-      source size; they do not measure proof coverage.
+      source size, not proof coverage.
     </p>
     <div class="dep-stat-grid" id="dep-code-cards">
       <div class="dep-loading">Loading source statistics…</div>
@@ -44,7 +44,7 @@ expanded here.
     <div class="dep-controls">
       <label>
         Search module
-        <input id="dep-search" type="search" placeholder="GraphSpec, Runtime, FNO…" />
+        <input id="dep-search" type="search" placeholder="Proofs, Runtime, FNO…" />
       </label>
       <label>
         Importing area
@@ -84,6 +84,7 @@ expanded here.
   }[c]));
   const layerOf = (mod) => {
     const parts = mod.split(".");
+    if (parts[0] === "TorchLean" && parts.length >= 3) return `TorchLean.${parts[1]}`;
     if (parts[0] !== "NN" || parts.length < 2) return parts[0] || "unknown";
     return `NN.${parts[1]}`;
   };

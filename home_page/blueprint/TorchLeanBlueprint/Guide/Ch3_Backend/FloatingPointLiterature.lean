@@ -1,12 +1,12 @@
 import VersoManual
-import NN.Proofs.Analysis.Lipschitz.Network
-import NN.Proofs.RuntimeApprox.NF.EndToEnd
+import TorchLean.NN.Lipschitz.Network
+import TorchLean.Verify.RuntimeApprox.NF.EndToEnd
 -- The experiments narrow finite native inputs to binary32 and widen their results for display.
 -- Import the scalar API directly, separately from the reduction proofs.
 import FloatLib
--- The reduction-schedule section prints `sumTreeResult_enclosure`, which lives with the
--- `SumTree` theory rather than with the scalar operations.
-import NN.Proofs.RuntimeApprox.Reductions.IEEE32
+-- The reduction-schedule section prints `SumResult.enclosure`, which lives with
+-- the reduction-tree theorems rather than with the scalar operations.
+import TorchLean.Verify.Floats.IEEE754.Reductions
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
 
@@ -14,11 +14,10 @@ open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 open FloatLib.Numerics
 open FloatLib.Floats.Formats.Flocq
+open TorchLean.Tensor
 open TorchLean
-open Proofs
-open Proofs.RuntimeApprox
 -- Open the namespace containing the reduction theorems.
-open TorchLean.Floats.IEEE754
+open IEEE754
 
 -- Verso checks `leanOutput` blocks against the real compiler message. The graph
 -- theorems below print wider than this file's 100-column limit, so those blocks ask
@@ -35,14 +34,14 @@ tag := "floating-point-literature"
 file := "Tracking-Numerical-Error-Through-A-Network"
 %%%
 
-A rounding error in the first linear layer becomes part of the input to ReLU and then to the
-second layer. The later operations may preserve, amplify, or reduce it while introducing errors
-of their own. Bounding each operation in isolation leaves out that dependence.
+A rounding error in the first linear layer becomes part of the input to ReLU and then to the second
+layer. Later operations may preserve, amplify, or reduce it while introducing errors of their own.
+So bounding each operation in isolation leaves out that dependence.
 
-I'll follow the error through the same two-layer MLP used in the executable comparison below.
-The local rounding analysis of {Informal.citet goldberg1991}[] gives us a starting point.
-FloatLib supplies those scalar facts, and TorchLean's covered tensor operations turn them into
-bounds on output tensors. A graph theorem composes the bounds in evaluation order.
+I'll follow the error through the same two-layer MLP used in the executable comparison below. Our
+starting point is the local rounding analysis of {Informal.citet goldberg1991}[]. FloatLib supplies
+those scalar facts, and TorchLean's covered tensor operations turn them into bounds on output
+tensors. A graph theorem then composes the bounds in evaluation order.
 
 Training extends the calculation. Reverse mode reads saved forward values, so their errors
 affect the gradient. An optimizer then uses that gradient to change the parameters. With a
@@ -63,26 +62,27 @@ It evaluates
 
 $$`y=W_2\operatorname{ReLU}(W_1x+b_1)+b_2`
 
-twice. The first run uses Lean's native `Float32`; the second uses the independent bit-level
-FloatLib binary32 reference, `ExecFloat.Binary 8 23`. Both runs evaluate the typed graph and then
-compute the parameter and input VJPs through `autograd.model.vjp`.
+twice, first with Lean's native `Float32` and then with the independent bit-level FloatLib binary32
+reference (`ExecFloat.Binary 8 23`). Both runs evaluate the typed graph and then compute the
+parameter and input VJPs through `autograd.model.vjp`.
 
 Read the six named tensors in each report: the output, both weight gradients, both bias gradients,
 and the input gradient. The final line reports their maximum absolute difference after converting
-the entries to `Float`. Inspect that value: the command reports differences without requiring
-them to be zero. For finite values, a zero difference establishes more than agreement of the
-printed decimals, but it does not distinguish signed zeros or inspect intermediate rounding steps.
+the entries to `Float`. Inspect that value: the command reports differences without requiring them
+to be zero. For finite values a zero difference establishes more than agreement of the printed
+decimals, but it doesn't distinguish signed zeros or inspect intermediate rounding steps.
 
-The comparison holds the input and parameter pack fixed while changing the scalar implementation.
-The approximation theorems below address quantified claims and state the assumptions needed to
-connect rounded calculations to real-valued ones.
+Across the two runs the input and parameter pack stay fixed while the scalar implementation
+changes. The approximation theorems below address quantified claims and state the assumptions
+needed to connect rounded calculations to real-valued ones.
 
 The gradient comparison exercises a different part of the computation from the forward comparison.
 A scalar output seeded with one asks how that output changes with each parameter, so the printed
 weight and bias entries must follow the model's parameter order. Matching only the final output
 would miss, for example, a reverse rule that sends the right numbers to the wrong parameter tensor.
-Inspecting every gradient tensor checks that correspondence on this example; the approximation
-theorems below explain how to make a statement with explicit input and arithmetic hypotheses.
+Inspecting every gradient tensor checks that correspondence on this example, while the
+approximation theorems below explain how to make a statement with explicit input and arithmetic
+hypotheses.
 
 # The Approximation Relation
 
@@ -90,36 +90,36 @@ Let $`x` be an ideal real tensor, $`\widehat{x}` its rounded counterpart with th
 $`\varepsilon` a bound on their coordinatewise error. A map `toSpec` interprets each rounded
 scalar as a real value. TorchLean writes the relation as
 
-$$`\operatorname{approxTensor}(x,\widehat x,\varepsilon)
+$$`\operatorname{ApproxTensor}(x,\widehat x,\varepsilon)
   \quad\Longleftrightarrow\quad
   \forall i,\;
   |\operatorname{toSpec}(\widehat x_i)-x_i|\leq\varepsilon`.
 
-The index $`i` ranges over the tensor's coordinates, so the same bound applies at every entry.
-For `NF`, `toSpec` returns the stored real value. For another runtime type, the map can be
-different.
+Here the index $`i` ranges over the tensor's coordinates, so the same bound applies at every entry.
+For `NF`, the map is `NF.toReal`, which returns the stored real value (for another runtime type,
+the map can be different).
 
-The signature says the same thing more tersely:
+Lean's signature says the same thing more tersely:
 
 ```lean (name := approxTensorSig)
 -- Expose the scalar interpretation and the shared
 -- coordinatewise error budget.
-#check @approxTensor
+#check @ApproxTensor
 ```
 ```leanOutput approxTensorSig (whitespace := lax)
-@approxTensor : {α : Type} → [inst : Storage α] →
-  {s : Spec.Shape} → (α → Spec.SpecScalar) →
-    Spec.SpecTensor s → Tensor α s → Spec.SpecScalar → Prop
+@ApproxTensor : {α : Type} → [inst : Storage α] →
+  {s : Shape} → (α → ℝ) → Tensor ℝ s → Tensor α s → ℝ → Prop
 ```
 
-The last argument is the error bound. Passing it separately lets graph propagation update the
-bound without rebuilding the tensor. It also lets us relate the same runtime value to several ideal
-values, each with its own error. The `toSpec` argument selects how to interpret the runtime scalar.
+The last argument is the error bound. Because it's a separate argument, graph propagation can
+update the bound without rebuilding the tensor, and we can relate the same runtime value to several
+ideal values, each with its own error. And the `toSpec` argument selects how to interpret the
+runtime scalar.
 
-The shared shape fixes which coordinates are compared. A budget of $`\varepsilon` permits that much
+A shared shape fixes which coordinates are compared. A budget of $`\varepsilon` permits that much
 error at each coordinate, so summing many coordinates can require a larger output budget even when
-every input satisfies the same relation. Reading the relation this way explains why a layer theorem
-needs an error transformer as well as an input approximation hypothesis.
+every input satisfies the same relation. That's why a layer theorem needs an error transformer as
+well as an input approximation hypothesis.
 
 # Error Bounds For A Linear Layer
 
@@ -150,16 +150,17 @@ $$`
   +(\widehat W-W)(\widehat x-x).
 `
 
-The first term propagates input error through the exact weight; the second propagates weight
-error through the exact input. The third accounts for perturbing both operands at once.
+In the expansion, the first term propagates input error through the exact weight and the second
+propagates weight error through the exact input. And the third accounts for perturbing both
+operands at once.
 
-Arithmetic introduces further error. Write $`P_k` for the total error charged to product $`k`
-and $`E_k` for the accumulated error after $`k` products. Let $`s_k` and $`p_k` be the ideal
+Arithmetic introduces further error. Write $`P_k` for the total error charged to product $`k` and
+$`E_k` for the accumulated error after $`k` products, and let $`s_k` and $`p_k` be the ideal
 partial sum and product. In the recurrence below, $`\rho_{\rm mul}(W_{jk},x_k)` must bound
 multiplication rounding throughout the operand neighborhoods given by $`\varepsilon_W` and
-$`\varepsilon_x`. Likewise, $`\rho_{\rm add}(s_k,p_k)` must cover the partial sum and product
-errors $`E_k` and $`P_k`. These error radii are implicit arguments of the notation; evaluating
-rounding error only at the ideal operands would not suffice. With an exact zero accumulator, a
+$`\varepsilon_x`, and $`\rho_{\rm add}(s_k,p_k)` must likewise cover the partial sum and product
+errors $`E_k` and $`P_k`. These error radii are implicit arguments of the notation. Evaluating
+rounding error only at the ideal operands wouldn't suffice. With an exact zero accumulator, a
 fixed-left dot product has the recurrence
 
 $$`
@@ -174,44 +175,44 @@ E_{k+1} &= E_k+P_k+\rho_{\rm add}(s_k,p_k).
 \end{aligned}
 `
 
-Each step adds the previous sum error, the new product's error, and the rounding error of combining
-them. After the final product, add $`\varepsilon_b` and the rounding of the bias addition. The
-local rounding bounds must cover the operands reached by this execution, which is why the theorem
-needs both a reduction order and magnitude information.
+Each step adds the previous sum error, its own product's error, and the rounding error of combining
+them. After the final product, add $`\varepsilon_b` and the rounding of the bias addition. Local
+rounding bounds must cover the operands reached by this execution, which is why the theorem needs
+both a reduction order and magnitude information.
 
-The `NF` backend implements this style of propagation with bounds computed from runtime operands.
-In `NFBackend.dotStep`, the magnitude terms use the decoded rounded operands plus their error
-budgets, and the local rounding terms are half-ULP bounds at the runtime product and sum before
-rounding. `dotBound` also conservatively charges half an ULP for its initial zero accumulator.
-Thus the implementation follows the error decomposition above without using exactly the same
-bound expression. Matrix multiplication, convolution, reductions, and scalar arithmetic each
-provide an error transformer and a theorem proving that transformer valid.
+TorchLean's `NF` backend implements this style of propagation, with bounds computed from runtime
+operands. In `NF.dotStep`, the magnitude terms use the decoded rounded operands plus their
+error budgets, and the local rounding terms are half-ULP bounds at the runtime product and sum
+before rounding. (`dotBound` also conservatively charges half an ULP for its initial zero
+accumulator.) So the implementation follows the error decomposition above, but its bound expression
+isn't identical. Matrix multiplication, convolution, reductions, and scalar arithmetic each provide
+an error transformer and a theorem proving that transformer valid.
 
-There are two sources of uncertainty in a dot product. The represented weights and inputs may
-already differ from the intended real data, and each multiplication and addition introduces a new
-rounding step. Even an exact multiplication of the represented operands would retain the first
-source. Conversely, exactly represented input data do not make every intermediate product or sum
+A dot product has two sources of uncertainty. Its represented weights and inputs may already differ
+from the intended real data, and each multiplication and addition introduces another rounding step.
+Even an exact multiplication of the represented operands would retain the first source, and
+conversely, exactly represented input data don't make every intermediate product or sum
 representable. Keeping the two contributions separate lets a caller improve the right part of a
 failed bound: a more accurate parameter conversion and a different accumulation algorithm solve
 different problems.
 
 # Accumulated Error Bounds And Measurements
 
-The recurrence bounds absolute errors and does not exploit cancellation between local rounding
-errors. It is not automatically linear in the number of terms: local magnitudes and rounding bounds
-may also grow. Under the classical relative-error model, with $`nu<1` and no problematic
-underflow or overflow, a sequential sum satisfies
+Our dot-product recurrence bounds absolute errors without exploiting cancellation between local
+rounding errors, and it isn't automatically linear in the number of terms: local magnitudes and
+rounding bounds may also grow. Under the classical relative-error model, with $`nu<1` and no
+problematic underflow or overflow, a sequential sum satisfies
 
 $$`|\widehat S-S|\leq\gamma_n\sum_i|x_i|,\qquad
 \gamma_n=nu/(1-nu).`
 
-Here $`u=2^{-24}` for binary32, and using $`n` instead of $`n-1` is a conservative convention.
-This becomes a relative bound of $`\gamma_n` for nonnegative terms with nonzero sum. For mixed
-signs, divide by $`|S|` and retain the condition factor $`\sum_i|x_i|/|S|`.
+Here $`u=2^{-24}` for binary32 (using $`n` instead of $`n-1` is a conservative convention). For
+nonnegative terms with nonzero sum, the sequential-sum bound becomes a relative bound of
+$`\gamma_n`. With mixed signs, divide by $`|S|` and keep the condition factor $`\sum_i|x_i|/|S|`.
 
-The following harmonic-sum experiment compares binary32 against a binary64 reference. Its positive
-terms keep the condition factor at one. Each term is first computed in binary64 and converted to
-binary32, so the observed difference includes term conversion as well as accumulation; the printed
+Our harmonic-sum experiment compares binary32 against a binary64 reference, and its positive terms
+keep the condition factor at one. Each term is first computed in binary64 and converted to
+binary32, so the observed difference includes term conversion as well as accumulation. The printed
 classical factor is a comparison scale, not a Lean proof about this complete experiment.
 
 ```lean (name := gammaGrow)
@@ -255,22 +256,22 @@ n=1024 observed=16.215394 u  bound=1024.062504 u
 n=4096 observed=8.159338 u  bound=4097.000244 u
 ```
 
-Both columns are in multiples of $`u`. The comparison factor is approximately $`n`, while the
-observed error is much smaller at the larger lengths and is not monotone. These deterministic data
-do not establish a random-walk law or a $`\sqrt n` growth rate.
+Both columns are in multiples of $`u`. The comparison factor is about $`n`, while the observed
+error is much smaller at the larger lengths and isn't monotone. These deterministic data don't
+establish a random-walk law or a $`\sqrt n` growth rate.
 
 A worst-case bound need not predict typical error. It can also be sharpened by using more facts
 about the inputs or intermediate values. Changing the program offers another route: compensated
 summation, a pairwise reduction with logarithmic depth, or a wider accumulator. Each needs an error
 contract matching the implemented arithmetic. The reduction theorem below makes its hypotheses
-explicit; it does not certify the printed $`\gamma_n` column unconditionally.
+explicit. It doesn't certify the printed $`\gamma_n` column unconditionally.
 
 # Sequential, Pairwise, And Compensated Summation
 
 Keep the converted harmonic terms fixed and change only the accumulation algorithm. The naive
-column uses the `harm32` fold above. The pairwise column adds neighbours in rounds until one value
-remains. Kahan summation keeps a correction for rounding lost at the previous addition and uses
-it to adjust the next term. All three are compared with the same binary64 reference.
+column uses the `harm32` fold above, while the pairwise column adds neighbours in rounds until one
+value remains. Kahan summation keeps a correction for rounding lost at the previous addition and
+uses it to adjust the next term. All three are compared with the same binary64 reference.
 
 ```lean (name := sumStrategies)
 -- The same term the naive fold above added.
@@ -328,42 +329,39 @@ n=4096 naive=8.159338 pairwise=2.763110 kahan=0.964368
 Pairwise summation stays below three units of roundoff across a factor of sixty-four in length,
 while the naive fold reaches sixteen. A depth-based worst-case analysis explains one advantage: in
 a 4096-term pairwise reduction every input passes through twelve additions instead of up to 4096.
-The classical
-analysis of the pairwise scheme replaces $`\gamma_n` by $`\gamma_{\lceil\log_2 n\rceil}`, which at
-$`n=4096` is about twelve units of roundoff instead of four thousand. Kahan stays below one unit
-in these
-four runs. In the code, `recovered` subtracts the old total from the new one to estimate how much
-of `adjusted` entered the accumulator. The difference is retained as `drift` and subtracted from
-the next term. This explains the role of the correction without turning these measurements into
-a general error bound.
+For the pairwise scheme, the classical analysis replaces $`\gamma_n` by
+$`\gamma_{\lceil\log_2 n\rceil}`, which at $`n=4096` is about twelve units of roundoff instead of
+four thousand. Kahan stays below one unit in these four runs. In the code, `recovered` subtracts
+the old total from the new one to estimate how much of `adjusted` entered the accumulator, and the
+difference is retained as `drift` and subtracted from the next term. This explains the role of the
+correction without turning these measurements into a general error bound.
 
-TorchLean's reduction theory represents schedules such as the pairwise one through `SumTree`.
-`sumTreeResult xs r` says that some schedule over some
-permutation of the inputs produces `r` with finite leaves and finite intermediate results, and the
-enclosure theorem bounds the error of
-whichever schedule that was:
+TorchLean's reduction theory represents schedules (such as the pairwise one) as FloatLib
+`ReductionTree`s. `SumResult xs r` says that some schedule over some permutation of the inputs
+produces `r` with finite leaves and finite intermediate results, and the enclosure theorem bounds
+the error of whichever schedule that was:
 
 ```lean (name := sumTreeEnc)
 -- Binary32 uses the tree's own representable operands.
-#check @IEEE32Exec.sumTreeResult_enclosure_binary32
+#check @SumResult.enclosure
 ```
 
-This corollary uses $`u=2^{-24}` and requires finite inputs and finite intermediate sums. It reuses
-FloatLib's addition bound on the tree's own representable binary32 operands, including subnormal
-sums. It does not assume a relative rounding bound for arbitrary real operands. That distinction
-matters near zero: the generic `sumTreeResult_enclosure` takes a universally quantified
-`RelativeLocalAddBound`, which the usual unit roundoff cannot supply there.
+At binary32 the corollary uses $`u=2^{-24}` (the format's `Model.unitRoundoffAt`) and requires
+finite inputs and finite intermediate sums. It reuses FloatLib's addition bound on the tree's own
+representable operands (including subnormal sums), and it doesn't assume a relative rounding bound
+for arbitrary real operands, which the usual unit roundoff can't supply near zero.
 
-`ReductionBound.growth u t.leafCount` is $`(1+u)^{n-1}` for $`n`
-leaves. It does not depend on tree depth, so it charges the same factor to a balanced schedule and
-a sequential one. A sharper logarithmic-depth bound requires another theorem. The current library
-also does not provide a complete compensated-summation error contract. Its proved Sterbenz
-subtraction lemma is a useful ingredient, but does not by itself prove the Kahan program above.
+The factor `(1 + u) ^ t.nodeCount` is $`(1+u)^{n-1}` for $`n` leaves, since a tree with $`n` leaves
+performs $`n-1` additions. It doesn't depend on tree depth, so it charges the same factor to a
+balanced schedule and a sequential one. A sharper logarithmic-depth bound requires another theorem.
+The library also doesn't provide a complete compensated-summation error contract. Its proved
+Sterbenz subtraction lemma is a useful ingredient, but it doesn't by itself prove the Kahan program
+above.
 
 The witness tree records an allowed order. Its permutation condition preserves every supplied
-summand, with multiplicity; it does not permit dropping a term.
+summand with multiplicity, so it doesn't permit dropping a term.
 
-`IEEE32Exec.dotTreeResult_enclosure_binary32` gives the same accumulation bound for a dot
+`DotResult.enclosure` gives the same accumulation bound for a dot
 product's already-rounded products. Comparing with the original real dot product also needs the
 multiplication errors. Neither corollary identifies the schedule used by an external GPU kernel.
 
@@ -418,31 +416,30 @@ sumAbs    = 200000001.000000
 bound     = 23.841859
 ```
 
-The naive order loses the answer completely. The two magnitudes are eight decimal orders apart and
-binary32 keeps twenty four significand bits, so `1e8 + 1` returns `1e8` unchanged and the final
-subtraction returns zero. Relative to the exact answer that is a one hundred percent error. Move the
+The naive order loses the answer completely. Binary32 keeps twenty four significand bits and the
+two magnitudes are eight decimal orders apart, so `1e8 + 1` returns `1e8` unchanged and the final
+subtraction returns zero. Relative to the exact answer that's a one hundred percent error. Move the
 small term to the end and the same three numbers add up exactly.
 
-The bound in `sumTreeResult_enclosure` scales with `sumAbsIEEE`, the sum of absolute values.
-Here that factor is approximately $`2\times 10^8` while the
-answer is $`1`, so
-the illustrative growth formula gives an absolute bound of about twenty-four, while the observed
-error is one. Turning an absolute bound into relative accuracy requires the
-condition number $`\sum_i|x_i|\,/\,|\sum_i x_i|`, approximately $`2\times 10^8` on this input.
+The bound in `SumResult.enclosure` scales with `sumAbs` (the sum of absolute values). Here that
+factor is about $`2\times 10^8` while the answer is $`1`, so the illustrative growth formula gives
+an absolute bound of about twenty-four against an observed error of one. Turning an absolute bound
+into relative accuracy requires the condition number $`\sum_i|x_i|\,/\,|\sum_i x_i|`, about
+$`2\times 10^8` on this input.
 
-An absolute-error certificate can therefore be sound while giving a weak relative bound on a
-nearly cancelled result. Reporting `sumAbs` beside the bound makes that scale visible.
-Reordering also matters: the same inputs produced either zero or one here. `sumTreeResult`
-allows permutations of the inputs; applying a theorem about one particular schedule requires
-establishing that the runtime used it.
+So an absolute-error certificate can be sound while giving a weak relative bound on a nearly
+cancelled result, and reporting `sumAbs` beside the bound makes that scale visible. Reordering also
+matters: the same inputs produced either zero or one here. `SumResult` allows permutations of
+the inputs, while applying a theorem about one particular schedule requires establishing that the
+runtime used it.
 
 Compensation attempts to preserve the unit contribution lost at the first addition. To claim a
-stronger guarantee for that program, we would need an argument about how its correction variable
+stronger guarantee for that program, we'd need an argument about how its correction variable
 behaves as well as a bound on each primitive operation.
 
 # ReLU Lipschitz Bounds
 
-ReLU is easier because it is 1-Lipschitz:
+ReLU is easier because it's 1-Lipschitz:
 
 $$`
 |\operatorname{ReLU}(u)-\operatorname{ReLU}(v)|
@@ -453,34 +450,34 @@ In Lean, with ReLU spelled as `max 0`:
 
 ```lean
 -- A ReLU cannot increase the distance between two scalar
--- inputs.
+-- inputs: Mathlib's `abs_max_sub_max_le_abs` with `c = 0`.
 example (u v : ℝ) :
-    |max 0 u - max 0 v| ≤ |u - v| :=
-  relu_scalar_lipschitz u v
+    |max 0 u - max 0 v| ≤ |u - v| := by
+  simpa only [max_comm (0 : ℝ)] using
+    abs_max_sub_max_le_abs u v 0
 ```
 
 If the runtime ReLU itself is exact for the declared scalar semantics, an incoming bound
-$`\varepsilon` remains $`\varepsilon`. The interesting case is when $`u` and $`v` lie on opposite
-sides of zero. The derivative changes discontinuously there, but the forward Lipschitz bound still
-holds, and the four-case proof of the scalar theorem is where that is checked.
+$`\varepsilon` remains $`\varepsilon`. Things get interesting when $`u` and $`v` lie on opposite
+sides of zero. There the derivative changes discontinuously, but the forward Lipschitz bound holds
+for every pair of inputs: Mathlib's `abs_max_sub_max_le_abs` proves `|max a c - max b c| ≤ |a - b|`
+for every `c`, and the example takes `c = 0`.
 
-The tensor statement is the same fact in the $`\ell_2` metric, for every shape at once:
+For tensors, TorchLean states the same fact in the $`\ell_2` metric, for every shape at once:
 
 ```lean (name := reluTensorSig)
 -- The tensor theorem lifts the scalar estimate to the
 -- stated tensor norm.
-#check @relu_lipschitz_general
+#check @l2Dist_relu_le
 ```
 ```leanOutput reluTensorSig (whitespace := lax)
-@relu_lipschitz_general : ∀ {s : Spec.Shape} (x y : Tensor ℝ s),
-  tensorL2Dist (Activation.reluSpec x) (Activation.reluSpec y) ≤
-    tensorL2Dist x y
+@l2Dist_relu_le : ∀ {s : Shape} (x y : Tensor ℝ s), dist x.relu y.relu ≤ dist x y
 ```
 
 This difference between forward and backward sensitivity matters. A small perturbation can leave
-the ReLU output close while changing which VJP branch is selected. Backward approximation
-therefore carries branch hypotheses or a bound that covers both possibilities rather than blindly
-reusing the forward proof.
+the ReLU output close while changing which VJP branch is selected. So backward approximation
+carries branch hypotheses (or a bound that covers both possibilities) rather than blindly reusing
+the forward proof.
 
 # Range Conditions For Softmax And Normalization
 
@@ -494,13 +491,13 @@ $$`
      {\sum_k\exp(z_k-\max_j z_j)}.
 `
 
-For a nonempty row of real logits, every shifted exponent input is nonpositive, the denominator
-is at least one, and the output lies in $`[0,1]`. Floating-point NaNs and infinities require
-separate treatment. Those range facts control the local Lipschitz and rounding terms.
+For a nonempty row of real logits, every shifted exponent input is nonpositive, the denominator is
+at least one, and the output lies in $`[0,1]` (floating-point NaNs and infinities require separate
+treatment). Those range facts control the local Lipschitz and rounding terms.
 
 For layer normalization, let $`\mu` be the mean over the normalized coordinates and $`\sigma^2`
-their variance. The positive stabilization constant $`\epsilon` is part of the operation,
-distinct from the approximation-error bounds above. The calculation proceeds through
+their variance. The positive stabilization constant $`\epsilon` is part of the operation (distinct
+from the approximation-error bounds above), and the calculation proceeds through
 
 $$`
 x
@@ -513,76 +510,76 @@ x
 \frac{x-\mu}{\sqrt{\sigma^2+\epsilon}}.
 `
 
-Subtracting the mean produces centered values; squaring and averaging them produces the variance.
-Adding $`\epsilon` gives the exact stabilized variance a positive lower bound. Rounding errors must
-also be small enough to preserve that margin. The theorem `approxTensor_normalizeCore` assumes
-a lower bound $`\eta>0` for the exact stabilized variance, with premises `stabilizedError < η`
-and `stdError < Real.sqrt η`. The first would keep the perturbed square-root input positive,
-but the current proof does not use it because `sqrtSpec` clamps its input to zero. The second
-keeps the perturbed denominator away from zero. Its error trace composes the subtraction,
-stabilization, square-root, division, and affine-scaling bounds, using the supplied error bounds
-for the input, mean, variance, and affine parameters.
+Subtracting the mean produces centered values, and squaring and averaging them produces the
+variance. Adding $`\epsilon` gives the exact stabilized variance a positive lower bound. Rounding
+errors must also be small enough to preserve that margin. `ApproxTensor.normalize` assumes a
+lower bound $`\eta>0` for the exact stabilized variance, with premises `stabilizedError < η` and
+`stdError < Real.sqrt η`. The first would keep the perturbed square-root input positive, but the
+proof doesn't use it, because `Tensor.sqrt _ .clampNegative` clamps its input to zero. And the
+second keeps the perturbed denominator away from zero. That theorem's error trace composes the
+subtraction, stabilization, square-root, division, and affine-scaling bounds, using the supplied
+error bounds for the input, mean, variance, and affine parameters.
 
-The two margins refer to different stages and have different units. For the current clamped
-square-root proof, the standard-deviation error margin is the one needed to protect division.
-Positivity of epsilon alone does not establish that margin. These are mathematical premises
-about a noncomputable trace, not comparisons performed by an executable checker.
+These two margins refer to different stages and have different units. For the clamped square-root
+proof, the standard-deviation error margin is the one needed to protect division. Positivity of
+epsilon alone doesn't establish that margin. Both are mathematical premises about a noncomputable
+trace, not comparisons performed by an executable checker.
 
 # Composition Over A Graph
 
 A proof-bearing `RevGraph` stores, for every node:
 
-- the exact forward operation;
-- the rounded forward operation;
-- an error transformer for the forward result;
-- the exact and rounded VJPs;
-- an error transformer for the VJP;
-- proofs for both transformers.
+- the exact forward operation
+- the rounded forward operation
+- an error transformer for the forward result
+- the exact and rounded VJPs
+- an error transformer for the VJP
+- proofs for both transformers
 
 `RevGraph.eval_approx` follows the graph in topological order. If the input context satisfies its
 declared bounds, the runtime output context satisfies the bounds computed by
 `RevGraph.evalBounds`.
 
-The executable graph interpreter uses `GraphData`, and one theorem connects it to the same forward
+Our executable graph interpreter uses `GraphData`, and one theorem connects it to the same forward
 result:
 
 ```lean (name := evalApproxSig)
 -- Erase the local certificates and check which executable
 -- forward graph they cover.
-#check @NFBackend.eval_approx_graphData
+#check @NF.eval_approx_graphData
 ```
 ```leanOutput evalApproxSig (whitespace := lax)
-@NFBackend.eval_approx_graphData :
+@NF.eval_approx_graphData :
   ∀ {β : Radix} {fexp : ℤ → ℤ} {rnd : ℝ → ℤ}
-    {Γ ss : List Spec.Shape} (g : RevGraph NFBackend.toSpec Γ ss)
-    (xS : TensorPack Spec.SpecScalar Γ)
+    {Γ ss : List Shape} (g : RevGraph NF.toReal Γ ss)
+    (xS : TensorPack ℝ Γ)
     (xR : TensorPack (NF β fexp rnd) Γ) (epsIn : EList Γ),
-  approxCtx NFBackend.toSpec xS xR epsIn →
-    approxCtx NFBackend.toSpec (g.evalSpec xS)
-      ((LinkAutogradAlgebra.RevGraph.toGraphData g).eval xR ())
+  ApproxCtx NF.toReal xS xR epsIn →
+    ApproxCtx NF.toReal (g.evalReal xS)
+      (g.toGraphData.eval xR ())
       (g.evalBounds epsIn xR)
 ```
 
-`Γ` lists the input shapes and `ss` lists the shapes appended by the graph. The hypothesis
-`approxCtx` relates the exact input pack `xS` to the rounded pack `xR` using `epsIn`.
-The conclusion relates the exact evaluation `g.evalSpec xS` to the lowered `GraphData`
-evaluation, with one bound per context entry supplied by `g.evalBounds epsIn xR`.
-The proof composes the contracts stored in `g`, so a supported graph can come from an MLP, CNN,
-transformer, or neural operator.
+`Γ` lists the input shapes and `ss` lists the shapes appended by the graph. In the hypothesis,
+`ApproxCtx` relates the exact input pack `xS` to the rounded pack `xR` using `epsIn`. And the
+conclusion relates the exact evaluation `g.evalReal xS` to the lowered `GraphData` evaluation, with
+one bound per context entry supplied by `g.evalBounds epsIn xR`. Because the proof composes the
+local contracts stored in the nodes of `g`, it holds for every `g`. No TorchLean model or
+`TorchLean.IR.Graph` is lowered to a `RevGraph`, so the caller builds `g`.
 
-The forward theorem concludes an approximation for the entire accumulated context. Earlier inputs
-and intermediate node values remain available alongside the final output. This is useful when the
-next theorem concerns backpropagation, since a local VJP may read saved forward values rather than
-only the graph's output. The shape lists in the signature keep those saved entries aligned with
-their error budgets. An output-only comparison would leave precisely this information unavailable
-to the reverse induction.
+This forward theorem concludes an approximation for the entire accumulated context: earlier inputs
+and intermediate node values remain available alongside the final output. That's useful when the
+next theorem concerns backpropagation, since a local VJP may read saved forward values, not only
+the graph's output. In the signature, the shape lists keep those saved entries aligned with their
+error budgets. An output-only comparison would leave the reverse induction without this
+information.
 
 # Backward Error Propagation
 
 Reverse mode starts from a seed cotangent and applies local VJPs from outputs back to inputs and
-parameters; {Informal.citet baydin2018}[] is the standard survey of the mechanism. For a composition
-$`h(x)=g(f(x))`, let $`\bar h` be the seed cotangent at the output and $`J_f`, $`J_g` the
-Jacobians of the two functions. The input cotangent is
+parameters. {Informal.citet baydin2018}[] is the standard survey of the mechanism. For a
+composition $`h(x)=g(f(x))`, let $`\bar h` be the seed cotangent at the output and $`J_f`, $`J_g`
+the Jacobians of the two functions. Then the input cotangent is
 
 $$`
 \bar x
@@ -591,34 +588,33 @@ $$`
 `
 
 Read the product from right to left: the VJP of $`g` maps the seed to a cotangent at the
-intermediate
-value $`f(x)`, then the VJP of $`f` maps that cotangent back to the input.
-The rounded pass perturbs the saved forward values, the seed, each local VJP, and every gradient
+intermediate value $`f(x)`, and then the VJP of $`f` maps that cotangent back to the input. The
+rounded pass perturbs the saved forward values, the seed, each local VJP, and every gradient
 accumulation. `RevGraph.backpropBounds` mirrors the runtime traversal and computes the resulting
-error context. The backward theorem adds a second `approxCtx` hypothesis for the seed:
+error context. Our backward theorem adds a second `ApproxCtx` hypothesis for the seed:
 
 ```lean (name := backpropApproxSig)
 -- The reverse theorem also carries seed errors and rounded
 -- gradient accumulation.
-#check @NFBackend.backprop_approx_graphData
+#check @NF.backprop_approx_graphData
 ```
 ```leanOutput backpropApproxSig (whitespace := lax)
-@NFBackend.backprop_approx_graphData :
+@NF.backprop_approx_graphData :
   ∀ {β : Radix} {fexp : ℤ → ℤ}
     [inst : ValidExp fexp] {rnd : ℝ → ℤ}
-    [ValidRndToNearest rnd] {Γ ss : List Spec.Shape}
-    (g : RevGraph NFBackend.toSpec Γ ss)
-    (xS : TensorPack Spec.SpecScalar Γ)
+    [ValidRndToNearest rnd] {Γ ss : List Shape}
+    (g : RevGraph NF.toReal Γ ss)
+    (xS : TensorPack ℝ Γ)
     (xR : TensorPack (NF β fexp rnd) Γ) (epsIn : EList Γ)
-    (seedS : TensorPack Spec.SpecScalar (Γ ++ ss))
+    (seedS : TensorPack ℝ (Γ ++ ss))
     (seedR : TensorPack (NF β fexp rnd) (Γ ++ ss))
     (epsSeed : EList (Γ ++ ss)),
-  approxCtx NFBackend.toSpec xS xR epsIn →
-    approxCtx NFBackend.toSpec seedS seedR epsSeed →
-      approxCtx NFBackend.toSpec (g.backpropSpec xS seedS)
-        ((LinkAutogradAlgebra.RevGraph.toGraphData g).backpropCtx xR () seedR)
+  ApproxCtx NF.toReal xS xR epsIn →
+    ApproxCtx NF.toReal seedS seedR epsSeed →
+      ApproxCtx NF.toReal (g.backpropReal xS seedS)
+        (g.toGraphData.backpropCtx xR () seedR)
         (g.backpropBounds epsIn xR epsSeed seedR fun {Δ} =>
-          NFBackend.ctxAddBound)
+          NF.ctxAddBound)
 ```
 
 So `GraphData.backpropCtx` stays inside the computed context whenever the inputs and seed satisfy
@@ -630,8 +626,8 @@ A cotangent seed is numerical input to the reverse computation. Scaling the seed
 VJP, and errors in that seed also propagate through the local reverse rules. Fanout adds a second
 issue: two paths can contribute to the same earlier variable. Their contributions must be summed,
 and that sum rounds too. The explicit accumulation contract in the displayed theorem is what
-accounts for this shared-variable case; it is not covered merely by bounding each local VJP in
-isolation.
+accounts for this shared-variable case. Merely bounding each local VJP in isolation doesn't cover
+it.
 
 # Optimizer Arithmetic
 
@@ -645,61 +641,55 @@ multiplication/subtraction rounding.
 
 Momentum adds a state recurrence. AdamW, as introduced by {Informal.citet adamw2019}[], adds first
 and second moments, bias correction, square root, division, and decoupled weight decay. Rather than
-hard-code each optimizer into the graph theorem, TorchLean uses `NumericalStepContract`. A contract
+hard-code each optimizer into the graph theorem, TorchLean uses `OptimizerContract`. A contract
 supplies:
 
-- ideal and rounded optimizer states;
-- an approximation relation for the state;
-- ideal and rounded update functions;
-- an error transformer for the new state and parameters;
-- a theorem that the transformer is sound.
+- ideal and rounded optimizer states
+- an approximation relation for the state
+- ideal and rounded update functions
+- an error transformer for the new state and parameters
+- a theorem that the transformer is sound
 
-The generic theorem takes one parameter gradient from reverse mode and passes it through an
-optimizer satisfying that interface. Its statement carries the graph, optimizer contract, exact
-and runtime states, and their error bounds into a conclusion about the updated state:
+Our generic theorem takes one parameter gradient from reverse mode and passes it through an
+optimizer satisfying that interface. Its statement carries the graph, optimizer contract, exact and
+runtime states, and their error bounds into a conclusion about the updated state:
 
 ```lean
 -- Check that an optimizer consumes the gradient bound
 -- derived from this graph.
 example :=
-  @NFBackend.backprop_optimizer_update_approx_graphData
+  @NF.update_approx_graphData
 ```
 
 SGD, momentum SGD, and AdamW reuse that same graph theorem.
 
 For an SGD step with exact learning rate, a gradient discrepancy of size $`\varepsilon_g`
-contributes at most $`|\eta|\varepsilon_g` before the update's own rounding is counted. This gives
-a practical interpretation of the optimizer layer: it translates gradient accuracy into parameter
-accuracy. It does not say that the updated loss decreases. A descent argument needs properties of
-the loss and a suitable step size, while a multi-step numerical argument must also relate the
-states and gradients supplied at every later step.
+contributes at most $`|\eta|\varepsilon_g` before the update's own rounding is counted. Read
+practically, the optimizer layer translates gradient accuracy into parameter accuracy. It doesn't
+say that the updated loss decreases. A descent argument needs properties of the loss and a suitable
+step size, while a multi-step numerical argument must also relate the states and gradients supplied
+at every later step.
 
 # Runtime Optimizers And Proved Optimizer Contracts
 
-The executable training layer is broader than those three numerical contracts.
-`Runtime.Autograd.Model.Optim` implements SGD, momentum SGD, AdaGrad, RMSProp, Adam, AdamW,
-Adadelta, projected SGD, and Muon over shape-indexed parameter lists, and `Trainer.Scheduler`
-adds the learning-rate schedules. Trainer checkpoints save model state and reject a checkpoint
-whose parameter layout does not match the model it is loaded into. CUDA Adam and AdamW moments
-and step counters use the separate `Checkpoint.Optimizer.save` and `Checkpoint.Optimizer.load`
+TorchLean's executable training layer covers more than those three numerical contracts.
+`TorchLean.Optimizer` implements SGD, momentum SGD, AdaGrad, RMSProp, Adam, AdamW,
+Adadelta, projected SGD, and Muon over shape-indexed parameter lists, and `Trainer.Scheduler` adds
+the learning-rate schedules. Trainer checkpoints save model state and reject a checkpoint whose
+parameter layout doesn't match the model it's loaded into, while CUDA Adam and AdamW moments and
+step counters use the separate `Checkpoint.Optimizer.save` and `Checkpoint.Optimizer.load`
 interfaces.
 
-The proved NF numerical contracts currently cover plain SGD, momentum SGD, and AdamW; AdamW also
-carries the positivity data needed for its square-root denominator. Runtime support for the other
-optimizers is implemented and tested, but it should not be described as inheriting those numerical
-refinement theorems automatically.
+We've proved NF numerical contracts for plain SGD, momentum SGD, and AdamW, and AdamW also carries
+the positivity data needed for its square-root denominator. Runtime support for the other
+optimizers is implemented and tested, but they don't inherit those numerical refinement theorems
+automatically.
 
 # Graph Numerical Certificates
 
-The executable companion to these approximation theorems works over the canonical IR:
-
-```terminal
-# Generate and replay the interval artifact, then try a
-# deliberately changed range.
-scripts/lake.sh exe torchlean numerical_certificate
-```
-
-The example constructs a two-layer MLP from ordinary IR operations:
+On the executable side, the companion to these approximation theorems works over graphs of
+registered operators (`TorchLean.IR.Graph`). The example constructs a two-layer MLP from ordinary IR
+operations:
 
 ```
 -- Each arrow below is an operation whose numerical rule
@@ -712,36 +702,32 @@ input [1,2]
   -> add bias [1,1]
 ```
 
-It generates outward-rounded binary32 ranges for every node, binds them to the selected backend
-profile, and replays a concrete FloatLib binary32 execution. It also generates and replays a
-scalar graph, then replaces an addition range with `[0,0]` and checks that certificate validation
-rejects it. A failed check returns a nonzero exit code. Backend-policy checks are part of the
-certificate machinery,
-but these examples do not exercise every policy or failure mode.
+Running the command generates outward-rounded binary32 ranges for every node, binds them to the
+selected backend profile, and replays a concrete FloatLib binary32 execution. The same file
+certifies and replays a scalar graph, and `tamperedCheck` replaces an addition range with `[0,0]` ,
+which certificate validation rejects. Backend-policy checks are part of the certificate machinery,
+but these examples don't exercise every policy or failure mode.
 
-Open
-{src "NN/Examples/DeepDives/Floats/GraphNumericalCertificate.lean"}[
-`GraphNumericalCertificate.lean`] and find `Mlp.graph`, `Mlp.sources`, `Mlp.payload`,
-`Mlp.certificate`, and `Mlp.replay`. Change one weight source interval so that it no longer
-contains the payload value,
-then rerun the command. Replay will identify the node whose value escaped the claimed enclosure.
+Open {src "TorchLeanExamples/DeepDives/Floats/GraphNumericalCertificate.lean"}[
+`GraphNumericalCertificate.lean`] and find `MLP.graph`, `MLP.sources`, `MLP.payload`,
+`MLP.certificate`, and `MLP.replay`. Change one weight source interval so that it excludes the
+payload value. `MLP.replay` then identifies the node whose value escaped the claimed enclosure.
 
-These are artifact checks and concrete replay. Rejecting the changed interval checks that validation
-uses the reconstructed ranges when deciding acceptance. The eventual error-width argument has
-another premise: the exact
-real execution must lie in those same ranges. Once both values are enclosed, their separation is
-at most the interval width. A narrow interval is therefore useful for both enclosure and error,
-but successful replay alone supplies only the rounded side of this argument.
+These are artifact checks and concrete replay. Rejecting the changed interval checks that
+validation uses the reconstructed ranges when deciding acceptance. An error-width argument has
+another premise: the exact real execution must lie in those same ranges. Once both values are
+enclosed, their separation is at most the interval width, so a narrow interval is useful for both
+enclosure and error, but successful replay alone supplies only the rounded side of this argument.
 
 # Training Error Traces
 
-`trainingStepTrace` records the bounds for inspection. Here is its data layout, with empty arrays
+`traceTrainingStep` records the bounds for inspection. Here's its data layout, with empty arrays
 standing in for the bounds a calculation would supply:
 
 ```lean
--- An empty report illustrates the data layout; it supplies
+-- An empty report illustrates the data layout and supplies
 -- no numerical evidence.
-def emptyTrace : NFBackend.TrainingStepTrace where
+def emptyTrace : NF.TrainingStepTrace where
   optimizerName := "sgd"
   parameterIndex := 0
   forwardErrors := #[]
@@ -752,18 +738,17 @@ def emptyTrace : NFBackend.TrainingStepTrace where
   assumptions := #[]
 ```
 
-The numeric fields store error bounds. `forwardErrors` and `backwardErrors` follow typed-context
-order, including the input context and appended node results. `gradientError` and `parameterError`
-summarize the parameter selected by `parameterIndex`. The `assumptions` field records the numbers
-supplied by the caller, so a displayed bound can be read together with the conditions used to
-compute it.
+Numeric fields in the trace store error bounds. `forwardErrors` and `backwardErrors` follow
+typed-context order, including the input context and appended node results. `gradientError` and
+`parameterError` summarize the parameter selected by `parameterIndex`. And the `assumptions` field
+records the numbers the caller supplied, so you can read a displayed bound together with the
+conditions it was computed from.
 
-The trace is architecture-independent. A frontend can attach names such as
-`transformer.blocks.3.attention.q_proj.weight` after lowering, but propagation itself only needs the
-typed graph and parameter index. This is a proof-level reporting interface: its bounds are Lean
-reals, and an executable dashboard
-needs a computable representation and a justified conversion. Constructing a `TrainingStepTrace`
-record alone does not attach proofs to its arbitrary fields.
+Nothing in the trace depends on the architecture. It identifies the parameter only by
+`parameterIndex`, its position in the input context, and propagation needs only the typed graph and
+that index. This is a proof-level reporting interface: its bounds are Lean reals, and an executable
+dashboard needs a computable representation and a justified conversion. Constructing a
+`TrainingStepTrace` record alone doesn't attach proofs to its arbitrary fields.
 
 # Training-Step Bound Assumptions
 
@@ -775,7 +760,7 @@ contract.
 
 FloatLib keeps format and rounding as separate parameters in its generic results
 {Informal.citep flocq2011}[]. To use one in this MLP, we select the parameters and establish its
-hypotheses at the relevant operation. The graph and optimizer contracts then carry that local
+hypotheses at the relevant operation, and the graph and optimizer contracts then carry that local
 bound to the updated parameters.
 
 # References

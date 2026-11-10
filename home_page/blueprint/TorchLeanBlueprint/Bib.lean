@@ -4,7 +4,7 @@ import VersoBlueprint
 /-!
 Bibliography entries for the TorchLean guide.
 
-Register papers once with `@[bib "label"]`; cite them with `{Informal.citet label}[]` or
+Register papers once with `@[bib "label"]` and cite them with `{Informal.citet label}[]` or
 `{Informal.citep label}[]`. The rendered bibliography links back to the citing sections.
 
 Verso's `Citable` type covers papers: conference proceedings, journal articles, arXiv preprints,
@@ -19,7 +19,7 @@ namespace TorchLeanBlueprint.Bib
 
 /-! ## TorchLean and the proof assistant it is written in -/
 
-/-- The TorchLean paper; the same entry appears in `README.md` as BibTeX. -/
+/-- The TorchLean paper. The same entry appears in `README.md` as BibTeX. -/
 @[bib "torchlean2026"]
 def torchlean2026 : Citable := .arXiv
   { title := inlines!"TorchLean: Formalizing Neural Networks in Lean"
@@ -393,20 +393,6 @@ def kiselyov2012 : Citable := .inProceedings
     booktitle := inlines!"Generic and Indexed Programming (Spring School)"
     url := some "https://okmij.org/ftp/tagless-final/" }
 
-/-- Intrinsically typed term representations with de Bruijn variables. -/
-@[bib "benton2012"]
-def benton2012 : Citable := .article
-  { title := inlines!"Strongly Typed Term Representations in Coq"
-    authors := #[inlines!"Nick Benton", inlines!"Chung-Kil Hur",
-      inlines!"Andrew J. Kennedy", inlines!"Conor McBride"]
-    journal := inlines!"Journal of Automated Reasoning"
-    year := 2012
-    month := none
-    volume := inlines!"49"
-    number := inlines!"2"
-    pages := some (141, 159)
-    url := none }
-
 /-! ## Optimization and learning theory -/
 
 /--
@@ -447,8 +433,8 @@ def sgdr2017 : Citable := .arXiv
     id := "1608.03983" }
 
 /--
-Learning-rate warm-up. The ramp in `warmupCosine` is not a TorchLean invention; it is the recipe
-this paper made standard for large-batch training.
+Learning-rate warm-up. The ramp in `warmupCosine` is the recipe this paper made standard for
+large-batch training.
 -/
 @[bib "goyal2017"]
 def goyal2017 : Citable := .arXiv
@@ -654,9 +640,9 @@ def lora2022 : Citable := .arXiv
     id := "2106.09685" }
 
 /--
-Hopfield's original paper. Cited for the energy argument the `Spec.Hopfield` development formalizes;
-the update rule there is asynchronous and the weights are symmetric with zero diagonal, which is
-exactly the setting our `SymmetricW` and `DiagonalZero` hypotheses name.
+Hopfield's original paper, cited for the energy argument the `TorchLean.Hopfield` development
+formalizes. The update rule there is asynchronous and the weights are symmetric with zero diagonal,
+the setting of the hypotheses `(Matrix.of p.W).IsSymm` and `(Matrix.of p.W).diag = 0`.
 -/
 @[bib "hopfield1982"]
 def hopfield1982 : Citable := .article
@@ -690,7 +676,7 @@ def modernhopfield2021 : Citable := .inProceedings
     booktitle := inlines!"International Conference on Learning Representations (ICLR)"
     url := some "https://arxiv.org/abs/2008.02217" }
 
-/-- Structured state spaces (S4), the recurrence `DiagonalS4Spec` is the diagonal case of. -/
+/-- Structured state spaces (S4), the recurrence `S4` is the diagonal case of. -/
 @[bib "s4_2022"]
 def s4_2022 : Citable := .inProceedings
   { title := inlines!"Efficiently Modeling Long Sequences with Structured State Spaces"

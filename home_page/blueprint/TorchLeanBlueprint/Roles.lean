@@ -35,14 +35,16 @@ end TorchLeanBlueprint.Roles
 
 open TorchLeanBlueprint.Roles
 
-/-- `{src "NN/API.lean"}[text]` links `text` to the file `NN/API.lean` on GitHub. -/
+/-- `{src "TorchLean/NN/README.md"}[text]` links `text` to the file `TorchLean/NN/README.md`
+on GitHub. -/
 @[role_expander src]
 def src : RoleExpander
   | args, inlines => do
     let path ← ArgParse.run (.positional `path .string) args
     repoFileLink path inlines
 
-/-- `{srcDir "NN/Proofs"}[text]` links `text` to the directory `NN/Proofs` on GitHub. -/
+/-- `{srcDir "TorchLean/NN"}[text]` links `text` to the directory `TorchLean/NN` on
+GitHub. -/
 @[role_expander srcDir]
 def srcDir : RoleExpander
   | args, inlines => do
@@ -72,7 +74,7 @@ block_extension terminalBlock (output : Bool) where
 
 /-- Display shell input with `terminal`, or a recorded result with `terminal +output`.
 
-These blocks display text; they do not execute commands during the guide build.
+These blocks display text and do not execute commands during the guide build.
 -/
 @[code_block_expander terminal]
 def terminal : CodeBlockExpander

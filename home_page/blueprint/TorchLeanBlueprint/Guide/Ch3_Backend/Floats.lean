@@ -2,8 +2,12 @@ import VersoManual
 import FloatLib
 import FloatLib.Floats.Formats.IEEE754
 import FloatLib.Floats.Formats.BinaryInterchange.Analysis.Sterbenz
-import NN.Floats
-import NN.Proofs.RuntimeApprox.IEEE32.Contracts
+import FloatLib.Floats
+import FloatLib.Floats.Formats.BinaryInterchange.Configured.Transcendentals
+import TorchLean.Tensor.Numeric
+import FloatLib.Floats.Formats.BinaryInterchange
+import FloatLib.Floats.Formats.Flocq.Theory.Rounding.Affine
+import TorchLean.Verify.Floats.IEEE754
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
 
@@ -13,7 +17,7 @@ open FloatLib.Numerics
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.Flocq
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
-open TorchLean.Floats
+open TorchLean
 
 -- Verso checks `leanOutput` blocks against the real compiler message. A few of the
 -- records and signatures below print wider than this file's 100-column limit, so
@@ -35,7 +39,7 @@ result using the format's rounding rule.
 # Choose A Format From FloatLib
 
 I'll use binary32 for the first calculation. FloatLib's `ExecFloat.Binary` selects it with eight
-exponent bits and 23 stored fraction bits. The implicit leading bit gives normal values 24 bits
+exponent bits and 23 stored fraction bits, and the implicit leading bit gives normal values 24 bits
 of significand precision:
 
 ```lean
@@ -43,19 +47,20 @@ abbrev ChapterBinary32 :=
   ExecFloat.Binary (exponentBits := 8) (fractionBits := 23)
 ```
 
-Changing those two parameters selects a wider or custom format through the same arithmetic
-interface. The selected type can also be the element type of TorchLean's typed CPU tensors and
-model graphs. LibTorch providers use native binary32 or binary64. Custom scalar functions can
-also use configured binary arithmetic on CUDA; unsupported carriers retain their precision on CPU.
+Change those two parameters and you select a wider or custom format through the same arithmetic
+interface. Whichever type you select can also be the element type of TorchLean's typed CPU tensors
+and model graphs. LibTorch providers use native binary32 or binary64. Custom scalar functions can
+also use configured binary arithmetic on CUDA, while unsupported carriers retain their precision on
+CPU.
 
-The scalar examples only need FloatLib. TorchLean imports its definitions and proofs directly.
-Its dependency declaration follows FloatLib's `main` branch; the manifest records the exact
-revision used by a build. Updating FloatLib requires updating that manifest and rebuilding.
+For the scalar examples, FloatLib is all we need, and TorchLean imports its definitions and proofs
+directly. Its dependency declaration follows FloatLib's `main` branch (the manifest records the
+exact revision a build used), so updating FloatLib requires updating that manifest and rebuilding.
 
-The `lean` blocks in the rest of this chapter are elaborated while the page is built; their
-`leanOutput` blocks are checked against Lean messages. Plain-text sketches illustrate the
-interfaces. The page opens `FloatLib.Numerics`, `FloatLib.Floats.Formats.Flocq`, and
-`TorchLean.Floats`, and uses `ExecFloat` and `Model` for FloatLib's executable and reference APIs.
+From here on, `lean` blocks are elaborated while the page is built, and their `leanOutput` blocks
+are checked against Lean messages. Plain-text sketches illustrate the interfaces. On this page we
+open `FloatLib.Numerics`, `FloatLib.Floats.Formats.Flocq`, and `TorchLean`, and use
+`ExecFloat` and `Model` for FloatLib's executable and reference APIs.
 
 # Nonassociative Binary32 Addition
 
@@ -67,9 +72,9 @@ Over the reals, both parenthesizations are equal:
 
 $$`(a+b)+c=a+(b+c)=1`.
 
-Binary32 has 24 bits of significand precision. Around $`2^{24}`, adjacent representable numbers are
-two units apart. The exact value $`2^{24}+1` sits halfway between them, and ties-to-even rounds it
-back to $`2^{24}`. Therefore
+Binary32 has 24 bits of significand precision, so around $`2^{24}` adjacent representable numbers
+are two units apart. That puts the exact value $`2^{24}+1` halfway between them, and ties-to-even
+rounds it back to $`2^{24}`. Therefore
 
 $$`
 \operatorname{fl}(\operatorname{fl}(a+b)+c)=0,
@@ -78,7 +83,7 @@ $$`
 `
 
 We run this example from the bit patterns themselves. `ExecFloat.Binary.ofBits32` reads a raw
-32-bit encoding; ordinary `+` uses FloatLib's arithmetic. No native floating-point addition is
+32-bit encoding, and ordinary `+` uses FloatLib's arithmetic. No native floating-point addition is
 needed to compute the reference result.
 
 ```lean
@@ -118,9 +123,9 @@ Adding $`1` to $`-2^{24}` first keeps it, because that sum is exactly representa
 ```
 
 The printed integers encode the results: `0` is `0x00000000`, which is $`+0`, and `1065353216` is
-`0x3f800000`, which is $`1`. Thus even finite binary32 addition is not associative, a central
-example in {Informal.citet goldberg1991}[]. A reduction's error bound must account for the order
-in which its additions run.
+`0x3f800000`, which is $`1`. So even finite binary32 addition isn't associative, a central example
+in {Informal.citet goldberg1991}[]. A reduction's error bound must account for the order in which
+its additions run.
 
 We can isolate the effect of the tie by changing the small addend.
 Replace the $`1` by $`2` and the two groupings agree, because $`2^{24}+2` lands exactly on the
@@ -182,9 +187,9 @@ Among these three increments, only $`b=1` changes the answer with grouping. Its 
 addition is a tie, while $`1-2^{24}` is exactly representable. The $`b=0.5` negative-side addition
 is also a tie, but rounds to $`-2^{24}`.
 
-The same calculation can now be examined at three levels. The spacing of the binary32 grid and
-the nearest-even rule explain the rounded value. An executable model must also determine its bits
-and handle signs, subnormals, infinities, and NaNs. A backend contract must then identify the
+We can examine the same calculation at three levels. The spacing of the binary32 grid and the
+nearest-even rule explain the rounded value. An executable model must also determine its bits and
+handle signs, subnormals, infinities, and NaNs. A backend contract must then identify the
 parenthesization or fused instruction used by the actual reduction.
 
 TorchLean separates these levels so a proof about grid spacing need not also reason about device
@@ -206,20 +211,20 @@ CPU, CUDA, and external providers
 
 The diagram starts with the mathematical format, specializes it to binary32 precision, and then
 connects that model to bit patterns and runtime providers. Each connection needs an agreement
-statement; placing two representations next to each other does not establish one.
+statement: placing two representations next to each other doesn't establish one.
 
-The integer printed after each evaluation is the stored word, not the represented numerical value.
+After each evaluation the printed integer is the stored word, not the represented numerical value.
 For example, `1073741824` is the binary32 encoding of two. Comparing words makes the experiment
-independent of how many decimal digits a pretty printer chooses. The examples also show why an
+independent of how many decimal digits a pretty printer chooses. These examples also show why an
 informal statement such as “small terms disappear next to large terms” is incomplete. Whether a
-term survives depends on the spacing on that side of the large value and, at a midpoint, on the
-tie rule. Changing one to two or to one half probes those separate decisions.
+term survives depends on the spacing on that side of the large value and, at a midpoint, on the tie
+rule. Changing one to two or to one half probes those separate decisions.
 
 This matters when translating a mathematical formula into tensor code. Parentheses select which
 partial result is rounded first. A compiler or parallel reducer that changes the association may
-still evaluate the same real polynomial while producing a different bit pattern. The later
-reduction contracts therefore describe an evaluation schedule, or quantify over an allowed family
-of schedules, rather than treating associativity of real addition as a floating-point law.
+still evaluate the same real polynomial while producing a different bit pattern. So the later
+reduction contracts describe an evaluation schedule (or quantify over an allowed family of
+schedules) instead of treating associativity of real addition as a floating-point law.
 
 # Formats And Rounding
 %%%
@@ -227,17 +232,17 @@ tag := "TorchLean--Floating-Point-and-Native-Boundaries--Floating-Point-Semantic
         Flocq-And-FloatLib___s-Generic-Theory"
 %%%
 
-A format tells us which real numbers are available. A rounding rule chooses one of those numbers.
-The same binary32 format can round downward, upward, toward zero, or to nearest-even. Conversely,
-the same nearest-even idea can be used with binary16, binary32, a fixed-point grid, or an
-experimental low-precision format. Once those choices are separated, theorems about monotonicity,
-exactness, neighboring values, and ULP error can be reused.
+A format tells us which real numbers are available, and a rounding rule chooses one of those
+numbers. The same binary32 format can round downward, upward, toward zero, or to nearest-even.
+Conversely, the same nearest-even idea can be used with binary16, binary32, a fixed-point grid, or
+an experimental low-precision format. Once those choices are separated, theorems about
+monotonicity, exactness, neighboring values, and ULP error can be reused.
 
 FloatLib's definitions and proofs are written in Lean. Its `Formats.Flocq` namespace contains the
-generic theory; its executable format families connect concrete encodings to reference semantics.
-TorchLean adds tensor semantics, graph-level error propagation, and verification interfaces. A
-theorem about scalar rounding therefore belongs to the imported numerical library, while a theorem
-carrying that error through a backward graph belongs to TorchLean.
+generic theory, and its executable format families connect concrete encodings to reference
+semantics. TorchLean adds tensor semantics, graph-level error propagation, and verification
+interfaces. So a theorem about scalar rounding belongs to the imported numerical library, while a
+theorem carrying that error through a backward graph belongs to TorchLean.
 
 The namespace retains the name of
 [Flocq](https://flocq.gitlabpages.inria.fr/), the Rocq (formerly Coq) library by Sylvie Boldo,
@@ -275,9 +280,9 @@ its literature and FloatLib's Lean source, the corresponding names are:
   * `round`
 :::
 
-The names in the last column live in `FloatLib.Floats.Formats.Flocq`. The arithmetic theory applies
-independently of a neural network; tensor and model proofs choose its radix, exponent policy, and
-rounding rule as parameters.
+FloatLib's names in the last column live in `FloatLib.Floats.Formats.Flocq`. That arithmetic theory
+applies independently of a neural network: tensor and model proofs choose its radix, exponent
+policy, and rounding rule as parameters.
 
 # Mantissas And Exponents
 
@@ -317,8 +322,8 @@ example : toReal threeQuarters = 3 / 4 := by
     Radix.toReal, threeQuarters]
 ```
 
-There is intentionally no field saying “24 bits of precision.” The pair $`(3,-2)` and the pair
-$`(6,-3)` denote the same real number, and that is a proof rather than a remark:
+There's intentionally no field saying “24 bits of precision.” Two different pairs, $`(3,-2)` and
+$`(6,-3)`, denote the same real number, and Lean proves it:
 
 ```lean
 -- A second pair can denote the same real value without
@@ -333,28 +338,28 @@ example :
     Radix.toReal, threeQuarters, sixEighths]
 ```
 
-A raw mantissa/exponent pair is therefore a representation, not yet a machine format. Keeping it
-general lets later proofs normalize representations and reuse the same carrier at different
-precisions.
+So a raw mantissa/exponent pair is a representation, and on its own it isn't a machine format.
+Keeping it general lets later proofs normalize representations and reuse the same carrier at
+different precisions.
 
-A format is added as a predicate on the real value. Its parameter `fexp` chooses the exponent used
-to test representability. Informally,
+A format is added as a predicate on the real value, and its parameter `fexp` chooses the exponent
+at which representability is tested. Informally,
 
 $$`\operatorname{genericFormat}(\beta,f_{\rm exp},x)`
 
 means that after scaling $`x` by the exponent selected by `fexp`, the resulting mantissa is an
-integer. The exponent policy is where precision and underflow enter.
+integer. Precision and underflow enter through the exponent policy.
 
-The two representations of three quarters separate equality of data from equality of meaning.
+Our two representations of three quarters separate equality of data from equality of meaning.
 Multiplying the mantissa by two and reducing the exponent by one leaves the represented real value
-unchanged. A theorem about `toReal` can use that equality without claiming that the two
-records are structurally equal. This is why a raw mantissa/exponent pair alone is insufficient to
-specify a format: the format must say which real values are representable at each magnitude, and
-rounding must select one of those values.
+unchanged. A theorem about `toReal` can use that equality without claiming that the two records are
+structurally equal. That's why a raw mantissa/exponent pair alone isn't enough to specify a format:
+the format must say which real values are representable at each magnitude, and rounding must select
+one of those values.
 
 # Formats As Exponent Policies
 
-The central format parameter is an exponent function
+A format's central parameter is an exponent function
 
 $$`f_{\mathrm{exp}}:\mathbb Z\to\mathbb Z`.
 
@@ -372,21 +377,21 @@ Three standard policies explain most uses:
   values receive `prec` digits, while values near zero stay on the fixed subnormal grid
   $`\beta^{e_{\min}}`.
 
-Precision must be positive. The raw integer formulas remain useful inside symbolic theorem
-statements, where positivity is carried as a hypothesis. Code reading a format configuration uses
-`FormatPrecision.ofNat?` or `FormatPrecision.ofInt?`; the checked value supplies valid
-FLX, FLT, and FTZ exponent selectors. Thus zero and negative inputs are rejected instead of being
-silently reinterpreted through an absolute value.
+Precision must be positive. Inside symbolic theorem statements, where positivity is carried as a
+hypothesis, the raw integer formulas remain useful. Code that reads a format configuration uses
+`FormatPrecision.ofNat?` or `FormatPrecision.ofInt?`, and the checked value supplies valid FLX,
+FLT, and FTZ exponent selectors. So zero and negative inputs are rejected instead of being silently
+reinterpreted through an absolute value.
 
-It helps to see this on a toy system. Take radix two, precision three, and minimum exponent $`-4`.
+It helps to see this on a toy system with radix two, precision three, and minimum exponent $`-4`.
 Between $`1` and $`2`, three-bit numbers are spaced by $`1/4`:
 
 $$`1,\quad 1.25,\quad 1.5,\quad 1.75,\quad 2`.
 
 Near zero, `fltExp (-4) 3` stops decreasing the exponent, so the spacing becomes the constant
-subnormal step $`2^{-4}=1/16`. `flxExp 3` would continue creating smaller normal scales forever;
-`fixExp (-4)` would use the $`1/16` grid everywhere. These three policies are not unrelated format
-implementations. They are three choices for the same exponent function interface.
+subnormal step $`2^{-4}=1/16`. `flxExp 3` would continue creating smaller normal scales forever,
+while `fixExp (-4)` would use the $`1/16` grid everywhere. These three policies aren't unrelated
+format implementations. They're three choices for the same exponent function interface.
 
 These policies are ordinary integer functions. At magnitude $`1`, the gradual format chooses
 exponent $`-2`, giving the $`1/4` spacing of the example above:
@@ -400,7 +405,7 @@ exponent $`-2`, giving the $`1/4` spacing of the example above:
 -2
 ```
 
-At magnitude $`-2` it has already reached the floor and returns `emin` rather than `-5`:
+At magnitude $`-2` the gradual format has already reached the floor and returns `emin`, not `-5`:
 
 ```lean (name := fltClamped)
 -- Near zero the minimum exponent prevents the spacing from
@@ -432,8 +437,8 @@ and `fixExp` ignores the magnitude altogether:
 -4
 ```
 
-Binary32 uses radix two, precision 24, and the least subnormal exponent $`-149`. The corresponding
-exponent policy is visible in the checked definition:
+Binary32 uses radix two, precision 24, and the least subnormal exponent $`-149`. Its exponent
+policy is visible in the checked definition:
 
 ```lean
 -- The format descriptor selects the precision and
@@ -443,12 +448,11 @@ example :
   rfl
 ```
 
-The choice $`-149` is not the minimum *normal* exponent. Binary32 normal numbers begin at
+The choice $`-149` isn't the minimum *normal* exponent. Binary32 normal numbers begin at
 $`2^{-126}`, but the 23 fraction bits extend the gradual-underflow grid down to $`2^{-149}`.
-Encoding that fact in
-`fltExp` is what allows the same representability predicate to cover normal and subnormal finite
-values. Three evaluations show the transition. Well inside the normal range the mantissa scale
-tracks the magnitude:
+Encoding that fact in `fltExp` is what allows the same representability predicate to cover normal
+and subnormal finite values. Three evaluations show the transition. Well inside the normal range
+the mantissa scale tracks the magnitude:
 
 ```lean (name := fexp32Normal)
 -- A large magnitude selects a coarser grid.
@@ -479,31 +483,29 @@ At magnitude $`-149` the subnormal floor fixes the grid:
 -149
 ```
 
-The benefit of the generic definition is visible in theorem statements. Monotonicity of rounding,
-the half-ULP nearest-rounding bound, and fixed-grid exactness do not need separate proofs for every
+You can see the benefit of the generic definition in theorem statements. Monotonicity of rounding,
+the half-ULP nearest-rounding bound, and fixed-grid exactness don't need separate proofs for every
 precision. A binary32 theorem specializes the generic result by supplying `binaryRadix`,
-`Model.fexpOf FloatFormat.binary32`,
-and nearest-even rounding.
+`Model.fexpOf FloatFormat.binary32`, and nearest-even rounding.
 
-The arguments to the exponent policy are magnitude exponents, not stored IEEE exponent fields.
-For example, the output `76` from `Model.fexpOf FloatFormat.binary32 100` means that values at
-that magnitude use grid spacing
-$`2^{76}`. The outputs near the lower end show when the maximum in `fltExp` selects the fixed
-floor instead of magnitude minus precision. No special-value encoding is involved in these
-calculations. They describe a real-valued grid that can later be related to the finite encodings
-of a bit-level format.
+Exponent-policy arguments are magnitude exponents, not stored IEEE exponent fields. For example,
+the output `76` from `Model.fexpOf FloatFormat.binary32 100` means that values at that magnitude
+use grid spacing $`2^{76}`. The outputs near the lower end show when the maximum in `fltExp`
+selects the fixed floor instead of magnitude minus precision. These calculations involve no
+special-value encoding. They describe a real-valued grid that can later be related to the finite
+encodings of a bit-level format.
 
 Precision and exponent validity also play different roles. A positive precision gives the intended
 number of significant radix digits. The `ValidExp` laws justify how the grid behaves when a
 rounding step moves a value across a magnitude boundary. Supplying an arbitrary function of the
 right type is enough to write an expression, but the generic rounding theorems require those laws.
-The format constructors provide them for the supported policies.
+For the supported policies, the format constructors provide them.
 
 # Rounding Rules
 
-A format determines the available real values; a rounding rule selects one to replace an exact
-input. The same binary format supports rounding toward negative infinity, toward positive
-infinity, toward zero, and to nearest with ties to even.
+A format determines the available real values, and a rounding rule selects one to replace an exact
+input. A single binary format supports rounding toward negative infinity, toward positive infinity,
+toward zero, and to nearest with ties to even.
 
 FloatLib expresses that rounding operation as
 
@@ -511,13 +513,12 @@ $$`\operatorname{round}_{\beta,f,r}(x)
    = \beta^{e}\,r(x\beta^{-e}),
    \qquad e=f(\operatorname{mag}_{\beta}(x))`,
 
-Here $`\beta` is the radix, $`f` is the exponent policy, and
+In this formula, $`\beta` is the radix, $`f` is the exponent policy, and
 $`\operatorname{mag}_{\beta}(x)` supplies the input's magnitude. Multiplying by $`\beta^{-e}`
-expresses the input in units of the selected grid spacing. The function
-$`r:\mathbb R\to\mathbb Z` rounds that scaled mantissa to an integer, and multiplication by
-$`\beta^e` restores the scale. The type class
-`ValidRnd r` records the order properties required of that integer rounder.
-`RoundingMode` packages the standard choices used by APIs.
+expresses the input in units of the selected grid spacing. Then $`r:\mathbb R\to\mathbb Z` rounds
+that scaled mantissa to an integer, and multiplication by $`\beta^e` restores the scale.
+`ValidRnd r` is the type class that records the order properties required of that integer rounder,
+and `RoundingMode` packages the standard choices used by APIs.
 
 Return to the toy three-bit format and round $`1.375`. Its canonical exponent in this binade is
 $`-2`, so the scaled mantissa is
@@ -526,39 +527,40 @@ $$`1.375\cdot2^2=5.5`.
 
 Rounding downward chooses mantissa $`5`, giving $`1.25`. Rounding upward chooses $`6`, giving
 $`1.5`. Nearest-even also chooses $`6`, because the two candidates are equally distant and $`6` is
-even. The format selected the scale $`2^{-2}`; the rounding mode selected the integer mantissa.
+even. So the format selected the scale $`2^{-2}`, and the rounding mode selected the integer
+mantissa.
 
-The separation gives us reusable theorems:
+That separation gives us reusable theorems:
 
-- rounding a representable value leaves it unchanged;
-- every rounded value belongs to the format;
-- directed rounding returns the greatest representable value below, or least one above, the input;
-- nearest rounding has error at most half an ULP;
-- rounding is monotone;
-- an initial round-to-odd can prevent a later nearest-even double-rounding error.
+- rounding a representable value leaves it unchanged
+- every rounded value belongs to the format
+- directed rounding returns the greatest representable value below, or least one above, the input
+- nearest rounding has error at most half an ULP
+- rounding is monotone
+- an initial round-to-odd can prevent a later nearest-even double-rounding error
 
-The abstract definition lets a proof reason about rounding without choosing an algorithm for it.
-FloatLib's `Floats.Formats.Flocq.Calculation` modules connect that definition to calculations on
-mantissas and exponents. `Location` and `Inbetween` describe a value's position between
-neighbors. The rounding calculation uses this position to select a mantissa, then restores its
-power-of-radix scale. The theorem `round_nearestEven_computed` proves that this calculation agrees
-with abstract nearest-even rounding for the declared radix and exponent policy.
+Because the definition is abstract, a proof can reason about rounding without choosing an algorithm
+for it. FloatLib's `Floats.Formats.Flocq.Calculation` modules connect that definition to
+calculations on mantissas and exponents. `Location` and `Inbetween` describe a value's position
+between neighbors. The rounding calculation uses this position to select a mantissa, then restores
+its power-of-radix scale. `round_nearestEven_computed` proves that this calculation agrees with
+abstract nearest-even rounding for the declared radix and exponent policy.
 
-Calculations starting from an arbitrary Lean real remain noncomputable; executable bit-level
+Calculations starting from an arbitrary Lean real remain noncomputable, while executable bit-level
 arithmetic is supplied separately by configured `ExecFloat` values such as FloatLib binary32.
 
-The toy rounding calculation has one discrete step: rounding the scaled mantissa from
-`5.5` to an integer. Everything before and after that step is exact real scaling. Downward rounding
-chooses five, while upward and nearest-even rounding choose six, giving different points on the
-same grid. This separation makes the half-ULP argument reusable: a half-unit error on the integer
-grid becomes half a grid spacing after rescaling. Directed rounding uses a different integer
-inequality but the same representation machinery.
+Our toy rounding calculation has one discrete step: rounding the scaled mantissa from `5.5` to an
+integer. Everything before and after that step is exact real scaling. Downward rounding chooses
+five, while upward and nearest-even rounding choose six, giving different points on the same grid.
+That separation makes the half-ULP argument reusable: a half-unit error on the integer grid becomes
+half a grid spacing after rescaling. Directed rounding uses a different integer inequality but the
+same representation machinery.
 
 # `NF`: Arithmetic In A Declared Format
 
-The generic theorems above discuss individual real values and rounding functions. Neural-network
-proofs need an object on which `+`, `*`, division, activations, and reductions can be written
-without repeating all format parameters. That object is
+Those generic theorems discuss individual real values and rounding functions. Neural-network proofs
+need an object on which `+`, `*`, division, activations, and reductions can be written without
+repeating all format parameters. That object is
 
 ```
 -- The scalar type records the radix, exponent policy, and
@@ -573,8 +575,8 @@ grid. Schematically,
 $$`\operatorname{NF.add}(a,b)
   = \operatorname{round}_{\beta,f,r}(a_{\mathbb R}+b_{\mathbb R})`.
 
-Error proofs compare an ideal value with a rounded one. Storing the real projection directly lets
-them express the difference as
+Error proofs compare an ideal value with a rounded one, and storing the real projection lets them
+express the difference as
 
 $$`|\operatorname{NF.toReal}(\widehat x)-x|`
 
@@ -582,12 +584,12 @@ while the type fixes the format and rounding rule. `NF.ofReal` rounds a
 real into the format. The low-level constructor is available for approximation relations, so
 theorems that need a genuine grid value ask for `NF.IsRepresentable`.
 
-A stored real value and a representable real value should not be confused when reading an `NF`
-theorem. The type fixes the arithmetic operations, and those operations round their results, but
-claims that rely on an operand already lying on the grid must have the corresponding evidence or
-obtain it from how that operand was constructed. This distinction is useful for proofs that start
-with arbitrary real inputs: the first conversion can incur error even if every later operation is
-applied to representable values.
+When reading an `NF` theorem, don't confuse a stored real value with a representable real value.
+The type fixes the arithmetic operations, and those operations round their results. But claims that
+rely on an operand already lying on the grid must have the corresponding evidence or obtain it from
+how that operand was constructed. That distinction is useful for proofs that start with arbitrary
+real inputs: the first conversion can incur error even if every later operation is applied to
+representable values.
 
 # `FP32`: The Binary32-Precision Rounded-Real Specialization
 
@@ -601,22 +603,21 @@ example : FP32 =
       nearestEven := rfl
 ```
 
-Here `nearestEven` breaks ties toward an even significand. The abbreviation is transparent,
-so a proof can move between the two spellings without a coercion.
+Here `nearestEven` breaks ties toward an even significand. Because the abbreviation is transparent,
+a proof can move between the two spellings without a coercion.
 
-It is the right model for a theorem whose intended reading is
-"perform this real operation and round it at binary32 precision with gradual underflow." Its
-exponent policy has no upper cutoff, so it is not the finite set of IEEE bit patterns. The
-generic functions
-`Model.roundAt`, `Model.ulpAt`, and `Model.epsilonAt` expose the rounder, local spacing, and
-half-ULP scale over `ℝ`; each takes the chosen `FloatFormat` as its first argument.
+That specialization is the right model for a theorem whose intended reading is "perform this real
+operation and round it at binary32 precision with gradual underflow." Its exponent policy has no
+upper cutoff, so it isn't the finite set of IEEE bit patterns. The generic functions
+`Model.roundAt`, `Model.ulpAt`, and `Model.halfUlpAt` expose the rounder, local spacing, and
+half-ULP scale over `ℝ`, and each takes the chosen `FloatFormat` as its first argument.
 
 That separation is deliberate. `FP32` omits:
 
-- NaN and positive or negative infinity;
-- signed zero and NaN payloads;
-- overflow to infinity;
-- IEEE exception flags.
+- NaN and positive or negative infinity
+- signed zero and NaN payloads
+- overflow to infinity
+- IEEE exception flags
 
 That makes `FP32` the convenient layer for ordinary forward-error analysis. A theorem about a linear
 layer can compare the exact dot product with a sequence of rounded operations without splitting
@@ -625,31 +626,30 @@ level to FloatLib binary32.
 
 # Domain Hypotheses For Total Operations
 
-`NF` and `FP32` use Lean's total real operations internally. Real division by zero and square root
-or logarithm outside their usual analytical domains therefore do not produce IEEE exceptions, and
-the rounded-real format has no upper exponent bound that models overflow to infinity. These choices
-keep algebraic definitions total; they do not turn invalid-domain calculations into faithful IEEE
-executions.
+`NF` and `FP32` use Lean's total real operations internally. So real division by zero and square
+root or logarithm outside their usual analytical domains don't produce IEEE exceptions, and the
+rounded-real format has no upper exponent bound that models overflow to infinity. These choices
+keep algebraic definitions total, but they don't turn invalid-domain calculations into faithful
+IEEE executions.
 
 Accordingly, an IEEE correspondence theorem states finiteness, nonzero-denominator, domain, and
-no-overflow hypotheses where needed. At the bit level, `ExecFloat.Binary.toRat?` returns `none`
-for NaN
-and infinity. The model projection `Model.toReal` maps those encodings to zero and should be used
-only under a finiteness hypothesis; interval work that includes infinities uses the extended-real
-semantics instead.
+no-overflow hypotheses where needed. At the bit level, `ExecFloat.Binary.toRat?` returns `none` for
+NaN and infinity. The model projection `Model.toReal` maps those encodings to zero and should be
+used only under a finiteness hypothesis. Interval work that includes infinities uses the
+extended-real semantics instead.
 
 A total real function always returns a real value, including at arguments where an IEEE operation
-would signal an exception. Its derivative theorem still has to describe that chosen function.
-For example, an algebraic inverse or a guarded logarithm cannot acquire the derivative of an
-unguarded expression merely because both are written with familiar notation. Domain hypotheses
-identify where the ordinary analytic formula applies; outside that region, the declared extension
-or guard determines the function that must be analyzed.
+would signal an exception. Its derivative theorem still has to describe that chosen function. For
+example, an algebraic inverse or a guarded logarithm can't acquire the derivative of an unguarded
+expression merely because both are written with familiar notation. Domain hypotheses identify where
+the ordinary analytic formula applies, and outside that region the declared extension or guard
+determines the function that must be analyzed.
 
 # Choosing Executable Precision
 
 The generic `NF` model supports proofs over real values. For an executable scalar, FloatLib exposes
 `ExecFloat.Binary`, whose type parameters select the exponent width and stored fraction width.
-The normal significand has one additional, implicit bit:
+Normal significands have one additional, implicit bit:
 
 ```lean (name := widerFormats)
 -- Keep the same arithmetic interface and change the format.
@@ -664,16 +664,17 @@ abbrev ChapterCustom :=
   ExecFloat.Binary (exponentBits := 11) (fractionBits := 80)
 ```
 
-These are binary64's 53-bit precision and binary128's 113-bit precision. The type also carries
-format-validity proofs: at least two exponent bits, a positive fraction width, and a valid positive
-bias. The custom example keeps binary64's exponent width but stores 80 fraction bits, giving
-81-bit precision for normal values. Other valid widths use the same interface. Increasing the
-fraction width gives finer spacing; increasing the exponent width changes the range. Neither
-choice removes rounding or exceptional values, and wider arithmetic can cost more time and memory.
+The first two abbreviations give binary64's 53-bit precision and binary128's 113-bit precision.
+Each type also carries format-validity proofs: at least two exponent bits, a positive fraction
+width, and a valid positive bias. Our custom example keeps binary64's exponent width but stores 80
+fraction bits, giving 81-bit precision for normal values. Other valid widths use the same
+interface. Increasing the fraction width gives finer spacing, while increasing the exponent width
+changes the range. Neither choice removes rounding or exceptional values, and wider arithmetic can
+cost more time and memory.
 
-Consider $`1+2^{-100}`. At one, binary64's next larger value is $`1+2^{-52}`, so adding
-$`2^{-100}` rounds back to one. Binary128 can retain the increment. We construct $`2^{-100}` by
-dividing by the exact integer $`2^{100}`; no native `Float` occurs on the input path:
+Consider $`1+2^{-100}`. At one, binary64's next larger value is $`1+2^{-52}`, so adding $`2^{-100}`
+rounds back to one. Binary128 can retain the increment. We construct $`2^{-100}` by dividing by the
+exact integer $`2^{100}`, so no native `Float` occurs on the input path:
 
 ```lean
 def narrowIncrement : ChapterBinary64 :=
@@ -704,7 +705,7 @@ or radix-two input into the selected destination format. Tensor inputs and model
 the same care:
 choosing a wide element type cannot recover information discarded by an earlier conversion.
 
-The executable addition has a refinement theorem for all inputs at the selected type:
+Executable addition has a refinement theorem for all inputs at the selected type:
 
 ```lean
 example (a b : ChapterBinary128) :
@@ -712,37 +713,36 @@ example (a b : ChapterBinary128) :
   ExecFloat.Proof.add_eq_spec a b
 ```
 
-This equality identifies the operation's reference semantics, including special values. A bound
-on distance from real addition additionally needs the relevant finite-path hypotheses and the
-format's error theorem. A wider format also does not establish the accuracy of an elementary
+The refinement equality identifies the operation's reference semantics, including special values.
+But a bound on distance from real addition also needs the relevant finite-path hypotheses and the
+format's error theorem. A wider format also doesn't establish the accuracy of an elementary
 function approximation. Configured transcendental functions are an explicit opt-in import,
 `FloatLib.Floats.Formats.BinaryInterchange.Configured.Transcendentals`.
 
-TorchLean's `NN.API.Precision` connects configured scalars to typed CPU tensors and model graphs.
-That path retains the selected type through parameters, forward values, and JVPs or VJPs.
-`nn.sgdStep` also accepts a learning rate and state gradient in that type, allowing an explicit
-SGD loop for models without buffer-update hooks. Frozen state remains unchanged; a model that
-needs running-statistics updates, such as BatchNorm, is rejected by this entrypoint.
-The tensor chapter constructs typed state directly. A supervised loop can use the same state with
+`TorchLean.NN.Sequential.Execution` connects configured scalars to typed CPU tensors and model
+graphs. That path retains the selected type through parameters, forward values, and JVPs or VJPs.
+`nn.sgdStep` also accepts a learning rate and state gradient in that type, allowing an explicit SGD
+loop for models without buffer-update hooks. Frozen state remains unchanged, while a model that
+needs running-statistics updates (such as BatchNorm) is rejected by this entrypoint. The tensor
+chapter constructs typed state directly. A supervised loop can use the same state with
 `trainer.openTyped (α := α) (initialState? := some state)`. That CPU session retains `α` through
 samples, predictions, losses, and exact model-state checkpoints. Its finished result captures a
-snapshot independent of later session updates. The
-{ref "training-from-scratch"}[training chapter] checks one such update against an exact rational.
-Seeded initialization still begins with stored `Float` values when no typed state is supplied;
-optimizer and scheduler settings also begin as `Float`. Use `nn.sgdStep` when the update coefficient
-itself needs the selected precision.
+snapshot independent of later session updates. The {ref "training-from-scratch"}[training chapter]
+checks one such update against an exact rational. Seeded initialization still begins with stored
+`Float` values when no typed state is supplied, and optimizer and scheduler settings also begin as
+`Float`. Use `nn.sgdStep` when the update coefficient itself needs the selected precision.
 
 # Encodings And Exceptional Values
 
-FloatLib's `ofBits32` and `toBits32` preserve the raw `UInt32` encoding of a binary32 value.
-Its classifiers distinguish zero, subnormal, normal, infinite, and NaN values. Core arithmetic uses
+FloatLib's `ofBits32` and `toBits32` preserve the raw `UInt32` encoding of a binary32 value. Its
+classifiers distinguish zero, subnormal, normal, infinite, and NaN values. Core arithmetic uses
 integer and dyadic calculations, so it can be evaluated without delegating the operation to the
-host's floating-point instruction. The format parameters fix the encoding, range, and spacing;
-the operation's rounding mode fixes how an exact intermediate lands on that grid.
+host's floating-point instruction. The format parameters fix the encoding, range, and spacing,
+while the operation's rounding mode fixes how an exact intermediate lands on that grid.
 
-At $`1`, one ULP is $`2^{-23}` and half an ULP is $`2^{-24}`. Here are three increments, a quarter
-of a unit in the last place, half a unit, and a full unit, added to the `unit` defined at the top of
-the chapter:
+At $`1`, one ULP is $`2^{-23}` and half an ULP is $`2^{-24}`. Here are three increments (a quarter
+of a unit in the last place, half a unit, and a full unit) added to the `unit` defined at the top
+of the chapter:
 
 ```lean
 -- Choose increments below, at, and above the nearest-even
@@ -788,20 +788,20 @@ Only the third advances the result to the next representable value, `0x3f800001`
 1065353217
 ```
 
-The first two results have the same bits as `unit`: the increment is absorbed even though it is
-positive. The full-ULP increment changes the result. This depends on the operand's local spacing;
-it is not a universal smallest meaningful increment.
+In the first two results the bits match `unit`: the increment is absorbed even though it's
+positive. The full-ULP increment changes the result. This depends on the operand's local spacing,
+so it isn't a universal smallest meaningful increment.
 
 In an accumulation, absorption means a new term leaves the accumulator unchanged. Repeating this
 can lose many small contributions even though each addition is correctly rounded, as happened to
 the unit increment in the opening example.
 
-The value-only operations have status-bearing variants. FloatLib's configured
-`ExecFloat.Binary.IEEEOutcome` contains the result `value`, its exception `status`, and a
-`ternary` comparison with the exact result. The status records invalid, divide-by-zero, overflow,
-underflow, and inexact flags. These calls default to nearest-even rounding. Underflow follows
-the documented tininess-after-rounding policy and is raised
-only for an inexact tiny result. We project the result's `UInt32` encoding for display:
+Value-only operations have status-bearing variants. FloatLib's configured
+`ExecFloat.Binary.IEEEOutcome` contains the result `value`, its exception `status`, and a `ternary`
+comparison with the exact result. That status records invalid, divide-by-zero, overflow, underflow,
+and inexact flags. These calls default to nearest-even rounding. Underflow follows the documented
+tininess-after-rounding policy and is raised only for an inexact tiny result. We project the
+result's `UInt32` encoding for display:
 
 For $`1` divided by $`+0`, the IEEE rule returns positive infinity and raises the divide-by-zero
 flag:
@@ -816,12 +816,10 @@ flag:
   (ExecFloat.Binary.toBits32 result.value, result.status)
 ```
 ```leanOutput divByZero (whitespace := lax)
-(2139095040,
- { invalid := false, divideByZero := true,
-   overflow := false, underflow := false, inexact := false })
+(2139095040, { divideByZero := true })
 ```
 
-For $`0` divided by $`+0`, it returns the canonical NaN and raises `invalid`:
+For $`0` divided by $`+0`, the rule returns the canonical NaN and raises `invalid`:
 
 ```lean (name := zeroByZero)
 -- Zero divided by zero instead takes the invalid-operation
@@ -833,32 +831,38 @@ For $`0` divided by $`+0`, it returns the canonical NaN and raises `invalid`:
   (ExecFloat.Binary.toBits32 result.value, result.status)
 ```
 ```leanOutput zeroByZero (whitespace := lax)
-(2143289344,
- { invalid := true, divideByZero := false,
-   overflow := false, underflow := false, inexact := false })
+(2143289344, { invalid := true })
 ```
 
-`2139095040` is `0x7f800000`, positive infinity, and `2143289344` is `0x7fc00000`, the canonical
-quiet NaN. Both statuses are derived from the same exact dyadic or rational intermediate used by the
-arithmetic operation; no host floating-point instruction is called to guess the flag.
+`2139095040` is `0x7f800000` (positive infinity), and `2143289344` is `0x7fc00000` (the canonical
+quiet NaN). Both statuses are derived from the same exact dyadic or rational intermediate used by
+the arithmetic operation, and no host floating-point instruction is called to guess the flag.
 
-Transcendentals have a different status from basic arithmetic because IEEE 754 does not prescribe
+Transcendentals have a different status from basic arithmetic because IEEE 754 doesn't prescribe
 one correctly rounded bit pattern for every elementary function. FloatLib supplies explicit
-approximation kernels; the runtime chapter explains how a concrete `libm`,
-`libdevice`, or LibTorch implementation can be related to them.
+approximation kernels, and for IEEE formats correctly rounded `exp`, `log`, `expMinus1`, `logPlus1`
+and `expMul`, which TorchLean's configured `Context` uses. TorchLean adds correctly rounded `atan`,
+`asin`, `acos` and `atan2` for IEEE formats
+({src "TorchLean/Tensor/ConfiguredBinary/InverseTrigonometric.lean"}[the inverse
+trigonometric functions]): exact comparisons with rational boundaries decide the rounding, with no
+floating-point approximation, and the special values follow C99 Annex F. They form the
+`InverseTrig` capability of every configured format. `InverseTrigonometric.toReal_atan` and its
+companions prove the rounding at finite inputs in the domain. `roundoff` has no numerical rule for
+these functions, so `#roundoff_coverage` records their routes as unsupported. The rounding theorems
+cover these Lean definitions, not a native `libm`, `libdevice`, or LibTorch implementation.
 
-Determinism fixes which answer an algorithm returns. A numerical accuracy claim additionally
-needs a range-specific error or interval contract for that function. The executable transcendental
-kernels have explicit special-value behavior, but the small Taylor bounds in the rules library do
-not by themselves certify every executable `sin`, `cos`, or `tanh` input.
+Determinism fixes which answer an algorithm returns. A numerical accuracy claim also needs a
+range-specific error or interval contract for that function. The executable transcendental kernels
+have explicit special-value behavior, but the small Taylor bounds in the rules library don't by
+themselves certify every executable `sin`, `cos`, or `tanh` input.
 
 # Lean `Float32`
 
 Lean gives core `Float32` operations a kernel-visible semantics through `Float32.Model`. The model
 defines bit conversion, classification, comparison, addition, subtraction, multiplication,
 division, negation, absolute value, and square root. Compiled programs may replace these logical
-definitions with native instructions through `@[extern]`; native conformance is recorded separately
-for each runtime provider.
+definitions with native instructions through `@[extern]`, and native conformance is recorded
+separately for each runtime provider.
 
 FloatLib supplies both the configured software arithmetic and its connections to Lean's model.
 Use its native adapters directly. Importing a native value and exporting it again recovers the
@@ -872,10 +876,10 @@ example (a : Float32) :
   ExecFloat.Binary.toFloat32_ofFloat32 a
 ```
 
-This theorem ranges over every native value: finite numbers, both signed zeros, infinities, and
-Lean's canonical NaN. In the opposite direction, a configured word may carry a NaN payload that
-Lean does not retain. Export followed by import canonicalizes that NaN; it leaves finite bits and
-zero signs unchanged.
+The round-trip theorem ranges over every native value: finite numbers, both signed zeros,
+infinities, and Lean's canonical NaN. In the opposite direction, a configured word may carry a NaN
+payload that Lean doesn't retain. Export followed by import canonicalizes that NaN but leaves
+finite bits and zero signs unchanged.
 
 Addition has a different domain from the round trip. Both operands must be finite:
 
@@ -888,10 +892,10 @@ example (a b : Float32)
   ExecFloat.Binary.ofFloat32_add_of_isFinite a b ha hb
 ```
 
-The finite inputs include signed zeros and subnormals. The result has no finiteness premise:
-cancellation, rounding, underflow, and overflow to infinity are all included.
-`ExecFloat.Binary.ofFloat32_sub_of_isFinite` gives the corresponding subtraction theorem.
-Neither statement asserts agreement for an addition or subtraction with a NaN or infinite input.
+In the addition theorem, the finite inputs include signed zeros and subnormals. The result has no
+finiteness premise: cancellation, rounding, underflow, and overflow to infinity are all included.
+`ExecFloat.Binary.ofFloat32_sub_of_isFinite` gives the corresponding subtraction theorem. Neither
+statement asserts agreement for an addition or subtraction with a NaN or infinite input.
 
 Square root does cover every configured binary32 word, with native export on both sides:
 
@@ -903,9 +907,10 @@ example (x : ExecFloat.Binary 8 23) :
 ```
 
 Negative inputs, signed zeros, infinities, and NaNs are included. Export selects Lean's canonical
-NaN representation, so this equality does not preserve arbitrary NaN payloads. Canonicalization is
-a representation change, not a second rounding of finite results. FloatLib exposes the same
-round-trip, finite-add/sub, and square-root interfaces for binary64 through `ofFloat` and `toFloat`.
+NaN representation, so this equality doesn't preserve arbitrary NaN payloads. Canonicalization is a
+representation change, not a second rounding of finite results. FloatLib exposes the same
+round-trip, finite-add/sub, and square-root interfaces for binary64 through `ofFloat` and
+`toFloat`.
 
 The absorption example gives a concrete use of the bridge. Compute the same addition with
 `Float32`, then inspect the result and its bit pattern:
@@ -950,7 +955,7 @@ Exceptional values also have logical native encodings. Division by zero in this 
 an infinity:
 
 ```lean (name := hostInf)
--- Finiteness is an explicit observation; real decoding
+-- Finiteness is an explicit observation: real decoding
 -- alone cannot establish it.
 #eval Float32.isFinite (hostOne / 0)
 ```
@@ -992,19 +997,19 @@ Float32.Model operation
 ```
 
 Lean defines the first equality. FloatLib proves operation-specific forms of the second between
-pure Lean algorithms. Its square-root theorem accounts for NaNs through canonicalization; its
+pure Lean algorithms. Its square-root theorem accounts for NaNs through canonicalization, while its
 native addition and subtraction theorems require finite inputs. A theorem refining configured
-division to `Model.div` has a different scope: it does not identify arbitrary native
-`Float32` division with that operation.
+division to `Model.div` has a different scope: it doesn't identify arbitrary native `Float32`
+division with that operation.
 
 Integer conversion has its own policy. FloatLib's constructor proofs round arbitrary `Nat` and
-`Int` inputs directly, without first converting them through a narrower native format. In the
-other direction, native signed-integer casts truncate toward zero and then saturate to the target
-range; NaN maps to zero and infinities to the corresponding endpoint. Checked scalar conversion
-can instead report exceptional or out-of-range inputs. Agreement with a checked conversion needs
-its range hypotheses. None of these logical cast theorems asserts hardware exception flags.
+`Int` inputs without first converting them through a narrower native format. In the other
+direction, native signed-integer casts truncate toward zero and then saturate to the target range
+(NaN maps to zero and infinities to the corresponding endpoint). Checked scalar conversion can
+instead report exceptional or out-of-range inputs. Agreement with a checked conversion needs its
+range hypotheses. None of these logical cast theorems asserts hardware exception flags.
 
-The resulting interfaces expose several different claims:
+Together, these interfaces expose several different claims:
 
 :::table +header
 *
@@ -1018,7 +1023,7 @@ The resulting interfaces expose several different claims:
   * Proved for every native logical value.
 *
   * Native and configured addition/subtraction agree.
-  * Proved for finite operands; the result may overflow.
+  * Proved for finite operands (the result may overflow).
 *
   * Configured square root commutes with native export.
   * Proved for every input word, with NaNs canonicalized at export.
@@ -1034,21 +1039,21 @@ To transfer an error, interval, or reduction result to a native logical expressi
 the matching operation theorem and discharge its hypotheses. Runtime execution separately uses
 the contract attached to its selected provider.
 
-Real decoding deliberately forgets some observations available at the bit level. Both signed
-zeros denote the real number zero, and a NaN has no real value to decode faithfully. Consequently,
-a real-valued equality cannot by itself establish equality of zero signs or NaN payloads. The
-host addition example prints both the displayed value and its bits to show which observation is
-being compared. Canonicalization at native export is relevant precisely when raw NaN
-encodings would otherwise distinguish the two sides.
+Real decoding deliberately forgets some observations available at the bit level. Both signed zeros
+denote the real number zero, and a NaN has no real value to decode faithfully. So a real-valued
+equality can't by itself establish equality of zero signs or NaN payloads. Our host addition
+example prints both the displayed value and its bits to show which observation is being compared.
+Canonicalization at native export is relevant precisely when raw NaN encodings would otherwise
+distinguish the two sides.
 
-This also explains the importance of the finiteness check before using a real bridge. A total
-fallback used by a decoding function makes it convenient to state expressions over all bit
-patterns, but the fallback is not a real interpretation of infinity or NaN. The theorem's finite
-hypotheses ensure that its real arithmetic is being applied to genuine decoded values.
+That's also why the finiteness check matters before using a real bridge. A total fallback used by a
+decoding function makes it convenient to state expressions over all bit patterns, but the fallback
+isn't a real interpretation of infinity or NaN. The theorem's finite hypotheses ensure that its
+real arithmetic is being applied to genuine decoded values.
 
 # Addition Across Numerical Models
 
-The addition above has four useful interpretations.
+There are four useful interpretations of the addition above.
 
 First, the ideal real expression is
 
@@ -1067,14 +1072,11 @@ $$`\operatorname{toReal}
   = \operatorname{round}_{32}
     (\operatorname{toReal}(a)+\operatorname{toReal}(b))`,
 
-under the theorem's finite-path and result hypotheses. The ULP bridge identifies the exponent
-returned by executable `ulpExp?` with `Model.ulpAt FloatFormat.binary32` in the rounded-real
-model. The absorption theorem then
-states that a successful finite executable absorption check implies the corresponding
-`Model.roundAt FloatFormat.binary32`
-addition leaves the left operand unchanged.
+under the theorem's finite-path and result hypotheses. The absorption theorem states that when a
+finite executable sum equals its left operand, the corresponding
+`Model.roundAt FloatFormat.binary32` addition leaves that operand unchanged.
 
-The representations line up as follows:
+Here's how the representations line up:
 
 ```
 -- Each arrow requires the corresponding rounding or
@@ -1087,8 +1089,8 @@ exact real expression
   -> Lean CPU runtime or LibTorch CUDA execution
 ```
 
-The mathematical layers and both bit-level models are Lean definitions. The last arrow is supplied
-by a native backend contract and its validation evidence.
+In the diagram, the mathematical layers and both bit-level models are Lean definitions, while the
+last arrow is supplied by a native backend contract and its validation evidence.
 
 # Exact Subtraction And Sterbenz's Lemma
 
@@ -1098,28 +1100,27 @@ representable $`x` and $`y` are within a factor of two,
 $$`\frac{y}{2}\leq x\leq 2y`,
 
 then $`x-y` is representable in the same format. FloatLib first proves the fixed-grid and
-unbounded-exponent results, then extends the argument to the gradual-underflow `FLT` format. The
-extension matters near zero: a proof only about normal values would miss subtraction across the
-normal/subnormal boundary.
+unbounded-exponent results, then extends the argument to the gradual-underflow `FLT` format, and
+that extension matters near zero (a proof only about normal values would miss subtraction across
+the normal/subnormal boundary).
 
 FloatLib's `Model.roundAt_sub_eq_of_sterbenz fmt` applies to the rounded-real grid of any format.
-FloatLib's `Model.toReal_sub_eq_of_sterbenz` goes further: for an IEEE format, finite bit patterns
-are decoded, proved representable on that format's grid, passed through the rounded-real Sterbenz
-theorem, and related back to executable subtraction. The theorem derives result finiteness from
-the operand hypotheses.
+`Model.toReal_sub_eq_of_sterbenz` goes further: for an IEEE format, bit patterns with positive
+values are decoded, proved representable on that format's grid, passed through the rounded-real
+Sterbenz theorem, and related back to executable subtraction. That executable theorem derives
+result finiteness from the operand hypotheses.
 
-Restating the executable theorem is the clearest way to see what it costs to use. The hypotheses are
-positivity, the factor-of-two bounds, and finiteness. The first part of the proof unfolds the
-certified subtraction to its model operation. FloatLib's Sterbenz theorem then supplies the exact
-real equality; `rfl` checks that the binary32 descriptor is an IEEE format:
+Restating the executable theorem is the clearest way to see what it costs to use. Its hypotheses
+are positivity and the factor-of-two bounds (a positive value is already finite, so no finiteness
+hypothesis is needed). First, the proof unfolds the certified subtraction to its model operation.
+Then FloatLib's Sterbenz theorem supplies the exact real equality, and `rfl` checks that the
+binary32 descriptor is an IEEE format:
 
 ```lean (name := sterbenzProof)
 -- The factor-of-two condition makes this finite subtraction
 -- exact by Sterbenz.
 open FloatLib.Floats.Formats.BinaryInterchange in
 example (x y : ExecFloat.Binary 8 23)
-    (hx : ExecFloat.Binary.isFinite x = true)
-    (hy : ExecFloat.Binary.isFinite y = true)
     (hxpos : 0 < Model.toReal (ExecFloat.Binary.toModel x))
     (hypos : 0 < Model.toReal (ExecFloat.Binary.toModel y))
     (hxy : Model.toReal (ExecFloat.Binary.toModel x) ≤
@@ -1140,12 +1141,12 @@ example (x y : ExecFloat.Binary 8 23)
         (ExecFloat.Binary.toModel y))
   rw [hsub]
   exact Model.toReal_sub_eq_of_sterbenz
-    (by rfl) hx hy hxpos hypos hxy hyx
+    (by rfl) hxpos hypos hxy hyx
 ```
 
 Under those hypotheses, subtracting two bit patterns and decoding the result gives the exact real
-difference. Running it on $`3-2`, using the
-`two` from the opening calculation, shows the inexact flag staying clear:
+difference. Running that subtraction on $`3-2` (with the `two` from the opening calculation) shows
+the inexact flag staying clear:
 
 ```lean
 -- Three and two satisfy the positive, nearby-operand
@@ -1162,14 +1163,12 @@ def three : ChapterBinary32 :=
   (ExecFloat.Binary.toBits32 result.value, result.status)
 ```
 ```leanOutput sterbenzEval (whitespace := lax)
-(1065353216,
- { invalid := false, divideByZero := false,
-   overflow := false, underflow := false, inexact := false })
+(1065353216, {})
 ```
 
-The absorption contract has the same shape. It turns the decided equality of two configured
-values into a statement about `Model.roundAt FloatFormat.binary32` over the reals, which is the
-form an error analysis wants:
+Our absorption contract has the same shape. It turns the decided equality of two configured values
+into a statement about `Model.roundAt FloatFormat.binary32` over the reals, which is the form an
+error analysis wants:
 
 ```lean (name := absorptionProof)
 -- A finite observed absorbed addition connects
@@ -1181,66 +1180,66 @@ example {a b : ExecFloat.Binary 8 23}
       (Model.toReal (ExecFloat.Binary.toModel a) +
         Model.toReal (ExecFloat.Binary.toModel b)) =
       Model.toReal (ExecFloat.Binary.toModel a) :=
-  IEEE754.IEEE32Exec.round_add_eq_left_of_absorbs
-    hfin habs
+  (IEEE754.round_add_eq_left_of_absorbs
+    hfin habs :)
 ```
 
-FloatLib's `Formats.BinaryInterchange.Analysis.Sterbenz` supplies both the rounded-real
-and executable model theorems above.
-The executable proof uses FloatLib's subtraction specification and codec round trip directly. The
-{src "NN/Floats/IEEEExec/Bridge/Finite.lean"}[finite addition and multiplication bridge]
-and {src "NN/Proofs/RuntimeApprox/IEEE32/Contracts.lean"}[absorption contract] supply the other
-links used here. In each case, the generic result supplies the rounding argument, the binary32
-specialization fixes the format, and the executable bridge connects the decoded bit patterns to
-that argument.
+FloatLib's `Formats.BinaryInterchange.Analysis.Sterbenz` supplies both the rounded-real and
+executable model theorems above, and its executable proof uses FloatLib's subtraction specification
+and codec round trip directly. We get the other links used here from the
+{src "TorchLean/Verify/Floats/IEEE754.lean"}[finite arithmetic bridge], which also
+states the absorption contract. In each case, the generic result supplies the rounding argument,
+instantiating it at `ExecFloat.Binary 8 23` fixes the format, and the executable bridge connects
+the decoded bit patterns to that argument.
 
-Sterbenz's conclusion concerns the subtraction of the represented operands. It can be exact even
-when those operands were obtained by inaccurate earlier computations. If a preceding calculation
-has already lost a small contribution, exact subtraction does not recover it. The theorem is
-therefore especially useful inside an error analysis: it removes one prospective rounding term
-when its positivity and factor-of-two hypotheses hold, while leaving the operands' existing
-errors in place.
+Sterbenz's conclusion concerns subtracting the represented operands, and that subtraction can be
+exact even when the operands came from inaccurate earlier computations. If a preceding calculation
+has already lost a small contribution, exact subtraction doesn't recover it. So the theorem is
+especially useful inside an error analysis: it removes one prospective rounding term when its
+positivity and factor-of-two hypotheses hold, while leaving the operands' existing errors in place.
 
-The absorption contract does not need separate operand-finiteness witnesses: a finite executable
-sum already forces finite operands. Neither theorem permits reassociation of the surrounding
-computation.
+For the absorption contract, a finite executable sum already forces finite operands, so the
+contract needs no separate operand-finiteness witnesses. Neither theorem permits reassociation of
+the surrounding computation.
 
 # Tensors, Reductions, And Quantization
 
-Pointwise tensor operations lift the scalar semantics coordinate by coordinate. A tensor theorem
-over `NF` therefore inherits the declared rounding at each scalar operation.
+Pointwise tensor operations lift the scalar semantics coordinate by coordinate, so a tensor theorem
+over `NF` inherits the declared rounding at each scalar operation.
 
 Reductions add another choice: order. A left fold, balanced tree, warp reduction, atomic
 accumulation, and library matrix multiplication may all use binary32 addition and still disagree.
 Contraction adds the same issue for $`ab+c`: FMA rounds once, while separate multiplication and
-addition round twice. The current capsule type records reduction order. It has no separate fields
+addition round twice. TorchLean's capsule type records reduction order but has no separate fields
 for contraction, rounding mode, or subnormal handling, so an analysis that depends on those choices
 must state them in its arithmetic assumptions.
 
 PyTorch also dispatches among numerical policies {Informal.citep pytorch2019}[]. `torch.sum` over a
-CUDA tensor need not use the reduction
-tree the CPU kernel uses, `torch.matmul` may or may not contract with a fused multiply-add
-depending on the dispatched backend, and setting `torch.backends.cuda.matmul.allow_tf32` changes the
-precision of the multiply without changing the program text. The opening non-associativity example
-shows why these choices affect a numerical claim. In TorchLean, a fixed-left certificate requires
-the capsule to declare that reduction order; an implementation-defined reduction does not supply
-the required agreement.
+CUDA tensor need not use the reduction tree the CPU kernel uses, `torch.matmul` may or may not
+contract with a fused multiply-add depending on the dispatched backend, and setting
+`torch.backends.cuda.matmul.allow_tf32` changes the precision of the multiply without changing the
+program text. Our opening non-associativity example shows why these choices affect a numerical
+claim. In TorchLean, a fixed-left certificate requires the capsule to declare that reduction order.
+An implementation-defined reduction doesn't supply the required agreement.
 
-FloatLib also offers exact accumulation with one final rounding through
-`ExecFloat.Binary.sum` and `ExecFloat.Binary.dot`. Those operations have a different semantics from
-a tree that rounds at every addition or multiply-add. In the opening example, exact accumulation
-keeps the unit contribution until the end; a rounded tree may already have lost it. TorchLean's
-rounded reduction-tree statements therefore remain necessary for the corresponding tensor and
-backend paths. An exact-accumulation theorem cannot be substituted for their local rounding
-premises.
+FloatLib also offers exact accumulation with one final rounding through `ExecFloat.Binary.sum` and
+`ExecFloat.Binary.dot`, and those operations have a different semantics from a tree that rounds at
+every addition or multiply-add. In the opening example, exact accumulation keeps the unit
+contribution until the end, while a rounded tree may already have lost it. So TorchLean's rounded
+reduction-tree statements remain necessary for the corresponding tensor and backend paths, and an
+exact-accumulation theorem can't be substituted for their local rounding premises.
 
-The generic `SumTree` proof in `NN.Proofs.RuntimeApprox.Reductions.Tree` takes a
-`RelativeLocalAddBound` for each rounded addition. Its binary32 specialization lives in
-`NN.Proofs.RuntimeApprox.Reductions.IEEE32`. There, `sumTreeResult_enclosure` also requires finite
-evaluation at every leaf and internal node. The dot-product counterpart, `dotTreeResult_enclosure`,
-bounds accumulation error
-relative to the exact sum of already-rounded products. Bounding the earlier product errors is
-another step; the accumulation theorem does not discard them.
+`TorchLean.Verify.Floats.IEEE754.Reductions` evaluates FloatLib `ReductionTree` schedules with the
+executable operations of a configured IEEE format. Its `IEEE754.SumResult.enclosure` and
+`IEEE754.DotResult.enclosure` rest on FloatLib's
+`Model.ReductionTree.abs_toReal_eval_sub_sum_le_geometric`. That theorem applies
+`abs_eval_sub_exact_le_geometric`, whose premise is local to the tree: each of its rounded
+additions $`x+y` errs by at most $`u(|x|+|y|)`. Finite evaluation at every leaf and internal node
+gives that premise with the format's unit roundoff, $`2^{-24}` for binary32, subnormal sums
+included. No relative bound on rounding arbitrary reals is assumed. Binary32 has none with
+$`u=2^{-24}`, because subnormal results need an absolute error term. The dot-product enclosure
+bounds accumulation error relative to the exact sum of already-rounded products. Bounding the
+earlier product errors is a separate step.
 
 Affine quantization also uses the generic rounding layer. A `RealAffineQuantizer` has a positive
 scale $`s`, zero point $`z`, and integer code bounds. Encoding divides by the scale, rounds to an
@@ -1256,14 +1255,14 @@ Here $`q(x)` is the stored integer code and $`\widehat{x}(q)` is its reconstruct
 Clamping explains why the reconstruction-error theorem needs a no-saturation hypothesis: outside
 the code range, distance to the nearest grid point alone cannot bound the error.
 
-The scalar definition and its arithmetic theorems live in FloatLib. The
-`NN.Spec.Quantization` adapter applies the same equations at every coordinate of a shape-indexed
-tensor. Together they prove code range, monotonicity, and in-range code round trips. The half-step
-reconstruction bound additionally requires nearest rounding and inactive saturation. Later runtime
-work can add packed int8 or int4
-storage without changing these scalar theorems.
+The scalar definition and its arithmetic theorems live in FloatLib. `Tensor.map` applies the same
+equations at every coordinate of a shape-indexed tensor, and the facts next to `Tensor.forall_map`
+carry the scalar theorems to every coordinate. Together they prove code range, monotonicity, and
+in-range code round trips. For the half-step reconstruction bound we also need nearest rounding and
+inactive saturation. These scalar theorems don't depend on how the runtime stores codes, so packed
+int8 or int4 storage wouldn't change them.
 
-The zero point shifts the code grid; it does not remove the need to check for saturation.
+A zero point shifts the code grid, but it doesn't remove the need to check for saturation.
 
 # Proving A Real Bound
 
@@ -1279,15 +1278,15 @@ example (x y : ℝ)
   interval (depth := 0)
 ```
 
-This proves the inequality for every pair in those ranges, not just sampled inputs. The same
+This proves the inequality for every pair in those ranges, not just sampled inputs, and the same
 proof can be applied to tensor coordinates once we have their bounds. Real powers require a
 strictly positive base interval. FloatLib also provides `Real.logb` and inverse hyperbolic
-enclosures with their own domain checks.
+enclosures, each with its own domain checks.
 
-For a new named function, `@[interval_extension]` registers an executable enclosure together
-with its containment proof. The tactic evaluates that enclosure again when subdividing an input
-box. We use the upstream API directly rather than keeping a second registry in TorchLean.
-These proofs concern real expressions; relating them to a rounded tensor computation still
+To support another named function, `@[interval_extension]` registers an executable enclosure
+together with its containment proof, and the tactic evaluates that enclosure again when it
+subdivides an input box. We use the upstream API and don't keep a second registry in TorchLean.
+These proofs concern real expressions, so relating them to a rounded tensor computation still
 requires the arithmetic and backend contracts below.
 
 # Native Backend Contracts
@@ -1299,23 +1298,24 @@ provider results to configured binary32 error bounds. Native instructions requir
 
 For a native provider, a kernel capsule records:
 
-- the operation and device;
-- its provider and backward mode;
-- shape and layout requirements;
-- its reduction policy;
-- the evidence attached to each shape, layout, value, and VJP contract.
+- the registered operator (attributes included) and its device
+- its provider and backward mode
+- shape and layout requirements
+- its reduction policy
+- the evidence attached to each shape, layout, value, and VJP contract
 
-The capsule makes reduction policy available to graph-level error analysis. Its `ContractEvidence`
-type records a runtime guard, test suite, trusted boundary, or `notApplicable`; it has no theorem
-constructor. The proved bridge for `Float32.Model` above concerns the logical arithmetic model.
-It does not become a proof about a native provider merely because a capsule names that provider.
+A capsule makes reduction policy available to graph-level error analysis. Its `Contract.Evidence`
+type records a shared definition, runtime guard, test suite, trusted boundary, or `notApplicable`
+(the type has no theorem constructor). The bridge proved above for `Float32.Model` concerns the
+logical arithmetic model, and it doesn't become a proof about a native provider merely because a
+capsule names that provider.
 
 A backend policy describes which numerical choices an execution claims to make. Evidence about
-primitive addition does not settle whether a dot product used separate multiplication and addition
+primitive addition doesn't settle whether a dot product used separate multiplication and addition
 or a fused multiply-add, because those expressions round at different points. Likewise, a fixed
 left fold and a tree reduction call the same addition primitive in different orders. An application
-must connect the selected policy to the expression covered by its theorem. The provider evidence
-record helps retain that information, but constructing the record is not itself a proof that the
+must connect the selected policy to the expression covered by its theorem. A provider evidence
+record helps retain that information, but constructing the record isn't itself a proof that the
 provider follows it on every execution.
 
 # Numerical Models And Their Uses
@@ -1324,37 +1324,35 @@ Use the smallest layer that states the claim accurately:
 
 :::table +header
 *
-  * Question
+  * To find out
   * Representation
 *
-  * Which values lie on a radix/precision grid?
+  * Which values lie on a radix/precision grid
   * `FloatRep` formats
 *
-  * How does a declared format round exact real arithmetic?
+  * How a declared format rounds exact real arithmetic
   * `NF`
 *
-  * What is the binary32-precision rounded-real error?
+  * The binary32-precision rounded-real error
   * `FP32`
 *
-  * What bits and IEEE exceptional cases result?
+  * Which bits and IEEE exceptional cases result
   * `ExecFloat.Binary` with the chosen format
 *
-  * What does a Lean `Float32` core operation mean in the logic?
+  * What a Lean `Float32` core operation means in the logic
   * `Float32.Model`
 *
-  * Does an interval enclose an operation?
+  * Whether an interval encloses an operation
   * FloatLib directed operations or proved interval rounders
 *
-  * What did CPU, CUDA, or LibTorch execute?
+  * What CPU, CUDA, or LibTorch executed
   * runtime result plus an explicit bridge or boundary
 :::
 
-The table also helps when a numerical argument gets stuck. If a theorem is cluttered with NaN
-cases while the algorithm assumes a finite path, move up to `FP32`. If a proof needs the sign
-of zero or an
-exception flag, use the configured bit-level operations. If two GPU runs disagree, inspect
-reduction and
-contraction policy before blaming the real-valued model.
+When a numerical argument gets stuck, the table helps too. If a theorem is cluttered with NaN cases
+while the algorithm assumes a finite path, move up to `FP32`. If a proof needs the sign of zero or
+an exception flag, use the configured bit-level operations. If two GPU runs disagree, inspect
+reduction and contraction policy before blaming the real-valued model.
 
 To follow one of these calculations into the source, start with the operation it uses:
 
@@ -1368,16 +1366,15 @@ To follow one of these calculations into the source, start with the operation it
   `ExecFloat.Binary.Interval` adds configured binary operations for arbitrary formats, storage
   plans, and codecs. Decimal and posit endpoints use the corresponding `OutwardRounding` adapters.
 
-TorchLean's numerical graph certificates use
-`FloatLib.Numerics.Interval (ExecFloat.Binary 8 23)` directly. Their endpoint contract remains
-binary32; choosing another format for a scalar interval does not by itself supply a graph
-certificate for that format.
+TorchLean's numerical graph certificates use `FloatLib.Numerics.Interval (ExecFloat.Binary 8 23)`
+directly, and their endpoint contract remains binary32. Choosing another format for a scalar
+interval doesn't by itself supply a graph certificate for that format.
 
-The tensor arguments live in TorchLean. `NN.Floats.FP32` selects binary32's gradual-underflow
-grid; `NN.Proofs.RuntimeApprox.FP32` carries its error bounds through tensor operations.
-The reduction-tree modules account for accumulation order. `NN.Spec.Quantization` lifts the
-real-scale quantizer to tensors, while `NN.Spec.Quantization.Rational` uses FloatLib's rational
-quantizer. The external Arb adapter is `NN.Floats.Arb.Oracle`.
+The tensor arguments live in TorchLean. `TorchLean.Verify.Floats.FP32` selects binary32's
+gradual-underflow grid. The `NF` bounds carry rounding errors through tensor operations on any such
+grid, binary32's included, up to whole networks in `TorchLean.Verify.RuntimeApprox.NF.MLP` and
+`TorchLean.Verify.RuntimeApprox.NF.CROWN`. The reduction-tree modules account for accumulation
+order. `Tensor.map` applies FloatLib's real-scale or rational quantizer at every coordinate.
 
 # References
 

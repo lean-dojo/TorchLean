@@ -1,0 +1,319 @@
+/-
+Copyright (c) 2026 TorchLean
+Released under MIT license as described in the file LICENSE.
+Authors: TorchLean Team
+-/
+
+module
+
+public import TorchLean.Tensor.OfFn -- shake: keep
+public import TorchLean.Tensor.LinearAlgebra.Identity -- shake: keep
+
+/-!
+# Tensor Conversion
+
+`Tensor.from` turns an in-memory value into a tensor of the shape the value describes
+(`SourceShape`), with no failure branch. `Array`, `List`, `Vector`, `FloatArray` and `ByteArray`
+each become a rank-one tensor of their length. `Tensor.to` reads a tensor out as an `Array`, a
+`List`, a `Vector` or, for `Float` and byte tensors, the native buffer.
+
+`Tensor.reshape` changes only the interpretation of a flat row-major buffer and needs a proof that
+the scalar count is unchanged. `Tensor.reshape?` decides the same equality at run time, for buffers
+whose length is known only then. External files and untrusted runtime metadata are validated by the
+corresponding loader.
+-/
+
+@[expose] public section
+
+open TorchLean.Shape (size size_eq_prod)
+
+namespace TorchLean.Tensor
+
+/-- Intrinsic tensor shape described by an in-memory source value. -/
+class SourceShape (source : Type) where
+  /-- Shape intrinsically described by the source value. -/
+  shape : source → Shape
+
+/-- Extensible, total materialization of a shaped in-memory source. -/
+class From (source : Type) (α : outParam Type) [TorchLean.Storage α]
+    [SourceShape source] where
+  /-- Construct the tensor without a runtime failure branch. -/
+  make : (value : source) → Tensor α (SourceShape.shape value)
+
+/-- Convert an in-memory value into a tensor with its intrinsic shape. -/
+def «from» {source α : Type} [TorchLean.Storage α]
+    [SourceShape source] [conversion : From source α] (value : source) :
+    Tensor α (SourceShape.shape value) :=
+  conversion.make value
+
+/-- An `Array` describes one dimension, its length.
+
+The shape is computed from the value, so `Tensor.from` needs no shape annotation. -/
+@[instance_reducible] instance arraySourceShape {α : Type} :
+    SourceShape (Array α) where
+  shape values := [values.size]
+
+/-- The shape an `Array` describes is its length. -/
+@[simp] theorem sourceShape_array {α : Type} (values : Array α) :
+    SourceShape.shape values = [values.size] :=
+  rfl
+
+/-- Materialize an `Array` as a rank-one tensor. The buffer is already row-major. -/
+@[instance_reducible] instance arrayFrom {α : Type} [TorchLean.Storage α] :
+    From (Array α) α where
+  make values :=
+    Tensor.Rep.ofArray values (by
+      simp [Shape.size])
+
+/-- A `List` behaves like an `Array`: one dimension, its length. -/
+@[instance_reducible] instance listSourceShape {α : Type} :
+    SourceShape (List α) where
+  shape values := [values.length]
+
+/-- The shape a `List` describes is its length. -/
+@[simp] theorem sourceShape_list {α : Type} (values : List α) :
+    SourceShape.shape values = [values.length] :=
+  rfl
+
+/-- Materialize a `List` as a rank-one tensor, copying once through `List.toArray`. -/
+@[instance_reducible] instance listFrom {α : Type} [TorchLean.Storage α] :
+    From (List α) α where
+  make values :=
+    Tensor.Rep.ofArray values.toArray (by
+      simp [Shape.size])
+
+/-- A `Vector α n` carries its length in its type, so the shape is known without inspecting the
+value at all. -/
+@[instance_reducible] instance vectorSourceShape {α : Type} {n : Nat} :
+    SourceShape (Vector α n) where
+  shape _ := [n]
+
+/-- The shape a `Vector α n` describes is `[n]`, independently of the value. -/
+@[simp] theorem sourceShape_vector {α : Type} {n : Nat} (values : Vector α n) :
+    SourceShape.shape values = [n] :=
+  rfl
+
+/-- Materialize a `Vector α n` as a `Tensor α [n]`. No length check is needed. -/
+@[instance_reducible] instance vectorFrom
+    {α : Type} [TorchLean.Storage α] {n : Nat} :
+    From (Vector α n) α where
+  make values :=
+    Tensor.Rep.ofArray values.toArray (by
+      simp [Shape.size])
+
+/-- A `FloatArray` describes one dimension, the length reported by its `Storage` instance. -/
+@[instance_reducible] instance floatArraySourceShape : SourceShape FloatArray where
+  shape values :=
+    [@TorchLean.Storage.size Float TorchLean.instFloatStorage values]
+
+/-- A `FloatArray` is already the unboxed `Float` storage, so materialization is a rewrap. -/
+@[instance_reducible] instance floatArrayFrom :
+    @From FloatArray Float TorchLean.instFloatStorage floatArraySourceShape where
+  make values := by
+    change Tensor Float
+      [@TorchLean.Storage.size Float TorchLean.instFloatStorage values]
+    exact
+      { buffer := values
+        size_eq := by simp [Shape.size] }
+
+/-- A `ByteArray` describes one dimension, the length reported by its `Storage` instance. -/
+@[instance_reducible] instance byteArraySourceShape : SourceShape ByteArray where
+  shape values :=
+    [@TorchLean.Storage.size UInt8 TorchLean.instUInt8Storage values]
+
+/-- A `ByteArray` is already the unboxed `UInt8` storage, so materialization is a rewrap. -/
+@[instance_reducible] instance byteArrayFrom :
+    @From ByteArray UInt8 TorchLean.instUInt8Storage byteArraySourceShape where
+  make values := by
+    change Tensor UInt8
+      [@TorchLean.Storage.size UInt8 TorchLean.instUInt8Storage values]
+    exact
+      { buffer := values
+        size_eq := by simp [Shape.size] }
+
+/--
+Reinterpret the same row-major buffer at an equal-size shape.
+
+The size equality is the whole safety condition: reshape never pads, truncates or moves scalar
+data.
+
+Example:
+```lean
+-- The default `by decide` proof checks that both shapes hold 12 scalars.
+def matrix (flat : Tensor Float [12]) : Tensor Float [3, 4] :=
+  Tensor.reshape flat [3, 4]
+```
+-/
+def reshape {α : Type} [TorchLean.Storage α]
+    {source : Shape} (tensor : Tensor α source) (target : Shape)
+    (hSize : source.size = target.size := by decide) :
+    Tensor α target :=
+  Tensor.Rep.reshape hSize tensor
+
+/-- `tensor` read at the shape `target` when `source.size = target.size`, and `none` otherwise. -/
+def reshape? {α : Type} [TorchLean.Storage α]
+    {source : Shape} (tensor : Tensor α source) (target : Shape) :
+    Option (Tensor α target) :=
+  if hSize : source.size = target.size then some (tensor.reshape target hSize) else none
+
+/-- Extensible conversion from a tensor to a requested in-memory target type. -/
+class To (α : Type) [TorchLean.Storage α] (shape : Shape)
+    (target : Type) where
+  /-- Materialize or expose the requested target representation. -/
+  convert : Tensor α shape → target
+
+/-- Convert a tensor to the requested target type. -/
+abbrev «to» {α : Type} [TorchLean.Storage α] {shape : Shape}
+    (tensor : Tensor α shape) (target : Type)
+    [conversion : To α shape target] : target :=
+  conversion.convert tensor
+
+/-- Read a tensor out as its row-major array. -/
+instance arrayTo
+    {α : Type} [TorchLean.Storage α] {shape : Shape} :
+    To α shape (Array α) where
+  convert tensor := tensor.data
+
+/-- Read a tensor out as its row-major list. -/
+instance listTo
+    {α : Type} [TorchLean.Storage α] {shape : Shape} :
+    To α shape (List α) where
+  convert tensor := tensor.data.toList
+
+-- A rank-one natural-number tensor reads out as a shape through `listTo`, because a shape is a
+-- list of dimensions. A separate instance for `Shape` would overlap with it.
+
+/-- Read a tensor out as a length-indexed vector. -/
+instance vectorTo
+    {α : Type} [TorchLean.Storage α] {shape : Shape} :
+    To α shape (Vector α (Shape.size shape)) where
+  convert tensor :=
+    ⟨tensor.data, Tensor.Rep.data_size tensor⟩
+
+/-- Expose the native buffer of a `Float` tensor. -/
+instance floatArrayTo {shape : Shape} :
+    To Float shape FloatArray where
+  convert tensor := tensor.buffer
+
+/-- Expose the native buffer of a byte tensor. -/
+instance byteArrayTo {shape : Shape} :
+    To UInt8 shape ByteArray where
+  convert tensor := tensor.buffer
+
+/-- Converting to `Array` exposes the row-major observation, boxing packed storage if needed. -/
+@[simp] theorem to_array_eq_data {α : Type} [TorchLean.Storage α]
+    {shape : Shape} (tensor : Tensor α shape) :
+    Tensor.to tensor (Array α) = tensor.data :=
+  rfl
+
+/-- Converting to `List` is the array conversion followed by `Array.toList`. -/
+@[simp] theorem to_list_eq_data {α : Type} [TorchLean.Storage α]
+    {shape : Shape} (tensor : Tensor α shape) :
+    Tensor.to tensor (List α) = tensor.data.toList :=
+  rfl
+
+/-- Array in, array out: `Tensor.from` then `Tensor.to` is the identity.
+
+Importing and exporting preserve the entries and their order, and the list round trips
+`to_list_from_array` and `to_list_from_list` are proved from this array result. -/
+@[simp] theorem to_array_from_array {α : Type} [TorchLean.Storage α]
+    (values : Array α) :
+    Tensor.to (Tensor.from values) (Array α) = values := by
+  change
+    (Tensor.Rep.ofArray values
+      (by simp [Shape.size])).data = values
+  exact Tensor.Rep.data_ofArray values _
+
+/-- Array in, list out. -/
+@[simp] theorem to_list_from_array {α : Type} [TorchLean.Storage α]
+    (values : Array α) :
+    Tensor.to (Tensor.from values) (List α) = values.toList := by
+  change (Tensor.to (Tensor.from values) (Array α)).toList = values.toList
+  rw [to_array_from_array]
+
+/-- List in, list out. -/
+@[simp] theorem to_list_from_list {α : Type} [TorchLean.Storage α]
+    (values : List α) :
+    Tensor.to (Tensor.from values) (List α) = values := by
+  change Tensor.to (Tensor.from values.toArray) (List α) = values
+  rw [to_list_from_array, List.toList_toArray]
+
+/-- Exporting to an `Array` gives the same array before and after `castShape`.
+
+The cast copies nothing: `Tensor.castShape` (`TorchLean/Tensor/Datatype.lean`) returns
+its argument at the target shape. -/
+@[simp] theorem to_array_castShape {α : Type} [TorchLean.Storage α]
+    {source target : Shape} (tensor : Tensor α source)
+    (hShape : source = target) :
+    Tensor.to (Tensor.castShape tensor hShape) (Array α) =
+      Tensor.to tensor (Array α) := by
+  cases hShape
+  rfl
+
+/-- The list version of `to_array_castShape`. -/
+@[simp] theorem to_list_castShape {α : Type} [TorchLean.Storage α]
+    {source target : Shape} (tensor : Tensor α source)
+    (hShape : source = target) :
+    Tensor.to (Tensor.castShape tensor hShape) (List α) =
+      Tensor.to tensor (List α) := by
+  cases hShape
+  rfl
+
+/-- Exporting to an `Array` gives the same array before and after `reshape`, which reuses the
+buffer. A reshape that reordered entries would break this lemma.
+
+The coordinate statement is `reshape_apply` (`TorchLean/Tensor/Movement.lean`):
+an output coordinate reads the input coordinate with the same row-major index. -/
+@[simp] theorem to_array_reshape {α : Type} [TorchLean.Storage α]
+    {source target : Shape} (tensor : Tensor α source)
+    (hSize : source.size = target.size) :
+    Tensor.to (tensor.reshape target hSize) (Array α) =
+      Tensor.to tensor (Array α) := by
+  rfl
+
+/-- Converting a filled tensor to a list produces one value per scalar position. -/
+@[simp] theorem to_list_full {α : Type} [TorchLean.Storage α]
+    (shape : Shape) (value : α) :
+    Tensor.to (Tensor.full shape value) (List α) =
+      List.replicate shape.size value := by
+  apply List.ext_getElem
+  · simp
+  · intro index hLeft hRight
+    simp only [to_list_eq_data]
+    have hFlat : index < Shape.size shape := by
+      rw [← Tensor.Rep.data_size (Tensor.full shape value),
+        ← Array.length_toList]
+      exact hLeft
+    change
+      (Tensor.Rep.data (Tensor.full shape value))[index]'_ =
+        (List.replicate shape.size value)[index]
+    calc
+      _ = Tensor.Rep.getFlat (Tensor.full shape value) ⟨index, hFlat⟩ := by
+        exact Tensor.Rep.data_getFlat (Tensor.full shape value) ⟨index, hFlat⟩
+      _ = value := by simp [Tensor.full]
+      _ = (List.replicate shape.size value)[index] := by simp
+
+/-- A filled natural-number vector describes the corresponding uniform shape. -/
+@[simp] theorem to_shape_full (rank value : Nat) :
+    Tensor.to (Tensor.full [rank] value) Shape =
+      List.replicate rank value := by
+  change Tensor.to (Tensor.full [rank] value) (List Nat) = _
+  rw [to_list_full]
+  simp
+
+/-- Native vector multiplication agrees with the product of its list conversion. -/
+theorem prod_eq_to_list_prod {α : Type}
+    [TorchLean.Storage α] [Monoid α]
+    {n : Nat} (tensor : Tensor α [n]) :
+    tensor.prod = (Tensor.to tensor (List α)).prod := by
+  rw [Tensor.prod, Tensor.Rep.foldl_eq_data_foldl,
+    ← Array.foldl_toList, ← List.prod_eq_foldl]
+  rfl
+
+/-- Converting a natural-number vector to a shape preserves its product as the shape size. -/
+@[simp] theorem size_to_shape {rank : Nat} (tensor : Tensor Nat [rank]) :
+    (Tensor.to tensor Shape).size = tensor.prod := by
+  change Shape.size (Tensor.to tensor (List Nat)) = tensor.prod
+  rw [Shape.size_eq_prod, ← prod_eq_to_list_prod]
+
+end TorchLean.Tensor

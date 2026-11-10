@@ -1,0 +1,395 @@
+/-
+Copyright (c) 2026 TorchLean
+Released under MIT license as described in the file LICENSE.
+Authors: TorchLean Team
+-/
+
+module
+
+public import TorchLean.NN.Tape.CPU
+public meta import TorchLean.NN.Widget.Tensor
+public meta import TorchLean.NN.Tape.Apply -- shake: keep
+public meta import TorchLean.NN.Tape.Backward -- shake: keep
+public meta import TorchLean.NN.IR.Pretty
+public import TorchLean.NN.Widget.Tensor
+import ProofWidgets.Component.HtmlDisplay
+
+/-!
+# Autograd
+
+Infoview panels for the tapes and gradients of TorchLean's eager-mode autograd:
+
+- `#tape_view t` renders the tape nodes, showing parents, stored forward values, and a DOT snippet.
+- `#tape_grads_view t, outId` runs reverse-mode from a scalar output (`outId`) and shows which node
+  ids received gradients, plus small previews.
+
+## Main definitions
+
+- `tapeHtml`: inspect a tape's nodes and edge structure.
+- `tapeGradsHtml`: run scalar reverse-mode and show gradient coverage/results.
+- `tapeTraceHtml`: accumulated cotangents and recomputed per-parent VJP contributions.
+- `#tape_view`, `#tape_grads_view`, `#tape_trace_view`: command frontends.
+-/
+
+public meta section
+
+open scoped ProofWidgets.Jsx
+
+namespace TorchLean.Widget
+
+open Tape
+open UI
+
+/-- Build an uncolored DOT view of the tape graph. -/
+private def tapeDot {α : Type} [Storage α] (t : Tape (SomeTensor α)) : String :=
+  let header := "digraph Tape {\n  rankdir=LR;\n  node [shape=box,fontname=\"monospace\"];\n"
+  let pairs : List (Nat × Node (SomeTensor α)) := List.zip
+      (List.range t.nodes.size) t.nodes.toList
+  let nodes : List String :=
+    pairs.map (fun (i, n) =>
+      let name := n.name.getD ""
+      let label := IR.dotEscape (if name = "" then s!"{i}" else s!"{i}: {name}")
+      s!"  n{i} [label=\"{label}\"];")
+  let edges : List String :=
+    pairs.flatMap (fun (i, n) => (n.parents.map (fun p => s!"  n{p} -> n{i};")).toList)
+  header ++ String.intercalate "\n" (nodes ++ edges) ++ "\n}\n"
+
+/-- The DOT view of the tape graph with fill colors: light red for the output node `outId`, light
+green for nodes where `hasGrad` holds, light yellow for other nodes that require a gradient, and
+light gray for the rest. -/
+private def tapeDotColored {α : Type} [Storage α] (t : Tape (SomeTensor α)) (outId
+    : Nat)
+    (hasGrad : Nat → Bool) : String :=
+  let header :=
+    "digraph Tape {\n" ++
+    "  rankdir=LR;\n" ++
+    "  node [shape=box,fontname=\"monospace\",style=filled,fillcolor=\"#f7f7f7\"];\n"
+  let pairs : List (Nat × Node (SomeTensor α)) := List.zip
+      (List.range t.nodes.size) t.nodes.toList
+  let nodes : List String :=
+    pairs.map (fun (i, n) =>
+      let name := n.name.getD ""
+      let labelBase := if name = "" then s!"{i}" else s!"{i}: {name}"
+      let label := IR.dotEscape labelBase
+      let fill :=
+        if i = outId then
+          "#ffdddd"
+        else if hasGrad i then
+          "#ddffea"
+        else if n.requiresGrad then
+          "#fff3cc"
+        else
+          "#f7f7f7"
+      s!"  n{i} [label=\"{label}\", fillcolor=\"{fill}\"];")
+  let edges : List String :=
+    pairs.flatMap (fun (i, n) => (n.parents.map (fun p => s!"  n{p} -> n{i};")).toList)
+  header ++ String.intercalate "\n" (nodes ++ edges) ++ "\n}\n"
+
+/-- A collapsible entry for one tape node, headed by its id, name, `requiresGrad` flag, parents and
+shape, with a preview of its forward value inside. -/
+private def nodeHtml {α : Type} [Storage α] [ToString α]
+    (id : Nat) (n : Node (SomeTensor α)) : ProofWidgets.Html :=
+  <details style={json% {"margin": "6px 0"}}>
+    <summary>
+      {monospace (toString id ++ ": " ++ n.name.getD "(unnamed)")} {pill
+        s!"requiresGrad={n.requiresGrad}"} {pill s!"parents={n.parents}"}
+      {pill s!"shape={n.value.shape}"}
+    </summary>
+    <div style={json% {"margin-top": "8px", "padding-left": "10px"}}>
+      {packedTensorHtml (α := α) n.value}
+    </div>
+  </details>
+
+/-- Render a tape as a panel: the list of its nodes, then its graph as GraphViz DOT text clipped
+after `maxDotChars` characters. -/
+def tapeHtml {α : Type} [Storage α] [ToString α]
+    (t : Tape (SomeTensor α)) (maxDotChars : Nat := 6000) : ProofWidgets.Html :=
+  let dot := tapeDot t
+  let dotPreview :=
+    if dot.length <= maxDotChars then dot
+    else (dot.take maxDotChars).toString ++ "\n... (clipped)";
+  <div style={json% {
+    "padding": "10px",
+    "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
+    "border-radius": "10px",
+    "background": "var(--vscode-editor-background, transparent)",
+    "color": "var(--vscode-editor-foreground, inherit)"
+  }}>
+    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom":
+      "10px"}}>
+      {pill "Autograd.Tape"} {pill s!"nodes={t.nodes.size}"} {pill "viewer"}
+    </div>
+    <details «open»={true}>
+      <summary>{.text "Nodes"}</summary>
+      <div style={json% {"margin-top": "8px"}}>
+        {... (t.nodes.mapIdx (fun i n => nodeHtml (α := α) i n))}
+      </div>
+    </details>
+    <details style={json% {"margin-top": "10px"}}>
+      <summary>{.text "GraphViz DOT (paste into `dot`)"}</summary>
+      <pre style={json% {
+        "white-space": "pre",
+        "overflow-x": "auto",
+        "margin-top": "6px",
+        "padding": "8px",
+        "border-radius": "8px",
+        "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
+        "background": "var(--vscode-textCodeBlock-background, rgba(127,127,127,0.12))"
+      }}>{.text dotPreview}</pre>
+    </details>
+  </div>
+
+/-- Render per-node gradient tensors from a completed backward pass. -/
+private def gradsTableHtml {α : Type} [Storage α] [ToString α] (t : Tape
+    (SomeTensor α))
+    (grads : Std.HashMap Nat (SomeTensor α)) : ProofWidgets.Html :=
+  let entries : Array (Nat × SomeTensor α) := grads.toArray;
+  <div style={json% {"margin-top": "10px"}}>
+    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom":
+      "8px"}}>
+      {pill s!"grads={entries.size}"} {pill "nodeId -> dL/d(node)"}
+    </div>
+    <div>
+      {... entries.map (fun (id, g) =>
+        <details style={json% {"margin": "6px 0"}}>
+          <summary>
+            {monospace s!"node {id}"} {pill s!"shape={g.shape}"}
+            {match t.getNode? id with
+              | none => errBadge "missing node"
+              | some n => okBadge (n.name.getD "(unnamed)")}
+          </summary>
+          <div style={json% {"margin-top": "8px", "padding-left": "10px"}}>
+            {packedTensorHtml (α := α) g}
+          </div>
+        </details>)}
+    </div>
+  </div>
+
+/-- The first `maxElems` ids of `xs` in brackets, ending in `...` when the list is longer. -/
+private def listPreviewNat (maxElems : Nat) (xs : List Nat) : String :=
+  let head := xs.take maxElems
+  let clipped : Bool := decide (xs.length > maxElems)
+  "[" ++ String.intercalate ", " (head.map toString) ++ (if clipped then ", ..." else "") ++ "]"
+
+/-- Summarize gradient coverage over the nodes that require gradients: how many received one, and
+the ids of the nodes and of the leaves that did not. -/
+private def gradCoverageHtml {α : Type} [Storage α] (t : Tape (SomeTensor α)) (outId
+    : Nat)
+    (grads : Std.HashMap Nat (SomeTensor α)) : ProofWidgets.Html :=
+  let pairs : List (Nat × Node (SomeTensor α)) := List.zip
+      (List.range t.nodes.size) t.nodes.toList
+  let req : List Nat := pairs.filter (fun (_, n) => n.requiresGrad) |>.map (·.1)
+  let leaf : List Nat := pairs.filter (fun (_, n) => n.parents.isEmpty) |>.map (·.1)
+  let hasGrad (i : Nat) : Bool := (grads.get? i).isSome
+  let got : List Nat := req.filter (fun i => hasGrad i)
+  let missing : List Nat := req.filter (fun i => !hasGrad i)
+  let missingLeaves : List Nat := leaf.filter (fun i => (t.getNode? i).map (·.requiresGrad) |>.getD
+    false) |>.filter (fun i => !hasGrad i)
+  <details «open»={false}>
+    <summary>
+      {pill "Grad coverage"} {pill s!"outId={outId}"} {pill s!"requiresGrad={req.length}"} {pill
+        s!"gotGrad={got.length}"} {pill s!"missing={missing.length}"}
+    </summary>
+    <div style={json% {"margin-top": "8px", "display": "grid", "grid-template-columns": "1fr",
+      "gap": "6px"}}>
+      <div>{pill "missing ids"} {monospace (listPreviewNat 30 missing)}</div>
+      <div>{pill "missing leaves"} {monospace (listPreviewNat 30 missingLeaves)}</div>
+        <div style={json% {"opacity": 0.8}}>
+          {.text
+          ("Missing gradients can come from a `requiresGrad=false` break " ++
+            "or a node disconnected from the selected output.")}
+        </div>
+      </div>
+    </details>
+
+/-- Run the reverse pass from the scalar output `outId` with seed `1`, like `loss.backward()`, and
+show the tape, the gradient coverage, a DOT graph colored by coverage and every gradient computed.
+When the backward pass fails, the panel shows the tape and the error message. -/
+def tapeGradsHtml {α : Type} [Storage α] [ToString α] [Add α] [One α]
+    (t : Tape (SomeTensor α)) (outId : Nat) : ProofWidgets.Html :=
+  match Tape.backwardScalar (α := α) (t := t) outId with
+  | .ok grads =>
+      let hasGrad (i : Nat) : Bool := (grads.get? i).isSome
+      let dot := tapeDotColored (α := α) t outId hasGrad
+      let dotPreview :=
+        if dot.length <= 6000 then
+          dot
+        else
+          (dot.take 6000).toString ++ "\n... (clipped)";
+      <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
+        {tapeHtml (α := α) t}
+        {gradCoverageHtml (α := α) t outId grads}
+        <details style={json% {"margin-top": "0"}} «open»={false}>
+          <summary>
+            {pill "GraphViz DOT"} {pill "colored by grads"} {pill s!"outId={outId}"} {pill
+              s!"gradNodes={grads.size}"}
+          </summary>
+          <pre style={json% {
+            "white-space": "pre",
+            "overflow-x": "auto",
+            "margin-top": "6px",
+            "padding": "8px",
+            "border-radius": "8px",
+            "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
+            "background": "var(--vscode-textCodeBlock-background, rgba(127,127,127,0.12))"
+          }}>{.text dotPreview}</pre>
+        </details>
+        {gradsTableHtml (α := α) t grads}
+      </div>
+  | .error msg =>
+      <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
+        {tapeHtml (α := α) t}
+        <div style={json% {"padding": "10px", "border":
+          "1px solid var(--vscode-panel-border, #e5e5e5)", "border-radius": "10px"}}>
+          {errBadge "backwardScalar failed"} {monospace msg}
+        </div>
+      </div>
+
+/-!
+## Reverse-Pass Trace
+
+`#tape_grads_view` shows which nodes received a gradient. To see where a gradient comes from, or
+why it is missing, `#tape_trace_view t, outId` displays the reverse traversal itself:
+- the upstream cotangent at each node, and
+- the per-parent contributions returned by the node’s local VJP rule.
+
+The viewer runs the whole reverse pass first, then lists the nodes in reverse id order and
+recomputes each local VJP from the node's accumulated cotangent, so every cotangent shown is a
+final total.
+-/
+
+/-- Show the final cotangent of every node and the local VJP recomputed from it, for the reverse
+pass from the scalar output node `outId` with seed `1`. A node with `requiresGrad = false` skips
+its VJP, and a failed backward pass gives the tape and the error message. -/
+def tapeTraceHtml {α : Type} [Storage α] [ToString α] [Add α] [One α]
+    (t : Tape (SomeTensor α)) (outId : Nat) : ProofWidgets.Html :=
+  let seed : SomeTensor α := SomeTensor.ofTensor (Tensor.scalar (1 : α))
+  match Tape.backwardDense (V := SomeTensor α) (t := t) outId seed with
+  | .error msg =>
+      <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
+        {tapeHtml (α := α) t}
+        <div style={json% {"padding": "10px", "border":
+          "1px solid var(--vscode-panel-border, #e5e5e5)", "border-radius": "10px"}}>
+          {errBadge "backwardDense failed"} {monospace msg}
+        </div>
+      </div>
+  | .ok dense =>
+      let getGrad (id : Nat) : Option (SomeTensor α) :=
+        match dense[id]? with
+        | none => none
+        | some g? => g?
+      let ids : List Nat := (List.range t.nodes.size).reverse
+      let stepHtml (id : Nat) : ProofWidgets.Html :=
+        match t.getNode? id with
+        | none =>
+            <div style={json% {"margin": "6px 0"}}>{errBadge s!"missing node {id}"}</div>
+        | some node =>
+            let g? := getGrad id
+            let status : ProofWidgets.Html :=
+              match g? with
+              | none =>
+                  if node.requiresGrad then warnBadge "no upstream grad" else pill
+                    "requiresGrad=false"
+              | some _ => okBadge "has upstream grad"
+            ;
+            <details style={json% {"margin": "6px 0"}}>
+              <summary>
+                {monospace s!"{id}: {node.name.getD "(unnamed)"}"} {pill s!"parents={node.parents}"}
+                  {pill s!"shape={node.value.shape}"} {status}
+              </summary>
+              <div style={json% {"margin-top": "8px", "padding-left": "10px", "display": "grid",
+                "grid-template-columns": "1fr", "gap": "10px"}}>
+                <div>
+                  {pill "forward value"}
+                  <div style={json% {"margin-top": "6px"}}>
+                    {packedTensorHtml (α := α) node.value}
+                  </div>
+                </div>
+                {match g? with
+                  | none => ProofWidgets.Html.text ""
+                  | some g =>
+                      <div>
+                        {pill "upstream dL/dy"}
+                        <div style={json% {"margin-top": "6px"}}>{packedTensorHtml (α := α) g}</div>
+                      </div>}
+                {match (if node.requiresGrad then g? else none) with
+                  | none =>
+                      if node.requiresGrad then ProofWidgets.Html.text ""
+                      else <div>{pill "VJP skipped (requiresGrad=false)"}</div>
+                  | some g =>
+                      match node.backward g with
+                      | .error msg =>
+                          <div>{errBadge "VJP failed"} <span style={json% {"margin-left":
+                            "8px"}}>{monospace msg}</span></div>
+                      | .ok contribs =>
+                          let contribHtml : Array ProofWidgets.Html :=
+                            contribs.map (fun (pid, pg) =>
+                              <details style={json% {"margin": "6px 0"}}>
+                                <summary>{monospace s!"parent {pid}"} {pill
+                                  s!"shape={pg.shape}"}</summary>
+                                <div style={json% {"margin-top": "6px", "padding-left": "10px"}}>
+                                  {packedTensorHtml (α := α) pg}
+                                </div>
+                              </details>)
+                          ;
+                          <div>
+                            <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap",
+                              "align-items": "center"}}>
+                              {pill s!"contribs={contribs.size}"} {pill "pid -> dL/d(parent)"}
+                            </div>
+                            <div style={json% {"margin-top": "8px"}}>
+                              {... contribHtml}
+                            </div>
+                          </div>}
+              </div>
+            </details>
+      let steps : Array ProofWidgets.Html := ids.toArray.map stepHtml
+      ;
+      <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
+        {tapeHtml (α := α) t}
+        <div style={json% {
+          "padding": "10px",
+          "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
+          "border-radius": "10px",
+          "background": "var(--vscode-editor-background, transparent)"
+        }}>
+          <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom":
+            "10px"}}>
+            {pill "Reverse-pass trace"} {pill s!"outId={outId}"} {pill s!"nodes={t.nodes.size}"}
+              {pill "seed=1 (scalar)"}
+          </div>
+          <div style={json% {"opacity": 0.85, "margin-bottom": "10px"}}>
+            {.text
+              ("Each step shows the accumulated upstream gradient and recomputes the parent " ++
+                "contributions from the node’s VJP rule. Disabled VJPs remain skipped.")}
+          </div>
+          <details «open»={true}>
+            <summary>{.text "Steps (reverse id order)"}</summary>
+            <div style={json% {"margin-top": "8px"}}>
+              {... steps}
+            </div>
+          </details>
+        </div>
+      </div>
+
+/-!
+## Commands
+-/
+
+/-- `#tape_view t` shows the panel of `tapeHtml` for the tape `t`. -/
+macro "#tape_view " t:term : command =>
+  UI.canonicalCommand <$> `(#html (tapeHtml $t))
+
+-- The comma delimiter keeps the first term from parsing greedily as an application
+-- that swallows the second argument.
+/-- `#tape_grads_view t, outId` shows the panel of `tapeGradsHtml` for the reverse pass of the tape
+`t` from its scalar node `outId`. -/
+macro "#tape_grads_view " t:term ", " outId:term : command =>
+  UI.canonicalCommand <$> `(#html (tapeGradsHtml $t $outId))
+
+/-- `#tape_trace_view t, outId` shows the panel of `tapeTraceHtml` for the reverse pass of the tape
+`t` from its scalar node `outId`. -/
+macro "#tape_trace_view " t:term ", " outId:term : command =>
+  UI.canonicalCommand <$> `(#html (tapeTraceHtml $t $outId))
+
+end TorchLean.Widget

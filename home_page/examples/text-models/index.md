@@ -7,35 +7,35 @@ We'll start with a text file, turn it into next-token prediction samples, and pa
 to TorchLean's trainer. With the GPT example, we'll also save a checkpoint, reload it, and
 generate text from a prompt.
 
-Run the shell commands from the repository root. The CUDA examples need a compatible LibTorch
-SDK and GPU; follow the [installation guide]({{ '/installation/' | relative_url }}) first.
+Run the shell commands from the repository root. Since the CUDA examples need a compatible LibTorch
+SDK and GPU, follow the [installation guide]({{ '/installation/' | relative_url }}) first.
 
 ## Load the text
 
-Let's start with Tiny Shakespeare, stored as a single UTF-8 text file. The download script puts
-it under `data/real/text/`. Run this once before training; the Lean example reports an error if
-the file is missing:
+Let's start with Tiny Shakespeare, stored as a single UTF-8 text file, which the download script
+puts under `data/real/text/`. Run this once before training (the Lean example reports an error if
+the file is missing):
 
 ```bash
 python3 scripts/datasets/download_example_data.py --tiny-shakespeare
 ```
 
-To use your own text, pass `--data-file path/to/file.txt` instead of `--tiny-shakespeare`.
-The GPT-2 example reads either choice through `text.Corpus.takeUtf8Input`.
+To use your own text, pass `--data-file path/to/file.txt` instead of `--tiny-shakespeare`. Either
+way, the GPT-2 example reads the text through `Text.Corpus.takeUTF8Input`.
 
 ## Tokenization: Bytes First, BPE When Requested
 
-We'll use byte tokens first. `text.Tokenizer.byte` maps every UTF-8 byte to
-one token id in `[0, 256)`. This gives us a fixed vocabulary of 256 entries without downloading
-a separate tokenizer.
+We'll use byte tokens first. `Text.Tokenizer.byte` maps every UTF-8 byte to one token id in
+`[0, 256)`, which gives us a fixed vocabulary of 256 entries without downloading a separate
+tokenizer.
 
-The runnable GPT example uses all 256 byte ids. Training and generation therefore share the same
-vocabulary, and generated ids can be decoded by the byte tokenizer without a lossy modulo mapping.
-The model width and context length keep the example small.
+Our runnable GPT example uses all 256 byte ids, so training and generation share the same
+vocabulary, and the byte tokenizer can decode generated ids without a lossy modulo mapping. The
+model width and context length keep the example small.
 
 The `text_gpt2` command can also use GPT-2 BPE files. Supply a matching `vocab.json` and
-`merges.txt` under `data/real/gpt2/`; the dataset downloader does not install tokenizer files.
-The command below reuses the Tiny Shakespeare corpus downloaded above:
+`merges.txt` under `data/real/gpt2/` (the dataset downloader doesn't install tokenizer files). Here
+we reuse the Tiny Shakespeare corpus downloaded above:
 
 ```bash
 scripts/lake.sh -Kcuda=true exe torchlean text_gpt2 --device cuda \
@@ -46,9 +46,9 @@ scripts/lake.sh -Kcuda=true exe torchlean text_gpt2 --device cuda \
 ```
 
 This command trains from randomly initialized weights. The BPE files define how text is split into
-tokens. The Lean command maps the observed BPE ids into a compact
-local vocabulary of at most 512 entries; token ids outside that vocabulary map to entry zero.
-It does not load pretrained GPT-2 weights or use the full GPT-2 output vocabulary.
+tokens, and the Lean command maps the observed BPE ids into a compact local vocabulary of at most
+512 entries (token ids outside that vocabulary map to entry zero). It doesn't load pretrained GPT-2
+weights or use the full GPT-2 output vocabulary.
 
 ## Supervised Examples: Next-Token Prediction As Tensors
 
@@ -62,9 +62,9 @@ abbrev input : Shape := [batchSize, contextLength, vocabularySize]
 abbrev output : Shape := input
 ```
 
-The function `Data.CausalLM.oneHotSample` converts a token tensor whose final axis has length
+`Data.CausalLM.oneHotSample` converts a token tensor whose final axis has length
 $\mathtt{seqLen}+1$ into $(x,y)$: input tokens and the same window shifted by one position as the
-target. The leading shape determines whether the sample is batched.
+target. Whether the sample is batched depends on the leading shape.
 
 We construct a sample with:
 
@@ -75,24 +75,23 @@ def batchSampleFromTokenIds (idsByBatch : Tensor Nat [batchSize, contextLength +
     (idsByBatch.map byteIndex)
 ```
 
-`Gpt2.samplesFromCorpus` byte-encodes the corpus once and retains the token tensor in the
-sample stream's closure. Each requested sample takes windows from that tensor, then constructs
-the one-hot inputs and shifted targets. The stream does not re-encode the complete text for
-every sample. Its window offsets and space-byte padding still determine which tokens each
-sample contains.
+`GPT2.samplesFromCorpus` byte-encodes the corpus once and retains the token tensor in the sample
+stream's closure. Each requested sample takes windows from that tensor, then constructs the one-hot
+inputs and shifted targets. So the stream doesn't re-encode the complete text for every sample,
+though its window offsets and space-byte padding determine which tokens each sample contains.
 
 <a id="gpt-2"></a>
 
 ## GPT-2: A Small Causal Transformer
 
-We'll build a small causal transformer with `nn.models.CausalTransformer.oneHot`.
-The example uses the GPT-style architecture, not pretrained GPT-2 weights.
+We'll build a small causal transformer with `nn.CausalTransformer.oneHot`. Our example uses
+the GPT-style architecture, not pretrained GPT-2 weights.
 
 We can build the transformer with this Lean definition:
 
 ```lean
 def model : nn.Builder (nn.Sequential input output) :=
-  nn.models.CausalTransformer.oneHot
+  nn.CausalTransformer.oneHot
     { sequenceLength := contextLength
       vocabularySize := vocabularySize
       headCount := attentionHeads
@@ -102,15 +101,15 @@ def model : nn.Builder (nn.Sequential input output) :=
     (batchShape := [batchSize])
 ```
 
-The configuration describes the Transformer itself. The `batchShape` argument supplies the leading
-batch shape for this particular training run; the same constructor also accepts an unbatched
-sequence or several leading collection axes.
+The configuration describes the Transformer itself. For this particular training run, `batchShape`
+supplies the leading batch shape, but the same constructor also accepts an unbatched sequence or
+several leading collection axes.
 
-With the model defined, we can train it using the same API as the quickstarts. These excerpts
-use the constants and options declared in the linked example source:
+With the model defined, we can train it using the same API as the quickstarts (these excerpts use
+the constants and options declared in the linked example source):
 
 ```lean
-let trainer := Trainer.new model <|
+let trainer := Trainer.create model <|
   { runtime with
       optimizer := optim.adam { lr := options.training.lr }
       objective := oneHotCrossEntropy 2 }
@@ -122,17 +121,17 @@ let trained ← trainer.train (Data.fromStream samples)
 trained.printSummary
 ```
 
-The record update starts from the parsed `--device` and `--seed` flags and adds the optimizer and
-the loss. `TrainOptions.steps` is
-required; `samplesPerStep` is the number of dataset items whose gradients are averaged before one
-update. The surrounding code builds a bank of token windows from the corpus, reports before/after
-predictions, saves checkpoints when requested, and samples text from the trained prediction closure.
+Starting from the parsed `--device` and `--seed` flags, the record update adds the optimizer and
+the loss. `TrainOptions.steps` is required, and `samplesPerStep` is the number of dataset items
+whose gradients are averaged before one update. In the surrounding code, we build a bank of token
+windows from the corpus, report before/after predictions, save checkpoints when requested, and
+sample text from the trained prediction closure.
 
-For generation, we pass the model's score callback to `text.generate`. It keeps the context
-window, applies the repetition penalty, and appends the sampled tokens to the prompt.
-`text.next` selects a single token using the same options. For lower-level experiments,
-`text.greedy?`, `text.topK`, and `text.sample?` work directly with a tensor of scores.
-The `?` means selection can fail—for example, if every allowed score is NaN.
+For generation, we pass the model's score callback to `Text.generate`, which keeps the context
+window, applies the repetition penalty, and appends the sampled tokens to the prompt. `Text.next`
+selects a single token using the same options. For lower-level experiments, `Text.greedy?`,
+`Text.topK`, and `Text.sample?` work on a tensor of scores (the `?` means selection can fail, for
+example if every allowed score is NaN).
 
 Try the short CUDA run:
 
@@ -158,26 +157,26 @@ format stores the shape-indexed state in JSON and preserves the exact IEEE-754 b
 `gpt2_saved` loads a state pack, checks its checkpoint format and tensor shapes,
 and samples without opening an optimizer. Those checks do not establish architecture identity.
 
-The GPT-2 command writes a checkpoint through `--save-checkpoint`; the inference example reloads
-the same shape-indexed state before sampling. If the shape list no longer matches
-the model, loading fails before the weights are used.
+With `--save-checkpoint`, the GPT-2 command writes a checkpoint, and the inference example reloads
+the same shape-indexed state before sampling. If the shape list doesn't match the model, loading
+fails before the weights are used.
 
 <a id="mamba"></a>
 
 ## Mamba: State-Space Text In The Same Runtime
 
-Next, let's try a different sequence model. `NN.Examples.Models.Sequence.Mamba` uses byte tokens
-with a compact state-space block in place of attention. We can keep the same trainer, automatic
-differentiation, and JSON loss logs.
+Next, let's try a different sequence model. `TorchLeanExamples.Models.Sequence.Mamba` uses byte
+tokens with a compact state-space block in place of attention, and we can keep the same trainer,
+automatic differentiation, and JSON loss logs.
 
-Each token updates a recurrent state instead of attending to every previous token.
-The model turns those states into next-token scores. We'll train it with the same cross-entropy
-loss and save the same kind of loss log as the transformer.
+Each token updates a recurrent state instead of attending to every previous token, and the model
+turns those states into next-token scores. We'll train it with the same cross-entropy loss and save
+the same kind of loss log as the transformer.
 
 We'll configure one block with width `modelWidth`:
 
 ```lean
-abbrev modelConfig : nn.models.Mamba.Config :=
+abbrev modelConfig : nn.Mamba.Config :=
   { vocabularySize := vocabularySize
     modelWidths := [modelWidth] }
 
@@ -185,13 +184,13 @@ abbrev input : Shape := modelConfig.inputShape contextLength
 abbrev output : Shape := modelConfig.outputShape contextLength
 
 def model : nn.Builder (nn.Sequential input output) :=
-  nn.models.Mamba.languageModel modelConfig contextLength
+  nn.Mamba.languageModel modelConfig contextLength
 ```
 
 Then we pass it to the trainer:
 
 ```lean
-let trainer := Trainer.new model <|
+let trainer := Trainer.create model <|
   { runtime with
       optimizer := optim.adam { lr := options.training.lr }
       objective := oneHotCrossEntropy 1 }
@@ -208,17 +207,17 @@ scripts/lake.sh -Kcuda=true exe torchlean mamba --device cuda --tiny-shakespeare
 
 ## Inspecting Runs In The Lean Editor
 
-For interactive inspection, open `NN.Examples.Models.Sequence.Gpt2` or
-`NN.Examples.Models.Sequence.Mamba` in VS Code with the Lean Infoview enabled. The relevant widgets
-can display saved training logs, tensor summaries, inferred shapes, and debug traces next to the
-Lean source.
+For interactive inspection, open `TorchLeanExamples.Models.Sequence.GPT2` or
+`TorchLeanExamples.Models.Sequence.Mamba` in VS Code with the Lean Infoview enabled. The relevant
+widgets can display saved training logs, tensor summaries, inferred shapes, and debug traces next
+to the Lean source.
 
-A concrete starting point is the training-log widget documented near the top of
-`NN.Examples.Models.Sequence.Gpt2`; it renders a saved JSON loss log in the Infoview.
+A concrete starting point is the training-log widget, which renders a saved JSON loss log in the
+Infoview (it's documented near the top of `TorchLeanExamples.Models.Sequence.GPT2`).
 
 Source entry points:
 
-- [`NN.Examples.Models.Sequence.Gpt2`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Models/Sequence/Gpt2.lean)
-- [`NN.Examples.Models.Sequence.Gpt2Saved`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Models/Sequence/Gpt2Saved.lean)
-- [`NN.Examples.Models.Sequence.Mamba`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Models/Sequence/Mamba.lean)
+- [`TorchLeanExamples.Models.Sequence.GPT2`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/Models/Sequence/GPT2.lean)
+- [`TorchLeanExamples.Models.Sequence.GPT2Saved`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/Models/Sequence/GPT2Saved.lean)
+- [`TorchLeanExamples.Models.Sequence.Mamba`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/Models/Sequence/Mamba.lean)
 - [Three End-to-End Case Studies]({{ '/blueprint/Examples-and-Applications/Three-End-to-End-Case-Studies/' | relative_url }})

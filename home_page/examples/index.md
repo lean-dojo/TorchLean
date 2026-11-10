@@ -5,8 +5,9 @@ title: Examples
 Let's train a model, compute some gradients, or check a numerical claim in Lean.
 Pick an example below for the code and commands.
 
-- [Custom Tensor Computations]({{ '/examples/custom-computations/' | relative_url }})
-  Let's square a tensor with an ordinary Lean function, then choose CPU or GPU when we run it. Try the CPU example directly in Lean's Infoview.
+- [Custom Tensor Computations]({{ '/examples/custom-computations/' | relative_url }}) Let's square
+  a tensor with an ordinary Lean function, then choose CPU or GPU when we run it. Try the CPU
+  example in Lean's Infoview.
 
 - [Graph IR and Bounds]({{ '/blueprint/Semantics-and-Graphs/The-Canonical-Graph-IR/' | relative_url }})
   Follow a small model as it becomes a graph with named operations, then use that graph for shape checks, execution traces, and interval bounds.
@@ -45,7 +46,8 @@ Pick an example below for the code and commands.
   Run PPO on Lean-native and Gymnasium environments, then inspect the rollout, reward, and policy artifacts that enter training.
 
 - [Bug Zoo]({{ '/examples/bug-zoo/' | relative_url }})
-  See how common ML bugs become small Lean contracts: causal masks, KV caches, token ids, normalization state, batching, and Float32 behavior.
+  See how common ML bugs become small Lean contracts: causal masks, KV caches, token ids,
+  normalization state, batching, Float32 behavior, and formulas that fail from rounding.
 
 - [3D Vision Certificates]({{ '/examples/3d-vision/' | relative_url }})
   Export camera and box tensors from a detector, recompute projection in Lean, and reject boxes that do not enclose projected corners.

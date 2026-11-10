@@ -1,9 +1,9 @@
 # Contributing to TorchLean
 
-Use the pinned Lean 4.35.0 toolchain and mathlib dependency, and keep changes focused. FloatLib tracks
-`main` in `lakefile.lean`; `lake-manifest.json` locks the revision used by a checkout. Update it with
-`scripts/lake.sh update floatlib`, rebuild and test, and commit the updated manifest with any fixes.
-Paths below are relative to the repository root.
+Use the pinned Lean 4.35.0 toolchain and Mathlib, and keep each change focused. Paths are relative
+to the repository root. FloatLib tracks `main` in `lakefile.lean`, and `lake-manifest.json` locks
+the revision. To update it, run `scripts/lake.sh update floatlib`, rebuild and test, then commit
+the manifest with any fixes.
 
 The guide has its own manifest. After updating FloatLib, refresh its inherited dependencies with
 `TORCHLEAN_PACKAGE_ROOT="$PWD/home_page/blueprint" scripts/lake.sh update TorchLean` and check the
@@ -17,13 +17,13 @@ scripts/lake.sh test
 scripts/lake.sh lint
 ```
 
-The GitHub Actions workflow publishes documentation; it does not run the runtime test suite.
-Run the CPU and CUDA checks before merging runtime changes.
+The only GitHub Actions workflow publishes the documentation and doesn't run the runtime tests, so
+run the CPU and CUDA checks yourself before merging a runtime change.
 
-The wrapper requires Bash and Python 3. It keeps each pinned toolchain's `cpu` and `cuda-libtorch`
-builds in separate local cache directories and holds a checkout lock while Lake runs. Use it consistently
-when switching profiles; direct `lake` commands do not acquire that lock. Blueprint builds select
-the parent library's CPU cache even after a CUDA build.
+`scripts/lake.sh` needs Bash and Python 3. It keeps separate `cpu` and `cuda-libtorch` caches for
+each pinned toolchain and holds a checkout lock that plain `lake` doesn't take, so use the wrapper
+for every build when you switch profiles. Blueprint builds use the parent library's CPU cache, even
+after a CUDA build.
 
 For GPU checks, select a CUDA-enabled LibTorch SDK and require a visible device:
 
@@ -33,48 +33,49 @@ scripts/lake.sh -Kcuda=true build nn_tests_suite
 TORCHLEAN_REQUIRE_CUDA=1 scripts/lake.sh -Kcuda=true test
 ```
 
-The GPU implementation lives in `csrc/libtorch`. TorchLean owns the tape and calls ATen for forward operations and their VJPs. See
-[native build instructions](../scripts/README.md#libtorch-cuda-build) for SDK selection and
-compiler requirements. CPU checks do not exercise the GPU backend.
+The GPU implementation lives in `csrc/libtorch`. TorchLean owns the tape and calls ATen for each
+forward operation and its VJP. The
+[native build instructions](../scripts/README.md#libtorch-cuda-build) cover SDK selection and
+compiler requirements. The CPU checks don't exercise the GPU backend.
 
-Custom scalar computations use the checked `NN.Kernel` frontend and NVRTC rather than ATen's
-operator catalogue. Its [guide](../NN/Kernel/README.md) describes source correspondence, supported
-precision, and the separate native execution boundary.
+Custom scalar computations go through the checked `Kernel` frontend and NVRTC instead of ATen's
+operator catalogue. Its [guide](../TorchLean/CUDA/Kernel/README.md) covers source correspondence,
+supported precision and the separate native execution boundary.
 
-`import NN.API` provides the application API; `import NN` includes specifications, runtime,
-verification, and proofs. Neither imports executable examples or tests.
+Each library holds the modules of one directory:
 
-| Target | Contents |
+| Library | Contents |
 | --- | --- |
-| `NN` | Library specifications, runtimes, APIs, proofs, and checkers |
-| `NNExamples` | Runnable examples and model commands |
-| `NNTests` | Test modules |
-| `NNCI` | Maintained modules outside the downstream umbrella |
-| `TorchLeanDocs:docs` | Generated API documentation |
+| `TorchLean.Tensor` | Tensors, shapes, scalar formats, operator specifications, and proofs |
+| `TorchLean.CUDA` | LibTorch buffers and kernels, and the CUDA kernel frontend |
+| `TorchLean.NN` | Autograd, runtimes, the application API, the operator IR, interop, and proofs |
+| `TorchLean.Verify` | CROWN and IBP, certificates, roundoff proofs, and FP32 contracts |
+| `TorchLeanExamples` | Runnable examples, model commands, and worked proofs |
+| `TorchLeanTest` | Test modules |
 
-For public API or proof changes, also run `scripts/lake.sh build NNCI`.
-These import targets check maintained library modules; examples and tests have their own targets.
-Large proofs may elaborate without intermediate progress output.
+`scripts/lake.sh build` builds the four libraries. After a change to the public API or to proofs,
+also run `scripts/lake.sh build TorchLeanExamples TorchLeanTest`. Large proofs may elaborate for a
+while without printing progress.
 
-Use Lean's types and proofs for mathematical behavior. Run development checks, tactic experiments,
-and broad input sweeps in temporary scratch files outside the repository, then remove them after
-validation. Keep a permanent test only for a specific numerical, parser, or CUDA/FFI gap not covered
-by the proofs or existing tests. Prefer extending an existing focused check over adding another
-test module. Useful teaching examples belong in `NN/Examples`, not duplicated in a test catalogue.
+Express mathematical behavior with Lean's types and proofs. Run development checks, tactic
+experiments and broad input sweeps in scratch files outside the repository, and delete them
+afterwards. Keep a permanent test only for a specific numerical, parser, or CUDA/FFI gap not covered
+by the proofs or the other tests. Prefer extending a focused check over adding another test module.
+Teaching examples belong in `TorchLeanExamples` and aren't copied into the test tree.
 
 ## Library and Examples
 
-Application examples use `open TorchLean` and named device and arithmetic choices:
-`device := gpu` and `arithmetic := ieee`. These names re-export the existing
-constructors; they do not define different settings. For names shared by several APIs, open the
-specific namespace locally, such as `open Trainer.Objective (mse)`, or qualify the value.
-Do not remove dots from field access, method calls or constructor patterns mechanically.
+Application examples use `open TorchLean` and name their device and arithmetic with the
+constructors of `Backend.Device` and `Arithmetic`, as in `device := .cuda` and
+`arithmetic := .ieee`, never by an alias. For a name shared by several APIs, open its namespace
+locally, as in `open Trainer.Objective (mse)`, or qualify it. Don't strip the dots from field
+access, method calls or constructor patterns mechanically.
 
-Reusable validation, execution, data processing, and training belong in the library. Examples
-construct inputs and models, call library operations, and explain results. Local formatting is
-fine; duplicating a runtime or implementing a model-specific replacement for a general operation
-is not. Reusable modules must not import examples, tests, CI aggregates, or executable wrappers.
-Keep global `main` declarations in executable modules.
+Reusable validation, execution, data processing and training belong in the library. An example
+builds its inputs and model, calls library operations and explains the results. It may format its
+output but must not duplicate a runtime or swap a general operation for a model-specific one.
+Reusable modules must not import examples, tests, CI aggregates or executable wrappers, and global
+`main` declarations stay in executable modules.
 
 Run examples and artifact checkers through their shared commands:
 
@@ -88,81 +89,146 @@ Keep fixtures small. Document external data requirements and record provenance i
 
 ## Module Boundaries
 
-Import the smallest module that provides what you use. The Torch runtime separates its
-`Functional.Ops` interface, `Session` internals, and `Trainer.Types` contract from backend
-construction. The parent modules re-export these parts for callers that need the whole API.
-Keep `Core.Types` free of typed-graph and operation imports. Eager operation files import the
-CPU and CUDA primitives they dispatch to; graph modules import their own recorder and proofs.
+Import the module that defines a declaration you use, not a parent module that imports it. The
+Torch runtime keeps its `Ops` interface (`TorchLean.NN.Ops`), `Session` internals and trainer
+contract (`TorchLean.NN.ScalarTrainer`) apart from backend construction
+(`TorchLean.NN.ScalarTrainer.Construction`). Keep `TorchLean.NN.Session.Config` free of
+typed-graph and operation imports. Eager operation files import the CPU and CUDA primitives they
+dispatch to, and graph modules import their own recorder and proofs.
 
-Use `public import` for dependencies in the public interface and ordinary `import` for
-implementation details. Keep runtime bodies hidden with `public section`. Add `@[expose]` where
-downstream elaboration or proofs need to reduce a definition, as with the curried argument types
-and operation instances. A runtime factory does not need its implementation exposed.
-Some polymorphic factories still need public backend imports for Lean's compiler specialization;
-check compiled consumers before making those imports private.
+Use `public import` for dependencies of the public interface and plain `import` for implementation
+details. Keep runtime bodies hidden with `public section`, and add `@[expose]` where downstream
+elaboration or proofs need to reduce a definition, as for the curried argument types and operation
+instances. Runtime factories don't need exposed implementations, but some polymorphic ones need
+public backend imports for Lean's compiler specialization, so check the compiled consumers before
+making those imports private.
 
 After changing imports, build the affected modules and ask Shake what they actually use:
 
 ```bash
-scripts/lake.sh build NN.Runtime.Autograd.Torch.Core.Trainer
-scripts/lake.sh shake --explain --keep-public NN.Runtime.Autograd.Torch.Core.Trainer
+scripts/lake.sh build TorchLean.NN.ScalarTrainer.Construction
+scripts/lake.sh shake --explain --keep-public TorchLean.NN.ScalarTrainer.Construction
 ```
 
-Review suggestions before applying them. A facade's public re-exports are part of its API, even
-when the facade has no declarations of its own. Rebuild consumers after narrowing imports; they
-may have relied on a dependency arriving indirectly.
+Review Shake's suggestions before applying them. After narrowing imports, rebuild the consumers,
+which may have relied on a dependency arriving indirectly. Module structure follows four rules:
+
+- No umbrella or import-only modules: a file imports the modules that define what it uses.
+- No alias files, modules that only `export` names from others.
+- One definition per concept, without compatibility synonyms or duplicate `Option`/`Except`
+  versions of an operation.
+- Layer order `TorchLean.Tensor` < `TorchLean.CUDA` < `TorchLean.NN` < `TorchLean.Verify`: a
+  module imports only modules of its own layer or of lower ones. `TorchLeanExamples` ranks above
+  the four layers, and `TorchLeanTest` may import any library.
+
+The layering gate in `scripts/checks/dependency_audit.py` checks the first, second, and fourth
+rules. It also checks Lake's glob ownership, where `@[extern]` declarations live and their
+agreement with the C sources, and the imports of the library check `scripts/checks/Library.lean`,
+which must reach every module of the libraries but the root modules of the executables.
+`scripts/lake.sh lint` builds the libraries and then runs the `torchlean_lint` executable, which
+runs `scripts/checks/repo_lint.py`, the gate and the library check. The library check fails unless
+every theorem of the libraries depends on at most `propext`, `Classical.choice` and `Quot.sound`.
+Its coverage check fails unless every public operator specification and tape constructor under
+`TorchLean/` is registered with `#roundoff_coverage`, every operator of the table with a rule has
+its equation lemma and, when one of its ports holds the scalar, a route analyzed for the configured
+scalar, and every `op_cert` certificate speaks about a route of its operator. Run the gate alone
+with:
+
+```bash
+python3 scripts/checks/dependency_audit.py --fail-on-error
+```
 
 ## Adding an Operator
 
-1. Define its mathematical meaning under `NN/Spec/Core` or `NN/Spec/Layers`.
-2. Add forward/VJP contracts under `NN/Spec/Autograd` if differentiation is supported.
-3. For graph primitives, update `NN.IR.OpKind`, denotation, and shape inference/checking.
-4. Add runtime support and any required verification transfers.
-5. Check the relevant declarations and execution behavior. State unsupported paths explicitly.
+Every frontend runs operators through the table `TorchLean.Op`
+(`TorchLean/Tensor/Op/Table.lean`, its rules in `TorchLean/Tensor/Op/Table/Rule.lean`), so an
+operator is added there once:
 
-A runtime-only or verifier-only operation must identify that boundary in its documentation.
-Theorems, conditional contracts, checker acceptance, and native execution carry different
-assumptions; see [trust boundaries](TRUST_BOUNDARIES.md). AI assistance is disclosed in
+1. Define its mathematical meaning and pullback as tensor operations under
+   `TorchLean/Tensor` or `TorchLean/Tensor/Layers`.
+2. Add an `Op` constructor with its attributes, indexed by its input and output ports
+   (`TorchLean.Port`: value, frozen, detached, index, Boolean or integer), and a docstring stating
+   what it computes and its pullback.
+3. Give it an arm of `Op.rule?` with the forward map and the dense pullback, plus a prepared
+   pullback, contribution order, alias rule or value-domain check where these differ from the
+   defaults. Restate the arm as the equation lemma `Op.rule?_<op>` (for the two forms of `cast`,
+   `Op.rule?_cast_bool` and `Op.rule?_cast_index`) in the module of its operator family under
+   `TorchLean/Tensor/Op/Table/`. Attributes that the type does not check go in `Op.check`.
+4. In `TorchLean/Tensor/Op/Need.lean`, give the operator an arm of `Op.need` if its rule reads an
+   optional capability (`Rounding`, `Erf`, `InverseTrig`, `DecidableEq`, `Cbrt`, `NextAfter` or
+   `Bits`). `Op.needsCapability` is computed from `Op.need`. In `TorchLean/Tensor/Op/Invoke.lean`,
+   list the operator in `Op.checksValues` if it checks its input values.
+   `Op.rule?_capabilities` and `Op.validate_eq_ok` there, and `Node.eval_ports` in
+   `TorchLean/NN/IR/Eval.lean`, go by cases on every constructor, and an arm that splits on an
+   attribute or reads a capability needs its own case.
+5. Add its `Op.encode` and `Op.decode` arms in `TorchLean/Tensor/Op/Codec.lean`, with a
+   `decode_encode_<op>` lemma and its case in `Op.decode_encode`. A change that makes an existing
+   record name another operator or other attributes, or fail to decode, must raise
+   `Op.Wire.formatVersion`.
+6. If PyTorch has a function for it, add its row to the PyTorch exporter
+   (`TorchLean/NN/PyTorch/Export/IR.lean`), which refuses an operator without one.
+7. If LibTorch has a kernel for it, add its CUDA entry to `LibTorch.Kernel.ofOp`
+   (`TorchLean/NN/LibTorch/Kernel.lean`) with a contract in
+   `TorchLean/NN/Backend/LibTorch.lean` and a test against the CPU tape (see the [native
+   guide](../csrc/libtorch/README.md)). Add its reference contract to
+   `Backend.Reference.contract?` so CPU planning offers a capsule.
+8. Register its routes with `#roundoff_coverage` in the matching module of
+   `TorchLean/Verify/Coverage/`.
+9. Model code reaches the operator through a method of the `Ops` interface
+   (`TorchLean/NN/Ops.lean`). Its eager instance records it
+   with `Session.apply`, and its recorder instance with `IR.record`.
+10. Check the arm's values (`TorchLeanTest/OpTable.lean` holds hand-computed checks) and any
+    certificate registered with `@[op_cert]`. Document each path that doesn't support it.
+
+The CPU tape needs nothing further: `Tape.apply` records every operator through
+its arm.
+
+A runtime-only or verifier-only operation must say so in its documentation. Theorems, conditional
+contracts, checker acceptance and native execution carry different assumptions, set out in
+[trust boundaries](TRUST_BOUNDARIES.md). AI assistance is disclosed in
 [AI usage](#ai-usage-disclosure).
 
 ## Names and Proof Style
 
 - Use UpperCamelCase for types and namespaces, lowerCamelCase for functions, and snake_case for
-  theorems. Use `theorem` for theorem declarations.
-- Prefer `open TorchLean` and the short `Tensor`/`Storage` names within a module. Qualify names
-  where needed to resolve ambiguity. Do not create local aliases for an already-open name.
-- Keep one canonical implementation. Public facades may re-export it; do not preserve unused
-  compatibility synonyms or duplicate Option/Except versions of the same operation.
-- Avoid repeating a namespace in its declaration names. Name options records `Options`.
-  Prefer a named `batch` option when the input and result shapes remain clear. Keep meaningful
-  spatial distinctions when they change an operation's meaning. Scalar type names such as
-  `Float32` name the representation; arithmetic functions should take or infer the format/type
-  instead of exposing separate `32`/`64` suffixed APIs. Avoid arbitrary version suffixes.
-- Lowercase application namespaces such as `nn`, `optim`, and `text` follow the public API.
-  Definition-specific auxiliary namespaces use their definition's spelling; other helpers belong
-  under `Internal`. Keep top-level API entrypoints as focused import modules.
-- Use `Internal.create` for sealed-structure construction. Exposed definitions need accessible
-  helpers; use private helpers only when their callers can also hide their bodies.
+  theorems, declared with `theorem`.
+- Within a module, prefer `open TorchLean` and the short `Tensor`/`Storage` names, and qualify a
+  name where it would be ambiguous. Don't create local aliases for an already-open name.
+- Don't repeat a namespace in its declaration names. Name options records `Options`. Prefer a
+  named `batch` option when the input and result shapes stay clear, and keep spatial distinctions
+  that change an operation's meaning. A scalar type name such as `Float32` names a representation,
+  so arithmetic functions take or infer the format or type instead of offering `32`- and
+  `64`-suffixed variants. Avoid arbitrary version suffixes.
+- `TorchLean.nn`, `TorchLean.optim` and `TorchLean.autograd` stay lowercase, as the public API
+  spells them. Every other namespace names a concept in UpperCamelCase, never a folder, file, role
+  or stage such as `Internal`, `Core`, `Spec` or `Proofs`. A definition's helpers live in its own
+  namespace.
+- Construct sealed structures with `create`. Exposed definitions need accessible helpers, so use
+  private helpers only when their callers can hide their bodies too.
 - Keep imports narrow, lines at most 100 characters, and comments about mathematical intent or
-  non-obvious invariants. Do not add unresolved `sorry`, `native_decide`, custom axioms, or
-  proof-level heartbeat overrides. The custom-axiom allowlist is empty.
-- Preserve theorem statements. Split expensive proofs into reusable lemmas rather than weakening
+  non-obvious invariants. Don't add `sorry`, `native_decide`, custom axioms or proof-level
+  heartbeat overrides. The custom-axiom allowlist (`ALLOWED_AXIOMS` in
+  `scripts/checks/repo_lint.py`) is empty.
+- Preserve theorem statements. Split expensive proofs into reusable lemmas instead of weakening
   hypotheses or raising resource limits.
 
-Reusable proof automation lives under `NN/Tactic`; see the [tactic guide](../NN/Tactic/README.md).
-Extend `autograd` with a proved rule when adding a differentiable operation, rather than adding
-another expression representation or a model-specific proof solver.
-Tensor expression elaborators stay under `NN/Tensor/Internal/Elab`, model-building macros under
-`NN/API/Macros`, and widget commands under `NN/Widgets`. Those construct programs or displays;
-they are not proof tactics. Keep single-file proof helpers local rather than exporting them just
-to place every macro in one directory.
+The [tensor tactic guide](../TorchLean/Tensor/Tactic/README.md) describes the reusable proof
+automation under `TorchLean/Tensor/Tactic`, and the [derivative tactic
+guide](../TorchLean/NN/Tactic/README.md) covers `autograd` and `converges` under
+`TorchLean/NN/Tactic`. When you add a differentiable operation, extend `autograd` with a proved rule
+instead of adding another expression representation or a model-specific proof solver. Tensor
+expression elaborators stay under `TorchLean/Tensor/Einops/Elab` and in
+`TorchLean/Tensor/Literal.lean`, model-building macros in `TorchLean/NN/Sequential/Literal.lean`
+and widget commands under `TorchLean/NN/Widget`: they build programs or displays, not proof
+tactics. Keep single-file proof helpers local instead of exporting them just to put every macro in
+one directory.
 
 ## Documentation
 
-Every Lean module needs a module docstring; public declarations need useful documentation or
-`@[inherit_doc ...]`. Describe the operation, shape conventions, failure conditions, and relevant
-trust assumptions. Update nearby user documentation when behavior changes; avoid repeating a
-complete API catalogue in several files.
+Every Lean module needs a module docstring, and every public declaration needs documentation or
+`@[inherit_doc ...]` covering the operation, shape conventions, failure conditions and relevant
+trust assumptions. When behavior changes, update the user documentation next to it, and keep any
+complete API catalogue in one file.
 
 Guide source lives in `home_page/blueprint/`. Build the website with:
 
@@ -170,24 +236,23 @@ Guide source lives in `home_page/blueprint/`. Build the website with:
 scripts/docs/build_site.sh
 ```
 
-See [website development](../scripts/README.md#documentation-and-data) for preview commands. Edit source files,
-not generated pages under `home_page/docs` or `home_page/_site`.
+[Website development](../scripts/README.md#documentation-and-data) has the preview commands. Edit
+the source files and leave the generated pages under `home_page/docs` and `home_page/_site` alone.
 
 ### Docstring Examples
 
-Keep short examples directly in API docstrings. Check changed snippets in temporary Lean files
-outside the repository, then remove the scratch files. Runnable tutorials belong in `NN/Examples`;
-do not maintain a second copy under the test tree.
+Keep short examples in the API docstrings themselves, and check a changed snippet in a scratch
+Lean file outside the repository.
 
 ## Before Review
 
 The build treats warnings as errors. Check an individual module with
-`scripts/lake.sh env lean -DwarningAsError=true NN/Path/To/File.lean`.
+`scripts/lake.sh env lean -DwarningAsError=true TorchLean/NN/Path/To/File.lean`.
 
 - Relevant build, proof, numerical, and lint checks pass.
 - Temporary refactor tests and exploratory code are removed.
 - Public documentation matches the final implementation and states remaining assumptions.
-- Dataset and third-party provenance is retained.
+- Dataset and third-party provenance is recorded in `docs/THIRD_PARTY_NOTICES.md`.
 
 ## AI Usage Disclosure
 
@@ -211,9 +276,9 @@ and IR lowering correctness, as well as native-runtime debugging and documentati
   boundaries: reading error logs, thinking through FFI and memory ownership
   issues, checking documentation language, and helping us separate what Lean
   proves from what the CUDA/cuBLAS runtime must be trusted to do.
-- More recently, OpenAI Codex has helped with repository-wide cleanup, API and
-  module organization, upgrades to newer Lean releases, and the build, test,
-  and documentation checks that accompany those changes. The maintainers
+- OpenAI Codex has helped with repository-wide cleanup, API and module
+  organization, Lean toolchain upgrades, and the build, test, and
+  documentation checks that accompany those changes. The maintainers
   reviewed the resulting code and decided which changes belonged in TorchLean.
 - Harmonic was used in a narrower exploratory role for a small amount of
   definition design and mathematical organization, especially before committing

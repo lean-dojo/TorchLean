@@ -1,0 +1,238 @@
+/-
+Copyright (c) 2026 TorchLean
+Released under MIT license as described in the file LICENSE.
+Authors: TorchLean Team
+-/
+
+module
+
+public import TorchLean.NN.FDeriv.Fold
+public import TorchLean.NN.FDeriv.Reindex
+public import TorchLean.Tensor.Context.Real
+
+/-!
+# Coordinate derivatives on real tensors
+
+The tensor representation already carries its Euclidean norm. Reading its coordinates is a
+continuous linear equivalence with the finite-dimensional function space `shape.Coord → ℝ`, so
+coordinatewise derivative proofs give Fréchet derivatives on the tensor itself. In particular, a
+matrix proof can keep its row and column indices and needs no second, flattened layout.
+
+The coordinate function space serves only to assemble the derivative. The result has the native
+tensor type and the Euclidean topology used by the tensor inner-product and adjoint theorems.
+-/
+
+@[expose] public section
+
+namespace TorchLean.Tensor
+
+open scoped ContDiff
+
+noncomputable section
+
+/-- The native coordinate view, with continuity supplied by finite dimensionality. -/
+def coordinateEquiv (shape : Shape) : Tensor ℝ shape ≃L[ℝ] (shape.Coord → ℝ) :=
+  (Tensor.toEuclidean shape).toContinuousLinearEquiv.trans
+    (EuclideanSpace.equiv (𝕜 := ℝ) (ι := shape.Coord))
+
+/-- Reading the coordinate view performs the same lookup as the tensor representation. -/
+@[simp] theorem coordinateEquiv_apply {shape : Shape}
+    (x : Tensor ℝ shape) (i : shape.Coord) :
+    coordinateEquiv shape x i = x i := rfl
+
+/-- Rebuilding a tensor preserves each supplied coordinate. -/
+@[simp] theorem coordinateEquiv_symm_apply {shape : Shape}
+    (x : shape.Coord → ℝ) (i : shape.Coord) :
+    (coordinateEquiv shape).symm x i = x i :=
+  Rep.get_ofFn _ i
+
+/-- A single tensor coordinate is a continuous linear functional. -/
+def coordinateCLM {shape : Shape} (i : shape.Coord) : Tensor ℝ shape →L[ℝ] ℝ :=
+  (ContinuousLinearMap.proj i).comp (coordinateEquiv shape).toContinuousLinearMap
+
+/-- The coordinate functional uses the native lookup. -/
+@[simp] theorem coordinateCLM_apply {shape : Shape}
+    (i : shape.Coord) (x : Tensor ℝ shape) :
+    coordinateCLM i x = x i := rfl
+
+variable {E : Type*} [NormedAddCommGroup E] [NormedSpace ℝ E]
+
+/-- Local smoothness of a tensor is equivalent to local smoothness of every coordinate. -/
+theorem contDiffAt_iff_coordinates {shape : Shape} {n : ℕ∞ω}
+    (f : E → Tensor ℝ shape) (x : E) :
+    ContDiffAt ℝ n f x ↔ ∀ i, ContDiffAt ℝ n (fun y => f y i) x := by
+  rw [← (coordinateEquiv shape).comp_contDiffAt_iff, contDiffAt_pi]
+  rfl
+
+/-- Reading a fixed coordinate preserves local smoothness. -/
+@[fun_prop] theorem contDiffAt_coordinate {shape : Shape} {n : ℕ∞ω}
+    {f : E → Tensor ℝ shape} {x : E} (hf : ContDiffAt ℝ n f x) (i : shape.Coord) :
+    ContDiffAt ℝ n (fun y => f y i) x :=
+  (contDiffAt_iff_coordinates f x).1 hf i
+
+/-- An elementwise map needs smoothness only at the current coordinate values. -/
+@[fun_prop] theorem contDiffAt_map {shape : Shape} {n : ℕ∞ω}
+    {g : ℝ → ℝ} {f : E → Tensor ℝ shape} {x : E}
+    (hg : ∀ i, ContDiffAt ℝ n g (f x i)) (hf : ContDiffAt ℝ n f x) :
+    ContDiffAt ℝ n (fun y => Tensor.map g (f y)) x := by
+  apply (contDiffAt_iff_coordinates _ x).2
+  intro i
+  simpa only [Tensor.map_apply, Function.comp_def] using
+    (hg i).comp x (contDiffAt_coordinate hf i)
+
+/-- Locally smooth coordinate families assemble into a locally smooth native tensor. -/
+@[fun_prop] theorem Rep.contDiffAt_ofFn {shape : Shape} {n : ℕ∞ω}
+    {f : E → shape.Coord → ℝ} {x : E} (hf : ∀ i, ContDiffAt ℝ n (fun y => f y i) x) :
+    ContDiffAt ℝ n (fun y => Rep.ofFn (f y)) x := by
+  apply (contDiffAt_iff_coordinates _ x).2
+  intro i
+  simpa only [Rep.get_ofFn] using hf i
+
+/-- A binary elementwise map needs smoothness only at each current pair of coordinates. -/
+@[fun_prop] theorem contDiffAt_zipWith {shape : Shape} {n : ℕ∞ω}
+    {op : ℝ → ℝ → ℝ} {f g : E → Tensor ℝ shape} {x : E}
+    (hop : ∀ i, ContDiffAt ℝ n (fun p : ℝ × ℝ => op p.1 p.2) (f x i, g x i))
+    (hf : ContDiffAt ℝ n f x) (hg : ContDiffAt ℝ n g x) :
+    ContDiffAt ℝ n (fun y => Tensor.zipWith op (f y) (g y)) x := by
+  apply (contDiffAt_iff_coordinates _ x).2
+  intro i
+  simpa only [Tensor.zipWith_apply, Function.comp_def] using
+    (hop i).comp x ((contDiffAt_coordinate hf i).prodMk (contDiffAt_coordinate hg i))
+
+/-- Tensor smoothness is equivalent to smoothness of its finitely many coordinates. -/
+theorem contDiff_iff_coordinates {shape : Shape} {n : ℕ∞ω} (f : E → Tensor ℝ shape) :
+    ContDiff ℝ n f ↔ ∀ i, ContDiff ℝ n (fun x => f x i) := by
+  simp only [contDiff_iff_contDiffAt, contDiffAt_iff_coordinates]
+  exact forall_comm
+
+/-- Reading a fixed tensor coordinate preserves the differentiability order. -/
+@[fun_prop] theorem contDiff_coordinate {shape : Shape} {n : ℕ∞ω}
+    {f : E → Tensor ℝ shape} (hf : ContDiff ℝ n f) (i : shape.Coord) :
+    ContDiff ℝ n (fun x => f x i) :=
+  (contDiff_iff_coordinates f).1 hf i
+
+/-- Mapping a smooth scalar function over a smooth tensor preserves its differentiability order. -/
+@[fun_prop] theorem contDiff_map {shape : Shape} {n : ℕ∞ω}
+    {g : ℝ → ℝ} {f : E → Tensor ℝ shape} (hg : ContDiff ℝ n g) (hf : ContDiff ℝ n f) :
+    ContDiff ℝ n (fun x => Tensor.map g (f x)) :=
+  contDiff_iff_contDiffAt.2 fun _ => contDiffAt_map (fun _ => hg.contDiffAt) hf.contDiffAt
+
+/-- Smooth coordinate families assemble into a smooth native tensor. -/
+@[fun_prop] theorem Rep.contDiff_ofFn {shape : Shape} {n : ℕ∞ω}
+    {f : E → shape.Coord → ℝ} (hf : ∀ i, ContDiff ℝ n (fun x => f x i)) :
+    ContDiff ℝ n (fun x => Rep.ofFn (f x)) :=
+  contDiff_iff_contDiffAt.2 fun _ => contDiffAt_ofFn (fun i => (hf i).contDiffAt)
+
+/-- Reading a packed storage index preserves local smoothness. -/
+@[fun_prop] theorem Rep.contDiffAt_getFlat {shape : Shape} {n : ℕ∞ω}
+    {f : E → Tensor ℝ shape} {x : E} (hf : ContDiffAt ℝ n f x)
+    (i : Fin (Shape.size shape)) :
+    ContDiffAt ℝ n (fun y => (f y).getFlat i) x := by
+  simpa only [Rep.get, Shape.Coord.linearize_unlinearize] using
+    contDiffAt_coordinate hf (Shape.Coord.unlinearize i)
+
+/-- Packed row-major lookups are the same continuous coordinate functionals. -/
+@[fun_prop] theorem Rep.contDiff_getFlat {shape : Shape} {n : ℕ∞ω}
+    {f : E → Tensor ℝ shape} (hf : ContDiff ℝ n f) (i : Fin (Shape.size shape)) :
+    ContDiff ℝ n (fun x => (f x).getFlat i) :=
+  contDiff_iff_contDiffAt.2 fun _ => contDiffAt_getFlat hf.contDiffAt i
+
+/-- Summation preserves local smoothness, including for empty tensors. -/
+@[fun_prop] theorem contDiffAt_sum {shape : Shape} {n : ℕ∞ω}
+    {f : E → Tensor ℝ shape} {x : E} (hf : ContDiffAt ℝ n f x) :
+    ContDiffAt ℝ n (fun y => Tensor.sum (f y)) x := by
+  simp only [Tensor.sum_eq_foldl, Rep.foldl_eq_fin_foldl,
+      Fin.foldl_eq_foldl_finRange]
+  exact List.contDiffAt_foldl _ (by fun_prop) contDiffAt_const
+    (fun i _ => Rep.contDiffAt_getFlat hf i)
+
+/-- Summing the packed tensor preserves smoothness, including when it has no entries. -/
+@[fun_prop] theorem contDiff_sum {shape : Shape} {n : ℕ∞ω}
+    {f : E → Tensor ℝ shape} (hf : ContDiff ℝ n f) :
+    ContDiff ℝ n (fun x => Tensor.sum (f x)) :=
+  contDiff_iff_contDiffAt.2 fun _ => contDiffAt_sum hf.contDiffAt
+
+/-- Applying a smooth binary scalar function to two tensors preserves their smoothness. -/
+@[fun_prop] theorem contDiff_zipWith {shape : Shape} {n : ℕ∞ω}
+    {op : ℝ → ℝ → ℝ} {f g : E → Tensor ℝ shape}
+    (hop : ContDiff ℝ n (fun p : ℝ × ℝ => op p.1 p.2))
+    (hf : ContDiff ℝ n f) (hg : ContDiff ℝ n g) :
+    ContDiff ℝ n (fun x => Tensor.zipWith op (f x) (g x)) :=
+  contDiff_iff_contDiffAt.2 fun _ =>
+    contDiffAt_zipWith (fun _ => hop.contDiffAt) hf.contDiffAt hg.contDiffAt
+
+/-- Dot products preserve local smoothness in both tensor arguments. -/
+@[fun_prop] theorem contDiffAt_dot {shape : Shape} {n : ℕ∞ω}
+    {f g : E → Tensor ℝ shape} {x : E}
+    (hf : ContDiffAt ℝ n f x) (hg : ContDiffAt ℝ n g x) :
+    ContDiffAt ℝ n (fun y => dot (f y) (g y)) x := by
+  apply contDiffAt_sum
+  exact contDiffAt_zipWith (fun _ => by fun_prop) hf hg
+
+/-- Dot products of two smooth tensor families are smooth. -/
+@[fun_prop] theorem contDiff_dot {shape : Shape} {n : ℕ∞ω}
+    {f g : E → Tensor ℝ shape} (hf : ContDiff ℝ n f) (hg : ContDiff ℝ n g) :
+    ContDiff ℝ n (fun x => dot (f x) (g x)) :=
+  contDiff_iff_contDiffAt.2 fun _ => contDiffAt_dot hf.contDiffAt hg.contDiffAt
+
+/-- Matrix multiplication needs smoothness of its inputs only near the evaluation point. -/
+@[fun_prop] theorem contDiffAt_matmul {n : ℕ∞ω} {rows inner cols : Nat}
+    {f : E → Tensor ℝ [rows, inner]} {g : E → Tensor ℝ [inner, cols]} {x : E}
+    (hf : ContDiffAt ℝ n f x) (hg : ContDiffAt ℝ n g x) :
+    ContDiffAt ℝ n (fun y => Tensor.matmul (f y) (g y)) x := by
+  simp only [Tensor.matmul_eq_ofFn]
+  apply Rep.contDiffAt_ofFn
+  intro i
+  simp only [get2_eq_apply]
+  exact List.contDiffAt_foldl _ (by fun_prop) contDiffAt_const
+    (fun k _ => (contDiffAt_coordinate hf _).mul (contDiffAt_coordinate hg _))
+
+/-- Matrix multiplication preserves smoothness when both operands vary. -/
+@[fun_prop] theorem contDiff_matmul {n : ℕ∞ω} {rows inner cols : Nat}
+    {f : E → Tensor ℝ [rows, inner]} {g : E → Tensor ℝ [inner, cols]}
+    (hf : ContDiff ℝ n f) (hg : ContDiff ℝ n g) :
+    ContDiff ℝ n (fun x => Tensor.matmul (f x) (g x)) :=
+  contDiff_iff_contDiffAt.2 fun _ => contDiffAt_matmul hf.contDiffAt hg.contDiffAt
+
+/-- Fixed coordinate reads preserve local smoothness, including repeated reads and empty outputs. -/
+@[fun_prop] theorem Rep.contDiffAt_pull {source target : Shape} {n : ℕ∞ω}
+    (index : target.Coord → source.Coord) {f : E → Tensor ℝ source} {x : E}
+    (hf : ContDiffAt ℝ n f x) :
+    ContDiffAt ℝ n (fun y => Rep.pull index (f y)) x := by
+  simpa only [Function.comp_def, pullCLM_apply] using
+    (pullCLM index).contDiff.contDiffAt.comp x hf
+
+/-- Fixed coordinate reads preserve smoothness, including repeated reads and empty outputs. -/
+@[fun_prop] theorem Rep.contDiff_pull {source target : Shape} {n : ℕ∞ω}
+    (index : target.Coord → source.Coord) {f : E → Tensor ℝ source}
+    (hf : ContDiff ℝ n f) : ContDiff ℝ n (fun x => Rep.pull index (f x)) :=
+  contDiff_iff_contDiffAt.2 fun _ => contDiffAt_pull index hf.contDiffAt
+
+/-- Assemble one scalar derivative for each output coordinate into a tensor derivative. -/
+def assemble {shape : Shape} (derivatives : shape.Coord → E →L[ℝ] ℝ) :
+    E →L[ℝ] Tensor ℝ shape :=
+  (coordinateEquiv shape).symm.toContinuousLinearMap.comp
+    (ContinuousLinearMap.pi derivatives)
+
+/-- Each coordinate of the assembled tangent is given by its supplied scalar derivative. -/
+@[simp] theorem assemble_apply {shape : Shape}
+    (derivatives : shape.Coord → E →L[ℝ] ℝ) (dx : E) (i : shape.Coord) :
+    assemble derivatives dx i = derivatives i dx :=
+  coordinateEquiv_symm_apply _ i
+
+/-- Scalar coordinate derivatives determine the full tensor Fréchet derivative.
+
+Finiteness of the shape makes assembling the coordinates a continuous linear map, so the
+hypotheses give a Fréchet derivative of `f` in the tensor norm. -/
+theorem hasFDerivAt_of_coordinates {shape : Shape} (f : E → Tensor ℝ shape)
+    (derivatives : shape.Coord → E →L[ℝ] ℝ) (x : E)
+    (h : ∀ i, HasFDerivAt (fun y => f y i) (derivatives i) x) :
+    HasFDerivAt f (assemble derivatives) x := by
+  have hpi := (hasFDerivAt_pi (𝕜 := ℝ)
+    (φ := fun i y => f y i) (φ' := derivatives) (x := x)).2 h
+  apply (coordinateEquiv shape).comp_hasFDerivAt_iff'.1
+  exact hpi
+
+end
+
+end TorchLean.Tensor

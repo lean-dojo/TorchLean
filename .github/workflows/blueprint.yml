@@ -44,6 +44,9 @@ jobs:
   build_project:
     runs-on: ubuntu-latest
     name: Build project
+    env:
+      # scripts/docs/build_site.sh builds and checks the site for its published base URL.
+      JEKYLL_ENV: production
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -84,85 +87,20 @@ jobs:
           scripts/lake.sh -Kcuda=false exe cache get || true
           rm -f ~/.cache/mathlib/*.ltar || true
 
-      - name: Cache API docs
-        if: steps.generated_docs.outputs.cache-hit != 'true'
-        uses: actions/cache@v4
-        with:
-          path: |
-            .lake/build/doc/Aesop
-            .lake/build/doc/Batteries
-            .lake/build/doc/find
-            .lake/build/doc/Init
-            .lake/build/doc/Lake
-            .lake/build/doc/Lean
-            .lake/build/doc/Mathlib
-            .lake/build/doc/Std
-          key: Docs-${{ hashFiles('lake-manifest.json') }}
-
       - name: Build project API documentation
         if: steps.generated_docs.outputs.cache-hit != 'true'
-        run: |
-          rm -rf .lake/build/doc-data .lake/build/api-docs.db
-          DISABLE_EQUATIONS=1 scripts/lake.sh -Kcuda=false -Kenv=dev build TorchLeanDocs:docs
-
-      - name: Copy API documentation to `home_page/docs`
-        if: steps.generated_docs.outputs.cache-hit != 'true'
-        run: |
-          rm -rf home_page/docs
-          cp -r .lake/build/doc home_page/docs
-          python3 scripts/docs/polish_docgen.py --docs home_page/docs
-          du -sh home_page/docs
+        run: scripts/docs/build_site.sh api
 
       - name: Build Verso guide from `home_page/blueprint`
         if: steps.generated_docs.outputs.cache-hit != 'true'
         run: |
-          cd home_page/blueprint
-          export TORCHLEAN_PACKAGE_ROOT="$PWD"
-          ../../scripts/lake.sh exe cache get || true
+          TORCHLEAN_PACKAGE_ROOT="$PWD/home_page/blueprint" scripts/lake.sh exe cache get || true
           rm -f ~/.cache/mathlib/*.ltar || true
-          ../../scripts/lake.sh exe vbp build --output ../../_out/blueprint
-          ../../scripts/lake.sh exe vbp check --site ../../_out/blueprint
-          unset TORCHLEAN_PACKAGE_ROOT
-          cd ../..
-          test -s _out/blueprint/html-multi/-verso-data/blueprint-manifest.json
-          test -s _out/blueprint/html-multi/-verso-data/blueprint-html-cache.json
-          if [ -d home_page/blueprint/TorchLeanBlueprint/Guide/Assets ]; then
-            mkdir -p _out/blueprint/html-multi/Guide/Assets
-            cp -r home_page/blueprint/TorchLeanBlueprint/Guide/Assets/* _out/blueprint/html-multi/Guide/Assets/
-          fi
-          python3 scripts/docs/polish_verso_guide.py --guide _out/blueprint/html-multi
+          scripts/docs/build_site.sh guide
 
-      - name: Trim Lake build metadata from docs
+      - name: Build dependency graphs
         if: steps.generated_docs.outputs.cache-hit != 'true'
-        run: |
-          find home_page/docs -name "*.trace" -delete
-          find home_page/docs -name "*.hash" -delete
-
-      - name: Reset generated manual output
-        run: rm -rf home_page/manual
-
-      - name: Build dependency graph audit
-        if: steps.generated_docs.outputs.cache-hit != 'true'
-        run: |
-          python3 scripts/checks/dependency_audit.py \
-            --root "$PWD" \
-            --json home_page/graphs/dependency-audit.json \
-            --fail-on-error
-
-      - name: Build interactive import graph HTML
-        if: steps.generated_docs.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p home_page/importgraph
-          scripts/lake.sh -Kcuda=false exe graph --to NN home_page/importgraph/index.html
-          python3 scripts/docs/polish_docgen.py --importgraph home_page/importgraph/index.html
-
-      - name: Check generated documentation is complete
-        run: |
-          test -s home_page/docs/index.html
-          test -s _out/blueprint/html-multi/-verso-data/blueprint-manifest.json
-          test -s _out/blueprint/html-multi/-verso-data/blueprint-html-cache.json
-          test -s home_page/importgraph/index.html
-          test -s home_page/graphs/dependency-audit.json
+        run: scripts/docs/build_site.sh graphs
 
       - name: Bundle dependencies
         uses: ruby/setup-ruby@v1
@@ -174,38 +112,15 @@ jobs:
       - name: Refresh build timing history
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/docs/ci_timings.py
+        run: scripts/docs/build_site.sh timings
 
       - name: Build website using Jekyll
-        working-directory: home_page
         env:
           JEKYLL_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          JEKYLL_ENV=production bundle exec jekyll build
-          mkdir -p _site/blueprint
-          cp -r ../_out/blueprint/html-multi/. _site/blueprint/
-          content_pages=0
-          while IFS= read -r -d '' page; do
-            if grep -Fq "<main" "$page"; then
-              content_pages=$((content_pages + 1))
-              grep -Fq "mathjax@3/es5/tex-chtml.js" "$page" || {
-                echo "error: MathJax is not loaded by $page" >&2
-                exit 1
-              }
-            fi
-          done < <(
-            find _site -type f -name "*.html" \
-              ! -path "_site/blueprint/*" \
-              ! -path "_site/docs/*" \
-              ! -path "_site/importgraph/*" \
-              -print0
-          )
-          test "$content_pages" -gt 0
+        run: scripts/docs/build_site.sh website
 
       - name: Check generated links and anchors
-        run: |
-          python3 scripts/docs/check_site_links.py home_page/_site \
-            --baseurl /TorchLean --site-url https://lean-dojo.github.io/TorchLean
+        run: scripts/docs/build_site.sh links
 
       - name: "Upload website (API documentation, blueprint and any home page)"
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

@@ -27,19 +27,21 @@ scripts/lake.sh exe verify --help
 
 The first lists runnable examples: quickstarts, supervised models, text models, diffusion, FNO
 Burgers, reinforcement learning, data loaders, PyTorch interop, graph examples, and floating-point
-checks. The second lists checker entry points: TorchLean IBP/CROWN paths, LiRPA-style fixtures,
-PINN certificates, ODE enclosures, VNN-COMP-style MNIST queries, 3D projection certificates, spline
-certificates, and two-stage Lyapunov experiments.
+checks. The second lists checker entry points: TorchLean IBP/CROWN paths, an IBP certificate check
+(`ibp-cert`), PINN certificates, ODE enclosures, VNN-COMP-style MNIST queries, 3D projection
+certificates, spline certificates, and two-stage Lyapunov experiments.
 
 ## Quickstart In Lean
 
-The same model written as Lean code is the example from the repository README. Application code
-writes tensor types as `Tensor α [dims...]` with the element type first, so `Tensor Float [4, 2]`
-is a four-by-two tensor of `Float` values. `nn.Sequential!` is scoped syntax, so the file needs
-`open TorchLean`.
+Here's the same model written as Lean code (it's the example from the repository README).
+Application code writes tensor types as `Tensor α [dims...]` with the element type first, so
+`Tensor Float [4, 2]` is a four-by-two tensor of `Float` values. `nn.Sequential!` is scoped syntax,
+so the file needs `open TorchLean`.
 
 ```lean
-import NN.API
+import TorchLean.NN.Data.Dataset
+import TorchLean.NN.Trainer.Constructor
+import TorchLean.NN.Trainer.Train
 open TorchLean
 open Trainer.Objective (mse)
 
@@ -47,7 +49,7 @@ open Trainer.Objective (mse)
 def model :=
   nn.Sequential![
     nn.linear 2 8,
-    nn.relu,
+    nn.op .relu,
     nn.linear 8 1
   ]
 
@@ -59,17 +61,17 @@ def xs : Tensor Float [4, 2] :=
 def ys : Tensor Float [4, 1] :=
   [[0.2], [1.0], [1.0], [1.8]]
 
--- The leading `4` counts samples; each sample has shapes `[2]` and `[1]`.
+-- The leading `4` counts samples, and each sample has shapes `[2]` and `[1]`.
 def data : Trainer.Dataset [2] [1] := Data.fromTensors xs ys
 
 def trainOnce : IO Unit := do
   -- Select the loss and train on the CPU with FloatLib binary32 arithmetic.
   let trainer :=
-    Trainer.new model
+    Trainer.create model
       { objective := mse
         optimizer := optim.sgd { lr := 0.05 }
-        device := cpu
-        arithmetic := ieee }
+        device := .cpu
+        arithmetic := .ieee }
   -- Inspect the initialized model before any parameter updates.
   let initialPrediction ← trainer.predict ([0.5, -0.25] : Tensor Float [2])
   IO.println s!"initial={reprStr initialPrediction}"
@@ -79,17 +81,18 @@ def trainOnce : IO Unit := do
   trained.printSummary
 ```
 
-`Trainer.new` takes the model and a configuration. `trainer.train` takes the dataset and a
-`TrainOptions` record; `steps` is required and `samplesPerStep` says how many sample gradients
-are averaged before each update. The result retains the updated parameter state and run report.
+`Trainer.create` takes the model and a configuration. `trainer.train` takes the dataset and a
+`TrainOptions` record, in which `steps` is required and `samplesPerStep` says how many sample
+gradients are averaged before each update. Its result retains the updated parameter state and run
+report.
 
 ## Choosing Your Precision
 
-Choose a FloatLib binary format, including custom precision, directly in your tensors. Binary32
-is a familiar starting point; binary128 and custom widths use the same API:
+Choose a FloatLib binary format, including custom precision, as the element type of your tensors.
+Binary32 is a familiar starting point, but binary128 and custom widths use the same API:
 
 ```lean
-import NN.API
+import TorchLean.NN.Sequential.Training
 open TorchLean
 open FloatLib.Floats
 
@@ -112,30 +115,32 @@ def customInput : Tensor Custom [2] :=
 ```
 
 The wider inputs retain fractions that binary64 loses at 1. A rational cast rounds directly into
-the chosen format. Its widths must satisfy FloatLib's constraints: at least two exponent bits,
-a positive fraction width, and a valid exponent bias. Larger formats cost more memory and work.
+the chosen format, whose widths must satisfy FloatLib's constraints: at least two exponent bits, a
+positive fraction width, and a valid exponent bias. Larger formats cost more memory and work.
 
-Use `nn.State Binary128 (nn.stateShapes model)` and `nn.lowerToTypedGraph model (α := Binary128)`
-to keep that scalar through parameters, activations, and derivatives on the typed CPU path. The
-[tensor guide]({{ '/blueprint/Building-Models/Tensors-That-Remember-Their-Shapes/' | relative_url }})
-works through an affine model with exact output and derivative checks. The supervised trainer
-above uses `Float` datasets and reports. To retain the chosen scalar through a supervised session,
-use `trainer.openTyped (α := Binary128)`: samples, predictions, losses, reports, and model-state
+Use `TensorPack Binary128 (nn.Sequential.stateShapes m)` and
+`nn.Sequential.lowerToTypedGraph m (α := Binary128)` for the built model `m := nn.build 2026 model`
+to keep that scalar through parameters, activations, and derivatives on the typed CPU path (the
+[tensor
+guide]({{ '/blueprint/Building-Models/Tensors-That-Remember-Their-Shapes/' | relative_url }}) works
+through an affine model with exact output and derivative checks). The supervised trainer above uses
+`Float` datasets and reports. To retain the chosen scalar through a supervised session, use
+`trainer.openTyped (α := Binary128)`: samples, predictions, losses, reports, and model-state
 checkpoints keep that type. Typed sessions run on CPU and reject custom backend profiles. Their
-results have no attached verifier, so `Result.verify` returns an error. Seeded initialization and
-optimizer/scheduler settings still begin with
-`Float` values; supply typed initial state when those initial values need extra precision.
-The eager CUDA tape retains binary32 for `Float32` and binary64 for `Float`, including saved
-values, gradients and optimizer state. Custom configured-binary computations can also record
-supported arithmetic on the GPU tape, keeping the complete words for values and gradients.
-This does not extend native optimizers or the full LibTorch operator catalogue to those formats.
+results have no attached verifier, so `Result.verify` returns an error. Even in a typed session,
+seeded initialization and optimizer/scheduler settings begin with `Float` values, so supply typed
+initial state when those initial values need extra precision. On CUDA, the eager tape retains
+binary32 for `Float32` and binary64 for `Float`, including saved values, gradients and optimizer
+state. Custom configured-binary computations can also record supported arithmetic on the GPU tape,
+keeping the complete words for values and gradients, but that doesn't extend native optimizers or
+the full LibTorch operator catalogue to those formats.
 
-For an explicit training loop, take the parameter gradients returned by
-`nn.TypedGraphModel.vjp` and pass them to `nn.sgdStep model lr state gradient`.
-The learning rate, state, and updates use the selected scalar. The
-[typed training example](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Quickstart/TypedTraining.lean)
-shows this loop for half squared error. It uses immutable CPU state, preserves frozen entries,
-and rejects models with buffer-update hooks such as BatchNorm; it does not provide their
+To write the training loop yourself, take the parameter gradients returned by
+`nn.TypedGraphModel.vjp` and pass them to `nn.sgdStep model lr state gradient`. In that loop the
+learning rate, state, and updates use the selected scalar. The [typed training
+example](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/Quickstart/TypedTraining.lean)
+shows this loop for half squared error. It uses immutable CPU state, preserves frozen entries, and
+rejects models with buffer-update hooks such as BatchNorm. It doesn't provide their
 running-statistics updates or extend the trainer's checkpoint interface.
 
 ## Where To Go Next
@@ -164,7 +169,7 @@ running-statistics updates or extend the trainer's checkpoint interface.
 - Train a model: `scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 100 --arithmetic ieee`.
 - Inspect a scientific ML run: [Scientific ML]({{ '/examples/scientific-ml/' | relative_url }}).
 - Check a certificate or bound pass: [Verification Bounds]({{ '/examples/verification/' | relative_url }}).
-- Start application code with `import NN.API; open TorchLean`.
+- Start application code with the quickstart's three imports and `open TorchLean`.
 - Follow declaration and proof dependencies: [Formalization graph]({{ '/blueprint/Dependency-Graph/' | relative_url }}).
 - Explore module dependencies: [Import graphs]({{ '/graphs/' | relative_url }}).
 - Understand CUDA assumptions: [GPU and CUDA Boundaries]({{ '/blueprint/Floating-Point-and-Native-Boundaries/From-A-Tensor-Operation-To-A-GPU-Kernel/' | relative_url }}).

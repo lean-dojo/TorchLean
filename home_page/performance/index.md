@@ -5,11 +5,12 @@ title: Performance
 # Performance
 
 <p class="lede performance-lede">
-  How long does TorchLean take to build its API documentation, guide, and website?
+  How long TorchLean takes to build its API documentation, guide, and website, and how fast its
+  executables run.
 </p>
 
 Recent successful builds, broken down into API documentation, the guide, and website assembly.
-GitHub-hosted runners vary, so these are build timings rather than model runtime benchmarks.
+GitHub-hosted runners vary, so these are build timings, not model runtime benchmarks.
 
 <aside class="performance-provenance">
   The commit-by-commit view is inspired by
@@ -85,6 +86,78 @@ GitHub-hosted runners vary, so these are build timings rather than model runtime
   </section>
 </div>
 
+<!-- runtime-bench:start (scripts/docs/runtime_bench.py renders this section) -->
+<div class="performance-dashboard">
+  <section class="performance-panel" aria-labelledby="performance-runtime-title">
+    <h2 id="performance-runtime-title">Runtime benchmarks</h2>
+    <p class="performance-panel-intro">
+      We ran the quick suite of <code>scripts/bench/bench.py</code>: 3 commands, 5 times each. The
+      table shows the median of each measurement. Between repetitions the instruction counts varied
+      by less than 0.01% and the CPU time by at most 4.4%.
+    </p>
+    <div class="performance-table-wrap">
+      <table class="performance-table">
+        <thead>
+          <tr>
+            <th>Benchmark</th>
+            <th>What it runs</th>
+            <th>Instructions</th>
+            <th>CPU time</th>
+            <th>Wall time</th>
+            <th>Max RSS</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>qs_mlp_ieee</code></td>
+            <td>the quickstart MLP's training loop and Adam in FloatLib binary32</td>
+            <td>46.5 billion</td>
+            <td>5.54 s</td>
+            <td>5.56 s</td>
+            <td>75 MiB</td>
+          </tr>
+          <tr>
+            <td><code>gpt2</code></td>
+            <td>a byte-level GPT on Tiny Shakespeare</td>
+            <td>76.4 billion</td>
+            <td>7.96 s</td>
+            <td>7.97 s</td>
+            <td>87 MiB</td>
+          </tr>
+          <tr>
+            <td><code>crown_query</code></td>
+            <td>exact-rational CROWN bounds of a 24-48-48-48-8 ReLU chain</td>
+            <td>66.9 billion</td>
+            <td>7.02 s</td>
+            <td>7.04 s</td>
+            <td>103 MiB</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="performance-chart-caption">
+      The commands, run in the checkout with the example data of
+      <code>scripts/datasets/download_example_data.py</code> in <code>data/real</code> and the query
+      file that <code>scripts/bench/gen_query.py</code> writes:
+    </p>
+    <ul>
+      <li><code>torchlean quickstart_mlp --device cpu --arithmetic ieee --steps 5000 --seed
+        0</code></li>
+      <li><code>torchlean gpt2 --device cpu --data-file data/real/text/tiny_shakespeare.txt
+        --steps 400 --log false --seed 0</code></li>
+      <li><code>verify crown-query q-24-48x3-8.json</code></li>
+    </ul>
+    <p class="performance-chart-caption">
+      Measured on 2026-11-09 at a checkout whose 1198 source files have the bench.py digest
+      <code>c60fed7c34aedf04</code>, with leanprover/lean4:v4.35.0, on Intel(R) Xeon(R) Platinum
+      8275CL CPU @ 3.00GHz, with 8 of its 96 logical CPUs available. Instructions are user-space
+      counts from perf_event_open. Max RSS is the largest resident set of the command's process
+      tree.
+    </p>
+  </section>
+</div>
+<!-- runtime-bench:end -->
+
 <script>
 (() => {
   "use strict";
@@ -122,7 +195,7 @@ GitHub-hosted runners vary, so these are build timings rather than model runtime
   };
 
   const formatDuration = seconds => {
-    if (!Number.isFinite(seconds)) return "—";
+    if (!Number.isFinite(seconds)) return "n/a";
     const rounded = Math.max(0, Math.round(seconds));
     const hours = Math.floor(rounded / 3600);
     const minutes = Math.floor((rounded % 3600) / 60);
@@ -133,7 +206,7 @@ GitHub-hosted runners vary, so these are build timings rather than model runtime
   };
 
   const shortDuration = seconds => {
-    if (!Number.isFinite(seconds)) return "—";
+    if (!Number.isFinite(seconds)) return "n/a";
     const rounded = Math.max(0, Math.round(seconds));
     const hours = Math.floor(rounded / 3600);
     const minutes = Math.floor((rounded % 3600) / 60);

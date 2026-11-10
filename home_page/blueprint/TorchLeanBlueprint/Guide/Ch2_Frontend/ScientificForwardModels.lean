@@ -1,13 +1,45 @@
 import VersoManual
-import NN.API
-import NN.Examples.Functional.Transcendentals
+import TorchLeanExamples.Transcendentals
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
+import TorchLean.NN.LoRA
+import TorchLean.NN.Autograd.Complex
+import TorchLean.NN.Autograd.Differential
+import TorchLean.NN.Autograd.Frontend
+import TorchLean.NN.CLI.Training.Command
+import TorchLean.NN.Data.Image
+import TorchLean.NN.Data.Synthetic
+import TorchLean.NN.Data.CausalLM
+import TorchLean.NN.Models.CNN
+import TorchLean.NN.Models.CausalTransformer.LanguageModel
+import TorchLean.NN.Models.Diffusion.NoisePredictor
+import TorchLean.NN.Models.FNO
+import TorchLean.NN.Models.KAN
+import TorchLean.NN.Models.Mamba
+import TorchLean.NN.Models.PPO
+import TorchLean.NN.Models.Recurrent
+import TorchLean.NN.Models.ResNet
+import TorchLean.NN.Models.MaskedPatchReconstructor
+import TorchLean.NN.Models.UNet
+import TorchLean.NN.Builder.MoE
+import TorchLean.NN.Sequential.Training
+import TorchLean.NN.RL.CLI
+import TorchLean.NN.SelfSupervised
+import TorchLean.NN.Text.GPT2BPE
+import TorchLean.NN.Text.Generation
+import TorchLean.NN.Text.Vocabulary
+import TorchLean.NN.Trainer.Constructor
+import TorchLean.NN.Trainer.Train
+import TorchLean.NN.Op.Pointwise
+import TorchLean.NN.Loss
+import TorchLean.NN.Session.Random
+import TorchLean.Verify.Trainer
 
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 open TorchLean
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
+open FloatLib.Numerics (MathFunctions)
 
 #doc (Manual) "Differentiable Scientific Models" =>
 %%%
@@ -19,28 +51,30 @@ That makes it a useful starting point for an inverse problem: we can check the u
 before asking an optimizer to fit observations. I'll start by varying one input, then let both
 factors in the exponent be unknown to see why correct derivatives alone cannot identify them.
 
-The named Lean blocks evaluate the gradients, Jacobians, Hessians, and float counterexamples during
-the build. Closed-form calculations and separate PyTorch snippets provide comparison points.
+We evaluate the gradients, Jacobians, Hessians, and float counterexamples in named Lean blocks
+during the build. Closed-form calculations and separate PyTorch snippets provide comparison points.
 
 # Vegetation Attenuation Model
 
-Consider a simplified vegetation-attenuation law: an exponential term represents transmission,
-and an additive offset represents a surface contribution. This illustrative model fixes its
-coefficients so that each derivative can be calculated explicitly:
+Consider a simplified vegetation-attenuation law: an exponential term represents transmission, and
+an additive offset represents a surface contribution. This illustrative model fixes its
+coefficients so that each derivative can be worked out by hand:
 
 $$`f(x)=\tfrac12 e^{-2x}+\tfrac1{10}.`
 
-Here $`x` is the attenuation variable. For nonnegative $`x`, increasing it reduces the
-exponential contribution toward the offset $`\tfrac1{10}`. The rank-zero input and output tensors
-represent individual scalars:
+Here $`x` is the attenuation variable. For nonnegative $`x`, increasing it reduces the exponential
+contribution toward the offset $`\tfrac1{10}`. Both the input and the output are rank-zero tensors,
+representing individual scalars:
 
 ```lean (name := sfmModel)
 -- Keep the attenuation scale, exponential, and surface
 -- offset explicit.
 def sfmAttenuation : autograd.Function [] [] :=
   fun x => do
-    let u ← nn.functional.scale x (-2)
-    let e ← nn.functional.exp u
+    let u ← Ops.apply .scale
+        (x, .data (Ops.dataConst
+          (Tensor.scalar (-2))), ())
+    let e ← Ops.apply .exp (u, ())
     nn.functional.affine e (1 / 2) (1 / 10)
 ```
 
@@ -65,8 +99,8 @@ The inner scaling contributes $`-2`, which cancels the outer factor of $`\tfrac1
 Autograd must propagate both factors through the three operations.
 
 `autograd.grad` differentiates the program. Passing `value := true` returns the gradient and the
-forward value from a single evaluation, which is the same convenience PyTorch spells
-`torch.func.grad_and_value`:
+forward value from a single evaluation (the same convenience PyTorch spells
+`torch.func.grad_and_value`):
 
 ```lean (name := sfmGrad)
 -- Return the primal and its input gradient from the same
@@ -87,8 +121,8 @@ f'(0.5) = -0.367879
 -e^-1   = -0.367879
 ```
 
-The last line is the closed form evaluated independently, in host Float, with no autograd involved.
-It agrees to every printed digit.
+The last line is the closed form evaluated independently (in host Float, with no autograd
+involved). It agrees to every printed digit.
 
 Second derivatives come from the same program. For this model,
 
@@ -122,14 +156,14 @@ hessian = 0.735759
 ```
 
 At this input, forward and reverse mode agree at the printed precision, and the Hessian matches
-$`2e^{-2x}`. For a scalar input and output, either Jacobian mode needs one directional pass,
-though their overhead differs. More generally, forward mode takes one pass per input direction
-and reverse mode one per output direction. A PDE residual may need derivatives with respect to
-only a few coordinates; a scalar training loss may depend on millions of parameters. Those
+$`2e^{-2x}`. For a scalar input and output, either Jacobian mode needs one directional pass (though
+their overhead differs). More generally, forward mode takes one pass per input direction and
+reverse mode one per output direction. A PDE residual may need derivatives with respect to only a
+few coordinates, while a scalar training loss may depend on millions of parameters. Those
 dimensions guide the choice of mode, as surveyed by {Informal.citet baydin2018}[].
 
-The corresponding PyTorch program uses float64. Its recorded transcript gives the same displayed
-values:
+In PyTorch the corresponding program uses float64, and its recorded transcript gives the same
+displayed values:
 
 ```
 # Use float64 to compare the same scalar formula and
@@ -155,21 +189,20 @@ jacfwd  = -0.367879
 hessian = 0.735759
 ```
 
-The four displayed values agree. The programs expose their structure differently: `f` above is a
-Python function traced by the differentiation transform, while
-`sfmAttenuation` has a type that says it maps a rank-zero tensor to a rank-zero tensor and works
-for every supported scalar type.
+What differs is how the programs expose their structure: `f` above is a Python function traced by
+the differentiation transform, while `sfmAttenuation` has a type that says it maps a rank-zero
+tensor to a rank-zero tensor and works for every supported scalar type.
 
-The three attenuation outputs describe different aspects of the same local behavior. At `0.5`,
-the prediction `0.283940` sits above the limiting offset `0.1`; its negative slope says that
-increasing attenuation reduces the prediction. The positive second derivative says that this
-negative slope becomes less steep as attenuation increases. It does not mean the prediction is
-increasing. The forward value, slope, and curvature together express a decreasing curve that
+Each of the three attenuation outputs describes a different aspect of the same local behavior. At
+`0.5`, the prediction `0.283940` sits above the limiting offset `0.1`, and its negative slope says
+that increasing attenuation reduces the prediction. Its positive second derivative says that this
+negative slope becomes less steep as attenuation increases. That doesn't mean the prediction is
+increasing. Read together, the forward value, slope, and curvature express a decreasing curve that
 flattens toward its offset.
 
 Here the exponential's argument is dimensionless. In a physical model, the units or normalization
-of the attenuation variable and its coefficient must make that true. The scalar tensor type does
-not track units, and the example's fixed coefficients are a simplified forward law rather than a
+of the attenuation variable and its coefficient must make that true (the scalar tensor type doesn't
+track units). With its fixed coefficients, the example is a simplified forward law and not a
 complete retrieval model. Connecting it to observations would also require the measurement model,
 parameter ranges, and noise assumptions that the derivative calculation leaves open.
 
@@ -181,7 +214,9 @@ Decimal literal notation requires an instance that `autograd.Function` does not 
 -- A scalar-polymorphic function cannot assume
 -- decimal-literal support.
 example : autograd.Function [] [] :=
-  fun x => nn.functional.scale x 0.8
+  fun x => TorchLean.Ops.apply .scale
+      (x, .data (TorchLean.Ops.dataConst
+        (Tensor.scalar 0.8)), ())
 ```
 
 ```leanOutput sfmLiteral (whitespace := lax)
@@ -207,16 +242,17 @@ fun σ τ =>
     [inst : Storage α] →
       [inst_1 : Context α] →
         {m : Type → Type} →
-          [inst_2 : Monad m] →
-            [inst_3 : Runtime.Autograd.Torch.Ops m α] →
-              Runtime.ValueRef m α σ →
-              m (Runtime.ValueRef m α τ)
+          [Monad m] →
+            [inst_3 : Ops m α] →
+              Ops.Ref m α σ →
+              m (Ops.Ref m α τ)
 ```
 
-Inside the body, `α` is an abstract scalar type constrained only by `Storage` and `Context`. There
-is no `OfScientific α`, because `0.8` is not meaningful for every scalar a tensor can hold. The
-standard `Zero`, `One`, `NatCast`, `Div`, and `Neg` interfaces provide integer constants and
-arithmetic expressions. `Context.defaultEpsilon` supplies a backend-selected numerical safeguard:
+Inside the body, `α` is an abstract scalar type constrained only by `Storage` and `Context`.
+There's no `OfScientific α`, because `0.8` isn't meaningful for every scalar a tensor can hold.
+Integer constants and arithmetic expressions come from the standard `Zero`, `One`, `NatCast`,
+`Div`, and `Neg` interfaces, and `Context.defaultEpsilon` supplies a backend-selected numerical
+safeguard:
 
 ```lean (name := sfmNumbers)
 -- These values instantiate the generic constants and
@@ -230,31 +266,30 @@ arithmetic expressions. `Context.defaultEpsilon` supplies a backend-selected num
 (0.500000, 0.100000, 0.000001)
 ```
 
-The missing literal instance does not prohibit other fixed coefficients. Use ordinary integer
-constants
-and scalar operations: for example, four fifths can be written as
-`(2 * 2) / 5`. Its value follows the chosen scalar arithmetic,
-so the real instance is exact while a floating instance rounds. A learned coefficient should instead
-be an input or parameter if its gradient is needed.
+The missing literal instance doesn't prohibit other fixed coefficients. Use ordinary integer
+constants and scalar operations (four fifths, for example, can be written as `(2 * 2) / 5`). That
+expression's value follows the chosen scalar arithmetic, so the real instance is exact while a
+floating instance rounds. A learned coefficient whose gradient you need should be an input or
+parameter instead.
 
-The same `sfmAttenuation` can be instantiated at host `Float`, at `Float32`, or at `ℝ` for a
-proof-facing interpretation. Sharing source keeps the formula aligned; numerical refinement still
-requires separate evidence.
+You can instantiate the same `sfmAttenuation` at host `Float`, at `Float32`, or at `ℝ` for a
+proof-facing interpretation. Sharing source keeps the formula aligned, but numerical refinement
+needs separate evidence.
 
-The tuple `(0.500000, 0.100000, 0.000001)` is the host `Float` interpretation of those expressions
-and the default epsilon. It is not a declaration that every backend represents one tenth exactly
-or uses the same epsilon. In a scientific objective, changing epsilon changes a regularized
-function, so retaining its selected value is part of describing the computation being
+Host `Float` interprets those expressions and the default epsilon as
+`(0.500000, 0.100000, 0.000001)`, and that tuple isn't a declaration that every backend represents
+one tenth exactly or uses the same epsilon. In a scientific objective, changing epsilon changes a
+regularized function, so retaining its selected value is part of describing the computation being
 differentiated.
 
 # Functional Primitives: `scale`, `shift`, And `affine`
 
-The attenuation model uses the same `nn.functional` operations as a neural network's forward pass.
-We can compose them and differentiate the result with the same transforms.
+The attenuation model uses the same `nn.functional` operations as a neural network's forward pass,
+and we can compose them and differentiate the result with the same transforms.
 
 `scale x c` is $`c\,x`, `shift x k` is $`x+k`, and `affine x c k` is $`c\,x+k`. Keeping `affine` as
-a named helper makes the formula readable. Its current implementation composes `scale` and `shift`;
-it is not a fused primitive or a guarantee of one memory pass. A short program using several
+a named helper makes the formula readable. Its implementation composes `scale` and `shift`, so it
+isn't a fused primitive or a guarantee of one memory pass. Here's a short program that uses several
 primitives at once:
 
 ```lean (name := sfmMixed)
@@ -264,11 +299,13 @@ def sfmMixed : autograd.Function [3] [] :=
   fun xs => do
     let sq ← nn.functional.square xs
     let up ← nn.functional.shift sq 1
-    let sc ← nn.functional.scale up (1 / 2)
+    let sc ← Ops.apply .scale
+        (up, .data (Ops.dataConst
+          (Tensor.scalar (1 / 2))), ())
     nn.functional.mean sc
 ```
 
-The composite is $`g(x)=\frac1{3}\sum_i \tfrac12(x_i^2+1)`, so
+Written out, the composite is $`g(x)=\frac1{3}\sum_i \tfrac12(x_i^2+1)`, so
 $`\partial g/\partial x_i=\tfrac13 x_i`:
 
 ```lean (name := sfmMixedGrad)
@@ -284,18 +321,18 @@ $`\partial g/\partial x_i=\tfrac13 x_i`:
 grad = [0.333333, 0.666667, 1.000000]
 ```
 
-`detach` preserves the forward value while cutting its derivative contribution.
-In $`h(x)=x\cdot\operatorname{detach}(x)` the forward value is
-$`x^2`, but the second factor is a constant as far as differentiation is concerned, so
-the transform returns $`\operatorname{detach}(x)`, which is $`3` at $`x=3` rather than $`6`.
-This is a stop-gradient rule, not the classical derivative of the forward function $`x^2`:
+`detach` preserves the forward value while cutting its derivative contribution. In
+$`h(x)=x\cdot\operatorname{detach}(x)` the forward value is $`x^2`, but the second factor is a
+constant as far as differentiation is concerned, so the transform returns
+$`\operatorname{detach}(x)`, which is $`3` at $`x=3` instead of $`6`. That's a stop-gradient rule,
+not the classical derivative of the forward function $`x^2`:
 
 ```lean (name := sfmDetach)
 -- Only the first factor contributes a derivative path
 -- through this product.
 def sfmDetached : autograd.Function [] [] :=
   fun x => do
-    let c ← nn.functional.detach x
+    let c ← Ops.apply .detach (x, ())
     nn.functional.mulB (s₁ := []) (s₂ := [])
       (t := []) x c
 
@@ -311,57 +348,24 @@ def sfmDetached : autograd.Function [] [] :=
 h(3) = 9, stop-gradient result = 3.000000
 ```
 
-This mechanism is used in self-supervised objectives and detached targets in temporal-difference
-learning.
+Self-supervised objectives use this stop-gradient mechanism, and so do detached targets in
+temporal-difference learning.
 
-In the detach block, `h(3) = 9` is printed as literal explanatory text; the transform computes the
-gradient. Only one product-rule contribution remains because the second factor is detached.
-
-# Positive And Negative Derivative Controls
-
-{src "NN/Examples/Functional/Transcendentals.lean"}[`Transcendentals.lean`] checks the exponential
-rule, an affine slope, and the negative factor in a composed exponential. The command
-`scripts/lake.sh exe torchlean transcendentals` runs these controls; the named block also runs
-them during
-the guide build:
-
-```lean (name := sfmControls)
--- Require both agreement with the formula and rejection of
--- the named wrong answers.
-open NN.Examples.Functional.Transcendentals in
-#eval run
-```
-
-```leanOutput sfmControls (whitespace := lax)
-[PASS] exp: grad = 1.648721 ≈ 1.648721
-[PASS-NEG] exp≠1: grad = 1.648721 ≠ 1.000000 (test discriminates)
-[PASS] affine(3x+1): grad = 3.000000 ≈ 3.000000
-[PASS-NEG] affine≠1: grad = 3.000000 ≠ 1.000000 (test discriminates)
-[PASS] exp(-2x): grad = -0.735759 ≈ -0.735759
-[PASS-NEG] exp(-2x) sign: grad = -0.735759 ≠ 0.735759 (test discriminates)
-[transcendentals] all positive + negative controls passed ✓
-```
-
-The three positive controls check $`\frac{d}{dx}e^x=e^x` at $`x=0.5`, a slope of three for
-$`3x+1`, and $`\frac{d}{dx}e^{-2x}=-2e^{-2x}` at $`x=0.5`.
-
-`PASS` uses an absolute tolerance of `1e-6` in the maintained control runner. `PASS-NEG` checks
-that the named incorrect value lies outside that same tolerance. Neither label asserts bitwise
-equality. For the exponential case, choosing `0.5` keeps the correct derivative far enough from
-`1` for the test to distinguish a constant-one rule. For the composed exponential, the sign check
-would catch a lost negative scaling even if the magnitude were correct. These controls are small
-because their purpose is to localize those mistakes, not estimate accuracy across a domain.
+In the detach block, `h(3) = 9` is printed as literal explanatory text, while the gradient is what
+the transform computes. Only one product-rule contribution remains, because the second factor is
+detached.
 
 # Inner Scaling And Derivatives
 
-In the $`e^{-2x}` control, change `scale := -2` to `scale := -3`. This changes both the
-exponential's argument and the factor contributed by the chain rule:
+{src "TorchLeanExamples/Transcendentals.lean"}[`exponential`] computes
+$`e^{\mathrm{scale}\,x}`. Changing `scale := -2` to `scale := -3` changes both the exponential's
+argument and the factor contributed by the chain rule:
 
 ```lean (name := sfmThree)
 -- Update the closed form when the inner coefficient
 -- changes.
 def sfmSteeper : autograd.Function [] [] :=
-  NN.Examples.Functional.Transcendentals.exponential
+  Examples.Transcendentals.exponential
     (scale := -3)
 
 #eval do
@@ -379,75 +383,63 @@ autograd       = -0.669390
 stale -2e^-1   = -0.735759
 ```
 
-Autograd now returns $`-3e^{-1.5}`, matching the new forward program. The old closed form,
-$`-2e^{-1}`, remains a distinct reference and no longer agrees. Maintaining that calculation
-independently lets a test detect when the implementation and intended formula diverge.
+With the steeper scale, autograd returns $`-3e^{-1.5}`, matching the edited forward program. The
+stale closed form ($`-2e^{-1}`) remains a distinct reference that autograd doesn't match.
+Maintaining that calculation independently lets a test detect when the implementation and intended
+formula diverge.
 
-The changed scaling also illustrates why the size of a coefficient does not alone predict the
+Changing the scale also illustrates why the size of a coefficient doesn't by itself predict the
 size of a derivative. At `x = 0.5`, replacing `-2` with `-3` increases the chain-rule factor's
 magnitude but decreases the exponential from `exp(-1)` to `exp(-1.5)`. Their product has magnitude
-`0.669390`, smaller than the old `0.735759`. Reading both effects avoids interpreting a smaller
-gradient as evidence that the inner scale was ignored.
+`0.669390`, smaller than the `0.735759` of the unedited control. Reading both effects keeps you
+from taking a smaller gradient as evidence that the inner scale was ignored.
 
 # Numerical Checks And Real-Valued Derivatives
 
-The controls use host `Float` on three formulas at the input `0.5`. The same file also gives a
-proof-layer object for real-valued `exp`:
-
-```lean (name := sfmProofSurface)
--- This bundle connects a real operation to its Fréchet
--- derivative.
-open NN.Examples.Functional.Transcendentals in
-#check @expSpec
-```
-
-```leanOutput sfmProofSurface (whitespace := lax)
-expSpec : Proofs.Autograd.OpSpecFDerivCorrect 1 1
-```
-
-`OpSpecFDerivCorrect` packages the real-valued forward operation, its JVP candidate, its backward
-candidate, and a proof that the JVP really is the Fréchet derivative. From that package TorchLean
-derives the statement that the backward rule is the adjoint of the derivative:
+Our derivative example above uses host `Float` at the input `0.5`, while over the reals the
+derivative of `exp` is a theorem about the operator table's `exp` arm, at every shape:
 
 ```lean (name := sfmAdjoint)
--- The theorem covers every real input and cotangent of the
--- stated shape.
-open NN.Examples.Functional.Transcendentals in
-#check @exp_backward_eq_adjoint_fderiv
+-- The theorem covers every real input and cotangent of
+-- every shape.
+#check @TorchLean.Op.exp_backward_eq_adjoint
 ```
 
 ```leanOutput sfmAdjoint (whitespace := lax)
-exp_backward_eq_adjoint_fderiv : ∀ (x δ : Tensor ℝ [1]),
-  Proofs.Autograd.getScalarE (expSpec.correct.op.backward x δ) =
-    (Proofs.Autograd.vjp expSpec.forwardVec
-      (Proofs.Autograd.getScalarE x)) (Proofs.Autograd.getScalarE δ)
+@Op.exp_backward_eq_adjoint : ∀ {s : Shape} (x δ : Tensor ℝ s),
+  HasFDerivAt (fun y => ((Op.exp.rule?.get ⋯).forward (y, ())).1)
+      (Op.slopeCLM fun c => Real.exp (Tensor.Rep.get x c)) x ∧
+    ((Op.exp.rule?.get ⋯).backward (x, ()) (δ, ())).1 =
+      (ContinuousLinearMap.adjoint
+        (fderiv ℝ (fun y => ((Op.exp.rule?.get ⋯).forward (y, ())).1) x)) δ
 ```
 
-This quantifies over all real tensors `x` and cotangents `δ` of the stated shape. Its axiom
-audit is:
+In words, the theorem says two things: the map that multiplies each entry of a tangent by
+`Real.exp` of the input entry is the Fréchet derivative of the arm's forward map at `x`, and the
+arm's backward rule is the adjoint of that derivative for the Euclidean inner product of the
+tensors. Here's its axiom audit:
 
 ```lean (name := sfmAxioms)
 -- Inspect the theorem dependencies separately from
 -- executable numerical behavior.
-open NN.Examples.Functional.Transcendentals in
-#print axioms exp_backward_eq_adjoint_fderiv
+#print axioms TorchLean.Op.exp_backward_eq_adjoint
 ```
 
 ```leanOutput sfmAxioms (whitespace := lax)
-'NN.Examples.Functional.Transcendentals.exp_backward_eq_adjoint_fderiv' depends on axioms: [propext,
+'TorchLean.Op.exp_backward_eq_adjoint' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
 ```
 
 The audit lists the three standard Lean axioms, with no `sorryAx` or TorchLean-specific axiom.
 
-The theorem concerns the real-valued proof-layer operation. Connecting it to host Float, CUDA, or
-LibTorch requires the runtime refinement boundary, which {ref "runtime-approximation"}[the runtime
-approximation chapter] develops and {ref "autograd-proofs"}[the autograd proofs chapter] applies to
-the differentiation rules.
+That theorem is about the real-valued proof-layer operation. Connecting it to host Float, CUDA, or
+LibTorch requires the runtime refinement boundary (developed in {ref "runtime-approximation"}[the
+runtime approximation chapter] and applied to the differentiation rules in
+{ref "autograd-proofs"}[the autograd proofs chapter]).
 
 The theorem uses shape `[1]` over `ℝ`, not the executable example's rank-zero `Float` interface.
-Its cotangent `δ` is arbitrary, rather than restricted to the unit seed used by `grad`.
+Its cotangent `δ` is arbitrary, while `grad` uses only the unit seed.
 
 # The Domain Of `log`
 
@@ -469,16 +461,16 @@ infinity:
 (NaN, -inf)
 ```
 
-Host floating-point operations, checked differentiation transforms, and total real-valued
-denotations handle these inputs differently.
+Host floating-point operations and the differentiation transforms follow IEEE 754 on these inputs,
+as PyTorch does, but total real-valued denotations handle them differently.
 
-At the positive input $`2`, the checked transform returns the expected value and derivative:
+At the positive input $`2`, the transform returns the expected value and derivative:
 
 ```lean (name := sfmLogGood)
--- A positive argument satisfies the checked raw-log
--- precondition.
+-- At a positive argument the value and the derivative
+-- are those of the real logarithm.
 def sfmLog : autograd.Function [] [] :=
-  fun x => nn.functional.log x
+  fun x => Ops.apply .log (x, ())
 
 #eval do
   let x : Tensor Float [] := Tensor.full [] 2.0
@@ -492,33 +484,27 @@ def sfmLog : autograd.Function [] [] :=
 log 2 = 0.693147, grad = 0.500000
 ```
 
-Public `IO` differentiation transforms check the raw-log domain before evaluating the forward
-node, including gradient-only calls. The failure is catchable:
+Outside the positive domain the transform raises no error, on any device: the forward value is
+IEEE's NaN or $`-\infty`, and the pullback applies the registered $`1/x` formula:
 
 ```lean (name := sfmLogBad)
--- Catch domain rejection before treating an invalid loss as
--- differentiable data.
+-- Value and gradient outside the real log domain: neither
+-- raises an error.
 #eval do
   for x0 in [-1.0, 0.0] do
     let x : Tensor Float [] := Tensor.full [] x0
-    try
-      let g ←
-        autograd.grad (σ := []) (α := Float) sfmLog x
-      IO.println s!"grad at {x0} = {g.item}"
-    catch e =>
-      IO.println s!"at {x0}: {e}"
+    let (g, y) ←
+      autograd.grad (σ := []) (α := Float) sfmLog x
+        (value := true)
+    IO.println s!"log {x0} = {y.item}, grad = {g.item}"
 ```
 
 ```leanOutput sfmLogBad (whitespace := lax)
-at -1.000000: autograd: log: input contains values <= 0
-(or NaN); `safe_log` computes log(softplus(x) + eps)
-and accepts every input
-at 0.000000: autograd: log: input contains values <= 0
-(or NaN); `safe_log` computes log(softplus(x) + eps)
-and accepts every input
+log -1.000000 = NaN, grad = -1.000000
+log 0.000000 = -inf, grad = inf
 ```
 
-PyTorch instead applies the registered $`1/x` backward formula even on these invalid forward inputs:
+PyTorch applies the same registered $`1/x` backward formula on these inputs:
 
 ```
 >>> # Inspect the registered backward formula at inputs
@@ -531,52 +517,50 @@ PyTorch instead applies the registered $`1/x` backward formula even on these inv
 (tensor(inf, dtype=torch.float64),)
 ```
 
-The value $`-1` is consistent with the registered formula, but is not a derivative of the real
-logarithm on its positive domain. Updating parameters from it can hide an invalid forward loss.
-TorchLean's eager tape and checked public transforms reject these inputs. Pure internal graph
-operations and mathematical real denotations retain their explicit domain assumptions; their
-existence does not make every direct internal evaluation a checked runtime entrypoint.
+The value $`-1` is consistent with the registered formula, but it isn't a derivative of the real
+logarithm on its positive domain. Updating parameters from it can hide an invalid forward loss (the
+NaN value is the signal). The real-valued theorems about `log` keep the hypothesis $`x>0`, which
+the runtime doesn't check.
 
-A common attempted fix is to write $`\log(x+\epsilon)`. For arbitrary negative $`x` this does not
-help, because adding a small positive $`\varepsilon` does not make a negative number positive. The
+A common attempted fix is to write $`\log(x+\epsilon)`. For arbitrary negative $`x` this doesn't
+help, because adding a small positive $`\varepsilon` doesn't make a negative number positive. The
 alternatives that actually work are:
 
-- prove the precondition $`x>0` where the model guarantees it;
-- construct a positive quantity, for instance $`\operatorname{softplus}(x)+\varepsilon`, and
-  document that you changed the model;
+- prove the precondition $`x>0` where the model guarantees it
+- construct a positive quantity (for instance $`\operatorname{softplus}(x)+\varepsilon`) and
+  document that you changed the model
 - call a deliberately total operation and state its semantics.
 
-TorchLean provides `safeLog` for models that need the third option.
-`safeLog` uses a positive real argument when its epsilon is positive, and its specification is a
-definition rather than a comment:
+TorchLean provides `safeLog` for models that need the third option. `safeLog` uses a positive real
+argument when its epsilon is positive, and its specification is a definition, not a comment:
 
 ```lean (name := sfmSafeLogSpec)
--- Read the transformed argument; safeLog changes the model
+-- Read the transformed argument: safeLog changes the model
 -- even at positive inputs.
-#print Activation.Math.safeLogSpec
+#print Activation.safeLog
 ```
 
 ```leanOutput sfmSafeLogSpec (whitespace := lax)
-def Activation.Math.safeLogSpec : {α : Type} → [inst : Context α] → α →
+def TorchLean.Activation.safeLog : {α : Type} → [inst : Context α] → α →
   optParam α Context.defaultEpsilon → α :=
 fun {α} [Context α] x ε =>
-  MathFunctions.log (Activation.Math.softplusSpec x + ε)
+  MathFunctions.log (Activation.softplus x + ε)
 ```
 
 So $`\operatorname{safelog}(x;\varepsilon)=\log(\operatorname{softplus}(x)+\varepsilon)`, whose
 derivative is $`\operatorname{softplus}'(x)/(\operatorname{softplus}(x)+\varepsilon)`, and both are
 defined for every real $`x` when $`\varepsilon>0`. An arbitrary `Context` or invalid epsilon
-does not supply that mathematical guarantee. Running the runtime operation and the specification
-side by side at
-the input that broke raw `log`:
+doesn't supply that mathematical guarantee. Here are the runtime operation and the specification
+side by side, at the inputs where raw `log` returns NaN and $`-\infty`:
 
 ```lean (name := sfmSafeLog)
 -- Compare the selected runtime rule with the
 -- softplus-plus-epsilon specification.
 def sfmSafeLog : autograd.Function [] [] :=
   fun x =>
-    Runtime.Autograd.Torch.safeLog x
-      (ε := Context.defaultEpsilon)
+    Ops.apply .safeLog
+        (x, .data (Ops.dataConst
+          (Tensor.scalar Context.defaultEpsilon)), ())
 
 #eval do
   for x0 in [2.0, -1.0, 0.0] do
@@ -584,7 +568,7 @@ def sfmSafeLog : autograd.Function [] [] :=
     let (g, y) ←
       autograd.grad (σ := []) (α := Float)
         sfmSafeLog x (value := true)
-    let spec := Activation.Math.safeLogSpec x0
+    let spec := Activation.safeLog x0
     IO.println s!"x = {x0}"
     IO.println s!"  runtime {y.item}, spec {spec}"
     IO.println s!"  grad {g.item}"
@@ -623,27 +607,26 @@ safelog(-1.0) = -1.160713  grad = 0.858517
 safelog(0.0) = -0.366511  grad = 0.721346
 ```
 
-The positive-input row also shows that `safeLog` changes the function even where raw logarithm
-is defined: $`\operatorname{safelog}(2)=0.754679`, while $`\log 2=0.693147`. Its softplus
-transformation and epsilon therefore belong in the model definition and any theorem about it.
+The positive-input row also shows that `safeLog` changes the function even where raw logarithm is
+defined: $`\operatorname{safelog}(2)=0.754679`, while $`\log 2=0.693147`. So its softplus
+transformation and epsilon belong in the model definition and in any theorem about it.
 
 One specification distinction is easy to miss here. Mathlib's real `log` and `sqrt` are total
-functions: `Real.log 0 = 0`, `Real.log (-x) = Real.log x`, and `Real.sqrt x = 0` for `x ≤ 0`.
-The rounded-real `NF` and `FP32`
-operations that {ref "runtime-approximation"}[the runtime approximation chapter] builds inherit
-that totalization. They never produce NaN or infinity. So a theorem proved about the rounded-real
-layer says nothing at all about the `NaN` printed above unless the positivity hypothesis is stated
-explicitly. Executable IEEE behavior lives in FloatLib binary32 and in {ref "floats"}[the floats
-chapter]; real-valued theorems should carry the domain hypotheses they mean.
+functions: `Real.log 0 = 0`, `Real.log (-x) = Real.log x`, and `Real.sqrt x = 0` for `x ≤ 0`. The
+rounded-real `NF` and `FP32` operations that {ref "runtime-approximation"}[the runtime
+approximation chapter] builds inherit that totalization. They never produce NaN or infinity. So a
+theorem proved about the rounded-real layer says nothing at all about the `NaN` printed above
+unless it states the positivity hypothesis. Executable IEEE behavior lives in FloatLib binary32 and
+in {ref "floats"}[the floats chapter], while real-valued theorems should carry the domain
+hypotheses they mean.
 
-An inverse-problem loop can catch the raw-log domain error and reject the proposed parameter state
-instead of updating from an invalid objective.
+An inverse-problem loop can test the objective with `Float.isFinite` and reject the proposed
+parameter state instead of updating from an invalid objective.
 
-The error also mentions NaN because an unordered value cannot satisfy the positive-input guard.
-Positive-domain validation is still narrower than a guarantee of a useful finite loss: a very
-large positive argument, upstream overflow, or subsequent arithmetic may need additional checks.
-The real statement that softplus plus a positive epsilon is positive should therefore be kept
-separate from finite-range and accuracy claims about its floating-point implementation.
+But a finite objective is narrower than a useful one: a very large positive argument, upstream
+overflow, or subsequent arithmetic may need additional checks. So the real statement that softplus
+plus a positive epsilon is positive should be kept separate from finite-range and accuracy claims
+about its floating-point implementation.
 
 # Multiple Inputs
 
@@ -653,22 +636,26 @@ decay,
 $$`g(b,x)=e^{-bx},`
 
 whose partial derivatives are $`\partial_b g=-x\,e^{-bx}` and $`\partial_x g=-b\,e^{-bx}`. Packing
-both arguments into one input tensor means `select` pulls out each coordinate along an explicit
-axis, with the index bounded by the shape:
+both arguments into one input tensor means `indexAt` pulls out each coordinate along a given axis,
+with the index bounded by the shape:
 
 ```lean (name := sfmPair)
 -- Coordinate zero is b and coordinate one is x in this
 -- input interface.
 def sfmDecay : autograd.Function [2] [] :=
   fun input => do
-    let b ← Runtime.Autograd.Torch.select
-      (s := [2]) 0 input ⟨0, by decide⟩
-    let x ← Runtime.Autograd.Torch.select
-      (s := [2]) 0 input ⟨1, by decide⟩
+    let b ← Ops.apply
+        (.indexAt (s := [2]) ⟨0, by decide⟩ ⟨0, by decide⟩)
+        (input, ())
+    let x ← Ops.apply
+        (.indexAt (s := [2]) ⟨0, by decide⟩ ⟨1, by decide⟩)
+        (input, ())
     let bx ← nn.functional.mulB (s₁ := [])
       (s₂ := []) (t := []) b x
-    let u ← nn.functional.scale bx (-1)
-    nn.functional.exp u
+    let u ← Ops.apply .scale
+        (bx, .data (Ops.dataConst
+          (Tensor.scalar (-1))), ())
+    Ops.apply .exp (u, ())
 
 #eval do
   let v : Tensor Float [2] := [2.0, 0.5]
@@ -697,22 +684,22 @@ PyTorch agrees, taking the gradient with respect to two leaf tensors instead of 
 (tensor(-0.1839, dtype=torch.float64), tensor(-0.7358, dtype=torch.float64))
 ```
 
-The `⟨0, by decide⟩` and `⟨1, by decide⟩` arguments have type `Fin`
-bounded by the axis size, so the proof that the coordinate exists is discharged at elaboration
-time and an out-of-range read is not expressible. What the type does not fix is the meaning of the
-coordinates: shape `[2]` does not say that position zero is the attenuation parameter and position
-one the observation. When the arguments have different shapes or different physical
-meaning, a typed input pack is usually the clearer choice, and `indexSelect` gathers several
-positions at once when a subset of features is wanted. Either way the feature order should be part
-of the input interface and its documentation.
+Both the `⟨0, by decide⟩` and `⟨1, by decide⟩` arguments have type `Fin` bounded by the axis size,
+so the proof that the coordinate exists is discharged at elaboration time and an out-of-range read
+isn't expressible. What the type doesn't fix is the meaning of the coordinates: shape `[2]` doesn't
+say that position zero is the attenuation parameter and position one the observation. When the
+arguments have different shapes or different physical meaning, a typed input pack is usually the
+clearer choice (and an index selection (`Op.gather` along one axis, with indices from
+`Tensor.selectIndices`) gathers several positions at once when a subset of features is wanted).
+Either way, the feature order should be part of the input interface and its documentation.
 
-The two partial derivatives have different meanings even though both are negative. The first
-measures a change in the attenuation coefficient with the observation coordinate fixed; the
-second changes the coordinate with the coefficient fixed. At `[2, 0.5]`, their magnitude ratio is
-four because the corresponding chain-rule factors are `0.5` and `2`. A gradient descent update
-would also need a choice of parameter scaling and units before these two coordinates could be
-treated as comparable step sizes. The packed tensor fixes their order, while the model
-interpretation fixes which coordinates are actually unknowns.
+Both partial derivatives are negative, but their meanings differ. The first measures a change in
+the attenuation coefficient with the observation coordinate fixed, while the second changes the
+coordinate with the coefficient fixed. At `[2, 0.5]` their magnitude ratio is four, because the
+corresponding chain-rule factors are `0.5` and `2`. A gradient descent update would also need a
+choice of parameter scaling and units before these two coordinates could be treated as comparable
+step sizes. Their order is fixed by the packed tensor, while the model interpretation fixes which
+coordinates are actually unknowns.
 
 # Inverse Problems
 
@@ -729,11 +716,10 @@ L(\theta)=
 \left(f_\theta(x_i)-y_i\right)^2.
 `
 
-The factor $`1/N` scales the gradient of every term in the objective. We can isolate the effect
-of this reduction by averaging the attenuation values themselves, before introducing residuals or
-unknown parameters. The next block therefore differentiates a mean output with respect to its
-three input coordinates. Since
-$`\frac{\partial}{\partial x_i}\frac1N\sum_j f(x_j)=\frac1N f'(x_i)` and
+In that objective, the factor $`1/N` scales the gradient of every term. We can isolate the effect
+of this reduction by averaging the attenuation values themselves (before introducing residuals or
+unknown parameters), so the next block differentiates a mean output with respect to its three input
+coordinates. Since $`\frac{\partial}{\partial x_i}\frac1N\sum_j f(x_j)=\frac1N f'(x_i)` and
 $`f'(x)=-e^{-2x}`, each coordinate should get $`-e^{-2x_i}/3`:
 
 ```lean (name := sfmMean)
@@ -741,8 +727,10 @@ $`f'(x)=-e^{-2x}`, each coordinate should get $`-e^{-2x_i}/3`:
 -- from a fitting objective.
 def sfmBatchMean : autograd.Function [3] [] :=
   fun xs => do
-    let u ← nn.functional.scale xs (-2)
-    let e ← nn.functional.exp u
+    let u ← Ops.apply .scale
+        (xs, .data (Ops.dataConst
+          (Tensor.scalar (-2))), ())
+    let e ← Ops.apply .exp (u, ())
     let a ←
       nn.functional.affine e (1 / 2) (1 / 10)
     nn.functional.mean a
@@ -775,8 +763,9 @@ implementation and evidence. Neither choice resolves an ambiguity in the model: 
 $`x` are unknown and observations depend only on their product, different parameter pairs can fit
 equally well.
 
-This is a mean-output derivative, not a least-squares parameter gradient. The latter also includes
-each residual and a factor of two; residuals of different signs can change the gradient direction.
+Our mean block gives a mean-output derivative, not a least-squares parameter gradient. A
+least-squares gradient also includes each residual and a factor of two, and residuals of different
+signs can change its direction.
 
 ## Identifiability And A Flat Direction
 
@@ -810,34 +799,31 @@ grad . (2, -0.5) = 0.000000
 ```
 
 For any fixed observed target, these three parameter vectors give the same residual and hence the
-same least-squares loss. The
-last line is the local version of the same fact: the gradient is $`-e^{-bx}(x,b)`, the tangent to
-the level curve at $`(b,x)` is $`(b,-x)`, and their inner product is $`-e^{-bx}(xb-bx)`, which is
-zero on paper and zero in Float here because the two products cancel with matching finite
-power-of-two scalings in this example.
+same least-squares loss. The last line is the local version of the same fact: the gradient is
+$`-e^{-bx}(x,b)`, the tangent to the level curve at $`(b,x)` is $`(b,-x)`, and their inner product
+is $`-e^{-bx}(xb-bx)`. That inner product is zero on paper, and in Float it's zero here as well,
+because the two products cancel with matching finite power-of-two scalings in this example.
 
 Additional information is needed. If a nonzero $`x` is known, one noiseless observation
 $`y=e^{-bx}>0` already determines $`b=-\log(y)/x`. If both coordinates remain unknown, more
-measurements must constrain them independently. In a larger model, the smallest eigenvalue of
-the Gauss-Newton matrix $`J^\top J` can reveal directions to which the predictions are locally
-insensitive. Here $`J` is the Jacobian of the observations with respect to the unknown parameters.
-For a single observation,
-that matrix is an outer product of one vector with itself, hence rank at most one and singular for
-every
-$`(b,x)`; at $`(0,0)` its rank is zero. A floating-point spectrum is evidence about a particular
-matrix, and a small eigenvalue alone does not prove non-identifiability. The
-proof, when the model is simple enough to allow one, is the algebraic statement that the map
-$`(b,x)\mapsto f_{b,x}` is not injective, which is exactly what the printed collision above
+measurements must constrain them independently. In a larger model, the smallest eigenvalue of the
+Gauss-Newton matrix $`J^\top J` can reveal directions to which the predictions are locally
+insensitive (here $`J` is the Jacobian of the observations with respect to the unknown parameters).
+For a single observation, that matrix is an outer product of one vector with itself, hence rank at
+most one and singular for every $`(b,x)`. At $`(0,0)` its rank is zero. A floating-point spectrum
+is evidence about a particular matrix, and a small eigenvalue alone doesn't prove
+non-identifiability. When the model is simple enough to allow one, the proof is the algebraic
+statement that the map $`(b,x)\mapsto f_{b,x}` is not injective, which the printed collision above
 witnesses at one point.
 
-The collision table holds the product `bx` fixed while changing the individual coordinates.
-Its gradients differ because the level curve has different tangents at those points, even though
-the predicted observation remains `0.367879`. A nonzero gradient therefore does not rule out
+Each row of the collision table has the same product `bx` and different individual coordinates.
+Their gradients differ because the level curve has different tangents at those points, even though
+the predicted observation remains `0.367879`. So a nonzero gradient doesn't rule out
 non-identifiability: it can point across a level curve while giving no information along it.
 
 The vanishing directional derivative is local. Moving a finite distance along the straight tangent
-need not stay on the hyperbola; moving along the hyperbola does. The product identity supplies the
-global ambiguity in this example. A small numerical directional derivative in a larger model,
+need not stay on the hyperbola, though moving along the hyperbola does. In this example the product
+identity supplies the global ambiguity. A small numerical directional derivative in a larger model,
 without such an identity, would supply only local evidence of weak sensitivity.
 
 # PINN Residuals
@@ -859,27 +845,31 @@ L_{\mathrm{PDE}}(\theta)
 following {Informal.citet pinn2019}[]. Here $`N` is the number of collocation points. Computing
 the objective and optimizing it require derivatives with respect to different variables:
 
-- derivatives with respect to *input coordinates* build the PDE terms $`u_t`, $`u_x`, $`u_{xx}`;
+- derivatives with respect to *input coordinates* build the PDE terms $`u_t`, $`u_x`, $`u_{xx}`
 - derivatives with respect to *parameters* drive the optimizer.
 
-The input-coordinate part is a function transform on a small map, exactly what `jacfwd` and
-`hessian` above compute. Here is a residual that can be checked by hand. The transport equation
-$`u_t+2u_x=0` has the travelling-wave solution $`u(x,t)=e^{x-2t}`, so the real input
-derivatives cancel exactly:
+The input-coordinate part is a function transform on a small map, which is what `jacfwd` and
+`hessian` above compute. Here's a residual you can check by hand. The transport equation
+$`u_t+2u_x=0` has the travelling-wave solution $`u(x,t)=e^{x-2t}`, so the real input derivatives
+cancel exactly:
 
 ```lean (name := sfmPinn)
 -- Read spatial and temporal coordinates in the same order
 -- used by the residual.
 def sfmField : autograd.Function [2] [] :=
   fun input => do
-    let x ← Runtime.Autograd.Torch.select
-      (s := [2]) 0 input ⟨0, by decide⟩
-    let t ← Runtime.Autograd.Torch.select
-      (s := [2]) 0 input ⟨1, by decide⟩
-    let drift ← nn.functional.scale t (-2)
+    let x ← Ops.apply
+        (.indexAt (s := [2]) ⟨0, by decide⟩ ⟨0, by decide⟩)
+        (input, ())
+    let t ← Ops.apply
+        (.indexAt (s := [2]) ⟨0, by decide⟩ ⟨1, by decide⟩)
+        (input, ())
+    let drift ← Ops.apply .scale
+        (t, .data (Ops.dataConst
+          (Tensor.scalar (-2))), ())
     let arg ← nn.functional.addB (s₁ := [])
       (s₂ := []) (t := []) x drift
-    nn.functional.exp arg
+    Ops.apply .exp (arg, ())
 
 #eval do
   let p : Tensor Float [2] := [0.3, 0.1]
@@ -897,8 +887,8 @@ and in this case exactly zero in Float as well because the two values differ by 
 PyTorch's `torch.func.jacfwd` on the same function returns `[1.105171, -2.210342]` and a residual
 of `0.000000`.
 
-Zero residual is a statement about one equation, though, and it is easy to read it as a statement
-about the field. The same $`u` is not a solution of the diffusion equation $`u_t=u_{xx}`, and the
+Zero residual is a statement about one equation, though, and it's easy to read it as a statement
+about the field. That same $`u` isn't a solution of the diffusion equation $`u_t=u_{xx}`, and the
 second input derivatives say by how much:
 
 ```lean (name := sfmHeat)
@@ -906,7 +896,7 @@ second input derivatives say by how much:
 -- differential equation.
 #eval do
   let p : Tensor Float [2] := [0.3, 0.1]
-  let h ←
+  let h : Tensor Float [2, 2] ←
     autograd.hessian (σ := [2]) (α := Float) sfmField p
   let (d, y) ←
     autograd.grad (σ := [2]) (α := Float) sfmField p
@@ -926,52 +916,50 @@ u_t + 2 u_x = 0.000000
 u_t - u_xx  = -3.315513
 ```
 
-`hessian` returns a `Tensor Float [2, 2]` indexed by the two input coordinates. Its rows hold
-$`(u_{xx},u_{xt})` and $`(u_{tx},u_{tt})`.
-For this field those are $`u`, $`-2u`, $`-2u`, and $`4u`, the powers of the drift coefficient
-appearing exactly where differentiating $`e^{x-2t}` twice puts them. The transport residual is zero
-and the diffusion residual is $`-3u`. Thus the same field satisfies the transport equation but
-fails the diffusion equation; the residual must include the intended differential operator.
-The cost of that Hessian is one Hessian-vector product per input coordinate, which is
-why input-coordinate derivatives stay cheap for a two-dimensional domain while parameter-space
-second derivatives do not.
+`hessian` returns a `Tensor Float [2, 2]` with rows $`(u_{xx},u_{xt})` and $`(u_{tx},u_{tt})`,
+indexed by the two input coordinates. For this field those are $`u`, $`-2u`, $`-2u`, and $`4u`, the
+powers of the drift coefficient appearing where differentiating $`e^{x-2t}` twice puts them. With a
+zero transport residual and a diffusion residual of $`-3u`, the same field satisfies the transport
+equation but fails the diffusion equation, so the residual must include the intended differential
+operator. That Hessian costs one Hessian-vector product per input coordinate, which is why
+input-coordinate derivatives stay cheap for a two-dimensional domain while parameter-space second
+derivatives don't.
 
 Its off-diagonal entries agree because both mixed derivatives of this smooth exponential equal
-`-2u`. Selecting `[0][0]` extracts `u_xx`; selecting another entry would define a different residual
-even though all entries have the same scalar type. The coordinate ordering established when the
-input is unpacked must therefore remain consistent when the differential operator is assembled.
+`-2u`. Selecting `[0][0]` extracts `u_xx`, and selecting another entry would define a different
+residual even though all entries have the same scalar type. So the coordinate ordering established
+when the input is unpacked must remain consistent when the differential operator is assembled.
 
-A residual that vanishes at sampled points leaves the behavior between those points unestablished;
-a PDE solution also has to meet its initial and boundary conditions.
-{ref "scientific-ml-verification"}[The scientific ML verification
-chapter] explains how a finite residual artifact becomes a checked claim and what remains to be
-established over the domain.
+A residual that vanishes at sampled points leaves the behavior between those points unestablished,
+and a PDE solution also has to meet its initial and boundary conditions.
+{ref "scientific-ml-verification"}[The scientific ML verification chapter] explains how a finite
+residual artifact becomes a checked claim and what remains to be established over the domain.
 
-The field example contains no learned parameters. It checks the coordinate derivatives needed to
-assemble a residual, using a closed-form field whose answers are known. Training a neural field
-adds a separate derivative through that residual with respect to its parameter state. The displayed
-Hessian is consequently a coordinate Hessian, not the Hessian of a training objective.
+There are no learned parameters in the field example. It checks the coordinate derivatives needed
+to assemble a residual, using a closed-form field whose answers are known. Training a neural field
+adds a separate derivative through that residual with respect to its parameter state. So the
+displayed Hessian is a coordinate Hessian, not the Hessian of a training objective.
 
 For that training step, `autograd.model.derivative` evaluates repeated input-directional
-derivatives of a sequential model, and `autograd.model.derivativeVjp` pulls a residual cotangent
-back to the model parameters. A direction tensor with rows `[dx, dx]` selects the second
-derivative in direction `dx`; `[dx, dt]` selects a mixed derivative. Each row has the input shape.
-The implementation nests dual scalars around the existing evaluator and reverse pass, keeping
-the directions and supplied cotangent constant.
+derivatives of a sequential model, and `autograd.model.derivativeVJP` pulls a residual cotangent
+back to the model parameters. A direction tensor with rows `[dx, dx]` selects the second derivative
+in direction `dx`, and rows `[dx, dt]` select a mixed derivative (each row has the input shape). We
+implement them by nesting dual scalars around the existing evaluator and reverse pass, keeping the
+directions and supplied cotangent constant.
 
-The runnable example trains a tanh MLP on $`u''=-2` over $`[-1,1]`, with zero values at both
-boundaries. It receives no solution labels:
+Our runnable example trains a tanh MLP on $`u''=-2` over $`[-1,1]`, with zero values at both
+boundaries, and it receives no solution labels:
 
 ```terminal
 scripts/lake.sh exe torchlean pinn
 ```
 
-Its loss is half the mean squared equation residual plus half the mean squared boundary residual.
-For each equation term, the pullback seed is the residual divided by the collocation count.
-The returned parameter gradients are added to the boundary gradients and passed to `nn.sgdStep`.
-The recorded 1,500-step CPU run reduced this loss from `2.244093` to `0.006179`.
-The exact solution $`1-x^2` appears only in the final comparison; it does not supply training data.
-As before, these sampled residuals do not establish a uniform PDE guarantee.
+In the PINN example, the loss is half the mean squared equation residual plus half the mean squared
+boundary residual. For each equation term, the pullback seed is the residual divided by the
+collocation count. We add the returned parameter gradients to the boundary gradients and pass them
+to `nn.sgdStep`. In the recorded 1,500-step CPU run, this loss fell from `2.244093` to `0.006179`.
+The exact solution $`1-x^2` appears only in the final comparison (it doesn't supply training data).
+As before, these sampled residuals don't establish a uniform PDE guarantee.
 
 # Floating-Point Transcendentals
 
@@ -980,7 +968,7 @@ Over the reals,
 $$`e^{a+b}=e^ae^b.`
 
 In floating point the two sides are different programs. Each `exp` call rounds, the product rounds
-again, and the two roundings do not have to land on the same representable number:
+again, and the two roundings don't have to land on the same representable number:
 
 ```lean (name := sfmExpIdentity)
 -- Scale the discrepancy for display without changing either
@@ -996,15 +984,13 @@ again, and the two roundings do not have to land on the same representable numbe
 (888.178420, -888.178420)
 ```
 
-Both differences are one unit in the last place of $`e^2\approx7.389`, scaled by $`10^{18}` so they
-are visible in the output. Their opposite signs show that neither evaluation consistently exceeds
-the other in these two examples. PyTorch reproduces the first one exactly (`888.1784197001252`
-in float64), which is
-a useful parity observation, though it does not establish that both dispatched to the same
-transcendental implementation. A theorem about the real identity does not specify either
-floating-point evaluation order, so a
-proof obligation stated over $`ℝ` needs an explicit rounding or refinement step before it says
-anything about the numbers a run produced.
+Both differences are one unit in the last place of $`e^2\approx7.389` (scaled by $`10^{18}` so
+they're visible in the output). Their opposite signs show that neither evaluation consistently
+exceeds the other in these two examples. PyTorch reproduces the first one exactly
+(`888.1784197001252` in float64), which is a useful parity observation, though it doesn't establish
+that both dispatched to the same transcendental implementation. A theorem about the real identity
+doesn't specify either floating-point evaluation order, so a proof obligation stated over $`ℝ`
+needs a rounding or refinement step before it says anything about the numbers a run produced.
 
 {Informal.citet goldberg1991}[] explains rounding and evaluation-order effects.
 {Informal.citet flocq2011}[] separates formats from rounding operators in Coq, a
@@ -1013,19 +999,19 @@ rounded-arithmetic proofs to emitted code in CompCert. {ref "floating-point-lite
 floating-point literature chapter] discusses how TorchLean's layer relates to each of them.
 
 FloatLib's executable transcendental approximations are deterministic definitions, and
-{ref "fp32-soundness"}[the FP32 soundness chapter] states what has been proved
-about them. What has not been proved is a universal correctly-rounded contract. A passing
-derivative check at $`\exp(-2x)` supports that input on that code path; it does not establish
-accuracy for `exp`, `log`, `sin`, or `cos` over all finite bit patterns.
+{ref "fp32-soundness"}[the FP32 soundness chapter] states what has been proved about them. What
+hasn't been proved is a universal correctly-rounded contract. A passing derivative check at
+$`\exp(-2x)` supports that input on that code path, but it doesn't establish accuracy for `exp`,
+`log`, `sin`, or `cos` over all finite bit patterns.
 
 # Parameterization, Reduction, And Arithmetic
 
 Three variations isolate different parts of the model:
 
-1. Replacing the $`-2` by a parameter and querying its gradient turns the forward
-   model into the inverse problem above;
+1. Replacing the $`-2` by a parameter and querying its gradient turns the forward model into the
+   inverse problem above.
 2. Widening `sfmBatchMean` from three observations to thirty reduces the contribution of each
-   unchanged coordinate by the factor predicted by $`1/N`;
+   unchanged coordinate by the factor predicted by $`1/N`.
 3. Evaluating the same finite input through FloatLib binary32 and host Float compares different
    arithmetic interpretations of the formula.
 
@@ -1034,14 +1020,14 @@ the inner-scaling example changed both the exponential argument and its chain-ru
 
 Sources and further reading:
 
-- {src "NN/Examples/Functional/Transcendentals.lean"}[`Transcendentals.lean`], the positive and
-  negative controls run above;
-- {src "NN/Runtime/Autograd/Model/Functional/Core.lean"}[`Functional/Core.lean`], the
-  `nn.functional` primitives;
-- {src "NN/Spec/Layers/Activation.lean"}[`Activation.lean`], the `softplus` and `safeLog`
-  specifications;
+- {src "TorchLeanExamples/Transcendentals.lean"}[`Transcendentals.lean`], the scaled
+  exponential used above
+- {src "TorchLean/NN/Functional.lean"}[`TorchLean/NN/Functional.lean`], the
+  `nn.functional` primitives
+- {src "TorchLean/Tensor/Layers/Activation.lean"}[`Activation.lean`], the `softplus` and
+  `safeLog` specifications
 - {Informal.citet baydin2018}[] on automatic differentiation, and {Informal.citep pytorch2019}[]
-  for the framework the comparisons above use;
-- {Informal.citet pinn2019}[] for the residual objective;
-- {Informal.citet goldberg1991}[], {Informal.citet flocq2011}[], and
-  {Informal.citet boldo2015}[] on floating-point arithmetic and its formalizations.
+  for the framework the comparisons above use
+- {Informal.citet pinn2019}[] for the residual objective
+- {Informal.citet goldberg1991}[], {Informal.citet flocq2011}[], and {Informal.citet boldo2015}[]
+  on floating-point arithmetic and its formalizations.

@@ -24,7 +24,7 @@
 extern "C" void lean_initialize_runtime_module();
 extern "C" lean_obj_res torchlean_libtorch_get_setting(uint32_t);
 extern "C" lean_obj_res torchlean_libtorch_set_setting(uint32_t, uint32_t);
-extern "C" lean_obj_res torchlean_libtorch_get_memory_fraction(uint32_t);
+extern "C" lean_obj_res torchlean_libtorch_get_memory_fraction(void);
 
 #define DECLARE_UNARY(name) \
   extern "C" lean_obj_res torchlean_cuda_buffer_##name(b_lean_obj_arg);
@@ -37,10 +37,12 @@ DECLARE_UNARY(sin)
 DECLARE_UNARY(cos)
 DECLARE_UNARY(log)
 DECLARE_UNARY(inv)
+DECLARE_UNARY(neg)
 DECLARE_UNARY(relu)
 DECLARE_UNARY(sigmoid)
 DECLARE_UNARY(tanh)
 DECLARE_UNARY(gelu)
+DECLARE_UNARY(silu)
 DECLARE_UNARY(copy_and_release)
 DECLARE_UNARY(reduce_sum)
 DECLARE_UNARY(reduce_mean)
@@ -56,6 +58,7 @@ DECLARE_BINARY(relu_bwd)
 DECLARE_BINARY(sigmoid_bwd)
 DECLARE_BINARY(tanh_bwd)
 DECLARE_BINARY(gelu_bwd)
+DECLARE_BINARY(silu_bwd)
 #undef DECLARE_BINARY
 #undef DECLARE_UNARY
 extern "C" lean_obj_res torchlean_cuda_buffer_scale(b_lean_obj_arg, double);
@@ -63,6 +66,9 @@ extern "C" lean_obj_res torchlean_cuda_buffer_axpy(b_lean_obj_arg, b_lean_obj_ar
 extern "C" lean_obj_res torchlean_cuda_buffer_mean_update(b_lean_obj_arg, b_lean_obj_arg, double);
 extern "C" lean_obj_res torchlean_cuda_buffer_scaled_prod_exp(
     b_lean_obj_arg, b_lean_obj_arg, double);
+extern "C" lean_obj_res torchlean_cuda_buffer_huber_terms(
+    b_lean_obj_arg, b_lean_obj_arg, double);
+extern "C" lean_obj_res torchlean_cuda_buffer_huber_slope(b_lean_obj_arg, double);
 extern "C" lean_obj_res torchlean_cuda_buffer_clamp(b_lean_obj_arg, double, double);
 extern "C" lean_obj_res torchlean_cuda_buffer_clamp_bwd(
     b_lean_obj_arg, b_lean_obj_arg, double, double);
@@ -72,7 +78,7 @@ extern "C" lean_obj_res torchlean_cuda_buffer_min_bwd(
     b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg);
 extern "C" lean_obj_res torchlean_cuda_buffer_adam_step(
     b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg,
-    double, double, double, double, double, double, double, double, double);
+    double, double, double, double, double, double, double, b_lean_obj_arg, double);
 
 namespace {
 
@@ -108,7 +114,7 @@ size_t nan_payload_differences = 0;
 void equal_bits(uint32_t actual, uint32_t expected, const std::string& label) {
   ++comparisons;
   if (actual == expected) return;
-  // This is exactly AgreeUpToNaN: never use a tolerance for finite values or signed zeros.
+  // This is exactly EqUpToNaN: never use a tolerance for finite values or signed zeros.
   if (is_nan(actual) && is_nan(expected)) {
     ++nan_payload_differences;
     return;
@@ -181,6 +187,28 @@ void activation_regressions() {
   }
 }
 
+// GELU and SiLU return the limits of `Activation` at the infinities: `-0` at `-inf` and `+inf`
+// at `+inf`, and the slopes `-0` and `1` times the gradient. A NaN stays a NaN, and both zeros keep
+// the staged formulas' exact values.
+void activation_limit_regressions() {
+  const Object x(on_device({0xff800000, 0xff800000, 0x7f800000, 0x7fc00000, 0x00000000,
+                            0x80000000}));
+  const Object g(on_device({0x3f800000, 0xbf800000, 0xbf800000, 0x3f800000, 0x3f800000,
+                            0x3f800000}));
+  const std::vector<uint32_t> value{0x80000000, 0x80000000, 0x7f800000, 0x7fc00000, 0x00000000,
+                                    0x80000000};
+  const std::vector<uint32_t> slope{0x80000000, 0x00000000, 0xbf800000, 0x7fc00000, 0x3f000000,
+                                    0x3f000000};
+  const Object gelu(torchlean_cuda_buffer_gelu(x));
+  equal_tensor(gelu.tensor(), value, "gelu at the infinities");
+  const Object silu(torchlean_cuda_buffer_silu(x));
+  equal_tensor(silu.tensor(), value, "silu at the infinities");
+  const Object gelu_bwd(torchlean_cuda_buffer_gelu_bwd(x, g));
+  equal_tensor(gelu_bwd.tensor(), slope, "gelu VJP at the infinities");
+  const Object silu_bwd(torchlean_cuda_buffer_silu_bwd(x, g));
+  equal_tensor(silu_bwd.tensor(), slope, "silu VJP at the infinities");
+}
+
 // Setting IDs are the current LibTorch control ABI, shared with LibTorch.
 constexpr uint32_t kDeterministic = 2;
 constexpr uint32_t kCuDNNBenchmark = 3;
@@ -207,7 +235,7 @@ void control_getter_regressions() {
   check(!lean_io_result_is_ok(invalid), "unknown LibTorch setting must return an IO error");
   check(get_setting(kDeterministic) == deterministic,
         "failed LibTorch setting read changed determinism");
-  const Object memory_fraction(torchlean_libtorch_get_memory_fraction(0));
+  const Object memory_fraction(torchlean_libtorch_get_memory_fraction());
   check(lean_io_result_is_ok(memory_fraction), "LibTorch memory fraction read failed");
   const auto fraction = lean_unbox_float(lean_ctor_get(memory_fraction, 0));
   check(std::isfinite(fraction) && fraction >= 0.0 && fraction <= 1.0,
@@ -278,15 +306,54 @@ void fused_discriminators() {
                                z.to(at::kDouble)).to(at::kFloat);
   equal_tensor(widened.slice(0, 1, 2), {0x3fc00002}, "binary64 negative control");
 
-  // add(alpha) may happen to fuse in this SDK build. Report it, never infer a guarantee.
-  const auto implicit = at::add(z.slice(0, 0, 1), y.slice(0, 0, 1), from_bits(xs[0]));
-  std::cout << "add(alpha) cancellation bits (diagnostic only): "
-            << hex(tensor_bits(implicit)[0]) << '\n';
-
   // The C ABI first rounds its double coefficient to float32, even at a halfway value.
   const Object zero(on_device({0})), one(on_device({0x3f800000}));
   const Object rounded(torchlean_cuda_buffer_axpy(zero, one, 1.0 + 0x1p-24));
   equal_tensor(rounded.tensor(), {0x3f800000}, "AXPY scalar rounds to float32");
+}
+
+// The sub and div pullbacks to the second operand negate with the neg kernel, as the CPU rules
+// negate with Tensor.neg: neg gives -0 at +0 and +0 at -0, where the composed 0 - g gives +0 at
+// both. The mse target pullback scales by -1, which also gives -0 at +0.
+void negation_regressions() {
+  const Object g(on_device({0x00000000, 0x80000000, 0x3f800000, 0xff800000, 0x7fc00000}));
+  const Object zeros(on_device({0, 0, 0, 0, 0}));
+  const Object negated(torchlean_cuda_buffer_neg(g));
+  const Object difference(torchlean_cuda_buffer_sub(zeros, g));
+  const Object scaled(torchlean_cuda_buffer_scale(g, -1.0));
+  equal_tensor(negated.tensor(), {0x80000000, 0x00000000, 0xbf800000, 0x7f800000, 0x7fc00000},
+               "neg at +0, -0, 1, -inf and a NaN");
+  equal_tensor(difference.tensor(), {0x00000000, 0x00000000, 0xbf800000, 0x7f800000, 0x7fc00000},
+               "0 - g negative control");
+  equal_tensor(scaled.tensor(), {0x80000000, 0x00000000, 0xbf800000, 0x7f800000, 0x7fc00000},
+               "scale by -1");
+}
+
+// The max and min pullbacks select as the CPU rules: the strict winner receives g bit for bit, the
+// strict loser +0 at every g (+inf, -inf, a NaN, -1, -0, the largest finite), and a tie, opposite
+// zeros or a NaN operand half of g each (+0 from the smallest subnormal by ties to even).
+void selection_regressions() {
+  const std::vector<uint32_t> greater{0x40000000, 0x40000000, 0x40000000, 0x40000000, 0x40000000,
+                                      0x40000000, 0x3f800000, 0x80000000, 0x7fc00000, 0x3f800000,
+                                      0x3f800000, 0x3f800000, 0x3f800000, 0x3f800000};
+  const std::vector<uint32_t> less{0x3f800000, 0x3f800000, 0x3f800000, 0x3f800000, 0x3f800000,
+                                   0x3f800000, 0x3f800000, 0x00000000, 0x3f800000, 0x7fc00000,
+                                   0x3f800000, 0x3f800000, 0x3f800000, 0x3f800000};
+  const std::vector<uint32_t> seed{0x7f800000, 0xff800000, 0x7fc00123, 0xbf800000, 0x80000000,
+                                   0x7f7fffff, 0x40400000, 0xc0c00000, 0x40c00000, 0x40c00000,
+                                   0x00000001, 0x00000003, 0x7f7fffff, 0x7f800000};
+  std::vector<uint32_t> winner(seed.begin(), seed.begin() + 6), loser(6, 0x00000000);
+  const std::vector<uint32_t> tie{0x3fc00000, 0xc0400000, 0x40400000, 0x40400000,
+                                  0x00000000, 0x00000002, 0x7effffff, 0x7f800000};
+  winner.insert(winner.end(), tie.begin(), tie.end());
+  loser.insert(loser.end(), tie.begin(), tie.end());
+  const Object a(on_device(greater)), b(on_device(less)), g(on_device(seed));
+  const Object maximum(torchlean_cuda_buffer_max_bwd(a, b, g));
+  const Object minimum(torchlean_cuda_buffer_min_bwd(a, b, g));
+  equal_tensor(torchlean::tensor(lean_ctor_get(maximum, 0)), winner, "max_bwd winner");
+  equal_tensor(torchlean::tensor(lean_ctor_get(maximum, 1)), loser, "max_bwd loser");
+  equal_tensor(torchlean::tensor(lean_ctor_get(minimum, 0)), loser, "min_bwd loser");
+  equal_tensor(torchlean::tensor(lean_ctor_get(minimum, 1)), winner, "min_bwd winner");
 }
 
 using AdamScalars = std::array<double, 9>;
@@ -332,8 +399,12 @@ std::array<float, 3> adam_oracle(float p, float g, float m0, float v0, const Ada
 
 lean_obj_res adam(const Object& p, const Object& g, const Object& m, const Object& v,
                   const AdamScalars& s) {
+  // The fixtures and their oracle std::fma(decay, p, p) take the decay step, zero included.
+  lean_object* decay = lean_alloc_ctor(1, 1, 0);
+  lean_ctor_set(decay, 0, lean_box_float(s[7]));
+  const Object owned(decay);
   return torchlean_cuda_buffer_adam_step(
-      p, g, m, v, s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8]);
+      p, g, m, v, s[0], s[1], s[2], s[3], s[4], s[5], s[6], owned, s[8]);
 }
 
 std::array<lean_object*, 3> triple_fields(lean_object* result) {
@@ -490,15 +561,15 @@ void deterministic_reduction_regressions() {
 
     const Object mean_input(on_device({0x40e00000, 0, 0}));  // [7, 0, 0]
     const Object mean(torchlean_cuda_buffer_reduce_mean(mean_input));
-    equal_tensor(mean.tensor(), {0x40155556}, "mean rounds reciprocal before multiply");
-    equal_bits(to_bits(rounded_div(7.0f, 3.0f)), 0x40155555,
-               "direct-division negative control");
+    equal_tensor(mean.tensor(), {0x40155555}, "mean divides the sum once by the count");
+    equal_bits(to_bits(rounded_mul(7.0f, rounded_div(1.0f, 3.0f))), 0x40155556,
+               "reciprocal-product negative control");
     const Object overflowing(on_device({0x7f7fffff, 0x7f7fffff}));
     const Object overflow_mean(torchlean_cuda_buffer_reduce_mean(overflowing));
-    equal_tensor(overflow_mean.tensor(), {0x7f800000}, "mean rounds sum before scaling");
+    equal_tensor(overflow_mean.tensor(), {0x7f800000}, "mean rounds sum before dividing");
     const Object empty(on_device({}));
     const Object empty_mean(torchlean_cuda_buffer_reduce_mean(empty));
-    equal_tensor(empty_mean.tensor(), {0x7fc00000}, "empty mean is NaN");
+    equal_tensor(empty_mean.tensor(), {0x00000000}, "empty mean is the zero sum");
   } catch (...) {
     restore_settings();
     throw;
@@ -647,6 +718,8 @@ void no_autograd_regressions() {
     run("axpy", [&] { return torchlean_cuda_buffer_axpy(x, y, 0.25); });
     run("mean_update", [&] { return torchlean_cuda_buffer_mean_update(x, y, 0.25); });
     run("scaled_prod_exp", [&] { return torchlean_cuda_buffer_scaled_prod_exp(x, y, 0.25); });
+    run("huber_terms", [&] { return torchlean_cuda_buffer_huber_terms(x, y, 1.0); });
+    run("huber_slope", [&] { return torchlean_cuda_buffer_huber_slope(x, 1.0); });
     run("clamp", [&] { return torchlean_cuda_buffer_clamp(x, 0.0, 1.0); });
     run("clamp_bwd", [&] { return torchlean_cuda_buffer_clamp_bwd(x, g, 0.0, 1.0); });
     run("max_bwd", [&] { return torchlean_cuda_buffer_max_bwd(x, y, g); }, 2);
@@ -654,7 +727,7 @@ void no_autograd_regressions() {
     run("adam_step", [&] { return adam(x, g, x, y, {1, 0, 1, 0, 1, 1, 0, 0, 1}); }, 3);
     const Object copied(on_device({0x3f800000}));
     run("copy_and_release", [&] { return torchlean_cuda_buffer_copy_and_release(copied); });
-    check(export_count == 35, "noAutograd export coverage changed");
+    check(export_count == 37, "noAutograd export coverage changed");
     check(!x.tensor().requires_grad() && !y.tensor().requires_grad() && !g.tensor().requires_grad(),
           "export mutated an input's requires_grad flag");
     const auto old_deterministic = get_setting(kDeterministic);
@@ -721,7 +794,8 @@ void lean_primitive_parity(const char* path) {
                          op == "div" ? rounded_div(x, y) :
                          op == "sqrt" ? rounded_sqrt(x) : std::fma(x, y, z);
       equal_bits(to_bits(host), c.expected, "host oracle against Lean " + op);
-      // Buffer.sqrt is selected_sqrt, whereas NativePrimitiveAgreement names raw IEEE sqrt.
+      // torchlean_cuda_buffer_sqrt (Buffer.sqrtClampNegative) is selected_sqrt, whereas .sqrt in
+      // TorchLean.LibTorch.Contract.Agreement names raw IEEE sqrt.
       selected.push_back(op == "sqrt" && x <= 0.0f ? 0 : c.expected);
     }
     const Object x(on_device(xs)), y(on_device(ys)), z(on_device(zs));
@@ -776,14 +850,17 @@ int main(int argc, char** argv) {
     {
       at::NoGradGuard no_grad;
       fused_discriminators();
+      negation_regressions();
+      selection_regressions();
       activation_regressions();
+      activation_limit_regressions();
       adam_regressions();
       deterministic_reduction_regressions();
       running_mean_regressions();
       lean_primitive_parity(reference_path);
     }
     no_autograd_regressions();
-    std::cout << "PASS: " << comparisons << " exact/AgreeUpToNaN comparisons; "
+    std::cout << "PASS: " << comparisons << " exact/EqUpToNaN comparisons; "
               << nan_payload_differences << " NaN encoding differences\n";
     return 0;
   } catch (const std::exception& error) {

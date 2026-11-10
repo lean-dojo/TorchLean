@@ -51,25 +51,37 @@ layout: null
     "text": "numerical certificate binary32 IEEE replay MLP intermediate interval enclosures rounding forward backward optimizer"
   },
   {
-    "title": "Graphs and IR",
+    "title": "Graph IR",
     "url": "{{ '/blueprint/Semantics-and-Graphs/The-Canonical-Graph-IR/' | relative_url }}",
     "section": "Guide",
     "text": "graph IR lowering shapes payloads semantics execution traces bounds"
   },
   {
-    "title": "Autograd Walkthrough",
+    "title": "Registered Operators",
+    "url": "{{ '/blueprint/Semantics-and-Graphs/The-Operator-Table/' | relative_url }}",
+    "section": "Guide",
+    "text": "operator table TorchLean.Op ports rules Op.rule? pullback capabilities certificates op_cert wire codec Op.encode import coverage ATen jax.lax"
+  },
+  {
+    "title": "Rounding Error In Attention",
+    "url": "{{ '/blueprint/Verification-and-Certificates/Rounding-Error-In-Attention/' | relative_url }}",
+    "section": "Guide",
+    "text": "FlashAttention online softmax two-pass rounding error IEEE formats bfloat16 weights normalizer transformer block GPT-2"
+  },
+  {
+    "title": "Differentiation",
     "url": "{{ '/blueprint/Runtime___-Autograd___-and-Interop/Differentiation-By-Example/' | relative_url }}",
     "section": "Guide",
     "text": "autograd reverse mode tape gradients VJP training runtime"
   },
   {
-    "title": "GPU and CUDA Boundaries",
+    "title": "GPU and CUDA",
     "url": "{{ '/blueprint/Floating-Point-and-Native-Boundaries/From-A-Tensor-Operation-To-A-GPU-Kernel/' | relative_url }}",
     "section": "Guide",
     "text": "CUDA GPU LibTorch ATen numerical primitives Lean attention native runtime trust boundary memcheck device buffers"
   },
   {
-    "title": "Run Configuration",
+    "title": "Choosing How A Model Runs",
     "url": "{{ '/blueprint/Runtime___-Autograd___-and-Interop/Choosing-How-A-Model-Runs/' | relative_url }}",
     "section": "Guide",
     "text": "runtime configuration CPU GPU arithmetic native IEEE seed training evaluation mode CUDA LibTorch providers backend contracts autograd tape"
@@ -99,7 +111,7 @@ layout: null
     "text": "bug zoo attention masks KV cache RoPE tokenizer normalization batch invariance stable loss Float32 boundaries"
   },
   {
-    "title": "Verification Examples",
+    "title": "Verification Bounds",
     "url": "{{ '/examples/verification/' | relative_url }}",
     "section": "Examples",
     "text": "verification IBP CROWN alpha beta alpha-beta-CROWN certificates interval bounds affine bounds model robustness VNN-COMP PINN ODE geometry"
@@ -123,25 +135,25 @@ layout: null
     "text": "diffusion denoising DDIM sampling generated images real image training"
   },
   {
-    "title": "3D Vision Certificates",
+    "title": "3D Vision Projection Certificates",
     "url": "{{ '/examples/3d-vision/' | relative_url }}",
     "section": "Examples",
     "text": "3D vision certificates camera boxes projection geometry detector Lean check"
   },
   {
-    "title": "CUDA Notes",
+    "title": "CUDA",
     "url": "{{ '/cuda/' | relative_url }}",
     "section": "Runtime",
     "text": "CUDA LibTorch ATen build flags native backend tests sanitizer deterministic execution"
   },
   {
-    "title": "Dependency Graphs",
+    "title": "Graphs",
     "url": "{{ '/graphs/' | relative_url }}",
     "section": "Reference",
     "text": "Lean import graph modules imports importers source tree build performance"
   },
   {
-    "title": "Build Performance",
+    "title": "Performance",
     "url": "{{ '/performance/' | relative_url }}",
     "section": "Reference",
     "text": "build performance GitHub Actions CI timings main branch history tests lint"

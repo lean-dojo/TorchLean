@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 """Build Lean's pinned mimalloc for TorchLean executables and shared libraries.
 
-Lean 4.35 pins mimalloc 3.4.5, which includes the large-free size correction.
-Its arena collector can still clear a concurrently published purge wakeup.
-The patch below publishes arena deadlines before their wakeup, clears before
-scanning, and preserves concurrent deadlines and the existing retry timing.
-Its installed static allocator uses local-exec TLS, which cannot be linked
-into TorchLean's shared libraries. Build the same source with PIC and
-initial-exec TLS so both native link modes can use it.
+Lean 4.35 pins mimalloc 3.4.5. Its arena collector clears the purge wakeup at the end of a scan,
+which can erase a wakeup that another thread publishes during that scan. The patch `ARENA_PATCHES`
+publishes arena deadlines before their wakeup, clears the wakeup before scanning, and keeps
+concurrent deadlines and mimalloc's retry timing. Lean's installed static allocator uses local-exec
+TLS, which cannot be linked into TorchLean's shared libraries, so the same source is built with PIC
+and initial-exec TLS for both native link modes.
 
-Build a private object; never modify the installed Lean runtime. Lake links
-this object before libleanrt.a. This serves compiled TorchLean executables;
-it does not replace the allocator inside the Lean compiler or `#eval`.
+The script builds a private object instead of modifying the installed Lean runtime. Lake links the
+object before libleanrt.a. It serves compiled TorchLean executables and does not replace the
+allocator inside the Lean compiler or `#eval`.
 
-Source is downloaded once and verified by SHA-256. For offline builds, set
-TORCHLEAN_MIMALLOC_ARCHIVE to the same verified v3.4.5 source archive.
-Review this source and header binding when updating the Lean toolchain.
+The source is downloaded once and verified by SHA-256. For offline builds, set
+TORCHLEAN_MIMALLOC_ARCHIVE to the same verified v3.4.5 source archive. Review this source and
+header binding when updating the Lean toolchain.
 """
 import argparse
 import hashlib
@@ -131,7 +130,7 @@ def extract_source(archive, directory):
 
 
 def patch_arena_source(text):
-    """Apply the reviewed wakeup protocol to exactly the pinned arena source."""
+    """Apply `ARENA_PATCHES` to the pinned arena source, refusing any other text."""
     if hashlib.sha256(text.encode()).hexdigest() != ARENA_SHA256:
         raise RuntimeError("unexpected unpatched arena source")
     for old, new in ARENA_PATCHES:
@@ -181,7 +180,7 @@ def main():
             "headerSha256": HEADER_SHA256, "osSha256": sha(os_source),
             "arenaBeforeSha256": ARENA_SHA256, "arenaSha256": sha(arena_source),
             "objectSha256": sha(args.output), "sourcePatched": True,
-            "patch": "arena-wakeup-v2",
+            "patch": "arena-wakeup",
             "compiler": args.compiler, "compilerSha256": sha(Path(args.compiler).resolve()),
             "flags": flags,
         }, indent=2) + "\n")

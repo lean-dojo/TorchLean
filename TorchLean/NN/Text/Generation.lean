@@ -1,0 +1,360 @@
+/-
+Copyright (c) 2026 TorchLean
+Released under MIT license as described in the file LICENSE.
+Authors: TorchLean Team
+-/
+
+module
+
+public import TorchLean.NN.Text.Options
+public import Batteries.Data.BinomialHeap.Basic
+
+/-!
+# Text Generation
+
+Token selection for the language-model examples: greedy and top-k choice over a filtered score
+vector, repetition penalties, temperature sampling and the autoregressive loop `generate`, along
+with byte display and argmax decoding of logits.
+-/
+
+@[expose] public section
+
+open FloatLib.Numerics (MathFunctions)
+
+namespace TorchLean
+namespace Text
+
+open TorchLean.Tensor
+
+/-- A valid token id together with its unscaled logit. -/
+structure ScoredToken (vocabularySize : Nat) where
+  /-- Token id in the model vocabulary. -/
+  token : Fin vocabularySize
+  /-- Logit, before temperature scaling. Selection excludes NaNs. -/
+  score : Float
+
+/-- Whether `left` ranks no better than `right`: a lower score ranks worse, and between equal
+scores the larger token id ranks worse. -/
+def ScoredToken.worseOrEqual {vocabularySize : Nat}
+    (left right : ScoredToken vocabularySize) : Bool :=
+  left.score < right.score || (left.score == right.score && left.token.val ≥ right.token.val)
+
+/-- Read one allowed, non-NaN logit without building an index tensor. -/
+def scoredTokenAt? {vocabularySize : Nat} (scores : Tensor Float [vocabularySize])
+    (allowToken : Fin vocabularySize → Bool) (index : Nat) :
+    Option (ScoredToken vocabularySize) :=
+  if h : index < vocabularySize then
+    let token : Fin vocabularySize := ⟨index, h⟩
+    let score := scores[token]
+    if allowToken token && !score.isNaN then some { token, score } else none
+  else none
+
+/-- Keep only the best `k` logits in a bounded heap, then return them in descending order. -/
+def topCandidates {vocabularySize : Nat} (scores : Tensor Float [vocabularySize]) (k : Nat)
+    (allowToken : Fin vocabularySize → Bool) : Array (ScoredToken vocabularySize) := Id.run do
+  if k = 0 then return #[]
+  let mut heap : Batteries.BinomialHeap (ScoredToken vocabularySize)
+    ScoredToken.worseOrEqual := .empty
+  let mut count := 0
+  for index in [:vocabularySize] do
+    if let some candidate := scoredTokenAt? scores allowToken index then
+      if count < k then
+        heap := heap.insert candidate
+        count := count + 1
+      else if let some worst := heap.head? then
+        if !ScoredToken.worseOrEqual candidate worst then
+          heap := heap.tail.insert candidate
+  return heap.toArray.reverse
+
+/-- Find the best indexed candidate in one pass, breaking ties by the smaller token id. -/
+def bestCandidate? {vocabularySize : Nat} (count : Nat)
+    (candidateAt? : Nat → Option (ScoredToken vocabularySize)) :
+    Option (ScoredToken vocabularySize) := Id.run do
+  let mut best := none
+  for index in [:count] do
+    if let some candidate := candidateAt? index then
+      if best.all (fun previous => !ScoredToken.worseOrEqual candidate previous) then
+        best := some candidate
+  return best
+
+/--
+Return up to `k` allowed, non-NaN score indices, largest first.
+
+The result has `min k vocabularySize` slots, and any trailing slots left unused hold `none`. Equal
+scores, including signed zeros and infinities, prefer smaller token ids. A bounded heap uses
+`O(vocabularySize * log(k + 1))` time and `O(min k vocabularySize)` auxiliary storage.
+
+The optional predicate filters token ids without replacing their scores by a finite sentinel, which
+matters when model logits are unbounded: a disallowed token must never become selectable merely
+because every allowed score is smaller than an arbitrary masking constant.
+
+Example:
+```lean
+-- Highest scores first. `allowToken` removes banned tokens from the candidates without a masking
+-- constant, so a banned token cannot become selectable however low the real scores are.
+def best (scores : Tensor Float [256]) : Tensor (Option (Fin 256)) [8] :=
+  Text.topK scores 8 (allowToken := fun token => token.val < 128)
+```
+-/
+def topK
+    {vocabularySize : Nat}
+    (scores : Tensor Float [vocabularySize])
+    (k : Nat)
+    (allowToken : Fin vocabularySize → Bool := fun _ => true) :
+    Tensor (Option (Fin vocabularySize)) [min k vocabularySize] :=
+  let candidates := topCandidates scores (min k vocabularySize) allowToken
+  Tensor.ofFn fun index => candidates[index.val]?.map (·.token)
+
+/--
+Greedy `argmax`, or `none` when no allowed non-NaN token exists, with equal scores preferring
+smaller token ids. It scans the vocabulary once with constant auxiliary storage.
+
+Example:
+```lean
+-- `none` means no allowed non-NaN score exists, a failure that reaches the caller where a silent
+-- fallback to token zero would hide it.
+def next (scores : Tensor Float [256]) : Option (Fin 256) :=
+  Text.greedy? scores
+```
+-/
+def greedy?
+    {vocabularySize : Nat}
+    (scores : Tensor Float [vocabularySize])
+    (allowToken : Fin vocabularySize → Bool := fun _ => true) :
+    Option (Fin vocabularySize) :=
+  (bestCandidate? vocabularySize (scoredTokenAt? scores allowToken)).map (·.token)
+
+/--
+Apply a repetition penalty by subtracting
+$\mathrm{repeatPenalty}\,\mathrm{count}(\mathrm{token})$ for tokens
+appearing in `recentTokens`. A penalty at or below zero leaves the scores unchanged.
+
+`next` validates the penalty and applies it to the logits before greedy selection or
+temperature scaling.
+-/
+def penalizeRepeats
+    {vocabularySize recentCount : Nat}
+    (scores : Tensor Float [vocabularySize])
+    (recentTokens : Tensor Nat [recentCount])
+    (repeatPenalty : Float) :
+    Tensor Float [vocabularySize] :=
+  if repeatPenalty <= 0.0 then
+    scores
+  else
+    let counts := recentTokens.foldl
+      (fun (counts : Std.HashMap Nat Nat) token =>
+        counts.insert token ((counts[token]?).getD 0 + 1)) {}
+    Tensor.ofFn fun token =>
+      scores[token] - repeatPenalty * Float.ofNat ((counts[token.val]?).getD 0)
+
+/-- True for byte tokens in the printable ASCII range, plus newline. -/
+def isPrintableAscii (token : Nat) : Bool :=
+  token = 10 || (32 ≤ token && token ≤ 126)
+
+/-- Escape one byte token for display inside a quoted string. Used only by `formatBytes`. -/
+def escapeByteToken (token : Nat) : String :=
+  if token = 10 then "\\n"
+  else if token = 9 then "\\t"
+  else if token = 34 then "\\\""
+  else if token = 92 then "\\\\"
+  else if 32 ≤ token && token ≤ 126 then
+    String.singleton (Char.ofNat token)
+  else
+    let hex : Array Char := #['0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f']
+    let highDigit := (token / 16) % 16
+    let lowDigit := token % 16
+    "\\x" ++ String.singleton (hex.getD highDigit '0') ++
+      String.singleton (hex.getD lowDigit '0')
+
+/--
+Escape byte ids as a one-line quoted display string.
+
+Example:
+```lean
+-- Generated bytes are not always valid UTF-8, so the display escapes them one byte at a time:
+-- `#[104, 105, 10]` prints as `"hi\n"`.
+def display {n : Nat} (tokens : Tensor Nat [n]) : String := Text.formatBytes tokens
+```
+-/
+def formatBytes {n : Nat} (tokens : Tensor Nat [n]) : String :=
+  tokens.foldl (fun result token => result ++ escapeByteToken token) "\"" ++ "\""
+
+/-- Stable softmax weight relative to a finite maximum and a positive finite temperature. -/
+def samplingWeight (score maximum temperature : Float) : Float :=
+  let difference := score - maximum
+  -- Opposite finite extremes can overflow in the subtraction, so those are divided by the
+  -- temperature first.
+  let exponent :=
+    if difference.isInf && score.isFinite then score / temperature - maximum / temperature
+    else difference / temperature
+  MathFunctions.exp exponent
+
+/-- Sample an indexed candidate sequence, storing weights once and never sorting the sequence. -/
+def sampleCandidates? {vocabularySize : Nat} (count : Nat)
+    (candidateAt? : Nat → Option (ScoredToken vocabularySize))
+    (temperature : Float) (seed counter : Nat) : Option (Fin vocabularySize) := Id.run do
+  let some maximum := bestCandidate? count candidateAt? | return none
+  if maximum.score.isInf then return some maximum.token
+  let mut weights : Array Float := Array.emptyWithCapacity count
+  let mut total := 0.0
+  for index in [:count] do
+    let weight := match candidateAt? index with
+      | some candidate => samplingWeight candidate.score maximum.score temperature
+      | none => 0.0
+    weights := weights.push weight
+    total := total + weight
+  let key := Random.keyOf seed counter
+  let denom : Nat := (2 : Nat) ^ 32
+  let u := Float.ofNat (Random.sampleNat key 0 denom) / Float.ofNat denom
+  let target := u * total
+  let mut cumulative := 0.0
+  for index in [:count] do
+    cumulative := cumulative + weights[index]!
+    if target < cumulative then
+      return (candidateAt? index).map (·.token)
+  return some maximum.token
+
+/--
+Sample an allowed token id using a positive finite temperature and top-k sampling.
+
+NaNs and disallowed tokens are excluded, and ties at the cutoff prefer smaller token ids. The
+result is `none` for a temperature that is not finite and positive, and also when no allowed token
+has a non-NaN score. If the maximum is infinite, where softmax normalization is undefined, the
+smallest token id that attains it is returned without sampling, also when every allowed score is
+negative infinity.
+
+`topK = 0` or `topK ≥ vocabularySize` samples the full vocabulary in token-id order in linear time.
+A smaller positive cutoff samples the bounded heap's output in descending score order. Randomness
+is deterministic given the scores, filter, temperature, cutoff, seed and counter, although the two
+traversal orders can turn the same random draw into different tokens.
+-/
+def sample? {vocabularySize : Nat} (scores : Tensor Float [vocabularySize])
+    (temperature : Float) (topK seed counter : Nat)
+    (allowToken : Fin vocabularySize → Bool := fun _ => true) :
+    Option (Fin vocabularySize) :=
+  if !temperature.isFinite || temperature <= 0.0 then none
+  else if topK = 0 || vocabularySize ≤ topK then
+    sampleCandidates? vocabularySize
+      (scoredTokenAt? scores allowToken) temperature seed counter
+  else
+    let candidates := topCandidates scores topK allowToken
+    sampleCandidates? candidates.size (fun index => candidates[index]?)
+      temperature seed counter
+
+/--
+Select the next token after the repetition penalty, greedily when `topK = 1` and with `sample?`
+otherwise. It fails on a non-finite or negative repetition penalty, on a temperature that is not
+finite and positive unless `topK = 1`, and when no allowed token has a non-NaN score.
+
+Example:
+```lean
+-- One decoding policy shared by every text example: repeat penalty first, then greedy or top-k
+-- sampling. `counter` keeps each step's randomness distinct while staying reproducible.
+def next (scores : Tensor Float [256])
+    (options : Text.GenerationOptions) (step : Nat) :
+    Except String (Fin 256) :=
+  Text.next scores options (counter := step) (recentTokens := Tensor.full [0] 0)
+```
+-/
+def next {vocabularySize recentCount : Nat} (scores : Tensor Float [vocabularySize])
+    (options : GenerationOptions) (counter : Nat) (recentTokens : Tensor Nat [recentCount])
+    (allowToken : Fin vocabularySize → Bool := fun _ => true) :
+    Except String (Fin vocabularySize) := do
+  options.validate
+  let scores := penalizeRepeats scores recentTokens options.repeatPenalty
+  let selected? :=
+    if options.topK = 1 then
+      greedy? scores allowToken
+    else
+      sample?
+        scores options.temperature options.topK options.seed counter allowToken
+  match selected? with
+  | some token => pure token
+  | none => throw "no allowed non-NaN token score is available for generation"
+
+/--
+Autoregressively extend token ids with a model-provided score callback.
+
+The callback receives an exact-length context window and the sequence position whose logits should
+be used for the next token. At each step the shared policy crops to the last `sequenceLength`
+tokens, pads with `paddingTokenId`, applies the repetition penalty over the last `repeatWindow`
+tokens, selects a token with `next` and writes it. The output holds the prompt followed by exactly
+`continuationLength` tokens, and a zero-length model context is rejected when generation is
+requested.
+
+Example:
+```lean
+-- The model arrives as a callback: given an exact-length window and the position whose logits to
+-- read, return that position's scores. Cropping, padding, penalties, and sampling stay here.
+def generate (options : Text.GenerationOptions)
+    (scoreWindow : Tensor Nat [16] → Fin 16 → IO (Tensor Float [256])) :
+    IO (Tensor Nat
+      [(Text.Tokenizer.byte.encode options.prompt).size + options.continuationLength]) :=
+  Text.generate 16 (paddingTokenId := 0)
+    (promptTokens := Tensor.from (Text.Tokenizer.byte.encode options.prompt))
+    (options := options) (scoreWindow := scoreWindow)
+```
+-/
+def generate {vocabularySize promptLength : Nat}
+    (sequenceLength paddingTokenId : Nat)
+    (promptTokens : Tensor Nat [promptLength])
+    (options : GenerationOptions)
+    (scoreWindow :
+      Tensor Nat [sequenceLength] →
+      Fin sequenceLength →
+      IO (Tensor Float [vocabularySize]))
+    (allowToken : Fin vocabularySize → Bool := fun _ => true) :
+    IO (Tensor Nat [promptLength + options.continuationLength]) := do
+  let mut tokens : Tensor Nat [promptLength + options.continuationLength] :=
+    Tensor.ofFn fun index =>
+      if h : index.val < promptLength then promptTokens[(⟨index.val, h⟩ : Fin promptLength)]
+      else paddingTokenId
+  if sequenceLengthIsZero : sequenceLength = 0 then
+    if options.continuationLength != 0 then
+      throw (IO.userError "generation requires a nonempty model context")
+    return tokens
+  else
+    for step in List.finRange options.continuationLength do
+      let activeLength := promptLength + step.val
+      let start := activeLength - sequenceLength
+      let contextCount := min activeLength sequenceLength
+      let predictionPosition : Fin sequenceLength :=
+        ⟨contextCount - 1, by omega⟩
+      let padded := Tensor.window tokens sequenceLength start paddingTokenId
+      let scores ← scoreWindow padded predictionPosition
+      let recentCount := min activeLength options.repeatWindow
+      let recentTokens :=
+        Tensor.window tokens recentCount (activeLength - recentCount) paddingTokenId
+      let nextToken ← IO.ofExcept <|
+        next scores options step.val recentTokens allowToken
+      let outputIndex : Fin (promptLength + options.continuationLength) := ⟨activeLength, by omega⟩
+      tokens := Tensor.set tokens (outputIndex, PUnit.unit) nextToken.val
+    return tokens
+
+/--
+Decode a matrix of token logits by taking `argmax` independently at each sequence position.
+
+The shape is `(sequenceLength × vocabularySize)`, one logits vector per token position, and an
+empty vocabulary gives `0` at every position. The helper is for inspection and debugging and is
+not differentiable.
+-/
+def argmaxTokens {α : Type} [TorchLean.Storage α] [BEq α] [LT α]
+    [DecidableRel ((· > ·) : α → α → Prop)]
+    {sequenceLength vocabularySize : Nat} (logits : Tensor α [sequenceLength, vocabularySize]) :
+    Tensor Nat [sequenceLength] :=
+  Tensor.ofFn fun position : Fin sequenceLength =>
+    if h : 0 < vocabularySize then
+      (Tensor.argmax (Tensor.unstack logits position) ⟨0, Nat.one_pos⟩ false h).item.val
+    else 0
+
+/-- Decode logits as text, choosing the largest score at each sequence position. -/
+def decodeLogits {α : Type} [TorchLean.Storage α] [BEq α] [LT α]
+    [DecidableRel ((· > ·) : α → α → Prop)]
+    (tokenizer : Tokenizer)
+    {sequenceLength vocabularySize : Nat}
+    (logits : Tensor α [sequenceLength, vocabularySize]) :
+    String :=
+  tokenizer.decode ((argmaxTokens (α := α) logits).to (Array Nat))
+
+end Text
+end TorchLean

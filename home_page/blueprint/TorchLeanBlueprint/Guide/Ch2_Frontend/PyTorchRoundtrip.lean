@@ -1,19 +1,48 @@
 import VersoManual
-import NN.API
-import NN.API.Seeded
-import NN.Runtime.Autograd.Model.Layers.Seq
-import NN.Runtime.PyTorch.Import.MLP
-import NN.Runtime.PyTorch.Import.Core
-import NN.Runtime.PyTorch.Export.Core
-import NN.Spec.Models.Mlp
+import TorchLean.NN.LoRA
+import TorchLean.NN.Autograd.Function
+import TorchLean.NN.Autograd.Frontend
+import TorchLean.NN.Autograd.Differential
+import TorchLean.NN.Autograd.Complex
+import TorchLean.NN.CLI.Training.Command
+import TorchLean.NN.Data.Synthetic
+import TorchLean.NN.Data.CausalLM
+import TorchLean.NN.Models.KAN
+import TorchLean.NN.Models.CNN
+import TorchLean.NN.Models.ResNet
+import TorchLean.NN.Models.UNet
+import TorchLean.NN.Models.Recurrent
+import TorchLean.NN.Models.CausalTransformer.LanguageModel
+import TorchLean.NN.Models.Mamba
+import TorchLean.NN.Models.MaskedPatchReconstructor
+import TorchLean.NN.Models.Diffusion.NoisePredictor
+import TorchLean.NN.Models.FNO
+import TorchLean.NN.Models.PPO
+import TorchLean.NN.Builder.MoE
+import TorchLean.NN.Sequential.Training
+import TorchLean.NN.RL.CLI
+import TorchLean.NN.RL.PPO.ActorCritic
+import TorchLean.NN.SelfSupervised
+import TorchLean.NN.Text.Vocabulary
+import TorchLean.NN.Text.GPT2BPE
+import TorchLean.NN.Text.Generation
+import TorchLean.NN.Trainer.Constructor
+import TorchLean.NN.Trainer.Train
+import TorchLean.NN.Data.Image
+import TorchLean.NN.Builder
+import TorchLean.NN.Sequential
+import TorchLean.NN.PyTorch.Import.State
+import TorchLean.NN.PyTorch.Export
+import TorchLean.NN.Models.MLP
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
+import TorchLean.NN.Session.Random
+import TorchLean.Verify.Trainer
 
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 open TorchLean
-open Import.PyTorch (StateDict parseTensor)
-open Import.PyTorch (unwrapParams getTensor?)
+open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
 #doc (Manual) "PyTorch Interop" =>
 %%%
@@ -23,183 +52,194 @@ file := "PyTorch-Round-Trip"
 
 Suppose we train a `2 → 3 → 1` MLP in PyTorch {Informal.citep pytorch2019}[] and want to evaluate
 its learned weights in Lean. Four tensors must cross over: two weight matrices and two biases.
-Their names and nested dimensions tell the importer which field each tensor should fill.
+Each one travels under the name that `state_dict()` gives it, such as `fc1.weight`, together with
+its dtype, its shape and the binary words of its elements.
 
-These weight importers reconstruct known model families with specified parameter layouts. They do
-not reconstruct arbitrary `nn.Module` objects, so that path needs the expected architecture on the
-Lean side. Captured graphs use a separate adapter and the shared IR parser.
+`PyTorch.state` reads such a state dict into the `TensorPack` of any TorchLean model. We give
+it the state shapes of the model and one PyTorch name per tensor, and it either returns the state
+with every tensor in place or fails with an error. It does not rebuild the PyTorch module itself,
+so the architecture is defined on the Lean side.
+Captured graphs have their own adapter and go through the shared IR parser.
 
 The checked-in
-{src "NN/Examples/Interop/PyTorch/Roundtrip.lean"}[round-trip program]
-wires three family-specific importers: an MLP, a convolutional network, and a transformer encoder.
-The shared JSON core parses named nested arrays, while each family chooses its accepted keys and
-expected tensor shapes. Python supplies a named payload, and Lean either reconstructs that typed
-family record or rejects it.
+{src "TorchLeanExamples/Interop/PyTorch/Roundtrip.lean"}[round-trip program]
+reads three models this way: an MLP, a convolutional network and a transformer encoder block.
+Python writes their state dicts with {src "python/torchlean/state.py"}[`torchlean.state`], and the
+importer is {src "TorchLean/NN/PyTorch/Import/State.lean"}[`PyTorch.state`].
 
 Named Lean blocks are checked while this page is built. Shell and Python transcripts are recorded
-runs with separate reproduction commands; they are not executed automatically by the guide build.
+runs with their own reproduction commands, and the guide build does not execute them.
 
 # Checking a captured computation
 
-The shared IR describes tensor programs, not only neural networks. An ordinary tensor function
-can have inputs, constants, casts, array operations and results without layers, trainable
-parameters or a loss. Both capture adapters use this interface; operation coverage, rather than
-the presence of a model class, determines what can be imported.
+TorchLean's shared IR describes tensor programs, not only neural networks. An ordinary tensor
+function can have inputs, constants, casts, array operations and results without layers, trainable
+parameters or a loss. Both capture adapters use this interface, and what they can import depends on
+operation coverage, whether or not there's a model class.
 
-The Python entry point `torchlean.verify(model, *inputs)` captures a PyTorch function or module,
-translates its supported operations to TorchLean IR, and asks Lean to check its structure and
-element types. No manual graph export is needed. Add
-`checks=("structure", "types", "compare")` to compare CPU reference execution with the frontend
-on that input. Casts, tensor promotions, broadcasts, and binary constants remain explicit in the
-artifact. Linear parameters are loaded at their declared precision from complete binary words.
+From Python, the entry point is `torchlean.verify(model, *inputs)`. It captures a PyTorch function
+or module, translates its supported operations to TorchLean IR and asks Lean to check its structure
+and element types, so you don't export a graph by hand. Add
+`checks=("structure", "types", "compare")` to compare CPU reference execution with the frontend on
+that input. Casts, tensor promotions, broadcasts and binary constants are all written out in the
+artifact, and linear parameters are loaded at their declared precision from complete binary words.
 
-The ordered tensor interface is shared by both frontends. PyTorch capture reads user argument
-order from the export graph signature, separately from lifted parameters and constants.
-Unused arguments remain in that interface. Each argument retains its own shape and dtype;
-the IR does not require one global scalar type for the model.
+Both frontends share the ordered tensor interface. PyTorch capture reads the user's argument order
+from the export graph signature, separately from lifted parameters and constants, and unused
+arguments stay in that interface. Each argument keeps its own shape and dtype (the IR doesn't
+require one global scalar type for the model).
 
-The report names each requested check and its scope. A sample comparison is not an all-input
-theorem, and an unsupported request cannot silently become a shape check. Frontend equivalence,
-external kernels, and captured physical device/layout constraints remain outside these checks.
-The same entry point accepts `frontend="jax"` or a typed artifact dictionary from another producer.
-See the {src "home_page/examples/verify/index.md"}[captured-computation example] for runnable code.
+Each requested check is named in the report, along with its scope. A sample comparison isn't an
+all-input theorem, and an unsupported request can't silently become a shape check. Frontend
+equivalence, external kernels and captured physical device/layout constraints stay outside these
+checks. Besides PyTorch, the same entry point accepts `frontend="jax"` or a typed artifact
+dictionary from another producer. See the
+{src "home_page/examples/verify/index.md"}[captured-computation example] for runnable code.
 
-When we're ready to write a theorem, add `export="Proofs/Model.lean"` to that same call.
-The file embeds the captured artifact and defines `Model.program` through the shared importer.
-Lean checks its import and shape/type/interface proofs when we open or compile the module;
-export itself does not launch a compiler. We can import it and prove further properties, reusing the
-tensor semantics and existing operation lemmas. Those mathematical proofs are separate from
-the check report. The export does not capture the Python function again and never replaces an
-existing file. A `.json` filename saves the interchange artifact for inspection instead.
+Operation coverage follows {ref "registered-operators"}[the operator table], whose chapter says how
+the capture and the JAX importer translate a framework's operators and which operators they refuse.
+For the attributes, element types and inputs the capture accepts, an imported entry is computed by
+its registered operator (the capture refuses the others). Each entry states its arithmetic, and in
+places that arithmetic is also PyTorch's: binary16 and bfloat16 elementary functions are computed
+in binary32 and rounded once, `cumsum` accumulates in PyTorch's accumulation type, and the tanh
+GELU follows the order of the kernel's DEFAULT level. Where eager PyTorch departs from IEEE
+754-2019, the IR keeps the IEEE result: `clamp_min(-0.0, 0)` is `+0.0` (PyTorch's kernel keeps
+`-0.0`), `0.1 / x` is the correctly rounded quotient (PyTorch multiplies by the reciprocal), and
+`relu` returns `+0.0` at `-0.0` (eager PyTorch returns `-0.0`). Both the
+{src "TorchLean/NN/IR/README.md"}[IR guide] and the
+{src "TorchLean/NN/PyTorch/README.md"}[PyTorch interop guide] list these rules operator by
+operator.
+
+When we're ready to write a theorem, add `export="Proofs/Model.lean"` to that same call. The file
+embeds the capture document and defines `Model.program` , its `torchlean.ir` program. Lean checks
+its decoding and shape/type/interface proofs when we open or compile the module (export itself
+doesn't launch a compiler). We can then import it and prove further properties, reusing the tensor
+semantics and existing operation lemmas, and those mathematical proofs are separate from the check
+report. Export doesn't capture the Python function again, and it never replaces an existing file.
+With a `.json` filename, export saves the interchange artifact for inspection instead.
 
 Element descriptors preserve configured binary and decimal formats, integer and posit widths,
-complex component types, and named representations. The shared decoder validates their parameters;
-it does not select an implementation. Typed custom calls also carry shape and element-type
-signatures. The interpreter checks those signatures and requires a supplied implementation;
-the default reference executes binary arithmetic and supplies Boolean and arbitrary-width integer
-storage for layout operations. Integer arithmetic, cross-type integer casts, other element
-families and unimplemented custom calls are rejected.
+complex component types and named representations. Their parameters are validated by the shared
+decoder, which doesn't select an implementation. Typed custom calls also carry shape and
+element-type signatures, which the checker compares with the graph (executing one requires a
+supplied implementation). TorchLean's default reference executes binary arithmetic and Boolean and
+arbitrary-width integer operations: layout operations, integer arithmetic modulo `2 ^ width`,
+comparisons and conversions. Other element families and unimplemented custom calls are rejected.
 
 # Captured graphs from JAX
 
 Weights are not the only useful artifact we can bring into Lean. A captured tensor computation
 also tells us which operations use those weights. The Jaxpr adapter in
-{src "NN/Runtime/JAX/jaxpr.py"}[`jaxpr.py`] lowers a static tensor computation to the
-same graph format used by the PyTorch and ONNX adapters. The Lean entry point is
-`Import.JAX.parseProgram`, from `NN.Runtime.JAX`. It checks a type for each node as well as
-dependencies and shapes. `Import.JAX.parseGraph` retains the homogeneous, scalar-polymorphic path.
+{src "python/torchlean/jaxpr.py"}[`jaxpr.py`] lowers a static tensor computation to the same
+`torchlean.ir` artifact as the PyTorch capture, in a capture document whose frontend is `jaxpr`.
+The Lean entry point is `TorchLean.JAX.load`, from `TorchLean.NN.JAX`. It checks the
+frontend and loads the artifact with `TorchLean.IR.load`, and `TorchLean.JAX.load_ok` states that
+the program it returns passes `Program.check .reference` and its payload passes `Payload.check`.
 
 Use `torchlean.verify(function, *inputs, frontend="jax")` directly: it captures the Jaxpr and
 translates it to TorchLean IR inside the call. Arguments may have different shapes and element
 types, and the capture preserves their positional order.
-The artifact lists those arguments in `input_ids`. The shared parser checks the complete interface,
-including unused arguments, and execution requires the declared number, shapes and types of tensor
-arguments. This interface is independent of the model architecture. Nested input containers require
-their own explicit type rules.
+Each input step of the artifact records its argument's position, and the shared loader checks the
+complete interface, including unused arguments. Execution requires the declared number, shapes and
+types of tensor arguments. This interface is independent of the model architecture. Nested input
+containers require their own explicit type rules.
 
-For example, `jnp.sum(x * x)` becomes an input, an elementwise multiplication, and a scalar sum.
-The companion
-{src "NN/Examples/Interop/JAX.lean"}[Lean example] proves that this graph's real-valued evaluation
-is unchanged by any permutation of a vector's entries, for any vector length. It first connects
-the graph evaluator to the tensor formula, then reuses the finite-sum reindexing theorem. This
-is a property of the graph's Lean semantics, not a proof of the Python translation or XLA kernels.
+For example, `jnp.sum(x * x)` becomes an input, an elementwise multiplication and a scalar sum. In
+the companion {src "TorchLeanExamples/Interop/JAX.lean"}[Lean example], we prove that this graph's
+real-valued evaluation is unchanged by any permutation of a vector's entries, for any vector
+length. We first connect the graph evaluator to the tensor formula and then reuse the finite-sum
+reindexing theorem. That's a property of the graph's Lean semantics, not a proof of the Python
+translation or the XLA kernels.
 
-The Python companion also saves artifacts for a small MLP, sums, broadcasts, reshapes, a batched
-contraction and several returned tensors, reporting unsupported entries separately. To inspect
-those captures independently, run
-`python3 NN/Examples/Interop/JAX/export.py /tmp/torchlean-jax-examples`, then run
-`scripts/lake.sh exe torchlean jaxpr /tmp/torchlean-jax-examples/mlp.json`.
-The runner checks the graph and compares homogeneous examples using native Lean binary64 arithmetic.
+On the Python side, the companion also saves capture documents for a small MLP, sums, broadcasts,
+reshapes, a batched contraction and several returned tensors, and it reports unsupported entries
+separately. To inspect those captures on their own, run
+`python3 TorchLeanExamples/Interop/JAX/export.py /tmp/torchlean-jax-examples` and then
+`scripts/lake.sh exe torchlean jaxpr /tmp/torchlean-jax-examples/mlp.json`. The runner loads each
+document, runs its program on the recorded arguments under the reference runtime and compares every
+output's element type, shape and interchange words with JAX's recorded output.
 
-For mixed precision, a Jaxpr conversion becomes an explicit cast in `NN.IR.Program`. Constants
-carry their complete binary words. `NN.IR.Interpreter.binary` executes the same graph using
-FloatLib at each declared precision, and `NN.IR.Binary.cast_value` connects its conversions to
-FloatLib's directed-rounding specification. Try `mixed_precision.json`, `float16_sum.json`, or
-`bfloat16_sum.json`; the runner compares their recorded results by interchange word. These examples
-do not establish equivalence with every XLA execution or reduction schedule. Jaxpr capture also
-preserves Boolean, integer and complex descriptors and exact constant words for type and shape
-checks. The default reference also executes Boolean and fixed-width integer layout operations;
-the explicit binary-only interpreter used by the companion remains separate. Integer arithmetic
-and complex execution need further implementations. Dynamic control flow and
-heterogeneous contractions with separate accumulation types are rejected until their rules are
-represented explicitly.
+For mixed precision, a Jaxpr conversion is an explicit cast step that rounds once. Every constant
+carries its complete words, whether binary, Boolean or integer. The reference runtime executes
+each binary step with FloatLib at its declared precision, and `TorchLean.IR.Binary.cast_value`
+connects its conversions to FloatLib's directed-rounding specification. Try `mixed_precision.json`,
+`float16_sum.json` or `bfloat16_sum.json`: the runner compares their recorded results by
+interchange word. These examples do not establish equivalence with every XLA execution or
+reduction schedule. The reference runtime also executes Boolean and fixed-width integer
+operations. Complex values, dynamic control flow and contractions with a separate accumulation
+type are rejected.
 
-JAX division is currently rejected rather than replaced by reciprocal multiplication, which
-changes rounding and exceptional values. This also excludes mean and LayerNorm expansions.
-Square root needs a structurally nonnegative operand because the IR clamps negative inputs.
-The softmax expansion's `reduce_max` is unsupported, so conventional attention using that
-expansion cannot yet be imported.
+JAX division imports as IEEE division. XLA's CPU code multiplies by the reciprocal of a broadcast
+divisor, and of a constant divisor under `jax.jit`, which changes rounding and exceptional values.
+When that rewrite reproduces every differing element, the failed `compare` entry lists it in
+`consistent_with`. JAX's mean, LayerNorm and softmax expansions import. Square root imports as
+IEEE's root at every operand, `Op.sqrt` at `.raw`.
 
 # Round-Trip Contract
 
-The round trip has five steps:
+A round trip has five steps:
 
-1. Lean defines the expected model family.
-2. Lean exports matching PyTorch code.
+1. Lean defines the model, and with it the shapes of the model's state.
+2. Python defines the same architecture as an `nn.Module`.
 3. Python trains or modifies the weights.
-4. Python writes a named tensor payload.
-5. The chosen Lean family importer looks up its required names and parses every nested array at the
-   statically expected shape.
+4. `torchlean.state.write` writes the module's `state_dict()` as a state document.
+5. `PyTorch.state` reads the document into the model's `TensorPack`. It checks every name,
+   dtype and shape and decodes every word.
 
-If any check fails, TorchLean rejects the artifact before constructing a model.
+If any check fails, `PyTorch.state` returns an error and no state.
 
-The shape of the boundary is intentionally closer to a `state_dict` contract than to Python object
-serialization. PyTorch users are used to seeing names such as:
+The boundary is PyTorch's own `state_dict` contract. A module with the attributes `fc1` and `fc2`
+names its four tensors:
 
 ```
-layer1.weight
-layer1.bias
-layer2.weight
-layer2.bias
+fc1.weight
+fc1.bias
+fc2.weight
+fc2.bias
 ```
 
-Each name must map to a particular parameter in the Lean family record.
+The caller gives the importer these names, one for each tensor of the Lean state and in the order
+of that state. Tensor `i` of the state is read from the entry named `names[i]`.
 
-The bridge delegates loading PyTorch's own serialization format to PyTorch, then exports the
-required tensor payload as JSON. Nested numeric arrays keep the Lean parser small and make the
-name-to-parameter mapping inspectable. The file is larger than a binary payload, however, and its
-numbers are decimal text rather than stored bit patterns. The
-{ref "fp32-soundness"}[float chapter] is where exact bit-level claims live; this chapter is about
-names and shapes.
+Python writes each element as the integer value of its binary word. A float64 entry holds the
+64-bit pattern of each element in row-major order, and a float32 entry the 32-bit pattern. Lean
+decodes the words with `Checkpoint.Encoding` at the element type of the state, so negative zeros,
+subnormals and every NaN payload that the element type keeps come back unchanged. Nothing is
+converted on the way. The {ref "fp32-soundness"}[float chapter] covers what the arithmetic then
+does with these values.
 
-The expected architecture gives each name a job. For the `2 → 3 → 1` MLP, the first weight must
-contain three output rows with two input coefficients each; its bias contains three values. The
-second weight has one row of three coefficients, followed by one output bias. A file with four
-arrays of the right total sizes could still attach them to the wrong meanings. Looking up names
-and parsing their particular nested shapes establishes a more useful contract than flattening all
-values and consuming them in file order.
+`PyTorch.stateDict` writes the same document from a Lean state. The theorem
+`PyTorch.state_stateDict` proves that reading it back gives the original state when the
+names have no repeats, there is one name per tensor and every word decodes to the scalar it
+encodes. `PyTorch.state_stateDict_scalar` discharges the last condition for every element
+type with an `Kernel.Scalar` instance, which covers `Float`, `Float32` and FloatLib's configured
+binary formats such as `Binary64`. Both theorems are about the Lean side. The Python side is
+checked by running it. The
+{src "TorchLeanTest/Interop/PyTorchRoundtrip.lean"}[parity test] reads the three
+checked-in state dicts with `torchlean.state.read` into the PyTorch modules and with
+`PyTorch.state` into the Lean models, and compares the outputs of the two sides.
 
-The contract ends at model state. Learning rate, optimizer momentum, random-generator state, and
-the training data are not reconstructed by these four arrays. That is enough to evaluate the
-family's forward pass. Resuming the same training trajectory would require a broader artifact and
-an explicit account of how each additional state component is restored.
+The Lean model gives each name a job. For the `2 → 3 → 1` MLP, the state shapes are `[3, 2]`,
+`[3]`, `[1, 3]` and `[1]`: three output rows of two input coefficients, three biases, one row of
+three coefficients and one output bias. A file with four tensors of the right sizes could
+attach them to the wrong meanings. Reading each tensor by its name and comparing its stored shape
+with the shape of the model rules out a reordered file and a transposed matrix of a different
+shape. It can't rule out a wrong name list, so the names should come from the PyTorch module.
+
+The contract ends at model state. The learning rate, the optimizer momentum, the random-generator
+state and the training data are not part of the module's `state_dict()`. The state is enough to
+evaluate the model's forward pass. Resuming the same training trajectory would need a larger
+artifact and a rule for restoring each extra component.
 
 # MLP Parameter Round Trip
 
-The MLP family exposes the full exchange in four tensors. Export its Python modules from the
+The MLP shows the whole exchange in four tensors. Steps three and four are one Python script,
+{src "TorchLeanExamples/Interop/PyTorch/MLP/train_mlp.py"}[`train_mlp.py`], run from the
 repository root:
 
 ```terminal
-# Generate the MLP family files expected by the companion
-# Python script.
-scripts/lake.sh exe torchlean pytorch_roundtrip --model mlp --action export
-```
-
-```
-Exported MLP PyTorch files under NN/Examples/Interop/PyTorch/MLP/.
-```
-
-That step writes two readable reference modules, `TestMLP_PyTorch.py` and
-`TestMLP_WithWeights.py`, whose class matches what the Lean importer expects to see back:
-`Linear(2, 3)`, `ReLU`, `Linear(3, 1)`.
-
-Step three and four are one Python script,
-{src "NN/Examples/Interop/PyTorch/MLP/train_mlp.py"}[`train_mlp.py`]:
-
-```terminal
-# Train the one-pair MLP example and write its named
-# parameter payload.
-python3 NN/Examples/Interop/PyTorch/MLP/train_mlp.py
+# Train the one-pair MLP example and write its state dict.
+python3 TorchLeanExamples/Interop/PyTorch/MLP/train_mlp.py
 ```
 
 ```
@@ -212,232 +252,251 @@ Epoch 50, Loss: 0.000000
 Epoch 100, Loss: 0.000000
 Epoch 150, Loss: 0.000000
 Final output: tensor([[1.0000]], grad_fn=<AddmmBackward0>)
-Saved trained weights to .../NN/Examples/Interop/PyTorch/MLP/mlp.json
 Original (fresh init) output: tensor([[-0.0945]], grad_fn=<AddmmBackward0>)
 Output change from initialization: 1.094462
+Saved the state dict to .../TorchLeanExamples/Interop/PyTorch/MLP/mlp.json
 ```
 
 This run fits one input-target pair, $`x=(0.5,0.8)` and $`y=1`, using two hundred SGD steps at
-learning rate $`0.1`. The fit supplies a modified parameter payload whose prediction can be
-checked after import; it provides no evidence of generalization. The script calls
-`torch.manual_seed(0)` before initialization, and repeating it in the recorded environment
-regenerates the same `mlp.json`.
+learning rate $`0.1`. The fit gives a modified state whose prediction can be checked after import.
+It provides no evidence of generalization. The script seeds the initialization with
+`torch.manual_seed(0)`. With PyTorch 2.13 on the CPU, a second run writes a byte-identical
+`mlp.json`, and the same holds for the CNN and transformer scripts.
 
-Step five reads the file back:
+Step five reads the file into the Lean MLP and evaluates it at the training input:
 
 ```terminal
-# Load the exported parameter values into the expected Lean
-# MLP family.
-scripts/lake.sh exe torchlean pytorch_roundtrip --model mlp --action import
+# Read the state dict into the Lean MLP and run it.
+scripts/lake.sh exe torchlean pytorch_roundtrip --model mlp
 ```
 
 ```terminal +output
 == MLP import example ==
-Loaded: NN/Examples/Interop/PyTorch/MLP/mlp.json
-Output (native tensor operations, Float):
+Loaded: TorchLeanExamples/Interop/PyTorch/MLP/mlp.json
+Output (executable `nn` module on CPU, Float):
 [1.000000]
 ```
 
-PyTorch finished training at `tensor([[1.0000]])`. Lean, reading only the JSON file and running its
-own forward pass, prints `[1.000000]`. The imported parameters reproduce the observed output at
-the displayed precision. One rounded output is not a proof that the
-programs compute the same function on every input.
+The program builds the ordinary `nn` model
+`nn.Sequential![nn.linear 2 3, nn.op .relu, nn.linear 3 1]` and instantiates it with the imported
+state in place of its seeded initialization. PyTorch finished training at `tensor([[1.0000]])`.
+Lean reads the JSON file, runs its own forward pass and prints `[1.000000]`. The full
+value is 0.9999999112061961, the word `0x3fefffffd05445c4`, and the trained module converted to
+float64 computes the same word at this input. One output is not a proof that the two programs
+compute the same function on every input.
 
-The complete exchanged payload is:
+Here's the complete document:
 
 ```
-{
-  "params": {
-    "layers.0.weight": [
-      [0.028833430260419846, 0.10097555816173553],
-      [-0.08230451494455338, -0.07359390705823898],
-      [-0.03851543739438057, 0.026815736666321754]
-    ],
-    "layers.0.bias": [
-      0.057182908058166504, 0.07928895205259323, -0.00887440424412489
-    ],
-    "layers.2.weight": [
-      [0.11024449020624161, -0.030221307650208473, -0.01965653896331787]
-    ],
-    "layers.2.bias": [0.9832008481025696]
-  },
-  "meta": {
-    "format": "TorchLean.MLP",
-    "pytorch_keys": "layers.*",
-    "dtype": "float32"
-  }
-}
+{"format": "torchlean.state", "entries": {
+  "fc1.weight": {"dtype": "float64", "shape": [3, 2],
+    "words": [4583967891858128896, 4591940476440936448, 13813967122843303936,
+              13813339457396408320, 13809083517394485248, 4583386331274543104]},
+  "fc1.bias": {"dtype": "float64", "shape": [3],
+    "words": [4588401746585321472, 4590377791781863424, 13799641404382642176]},
+  "fc2.weight": {"dtype": "float64", "shape": [1, 3],
+    "words": [4592608373383364608, 13807739957135015936, 13804694869882437632]},
+  "fc2.bias": {"dtype": "float64", "shape": [1], "words": [4607031105491566592]}
+}}
 ```
 
-The output bias `layers.2.bias` is about $`0.983`. With one training point, that bias alone could
-fit the target while the other parameters remained fixed; the fit does not identify a unique
-parameter vector.
+The script writes the float64 copy `model.double()`, so every entry has the dtype `float64`, the
+dtype of Lean's `Float`. Widening binary32 to binary64 is exact, so these words hold the trained
+float32 values. The output bias `fc2.bias` is the word `4607031105491566592`, which is
+`0x3fef7661a0000000`, the binary64 value 0.9832008481025696. Its low 29 bits are zero, as for every
+widened binary32 value. With one training point, that bias alone could fit the target while the
+other parameters stayed fixed, and the fit does not identify a unique parameter vector.
 
-The decimal strings retain enough significant digits for finite binary32 values because Python's
-`json.dump` prints the shortest decimal that round-trips the underlying binary64 value that
-`tolist()` produced from a binary32 tensor. This serialization can preserve those numerical
-values, while `meta.dtype` separately records their source dtype. The importer still constructs
-host `Float` tensors; source dtype metadata does not select the arithmetic of the Lean forward pass.
+The dtype of a document must equal the dtype of the Lean element type. Reading a `float32`
+document into `TensorPack Float` fails, and the importer never converts. A state of `Float32`
+elements reads the document that `state.write` writes from the float32 module itself.
 
 `Output change from initialization` measures the absolute change in the prediction. Its usefulness
-depends on the chosen target; the initial and final values above show that this prediction moved
+depends on the chosen target. The initial and final values above show that this prediction moved
 toward `1`.
 
 # Import Validation
 
-The importer is strict about required tensors, and it checks them before constructing the typed
-family record used by the example.
+`PyTorch.state shapes names document` returns either the state or the first error it
+meets. It checks, in this order:
 
-The checks actually performed are:
+- There is one name for each tensor of the state.
+- The keys of the document are `format` and `entries`, and its format is `torchlean.state`.
+- The names have no repeats, and they are the keys of `entries`.
+- Each entry has the keys `dtype`, `shape` and `words`.
+- The dtype of each entry is the dtype of the element type, such as `float64` for `Float`.
+- The shape of each entry is the shape of its state tensor.
+- Each entry has one word per element, and every word decodes at the element type.
 
-- the root is a JSON object, optionally with a `params` object;
-- every required family-specific key exists under one of the accepted naming conventions;
-- every scalar leaf is a JSON number;
-- every nested array has exactly the length required by the expected Lean shape.
+The last four checks run entry by entry, in the order of the names. JSON object order is
+irrelevant, since the importer looks up names. An entry that the model does not name is an error,
+as in PyTorch's strict `load_state_dict`, so a successful read uses every tensor of the document.
+A word decodes when the element type gives it back unchanged. `Float.ofBits` and `Float32.ofBits`
+turn every NaN word into `0x7ff8000000000000` and `0x7fc00000`, so a `Float` or `Float32` state
+reads no other NaN word. FloatLib's `Binary64` and `Binary32` keep every word, NaN payloads
+included.
 
-JSON object order is irrelevant: the importer looks up names and constructs a fixed typed record.
-For a `params` wrapper, the family loaders validate a supplied `meta.dtype` or per-tensor dtype
-metadata as float32.
-`meta.format` is not an architecture proof, and extra parameter keys are ignored. An absent
-`meta` is accepted; a bare payload has no wrapper metadata to check. Imported
-numbers become host `Float` values, so this format does not preserve exact binary32 payload bits.
+## Importer Examples
 
-## Parser Examples
-
-The two helpers that do the work are small and total. Their types say what they promise:
+The type of the importer says what a successful read returns:
 
 ```lean (name := ptrTypes)
--- The requested shape is retained in the successful parse
--- result.
-#check @parseTensor
-#check @getTensor?
+-- The state shapes in the arguments appear in the result
+-- type.
+#check @PyTorch.state
 ```
 
-```leanOutput ptrTypes
-parseTensor : (s : Shape) → Lean.Json → Option (Tensor Float s)
+```leanOutput ptrTypes (whitespace := lax)
+@PyTorch.state : {α : Type} →
+  [inst : Storage α] →
+    [Checkpoint.Encoding α] →
+      (shapes : List Shape) → List String → Lean.Json → Except String (TensorPack α shapes)
 ```
 
-```leanOutput ptrTypes
-getTensor? : StateDict → String → (s : Shape) → Option (Tensor Float s)
-```
+The shape list `shapes` appears in the result type `TensorPack α shapes`, so a successful read has
+these shapes in this order. The type alone would also allow a reordered or fabricated state.
+`PyTorch.state_stateDict` is the theorem about values: reading the document of a state
+gives back that state.
 
-The shape argument to `parseTensor` appears in its result type. There is no
-value of type `Tensor Float [3, 2]` that holds two rows of three, so the returned type records that
-layout. The parser must still be reviewed for how it maps each
-JSON position into the tensor; the type alone would also allow a reordered or fabricated tensor.
-
-Take a payload in the same wrapper format the Python script writes:
+Take the state of a `2 → 2 → 1` MLP with identity first weights, zero first biases, the second
+weight row `[1, 1]` and the output bias `0.5`, written as a float64 state document:
 
 ```lean (name := ptrPayload)
--- Exercise the low-level wrapper helpers independently of
--- family dtype validation.
+-- The binary64 words of 1.0, 0.0 and 0.5.
 def ptrPayload : String :=
-  r#"{ "params":
-       { "layers.0.weight": [[1, 2], [3, 4], [5, 6]],
-         "layers.0.bias": [0.5, -0.5, 0.25] },
-     "meta": { "format": "TorchLean.MLP" } }"#
+  r#"{"format": "torchlean.state", "entries": {
+  "fc1.weight": {"dtype": "float64", "shape": [2, 2],
+    "words": [4607182418800017408, 0, 0,
+      4607182418800017408]},
+  "fc1.bias": {"dtype": "float64", "shape": [2],
+    "words": [0, 0]},
+  "fc2.weight": {"dtype": "float64", "shape": [1, 2],
+    "words": [4607182418800017408, 4607182418800017408]},
+  "fc2.bias": {"dtype": "float64", "shape": [1],
+    "words": [4602678819172646912]}
+}}"#
 
-def ptrDict : Option StateDict := do
-  let json ← (Lean.Json.parse ptrPayload).toOption
-  let .obj dict := json | none
-  return unwrapParams dict
+def ptrShapes : List Shape :=
+  [[2, 2], [2], [1, 2], [1]]
+
+def ptrNames : List String :=
+  ["fc1.weight", "fc1.bias", "fc2.weight", "fc2.bias"]
+
+def ptrRead (names : List String) (s : String) :
+    Except String (TensorPack Float ptrShapes) := do
+  PyTorch.state ptrShapes names (← Lean.Json.parse s)
+
+#eval ptrRead ptrNames ptrPayload
 ```
 
-`unwrapParams` is what lets both accepted layouts work: a bare object of tensors, or an object with
-a `params` field. It merges the remaining top-level fields, so `meta` stays visible to any loader
-that wants to read provenance, while parameter entries win on a name collision. Metadata must never
-be able to replace a tensor.
-
-Now ask for the two tensors at the shapes the MLP family expects:
-
-```lean (name := ptrGood)
--- Read each required name at its own expected nested shape.
-#eval ptrDict.bind fun d =>
-  getTensor? d "layers.0.weight" [3, 2]
-
-#eval ptrDict.bind fun d => getTensor? d "layers.0.bias" [3]
+```leanOutput ptrPayload (whitespace := lax)
+Except.ok [[2, 2]:
+ [[1.000000, 0.000000], [0.000000, 1.000000]],
+ [2]:
+ [0.000000, 0.000000],
+ [1, 2]:
+ [[1.000000, 1.000000]],
+ [1]:
+ [0.500000]]
 ```
 
-```leanOutput ptrGood
-some [[1.000000, 2.000000], [3.000000, 4.000000], [5.000000, 6.000000]]
+Each tensor of the state carries its shape in its type. `Pack.get` returns tensor `i` at the
+type `Tensor Float (ptrShapes.get i)`, which is the type the forward pass needs:
+
+```lean (name := ptrRun)
+-- Evaluate the imported state at the input (2, 3).
+def ptrRun (names : List String) (s : String) :
+    Except String (Tensor Float [1]) := do
+  let p ← ptrRead names s
+  return MLP.forward (α := Float)
+    { weights := p.get ⟨0, by decide⟩,
+      bias := p.get ⟨1, by decide⟩ }
+    { weights := p.get ⟨2, by decide⟩,
+      bias := p.get ⟨3, by decide⟩ }
+    [2.0, 3.0]
+
+#eval ptrRun ptrNames ptrPayload
 ```
 
-```leanOutput ptrGood
-some [0.500000, -0.500000, 0.250000]
+```leanOutput ptrRun
+Except.ok [5.500000]
 ```
 
-Three ways to break it, and all three are caught:
+The identity weights and the `[1, 1]` output row determine the result: the hidden vector is
+$`[2, 3]`, the ReLU leaves it unchanged, and the sum plus the bias $`0.5` is $`5.5`.
+
+Each check has its own message. Five altered copies of the document and a short name list show
+them:
 
 ```lean (name := ptrBad)
--- The same JSON, requested at the transposed shape.
-#eval (ptrDict.bind fun d =>
-  getTensor? d "layers.0.weight" [2, 3]).isSome
+-- Print the error of a read, or ok.
+def ptrCheck (names : List String) (s : String) : IO Unit :=
+  match ptrRead names s with
+  | .ok _ => IO.println "ok"
+  | .error e => IO.println e
 
--- A misspelled key.
-#eval (ptrDict.bind fun d =>
-  getTensor? d "layers.0.wieght" [3, 2]).isSome
+-- The second weight stored transposed, as [2, 1].
+#eval ptrCheck ptrNames
+  (ptrPayload.replace "[1, 2]" "[2, 1]")
 
--- A leaf that is not a number.
-#eval (parseTensor [3]
-  (.arr #[.num 1, .str "nan", .num 3])).isSome
+-- A misspelled name.
+#eval ptrCheck ptrNames
+  (ptrPayload.replace "fc2.bias" "fc2.bais")
+
+-- A float32 document for a state of Float elements.
+#eval ptrCheck ptrNames
+  (ptrPayload.replace "float64" "float32")
+
+-- One word for two elements.
+#eval ptrCheck ptrNames
+  (ptrPayload.replace "\"words\": [0, 0]" "\"words\": [0]")
+
+-- A NaN word that Float.ofBits would change.
+#eval ptrCheck ptrNames
+  (ptrPayload.replace "4602678819172646912"
+    "9218868437227405313")
+
+-- Three names for four tensors.
+#eval ptrCheck (ptrNames.take 3) ptrPayload
 ```
 
-```leanOutput ptrBad
-false
+```leanOutput ptrBad (whitespace := lax)
+PyTorch state: size mismatch for fc2.weight: copying a param with
+shape torch.Size([2, 1]) from checkpoint, the shape in current model
+is torch.Size([1, 2]).
 ```
 
-```leanOutput ptrBad
-false
+```leanOutput ptrBad (whitespace := lax)
+PyTorch state: Missing key(s) in state_dict: "fc2.bias".
+Unexpected key(s) in state_dict: "fc2.bais".
 ```
 
-```leanOutput ptrBad
-false
+```leanOutput ptrBad (whitespace := lax)
+PyTorch state: dtype mismatch for fc1.weight: copying a param with
+dtype float32 from checkpoint, the dtype in current model is float64.
 ```
 
-The first rejection compares the nested array structure with the requested shape. The payload has
-three rows of length two, so it cannot satisfy a request for `[2, 3]`, even though both shapes
-contain six values. No separate `"shape"` annotation is needed to make this check.
-
-The other two failures need no dimension mismatch: one misspells `weight`, and the other supplies
-a string where a JSON number is required. `"nan"` fails because it is a string.
-
-These examples deliberately call the low-level dictionary and tensor helpers. They do not call
-`loadWeights?`, which performs wrapper dtype validation for the family loaders. In particular,
-`ptrPayload` demonstrates retaining a `meta.format` field while parsing tensors; its success is
-not evidence that an arbitrary metadata object would pass a complete MLP load. Keeping this layer
-visible helps locate a rejection before blaming the array parser.
-
-## Import Error Diagnostics
-
-Transposing `layers.0.weight` in `mlp.json` to two rows of three causes the family importer to
-reject it, but the command does not identify the offending tensor:
-
-```terminal +output
-error: Failed to load MLP state dict
+```leanOutput ptrBad (whitespace := lax)
+PyTorch state: the entry fc1.bias of shape torch.Size([2]) has 1
+word(s), expected 2.
 ```
 
-The exit code is 1. Deleting a required key or replacing a numeric leaf with the string `"nan"`
-produces the same message. The current diagnostic distinguishes success from failure but does not
-localize the cause.
-
-The reason is visible in
-{src "NN/Runtime/PyTorch/Import/MLP.lean"}[the MLP loader].
-It is written in the `Option` monad, and it tries the two accepted key conventions in sequence:
-
-```
--- Try each complete naming convention as one alternative.
-tryKeys "fc1.weight" "fc1.bias" "fc2.weight" "fc2.bias" <|>
-  tryKeys "layers.0.weight" "layers.0.bias"
-          "layers.2.weight" "layers.2.bias"
+```leanOutput ptrBad (whitespace := lax)
+PyTorch state: fc2.bias[0]: Checkpoint: noncanonical native Float NaN
+encoding
 ```
 
-`<|>` on `Option` cannot tell you why the left branch failed, because `none` carries no
-information. Every distinct failure inside either branch arrives at the caller as the same absent
-value, and the caller can only report that the load failed.
+```leanOutput ptrBad (whitespace := lax)
+PyTorch state: 3 name(s) for 4 tensor(s).
+```
 
-A diagnostic variant returning `Except String` could retain the missing key, expected shape, or
-invalid leaf. The current `Option` interface discards that information, so inspecting the payload
-is necessary to distinguish these failures.
+The first rejection compares the stored shape with the shape of the model, as PyTorch does. Both
+shapes hold two values, so the words alone could not tell them apart. The misspelled name gives
+both halves of PyTorch's strict message: the model's name is missing and the document's name is
+unexpected. The float32 document fails at `fc1.weight`, the first name, since an entry's dtype is
+compared ahead of its shape and words. The word `9218868437227405313` is `0x7ff0000000000001`, a
+NaN with the payload 1. `Float.ofBits` would turn it into `0x7ff8000000000000`, so the importer
+rejects the document.
 
 ## PyTorch Load Errors
 
@@ -452,246 +511,234 @@ RuntimeError: Error(s) in loading state_dict for Sequential:
   is torch.Size([3, 2]).
 ```
 
-and with a key removed:
+with a key removed:
 
 ```
 RuntimeError: Error(s) in loading state_dict for Sequential:
   Missing key(s) in state_dict: "0.bias".
 ```
 
-Called with `strict=False`, the same load returns
-`_IncompatibleKeys(missing_keys=['0.bias'], unexpected_keys=[])` instead of raising, and the
-parameter simply keeps its previous value.
+and with an extra key:
 
-The checks produce different kinds of results:
+```
+RuntimeError: Error(s) in loading state_dict for Sequential:
+  Unexpected key(s) in state_dict: "0.extra".
+```
+
+Called with `strict=False`, the load without `0.bias` raises no error. It returns
+`_IncompatibleKeys(missing_keys=['0.bias'], unexpected_keys=[])`, and the parameter keeps its
+value. A float64 state dict loads into the float32 module without a message, and the module stays
+float32: PyTorch copies each tensor into the destination dtype.
+
+Side by side, the two checks produce different kinds of results:
 
 :::table +header
 *
   * Property
   * PyTorch `load_state_dict`
-  * TorchLean family importer
+  * `PyTorch.state`
 *
   * Input format
   * mapping, often obtained with `torch.load`
-  * JSON object of nested arrays
+  * `torchlean.state` JSON document of binary words
 *
   * Reading it requires
   * a Python interpreter
-  * a Lean parser of a few dozen lines
+  * a Lean reader and the scalar decoders
 *
   * Shape check
   * at load time, per parameter
-  * at parse time, against the Lean type
+  * at load time, against the shapes in the Lean type
 *
   * Missing key
   * `RuntimeError`, or `missing_keys` when not strict
-  * whole load returns `none`
+  * an error naming every missing key
+*
+  * Unexpected key
+  * `RuntimeError`, or `unexpected_keys` when not strict
+  * an error naming every unexpected key
 *
   * Failure message
   * names the key and both shapes
-  * one sentence, no localization
+  * PyTorch's wording for key and shape errors, after `PyTorch state:`
 *
   * Element type
-  * copied into destination dtype by default
-  * decimal text becomes host `Float`
+  * copied into the destination dtype by default
+  * must equal the dtype of the Lean element type, never converted
 *
   * Result
   * a mutable module object
-  * an immutable typed record
+  * an immutable `TensorPack` whose type holds the shapes
 :::
 
-A loaded TorchLean family record retains its parameter shapes in its type. Later graph lowering
-and theorem statements can use those shapes directly. This guarantee concerns the record's
-structure; it does not establish that a name or coordinate has the intended physical meaning.
+The shapes in the type of the state are available to graph lowering and to theorems about the
+model. They describe the structure of the state and say nothing about whether a name or coordinate
+has the intended physical meaning.
 
-The family loader combines all required lookups before returning a record. A missing bias
-therefore cannot leave a freshly initialized Lean bias in place, as PyTorch's non-strict load
-permits. Extra keys are still ignored, so success does not imply that every supplied field was used.
+A read that fails returns no state, so a missing bias can't leave a freshly initialized Lean bias
+in place, as PyTorch's non-strict load permits.
 
-# Serialized Tensor Layouts
+# Parameter Names
 
-The imported record supplies this example's family-specific forward pass. Using it through another
-model API requires an explicit adapter. Even before that step, the names must agree with one of
-the chosen family's accepted conventions.
+The importer reads the names the caller gives it and has no naming convention of its own. The
+names come from the PyTorch module. A module with named attributes gives `fc1.weight`, and the same
+architecture written as `nn.Sequential` gives `0.weight`. The index gap between `0` and `2` is not
+an error: position `1` is the `ReLU`, and activations have no parameters. Nesting adds prefixes, so
+a sequential block held in an attribute called `layers` gives `layers.0.weight`.
 
-The MLP loader accepts two key conventions, `fc1.*`/`fc2.*` and `layers.0.*`/`layers.2.*`, because
-PyTorch itself produces both. A module with named attributes gives `fc1.weight`; the same
-architecture written as `nn.Sequential` gives `0.weight`, which becomes `layers.0.weight` once the
-sequential block is held in an attribute called `layers`. The index gap between `0` and `2` is not
-an error: position `1` is the `ReLU`, and activations have no parameters. The CNN and transformer
-loaders have their own fixed key sets.
-
-Here are both conventions carrying identical weights, plus a third payload that names one layer each
-way:
+Here is the identity document under the names of `nn.Sequential`, read with its own names and with
+the names of the module with attributes:
 
 ```lean (name := ptrKeys)
-open Import.PyTorch.MLP (load forward)
+-- The same tensors under the names that nn.Sequential
+-- gives them.
+def ptrSeqPayload : String :=
+  (ptrPayload.replace "fc1." "0.").replace "fc2." "2."
 
-def ptrLinearKeys : String :=
-  r#"{ "fc1.weight": [[1, 0], [0, 1]],
-       "fc1.bias": [0, 0],
-       "fc2.weight": [[1, 1]],
-       "fc2.bias": [0.5] }"#
+def ptrSeqNames : List String :=
+  ["0.weight", "0.bias", "2.weight", "2.bias"]
 
-def ptrSeqKeys : String :=
-  r#"{ "layers.0.weight": [[1, 0], [0, 1]],
-       "layers.0.bias": [0, 0],
-       "layers.2.weight": [[1, 1]],
-       "layers.2.bias": [0.5] }"#
-
--- One layer named each way, in the same file.
-def ptrMixedKeys : String :=
-  r#"{ "fc1.weight": [[1, 0], [0, 1]],
-       "fc1.bias": [0, 0],
-       "layers.2.weight": [[1, 1]],
-       "layers.2.bias": [0.5] }"#
-
-def ptrRunMlp (s : String) : Option (Tensor Float [1]) := do
-  let json ← (Lean.Json.parse s).toOption
-  let p ← load 2 2 1 json
-  return forward p [2.0, 3.0]
-
-#eval ptrRunMlp ptrLinearKeys
-#eval ptrRunMlp ptrSeqKeys
-#eval ptrRunMlp ptrMixedKeys
+#eval ptrRun ptrSeqNames ptrSeqPayload
+#eval ptrCheck ptrNames ptrSeqPayload
 ```
 
 ```leanOutput ptrKeys
-some [5.500000]
-```
-```leanOutput ptrKeys
-some [5.500000]
-```
-```leanOutput ptrKeys
-none
+Except.ok [5.500000]
 ```
 
-The identity weights and the `[1, 1]` output row determine the result directly: the hidden
-vector is $`[2, 3]`, the ReLU leaves it alone, and the sum plus the $`0.5` bias is $`5.5`. Both
-naming conventions construct the same tensors and produce this value.
+```leanOutput ptrKeys (whitespace := lax)
+PyTorch state: Missing key(s) in state_dict: "fc1.weight", "fc1.bias",
+"fc2.weight", "fc2.bias". Unexpected key(s) in state_dict: "0.bias",
+"0.weight", "2.bias", "2.weight".
+```
 
-The mixed payload fails because `load` is written as
-`tryKeys "fc1.weight" ... <|> tryKeys "layers.0.weight" ...`, so each convention is tried as a
-complete set. A payload that names its first layer `fc1` and its second `layers.2.weight` satisfies
-neither alternative and is rejected, even though every tensor it needs is present under some name.
-This loader requires a consistent complete naming convention. Supporting mixed conventions would
-need an explicit conflict policy; shape checking cannot identify the intended parameter when two
-candidate keys both have the expected shape.
-
-This small exchange format handles known TorchLean families. Keep the full object in Python when a
-training pipeline needs PyTorch's complete serialization graph, and export only the checked payload
-that TorchLean understands.
+With matching names the read gives the same state and the same output $`5.5`. With the other
+names every key is missing and every entry unexpected, and the message lists all of them. A
+document whose names follow no single convention needs no special rule either, since every name in
+the caller's list must be present and every entry must be named.
 
 The identity weights make the naming test easy to check by hand. They would not reveal an
 accidental transpose of the first weight matrix, since transposing an identity changes nothing.
-The transformer example below uses an asymmetric matrix to expose that mistake.
+The transformer example below shows that mistake with an asymmetric matrix.
 
-# Model Families
+# Example Models
 
-The three family examples exercise different parameter layouts and forward paths.
+The three examples exercise different state layouts and forward paths. Each runs the ordinary
+executable `nn` model with the imported state in place of its seeded initialization.
 
 ## MLP
 
-The MLP contract consists of two weight matrices and two bias vectors. Their names and shapes
-can be compared directly with the Python `state_dict` and Lean family record:
+The MLP state consists of two weight matrices and two bias vectors, with the same names and shapes
+in the Python `state_dict` and in the Lean model's state.
 
 ```terminal
-# Run the complete MLP exchange using one family-specific
-# schema.
-scripts/lake.sh exe torchlean pytorch_roundtrip --model mlp --action export
-python3 NN/Examples/Interop/PyTorch/MLP/train_mlp.py
-scripts/lake.sh exe torchlean pytorch_roundtrip --model mlp --action import
+# Train the MLP and read its state dict into the Lean MLP.
+python3 TorchLeanExamples/Interop/PyTorch/MLP/train_mlp.py
+scripts/lake.sh exe torchlean pytorch_roundtrip --model mlp
 ```
 
-Its forward pass runs on native tensor operations, which is why the import transcript above says
-so.
+The second command prints the `[1.000000]` of the MLP round trip.
 
 ## CNN
 
-The CNN example adds convolutional weight layouts. Both sides must agree on which axes represent
-output channels, input channels, and spatial kernel dimensions; matching the total number of
-elements does not establish that agreement.
+The CNN example adds convolutional weight layouts. Both sides must agree on which axes hold output
+channels, input channels and the spatial kernel dimensions, and matching the total number of
+elements does not establish that agreement. PyTorch stores `conv1.weight` with the shape
+`[2, 1, 3, 3]`, output channels first, and the Lean convolution's state has the same shape.
 
 ```terminal
-# Exercise convolutional parameter layouts through the CNN
-# exchange.
-scripts/lake.sh exe torchlean pytorch_roundtrip --model cnn --action export
-python3 NN/Examples/Interop/PyTorch/CNN/train_cnn.py
-scripts/lake.sh exe torchlean pytorch_roundtrip --model cnn --action import
+# Train the CNN and read its state dict into the Lean CNN.
+python3 TorchLeanExamples/Interop/PyTorch/CNN/train_cnn.py
+scripts/lake.sh exe torchlean pytorch_roundtrip --model cnn
 ```
 
 ```terminal +output
 == CNN import example ==
-Loaded: NN/Examples/Interop/PyTorch/CNN/cnn.json
+Loaded: TorchLeanExamples/Interop/PyTorch/CNN/cnn.json
 Output (executable `nn` module on CPU, Float):
 [0.999962, 0.500014]
 ```
 
 Here
-{src "NN/Examples/Interop/PyTorch/CNN/train_cnn.py"}[`train_cnn.py`]
-writes `NN/Examples/Interop/PyTorch/CNN/cnn.json`. The trained targets were $`1` and $`0.5`, and
-the imported predictions are within about $`4\times10^{-5}` of those targets. Unlike the MLP path,
-this family runs
-through an ordinary executable `nn` module.
+{src "TorchLeanExamples/Interop/PyTorch/CNN/train_cnn.py"}[`train_cnn.py`]
+writes `TorchLeanExamples/Interop/PyTorch/CNN/cnn.json`, six entries from `conv1.weight` to
+`fc.bias`. The training targets are $`1` and $`0.5`, and the imported predictions are within about
+$`4\times10^{-5}` of those targets. The trained module in float64 computes 0.9999618741736017 and
+0.5000140904038091 at the same input. Lean's first output is 0.9999618741736018, one unit in the
+last place above, and its second output has the same word.
 
-The residuals compare the imported model with its training targets. They do not compare CPU and
-CUDA convolutions; this forward pass uses host `Float` on the CPU.
+The residuals compare the imported model with its training targets and with PyTorch's float64
+evaluation. They do not compare CPU and CUDA convolutions, since this forward pass uses host
+`Float` on the CPU.
 
 ## Transformer (Encoder)
 
 The transformer example adds four attention projections per block and normalization parameters.
-The importer must know the name and orientation of each tensor
+Each of these tensors needs the right name and orientation
 {Informal.citep transformer2017}[].
 
 ```terminal
-# Exchange the encoder projections and normalization
-# parameters.
-scripts/lake.sh exe torchlean pytorch_roundtrip --model transformer --action export
-python3 NN/Examples/Interop/PyTorch/Transformer/export_transformer.py
-scripts/lake.sh exe torchlean pytorch_roundtrip --model transformer --action import
+# Initialize the encoder and read its state dict into the
+# Lean encoder block.
+python3 TorchLeanExamples/Interop/PyTorch/Transformer/export_transformer.py
+scripts/lake.sh exe torchlean pytorch_roundtrip --model transformer
 ```
 
 ```terminal +output
 == Transformer import example ==
-Loaded: NN/Examples/Interop/PyTorch/Transformer/transformer_encoder.json
+Loaded: TorchLeanExamples/Interop/PyTorch/Transformer/transformer_encoder.json
 Output (executable `nn` module on CPU, Float):
 [[0.999998, -0.999998]]
 ```
 
 The companion
-{src "NN/Examples/Interop/PyTorch/Transformer/export_transformer.py"}[`export_transformer.py`]
-writes `NN/Examples/Interop/PyTorch/Transformer/transformer_encoder.json` from seeded
-initialization; it does not train the encoder. Lean then checks the declared shapes and
-parameter layout as it imports that JSON payload.
+{src "TorchLeanExamples/Interop/PyTorch/Transformer/export_transformer.py"}[`export_transformer.py`]
+writes `TorchLeanExamples/Interop/PyTorch/Transformer/transformer_encoder.json` from seeded
+initialization and does not train the encoder. Its twelve entries run from
+`layers.0.mha.q_weight` to `layers.0.norm2.bias`. The four attention projections are bias-free
+`(input, output)` matrices applied as `x @ weight`, the layout of TorchLean's executable attention
+layer, so both sides store the same numbers in the same order. The module in float64 computes
+0.9999983489980666 and -0.9999983489980665. Lean's first output has the same word, and its second
+output is the exact negation of its first, one unit in the last place from PyTorch's.
 
-One caution that this family makes concrete: a projection matrix stored in the wrong orientation is
-only caught by shape checking when the two dimensions differ. A square $`d\times d` attention
-projection transposed by mistake still parses, as this two-dimensional example shows:
+The shape check catches a projection matrix stored in the wrong orientation when its two dimensions
+differ, and misses it when they are equal. A module that computed its projections with `nn.Linear`
+would store `(output, input)` matrices of the same square shape, and reading them would transpose
+every projection without an error. This two-dimensional example shows the effect:
 
 ```lean (name := ptrSquare)
--- A 2x2 projection, and the same four numbers stored
--- with rows and columns swapped.
+-- A 2x2 matrix, and the same four numbers stored with rows
+-- and columns swapped: the words of 1, 2, 3, 4 and of
+-- 1, 3, 2, 4.
 def ptrRowMajor : String :=
-  r#"{ "params": { "w": [[1, 2], [3, 4]] } }"#
+  r#"{"format": "torchlean.state", "entries": {
+  "w": {"dtype": "float64", "shape": [2, 2],
+    "words": [4607182418800017408, 4611686018427387904,
+              4613937818241073152, 4616189618054758400]}}}"#
 
 def ptrColMajor : String :=
-  r#"{ "params": { "w": [[1, 3], [2, 4]] } }"#
+  r#"{"format": "torchlean.state", "entries": {
+  "w": {"dtype": "float64", "shape": [2, 2],
+    "words": [4607182418800017408, 4613937818241073152,
+              4611686018427387904, 4616189618054758400]}}}"#
 
 def ptrReadW (s : String) :
-    Option (Tensor Float [2, 2]) := do
-  let json ← (Lean.Json.parse s).toOption
-  let .obj object := json | none
-  let dict := unwrapParams object
-  getTensor? dict "w" [2, 2]
+    Except String (TensorPack Float [[2, 2]]) := do
+  PyTorch.state [[2, 2]] ["w"] (← Lean.Json.parse s)
 
--- Both parse. Shape checking cannot tell them apart.
-#eval (ptrReadW ptrRowMajor).isSome
-#eval (ptrReadW ptrColMajor).isSome
+-- Both read. The shape check cannot tell them apart.
+#eval (ptrReadW ptrRowMajor).isOk
+#eval (ptrReadW ptrColMajor).isOk
 
 def ptrProbe : Tensor Float [2] := [1.0, 0.0]
 
-#eval (ptrReadW ptrRowMajor).map (Tensor.matvec · ptrProbe)
-#eval (ptrReadW ptrColMajor).map (Tensor.matvec · ptrProbe)
+def ptrApply (s : String) :
+    Except String (Tensor Float [2]) := do
+  let p ← ptrReadW s
+  return Tensor.matvec (p.get ⟨0, by decide⟩) ptrProbe
+
+#eval ptrApply ptrRowMajor
+#eval ptrApply ptrColMajor
 ```
 
 ```leanOutput ptrSquare
@@ -701,31 +748,27 @@ true
 true
 ```
 ```leanOutput ptrSquare
-some [1.000000, 3.000000]
+Except.ok [1.000000, 3.000000]
 ```
 ```leanOutput ptrSquare
-some [1.000000, 2.000000]
+Except.ok [1.000000, 2.000000]
 ```
 
-Both payloads parse, but matrix-vector multiplication produces different answers. Multiplying by
-the first basis vector reads off a column, so the row-major payload gives $`[1, 3]` and the swapped
-one gives $`[1, 2]`. Nothing here is a bug in `getTensor?`; the requested type was `[2, 2]` and both
-payloads have that shape.
+Both documents read, but matrix-vector multiplication produces different answers. Multiplying by
+the first basis vector reads off a column, so the row-major document gives $`[1, 3]` and the
+swapped one gives $`[1, 2]`. The model's shape is `[2, 2]` and both documents have it, so the
+importer accepts both.
 
-Shape checking detects incompatible dimensions; it cannot distinguish equally shaped orientation
-conventions. Evaluating both sides on a shared input can expose such a mismatch. A
-literal nested-array transpose of a non-square projection fails the shape check. Other value
-permutations can preserve shape, so numerical checks remain useful for both square and non-square
-parameters. Attention blocks are full of square
-projections, which is exactly why this family is the one that makes the caution concrete.
+Evaluating both sides on a shared input can expose such a mismatch, and the parity test does that
+for the three examples. Other permutations of the values also preserve shape, so numerical
+comparison is useful for square and non-square parameters alike. Attention blocks have many square
+projections, such as the four `[2, 2]` matrices of this encoder.
 
 # PyTorch Code Generation
 
-The
-{src "NN/Examples/DeepDives/TorchIRPyTorch.lean"}[IR export example]
-does the reverse kind of work. It lowers a TorchLean model to the shared IR and emits runnable
-PyTorch code for a curated set of architectures: `linear`, `mlp`, `sum`, `autoencoder`, `mha`,
-`mha-mask`, and `transformer`.
+Going the other way, the {src "TorchLeanExamples/DeepDives/TorchIRPyTorch.lean"}[IR export example]
+lowers a TorchLean model to the shared IR and emits runnable PyTorch code for a curated set of
+architectures (`linear`, `mlp`, `sum`, `autoencoder`, `mha`, `mha-mask` and `transformer`).
 
 ```terminal
 # Emit a standalone Python program for the seeded IR
@@ -740,18 +783,18 @@ We can write the MLP with three layers:
 -- Fix the architecture before assigning seeded parameter
 -- values.
 def mlp : nn.Builder (nn.Sequential [2] [1]) :=
-  nn.Sequential![nn.linear 2 3, nn.relu, nn.linear 3 1]
+  nn.Sequential![nn.linear 2 3, nn.op .relu, nn.linear 3 1]
 ```
 
-and `nn.build 0 mlp` turns that description into a model with concrete seeded parameters. The
-emitted Python has no builder and no seed; the parameters are baked in as literals, and the forward
-pass is the lowered IR written out one SSA binding at a time:
+and `nn.build 0 mlp` turns that description into a model with concrete seeded parameters. There's
+no builder and no seed in the emitted Python. Its parameters are baked in as literals, and its
+forward pass is the lowered IR written out one SSA binding at a time:
 
 ```
 class TorchLeanMLP(nn.Module):
   def __init__(self):
     super().__init__()
-    dtype = torch.float32
+    dtype = torch.float64
     self.const_2 = nn.Parameter(torch.tensor([
       float.fromhex('0x182a07c19a71ecp-54'),
       float.fromhex('0x1597e07783b3c0p-53'),
@@ -763,52 +806,56 @@ class TorchLeanMLP(nn.Module):
     self.register_buffer("const_5", torch.tensor(
       [0.0, 0.0, 0.0], dtype=dtype).reshape((3,)))
     self.const_11 = nn.Parameter(torch.tensor([
-      float.fromhex('-0x10fbf4e603fdfdp-52'),
-      float.fromhex('-0x170671f4bea0ecp-53'),
-      float.fromhex('0x1accf23e183060p-53')],
+      float.fromhex('-0x100e8202b6cceap-52'),
+      float.fromhex('-0x116eede4c8f307p-53'),
+      float.fromhex('-0x18d0ae05a0e7a0p-56')],
       dtype=dtype).reshape((1, 3)))
     self.register_buffer("const_14", torch.tensor(
       [0.0], dtype=dtype).reshape((1,)))
 
   def forward(self, x):
     v0 = x
-    v1 = v0.reshape((1, 2))
+    v1 = torch.reshape(v0, shape=(1, 2))
     v2 = self.const_2
-    v3 = v2.transpose(0, 1)
+    v3 = torch.permute(v2, dims=(1, 0))
     v4 = torch.matmul(v1, v3)
     v5 = self.const_5
-    v6 = torch.broadcast_to(v5, (1, 3))
-    v7 = v4 + v6
-    v8 = v7.reshape((3,))
-    v9 = torch.relu(v8)
-    v10 = v9.reshape((1, 3))
+    v6 = v5.reshape((1, 3,)).expand((1, 3))
+    v7 = torch.add(v4, v6)
+    v8 = torch.reshape(v7, shape=(3,))
+    v9 = torch.relu(v8) + 0.0
+    v10 = torch.reshape(v9, shape=(1, 3))
     v11 = self.const_11
-    v12 = v11.transpose(0, 1)
+    v12 = torch.permute(v11, dims=(1, 0))
     v13 = torch.matmul(v10, v12)
     ...
 ```
 
-The `transpose(0, 1)` calls are the orientation convention made explicit: TorchLean stores a linear
-layer's matrix as `[out, in]` and the emitter writes the transpose that `x @ W.T` needs, rather
-than silently reordering the numbers on the way out. The emitted file also trains itself when run,
-which exercises forward, backward, and an optimizer step. In the excerpt, weight constants become
-`nn.Parameter`s while the zero biases become registered buffers. A matching forward value
-therefore does not establish that subsequent training updates the same set of parameters.
-A CPU run
-(`CUDA_VISIBLE_DEVICES="" python3 exported_model.py`) reports:
+Those `torch.permute(..., dims=(1, 0))` calls make the orientation convention visible: TorchLean
+stores a linear layer's matrix as `[out, in]`, and the emitter writes the transpose that `x @ W.T`
+needs (it doesn't silently reorder the numbers on the way out). When run, the emitted file also
+trains itself, which exercises forward, backward and an optimizer step. In the excerpt, weight
+constants become `nn.Parameter`s while the zero biases become registered buffers, so a matching
+forward value doesn't establish that subsequent training updates the same set of parameters. A CPU
+run (`CUDA_VISIBLE_DEVICES="" python3 exported_model.py`, PyTorch 2.8.0 on an Intel Xeon) reports:
 
 ```
-loss 3.9950685501098633
+loss 0.8064298643505659
 ```
 
-The generated bindings let us follow one linear layer without guessing how Python interprets a
-matrix. The input becomes a single row, the stored `[3, 2]` weight is transposed to `[2, 3]`, and
-matrix multiplication produces three hidden features. Broadcasting the `[3]` bias adds one value
-per feature before the row is reshaped back to a vector. Those transformations preserve the
-intended feature order while adapting it to PyTorch's matrix interface.
+The module computes in binary64, the emitter's default dtype, and its training example draws `x` and
+`y` with `torch.randn` after `torch.manual_seed(0)`. The printed value is the mean squared error of
+the first forward pass, taken before the optimizer step. Its low bits can depend on the order in
+which the CPU's matrix kernel rounds the products and sums.
+
+With the generated bindings we can follow one linear layer without guessing how Python interprets a
+matrix. First the input becomes a single row, then the stored `[3, 2]` weight is transposed to
+`[2, 3]`, and matrix multiplication produces three hidden features. Broadcasting the `[3]` bias adds
+one value per feature before the row is reshaped back to a vector. Those transformations preserve
+the intended feature order while adapting it to PyTorch's matrix interface.
 
 That printed loss comes from the emitted file's training example. To compare its initial forward
-pass with Lean, I'll use the same input and seeded parameters on both sides.
+pass with Lean, we use the same input and seeded parameters on both sides.
 
 ## Generated Model Forward Comparison
 
@@ -821,20 +868,20 @@ pass at $`x = (0.5, 0.8)`:
 -- Use the same seed and [out, in] weights as the exported
 -- MLP.
 def ptrArch : nn.Builder (nn.Sequential [2] [1]) :=
-  nn.Sequential![nn.linear 2 3, nn.relu, nn.linear 3 1]
+  nn.Sequential![nn.linear 2 3, nn.op .relu, nn.linear 3 1]
 
 def ptrInput : Tensor Float [2] :=
   Tensor.ofFn fun i => [0.5, 0.8][i.val]!
 
 def ptrLeanOut : Tensor Float [1] :=
-  match Runtime.Autograd.Model.Layers.Seq.initState
+  match nn.Sequential.initState
       (m := nn.build 0 ptrArch) with
   | .cons w1 (.cons b1 (.cons w2 (.cons b2 .nil))) =>
-      Examples.mlpForward (α := Float)
+      MLP.forward (α := Float)
         { weights := w1, bias := b1 }
         { weights := w2, bias := b2 } ptrInput
 
-#eval Runtime.Autograd.Model.Layers.Seq.initState
+#eval nn.Sequential.initState
   (m := nn.build 0 ptrArch)
 
 #eval ptrLeanOut
@@ -846,17 +893,17 @@ def ptrLeanOut : Tensor Float [1] :=
  [3]:
  [0.000000, 0.000000, 0.000000],
  [1, 3]:
- [[-1.061513, -0.719537, 0.837518]],
+ [[-1.003542, -0.544791, -0.096934]],
  [1]:
  [0.000000]]
 ```
 
 ```leanOutput ptrLean
-[-1.377817]
+[-1.188799]
 ```
 
-The four parameter tensors correspond to the four emitted constants in the same orientation.
-Their six-decimal Lean display does not expose all stored bits. Using the exact generated literals,
+Those four parameter tensors correspond to the four emitted constants in the same orientation, but
+their six-decimal Lean display doesn't expose all stored bits. Using the exact generated literals,
 the initial forward values at $`(0.5, 0.8)` are:
 
 :::table +header
@@ -865,33 +912,35 @@ the initial forward values at $`(0.5, 0.8)` are:
   * Value
 *
   * Lean, `Tensor Float`, seeded weights (display)
-  * `-1.377817`
+  * `-1.188799`
 *
-  * Emitted module, `torch.float32`
-  * `-1.3778172731399536`
+  * Emitted module with `dtype = torch.float32`
+  * `-1.1887991428375244`
 *
   * Same emitted parameters, NumPy float64
-  * `-1.3778172042069539`
+  * `-1.1887990892460092`
 *
-  * Emitted module with `dtype = torch.float64`
-  * `-1.3778172042069539`
+  * Emitted module, `torch.float64`
+  * `-1.1887990892460092`
 :::
 
-The float32 row rounds the emitted parameters and inputs to binary32 and evaluates with binary32
-operations. Its difference from the float64 rows therefore includes both conversion and arithmetic;
-it does not isolate accumulation precision alone. Matching NumPy and PyTorch float64 outputs at
-this point is a useful regression, not a theorem for arbitrary inputs or reduction schedules.
+In the float32 row, the emitted parameters and inputs are rounded to binary32 and evaluated with
+binary32 operations. So that row's difference from the float64 rows includes both conversion and
+arithmetic, and it doesn't isolate accumulation precision alone. Matching NumPy and PyTorch float64
+outputs at this point is a useful regression, not a theorem for arbitrary inputs or reduction
+schedules.
 
-The emitter uses `Export.PyTorch.floatLiteral`, rather than the tensor display formatter. It
-keeps short decimal strings only when they round-trip to the same bits; otherwise it emits an exact
-hexadecimal Python expression. Small nonzero parameters therefore survive source generation:
+Instead of the tensor display formatter, the emitter uses `PyTorch.floatLiteral`. That
+function keeps short decimal strings only when they round-trip to the same bits, and otherwise it
+emits an exact hexadecimal Python expression. So small nonzero parameters survive source
+generation:
 
 ```lean (name := ptrFmt)
 -- Compare human-readable display with literals intended to
 -- preserve stored values.
 #eval toString (1e-9 : Float)
-#eval Export.PyTorch.floatLiteral (1e-9 : Float)
-#eval Export.PyTorch.floatLiteral (0.5 : Float)
+#eval PyTorch.floatLiteral (1e-9 : Float)
+#eval PyTorch.floatLiteral (0.5 : Float)
 ```
 
 ```leanOutput ptrFmt
@@ -907,78 +956,75 @@ hexadecimal Python expression. Small nonzero parameters therefore survive source
 ```
 
 Python evaluates the hexadecimal expression to the original binary64 value. The formatter also
-preserves signed zero and spells infinities and NaN explicitly; it does not preserve NaN payloads.
+preserves signed zero and spells out infinities and NaN, though it doesn't preserve NaN payloads.
 An emitted `torch.tensor(..., dtype=torch.float32)` then intentionally rounds to its requested
-storage dtype. Exact source literals preserve input values across serialization, but do not prove
-that two frameworks use the same arithmetic, backward rules, or parameter/buffer classification.
+storage dtype. Exact source literals preserve input values across serialization, but they don't
+prove that two frameworks use the same arithmetic, backward rules or parameter/buffer
+classification.
 
 Using the ordinary display string for `1e-9` would replace a nonzero parameter by zero. In
 contrast, `0.5` already survives the short decimal path.
 
 ## JSON Transport And Bitwise Comparison
 
-The JSON path has a separate numeric transport check. A PyTorch module with the architecture used
-above was
-initialized under `torch.manual_seed(7)` and dumped with `json.dumps`, which prints a float64 repr
-of each float32 parameter:
+The state document gets its own numeric transport check. A PyTorch module with the architecture
+used above is initialized under `torch.manual_seed(7)`, evaluated at $`(0.5, 0.8)` in
+`torch.float32`, converted to float64 with `m.double()`, evaluated again and written:
 
 ```
-# Keep the parameter payload fixed for the two arithmetic
-# evaluations.
+# Seed the parameters, evaluate the module in float32 and in
+# float64, then write the float64 copy.
 torch.manual_seed(7)
 m = torch.nn.Sequential(torch.nn.Linear(2, 3), torch.nn.ReLU(), torch.nn.Linear(3, 1))
-sd = m.state_dict()
-payload = {"params": {
-  "layers.0.weight": sd["0.weight"].tolist(),
-  "layers.0.bias":   sd["0.bias"].tolist(),
-  "layers.2.weight": sd["2.weight"].tolist(),
-  "layers.2.bias":   sd["2.bias"].tolist()}}
+with torch.no_grad():
+    y32 = m(torch.tensor([[0.5, 0.8]])).item()
+    m.double()
+    y64 = m(torch.tensor([[0.5, 0.8]], dtype=torch.float64)).item()
+state.write("seed7.json", m)
 ```
 
-The same run reports its prediction at $`(0.5,0.8)` two ways, once through the module in
-`torch.float32` and once by evaluating the printed weights in NumPy `float64`, with the raw bit
-pattern beside each value. Both bit strings below encode binary64 values; the first is the
-binary32 result widened for reporting:
+Printed with their binary64 words in hex, the float32 result widened for the report, the two
+results are:
 
 ```
 float32 forward : -0.052048876881599426 0xbfaaa62680000000
 float64 forward : -0.05204887814426984  0xbfaaa6268ad8a440
 ```
 
-Now the Lean half. The payload goes in verbatim, and the four tensors come out at the shapes the MLP
-family expects:
+NumPy, evaluating the widened parameters in float64, gives the same float64 word. The Lean half
+reads `seed7.json` under the names of `nn.Sequential` and runs the MLP specification at the same
+input:
 
 ```lean (name := ptrJson)
--- Import this explicit payload, then compare output bits as
--- well as rounded display.
+-- Read the seed-7 state dict, then compare the output word
+-- as well as the rounded display.
 def ptrTrained : String :=
-  r#"{ "params":
-   { "layers.0.weight":
-     [[0.04938792809844017, -0.4259566068649292],
-      [0.22515933215618134, 0.2218763530254364],
-      [-0.37793222069740295, -0.10597917437553406]],
-     "layers.0.bias":
-     [-0.4142428934574127, 0.18347492814064026,
-      -0.19047172367572784],
-     "layers.2.weight":
-     [[0.40560975670814514, 0.4098530411720276,
-       0.05881491303443909]],
-     "layers.2.bias": [-0.2461371123790741] } }"#
+  r#"{"format": "torchlean.state", "entries": {
+  "0.weight": {"dtype": "float64", "shape": [3, 2],
+    "words": [4587278371582377984, 13824717008836493312,
+              4597280240165715968, 4597161958376996864,
+              13823851878405898240, 13815673061841567744]},
+  "0.bias": {"dtype": "float64", "shape": [3],
+    "words": [13824505993335144448, 4595778401234583552,
+              13819402524215476224]},
+  "2.weight": {"dtype": "float64", "shape": [1, 3],
+    "words": [4600978435714580480, 4601054875931901952,
+              4588636943289417728]},
+  "2.bias": {"dtype": "float64", "shape": [1],
+    "words": [13821408081206050816]}
+}}"#
 
-def ptrTrainedDict : Option StateDict := do
-  let json ← (Lean.Json.parse ptrTrained).toOption
-  let .obj dict := json | none
-  return unwrapParams dict
-
-def ptrImported : Option (Tensor Float [1]) := do
-  let d ← ptrTrainedDict
-  let w1 ← getTensor? d "layers.0.weight" [3, 2]
-  let b1 ← getTensor? d "layers.0.bias" [3]
-  let w2 ← getTensor? d "layers.2.weight" [1, 3]
-  let b2 ← getTensor? d "layers.2.bias" [1]
-  return Examples.mlpForward (α := Float)
-    { weights := w1, bias := b1 }
-    { weights := w2, bias := b2 } ptrInput
+def ptrImported : Except String (Tensor Float [1]) := do
+  let json ← Lean.Json.parse ptrTrained
+  let p ← PyTorch.state (α := Float)
+    [[3, 2], [3], [1, 3], [1]]
+    ["0.weight", "0.bias", "2.weight", "2.bias"] json
+  return MLP.forward (α := Float)
+    { weights := p.get ⟨0, by decide⟩,
+      bias := p.get ⟨1, by decide⟩ }
+    { weights := p.get ⟨2, by decide⟩,
+      bias := p.get ⟨3, by decide⟩ }
+    ptrInput
 
 /-- The bit pattern of a `Float`, in hex. Six printed
 decimals cannot distinguish two nearby doubles, and this
@@ -991,39 +1037,38 @@ def ptrBits (x : Float) : String :=
 ```
 
 ```leanOutput ptrJson
-some [-0.052049]
+Except.ok [-0.052049]
 ```
 
 ```leanOutput ptrJson
-some "bfaaa6268ad8a440"
+Except.ok "bfaaa6268ad8a440"
 ```
 
-Lean's output bits match the NumPy float64 result in this test. For lossless parameter transport,
-the parser must recover each value written by `json.dumps`: a finite float32 value is exactly
-representable in float64. Comparing the imported parameter bits directly would test that property
-without relying on a forward pass, where unused or canceling parameters could conceal an error.
+Lean's output word matches the float64 results of PyTorch and NumPy in this test. The importer
+decodes each word to the `Float` with that word, so the four tensors hold the float32 parameters
+of the module unchanged. Writing the Lean state back with `PyTorch.stateDict` and comparing
+words tests the transport without a forward pass, where unused or canceling parameters could hide
+an error.
 
-Against the widened float32 forward result, `bfaaa62680000000`, the two patterns share their first
-nine hex digits, followed by zeros in the float32 row. That gap
-does not come from source-literal truncation. Nor is it simply a final rounding of
-the float64 answer, since the module rounded to binary32 after every operation rather than at
-the end. Bounding such precision differences requires the operation hypotheses and error analysis in
+Against the widened float32 result, `bfaaa62680000000`, the two words share their first nine hex
+digits, and the rest of the float32 word is zero, as in every widened binary32 value. In this run
+the float32 result is the float64 result rounded to binary32. The module gets there another way,
+rounding every intermediate tensor to binary32, and on other inputs the two can differ. Bounding
+such differences requires the operation hypotheses and error analysis in
 {ref "fp32-soundness"}[the FP32 soundness chapter].
 
-This bit equality is a result for one run. Even a three-term dot product can be sensitive to
-cancellation, and a reference Lean loop, a NumPy BLAS call, and a LibTorch operation may accumulate
-in different orders. {ref "spec-layer"}[The specification chapter] shows four numbers whose
-sum already depends on that choice. The importer checks names and shapes and parses decimal numbers.
-Bit preservation, finite-range
-requirements, and evaluation parity require their own checks.
+This word equality is a result for one run. Even a three-term dot product can be sensitive to
+cancellation, and a reference Lean loop, a NumPy BLAS call and a LibTorch operation may accumulate
+in different orders. {ref "spec-layer"}[The specification chapter] shows four numbers whose sum
+depends on that choice. The importer checks names, dtypes and shapes and keeps every word.
+Finite-range requirements and evaluation parity need their own checks.
 
-# Python Training And Parameter Export
+# Python Training And State Export
 
-The training loop in `train_mlp.py` uses PyTorch's standard loss, backward pass, and optimizer:
+The training loop in `train_mlp.py` uses PyTorch's standard loss, backward pass and optimizer:
 
 ```
-# Clear each iteration's gradients before differentiating
-# the current loss.
+# One SGD step per epoch on the single training pair.
 criterion = nn.MSELoss()
 optimizer = optim.SGD(model.parameters(), lr=0.1)
 
@@ -1038,47 +1083,38 @@ for epoch in range(200):
     optimizer.step()
 ```
 
-The only TorchLean-aware part is the export, and it is a dictionary rebuild:
+The part that knows about TorchLean is one call:
 
 ```
-# Rename learned tensors into the exact keys accepted by the
-# Lean family loader.
-state_dict = model.state_dict()
-new_format = {}
-new_format['layers.0.weight'] = state_dict['fc1.weight'].tolist()
-new_format['layers.0.bias'] = state_dict['fc1.bias'].tolist()
-new_format['layers.2.weight'] = state_dict['fc2.weight'].tolist()
-new_format['layers.2.bias'] = state_dict['fc2.bias'].tolist()
+# Write the float64 copy of the trained state dict.
+out_path = THIS_DIR / "mlp.json"
+state.write(out_path, model.double())
 ```
 
-Those four lines implement the name mapping. A missing required key is rejected; a wrong mapping
-that still supplies every required key at the expected shape may be accepted. Keep numerical
-probes alongside the schema checks.
+Nothing is renamed. The Lean program lists the PyTorch name of each state tensor in the order of
+the Lean state, so `fc1.weight` keeps its name from the module to the importer.
 
-The optimizer loop clears accumulated gradients before each backward pass. Without that step, the
-next update would use contributions retained from previous iterations as well as the current
-loss. The export block runs after training and reads the resulting parameter values; it does not
-serialize the autograd graph that produced them. Renaming `fc1.weight` to `layers.0.weight` changes
-the transport key while preserving the nested numeric array. That explicit mapping is the place
-to review which learned tensor fills each Lean field.
+Each step starts with `optimizer.zero_grad()`. Without that call, the backward pass would add the
+gradient of the step's loss to the gradients accumulated by earlier steps. The export runs after
+training and reads the resulting parameter values. It does not serialize the autograd graph that
+produced them.
 
 # Tensor Exchange Versus Model Import
 
-It is useful to distinguish three interop layers:
+It helps to separate three interop layers:
 
-- *tensor exchange* moves arrays between frameworks;
-- *parameter import* fills a known TorchLean model family with checked weights;
-- *semantic import* claims that a foreign program has the same meaning as a TorchLean graph.
+- *Tensor exchange* moves arrays between frameworks.
+- *State import* fills the state of a TorchLean model with checked tensors.
+- *Semantic import* claims that a foreign program has the same meaning as a TorchLean graph.
 
-DLPack belongs mostly to the first layer: it is a standard in-memory tensor exchange format used by
-array and tensor libraries. It can help avoid extra copies, but it does not by itself tell Lean that
-a Python model has the same architecture, parameter names, or proof semantics.
+DLPack belongs mostly to the first layer. It is a standard in-memory tensor exchange format used
+by array and tensor libraries. It can avoid extra copies, but it does not tell Lean that a Python
+model has the same architecture, parameter names or proof semantics.
 
-TorchLean's current round trip implements the second layer for three known families: the selected
-loader checks required names and tensor shapes. Semantic import is stronger and requires an IR
-denotation and a proof relating the foreign program to it. The numeric comparison in the previous
-section checks one input; the
-verification chapters are where a claim about all inputs in a region gets established.
+The round trip implements the second layer for any TorchLean model, given the PyTorch name of each
+state tensor. Semantic import is stronger and requires an IR denotation and a proof relating the
+foreign program to it. The numeric comparisons above each check one input, and the verification
+chapters establish claims about all inputs in a region.
 
 # Interop Boundary Selection
 
@@ -1087,10 +1123,10 @@ verification chapters are where a claim about all inputs in a region gets establ
   * If
   * Then
 *
-  * training belongs in Python, and named tensors should enter a known family
+  * training belongs in Python, and the trained state should enter a Lean model
   * use the round trip
 *
-  * training state transitions must stay explicit and checkable
+  * every training step must be checkable in Lean
   * run the training loop in Lean
 *
   * the model must be inspected as a graph or connected to a theorem
@@ -1100,34 +1136,28 @@ verification chapters are where a claim about all inputs in a region gets establ
   * emit PyTorch from the IR
 :::
 
-An imported model can subsequently be lowered to IR or exported again; these choices can be
-combined.
+An imported model can be lowered to IR or exported again, and these choices combine.
 
-# Guarantees And Limits
+# Limits
 
-The family importers return typed parameters for a forward pass. When preparing an exchange,
-keep these limits in view:
-
-- arbitrary PyTorch training needs its own semantic or artifact bridge;
-- the importer covers the supported artifact formats rather than the full PyTorch ecosystem;
-- dtype metadata on a `params` wrapper is validated when supplied, but architecture metadata,
-  optimizer state, unlisted
-  buffers, extra keys, and exact float bit patterns are not certified by these family loaders;
-- malformed required tensors are rejected without a localized diagnostic, because the loader uses
-  `Option`;
-- emitted constants preserve finite binary64 values before the requested tensor dtype conversion;
-- shape checking cannot distinguish two conventions that agree on shape, such as a transposed
-  square matrix;
-- binary32 behavior is handled by the floating point bridge rather than by the round trip format.
+- Arbitrary PyTorch training needs its own semantic or artifact bridge. The round trip carries the
+  state that training produces.
+- The importer reads `torchlean.state` documents. A `torch.save` checkpoint of a `state_dict`
+  converts in one line, `state.write("model.json", torch.load("model.pt"))`, since `write` accepts
+  a mapping from names to tensors as well as a module.
+- One state has one element type, and every entry must carry its dtype.
+  `BatchNorm2d(2).state_dict()` holds four `float32` entries and the `int64` counter
+  `num_batches_tracked`, so its document fits no single state. A mapping that leaves the counter
+  out writes the four `float32` entries.
 
 # References
 
 - {Informal.citet torchlean2026}[] for the project overview and shared IR architecture.
 - {Informal.citet pytorch2019}[] for PyTorch's design, including `state_dict` conventions.
-- {Informal.citet transformer2017}[] for the encoder architecture used by the third family.
+- {Informal.citet transformer2017}[] for the encoder architecture used by the third example.
 - PyTorch, [serialization notes](https://pytorch.org/docs/stable/notes/serialization.html), for
   `state_dict`-style save and load workflows.
 - PyTorch, [`nn.Module`](https://pytorch.org/docs/stable/generated/torch.nn.Module.html), for
   parameter naming and module conventions.
 - [DLPack documentation](https://dmlc.github.io/dlpack/latest/), for tensor exchange as distinct
-  from model-family import.
+  from state import.

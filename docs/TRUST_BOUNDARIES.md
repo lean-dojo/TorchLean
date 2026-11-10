@@ -1,140 +1,195 @@
 # TorchLean Trust Boundaries
 
-TorchLean uses Lean to state and check mathematical claims about neural-network artifacts. Some
-parts of the system are inside Lean's proof kernel; others are executable tools, native runtimes, or
-external producers whose outputs may be checked by Lean.
+TorchLean uses Lean to state and check mathematical claims about neural-network artifacts. Part of
+the system sits inside Lean's proof kernel. The rest is executable tools, native runtimes and
+external producers, whose outputs Lean may check.
 
 ## Levels of Assurance
 
 | Layer | Example | Assurance |
 | --- | --- | --- |
-| Lean theorem | graph semantics, IR shape soundness, executed backward sweep | checked by Lean |
+| Lean theorem | graph semantics, IR shape soundness, lowered-tape backward pass | checked by Lean |
 | Executable checker | certificate parser, backend contract check | checked by code/tests |
 | Prop-valued contract | agreement between two independent semantics | hypothesis from the caller |
 | FFI/native runtime | LibTorch ATen, CUDA libraries, host tensor kernels | external implementation path |
-| External producer | Python, Julia, Arb, alpha-beta-CROWN | produces artifacts Lean may check |
+| External producer | Python, Julia, alpha-beta-CROWN | produces artifacts Lean may check |
 
-Two theorem families anchor the first row. `NN/IR/ShapeSoundness.lean` proves that the IR shape
-checker and the IR evaluator agree: `checkShapes_sound` and `denoteAll_shape` state that every value
-produced by `Graph.denoteAll` has the declared shape of its node, and `evalNodeRaw_shape_of_infer`
-is the per-operator fact behind them. For autograd, the executed eager sweep is covered by
-`backwardDenseAll_lowerGraphToTape_adjoint_fderiv` in
-`NN/Proofs/Autograd/Runtime/Link/BackwardDenseGraph.lean`: running `Tape.backwardDenseAll` on a
-tape lowered from a proof-carrying `Graph` succeeds, returns `backpropAllCtx` of the one-hot seed,
-and over `ℝ` its input block is the adjoint of the Fréchet derivative of the forward map. Both are
-statements about the exact tape and spec models at the given carrier; neither says anything about
-`Float` rounding, compiled code, or CUDA.
+Two theorem families anchor the first row. `Graph.run_ports` in `TorchLean/NN/IR/Eval.lean`
+proves that entry `j` of a successful run of a graph of registered operators (`Graph.run`) is at the
+ports of node `j`, so every value has the element sort and shape its node declares. It needs no
+shape-check premise, because each operator is typed by its ports and `Node.eval` reads a graph input
+or constant at its node's port. `Node.eval_ports` is the per-node fact behind it. These graphs are
+the canonical IR (`IR.Graph`, run by `Graph.run` and `Graph.eval`). Results about them are
+forward statements, and the autograd theorems are about the proof-layer `Graph`.
+
+`GraphData.toTape` in `TorchLean/NN/TypedGraph.lean` lowers a proof-carrying `Graph` to the
+executable tape, with forward and backward correspondence theorems in
+`TorchLean/NN/Tape/Lowering.lean` and `TorchLean/NN/Tape/Lowering/`. The backward chain ends in
+`Graph.backwardDenseAll_eq_fderiv` in `TorchLean/NN/Tape/Lowering/BackwardDenseGraph.lean`:
+`Tape.backwardDenseAll` on the lowered tape succeeds and returns `backpropAllCtx` of the one-hot
+seed. Over `ℝ`, given a correct derivative of every node at the values the forward pass reaches
+(`RealGraph.FDerivCorrectAt`), the input block of that context is the adjoint of the Fréchet
+derivative of the forward map. No runtime path sweeps a lowered tape. The CPU eager tape that
+`Tape.apply` records is linked per node (`TorchLean/NN/Tape/Apply/Correctness.lean`) and, for
+layer normalization of a matrix, by `LayerNorm.eager_backward_eq_fderiv` in
+`TorchLean/NN/Norm/LayerNorm/Eager.lean`. The checked typed-graph pullback is covered end to end
+by `vjpChecked_eq_fderiv` in `TorchLean/NN/TypedGraph/WithData/Checked.lean`. Both families are
+about the exact tape and spec models at the given carrier. Neither says anything about `Float`
+rounding, compiled code or CUDA.
+
+The local rules carry certificates over `ℝ`, which `@[op_cert]` registers and `#op_certs` lists. The
+operators with a fixed number of inputs have 166 value inputs, and the gradient of each has a
+`derivative` certificate. At the points its hypotheses name, the stored backward is the adjoint of
+the Fréchet derivative of the forward in all the value inputs together. `cat` has
+`cat_backward_eq_adjoint`, and the pullback that a custom operation supplies claims no derivative.
+At kinks, `convention` certificates state the stored backward at every input.
+`scripts/checks/Library.lean` fails when such a gradient has no `derivative` certificate. The
+attribute checks that a statement mentions the operator's rule. It does not check that the statement
+says what its kind says. `op_deriv` in `TorchLean/NN/Tactic/OpDeriv.lean` proves statements of the
+same form for programs outside the table. Its proofs go through Lean's kernel, so the tactic can
+fail on a true goal but cannot prove a false one. No theorem bounds the rounding of a stored
+backward in `Float` or `Float32`.
 
 For a correctness claim, cite the applicable theorem and hypotheses, checker predicate, or native
 validation evidence. A successful command, an accepted artifact, and a proof are different results.
 
 The backend planner and capsule vocabulary are documented in the
 [Installation guide](https://lean-dojo.github.io/TorchLean/installation/#from-a-model-to-a-kernel).
-A kernel capsule (`NN.Backend.KernelCapsule`) names one operation, provider, and device, states a
-trust level (`checked` or `trustedExternal`), a VJP mode, and a reduction-order policy, and carries
-four contract descriptors (shape, layout, value, VJP). Each descriptor pairs a structured claim with
-its evidence: a runtime guard, a regression suite, a named trusted boundary, or not applicable. The
-planner selects a capsule only when its device, provider preference, VJP mode, and trust level fit
-the profile and each descriptor states the claim its field advertises. The contract check
-(`checkContracts` in `NN/Backend/ContractCheck.lean`, returning a `ContractCheck`) then confirms
-that no selected descriptor rests on a trusted boundary unless the profile's assurance policy allows
-trusted-boundary evidence. Capsule modules may extend a backend profile, but every contributed capsule
-passes through the same selection and contract check.
+A kernel capsule (`TorchLean.Backend.KernelCapsule`) names one registered operator (its
+`Op.encode` record, attributes included), a provider and a device. It states a trust level
+(`checked` or `trustedExternal`), a VJP mode and a reduction-order policy, and it carries four
+contract descriptors: shape, layout, value and VJP. Each descriptor pairs a structured claim with
+its evidence: a shared canonical definition, a runtime guard, a regression suite, a named trusted
+boundary or not applicable. The planner selects a capsule only when its device, provider
+preference, VJP mode and trust level fit the profile and each descriptor states the claim its field
+advertises. The contract check (`checkContracts` in `TorchLean/NN/Backend/ContractCheck.lean`,
+returning a `Contract.Check`) then confirms that no selected descriptor rests on a trusted boundary
+unless the profile's assurance policy allows trusted-boundary evidence. Implementation tables may
+extend a backend profile, but every capsule they offer passes through the same selection and
+contract check.
 
-The eager runtime binds a selected capsule to a typed handler only when operation, provider, and
-device agree. This prevents a backend report from naming one provider while its dispatch branch
-runs another. The binding proves only that identity agreement; it does not prove the handler's
-arithmetic, FFI code, compiler output, driver, or hardware. Those obligations retain the evidence
-and trust level stated by the capsule. CUDA primitives are registered under `Provider.libTorch`,
-with names such as `libtorch.matmul`. The single GPU attention implementation is
-`libtorch.direct_attention`: this capsule describes forward and local VJP
-composition in Lean over LibTorch numerical primitives. The tape owns its saved buffers.
+The eager runtime (`Session.apply`) runs an operator's CUDA entry in `LibTorch.Kernel.ofOp` under a
+selected capsule only when the entry's own capsule names the same operator, provider and device
+(`KernelCapsule.implements`). Under a reference CPU capsule it runs the operator's rule `Op.rule?`
+on the CPU tape. A backend report therefore cannot name one provider while its dispatch branch runs
+another. The check compares those labels only. The entry's arithmetic, FFI code, compiler output,
+driver and hardware rest on the evidence and trust level the capsule states. CUDA primitives are
+registered under `Provider.libTorch`, with names such as `libtorch.matmul`. GPU multi-head attention
+has one implementation, `libtorch.multihead_attention`, which composes the forward pass and the
+local VJP in Lean over LibTorch numerical primitives. Scaled dot-product attention is recorded as
+the key transpose and the scaled score product, followed by the rest of attention (row softmax, an
+optional multiplier and the product with the values) under `libtorch.attention`.
 
-The default `libTorchCuda` profile prefers LibTorch and retains TorchLean's global tape. It admits
-explicit LibTorch implementation assumptions for operations without retained CUDA parity checks.
-The strict `checkedCuda` profile requires runtime guards and named regression evidence instead;
-it rejects those untested capsules. A `checked` classification does not mean that LibTorch is
-inside Lean's proof kernel. Likewise,
-`KernelPlanAudit.hasTrustedExternal = false` means no capsule has the `trustedExternal`
-classification; it does not mean that no foreign code runs. A descriptor naming a regression suite
-records the required validation, not a proof or a stored result from a particular test run.
+The default `libTorchCUDA` profile prefers LibTorch and keeps TorchLean's global tape. It admits
+the recorded LibTorch trust boundaries of operations without CUDA parity checks. The strict
+`checkedCUDA` profile rejects those untested capsules and requires runtime guards and named
+regression evidence. A `checked` classification does not put LibTorch inside Lean's proof
+kernel. Likewise, `KernelPlan.hasTrustedExternal = false` means no capsule has the
+`trustedExternal` classification. It does not mean that no foreign code runs. A descriptor that
+names a regression suite records which validation is required. It is neither a proof nor the stored
+result of a particular test run.
 
 ## Lean Axioms and Hidden Implementations
 
-TorchLean currently declares no custom Lean axioms. The CUDA handle type is instead carried by
-`Runtime.Autograd.LibTorch.BufferImpl`, an opaque `NonemptyType` in
-`NN/Runtime/Autograd/Engine/LibTorch/Trusted.lean`. Its `Nonempty` instance is obtained from that data
-carrier rather than asserted as a proposition. This lets compiled extern functions return buffers,
-but it neither allocates a buffer nor proves anything about native memory.
+TorchLean declares no custom Lean axioms. The CUDA handle type `Buffer` is the carrier of
+`TorchLean.LibTorch.BufferPointed`, an opaque `NonemptyType` in
+`TorchLean/CUDA/LibTorch/Trusted.lean`, so its `Nonempty` instance comes from that value
+with no asserted proposition. The instance lets compiled extern functions return buffers. It
+allocates nothing and proves nothing about native memory.
 
-Opaque definitions and executable replacements are still important during an audit even though
-they are not axioms. The following command finds all three mechanisms:
+Opaque definitions and executable replacements are not axioms, but an audit has to find them too.
+The command below finds axioms, opaque definitions and both kinds of executable replacement
+(`@[implemented_by]` and `@[extern]`):
 
 ```bash
-rg -n "\\bopaque\\b|\\baxiom\\b|@\\[implemented_by" NN -g'*.lean'
+rg -n "\\bopaque\\b|\\baxiom\\b|@\\[implemented_by|\\bextern \"" -g'*.lean' \
+  TorchLean TorchLeanExamples TorchLeanTest
 ```
 
 For any theorem used in a claim, `#print axioms theoremName` reports its transitive logical
-dependencies.
+dependencies. `scripts/lake.sh lint` runs the same check on every theorem of the modules under
+`TorchLean/`, `TorchLeanExamples/` and `TorchLeanTest/`, private and generated theorems included,
+and fails unless each depends on at most `propext`, `Classical.choice` and `Quot.sound`. The file
+that runs it, `scripts/checks/Library.lean`, leaves out the root modules of the executables.
+
+A `roundoff theorem` or `roundoff mixed theorem` declaration states the bound that the analysis
+infers from the code, so its statement appears nowhere in the source, and `#check` prints it. Lean
+checks the proof, but nothing compares the bound with an earlier one: a change to the code or to
+FloatLib's rules can loosen it without failing the build.
+
+`#roundoff_coverage` records the outcome of each route's analysis: proved, conditional, unsupported
+or failed. The coverage check of `scripts/lake.sh lint` counts the outcomes for the configured
+scalar but doesn't compare them with earlier ones, so a change can turn a proved route into a failed
+one without failing the build or the lint.
 
 ## Prop-Valued Contracts
 
-Some declarations are `class ... : Prop`, `structure ... : Prop`, or `def ... : Prop` rather than
-axioms. These are not kernel assumptions by themselves: a theorem using one is conditional on the
-caller supplying the fields. We still treat them as part of the trust model, because public theorem
+Some contracts are declared as `class ... : Prop`, `structure ... : Prop` or `def ... : Prop`. They
+are not axioms, and by themselves they add no kernel assumption: a theorem that uses one holds only
+when the caller supplies the fields. We count them in the trust model anyway, because public theorem
 names and docs should make those assumptions visible.
 
-Important examples include:
+The main examples:
 
-- `NN.MLTheory.CROWN.Graph.CrownCertSoundness.CrownTransferSound` is the generic graph-CROWN
-  transfer interface, the kernel of the certificate checker theorem. TorchLean proves it for the
-  concrete α-CROWN transfer rule, with and without ReLU phases (`alphaCrown_transfer_sound`,
-  `phasedCrown_transfer_sound`). Those
-  transfer theorems take the IBP boxes as a hypothesis (`IBPEnclosesVals`).
-  `NN/MLTheory/CROWN/Proofs/GraphAlphaCrownTransferSoundness/EndToEnd.lean` discharges that
-  hypothesis from the IBP soundness theorem `cert_encloses_semantics`
-  (`ibp_encloses_vals_of_cert_local_ok`) and states the composed corollaries
-  `alphaCrown_cert_encloses_semantics`, `phasedCrown_cert_encloses_semantics`, and
-  `alphaCrown_cert_encloses_evalGraphRec`, which have no `IBPEnclosesVals` hypothesis.
-  `NN/MLTheory/CROWN/Proofs/GraphRunibpEndToEnd.lean` connects the proof-side IBP pass to the
-  engine's executable `runIBP` (`runIBP_eq_runIBP?`, `runIBP_encloses_evalGraphRec`). All of these
-  are statements over `ℝ`. A new backend-dependent transfer rule must provide its own
-  `CrownTransferSound` proof.
-  The executable output-box APIs seed propagation with the requested input region. For rounded
-  scalar backends, `outputBoxPhasedCROWN?` uses directed CROWN rather than reassociating rounded
-  affine coefficients through the exact-real phased α-CROWN rules. An exact-real transfer theorem
-  alone does not justify such reassociation in binary32.
-- `NN.MLTheory.Proofs.UniversalApproximation.FloatIntervalApprox.OpsExact.Sound` packages local
-  finite-IEEE32 interval obligations. Addition, multiplication, and ReLU have proved theorems and
-  an unconditional instance in `NN/MLTheory/Proofs/Approximation/FloatInterval/Semantics.lean`;
-  callers do not supply this instance.
-- `NN.MLTheory.CROWN.Lyapunov.LyapunovCert.ValidFor` remains a substantive application contract:
-  parsing endpoint values does not prove that they enclose the named Lyapunov function and orbital
+- The CROWN passes on graphs of registered operators (`TorchLean.CROWN.Op`) are proved at any
+  scalar whose endpoint operations are lawful (`LawfulBoundOps`, `LawfulNonlinearBoundOps`):
+  `Op.Directed.encloses_of_run` for interval propagation and `CROWN.Op.outputBoxCROWN?_of_run`
+  for the backward CROWN output box. The forward α-CROWN pass is proved over `ℝ` only, by
+  `Op.Alpha.encloses_of_run`. A backend scalar without those instances needs its own proof of
+  them. The executable output-box APIs seed propagation with the requested input region. For
+  rounded scalar backends, `Op.outputBoxAlphaCROWN?`, which the verification API's `alphaCROWN`
+  algorithm runs, falls back to directed CROWN and never reassociates rounded affine coefficients
+  through the exact-real phased α-CROWN rules. An exact-real transfer theorem alone does not
+  justify such reassociation in binary32. The node-certificate checker
+  `TorchLean.Certificate.CROWNNode` replays the forward α-CROWN pass in binary32, rounded to
+  nearest, so a certificate it accepts agrees with that replay and need not enclose the graph. For
+  linear/ReLU chains, `TorchLean.Certificate.FiniteArtifact.accepts_graph_sound` proves the
+  requested output inequalities of an artifact that `FiniteArtifact.accepts` accepts.
+- `TorchLean.Examples.Lyapunov.Cert.ValidFor` is a substantive application contract: parsing
+  endpoint values does not prove that they enclose the named Lyapunov function and orbital
   derivative.
-- `roundedTargetExactIntervalImage_of_correctRounding` is conditional on correct rounding, real
-  activation conditions, threshold-network construction, and exact interval-semantics
-  construction. These premises are mathematical obligations, not facts inferred from execution.
 
 ## Executable Replacements
 
-`@[implemented_by]` lets a definition have one logical body for reduction and a different compiled
-body for performance. Lean theorems describe the logical body; applying them to compiled results
-requires an agreement argument between the two implementations.
+`@[implemented_by]` gives a definition one logical body, which proofs and reduction see, and a
+different compiled body for performance. Lean theorems are about the logical body, and applying them
+to compiled results needs an argument that the two bodies agree.
 
-`NN/Spec/Core/Tensor/Factorizations.lean` uses this mechanism for Cholesky columns, triangular
-solves, and ridge solves. Their strict array implementations are tested executable code, not
-consequences of the reconstruction theorems about the logical definitions.
+Parameter alias grouping in `TorchLean/NN/Session.lean` keys its buckets with a private `opaque`
+lookup key whose compiled body (`@[implemented_by]`) reads the shape and the full-width addresses
+of the three mutable `IO.Ref` cells. The logic has no model of addresses, so no theorem depends on
+the key. Every candidate in a bucket must also pass `Cells.same`: equal shape and `IO.Ref.ptrEq`
+on the value, CUDA-mirror and host-validity cells. Tensor contents and CUDA allocation addresses
+do not decide aliases.
 
-Parameter alias grouping in `NN/Runtime/Autograd/Torch/Core/Session/State.lean` uses a private
-executable replacement for its lookup key. The logical key groups by shape; the compiled key also
-uses full-width addresses of the three mutable `IO.Ref` cells. Every bucket candidate still passes
-`ParameterStorage.same`: equal shape and `IO.Ref.ptrEq` on the value, CUDA-mirror, and host-validity
-cells. Tensor contents and CUDA allocation addresses do not decide aliases.
+The refinement relies on Lean's address primitive returning stable addresses for live reference
+cells. The index holds its representatives until the grouping call ends, which prevents address
+reuse while a key is present, and no keys or references are cached between calls. The retie
+regression in `TorchLeanTest/CUDA/ParameterAliases.lean` exercises this boundary on the CUDA
+backend, but no theorem proves that aliased storages get equal keys.
 
-This refinement relies on Lean's address primitive returning stable addresses for live reference
-cells. The index retains its representatives until that grouping call ends, preventing address
-reuse while a key is present; no keys or references are cached between calls. Collision and retie
-regressions exercise this boundary, but do not constitute a formal proof of compiled agreement.
+The `Storage` instances of the packed `Float` and `UInt8` buffers in `TorchLean/Tensor/Storage.lean`
+are built from core's `FloatArray` and `ByteArray` operations, and Lean proves the `Storage` laws
+about them from core's definitions (for `FloatArray` through a private
+`import all Init.Data.FloatArray.Basic`). The folds are proved equal to the array fold by
+`FloatArray.foldlM_eq_foldlM_data` and `ByteArray.foldlM_eq_foldlM_data`, and the byte slice is one
+`ByteArray.copySlice` call on the clamped interval, proved for all natural bounds by
+`data_byteBufferAppendSlice`. What Lean does not check here is core's runtime: the C primitives
+behind `FloatArray` and `ByteArray` and core's `implemented_by` loop for `foldlM`. Packed `Float`
+slices and transposes run the C kernels described under Native Host Tensors, and the regressions in
+`TorchLeanTest/Tensor/Storage.lean` exercise packed reads, updates, and slices.
+
+A `@[csimp]` theorem `@f = @fFast` also makes compiled code run `fFast`, but Lean checks that
+equality, so theorems about `f` need no further agreement argument. The core tensor operations in
+`TorchLean/Tensor/Rep/Pointwise.lean` take this form: the native loops and slice copies of the
+constant tensor, stacking, `map`, `zipWith`, `zipWith3` and `unstack` are proved equal to their
+logical definitions. The buffer operations they call on packed storage are those of the `Storage`
+instances for `Float` and `UInt8` in `TorchLean/Tensor/Storage.lean`.
+`TorchLean/Tensor/Factorization.lean` takes the same form: compiled code runs array functions for
+Cholesky columns, the Cholesky solve and the ridge solve, and the `@[csimp]` theorems
+`choleskyColsFn_eq_choleskyCols`, `cholSolveFn_eq_cholSolve` and `solveRidgeFn_eq_solveRidge` prove
+each equal to its logical definition on every scalar type with a `Context` instance, `Float` and
+`Float32` included.
 
 ## Native Host Tensors
 
@@ -146,23 +201,27 @@ Proofs observe these representations through the ordinary `Storage.toArray` laws
 `csrc/cpu/torchlean_tensor.c` implements selected host operations:
 
 - packed Float contiguous slices, rank-two transpose, and entrywise addition, subtraction,
-  multiplication, and division;
-- fused `UInt8 + Float` and `Float + UInt8` promotion and addition;
-- rank-two transpose for ordinary `Array α` storage.
+  multiplication, and division in one kernel that selects the operation once per call
+- the same four operations between packed `UInt8` entries, converted exactly to `Float`, and
+  packed `Float` entries, in `byteFloatBufferBinary` and `floatByteBufferBinary` for the two
+  operand orders
+- rank-two transpose for ordinary `Array α` storage
 
-Each operation has a proof-visible Lean model under `NN/Tensor/Internal/Elab/Native/`.
+Each operation has a proof-visible Lean model, the slices and transposes in
+`TorchLean/Tensor/Storage.lean` and the entrywise kernels in
+`TorchLean/Tensor/Native/Pointwise.lean`.
 Coordinate and buffer theorems establish the model's public tensor semantics. Compiled execution
-uses `@[implemented_by]` and `@[extern]`, so those theorems do not prove the C implementation,
+uses `@[extern]`, so those theorems do not prove the C implementation,
 Lean compiler, or machine instructions. The C code checks sizes and allocation overflow at the
 FFI boundary. Regression tests compare Float exceptional cases at the bit level and stress
 ordinary-array ownership with repeated rational and complex transposes.
 
-The ordinary-array transpose consumes its input according to Lean's generated calling convention.
-It transposes a uniquely owned square array in place, transfers elements from a uniquely owned
+The ordinary-array transpose consumes its input according to Lean's generated calling convention. It
+transposes a uniquely owned square array in place, transfers elements from a uniquely owned
 rectangular array without changing their reference counts, and retains elements when the array is
-shared. Correct reference counting in those branches remains part of the native runtime boundary.
-The packed Float pointwise loops are auto-vectorized by the C compiler; they preserve independent
-scalar operations but do not authorize reassociation of reductions.
+shared. Correct reference counting in those branches is part of the native runtime boundary. The C
+compiler auto-vectorizes the packed Float pointwise loops. Each scalar operation stays independent,
+and vectorization gives no license to reassociate reductions.
 
 ## Native Host Allocation
 
@@ -172,13 +231,13 @@ SHA-256, then compiles position-independent code with initial-exec thread-local 
 supports both native link modes without replacing the installed Lean runtime or the allocator
 used by the Lean compiler and `#eval`.
 
-The local patch addresses a lost global purge wakeup: a collector finishing its scan could erase
-a deadline another thread had just published. Publishing a newly set arena deadline now completes
-an acquire-release atomic read-modify-write even when a global deadline is already pending.
-The collector consumes that global timer with an acquire-release exchange before taking its arena
-snapshot. Later publications survive scan completion, and retry publication preserves the earliest
-pending deadline so expired work left by the purge budget stays eligible. Zero remains reserved
-for the absence of a wakeup.
+The local patch addresses a lost global purge wakeup in mimalloc 3.4.5: a collector finishing its
+scan can erase a deadline that another thread publishes during the scan. With the patch, publishing
+an arena deadline completes an acquire-release atomic read-modify-write even when a global deadline
+is already pending. The collector consumes that global timer with an acquire-release exchange before
+taking its arena snapshot. Later publications survive scan completion, and retry publication
+preserves the earliest pending deadline, so expired work left by the purge budget stays eligible.
+Zero is reserved for the absence of a wakeup.
 
 Per-arena timer, purge-bitmap, and free-range operations retain their upstream ordering. Controlled
 regressions exercise collection/free interleavings and check page release through ordinary
@@ -187,96 +246,106 @@ or a complete concurrency proof of mimalloc, its compiler output, or operating-s
 
 ## LibTorch CUDA Runtime
 
-Established CUDA model primitives cross the LibTorch ATen bridge. TorchLean retains graph
-recording, tape traversal, gradient accumulation policy, and the selection of local VJPs. Native
-forward and backward calls execute with gradient recording disabled; they do not create a second
-local or global LibTorch autograd graph. `VJPMode.backendVJP` means a bridge routine evaluates the
-selected local reverse rule, not that LibTorch owns differentiation. Attention advertises
+Established CUDA model primitives cross the LibTorch ATen bridge. TorchLean keeps graph recording,
+tape traversal, gradient accumulation policy and the selection of local VJPs. Native forward and
+backward calls run with gradient recording disabled, so they create no second LibTorch autograd
+graph, local or global. `VJPMode.backendVJP` means that a bridge routine evaluates the selected
+local reverse rule. It does not hand differentiation to LibTorch. Attention advertises
 `VJPMode.torchLeanTape` because Lean composes its local reverse rule as well as traversing the tape.
 Spectral model composition likewise stays in Lean: FFT, frequency mixing, and inverse FFT call
-the existing numerical primitives.
+the library's numerical primitives.
 
-- `csrc/libtorch/` contains the native tensor operations. The Lean boundary remains under
-  `NN/Runtime/Autograd/Engine/LibTorch/`; its CUDA names identify the execution device and FFI ABI.
-  LibTorch, its CUDA dependencies, the compiler, and the driver remain outside Lean's proof kernel.
-- Shape-erased tape values must match their native tensor element counts. Dimensions, indices, and
-  output sizes must fit the `UInt32` FFI ABI. Native guards must also check dtype, device, and
-  layout. A typed capsule/handler binding proves agreement of operation, provider, and device;
-  it does not prove those native guards or arithmetic correct.
-- Native eager CUDA buffers hold contiguous row-major LibTorch binary32 or binary64 tensors.
-  Custom configured-binary arithmetic uses byte tensors carrying complete scalar encodings,
-  including saved values and gradients on the same tape. Native model operators do not accept
-  those encoded formats. Native handles and views
-  follow LibTorch ownership; Lean finalizers release their tensor owners rather than specifying
-  direct `cudaFree` behavior. Borrowed Lean arguments still use `@&`, and native calls must respect
-  that calling convention. Both native and encoded interfaces must preserve their dtype and
-  buffer-layout requirements.
-- Native buffer operations remain marked `@[never_extract]` where resource behavior prevents
-  commoning or deletion. Effectful constructors and explicit release sequence allocation and
-  destruction. A `Buffer` is still a copyable reference, not a linear capability: explicit release
-  can invalidate raw aliases. LibTorch tensor ownership does not prove TorchLean's handle lifetimes.
+- `csrc/libtorch/` contains the native tensor operations. The Lean boundary is under
+  `TorchLean/CUDA/LibTorch/`, and its CUDA names identify the execution device and FFI
+  ABI. LibTorch, its CUDA dependencies, the compiler and the driver are outside Lean's proof kernel.
+- Shape-erased tape values must match their native tensor element counts. Dimensions, indices and
+  output sizes must fit the `UInt32` FFI ABI. Native guards must also check dtype, device and
+  layout. The identity check `KernelCapsule.implements` compares operator, provider and device, and
+  it proves neither those native guards nor the arithmetic correct.
+- Native eager CUDA buffers hold contiguous row-major LibTorch binary32 or binary64 tensors. Custom
+  configured-binary arithmetic uses byte tensors carrying complete scalar encodings, including saved
+  values and gradients on the same tape. Native model operators do not accept those encoded formats.
+  Native handles and views follow LibTorch ownership: Lean finalizers release their tensor owners,
+  and LibTorch decides when the device memory is freed. Borrowed Lean arguments use `@&`, and native
+  calls must respect that calling convention. Both native and encoded interfaces must preserve their
+  dtype and buffer-layout requirements.
+- Native buffer operations are marked `@[never_extract]` where resource behavior prevents commoning
+  or deletion. Effectful constructors and release calls sequence allocation and destruction. A
+  `Buffer` is a copyable reference and not a linear capability, so releasing one can invalidate raw
+  aliases. LibTorch tensor ownership does not prove TorchLean's handle lifetimes.
 - Sparse backward and optimizer paths retain their ownership obligations for seeds, saved values,
   gradient buffers, and parameter mirrors. Lifetime and numerical regressions must exercise the
   linked LibTorch implementation under the settings used by the application.
 - The bridge must preserve TorchLean's selected local VJP conventions. These include a zero clamp
-  derivative at the endpoints, a totalized square root with zero VJP on nonpositive inputs,
-  equal splitting at eager elementwise min/max ties, and the smooth logarithm surrogate
-  `log(softplus(x) + epsilon)`. Delegating arithmetic does not authorize replacing those rules
-  with the derivative chosen by a similarly named library operation. Piecewise differentiability
-  theorems retain their domain and no-tie hypotheses.
-- Max pooling skips padded cells and sends each output cotangent to the first row-major finite
-  maximum at ties. NaNs propagate, with the last encountered NaN selected by both forward and
-  backward (`NN/Spec/Layers/Pooling.lean`). Average pooling counts padded cells as
-  zero in the whole-window denominator. Implementation-defined accumulation order does not permit
+  derivative at the endpoints, a totalized square root (`Op.sqrt .clampNegative`) whose VJP
+  multiplies the cotangent by zero on nonpositive inputs, equal splitting at eager elementwise
+  min/max ties, and the smooth logarithm surrogate `log(softplus(x) + epsilon)`. Delegating
+  arithmetic does not authorize replacing those rules with the derivative chosen by a similarly
+  named library operation. Piecewise differentiability theorems retain their domain and no-tie
+  hypotheses.
+- The CUDA entries of `Op.max`, `Op.min` and `Op.clamp` build IEEE 754-2019 maximum and minimum
+  from ATen's `maximum` and `minimum`, which propagate a NaN, and settle a pair of zeros by a sum.
+  Their CPU rules compute the same values. The CUDA tests compare the `max` and `min` pullbacks
+  with the CPU rules bit for bit at ties, infinities, signed zeros and NaN operands. They compare
+  the forward values on the finite nonzero inputs of a composite test, so the values at a NaN or a
+  signed zero rest on the adapter's construction. `Op.fmax`, `Op.fmin` and `Op.remainder` have no
+  CUDA entry.
+- Max pooling skips padded cells and sends each output cotangent to the first maximum in row-major
+  order at ties, `0` counting above `-0` as in the IEEE 754-2019 `maximum`. NaNs propagate, with
+  the last encountered NaN selected by both forward and backward (`poolWins` and `poolIndices` in
+  `TorchLean/Tensor/Window.lean`). Average pooling adds padded cells as zero and divides by the
+  window cells inside the padded input when `countIncludePad` is set, and by those inside the
+  input otherwise (`poolCount`). Implementation-defined accumulation order does not permit
   changing these selection or padding conventions.
 - Seeded random operations must preserve the documented seeded-runtime contract or reject an
   unsupported request. Using a library RNG is not itself evidence of agreement with TorchLean's
   seed-to-value mapping.
-- ATen chooses the implementations of matrix products, convolutions, reductions, FFTs, scans,
-  and pooling. Their capsules advertise `implementationDefined` numerical ordering. Deterministic
-  execution settings are runtime requests; they do not establish the reference left fold, a
-  particular multiply-add contraction schedule, or FloatLib bit agreement. Unsupported requests
-  must be reported rather than silently treated as fulfilled.
+- ATen chooses the implementations of matrix products, convolutions, reductions, FFTs, scans and
+  pooling. Their capsules advertise `implementationDefined` numerical ordering. Deterministic
+  execution settings are runtime requests. They establish neither the reference left fold, nor a
+  particular multiply-add contraction schedule, nor bit agreement with FloatLib. Unsupported
+  requests must be reported, so that none passes silently as fulfilled.
 - Runtime numerical evidence must identify the LibTorch/CUDA build, device, dtype, and relevant
   precision and determinism settings. Capsule reduction metadata alone does not record those
   choices. Bit-level agreement requires evidence for the executed operations and their rounding
   sequence.
 - Runtime setting and allocator memory-fraction getters return checked `IO` results across the
-  native boundary, as do configuration requests. Unknown setting IDs return errors. The bridge
-  maps caught native out-of-memory and allocation exceptions to `IO.Error.resourceExhausted`;
-  other caught standard exceptions become IO errors. Successful readback records runtime state,
-  not proof of numerical agreement. Builds without LibTorch return zero for known settings and
-  memory fraction, reject unknown setting IDs, and reject configuration requests.
-- Attention retains its proof-facing denotation in `NN/Spec/Layers/FlashAttention.lean`.
+  native boundary, as do configuration requests. Unknown setting IDs return errors. The bridge maps
+  caught native out-of-memory and allocation exceptions to `IO.Error.resourceExhausted`, and other
+  caught standard exceptions become IO errors. Successful readback records runtime state and says
+  nothing about numerical agreement. Builds without LibTorch return zero for known settings and
+  memory fraction, reject unknown setting IDs and reject configuration requests.
+- Attention's mathematical definition is in `TorchLean/Tensor/Layers/Attention.lean`.
   `Buffer.attentionForward` composes matrix products and softmax in Lean and returns output plus
-  probabilities. `Buffer.attentionBackward` uses Q/K/V, saved probabilities, and the output
-  cotangent to compose the softmax VJP and matrix products for `dQ`, `dK`, and `dV`. The tape owns
-  the saved buffers; there is no native attention context or fused-provider selection. Full score
-  and probability matrices use quadratic memory in sequence length. Boolean masks retain zero
-  contributions at blocked coordinates and zero fully blocked rows. Finite additive attention
-  biases remain a separate semantic operation. Lean composition still depends on the numerical
-  primitive boundary; the specification theorem does not prove those native calls correct.
-- Batched attention still folds batch and head axes for execution and sums shared parameter
-  cotangents over the batch. Its specification and typed-graph proofs describe the mathematical
-  operation. Applying those results to the LibTorch execution requires the backend agreement
-  boundary and numerical evidence.
-- Stream ordering, asynchronous errors, synchronization, and allocator behavior belong to the
-  native bridge and LibTorch runtime. They require runtime validation; neither capsule selection
-  nor the Lean tape theorem establishes them.
+  probabilities. `Buffer.attentionBackward` uses Q/K/V, saved probabilities and the output cotangent
+  to compose the softmax VJP and matrix products for `dQ`, `dK` and `dV`. The tape owns the saved
+  buffers. There is no native attention context or fused-provider selection. Full score and
+  probability matrices use quadratic memory in sequence length. Boolean masks keep zero
+  contributions at blocked coordinates and zero fully blocked rows. Finite additive attention biases
+  are a separate semantic operation. Lean composition depends on the numerical primitive boundary,
+  and the specification theorem does not prove those native calls correct.
+- Batched attention folds batch and head axes for execution and sums shared parameter cotangents
+  over the batch. Its specification and typed-graph proofs describe the mathematical operation.
+  Applying those results to the LibTorch execution requires the backend agreement boundary and
+  numerical evidence.
+- Stream ordering, asynchronous errors, synchronization and allocator behavior belong to the native
+  bridge and LibTorch runtime. They need runtime validation, and neither capsule selection nor the
+  Lean tape theorem establishes them.
 
 ## Custom Tensor Computations
 
-`NN.Kernel` applies scalar functions to tensors on CPU or compiles supported native and configured
-binary calculations to CUDA. `Program.correct`, `Program.lower_correct` and `Program.named_correct` prove source
-correspondence through the expression and statement representations. `Cuda.source_denotes`
-connects emitted source semantics under explicit arithmetic and reader contracts. These theorems
-do not verify NVRTC, the CUDA driver, hardware arithmetic, concurrent error recording or foreign
-memory. The native bridge checks reads, retains input owners until completion, and bounds its
-compiled-module cache; those checks remain native implementation obligations.
+`TorchLean.NN.Kernel.Function` applies scalar functions to tensors on CPU or compiles supported
+native and configured binary calculations to CUDA. The field `Program.correct` and the theorems
+`Program.lower_correct` and `Program.named_correct` prove source correspondence through the
+expression and statement representations. `CUDA.denotes_emit` connects emitted source semantics
+under supplied arithmetic and reader contracts. NVRTC, the CUDA driver, hardware arithmetic,
+concurrent error recording and foreign memory are outside these theorems. The native bridge checks
+reads, keeps input owners alive until completion, and bounds its compiled-module cache. Those checks
+are native implementation obligations.
 
 Configured binary arithmetic uses complete encoded words in CUDA buffers, including saved values
-and gradients on the existing tape. Its generated arithmetic is compared with FloatLib, not
-verified by Lean's kernel. The format descriptor, byte transfer, slicing, concatenation and zero
+and gradients on the autograd tape. The generated arithmetic is compared with FloatLib, and Lean's
+kernel does not verify it. The format descriptor, byte transfer, slicing, concatenation and zero
 allocation are additional native implementation obligations. Encoded buffers cannot be used as
 native optimizer checkpoints or passed to unsupported ATen operations.
 
@@ -286,136 +355,157 @@ rejected for GPU compilation. The public `Scalar` constructor is an extension tr
 manually constructing a `Program` with a forged scalar dictionary does not verify that CUDA
 implements those operations, even if its Lean source-equivalence certificate is valid.
 
-Automatic recording checks the operation recipe against the original function. Scalar branches
-record only the selected path and synchronize to Lean for the decision. Fixed-parameter
-recurrences record their ordered steps. These source equalities do not establish differentiability
-at branch boundaries or turn floating-point VJPs into exact real derivatives; the existing
-derivative laws and their domain assumptions still apply.
+Automatic recording has Lean's kernel check that a recipe rebuilt from the source term's functions
+equals the original function. The table from source functions to recorded operators and the operand
+wiring are trusted. Scalar branches record only the selected path and synchronize to Lean for the
+decision. Fixed-parameter recurrences record their ordered steps. These source equalities do not
+establish differentiability at branch boundaries or turn floating-point VJPs into exact real
+derivatives. The derivative laws apply only under their domain assumptions.
 
-CPU evaluates the original scalar function. CPU-only carriers retain their type through a reported
-fallback; unsupported source for a GPU-capable carrier remains an error.
-Canonical IR stores a custom node's checked body separately from its shape signature. A source
-proof supplies neither a real-enclosure rule nor a derivative: IBP/CROWN, forward-only lowering
-and PyTorch export reject unsupported custom paths. See the
-[custom-computation guide](../NN/Kernel/README.md) for the supported frontend and precision limits.
+CPU evaluates the original scalar function. CPU-only carriers keep their type through a reported
+fallback, and unsupported source for a GPU-capable carrier is an error. Canonical IR stores a custom
+node's checked body separately from its shape signature. A source proof supplies neither a
+real-enclosure rule nor a derivative: IBP/CROWN, forward-only lowering and PyTorch export reject
+unsupported custom paths. The [custom-computation guide](../TorchLean/CUDA/Kernel/README.md) lists
+the supported frontend and the precision limits.
+
+`Program.tangent` and `Program.gradient` derive the derivative programs of a custom operation from
+its expression. Over `ℝ`, `Expr.hasFDerivAt_evaluate_tangent` and `Expr.gradient_eq_adjoint`
+prove that they compute the Fréchet derivative and its adjoint where the evaluation is regular: no
+division it reaches has a zero divisor, and no comparison has equal operands unless both are
+constants. `Expr.map_gradient_eq_adjoint` carries this to programs over a scalar type whose
+reading as reals keeps zero and one, as the IEEE binary formats and Lean's `Float32` and `Float`
+do. No theorem bounds the rounding of a run, and in a binary format one infinite or NaN partial
+derivative makes every entry of the gradient NaN.
+
+The tree kernels of [`TorchLean/CUDA/Tree`](../TorchLean/CUDA/Tree/README.md) prove that the level
+schedule of a fold computes its Lean function (`Fold.eval_encode`, `Step.schedule_eq`) and that
+the CUDA text of a row kernel computes its expression for the native formats (`denotes_emitRow`,
+`Step.denotes_source`). The device run is trusted: NVRTC, the launches in
+`csrc/libtorch/tree.cpp`, the bytes, and the agreement of the device arithmetic with
+`Scalar.arithmetic`. The CUDA text of the configured formats is tested only. The certificates of
+hylomorphisms and unfolds give partial correctness, and a run past its capacity computes on the
+host. A kernel table of a unary function (`TorchLean/CUDA/Kernel/Table.lean`) gives the function
+at every input by `Table.eval_eq_of_check`, and its device run is trusted in the same way.
 
 ## Executable Floating Point
 
-- FloatLib supplies the executable floating-point formats, software arithmetic, rounding theory,
-  and interval semantics. `lakefile.lean` tracks its `main` branch; `lake-manifest.json` locks the
-  checked-out revision. Consult that manifest for the exact pin; Lean and mathlib use 4.35.0.
-  TorchLean's runtime and certificate interfaces use `ExecFloat.Binary 8 23` directly.
-  The typed tensor/model API supports FloatLib's configured binary family, including custom
-  precision with valid widths, bias, and storage plans. This does not supply tensor `Context`
-  instances for FloatLib's posit, fixed-point, or decimal families.
-  Higher-precision training uses typed state, graphs, and `nn.sgdStep` on CPU, or a supervised
-  session opened with `trainer.openTyped (α := Scalar)`. Typed sessions retain `Scalar` through
-  inputs, state, predictions, losses, reports, and model-state checkpoints; `finish` takes an
-  independent snapshot. They reject non-CPU devices and custom backend profiles, and their
-  results do not provide a verifier. Seeded initialization and optimizer/scheduler coefficients
-  still start from `Float`; supply typed initial state when those extra digits matter.
-  The ordinary `trainer.open` interface retains `Float` input/result boundaries and uses
-  `arithmetic := ieee` to select binary32 internally. Native GPU dtype support does not provide
-  execution of arbitrary FloatLib formats.
+- FloatLib supplies the executable floating-point formats, software arithmetic, rounding theory and
+  interval semantics. `lakefile.lean` tracks its `main` branch, and `lake-manifest.json` locks the
+  checked-out revision. Consult that manifest for the exact pin. Lean and mathlib use 4.35.0.
+  TorchLean's runtime and certificate interfaces use `ExecFloat.Binary 8 23`. The typed
+  tensor/model API supports FloatLib's configured binary family, including custom precision with
+  valid widths, bias and storage plans. It does not supply tensor `Context` instances for FloatLib's
+  posit, fixed-point or decimal families. Higher-precision training uses typed state, graphs and
+  `nn.sgdStep` on CPU, or a supervised session opened with `trainer.openTyped (α := Scalar)`. Typed
+  sessions keep `Scalar` through inputs, state, predictions, losses, reports and model-state
+  checkpoints, and `finish` takes an independent snapshot. They reject non-CPU devices and custom
+  backend profiles, and their results do not provide a verifier. Seeded initialization and
+  optimizer/scheduler coefficients start from `Float`, so supply typed initial state when those
+  extra digits matter. The ordinary `trainer.open` interface keeps `Float` input/result boundaries
+  and uses `arithmetic := .ieee` to select binary32 internally. Native GPU dtype support does not
+  provide execution of arbitrary FloatLib formats.
 - Lean defines ordinary `Float32` addition, subtraction, multiplication, division, negation,
-  absolute value, square root, bit conversion, comparison, and classification through the
-  canonical `Float32.Model` visible to the kernel. FloatLib's public
-  `FloatLib.Floats.Formats.IEEE754` import supplies native conversions and operation-specific
-  correspondence theorems directly:
+  absolute value, square root, bit conversion, comparison and classification through the canonical
+  `Float32.Model` visible to the kernel. Compiled programs run native `@[extern]` implementations,
+  which are a deployment boundary, and Lean's transcendental `Float32` functions are opaque and
+  outside the core model bridge. FloatLib's public `FloatLib.Floats.Formats.IEEE754` import supplies
+  native conversions and operation-specific correspondence theorems. Configured division
+  has its own all-input software-model refinement, which does not prove agreement with arbitrary
+  native `Float32` division. The binary64 interfaces use `ofFloat` and `toFloat`, and the binary32
+  theorems are these:
   - `ExecFloat.Binary.toFloat32_ofFloat32` proves the exact native round trip for every value.
-  - `ExecFloat.Binary.ofFloat32_add_of_isFinite` and `ofFloat32_sub_of_isFinite` require
-    both operands to be finite, including signed zeros and subnormals. Their results may overflow.
-  - `ExecFloat.Binary.toFloat32_sqrt` covers every configured input through native export,
-    which canonicalizes NaNs. It does not preserve arbitrary NaN payloads.
-  The corresponding binary64 interfaces use `ofFloat` and `toFloat`. Configured division has its
-  own all-input software-model
-  refinement, which does not prove agreement with arbitrary native `Float32` division.
-  The `@[extern]` implementations used by compiled programs are still native code and remain a
-  deployment boundary. Lean's transcendental `Float32` functions are opaque and are not covered by
-  the core model bridge.
-- `NN/Proofs/RuntimeApprox/Graph/NumericalCertificate.lean` checks graph-wide binary32 interval
-  traces against the canonical `NN.IR.Graph`. It rebuilds ranges rather than trusting claimed
-  endpoints, rejects non-finite replay values, and re-runs backend planning before accepting the
-  embedded execution audit. A `RegistryCheckedCertificate` stores the exact graph checked, and
-  `executeIEEE32` can replay only that stored graph. This is FloatLib reference execution, not a
-  replay of the selected LibTorch kernels. The certificate's provider/capsule identities must match
-  the recomputed audit. The audit is planning
-  data, not proof of which implementation produced an imported tensor.
-- Transcendental functions such as `exp`, `log`, and `tanh` are deterministic approximations unless
-  a file states a stronger theorem for a specific operation.
+  - `ExecFloat.Binary.ofFloat32_add_of_isFinite` and `ofFloat32_sub_of_isFinite` require both
+    operands to be finite, including signed zeros and subnormals. Their results may overflow.
+  - `ExecFloat.Binary.toFloat32_sqrt` covers every configured input through native export, which
+    canonicalizes NaNs. It does not preserve arbitrary NaN payloads.
+- `TorchLean/Verify/` checks graph-wide binary32 interval
+  traces against a graph of registered operators (`IR.Graph`). It rebuilds every range and
+  trusts no claimed endpoint, rejects non-finite replay values and re-runs backend planning before
+  accepting the embedded execution audit. A `NumericalCertificate.Checked` stores the exact graph
+  checked, and `executeIEEE32` can replay only that stored graph. The replay is FloatLib reference
+  execution and does not rerun the selected LibTorch kernels. The certificate's provider/capsule
+  identities must match the recomputed audit. The audit is planning data and does not show which
+  implementation produced an imported tensor.
 
-`NN/Spec/Core/FloatInstances.lean` supplies a `Context` for FloatLib's configured binary values.
-The exponent and fraction widths are part of the scalar type; they can exceed binary64's widths.
-Tensor storage keeps these values in `Array α`, and integer and rational constants are rounded
-directly in the selected format. Constructing a value through a native `Float` first retains that
-earlier rounding, regardless of the destination precision.
+`TorchLean/Tensor/ConfiguredBinary.lean` supplies a `Context` for FloatLib's configured
+binary values. The exponent and fraction widths are part of the scalar type and can exceed
+binary64's widths. Tensor storage keeps these values in `Array α`, and integer and rational
+constants are rounded directly in the selected format. A value constructed through a native `Float`
+first keeps that earlier rounding, whatever the destination precision.
 
-This context makes the shared tensor and model specifications executable with software arithmetic.
-It does not itself supply a CUDA storage representation, a trainer/checkpoint encoding, or an
-ordered field law for floating-point operations. Typed sessions obtain their checkpoint encoding
-separately from `Checkpoint.Encoding`. Its elementary functions come from FloatLib's explicit
-binary transcendental module, whose deterministic approximations have no general error or
+The context makes the shared tensor and model specifications executable with software arithmetic.
+It does not supply a CUDA storage representation, a trainer/checkpoint encoding or an ordered field
+law for floating-point operations. Typed sessions obtain their checkpoint encoding separately from
+`Checkpoint.Encoding`. For an IEEE descriptor its `exp`, `log`, `log1p`, `expm1` and `expMul` are
+FloatLib's correctly rounded functions, and `ConfiguredBinary.exp_of_isIEEE` and its siblings prove
+that the dictionary selects them. Its `tan`, `exp2`, `log2`, `log10`, `asinh`, `acosh` and `atanh`
+round the real function once on every descriptor, with C99's special values
+(`TorchLean.Tensor.ConfiguredBinary.Elementary`), and
+`TorchLean.Verify.RuntimeApprox.Elementary` proves the rounding for an IEEE descriptor. Its `sin`,
+`cos`, `sinh`, `cosh` and `tanh`, and its `exp`, `log`, `log1p` and `expm1` for other descriptors,
+are FloatLib's deterministic approximations or compensated formulas, which have no general error or
 correct-rounding guarantee. A proof about those functions must supply the bounds it uses.
 
 The context's default safeguard is the rounded rational `1/1000000`. If that rounds to zero in a
-coarse format, the context uses its smallest positive subnormal instead. This keeps the default
-nonzero, but it can substantially change a guarded formula. The safeguard is neither machine
-epsilon nor an accuracy bound; tolerances remain part of the model's numerical specification.
+coarse format, the context uses its smallest positive subnormal instead. The fallback keeps the
+default nonzero, but it can substantially change a guarded formula. The safeguard is neither machine
+epsilon nor an accuracy bound, and tolerances belong to the model's numerical specification.
 
 Normalization has a separate default, the exact rational `1/100000` rounded once in the selected
-scalar. It remains nonzero in binary16 but can round to zero in a coarser format. There is no
-minimum-subnormal fallback for this constant: callers must supply a positive, representable
+scalar. It stays nonzero in binary16 but can round to zero in a coarser format. The normalization
+default has no minimum-subnormal fallback, so callers must supply a positive, representable
 normalization epsilon when the default is too small. Validation of a rational model configuration
-checks positivity before scalar conversion; it does not establish positivity after rounding.
+checks positivity before scalar conversion and does not establish positivity after rounding.
 
-Kernel capsules record one numerical choice: the reduction order (`NumericalPolicy.reduction`,
-one of `fixedLeft`, `implementationDefined`, or `notApplicable`). It is audited contract data, not
-proof evidence. The certificate guard `requireFixedLeftReduction` in
-`NN/Proofs/RuntimeApprox/Graph/NumericalCertificate/Contracts.lean` reads it as an `Except`
-precondition and rejects any node whose capsule does not advertise `fixedLeft`. Rounding mode,
-subnormal handling, and multiply-add contraction are not recorded; a certificate that depends on
-them must state the assumption itself. Portable reference accumulations advertise the fixed left
-fold. LibTorch matrix products, convolutions, normalizations, pooling operations,
-FFT/FNO paths, scans, and attention advertise implementation-dependent reductions. Consequently,
-the fixed-left graph certificate refuses to reuse its transfer for those accelerated paths. A
-theorem about such a path needs a backend-specific schedule or an applicable order-independent
-enclosure from `NN/Proofs/RuntimeApprox/Reductions/IEEE32.lean`. The latter still requires its
-operation and finiteness hypotheses; generic forms also require explicit local-error bounds.
-The binary32 corollaries use FloatLib's tree-local unit-roundoff result directly. The dot-product
-corollary bounds the sum of rounded products, so multiplication errors remain a separate obligation.
+Kernel capsules record one numerical choice, the reduction order (`NumericalPolicy.reduction`):
+`fixedLeft`, `fixedLeftOrExact`, `implementationDefined` or `notApplicable`. It is contract data
+for the audit and carries no proof. The certificate guard `fixedLeftGuard` in
+`TorchLean/Verify/NumericalCertificate/Contracts.lean` reads it as an `Except`
+precondition and rejects any node whose transfer folds a reduction from the left (`fixedLeftNode`)
+when its capsule does not advertise `fixedLeft`. The scaled matrix contraction transfer requires
+`fixedLeftOrExact` instead. Rounding mode, subnormal handling, and multiply-add contraction are not
+recorded. A certificate that depends on them must state the assumption itself. Portable reference
+accumulations advertise the fixed left fold, except that `scaledMatmul`, `softmax`, `maskedSoftmax`
+and `distill` advertise `fixedLeftOrExact` and the reference attention operators advertise
+`implementationDefined`. LibTorch matrix products, convolutions, normalizations, pooling operations,
+FFT/FNO paths, scans and attention advertise implementation-dependent reductions, so the fixed-left
+graph certificate refuses to reuse its transfer for those accelerated paths. A theorem about such a
+path needs a backend-specific schedule or an applicable order-independent enclosure from
+`TorchLean/Verify/Floats/IEEE754/Reductions.lean`. That enclosure has its own operation and
+finiteness hypotheses, and its generic forms also take local-error bounds as hypotheses. The
+binary32 corollaries use FloatLib's tree-local unit-roundoff result. The dot-product corollary
+bounds the sum of rounded products, so multiplication errors are a separate obligation.
 None of these theorems covers an arbitrary ATen algorithm.
 
 For a checked replay, interval validity proves that each endpoint is finite and ordered. The replay
-also checks every computed entry for finiteness, and `executeIEEE32` returns a
-`RangeCheckedExecution` only when every FloatLib binary32 node value lies inside its checked range. That
-is the whole of what the checker proves. It does not prove that the exact-real denotation of the
-graph lies in those ranges. That statement is the structure `ProvedRealEnclosure` in
-`NN/Proofs/RuntimeApprox/Graph/NumericalCertificate/Certificate.lean`, whose fields require a real
-payload and input, the complete real node trace, a proof that the trace is the graph's real
-denotation, and a pointwise proof that each real value lies in its checked interval. The caller must
-supply this structure; nothing in the repository constructs one today. Given both, the theorem
-`RangeCheckedExecution.error_trace` yields the pointwise interval-width error bound for every
-intermediate. This is a theorem about the FloatLib binary32 replay. Transporting it to Lean runtime
-`Float32`, CUDA, LibTorch, cuBLAS, or cuDNN still requires the agreement recorded by that backend's
-capsule.
+also checks every computed entry for finiteness, and `executeIEEE32` returns a `CheckedExecution`
+only when every FloatLib binary32 node value lies inside its checked range. That is the whole of
+what the checker proves. It does not prove that the exact-real denotation of the graph lies in those
+ranges. That statement is the structure `NumericalCertificate.RealEnclosure` in
+`TorchLean/Verify/NumericalCertificate.lean`. Its fields require a real payload and inputs, the
+complete real node trace, a proof that the trace is the graph's real denotation, and a pointwise
+proof that each real value lies in its checked interval. The caller must supply this structure, and
+nothing in the repository constructs one. Given both, the theorem `CheckedExecution.errorTrace`
+yields the pointwise interval-width error bound for every intermediate. It is a theorem about the
+FloatLib binary32 replay. Transporting it to Lean runtime `Float32`, CUDA, LibTorch, cuBLAS or cuDNN
+requires the agreement recorded by that backend's capsule.
 
-The proof-bearing `RevGraph` path has rounded forward and VJP theorems and erases to executable
-autograd `GraphData`. One optimizer contract carries those gradient bounds through SGD,
-momentum-SGD, and AdamW; AdamW supplies a lower bound and error margin for its complete denominator at
-each step. These are Lean theorems about the `NF` rounded-real scalar model.
+The `RevGraph` theorems bound the rounded forward and reverse passes of a `RevGraph` whose nodes
+carry local error certificates, and such a graph erases to executable autograd `GraphData`. No
+model or `TorchLean.IR.Graph` is lowered to a `RevGraph`, so the caller builds the graph. One
+optimizer contract carries those gradient bounds through SGD, momentum SGD and AdamW. For AdamW,
+the assumptions of each step include a lower bound on the complete denominator and an error margin
+for it. These are Lean theorems about the `NF` rounded-real scalar model.
 
-The ODE adapters in `NN/Proofs/Verification/ODE/EnclosureBackends.lean` require continuity,
-derivative identities, and corridor inequalities for a real interpretation. A directly decoded
-binary32 trajectory has finite range; `ieee32RealView_eq_of_continuousOn` proves that continuity
-on an interval makes it constant there. Discrete samples therefore need a real-valued interpolant
-before applying the corridor theorem. Sample values and boxes alone do not establish its required
-clamped-ODE derivative identity.
-
-The lowering of the proof-layer `Graph` to the executable tape (`lowerGraphToTape` in
-`NN/Proofs/Autograd/Runtime/Link/`) has both forward and backward correspondence theorems, ending
-in `backwardDenseAll_lowerGraphToTape_adjoint_fderiv` over `ℝ`. The canonical `NN.IR.Graph` is
-run by its own semantics (`Graph.denoteAll`); IR results are forward statements, not autograd
-theorems.
+The ODE corridor theorems in `TorchLeanExamples/Verification/ODE/Enclosure.lean` require
+continuity, derivative identities, and corridor inequalities for a real interpretation. Discrete
+samples of a floating-point trajectory reach them only through a real-valued interpolant. Sample
+values and boxes alone do not establish the clamped-ODE derivative identity of that interpolant.
+A directly decoded trajectory of a configured binary format, such as binary32, has finite range.
+`decoded_eq_of_continuousOn` in `TorchLeanExamples/Verification/ODE/EnclosureBackends.lean` proves
+that when its decoded real values are continuous on `Icc a b`, they are equal at any two points of
+`Icc a b`.
 
 Use the float layers as follows:
 
@@ -423,35 +513,28 @@ Use the float layers as follows:
 | --- | --- |
 | executable configured binary behavior inside Lean | FloatLib's `ExecFloat.Binary` and `BinaryInterchange` refinement theorems |
 | TorchLean binary32 certificate representation | FloatLib's `ExecFloat.Binary 8 23` |
-| finite rounded-real float32 error bound | `NN/Floats/FP32` |
+| finite rounded-real float32 error bound | `TorchLean/Verify/Floats/FP32.lean` |
 | precision-parametric rounding theorem | `FloatLib.Floats.Formats.Flocq` |
-| endpoint interval enclosure | FloatLib's `BinaryInterchange.IntervalSemantics` and `NN/Floats/Interval` adapters |
-| external high-precision enclosure evidence | `NN/Floats/Arb` plus the oracle boundary |
+| endpoint interval enclosure | FloatLib's `BinaryInterchange.IntervalSemantics` |
 | meaning of Lean `Float32` core arithmetic | Lean's `Float32.Model` definitions |
 | native logical import/export and arithmetic correspondence | FloatLib's `IEEE754.Native` proof modules, with each operation's stated hypotheses |
 | compiled `Float`/`Float32`, CUDA, or LibTorch behavior | provider bridge or boundary statement |
 
 ## External Numeric Oracles
 
-- CROWN/Lyapunov certificate generation is an external evidence producer. Generated Lean modules
-  prove their numeric sign margins, while the final stability theorem requires an explicit
-  `LyapunovCert.ValidFor` proof connecting those numbers to the named Lean functions. A checked
-  graph workflow can establish that predicate; a Python-only workflow must state it as a local
-  assumption rather than inheriting a repository-wide axiom.
-- The Arb / `python-flint` integration under `NN/Floats/Arb/` is an external subprocess backend. It
-  can produce high-quality interval evidence, but an Arb response is still an oracle result unless
-  the relevant certificate is independently checked in Lean.
-- PyTorch import/export scripts and training helpers are external producers of weights, examples,
-  or JSON artifacts. TorchLean can parse and replay those artifacts, but PyTorch training itself is
-  not part of Lean's trusted kernel. The operator tag wire format used by that exchange has a
-  round-trip check in Lean (`parse_op_tag`, `parse_op_kind` in `NN/Runtime/PyTorch/Wire.lean`); the
-  Python side that emits it remains a producer.
-- The optional Julia wrapper `NN/Runtime/External/Julia.lean` follows the same pattern. It resolves
-  `TORCHLEAN_JULIA` when set, otherwise falls back to `julia` on `PATH`, and does not require Julia
-  at compile time. It supports "untrusted producer, Lean checker" workflows such as the
-  piecewise-polynomial spline certificate workflow (producer scripts under
-  `scripts/verification/splines/`, bundled fixtures under `NN/Examples/Verification/Splines/`).
-- A Julia-produced spline or PINN artifact is trusted only after a Lean checker validates the small
-  certificate data it needs: for example cell domains, polynomial coefficients, interval bounds, and
-  claimed residual inequalities. Lean does not trust Julia's fitting process, optimizer, GPU use, or
-  floating-point arithmetic merely because the subprocess returned successfully.
+- PyTorch import/export scripts and training helpers are external producers of weights, examples, or
+  JSON artifacts. TorchLean can parse and replay those artifacts, but PyTorch training itself is not
+  part of Lean's trusted kernel. The operator records of the `torchlean.ir` artifacts of that
+  exchange have a round-trip theorem in Lean (`Op.decode_encode` in
+  `TorchLean/Tensor/Op/Codec.lean`), and `TorchLean.IR.load_ok` proves that a loaded artifact's
+  program passes `Program.check` and its payload `Payload.check`. The Python side that emits them
+  remains a producer.
+- The optional Julia wrapper `TorchLeanExamples/Verification/Splines/Julia.lean` follows the same
+  pattern. It resolves `TORCHLEAN_JULIA` when set, otherwise falls back to `julia` on `PATH`, and
+  does not require Julia at compile time. It supports "untrusted producer, Lean checker" workflows
+  such as the piecewise-polynomial spline certificate workflow (the producer script and bundled
+  fixtures under `TorchLeanExamples/Verification/Splines/`).
+- A Julia-produced spline artifact or a Python-produced PINN artifact is trusted only after a Lean
+  checker validates the small certificate data it needs: for example cell domains, polynomial
+  coefficients, interval bounds, and claimed residual inequalities. A successful exit doesn't make
+  the producer's fitting process, optimizer, GPU use, or floating-point arithmetic trusted.

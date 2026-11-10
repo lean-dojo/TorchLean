@@ -1,11 +1,43 @@
 import VersoManual
-import NN.API
+import TorchLean.NN.LoRA
+import TorchLean.NN.Autograd.Function
+import TorchLean.NN.Autograd.Frontend
+import TorchLean.NN.Autograd.Differential
+import TorchLean.NN.Autograd.Complex
+import TorchLean.NN.CLI.Training.Command
+import TorchLean.NN.Data.Synthetic
+import TorchLean.NN.Data.CausalLM
+import TorchLean.NN.Models.KAN
+import TorchLean.NN.Models.CNN
+import TorchLean.NN.Models.ResNet
+import TorchLean.NN.Models.UNet
+import TorchLean.NN.Models.Recurrent
+import TorchLean.NN.Models.CausalTransformer.LanguageModel
+import TorchLean.NN.Models.Mamba
+import TorchLean.NN.Models.MaskedPatchReconstructor
+import TorchLean.NN.Models.Diffusion.NoisePredictor
+import TorchLean.NN.Models.FNO
+import TorchLean.NN.Models.PPO
+import TorchLean.NN.Builder.MoE
+import TorchLean.NN.Sequential.Training
+import TorchLean.NN.RL.CLI
+import TorchLean.NN.RL.PPO.ActorCritic
+import TorchLean.NN.SelfSupervised
+import TorchLean.NN.Text.Vocabulary
+import TorchLean.NN.Text.GPT2BPE
+import TorchLean.NN.Text.Generation
+import TorchLean.NN.Trainer.Constructor
+import TorchLean.NN.Trainer.Train
+import TorchLean.NN.Data.Image
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
+import TorchLean.NN.Loss
+import TorchLean.NN.Session.Random
+import TorchLean.Verify.Trainer
 
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
-open TorchLean
+open TorchLean Arithmetic Backend.Device Trainer.Objective
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
 #doc (Manual) "Choosing How A Model Runs" =>
@@ -14,22 +46,22 @@ tag := "run-configuration"
 file := "Choosing-How-A-Model-Runs"
 %%%
 
-The MLP trained in {ref "api_tour"}[A Tour Of The API] maps a two-component input to a
+In {ref "api_tour"}[A Tour Of The API] we trained an MLP that maps a two-component input to a
 one-component output, with parameters $`\theta`:
 
 $$`F_\theta:[2]\to[1]`
 
 Its type stays `[2] → [1]` whether it runs on the CPU, with FloatLib's bit-level binary32, or with
-LibTorch's CUDA operations. Every run records the same autograd tape; the device only chooses who
-executes each operation. Holding the architecture, seed, and data fixed lets us compare these
-choices on the same training problem. The transcripts below record the binary's output
-on the machine used for this guide; the embedded Lean comparisons also run when the page is built.
+LibTorch's CUDA operations. Every run records the same autograd tape, and the device only chooses
+who executes each operation. Holding the architecture, seed, and data fixed lets us compare these
+choices on the same training problem. Each transcript below records the binary's output on the
+machine used for this guide, and the embedded Lean comparisons also run when the page is built.
 
 # Runtime Configuration
 
-TorchLean configures arithmetic, providers, and model mode separately. The runtime
-validates their compatibility; not every combination is supported. Each setting controls a
-different part of the computation:
+TorchLean configures arithmetic, providers, and model mode separately. Not every combination is
+supported, so the runtime validates their compatibility. Each setting controls a different part of
+the computation:
 
 :::table +header
 *
@@ -42,7 +74,7 @@ different part of the computation:
   * which binary32 semantics every scalar operation obeys
 *
   * device and providers
-  * `cpu`, `gpu`, a full profile
+  * `cpu`, `cuda`, a full profile
   * which implementation of each operation is selected, and what evidence backs it
 *
   * train or evaluation mode
@@ -57,88 +89,77 @@ necessary to distinguish a provider comparison from a comparison of different fo
 ```lean (name := runArith)
 -- The dispatcher vocabulary is broader than the trainer's
 -- accepted arithmetic.
-#print Runtime.Arithmetic
+#print Arithmetic
 ```
 
 ```leanOutput runArith (whitespace := lax)
-inductive TorchLean.Runtime.Arithmetic : Type
+inductive TorchLean.Arithmetic : Type
 number of parameters: 0
 constructors:
-TorchLean.Runtime.Arithmetic.native : Runtime.Arithmetic
-TorchLean.Runtime.Arithmetic.ieee : Runtime.Arithmetic
-TorchLean.Runtime.Arithmetic.complex : Runtime.Arithmetic
+TorchLean.Arithmetic.native : Arithmetic
+TorchLean.Arithmetic.ieee : Arithmetic
+TorchLean.Arithmetic.complex : Arithmetic
 ```
 
-The supervised trainer accepts two of these three constructors. As the errors below show, the lower
-dispatcher can execute complex binary32, but the supervised interface exchanges real data and
-results. Complex training instead uses an explicit real loss with `autograd.complex.grad`, followed
-by `nn.sgdStep` on complex state. The `complex_regression` command demonstrates this separate path;
-it preserves both components in predictions and checkpoints.
+Of these three constructors, the supervised trainer accepts two. As the errors below show, the
+lower dispatcher can execute complex binary32, but the supervised interface exchanges real data and
+results. Complex training instead uses a hand-written real loss with `autograd.complex.grad`,
+followed by `nn.sgdStep` on complex state. You can see this separate path in the
+`complex_regression` command, which preserves both components in predictions and checkpoints.
 
-The device vocabulary is the widest of the three:
+The device type has two constructors:
 
 ```lean (name := runDevices)
 -- A device constructor names a target without asserting
--- that a handler is linked.
-#print Runtime.Device
+-- that an implementation is linked.
+#print Backend.Device
 ```
 
 ```leanOutput runDevices (whitespace := lax)
-inductive NN.Backend.Device : Type
+inductive TorchLean.Backend.Device : Type
 number of parameters: 0
 constructors:
-NN.Backend.Device.cpu : NN.Backend.Device
-NN.Backend.Device.cuda : NN.Backend.Device
-NN.Backend.Device.rocm : NN.Backend.Device
-NN.Backend.Device.metal : NN.Backend.Device
-NN.Backend.Device.wasm : NN.Backend.Device
-NN.Backend.Device.tpu : NN.Backend.Device
-NN.Backend.Device.trainium : NN.Backend.Device
-NN.Backend.Device.custom : NN.Backend.Device
-NN.Backend.Device.external : NN.Backend.Device
+TorchLean.Backend.Device.cpu : Backend.Device
+TorchLean.Backend.Device.cuda : Backend.Device
 ```
 
-Two of these nine devices currently have maintained runtime profiles. Device names also index
-profiles, capsules, and reports, so the vocabulary includes targets such as `rocm` and `metal`
-without claiming that an executable provider is available for them.
+Both have maintained runtime profiles, `checked_cpu` and `libtorch_cuda`. A CPU-only build still
+names `cuda`, so naming a device doesn't mean an executable provider is linked for it.
 
-`withDevice` checks for a maintained profile before execution. `validateForExecution` additionally
-checks whether the linked binary can provide the requested runtime:
+`withDevice` checks for a maintained profile before execution. `validateForExecution` also checks
+whether the linked binary can provide the requested runtime:
 
 ```lean (name := runValidate)
 -- Pure profile lookup and effectful execution validation
 -- answer different questions.
-open Runtime.Autograd.Torch in
-#check @Config.withDevice
+#check @Session.Config.withDevice
 
-open Runtime.Autograd.Torch in
-#check @Config.validateForExecution
+#check @Session.Config.validateForExecution
 ```
 
 ```leanOutput runValidate (whitespace := lax)
-Config.withDevice : Runtime.Autograd.Torch.Config →
-  NN.Backend.Device →
-  Except String Runtime.Autograd.Torch.Config
+Session.Config.withDevice : Session.Config →
+  Backend.Device →
+  Except String Session.Config
 ```
 
 ```leanOutput runValidate (whitespace := lax)
-Config.validateForExecution :
-  Runtime.Autograd.Torch.Config → IO Unit
+Session.Config.validateForExecution :
+  Session.Config → IO Unit
 ```
 
-The first returns `Except String Config`, so the failure is a value and can be inspected without
-running anything. Checking the four named devices takes four lines:
+Because the first returns `Except String Config`, its failure is a value that you can inspect
+without running anything. Checking both devices takes a few lines:
 
 ```lean (name := runProfiles)
 -- Check maintained defaults without requiring the named
 -- devices to be present.
-open Runtime.Autograd.Torch in
 #eval do
-  let devices : List Runtime.Device :=
-    [.cpu, .cuda, .metal, .tpu]
+  let devices : List Backend.Device :=
+    [.cpu, .cuda]
   devices.forM fun d => do
     let name := d.cliName
-    match Config.withDevice {} d with
+    match Session.Config.withDevice {} d with
     | .ok _ => IO.println s!"{name}: maintained profile"
     | .error msg => IO.println s!"{name}: {msg}"
 ```
@@ -146,23 +167,18 @@ open Runtime.Autograd.Torch in
 ```leanOutput runProfiles (whitespace := lax)
 cpu: maintained profile
 cuda: maintained profile
-metal: device `metal` has no maintained runtime profile;
-  provide a backend profile with executable capsules
-tpu: device `tpu` has no maintained runtime profile;
-  provide a backend profile with executable capsules
 ```
 
-A custom backend needs both a profile describing admissible kernels and runtime handlers that
-execute them. Supplying capsule metadata alone does not implement Metal. The maintained profiles
-reject unsupported devices at configuration time.
+A custom backend needs both a profile describing admissible kernels and runtime implementations
+that execute them. Supplying capsule metadata alone doesn't implement a provider.
 
-The `Except String Config` result lets a caller handle a missing profile before entering `IO`.
-Execution validation then checks the linked runtime and device availability. Individual operations
-still have their own shape, layout, arithmetic, and gradient requirements.
+With an `Except String Config` result, a caller can handle a missing profile before entering `IO`,
+and execution validation then checks the linked runtime and device availability. Beyond these
+checks, individual operations have their own shape, layout, arithmetic, and gradient requirements.
 
 # Runtime Flags
 
-The runner lists its examples and runtime flags:
+Ask the runner to list its examples and runtime flags:
 
 ```terminal
 # List the runnable examples and the shared entry-point
@@ -170,25 +186,23 @@ The runner lists its examples and runtime flags:
 scripts/lake.sh exe torchlean --help
 ```
 
-The help lists the runnable examples, followed by their shared runtime flags:
+Its output lists the runnable examples first, then the runtime flags they share:
 
 ```
 Runtime flags:
   --choose                         ask for a device when the example supports --device
-  --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external
-      execution backends: CPU and CUDA; other parsed device names are not implemented
+  --device auto|cpu|gpu|cuda
   --arithmetic native|ieee|complex
       arithmetic availability depends on the example; check its --help
   --seed N
   --show-backend
 
 Verification commands live under `scripts/lake.sh exe verify -- list`.
-Use `scripts/lake.sh exe torchlean <example> --help` for command-specific flags;
-`jaxpr` has no --help and takes only artifact paths.
+Use `scripts/lake.sh exe torchlean <example> --help` for command-specific flags.
 ```
 
-The top-level parser knows three arithmetics; each
-example states which ones it supports. For our example:
+While the top-level parser knows three arithmetics, each example states which ones it supports. For
+our example:
 
 ```terminal
 # Inspect the controls accepted by this particular training
@@ -205,15 +219,15 @@ Usage:
     [--show-backend]
 ```
 
-This example supports `native|ieee` and `cpu|cuda`. An opt-in interactive chooser, `--choose`,
-can also select the device; {ref "cli"}[Command-Line Reference] shows its prompt.
+This example supports `native|ieee` and `cpu|cuda`. An opt-in interactive chooser, `--choose`, can
+also select the device (the {ref "cli"}[Command-Line Reference] shows its prompt).
 
-The chooser and flags both request a configuration. The banner echoes that request; the backend
-report below names the implementations selected for the model's operations.
+Both the chooser and the flags request a configuration. The banner echoes that request, while the
+backend report below names the implementations selected for the model's operations.
 
 # CPU Execution
 
-The baseline uses native binary32 arithmetic on the CPU and twenty training steps:
+Our baseline uses native binary32 arithmetic on the CPU and twenty training steps:
 
 ```terminal
 # Run the short CPU baseline and print the selected backend
@@ -230,20 +244,21 @@ Leaving out `--show-backend` for a moment, the run prints:
 ```terminal +output
 == Quickstart: simple MLP training (seed=2026, steps=20) ==
 target(heldout)    = [0.200000]
-untrained(heldout) = [-0.088261]
+untrained(heldout) = [-0.047640]
 dataset size = 25
-mean_loss(before training) = 0.495227
-mean_loss(after training) = 0.401184
-steps=20 arithmetic=native scalar=Float32 loss=0.495227 -> 0.401184
-trained(heldout) = [0.365380]
+mean_loss(before training) = 0.629263
+mean_loss(after training) = 0.471118
+steps=20 arithmetic=native scalar=Float32 loss=0.629263 -> 0.471118
+trained(heldout) = [0.369533]
 ```
 
 Training opens one session and records each sample's operations on a fresh tape as the model
-runs. Every operation asks the active profile for an admissible capsule, executes that capsule's
-provider, and appends a local VJP rule when gradients are required. A capsule bundles a provider,
-a trust level, a VJP owner, and a numerical policy, and `--show-backend` prints one the first time
-each operation is selected. Here is the entry for addition, wrapped to fit the page (in the
-terminal each of these is a single line):
+runs. Every registered operator the model records asks the active profile for an admissible
+capsule of that operator, and the session records it with the implementation the capsule names:
+on the CPU, the operator's rule in `Op.rule?`, which supplies its value and its local VJP. A
+capsule bundles a provider, a trust level, a VJP owner, and a numerical policy, and
+`--show-backend` prints each capsule name the first time the session selects it. Here is the
+entry for addition, wrapped to fit the page (in the terminal each of these is a single line):
 
 ```
   add: reference.add provider=reference trust=checked
@@ -253,18 +268,19 @@ terminal each of these is a single line):
     layout: canonical-tensor layout compatibility for add;
       guarded at runtime by typed tensor layout
     value: add forward refines its TorchLean semantics;
-      covered by test suite NN.Tests.Runtime.Floats.Suite
+      uses canonical definition TorchLean.Op.rule? directly
     vjp: add torchlean-tape VJP refines its TorchLean
-      semantics; covered by test suite
-      NN.Tests.Runtime.Floats.Suite
+      semantics; uses canonical definition TorchLean.Op.rule? directly
 ```
 
-The four evidence lines distinguish shape, layout, forward-value, and VJP claims. Two cite runtime
-guards and two cite a test suite. These labels identify the declared evidence for the selected
-capsule; they do not assert a theorem. {ref "verification"}[Verification And Certificates]
-develops the proof interfaces.
+That entry's four evidence lines distinguish shape, layout, forward-value, and VJP claims. Two cite
+runtime guards and two cite the canonical definition that the CPU tape runs. These labels
+identify the declared evidence for the selected capsule, but they don't assert a theorem.
+{ref "verification"}[Verification And Certificates] develops the proof interfaces.
 
-Our twenty-step CPU run selects seven capsules. Tabulating the first line of each entry:
+Our twenty-step CPU run selects seven capsules. Each entry's first word is the operator's tag, its
+constructor name in `TorchLean.Op`, so the loss reads `mseLoss` while its capsule is named
+`reference.mse_loss`. Tabulating the first line of each entry:
 
 :::table +header
 *
@@ -303,60 +319,61 @@ Our twenty-step CPU run selects seven capsules. Tabulating the first line of eac
   * `torchlean-tape`
   * `n/a`
 *
-  * `mse_loss`
+  * `mseLoss`
   * `reference.mse_loss`
   * `torchlean-tape`
   * `fixed-left`
 :::
 
-Every provider is `reference`, every trust level is `checked`, and every VJP is owned by TorchLean's
-own tape. The `fixed-left` policy on the two reducing operations specifies their summation order,
-one of the conditions needed to reproduce floating-point results. The CUDA profile below changes
-that policy.
+Every provider is `reference`, every trust level is `checked`, and every VJP is owned by
+TorchLean's own tape. On the two reducing operations, the `fixed-left` policy specifies their
+summation order, one of the conditions needed to reproduce floating-point results. That policy
+changes under the CUDA profile below.
 
 With `--show-backend`, the run prints the banner `[TorchLean] backend capsules used:` several
 times. An eager session prints it when it is created
-({src "NN/Runtime/Autograd/Torch/Core/Session/Lifecycle.lean"}[`Session/Lifecycle.lean`]), so the
-banners count sessions rather than operations. `trainer.predict` and `trainer.train` each open a
-trainer session. A trainer session creates one eager session that records a fresh tape for each
-training sample, and further eager sessions without gradients for prediction and evaluation loss.
-Their banners print together when the trainer session opens, so a banner can have nothing under
-it. The banner therefore identifies a session opening; the entries beneath it identify capsule
+({src "TorchLean/NN/Session/Lifecycle.lean"}[`Session/Lifecycle.lean`]),
+so the banners count sessions, not operations. `trainer.predict` and `trainer.train` each open a
+trainer session, which creates one eager session that records a fresh tape for each training
+sample, and further eager sessions without gradients for prediction and evaluation loss. Their
+banners print together when the trainer session opens, so a banner can have nothing under it. A
+banner therefore identifies a session opening, while the entries beneath it identify capsule
 selections.
 
-The tape lets you inspect provider choices and use the maintained CUDA runtime. A manually
-assembled eager session can record a different operation sequence on each call. The current model
-frontend still hides tensor elements behind `Function`, so the tape alone does not enable arbitrary
-tensor-dependent Lean branches. *Dynamic Control Flow And Typed Graphs*
-below explains this frontend boundary.
+With the tape you can inspect provider choices and use the maintained CUDA runtime, and a manually
+assembled eager session can record a different operation sequence on each call. But the model
+frontend hides tensor elements behind `Function`, so the tape alone doesn't enable arbitrary
+tensor-dependent Lean branches. *Dynamic Control Flow And Typed Graphs* below explains this
+frontend boundary.
 
-There are three different loss observations in this short run. The initial `0.495227` is an
-average over the 25 training examples. The `step 0` value, `0.250488`, belongs to the example used
-for that update. The final `0.401184` is another evaluation over the dataset after 20 updates.
-Comparing the first and last values is meaningful as a change in dataset loss; comparing either
-one directly with the single-example step loss mixes two different measurements. Twenty updates
-also need not visit every example equally often.
+There are three different loss observations in this short run. The initial `0.629263` is an average
+over the 25 training examples. At `step 0`, the loss `0.330237` belongs to the example used for
+that update (this run doesn't log it, and the {ref "training-from-scratch"}[training chapter]
+prints it). After 20 updates, the final `0.471118` is another evaluation over the dataset.
+Comparing the first and last values is meaningful as a change in dataset loss, but comparing either
+one with the single-example step loss mixes two different measurements. Twenty updates also need
+not visit every example equally often.
 
-The held-out prediction is a fourth observation. Its target is `0.2`, and its trained value here is
-`0.365380`; a lower training loss does not make that particular prediction exact. Keeping it
+A fourth observation is the held-out prediction. Its target is `0.2`, and its trained value here is
+`0.369533`. A lower training loss doesn't make that particular prediction exact. Keeping it
 separate makes the log useful even when individual update losses fluctuate.
 
-The seven capsule kinds describe the operations needed by the model and loss. They are not a
+These seven capsule kinds describe the operations needed by the model and loss, and they aren't a
 count of kernel launches or arithmetic instructions. Repeated operations may choose the same
-capsule, and a report with no new entries during prediction does not mean prediction performed no
+capsule, and a report with no new entries during prediction doesn't mean prediction performed no
 work. It means that report contains no additional selections to display for that session.
 
 # Training Inside The Guide
 
-Comparisons can also run inside the guide, so the page build checks them directly. The setup
-fixes the quickstart model, target, dataset, optimizer, and seed:
+Comparisons can also run inside the guide, so building the page checks them. Our setup fixes the
+quickstart model, target, dataset, optimizer, and seed:
 
 ```lean (name := runSetup)
 -- Hold model, target, data, and seed fixed while exposing
 -- the runtime choices.
 /-- The `2 -> 8 -> 1` regression MLP from the quickstart. -/
 def runModel : nn.Builder (nn.Sequential [2] [1]) :=
-  nn.Sequential![nn.linear 2 8, nn.relu, nn.linear 8 1]
+  nn.Sequential![nn.linear 2 8, nn.op .relu, nn.linear 8 1]
 
 /-- Target `0.8 relu(x₁+x₂) - 0.4 relu(x₂-x₁) + 0.2`. -/
 def runTarget (x : Tensor Float [2]) : Tensor Float [1] :=
@@ -376,9 +393,9 @@ def runData : Trainer.Dataset [2] [1] :=
 def runPoint : Tensor Float [2] := [0.25, -0.75]
 
 /-- One trainer per choice of arithmetic and device. -/
-def trainerOn (arithmetic : Runtime.Arithmetic)
-    (device : Runtime.Device) : Trainer [2] [1] :=
-  Trainer.new runModel
+def trainerOn (arithmetic : Arithmetic)
+    (device : Backend.Device) : Trainer [2] [1] :=
+  Trainer.create runModel
     { objective := mse
       optimizer := optim.adam { lr := 0.03 }
       arithmetic := arithmetic
@@ -405,7 +422,8 @@ scripts/lake.sh -K cuda=true exe torchlean quickstart_mlp \
   --show-backend
 ```
 
-The report now names a different provider for every operation. Comparing it against the CPU table:
+This time the report names a different provider for every operation. Comparing it against the CPU
+table:
 
 :::table +header
 *
@@ -444,23 +462,22 @@ The report now names a different provider for every operation. Comparing it agai
   * `libtorch.relu`
   * `n/a`
 *
-  * `mse_loss`
+  * `mseLoss`
   * `reference.mse_loss`
   * `libtorch.mse_loss`
   * `implementation-defined`
 :::
 
-The provider label changes from `reference` to `libtorch`. Evidence names the retained CUDA
-comparison for each tested operation; operations without one record a LibTorch trust boundary.
-Shape guards move to CUDA FFI size and rank checks at the Lean and native boundary. The default
-GPU profile admits those external implementation assumptions; the strict checked profile does not.
+Provider labels change from `reference` to `libtorch`. Evidence names the retained CUDA comparison
+for each tested operation, and operations without one record a LibTorch trust boundary. Shape
+guards move to CUDA FFI size and rank checks at the Lean and native boundary. The default GPU
+profile admits those external implementation assumptions, but the strict checked profile doesn't.
 
 Local VJP ownership depends on the operation. ReLU and broadcast use `backend-vjp`: their
 derivatives call native backward primitives. Matmul, addition, MSE, reshape, and permutation retain
-`torchlean-tape`: Lean composes their derivatives from LibTorch numerical operations. TorchLean
-records and traverses the tape in both cases; LibTorch autograd recording is disabled.
-For numerical comparison, the two reducing operations move from `fixed-left` to
-`implementation-defined`.
+`torchlean-tape`: Lean composes their derivatives from LibTorch numerical operations. In both cases
+TorchLean records and traverses the tape, with LibTorch autograd recording disabled. For numerical
+comparison, the two reducing operations move from `fixed-left` to `implementation-defined`.
 
 To compare the two devices, hold the model, dataset, seed, optimizer, and step count fixed.
 A provider with `reduction=implementation-defined` may use a different summation order, and
@@ -469,19 +486,18 @@ relevant to the experiment, such as predictions or parameter buffers, and record
 provider, and comparison tolerance. Agreement in printed decimal output does not establish equal
 parameter bits or equal behavior on other inputs.
 
-The module and CUDA buffer both use binary32 values, but upload is not conversion-free. The current
+Both the module and the CUDA buffer use binary32 values, but upload isn't conversion-free: the
 bridge widens host `Float32` elements to `Float` staging values before packing them into a CUDA
 float32 buffer. This preserves finite binary32 values but adds transfer work. A capsule identifies
-the trusted native provider; it does not prove the kernel, compiler, driver, or device correct.
+the trusted native provider, but it doesn't prove the kernel, compiler, driver, or device correct.
 
-A build without CUDA support rejects the request. The default CPU profile supports the portable
-runtime without a GPU; compiling it does not exercise the CUDA provider.
+A build without CUDA support rejects the request. Without a GPU, the default CPU profile supports
+the portable runtime, but compiling it doesn't exercise the CUDA provider.
 
-A common seed fixes initialization and the example sequence; it does not fix the order in which
-a backend adds partial sums. Updates can carry numerical differences into later steps, and a ReLU
-can change its active branch near zero. To investigate a discrepancy, compare the inputs and
-outputs of the first differing operation before attributing the final loss difference to the
-optimizer.
+A common seed fixes initialization and the example sequence, but not the order in which a backend
+adds partial sums. Updates can carry numerical differences into later steps, and a ReLU can change
+its active branch near zero. To investigate a discrepancy, compare the inputs and outputs of the
+first differing operation before attributing the final loss difference to the optimizer.
 
 # Executable Binary32 Arithmetic
 
@@ -496,23 +512,23 @@ scripts/lake.sh exe torchlean quickstart_mlp \
 ```
 
 The `ieee` path evaluates addition and multiplication with FloatLib binary32. Comparing the two
-implementations can expose errors
-in rounding or exceptional-value handling that a comparison of decimal output alone may miss.
-Formal floating-point models make these rules explicit
+implementations can expose errors in rounding or exceptional-value handling that a comparison of
+decimal output alone may miss. Formal floating-point models make these rules explicit
 {Informal.citep goldberg1991}[]. Flocq made such a model reusable inside a proof assistant
 {Informal.citep flocq2011}[], and the same group's later work connects such a model to the
 arithmetic a compiler actually emits {Informal.citep boldo2015}[]. FloatLib supplies the executable
 format and arithmetic used here. For higher precision, select a valid FloatLib binary format in
-typed CPU tensors and graphs; the trainer flag shown above remains fixed to binary32.
+typed CPU tensors and graphs, because the trainer flag shown above remains fixed to binary32.
 
 For typed training, `trainer.openTyped (α := α)` keeps inputs, state, predictions, and losses in
 the chosen scalar type on CPU. It rejects GPU devices and custom backend profiles. Supply
-`initialState?` when the parameters need precision beyond the seeded `Float` initializers;
-converting those initializers into a wider format does not add precision. Optimizer and scheduler
-coefficients are still configured in `Float` and converted into the selected scalar.
+`initialState?` when the parameters need precision beyond the seeded `Float` initializers, because
+converting those initializers into a wider format doesn't add precision. Even in typed training,
+optimizer and scheduler coefficients are configured in `Float` and converted into the selected
+scalar.
 
-The following embedded comparison runs two hundred steps with each arithmetic choice, holding
-the seed and dataset fixed. It also checks prediction equality:
+Next, an embedded comparison runs two hundred steps with each arithmetic choice, holding the seed
+and dataset fixed. It also checks prediction equality:
 
 ```lean (name := runNativeVsIeee)
 -- Keep the device fixed to compare the two binary32
@@ -533,37 +549,36 @@ the seed and dataset fixed. It also checks prediction equality:
 
 ```leanOutput runNativeVsIeee (whitespace := lax)
 dataset size = 25
-mean_loss(before training) = 0.495227
-mean_loss(after training) = 0.002402
+mean_loss(before training) = 0.629263
+mean_loss(after training) = 0.002308
 dataset size = 25
-mean_loss(before training) = 0.495227
-mean_loss(after training) = 0.002402
+mean_loss(before training) = 0.629263
+mean_loss(after training) = 0.002308
 native = steps=200 arithmetic=native scalar=Float32
-  loss=0.495227 -> 0.002402
+  loss=0.629263 -> 0.002308
 ieee   = steps=200 arithmetic=ieee scalar=ExecFloat.Binary 8 23
-  loss=0.495227 -> 0.002402
-native prediction = [0.228325]
-ieee   prediction = [0.228325]
+  loss=0.629263 -> 0.002308
+native prediction = [0.189033]
+ieee   prediction = [0.189033]
 predictions equal = true
 ```
 
-The held-out target can be checked without running either trainer. At `[0.25, -0.75]`, the sum of
+You can check the held-out target without running either trainer. At `[0.25, -0.75]`, the sum of
 the coordinates is `-0.5` and their difference `x₁ - x₀` is `-1`. Both ReLU terms in the target
-function therefore vanish, leaving its constant `0.2`. The common prediction `0.228325` is about
-`0.028325` above that target. The small final dataset loss and this remaining prediction error
-answer different questions, even though both came from the same trained parameters.
+function therefore vanish, leaving its constant `0.2`. The common prediction `0.189033` is about
+`0.010967` below that target. Even though both came from the same trained parameters, the small
+final dataset loss and this remaining prediction error answer different questions.
 
-Agreement on one model, one seed, and one dataset is a test result. A differential
-test between a hardware instruction and a bit-level implementation can expose rounding, tie,
-or sign errors exercised by its inputs and assertions. It says nothing about inputs we did not
-try. The theorem-side story lives in {ref "floats"}[Floating Point Semantics], where the
-proof-oriented `FP32` model and exact `Real` appear in statements rather than in `IO`, and where the
-finite and no-overflow bridge from `FP32` to FloatLib binary32 is stated. `FP32` rounds reals at
-binary32
-precision with gradual underflow, and it does not model overflow, NaN, infinity, or signed zero,
-which is why the bridge has hypotheses.
+Agreement on one model, one seed, and one dataset is a test result. A differential test between a
+hardware instruction and a bit-level implementation can expose rounding, tie, or sign errors
+exercised by its inputs and assertions. It says nothing about inputs we didn't try.
+{ref "floats"}[Floating Point Semantics] tells the theorem-side story: there the proof-oriented
+`FP32` model and exact `Real` appear in statements, not in `IO`, and the finite and no-overflow
+bridge from `FP32` to FloatLib binary32 is stated. `FP32` rounds reals at binary32 precision with
+gradual underflow, and it doesn't model overflow, NaN, infinity, or signed zero, which is why the
+bridge has hypotheses.
 
-The bit-level implementation can cost more than native arithmetic. Measure that cost on the
+FloatLib's bit-level implementation can cost more than native arithmetic. Measure that cost on the
 workload and hardware of interest, separating process startup from repeated execution. Record
 commands, software versions, thread settings, and the actual provider alongside timings so that
 others can reproduce the comparison.
@@ -592,19 +607,19 @@ def runIeeeCpu : Trainer.RunConfig :=
   { runCpu with arithmetic := ieee }
 
 def runCuda : Trainer.RunConfig :=
-  { runCpu with device := gpu }
+  { runCpu with device := cuda }
 
 /-- Bind a run configuration to an objective and a seed. -/
 def trainerFromRun (run : Trainer.RunConfig) :
     Trainer [2] [1] :=
-  Trainer.new runModel
+  Trainer.create runModel
     { run with objective := mse, seed := 2026 }
 
 #eval do
   let runs := [runCpu, runIeeeCpu, runCuda]
   runs.forM fun (run : Trainer.RunConfig) => do
-    IO.println
-      s!"{run.toConfig.deviceName} {run.arithmetic.cliName}"
+    let device := run.toConfig.device.cliName
+    IO.println s!"{device} {run.arithmetic.cliName}"
 ```
 
 ```leanOutput runConfigs (whitespace := lax)
@@ -613,21 +628,19 @@ cpu ieee
 cuda native
 ```
 
-The record update syntax makes `runIeeeCpu` and `runCuda` each differ from `runCpu` in exactly one
-field.
-`RunConfig` extends `Runtime.Config` with the optimizer and arithmetic, and `Trainer.Config`
+Record update syntax makes `runIeeeCpu` and `runCuda` each differ from `runCpu` in exactly one
+field. `RunConfig` extends `Session.Config` with the optimizer and arithmetic, and `Trainer.Config`
 extends `RunConfig` with the objective, so one record update such as
-`{ run with objective := mse, seed := 2026 }` produces a full `Trainer.Config`. This permits
-reuse of one runtime configuration across several objectives. `run.toConfig` is the
-`Runtime.Config` that the session layer actually validates, which is the value that
-`validateForExecution` inspects.
+`{ run with objective := mse, seed := 2026 }` produces a full `Trainer.Config`. That lets you reuse
+one runtime configuration across several objectives. `run.toConfig` is the `Session.Config` that
+the session layer actually validates, which is the value that `validateForExecution` inspects.
 
-The same syntax goes the other way: `{ runtime with optimizer := ... }` starts a `RunConfig` from a
-`Runtime.Config` parsed from the command line. A sweep therefore declares the model once, keeps
+Record updates go the other way too: `{ runtime with optimizer := ... }` starts a `RunConfig` from
+a `Session.Config` parsed from the command line. A sweep therefore declares the model once, keeps
 one base `RunConfig`, and derives each cell of the sweep from it.
 
-Constructing `runCuda` does not open CUDA. These labels print only the device and arithmetic fields
-of each record; they omit optimizer settings and provider overrides. Save those fields too when
+Constructing `runCuda` doesn't open CUDA. These labels print only the device and arithmetic fields
+of each record and omit optimizer settings and provider overrides. Save those fields too when
 comparing runs.
 
 # Graph Lowering And Direct Execution
@@ -636,19 +649,19 @@ The trainer runs on the tape and keeps no graph. When a program needs a typed gr
 take forward-mode derivatives, lower the model directly:
 
 ```lean (name := runGraphTypes)
--- Graph leaves contain state followed by input; the wrapper
--- separates them for callers.
-#check @nn.lowerToTypedGraph
+-- Graph leaves contain state followed by input, and the
+-- wrapper separates them for callers.
+#check @nn.Sequential.lowerToTypedGraph
 #check @nn.TypedGraphModel.forward
 ```
 
 ```leanOutput runGraphTypes (whitespace := lax)
-@Runtime.Autograd.Model.Layers.Seq.lowerToTypedGraph :
-  {σ τ : Shape} → (model : Runtime.Autograd.Model.Layers.Seq σ τ) →
-  optParam Runtime.Autograd.Model.Layers.Mode
-    Runtime.Autograd.Model.Layers.Mode.eval →
+@nn.Sequential.lowerToTypedGraph :
+  {σ τ : Shape} → (model : nn.Sequential σ τ) →
+  optParam nn.Mode
+    nn.Mode.eval →
   {α : Type} → [inst : Storage α] → [Context α] →
-  IO (Runtime.Autograd.Torch.TypedGraph α
+  IO (TypedGraph α
     (model.stateShapes ++ [σ]) τ)
 ```
 
@@ -656,36 +669,35 @@ take forward-mode derivatives, lower the model directly:
 @nn.TypedGraphModel.forward : {σ τ : Shape} → {α : Type} →
   [inst : Storage α] → {stateShapes : List Shape} →
   nn.TypedGraphModel stateShapes σ τ α →
-  nn.State α stateShapes → Tensor α σ → Tensor α τ
+  TensorPack α stateShapes → Tensor α σ → Tensor α τ
 ```
 
-`lowerToTypedGraph` returns a
-`TypedGraph α (model.stateShapes ++ [σ]) τ`, whose index is a flat list of every graph leaf:
-parameters first, then the model input. `nn.TypedGraphModel` is the model-facing view of exactly
-that type, and its `forward` splits the leaves back into `nn.State α stateShapes` and
-`Tensor α σ`. Nothing is converted; the second signature is a way of talking about the first that
-keeps the parameters and the input apart.
+`lowerToTypedGraph` returns a `TypedGraph α (model.stateShapes ++ [σ]) τ`, whose index is a flat
+list of every graph leaf: parameters first, then the model input. `nn.TypedGraphModel` is the
+model-facing view of that same type, and its `forward` splits the leaves back into
+`TensorPack α stateShapes` and `Tensor α σ`. Nothing is converted: the second signature is a way of
+talking about the first that keeps the parameters and the input apart.
 
 `nn.TypedGraphModel` is an `abbrev`, so it is transparent to dot
-notation. Writing `g.forward state input` resolves to the raw `TypedGraph.forward`, which wants one
-`TensorPack` over the concatenated leaves and will reject the two arguments. Call the model-facing
-wrappers by name, as below.
+notation. Writing `g.forward state input` resolves to the raw `TypedGraph.WithData.forward`, which
+wants one `TensorPack` over the concatenated leaves and the unit data `()`, and rejects the two
+arguments. Call the model-facing wrappers by name, as below.
 
 ```lean (name := runGraph)
 -- Zero parameter tangents isolate derivatives with respect
 -- to the input coordinates.
 #eval do
   let built := nn.build 2026 runModel
-  let g ← nn.lowerToTypedGraph built (α := Float)
+  let g ← nn.Sequential.lowerToTypedGraph built (α := Float)
   let state := nn.initialState built
-  let shapes := nn.stateShapes built
+  let shapes := nn.Sequential.stateShapes built
   let y := nn.TypedGraphModel.forward g state runPoint
   IO.println s!"forward = {y}"
   let (_, inputGradient) :=
     nn.TypedGraphModel.vjp g state runPoint [1.0]
   IO.println s!"input gradient = {inputGradient}"
   IO.println s!"parameter shapes = {shapes}"
-  let zero : nn.State Float shapes := nn.State.zeros
+  let zero : TensorPack Float shapes := .zero
   let jvp := nn.TypedGraphModel.jvp g state zero runPoint
   let d0 := jvp [1.0, 0.0]
   let d1 := jvp [0.0, 1.0]
@@ -693,50 +705,50 @@ wrappers by name, as below.
 ```
 
 ```leanOutput runGraph (whitespace := lax)
-forward = [-0.088261]
-input gradient = [0.263189, 0.205411]
+forward = [-0.047640]
+input gradient = [0.142060, 0.110873]
 parameter shapes = [[8, 2], [8], [1, 8], [1]]
-jvp along e₀ = [0.263189], jvp along e₁ = [0.205411]
+jvp along e₀ = [0.142060], jvp along e₁ = [0.110873]
 ```
 
-`forward = [-0.088261]` is the same number the runner printed as
-`untrained(heldout)` in every experiment above, which is a small consistency check that the lowered
-graph and the trainer agree on the model. The parameter shapes `[[8, 2], [8], [1, 8], [1]]` are the
-two weight matrices and two bias vectors of a `2 → 8 → 1` MLP, in declaration order.
+`forward = [-0.047640]` is the same number the runner printed as `untrained(heldout)` in every
+experiment above, which is a small consistency check that the lowered graph and the trainer agree
+on the model. And the parameter shapes `[[8, 2], [8], [1, 8], [1]]` are the two weight matrices and
+two bias vectors of a `2 → 8 → 1` MLP, in declaration order.
 
-The reverse mode pass, seeded with the output
-cotangent `[1.0]`, returns the input gradient `[0.263189, 0.205411]`. The two forward mode passes,
-seeded with the basis tangents `[1.0, 0.0]` and `[0.0, 1.0]` and a zero parameter tangent, return
-`[0.263189]` and `[0.205411]`. For a function with a one-dimensional output these must coincide,
-because both are computing the same $`1 \times 2` Jacobian, one row at a time from the left and one
-column at a time from the right. They coincide to the last printed digit. Comparing forward and
-reverse directional derivatives checks their agreement without requiring a separate symbolic
-derivative {Informal.citep baydin2018}[]. Retaining the graph lets all three calls use the same
-recorded operations.
+Seeded with the output cotangent `[1.0]`, the reverse mode pass returns the input gradient
+`[0.142060, 0.110873]`. The two forward mode passes, seeded with the basis tangents `[1.0, 0.0]`
+and `[0.0, 1.0]` and a zero parameter tangent, return `[0.142060]` and `[0.110873]`. For a function
+with a one-dimensional output these must coincide, because both are computing the same
+$`1 \times 2` Jacobian, one row at a time from the left and one column at a time from the right.
+They coincide to the last printed digit. Comparing forward and reverse directional derivatives
+checks their agreement without requiring a separate symbolic derivative
+{Informal.citep baydin2018}[]. Retaining the graph lets all three calls use the same recorded
+operations.
 
-Two lifetimes to keep straight. `nn.lowerToTypedGraph` hands you a graph that lives as long as the
-reference does. An eager session instead records one tape per recording phase, and `resetTape`
-starts a fresh one. When the graph itself must survive across calls, lower it.
+Two lifetimes to keep straight. `nn.Sequential.lowerToTypedGraph` hands you a graph that lives as
+long as the reference does. An eager session instead records one tape per recording phase, and
+`resetTape` starts a fresh one. When the graph itself must survive across calls, lower it.
 
-The example explicitly uses `Float`; it should not be read as another execution of the trainer's
-binary32 comparison, despite the similar printed initial prediction.
+This example runs in `Float`, so it isn't another execution of the trainer's binary32 comparison,
+despite the similar printed initial prediction.
 
 # Device And Provider Profiles
 
 Ordinary code selects a device and lets TorchLean resolve the maintained profile for it. Advanced
 code can select a complete profile with `withBackendProfile`, choosing provider preference,
-assurance policy, VJP ownership, target availability, and capsule modules together. Calling
+assurance policy, VJP ownership, target availability, and implementation tables together. Calling
 `withDevice` afterwards clears that override, which is deliberate: a device name and a hand-built
 profile are two ways to answer the same question, and the last answer wins rather than silently
 merging.
 
 {ref "backend-selection"}[Backend Selection] follows an operation request through provider
-selection, contract checks, and binding to a runtime handler.
+selection, contract checks, and the implementation that runs it.
 
 # Train And Evaluation Mode
 
-The high-level `Trainer.Session` selects mode from the operation you call. Lower-level module APIs
-also provide explicit mode setters:
+At the high level, `Trainer.Session` selects mode from the operation you call. Lower-level module
+APIs also provide explicit mode setters:
 
 :::table +header
 *
@@ -764,14 +776,14 @@ reports, for the summary prediction, and for later calls to `Trainer.Result.pred
 independent of device and execution choice: a CUDA session switches mode without changing the model
 architecture or the provider profile.
 
-`step` returns `Unit` by default, so an update does not read the loss back to the host. Add
-`(loss := true)` when the caller needs the loss from that update. The `batch` flag selects a
-nonempty array of samples; it does not change training mode.
+`step` returns `Unit` by default, so an update doesn't read the loss back to the host. Add
+`(loss := true)` when the caller needs the loss from that update. Setting the `batch` flag selects
+a nonempty array of samples, but it doesn't change training mode.
 
 Dropout {Informal.citep dropout2014}[] makes the effect of mode visible. During training it samples
-a mask; during evaluation it applies its deterministic inference behavior. The next block inserts
-dropout between the MLP's hidden activation and output layer, then evaluates the same dataset
-through both session paths:
+a mask, while during evaluation it applies its deterministic inference behavior. In the next block
+we insert dropout between the MLP's hidden activation and output layer, then evaluate the same
+dataset through both session paths:
 
 ```lean (name := runDropout)
 -- Evaluate before the batch update so the mode comparison
@@ -779,11 +791,11 @@ through both session paths:
 /-- The same MLP with one dropout layer. -/
 def runDropoutModel (p : Float) :
     nn.Builder (nn.Sequential [2] [1]) :=
-  nn.Sequential![nn.linear 2 8, nn.relu, nn.dropout p,
+  nn.Sequential![nn.linear 2 8, nn.op .relu, nn.dropout p,
     nn.linear 8 1]
 
 def runDropoutTrainer (p : Float) : Trainer [2] [1] :=
-  Trainer.new (runDropoutModel p)
+  Trainer.create (runDropoutModel p)
     { objective := mse
       optimizer := optim.adam { lr := 0.03 }
       seed := 2026 }
@@ -804,29 +816,30 @@ def runDropoutTrainer (p : Float) : Trainer [2] [1] :=
 
 ```leanOutput runDropout (whitespace := lax)
 p = 0.000000
-  evaluation mode 0.495227
-  training mode   0.495227
-  gap * 1e9 = -29.355288
+  evaluation mode 0.629263
+  training mode   0.629263
+  gap * 1e9 = -57.220459
 p = 0.500000
-  evaluation mode 0.761530
-  training mode   0.307745
-  gap * 1e9 = -453785276.710987
+  evaluation mode 0.360462
+  training mode   0.495756
+  gap * 1e9 = 135293566.733599
 ```
 
 Read the gaps, not the printed losses. At `p = 0.0` the layer is the identity in both modes and the
-two numbers print the same to six decimals, yet the gap is `-2.9e-8` rather than zero.
-`eval` converts per-sample losses to `Float` and averages them there; `step` with `(batch := true)`
-uses the runtime scalar for its batch reduction. This comparison changes both reduction structure
-and the precision of the final average, so it does not isolate summation order alone.
+two numbers print the same to six decimals, yet the gap is a nonzero `-5.7e-8`. `eval` converts
+per-sample losses to `Float` and averages them there, while `step` with `(batch := true)` uses the
+runtime scalar for its batch reduction. This comparison changes both reduction structure and the
+precision of the final average, so it doesn't isolate summation order alone.
 
-At `p = 0.5` the much larger gap illustrates the effect of training-mode dropout in this example.
-The `p = 0` result is a useful control, not a universal bound on floating point discrepancies.
+At `p = 0.5` the much larger gap illustrates the effect of training-mode dropout in this example,
+while the `p = 0` result is a useful control, not a universal bound on floating point
+discrepancies.
 
-Repeating the `p = 0.5` measurement in freshly opened sessions gives the same result for this seed.
-The builder derives the dropout layer's seed from the model build seed. This demonstrates seeded
-reproducibility; it does not establish independence of masks across calls. `Session.save` saves
-model state; it does not save the optimizer history, loader position, or random stream needed for
-exact training resume. The lower-level `Checkpoint.Optimizer.save` separately supports backend-owned
+Repeating the `p = 0.5` measurement in freshly opened sessions gives the same result for this seed:
+the builder derives the dropout layer's seed from the model build seed. This demonstrates seeded
+reproducibility, but it doesn't establish independence of masks across calls. `Session.save` saves
+model state, but not the optimizer history, loader position, or random stream needed for exact
+training resume. At a lower level, `Checkpoint.Optimizer.save` separately supports backend-owned
 CUDA Adam/AdamW state and its eager random counter.
 
 Compare PyTorch, where the same distinction exists but is carried by a mutable attribute
@@ -851,24 +864,24 @@ True
 
 Three calls to the same object on the same input give three different answers, then the same call
 becomes deterministic after `net.eval()`. In PyTorch, mode is a flag on the module and defaults to
-training. In TorchLean,
-`Trainer.Session` chooses the mode for these operations, while lower-level APIs require the caller
-to select it. The example derives training-mode randomness from the build seed.
+training. In TorchLean, `Trainer.Session` chooses the mode for these operations, while lower-level
+APIs require the caller to select it. Our example derives its training-mode randomness from the
+build seed.
 
-The mode also determines which random state the reverse rule must retain. Consider the operation
+Mode also determines which random state the reverse rule must retain. Consider the operation
 
 $$`y=\operatorname{Dropout}_{p}(x)`.
 
 During training a mask is realized and retained for the backward rule. Re-running the backward pass
-with a freshly sampled mask would not differentiate the forward value that was actually computed; it
-would differentiate a different function with the same input and output shapes. The reverse rule
-must therefore retain the realized mask or enough state to reproduce that exact draw.
+with a freshly sampled mask wouldn't differentiate the forward value that was actually computed. It
+would differentiate a different function with the same input and output shapes. So the reverse rule
+must retain the realized mask, or enough state to reproduce that exact draw.
 
-Each dropout measurement starts a fresh session and evaluates before performing the batch update.
-Within that session, the evaluation and the training loss therefore refer to the same initial
-parameter state. The training loss is produced as part of the update; it is not a second evaluation
-of the updated model. Evaluating after the update would mix the effect of mode with the effect of
-changed parameters.
+Each dropout measurement starts a fresh session and evaluates before performing the batch update,
+so within that session the evaluation and the training loss refer to the same initial parameter
+state. The training loss is produced as part of the update and isn't a second evaluation of the
+updated model. Evaluating after the update would mix the effect of mode with the effect of changed
+parameters.
 
 # Dynamic Control Flow And Typed Graphs
 
@@ -876,9 +889,9 @@ A fixed typed model graph needs its operation structure and its shapes to be kno
 recorded. A program that reads a token value and then changes that structure cannot be represented
 by this recorder as one fixed graph.
 
-This differs from a scalar conditional inside a tensor computation. The
+A scalar conditional inside a tensor computation is a different matter. TorchLean's
 {ref "custom-computations"}[custom computation frontend] supports `if` expressions on tensor
-elements on CPU and GPU. The conditional stays in the scalar program; it does not change the
+elements on CPU and GPU, and such a conditional stays in the scalar program: it doesn't change the
 model graph's nodes or shapes.
 
 Tracing and export illustrate why this restriction matters. Consider a function whose branch
@@ -914,11 +927,11 @@ graph(%x : Float(2, strides=[1], requires_grad=0, device=cpu)):
   return (%6)
 ```
 
-The recorded graph contains one `aten::mul` and no comparison. It therefore returns `[-2.0, -2.0]`
-on the negative input, where the original function takes the unrecorded `else` branch and returns
-`[-101.0, -101.0]`. Matching the input shape did not preserve the input-dependent choice.
+The recorded graph contains one `aten::mul` and no comparison, so on the negative input it returns
+`[-2.0, -2.0]`, where the original function takes the unrecorded `else` branch and returns
+`[-101.0, -101.0]`. Matching the input shape didn't preserve the input-dependent choice.
 
-The modern export path refuses instead:
+PyTorch's modern export path refuses instead:
 
 ```
 >>> # Ask export to retain a branch whose decision depends
@@ -935,46 +948,45 @@ The partial graph ends at `torch.ops.aten.item.default`: evaluating the branch c
 a tensor value that is not determined by the input shape.
 
 TorchLean's typed graph recorder supports a fixed operation structure and rejects unsupported
-recording operations. Its shape indices check tensor dimensions and references; they do not prove
-that an arbitrary frontend program preserves data-dependent branching. A fixed graph must represent
-the intended choice explicitly rather than specialize it to one sample's values.
+recording operations. Its shape indices check tensor dimensions and references, but they don't
+prove that an arbitrary frontend program preserves data-dependent branching. A fixed graph must
+represent the intended choice explicitly, not specialize it to one sample's values.
 
 Data-dependent structure can remain in an eager frontend that supports it. Other options are to
 express the choice as a supported tensor operation, such as a mask or select, or record separate
 static branches and choose between them at runtime. In each case, the implementation must preserve
 the choice on subsequent inputs.
 
-Agreement on several positive-sum inputs would not expose this trace's defect: all of them follow
-the branch that recording retained. A useful probe crosses the decision boundary while keeping
-the tensor shape fixed. The negative input above does exactly that. More generally, validating a
+Agreement on several positive-sum inputs wouldn't expose this trace's defect: all of them follow
+the branch that recording retained. A useful probe crosses the decision boundary while keeping the
+tensor shape fixed, which is what the negative input above does. More generally, validating a
 captured program requires inputs that distinguish its possible behaviors, not just repeated
 examples from the region in which it was captured.
 
-A branch on a fixed model configuration can be resolved while constructing a graph. A branch on
-a future tensor value needs a representation of that decision in the executable program. The
-polymorphic TorchLean function interface uses opaque tensor references even with an eager handler;
-it does not expose their elements as ordinary Lean booleans. Supporting that style of dynamic
-control flow would require an appropriate frontend and runtime interface, beyond the current model
-API.
+A branch on a fixed model configuration can be resolved while constructing a graph, but a branch on
+a future tensor value needs a representation of that decision in the executable program.
+TorchLean's polymorphic function interface uses opaque tensor references even when run eagerly, and
+it doesn't expose their elements as ordinary Lean booleans. Supporting that style of dynamic
+control flow would require an appropriate frontend and runtime interface, which the model API
+doesn't provide.
 
 # Unsupported Runtime Configurations
 
-The following requests fail at different configuration boundaries. The
-messages are wrapped here to fit the page; each is a single line in the terminal.
+The requests below fail at different configuration boundaries. Their messages are wrapped here to
+fit the page, and each is a single line in the terminal.
 
-An unimplemented device:
+An unknown device:
 
 ```terminal +output
-$ # Request a recognized device that has no maintained
-$ # runtime profile.
+$ # Request a device name the parser doesn't know.
 $ scripts/lake.sh exe torchlean quickstart_mlp --device metal --steps 1
-error: quickstart_mlp: device `metal` has no
-maintained runtime profile; use a programmatic backend profile
+error: quickstart_mlp: unknown device metal (known devices:
+cpu|gpu|cuda)
 ```
 
-An arithmetic the lower dispatcher can execute but the supervised trainer cannot use,
-`--arithmetic complex`, is refused when the flags are parsed; {ref "cli"}[Command-Line Reference]
-shows the message.
+An arithmetic the lower dispatcher can execute but the supervised trainer can't use,
+`--arithmetic complex`, is refused when the flags are parsed (the {ref "cli"}[Command-Line
+Reference] shows the message).
 
 A CUDA build with no visible device:
 
@@ -987,12 +999,12 @@ this is a CUDA build, but no usable CUDA device is visible
 ```
 
 That last message distinguishes the two failure modes it could be reporting. A build without
-LibTorch says so and tells you to rebuild with `-K cuda=true`; a real CUDA build with no
-device says that instead. Both refuse, and both are raised when the session opens rather than when
+LibTorch says so and tells you to rebuild with `-K cuda=true`, while a real CUDA build with no
+device gives the message above. Both refuse, and both are raised when the session opens, not when
 the flags are parsed, so session validation checks programmatic configurations as well as
 command-line requests.
 
-The rejection is a value in Lean, so this page can exhibit one without a terminal. A
+Because the rejection is a value in Lean, we can exhibit one here without a terminal. A
 configuration built in code passes no flag parser, so the same complex-arithmetic request fails
 when the session opens:
 
@@ -1001,7 +1013,7 @@ when the session opens:
 -- catch the session-opening failure.
 #eval do
   try
-    let trainer := Trainer.new runModel
+    let trainer := Trainer.create runModel
       { objective := mse, arithmetic := complex,
         seed := 2026 }
     let _ ← trainer.train runData
@@ -1017,10 +1029,10 @@ rejected: TorchLean.Trainer: supervised training supports real
 ```
 
 The general rule covers more than these three. CUDA in a CPU-only build, proof-only arithmetic in
-`IO`, and an operation with no admissible capsule all fail
-rather than quietly changing the requested configuration behind the caller's back. These failures
-help protect benchmark provenance. Record the accepted configuration and actual provider so that
-a requested device is not mistaken for evidence of where an operation ran.
+`IO`, and an operation with no admissible capsule all fail instead of quietly changing the
+requested configuration behind the caller's back. These failures help protect benchmark provenance.
+Record the accepted configuration and actual provider so that a requested device isn't mistaken for
+evidence of where an operation ran.
 
 # Choosing A Configuration
 
@@ -1051,8 +1063,9 @@ a requested device is not mistaken for evidence of where an operation ran.
   * the IR semantics, no trainer profile
 :::
 
-The final row lowers a model to `NN.IR.Graph` for semantic inspection and proof. See
-{ref "spec-layer"}[The Specification Layer] for how to reason about that graph.
+For the final row, TorchLean lowers a model to a graph of registered operators (`IR.Graph`)
+for semantic inspection and proof. See {ref "spec-layer"}[The Specification Layer] for how to
+reason about that graph.
 
 # Reproducible Comparisons
 
@@ -1069,15 +1082,16 @@ checkpoint and code revision
 ```
 
 Without those, two loss curves may be incomparable even when both are labelled "TorchLean float32".
-The batching comparison has a nonzero gap that a six-decimal summary hides. Provider and
-reduction-policy metadata help investigate such differences; exact buffer comparisons and
-controlled experiments are needed to explain them.
+The batching comparison, for instance, has a nonzero gap that a six-decimal summary hides. Provider
+and reduction-policy metadata help investigate such differences, but explaining them takes exact
+buffer comparisons and controlled experiments.
 
 Sources:
 
-- {src "NN/API/Trainer/Core.lean"}[Trainer/Core.lean], the `RunConfig` record;
-- {src "NN/API/Trainer/Session.lean"}[Session.lean], the single session choke point;
-- {src "NN/Runtime/Autograd/Torch/Core/Types.lean"}[Types.lean], `validateForExecution`;
-- {src "NN/Runtime/Autograd/Torch/Core/Session.lean"}[Session.lean], capsule reporting;
-- {src "NN/Backend/Report.lean"}[Report.lean], the evidence lines;
-- {src "NN/Examples/Quickstart/SimpleMlpTrain.lean"}[SimpleMlpTrain.lean], the runnable example.
+- {src "TorchLean/NN/Trainer.lean"}[NN/Trainer.lean], the `RunConfig` record
+- {src "TorchLean/NN/Trainer/Session.lean"}[Session.lean], the single session choke point
+- {src "TorchLean/NN/Session/Config.lean"}[Config.lean], `validateForExecution`
+- {srcDir "TorchLean/NN/Session"}[Session/], capsule reporting
+- {src "TorchLean/NN/Backend/Report.lean"}[Report.lean], the evidence lines
+- {src "TorchLeanExamples/Quickstart/MLP.lean"}[MLP.lean], the runnable
+  example.

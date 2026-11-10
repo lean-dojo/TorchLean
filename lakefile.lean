@@ -9,7 +9,8 @@ import Lake.Util.Proc
 open Lake DSL
 open System
 
-/-- Whether Lake should link the LibTorch CUDA backend instead of the unavailable-backend shim. -/
+/-- Whether the build links the LibTorch CUDA backend, selected by `-K cuda=true` or `-K cuda=1`.
+Any other value, and the default, links the unavailable-backend shim. -/
 private def cudaEnabled : Bool :=
   let value := (get_config? cuda).getD "false"
   value == "true" || value == "1"
@@ -36,15 +37,19 @@ package TorchLean where
 /-!
 ## Native backend libraries
 
-`-K cuda=true` builds one LibTorch C++ library containing the numerical C ABI exports. CMake obtains
-the ABI, language standard, libraries, and runtime paths from the selected SDK. The default build
-needs neither LibTorch nor a CUDA toolkit: it links a small C file that reports the backend as not
-linked and rejects GPU computation. Status and memory queries remain available.
+`-K cuda=true` builds one LibTorch C++ library containing the numerical C ABI exports, and CMake
+obtains its ABI, language standard, libraries, and runtime paths from the selected SDK. The default
+build needs neither LibTorch nor a CUDA toolkit: it links a small C file that reports the backend
+as not linked and rejects GPU computation. Status and memory queries work in both builds, and
+without LibTorch the memory statistics read zero.
 -/
 
 /--
-Resolve a compiler and trace its contents, so replacing it invalidates cached native objects.
-Preserve the invocation path: a `clang++` symlink can select a different mode from `clang`.
+Finds the compiler `name` (on `PATH` when it is a bare name) and traces its invocation path,
+resolved path and file hash, so replacing the compiler invalidates cached native objects. The job
+takes the first candidate that runs `--version` with exit code 0, so a file that cannot be executed
+is skipped. It returns the invocation path with symlinks unresolved, because a `clang++` symlink can
+select a different mode from `clang`.
 -/
 private def nativeCompilerJob (name : String) : SpawnM (Job FilePath) := Job.async do
   let path := FilePath.mk name
@@ -57,11 +62,12 @@ private def nativeCompilerJob (name : String) : SpawnM (Job FilePath) := Job.asy
   for candidate in candidates do
     if (← candidate.pathExists) && !(← candidate.isDir) then
       let compiler := candidate.normalize
-      let resolved ← IO.FS.realPath compiler
-      addPureTrace (compiler.toString, resolved.toString) "native tool paths"
-      addTrace (.ofHash (← computeFileHash resolved) resolved.toString)
-      return compiler
-  error s!"native compiler not found: {name}"
+      if (← testProc { cmd := compiler.toString, args := #["--version"] }) then
+        let resolved ← IO.FS.realPath compiler
+        addPureTrace (compiler.toString, resolved.toString) "native tool paths"
+        addTrace (.ofHash (← computeFileHash resolved) resolved.toString)
+        return compiler
+  error s!"native compiler not found: no candidate for {name} runs `--version`"
 
 /-- Numerical CUDA primitives built and linked with the selected LibTorch SDK. -/
 target torchlean_libtorch pkg : FilePath := do
@@ -77,7 +83,8 @@ target torchlean_libtorch pkg : FilePath := do
       let path := (config.getD "").trimAscii.toString
       if !path.isEmpty then
         args := args.push s!"--{flag}={path}"
-    -- The helper checks SDK/tool/source contents even when Lake previously built this target.
+    -- Each time a build needs this target, cache hits included, the helper runs and rebuilds
+    -- through CMake when the SDK, a tool, a flag or a source file has changed.
     let fingerprint ← captureProc { cmd := "python3", args := args }
     addPureTrace fingerprint "LibTorch SDK, compiler, flags, and native sources"
     addTrace (← getLeanTrace)
@@ -86,7 +93,8 @@ target torchlean_libtorch pkg : FilePath := do
     addTrace (.ofHash (← computeFileHash output) output.toString)
     return output
 
-/-- Object shared by the static executable link and the dynamic elaborator library. -/
+/-- `csrc/cpu/torchlean_tensor.c` compiled once with `-fPIC`, as one object file shared by the
+static executable link and the dynamic elaborator library. -/
 target torchlean_tensor_cpu_object pkg : FilePath := do
   let lean ← getLeanInstall
   let srcJob ← inputFile
@@ -109,7 +117,8 @@ target torchlean_tensor_cpu_shared pkg : Dynlib := do
   let libFile := pkg.sharedLibDir / nameToSharedLib libName
   buildLeanSharedLib libName libFile #[oJob] #[]
 
-/-- GPU ABI exports for builds without LibTorch: status reports "not linked", calls fail. -/
+/-- GPU ABI exports for builds without LibTorch: the status query reports the backend as not
+linked, IO constructors return an error and pure operations panic. -/
 target torchlean_libtorch_unavailable pkg : FilePath := do
   let lean ← getLeanInstall
   let srcJob ← inputFile (pkg.dir / "csrc/libtorch/unavailable.c") false
@@ -121,7 +130,8 @@ target torchlean_libtorch_unavailable pkg : FilePath := do
     buildO oFile source #["-I", lean.includeDir.toString] #["-O2", "-fPIC"] compiler getLeanTrace
   buildStaticLib (pkg.buildDir / nameToStaticLib "torchlean_libtorch_unavailable") #[oJob]
 
-/-- Build the pinned Linux allocator with shared-library TLS and the arena purge-wakeup repair. -/
+/-- Lean's pinned mimalloc for Linux links, compiled by `scripts/lean_allocator.py` with PIC,
+initial-exec TLS (so shared libraries can use it) and the arena purge-wakeup repair. -/
 target torchlean_allocator pkg : FilePath := do
   let lean ← getLeanInstall
   let buildScript := pkg.dir / "scripts/lean_allocator.py"
@@ -141,64 +151,92 @@ target torchlean_allocator pkg : FilePath := do
           "--compiler", compiler.toString, "--output", output.toString]
       }) getLeanTrace
 
+-- Libraries: one per module root, in the order TorchLean.Tensor < TorchLean.CUDA < TorchLean.NN
+-- < TorchLean.Verify < TorchLeanExamples. A module imports only modules of its own library or of
+-- earlier ones, and TorchLeanTest may import any library. The layering gate of
+-- `scripts/checks/dependency_audit.py`, run by `scripts/lake.sh lint` and CI, checks this order.
+
+/-- Tensors, shapes, the operator table and its specifications, and the packed CPU kernels. -/
 @[default_target]
-lean_lib NN where
+lean_lib TorchLean.Tensor where
+  roots := #[]
+  globs := #[.submodules `TorchLean.Tensor]
   moreLinkObjs :=
-    (if Platform.isLinux then (#[torchlean_allocator] : TargetArray FilePath) else #[]) ++
-    (#[torchlean_tensor_cpu] : TargetArray FilePath) ++
-      if cudaEnabled then
-        (#[torchlean_libtorch] : TargetArray FilePath)
-      else
-        (#[torchlean_libtorch_unavailable] : TargetArray FilePath)
-  -- The reusable library follows its canonical umbrella. Examples, tests, CI-only modules,
-  -- documentation, and executable roots have separate targets below.
-  roots := #[`NN]
+    -- Embedders that link Lean's shared runtime (`-K sharedRuntime=true`) must use its allocator,
+    -- so only Linux builds against the static runtime link the pinned one.
+    (if Platform.isLinux && (get_config? sharedRuntime).getD "false" != "true" then
+      (#[torchlean_allocator] : TargetArray FilePath) else #[]) ++
+    (#[torchlean_tensor_cpu] : TargetArray FilePath)
 
-/-- Runnable and narrative examples, kept out of the reusable `NN` library target. -/
-lean_lib NNExamples where
-  roots := #[`NN.Examples]
-  globs := #[.one `NN.Examples, .submodules `NN.Examples]
+/-- The LibTorch/CUDA boundary: GPU `@[extern]` declarations, CUDA source generation and the native
+link. Without `-Kcuda=true` it links the stub that reports the backend as not linked. -/
+@[default_target]
+lean_lib TorchLean.CUDA where
+  roots := #[]
+  globs := #[.submodules `TorchLean.CUDA]
+  moreLinkObjs :=
+    if cudaEnabled then (#[torchlean_libtorch] : TargetArray FilePath)
+    else (#[torchlean_libtorch_unavailable] : TargetArray FilePath)
 
-/-- Test modules used by the curated native test runner. -/
-lean_lib NNTests where
-  roots := #[`NN.Tests.Suite]
-  globs := #[.submodules `NN.Tests]
+/-- Autograd and the tape, the runtime and API, the IR with import and export, and their proofs. -/
+@[default_target]
+lean_lib TorchLean.NN where
+  roots := #[]
+  globs := #[.submodules `TorchLean.NN]
 
-/-- Ordinary CI-only imports omitted from the downstream `NN` umbrella. -/
-lean_lib NNCI where
-  roots := #[`NN.CI.All]
+/-- CROWN and IBP, certificates, and roundoff proofs. -/
+@[default_target]
+lean_lib TorchLean.Verify where
+  roots := #[]
+  globs := #[.submodules `TorchLean.Verify]
 
-/-- Complete maintained API documentation surface. -/
-lean_lib TorchLeanDocs where
-  roots := #[`NN.Docs]
+/-- Runnable and narrative examples, and the roots of the `verify` and `torchlean` executables. -/
+lean_lib TorchLeanExamples where
+  roots := #[]
+  globs := #[.submodules `TorchLeanExamples]
 
--- Unified verification CLI registry: `scripts/lake.sh exe verify -- <tool> [args...]`
+/-- Tests run by `scripts/lake.sh test`. -/
+lean_lib TorchLeanTest where
+  roots := #[]
+  globs := #[.submodules `TorchLeanTest]
+
+-- Verification tools: `scripts/lake.sh exe verify -- <tool> [args...]`.
 lean_exe verify where
-  root := `NN.Verification.Main
+  root := `TorchLeanExamples.Verification.Main
 
 -- Native runner for `scripts/lake.sh test`, including tests that call backend externs.
 lean_exe nn_tests_suite where
-  root := `NN.Tests.Suite
+  root := `TorchLeanTest.Suite
 
--- Developer-only arithmetic check, outside the public NN import surface.
+-- Developer-only arithmetic check.
 lean_exe native_float32_parity where
-  root := `NN.Tests.Floats.NativePrimitiveParityMain
+  root := `TorchLeanTest.Floats.NativePrimitivesMain
 
--- Repo-policy lints (header hygiene, banned constructs, etc.) via `scripts/lake.sh lint`.
+-- Tree kernel checks on the host and, with LibTorch, on the device.
+lean_exe tree_tests where
+  root := `TorchLeanTest.Tree.Main
+
+-- Repository policy, layering and library checks: `scripts/lake.sh lint`. Lake builds the
+-- libraries first, because the library check imports them.
 lean_exe torchlean_lint where
   srcDir := "scripts/checks"
   root := `TorchLeanLint
+  needs := #[TorchLean.Tensor, TorchLean.CUDA, TorchLean.NN, TorchLean.Verify, TorchLeanExamples,
+    TorchLeanTest]
 
 -- Runnable examples: `scripts/lake.sh exe torchlean <example> [args...]`.
 -- Build with `scripts/lake.sh -Kcuda=true build` before passing `--device cuda` to an example.
 lean_exe torchlean where
-  root := `NN.Examples.RunnerMain
+  root := `TorchLeanExamples.RunnerMain
 
 -- Shared executable numerical formats and refinement proofs.
 require floatlib from git
   "https://github.com/lean-dojo/FloatLib" @ "main"
 
--- Complete API documentation (HTML) via `scripts/lake.sh build TorchLeanDocs:docs`.
+-- API documentation (HTML): `build TorchLean.Tensor:docInfo TorchLean.CUDA:docInfo
+-- TorchLean.NN:docInfo TorchLean.Verify:docInfo TorchLeanExamples:docInfo +FloatLib:docInfo`,
+-- then `exe doc-gen4 fromDb` with no module roots (scripts/docs/build_site.sh). A
+-- library's `:docs` facet renders only its root modules.
 require «doc-gen4» from git
   "https://github.com/leanprover/doc-gen4" @ "v4.35.0"
 

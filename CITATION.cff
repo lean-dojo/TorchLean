@@ -17,11 +17,12 @@ authors:
   - family-names: "Anandkumar"
     given-names: "Anima"
     affiliation: "California Institute of Technology"
+version: "0.1.0"
 url: "https://github.com/lean-dojo/TorchLean"
 repository-code: "https://github.com/lean-dojo/TorchLean"
 license: "MIT"
 preferred-citation:
-  type: article
+  type: generic
   title: "TorchLean: Formalizing Neural Networks in Lean"
   authors:
     - family-names: "George"
@@ -42,6 +43,6 @@ preferred-citation:
   year: 2026
   url: "https://arxiv.org/abs/2602.22631"
   identifiers:
-    - type: other
-      value: "arXiv:2602.22631"
-      description: "arXiv preprint identifier"
+    - type: doi
+      value: "10.48550/arXiv.2602.22631"
+      description: "DOI of the arXiv preprint"

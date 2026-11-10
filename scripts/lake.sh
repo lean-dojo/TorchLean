@@ -30,7 +30,8 @@ set_config_flag() {
       esac
       ;;
     libtorch_home)
-      # Match Lake's whitespace normalization; an empty override uses the environment/default.
+      # Trim surrounding whitespace as Lake does. An empty override falls back to the
+      # environment or the default.
       value="${value#"${value%%[![:space:]]*}"}"
       value="${value%"${value##*[![:space:]]}"}"
       libtorch_home="$value"
@@ -88,8 +89,6 @@ fi
 
 if [[ -n "${TORCHLEAN_BUILD_ROOT:-}" ]]; then
   build_root="$TORCHLEAN_BUILD_ROOT"
-elif [[ -d /mnt/build && -w /mnt/build ]]; then
-  build_root="/mnt/build/TorchLean"
 else
   build_root="${XDG_CACHE_HOME:-$HOME/.cache}/torchlean/build"
 fi
@@ -138,8 +137,8 @@ if ! command -v "$lean_bin" >/dev/null 2>&1; then
   exit 127
 fi
 if [[ "$cuda" == true ]]; then
-  # CMake owns CUDA SDK discovery. TorchLean builds only C++ sources; there is no independent
-  # nvcc prerequisite here. The selected LibTorch package may itself require a CUDA toolkit.
+  # CMake owns CUDA SDK discovery. TorchLean builds only C++ sources, so the wrapper does not
+  # require nvcc. The selected LibTorch package may itself require a CUDA toolkit.
   declare -a sdk_args=(--package-dir "$repo_root" --resolve-home)
   if [[ -n "$libtorch_home" ]]; then
     sdk_args+=("--libtorch-home=$libtorch_home")
@@ -184,16 +183,16 @@ EOF
 }
 
 use_build_dir "$repo_root" "$build_dir"
-if [[ "$repo_root" == "$default_repo_root/home_page/blueprint" ]]; then
-  # The blueprint's path dependency explicitly requests cuda=false. Its default buildDir uses
-  # this symlink, which may still point at CUDA artifacts from the last root-package invocation.
+if [[ "$repo_root" == "$default_repo_root/home_page/blueprint" ||
+      "$repo_root" == "$default_repo_root/bindings/python" ]]; then
+  # These path dependencies request cuda=false. Their default buildDir resolves through this
+  # symlink, which may point at the CUDA artifacts of the last root-package invocation.
   use_build_dir "$default_repo_root" "$(build_dir_for "$default_repo_root" cpu)"
 fi
 
 lean_prefix="$("$lean_bin" --print-prefix)"
 lean_system_lib="$lean_prefix/lib"
 lean_library_lib="$lean_prefix/lib/lean"
-export TORCHLEAN_BUILD_DIR="$build_dir"
 export LD_LIBRARY_PATH="$lean_system_lib:$lean_library_lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 if [[ "$repo_root" == "$default_repo_root" ]]; then

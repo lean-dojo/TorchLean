@@ -1,27 +1,32 @@
 import VersoManual
-import NN.Proofs.Probability.DiffusionForward
-import NN.Proofs.Gradients.Linear
-import NN.Proofs.Gradients.Activation
-import NN.Proofs.Autograd.FDeriv.Core
-import NN.Tensor
+import TorchLean.NN.Models.Diffusion.ForwardProcess.Gaussian
+import TorchLean.NN.Gradients.Linear
+import TorchLean.NN.Gradients.Activation
+import TorchLean.NN.FDeriv
+import TorchLean.Tensor.Einops.Elab.Einsum
+import TorchLean.Tensor.Einops.Elab.Pack
+import TorchLean.Tensor.Literal
+import TorchLean.Tensor.Einops.Elab.Transform
+import TorchLean.Tensor.Tactic.Einops.Report
+import TorchLean.Tensor.LinearAlgebra
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
+import TorchLean.Tensor.Constructors
 
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 
--- The declarations on this page live in four namespaces: the executable tensor specs in `Spec`, the
--- spec identities and calculus lemmas in `Proofs`, the measure-theoretic layer in
--- `NN.Proofs.Probability`, and the Fréchet-derivative layer in `Proofs.Autograd`. Opening all four
--- keeps the printed signatures close to what a caller would actually type, and keeps the displayed
--- code inside Verso's narrow column.
+-- The declarations on this page live under `TorchLean`: the linear-layer specs and gradient
+-- identities in `Linear`, the tensor helpers in `Tensor`, the activation calculus in `Activation`
+-- and `Context`, the measure-theoretic layer in `Diffusion`, and the Fréchet-derivative layer in
+-- `VJPOp` and `Vec`. Opening them keeps the printed signatures close to what a caller would
+-- actually type, and keeps the displayed code inside Verso's narrow column.
 open TorchLean
-open Spec
-open Proofs
+open Linear Tensor
+open Activation Context
 open MeasureTheory ProbabilityTheory
-open NN.Proofs.Probability
-open Proofs.Autograd
-open scoped Autograd
+open Diffusion
+open VJPOp Vec
 
 -- A few signatures below are wider than this file's 100-column limit, so their `leanOutput` blocks
 -- ask for `whitespace := lax` and are wrapped in the source. The rendered page still shows each
@@ -38,9 +43,9 @@ about affine images of Gaussian noise. An autograd theorem needs the derivative 
 A linear-layer proof needs to agree on whether weights are stored by input or output coordinate.
 TorchLean keeps these local facts small enough to use independently.
 
-The Gaussian calculation can be reused across diffusion schedules because the noise coefficients
-are arguments to the theorem. For backward rules, reuse depends on the points where we apply
-them: composing layers also requires each local differentiability condition to hold.
+Because the noise coefficients are arguments to the theorem, the Gaussian calculation can be reused
+across diffusion schedules. For backward rules, reuse depends on the points where we apply them:
+composing layers also requires each local differentiability condition to hold.
 
 # Vector-Jacobian Products
 
@@ -48,35 +53,34 @@ For a function with several outputs, a backward pass also needs an incoming cota
 how those outputs contribute to the surrounding calculation.
 
 Let $`f:\mathbb R^n\to\mathbb R^m` be differentiable at $`x`, with derivative the linear map
-$`Df(x)`. Forward mode evaluates $`Df(x)` on a direction: given $`v`, it returns
-$`Df(x)\,v`, the *Jacobian-vector product*. Reverse mode evaluates the adjoint: given a cotangent
+$`Df(x)`. Forward mode evaluates $`Df(x)` on a direction: given $`v`, it returns $`Df(x)\,v` (the
+*Jacobian-vector product*). Reverse mode evaluates the adjoint: given a cotangent
 $`\delta\in\mathbb R^m`, it returns the unique vector $`\bar x` satisfying
 
 $$`\langle Df(x)\,v,\ \delta\rangle
   =\langle v,\ \bar x\rangle
   \quad\text{for every }v,`
 
-which in coordinates is $`\bar x=Df(x)^{\mathsf T}\delta`, the *vector-Jacobian product*. This is
-the analytic derivative contract; algebraic tape theorems first prove adjointness of
-the supplied JVP/VJP rules. The identity specifies how a change in the input affects the
-cotangent-weighted output. For a scalar loss, $`m=1`; choosing
-$`\delta=1` gives the gradient.
+which in coordinates is $`\bar x=Df(x)^{\mathsf T}\delta` (the *vector-Jacobian product*). This is
+the analytic derivative contract. Algebraic tape theorems first prove adjointness of the supplied
+JVP/VJP rules. In words, the identity specifies how a change in the input affects the
+cotangent-weighted output. For a scalar loss, $`m=1`, and choosing $`\delta=1` gives the gradient.
 
 Two consequences shape everything below. First, a backward rule can be *stated* without mentioning
-tapes, graphs, or memory: it is an identity between two vectors. Second, identifying that rule
-with the adjoint of an actual derivative requires differentiability. A chosen linear rule can
-have an adjoint at a kink even when it is not a derivative there. The analytic theorems below
-therefore carry domain hypotheses for nonsmooth primitives.
-The wider automatic-differentiation context, including why reverse mode is the right choice when
-$`m\ll n`, is surveyed by Baydin and coauthors {Informal.citep baydin2018}[].
+tapes, graphs, or memory: it's an identity between two vectors. Second, identifying that rule with
+the adjoint of an actual derivative requires differentiability. A chosen linear rule can have an
+adjoint at a kink even when it isn't a derivative there, so the analytic theorems below carry
+domain hypotheses for nonsmooth primitives. Baydin and coauthors {Informal.citep baydin2018}[]
+survey the wider automatic-differentiation context (including why reverse mode is the right choice
+when $`m\ll n`).
 
 A concrete cotangent makes the transpose less mysterious. If a later scalar calculation is
-$`L(y)=2y_0-y_1`, its incoming cotangent is $`(2,-1)`. The reverse rule must report how that
+$`L(y)=2y_0-y_1`, its incoming cotangent is $`(2,-1)`, and the reverse rule must report how that
 weighted combination changes when an input coordinate changes. Pairing with an arbitrary input
 direction `v` tests all such changes at once. In a Euclidean space, equality of these pairings for
-every `v` uniquely determines the returned vector. The tensor dot-product theorems use this
-characterization to avoid constructing an entire Jacobian, which would store one entry for every
-input/output coordinate pair.
+every `v` uniquely determines the returned vector. TorchLean's tensor dot-product theorems use this
+characterization to avoid constructing an entire Jacobian (which would store one entry for every
+input/output coordinate pair).
 
 # Forward Diffusion Kernels
 
@@ -97,23 +101,14 @@ $$`x_t=\sqrt{\bar\alpha_t}\,x_0
       +\sqrt{1-\bar\alpha_t}\,\epsilon,`
 
 which is the closed-form marginal of the forward chain in Ho, Jain, and Abbeel
-{Informal.citep ddpm2020}[]. The schedule is not built into the probability theorem. The theorem
-layer accepts arbitrary `a` and `b`; a diffusion model chooses them elsewhere, reusing the same
-affine probability calculation across coefficient choices. DDIM
-{Informal.citep ddim2021}[] has a distinct reverse-sampling construction; this forward Gaussian
-theorem does not establish that sampler's correctness.
+{Informal.citep ddpm2020}[]. The schedule isn't built into the probability theorem: the theorem
+layer accepts arbitrary `a` and `b`, and a diffusion model chooses them elsewhere, reusing the same
+affine probability calculation across coefficient choices. DDIM {Informal.citep ddim2021}[] has a
+distinct reverse-sampling construction, and this forward Gaussian theorem doesn't establish that
+sampler's correctness.
 
-There is a closely related definition in the generative-model development:
-`NN.MLTheory.Generative.Diffusion.forwardGaussian`. Both definitions scale a standard Gaussian and
-translate it by a scaled clean state, but they live at different levels. `forwardNoising` works over
-an arbitrary finite-dimensional real inner-product space and also supplies a Markov-kernel wrapper;
-`forwardGaussian` is specialized to Euclidean space and records the Gaussian-closure theorem used by
-the diffusion chapter. TorchLean does not currently contain a bridge theorem identifying the two
-measures, so downstream proofs should use the declaration their hypotheses actually mention.
-
-The definition
-{src "NN/Proofs/Probability/DiffusionForward.lean"}[`forwardNoising`]
-is a measure obtained by two pushforwards:
+We define {src "TorchLean/NN/Models/Diffusion/ForwardProcess/Gaussian.lean"}[`forwardNoising`] as a
+measure obtained by two pushforwards:
 
 ```lean (name := fwdNoising)
 -- Inspect the structures needed to define a noising measure
@@ -128,7 +123,7 @@ is a measure obtained by two pushforwards:
       [inst : MeasurableSpace E] → ℝ → ℝ → E → Measure E
 ```
 
-Its body applies the continuous linear scaling first and translates second:
+The definition's body applies the continuous linear scaling first and translates second:
 
 ```
 -- Scale the standard Gaussian first, then translate it by
@@ -140,16 +135,16 @@ def forwardNoising (a b : ℝ) (x : E) : Measure E :=
 ```
 
 A pushforward describes a distribution by what happens to its samples: draw `z` from the original
-measure, then apply the displayed map. Formally, the probability assigned to an output event is
-the original measure of its preimage. The first `map` therefore changes the noise scale, and the
-second moves its center. `Measure E` in the return type is more general than a probability measure;
-the mass-one theorem below supplies the normalization fact for this construction. The definition
-also admits `b = 0`, when the entire distribution is concentrated at `a • x`. Gaussian closure
-here includes such degenerate distributions, so there is no nonzero-noise hypothesis to discharge.
+measure, then apply the displayed map. Formally, the probability assigned to an output event is the
+original measure of its preimage. So the first `map` changes the noise scale, and the second moves
+its center. `Measure E` in the return type is more general than a probability measure, and the
+mass-one theorem below supplies the normalization fact for this construction. Our definition also
+admits `b = 0` (the entire distribution is then concentrated at `a • x`). Gaussian closure here
+includes such degenerate distributions, so there's no nonzero-noise hypothesis to discharge.
 
-The two stages match Mathlib's Gaussian-closure instances: a continuous linear image of a
-Gaussian is Gaussian, and so is a translation. This lets `infer_instance` establish Gaussianity
-from the definition. The following theorem combines the two stages into one affine pushforward:
+Both stages match Mathlib's Gaussian-closure instances (a continuous linear image of a Gaussian is
+Gaussian, and so is a translation), which lets `infer_instance` establish Gaussianity from the
+definition. We also prove that the two stages combine into one affine pushforward:
 
 ```lean (name := fwdEqMap)
 -- Replace the two pushforwards with the single affine noise
@@ -166,14 +161,15 @@ from the definition. The following theorem combines the two stages into one affi
     Measure.map (fun z => a • x + b • z) (stdGaussian E)
 ```
 
-This is the one direct affine pushforward
+On the right of that equation is the one direct affine pushforward
 
 $$`\operatorname{map}
   \bigl(z\mapsto ax+bz\bigr)
   \bigl(\mathcal N(0,I)\bigr),`
 
-and it is tagged `@[simp]`, so downstream proofs almost never see the staged form. Because the
-measure is Gaussian it is in particular a probability measure, which the file records explicitly:
+and the theorem is tagged `@[simp]`, so downstream proofs almost never see the staged form. Because
+the measure is Gaussian it's in particular a probability measure, which the file records as its own
+theorem:
 
 ```lean (name := fwdUniv)
 -- Total mass one supplies normalization of the constructed
@@ -193,7 +189,8 @@ A diffusion process needs composable transitions in addition to a measure for ea
 `forwardKernel a b : Kernel E E` packages the operation as a Markov kernel, built from
 `Kernel.id ×ₖ Kernel.const E (stdGaussian E)` so that it fits Mathlib's kernel composition
 machinery {Informal.citep mathlib2020}[]. The product kernel pairs the current state with fresh
-Gaussian noise. The following theorem identifies its affine image with the measure already defined:
+Gaussian noise, and the next theorem identifies the affine image of the product kernel with the
+measure already defined:
 
 ```lean (name := kernelApply)
 -- Applying the kernel at a fixed state recovers the same
@@ -209,24 +206,23 @@ Gaussian noise. The following theorem identifies its affine image with the measu
   (forwardKernel a b) x = forwardNoising a b x
 ```
 
-With that in hand, every fact proved about the measure transfers to the kernel by rewriting, which
-is how `isGaussian_forwardKernel` is proved in two lines.
+With that in hand, every fact proved about the measure transfers to the kernel by rewriting (that's
+how `isGaussian_forwardKernel` is proved in two lines).
 
-The distinction between a measure and a kernel is about dependence on the starting state. A
-measure answers which noised outputs are possible from one fixed `x`. A kernel additionally
-packages the measurability needed to vary `x` and integrate over a distribution of starting
-states. Thus `forwardKernel_apply` is an equality of measures at each state, not a statement
-about one sampled noise vector. A subsequent transition can use kernel composition, while a
-moment calculation at a fixed clean input can rewrite directly to `forwardNoising`.
+A measure and a kernel differ in their dependence on the starting state. A measure answers which
+noised outputs are possible from one fixed `x`. A kernel also packages the measurability needed to
+vary `x` and integrate over a distribution of starting states. So `forwardKernel_apply` is an
+equality of measures at each state, not a statement about one sampled noise vector. A subsequent
+transition can use kernel composition, while a moment calculation at a fixed clean input can
+rewrite to `forwardNoising`.
 
 # Mean And Variance Of Forward Noising
 
-`IsGaussian μ` says that `μ` belongs to the class of Gaussian measures. The definition of
-`forwardNoising` fixes a particular distribution, but Gaussian closure
-alone does not expose its mean or
-covariance. A signal-to-noise argument needs the corresponding moment identities.
+`IsGaussian μ` says that `μ` belongs to the class of Gaussian measures. Defining `forwardNoising`
+fixes a particular distribution, but Gaussian closure alone doesn't expose its mean or covariance.
+A signal-to-noise argument needs the corresponding moment identities.
 
-The first moment theorem identifies the mean:
+Our first moment theorem identifies the mean:
 
 ```lean (name := meanThm)
 -- The vector-valued integral identifies the mean of the
@@ -243,18 +239,17 @@ The first moment theorem identifies the mean:
 ```
 
 Rewriting with `forwardNoising_eq_map` turns the goal into an integral against `stdGaussian E`.
-Splitting the
-integral of the sum needs both halves integrable: the constant is integrable because the measure is
-finite, and the identity is integrable under a Gaussian by Fernique's theorem, which Mathlib exposes
-as `IsGaussian.integrable_id`. The noise term then vanishes because the standard Gaussian is
-centred. The remaining constant term is the scaled clean state.
+Splitting the integral of the sum needs both halves integrable: the constant is integrable because
+the measure is finite, and the identity is integrable under a Gaussian by Fernique's theorem (which
+Mathlib exposes as `IsGaussian.integrable_id`). Because the standard Gaussian is centred, the noise
+term then vanishes, leaving the constant term: the scaled clean state.
 
-In the integral notation, `∂forwardNoising a b x` names the measure used for averaging; the
-variable `y` is the noisy output being integrated. The result is a vector in `E`, as is `a • x`.
-The symbol `•` denotes scalar multiplication, allowing the same theorem to apply to a scalar,
-a coordinate vector, or another finite-dimensional real inner-product representation. The
+In the integral notation, `∂forwardNoising a b x` names the measure used for averaging, and the
+variable `y` is the noisy output being integrated. Both the integral and `a • x` are vectors in
+`E`. Here `•` denotes scalar multiplication, allowing the same theorem to apply to a scalar, a
+coordinate vector, or another finite-dimensional real inner-product representation. Those
 integrability facts in the proof matter because the integral API is total: a syntactically valid
-integral expression alone would not justify splitting a sum into two expectations.
+integral expression alone wouldn't justify splitting a sum into two expectations.
 
 The variance theorem describes spread along a continuous linear functional:
 
@@ -272,37 +267,37 @@ The variance theorem describes spread along a continuous linear functional:
   Var[⇑L; forwardNoising a b x] = b ^ 2 * ‖L‖ ^ 2
 ```
 
-`L : StrongDual ℝ E` is a continuous linear map from the state space to the reals.
-Applying it to the noised state produces a constant plus `b` times a scalar Gaussian.
-Translation leaves variance unchanged, and scaling multiplies it by the square of the scale.
-Mathlib's `variance_dual_stdGaussian` supplies the variance of that scalar Gaussian.
-In particular, instantiate `L` with the inner product against a unit vector to get variance
-$`b^2` along that direction, with the right-hand side not depending on the direction at all. That
-independence *is* the isotropy claim, stated without ever writing a matrix.
+`L : StrongDual ℝ E` is a continuous linear map from the state space to the reals. Applying it to
+the noised state produces a constant plus `b` times a scalar Gaussian. Translation leaves variance
+unchanged, and scaling multiplies it by the square of the scale. Mathlib's
+`variance_dual_stdGaussian` supplies the variance of that scalar Gaussian. In particular,
+instantiate `L` with the inner product against a unit vector to get variance $`b^2` along that
+direction (the right-hand side doesn't depend on the direction at all). That independence *is* the
+isotropy claim, stated without ever writing a matrix.
 
-The right-hand side does not depend on `a` or the fixed clean state `x`: their contribution is
-a translation. The noise scale `b` controls this conditional variance. If the clean state were
-itself random, its variability would also contribute to an unconditional variance calculation.
+The right-hand side doesn't depend on `a` or the fixed clean state `x`: their contribution is a
+translation. Instead, the noise scale `b` controls this conditional variance. If the clean state
+were itself random, its variability would also contribute to an unconditional variance calculation.
 
-For a non-unit direction, the norm factor records the scale of the measurement itself. Doubling
-`L` doubles every measured deviation from its mean and multiplies the variance by four. Taking
-`L = 0` gives zero variance. These cases explain why the theorem quantifies over all continuous
-linear functionals instead of just coordinate projections. In a diffusion model, any fixed linear
-readout of the noisy state can use the same theorem without first changing basis. The clean
-signal enters its mean through `L (a • x)`, while its conditional noise variance is
+For a non-unit direction, the norm factor records the scale of the measurement itself. Doubling `L`
+doubles every measured deviation from its mean and multiplies the variance by four. Taking `L = 0`
+gives zero variance. These cases explain why the theorem quantifies over all continuous linear
+functionals instead of just coordinate projections. In a diffusion model, any fixed linear readout
+of the noisy state can use the same theorem without first changing basis. For such a readout, the
+clean signal enters its mean through `L (a • x)`, while its conditional noise variance is
 $`b^2\|L\|^2`.
 
-Both statements have kernel-level twins, `integral_id_forwardKernel` and
-`variance_dual_forwardKernel`, proved by rewriting with `forwardKernel_apply` and applying the
+Both statements have kernel-level twins (`integral_id_forwardKernel` and
+`variance_dual_forwardKernel`), proved by rewriting with `forwardKernel_apply` and applying the
 measure-level theorem.
 
-Changing the sign of `b` preserves the variance because the scale enters quadratically;
-the mean remains `a • x` in either case.
+Changing the sign of `b` preserves the variance because the scale enters quadratically, and the
+mean remains `a • x` in either case.
 
 # Gaussian Noising Proofs
 
-The following proofs are checked as the page builds. The section header
-carries the same instance list the library file uses:
+Lean checks the following proofs as the page builds. Their section header carries the same instance
+list the library file uses:
 
 ```lean
 -- Rewrite the kernel to its measure before applying the
@@ -322,7 +317,8 @@ example (a b : ℝ) (x : E) :
 ```
 
 Two moves: rewrite a kernel application as its noising measure, then use the probability-mass
-theorem. Now the isotropy reading of the variance theorem, in the form a coordinate argument wants:
+theorem. Next comes the isotropy reading of the variance theorem, in the form a coordinate argument
+wants:
 
 ```lean
 -- A unit measurement direction removes the norm factor from
@@ -336,12 +332,12 @@ example (a b : ℝ) (x v : E) (hv : ‖v‖ = 1) :
 end
 ```
 
-The `simp` step is only discharging $`\|\operatorname{innerSL} v\|^2=\|v\|^2=1`, which Mathlib knows
+Here `simp` is only discharging $`\|\operatorname{innerSL} v\|^2=\|v\|^2=1`, which Mathlib knows
 because `innerSL` is a linear isometry onto its image. So the variance along any unit direction is
 $`b^2`, and the choice of direction never appeared.
 
-Now delete `[BorelSpace E]` from the variable block and ask for the mass-one fact again. The
-measurable-space instance remains available, but Lean cannot connect it to the topology:
+Delete `[BorelSpace E]` from the variable block and ask for the mass-one fact again. The
+measurable-space instance remains available, but Lean can't connect it to the topology:
 
 ```lean +error (name := noBorel)
 -- Keep the vector-space instances but deliberately omit the
@@ -381,9 +377,8 @@ developments may cite.
 # Gaussian Noising In PyTorch
 
 The theorems above are exact statements about a measure. A sampling experiment gives a finite
-statistical check of the same formula. Take
-$`\bar\alpha_t=0.36`, so $`a=0.6` and $`b=0.8` in the real formula, and a clean state
-$`x_0=(1,-2,0.5)`:
+statistical check of the same formula. Take $`\bar\alpha_t=0.36` (so $`a=0.6` and $`b=0.8` in the
+real formula) and a clean state $`x_0=(1,-2,0.5)`:
 
 ```
 # Compare sampled coordinate moments with the conditional
@@ -412,14 +407,13 @@ b^2 = 0.64
 off-diagonal max |cov| = 0.00081
 ```
 
-Read this recorded Python output against the two theorems. The empirical mean is near `a • x0`,
-the exact mean given by `integral_id_forwardNoising`. The three empirical variances are near
-$`b^2=0.64`, the value given by `variance_dual_forwardNoising` along each coordinate direction.
-This finite sample illustrates those identities; it does not prove convergence.
-The largest off-diagonal covariance is $`8\times10^{-4}`, consistent with the same theorem read
+Read this recorded Python output against the two theorems. Its empirical mean is near `a • x0` (the
+exact mean given by `integral_id_forwardNoising`), and its three empirical variances are near
+$`b^2=0.64` (the value given by `variance_dual_forwardNoising` along each coordinate direction).
+This finite sample illustrates those identities but doesn't prove convergence. At
+$`8\times10^{-4}`, the largest off-diagonal covariance is consistent with the same theorem read
 along the diagonal directions $`(e_i\pm e_j)/\sqrt2`, whose equal variances imply zero
-cross-covariance by expansion. Gaussianity then connects
-uncorrelated coordinates to independence.
+cross-covariance by expansion. Gaussianity then connects uncorrelated coordinates to independence.
 
 The displayed deviations include sampling error and floating arithmetic. A finite run cannot
 establish the theorem's quantification over every continuous linear functional and every pair
@@ -434,10 +428,10 @@ TorchLean stores a linear layer's weight tensor with shape
 
 $$`\texttt{[outDim, inDim]},`
 
-matching PyTorch's `torch.nn.functional.linear` convention. A row of $`W` contains the weights
-for one output coordinate; in row-major storage, the input index varies fastest. Using the same
-layout simplifies checkpoint and gradient comparisons. Shape checking catches a transposed
-rectangular matrix, but a square matrix still needs a check of its entries.
+matching PyTorch's `torch.nn.functional.linear` convention. A row of $`W` contains the weights for
+one output coordinate (in row-major storage, the input index varies fastest). Using the same layout
+simplifies checkpoint and gradient comparisons. Shape checking catches a transposed rectangular
+matrix, but a square matrix still needs a check of its entries.
 
 For one input vector,
 
@@ -459,21 +453,20 @@ $$`\bar x=W^\top\bar y,\qquad
 \bar W=\bar y\,x^\top,\qquad
 \bar b=\bar y.`
 
-The file
-{src "NN/Proofs/Gradients/Linear.lean"}[`NN.Proofs.Gradients.Linear`]
-records these three equations using TorchLean tensors. Here is the weight rule:
+In {src "TorchLean/NN/Gradients/Linear.lean"}[`TorchLean.NN.Gradients.Linear`] we
+record these three equations using TorchLean tensors. Here's the weight rule:
 
 ```lean (name := wRule)
 -- Weight cotangents have the same output-by-input
 -- orientation as the weights.
-#check @linearWeightsDerivSpec_eq_outerProductSpec
+#check @weightsDeriv_apply
 ```
 
 ```leanOutput wRule (whitespace := lax)
-@linearWeightsDerivSpec_eq_outerProductSpec :
+@weightsDeriv_apply :
   ∀ {inDim outDim : ℕ} (x : Tensor ℝ [inDim])
-    (δ : Tensor ℝ [outDim]),
-  linearWeightsDerivSpec x δ = outerProductSpec δ x
+    (δ : Tensor ℝ [outDim]) (i : Fin outDim) (j : Fin inDim),
+  (weightsDeriv x δ).get2 i j = δ.getScalar i * x.getScalar j
 ```
 
 The input rule:
@@ -481,42 +474,43 @@ The input rule:
 ```lean (name := xRule)
 -- Input cotangents sum contributions across the output rows
 -- of the weights.
-#check @linearInputDerivSpec_eq_vecMatMulSpec
+#check @inputDeriv_eq_contract
 ```
 
 ```leanOutput xRule (whitespace := lax)
-@linearInputDerivSpec_eq_vecMatMulSpec :
-  ∀ {inDim outDim : ℕ} (layer : LinearSpec ℝ inDim outDim)
+@inputDeriv_eq_contract :
+  ∀ {inDim outDim : ℕ} (layer : Linear ℝ inDim outDim)
     (δ : Tensor ℝ [outDim]),
-  linearInputDerivSpec layer.weights δ =
-    vecMatMulSpec δ layer.weights
+  inputDeriv layer.weights δ =
+    δ.contract layer.weights (Shape.vecMatDims outDim inDim)
+      (Shape.noBatch [outDim] [outDim, inDim]) [inDim] ⋯ ⋯
 ```
 
 And the bias rule:
 
 ```lean (name := bRule)
 -- Read the bias cotangent from the backward result.
-#check @linearBackwardSpec_biasGradient
+#check @backward_biasGradient
 ```
 
 ```leanOutput bRule (whitespace := lax)
-@linearBackwardSpec_biasGradient : ∀ {inDim outDim : ℕ}
-  (layer : LinearSpec ℝ inDim outDim) (x : Tensor ℝ [inDim]) (δ : Tensor ℝ [outDim]),
-  (linearBackwardSpec layer x δ).biasGradient = δ
+@backward_biasGradient : ∀ {inDim outDim : ℕ}
+  (layer : Linear ℝ inDim outDim) (x : Tensor ℝ [inDim]) (δ : Tensor ℝ [outDim]),
+  (layer.backward x δ).parameters.bias = δ
 ```
 
-The bias gradient is already the incoming cotangent. `linearBackwardSpec` stores it directly in
-the result alongside the weight and input gradients; there is no separate calculation to run.
+The bias gradient is already the incoming cotangent. `Linear.backward` stores it in the `parameters`
+of its result, beside the weight gradient (there's no separate calculation to run).
 
-The tensor types also prevent transposing the outer product accidentally: $`\delta\otimes x` has
-shape `[outDim, inDim]`, while $`x\otimes\delta` has shape `[inDim, outDim]`. For different input
-and output dimensions, the swapped outer product has the wrong type.
-The square example below still needs a value-level check.
+TorchLean's tensor types also prevent transposing the outer product accidentally:
+$`\delta\otimes x` has shape `[outDim, inDim]`, while $`x\otimes\delta` has shape
+`[inDim, outDim]`. For different input and output dimensions, the swapped outer product has the
+wrong type, but the square example below still needs a value-level check.
 
 # Linear-Layer Gradient Example
 
-The specs are polymorphic over any scalar type with the right algebra, so the same definitions the
-theorems are about can be executed at `Float`. Take
+Because the specs are polymorphic over any scalar type with the right algebra, the same definitions
+the theorems are about can be executed at `Float`. Take
 
 $$`W=\begin{pmatrix}1&2\\-1&3\end{pmatrix},
 \quad x=\begin{pmatrix}4\\5\end{pmatrix},
@@ -535,13 +529,14 @@ def cotangent : Tensor Float [2] := [2, -1]
 
 ```
 
-The forward pass first, so there is something for the cotangent to come back through:
+First the forward pass, so there's something for the cotangent to come back through:
 
 ```lean (name := fwdRun)
 -- Evaluate the affine output before applying the chosen
 -- incoming cotangent.
 #eval Tensor.to
-  (linearSpec { weights := layerW, bias := layerB } layerX)
+  (Linear.forward
+    { weights := layerW, bias := layerB } layerX)
   (Array Float)
 ```
 
@@ -549,14 +544,14 @@ The forward pass first, so there is something for the cotangent to come back thr
 #[16.000000, 10.000000]
 ```
 
-By hand, $`1\cdot4+2\cdot5+2=16` and $`-1\cdot4+3\cdot5-1=10`. Now the three reverse rules:
+By hand, $`1\cdot4+2\cdot5+2=16` and $`-1\cdot4+3\cdot5-1=10`. Then the three reverse rules:
 
 ```lean (name := revRun)
 -- Display weight, input, and bias cotangents as flat arrays
 -- for comparison.
-#eval Tensor.to (linearWeightsDerivSpec layerX cotangent)
+#eval Tensor.to (weightsDeriv layerX cotangent)
   (Array Float)
-#eval Tensor.to (linearInputDerivSpec layerW cotangent)
+#eval Tensor.to (inputDeriv layerW cotangent)
   (Array Float)
 #eval Tensor.to cotangent (Array Float)
 ```
@@ -577,8 +572,8 @@ The first array is $`\bar W=\delta x^\top` flattened row-major: $`(2\cdot4,\ 2\c
 -1\cdot4,\ -1\cdot5)`. The second is $`\bar x=W^\top\delta=(1\cdot2+(-1)(-1),\
 2\cdot2+3\cdot(-1))=(3,1)`. The third is $`\delta` itself, unchanged, as the bias rule promises.
 
-The products and sums here are small integers, exactly representable in binary32 and binary64.
-This makes the run useful for checking index order: a discrepancy cannot be explained by rounding
+Here the products and sums are small integers (exactly representable in binary32 and binary64),
+which makes the run useful for checking index order: a discrepancy can't be explained by rounding
 in these operations.
 
 # Linear-Layer Gradients In PyTorch
@@ -616,11 +611,14 @@ theorem would need to relate their definitions across all inputs, including thei
 
 # Batched Linear-Layer Gradients
 
-The rules above are for one vector. Real training passes a batch, and the interesting part is that
-the three gradients do not batch the same way: the input gradient gets one row per sample, while the
-weight and bias gradients *accumulate* across samples. `linearDerivSpec` does this over any
-leading shape
-with positive total size by flattening the leading axes:
+Each rule above takes one vector. Real training passes a batch, and the interesting part is that
+the three gradients don't batch the same way: the input gradient gets one row per sample, while the
+weight and bias gradients *accumulate* across samples. `weightsDerivLeading` and
+`biasDerivLeading` do this over any leading shape by flattening the leading axes: each entry
+is one sum from zero over the samples in row-major order, so an empty leading axis gives zero
+gradients. `inputDerivLeading` gives each sample its input gradient. `Op.linear` at a leading
+shape of positive rank uses exactly these three. At the empty leading shape (one vector), it keeps
+the vector rule instead, whose bias gradient is the cotangent itself, not a sum from zero:
 
 ```lean (name := batchRun)
 -- Accumulate shared parameter gradients while keeping one
@@ -632,12 +630,12 @@ def batchD : Tensor Float [3, 2] :=
   [[2, -1], [1, 1], [0, 2]]
 
 #eval
-  let gradients :=
-    linearDerivSpec (leading := [3]) (by decide)
-      layerW batchX batchD
-  (Tensor.to gradients.weightGradient (Array Float),
-   Tensor.to gradients.biasGradient (Array Float),
-   Tensor.to gradients.inputGradient (Array Float))
+  (Tensor.to (weightsDerivLeading [3] batchX batchD)
+     (Array Float),
+   Tensor.to (biasDerivLeading [3] batchD)
+     (Array Float),
+   Tensor.to (inputDerivLeading [3] layerW batchD)
+     (Array Float))
 ```
 
 ```leanOutput batchRun (whitespace := lax)
@@ -646,12 +644,12 @@ def batchD : Tensor Float [3, 2] :=
  #[3.000000, 1.000000, 0.000000, 5.000000, -2.000000, 6.000000])
 ```
 
-Check the accumulation by hand. The three per-sample weight gradients are
+Check the accumulation by hand. Per sample, the weight gradients are
 $`\begin{pmatrix}8&10\\-4&-5\end{pmatrix}`, $`\begin{pmatrix}1&0\\1&0\end{pmatrix}`, and
-$`\begin{pmatrix}0&0\\0&2\end{pmatrix}`; they sum to
+$`\begin{pmatrix}0&0\\0&2\end{pmatrix}`, and they sum to
 $`\begin{pmatrix}9&10\\-3&-3\end{pmatrix}`, which is the first array. The bias gradient is
-$`(2+1+0,\ -1+1+2)=(3,2)`. The input gradient keeps all three rows, $`(3,1)`, $`(0,5)`,
-$`(-2,6)`, one $`W^\top\delta` per sample. PyTorch agrees on every entry:
+$`(2+1+0,\ -1+1+2)=(3,2)`, and the input gradient keeps all three rows ($`(3,1)`, $`(0,5)`,
+$`(-2,6)`), one $`W^\top\delta` per sample. PyTorch agrees on every entry:
 
 ```
 # Clear the earlier parameter gradients before evaluating
@@ -672,50 +670,48 @@ b.grad  [3.0, 2.0]
 X.grad  [[3.0, 1.0], [0.0, 5.0], [-2.0, 6.0]]
 ```
 
-There is no division by the batch size in these formulas. The incoming tensor `batchD` already
+There's no division by the batch size in these formulas: the incoming tensor `batchD` already
 specifies the derivative of the surrounding calculation with respect to each output. If that
 calculation averages a loss across three samples, its cotangents include the factor $`1/3`, and
 linearity then scales the accumulated parameter gradients accordingly. Adding an extra average
-inside the layer would divide twice. The Python block resets `W.grad` and `b.grad` before the
-batched call because those shared parameters were used in the preceding experiment; otherwise
-PyTorch's accumulation would mix the two demonstrations.
+inside the layer would divide twice. In the Python block we reset `W.grad` and `b.grad` before the
+batched call, because those shared parameters were used in the preceding experiment (otherwise
+PyTorch's accumulation would mix the two demonstrations).
 
-`linearDerivSpec` currently has no correctness theorem. The unbatched identities above do not
-establish that its flattening, accumulation, and output layout implement the batched derivative.
-The proved batched
-path in TorchLean goes through the tape-node layer instead, where matmul and reduction nodes carry
-their own adjointness theorems and a batch is a shape rather than a special case; see
-{src "NN/Proofs/Autograd/Coverage.lean"}[`NN.Proofs.Autograd.Coverage`] for what that layer covers.
-If you want a theorem about the executable batched call above, it is open work.
+These batched gradients have no correctness theorem. The unbatched identities above don't establish
+that their flattening, accumulation, and output layout implement the batched derivative. In
+TorchLean the proved batched path goes through the tape-node layer instead, where matmul and
+reduction nodes carry their own adjointness theorems and a batch is a shape, not a special case.
+See {srcDir "TorchLean/NN/Tape"}[`TorchLean/NN/Tape`] for what that layer
+covers.
 
 # Definitional Linear-Layer Identities
 
-All three linear identities are proved by `rfl`: `linearWeightsDerivSpec` is defined as the
-outer product, so the theorem is a definitional unfolding that gives the equation a name and a
-stable form for `simp`. Reading the coordinates makes the definitional character visible:
+`weightsDeriv` is the product of the cotangent broadcast along the rows and the input
+broadcast along the columns, so each entry of the weight gradient is one product:
 
 ```lean
 -- Reduce one weight-gradient entry to the corresponding
 -- cotangent-input product.
 example (x : Tensor ℝ [2]) (δ : Tensor ℝ [2])
     (i j : Fin 2) :
-    get2 (linearWeightsDerivSpec x δ) i j =
-      δ.getScalar i * x.getScalar j := by
-  simp [linearWeightsDerivSpec]
+    get2 (weightsDeriv x δ) i j =
+      δ.getScalar i * x.getScalar j :=
+  weightsDeriv_apply x δ i j
 ```
 
-Entry $`(i,j)` of the weight gradient is the product of two scalars, closed by `simp` from the
-`get2_outerProductSpec` lemma alone.
+Entry $`(i,j)` of the weight gradient is the product of two scalars.
 
-These theorems give named equations for the backward-rule interface, useful for rewriting larger
-expressions. Identifying those rules with the derivative of the forward tensor map requires a
-separate `HasFDerivAt` argument. The equations alone also make no claim about a tape or CUDA kernel.
+These theorems give named equations for the backward-rule interface (useful for rewriting larger
+expressions). Identifying those rules with the derivative of the forward tensor map requires a
+separate `HasFDerivAt` argument. On their own, the equations also say nothing about a tape or CUDA
+kernel.
 
 # Scalar Activation Calculus
 
-Activation theorems connect the derivative helpers to real calculus. The file
-{src "NN/Proofs/Gradients/Activation.lean"}[`NN.Proofs.Gradients.Activation`]
-proves Mathlib `HasDerivAt` statements for real scalar functions. For smooth sigmoid,
+Activation theorems connect the derivative helpers to real calculus. In
+{src "TorchLean/NN/Gradients/Activation.lean"}[`TorchLean.NN.Gradients.Activation`]
+we prove Mathlib `HasDerivAt` statements for real scalar functions. For smooth sigmoid,
 
 $$`\sigma(x)=\frac{1}{1+e^{-x}},
 \qquad
@@ -726,27 +722,28 @@ and the theorem is global, with no hypothesis at all:
 ```lean (name := sigThm)
 -- The derivative proposition connects the sigmoid helper to
 -- real calculus.
-#check @sigmoid_deriv_correct
+#check @hasDerivAt_sigmoid
 ```
 
 ```leanOutput sigThm (whitespace := lax)
-sigmoid_deriv_correct : ∀ (x : ℝ),
-  HasDerivAt Activation.Math.sigmoidSpec
-    (Activation.Math.sigmoidDerivSpec x) x
+hasDerivAt_sigmoid : ∀ (x : ℝ),
+  HasDerivAt Context.sigmoid
+    (Numeric.sigmoidDeriv x) x
 ```
 
 `HasDerivAt f d x` has three distinct arguments: the function being differentiated, its proposed
-derivative value, and the point of evaluation. The proposition establishes the limiting
-first-order behavior at that point, including differentiability. This is stronger than an equation
+derivative value, and the point of evaluation. As a proposition it establishes the limiting
+first-order behavior at that point, including differentiability, which is stronger than an equation
 that merely unfolds the definition of a derivative helper. In the sigmoid signature,
-`Activation.Math.sigmoidDerivSpec x` occupies the derivative-value slot, so the theorem connects
-the executable formula's real interpretation to calculus. The universal `∀ x` means no input
+`TorchLean.Numeric.sigmoidDeriv x` occupies the derivative-value slot, so the theorem connects the
+executable formula's real interpretation to calculus. Because of the universal `∀ x`, no input
 point is omitted from this real-valued result.
 
-The proof identifies both branches of `sigmoidSpec` with Mathlib's `Real.sigmoid` over the reals
-using `sigmoid_eq_inv_exp`, then reuses `Real.hasDerivAt_sigmoid`. The form $`\sigma(1-\sigma)`
-can reuse the forward sigmoid value without evaluating
-$`e^{-x}/(1+e^{-x})^2` separately. The theorem's right-hand side uses this factored expression.
+We prove the sigmoid theorem by identifying both branches of `Context.sigmoid` with Mathlib's
+`Real.sigmoid` over the reals using `sigmoid_eq_inv_exp`, then reusing `Real.hasDerivAt_sigmoid`.
+Written as $`\sigma(1-\sigma)`, the derivative can reuse the forward sigmoid value without
+evaluating $`e^{-x}/(1+e^{-x})^2` separately, and the theorem's right-hand side uses this factored
+expression.
 
 ReLU is different:
 
@@ -757,25 +754,25 @@ $$`\operatorname{ReLU}(x)=\max(x,0),\qquad
 1,&x>0.
 \end{cases}`
 
-ReLU has no ordinary derivative at zero. The following theorem supplies its derivative everywhere
-else, with an explicit nonzero hypothesis:
+ReLU has no ordinary derivative at zero. Its theorem supplies the derivative everywhere else, with
+the nonzero condition stated as a hypothesis:
 
 ```lean (name := reluThm)
 -- The nonzero premise excludes the point where the ReLU
 -- slopes disagree.
-#check @relu_deriv_correct
+#check @hasDerivAt_relu
 ```
 
 ```leanOutput reluThm (whitespace := lax)
-relu_deriv_correct : ∀ (x : ℝ), x ≠ 0 →
-  HasDerivAt Activation.Math.reluSpec
-    (Activation.Math.reluDerivSpec x) x
+hasDerivAt_relu : ∀ (x : ℝ), x ≠ 0 →
+  HasDerivAt Activation.relu
+    (reluDeriv x) x
 ```
 
-The same kind of nonzero hypothesis appears for leaky ReLU (also requiring a positive slope) and
-general-parameter ELU. Smooth
-activations such as sigmoid, tanh, softplus, SiLU, and the chosen GELU formula have global
-derivative theorems; guarded functions such as `safe_log` expose their domain parameter instead.
+The same nonzero hypothesis, and no other, appears for leaky ReLU with any slope
+(`hasDerivAt_leakyReLU`) and for general-parameter ELU (`hasDerivAt_elu`). Smooth activations (such
+as sigmoid, tanh, softplus, SiLU, and the chosen GELU formula) have global derivative theorems,
+while guarded functions such as `safe_log` expose their domain parameter instead.
 
 Two proofs, elaborated here. Away from the kink the ReLU theorem is usable and the derivative
 computes to `1`:
@@ -784,26 +781,26 @@ computes to `1`:
 -- Apply the local ReLU theorem at a positive point and
 -- sigmoid’s theorem at zero.
 example :
-    HasDerivAt (Activation.Math.reluSpec : ℝ → ℝ) (1 : ℝ)
+    HasDerivAt (Activation.relu : ℝ → ℝ) (1 : ℝ)
       (2 : ℝ) := by
-  simpa [Activation.Math.reluDerivSpec] using
-    relu_deriv_correct (2 : ℝ) (by norm_num)
+  simpa [Activation.reluDeriv] using
+    hasDerivAt_relu (2 : ℝ) (by norm_num)
 
 example :
-    HasDerivAt (Activation.Math.sigmoidSpec : ℝ → ℝ)
-      (Activation.Math.sigmoidDerivSpec (0 : ℝ)) (0 : ℝ) :=
-  sigmoid_deriv_correct 0
+    HasDerivAt (Context.sigmoid : ℝ → ℝ)
+      (TorchLean.Numeric.sigmoidDeriv (0 : ℝ)) (0 : ℝ) :=
+  hasDerivAt_sigmoid 0
 ```
 
-At the kink the same call cannot be made, and the error is exactly the hypothesis:
+At the kink the same call can't be made, and the error is the hypothesis itself:
 
 ```lean +error (name := kinkFail)
 -- At zero the ReLU theorem requires the impossible side
 -- condition zero ≠ zero.
 example :
-    HasDerivAt (Activation.Math.reluSpec : ℝ → ℝ)
-      (Activation.Math.reluDerivSpec (0 : ℝ)) (0 : ℝ) :=
-  relu_deriv_correct (0 : ℝ) (by norm_num)
+    HasDerivAt (TorchLean.Activation.relu : ℝ → ℝ)
+      (TorchLean.Activation.reluDeriv (0 : ℝ)) (0 : ℝ) :=
+  hasDerivAt_relu (0 : ℝ) (by norm_num)
 ```
 
 ```leanOutput kinkFail
@@ -816,15 +813,15 @@ tactic that will close this, because the statement is not true.
 
 # ReLU Backward Values At Zero
 
-`reluDerivSpec` also returns a value at zero: its chosen backward value there is `0`.
+`Activation.reluDeriv` also returns a value at zero: its chosen backward value there is `0`.
 That convention is outside the derivative theorem:
 
 ```lean (name := kinkRun)
 -- Compare the chosen kink value with the smooth sigmoid
 -- values at the origin.
-#eval Activation.Math.reluDerivSpec (0.0 : Float)
-#eval Activation.Math.sigmoidSpec (0.0 : Float)
-#eval Activation.Math.sigmoidDerivSpec (0.0 : Float)
+#eval Activation.reluDeriv (0.0 : Float)
+#eval Context.sigmoid (0.0 : Float)
+#eval TorchLean.Numeric.sigmoidDeriv (0.0 : Float)
 ```
 
 ```leanOutput kinkRun
@@ -840,15 +837,15 @@ That convention is outside the derivative theorem:
 ```
 
 In the recorded PyTorch comparison, ReLU at a scalar tensor containing `0.0` has gradient `0.0`,
-and sigmoid at that input has gradient `0.25`, matching the two sigmoid values above. So the
-ReLU subgradient convention agrees. The forward value at signed zero has a separate behavior:
+and sigmoid at that input has gradient `0.25` (matching the two sigmoid values above). So the ReLU
+subgradient convention agrees. At signed zero, though, the forward value has a separate behavior:
 
 ```lean (name := signedZero)
 -- Taking a reciprocal exposes the sign of the returned
 -- floating zero.
-#eval Activation.Math.reluSpec (-0.0 : Float)
+#eval Activation.relu (-0.0 : Float)
 #eval (1.0 : Float) /
-  Activation.Math.reluSpec (-0.0 : Float)
+  Activation.relu (-0.0 : Float)
 ```
 
 ```leanOutput signedZero
@@ -859,27 +856,25 @@ ReLU subgradient convention agrees. The forward value at signed zero has a separ
 inf
 ```
 
-The second `#eval` checks the sign independently of decimal formatting: division yields `inf`
-for $`+0` and `-inf` for $`-0`, so the result establishes that the selected zero is positive.
-The recorded CPU comparison preserves negative zero through ReLU. This describes that execution,
-not every PyTorch backend. TorchLean's spec explicitly returns scalar zero when `x == 0`. That
-equality
-test also succeeds for `-0.0`, so the selected branch returns `+0.0`. Away from zero it uses
-`max x 0`; the real identity `reluSpec_eq_max` recovers the usual maximum formula. Both are IEEE 754
-legal; signed zero is a real part of the format, not an
-accident {Informal.citep goldberg1991}[].
+The second `#eval` checks the sign independently of decimal formatting: division yields `inf` for
+$`+0` and `-inf` for $`-0`, so the result establishes that the selected zero is positive. In the
+recorded CPU comparison, PyTorch preserves negative zero through ReLU (a description of that
+execution, not of every PyTorch backend). TorchLean's spec has a branch that returns scalar zero
+when `x == 0`. That equality test also succeeds for `-0.0`, so the selected branch returns `+0.0`.
+Away from zero the spec uses `max x 0`, and the real identity `relu_eq_max` recovers the usual
+maximum formula. Both behaviors are IEEE 754 legal: signed zero is a real part of the format, not
+an accident {Informal.citep goldberg1991}[].
 
 Both implementations select a zero gradient at the kink, but the sign of the forward zero can
-affect a downstream division or another sign-sensitive operation. The `ℝ`-level
-theorem cannot distinguish those signs, since $`\mathbb R` has one zero.
+affect a downstream division or another sign-sensitive operation. At the `ℝ` level, the derivative
+theorem can't distinguish those signs, since $`\mathbb R` has one zero.
 
 Other primitives have domain conditions too. A theorem using the usual positive domain of `log`
-needs positivity;
-one for reciprocal or division needs a nonzero denominator; square-root differentiation needs a
-strictly positive point. Epsilon-protected `safe_log` and safe-division operations are different
-functions, not licenses to drop those hypotheses from the raw functions. When composing a graph,
-the local domain facts must be established at the actual saved forward values used by the reverse
-rule.
+needs positivity, one for reciprocal or division needs a nonzero denominator, and square-root
+differentiation needs a strictly positive point. Epsilon-protected `safe_log` and safe-division
+operations are different functions, not licenses to drop those hypotheses from the raw functions.
+When composing a graph, the local domain facts must be established at the actual saved forward
+values used by the reverse rule.
 
 # MLP Derivative Composition
 
@@ -895,90 +890,88 @@ scalar theorem is lifted to a vector:
 ```lean (name := reluVecThm)
 -- Pointwise differentiability requires every input
 -- coordinate to avoid zero.
-#check @hasFDerivAt_reluVec
+#check @hasFDerivAt_relu
 ```
 
 ```leanOutput reluVecThm (whitespace := lax)
-@hasFDerivAt_reluVec : ∀ {n : ℕ} (x : Vec n),
+@hasFDerivAt_relu : ∀ {n : ℕ} (x : Vec n),
   (∀ (i : Fin n), x.ofLp i ≠ 0) →
-    HasFDerivAt reluVec (reluDerivCLM x) x
+    HasFDerivAt Vec.relu x.reluDerivCLM x
 ```
 
-The scalar nonzero hypothesis becomes a condition on every coordinate. An $`n`-dimensional ReLU
-map is nondifferentiable on the union of the $`n` coordinate hyperplanes; the displayed theorem
-proves differentiability away from that union.
+Lifted to vectors, the scalar nonzero hypothesis becomes a condition on every coordinate. An
+$`n`-dimensional ReLU map is nondifferentiable on the union of the $`n` coordinate hyperplanes, and
+the displayed theorem proves differentiability away from that union.
 
 Composing the affine and activation derivatives gives a theorem about the full MLP backward rule:
 
 ```lean (name := mlpThm)
 -- The MLP theorem tests the hidden pre-activations and
 -- handles any cotangent.
-#check @mlp_backward_eq_adjoint_fderiv
+#check @mlp_backward_eq_fderiv
 ```
 
 ```leanOutput mlpThm (whitespace := lax)
-@mlp_backward_eq_adjoint_fderiv : ∀ {inDim hidDim outDim : ℕ}
-  (l1 : LinearSpec ℝ inDim hidDim)
-  (l2 : LinearSpec ℝ hidDim outDim) (x : Tensor ℝ [inDim]),
+@mlp_backward_eq_fderiv : ∀ {inDim hidDim outDim : ℕ}
+  (l1 : Linear ℝ inDim hidDim)
+  (l2 : Linear ℝ hidDim outDim) (x : Tensor ℝ [inDim]),
   (∀ (i : Fin hidDim),
-      have W1 := tensorToMatrix l1.weights;
-      have b1 := getScalarE l1.bias;
-      (affine W1 b1 (getScalarE x)).ofLp i ≠ 0) →
+      have W1 := (Rep.matrixEquiv ℝ hidDim inDim) l1.weights;
+      have b1 := l1.bias.getScalarE;
+      (affine W1 b1 x.getScalarE).ofLp i ≠ 0) →
     ∀ (δ : Tensor ℝ [outDim]),
-      getScalarE ((mlpOp l1 l2).backward x δ) =
-        VJP[mlpVec l1 l2, getScalarE x] (getScalarE δ)
+      ((AdjointOp.mlp l1 l2).op.backward x δ).getScalarE =
+        (ContinuousLinearMap.adjoint (fderiv ℝ (mlp l1 l2) x.getScalarE))
+          δ.getScalarE
 ```
 
 Read the conclusion against the definition from the opening section. On the left is what the
-spec-level backward rule returns for a cotangent `δ`. On the right, `VJP[f, x]` is scoped notation
-for the adjoint of the Fréchet derivative of `f` at `x`, so the right-hand side is the true analytic
-vector-Jacobian product. The hypothesis is the lifted kink condition, now stated at the
-pre-activation $`W_1x+b_1` rather than at the input, because that is where ReLU is actually
-applied. This is the proof-layer analogue of the claim that `loss.backward()` computes the correct
-VJP for a composed model {Informal.citep pytorch2019}[].
+spec-level backward rule returns for a cotangent `δ`. On the right, `ContinuousLinearMap.adjoint`
+of `fderiv ℝ f x` is the adjoint of the Fréchet derivative of `f` at `x`, so the right-hand side is
+the true analytic vector-Jacobian product. The hypothesis is the lifted kink condition, stated at
+the pre-activation $`W_1x+b_1` (not at the input) because that's where ReLU is applied. So the
+theorem is the proof-layer analogue of the claim that `loss.backward()` computes the correct VJP for
+a composed model {Informal.citep pytorch2019}[].
 
-The `have W1 := ...; have b1 := ...;` expressions inside the printed hypothesis are local
-abbreviations. They do not ask the caller to prove new propositions named `W1` or `b1`; they give
-names to the vectorized weights and bias before stating that every pre-activation is nonzero.
-Similarly, `getScalarE` translates the tensor result and cotangent into the Euclidean
-representation used by `VJP`. Once the hypothesis holds, the final `∀ δ` covers every incoming
+Inside the printed hypothesis, the `have W1 := ...; have b1 := ...;` expressions are local
+abbreviations. They give names to the vectorized weights and bias before stating that every
+pre-activation is nonzero, and they don't ask the caller to prove new propositions named `W1` or
+`b1`. Similarly, `getScalarE` translates the tensor result and cotangent into the Euclidean
+representation used by `fderiv`. Once the hypothesis holds, the final `∀ δ` covers every incoming
 cotangent for this same forward input. Choosing different cotangents therefore needs no new
 differentiability proof, while changing the input may require checking the pre-activations again.
 
-Beyond the analytic layer, a runtime-autograd proof also has to show that the tape records the graph
-correctly, that saved tensors and cotangent accumulation are right, and that the selected provider
-implementation agrees with the operator semantics. The first two are proved for tapes lowered from a
-proof-carrying graph: `backwardDenseAll_lowerGraphToTape_eq_backpropAllCtx` shows that the dense
-reverse evaluator
-on a lowered proof-carrying graph equals its proved backpropagation, and over
-`ℝ` its companion `backwardDenseAll_lowerGraphToTape_adjoint_fderiv` equates that executed sweep
-with the adjoint of the Fréchet derivative. The algebraic equality is generic over a commutative
-semiring; the Fréchet-adjoint theorem
-is specifically real-valued and carries differentiability hypotheses. The third obligation,
-agreement of the `Float` and CUDA executions
-with the operator semantics, remains an approximation and engineering concern rather than a theorem.
+Beyond the analytic layer, a runtime-autograd proof also has to show that the tape records the
+graph correctly, that saved tensors and cotangent accumulation are right, and that the selected
+provider implementation agrees with the operator semantics. For tapes lowered from a proof-carrying
+graph, the first two are proved: `backwardDenseAll_toTape` shows that the dense reverse evaluator
+on a lowered proof-carrying graph equals its proved backpropagation, and over `ℝ` its companion
+`backwardDenseAll_eq_fderiv` equates that executed sweep with the adjoint of the Fréchet
+derivative. Of the two, the algebraic equality is generic
+over a commutative semiring, while the Fréchet-adjoint theorem is specifically real-valued and
+carries differentiability hypotheses. The third obligation (agreement of the `Float` and CUDA
+executions with the operator semantics) remains an approximation and engineering concern, not a
+theorem.
 
-The probability theorem has an analogous place in diffusion. It supplies the exact forward
+In diffusion, the probability theorem has an analogous place. It supplies the exact forward
 transition law with its two moments, while a model proof must still connect that law to a schedule,
 a denoising objective, and an executable sampler.
 
 # Probability And Autograd Proof Gaps
 
-To extend these local results to the corresponding model and runtime proofs, we still need:
+To extend these local results to the corresponding model and runtime proofs, we need:
 
-* a bridge theorem identifying `forwardNoising` with
-  `NN.MLTheory.Generative.Diffusion.forwardGaussian`, so the two developments can cite each other;
 * the reverse-time transition and any statement about a denoising objective, which this file does
-  not touch;
-* a correctness theorem for `linearDerivSpec`, the batched call executed above;
+  not touch
+* a correctness theorem for the batched gradients executed above
 * Fréchet-derivative statements for the tensor-typed linear map itself, as opposed to its
-  vectorization through `getScalarE`;
+  vectorization through `getScalarE`
 * the runtime-layout lowering theorems that connect proved SSA graphs to the executable model
-  wrappers, which {src "NN/Proofs/Autograd/Coverage.lean"}[`Coverage.lean`] tracks in detail;
+  wrappers
 * a numerical bridge for the particular executed `Float` or CUDA path. Existing rounded-model
   approximation theorems and runtime tests provide separate pieces, not automatic coverage.
 
-The Gaussian construction is grounded in Mathlib's multivariate Gaussian and kernel libraries
-{Informal.citep mathlib2020}[]. The reverse-mode formulas are standard matrix calculus. TorchLean's
-declarations make these formulas available to later graph and runtime proofs, with explicit
-assumptions on measurability, differentiability, and the point of evaluation.
+Our Gaussian construction is grounded in Mathlib's multivariate Gaussian and kernel libraries
+{Informal.citep mathlib2020}[], and the reverse-mode formulas are standard matrix calculus.
+TorchLean's declarations make these formulas available to later graph and runtime proofs, with
+stated assumptions on measurability, differentiability, and the point of evaluation.

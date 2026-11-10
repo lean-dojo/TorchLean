@@ -1,14 +1,52 @@
 import VersoManual
-import NN.API
-import NN.API.Verification.Lowering
-import NN.IR
-import NN.Floats
+import TorchLean.NN.LoRA
+import TorchLean.NN.Autograd.Function
+import TorchLean.NN.Autograd.Frontend
+import TorchLean.NN.Autograd.Differential
+import TorchLean.NN.Autograd.Complex
+import TorchLean.NN.CLI.Training.Command
+import TorchLean.NN.Data.Synthetic
+import TorchLean.NN.Data.CausalLM
+import TorchLean.NN.Models.KAN
+import TorchLean.NN.Models.CNN
+import TorchLean.NN.Models.ResNet
+import TorchLean.NN.Models.UNet
+import TorchLean.NN.Models.Recurrent
+import TorchLean.NN.Models.CausalTransformer.LanguageModel
+import TorchLean.NN.Models.Mamba
+import TorchLean.NN.Models.MaskedPatchReconstructor
+import TorchLean.NN.Models.Diffusion.NoisePredictor
+import TorchLean.NN.Models.FNO
+import TorchLean.NN.Models.PPO
+import TorchLean.NN.Builder.MoE
+import TorchLean.NN.Sequential.Training
+import TorchLean.NN.RL.CLI
+import TorchLean.NN.RL.PPO.ActorCritic
+import TorchLean.NN.SelfSupervised
+import TorchLean.NN.Text.Vocabulary
+import TorchLean.NN.Text.GPT2BPE
+import TorchLean.NN.Text.Generation
+import TorchLean.NN.Trainer.Constructor
+import TorchLean.NN.Trainer.Train
+import TorchLean.NN.Data.Image
+import TorchLean.Verify.Lowering
+import TorchLean.NN.IR.CustomRule
+import TorchLean.NN.IR.Tangent
+import TorchLean.NN.IR.Program
+import FloatLib.Floats
+import TorchLean.Verify.Floats.FP32
+import FloatLib.Floats.Formats.BinaryInterchange
+import FloatLib.Floats.Formats.Flocq.Theory.Rounding.Affine
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
+import TorchLean.NN.Loss
+import TorchLean.NN.Session.Random
+import TorchLean.Tensor.Op.Pointwise.Real
+import TorchLean.Verify.Trainer
 
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
-open TorchLean
+open TorchLean Trainer.Objective
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
 open FloatLib.Floats (ExecFloat)
@@ -21,9 +59,9 @@ file := "The-Problem-TorchLean-Solves"
 %%%
 
 Suppose we train a small network, save its parameters, run it on a GPU, and later claim that its
-output stays in a safe range for every input near a test point. The verifier must analyze the
-parameters and computation that actually run. The architecture alone cannot identify them:
-initialization chooses parameter values, training changes them, and exporting or compiling
+output stays in a safe range for every input near a test point. To check that claim, a verifier
+must analyze the parameters and computation that actually run. Architecture alone can't identify
+them: initialization chooses parameter values, training changes them, and exporting or compiling
 determines how the operations will be represented and evaluated.
 
 A mismatch can be hard to detect. A checkpoint loader may transpose a weight matrix. A verification
@@ -31,25 +69,26 @@ script may forget that the model expects normalized inputs. A compiler may repla
 multiplication and addition with an FMA, changing the result by an amount that a test's tolerance
 hides. Each program still runs, but computes a different function from the one we had in mind.
 
-TorchLean was designed around that problem. It is a neural-network library in which the
-architecture, parameter payload, graph, arithmetic, and property can be named in the same language.
-Numerical kernels may still run through optimized native providers; their inputs, outputs, and
-assumptions remain attached to the computation being studied.
+We designed TorchLean around that problem. It's a neural-network library in which the architecture,
+parameter payload, graph, arithmetic, and property can be named in the same language. Numerical
+kernels may still run through optimized native providers, but their inputs, outputs, and
+assumptions stay attached to the computation we're studying.
 
 # Model Definition And Initialization
 
-Application code uses the focused `NN.API` import:
+The model and the trainer below need two imports:
 
 ```
--- The application interface provides the model builder and
+-- The trainer modules provide the model builder and the
 -- trainer used below.
-import NN.API
+import TorchLean.NN.Trainer.Constructor
+import TorchLean.NN.Trainer.Train
 
 open TorchLean
 ```
 
-The named Lean blocks are elaborated when this page is built, and their output is checked against
-the displayed results. The first declaration is a two-layer regression model:
+When this page is built, its named Lean blocks are elaborated and their output is checked against
+the displayed results. Our first declaration is a two-layer regression model:
 
 ```lean
 -- The hidden shape [8] must connect the first affine layer,
@@ -58,17 +97,17 @@ def model :
     nn.Builder (nn.Sequential [2] [1]) :=
   nn.Sequential![
     nn.linear 2 8,
-    nn.relu,
+    nn.op .relu,
     nn.linear 8 1
   ]
 ```
 
-The model accepts a length-two tensor and returns a length-one prediction. The dimensions occur in
-the model's type, so the output of a layer with width seven cannot be fed to a layer expecting width
-eight. `nn.Builder` means that this is a seeded model builder. It describes initialization but has
-not yet chosen the random seed or produced concrete parameter tensors.
+Our model accepts a length-two tensor and returns a length-one prediction. The dimensions occur in
+the model's type, so the output of a layer with width seven can't be fed to a layer expecting width
+eight. `nn.Builder` means that this is a seeded model builder, which describes initialization
+without choosing the random seed or producing concrete parameter tensors.
 
-We can initialize it directly:
+We can initialize it ourselves:
 
 ```lean
 -- Run the initialization builder with an explicit seed to
@@ -83,22 +122,23 @@ or ask the trainer to initialize and execute it:
 -- Configure the loss and optimizer without performing a
 -- training step.
 def trainer :=
-  Trainer.new model
+  Trainer.create model
     { objective := mse
       optimizer := optim.adam
         { lr := 0.03 }
       seed := 2026 }
 ```
 
-The notation is intentionally familiar to a PyTorch user
-({Informal.citet pytorch2019}[]), but Lean learns more from the declaration.
-It checks the input and output dimensions while elaborating the file. It distinguishes the seeded
-builder from the initialized model. Once initialized, the model exposes the exact order and shape of
-its parameter tensors. That information is available later to the trainer, graph lowering pass, and
-verifier without rediscovering it from runtime metadata.
+The notation is intentionally familiar to a PyTorch user {Informal.citep pytorch2019}[], but Lean
+learns more from the declaration. It checks the input and output dimensions while elaborating the
+file, and it distinguishes the seeded builder from the initialized model. Once initialized, the
+model exposes the exact order and shape of its parameter tensors, so the trainer, the graph
+lowering pass, and the verifier can use that information later without rediscovering it from
+runtime metadata.
 
-Because the seed is part of the trainer's configuration rather than a global mutable generator, an
-untrained prediction is a value we can reproduce with the same initialization and numerical backend:
+Since the seed sits in the trainer's configuration (not in a global mutable generator), an
+untrained prediction is a value we can reproduce with the same initialization and numerical
+backend:
 
 ```lean (name := untrainedPrediction)
 -- Observe the seeded model at one input before fitting any
@@ -106,14 +146,14 @@ untrained prediction is a value we can reproduce with the same initialization an
 #eval trainer.predict ([0.25, -0.75] : Tensor Float [2])
 ```
 ```leanOutput untrainedPrediction
-[-0.088261]
+[-0.047640]
 ```
 
 # Core Objects
 
-The declarations above let us inspect several stages of the model's lifecycle. We print the
-builder, initialized model, parameter state, and lowering result types, and check the prediction
-function's single-input type:
+With the declarations above we can inspect several stages of the model's lifecycle. We print the
+types of the builder, the initialized model, the parameter state, and the lowering result, and
+check the prediction function's single-input type:
 
 ```lean (name := ovSix)
 -- Inspect the types at each transition: builder, model,
@@ -133,32 +173,32 @@ model : nn.Builder (nn.Sequential [2] [1])
 initialized : nn.Sequential [2] [1]
 ```
 ```leanOutput ovSix (whitespace := lax)
-nn.initialState initialized Float : nn.State Float
-  (Runtime.Autograd.Model.Layers.Seq.stateShapes initialized)
+nn.initialState initialized Float : TensorPack Float
+  initialized.stateShapes
 ```
 ```leanOutput ovSix (whitespace := lax)
 Verification.lowerForwardToIR initialized
-  (nn.initialState initialized Float) : Except String (NN.Verification.Builtin.LoweredIR Float)
+  (nn.initialState initialized Float) : Except String (IR.LoweredModel Float)
 ```
 
-`model` and `initialized` have different types. A builder is a recipe; a `nn.Sequential [2] [1]` is
-a network with concrete parameter tensors in it. Code that needs one and is handed the other does
-not compile. Initialization is therefore an explicit step in the interface.
+`model` and `initialized` have different types. A builder is a recipe, while a
+`nn.Sequential [2] [1]` is a network with concrete parameter tensors in it. Code that needs one and
+is handed the other doesn't compile. So initialization is its own step in the interface.
 
-The type of the parameter payload mentions the model it came from:
-`nn.State Float (Runtime.Autograd.Model.Layers.Seq.stateShapes initialized)`. The list of shapes is
-computed from `initialized`, not supplied alongside it. A payload with a different ordered list of
-state shapes has a different type. Models with the same state shapes can still have different
-operations or parameter values, so this check does not establish checkpoint identity.
+Here the parameter payload's type mentions the model it came from:
+`TensorPack Float initialized.stateShapes`. That list of shapes is computed from `initialized`, not
+supplied alongside it, and a payload with a different ordered list of state shapes has a different
+type. But models with the same state shapes can still have different operations or parameter
+values, so this check doesn't establish checkpoint identity.
 
 `trainer.predict` returns `IO (Tensor Float [1])`, so using the runtime requires an effectful
-computation. The specification-level forward function of the same network is a plain total function
-with no `IO`, and the {ref "running-example"}[running example] checks that the two agree on a
-held-out point.
+computation. For the same network, the specification-level forward function is a plain total
+function with no `IO`, and the {ref "running-example"}[running example] checks that the two agree
+on a held-out point.
 
-Lowering returns `Except String (LoweredIR Float)`. The error alternative reports unsupported
-forward programs or invalid inputs; the success alternative contains the lowered artifact.
-Its semantics still require a separate correctness argument.
+Lowering returns `Except String (IR.LoweredModel Float)`. Its error alternative reports unsupported
+forward programs or invalid inputs, and its success alternative contains the lowered artifact,
+whose semantics need a correctness argument of their own.
 
 Each stage of the workflow has corresponding objects in Lean and PyTorch:
 
@@ -181,7 +221,7 @@ Each stage of the workflow has corresponding objects in Lean and PyTorch:
   * the same `Parameter` objects, mutated by `optimizer.step()`
 *
   * exported operation graph
-  * `NN.IR.Graph` plus an `NN.IR.Payload α`
+  * `IR.Graph` plus an `IR.Payload α`
   * an `fx.GraphModule` or a `torch.export` program
 *
   * the program that actually runs
@@ -189,60 +229,65 @@ Each stage of the workflow has corresponding objects in Lean and PyTorch:
   * whatever kernel ATen dispatch picks after `.to(device)`
 *
   * the object a verifier analyzes
-  * `LoweredIR α`
+  * `IR.LoweredModel α`
   * an ONNX or VNN-LIB file handed to an external checker
 :::
 
-PyTorch also distinguishes these objects and provides conversions between them. TorchLean places
+PyTorch also distinguishes these objects and provides conversions between them. TorchLean puts
 additional information in their types, including the network's input and output shapes and the
-ordered shapes of its state. These checks rule out some conversion mistakes; they still leave
-value-level questions, such as whether a checkpoint contains the intended weights.
+ordered shapes of its state. Those checks rule out some conversion mistakes, but they leave
+value-level questions open, such as whether a checkpoint contains the intended weights.
 
 # Model Representations
 
-The trainer, proof, and verifier each need a different view of the initialized model.
+Trainer, proof, and verifier each need a different view of the initialized model.
 
 ## The model description
 
 An `nn.Sequential` stores layer definitions, parameter shapes, initialization values, gradient
-flags, and a forward program. This is the object used by the high-level trainer. Training creates an
-effectful runtime runner whose parameters change over time; it does not rewrite the source
+flags, and a forward program, and it's the object the high-level trainer uses. Training creates an
+effectful runtime runner whose parameters change over time, but it doesn't rewrite the source
 definition.
 
 ## The equations
 
 The specification layer defines tensors as shape-indexed objects and gives operations such as
-matrix multiplication, softmax, normalization, and loss functions explicit mathematical meanings.
-Proofs use these definitions rather than reverse-engineering an opaque native buffer. The real
-analysis those definitions are stated against comes from Mathlib
-({Informal.citep mathlib2020}[]), so a TorchLean theorem about a gradient is a
-statement in Mathlib's analysis. Analytic gradient theorems use `fderiv`; algebraic JVP/VJP
-adjointness theorems have a separate role and require an analytic bridge to identify a derivative.
+matrix multiplication, softmax, normalization, and loss functions their mathematical meanings.
+Proofs use these definitions, so they don't have to reverse-engineer an opaque native buffer. Those
+definitions are stated against Mathlib's real analysis {Informal.citep mathlib2020}[], so a
+TorchLean theorem about a gradient is a statement in Mathlib's analysis. Analytic gradient theorems
+use `fderiv`, while algebraic JVP/VJP adjointness theorems have a separate role and require an
+analytic bridge to identify a derivative.
 
 ## The running program
 
-The eager runtime owns autograd tape nodes, parameter and optimizer state, and optional accelerator
-buffers. A backend profile selects implementations without changing the source model. The backend
-chapter explains the maintained profiles and what their evidence supports.
+TorchLean's eager runtime owns autograd tape nodes, parameter and optimizer state, and optional
+accelerator buffers. Each operation it records is a registered operator of one table,
+`TorchLean.Op`, whose rule `Op.rule?` gives the operator's forward value and pullback. On the CPU
+tape, `Tape.apply` records an operator through that rule. On the CUDA tape, `LibTorch.Tape.apply`
+records it through its entry in `LibTorch.Kernel.ofOp`, which calls LibTorch kernels that no
+theorem relates to the rule. A backend profile selects implementations without changing the source
+model, and the backend chapter explains the profiles we maintain and what their evidence supports.
 
 ## The operation graph
 
-`NN.IR.Graph` is a directed acyclic graph of operation-tagged nodes. Each node has parent ids and a
-declared output shape. Constants, weights, convolution parameters, and similar data live in a
-separate payload store, so inspecting the structure does not require inspecting every parameter.
+A lowered graph (`IR.Graph`) is a straight-line graph of registered operators. Each node is
+the graph input, a constant, or an operator with one reference per input port. Constants, weights
+and similar data live in a separate payload, so you can inspect the structure without inspecting
+every parameter.
 
 For the two linear layers and ReLU above, we can inspect the node count and input and output ids:
 
 ```lean (name := ovGraphIds)
 -- Keep lowering errors visible while extracting the graph
--- size and its boundary node ids.
+-- size and its input and output nodes.
 def ovGraphFacts :
     Except String (Nat × Nat × Nat) := do
   let lowered ← Verification.lowerForwardToIR
     (α := Float) initialized
     (nn.initialState initialized)
   return (lowered.graph.nodes.size,
-    lowered.inputId, lowered.outputId)
+    lowered.input.node, lowered.output.node)
 
 #eval ovGraphFacts
 ```
@@ -250,27 +295,36 @@ def ovGraphFacts :
 Except.ok (18, 0, 17)
 ```
 
-The tuple gives eighteen nodes, input id `0`, and output id `17`. The output still has shape `[1]`;
-seventeen identifies a node, not a dimension. Nor is the node count a parameter count: a constant
+So the graph has eighteen nodes, input id `0`, and output id `17`. Seventeen identifies a node, not
+a dimension (the output still has shape `[1]`). Nor is the node count a parameter count: a constant
 node can hold an entire weight matrix.
 
 Two linear layers and a ReLU expand to eighteen nodes because reshapes, broadcasts, matrix
 products, and bias additions each have their own nodes. A proof can follow these operations
 one at a time using the equation attached to each node.
 
-The graph structure itself does not choose an element type. Evaluation does: `NN.IR.Payload α` and
-the graph denotation use one `α` for the numeric input, parameters, intermediates, and output. The
-{ref "tensors-shapes"}[tensor chapter] explains how that arithmetic is selected and recorded.
+By itself, the graph structure doesn't choose an element type. Evaluation does:
+`IR.Payload α` and the graph's evaluation use one `α` for the numeric input, parameters,
+intermediates, and output. We explain in the {ref "tensors-shapes"}[tensor chapter] how that
+arithmetic is selected and recorded.
+
+Lowering builds this graph by recording the forward program's operations as registered operators of
+`TorchLean.Op` in a typed graph (`IR.record`), then building that typed
+graph's graph of registered operators node for node (`IR.OpGraph.toOp`). On every input, the
+lowered graph returns the typed graph's value at the output (`IR.lowerForward_eq_ok`). That
+recording is a construction, though: no theorem relates the recorded graph to the forward program
+it came from. The PyTorch and JAX captures write typed programs of these registered operators as
+JSON, in the `torchlean.ir` artifact format (`IR.Artifact`), and `IR.load` checks and loads them.
 
 ## Verification Artifacts
 
-The verification lowering converts supported forward programs and a concrete parameter payload
-to a `LoweredIR`. Interval bound propagation (IBP) carries lower and upper bounds through the
-operations. CROWN uses affine bounds to retain more information about how values depend on the
-input. Both operate on the lowered graph. Numerical certificates can replay
-bit-level ranges and backend policies over it. Other checkers consume external artifacts such as
-alpha-beta-CROWN leaves ({Informal.citep betacrown2021}[]) or PINN residual
-certificates.
+Verification lowering converts supported forward programs and a concrete parameter payload to a
+`IR.LoweredModel`. Interval bound propagation (IBP) carries lower and upper bounds through the
+operations, while CROWN uses affine bounds to retain more information about how values depend on
+the input. Both operate on the lowered graph's import as a graph of registered operators
+(`IR.LoweredModel.toImported`), and numerical certificates can replay bit-level ranges and backend
+policies over it. Other checkers consume external artifacts such as alpha-beta-CROWN leaves
+{Informal.citep betacrown2021}[] or PINN residual certificates.
 
 ## Comparing Runtime And Graph Evaluation
 
@@ -289,9 +343,11 @@ evaluation with interval propagation through the lowered graph:
     | .error e => throw <| IO.userError e
   let x0 : Tensor Float [2] := [0.25, -0.75]
   -- Radius zero: the "region" is one point.
-  let ps := lowered.seedLInfBall x0 0.0
+  let xB := CROWN.FlatBox.lInfBall
+    (α := Float) x0 0.0
+  let imported := lowered.toImported
   let box ← IO.ofExcept <|
-    lowered.outputBox? (lowered.runIBP ps)
+    imported.outputBox? (imported.runIBP xB)
   let y ← trainer.predict x0
   IO.println s!"runtime  = {y}"
   IO.println s!"IBP lo   = {box.lo}"
@@ -299,9 +355,9 @@ evaluation with interval propagation through the lowered graph:
 ```
 
 ```leanOutput ovAgree
-runtime  = [-0.088261]
-IBP lo   = [-0.088261]
-IBP hi   = [-0.088261]
+runtime  = [-0.047640]
+IBP lo   = [-0.047640]
+IBP hi   = [-0.047640]
 ```
 
 All three values agree at the displayed precision. This checks initialization, payload transfer,
@@ -311,8 +367,8 @@ A zero-radius box removes input variation but leaves those numerical choices in 
 Agreement at one point and six decimal places does not establish an enclosure theorem for host
 `Float` execution, or rule out smaller differences.
 
-The graph itself is a value, so the eighteen nodes can simply be printed. This is the level of
-detail the verifier sees:
+Since the graph is itself a value, we can print its eighteen nodes. This is the level of detail the
+verifier sees:
 
 ```lean (name := ovKinds)
 -- Print the primitive operations hidden inside the three
@@ -323,45 +379,56 @@ detail the verifier sees:
         initialized (nn.initialState initialized) with
     | .ok c => pure c
     | .error e => throw <| IO.userError e
-  for node in lowered.graph.nodes do
-    IO.println s!"{node.id}: {repr node.kind}"
+  let nodes := lowered.graph.nodes
+  for i in [0:nodes.size] do
+    match nodes[i]? with
+    | some (.input _ p) =>
+        IO.println s!"{i}: input {repr p.shape}"
+    | some (.const p) =>
+        IO.println s!"{i}: const {repr p.shape}"
+    | some (.op o refs) =>
+        let tag := (TorchLean.Op.encode o).tag
+        let parents := refs.toList.map (·.node)
+        IO.println s!"{i}: {tag} {parents}"
+    | none => pure ()
 ```
 
 ```leanOutput ovKinds (whitespace := lax)
-0: NN.IR.OpKind.input
-1: NN.IR.OpKind.reshape [2] [1, 2]
-2: NN.IR.OpKind.const [8, 2]
-3: NN.IR.OpKind.transpose 0 1
-4: NN.IR.OpKind.matmul
-5: NN.IR.OpKind.const [8]
-6: NN.IR.OpKind.broadcastTo [8] [1, 8]
-7: NN.IR.OpKind.add
-8: NN.IR.OpKind.reshape [1, 8] [8]
-9: NN.IR.OpKind.relu
-10: NN.IR.OpKind.reshape [8] [1, 8]
-11: NN.IR.OpKind.const [1, 8]
-12: NN.IR.OpKind.transpose 0 1
-13: NN.IR.OpKind.matmul
-14: NN.IR.OpKind.const [1]
-15: NN.IR.OpKind.broadcastTo [1] [1, 1]
-16: NN.IR.OpKind.add
-17: NN.IR.OpKind.reshape [1, 1] [1]
+0: input [2]
+1: reshape [0]
+2: const [8, 2]
+3: permute [2]
+4: matmul [1, 3]
+5: const [8]
+6: broadcast [5]
+7: add [4, 6]
+8: reshape [7]
+9: relu [8]
+10: reshape [9]
+11: const [1, 8]
+12: permute [11]
+13: matmul [10, 12]
+14: const [1]
+15: broadcast [14]
+16: add [13, 15]
+17: reshape [16]
 ```
 
-Follow the first affine layer through the listing. The input vector becomes a one-row matrix of
-shape `[1, 2]`. The stored weight has shape `[8, 2]`, so transposing it gives the `[2, 8]` matrix
+Each operator lists the nodes it reads, and each input and constant its shape. Follow the first
+affine layer through the listing. Its input vector becomes a one-row matrix of shape `[1, 2]`.
+Since the stored weight has shape `[8, 2]`, permuting its two dimensions gives the `[2, 8]` matrix
 needed on the right of that row. Their product has shape `[1, 8]`. Broadcasting the length-eight
 bias gives it the same shape before addition, and the last reshape removes the temporary row axis.
-ReLU then acts on the eight entries. The second affine layer repeats the same construction with
-eight inputs and one output. These structural nodes make the storage convention explicit.
+ReLU then acts on the eight entries. With eight inputs and one output, the second affine layer
+repeats the same construction. These structural nodes spell out the storage convention.
 
 A soundness proof can relate each of these primitives to its equation and compose the results
 along the graph.
 
 ## Interval And Affine Bounds
 
-With a positive radius, the library offers three analyses of that graph. Interval
-propagation, the forward CROWN pass, and the backward objective pass all read the same nodes and the
+With a positive radius, the library offers three analyses of that graph's import. Interval
+propagation, the CROWN output box, and the backward objective pass all read the same nodes and the
 same payload:
 
 ```lean (name := ovCrown)
@@ -375,67 +442,65 @@ same payload:
     | .error e => throw <| IO.userError e
   let x0 : Tensor Float [2] := [0.25, -0.75]
   let eps : Float := 1.0
-  let xB := NN.Verification.Builtin.lInfBall
+  let xB := CROWN.FlatBox.lInfBall
     (α := Float) x0 eps
-  let ps := lowered.seedLInfBall x0 eps
-  let ibp := lowered.runIBP ps
-  let ibpBox ← IO.ofExcept (lowered.outputBox? ibp)
-  let fwd ← IO.ofExcept (lowered.outputBoxCROWN? ps xB)
-  let obj : NN.MLTheory.CROWN.Graph.FlatTensor Float :=
+  let imported := lowered.toImported
+  let ibp := imported.runIBP xB
+  let ibpBox ← IO.ofExcept (imported.outputBox? ibp)
+  let crown ← IO.ofExcept (imported.outputBoxCROWN? xB)
+  let obj : CROWN.Graph.FlatTensor Float :=
     { n := 1, v := Tensor.full [1] 1.0 }
   IO.println s!"IBP      = {ibpBox.lo}, {ibpBox.hi}"
-  IO.println s!"forward  = {fwd.lo}, {fwd.hi}"
-  match lowered.backwardObjectiveBox? ps ibp xB obj with
+  IO.println s!"CROWN    = {crown.lo}, {crown.hi}"
+  match imported.backwardObjectiveBox? ibp xB obj with
   | .ok b => IO.println s!"backward = {b.lo}, {b.hi}"
   | .error m => IO.println s!"backward: {m}"
 ```
 
 ```leanOutput ovCrown
-IBP      = [-1.033713], [0.242680]
-forward  = [-1.033713], [0.242680]
-backward = [-1.033713], [0.242680]
+IBP      = [-1.099108], [0.227352]
+CROWN    = [-1.099108], [0.227352]
+backward = [-1.099108], [0.227352]
 ```
 
-The backward pass takes one extra ingredient: `obj` has one coefficient, equal to one, so the
+One extra ingredient goes into the backward pass: `obj` has one coefficient, equal to one, so the
 objective is the scalar network output itself. In a classifier, a vector of coefficients could
 instead ask about a difference between two logits. Here all three passes compute bounds for the
 same scalar.
 
-All three produce the same bounds in the displayed transcript. The
-{src "NN/MLTheory/CROWN/Graph/Engine/CROWN/Node.lean"}[CROWN engine] selects its transfer rules
-according to the scalar arithmetic. For exact arithmetic, it propagates affine forms through
-operations such as matrix multiplication and addition. For `Float`, those arithmetic nodes use
-`directedNodeBounds?`, which tries a directed backward objective for each output coordinate and
-falls back to the node's IBP box when that calculation is unavailable.
+In the displayed transcript all three produce the same bounds. TorchLean's
+{src "TorchLean/Verify/CROWN/Op/ExecCROWN.lean"}[CROWN pass] sweeps interval coefficients backward
+from the output to the input, rounding outward at every scalar. Sums, reshapes, permutations, and
+products with a constant operand pass their coefficients on, and a node without such a rule (ReLU
+among them) bounds its coefficient by its IBP box.
 
-The forward ReLU rule uses its IBP enclosure as a constant affine form. A crossing-zero ReLU
-relaxation requires a division to compute its slope; the forward rule keeps the interval until
-directed affine coefficients are available. The backward objective path has its own transfer
-rules, so this forward fallback alone does not explain whether the three final bounds agree.
+So on this network each ReLU enters the bound as its interval, which is why the three bounds agree
+here. For a crossing-zero ReLU, the α-CROWN relaxation belongs to the forward pass, which
+`Op.outputBoxAlphaCROWN?` runs only at scalars with exact affine reassociation, and `Float` isn't
+one of them.
 
-Replacing an affine form with its enclosing interval can lose tightness; the validity of that
-interval still depends on the arithmetic and enclosure hypotheses. The real-valued ReLU relaxation
-is available as a theorem, and {ref "motivation"}[the motivation chapter] proves the smallest
-instance of it by hand. Executable `mulElem` and two-argument `matmul` transfers use McCormick
-relaxations, while supported softmax nodes fall back to IBP enclosures. The agreement displayed
-here therefore describes this particular network and input box, not every graph accepted by the
-pass.
+Replacing an affine form with its enclosing interval can lose tightness, and the validity of that
+interval still depends on the arithmetic and enclosure hypotheses. There's a theorem for the
+real-valued ReLU relaxation, and {ref "motivation"}[the motivation chapter] proves its smallest
+instance by hand. Products of two bounded operands (`mul`, `matmul`, `scaledMatmul`) use McCormick
+planes, while softmax nodes fall back to IBP enclosures. So the agreement displayed here describes
+this particular network and input box, not every graph the pass accepts.
 
 External verifiers can also propose sharper bounds. Their artifacts need separate checks:
 {ref "certificates"}[the certificates chapter] distinguishes recomputing an enclosure from checking
-an α,β-CROWN leaf artifact's consistency ({Informal.citep betacrown2021}[]). Accepting the latter
+an α,β-CROWN leaf artifact's consistency {Informal.citep betacrown2021}[]. Accepting the latter
 does not by itself prove the proposed numerical bound.
 
 Reading an interval also requires a property to compare it with. Suppose we wanted to establish
-that the output stays below zero throughout this input box. The displayed upper endpoint,
-`0.242680`, would not establish that claim. It would not by itself refute the claim either: a
-bound can include values the network never attains. A counterexample would need an actual input
-and its output. For a proof of the upper bound, we would instead need an enclosure whose upper
-endpoint satisfies the requested threshold, together with the soundness argument connecting that
-enclosure to the intended computation.
+that the output stays below zero throughout this input box. Then the displayed upper endpoint,
+`0.227352`, wouldn't establish that claim, and it wouldn't refute the claim by itself either: a
+bound can include values the network never attains. A counterexample would need an actual input and
+its output. For a proof of the upper bound, we'd instead need an enclosure whose upper endpoint
+satisfies the requested threshold, together with the soundness argument connecting that enclosure
+to the intended computation.
 
-The analysis has succeeded in producing a box, but that box does not settle the requested
-inequality. A loose bound, an execution error, and a counterexample call for different next steps.
+Here the analysis has succeeded in producing a box, but that box doesn't settle the requested
+inequality. A loose bound, an execution error, and a counterexample call for different follow-ups.
 
 # Shape Contracts In A Loss Function
 
@@ -458,7 +523,7 @@ def labels : Tensor Float [32] :=
 These are different types, and Lean says so before anything runs:
 
 ```lean +error (name := shapeClash)
--- A singleton axis is still part of the type; it is not
+-- A singleton axis is still part of the type, so it is not
 -- removed implicitly.
 example : Tensor Float [32] := predictions
 ```
@@ -471,24 +536,25 @@ but is expected to have type
   Tensor Float [32]
 ```
 
-A loss that expects equal shapes cannot silently broadcast the label vector across the second axis.
+A loss that expects equal shapes can't silently broadcast the label vector across the second axis.
 Mean squared error on two tensors of the same shape is fine:
 
 ```lean (name := ovLossOk)
 -- Matching prediction and target shapes permit a scalar
 -- mean squared error.
-#check Spec.mseSpec predictions predictions
+#check Tensor.meanSquaredError predictions predictions
 ```
 ```leanOutput ovLossOk
-Spec.mseSpec predictions predictions : Float
+predictions.meanSquaredError predictions : Float
 ```
 
-Mixing the two shapes is not, and the message names the argument:
+Mixing the two shapes isn't, and the message names the argument:
 
 ```lean +error (name := ovLossClash)
 -- The loss requires a common shape, so it cannot broadcast
 -- these labels silently.
-example : Float := Spec.mseSpec predictions labels
+example : Float :=
+  Tensor.meanSquaredError predictions labels
 ```
 ```leanOutput ovLossClash
 Application type mismatch: The argument
@@ -498,10 +564,10 @@ has type
 but is expected to have type
   Tensor Float [32, 1]
 in the application
-  Spec.mseSpec predictions labels
+  predictions.meanSquaredError labels
 ```
 
-With all-zero tensors, even incorrectly paired entries would give zero loss. The type error
+With all-zero tensors, even incorrectly paired entries would give zero loss, but the type error
 exposes the mismatch without relying on the values. Under broadcasting, the `[32]` labels would
 stretch across the second axis and subtraction would produce a `[32, 32]` matrix of all pairwise
 residuals. On nonzero data, that loss could decrease while comparing every prediction with every
@@ -515,7 +581,7 @@ That choice should follow the intended pairing of samples and targets.
 Shape typing checks dimensions, leaving properties of the entries to other checks. A square
 matrix and its transpose, for example, have exactly the same tensor type.
 
-The einops-style notation from the tensor chapter expresses the axis exchange:
+We write the axis exchange in the einops-style notation from the tensor chapter:
 
 ```lean (name := ovTranspose)
 -- A nonsymmetric square matrix exposes a transpose that
@@ -530,8 +596,8 @@ def ovWT : Tensor Float [2, 2] :=
 
 def ovIn : Tensor Float [2] := [1.0, 0.0]
 
-#eval Spec.matVecMulSpec ovW ovIn
-#eval Spec.matVecMulSpec ovWT ovIn
+#eval Tensor.matvec ovW ovIn
+#eval Tensor.matvec ovWT ovIn
 ```
 ```leanOutput ovTranspose
 [0.500000, 2.500000]
@@ -540,24 +606,24 @@ def ovIn : Tensor Float [2] := [1.0, 0.0]
 [0.500000, 1.500000]
 ```
 
-The input `[1, 0]` selects the first column in a matrix-vector product. Before transposition,
-that column contains 0.5 and 2.5; afterwards it contains 0.5 and 1.5. A square matrix makes the
-shape error invisible, while a nonsymmetric payload makes the semantic error visible. This is a
-useful way to design an importer check: choose entries that distinguish row and column conventions,
-then choose an input that isolates one of them. A matrix of all zeros or a symmetric matrix would
-let the wrong convention pass this particular check.
+In a matrix-vector product, the input `[1, 0]` selects the first column. Before transposition that
+column contains 0.5 and 2.5, and afterwards it contains 0.5 and 1.5. A square matrix makes the
+shape error invisible, while a nonsymmetric payload makes the semantic error visible. That gives us
+a useful way to design an importer check: choose entries that distinguish row and column
+conventions, then choose an input that isolates one of them. A matrix of all zeros or a symmetric
+matrix would let the wrong convention pass this particular check.
 
 A loader that reads this row-major buffer as column-major would introduce exactly that transpose
 while preserving the tensor type `Tensor Float [2, 2]`.
 
-It helps to remember what the contraction is doing. `Spec.matVecMulSpec` sums over the second axis,
+It helps to remember what the contraction is doing. `Tensor.matvec` sums over the second axis,
 so entry $`i` of the result is the dot product of row $`i` with the input:
 
 ```lean (name := ovDot)
 -- Use basis and all-ones inputs to make contraction
 -- directions easy to identify.
-#eval Tensor.dotSpec ovIn ovIn
-#eval Spec.matVecMulSpec ovW (Tensor.full [2] 1.0)
+#eval Tensor.dot ovIn ovIn
+#eval Tensor.matvec ovW (Tensor.full [2] 1.0)
 ```
 ```leanOutput ovDot
 1.000000
@@ -571,15 +637,16 @@ Feeding the transposed matrix the same input gives the column sums instead.
 
 What catches a transposed checkpoint is a claim about values, not about shapes: an equation between
 the tensor that was saved and the tensor that was loaded, or an end-to-end comparison against a
-reference run. The {ref "pytorch-roundtrip"}[round trip chapter] does the second of those against
-real PyTorch state dicts, and the failure it is guarding against is exactly this one.
+reference run. We do the second of those against real PyTorch state dicts in the
+{ref "pytorch-roundtrip"}[round trip chapter], and the failure that comparison guards against is
+this one.
 
 Units, label quality, normalization, finiteness, and generalization need their own definitions and
-hypotheses. The tensor shape carries none of those guarantees.
+hypotheses, because a tensor shape carries none of those guarantees.
 
-The scalar parameter is equally explicit. `Tensor α s` is homogeneous: every element of that
-tensor has type `α`. The tensor chapter develops that point once, alongside the distinction between
-specification scalars and executable runtime arithmetic.
+A tensor type names its scalar parameter too. `Tensor α s` is homogeneous: every element of that
+tensor has type `α`. We develop that point once, in the tensor chapter, alongside the distinction
+between specification scalars and executable runtime arithmetic.
 
 # Input Normalization
 
@@ -608,8 +675,8 @@ def ovRaw : Tensor Float [2] := [11.0, 125.0]
 [0.500000, 0.500000]
 ```
 
-The raw measurement sits half a standard deviation above the mean in both features. Now ask the
-model about it, once through the normalizer and once directly, which is the mistake:
+In both features, the raw measurement sits half a standard deviation above the mean. We ask the
+model about it once through the normalizer and once in raw units, which is the mistake:
 
 ```lean (name := ovNormBug)
 -- Compare the normalized measurement with the same numbers
@@ -618,16 +685,16 @@ model about it, once through the normalizer and once directly, which is the mist
 #eval trainer.predict ovRaw
 ```
 ```leanOutput ovNormBug
-[0.024256]
+[-0.071120]
 ```
 ```leanOutput ovNormBug
-[-47.586140]
+[-63.560242]
 ```
 
-The same raw measurement leads to predictions three orders of magnitude apart depending on whether
-normalization is applied. Both calls accept `Tensor Float [2]` and return `IO (Tensor Float [1])`.
-The shape cannot distinguish raw coordinates from normalized coordinates, so the caller needs a
-separate contract specifying which representation the model expects.
+Depending on whether normalization is applied, the same raw measurement leads to predictions about
+three orders of magnitude apart. Yet both calls accept `Tensor Float [2]` and return
+`IO (Tensor Float [1])`. A shape can't distinguish raw coordinates from normalized coordinates, so
+the caller needs a separate contract specifying which representation the model expects.
 
 For verification, we must transform the whole input region as well as its center. An
 $`\ell^\infty` ball of radius $`\varepsilon` allows each coordinate to vary by at most that amount.
@@ -642,34 +709,32 @@ Dividing each coordinate by its standard deviation also divides its permitted va
 (0.050000, 0.002000)
 ```
 
-Around the normalized center `[0.5, 0.5]`, these half-widths describe the rectangle
-`[0.45, 0.55]` by `[0.498, 0.502]`. The second feature has a much narrower normalized range
-because its raw scale is larger. Replacing both half-widths by 0.05 would enlarge the region in
-that feature, potentially making a bound much looser; replacing both by 0.002 would fail to cover
-the intended first-feature perturbations.
+Around the normalized center `[0.5, 0.5]`, these half-widths describe the rectangle `[0.45, 0.55]`
+by `[0.498, 0.502]`. In normalized units the second feature has a much narrower range, because its
+raw scale is larger. Replacing both half-widths by 0.05 would enlarge the region in that feature
+(potentially making a bound much looser), while replacing both by 0.002 would fail to cover the
+intended first-feature perturbations.
 
-A ball of radius $`0.1` in raw units becomes a box of half-widths $`0.05` and $`0.002` in normalized
-units. It is still a box, because the normalizer here is diagonal, but it is no longer a *ball*: the
-two features are scaled by different amounts, so the certificate produced for
-$`\|x-x_0\|_\infty\leq 0.1` in one coordinate system is not a certificate for the same inequality in
-the other. Conversely, a normalized radius of $`0.1` corresponds to raw half-widths $`0.2` and $`5`.
-The claim must state which coordinate system and which per-feature widths it covers.
+A ball of radius $`0.1` in raw units becomes a box of half-widths $`0.05` and $`0.002` in
+normalized units. It's still a box, because the normalizer here is diagonal, but it's no longer a
+*ball*: the two features are scaled by different amounts, so the certificate produced for
+$`\|x-x_0\|_\infty\leq 0.1` in one coordinate system isn't a certificate for the same inequality in
+the other. Conversely, a normalized radius of $`0.1` corresponds to raw half-widths $`0.2` and
+$`5`. So the claim must state which coordinate system and which per-feature widths it covers.
 
-There are two ways to account for this transformation. Either
-the normalizer is part of the lowered forward program, so `denote` includes it and the input box is
-quantified over raw measurements, or it is not, and then the normalization becomes an explicit
-hypothesis about the box being verified. Because the graph and the box are separate arguments to the
-checker, they can be inspected separately. The
-{ref "verification"}[verification chapters] state the property against a named graph and a named
-region for exactly this reason, and {ref "datasets-loaders"}[the datasets chapter] is where the
-statistics that define a normalizer come from.
+We can account for this transformation in two ways. Either the normalizer is part of the lowered
+forward program, so `eval` includes it and the input box is quantified over raw measurements, or it
+isn't, and then the normalization becomes a hypothesis about the box being verified. Because the
+graph and the box are separate arguments to the checker, they can be inspected separately. That's
+why the {ref "verification"}[verification chapters] state the property against a named graph and a
+named region, and the statistics that define a normalizer come from {ref "datasets-loaders"}[the
+datasets chapter].
 
 # Fused Multiply-Add
 
-Replacing `x * y + z` with a single fused multiply-add can change the answer because the fused
-operation rounds only once. The
-float chapters use FloatLib's executable semantics for exactly this kind of question, and it is
-available with one more import:
+Replacing `x * y + z` with a single fused multiply-add can change the answer, because the fused
+operation rounds only once. For this kind of question the float chapters use FloatLib's executable
+semantics, which is available with one more import:
 
 ```
 -- Import the executable binary32 operations used to
@@ -690,7 +755,7 @@ def ovA : ExecFloat.Binary 8 23 :=
 def ovB : ExecFloat.Binary 8 23 := -1
 ```
 
-Now compute $`a \cdot a + b` with separate operations and with a fused operation:
+We compute $`a \cdot a + b` with separate operations and with a fused operation:
 
 ```lean (name := ovFma)
 -- Compare two rounding schedules by equality, encoded
@@ -718,84 +783,97 @@ false
 59.604645
 ```
 
-Cancellation explains the large ULP count. The product is close to one, but subtracting one leaves
-a much smaller result with much finer spacing between representable numbers. A small rounding
-error in the product can therefore span many ULPs of the result.
+Cancellation explains the large ULP count. That product is close to one, but subtracting one leaves
+a much smaller result with much finer spacing between representable numbers, so a small rounding
+error in the product can span many ULPs of the result.
 
-The exact product is $`a \cdot a = 1 + 2^{-11} + 2^{-24}`, and that value needs
+In exact arithmetic the product is $`a \cdot a = 1 + 2^{-11} + 2^{-24}`, and that value needs
 twenty-five significand bits, one more than binary32 has. So the separate multiply rounds it to
-$`1 + 2^{-11}`, after which adding $`-1` is exact and the answer is $`2^{-11}`. The fused form keeps
-the full product, rounds once at the end, and returns $`2^{-11} + 2^{-24}`. The two results differ
-by $`2^{-24} \approx 5.96 \times 10^{-8}`, which is $`1024` ULPs at this result's magnitude
-($`\operatorname{ulp}(2^{-11})=2^{-34}`). That is the third
-`#eval` above, reported as a multiple of $`10^{-9}` because `Float.toString` prints six decimals and
-both results print as `0.000488`.
+$`1 + 2^{-11}`, after which adding $`-1` is exact and the answer is $`2^{-11}`. A fused
+multiply-add keeps the full product, rounds once at the end, and returns $`2^{-11} + 2^{-24}`.
+Those two results differ by $`2^{-24} \approx 5.96 \times 10^{-8}`, which is $`1024` ULPs at this
+result's magnitude ($`\operatorname{ulp}(2^{-11})=2^{-34}`). That's the third `#eval` above,
+reported as a multiple of $`10^{-9}` because `Float.toString` prints six decimals and both results
+print as `0.000488`.
 
-A regression test with absolute tolerance $`10^{-6}` cannot see this difference;
-larger computations need an error analysis that accounts for their operation schedule. Also,
-compiler contraction settings can permit this substitution. The CompCert work on verified
-compilation of floating-point computations
-({Informal.citet boldo2015}[]) treats it as a case the semantics has to model rather than an
-optimizer bug. A numerical guarantee must therefore account for whether the execution permits
-fusion.
+A regression test with absolute tolerance $`10^{-6}` can't see this difference. Larger computations
+need an error analysis that accounts for their operation schedule. And compiler contraction
+settings can permit this substitution. The CompCert work on verified compilation of floating-point
+computations {Informal.citep boldo2015}[] treats it as a case the semantics has to model, not as
+an optimizer bug. So a numerical guarantee must account for whether the execution permits fusion.
 
 FloatLib gives `*`, `+`, and `fma` separate specifications, so a theorem has to commit to a
-rounding schedule. The
-{ref "floats"}[floating-point chapter] develops that semantics, compares the design against the Rocq
-Flocq library ({Informal.citep flocq2011}[]), and states which backend contracts assume that no
-fusion happened. For the underlying arithmetic, Goldberg's survey
-({Informal.citep goldberg1991}[]) explains rounding and the effect of intermediate precision.
+rounding schedule. We develop that semantics in the {ref "floats"}[floating-point chapter], compare
+the design against the Rocq Flocq library {Informal.citep flocq2011}[], and state which backend
+contracts assume that no fusion happened. For the underlying arithmetic, Goldberg's survey
+{Informal.citep goldberg1991}[] explains rounding and the effect of intermediate precision.
 
 # Output Properties
 
 Suppose the trained model has parameters $`\theta`, its graph is $`g`, and the two input features
 vary in a box $`B`. Let $`y^\star` be the desired output and $`\delta` the allowed error. Writing
-`denote` for evaluation of the graph with those parameters, a range statement might be
+`eval` for evaluation of the graph with those parameters, a range statement might be
 
 $$`\forall x\in B,\qquad
-  |\operatorname{denote}(g,\theta,x)_0-y^\star|\leq\delta`.
+  |\operatorname{eval}(g,\theta,x)_0-y^\star|\leq\delta`.
 
 This line records the details that are easy to lose in prose:
 
-- $`g` identifies the operation graph;
-- $`\theta` identifies the concrete trained parameters;
-- $`B` identifies the quantified input convention;
-- `denote` identifies the scalar and operator semantics;
+- $`g` identifies the operation graph
+- $`\theta` identifies the concrete trained parameters
+- $`B` identifies the quantified input convention
+- `eval` identifies the scalar and operator semantics
 - index $`0`, target $`y^\star`, and tolerance $`\delta` identify the output property.
 
-The `denote` in that formula is not shorthand for "however the graph happens to run". It is a
-function in the library, and its type lists the same ingredients:
+In that formula, `eval` isn't shorthand for "however the graph happens to run". It's a function in
+the library, and its type lists the same ingredients:
 
-```lean (name := ovDenote)
+```lean (name := ovEval)
 -- Expose all arguments that determine a graph evaluation,
 -- including its scalar semantics.
-#check @NN.IR.Graph.denote
+#check @IR.Graph.eval
 ```
-```leanOutput ovDenote (whitespace := lax)
-@NN.IR.Graph.denote : {α : Type} →
+```leanOutput ovEval (whitespace := lax)
+@IR.Graph.eval : {α : Type} →
   [inst : Storage α] →
-    [Context α] → NN.IR.Graph → NN.IR.Payload α →
-      Spec.SomeTensor α → ℕ → Except String (Spec.SomeTensor α)
+    [Context α] →
+      [Op.Capabilities α] →
+        IR.Graph →
+          IR.Payload α →
+            List (Op.Value α) →
+              Except String (List (Op.Value α))
 ```
 
-The arguments fix the scalar type and its storage and arithmetic instances, then the graph,
-payload, input tensor, and requested node id. For our model that id is `17`; another request can
-select another node in the same graph.
+Those arguments fix the scalar type, its storage and arithmetic instances, and the optional
+capabilities that some operators read (`Op.Capabilities`), then the graph, the payload, and the
+list of graph inputs. Evaluation returns the graph's output values as a list. Our lowered model has
+one output, the length-one vector of node `17`, and the formula reads its coordinate `0`.
+`IR.Graph.run` returns the outputs of every node.
 
-`SomeTensor α` pairs the result with its shape, because a graph supplied as data determines
-intermediate shapes during evaluation. `Except String` reports malformed graphs as errors.
-The `Storage` and `Context` instances provide the operations needed to evaluate; a bound on the
-returned values still requires a soundness argument.
+Each `Op.Value α` pairs a tensor with its port, because a graph supplied as data records its ports
+in its nodes, not in its type. `Except String` reports the first error that stops an evaluation,
+such as a missing graph input or constant, a reference that names no output, a value at a port that
+the node reading it doesn't accept, or an operator whose attribute or value-domain check fails.
+Evaluation gets the operations it needs from the `Storage`, `Context`, and `Op.Capabilities`
+instances, but a bound on the returned values still requires a soundness argument.
 
-An interval pass can compute lower and upper output bounds. A Boolean check can then confirm that
-the whole interval lies in $`[y^\star-\delta,y^\star+\delta]`. The last ingredient is a soundness
-theorem saying that the computed interval really encloses `denote` for this graph. Interval
-propagation and its linear-relaxation refinement are not TorchLean inventions; the shapes of those
-bounds come from the robustness-verification literature
-({Informal.citep wongkolter2018 crown2018 autolirpa2020}[]), and what TorchLean
-adds is a Lean proof that the propagation step really encloses the semantics it claims to.
+An interval pass can compute lower and upper output bounds, and a Boolean check can then confirm
+that the whole interval lies in $`[y^\star-\delta,y^\star+\delta]`. Last comes a soundness theorem
+saying that the computed interval really encloses `eval` for this graph. We didn't invent interval
+propagation or its linear-relaxation refinement: the shapes of those bounds come from the
+robustness-verification literature {Informal.citep wongkolter2018 crown2018 autolirpa2020}[].
+What TorchLean adds is a Lean proof that the propagation step really encloses the semantics it
+claims to.
 
-The guide uses the following vocabulary throughout:
+For the interval passes above (`CROWN.Op.runIBP`), that theorem is
+`TorchLean.CROWN.Op.runIBP_encloses`: every box the pass computes from an input box
+encloses its node's value in a successful real run of the graph, not in a native run, given lawful
+endpoint operations (`LawfulNonlinearBoundOps`), an input box that encloses graph input `0`, and a
+real payload that holds the real values of the rounded constants. A node whose operator has no
+interval rule gets no box. `ℝ` and the rounded binary32 model `FP32` have lawful instances, but
+host `Float` has none, so the `Float` passes above are outside the theorem.
+
+Throughout the guide we use this vocabulary:
 
 :::table +header
 *
@@ -819,13 +897,13 @@ The guide uses the following vocabulary throughout:
 :::
 
 Nothing in that table is unique to machine learning. It is the proof-carrying-code discipline
-({Informal.citet necula1997}[]) applied to tensor programs: an untrusted producer
+{Informal.citep necula1997}[] applied to tensor programs: an untrusted producer
 emits an artifact, a small checker accepts or rejects it, and a theorem relates acceptance to the
 property we actually care about.
 
 # Native Kernels And Backend Contracts
 
-The numerical work can still use established native kernels. PyTorch provides operator coverage,
+Numerical work can still use established native kernels. PyTorch provides operator coverage,
 distributed training, compilers, and pretrained models that a project may already depend on.
 
 TorchLean calls LibTorch's ATen operators for CUDA computation while retaining its own model,
@@ -836,35 +914,42 @@ that connect it to graph semantics.
 
 # Imports
 
-Use the focused TorchLean API for application code:
+Application code imports the modules it uses, since no single import covers a whole library.
+Building and training a model takes the two trainer modules:
 
 ```
--- Use the application import when model construction and
--- training are the task.
-import NN.API
+-- The trainer modules also bring in tensors, the model
+-- builder and the optimizers.
+import TorchLean.NN.Trainer.Constructor
+import TorchLean.NN.Trainer.Train
 open TorchLean
 ```
 
-Use the complete library import when one file combines application code with proofs, verification,
-floating-point semantics, backends, or widgets:
+A file that also verifies a model adds a module of `TorchLean.Verify`, such as the lowering
+interface:
 
 ```
--- The full import also makes proof, verification, and
--- backend interfaces available.
-import NN
+-- Verification is in TorchLean.Verify, which the trainer
+-- modules don't import.
+import TorchLean.Verify.Lowering
 open TorchLean
 ```
 
-Focused subsystem imports such as `NN.IR`, `NN.Floats`, `NN.Proofs`, and `NN.Verification` avoid
-loading the whole project when only one layer is needed.
+TorchLean's Lean code is in four libraries, each built only on the ones named before it.
+`TorchLean.Tensor` holds tensors, shapes, the operator table and the layer specifications.
+`TorchLean.CUDA` adds the LibTorch bindings and the CUDA kernel emitter. `TorchLean.NN` has the
+runtime and autograd, the application interface, the IR and the model specifications, and
+`TorchLean.Verify` has bound propagation, certificates, the floating-point error proofs and the
+verification interface. The worked examples are in `TorchLeanExamples` and the tests in
+`TorchLeanTest`.
 
 # References
 
-The frontend notation follows PyTorch ({Informal.citet pytorch2019}[]), and the analysis the
-specification layer is stated against is Mathlib ({Informal.citet mathlib2020}[]). The fused
-multiply-add example is the situation modelled by {Informal.citet boldo2015}[]; the arithmetic
-behind it is explained in {Informal.citet goldberg1991}[], and the Rocq library the floating-point
-chapters compare against is {Informal.citet flocq2011}[]. Bound propagation and its refinements come
-from {Informal.citet wongkolter2018}[], {Informal.citet crown2018}[],
-{Informal.citet autolirpa2020}[], and {Informal.citet betacrown2021}[]. The evidence vocabulary is
+TorchLean's frontend notation follows PyTorch {Informal.citep pytorch2019}[], and the analysis
+our specification layer is stated against is Mathlib {Informal.citep mathlib2020}[]. The fused
+multiply-add example is the situation modelled by {Informal.citet boldo2015}[], and
+{Informal.citet goldberg1991}[] explains the arithmetic behind it. In the floating-point chapters
+we compare against the Rocq library of {Informal.citet flocq2011}[]. Bound propagation and its
+refinements come from {Informal.citet wongkolter2018}[], {Informal.citet crown2018}[],
+{Informal.citet autolirpa2020}[], and {Informal.citet betacrown2021}[]. Our evidence vocabulary is
 the proof-carrying-code discipline of {Informal.citet necula1997}[].

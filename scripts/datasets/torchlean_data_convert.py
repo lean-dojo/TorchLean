@@ -2,7 +2,7 @@
 """Convert common dataset artifacts into TorchLean's canonical tensor files.
 
 TorchLean's Lean-side loaders stay small and deterministic:
-they read numeric CSV tables and NumPy `.npy` tensors.  This script is the
+they read numeric CSV tables and NumPy `.npy` tensors.  The script is the
 interop bridge for the other common artifacts people keep on disk:
 
 * NumPy `.npy` / `.npz`
@@ -81,11 +81,17 @@ def to_numpy(x: Any, *, source: Path) -> np.ndarray:
 
 
 def cast_array(arr: np.ndarray, dtype: str) -> np.ndarray:
-    """Return a contiguous array without turning a rank-zero tensor into a vector."""
+    """Return a contiguous array without turning a rank-zero tensor into a vector, and exit when
+    an integer `dtype` cannot hold every value exactly."""
     try:
-        return np.asarray(arr, dtype=None if dtype == "preserve" else dtype, order="C")
+        with np.errstate(invalid="ignore", over="ignore"):
+            out = np.asarray(arr, dtype=None if dtype == "preserve" else dtype, order="C")
     except (TypeError, ValueError) as exc:
         die(f"unsupported dtype {dtype!r}: {exc}")
+    source = np.asarray(arr)
+    if out.dtype.kind in "iu" and source.dtype.kind in "fiu" and not np.array_equal(out, source):
+        die(f"values cannot be represented exactly as {dtype}")
+    return out
 
 
 def npy_output_path(value: str) -> Path:
@@ -141,7 +147,7 @@ def parse_integer(value: str) -> int:
 
 
 def load_csv_array(path: Path, *, skip_header: int = 0, dtype: str = "float32") -> np.ndarray:
-    """Parse CSV directly in the requested dtype; untyped `preserve` CSV uses float64."""
+    """Parse CSV in the requested dtype, or as float64 for `preserve` since CSV has no dtype."""
     if skip_header < 0:
         die("--skip-header must be nonnegative")
     if skip_header == 0:
@@ -167,7 +173,7 @@ def load_csv_array(path: Path, *, skip_header: int = 0, dtype: str = "float32") 
 
 
 def load_torch_artifact(path: Path, *, trusted_pickle: bool) -> Any:
-    """Load a PyTorch artifact with pickle disabled unless explicitly requested."""
+    """Load a PyTorch artifact with pickle disabled unless `trusted_pickle` is set."""
     try:
         import torch  # type: ignore
     except ImportError:
@@ -302,6 +308,8 @@ def cmd_image_folder(args: argparse.Namespace) -> None:
     y_out = npy_output_path(args.y_output) if args.y_output else None
     if args.labels_from_dirs and y_out is None:
         die("--y-output is required with --labels-from-dirs")
+    if y_out is not None and not args.labels_from_dirs:
+        die("--y-output needs --labels-from-dirs")
     if y_out is not None and x_out.resolve() == y_out.resolve():
         die("--x-output and --y-output must name different files")
     if args.height <= 0 or args.width <= 0:
@@ -369,7 +377,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--skip-header", type=int, default=0, help="CSV rows to skip before reading")
     p.add_argument(
         "--dtype", default="float32",
-        help="float32, float64, int64, or preserve (CSV has no dtype; uses float64)",
+        help="float32, float64, int64, or preserve (float64 for CSV, which has no dtype)",
     )
     p.add_argument("--manifest", action="store_true", help="write OUTPUT.npy.json metadata")
     p.add_argument(

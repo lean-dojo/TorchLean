@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Build the LibTorch C ABI library through the selected SDK's CMake package.
 
-Lake calls this helper even on cache hits, so changes to the SDK, toolchain, flags,
-or source contents cannot reuse an incompatible backend. Compilation needs a
-Linux host with a full LibTorch SDK; --resolve-home and --help only inspect paths.
+Lake calls this helper even on cache hits, so a change to the SDK, toolchain, flags or source
+contents never reuses an incompatible backend. Compilation needs a Linux host with a full LibTorch
+SDK, while --resolve-home only checks the SDK layout and prints its path.
 """
 
 from __future__ import annotations
@@ -21,7 +21,8 @@ import tempfile
 
 
 SOURCES = (
-    "torchlean.cpp", "torchlean_libtorch.h", "operations.h", "binary.h", "CMakeLists.txt",
+    "torchlean.cpp", "conv_pool.cpp", "tree.cpp", "torchlean_libtorch.h", "operations.h", "binary.h",
+    "CMakeLists.txt",
 )
 BUILD_ENV = (
     "PATH", "CXX", "CC", "CXXFLAGS", "CFLAGS", "CPPFLAGS", "LDFLAGS",
@@ -60,7 +61,7 @@ def file_record(path: Path, *, contents: bool = True) -> dict:
 
 
 def tree_records(root: Path, *, contents: bool = True) -> list[dict]:
-    # Only explicitly selected SDK/header directories; never walk the package's build cache.
+    # Callers pass only the selected SDK and header directories, never the package's build cache.
     return [file_record(path, contents=contents) for path in sorted(root.rglob("*"))
             if path.is_file()]
 
@@ -109,7 +110,7 @@ def cmake_cache(path: Path) -> dict[str, str]:
 
 
 def discovered_inputs(directory: Path) -> list[dict]:
-    """Track tools/dependencies that the SDK, rather than TorchLean, selected."""
+    """Record the tools, libraries and CUDA toolkit files that the SDK's `CMakeCache.txt` names."""
     records = {}
     cache = cmake_cache(directory / "CMakeCache.txt")
     for key, value in cache.items():
@@ -169,7 +170,7 @@ def run(command: list[str], *, env: dict[str, str]) -> None:
 
 def build(args: argparse.Namespace, package: Path, home: Path) -> str:
     if sys.platform != "linux":
-        raise ValueError("cuda=true currently requires a Linux LibTorch SDK")
+        raise ValueError("cuda=true requires a Linux LibTorch SDK")
     if not args.build_dir or not args.lean_include:
         raise ValueError("building requires --build-dir and --lean-include")
     source = package / "csrc/libtorch"
@@ -208,7 +209,7 @@ def build(args: argparse.Namespace, package: Path, home: Path) -> str:
             file_record(home / name) for name in ("version.py", "build-version", "build-hash")
             if (home / name).is_file()
         ],
-        # Header metadata is enough to detect an SDK swap; hashing ~10k headers costs every call.
+        # Header metadata detects an SDK swap. Hashing ~10k headers would slow every call.
         "sdk_headers": tree_records(home / "include", contents=False),
         # SDK DSOs can be several GB each. Replacement metadata, including ctime and
         # resolved symlinks, is tracked without rereading every DSO on every Lake call.
@@ -222,7 +223,7 @@ def build(args: argparse.Namespace, package: Path, home: Path) -> str:
     }
     build_root = Path(args.build_dir).resolve() / "libtorch"
     build_root.mkdir(parents=True, exist_ok=True)
-    # Lock direct Lake/helper invocations too; the wrapper's checkout lock is not always held.
+    # Lock here as well: direct Lake or helper invocations skip the wrapper's checkout lock.
     import fcntl
     with (build_root / "build.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -241,15 +242,16 @@ def build(args: argparse.Namespace, package: Path, home: Path) -> str:
                 and previous.get("output_sha256") == file_hash(output)):
             return digest(previous)
 
-        # A changed compiler, SDK, header, or flag must not survive CMake's own timestamp cache.
-        # Reconfigure cleanly on misses; the usual unchanged build skips CMake entirely.
+        # A changed compiler, SDK, header or flag must not survive CMake's own timestamp cache,
+        # so a miss reconfigures from scratch. An unchanged build returns above without CMake.
         if directory.exists():
             shutil.rmtree(directory)
         query = directory / ".cmake/api/v1/query"
         query.mkdir(parents=True)
         (query / "cmakeFiles-v1").touch()
         env = dict(os.environ)
-        # TorchConfig.cmake also consults this variable; prevent a second SDK winning discovery.
+        # TorchConfig.cmake also reads this variable. Pinning it keeps a second SDK from winning
+        # discovery.
         env["TORCH_INSTALL_PREFIX"] = str(home)
         command = [
             str(cmake), "-S", str(source), "-B", str(directory), "-G", "Unix Makefiles",

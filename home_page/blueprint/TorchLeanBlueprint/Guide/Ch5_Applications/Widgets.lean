@@ -1,13 +1,28 @@
 import VersoManual
-import NN.Widgets
-import NN.Tensor
-import NN.Spec.Core.Tensor.Core
-import NN.IR.Graph
-import NN.IR.Semantics
+import TorchLean.NN.Widget.Docs
+import TorchLean.NN.Widget.IR.ExecutionTrace
+import TorchLean.NN.Widget.IR.Rewrite
+import TorchLean.NN.Widget.IR.ShapeInference
+import TorchLean.NN.Widget.PyTorchTranslator
+import TorchLean.NN.Widget.Float32
+import TorchLeanExamples.Models.RL.GridWorld.Widgets
+import TorchLean.NN.Widget.RL.Boundary
+import TorchLean.NN.Widget.RL.PPO
+import TorchLean.NN.Widget.Autograd
+import TorchLean.Verify.CROWN.Widget
+import TorchLean.Tensor.Einops.Elab.Einsum
+import TorchLean.Tensor.Einops.Elab.Pack
+import TorchLean.Tensor.Einops.Elab.Transform
+import TorchLean.Tensor.Tactic.Einops.Report
+import TorchLean.Tensor.Literal
+import TorchLean.Tensor.Datatype
+import TorchLean.NN.IR.Eval
+import TorchLean.NN.IR.Pretty
 import FloatLib
-import NN.MLTheory.CROWN.Graph
-import NN.Runtime.Autograd.Engine.Core
-import NN.Runtime.Training.Log
+import TorchLean.Verify.CROWN.Op.ExecCROWN
+import TorchLean.NN.Tape.Apply
+import TorchLean.NN.Tape.Backward
+import TorchLean.NN.Training
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
 
@@ -15,13 +30,13 @@ open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 
 -- Every example in this chapter is elaborated when the page is built, so the namespaces come out
--- here rather than being repeated inside each block. `Spec` and `TorchLean` carry the tensor type
--- and its literal notation, `NN.IR` the graph and its evaluator, FloatLib the binary scalars,
--- `CROWN` the interval boxes, and `Runtime.Autograd` the tape.
-open Spec TorchLean
-open NN.IR
-open NN.MLTheory.CROWN
-open Runtime.Autograd
+-- here rather than being repeated inside each block. `TorchLean` carries the tensor type and its
+-- literal notation, `IR` the graph and its evaluator, FloatLib the binary scalars, `CROWN` the
+-- interval boxes and engines, and `Tape` the tape.
+open TorchLean
+open IR
+open CROWN
+open Tape
 
 -- A few printed reports are wider than the code column, so their `leanOutput` blocks ask for
 -- `whitespace := lax` and are wrapped in the source. The rendered page shows what Lean printed.
@@ -45,12 +60,13 @@ first loss of precision. A widget displays those node bounds together with the g
 produced them.
 
 Widgets render existing Lean objects in the Infoview: tensor entries, graph parents, inferred
-shapes, Float32 fields, affine bounds, tape gradients, and metric curves. The view helps locate a
-problem; evaluating or proving a claim about the underlying object remains a separate operation.
+shapes, Float32 fields, affine bounds, tape gradients, and metric curves. A view helps you locate a
+problem, but evaluating or proving a claim about the underlying object remains a separate
+operation.
 
-The [widget modules](https://github.com/lean-dojo/TorchLean/tree/main/NN/Widgets/) are collected by
-`NN.Widgets`. Import that module when a scratch file needs the inspection tools together; the
-broader `import NN` also brings them into a larger development.
+The [widget modules](https://github.com/lean-dojo/TorchLean/tree/main/TorchLean/NN/Widget/) group
+the views by the objects they display, and a scratch file imports the modules of the views it uses.
+`#crown_view` and `#bounds_tightness_view` come from `TorchLean.Verify.CROWN.Widget`.
 
 # Inspection Workflow
 
@@ -59,7 +75,7 @@ inconclusive verification result, node-by-node interval widths help locate preci
 stalled training run may instead call for comparing the tape, accumulated gradients, and metric
 log.
 
-The same named object can be evaluated, viewed, and checked:
+You can evaluate, view, and check the same named object:
 
 1. Keep the value that matters as a named Lean definition or as an artifact at an explicit path.
 2. Run the evaluator or checker whose semantics the eventual claim uses.
@@ -69,10 +85,10 @@ The same named object can be evaluated, viewed, and checked:
    instead of trusting the picture.
 
 Read-only views such as `#tensor_view` format a value without changing it. Trace views execute a
-specific Lean computation: `#ir_exec_trace_view` steps through `NN.IR.Semantics`, while
+specific Lean computation: `#ir_exec_trace_view` steps through `Node.eval`, while
 `#tape_trace_view` runs reverse mode and recomputes local VJP contributions from the resulting
-cotangents. It does not record intermediate gradient-map updates. A theorem about either
-computation is still a separate proof.
+cotangents, without recording intermediate gradient-map updates. A theorem about either computation
+is still a separate proof.
 
 The available views expose different parts of these objects:
 
@@ -88,7 +104,7 @@ The available views expose different parts of these objects:
 *
   * graph structure or execution
   * `#ir_view`, `#shape_infer_view`, `#ir_exec_trace_view`
-  * parents, declared/inferred shapes, and intermediate values
+  * references, ports, and intermediate values
 *
   * a rewrite
   * `#graph_rewrite_view`
@@ -111,18 +127,18 @@ The available views expose different parts of these objects:
   * an editor-assistant translation, not an importer proof
 :::
 
-Choose the view by the question being asked. If a tensor contains the wrong entries, changing a
-plot's scale cannot explain where those entries came from; follow its parents in the graph or tape.
-If the entries are plausible but a bound is wide, inspect the verifier state instead of rerunning
-ordinary evaluation at one input. The two computations answer different questions: one produces a
-value at a chosen point, while the other represents a range of possible values. Keeping the named
-input object beside its view makes that distinction concrete.
+Choose the view by the question you're asking. If a tensor contains the wrong entries, changing a
+plot's scale can't explain where those entries came from. Follow the tensor's parents in the graph
+or tape. If the entries are plausible but a bound is wide, inspect the verifier state instead of
+rerunning ordinary evaluation at one input. Those two computations answer different questions: one
+produces a value at a chosen point, while the other represents a range of possible values. Keeping
+the named input object beside its view makes that distinction concrete.
 
 # Application Workflows
 
-Some values live only while a file elaborates; others are written by a command and inspected later.
-A graph or tape definition can sit immediately above its view. A GPT or
-PPO run instead writes a named artifact, which a later Lean file reads:
+Some values live only while a file elaborates. Others are written by a command and inspected later.
+A graph or tape definition can sit immediately above its view. A GPT or PPO run instead writes a
+named artifact, which a later Lean file reads:
 
 ```
 -- Inspect the saved artifacts at the same paths used by
@@ -130,11 +146,11 @@ PPO run instead writes a named artifact, which a later Lean file reads:
 #train_log_file_view "data/examples/cnn_trainlog.json"
 #train_log_file_view "data/examples/gpt2_trainlog.json"
 #rl_boundary_rollout_file_view "data/rl/gym_cartpole_rollout.json", contract, 12
-#pytorch_translate_file "NN/Examples/Interop/PyTorch/MLP/train_mlp.py"
+#pytorch_translate_file "TorchLeanExamples/Interop/PyTorch/MLP/train_mlp.py"
 ```
 
 Keep the producer command beside a file-backed view in a comment or experiment note. The renderer
-can tell you what the file says, but it cannot recover where the file came from. When the artifact
+can tell you what the file says, but it can't recover where the file came from. When the artifact
 has a checker, check it first and then inspect the accepted object.
 
 # Tensor Viewer
@@ -179,8 +195,8 @@ def matrix : Tensor Int [2, 4] :=
 ```
 
 `Tensor.generate` passes the coordinate list to its callback. For shape `[2, 3, 4]`, the three
-lookups give the indices that `grid` encodes; `matrix` uses the first two coordinates
-of its rank-two shape.
+lookups give the indices that `grid` encodes, and `matrix` uses the first two coordinates of its
+rank-two shape.
 
 Those definitions are the widget inputs. In an editor, each `#tensor_view` line renders the value
 beside the cursor:
@@ -198,8 +214,8 @@ beside the cursor:
 #tensor_stats_view native
 ```
 
-The commands above are elaborated when this page is built. Interactive panels require the
-Infoview; the same tensor can also be inspected through its printed entries:
+When this page is built, Lean elaborates the commands above. Interactive panels require the
+Infoview, but you can also inspect the same tensor through its printed entries:
 
 ```lean (name := wgGrid)
 -- Print the same coordinate-coded tensor used by the
@@ -216,8 +232,8 @@ Infoview; the same tensor can also be inspected through its printed entries:
 Entry `112` sits at $`(1,1,2)`. Moving the first axis would move the hundreds digit's variation to
 a different nesting level, making the layout change visible across the whole grid.
 
-`native` and `ieee` use different scalar types. Comparing their decimal renderings does
-not reveal every difference introduced by binary32 conversion:
+`native` and `ieee` use different scalar types. Comparing their decimal renderings doesn't reveal
+every difference introduced by binary32 conversion:
 
 ```lean (name := wgPrecision)
 -- Put the binary32 bits beside rounded decimal text to
@@ -242,63 +258,60 @@ binary64 0.100000  binary32 0.100000  bits 0x3dcccccd
 binary64 0.333333  binary32 0.333333  bits 0x3eaaaaab
 ```
 
-Each row uses the same decimal rendering for its binary64 and binary32 values; the final column
-shows the binary32 bits. One is exact in both formats. One tenth is not a binary
-fraction, so neither format holds it exactly, and the two formats do not hold the same
-approximation of it {Informal.citep goldberg1991}[]. This comparison explicitly converts each
-binary32 result to the native decimal display. The configured tensor's own printer can show its
-exact dyadic value; `#float32_view` further down exposes the encoding and exceptional-value fields.
+Each row uses the same decimal rendering for its binary64 and binary32 values, and the final column
+shows the binary32 bits. One is exact in both formats. One tenth isn't a binary fraction, so
+neither format holds it exactly, and the two formats don't hold the same approximation of it
+{Informal.citep goldberg1991}[]. In this comparison we convert each binary32 result to the native
+decimal display. The configured tensor's own printer can show its exact dyadic value, and
+`#float32_view` further down exposes the encoding and exceptional-value fields.
 
-The coordinate-coded grid is useful because a transposition can preserve both the number of
-entries and their minimum and maximum. A summary might therefore look unchanged while the model
-reads the wrong axis as channels or time. Here the hundreds digit identifies the first coordinate,
-the tens digit the second, and the units digit the third. Reading the nesting and the digits
-together checks their correspondence. The precision example tests another kind of lost information:
-decimal formatting can preserve the visual pattern while hiding different stored numbers.
+A coordinate-coded grid is useful because a transposition can preserve both the number of entries
+and their minimum and maximum, so a summary might look unchanged while the model reads the wrong
+axis as channels or time. Here the hundreds digit identifies the first coordinate, the tens digit
+the second, and the units digit the third. Reading the nesting and the digits together checks their
+correspondence. And the precision example tests another kind of lost information: decimal
+formatting can preserve the visual pattern while hiding different stored numbers.
 
 # IR Graph Viewer
 
 For the next graph, we can inspect three things separately:
 
-1. *Structure*: which nodes, parents, and shapes are present?
-2. *Invariants*: do declared node shapes match what the ops infer from parent shapes?
-3. *Semantics*: when the graph is evaluated, which node fails first and what are the intermediate
-   values?
+1. *Structure*: which nodes, references, and ports are present.
+2. *Invariants*: whether every reference names an output at a port its operator's input accepts.
+3. *Semantics*: when the graph is evaluated, which node fails first and what the intermediate
+   values are.
 
-The trace command calls the internal IR evaluator directly, so its input uses `Spec.SomeTensor` to
-carry a runtime shape. Model code continues to accept and return `Tensor α shape`.
+Since the trace command calls the graph evaluator directly, its inputs are values at ports
+(`TorchLean.Op.Value`), each carrying its port and shape. Model code keeps accepting and returning
+`Tensor α shape`.
 
 ```lean
 -- Keep the graph structure separate from the input and
 -- constant payload it evaluates.
-def graph (op : NN.IR.OpKind) : NN.IR.Graph :=
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input
-        outShape := [2] },
-      { id := 1, parents := #[]
-        kind := .const [2]
-        outShape := [2] },
-      { id := 2, parents := #[0, 1], kind := op
-        outShape := [2] }
-    ] }
+def graph (op : TorchLean.Op [.value [2], .value [2]]
+    [.value [2]]) : IR.Graph :=
+  { nodes := #[.input 0 (.value [2]), .const (.value [2]),
+      .op ⟨_, _, op⟩ #[⟨0, 0⟩, ⟨1, 0⟩]]
+    outputs := #[⟨2, 0⟩] }
 
 -- The `.const` node reads an external payload rather than
 -- storing its value in the graph.
-def input : Spec.SomeTensor Float :=
-  { shape := [2], tensor := [0.60, -0.20] }
+def input : List (TorchLean.Op.Value Float) :=
+  [⟨.value [2], ([0.60, -0.20] : Tensor Float [2])⟩]
 
 def payload : Payload Float :=
   { const? := fun id =>
       if id = 1 then
-        some { n := 2, v := [0.25, 0.25] }
+        some ⟨.value [2], ([0.25, 0.25] : Tensor Float [2])⟩
       else
         none }
 ```
 
-`parents := #[0, 1]` stores the input and constant node ids in an `Array Nat`. The constant's
-value lives in `payload`; the graph records its shape and the operation that reads it.
+`#[⟨0, 0⟩, ⟨1, 0⟩]` references output `0` of the input and of the constant node (a `Ref` is a node
+id and an output position). For the constant, the graph records its port and the operator that
+reads it, and the value itself lives in `payload`.
 
-The four views then attach to those definitions:
+Four views then attach to those definitions:
 
 ```lean
 -- Inspect structure first, then compare shapes, the edited
@@ -306,7 +319,7 @@ The four views then attach to those definitions:
 #ir_view (graph (op := .add))
 
 -- 1) Invariant check:
--- declared shape tags vs inferred shapes.
+-- expected input ports vs the ports read.
 #shape_infer_view (graph (op := .add))
 
 -- 2) Before/after view:
@@ -318,24 +331,22 @@ The four views then attach to those definitions:
 #ir_exec_trace_view (graph (op := .add)), payload, input
 ```
 
-The graph view shows node `2` depending on the input and constant. The shape view compares all
-three declared length-two shapes with inference. The trace view repeatedly calls `Graph.evalAt`,
-retaining the values computed before a failure.
-The following `Graph.denoteAll` call evaluates the complete graph through the same node semantics
-and prints the successful result in node order:
+In the graph view, node `2` depends on the input and constant. The shape view lists the length-two
+ports the addition expects beside the ports its references name. Calling `Node.eval` node by node,
+the trace view retains the outputs computed before a failure. Next, a `Graph.run` call evaluates
+the complete graph through the same node semantics and prints every node's output in node order:
 
 ```lean (name := wgTrace)
 -- Evaluate all nodes so each displayed value can be matched
 -- to its parent values.
 #eval do
   let g := graph (op := .add)
-  let r := Graph.denoteAll g payload input
-  match r with
-  | .ok vals =>
-    for i in [0:vals.size] do
-      match vals[i]? with
-      | some v => IO.println s!"node {i}: {v.tensor}"
-      | none => pure ()
+  match g.run payload input with
+  | .ok outs =>
+    for (vs, i) in outs.zipIdx do
+      match (vs : List (TorchLean.Op.Value Float)) with
+      | [⟨⟨.value, _⟩, v⟩] => IO.println s!"node {i}: {v}"
+      | _ => pure ()
   | .error e => IO.println s!"evaluation failed: {e}"
 ```
 
@@ -349,88 +360,71 @@ Node `2` adds `[0.25, 0.25]` to `[0.60, -0.20]`, producing `[0.85, 0.05]` to the
 If that result were unexpected, the two parent rows would distinguish incorrect inputs from an
 incorrect addition. Shape checking addresses failures that prevent this evaluation from succeeding.
 
-The addition/subtraction comparison is a display example, not a justified graph rewrite.
+We compare addition with subtraction as a display example, not as a justified graph rewrite.
 `graph (op := .sub)` changes the mathematical operation. Seeing both graphs side by side helps us
-locate the change but cannot establish that they compute the same result. For an optimizer rewrite,
-the correctness statement must relate the source and destination semantics under its
-hypotheses. A structural diff remains useful even then: it lets the reader check which nodes and
-payloads that statement is supposed to cover.
+locate the change but can't establish that they compute the same result. For an optimizer rewrite,
+the correctness statement must relate the source and destination semantics under its hypotheses. A
+structural diff remains useful even then: it lets you check which nodes and payloads that statement
+is supposed to cover.
 
 ## Shape Inference Errors
 
-A wrong declared output shape and incompatible operand shapes fail at different stages. The next
-two graphs isolate those cases:
+An operator graph declares no output shapes: `Node.outs` reads every node's ports off its operator,
+so a node can't claim a shape its operator doesn't produce. What remains is a reference whose port
+the operator's input doesn't accept. In the next graph we add a constant of three entries to an
+input of two:
 
 ```lean
--- The declared shape at the output node is wrong.
-def miscountedGraph : NN.IR.Graph :=
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input
-        outShape := [2] },
-      { id := 1, parents := #[]
-        kind := .const [2]
-        outShape := [2] },
-      { id := 2, parents := #[0, 1], kind := .add
-        outShape := [3] }
-    ] }
-
--- Every declaration agrees with its own node here, but
--- the addition itself cannot happen.
-def crossedGraph : NN.IR.Graph :=
-  { nodes := #[
-      { id := 0, parents := #[], kind := .input
-        outShape := [2] },
-      { id := 1, parents := #[]
-        kind := .const [3]
-        outShape := [3] },
-      { id := 2, parents := #[0, 1], kind := .add
-        outShape := [2] }
-    ] }
+-- Every node is well formed on its own, but the addition
+-- at shape `[2]` reads a constant of shape `[3]`.
+def crossedGraph : IR.Graph :=
+  { nodes := #[.input 0 (.value [2]), .const (.value [3]),
+      .op ⟨_, _, TorchLean.Op.add (s := [2])⟩
+        #[⟨0, 0⟩, ⟨1, 0⟩]]
+    outputs := #[⟨2, 0⟩] }
 ```
 
-`Graph.inferShapes` is the function behind `#shape_infer_view`. It returns one shape per node in id
-order, or stops at the first disagreement:
+`Graph.check` decides what `#shape_infer_view` shows node by node. It accepts the addition graph
+and stops at the first reference whose port its operator's input doesn't accept:
 
 ```lean (name := wgInfer)
--- Separate incorrect output declarations from incompatible
--- operand shapes.
+-- Derived output ports, then the structural check of both
+-- graphs.
 #eval do
-  match Graph.inferShapes (graph (op := .add)) with
-  | .ok shapes =>
-    IO.println s!"addition graph inferred {shapes}"
-  | .error e =>
-    IO.println s!"addition graph rejected: {e}"
-  match Graph.checkShapes miscountedGraph with
-  | .ok _ => IO.println "miscountedGraph accepted"
-  | .error e =>
-    IO.println s!"miscountedGraph rejected: {e}"
-  match Graph.checkShapes crossedGraph with
-  | .ok _ => IO.println "crossedGraph accepted"
+  let g := graph (op := .add)
+  let ports := g.nodes.toList.map Node.outsPretty
+  IO.println s!"addition graph produces {ports}"
+  match g.check with
+  | .ok () => IO.println "addition graph accepted"
+  | .error e => IO.println s!"addition graph rejected: {e}"
+  match crossedGraph.check with
+  | .ok () => IO.println "crossedGraph accepted"
   | .error e =>
     IO.println s!"crossedGraph rejected: {e}"
 ```
 
 ```leanOutput wgInfer (whitespace := lax)
-addition graph inferred #[[2], [2], [2]]
-miscountedGraph rejected: IR graph: node 2: outShape
-  mismatch: inferred=[2], declared=[3]
-  (Node(id=2, kind=add, parents=#[0, 1], outShape=[3]))
-crossedGraph rejected: add: shape mismatch: [2] vs [3]
+addition graph produces [[2], [2], [2]]
+addition graph accepted
+crossedGraph rejected: IR check: node 2: output 0 of node 1
+  has port { kind := TorchLean.Port.Kind.value, shape := [3] },
+  which input port { kind := TorchLean.Port.Kind.value, shape := [2] }
+  does not accept
 ```
 
-For `miscountedGraph`, the operands support a length-two result but the declaration says length
-three. For `crossedGraph`, the addition itself receives incompatible lengths, so changing only its
-output tag cannot repair the graph. The shape viewer reports both inferred shapes and declaration
-checks. `NN.IR.ShapeSoundness` proves that successful evaluation of an accepted graph produces the
-declared shapes. Acceptance supplies that structural hypothesis; it does not provide missing
-parameter payloads or ensure that every runtime operation succeeds.
+For `crossedGraph`, the addition at shape `[2]` receives a constant of shape `[3]`, so changing the
+constant's payload can't repair the graph: the reference or the constant's port has to change. For
+every node, the shape viewer shows the ports its operator expects, the ports its references name,
+and the ports it produces. `Node.eval_ports` proves that every output of a successful node is at
+the port the node declares. Acceptance by `Graph.check` doesn't provide missing parameter payloads
+or ensure that every runtime operation succeeds.
 
-A shape error and a missing constant payload require different repairs. The former concerns the
-operation's tensor interface and can be detected from graph metadata. The latter concerns the
-values supplied when the graph runs. This example deliberately stores the constant outside the
-graph so both layers remain visible. When a trace stops, the last successful node narrows the
-search; nodes marked unexecuted are consequences of that stop, not additional independent failures.
-Inspect the first error before interpreting later empty rows.
+A shape error and a missing constant payload require different repairs: the former concerns the
+operation's tensor interface and can be detected from graph metadata, while the latter concerns the
+values supplied when the graph runs. In this example we store the constant outside the graph on
+purpose, so that both layers remain visible. When a trace stops, the last successful node narrows
+the search. Nodes marked unexecuted are consequences of that stop, not additional independent
+failures. Inspect the first error before interpreting later empty rows.
 
 # Float32 Bit Layout Viewer
 
@@ -480,11 +474,11 @@ qnan32: sign=0 exp=255 frac=4194304 nan=true
 `one32` is sign `0`, biased exponent `127`, zero fraction, which is the encoding of $`1.0`. The
 quiet NaN has the all-ones exponent field `255` and a nonzero fraction, so its classification stays
 visible even though it has no real value to print. That distinction matters in practice: a NaN that
-reaches a gradient can contaminate later arithmetic. The bit view exposes that value directly;
-a loss curve alone may hide it, especially when later branches mask the NaN.
+reaches a gradient can contaminate later arithmetic. A loss curve alone may hide that value
+(especially when later branches mask the NaN), but the bit view exposes it.
 
-The round views answer a different question. When a binary64 `Float` crosses the scalar boundary,
-which binary32 pattern is chosen?
+The round views answer a different question: which binary32 pattern is chosen when a binary64
+`Float` crosses the scalar boundary.
 
 ```lean (name := wgRound)
 -- Recover the exact dyadic value behind the six-decimal
@@ -504,16 +498,16 @@ rounded value = 0.100000
 exact value = some { negative := false, significand := 13421773, exponent := -27 }
 ```
 
-The rounded float is $`13421773 \cdot 2^{-27}`. With the significand and exponent returned by
+That rounded float is $`13421773 \cdot 2^{-27}`. With the significand and exponent returned by
 `toDyadic?`, we can state its exact value in a proof even though the display rounds it to
 `0.100000`. Flocq's treatment of IEEE-754 in Rocq also reasons from exact representations of
 floating-point values {Informal.citep flocq2011}[] {Informal.citep boldo2015}[].
 
-The exact dyadic output also gives a way to reason about conversion error. Once the finite value
-is written as an integer times a power of two, its distance from the intended rational can be
-computed without relying on the displayed decimal digits. That is why the bit and round views are
-useful beside numerical proofs: they expose the data on which an exact statement can be based.
-For a NaN or infinity, that finite-value interpretation is unavailable, so classification must come
+That exact dyadic output also gives us a way to reason about conversion error: once the finite
+value is written as an integer times a power of two, you can compute its distance from the intended
+rational without relying on the displayed decimal digits. That's why the bit and round views are
+useful beside numerical proofs: they expose the data on which an exact statement can be based. For
+a NaN or infinity, that finite-value interpretation is unavailable, so classification must come
 before treating a bit pattern as a real number.
 
 # Verification (IBP/CROWN State)
@@ -523,42 +517,34 @@ CROWN affine forms. When debugging a verifier, inspect which nodes
 have bounds and whether shapes and flattened dimensions match the intended layout.
 
 ```lean
--- The three boxes are named so the widths below can be
--- printed one at a time.
+-- The input box seeds both engines. The other boxes and the
+-- affine bounds are computed from the graph.
 def inputBox : FlatBox Float :=
   { dim := 2
     lo := [-1.0, -1.0]
     hi := [1.0, 1.0] }
 
-def constBox : FlatBox Float :=
-  { dim := 2
-    lo := [0.25, 0.25]
-    hi := [0.25, 0.25] }
+def seeds (id : Nat) : Option (FlatBox Float) :=
+  if id = 0 then some inputBox else none
 
-def outputBox : FlatBox Float :=
-  { dim := 2
-    lo := [-0.75, -0.75]
-    hi := [1.25, 1.25] }
+def boxes : Array (Option (FlatBox Float)) :=
+  Op.runIBP (graph (op := .add)) payload seeds
 
-def bounds : Graph.PropState Float :=
-  { inputId := 0
-    inputDim := 2
-    states := #[
-      { shape := [2], ibp? := some inputBox, aff? := none }
-    , { shape := [2], ibp? := some constBox, aff? := none }
-    , { shape := [2], ibp? := some outputBox, aff? := none }
-    ] }
+def affine :
+    Array (Option (Graph.FlatAffineBounds Float)) :=
+  Op.runCROWN (graph (op := .add)) payload
+    { inputId := 0, inputDim := 2 } seeds boxes inputBox
 
-#crown_view (graph (op := .add)), bounds
+#crown_view (graph (op := .add)), boxes, affine
 
 -- Interval widths (`hi - lo`) are a
 -- "where did bounds blow up?" diagnostic.
-#bounds_tightness_view (graph (op := .add)), bounds
+#bounds_tightness_view (graph (op := .add)), boxes
 ```
 
-We use the same `graph (op := .add)` as above, so a trace value and a bound refer to the same
-node id. Here `bounds` is a manually constructed display fixture, not the output of a verifier
-or a checked certificate. Adding
+We use the same `graph (op := .add)` as above, so a trace value and a bound refer to the same node
+id. Here `boxes` and `affine` are what the operator-graph engines `Op.runIBP` and `Op.runCROWN`
+compute from the input box. Those values are diagnostic state, not a checked certificate. Adding
 the exact constant $`0.25` shifts $`[-1,1]` to $`[-0.75,1.25]` without changing the width:
 
 ```lean (name := wgWidths)
@@ -568,9 +554,12 @@ def boxLine (tag : String) (b : FlatBox Float) : String :=
   s!"{tag}: [{b.lo}, {b.hi}] width {b.hi - b.lo}"
 
 #eval do
-  IO.println (boxLine "input " inputBox)
-  IO.println (boxLine "const " constBox)
-  IO.println (boxLine "output" outputBox)
+  let rows : List (String × Nat) :=
+    [("input ", 0), ("const ", 1), ("output", 2)]
+  for (tag, i) in rows do
+    match boxes[i]? with
+    | some (some b) => IO.println (boxLine tag b)
+    | _ => IO.println s!"{tag}: no box"
 ```
 
 ```leanOutput wgWidths (whitespace := lax)
@@ -582,22 +571,22 @@ output: [[-0.750000, -0.750000], [1.250000, 1.250000]]
   width [2.000000, 2.000000]
 ```
 
-The input and output both have width two; the constant has width zero. These representable
+Both input and output have width two, and the constant has width zero. These representable
 endpoints make the translation exact. Over real arithmetic, adding a point preserves interval
 width, while directed floating-point arithmetic may widen endpoints through rounding. In a larger
-graph, inspecting the first unexpected increase helps distinguish rounding from precision lost by
-a bound-propagation rule {Informal.citep crown2018}[].
+graph, inspecting the first unexpected increase helps distinguish rounding from precision lost by a
+bound-propagation rule {Informal.citep crown2018}[].
 
-The state records use flattened boxes of dimension two even though the graph keeps tensor
-shapes separately. Matching the node id, shape, and flattened dimension prevents a convincing plot
-from being attached to the wrong operation. Missing bounds also matter: a blank interval entry
-means no box was supplied for that node, whereas a zero-width box represents an exact point.
-The constant's zero width here is therefore useful information. It explains why translating the
-input box introduces no uncertainty in this fixture.
+Both engines use flattened boxes of dimension two even though the graph keeps tensor shapes in its
+ports. Matching the node id, port, and flattened dimension prevents a convincing plot from being
+attached to the wrong operation. Missing bounds also matter: a blank interval entry means no box
+was computed for that node, whereas a zero-width box represents an exact point. So the constant's
+zero width here is useful information: it explains why translating the input box introduces no
+uncertainty in this graph.
 
 ## Interval Dependency
 
-Subtracting a value from itself exposes information that separate interval boxes cannot retain:
+Subtracting a value from itself exposes information that separate interval boxes can't retain:
 
 ```lean (name := wgDependency)
 -- Reusing one box twice shows the dependency information
@@ -607,7 +596,7 @@ Subtracting a value from itself exposes information that separate interval boxes
   IO.println (boxLine "x - x  "
     (Graph.boxSub inputBox inputBox))
   IO.println (boxLine "relu x "
-    (Graph.boxRelu inputBox))
+    (Graph.boxReLU inputBox))
 ```
 
 ```leanOutput wgDependency (whitespace := lax)
@@ -619,21 +608,22 @@ relu x : [[0.000000, 0.000000], [1.000000, 1.000000]]
   width [1.000000, 1.000000]
 ```
 
-$`x - x` is zero for every $`x`, but interval subtraction returns a width-four box. The box still
+$`x - x` is zero for every $`x`, but interval subtraction returns a width-four box. That box still
 contains zero. It also contains values obtained by choosing different points from the two input
-intervals, because `boxSub` has no record that both occurrences denote the same variable.
-This dependency loss can make interval bound propagation
-{Informal.citep gowal2018}[] too imprecise for a network's verification property. CROWN can retain
-correlations through affine forms where its transfer rules support them
+intervals, because `boxSub` has no record that both occurrences denote the same variable. This
+dependency loss can make interval bound propagation {Informal.citep gowal2018}[] too imprecise for
+a network's verification property. CROWN can retain correlations through affine forms where its
+transfer rules support them
 {Informal.citep crown2018}[]: an affine expression for $`x
 - x` cancels its
 coefficients before any endpoint is ever computed.
 
 Read `#bounds_tightness_view` with that distinction in hand. Elementwise ReLU clamps interval
-endpoints and cannot increase a scalar interval's width; the example above shrinks it. A separate
-affine relaxation can lose correlations even when the interval width shrinks. Unexpected growth
-at another operation can come from dependency loss, arithmetic rounding, or a transfer-rule error.
-Inspect that operation before choosing a tighter relaxation, input partitioning, or a code fix.
+endpoints and can't increase a scalar interval's width (the example above shrinks it), but a
+separate affine relaxation can lose correlations even when the interval width shrinks. Unexpected
+growth at another operation can come from dependency loss, arithmetic rounding, or a transfer-rule
+error. Inspect that operation before choosing a tighter relaxation, input partitioning, or a code
+fix.
 
 # Autograd (Tape + Gradients)
 
@@ -642,23 +632,30 @@ reverse-mode to accumulate gradients. The widget below shows the recorded tape a
 produced by scalar backprop, corresponding to a call to `loss.backward()` in PyTorch
 {Informal.citep pytorch2019}[].
 
+Each step records one registered operator of `TorchLean.Op` (here `Op.mul` and `Op.add` at the
+scalar shape) with `Tape.apply`, which runs the operator's rule from `Op.rule?`. A step's parents
+are node ids in nested pairs ending in `()`, and the result holds the extended tape and the id of
+the operator's value output.
+
 ```lean
 -- Record ab + b so the shared leaf b must receive two
 -- reverse contributions.
-def record : Result (Tape (Spec.SomeTensor Float)) := do
+def record : Result (Tape (SomeTensor Float)) := do
   let (t0, aId) :=
-    Tape.leaf (α := Float) (t := Tape.empty)
-      (value := Tensor.full [] 2.0) (name := some "a")
+    Tape.leaf (t := (Tape.empty : Tape (SomeTensor Float)))
+      (value := .ofTensor (Tensor.full [] 2.0))
+      (name := some "a")
   let (t1, bId) :=
-    Tape.leaf (α := Float) (t := t0)
-      (value := Tensor.full [] 3.0) (name := some "b")
-  let (t2, abId) ←
-    Tape.mul (α := Float) (t := t1) (s := []) aId bId
+    Tape.leaf (t := t0)
+      (value := .ofTensor (Tensor.full [] 3.0))
+      (name := some "b")
+  let (t2, abId, _) ←
+    Tape.apply t1 "mul" (Op.mul (s := [])) (aId, bId, ())
   let (t3, _) ←
-    Tape.add (α := Float) (t := t2) (s := []) abId bId
+    Tape.apply t2 "add" (Op.add (s := [])) (abId, bId, ())
   pure t3
 
-def tape : Tape (Spec.SomeTensor Float) :=
+def tape : Tape (SomeTensor Float) :=
   have succeeds : record.toOption.isSome = true := by decide
   record.toOption.get succeeds
 
@@ -669,19 +666,18 @@ def tape : Tape (Spec.SomeTensor Float) :=
 #tape_trace_view tape, 3
 ```
 
-The proof in `tape` checks that recording succeeded; it cannot silently replace a failed operation
-with an earlier tape. The recorded scalar is $`ab+b` at $`a=2` and $`b=3`, so
-$`\partial/\partial a = b = 3` and
-$`\partial/\partial b = a+1 = 3`. Both derivatives are three by coincidence at this point, which is
-convenient for reading the output and worth remembering when changing the numbers. Running the same
-reverse pass the widget runs:
+The proof in `tape` checks that recording succeeded: it can't silently replace a failed operation
+with an earlier tape. We record the scalar $`ab+b` at $`a=2` and $`b=3`, so
+$`\partial/\partial a = b = 3` and $`\partial/\partial b = a+1 = 3`. Both derivatives are three by
+coincidence at this point, which is convenient for reading the output and worth remembering when
+you change the numbers. We run the same reverse pass the widget runs:
 
 ```lean (name := wgGrads)
 -- Report stored values and accumulated gradients from the
 -- reverse pass rooted at node 3.
 def tapeLine
-    (grads : Std.HashMap Nat (Spec.SomeTensor Float))
-    (id : Nat) (n : Node (Spec.SomeTensor Float)) :
+    (grads : Std.HashMap Nat (SomeTensor Float))
+    (id : Nat) (n : Node (SomeTensor Float)) :
     String :=
   let grad :=
     match grads[id]? with
@@ -707,39 +703,39 @@ mul: value 6.000000 grad 1.000000
 add: value 9.000000 grad 1.000000
 ```
 
-The output is nine and both leaf gradients are three, matching the derivatives above. Node `b`
-feeds both multiplication and addition, so its gradient accumulates two contributions: $`a=2`
+We get an output of nine, and both leaf gradients are three, matching the derivatives above. Node
+`b` feeds both multiplication and addition, so its gradient accumulates two contributions: $`a=2`
 from multiplication and $`1` from addition. Dropping the addition's contribution would give the
-plausible but incorrect gradient `2.0`. The reverse traversal combines these contributions using
-`SomeTensor.add`, rather than mutating a leaf's `.grad` field as PyTorch does
-{Informal.citep pytorch2019}[].
+plausible but incorrect gradient `2.0`. TorchLean's reverse traversal combines these contributions
+with `SomeTensor.add`, while PyTorch mutates a leaf's `.grad` field {Informal.citep pytorch2019}[].
 
-`Tape.backwardScalar` returns a map from node ids to gradients and an `Except` error if a local
-VJP fails, for example because of a shape mismatch. The derivatives of $`ab+b` give a reference
-for inspecting this reverse trace: a missing or incorrect gradient can be traced to the step where
-a contribution was omitted or computed incorrectly.
+`Tape.backwardScalar` returns a map from node ids to gradients and an `Except` error if a local VJP
+fails, for example because of a shape mismatch. For inspecting this reverse trace, the derivatives
+of $`ab+b` give a reference: a missing or incorrect gradient can be traced to the step where a
+contribution was omitted or computed incorrectly.
 
-The two internal gradients explain the reverse traversal as well. The final addition is seeded
-with one because it is the selected scalar output. Its multiplication parent receives one, and
-that parent sends `b` to `a` and `a` to `b`. The direct addition edge supplies the extra one to `b`.
-Looking only at the final leaf numbers would miss this route through the graph. The trace panel
-shows each local VJP applied to its final accumulated cotangent, in reverse node order. It can
-explain the contributions from several consumers, but does not show the accumulator after each
+You can read the reverse traversal off the two internal gradients as well. As the selected scalar
+output, the final addition is seeded with one. Its multiplication parent receives one, and that
+parent sends `b` to `a` and `a` to `b`. And the direct addition edge supplies the extra one to `b`.
+Looking only at the final leaf numbers would miss this route through the graph. In reverse node
+order, the trace panel shows each local VJP applied to its final accumulated cotangent: it can
+explain the contributions from several consumers, but it doesn't show the accumulator after each
 individual addition. Nodes with `requiresGrad=false` keep their VJP disabled in the view as in the
 engine.
 
 ## Unused Leaves And Missing Gradients
 
-The other half of gradient debugging is a missing entry rather than a wrong number. Record a leaf
-that nothing consumes and the reverse pass never visits it:
+The other half of gradient debugging is a missing entry, not a wrong number. Record a leaf that
+nothing consumes and the reverse pass never visits it:
 
 ```lean (name := wgStray)
 -- Add an unused leaf while keeping the reverse pass rooted
 -- at the original output.
-def strayLeafTape : Tape (Spec.SomeTensor Float) :=
+def strayLeafTape : Tape (SomeTensor Float) :=
   let (t0, _) :=
-    Tape.leaf (α := Float) (t := tape)
-      (value := Tensor.full [] 5.0) (name := some "c")
+    Tape.leaf (t := tape)
+      (value := .ofTensor (Tensor.full [] 5.0))
+      (name := some "c")
   t0
 
 #eval do
@@ -761,24 +757,25 @@ c: value 5.000000 grad none
 ```
 
 `c` has a stored value but no entry in the returned gradient map because it has no path to the
-chosen output. An unused parameter can produce the same symptom in a model. The gradient view
-shows the absent entry; the trace view shows why reverse traversal never reaches `c`. This differs
-from reaching a node and computing a zero contribution, even if a display that fills missing
-entries with zero would make the two cases look alike.
+chosen output. An unused parameter can produce the same symptom in a model. In the gradient view
+the entry is absent, and the trace view shows why reverse traversal never reaches `c`. That case
+differs from reaching a node and computing a zero contribution, even if a display that fills
+missing entries with zero would make the two cases look alike.
 
 # Training Dashboards
 
-Training logs and confusion matrices are also Lean values. `Runtime.Training.TrainLog` records
-steps, metric series, and notes; `Runtime.Training.ConfusionMatrix` stores class counts. The widget
-layer renders these records whether they came from a Lean training loop or an external experiment.
+Training logs and confusion matrices are also Lean values. `Training.TrainLog` records
+steps, metric series, and notes, while `Training.ConfusionMatrix` stores class counts.
+Whether these records came from a Lean training loop or an external experiment, the widget layer
+renders them.
 
-The following literals are display fixtures. Their values and notes are supplied directly here;
-no training run produced them:
+These literals are display fixtures. We wrote their values and notes here, and no training run
+produced them:
 
 ```lean (name := wgLog)
 -- These independent records exercise the dashboard without
 -- claiming a training run.
-def log : Runtime.Training.TrainLog :=
+def log : Training.TrainLog :=
   { title := "Classifier training run"
     steps := #[0, 1, 2, 3, 4]
     series := #[
@@ -797,7 +794,7 @@ def log : Runtime.Training.TrainLog :=
 
 def labels : Array String := #["cat", "dog", "owl"]
 
-def confusion : Runtime.Training.ConfusionMatrix :=
+def confusion : Training.ConfusionMatrix :=
   { counts := #[
       #[8, 1, 0]
     , #[2, 6, 1]
@@ -805,7 +802,7 @@ def confusion : Runtime.Training.ConfusionMatrix :=
     ] }
 ```
 
-The two viewer commands then take those names. They render in the Infoview, so this page can only
+Then the two viewer commands take those names. They render in the Infoview, so this page can only
 show the invocation:
 
 ```
@@ -845,10 +842,10 @@ lr: 0.050000 -> 0.010000
 correct 21 of 26
 ```
 
-The confusion matrix contains 21 correct predictions among 26, giving $`21/26 \approx 0.808`.
-That differs from the fixture log's final `val_acc` of `0.79`: the two literals were constructed
-independently. When both artifacts describe the same evaluation in a real run, this comparison
-can detect inconsistent metrics or mismatched files.
+The confusion matrix contains 21 correct predictions among 26, giving $`21/26 \approx 0.808`, which
+differs from the fixture log's final `val_acc` of `0.79`: the two literals were constructed
+independently. When both artifacts describe the same evaluation in a real run, this comparison can
+detect inconsistent metrics or mismatched files.
 
 For logs produced by a training command, see:
 
@@ -867,8 +864,8 @@ matrix dimensions for that interpretation to make sense.
 
 # GPT And Text-Model Logs
 
-Text models write ordinary `TrainLog` artifacts. The shared viewer preserves multiline notes,
-including prompts and generated samples:
+Text models write ordinary `TrainLog` artifacts, and the shared viewer preserves their multiline
+notes, including prompts and generated samples:
 
 ```
 -- Read the text model log written by its training or
@@ -876,73 +873,76 @@ including prompts and generated samples:
 #train_log_file_view "data/examples/gpt2_trainlog.json"
 ```
 
-Run training or generation through the model's CLI, then inspect the saved log. The widget only
-reads and renders the artifact.
+Run training or generation through the model's CLI, then inspect the saved log. All the widget does
+is read and render the artifact.
 
 # RL Boundary And Policy Views
 
-A reward curve leaves out the transitions and actions that produced it. The RL views expose:
+A reward curve leaves out the transitions and actions that produced it. TorchLean's RL views
+expose:
 
 - the checked transition boundary for Gymnasium rollouts,
 - GridWorld policies and paths,
 - PPO rollout curves derived from reward/value/advantage data.
 
-The main entry files are:
+Their main entry files are:
 
-- {src "NN/Widgets/RL/GridWorld.lean"}[GridWorld widget source]
-- [PPO widget source](https://github.com/lean-dojo/TorchLean/blob/main/NN/Widgets/RL/PPO.lean)
-- {src "NN/Widgets/RL/Boundary.lean"}[RL boundary widget source]
+- {src "TorchLeanExamples/Models/RL/GridWorld/Widgets.lean"}[GridWorld widget source]
+- [PPO widget
+  source](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/NN/Widget/RL/PPO.lean)
+- {src "TorchLean/NN/Widget/RL/Boundary.lean"}[RL boundary widget source]
 
 These views expose the transitions received by the learner and the policy/path artifacts written
 by a command. MDP validity and boundary soundness are separate statements in the proof layer.
 
-A rollout boundary report counts checked transitions and records failures with their indices.
-That index lets a reader inspect the offending observation, action, or reward in the original
-artifact. It does not supply the old policy probabilities or value estimates needed to reconstruct
-a PPO objective; those belong to a different record. An empty rollout deserves special attention:
-there are no rejected transitions, but there are also no accepted observations of the boundary.
-The widget reports that no checks ran rather than presenting emptiness as evidence about an episode.
+A rollout boundary report counts checked transitions and records failures with their indices. That
+index lets you inspect the offending observation, action, or reward in the original artifact. The
+report doesn't supply the old policy probabilities or value estimates needed to reconstruct a PPO
+objective. Those belong to a different record. An empty rollout deserves special attention: there
+are no rejected transitions, but there are also no accepted observations of the boundary. Instead
+of presenting emptiness as evidence about an episode, the widget reports that no checks ran.
 
 # PyTorch Translator Widget
 
-The PyTorch translator widget proposes a constructor sketch in the editor:
+In the editor, the PyTorch translator widget proposes a constructor sketch:
 
 ```
 -- Ask the editor assistant for a constructor sketch of this
 -- Python source.
-#pytorch_translate_file "NN/Examples/Interop/PyTorch/MLP/train_mlp.py"
+#pytorch_translate_file "TorchLeanExamples/Interop/PyTorch/MLP/train_mlp.py"
 ```
 
-It helps readers see how a simple `torch.nn` snippet maps onto TorchLean constructors. Checked
-interop claims should cite the explicit PyTorch roundtrip/export examples and the artifact bridge,
-not the heuristic widget alone. The widget accepts scalar natural dimensions in recognized
-constructor arguments; symbolic sizes, tuples, duplicate keywords, and extra options are reported
-as unsupported. Convolution rows provide metadata and shape-boundary notes, not an executable CNN.
+With the translator widget you can see how a simple `torch.nn` snippet maps onto TorchLean
+constructors. Checked interop claims should cite the PyTorch roundtrip/export examples and the
+artifact bridge, not the heuristic widget alone. In recognized constructor arguments the widget
+accepts scalar natural dimensions, and it reports symbolic sizes, tuples, duplicate keywords, and
+extra options as unsupported. Convolution rows provide metadata and shape-boundary notes, not an
+executable CNN.
 
 # Widget Examples
 
-Open
-{src "NN/Examples/DeepDives/Widgets.lean"}[NN/Examples/DeepDives/Widgets.lean]
-in VS Code with the Lean extension enabled. Put the cursor on each widget command and open the
-Infoview. The file is deliberately small enough to elaborate interactively.
+Open {src "TorchLeanExamples/DeepDives/WidgetGallery.lean"}[
+  TorchLeanExamples/DeepDives/WidgetGallery.lean] in
+VS Code with the Lean extension enabled. Put the cursor on each widget command and open the
+Infoview. We kept the file small enough to elaborate interactively.
 
 Work through four changes:
 
-1. Change one entry of a tensor and confirm that `#tensor_view` and `#tensor_stats_view` update from
-   the same Lean value.
-2. Give an IR node the wrong declared output shape. `#shape_infer_view` should identify the first
-   disagreement; restore the shape before continuing.
-3. Change `op := .add` to `op := .sub` in the rewrite view and inspect the changed operation
-   tag rather than comparing raw record syntax.
+1. Change one entry of a tensor and confirm that `#tensor_view` and `#tensor_stats_view` update
+   from the same Lean value.
+2. Give the constant node another port shape. `#shape_infer_view` should then mark the addition,
+   whose input doesn't accept the changed port. Restore the shape before continuing.
+3. Change `op := .add` to `op := .sub` in the rewrite view and inspect the changed operation tag
+   instead of comparing raw record syntax.
 4. Compare `(1 : ExecFloat.Binary 8 23)` with a quiet NaN. The bit viewer should expose the
    exponent, fraction, and classification that ordinary decimal printing hides.
 
-The file can also be elaborated from a terminal:
+You can also elaborate the file from a terminal:
 
 ```terminal
 # Elaborate the widget examples; interactive panels are
 # displayed by the editor.
-scripts/lake.sh env lean NN/Examples/DeepDives/Widgets.lean
+scripts/lake.sh env lean TorchLeanExamples/DeepDives/WidgetGallery.lean
 ```
 
 Terminal elaboration checks the commands and definitions, while the VS Code Infoview provides the
@@ -952,48 +952,46 @@ reintroduce the view after its type is correct.
 
 ## Other Widget Sources
 
-The focused examples are useful when one artifact is the whole subject:
+These focused examples are useful when one artifact is the whole subject:
 
-- {src "NN/Examples/DeepDives/Floats/Float32Semantics.lean"}[Float32 semantics]
+- {src "TorchLeanExamples/DeepDives/Floats/Float32Semantics.lean"}[Float32 semantics]
   pairs `#float32_view`, `#float32_compare_view`, and `#float32_round_view` with executable binary32
   values.
-- {src "NN/Verification/Builtin/CrownOpsWorkflow.lean"}[CROWN workflow]
+- {src "TorchLeanExamples/Verification/CROWNOpsWorkflow.lean"}[CROWN workflow]
   and
-  {src "NN/Verification/Builtin/IBPWorkflow.lean"}[IBP workflow] provide real verifier states for
-  `#crown_view` and `#bounds_tightness_view`.
-- {src "NN/Examples/Quickstart/AutogradBasics.lean"}[Autograd basics]
-  supplies a tape for `#tape_view`, `#tape_grads_view`, and `#tape_trace_view`.
+  {src "TorchLeanExamples/Verification/IBPWorkflow.lean"}[IBP workflow] provide real verifier states
+  for `#crown_view` and `#bounds_tightness_view`.
+- {src "TorchLeanExamples/DeepDives/WidgetGallery.lean"}[Widget gallery] records a tape for
+  `#tape_view`, `#tape_grads_view`, and `#tape_trace_view`.
 
 ## File-Backed Views
 
 Training and application commands can write artifacts that outlive the Lean process. Use
-`#train_log_file_view` for metric and text-generation logs, and
-`#rl_boundary_rollout_file_view` for checked transition records. The
-{src "NN/Examples/Data/Loaders/Csv.lean"}[CSV loader example],
-{src "NN/Examples/Models/Sequence/Gpt2.lean"}[GPT training command],
-and
-{src "NN/Examples/Models/RL/Views/GymnasiumRollout.lean"}[RL rollout view] show the corresponding
-producers.
+`#train_log_file_view` for metric and text-generation logs, and `#rl_boundary_rollout_file_view`
+for checked transition records. For the corresponding producers, see the
+{src "TorchLeanExamples/Data/Loaders/CSV.lean"}[CSV loader example],
+{src "TorchLeanExamples/Models/Sequence/GPT2.lean"}[GPT training command], and
+{src "TorchLeanExamples/Models/RL/GymnasiumRollout.lean"}[RL rollout view].
 
-GridWorld file views use the same validated policy/path readers as the runtime artifact API;
-missing fields and invalid actions or positions produce error panels. The rollout boundary view
-explicitly reports when an empty file contained no transitions to check.
+GridWorld file views use the same validated policy/path readers as the runtime artifact API.
+Missing fields and invalid actions or positions produce error panels. When an empty file contained
+no transitions to check, the rollout boundary view reports that.
 
-File-backed views parse and render the artifact at the named path. A successful visualization does
-not authenticate its producer or strengthen the artifact's checker claim. When validity matters,
-run the corresponding checker first and use the widget to inspect the same accepted file.
+File-backed views parse and render the artifact at the named path. A successful visualization
+doesn't authenticate its producer or strengthen the artifact's checker claim. When validity
+matters, run the corresponding checker first and use the widget to inspect the same accepted file.
 
 A file-backed view can also fail without invalidating the Lean definition that invokes it. For
-example, the training-log viewer turns a missing or malformed file into an error panel. This makes
-it usable during an experiment, but it means successful elaboration alone is not evidence that the
-intended artifact was displayed. Inspect the panel's path and status as well as its curves. If a
-file is replaced between checking and viewing, the two operations no longer necessarily refer to
-the same data; retain the accepted artifact when documenting a result.
+example, the training-log viewer turns a missing or malformed file into an error panel. That
+behavior makes the viewer usable during an experiment, but it means successful elaboration alone
+isn't evidence that the intended artifact was displayed. Inspect the panel's path and status as
+well as its curves. If a file is replaced between checking and viewing, the two operations don't
+necessarily refer to the same data. When you document a result, retain the accepted artifact.
 
 # View Data Sources
 
-Keep the definition or producer path near its view. A graph panel can then be traced to the graph
-record, a bound to its verifier state, and a training curve to the parsed file. This makes a
+Keep the definition or producer path near its view, so that a graph panel can be traced to the
+graph record, a bound to its verifier state, and a training curve to the parsed file. This makes a
 surprising display traceable to the data that produced it.
 
 ```lean -show

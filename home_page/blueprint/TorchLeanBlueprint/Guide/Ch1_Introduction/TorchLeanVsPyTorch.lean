@@ -1,16 +1,51 @@
 import VersoManual
-import NN.API
-import NN.API.Runtime
-import NN.API.Verification.Lowering
-import NN.IR
-import NN.Spec.Models.Mlp
-import NN.Examples.BugZoo.BatchInvariance
+import TorchLean.NN.LoRA
+import TorchLean.NN.Autograd.Function
+import TorchLean.NN.Autograd.Frontend
+import TorchLean.NN.Autograd.Differential
+import TorchLean.NN.Autograd.Complex
+import TorchLean.NN.CLI.Training.Command
+import TorchLean.NN.Data.Synthetic
+import TorchLean.NN.Data.CausalLM
+import TorchLean.NN.Models.KAN
+import TorchLean.NN.Models.CNN
+import TorchLean.NN.Models.ResNet
+import TorchLean.NN.Models.UNet
+import TorchLean.NN.Models.Recurrent
+import TorchLean.NN.Models.CausalTransformer.LanguageModel
+import TorchLean.NN.Models.Mamba
+import TorchLean.NN.Models.MaskedPatchReconstructor
+import TorchLean.NN.Models.Diffusion.NoisePredictor
+import TorchLean.NN.Models.FNO
+import TorchLean.NN.Models.PPO
+import TorchLean.NN.Builder.MoE
+import TorchLean.NN.Sequential.Training
+import TorchLean.NN.RL.CLI
+import TorchLean.NN.RL.PPO.ActorCritic
+import TorchLean.NN.SelfSupervised
+import TorchLean.NN.Text.Vocabulary
+import TorchLean.NN.Text.GPT2BPE
+import TorchLean.NN.Text.Generation
+import TorchLean.NN.Trainer.Constructor
+import TorchLean.NN.Trainer.Train
+import TorchLean.NN.Data.Image
+import TorchLean.NN.Session.Selection
+import TorchLean.Verify.Lowering
+import TorchLean.NN.Backend.Graph
+import TorchLean.NN.IR.CustomRule
+import TorchLean.NN.IR.Tangent
+import TorchLean.NN.IR.Program
+import TorchLean.NN.Models.MLP
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
+import TorchLean.NN.Loss
+import TorchLean.NN.Session.Random
+import TorchLean.Tensor.Op.Pointwise.Real
+import TorchLean.Verify.Trainer
 
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
-open TorchLean
+open TorchLean Backend.Device Trainer.Objective
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
 #doc (Manual) "TorchLean and PyTorch" =>
@@ -19,12 +54,12 @@ tag := "torchlean_vs_pytorch"
 %%%
 
 TorchLean and PyTorch both organize training around tensors, modules, parameters, autograd, and
-optimizers. The comparison becomes more precise when we follow the same model through those
-interfaces. Where is its shape recorded? How do we obtain its current weights? Which function
-does a backward rule differentiate, and what arithmetic evaluates that rule?
+optimizers. Following the same model through those interfaces makes the comparison more precise: we
+can ask where its shape is recorded, how we obtain its current weights, which function a backward
+rule differentiates, and what arithmetic evaluates that rule.
 
 Named Lean blocks are elaborated when this page is built, and their recorded outputs are checked.
-The Python examples record runs against PyTorch 2.13.0; the guide build does not execute them.
+Each Python example records a run against PyTorch 2.13.0 (the guide build doesn't execute it).
 
 # MLP Definitions
 
@@ -45,7 +80,7 @@ x = torch.zeros(4)
 logits = net(x)
 ```
 
-The corresponding TorchLean builder is:
+Here's the corresponding TorchLean builder:
 
 ```lean (name := tpModelDef)
 -- Match the Python architecture while retaining its input
@@ -54,24 +89,24 @@ def tpModel :
     nn.Builder (nn.Sequential [4] [2]) :=
   nn.Sequential![
     nn.linear 4 8,
-    nn.relu,
+    nn.op .relu,
     nn.linear 8 2
   ]
 ```
 
-In PyTorch, an eager tensor carries its shape as runtime metadata. Calling a layer inspects those
-dimensions while the program executes. PyTorch's export and compilation systems can add symbolic
-shape constraints later, but an ordinary annotation such as `torch.Tensor` does not distinguish a
-vector of length four from a matrix with four columns.
+In PyTorch, an eager tensor carries its shape as runtime metadata, and calling a layer inspects
+those dimensions while the program executes. PyTorch's export and compilation systems can add
+symbolic shape constraints later, but an ordinary annotation such as `torch.Tensor` doesn't
+distinguish a vector of length four from a matrix with four columns.
 
-In TorchLean, the input and output shapes index the `nn.Sequential` type. Layer composition is
+In TorchLean, the input and output shapes index the `nn.Sequential` type, and layer composition is
 checked while Lean elaborates the definition. `nn.Builder` also records that `tpModel` is a
 deterministic seed-state computation waiting to initialize its parameters.
 
 ## Layer And Input Shape Errors
 
 Suppose the second linear layer is typed with the wrong input width. In TorchLean the definition
-does not survive elaboration:
+doesn't survive elaboration:
 
 ```lean +error -keep (name := tpWidth)
 -- A seven-input readout cannot follow an eight-output
@@ -80,7 +115,7 @@ def tpBroken :
     nn.Builder (nn.Sequential [4] [2]) :=
   nn.Sequential![
     nn.linear 4 8,
-    nn.relu,
+    nn.op .relu,
     nn.linear 7 2
   ]
 ```
@@ -89,8 +124,8 @@ nn.Sequential!: layer 2 expects input shape [7], but layer 1 outputs [8].
 Change layer 2's input shape or insert a layer that converts [8] to [7].
 ```
 
-The message identifies a layer expecting width `7` where composition requires width `8`.
-Lean rejects this model before execution.
+The message identifies a layer expecting width `7` where composition requires width `8`, and Lean
+rejects the model before execution.
 
 A related PyTorch mismatch occurs when the valid four-input model receives a width-three input:
 
@@ -100,23 +135,24 @@ A related PyTorch mismatch occurs when the valid four-input model receives a wid
 RuntimeError: mat1 and mat2 shapes cannot be multiplied (1x3 and 4x8)
 ```
 
-Here PyTorch checks the dimensions during the call. An invalid operation in a conditional
-branch is therefore detected when that branch executes. Lean checks the shape contracts of both
-branches while elaborating a shape-indexed program.
+Here PyTorch checks the dimensions during the call, so an invalid operation in a conditional branch
+is detected when that branch executes. Lean checks the shape contracts of both branches while
+elaborating a shape-indexed program.
 
 Dynamic shapes are convenient during exploration and for data-dependent programs. Shape-indexed
 types require more information up front, but they make layer composition and later theorem
-statements much cleaner. TorchLean still accepts runtime-loaded data; it checks the dimensions once
+statements much cleaner. TorchLean still accepts runtime-loaded data: it checks the dimensions once
 at the boundary and then works with the resulting typed tensor.
 
-These contracts also describe higher-rank inputs. `matmul` handles matrices, batches of
-matrices, and higher-rank collections, broadcasting compatible leading dimensions.
+These contracts also describe higher-rank inputs. `matmul` handles matrices, batches of matrices,
+and higher-rank collections (broadcasting compatible leading dimensions).
 
-There is also no special batch tensor type. Operations that preserve outer axes accept a leading
-shape explicitly. Thus `nn.flattenAfter [batch, time]` keeps the batch and time axes and
-flattens everything after them. Classification and regression heads use the same argument, so one
-definition works for single examples, batches, sequences of examples, and higher-rank collections.
-The resulting input and output shapes are still checked while the model is built.
+There's also no special batch tensor type. Operations that preserve outer axes take a leading shape
+as an argument. So a reshape from `[batch, time] ++ s` to `[batch, time, s.size]` keeps the batch
+and time axes and flattens everything after them. Classification and regression heads use the same
+argument, so one definition works for single examples, batches, sequences of examples, and
+higher-rank collections. The resulting input and output shapes are still checked while the model is
+built.
 
 # Parameters: Object Fields Versus Explicit Payloads
 
@@ -124,9 +160,9 @@ A PyTorch `nn.Module` registers parameter objects. Calling `model(x)` reads the 
 fields. An optimizer mutates those parameters, usually through gradient fields populated by
 autograd.
 
-TorchLean's model description contains parameter shapes, initialization tensors, gradient
-flags, and a forward program. The forward program receives the *live parameter payload* explicitly.
-Initialization and execution are therefore related but distinguishable:
+TorchLean's model description contains parameter shapes, initialization tensors, gradient flags,
+and a forward program, which receives the *live parameter payload* as an argument. So
+initialization and execution are related but distinguishable:
 
 ```lean (name := tpInitDef)
 -- Initialize once, then inspect the type of the state
@@ -137,8 +173,8 @@ def tpInit : nn.Sequential [4] [2] :=
 #check nn.initialState tpInit
 ```
 ```leanOutput tpInitDef (whitespace := lax)
-nn.initialState tpInit Float : nn.State Float
-  (Runtime.Autograd.Model.Layers.Seq.stateShapes tpInit)
+nn.initialState tpInit Float : TensorPack Float
+  tpInit.stateShapes
 ```
 
 The initialized description exposes its state shape list:
@@ -146,18 +182,18 @@ The initialized description exposes its state shape list:
 ```lean (name := tpShapes)
 -- List weights and biases in the order required by the
 -- forward program.
-#eval nn.stateShapes tpInit
+#eval nn.Sequential.stateShapes tpInit
 ```
 ```leanOutput tpShapes
 [[8, 4], [8], [2, 8], [2]]
 ```
 
-The four groups contain 32 weights, eight hidden biases, sixteen readout weights, and two
-readout biases. The input and output interface `[4] -> [2]` alone does not reveal those groups:
-another model could use the same interface with a different hidden width. The shape list exposes
-that internal layout. The PyTorch names additionally identify where each tensor came from in the
-module tree. An adapter must connect names to positions and validate their shapes before it can
-compare or execute the resulting payload.
+The four groups contain 32 weights, eight hidden biases, sixteen readout weights, and two readout
+biases. The input and output interface `[4] -> [2]` alone doesn't reveal them (another model could
+use the same interface with a different hidden width), but the shape list exposes that internal
+layout. PyTorch's names also identify where each tensor came from in the module tree. An adapter
+must connect names to positions and validate their shapes before it can compare or execute the
+resulting payload.
 
 PyTorch answers the same question through the module's `state_dict`:
 
@@ -176,13 +212,13 @@ for name, t in net.state_dict().items():
 2.bias     (2,)
 ```
 
-Both lists contain the same four tensors in the same order. PyTorch attaches a string key to
-each tensor; loading must account for missing, unexpected, or
-renamed keys. TorchLean attaches a position and shape computed from the model. This rejects
-incompatible state shape lists, but another architecture with the same state shapes can supply
-a payload of the same type. Neither convention alone proves that the intended weights were loaded.
+Both lists contain the same four tensors in the same order. PyTorch attaches a string key to each
+tensor, so loading must account for missing, unexpected, or renamed keys. TorchLean attaches a
+position and shape computed from the model. This rejects incompatible state shape lists, but
+another architecture with the same state shapes can supply a payload of the same type. Neither
+convention alone proves that the intended weights were loaded.
 
-The initial tensors are part of the initialized description. Execution instantiates a mutable
+After initialization, the description holds the initial tensors. Execution instantiates a mutable
 `nn.Module` from them, and the whole lifecycle is ordinary `IO`:
 
 ```lean (name := tpRun)
@@ -196,42 +232,44 @@ The initial tensors are part of the initialized description. Execution instantia
   IO.println s!"{output}"
 ```
 ```leanOutput tpRun
-[-0.284787, -0.230906]
+[-0.138766, 0.021430]
 ```
 
 The module owns the live parameters, persistent buffers, and train/eval mode, and `module.state`
-reads the current payload back out. The immutable `nn.Sequential` remains the value used by graph
-lowering and proofs. A theorem about `nn.initialState tpInit` is therefore not a theorem about the
-parameters after 10,000 optimizer steps; a claim about trained weights must name the saved payload
-it analyzes.
+reads the current payload back out. Graph lowering and proofs keep using the immutable
+`nn.Sequential`. So a theorem about `nn.initialState tpInit` isn't a theorem about the parameters
+after 10,000 optimizer steps, and a claim about trained weights must name the saved payload it
+analyzes.
 
 Lowering receives the initialized model and the tensors to analyze. This fixes the values in
 the resulting graph artifact independently of later module updates. A PyTorch checkpoint importer
 must map the external names, shapes, order, and layout into this payload.
 
 The payload distinction also applies to layers beyond this MLP. For integer-indexed embeddings,
-`nn.embedding vocab embedDim` constructs a trainable table,
-`nn.Embedding.fromWeight weight` preserves an existing table exactly, and `freeze := true` keeps
-that table in module state without requesting a parameter gradient. If the index tensor has
-dimensions `dims`, its output has dimensions `dims ++ [embedDim]`; repeated ids accumulate into the
-same gradient row.
+`nn.embedding vocab embedDim` constructs a trainable table, `nn.Embedding.fromWeight weight`
+preserves an existing table exactly, and `freeze := true` keeps that table in module state without
+requesting a parameter gradient. If the index tensor has dimensions `dims`, its output has
+dimensions `dims ++ [embedDim]`, and repeated ids accumulate into the same gradient row.
 
 # Autograd Implementations And Specifications
 
 PyTorch dynamically constructs an autograd graph while tensor operations run. During backward,
 saved tensors and derivative rules propagate vector-Jacobian products to leaves through its
 dispatcher and autograd machinery
-({Informal.citep pytorch2019 baydin2018}[]).
+{Informal.citep pytorch2019 baydin2018}[].
 
-TorchLean's eager runtime records its own tape, including when its CUDA backend calls LibTorch.
-The native bridge disables LibTorch autograd recording. TorchLean defines the local backward
-rules and accumulates their results while traversing its tape. On CUDA, those rules either call
-a backend VJP or combine ATen operations. For example, the matrix-product rule computes its two
-input gradients with transposed matrix products; it does not ask LibTorch to differentiate a graph.
-To reason about a backward step, its proofs refer
-to an ideal derivative or VJP definition. For covered operations, correctness theorems show that
-this rule is the mathematical derivative; numerical results relate it to the rule evaluated with
-the runtime node's saved values.
+TorchLean's eager runtime records its own tape, including when its CUDA backend calls LibTorch (the
+native bridge disables LibTorch autograd recording). TorchLean defines the local backward rules and
+accumulates their results while traversing its tape. Each rule belongs to a registered operator of
+`TorchLean.Op`. On CPU, `Tape.apply` takes the operator's rule from `Op.rule?` and prepares it with
+its parents' gradient flags, so the pullback computes contributions only for the parents that need
+one (as PyTorch's `needs_input_grad` does). On CUDA, `LibTorch.Tape.apply` runs the operator's
+entry in `LibTorch.Kernel.ofOp`, whose backward rules either call a backend VJP or combine ATen
+operations. For example, the matrix-product rule computes its two input gradients with transposed
+matrix products, without asking LibTorch to differentiate a graph. To reason about a backward step,
+TorchLean's proofs refer to an ideal derivative or VJP definition: for covered operations,
+correctness theorems show that this rule is the mathematical derivative. Numerical results relate
+it to the rule evaluated with the runtime node's saved values.
 
 For a scalar loss $`L(\theta)`, reverse mode starts with derivative $`1` at the loss and
 propagates derivatives backward. At a node $`y=f(x)`, let $`J_f(x)` be the Jacobian and
@@ -241,18 +279,18 @@ vector. The corresponding input derivative $`\bar{x}` is obtained by the local V
 $$`\bar{x}=J_f(x)^\mathsf{T}\bar{y}`.
 
 Each node computes this product without materializing the full network Jacobian. The ideal VJP
-states the intended rule; correctness and numerical error results describe its relationship to
-the runtime implementation under their hypotheses.
+states the intended rule. Correctness and numerical error results describe its relationship to the
+runtime implementation under their hypotheses.
 
-External kernels make the three layers particularly important because forward and backward may
-cross different boundaries. The backend chapter records that ownership per operation instead of
+External kernels make the three layers particularly important, because forward and backward may
+cross different boundaries. Our backend chapter records that ownership per operation instead of
 letting it hide inside the training loop.
 
 ## Gradient Comparison
 
 To inspect a whole gradient, use a smaller network with two inputs, two hidden units, and one
-output. Explicit weights make one hidden unit inactive and the other active at the chosen input,
-so we can follow which derivatives survive ReLU in both implementations.
+output. We set the weights by hand to make one hidden unit inactive and the other active at the
+chosen input, so we can follow which derivatives survive ReLU in both implementations.
 
 ```lean (name := tpWeights)
 -- Fix asymmetric weights and nonzero biases so the two
@@ -269,19 +307,19 @@ def tpY : Tensor Float [1] := [0.5]
 def tpNet : nn.Sequential [2] [1] :=
   nn.build 0 nn.Sequential![
     nn.linear 2 2,
-    nn.relu,
+    nn.op .relu,
     nn.linear 2 1
   ]
 
 def tpState : autograd.model.State tpNet Float :=
-  nn.State.empty
-    |>.push tpW1 |>.push tpB1
-    |>.push tpW2 |>.push tpB2
+  Pack.nil
+    |>.snoc tpW1 |>.snoc tpB1
+    |>.snoc tpW2 |>.snoc tpB2
 ```
 
-The seed `0` in `nn.build` only supplies the architecture and its shape list here, because the
-payload we pass to autograd is `tpState`, replacing the model's initial values for this call.
-The explicit payload lets us use exactly the weights in the hand calculation.
+Here the seed `0` in `nn.build` only supplies the architecture and its shape list, because the
+payload we pass to autograd is `tpState` (it replaces the model's initial values for this call). So
+we can use the same weights as the hand calculation.
 
 Write the first layer's weights and bias as $`W_1` and $`b_1`, and its pre-activation vector as
 $`z`. For the input $`x` above,
@@ -298,7 +336,7 @@ giving squared error $`(-0.925-0.5)^2=2.030625`. The specification-level forward
 ```lean (name := tpSpecForward)
 -- Evaluate the explicit payload before comparing its loss
 -- derivatives.
-#eval Examples.mlpForward (α := Float)
+#eval MLP.forward (α := Float)
   { weights := tpW1, bias := tpB1 }
   { weights := tpW2, bias := tpB2 } tpX
 ```
@@ -311,10 +349,10 @@ comparing full parameter arrays: a nonzero gradient through the first unit would
 inactive ReLU.
 
 For this calculation, $`y=0.5` is the target and $`\bar{y}` denotes the loss derivative with
-respect to the prediction $`\hat{y}`. Bars on other quantities denote their loss derivatives.
-The symbol $`\odot` means elementwise multiplication, and
-$`\mathbf{1}[z>0]` is the vector of indicators for active ReLU units. Applying the chain rule
-from the output toward the input, with $`\bar{y}=2(\hat{y}-y)=-2.85`, gives:
+respect to the prediction $`\hat{y}` (bars on other quantities denote their loss derivatives). The
+symbol $`\odot` means elementwise multiplication, and $`\mathbf{1}[z>0]` is the vector of
+indicators for active ReLU units. Applying the chain rule from the output toward the input, with
+$`\bar{y}=2(\hat{y}-y)=-2.85`, gives:
 
 $$`\overline{W_2}=\bar{y}\,h^\mathsf{T}=(0,\;-3.705),\qquad \overline{b_2}=-2.85`,
 
@@ -379,26 +417,26 @@ loss = 2.0306248664855957
 ```
 
 The printed entries approximate the hand-derived values, including the zeros from the inactive
-ReLU. The examples use different formats: TorchLean's `Float` is binary64, while PyTorch's
+ReLU, but the examples use different formats: TorchLean's `Float` is binary64, while PyTorch's
 default dtype is binary32. Running the TorchLean example in binary32 lets us compare the stored
-bits directly:
+bits:
 
 ```lean (name := tpCastDefs)
 /-- The same four tensors, cast into any runtime scalar. -/
 def tpStateIn (α : Type) [Storage α] [Context α]
-    [Runtime.FromFloat α] :
+    [FromFloat α] :
     autograd.model.State tpNet α :=
-  let c : Float → α := Runtime.ofFloat
-  nn.State.empty
-    |>.push (Tensor.map c tpW1)
-    |>.push (Tensor.map c tpB1)
-    |>.push (Tensor.map c tpW2)
-    |>.push (Tensor.map c tpB2)
+  let c : Float → α := ofFloat
+  Pack.nil
+    |>.snoc (Tensor.map c tpW1)
+    |>.snoc (Tensor.map c tpB1)
+    |>.snoc (Tensor.map c tpW2)
+    |>.snoc (Tensor.map c tpB2)
 
 /-- Gradient payload flattened in state order. -/
 def tpFlat {α : Type} [Storage α] [Context α]
     (g : autograd.model.State tpNet α) : Array α :=
-  match nn.State.Internal.toTensorPack g with
+  match g with
   | .cons w1 (.cons b1 (.cons w2 (.cons b2 .nil))) =>
       Tensor.to w1 (Array α) ++ Tensor.to b1 (Array α)
         ++ Tensor.to w2 (Array α)
@@ -412,20 +450,21 @@ def tpFlat {α : Type} [Storage α] [Context α]
   let g ← autograd.model.grad (α := Float32) tpNet
     autograd.model.Loss.mse
     (tpStateIn Float32)
-    (Tensor.map Runtime.ofFloat tpX)
-    (Tensor.map Runtime.ofFloat tpY)
+    (Tensor.map ofFloat tpX)
+    (Tensor.map ofFloat tpY)
   IO.println s!"{(tpFlat g).map Float32.toBits}"
 ```
 ```leanOutput tpBits
 #[0, 0, 1074318540, 1082707148, 0, 1074318540, 0, 3228376759, 3224790630]
 ```
 
-Flattening is part of this comparison's contract. Each tensor is flattened internally, then the
+Flattening is part of this comparison's contract: each tensor is flattened internally, then the
 four groups are concatenated in the same weight, bias, weight, bias order. Reordering groups could
-make a correct backward pass look wrong, or hide a swap if the chosen entries happened to agree.
-The Python `view(torch.int32)` reads the storage words rather than rounding gradients to integers;
-masking with `0xffffffff` displays those words as unsigned values. The comparison therefore checks
-both this layout convention and all bits of these nine gradient entries for the chosen input.
+make a correct backward pass look wrong, or hide a swap if the chosen entries happened to agree. In
+the Python version, `view(torch.int32)` reads the storage words (it doesn't round gradients to
+integers), and masking with `0xffffffff` displays those words as unsigned values. So the comparison
+checks both this layout convention and all bits of these nine gradient entries for the chosen
+input.
 
 ```
 # Reinterpret gradient storage as 32-bit words; do not
@@ -441,9 +480,9 @@ print([b & 0xffffffff for b in bits])
 [0, 0, 1074318540, 1082707148, 0, 1074318540, 0, 3228376759, 3224790630]
 ```
 
-All nine 32-bit words match. Agreement between implementations does not imply correct rounding
-of the exact real derivative, however. One entry has exact value $`2.85\times 0.75=2.1375`, whose
-nearest binary32 representation differs from the shared word `1074318540`:
+All nine 32-bit words match. But agreement between implementations doesn't imply correct rounding
+of the exact real derivative. One entry has exact value $`2.85\times 0.75=2.1375`, whose nearest
+binary32 representation differs from the shared word `1074318540`:
 
 ```lean (name := tpRound)
 -- Compare rounding the final real derivative with the
@@ -460,19 +499,19 @@ nearest binary32 representation differs from the shared word `1074318540`:
 ```
 
 Rounding the exact derivative gives `1074318541`. Both libraries returned `1074318540`, one ULP
-lower, or about $`1.9\times 10^{-7}` below the exact value. The computation rounds intermediate
-results, so it need not equal a single rounding of the final real expression. Matching those
-intermediate operations can reproduce the same bits. Later in this chapter, a batched matrix
-product illustrates how changing the evaluation order can break such agreement.
+lower (about $`1.9\times 10^{-7}` below the exact value). Because the computation rounds
+intermediate results, it need not equal a single rounding of the final real expression. Matching
+those intermediate operations can reproduce the same bits. Changing the evaluation order can break
+such agreement, as the batched matrix product in the floating-point section shows.
 
 `Float.toString` prints six decimals, which would hide this discrepancy. Comparing stored words
 establishes more than comparing those displays, but still only for this payload and input. The
-guide reruns the Lean half; repeating the Python half is a separate cross-framework check.
-The proof chapters instead state quantified results over specification VJPs for covered operations.
+guide reruns the Lean half (repeating the Python half is a separate cross-framework check), and its
+proof chapters instead state quantified results over specification VJPs for covered operations.
 
 # Training Loops
 
-A conventional PyTorch loop is explicit Python mutation:
+A conventional PyTorch loop spells out its mutations in Python:
 
 ```
 # Clear old gradients before differentiating this batch and
@@ -488,42 +527,43 @@ for x, y in loader:
 TorchLean's trainer packages the same lifecycle:
 
 ```lean (name := tpTrainer)
--- The output is [2], so its class axis is zero; this
+-- The output is [2], so its class axis is zero. This
 -- definition configures a trainer.
 def tpTrainer :=
-  Trainer.new tpModel
+  Trainer.create tpModel
     { objective := oneHotCrossEntropy 0
       optimizer := optim.adam
         { lr := 0.001 }
       seed := 2026 }
 ```
 
-The output is a vector of two class logits, so its class axis is zero. In
-`oneHotCrossEntropy 0`, that argument selects the axis; the one-hot target of shape `[2]` selects
-the desired class. The objective reduces the logits to a scalar loss. `tpTrainer` configures this
-objective and Adam; a subsequent training call supplies the dataset and performs the updates.
+Here the output is a vector of two class logits, so its class axis is zero. In
+`oneHotCrossEntropy 0`, that argument selects the axis, and the one-hot target of shape `[2]`
+selects the desired class. The objective reduces the logits to a scalar loss. `tpTrainer`
+configures this objective and Adam, while a subsequent training call supplies the dataset and
+performs the updates.
 
 Internally, the runtime owns mutable parameters, gradients, optimizer moments, tape state, and
-possibly device buffers. TorchLean does not force a large GPU training loop to allocate a new pure
-tensor tree at every step. The semantic interfaces remain explicit while the execution engine uses
+possibly device buffers. TorchLean doesn't force a large GPU training loop to allocate a new pure
+tensor tree at every step: its semantic interfaces remain explicit while the execution engine uses
 mutation and ownership where performance requires it.
 
-The `train` call returns a trained result whose prediction closures refer to the trained runner.
-Lower-level manual APIs expose parameter tensors and individual forward, backward, and optimizer
-steps when verification or research code needs them. The {ref "running-example"}[running example]
-runs 200 steps and compares the results with a PyTorch loop, explaining the different batch sizes
-and initializations.
+Calling `train` returns a trained result whose prediction closures refer to the trained runner,
+while lower-level manual APIs expose parameter tensors and individual forward, backward, and
+optimizer steps when verification or research code needs them. Our {ref "running-example"}[running
+example] runs 200 steps and compares the results with a PyTorch loop, explaining the different
+batch sizes and initializations.
 
 ## Momentum SGD
 
-Reproducing a training run requires matching the optimizer's recurrence as well as its name.
-Let $`p` be a parameter, $`g` its gradient, $`\eta` the learning rate, and $`\mu` the momentum
+Reproducing a training run requires matching the optimizer's recurrence as well as its name. Let
+$`p` be a parameter, $`g` its gradient, $`\eta` the learning rate, and $`\mu` the momentum
 coefficient. The momentum form associated with Polyak {Informal.citep polyak1964}[] stores the
 learning rate inside a buffer: $`v\gets\mu v-\eta g`, then $`p\gets p+v`. PyTorch uses a buffer
-$`b` with the learning rate outside: $`b\gets\mu b+g`, then $`p\gets p-\eta b`.
-For constant $`\eta`, scaling the buffers appropriately relates the recurrences; a changing
-learning rate generally changes that relationship. TorchLean's `updateMomentumBuffer` follows
-the PyTorch convention, as its docstring specifies.
+$`b` with the learning rate outside: $`b\gets\mu b+g`, then $`p\gets p-\eta b`. For constant
+$`\eta`, scaling the buffers appropriately relates the recurrences, but a changing learning rate
+generally changes that relationship. TorchLean's `updateMomentumBuffer` follows the PyTorch
+convention, as its docstring specifies.
 
 Here are three steps on the same parameter and the same repeated gradient:
 
@@ -535,14 +575,14 @@ def tpGradient : Tensor Float [3] := [0.1, 0.3, -0.2]
 
 def tpSgdSteps (n : Nat) : Tensor Float [3] :=
   let rec go (k : Nat)
-      (st : Optim.MomentumSGD.State Float [3])
+      (st : MomentumSGD.State Float [3])
       (p : Tensor Float [3]) : Tensor Float [3] :=
     match k with
     | 0 => p
     | k + 1 =>
-      let step := Optim.MomentumSGD.update st p tpGradient
+      let step := MomentumSGD.update st p tpGradient
       go k step.optimizerState step.parameters
-  go n (Optim.MomentumSGD.init 0.1 0.9 tpTheta) tpTheta
+  go n (MomentumSGD.init 0.1 0.9 tpTheta) tpTheta
 
 #eval tpSgdSteps 1
 #eval tpSgdSteps 3
@@ -554,12 +594,12 @@ def tpSgdSteps (n : Nat) : Tensor Float [3] :=
 [0.943900, -2.168300, 0.612200]
 ```
 
-Starting from a zero buffer, the first three momentum buffers are `g`, `1.9 * g`, and
-`2.71 * g`. The total displacement after three updates is therefore `0.1 * 5.61 * g` in exact
-arithmetic. For the first coordinate that subtracts 0.0561 from one; for the third it adds 0.1122
-to 0.5 because the gradient is negative. This explains the direction and scale of every coordinate
-in the printed vector. Threading `step.optimizerState` is essential: reinitializing the buffer on
-each call would erase this history and produce plain SGD behavior instead.
+Starting from a zero buffer, the first three momentum buffers are `g`, `1.9 * g`, and `2.71 * g`,
+so the total displacement after three updates is `0.1 * 5.61 * g` in exact arithmetic. For the
+first coordinate that subtracts 0.0561 from one, and for the third it adds 0.1122 to 0.5 because
+the gradient is negative. This explains the direction and scale of every coordinate in the printed
+vector. Threading `step.optimizerState` is essential: reinitializing the buffer on each call would
+erase this history and produce plain SGD behavior instead.
 
 Use binary64 in PyTorch too, so the comparison holds the scalar format fixed:
 
@@ -582,9 +622,9 @@ print(p.detach().tolist())
 [0.9439, -2.1683, 0.6122000000000001]
 ```
 
-For the third coordinate, PyTorch prints `0.6122000000000001` because that is
-the binary64 number it holds; TorchLean prints `0.612200` because its printer stops at six decimals.
-Lean confirms the stored value agrees when asked to compare against the full literal:
+For the third coordinate, PyTorch prints `0.6122000000000001` because that's the binary64 number it
+holds, while TorchLean prints `0.612200` because its printer stops at six decimals. Lean confirms
+the stored value agrees when asked to compare against the full literal:
 
 ```lean (name := tpOptBits)
 -- Check the full binary64 value behind the shorter
@@ -597,26 +637,26 @@ true
 
 ## Adam's Epsilon
 
-Adam adds a second convention to compare: where the small positive constant $`\varepsilon`
-enters the denominator {Informal.citep adam2015}[]. TorchLean adds it after the square root,
-matching Kingma and Ba and PyTorch's `denom`. The constant keeps the denominator nonzero but
-also changes the update for nonzero gradients. With a constant gradient, bias correction removes
-the initial attenuation of the moment estimates, making that effect easy to isolate:
+Adam adds a second convention to compare: where the small positive constant $`\varepsilon` enters
+the denominator {Informal.citep adam2015}[]. TorchLean adds it after the square root (matching
+Kingma and Ba and PyTorch's `denom`). Epsilon keeps the denominator nonzero but also changes the
+update for nonzero gradients. With a constant gradient, bias correction removes the initial
+attenuation of the moment estimates, making that effect easy to isolate:
 
 ```lean (name := tpOptAdam)
 -- Repeated identical gradients make the denominator's
 -- epsilon effect easier to inspect.
 def tpAdamSteps (n : Nat) : Tensor Float [3] :=
   let rec go (k : Nat)
-      (st : Optim.Adam.State Float [3])
+      (st : Adam.State Float [3])
       (p : Tensor Float [3]) : Tensor Float [3] :=
     match k with
     | 0 => p
     | k + 1 =>
-      let step := Optim.Adam.update st p tpGradient
+      let step := Adam.update st p tpGradient
       go k step.optimizerState step.parameters
   go n
-    (Optim.Adam.init 0.1 0.9 0.999 1.0e-8 tpTheta) tpTheta
+    (Adam.init 0.1 0.9 0.999 1.0e-8 tpTheta) tpTheta
 
 #eval tpAdamSteps 1
 #eval tpAdamSteps 3
@@ -628,15 +668,15 @@ def tpAdamSteps (n : Nat) : Tensor Float [3] :=
 [0.700000, -2.300000, 0.800000]
 ```
 
-For a constant gradient and initially zero moments, bias correction makes the ideal first
-moment equal to `g` and the ideal second moment equal to `g^2`. The normalized update is therefore
-`lr * g / (abs g + epsilon)`. Coordinates with different nonzero gradient magnitudes
-move by nearly the same amount. This cancellation depends on holding the gradient fixed.
+For a constant gradient and initially zero moments, bias correction makes the ideal first moment
+equal to `g` and the ideal second moment equal to `g^2`, so the normalized update is
+`lr * g / (abs g + epsilon)`. Coordinates with different nonzero gradient magnitudes move by nearly
+the same amount. This cancellation depends on holding the gradient fixed.
 
 With this constant nonzero gradient, each coordinate moves approximately $`0.1` per step, in the
-opposite direction to its gradient. Epsilon and rounding change the magnitude slightly; changing
-gradients need not produce the same step size. PyTorch prints the same
-run, after one step and after three, with more digits:
+opposite direction to its gradient. Epsilon and rounding change the magnitude slightly, and
+changing gradients need not produce the same step size. PyTorch prints the same run (after one step
+and after three) with more digits:
 
 ```
 # Hold the gradient fixed to isolate Adam's bias correction
@@ -688,14 +728,14 @@ PyTorch's `0.900000009999999` is the same shortfall.
 Three steps accumulate three times as much, which the second number confirms.
 
 The results check the placement of epsilon for this trajectory. Double precision makes its small
-effect visible; with these parameter values, Float32 can hide it below one ULP.
+effect visible, but with these parameter values, Float32 can hide it below one ULP.
 {ref "fp32-soundness"}[The soundness chapter] separates the update equation from the format in
 which it is evaluated so that both sources of numerical behavior can be accounted for.
 
 # Dispatch And Backend Selection
 
 PyTorch routes an operation through its dispatcher. Device, dtype, layout, compilation state, and
-available libraries determine the eventual implementation. A CUDA matrix multiplication may use
+available libraries determine the eventual implementation: a CUDA matrix multiplication may use
 cuBLAS, convolution may use cuDNN, and attention may select one of several fused kernels.
 
 TorchLean records the corresponding choice as a device, operation, provider, and accepted kernel
@@ -726,31 +766,32 @@ DispatchKeySet(CUDA, ADInplaceOrView, AutogradCUDA, AutocastCUDA)
 ```
 
 Fifteen registrations for one operator, and the key set picks among them. TorchLean asks the same
-question of a profile, before anything executes, and the answer is a value you can print:
+question of a profile (before anything executes), and the answer is a value you can print:
 
 ```lean (name := tpDispatch)
 -- Ask each declared backend profile for a plan without
 -- executing its kernels.
 section
-open NN.Backend
+open Backend
 
 /-- A CUDA request against a build that declares only CPU
 availability. The model, the graph, and the parameters are
-untouched; the policy is the only thing that changed. -/
-def tpCudaOnCpuBuild : BackendProfile :=
-  { BackendProfile.checkedCpu with
+untouched. The policy is the only thing that changed. -/
+def tpCudaOnCpuBuild : Profile :=
+  { Profile.checkedCPU with
     name := "cuda_request_cpu_build"
     policy :=
-      { BackendProfile.checkedCpu.policy with
-        device := gpu } }
+      { Profile.checkedCPU.policy with
+        device := cuda } }
 
 #eval show IO Unit from do
   let l ← IO.ofExcept
     (Verification.lowerForwardToIR (α := Float)
       tpInit (nn.initialState tpInit))
-  for p in [BackendProfile.checkedCpu,
-      BackendProfile.libTorchCuda, tpCudaOnCpuBuild] do
-    match p.planGraphNodes l.graph with
+  for p in [Profile.checkedCPU,
+      Profile.libTorchCUDA, tpCudaOnCpuBuild] do
+    match l.graph.plan p.policy p.availability
+        p.implementations with
     | .ok plan =>
         let names := (plan.kernels.map
           (·.capsule.name)).toList.eraseDups
@@ -782,14 +823,14 @@ cuda_request_cpu_build: rejected
   no admissible kernel capsule for op reshape on device cuda
 ```
 
-The three profiles describe different plans for the same eighteen-node graph. The CPU profile
-selects six reference capsules; the CUDA profile selects LibTorch capsules for those operations.
-The third request asks for CUDA while declaring only CPU availability. Planning rejects it and
-names the unsupported operation before any allocation or launch.
+The three profiles describe different plans for the same eighteen-node graph: the CPU profile
+selects six reference capsules, while the CUDA profile selects LibTorch capsules for those
+operations. The third request asks for CUDA while declaring only CPU availability, so planning
+rejects it and names the unsupported operation before any allocation or launch.
 
-The failure is in the runtime configuration: the graph's shapes are valid, but the declared
-providers cannot implement the requested operation on CUDA. Conversely, a successful plan only
-shows that the graph fits the profile's declarations. This example does not execute the kernels.
+That failure is in the runtime configuration: the graph's shapes are valid, but the declared
+providers can't implement the requested operation on CUDA. Conversely, a successful plan only shows
+that the graph fits the profile's declarations (this example doesn't execute the kernels).
 
 PyTorch also rejects incompatible device placement:
 
@@ -802,16 +843,16 @@ on cuda:0, different from other tensors on cpu (when checking argument in
 method wrapper_CUDA_addmm)
 ```
 
-The difference is when the decision happens and what carries it. PyTorch's answer is a function of
-ambient tensor state at the moment of the call, spread across device, dtype, autocast mode, and grad
-mode. Dispatch inspection can expose parts of that choice before execution, as the key-set
-example above shows. TorchLean's answer is a function of one record
-you can name, print, compare against another profile, and hand to a proof. The `availability` field
-is what the build declares rather than a probe of the driver. Planning stays a
-pure function of the profile and the graph, so the same plan comes out on a machine with no GPU at
-all, and a host that cannot honour it fails at the capsule boundary instead of quietly producing a
-different plan. {ref "backend-selection"}[The backend planner chapter] is where that record, and the
-limits of what a plan currently controls, are laid out.
+What differs is when the decision happens and what carries it. PyTorch's answer is a function of
+ambient tensor state at the moment of the call (spread across device, dtype, autocast mode, and
+grad mode), though dispatch inspection can expose parts of that choice before execution, as the
+key-set example above shows. TorchLean's answer is a function of one record you can name, print,
+compare against another profile, and hand to a proof. That record's `availability` field is what
+the build declares, not a probe of the driver. Planning stays a pure function of the profile and
+the graph, so the same plan comes out on a machine with no GPU at all, and a host that can't honour
+it fails at the capsule boundary instead of quietly producing a different plan.
+{ref "backend-selection"}[The backend planner chapter] lays out that record and the limits of what
+a plan controls.
 
 # Graphs, Lowering, And Compilation
 
@@ -820,14 +861,19 @@ Their graphs support transformation and deployment inside the PyTorch ecosystem.
 
 TorchLean has two graph-facing layers with different purposes:
 
-- `GraphSpec` describes structured architectures and lowers them to TorchLean programs;
-- `NN.IR.Graph` is the canonical operation DAG used by lower-level evaluation and verification.
+- `nn.Sequential` describes layer architectures with shapes in their types and lowers them to typed
+  graphs and the IR
+- `IR.Graph`, a graph of registered operators, is the canonical operation DAG used by
+  lower-level evaluation and verification.
 
-An IR node contains an operation tag, parent ids, and an output shape. Parameter and constant values
-live in payload stores. `NN.IR.Semantics` defines how supported nodes are interpreted over a scalar
-domain.
+An IR node is a graph input at a port, a constant at a port, or a registered operator
+(`TorchLean.Op ins outs`, typed by its input and output ports) with the references of the outputs it
+reads, one per input port in a well-formed graph (`IR.Graph.WellFormed`). Parameter and
+constant values live in the payload (`IR.Payload`), by node id. `IR.Graph.eval`
+interprets a graph over a scalar type: each operator by its rule (`Op.rule?`), a custom
+operation by the checked program that the payload holds for its node.
 
-The two graphs for our four-input MLP are a good way to see the difference in granularity.
+For our four-input MLP, the two graphs are a good way to see the difference in granularity.
 `torch.export` produces nine nodes:
 
 ```
@@ -858,56 +904,59 @@ TorchLean's verification lowering produces eighteen:
 -- ids, not a timing measurement.
 #eval (Verification.lowerForwardToIR (α := Float)
     tpInit (nn.initialState tpInit)).map fun l =>
-  (l.graph.nodes.size, l.inputId, l.outputId)
+  (l.graph.nodes.size, l.input.node, l.output.node)
 ```
 ```leanOutput tpNodes
 Except.ok (18, 0, 17)
 ```
 
-`aten.linear.default` retains the affine layer as one graph operation; its execution can depend
+`aten.linear.default` retains the affine layer as one graph operation, whose execution can depend
 on later dispatch and compilation choices. TorchLean's verification graph expands that layer into
-reshapes, a matrix product, a broadcast, and an addition. Each primitive has a semantic equation
-used when reasoning through the graph one node at a time. The
-{ref "graphs-and-ir"}[graph chapter] lists the node kinds.
+reshapes, a matrix product, a broadcast, and an addition, each with a semantic equation used when
+reasoning through the graph one node at a time. Our {ref "graphs-and-ir"}[graph chapter] lists the
+node kinds.
 
-The counts describe this difference in granularity. Eighteen nodes versus nine gives no direct
-comparison of memory or speed; those depend on how the operations execute.
+Both counts describe this difference in granularity. Eighteen nodes versus nine gives no direct
+comparison of memory or speed, because those depend on how the operations execute.
 
 The verification lowering pass can lower supported initialized models and parameter payloads to
-this IR. A separate first-order source language under `NN.Verification.Builtin.Proved` has an
-end-to-end lowering-correctness theorem. They share an IR target, but the theorem applies to the
-proved source fragment, not automatically to every model accepted by the broader lowering pass.
+this IR. Its output provably runs as the typed graph the pass records, but no theorem relates that
+graph to the source model.
 
-TorchLean calls the conversion to `NN.IR.Graph` *verification lowering*. Typed graph lowering is a
-separate path: it records a shape-indexed SSA graph whose nodes store forward and differentiation
-functions. Derivative correctness is established by separate theorems over proof-carrying nodes and
-graphs. Neither lowering path performs optimization, fusion, scheduling, or native code generation,
-so recording a typed graph does not imply a `torch.compile`-style compiler.
+TorchLean calls the conversion to `IR.Graph` *verification lowering*. Typed graph lowering is
+a separate path: it records a shape-indexed SSA graph whose nodes store forward and differentiation
+functions, and derivative correctness is established by separate theorems over proof-carrying nodes
+and graphs. Neither lowering path performs optimization, fusion, scheduling, or native code
+generation, so recording a typed graph doesn't imply a `torch.compile`-style compiler.
 
 # Checkpoints And Graph Import
 
-PyTorch checkpoints are Python-oriented zip/pickle artifacts. TorchLean does not duplicate that
-loader inside Lean. Its adapter generates Python that asks PyTorch to load a `state_dict` and emit
-named tensor data as plain JSON. Lean then parses each requested tensor into a statically known
+PyTorch checkpoints are Python-oriented zip/pickle artifacts, and TorchLean doesn't duplicate that
+loader inside Lean. Its Python module `torchlean.state` asks PyTorch for a module's `state_dict`
+and writes each named tensor as plain JSON with the words of its elements. Lean's
+`TorchLean.PyTorch.state` then reads each requested tensor word for word into a statically known
 shape.
 
-Graph import is separate. A generated adapter uses `torch.export` or FX to emit the
-`torchlean.ir.v2` format, which Lean parses into `NN.IR.Graph`. The ONNX adapter lowers supported
-static nodes to the same format.
+Graph import is separate. The Python module `torchlean.export` uses `torch.export` or FX to capture
+a model and writes it as a `torchlean.ir` artifact of registered operators with the exact words of
+its constants. The module `torchlean.onnx` writes supported static ONNX models in the same format
+with the exact words of their initializers. Lean decodes and checks both with
+`TorchLean.IR.Artifact.ofJson` and `TorchLean.IR.Artifact.load` and runs them with
+`IR.Program.eval`.
 
-Parsing checks the JSON schema and requested tensor shapes; graph checks validate node references
-and shape contracts. These catch a malformed export, but a transposed square weight matrix can
-pass them. A value comparison can expose that error. To prove equivalence with the source graph,
-we would need refinement for each operator and a bridge from graph semantics to the deployed
-kernels. The {ref "pytorch-roundtrip"}[round trip chapter] exercises the import and comparison
-on a real checkpoint.
+Parsing checks the JSON schema and requested tensor shapes, and graph checks validate node
+references and shape contracts. These catch a malformed export, but a transposed square weight
+matrix can pass them. A value comparison can expose that error. To prove equivalence with the
+source graph, we would need refinement for each operator and a bridge from graph semantics to the
+deployed kernels. The {ref "pytorch-roundtrip"}[round trip chapter] exercises the import and
+comparison on a real checkpoint.
 
 # Floating Point
 
 PyTorch's numerical behavior depends on dtype, device, library versions, compiler transformations,
-and reduction algorithms. Its numerical-accuracy documentation explicitly warns that mathematically
-identical computations are not guaranteed to be bitwise identical across batched, sliced, device,
-or backend paths.
+and reduction algorithms, and its numerical-accuracy documentation warns that mathematically
+identical computations aren't guaranteed to be bitwise identical across batched, sliced, device, or
+backend paths.
 
 Comparing a batched product with the product of one selected slice exposes this issue:
 
@@ -929,23 +978,23 @@ False
 3206383400 3206383430
 ```
 
-`False` says at least one entry differs; the next line gives the maximum absolute difference
-across the row. The integer words describe only the first entry, which need not attain that
-maximum. The snippet does not fix a random seed, so these are results from the recorded run.
+`False` says at least one entry differs, and the next line gives the maximum absolute difference
+across the row. Both integer words describe only the first entry, which need not attain that
+maximum. Because the snippet doesn't fix a random seed, these are results from the recorded run.
 
 On the recorded platform, these two mathematically equal products differed in their computed
-binary32 values. Blocking and reduction choices can change rounding; the displayed first entry
-differs by thirty ULPs. Other platforms or inputs may give equal results. A claim about the
-executed output may therefore need to include the batching policy: grouping requests can change
-the numerical computation even when the ideal function acts independently on each row.
+binary32 values. Blocking and reduction choices can change rounding, and here the displayed first
+entry differs by thirty ULPs. Other platforms or inputs may give equal results. So a claim about
+the executed output may need to include the batching policy: grouping requests can change the
+numerical computation even when the ideal function acts independently on each row.
 
 TorchLean names several numerical meanings so that a statement can pick one:
 
-- real-valued specifications for ideal mathematics;
-- `NF`, a configurable rounded-real arithmetic;
+- real-valued specifications for ideal mathematics
+- `NF`, a configurable rounded-real arithmetic
 - `FP32`, a rounded-real specialization with binary32 precision and gradual underflow, but without
-  an upper exponent bound or IEEE special values;
-- FloatLib binary32, an executable bit-level binary32 model;
+  an upper exponent bound or IEEE special values
+- FloatLib binary32, an executable bit-level binary32 model
 - runtime CPU representations and LibTorch CUDA tensors.
 
 For batching, the library states a property of the reference semantics. If a batched run is
@@ -961,29 +1010,27 @@ open TorchLean.Tensor in
 ```leanOutput tpBatch (whitespace := lax)
 @unstack_mapLeading : ∀ {α : Type} [inst : Storage α] {batch : ℕ}
   {inShape outShape : Shape} (f : Tensor α inShape → Tensor α outShape)
-  (xs : Tensor α (inShape.prependDim batch)) (i : Fin batch),
+  (xs : Tensor α (Shape.dim batch inShape)) (i : Fin batch),
   (mapLeading [batch] f xs).unstack i = f (xs.unstack i)
 ```
 
-The quantifiers range over an element type, a batch length, input and output shapes, a function
-`f`, the batch tensor `xs`, and a valid row index `i`. The left side applies `f` independently
-through `mapLeading` and then selects row `i`; the right side first selects that row and applies
-`f` once. Equality says those two constructions agree for every such argument. The bounded index
-`Fin batch` ensures the selected row exists. The hypothesis is built into the construction: each
-row is processed by the same pure function, without consulting the other rows.
+Here the quantifiers range over an element type, a batch length, input and output shapes, a
+function `f`, the batch tensor `xs`, and a valid row index `i`. The left side applies `f`
+independently through `mapLeading` and then selects row `i`, while the right side first selects
+that row and applies `f` once. Equality says those two constructions agree for every such argument.
+Because the index has type `Fin batch`, the selected row exists. The hypothesis is built into the
+construction: each row is processed by the same pure function, without consulting the other rows.
 
-This theorem establishes batch invariance for the reference semantics in
-{src "NN/Examples/BugZoo/BatchInvariance.lean"}[`BatchInvariance.lean`]. Applying it to a cuBLAS
-or other native kernel requires a contract relating that kernel to the specification. The named
-property states exactly what such a contract would need to preserve.
+This theorem, in {src "TorchLean/Tensor/Operations.lean"}[`Operations.lean`], establishes batch
+invariance for the reference semantics. Applying it to a cuBLAS or other native kernel requires a
+contract relating that kernel to the specification, and the named property states exactly what such
+a contract would need to preserve.
 
-The generic layer was influenced by Flocq's separation of formats from rounding operators
-({Informal.citep flocq2011}[]), and the CompCert float work
-({Informal.citep boldo2015}[]) addresses connections between floating-point semantics and
-compiled code. FloatLib supplies executable binary formats, with binary32 as the familiar example
-here. The
-{ref "floats"}[floating-point chapters] derive these layers from examples and show how they
-reconnect to a runtime.
+Flocq's separation of formats from rounding operators {Informal.citep flocq2011}[] influenced the
+generic layer, and the CompCert float work {Informal.citep boldo2015}[] addresses connections
+between floating-point semantics and compiled code. FloatLib supplies executable binary formats
+(binary32 is the familiar example here). The {ref "floats"}[floating-point chapters] derive these
+layers from examples and show how they reconnect to a runtime.
 
 # Verification Artifacts
 
@@ -1000,7 +1047,8 @@ shape-typed model
   -> theorem with named assumptions
 ```
 
-Each arrow is an interface that can be tested, checked, or proved independently as coverage grows.
+Each arrow is an interface that can be tested, checked, or proved independently where coverage
+allows.
 
 # PyTorch Integration
 
@@ -1010,15 +1058,15 @@ executed model must identify the imported weights, graph semantics, and kernel c
 
 # References
 
-The system compared against throughout this chapter is described in
-{Informal.citet pytorch2019}[], and the reverse-mode machinery both libraries implement is surveyed
-in {Informal.citet baydin2018}[]. The floating-point design references are
-{Informal.citet flocq2011}[] and {Informal.citet boldo2015}[]. The PyTorch documentation pages used
-for the transcripts above are:
+We compare against the system described in {Informal.citet pytorch2019}[] throughout this chapter,
+and the reverse-mode machinery both libraries implement is surveyed in
+{Informal.citet baydin2018}[]. For floating-point design, the references are
+{Informal.citet flocq2011}[] and {Informal.citet boldo2015}[]. These PyTorch documentation pages
+were used for the transcripts above:
 
-- [`nn.Module`](https://pytorch.org/docs/stable/generated/torch.nn.Module.html);
-- [`nn.Embedding`](https://pytorch.org/docs/stable/generated/torch.nn.Embedding.html);
-- [`torch.compile`](https://pytorch.org/docs/stable/generated/torch.compile.html);
-- [autograd mechanics](https://docs.pytorch.org/docs/stable/notes/autograd.html);
-- [`torch.export`](https://docs.pytorch.org/docs/stable/export.html);
+- [`nn.Module`](https://pytorch.org/docs/stable/generated/torch.nn.Module.html)
+- [`nn.Embedding`](https://pytorch.org/docs/stable/generated/torch.nn.Embedding.html)
+- [`torch.compile`](https://pytorch.org/docs/stable/generated/torch.compile.html)
+- [autograd mechanics](https://docs.pytorch.org/docs/stable/notes/autograd.html)
+- [`torch.export`](https://docs.pytorch.org/docs/stable/export.html)
 - [numerical accuracy notes](https://docs.pytorch.org/docs/stable/notes/numerical_accuracy.html).

@@ -25,6 +25,9 @@
 
 namespace {
 
+using torchlean::io;
+using torchlean::rounded;
+
 struct Counter {
   std::atomic<uint64_t> live{0}, peak{0}, created{0}, retired{0};
 
@@ -83,25 +86,6 @@ lean_external_class* buffer_class() {
   return result;
 }
 
-template <typename F>
-lean_obj_res io(F&& body) {
-  try {
-    torchlean::initialize();
-    at::NoGradGuard no_grad;
-    c10::DeviceGuard guard(torchlean::device());
-    return lean_io_result_mk_ok(std::forward<F>(body)());
-  } catch (const c10::OutOfMemoryError& error) {
-    return lean_io_result_mk_error(
-        lean_mk_io_error_resource_exhausted(0, lean_mk_string(error.what())));
-  } catch (const std::bad_alloc& error) {
-    return lean_io_result_mk_error(
-        lean_mk_io_error_resource_exhausted(0, lean_mk_string(error.what())));
-  } catch (const std::exception& error) {
-    return lean_io_result_mk_error(
-        lean_mk_io_error_other_error(0, lean_mk_string(error.what())));
-  }
-}
-
 int64_t signed_bits(uint64_t value) {
   int64_t result;
   std::memcpy(&result, &value, sizeof(result));
@@ -114,11 +98,9 @@ at::Tensor shift_right(const at::Tensor& value, int64_t amount) {
   return at::bitwise_and(at::bitwise_right_shift(value, amount), mask);
 }
 
-at::Tensor splitmix_draws(uint32_t n, uint64_t key, int64_t step = 1, int64_t offset = 0) {
+at::Tensor splitmix_draws(uint32_t n, uint64_t key) {
   auto counter = at::arange(static_cast<int64_t>(n), torchlean::options().dtype(at::kLong));
-  if (step != 1) counter = at::mul(counter, step);
-  auto value = at::add(counter, signed_bits(key + static_cast<uint64_t>(offset) +
-                                           UINT64_C(0x9e3779b97f4a7c15)));
+  auto value = at::add(counter, signed_bits(key + UINT64_C(0x9e3779b97f4a7c15)));
   value = at::mul(at::bitwise_xor(value, shift_right(value, 30)),
                   signed_bits(UINT64_C(0xbf58476d1ce4e5b9)));
   value = at::mul(at::bitwise_xor(value, shift_right(value, 27)),
@@ -131,23 +113,8 @@ at::ScalarType scalar_type(uint8_t dtype) {
   return dtype == 0 ? at::kFloat : at::kDouble;
 }
 
-double rounded(double value, at::ScalarType dtype) {
-  return dtype == at::kFloat ? static_cast<double>(static_cast<float>(value)) : value;
-}
-
 at::Tensor uniform(uint32_t n, uint64_t key, at::ScalarType dtype) {
   return at::div(splitmix_draws(n, key).to(at::kDouble), 4294967296.0).to(dtype);
-}
-
-at::Tensor normal(uint32_t n, double mean, double deviation, uint64_t key, at::ScalarType dtype) {
-  const auto first = splitmix_draws(n, key, 2, 0).to(dtype);
-  const auto second = splitmix_draws(n, key, 2, 1);
-  const auto u1 = at::div(at::add(first, 1.0), rounded(4294967297.0, dtype));
-  const auto u2 = at::div(second.to(at::kDouble), 4294967296.0).to(dtype);
-  const auto radius = at::sqrt(at::mul(at::log(u1), -2.0f));
-  const auto angle = at::cos(at::mul(u2, rounded(6.2831853071795864769, dtype)));
-  const auto sample = at::mul(radius, angle);
-  return at::add(at::full_like(sample, rounded(mean, dtype)), sample, rounded(deviation, dtype));
 }
 
 at::Tensor bernoulli(uint32_t n, double probability, uint64_t key, at::ScalarType dtype) {
@@ -362,11 +329,9 @@ auto allocator_stats() {
 }
 
 uint64_t memory_info(bool total) {
-  return torchlean::invoke([&]() -> uint64_t {
-    size_t free_bytes = 0, total_bytes = 0;
-    C10_CUDA_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
-    return total ? total_bytes : free_bytes;
-  });
+  size_t free_bytes = 0, total_bytes = 0;
+  C10_CUDA_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
+  return total ? total_bytes : free_bytes;
 }
 
 // Initial policy from TORCHLEAN_CUDA_DETERMINISTIC_REDUCTIONS: unset, empty, or "0" means off.
@@ -451,6 +416,58 @@ lean_obj_res encoded(at::Tensor value, b_lean_obj_arg format, size_t width) {
   return torchlean_cuda_buffer_box(buffer.release());
 }
 
+// Context.divNat on the device: each entry divided once by the exact count, through a device
+// tensor divisor. ATen turns a CPU scalar divisor into a product with its rounded reciprocal, which
+// changes bits: binary32 147 * 2^-149 / 98 rounds to 2^-148, the product to 2^-149. Below 2^53 a
+// binary64 count is exact and the quotient is one IEEE division. binary32 divides in binary64 and
+// then rounds to binary32; for finite s and 1 <= n < 2^29, RN32(RN64(s / n)) = RN32(s / n). Since
+// |s| >= |s / n|, s is a multiple of the binary32 spacing D at s / n and n * M of D / 2 for a
+// binary32 midpoint M, so a quotient other than M lies at least D / (2n) > D * 2^-30 from M, more
+// than binary64's half spacing there: the binary64 rounding cannot reach or cross M, and a midpoint
+// quotient is exact in binary64 and takes binary32's tie rule. Subnormal quotients have
+// D = 2^-149, and a nonzero quotient exceeds 2^-178, a normal binary64 number. Zeros keep their
+// sign; infinities and NaNs pass both roundings; the count zero is the IEEE division by zero.
+at::Tensor divide_by_count(const at::Tensor& x, uint64_t count) {
+  const auto dtype = x.scalar_type();
+  if (dtype == at::kDouble) {
+    require(count < (uint64_t{1} << 53), "divCount: a binary64 count must be below 2^53");
+    return at::div(x, at::scalar_tensor(static_cast<double>(count), x.options()));
+  }
+  require(dtype == at::kFloat, "divCount: a binary32 or binary64 buffer is required");
+  require(count < (uint64_t{1} << 29), "divCount: a binary32 count must be below 2^29");
+  const auto wide = x.to(at::kDouble);
+  return at::div(wide, at::scalar_tensor(static_cast<double>(count), wide.options()))
+      .to(at::kFloat);
+}
+
+rows_kernel compile_rows(const std::string& source) {
+  return compile_kernel(source);
+}
+
+void launch_rows(const rows_kernel& handle, std::vector<launch>& launches) {
+  const auto* kernel = static_cast<const CompiledKernel*>(handle.get());
+  constexpr uint64_t threads = 256;
+  const auto* properties = at::cuda::getCurrentDeviceProperties();
+  const auto stream = c10::cuda::getCurrentCUDAStream(device().index());
+  std::vector<void*> pointers;
+  for (auto& entry : launches) {
+    if (entry.count == 0) continue;
+    const uint64_t blocks = (entry.count + threads - 1) / threads;
+    TORCH_CHECK(blocks <= static_cast<uint64_t>(properties->maxGridSize[0]),
+                "kernel: rows exceed CUDA grid extent");
+    pointers.clear();
+    for (auto& argument : entry.arguments) pointers.push_back(&argument);
+    check_driver(cuLaunchKernel(kernel->function, static_cast<unsigned int>(blocks), 1, 1,
+                                threads, 1, 1, 0, stream.stream(), pointers.data(), nullptr));
+  }
+  // The caller holds the module until the launches have finished.
+  C10_CUDA_CHECK(cudaStreamSynchronize(stream.stream()));
+}
+
+void launch_rows(const std::string& source, std::vector<launch>& launches) {
+  launch_rows(compile_rows(source), launches);
+}
+
 }  // namespace torchlean
 
 extern "C" torchlean_cuda_buffer* torchlean_cuda_buffer_unbox(b_lean_obj_arg object) {
@@ -473,13 +490,15 @@ extern "C" void torchlean_cuda_buffer_drop_unboxed(torchlean_cuda_buffer* buffer
   delete buffer;
 }
 
-extern "C" LEAN_EXPORT uint32_t torchlean_cuda_runtime_status(uint32_t) {
-  return c10::cuda::device_count() > 0 ? 1 : 2;
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_runtime_status() {
+  return lean_io_result_mk_ok(lean_box_uint32(c10::cuda::device_count() > 0 ? 1u : 2u));
 }
 
+// Ownership counters are relaxed atomic loads, so reading them never initializes CUDA.
 #define TORCHLEAN_COUNTER(NAME, VALUE)                                             \
-  extern "C" LEAN_EXPORT uint64_t torchlean_cuda_##NAME(uint32_t) {                 \
-    return (VALUE).load(std::memory_order_relaxed);                                \
+  extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_##NAME() {                     \
+    return lean_io_result_mk_ok(                                                   \
+        lean_box_uint64((VALUE).load(std::memory_order_relaxed)));                 \
   }
 TORCHLEAN_COUNTER(allocator_live_bytes, payloads.live)
 TORCHLEAN_COUNTER(allocator_peak_bytes, payloads.peak)
@@ -491,17 +510,17 @@ TORCHLEAN_COUNTER(wrapper_alloc_count, wrappers.created)
 TORCHLEAN_COUNTER(wrapper_finalize_count, wrappers.retired)
 #undef TORCHLEAN_COUNTER
 
-extern "C" LEAN_EXPORT uint64_t torchlean_cuda_allocator_device_free_bytes(uint32_t) {
-  return memory_info(false);
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_allocator_device_free_bytes() {
+  return io([] { return lean_box_uint64(memory_info(false)); });
 }
 
-extern "C" LEAN_EXPORT uint64_t torchlean_cuda_allocator_device_total_bytes(uint32_t) {
-  return memory_info(true);
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_allocator_device_total_bytes() {
+  return io([] { return lean_box_uint64(memory_info(true)); });
 }
 
 #define TORCHLEAN_ALLOCATOR_STAT(NAME, FIELD, WHICH)                                \
-  extern "C" LEAN_EXPORT uint64_t torchlean_libtorch_##NAME(uint32_t) {             \
-    return torchlean::invoke([]() -> uint64_t { return allocator_stats().FIELD[0].WHICH; }); \
+  extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_##NAME() {                 \
+    return io([] { return lean_box_uint64(allocator_stats().FIELD[0].WHICH); });    \
   }
 TORCHLEAN_ALLOCATOR_STAT(allocated_bytes, allocated_bytes, current)
 TORCHLEAN_ALLOCATOR_STAT(reserved_bytes, reserved_bytes, current)
@@ -515,18 +534,17 @@ extern "C" LEAN_EXPORT uint32_t torchlean_cuda_buffer_size(b_lean_obj_arg object
   return static_cast<uint32_t>(buffer->size);
 }
 
-extern "C" LEAN_EXPORT uint32_t torchlean_cuda_buffer_size_with_token(
-    b_lean_obj_arg object, uint32_t) {
-  return torchlean_cuda_buffer_size(object);
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_size_io(b_lean_obj_arg object) {
+  return lean_io_result_mk_ok(lean_box_uint32(torchlean_cuda_buffer_size(object)));
 }
 
 extern "C" LEAN_EXPORT uint32_t torchlean_cuda_buffer_release(b_lean_obj_arg object) {
   return release_data(torchlean_cuda_buffer_unbox(object)) ? 1 : 0;
 }
 
-extern "C" LEAN_EXPORT uint32_t torchlean_cuda_buffer_release_with_token(
-    b_lean_obj_arg object, uint32_t) {
-  return torchlean_cuda_buffer_release(object);
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_release_io(
+    b_lean_obj_arg object) {
+  return lean_io_result_mk_ok(lean_box_uint32(torchlean_cuda_buffer_release(object)));
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_release_then(
@@ -536,9 +554,9 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_release_then(
   return keep;
 }
 
-extern "C" LEAN_EXPORT uint32_t torchlean_runtime_collect_allocator(uint32_t) {
+extern "C" LEAN_EXPORT lean_obj_res torchlean_runtime_collect_allocator() {
   mi_collect(false);
-  return 1;
+  return lean_io_result_mk_ok(lean_box(0));
 }
 
 #define TORCHLEAN_CONSTRUCTOR(NAME, PARAMETERS, EXPRESSION)                         \
@@ -553,19 +571,18 @@ TORCHLEAN_CONSTRUCTOR(zeros, (uint32_t n, uint8_t dtype),
 TORCHLEAN_CONSTRUCTOR(full, (uint32_t n, double v, uint8_t dtype),
                      at::full({n}, rounded(v, scalar_type(dtype)),
                               torchlean::options().dtype(scalar_type(dtype))))
-TORCHLEAN_CONSTRUCTOR(rand_uniform, (uint32_t n, uint64_t key, uint8_t dtype),
-                     uniform(n, key, scalar_type(dtype)))
-TORCHLEAN_CONSTRUCTOR(bernoulli_mask, (uint32_t n, double p, uint64_t key, uint8_t dtype),
-                     bernoulli(n, p, key, scalar_type(dtype)))
 TORCHLEAN_CONSTRUCTOR(of_float_array, (b_lean_obj_arg object, uint8_t dtype),
                      upload(object, scalar_type(dtype)))
 #undef TORCHLEAN_CONSTRUCTOR
 
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_normal(
-    uint32_t n, double mean, double deviation, uint64_t key, uint8_t dtype) {
-  return torchlean::invoke([&] {
-    return torchlean::box(normal(n, mean, deviation, key, scalar_type(dtype)));
-  });
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_rand_uniform_io(
+    uint32_t n, uint64_t key, uint8_t dtype) {
+  return io([&] { return torchlean::box(uniform(n, key, scalar_type(dtype))); });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_bernoulli_mask_io(
+    uint32_t n, double p, uint64_t key, uint8_t dtype) {
+  return io([&] { return torchlean::box(bernoulli(n, p, key, scalar_type(dtype))); });
 }
 
 extern "C" LEAN_EXPORT uint8_t torchlean_cuda_buffer_dtype(b_lean_obj_arg object) {
@@ -631,13 +648,13 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_to_float_array_io(b_le
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_kernel_run_buffer(
-    b_lean_obj_arg source, b_lean_obj_arg objects, uint64_t count) {
+    b_lean_obj_arg source, uint8_t dtype, b_lean_obj_arg objects, uint64_t count) {
   return io([&] {
     std::vector<at::Tensor> inputs;
     inputs.reserve(lean_array_size(objects));
     for (size_t i = 0; i < lean_array_size(objects); ++i)
       inputs.push_back(torchlean::tensor(lean_array_uget(objects, i)));
-    return torchlean::box(run_kernel(source, inputs, at::kFloat, count));
+    return torchlean::box(run_kernel(source, inputs, scalar_type(dtype), count));
   });
 }
 
@@ -732,16 +749,17 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_bytes_io(
   return io([&] { return torchlean::box(upload_bytes(object, scalar_type(dtype), scalar_type(source))); });
 }
 
-extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_version(uint32_t) {
-  return lean_mk_string(TORCH_VERSION);
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_version() {
+  return lean_io_result_mk_ok(lean_mk_string(TORCH_VERSION));
 }
 
-extern "C" LEAN_EXPORT uint32_t torchlean_libtorch_device_count(uint32_t) {
-  return static_cast<uint32_t>(c10::cuda::device_count());
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_device_count() {
+  return lean_io_result_mk_ok(
+      lean_box_uint32(static_cast<uint32_t>(c10::cuda::device_count())));
 }
 
-extern "C" LEAN_EXPORT uint32_t torchlean_libtorch_get_device(uint32_t) {
-  return static_cast<uint32_t>(selected_device.load());
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_get_device() {
+  return lean_io_result_mk_ok(lean_box_uint32(static_cast<uint32_t>(selected_device.load())));
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_set_device(uint32_t index) {
@@ -807,7 +825,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_set_setting(
   });
 }
 
-extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_get_memory_fraction(uint32_t) {
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_get_memory_fraction() {
   return io([] {
     return lean_box_float(
         c10::cuda::CUDACachingAllocator::getMemoryFraction(torchlean::device().index()));
@@ -823,14 +841,14 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_set_memory_fraction(doubl
   });
 }
 
-extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_synchronize(uint32_t) {
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_synchronize() {
   return io([] {
     c10::cuda::device_synchronize();
     return lean_box(0);
   });
 }
 
-extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_empty_cache(uint32_t) {
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_empty_cache() {
   return io([] {
     c10::cuda::CUDACachingAllocator::emptyCache();
     return lean_box(0);
@@ -848,6 +866,7 @@ namespace torchlean::elementwise {
 namespace {
 
 using torchlean::box;
+using torchlean::divide_by_count;
 using torchlean::invoke;
 using torchlean::pair;
 using torchlean::require;
@@ -869,16 +888,15 @@ at::Tensor selected_sqrt(const at::Tensor& x) {
 }
 
 at::Tensor selected_relu(const at::Tensor& x) {
-  // Match reluSpec's ordered maximum: preserve NaN, but normalize both zeros to +0.
+  // Match Activation.relu's ordered maximum: preserve NaN, but normalize both zeros to +0.
   return at::where(at::le(x, 0.0f), 0.0f, x);
 }
 
 at::Tensor axpy(const at::Tensor& a, const at::Tensor& b, double c) {
-  // PyTorch 0291f960b6 (a 2.12 nightly): CUDA DeviceAddCmulCdiv.cuh explicitly calls
-  // std::fma(tensor1, tensor2, input) when addcmul's value is exactly one.
-  // Place c in tensor2 (the supported CPU-scalar operand), NOT in value:
-  // value != 1 first rounds tensor1*tensor2 before the final FMA.
-  // This avoids depending on implicit contraction in the add(alpha) ufunc.
+  // CUDA addcmul evaluates std::fma(tensor1, tensor2, input) when its value is exactly one
+  // (DeviceAddCmulCdiv.cuh), while add with alpha fuses only if the SDK's compiler contracted it.
+  // We pass c as tensor2, the CPU-scalar operand, since a value other than one rounds
+  // tensor1 * tensor2 before the fma. TorchLeanTest/CUDA/Numerics.lean checks the fma.
   const auto coefficient = at::scalar_tensor(
       rounded(c, a.scalar_type()), at::TensorOptions().dtype(a.scalar_type()).device(at::kCPU));
   return at::addcmul(a, b, coefficient, 1.0f);
@@ -909,8 +927,20 @@ at::Tensor mean_update(const at::Tensor& mean, const at::Tensor& sample, double 
   return at::where(at::logical_and(at::isfinite(mean), at::isfinite(sample)), candidate, weighted);
 }
 
-constexpr double kGeluCoeff = 0.044715;
-constexpr double kSqrtTwoOverPi = 0.79788456080286535588;
+// The constants of `Activation.geluTanh`: `0.044715`, rounded to the dtype by `rounded`
+// (binary32 0x3d372713, binary64 the value nearest 0.044715), and `sqrt(2 / pi)` computed in the
+// dtype, the square root of the rounded quotient of 2 by the rounded pi: binary32 0x3f4c4229, one
+// unit in the last place below PyTorch's kBeta rounded to binary32; binary64 the value nearest.
+constexpr double kGeluKappa = 0.044715;
+
+double gelu_beta(at::ScalarType dtype) {
+  if (dtype == at::kFloat) {
+    const float pi = static_cast<float>(M_PI);
+    return static_cast<double>(std::sqrt(2.0f / pi));
+  }
+  require(dtype == at::kDouble, "gelu: the LibTorch buffers compute binary32 or binary64 only");
+  return std::sqrt(2.0 / M_PI);
+}
 
 at::Tensor stable_sigmoid(const at::Tensor& x) {
   const auto z = at::exp(at::neg(at::abs(x)));
@@ -931,21 +961,59 @@ at::Tensor activation_backward(const at::Tensor& x, const at::Tensor& g, bool is
   }
   const auto ordinary = at::mul(slope, g);
 
-  // Share the incoming magnitude between the exponential factors before squaring. The final
-  // weighted gradient can fit even when a separately rounded local slope would be zero.
-  const auto q = at::exp(at::mul(magnitude, -0.5f));
+  const auto half_argument = at::mul(magnitude, -0.5f);
+  const auto q = at::exp(half_argument);
   const auto gradient_magnitude = at::abs(g);
-  auto amplitude = at::mul(at::sqrt(gradient_magnitude), q);
-  if (is_tanh) amplitude = at::mul(at::mul(amplitude, q), 2.0f);
-  amplitude = at::div(amplitude, denominator);
-  const auto repaired = at::copysign(at::mul(amplitude, amplitude), g);
   const double min_normal = x.scalar_type() == at::kFloat
       ? std::numeric_limits<float>::min() : std::numeric_limits<double>::min();
+  at::Tensor repaired;
+  if (x.scalar_type() == at::kFloat) {
+    // The replay of TorchLean.Numeric.applySlope, q^2 g / (1 + q^2)^2 or
+    // 4 q^4 g / (1 + q^4)^2, evaluated in binary64 and rounded once to binary32. Its binary64
+    // error, below 8 units of 2^-53 relative, decides that rounding only next to a midpoint.
+    // A binary32 q below the least normal sends the rule to its enclosure of the exact slope,
+    // for which the binary64 exp stands in.
+    const auto wide_q = at::where(at::lt(q, min_normal),
+                                  at::exp(at::mul(magnitude.to(at::kDouble), -0.5)),
+                                  q.to(at::kDouble));
+    auto power = at::mul(wide_q, wide_q);
+    if (is_tanh) power = at::mul(power, power);
+    const auto wide_denominator = at::add(power, 1.0);
+    auto weighted = at::div(at::mul(power, g.to(at::kDouble)),
+                            at::mul(wide_denominator, wide_denominator));
+    if (is_tanh) {
+      weighted = at::mul(weighted, 4.0);
+    } else {
+      // At a nonzero x whose half argument rounds below the least normal, the rule encloses the
+      // exact slope, which lies below the replay's 1/4 by a relative x^2/4 < 2^-250. One binary64
+      // step toward zero rounds as the exact value does: both lie below g/4 and above every
+      // binary32 number or midpoint below it. weighted * 0 keeps the sign of a zero.
+      const auto enclosed = at::logical_and(at::gt(magnitude, 0.0f),
+                                            at::gt(half_argument, -min_normal));
+      weighted = at::where(enclosed, at::nextafter(weighted, at::mul(weighted, 0.0)), weighted);
+    }
+    repaired = weighted.to(at::kFloat);
+  } else {
+    // Without a wider device type, share the incoming magnitude between the exponential
+    // factors before squaring, so the weighted gradient fits where a rounded slope is zero.
+    auto amplitude = at::mul(at::sqrt(gradient_magnitude), q);
+    if (is_tanh) amplitude = at::mul(at::mul(amplitude, q), 2.0f);
+    amplitude = at::div(amplitude, denominator);
+    repaired = at::copysign(at::mul(amplitude, amplitude), g);
+  }
   const auto lost_range = at::logical_or(at::lt(at::abs(slope), min_normal),
                                        at::lt(at::abs(ordinary), min_normal));
   const auto finite_gradient = at::lt(gradient_magnitude, std::numeric_limits<double>::infinity());
   const auto repair = at::logical_and(lost_range, at::logical_and(finite(x), finite_gradient));
   return at::where(repair, repaired, ordinary);
+}
+
+// The limits that the Lean definitions of GELU, SiLU and their slopes return at the infinities
+// before their formulas, which compute `inf * 0` there: `at_positive` at `+inf`, `-0` at `-inf`.
+at::Tensor infinity_limits(const at::Tensor& x, const at::Tensor& at_positive,
+                           const at::Tensor& formula) {
+  const auto limit = at::where(at::gt(x, 0.0f), at_positive, at::neg(at::zeros_like(x)));
+  return at::where(at::isinf(x), limit, formula);
 }
 
 at::Tensor staged_silu(const at::Tensor& x) {
@@ -954,7 +1022,7 @@ at::Tensor staged_silu(const at::Tensor& x) {
   const auto r = at::exp(at::mul(negative, 0.5f));
   const auto denominator = at::add(at::mul(r, r), 1.0f);
   const auto tail = at::div(at::mul(at::mul(x, r), r), denominator);
-  return at::where(at::gt(x, 0.0f), at::mul(x, stable_sigmoid(x)), tail);
+  return infinity_limits(x, x, at::where(at::gt(x, 0.0f), at::mul(x, stable_sigmoid(x)), tail));
 }
 
 at::Tensor staged_silu_backward(const at::Tensor& x, const at::Tensor& g) {
@@ -967,22 +1035,22 @@ at::Tensor staged_silu_backward(const at::Tensor& x, const at::Tensor& g) {
   const auto positive_denominator = at::add(z, 1.0f);
   const auto positive_slope = at::div(z, at::mul(positive_denominator, positive_denominator));
   const auto positive = at::add(at::reciprocal(positive_denominator), at::mul(x, positive_slope));
-  return at::mul(at::where(at::gt(x, 0.0f), positive, tail), g);
+  return at::mul(infinity_limits(x, at::ones_like(x), at::where(at::gt(x, 0.0f), positive, tail)),
+                 g);
 }
 
 at::Tensor gelu_inner(const at::Tensor& x) {
-  // Each ATen call materializes one rounded stage in the input dtype.
-  const auto cubic0 = at::mul(x, rounded(kGeluCoeff, x.scalar_type()));
-  const auto cubic1 = at::mul(cubic0, x);
-  const auto cubic = at::mul(cubic1, x);
-  const auto inner = at::add(x, cubic);
-  return at::mul(inner, rounded(kSqrtTwoOverPi, x.scalar_type()));
+  // Each ATen call materializes one rounded stage in the input dtype: beta (x + kappa x^3).
+  const auto cube = at::mul(at::mul(x, x), x);
+  const auto inner = at::add(x, at::mul(cube, rounded(kGeluKappa, x.scalar_type())));
+  return at::mul(inner, gelu_beta(x.scalar_type()));
 }
 
+// `Activation.geluTanh` in its order, `(0.5 x) (1 + tanh (beta (x + kappa x^3)))`, one rounded
+// ATen stage per operation, with its limits at the infinities; the device's `tanh` is its own
+// approximation.
 at::Tensor staged_gelu(const at::Tensor& x) {
-  const auto inner = gelu_inner(x);
-  const auto gate = stable_sigmoid(at::add(inner, inner));
-  return at::mul(x, gate);
+  return infinity_limits(x, x, at::mul(at::mul(x, 0.5), at::add(at::tanh(gelu_inner(x)), 1.0)));
 }
 
 at::Tensor staged_gelu_backward(const at::Tensor& x, const at::Tensor& g) {
@@ -991,26 +1059,40 @@ at::Tensor staged_gelu_backward(const at::Tensor& x, const at::Tensor& g) {
   const auto z = at::exp(at::neg(at::abs(inner)));
   const auto reciprocal_cosh = at::div(at::add(z, z), at::add(at::mul(z, z), 1.0f));
   const auto sech_term = at::mul(reciprocal_cosh, reciprocal_cosh);
-  const double scaled_coeff = rounded(3.0 * rounded(kGeluCoeff, x.scalar_type()), x.scalar_type());
+  const double scaled_coeff = rounded(3.0 * rounded(kGeluKappa, x.scalar_type()), x.scalar_type());
   const auto quadratic0 = at::mul(x, scaled_coeff);
   const auto quadratic = at::mul(quadratic0, x);
   const auto inner_deriv = at::mul(at::add(quadratic, 1.0f),
-                                  rounded(kSqrtTwoOverPi, x.scalar_type()));
+                                  gelu_beta(x.scalar_type()));
   const auto derivative_term = at::where(at::eq(sech_term, 0.0f), at::zeros_like(x),
                                        at::mul(at::mul(x, sech_term), inner_deriv));
   const auto numerator = at::add(at::add(gate, gate), derivative_term);
-  return at::mul(at::mul(numerator, 0.5f), g);
+  return at::mul(infinity_limits(x, at::ones_like(x), at::mul(numerator, 0.5f)), g);
+}
+
+// IEEE 754-2019 9.6 `maximum` from ATen pieces: `at::maximum` returns a NaN when an operand is
+// one, and at equal zeros `a + b` is the larger zero in round to nearest, `+0` unless both are
+// `-0`.
+at::Tensor ieee_maximum(const at::Tensor& a, const at::Tensor& b) {
+  return at::where(at::logical_and(at::eq(a, b), at::eq(a, 0)), at::add(a, b), at::maximum(a, b));
+}
+
+// 9.6 `minimum`: at equal zeros `-((-a) + (-b))` is the smaller zero, `-0` unless both are `+0`.
+at::Tensor ieee_minimum(const at::Tensor& a, const at::Tensor& b) {
+  return at::where(at::logical_and(at::eq(a, b), at::eq(a, 0)),
+                   at::neg(at::add(at::neg(a), at::neg(b))), at::minimum(a, b));
 }
 
 lean_obj_res minmax_backward(
     const at::Tensor& a, const at::Tensor& b, const at::Tensor& g, bool maximum) {
   const auto a_wins = maximum ? at::gt(a, b) : at::gt(b, a);
   const auto b_wins = maximum ? at::gt(b, a) : at::gt(a, b);
-  const auto half = at::mul(g, 0.5f);
-  // Unordered comparisons follow the tie branch too. Selecting zero, rather
-  // than multiplying by a zero mask, also matters when the cotangent is NaN/Inf.
-  auto da = at::where(a_wins, g, at::where(b_wins, 0.0f, half));
-  auto db = at::where(b_wins, g, at::where(a_wins, 0.0f, half));
+  // The CPU rule, by selection: the strict winner receives g bit for bit, the strict loser +0 at
+  // every g, and a tie or an unordered pair (a NaN operand) half of g each.
+  const auto zero = at::zeros_like(g);
+  const auto half = at::mul(at::full_like(g, 0.5), g);
+  auto da = at::where(a_wins, g, at::where(b_wins, zero, half));
+  auto db = at::where(b_wins, g, at::where(a_wins, zero, half));
   return pair(std::move(da), std::move(db));
 }
 
@@ -1052,12 +1134,58 @@ at::Tensor reduce_sum(const at::Tensor& x) {
 }
 
 at::Tensor reduce_mean(const at::Tensor& x) {
-  if (x.numel() == 0)
-    return at::full({1}, std::numeric_limits<float>::quiet_NaN(), x.options());
-  // Preserve rounding of the complete sum before multiplication by the dtype-rounded reciprocal.
-  const double scale = rounded(1.0 / rounded(static_cast<double>(x.numel()), x.scalar_type()),
-                                x.scalar_type());
-  return at::mul(reduce_sum(x), scale);
+  // Op.mean over every axis: the sum divided once by the element count, by one for an empty
+  // buffer, whose sum is zero.
+  return divide_by_count(reduce_sum(x), std::max<uint64_t>(static_cast<uint64_t>(x.numel()), 1));
+}
+
+// Tensor.meanSquaredError of the differences d: the sum of the squares divided once by the count
+// n, or, where that sum overflows while every difference is finite, the sum of d * (d / n), whose
+// exact terms do not exceed the exact mean. Both sums are reduce_sum's.
+at::Tensor mse_mean(const at::Tensor& d, uint64_t count) {
+  const auto total = reduce_sum(at::mul(d, d));
+  const auto repair = at::logical_and(at::logical_not(finite(total)), at::all(finite(d)));
+  return at::where(repair, reduce_sum(at::mul(d, divide_by_count(d, count))),
+                   divide_by_count(total, count));
+}
+
+// Tensor.meanSquaredErrorBackward's slope 2d / n at each difference d: a finite d + d divided once
+// by n, and otherwise d / n doubled. Both are 2d / n rounded once: a finite d + d is exact, and
+// for n >= 2 so is the doubling of d / n, which stays normal at every count divide_by_count
+// accepts (the quotient of a d with an overflowing double is subnormal only past 2^(emax - emin)).
+at::Tensor mse_slope(const at::Tensor& d, uint64_t count) {
+  const auto twice = at::add(d, d);
+  const auto quotient = divide_by_count(d, count);
+  return at::where(finite(twice), divide_by_count(twice, count), at::add(quotient, quotient));
+}
+
+// Huber.term at each prediction p and target t with the threshold delta, every operation in
+// the buffers' dtype and in the rule's order: (|d| / 2) |d| below delta, else delta (|d| - delta /
+// 2), or |delta p - delta t| - (delta / 2) delta where d = p - t is not finite, delta > 0 and that
+// weighted difference is finite.
+at::Tensor huber_terms(const at::Tensor& p, const at::Tensor& t, double delta) {
+  const auto threshold = at::scalar_tensor(delta, p.options());
+  const auto half = at::mul(threshold, 0.5);
+  const auto difference = at::sub(p, t);
+  const auto x = at::abs(difference);
+  const auto direct = at::mul(threshold, at::sub(x, half));
+  const auto weighted = at::abs(at::sub(at::mul(threshold, p), at::mul(threshold, t)));
+  const auto keep = at::logical_or(
+      at::logical_or(finite(difference), at::logical_not(at::gt(threshold, 0.0))),
+      at::logical_not(finite(weighted)));
+  const auto linear = at::where(keep, direct, at::sub(weighted, at::mul(half, threshold)));
+  return at::where(at::lt(x, threshold), at::mul(at::mul(x, 0.5), x), linear);
+}
+
+// Tensor.huberLossBackward's slope at each difference d before the mean's division: d
+// where |d| < delta, else delta, -delta or +0 by the sign of d (+0 at a NaN).
+at::Tensor huber_slope(const at::Tensor& d, double delta) {
+  const auto threshold = at::scalar_tensor(delta, d.options());
+  const auto positive = at::gt(d, 0.0);
+  const auto magnitude = at::where(positive, d, at::neg(d));
+  const auto outer = at::where(positive, threshold,
+      at::where(at::lt(d, 0.0), at::neg(threshold), at::zeros_like(d)));
+  return at::where(at::lt(magnitude, threshold), d, outer);
 }
 
 // All generated calls share conversion, validation, device selection, and result ownership.
@@ -1123,6 +1251,16 @@ lean_obj_res call_buffer(Function&& function, Args... args) {
 #undef TORCHLEAN_ARGUMENTS
 #undef TORCHLEAN_BUFFER_EXPORT
 
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_mse_mean(
+    b_lean_obj_arg input, uint64_t count) {
+  return invoke([&] { return box(mse_mean(tensor(input), count)); });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_mse_slope(
+    b_lean_obj_arg input, uint64_t count) {
+  return invoke([&] { return box(mse_slope(tensor(input), count)); });
+}
+
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_abs_bwd(
     b_lean_obj_arg XObj, b_lean_obj_arg GObj) {
   return invoke([&]() {
@@ -1130,8 +1268,8 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_abs_bwd(
     const auto g = flat(GObj);
     same_size(x, g, "torchlean_cuda_buffer_abs_bwd: size mismatch");
     const auto sign = at::where(
-        at::gt(x, 0.0f), 1.0f, at::where(at::lt(x, 0.0f), -1.0f, at::zeros_like(x)));
-    // abs uses sign(x)*g even at zero/NaN, including 0*Inf and signed-zero results.
+        at::gt(x, 0.0f), 1.0f, at::where(at::lt(x, 0.0f), -1.0f, x));
+    // Context.sign: x itself at a zero or NaN, so a NaN propagates and a zero keeps its sign.
     return box(at::mul(sign, g));
   });
 }
@@ -1144,8 +1282,10 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_sqrt_bwd(
     same_size(x, g, "torchlean_cuda_buffer_sqrt_bwd: size mismatch");
     const auto positive = at::gt(x, 0.0f);
     const auto root = at::sqrt(at::where(positive, x, 1.0f));
-    // Rounding a reciprocal first can change the final rounding of a subnormal gradient.
-    return box(at::where(positive, at::div(g, at::mul(root, 2.0f)), 0.0f));
+    // The rule of Op.sqrt .clampNegative rounds g / (2 root) once and multiplies a zero factor
+    // where x > 0 fails, which gives -0 at a negative g and a NaN at a nonfinite one.
+    return box(at::where(positive, at::div(g, at::mul(root, 2.0f)),
+                         at::mul(at::zeros_like(g), g)));
   });
 }
 
@@ -1155,8 +1295,9 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_clamp(
     const auto x = flat(BObj);
     const auto lower = at::scalar_tensor(rounded(lo, x.scalar_type()), x.options());
     const auto upper = at::scalar_tensor(rounded(hi, x.scalar_type()), x.options());
-    // fmin/fmax implement the selected NaN behavior, including NaN bounds and lo > hi.
-    return box(at::fmin(at::fmax(x, lower), upper));
+    // `Context.clamp`: minimum (maximum x lo) hi with 9.6's operations, so a NaN operand or bound
+    // gives a NaN and, for a number x, lo > hi gives hi.
+    return box(ieee_minimum(ieee_maximum(x, lower), upper));
   });
 }
 
@@ -1168,7 +1309,28 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_clamp_bwd(
     same_size(x, g, "torchlean_cuda_buffer_clamp_bwd: size mismatch");
     const auto interior = at::logical_and(
         at::gt(x, rounded(lo, x.scalar_type())), at::lt(x, rounded(hi, x.scalar_type())));
-    return box(at::where(interior, g, 0.0f));
+    // `clampDerivative x lo hi * g`: the coefficient 1 or 0 times the cotangent.
+    return box(at::mul(at::where(interior, at::ones_like(g), at::zeros_like(g)), g));
+  });
+}
+
+// Op.dropout in both passes: an entry is kept iff its uniform sample u is at least p (IEEE >=, so a
+// NaN p keeps none); a kept entry is one IEEE division x / (1 - p), a dropped one x * 0 (NaN at an
+// infinite or NaN x, -0 at a negative one), and every entry is +0 when p >= 1. The divisor is a
+// device tensor, since ATen turns a CPU scalar divisor into a product with its rounded reciprocal.
+// p is rounded to the dtype first; binary32 forms 1 - p in binary64 and rounds it once more, which
+// is the binary32 difference (53 >= 2 * 24 + 2 bits).
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_dropout(
+    b_lean_obj_arg XObj, b_lean_obj_arg UObj, double probability) {
+  return invoke([&]() {
+    const auto x = flat(XObj);
+    const auto u = flat(UObj);
+    same_size(x, u, "torchlean_cuda_buffer_dropout: size mismatch");
+    const auto dtype = x.scalar_type();
+    const double p = rounded(probability, dtype);
+    if (p >= 1.0) return box(at::zeros_like(x));
+    const auto divisor = at::scalar_tensor(rounded(1.0 - p, dtype), x.options());
+    return box(at::where(at::ge(u, p), at::div(x, divisor), at::mul(x, 0.0)));
   });
 }
 
@@ -1199,9 +1361,9 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_min_bwd(
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_copy_and_release(
     b_lean_obj_arg BObj) {
   return invoke([&]() {
-    // Complete allocation and enqueue the scale-by-one copy before retiring the
-    // source through the runtime's allocator and telemetry path.
-    auto result = box(at::mul(flat(BObj), 1.0f));
+    // Complete allocation and enqueue the copy before retiring the source
+    // through the runtime's allocator and telemetry path.
+    auto result = box(flat(BObj).clone());
     (void)torchlean_cuda_buffer_release(BObj);
     return result;
   });
@@ -1219,7 +1381,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_adam_step(
     double firstMomentDenominator,
     double secondMomentDenominator,
     double epsilon,
-    double decay,
+    b_lean_obj_arg DecayObj,
     double updateScale) {
   return invoke([&]() {
     const auto parameters = flat(ParametersObj);
@@ -1239,7 +1401,6 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_adam_step(
     const double first_correction = rounded(1.0 / firstMomentDenominator, dtype);
     const double second_correction = rounded(1.0 / secondMomentDenominator, dtype);
     const double epsilon_f = rounded(epsilon, dtype);
-    const double decay_f = rounded(decay, dtype);
     const double update_scale = rounded(updateScale, dtype);
 
     const auto m_scaled = at::mul(first_moment, beta1_f);
@@ -1257,8 +1418,8 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_adam_step(
     };
     const auto m_hat = correct_moment(m, first_correction, firstMomentDenominator);
     const auto v_hat = correct_moment(v, second_correction, secondMomentDenominator);
-    // Adam specifies the raw IEEE square root; Buffer.sqrt has a selected nonpositive branch.
-    // A negative v_hat must therefore remain NaN rather than being clamped.
+    // The raw IEEE root of Buffer.sqrt, not Buffer.sqrtClampNegative: a negative v_hat stays
+    // NaN, where the CPU's Optimizer.correctedRMS clamps it to zero.
     auto corrected_root = at::sqrt(v_hat);
     const double second_divisor = rounded(secondMomentDenominator, dtype);
     if (second_divisor > 0) {
@@ -1271,7 +1432,10 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_adam_step(
     // Keep a tensor denominator: ATen's scalar-divisor optimization uses a
     // rounded reciprocal followed by multiplication, which can change bits.
     const auto normalized_update = at::div(m_hat, denominator);
-    const auto decayed_parameters = axpy(parameters, parameters, decay_f);
+    // Adam passes none: even a zero coefficient turns an infinite parameter into NaN.
+    const auto decayed_parameters = lean_is_scalar(DecayObj) ? parameters
+        : axpy(parameters, parameters,
+               rounded(lean_unbox_float(lean_ctor_get(DecayObj, 0)), dtype));
     auto updated = axpy(decayed_parameters, normalized_update, update_scale);
     // A finite weighted update can survive an unrepresentable unscaled quotient.
     // Keep the ordinary FMA above; rescale exceptional entries by exact powers of two.
@@ -1329,20 +1493,33 @@ using at::Tensor;
 constexpr double kNegativeInfinity = -std::numeric_limits<double>::infinity();
 
 int64_t element_count(at::IntArrayRef shape) {
+  for (int64_t dim : shape) require(dim >= 0, "LibTorch kernels: negative dimension");
+  // A zero extent empties the shape whatever its other extents are.
+  if (std::find(shape.begin(), shape.end(), 0) != shape.end()) return 0;
   int64_t count = 1;
   for (int64_t dim : shape) {
-    require(dim >= 0, "LibTorch kernels: negative dimension");
-    require(dim == 0 || count <= std::numeric_limits<int64_t>::max() / dim,
+    require(count <= std::numeric_limits<int64_t>::max() / dim,
             "LibTorch kernels: shape size overflow");
     count *= dim;
   }
   return count;
 }
 
-Tensor checked(b_lean_obj_arg object, at::IntArrayRef shape) {
+void require_size(b_lean_obj_arg object, at::IntArrayRef shape) {
   require(tensor(object).numel() == element_count(shape),
           "LibTorch kernels: buffer size does not match shape");
+}
+
+Tensor checked(b_lean_obj_arg object, at::IntArrayRef shape) {
+  require_size(object, shape);
   return shaped(object, shape);
+}
+
+// ATen's contiguous strides multiply the extents after the first, reading a zero extent as one,
+// so they can overflow for a shape with a zero extent, which has no entries. A kernel returns the
+// result of such a shape before it builds a tensor of that shape.
+Tensor no_entries(b_lean_obj_arg like) {
+  return at::empty({0}, tensor(like).options());
 }
 
 std::vector<int64_t> shape_array(b_lean_obj_arg object) {
@@ -1367,12 +1544,10 @@ Tensor device_indices(const std::vector<int64_t>& values, const Tensor& like) {
       .to(like.device(), at::kLong, false, true);
 }
 
-// At PyTorch revision 0291f960b6 (a 2.12 nightly), segment_reduce on a rank-two input
-// uses a sequential fold within each segment/column on both CPU and CUDA
-// (aten/src/ATen/native/{cuda/SegmentReduce.cu,SegmentReduce.cpp}). Keep the
-// trailing column dimension even for vectors: rank one selects a different
-// CUDA reduction. SDK upgrades must recheck this implementation detail and run
-// the base-order regression; ATen's public API does not promise this ordering.
+// segment_reduce on a rank-two input folds each segment column in order from the initial value,
+// on CPU and CUDA (aten/src/ATen/native/{cuda/SegmentReduce.cu,SegmentReduce.cpp}). ATen does not
+// promise this order, so TorchLeanTest/CUDA/Numerics.lean checks it. We keep the
+// trailing column dimension even for vectors because rank one selects a different CUDA reduction.
 Tensor ordered_segments(const Tensor& data, const std::vector<int64_t>& lengths,
                         double initial = 0.0) {
   require(data.dim() == 2, "LibTorch kernels: ordered segments need rank two");
@@ -1543,48 +1718,18 @@ Tensor inverse_real_fft(b_lean_obj_arg input, uint32_t batch, uint32_t n, bool n
   return at::fft_irfft(spectrum, n, 1, normalized ? "backward" : "forward");
 }
 
-// Evaluate h[t] = a[t] h[t-1] + b[t]. The parallel affine prefix has logarithmic
-// launch depth, O(T*D) live workspace, and O(T*D*log(T)) arithmetic.
-//
-// Products use double precision so contractive coefficients do not underflow
-// in float32 before multiplying a large state. Bias/state results are rounded
-// to float32 at each composition. Reassociation can change rounding; it is not
-// a bitwise reproduction of the old sequential CUDA recurrence.
-//
-// Expansive/nonfinite inputs, and a nonfinite parallel result, use the original
-// recurrence order. That fallback avoids introducing product overflow or a
-// different nonfinite propagation rule merely to obtain a parallel schedule.
+// Evaluate h[t] = a[t] h[t-1] + b[t] left to right with one rounded product and one rounded sum
+// per step, the order of TorchLean.StateSpace.scanStates and of its adjoint recurrence.
 Tensor affine_scan(const Tensor& a, const Tensor& b, const Tensor& initial) {
   const int64_t steps = b.size(0);
   if (steps == 0 || b.size(1) == 0) return at::empty_like(b);
-  auto sequential = [&]() {
-    auto result = at::empty_like(b);
-    auto state = initial;
-    for (int64_t t = 0; t < steps; ++t) {
-      state = a.select(0, t) * state + b.select(0, t);
-      result.select(0, t).copy_(state);
-    }
-    return result;
-  };
-  auto eligible = a.abs().le(1).all()
-      .logical_and(b.isfinite().all()).logical_and(initial.isfinite().all());
-  if (!eligible.item<bool>()) return sequential();
-
-  auto coefficients = a.to(at::kDouble).clone();
-  auto states = b.clone();
-  states.select(0, 0).copy_(a.select(0, 0) * initial + b.select(0, 0));
-  for (int64_t stride = 1; stride < steps; stride *= 2) {
-    const int64_t count = steps - stride;
-    auto right = coefficients.narrow(0, stride, count);
-    auto next_states =
-        (right * states.narrow(0, 0, count).to(at::kDouble)
-         + states.narrow(0, stride, count).to(at::kDouble)).to(states.scalar_type());
-    auto next_coefficients = right * coefficients.narrow(0, 0, count);
-    // Both right-hand sides are materialized before either source is changed.
-    states.narrow(0, stride, count).copy_(next_states);
-    coefficients.narrow(0, stride, count).copy_(next_coefficients);
+  auto result = at::empty_like(b);
+  auto state = initial;
+  for (int64_t t = 0; t < steps; ++t) {
+    state = a.select(0, t) * state + b.select(0, t);
+    result.select(0, t).copy_(state);
   }
-  return states.isfinite().all().item<bool>() ? states : sequential();
+  return result;
 }
 
 struct ScanInputs {
@@ -1620,20 +1765,22 @@ lean_obj_res scan_backward(const ScanInputs& inputs, const Tensor& output,
                      at::zeros_like(inputs.initial));
   }
   // Reverse recurrence: g[t] = dy[t] + a[t+1] * g[t+1].
-  // The final step adds +0 without reading a coefficient beyond the sequence.
+  // The final step adds (+0) * (-0) = -0, the identity of rounded addition, so g[T-1] = dy[T-1]
+  // exactly as in StateSpace.scanAdjoints, without reading a coefficient beyond the sequence.
   auto shifted = at::cat(
       {inputs.a.narrow(0, 1, steps - 1),
        at::zeros({1, state}, inputs.a.options())}, 0);
   auto g = affine_scan(shifted.flip({0}), dy.flip({0}),
-                       at::zeros_like(inputs.initial)).flip({0});
+                       at::full_like(inputs.initial, -0.0)).flip({0});
   auto previous = at::cat(
       {inputs.initial.unsqueeze(0), output.narrow(0, 0, steps - 1)}, 0);
   auto da = g * previous;
   auto db = g * inputs.x;
   if (!variable) {
-    // Constant coefficients accumulate their cotangents in reverse time.
-    da = ordered_columns(da.flip({0}));
-    db = ordered_columns(db.flip({0}));
+    // Shared coefficients add their cotangents from +0 in increasing t, the order of
+    // TorchLean.Tensor.scanCoefficientGrad.
+    da = ordered_columns(da);
+    db = ordered_columns(db);
   }
   return quadruple(da, db, g * inputs.b,
                    g.select(0, 0) * inputs.a.select(0, 0));
@@ -1671,12 +1818,16 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_distill(
   return invoke([&] {
     const auto shape = shape_array(dimensions);
     require(axis < shape.size(), "distill: class axis out of range");
-    const auto x = checked(student, shape);
-    const auto t = checked(teacher, shape);
-    require(x.scalar_type() == t.scalar_type(), "distill: student/teacher dtype mismatch");
-    if (x.numel() == 0) {
-      return box(gradient ? at::zeros_like(x) : at::zeros({}, x.options()));
+    require_size(student, shape);
+    require_size(teacher, shape);
+    require(tensor(student).scalar_type() == tensor(teacher).scalar_type(),
+            "distill: student/teacher dtype mismatch");
+    // The empty loss is the negated empty sum, `-0`, and the empty gradient is empty.
+    if (element_count(shape) == 0) {
+      return box(gradient ? no_entries(student) : -at::zeros({}, tensor(student).options()));
     }
+    const auto x = shaped(student, shape);
+    const auto t = shaped(teacher, shape);
     const auto samples = x.numel() / shape[axis];
     const auto p = at::softmax(t, axis, t.scalar_type());
     if (!gradient) {
@@ -1685,7 +1836,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_distill(
       const auto logq = shifted - log_normalizer(shifted, pivot, axis);
       // A zero teacher weight must not multiply an infinite student log-probability.
       const auto safe = at::where(p == 0, at::zeros_like(logq), logq);
-      return box(-(p * safe).sum() / samples);
+      return box(divide_by_count(-(p * safe).sum(), samples));
     }
     const auto q = at::softmax(x, axis, x.scalar_type());
     const auto delta = x - t;
@@ -1695,7 +1846,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_distill(
     // Mask before expm1 as well: the inactive near-field branch must not overflow.
     const auto safe = at::where(close, ratio, at::zeros_like(ratio));
     const auto difference = at::where(close, p * at::expm1(safe), q - p);
-    return box((difference - q * difference.sum(axis, true)) / samples);
+    return box(divide_by_count(difference - q * difference.sum(axis, true), samples));
   });
 }
 
@@ -1705,12 +1856,16 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_cross_entropy(
   return invoke([&] {
     const auto shape = shape_array(dimensions);
     require(axis < shape.size(), "cross_entropy: class axis out of range");
-    const auto x = checked(logits, shape);
-    const auto weights = checked(target, shape);
-    require(x.scalar_type() == weights.scalar_type(), "cross_entropy: dtype mismatch");
-    if (x.numel() == 0) return box(at::zeros({}, x.options()));
-    const auto samples = mean ? x.numel() / shape[axis] : 1;
-    return box(-weighted_log_softmax(x, weights, axis).sum() / samples);
+    require_size(logits, shape);
+    require_size(target, shape);
+    require(tensor(logits).scalar_type() == tensor(target).scalar_type(),
+            "cross_entropy: dtype mismatch");
+    // The empty loss is the negated empty sum, `-0`.
+    if (element_count(shape) == 0) return box(-at::zeros({}, tensor(logits).options()));
+    const auto x = shaped(logits, shape);
+    const auto weights = shaped(target, shape);
+    const auto total = -weighted_log_softmax(x, weights, axis).sum();
+    return box(mean ? divide_by_count(total, x.numel() / shape[axis]) : total);
   });
 }
 
@@ -1720,13 +1875,15 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_cross_entropy_bwd(
   return invoke([&] {
     const auto shape = shape_array(dimensions);
     require(axis < shape.size(), "cross_entropy: class axis out of range");
-    const auto x = checked(logits, shape);
-    const auto weights = checked(target, shape);
+    require_size(logits, shape);
+    require_size(target, shape);
     const auto g = checked(seed, {});
-    require(x.scalar_type() == weights.scalar_type() && x.scalar_type() == g.scalar_type(),
+    require(tensor(logits).scalar_type() == tensor(target).scalar_type() &&
+                tensor(logits).scalar_type() == g.scalar_type(),
             "cross_entropy: dtype mismatch");
-    if (x.numel() == 0) return pair(at::zeros_like(x), at::zeros_like(weights));
-    const auto samples = mean ? x.numel() / shape[axis] : 1;
+    if (element_count(shape) == 0) return pair(no_entries(logits), no_entries(target));
+    const auto x = shaped(logits, shape);
+    const auto weights = shaped(target, shape);
     const auto pivot = x.argmax(axis, true);
     const auto shifted = x - x.gather(axis, pivot);
     const auto logp = shifted - log_normalizer(shifted, pivot, axis);
@@ -1736,14 +1893,18 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_cross_entropy_bwd(
     const auto regular = upstream - probabilities * upstream.sum(axis, true);
     const auto diagonal = -at::expm1(logp.gather(axis, pivot)) * upstream.gather(axis, pivot) -
                           probabilities.gather(axis, pivot) * others.sum(axis, true);
-    const auto dx = regular.scatter(axis, pivot, diagonal) / samples * g;
-    const auto dt = -weighted_log_softmax(x, g.expand_as(x), axis) / samples;
+    // Each entry divided once by the number of samples when `mean`, as the spec's pullbacks.
+    const auto scattered = regular.scatter(axis, pivot, diagonal);
+    const auto targets = -weighted_log_softmax(x, g.expand_as(x), axis);
+    const auto samples = x.numel() / shape[axis];
+    const auto dx = (mean ? divide_by_count(scattered, samples) : scattered) * g;
+    const auto dt = mean ? divide_by_count(targets, samples) : targets;
     return pair(dx, dt);
   });
 }
 
 // One for the entries of each row that fewer than k entries of the row beat, zero elsewhere
-// (`Spec.MoE.kept`): entry j beats entry i when x_j > x_i, or when neither is larger and j < i.
+// (`MoE.kept`): entry j beats entry i when x_j > x_i, or when neither is larger and j < i.
 // Without NaN that keeps min(k, cols) entries. Comparisons and integer counts only, so every
 // device and run gives the same mask.
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_top_k_mask_by_row(
@@ -1777,14 +1938,26 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_hard_masked_softmax_by
   });
 }
 
+// Whether two `FloatFormat` descriptors are equal. A descriptor holds `expWidth`, `fracWidth` and
+// `exponentBias` as `Nat` objects and then its `encoding` byte. Its proofs are erased.
+static bool same_format(b_lean_obj_arg x, b_lean_obj_arg y) {
+  const unsigned fields = lean_ctor_num_objs(x);
+  if (fields != lean_ctor_num_objs(y)) return false;
+  for (unsigned i = 0; i < fields; ++i)
+    if (!lean_nat_eq(lean_ctor_get(x, i), lean_ctor_get(y, i))) return false;
+  const unsigned encoding = fields * sizeof(void*);
+  return lean_ctor_get_uint8(x, encoding) == lean_ctor_get_uint8(y, encoding);
+}
+
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_concat1d(
     b_lean_obj_arg first, b_lean_obj_arg second, uint32_t n, uint32_t m) {
   return invoke([&] {
     auto* a = torchlean_cuda_buffer_unbox(first);
     auto* b = torchlean_cuda_buffer_unbox(second);
     if (a->format || b->format) {
-      require(a->format && b->format && a->width == b->width &&
-                a->tensor.defined() && b->tensor.defined() && a->size == n && b->size == m,
+      require(a->format && b->format && same_format(a->format, b->format) &&
+                a->width == b->width && a->tensor.defined() && b->tensor.defined() &&
+                a->size == n && b->size == m,
               "concat: incompatible encoded buffers");
       return encoded(at::cat({a->tensor, b->tensor}), a->format, a->width);
     }
@@ -1817,11 +1990,15 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_broadcast_vec_to_cols(
   });
 }
 
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_div_count(
+    b_lean_obj_arg input, uint64_t count) {
+  return invoke([&] { return box(divide_by_count(tensor(input), count)); });
+}
+
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_layer_norm_fwd(
     b_lean_obj_arg input, b_lean_obj_arg gamma, b_lean_obj_arg beta,
-    uint32_t rows, uint32_t cols, double invCols, double epsilon) {
+    uint32_t rows, uint32_t cols, double epsilon) {
   return invoke([&] {
-    (void)invCols;  // Derive the divisor from the exact integer column count.
     require(rows > 0 && cols > 0, "layerNormFwd: dimensions must be positive");
     auto x = checked(input, {rows, cols}).to(at::kDouble);
     auto weight = checked(gamma, {cols});
@@ -1832,18 +2009,24 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_layer_norm_fwd(
     // which multiplies by a rounded reciprocal instead of dividing the sum.
     auto divisor = at::full({1, 1}, static_cast<double>(cols), x.options());
     auto centered = x - x.sum({1}, true) / divisor;
-    auto standard_deviation =
-        (centered.square().sum({1}, true) / divisor + epsilon).sqrt();
-    auto normalized = (centered / standard_deviation).to(weight.scalar_type());
-    auto inverse = standard_deviation.reciprocal().to(weight.scalar_type());
+    // Normalization.normalizedRows: each centered row is divided by Tensor.normalizationScale,
+    // the IEEE maximum of its largest magnitude and sqrt |epsilon|, before it is squared. The
+    // variance of the scaled row centers it again, and the clamp keeps a NaN.
+    auto regularizer = at::full({1, 1}, epsilon, x.options());
+    auto scale = at::maximum(centered.abs().amax({1}, true), regularizer.abs().sqrt());
+    auto scaled = centered / scale;
+    auto deviation = scaled - scaled.sum({1}, true) / divisor;
+    auto standard_deviation = (deviation.square().sum({1}, true) / divisor +
+        regularizer / scale / scale).clamp_min(0).sqrt();
+    auto normalized = (scaled / standard_deviation).to(weight.scalar_type());
+    auto inverse = (standard_deviation.reciprocal() / scale).to(weight.scalar_type());
     return triple(normalized * weight + bias, normalized, inverse);
   });
 }
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_layer_norm_bwd(
     b_lean_obj_arg dout, b_lean_obj_arg normalized, b_lean_obj_arg invstd,
-    b_lean_obj_arg gamma, uint32_t rows, uint32_t cols,
-    double colsScale, double invCols) {
+    b_lean_obj_arg gamma, uint32_t rows, uint32_t cols) {
   return invoke([&] {
     require(rows > 0 && cols > 0, "layerNormBwd: dimensions must be positive");
     auto dy = checked(dout, {rows, cols});
@@ -1851,11 +2034,12 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_layer_norm_bwd(
     auto inverse = checked(invstd, {rows, 1});
     auto weight = checked(gamma, {cols});
     auto dxhat = dy * weight;
-    // Keep the supplied, dtype-rounded scale parameters and saved xhat/rstd.
-    // Reconstructing native_layer_norm inputs would change this selected VJP.
-    auto centered = dxhat * rounded(colsScale, dxhat.scalar_type()) - dxhat.sum({1}, true);
-    auto term = centered - xhat * (dxhat * xhat).sum({1}, true);
-    auto dx = (term * inverse) * rounded(invCols, dxhat.scalar_type());
+    // LayerNorm.backward on the saved xhat and rstd (reconstructing native_layer_norm inputs
+    // would change this VJP): rstd * ((dxhat - mean dxhat) - xhat * mean (dxhat * xhat)), each
+    // mean a row sum divided once by the column count.
+    auto mean = divide_by_count(dxhat.sum({1}, true), cols);
+    auto mean_xhat = divide_by_count((dxhat * xhat).sum({1}, true), cols);
+    auto dx = inverse * ((dxhat - mean) - xhat * mean_xhat);
     return triple(dx, (dy * xhat).sum(0), dy.sum(0));
   });
 }
@@ -1865,11 +2049,14 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_bmm_with_transpose(
     uint32_t m, uint32_t n, uint32_t p, uint32_t transposeA, uint32_t transposeB) {
   return invoke([&] {
     require(transposeA <= 1 && transposeB <= 1, "bmm: transpose flag must be zero or one");
-    auto a = transposeA ? checked(first, {batch, n, m}).transpose(1, 2)
-                        : checked(first, {batch, m, n});
-    auto b = transposeB ? checked(second, {batch, p, n}).transpose(1, 2)
-                        : checked(second, {batch, n, p});
+    require_size(first, {batch, m, n});
+    require_size(second, {batch, n, p});
     element_count({batch, m, p});
+    if (batch == 0) return box(no_entries(first));
+    auto a = transposeA ? shaped(first, {batch, n, m}).transpose(1, 2)
+                        : shaped(first, {batch, m, n});
+    auto b = transposeB ? shaped(second, {batch, p, n}).transpose(1, 2)
+                        : shaped(second, {batch, n, p});
     return box(at::bmm(a, b));
   });
 }
@@ -1880,12 +2067,22 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_scaled_bmm(
     double scale) {
   return invoke([&] {
     require(transposeA <= 1 && transposeB <= 1, "scaledBmm: invalid transpose flag");
-    auto a = transposeA ? checked(first, {batch, n, m}).transpose(1, 2)
-                        : checked(first, {batch, m, n});
-    auto b = transposeB ? checked(second, {batch, p, n}).transpose(1, 2)
-                        : checked(second, {batch, n, p});
+    require_size(first, {batch, m, n});
+    require_size(second, {batch, n, p});
     element_count({batch, m, p});
-    require(a.scalar_type() == b.scalar_type(), "scaledBmm: dtype mismatch");
+    require(tensor(first).scalar_type() == tensor(second).scalar_type(),
+            "scaledBmm: dtype mismatch");
+    if (batch == 0) {
+      // An empty batch has no product to replay.
+      auto* result = lean_alloc_ctor(0, 2, 0);
+      lean_ctor_set(result, 0, box(no_entries(first)));
+      lean_ctor_set(result, 1, lean_box(false));
+      return result;
+    }
+    auto a = transposeA ? shaped(first, {batch, n, m}).transpose(1, 2)
+                        : shaped(first, {batch, m, n});
+    auto b = transposeB ? shaped(second, {batch, p, n}).transpose(1, 2)
+                        : shaped(second, {batch, n, p});
     const auto minimum = a.scalar_type() == at::kFloat
         ? static_cast<double>(std::numeric_limits<float>::min())
         : std::numeric_limits<double>::min();
@@ -1910,9 +2107,14 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_scaled_bmm(
     const auto contributes = at::logical_and((a != 0).any(2, true), (b != 0).any(1, true));
     at::Tensor value;
     if (scale != 0.0 && std::abs(scale) < 1.0) {
-      const auto factor = std::sqrt(std::abs(scale));
-      const auto left = at::mul(a, scale < 0.0 ? -factor : factor);
-      const auto right = at::mul(b, factor);
+      // A power of two near sqrt(|scale|) on the left and the remainder on the right: no rounded
+      // square root, and no rounding for a power-of-two scale while the factors and the scaled
+      // operands are representable in the dtype.
+      int exponent = 0;
+      std::frexp(scale, &exponent);
+      const auto power = std::ldexp(1.0, exponent / 2);
+      const auto left = at::mul(a, power);
+      const auto right = at::mul(b, scale / power);
       // Zero is included: a nonzero original operand can disappear before the contraction.
       risky = at::logical_or(risky,
           at::logical_or(at::logical_and(a != 0, left.abs() < minimum).any(),
@@ -2003,21 +2205,15 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_selective_scan_diag_va
   });
 }
 
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_scatter_add(
-    b_lean_obj_arg input, b_lean_obj_arg values, uint32_t n,
-    b_lean_obj_arg indices, uint32_t k) {
-  return invoke([&] {
-    return box(scatter_rows(checked(input, {n, 1}), checked(values, {k, 1}),
-                            index_array(indices, k)));
-  });
-}
-
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_broadcast_to(
     b_lean_obj_arg input, b_lean_obj_arg input_dims,
     b_lean_obj_arg output_dims, b_lean_obj_arg axis_map) {
   return invoke([&] {
     auto shape = broadcast_shape(input_dims, output_dims, axis_map);
-    auto x = checked(input, shape.input);
+    require_size(input, shape.input);
+    // An input with a zero extent broadcasts to an output with that extent.
+    if (element_count(shape.output) == 0) return box(no_entries(input));
+    auto x = shaped(input, shape.input);
     return box(x.permute(shape.input_permutation).reshape(shape.expanded_input)
                    .expand(shape.output).clone());
   });
@@ -2028,11 +2224,12 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_from_broadcast(
     b_lean_obj_arg output_dims, b_lean_obj_arg axis_map) {
   return invoke([&] {
     auto shape = broadcast_shape(input_dims, output_dims, axis_map);
-    auto dy = checked(dout, shape.output);
+    require_size(dout, shape.output);
     const int64_t input_size = element_count(shape.input);
-    if (input_size == 0 || dy.numel() == 0) {
-      return box(at::zeros(shape.input, dy.options()));
+    if (input_size == 0 || element_count(shape.output) == 0) {
+      return box(at::zeros({input_size}, tensor(dout).options()));
     }
+    auto dy = shaped(dout, shape.output);
     std::vector<int64_t> permutation;
     std::vector<int64_t> kept(shape.input.size(), -1);
     for (size_t axis = 0; axis < shape.map.size(); ++axis) {
@@ -2059,7 +2256,9 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_swap_adjacent_at_depth
     auto shape = shape_array(dims);
     require(static_cast<uint64_t>(depth) + 1 < shape.size(),
             "swapAdjacentAtDepth: invalid depth");
-    return box(checked(input, shape).transpose(depth, static_cast<int64_t>(depth) + 1).clone());
+    require_size(input, shape);
+    if (element_count(shape) == 0) return box(no_entries(input));
+    return box(shaped(input, shape).transpose(depth, static_cast<int64_t>(depth) + 1).clone());
   });
 }
 
@@ -2067,10 +2266,9 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_sum_axis(
     b_lean_obj_arg input, b_lean_obj_arg dims, uint32_t axis) {
   return invoke([&] {
     auto shape = shape_array(dims);
-    auto x = checked(input, shape);
-    if (shape.empty()) return box(x.clone());
+    require_size(input, shape);
+    if (shape.empty()) return box(shaped(input, shape).clone());
     require(axis < shape.size(), "reduceSumAxis: invalid axis");
-    if (!at::globalContext().deterministicAlgorithms()) return box(x.sum(axis));
     std::vector<int64_t> permutation{axis};
     std::vector<int64_t> output_shape;
     for (size_t i = 0; i < shape.size(); ++i) {
@@ -2079,7 +2277,12 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_reduce_sum_axis(
         output_shape.push_back(shape[i]);
       }
     }
-    auto matrix = x.permute(permutation).reshape({shape[axis], element_count(output_shape)});
+    const int64_t output_size = element_count(output_shape);
+    // The sums of an empty input are empty sums, `+0`.
+    if (element_count(shape) == 0) return box(at::zeros({output_size}, tensor(input).options()));
+    auto x = shaped(input, shape);
+    if (!at::globalContext().deterministicAlgorithms()) return box(x.sum(axis));
+    auto matrix = x.permute(permutation).reshape({shape[axis], output_size});
     return box(ordered_columns(matrix));
   });
 }
@@ -2103,650 +2306,3 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_scatter_add_rows(
 }
 
 }  // namespace torchlean::operators
-
-// Convolution and pooling
-
-#include <vector>
-
-// ATen schemas checked against the PyTorch 2.12 nightly 0291f960b6 and pip torch 2.13.0+cu130:
-// https://github.com/pytorch/pytorch/blob/0291f960b6/aten/src/ATen/native/native_functions.yaml
-// Backward calls return explicit cotangents to the Lean tape; they do not record autograd graphs.
-namespace torchlean::conv_pool {
-
-// The LibTorch backend follows PyTorch's convolution and pooling families: one, two, or three
-// spatial dimensions. Higher-dimensional mathematical specifications remain available in Lean,
-// but the native backend does not emulate kernels that LibTorch does not provide.
-constexpr size_t kMaxSpatialRank = 3;
-
-static uint32_t outDim(uint32_t in, uint32_t k, uint32_t stride, uint32_t padding) {
-  torchlean::require(stride != 0, "LibTorch conv/pool: stride must be > 0");
-  if (k == 0) return 0;
-  // Invalid geometry has no windows; do not turn saturated subtraction into a phantom window.
-  const uint64_t inPad = uint64_t{in} + 2 * uint64_t{padding};
-  if (inPad < k) return 0;
-  const uint64_t out = (inPad - k) / stride + 1;
-  torchlean::require(out <= UINT32_MAX, "LibTorch conv/pool: outDim overflow");
-  return static_cast<uint32_t>(out);
-}
-
-// N-D pooling follows `Spec.poolOutSpatialPad`: empty inputs and padding beyond half the kernel
-// are invalid axes, even when the generic sliding-window formula would produce a positive length.
-static uint32_t poolOutDim(uint32_t in, uint32_t k, uint32_t stride, uint32_t padding) {
-  if (in == 0 || k == 0 || padding > k / 2) return 0;
-  return outDim(in, k, stride, padding);
-}
-
-// Spec: ((in - 1) * stride + k) - 2 * padding in Nat, so the addition precedes the subtraction.
-static uint32_t outDimTranspose(uint32_t in, uint32_t k, uint32_t stride, uint32_t padding) {
-  torchlean::require(stride != 0, "LibTorch conv/pool: stride must be > 0");
-  if (in == 0 || k == 0) return 0;
-  const uint64_t t = uint64_t{in - 1} * stride + k;
-  const uint64_t sub = 2 * uint64_t{padding};
-  const uint64_t out = t >= sub ? t - sub : 0;
-  torchlean::require(out <= UINT32_MAX, "LibTorch conv/pool: outDimTranspose overflow");
-  return static_cast<uint32_t>(out);
-}
-
-// Validate in the input dtype: a finite nonzero host coefficient can overflow or
-// underflow when a binary32 buffer requires conversion.
-static double checked_smoothmax_beta(double beta, at::ScalarType dtype, const char* msg) {
-  const double betaF = rounded(beta, dtype);
-  torchlean::require(std::isfinite(betaF) && betaF != 0.0f, msg);
-  return betaF;
-}
-
-// Floor and ceiling division for b > 0.
-static int64_t floor_div_i64(int64_t a, int64_t b) {
-  const int64_t q = a / b;
-  return (a % b != 0 && a < 0) ? q - 1 : q;
-}
-
-static int64_t ceil_div_i64(int64_t a, int64_t b) { return -floor_div_i64(-a, b); }
-
-using Shape = std::vector<int64_t>;
-using Gradients = std::tuple<at::Tensor, at::Tensor, at::Tensor>;
-enum class Kind { convolution, transposed, pooling };
-
-static size_t spatial_volume(const Shape& shape) {
-  if (std::find(shape.begin(), shape.end(), 0) != shape.end()) return 0;
-  size_t result = 1;
-  for (const auto dim : shape) {
-    result = checked_mul_size(result, static_cast<size_t>(dim),
-                              "torchlean conv/pool: dimension product overflow");
-  }
-  return result;
-}
-
-static int64_t volume(const Shape& shape) {
-  const size_t result = spatial_volume(shape);
-  require(result <= static_cast<size_t>(INT64_MAX),
-          "torchlean conv/pool: tensor size exceeds ATen indexing");
-  return static_cast<int64_t>(result);
-}
-
-static Shape with_channels(int64_t channels, const Shape& spatial) {
-  Shape shape{channels};
-  shape.insert(shape.end(), spatial.begin(), spatial.end());
-  return shape;
-}
-
-struct Geometry {
-  Shape input, kernel, stride, padding, output;
-  size_t input_volume, kernel_volume, output_volume;
-
-  Geometry(Shape in, Shape k, Shape s, Shape p, Kind kind)
-      : input(std::move(in)), kernel(std::move(k)),
-        stride(std::move(s)), padding(std::move(p)) {
-    require(!input.empty() && input.size() <= kMaxSpatialRank,
-            "torchlean conv/pool: spatial rank must be one, two, or three");
-    require(kernel.size() == input.size() && stride.size() == input.size() &&
-                padding.size() == input.size(),
-            "torchlean conv/pool: array rank mismatch");
-    for (size_t axis = 0; axis < input.size(); ++axis) {
-      require(input[axis] >= 0 && input[axis] <= UINT32_MAX &&
-                  kernel[axis] > 0 && kernel[axis] <= UINT32_MAX &&
-                  stride[axis] > 0 && stride[axis] <= UINT32_MAX &&
-                  padding[axis] >= 0 && padding[axis] <= UINT32_MAX,
-              "torchlean conv/pool: invalid spatial dimension, kernel, stride or padding");
-      const auto i = static_cast<uint32_t>(input[axis]);
-      const auto w = static_cast<uint32_t>(kernel[axis]);
-      const auto s0 = static_cast<uint32_t>(stride[axis]);
-      const auto p0 = static_cast<uint32_t>(padding[axis]);
-      output.push_back(kind == Kind::transposed ? outDimTranspose(i, w, s0, p0)
-                       : kind == Kind::pooling ? poolOutDim(i, w, s0, p0)
-                                               : outDim(i, w, s0, p0));
-    }
-    // Validate spatial products even when a channel count subsequently makes the buffer empty.
-    // Keep these unsigned: zero-channel buffers can carry larger spatial metadata than
-    // a nonempty ATen tensor can represent. Validate actual buffer sizes separately.
-    input_volume = spatial_volume(input);
-    kernel_volume = spatial_volume(kernel);
-    output_volume = spatial_volume(output);
-  }
-
-  Shape kernel_shape(int64_t in_channels, int64_t out_channels, bool transposed) const {
-    Shape shape = transposed ? Shape{in_channels, out_channels}
-                             : Shape{out_channels, in_channels};
-    shape.insert(shape.end(), kernel.begin(), kernel.end());
-    return shape;
-  }
-};
-
-// For one kernel offset, valid input/output pairs form a Cartesian product of intervals.
-// Strided views express that product without allocating an im2col tensor or device index grid.
-struct Window {
-  Shape first, last, base_first, base_last, step;
-  int64_t elements = 1;
-
-  Window(const Shape& base, const Shape& windows, const Geometry& g, size_t offset)
-      : step(g.stride) {
-    Shape coordinate(g.kernel.size());
-    for (size_t a = g.kernel.size(); a-- > 0;) {
-      coordinate[a] = offset % g.kernel[a];
-      offset /= g.kernel[a];
-    }
-    for (size_t a = 0; a < base.size(); ++a) {
-      const int64_t shift = coordinate[a] - g.padding[a];
-      const int64_t lo = std::max<int64_t>(0, ceil_div_i64(-shift, g.stride[a]));
-      const int64_t hi = std::min<int64_t>(
-          windows[a], floor_div_i64(base[a] - 1 - shift, g.stride[a]) + 1);
-      if (hi <= lo) {
-        elements = 0;
-        return;
-      }
-      first.push_back(lo);
-      last.push_back(hi);
-      base_first.push_back(lo * g.stride[a] + shift);
-      base_last.push_back((hi - 1) * g.stride[a] + shift + 1);
-      elements *= hi - lo;
-    }
-  }
-
-  at::Tensor base_view(at::Tensor value) const {
-    for (size_t a = 0; a < first.size(); ++a)
-      value = value.slice(a + 1, base_first[a], base_last[a], step[a]);
-    return value;
-  }
-
-  at::Tensor window_view(at::Tensor value) const {
-    for (size_t a = 0; a < first.size(); ++a)
-      value = value.slice(a + 1, first[a], last[a]);
-    return value;
-  }
-
-};
-
-static at::Tensor bias_output(const at::Tensor& bias, const Geometry& g, int64_t channels) {
-  Shape singleton(g.input.size() + 1, 1);
-  singleton[0] = channels;
-  return bias.reshape(singleton).expand(with_channels(channels, g.output)).clone();
-}
-
-static at::Tensor convolution_forward(
-    const at::Tensor& input, const at::Tensor& kernel, const at::Tensor& bias,
-    const Geometry& g, int64_t in_channels, int64_t out_channels, bool transposed) {
-  if (out_channels == 0 || g.output_volume == 0) return at::empty({0}, input.options());
-  if (input.numel() == 0) return bias_output(bias, g, out_channels);
-  const auto x = input.reshape(with_channels(in_channels, g.input));
-  const auto w = kernel.reshape(g.kernel_shape(in_channels, out_channels, transposed));
-  const Shape dilation(g.input.size(), 1), output_padding(g.input.size(), 0);
-  return at::convolution(x.unsqueeze(0), w, bias, g.stride, g.padding, dilation,
-                         transposed, output_padding, 1).squeeze(0);
-}
-
-static Gradients convolution_backward(
-    const at::Tensor& input, const at::Tensor& kernel, const at::Tensor& gradient,
-    const Geometry& g, int64_t in_channels, int64_t out_channels, bool transposed) {
-  if (gradient.numel() == 0 || input.numel() == 0 || kernel.numel() == 0) {
-    auto db = gradient.numel() == 0 ? at::zeros({out_channels}, gradient.options())
-        : gradient.reshape({out_channels, static_cast<int64_t>(g.output_volume)}).sum(1);
-    return {at::zeros_like(kernel), db, at::zeros_like(input)};
-  }
-  const auto x = input.reshape(with_channels(in_channels, g.input));
-  const auto w = kernel.reshape(g.kernel_shape(in_channels, out_channels, transposed));
-  const auto grad = gradient.reshape(with_channels(out_channels, g.output));
-  const Shape dilation(g.input.size(), 1), output_padding(g.input.size(), 0);
-  const Shape bias_shape{out_channels};
-  const auto result = at::convolution_backward(
-      grad.unsqueeze(0), x.unsqueeze(0), w, at::IntArrayRef(bias_shape), g.stride, g.padding,
-      dilation, transposed, output_padding, 1, std::array<bool, 3>{true, true, true});
-  // ATen returns (input, weight, bias); the existing Lean ABI expects (weight, bias, input).
-  return {std::get<1>(result), std::get<2>(result), std::get<0>(result).squeeze(0)};
-}
-
-struct PoolArguments {
-  Shape kernel, stride, padding, dilation, explicit_padding;
-  explicit PoolArguments(const Geometry& g, bool average = false)
-      : kernel(g.kernel), stride(g.stride), padding(g.padding), dilation(g.input.size(), 1) {
-    // avg_pool3d rejects a small unpadded input even when its padded windows are valid.
-    // Materializing those zeros keeps the full-window divisor and uses the same ATen operator.
-    if (average && kernel.size() == 3) {
-      bool small = false;
-      for (size_t axis = 0; axis < kernel.size(); ++axis)
-        small = small || g.input[axis] < kernel[axis];
-      if (small) {
-        for (size_t axis = kernel.size(); axis-- > 0;) {
-          explicit_padding.push_back(padding[axis]);
-          explicit_padding.push_back(padding[axis]);
-        }
-        padding.assign(kernel.size(), 0);
-      }
-    }
-    // ATen exposes 1-D pooling backward through its 2-D operators.
-    if (kernel.size() == 1) {
-      kernel.insert(kernel.begin(), 1);
-      stride.insert(stride.begin(), 1);
-      padding.insert(padding.begin(), 0);
-      dilation.insert(dilation.begin(), 1);
-    }
-  }
-  at::Tensor batched(const at::Tensor& x, const Geometry& g) const {
-    return g.input.size() == 1 ? x.unsqueeze(0).unsqueeze(2) : x.unsqueeze(0);
-  }
-  at::Tensor unbatched(const at::Tensor& x, const Geometry& g) const {
-    return g.input.size() == 1 ? x.squeeze(0).squeeze(1) : x.squeeze(0);
-  }
-};
-
-static std::tuple<at::Tensor, at::Tensor> max_pool_with_indices(
-    const at::Tensor& x, const Geometry& g) {
-  const PoolArguments args(g);
-  const auto input = args.batched(x, g);
-  const auto result = g.input.size() == 3
-      ? at::max_pool3d_with_indices(input, args.kernel, args.stride, args.padding,
-                                   args.dilation, false)
-      : at::max_pool2d_with_indices(input, args.kernel, args.stride, args.padding,
-                                   args.dilation, false);
-  return {args.unbatched(std::get<0>(result), g),
-          args.unbatched(std::get<1>(result), g)};
-}
-
-static at::Tensor max_pool_forward(const at::Tensor& input, const Geometry& g, int64_t channels) {
-  if (channels == 0 || g.output_volume == 0) return at::empty({0}, input.options());
-  const auto x = input.reshape(with_channels(channels, g.input));
-  return std::get<0>(max_pool_with_indices(x, g));
-}
-
-static at::Tensor max_pool_backward(
-    const at::Tensor& input, const at::Tensor& gradient, const Geometry& g, int64_t channels) {
-  if (gradient.numel() == 0) return at::zeros_like(input);
-  const auto x = input.reshape(with_channels(channels, g.input));
-  const auto grad = gradient.reshape(with_channels(channels, g.output));
-  const PoolArguments args(g);
-  const auto indices = args.batched(std::get<1>(max_pool_with_indices(x, g)), g);
-  const auto dy = args.batched(grad, g), source = args.batched(x, g);
-  const auto result = g.input.size() == 3
-      ? at::max_pool3d_with_indices_backward(
-            dy, source, args.kernel, args.stride, args.padding, args.dilation, false, indices)
-      : at::max_pool2d_with_indices_backward(
-            dy, source, args.kernel, args.stride, args.padding, args.dilation, false, indices);
-  return args.unbatched(result, g);
-}
-
-static at::Tensor avg_pool_forward(const at::Tensor& input, const Geometry& g, int64_t channels) {
-  if (channels == 0 || g.output_volume == 0) return at::empty({0}, input.options());
-  const auto x = input.reshape(with_channels(channels, g.input));
-  const PoolArguments args(g, true);
-  auto source = args.batched(x, g);
-  if (!args.explicit_padding.empty())
-    source = at::constant_pad_nd(source, args.explicit_padding, 0);
-  const auto result = g.input.size() == 3
-      ? at::avg_pool3d(source, args.kernel, args.stride, args.padding, false, true, std::nullopt)
-      : at::avg_pool2d(source, args.kernel, args.stride, args.padding, false, true, std::nullopt);
-  return args.unbatched(result, g);
-}
-
-static at::Tensor avg_pool_backward(
-    const at::Tensor& gradient, const Geometry& g, int64_t channels) {
-  const auto count = volume(with_channels(channels, g.input));
-  if (gradient.numel() == 0) return at::zeros({count}, gradient.options());
-  const auto grad = gradient.reshape(with_channels(channels, g.output));
-  const PoolArguments args(g, true);
-  // The upstream backward needs the input's shape, but never its values.
-  auto input_shape = with_channels(channels, g.input);
-  if (!args.explicit_padding.empty())
-    for (size_t axis = 0; axis < g.input.size(); ++axis)
-      input_shape[axis + 1] += 2 * g.padding[axis];
-  const auto source = args.batched(at::empty(input_shape, grad.options()), g);
-  const auto dy = args.batched(grad, g);
-  auto result = g.input.size() == 3
-      ? at::avg_pool3d_backward(
-            dy, source, args.kernel, args.stride, args.padding, false, true, std::nullopt)
-      : at::avg_pool2d_backward(
-            dy, source, args.kernel, args.stride, args.padding, false, true, std::nullopt);
-  if (!args.explicit_padding.empty())
-    for (size_t axis = 0; axis < g.input.size(); ++axis)
-      result = result.narrow(axis + 2, g.padding[axis], g.input[axis]);
-  return args.unbatched(result, g);
-}
-
-// Widen before subtraction, not before scaling each operand. The latter loses nearby
-// differences; narrow subtraction can instead overflow for opposite-sign finite inputs.
-static at::Tensor smooth_pool_exp(const at::Tensor& values, const at::Tensor& pivot,
-                                  double beta) {
-  const auto dtype = values.scalar_type();
-  if (dtype == at::kHalf || dtype == at::kBFloat16 || dtype == at::kFloat)
-    return ((values.to(at::kDouble) - pivot.to(at::kDouble)) * beta).exp().to(dtype);
-  return ((values - pivot) * beta).exp();
-}
-
-static std::tuple<at::Tensor, at::Tensor> smooth_pool_statistics(
-    const at::Tensor& x, const Geometry& g, double beta) {
-  const auto output_shape = with_channels(x.size(0), g.output);
-  auto pivot = at::full(output_shape, beta > 0 ? -std::numeric_limits<float>::infinity()
-                                             : std::numeric_limits<float>::infinity(), x.options());
-  auto values = at::zeros(output_shape, x.options());
-  // Padding contributes the literal value zero, including to the pivot and denominator.
-  for (size_t k = 0; k < g.kernel_volume; ++k) {
-    values.zero_();
-    const Window window(g.input, g.output, g, k);
-    if (window.elements != 0) window.window_view(values).copy_(window.base_view(x));
-    pivot = beta > 0 ? at::fmax(pivot, values) : at::fmin(pivot, values);
-  }
-  auto denominator = at::zeros_like(pivot);
-  for (size_t k = 0; k < g.kernel_volume; ++k) {
-    values.zero_();
-    const Window window(g.input, g.output, g, k);
-    if (window.elements != 0) window.window_view(values).copy_(window.base_view(x));
-    denominator.add_(smooth_pool_exp(values, pivot, beta));
-  }
-  return {pivot, denominator};
-}
-
-static at::Tensor smooth_pool_forward(
-    const at::Tensor& input, const Geometry& g, int64_t channels, double beta) {
-  // Match the existing forward ABI: empty output does not evaluate beta.
-  if (channels == 0 || g.output_volume == 0) return at::empty({0}, input.options());
-  const double b = checked_smoothmax_beta(beta, input.scalar_type(),
-                                         "torchlean smooth pool: beta must be finite and nonzero");
-  const auto x = input.reshape(with_channels(channels, g.input));
-  const auto statistics = smooth_pool_statistics(x, g, b);
-  return std::get<0>(statistics) + std::get<1>(statistics).log() / b;
-}
-
-static at::Tensor smooth_pool_backward(
-    const at::Tensor& input, const at::Tensor& gradient,
-    const Geometry& g, int64_t channels, double beta) {
-  const double b = checked_smoothmax_beta(beta, input.scalar_type(),
-                                         "torchlean smooth pool: beta must be finite and nonzero");
-  if (gradient.numel() == 0) return at::zeros_like(input);
-  const auto x = input.reshape(with_channels(channels, g.input));
-  const auto grad = gradient.reshape(with_channels(channels, g.output));
-  const auto statistics = smooth_pool_statistics(x, g, b);
-  auto dx = at::zeros_like(x);
-  for (size_t k = 0; k < g.kernel_volume; ++k) {
-    const Window window(g.input, g.output, g, k);
-    if (window.elements == 0) continue;
-    const auto numerator = smooth_pool_exp(window.base_view(x),
-        window.window_view(std::get<0>(statistics)), b);
-    const auto weight = numerator / window.window_view(std::get<1>(statistics));
-    window.base_view(dx).add_(window.window_view(grad) * weight);
-  }
-  return dx;
-}
-
-static Geometry read_geometry(b_lean_obj_arg input, b_lean_obj_arg kernel,
-                              b_lean_obj_arg stride, b_lean_obj_arg padding, Kind kind) {
-  for (auto object : {input, kernel, stride, padding})
-    require(lean_is_array(object), "torchlean conv/pool: expected shape arrays");
-  return Geometry(dimensions(input, "torchlean conv/pool: bad input dimension"),
-                  dimensions(kernel, "torchlean conv/pool: bad kernel dimension"),
-                  dimensions(stride, "torchlean conv/pool: bad stride"),
-                  dimensions(padding, "torchlean conv/pool: bad padding"), kind);
-}
-
-static const at::Tensor& checked_tensor(b_lean_obj_arg object, const Shape& shape) {
-  const auto& value = tensor(object);
-  require(value.numel() == volume(shape), "torchlean conv/pool: buffer size mismatch");
-  return value;
-}
-
-static lean_obj_res convolution_ffi(
-    b_lean_obj_arg input, b_lean_obj_arg kernel, b_lean_obj_arg bias_or_gradient,
-    b_lean_obj_arg spatial, b_lean_obj_arg kernel_spatial,
-    b_lean_obj_arg stride, b_lean_obj_arg padding, uint32_t in_channels, uint32_t out_channels,
-    bool transposed, bool backward) {
-  return invoke([&]() -> lean_obj_res {
-    const auto g = read_geometry(spatial, kernel_spatial, stride, padding,
-                                 transposed ? Kind::transposed : Kind::convolution);
-    const auto& x = checked_tensor(input, with_channels(in_channels, g.input));
-    const auto& w = checked_tensor(kernel, g.kernel_shape(in_channels, out_channels, transposed));
-    const auto& other = checked_tensor(
-        bias_or_gradient, backward ? with_channels(out_channels, g.output) : Shape{out_channels});
-    // Check the output size even when this is a forward call with no output buffer yet.
-    volume(with_channels(out_channels, g.output));
-    if (!backward)
-      return box(convolution_forward(x, w, other, g, in_channels, out_channels, transposed));
-    const auto result = convolution_backward(x, w, other, g, in_channels, out_channels, transposed);
-    return triple(std::get<0>(result), std::get<1>(result), std::get<2>(result));
-  });
-}
-
-enum class Pool { maximum, average, smooth };
-
-static lean_obj_res pooling_ffi(
-    b_lean_obj_arg input, b_lean_obj_arg gradient, double beta,
-    b_lean_obj_arg spatial, b_lean_obj_arg kernel, b_lean_obj_arg stride, b_lean_obj_arg padding,
-    uint32_t channels, Pool pool, bool backward) {
-  return invoke([&]() -> lean_obj_res {
-    const auto g = read_geometry(spatial, kernel, stride, padding, Kind::pooling);
-    volume(with_channels(channels, g.input));
-    volume(with_channels(channels, g.output));
-    if (backward) {
-      const auto& grad = checked_tensor(gradient, with_channels(channels, g.output));
-      if (pool == Pool::average) return box(avg_pool_backward(grad, g, channels));
-      const auto& x = checked_tensor(input, with_channels(channels, g.input));
-      return box(pool == Pool::maximum ? max_pool_backward(x, grad, g, channels)
-                                      : smooth_pool_backward(x, grad, g, channels, beta));
-    }
-    const auto& x = checked_tensor(input, with_channels(channels, g.input));
-    if (pool == Pool::maximum) return box(max_pool_forward(x, g, channels));
-    if (pool == Pool::average) return box(avg_pool_forward(x, g, channels));
-    return box(smooth_pool_forward(x, g, channels, beta));
-  });
-}
-
-}  // namespace torchlean::conv_pool
-
-namespace {
-
-// The pure ABI's dimension helpers panic. IO operations must reject malformed metadata by
-// throwing instead, so `io` can return an ordinary Lean error without terminating the process.
-std::vector<int64_t> io_dimensions(b_lean_obj_arg object) {
-  TORCH_CHECK(lean_is_array(object), "LibTorch: expected dimension array");
-  std::vector<int64_t> result;
-  result.reserve(lean_array_size(object));
-  for (size_t i = 0; i < lean_array_size(object); ++i) {
-    const auto dim = lean_array_uget(object, i);
-    TORCH_CHECK(lean_is_scalar(dim) && lean_unbox(dim) <= UINT32_MAX,
-                "LibTorch: dimension exceeds UInt32 ABI");
-    result.push_back(static_cast<int64_t>(lean_unbox(dim)));
-  }
-  return result;
-}
-
-int64_t io_volume(const std::vector<int64_t>& shape) {
-  if (std::find(shape.begin(), shape.end(), 0) != shape.end()) return 0;
-  int64_t result = 1;
-  for (const auto dim : shape) {
-    TORCH_CHECK(dim > 0 && result <= INT64_MAX / dim, "LibTorch: dimension product overflow");
-    result *= dim;
-  }
-  return result;
-}
-
-const at::Tensor& io_tensor(b_lean_obj_arg object, const std::vector<int64_t>& shape) {
-  const auto& value = torchlean::tensor(object);
-  TORCH_CHECK(value.numel() == io_volume(shape), "LibTorch: buffer size mismatch");
-  return value;
-}
-
-}  // namespace
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_softmax_io(
-    b_lean_obj_arg input, b_lean_obj_arg dims, uint32_t axis) {
-  return io([&] {
-    const auto shape = io_dimensions(dims);
-    TORCH_CHECK(axis < shape.size(), "LibTorch softmax: axis out of range");
-    const auto x = io_tensor(input, shape).reshape(shape);
-    return torchlean::box(at::softmax(x, axis, x.scalar_type()));
-  });
-}
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_conv_io(
-    b_lean_obj_arg input, b_lean_obj_arg kernel, b_lean_obj_arg bias,
-    b_lean_obj_arg input_dims, b_lean_obj_arg kernel_dims, b_lean_obj_arg strides,
-    b_lean_obj_arg padding_before, b_lean_obj_arg padding_after, b_lean_obj_arg dilations,
-    uint32_t groups) {
-  return io([&] {
-    using namespace torchlean;
-    using namespace torchlean::conv_pool;
-    const auto read = io_dimensions;
-    const auto shape = read(input_dims), weight_shape = read(kernel_dims);
-    const auto stride = read(strides), before = read(padding_before);
-    const auto after = read(padding_after), dilation = read(dilations);
-    const size_t rank = stride.size();
-    TORCH_CHECK(rank >= 1 && rank <= kMaxSpatialRank,
-                "LibTorch conv: spatial rank must be one, two, or three");
-    TORCH_CHECK(shape.size() >= rank + 1 && weight_shape.size() == rank + 2 &&
-                before.size() == rank && after.size() == rank && dilation.size() == rank,
-                "LibTorch conv: rank mismatch");
-    const size_t channel_axis = shape.size() - rank - 1;
-    const int64_t in_channels = shape[channel_axis], out_channels = weight_shape[0];
-    TORCH_CHECK(groups > 0 && in_channels > 0 && out_channels > 0 &&
-                in_channels % groups == 0 && out_channels % groups == 0 &&
-                weight_shape[1] == in_channels, "LibTorch conv: invalid channel groups");
-    const int64_t batch = io_volume(Shape(shape.begin(), shape.begin() + channel_axis));
-    TORCH_CHECK(batch <= UINT32_MAX, "LibTorch conv: batch exceeds ABI");
-    Shape output{batch, out_channels}, packed_shape = weight_shape;
-    packed_shape[1] = in_channels / groups;
-    Shape input_shape{batch};
-    input_shape.insert(input_shape.end(), shape.begin() + channel_axis, shape.end());
-    Shape pads;
-    for (size_t axis = 0; axis < rank; ++axis) {
-      const auto k = weight_shape[axis + 2];
-      TORCH_CHECK(k > 0 && stride[axis] > 0 && dilation[axis] > 0,
-                  "LibTorch conv: kernel, stride and dilation must be positive");
-      const uint64_t effective = static_cast<uint64_t>(k - 1) * dilation[axis] + 1;
-      const uint64_t padded = static_cast<uint64_t>(shape[channel_axis + 1 + axis]) +
-                              before[axis] + after[axis];
-      const uint64_t extent = padded < effective ? 0 : (padded - effective) / stride[axis] + 1;
-      TORCH_CHECK(extent <= UINT32_MAX, "LibTorch conv: output dimension exceeds ABI");
-      output.push_back(static_cast<int64_t>(extent));
-    }
-    TORCH_CHECK(io_volume(output) <= UINT32_MAX, "LibTorch conv: output exceeds ABI");
-    const auto& x_flat = io_tensor(input, shape);
-    const auto& w_flat = io_tensor(kernel, weight_shape);
-    const auto& b = io_tensor(bias, Shape{out_channels});
-    if (io_volume(output) == 0) return box(at::empty({0}, x_flat.options()));
-    if (x_flat.numel() == 0) {
-      Shape singleton(output.size(), 1);
-      singleton[1] = out_channels;
-      return box(b.reshape(singleton).expand(output).clone());
-    }
-    auto w = w_flat.reshape(weight_shape);
-    if (groups != 1) {
-      std::vector<at::Tensor> blocks;
-      const int64_t in_group = in_channels / groups, out_group = out_channels / groups;
-      blocks.reserve(groups);
-      for (uint32_t group = 0; group < groups; ++group)
-        blocks.push_back(w.slice(0, group * out_group, (group + 1) * out_group)
-                          .slice(1, group * in_group, (group + 1) * in_group));
-      w = at::cat(blocks, 0).reshape(packed_shape);
-    }
-    for (size_t axis = rank; axis-- > 0;) {
-      pads.push_back(before[axis]);
-      pads.push_back(after[axis]);
-    }
-    const auto x = at::constant_pad_nd(x_flat.reshape(input_shape), pads, 0);
-    const Shape zeros(rank, 0);
-    const auto result = at::convolution(x, w, b, stride, zeros, dilation, false, zeros, groups);
-    TORCH_CHECK(result.sizes().vec() == output, "LibTorch conv: unexpected output geometry");
-    return box(result);
-  });
-}
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_conv_fwd(
-    b_lean_obj_arg input, b_lean_obj_arg kernel, b_lean_obj_arg bias,
-    b_lean_obj_arg spatial, b_lean_obj_arg kernel_spatial,
-    b_lean_obj_arg stride, b_lean_obj_arg padding, uint32_t in_channels, uint32_t out_channels) {
-  return torchlean::conv_pool::convolution_ffi(
-      input, kernel, bias, spatial, kernel_spatial, stride, padding,
-      in_channels, out_channels, false, false);
-}
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_conv_bwd(
-    b_lean_obj_arg input, b_lean_obj_arg kernel, b_lean_obj_arg gradient,
-    b_lean_obj_arg spatial, b_lean_obj_arg kernel_spatial,
-    b_lean_obj_arg stride, b_lean_obj_arg padding, uint32_t in_channels, uint32_t out_channels) {
-  return torchlean::conv_pool::convolution_ffi(
-      input, kernel, gradient, spatial, kernel_spatial, stride, padding,
-      in_channels, out_channels, false, true);
-}
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_convtranspose_fwd(
-    b_lean_obj_arg input, b_lean_obj_arg kernel, b_lean_obj_arg bias,
-    b_lean_obj_arg spatial, b_lean_obj_arg kernel_spatial,
-    b_lean_obj_arg stride, b_lean_obj_arg padding, uint32_t in_channels, uint32_t out_channels) {
-  return torchlean::conv_pool::convolution_ffi(
-      input, kernel, bias, spatial, kernel_spatial, stride, padding,
-      in_channels, out_channels, true, false);
-}
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_convtranspose_bwd(
-    b_lean_obj_arg input, b_lean_obj_arg kernel, b_lean_obj_arg gradient,
-    b_lean_obj_arg spatial, b_lean_obj_arg kernel_spatial,
-    b_lean_obj_arg stride, b_lean_obj_arg padding, uint32_t in_channels, uint32_t out_channels) {
-  return torchlean::conv_pool::convolution_ffi(
-      input, kernel, gradient, spatial, kernel_spatial, stride, padding,
-      in_channels, out_channels, true, true);
-}
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_maxpool_fwd(
-    b_lean_obj_arg input, b_lean_obj_arg spatial, b_lean_obj_arg kernel,
-    b_lean_obj_arg stride, b_lean_obj_arg padding, uint32_t channels) {
-  return torchlean::conv_pool::pooling_ffi(
-      input, nullptr, 0, spatial, kernel, stride, padding, channels,
-      torchlean::conv_pool::Pool::maximum, false);
-}
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_maxpool_bwd(
-    b_lean_obj_arg input, b_lean_obj_arg gradient, b_lean_obj_arg spatial, b_lean_obj_arg kernel,
-    b_lean_obj_arg stride, b_lean_obj_arg padding, uint32_t channels) {
-  return torchlean::conv_pool::pooling_ffi(
-      input, gradient, 0, spatial, kernel, stride, padding, channels,
-      torchlean::conv_pool::Pool::maximum, true);
-}
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_avgpool_fwd(
-    b_lean_obj_arg input, b_lean_obj_arg spatial, b_lean_obj_arg kernel,
-    b_lean_obj_arg stride, b_lean_obj_arg padding, uint32_t channels) {
-  return torchlean::conv_pool::pooling_ffi(
-      input, nullptr, 0, spatial, kernel, stride, padding, channels,
-      torchlean::conv_pool::Pool::average, false);
-}
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_avgpool_bwd(
-    b_lean_obj_arg gradient, b_lean_obj_arg spatial, b_lean_obj_arg kernel,
-    b_lean_obj_arg stride, b_lean_obj_arg padding, uint32_t channels) {
-  return torchlean::conv_pool::pooling_ffi(
-      nullptr, gradient, 0, spatial, kernel, stride, padding, channels,
-      torchlean::conv_pool::Pool::average, true);
-}
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_smooth_maxpool_fwd(
-    b_lean_obj_arg input, double beta, b_lean_obj_arg spatial, b_lean_obj_arg kernel,
-    b_lean_obj_arg stride, b_lean_obj_arg padding, uint32_t channels) {
-  return torchlean::conv_pool::pooling_ffi(
-      input, nullptr, beta, spatial, kernel, stride, padding, channels,
-      torchlean::conv_pool::Pool::smooth, false);
-}
-
-extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_smooth_maxpool_bwd(
-    b_lean_obj_arg input, b_lean_obj_arg gradient, double beta,
-    b_lean_obj_arg spatial, b_lean_obj_arg kernel,
-    b_lean_obj_arg stride, b_lean_obj_arg padding, uint32_t channels) {
-  return torchlean::conv_pool::pooling_ffi(
-      input, gradient, beta, spatial, kernel, stride, padding, channels,
-      torchlean::conv_pool::Pool::smooth, true);
-}

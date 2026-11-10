@@ -1,0 +1,12 @@
+[project]
+name = "torchlean"
+version = "0.1.0"
+description = "Compile PyTorch and JAX graphs to TorchLean IR and check them"
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["torchlean"]

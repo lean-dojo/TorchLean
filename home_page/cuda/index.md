@@ -38,20 +38,27 @@ scripts/checks/cuda.sh sanitize --all-tools
 
 ## What CUDA Covers
 
-The adapter calls ATen for elementwise arithmetic, reductions, matrix products, convolutions,
-pooling, shape operations, and FFTs. Lean composes attention from matrix products and softmax,
-including its explicit local VJP, and spectral layers from FFT, frequency mixing, and inverse FFT.
-The tape owns their saved buffers. LibTorch supplies the numerical primitives without recording
-an autograd graph. Model examples select this path with `--device cuda`.
+Our adapter calls ATen for elementwise arithmetic, reductions, matrix products, convolutions,
+pooling, shape operations, and FFTs. Lean composes attention from matrix products and softmax
+(including attention's local VJP), and spectral layers from FFT, frequency mixing, and inverse FFT.
+The tape owns their saved buffers, while LibTorch supplies the numerical primitives without
+recording an autograd graph. Model examples select this path with `--device cuda`.
+
+Each registered operator with a CUDA implementation has an entry in `LibTorch.Kernel.ofOp`, which
+the CUDA tape records through. A CUDA session refuses an operator without an entry, such as `fmax`,
+instead of moving its tensors to the CPU. For `max`, `min` and `clamp`, the entries compute the
+IEEE 754-2019 maximum and minimum as the CPU tape does (these propagate a NaN and order `-0` below
+`+0`), and their gradients follow the CPU rules.
 
 Attention materializes full score and probability matrices, so its memory use is quadratic in
 sequence length. It does not select a fused attention implementation.
 
-We can also run our own Lean calculations on GPU, including arithmetic in configured binary
-formats such as binary128. Supported calculations record values and gradients on the same tape
-without narrowing them. The [custom computations example]({{ '/examples/custom-computations/' | relative_url }})
-shows how to try this and which operations we can record. These formats do not extend the dtype
-support of LibTorch's model operators.
+We can also run our own Lean calculations on GPU, including arithmetic in configured binary formats
+such as binary128. Supported calculations record values and gradients on the same tape without
+narrowing them (the [custom computations
+example]({{ '/examples/custom-computations/' | relative_url }}) shows how to try this and which
+operations we can record). These formats don't extend the dtype support of LibTorch's model
+operators.
 
 ## Determinism
 
@@ -59,17 +66,16 @@ Floating-point addition is not associative, so a reduction's evaluation order ca
 Request strict deterministic algorithms through the typed LibTorch controls:
 
 ```lean
-import NN.Runtime
+import TorchLean.CUDA.LibTorch.Controls
 
 def enableDeterminism : IO Unit :=
-  Runtime.Autograd.LibTorch.setDeterministic true
+  TorchLean.LibTorch.setDeterministic true
 ```
 
 `setDeterministic : Bool → IO Unit` checks the native setting and disables convolution
 benchmarking. A subsequent operation fails if the SDK cannot meet the request.
-Use this IO setter from application code with `import NN.Runtime`.
 
-The same policy can be selected at process startup:
+You can also select the same policy at process startup:
 
 ```bash
 TORCHLEAN_CUDA_DETERMINISTIC_REDUCTIONS=1 \

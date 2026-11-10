@@ -1,17 +1,21 @@
 import VersoManual
-import NN.Verification.Builtin.Proved
-import NN.MLTheory.CROWN.Proofs.GraphCertSoundness
-import NN.MLTheory.CROWN.Proofs.GraphRunibpEndToEnd
-import NN.MLTheory.CROWN.Proofs.GraphCrownCertSoundness
-import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness
-import NN.MLTheory.CROWN.Proofs.GraphAlphaCrownTransferSoundness.EndToEnd
-import NN.Verification.Cert.CROWNNodeCert
-import NN.Verification.Cert.FiniteArtifactSemantics
-import NN.IR.ShapeSoundness
+import TorchLean.Verify.CROWN.Arithmetic
+import TorchLean.NN.IR.Builder
+import TorchLean.Verify.Certificate.CROWNNode
+import TorchLean.Verify.Certificate.FiniteArtifact.Semantics
+-- The shape contracts of the matrix product and concatenation examples below.
+import TorchLean.NN.IR.OpContracts
+-- The bound theorems quoted below: the IBP certificate, the rounded interval pass, the forward
+-- α-CROWN pass and the backward CROWN queries on graphs of registered operators.
+import TorchLean.Verify.CROWN.Op.Certify
+import TorchLean.Verify.CROWN.Op.Alpha
+import TorchLean.Verify.CROWN.Op.BackwardRun
+import TorchLean.Verify.CROWN.Op.CertSoundness
 -- The worked two-layer example below writes its input corners as tensor literals.
-import NN.Tensor.Internal.Elab.TensorLiteral
+import TorchLean.Tensor.Literal
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
+import TorchLean.NN.Session.Random
 
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
@@ -20,11 +24,9 @@ open Verso.Genre.Manual.InlineLean
 -- code narrow enough to read in a sidebar. Opening the namespaces here lets every `#check`
 -- below fit on one line without losing any information: a printed signature always spells
 -- out the fully qualified name of everything it mentions.
-open NN.Verification.Builtin.Proved.Correctness
-open NN.MLTheory.CROWN.Graph.CertSoundness
-open NN.MLTheory.CROWN.Graph.CrownCertSoundness
-open NN.MLTheory.CROWN.Graph.AlphaCrownTransferSoundness
-open NN.Verification.Cert
+open TorchLean.CROWN.Op
+open TorchLean.Certificate
+open TorchLean.CROWN.Graph (EnclosesAtInput AlphaOK)
 
 -- The soundness statements printed below are wider than the 100 columns this file allows, so their
 -- expected output is rewrapped by hand and the blocks ask for `whitespace := lax`, which compares
@@ -39,54 +41,54 @@ open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 tag := "verification"
 %%%
 
-Consider a classifier with two inputs and two possible labels. Give it the point `[1.5, 0.0]`,
-and it returns one score for class zero and another for class one. The larger score determines the
+Consider a classifier with two inputs and two possible labels. Give it the point `[1.5, 0.0]` and
+it returns two scores (one for class zero, one for class one), and the larger score determines the
 prediction. We can evaluate the model at this point and see which class wins. We can also move the
 input a little and evaluate it again. Both computations tell us what happened at the points we
-chose; neither tells us what happens at every nearby point.
+chose, but neither tells us what happens at every nearby point.
 
-That distinction matters when the input is a measurement. Suppose each coordinate may differ by
-up to `0.10` from its recorded value. The possible inputs form a square around `[1.5, 0.0]`.
-If the classifier chooses the same label throughout that square, this particular uncertainty
-cannot change its decision. If there is a decision boundary inside the square, an input change
-within our stated tolerance may cross it. Small input changes can alter classifier predictions,
-as {Informal.citet szegedy2014}[] demonstrated; evaluating a finite collection of perturbations
+That distinction matters when the input is a measurement. Suppose each coordinate may differ by up
+to `0.10` from its recorded value. Then the possible inputs form a square around `[1.5, 0.0]`. If
+the classifier chooses the same label throughout that square, this particular uncertainty can't
+change its decision. But if there's a decision boundary inside the square, an input change within
+our stated tolerance may cross it. Small input changes can alter classifier predictions, as
+{Informal.citet szegedy2014}[] demonstrated, and evaluating a finite collection of perturbations
 leaves open what happens between them.
 
 Neural network verification asks whether a specified property holds for all inputs in a specified
-set. Local classification robustness is one such property. Others concern output ranges,
-monotonicity, or an inequality used by a controller. The model, the input set, and the property
-all belong to the statement: verifying one square around one point does not establish the same
-claim everywhere, and preserving a prediction does not show that the prediction is the correct
-label in the first place.
+set. Local classification robustness is one such property (others concern output ranges,
+monotonicity, or an inequality used by a controller). The model, the input set, and the property
+all belong to the statement: verifying one square around one point doesn't establish the same claim
+everywhere, and preserving a prediction doesn't show that the prediction is the correct label in
+the first place.
 
-I'll start with a classifier because its property is easy to read from the outputs. There are
-only two scores to compare, and the same comparison extends directly to more classes. Let `f`
-return the classifier's logits, let `X` be the input region, and let `y` and `j` be the intended
-and competing classes. A logit is a score before a probability normalization; it may be negative.
+I'll start with a classifier because its property is easy to read from the outputs: there are only
+two scores to compare, and the same comparison extends to more classes. Let `f` return the
+classifier's logits (a logit is a score before a probability normalization, and it may be
+negative), let `X` be the input region, and let `y` and `j` be the intended and competing classes.
 To show that class `y` stays ahead of class `j` throughout the region, we seek
 
 $$`\forall x\in X,\qquad f_y(x)-f_j(x)>0.`
 
-The subtraction measures the pairwise margin. A positive lower bound on that margin would settle
-the claim, provided it refers to the intended model, input region, and arithmetic. Each of those
-choices needs an explicit connection to the computation: lowering must preserve the model, the
-bound procedure must enclose the graph's values, and accepted certificate data must satisfy the
-bound theorem's premises. Rounded execution adds an approximation argument.
+Subtracting the two logits measures the pairwise margin. A positive lower bound on that margin
+would settle the claim, provided it refers to the intended model, input region, and arithmetic.
+Each of those choices must be tied to the computation: lowering must preserve the model, the bound
+procedure must enclose the graph's values, and accepted certificate data must satisfy the bound
+theorem's premises. Rounded execution adds an approximation argument.
 
-For the two-class model, this is one inequality. With ten classes, it is nine inequalities,
-one against each competitor. Strict positivity also removes a possible tie: the conclusion does
-not depend on which class an implementation selects when two scores are equal. The rest of the
-work is finding a lower bound that applies to the whole input region and justifying how it was
-computed. The training run below gives us a concrete model and margin to follow.
+For the two-class model, this is one inequality. With ten classes, it's nine inequalities, one
+against each competitor. Strict positivity also removes a possible tie: the conclusion doesn't
+depend on which class an implementation selects when two scores are equal. What's left is finding a
+lower bound that applies to the whole input region and justifying how it was computed. The training
+run below gives us a concrete model and margin to follow.
 
 # Classifier Training And Verification
 
-The maintained workflow trains a `2 -> 8 -> 2` ReLU classifier: two input coordinates, eight
-hidden units, and two output scores. Its eight training examples separate by the sign of the
-first coordinate. Positive first coordinates have class-zero labels; negative first coordinates
-have class-one labels. Training fits that distinction with one-hot cross-entropy and SGD.
-Verification then fixes the resulting weights and asks about the model that was actually trained:
+The maintained workflow trains a `2 -> 8 -> 2` ReLU classifier: two input coordinates, eight hidden
+units, and two output scores. Its eight training examples separate by the sign of the first
+coordinate. Positive first coordinates have class-zero labels, and negative ones have class-one
+labels. Training fits that distinction with one-hot cross-entropy and SGD. Verification then fixes
+the resulting weights and asks about the model that was actually trained:
 
 ```
 -- Keep the parameters produced by these 120 training steps.
@@ -95,14 +97,13 @@ let trained ← trainer.train dataset { steps := 120 }
 -- the input box.
 let report ← trained.verify center
   (radius := 0.10)
-  (norm := linf)
-  (property := topLabel 0)
+  (property := .topLabel 0)
 report.printSummary
 ```
 
 Tensor shapes use the public notation: `[]` for a scalar tensor, `[n]` for a vector, and `[m, n]`
-for a matrix. The call above does not expose recursive shape constructors, graph nodes, flat boxes,
-or parameter stores.
+for a matrix. Nothing in the call above exposes recursive shape constructors, graph nodes, flat
+boxes, or parameter stores.
 
 Run it with either maintained CPU arithmetic mode:
 
@@ -114,42 +115,41 @@ scripts/lake.sh exe verify -- torchlean-mlp-workflow
 scripts/lake.sh exe verify -- torchlean-mlp-workflow --arithmetic ieee
 ```
 
-The following illustrative values show how to read an abridged report. Rerun the commands above
-to obtain the current workflow's output; this table does not establish agreement between backends:
+A recorded run of either command printed these report lines, abridged here with the CROWN line
+wrapped. Equal printed values for the two modes don't establish agreement between the backends:
 
 ```terminal +output
-avg_loss(on samples)=0.011495
-prediction at center=[3.252241, -1.435592]
-CROWN lower=[2.956110, -1.593903] upper=[3.548373, -1.277281] label=0
-  margin=4.233391 certified=true
+avg_loss(on samples)=0.010122
+prediction at center=[2.016916, -3.001449]
+CROWN radius=0.100000 lower=[1.781388, -3.287453] upper=[2.229471, -2.722632]
+  label=0 margin=4.504020 certified=true
 ```
 
-The report lower-bounds class zero by `2.956110` and upper-bounds its only competitor by
-`-1.277281`. Their difference is the positive reported margin `4.233391`, so the chosen bound pass
-reports `certified=true` for the requested input box. The semantic and arithmetic bridges below
-are required before interpreting that report as a theorem.
+The report lower-bounds class zero by `1.781388` and upper-bounds its only competitor by
+`-2.722632`. Their difference is the positive reported margin `4.504020`, so the chosen bound pass
+reports `certified=true` for the requested input box. Interpreting that report as a theorem
+requires the semantic and arithmetic bridges below.
 
 The loss describes fitting the training examples. A small training loss says nothing by itself
-about the entire perturbation region. The `prediction at center` line is a
-single forward evaluation: `1.885023` beats `-3.156008`, so the center receives class zero.
-The `lower` and `upper` arrays answer a different question. Their entries describe bounds on
-each score as the input varies. To protect class zero, the unfavorable comparison uses its
-lowest allowed score and class one's highest allowed score. Comparing the two center scores
-would miss that variation.
+about the entire perturbation region. A single forward evaluation produces the
+`prediction at center` line: `2.016916` beats `-3.001449`, so the center receives class zero. The
+`lower` and `upper` arrays answer a different question. Their entries describe bounds on each score
+as the input varies. To protect class zero, the unfavorable comparison uses its lowest allowed score
+and class one's highest allowed score. Comparing the two center scores would miss that variation.
 
-Here `linf` means that each input coordinate may move independently by at most the radius.
-In real coordinates the intended region is `[1.4, 1.6] × [-0.1, 0.1]`. This geometric meaning
-is part of the verification request; the representation and rounding of its endpoints still
-belong to the arithmetic obligations below.
+The input region is the L∞ ball of radius `0.10` around the center: each input coordinate may move
+independently by at most the radius. In real coordinates the intended region is
+`[1.4, 1.6] × [-0.1, 0.1]`. This geometric meaning is part of the verification request, while the
+representation and rounding of its endpoints belong to the arithmetic obligations below.
 
 The reported margin subtracts the competitor's upper endpoint from class zero's lower endpoint.
 Using the displayed values gives:
 
 ```lean (name := marginEval)
 -- Use the unfavorable endpoint for each of the two classes.
-def certifiedLower : Float := 2.956110
+def certifiedLower : Float := 1.781388
 
-def competitorUpper : Float := -1.277281
+def competitorUpper : Float := -2.722632
 
 -- Reconstruct the margin from the six-decimal values in the
 -- report.
@@ -157,11 +157,11 @@ def competitorUpper : Float := -1.277281
 ```
 
 ```leanOutput marginEval
-4.233391
+4.504020
 ```
 
-The flag tests the computed margin. The six-decimal endpoints above have also been rounded for
-display, so subtracting their printed values checks the displayed arithmetic, not the exact
+The flag tests the computed margin. Since the six-decimal endpoints above have also been rounded
+for display, subtracting their printed values checks the displayed arithmetic, not the exact
 internal margin or a theorem about every point in the box.
 
 A proof of the reported property would connect the source model to the lowered graph, show that
@@ -169,94 +169,64 @@ the propagated boxes contain its outputs throughout the input region, and use th
 to compare the two logits. For native binary32 execution, the same argument also needs a bound on
 how far its outputs can move from those semantic values.
 
-The obligations also localize maintenance. A lowering change affects the source-to-graph argument;
-a new CROWN activation affects bound propagation; and a CUDA deployment claim requires the native
-arithmetic link in addition to the real-valued theorem.
+These obligations also localize maintenance. A lowering change affects the source-to-graph
+argument, a new CROWN activation affects bound propagation, and a CUDA deployment claim requires
+the native arithmetic link in addition to the real-valued theorem.
 
 # Semantic Target And Graph Boundary
 
-The verifier operates on the canonical `NN.IR.Graph`. An interval or affine form is meaningful only
-relative to a denotation of that same graph, parameter store, and input box. A lowering theorem is
-therefore part of a source-model claim.
+TorchLean's verifier lowers a model to a graph of registered operators (`TorchLean.IR.Graph`) and a
+payload of its constants (`TorchLean.IR.Payload`), the fields `graph` and `payload` of
+`TorchLean.IR.LoweredModel`, and runs its bound passes on that graph. An interval or affine form is
+meaningful only relative to the runs of that same graph and payload (`TorchLean.IR.Graph.run`) on
+the inputs in that same box. So a lowering theorem is part of a source-model claim.
 
-The forward correspondence is a lowering theorem. The typed first-order
-{src "NN/Verification/Builtin/Proved.lean"}[proved forward fragment]
-lowers `NN.Verification.Builtin.Proved.ForwardProgram` values. Its constructors cover constants,
-parameters, arithmetic, ReLU, `exp`, `log`, inverse, matrix products, reshapes and
-two-axis transposes,
-softmax along any valid axis, axis-parametrized LayerNorm, linear and convolution layers, and MSE
-loss.
-`Correctness.lowerForwardProgramToIR_wellFormed` proves structural well-formedness, while
-`Correctness.runForwardIR_eq_evalForward` proves equality with the typed program evaluator.
+`TorchLean.IR.lowerForward` records a TorchLean program as a typed graph (`TorchLean.IR.OpGraph`)
+and builds its operator graph. No theorem relates the recorded graph to the source program, but the
+lowered graph runs as the recorded graph
+({src "TorchLean/NN/IR/Lowering.lean"}[`TorchLean.IR.lowerForward_eq_ok`]: on every input the run
+succeeds with the typed graph's value at the output).
 
-A smaller fact sits underneath it: `NN.IR.Graph.checkShapes_sound` proves that the shapes
-declared in an accepted graph are the shapes its denotation computes.
+A smaller fact sits beside it: `TorchLean.IR.Graph.run_ports` proves that the values a successful
+run computes at a node are at the ports the node declares (`TorchLean.IR.Node.outs`), so each has
+its declared element sort and shape.
 
-Both are Lean semantic statements over an abstract scalar `Context`. They are not statements that a
-PyTorch module, CUDA kernel, or vendor library agrees with the graph. General API lowering also
-does not inherit the typed-fragment theorem merely because it returns the same IR type.
+Both are Lean semantic statements over an abstract scalar `Context`. Neither says that a PyTorch
+module, CUDA kernel, or vendor library agrees with the graph.
 
-The following signatures are checked against the imported `NN` modules when the page builds.
-They expose the scalar type, accepted fragment, and success conditions needed to apply each result.
+When the page builds, Lean checks the following signature against the imported TorchLean modules.
+That signature exposes the scalar type and the success conditions needed to apply the result.
 
 ```lean (name := loweringThms)
--- The typed source program always lowers to a structurally
--- valid graph.
-#check @lowerForwardProgramToIR_wellFormed
--- Its graph evaluation agrees with evaluation of the
--- original typed program.
-#check @runForwardIR_eq_evalForward
--- Successful shape checking agrees with the shapes of
--- successfully computed values.
-#check @NN.IR.Graph.checkShapes_sound
+-- The values a successful run computes at a node are at
+-- the node's ports.
+#check @TorchLean.IR.Graph.run_ports
 ```
 ```leanOutput loweringThms (whitespace := lax)
-@lowerForwardProgramToIR_wellFormed : ∀ {α : Type} [inst : TorchLean.Storage α] [inst_1 :
-  Context α]
-  {paramShapes : List Spec.Shape} {inShape outShape : Spec.Shape}
-  (p : NN.Verification.Builtin.Proved.ForwardProgram α paramShapes inShape outShape)
-  (params : TorchLean.TensorPack α paramShapes),
-  (NN.Verification.Builtin.Proved.lowerForwardProgramToIR p params).graph.wellFormed = true
-```
-```leanOutput loweringThms (whitespace := lax)
-@runForwardIR_eq_evalForward : ∀ {α : Type} [inst : TorchLean.Storage α] [inst_1 : Context α]
-  {paramShapes : List Spec.Shape} {inShape outShape : Spec.Shape}
-  (p : NN.Verification.Builtin.Proved.ForwardProgram α paramShapes inShape outShape)
-  (params : TorchLean.TensorPack α paramShapes) (x : TorchLean.Tensor α inShape),
-  NN.Verification.Builtin.runForwardIR (NN.Verification.Builtin.Proved.lowerForwardProgramToIR
-    p params) x =
-    NN.Verification.Builtin.Proved.evalForward p params x
-```
-```leanOutput loweringThms (whitespace := lax)
-@NN.IR.Graph.checkShapes_sound : ∀ {α : Type} [inst : TorchLean.Storage α] [inst_1 : Context α]
-  (g : NN.IR.Graph)
-  (payload : NN.IR.Payload α) (input : Spec.SomeTensor α) (vals : Array (Spec.SomeTensor α)),
-  g.checkShapes = Except.ok () →
-    g.denoteAll payload input = Except.ok vals →
-      ∀ (i : ℕ) (hi : i < g.nodes.size) (hiv : i < vals.size), vals[i].shape = g.nodes[i].outShape
+@TorchLean.IR.Graph.run_ports : ∀ {α : Type} [inst : TorchLean.Storage α]
+  [inst_1 : TorchLean.Context α] [inst_2 : TorchLean.Op.Capabilities α]
+  {g : TorchLean.IR.Graph} {payload : TorchLean.IR.Payload α}
+  {inputs : List (TorchLean.Op.Value α)} {values : Array (List (TorchLean.Op.Value α))},
+  g.run payload inputs = Except.ok values →
+    ∀ {j : ℕ} {n : TorchLean.IR.Node} {vs : List (TorchLean.Op.Value α)},
+      g.nodes[j]? = some n → values[j]? = some vs → List.map Sigma.fst vs = n.outs
 ```
 
-Each `#check` prints a declaration's type. It does not execute the model or apply the theorem to
-this classifier. In the first output, read everything before the final expression as the data
-the theorem accepts; the expression ending in `wellFormed = true` is what it establishes. The
-second output ends in an equality between two evaluators, both given the same parameters and
-input. That equality is the link needed when a bound on one representation is to say something
-about the other.
+A `#check` prints a declaration's type. It doesn't execute the model or apply the theorem to this
+classifier.
 
-In these signatures, `∀` means “for every,” `{...}` contains arguments Lean can often infer, and
+In this signature, `∀` means “for every,” `{...}` contains arguments Lean can often infer, and
 `[...]` requests an interface instance, such as the scalar operations in `Context α`. An arrow
 `P → Q` says that a proof of `P` yields a proof of `Q`. Long namespaces tell Lean which definition
-is meant; the important reading order is the objects, then the hypotheses, then the conclusion.
-For example, the last output needs successful shape checking and successful denotation before it
-says anything about a value's shape.
+is meant, but the important reading order is the objects, then the hypotheses, then the conclusion.
+Here the theorem needs a successful run before it says anything about the ports of a node's values.
 
-The typed-program results need no additional success premise: the program constructors, shapes,
-and scalar interfaces already restrict the objects they accept. The equality includes errors, so a
-raw logarithm of a nonpositive input fails in the same way on both sides.
-
-Shape soundness has a different role. Once shape checking and denotation both succeed, it identifies
-the shape of each computed value with the declaration at the corresponding node. It supplies no
-existence result for the value table: successful denotation is an assumption.
+The port theorem has a different role. Once a run succeeds, it identifies the port of each
+computed value, its element sort and shape, with the port its node declares
+(`TorchLean.IR.Node.outs`). It has no premise about the structural check `TorchLean.IR.Graph.check`:
+the evaluator returns the values of a successful node at the ports the node declares
+(`TorchLean.IR.Node.eval_ports`), whether or not the graph is well formed. It supplies no existence
+result for the value table: a successful run is an assumption.
 
 # IBP
 
@@ -269,7 +239,7 @@ the usual sign split gives
 $$`\ell_y=W^+\ell+W^-u+b,\qquad
 u_y=W^+u+W^-\ell+b,`
 
-where $`W^+=\max(W,0)` and $`W^-=\min(W,0)`. Monotone activations transform endpoints; ReLU maps
+where $`W^+=\max(W,0)` and $`W^-=\min(W,0)`. Monotone activations transform endpoints: ReLU maps
 $`[\ell,u]` to $`[\max(0,\ell),\max(0,u)]`. Elementwise multiplication needs all endpoint products.
 
 For one weighted input, a nonnegative weight preserves the order of the endpoints and a
@@ -288,8 +258,8 @@ theorem weight_eq_max_add_min (w : ℝ) :
 
 example (w x l u b : ℝ) (hl : l ≤ x) (hu : x ≤ u) :
     max w 0 * l + min w 0 * u + b ≤ w * x + b := by
-  -- Positive weights use the lower input endpoint; negative
-  -- weights use the upper.
+  -- Positive weights use the lower input endpoint, and
+  -- negative weights use the upper.
   have h1 : max w 0 * l ≤ max w 0 * x :=
     mul_le_mul_of_nonneg_left hl (le_max_right _ _)
   have h2 : min w 0 * u ≤ min w 0 * x :=
@@ -314,229 +284,233 @@ example (w x l u b : ℝ) (hl : l ≤ x) (hu : x ≤ u) :
         linarith
 ```
 
-The graph proof applies local enclosure arguments like these at each node in topological order.
-The induction maintains enclosure for every earlier value, so a node can use the bounds on its
-parents. Tensor dimensions, parameter lookup, and missing values must also agree between the bound
-pass and the semantic evaluator. Directed floating arithmetic adds the obligation that rounded
-endpoints remain on the enclosing side of the exact result.
+The graph proof applies local enclosure arguments like these at each node in topological order. Its
+induction maintains enclosure for every earlier value, so a node can use the bounds on its parents.
+Tensor dimensions, parameter lookup, and missing values must also agree between the bound pass and
+the semantic evaluator. Directed floating arithmetic adds the obligation that rounded endpoints
+remain on the enclosing side of the exact result.
 
-The generic real soundness theorem is `cert_encloses_semantics`. It requires:
+The bound passes run on graphs of registered operators (`TorchLean.IR.Graph`). A lowered model's
+graph is one (the field `graph` of `TorchLean.IR.LoweredModel`), with its weights and biases as
+constant nodes. The generic real soundness theorem is `Op.certLocalOK_encloses`. It requires:
 
-- `TopoSorted g`;
-- `Supported g`;
-- exact local certificate consistency `CertLocalOK`;
-- exact local value consistency `SemLocalOK`;
-- `InputsEnclosed`.
+- exact local certificate consistency `CertLocalOK`
+- exact local value consistency `SemLocalOK`: the value table is a fixpoint of the graph's node
+  evaluation
+- seed boxes that enclose the graph inputs
 
-It concludes that each available certificate box encloses the matching semantic value. The current
-`Supported` predicate contains input, constant, detach, addition, subtraction, elementwise
-multiplication, ReLU, linear, matrix multiplication, concatenation, convolution, tanh, sigmoid,
-softplus, safe logarithm, sine, and cosine nodes.
+From these premises the theorem concludes that each certificate box encloses the value of its node
+in the table. The checker boxes input and constant nodes, the operators of kind `shared` in the
+table `Op.ruleKind`, and tanh, sigmoid, sine, and cosine. A node of another operator has no
+certified box, so the theorem needs no assumption on the operators or on their order.
 
-The proof-side real evaluator has the stronger end-to-end theorem
-`runIBP?_encloses_evalGraphRec`. It proves that the particular real `runIBP?` construction encloses
-`evalGraphRec`, under topological order, supported operations, and enclosed inputs.
+`Op.certify` computes the certificate node by node, and on a sorted graph `Op.certify_localOK`
+proves that it satisfies `CertLocalOK`. `Op.semLocalOK_iff_run` proves that a value table is a
+fixpoint of the node evaluation exactly when it holds the outputs of a successful run, so the
+enclosure holds in every successful real run whose graph inputs the seed boxes contain. Neither
+`Op.certLocalOK_encloses` nor `Op.semLocalOK_iff_run` has a sorting premise, since the evaluation
+of a node reads only the nodes before it.
 
-The executable engine has a separate theorem on a named core. `runIBP_eq_runIBP?` proves that the
-engine's `runIBP` computes exactly the proof-side pass on graphs whose nodes are all in
-`EngineCore` (input, constant, detach, addition, subtraction, elementwise multiplication, ReLU,
-linear, matrix multiplication, concatenation, convolution, softplus, and safe logarithm),
-provided the semantic-support guard
-succeeds and the proof-side pass produced a box at every node (`IBPCovers`).
-`runIBP_encloses_evalGraphRec` then gives enclosure
-for the executable engine directly. Both are stated over `ℝ`; operations outside `EngineCore`
-and every rounded scalar remain outside these two theorems.
+The executable pass `Op.runIBP` has its own theorem at every scalar with lawful endpoint
+operations. `Op.Directed.encloses_of_run` requires `LawfulBoundOps` and `LawfulNonlinearBoundOps`,
+a real payload holding the real value of each rounded constant (`RealConsts`), seed boxes that
+enclose the graph inputs, and a successful real run. It concludes that every box the pass returns
+encloses the flat value of its node in that run. There is no operator restriction: every operator
+the pass boxes has a proved rule (`Op.Directed.supported_of_ibp?`). Both the reals and the
+rounded-real `FP32` model satisfy these scalar requirements.
 
-Rounded endpoints have the full forward theorem `runIBP_encloses_all` in
-{src "NN/MLTheory/CROWN/Proofs/DirectedIBPFullSoundness.lean"}[`DirectedIBPFullSoundness`].
-It requires `LawfulBoundOps`, `LawfulNonlinearBoundOps`, and `LawfulMinBoundOps`, together with
-a nonnegative real interpretation of the backend's fixed `normalizationEpsilon`. The reals and
-the rounded-real `FP32` model satisfy these scalar requirements.
+Since the run supplies the real values, no equation at a node is assumed: the operators' own
+semantics fix the coordinate maps, reductions, normalization formulas, and convolutions that the
+boxes must enclose. Supported rules include convolution, binary matrix multiplication, structural
+operations, and normalization, and the proof derives their intermediate enclosures by induction. An
+operator without an interval rule, invalid shapes, missing constants, and unavailable arithmetic
+transfers can leave an entry as `none`, but the theorem establishes enclosure whenever a box is
+returned.
 
-Every box the executable `runIBP` returns encloses the real value of its node, provided parents
-precede their consumers, the seed boxes contain the real inputs, and the real point satisfies
-`RealNodeEquation` at each node. These equations use the actual coordinate maps, reductions,
-normalization formulas, and real interpretations of stored parameters; convolution uses the
-exact spatial operation. Supported transfers include convolution, binary matrix multiplication,
-structural operations, and normalization. The proof derives their intermediate enclosures by
-induction.
-Invalid shapes, missing parameters, and unavailable arithmetic transfers can still leave an entry
-as `none`; the theorem establishes enclosure whenever a box is returned.
-Grouped scaled contractions have a separate numerical-certificate range rule; the direct IBP and
-CROWN passes currently reject them.
-
-Random nodes use the actual real `Spec.Random.uniform` and `Spec.Random.mask` values at
-`Spec.Random.keyOf seed id` and the node's row-major coordinate. Uniform nodes have no parents;
-a mask has one existing scalar parent supplying its keep probability.
-The lemmas in {src "NN/Proofs/Probability/RandomSupport.lean"}[`RandomSupport`] prove that each
+Random operators carry their key as an attribute, and the pass bounds them by their range. Lemmas
+in {src "TorchLean/NN/Random/Range.lean"}[`Random.Range`] prove that each
 uniform value lies in $`[0,1)` and each mask value is zero or one, with keep probabilities zero and
-one giving the corresponding constant masks. Support follows from these seeded source equations.
-Agreement with a separate rounded or native random implementation remains a numerical
-correspondence question.
-These are the IR's own random-node semantics. Model lowering currently rejects runtime random
-draws because their keys count random calls rather than IR nodes; it must not silently substitute
-a different mask. Deterministic evaluation-mode dropout does not draw a mask.
+one giving the corresponding constant masks. Agreement with a separate rounded or native random
+implementation remains a numerical correspondence question. Model lowering rejects runtime random
+draws because their keys count random calls, not IR nodes. Lowering must not silently substitute a
+different mask. Deterministic evaluation-mode dropout doesn't draw a mask.
 
-`GraphPoint.ofRunIBPAll` feeds these bounds to the backward proof and derives its node equations
-from `RealNodeEquation`. For checked convolution, positive dilation makes each affine coefficient
-a stored weight or zero, so interpreting that coefficient agrees with the real spatial operation.
-This step does not assume that ordinary rounded addition is exact. Structural operations use the
-same coordinate maps in both directions.
+CROWN's backward theorems start from the same run: `Op.graphPoint_of_run` builds their
+real point from it, and `Op.equation_of_run` gives every operator node its real
+equation. At a convolution with constant kernel and bias, the backward pass applies the transposed
+convolution rounded outward, which encloses the real adjoint (`Op.convBack?_sound`).
+Structural operations use the same coordinate maps in both directions.
 
-The public theorem `backwardObjectiveBox_encloses_runIBP_all` in
-{src "NN/MLTheory/CROWN/Proofs/DirectedBackwardEvaluation.lean"}[`DirectedBackwardEvaluation`]
-then connects successful forward IBP, directed backward propagation, and final interval evaluation.
-It requires exact affine reassociation to be disabled, as it is for `FP32`,
-consistent node identifiers, valid input and output dimensions, an objective of the output
-dimension, and an enclosing input box. Every successful `.ok` query contains the real objective.
-No intermediate enclosure or additional backward node equation is assumed.
+`Op.backwardObjectiveBox?_of_run` in
+{src "TorchLean/Verify/CROWN/Op/BackwardRun.lean"}[`BackwardRun`] then connects interval
+propagation, directed backward propagation, and final interval evaluation. It requires an interval
+table whose boxes enclose the run, such as the boxes of `Op.runIBP` (`Op.runIBP_encloses`),
+an objective of the output's width, and an input box enclosing graph input `0`. Every successful
+`.ok` query contains the real objective. No intermediate enclosure or node equation is assumed.
+`Op.outputBoxCROWN?_of_run` is the same statement for the CROWN output box.
 
-For a graph in the `ibpForwardSupported` core, `runIBP_encloses`, `GraphPoint.ofRunIBP`, and
-`backwardObjectiveBox_encloses_runIBP` use `NodeEquation` directly. These theorems need no
-`LawfulMinBoundOps` instance or normalization-epsilon assumption, since the core excludes the
-operations that require them.
+These theorems are about runs of the operator graph. For a lowered model,
+`TorchLean.IR.lowerForward_eq_ok` identifies the lowered graph and payload with those that
+`TorchLean.IR.OpGraph.toOp` builds from the recorded typed graph, and
+`TorchLean.IR.OpGraph.eval_ok_of_admissible` proves that the run of such a graph and payload
+succeeds on every input tensor of the input shape.
 
 ```lean (name := ibpThms)
--- Locally consistent real boxes enclose the corresponding
--- semantic values.
-#check @cert_encloses_semantics
--- Instantiate those boxes with the proof-side interval
--- propagation pass.
-#check @runIBP?_encloses_evalGraphRec
--- On the supported engine core, the executable real pass
--- equals that construction.
-#check @runIBP_eq_runIBP?
--- Transfer enclosure to the executable real pass under its
--- coverage hypotheses.
-#check @runIBP_encloses_evalGraphRec
+-- Locally consistent real boxes enclose the values of
+-- a fixpoint of the node evaluation.
+#check @TorchLean.CROWN.Op.certLocalOK_encloses
+-- The certificate the checker's step computes is locally
+-- consistent on a sorted graph.
+#check @TorchLean.CROWN.Op.certify_localOK
+-- The fixpoints are the outputs of the successful runs.
+#check @TorchLean.CROWN.Op.semLocalOK_iff_run
+-- The executable interval pass at a lawful scalar.
+#check @TorchLean.CROWN.Op.Directed.encloses_of_run
 ```
 ```leanOutput ibpThms (whitespace := lax)
-cert_encloses_semantics : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
-  NN.MLTheory.CROWN.Graph.ParamStore ℝ)
-  (cert : Array (Option (NN.MLTheory.CROWN.FlatBox ℝ))) (inputs : Std.HashMap ℕ Val) (vals :
-    Array (Option Val)),
-  TopoSorted g →
-    Supported g →
-      CertLocalOK g ps cert →
-        SemLocalOK g ps inputs vals →
-          InputsEnclosed g ps inputs →
-            ∀ id < g.nodes.size,
-              match cert[id]!, vals[id]! with
-              | some B, some v => EnclosesBox B v
-              | x, x_1 => True
+certLocalOK_encloses : ∀ (G : TorchLean.IR.Graph) (P : TorchLean.IR.Payload ℝ)
+  (seeds : ℕ → Option (TorchLean.CROWN.FlatBox ℝ)) (cert : Array (Option
+      (TorchLean.CROWN.FlatBox ℝ)))
+  (inputs : List (TorchLean.Op.Value ℝ)) (values : Array (List (TorchLean.Op.Value ℝ))),
+  CertLocalOK G P seeds cert →
+    SemLocalOK G P inputs values →
+      (∀ (id k : ℕ) (p : TorchLean.Port),
+          G.nodes[id]? = some (TorchLean.IR.Node.input k p) →
+            ∀ (B : TorchLean.CROWN.FlatBox ℝ),
+              seeds id = some B →
+                ∀ (x : TorchLean.Op.Value ℝ) (y : TorchLean.Port.Carrier ℝ p)
+                  (v : TorchLean.CROWN.Graph.FlatTensor ℝ),
+                  inputs[k]? = some x → p.read x = Except.ok y → flatOf ⟨p, y⟩ = some v →
+                      Directed.Encloses B v) →
+        ∀ id < G.nodes.size,
+          ∀ (B : TorchLean.CROWN.FlatBox ℝ) (v : TorchLean.CROWN.Graph.FlatTensor ℝ),
+            cert[id]! = some B → runVal values id = some v → Directed.Encloses B v
 ```
 ```leanOutput ibpThms (whitespace := lax)
-runIBP?_encloses_evalGraphRec : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
-  NN.MLTheory.CROWN.Graph.ParamStore ℝ)
-  (inputs : Std.HashMap ℕ Val),
-  TopoSorted g →
-    Supported g →
-      InputsEnclosed g ps inputs →
-        ∀ id < g.nodes.size,
-          match (runIBP? g ps)[id]!, (evalGraphRec g ps inputs)[id]! with
-          | some B, some v => EnclosesBox B v
-          | x, x_1 => True
+@certify_localOK : ∀ {G : TorchLean.IR.Graph} {P : TorchLean.IR.Payload ℝ} {seeds : ℕ → Option
+    (TorchLean.CROWN.FlatBox ℝ)},
+  TopoSorted G → CertLocalOK G P seeds (certify G P seeds)
 ```
 ```leanOutput ibpThms (whitespace := lax)
-runIBP_eq_runIBP? : ∀ (g : NN.MLTheory.CROWN.Graph) (ps : NN.MLTheory.CROWN.Graph.ParamStore ℝ),
-  TopoSorted g →
-    EngineCore g → g.crownGraphSemanticsSupported ps = true → IBPCovers g (runIBP? g ps) →
-      g.runIBP ps = runIBP? g ps
+@semLocalOK_iff_run : ∀ {α : Type} [inst : TorchLean.Storage α] [inst_1 : TorchLean.Context α]
+  [inst_2 : TorchLean.Op.Capabilities α] {G : TorchLean.IR.Graph} {P : TorchLean.IR.Payload α}
+  {inputs : List (TorchLean.Op.Value α)} {values : Array (List (TorchLean.Op.Value α))},
+  SemLocalOK G P inputs values ↔ G.run P inputs = Except.ok values
 ```
 ```leanOutput ibpThms (whitespace := lax)
-runIBP_encloses_evalGraphRec : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
-  NN.MLTheory.CROWN.Graph.ParamStore ℝ)
-  (inputs : Std.HashMap ℕ Val),
-  TopoSorted g →
-    EngineCore g →
-      IBPCovers g (runIBP? g ps) →
-        InputsEnclosed g ps inputs →
-          ∀ id < g.nodes.size,
-            ∀ (B : NN.MLTheory.CROWN.FlatBox ℝ) (v : Val),
-              (g.runIBP ps)[id]! = some B → (evalGraphRec g ps inputs)[id]! = some
-                v → EnclosesBox B v
+@Directed.encloses_of_run : ∀ {α : Type} [inst : TorchLean.Storage α] [inst_1 : TorchLean.Context α]
+  [inst_2 : TorchLean.CROWN.BoundOps α] [inst_3 : TorchLean.CROWN.LawfulBoundOps α]
+  [inst_4 : TorchLean.CROWN.NonlinearBoundOps α] [TorchLean.CROWN.LawfulNonlinearBoundOps α]
+      (G : TorchLean.IR.Graph)
+  (P : TorchLean.IR.Payload α) (Pr : TorchLean.IR.Payload ℝ) (seeds : ℕ → Option
+      (TorchLean.CROWN.FlatBox α))
+  (inputs : List (TorchLean.Op.Value ℝ)) (values : Array (List (TorchLean.Op.Value ℝ))),
+  Directed.RealConsts Pr P →
+    (∀ (id k : ℕ) (p : TorchLean.Port),
+        G.nodes[id]? = some (TorchLean.IR.Node.input k p) →
+          ∀ (B : TorchLean.CROWN.FlatBox α),
+            seeds id = some B →
+              ∀ (x : TorchLean.Op.Value ℝ) (y : TorchLean.Port.Carrier ℝ p)
+                  (v : TorchLean.CROWN.Graph.FlatTensor ℝ),
+                inputs[k]? = some x → p.read x = Except.ok y → flatOf ⟨p, y⟩ = some v →
+                    Directed.Encloses B v) →
+      G.run Pr inputs = Except.ok values →
+        ∀ id < G.nodes.size,
+          ∀ (B : TorchLean.CROWN.FlatBox α) (v : TorchLean.CROWN.Graph.FlatTensor ℝ),
+            (runIBP G P seeds)[id]! = some B → runVal values id = some v → Directed.Encloses B v
 ```
 
-The first two conclusions examine a pair of optional entries. Enclosure is asserted only when
-both a box and a semantic value are present; the other cases return `True`. Thus these theorems can
-justify an available bound without promising that the pass produces every bound an application
-needs. `IBPCovers` supplies the separate coverage condition in the executable-engine results.
+The enclosure conclusions assume both entries, a box (`cert[id]! = some B`) and a value
+(`runVal values id = some v`). These theorems therefore justify an available bound without promising
+that the pass produces every bound an application needs.
 
-The names describe the pieces of the graph induction. `TopoSorted` puts a node's parents before
-that node. `Supported` restricts the operations to those with a proved transfer rule.
-`CertLocalOK` says that the stored boxes follow those rules, and `SemLocalOK` says that the stored
-values follow the graph's evaluator. `InputsEnclosed` starts the induction by placing the actual
-input values inside the input boxes. For the classifier, the conclusion we ultimately need is
-enclosure at the output node; these hypotheses explain how the proof can reach that node.
+Each name describes a piece of the graph induction. `CertLocalOK` says that the stored boxes follow
+the checker's rules, and `SemLocalOK` says that the stored values follow the graph's node
+evaluation. The seed premise starts the induction by placing the actual input values inside the
+input boxes. For the classifier, the conclusion we need in the end is enclosure at the output node,
+and these hypotheses explain how the proof can reach that node.
 
-`runIBP_eq_runIBP?` identifies the executable real pass with the proof-side construction under its
-listed guards. Substituting that equality into the proof-side enclosure result gives a theorem
-about the engine. No second arithmetic argument is needed for that substitution.
+At `ℝ` the executable pass and the certificate are also related. On a graph whose every operator
+has the same rule in the pass and in the checker (`SharedOnly`: kind `shared` or `none` in
+`Op.ruleKind`), `Op.runIBP_eq_certify` proves that the pass computes the certificate, so the
+certificate theorems apply to its table. No second arithmetic argument is needed for that
+substitution.
 
 ## IBP On A Two-Layer Affine Network
 
-The theorems establish enclosure, but a box can be sound and too wide to settle the property.
-We can measure that excess width by running the pass on a graph whose exact range we can
-calculate by hand.
+These theorems establish enclosure, but a box can be sound and too wide to settle the property. We
+can measure that excess width by running the pass on a graph whose exact range we can calculate by
+hand.
 
-Consider the map $`x\mapsto (x_0+x_1)-(x_0-x_1)`, written as two affine layers. Composed, it is
-exactly $`2x_1`, so on the unit box $`[-1,1]^2` the exact output range is $`[-2,2]`. The bound
-engine works on IR graphs rather than on layer combinators, so the graph is spelled out node by
-node, and the weights live beside it in a `ParamStore`:
+Consider the map $`x\mapsto (x_0+x_1)-(x_0-x_1)`, written as two affine layers. Composed, it's
+exactly $`2x_1`, so on the unit box $`[-1,1]^2` the exact output range is $`[-2,2]`. Since the
+bound passes work on graphs, not on layer combinators, we spell the graph out node by node with the
+graph builder (`TorchLean.IR.Graph.Builder`) and keep the weights beside it in a payload
+(`TorchLean.IR.Payload`), keyed by the constant nodes that read them:
 
 ```lean
 /-- Two affine layers computing `(x₀+x₁) - (x₀-x₁)`.
-Node 1 produces both intermediate coordinates; node 2
-subtracts them. -/
-def depGraph : NN.IR.Graph :=
-  { nodes :=
-      #[ { id := 0, parents := #[]
-         , kind := .input, outShape := [2] }
-       , { id := 1, parents := #[0]
-         , kind := .linear, outShape := [2] }
-       , { id := 2, parents := #[1]
-         , kind := .linear, outShape := [1] } ] }
+Node 3 produces both intermediate coordinates, and node 6
+subtracts them. Nodes 1, 2, 4 and 5 hold the weights and
+biases. -/
+def depGraph : Except String TorchLean.IR.Graph :=
+  let (b, x) :=
+    ({} : TorchLean.IR.Graph.Builder).input 0 (.value [2])
+  let (b, w1) := b.const (.value [2, 2])
+  let (b, bias1) := b.const (.value [2])
+  let (b, h) := b.op
+    (TorchLean.Op.linear (lead := []) (inDim := 2)
+      (outDim := 2)) [w1, bias1, x]
+  let (b, w2) := b.const (.value [1, 2])
+  let (b, bias2) := b.const (.value [1])
+  let (b, y) := b.op
+    (TorchLean.Op.linear (lead := []) (inDim := 2)
+      (outDim := 1)) ([w2, bias2] ++ h)
+  b.build y.toArray
 
 /-- The input region: the unit box in the sup norm. -/
-def depBox : NN.MLTheory.CROWN.FlatBox Float :=
+def depBox : TorchLean.CROWN.FlatBox Float :=
   { dim := 2, lo := [-1.0, -1.0], hi := [1.0, 1.0] }
 
-/-- Weights and biases for the two layers, keyed by the
-node they belong to. -/
-def depStore :
-    NN.MLTheory.CROWN.Graph.ParamStore Float :=
-  { inputBoxes :=
-      (Std.HashMap.emptyWithCapacity).insert 0 depBox
-    linearWB :=
-      (Std.HashMap.emptyWithCapacity)
-        |>.insert 1
-            { m := 2, n := 2
-            , w := [[1.0, 1.0], [1.0, -1.0]]
-            , b := [0.0, 0.0] }
-        |>.insert 2
-            { m := 1, n := 2, w := [[1.0, -1.0]]
-            , b := [0.0] } }
+/-- The weights and biases of the two layers. -/
+def depW1 : TorchLean.Tensor Float [2, 2] :=
+  [[1.0, 1.0], [1.0, -1.0]]
+def depB1 : TorchLean.Tensor Float [2] := [0.0, 0.0]
+def depW2 : TorchLean.Tensor Float [1, 2] :=
+  [[1.0, -1.0]]
+def depB2 : TorchLean.Tensor Float [1] := [0.0]
+
+/-- The payload: the weights and biases at the constant
+nodes that read them. -/
+def depPayload : TorchLean.IR.Payload Float :=
+  { const? := fun
+      | 1 => some ⟨.value [2, 2], depW1⟩
+      | 2 => some ⟨.value [2], depB1⟩
+      | 4 => some ⟨.value [1, 2], depW2⟩
+      | 5 => some ⟨.value [1], depB2⟩
+      | _ => none }
 ```
 
-Now run both bound methods on the same store and print the output box of node 2:
+Both passes read the graph with its payload, and the input box seeds the graph input
+(`Op.inputSeeds`). We run interval propagation (`Op.runIBP`) and CROWN (`Op.outputBoxCROWN?`) and
+print the box of the graph's one output, node 6:
 
 ```lean (name := depRun)
--- Both entry points live in `NN.MLTheory.CROWN.Graph`.
--- Opening it for this one command keeps the printed
--- signatures elsewhere in the chapter fully qualified.
-open NN.MLTheory.CROWN.Graph in
+-- Propagate the unit box through the graph. Its one
+-- output is node 6.
 #eval do
-  let boxes := runIBP (α := Float) depGraph depStore
-  match boxes[2]! with
-  | some b =>
-    IO.println
-      s!"IBP   lo={Spec.pretty b.lo} hi={Spec.pretty b.hi}"
-  | none => IO.println "no IBP box"
-  match outputBoxCROWN? (α := Float)
-      depGraph depStore depBox 0 2 2 with
+  let g ← IO.ofExcept depGraph
+  let boxes :=
+    runIBP g depPayload (inputSeeds g [depBox])
+  match outputBox? g boxes 0 with
   | .ok b =>
     IO.println
-      s!"CROWN lo={Spec.pretty b.lo} hi={Spec.pretty b.hi}"
+      s!"IBP   lo={b.lo.pretty} hi={b.hi.pretty}"
+  | .error e => IO.println s!"IBP failed: {e}"
+  match outputBoxCROWN? g depPayload depBox 0 with
+  | .ok b =>
+    IO.println
+      s!"CROWN lo={b.lo.pretty} hi={b.hi.pretty}"
   | .error e => IO.println s!"CROWN failed: {e}"
 ```
 ```leanOutput depRun
@@ -544,7 +518,7 @@ IBP   lo=[-4.000000] hi=[4.000000]
 CROWN lo=[-2.000000] hi=[2.000000]
 ```
 
-IBP returns twice the exact width. Its box for node 1 is
+IBP returns twice the exact width. Its box for node 3 is
 $`[-2,2]\times[-2,2]`, and each coordinate really does range over $`[-2,2]`. What the box cannot
 record is that the two coordinates move together: whenever $`x_0+x_1` is at its maximum, $`x_0-x_1`
 is $`0`. The second layer subtracts them, and interval subtraction has to assume the worst case
@@ -553,44 +527,28 @@ loss: each interval retains a coordinate's range but loses its relation to the o
 this loss across layers can make box propagation alone
 {Informal.citep gowal2018}[] progressively looser as depth grows.
 
-CROWN {Informal.citep crown2018}[] carries an affine form of each node in terms of the input
-instead of a box, so the cancellation happens symbolically before any interval is evaluated:
-$`1\cdot(x_0+x_1)-1\cdot(x_0-x_1)` becomes $`2x_1`, and only then is the box substituted. The
-result is the exact range. That exactness is a property of this graph, not of the method: the graph
-is purely affine, so the affine form is the function. An unstable ReLU can introduce a strict
-relaxation; stable ReLUs may remain exact. The amount
-of improvement over IBP depends on the chosen affine bounds and graph.
+CROWN {Informal.citep crown2018}[] carries affine forms in the input instead of boxes. Its backward
+pass sweeps the output's coefficients back through both layers, so the cancellation happens
+symbolically before any interval is evaluated: $`1\cdot(x_0+x_1)-1\cdot(x_0-x_1)` becomes $`2x_1`,
+and only then is the box substituted. The result is the exact range. That exactness is a property
+of this graph, not of the method: the graph is purely affine, so the affine form is the function.
+An unstable ReLU can introduce a strict relaxation, while stable ReLUs may remain exact. How much
+CROWN improves over IBP depends on the chosen affine bounds and graph.
 
-The real affine map attains its extrema at box corners. The following `Float` run checks that the
-same node array and corresponding payload produce the expected corner values. It uses
-`NN.IR.Graph.denote`, so it also lets us compare graph evaluation with the bound pass:
+This real affine map attains its extrema at box corners. We evaluate the same graph and payload at
+the corners in `Float` with `TorchLean.IR.Graph.eval`, which also lets us compare graph evaluation
+with the bound pass:
 
 ```lean (name := depCorners)
-/-- The same two layers as executable parameters. -/
-def depPayload : NN.IR.Payload Float :=
-  { linear? := fun id =>
-      if id = 1 then
-        some { outDim := 2, inDim := 2
-             , W := [[1.0, 1.0], [1.0, -1.0]]
-             , b := [0.0, 0.0] }
-      else if id = 2 then
-        some { outDim := 1, inDim := 2
-             , W := [[1.0, -1.0]], b := [0.0] }
-      else none }
-
 /-- Evaluate `depGraph` at one input and read off the
 single output coordinate. -/
 def depEval (x : TorchLean.Tensor Float [2]) :
     Except String Float := do
-  let out ←
-    NN.IR.Graph.denote (α := Float) (g := depGraph)
-      (payload := depPayload)
-      (input := Spec.SomeTensor.ofTensor x)
-      (outputId := 2)
-  let vec ←
-    NN.IR.Graph.expectShape (α := Float)
-      (expected := [1]) out
-  pure (TorchLean.Tensor.getScalar vec 0)
+  let g ← depGraph
+  match ← g.eval depPayload [⟨.value [2], x⟩] with
+  | [⟨⟨.value, [1]⟩, t⟩] =>
+    pure (TorchLean.Tensor.getScalar t 0)
+  | _ => throw "expected one vector of length one"
 
 #eval do
   let corners : List (TorchLean.Tensor Float [2]) :=
@@ -610,169 +568,164 @@ corner value: 2.000000
 So $`\pm 2` are attained and the true range is $`[-2,2]`: CROWN's box is tight here, and IBP's
 extra factor of two is pure over-approximation. Neither pass is wrong. Soundness only promises
 containment, and a sound bound that is too wide reports "cannot verify" on a network that is in
-fact robust. Tighter bounds may cost more computation; input subdivision lets us explore that
+fact robust. Tighter bounds may cost more computation, and input subdivision lets us explore that
 tradeoff while keeping the local interval rules fixed.
 
 ## Tensor Geometry In A Bound Pass
 
-The box representation stores one interval per scalar. The graph still records the shape that
-tells us how those scalars interact. A matrix product multiplies the matrices on the final two
-axes, broadcasting the leading axes. Vectors participate without a separate reshape:
+The box representation stores one interval per scalar. But the graph records the shape that tells
+us how those scalars interact. A matrix product multiplies the matrices on the final two axes,
+broadcasting the leading axes. Vectors participate without a separate reshape:
 
 ```lean (name := boundMatmulShapes)
 example :
-    NN.IR.OpContracts.inferMatmulOutShape
+    TorchLean.IR.inferMatmulOutShape
       [2, 3, 4, 5] [2, 3, 5, 6] =
         .ok [2, 3, 4, 6] := by decide
 
 example :
-    NN.IR.OpContracts.inferMatmulOutShape
+    TorchLean.IR.inferMatmulOutShape
       [1, 4, 5] [2, 5, 6] = .ok [2, 4, 6] := by decide
 
 example :
-    NN.IR.OpContracts.inferMatmulOutShape
+    TorchLean.IR.inferMatmulOutShape
       [5] [2, 5, 6] = .ok [2, 6] := by decide
 
 example :
-    NN.IR.OpContracts.inferMatmulOutShape
+    TorchLean.IR.inferMatmulOutShape
       [5] [5] = .ok [] := by decide
 ```
 
-The first example has six independent $`4\times5` by $`5\times6` products. In the second,
-one left matrix is reused across two right matrices. The third multiplies one vector by each
-right matrix, and the fourth is a dot product with a scalar result. The runtime, interval pass,
-and backward pass use the same shape contract and coordinate maps. When an operand is reused
-by broadcasting, its gradient accumulates contributions from every use.
-The {src "NN/MLTheory/CROWN/Proofs/BinaryMatmulRuntimeBridge.lean"}[runtime proof] shows that
-flattening the checked IR product gives the certificate evaluator's product for these shapes.
+The first example has six independent $`4\times5` by $`5\times6` products. In the second, one left
+matrix is reused across two right matrices. In the third, one vector is multiplied by each right
+matrix, and the fourth is a dot product with a scalar result. The runtime, interval pass, and
+backward pass use the same shape contract and coordinate maps. When an operand is reused by
+broadcasting, its gradient accumulates contributions from every use. In the
+{src "TorchLean/Verify/CROWN/Op/RunValues.lean"}[runtime proof], `Op.flat_matmul` shows that the
+flat value of a matrix product is the flat contraction of its operands' flat values over the
+operator's layout.
 
-For rounded endpoints, the directed backward pass bounds a binary product's objective using
-its output IBP box. It does not propagate that objective's coefficients through both operands.
-This interval fallback can lose correlations that an affine transfer would retain.
+For a binary product, the backward pass bounds each term by a McCormick plane of the two operand
+boxes when the term's coefficient has one sign, and by the interval product of the boxes otherwise.
+An operand that is a single point passes its coefficient exactly. Since the planes are relaxations,
+this rule can lose correlations that an exact affine transfer would retain.
 
-Concatenation follows the selected axis, with at least two parents and equal dimensions on every
-other axis. A parent can have an empty axis:
+Concatenation follows the selected dimension, with at least one parent and equal extents on every
+other dimension. A parent can have an empty dimension:
 
 ```lean (name := boundConcatShape)
 example :
-    NN.IR.OpContracts.inferConcatOutShape 1
+    TorchLean.IR.catShape 1
       #[[2, 1, 3], [2, 0, 3], [2, 2, 3]] =
         .ok [2, 3, 3] := by decide
 ```
 
 Here each of the two leading coordinates gets one slice from the first parent and two from the
-third; the middle parent contributes no entries. Appending whole flat buffers would mix those
-leading coordinates. The value, interval, and affine transfers instead share the same coordinate
-map, and the backward pass uses it to split output coefficients among parent occurrences.
-If $`y=\operatorname{concat}(x,x)` has coefficient slices $`u` and $`v`, both slices reach the
-same input, giving coefficient $`u+v`. Repeated parent ids therefore require accumulation.
+third, and the middle parent contributes no entries. Appending whole flat buffers would mix those
+leading coordinates. Instead, the value, interval, and affine transfers share the same coordinate
+map, and the backward pass uses it to split output coefficients among parent occurrences. If
+$`y=\operatorname{cat}(x,x)` has coefficient slices $`u` and $`v`, both slices reach the same
+input, giving coefficient $`u+v`. So repeated parent ids require accumulation.
 
-The proof-side certificate evaluator uses this layout too. Both its `Supported` predicate and
-the executable `EngineCore` theorem include concatenation. The
-{src "NN/MLTheory/CROWN/Proofs/GraphRuntimeBridge.lean"}[runtime bridge] also proves that the IR
-evaluator produces these coordinates along every valid axis. The evaluator moves the selected
-axis to the front, concatenates the parents, and applies the inverse permutation. The proof
-follows those actual permutations, including when a dimension is empty.
+The certificate checker places the boxes of the parents by this layout too (`Op.catLayout`), and the
+certificate induction includes concatenation. In the
+{src "TorchLean/Verify/CROWN/Op/RunValues.lean"}[runtime proof] we also show that the flat value of
+`Tensor.cat` along any valid dimension is the checked flat concatenation of the flat values of its
+inputs over this layout (`Op.flat_cat`).
 
-For LayerNorm on `[2, 2, 2]`, choosing axis one means normalizing the suffix `[2, 2]`.
-There are two independent rows of four coordinates. If the first row contains $`0,1,2,3`
-and the second contains $`4,5,6,7`, their means are $`1.5` and $`5.5`. Flattening all eight
-coordinates into one normalization would give mean $`3.5` and change both outputs. The
-scale and bias therefore carry the exact suffix shape `[2, 2]`; `[4]` has the same number
-of entries but fails the payload shape check.
-An empty leading batch, such as `[0, 2, 2]`, has no rows to normalize and produces an empty
-output. The normalized suffix itself must remain nonempty.
+For LayerNorm on `[2, 2, 2]`, the verifier normalizes the last axis, which gives four independent
+rows of two coordinates. If the rows hold $`0,1`, $`2,3`, $`4,5` and $`6,7`, their means are
+$`0.5`, $`2.5`, $`4.5` and $`6.5`. Flattening all eight coordinates into one normalization would
+give mean $`3.5` and change every output. So the scale and bias carry the last axis's shape `[2]`.
+The leading axes must hold at least one row, so an empty batch such as `[0, 2, 2]` is rejected, and
+the last axis must hold at least one coordinate.
 
 Softmax value bounds also follow the selected axis. On `[2, 3, 1]`, axes zero and one use
 the conservative range $`[0,1]` for each coordinate. Axis two has one entry per softmax row,
 so its range is $`[1,1]`. These value rules do not require a directed implementation of
-exponential. First and mixed derivative transfers also follow the selected axis, keeping
-independent rows separate, for backends that enable the ideal softmax derivative rules.
-The native `Float` and `Float32` interval backends return no softmax derivative bound;
-their value bounds remain available. LayerNorm derivative transfers normalize the whole configured
-suffix and require positive epsilon. Their formulas and numerical proof obligations are explained
-in the derivative section below.
+exponential.
 
 Convolution transfers share the IR's validation of channels, groups, stride, dilation, and
 asymmetric padding. Any leading batch shape is retained, and each batch coordinate is evaluated
-independently. The payload stores the full input-channel axis and selects the channels belonging
-to each group. In affine propagation, convolution is represented by a dense matrix over flat
-input and output coordinates. That representation can be much larger than the kernel tensor,
-even though most coefficients are zero.
+independently. A convolution node in PyTorch's layout reads its kernel as
+`(outC, inC / groups, k...)`, keeping for each output channel the input channels of its group
+(`TorchLean.Conv.packedKernel`). The backward pass sends coefficients through a convolution by the
+transposed convolution over the same configuration, so it never forms the dense matrix below,
+which can be much larger than the kernel tensor.
 
-For real tensors, this representation satisfies
+A convolution is still an affine map of its flat input. For real tensors,
 
 $$`\operatorname{vec}(C(x))=A\,\operatorname{vec}(x)+b_{\mathrm{broadcast}}.`
 
-The theorem `ConvProof.conv_linear_matrix_add_bias_eq_grouped_conv` in
-{src "NN/MLTheory/CROWN/Proofs/Conv.lean"}[the convolution proof] establishes this equality for
-grouped channels, dilation, asymmetric padding, and any leading batch shape. The interval pass
-itself sums the kernel contributions with directed products and additions; it does not need to
-construct this matrix. Its real enclosure theorem is in
-{src "NN/MLTheory/CROWN/Proofs/ConvEnclosure.lean"}[the directed convolution proof].
-For a fixed kernel and bias, the input derivative is the same convolution with zero bias.
-{src "NN/MLTheory/CROWN/Proofs/ConvDerivatives.lean"}[The derivative proof] establishes this
-identity and its adjoint for the same geometry. Graph execution still checks the configuration.
-The checked graph enclosure in
-{src "NN/MLTheory/CROWN/Proofs/ConvGraphEnclosure.lean"}[the graph transfer proof] connects those
-checks to the operator theorem. Convolution is included in the real certificate induction and
-the executable `EngineCore` theorem.
-{src "NN/MLTheory/CROWN/Proofs/GraphConvBridge.lean"}[The IR correspondence proof] derives the
-same checked geometry from a successful IR convolution and proves equality with the certificate
-evaluator. A claim about rounded execution still needs its numerical correspondence.
+The theorem `convLinearMatrix_spec` in {src "TorchLean/Verify/CROWN/Conv/Affine.lean"}[the
+convolution proof] establishes this equality for grouped channels, dilation, asymmetric padding,
+and any leading batch shape. The interval pass sums the kernel contributions with directed products
+and additions, without constructing this matrix. Its real enclosure theorem is in
+{src "TorchLean/Verify/CROWN/Conv/Enclosure.lean"}[the directed convolution proof]. Graph execution
+checks the configuration. On graphs of registered operators, `Op.Directed.encloses_conv` proves
+that the interval box of `Op.conv` encloses its forward value at the real values of the kernel and
+bias, at every lawful scalar and so at `ℝ`, on an input whose flattening the input box encloses.
+Its proof goes through `Op.convBox?_of_convOpBox?` in
+{src "TorchLean/Verify/CROWN/Op/Conv.lean"}[the operator proof], which identifies the operator's
+box with the box of the convolution proofs. Convolution is included in the real certificate
+induction and in `Op.Directed.encloses_of_run`. A claim about rounded execution still needs its
+numerical correspondence.
 
-The elementwise interval maps in `CROWN.Runtime.Ops.IBP` preserve arbitrary tensor shapes,
-including scalars and empty tensors. This extends where the same scalar formulas can be applied.
-It does not change their arithmetic hypotheses or extend `EngineCore` to LayerNorm or softmax.
-For a theorem about a complete graph, the executable operator contract and the theorem's supported
-fragment both have to match the graph we are using.
+Each elementwise interval map in `CROWN.IBP` preserves arbitrary tensor shapes (scalars
+and empty tensors included), which extends where the same scalar formulas can be applied but
+doesn't change their arithmetic hypotheses. For a theorem about a complete graph, the executable
+operator contract and the theorem's premises both have to match the graph we're using.
 
 ## Input Subdivision
 
 Another general option is to partition an input box and evaluate the same graph on every piece.
-`NN.MLTheory.CROWN.Graph.refinedIBPOutput? g ps inputId outId splitBudget` does this without
-changing any layer transfer. It applies to any graph supported by IBP,
-including mixed architectures.
-For example, splitting $`[-1,1]` at zero tightens the ordinary interval bound on
-$`\max(x,0)+\max(-x,0)` from approximately $`[0,2]` to $`[0,1]`.
+`TorchLean.CROWN.Graph.Refinement.bound enclose box splitBudget` does this for any enclosure
+procedure `enclose` without changing any layer transfer, so with interval bound propagation it
+applies to any graph IBP supports (mixed architectures included). For example, splitting $`[-1,1]`
+at zero tightens the ordinary interval bound on $`\max(x,0)+\max(-x,0)` from approximately $`[0,2]`
+to $`[0,1]`.
 
-The budget counts total splits, so at most $`2b+1` IBP calls are made for budget $`b`. Both children
-must produce bounds; a failed branch keeps the parent result. Their results are combined by a hull,
-then intersected with the parent bound. The shared split boundary preserves all original inputs,
-including the cut itself. Adjacent floating-point endpoints with no interior midpoint stay unsplit.
+The budget counts total splits, so at most $`2b+1` IBP calls are made for budget $`b`. Both
+children must produce bounds (a failed branch keeps the parent result). Their results are combined
+by a hull, then intersected with the parent bound. Since the split boundary is shared, all original
+inputs are preserved, including the cut itself. Adjacent floating-point endpoints with no interior
+midpoint stay unsplit.
 
-This can reduce dependency loss across layers, but does not promise improvement everywhere. A
-linear transfer may already be tight, and an input-independent activation range may remain broad.
-The theorem `NN.MLTheory.CROWN.Graph.Refinement.splitAt_covers` proves real input coverage of each
-split. Sound output bounds still depend on the underlying transfers; subdivision does not establish
-universal soundness for rounded LayerNorm or other operations.
+Subdivision can reduce dependency loss across layers, but it doesn't promise improvement
+everywhere: a linear transfer may already be tight, and an input-independent activation range may
+remain broad. `TorchLean.CROWN.Graph.Refinement.splitAt_covers` proves real input coverage of
+each split. Sound output bounds still depend on the underlying transfers, so subdivision doesn't
+establish universal soundness for rounded LayerNorm or other operations.
 
 Artifact replay can opt in with
-`NN.Verification.Cert.IBPCert.check g ps outId path (refinement := some (inputId, splitBudget))`.
-The default is unchanged. This is a graph-level option, separate from the high-level trainer API.
+`TorchLean.Certificate.IBP.check G P inputs output path (refinement := some (k, splitBudget))`,
+which subdivides the box of graph input `k` of the graph of registered operators `G` (by default
+the check doesn't subdivide). This refinement is a graph-level option, separate from the high-level
+trainer API.
 
 ## Trainer Verification API
 
 `trainer.train` returns a snapshot of the trained parameters. Its `verify` operation uses that
-snapshot and accepts a tensor center and named choices such as `radius`, `norm`, `property`,
-and `algorithm`. A result obtained from `session.finish` uses the same snapshot semantics:
+snapshot and accepts a tensor center and named choices such as `radius`, `property`, and
+`algorithm`. A result obtained from `session.finish` uses the same snapshot semantics:
 further training or loading a checkpoint into the session does not change the model it verifies.
 
-Import `NN.API.Verification` to use the `trained.verify` call shown above. The default method is
-`alphaCrown`, fixed-relaxation alpha-CROWN with the ReLU phases IBP proves; `ibp` and `crown`
-are available for comparison. On a rounded scalar such as binary32, `alphaCrown` runs directed
-CROWN, and the report names `CROWN` as the method. To inspect graph nodes and intermediate bounds,
-import `NN.API.Verification.Lowering`.
+Import `TorchLean.Verify.Trainer` to use the `trained.verify` call shown above. The default method
+is `crown`. `ibp` and `alphaCROWN` (fixed-relaxation alpha-CROWN with the ReLU phases IBP proves)
+are available for comparison. On a rounded scalar such as binary32, `crown` runs directed CROWN,
+rounding coefficients and constants outward, and `alphaCROWN` runs directed CROWN too, so its
+report names `CROWN`. To inspect graph nodes and intermediate bounds, import
+`TorchLean.Verify.Lowering`.
 
 This high-level verifier belongs to the ordinary binary32 training path. A session opened with
-`trainer.openTyped` preserves its chosen scalar in training and prediction, but supplies no
-verifier; calling `verify` on its result reports that verification is unavailable. Choosing a
-wider training format does not by itself supply bound arithmetic or soundness proofs for it.
+`trainer.openTyped` preserves its chosen scalar in training and prediction but supplies no
+verifier, so calling `verify` on its result reports that verification is unavailable. Choosing a
+wider training format doesn't by itself supply bound arithmetic or soundness proofs for it.
 
 ## Bound Propagation With `auto_LiRPA`
 
 With PyTorch, we can use `auto_LiRPA` {Informal.citep autolirpa2020}[] to propagate bounds through
-the model. The wrapper takes the perturbation region along with the model input:
+the model. Its wrapper takes the perturbation region along with the model input:
 
 ```
 # Wrap the same model with an interface that propagates
@@ -792,244 +745,187 @@ print((lb[0, 0] - ub[0, 1]).item())
 ```
 
 Both examples ask for bounds over the same kind of perturbation region, then compare one class's
-lower bound with another's upper bound. The choice of bound method and arithmetic determines how
-those endpoints are computed. In TorchLean, the real-semantic transfer theorems and local
-certificate predicates describe the evidence needed to justify them. Applying those theorems to
-the high-level Float report still requires proofs about the produced data and rounded arithmetic;
-the trust ledger below records those obligations.
+lower bound with another's upper bound. How those endpoints are computed depends on the choice of
+bound method and arithmetic. In TorchLean, the real-semantic transfer theorems and local
+certificate predicates describe the evidence needed to justify them, but applying those theorems to
+the high-level Float report still requires proofs about the produced data and rounded arithmetic
+(the trust ledger below records those obligations).
 
 # CROWN And Alpha-CROWN
 
-CROWN {Informal.citep crown2018}[] propagates affine lower and upper forms rather than only boxes.
-Bounding a network by a convex outer approximation and then optimizing inside it predates
-CROWN {Informal.citep wongkolter2018}[]; CROWN obtains bounds with a backward pass.
-At an uncertain ReLU with $`\ell<0<u`, the secant upper
-relaxation is
+CROWN {Informal.citep crown2018}[] propagates affine lower and upper forms, not only boxes.
+Bounding a network by a convex outer approximation and then optimizing inside it predates CROWN
+{Informal.citep wongkolter2018}[], while CROWN obtains bounds with a backward pass. At an uncertain
+ReLU with $`\ell<0<u`, the secant upper relaxation is
 
 $$`\operatorname{ReLU}(z)
 \le \frac{u}{u-\ell}(z-\ell),`
 
 while a lower relaxation may use a slope $`\alpha` constrained to a valid range. Alpha-CROWN
-optimizes these slopes. Alpha-beta-CROWN {Informal.citep betacrown2021}[] additionally records
-branch phases: an active branch uses $`z\ge 0`, and an inactive branch uses $`z\le 0`. Splitting on
-a phase can tighten the relaxation, at the cost of additional bound passes.
+optimizes these slopes. Alpha-beta-CROWN {Informal.citep betacrown2021}[] also records branch
+phases: an active branch uses $`z\ge 0`, and an inactive branch uses $`z\le 0`. Splitting on a
+phase can tighten the relaxation, at the cost of additional bound passes.
 
-TorchLean's generic theorem `crown_checker_encloses_semantics` takes an exact
-`CrownCertLocalOK` hypothesis and a separate `CrownTransferSound` proof. The local transfer
-theorems
+TorchLean proves the CROWN passes sound on graphs of registered operators. CROWN's forward pass
+`Op.alphaStep?` builds affine lower and upper forms in the input node by node: the identity at the
+designated input, constants, detach, a linear layer with constant weight and bias, ReLU with α
+slopes or with phases, a sum over every axis, and reshape. Matrix products and custom operators get
+no bounds, and every other operator gets the constant forms of its own interval box. At `ℝ`,
+`Op.Alpha.encloses_of_run` proves that every bound of a table whose present entries the step
+replays encloses, at the input point, the flat value of its node in a successful real run. It
+assumes that the interval table encloses the run, that the designated input node holds the point,
+and that the slopes lie in $`[0,1]` (`AlphaOK`). The phased step rejects phase choices inconsistent
+with the current IBP interval. `Op.runAlphaCROWN_encloses` covers the table of the
+executable forward pass `Op.runAlphaCROWN`, which takes the default slopes and the phases the
+intervals force, so it has no slope premise.
 
-- `alphaCrown_transfer_sound`;
-- `phasedCrown_transfer_sound`
+CROWN's backward pass bounds a linear objective of one node by affine forms in the input. It sweeps
+interval coefficients from the objective's node to the input, rounding outward, and bounds the
+coefficient of a node without a coefficient rule by that node's interval box. At a scalar with
+lawful endpoint operations, `Op.outputBoxCROWN?_of_run` proves that a successful CROWN
+output box encloses the output of a successful real run, when the payload holds the reals of the
+rounded constants and the input box encloses graph input `0`.
+`Op.backwardObjectiveBox?_of_run` is the same for an objective query over an interval
+table that encloses the run. Full CROWN meets each node's interval box with its affine bounds on
+the input box, and `Op.crownBoxes_encloses` and `Op.runCROWN_encloses` prove that
+its boxes and affine bounds enclose the run as well.
 
-show that the proposition-level alpha-CROWN step, without and with ReLU phases, satisfies
-`CrownTransferSound` under its explicit real-semantic and enclosure hypotheses. The phased step
-rejects phase choices inconsistent with the current IBP interval.
+These theorems take the interval table as an assumption about the run: its boxes enclose the run's
+flat values. `Op.Directed.encloses_of_run` and `Op.runIBP_encloses` prove that assumption
+for the boxes of `Op.runIBP`.
 
-The transfer theorems take the IBP boxes as an assumption, `IBPEnclosesVals`. The composed
-corollaries discharge it from the IBP soundness theorem. `alphaCrown_cert_encloses_semantics` and
-`phasedCrown_cert_encloses_semantics` conclude enclosure from topological order, supported
-operations, locally consistent boxes and values, enclosed inputs, valid slopes, and a certificate
-that replays the affine step; `alphaCrown_cert_encloses_evalGraphRec` fixes the boxes to `runIBP?`
-and the values to `evalGraphRec`, so only the graph, input, slope, and certificate hypotheses
-remain. These are the forms a caller should cite.
-
-The executable `outputBoxPhasedCROWN?` seeds IBP with the requested input box. On backends that
-support exact affine reassociation, `runPhasedCROWN` takes those intervals, infers every ReLU
-phase they already force, and rechecks it while replaying affine bounds. Unstable phases remain
-unsplit and use the default alpha relaxation. Rounded scalar backends instead use directed CROWN;
-nearest-rounded affine coefficients cannot be treated as exact-real enclosures. Both paths are
-distinct from the external Alpha-Beta-CROWN optimizer's branch-and-bound search.
+The executable `Op.outputBoxAlphaCROWN?` seeds IBP with the requested input box. On backends that
+support exact affine reassociation, `Op.runAlphaCROWN` takes those intervals, infers every ReLU
+phase they already force, and runs the forward pass with them. Unstable phases remain unsplit and
+use the default alpha relaxation. Rounded scalar backends instead run the backward pass through
+`Op.outputBoxCROWN?`. Nearest-rounded affine coefficients can't be treated as exact-real
+enclosures. Both paths are distinct from the external Alpha-Beta-CROWN optimizer's branch-and-bound
+search.
 
 ```lean (name := crownThms)
--- Combine local certificate consistency with a proof that
--- each transfer encloses values.
-#check @crown_checker_encloses_semantics
--- Establish that enclosure property for real alpha-CROWN
--- transfers.
-#check @alphaCrown_transfer_sound
--- The same transfer with ReLU phases that the IBP
--- intervals already justify.
-#check @phasedCrown_transfer_sound
--- Compose alpha-CROWN with the real IBP and
--- graph-consistency hypotheses.
-#check @alphaCrown_cert_encloses_semantics
--- Fix the interval pass and evaluator, discharging their
--- local-consistency premises.
-#check @alphaCrown_cert_encloses_evalGraphRec
--- The composed result for certificates with ReLU
--- phases.
-#check @phasedCrown_cert_encloses_semantics
+-- Every replayed α-CROWN bound encloses the run at the
+-- input point.
+#check @TorchLean.CROWN.Op.Alpha.encloses_of_run
+-- The same for the table of the executable forward pass.
+#check @TorchLean.CROWN.Op.runAlphaCROWN_encloses
+-- A successful CROWN output box encloses the real output.
+#check @TorchLean.CROWN.Op.outputBoxCROWN?_of_run
 ```
 ```leanOutput crownThms (whitespace := lax)
-crown_checker_encloses_semantics : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
-  NN.MLTheory.CROWN.Graph.ParamStore ℝ)
-  (step :
-    Array (Option (NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ)) →
-      ℕ → Option (NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ))
-  (cert : Array (Option (NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ))) (inputs : Std.HashMap ℕ
-    Val)
-  (vals : Array (Option Val)) (ctx : NN.MLTheory.CROWN.Graph.AffineCtx) (x : TorchLean.Tensor
-    ℝ [ctx.inputDim]),
-  TopoSorted g →
-    SemLocalOK g ps inputs vals →
-      CrownCertLocalOK g step cert →
-        CrownTransferSound g ps inputs vals ctx x step cert →
-          ∀ id < g.nodes.size,
-            ∀ (b : NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ) (v : Val),
-              cert[id]! = some b → vals[id]! = some v → EnclosesAtInput ctx x b v
-```
-```leanOutput crownThms (whitespace := lax)
-alphaCrown_transfer_sound : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
-  NN.MLTheory.CROWN.Graph.ParamStore ℝ)
-  (ibp : Array (Option (NN.MLTheory.CROWN.FlatBox ℝ))) (alpha : Array (Option
-    (NN.MLTheory.CROWN.Graph.FlatTensor ℝ)))
-  (cert : Array (Option (NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ))) (inputs : Std.HashMap ℕ
-    Val)
-  (vals : Array (Option Val)) (ctx : NN.MLTheory.CROWN.Graph.AffineCtx) (x : TorchLean.Tensor
-    ℝ [ctx.inputDim]),
-  TopoSorted g →
-    SemLocalOK g ps inputs vals →
-      InputsMatch inputs ctx x →
-        IBPEnclosesVals ibp vals →
-          AlphaOK alpha → CrownTransferSound g ps inputs vals ctx x (stepAlpha g ps
-            ibp alpha ctx) cert
-```
-```leanOutput crownThms (whitespace := lax)
-phasedCrown_transfer_sound : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
-  NN.MLTheory.CROWN.Graph.ParamStore ℝ)
-  (ibp : Array (Option (NN.MLTheory.CROWN.FlatBox ℝ))) (alpha : Array (Option
-    (NN.MLTheory.CROWN.Graph.FlatTensor ℝ)))
+Alpha.encloses_of_run : ∀ (G : TorchLean.IR.Graph) (P : TorchLean.IR.Payload ℝ)
+  (ibp : Array (Option (TorchLean.CROWN.FlatBox ℝ))) (alpha : Array (Option
+      (TorchLean.CROWN.Graph.FlatTensor ℝ)))
   (phases : Array (Option (Array ℤ))) (cert : Array (Option
-    (NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ)))
-  (inputs : Std.HashMap ℕ Val) (vals : Array (Option Val)) (ctx :
-    NN.MLTheory.CROWN.Graph.AffineCtx)
-  (x : TorchLean.Tensor ℝ [ctx.inputDim]),
-  TopoSorted g →
-    SemLocalOK g ps inputs vals →
-      InputsMatch inputs ctx x →
-        IBPEnclosesVals ibp vals →
-          AlphaOK alpha → CrownTransferSound g ps inputs vals ctx x (stepPhased g
-            ps ibp alpha phases ctx) cert
+      (TorchLean.CROWN.Graph.FlatAffineBounds ℝ)))
+  (ctx : TorchLean.CROWN.Graph.AffineCtx) (x : TorchLean.Tensor ℝ [ctx.inputDim])
+  (inputs : List (TorchLean.Op.Value ℝ)) (values : Array (List (TorchLean.Op.Value ℝ))),
+  (∀ (id : ℕ) (b : TorchLean.CROWN.Graph.FlatAffineBounds ℝ),
+      id < G.nodes.size → cert[id]! = some b →
+          alphaStep? G P ibp alpha phases cert ctx id = some b) →
+    (∀ (id : ℕ) (B : TorchLean.CROWN.FlatBox ℝ) (v : TorchLean.CROWN.Graph.FlatTensor ℝ),
+        ibp[id]?.join = some B → runVal values id = some v → Directed.Encloses B v) →
+      (∀ (k : ℕ) (p : TorchLean.Port) (v : TorchLean.CROWN.Graph.FlatTensor ℝ),
+          G.nodes[ctx.inputId]? = some (TorchLean.IR.Node.input k p) →
+            runVal values ctx.inputId = some v →
+              ∃ (h : v.n = ctx.inputDim), TorchLean.CROWN.Graph.castDimScalar h v.v = x) →
+        AlphaOK alpha →
+          G.run P inputs = Except.ok values →
+            ∀ id < G.nodes.size,
+              ∀ (b : TorchLean.CROWN.Graph.FlatAffineBounds ℝ)
+                (v : TorchLean.CROWN.Graph.FlatTensor ℝ),
+                cert[id]! = some b → runVal values id = some v → EnclosesAtInput ctx x b v
 ```
 ```leanOutput crownThms (whitespace := lax)
-alphaCrown_cert_encloses_semantics : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
-  NN.MLTheory.CROWN.Graph.ParamStore ℝ)
-  (ibp : Array (Option (NN.MLTheory.CROWN.FlatBox ℝ))) (alpha : Array (Option
-    (NN.MLTheory.CROWN.Graph.FlatTensor ℝ)))
-  (cert : Array (Option (NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ))) (inputs : Std.HashMap ℕ
-    Val)
-  (vals : Array (Option Val)) (ctx : NN.MLTheory.CROWN.Graph.AffineCtx) (x : TorchLean.Tensor
-    ℝ [ctx.inputDim]),
-  TopoSorted g →
-    Supported g →
-      CertLocalOK g ps ibp →
-        SemLocalOK g ps inputs vals →
-          InputsEnclosed g ps inputs →
-            InputsMatch inputs ctx x →
-              AlphaOK alpha →
-                CrownCertLocalOK g (stepAlpha g ps ibp alpha ctx) cert →
-                  ∀ id < g.nodes.size,
-                    ∀ (b : NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ) (v : Val),
-                      cert[id]! = some b → vals[id]! = some v → EnclosesAtInput ctx x b v
+runAlphaCROWN_encloses : ∀ (G : TorchLean.IR.Graph) (P : TorchLean.IR.Payload ℝ)
+  (ctx : TorchLean.CROWN.Graph.AffineCtx) (ibp : Array (Option (TorchLean.CROWN.FlatBox ℝ)))
+  (x : TorchLean.Tensor ℝ [ctx.inputDim]) (inputs : List (TorchLean.Op.Value ℝ))
+  (values : Array (List (TorchLean.Op.Value ℝ))),
+  (∀ (id : ℕ) (B : TorchLean.CROWN.FlatBox ℝ) (v : TorchLean.CROWN.Graph.FlatTensor ℝ),
+      ibp[id]?.join = some B → runVal values id = some v → Directed.Encloses B v) →
+    (∀ (k : ℕ) (p : TorchLean.Port) (v : TorchLean.CROWN.Graph.FlatTensor ℝ),
+        G.nodes[ctx.inputId]? = some (TorchLean.IR.Node.input k p) →
+          runVal values ctx.inputId = some v →
+            ∃ (h : v.n = ctx.inputDim), TorchLean.CROWN.Graph.castDimScalar h v.v = x) →
+      G.run P inputs = Except.ok values →
+        ∀ (id : ℕ) (b : TorchLean.CROWN.Graph.FlatAffineBounds ℝ)
+          (v : TorchLean.CROWN.Graph.FlatTensor ℝ),
+          (runAlphaCROWN G P ctx ibp)[id]! = some b → runVal values id = some v →
+              EnclosesAtInput ctx x b v
 ```
 ```leanOutput crownThms (whitespace := lax)
-alphaCrown_cert_encloses_evalGraphRec : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
-  NN.MLTheory.CROWN.Graph.ParamStore ℝ)
-  (alpha : Array (Option (NN.MLTheory.CROWN.Graph.FlatTensor ℝ)))
-  (cert : Array (Option (NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ))) (inputs : Std.HashMap ℕ
-    Val)
-  (ctx : NN.MLTheory.CROWN.Graph.AffineCtx) (x : TorchLean.Tensor ℝ [ctx.inputDim]),
-  TopoSorted g →
-    Supported g →
-      InputsEnclosed g ps inputs →
-        InputsMatch inputs ctx x →
-          AlphaOK alpha →
-            CrownCertLocalOK g (stepAlpha g ps (runIBP? g ps) alpha ctx) cert →
-              ∀ id < g.nodes.size,
-                ∀ (b : NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ) (v : Val),
-                  cert[id]! = some b → (evalGraphRec g ps inputs)[id]! = some
-                    v → EnclosesAtInput ctx x b v
-```
-```leanOutput crownThms (whitespace := lax)
-phasedCrown_cert_encloses_semantics : ∀ (g : NN.MLTheory.CROWN.Graph) (ps :
-  NN.MLTheory.CROWN.Graph.ParamStore ℝ)
-  (ibp : Array (Option (NN.MLTheory.CROWN.FlatBox ℝ))) (alpha : Array (Option
-    (NN.MLTheory.CROWN.Graph.FlatTensor ℝ)))
-  (phases : Array (Option (Array ℤ))) (cert : Array (Option
-    (NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ)))
-  (inputs : Std.HashMap ℕ Val) (vals : Array (Option Val)) (ctx :
-    NN.MLTheory.CROWN.Graph.AffineCtx)
-  (x : TorchLean.Tensor ℝ [ctx.inputDim]),
-  TopoSorted g →
-    Supported g →
-      CertLocalOK g ps ibp →
-        SemLocalOK g ps inputs vals →
-          InputsEnclosed g ps inputs →
-            InputsMatch inputs ctx x →
-              AlphaOK alpha →
-                CrownCertLocalOK g (stepPhased g ps ibp alpha phases ctx) cert →
-                  ∀ id < g.nodes.size,
-                    ∀ (b : NN.MLTheory.CROWN.Graph.FlatAffineBounds ℝ) (v : Val),
-                      cert[id]! = some b → vals[id]! = some v → EnclosesAtInput ctx x b v
+@outputBoxCROWN?_of_run : ∀ {α : Type} [inst : TorchLean.Storage α] [inst_1 : TorchLean.Context α]
+  [inst_2 : TorchLean.CROWN.BoundOps α] [inst_3 : TorchLean.CROWN.LawfulBoundOps α]
+      {G : TorchLean.IR.Graph}
+  {P : TorchLean.IR.Payload α} {Pr : TorchLean.IR.Payload ℝ} {inputs : List (TorchLean.Op.Value ℝ)}
+  {values : Array (List (TorchLean.Op.Value ℝ))} [inst_4 : TorchLean.CROWN.NonlinearBoundOps α]
+  [TorchLean.CROWN.LawfulNonlinearBoundOps α],
+  G.run Pr inputs = Except.ok values →
+    Directed.RealConsts Pr P →
+      ∀ {xB : TorchLean.CROWN.FlatBox α},
+        (∀ (x : TorchLean.Op.Value ℝ), inputs[0]? = some x → ∃ t,
+            flatOf x = some t ∧ Directed.Encloses xB t) →
+          ∀ {i out : ℕ} {ctx : TorchLean.CROWN.Graph.AffineCtx},
+            outputContext G xB i = Except.ok (out, ctx) →
+              ∀ {t : TorchLean.CROWN.Graph.FlatTensor ℝ},
+                runVal values out = some t →
+                  ∀ {result : TorchLean.CROWN.FlatBox α},
+                    outputBoxCROWN? G P xB i = Except.ok result → Directed.Encloses result t
 ```
 
-The two transfer theorems have the same semantic hypotheses. The phased version adds per-node ReLU
-phases `phases` and uses `stepPhased`. It needs no extra domain premise because that step accepts
-only phases already justified by the supplied intervals. To assume a phase for an unstable ReLU,
-a theorem would also have to restrict the input domain to that branch.
+`Op.Alpha.encloses_of_run` holds for any supplied phases, because a phase reaches a ReLU's
+relaxation only when it agrees with the interval of the ReLU's input. To assume a phase for an
+unstable ReLU, a theorem would also have to restrict the input domain to that branch.
 
-The shared predicate `CrownTransferSound` states the local enclosure obligation. A different
-relaxation can use the generic checker theorem once its step function has a proof of that
-obligation.
-
-These theorems should not be confused with the JSON node-certificate checker
-`CROWNNodeCert.check`. That `IO Bool` function parses finite decimal fields into FloatLib
-binary32, recomputes the complete IBP trace from trusted inputs and parameters, and replays affine
-nodes from previously recomputed affine data. A serialized interval may be wider than the
-recomputed interval but may not move inward. Affine replay data must match exactly at the binary32
-level. When the certificate gives ReLU phases, the checker also validates their lengths, entries,
-and consistency with IBP.
+These theorems are separate from the JSON node-certificate checker `CROWNNode.check`. That
+`IO Report` function parses finite decimal fields into FloatLib binary32, recomputes the complete
+IBP trace from trusted inputs and parameters, and replays each affine node from the affine data it
+recomputed for the nodes before it. A serialized interval may be wider than the recomputed interval
+but may not move inward. Affine replay data must match exactly at the binary32 level. When the
+certificate gives ReLU phases, the checker also validates their lengths, entries, and consistency
+with IBP.
 
 The shared JSON boundary validates input regions before replay begins. Endpoint boxes require
-finite arrays of the declared dimension with `lo[i] <= hi[i]`; center-radius boxes additionally
-require a finite nonnegative radius. Incomplete or mixed schemas are rejected. Artifact formats
-that prescribe endpoints, including the alpha-beta-CROWN leaf format, request that exact schema
-rather than accepting the alternate center-radius notation.
+finite arrays of the declared dimension with `lo[i] <= hi[i]`, and center-radius boxes also require
+a finite nonnegative radius. Incomplete or mixed schemas are rejected. Artifact formats that
+prescribe endpoints, including the alpha-beta-CROWN leaf format, request that exact schema and
+don't accept the alternate center-radius notation.
 
-The final decision is `CROWNNodeCert.accepts`. Its soundness theorem proves that acceptance
-supplies `CrownCertLocalOK` for the exact FloatLib binary32 replay function used by the checker.
+`CROWNNode.accepts` is the final decision. Its soundness theorem proves that acceptance
+supplies local consistency for the exact FloatLib binary32 replay function used by the checker.
 
 ```lean (name := acceptThms)
 -- If the CROWN decision accepts, its stored affine entries
 -- satisfy the replay rule.
-#check @CROWNNodeCert.accepts_eq_true
+#check @CROWNNode.accepts_sound
 ```
 ```leanOutput acceptThms (whitespace := lax)
-CROWNNodeCert.accepts_eq_true : ∀ (cert : NodeReplay.CROWNCertificate)
-  (g : NN.MLTheory.CROWN.Graph)
-  (ps :
-    NN.MLTheory.CROWN.Graph.ParamStore
+CROWNNode.accepts_sound : ∀ (cert : CROWNNode) (G : TorchLean.IR.Graph)
+  (P :
+    TorchLean.IR.Payload
       (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-        CROWNNodeCert.checkNodeEntries._proof_1 CROWNNodeCert.checkNodeEntries._proof_2
-        CROWNNodeCert.checkNodeEntries._proof_3 CROWNNodeCert.checkNodeEntries._proof_4))
+        CROWNNode.checkNode._proof_1 CROWNNode.checkNode._proof_2
+        CROWNNode.checkNode._proof_3 CROWNNode.checkNode._proof_4))
   (authoritativeIbp :
     Array
       (Option
-        (NN.MLTheory.CROWN.FlatBox
-          (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-            CROWNNodeCert.checkNodeEntries._proof_1 CROWNNodeCert.checkNodeEntries._proof_2
-            CROWNNodeCert.checkNodeEntries._proof_3 CROWNNodeCert.checkNodeEntries._proof_4))))
+        (TorchLean.CROWN.FlatBox
+          (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee
+            (FloatFormat.Encoding.ieee.defaultBias 8)
+            CROWNNode.checkNode._proof_1 CROWNNode.checkNode._proof_2
+            CROWNNode.checkNode._proof_3 CROWNNode.checkNode._proof_4))))
   (diagnosticsOk : Bool),
-  CROWNNodeCert.accepts cert g ps authoritativeIbp diagnosticsOk = true →
-    CrownCertLocalOK g (CROWNNodeCert.replayStep g ps authoritativeIbp cert) cert.crown
+  cert.accepts G P authoritativeIbp diagnosticsOk = true →
+    cert.crown.size = G.nodes.size ∧
+      ∀ id < G.nodes.size,
+        cert.crown[id]! = CROWNNode.replayStep G P authoritativeIbp cert cert.crown id
 ```
 
-The output says: for any certificate, graph, parameter store, interval trace, and diagnostic
-flag, *if this decision returns `true`, then the affine table in the certificate agrees with the
-specified replay rule*. The arrow before `CrownCertLocalOK` separates the assumption from the
-conclusion. There is no classifier margin in this statement yet.
+The output says: for any certificate, graph, payload, interval trace, and diagnostic flag, *if this
+decision returns `true`, then the affine table in the certificate agrees with the specified replay
+rule*. In the signature, the arrow before the conjunction separates the assumption from the
+conclusion. No classifier margin appears in this statement.
 
-The arguments have concrete jobs:
+Each argument has a concrete job:
 
 :::table +header
 *
@@ -1039,11 +935,11 @@ The arguments have concrete jobs:
   * `cert`
   * The proposed certificate, including its affine table `cert.crown` and relaxation data.
 *
-  * `g`
-  * The graph whose nodes the table describes.
+  * `G`
+  * The graph of registered operators whose nodes the table describes.
 *
-  * `ps`
-  * The weights, biases, input boxes, and other parameters used by replay.
+  * `P`
+  * The payload: the weights, biases, and other constants used by replay.
 *
   * `authoritativeIbp`
   * The interval table supplied to the decision. The IO wrapper constructs it by rerunning IBP.
@@ -1058,44 +954,52 @@ The arguments have concrete jobs:
 `Array (Option (FlatBox (ExecFloat.Binary 8 23)))` describes the interval table's representation.
 There is an array slot for each represented node, and a slot may hold a box (`some`) or no box
 (`none`). A `FlatBox` stores lower and upper vectors. Their scalar type selects FloatLib binary32,
-including its rounding and exceptional values. A theorem about this table therefore concerns
-those executable values; a real-valued conclusion needs a further refinement argument.
+including its rounding and exceptional values. So a theorem about this table concerns those
+executable values, and a real-valued conclusion needs a further refinement argument.
 
-We can unpack `CrownCertLocalOK` precisely. It requires the affine table to have the same length
-as the graph's node array. At every valid node index, the table entry must equal the result of
-`replayStep` applied to that table and index. If a producer changes an affine coefficient, the
-exact comparison can reject it even when the decimal difference looks small. Since entries are
-optional, local consistency alone does not assert that every node has a bound.
+We can unpack the conclusion precisely. Its first conjunct requires the affine table to have the
+same length as the graph's node array. By the second, at every valid node index the table entry
+equals the result of `replayStep` applied to that table and index. If a producer changes an
+affine coefficient, the exact comparison can reject it even when the decimal difference looks
+small. Since entries are optional, local consistency alone does not assert that every node has a
+bound.
 
 The theorem connects an executable Boolean decision to a Lean proposition, which lets a later
 proof use the result without reasoning again about every componentwise comparison.
 
-There are two details to keep when applying the result. The pure theorem accepts the interval
-trace as an argument; calling it `authoritativeIbp` does not prove where that trace came from.
-The wrapper supplies the recomputation. Likewise, the theorem does not interpret the individual
-diagnostics behind `diagnosticsOk`. Its conclusion is the stated local consistency property.
-To recover the classifier claim, we still need a soundness argument saying that these replay
-rules enclose the network, bounds at the required output, and a positive class margin.
+Two details matter when applying the result. The pure theorem accepts the interval trace as an
+argument, and calling it `authoritativeIbp` doesn't prove where that trace came from. The wrapper
+supplies the recomputation. Likewise, the theorem doesn't interpret the individual diagnostics
+behind `diagnosticsOk`: its conclusion is the stated local consistency property. To recover the
+classifier claim, we would need a soundness argument saying that these replay rules enclose the
+network, bounds at the required output and a positive class margin.
 
-The real theorem `crown_checker_encloses_semantics` also uses a local-consistency predicate, but
-over real affine data and a real step function. The binary32 result cannot be supplied directly
-as that premise. A real enclosure requires a refinement argument connecting the rounded replay
-to the real transfers, as well as the remaining semantic hypotheses.
+In binary32 the rules need not enclose the network, because each sum, product and quotient rounds
+to nearest. After the layers `h = x + 1` and `y = h + 2 ^ -24` at `x = -1`, where `y = 2 ^ -24`,
+the replayed upper form of `y` is `x + 1`, which is `0` there, and `CROWNNode.check` accepts a
+certificate holding that form.
+
+On the real side, `Op.Alpha.encloses_of_run` also takes a replay premise, but over real affine data
+and the step at `ℝ`. The binary32 result can't be supplied as that premise on its own.
 
 There are two different universal statements in this chain. Local replay checks every node in a
 finite graph. Robustness concerns every input in a region, which contains infinitely many real
-points. The transfer theorem is what connects them: each node's rule preserves an enclosure for
-an arbitrary input satisfying the assumptions, and graph induction carries that fact to the
-output. Checking every node is useful because of that argument. The number of entries checked
-does not replace it, and the printed `#check` signatures identify the argument rather than
-performing it for the displayed classifier.
+points. The transfer theorem is what connects them: each node's rule preserves an enclosure for an
+arbitrary input satisfying the assumptions, and graph induction carries that fact to the output.
+Checking every node is useful because of that argument. No count of checked entries replaces it,
+and the printed `#check` signatures identify the argument without performing it for the displayed
+classifier.
 
 ## Checking The Supplied Binary32 Bounds Against Real Arithmetic
 
 There is a stronger decision for a vector input followed by a chain of linear and ReLU layers:
-`NN.Verification.Cert.FiniteArtifact.accepts`. It reads the same binary32 graph parameters,
-input box, affine entries, and requested output inequalities. Each finite word has an exact
-rational value. We can therefore check whether the supplied coefficients enclose a real
+`FiniteArtifact.accepts`. It reads a graph of registered operators, the
+binary32 weights and biases among its payload constants, an input box, the affine entries, and the
+requested output inequalities. The graph must lay out such a chain in a fixed order. The input node
+comes first. Each linear layer is its weight constant, its bias constant, and then `Op.linear` on
+those two and the output of the previous layer (the node before the two constants). Each ReLU is
+`Op.relu` on the previous node, and the last node is the graph's only output. Each finite word has
+an exact rational value. We can therefore check whether the supplied coefficients enclose a real
 computation without first replacing them with a different certificate.
 
 Here is the rounding issue that this check catches. Put two scalar linear layers in sequence,
@@ -1105,141 +1009,95 @@ $$`a^2=1+2^{-22}+2^{-46}.`
 
 Binary32 rounds that product to $`1+2^{-22}`. An affine upper bound using the rounded coefficient
 can agree perfectly with binary32 replay while falling below the real output at a positive input.
-The regression in `NN.Tests.Verification.FiniteArtifact` constructs this case: replay accepts its
-table, and the stronger decision rejects it.
+On this two-layer graph, the decision rejects the output entry with the rounded coefficient and
+accepts the entry rounded outward.
 
-The extra check follows the graph from its input. At each layer, it computes an exact rational
-transfer from the already checked parent bounds. The supplied lower affine form must lie below
-that transfer throughout the input box, and the supplied upper form must lie above it. The
-decision then checks every requested output inequality using those supplied bounds. Strict and
-non-strict inequalities are separate choices, so a zero margin cannot satisfy a strict request.
+The extra check follows the graph from its input. At each layer it computes an exact rational
+transfer from the already checked parent bounds: the supplied lower affine form must lie below that
+transfer throughout the input box, and the supplied upper form must lie above it. Then the decision
+checks every requested output inequality using those supplied bounds. Strict and non-strict
+inequalities are separate choices, so a zero margin can't satisfy a strict request.
 
-`FiniteArtifact.accepts_graph_sound` connects this decision to the original graph's `denote`
-function, using the exact real values of its decoded binary32 parameters. For every real input
-inside the decoded box, the graph evaluates successfully and all requested inequalities hold.
-The statement includes the actual artifact entry at the designated output. Missing bounds,
-nonfinite values, empty input or output dimensions, an empty collection of inequalities, and an
-output id that does not cover the whole chain are rejected.
+`FiniteArtifact.accepts_graph_sound` connects this decision to the graph's evaluator `Graph.eval`,
+using the exact real values of its decoded binary32 constants: for every real input inside the
+decoded box, the graph evaluates successfully and all requested inequalities hold. And the
+statement includes the actual artifact entry at the designated output. The decision reads the
+affine entries at the input, at every linear operator and at every ReLU, which are mandatory, and
+the slope vector at every ReLU, which is optional (without one it takes slope `1` where the upper
+bound exceeds minus the lower bound and `0` elsewhere). A missing affine entry there, a nonfinite
+value among the words it reads, empty input or output dimensions, an empty collection of
+inequalities, and an output id that doesn't cover the whole chain are rejected. Entries at the
+constant nodes and the interval and phase fields aren't read.
 
-This decision covers nonempty vector linear/ReLU chains. The general JSON replay decisions above
-retain their local-consistency conclusions. The real computation in the stronger theorem also
-differs from a native floating-point run: relating a LibTorch result to that real value still
-requires an execution-error bound.
+This decision covers nonempty vector linear/ReLU chains in that layout. The general JSON replay
+decisions above retain their local-consistency conclusions. And the real computation in the
+stronger theorem differs from a native floating-point run, so relating a LibTorch result to that
+real value still requires an execution-error bound.
 
 # Directed Arithmetic In The Executable Pass
 
-The graph engine does not assume that every scalar type can safely evaluate every interval rule.
-`BoundOps` supplies executable lower and upper addition, subtraction, and multiplication.
-`LawfulBoundOps` is the corresponding proof interface: it interprets each endpoint as a real
-number and proves that the lower operation is below exact arithmetic and the upper operation is
-above it. Sound arithmetic lemmas require this second interface. `NonlinearBoundOps` supplies
-executable interval transfers for operations such as division, square root, exponential, logarithm,
-and layer normalization. A successful computation is not itself a theorem. The separate
+The bound passes don't assume that every scalar type can safely evaluate every interval rule.
+`BoundOps` supplies executable lower and upper addition, subtraction, and multiplication, and
+`LawfulBoundOps` is the corresponding proof interface: it interprets each endpoint as a real number
+and proves that the lower operation is below exact arithmetic and the upper operation is above it.
+Sound arithmetic lemmas require this second interface. `NonlinearBoundOps` supplies executable
+interval transfers for operations such as division, square root, exponential, logarithm, and layer
+normalization. A successful computation isn't itself a theorem: the separate
 `LawfulNonlinearBoundOps` class proves that every returned interval encloses the corresponding real
-operation; sound entrypoints must require this class. A transfer returns `none` when the scalar
+operation, and sound entrypoints must require this class. A transfer returns `none` when the scalar
 backend has no finite implementation for that operation.
 
-These classes specify directed endpoint operations and separate scalar soundness laws; they do
-not implement the full IEEE interval-arithmetic standard.
+These classes specify directed endpoint operations and separate scalar soundness laws, but they
+don't implement the full IEEE interval-arithmetic standard.
 
-A point interval already shows why the distinction matters. Both entries of
-$`x=(1,2^{-25})` are exactly representable in binary32, but their real sum
-$`1+2^{-25}` rounds to $`1` under nearest rounding. Using that same rounded value as both
-endpoints would return $`[1,1]` and exclude the sum. The engine's reductions accumulate a lower
-sum downward and an upper sum upward. A mean also encloses the coordinate count before division,
-since a large count need not be exactly representable in the chosen format.
+A point interval already shows why the distinction matters. Both entries of $`x=(1,2^{-25})` are
+exactly representable in binary32, but their real sum $`1+2^{-25}` rounds to $`1` under nearest
+rounding. Using that same rounded value as both endpoints would return $`[1,1]` and exclude the
+sum, which is why the engine's reductions accumulate a lower sum downward and an upper sum upward.
+A mean also encloses the coordinate count before division, since a large count need not be exactly
+representable in the chosen format.
 
-Average pooling uses the same directed mean for each window, including padded zeros in its count.
+Average pooling uses the same directed mean for each window. Its count includes padded cells only
+when `countIncludePad` is set. Otherwise it counts the window cells inside the input.
 Input regions round the center-minus-radius downward and center-plus-radius upward. Eval-mode
-BatchNorm encloses the stabilized variance, square root, division, scale, and bias separately.
-Its running statistics are fixed, but computing a normalization coefficient still involves
-rounding. These executable transfers live in
-{src "NN/MLTheory/CROWN/Graph/Engine/Base.lean"}[the interval engine];
-their availability does not enlarge the `EngineCore` theorem fragment stated above.
+BatchNorm encloses the stabilized variance, square root, division, scale, and bias separately. Its
+running statistics are fixed, but computing a normalization coefficient still involves rounding.
+These executable transfers live in {src "TorchLean/Verify/CROWN/Op/Exec.lean"}[the interval pass],
+and `Op.Directed.encloses_of_run` covers the pooling and normalization rules among them.
 
-`ℝ` and `FP32` have lawful nonlinear instances. The `FP32` proofs use its exact-real floor and
-ceiling rounding theorems. The FloatLib binary32
-{src "NN/MLTheory/CROWN/Extras/BoundOpsIEEE32Exec.lean"}[executable interval adapter] instead
-checks finite, ordered endpoints and uses certified rational interval kernels followed by outward
-binary32 rounding. Its eight `IEEE32ExecBounds.*Bounds_containsReal` theorems cover division,
+`ℝ` and `FP32` have lawful nonlinear instances, and the `FP32` proofs use its exact-real floor and
+ceiling rounding theorems. For FloatLib binary32, the
+{src "TorchLean/Verify/CROWN/BoundOps/Binary32.lean"}[executable interval adapter] instead checks
+finite, ordered endpoints and uses certified rational interval kernels followed by outward binary32
+rounding, and its eight `Binary32.*Bounds_sound` theorems cover division,
 exponential, logarithm, square root, sigmoid, tanh, sine, and cosine. Each theorem starts from a
 successful transfer and exact finite endpoint decoding, then encloses every real member of the
-input interval. These include irrational inputs and trigonometric extrema inside the interval.
+input interval (including irrational inputs and trigonometric extrema inside the interval).
 
-Exponential and logarithm now return finite enclosures when their checks succeed. Invalid domains,
+Exponential and logarithm return finite enclosures when their checks succeed. Invalid domains,
 exceptional endpoints, reversed intervals, and overflow can return `none`. Square root clamps the
-negative part of an interval crossing zero, matching `Real.sqrt`; sigmoid and tanh retain their
-global codomain fallbacks. `layerNormAbsBound` still returns `none`, and
-`supportsIdealCoupledDerivatives` is false. These finite containment theorems do not supply a
-global `LawfulBoundOps` instance for the IEEE carrier, which includes infinities and NaNs, or an
-error bound for a native transcendental implementation. Host `Float` widens basic binary64
-arithmetic by one adjacent representable value, but it likewise has no global `LawfulBoundOps`
-instance and makes no enclosure claim for the host transcendental library.
+negative part of an interval crossing zero (matching `Real.sqrt`), and sigmoid and tanh retain
+their global codomain fallbacks. `layerNormAbsBound` returns `none`. These finite containment
+theorems don't supply a global `LawfulBoundOps` instance for the IEEE carrier (which includes
+infinities and NaNs) or an error bound for a native transcendental implementation. Host `Float`
+widens basic binary64 arithmetic by one adjacent representable value, but it likewise has no global
+`LawfulBoundOps` instance and makes no enclosure claim for the host transcendental library.
 
-The CROWN output query uses a forward affine sweep when the scalar backend permits exact
-reassociation. Rounded backends request directed backward bounds for each output coordinate.
-Where a node has an IBP box but no coefficient transfer, that box bounds the active objective
-without sending coefficients to the node's parents. Binary matmul and MSE loss use this fallback.
-It can lose correlations, so finishing a CROWN pass does not guarantee a tighter result than IBP.
-The {src "NN/MLTheory/CROWN/Proofs/DirectedBackwardEvaluation.lean"}[rounded backward theorem]
-covers coefficient propagation, the output-box fallback, and final interval evaluation.
-`backwardObjectiveBox_encloses_runIBP_all` uses `GraphPoint.ofRunIBPAll` to derive the
-intermediate enclosures and backward node equations from the input boxes and `RealNodeEquation`.
-Its scalar laws, nonnegative default epsilon, graph-order and dimension premises, and successful
-result hypothesis are the ones described above. A returned result is sound under these premises;
-unsupported transfers can still prevent success.
-ReLU, LayerNorm, and the other nonlinear nodes have no coefficient transfer on rounded backends,
-so they pass through their IBP box as well, and a rounded MLP "CROWN" bound is IBP at every ReLU.
-Relating these bounds to a separate native execution additionally requires a runtime-approximation
-theorem.
-
-The first-derivative interval pass starts with an input direction.
-`runDirectionalDerivative` propagates a point or interval of directions through the graph, using
-the value boxes from IBP. A coordinate vector selects a partial derivative.
-`runScalarDerivative` supplies the direction `1` for a scalar input and rejects a larger input
-box. Both entrypoints use the same local transfer rules.
-
-For two directions $`u` and $`v`, `runMixedSecondDerivative` propagates an enclosure of
-$`D^2f(x)[u,v]`. At a composed node $`f=h\circ z`, the rule must retain both terms:
-
-$$`D^2f(x)[u,v]
-= Dh(z(x))\,D^2z(x)[u,v]
-+ D^2h(z(x))[Dz(x)u,Dz(x)v].`
-
-The two directions can differ, and the input can have any number of coordinates.
-`runSecondDirectionalDerivative` uses the same direction twice.
-For a scalar output, `runHessianVectorProduct` pairs each coordinate direction $`e_i` with a
-fixed $`v`: its $`i`th result encloses $`D^2f(x)[e_i,v]=(H_f(x)v)_i`.
-These entrypoints share the mixed-derivative pass, so an unavailable operator transfer leaves the
-corresponding result unresolved in each API.
-
-LayerNorm applies this rule independently to each normalized row. Its fixed scale multiplies the
-derivative; its fixed bias contributes zero. For example, take a constant row $`(5,5)`, scale
-$`(2,3)`, epsilon $`1`, and direction $`(1,0)`. Centering the direction gives
-$`(1/2,-1/2)`, so the output derivative is $`(1,-3/2)`, whatever the fixed bias.
-A direction in another row does not enter this calculation.
-
-Positive epsilon gives a useful bound even when the input row is constant:
-
-$$`(\operatorname{Var}(x)+\varepsilon)^{-1/2}\le\varepsilon^{-1/2}.`
-
-The interval transfer uses this bound together with centered input and direction bounds.
-The mixed rule includes the change in variance and the upstream mixed derivative. It supports
-the complete normalized suffix: shape $`[2,2,2]` at axis one gives two rows of four coordinates.
-Nonpositive epsilon, nonfinite endpoints, and inconsistent affine shapes leave the transfer
-unresolved.
-
-The theorem `layerNormDerivativeRow?_encloses_fderiv` in
-{src "NN/MLTheory/CROWN/Graph/Proofs/LayerNormDerivativeEnclosure.lean"}[the row enclosure proof]
-follows the executed calculation: means, centered radii, the reciprocal standard deviation, and
-both terms of the mixed rule. If the incoming boxes enclose the values and derivatives, a successful
-row calculation encloses the actual real first and mixed derivatives. The theorem requires the
-scalar operation laws and exact interpretations of the literals zero through four; its real-endpoint
-corollary discharges those arithmetic assumptions.
-
-This supplies the local LayerNorm step. A derivative certificate for a complete floating-point
-graph also needs an induction through its other operations and the corresponding scalar
-backend's numerical laws.
+CROWN's output query `Op.outputBoxCROWN?` runs the backward pass at every scalar, rounding
+coefficients and constants outward. Where a node has an IBP box but no coefficient rule, that box
+bounds the active objective without sending coefficients to the node's parents. ReLU, LayerNorm,
+softmax, and MSE loss take this fallback, so the backward pass treats every ReLU of an MLP by its
+interval box. Binary products use the McCormick planes described above. A few operators (such as
+gather, padding, and custom operators) end the sweep, and the query then keeps the output's
+interval box. So finishing a CROWN pass doesn't guarantee a tighter result than IBP. The
+{src "TorchLean/Verify/CROWN/Op/Backward.lean"}[backward theorems] cover coefficient propagation,
+the box fallback, and final interval evaluation at a supplied real point of the graph, while
+`Op.outputBoxCROWN?_of_run` and `Op.backwardObjectiveBox?_of_run` take that point
+and the node equations from a successful real run. A returned result is sound under these premises,
+but unsupported transfers can still prevent success. The α-CROWN relaxation of an unstable ReLU
+belongs to the forward pass, which `Op.outputBoxAlphaCROWN?` runs only at scalars with exact
+affine reassociation. Relating these bounds to a separate native execution also requires a
+runtime-approximation theorem.
 
 # Robustness Margins From Output Bounds
 
@@ -1248,11 +1106,11 @@ Suppose a sound bound procedure produces, for every `x` in the input box,
 $$`f_y(x)\ge L_y,\qquad f_j(x)\le U_j.`
 
 Then $`L_y-U_j>0` proves the pairwise class margin. A multiclass certificate repeats this for every
-$`j\ne y`. The arithmetic is elementary; the substantive obligations are that:
+$`j\ne y`. The arithmetic is elementary, but the substantive obligations are that:
 
-- the bounds enclose the exact graph semantics;
-- the graph denotes the intended model;
-- the input box denotes the intended perturbation set;
+- the bounds enclose the exact graph semantics
+- the graph denotes the intended model
+- the input box denotes the intended perturbation set
 - any rounded or native execution is related to the exact graph.
 
 For a rounded implementation with coordinate errors
@@ -1261,72 +1119,67 @@ $`\lvert f_i^{\mathrm{run}}(x)-f_i(x)\rvert\le\varepsilon_i`, the transferred ma
 $$`f_y^{run}(x)-f_j^{run}(x)
 \ge L_y-U_j-\varepsilon_y-\varepsilon_j.`
 
-The right-hand side must remain positive. A real CROWN theorem alone does not prove the native
-binary32 claim; the FP32 and runtime-approximation sections describe the additional bridge.
+The right-hand side must remain positive. A real CROWN theorem alone doesn't prove the native
+binary32 claim (the FP32 and runtime-approximation sections describe the additional bridge).
 
 Both error terms are subtracted because rounding can move the two scores in opposite unfavorable
-directions: down for the chosen class and up for its competitor. This also explains why a very
+directions (down for the chosen class and up for its competitor), which also explains why a very
 small positive real margin may be insufficient for a rounded implementation. If the transferred
-lower bound is zero or negative, the argument has failed to establish strict dominance. It has
-not produced an input where the classifier changes its label. Finding such an input is a
+lower bound is zero or negative, the argument has failed to establish strict dominance, but it
+hasn't produced an input where the classifier changes its label. Finding such an input is a
 different result from failing to prove that none exists.
 
 # Executable Certificates And Imported Artifacts
 
-TorchLean currently checks several kinds of artifact, each with a deliberately limited meaning.
+TorchLean checks several kinds of artifact, each with a deliberately limited meaning.
 
-The graph numerical certificate records source ranges, derived node ranges, a registry name,
-and a backend-plan audit. `generateChecked` reconstructs this data, and `executeIEEE32` performs a
-bit-level reference replay while checking each intermediate tensor. A `GraphRangeContract`
-contains an executable `derive` function but no semantic soundness field. A proof-level error trace
-therefore also requires a separately constructed `ProvedRealEnclosure`, whose fields supply the
-real denotation and enclosure proof. See the runtime-approximation section for the complete
-boundary.
+A graph numerical certificate records source ranges, derived node ranges and a backend-plan audit.
+`generateChecked` reconstructs this data, and `executeIEEE32` performs a bit-level reference replay
+while checking each intermediate tensor. A range transfer (`RangeTransfer`) is an executable
+function with no semantic soundness field, so a proof-level error trace also requires a separately
+constructed `RealEnclosure` (whose fields supply the real denotation and enclosure proof).
+See the runtime-approximation section for the complete boundary.
 
-The external alpha-beta-CROWN leaf checker `AbCrownLeafCert.check` validates the JSON schema,
+`AbCROWNLeaf.check`, the external alpha-beta-CROWN leaf checker, validates the JSON schema,
 finite ordered root and leaf boxes, dimensions, containment of each represented leaf in the root,
 and the exported lower-bound witness relative to its threshold. It also checks root coverage using
-the closed grid cut by leaf and root endpoints, returning an error above one million cells. This
-executable check has no accompanying soundness theorem. The lower bounds' relationship to the
-network semantics remains a producer obligation.
+the closed grid cut by leaf and root endpoints (returning an error above one million cells). But
+this executable check has no accompanying soundness theorem, and the lower bounds' relationship to
+the network semantics remains a producer obligation.
 
 This yields three distinct uses of "certificate":
 
-- a Lean term containing proof fields;
-- an artifact accepted by a structural or numerical checker;
+- a Lean term containing proof fields
+- an artifact accepted by a structural or numerical checker
 - an externally produced claim whose semantic validity is assumed.
 
 Proof-carrying code in the sense of {Informal.citet necula1997}[] requires a sound checker for the
 property being claimed. Structural validation alone can be useful without establishing that
-stronger property. The command's acceptance predicate, rather than the artifact's name, determines
-what evidence is available.
+stronger property. What evidence is available depends on the command's acceptance predicate, not on
+the artifact's name.
 
-The certificate chapter runs the leaf checker, changes a witness so that it must fail, and explains
-which stronger artifact would be needed to obtain root-region soundness.
+In the certificate chapter we run the leaf checker, change a witness so that it must fail, and
+explain which stronger artifact would be needed to obtain root-region soundness.
 
 ## Other Maintained Checkers
 
-The verifier registry includes several implemented families that exercise different semantic
-objects:
+Several implemented families in the verifier registry exercise different semantic objects:
 
-- `lirpa-mlp`, `lirpa-cnn`, `lirpa-attention`, `lirpa-gru`, and `lirpa-encoder` replay their
-  corresponding finite LiRPA JSON formats. Acceptance is specific to each format and supported
-  operator fragment.
+- `ibp-cert` replays the interval bounds of a 3 → 4 → 2 ReLU MLP from a JSON certificate and
+  accepts it only when the serialized bounds enclose the bounds Lean recomputes.
 - `camera-box3d-cert` checks a camera/3D-box artifact. Its
-  [`Box3D`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Verification/Geometry3D/Box3D.lean)
-  implementation includes interval-operation soundness lemmas and `checkCert_sound`, connecting a
-  successful pure check to the stated projection, positive-depth, and image/bounding-box guards.
+  {src "TorchLeanExamples/Verification/Geometry3D/Box3D.lean"}[`Box3D`] implementation includes
+  interval-operation soundness lemmas and `checkCert_sound`, connecting a successful pure check to
+  the stated projection, positive-depth, and image/bounding-box guards.
 - `vnncomp-mnistfc` parses the supported VNN-COMP-style MNIST-FC suite and runs the in-repo bound
-  workflow. This is support for that declared suite, not for every VNN-LIB/ONNX benchmark.
-- `digits` and `digits-train-certify` run the prepared sklearn-digits robustness paths; one checks
-  supplied weights and the other trains before compiling and reporting bounds.
-- the three `twostage-*` commands implement the Lyapunov workflows described in the two-stage
-  chapter, with distinct external-producer, hybrid, and all-in-Lean boundaries.
+  workflow. It supports that declared suite, not every VNN-LIB/ONNX benchmark.
+- `torchlean-mlp-workflow` trains a small classifier and then checks its robustness with CROWN.
+- `twostage-torchlean-cegis-van` runs the all-in-Lean Lyapunov workflow of the two-stage chapter,
+  from initialization through the final bound check.
 
 `scripts/lake.sh exe verify -- list` is the authoritative command inventory. A successful run
-establishes the
-acceptance predicate or reported computation documented for that command; it does not merge these
-heterogeneous formats into one global verification theorem.
+establishes the acceptance predicate or reported computation documented for that command, but it
+doesn't merge these heterogeneous formats into one global verification theorem.
 
 # Floating-Point Models And Refinement
 
@@ -1335,16 +1188,17 @@ rounded-real model with gradual
 underflow. Its exponent description has no upper bound, so it does not model overflow, NaN,
 infinity, or signed-zero payload behavior. FloatLib binary32 is the executable bit-level model.
 
-The {src "NN/Floats/IEEEExec/Bridge/Finite.lean"}[finite addition theorem] connects executable
-addition to the proof-level rounding model under the explicit hypothesis that the result is finite.
-Corresponding
-multiplication, division, and square-root bridges carry their own finite-path hypotheses. Layer
+FloatLib's `ExecFloat.Binary.toReal_add_eq_roundAt` connects executable addition to the
+proof-level rounding model under the explicit hypothesis that the result is finite. The
+multiplication theorem `ExecFloat.Binary.toReal_mul_eq_roundAt` and the division and square-root
+bridges of {src "TorchLean/Verify/Floats/IEEE754.lean"}[the finite bridge] carry
+their own finite-path hypotheses. Layer
 and MLP theorems then propagate explicit error budgets. Neither layer is an unstated theorem about
 native hardware or a vendor reduction schedule.
 
-The generic IEEE32 CROWN theorem likewise leaves the node evaluator and
-`CrownTransferSound` proof to its caller. Choosing an IEEE scalar type does not discharge the
-floating refinement obligations.
+The rounded-pass theorems likewise need `LawfulBoundOps` and `LawfulNonlinearBoundOps`, which the
+FloatLib IEEE carrier doesn't supply globally. So choosing an IEEE scalar type doesn't discharge
+the floating refinement obligations.
 
 # Verification Evidence And Assumptions
 
@@ -1356,53 +1210,41 @@ A verification report should make the following boundary visible:
   * Established in current source
   * Not established by that evidence
 *
-  * `Correctness.runForwardIR_eq_evalForward`
-  * typed proved-program and IR evaluator agree
-  * arbitrary frontend or native runtime agreement
+  * `IR.lowerForward_eq_ok`
+  * the lowered graph and the recorded typed graph agree
+  * agreement with the source program or a native runtime
 *
-  * `runIBP?_encloses_evalGraphRec`
-  * proof-side real IBP encloses proof-side real semantics
-  * every executable IBP implementation
+  * `Op.certLocalOK_encloses`
+  * every box of an accepted real certificate encloses its node's value in a successful real run
+    (`Op.semLocalOK_iff_run`)
+  * that the certificate has a box at every node, rounded scalars, or the JSON checkers
 *
-  * `runIBP_encloses_evalGraphRec`
-  * the executable real engine encloses the semantics on `EngineCore` graphs with full coverage
-  * node kinds outside `EngineCore`, rounded scalars, or the JSON checkers
+  * `Op.Directed.encloses_of_run`
+  * every box `Op.runIBP` returns encloses its node's value in a successful real run, under the
+    scalar laws, the real constants, and enclosed inputs
+  * that every node returns a box, or that a native execution is that real run
 *
-  * `runIBP_encloses_all`
-  * every returned box encloses its `RealNodeEquation` value under the scalar laws, node order,
-    enclosed inputs, and nonnegative default normalization epsilon
-  * that every node returns a box, or that a native execution satisfies those real equations
-*
-  * `backwardObjectiveBox_encloses_runIBP_all`
-  * a successful rounded objective query encloses its real value through forward IBP, backward
-    propagation, and final interval evaluation, under the scalar, graph, and input hypotheses
+  * `Op.backwardObjectiveBox?_of_run`
+  * a successful objective query encloses its real value through backward propagation and final
+    interval evaluation, under the scalar, run, and input hypotheses
   * total success, improved tightness over IBP, or native runtime equivalence
 *
-  * `alphaCrown_cert_encloses_evalGraphRec`
-  * α-CROWN enclosure with the IBP hypothesis discharged
-  * that a produced certificate satisfies `CrownCertLocalOK` and `AlphaOK`
+  * `Op.Alpha.encloses_of_run`
+  * real α-CROWN enclosure at the input point for a replayed table with enclosing intervals
+  * that a produced certificate replays the step and satisfies `AlphaOK`
 *
-  * `cert_encloses_semantics`
-  * enclosure from exact local IBP and semantic hypotheses
-  * that a JSON/Float checker supplied those hypotheses
-*
-  * `alphaCrown_transfer_sound` / `phasedCrown_transfer_sound`
-  * exact real local affine transfer soundness
-  * approximate artifact-checker acceptance
-*
-  * CROWN node checker returns `true`
-  * artifact intervals contain the authoritative FloatLib binary32 IBP trace and affine entries
-  exactly
-    match a sequential FloatLib binary32 replay
+  * CROWN node checker accepts
+  * artifact intervals contain the authoritative FloatLib binary32 IBP trace, and affine entries
+    exactly match a sequential FloatLib binary32 replay
   * exact-real CROWN soundness
 *
   * `abcrown-leaf` checker succeeds
   * represented boxes and witness fields pass structural/numeric checks
-  * network-bound provenance; coverage is an executable check without a soundness theorem
+  * network-bound provenance, or soundness of the executable coverage check
 *
   * numerical range check plus IEEE replay
   * stored trace and one reference execution pass executable checks
-  * real semantic enclosure without `ProvedRealEnclosure`
+  * real semantic enclosure without `RealEnclosure`
 *
   * FP32 approximation theorem
   * rounded-real output is within its stated budget

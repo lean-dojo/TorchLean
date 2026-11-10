@@ -58,15 +58,17 @@ status:
   lean_kernel_checked: true
   sorry_free: true
   notes:
-    - The repository currently has no Lean `sorry` or `admit` declarations outside dependencies.
+    - The repository contains no Lean `sorry` or `admit` outside its dependencies.
     - Native runtime and oracle boundaries are documented explicitly rather than hidden behind proof names.
     - Public claims should be read together with docs/TRUST_BOUNDARIES.md.
 
 build_and_validation:
   standard_build:
     command: "scripts/lake.sh build"
-  ci_surface:
-    command: "scripts/lake.sh build NNCI"
+  full_build:
+    command: >-
+      scripts/lake.sh build TorchLean.Tensor TorchLean.CUDA TorchLean.NN TorchLean.Verify
+      TorchLeanExamples TorchLeanTest
   cuda_build:
     command: "scripts/lake.sh -Kcuda=true build"
     note: >
@@ -83,43 +85,40 @@ build_and_validation:
     - "git diff --check"
 
 main_components:
-  public_api:
+  tensors:
     files:
-      - NN.lean
-      - NN/API
+      - TorchLean/Tensor
     description: >
-      Application API for model, tensor, data, runtime, and training workflows.
-  specifications:
+      Shapes, tensor operations and their mathematical definitions, the einops compiler, and
+      tensor algebra proofs.
+  neural_networks:
     files:
-      - NN/Spec
+      - TorchLean/NN
     description: >
-      Mathematical tensor, layer, model, and dynamical-system definitions.
+      Application API for model, data, runtime, and training workflows, with the layer, model,
+      and dynamical-system definitions, executable autograd, and the autograd-correctness,
+      robustness, and learning-theory proofs.
   graph_semantics:
     files:
-      - NN/IR
-      - NN/GraphSpec
+      - TorchLean/NN/IR
     description: >
       Graph representations, denotational semantics, and graph/spec bridge layers.
-  proofs:
+  verification:
     files:
-      - NN/Proofs
-      - NN/Verification
-      - NN/MLTheory
+      - TorchLean/Verify
     description: >
-      Tensor algebra, autograd correctness, runtime approximation, robustness,
-      CROWN/LiRPA, and certificate-checking proof layers.
+      Runtime approximation, CROWN/LiRPA bounds, and certificate checking.
   runtime:
     files:
-      - NN/Runtime
+      - TorchLean/CUDA
       - csrc
     description: >
-      Executable autograd, training loops, PyTorch import/export, native CPU/CUDA
-      entrypoints, and external-runtime boundaries.
+      Native CPU/CUDA entrypoints and external-runtime boundaries.
   numeric_integration:
     files:
-      - NN/Core/Numeric
-      - NN/Spec/Core/FloatInstances.lean
-      - NN/Floats
+      - TorchLean/Tensor/Numeric
+      - TorchLean/Tensor/ConfiguredBinary.lean
+      - TorchLean/Verify/Floats
     description: >
       FloatLib scalar contexts, binary32 certificate adapters, rounded-real
       model specializations, and numerical contracts for differentiation.
@@ -127,7 +126,7 @@ main_components:
       tensor representation has its own supported precisions.
   examples:
     files:
-      - NN/Examples
+      - TorchLeanExamples
     description: >
       Quickstarts, model commands, interoperability demos, and verification examples.
   manual:
@@ -141,13 +140,15 @@ trust_boundaries:
   lean_axioms: []
   opaque_runtime_declarations:
     description: >
-      CUDA buffers, kernel entrypoints, external oracles, and selected executable
-      wrappers are opaque Lean declarations. They are treated as trust boundaries
-      and audited through docs/TRUST_BOUNDARIES.md and scripts/checks/repo_lint.py.
+      CUDA buffers, kernel entrypoints and native host kernels are `@[extern]` Lean
+      declarations, most of them opaque. They are trust boundaries, listed in
+      docs/TRUST_BOUNDARIES.md. scripts/checks/dependency_audit.py checks where they
+      live and that they agree with the C sources, and scripts/checks/repo_lint.py
+      checks that no axiom is declared and that the CUDA buffer externs are
+      `never_extract`.
   external_producers:
     - PyTorch import/export and training scripts
-    - Julia spline or PINN certificate producers
-    - Arb / python-flint interval subprocesses
+    - Julia spline and Python PINN certificate producers
     - alpha-beta-CROWN and related external certificate tools
   native_runtime:
     description: >

@@ -1,28 +1,29 @@
 # Third-Party Notices
 
-TorchLean is MIT-licensed; see [LICENSE](../LICENSE). This file records external datasets, tokenizer assets,
-bundled generated artifacts, optional third-party code, and the main external projects TorchLean
-builds on. Paths and commands below are relative to the repository root.
+TorchLean is MIT-licensed (see [LICENSE](../LICENSE)). This file records external datasets,
+tokenizer assets, bundled generated artifacts, and the main external projects TorchLean builds
+on. Paths and commands below are relative to the repository root.
 
 The repository builds from source without downloading real datasets. When an example needs public
 data, the helper scripts below place it under the ignored `data/` directory.
 
 ## Lean Ecosystem and Build Dependencies
 
-The main Lean dependencies are pinned in `lake-manifest.json` and `home_page/blueprint/lake-manifest.json`.
-After `lake update`, their license files are available under `.lake/packages/` and
-`home_page/blueprint/.lake/packages/`.
+The main Lean dependencies are pinned in `lake-manifest.json`, in the guide's
+`home_page/blueprint/lake-manifest.json` and in the Python binding's
+`bindings/python/lake-manifest.json`. Lake fetches them, with their license files, into
+`.lake/packages/` for the root package and the Python binding, and into
+`home_page/blueprint/.lake/packages/` for the guide.
 
 | Component | Role in TorchLean | Notice |
 | --- | --- | --- |
 | Lean 4, Lake, and Std | Compiler, package manager, and standard library, selected by `lean-toolchain`. | Source project: `leanprover/lean4`. |
-| mimalloc 3.4.5 | Private allocator object for TorchLean's Linux native executables and shared libraries, with a narrow global purge-wakeup repair. The installed Lean compiler allocator is unchanged. | Source project: `microsoft/mimalloc`, MIT licensed. `scripts/lean_allocator.py` pins and checks the source archive and SDK header; the archive includes `LICENSE`. |
+| mimalloc 3.4.5 | Private allocator object for TorchLean's Linux native executables and shared libraries, with a narrow global purge-wakeup repair. TorchLean does not modify the allocator of the installed Lean toolchain. | Source project: `microsoft/mimalloc`, MIT licensed. `scripts/lean_allocator.py` pins and checks the source archive, which includes `LICENSE`, and the SDK header. |
 | Mathlib | Formal mathematics used by specifications, proofs, probability, real analysis, tensors, and optimization files. | Source project: `leanprover-community/mathlib4`, pinned to the Lean 4.35 line here. Mathlib is Apache-2.0 licensed. |
 | FloatLib | Configurable executable scalars, reference semantics, generic rounding theory, and arithmetic refinement proofs. | Source project: `lean-dojo/FloatLib`, tracking `main` with the exact revision locked in `lake-manifest.json`. MIT licensed; its license and third-party notices are distributed with the dependency. |
-| Batteries, Aesop, Qq, ProofWidgets, LeanSearchClient, importGraph, plausible, Cli, leansqlite, MD4Lean, BibtexQuery, UnicodeBasic | Lean ecosystem packages pulled directly or transitively for proofs, tactics, widgets, documentation, dependency analysis, and command-line tooling. | Their license files are fetched with the Lake package cache. |
-| doc-gen4 | Generates the API documentation built with `scripts/lake.sh -Kenv=dev build TorchLeanDocs:docs`. | Source project: `leanprover/doc-gen4`, Apache-2.0 licensed. |
-| Verso, VersoBlueprint, SubVerso, Illuminate | Build the TorchLean guide/blueprint documentation. | Upstream Lean documentation tooling. |
-| Lean4Checker | Optional kernel-level checking infrastructure used by verification workflows. | Upstream Lean project pinned in the Lake manifests. |
+| Batteries, Aesop, Qq, ProofWidgets, LeanSearchClient, importGraph, plausible, Cli, leansqlite, MD4Lean, BibtexQuery, UnicodeBasic, lean_vir, nerodia | Lean ecosystem packages pulled directly or transitively for proofs, tactics, widgets, documentation, dependency analysis, command-line tooling, and the optional Python binding (nerodia). | Their license files are fetched with the Lake package cache. |
+| doc-gen4 | Generates the API documentation built by `scripts/docs/build_site.sh`. | Source project: `leanprover/doc-gen4`, Apache-2.0 licensed. |
+| Verso, VersoBlueprint, verso-slides, SubVerso, Illuminate | Build the TorchLean guide/blueprint documentation. | Upstream Lean documentation tooling. |
 | CUDA toolkit and NVIDIA runtime libraries | Dependencies of the selected CUDA-enabled LibTorch SDK when building with `scripts/lake.sh -Kcuda=true build`. | Users provide a compatible SDK and toolkit installation. |
 | LibTorch and ATen | CUDA tensor evaluation and local gradient operations, called by TorchLean's differentiation tape. | External C++ SDK; its bundled dependencies and license notices accompany the selected distribution. |
 | PyTorch and ONNX tooling | Checkpoint exchange, graph capture, and IR import/export. | External systems; TorchLean checks imported JSON/IR artifacts and documents their trust boundaries separately. |
@@ -30,16 +31,18 @@ After `lake update`, their license files are available under `.lake/packages/` a
 
 `csrc/runtime/allocator.cpp` adapts the allocation entry points and thread-local layout from
 Lean 4.35's `src/runtime/mimalloc.cpp` and `src/runtime/alloc_tls.h` (Julia M. Himmel,
-Lean FRO, LLC). This file retains their Apache-2.0 license and attribution; the surrounding
-allocator remains the pinned MIT-licensed mimalloc source.
+Lean FRO, LLC). This file keeps their Apache-2.0 license and attribution. The rest of the
+allocator is the pinned MIT-licensed mimalloc source.
 
 ## Local Data Policy
 
 The root `data/` directory is a local workspace for downloaded datasets, Hugging Face caches,
 tokenizer files, training logs, plots, and other generated artifacts. `lake build` and CI do not
 download real datasets. Preparation commands are listed with their sources below. Install
-`numpy scipy pyarrow` for the dataset helpers; `download_example_data.py --all` prepares all five
-datasets supported by that helper.
+`numpy scipy pyarrow` for the dataset helpers: SciPy reads the `.mat` files and PyArrow the
+WikiText shards. `scripts/datasets/download_example_data.py --all` prepares five of its six
+datasets (CIFAR-10, household power, Auto MPG, Tiny Shakespeare and TinyStories). WikiText is
+prepared separately with `--wikitext`.
 
 The CIFAR-10 default is 200 train images and 100 test images. Add
 `--cifar10-limit-train -1 --cifar10-limit-test -1` for the full 50,000/10,000 split.
@@ -62,41 +65,31 @@ These are the public data sources used by the runnable examples when a user choo
 
 | Asset | Source | Local path | Preparation command | License / provenance note |
 | --- | --- | --- | --- | --- |
-| CIFAR-10 | `https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz` | `data/real/cifar10/*.npy`, archive cache under `data/real/raw/` | `python3 scripts/datasets/download_example_data.py --cifar10` | CIFAR-10 is the Krizhevsky/Nair/Hinton image dataset. The downloader checks MD5 `c58f30108f718f92721af3b95e74349a`. |
-| MNIST | `https://ossci-datasets.s3.amazonaws.com/mnist/` | `data/real/mnist/*-ubyte.gz` | `uv run NN/Examples/Interop/JAX/mnist.py OUTPUT` | LeCun/Cortes/Burges handwritten digits, derived from NIST data. Uses the HTTPS mirror and four published archive checksums recorded in [torchvision's MNIST loader](https://github.com/pytorch/vision/blob/main/torchvision/datasets/mnist.py). No dataset is bundled; the example downloads it only when run. |
+| CIFAR-10 | `https://cave.cs.toronto.edu/kriz/cifar-10-python.tar.gz` | `data/real/cifar10/*.npy`, archive cache under `data/real/raw/` | `python3 scripts/datasets/download_example_data.py --cifar10` | CIFAR-10 is the Krizhevsky/Nair/Hinton image dataset. The downloader checks MD5 `c58f30108f718f92721af3b95e74349a`. |
+| MNIST | `https://ossci-datasets.s3.amazonaws.com/mnist/` | `data/real/mnist/*-ubyte.gz` | `uv run TorchLeanExamples/Interop/JAX/mnist.py OUTPUT` | LeCun/Cortes/Burges handwritten digits, derived from NIST data. Uses the HTTPS mirror and four published archive checksums recorded in [torchvision's MNIST loader](https://github.com/pytorch/vision/blob/main/torchvision/datasets/mnist.py). No dataset is bundled, and the example downloads it only when run. |
+| Household electric power consumption | `https://archive.ics.uci.edu/static/public/235/individual+household+electric+power+consumption.zip` | `data/real/household_power/household_power_{X,Y}.npy`, archive cache under `data/real/raw/` | `python3 scripts/datasets/download_example_data.py --household-power` | Hebrail and Berard, UCI Machine Learning Repository, `https://doi.org/10.24432/C58K54`, CC BY 4.0. The script averages the valid minute readings of each hour, scales them to `[0, 1]` and exports 24-hour forecasting windows. |
+| Auto MPG | `https://archive.ics.uci.edu/static/public/9/auto+mpg.zip` | `data/real/auto_mpg/auto_mpg.csv`, archive cache under `data/real/raw/` | `python3 scripts/datasets/download_example_data.py --auto-mpg` | Quinlan, UCI Machine Learning Repository, `https://doi.org/10.24432/C5859H`, CC BY 4.0. The script writes the seven numeric predictors and the target, scaled to `[0, 1]`. |
 | Tiny Shakespeare | `https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt` | `data/real/text/tiny_shakespeare.txt` | `python3 scripts/datasets/download_example_data.py --tiny-shakespeare` | Public text corpus popularized by the `char-rnn` examples. |
 | TinyStories validation split | `https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStories-valid.txt` | `data/real/text/tinystories_valid.txt` | `python3 scripts/datasets/download_example_data.py --tinystories-valid` | TinyStories is the Eldan/Li synthetic stories corpus on Hugging Face. |
-| WikiText | Hugging Face dataset `Salesforce/wikitext` via the Dataset Viewer API | `data/real/text/wikitext2_train.txt`, optional cache under `data/real/hf_cache/wikitext/` | `python3 scripts/datasets/download_example_data.py --wikitext --config wikitext-2-raw-v1 --split train --output data/real/text/wikitext2_train.txt` | The script records the upstream license note: WikiText is CC BY-SA 3.0 / GFDL; see the Hugging Face dataset card for details. |
-| GPT-2 tokenizer files | Hugging Face repository `openai-community/gpt2` | `data/real/gpt2/vocab.json`, `data/real/gpt2/merges.txt` | Use the `curl` commands in the Local Data Policy section. | Used by `NN.API.Text.Tokenizer` and `torchlean text_gpt2` for standard GPT-2 byte-pair encoding. |
-| 1D Burgers FNO dataset | `https://huggingface.co/datasets/kks32/sciml-dataset/resolve/main/fno/burgers_data_R10.mat` | `data/real/fno/burgers_*.npy`, `data/real/fno/burgers_meta.json` | `python3 NN/Examples/Data/prepare_fno1d_burgers.py --download --out-dir data/real/fno` | Public SciML/FNO Burgers operator-learning data. The script converts the `.mat` file to native NPY arrays used by `torchlean fno1d_burgers`. |
-| Viscous Burgers PINN reference data | `https://github.com/AdrianDario10/Burgers_Equation1D` (`burgers_shock.mat`) | User-selected path, commonly `/tmp/burgers_dataset.json` after conversion | `git clone --depth 1 https://github.com/AdrianDario10/Burgers_Equation1D.git /tmp/Burgers_Equation1D` then `python3 scripts/verification/pinn/import_burgers_shock_mat.py --mat /tmp/Burgers_Equation1D/burgers_shock.mat --out /tmp/burgers_dataset.json` | Classic Raissi et al. viscous Burgers PINN reference dataset as distributed by the external repository. |
+| WikiText | Hugging Face dataset `Salesforce/wikitext` via the Dataset Viewer API | `data/real/text/wikitext2_train.txt`, optional cache under `data/real/hf_cache/wikitext/` | `python3 scripts/datasets/download_example_data.py --wikitext --config wikitext-2-raw-v1 --split train --output data/real/text/wikitext2_train.txt` | The script records the upstream license note: WikiText is CC BY-SA 3.0 / GFDL (see the Hugging Face dataset card). |
+| GPT-2 tokenizer files | Hugging Face repository `openai-community/gpt2` | `data/real/gpt2/vocab.json`, `data/real/gpt2/merges.txt` | Use the `curl` commands in the Local Data Policy section. | Used by `TorchLean.NN.Text.Tokenizer` and `torchlean text_gpt2` for standard GPT-2 byte-pair encoding. |
+| 1D Burgers FNO dataset | `https://huggingface.co/datasets/kks32/sciml-dataset/resolve/main/fno/burgers_data_R10.mat` | `data/real/fno/burgers_*.npy`, `data/real/fno/burgers_meta.json` | `python3 TorchLeanExamples/Data/prepare_fno1d_burgers.py --download --out-dir data/real/fno` | Public SciML/FNO Burgers operator-learning data. The script converts the `.mat` file to native NPY arrays used by `torchlean fno1d_burgers`. |
+| Viscous Burgers PINN reference data | `https://github.com/AdrianDario10/Burgers_Equation1D` (`burgers_shock.mat`) | User-selected path, commonly `/tmp/burgers_dataset.json` after conversion | `git clone --depth 1 https://github.com/AdrianDario10/Burgers_Equation1D.git /tmp/Burgers_Equation1D` then `python3 TorchLeanExamples/Verification/PINN/import_burgers_shock_mat.py --mat /tmp/Burgers_Equation1D/burgers_shock.mat --out /tmp/burgers_dataset.json` | Classic Raissi et al. viscous Burgers PINN reference dataset as distributed by the external repository. |
 
 ## Example Artifacts
 
-`NN/Examples/Data/generate_small_data.py` generates the small synthetic regression, image,
-forecasting and FNO inputs locally under the repository MIT license. These CSV/NPY outputs
+`TorchLeanExamples/Data/generate_small_data.py` generates the small synthetic regression and image
+inputs locally under the repository MIT license. These CSV/NPY outputs
 are not checked in. The artifacts below are included for offline examples and checks:
 
 | Artifact | Path | Origin / notice |
 | --- | --- | --- |
-| Robustness digits JSON artifacts | `NN/Examples/Verification/Robustness/digits_test.json`, `NN/Examples/Verification/Robustness/digits_linear_weights.json`, `NN/Examples/Verification/Robustness/digits_linear_margin_cert.json` | Derived artifacts produced from scikit-learn's built-in `load_digits` dataset and local training/certification scripts. scikit-learn is BSD-3-Clause licensed. |
-| LiRPA interval-bound fixture JSON | `NN/Examples/Verification/LiRPA/*.json` | Small deterministic artifacts produced by scripts under `scripts/verification/lirpa/`; Lean checkers consume the represented bounds. |
-| Alpha-beta-CROWN-style leaf artifacts | `NN/Examples/Verification/AbCrown/*.json` | Compact raw/converted terminal-leaf artifacts for the TorchLean consistency checker. The external verifier/search remains a producer boundary. |
-| ODE/PINN/spline certificate fixtures | `NN/Examples/Verification/{ODE,PINN,Splines}/` | Small curated artifacts produced by local scripts or hand-written fixtures so verification commands run offline. Larger trained checkpoints stay outside git. |
+| IBP fixture | `TorchLeanExamples/Verification/IBPCert/mlp_cert.json` | From `export_cert.py`. |
+| Alpha-beta-CROWN-style leaf artifacts | `TorchLeanExamples/Verification/AbCROWN/*.json` | Compact raw/converted terminal-leaf artifacts for the TorchLean consistency checker. The external verifier/search remains a producer boundary. |
+| ODE/PINN/spline/camera certificate fixtures | `TorchLeanExamples/Verification/{Geometry3D,ODE,PINN,Splines}/` | Small curated artifacts produced by local scripts or hand-written fixtures so verification commands run offline. Larger trained checkpoints stay outside git. |
 
 Bundled JSON fixtures should stay small enough to review. If an artifact depends on a large model,
 dataset, solver run, or external training process, keep the large output under `data/`, `_external/`,
 `/tmp`, or another ignored directory and document the regeneration command instead.
-
-## Optional Third-Party Code
-
-- `Two-Stage_Neural_Controller_Training/`
-  - This path is gitignored in TorchLean; it is a local checkout for the two-stage controller
-    experiments rather than part of the library tree.
-  - If you check out the external project locally, see
-    `Two-Stage_Neural_Controller_Training/LICENSE`.
-  - That external checkout may itself vendor the `alphabetaCROWN` code and data; see:
-    - `Two-Stage_Neural_Controller_Training/src/alphabetaCROWN/LICENSE`
-    - `Two-Stage_Neural_Controller_Training/src/alphabetaCROWN/README.md`
 
 Questions or corrections about provenance are welcome as issues or pull requests.

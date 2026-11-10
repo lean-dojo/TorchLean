@@ -7,16 +7,14 @@
 .DS_Store
 .venv/
 external/
-NN/Examples/MNIST/
-NN/Autograd/
 lean-nn-env/
 data/
-NN/Examples/Data/*.csv
-NN/Examples/Data/*.npy
+TorchLeanExamples/Data/*.csv
+TorchLeanExamples/Data/*.npy
 _external/
 third_party/interval/
 
-# Local LibTorch unpack (CUDA prerequisite; see README)
+# Local LibTorch unpack, a CUDA prerequisite (see README)
 /libtorch
 .lake/build/libtorch.path
 
@@ -28,20 +26,16 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ipynb_checkpoints/
+python/*.egg-info/
+python/build/
 
-# Generated PyTorch exports (`scripts/lake.sh exe torchlean pytorch_roundtrip --action export`)
-NN/Examples/PyTorch/*/Test*.py
-NN/Examples/Interop/PyTorch/*/Test*.py
-
-# PINN training artifacts
-NN/Examples/Verification/PINN/checkpoints/
+# PyTorch checkpoints
 *.pt
 
 # Verification experiment outputs. Small checked-in JSON artifacts live next to examples, but new
 # generated artifacts should go into these ignored directories or `_external/`.
-NN/Examples/Verification/**/generated/
-NN/Examples/Verification/**/outputs/
-NN/Examples/Verification/TwoStageTorchLean/_external/
+TorchLeanExamples/Verification/**/generated/
+TorchLeanExamples/Verification/**/outputs/
 home_page/blueprint/print/*.nfs*
 
 # LaTeX build artifacts (paper/blueprint)
@@ -59,7 +53,6 @@ missfont.log
 
 # Verso output (generated HTML/book assets)
 /_out/
-/docs/manual/
 **/_out/
 verso_manual/.verso/
 verso_manual/.lake/
@@ -70,16 +63,11 @@ testingoblass/
 pdf/
 plots/
 
-# Repo tooling (note: existing tracked files are still public; this only ignores *new* untracked artifacts).
+# Local tooling directories. Ignoring a path does not untrack files that git already tracks.
 tools/
-# `/tools/` above is for scratch tooling directories; this Jekyll route is maintained site content.
+# `tools/` above ignores scratch tooling directories. This Jekyll route is site content.
 !home_page/tools/
 !home_page/tools/index.md
-
-# Optional external experiment repo (keep it out of the public repo).
-# If you work on it locally, clone it into the repo root and it will stay untracked.
-PINN_verification/
-Two-Stage_Neural_Controller_Training/
 
 # Jekyll / GitHub Pages site build artifacts
 home_page/_site/
@@ -87,9 +75,8 @@ home_page/.jekyll-cache/
 home_page/.sass-cache/
 home_page/.jekyll-metadata
 home_page/docs/
-home_page/manual/
 
-# Rebuilt from the current Lean import graph by `scripts/docs/build_site.sh` and CI.
+# Written by `scripts/docs/build_site.sh graphs` from the Lean import graph.
 home_page/graphs/dependency-audit.json
 home_page/importgraph/index.html
 

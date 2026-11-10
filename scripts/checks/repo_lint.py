@@ -2,16 +2,15 @@
 """
 TorchLean repo lints (project-specific).
 
-This linter stays dependency-free so it can run in CI and locally.
+The linter stays dependency-free so it can run in CI and locally.
 
-Checks are split into:
-  - errors: must be fixed (fail CI)
-  - warnings: reported for visibility (do not fail by default)
+Every finding is an error: the command prints each one and exits with status 1 if there is any.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import os
 import pathlib
 import re
@@ -27,19 +26,10 @@ from dependency_audit import mask_comments_and_strings as _mask_lean_comments_an
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-LINT_SCOPE_SENTINEL = REPO_ROOT / "NN/MLTheory/CROWN/Lyapunov/Certificate.lean"
+LINT_SCOPE_SENTINEL = REPO_ROOT / "TorchLean/Verify/CROWN.lean"
 
-# External trees that may exist in a developer checkout but are not part of TorchLean's core sources
-# and must not affect repo policy/CI. These are user-cloned repos outside TorchLean's source tree.
-#
-# Source discovery skips these directories so optional checkouts do not affect `lake lint`.
-VENDORED_DIR_NAMES = {
-    "Two-Stage_Neural_Controller_Training",  # optional external checkout (α,β-CROWN workflows)
-    "PINN_verification",  # user-cloned external repo (gitignored)
-}
-
-# Prune these before descent: filtering yielded paths still crawls their contents on EFS.
-SOURCE_EXCLUDED_DIR_NAMES = VENDORED_DIR_NAMES | {
+# Prune these before descent, since filtering the yielded paths would walk everything below them.
+SOURCE_EXCLUDED_DIR_NAMES = {
     ".git",
     ".lake",
     ".cache",
@@ -59,15 +49,13 @@ SOURCE_EXCLUDED_DIR_NAMES = VENDORED_DIR_NAMES | {
 
 # These output paths have ordinary names that can also occur in authored source directories.
 GENERATED_DOC_DIRS = {
-    "docs/manual",
     "home_page/docs",
-    "home_page/manual",
     "home_page/blueprint/print",
     "home_page/blueprint/web",
 }
 
-# Keep the trusted boundary explicit: axioms must be quarantined, named, and documented.
-# TorchLean currently has no custom axioms.
+# Axioms must be quarantined, named and documented, so that the trusted boundary stays visible.
+# TorchLean has no custom axioms.
 ALLOWED_AXIOMS: dict[str, set[str]] = {}
 
 # Visibility and attributes do not change an axiom's contribution to the trusted boundary.
@@ -80,20 +68,9 @@ AXIOM_DECL_RE = re.compile(
 )
 
 # Documentation may mention producer-side environment variables only when the implementation hook
-# exists in source. This prevents guide text from advertising phantom integration flags.
+# exists in source, so guide text cannot advertise phantom integration flags.
 DOCUMENTED_ENV_VAR_IMPLEMENTATIONS = {
     "ABCROWN_ARTIFACT_OUT": "scripts/verification/abcrown/export_leaf_artifact.py",
-}
-
-TRUST_BOUNDARY_DECL_REFS = {
-    "NN.MLTheory.CROWN.Graph.CrownCertSoundness.CrownTransferSound": (
-        "NN/MLTheory/CROWN/Proofs/GraphCrownCertSoundness.lean",
-        re.compile(r"\bdef\s+CrownTransferSound\b"),
-    ),
-    "NN.MLTheory.Proofs.UniversalApproximation.FloatIntervalApprox.OpsExact.Sound": (
-        "NN/MLTheory/Proofs/Approximation/FloatInterval/Semantics.lean",
-        re.compile(r"\bclass\s+Sound\s*:\s*Prop\b"),
-    ),
 }
 
 TORCHLEAN_SOURCE_LINK_RE = re.compile(
@@ -105,7 +82,8 @@ DOCGEN_API_LINK_RE = re.compile(
 )
 
 LOCAL_SOURCE_REF_RE = re.compile(
-    r"`((?:NN|blueprint|home_page|scripts|csrc)/[^`\s]+"
+    r"`((?:TorchLean|TorchLeanExamples|TorchLeanTest|python|blueprint|home_page|scripts|csrc)"
+    r"/[^`\s]+"
     r"\.(?:lean|md|py|json|sh|cu|c|h|yml|yaml))`"
 )
 
@@ -125,27 +103,7 @@ FORMALIZATION_MATH_IN_ORDINARY_CODE_RE = re.compile(
     r"(?<!\$)`[^`\n]*(?:\s[\^+*/<>]=?\s|≤|≥|±)[^`\n]*`"
 )
 
-PUBLIC_NUMERICAL_EXAMPLE_PREFIXES = (
-    "NN/Examples/Quickstart/",
-    "NN/Examples/Models/",
-    "NN/Examples/Data/",
-    "NN/Examples/Functional/",
-    "NN/Examples/Factorization/",
-    "NN/Examples/Interop/",
-)
-
-PUBLIC_NUMERICAL_SPEC_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (
-        re.compile(
-            r"\bSpec\.(?:fill|mseSpec|getSpec|toScalarSpec|qrQSpec|qrRSpec|qrSpec|"
-            r"choleskySpec|linearSpec|matVecMulSpec|matMulSpec|"
-            r"convOutSpatial|poolOutSpatialPad)\b|"
-            r"\bActivation\.(?:reluSpec|sigmoidSpec|tanhSpec)\b|"
-            r"\b(?:Spec\.)?Tensor\.(?:addSpec|subSpec|mulSpec|divSpec|scaleSpec)\b"
-        ),
-        "runnable numerical examples should call the public `Tensor.*` or `nn.*` operation; "
-        "reserve direct computational `Spec.*` calls for proof and specification examples.",
-    ),
+NUMERICAL_EXAMPLE_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (
         re.compile(r"\[[^\]\n]+\]!"),
         "runnable numerical examples should use bounded tensor indices or checked container lookup, "
@@ -158,36 +116,69 @@ PUBLIC_NUMERICAL_SPEC_BANNED_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
 ]
 
-# Root-driven Lake targets that collectively typecheck maintained modules outside the dedicated
-# example and test libraries. Keep this list aligned with `lakefile.lean`.
-LEAN_TYPECHECK_ROOTS = {
-    "NN",
-    "NN.CI.All",
-    "NN.Docs",
-    "NN.Verification.Main",
-}
-
-LEAN_TYPECHECK_GLOB_PREFIXES = (
-    "NN/Examples/",
-    "NN/Tests/",
+# The tensor compiler's internal language uses Lean vectors for compiler indices and
+# proof-recursive lists for syntax. The public numerical-container policies apply everywhere else.
+TENSOR_COMPILER_PATHS = (
+    "TorchLean/Tensor/Einops/",
+    "TorchLean/Tensor/Native/",
+    "TorchLean/Tensor/Rep/",
+    "TorchLean/Tensor/Literal.lean",
+    "TorchLean/Tensor/Promotion.lean",
+    "TorchLean/Tensor/Rep.lean",
+    "TorchLean/Tensor/Shape/Coord.lean",
+    "TorchLean/Tensor/Storage.lean",
 )
-
-# The tensor compiler's internal language uses Lean vectors for compiler indices,
-# proof-recursive lists for syntax.
-# Public numerical-container policies apply at `NN.Tensor`, not inside this
-# implementation namespace.
-TENSOR_INTERNAL_PREFIX = "NN/Tensor/Internal/"
+# Public API and example code resolve canonical namespaces without `_root_.`.
+PUBLIC_API_PATHS = (
+    "TorchLean/NN/Arithmetic.lean",
+    "TorchLean/NN/Autograd/",
+    "TorchLean/NN/Builder.lean",
+    "TorchLean/NN/Builder/",
+    "TorchLean/NN/CLI/",
+    "TorchLean/NN/Checkpoint.lean",
+    "TorchLean/NN/Data/CausalLM.lean",
+    "TorchLean/NN/Data/Dataset.lean",
+    "TorchLean/NN/Data/Image.lean",
+    "TorchLean/NN/Data/Loader.lean",
+    "TorchLean/NN/Data/Source.lean",
+    "TorchLean/NN/Data/Synthetic.lean",
+    "TorchLean/NN/LoRA.lean",
+    "TorchLean/NN/Models/CNN.lean",
+    "TorchLean/NN/Models/CausalTransformer.lean",
+    "TorchLean/NN/Models/CausalTransformer/",
+    "TorchLean/NN/Models/Diffusion/NoisePredictor.lean",
+    "TorchLean/NN/Models/FNO.lean",
+    "TorchLean/NN/Models/Generative.lean",
+    "TorchLean/NN/Models/KAN.lean",
+    "TorchLean/NN/Models/Mamba.lean",
+    "TorchLean/NN/Models/MaskedPatchReconstructor.lean",
+    "TorchLean/NN/Models/PPO.lean",
+    "TorchLean/NN/Models/Recurrent.lean",
+    "TorchLean/NN/Models/ResNet.lean",
+    "TorchLean/NN/Models/UNet.lean",
+    "TorchLean/NN/Models/ViT.lean",
+    "TorchLean/NN/Module.lean",
+    "TorchLean/NN/Module/",
+    "TorchLean/NN/Optimizer/",
+    "TorchLean/NN/RL/CLI.lean",
+    "TorchLean/NN/RL/PPO/",
+    "TorchLean/NN/Random.lean",
+    "TorchLean/NN/Sample.lean",
+    "TorchLean/NN/SelfSupervised.lean",
+    "TorchLean/NN/Sequential/",
+    "TorchLean/NN/Session/",
+    "TorchLean/NN/Text/",
+    "TorchLean/NN/Trainer.lean",
+    "TorchLean/NN/Trainer/",
+    "TorchLean/NN/Training/",
+    "TorchLean/Verify/Lowering.lean",
+    "TorchLean/Verify/Report.lean",
+    "TorchLean/Verify/Trainer.lean",
+    "TorchLeanExamples/",
+)
 TENSOR_VECTOR_BOUNDARY_FILES = {
-    "NN/Tensor/Conversion.lean",
-    "NN/Tests/Tensor/Storage.lean",
+    "TorchLean/Tensor/Conversion.lean",
 }
-
-
-
-TOP_LEVEL_API_DECL_RE = re.compile(
-    r"^\s*(def|structure|inductive|class|abbrev|instance|theorem|lemma)\s+",
-    flags=re.MULTILINE,
-)
 
 
 # Lean.Parser.Module.Syntax: optional public, optional meta, import, optional all, module.
@@ -210,33 +201,29 @@ def _lean_import_header(masked: str) -> str:
             break
     return "".join(lines)
 
-# Import-only API umbrellas should compose focused public modules. Re-exporting these implementation
-# roots makes runtime internals part of the user API by accident.
-BROAD_LOW_LEVEL_IMPORTS = {
-    "NN",
-    "NN.Proofs",
-    "NN.Runtime",
-    "NN.Spec",
-    "NN.Verification",
-    "NN.Runtime.Autograd.Model",
-}
-
-BROAD_LOW_LEVEL_IMPORT_PREFIXES = (
-    "NN.Runtime.Autograd.Engine.",
-    "NN.Runtime.Autograd.Torch.Core.",
-    "NN.Spec.Core.Tensor.Internal.",
-)
-
 CONTRACT_GUARD_SOURCE_PATH_RE = re.compile(
     r"\.runtimeGuard\s+\"[^\"]*\.(?:c|cc|cpp|cu|cuh|h|hpp)\"",
 )
 
 
+# The source roots: the four libraries under `TorchLean/`, the examples and the tests.
+SOURCE_ROOTS = ("TorchLean", "TorchLeanExamples", "TorchLeanTest")
+
+# Path-scoped rules name files and directories under these roots. A rule whose path matches no
+# file passes vacuously, so `_check_rule_paths` fails on such a path.
+RULE_PATH_RE = re.compile(
+    r"(?:TorchLean|TorchLeanExamples|TorchLeanTest|python)(?:/[^\s\"'`*?\[\]]*)?"
+)
+
+# `{src "path"}` and `{srcDir "path"}` (TorchLeanBlueprint/Roles.lean) link a file or a directory.
+VERSO_SOURCE_ROLE_RE = re.compile(r'\{(src|srcDir)[ \t]+"((?:[^"\\\n]|\\.)*)"[ \t]*\}')
+
+
 @dataclass(frozen=True)
 class Finding:
-    """One repository-lint warning or error."""
+    """One repository-lint error."""
 
-    level: str  # "ERROR" | "WARN"
+    level: str  # always "ERROR", the prefix `render` prints
     path: pathlib.Path
     line: int | None
     col: int | None
@@ -254,6 +241,11 @@ class Finding:
 
 def _iter_lean_files() -> Iterable[pathlib.Path]:
     """Yield tracked and non-ignored project Lean sources without crawling build trees."""
+    yield from _iter_project_files("*.lean")
+
+
+def _iter_project_files(pattern: str) -> Iterable[pathlib.Path]:
+    """Yield tracked and non-ignored project files matching a Git pathspec."""
     command = [
         "git",
         "ls-files",
@@ -262,7 +254,7 @@ def _iter_lean_files() -> Iterable[pathlib.Path]:
         "--exclude-standard",
         "-z",
         "--",
-        "*.lean",
+        pattern,
     ]
     try:
         result = subprocess.run(
@@ -282,16 +274,14 @@ def _iter_lean_files() -> Iterable[pathlib.Path]:
         if not relative_bytes:
             continue
         relative = pathlib.Path(relative_bytes.decode("utf-8", errors="surrogateescape"))
-        if any(directory in relative.parts for directory in VENDORED_DIR_NAMES):
-            continue
         if "_out" in relative.parts:
             continue
         path = REPO_ROOT / relative
         if path.is_file():
             yield path
 
-# FloatLib owns the shared numerical library. The remaining TorchLean adapters follow the
-# same source-style rules as the rest of this repository.
+# FloatLib owns the shared numerical library. The TorchLean adapters follow the same
+# source-style rules as the rest of this repository.
 MAX_LINE_LENGTH = 100
 
 
@@ -309,51 +299,55 @@ def _check_line_style(path: pathlib.Path, text: str, findings: list[Finding]) ->
             )
 
 
-def _check_lean_target_coverage(findings: list[Finding]) -> None:
-    """Require every maintained `NN` module to belong to a typecheck target."""
+def _in_source_roots(path: pathlib.Path) -> bool:
+    """Check whether `path` lies under one of the source roots."""
 
-    nn_files = {
-        path.relative_to(REPO_ROOT).with_suffix("").as_posix().replace("/", "."): path
-        for path in _iter_lean_files()
-        if path == REPO_ROOT / "NN.lean" or path.is_relative_to(REPO_ROOT / "NN")
-    }
-    imports: dict[str, list[str]] = {}
-    for module, path in nn_files.items():
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        masked = _mask_lean_comments_and_strings(text)
-        imports[module] = [
-            match.group("module")
-            for match in LEAN_IMPORT_RE.finditer(_lean_import_header(masked))
-            if match.group("module") in nn_files
-        ]
+    return any(path.is_relative_to(REPO_ROOT / top) for top in SOURCE_ROOTS)
 
-    covered: set[str] = set()
-    pending = list(LEAN_TYPECHECK_ROOTS)
-    while pending:
-        module = pending.pop()
-        if module in covered or module not in nn_files:
-            continue
-        covered.add(module)
-        pending.extend(imports.get(module, []))
 
-    for module, path in sorted(nn_files.items()):
-        rel = path.relative_to(REPO_ROOT).as_posix()
-        if module in covered or rel.startswith(LEAN_TYPECHECK_GLOB_PREFIXES):
+def _check_rule_paths(findings: list[Finding]) -> None:
+    """Fail on a path in this file's rules (a string literal under `TorchLean/`,
+    `TorchLeanExamples/`, `TorchLeanTest/` or `python/`) that matches no project file, so a rule
+    cannot pass vacuously after files move."""
+
+    source = pathlib.Path(__file__).resolve()
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    files = [path.relative_to(REPO_ROOT).as_posix() for path in _iter_project_files("*")]
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
             continue
-        findings.append(
-            Finding(
-                "ERROR",
-                path,
-                None,
-                None,
-                "maintained Lean module is not reachable from `NN`, `NNCI`, "
-                "`TorchLeanDocs`, or an executable root, and is not covered by the `NNExamples` "
-                "or `NNTests` globs.",
+        if RULE_PATH_RE.fullmatch(node.value) and not any(
+            rel.startswith(node.value) for rel in files
+        ):
+            findings.append(
+                Finding(
+                    "ERROR",
+                    source,
+                    node.lineno,
+                    node.col_offset + 1,
+                    f"rule path `{node.value}` matches no file; update the rule or delete it.",
+                )
             )
-        )
+
+
+def _check_verso_source_roles(path: pathlib.Path, text: str, findings: list[Finding]) -> None:
+    """Check that every `{src "…"}` names a file and every `{srcDir "…"}` a directory."""
+
+    for m in VERSO_SOURCE_ROLE_RE.finditer(text):
+        role, target = m.group(1), m.group(2)
+        kind = "file" if role == "src" else "directory"
+        resolved = REPO_ROOT / target
+        if not (resolved.is_file() if role == "src" else resolved.is_dir()):
+            line, col = _line_col(text, m.start())
+            findings.append(
+                Finding(
+                    "ERROR",
+                    path,
+                    line,
+                    col,
+                    f"dead `{{{role}}}` link: `{target}` is not a {kind} in this checkout.",
+                )
+            )
 
 
 def _iter_source_files(
@@ -393,12 +387,15 @@ def _iter_doc_paths() -> Iterable[pathlib.Path]:
     yield from REPO_ROOT.glob("README.md")
     yield from (REPO_ROOT / "docs").glob("*.md")
     yield from _iter_source_files(REPO_ROOT / "home_page/blueprint", ".lean")
-    for relative in ("home_page", "NN", "scripts"):
+    for relative in (
+        "home_page", "TorchLean", "TorchLeanExamples", "TorchLeanTest", "python",
+        "scripts",
+    ):
         yield from _iter_source_files(REPO_ROOT / relative, ".md")
 
 
 def _iter_generated_script_artifacts() -> Iterable[pathlib.Path]:
-    """Generated files that stay outside the checked-in `scripts/` tree."""
+    """Yield generated files under `scripts/` (`__pycache__`, `.pyc`, `.pyo`, `.DS_Store`)."""
 
     scripts_dir = REPO_ROOT / "scripts"
     if not scripts_dir.exists():
@@ -409,7 +406,7 @@ def _iter_generated_script_artifacts() -> Iterable[pathlib.Path]:
 
 
 def _iter_script_files() -> Iterable[pathlib.Path]:
-    """Yield checked-in support scripts and helper files under `scripts/`."""
+    """Yield every file on disk under `scripts/`, tracked or not."""
 
     scripts_dir = REPO_ROOT / "scripts"
     if not scripts_dir.exists():
@@ -450,13 +447,22 @@ def _line_col(text: str, idx: int) -> tuple[int, int]:
     return line, col
 
 
-def _has_nn_header(path: pathlib.Path, text: str) -> bool:
-    """Check whether an `NN/` source file carries the standard TorchLean header."""
-    # TorchLean policy: NN sources carry a consistent header at the top of the file.
-    if not path.is_relative_to(REPO_ROOT / "NN"):
+TORCHLEAN_HEADER = (
+    "Copyright (c) 2026 TorchLean",
+    "Released under MIT license as described in the file LICENSE.",
+    "Authors: TorchLean Team",
+)
+
+
+def _has_torchlean_header(path: pathlib.Path, text: str) -> bool:
+    """Check whether a source file under `TorchLean/`, `TorchLeanExamples/` or
+    `TorchLeanTest/` carries the standard TorchLean header."""
+    # TorchLean policy: library, example and test sources carry a consistent header at the top
+    # of the file.
+    if not _in_source_roots(path):
         return True
-    head = "\n".join(text.splitlines()[:10])
-    return "Copyright (c) 2026 TorchLean" in head
+    head = text.splitlines()[:10]
+    return all(line in head for line in TORCHLEAN_HEADER)
 
 
 def _has_lean_module_docstring(text: str) -> bool:
@@ -491,7 +497,7 @@ def _mask_verso_prose(text: str) -> str:
         elif lean_block:
             out.append(line)
             continue
-        # Inline Lean roles also elaborate terms; retain them for the banned-construct checks.
+        # Inline Lean roles also elaborate terms, so keep them for the banned-construct checks.
         masked = list(re.sub(r"[^\r\n]", " ", line))
         if fence is None:
             for role in re.finditer(r"\{lean(?:\s[^}\n]*)?\}(`+)(.*?)\1", line):
@@ -579,7 +585,7 @@ def _check_lean_doc_math(path: pathlib.Path, text: str, findings: list[Finding])
 
 
 def _check_verso_math_roles(path: pathlib.Path, text: str, findings: list[Finding]) -> None:
-    """Catch mathematical TeX that would remain an ordinary monospace code span."""
+    """Catch mathematical TeX that would render as an ordinary monospace code span."""
 
     patterns = [VERSO_TEX_IN_ORDINARY_CODE_RE]
     if path.is_relative_to(REPO_ROOT / "home_page/blueprint/TorchLeanBlueprint/FormalizationMap"):
@@ -618,7 +624,23 @@ def _check_backend_contract_refs(
         )
 
 
-def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
+def _check_python_native_decide(path: pathlib.Path, text: str, findings: list[Finding]) -> None:
+    """Reject `native_decide` in a Python source, including in the Lean proofs it writes."""
+
+    for m in re.finditer(r"\bnative_decide\b", text):
+        line, col = _line_col(text, m.start())
+        findings.append(
+            Finding(
+                "ERROR",
+                path,
+                line,
+                col,
+                "`native_decide` is banned in TorchLean, including in generated Lean proofs.",
+            )
+        )
+
+
+def lint_repo() -> list[Finding]:
     """Run TorchLean's repository hygiene checks and return all findings."""
     findings: list[Finding] = []
     if not LINT_SCOPE_SENTINEL.exists():
@@ -629,11 +651,11 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                 None,
                 None,
                 "repo linter is not rooted at TorchLean; expected to see "
-                "NN/MLTheory/CROWN/Lyapunov/Certificate.lean.",
+                "TorchLean/Verify/CROWN.lean.",
             )
         )
 
-    _check_lean_target_coverage(findings)
+    _check_rule_paths(findings)
 
     for path in _iter_generated_script_artifacts():
         findings.append(
@@ -675,41 +697,6 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     )
                 )
 
-    trust_file = REPO_ROOT / "docs/TRUST_BOUNDARIES.md"
-    try:
-        trust_text = trust_file.read_text(encoding="utf-8")
-    except OSError as e:
-        trust_text = ""
-        findings.append(Finding("ERROR", trust_file, None, None, f"failed to read file: {e}"))
-
-    for fq_name, (rel_source, decl_re) in TRUST_BOUNDARY_DECL_REFS.items():
-        if fq_name not in trust_text:
-            findings.append(
-                Finding(
-                    "ERROR",
-                    trust_file,
-                    None,
-                    None,
-                    f"trust-boundary declaration `{fq_name}` is missing from docs/TRUST_BOUNDARIES.md.",
-                )
-            )
-        source = REPO_ROOT / rel_source
-        try:
-            source_text = source.read_text(encoding="utf-8")
-        except OSError as e:
-            findings.append(Finding("ERROR", source, None, None, f"failed to read file: {e}"))
-            continue
-        if not decl_re.search(source_text):
-            findings.append(
-                Finding(
-                    "ERROR",
-                    source,
-                    None,
-                    None,
-                    f"docs/TRUST_BOUNDARIES.md cites `{fq_name}`, but the expected declaration was not found.",
-                )
-            )
-
     for path in _iter_doc_paths():
         try:
             text = path.read_text(encoding="utf-8")
@@ -720,6 +707,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
             _check_docgen_api_links(path, text, findings)
         elif path.is_relative_to(REPO_ROOT / "home_page/blueprint/TorchLeanBlueprint"):
             _check_verso_math_roles(path, text, findings)
+            _check_verso_source_roles(path, text, findings)
         for m in TORCHLEAN_SOURCE_LINK_RE.finditer(text):
             raw_target = m.group(1).split("#", 1)[0]
             target = urllib.parse.unquote(raw_target)
@@ -788,7 +776,8 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
             findings.append(Finding("ERROR", path, None, None, f"failed to read file: {e}"))
             continue
 
-        # Enforce LF-only; CRLF and stray CR cause confusing diffs and occasional parser weirdness.
+        # Enforce LF-only line endings. CRLF and stray CR cause confusing diffs and occasional
+        # parser weirdness.
         if b"\r" in raw:
             findings.append(Finding("ERROR", path, None, None, "contains CR (`\\r`) characters (use LF)."))
             continue
@@ -801,7 +790,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
         _check_lean_doc_math(path, text, findings)
         _check_backend_contract_refs(path, text, findings)
 
-        if rel.startswith(("NN/API/", "NN/Examples/")):
+        if rel.startswith(PUBLIC_API_PATHS):
             for match in re.finditer(r"_root_\.", masked):
                 line, col = _line_col(text, match.start())
                 findings.append(
@@ -815,11 +804,13 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     )
                 )
 
-        if rel.startswith("NN/Examples/Quickstart/"):
+        if rel.startswith("TorchLeanExamples/Quickstart/"):
             quickstart_internals = [
-                (re.compile(r"\bTensorPack\b"), "heterogeneous runtime packs"),
-                (re.compile(r"\bRuntime\.Autograd\b"), "runtime autograd internals"),
-                (re.compile(r"\bNN\.IR\b"), "raw compiler IR"),
+                (re.compile(r"(?<![\w.'])(?:TorchLean\.)?Pack\b"),
+                 "heterogeneous runtime packs"),
+                (re.compile(r"(?<![\w.'])(?:TorchLean\.)?(?:Tape|Dual|TypedGraph)\b"),
+                 "runtime autograd internals"),
+                (re.compile(r"(?<![\w.'])(?:TorchLean\.)?IR\b"), "raw compiler IR"),
                 (re.compile(r"\bTensor\.ofFn\b"), "proof-level tensor construction"),
                 (re.compile(r"\bList\.finRange\b"), "bounded-index proof plumbing"),
             ]
@@ -838,14 +829,13 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     )
 
         runtime_example_prefixes = (
-            "NN/Examples/Quickstart/",
-            "NN/Examples/Data/",
-            "NN/Examples/Factorization/",
-            "NN/Examples/Models/Supervised/",
-            "NN/Examples/Models/Vision/",
-            "NN/Examples/Models/Sequence/",
-            "NN/Examples/Models/Generative/",
-            "NN/Examples/Models/Operators/",
+            "TorchLeanExamples/Quickstart/",
+            "TorchLeanExamples/Data/",
+            "TorchLeanExamples/Models/Supervised/",
+            "TorchLeanExamples/Models/Vision/",
+            "TorchLeanExamples/Models/Sequence/",
+            "TorchLeanExamples/Models/Generative/",
+            "TorchLeanExamples/Models/Operators/",
         )
         if rel.startswith(runtime_example_prefixes):
             for match in re.finditer(r"\bSpec\.", masked):
@@ -861,21 +851,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     )
                 )
 
-        if rel.startswith("NN/Examples/"):
-            for match in re.finditer(r"\b(?:nn\.)?State\.Internal\b", masked):
-                line, col = _line_col(text, match.start())
-                findings.append(
-                    Finding(
-                        "ERROR",
-                        path,
-                        line,
-                        col,
-                        "examples must use the public opaque `nn.State` and public execution or "
-                        "verification APIs, not unpack its internal tensor representation.",
-                    )
-                )
-
-        if rel.startswith("NN/Examples/Models/"):
+        if rel.startswith("TorchLeanExamples/Models/"):
             prefixed_name_re = re.compile(
                 r'\bdef\s+exeName\s*:\s*String\s*:=\s*"torchlean(?:\s|")'
             )
@@ -893,7 +869,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                 )
 
 
-        if rel.startswith("NN/Examples/Models/") or rel == "NN/API/RL/Cli.lean":
+        if rel.startswith("TorchLeanExamples/Models/") or rel == "TorchLean/NN/RL/CLI.lean":
             for match in re.finditer(r"\.drop\s+10\b", masked):
                 line, col = _line_col(text, match.start())
                 findings.append(
@@ -917,17 +893,6 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
             directive = " ".join(match.group("directive").split())
             module_name = match.group("module")
             line, col = _line_col(text, match.start())
-            if rel.startswith("NN/CI/") and match.group("public"):
-                findings.append(
-                    Finding(
-                        "ERROR",
-                        path,
-                        line,
-                        col,
-                        "CI import targets compile dependencies but must not re-export them; "
-                        "use a private `import`.",
-                    )
-                )
             previous_line = import_directives.get(directive)
             if previous_line is None:
                 import_directives[directive] = line
@@ -943,31 +908,10 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     )
                 )
 
-        if rel.startswith("NN/API") and TOP_LEVEL_API_DECL_RE.search(masked) is None:
-            for match in LEAN_IMPORT_RE.finditer(import_header):
-                if not match.group("public"):
-                    continue
-                module_name = match.group("module")
-                if (
-                    module_name in BROAD_LOW_LEVEL_IMPORTS
-                    or module_name.startswith(BROAD_LOW_LEVEL_IMPORT_PREFIXES)
-                ):
-                    line, col = _line_col(text, match.start("module"))
-                    findings.append(
-                        Finding(
-                            "ERROR",
-                            path,
-                            line,
-                            col,
-                            f"import-only API umbrella re-exports low-level module `{module_name}`; "
-                            "export a focused API module instead.",
-                        )
-                    )
-
         ownership_sensitive_cuda_modules = {
-            "NN/Runtime/Autograd/Engine/LibTorch/Buffer.lean",
-            "NN/Runtime/Autograd/Engine/LibTorch/Kernels.lean",
-            "NN/Runtime/Autograd/Engine/LibTorch/ConvPool.lean",
+            "TorchLean/CUDA/LibTorch/Buffer.lean",
+            "TorchLean/CUDA/LibTorch/Kernels.lean",
+            "TorchLean/CUDA/LibTorch/ConvPool.lean",
         }
         if rel in ownership_sensitive_cuda_modules:
             unsafe_extern = re.compile(r"@\[(?![^\]]*\bnever_extract\b)[^\]]*\bextern\b[^\]]*\]")
@@ -984,18 +928,19 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                     )
                 )
 
-        if not _has_nn_header(path, text):
+        if not _has_torchlean_header(path, text):
             findings.append(
                 Finding(
                     "ERROR",
                     path,
                     1,
                     1,
-                    "missing TorchLean header in the first ~10 lines (expected `Copyright (c) 2026 TorchLean`).",
+                    "missing TorchLean header in the first 10 lines (expected the lines `Copyright (c) 2026 TorchLean`, "
+                    "`Released under MIT license as described in the file LICENSE.` and `Authors: TorchLean Team`).",
                 )
             )
 
-        if path.is_relative_to(REPO_ROOT / "NN") and not _has_lean_module_docstring(text):
+        if _in_source_roots(path) and not _has_lean_module_docstring(text):
             findings.append(
                 Finding(
                     "ERROR",
@@ -1006,7 +951,7 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                 )
             )
 
-        # Line-level whitespace hygiene: Lean rejects tabs, and trailing whitespace is noisy in reviews.
+        # Line-level whitespace hygiene: Lean rejects tabs, and trailing whitespace is diff noise.
         for i, line in enumerate(text.splitlines(), start=1):
             if "\t" in line:
                 col = line.find("\t") + 1
@@ -1014,10 +959,10 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
             if line.endswith(" "):
                 findings.append(Finding("ERROR", path, i, len(line), "trailing whitespace."))
 
-        if rel.startswith("NN/"):
+        if _in_source_roots(path):
             fixed_vector_re = re.compile(r"\b(?:List\.)?Vector\b|#v\[")
             if (
-                not rel.startswith(TENSOR_INTERNAL_PREFIX)
+                not rel.startswith(TENSOR_COMPILER_PATHS)
                 and rel not in TENSOR_VECTOR_BOUNDARY_FILES
             ):
                 for m in fixed_vector_re.finditer(masked):
@@ -1036,15 +981,12 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
 
             dynamic_numeric_list_re = re.compile(
                 r"\bList\s+(?:Float|Rat|Int|Bool|UInt8|UInt16|UInt32|UInt64)\b|"
-                r"\bList\s*\(\s*(?:Probe|Sample\.Supervised|LinParams)\b|"
-                r"\bList\s*\(\s*FlatAffine\b|"
-                r"\bList\s+PinnLayer\b|"
+                r"\bList\s*\(\s*(?:Probe|Sample\.Supervised|SomeLinear)\b|"
                 r"\bIO\.Ref\s*\(\s*List\s+Nat\s*\)|"
-                r"\bList\s+NN\.Backend\.(?:AcceptedKernel|Provider)\b|"
-                r"\bList\s*\(\s*NN\.Backend\.KernelHandler\b|"
+                r"\bList\s+(?:TorchLean\.)?Backend\.(?:AcceptedKernel|Provider)\b|"
                 r"\bhiddenDims\s*:\s*List\s+Nat\b"
             )
-            if not rel.startswith(TENSOR_INTERNAL_PREFIX):
+            if not rel.startswith(TENSOR_COMPILER_PATHS):
                 for m in dynamic_numeric_list_re.finditer(masked):
                     line, col = _line_col(text, m.start())
                     findings.append(
@@ -1063,31 +1005,9 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                 line, col = _line_col(text, m.start())
                 findings.append(Finding("ERROR", path, line, col, msg))
 
-        # Keep the FloatLib adapters below TorchLean's spec, proof, runtime, and verification
-        # layers. Their TorchLean imports are restricted to fellow adapters and core definitions.
-        if rel == "NN/Floats.lean" or rel.startswith("NN/Floats/"):
-            for m in re.finditer(
-                r"^\s*(?:public\s+)?import\s+(NN\.[A-Za-z0-9_.]+)\s*$",
-                masked,
-                flags=re.MULTILINE,
-            ):
-                imported = m.group(1)
-                if not (imported == "NN.Floats" or imported.startswith("NN.Floats.")
-                        or imported == "NN.Core" or imported.startswith("NN.Core.")):
-                    line, col = _line_col(text, m.start(1))
-                    findings.append(
-                        Finding(
-                            "ERROR",
-                            path,
-                            line,
-                            col,
-                            f"floating-point core imports `{imported}`; move this integration to the spec, proof, runtime, or verification layer.",
-                        )
-                    )
-
         is_shape_generic_public_api = (
-            rel.startswith("NN/API/Models/")
-            or rel.startswith("NN/API/Neural/")
+            rel.startswith(("TorchLean/NN/Models/", "TorchLean/NN/Builder/"))
+            or rel.startswith("TorchLean/NN/Sequential/")
         )
         if is_shape_generic_public_api:
             for m in re.finditer(r"\bPNat\b", masked):
@@ -1115,49 +1035,20 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                         path,
                         line,
                         col,
-                        "public tensor and model geometry must use `Spec.Shape` for static "
+                        "public tensor and model geometry must use `Shape` for static "
                         "shape indices or `Tensor Nat [d]` for computed geometry, not `List Nat`; "
                         "ordinary lists are reserved for explicitly named recursive architecture "
                         "plans named `hiddenWidths` or `modelWidths`.",
                     )
                 )
 
-        if rel == "NN/API/Neural.lean" and re.search(
-            r"^\s*public\s+import\s+NN\.API\.Trainer\s*$", masked, flags=re.MULTILINE
-        ):
-            findings.append(
-                Finding(
-                    "ERROR",
-                    path,
-                    None,
-                    None,
-                    "`NN.API.Neural` must not re-export `NN.API.Trainer`; use `TorchLean.Trainer` for ordinary code and import the advanced training module explicitly when needed.",
-                )
-            )
-        is_trainer_api = rel == "NN/API/Trainer.lean" or rel.startswith("NN/API/Trainer/")
-        is_training_entrypoint = rel in {"NN/API.lean", "NN/API/Data/Training.lean"}
-        if re.search(
-            r"^\s*public\s+import\s+NN\.API\.Trainer\s*$", masked, flags=re.MULTILINE
-        ) and not (is_trainer_api or is_training_entrypoint):
-            findings.append(
-                Finding(
-                    "ERROR",
-                    path,
-                    None,
-                    None,
-                    "`NN.API.Trainer` should only be imported by the Trainer API; keep the callback-heavy training layer out of broad application API imports.",
-                )
-            )
-
-        if rel.endswith(".lean") and any(
-            rel.startswith(prefix) for prefix in PUBLIC_NUMERICAL_EXAMPLE_PREFIXES
-        ):
-            for rx, msg in PUBLIC_NUMERICAL_SPEC_BANNED_PATTERNS:
+        if rel.endswith(".lean") and rel.startswith("TorchLeanExamples/"):
+            for rx, msg in NUMERICAL_EXAMPLE_BANNED_PATTERNS:
                 for m in rx.finditer(masked):
                     line, col = _line_col(text, m.start())
                     findings.append(Finding("ERROR", path, line, col, msg))
 
-        # Axioms must be quarantined and named explicitly.
+        # Axioms must be quarantined and listed by name in `ALLOWED_AXIOMS`.
         allowed_axiom_names = ALLOWED_AXIOMS.get(rel, set())
         for m in AXIOM_DECL_RE.finditer(masked):
             axiom_name = m.group(1)
@@ -1234,39 +1125,32 @@ def lint_repo(*, fail_on_warn: bool) -> list[Finding]:
                 )
             )
 
-    if not fail_on_warn:
-        return findings
-    # Promote warnings to errors.
-    return [
-        Finding("ERROR" if f.level == "WARN" else f.level, f.path, f.line, f.col, f.message)
-        for f in findings
-    ]
+    # Python generators write Lean proofs that Lean checks later, so the same ban covers them.
+    for path in _iter_project_files("*.py"):
+        if path == pathlib.Path(__file__).resolve():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            findings.append(Finding("ERROR", path, None, None, f"failed to read file: {e}"))
+            continue
+        _check_python_native_decide(path, text, findings)
+
+    return findings
 
 
 def main() -> int:
-    """CLI entry point used by local checks and CI."""
+    """Print every finding of `lint_repo`. Return 1 if there is any, else 0."""
     ap = argparse.ArgumentParser(description="TorchLean repo lints (project policies).")
-    ap.add_argument(
-        "--fail-on-warn",
-        action="store_true",
-        help="Treat warnings as errors (useful for tightening policies over time).",
-    )
-    args = ap.parse_args()
+    ap.parse_args()
 
-    findings = lint_repo(fail_on_warn=args.fail_on_warn)
-    errors = [f for f in findings if f.level == "ERROR"]
-    warns = [f for f in findings if f.level == "WARN"]
-
+    findings = lint_repo()
     for f in findings:
         print(f.render())
 
-    if errors:
-        print(f"\nFAILED: {len(errors)} error(s), {len(warns)} warning(s).")
+    if findings:
+        print(f"\nFAILED: {len(findings)} error(s).")
         return 1
-
-    if warns:
-        print(f"\nOK (with warnings): {len(warns)} warning(s).")
-        return 0
 
     print("OK: no issues found.")
     return 0

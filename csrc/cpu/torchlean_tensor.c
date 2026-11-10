@@ -268,91 +268,74 @@ static lean_obj_res torchlean_float_zip_output(
   return lean_alloc_sarray(sizeof(double), size, size);
 }
 
-/* Independent IEEE operations retain scalar order and permit vectorization. */
-LEAN_EXPORT lean_obj_res torchlean_float_array_add(
-    b_lean_obj_arg left, b_lean_obj_arg right) {
-  lean_object *result = torchlean_float_zip_output(left, right);
-  size_t output_size = lean_sarray_size(result);
-  const double *left_data = lean_float_array_cptr(left);
-  const double *right_data = lean_float_array_cptr(right);
-  double *result_data = lean_float_array_cptr(result);
-  for (size_t index = 0; index < output_size; ++index) {
-    result_data[index] = left_data[index] + right_data[index];
-  }
-  return result;
-}
-
-LEAN_EXPORT lean_obj_res torchlean_float_array_sub(
-    b_lean_obj_arg left, b_lean_obj_arg right) {
-  lean_object *result = torchlean_float_zip_output(left, right);
-  size_t output_size = lean_sarray_size(result);
-  const double *left_data = lean_float_array_cptr(left);
-  const double *right_data = lean_float_array_cptr(right);
-  double *result_data = lean_float_array_cptr(result);
-  for (size_t index = 0; index < output_size; ++index) {
-    result_data[index] = left_data[index] - right_data[index];
-  }
-  return result;
-}
-
-LEAN_EXPORT lean_obj_res torchlean_float_array_mul(
-    b_lean_obj_arg left, b_lean_obj_arg right) {
-  lean_object *result = torchlean_float_zip_output(left, right);
-  size_t output_size = lean_sarray_size(result);
-  const double *left_data = lean_float_array_cptr(left);
-  const double *right_data = lean_float_array_cptr(right);
-  double *result_data = lean_float_array_cptr(result);
-  for (size_t index = 0; index < output_size; ++index) {
-    result_data[index] = left_data[index] * right_data[index];
-  }
-  return result;
-}
-
-LEAN_EXPORT lean_obj_res torchlean_float_array_div(
-    b_lean_obj_arg left, b_lean_obj_arg right) {
-  lean_object *result = torchlean_float_zip_output(left, right);
-  size_t output_size = lean_sarray_size(result);
-  const double *left_data = lean_float_array_cptr(left);
-  const double *right_data = lean_float_array_cptr(right);
-  double *result_data = lean_float_array_cptr(result);
-  for (size_t index = 0; index < output_size; ++index) {
-    result_data[index] = left_data[index] / right_data[index];
-  }
-  return result;
-}
-
 /*
- * Promote packed bytes and add them to packed doubles in one output loop.
+ * Apply one BinaryOp to two packed arrays in one binary64 output loop.
  *
- * UInt8 values convert exactly to IEEE binary64. Keeping separate functions
- * for the two operand orders preserves the scalar Float expression, including
+ * The op codes follow the constructor order of BinaryOp: add, sub, mul, div.
+ * We switch once, outside the loop, so each loop performs one IEEE binary64
+ * operation per element in scalar order, and the compiler may vectorize it.
+ * UInt8 entries convert exactly to binary64. Separate functions for the two
+ * mixed operand orders keep the scalar Float expression, including the
  * implementation-defined NaN payload selection.
  */
-LEAN_EXPORT lean_obj_res torchlean_byte_float_array_add(
-    b_lean_obj_arg left, b_lean_obj_arg right) {
+#define TORCHLEAN_ZIP_LOOP(LEFT, OPERATOR, RIGHT)                         \
+  for (size_t index = 0; index < output_size; ++index) {                  \
+    result_data[index] = (LEFT) OPERATOR (RIGHT);                         \
+  }
+
+#define TORCHLEAN_BINARY_SWITCH(LEFT, RIGHT)                              \
+  switch (op) {                                                           \
+    case 0:                                                               \
+      TORCHLEAN_ZIP_LOOP(LEFT, +, RIGHT)                                  \
+      break;                                                              \
+    case 1:                                                               \
+      TORCHLEAN_ZIP_LOOP(LEFT, -, RIGHT)                                  \
+      break;                                                              \
+    case 2:                                                               \
+      TORCHLEAN_ZIP_LOOP(LEFT, *, RIGHT)                                  \
+      break;                                                              \
+    case 3:                                                               \
+      TORCHLEAN_ZIP_LOOP(LEFT, /, RIGHT)                                  \
+      break;                                                              \
+    default:                                                              \
+      lean_internal_panic_unreachable();                                  \
+  }
+
+LEAN_EXPORT lean_obj_res torchlean_float_array_binary(
+    uint8_t op, b_lean_obj_arg left, b_lean_obj_arg right) {
+  lean_object *result = torchlean_float_zip_output(left, right);
+  size_t output_size = lean_sarray_size(result);
+  const double *left_data = lean_float_array_cptr(left);
+  const double *right_data = lean_float_array_cptr(right);
+  double *result_data = lean_float_array_cptr(result);
+  TORCHLEAN_BINARY_SWITCH(left_data[index], right_data[index])
+  return result;
+}
+
+LEAN_EXPORT lean_obj_res torchlean_byte_float_array_binary(
+    uint8_t op, b_lean_obj_arg left, b_lean_obj_arg right) {
   lean_object *result = torchlean_float_zip_output(left, right);
   size_t output_size = lean_sarray_size(result);
   const uint8_t *left_data = lean_sarray_cptr(left);
   const double *right_data = lean_float_array_cptr(right);
   double *result_data = lean_float_array_cptr(result);
-  for (size_t index = 0; index < output_size; ++index) {
-    result_data[index] = (double)left_data[index] + right_data[index];
-  }
+  TORCHLEAN_BINARY_SWITCH((double)left_data[index], right_data[index])
   return result;
 }
 
-LEAN_EXPORT lean_obj_res torchlean_float_byte_array_add(
-    b_lean_obj_arg left, b_lean_obj_arg right) {
+LEAN_EXPORT lean_obj_res torchlean_float_byte_array_binary(
+    uint8_t op, b_lean_obj_arg left, b_lean_obj_arg right) {
   lean_object *result = torchlean_float_zip_output(left, right);
   size_t output_size = lean_sarray_size(result);
   const double *left_data = lean_float_array_cptr(left);
   const uint8_t *right_data = lean_sarray_cptr(right);
   double *result_data = lean_float_array_cptr(result);
-  for (size_t index = 0; index < output_size; ++index) {
-    result_data[index] = left_data[index] + (double)right_data[index];
-  }
+  TORCHLEAN_BINARY_SWITCH(left_data[index], (double)right_data[index])
   return result;
 }
+
+#undef TORCHLEAN_BINARY_SWITCH
+#undef TORCHLEAN_ZIP_LOOP
 
 /*
  * Lean's evaluator resolves an external declaration through the generated
@@ -362,7 +345,7 @@ LEAN_EXPORT lean_obj_res torchlean_float_byte_array_add(
  * in ordinary executables.
  */
 LEAN_EXPORT TORCHLEAN_WEAK lean_obj_res
-lp_TorchLean_TorchLean_Storage_Internal_floatBufferAppendSliceNative___boxed(
+lp_TorchLean_TorchLean_Storage_floatBufferAppendSlice___boxed(
     lean_obj_arg source, lean_obj_arg start, lean_obj_arg stop,
     lean_obj_arg output) {
   lean_object *result =
@@ -374,7 +357,7 @@ lp_TorchLean_TorchLean_Storage_Internal_floatBufferAppendSliceNative___boxed(
 }
 
 LEAN_EXPORT TORCHLEAN_WEAK lean_obj_res
-lp_TorchLean_TorchLean_Tensor_Internal_Elab_Impl_floatBufferTranspose2DNative___boxed(
+lp_TorchLean_TorchLean_Native_floatBufferTranspose2D___boxed(
     lean_obj_arg source, lean_obj_arg rows, lean_obj_arg columns,
     lean_obj_arg h_size) {
   (void)h_size;
@@ -387,7 +370,7 @@ lp_TorchLean_TorchLean_Tensor_Internal_Elab_Impl_floatBufferTranspose2DNative___
 }
 
 LEAN_EXPORT TORCHLEAN_WEAK lean_obj_res
-lp_TorchLean_TorchLean_Tensor_Internal_Elab_Impl_arrayBufferTranspose2DNative___boxed(
+lp_TorchLean_TorchLean_Native_arrayBufferTranspose2D___boxed(
     lean_obj_arg type, lean_obj_arg source, lean_obj_arg rows,
     lean_obj_arg columns, lean_obj_arg h_size) {
   (void)type;
@@ -398,33 +381,34 @@ lp_TorchLean_TorchLean_Tensor_Internal_Elab_Impl_arrayBufferTranspose2DNative___
   return result;
 }
 
-#define TORCHLEAN_BINARY_EVAL_WRAPPER(wrapper, kernel)                    \
-  LEAN_EXPORT TORCHLEAN_WEAK lean_obj_res wrapper(                        \
-      lean_obj_arg left, lean_obj_arg right) {                            \
-    lean_object *result = kernel(left, right);                            \
-    lean_dec_ref(right);                                                  \
-    lean_dec_ref(left);                                                   \
-    return result;                                                        \
-  }
+LEAN_EXPORT TORCHLEAN_WEAK lean_obj_res
+lp_TorchLean_TorchLean_Native_floatBufferBinary___boxed(
+    lean_obj_arg op, lean_obj_arg left, lean_obj_arg right) {
+  lean_object *result =
+      torchlean_float_array_binary((uint8_t)lean_unbox(op), left, right);
+  lean_dec_ref(right);
+  lean_dec_ref(left);
+  return result;
+}
 
-TORCHLEAN_BINARY_EVAL_WRAPPER(
-    lp_TorchLean_TorchLean_Tensor_Internal_Elab_Impl_floatBufferAddNative___boxed,
-    torchlean_float_array_add)
-TORCHLEAN_BINARY_EVAL_WRAPPER(
-    lp_TorchLean_TorchLean_Tensor_Internal_Elab_Impl_floatBufferSubNative___boxed,
-    torchlean_float_array_sub)
-TORCHLEAN_BINARY_EVAL_WRAPPER(
-    lp_TorchLean_TorchLean_Tensor_Internal_Elab_Impl_floatBufferMulNative___boxed,
-    torchlean_float_array_mul)
-TORCHLEAN_BINARY_EVAL_WRAPPER(
-    lp_TorchLean_TorchLean_Tensor_Internal_Elab_Impl_floatBufferDivNative___boxed,
-    torchlean_float_array_div)
-TORCHLEAN_BINARY_EVAL_WRAPPER(
-    lp_TorchLean_TorchLean_Tensor_Internal_Elab_Impl_byteFloatBufferAddNative___boxed,
-    torchlean_byte_float_array_add)
-TORCHLEAN_BINARY_EVAL_WRAPPER(
-    lp_TorchLean_TorchLean_Tensor_Internal_Elab_Impl_floatByteBufferAddNative___boxed,
-    torchlean_float_byte_array_add)
+LEAN_EXPORT TORCHLEAN_WEAK lean_obj_res
+lp_TorchLean_TorchLean_Native_byteFloatBufferBinary___boxed(
+    lean_obj_arg op, lean_obj_arg left, lean_obj_arg right) {
+  lean_object *result =
+      torchlean_byte_float_array_binary((uint8_t)lean_unbox(op), left, right);
+  lean_dec_ref(right);
+  lean_dec_ref(left);
+  return result;
+}
 
-#undef TORCHLEAN_BINARY_EVAL_WRAPPER
+LEAN_EXPORT TORCHLEAN_WEAK lean_obj_res
+lp_TorchLean_TorchLean_Native_floatByteBufferBinary___boxed(
+    lean_obj_arg op, lean_obj_arg left, lean_obj_arg right) {
+  lean_object *result =
+      torchlean_float_byte_array_binary((uint8_t)lean_unbox(op), left, right);
+  lean_dec_ref(right);
+  lean_dec_ref(left);
+  return result;
+}
+
 #undef TORCHLEAN_WEAK

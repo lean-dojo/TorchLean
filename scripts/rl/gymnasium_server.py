@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Gymnasium JSON-lines server used by TorchLean RL examples.
+"""Gymnasium JSON-lines server for the TorchLean RL examples.
 
-With --out PATH, records a seeded random-policy rollout for the Lean boundary viewer.
-Otherwise starts one Gymnasium environment and speaks a compact JSON-lines protocol over
-stdin/stdout so a Lean process can:
+With --out PATH, the script records a seeded random-policy rollout for the Lean boundary viewer.
+Otherwise it starts one Gymnasium environment and speaks a compact JSON-lines protocol over
+stdin/stdout, so a Lean process can:
   - reset the env, and
   - step the env with discrete actions.
 
-Why a line protocol?
-  - easy to debug (you can run this file directly and type JSON by hand)
-  - easy to wrap with a Lean-side contract checker at the trust boundary
+A line protocol is easy to debug (run this file and type JSON by hand) and easy to wrap with a
+Lean-side contract checker at the trust boundary.
 
 Protocol (one JSON object per line):
   {"cmd": "describe"}
@@ -26,10 +25,10 @@ Protocol (one JSON object per line):
     -> {"ok": true}
 
 Notes:
-  - Discrete action spaces (`gymnasium.spaces.Discrete`) in this bridge.
-  - Protocol and rollout actions are zero-based indices; the bridge adds the space's `start`.
-  - Observations are converted via `.tolist()` when available (NumPy arrays), else recursively
-    converted for lists/tuples.
+  - Only discrete action spaces (`gymnasium.spaces.Discrete`) are supported.
+  - Protocol and rollout actions are zero-based indices, and the bridge adds the space's `start`.
+  - Observations with a `.tolist()` method (NumPy arrays) are converted by it, and lists and
+    tuples element by element.
 
 References:
   - Gymnasium API semantics (`reset`, `step`, `terminated` vs `truncated`):
@@ -50,7 +49,7 @@ from typing import Any
 
 def _to_jsonable_obs(obs: Any) -> Any:
     """Convert Gymnasium observations into values accepted by `json.dumps`."""
-    # Numpy arrays expose `.tolist()`. Python lists/tuples are already jsonable.
+    # NumPy arrays and scalars expose `.tolist()`. Lists and tuples may hold them, so recurse.
     if hasattr(obs, "tolist"):
         return obs.tolist()
     if isinstance(obs, (list, tuple)):
@@ -90,7 +89,7 @@ def _register_ale_if_needed(env_id: str) -> None:
 
 
 def export_rollout(env: Any, env_id: str, steps: int, seed: int, output: Path) -> None:
-    """Write transitions in the schema consumed by `NN.Runtime.RL.Boundary.loadRollout`."""
+    """Write a random-policy rollout in the schema `TorchLean.RL.Boundary.loadRolloutAll` reads."""
     env.action_space.seed(seed)
     obs, _ = env.reset(seed=seed)
     transitions = []
@@ -116,7 +115,7 @@ def export_rollout(env: Any, env_id: str, steps: int, seed: int, output: Path) -
 
 
 def main() -> int:
-    """Run the Gymnasium environment server until stdin closes or `close` arrives."""
+    """Serve one environment until stdin closes or `close` arrives, or record a --out rollout."""
     ap = ArgumentParser(description="Run one Gymnasium env behind TorchLean's JSON-lines protocol.")
     ap.add_argument("--env-id", default="CartPole-v1", help="Gymnasium environment id")
     ap.add_argument(
@@ -124,7 +123,7 @@ def main() -> int:
         default=None,
         help="JSON object of kwargs passed to gym.make(env_id, **kwargs), e.g. '{\"obs_type\":\"ram\"}'",
     )
-    ap.add_argument("--out", type=Path, help="record a rollout to this JSON file instead of serving")
+    ap.add_argument("--out", type=Path, help="write a rollout to this JSON file and exit")
     ap.add_argument("--steps", type=int, default=256, help="transitions to record with --out")
     ap.add_argument("--seed", type=int, default=0, help="environment and action seed for --out")
     args = ap.parse_args()
@@ -133,8 +132,8 @@ def main() -> int:
 
     import gymnasium as gym
 
-    # Atari/ALE environments live in `ale-py`; register them only when requested so CartPole users
-    # do not need the dependency.
+    # Atari/ALE environments live in `ale-py`. Registering them only on request spares CartPole
+    # users the dependency.
     _register_ale_if_needed(args.env_id)
 
     make_kwargs: dict[str, Any] = {}

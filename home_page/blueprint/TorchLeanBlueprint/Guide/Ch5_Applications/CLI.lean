@@ -1,7 +1,39 @@
 import VersoManual
-import NN.API
+import TorchLean.NN.LoRA
+import TorchLean.NN.Autograd.Function
+import TorchLean.NN.Autograd.Frontend
+import TorchLean.NN.Autograd.Differential
+import TorchLean.NN.Autograd.Complex
+import TorchLean.NN.CLI.Training.Command
+import TorchLean.NN.Data.Synthetic
+import TorchLean.NN.Data.CausalLM
+import TorchLean.NN.Models.KAN
+import TorchLean.NN.Models.CNN
+import TorchLean.NN.Models.ResNet
+import TorchLean.NN.Models.UNet
+import TorchLean.NN.Models.Recurrent
+import TorchLean.NN.Models.CausalTransformer.LanguageModel
+import TorchLean.NN.Models.Mamba
+import TorchLean.NN.Models.MaskedPatchReconstructor
+import TorchLean.NN.Models.Diffusion.NoisePredictor
+import TorchLean.NN.Models.FNO
+import TorchLean.NN.Models.PPO
+import TorchLean.NN.Builder.MoE
+import TorchLean.NN.Sequential.Training
+import TorchLean.NN.RL.CLI
+import TorchLean.NN.RL.PPO.ActorCritic
+import TorchLean.NN.SelfSupervised
+import TorchLean.NN.Text.Vocabulary
+import TorchLean.NN.Text.GPT2BPE
+import TorchLean.NN.Text.Generation
+import TorchLean.NN.Trainer.Constructor
+import TorchLean.NN.Trainer.Train
+import TorchLean.NN.Data.Image
 import TorchLeanBlueprint.Bib
 import TorchLeanBlueprint.Roles
+import TorchLean.NN.Loss
+import TorchLean.NN.Session.Random
+import TorchLean.Verify.Trainer
 
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
@@ -13,8 +45,8 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 tag := "cli"
 %%%
 
-TorchLean has two command dispatchers. `torchlean` runs models, demonstrations, and data checks;
-`verify` runs verification workflows and artifact checkers:
+TorchLean has two command dispatchers. `torchlean` runs models, demonstrations, and data checks,
+while `verify` runs verification workflows and artifact checkers:
 
 ```
 # Replace the placeholders with a registered command and its
@@ -24,21 +56,23 @@ scripts/lake.sh exe verify -- <tool> [args...]
 ```
 
 Both commands can print numerical results. A training command's success means it completed its
-runtime checks; a verification command's success depends on that tool's declared checks. For
+runtime checks, while a verification command's success depends on that tool's declared checks. For
 example, validating an artifact's schema is different from establishing its claimed bounds.
 
-The dispatch tables are ordinary Lean definitions:
+Both dispatch tables are ordinary Lean definitions:
 
-- {src "NN/Examples/Runner.lean"}[`NN/Examples/Runner.lean`] routes the `torchlean` subcommands;
-- {src "NN/Verification/CLI.lean"}[`NN/Verification/CLI.lean`] routes the `verify` tools.
+- {src "TorchLeanExamples/Runner.lean"}[`TorchLeanExamples/Runner.lean`] routes the `torchlean`
+  subcommands.
+- {src "TorchLeanExamples/Verification/CLI.lean"}[`TorchLeanExamples/Verification/CLI.lean`] routes
+  the `verify` tools.
 
-The commands below expose these workflows. Help from your executable remains authoritative for
-command names and flags. Terminal transcripts below are recorded examples; numerical output,
-banners, and backend reports can change with the build.
+You reach these workflows through the commands below, but the help from your executable remains
+authoritative for command names and flags. Terminal transcripts below are recorded examples:
+numerical output, banners, and backend reports can change with the build.
 
 # Discovering Commands
 
-The dispatcher provides grouped help and a machine-readable list:
+You get grouped help and a machine-readable list from the dispatcher:
 
 ```terminal
 # Compare grouped help with the flat list used by scripts.
@@ -52,8 +86,8 @@ Running `scripts/lake.sh exe torchlean`
 with no arguments prints the same help and exits with status `1`, so a bare invocation in a
 Makefile fails rather than silently doing nothing.
 
-Use the generated help for the current groups and command descriptions; they come directly from
-the runner's registry rather than a second catalogue maintained in this chapter.
+Use the generated help for the command groups and descriptions, which come from the runner's
+registry and not from a second catalogue kept on this page.
 
 `--list` prints the registered command names with no grouping and no descriptions:
 
@@ -82,12 +116,12 @@ TorchLean runnable examples
 ...
 ```
 
-The exit status is `1`.
+That invocation exits with status `1`.
 
 # Command Implementation
 
-The MLP quickstart shows how the shared parser connects to a trainer. Its `main` first handles help
-and arguments, then constructs the training configuration:
+You can see how the shared parser connects to a trainer in the MLP quickstart, whose `main` first
+handles help and arguments, then constructs the training configuration:
 
 ```
 -- Dispatch selects the registered command; that command
@@ -100,9 +134,9 @@ def main (args : List String) : IO Unit := do
   let (seed, args) ← CLI.orThrow exeName <| CLI.takeSeed args
   let (steps, args) ← CLI.orThrow exeName <|
     CLI.takePositiveNatFlag args exeName "steps" 200
-  let runtime ← CLI.Trainer.parseCommandLine exeName args
+  let runtime ← Trainer.RunConfig.parseCommandLine exeName args
 
-  let trainer := Trainer.new model
+  let trainer := Trainer.create model
     { runtime with
         objective := mse
         optimizer := optim.adam { lr := 0.03 }
@@ -110,13 +144,13 @@ def main (args : List String) : IO Unit := do
   ...
 ```
 
-The command drops a leading `--`, answers `--help` if present, and parses the remaining arguments
-before constructing the trainer. The full file is
-{src "NN/Examples/Quickstart/SimpleMlpTrain.lean"}[`SimpleMlpTrain.lean`]. Each binding of `args`
-contains only the arguments left by the previous parser. After consuming
-`--seed` and `--steps`, `CLI.Trainer.parseCommandLine` handles runtime flags and checks for anything
-left over. The shared functions in {src "NN/API/CLI.lean"}[`NN/API/CLI.lean`] expose this remainder
-in their return types:
+Before constructing the trainer, the quickstart drops a leading `--`, answers `--help` if present,
+and parses the remaining arguments (the full file is
+{src "TorchLeanExamples/Quickstart/MLP.lean"}[`MLP.lean`]). Each binding of
+`args` holds only the arguments the previous parser left, and after `--seed` and `--steps` are
+consumed, `Trainer.RunConfig.parseCommandLine` handles runtime flags and checks for anything left
+over. In {srcDir "TorchLean/NN/CLI"}[`TorchLean/NN/CLI/`], the shared functions expose this
+remainder in their return types:
 
 ```lean (name := cliTypes)
 -- The result carries both a typed optional value and the
@@ -152,26 +186,25 @@ CLI.takeBoolValueFlag? : List String → String →
 CLI.checkNoArgs : List String → Except String Unit
 ```
 
-The four `take...` functions return the parsed optional value together with the remaining
-arguments. Each can also return an error message. `checkNoArgs` returns only `Unit` on success,
-and succeeds only for an empty list. Calling it on the final remainder rejects flags that no
-parser consumed.
+All four `take...` functions return the parsed optional value together with the remaining
+arguments, and each can also return an error message. `checkNoArgs` returns only `Unit` on success,
+and succeeds only for an empty list. Calling it on the final remainder rejects flags that no parser
+consumed.
 
 If you know Python's `argparse`, `parse_args` also rejects unknown arguments by default, while
 `parse_known_args` returns them to its caller. Here we can see that choice in the call to
 `checkNoArgs`.
 
-The `Except` and `Option` in these signatures answer separate questions. `Except.error` means
-that the supplied command line cannot be used. Inside `Except.ok`, `none` means that this
-particular flag was absent, while `some value` means it was present and parsed. This distinction
-lets a command supply a default without silently replacing a misspelled number. The second
-component is just as important: it records the arguments that another parser still has to
-account for. A successful individual parser does not establish that the whole command line is
-valid.
+In these signatures, `Except` and `Option` answer separate questions. `Except.error` means that the
+supplied command line can't be used. Inside `Except.ok`, `none` means that this particular flag was
+absent, while `some value` means it was present and parsed. That distinction lets a command supply
+a default without silently replacing a misspelled number. Just as important is the second
+component: it records the arguments left for another parser to account for. A successful individual
+parser doesn't establish that the whole command line is valid.
 
 # Parser Results
 
-The parsers can be evaluated directly. This call consumes `--steps 20` and leaves the unrelated
+You can evaluate the parsers on their own. This call consumes `--steps 20` and leaves the unrelated
 path flag in the remainder:
 
 ```lean (name := cliTake)
@@ -185,8 +218,8 @@ path flag in the remainder:
 Except.ok (some 20, ["--x", "a.npy"])
 ```
 
-The `20` came out, and `--x a.npy` was handed back untouched. The `--key=value` spelling is accepted
-as the same thing:
+That call took the `20` out and handed `--x a.npy` back untouched. A flag written as `--key=value`
+is accepted as the same thing:
 
 ```lean (name := cliEq)
 -- The equals form produces the same typed value as the
@@ -238,7 +271,7 @@ A present flag with an unusable value is:
 Except.error "--steps: expected a natural number, got `two`"
 ```
 
-The final check reports arguments left unconsumed:
+Arguments left unconsumed are reported by the final check:
 
 ```lean (name := cliRest)
 -- The final parser rejects a flag that no earlier parser
@@ -264,8 +297,8 @@ Paths and Booleans go through typed variants, so a path becomes a `System.FilePa
 rather than being carried around as a string:
 
 ```lean (name := cliPath)
--- Parsing constructs a path value; opening the file happens
--- later.
+-- Parsing constructs a path value. Opening the file
+-- happens later.
 #eval CLI.takePathFlag?
   ["--log", "/tmp/trainlog.json"] "log"
 ```
@@ -285,7 +318,7 @@ Except.ok (some (FilePath.mk "/tmp/trainlog.json"), [])
 Except.ok (some false, [])
 ```
 
-The two remaining helpers handle the shape of the command line rather than its contents. A leading
+Both remaining helpers deal with the shape of the command line, not its contents. A leading
 separator is dropped for the benefit of wrappers that insist on one:
 
 ```lean (name := cliDash)
@@ -312,16 +345,16 @@ true
 `hasHelp` is checked before the other parsers, so help remains available even if another argument
 on the command line is invalid.
 
-The path and Boolean outputs above describe parsing, not the effects of running the command.
-`FilePath.mk` does not check whether a file exists, whether its contents have the required shape,
-or whether its directory is writable. Those checks belong to the reader or writer that uses the
-path. Similarly, successfully parsing `false` says which Boolean was requested; the command must
-still use that value when it constructs its configuration. Following the parsed value into the
-configuration is the useful next step when a flag appears to have no effect.
+Both the path and the Boolean outputs above describe parsing, not the effects of running the
+command. `FilePath.mk` doesn't check whether a file exists, whether its contents have the required
+shape, or whether its directory is writable (those checks belong to the reader or writer that uses
+the path). Similarly, successfully parsing `false` says which Boolean was requested, but the
+command must still use that value when it constructs its configuration. So when a flag seems to
+have no effect, follow the parsed value into the configuration.
 
 # Command Grammar
 
-The normal form is:
+A command line normally has this form:
 
 ```
 # Runtime and command-specific flags share the argument list
@@ -348,9 +381,9 @@ scripts/lake.sh exe torchlean --device cpu quickstart_mlp \
 ```
 
 The runner collects prefix flags, finds the command, and forwards those flags together with the
-arguments after it. The selected command parses both. I put the command first in these examples
-so we can read what will run before its options.
-A leading separator is accepted for wrappers that require one:
+arguments after it, so the selected command parses both. I put the command first in these examples
+so we can read what will run before its options. A leading separator is accepted for wrappers that
+require one:
 
 ```terminal
 # The separator is removed before the command parses its
@@ -360,7 +393,7 @@ scripts/lake.sh exe torchlean -- quickstart_mlp --device cpu --steps 20
 
 # Strict Parsing
 
-The GridWorld command has a fixed source-level horizon and does not accept `--rollout`:
+GridWorld's command has a fixed source-level horizon and doesn't accept `--rollout`:
 
 ```terminal
 # GridWorld does not accept this spelling of the rollout
@@ -376,14 +409,14 @@ ppo_gridworld: PPO on Lean-native GridWorld (4x4, horizon=64) (device=cpu)
 error: ppo_gridworld: unexpected arguments: [--rollout, 8]
 ```
 
-The command exits with status `1` before training or writing artifacts. Its runtime selection and
-description appear first because it prints them before the final `checkNoArgs`. The runner's
-`TorchLean.CLI.exitOnError` catches the error and adds the `error:` prefix. Scripts should test
-the exit status rather than infer success from a banner or require an error message to start with
-the command name.
+That run exits with status `1` before training or writing artifacts. Its runtime selection and
+description appear first because the command prints them before the final `checkNoArgs`. In the
+runner, `TorchLean.CLI.exitOnError` catches the error and adds the `error:` prefix. Scripts should
+test the exit status instead of inferring success from a banner or requiring an error message to
+start with the command name.
 
-The same rule catches flags borrowed from a neighbouring command. The FNO application takes `--x`
-and `--y` for its training arrays, so the plausible-looking `--train-x` fails:
+Strict parsing also catches flags borrowed from a neighbouring command. Because the FNO application
+takes `--x` and `--y` for its training arrays, the plausible-looking `--train-x` fails:
 
 ```terminal
 # A dataset option from another command is rejected by the
@@ -396,22 +429,22 @@ fno1d_burgers: native FNO1D Burgers (device=cpu)
 error: fno1d_burgers: unexpected arguments: [--train-x, a.npy]
 ```
 
-The leftover-argument check makes independently written parsers compose. A training parser can
+Independently written parsers compose because of the leftover-argument check. A training parser can
 consume `--steps`, then hand the remainder to the runtime parser without knowing every device
-option itself. The final `checkNoArgs` closes that process: an unrecognized flag cannot quietly
-survive the chain. This is why the errors above show the original unused arguments. When adding
-a new option, both consuming it and placing its value in the eventual configuration matter.
+option itself. At the end, `checkNoArgs` closes that process: an unrecognized flag can't quietly
+survive the chain. That's why the errors above show the original unused arguments. When you add a
+new option, consuming it and placing its value in the eventual configuration both matter.
 
 # Runtime Flags
 
-The common runtime parser recognizes:
+Here's what the common runtime parser recognizes:
 
 :::table +header
 *
   * Flag
   * Current meaning
 *
-  * `--device auto|cpu|cuda|...`
+  * `--device auto|cpu|gpu|cuda`
   * requested execution device
 *
   * `--arithmetic native|ieee|complex`
@@ -424,7 +457,7 @@ The common runtime parser recognizes:
   * print selected backend capsules
 :::
 
-Per-command help narrows this shared list. The convolutional classifier, for instance, advertises
+Per-command help narrows this shared list. For instance, the convolutional classifier advertises
 only native arithmetic:
 
 ```terminal
@@ -449,45 +482,31 @@ Training:
   --cuda-mem-watch N sample CUDA allocator state every N updates
 
 Runtime:
-  --device auto|cpu|gpu|cuda|rocm|metal|wasm|tpu|trainium|custom|external
+  --device auto|cpu|gpu|cuda
   --arithmetic native
   --seed N           runtime seed (default: 0)
-  --show-backend     print backend capsules as they execute
+  --show-backend     print backend capsules as they are selected
 ```
 
 Read the `Runtime:` block as this command's contract, not as a copy of the global list.
 
 ## Devices
 
-The parser accepts `rocm`, `metal`, `wasm`, `tpu`, `trainium`, `custom`, and `external`. They are
-planning targets in the backend registry, not completed runtimes, and asking for one says so:
-
-```terminal
-# A known device name can still lack an implementation for
-# this command.
-scripts/lake.sh exe torchlean quickstart_mlp --device rocm --steps 1
-```
-
-```terminal +output
-error: quickstart_mlp: device `rocm` has no maintained
-runtime profile; use a programmatic backend profile
-```
-
-A name outside the registry fails differently, and lists the registry:
+The parser accepts `cpu`, `cuda`, `gpu` (another name for `cuda`) and `auto`, which chooses the
+portable CPU runtime. Any other name is rejected with the list of known devices:
 
 ```terminal
 # An unknown device name fails during parsing rather than
 # backend execution.
-scripts/lake.sh exe torchlean quickstart_mlp --device banana --steps 1
+scripts/lake.sh exe torchlean quickstart_mlp --device rocm --steps 1
 ```
 
 ```terminal +output
-error: quickstart_mlp: unknown device banana (known targets:
-cpu | cuda | rocm | metal | wasm | tpu | trainium | custom | external)
+error: quickstart_mlp: unknown device rocm (known devices:
+cpu|gpu|cuda)
 ```
 
-Both requests exit with status `1`; neither silently selects CPU. An unsupported device and an
-unrecognized device name are separate errors.
+The request exits with status `1` and doesn't fall back to CPU.
 
 A CPU-only build rejects a CUDA request at the runtime boundary. Build CUDA support before
 requesting that device, and use `--show-backend` to inspect the selected implementation and its
@@ -514,10 +533,10 @@ scripts/lake.sh -R -K cuda=true exe torchlean chargpt --device cuda \
   --tiny-shakespeare --preset smoke
 ```
 
-The wrapper isolates CPU and CUDA build profiles; pass `-Kcuda=true` on each CUDA invocation.
-`-R` forces Lake to reconfigure the package. Without
-`cuda=true`, the CUDA symbols fail with a message to rebuild. The SDK, CUDA toolkit, and compiler
-must be compatible; {ref "gpu-and-cuda"}[GPU And CUDA] describes the native build.
+Since the wrapper isolates CPU and CUDA build profiles, pass `-Kcuda=true` on each CUDA invocation.
+`-R` forces Lake to reconfigure the package. Without `cuda=true`, the CUDA symbols fail with a
+message to rebuild. Your SDK, CUDA toolkit, and compiler must be compatible
+({ref "gpu-and-cuda"}[GPU And CUDA] describes the native build).
 
 Add `--show-backend` to inspect what was selected:
 
@@ -526,7 +545,7 @@ Add `--show-backend` to inspect what was selected:
 scripts/lake.sh exe torchlean quickstart_mlp --steps 1 --show-backend
 ```
 
-The report names, for each operation, its provider, trust level, VJP source, and reduction order,
+For each operation the report names its provider, trust level, VJP source, and reduction order,
 then four evidence lines. Wrapped to fit this page, the matrix-multiply entry reads:
 
 ```
@@ -537,34 +556,35 @@ then four evidence lines. Wrapped to fit this page, the matrix-multiply entry re
     layout: canonical-tensor layout compatibility for matmul;
       guarded at runtime by typed tensor layout
     value: matmul forward refines its TorchLean semantics;
-      covered by test suite NN.Tests.Runtime.Floats.Suite
+      uses canonical definition TorchLean.Op.rule? directly
     vjp: matmul torchlean-tape VJP refines its TorchLean
-      semantics; covered by test suite NN.Tests.Runtime.Floats.Suite
+      semantics; uses canonical definition TorchLean.Op.rule? directly
 ```
 
 For that one-step run the report covers seven operations: `reshape`, `permute`, `matmul`,
 `broadcast`, `add`, `relu`, and `mse_loss`. `reduction=fixed-left` records a specific summation
 order, which matters when reproducing floating-point results {Informal.citep goldberg1991}[].
-The `trust=checked` entry points to runtime guards and tests; the two value/VJP lines name the test
-suite that supports those claims. They do not identify a kernel-checked refinement proof.
+`trust=checked` points to runtime guards and tests, while the two value/VJP lines say that the
+reference implementation uses the canonical definition directly. Those lines don't identify a
+kernel-checked refinement proof.
 
-Capsule lines may interleave with the application's output. Redirect to a file and search for
-`provider=` to find the report. {ref "backend-selection"}[Backend Selection] explains
-what the fields mean and where they come from.
+Capsule lines may interleave with the application's output, so redirect to a file and search for
+`provider=` to find the report. {ref "backend-selection"}[Backend Selection] explains what the
+fields mean and where they come from.
 
-The device identifies where operations run. The capsule identifies the implementation selected
-for each operation on that device.
+The device identifies where operations run, while the capsule identifies the implementation
+selected for each operation on that device.
 
 A build flag and a runtime flag act at different stages. `-Kcuda=true` changes the build
-configuration and linked backend support. `--device cuda` asks an already built executable to
-select that backend. Recording only the latter leaves out whether the executable could satisfy
-the request. Capsule reporting describes selection before handler lookup and execution; a report
-can therefore precede a missing-handler error. A successful native call requires the linked
-implementation and a usable device as well as an admissible capsule.
+configuration and linked backend support, while `--device cuda` asks an already built executable to
+select that backend. Recording only the latter leaves out whether the executable could satisfy the
+request. Capsule reporting describes selection before execution, so a report can precede a
+missing-implementation error. A successful native call requires the linked implementation and a
+usable device as well as an admissible capsule.
 
 # Arithmetic
 
-Most model commands use native `Float32`. The arithmetic-polymorphic quickstarts and numerical
+Most model commands use native `Float32`, but the arithmetic-polymorphic quickstarts and numerical
 workflows also accept `--arithmetic ieee`, which selects FloatLib's executable binary32:
 
 ```terminal
@@ -574,13 +594,13 @@ scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 1 --seed 2026
 scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 1 --seed 2026 --arithmetic ieee
 ```
 
-Native arithmetic executes hardware floating-point operations; `--arithmetic ieee` selects
+Native arithmetic executes hardware floating-point operations, while `--arithmetic ieee` selects
 `ExecFloat.Binary 8 23`, with binary32 rounding defined in FloatLib. Compare the reported losses
 and held-out prediction. Running both can expose a disagreement between the executable reference
-and the runtime, but matching decimal output alone does not compare every bit or cover other inputs.
-The proof statements
-and their assumptions are in {ref "fp32-soundness"}[Float32 Soundness];
-{ref "floats"}[Floating-Point Semantics] describes the scalar types {Informal.citep flocq2011}[].
+and the runtime, but matching decimal output alone doesn't compare every bit or cover other inputs.
+You'll find the proof statements and their assumptions in {ref "fp32-soundness"}[Float32
+Soundness], and {ref "floats"}[Floating-Point Semantics] describes the scalar types
+{Informal.citep flocq2011}[].
 
 A command that cannot implement the requested semantics says so instead of approximating:
 
@@ -596,27 +616,28 @@ supports native or IEEE arithmetic; complex arithmetic requires an explicit
 complex-valued training API
 ```
 
-The shared parser recognizes names across commands. Each selected command still checks whether it
-supports the requested arithmetic and device.
+The shared parser recognizes names across commands, but each selected command still checks whether
+it supports the requested arithmetic and device.
 
 For complex training, the explicit-state example has its own command:
 
 ```terminal
-scripts/lake.sh exe torchlean complex_regression 50 /tmp/complex-regression.state
+scripts/lake.sh exe torchlean complex_regression \
+  --steps 50 --save-checkpoint /tmp/complex-regression.state
 ```
 
-It minimizes a real squared-residual loss over complex binary32 weights and bias, then prints a
-held-out complex prediction. The optional checkpoint is reloaded and checked without discarding
-either component. Its coordinate-forward gradient is intended for small models, not as a native
-complex GPU training benchmark.
+That command minimizes a real squared-residual loss over complex binary32 weights and bias, then
+prints a held-out complex prediction. `--save-checkpoint` saves both complex components of the
+final state. Its coordinate-forward gradient is intended for small models, not as a native complex
+GPU training benchmark.
 
 Device and arithmetic describe two choices: where tensor operations run and how scalar arithmetic
-is implemented. They are useful to
-record separately even when only some combinations are implemented. The two commands above
-make a deliberately small comparison with the same training arguments. Reading a numerical
-difference as an arithmetic effect requires keeping the initialization, data, optimizer settings,
-and number of updates fixed as well. A completed command establishes that its selected path ran;
-the printed loss describes that run's objective.
+is implemented. It's useful to record them separately even when only some combinations are
+implemented. The native and IEEE `quickstart_mlp` commands make a deliberately small comparison
+with the same training arguments. Reading a numerical difference as an arithmetic effect requires
+keeping the initialization, data, optimizer settings, and number of updates fixed as well. A
+completed command establishes that its selected path ran, and the printed loss describes that run's
+objective.
 
 # The Interactive Device Chooser
 
@@ -636,12 +657,11 @@ Runtime device:
 Select device [1]:
 ```
 
-Pressing Enter selects CPU and the run proceeds. The chooser is opt-in so shell scripts, tests, and
-continuous integration never block waiting for input, and it offers only the two implemented
-runtimes rather than the whole device registry.
+Pressing Enter selects CPU and the run proceeds. We keep the chooser opt-in so shell scripts,
+tests, and continuous integration never block waiting for input.
 
-The command registry records which examples accept device selection. The chooser prompts only for
-those examples; fixed-runtime commands run directly, and help, unknown commands, and incomplete
+The command registry records which examples accept device selection, and the chooser prompts only
+for those. Fixed-runtime commands run directly, while help, unknown commands, and incomplete
 invocations are handled without prompting. For example:
 
 ```terminal
@@ -650,8 +670,8 @@ invocations are handled without prompting. For example:
 scripts/lake.sh exe torchlean --choose quickstart_tensors
 ```
 
-This runs the tensor quickstart directly. An explicit `--device` is preserved and suppresses the
-prompt; its value is still validated by the selected command.
+That command runs the tensor quickstart without a prompt. A `--device` given on the command line is
+preserved and suppresses the prompt, but the selected command still validates that value.
 
 # Command-Specific Flags
 
@@ -693,25 +713,25 @@ Notes:
   - CPU and CUDA runs both use native Float32 arithmetic.
 ```
 
-The help lists presets, architecture and training options, and checkpoint paths. It also gives
-constraints such as the requirement that `--heads` divide `--width`. The batch flag is
-`--batch-size`; `--batch` is rejected.
+Presets, architecture and training options, and checkpoint paths appear in that help, along with
+constraints such as the requirement that `--heads` divide `--width`. Batch size is set with
+`--batch-size`, and `--batch` is rejected.
 
-Not every application has equally detailed command-specific help yet. If a generic runtime page is
-printed, read the module documentation or the parser next to that application; the source links in
-the preceding chapters point at the maintained definitions.
+Command-specific help isn't equally detailed for every application. If a generic runtime page is
+printed, read the module documentation or the parser next to that application (the source links in
+the preceding chapters point at the maintained definitions).
 
-The text-model help groups dimensions with training controls because they constrain each other.
-Context length determines how many token positions participate in an example; batch size determines
-how many such examples are processed together. An evaluation batch count controls how many losses
-are averaged, so changing it changes the measurement even when the model parameters are fixed.
-When reproducing a reported result, keep these values alongside the seed and step count. A command
-name alone does not identify the experiment.
+Dimensions and training controls share a group in the text-model help because they constrain each
+other. Context length determines how many token positions participate in an example, and batch size
+determines how many such examples are processed together. An evaluation batch count controls how
+many losses are averaged, so changing it changes the measurement even when the model parameters are
+fixed. When reproducing a reported result, keep these values alongside the seed and step count. A
+command name alone doesn't identify the experiment.
 
 # Preparing Data
 
-Synthetic examples need no dataset download. Real-data examples have separate preparation steps;
-check the command because some text workflows can download their corpus. The dataset script prepares
+Synthetic examples need no dataset download. Real-data examples have separate preparation steps
+(check the command, because some text workflows can download their corpus). One script prepares
 several public datasets:
 
 ```terminal
@@ -721,8 +741,9 @@ python3 scripts/datasets/download_example_data.py \
   --auto-mpg --tiny-shakespeare --tinystories-valid --cifar10
 ```
 
-It writes under `data/real/`, and `--cifar10-limit-train -1` opts into all 50000 training images
-instead of the small default subset. Forecasting and the Burgers operator use dedicated preparation:
+That script writes under `data/real/`, and `--cifar10-limit-train -1` opts into all 50000 training
+images instead of the small default subset. Forecasting and the Burgers operator use dedicated
+preparation:
 
 ```terminal
 # Convert the source data into the formats expected by the
@@ -730,7 +751,7 @@ instead of the small default subset. Forecasting and the Burgers operator use de
 python3 scripts/datasets/download_example_data.py \
   --household-power --household-power-windows 512
 
-python3 NN/Examples/Data/prepare_fno1d_burgers.py \
+python3 TorchLeanExamples/Data/prepare_fno1d_burgers.py \
   --download --grid 32 --ntrain 128 --ntest 32
 ```
 
@@ -748,18 +769,17 @@ python3 scripts/datasets/torchlean_data_convert.py image-folder \
 ```
 
 These Python tools download and preprocess data, including image decoding and array conversion.
-The Lean loaders then check file existence, array metadata, dimensions, finiteness where required,
-and conversion to typed tensors. These checks do not establish that the downloaded labels or the
-preprocessing script are semantically correct.
-{ref "datasets-loaders"}[Datasets And Loaders] describes the loader contracts.
+Then the Lean loaders check file existence, array metadata, dimensions, finiteness where required,
+and conversion to typed tensors. Those checks don't establish that the downloaded labels or the
+preprocessing script are semantically correct. {ref "datasets-loaders"}[Datasets And Loaders]
+describes the loader contracts.
 
-Data preparation determines the interface that the trainer will see. Resizing an image changes
-its spatial dimensions, choosing a label column changes the target, and converting a sequence
-fixes the ordering in which observations are presented. These choices should agree with the
-model configuration before training begins. A limit on input rows is also different from a
-minibatch size: one limits the available dataset, while the other controls how examples are
-grouped for an update. The conversion and training commands expose different parts of that
-contract.
+Data preparation determines the interface that the trainer will see. Resizing an image changes its
+spatial dimensions, choosing a label column changes the target, and converting a sequence fixes the
+ordering in which observations are presented. These choices should agree with the model
+configuration before training begins. A limit on input rows is also different from a minibatch
+size: one limits the available dataset, while the other controls how examples are grouped for an
+update. Conversion commands and training commands expose different parts of that contract.
 
 # Artifact Paths
 
@@ -790,16 +810,16 @@ scripts/lake.sh -R -K cuda=true exe torchlean diffusion --device cuda \
 ```
 
 `--log PATH|false` appears in most training commands, and passing `false` turns logging off rather
-than writing to a file named `false`. The path is part of the experiment: it tells a widget,
+than writing to a file named `false`. That path is part of the experiment: it tells a widget,
 plotting script, or checker which exact object it is reading. {ref "widgets"}[Interactive Widgets]
 consumes these files.
 
-An artifact path gives a run a destination, but it does not by itself describe the artifact's
-provenance. Keep the command, configuration, and input identity with a checkpoint or log if it
-will be compared with another run later. Explicit paths are particularly useful when invoking the
-same example repeatedly: a default filename otherwise refers to whichever run wrote it most
-recently. The three PPO outputs serve different purposes, so preserving a log does not replace
-preserving the policy parameters or the recorded rollout.
+An artifact path gives a run a destination, but it doesn't by itself describe the artifact's
+provenance. Keep the command, configuration, and input identity with a checkpoint or log if it will
+be compared with another run later. Explicit paths are particularly useful when invoking the same
+example repeatedly: a default filename otherwise refers to whichever run wrote it most recently.
+PPO's three outputs serve different purposes, so preserving a log doesn't replace preserving the
+policy parameters or the recorded rollout.
 
 # Verification Commands
 
@@ -813,8 +833,8 @@ scripts/lake.sh exe verify -- torchlean-ibp
 ```
 
 Each row below is one `Tool` record in
-{src "NN/Verification/CLI.lean"}[`NN/Verification/CLI.lean`], and the last column is its
-`includeInAll` field:
+{src "TorchLeanExamples/Verification/CLI.lean"}[`TorchLeanExamples/Verification/CLI.lean`], and the
+last column is its `includeInAll` field:
 
 :::table +header
 *
@@ -822,41 +842,29 @@ Each row below is one `Tool` record in
   * Reads
   * In `all`
 *
+  * `ibp-cert`
+  * IBP certificate for a 3 → 4 → 2 ReLU MLP
+  * yes
+*
   * `ir`
   * typed graph structure, dtype checks, and optional binary sample comparison
   * no
-*
-  * `lirpa-mlp`
-  * IBP certificate for a feed-forward MLP
-  * yes
-*
-  * `lirpa-cnn`
-  * IBP certificate for a convolution and head
-  * yes
-*
-  * `lirpa-attention`
-  * IBP certificate for an attention softmax block
-  * yes
-*
-  * `lirpa-gru`
-  * IBP certificate for a GRU gate
-  * yes
-*
-  * `lirpa-encoder`
-  * IBP certificate for a transformer encoder block
-  * yes
 *
   * `camera-box3d-cert`
   * 3D camera-box projection certificate
   * yes
 *
   * `pinn-cert`
-  * PINN residual-bound certificate replay
+  * PINN certificate recomputation check
   * yes
 *
   * `spline-cert`
   * piecewise-polynomial certificate
   * yes
+*
+  * `pinn-cli`
+  * interactive PINN residual bounding
+  * no
 *
   * `abcrown-leaf`
   * α,β-CROWN leaf artifact consistency
@@ -864,14 +872,6 @@ Each row below is one `Tool` record in
 *
   * `crown-query`
   * exact rational CROWN output query
-  * no
-*
-  * `margin-report`
-  * consistency of an exported logit-bound report
-  * yes
-*
-  * `pinn-cli`
-  * interactive PINN residual bounding
   * no
 *
   * `torchlean-ibp`
@@ -898,24 +898,8 @@ Each row below is one `Tool` record in
   * ODE enclosure with network sub- and super-solutions
   * no
 *
-  * `digits`
-  * certified accuracy over sklearn digits
-  * no
-*
-  * `digits-train-certify`
-  * train digits, lower to IR, then report
-  * no
-*
   * `vnncomp-mnistfc`
   * VNN-COMP-style MNIST-FC suite
-  * no
-*
-  * `twostage-pythononly-certgen`
-  * Lyapunov certificate from an external script
-  * no
-*
-  * `twostage-hybrid-van-stage2`
-  * PyTorch initialization refined in Lean
   * no
 *
   * `twostage-torchlean-cegis-van`
@@ -923,13 +907,14 @@ Each row below is one `Tool` record in
   * no
 :::
 
-The `lirpa-*` names refer to interval bound propagation
-{Informal.citep gowal2018}[] and the LiRPA framework {Informal.citep autolirpa2020}[].
-The other names refer to α,β-CROWN {Informal.citep betacrown2021}[] for `abcrown-leaf`,
-physics-informed residuals {Informal.citep pinn2019}[] for the PINN tools, and neural Lyapunov
-functions {Informal.citep neurallyapunov2019}[] for the two-stage workflows.
+`ibp-cert`, `torchlean-ibp` and `torchlean-transformer-ibp` use interval bound propagation
+{Informal.citep gowal2018}[], and the CROWN tools use the linear relaxations of the LiRPA framework
+{Informal.citep autolirpa2020}[]. The other names refer to α,β-CROWN
+{Informal.citep betacrown2021}[] for `abcrown-leaf`, physics-informed residuals
+{Informal.citep pinn2019}[] for the PINN tools, and neural Lyapunov functions
+{Informal.citep neurallyapunov2019}[] for the two-stage workflow.
 
-The table includes both in-memory computations and readers of external artifacts. An in-memory
+Both in-memory computations and readers of external artifacts appear in the table. An in-memory
 workflow such as `torchlean-ibp` builds a model, lowers it to IR, and runs a bound algorithm inside
 the current process:
 
@@ -943,18 +928,17 @@ scripts/lake.sh exe verify -- torchlean-ibp
 === TorchLean → IR → IBP (small MLP) workflow ===
 [TorchLean] arithmetic: native binary32
 lowered IR nodes: 18
-output box lo: [1.904000]
+output box lo: [1.903999]
 output box hi: [2.256001]
 ```
 
-The workflow computes this box from its built-in model. An artifact checker such
-as `pinn-cert` or `abcrown-leaf` parses a file produced elsewhere and applies its declared
-checks. These differ: the α,β-CROWN leaf reader checks that the leaves cover the root and clear
-their thresholds without recomputing the bounds, while a semantic
-certificate checker must also establish the claimed bounds. This distinction matters for
-proof-carrying code
+That workflow computes the output box from its built-in model. An artifact checker such as
+`pinn-cert` or `abcrown-leaf` parses a file produced elsewhere and applies its declared checks.
+Declared checks differ between checkers: the α,β-CROWN leaf reader checks that the leaves cover the
+root and clear their thresholds without recomputing the bounds, while a semantic certificate
+checker must also establish the claimed bounds. That distinction matters for proof-carrying code
 {Informal.citep necula1997}[]: the producer may be untrusted as long as the consumer can check the
-evidence. A checker accepts only its declared schema and semantic fragment, and it does not
+evidence. A checker accepts only its declared schema and semantic fragment, and it doesn't
 retroactively verify the process that produced the artifact.
 
 ## `all` Coverage
@@ -968,38 +952,28 @@ scripts/lake.sh exe verify -- all
 runs the bundled checks marked `yes` above, one after another:
 
 ```terminal +output
-== lirpa-mlp ==
-IBP certificate verified: serialized bounds enclose Lean recomputation.
-
-== lirpa-cnn ==
+== ibp-cert ==
 IBP certificate verified: serialized bounds enclose Lean recomputation.
 ...
 == abcrown-leaf ==
 [artifact] Checked 1 leaves: ok=1, bad=0
 [artifact] consistent: the leaves cover the root and every leaf clears its threshold.
 [artifact] The lower bounds are the producer's claims; TorchLean did not recompute them.
-
-== margin-report ==
-[margin report] examples=360
-[margin report] nominal_ok=349 (requires 'pred' in examples)
-[margin report] positive_margin=318
 ```
 
-The tools it skips are marked `no` above: interactive, externally dependent, long-running, or
-awaiting a caller-supplied artifact. That list includes every `torchlean-*` in-memory workflow
-and `ir`, so a green `all` is not
-evidence that model lowering and bound propagation still work. Run those explicitly.
+Skipped tools are marked `no` above: interactive, externally dependent, long-running, or awaiting a
+caller-supplied artifact. That list includes every `torchlean-*` in-memory workflow and `ir`, so a
+green `all` is not evidence that model lowering and bound propagation still work. Run those by
+name.
 
-`margin-report` reports a positive margin for 318 of 360 examples, and `all` still exits `0`.
-The tool checks report consistency; it does not require every example to have a positive margin.
-Likewise, the leaf reader's `ok=1` records acceptance under its consistency checks. Interpret each
+In the leaf reader's output, `ok=1` records acceptance under its consistency checks. Interpret each
 message against the tool's contract before treating it as evidence of a semantic bound.
 
-`verify all` runs each included tool
-with an empty argument list. Extra arguments after `all` are not forwarded as shared checker
-options. To choose an artifact path or another tool-specific argument, invoke that tool directly.
-This behavior differs from the strict per-command parsers illustrated earlier, and it follows
-from the `all` branch of the verification dispatcher rather than from `checkNoArgs`.
+`verify all` runs each included tool with an empty argument list. Extra arguments after `all`
+aren't forwarded as shared checker options, so to choose an artifact path or another tool-specific
+argument, invoke that tool on its own. This behavior differs from the strict per-command parsers
+illustrated earlier, and it follows from the `all` branch of the verification dispatcher rather
+than from `checkNoArgs`.
 
 # Validation Sequence
 
@@ -1009,56 +983,35 @@ After a fresh clone or a substantial local change, run these commands in order:
 # Check elaboration, small executions, training, and
 # verification in sequence.
 scripts/lake.sh build
-scripts/lake.sh build NNExamples
+scripts/lake.sh build TorchLeanExamples
 scripts/lake.sh exe torchlean quickstart_tensors
 scripts/lake.sh exe torchlean quickstart_autograd
 scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 20 --seed 2026
-scripts/lake.sh exe torchlean numerical_certificate
 scripts/lake.sh exe verify -- torchlean-ibp
 ```
 
-They answer different questions:
+Those commands check different things:
 
 :::table +header
 *
   * Command
-  * Question
+  * Checks
 *
   * `scripts/lake.sh build`
-  * does the project elaborate and link?
+  * whether the project elaborates and links
 *
-  * `scripts/lake.sh build NNExamples`
-  * do the curated examples elaborate?
+  * `scripts/lake.sh build TorchLeanExamples`
+  * whether the curated examples elaborate
 *
   * tensor/autograd quickstarts
-  * do small executable values and derivatives behave as expected?
+  * whether small executable values and derivatives behave as expected
 *
   * MLP training
-  * does a complete optimizer path run?
-*
-  * numerical certificate
-  * are positive *and* negative certificate cases handled?
+  * whether a complete optimizer path runs
 *
   * TorchLean IBP
-  * does model lowering and bound propagation complete?
+  * whether model lowering and bound propagation complete
 :::
-
-The numerical-certificate command includes a negative control alongside successful certificate
-and replay cases:
-
-```terminal +output
-TorchLean numerical runtime certificate
-  ok  base certificate
-  ok  base IEEE replay
-  ok  tampered range rejected
-  ok  two-layer MLP certificate
-  ok  two-layer MLP IEEE replay
-All numerical certificate checks passed.
-```
-
-The negative control changes an addition range and confirms rejection. The remaining rows check
-successful generation and replay of the small graph and the MLP. For the broader native numerical
-checks, use the curated suite; this example keeps the artifact workflow visible.
 
 For CUDA changes, follow with CUDA-specific builds and runtime checks. For external tools, prepare
 their dependencies separately. Their dependencies and acceptance conditions differ from the CPU
@@ -1066,7 +1019,7 @@ checks above.
 
 # Building The Website
 
-The guide, API reference, and application pages are built by:
+You build the guide, API reference, and application pages with:
 
 ```terminal
 # Regenerate the blueprint before serving the website that
@@ -1093,12 +1046,12 @@ http://127.0.0.1:4001/examples/
 http://127.0.0.1:4001/docs/
 ```
 
-If the source changed but the browser did not, rebuild the generated site before restarting Jekyll.
-The blueprint build checks the document's executable pieces and regenerates the guide; Jekyll
-serves the resulting files. Restarting the server against an older generated tree will still show
-the older examples. After rebuilding, read the edited prose beside its output blocks in the served
-page: elaboration checks the executable pieces, while this reading checks whether the explanation
-still makes sense with them.
+If the source changed but the browser didn't, rebuild the generated site before restarting Jekyll.
+Building the blueprint checks the document's executable pieces and regenerates the guide, while
+Jekyll serves the resulting files. Restarting the server against an older generated tree will still
+show the older examples. After rebuilding, read the edited prose beside its output blocks in the
+served page: elaboration checks the executable pieces, while this reading checks whether the
+explanation still makes sense with them.
 
 # Command Exercises
 

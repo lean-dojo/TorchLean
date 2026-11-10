@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Download and prepare real datasets used by TorchLean examples.
 
-The Lean examples stay offline and deterministic by default.  This script is the opt-in bridge for
+The Lean examples stay offline and deterministic by default.  The script is the opt-in bridge for
 people who want the same examples to run on real public datasets.
 
 Outputs:
@@ -15,7 +15,7 @@ Outputs:
   data/real/text/tiny_shakespeare.txt
   data/real/text/tinystories_valid.txt
 
-Requires Python 3.12+ and NumPy. WikiText additionally needs PyArrow; other datasets do not.
+Requires Python 3.12+ and NumPy. Only WikiText also needs PyArrow.
 """
 
 from __future__ import annotations
@@ -71,13 +71,13 @@ def open_https(url: str, *, timeout: float):
 
 
 def file_md5(path: Path) -> str:
-    """Compute the legacy checksum published with the CIFAR archive."""
+    """Compute the MD5 digest of `path`, the checksum published with the CIFAR-10 archive."""
     with path.open("rb") as source:
         return hashlib.file_digest(source, "md5").hexdigest()
 
 
 def download_atomic(url: str, path: Path, *, timeout: float, md5: str | None = None) -> None:
-    """Publish a complete, nonempty transfer only after checking its checksum."""
+    """Publish a complete, nonempty transfer at `path`, after checking `md5` when it is given."""
     require_https(url)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file() and path.stat().st_size > 0 and (md5 is None or file_md5(path) == md5):
@@ -109,7 +109,7 @@ def download(
     md5: str | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> Path:
-    """Download `url` to `out`, reusing a cached copy when the checksum matches."""
+    """Fetch `url` into `out`. A nonempty `out` is reused if `md5` is None or is its MD5 digest."""
     print(f"[download] {url}")
     download_atomic(url, out, timeout=timeout, md5=md5)
     print(f"[ok] {out}")
@@ -138,8 +138,8 @@ def prepare_cifar10(root: Path, *, limit_train: int | None, limit_test: int | No
     batches.append(extract_root / "test_batch")
     complete = extract_root / ".extracted"
     if not (complete.is_file() and all(p.is_file() and p.stat().st_size > 0 for p in batches)):
-        # An interrupted extraction can leave even its last batch nonempty but incomplete.
-        # Publish the marker only after extractall returns; old caches are extracted once again.
+        # An interrupted extraction can leave its last batch nonempty but incomplete, so the marker
+        # is written only after extractall returns and a cache without it is extracted again.
         complete.unlink(missing_ok=True)
         print(f"[extract] {archive}")
         with tarfile.open(archive, "r:gz") as tf:
@@ -184,9 +184,10 @@ def prepare_household_power(root: Path, *, windows: int, stride: int) -> None:
       UCI Machine Learning Repository, https://doi.org/10.24432/C58K54
       License: CC BY 4.0.
 
-    The raw file is minute-level and contains missing values. The LSTM tutorial uses averaged valid
-    `Global_active_power` values into hourly readings, normalize them to `[0, 1]`, and export
-    `(24, 1) -> (24, 1)` one-step-shifted windows.
+    The raw file is minute-level and contains missing values. For the LSTM tutorial, the valid
+    `Global_active_power` readings of each hour are averaged, scaled to `[0, 1]`, and exported as
+    one-step-shifted `(24, 1) -> (24, 1)` windows. An hour without a valid reading repeats the last
+    one, or 0 before the first.
     """
 
     if windows <= 0:
@@ -277,8 +278,8 @@ def prepare_auto_mpg(root: Path) -> None:
     The raw file has rows:
       mpg cylinders displacement horsepower weight acceleration model_year origin car_name
 
-    Rows with missing horsepower are dropped, then the seven numeric predictors and target are normalized to
-    `[0, 1]`, and write columns `x1..x7,y` for the Lean MLP tutorial.
+    Rows with missing horsepower are dropped. The seven numeric predictors and the target are scaled
+    to `[0, 1]` and written as columns `x1..x7,y` for the Lean MLP tutorial.
     """
 
     raw_dir = root / "raw"
@@ -407,8 +408,10 @@ def main() -> None:
     ap.add_argument("--wikitext", action="store_true", help="export WikiText (requires PyArrow)")
     ap.add_argument("--config", default="wikitext-2-raw-v1", help="WikiText dataset configuration")
     ap.add_argument("--split", default="train", help="WikiText split")
-    ap.add_argument("--output", type=Path, help="WikiText output; defaults to ROOT/text/wikitext2_train.txt")
-    ap.add_argument("--cache-dir", type=Path, help="WikiText cache; defaults to ROOT/hf_cache/wikitext")
+    ap.add_argument("--output", type=Path,
+                    help="WikiText output (default: ROOT/text/wikitext2_train.txt)")
+    ap.add_argument("--cache-dir", type=Path,
+                    help="WikiText cache (default: ROOT/hf_cache/wikitext)")
     ap.add_argument("--max-bytes", type=int, help="maximum WikiText corpus bytes, excluding source header")
     ap.add_argument(
         "--all",
@@ -419,13 +422,13 @@ def main() -> None:
         "--cifar10-limit-train",
         type=int,
         default=200,
-        help="number of CIFAR-10 train images to export; use -1 for all 50000",
+        help="number of CIFAR-10 train images to export (-1 for all 50000)",
     )
     ap.add_argument(
         "--cifar10-limit-test",
         type=int,
         default=100,
-        help="number of CIFAR-10 test images to export; use -1 for all 10000",
+        help="number of CIFAR-10 test images to export (-1 for all 10000)",
     )
     ap.add_argument(
         "--household-power-windows",

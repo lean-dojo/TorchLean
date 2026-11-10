@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """Export TorchLean alpha-beta-CROWN-style leaf artifacts.
 
-This script is the producer-side bridge for TorchLean's
-`abcrown_leaf_artifact_v0_1` checker.  It does not run alpha-beta-CROWN.  Instead,
-it converts a small raw leaf/domain dump from an external verifier into the
-JSON schema consumed by:
+The script is the producer-side bridge for TorchLean's `abcrown_leaf_artifact_v0_1` checker. It
+does not run alpha-beta-CROWN. It converts a small raw leaf/domain dump from an external verifier
+into the JSON schema read by:
 
-  scripts/lake.sh exe verify -- abcrown-leaf <artifact.json>
+  `scripts/lake.sh exe verify -- abcrown-leaf <artifact.json>`
 
-For external integrations, import `write_abcrown_leaf_artifact` and pass the root
-box plus terminal leaves.  If `out_path` is omitted, the helper writes to the
+For external integrations, import `write_abcrown_leaf_artifact` and pass the root box plus
+terminal leaves. If `out_path` is omitted, the helper writes to the path in the
 `ABCROWN_ARTIFACT_OUT` environment variable.
 """
 
@@ -43,22 +42,31 @@ def _as_object(value: Any, ctx: str) -> Mapping[str, Any]:
 
 
 def _get_any(obj: Mapping[str, Any], names: Sequence[str], ctx: str) -> Any:
-    """Return the first present field from `names`."""
+    """Return the value `obj` gives under the spellings `names`, read as `_get_optional` does.
 
-    for name in names:
-        if name in obj:
-            return obj[name]
-    joined = ", ".join(names)
-    raise ArtifactExportError(f"{ctx}: expected one of fields: {joined}")
+    A record with none of the spellings raises `ArtifactExportError`.
+    """
+
+    if not any(name in obj for name in names):
+        joined = ", ".join(names)
+        raise ArtifactExportError(f"{ctx}: expected one of fields: {joined}")
+    return _get_optional(obj, names, ctx)
 
 
-def _get_optional(obj: Mapping[str, Any], names: Sequence[str]) -> Any | None:
-    """Return the first present optional field from `names`."""
+def _get_optional(obj: Mapping[str, Any], names: Sequence[str], ctx: str) -> Any | None:
+    """Return the value `obj` gives under the spellings `names` of one field, or None.
 
-    for name in names:
-        if name in obj:
-            return obj[name]
-    return None
+    Two spellings with different values raise `ArtifactExportError` naming both keys, since
+    reading either one would silently drop the other.
+    """
+
+    present = [name for name in names if name in obj]
+    for name in present[1:]:
+        if obj[name] != obj[present[0]]:
+            raise ArtifactExportError(
+                f"{ctx}: fields {present[0]} and {name} give different values"
+            )
+    return obj[present[0]] if present else None
 
 
 def _float_list(value: Any, ctx: str) -> list[float]:
@@ -175,7 +183,7 @@ def normalize_leaf(
             raise ArtifactExportError(f"{ctx}: invalid box at coordinate {i}: lo={a} > hi={b}")
 
     lb = _float_list(_get_any(leaf, LEAF_LB_FIELDS, ctx), f"{ctx}.lb")
-    threshold_raw = _get_optional(leaf, LEAF_THRESHOLD_FIELDS)
+    threshold_raw = _get_optional(leaf, LEAF_THRESHOLD_FIELDS, ctx)
     if threshold_raw is None:
         if default_threshold is None:
             raise ArtifactExportError(
@@ -183,7 +191,7 @@ def normalize_leaf(
             )
         threshold_raw = default_threshold
     threshold = _float_list_or_scalar(threshold_raw, len(lb), f"{ctx}.threshold")
-    witness_idx, witness_margin = _best_witness(lb, threshold)
+    witness_idx, _ = _best_witness(lb, threshold)
 
     return {
         "lo": lo,
@@ -191,7 +199,6 @@ def normalize_leaf(
         "lb": lb,
         "threshold": threshold,
         "witness_idx": witness_idx,
-        "witness_margin": witness_margin,
     }
 
 
@@ -205,8 +212,8 @@ def build_abcrown_leaf_artifact(
 
     A dump that already carries the TorchLean format tag is returned unchanged, so re-exporting an
     artifact is a no-op.  That shortcut cannot honour a caller-supplied root box, so it is skipped
-    whenever one is given: the root then has to be rebuilt from the leaves, which the ordinary path
-    already does.  Silently keeping the artifact's own root would discard the property domain the
+    whenever one is given, and the ordinary path re-normalizes the artifact's leaves under the
+    caller's root.  Silently keeping the artifact's own root would discard the property domain the
     caller passed in, and that domain is what a robustness claim is about.
     """
 
@@ -223,11 +230,11 @@ def build_abcrown_leaf_artifact(
         top: Mapping[str, Any] = {}
     else:
         top = _as_object(raw, "top-level")
-        leaves_value = _get_optional(top, LEAF_LIST_FIELDS)
+        leaves_value = _get_optional(top, LEAF_LIST_FIELDS, "top-level")
         if leaves_value is not None:
             # A dump that carries a domain list is a branch-and-bound run, even when the top
-            # level also carries x_L/x_U: those are the root box, which is exactly what we want
-            # to read from there.  Checking the list first matters because alpha-beta-CROWN
+            # level also carries x_L/x_U: those are the root box, which is what we want to read
+            # from there.  Checking the list first matters because alpha-beta-CROWN
             # writes both, and the single-leaf reading would silently drop every domain.
             if not isinstance(leaves_value, list):
                 raise ArtifactExportError("top-level leaves/domains field must be a list")
@@ -242,14 +249,14 @@ def build_abcrown_leaf_artifact(
             raise ArtifactExportError(f"top-level: expected one of fields: {joined}")
 
     if root_lo is None or root_hi is None:
-        root_obj = _get_optional(top, ("root", "input_box"))
+        root_obj = _get_optional(top, ("root", "input_box"), "top-level")
         if root_obj is not None:
             root = _as_object(root_obj, "root")
             root_lo = _float_list(_get_any(root, ("lo", "x_L", "lower"), "root"), "root.lo")
             root_hi = _float_list(_get_any(root, ("hi", "x_U", "upper"), "root"), "root.hi")
         else:
-            root_lo_raw = _get_optional(top, ("root_lo", "input_lo", "x_L"))
-            root_hi_raw = _get_optional(top, ("root_hi", "input_hi", "x_U"))
+            root_lo_raw = _get_optional(top, ("root_lo", "input_lo", "x_L"), "top-level")
+            root_hi_raw = _get_optional(top, ("root_hi", "input_hi", "x_U"), "top-level")
             if (root_lo_raw is None) != (root_hi_raw is None):
                 raise ArtifactExportError("root requires both bounds")
             if root_lo_raw is not None and root_hi_raw is not None:
@@ -268,7 +275,9 @@ def build_abcrown_leaf_artifact(
         if a > b:
             raise ArtifactExportError(f"root coordinate {i}: lo={a} > hi={b}")
 
-    default_threshold = _get_optional(top, ("default_threshold", "threshold", "thresholds", "rhs"))
+    default_threshold = _get_optional(
+        top, ("default_threshold", "threshold", "thresholds", "rhs"), "top-level"
+    )
     leaves = [
         normalize_leaf(
             leaf,
@@ -296,8 +305,8 @@ def write_abcrown_leaf_artifact(
 ) -> Path:
     """Write a TorchLean leaf artifact.
 
-    If `out_path` is omitted, `ABCROWN_ARTIFACT_OUT` supplies the output path.  This is the function to
-    call from an instrumented external verifier once it has terminal leaf boxes and lower bounds.
+    If `out_path` is omitted, `ABCROWN_ARTIFACT_OUT` supplies the output path. Call it from an
+    instrumented external verifier once it has terminal leaf boxes and lower bounds.
     """
 
     output = out_path or os.environ.get(ENV_OUT, "")

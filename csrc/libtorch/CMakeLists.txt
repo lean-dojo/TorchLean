@@ -73,6 +73,8 @@ target_link_options(torchlean_sdk_link_check PRIVATE "LINKER:--disable-new-dtags
 
 add_library(torchlean_libtorch SHARED
   torchlean.cpp
+  conv_pool.cpp
+  tree.cpp
 )
 add_dependencies(torchlean_libtorch torchlean_sdk_link_check)
 target_compile_definitions(torchlean_libtorch PRIVATE TORCHLEAN_LIBTORCH)

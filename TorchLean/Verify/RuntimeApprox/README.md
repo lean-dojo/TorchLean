@@ -1,0 +1,135 @@
+# `TorchLean/Verify/RuntimeApprox`
+
+Runtime approximation theorems bound forward and backward error under stated local operator
+assumptions and tolerances. A runtime value is mapped into `ℝ` and compared with the real
+specification. The graph theorems compose local bounds over typed graphs and have no MLP,
+convolution or attention case, since an architecture is a composition of nodes. `NF` rounds with
+`Flocq.round` after every primitive, and it is a backend we can reason about inside Lean. A
+native path such as CUDA or LibTorch is covered only where a theorem connects its behavior to one of
+these approximation relations.
+
+- `Tolerance.lean`, `TorchLean/Verify/RuntimeApprox.lean`: tolerances (`ApproxTol`) and scalar and
+  tensor approximation predicates.
+- `ApproxTensor.lean`: shape-generic `ApproxTensor` and `linfNorm` lemmas that turn scalar
+  absolute-error bounds into forward-error bounds on whole tensors.
+- `Rounding.lean`: `ScalarApprox` and the bound for one rounded multiplication
+  (`ScalarApprox.roundedMul`). Rounded addition uses FloatLib's `add_error` directly.
+- `Constants.lean`: square roots of dimension counts that overflow their scalar representation.
+- `Elementary.lean`, `InverseTrigonometric.lean`: correctly rounded elementary functions.
+- `TorchLean/Verify/Floats/IEEE754/Expressions.lean`: binary-format `Expr` evaluation rounds each
+  real operation (`FiniteEval`).
+- `TorchLean/Verify/Floats/IEEE754/Reductions.lean`: a forward-error bound that holds for every
+  valid reduction tree.
+- `Graph/`: forward and reverse graph composition.
+- `NF/`: `NF` operator bounds and their reverse-graph composition (`NF.backprop_approx`).
+- `NF/Layers.lean`, `NF/MLP.lean`, `NF/CROWN.lean`: linear-layer, MLP and CROWN/IBP box bounds.
+- `Roundoff.lean`, `Roundoff/Fold.lean`, `Roundoff/Mixed.lean`, `Roundoff/Rules.lean`,
+  `Roundoff/Rules/`, `Roundoff/Coverage.lean`: tensors in FloatLib's `roundoff`.
+- `TorchLean/Verify/Coverage/`: the roundoff theorems of every registered operator and composite, by
+  family.
+- `Roundoff/`: `roundoff` bounds of operators, pullbacks, softmax, losses, convolution, pooling,
+  composites, contractions and blocked online softmax attention.
+- `OnlineSoftmax/Real.lean`: online softmax equals the two-pass value over `ℝ`, and the real
+  algebra of its error bounds.
+- `OnlineSoftmax.lean`: the rounding error of online softmax in every IEEE format.
+- `OnlineSoftmax/Binary32.lean`: those bounds evaluated in `binary32` at 4096 and 16384 keys.
+- `Roundoff/SoftmaxReplay.lean`: softmax and its pullback, with their exact-rational replay
+  branches.
+- `Roundoff/SoftmaxReplay/Binary32.lean`: `binary32` inputs on which softmax takes its replay
+  branches.
+- `Roundoff/SoftmaxShift.lean`: the exponentials of stable softmax sum to at least one.
+- `TransformerBlock.lean`: a per-token bound between `Arithmetic.block`, a rounded schedule of a
+  pre-normalization transformer block, and the exact block. The executed op-table block rescales
+  inside its layer normalization and adds each bias last, so the bound does not cover it.
+- `TransformerBlock/Nearest.lean`: that bound under nearest rounding in any IEEE format.
+  `TorchLeanExamples/Models/Sequence/GPT2BlockBound.lean` evaluates it at GPT-2 small in `binary32`.
+- `TransformerBlock/Ops.lean`: its real `layerNorm`, `softmax`, `attention`, `heads` and `block` as
+  forwards of op-table operations.
+- `OptimizerContract.lean`: `OptimizerContract` and `runApprox_of_stepStreamApprox` over any finite
+  gradient stream.
+- `Roundoff/Recovery.lean`: sigmoid, tanh and power slopes enclosed in certified rational intervals.
+- `RL/`: RL backups in executable IEEE semantics, runtime-checked finiteness, and the PPO ratio.
+
+Import the module of the theorem you use, for example the end-to-end `NF` bounds:
+
+```lean
+import TorchLean.Verify.RuntimeApprox.NF.EndToEnd
+```
+
+## Tensors In `roundoff`
+
+`Roundoff.lean` registers TorchLean's tensors with FloatLib's `roundoff` analysis. It reads a
+tensor entry at a coordinate and carries a step bound through tensor folds and index loops
+(`Roundoff/Fold.lean`). General operators go through the coordinate lemmas registered in
+`Roundoff/Rules/`: `Tensor`, `Movement`, `Broadcast`, `Reduction`, `Ordering`, `Elementwise`,
+`Power`, `Literal`, `Products`, `Composite`, `NormalizedRows`, `Softmax`, `OnlineSoftmax`,
+`Convolution` and `Autograd`. `Roundoff/Rules/OnlineSoftmax.lean` registers the hand bounds of
+`OnlineSoftmax.lean` for the online softmax iterators. `Roundoff/Rules/Autograd.lean` registers the
+compiler replacements the autograd proofs prove (`eval` is `evalWithArray`, `backpropCtx` is
+`backpropCtxSaved`), so the analysis reads indexed forward and saved reverse execution through
+their source programs.
+
+Layer normalization, batch normalization over batch statistics and group normalization divide the
+centered values by a detached scale before squaring them. `Roundoff/Rules/Composite.lean` bounds the
+error of the scale of the first two, `Tensor.normalizationScale`, by the largest error among the
+centered values and `sqrt |epsilon|`, absolute and mixed. It also reads a statistic broadcast back
+along the kept axes at its reduced shape, and rewrites group normalization by
+`TorchLean.Tensor.groupNorm_def`, which types the statistics of the grouped view at that shape. The
+scale that `Normalization.normalizedRows` casts to the shape of the rows, in the JVP and backward
+kernels of layer and batch normalization, is read at the reduced shape too. We register Mathlib's
+`Equiv.apply_symm_apply`, so in the sums of `Normalization.normalizedRows` along a row, a statistic
+broadcast back along the row is read at the coordinate of the row. The largest magnitude in the
+scale of group normalization is exact on finite entries.
+
+`Roundoff/Rules/NormalizedRows.lean` bounds each normalized value and each inverse standard
+deviation of `Normalization.normalizedRows` as one function of its rows: from rows whose entries
+have mixed errors, `roundoff` infers a mixed bound on each. Mixed analysis applies these bounds in
+the JVP and backward kernels of layer and batch normalization, and absolute analysis reads the same
+entries through the definition of `Normalization.normalizedRows`.
+`TorchLean/Verify/Coverage/Layers/LayerNorm.lean`, which analyzes these kernels, is the one coverage
+module that imports these rules.
+
+`Roundoff/Coverage.lean` defines `#roundoff_coverage`. The modules under
+`TorchLean/Verify/Coverage/` run it on every registered operator, tape constructor and tensor
+composite, family by family, and declare the theorems it proves.
+The coverage check in `scripts/checks/Library.lean`, which `scripts/lake.sh lint` runs, fails unless
+every public operator specification and tape constructor under `TorchLean/` is registered with
+`#roundoff_coverage`, every operator of the table with a rule has its equation lemma and, when one
+of its ports holds the scalar, a route analyzed for the configured scalar, and every `op_cert`
+certificate speaks about a route of its operator. The guide's
+[operator chapter](https://lean-dojo.github.io/TorchLean/blueprint/Semantics-and-Graphs/The-Operator-Table/)
+lists the operators of the table by family, with their CUDA entries, certificates and bound
+propagations.
+
+## `NF` And `FP32`
+
+The `NF` rounded-real bounds for the sigmoid are built on `divPosErrorBound`, and
+`reciprocalSigmoidBoundScalar_le_one` bounds the budget of the sequence `1 / (1 + exp (-x))` by
+`1` under small-error hypotheses. The row mean divides by the exact count with one rounding
+(`Context.divNat`), so `NF.approx_meanRow` needs no denominator margin.
+`approxTensor_reluTwoLayerMLP` and `reluTwoLayerMLP_ibp_sound` bound a rounded two-layer
+ReLU MLP and its IBP output box in any `NF β fexp rnd` with round-to-nearest. `FP32` is the instance
+at binary32 precision, a rounded-real model distinct from Lean's `Float32`.
+
+## Numerical Certificates
+
+`TorchLean/Verify/NumericalCertificate.lean` and `TorchLean/Verify/NumericalCertificate/` check
+interval certificates for graphs of registered operators, with FloatLib's outward-rounded binary32
+intervals and the selected kernel capsules. `check` does not
+trust a certificate's node ranges. It checks that the source endpoints are finite and ordered,
+replans under the backend profile and rebuilds the range trace from the graph and the sources. Every
+rebuilt enclosure must be finite and ordered, and the result must match the certificate. Success
+gives a `NumericalCertificate.Checked`. Enclosure of the exact-real graph is the separate
+`NumericalCertificate.RealEnclosure` used by `CheckedExecution.errorTrace`. An unsupported operation
+fails with its node id and operation name rather than receiving `[-inf,+inf]`.
+
+`deriveNodeRange` admits a node whose transfer folds a reduction from the left only when the first
+selected kernel with the node's id declares the fixed-left policy
+(`TorchLean/Verify/NumericalCertificate/NumericalPolicy.lean`). It establishes the consumer's policy
+gate, not the numerical correctness of a native implementation.
+
+## References
+
+- IEEE Std 754-2019, IEEE Standard for Floating-Point Arithmetic.
+- IEEE Std 1788-2015, IEEE Standard for Interval Arithmetic.
+- N. J. Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., SIAM, 2002.

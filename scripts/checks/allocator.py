@@ -389,7 +389,7 @@ def allocator_module():
 
 
 def wakeup_checks(lean_prefix, output):
-    """Compile both implementations and preserve their sources and raw results."""
+    """Compile the upstream and patched arenas, keeping their sources and raw results."""
     allocator = allocator_module()
     if allocator.sha(lean_prefix / "include/lean/mimalloc.h") != allocator.HEADER_SHA256:
         raise RuntimeError("wakeup check requires the pinned Lean allocator header")

@@ -1,0 +1,744 @@
+/* Shared polish variables -------------------------------------------------
+   DocGen already defines semantic colors for declaration kinds.  These
+   TorchLean variables cover site chrome: teal accents, soft borders, and
+   shadows used by the landing page and sidebar cards. */
+header h1 span {
+  letter-spacing: 0;
+}
+
+:root {
+  --tl-teal: #157878;
+  --tl-teal-soft: rgba(21, 120, 120, 0.13);
+  --tl-border: rgba(17, 44, 64, 0.16);
+  --tl-shadow: 0 16px 44px rgba(17, 44, 64, 0.08);
+  --content-width: clamp(36rem, 64vw, 78rem);
+}
+
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  font-size: 18px;
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--code-bg) 35%, transparent), transparent 28rem),
+    var(--body-bg);
+}
+
+/* Header and search -------------------------------------------------------
+   Keep DocGen's fixed header model, but make it feel like the rest of the
+   public site.  Search remains the real DocGen search form. */
+header {
+  border-bottom: 1px solid rgba(127, 127, 127, 0.18);
+  box-shadow: 0 8px 28px rgba(17, 44, 64, 0.06);
+  backdrop-filter: blur(10px);
+}
+
+header h1 {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+header .header_filename {
+  color: color-mix(in srgb, var(--text-color) 66%, transparent);
+  font-size: 0.92rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#search_form {
+  white-space: nowrap;
+}
+
+#search_form input,
+#search_page_query {
+  border: 1px solid rgba(127, 127, 127, 0.28);
+  border-radius: 999px;
+  padding: 0.42rem 0.72rem;
+  background: color-mix(in srgb, var(--body-bg) 92%, var(--code-bg));
+  color: var(--text-color);
+}
+
+#search_button {
+  border: 1px solid var(--tl-border);
+  border-radius: 999px;
+  padding: 0.38rem 0.72rem;
+  background: var(--tl-teal);
+  color: white;
+  cursor: pointer;
+}
+
+#search_button:hover {
+  filter: brightness(0.94);
+}
+
+/* Cross-site links --------------------------------------------------------
+   Generated API pages sit under `/docs/`, while the human guide and examples
+   sit elsewhere in the Jekyll site.  These links connect the generated API
+   pages back to the rest of the public site. */
+.tl-docsite-links {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.86rem;
+}
+
+.tl-docsite-links a {
+  color: color-mix(in srgb, var(--text-color) 78%, transparent);
+  text-decoration: none;
+  padding: 0.24rem 0.48rem;
+  border-radius: 999px;
+}
+
+.tl-docsite-links a:hover {
+  color: var(--tl-teal);
+  background: var(--tl-teal-soft);
+  text-decoration: none;
+}
+
+/* Leave room for the module drawer and search before the header links crowd
+   those controls. */
+@media (max-width: 1200px) {
+  .tl-docsite-links {
+    display: none;
+  }
+}
+
+.tl-doc-theme-toggle {
+  border: 1px solid var(--tl-border);
+  border-radius: 999px;
+  padding: 0.28rem 0.62rem;
+  background: color-mix(in srgb, var(--body-bg) 90%, var(--code-bg));
+  color: color-mix(in srgb, var(--text-color) 82%, transparent);
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.tl-doc-theme-toggle:hover {
+  color: var(--tl-teal);
+  border-color: color-mix(in srgb, var(--tl-teal) 45%, transparent);
+  background: var(--tl-teal-soft);
+}
+
+/* Landing-page module drawer ---------------------------------------------
+   The landing page uses the same hidden checkbox / iframe navbar that DocGen
+   emits everywhere else. The custom index hides the drawer by default and
+   expose it with a human label, "Modules", instead of the raw hamburger glyph. */
+.tl-docs-index {
+  --content-width: min(1080px, calc(100vw - 3rem));
+  --tl-doc-drawer-width: 20rem;
+  --tl-doc-open-content-width: min(960px, calc(100vw - var(--tl-doc-drawer-width) - 5rem));
+}
+
+.tl-docs-index:has(#nav_toggle:checked) {
+  display: grid;
+  grid-template-columns: var(--tl-doc-drawer-width) var(--tl-doc-open-content-width);
+  justify-content: start;
+  column-gap: 1.5rem;
+  padding: 0 1.25rem 0 clamp(1.5rem, 3vw, 3rem);
+}
+
+.tl-docs-index header {
+  justify-content: flex-start;
+  gap: 1rem;
+}
+
+.tl-docs-index #search_form {
+  margin-left: auto;
+}
+
+.tl-docs-index .header_filename {
+  display: none;
+}
+
+.tl-docs-index .nav {
+  display: none;
+}
+
+.tl-docs-index #nav_toggle:checked ~ .nav {
+  display: block;
+  position: sticky;
+  top: calc(var(--header-height) + 1rem);
+  grid-column: 1;
+  grid-row: 2;
+  align-self: start;
+  width: 100%;
+  max-width: none;
+  height: calc(100vh - var(--header-height) - 2rem);
+  left: auto;
+  z-index: 4;
+  background: var(--body-bg);
+  border: 1px solid rgba(127, 127, 127, 0.24);
+  border-radius: 12px;
+  margin: calc(var(--header-height) + 1rem) 0 1rem;
+  overflow: hidden;
+  padding: 0;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.2);
+}
+
+.tl-docs-index #nav_toggle:checked ~ main {
+  grid-column: 2;
+  grid-row: 2;
+  width: 100%;
+  max-width: var(--tl-doc-open-content-width);
+  margin: calc(var(--header-height) + 1rem) 0 4rem;
+}
+
+.tl-docs-index #nav_toggle:checked ~ main .tl-api-grid {
+  grid-template-columns: 1fr;
+}
+
+.tl-docs-index #nav_toggle:checked ~ main .tl-api-card {
+  min-height: auto;
+  min-width: 0;
+  padding: 0.8rem 0.95rem;
+}
+
+.tl-docs-index #nav_toggle:checked ~ main .tl-api-grid,
+.tl-docs-index #nav_toggle:checked ~ main .tl-api-section {
+  margin-top: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+#settings {
+  display: none !important;
+}
+
+.tl-docs-index label[for="nav_toggle"] {
+  display: inline-block;
+  margin-right: 0.5rem;
+  border: 1px solid var(--hamburger-border-color);
+  padding: 0.25rem 0.62rem;
+  cursor: pointer;
+  background: var(--hamburger-bg-color);
+  border-radius: 999px;
+}
+
+.tl-docs-index label[for="nav_toggle"]::before {
+  content: 'Modules';
+}
+
+/* Landing-page layout -----------------------------------------------------
+   These rules are only for `/docs/`: entry-point cards, section blocks, and
+   the declaration-kind legend. The declaration pages use the later
+   `body:not(.tl-docs-index)` rules. */
+main {
+  padding-bottom: 4rem;
+}
+
+.tl-docs-index main {
+  max-width: 1080px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.tl-api-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.9rem;
+  margin: 1.35rem 0 1.75rem;
+}
+
+.tl-api-card {
+  display: block;
+  min-height: 9rem;
+  padding: 1.05rem 1.1rem;
+  border: 1px solid var(--tl-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--body-bg) 88%, var(--code-bg));
+  color: var(--text-color);
+  text-decoration: none;
+  transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+}
+
+.tl-api-card:hover {
+  border-color: rgba(21, 120, 120, 0.56);
+  transform: translateY(-2px);
+  box-shadow: var(--tl-shadow);
+  text-decoration: none;
+}
+
+.tl-api-card span {
+  display: block;
+  color: var(--tl-teal);
+  font-family: JuliaMono, monospace;
+  font-size: 0.78rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.tl-api-card strong {
+  display: block;
+  margin: 0 0 0.32rem;
+  font-size: 1.08rem;
+  overflow-wrap: anywhere;
+}
+
+.tl-api-card p {
+  margin: 0;
+  color: color-mix(in srgb, var(--text-color) 78%, transparent);
+  font-size: 0.94rem;
+}
+
+.tl-api-section {
+  margin: 1.45rem 0;
+}
+
+.tl-api-section h2 {
+  color: var(--tl-teal);
+  margin-bottom: 0.45rem;
+}
+
+.tl-docs-index .tl-api-section:last-of-type {
+  margin-bottom: 0;
+}
+
+.tl-kind-section {
+  padding: 0.95rem 1rem;
+  border: 1px solid var(--tl-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--body-bg) 91%, var(--code-bg));
+}
+
+.tl-kind-section p {
+  margin: 0.1rem 0 0.75rem;
+  color: color-mix(in srgb, var(--text-color) 72%, transparent);
+}
+
+.tl-kind-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.tl-kind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.38rem 0.6rem;
+  border: 1px solid var(--tl-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--body-bg) 88%, var(--code-bg));
+  font-family: JuliaMono, monospace;
+  font-size: 0.86rem;
+}
+
+.tl-kind-chip::before {
+  content: "";
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 999px;
+  background: var(--tl-kind-color, var(--text-color));
+}
+
+.tl-kind-def {
+  --tl-kind-color: var(--def-color);
+}
+
+.tl-kind-theorem {
+  --tl-kind-color: var(--theorem-color);
+}
+
+.tl-kind-structure {
+  --tl-kind-color: var(--structure-and-inductive-color);
+}
+
+.tl-kind-axiom {
+  --tl-kind-color: var(--axiom-and-constant-color);
+}
+
+/* Generated declaration pages --------------------------------------------
+   DocGen outputs one main module doc block followed by declaration blocks.
+   The base HTML is excellent for linking and search, but visually flat.  These
+   rules wrap module docs and declarations in subtle cards while preserving the
+   colored left/top borders that encode declaration kind. */
+body:not(.tl-docs-index) main {
+  padding-top: 0.4rem;
+}
+
+body:not(.tl-docs-index) .mod_doc {
+  margin: 0 0 1.2rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--tl-border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--body-bg) 91%, var(--code-bg));
+  box-shadow: 0 10px 32px rgba(17, 44, 64, 0.05);
+}
+
+body:not(.tl-docs-index) .mod_doc h1:first-child,
+body:not(.tl-docs-index) main > h1:first-child {
+  margin-top: 0;
+}
+
+body:not(.tl-docs-index) .decl {
+  margin: 1.2rem 0;
+}
+
+body:not(.tl-docs-index) .decl > div {
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+  background: color-mix(in srgb, var(--body-bg) 93%, var(--code-bg));
+  box-shadow: 0 10px 28px rgba(17, 44, 64, 0.045);
+}
+
+/* Right-side page navigation ---------------------------------------------
+   The `.internal_nav` column contains imports, imported-by, and declaration
+   anchors of the page. This polish pass adds cards and hover affordances, plus the
+   compact declaration-kind legend on pages with declarations. */
+.internal_nav {
+  padding: 0.8rem;
+  border: 1px solid var(--tl-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--body-bg) 92%, var(--code-bg));
+}
+
+.internal_nav p:first-child {
+  margin-top: 0;
+}
+
+.internal_nav .imports {
+  padding: 0.55rem;
+  border: 1px solid rgba(127, 127, 127, 0.16);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--body-bg) 88%, var(--code-bg));
+}
+
+.internal_nav .nav_link {
+  margin: 0.28rem 0;
+  padding: 0.24rem 0.35rem 0.24rem 2.35ex;
+  border-radius: 8px;
+}
+
+.internal_nav .nav_link:hover {
+  background: var(--tl-teal-soft);
+}
+
+.tl-kind-legend-side {
+  margin: 0 0 0.8rem;
+  padding: 0.65rem;
+  border: 1px solid rgba(127, 127, 127, 0.16);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--body-bg) 88%, var(--code-bg));
+}
+
+.tl-kind-legend-side strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: color-mix(in srgb, var(--text-color) 80%, transparent);
+  font-size: 0.84rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tl-kind-legend-side .tl-kind-legend {
+  gap: 0.35rem;
+}
+
+.tl-kind-legend-side .tl-kind-chip {
+  padding: 0.22rem 0.42rem;
+  font-size: 0.74rem;
+}
+
+.tl-kind-legend-side .tl-kind-chip::before {
+  width: 0.55rem;
+  height: 0.55rem;
+}
+
+/* Left module tree --------------------------------------------------------
+   The left iframe is generated by DocGen from all imported modules, including
+   Lean, Mathlib, and dependencies. A hint and highlight for `TorchLean` show
+   users where the TorchLean modules live.
+
+   DocGen's default desktop layout keeps this tree permanently visible in a
+   side column. That works for wide theorem-library docs, but TorchLean pages
+   often contain long module docs and code blocks, so the tree can overlap the
+   readable content. Treat it as an explicit drawer on every viewport instead:
+   the header's Modules tab opens it, and the same tab closes it. */
+label[for="nav_toggle"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-right: 0.65rem;
+  border: 1px solid var(--tl-border);
+  border-radius: 999px;
+  padding: 0.42rem 0.75rem;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--body-bg) 88%, var(--code-bg));
+  color: var(--text-color);
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 6px 18px rgba(17, 44, 64, 0.08);
+}
+
+label[for="nav_toggle"]::before {
+  content: "Modules";
+}
+
+#nav_toggle:checked ~ header label[for="nav_toggle"] {
+  background: var(--tl-teal);
+  color: white;
+}
+
+#nav_toggle:checked ~ header label[for="nav_toggle"]::before {
+  content: "Close modules";
+}
+
+#nav_toggle:not(:checked) ~ .nav {
+  display: none;
+}
+
+#nav_toggle:checked ~ .nav {
+  display: block;
+  left: 1rem;
+  margin-left: 0;
+  width: min(28rem, calc(100vw - 2rem));
+  max-width: min(28rem, calc(100vw - 2rem));
+  z-index: 20;
+  padding: 0;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--body-bg) 95%, var(--code-bg));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.24);
+}
+
+#nav_toggle:checked ~ main {
+  visibility: visible;
+}
+
+.nav {
+  padding-right: 0.35rem;
+}
+
+.navframe {
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+}
+
+.tl-docs-index .navframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+body > .navframe {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body > .navframe > .nav {
+  box-sizing: border-box;
+  left: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 1rem 1.05rem 1.25rem;
+  font-size: 0.94rem;
+}
+
+body > .navframe > .nav h3:first-child {
+  margin-top: 0;
+}
+
+body > .navframe > .nav h3 {
+  margin: 1.15rem 0 0.45rem;
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+body > .navframe > .nav .nav_link,
+body > .navframe > .nav summary {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.tl-nav-hint {
+  margin: 0.25rem 0 0.65rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgba(21, 120, 120, 0.28);
+  border-radius: 10px;
+  color: color-mix(in srgb, var(--text-color) 82%, transparent);
+  background: var(--tl-teal-soft);
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.tl-nav-hint strong {
+  color: var(--text-color);
+}
+
+.tl-nav-hint span {
+  display: block;
+  color: var(--tl-teal);
+  font-size: 1.3rem;
+  line-height: 1.1;
+}
+
+.nav details[data-path="./TorchLean.html"] > summary {
+  position: relative;
+  padding: 0.2rem 0.25rem;
+  border-radius: 8px;
+  background: var(--tl-teal-soft);
+}
+
+/* Declaration text and search results ------------------------------------
+   Long Lean names and types need breathing room. Monospace stays in place for Lean
+   fragments, but slightly increase line height and add understated search
+   result separators. */
+.nav .nav_file a {
+  display: inline-block;
+  padding: 0.08rem 0.24rem;
+  border-radius: 7px;
+}
+
+.nav .nav_file a:hover {
+  background: var(--tl-teal-soft);
+  text-decoration: none;
+}
+
+.decl_header {
+  line-height: 1.65;
+}
+
+.decl_type,
+.structure_field_info,
+.constructor {
+  line-height: 1.58;
+}
+
+pre {
+  border: 1px solid rgba(127, 127, 127, 0.16);
+  overflow-x: auto;
+}
+
+code {
+  font-size: 0.92em;
+}
+
+/* DocGen places the declaration sidebar beside its content column. Keep that
+   column's width and let long Lean declarations scroll. Expanding main to the
+   full viewport would put the text underneath the fixed sidebar. */
+body:not(.tl-docs-index) main {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+body:not(.tl-docs-index) .mod_doc,
+body:not(.tl-docs-index) .def,
+body:not(.tl-docs-index) .theorem,
+body:not(.tl-docs-index) .opaque,
+body:not(.tl-docs-index) .axiom,
+body:not(.tl-docs-index) .class,
+body:not(.tl-docs-index) .structure,
+body:not(.tl-docs-index) .inductive,
+body:not(.tl-docs-index) .instance {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+body:not(.tl-docs-index) .mod_doc a,
+body:not(.tl-docs-index) .mod_doc code,
+body:not(.tl-docs-index) li code,
+body:not(.tl-docs-index) p code,
+body:not(.tl-docs-index) :not(pre) > code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal !important;
+}
+
+/* Inline-code wrapping must not collapse line breaks or indentation in examples. */
+body:not(.tl-docs-index) pre code,
+body:not(.tl-docs-index) pre code *,
+body:not(.tl-docs-index) .mod_doc pre code,
+body:not(.tl-docs-index) .mod_doc pre code * {
+  overflow-wrap: normal;
+  word-break: normal;
+  white-space: pre !important;
+}
+
+#kinds {
+  margin: 0.8rem 0 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--tl-border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--body-bg) 90%, var(--code-bg));
+}
+
+#search_results .result_link,
+#search_results .result_doc {
+  border-bottom: 1px solid rgba(127, 127, 127, 0.22);
+  padding: 0.45rem 0.35rem;
+}
+
+/* Mobile cleanup ----------------------------------------------------------
+   Small screens cannot support both the site nav and the DocGen drawer. The
+   drawer stays available through the Modules button. Secondary site links and
+   the right-sidebar declaration legend collapse away. */
+@media (max-width: 700px) {
+  .tl-docs-index {
+    --content-width: calc(100vw - 1.25rem);
+  }
+
+  .tl-docs-index:has(#nav_toggle:checked) {
+    display: block;
+    padding: 0;
+  }
+
+  .tl-docs-index header {
+    gap: 0.5rem;
+  }
+
+  .tl-docs-index header h1 span {
+    display: none;
+  }
+
+  .tl-docs-index #search_form {
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+
+  .tl-doc-theme-toggle {
+    order: 2;
+  }
+
+  .tl-docs-index #nav_toggle:checked ~ .nav {
+    position: fixed;
+    top: calc(var(--header-height) + 0.75rem);
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    width: auto;
+    max-width: none;
+  }
+
+  .tl-docs-index #nav_toggle:checked ~ main {
+    max-width: var(--content-width);
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .tl-docsite-links {
+    display: none;
+  }
+
+  .tl-api-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tl-kind-legend-side {
+    display: none;
+  }
+}

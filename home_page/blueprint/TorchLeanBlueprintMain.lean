@@ -5,7 +5,7 @@ import TorchLeanBlueprint.Guide
 open Verso Doc
 open Verso.Genre Manual
 
-/-- Keep numbered navigation at chapter and page level; read the rest within the page. -/
+/-- Keep numbered navigation at chapter and page level. Deeper headings stay within their page. -/
 private partial def readingLayout (part : Part Manual) (depth : Nat := 0) : Part Manual :=
   let metadata := part.metadata.getD {}
   -- The book is depth 0, chapters are depth 1, and pages such as 2.1 are depth 2.

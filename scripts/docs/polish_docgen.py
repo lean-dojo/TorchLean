@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Polish DocGen output for the public TorchLean website.
 
-Run after `scripts/lake.sh build TorchLeanDocs:docs` and copying its output to `home_page/docs`.
-This adds the landing page and shared styles, removes local dependency pages, and rewrites their
-links to upstream documentation. Search data and navigation are adjusted to the published URLs;
-DocGen still supplies declaration content and source links. Use `--importgraph PAGE` to style
-the generated import viewer instead.
+Run after building the API documentation and copying it to `home_page/docs`, as
+`scripts/docs/build_site.sh` does. The script adds the landing page and the styles of
+`assets/docgen.css`, removes local dependency pages and rewrites their links to upstream
+documentation. Search data and navigation are adjusted to the published URLs, and DocGen supplies
+the declaration content and source links. With `--importgraph PAGE`, the script styles only the
+generated import viewer.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ import shutil
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+
+ASSETS = Path(__file__).resolve().parent / "assets"
 
 # `append_style` is idempotent: it removes everything after this marker before
 # re-appending the TorchLean-specific CSS.  That lets `build_site.sh` and local
@@ -49,78 +52,20 @@ DOCGEN_MATHJAX_TEX_OPTIONS = r'''    packages: {"[-]": ["noundefined"]},
     },
 '''
 
-
-DOC_THEME_SCRIPT = """
-<script>
-(function () {
-  const key = "torchlean-theme";
-  const root = document.documentElement;
-
-  function preferredTheme() {
-    const stored = window.localStorage && window.localStorage.getItem(key);
-    if (stored === "light" || stored === "dark") {
-      return stored;
-    }
-    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light";
-  }
-
-  function applyTheme(theme) {
-    root.setAttribute("data-theme", theme);
-    if (window.localStorage) {
-      window.localStorage.setItem("theme", theme);
-    }
-    const button = document.querySelector("[data-doc-theme-toggle]");
-    if (button) {
-      const isDark = theme === "dark";
-      button.textContent = isDark ? "Light" : "Dark";
-      button.setAttribute("aria-label", isDark ? "Use light theme" : "Use dark theme");
-      button.setAttribute("title", isDark ? "Use light theme" : "Use dark theme");
-    }
-    document.querySelectorAll("iframe.navframe").forEach(function (frame) {
-      try {
-        if (frame.contentDocument) {
-          frame.contentDocument.documentElement.setAttribute("data-theme", theme);
-        }
-      } catch (_err) {
-        // Same-origin in local/docs builds; ignore if a browser blocks access.
-      }
-    });
-  }
-
-  applyTheme(preferredTheme());
-
-  window.addEventListener("DOMContentLoaded", function () {
-    applyTheme(preferredTheme());
-    document.querySelectorAll("iframe.navframe").forEach(function (frame) {
-      frame.addEventListener("load", function () {
-        applyTheme(root.getAttribute("data-theme") || preferredTheme());
-      });
-    });
-    const button = document.querySelector("[data-doc-theme-toggle]");
-    if (!button) {
-      return;
-    }
-    button.addEventListener("click", function () {
-      const next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
-      window.localStorage && window.localStorage.setItem(key, next);
-      applyTheme(next);
-    });
-  });
-})();
-</script>
-"""
+# The light/dark theme toggle, inlined into every page that has the toggle button.
+DOC_THEME_SCRIPT = (
+    "\n<script>\n" + (ASSETS / "docgen-theme.js").read_text(encoding="utf-8") + "</script>\n"
+)
 
 
 def prune_dependency_pages(docs: Path) -> None:
     """Keep the published API reference focused on TorchLean modules.
 
-    DocGen generates pages for every imported package. That is useful in a local
-    theorem-library browser, but expensive on GitHub Pages: Mathlib and Lean's
-    own generated pages dominate the artifact size while sending users away
-    from the `NN` API surface they came to inspect. We keep shared DocGen assets
-    and the TorchLean `NN` pages, and rely on upstream docs for dependencies.
+    DocGen generates pages for every imported package. That suits a local theorem-library
+    browser, but on GitHub Pages the Mathlib and Lean pages dominate the artifact size and
+    lead readers away from the TorchLean API. We delete the pages of the packages in
+    `DOCGEN_DEPENDENCY_MODULES`, keep the shared DocGen assets and the TorchLean and FloatLib
+    pages, and rely on upstream docs for the deleted packages.
     """
     for name in DOCGEN_DEPENDENCY_MODULES:
         path = docs / name
@@ -134,11 +79,11 @@ def prune_dependency_pages(docs: Path) -> None:
 def rewrite_dependency_links(docs: Path) -> None:
     """Rewrite links to pruned dependencies to the upstream Lean/mathlib docs.
 
-    The public TorchLean site publishes `NN` declaration pages, not a second
-    copy of Lean, Std, Mathlib, and other imported packages.  DocGen still emits
-    local links to those declarations.  After `prune_dependency_pages` removes
-    the dependency pages, those links would become local 404s unless we rewrite
-    them to the canonical upstream DocGen site.
+    The public TorchLean site publishes the TorchLean and FloatLib declaration pages, with no
+    second copy of Lean, Std, Mathlib and the other packages in `DOCGEN_DEPENDENCY_MODULES`.
+    DocGen emits local links to those declarations.  After `prune_dependency_pages` removes
+    the dependency pages, those links would become local 404s unless we rewrite them to the
+    canonical upstream DocGen site.
     """
 
     for path in docs.rglob("*.html"):
@@ -201,8 +146,9 @@ def rewrite_search_links(docs: Path) -> None:
                 entry[field] = UPSTREAM_DOCGEN_BASE + url.removeprefix("./")
     index_path.write_text(json.dumps(index, separators=(",", ":")), encoding="utf-8")
 
-    # DocGen prefixes every index URL with SITE_ROOT. Absolute upstream URLs need
-    # URL resolution instead, both on the landing page and in nested modules.
+    # DocGen prefixes every index URL with SITE_ROOT, which breaks absolute upstream
+    # URLs. Resolving each URL against SITE_ROOT with `new URL` handles relative and
+    # absolute URLs alike, on the landing page and in nested modules.
     base = "new URL(SITE_ROOT, window.location.href)"
     replacements = {
         "search.js": [("SITE_ROOT + result[j].docLink",
@@ -228,18 +174,16 @@ def rewrite_search_links(docs: Path) -> None:
 
 
 def rewrite_floatlib_profile_link(docs: Path) -> None:
-    """Repair one misresolved prose link only when its precise module page exists."""
+    """Repair one misresolved prose link when its page and its target module page exist."""
     page = docs / "FloatLib/Floats/Formats/BinaryInterchange/Transcendentals.html"
     target = page.parent / "Info/Profile.html"
     if not page.is_file() or not target.is_file():
         return
 
     text = page.read_text(encoding="utf-8")
-    # FloatLib has used both spellings in its prose. DocGen resolves them from the
-    # documentation root, but Profile is a sibling module beneath Info/.
-    updated = text
-    for link in ("Info/Profile.html", "BinaryInterchange/Info/Profile.html"):
-        updated = updated.replace(f'href="../../../.././{link}"', 'href="./Info/Profile.html"')
+    # The module doc names `Info.Profile`. DocGen resolves that name from the documentation root,
+    # but the module is `BinaryInterchange.Info.Profile`, beneath this page's directory.
+    updated = text.replace('href="../../../.././Info/Profile.html"', 'href="./Info/Profile.html"')
     if updated != text:
         page.write_text(updated, encoding="utf-8")
 
@@ -294,85 +238,56 @@ def write_index(docs: Path) -> None:
   <main>
     <a id="top"></a>
     <section class="tl-api-grid" aria-label="Main API entrypoints">
-      <a class="tl-api-card" href="./NN.html">
-        <strong>Start with one import</strong>
-        <span>NN</span>
-        <p>The complete TorchLean library.</p>
+      <a class="tl-api-card" href="../graphs/">
+        <strong>Choose the layers</strong>
+        <span>Tensor, CUDA, NN, Verify</span>
+        <p>The four libraries and the imports between their modules.</p>
       </a>
-      <a class="tl-api-card" href="./NN/API.html">
-        <strong>Write model code</strong>
-        <span>NN.API</span>
-        <p>The focused application API for models, data, and training.</p>
+      <a class="tl-api-card" href="./TorchLean/NN/Trainer/Train.html">
+        <strong>Train a model</strong>
+        <span>TorchLean.NN.Trainer.Train</span>
+        <p>Prediction, dataset training, checkpoint restoration, and stream training.</p>
       </a>
-      <a class="tl-api-card" href="./NN/Tensor.html">
+      <a class="tl-api-card" href="./TorchLean/Tensor/Constructors.html">
         <strong>Work with tensors</strong>
-        <span>NN.Tensor</span>
-        <p>The focused tensor, shape, and operation import.</p>
+        <span>TorchLean.Tensor.Constructors</span>
+        <p>Tensor literals, flat-index generation, and bounded-index constructors.</p>
       </a>
-      <a class="tl-api-card" href="./NN/IR/Graph.html">
+      <a class="tl-api-card" href="./TorchLean/NN/IR/Graph.html">
         <strong>Inspect graph IR</strong>
-        <span>NN.IR.Graph</span>
-        <p>The op-tagged graph representation used by lowering and verification.</p>
+        <span>TorchLean.NN.IR.Graph</span>
+        <p>Graphs of registered operators: nodes, ports and the constant payload.</p>
       </a>
-      <a class="tl-api-card" href="./NN/IR/Semantics.html">
+      <a class="tl-api-card" href="./TorchLean/NN/IR/Eval.html">
         <strong>Read operator semantics</strong>
-        <span>NN.IR.Semantics</span>
-        <p>The executable meaning attached to IR operators and graph evaluation.</p>
+        <span>TorchLean.NN.IR.Eval</span>
+        <p>The evaluation of graphs of registered operators, node by node.</p>
       </a>
-      <a class="tl-api-card" href="./NN/Runtime.html">
-        <strong>Run training code</strong>
-        <span>NN.Runtime</span>
-        <p>Runtime autograd, typed graph execution, and training support.</p>
+      <a class="tl-api-card" href="./TorchLean/NN/Tape.html">
+        <strong>Run autograd</strong>
+        <span>TorchLean.NN.Tape</span>
+        <p>The autograd tape and its reverse sweeps, shared by CPU and CUDA.</p>
       </a>
-      <a class="tl-api-card" href="./NN/Verification.html">
+      <a class="tl-api-card" href="./TorchLean/Verify/Capture/Error.html">
         <strong>Check certificates</strong>
-        <span>NN.Verification</span>
-        <p>The registered certificate and verification command surface.</p>
+        <span>TorchLean.Verify.Capture.Error</span>
+        <p>Concrete numerical certificates for captured programs.</p>
       </a>
-      <a class="tl-api-card" href="./NN/Floats.html">
+      <a class="tl-api-card" href="./TorchLean/Verify/Floats/FP32.html">
         <strong>Use FloatLib formats</strong>
-        <span>NN.Floats</span>
-        <p>TorchLean adapters for FloatLib's configured binary formats and rounded-real models.</p>
+        <span>TorchLean.Verify.Floats.FP32</span>
+        <p>The rounded-real binary32 specialization of FloatLib's NF model.</p>
       </a>
     </section>
 
     <section class="tl-api-section">
       <h2>Browse By Layer</h2>
-      <div class="tl-link-list">
-        <a href="./NN/API.html">API</a>
-        <a href="./NN/Spec.html">Spec</a>
-        <a href="./NN/Runtime.html">Runtime</a>
-        <a href="./NN/IR/Graph.html">IR</a>
-        <a href="./NN/GraphSpec.html">GraphSpec</a>
-        <a href="./NN/Proofs.html">Proofs</a>
-        <a href="./NN/Verification.html">Verification</a>
-        <a href="./NN/Examples.html">Examples</a>
-      </div>
-    </section>
-
-    <section class="tl-api-section tl-task-grid" aria-label="Common documentation tasks">
-      <article>
-        <h2>Common Tasks</h2>
-        <p>
-          Start from the thing you want to do, then jump into the declaration namespace from there.
-        </p>
-      </article>
-      <a href="./NN/API.html">
-        <strong>Write model code</strong>
-        <span>NN.API</span>
-      </a>
-      <a href="./NN/IR/Graph.html">
-        <strong>Inspect lowering</strong>
-        <span>NN.IR.Graph</span>
-      </a>
-      <a href="./NN/Runtime.html">
-        <strong>Run autograd</strong>
-        <span>NN.Runtime</span>
-      </a>
-      <a href="./NN/Verification.html">
-        <strong>Check certificates</strong>
-        <span>NN.Verification</span>
-      </a>
+      <p>
+        The modules are grouped in libraries, in import order: TorchLean.Tensor,
+        TorchLean.CUDA, TorchLean.NN, TorchLean.Verify and TorchLeanExamples. A module
+        imports only modules of its own library or of the libraries before it. Open
+        TorchLean and TorchLeanExamples in the module list to browse them.
+      </p>
     </section>
 
     <section class="tl-api-section tl-kind-section" aria-label="Declaration kind legend">
@@ -398,7 +313,7 @@ def write_index(docs: Path) -> None:
 def append_style(docs: Path) -> None:
     """Append the public-site visual layer to DocGen's generated stylesheet.
 
-    The script appends instead of rewriting the base stylesheet because DocGen's CSS also
+    The script appends to the base stylesheet, without rewriting it, because DocGen's CSS also
     controls behavior-heavy pieces such as the module drawer, declaration blocks,
     search results, and responsive sidebar toggling.  The appended rules should
     therefore be mostly cosmetic and conservative: nicer cards, clearer spacing,
@@ -408,853 +323,16 @@ def append_style(docs: Path) -> None:
     current = style.read_text(encoding="utf-8")
     if STYLE_MARKER in current:
         current = current.split(STYLE_MARKER, 1)[0].rstrip() + "\n\n"
-    style.write_text(
-        current
-        + """
-
-{STYLE_MARKER}
-""".replace("{STYLE_MARKER}", STYLE_MARKER)
-        + """
-/* Shared polish variables -------------------------------------------------
-   DocGen already defines semantic colors for declaration kinds.  These
-   TorchLean variables cover site chrome: teal accents, soft borders, and
-   shadows used by the landing page and sidebar cards. */
-header h1 span {
-  letter-spacing: 0;
-}
-
-:root {
-  --tl-teal: #157878;
-  --tl-teal-soft: rgba(21, 120, 120, 0.13);
-  --tl-border: rgba(17, 44, 64, 0.16);
-  --tl-shadow: 0 16px 44px rgba(17, 44, 64, 0.08);
-  --content-width: clamp(36rem, 64vw, 78rem);
-}
-
-html,
-body {
-  max-width: 100%;
-  overflow-x: hidden;
-}
-
-body {
-  font-size: 18px;
-  background:
-    radial-gradient(circle at top left, color-mix(in srgb, var(--code-bg) 35%, transparent), transparent 28rem),
-    var(--body-bg);
-}
-
-/* Header and search -------------------------------------------------------
-   Keep DocGen's fixed header model, but make it feel like the rest of the
-   public site.  Search remains the real DocGen search form. */
-header {
-  border-bottom: 1px solid rgba(127, 127, 127, 0.18);
-  box-shadow: 0 8px 28px rgba(17, 44, 64, 0.06);
-  backdrop-filter: blur(10px);
-}
-
-header h1 {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  min-width: 0;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-header .header_filename {
-  color: color-mix(in srgb, var(--text-color) 66%, transparent);
-  font-size: 0.92rem;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-#search_form {
-  white-space: nowrap;
-}
-
-#search_form input,
-#search_page_query {
-  border: 1px solid rgba(127, 127, 127, 0.28);
-  border-radius: 999px;
-  padding: 0.42rem 0.72rem;
-  background: color-mix(in srgb, var(--body-bg) 92%, var(--code-bg));
-  color: var(--text-color);
-}
-
-#search_button {
-  border: 1px solid var(--tl-border);
-  border-radius: 999px;
-  padding: 0.38rem 0.72rem;
-  background: var(--tl-teal);
-  color: white;
-  cursor: pointer;
-}
-
-#search_button:hover {
-  filter: brightness(0.94);
-}
-
-/* Cross-site links --------------------------------------------------------
-   Generated API pages sit under `/docs/`, while the human guide and examples
-   sit elsewhere in the Jekyll site.  These links connect the generated API
-   pages back to the rest of the public site. */
-.tl-docsite-links {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.86rem;
-}
-
-.tl-docsite-links a {
-  color: color-mix(in srgb, var(--text-color) 78%, transparent);
-  text-decoration: none;
-  padding: 0.24rem 0.48rem;
-  border-radius: 999px;
-}
-
-.tl-docsite-links a:hover {
-  color: var(--tl-teal);
-  background: var(--tl-teal-soft);
-  text-decoration: none;
-}
-
-/* Leave room for the module drawer and search before the header links crowd
-   those controls. */
-@media (max-width: 1200px) {
-  .tl-docsite-links {
-    display: none;
-  }
-}
-
-.tl-doc-theme-toggle {
-  border: 1px solid var(--tl-border);
-  border-radius: 999px;
-  padding: 0.28rem 0.62rem;
-  background: color-mix(in srgb, var(--body-bg) 90%, var(--code-bg));
-  color: color-mix(in srgb, var(--text-color) 82%, transparent);
-  cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.tl-doc-theme-toggle:hover {
-  color: var(--tl-teal);
-  border-color: color-mix(in srgb, var(--tl-teal) 45%, transparent);
-  background: var(--tl-teal-soft);
-}
-
-/* Landing-page module drawer ---------------------------------------------
-   The landing page uses the same hidden checkbox / iframe navbar that DocGen
-   emits everywhere else. The custom index hides the drawer by default and
-   expose it with a human label, "Modules", instead of the raw hamburger glyph. */
-.tl-docs-index {
-  --content-width: min(1080px, calc(100vw - 3rem));
-  --tl-doc-drawer-width: 20rem;
-  --tl-doc-open-content-width: min(960px, calc(100vw - var(--tl-doc-drawer-width) - 5rem));
-}
-
-.tl-docs-index:has(#nav_toggle:checked) {
-  display: grid;
-  grid-template-columns: var(--tl-doc-drawer-width) var(--tl-doc-open-content-width);
-  justify-content: start;
-  column-gap: 1.5rem;
-  padding: 0 1.25rem 0 clamp(1.5rem, 3vw, 3rem);
-}
-
-.tl-docs-index header {
-  justify-content: flex-start;
-  gap: 1rem;
-}
-
-.tl-docs-index #search_form {
-  margin-left: auto;
-}
-
-.tl-docs-index .header_filename {
-  display: none;
-}
-
-.tl-docs-index .nav {
-  display: none;
-}
-
-.tl-docs-index #nav_toggle:checked ~ .nav {
-  display: block;
-  position: sticky;
-  top: calc(var(--header-height) + 1rem);
-  grid-column: 1;
-  grid-row: 2;
-  align-self: start;
-  width: 100%;
-  max-width: none;
-  height: calc(100vh - var(--header-height) - 2rem);
-  left: auto;
-  z-index: 4;
-  background: var(--body-bg);
-  border: 1px solid rgba(127, 127, 127, 0.24);
-  border-radius: 12px;
-  margin: calc(var(--header-height) + 1rem) 0 1rem;
-  overflow: hidden;
-  padding: 0;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.2);
-}
-
-.tl-docs-index #nav_toggle:checked ~ main {
-  grid-column: 2;
-  grid-row: 2;
-  width: 100%;
-  max-width: var(--tl-doc-open-content-width);
-  margin: calc(var(--header-height) + 1rem) 0 4rem;
-}
-
-.tl-docs-index #nav_toggle:checked ~ main .tl-api-grid,
-.tl-docs-index #nav_toggle:checked ~ main .tl-task-grid {
-  grid-template-columns: 1fr;
-}
-
-.tl-docs-index #nav_toggle:checked ~ main .tl-api-card,
-.tl-docs-index #nav_toggle:checked ~ main .tl-task-grid > a,
-.tl-docs-index #nav_toggle:checked ~ main .tl-task-grid > article {
-  min-height: auto;
-  min-width: 0;
-  padding: 0.8rem 0.95rem;
-}
-
-.tl-docs-index #nav_toggle:checked ~ main .tl-api-grid,
-.tl-docs-index #nav_toggle:checked ~ main .tl-api-section {
-  margin-top: 0.9rem;
-  margin-bottom: 1rem;
-}
-
-#settings {
-  display: none !important;
-}
-
-.tl-docs-index label[for="nav_toggle"] {
-  display: inline-block;
-  margin-right: 0.5rem;
-  border: 1px solid var(--hamburger-border-color);
-  padding: 0.25rem 0.62rem;
-  cursor: pointer;
-  background: var(--hamburger-bg-color);
-  border-radius: 999px;
-}
-
-.tl-docs-index label[for="nav_toggle"]::before {
-  content: 'Modules';
-}
-
-/* Landing-page layout -----------------------------------------------------
-   These rules are only for `/docs/`: entrypoint cards, layer chips, task
-   shortcuts, and the declaration-kind legend. The declaration pages use the
-   later `body:not(.tl-docs-index)` rules. */
-main {
-  padding-bottom: 4rem;
-}
-
-.tl-docs-index main {
-  max-width: 1080px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.tl-api-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 0.9rem;
-  margin: 1.35rem 0 1.75rem;
-}
-
-.tl-api-card {
-  display: block;
-  min-height: 9rem;
-  padding: 1.05rem 1.1rem;
-  border: 1px solid var(--tl-border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--body-bg) 88%, var(--code-bg));
-  color: var(--text-color);
-  text-decoration: none;
-  transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
-}
-
-.tl-api-card:hover {
-  border-color: rgba(21, 120, 120, 0.56);
-  transform: translateY(-2px);
-  box-shadow: var(--tl-shadow);
-  text-decoration: none;
-}
-
-.tl-api-card span {
-  display: block;
-  color: var(--tl-teal);
-  font-family: JuliaMono, monospace;
-  font-size: 0.78rem;
-  font-weight: 800;
-  overflow-wrap: anywhere;
-}
-
-.tl-api-card strong {
-  display: block;
-  margin: 0 0 0.32rem;
-  font-size: 1.08rem;
-  overflow-wrap: anywhere;
-}
-
-.tl-api-card p {
-  margin: 0;
-  color: color-mix(in srgb, var(--text-color) 78%, transparent);
-  font-size: 0.94rem;
-}
-
-.tl-api-section {
-  margin: 1.45rem 0;
-}
-
-.tl-api-section h2 {
-  color: var(--tl-teal);
-  margin-bottom: 0.45rem;
-}
-
-.tl-docs-index .tl-api-section:last-of-type {
-  margin-bottom: 0;
-}
-
-.tl-link-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-}
-
-.tl-link-list a {
-  display: inline-block;
-  padding: 0.42rem 0.62rem;
-  border: 1px solid var(--tl-border);
-  border-radius: 999px;
-  text-decoration: none;
-}
-
-.tl-link-list a:hover {
-  border-color: rgba(21, 120, 120, 0.56);
-  text-decoration: none;
-}
-
-.tl-task-grid {
-  display: grid;
-  grid-template-columns: minmax(240px, 1.35fr) repeat(2, minmax(210px, 1fr));
-  gap: 0.8rem;
-  align-items: stretch;
-}
-
-.tl-task-grid article,
-.tl-task-grid > a {
-  border: 1px solid var(--tl-border);
-  border-radius: 14px;
-  padding: 1rem;
-  background: color-mix(in srgb, var(--body-bg) 90%, var(--code-bg));
-}
-
-.tl-task-grid article {
-  grid-row: span 2;
-}
-
-.tl-task-grid article h2 {
-  margin-top: 0;
-}
-
-.tl-task-grid > a {
-  display: block;
-  text-decoration: none;
-}
-
-.tl-task-grid > a:hover {
-  border-color: rgba(21, 120, 120, 0.56);
-  box-shadow: var(--tl-shadow);
-}
-
-.tl-task-grid strong {
-  display: block;
-  margin-bottom: 0.25rem;
-  color: var(--text-color);
-}
-
-.tl-task-grid span {
-  display: block;
-  color: color-mix(in srgb, var(--text-color) 72%, transparent);
-  font-family: JuliaMono, monospace;
-  font-size: 0.86rem;
-  overflow-wrap: anywhere;
-}
-
-.tl-kind-section {
-  padding: 0.95rem 1rem;
-  border: 1px solid var(--tl-border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--body-bg) 91%, var(--code-bg));
-}
-
-.tl-kind-section p {
-  margin: 0.1rem 0 0.75rem;
-  color: color-mix(in srgb, var(--text-color) 72%, transparent);
-}
-
-.tl-kind-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.55rem;
-}
-
-.tl-kind-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.38rem 0.6rem;
-  border: 1px solid var(--tl-border);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--body-bg) 88%, var(--code-bg));
-  font-family: JuliaMono, monospace;
-  font-size: 0.86rem;
-}
-
-.tl-kind-chip::before {
-  content: "";
-  display: inline-block;
-  width: 0.7rem;
-  height: 0.7rem;
-  border-radius: 999px;
-  background: var(--tl-kind-color, var(--text-color));
-}
-
-.tl-kind-def {
-  --tl-kind-color: var(--def-color);
-}
-
-.tl-kind-theorem {
-  --tl-kind-color: var(--theorem-color);
-}
-
-.tl-kind-structure {
-  --tl-kind-color: var(--structure-and-inductive-color);
-}
-
-.tl-kind-axiom {
-  --tl-kind-color: var(--axiom-and-constant-color);
-}
-
-/* Generated declaration pages --------------------------------------------
-   DocGen outputs one main module doc block followed by declaration blocks.
-   The base HTML is excellent for linking and search, but visually flat.  These
-   rules wrap module docs and declarations in subtle cards while preserving the
-   colored left/top borders that encode declaration kind. */
-body:not(.tl-docs-index) main {
-  padding-top: 0.4rem;
-}
-
-body:not(.tl-docs-index) .mod_doc {
-  margin: 0 0 1.2rem;
-  padding: 1rem 1.1rem;
-  border: 1px solid var(--tl-border);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--body-bg) 91%, var(--code-bg));
-  box-shadow: 0 10px 32px rgba(17, 44, 64, 0.05);
-}
-
-body:not(.tl-docs-index) .mod_doc h1:first-child,
-body:not(.tl-docs-index) main > h1:first-child {
-  margin-top: 0;
-}
-
-body:not(.tl-docs-index) .decl {
-  margin: 1.2rem 0;
-}
-
-body:not(.tl-docs-index) .decl > div {
-  border-radius: 14px;
-  padding: 0.9rem 1rem;
-  background: color-mix(in srgb, var(--body-bg) 93%, var(--code-bg));
-  box-shadow: 0 10px 28px rgba(17, 44, 64, 0.045);
-}
-
-/* Right-side page navigation ---------------------------------------------
-   The `.internal_nav` column contains imports, imported-by, and declaration
-   anchors for the current page. This polish pass adds cards and hover affordances, plus the
-   compact declaration-kind legend on pages with declarations. */
-.internal_nav {
-  padding: 0.8rem;
-  border: 1px solid var(--tl-border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--body-bg) 92%, var(--code-bg));
-}
-
-.internal_nav p:first-child {
-  margin-top: 0;
-}
-
-.internal_nav .imports {
-  padding: 0.55rem;
-  border: 1px solid rgba(127, 127, 127, 0.16);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--body-bg) 88%, var(--code-bg));
-}
-
-.internal_nav .nav_link {
-  margin: 0.28rem 0;
-  padding: 0.24rem 0.35rem 0.24rem 2.35ex;
-  border-radius: 8px;
-}
-
-.internal_nav .nav_link:hover {
-  background: var(--tl-teal-soft);
-}
-
-.tl-kind-legend-side {
-  margin: 0 0 0.8rem;
-  padding: 0.65rem;
-  border: 1px solid rgba(127, 127, 127, 0.16);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--body-bg) 88%, var(--code-bg));
-}
-
-.tl-kind-legend-side strong {
-  display: block;
-  margin-bottom: 0.35rem;
-  color: color-mix(in srgb, var(--text-color) 80%, transparent);
-  font-size: 0.84rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.tl-kind-legend-side .tl-kind-legend {
-  gap: 0.35rem;
-}
-
-.tl-kind-legend-side .tl-kind-chip {
-  padding: 0.22rem 0.42rem;
-  font-size: 0.74rem;
-}
-
-.tl-kind-legend-side .tl-kind-chip::before {
-  width: 0.55rem;
-  height: 0.55rem;
-}
-
-/* Left module tree --------------------------------------------------------
-   The left iframe is generated by DocGen from all imported modules, including
-   Lean, Mathlib, and dependencies. A hint and highlight for `NN` show
-   users know where the TorchLean modules live.
-
-   DocGen's default desktop layout keeps this tree permanently visible in a
-   side column. That works for wide theorem-library docs, but TorchLean pages
-   often contain long module docs and code blocks, so the tree can overlap the
-   readable content. Treat it as an explicit drawer on every viewport instead:
-   the header's Modules tab opens it, and the same tab closes it. */
-label[for="nav_toggle"] {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin-right: 0.65rem;
-  border: 1px solid var(--tl-border);
-  border-radius: 999px;
-  padding: 0.42rem 0.75rem;
-  cursor: pointer;
-  background: color-mix(in srgb, var(--body-bg) 88%, var(--code-bg));
-  color: var(--text-color);
-  font-size: 0.88rem;
-  font-weight: 700;
-  line-height: 1;
-  box-shadow: 0 6px 18px rgba(17, 44, 64, 0.08);
-}
-
-label[for="nav_toggle"]::before {
-  content: "Modules";
-}
-
-#nav_toggle:checked ~ header label[for="nav_toggle"] {
-  background: var(--tl-teal);
-  color: white;
-}
-
-#nav_toggle:checked ~ header label[for="nav_toggle"]::before {
-  content: "Close modules";
-}
-
-#nav_toggle:not(:checked) ~ .nav {
-  display: none;
-}
-
-#nav_toggle:checked ~ .nav {
-  display: block;
-  left: 1rem;
-  margin-left: 0;
-  width: min(28rem, calc(100vw - 2rem));
-  max-width: min(28rem, calc(100vw - 2rem));
-  z-index: 20;
-  padding: 0;
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--body-bg) 95%, var(--code-bg));
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.24);
-}
-
-#nav_toggle:checked ~ main {
-  visibility: visible;
-}
-
-.nav {
-  padding-right: 0.35rem;
-}
-
-.navframe {
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-}
-
-.tl-docs-index .navframe {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-body > .navframe {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-
-body > .navframe > .nav {
-  box-sizing: border-box;
-  left: 0;
-  width: 100%;
-  max-width: none;
-  margin: 0;
-  padding: 1rem 1.05rem 1.25rem;
-  font-size: 0.94rem;
-}
-
-body > .navframe > .nav h3:first-child {
-  margin-top: 0;
-}
-
-body > .navframe > .nav h3 {
-  margin: 1.15rem 0 0.45rem;
-  font-size: 1rem;
-  line-height: 1.2;
-}
-
-body > .navframe > .nav .nav_link,
-body > .navframe > .nav summary {
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.tl-nav-hint {
-  margin: 0.25rem 0 0.65rem;
-  padding: 0.55rem 0.65rem;
-  border: 1px solid rgba(21, 120, 120, 0.28);
-  border-radius: 10px;
-  color: color-mix(in srgb, var(--text-color) 82%, transparent);
-  background: var(--tl-teal-soft);
-  font-size: 0.92rem;
-  line-height: 1.35;
-}
-
-.tl-nav-hint strong {
-  color: var(--text-color);
-}
-
-.tl-nav-hint span {
-  display: block;
-  color: var(--tl-teal);
-  font-size: 1.3rem;
-  line-height: 1.1;
-}
-
-.nav details[data-path="./NN.html"] > summary {
-  position: relative;
-  padding: 0.2rem 0.25rem;
-  border-radius: 8px;
-  background: var(--tl-teal-soft);
-}
-
-.nav details[data-path="./NN.html"] > summary::after {
-  content: "TorchLean";
-  margin-left: 0.35rem;
-  padding: 0.08rem 0.35rem;
-  border-radius: 999px;
-  background: var(--tl-teal);
-  color: white;
-  font-size: 0.72rem;
-  font-weight: 700;
-}
-
-/* Declaration text and search results ------------------------------------
-   Long Lean names and types need breathing room. Monospace stays in place for Lean
-   fragments, but slightly increase line height and add understated search
-   result separators. */
-.nav .nav_file a {
-  display: inline-block;
-  padding: 0.08rem 0.24rem;
-  border-radius: 7px;
-}
-
-.nav .nav_file a:hover {
-  background: var(--tl-teal-soft);
-  text-decoration: none;
-}
-
-.decl_header {
-  line-height: 1.65;
-}
-
-.decl_type,
-.structure_field_info,
-.constructor {
-  line-height: 1.58;
-}
-
-pre {
-  border: 1px solid rgba(127, 127, 127, 0.16);
-  overflow-x: auto;
-}
-
-code {
-  font-size: 0.92em;
-}
-
-/* DocGen places the declaration sidebar beside its content column. Keep that
-   column's width when allowing long Lean declarations to scroll; expanding main
-   to the full viewport would put the text underneath the fixed sidebar. */
-body:not(.tl-docs-index) main {
-  min-width: 0;
-  overflow-x: auto;
-}
-
-body:not(.tl-docs-index) .mod_doc,
-body:not(.tl-docs-index) .def,
-body:not(.tl-docs-index) .theorem,
-body:not(.tl-docs-index) .opaque,
-body:not(.tl-docs-index) .axiom,
-body:not(.tl-docs-index) .class,
-body:not(.tl-docs-index) .structure,
-body:not(.tl-docs-index) .inductive,
-body:not(.tl-docs-index) .instance {
-  min-width: 0;
-  max-width: 100%;
-  overflow-x: auto;
-}
-
-body:not(.tl-docs-index) .mod_doc a,
-body:not(.tl-docs-index) .mod_doc code,
-body:not(.tl-docs-index) li code,
-body:not(.tl-docs-index) p code,
-body:not(.tl-docs-index) :not(pre) > code {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  white-space: normal !important;
-}
-
-/* Inline-code wrapping must not collapse line breaks or indentation in examples. */
-body:not(.tl-docs-index) pre code,
-body:not(.tl-docs-index) pre code *,
-body:not(.tl-docs-index) .mod_doc pre code,
-body:not(.tl-docs-index) .mod_doc pre code * {
-  overflow-wrap: normal;
-  word-break: normal;
-  white-space: pre !important;
-}
-
-#kinds {
-  margin: 0.8rem 0 1rem;
-  padding: 0.75rem;
-  border: 1px solid var(--tl-border);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--body-bg) 90%, var(--code-bg));
-}
-
-#search_results .result_link,
-#search_results .result_doc {
-  border-bottom: 1px solid rgba(127, 127, 127, 0.22);
-  padding: 0.45rem 0.35rem;
-}
-
-/* Mobile cleanup ----------------------------------------------------------
-   Small screens cannot support both the site nav and the DocGen drawer.  The
-   drawer stays available through the Modules button; secondary site links and
-   the right-sidebar declaration legend collapse away. */
-@media (max-width: 700px) {
-  .tl-docs-index {
-    --content-width: calc(100vw - 1.25rem);
-  }
-
-  .tl-docs-index:has(#nav_toggle:checked) {
-    display: block;
-    padding: 0;
-  }
-
-  .tl-docs-index header {
-    gap: 0.5rem;
-  }
-
-  .tl-docs-index header h1 span {
-    display: none;
-  }
-
-  .tl-docs-index #search_form {
-    flex: 1 1 100%;
-    margin-left: 0;
-  }
-
-  .tl-doc-theme-toggle {
-    order: 2;
-  }
-
-  .tl-docs-index #nav_toggle:checked ~ .nav {
-    position: fixed;
-    top: calc(var(--header-height) + 0.75rem);
-    left: 0.75rem;
-    right: 0.75rem;
-    bottom: 0.75rem;
-    width: auto;
-    max-width: none;
-  }
-
-  .tl-docs-index #nav_toggle:checked ~ main {
-    max-width: var(--content-width);
-    margin-left: auto;
-    margin-right: auto;
-  }
-
-  .tl-docsite-links {
-    display: none;
-  }
-
-  .tl-api-grid,
-  .tl-task-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .tl-task-grid article {
-    grid-row: auto;
-  }
-
-  .tl-kind-legend-side {
-    display: none;
-  }
-}
-""",
-        encoding="utf-8",
-    )
+    css = (ASSETS / "docgen.css").read_text(encoding="utf-8")
+    style.write_text(f"{current}\n\n{STYLE_MARKER}\n\n{css}", encoding="utf-8")
 
 
 def add_nav_hint(docs: Path) -> None:
     """Add a small hint above DocGen's module tree.
 
-    The generated tree can still contain dependency names in cached navigation
-    metadata. The published pages are pruned to TorchLean modules, so this hint
-    points visitors at the `NN` subtree and states the intended scope directly.
+    Cached navigation metadata can put dependency names in the generated tree.
+    The published pages are pruned to TorchLean modules, so the hint points
+    visitors at the `TorchLean` subtree and states the intended scope.
     """
     nav = docs / "navbar.html"
     if not nav.exists():
@@ -1266,7 +344,7 @@ def add_nav_hint(docs: Path) -> None:
     hint = (
         '<h3>Library</h3>'
         '<div class="tl-nav-hint">'
-        'Open <strong>NN</strong> for TorchLean modules.'
+        'Open <strong>TorchLean</strong> for the TorchLean modules.'
         '<span aria-hidden="true">↓</span>'
         '</div>'
         '<div class="module_list">'
@@ -1276,19 +354,12 @@ def add_nav_hint(docs: Path) -> None:
 
 
 def rename_docgen_header(docs: Path) -> None:
-    """Patch generated declaration pages in-place.
+    """Brand every generated page except the landing page as the TorchLean API reference.
 
-    This function performs the per-page DocGen rewrites that are easiest to
-    express against generated HTML fragments:
-
-    - add cross-site links to each generated header,
-    - normalize path casing in generated doc links,
-    - convert `tl-docsite-links` nav wrappers into divs,
-    - add a compact declaration-kind legend to pages with declarations.
-
-    These are narrow string rewrites against stable DocGen fragments.
-    If DocGen changes its HTML shape, this function should fail harmlessly by
-    skipping a rewrite rather than corrupting pages.
+    The header title becomes `TorchLean API`, the cross-site links and the theme toggle go before
+    the module name, and the toggle script goes at the end of the body. Pages with declarations
+    also get the declaration-kind legend at the top of their internal navigation. Each rewrite
+    matches a fixed DocGen fragment and skips a page that lacks it.
     """
     legend = (
         '<div class="tl-kind-legend-side" aria-label="Declaration kind legend">'
@@ -1312,16 +383,8 @@ def rename_docgen_header(docs: Path) -> None:
         # module name display.
         updated = text.replace("<span>Documentation</span>", "<span>TorchLean API</span>")
 
-        # DocGen's global CSS treats every `nav` as a fixed sidebar, so normalize
-        # this tiny cross-site link group to a plain div before adding links.
-        updated = updated.replace(
-            '<nav class="tl-docsite-links" aria-label="TorchLean site links">',
-            '<div class="tl-docsite-links" aria-label="TorchLean site links">',
-        )
-        updated = updated.replace("</nav><h2 class=\"header_filename", "</div><h2 class=\"header_filename")
-
         # Header links are relative to each generated page.  `docs_root` points
-        # back to `/docs/`; `site_root` points back to the Jekyll site root.
+        # back to `/docs/` and `site_root` to the Jekyll site root.
         depth = len(path.relative_to(docs).parent.parts)
         docs_root = "../" * depth if depth else "./"
         site_root = docs_root + "../"
@@ -1337,17 +400,6 @@ def rename_docgen_header(docs: Path) -> None:
                 "</div>"
             )
             updated = updated.replace('<h2 class="header_filename', links + '<h2 class="header_filename', 1)
-        elif "tl-docsite-links" in updated and ">Tools</a>" not in updated:
-            # Keep repeated polish runs useful after the cross-site navigation
-            # grows. Existing generated pages may already contain the wrapper,
-            # so append the new destination instead of treating them as done.
-            links_start = updated.find(
-                '<div class="tl-docsite-links" aria-label="TorchLean site links">'
-            )
-            links_end = updated.find("</div>", links_start)
-            if links_start != -1 and links_end != -1:
-                tools_link = f'<a href="{site_root}tools/">Tools</a>'
-                updated = updated[:links_end] + tools_link + updated[links_end:]
 
         if "data-doc-theme-toggle" not in updated and '<h2 class="header_filename' in updated:
             theme_button = (
@@ -1359,8 +411,8 @@ def rename_docgen_header(docs: Path) -> None:
         if "data-doc-theme-toggle" in updated and "torchlean-theme" not in updated:
             updated = updated.replace("</body>", DOC_THEME_SCRIPT + "\n</body>", 1)
 
-        # Only declaration-heavy pages need the color legend.  Module-only pages
-        # such as `NN` would waste sidebar space with it.
+        # Only pages with declarations need the color legend.  Module-only pages
+        # would waste sidebar space with it.
         if has_declarations and "tl-kind-legend-side" not in updated:
             updated = updated.replace('<nav class="internal_nav">', '<nav class="internal_nav">' + legend, 1)
         if updated != text:

@@ -1,10 +1,10 @@
-// Copyright (c) 2026 TorchLean contributors. MIT license.
+// Copyright (c) 2026 TorchLean. MIT license.
 #pragma once
 
 // NVRTC receives this bundled header in memory; execution never reads source files from disk.
 namespace torchlean {
 inline constexpr char binary_cuda[] = R"CUDA(
-// Copyright (c) 2026 TorchLean contributors. MIT license.
+// Copyright (c) 2026 TorchLean. MIT license.
 // Device-side configured binary arithmetic for custom computations. This is a foreign-code
 // implementation, not a replacement for FloatLib's proofs. Words are little-endian bytes;
 // compatible IEEE operations use native instructions; other formats use integer limbs.
@@ -331,7 +331,8 @@ template<int E, int F, long long Bias, int Encoding> struct TLBinary {
   __device__ bool operator==(TLBinary b) const {
     if (nan() || b.nan()) return false;
     if (zero() && b.zero()) return true;
-    for (int i = 0; i < bytes; ++i) if (data[i] != b.data[i]) return false;
+    // Only the sign, exponent and fraction bits count: the bits above them pad the last byte.
+    for (int i = 0; i <= E + F; ++i) if (bit(i) != b.bit(i)) return false;
     return true;
   }
   __device__ bool operator<(TLBinary b) const {

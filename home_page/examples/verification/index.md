@@ -2,9 +2,9 @@
 title: Verification Bounds
 ---
 
-Now let's look at what happens when we perturb a model's input. We'll compute bounds on its
-outputs over an input region, starting with interval bound propagation (IBP). Then we'll try
-CROWN, which can retain more information about how the outputs depend on the inputs.
+Let's look at what happens when we perturb a model's input. We'll compute bounds on its outputs
+over an input region, starting with interval bound propagation (IBP). Then we'll try CROWN, which
+can retain more information about how the outputs depend on the inputs.
 
 We'll also check certificates exported by other tools. Each checker has a specific job:
 some recompute bounds, while others only check the consistency of supplied bounds and witnesses.
@@ -15,57 +15,61 @@ some recompute bounds, while others only check the consistency of supplied bound
 
 ## The Question
 
-The robustness question we'll work with is:
+Here's the robustness question we'll work with:
 
 > For every input inside a small box around the example point, can the model’s output still satisfy the
 > desired margin or safety condition?
 
 To ask it in TorchLean, we need four things:
 
-- a model, written in the same API used for training examples;
-- a lowered `NN.IR.Graph`, so verifier code can traverse named nodes;
-- an input box, with lower and upper bounds for every input coordinate;
+- a model, written in the same API used for training examples
+- a lowered graph of registered operators (`TorchLean.IR.Graph`), so verifier code can traverse its
+  nodes by id
+- an input box, with lower and upper bounds for every input coordinate
 - an output property, usually a margin such as
-  $\operatorname{logit}\_{\mathrm{true}}-\operatorname{logit}\_{\mathrm{other}}>0$ for every other class.
+  $\operatorname{logit}\_{\mathrm{true}}-\operatorname{logit}\_{\mathrm{other}}>0$ for every other
+  class
 
-The common path is therefore:
+So the common path is:
 
 1. write or import a TorchLean model,
-2. lower it to `NN.IR.Graph`,
+2. lower it to a graph of registered operators (`TorchLean.IR.Graph`),
 3. attach an input box,
 4. run a bound engine,
 5. inspect or check the output bounds.
 
-The reusable workflows under `NN/Verification/Builtin/` keep the model, input box, output
+Our reusable workflows under `TorchLean/Verify/CROWN/` keep the model, input box, output
 property, and bound pass together. Imported weights need to be attached to a supported graph.
-External verifier leaves use a separate artifact reader; that reader does not recompute their bounds.
+External verifier leaves go through a separate artifact reader, which doesn't recompute their
+bounds.
 
 Let's build an input box for a small MLP. We'll use `inputCenter` as its center and `eps` as its
-radius, then insert the flattened `inputBox` at the lowered input node:
+radius, and take the lowered graph with its payload as an import (`LoweredModel.toImported`), whose
+input `0` takes the flattened `inputBox`:
 
 ```lean
 let inputCenter : Tensor α [2] :=
   Tensor.map cast ([0.5, 0.8] : Tensor Float [2])
-let eps : α := Runtime.ofFloat 0.1
-let inputBox : FlatBox α := NN.Verification.Builtin.lInfBall (α := α) inputCenter eps
-let ps : ParamStore α := lowered.seedInputBox inputBox
+let eps : α := ofFloat 0.1
+let inputBox : FlatBox α := FlatBox.lInfBall (α := α) inputCenter eps
+let imported := lowered.toImported
 ```
 
-The pass propagates the input box
+IBP propagates the input box
 
 $$[\mathtt{inputCenter}-\mathtt{eps},\mathtt{inputCenter}+\mathtt{eps}].$$
 
 ```lean
-let ibp := lowered.runIBP ps
-let outB ← IO.ofExcept (lowered.outputBox? ibp)
+let ibp := imported.runIBP inputBox
+let outB ← IO.ofExcept (imported.outputBox? ibp)
 ```
 
-The bound engine returns node-indexed `FlatBox` values. Each box stores a flattened dimension plus
-lower and upper tensors. A sound output enclosure satisfying
-$\mathrm{lo}[\mathrm{label}]>\max_{\mathrm{other}}\mathrm{hi}[\mathrm{other}]$ establishes that label
-for every input in the seed box. The rounded CLI passes below calculate candidate enclosures.
-Applying this argument to them requires a soundness theorem covering the graph, parameters, and
-arithmetic; the printed bounds alone do not supply that proof.
+IBP returns node-indexed `FlatBox` values, each storing a flattened dimension plus lower and upper
+tensors. A sound output enclosure satisfying
+$\mathrm{lo}[\mathrm{label}]>\max_{\mathrm{other}}\mathrm{hi}[\mathrm{other}]$ establishes that
+label for every input in the seed box. The rounded CLI passes below calculate candidate enclosures,
+and applying this argument to them requires a soundness theorem covering the graph, parameters, and
+arithmetic. Their printed bounds alone don't supply that proof.
 
 ## IBP: Propagate Boxes Through The Graph
 
@@ -100,8 +104,8 @@ endpoints and accumulates lower and upper sums with directed rounding. With a so
 every true activation is inside the box, but the box may include values that cannot occur together.
 
 That tradeoff explains both why IBP works well as a first verifier and why it can fail to certify
-true properties. It is fast, local, and easy to compose over graphs; it loses correlations between
-coordinates.
+true properties. It's fast, local, and easy to compose over graphs, but it loses correlations
+between coordinates.
 
 ## A Margin Example
 
@@ -128,14 +132,14 @@ $$
 \operatorname{logit}_1 \in [0.2,1.0],
 $$
 
-then the lower margin bound is $0.8-1.0=-0.2$. The property is undecided at the IBP-box level.
-The model may still be safe; this abstraction was not tight enough for this input box.
+then the lower margin bound is $0.8-1.0=-0.2$. At the IBP-box level the property is undecided. The
+model may still be safe, but this abstraction wasn't tight enough for this input box.
 
 ## CROWN-Style Affine Bounds
 
-CROWN-style passes keep affine upper and lower forms instead of only interval boxes. In other words,
-the bound can say more than “this node lies between two numbers.” It can be “this node is bounded by a
-linear expression over the input variables.” That preserves more correlation information.
+CROWN-style passes keep affine upper and lower forms instead of only interval boxes. So a bound can
+say more than “this node lies between two numbers.” It can say “this node is bounded by a linear
+expression over the input variables,” which preserves more correlation information.
 
 CROWN still uses IBP intervals, because nonlinear relaxations need pre-activation ranges. Forward
 CROWN stores affine lower and upper forms for nodes with respect to the chosen input node. Backward
@@ -145,79 +149,76 @@ back to an input-box bound.
 
 For ReLU, the affine relaxation depends on the pre-activation interval:
 
-- if the interval is entirely nonnegative, ReLU is exactly the identity;
-- if the interval is entirely nonpositive, ReLU is exactly zero;
-- if the interval crosses zero, CROWN uses a sound linear envelope.
+- if the interval is entirely nonnegative, ReLU is exactly the identity
+- if the interval is entirely nonpositive, ReLU is exactly zero
+- if the interval crosses zero, CROWN uses a sound linear envelope
 
-We can ask our lowered graph for a CROWN output box. On the CLI's rounded
-backends, this uses directed backward bounds for the output coordinates. Backends supporting exact
-affine reassociation instead use the nodewise CROWN sweep. Either path can retain an IBP enclosure
-when no affine transfer is available:
+We can ask the imported graph for a CROWN output box. That request runs the backward pass on every
+backend (interval coefficients swept from the output to the input with outward rounding), and a
+node without an affine transfer keeps its IBP enclosure:
 
 ```lean
-let crown ← IO.ofExcept (lowered.outputBoxCROWN? ps inputBox)
+let crown ← IO.ofExcept (imported.outputBoxCROWN? inputBox)
 ```
 
-The result is another `FlatBox` for the output node. It need not improve on IBP. The separate
-`Verification.runCROWN` API returns nodewise affine bounds when those intermediate objects are
-needed, rather than only the final output box.
+The result is another `FlatBox` for the output node. It need not improve on IBP. The forward α-CROWN
+pass `TorchLean.CROWN.Op.outputBoxAlphaCROWN?` on `imported.graph` runs on backends supporting exact
+affine reassociation and falls back to this box on the others. When the intermediate objects are
+needed, `TorchLean.CROWN.Op.crownBoxes` on `imported.graph` returns the box of every node from full
+CROWN, and `TorchLean.CROWN.Op.runCROWN` on `imported.graph` returns nodewise affine bounds, not
+only the output box.
 
 For a margin objective, the backward pass asks for a bound on one scalar expression, such as
-$\operatorname{logit}_0-\operatorname{logit}_1$. Instead of bounding every output independently,
-this lets the verifier push a
-single objective backward through the graph:
+$\operatorname{logit}_0-\operatorname{logit}_1$, so the verifier can push a single objective
+backward through the graph instead of bounding every output independently:
 
 ```lean
 let objV : Tensor α [3] :=
   Tensor.map cast ([1.0, -1.0, 0.0] : Tensor Float [3])
 let obj : FlatTensor α := { n := 3, v := objV }
 
-let objectiveBox ← IO.ofExcept (lowered.backwardObjectiveBox? ps ibp inputBox obj)
-let margin := getAtOrZero objectiveBox.lo [0]
+let objectiveBox ← IO.ofExcept (imported.backwardObjectiveBox? ibp inputBox obj)
+let margin := Tensor.getAtOrZero objectiveBox.lo [0]
 ```
 
 `margin` is the reported candidate lower bound on $p_0 - p_1$ over the input box. Its semantic
 guarantee has the same soundness obligations as the output enclosure above.
 
-`backwardObjectiveBox?` is `runCROWNBackwardObjective` applied to the lowered graph's affine
-context, so the caller does not rebuild that context by hand.
+`backwardObjectiveBox?` reads the affine context of the import's input `0` and output itself, so
+the caller does not build that context by hand.
 
 The model, graph, bounds, and certificate checks all refer to the same node ids and tensor shapes.
 
-## Which Tensor Shapes Does The Bound Pass Accept?
+## Tensor Shapes In The Bound Pass
 
-Flattening a tensor into a box does not discard its graph shape. Matrix products promote vector
+Flattening a tensor into a box doesn't discard its graph shape. Matrix products promote vector
 operands and broadcast compatible leading batch axes: `[2]` times `[2,3]` gives `[3]`, while
-`[2,1,2,2]` times `[1,3,2,2]` gives `[2,3,2,2]`. The contraction dimensions must match.
-IR evaluation, IBP, and CROWN share this shape contract. The directed backward pass bounds a
-binary product's objective using its output IBP box; that fallback can lose correlations even
-when the shape is supported.
+`[2,1,2,2]` times `[1,3,2,2]` gives `[2,3,2,2]` (the contraction dimensions must match). IR
+evaluation, IBP, and CROWN share this shape contract. The backward pass bounds a binary product by
+McCormick planes of its operand boxes, and that relaxation can lose correlations even when the
+shape is supported.
 
 Concatenation accepts any valid axis and at least two parents, including empty dimensions and
 repeated parent ids. Dimensions off the selected axis must match. The backward pass splits
 coefficients by parent occurrence and adds the contributions when a parent appears more than once.
 
 Convolution transfers accept groups, dilation, asymmetric padding, and arbitrary leading batch
-dimensions, with the configuration and payload checked together. The payload stores the full
-input-channel axis and selects each output channel's group; it is not a packed group-weight
-tensor. Its affine representation is a dense matrix over flattened input and output coordinates,
-which can use much more memory than evaluating the convolution itself.
+dimensions, with the configuration and payload checked together. A convolution node in
+PyTorch's layout reads its kernel as `(outC, inC / groups, k...)`, keeping for each output
+channel the input channels of its group (`TorchLean.Conv.packedKernel`). The backward pass sends
+coefficients through a convolution by the transposed convolution, so it builds no dense matrix
+over the flattened coordinates.
 
-LayerNorm normalizes the whole suffix beginning at its chosen axis. On `[2,2,2]`, axis one
-means two independent rows with normalized shape `[2,2]`; flattening all eight entries into
-one row would compute a different function. The scale and bias must have that exact suffix
-shape. Softmax value bounds likewise use the selected axis: an extent of one gives `[1,1]`,
-while other extents use `[0,1]`.
+LayerNorm normalizes the whole suffix beginning at its chosen axis. On `[2,2,2]`, axis one means
+two independent rows with normalized shape `[2,2]` (flattening all eight entries into one row would
+compute a different function). LayerNorm's scale and bias must have that exact suffix shape.
+Softmax value bounds likewise use the selected axis: an extent of one gives `[1,1]`, while other
+extents use `[0,1]`.
 
-The derivative engine also computes first and mixed-second LayerNorm interval transfers over
-the normalized suffix, using the stored scale and a positive epsilon. Invalid shapes or failed finite
-arithmetic yield no bound. Softmax derivative transfers work along any valid axis when the scalar
-backend enables `supportsIdealCoupledDerivatives`; native `Float` and `Float32` leave that
-capability disabled.
-
-These rules describe executable bound propagation. The end-to-end real IBP theorem covers its
-named `EngineCore` fragment. Broader operator support does not discharge the local-transfer or
-rounded-execution assumptions in a certificate theorem.
+These rules describe executable bound propagation. For the rounded pass, the soundness theorem
+`TorchLean.CROWN.Op.Directed.encloses_of_run` covers every operator the pass boxes at scalars
+with lawful endpoint operations, but it doesn't discharge the rounded-execution assumptions of a
+native run.
 
 ## What Each Command Shows
 
@@ -225,42 +226,35 @@ Let's run the TorchLean examples first:
 
 ```bash
 scripts/lake.sh exe verify -- torchlean-ibp
-scripts/lake.sh exe verify -- torchlean-transformer-ibp --with-crown
+scripts/lake.sh exe verify -- torchlean-transformer-ibp
 scripts/lake.sh exe verify -- torchlean-crown-ops
 scripts/lake.sh exe verify -- torchlean-mlp-workflow
-scripts/lake.sh exe verify -- digits-train-certify --epochs=50 --eps=0.02 --max=100
-scripts/lake.sh exe verify -- margin-report
 scripts/lake.sh exe verify -- camera-box3d-cert
 ```
 
-`torchlean-ibp` is the smallest graph-bound check: lower a TorchLean model, attach an input
-box, and propagate interval bounds to the output. `torchlean-transformer-ibp` applies attention
-and LayerNorm, then bounds their MSE against a fixed target; `--with-crown` also requests CROWN
-output and loss-objective bounds.
-`torchlean-crown-ops` uses the same graph style but adds forward and backward CROWN-style affine
-passes over softmax and MSE-loss operations. `torchlean-mlp-workflow` trains a classifier and then
-checks robustness through `outputBoxPhasedCROWN?` on the resulting graph. Rounded scalar
-backends use directed CROWN in that API; the phased α-CROWN pass requires exact reassociation.
-The requested input box seeds propagation in either case. The arithmetic used by these commands
-follows the same `--arithmetic native|ieee` flag as the examples.
+`torchlean-ibp` is the smallest graph-bound check: lower a TorchLean model, attach an input box,
+and propagate interval bounds to the output. `torchlean-transformer-ibp` applies attention and
+LayerNorm, then bounds their MSE against a fixed target. With `--with-crown` it also requests CROWN
+output bounds and objective-dependent backward CROWN bounds on the loss. `torchlean-crown-ops` uses
+the same graph style but adds forward and backward CROWN-style affine passes over softmax and
+MSE-loss operations. `torchlean-mlp-workflow` trains a classifier and then checks robustness with
+`trained.verify`, which runs CROWN (`outputBoxCROWN?`) on the resulting graph from the requested
+input box. The arithmetic used by these commands follows the same `--arithmetic native|ieee` flag
+as the examples.
 
-`digits-train-certify` trains a small
-sklearn-digits classifier with Python, exports weights and test examples, then immediately
-loads them and runs bound and margin checks in Lean. `margin-report` checks the internal arithmetic
-of an exported logit-bound report; it does not establish the provenance of those bounds.
-`vnncomp-mnistfc` exercises a compact
-VNN-COMP-style fully connected MNIST network/property pair. `camera-box3d-cert` checks a camera
-projection certificate for a supplied finite point set by recomputing its projections and the
-claimed 2D envelope expanded by the artifact's nonnegative tolerance. Eight cuboid corners are one choice of point set.
+`vnncomp-mnistfc` exercises a compact VNN-COMP-style fully connected MNIST network/property pair.
+`camera-box3d-cert` checks a camera projection certificate for a supplied finite point set by
+recomputing its projections and the claimed 2D envelope expanded by the artifact's nonnegative
+tolerance. Eight cuboid corners are one choice of point set.
 
 The MNIST runner labels its result `numerically_refuted`, not `safe`. It uses outward-widened host
 `Float` operations to refute the unsafe output region, but that executable result is not itself a
 Lean theorem about real-valued network semantics.
 
-The MNIST workflow requires externally prepared weights and suite files, which are not bundled.
-After preparing the JSON artifacts described in the
-[VNN-COMP artifact README](https://github.com/lean-dojo/TorchLean/blob/main/NN/Examples/Verification/VNNComp/README.md),
-run:
+For the MNIST workflow you need externally prepared weights and suite files, which aren't bundled.
+After preparing the JSON artifacts that
+[`TorchLeanExamples.Verification.VNNComp.MNISTFC`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/Verification/VNNComp/MNISTFC.lean)
+reads from `_external/vnncomp/mnist_fc/`, run:
 
 ```bash
 scripts/lake.sh exe verify -- vnncomp-mnistfc \
@@ -269,8 +263,8 @@ scripts/lake.sh exe verify -- vnncomp-mnistfc \
 ```
 
 Typical output from the native CROWN example includes softmax bounds, an MSE-loss bound, a margin
-lower bound, and the backward objective bound. The exact numbers depend on dtype and runtime flags,
-but the shape of the output should look like this:
+lower bound, and the backward objective bound. Exact values depend on dtype and runtime flags, but
+the shape of the output should look like this:
 
 ```text
 [IBP] p lo = ...
@@ -287,21 +281,16 @@ Then check the bundled alpha-beta-CROWN-style leaf artifact:
 scripts/lake.sh exe verify -- abcrown-leaf
 ```
 
-Run the compact LiRPA-style JSON fixtures:
+Run the bundled IBP certificate check:
 
 ```bash
-scripts/lake.sh exe verify -- lirpa-mlp
-scripts/lake.sh exe verify -- lirpa-cnn
-scripts/lake.sh exe verify -- lirpa-attention
-scripts/lake.sh exe verify -- lirpa-gru
-scripts/lake.sh exe verify -- lirpa-encoder
+scripts/lake.sh exe verify -- ibp-cert
 ```
 
-These commands are good checks when changing certificate parsing or bound-replay utilities. Each bundled
-fixture names a small supported fragment, such as an MLP, convolutional head, attention softmax
-block, GRU gate, or transformer encoder block. Lean checks the artifact it receives; the fixture is
-evidence for the checker format and replay predicate, not a claim about every possible LiRPA
-producer.
+This command is a good check when you change certificate parsing or bound-replay utilities. Its
+bundled certificate is for a 3 → 4 → 2 ReLU MLP, and Lean accepts it only when the serialized
+bounds enclose the bounds it recomputes. The fixture is evidence for the checker format and replay
+predicate, and it doesn't cover every possible IBP producer.
 
 To run the fast non-interactive checker suite:
 
@@ -312,25 +301,25 @@ scripts/lake.sh exe verify -- all
 ## External Artifacts
 
 The alpha-beta-CROWN leaf checker is a consistency checker for a declared leaf artifact. Vanilla
-alpha-beta-CROWN does not emit TorchLean's JSON schema directly. The current path is: an external
-verifier exposes or dumps terminal leaf data, TorchLean's exporter converts that data to
-`abcrown_leaf_artifact_v0_1`, and Lean checks the represented part of the artifact: box nesting,
-coverage of the root box by the leaves, compatible tensor dimensions, and the witness lower-bound
-test. It does not recompute the lower bounds.
+alpha-beta-CROWN doesn't emit TorchLean's JSON schema. Instead, an external verifier exposes or
+dumps terminal leaf data, TorchLean's exporter converts that data to `abcrown_leaf_artifact_v0_1`,
+and Lean checks the represented part of the artifact (box nesting, coverage of the root box by the
+leaves, compatible tensor dimensions, and the witness lower-bound test). The checker doesn't
+recompute the lower bounds.
 
-The checker therefore relies on the producer for the correctness of the supplied lower bounds.
-It also cannot establish whether the JSON faithfully records the external verifier's output.
+So the checker relies on the producer for the correctness of the supplied lower bounds, and it
+can't establish whether the JSON faithfully records the external verifier's output.
 
-The witness selects one output coordinate. The checker requires its lower bound to exceed the
-corresponding unsafe threshold. Mismatched dimensions and out-of-range witness indices are rejected.
-The implementation lives in `NN.Verification.Cert.AbCrownLeafCert` and its shared verification
-utilities.
+The witness selects one output coordinate, and the checker requires its lower bound to exceed the
+corresponding unsafe threshold. Mismatched dimensions and out-of-range witness indices are
+rejected. We implement the checker in `TorchLean.Verify.Certificate.AbCROWNLeaf` and its shared
+verification utilities.
 
 We can try the leaf checker with the small bundled certificate, which is also its default input:
 
 ```bash
 scripts/lake.sh exe verify -- abcrown-leaf \
-  NN/Examples/Verification/AbCrown/sample_abcrown_leaf_artifact_v0_1.json
+  TorchLeanExamples/Verification/AbCROWN/sample_abcrown_leaf_artifact_v0_1.json
 ```
 
 ```text
@@ -343,27 +332,24 @@ To create that schema from a raw terminal-domain dump, use the TorchLean exporte
 
 ```bash
 python3 scripts/verification/abcrown/export_leaf_artifact.py \
-  --input NN/Examples/Verification/AbCrown/example_raw_leaf_dump.json \
+  --input TorchLeanExamples/Verification/AbCROWN/example_raw_leaf_dump.json \
   --out _external/abcrown/leaf_artifact.json \
   --check
 ```
 
 `ABCROWN_ARTIFACT_OUT` is the TorchLean side exporter hook. Use it from a small wrapper or
-instrumented external verifier to write the schema that Lean checks. The external search still owns
-the branch-and-bound run; TorchLean owns the exported artifact schema and the local witness
+instrumented external verifier to write the schema that Lean checks. The external search owns the
+branch-and-bound run, while TorchLean owns the exported artifact schema and the local witness
 predicate replayed by the checker.
 
 ## Verification Results
 
-Now that we've seen the commands, let's distinguish what their results tell us:
+Let's distinguish what the results of these commands tell us:
 
 - IBP and CROWN commands lower a TorchLean model, attach an input box, propagate bounds over the
   supported graph operations, and report the resulting margin predicate.
-- Margin certificates are replayable JSON claims: the file names a graph-shaped predicate and Lean
-  recomputes the margin condition.
-- LiRPA-style fixtures exercise small exported bound artifacts for supported network fragments.
-  They are regression fixtures for the checker API and examples of the finite objects Lean can
-  reload.
+- `ibp-cert` replays a stored IBP bound for a small 3-4-2 ReLU MLP. It is a regression fixture
+  for the checker API and an example of the finite objects Lean can reload.
 - $\alpha,\beta$-CROWN-style leaf artifacts carry one terminal external-verifier claim into Lean. The checker
   validates the schema, box nesting and root coverage, tensor dimensions, and witness lower-bound comparison represented in
   that artifact.
@@ -381,14 +367,14 @@ phrasing is more precise than saying only that a verifier ran.
 ## Where To Read The Source
 
 - TorchLean-native graph and IBP entry point:
-  [`NN/Verification/Builtin/IBPWorkflow.lean`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Verification/Builtin/IBPWorkflow.lean)
+  [`TorchLeanExamples/Verification/IBPWorkflow.lean`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/Verification/IBPWorkflow.lean)
 - CROWN operation entry point:
-  [`NN/Verification/Builtin/CrownOpsWorkflow.lean`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Verification/Builtin/CrownOpsWorkflow.lean)
+  [`TorchLeanExamples/Verification/CROWNOpsWorkflow.lean`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/Verification/CROWNOpsWorkflow.lean)
 - $\alpha,\beta$-CROWN-style leaf artifact checker:
-  [`NN.Verification.Cert.AbCrownLeafCert`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Verification/Cert/AbCrownLeafCert.lean)
+  [`TorchLean.Verify.Certificate.AbCROWNLeaf`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/Verify/Certificate/AbCROWNLeaf.lean)
 - VNN-COMP-style MNIST entry point:
-  [`NN.Verification.VNNComp.MnistFC`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Verification/VNNComp/MnistFC.lean)
+  [`TorchLeanExamples.Verification.VNNComp.MNISTFC`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/Verification/VNNComp/MNISTFC.lean)
 - 3D geometry certificate checker:
-  [`NN.Verification.Geometry3D`](https://github.com/lean-dojo/TorchLean/blob/main/NN/Verification/Geometry3D.lean)
+  [`TorchLeanExamples/Verification/Geometry3D`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/Verification/Geometry3D/)
 - Verification guide chapter:
   [Neural Network Verification]({{ '/blueprint/Verification-and-Certificates/Neural-Network-Verification/' | relative_url }})

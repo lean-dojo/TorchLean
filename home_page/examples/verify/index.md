@@ -4,9 +4,8 @@ title: Checking a Captured Computation
 
 Suppose we already have a tensor calculation in Python. We'd like to bring its
 operations into Lean without rewriting the model, inspect its precision changes,
-and ask which checks we can run on that graph.
-
-Put `@torchlean.compile` on the model class or function, then call it as usual. TorchLean detects
+and ask which checks we can run on that graph. Put `@torchlean.compile` on the model class or
+function, then call it as usual. TorchLean detects
 PyTorch or JAX from the model and its tensor arguments. The first call captures the computation for
 the whole tensor or batch, so you don't need a loop that checks samples one at a time. TorchLean
 translates supported operations into its IR and checks the graph in Lean, while the framework
@@ -131,8 +130,10 @@ program has no other mistakes.
 
 PyTorch and the CPU reference run can disagree on reduction order or elementary-function
 approximations (the IR's binary `exp` and `log` are correctly rounded, for example, while PyTorch's
-vectorized kernels can differ from them in the last bit). A failed comparison identifies a
-difference on that input, but it doesn't tell us the cause without further analysis.
+vectorized kernels can differ from them in the last bit). The capture also translates Python's
+`s / x` to IR true division, while eager PyTorch can compute `reciprocal(x) * s`, with an extra
+rounding. A failed comparison identifies a difference on that input, but it doesn't tell us the
+cause without further analysis.
 
 The JAX importer records supported operations with their shapes, dtypes and casts, and the CPU
 reference evaluates them with TorchLean and FloatLib arithmetic. XLA's compiled CPU code can

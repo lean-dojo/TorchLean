@@ -204,8 +204,8 @@ def _words(node: dict, name: str, refuse: Refuse) -> list[int]:
 
 def _contract(node: dict, s: list[int], t: list[int], out: list[int], refuse: Refuse,
               located: Refuse) -> tuple:
-    """`IR.contractDims` and `Shape.contract`: the batch axes, the other axes of `s`,
-    then the other axes of `t`."""
+    """The batch axes, the other axes of `s`, then the other axes of `t`, as `Shape.contract`
+    computes them."""
     dims = [[_axis(a, len(s)), _axis(b, len(t))] for a, b in node.get('dims', [])]
     batch = [[_axis(a, len(s)), _axis(b, len(t))] for a, b in node.get('batch_dims', [])]
     pairs = batch + dims

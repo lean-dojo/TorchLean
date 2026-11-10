@@ -1,0 +1,66 @@
+/* One code palette for the articles, checked guide examples and API docstrings. */
+:root {
+  --tl-code-bg: #f4f6f8;
+  --tl-code-ink: #24313d;
+  --tl-code-border: #d6dce2;
+  --tl-code-keyword: #7040a0;
+  --tl-code-name: #235b99;
+  --tl-code-type: #006f65;
+  --tl-code-comment: #526552;
+  --tl-code-string: #9b3b2a;
+  --tl-code-number: #9d4f0f;
+}
+:root[data-theme="dark"] {
+  --tl-code-bg: #1b2229;
+  --tl-code-ink: #e4eaf0;
+  --tl-code-border: #3b4651;
+  --tl-code-keyword: #c4a7ff;
+  --tl-code-name: #89b9ff;
+  --tl-code-type: #78d7c6;
+  --tl-code-comment: #a6b6a2;
+  --tl-code-string: #efa596;
+  --tl-code-number: #e8b673;
+}
+main pre, .main-content pre, .main-content .highlight pre,
+main code.hl.lean.block, main .highlight,
+main .tl-terminal, main .tl-terminal[data-output="true"], main .tl-lean-example {
+  background: var(--tl-code-bg);
+  color: var(--tl-code-ink);
+  border-color: var(--tl-code-border);
+  box-shadow: none;
+}
+main pre code, .main-content pre code, main .highlight pre, main .tl-terminal pre,
+main .tl-lean-example > code.hl.lean.block, main .tl-lean-example > pre.lean-output {
+  background: transparent;
+  color: var(--tl-code-ink);
+}
+main .tl-terminal-heading, main .tl-terminal[data-output="true"] > .tl-terminal-heading,
+main .tl-example-heading, main .tl-example-heading.tl-output-heading {
+  color: var(--tl-code-comment);
+  background: transparent;
+  border-color: var(--tl-code-border);
+}
+main .tl-copy-code, main .tl-code-action, main .tl-copy-command {
+  background: var(--tl-code-bg);
+  color: var(--tl-code-ink);
+  border-color: var(--tl-code-border);
+}
+.tl-lean-keyword, .tl-lean-tactic,
+.highlight :is(.k, .kc, .kd, .kn, .kp, .kr, .kv), .hl.lean .token.keyword {
+  color: var(--tl-code-keyword); font-weight: 600;
+}
+.tl-lean-name, .highlight :is(.nf, .nc, .nd, .ne, .nl, .nt, .na, .nv, .vc, .vg, .vi),
+.hl.lean .token.const {
+  color: var(--tl-code-name);
+}
+.tl-lean-type, .highlight :is(.kt, .nb, .bp, .no) { color: var(--tl-code-type); }
+.tl-lean-comment, .highlight :is(.c, .c1, .cm, .cp, .cs, .cd),
+.hl.lean .token.comment, .hl.lean .token.comment.line,
+.hl.lean .token.doc-comment { color: var(--tl-code-comment); font-style: normal; }
+.tl-lean-string, .highlight :is(.s, .s1, .s2, .sb, .sc, .sd, .se, .sh, .si, .sx, .sr, .ss),
+.hl.lean .token.literal.string { color: var(--tl-code-string); }
+.tl-lean-number, .highlight :is(.m, .mi, .mf, .mh, .mo, .mb, .mx, .il),
+.hl.lean .token.literal.number { color: var(--tl-code-number); }
+.tl-lean-operator, .highlight :is(.o, .ow, .p, .n, .nn, .nx, .w), .hl.lean .token.var {
+  color: var(--tl-code-ink); font-weight: normal;
+}

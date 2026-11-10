@@ -73,6 +73,27 @@ def inject_script(root: Path) -> None:
         path.write_text(html.replace("</head>", tag + "  </head>", 1))
 
 
+def inject_code_highlighter(root: Path) -> None:
+    """Highlight plain Lean docstrings without replacing Verso's checked semantic spans."""
+    for path in root.rglob("*.html"):
+        original = path.read_text()
+        source = original
+        if "assets/css/code.css" not in source:
+            source = source.replace(
+                "</head>",
+                '<link rel="stylesheet" href="../assets/css/code.css">\n</head>',
+                1,
+            )
+        if "lean-highlight.js" not in source:
+            source = source.replace(
+                "</head>",
+                '<script defer src="../assets/js/lean-highlight.js"></script>\n</head>',
+                1,
+            )
+        if source != original:
+            path.write_text(source)
+
+
 def inject_favicon(root: Path) -> None:
     """Use the main TorchLean mark for every generated guide page."""
     marker = "data-torchlean-favicon"
@@ -546,6 +567,7 @@ def main() -> int:
     add_fragment_aliases(args.guide)
     inject_favicon(args.guide)
     inject_script(args.guide)
+    inject_code_highlighter(args.guide)
     validate_math_runtime(args.guide)
     try:
         pages, sections = check_layout(args.guide)

@@ -3,7 +3,7 @@
 #
 # Usage: scripts/docs/build_site.sh [STEP...]
 # The steps run in the order given, and without arguments all of them run in this order:
-#   lean     build the Lean library and executables
+#   lean     build the four Lean libraries
 #   api      render the DocGen API reference into home_page/docs
 #   guide    build and check the Verso guide in _out/blueprint/html-multi
 #   graphs   write the dependency audit JSON and the import graph page

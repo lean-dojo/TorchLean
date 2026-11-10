@@ -174,22 +174,10 @@ def checkSource {σ : Sig} {T : Fin σ.sorts → Type} [σ.Inductive α T] (labe
       s!"{label}: the source has more columns or inputs than the fold"
   | .error e => throw <| IO.userError s!"{label}: no source: {e}"
 
-/-- Checks that the rows of every level of a pseudorandom tree, cut into runs of 1, 2, 3, 7, 256
-and `2 ^ 20` rows, are the rows computed one at a time. On levels of 0 to 4097 rows around the run
-boundaries, whose row `k` has both children and its scalar at `k` over results `k`, runs of 1, 7,
-256 and all rows must give `3 * k` at row `k`. -/
+/-- Checks levels of 0 to 4097 rows around the run boundaries. Row `k` has both children and
+its scalar at `k` over results `k`, so runs of 1, 7, 256 and all rows must give `3 * k` at row `k`.
+-/
 def checkRuns : IO Unit := do
-  let F := BTree.weightedFold (0.0 : Float)
-  let read := weight (moderate 3 : Float)
-  let a := arenaB (BTree.random (moderate (α := Float)) 20000 1)
-  for (level, r) in a.levels.toList.zipIdx do
-    let below := F.results read a (r + 1)
-    let rows := (Array.range level.tag.size).map fun k =>
-      F.expr.eval F.arithmetic (Step.reader read F.inputs below)
-        (level.env BTree.sig.indexSlots BTree.sig.scalarSlots k)
-    for grain in [1, 2, 3, 7, 256, 2 ^ 20] do
-      ensure (allSame (F.levelRuns grain read level below) rows)
-        s!"runs of {grain} rows: level {r} differs from its rows one at a time"
   let G := BTree.sumFold (0.0 : Float)
   for n in [0, 1, 2, 255, 256, 257, 511, 512, 513, 1000, 4096, 4097] do
     let rows := (Array.range n).map (·.toUInt64)

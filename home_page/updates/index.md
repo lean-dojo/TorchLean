@@ -51,13 +51,13 @@ measurements with their conditions.
 
 ## One Operator Table, Attention Rounding, and Library Bugs
 
-The CPU tape, the CUDA tape and the verifier's lowering all record operators from one table,
-`TorchLean.Op`. It runs from the elementwise functions through gathers, scatters, sorts,
-convolution, normalization, attention and the losses, and every operator carries its attributes and
-typed ports. `Op.rule?` gives each operator one rule: its forward value, its pullback, and the node
-a recorder prepares. Each recorder has its own entry point (`Tape.apply` on the CPU tape,
-`LibTorch.Tape.apply` through the operator's entry in `LibTorch.Kernel.ofOp` on the CUDA tape, and
-`IR.record` in the lowering). On the CPU tape, a node's pullback computes
+CPU tensors and CUDA buffers share one autograd tape. Both record operators from `TorchLean.Op`,
+the same table used by the verifier's graph lowering. It covers elementwise functions, gathers,
+scatters, sorts, convolution, normalization, attention and losses. Every operator carries its
+attributes and typed ports. For the supported scalar capabilities, `Op.rule?` supplies the forward
+map, pullback and prepared node. Each recorder has its own entry point (`Tape.apply` for CPU tensors,
+`LibTorch.Tape.apply` through the operator's entry in `LibTorch.Kernel.ofOp` for CUDA buffers, and
+`IR.record` in the lowering). On the CPU, a node's pullback computes
 contributions only for the parents that need a gradient. A CUDA entry calls LibTorch kernels, and
 no theorem relates them to the rule. No theorem relates the recorded graph to the program it was
 recorded from either.
@@ -75,10 +75,10 @@ notes](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/NN/PyTorch/REA
 record, operator by operator, where the import follows a framework kernel and where it differs from
 eager PyTorch.
 
-Every node of the operator graph `IR.Graph` holds a registered operator, and a node can have
-several outputs. The `torch.export` capture and the Jaxpr importer write typed programs over
-these operators in one JSON format, `torchlean.ir`, which `IR.load` checks and loads. Interval
-propagation runs on the graphs. For scalars with lawful endpoint operations,
+Every operation node of `IR.Graph` holds a registered operator, and a node can have several outputs.
+The graph also records its inputs and constants. The `torch.export` capture and the Jaxpr importer
+write typed programs over these operators in one JSON format, `torchlean.ir`, which `IR.load`
+checks and loads. Interval propagation runs on the graphs. For scalars with lawful endpoint operations,
 `TorchLean.CROWN.Op.runIBP_encloses` proves that its boxes enclose a successful real run
 of the graph (not a native run). The [IR
 chapter]({{ '/blueprint/Semantics-and-Graphs/The-Canonical-Graph-IR/' | relative_url }}) explains

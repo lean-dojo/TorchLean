@@ -44,7 +44,7 @@ TorchLean. External imports appear in the explorer, but their source trees aren'
     <div class="dep-controls">
       <label>
         Search module
-        <input id="dep-search" type="search" placeholder="Proofs, Runtime, FNO…" />
+        <input id="dep-search" type="search" placeholder="Tensor, IR, CROWN, FNO…" />
       </label>
       <label>
         Importing area
@@ -85,8 +85,7 @@ TorchLean. External imports appear in the explorer, but their source trees aren'
   const layerOf = (mod) => {
     const parts = mod.split(".");
     if (parts[0] === "TorchLean" && parts.length >= 3) return `TorchLean.${parts[1]}`;
-    if (parts[0] !== "NN" || parts.length < 2) return parts[0] || "unknown";
-    return `NN.${parts[1]}`;
+    return parts[0] || "unknown";
   };
 
   function setOptions(select, values, label) {

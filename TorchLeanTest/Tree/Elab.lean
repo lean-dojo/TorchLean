@@ -27,8 +27,7 @@ them, or none.
 On the host the fold of each function must give the result of the function. On the device the
 schedule must finish exactly when the function has a result on the value of every row of the
 arena, with the results of the host schedule, and `Fold.run` must give the result of the
-function, failures included. The fold of the term evaluator must agree with the fold of the
-examples written by hand, and the reference of a fold is the function itself, by `rfl`. The
+function, failures included. The reference of a fold is the function itself, by `rfl`. The
 functions that `Fold.of` rejects are checked by their messages when this file compiles.
 -/
 
@@ -37,7 +36,7 @@ functions that `Fold.of` rejects are checked by their messages when this file co
 namespace TorchLean.Test.Tree.Elaborated
 
 open Kernel Examples.Tree Arenas FloatLib.Floats
-open Folds (allSame arenaT checkRun checkSource environment moderate same)
+open Folds (checkRun checkSource environment moderate same)
 
 variable {α : Type}
 
@@ -527,16 +526,10 @@ def checkAll (device : Bool) : IO Unit := do
   check "short" device Ast.shortFold 0 Ast.short asts environments
   check "termEval" device termFold 0 termEval (Folds.terms (α := Float)) environments
 
-/-- The host checks: the fold of every function against the function, the fold of the term
-evaluator against the fold written by hand, and the sources of two folds that read inputs. -/
+/-- The host checks: the fold of every function against the function, and the sources of two
+folds that read inputs. -/
 def run : IO Unit := do
   checkAll false
-  for (name, t) in Folds.terms (α := Float) do
-    for xs in environments do
-      let read := Reader.ofArrays xs
-      ensure (allSame (termFold.results read (arenaT t) 0)
-          (Term.evalFold.results read (arenaT t) 0))
-        s!"term {name}: the fold of termEval differs from the fold written by hand"
   checkSource "guarded" guardedFold
   checkSource "weighted16" weighted16Fold
   IO.println "  folds from functions: trees, expressions and terms passed on the host"

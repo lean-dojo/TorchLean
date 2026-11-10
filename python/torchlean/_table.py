@@ -13,6 +13,7 @@ from collections.abc import Sequence
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 
 from ._checker import Checker
@@ -22,30 +23,45 @@ DTYPES = ("float16", "bfloat16", "float32", "float64", "bool", "int8", "int16", 
 
 _KEYS = ("format", "version", "dtypes", "codes", "pointwise")
 
-# The parsed tables, one per checker: None, an executable path as a string, or the tuple of a
-# command's arguments.
-_TABLES: dict[str | tuple[str, ...] | None, dict] = {}
+# Cache by the resolved checker choice and optional table file. Environment overrides can change
+# during a process, so a default argument alone does not identify the source of a table.
+_TABLES: dict[tuple, dict] = {}
 
 
-def _key(checker: str | Path | Sequence[str] | None) -> str | tuple[str, ...] | None:
+def _file_key(path: str | Path) -> tuple:
+    path = Path(path).resolve()
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return (str(path),)
+    return (str(path), stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+
+
+def _key(checker: str | Path | Sequence[str] | None) -> tuple:
     # `Checker` raises TypeError for a malformed command, so only a valid command forms a key.
-    if checker is None or isinstance(checker, (str, Path)):
-        return None if checker is None else str(checker)
-    Checker(checker)
-    return tuple(checker)
+    if checker is None:
+        return (None, _file_key(Path(__file__).resolve().parents[2] / ".lake/build/bin/verify"),
+                ("ir",))
+    if isinstance(checker, (str, Path)):
+        command = (str(checker), "ir")
+    else:
+        Checker(checker)
+        command = tuple(checker)
+    return (_file_key(shutil.which(command[0]) or command[0]), command[1:])
 
 
 def op_table(checker: str | Path | Sequence[str] | None = None) -> dict:
-    """Return the parsed op table for `DTYPES`, read once per process for each `checker`.
+    """Return the parsed op table for `DTYPES`, cached until its source changes.
 
     The table is the file named by `TORCHLEAN_OP_TABLE` when that variable is set, else the one
     `Checker(checker).op_table` returns, `checker` as in `torchlean.verify`: None finds
     `TORCHLEAN_VERIFY`, else the native `_torchlean.op_table`, else the local `verify` executable.
     """
-    key = _key(checker)
+    path = os.environ.get("TORCHLEAN_OP_TABLE")
+    selected = checker if checker is not None else os.environ.get("TORCHLEAN_VERIFY")
+    key = (_key(selected), _file_key(path) if path else None)
     table = _TABLES.get(key)
     if table is None:
-        path = os.environ.get("TORCHLEAN_OP_TABLE")
         if path:
             text = Path(path).read_text(encoding="utf-8")
         else:

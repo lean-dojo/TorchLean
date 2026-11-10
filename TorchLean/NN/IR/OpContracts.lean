@@ -10,16 +10,15 @@ public import TorchLean.NN.IR.Attr
 public import TorchLean.NN.IR.MatmulLayout
 public import TorchLean.Tensor.Conversion
 public import TorchLean.Tensor.Layers.Pooling
-public import TorchLean.Tensor.Contract
 
 /-!
 # Operation Contracts
 
-The shape contracts of the operations with a nontrivial shape rule. Each contract returns the
-checked attributes in the form the specification operator takes (dimensions as `Fin rank`, with
-their validity proofs) together with the output shape. The recording of registered operators
-(`TorchLean.NN.IR.Record`) uses them, and the CROWN matrix-product rules read the decomposition
-`IR.MatmulDims` that `inferMatmulDims` returns.
+Shape helpers used by the model recorder and the bound passes: slice dimensions, pooling windows,
+convolution geometry and matrix-product layout. The registered operators carry their other shape
+conditions in their types, and `Op.decode` checks the corresponding wire attributes.
+`TorchLean.NN.IR.Record` uses these helpers, and the CROWN matrix-product rules read the
+`IR.MatmulDims` decomposition that `inferMatmulDims` returns.
 -/
 
 @[expose] public section
@@ -365,16 +364,9 @@ def inferConvConfigOutShape (tag : String) (config : ConvConfig) (parent : Shape
 /-!
 ## Dimension attributes
 
-Operations store dimensions as natural numbers. These contracts read them against the rank of the
-shape they act on through the signed readers `Shape.axis?` and `Shape.axes?` that the
-importers use, so a natural number below the rank names itself and any other names nothing.
+The recorder's slice helper reads natural-number dimensions through `Shape.axes?`, the same
+reader the operator codec uses. It rejects repeated dimensions and dimensions outside the rank.
 -/
-
-/-- The dimension of `s` named by `dim`, rejecting one at or beyond the rank. -/
-def dimOf (tag : String) (s : Shape) (dim : Nat) : Except String (Fin s.rank) :=
-  match s.axis? (dim : Int) with
-  | some d => .ok d
-  | none => .error s!"{tag}: dimension {dim} is out of range for shape {repr s}"
 
 /-- The distinct dimensions of `s` named by `dims`, in their order. -/
 def dimsOf (tag : String) (s : Shape) (dims : Array Nat) : Except String (List (Fin s.rank)) :=
@@ -391,32 +383,9 @@ theorem nodup_of_dimsOf {tag : String} {s : Shape} {dims : Array Nat}
     exact Shape.nodup_of_axes?_eq_some ‹_›
   · cases h
 
-/-- One value per dimension of `s`, as a function on its dimensions. -/
-def perDim (tag : String) (s : Shape) (values : Array Nat) : Except String (Fin s.rank → Nat) :=
-  if h : values.size = s.rank then .ok fun d => values[d.val]'(by rw [h]; exact d.isLt)
-  else .error s!"{tag}: expected {s.rank} values, one per dimension of {repr s}, got {values}"
-
-/-- The dimension pairs `(a, b)` with `a` a dimension of `s` and `b` one of `t`. -/
-def dimPairsOf (tag : String) (s t : Shape) (pairs : Array (Nat × Nat)) :
-    Except String (List (Fin s.rank × Fin t.rank)) :=
-  pairs.toList.mapM fun (a, b) => do pure (← dimOf tag s a, ← dimOf tag t b)
-
 /-!
 ## General data movement
 -/
-
-/-- The placement of a broadcast from `s` to `t`: source dimension `i` goes to `dims[i]`, in
-increasing order, and each source extent is one or the extent there. -/
-def broadcastDims (s t : Shape) (dims : Array Nat) :
-    Except String {f : Fin s.rank → Fin t.rank // Shape.BroadcastDims s t f} :=
-  if hsize : dims.size = s.rank then
-    if hlt : ∀ i : Fin s.rank, dims[i.val]'(by rw [hsize]; exact i.isLt) < t.rank then
-      let f : Fin s.rank → Fin t.rank := fun i =>
-        ⟨dims[i.val]'(by rw [hsize]; exact i.isLt), hlt i⟩
-      if hf : Shape.BroadcastDims s t f then .ok ⟨f, hf⟩
-      else .error s!"broadcast: {repr s} does not broadcast to {repr t} at dimensions {dims}"
-    else .error s!"broadcast: dimensions {dims} are out of range for {repr t}"
-  else .error s!"broadcast: expected one dimension per dimension of {repr s}, got {dims}"
 
 /-- The dimensions of a slice, checked by `Shape.SliceValid`: distinct, one start, stop and
 step each, every stop at most its extent and every step positive. -/
@@ -427,92 +396,5 @@ def sliceDims (s : Shape) (dims starts stops steps : Array Nat) :
   if h : Shape.SliceValid s ds starts.toList stops.toList steps.toList then pure ⟨ds, h⟩
   else throw s!"slice: invalid starts {starts}, stops {stops}, steps {steps} at dimensions \
     {dims} of {repr s}"
-
-/-- The checked index tensor of a gather or scatter along `dims`: the index along `dims[k]` at the
-coordinate with flat index `i` is `indices.values[i * dims.length + k]`. -/
-def IndexTensor.toTensor (tag : String) (s : Shape) (dims : List (Fin s.rank))
-    (indices : IndexTensor) :
-    Except String (Tensor (Einops.AxisTuple s.extent dims) indices.shape) :=
-  if hsize : indices.values.size = indices.shape.size * dims.length then
-    have hlt (i : Fin indices.shape.size) (k : Fin dims.length) :
-        i.val * dims.length + k.val < indices.values.size := by
-      rw [hsize]
-      calc i.val * dims.length + k.val < i.val * dims.length + dims.length := by omega
-        _ = (i.val + 1) * dims.length := by rw [Nat.succ_mul]
-        _ ≤ indices.shape.size * dims.length := Nat.mul_le_mul_right _ i.isLt
-    if hbound : ∀ i : Fin indices.shape.size, ∀ k : Fin dims.length,
-        indices.values[i.val * dims.length + k.val]'(hlt i k) < s.extent (dims.get k) then
-      .ok (Tensor.Rep.ofFn fun c => fun k =>
-        let i : Fin indices.shape.size := Shape.Coord.linearize c
-        ⟨indices.values[i.val * dims.length + k.val]'(hlt i k), hbound i k⟩)
-    else .error s!"{tag}: an index is out of range for the dimensions of {repr s}"
-  else .error s!"{tag}: {indices.values.size} index values for {indices.shape.size} entries of \
-    {dims.length} dimensions"
-
-/-- The checked arguments of `Tensor.gather`. -/
-structure GatherPlan (s : Shape) (indices : IndexTensor) where
-  /-- The indexed dimensions. -/
-  dims : List (Fin s.rank)
-  /-- Pairs of an operand dimension and an index-tensor dimension read together. -/
-  batchDims : List (Fin s.rank × Fin indices.shape.rank)
-  /-- The arguments satisfy `Shape.GatherValid`. -/
-  valid : Shape.GatherValid s indices.shape dims batchDims
-  /-- The typed index tensor. -/
-  index : Tensor (Einops.AxisTuple s.extent dims) indices.shape
-
-/-- The shape of a gather: the index-tensor dimensions, then the operand dimensions that are
-neither indexed nor batched. -/
-def GatherPlan.outShape {s : Shape} {indices : IndexTensor} (plan : GatherPlan s indices) :
-    Shape :=
-  indices.shape ++ s.eraseAxes (plan.dims ++ plan.batchDims.map Prod.fst)
-
-/-- Check the arguments of a gather from `s` at the indices along `dims` with the batch pairs. -/
-def planGather (s : Shape) (dims : Array Nat) (batchDims : Array (Nat × Nat))
-    (indices : IndexTensor) : Except String (GatherPlan s indices) := do
-  let ds ← dimsOf "gather" s dims
-  let bs ← dimPairsOf "gather" s indices.shape batchDims
-  if hv : (ds ++ bs.map Prod.fst).Nodup ∧ (bs.map Prod.snd).Nodup ∧
-      ∀ p ∈ bs, s.extent p.1 = indices.shape.extent p.2 then
-    let index ← IndexTensor.toTensor "gather" s ds indices
-    pure ⟨ds, bs, ⟨hv.1, hv.2.1, hv.2.2⟩, index⟩
-  else throw s!"gather: dimensions {dims} and batch pairs {batchDims} are not valid for \
-    {repr s} and indices of shape {repr indices.shape}"
-
-/-- The concatenated shape of `shapes` along `dim`: every shape has the first one's extents off
-`dim`, and the extents along `dim` add. -/
-def catShape (dim : Nat) (shapes : Array Shape) : Except String Shape :=
-  if hne : 0 < shapes.size then
-    if dim < shapes[0].rank then
-      if ∀ j : Fin shapes.size, shapes[j] = shapes[0].set dim (shapes[j].getD dim 0) then
-        .ok (shapes[0].set dim (∑ j : Fin shapes.size, shapes[j].getD dim 0))
-      else .error s!"cat: the inputs differ off dimension {dim}: {repr shapes}"
-    else .error s!"cat: dimension {dim} is out of range for {repr shapes[0]}"
-  else .error "cat: expected at least one input"
-
-/-!
-## Reductions and contractions
--/
-
-/-- The dimensions of a reduction with `op`. A maximum or a minimum starts from the first entry of
-each fiber, so it needs every listed dimension nonempty. -/
-def reduceDims (op : Tensor.ReduceOp) (s : Shape) (dims : Array Nat) :
-    Except String
-      {ds : List (Fin s.rank) // (op = .max ∨ op = .min) → ∀ d ∈ ds, 0 < s.extent d} := do
-  let ds ← dimsOf "reduce" s dims
-  if h : (op = .max ∨ op = .min) → ∀ d ∈ ds, 0 < s.extent d then pure ⟨ds, h⟩
-  else throw s!"reduce: a {repr op} over an empty dimension of {repr s}"
-
-/-- The checked pairs of a contraction of `s` with `t`, satisfying `Shape.ContractValid`. -/
-def contractDims (s t : Shape) (dims batchDims : Array (Nat × Nat)) :
-    Except String
-      {p : List (Fin s.rank × Fin t.rank) × List (Fin s.rank × Fin t.rank) //
-        Shape.ContractValid s t p.1 p.2} := do
-  let ds ← dimPairsOf "contract" s t dims
-  let bs ← dimPairsOf "contract" s t batchDims
-  if hv : ((bs ++ ds).map Prod.fst).Nodup ∧ ((bs ++ ds).map Prod.snd).Nodup ∧
-      ∀ p ∈ bs ++ ds, s.extent p.1 = t.extent p.2 then
-    pure ⟨(ds, bs), ⟨hv.1, hv.2.1, hv.2.2⟩⟩
-  else throw s!"contract: pairs {dims} and batch pairs {batchDims} are not valid for {repr s} \
-    and {repr t}"
 
 end TorchLean.IR

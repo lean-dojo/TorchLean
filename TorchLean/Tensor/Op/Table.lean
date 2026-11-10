@@ -104,8 +104,8 @@ in binary64. Over ℝ, the certificates of `TorchLean.NN.Op.Pointwise` and `Torc
 prove that the pullbacks of those activations, `abs` and `clamp` are the adjoints of their
 derivatives (`Op.softplus_backward_eq_adjoint`, `Op.relu_backward_eq_adjoint` away from zero,
 `Op.softmax_backward_eq_adjoint`), except at the kinks that `TorchLean.NN.Op.Pointwise` lists.
-`scatter`'s torch test is named in its docstring, and `cumsum` and `mseLoss` have neither a
-certificate nor a torch test.
+`scatter`'s torch test is named in its docstring. The certificates in `TorchLean.NN.Op.Reduce`
+and `TorchLean.NN.Op.Loss` also prove the pullbacks of `cumsum` and `mseLoss` over the reals.
 -/
 
 @[expose] public section

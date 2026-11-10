@@ -49,24 +49,11 @@ larger experiments and formalize the ideas behind recent model papers.
       with the equations, Lean code and explanations together : )
     </p>
     <nav class="tool-links" aria-label="TorchLean Verified Examples links">
+      <a href="https://robertboy18.github.io/TorchLean-Verified-Examples/">
+        Articles and experiments
+      </a>
       <a href="https://github.com/Robertboy18/TorchLean-Verified-Examples">
-        Repository and overview
-      </a>
-      <a
-        href="https://github.com/Robertboy18/TorchLean-Verified-Examples/tree/master/week-01-batch-invariant-inference">
-        Batch-invariant inference
-      </a>
-      <a
-        href="https://github.com/Robertboy18/TorchLean-Verified-Examples/tree/master/week-02-verifiable-transformer-checkpoint">
-        Verifiable transformer checkpoint
-      </a>
-      <a
-        href="https://github.com/Robertboy18/TorchLean-Verified-Examples/tree/master/week-03-gpt-training">
-        GPT training in Lean
-      </a>
-      <a
-        href="https://github.com/Robertboy18/TorchLean-Verified-Examples/tree/master/week-04-kimi-k3-specification">
-        Kimi K3 specification
+        Source repository
       </a>
     </nav>
   </article>

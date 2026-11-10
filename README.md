@@ -12,10 +12,10 @@ so we can run a calculation and reason about it in the same language.
 The same model definition serves training, graph transformations, certificate checks and proofs.
 The verification tools answer questions such as whether a classifier keeps its prediction across
 an input region. Through FloatLib, we can choose the numerical precision and prove bounds on
-rounding and numerical error under stated assumptions. The CPU tape, the GPU tape and the
-verifier's graph lowering all record operators from one table, `TorchLean.Op`. Each operator has
-one rule for its value and gradient. The CPU tape runs that rule, and the GPU tape runs the
-operator's LibTorch implementation. Automatic differentiation is TorchLean's own: the tape
+rounding and numerical error under stated assumptions. One autograd tape serves CPU tensors and
+GPU buffers. Both record operators from `TorchLean.Op`, the same table used by graph lowering and
+verification. The CPU executes the operator's forward and gradient rule; the GPU uses its
+LibTorch implementation. Automatic differentiation is TorchLean's own: the tape
 and the backward pass are Lean code, and on the GPU, LibTorch's ATen operations compute the tensor
 values and local gradients. That external GPU code is a trust boundary, outside the Lean proofs.
 

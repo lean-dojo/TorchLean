@@ -17,10 +17,9 @@ Some operators need an operation that not every scalar type has: the integral ro
 (`Rounding`), the error function (`Erf`), the inverse trigonometric functions (`InverseTrig`),
 the cube root (`Cbrt`), C's `nextafter` (`NextAfter`) and the interchange word of a binary format
 (`Bits`, for `bitcast`). `Op.Capability C α` holds an instance of `C α` where synthesis finds one
-and `none` otherwise, and `Op.Capabilities α` bundles these six with decidable equality
-(`DecidableEq`), which no operator reads. `Op.rule?` reads the six, so an operator that needs a
-missing capability has no rule at that scalar. `Float` has `Rounding`, `InverseTrig` and
-`DecidableEq` but no `Erf`, `Cbrt`, `NextAfter` or `Bits`, while the configured binary formats of
+and `none` otherwise, and `Op.Capabilities α` bundles these six. An operator that needs a missing
+capability has no rule at that scalar. `Float` has `Rounding` and `InverseTrig` but no `Erf`,
+`Cbrt`, `NextAfter` or `Bits`, while the configured binary formats of
 FloatLib have every capability but `Erf`.
 -/
 
@@ -49,10 +48,6 @@ instance erf [instance_ : Erf α] : Op.Capability Erf α := ⟨some instance_⟩
 /-- The inverse trigonometric functions, where the scalar has them. -/
 instance inverseTrig [instance_ : InverseTrig α] : Op.Capability InverseTrig α := ⟨some instance_⟩
 
-/-- Decidable equality, where the scalar has it. -/
-instance decidableEq [instance_ : DecidableEq α] : Op.Capability DecidableEq α :=
-  ⟨some instance_⟩
-
 /-- The cube root, where the scalar has it. -/
 instance cbrt [instance_ : Cbrt α] : Op.Capability Cbrt α := ⟨some instance_⟩
 
@@ -72,8 +67,6 @@ class Op.Capabilities (α : Type) where
   erf? : Option (Erf α)
   /-- The inverse trigonometric functions. -/
   inverseTrig? : Option (InverseTrig α)
-  /-- Decidable equality. -/
-  decidableEq? : Option (DecidableEq α)
   /-- The cube root. -/
   cbrt? : Option (Cbrt α)
   /-- C's `nextafter`. -/
@@ -84,9 +77,9 @@ class Op.Capabilities (α : Type) where
 /-- The capabilities a scalar type has, each found by synthesis. -/
 instance Op.Capabilities.ofCapability {α : Type} [rounding : Op.Capability Rounding α]
     [erf : Op.Capability Erf α] [inverseTrig : Op.Capability InverseTrig α]
-    [decidableEq : Op.Capability DecidableEq α] [cbrt : Op.Capability Cbrt α]
+    [cbrt : Op.Capability Cbrt α]
     [nextafter : Op.Capability NextAfter α] [bits : Op.Capability Bits α] : Op.Capabilities α :=
-  ⟨rounding.get?, erf.get?, inverseTrig.get?, decidableEq.get?, cbrt.get?, nextafter.get?,
+  ⟨rounding.get?, erf.get?, inverseTrig.get?, cbrt.get?, nextafter.get?,
     bits.get?⟩
 
 end TorchLean

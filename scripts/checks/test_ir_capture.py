@@ -155,6 +155,66 @@ def _same(case, actual, expected, message=None):
             case.assertEqual((a, math.copysign(1.0, a)), (b, math.copysign(1.0, b)), message)
 
 
+class OperatorTableTests(unittest.TestCase):
+    def test_environment_overrides_select_their_own_table(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from torchlean import _table
+
+        def table(source):
+            return {"format": source, "version": 1, "dtypes": {}, "codes": {}, "pointwise": {}}
+
+        def checker(source):
+            source = source if source is not None else os.environ.get("TORCHLEAN_VERIFY")
+            return SimpleNamespace(op_table=lambda *_: json.dumps(table(source)))
+
+        # Changing the default checker must not reuse the previous checker's codec records.
+        with patch.dict(_table._TABLES, {}, clear=True), patch.dict(os.environ), \
+                patch.object(_table, "Checker", checker):
+            os.environ.pop("TORCHLEAN_OP_TABLE", None)
+            for source in ("checker-A", "checker-B", "checker-A"):
+                os.environ["TORCHLEAN_VERIFY"] = source
+                self.assertEqual(_table.op_table()["format"], source)
+            self.assertEqual(_table.op_table("explicit-checker")["format"], "explicit-checker")
+
+            # A path appends `ir`, but a command sequence is executed exactly as supplied.
+            def command_checker(source):
+                command = [str(source), "ir"] if isinstance(source, (str, Path)) else source
+                return SimpleNamespace(op_table=lambda *_: json.dumps(table(" ".join(command))))
+
+            with patch.object(_table, "Checker", command_checker):
+                self.assertEqual(_table.op_table("command-checker")["format"], "command-checker ir")
+                self.assertEqual(_table.op_table(["command-checker"])["format"], "command-checker")
+                self.assertEqual(_table.op_table(["command-checker", "ir"])["format"],
+                                 "command-checker ir")
+
+        # A table file overrides that choice, and switching files changes the codec records too.
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.dict(_table._TABLES, {}, clear=True), patch.dict(os.environ):
+            for source in ("table-A", "table-B", "table-A"):
+                path = Path(temporary) / source
+                path.write_text(json.dumps(table(source)), encoding="utf-8")
+                os.environ["TORCHLEAN_OP_TABLE"] = str(path)
+                self.assertEqual(_table.op_table()["format"], source)
+
+            # Rebuilding a checker or rewriting a table in place also changes its meaning.
+            modified = path.stat().st_mtime_ns + 1_000_000
+            path.write_text(json.dumps(table("table-C")), encoding="utf-8")
+            os.utime(path, ns=(path.stat().st_atime_ns, modified))
+            self.assertEqual(_table.op_table()["format"], "table-C")
+            os.environ.pop("TORCHLEAN_OP_TABLE")
+
+            def file_checker(source):
+                return SimpleNamespace(op_table=lambda *_: path.read_text(encoding="utf-8"))
+
+            with patch.object(_table, "Checker", file_checker):
+                self.assertEqual(_table.op_table(path)["format"], "table-C")
+                modified = path.stat().st_mtime_ns + 1_000_000
+                path.write_text(json.dumps(table("table-D")), encoding="utf-8")
+                os.utime(path, ns=(path.stat().st_atime_ns, modified))
+                self.assertEqual(_table.op_table(path)["format"], "table-D")
+
+
 class CheckerCase(unittest.TestCase):
     def assert_passes(self, report):
         self.assertTrue(report["ok"], _statuses(report))
@@ -2066,10 +2126,27 @@ class PyTorchGeneralOperatorTests(CheckerCase):
             return (torch.floor(x), torch.ceil(x), torch.round(x), torch.trunc(x), torch.fix(x),
                     torch.frac(x), torch.sign(x))
 
+        class Roundings(torch.nn.Module):
+            def forward(self, x):
+                return roundings(x)
+
         for dtype in (torch.float32, torch.bfloat16, torch.float16):
             for core in (False, True):
                 with self.subTest(dtype=dtype, core=core):
-                    self.assert_passes(self.verify(roundings, x.to(dtype), core=core))
+                    values = x.to(dtype)
+                    if core:
+                        # PyTorch's frac decomposition can change the sign of zero. The import
+                        # must match that captured graph, including its zero signs.
+                        graph = torch.export.export(Roundings(), (values,)).run_decompositions()
+                        expected = graph.module()(values)
+                        report = self.verify(roundings, values, core=True, checks=EXECUTE)
+                        self.assert_passes(report)
+                        outputs = _outputs(report)
+                        self.assertEqual(len(outputs), len(expected))
+                        for got, want in zip(outputs, expected):
+                            _same(self, got.flatten().tolist(), want.flatten().tolist())
+                    else:
+                        self.assert_passes(self.verify(roundings, values))
         kinds = _tags(self.artifact(roundings, x))
         # torch.sign is captured as comparisons and selections: it maps a NaN to 0 and -0 to +0,
         # where the IR's sign gives the NaN and keeps -0.
@@ -3211,6 +3288,9 @@ class PyTorchGeneralOperatorTests(CheckerCase):
         # cdist (direct, and the matmul expansion beyond 25 rows), pdist, linear and bilinear
         # upsampling with PyTorch's per-axis indices and weights, and grid_sampler_2d through a
         # runtime gather at the floored corners: within a tolerance of the CPU kernels.
+        import math
+        from fractions import Fraction
+
         torch = self.torch
         functional = torch.nn.functional
         generator = torch.Generator().manual_seed(9)
@@ -3265,8 +3345,31 @@ class PyTorchGeneralOperatorTests(CheckerCase):
                         report = self.verify(function, *arguments, checks=EXECUTE, core=core)
                         self.assert_passes(report)
                         self.assertEqual(len(_outputs(report)), len(function(*arguments)))
-                        for got, want in zip(_outputs(report), function(*arguments)):
-                            torch.testing.assert_close(got, want, rtol=1e-5, atol=1e-5)
+                        for index, (got, want) in enumerate(zip(_outputs(report), function(*arguments))):
+                            if name == "expanded" and index < 2:
+                                # Self-distances cancel in the squared-distance expansion. Two
+                                # d-term norms and the (d+2)-term dot have total absolute terms
+                                # 4||x||²; γ_(2d+4) bounds their rounding paths. The clamped root
+                                # is at most (1+u) sqrt(4γ||x||²). Compute that bound outward from
+                                # exact input rationals; keep the off-diagonal comparison strict.
+                                width = arguments[0].shape[-1]
+                                u = Fraction(torch.finfo(dtype).eps) / 2
+                                gamma = (2 * width + 4) * u / (1 - (2 * width + 4) * u)
+                                bounds = []
+                                for row in arguments[0][:min(got.shape)].tolist():
+                                    energy = sum(Fraction(v) ** 2 for v in row)
+                                    squared = 4 * gamma * energy * (1 + u) ** 2
+                                    bounds.append(math.nextafter(math.sqrt(math.nextafter(
+                                        float(squared), math.inf)), math.inf) if squared else 0.0)
+                                bound = torch.tensor(bounds, dtype=torch.float64)
+                                for diagonal in (got.diagonal(), want.diagonal()):
+                                    self.assertTrue(bool(((diagonal >= 0) & (diagonal <= bound)).all()),
+                                                    (diagonal, bound))
+                                other = ~torch.eye(*got.shape, dtype=torch.bool)
+                                torch.testing.assert_close(got[other], want[other],
+                                                           rtol=1e-5, atol=1e-5)
+                            else:
+                                torch.testing.assert_close(got, want, rtol=1e-5, atol=1e-5)
 
     def test_random_operators_use_keyed_streams(self):
         # rand, randperm and training-mode dropout draw from TorchLean's generator under keys
@@ -3322,8 +3425,13 @@ class PyTorchGeneralOperatorTests(CheckerCase):
         for name, function in (("rand", lambda x: x + torch.rand(4, 5, generator=generator)),
                                ("randn", lambda x: x + torch.randn(4, 5, generator=generator))):
             with self.subTest(generator=name):
-                self.assert_refused(self.verify(function, x, checks=("structure",)),
-                                    f"aten.{name}.generator")
+                # Some PyTorch versions refuse Generator while capturing, before an ATen node
+                # reaches the importer. Both stages must report it as unsupported.
+                report = self.verify(function, x, checks=("structure",))
+                self.assertFalse(report["ok"])
+                status, message = _statuses(report)["structure"]
+                self.assertEqual(status, "unsupported")
+                self.assertRegex(message, rf"aten\.{name}\.generator|torch\._C\.Generator")
 
     def test_randn_uses_a_keyed_normal_sampler(self):
         # randn is Op.randn (Random.normal) under a key k = splitmix64(0) + j 2^32 modulo

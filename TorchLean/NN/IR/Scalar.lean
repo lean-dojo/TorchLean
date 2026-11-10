@@ -328,7 +328,7 @@ def arithmetic : (d : DType) → Option (Context (Carrier d))
 @[instance_reducible]
 def capabilities : (d : DType) → Op.Capabilities (Carrier d)
   | .binary format => inferInstanceAs (Op.Capabilities (Binary.Scalar format))
-  | _ => ⟨none, none, none, none, none, none, none⟩
+  | _ => ⟨none, none, none, none, none, none⟩
 
 end Reference
 

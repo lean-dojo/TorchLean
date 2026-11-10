@@ -6,9 +6,7 @@ I've been thinking about how we can bring Lean closer to the code people already
 write for machine learning. If we have a model in JAX or PyTorch, can we keep that
 code and prove something about its computations without writing the model again
 in Lean? That's what we're working toward with TorchLean's intermediate
-representation (IR).
-
-The idea is to capture the tensor operations from the original code and translate
+representation (IR). The idea is to capture the tensor operations from the original code and translate
 the supported ones into our IR. Then we can work with their Lean definitions,
 reuse mathlib and our tensor lemmas, and bring in FloatLib when rounding matters.
 We need to keep the shapes, axes, constants and precision choices along the way.
@@ -25,12 +23,12 @@ We're still building the IR and its importers. Today we accept supported Jaxpr
 and captured PyTorch graphs, check them, and run reference computations. Some
 graphs also have Lean proofs, including the permutation theorem below. Importing
 a graph does not itself prove the translation faithful or verify the kernels that
-JAX or PyTorch executes.
-
-The numerical issues we found were in our translation and reference paths. For
+JAX or PyTorch executes. The numerical issues we found were in our translation and reference paths. For
 example, replacing division with multiplication by a rounded reciprocal can
-change the answer. We corrected those paths or rejected captures that would
-change the calculation. These examples have not identified a bug in JAX or XLA.
+change the answer. We corrected the JAX division path; the [PyTorch import
+notes](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/NN/PyTorch/README.md)
+describe where capture still differs from eager PyTorch. These examples have not identified a bug
+in JAX or XLA.
 
 For an ML engineer considering lower precision, this gives us a way to
 inspect where a captured model rounds its values and run that calculation in

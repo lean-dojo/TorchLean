@@ -30,11 +30,9 @@ import TorchLean.NN.IR.Eval
   rounding direction, with NaN, infinities and integers the type cannot hold as errors
   (`toInteger_cast_binary`). Integer types convert among themselves modulo `2 ^ width`, and integers
   and binary values convert to Booleans as `x != 0`.
-- `OpContracts.lean`: one contract per operation with a nontrivial shape rule. A contract returns
-  the checked attributes in the form the specification operator takes, with the output shape. The
-  contracts cover dimension attributes read against the rank (`dimOf`, `dimsOf`, `perDim`),
-  broadcast placements, slices, gathers, index tensors, `cat`, reductions, contractions, matmul,
-  pooling and convolution.
+- `OpContracts.lean`: the shape helpers used by the model recorder and the bound passes: slices,
+  matmul decomposition, pooling and convolution. Other operation shapes are checked when
+  `Op.decode` constructs the registered operator from its wire record.
 - `MatmulLayout.lean`: the flat layout of a matrix product (`IR.MatmulDims`) and the row-major
   contraction over it (`MatmulDims.matmulFlat`). On operands whose batch prefixes broadcast to the
   product's leading shape, the contraction is the registered batched product `Tensor.batchMatmul`
@@ -101,10 +99,9 @@ import TorchLean.NN.IR.Eval
   (`Pointwise.typed?_isSome_of_integerOnly`) and `cbrt` and `nextafter` at a binary format, and
   `Pointwise.logical?` gives the logical operators of Booleans. The op table lists every form
   ([below](#the-artifact)). No theorem mentions `fragment?`.
-- `Attr.lean`: the records of a node's static attributes and `Values.get`, output `k` of a list
-  of values. The records are the constant index tensor of a `gather` or `scatter` node
-  (`IndexTensor`), the per-axis window of a pooling (`WindowConfig`) and the shape metadata of a
-  convolution (`ConvConfig`).
+- `Attr.lean`: the model recorder's pooling-window record (`WindowConfig`), convolution geometry
+  (`ConvConfig`) and `Values.get`, output `k` of a list of values. Index tensors flow through the
+  operator's typed index ports.
 - Execution and planning of operator graphs: `IR.Graph.runBuffers`
   (`TorchLean.NN.Kernel.Graph`) runs an operator graph on resident binary32 buffers, each custom
   operation by its checked program and every other operator by its entry in `LibTorch.Kernel.ofOp`.
@@ -181,26 +178,26 @@ step without a scalar runs it without a `Context`. An operator with a value, fro
 port has none, so at the scalar a data-movement operator runs by the runtime's arithmetic at that
 scalar and fails where the runtime has none.
 
-A registered operator's ports are its shape rule: `Op.decode` recomputes them from the record's
-attributes, and `Program.check` accepts a step only when each reference names an earlier output
-at a port its input accepts. `OpContracts.lean` holds one contract for each operation whose output
-shape is neither an operand shape nor a shape written in the operation:
+A registered operator's ports are its shape rule: `Op.decode` checks the wire attributes and
+constructs an operator with the resulting ports. `Program.check` accepts a step only when each
+reference names an earlier output at a port its input accepts. `Op.check` covers attributes that
+are not enforced by the constructor's type, such as a pooling window or distinct reduction axes.
 
-| Operation | Contract |
+| Operation | Shape check |
 | --- | --- |
-| `broadcast` | `IR.broadcastDims` |
+| `broadcast` | `Op.decode` constructs `Shape.BroadcastDims` |
 | `permute` | `TorchLean.Shape.perm?` |
-| `slice` | `IR.sliceDims` and `TorchLean.Shape.slice` |
-| `pad` | `IR.perDim` and `TorchLean.Shape.pad` |
-| `cat` | `IR.catShape` |
-| `gather`, `scatter` | `IR.planGather`, `IndexTensor.toTensor` |
-| `reduce`, `mean` | `IR.reduceDims`, `IR.dimsOf` and `TorchLean.Shape.reduce` |
-| `contract` | `IR.contractDims` and `TorchLean.Shape.contract` |
-| `matmul`, `scaledMatmul` | `IR.inferMatmulDims` (operand decomposition) |
-| `maxPool`, `avgPool` | `IR.planPool` via `inferWindowOutShape` |
-| `conv` | `IR.inferConvConfigOutShape` |
-| `topk` | `IR.dimOf` and `TorchLean.Shape.slice` of the first `k` entries |
-| dimensions of `softmax`, `logSoftmax`, `layerNorm`, `batchNorm`, `topKMask`, `cumsum`, `cumprod`, `cummax`, `cummin`, `sort`, `flip`, `indices` | `IR.dimOf`, `IR.dimsOf` |
+| `slice` | `Op.decode` constructs `Shape.SliceValid`; the model recorder uses `IR.sliceDims` |
+| `pad` | One low, high and interior padding value per axis; `TorchLean.Shape.pad` gives the output shape |
+| `cat` | Input extents off the concatenation axis agree |
+| `gather`, `scatter` | `Shape.GatherValid` for gather and distinct indexed axes for scatter; typed index ports carry the indices |
+| `reduce`, `mean` | Checked reduction axes and `TorchLean.Shape.reduce`; extrema require nonempty fibers |
+| `contract` | `Shape.ContractValid` and `TorchLean.Shape.contract` |
+| `matmul`, `scaledMatmul` | Checked vector promotion and batch broadcasting; bound passes use `IR.inferMatmulDims` |
+| `maxPool`, `avgPool` | Checked window geometry; the model recorder uses `IR.planPool` |
+| `conv` | Checked layouts and geometry; the model recorder uses `IR.inferConvConfigOutShape` |
+| `topk` | A valid axis and `k` no larger than its extent |
+| dimensions of `softmax`, `logSoftmax`, `layerNorm`, `batchNorm`, `topKMask`, `cumsum`, `cumprod`, `cummax`, `cummin`, `sort`, `flip`, `indices` | Checked `Fin rank` axes |
 
 ## How Core ATen Operators Enter The IR
 

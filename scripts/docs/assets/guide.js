@@ -3,6 +3,19 @@
   const storageKey = "torchlean-guide-read-v1";
   const script = document.currentScript;
   const rootUrl = new URL(".", script ? script.src : window.location.href);
+  const themeKey = "torchlean-theme";
+
+  function setTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    const toggle = document.querySelector("[data-guide-theme-toggle]");
+    if (toggle) {
+      toggle.textContent = theme === "dark" ? "Light" : "Dark";
+      toggle.setAttribute("aria-label", theme === "dark" ? "Use light theme" : "Use dark theme");
+    }
+  }
+
+  try { setTheme(localStorage.getItem(themeKey) === "dark" ? "dark" : "light"); }
+  catch (_) { setTheme("light"); }
 
   function installDocstringMath() {
     if (!window.marked || !window.katex) return;
@@ -105,12 +118,23 @@
       a.textContent = label;
       nav.appendChild(a);
     }
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "tl-guide-theme-toggle";
+    toggle.dataset.guideThemeToggle = "";
+    toggle.addEventListener("click", () => {
+      const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      setTheme(theme);
+      try { localStorage.setItem(themeKey, theme); } catch (_) { /* Storage may be unavailable. */ }
+    });
+    nav.appendChild(toggle);
     if (titleWrapper) {
       titleWrapper.appendChild(nav);
     } else {
       const search = header.querySelector("#search-wrapper");
       header.insertBefore(nav, search || null);
     }
+    setTheme(document.documentElement.dataset.theme);
   }
 
   function polishGuideHomepage() {

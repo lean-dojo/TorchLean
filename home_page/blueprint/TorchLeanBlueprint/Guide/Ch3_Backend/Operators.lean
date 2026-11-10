@@ -229,8 +229,8 @@ Some operators need an operation that not every scalar type has. `Rounding` give
 roundings, the rounded divisions, `fmod` and `remainder`. `Erf` gives the error function (for `erf`
 and the exact GELU), and `InverseTrig` the inverse trigonometric functions `atan`, `asin`, `acos`
 and `atan2`. `Cbrt` gives the cube root, `NextAfter` C's `nextafter` and `Bits` the interchange word
-of a binary format (for `bitcast`). `Op.Capabilities α` bundles these six and `DecidableEq`, which
-no operator reads, each found by instance synthesis. An operator that needs a missing capability has
+of a binary format (for `bitcast`). `Op.Capabilities α` bundles these six capabilities, found by
+instance synthesis. An operator that needs a missing capability has
 no rule at that scalar:
 
 ```lean (name := regCapabilities)

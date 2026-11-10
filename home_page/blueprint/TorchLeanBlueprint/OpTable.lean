@@ -660,7 +660,6 @@ def posOwn (l : Leaf) : Option Bool :=
 def needClasses : List (Name × String) :=
   [(``TorchLean.Op.Need.rounding, "Rounding"), (``TorchLean.Op.Need.erf, "Erf"),
    (``TorchLean.Op.Need.inverseTrig, "InverseTrig"),
-   (``TorchLean.Op.Need.decidableEq, "DecidableEq"),
    (``TorchLean.Op.Need.cbrt, "Cbrt"), (``TorchLean.Op.Need.nextafter, "NextAfter"),
    (``TorchLean.Op.Need.bits, "Bits")]
 

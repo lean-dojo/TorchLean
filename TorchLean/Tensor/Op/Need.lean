@@ -19,7 +19,7 @@ scalar, `Erf` for `erf` and the exact GELU, `InverseTrig` for the inverse trigon
 and `atan2`, `Cbrt` for `cbrt`, `NextAfter` for `nextafter`, `Bits` of the operator's width for a
 `bitcast` with a scalar side, and none for every other operator. An instance of
 `Op.Need.Supplied α n` is a capability record that holds `n`, found from `Rounding α`, `Erf α`,
-`InverseTrig α`, `DecidableEq α`, `Cbrt α`, `NextAfter α` or `Bits α`, so `Op.Supported α op` is
+`InverseTrig α`, `Cbrt α`, `NextAfter α` or `Bits α`, so `Op.Supported α op` is
 synthesized at a call site that names the operator exactly when the scalar has what it needs. The
 eager CPU tape and the typed graph run `Op.rule?` with that record, the eager CUDA tape runs the
 operator's LibTorch entry, and the verifier recorder reads no record: it lowers only operators whose
@@ -48,8 +48,6 @@ inductive Op.Need where
   | erf
   /-- The inverse trigonometric functions, `InverseTrig`. -/
   | inverseTrig
-  /-- Decidable equality, `DecidableEq`. -/
-  | decidableEq
   /-- The cube root, `Cbrt`. -/
   | cbrt
   /-- C's `nextafter`, `NextAfter`. -/
@@ -77,7 +75,6 @@ def Op.Need.Available {α : Type} (n : Op.Need) (caps : Op.Capabilities α) : Pr
   | .rounding => caps.rounding?.isSome = true
   | .erf => caps.erf?.isSome = true
   | .inverseTrig => caps.inverseTrig?.isSome = true
-  | .decidableEq => caps.decidableEq?.isSome = true
   | .cbrt => caps.cbrt?.isSome = true
   | .nextafter => caps.nextafter?.isSome = true
   | .bits width => (caps.bits?.any fun b => decide (b.width = width)) = true
@@ -90,7 +87,6 @@ instance Op.Need.decidableAvailable {α : Type} (n : Op.Need) (caps : Op.Capabil
   | .rounding => inferInstanceAs (Decidable (caps.rounding?.isSome = true))
   | .erf => inferInstanceAs (Decidable (caps.erf?.isSome = true))
   | .inverseTrig => inferInstanceAs (Decidable (caps.inverseTrig?.isSome = true))
-  | .decidableEq => inferInstanceAs (Decidable (caps.decidableEq?.isSome = true))
   | .cbrt => inferInstanceAs (Decidable (caps.cbrt?.isSome = true))
   | .nextafter => inferInstanceAs (Decidable (caps.nextafter?.isSome = true))
   | .bits width => inferInstanceAs
@@ -107,7 +103,7 @@ class Op.Need.Supplied (α : Type) (n : Op.Need) where
 
 /-- The record without capabilities, for an operator that needs none. -/
 instance Op.Need.Supplied.empty {α : Type} : Op.Need.Supplied α .none :=
-  ⟨⟨Option.none, Option.none, Option.none, Option.none, Option.none, Option.none, Option.none⟩,
+  ⟨⟨Option.none, Option.none, Option.none, Option.none, Option.none, Option.none⟩,
     trivial⟩
 
 /-- The record holding the scalar's `Rounding`. -/
@@ -122,11 +118,6 @@ instance Op.Need.Supplied.erf {α : Type} [instance_ : Erf α] : Op.Need.Supplie
 /-- The record holding the scalar's `InverseTrig`. -/
 instance Op.Need.Supplied.inverseTrig {α : Type} [instance_ : InverseTrig α] :
     Op.Need.Supplied α .inverseTrig :=
-  ⟨Op.Capabilities.ofCapability, rfl⟩
-
-/-- The record holding the scalar's `DecidableEq`. -/
-instance Op.Need.Supplied.decidableEq {α : Type} [instance_ : DecidableEq α] :
-    Op.Need.Supplied α .decidableEq :=
   ⟨Op.Capabilities.ofCapability, rfl⟩
 
 /-- The record holding the scalar's `Cbrt`. -/
@@ -176,7 +167,7 @@ what the operator needs. -/
 theorem isSome_rule?_iff (caps : Op.Capabilities α) {ins outs : List Port} (op : Op ins outs)
     (h : op.hasRule = true) :
     (@Op.rule? α _ _ caps ins outs op).isSome = true ↔ op.need.Available caps := by
-  obtain ⟨rounding, erf, inverseTrig, decidableEq, cbrt, nextafter, bits⟩ := caps
+  obtain ⟨rounding, erf, inverseTrig, cbrt, nextafter, bits⟩ := caps
   cases op
   case div mode e => cases mode <;> cases e <;> first
     | exact iff_of_true rfl trivial

@@ -693,9 +693,10 @@ forward: an operator is invoked on the values its references name and returns it
 values (`TorchLean.Op.invoke`, `Op.rule?`), and a custom operation runs the checked
 program that the payload holds for its node. Those same rules carry pullbacks and (for some
 operators) forward-mode rules, but the evaluator computes no gradients: the reverse sweep belongs
-to the eager tape. `IR.Graph.tangent` uses the forward-mode rules to append to a graph the
-nodes that compute its directional derivative along given seeds. A rule makes no correctness claim.
-Its certificates are separate theorems, attached to the operator by the `op_cert` attribute.
+to the eager tape. `IR.Graph.tangent` appends tangent calculations using a separate set of graph
+rewrite rules. No theorem yet connects those rewrites to `Op.Rule.jvp?` or to a derivative, so a
+tangent graph is not itself a checked derivative proof. An operator's correctness certificates are
+separate theorems attached by the `op_cert` attribute.
 
 Both paths honor the homogeneous-element contract from {ref "tensors-shapes"}[Tensors And Shapes]:
 a typed graph is parameterized by one `α`, and an IR evaluation (`IR.Graph.eval`) receives

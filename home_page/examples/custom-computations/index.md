@@ -4,11 +4,9 @@ title: Custom Tensor Computations
 
 Let's write a function in Lean and run it on a tensor. We'll start with a square in the editor,
 then add parameters, sum rows and repeat an update. We'll also ask for a gradient without
-rewriting the function.
-
-LibTorch already handles our standard GPU model operations. But for a different activation or a
-small custom calculation, we'd like to write it in Lean without maintaining a second implementation
-in CUDA, and the examples below show which calculations we can run this way.
+rewriting the function. LibTorch already handles our standard GPU model operations. For a different
+activation or a small custom calculation, we'd like to write it in Lean without maintaining a second
+implementation in CUDA, and the examples below show which calculations we can run this way.
 
 ## Start with a square
 
@@ -31,9 +29,8 @@ list conversion or buffer handling. CPU is the default.
 
 ## Run on GPU
 
-We select the device at the call site:
-
-The device is a `Backend.Device`, and we write its constructors with a leading dot.
+We select the device at the call site. Its type is `Backend.Device`, and we write its constructors
+with a leading dot:
 
 ```lean
 def onCpu : IO (Tensor Float32 [3]) :=

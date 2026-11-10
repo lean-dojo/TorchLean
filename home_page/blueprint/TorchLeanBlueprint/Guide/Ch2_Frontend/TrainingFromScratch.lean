@@ -294,7 +294,7 @@ Zero biases do not make the initial model zero: the two weight matrices already 
 values.
 
 PyTorch makes both decisions differently. Its `Linear` uses Kaiming uniform initialization
-{Informal.citep he2015}[] with bound $`1/\sqrt{n_{\Text{in}}}` and gives the bias a random value
+{Informal.citep he2015}[] with bound $`1/\sqrt{n_{\text{in}}}` and gives the bias a random value
 from the same interval:
 
 ```terminal +output

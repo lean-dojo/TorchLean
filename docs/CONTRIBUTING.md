@@ -155,7 +155,7 @@ operator is added there once:
    `Op.rule?_cast_bool` and `Op.rule?_cast_index`) in the module of its operator family under
    `TorchLean/Tensor/Op/Table/`. Attributes that the type does not check go in `Op.check`.
 4. In `TorchLean/Tensor/Op/Need.lean`, give the operator an arm of `Op.need` if its rule reads an
-   optional capability (`Rounding`, `Erf`, `InverseTrig`, `DecidableEq`, `Cbrt`, `NextAfter` or
+   optional capability (`Rounding`, `Erf`, `InverseTrig`, `Cbrt`, `NextAfter` or
    `Bits`). `Op.needsCapability` is computed from `Op.need`. In `TorchLean/Tensor/Op/Invoke.lean`,
    list the operator in `Op.checksValues` if it checks its input values.
    `Op.rule?_capabilities` and `Op.validate_eq_ok` there, and `Node.eval_ports` in

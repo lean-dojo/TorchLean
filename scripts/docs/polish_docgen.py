@@ -188,6 +188,36 @@ def rewrite_floatlib_profile_link(docs: Path) -> None:
         page.write_text(updated, encoding="utf-8")
 
 
+def repair_source_file_links(docs: Path) -> None:
+    """Repair source-file paths that DocGen mistook for published module links."""
+    repository = Path(__file__).resolve().parents[2]
+    code_link = re.compile(r'<code><a href="([^"]+)">([^<]+\.lean)</a></code>')
+    for page in docs.rglob("*.html"):
+        text = page.read_text(encoding="utf-8")
+        source_base = re.search(r'https://github\.com/lean-dojo/TorchLean/blob/[^/"<>]+/', text)
+
+        def repair(match: re.Match[str]) -> str:
+            href, label = match.groups()
+            parsed = urlsplit(href)
+            if parsed.scheme or parsed.netloc or not parsed.path.endswith(".html"):
+                return match.group(0)
+            if (page.parent / unquote(parsed.path)).is_file():
+                return match.group(0)
+            # A short path in a module docstring is relative to that module's directory.
+            relative_api = Path(label).with_suffix(".html")
+            if (page.parent / relative_api).is_file():
+                return f'<code><a href="{relative_api.as_posix()}">{label}</a></code>'
+            source = (repository / label).resolve()
+            if source.is_relative_to(repository) and source.is_file() and source_base:
+                return f'<code><a href="{source_base[0]}{label}">{label}</a></code>'
+            # An external example may be cited without having an API page in this build.
+            return f"<code>{label}</code>"
+
+        updated = code_link.sub(repair, text)
+        if updated != text:
+            page.write_text(updated, encoding="utf-8")
+
+
 def write_index(docs: Path) -> None:
     """Replace DocGen's default index with a TorchLean-specific API index.
 
@@ -202,6 +232,7 @@ def write_index(docs: Path) -> None:
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="../assets/css/code.css">
   <link rel="icon" href="./favicon.svg">
   <link rel="mask-icon" href="./favicon.svg" color="#000000">
   <link rel="prefetch" href=".//declarations/declaration-data.bmp" as="image">
@@ -388,6 +419,18 @@ def rename_docgen_header(docs: Path) -> None:
         depth = len(path.relative_to(docs).parent.parts)
         docs_root = "../" * depth if depth else "./"
         site_root = docs_root + "../"
+        if "assets/css/code.css" not in updated:
+            updated = updated.replace(
+                "</head>",
+                f'<link rel="stylesheet" href="{site_root}assets/css/code.css">\n</head>',
+                1,
+            )
+        if "language-lean" in updated and "lean-highlight.js" not in updated:
+            updated = updated.replace(
+                "</head>",
+                f'<script defer src="{site_root}assets/js/lean-highlight.js"></script>\n</head>',
+                1,
+            )
         if "tl-docsite-links" not in updated and '<h2 class="header_filename' in updated:
             links = (
                 '<div class="tl-docsite-links" aria-label="TorchLean site links">'
@@ -522,6 +565,7 @@ def main() -> None:
     add_nav_hint(docs)
     rename_docgen_header(docs)
     rewrite_floatlib_profile_link(docs)
+    repair_source_file_links(docs)
     configure_math_runtime(docs)
     validate_math_runtime(docs)
 

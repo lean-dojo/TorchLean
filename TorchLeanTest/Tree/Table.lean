@@ -16,8 +16,9 @@ The host checks build the tables of FloatLib's correctly rounded `exp`, `expMinu
 `logPlus1` in the configured formats e4m3, e5m2, 12-bit, binary16 and bfloat16 and in the 8-bit
 formats without infinities e4m3fn and e4m3fnuz, of TorchLean's correctly rounded `tan`, negation,
 `0 - x`, the identity and a constant in the 8-bit formats, and of the reciprocal in e4m3 and
-e5m2. At every word of the format the kernel of each table, run with `evaluate` over the reader of
-its inputs, gives the function bit for bit, signed zeros, infinities and NaN payloads included.
+e5m2. `Table.make` checks each table at every word, signed zeros, infinities and NaN payloads
+included. The returned `Table.Of` carries that result, and `Table.Of.evaluate_kernel` proves that
+the kernel gives the function when its inputs hold the table.
 Two kernels apply tables inside arithmetic, `log1p (exp x)` with two tables and `x * exp x`, and
 give the composite at every word of the 12-bit format, binary16 and bfloat16. A read past the
 input is the failure of the kernel. NaNs and zeros read no table, the other inputs read the keys,
@@ -115,17 +116,12 @@ and `2`. -/
 def timesSelf (F : Table α) : Expr α [.index] .scalar :=
   .letIn (.load 0 (.var .zero)) (.binary .mul (.var .zero) (F.apply 1 2 (.var .zero)))
 
-/-- Checks the table of each function of `fs`: the kernel gives the function at every word of
-`α`, bit for bit. -/
-@[noinline, nospecialize] def checkTables [Scalar α] [Inhabited α] (label : String)
+/-- Require a checked table for every function of `fs`. `Table.make` checks every word, and
+`Table.Of.evaluate_kernel` proves the kernel's correspondence from the returned certificate. -/
+@[noinline, nospecialize] def checkTables [Scalar α] (label : String)
     (fs : List (String × (α → α))) : IO Unit := do
-  let A : Arithmetic α := Scalar.arithmetic
-  let xs : Array α := allWords
   for (name, f) in fs do
-    let T ← tableOf label name f
-    let R := Reader.ofArrays #[xs, T.table.keys, T.table.values]
-    ensureNone s!"{label} {name}: the kernel"
-      (mismatches f xs fun i => evaluate A T.table.kernel R i.toUInt64)
+    discard <| tableOf label name f
 
 /-- Checks the kernels `composite` and `timesSelf` with the tables of `f` and `g` at every word,
 the failure of a read past the input, the reads of the table of `f`, none for NaNs and zeros and
@@ -276,7 +272,7 @@ def run : IO Unit := do
     (ExecFloat.Binary.CorrectlyRounded.exp · {})
   IO.println "  tables: kernel tables of exp, expm1, log and log1p in seven formats, of tan, \
     negation, 0 - x, the identity and a constant in four and of the reciprocal in two, bit for \
-    bit at every word on the host, a table of depth 0, the refusals and folds of tables"
+    bit in checked tables on the host, a table of depth 0, the refusals and folds of tables"
 
 /-- The words of `xs` as a kernel input. -/
 def inputWords [Scalar α] (xs : Array α) : ByteArray :=

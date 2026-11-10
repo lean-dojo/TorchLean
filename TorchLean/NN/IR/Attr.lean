@@ -11,9 +11,8 @@ public import TorchLean.Tensor.Op.Port
 /-!
 # Attribute records of operator nodes
 
-The records that a node's static attributes form: the constant index tensor of a `gather` or
-`scatter` node (`IndexTensor`), the per-axis window of a pooling (`WindowConfig`) and the shape
-metadata of a convolution (`ConvConfig`). Their shape contracts are in
+The per-axis window of pooling (`WindowConfig`) and the shape metadata of convolution
+(`ConvConfig`), used by the model recorder. Their shape contracts are in
 `TorchLean.NN.IR.OpContracts`, and the recording of registered operators (`TorchLean.NN.IR.Record`)
 builds the windows of its pooling and convolution steps.
 
@@ -24,20 +23,6 @@ read each argument of a step with it.
 @[expose] public section
 
 namespace TorchLean
-
-/-- A constant index tensor carried by a `gather` or `scatter` node.
-
-For every coordinate of `shape` there is one index per indexed dimension of the node, stored
-row-major with the dimension innermost: the index along the `k`-th indexed dimension at the flat
-coordinate `i` is `values[i * k' + k]`, where `k'` is the number of indexed dimensions. The checker
-rejects a wrong length and an index outside its dimension.
--/
-structure IR.IndexTensor where
-  /-- Shape of the index grid. Each of its coordinates carries one index per indexed dimension. -/
-  shape : Shape
-  /-- The indices in row-major order, the indexed dimension innermost. -/
-  values : Array Nat
-  deriving Repr, DecidableEq
 
 /-- Per-axis geometry for pooling and convolution operators.
 

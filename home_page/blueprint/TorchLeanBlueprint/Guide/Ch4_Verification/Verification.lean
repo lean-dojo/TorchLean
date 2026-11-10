@@ -3,7 +3,7 @@ import TorchLean.Verify.CROWN.Arithmetic
 import TorchLean.NN.IR.Builder
 import TorchLean.Verify.Certificate.CROWNNode
 import TorchLean.Verify.Certificate.FiniteArtifact.Semantics
--- The shape contracts of the matrix product and concatenation examples below.
+-- The shape contract of the matrix product examples below.
 import TorchLean.NN.IR.OpContracts
 -- The bound theorems quoted below: the IBP certificate, the rounded interval pass, the forward
 -- α-CROWN pass and the backward CROWN queries on graphs of registered operators.
@@ -614,10 +614,10 @@ Concatenation follows the selected dimension, with at least one parent and equal
 other dimension. A parent can have an empty dimension:
 
 ```lean (name := boundConcatShape)
-example :
-    TorchLean.IR.catShape 1
-      #[[2, 1, 3], [2, 0, 3], [2, 2, 3]] =
-        .ok [2, 3, 3] := by decide
+example : TorchLean.Op
+    [.value [2, 1, 3], .value [2, 0, 3], .value [2, 2, 3]]
+    [.value [2, 3, 3]] :=
+  TorchLean.Op.cat (s := [2, 0, 3]) ⟨1, by decide⟩ [1, 0, 2]
 ```
 
 Here each of the two leading coordinates gets one slice from the first parent and two from the

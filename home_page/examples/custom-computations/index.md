@@ -453,9 +453,11 @@ CPU.
 
 Shared `let` bindings stay shared on the existing tape, and recorded arithmetic, tensor sums,
 square, ReLU, sigmoid, tanh and rank-two matrix products use the existing local VJP rules. Captured
-tensors are constants, not extra trainable inputs. The frontend checks that its reconstructed
-arithmetic expression equals our original function, without reassociating operations. Requesting an
-unsupported recording returns an error, but CPU forward-only calls can still evaluate the original
+tensors are constants, not extra trainable inputs. For each recording the frontend adds a
+kernel-checked theorem that the recorded program, run by the pure interpreter, computes our
+original function, without reassociating operations. An operation whose instance computes
+something other than the recorded operator is an error. Requesting an unsupported recording with
+`grad := true` is an elaboration error, but CPU forward-only calls can still evaluate the original
 function. Division, direct negation, scalar conditionals and fixed-parameter scalar recurrences can
 also be recorded, so let's differentiate the activation we wrote earlier:
 

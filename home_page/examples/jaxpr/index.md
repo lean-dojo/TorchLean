@@ -75,7 +75,10 @@ print(report["ok"])
 records a Jaxpr at this input shape. TorchLean reads its equations and constructs
 three TorchLean IR nodes: the input, elementwise multiplication, and a scalar sum.
 It sends that graph to Lean for shape and type checks and returns their report.
-Constants in other computations travel with the graph.
+Constants in other computations travel with the graph. Each argument is taken as
+JAX reads it (`jnp.asarray`), and the trace, the serialized arguments and the
+reference outputs all use those values. With 64-bit mode off, a NumPy float64,
+int64 or uint64 array becomes its 32-bit counterpart, as in any traced call.
 
 ```text
 input [4] → multiply input by itself [4] → sum []
@@ -84,8 +87,11 @@ input [4] → multiply input by itself [4] → sum []
 On the Lean side, `TorchLean.JAX.load` checks dependencies, operator arguments,
 shapes, and the element type of each node, and decodes each constant from its
 interchange words. `TorchLean.JAX.load_ok` proves that every program it returns passes
-these checks. It reads the same artifact format, `torchlean.ir`, as the PyTorch
-capture, so JAX does not get a separate tensor representation.
+these checks. The load also refuses a program that gives a value another element
+type or shape than JAX's trace records for it (the document's `declared_types`,
+which `TorchLean.IR.load` checks). It reads the same artifact format,
+`torchlean.ir`, as the PyTorch capture, so JAX does not get a separate tensor
+representation.
 
 ## What comes out of the pipeline?
 
@@ -99,7 +105,7 @@ Here's what we get back, depending on which steps we run:
 | --- | --- |
 | Optional export | The operations, dependencies, constants, tensor shapes, element types, explicit casts and designated outputs, saved as JSON or embedded in a Lean module. |
 | Check report | Results for the requested checks, including failures and unsupported cases. A successful report applies to those checks. |
-| Reference results | Computed output tensors when evaluation is requested, with conversion flags on the configured binary path. Sample comparisons relate these results to recorded frontend outputs. |
+| Reference results | Computed output tensors when evaluation is requested, index results with their bounds, and the run's complete conversion status on the configured binary path: `inexact`, `overflow`, `underflow`, `saturated`, `wrapped`, `mapped_special` and `invalid`. Sample comparisons relate these results to recorded frontend outputs. |
 | Lean theorem | A separately written, kernel-checked proof about the graph's Lean meaning. Passing the checks does not generate this proof. |
 
 For our input `[1, 2, 3, 4]`, the sum-of-squares result is `30`. Requesting `compare`
@@ -335,22 +341,25 @@ report = torchlean.verify(
 ```
 
 `SumSquares.artifact` contains the captured operations, shapes, types and constants.
-`SumSquares.program` is the shared importer's result for that artifact. The file
-includes proofs that the import succeeds and the program passes the shared checker.
+`SumSquares.program` is `SumSquares.artifact.program`. The file proves artifact decoding and
+`Program.check .reference`, which checks the program's dependencies, shapes, types and interface.
 Lean checks those proofs when we open the module or compile it:
 
 ```bash
 scripts/lake.sh env lean Proofs/SumSquares.lean
 ```
 
+The report also validates the constant payload and `declared_types` through `IR.load`; the
+export includes no proof of those load checks.
+
 We can import `Proofs.SumSquares` in our proof project and state further properties
 about this program. The export never replaces an existing file, so rerunning a
 capture cannot overwrite a proof we've started writing.
 
 The module embeds JSON constructors rather than calling a file parser at runtime.
-The import and validation proofs use kernel reduction; no `native_decide` is used.
-These are import and validation proofs. The permutation argument below supplies
-the mathematical property, and more involved computations need their own arguments.
+The decoding and `Program.check` proofs use kernel reduction; no `native_decide` is used.
+The permutation argument below supplies the mathematical property, and more involved
+computations need their own arguments.
 
 For inspecting a capture in another tool, use `export="sum_squares.json"` instead.
 Both exports are optional and use the artifact already sent to the checker.

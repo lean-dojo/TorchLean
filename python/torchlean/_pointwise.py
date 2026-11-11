@@ -609,13 +609,20 @@ def _emit_pointwise(plan, nodes, node_to_id, shape, dtype):
         # the operands are that element's own value and the other operand in the common dtype,
         # both in binary32. The quotient (and its rounding mode) is computed there and rounded to
         # the dtype. ATen's div kernels take that path for a one-element divisor only.
+        # A floating `trunc` division truncates that rounded quotient (`10` at `(1, 0.1)` in
+        # binary32), so it is `div` then `trunc`: the IR's `trunc` mode truncates the exact
+        # quotient (`9`), which is PyTorch's integer division only.
         dividend, divisor = operands
-        mode = {_keyword('div')[0]: plan['rounding_mode']}
+        truncate = plan['rounding_mode'] == 'trunc' and dtype in _FLOATING
+        mode = {_keyword('div')[0]: None if truncate else plan['rounding_mode']}
+        def quotient(parents):
+            result = apply('div', parents, **mode)
+            return apply('trunc', [result]) if truncate else result
         if reduced and (_one_element(divisor, dtype) or _one_element(dividend, dtype)):
             parents = [operand(value, opmath) if _one_element(value, dtype)
                        else operand(value, dtype, opmath) for value in operands]
-            return _cast_to(nodes, apply('div', parents, **mode), dtype)
-        return apply('div', [operand(dividend, dtype), operand(divisor, dtype)], **mode)
+            return _cast_to(nodes, quotient(parents), dtype)
+        return quotient([operand(dividend, dtype), operand(divisor, dtype)])
     base, exponent = operands
     if isinstance(exponent, torch.fx.Node):
         # pow.Tensor_Tensor: both operands in the common dtype, then in the opmath type. A

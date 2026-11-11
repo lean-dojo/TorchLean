@@ -57,6 +57,10 @@ Trust boundary note:
   is the decimal conversion of IEEE 754-2019 section 5.12, so an endpoint stands for a binary32
   value. Past the binary32 range, `1e39` is `+∞` as an upper endpoint and the largest finite value
   as a lower one, as `TorchLean.Test.CertificatePreconditions.boundary` checks.
+- Acceptance is not a safety verdict on the real graph. The trace is rounded outward in binary32,
+  but `ExecFloat.Binary 8 23` holds infinities and NaN and has no `LawfulBoundOps` instance, so
+  `TorchLean.CROWN.Op.Directed.encloses_of_run` does not apply to it, and no theorem connects an
+  accepted certificate to the graph evaluated over `ℝ`.
 -/
 
 @[expose] public section
@@ -123,7 +127,8 @@ input box per graph input index in `inputs`.
 The report accepts the certificate iff `G` passes `Graph.check`, `inputs` passes
 `Op.validInputs`, every constant node has its payload constant, and every node's certificate entry
 passes `checkNode` against the trace recomputed from trusted inputs and constants. A rejected
-certificate's report has a line for each failing entry.
+certificate's report has a line for each failing entry. Acceptance is containment of Lean's
+binary32 trace, with no theorem about the real graph.
 -/
 def check (G : IR.Graph) (P : IR.Payload (ExecFloat.Binary 8 23))
     (inputs : List (FlatBox (ExecFloat.Binary 8 23))) (path : String) : IO Report := do

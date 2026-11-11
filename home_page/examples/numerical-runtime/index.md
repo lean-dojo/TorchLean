@@ -248,8 +248,9 @@ kernels, are not analyzed. The coverage check of `scripts/lake.sh lint` fails un
 operator specification and tape constructor under `TorchLean/` is registered with
 `#roundoff_coverage`, every operator of the table with a rule has its equation lemma and, when one
 of its ports holds the scalar, a route analyzed for the configured scalar, and every `op_cert`
-certificate speaks about a route of its operator. Its message counts by status the routes analyzed
-for the configured scalar.
+certificate speaks about a route of its operator. It also fails when an analysis has a worse
+outcome than `scripts/checks/roundoff_baseline.jsonl` records, and on a new or better one until
+that file is updated. Its message counts by status the routes analyzed for the configured scalar.
 
 A route whose analysis exceeds the heartbeat budget of one declaration is analyzed once more with
 the generated theorems of the operations it calls as rules, each stated against real references

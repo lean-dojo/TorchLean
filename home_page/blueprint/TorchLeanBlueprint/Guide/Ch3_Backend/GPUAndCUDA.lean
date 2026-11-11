@@ -72,7 +72,8 @@ configured binary formats, including binary128 values and gradients recorded on 
 and the {ref "custom-computations"}[custom computations chapter] explains which operations we can
 record. Types outside the custom GPU interface use CPU with a diagnostic. Neither path hides
 compilation or execution errors behind a fallback. Use `cuda` to name the device explicitly. The
-default plain build still runs on CPU. A CUDA build needs a CUDA-enabled LibTorch SDK:
+default plain build still runs on CPU. A CUDA build needs a CUDA-enabled LibTorch SDK of torch 2.13
+or later:
 
 ```terminal
 scripts/lake.sh -Kcuda=true \
@@ -88,7 +89,11 @@ A CUDA build compiles TorchLean's C++ adapter and uses the selected SDK's CMake 
 compiler flags, C++ ABI, and library dependencies. ATen supplies the model-operation kernels, and
 custom computations also need the CUDA toolkit's NVRTC and driver libraries. Keep the same SDK
 selection on later `build`, `exe`, and `env` commands. Our build helper records SDK and compiler
-inputs so that a changed native configuration can't silently reuse an incompatible adapter.
+inputs so that a changed native configuration can't silently reuse an incompatible adapter. The
+adapter calls torch only through the LibTorch Stable ABI of torch 2.13, apart from one file for
+the backend settings and the CUDA allocator. The tensor operations can run with a later torch
+runtime; allocator statistics and controls have the version limit described below. The trust
+boundaries list every ATen operator schema it calls.
 
 Compilation and session creation answer different questions. A linked adapter still needs a
 visible, supported GPU to open a CUDA session, and a CPU build doesn't execute the CUDA adapter, so
@@ -495,7 +500,7 @@ and ATen dispatches their implementations using the tensor shapes, dtype, device
 settings (vendor libraries such as cuBLAS, cuDNN, and cuFFT sit below that interface).
 
 That layering makes the boundary easier to locate: the Lean wrapper states the operation, the C++
-adapter expresses it through ATen, and the selected SDK supplies its kernels. A single ATen
+adapter expresses it through ATen, and the loaded torch runtime supplies its kernels. A single ATen
 operator may perform several launches, and a TorchLean operation may require a composition of ATen
 operators. A capsule identifies the provider and contract, but it doesn't report an exact kernel
 schedule or predict its speed.
@@ -902,8 +907,9 @@ returns the stub index zero, but that index doesn't establish availability: the 
 # Reading CUDA Memory Usage
 
 The LibTorch allocator owns device storage and its reuse policy. TorchLean's counters report
-something related but different: which logical payloads and Lean buffer wrappers remain owned. Read
-both levels at the point in the workload whose lifetime matters:
+something related but different: which logical payloads and Lean buffer wrappers remain owned.
+The allocator statistics and controls below require a torch runtime from 2.13 to 2.15. Other
+versions return an error. Read both levels at the point in the workload whose lifetime matters:
 
 ```lean (name := gpuMemory)
 def gpuPrintMemory : IO Unit := do

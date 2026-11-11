@@ -31,7 +31,8 @@ scripts/lake.sh exe verify -- camera-box3d-cert
 python3 TorchLeanExamples/Verification/Geometry3D/export_hf_depth_box3d_cert.py --verify
 ```
 
-`camera-box3d-cert` verifies the bundled certificate and prints `3D camera-box certificate verified`
+`camera-box3d-cert` checks the bundled certificate in host `Float` and prints
+`3D camera-box certificate accepted by the host-Float check`
 with its path. `export_hf_depth_box3d_cert.py` downloads the image and both models, writes
 `_external/geometry3d/hf_depth_box3d_cert.json`, and with `--verify` runs `camera-box3d-cert` on
 it. All three exporters take `--out PATH` and `--verify`. Rendered overlays are PNGs under

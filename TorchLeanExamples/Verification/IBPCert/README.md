@@ -20,7 +20,8 @@ python3 TorchLeanExamples/Verification/IBPCert/export_cert.py
 ```
 
 Without a path, `ibp-cert` reads `mlp_cert.json`. On success it prints
-`IBP certificate verified: serialized bounds enclose Lean recomputation.` We run the exporter from
+`IBP certificate accepted: serialized bounds contain Lean's host-Float recomputation.` We run the
+exporter from
 the repository root, since it writes into `TorchLeanExamples/Verification/IBPCert` unless
 `--out-dir PATH` names another directory. It needs Python 3.10 or later and imports
 `scripts/verification/interval.py`.

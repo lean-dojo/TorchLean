@@ -41,6 +41,12 @@ it lowers and FX's symbolic trace otherwise, and with `prefer_torch_export=False
 `python/torchlean` split the work:
 
 - `_fx` reads the dtypes, shapes, operator names and parameter payloads of FX nodes.
+- `_bind.bind_arguments` gives every call's keywords PyTorch's parameter names, once per graph and
+  before any lowering reads them. PyTorch's parser accepts NumPy's `axis`, `keepdims`, `x`, `a`,
+  `x1` and `x2` for `dim`, `keepdim`, `input` and `other`, so `torch.sum(x, axis=1, keepdims=True)`
+  is `torch.sum(x, dim=1, keepdim=True)`. A call with keywords is refused when it gives one
+  parameter twice, or when its arguments bind to no overload or to overloads that name them
+  differently.
 - `_pointwise` plans the pointwise operators with their Python scalar operands and expands the
   plans into capture nodes.
 - `_structure` plans indexing, scatters, statistics, random draws and buffer updates.
@@ -50,9 +56,12 @@ it lowers and FX's symbolic trace otherwise, and with `prefer_torch_export=False
 - `_artifact.lower` writes the capture nodes as the steps of a typed artifact of format
   `torchlean.ir` (`TorchLean.IR.Artifact`): inputs, constants with their words, casts and registered
   operators, each step at its element type. The JAX capture (`jaxpr.py`) calls it too.
-- `export` writes the document `{"artifact", "frontend": "pytorch", "capture_constraints"}`.
-  `torchlean.verify` adds the `"arguments"` for an execution and the `"reference_outputs"` for a
-  comparison.
+- `export` writes the document
+  `{"artifact", "frontend": "pytorch", "capture_constraints", "declared_types"}`.
+  `declared_types` gives each lowered tensor value's step output and the element type and shape
+  that FX's metadata records for it, and `TorchLean.IR.load` refuses a program that gives one of
+  them another type. `torchlean.verify` adds the `"arguments"` for an execution and the
+  `"reference_outputs"` for a comparison.
 
 The facts that the capture shares with Lean come from Lean's op table (`TorchLean.IR.table`,
 `TorchLean/NN/IR/Table.lean`), which `torchlean._table.op_table()` reads once per process.
@@ -194,21 +203,24 @@ dtype: products for `2`, `3` and `-2` and square roots for `±0.5` in binary32, 
 bfloat16, while binary16 calls its own `pow`.
 
 A conversion is one IR cast, which rounds once, also from an integer or binary64 source to binary16
-or bfloat16, which `c10::convert` rounds twice, through binary32. To an integer type, a floating
-value truncates toward zero, a truncated value the type cannot hold is an execution error, and
-integer values wrap modulo `2 ^ width`. A Python scalar operand, of these operators or of `add`,
-`sub` and `mul`, and a scalar bound of `clamp_min` and `clamp_max` become constants rounded once
-from the int64, uint64, binary64 or Boolean value PyTorch wraps them in. An integer beyond `2^53`
-therefore rounds once to binary32, binary64, bfloat16 or binary16. `clamp_min`, `clamp_max` and
-`clamp` with one bound, scalar or tensor, are IEEE maximum and minimum, `max_elem` and `min_elem`,
-with the bound converted to the operation's result type. So an int32 tensor clamped at `0.5` gives
-binary32, `clamp_min(-0.0, 0)` is `+0.0` (PyTorch's kernel keeps `-0.0`), and a NaN bound gives
-NaNs. The IR's `relu` returns `+0.0` at `-0.0`, where eager PyTorch returns `-0.0`. The tanh GELU
-uses the arithmetic order of PyTorch's CPU kernels at the DEFAULT capability level, which
-`ATEN_CPU_CAPABILITY=default` selects and which rounds `κ x³` and `x + κ x³` separately. At the
-AVX2 and AVX-512 levels PyTorch fuses that sum on x86-64, and we have not measured other
-processors or CUDA. The [IR guide](../IR/README.md#frontend-lowering) lists the rules and the
-elements that PyTorch's scalar loop computes differently.
+or bfloat16, which `c10::convert` rounds twice, through binary32. For one, binary64
+`1 + 2^-8 + 2^-40` (bits `0x3FF0100000001000`) becomes binary32 `0x3F808000` there. That is the
+bfloat16 midpoint `1 + 2^-8`, and ties to even give `0x3F80` (`1.0`). The IR gives the correctly
+rounded `0x3F81` (`1.0078125`), so a comparison with PyTorch rejects such a conversion, by design.
+To an integer type, a floating value truncates toward zero, a truncated value the type cannot hold
+is an execution error, and integer values wrap modulo `2 ^ width`. A Python scalar operand, of these
+operators or of `add`, `sub` and `mul`, and a scalar bound of `clamp_min` and `clamp_max` become
+constants rounded once from the int64, uint64, binary64 or Boolean value PyTorch wraps them in. An
+integer beyond `2^53` therefore rounds once to binary32, binary64, bfloat16 or binary16.
+`clamp_min`, `clamp_max` and `clamp` with one bound, scalar or tensor, are IEEE maximum and minimum,
+`max_elem` and `min_elem`, with the bound converted to the operation's result type. So an int32
+tensor clamped at `0.5` gives binary32, `clamp_min(-0.0, 0)` is `+0.0` (PyTorch's kernel keeps
+`-0.0`), and a NaN bound gives NaNs. The IR's `relu` returns `+0.0` at `-0.0`, where eager PyTorch
+returns `-0.0`. The tanh GELU uses the arithmetic order of PyTorch's CPU kernels at the DEFAULT
+capability level, which `ATEN_CPU_CAPABILITY=default` selects and which rounds `κ x³` and `x + κ x³`
+separately. At the AVX2 and AVX-512 levels PyTorch fuses that sum on x86-64, and we have not
+measured other processors or CUDA. The [IR guide](../IR/README.md#frontend-lowering) lists the rules
+and the elements that PyTorch's scalar loop computes differently.
 
 `cumsum` and `cumprod` scan in PyTorch's accumulation type (binary64 for binary32, binary32 for
 binary16 and bfloat16) and round each prefix. `cummax` and `cummin` keep the later of tied entries

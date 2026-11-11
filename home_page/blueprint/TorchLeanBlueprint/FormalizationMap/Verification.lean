@@ -399,31 +399,34 @@ branch-and-bound search of the external alpha-beta-CROWN verifier.
 :::
 
 :::definition "crown_node_checker" (parent := "bound_propagation") (lean := "TorchLean.Certificate.CROWNNode.check")
-The executable checker parses and replays a FloatLib binary32 node certificate on a graph of
-registered operators (with or without ReLU phases), with the operator graph's forward α-CROWN pass.
-Its final acceptance decision has a proved bridge to the proposition-level local replay condition.
-That binary32 condition gives no real enclosure, because the replay rounds to nearest: after the
-layers $`h = x + 1` and $`y = h + 2^{-24}` at $`x = -1`, where $`y = 2^{-24}`, the replayed upper
-form of $`y` is $`x + 1`, which is $`0` there. For linear and ReLU chains,
-`TorchLean.Certificate.FiniteArtifact.accepts_graph_sound` proves the requested output inequalities
-of an artifact that `FiniteArtifact.accepts` accepts.
+The executable safety verdict parses a FloatLib binary32 node certificate on a graph of registered
+operators and decides it with `TorchLean.Certificate.FiniteArtifact.accepts`, which checks every
+affine entry against the exact rational transfer of its parent over the input box. For linear and
+ReLU chains, `TorchLean.Certificate.FiniteArtifact.accepts_graph_sound` proves the requested output
+inequalities of an accepted artifact for every real input in the box, and the verdict rejects every
+other graph. Agreement with the operator graph's forward α-CROWN pass replayed in binary32, with or
+without ReLU phases, is the separate diagnostic `TorchLean.Certificate.CROWNNode.replayDiagnostic`,
+which is not a safety verdict. That replay gives no real enclosure, because it rounds to nearest:
+after the layers $`h = x + 1` and $`y = h + 2^{-24}` at $`x = -1`, where $`y = 2^{-24}`, the
+replayed upper form of $`y` is $`x + 1`, which is $`0` there.
 :::
 
-:::theorem "crown_node_acceptance" (parent := "bound_propagation") (lean := "TorchLean.Certificate.CROWNNode.accepts_sound")
-Acceptance of the in-memory CROWN decision implies local consistency for the exact FloatLib
-binary32 replay step used by the checker: one optional table entry per node of the operator graph,
-each equal to the replay of the table. It does not show that any entry is present.
+:::theorem "crown_node_replay_agreement" (parent := "bound_propagation") (lean := "TorchLean.Certificate.CROWNNode.replayAgrees_spec")
+Agreement of an in-memory CROWN node certificate with the replay implies local consistency for the
+exact FloatLib binary32 replay step of the replay diagnostic: one optional table entry per node of
+the operator graph, each equal to the replay of the table. It does not show that any entry is
+present, and agreement is not a safety verdict.
 :::
 
-:::proof "crown_node_acceptance"
-The checker compares every dependent affine record bit-for-bit. Soundness of the tensor, matrix,
-affine-vector, and optional-record comparisons turns the successful Boolean replay into equality at
-every graph node.
+:::proof "crown_node_replay_agreement"
+The diagnostic compares every dependent affine record bit-for-bit. Soundness of the tensor, matrix,
+affine-vector, and optional-record comparisons turns the successful Boolean replay test into
+equality at every graph node.
 
-The type of `CROWNNode.accepts_sound` fixes the graph, parameter store, authoritative IBP array, and
-certificate before asking for acceptance. Its result refers to the replay step built from those
-same arguments. This prevents a successful check for one parameter store from being reused as a
-local-consistency proof for a different checkpoint.
+The type of `CROWNNode.replayAgrees_spec` fixes the graph, parameter store, authoritative IBP
+array, and certificate before asking for agreement. Its result refers to the replay step built from
+those same arguments. This prevents a successful comparison for one parameter store from being
+reused as a local-consistency proof for a different checkpoint.
 :::
 
 :::group "spec_bridges"

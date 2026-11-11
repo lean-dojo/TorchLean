@@ -1,9 +1,11 @@
 """Export a PyTorch model to a TorchLean capture document.
 
 `export_torchlean_graph_json(model, example, json_path)` captures the model at the example, lowers
-its nodes with `_artifact.lower` and writes `{"artifact", "frontend", "capture_constraints"}` as
-JSON. From a shell: `python3 -m torchlean.export MODULE CTOR JSON --example-shape 1,4`, where
-`--require-torch-export` refuses FX's symbolic trace.
+its nodes with `_artifact.lower` and writes `{"artifact", "frontend", "capture_constraints",
+"declared_types"}` as JSON. `declared_types` gives, for each lowered tensor value, its step output
+and the element type and shape that the capture recorded for it. From a shell:
+`python3 -m torchlean.export MODULE CTOR JSON --example-shape 1,4`, where `--require-torch-export`
+refuses FX's symbolic trace.
 """
 
 from __future__ import annotations
@@ -37,8 +39,10 @@ def _load_model(module_path: str, ctor_name: str):
 
 
 def _document(model, graph, user_input_names):
-    # The capture document of a captured graph: its artifact, its frontend and the
-    # constraints of the capture. The caller holds _graph._LOCK from the reset on.
+    # The capture document of a captured graph: its artifact, its frontend, the constraints of
+    # the capture and the type the capture recorded for each lowered value. The caller holds
+    # _graph._LOCK from the reset on and has run `_check_graph_operators`, which binds the
+    # graph's keywords (_bind), so the lowerings read canonical keywords.
     input_names = set(user_input_names)
     nodes = []
     promotion_cache = {}
@@ -169,7 +173,23 @@ def _document(model, graph, user_input_names):
             constraint['ref'] = refs[constraint.pop('node')]
             constraint['value_ref'] = refs[constraint.pop('value_id')]
     return {"artifact": artifact, "frontend": "pytorch",
-            "capture_constraints": capture_constraints}
+            "capture_constraints": capture_constraints,
+            "declared_types": _declared_types(node_to_id, refs)}
+
+
+def _declared_types(node_to_id, refs):
+    # The element type and shape that the capture's metadata gives each lowered tensor value, at
+    # the step output holding it. Lean's IR.load requires the program to give it that type.
+    declared = []
+    for node, node_id in node_to_id.items():
+        value = node.meta.get('val', node.meta.get('tensor_meta'))
+        if node_id is None or not (isinstance(value, torch.Tensor) or
+                                   type(value).__name__ == 'TensorMetadata'):
+            continue
+        declared.append({'node': node_id, 'ref': refs[node_id], 'origin': node.name,
+                         'source': 'capture', 'dtype': _node_dtype(node),
+                         'shape': _node_shape(node)})
+    return declared
 
 
 def export_torchlean_graph_json(model, example, json_path, require_torch_export=False,

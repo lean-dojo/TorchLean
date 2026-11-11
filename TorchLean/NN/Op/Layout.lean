@@ -37,11 +37,12 @@ Concatenation along `dim` places entry `c` of input `i` at `Tensor.catCoordEquiv
 equivalence from the coordinates of the inputs, indexed by the input, to those of the output. So
 it is a continuous linear map `Tensor.catCLM` on the L2 product of the inputs, whose adjoint reads
 the cotangent back at those coordinates (`Tensor.inner_cat`). The certificate of `Op.cat` takes
-its point in that product and reads it into the tuple of inputs by `Op.catElementValues`, the
-inverse of `Op.catElementParts`, and `Tensor.catBlock_eq_catBackward` identifies the stored blocks
-of the cotangent with that adjoint. The `fun_prop` rule `HasPullbackAt.cat_family` concatenates a
-family of maps, and `HasPullbackAt.cat`, the rule for one map into the L2 product, gives the
-certificate.
+its point in that product, reads it into the tuple of inputs by `TProd.ofParts` and the tuples of
+inputs and gradients into families by `TProd.parts`, and `Tensor.catBlock_eq_catBackward`
+identifies the stored blocks of the cotangent with that adjoint. `Op.catTangentParts_eq_parts`
+says that the table's `catTangentParts` is `TProd.parts`. The `fun_prop` rule
+`HasPullbackAt.cat_family` concatenates a family of maps, and `HasPullbackAt.cat`, the rule for one
+map into the L2 product, gives the certificate.
 -/
 
 @[expose] public section
@@ -136,7 +137,7 @@ theorem pad (low high interior : Fin s.rank → Nat) {g : E → Tensor ℝ []}
       ⟪Op.padValueCLM low high interior u, δ⟫ = ⟪u, Tensor.scalar (Tensor.sum (Tensor.select
         (Tensor.pad (Tensor.full s false) low high interior true) δ (Tensor.full _ 0)))⟫ := by
     intro u δ
-    have h := Op.pad_value_backward_eq_adjoint low high interior 0 u δ
+    have h := (Op.pad_value_backward_eq_adjoint low high interior 0 u δ).2
     rw [(Op.pad_value_hasFDerivAt low high interior 0 u).fderiv] at h
     simp only [Op.rule?_pad, Option.get_some] at h
     rw [h, ContinuousLinearMap.adjoint_inner_right]
@@ -260,46 +261,55 @@ namespace Op
 
 variable {α : Type} [Storage α] {e : Op.Element} {s : Shape}
 
-/-- The tuple of inputs of `cat` along `dim` at the element `e` whose tensors by position are
-`xs`, the inverse of `Op.catElementParts`. -/
-def catElementValues (dim : Fin s.rank) : (sizes : List Nat) →
-    ((i : Fin sizes.length) → (e.port .value (s.set dim (sizes.get i))).Carrier α) →
-    Values α (sizes.map fun n => e.port .value (s.set dim n))
-  | [], _ => ()
-  | _ :: rest, xs => (xs ⟨0, Nat.zero_lt_succ _⟩, catElementValues dim rest fun i => xs i.succ)
-
-/-- The tensors by position of the tuple `catElementValues dim sizes xs` are `xs`. -/
-@[simp] theorem catElementParts_catElementValues (dim : Fin s.rank) : (sizes : List Nat) →
+/-- The tensors by position of the tuple `TProd.ofParts _ sizes xs` of inputs of `cat` along `dim`
+at the element `e` are `xs`. -/
+@[simp] theorem catElementParts_ofParts (dim : Fin s.rank) : (sizes : List Nat) →
     (xs : (i : Fin sizes.length) → (e.port .value (s.set dim (sizes.get i))).Carrier α) →
-    catElementParts dim sizes (catElementValues dim sizes xs) = xs
+    catElementParts dim sizes (TProd.ofParts (fun n => e.port .value (s.set dim n)) sizes xs) = xs
   | [], _ => funext fun i => i.elim0
   | _ :: rest, xs => funext fun
     | ⟨0, _⟩ => rfl
-    | ⟨k + 1, hk⟩ => congrFun (catElementParts_catElementValues dim rest fun i => xs i.succ)
+    | ⟨k + 1, hk⟩ => congrFun (catElementParts_ofParts dim rest fun i => xs i.succ)
         ⟨k, Nat.lt_of_succ_lt_succ hk⟩
-
-/-- The tuple built from the tensors by position of the inputs `xs` of `cat` is `xs`. -/
-@[simp] theorem catElementValues_catElementParts (dim : Fin s.rank) : (sizes : List Nat) →
-    (xs : Values α (sizes.map fun n => e.port .value (s.set dim n))) →
-    catElementValues dim sizes (catElementParts dim sizes xs) = xs
-  | [], () => rfl
-  | _ :: rest, (_, xs) => congrArg _ (catElementValues_catElementParts dim rest xs)
 
 /-- Input `i` of the gradients `catGrads dim g offset sizes h` is the block of `g` along `dim` of
 `sizes.get i` entries from `o`, the sum of `offset` and the sizes before `i`. -/
-theorem catTangentParts_catGrads {total : Nat} (dim : Fin s.rank)
+theorem parts_catGrads {total : Nat} (dim : Fin s.rank)
     (g : Tensor α (s.set dim total)) : (offset : Nat) → (sizes : List Nat) →
     (h : offset + sizes.sum ≤ total) → (i : Fin sizes.length) → (o : Nat) →
     o = offset + (sizes.take i).sum → (h' : o + sizes.get i ≤ total) →
-    catTangentParts dim sizes (catGrads dim g offset sizes h) i = catBlock dim g o (sizes.get i) h'
+    TProd.parts (fun n => Port.value (s.set dim n)) sizes (catGrads dim g offset sizes h) i =
+      catBlock dim g o (sizes.get i) h'
   | _, [], _, i, _, _, _ => i.elim0
   | offset, n :: rest, h, ⟨0, _⟩, o, ho, h' => by
       subst ho
       rfl
   | offset, n :: rest, h, ⟨k + 1, hk⟩, o, ho, h' =>
-      catTangentParts_catGrads dim g (offset + n) rest (by rw [List.sum_cons] at h; omega)
+      parts_catGrads dim g (offset + n) rest (by rw [List.sum_cons] at h; omega)
         ⟨k, Nat.lt_of_succ_lt_succ hk⟩ o
         (by simp only [ho, List.take_succ_cons, List.sum_cons]; omega) h'
+
+/-- The tangents of the inputs of `cat` by position, `catTangentParts`, are `TProd.parts` of the
+tuple over the ports of the inputs. -/
+theorem catTangentParts_eq_parts (dim : Fin s.rank) : (sizes : List Nat) →
+    (xs : Tangents α (sizes.map fun n => Port.value (s.set dim n))) →
+    catTangentParts dim sizes xs = TProd.parts (fun n => Port.value (s.set dim n)) sizes xs
+  | [], _ => funext fun i => i.elim0
+  | _ :: rest, (_, xs) => funext fun
+    | ⟨0, _⟩ => rfl
+    | ⟨k + 1, hk⟩ => congrFun (catTangentParts_eq_parts dim rest xs) ⟨k, Nat.lt_of_succ_lt_succ hk⟩
+
+/-- `parts_catGrads` read by `catTangentParts`: input `i` of the gradients
+`catGrads dim g offset sizes h` is the block of `g` along `dim` of `sizes.get i` entries from `o`,
+the sum of `offset` and the sizes before `i`. -/
+theorem catTangentParts_catGrads {total : Nat} (dim : Fin s.rank)
+    (g : Tensor α (s.set dim total)) : (offset : Nat) → (sizes : List Nat) →
+    (h : offset + sizes.sum ≤ total) → (i : Fin sizes.length) → (o : Nat) →
+    o = offset + (sizes.take i).sum → (h' : o + sizes.get i ≤ total) →
+    catTangentParts dim sizes (catGrads dim g offset sizes h) i =
+      catBlock dim g o (sizes.get i) h' :=
+  fun offset sizes h i o ho h' => by
+    rw [catTangentParts_eq_parts]; exact parts_catGrads dim g offset sizes h i o ho h'
 
 end Op
 
@@ -456,22 +466,22 @@ theorem cat_backward_eq_adjoint {s : Shape} (dim : Fin s.rank) (sizes : List Nat
     DifferentiableAt ℝ (fun p : PiLp 2 (fun i : Fin sizes.length =>
           Tensor ℝ (s.set dim (sizes.get i))) =>
         (((Op.cat dim sizes).rule? (α := ℝ) |>.get rfl).forward
-          (Op.catElementValues dim sizes p.ofLp)).1)
-      (WithLp.toLp 2 (Op.catElementParts (e := .scalar) dim sizes xs)) ∧
-    WithLp.toLp 2 (Op.catTangentParts dim sizes
+          (TProd.ofParts (fun n => Port.value (s.set dim n)) sizes p.ofLp)).1)
+      (WithLp.toLp 2 (TProd.parts (fun n => Port.value (s.set dim n)) sizes xs)) ∧
+    WithLp.toLp 2 (TProd.parts (fun n => Port.value (s.set dim n)) sizes
         (((Op.cat dim sizes).rule? (α := ℝ) |>.get rfl).backward xs (δ, ()))) =
       (fderiv ℝ (fun p : PiLp 2 (fun i : Fin sizes.length =>
           Tensor ℝ (s.set dim (sizes.get i))) =>
         (((Op.cat dim sizes).rule? (α := ℝ) |>.get rfl).forward
-          (Op.catElementValues dim sizes p.ofLp)).1)
-        (WithLp.toLp 2 (Op.catElementParts (e := .scalar) dim sizes xs))).adjoint δ := by
-  simp only [Op.rule?_cat, Option.get_some, Op.catElementParts_catElementValues]
+          (TProd.ofParts (fun n => Port.value (s.set dim n)) sizes p.ofLp)).1)
+        (WithLp.toLp 2 (TProd.parts (fun n => Port.value (s.set dim n)) sizes xs))).adjoint δ := by
+  simp only [Op.rule?_cat, Option.get_some, Op.catElementParts_ofParts]
   apply HasPullbackAt.differentiableAt_and
   · exact HasPullbackAt.cat dim sizes.get _ _ (HasPullbackAt.id _)
   · refine congrArg (WithLp.toLp 2) (funext fun i => ?_)
     have hi := List.sum_take_add_sum_drop sizes (i + 1)
     rw [List.sum_take_succ sizes i i.isLt] at hi
-    rw [Op.catTangentParts_catGrads dim δ 0 sizes _ i (sizes.take i).sum (zero_add _).symm
+    rw [Op.parts_catGrads dim δ 0 sizes _ i (sizes.take i).sum (zero_add _).symm
         (by simp only [List.get_eq_getElem]; omega),
       Tensor.catBlock_eq_catBackward dim sizes.get (by simp) δ i (sizes.take i).sum
         (by rw [← Fin.ofFn_take_get sizes i.isLt.le, List.sum_ofFn]; rfl)]

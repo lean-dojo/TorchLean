@@ -1383,7 +1383,7 @@ def _lower_kind(node, model=None):
     kwargs = dict(node.kwargs)
     if kwargs.get("out", None) is not None:
         raise NotImplementedError("out= mutation is outside the pure graph contract")
-    axis = kwargs.get("dim", kwargs.get("axis", None))
+    axis = kwargs.get("dim", None)
     if axis is None and len(args) > 1: axis = args[1]
     structure = _structure_kind(node, model)
     if structure is not None: return structure

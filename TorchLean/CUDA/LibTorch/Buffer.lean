@@ -124,8 +124,8 @@ private opaque wrapperAllocCountRaw : IO UInt64
 @[never_extract, extern "torchlean_cuda_wrapper_finalize_count"]
 private opaque wrapperFinalizeCountRaw : IO UInt64
 
-/-- Free bytes on the device as `cudaMemGetInfo` reports them, so the allocator's cache counts as
-used. -/
+/-- Free bytes on the device as the CUDA driver's `cuMemGetInfo` reports them, so the allocator's
+cache counts as used. -/
 @[never_extract, extern "torchlean_cuda_allocator_device_free_bytes"]
 private opaque allocatorDeviceFreeBytesRaw : IO UInt64
 
@@ -190,8 +190,8 @@ structure Memory where
   wrapperAllocCount : UInt64
   /-- External buffer wrappers finalized by the Lean garbage collector since process start. -/
   wrapperFinalizeCount : UInt64
-  /-- Free device bytes as `cudaMemGetInfo` reports them, with the allocator's cache counted as
-  used. -/
+  /-- Free device bytes as the CUDA driver's `cuMemGetInfo` reports them, with the allocator's
+  cache counted as used. -/
   deviceFreeBytes : UInt64
   /-- Total device memory that the driver reports. -/
   deviceTotalBytes : UInt64
@@ -459,8 +459,8 @@ else `0 * dLdy`, which is `-0` at a negative `dLdy` and a NaN at a nonfinite one
 @[never_extract, extern "torchlean_cuda_buffer_sqrt_bwd"]
 opaque sqrtClampNegativeBackward (x dLdy : @& Buffer) : Buffer
 
-/-- Elementwise IEEE 754 square root (`at::sqrt`), matching `Tensor.sqrt x`: `-0` at `-0` and a NaN
-below zero. -/
+/-- Elementwise IEEE 754 square root (`aten::sqrt`), matching `Tensor.sqrt x`: `-0` at `-0` and a
+NaN below zero. -/
 @[never_extract, extern "torchlean_cuda_buffer_sqrt_raw"]
 opaque sqrt (b : @& Buffer) : Buffer
 
@@ -476,7 +476,7 @@ opaque exp (b : @& Buffer) : Buffer
 /--
 Elementwise sine of angles in radians, retaining the input dtype.
 
-The native implementation uses `at::sin`. The input is borrowed, so the tape can
+The native implementation uses `aten::sin`. The input is borrowed, so the tape can
 retain it for the cosine factor in the backward pass.
 -/
 @[never_extract, extern "torchlean_cuda_buffer_sin"]
@@ -610,7 +610,7 @@ rounded in stages, with the sign of `seed`. -/
 opaque sigmoidBackward (x seed : @& Buffer) : Buffer
 
 /--
-Elementwise hyperbolic tangent through `at::tanh`, retaining the input dtype.
+Elementwise hyperbolic tangent through `aten::tanh`, retaining the input dtype.
 
 Direct evaluation avoids cancellation near zero and preserves signed zero. The input is borrowed,
 and TorchLean's tape evaluates its derivative from the input's scaled reciprocal cosh.

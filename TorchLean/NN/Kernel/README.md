@@ -75,10 +75,13 @@ engine. It supports arithmetic with division and direct negation, shared `let` b
 sums, square, ReLU, sigmoid, tanh and rank-two matrix products. A scalar conditional that depends
 on the input records only the chosen branch. A recurrence with fixed parameters and a final
 natural-number count records each step, and the count must not depend on differentiable inputs.
-Captured tensors are constants, and backward differentiates the supplied input. Lean's kernel
-checks that a recipe rebuilt from the source's own functions equals the original function, with
-no reassociation. Analytic correctness rests on the local derivative laws, and no theorem covers
-the GPU instructions.
+Captured tensors are constants, and backward differentiates the supplied input. Each recording
+adds a kernel-checked theorem that the recorded program, run by the pure interpreter `Id`,
+computes the original function, with no reassociation. An operation is recorded only when it
+computes what the recorded operator computes in the element type's `Context`, instance included,
+so a local instance that computes something else is an elaboration error. The theorem covers the
+pure interpreter, not the eager tape's values or the GPU instructions, and analytic correctness
+rests on the local derivative laws.
 
 Backward consumes the recording, also when it fails. Its default cotangent is all ones, so it
 differentiates the sum of the output entries. Pass a tensor to `result.backward seed` for another
@@ -98,7 +101,8 @@ path, and at a branch boundary they need not be mathematical derivatives.
 
 CPU-only carriers run on the CPU with a diagnostic, and an unavailable GPU is an error. Without
 `grad := true`, `.run` returns only the forward tensor. A function with no supported recording
-runs on the CPU, and asking for its gradient is an error. Arbitrary indexed bodies and `.zip` get
+runs on the CPU. Asking for its gradient is an elaboration error with `grad := true`, and an IO
+error when `grad` is known only at run time. Arbitrary indexed bodies and `.zip` get
 no automatic backward rules from their source-equivalence proofs. For an indexed body,
 `Program.gradient` builds the gradient as another kernel, proved over the reals, and the tape does
 not record it ([derivative kernels](../../CUDA/Kernel/README.md#derivatives)).

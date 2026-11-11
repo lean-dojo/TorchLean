@@ -108,10 +108,18 @@ Each requested check has its own result:
 | Request | A successful result means |
 | --- | --- |
 | `structure` | The typed artifact passes the shared dependency, arity, and shape checks. |
-| `types` | Operand/result types, explicit casts, and the program interface are consistent. |
-| `execute` | CPU reference execution completed for the supplied arguments. |
+| `types` | Operand/result types, explicit casts, and the program interface are consistent, and the program gives every value the capture lowered the element type and shape that PyTorch or JAX recorded for it (`declared_types`). |
+| `execute` | CPU reference execution completed for the supplied arguments, and every result was written to `report["outputs"]`. |
 | `compare` | Its output types, shapes, and complete binary words match the supplied reference for those arguments. Two NaN results match whatever their sign and payload, which the IR leaves unspecified. |
 | `compare_bitwise` | As `compare`, with NaN words compared too. |
+
+After an execution, `report["outputs"]` holds each result with its `element_type`, `dtype`, `shape`
+and complete words in `bits`. A result of index tuples, such as the one `argmax` returns, has
+`element_type` `"index"`, a null `dtype`, its `port` with the index bounds, and the components of
+its tuples in `bits`. `report["conversion_flags"]` gives the complete conversion status of the run:
+`inexact`, `overflow`, `underflow`, `saturated`, `wrapped`, `mapped_special` and `invalid`, each
+`true` when a conversion of the run raised it. For example, int16 `256` converted to uint8 gives
+`0`, with `wrapped` true.
 
 `compile` runs `structure` and `types`, which are also `verify`'s default requests. Those two
 checks don't run a sample comparison, prove frontend equivalence, or establish a mathematical
@@ -121,6 +129,8 @@ property for every input. Unknown `verify` requests are returned as `unsupported
 `compile` raises if capture or lowering is unsupported, or if a required check fails, and it
 doesn't run an unchecked fallback. When you call `verify` yourself, unsupported capture instead
 marks every request `unsupported` and sets `checker` to `not_run` (no Lean check ran in that case).
+A document with no UTF-8 JSON text (a NaN, a value JSON lacks, a lone surrogate) also gets
+`not_run`, with every request `failed`, and no export.
 Missing dependencies and invalid API arguments remain ordinary Python errors.
 
 Try changing a cast in an exported artifact to an identity while leaving its output type unchanged:
@@ -227,8 +237,8 @@ report = torchlean.verify(square, x, export="Proofs/Square.lean")
 
 The generated module embeds the capture document and defines `Square.program`, the typed program of
 its artifact. `Square.artifact_decoded` proves that `Square.artifact` is the decoding of that
-document's artifact, and `Square.program_checked` proves that the shape, type and interface checks
-succeed at the reference runtime. Open the file in Lean, or run
+document's artifact, and `Square.program_checked` proves `Program.check .reference`, the program's
+dependency, shape, type and interface checks. Open the file in Lean, or run
 `scripts/lake.sh env lean Proofs/Square.lean`, to check those proofs (export itself writes the file
 without launching a compiler). Import `Proofs.Square` in a proof project to state mathematical
 properties of the program, reusing TorchLean's tensor lemmas and mathlib. A person or an agent can
@@ -237,8 +247,9 @@ write those proofs, and Lean checks them.
 Export uses the artifact from this call, not another run of the Python function, and its constants
 retain their complete element words. Existing files are never replaced. When you only want the
 interchange artifact, use a `.json` filename instead. Unsupported capture creates no export. A
-failed check can still leave an artifact for inspection, but an invalid graph won't pass the
-generated Lean proof.
+failed check can still leave an export for inspection. The report also validates the constant
+payload and `declared_types` through `IR.load`; the generated module includes no proof of those
+load checks.
 
 We can also state theorems about the graph itself. Our JAX example proves permutation invariance of
 the real-valued sum-of-squares graph for every vector length and every permutation, and

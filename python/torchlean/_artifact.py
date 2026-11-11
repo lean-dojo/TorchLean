@@ -12,7 +12,10 @@ capture vocabulary that `_project` names. A step's scalar is the DType JSON of t
 runs at when one of its ports carries values (`Program.Node.ports`), and null otherwise. The record
 of an operator generalized over its element type ends with an `element` field, "scalar" at a binary
 format. A record at Booleans or an integer type carries that element in such a field, and Lean
-accepts or refuses the operator there when `Artifact.load` checks every step again.
+accepts or refuses the operator there when `Artifact.load` checks every step again. A node whose
+operator `_project` keeps at a binary format (no `element` field: `reduce`, `mean`, `abs`, `exp`,
+`logSoftmax`, ...) at Booleans or an integer type is refused here with that reason, since Lean's
+decoder has no form of it there.
 """
 
 from __future__ import annotations
@@ -246,6 +249,9 @@ def _project(node: dict, hints: list, refuse: Refuse, located: Refuse, table: di
                 out)
     if kind in _BINARY:
         parents(2)
+        if element['element'] == 'bool':
+            # The arithmetic operators take a numeric element (`Op.Element.numeric?`).
+            raise NotImplementedError(refuse(f'{_BINARY[kind]} has no Boolean form in the IR'))
         return (_BINARY[kind], [{'shape': out}, element], [('parent', 0, out), ('parent', 1, out)],
                 0, out)
     if kind == 'contract':
@@ -785,10 +791,11 @@ def _block(nodes: list, input_ids: list[int], refs: list, base: int, i: int, nod
     element = _element(d, table)
     if element != 'scalar':
         # Lean accepts or refuses the operator at this element when it loads the artifact. A
-        # record without an `element` field gets one, which Lean's decoder refuses. Its value
-        # constants hold that element, and index and mask constants keep their ports.
+        # record without an `element` field has no form at this element in Lean's decoder. Its
+        # value constants hold that element, and index and mask constants keep their ports.
         if not any('element' in field for field in fields):
-            fields = fields + [{'element': element}]
+            raise NotImplementedError(refuse(f'{tag} runs at a binary format only, not at '
+                                             f'{_describe(d)}'))
         feeds = [('const', _port(d, list(f[1].values())[0], table), f[2])
                  if f[0] == 'const' and _carries(f[1]) else f for f in feeds]
     steps, inputs = [], []

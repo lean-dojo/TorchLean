@@ -1,14 +1,17 @@
 # Elementwise C ABI regression
 
 The C++ executable `torchlean_elementwise_regression`, built from `regression.cpp`, links the
-production backend, the selected ATen SDK and the Lean runtime, and checks the backend's
-elementwise C ABI against the Lean binary32 reference and against host arithmetic. It needs a
-Linux host, a CUDA device and the same LibTorch SDK as the backend build.
+production backend, ATen and the Lean runtime, and checks the backend's elementwise C ABI against
+the Lean binary32 reference and against host arithmetic. It needs a Linux host and a CUDA device.
+The harness computes its oracles with ATen's C++ API, so it is built against the torch package or
+SDK it runs with. The backend uses only the Stable ABI, so it can be a library built against an
+earlier release (see [Torch versions](../../README.md#torch-versions)). A tensor crosses between
+the two as an `AtenTensorHandle`, which both read as the same ATen tensor.
 
 From the source root, after building the production LibTorch backend:
 
 ```bash
-# Set these to the same SDK, toolchain and artifact used by the production backend build.
+# The torch package or SDK to run with, the backend's Lean toolchain and the built backend.
 export TORCHLEAN_LIBTORCH_HOME=/path/to/torch
 export TORCHLEAN_LEAN_PREFIX=/path/to/lean
 export TORCHLEAN_BACKEND_LIBRARY=/absolute/path/to/libtorchlean_libtorch.so
@@ -23,7 +26,9 @@ build and reference directory and prints its path, and `--skip-build` reuses the
 executable (the C++ harness is built either way). The default sweep adds 200000 random cases to the
 curated ones. Start with `--sweep 1024` to time a short run. Every case is checked: each FMA case
 through one scalar AXPY call, and add, mul, div and sqrt in batches. The reference file must contain
-all five primitives.
+all five primitives. To run the backend with another release than the one it was built against,
+set `TORCHLEAN_LIBTORCH_HOME` to that release and put its `torch/lib` and NVIDIA libraries first in
+`LD_LIBRARY_PATH`.
 
 After building `nn_tests_suite` with the native LibTorch configuration, run the isolated Lean
 memory probes against that executable:
@@ -78,14 +83,16 @@ checks that the native counters are zero and skips the probes.
   multiply and add must return the **wrong** upper float32 neighbor on the double-rounding
   discriminator. The two negative controls show that the fixtures reject both replacements.
 - The test lists 37 buffer exports, and each runs under both ambient `GradMode` settings. An ATen
-  `RecordFunction` callback checks that their operations execute with `GradMode` disabled inside
-  the export, and that the results have no `grad_fn` or `requires_grad`. The observer is calibrated
+  `RecordFunction` callback checks that their operations execute with `GradMode` disabled inside the
+  export, and that the results have no `grad_fn` or `requires_grad`. The observer is calibrated
   against an ordinary graph-recording ATen multiplication, so no-grad inputs cannot make the test
-  vacuous. The runtime rejects gradient-bearing `Buffer` inputs, so a separate gradient-bearing
-  ATen tensor checks `invoke` itself. The test switches between both reduction modes through the
-  LibTorch settings API, checking the IO result of every read and write and unboxing the `UInt32`
-  readback. Strict determinism must disable cuDNN benchmarking, and both settings are restored
-  afterward. The caller's `GradMode` and input flags must survive.
+  vacuous. The callback sees the backend's calls, which go through torch's dispatcher. A `Buffer`
+  never holds a gradient-bearing tensor (the Stable ABI cannot read the flag, so the harness refuses
+  to box one), so a separate gradient-bearing ATen tensor checks `invoke` itself. The test switches
+  between both reduction modes through the LibTorch settings API, checking the IO result of every
+  read and write and unboxing the `UInt32` readback. Strict determinism must disable cuDNN
+  benchmarking, and both settings are restored afterward. The caller's `GradMode` and input flags
+  must survive.
 - The raw control getter must return an IO error for an unknown setting ID and leave the determinism
   setting unchanged. The allocator memory-fraction getter must return a successful IO result holding
   a finite `Float` in `[0, 1]`.
@@ -108,35 +115,27 @@ checks that the native counters are zero and skips the probes.
 A finite sweep tests the cases it draws. Run the selected-gradient, tape traversal, deterministic
 reduction, GELU and end-to-end Lean suites as well.
 
-## SDK source audit
+## Fused multiply-add
 
-The audited SDK reported `torch 2.12.0a0+0291f960b6.nv26.04.48445190`, CUDA 13.2, with the C++11
-ABI enabled. The public upstream commit `0291f960b6` has `version.txt = 2.12.0a0`. The executable
-prints its header version. Keep the full SDK and build manifest with the results, because vendor
-patches and compiler options matter too.
+Production AXPY (`Buffer.axpy`) does not use an ATen operator. A kernel the backend generates
+computes `fma(b, c, a)` with `fmaf` or `fma`, after rounding the coefficient `c` to the operands'
+format, and NVRTC compiles it with `--fmad=false`. Each entry rounds once with any torch runtime.
 
-The upstream sources at that commit:
-
-- <https://github.com/pytorch/pytorch/blob/0291f960b6/aten/src/ATen/native/cuda/DeviceAddCmulCdiv.cuh>
-- <https://github.com/pytorch/pytorch/blob/0291f960b6/aten/src/ATen/native/cuda/PointwiseOpsKernel.cu>
-- <https://github.com/pytorch/pytorch/blob/0291f960b6/aten/src/ATen/native/ufunc/add.h>
-- <https://github.com/pytorch/pytorch/blob/0291f960b6/aten/src/ATen/record_function.h>
-
-For CUDA float32, both `addcmul` kernel paths call `pointwise_op_impl<float>`, and with
-`value == 1` that helper calls `std::fma(tensor1, tensor2, input)`. Production AXPY therefore
-passes the rounded coefficient as **tensor2** and sets **value to one** (CUDA accepts a CPU scalar
-only in tensor2 for this operation). AXPY is then one fused stage, with no kernel to allocate the
-scalar on the GPU.
-
-For any other `value` the helper first rounds the product, then computes
-`std::fma(value, product, input)`, so moving a factor into `value` moves a rounding boundary. The
-CUDA `add(alpha)` ufunc evaluates an ordinary `self + alpha * other` expression whose contraction
-depends on the build, so we never use it for AXPY and the test does not exercise it.
+The harness also checks ATen's `addcmul` with `value` one on every FMA case, as an oracle
+independent of the backend: with the coefficient as a CPU 0-dim tensor and as a CUDA 0-dim tensor
+in `tensor2`, and with tensor operands. For CUDA float32 and `value == 1`, both of its kernel paths
+call `pointwise_op_impl`, which returns `std::fma(tensor1, tensor2, input)`; for any other `value`
+it first rounds the product, then computes `std::fma(value, product, input)`, so moving a factor
+into `value` moves a rounding boundary. `ATen/native/cuda/DeviceAddCmulCdiv.cuh` holds that helper,
+the same file in the headers of torch 2.13.0 and 2.15.0. These checks test the loaded runtime's
+`addcmul`, so a failure in them alone points at torch, not at the backend. The CUDA `add(alpha)`
+ufunc evaluates an ordinary `self + alpha * other` expression whose contraction depends on the
+build, so the backend never uses it for AXPY and the test does not exercise it.
 
 Binary64 cannot stand in for FMA in general. With `x = 1 + 2^-23`, `y = 1.5` and `z = -2^-80`,
 the exact product is the midpoint between float32 `0x3fc00001` and `0x3fc00002`. The tiny negative
 addend selects the lower neighbor in a true float32 FMA, but a binary64 add loses it, and the
 result rounds to the upper, even neighbor.
 
-The audit above covers only this SDK revision. A different SDK needs its own source audit and
-another CUDA run with the same finite-bit assertions.
+The executable prints the version of the LibTorch headers it was built against. Keep it with the
+results, with the backend's `TorchLean.LibTorch.version` and build manifest.

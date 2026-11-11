@@ -333,7 +333,7 @@ private def withEquation {β : Type} [Inhabited β] (src : FoldSource) (ctor : D
   withLocalDeclsDND leadDecls fun leads => do
   let term := mkAppN src.fn (leads ++ if src.form == .reader then #[R, mkAppN ctorFn fields]
     else #[mkAppN ctorFn fields])
-  let (body, equation) ← try equationBody term src.equations catch ex =>
+  let (body, equation, _) ← try equationBody term src.equations catch ex =>
     let message ← ex.toMessageData.toString
     unless message.startsWith "Program.of: no constructor equation" do throw ex
     throwError "Fold.of: no equation of {src.fn} covers the whole case\

@@ -768,7 +768,7 @@ def checkFile (path : String) : IO Bool := do
   let finiteDepths := (List.finRange cert.pointCount).all fun i => (certProjectZ cert i).isFinite
   let ok := finiteDepths && checkCert (α := Float) cert
   if ok then
-    IO.println s!"3D camera-box certificate verified: {path}"
+    IO.println s!"3D camera-box certificate accepted by the host-Float check: {path}"
   else
     IO.println s!"3D camera-box certificate rejected: {path}"
   pure ok

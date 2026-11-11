@@ -11,12 +11,13 @@ public import TorchLean.CUDA.LibTorch.Controls
 public import TorchLean.CUDA.LibTorch.Kernels
 
 /-!
-# The ATen evaluation orders behind two CUDA rounding contracts
+# The evaluation orders behind two CUDA rounding contracts
 
-`Buffer.axpy` rounds `a + c * b` once because CUDA `addcmul` calls `fma` when its value is one, and
-the deterministic `Buffer.reduceSumAxis` folds each column in order because `segment_reduce` does
-so on rank-two inputs. ATen documents neither. Each fixture below has another result when the
-product rounds first or the fold runs in another order, in binary32 and in binary64.
+`Buffer.axpy` rounds `a + c * b` once because its generated kernel calls `fma`, and the
+deterministic `Buffer.reduceSumAxis` folds each column in order because its generated kernel sums
+each column from `+0` in one thread, row by row, in the input's format. Each fixture below has
+another result when the product rounds first or the fold runs in another order, in binary32 and in
+binary64.
 
 With `e` the spacing at one, `a = -(1 + 2e)` and `b = c = 1 + e` give `e * e` under one rounding
 and `0` when `c * b` rounds first. With `p` the precision, `2^p`, 4095 ones and `-2^p` fold to `0`
@@ -51,13 +52,13 @@ def checkDtype (dtype : Dtype) (name : String) (precision : Nat) : IO Unit := do
   discard <| Buffer.releaseIO b
   unless fused == spacing * spacing do
     throw <| IO.userError
-      s!"numerics: addcmul rounds the {name} multiply-add twice, so Buffer.axpy is not fused"
+      s!"numerics: Buffer.axpy rounds the {name} multiply-add twice"
   let values := (#[top] ++ Array.replicate 4095 1.0).push (-top)
   let data ← Buffer.ofFloatArrayIO (FloatArray.mk values) dtype
   let folded ← readOne s!"reduceSumAxis {name}" (Buffer.reduceSumAxis data #[values.size] 0)
   discard <| Buffer.releaseIO data
   unless folded == 0.0 do
-    throw <| IO.userError s!"numerics: segment_reduce does not fold {name} columns in order"
+    throw <| IO.userError s!"numerics: Buffer.reduceSumAxis does not fold {name} columns in order"
 
 /-- The fixtures in binary32 and binary64, with deterministic algorithms enabled and the previous
 setting restored. -/
@@ -69,7 +70,7 @@ def run : IO Unit := do
   try
     checkDtype .float32 "binary32" 24
     checkDtype .float64 "binary64" 53
-    IO.println "  numerics: addcmul rounds once and segment_reduce folds in order"
+    IO.println "  numerics: Buffer.axpy rounds once and Buffer.reduceSumAxis folds in order"
   finally
     setDeterministic previous
 

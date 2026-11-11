@@ -41,7 +41,7 @@ Windows/WSL and CUDA with LibTorch, and explains TorchLean's backend architectur
 scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 10 --arithmetic ieee
 scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 10
 
-# Optional GPU run with a CUDA-enabled LibTorch SDK, matching toolkit, and NVIDIA GPU:
+# Optional GPU run with a CUDA-enabled LibTorch SDK of torch 2.13 or later, its toolkit and a GPU:
 export TORCHLEAN_LIBTORCH_HOME=/absolute/path/to/libtorch
 scripts/lake.sh -Kcuda=true build
 scripts/lake.sh -Kcuda=true exe torchlean quickstart_mlp --device cuda --steps 10
@@ -229,9 +229,11 @@ Over the reals, the stored gradients of the operator table are proved to be adjo
 derivatives. The operators with a fixed number of inputs (all but `cat` and `custom`) have 166 value
 inputs, and the gradient of each has a `derivative` certificate in all the value inputs together.
 The certificate holds at the points its hypotheses name, such as nonzero divisors for division.
-`scripts/checks/Library.lean` fails when one of these gradients has no such certificate. `cat` has
-`cat_backward_eq_adjoint`. At kinks, such as `relu` at zero, `convention` certificates state the
-stored backward. `#op_certs Op.relu` lists the certificates of `relu`.
+`op_cert` registers a `derivative` certificate only when its statement is `TorchLean.DerivCert`
+of the operator's forward and stored backward, so a tautology such as `backward = backward` is
+rejected. `scripts/checks/Library.lean` fails when one of these gradients has no such certificate.
+`cat` has `cat_backward_eq_adjoint`. At kinks, such as `relu` at zero, `convention` certificates
+state the stored backward. `#op_certs Op.relu` lists the certificates of `relu`.
 
 `op_deriv` proves the same statement for a backward pass written by hand, here for softplus
 applied entrywise:
@@ -307,7 +309,8 @@ tensors with the tactic (`TorchLean.Verify.RuntimeApprox.Roundoff`), so it also 
 entries, folds and the general operators, at any axes and shape. The
 [numerical runtime example](https://lean-dojo.github.io/TorchLean/examples/numerical-runtime/)
 explains its theorems. `#roundoff_coverage` runs it on every registered operator and tape
-constructor, and `scripts/lake.sh lint` fails when a public one isn't registered. The guide's
+constructor, and `scripts/lake.sh lint` fails when a public one isn't registered or when an
+analysis gets a worse outcome than `scripts/checks/roundoff_baseline.jsonl` records. The guide's
 [operator chapter](https://lean-dojo.github.io/TorchLean/blueprint/Semantics-and-Graphs/The-Operator-Table/)
 lists the operators of the table by family, with their CUDA entries, certificates and bound
 propagations.

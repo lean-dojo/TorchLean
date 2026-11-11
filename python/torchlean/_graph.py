@@ -11,6 +11,7 @@ import threading
 
 import torch
 
+from ._bind import bind_arguments
 from ._emit import _lower_kind
 from ._fx import (_CHECKER, _TENSOR_VALUES, _is_getitem, _is_op, _target_name, _top_k_mask,
                   _tuple_shapes_of_node, _zeros_like)
@@ -52,6 +53,9 @@ def _metadata_constraint(node):
 
 
 def _check_graph_operators(graph, model):
+    # The one binding of the graph's keywords (`torch.cumsum(x, axis=0)` is `dim=0`): every
+    # capture runs this check before it lowers, and the lowerings read canonical keywords only.
+    bind_arguments(graph)
     helpers = _routing_helpers(graph)
     for node in graph.nodes:
         if node.op in ("placeholder", "get_attr", "output"):

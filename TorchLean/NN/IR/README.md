@@ -126,12 +126,19 @@ gives back its own program, which passes `Program.check`, with a payload that pa
 
 The PyTorch and JAX captures write one capture document per computation, which
 `TorchLean.NN.IR.Loaded` reads: the artifact, the arguments and reference outputs by element type,
-shape and complete interchange words, and the name of the capture that wrote it. `TorchLean.IR.load`
+shape and complete interchange words, and the name of the capture that wrote it. Its
+`"declared_types"` give, for each value the capture lowered, the step output that holds it and the
+element type and shape that the framework's own metadata records for it. `TorchLean.IR.load`
 loads the artifact under the reference runtime with no registered custom operation or call, and
 `TorchLean.IR.load_ok` proves that the program it returns passes `Program.check .reference` and its
-payload `Payload.check`. `TorchLean.JAX.load` first checks that the frontend is `jaxpr` and has the
-same guarantee (`TorchLean.JAX.load_ok`). `TorchLean.IR.loadArguments` reads the arguments under a
-runtime, and `TorchLean.IR.words` gives the element type, shape and words of a value back.
+payload `Payload.check`. `load` then requires the program to give every declared value its declared
+element type and shape (`Program.checkDeclared`), and `TorchLean.IR.load_declared` proves that a
+loaded program does. So a lowering that changes a value's type fails the load, with a message
+`IR types: ...` that names the value, the type the IR computes and the declared one. A document
+that names a frontend must declare these types, and a raw IR document declares none.
+`TorchLean.JAX.load` first checks that the frontend is `jaxpr` and has the same guarantee
+(`TorchLean.JAX.load_ok`). `TorchLean.IR.loadArguments` reads the arguments under a runtime, and
+`TorchLean.IR.words` gives the element type, shape and words of a value back.
 
 The PyTorch capture in `python/torchlean/` and the Jaxpr capture (`python/torchlean/jaxpr.py`) lower
 their graphs to these steps (`_artifact.lower` in `python/torchlean/_artifact.py`), and the ONNX
@@ -264,7 +271,10 @@ invoking the operator on its inputs does (`TorchLean.IR.Program.step_op_arithmet
 forward values. A `decodeIndex` step outputs the index tuples its words hold and fails on a
 component outside its bound, and an `encodeIndex` step outputs the words of its tuples and fails on
 a component the integer type cannot hold (`TorchLean.IR.Program.step_decodeIndex`,
-`step_encodeIndex`). These are statements about one step.
+`step_encodeIndex`). These are statements about one step. A program written directly in the IR can
+also return index tuples. The `verify` report writes such a result with `"element_type": "index"`,
+its port and the components of its tuples (`TorchLean.Capture.resultJson`), and a comparison with a
+reference tensor fails, since a tensor holds no index tuples.
 
 A core ATen operator belongs to the family when its operands and result share one shape. In a
 graph over one scalar type, a comparison, a predicate or a logical operator returns `1` or `0` in
@@ -440,11 +450,15 @@ is an execution error (`c10::convert` takes a floating value to uint8 through in
 An integer value converted to an integer type wraps modulo `2 ^ width`. PyTorch's `c10::convert` and
 XLA's `convert_element_type` on the CPU make binary16 and bfloat16 values from binary32, so they
 round an integer or binary64 value twice. For example, int32 `16842753` becomes bfloat16 `16777216`
-there and `16908288` in the IR. The two disagree on 478 of 6008 binary64 test values converted to
-bfloat16 and 528 converted to binary16. Integers convert to binary16 alike both ways, since binary32
-holds every integer below binary16's overflow threshold exactly, and Boolean values are exact either
-way. The PyTorch capture applies the rule to `Tensor.to` and to the promotions of `add`, `sub`,
-`mul`, `maximum` and `minimum`, the JAX importer to `convert_element_type`.
+there and `16908288` in the IR. Binary64 `1 + 2^-8 + 2^-40` (bits `0x3FF0100000001000`) becomes
+binary32 `0x3F808000` there. That is the bfloat16 midpoint `1 + 2^-8`, and ties to even give
+`0x3F80` (`1.0`). The IR rounds the exact value once, to `0x3F81` (`1.0078125`), the correctly
+rounded result. PyTorch 2.13, ml_dtypes 0.5.4 and XLA's CPU code all give `0x3F80`, so a comparison
+rejects such a conversion, by design. The two disagree on 478 of 6008 binary64 test values
+converted to bfloat16 and 528 converted to binary16. Integers convert to binary16 alike both ways,
+since binary32 holds every integer below binary16's overflow threshold exactly, and Boolean values
+are exact either way. The PyTorch capture applies the rule to `Tensor.to` and to the promotions of
+`add`, `sub`, `mul`, `maximum` and `minimum`, the JAX importer to `convert_element_type`.
 
 A Python scalar becomes a constant from the value PyTorch wraps it in, a bool as a Boolean, an int
 as int64 (uint64 from `2^63`) and a float as binary64, rounded once to the constant's dtype. The
@@ -482,8 +496,10 @@ bfloat16 ones gives `16777216`, where converting the int once gives `16908288`.
 
 Other divisions and products convert both operands to the result dtype and round once there. `floor`
 is the flooring schedule above, in which the exact remainder corrects the rounded quotient, as
-Python's `//` does (`1 // 0.1` is `9`). `trunc` runs that schedule on the magnitudes with the sign
-of the quotient: `9` at `(1, 0.1)`, where PyTorch truncates the rounded quotient to `10`. Python's
+Python's `//` does (`1 // 0.1` is `9`). The IR's `trunc` mode runs that schedule on the magnitudes
+with the sign of the quotient (`9` at `(1, 0.1)`). PyTorch truncates the rounded quotient (`10`), so
+the capture lowers a floating `trunc` division as `div` then `trunc`; an integer one is the IR's
+`trunc` mode, which is exact there. Python's
 `s / x` is true division, the IR's `div` of the converted operands, which `torch.div(s, x)` computes
 too. PyTorch's `Tensor.__rtruediv__` computes `reciprocal(x) * s`, which differs from the correctly
 rounded quotient on 26531 of 100000 binary32 values `0.1 / x` (26167 in binary64). FX records
@@ -804,10 +820,11 @@ dictionary. Optional execution and comparison concern only the supplied argument
 
 Add `export="Model.lean"` to `verify` to keep the same capture as a self-contained Lean module. It
 embeds the capture and defines `Model.program`, the program of its typed artifact. Lean checks the
-included decoding and the shape/type/interface proofs by kernel reduction when the module is
-compiled, and export does not launch a compiler. Mathematical properties can refer to that program
-and the embedded constants, and they need their own proofs. A `.json` export keeps the capture
-document instead. Neither export replaces an existing file. The
+included proofs of artifact decoding and `Program.check .reference` by kernel reduction when the
+module is compiled, and export does not launch a compiler. `IR.load` also validates the constant
+payload and `declared_types`; the export includes no proof of those load checks. Mathematical
+properties can refer to that program and the embedded constants, and they need their own proofs.
+A `.json` export keeps the capture document instead. Neither export replaces an existing file. The
 [captured-computation example](../../../home_page/examples/verify/index.md) exports a captured
 `square` function to `Proofs/Square.lean`.
 

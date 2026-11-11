@@ -16,7 +16,8 @@ operation, or bit agreement with FloatLib.
 
 TorchLean owns its tape and selected local VJPs, and these controls never enable LibTorch autograd.
 They keep every native tensor in its hardware dtype and select no FloatLib format. `version` reports
-the LibTorch version of the linked native build.
+the release of the torch runtime the process loaded, which may be later than the release the
+native build was compiled against.
 
 The raw ABI uses setting IDs 0–8: TF32 matmul, TF32 cuDNN convolution, strict determinism, cuDNN
 benchmarking, flash SDP, efficient SDP, math SDP, cuDNN SDP, and cuDNN enablement. Public callers
@@ -31,7 +32,8 @@ and configuration requests fail.
 namespace TorchLean
 namespace LibTorch
 
-/-- Native build identification, or `"unavailable"` when LibTorch is not linked. -/
+/-- The release of the loaded torch runtime, such as `"2.13.0"`, or `"unavailable"` when LibTorch
+is not linked. -/
 @[never_extract, extern "torchlean_libtorch_version"]
 opaque version : IO String
 

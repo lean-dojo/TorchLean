@@ -1,8 +1,10 @@
 # TorchLean LibTorch backend
 
-`csrc/libtorch` holds the CUDA backend behind TorchLean's GPU buffer ABI: C++ that calls the ATen
-operations of the selected LibTorch SDK. Lean checks shapes and dispatches through the extern
-symbols. Native memory safety, SDK behavior and floating-point execution lie outside Lean's kernel.
+`csrc/libtorch` holds the CUDA backend behind TorchLean's GPU buffer ABI: C++ that calls ATen
+operators through the LibTorch Stable ABI of torch 2.13, so one built library runs with torch 2.13
+and later releases (see [Torch versions](#torch-versions)). Lean checks shapes and dispatches
+through the extern symbols. Native memory safety, torch's behavior and floating-point execution
+lie outside Lean's kernel.
 
 ## Layout
 
@@ -10,24 +12,28 @@ The backend builds into one shared library, `libtorchlean_libtorch.so`, from the
 
 | File | Contents |
 | --- | --- |
-| `torchlean.cpp` | The runtime, ATen adapters, and compiling and launching generated operations. |
+| `torchlean.cpp` | The runtime and the ATen adapters of the buffer API. |
 | `conv_pool.cpp` | Grouped and transposed convolutions and the pools, with their backward calls. |
 | `tree.cpp` | Tree arenas in device memory, and the launches of the row kernels of folds, expansions and unfolds, level by level. |
+| `kernels.cpp` | Generated CUDA kernels, compiled by NVRTC for the device's architecture and launched through the CUDA driver API, and the device count, memory and synchronization the bridge reports. |
+| `stable.h` | The call of an ATen operator by its schema, `aten<"name.overload">(...)`, through torch's dispatcher, and what else the bridge takes from the Stable ABI: scalar operands, addition, padding, host views, grad mode, and the CUDA device guard and stream. |
+| `schemas.h` | The generated table of the operator schemas the bridge calls. |
+| `unstable.cpp`, `unstable.h` | The one source compiled against torch's C++ API: the process-wide backend settings and the CUDA caching allocator's statistics and controls, which the Stable ABI cannot express. |
 | `operations.h` | The shared operation list that generates the exports common to both builds. |
-| `torchlean_libtorch.h` | The buffer representation and the Lean object, size and error helpers. |
+| `torchlean_libtorch.h` | The buffer representation, the Lean object, size and error helpers, and the handle functions for native tests. |
 | `binary.h` | The NVRTC header, bundled into the library, for configured binary arithmetic. |
 | `CMakeLists.txt` | The CMake project `scripts/libtorch_build.py` configures against the SDK. |
 
 A build without LibTorch links `unavailable.c` instead. It exports the same symbols, reports
 `RuntimeStatus.notLinked`, and fails every buffer operation with a message that says how to
-rebuild. The Lean tape owns differentiation, and native calls run under a no-grad guard. Lean
+rebuild. The Lean tape owns differentiation, and native calls run with torch's grad mode off. Lean
 loads the CPU tensor library (Lake target `torchlean_tensor_cpu_shared`) for `#eval`, and the GPU
 tests run as compiled executables.
 
 On Linux, interpreted GPU calls can load Lean's bundled exception unwinder alongside the unwinder
-of a GCC-built SDK. If a caught SDK exception aborts under `#eval` or `lean --run`, select the
-SDK's `libgcc_s.so.1` with `LD_PRELOAD` for that process only, never globally. The C++ regression
-harness links the host unwinder (`gcc_s`) ahead of the Lean runtime.
+of the GCC-built bridge and torch. If a caught C++ exception aborts under `#eval` or `lean --run`,
+select the host's `libgcc_s.so.1` with `LD_PRELOAD` for that process only, never globally. The
+C++ regression harness links the host unwinder (`gcc_s`) ahead of the Lean runtime.
 
 ## Build selection
 
@@ -39,23 +45,71 @@ selection, prerequisites, compiler controls, cache directories, and the build an
 The backend also links the toolkit's NVRTC and CUDA driver libraries. Generated custom operations
 compile their CUDA source with them at runtime, so they need no handwritten kernels.
 
-## Tested SDK versions
+## Torch versions
 
-We test the CUDA suite with pip torch 2.13.0+cu130 (CUDA 13.0, git revision
-`cf30153c4c131c8164ee7798e5022d810682e2cb`) on an NVIDIA A100-SXM4-80GB. Other SDK versions
-are untested.
+The bridge builds against torch 2.13 or later and runs with the torch runtime the process loads,
+torch 2.13 or a later release, without a rebuild. `torchlean.cpp`, `conv_pool.cpp`, `tree.cpp` and
+`kernels.cpp` are compiled with `TORCH_TARGET_VERSION` set to torch 2.13 and include from torch only
+the headers of the LibTorch Stable ABI. Each ATen operator call names its schema,
+`aten<"name.overload">(...)`: `stable.h` checks the arguments against the schema in the generated
+table `schemas.h` at compile time, and torch's dispatcher finds the operator by name when the call
+runs. A scalar operand is a CPU 0-dim tensor, which ATen's elementwise operators take as they take a
+`Scalar` overload's wrapped number. An operator that ATen registers with a device check rejects such
+a tensor beside a CUDA tensor, so a scalar operand has its own C++ type, which `aten<Key>` accepts
+only for the operators of the list `no_device_check` in `schemas.h`, generated from torch's
+declarations, and passing one to any other operator does not compile. Everything else these files
+take from torch goes through its C shims. `unstable.cpp` holds what the Stable ABI cannot express,
+the process-wide backend settings and the CUDA caching allocator's statistics and controls. It is
+compiled against torch's C++ API and binds each function it calls by name. The allocator calls go
+through virtual functions whose order a release may change, so they run only on torch 2.13 to 2.15
+and fail with an error on any other release.
+[LibTorch Stable ABI](../../docs/TRUST_BOUNDARIES.md#libtorch-stable-abi) lists each schema, C shim
+and unstable symbol the library uses, and the operators its C shims run, with the minimum version
+and a reason.
 
-The build records the SDK's `TORCH_VERSION` and runs a compile and link check against the SDK.
-Attention is composed in Lean from numerical primitives, with no private ATen attention selectors
-or paired attention kernels. A different SDK can still change compilation and numerical results,
-so rerun the CUDA suite and the elementwise C++ harness below after changing SDKs.
+`scripts/checks/libtorch_abi.py` checks those lists, and `scripts/lake.sh lint` runs it on the
+sources, which also checks that `call` in `stable.h` is the only use of the dispatcher. After each
+build, `scripts/libtorch_build.py` runs it on the library and the SDK it was built against and
+records the result in `libtorch/abi_check.json`: the SDK registers each listed schema verbatim and
+defines every torch symbol the library imports, and the library names exactly the table's
+operators, imports exactly the listed C shims and nothing else from torch but the unstable
+remainder, apart from functions of the C++ standard library that `libtorch.so` also exports, and
+does not link the CUDA runtime. A failed check fails the build. With a pip package's `torchgen`
+beside the SDK, it also checks `no_device_check` against the package's declarations.
+`libtorch_abi.py --torch DIR` checks the registry of another torch package without a build,
+`--torch DIR --library SO` also checks that the package defines every torch symbol a built library
+imports, and `--write --torch DIR` regenerates `schemas.h` after a source adds an operator.
 
-Two rounding contracts rest on ATen behavior that the SDK does not document. `Buffer.axpy` rounds
-once because CUDA `addcmul` calls `fma` when its value is one. The ordered sums behind column sums,
-scan gradients and row scatters fold each segment in order from its initial value because
-`segment_reduce` does so on rank-two inputs. `TorchLeanTest/CUDA/Numerics.lean` runs both on
-binary32 and binary64 cases whose results change when the product rounds first or the fold runs in
-another order.
+The library finds torch through its RUNPATH, the SDK's `lib` directory, and torch's libraries find
+their own dependencies through their own search paths (see the
+[build instructions](../../scripts/README.md#libtorch-cuda-build)). `LD_LIBRARY_PATH` comes before
+the RUNPATH, so naming another release's `torch/lib`, and its NVIDIA libraries, there makes the
+same library run with that release. The library binds every import when it loads (`-z now`), so a
+runtime that lacks a function the library imports fails to load and names the function.
+`TorchLean.LibTorch.version` reports the release of the loaded runtime.
+
+We build the library with pip torch 2.13.0+cu130 (CUDA 13.0) and run that one library, without a
+rebuild, on an NVIDIA A100-SXM4-80GB with the runtimes of torch 2.13.0+cu130 and 2.15.0+cu132: the
+CUDA suite, `tree_tests` and the elementwise C++ harness below pass with each. The harness is built
+against each release's SDK and computes its reference with that release's ATen. On the cases of one
+`--sweep 1024` run, the 43289 values it compares, the library's and the reference's, have the same
+bits with both runtimes, NaN payloads included. `libtorch_abi.py --torch DIR --library SO` also
+passes with torch 2.14.0+cu130, whose runtime we have not run, and other releases are untested. A
+later release can still change numerical results, because the library calls the loaded runtime's
+kernels, so rerun the CUDA suite and the elementwise harness with each runtime. Attention is
+composed in Lean from numerical primitives, with no private ATen attention selectors or paired
+attention kernels.
+
+Two rounding contracts rest on TorchLean's generated kernels rather than on ATen. `Buffer.axpy`
+rounds once because its kernel calls `fma`. The ordered sums behind column sums, scan gradients and
+row scatters fold each column of a segment in order from its initial value, in one thread.
+`TorchLeanTest/CUDA/Numerics.lean` runs both on binary32 and binary64 cases whose results change
+when the product rounds first or the fold runs in another order.
+
+An operator's error, like a failure to box its arguments, carries torch's message without its
+backtrace: an `IO` operation returns it as an IO error, and a pure buffer operation ends the
+process with Lean's internal panic, which prints it. The methods of torch's `torch::stable::Tensor`
+print their own failures to standard error, but they fail only on torch's internal errors.
 
 The optional discovery controls are the architecture list and the toolkit root:
 
@@ -70,14 +124,18 @@ to every later `build`, `exe` and `env` command.
 The build helper `scripts/libtorch_build.py` runs on every Lake build, cache hits included. It
 fingerprints the SDK's CMake and version files, its headers and libraries (by file metadata), the
 compiler, the build environment, the backend sources and the dependencies CMake discovered. It
-writes the manifest to `libtorch/build.json` and the SDK settings to `libtorch/cmake/sdk.txt`
-under the selected build directory. Lake links `libtorch/libtorchlean_libtorch.so` by its
-resolved absolute path, so keep that file and the selected SDK for execution.
+writes the manifest to `libtorch/build.json`, the SDK settings to `libtorch/cmake/sdk.txt` and the
+ABI check's record to `libtorch/abi_check.json` under the selected build directory. Lake links
+`libtorch/libtorchlean_libtorch.so` by its resolved absolute path, so keep that file for execution.
+The build environment includes `LD_LIBRARY_PATH`, so a Lake command that sets it to select another
+torch runtime rebuilds the library. To run the built library with another runtime, run the built
+executables directly with `LD_LIBRARY_PATH` set.
 
 ## Generated custom operations
 
 `TorchLean.CUDA.Kernel.Launch` generates CUDA source from typed kernel expressions and hands it to
-this bridge. NVRTC uses the current device's compute capability, disables multiply-add contraction
+this bridge. NVRTC compiles machine code for the current device's compute capability, so the
+driver never translates PTX, and it disables multiply-add contraction
 and flush-to-zero, and rounds division and square root correctly (`--prec-div`, `--prec-sqrt`).
 The compilation inherits no fast-math setting from the caller. These options apply only to
 generated kernels, not to LibTorch's own operations.
@@ -110,10 +168,11 @@ execution boundary lies outside Lean's proofs.
 ## Execution and memory
 
 LibTorch supplies PyTorch's C++ libraries, and ATen is the tensor operation layer this backend
-calls. A CUDA buffer reaches C++ as a Lean external object that owns an `at::Tensor`. The bridge
-unwraps the tensor, calls ATen and returns the result as another owned buffer through the Lean C
-ABI. The backend needs no Python interpreter, although an installed CUDA-enabled PyTorch package
-can supply the SDK for building and running.
+calls. A CUDA buffer reaches C++ as a Lean external object that owns a `torch::stable::Tensor`, a
+handle to a torch tensor. The bridge unwraps the tensor, calls ATen operators through torch's
+dispatcher and returns the result as another owned buffer through the Lean C ABI. The backend
+needs no Python interpreter, although an installed CUDA-enabled PyTorch package can supply the SDK
+for building and running.
 
 Configure the selected device and the process-wide SDK settings before any concurrent runtime
 work, as `TorchLean.CUDA.LibTorch.Controls` requires. The live-wrapper check prevents sequential
@@ -124,9 +183,9 @@ with concurrent independent owners, but mutating one owner from several threads 
 For a linear layer, the CUDA entry of `Op.linear` in `LibTorch.Kernel.ofOp` sends the matrix product
 and the bias addition to the buffer API, and `LibTorch.Tape.apply` records the result, its parents
 and its backward rule on the runtime tape. During backward, Lean traverses the tape and calls the
-matching gradient operations. Each native call runs under `at::NoGradGuard`, so LibTorch records
-no autograd graph of its own. Some operations call SDK backward kernels, such as
-`at::convolution_backward`. Attention's forward and local VJP are composed in
+matching gradient operations. Each native call runs with torch's grad mode off, so LibTorch
+records no autograd graph of its own. Some operations call ATen's backward kernels, such as
+`aten::convolution_backward`. Attention's forward and local VJP are composed in
 `TorchLean/NN/LibTorch/Attention.lean`. `Buffer.attentionForward` takes
 Q, K and V, an optional mask, the dimensions and the scale, and returns
 `Except String (Buffer × Buffer)` for the output and the probabilities. `Buffer.attentionBackward`
@@ -208,7 +267,7 @@ Coverage by test module:
 
 | Test module | Main coverage |
 | --- | --- |
-| `TorchLeanTest/CUDA/Numerics.lean` | The ATen evaluation orders behind `Buffer.axpy` and the ordered sums, in binary32 and binary64. |
+| `TorchLeanTest/CUDA/Numerics.lean` | The evaluation orders of the generated kernels behind `Buffer.axpy` and the ordered sums, in binary32 and binary64. |
 | `TorchLeanTest/CUDA/Softmax.lean` | `softmax` and `log_softmax`, forward and backward. |
 | `TorchLeanTest/CUDA/Elementwise.lean` | Scalar elementwise ops, activations, safe logs, products, `sum`, `dropout` against its binary32 specification, and the Huber terms and slopes (`huberTerms`, `huberSlope`) against the CPU rules. |
 | `TorchLeanTest/CUDA/Attention.lean` | Attention values and gradients against the CPU reference, including batches. |
@@ -229,9 +288,10 @@ Coverage by test module:
 Elementwise arithmetic, activations and whole-buffer reductions share the operation list in
 `operations.h`, which generates both the LibTorch exports and their counterparts in
 `unavailable.c`. The shared call adapter converts the arguments, checks buffer lengths and dtypes,
-rounds scalar arguments to the buffer dtype, turns off native autograd and boxes the result. Calls
-resolve at compile time, with no string lookup or operator-ID switch. Operations with shape
-metadata or saved backward state keep adapters of their own.
+rounds scalar arguments to the buffer dtype, turns off native autograd and boxes the result. Each
+operator's schema is checked at compile time, with no operator-ID switch, and torch's dispatcher
+finds the operator by name when the call runs. Operations with shape metadata or saved backward
+state keep adapters of their own.
 
 To add a CUDA symbol outside that list, add its failing export to `unavailable.c`, add a row to
 the table above, and test it against the Lean CPU tape at least once. If the symbol takes part in
@@ -242,8 +302,9 @@ The separate [elementwise C++ harness](tests/elementwise/README.md) links the pr
 and reads Lean binary32 cases. Its wrapper is
 `scripts/checks/cuda.sh parity --libtorch-home PATH --backend-library PATH --lean-prefix PATH`.
 It checks finite results and signed zeros bit for bit, reports differing NaN encodings, and
-includes staged Adam and no-autograd regressions. A different SDK needs its own audit and
-regression results.
+includes staged Adam and no-autograd regressions. The harness computes its oracle with ATen's C++
+API, so it is rebuilt against each torch release it runs with, and links the backend library as
+built. A different torch runtime needs its own harness and suite results.
 
 Convolution values and their kernel, bias and input pullbacks are compared exactly with
 hand-computed sums and with the CPU rule of `Op.conv`, and `gather`, `indexAt` and `scatter .sum`
@@ -256,9 +317,11 @@ checked only through the running statistics that training steps leave behind in
 
 ## Numerics and SDK changes
 
-- SDK upgrades can change numerical behavior. Compile and link compatibility says nothing about
-  agreement with TorchLean's floating-point contracts, so keep the full SDK and build manifest
-  with the test results.
+- A torch upgrade can change numerical behavior, with or without a rebuild, because the library
+  calls the loaded runtime's kernels. ABI compatibility says nothing about agreement with
+  TorchLean's floating-point contracts, so keep the build manifest and the loaded runtime's
+  release with the test results. For example, the CUDA `relu` and `clamp_min(x, 0)` of torch 2.15,
+  which the bridge does not call, return `-0` at `-0`, where those of torch 2.13 return `+0`.
 - The deterministic controls request the SDK's supported deterministic algorithms. Repeatable
   results on the tested SDK and device do not imply bitwise agreement across releases, devices or
   algorithms.
@@ -269,8 +332,8 @@ checked only through the running statistics that training steps leave behind in
   (`TorchLeanTest/CUDA/Elementwise.lean`) sit at `x = ±0`, where the device `exp` returns
   `1` exactly, and for sigmoid in binary32 at `x = -200`, where the weighted slope rounds to zero.
 - `max` and `min` are the IEEE 754-2019 maximum and minimum (`ieee_maximum` and `ieee_minimum` in
-  `torchlean.cpp`): `at::maximum` and `at::minimum` propagate a NaN, and at a pair of zeros a sum
-  picks the larger or the smaller one. `clamp` is `minimum (maximum x lo) hi` with them, so the
+  `torchlean.cpp`): `aten::maximum` and `aten::minimum` propagate a NaN, and at a pair of zeros a
+  sum picks the larger or the smaller one. `clamp` is `minimum (maximum x lo) hi` with them, so the
   CUDA entries of `Op.max`, `Op.min` and `Op.clamp` compute the CPU tape's values. The CUDA tests
   compare the `max` and `min` pullbacks with the CPU rules bit for bit at ties, infinities, signed
   zeros and NaN operands, and the forward values on the finite nonzero inputs of a composite test.

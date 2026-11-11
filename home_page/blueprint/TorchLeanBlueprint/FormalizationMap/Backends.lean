@@ -239,8 +239,10 @@ the operator's own round trip lemma.
 The loader reads the `"artifact"` of a capture document, a typed artifact of format `torchlean.ir`.
 It decodes each record into a {uses "pytorch_op_wire_format"}[registered operator], checks each
 reference against the port of the input that reads it, the element type of each step and the
-outputs, and builds the payload of the constants under the reference runtime. A document without
-an artifact is refused.
+outputs, and builds the payload of the constants under the reference runtime. It then requires the
+program to give each value of the document's `declared_types` its declared element type and shape,
+and refuses a document that names a frontend without them. A document without an artifact is
+refused.
 :::
 
 :::theorem "pytorch_graph_import_well_shaped" (parent := "external_graph_bridges") (lean := "TorchLean.IR.load_ok")
@@ -254,9 +256,21 @@ captured Python model still requires correct operation lowering and matching par
 :::
 
 :::proof "pytorch_graph_import_well_shaped"
-The loader returns a program only after `TorchLean.IR.Artifact.load` checks it: we unfold
-{uses "pytorch_graph_import"}[the loader] , rule out the document without an artifact and applies
-`TorchLean.IR.Artifact.load_ok`.
+The loader returns a program only after `TorchLean.IR.Artifact.load` checks it:
+`TorchLean.IR.load_eq_ok` unfolds {uses "pytorch_graph_import"}[the loader] and rules out the
+document without an artifact, and `TorchLean.IR.Artifact.load_ok` gives the two checks.
+:::
+
+:::theorem "pytorch_graph_import_declared" (parent := "external_graph_bridges") (lean := "TorchLean.IR.load_declared")
+Every program returned successfully by {uses "pytorch_graph_import"}[the loader] gives each value
+of the document's `declared_types` the element type and shape declared there. The declarations
+come from the capture, so this catches a lowering that disagrees with the framework's metadata, not
+a wrong declaration.
+:::
+
+:::proof "pytorch_graph_import_declared"
+`TorchLean.IR.load_eq_ok` gives the successful `TorchLean.IR.Program.checkDeclared`, and
+`TorchLean.IR.Program.checkDeclared_ok` turns it into the property of each declared value.
 :::
 
 :::definition "pytorch_state_import" (parent := "external_graph_bridges") (lean := "TorchLean.PyTorch.state")

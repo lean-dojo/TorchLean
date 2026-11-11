@@ -713,8 +713,11 @@ of that operator. The attribute checks that the statement mentions the arm's rul
 says what the theorem claims: `algebraic` (the pullback is adjoint to a selected tangent map, with
 no claim that it is a derivative), `derivative` (a Fréchet derivative and its adjoint),
 `convention` (a rule fixed by an AD convention, as for `detach`), `prepared` (a compact pullback
-returns the dense one) or `roundoff` (a floating-point bound). But the attribute doesn't check that
-a statement says what its kind says. In {src "TorchLean/NN/Op/Certificates.lean"}[the
+returns the dense one) or `roundoff` (a floating-point bound). For `derivative` the attribute checks
+the statement against one proposition, `DerivCert f x δ v`: the operator's forward `f` is
+differentiable at `x`, and the stored backward `v` of `δ` is the adjoint of its derivative. For
+the other kinds it doesn't check that a statement says what its kind says. In
+{src "TorchLean/NN/Op/Certificates.lean"}[the
 certificate file] we state records over the reals about the arms, each as an equation between the
 record's operator and the arm, and register them. And
 {src "TorchLean/NN/Op/Softmax.lean"}[the softmax certificates] state the derivatives of
@@ -758,9 +761,10 @@ give each input half of the cotangent.
 
 Over the reals, the operators with a fixed number of inputs (every operator but `cat` and `custom`)
 have 166 value inputs, and the gradient of each has a `derivative` certificate in all the value
-inputs together. The certificate holds at the points its hypotheses name, such as nonzero divisors
-for division. `scripts/checks/Library.lean` fails when one of these gradients has no such
-certificate. `cat` has `cat_backward_eq_adjoint`.
+inputs together. Up to unfolding, its statement is `DerivCert f x δ v` for the operator's forward
+and stored backward, which `op_cert` checks on registration. The certificate holds at the points
+its hypotheses name, such as nonzero divisors for division. `scripts/checks/Library.lean` fails
+when one of these gradients has no such certificate. `cat` has `cat_backward_eq_adjoint`.
 
 The tactic `op_deriv` in {src "TorchLean/NN/Tactic/OpDeriv.lean"}[`OpDeriv.lean`] proves
 statements of this form for programs outside the table. `fun_prop` composes the `HasPullbackAt`

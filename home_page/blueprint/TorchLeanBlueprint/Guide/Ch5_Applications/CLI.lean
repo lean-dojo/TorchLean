@@ -523,7 +523,7 @@ scripts/lake.sh build
 scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 20
 ```
 
-CUDA execution requires a CUDA-enabled LibTorch SDK and the Lake option:
+CUDA execution requires a CUDA-enabled LibTorch SDK of torch 2.13 or later and the Lake option:
 
 ```terminal
 # Set this to the installed SDK before linking the CUDA configuration.
@@ -953,7 +953,7 @@ runs the bundled checks marked `yes` above, one after another:
 
 ```terminal +output
 == ibp-cert ==
-IBP certificate verified: serialized bounds enclose Lean recomputation.
+IBP certificate accepted: serialized bounds contain Lean's host-Float recomputation.
 ...
 == abcrown-leaf ==
 [artifact] Checked 1 leaves: ok=1, bad=0

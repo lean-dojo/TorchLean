@@ -61,7 +61,7 @@ local notation "Tree" => ReductionTree (ExecFloat (Configured.Family format code
 
 `treeSum` is the summation schedule of the native flat sum when deterministic algorithms are
 enabled (`deterministic_sum` in `csrc/libtorch/torchlean.cpp`). Otherwise the native sum is
-`at::sum`, whose order is implementation-defined and which nothing here describes. One pass over
+`aten::sum`, whose order is implementation-defined and which nothing here describes. One pass over
 `m` values uses `min (⌈m / 256⌉) 65535` blocks of 256 lanes and the stride `256 · blocks`. Every
 lane starts at `+0` and adds the inputs at its index plus each multiple of the stride, in
 increasing order, and a lane past the end adds nothing. Each block then halves its lanes eight

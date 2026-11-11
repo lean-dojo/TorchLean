@@ -876,13 +876,15 @@ runAlphaCROWN_encloses : ∀ (G : TorchLean.IR.Graph) (P : TorchLean.IR.Payload 
 relaxation only when it agrees with the interval of the ReLU's input. To assume a phase for an
 unstable ReLU, a theorem would also have to restrict the input domain to that branch.
 
-These theorems are separate from the JSON node-certificate checker `CROWNNode.check`. That
-`IO Report` function parses finite decimal fields into FloatLib binary32, recomputes the complete
-IBP trace from trusted inputs and parameters, and replays each affine node from the affine data it
-recomputed for the nodes before it. A serialized interval may be wider than the recomputed interval
-but may not move inward. Affine replay data must match exactly at the binary32 level. When the
-certificate gives ReLU phases, the checker also validates their lengths, entries, and consistency
-with IBP.
+These theorems are separate from the JSON node-certificate replay diagnostic
+`CROWNNode.replayDiagnostic`. That `IO (Array String)` function parses finite decimal fields into
+FloatLib binary32, recomputes the complete IBP trace from trusted inputs and parameters, replays
+each affine node from the affine data it recomputed for the nodes before it, and lists every
+difference. A serialized interval may be wider than the recomputed interval but may not move
+inward. Affine replay data must match exactly at the binary32 level. When the certificate gives
+ReLU phases, the diagnostic also validates their lengths, entries, and consistency with IBP. The
+diagnostic is not a safety verdict. The verdict `CROWNNode.check` decides with the exact rational
+check of the next section.
 
 The shared JSON boundary validates input regions before replay begins. Endpoint boxes require
 finite arrays of the declared dimension with `lo[i] <= hi[i]`, and center-radius boxes also require
@@ -890,39 +892,40 @@ a finite nonnegative radius. Incomplete or mixed schemas are rejected. Artifact 
 prescribe endpoints, including the alpha-beta-CROWN leaf format, request that exact schema and
 don't accept the alternate center-radius notation.
 
-`CROWNNode.accepts` is the final decision. Its soundness theorem proves that acceptance
-supplies local consistency for the exact FloatLib binary32 replay function used by the checker.
+`CROWNNode.replayAgrees` is the diagnostic's final agreement test. Its theorem proves that
+agreement supplies local consistency for the exact FloatLib binary32 replay function of the
+diagnostic.
 
-```lean (name := acceptThms)
--- If the CROWN decision accepts, its stored affine entries
--- satisfy the replay rule.
-#check @CROWNNode.accepts_sound
+```lean (name := replayThms)
+-- If the certificate agrees with the replay, its stored
+-- affine entries satisfy the replay rule.
+#check @CROWNNode.replayAgrees_spec
 ```
-```leanOutput acceptThms (whitespace := lax)
-CROWNNode.accepts_sound : ∀ (cert : CROWNNode) (G : TorchLean.IR.Graph)
+```leanOutput replayThms (whitespace := lax)
+CROWNNode.replayAgrees_spec : ∀ (cert : CROWNNode) (G : TorchLean.IR.Graph)
   (P :
     TorchLean.IR.Payload
       (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-        CROWNNode.checkNode._proof_1 CROWNNode.checkNode._proof_2
-        CROWNNode.checkNode._proof_3 CROWNNode.checkNode._proof_4))
+        CROWNNode.nodeMismatch._proof_1 CROWNNode.nodeMismatch._proof_2
+        CROWNNode.nodeMismatch._proof_3 CROWNNode.nodeMismatch._proof_4))
   (authoritativeIbp :
     Array
       (Option
         (TorchLean.CROWN.FlatBox
           (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee
             (FloatFormat.Encoding.ieee.defaultBias 8)
-            CROWNNode.checkNode._proof_1 CROWNNode.checkNode._proof_2
-            CROWNNode.checkNode._proof_3 CROWNNode.checkNode._proof_4))))
+            CROWNNode.nodeMismatch._proof_1 CROWNNode.nodeMismatch._proof_2
+            CROWNNode.nodeMismatch._proof_3 CROWNNode.nodeMismatch._proof_4))))
   (diagnosticsOk : Bool),
-  cert.accepts G P authoritativeIbp diagnosticsOk = true →
+  cert.replayAgrees G P authoritativeIbp diagnosticsOk = true →
     cert.crown.size = G.nodes.size ∧
       ∀ id < G.nodes.size,
         cert.crown[id]! = CROWNNode.replayStep G P authoritativeIbp cert cert.crown id
 ```
 
 The output says: for any certificate, graph, payload, interval trace, and diagnostic flag, *if this
-decision returns `true`, then the affine table in the certificate agrees with the specified replay
-rule*. In the signature, the arrow before the conjunction separates the assumption from the
+agreement test returns `true`, then the affine table in the certificate agrees with the specified
+replay rule*. In the signature, the arrow before the conjunction separates the assumption from the
 conclusion. No classifier margin appears in this statement.
 
 Each argument has a concrete job:
@@ -942,7 +945,7 @@ Each argument has a concrete job:
   * The payload: the weights, biases, and other constants used by replay.
 *
   * `authoritativeIbp`
-  * The interval table supplied to the decision. The IO wrapper constructs it by rerunning IBP.
+  * The interval table given to the agreement test. The IO wrapper constructs it by rerunning IBP.
 *
   * `diagnosticsOk`
   * The combined Boolean result of the wrapper's additional checks.
@@ -964,8 +967,8 @@ affine coefficient, the exact comparison can reject it even when the decimal dif
 small. Since entries are optional, local consistency alone does not assert that every node has a
 bound.
 
-The theorem connects an executable Boolean decision to a Lean proposition, which lets a later
-proof use the result without reasoning again about every componentwise comparison.
+The theorem connects an executable Boolean test to a Lean proposition, which lets a later proof use
+the result without reasoning again about every componentwise comparison.
 
 Two details matter when applying the result. The pure theorem accepts the interval trace as an
 argument, and calling it `authoritativeIbp` doesn't prove where that trace came from. The wrapper
@@ -976,8 +979,9 @@ network, bounds at the required output and a positive class margin.
 
 In binary32 the rules need not enclose the network, because each sum, product and quotient rounds
 to nearest. After the layers `h = x + 1` and `y = h + 2 ^ -24` at `x = -1`, where `y = 2 ^ -24`,
-the replayed upper form of `y` is `x + 1`, which is `0` there, and `CROWNNode.check` accepts a
-certificate holding that form.
+the replayed upper form of `y` is `x + 1`, which is `0` there, and `CROWNNode.replayDiagnostic`
+reports no difference for a certificate holding that form. `CROWNNode.check` rejects it, because
+`x + 1` lies below the exact transfer `x + 1 + 2 ^ -24`.
 
 On the real side, `Op.Alpha.encloses_of_run` also takes a replay premise, but over real affine data
 and the step at `ℝ`. The binary32 result can't be supplied as that premise on its own.
@@ -1029,10 +1033,11 @@ value among the words it reads, empty input or output dimensions, an empty colle
 inequalities, and an output id that doesn't cover the whole chain are rejected. Entries at the
 constant nodes and the interval and phase fields aren't read.
 
-This decision covers nonempty vector linear/ReLU chains in that layout. The general JSON replay
-decisions above retain their local-consistency conclusions. And the real computation in the
-stronger theorem differs from a native floating-point run, so relating a LibTorch result to that
-real value still requires an execution-error bound.
+This decision covers nonempty vector linear/ReLU chains in that layout, and the node-certificate
+verdict `CROWNNode.check` decides with it (`CROWNNode.verdict_ok`). The replay diagnostic above
+keeps only its local-consistency conclusion. And the real computation in the stronger theorem
+differs from a native floating-point run, so relating a LibTorch result to that real value still
+requires an execution-error bound.
 
 # Directed Arithmetic In The Executable Pass
 

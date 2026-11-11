@@ -14,6 +14,7 @@ public import Mathlib.Analysis.Calculus.FDeriv.Mul
 public import Mathlib.Analysis.Calculus.Deriv.Inv
 public import Mathlib.Analysis.InnerProductSpace.Adjoint
 public import Mathlib.Analysis.InnerProductSpace.ProdL2
+public import TorchLean.NN.FDeriv.DerivCert
 import Mathlib.Tactic.FunProp
 
 /-!
@@ -25,7 +26,9 @@ of `D`, in the form `⟪D u, δ⟫ = ⟪u, b δ⟫` for all `u` and `δ`. It is 
 composition, sums, differences, negation, constant multiples, finite sums, and the projections
 and pairing of an L2 product, so `fun_prop` assembles them for a composite of registered maps by
 unification. `HasPullbackAt.cert` turns the result into the statement shape of the operator
-certificates, the derivative at `x` and a stored pullback equal to its adjoint.
+certificates, the derivative at `x` and a stored pullback equal to its adjoint, and
+`HasPullbackAt.differentiableAt_and` into `DerivCert`, the statement `op_cert` checks.
+`DerivCert.comp` precomposes a certificate with a map that has a pullback.
 
 Real-valued maps have the product, quotient and constant-multiple rules, a varying real scalar
 times a map has the rule `HasPullbackAt.smul`, and `HasPullbackAt.of_hasDerivAt` turns a Mathlib
@@ -91,10 +94,10 @@ theorem cert_of_eq (h : HasPullbackAt f D' b x) (hD : D' = D) (hv : v = b δ) :
     HasFDerivAt f D x ∧ v = (fderiv ℝ f x).adjoint δ :=
   hD ▸ h.cert hv
 
-/-- The certificate shape that leaves the derivative implicit: `f` is differentiable at `x`, and a
-value equal to `b δ` is the adjoint of its derivative applied to `δ`. -/
-theorem differentiableAt_and (h : HasPullbackAt f D b x) (hv : v = b δ) :
-    DifferentiableAt ℝ f x ∧ v = (fderiv ℝ f x).adjoint δ :=
+/-- The certificate shape that leaves the derivative implicit, `DerivCert f x δ v`: `f` is
+differentiable at `x`, and a value equal to `b δ` is the adjoint of its derivative applied to
+`δ`. -/
+theorem differentiableAt_and (h : HasPullbackAt f D b x) (hv : v = b δ) : DerivCert f x δ v :=
   ⟨h.hasFDerivAt.differentiableAt, (h.cert hv).2⟩
 
 /-- A value equal to `b δ` is the adjoint of the derivative of `f` at `x` applied to `δ`. -/
@@ -310,5 +313,17 @@ theorem toLp_prod {f : E → F} {g : E → G} {Df : E →L[ℝ] F} {Dg : E →L[
 end Prod
 
 end HasPullbackAt
+
+/-- A certificate of `f` at `g y`, precomposed with a map `g` that has the pullback `bg` at `y`,
+is a certificate of `f ∘ g` at `y` with the value `bg v`. -/
+theorem DerivCert.comp [CompleteSpace E] [CompleteSpace F] [CompleteSpace G] {f : E → F}
+    {g : G → E} {Dg : G →L[ℝ] E} {bg : E → G} {y : G} {δ : F} {v : E}
+    (h : DerivCert f (g y) δ v) (hg : HasPullbackAt g Dg bg y) :
+    DerivCert (f ∘ g) y δ (bg v) := by
+  obtain ⟨hf, hv⟩ := h
+  have hfg := hf.hasFDerivAt.comp y hg.hasFDerivAt
+  refine ⟨hfg.differentiableAt, ?_⟩
+  rw [hfg.fderiv, ContinuousLinearMap.adjoint_comp, ContinuousLinearMap.comp_apply, ← hv]
+  exact hg.eq_adjoint v
 
 end TorchLean

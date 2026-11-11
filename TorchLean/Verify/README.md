@@ -25,12 +25,14 @@ implements, and a stronger claim needs one of the theorems named below.
   (`Capture/Error.lean`) re-executes two captured programs on the reference runtime of the
   operator IR and checks a rational absolute error budget at their supplied arguments.
 - `Certificate/`: JSON certificate formats and executable recomputation checkers, including IBP and
-  alpha-CROWN local node artifacts. A CROWN node certificate may add ReLU phases that IBP already
-  implies, so it replays alpha-CROWN bounds, with no beta multipliers or branch splits.
-  `Certificate/FiniteArtifact.lean` checks binary32 affine bounds for linear/ReLU chains against
-  exact rational transfers, and `FiniteArtifact.accepts_graph_sound` proves the requested output
-  inequalities for the original graph under the exact real values of its binary32 parameters.
-  The checker is a library API with no `scripts/lake.sh exe verify` command.
+  alpha-CROWN local node artifacts. `CROWNNode.check` decides a CROWN node certificate with
+  `FiniteArtifact.accepts` (`Certificate/FiniteArtifact.lean`), which checks its binary32 affine
+  bounds for linear/ReLU chains against exact rational transfers, and
+  `FiniteArtifact.accepts_graph_sound` proves the requested output inequalities for the original
+  graph under the exact real values of its binary32 parameters. `CROWNNode.replayDiagnostic` lists
+  where the certificate differs from Lean's binary32 alpha-CROWN replay, with ReLU phases that IBP
+  already implies and no beta multipliers or branch splits. It is a diagnostic, not a safety
+  verdict. Both are library APIs with no `scripts/lake.sh exe verify` command.
 - `Coverage/`: the `#roundoff_coverage` runs over the operator specifications, by family
   (elementwise, indexing, layers, losses, ordering, pointwise, tensor composites and tensor
   operations) and for the structure specifications and tape operations. Each run declares a
@@ -153,12 +155,37 @@ its groups, dilation and both padding sides, and LayerNorm uses the full trailin
 The [CROWN geometry contracts](CROWN/README.md#tensor-geometry) give each operator's limits and the
 soundness theorems that cover them.
 
+## Safety Verdicts
+
+A public API that returns a safety verdict decides it in one of three ways: (A) a checker with a
+soundness theorem about the real (`ℝ`) semantics, (B) agreement with the rounded binary32 affine
+replay, which can fail to enclose the real graph, or (C) host `Float` or binary32 evaluation with no
+theorem about the real graph. No verdict uses (B). `CROWNNode.replayDiagnostic` and
+`CROWNNode.replayAgrees` compare a CROWN node certificate with the replay, and they are
+diagnostics.
+
+| Verdict (`verify` command) | Path | Theorem or reason |
+| --- | --- | --- |
+| `CROWNQuery.Query.check`, `CROWNQuery.acceptsJson`, `CROWNQuery.acceptsText` (`crown-query`) | A | `Query.check_sound`, `acceptsJson_sound`, `acceptsText_sound` |
+| `CROWNNode.check`, `CROWNNode.verdict`, `FiniteArtifact.accepts` | A | `CROWNNode.verdict_ok`, `FiniteArtifact.accepts_sound`, `FiniteArtifact.accepts_graph_sound` |
+| `Monotonicity.Certificate.check`, `Monotonicity.acceptsJson`, `Monotonicity.acceptsText` | A | `Certificate.check_sound`, `acceptsJson_sound`, `acceptsText_sound` |
+| `Json.accepts`, `Json.acceptsText` | A, given a sound check | `Json.accepts_sound`, `Json.acceptsText_sound` |
+| `Distillation.checkEquivalence` | A | `checkEquivalence_sound` |
+| `Capture.checkError`, `Capture.checkPrediction` | A, about the binary reference runtime, not `ℝ` | `checkError_sound`, `checkPrediction_sound` |
+| `IBPNode.check` | C | binary32 has no `LawfulBoundOps` instance, so `Op.Directed.encloses_of_run` does not apply |
+| `IBP.check` (`ibp-cert`) | C | host `Float` |
+| `AbCROWNLeaf.check` (`abcrown-leaf`) | C | exact rational consistency of the leaves only; the format has no graph |
+| `Capture.check` (`ir`, Python `torchlean.verify`) | C | structure, types and runs on the reference runtime |
+| `Trainer.Result.verify`, `Verification.forLowered`, `Verification.Result.fromBounds` (`torchlean-mlp-workflow`) | C | host `Float` bounds |
+| `NumericalCertificate.check` | C | binary32 execution with no real enclosure |
+| `camera-box3d-cert`, `pinn-cert`, `pinn-cli`, `pinn-dataset-check`, `spline-cert`, `ode`, `vnncomp-mnistfc` | C | host `Float`, binary32 or unproved exact rational checks |
+
 ## Public Imports
 
 - `TorchLean.Verify.Trainer`: `trained.verify`, imported next to the trainer modules.
 - `TorchLean.Verify.Certificate.IBP`, `TorchLean.Verify.Certificate.IBPNode` and
-  `TorchLean.Verify.Certificate.CROWNNode`: output-box IBP certificates and per-node IBP and
-  α-CROWN certificates.
+  `TorchLean.Verify.Certificate.CROWNNode`: output-box IBP certificates, per-node IBP certificates,
+  and the verdict and replay diagnostic of per-node α-CROWN certificates.
 - `TorchLean.Verify.Certificate.FiniteArtifact.Semantics`: the finite binary32 affine artifact
   checker and its soundness theorem `FiniteArtifact.accepts_graph_sound`.
 - `TorchLean.Verify.Certificate.AbCROWNLeaf`: consistency checks of converted alpha-beta-CROWN leaf

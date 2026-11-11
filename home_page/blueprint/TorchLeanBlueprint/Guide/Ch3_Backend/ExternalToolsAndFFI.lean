@@ -239,7 +239,8 @@ jaxpr. Both write a capture document whose `"artifact"` field holds a typed arti
 `torchlean.ir`. The format name, the record version, the operator codes and the pointwise forms
 they write come from the op table that Lean computes (`TorchLean.IR.table`). Lean reads the document
 of either capture with one loader, `TorchLean.IR.load`, whose structural theorem is
-`TorchLean.IR.load_ok`.
+`TorchLean.IR.load_ok`. `TorchLean.IR.load_declared` states that the loaded program gives every
+declared value its recorded element type and shape.
 
 The examples below inspect that theorem and exercise malformed documents. Numerical agreement is
 a separate question: shape validation cannot detect a missing affine bias or a changed

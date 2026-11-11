@@ -21,6 +21,7 @@ def lower(graph_module: Any, example_inputs: Sequence[Any],
     from torch.fx.passes.shape_prop import TensorMetadata
 
     from . import _lower_pytorch_graph
+    from ._bind import canonical
 
     def metadata(node):
         value = node.meta.get("val", node.meta.get("tensor_meta"))
@@ -84,7 +85,8 @@ def lower(graph_module: Any, example_inputs: Sequence[Any],
             continue
 
         args = map_arg(node.args, lambda parent: environment[parent])
-        kwargs = map_arg(node.kwargs, lambda parent: environment[parent])
+        kwargs = canonical(node.op, node.target, args,
+                           map_arg(node.kwargs, lambda parent: environment[parent]))
         source = kwargs.get("input", args[0] if args else None)
         weight = kwargs.get("weight", args[1] if len(args) > 1 else None)
         bias = kwargs.get("bias", args[2] if len(args) > 2 else None)

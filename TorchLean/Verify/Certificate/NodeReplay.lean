@@ -20,12 +20,15 @@ Parsing, exact comparison, and local replay for node-wise verification certifica
 
 The IBP and CROWN checkers consume the same basic artifact shapes: flat interval boxes, affine
 lower/upper bounds, and optional per-node vectors. Those format-level operations live here so each
-checker can focus on its propagation rule. `IBPNode.check` checks interval propagation, and
-`CROWNNode.check` checks affine α-CROWN propagation with optional ReLU phases.
+checker can focus on its propagation rule. `IBPNode.check` checks interval propagation.
+`CROWNNode.replayDiagnostic` compares affine entries with Lean's binary32 α-CROWN replay, with
+optional ReLU phases, and `CROWNNode.check` decides a certificate by the exact rational checks of
+`FiniteArtifact.accepts`.
 
-The JSON artifact is always untrusted. The helpers here only parse and compare data, and each
-checker recomputes the corresponding bound inside Lean before it accepts. Numbers are read as exact
-signed decimals (`TorchLean.Certificate.DecimalJson`), so `-0.0` is the negative zero.
+The JSON artifact is always untrusted. The helpers here only parse and compare data.
+`IBPNode.check` and `CROWNNode.replayDiagnostic` recompute each bound inside Lean and compare it
+with the artifact. Numbers are read as exact signed decimals (`TorchLean.Certificate.DecimalJson`),
+so `-0.0` is the negative zero.
 
 Each box endpoint and affine coefficient stands for its rounded binary32 value. The decimal is
 converted once by FloatLib's `Model.convertDecimalText`, as in IEEE 754-2019 section 5.12, outward
@@ -36,11 +39,12 @@ the largest finite value and `2 ^ 128`, is the infinity of its sign, and a small
 endpoint, and `-1e39` symmetrically. An α entry is rounded to nearest after its decimal is checked
 to lie in `[0, 1]`, and the integers of `ctx` and of the phases are read exactly.
 
-Interval claims are checked by containment, while affine replay transcripts must match the
-executable binary32 result exactly. A matrix entry must be finite. An offset may be the infinity
-that bounds nothing on its side, `-∞` in `loC` and `+∞` in `hiC`, but not the other infinity. The
-writers `flatBoxValue` and `affineBoundsValue?` emit each finite binary32 value as its exact
-decimal, which these readers round back to the same value, and an infinity as `±1e39`.
+Interval claims are compared by containment, and an affine transcript agrees with the replay
+only when it equals the executable binary32 result bit for bit. A matrix entry must be finite. An
+offset may be the infinity that bounds nothing on its side, `-∞` in `loC` and `+∞` in `hiC`, but
+not the other infinity. The writers `flatBoxValue` and `affineBoundsValue?` emit each finite
+binary32 value as its exact decimal, which these readers round back to the same value, and an
+infinity as `±1e39`.
 -/
 
 @[expose] public section
@@ -73,23 +77,22 @@ def flatBoxContains {α : Type} [Storage α] [Context α] (outer inner : FlatBox
 /-!
 ## Proved local replay
 
-The diagnostic node checks of `CROWNNode.checkNodeEntries` replay bounds incrementally so that
-they can report the first bad node. The final acceptance decision also runs the pure check
-`crownLocalAccepts` on the complete imported certificate, over a graph of `size` nodes. Its
-soundness theorem states that every entry is the replay of the entries.
-`TorchLean.CROWN.Op.Alpha.encloses_of_run` takes that consistency over `ℝ` as a hypothesis. In
-binary32 the α-CROWN replay rounds to nearest, and an entry equal to its replay need not enclose
-its node's value.
+The node diagnostics of `CROWNNode.mismatches` replay bounds incrementally so that they can report
+the first bad node. `CROWNNode.replayAgrees` also runs the pure test `isReplay` on the complete
+imported certificate, over a graph of `size` nodes, and `isReplay_spec` states that every entry is
+the replay of the entries. `TorchLean.CROWN.Op.Alpha.encloses_of_run` takes that consistency over
+`ℝ` as a hypothesis. In binary32 the α-CROWN replay rounds to nearest, and an entry equal to its
+replay need not enclose its node's value. So agreement with the replay is a diagnostic, not a
+safety verdict.
 -/
 
 /--
 Whether the certificate has `size` affine entries, each equal to `step` applied to the imported
 certificate at its index.
 
-The check is narrower than the full certificate checker, which runs parsing, IBP containment, shape
-checks and domain checks separately.
+The test covers only the entries. Parsing, IBP containment and shapes are tested separately.
 -/
-def crownLocalAccepts {α : Type} [Storage α] [Context α] [DecidableEq α]
+def isReplay {α : Type} [Storage α] [Context α] [DecidableEq α]
     (size : Nat)
     (step : Array (Option (FlatAffineBounds α)) → Nat → Option (FlatAffineBounds α))
     (cert : Array (Option (FlatAffineBounds α))) : Bool :=
@@ -99,15 +102,15 @@ def crownLocalAccepts {α : Type} [Storage α] [Context α] [DecidableEq α]
   else
     false
 
-/-- Successful pure replay proves local consistency: `size` entries, each the replay of the
-entries. -/
-theorem crownLocalAccepts_sound {α : Type} [Storage α] [Context α] [DecidableEq α]
+/-- A certificate that passes `isReplay` is locally consistent: `size` entries, each the replay of
+the entries. -/
+theorem isReplay_spec {α : Type} [Storage α] [Context α] [DecidableEq α]
     (size : Nat)
     (step : Array (Option (FlatAffineBounds α)) → Nat → Option (FlatAffineBounds α))
     (cert : Array (Option (FlatAffineBounds α)))
-    (haccept : crownLocalAccepts size step cert = true) :
+    (haccept : isReplay size step cert = true) :
     cert.size = size ∧ ∀ id : Nat, id < size → cert[id]! = step cert id := by
-  unfold crownLocalAccepts at haccept
+  unfold isReplay at haccept
   split at haccept
   next hsize =>
     refine ⟨hsize, ?_⟩
@@ -120,25 +123,27 @@ theorem crownLocalAccepts_sound {α : Type} [Storage α] [Context α] [Decidable
   next => simp at haccept
 
 /--
-The full acceptance decision: the diagnostic checks `diagnosticsOk` and then the pure local replay.
+Whether the node diagnostics passed (`diagnosticsOk`) and the certificate passes `isReplay`. This is
+agreement with the replay, not a safety verdict.
 -/
-def crownAccepts {α : Type} [Storage α] [Context α] [DecidableEq α]
+def agrees {α : Type} [Storage α] [Context α] [DecidableEq α]
     (size : Nat)
     (step : Array (Option (FlatAffineBounds α)) → Nat → Option (FlatAffineBounds α))
     (cert : Array (Option (FlatAffineBounds α)))
     (diagnosticsOk : Bool) : Bool :=
-  diagnosticsOk && crownLocalAccepts size step cert
+  diagnosticsOk && isReplay size step cert
 
-/-- The complete Boolean acceptance decision implies local consistency. -/
-theorem crownAccepts_sound {α : Type} [Storage α] [Context α] [DecidableEq α]
+/-- A certificate that passes `agrees` is locally consistent: `size` entries, each the replay of
+the entries. -/
+theorem agrees_spec {α : Type} [Storage α] [Context α] [DecidableEq α]
     (size : Nat)
     (step : Array (Option (FlatAffineBounds α)) → Nat → Option (FlatAffineBounds α))
     (cert : Array (Option (FlatAffineBounds α)))
     (diagnosticsOk : Bool)
-    (haccept : crownAccepts size step cert diagnosticsOk = true) :
+    (haccept : agrees size step cert diagnosticsOk = true) :
     cert.size = size ∧ ∀ id : Nat, id < size → cert[id]! = step cert id := by
-  simp only [crownAccepts, Bool.and_eq_true] at haccept
-  exact crownLocalAccepts_sound size step cert haccept.2
+  simp only [agrees, Bool.and_eq_true] at haccept
+  exact isReplay_spec size step cert haccept.2
 
 /-- The decimals of a length-`dim` JSON vector, with `ctx` naming the vector in the error. -/
 def decimalVec (ctx : String) (dim : Nat) (v : Value) : IO (Fin dim → Decimal) := do
@@ -279,16 +284,17 @@ optional α vectors of the ReLU lower relaxations, and optional ReLU phases.
 structure _root_.TorchLean.Certificate.CROWNNode where
   /-- Affine-propagation context, including the chosen input node and flattened input dimension. -/
   ctx : AffineCtx
-  /-- Per-node interval boxes, `null` at a node without a scalar output. `CROWNNode.check`
-  requires each box to contain Lean's recomputed box, and its replay reads Lean's boxes. -/
+  /-- Per-node interval boxes, `null` at a node without a scalar output.
+  `CROWNNode.replayDiagnostic` reports each box that does not contain Lean's recomputed box, and
+  its replay reads Lean's boxes. `CROWNNode.check` does not read them. -/
   ibp : Array (Option (FlatBox (ExecFloat.Binary 8 23)))
   /-- Optional per-node affine lower/upper bounds. -/
   crown : Array (Option (FlatAffineBounds (ExecFloat.Binary 8 23)))
   /-- Optional per-node α values for ReLU lower relaxations. -/
   alpha : Array (Option (FlatTensor (ExecFloat.Binary 8 23)))
   /-- Optional per-node ReLU phases: `-1` inactive, `0` unconstrained, `1` active. A phase must
-  be one that Lean's IBP interval already proves, or `CROWNNode.check` refuses the
-  certificate. -/
+  be one that Lean's IBP interval already proves, or the replay gives the node no bound and
+  `CROWNNode.replayDiagnostic` reports it. `CROWNNode.check` does not read the phases. -/
   phases : Array (Option (Array Int)) := #[]
 
 /-- One node's ReLU phases from JSON: `null`, or `dim` integers each `-1`, `0` or `1`. -/

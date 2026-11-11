@@ -10,6 +10,7 @@ public import TorchLean.Tensor.Euclidean
 public import TorchLean.Tensor.Reduce.Real
 public import Mathlib.Analysis.Calculus.FDeriv.Linear
 public import Mathlib.Analysis.InnerProductSpace.Adjoint
+public import TorchLean.NN.FDeriv.DerivCert
 
 /-!
 # Derivatives of tensor coordinate maps

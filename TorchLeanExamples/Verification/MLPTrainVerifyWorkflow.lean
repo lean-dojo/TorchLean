@@ -13,11 +13,12 @@ public import TorchLean.NN.Module.Command
 public import TorchLean.NN.Trainer.Constructor
 
 /-!
-# Train a Classifier, Then Verify Robustness
+# Train a Classifier, Then Check Robustness
 
-The complete high-level workflow: build and train a classifier, then verify that its class cannot
-change inside an L-infinity input ball. `trained.verify` does the graph lowering and the bound pass
-itself.
+The complete high-level workflow: build and train a classifier, then check with computed bounds
+that its class does not change inside an L-infinity input ball. `trained.verify` does the graph
+lowering and the bound pass itself. On a rounded scalar no theorem says the bounds enclose the
+model over `ℝ`.
 
 Training:
 - build a two-layer ReLU classifier (2 → 8 → 2)
@@ -27,7 +28,7 @@ Verification:
 - call `trained.verify` over the L∞ ball of radius 0.10 around the center
 - run the default `crown` method over the trained parameters, directed CROWN on the rounded
   scalars this workflow uses
-- report typed output bounds, the worst-case class margin, and the certification result
+- report typed output bounds, the worst-case class margin, and whether that margin is positive
 
 Run:
   `scripts/lake.sh exe verify -- torchlean-mlp-workflow`

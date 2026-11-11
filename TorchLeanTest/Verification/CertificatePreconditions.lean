@@ -12,6 +12,7 @@ public import TorchLean.Verify.JSON
 public import TorchLeanExamples.Verification.ODE.Parse
 public import TorchLeanExamples.Verification.PINN
 public import TorchLeanExamples.Verification.PINN.PDEParse
+public import TorchLeanTest.Verification.CertificateVerdict
 
 /-!
 # CertificatePreconditions
@@ -39,6 +40,9 @@ their stated bits to nearest, and only the finite ones are accepted as a matrix 
 `±1e999999999` and `±1e-999999999`, whose exponents FloatLib's conversion clamps, read as their
 stated bits in each of the six modes. The writers emit the infinite offsets as `-1e39` and `1e39`,
 which read back to them, and the readers refuse NaN and the strings `"NaN"`, `"-inf"` and `"+inf"`.
+
+`run` ends with `TorchLean.Test.CertificateVerdict.run`, the file checks of the CROWN node verdict
+and the replay diagnostic.
 -/
 
 @[expose] public section
@@ -460,6 +464,7 @@ def run : IO Unit := do
   boundary
   signedDecimals
   vacuousOffsets
+  CertificateVerdict.run
 
   IO.println "certificate_preconditions: ok"
 

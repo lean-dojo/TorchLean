@@ -131,17 +131,21 @@ def tensorSquare {α : Type} [Storage α] [Mul α]
 
 Recording uses the existing arithmetic, tensor sums, square, ReLU, sigmoid, tanh and rank-two
 matrix products, along with their VJP rules (a VJP takes an output gradient and propagates it back
-to the inputs). The frontend checks that its reconstructed arithmetic expression equals our
-function, without reassociating operations. There's no separate custom-gradient tape. Captured
-tensors are constants, and backward differentiates the supplied input. Division and direct negation
-use that same interface. Scalar input-dependent conditionals record only the chosen branch, while
-fixed-parameter scalar recurrences record each step (and the count must be independent of
-differentiable inputs).
+to the inputs). For each recording the frontend adds a kernel-checked theorem: the recorded
+program, run by the pure interpreter, computes our function. Each operation is recorded only when
+it computes what the recorded operator computes in the element type's context, instance included,
+so an `x * y` whose `Mul` instance means something else is an error rather than a wrong gradient.
+The theorem covers the pure interpreter, not the eager tape or a GPU kernel. There's no separate
+custom-gradient tape. Captured tensors are constants, and backward differentiates the supplied
+input. Division and direct negation use that same interface. Scalar input-dependent conditionals
+record only the chosen branch, while fixed-parameter scalar recurrences record each step (and the
+count must be independent of differentiable inputs).
 
 Backward consumes the recording, even on failure. Its default seed is all ones, which gives the
 derivative of the sum of output entries. Pass `result.backward seed` to supply different output
-gradients, or call `result.close` when backward isn't needed. Unsupported recordings return an
-error, though CPU forward-only calls evaluate the original function.
+gradients, or call `result.close` when backward isn't needed. A function that can't be recorded is
+an elaboration error when we write `grad := true`, and an IO error when `grad` is known only at run
+time. CPU forward-only calls evaluate the original function.
 
 With recording, the element type can be a parameter too. On GPU, the tape retains binary32 for
 `Float32`, binary64 for `Float`, and complete words for configured binary arithmetic (including

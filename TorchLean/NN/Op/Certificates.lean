@@ -235,15 +235,19 @@ theorem pad_hasFDerivAt (value : Tensor ℝ []) (x : Tensor ℝ s) :
   rw [heq]
   exact ((Rep.pullCLM _).adjoint.hasFDerivAt).add_const _
 
-/-- The pullback of `pad` to its input, the entries at the `padPosition`s, is the adjoint of the
-derivative, the padding value fixed. -/
+/-- The forward of `pad` is differentiable in its input, the padding value fixed, and its pullback
+to the input, the entries at the `padPosition`s, is the adjoint of the derivative. -/
 @[op_cert TorchLean.Op.pad derivative 0]
 theorem pad_backward_eq_adjoint (value : Tensor ℝ []) (x : Tensor ℝ s)
     (δ : Tensor ℝ (s.pad low high interior)) :
+    DifferentiableAt ℝ (fun y =>
+        (((Op.pad (s := s) low high interior).rule? (α := ℝ) |>.get rfl).forward
+          (y, value, ())).1) x ∧
     (((Op.pad (s := s) low high interior).rule? (α := ℝ) |>.get rfl).backward
         (x, value, ()) (δ, ())).1 =
       (fderiv ℝ (fun y => (((Op.pad (s := s) low high interior).rule? (α := ℝ) |>.get rfl).forward
         (y, value, ())).1) x).adjoint δ := by
+  refine ⟨(pad_hasFDerivAt low high interior value x).differentiableAt, ?_⟩
   rw [(pad_hasFDerivAt low high interior value x).fderiv, ContinuousLinearMap.adjoint_adjoint]
   apply Tensor.Rep.ext
   intro c
@@ -270,15 +274,20 @@ theorem pad_value_hasFDerivAt (x : Tensor ℝ s) (value : Tensor ℝ []) :
   rw [heq]
   exact (padValueCLM low high interior).hasFDerivAt.const_add _
 
-/-- The pullback of `pad` to its padding value, the sum of the cotangent over the padding
-positions, is the adjoint of the derivative, the input fixed. -/
+/-- The forward of `pad` is differentiable in its padding value, the input fixed, and its
+pullback to the padding value, the sum of the cotangent over the padding positions, is the adjoint
+of the derivative. -/
 @[op_cert TorchLean.Op.pad derivative 1]
 theorem pad_value_backward_eq_adjoint (x : Tensor ℝ s) (value : Tensor ℝ [])
     (δ : Tensor ℝ (s.pad low high interior)) :
+    DifferentiableAt ℝ (fun v =>
+        (((Op.pad (s := s) low high interior).rule? (α := ℝ) |>.get rfl).forward
+          (x, v, ())).1) value ∧
     (((Op.pad (s := s) low high interior).rule? (α := ℝ) |>.get rfl).backward
         (x, value, ()) (δ, ())).2.1 =
       (fderiv ℝ (fun v => (((Op.pad (s := s) low high interior).rule? (α := ℝ) |>.get rfl).forward
         (x, v, ())).1) value).adjoint δ := by
+  refine ⟨(pad_value_hasFDerivAt low high interior x value).differentiableAt, ?_⟩
   rw [(pad_value_hasFDerivAt low high interior x value).fderiv]
   apply ext_inner_left ℝ
   intro u
@@ -619,33 +628,39 @@ noncomputable def contractRightCLM (x : Tensor ℝ s) :
           RingHom.id_apply, Finset.mul_sum, mul_left_comm] }
   ⟨linear, linear.continuous_of_finiteDimensional⟩
 
-/-- The pullback of `contract` to its left operand, `contractBackwardLeft`, is the adjoint of the
-derivative, the right operand fixed. -/
+/-- The forward of `contract` is differentiable in its left operand, the right operand fixed, and
+its pullback to the left operand, `contractBackwardLeft`, is the adjoint of the derivative. -/
 @[op_cert TorchLean.Op.contract derivative 0]
 theorem contract_backward_eq_adjoint (x : Tensor ℝ s) (y : Tensor ℝ t)
     (δ : Tensor ℝ (s.contract t dims batchDims)) :
+    DifferentiableAt ℝ (fun x' =>
+        (((Op.contract dims batchDims h).rule? (α := ℝ) |>.get rfl).forward (x', y, ())).1) x ∧
     (((Op.contract dims batchDims h).rule? (α := ℝ) |>.get rfl).backward (x, y, ()) (δ, ())).1 =
       (fderiv ℝ (fun x' => (((Op.contract dims batchDims h).rule? (α := ℝ) |>.get rfl).forward
         (x', y, ())).1) x).adjoint δ := by
   have hf : (fun x' => (((Op.contract dims batchDims h).rule? (α := ℝ) |>.get rfl).forward
       (x', y, ())).1) = ⇑(contractLeftCLM dims batchDims h y) := rfl
   rw [hf, (contractLeftCLM dims batchDims h y).fderiv]
+  refine ⟨(contractLeftCLM dims batchDims h y).differentiableAt, ?_⟩
   apply ext_inner_left ℝ
   intro u
   rw [ContinuousLinearMap.adjoint_inner_right]
   exact (Tensor.inner_contract_eq_inner_contractBackwardLeft h u y δ).symm
 
-/-- The pullback of `contract` to its right operand, `contractBackwardRight`, is the adjoint of
-the derivative, the left operand fixed. -/
+/-- The forward of `contract` is differentiable in its right operand, the left operand fixed, and
+its pullback to the right operand, `contractBackwardRight`, is the adjoint of the derivative. -/
 @[op_cert TorchLean.Op.contract derivative 1]
 theorem contract_right_backward_eq_adjoint (x : Tensor ℝ s) (y : Tensor ℝ t)
     (δ : Tensor ℝ (s.contract t dims batchDims)) :
+    DifferentiableAt ℝ (fun y' =>
+        (((Op.contract dims batchDims h).rule? (α := ℝ) |>.get rfl).forward (x, y', ())).1) y ∧
     (((Op.contract dims batchDims h).rule? (α := ℝ) |>.get rfl).backward (x, y, ()) (δ, ())).2.1 =
       (fderiv ℝ (fun y' => (((Op.contract dims batchDims h).rule? (α := ℝ) |>.get rfl).forward
         (x, y', ())).1) y).adjoint δ := by
   have hf : (fun y' => (((Op.contract dims batchDims h).rule? (α := ℝ) |>.get rfl).forward
       (x, y', ())).1) = ⇑(contractRightCLM dims batchDims h x) := rfl
   rw [hf, (contractRightCLM dims batchDims h x).fderiv]
+  refine ⟨(contractRightCLM dims batchDims h x).differentiableAt, ?_⟩
   apply ext_inner_left ℝ
   intro u
   rw [ContinuousLinearMap.adjoint_inner_right]

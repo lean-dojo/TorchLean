@@ -11,7 +11,7 @@ Model shapes and graph construction use the same Lean API as CPU execution.
 
 ## Build and Run
 
-Select a CUDA-enabled LibTorch SDK and build:
+Select a CUDA-enabled LibTorch SDK of torch 2.13 or later and build:
 
 ```bash
 export TORCHLEAN_LIBTORCH_HOME=/opt/libtorch
@@ -83,7 +83,7 @@ TORCHLEAN_CUDA_DETERMINISTIC_REDUCTIONS=1 \
 ```
 
 Deterministic execution does not establish bitwise agreement with a particular FloatLib reference
-or across different SDKs and devices. The
+or across different torch releases and devices. The
 [GPU chapter]({{ '/blueprint/Floating-Point-and-Native-Boundaries/From-A-Tensor-Operation-To-A-GPU-Kernel/' | relative_url }})
 explains the numerical contracts and what the CUDA tests establish. For provider selection, VJP ownership, and
 assurance policies, read

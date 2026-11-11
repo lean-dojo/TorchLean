@@ -57,7 +57,7 @@ evaluator (`IR.Graph.eval`) and the typed graph nodes (`TypedGraph.GraphM.apply_
 accept every input and compute its forward map `Tensor.log` (`Op.rule?_log`). At `Float` and
 `Float32` that map is `Float.log` and `Float32.log`: `-∞` at `+0` and at `-0`, NaN below zero and
 at NaN, and `+∞` at `+∞`, the values of IEEE 754-2019 9.2 and 6.2. The CUDA tape runs LibTorch's
-`at::log` (`LibTorch.Buffer.log`) with no check, and the CUDA math library specifies the same
+`aten::log` (`LibTorch.Buffer.log`) with no check, and the CUDA math library specifies the same
 values for it. Over `ℝ` the map is `Real.log`, with `Real.log 0 = 0` and
 `Real.log |x| = Real.log x` (`Real.log_zero`, `Real.log_abs`), so `Real.exp (Real.log x) = x`
 needs `0 < x` (`Real.exp_log`). Use `Op.safeLog`, which computes `log (softplus x + ε)` for a

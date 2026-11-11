@@ -155,6 +155,7 @@ import TorchLean.Verify.Robustness.MLP
 import TorchLean.Verify.RuntimeApprox.OnlineSoftmax.FDeriv
 import TorchLean.Verify.RuntimeApprox.RL.Checked
 import TorchLean.Verify.RuntimeApprox.RL.PPORatio
+import TorchLean.Verify.RuntimeApprox.Roundoff.Baseline
 import TorchLean.Verify.RuntimeApprox.Roundoff.Composites
 import TorchLean.Verify.RuntimeApprox.Roundoff.Contractions
 import TorchLean.Verify.RuntimeApprox.Roundoff.Convolution
@@ -220,9 +221,12 @@ import TorchLeanTest.Verification.CameraCertificates
 import TorchLeanTest.Verification.CertificateParsing
 import TorchLeanTest.Verification.GradientKernel
 import TorchLeanTest.Verification.KernelMap
+import TorchLeanTest.Verification.OpCert
 import TorchLeanTest.Verification.OpDeriv
 import TorchLeanTest.Verification.OpDerivCat
 import TorchLeanTest.Verification.OpDerivScatter
+import TorchLeanTest.Verification.Recorder
+import TorchLeanTest.Verification.RoundoffBaseline
 
 /-!
 # Checks on the built libraries
@@ -251,13 +255,19 @@ reduce to `false` has an equation lemma among them named after `TorchLean.Op.rul
 constructor, as `TorchLean.Op.rule?_relu`, and a route analyzed for the configured scalar when one
 of its ports holds the model's scalar (`TorchLean.Port.Kind.isScalar`), and every `op_cert`
 certificate of the imported modules speaks about a route of its operator: an analyzed route, the
-gradient of one of its value inputs or its tangent. The gradient of every value input of a
-constructor whose number of inputs does not depend on its attributes must also have a `derivative`
-certificate about all the value inputs of the constructor together that fixes none of its
-arguments, an element at the scalar and a proof the constructor takes excepted. A function that
-takes a graph lowers the whole graph to a tape and needs no registration. The outcomes of the
-analyses do not make the check fail: its message counts those for the configured scalar by
-outcome.
+gradient of one of its value inputs or its tangent. Every `derivative` certificate must have passed
+the check of `op_cert` against `TorchLean.DerivCert`, the operator's forward and pullback at a
+point. The gradient of every value input of a constructor whose number of inputs does not depend
+on its attributes must also have such a certificate under `TorchLean/` in all the value inputs of
+the constructor together that leaves each of its arguments a distinct variable, an element at the
+scalar and a proof the constructor takes excepted. The message counts the `derivative`
+certificates under `TorchLean/` and those of them without domain premises. A function that takes a
+graph lowers the whole graph to a tape and needs no registration. The outcomes of the
+analyses must also match `scripts/checks/roundoff_baseline.jsonl`, as
+`TorchLean.Roundoff.Baseline.check` compares them: the check fails on a lower status, a weaker
+budget, a new premise or caveat, a changed reference and a gone analysis, and on a new analysis
+or an improvement until the file is updated with `TORCHLEAN_ROUNDOFF_BASELINE=update`. Its
+message counts the outcomes for the configured scalar.
 -/
 
 open Lean Meta Elab Command
@@ -422,7 +432,8 @@ def scalarElements : List Name :=
   [``TorchLean.Op.Element.scalar, ``TorchLean.Op.NumericElement.scalar]
 
 /-- Whether the statement `type` leaves every argument of the constructor `operator` a variable at
-its occurrence of the rule, a proof the constructor takes and an element at the scalar excepted. -/
+its occurrence of the rule, no two the same, a proof the constructor takes and an element at the
+scalar excepted. -/
 def fixesNoArgument (operator : Name) (type : Expr) : MetaM Bool := do
   let proofs ← forallTelescope (← getConstInfo operator).type fun binders _ =>
     binders.mapM fun binder => do isProp (← inferType binder)
@@ -431,9 +442,11 @@ def fixesNoArgument (operator : Name) (type : Expr) : MetaM Bool := do
         e.isAppOf ``TorchLean.Op.rule? && e.getAppNumArgs > 0 &&
           e.getAppArgs.back!.getAppFn.constName? == some operator
       | return false
-    return (spec.getAppArgs.back!.getAppArgs.zip proofs).all fun (argument, proof) =>
-      proof || (argument.isFVar && locals.contains argument) ||
-        scalarElements.any argument.isConstOf
+    let arguments := (spec.getAppArgs.back!.getAppArgs.zip proofs).filterMap
+      fun (argument, proof) =>
+        if proof || scalarElements.any argument.isConstOf then none else some argument
+    return arguments.all (fun a => a.isFVar && locals.contains a) &&
+      arguments.toList.eraseDups.length == arguments.size
 
 run_cmd do
   let env ← getEnv
@@ -470,6 +483,8 @@ run_cmd do
   let mut certified : Nat := 0
   let mut positions : Nat := 0
   let mut jointly : Nat := 0
+  let mut canonical : Nat := 0
+  let mut unconditional : Nat := 0
   for operator in table.ctors do
     let found ← liftTermElabM <| tableConstructor operator
     let short := operator.getString!
@@ -490,22 +505,34 @@ run_cmd do
       unless fields.jvp || routes.any (speaksAbout fields entry.inputs) do
         problems := problems.push s!"{operator}: the certificate {entry.certificate} speaks \
           about no route"
-    -- The derivative certificates in all the value inputs together that fix no argument.
+    -- Every derivative certificate passed the check of `op_cert`. Those declared under
+    -- `coverageRoots` count, and the ones in all the value inputs together (their varying
+    -- positions, or a mapped list of inputs) that fix no argument cover the gradients.
     let values := found.gradients.map routePosition
     let mut joint : Array (RuleFields × List Nat) := #[]
     for entry in TorchLean.Op.certificates env operator do
       unless entry.kind == `derivative do continue
-      unless entry.inputs.isEmpty || values.all entry.inputs.contains do continue
+      let some checked := TorchLean.Op.derivEntry? env entry.certificate |
+        problems := problems.push s!"{operator}: the derivative certificate \
+          {entry.certificate} did not pass the check of op_cert"
+      unless inCoverageRoots env entry.certificate do continue
+      canonical := canonical + 1
+      if checked.premises.isEmpty then unconditional := unconditional + 1
+      unless checked.varying.isEmpty || values.all checked.varying.contains do continue
       let type := (← getConstInfo entry.certificate).type
       if ← liftTermElabM <| fixesNoArgument operator type then
-        joint := joint.push (← liftTermElabM <| ruleFields type, entry.inputs)
+        joint := joint.push (← liftTermElabM <| ruleFields type, checked.varying)
     for route in found.gradients do
       positions := positions + 1
       if joint.any fun (fields, inputs) => speaksAbout fields inputs route then
         jointly := jointly + 1
       else
         problems := problems.push s!"{operator}: its gradient {route} has no derivative \
-          certificate in all its value inputs together that fixes no argument"
+          certificate of the canonical form in all its value inputs together that leaves its \
+          arguments distinct variables"
+  -- The outcomes of the analyses against the baseline next to this file.
+  problems := problems ++ (← TorchLean.Roundoff.Baseline.check entries
+    ((System.FilePath.mk (← getFileName)).withFileName "roundoff_baseline.jsonl"))
   unless problems.isEmpty do
     throwError m!"the coverage check:\n{"\n".intercalate problems.toList}"
   let count (status : TorchLean.Roundoff.CoverageStatus) : Nat :=
@@ -513,10 +540,11 @@ run_cmd do
   logInfo m!"{specifications.size} operator specifications and {recorders.size} tape \
     constructors are registered with #roundoff_coverage. The {table.ctors.length} constructors \
     of the operator table have the equation lemmas and routes they need, and their {certified} \
-    certificates speak about routes. {jointly} of the {positions} gradients of their value inputs \
-    have a derivative certificate in all the value inputs together that fixes no argument. Of \
-    the {configured.size} analyses for the configured \
-    scalar, {count .proved} are proved, {count .conditional} conditional, \
+    certificates speak about routes. {canonical} derivative certificates have the canonical \
+    form, {unconditional} of them without domain premises, and {jointly} of the {positions} \
+    gradients of their value inputs have one in all the value inputs together that leaves the \
+    operator's arguments distinct variables. Of the {configured.size} analyses for the \
+    configured scalar, {count .proved} are proved, {count .conditional} conditional, \
     {count .unsupported} unsupported and {count .failed} failed."
 
 end CoverageCheck

@@ -58,8 +58,9 @@ end Algorithm
 /--
 Output property checked against the computed bounds.
 
-`outputBounds` asks for the enclosure and nothing more. `topLabel label` asks for a certificate
-that one class wins everywhere on the input region.
+`outputBounds` asks for the enclosure and nothing more. `topLabel label` asks whether the computed
+bounds show that class `label` wins everywhere on the input region. At a scalar without
+`LawfulBoundOps`, such as host `Float` or binary32, no theorem says the bounds enclose the model.
 -/
 inductive Property where
   /-- Return the output enclosure without an additional assertion. -/

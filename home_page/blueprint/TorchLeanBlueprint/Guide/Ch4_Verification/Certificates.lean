@@ -500,9 +500,10 @@ There are three progressively stronger designs:
 - *Structural checking:* the artifact is self-consistent and each exported witness passes its
   stated arithmetic test, with the leaves covering the root. This is what `abcrown-leaf` provides.
 - *Recompute and compare:* the artifact contains a network and enough node data for Lean to
-  reproduce the bound calculation. TorchLean's node-certificate checkers recompute the complete
-  trace with FloatLib binary32: interval entries must contain the authoritative trace, while affine
-  replay entries must agree exactly at the binary32 level.
+  reproduce the bound calculation. TorchLean's interval node checker recomputes the complete trace
+  with FloatLib binary32, and interval entries must contain the authoritative trace. The CROWN
+  replay diagnostic lists where affine entries differ from a binary32 replay, which is not a
+  verdict.
 - *Proof-backed soundness:* checker acceptance supplies the exact hypotheses of a theorem that
   encloses the graph semantics. This requires a proved local transfer for every supported
   operator, plus a lowering correspondence and any required floating-point bridge.
@@ -692,9 +693,11 @@ fixes the reference binary32 operations for replay, but doesn't by itself provid
 {ref "fp32-soundness"}[floating-point soundness chapter] develops the relevant distinction.
 
 The {ref "certificates"}[leaf artifact described here] carries no graph or transfer evidence, so
-this theorem can't be applied to it directly. The CROWN node checker does have an acceptance
-theorem establishing local consistency of its binary32 replay. But a real enclosure still needs the
-real transfer hypotheses and a refinement argument from that replay to the real semantics.
+this theorem can't be applied to it directly. The CROWN replay diagnostic has a theorem,
+`CROWNNode.replayAgrees_spec`, establishing local consistency of its binary32 replay, but no real
+enclosure follows from it. The CROWN node verdict `CROWNNode.check` decides with
+`FiniteArtifact.accepts` instead, and `FiniteArtifact.accepts_graph_sound` proves its requested
+output inequalities for every real input in the box, on linear/ReLU chains.
 
 The last lines of the output are worth reading literally. Choose a valid node `id` and a box `B`.
 If the certificate contains `some B` at that node, the theorem concludes that the interval pass
@@ -733,8 +736,11 @@ may still raise an error before any report exists.
 -- Replay every supplied interval node of an operator graph
 -- with binary32 constants.
 #check @IBPNode.check
--- Add exact comparisons for the affine CROWN transcript.
+-- Decide a CROWN certificate on exact rational transfers.
 #check @CROWNNode.check
+-- List where the affine CROWN transcript differs from the
+-- binary32 replay.
+#check @CROWNNode.replayDiagnostic
 -- The parsed CROWN certificate, with optional ReLU phases.
 #check @Certificate.CROWNNode
 ```
@@ -764,15 +770,28 @@ IBPNode.check : IR.Graph →
 CROWNNode.check : IR.Graph →
   IR.Payload
       (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
-        CROWNNode.checkNode._proof_1 CROWNNode.checkNode._proof_2
-        CROWNNode.checkNode._proof_3 CROWNNode.checkNode._proof_4) →
+        CROWNNode.nodeMismatch._proof_1 CROWNNode.nodeMismatch._proof_2
+        CROWNNode.nodeMismatch._proof_3 CROWNNode.nodeMismatch._proof_4) →
+    CROWN.FlatBox
+        (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
+          CROWNNode.nodeMismatch._proof_1 CROWNNode.nodeMismatch._proof_2
+          CROWNNode.nodeMismatch._proof_3 CROWNNode.nodeMismatch._proof_4) →
+      FiniteArtifact.Query → String → IO Report
+```
+
+```leanOutput nodeEntries (whitespace := lax)
+CROWNNode.replayDiagnostic : IR.Graph →
+  IR.Payload
+      (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee (FloatFormat.Encoding.ieee.defaultBias 8)
+        CROWNNode.nodeMismatch._proof_1 CROWNNode.nodeMismatch._proof_2
+        CROWNNode.nodeMismatch._proof_3 CROWNNode.nodeMismatch._proof_4) →
     List
         (CROWN.FlatBox
           (ExecFloat.Binary 8 23 FloatFormat.Encoding.ieee
             (FloatFormat.Encoding.ieee.defaultBias 8)
-            CROWNNode.checkNode._proof_1 CROWNNode.checkNode._proof_2
-            CROWNNode.checkNode._proof_3 CROWNNode.checkNode._proof_4)) →
-      String → IO Report
+            CROWNNode.nodeMismatch._proof_1 CROWNNode.nodeMismatch._proof_2
+            CROWNNode.nodeMismatch._proof_3 CROWNNode.nodeMismatch._proof_4)) →
+      String → IO (Array String)
 ```
 
 ```leanOutput nodeEntries
@@ -780,10 +799,11 @@ CROWNNode : Type
 ```
 
 All three checkers receive a graph and its parameters, so they can recompute bounds for a
-supplied network. `IBPNode` and `CROWNNode` take a graph of registered operators, its
-payload of `ExecFloat.Binary 8 23` constants and one input box per graph input, and compare
-against a specified binary32 execution. A producer using different rounding or reduction rules
-may disagree with that replay.
+supplied network. `IBPNode.check` and `CROWNNode.replayDiagnostic` take a graph of registered
+operators, its payload of `ExecFloat.Binary 8 23` constants and one input box per graph input, and
+compare against a specified binary32 execution. A producer using different rounding or reduction
+rules may disagree with that replay. `CROWNNode.check` takes the box of graph input `0` and the
+requested output inequalities, a `FiniteArtifact.Query`, and compares nothing with a replay.
 
 Both node formats index their arrays by operator-node id: entry `i` belongs to node `i` of the
 operator graph, including the constant nodes of parameters and masks. In `ibp` and `crown`, a node
@@ -801,9 +821,10 @@ direction. To nearest, a magnitude of at least `2 ^ 128 - 2 ^ 103` (halfway betw
 finite value and `2 ^ 128`) is the infinity of its sign, and a smaller one is finite. So `1e39` is
 `+∞` as an upper endpoint or a coefficient and the largest finite value as a lower endpoint (and
 `-1e39` symmetrically). For the infinities, the writers `NodeReplay.flatBoxValue` and
-`NodeReplay.affineBoundsValue?` emit `±1e39`. A `crown` entry must equal Lean's replay bit for bit.
-Its matrix entries must be finite, and an offset may be the infinity that bounds nothing on its
-side (`-∞` in `loC` and `+∞` in `hiC`), but the other infinity is refused.
+`NodeReplay.affineBoundsValue?` emit `±1e39`. The replay diagnostic reports a `crown` entry that
+differs from Lean's replay in any bit. Matrix entries must be finite, and an offset may be the
+infinity that bounds nothing on its side (`-∞` in `loC` and `+∞` in `hiC`), but the other infinity
+is refused. `CROWNNode.check` refuses every infinite coefficient.
 
 `IBP.check` instead uses host `Float` and takes the index of a graph output. Its artifact
 stores the box of that output, not a trace for every node.
@@ -811,36 +832,39 @@ stores the box of that output, not a trace for every node.
 Here `String → IO Report` means “given a path, perform an IO action that returns a report.” An
 exception signals a file that the checker cannot read in its format, and a report with a rejection
 signals an artifact that fails the check. Signatures of the node checkers end in the same
-`IO Report`. On its own line, `CROWNNode : Type` describes a data type, not a checker
-or a theorem. In `IBP.check`, `optParam ... none` displays a defaulted argument (callers may omit
-the optional refinement request). If you read the result type and arguments first, the long
-namespace prefixes are much less distracting.
+`IO Report`, and the replay diagnostic ends in `IO (Array String)`, its list of differences. On its
+own line, `CROWNNode : Type` describes a data type, not a checker or a theorem. In `IBP.check`,
+`optParam ... none` displays a defaulted argument (callers may omit the optional refinement
+request). If you read the result type and arguments first, the long namespace prefixes are much
+less distracting.
 
-`IBPNode.check` has the same type as `CROWNNode.check`, and neither signature encodes an artifact
-kind. These node schemas don't require a distinguishing `format` field: the selected checker parses
-its fields and recomputes its own rules. So callers must choose the intended checker, and shared or
-extra JSON fields don't establish that choice.
+`IBPNode.check` and `CROWNNode.replayDiagnostic` differ only in their results, and no signature
+encodes an artifact kind. These node schemas don't require a distinguishing `format` field: the
+selected checker parses its fields and recomputes its own rules. So callers must choose the
+intended checker, and shared or extra JSON fields don't establish that choice.
 
 Use `abcrown-leaf` when the artifact is a branch-and-bound leaf summary. `IBP.check` checks a
 compact Float output-bound artifact against a supplied graph of registered operators, its payload
 and its input boxes. `IBPNode` instead replays per-node interval data with FloatLib binary32.
 `CROWNNode` adds affine CROWN data and optional ReLU phase tags already justified by the IBP
-intervals. It replays α-CROWN bounds, with no β multipliers or branch splits. These formats are
-related, but they aren't interchangeable transcripts.
+intervals. Its diagnostic replays α-CROWN bounds, with no β multipliers or branch splits, and its
+verdict checks the affine data against exact rational transfers. These formats are related, but
+they aren't interchangeable transcripts.
 
 When reporting an accepted artifact, name the checker and the condition it established:
 
 - `abcrown-leaf` checks a structural leaf artifact.
 - `IBPNode.check` recomputes the authoritative binary32 interval trace and requires the imported
   node boxes to contain it.
-- `CROWNNode.check` recomputes α-CROWN transfers for the supported CROWN fragment, validates any
-  IBP-stable phase tags, and compares the affine transcript exactly in binary32. Parsed interval
-  side data may widen the recomputed boxes but may never shrink them. Decimal endpoints are first
-  rounded outward to binary32. Lean's replay rounds to nearest, so acceptance does not show that
-  the affine bounds enclose the graph.
-- `FiniteArtifact.accepts` checks the affine bounds of a CROWN certificate on a linear/ReLU chain
-  against exact rational transfers, and `FiniteArtifact.accepts_graph_sound` proves the requested
-  output inequalities on the input box.
+- `CROWNNode.check` accepts exactly when `FiniteArtifact.accepts` does (`CROWNNode.verdict_ok`).
+  That decision checks the affine bounds of a CROWN certificate on a linear/ReLU chain against
+  exact rational transfers, and `FiniteArtifact.accepts_graph_sound` proves the requested output
+  inequalities for every real input in the box.
+- `CROWNNode.replayDiagnostic` is not a verdict. It recomputes α-CROWN transfers for the supported
+  CROWN fragment, validates any IBP-stable phase tags, and lists where the affine transcript
+  differs from the binary32 replay. Parsed interval side data may widen the recomputed boxes but
+  may never shrink them. Decimal endpoints are first rounded outward to binary32. Lean's replay
+  rounds to nearest, so an empty list does not show that the affine bounds enclose the graph.
 - graph soundness theorems apply only when the certificate format and graph fragment supply the
   hypotheses those theorems demand.
 

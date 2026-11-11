@@ -2,7 +2,10 @@
 // Build against the production backend's SDK; see README.md for the Lean reference input.
 #include "../../torchlean_libtorch.h"
 
+#include <ATen/ATen.h>
+#include <ATen/core/grad_mode.h>
 #include <ATen/record_function.h>
+#include <torch/csrc/inductor/aoti_torch/utils.h>
 #include <torch/version.h>
 
 #include <algorithm>
@@ -145,15 +148,29 @@ void equal_tensor(const at::Tensor& value, const std::vector<uint32_t>& expected
     equal_bits(actual[i], expected[i], label + "[" + std::to_string(i) + "]");
 }
 
+// The harness computes with ATen and the bridge with the Stable ABI. A tensor crosses between
+// them as an `AtenTensorHandle`, which both read as the same `at::Tensor`. The bridge cannot read
+// whether a tensor requires gradients, so `buffer_of` refuses one that does.
+lean_object* buffer_of(const at::Tensor& tensor) {
+  check(!tensor.requires_grad(), "a buffer's tensor must not require gradients");
+  return torchlean_cuda_buffer_of_handle(
+      torch::aot_inductor::new_tensor_handle(at::Tensor(tensor)));
+}
+
+const at::Tensor& tensor_of(b_lean_obj_arg object) {
+  return *torch::aot_inductor::tensor_handle_to_tensor_pointer(
+      torchlean_cuda_buffer_handle(object));
+}
+
 struct Object {
   lean_object* value;
   explicit Object(lean_object* object) : value(object) {}
-  explicit Object(const at::Tensor& tensor) : value(torchlean::box(tensor)) {}
+  explicit Object(const at::Tensor& tensor) : value(buffer_of(tensor)) {}
   ~Object() { lean_dec(value); }
   Object(const Object&) = delete;
   Object& operator=(const Object&) = delete;
   operator lean_object*() const { return value; }
-  const at::Tensor& tensor() const { return torchlean::tensor(value); }
+  const at::Tensor& tensor() const { return tensor_of(value); }
 };
 
 void activation_regressions() {
@@ -250,7 +267,8 @@ void external_buffer_class_regression() {
   const Object other(lean_alloc_external(other_class, nullptr));
   bool rejected = false;
   try {
-    (void)torchlean_cuda_buffer_unbox(other);
+    // The bridge exports only its entry points; `handle` unboxes before anything else.
+    (void)torchlean_cuda_buffer_handle(other);
   } catch (const std::exception& error) {
     rejected = std::string(error.what()).find("not a tensor buffer") != std::string::npos;
   }
@@ -350,10 +368,10 @@ void selection_regressions() {
   const Object a(on_device(greater)), b(on_device(less)), g(on_device(seed));
   const Object maximum(torchlean_cuda_buffer_max_bwd(a, b, g));
   const Object minimum(torchlean_cuda_buffer_min_bwd(a, b, g));
-  equal_tensor(torchlean::tensor(lean_ctor_get(maximum, 0)), winner, "max_bwd winner");
-  equal_tensor(torchlean::tensor(lean_ctor_get(maximum, 1)), loser, "max_bwd loser");
-  equal_tensor(torchlean::tensor(lean_ctor_get(minimum, 0)), loser, "min_bwd loser");
-  equal_tensor(torchlean::tensor(lean_ctor_get(minimum, 1)), winner, "min_bwd winner");
+  equal_tensor(tensor_of(lean_ctor_get(maximum, 0)), winner, "max_bwd winner");
+  equal_tensor(tensor_of(lean_ctor_get(maximum, 1)), loser, "max_bwd loser");
+  equal_tensor(tensor_of(lean_ctor_get(minimum, 0)), loser, "min_bwd loser");
+  equal_tensor(tensor_of(lean_ctor_get(minimum, 1)), winner, "min_bwd winner");
 }
 
 using AdamScalars = std::array<double, 9>;
@@ -422,7 +440,7 @@ void adam_fixture(const std::string& label, const std::array<uint32_t, 4>& input
                                   from_bits(input[2]), from_bits(input[3]), scalars);
   for (size_t i = 0; i < 3; ++i) {
     equal_bits(to_bits(oracle[i]), expected[i], label + " independent fixture/oracle");
-    equal_tensor(torchlean::tensor(fields[i]), {expected[i]},
+    equal_tensor(tensor_of(fields[i]), {expected[i]},
                  label + " output " + std::to_string(i));
   }
 }
@@ -495,7 +513,7 @@ void adam_regressions() {
     const Object result(adam(p, g, m, v, scalars));
     const auto fields = triple_fields(result);
     for (size_t j = 0; j < 3; ++j)
-      equal_tensor(torchlean::tensor(fields[j]), expected[j],
+      equal_tensor(tensor_of(fields[j]), expected[j],
                    "Adam staged oracle variant " + std::to_string(variant) +
                    " output " + std::to_string(j));
   }
@@ -631,7 +649,7 @@ void running_mean_regressions() {
 }
 
 void no_graph(lean_object* object, const std::string& label) {
-  const auto& value = torchlean::tensor(object);
+  const auto& value = tensor_of(object);
   check(!value.requires_grad(), label + ": result requires gradients");
   check(value.grad_fn() == nullptr, label + ": result has an autograd node");
 }
@@ -643,7 +661,7 @@ void no_autograd_regressions() {
     const Object x(on_device({0x3f000000, 0x3f800000}));
     const Object y(on_device({0x3fc00000, 0x40000000}));
     const Object g(on_device({0x3f800000, 0x3f800000}));
-    // The runtime rejects gradient-bearing Buffer inputs. Use a separate ATen leaf to
+    // Buffers never hold gradient-bearing tensors (`buffer_of`). Use a separate ATen leaf to
     // calibrate observation and exercise invoke with gradients, then valid Buffer inputs
     // for all exports. Observation detects a missing guard even with no-grad inputs.
     auto leaf = on_device({0x3f800000});

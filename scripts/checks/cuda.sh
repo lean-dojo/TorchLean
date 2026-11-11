@@ -25,7 +25,8 @@ Finite values and signed zeros must match exactly, and both NaNs satisfy EqUpToN
 NaN encoding differences are counted separately. A finite sweep is validation, not a proof.
 
 The C++ harness batches add/mul/div and raw IEEE sqrt through ATen. It also checks the
-production C ABI, including each FMA case through scalar AXPY using addcmul(value=1).
+production C ABI, including each FMA case through scalar AXPY (a generated fma kernel), with
+ATen addcmul(value=1) as an independent oracle.
 Buffer.sqrt is checked separately with its specified nonpositive-to-zero selection.
 FMA cancellation/double-rounding, staged Adam and noAutograd regressions run as well.
 

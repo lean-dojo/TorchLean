@@ -251,25 +251,36 @@ Use this split when adding operators:
 
 ### Certificate acceptance
 
-The library functions `IBPNode.check` and `CROWNNode.check` check node certificates, and
-`lake exe verify` has no command for them. A CROWN certificate may carry ReLU phases, which only
-fix ReLUs whose IBP interval already proves the phase. The CROWN check ends with a pure complete
-replay, and `CROWNNode.accepts_sound` turns a successful binary32 replay into local
-consistency (one entry per node, each its replay with the operator graph's forward pass
-`Op.alphaStep?`). The result is a theorem about the imported binary32 transcript, which need not
+The library functions `IBPNode.check`, `CROWNNode.check` and `CROWNNode.replayDiagnostic` read
+node certificates, and `lake exe verify` has no command for them. Of these, only
+`CROWNNode.check` is a safety verdict with a theorem about the graph over `ℝ`.
+
+`CROWNNode.check` decides a per-node α-CROWN certificate by `Certificate.FiniteArtifact.accepts`
+(`CROWNNode.verdict_ok`). For nonempty vector linear/ReLU chains, `FiniteArtifact.accepts` checks
+the supplied bounds against exact rational transfers, with no binary32 replay. It rejects
+inward-rounded affine coefficients even when they agree with binary32 replay, and accepts bounds
+from any producer that dominate the exact transfers. `FiniteArtifact.accepts_graph_sound` (in
+`TorchLean.Verify.Certificate.FiniteArtifact.Semantics`) then proves that the original graph, read
+with the exact real values of those binary32 parameters, satisfies every requested output inequality
+on the whole input box. The checker needs bounds for the whole chain and at least one inequality,
+and it rejects every other graph. Native execution error is a separate obligation.
+
+`CROWNNode.replayDiagnostic` is a diagnostic, not a safety verdict. It lists where a certificate
+differs from Lean's binary32 replay with the operator graph's forward pass `Op.alphaStep?`. A
+CROWN certificate may carry ReLU phases, which only fix ReLUs whose IBP interval already proves the
+phase. `CROWNNode.replayAgrees_spec` turns agreement into local consistency (one entry per node,
+each its replay). The result is a theorem about the imported binary32 transcript, which need not
 enclose the graph, because the replay rounds to nearest. After the layers `h = x + 1` and
 `y = h + 2 ^ -24` at `x = -1`, where `y = 2 ^ -24`, the replayed upper form of `y` is `x + 1`,
 which is `0` there. On `y = relu x` over `[-M, M]`, with `M` the largest finite value,
 `M - (-M)` overflows and the replayed upper form of `y` is `0`, below `relu M = M`.
+`TorchLeanTest.Verification.CertificateVerdict` holds a linear/ReLU certificate that agrees with
+the replay and that `CROWNNode.check` rejects.
 
-For nonempty vector linear/ReLU chains, `Certificate.FiniteArtifact.accepts` checks the
-supplied bounds against exact rational transfers, with no binary32 replay. It rejects inward-rounded
-affine coefficients even when they agree with binary32 replay, and accepts bounds from any producer
-that dominate the exact transfers. `FiniteArtifact.accepts_graph_sound` (in
-`TorchLean.Verify.Certificate.FiniteArtifact.Semantics`) then proves that the original graph, read
-with the exact real values of those binary32 parameters, satisfies every requested output inequality
-on the whole input box. The checker needs bounds for the whole chain and at least one inequality.
-Native execution error is a separate obligation.
+`IBPNode.check` accepts when every box contains Lean's binary32 IBP trace. Binary32 has no
+`LawfulBoundOps` instance, so no theorem connects that acceptance to the graph over `ℝ`: it is a
+(C) verdict. The Safety Verdicts section of `TorchLean/Verify/README.md` lists every verdict and
+the path it uses.
 
 ## `Op/` Modules
 

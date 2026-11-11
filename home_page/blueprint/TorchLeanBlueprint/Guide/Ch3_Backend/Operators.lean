@@ -349,8 +349,11 @@ others are held fixed. The kinds keep apart what the theorems state:
 
 On registration, the attribute checks that the declaration is a theorem whose statement mentions
 the operator's arm of `Op.rule?`, and, when the operator's input list reduces to a literal list,
-that every listed position is an input. It doesn't check that
-the statement says what its kind says. `#op_certs` prints the registrations of one operator:
+that every listed position is an input. For `derivative` it checks the statement against one
+proposition, `DerivCert f x δ v`: the operator's forward `f` in the listed inputs is
+differentiable at the point `x`, and the stored backward `v` of `δ` is the adjoint of its
+derivative. For the other kinds it doesn't check that the statement says what its kind says.
+`#op_certs` prints the registrations of one operator:
 
 ```lean (name := regCerts)
 #op_certs Op.tanh

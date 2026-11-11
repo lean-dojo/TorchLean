@@ -156,8 +156,25 @@ def _is_integer(dtype: DType) -> bool:
 
 
 def encode(value: Any) -> dict[str, Any]:
-    """Serialize a tensor with its canonical element descriptor, shape and exact words."""
+    """Serialize a tensor as JAX reads it (``canonical``), with its canonical element descriptor,
+    shape and exact words. With 64-bit mode off, a NumPy float64 array is written as the float32
+    array that a traced call computes on."""
+    (value,) = canonical([value])
     return dict(dtype=_dtype(value), shape=_shape(value), bits=bits(value))
+
+
+def canonical(values: Sequence[Any]) -> list[Any]:
+    """The values with every pytree leaf as a JAX array (``jnp.asarray``): the values a traced call
+    computes on. A container keeps its structure.
+
+    With 64-bit mode off, JAX converts a float64, int64 or uint64 array to its 32-bit type (an
+    integer modulo ``2 ** 32``), and with it on it keeps the array. A capture traces, serializes
+    and runs its reference on these values, so all three see the same words: ``export`` traces
+    them (``jax.make_jaxpr`` converts its examples so), ``encode`` writes them and ``references``
+    computes on them.
+    """
+    import jax.numpy as jnp
+    return [jax.tree.map(jnp.asarray, value) for value in values]
 
 
 class _Builder:
@@ -175,6 +192,12 @@ class _Builder:
         # computation of its own when the function is evaluated one primitive at a time.
         self.primitive_index: int | None = None
         self.primitives = 0
+        # The type JAX gives each traced variable, by the internal node holding its value.
+        self.declared: dict[int, dict[str, Any]] = {}
+
+    def declare(self, index: int, origin: str, aval: Any) -> None:
+        self.declared.setdefault(index, dict(node=index, origin=origin, source="capture",
+                                             dtype=_dtype(aval), shape=_shape(aval)))
 
     def node(self, kind: str, parents: list[int], shape: list[int],
              dtype: DType | None = None, **attrs: Any) -> int:
@@ -1009,6 +1032,7 @@ class _Builder:
                     raise Unsupported(f"{name}: lowering produced an inconsistent output shape")
                 if self.nodes[index]["dtype"] != _dtype(var.aval):
                     raise Unsupported(f"{name}: lowering produced an inconsistent output dtype")
+                self.declare(index, f"{var} = {name}", var.aval)
                 env[var] = index
         return [read(atom) for atom in jaxpr.outvars]
 
@@ -1430,12 +1454,15 @@ def lower(closed_jaxpr: Any,
     builder = _Builder(_dtype(jaxpr.invars[0].aval), checker)
     input_ids = [builder.node("input", [], _shape(var.aval), dtype=_dtype(var.aval))
                  for var in jaxpr.invars]
+    for var, index in zip(jaxpr.invars, input_ids):
+        builder.declare(index, f"input {var}", var.aval)
     output_ids = builder.body(closed_jaxpr, input_ids)
     if not output_ids:
         raise Unsupported("Jaxpr import needs at least one tensor output")
     whole = (len(jaxpr.eqns) == 1 and jaxpr.eqns[0].primitive.name in {"jit", "pjit"}
              and list(jaxpr.eqns[0].outvars) == list(jaxpr.outvars))
-    artifact, _, origin = _artifact.lower(builder.nodes, input_ids, output_ids, op_table(checker))
+    artifact, refs, origin = _artifact.lower(builder.nodes, input_ids, output_ids,
+                                             op_table(checker))
 
     def per_step(key: str) -> list[int | None]:
         # The metadata of the internal node whose lowering emitted each artifact step.
@@ -1444,7 +1471,9 @@ def lower(closed_jaxpr: Any,
     return dict(artifact=artifact, frontend="jaxpr",
                 reference_execution="jit" if whole else "eager",
                 jit_computations=builder.jit_computations, computation=per_step("computation"),
-                primitive_index=per_step("primitive_index"))
+                primitive_index=per_step("primitive_index"),
+                declared_types=[dict(entry, ref=refs[index])
+                                for index, entry in sorted(builder.declared.items())])
 
 
 def export(function: Callable[..., Any], *examples: Any,
@@ -1525,16 +1554,28 @@ def references(function: Callable[..., Any], *examples: Any) -> dict[str, Any]:
     ``eager_reference_outputs``: the outputs of ``evaluate``, one primitive at a time, which XLA
     computes without ``jax.jit``'s rewrites. Their platform is in ``reference_platform`` too. Merge
     the result into the document that ``export`` writes for the same function and examples.
+
+    The examples and the output leaves are taken as JAX arrays (``canonical``), so a NumPy float64
+    leaf is the float32 value the trace computes when 64-bit mode is off. An output whose element
+    type or shape is not its traced output's is refused with ``Unsupported``.
     """
     import jaxlib
 
-    outputs = jax.tree.leaves(function(*examples))
+    examples = canonical(examples)
+    outputs = canonical(jax.tree.leaves(function(*examples)))
+    closed = jax.make_jaxpr(function)(*examples)
+    traced = closed.jaxpr.outvars
+    if len(outputs) != len(traced):
+        raise Unsupported(f"the function returns {len(outputs)} tensors, its trace {len(traced)}")
+    for i, (value, var) in enumerate(zip(outputs, traced)):
+        if _dtype(value) != _dtype(var.aval) or _shape(value) != _shape(var.aval):
+            raise Unsupported(f"reference output {i} is {_dtype(value)} {_shape(value)}, "
+                              f"the traced output is {_dtype(var.aval)} {_shape(var.aval)}")
     record: dict[str, Any] = dict(reference_outputs=[encode(value) for value in outputs],
                                   jaxlib_version=jaxlib.__version__)
-    closed = jax.make_jaxpr(function)(*examples)
     computed = list(outputs)
     if _calls_jit(closed.jaxpr):
-        eager = evaluate(closed, *examples)
+        eager = canonical(evaluate(closed, *examples))
         record["eager_reference_outputs"] = [encode(value) for value in eager]
         computed += eager
     record["reference_platform"] = _platform(computed)

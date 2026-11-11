@@ -20,10 +20,10 @@ Low-level coverage of the packed real FFT buffer primitives:
 - `Buffer.irfftPacked`: packed half-spectrum back to normalized real rows,
 - `Buffer.rfftAdjoint`: the adjoint of the real transform, at both ends of the binary32 range.
 
-The CUDA backend calls LibTorch's `at::fft_rfft` and `at::fft_irfft`. The spectral convolution
-checks run the public Lean composition, compare its values and pullbacks with the dense reference
-on both devices, and check the pullbacks against finite differences on odd and even grids, with two
-channels and with no retained modes.
+The CUDA backend calls ATen's `aten::fft_rfft` and, for the inverse, `aten::_fft_c2r`, the
+operator inside `fft_irfft`. The spectral convolution checks run the public Lean composition,
+compare its values and pullbacks with the dense reference on both devices, and check the pullbacks
+against finite differences on odd and even grids, with two channels and with no retained modes.
 -/
 
 @[expose] public section

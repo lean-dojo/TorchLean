@@ -2,7 +2,7 @@
 #pragma once
 
 // NVRTC receives this bundled header in memory; execution never reads source files from disk.
-namespace torchlean {
+namespace torchlean __attribute__((visibility("hidden"))) {
 inline constexpr char binary_cuda[] = R"CUDA(
 // Copyright (c) 2026 TorchLean. MIT license.
 // Device-side configured binary arithmetic for custom computations. This is a foreign-code

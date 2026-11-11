@@ -95,6 +95,16 @@ def _check_static(leaves: Sequence[Any], dynamic: Sequence[bool], framework: str
                                   "or str (register structured arguments as pytrees)")
 
 
+def _copy(value: Any, what: str) -> Any:
+    """A deep copy of ``value``, the JAX capture's ``what``; an object that cannot be copied (one
+    holding a lock, say) is refused."""
+    try:
+        return copy.deepcopy(value)
+    except Exception as error:
+        raise NotImplementedError(f"the JAX capture copies the {what}, which raised "
+                                  f"{type(error).__name__}: {error}") from error
+
+
 def _flatten_call(function: Any, leaves: Sequence[Any], dynamic: Sequence[bool],
                   structure: Any) -> Any:
     """Return ``function`` as a function of the tensor leaves of the JAX pytree ``structure``.
@@ -175,15 +185,17 @@ def _capture(model: Any, examples: tuple[Any, ...], frontend: str, checks: Seque
         model = original.__get__(owner, type(owner)) if owner is not None else original
     if frontend == "jax":
         import jax
-        from .jaxpr import Unsupported, encode, lower, references
+        from .jaxpr import Unsupported, canonical, encode, lower, references
 
-        leaves, structure = jax.tree.flatten(copy.deepcopy((examples, kwargs)))
+        leaves, structure = jax.tree.flatten(_copy((examples, kwargs), "arguments"))
         dynamic = [hasattr(value, "shape") and hasattr(value, "dtype") for value in leaves]
-        tensors = [value for value, tensor in zip(leaves, dynamic) if tensor]
+        # The tensors as JAX traces them (a float64 one is float32 with 64-bit mode off): the
+        # trace, the serialized arguments and the reference all use these same values.
+        tensors = canonical([value for value, tensor in zip(leaves, dynamic) if tensor])
         if not tensors:
             raise NotImplementedError("JAX capture requires at least one tensor argument")
         _check_static(leaves, dynamic, "JAX")
-        flattened = _flatten_call(copy.deepcopy(model), leaves, dynamic, structure)
+        flattened = _flatten_call(_copy(model, "model"), leaves, dynamic, structure)
 
         try:
             with _preserve_random_state():
@@ -334,9 +346,11 @@ import all Init.Meta.Defs
 
 This module embeds the capture document written by `torchlean.verify`, whose artifact is a
 typed TorchLean IR program with the words of its constants. The constants, types, casts and
-input/output order belong to the same capture as the check report. The decoding and check proofs
-below do not prove frontend or kernel equivalence. Write further properties about `program` using
-its tensor semantics, with the constants that `artifact.load` decodes.
+input/output order belong to the same capture as the check report. The proofs below establish
+artifact decoding and `Program.check .reference`, the program's dependency, shape, type and
+interface checks. The report also validates the constant payload and `declared_types` through
+`IR.load`; those load checks, frontend equivalence and kernel equivalence are not proved here.
+Further properties can use the tensor semantics, with constants decoded by `artifact.load`.
 -/
 
 @[expose] public section
@@ -364,7 +378,7 @@ theorem artifact_decoded :
 /-- The captured typed program. -/
 def program : TorchLean.IR.Program := artifact.program
 
-/-- The program passes the shape, type and interface checks at the reference runtime. -/
+/-- The program passes `Program.check` at the reference runtime. -/
 theorem program_checked : program.check .reference = .ok () := by
   have success : (program.check .reference).toBool = true := by decide +kernel
   cases h : program.check .reference with
@@ -382,6 +396,14 @@ def _export(source: str, path: Path) -> None:
     # An export may become a hand-written proof file. Never replace it on recapture.
     with path.open("x", encoding="utf-8") as output:
         output.write(content)
+
+
+def _not_run(checks: Sequence[str], status: str, message: str) -> dict[str, Any]:
+    """The report for a document the checker never read: every request gets `status`."""
+    return dict(format="torchlean.verification", ok=False, checker="not_run",
+                checks=[dict(name=name, status=status, message=message) for name in checks],
+                outputs=None, conversion_flags=None, frontend_equivalence="not_checked",
+                frontend_device_layout_constraints="not_checked", external_kernels="not_checked")
 
 
 def verify(model: Any, example: Any = _NO_EXAMPLE, *examples: Any, frontend: str = "auto",
@@ -402,12 +424,15 @@ def verify(model: Any, example: Any = _NO_EXAMPLE, *examples: Any, frontend: str
 
     Capture and translation are automatic. Optional ``export="model.json"`` saves the JSON
     document sent to Lean, and ``export="Model.lean"`` embeds it in a Lean module exposing
-    ``Model.program`` and its decoding and check proofs. Further mathematical proofs can refer
-    to this program without recapturing the function. Export writes proof source: opening or
+    ``Model.program`` and proofs of artifact decoding and ``Program.check .reference``. The
+    report also validates the constant payload and ``declared_types`` through ``IR.load``;
+    the export includes no proof of those load checks. Further mathematical proofs can refer to
+    this program without recapturing the function. Export writes proof source: opening or
     compiling the Lean module checks its proofs. The Lean filename must be an ASCII identifier.
     Existing files are never replaced. The export is written before the checks run, so a failed
     check or a checker error leaves it for inspection. An unsupported capture creates no file.
-    Invalid graphs cannot pass the generated Lean check proof.
+    A document with no UTF-8 JSON text (a NaN, a value JSON lacks, a lone surrogate) fails
+    every request and creates no file.
 
     ``checker`` is an executable path (the ``ir`` subcommand is appended), or a
     complete argument sequence already ending in the IR checker command. No shell
@@ -470,13 +495,13 @@ def verify(model: Any, example: Any = _NO_EXAMPLE, *examples: Any, frontend: str
         except NotImplementedError as error:
             # No Lean checks ran. Keep every request visible rather than fabricating
             # a successful result for a smaller graph or a different frontend.
-            return dict(format="torchlean.verification", ok=False, checker="not_run",
-                        checks=[dict(name=name, status="unsupported",
-                                     message=f"Capture is unsupported: {error}") for name in checks],
-                        outputs=None, conversion_flags=None, frontend_equivalence="not_checked",
-                        frontend_device_layout_constraints="not_checked",
-                        external_kernels="not_checked")
-        source = json.dumps(document, ensure_ascii=False, allow_nan=False) + "\n"
+            return _not_run(checks, "unsupported", f"Capture is unsupported: {error}")
+        try:
+            source = json.dumps(document, ensure_ascii=False, allow_nan=False) + "\n"
+            source.encode("utf-8")
+        except (TypeError, ValueError) as error:
+            # Neither the checker nor an export can read a document without UTF-8 JSON text.
+            return _not_run(checks, "failed", f"The document has no UTF-8 JSON text: {error}")
         if destination is not None:
             _export(source, destination)
         return runner.check(source, checks, directory)

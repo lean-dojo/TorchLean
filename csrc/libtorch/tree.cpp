@@ -19,11 +19,13 @@
 
 namespace {
 
+using namespace torchlean;
+
 struct tree {
   // (1 + index_slots) * count words.
-  at::Tensor words;
+  Tensor words;
   // scalar_slots * count scalars: kFloat, kDouble, or kByte words of `width` bytes.
-  at::Tensor scalars;
+  Tensor scalars;
   uint64_t count;
   uint64_t index_slots;
   uint64_t scalar_slots;
@@ -42,19 +44,19 @@ lean_external_class* tree_class() {
   return result;
 }
 
-at::ScalarType scalar_type(uint32_t format) {
-  return format == 0 ? at::kFloat : format == 1 ? at::kDouble : at::kByte;
+ScalarType scalar_type(uint32_t format) {
+  return format == 0 ? kFloat : format == 1 ? kDouble : kByte;
 }
 
 void check_layout(uint32_t format, uint64_t width) {
-  TORCH_CHECK(format <= 2 && width > 0, "tree: invalid scalar layout");
-  TORCH_CHECK(format == 2 || width == c10::elementSize(scalar_type(format)),
-              "tree: native scalar width mismatch");
+  TORCHLEAN_CHECK(format <= 2 && width > 0, "tree: invalid scalar layout");
+  TORCHLEAN_CHECK(format == 2 || width == element_size(scalar_type(format)),
+                  "tree: native scalar width mismatch");
 }
 
 uint64_t times(uint64_t a, uint64_t b) {
   uint64_t result;
-  TORCH_CHECK(!__builtin_mul_overflow(a, b, &result), "tree: block size overflow");
+  TORCHLEAN_CHECK(!__builtin_mul_overflow(a, b, &result), "tree: block size overflow");
   return result;
 }
 
@@ -65,25 +67,26 @@ std::string string_of(b_lean_obj_arg text) {
 // The handle, after checking that it is read with the scalar layout it was uploaded with.
 const tree& unbox(b_lean_obj_arg object, uint32_t format, b_lean_obj_arg descriptor,
                   uint64_t width) {
-  TORCH_CHECK(!lean_is_scalar(object) && lean_is_external(object) &&
-                  lean_get_external_class(object) == tree_class(),
-              "tree: invalid handle");
+  TORCHLEAN_CHECK(!lean_is_scalar(object) && lean_is_external(object) &&
+                      lean_get_external_class(object) == tree_class(),
+                  "tree: invalid handle");
   const auto& result = *static_cast<const tree*>(lean_get_external_data(object));
-  TORCH_CHECK(result.format == format && result.width == width &&
-                  result.descriptor == string_of(descriptor),
-              "tree: the arena's scalars are in another layout");
+  TORCHLEAN_CHECK(result.format == format && result.width == width &&
+                      result.descriptor == string_of(descriptor),
+                  "tree: the arena's scalars are in another layout");
   return result;
 }
 
 // A block of little-endian words as a device tensor whose elements are those words.
-at::Tensor upload_block(b_lean_obj_arg bytes, at::ScalarType dtype) {
-  const size_t size = c10::elementSize(dtype);
+Tensor upload_block(b_lean_obj_arg bytes, ScalarType dtype) {
+  const size_t size = element_size(dtype);
   const size_t total = lean_sarray_size(bytes);
-  TORCH_CHECK(total % size == 0 && total / size <= INT64_MAX, "tree: truncated block");
+  TORCHLEAN_CHECK(total % size == 0 && total / size <= INT64_MAX, "tree: truncated block");
   const size_t n = total / size;
-  auto host = at::empty({static_cast<int64_t>(n)}, at::TensorOptions().dtype(dtype));
+  auto host =
+      aten<"empty.memory_format">({static_cast<int64_t>(n)}, tensor_options{dtype, Device(kCPU)});
   const auto* source = reinterpret_cast<const uint8_t*>(lean_sarray_cptr(bytes));
-  auto* values = static_cast<uint8_t*>(host.data_ptr());
+  auto* values = static_cast<uint8_t*>(host.mutable_data_ptr());
   if (size == 1) {
     if (total) std::memcpy(values, source, total);
   } else for (size_t i = 0; i != n; ++i) {
@@ -94,15 +97,15 @@ at::Tensor upload_block(b_lean_obj_arg bytes, at::ScalarType dtype) {
       std::memcpy(values + size * i, &word, size);
     } else std::memcpy(values + size * i, &bits, size);
   }
-  return host.to(torchlean::options().dtype(dtype), false, true);
+  return device_copy(host, dtype);
 }
 
 // The elements of a device tensor as a block of little-endian words.
-lean_obj_res download_block(const at::Tensor& block) {
-  const size_t size = c10::elementSize(block.scalar_type());
+lean_obj_res download_block(const Tensor& block) {
+  const size_t size = element_size(block.scalar_type());
   const size_t n = static_cast<size_t>(block.numel());
   const size_t total = times(n, size);
-  const auto host = block.to(at::kCPU).contiguous();
+  const auto host = host_copy(block);
   lean_object* out = lean_alloc_sarray(1, total, total);
   const auto* values = static_cast<const uint8_t*>(host.const_data_ptr());
   auto* destination = lean_sarray_cptr(out);
@@ -123,20 +126,20 @@ lean_obj_res download_block(const at::Tensor& block) {
 
 // The device address of byte `offset` of a block. Offsets stay within the blocks, whose byte
 // sizes are checked when they are made.
-uint64_t address(const at::Tensor& block, uint64_t offset) {
+uint64_t address(const Tensor& block, uint64_t offset) {
   return reinterpret_cast<uint64_t>(static_cast<const uint8_t*>(block.const_data_ptr()) + offset);
 }
 
 // The input blocks of a generated kernel as device tensors of scalars, with their numbers of
 // scalars. A configured scalar takes `stride` byte elements, a native one a single element.
 struct inputs_on_device {
-  std::vector<at::Tensor> blocks;
+  std::vector<Tensor> blocks;
   std::vector<uint64_t> lengths;
 
-  inputs_on_device(b_lean_obj_arg inputs, at::ScalarType dtype, uint64_t stride) {
+  inputs_on_device(b_lean_obj_arg inputs, ScalarType dtype, uint64_t stride) {
     for (size_t i = 0; i != lean_array_size(inputs); ++i) {
       blocks.push_back(upload_block(lean_array_get_core(inputs, i), dtype));
-      TORCH_CHECK(blocks.back().numel() % stride == 0, "tree: truncated input scalars");
+      TORCHLEAN_CHECK(blocks.back().numel() % stride == 0, "tree: truncated input scalars");
       lengths.push_back(static_cast<uint64_t>(blocks.back().numel()) / stride);
     }
   }
@@ -157,12 +160,12 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_tree_upload(
     uint64_t index_slots, uint64_t scalar_slots, b_lean_obj_arg words, b_lean_obj_arg scalars) {
   return torchlean::io([&] {
     check_layout(format, width);
-    TORCH_CHECK(index_slots < UINT64_MAX, "tree: block size overflow");
-    TORCH_CHECK(lean_sarray_size(words) == times(times(8, index_slots + 1), count),
-                "tree: the words block does not match the descriptor");
-    TORCH_CHECK(lean_sarray_size(scalars) == times(times(width, scalar_slots), count),
-                "tree: the scalar block does not match the descriptor");
-    auto result = std::make_unique<tree>(tree{upload_block(words, at::kLong),
+    TORCHLEAN_CHECK(index_slots < UINT64_MAX, "tree: block size overflow");
+    TORCHLEAN_CHECK(lean_sarray_size(words) == times(times(8, index_slots + 1), count),
+                    "tree: the words block does not match the descriptor");
+    TORCHLEAN_CHECK(lean_sarray_size(scalars) == times(times(width, scalar_slots), count),
+                    "tree: the scalar block does not match the descriptor");
+    auto result = std::make_unique<tree>(tree{upload_block(words, kLong),
         upload_block(scalars, scalar_type(format)), count, index_slots, scalar_slots, format,
         width, string_of(descriptor)});
     return lean_alloc_external(tree_class(), result.release());
@@ -194,28 +197,28 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_tree_fold(
     b_lean_obj_arg inputs) {
   return torchlean::io([&]() -> lean_obj_res {
     const tree& arena = unbox(handle, format, descriptor, width);
-    TORCH_CHECK(arena.index_slots == index_slots && arena.scalar_slots == scalar_slots,
-                "tree fold: the arena has other slots than the fold");
-    TORCH_CHECK(arena.words.device() == torchlean::device() &&
-                    arena.scalars.device() == torchlean::device(),
-                "tree fold: the arena is on another device");
+    TORCHLEAN_CHECK(arena.index_slots == index_slots && arena.scalar_slots == scalar_slots,
+                    "tree fold: the arena has other slots than the fold");
+    TORCHLEAN_CHECK(arena.words.device() == torchlean::device() &&
+                        arena.scalars.device() == torchlean::device(),
+                    "tree fold: the arena is on another device");
     const size_t levels = lean_array_size(sizes);
     std::vector<uint64_t> size(levels), base(levels + 1, 0);
     for (size_t r = 0; r != levels; ++r) {
       size[r] = lean_unbox_uint64(lean_array_get_core(sizes, r));
-      TORCH_CHECK(!__builtin_add_overflow(base[r], size[r], &base[r + 1]),
-                  "tree fold: level sizes overflow");
+      TORCHLEAN_CHECK(!__builtin_add_overflow(base[r], size[r], &base[r + 1]),
+                      "tree fold: level sizes overflow");
     }
-    TORCH_CHECK(base[levels] == arena.count,
-                "tree fold: the level sizes do not add up to the rows");
+    TORCHLEAN_CHECK(base[levels] == arena.count,
+                    "tree fold: the level sizes do not add up to the rows");
     const auto dtype = scalar_type(format);
     // A configured scalar takes `width` byte elements, a native one a single element.
     const uint64_t stride = format == 2 ? width : 1;
     const inputs_on_device blocks(inputs, dtype, stride);
     // Zeros, so that a failed row, which writes no result, leaves a defined word.
-    auto results = at::zeros({static_cast<int64_t>(times(arena.count, stride))},
-                             torchlean::options().dtype(dtype));
-    auto error = at::zeros({4}, torchlean::options().dtype(at::kLong));
+    auto results = aten<"zeros">({static_cast<int64_t>(times(arena.count, stride))},
+                                 torchlean::options().dtype(dtype));
+    auto error = aten<"zeros">({4}, torchlean::options().dtype(kLong));
     std::vector<torchlean::launch> launches;
     for (size_t r = levels; r-- != 0;) {
       torchlean::launch entry{size[r], {}};
@@ -232,12 +235,12 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_tree_fold(
       launches.push_back(std::move(entry));
     }
     torchlean::launch_rows(string_of(source), launches);
-    const auto record = error.to(at::kCPU);
+    const auto record = host_copy(error);
     if (record.const_data_ptr<int64_t>()[0] != 0) return lean_box(0);
     const uint64_t roots = levels ? size[0] : 0;
     // The download may throw, so the option cell is allocated after it.
     lean_object* bytes =
-        download_block(results.narrow(0, 0, static_cast<int64_t>(times(roots, stride))));
+        download_block(aten<"narrow">(results, 0, 0, static_cast<int64_t>(times(roots, stride))));
     lean_object* some = lean_alloc_ctor(1, 1, 0);
     lean_ctor_set(some, 0, bytes);
     return some;
@@ -264,28 +267,29 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_tree_expand(
     uint64_t capacity) {
   return torchlean::io([&]() -> lean_obj_res {
     check_layout(format, width);
-    TORCH_CHECK(capacity < (uint64_t(1) << 31), "tree expand: the capacity is too large");
-    TORCH_CHECK(index_slots < UINT64_MAX, "tree: block size overflow");
-    TORCH_CHECK(lean_sarray_size(words) == times(times(8, index_slots + 1), count),
-                "tree expand: the words block does not match the roots");
-    TORCH_CHECK(lean_sarray_size(scalars) == times(times(width, scalar_slots), count),
-                "tree expand: the scalar block does not match the roots");
+    TORCHLEAN_CHECK(capacity < (uint64_t(1) << 31), "tree expand: the capacity is too large");
+    TORCHLEAN_CHECK(index_slots < UINT64_MAX, "tree: block size overflow");
+    TORCHLEAN_CHECK(lean_sarray_size(words) == times(times(8, index_slots + 1), count),
+                    "tree expand: the words block does not match the roots");
+    TORCHLEAN_CHECK(lean_sarray_size(scalars) == times(times(width, scalar_slots), count),
+                    "tree expand: the scalar block does not match the roots");
     uint64_t slots;
-    TORCH_CHECK(!__builtin_add_overflow(index_slots, scalar_slots, &slots) &&
-                    lean_array_size(arguments) == slots,
-                "tree expand: there is not one kernel per slot");
+    TORCHLEAN_CHECK(!__builtin_add_overflow(index_slots, scalar_slots, &slots) &&
+                        lean_array_size(arguments) == slots,
+                    "tree expand: there is not one kernel per slot");
     const bool build = lean_array_size(nodes) != 0;
     uint64_t columns = 0;
-    TORCH_CHECK(!build || (!__builtin_add_overflow(node_index_slots, node_scalar_slots, &columns) &&
-                           columns < UINT64_MAX && lean_array_size(nodes) == columns + 1),
-                "tree expand: there is not one node kernel per column");
+    TORCHLEAN_CHECK(
+        !build || (!__builtin_add_overflow(node_index_slots, node_scalar_slots, &columns) &&
+                   columns < UINT64_MAX && lean_array_size(nodes) == columns + 1),
+        "tree expand: there is not one node kernel per column");
     // The slots of the rows of the handle: those of the nodes, or those of the calls.
     const uint64_t out_index = build ? node_index_slots : index_slots;
     const uint64_t out_scalar = build ? node_scalar_slots : scalar_slots;
     if (count > capacity) return lean_box(0);
     const auto dtype = scalar_type(format);
     const uint64_t stride = format == 2 ? width : 1;
-    const auto index_options = torchlean::options().dtype(at::kLong);
+    const auto index_options = torchlean::options().dtype(kLong);
     const auto scalar_options = torchlean::options().dtype(dtype);
     const inputs_on_device blocks(inputs, dtype, stride);
     const std::string calls_source = string_of(calls);
@@ -305,25 +309,25 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_tree_expand(
       return kernel;
     };
     // The slot columns of the frontier, at first the roots.
-    const auto root_words = upload_block(words, at::kLong);
+    const auto root_words = upload_block(words, kLong);
     const auto root_scalars = upload_block(scalars, dtype);
     const auto rows = static_cast<int64_t>(count);
-    std::vector<at::Tensor> index, scalar;
+    std::vector<Tensor> index, scalar;
     for (uint64_t i = 0; i != index_slots; ++i)
-      index.push_back(root_words.narrow(0, static_cast<int64_t>(i + 1) * rows, rows));
+      index.push_back(aten<"narrow">(root_words, 0, static_cast<int64_t>(i + 1) * rows, rows));
     for (uint64_t j = 0; j != scalar_slots; ++j)
-      scalar.push_back(root_scalars.narrow(0, static_cast<int64_t>(j * stride) * rows,
-                                           rows * static_cast<int64_t>(stride)));
+      scalar.push_back(aten<"narrow">(root_scalars, 0, static_cast<int64_t>(j * stride) * rows,
+                                      rows * static_cast<int64_t>(stride)));
     // The columns of every level, and their sizes.
-    std::vector<at::Tensor> tags;
-    std::vector<std::vector<at::Tensor>> index_levels(out_index), scalar_levels(out_scalar);
+    std::vector<Tensor> tags;
+    std::vector<std::vector<Tensor>> index_levels(out_index), scalar_levels(out_scalar);
     std::vector<uint64_t> sizes;
-    auto error = at::zeros({4}, index_options);
+    auto error = aten<"zeros">({4}, index_options);
     uint64_t budget = capacity - count, n = count, total_rows = 0;
     while (n != 0) {
       const auto frontier = static_cast<int64_t>(n);
       // Zeroed, since a failed read stops the threads before they write their numbers.
-      auto counts = at::zeros({frontier}, index_options);
+      auto counts = aten<"zeros">({frontier}, index_options);
       torchlean::launch entry{n, {}};
       for (const auto& column : index) entry.arguments.push_back(address(column, 0));
       for (const auto& column : scalar) entry.arguments.push_back(address(column, 0));
@@ -337,21 +341,25 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_tree_expand(
       // the slot kernels of the level above, whether a number of calls is out of range (as a
       // signed word, a number of 2^63 or more is negative), and the total.
       const auto limit = static_cast<int64_t>(budget);
-      const auto summary =
-          at::stack({error[0], counts.lt(0).logical_or(counts.gt(limit)).any().to(at::kLong),
-                     counts.sum()})
-              .to(at::kCPU);
+      const auto out_of_range = aten<"any">(
+          aten<"logical_or">(aten<"lt.Tensor">(counts, scalar_for(counts, std::int64_t{0})),
+                             aten<"gt.Tensor">(counts, scalar_for(counts, limit))));
+      const auto summary = host_copy(aten<"stack">(
+          {aten<"select.int">(error, 0, 0), aten<"to.dtype">(out_of_range, kLong),
+           aten<"sum">(counts)}));
       const int64_t* record = summary.const_data_ptr<int64_t>();
       if (record[0] != 0 || record[1] != 0 || record[2] > limit) return lean_box(0);
       const uint64_t total = static_cast<uint64_t>(record[2]);
-      const auto firsts = counts.cumsum(0).sub_(counts);
+      const auto firsts = sub(aten<"cumsum">(counts, 0), counts);
       if (build) {
         // Column p of the nodes: the tag for p = 0, then the index columns, then the scalar
         // columns.
         for (size_t p = 0; p != node_sources.size(); ++p) {
           const bool word = p <= out_index;
-          auto output = word ? at::empty({frontier}, index_options)
-                             : at::empty({frontier * static_cast<int64_t>(stride)}, scalar_options);
+          auto output =
+              word ? aten<"empty.memory_format">({frontier}, index_options)
+                   : aten<"empty.memory_format">({frontier * static_cast<int64_t>(stride)},
+                                                 scalar_options);
           torchlean::launch node{n, {}};
           node.arguments.push_back(address(firsts, 0));
           for (const auto& column : index) node.arguments.push_back(address(column, 0));
@@ -376,20 +384,27 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_tree_expand(
       if (total == 0) break;
       // Call c of the level is call `call[c]` of row `parent[c]`.
       const auto calls_count = static_cast<int64_t>(total);
-      const auto parent = at::repeat_interleave(counts, std::optional<int64_t>(calls_count));
-      const auto call = at::arange(calls_count, index_options).sub_(firsts.index_select(0, parent));
-      std::vector<at::Tensor> parent_index, parent_scalar;
-      for (const auto& column : index) parent_index.push_back(column.index_select(0, parent));
+      const auto parent = aten<"repeat_interleave.Tensor">(counts, calls_count);
+      const auto call =
+          sub(arange(calls_count, index_options), aten<"index_select">(firsts, 0, parent));
+      std::vector<Tensor> parent_index, parent_scalar;
+      for (const auto& column : index)
+        parent_index.push_back(aten<"index_select">(column, 0, parent));
       for (const auto& column : scalar)
-        parent_scalar.push_back(stride == 1 ? column.index_select(0, parent)
-                                            : column.view({frontier, static_cast<int64_t>(stride)})
-                                                  .index_select(0, parent)
-                                                  .reshape({-1}));
-      std::vector<at::Tensor> next_index, next_scalar;
+        parent_scalar.push_back(
+            stride == 1 ? aten<"index_select">(column, 0, parent)
+                        : aten<"reshape">(
+                              aten<"index_select">(
+                                  aten<"view">(column, {frontier, static_cast<int64_t>(stride)}),
+                                  0, parent),
+                              {-1}));
+      std::vector<Tensor> next_index, next_scalar;
       for (uint64_t p = 0; p != slots; ++p) {
-        auto output = p < index_slots
-                          ? at::empty({calls_count}, index_options)
-                          : at::empty({calls_count * static_cast<int64_t>(stride)}, scalar_options);
+        auto output =
+            p < index_slots
+                ? aten<"empty.memory_format">({calls_count}, index_options)
+                : aten<"empty.memory_format">({calls_count * static_cast<int64_t>(stride)},
+                                              scalar_options);
         torchlean::launch slot{total, {}};
         slot.arguments.push_back(address(call, 0));
         for (const auto& column : parent_index) slot.arguments.push_back(address(column, 0));
@@ -408,17 +423,17 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_tree_expand(
       scalar = std::move(next_scalar);
     }
     // A failed read of the node kernels of the last level is recorded after the last copy.
-    if (build && error[0].item<int64_t>() != 0) return lean_box(0);
+    if (build && item<std::int64_t>(aten<"select.int">(error, 0, 0)) != 0) return lean_box(0);
     // The blocks of all levels: the tags, then each index column, and each scalar column.
-    auto all_words = at::empty({0}, index_options);
-    auto all_scalars = at::empty({0}, scalar_options);
+    auto all_words = aten<"empty.memory_format">({0}, index_options);
+    auto all_scalars = aten<"empty.memory_format">({0}, scalar_options);
     if (!sizes.empty()) {
-      std::vector<at::Tensor> parts{at::cat(tags)};
-      for (const auto& column : index_levels) parts.push_back(at::cat(column));
-      all_words = at::cat(parts);
-      std::vector<at::Tensor> pieces;
-      for (const auto& column : scalar_levels) pieces.push_back(at::cat(column));
-      if (!pieces.empty()) all_scalars = at::cat(pieces);
+      std::vector<Tensor> parts{aten<"cat">(tags)};
+      for (const auto& column : index_levels) parts.push_back(aten<"cat">(column));
+      all_words = aten<"cat">(parts);
+      std::vector<Tensor> pieces;
+      for (const auto& column : scalar_levels) pieces.push_back(aten<"cat">(column));
+      if (!pieces.empty()) all_scalars = aten<"cat">(pieces);
     }
     auto result = std::make_unique<tree>(tree{std::move(all_words), std::move(all_scalars),
         total_rows, out_index, out_scalar, format, width, string_of(descriptor)});

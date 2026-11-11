@@ -111,11 +111,13 @@ GELU follows the order of the kernel's DEFAULT level. Where eager PyTorch depart
 operator.
 
 When we're ready to write a theorem, add `export="Proofs/Model.lean"` to that same call. The file
-embeds the capture document and defines `Model.program` , its `torchlean.ir` program. Lean checks
-its decoding and shape/type/interface proofs when we open or compile the module (export itself
-doesn't launch a compiler). We can then import it and prove further properties, reusing the tensor
-semantics and existing operation lemmas, and those mathematical proofs are separate from the check
-report. Export doesn't capture the Python function again, and it never replaces an existing file.
+embeds the capture document and defines `Model.program`, its `torchlean.ir` program. Lean checks
+its proofs of artifact decoding and `Program.check .reference` when we open or compile the module
+(export itself doesn't launch a compiler). The report also validates the constant payload and
+`declared_types` through `IR.load`; the export includes no proof of those load checks. We can then
+import it and prove further properties, reusing the tensor semantics and existing operation lemmas,
+and those mathematical proofs are separate from the check report. Export doesn't capture the
+Python function again, and it never replaces an existing file.
 With a `.json` filename, export saves the interchange artifact for inspection instead.
 
 Element descriptors preserve configured binary and decimal formats, integer and posit widths,

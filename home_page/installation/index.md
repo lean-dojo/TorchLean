@@ -90,7 +90,8 @@ the complete Lean project. GPU requests fail with instructions to rebuild with L
 
 Install a supported NVIDIA driver and CUDA toolkit using NVIDIA's [CUDA Installation Guide for
 Linux](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/). Download a CUDA-enabled SDK
-from the [LibTorch installation page](https://docs.pytorch.org/cppdocs/installing.html), using its
+of torch 2.13 or later from the [LibTorch installation
+page](https://docs.pytorch.org/cppdocs/installing.html), using its
 supported C++ compiler and matching CUDA toolkit (the SDK must contain `include/`, `lib/`, and
 `share/cmake/Torch/TorchConfig.cmake`). To build the bridge, you need CMake 3.22 or later, Make,
 and Python 3. Check the machine before rebuilding:
@@ -124,8 +125,10 @@ See the [CUDA guide]({{ '/cuda/' | relative_url }}) for deterministic reductions
 sanitizers, and the remaining native-code trust boundary.
 
 The SDK's CMake configuration supplies its compiler ABI flags and library dependencies. TorchLean
-compiles C++ adapters, while the SDK supplies GPU kernels and their supported architectures. You
-can also pass the SDK path to Lake:
+compiles C++ adapters, while the torch runtime supplies GPU kernels and their supported
+architectures. The tensor operations use the LibTorch Stable ABI and can run with a later torch
+runtime. Allocator statistics, memory-fraction controls and `emptyCache` require torch 2.13 to
+2.15. You can also pass the SDK path to Lake:
 
 ```bash
 scripts/lake.sh -Kcuda=true \

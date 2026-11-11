@@ -718,7 +718,7 @@ def runCertificate (path : String) (backendOverride : Option ModelBackend)
     | .error msg => throw <| IO.userError s!"Invalid ODE certificate segment: {msg}"
     | .ok () => pure ()
   if ← verifySegments rhsAst cert.segments config then
-    IO.println "[ODE] certificate verified: all segments succeeded."
+    IO.println "[ODE] certificate accepted: every segment passed the check."
   else
     throw <| IO.userError "[ODE] certificate verification failed."
 
@@ -796,7 +796,7 @@ def runArgs (args : List String) : IO Unit := do
     | .error msg => throw <| IO.userError s!"Invalid ODE certificate segment: {msg}"
     | .ok () => pure ()
     if ← verifySegments rhsAst #[seg] config then
-      IO.println "[ODE] verification succeeded."
+      IO.println "[ODE] check succeeded."
     else
       throw <| IO.userError "[ODE] verification failed."
 

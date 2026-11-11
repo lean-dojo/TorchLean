@@ -49,6 +49,13 @@ foreach(include_dir IN LISTS TORCH_INCLUDE_DIRS)
     endif()
   endif()
 endforeach()
+# torchlean.cpp, conv_pool.cpp, tree.cpp and kernels.cpp call torch only through the LibTorch Stable
+# ABI of torch 2.13 (TORCH_TARGET_VERSION is TORCH_VERSION_2_13_0), so the library also runs with
+# later releases. unstable.cpp holds what that ABI cannot express; docs/TRUST_BOUNDARIES.md lists
+# both.
+if(torch_sdk_version VERSION_LESS 2.13)
+  message(FATAL_ERROR "The LibTorch bridge needs torch 2.13 or later, not ${torch_sdk_version}.")
+endif()
 
 # Keep the compile/link probe in this project. A try_compile scratch project cannot reliably
 # re-export SDK alias targets (the NVIDIA SDK's torch_cpu_library uses protobuf::libprotobuf).
@@ -75,7 +82,12 @@ add_library(torchlean_libtorch SHARED
   torchlean.cpp
   conv_pool.cpp
   tree.cpp
+  kernels.cpp
+  unstable.cpp
 )
+# USE_CUDA declares the CUDA shims (device guards and streams).
+set_source_files_properties(torchlean.cpp conv_pool.cpp tree.cpp kernels.cpp PROPERTIES
+  COMPILE_DEFINITIONS "TORCH_TARGET_VERSION=0x020d000000000000;USE_CUDA")
 add_dependencies(torchlean_libtorch torchlean_sdk_link_check)
 target_compile_definitions(torchlean_libtorch PRIVATE TORCHLEAN_LIBTORCH)
 target_compile_options(torchlean_libtorch PRIVATE ${torch_sdk_cxx_flags})
@@ -94,8 +106,15 @@ set_target_properties(torchlean_libtorch PROPERTIES
   BUILD_WITH_INSTALL_RPATH ON
   INSTALL_RPATH_USE_LINK_PATH ON
 )
-# Use RPATH for transitive SDK dependencies as well (some SDK DSOs omit their own RUNPATH).
-target_link_options(torchlean_libtorch PRIVATE "LINKER:--disable-new-dtags")
+# RUNPATH, not RPATH, so LD_LIBRARY_PATH can select another torch runtime for the built library.
+# A RUNPATH serves only the bridge's own dependencies, so each SDK library must find its own,
+# libc10 among them, through its own search path, as pip torch's do with `$ORIGIN`, or through
+# LD_LIBRARY_PATH or ldconfig (scripts/README.md). The bridge calls no CUDA runtime function, and
+# --as-needed keeps libcudart, which torch's targets add, out of its dependencies: the torch runtime
+# loads its own. -z now binds every import at load, so a torch runtime that lacks a function of
+# docs/TRUST_BOUNDARIES.md fails to load, naming the function.
+target_link_options(torchlean_libtorch PRIVATE "LINKER:--enable-new-dtags" "LINKER:--as-needed"
+  "LINKER:-z,now")
 
 file(WRITE "${CMAKE_BINARY_DIR}/sdk.txt"
   "Torch_VERSION=${torch_sdk_version}

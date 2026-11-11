@@ -10,9 +10,11 @@
 #include <tuple>
 #include <vector>
 
-// The ATen schemas we call are those of the SDKs under "Tested SDK versions" in README.md.
+// The ATen schemas we call are in schemas.h; the build checks them against the torch it builds
+// with.
 // Backward calls return explicit cotangents to the Lean tape and record no autograd graph.
-namespace torchlean::conv_pool {
+namespace torchlean __attribute__((visibility("hidden"))) {
+namespace conv_pool {
 
 // The LibTorch backend follows PyTorch's convolution and pooling families: one, two, or three
 // spatial dimensions. Lean specifies higher ranks too, and the native backend does not emulate
@@ -50,7 +52,7 @@ static uint32_t outDimTranspose(uint32_t in, uint32_t k, uint32_t stride, uint32
 
 // Validate in the input dtype: a finite nonzero host coefficient can overflow or
 // underflow when a binary32 buffer requires conversion.
-static double checked_smoothmax_beta(double beta, at::ScalarType dtype, const char* msg) {
+static double checked_smoothmax_beta(double beta, ScalarType dtype, const char* msg) {
   const double betaF = rounded(beta, dtype);
   torchlean::require(std::isfinite(betaF) && betaF != 0.0f, msg);
   return betaF;
@@ -65,7 +67,7 @@ static int64_t floor_div_i64(int64_t a, int64_t b) {
 static int64_t ceil_div_i64(int64_t a, int64_t b) { return -floor_div_i64(-a, b); }
 
 using Shape = std::vector<int64_t>;
-using Gradients = std::tuple<at::Tensor, at::Tensor, at::Tensor>;
+using Gradients = std::tuple<Tensor, Tensor, Tensor>;
 enum class Kind { transposed, pooling };
 
 static size_t spatial_volume(const Shape& shape) {
@@ -162,15 +164,15 @@ struct Window {
     }
   }
 
-  at::Tensor base_view(at::Tensor value) const {
+  Tensor base_view(Tensor value) const {
     for (size_t a = 0; a < first.size(); ++a)
-      value = value.slice(a + 1, base_first[a], base_last[a], step[a]);
+      value = aten<"slice.Tensor">(value, a + 1, base_first[a], base_last[a], step[a]);
     return value;
   }
 
-  at::Tensor window_view(at::Tensor value) const {
+  Tensor window_view(Tensor value) const {
     for (size_t a = 0; a < first.size(); ++a)
-      value = value.slice(a + 1, first[a], last[a]);
+      value = aten<"slice.Tensor">(value, a + 1, first[a], last[a]);
     return value;
   }
 
@@ -178,42 +180,49 @@ struct Window {
 
 // Without input channels every window is empty: each output is the empty sum `+0` plus the bias,
 // which is `+0` for a `-0` bias.
-static at::Tensor bias_output(const at::Tensor& bias, const Geometry& g, int64_t channels) {
+static Tensor bias_output(const Tensor& bias, const Geometry& g, int64_t channels) {
   Shape singleton(g.input.size() + 1, 1);
   singleton[0] = channels;
-  return at::zeros(with_channels(channels, g.output), bias.options()) + bias.reshape(singleton);
+  return add(aten<"zeros">(with_channels(channels, g.output), options(bias)),
+             aten<"reshape">(bias, singleton));
 }
 
-static at::Tensor transposed_convolution_forward(
-    const at::Tensor& input, const at::Tensor& kernel, const at::Tensor& bias,
+static Tensor transposed_convolution_forward(
+    const Tensor& input, const Tensor& kernel, const Tensor& bias,
     const Geometry& g, int64_t in_channels, int64_t out_channels) {
-  if (out_channels == 0 || g.output_volume == 0) return at::empty({0}, input.options());
+  if (out_channels == 0 || g.output_volume == 0)
+    return aten<"empty.memory_format">({0}, options(input));
   if (input.numel() == 0) return bias_output(bias, g, out_channels);
-  const auto x = input.reshape(with_channels(in_channels, g.input));
-  const auto w = kernel.reshape(g.kernel_shape(in_channels, out_channels));
+  const auto x = aten<"reshape">(input, with_channels(in_channels, g.input));
+  const auto w = aten<"reshape">(kernel, g.kernel_shape(in_channels, out_channels));
   const Shape dilation(g.input.size(), 1), output_padding(g.input.size(), 0);
-  return at::convolution(x.unsqueeze(0), w, bias, g.stride, g.padding, dilation,
-                         /*transposed=*/true, output_padding, 1).squeeze(0);
+  return aten<"squeeze.dim">(
+      aten<"convolution">(aten<"unsqueeze">(x, 0), w, bias, g.stride, g.padding, dilation,
+                          /*transposed=*/true, output_padding, 1),
+      0);
 }
 
 static Gradients transposed_convolution_backward(
-    const at::Tensor& input, const at::Tensor& kernel, const at::Tensor& gradient,
+    const Tensor& input, const Tensor& kernel, const Tensor& gradient,
     const Geometry& g, int64_t in_channels, int64_t out_channels) {
   if (gradient.numel() == 0 || input.numel() == 0 || kernel.numel() == 0) {
-    auto db = gradient.numel() == 0 ? at::zeros({out_channels}, gradient.options())
-        : gradient.reshape({out_channels, static_cast<int64_t>(g.output_volume)}).sum(1);
-    return {at::zeros_like(kernel), db, at::zeros_like(input)};
+    auto db = gradient.numel() == 0
+        ? aten<"zeros">({out_channels}, options(gradient))
+        : aten<"sum.dim_IntList">(
+              aten<"reshape">(gradient, {out_channels, static_cast<int64_t>(g.output_volume)}),
+              {1});
+    return {aten<"zeros_like">(kernel), db, aten<"zeros_like">(input)};
   }
-  const auto x = input.reshape(with_channels(in_channels, g.input));
-  const auto w = kernel.reshape(g.kernel_shape(in_channels, out_channels));
-  const auto grad = gradient.reshape(with_channels(out_channels, g.output));
+  const auto x = aten<"reshape">(input, with_channels(in_channels, g.input));
+  const auto w = aten<"reshape">(kernel, g.kernel_shape(in_channels, out_channels));
+  const auto grad = aten<"reshape">(gradient, with_channels(out_channels, g.output));
   const Shape dilation(g.input.size(), 1), output_padding(g.input.size(), 0);
   const Shape bias_shape{out_channels};
-  const auto result = at::convolution_backward(
-      grad.unsqueeze(0), x.unsqueeze(0), w, at::IntArrayRef(bias_shape), g.stride, g.padding,
+  const auto result = aten<"convolution_backward">(
+      aten<"unsqueeze">(grad, 0), aten<"unsqueeze">(x, 0), w, bias_shape, g.stride, g.padding,
       dilation, /*transposed=*/true, output_padding, 1, std::array<bool, 3>{true, true, true});
   // ATen returns (input, weight, bias), and the Lean ABI is (weight, bias, input).
-  return {std::get<1>(result), std::get<2>(result), std::get<0>(result).squeeze(0)};
+  return {std::get<1>(result), std::get<2>(result), aten<"squeeze.dim">(std::get<0>(result), 0)};
 }
 
 struct PoolArguments {
@@ -242,165 +251,184 @@ struct PoolArguments {
       dilation.insert(dilation.begin(), 1);
     }
   }
-  at::Tensor batched(const at::Tensor& x, const Geometry& g) const {
-    return g.input.size() == 1 ? x.unsqueeze(0).unsqueeze(2) : x.unsqueeze(0);
+  Tensor batched(const Tensor& x, const Geometry& g) const {
+    return g.input.size() == 1 ? aten<"unsqueeze">(aten<"unsqueeze">(x, 0), 2)
+                               : aten<"unsqueeze">(x, 0);
   }
-  at::Tensor unbatched(const at::Tensor& x, const Geometry& g) const {
-    return g.input.size() == 1 ? x.squeeze(0).squeeze(1) : x.squeeze(0);
+  Tensor unbatched(const Tensor& x, const Geometry& g) const {
+    return g.input.size() == 1 ? aten<"squeeze.dim">(aten<"squeeze.dim">(x, 0), 1)
+                               : aten<"squeeze.dim">(x, 0);
   }
 };
 
-static std::tuple<at::Tensor, at::Tensor> max_pool_with_indices(
-    const at::Tensor& x, const Geometry& g) {
+static std::tuple<Tensor, Tensor> max_pool_with_indices(
+    const Tensor& x, const Geometry& g) {
   const PoolArguments args(g);
-  const auto pool = [&](const at::Tensor& t) {
+  const auto pool = [&](const Tensor& t) {
     const auto input = args.batched(t, g);
     const auto result = g.input.size() == 3
-        ? at::max_pool3d_with_indices(input, args.kernel, args.stride, args.padding,
-                                     args.dilation, false)
-        : at::max_pool2d_with_indices(input, args.kernel, args.stride, args.padding,
-                                     args.dilation, false);
+        ? aten<"max_pool3d_with_indices">(input, args.kernel, args.stride, args.padding,
+                                          args.dilation, false)
+        : aten<"max_pool2d_with_indices">(input, args.kernel, args.stride, args.padding,
+                                          args.dilation, false);
     return std::make_tuple(args.unbatched(std::get<0>(result), g),
                            args.unbatched(std::get<1>(result), g));
   };
   const auto [value, index] = pool(x);
   // ATen keeps the first of a `-0` and `0` tie. The IEEE 754-2019 `maximum` is `0`, as in
   // `poolWins`, so a window whose maximum is zero and that holds a `0` selects its first `0`.
-  const auto positive_zero = at::logical_and(at::eq(x, 0), at::logical_not(at::signbit(x)));
-  const auto [has_positive_zero, positive_index] = pool(positive_zero.to(x.scalar_type()));
-  const auto take = at::logical_and(at::eq(value, 0), at::eq(has_positive_zero, 1));
-  return {at::where(take, at::zeros_like(value), value), at::where(take, positive_index, index)};
+  const auto positive_zero =
+      aten<"logical_and">(aten<"eq.Tensor">(x, scalar_for(x, std::int64_t{0})),
+                          aten<"logical_not">(aten<"signbit">(x)));
+  const auto [has_positive_zero, positive_index] =
+      pool(aten<"to.dtype">(positive_zero, x.scalar_type()));
+  const auto take = aten<"logical_and">(
+      aten<"eq.Tensor">(value, scalar_for(value, std::int64_t{0})),
+      aten<"eq.Tensor">(has_positive_zero, scalar_for(has_positive_zero, std::int64_t{1})));
+  return {aten<"where.self">(take, aten<"zeros_like">(value), value),
+          aten<"where.self">(take, positive_index, index)};
 }
 
-static at::Tensor max_pool_forward(const at::Tensor& input, const Geometry& g, int64_t channels) {
-  if (channels == 0 || g.output_volume == 0) return at::empty({0}, input.options());
-  const auto x = input.reshape(with_channels(channels, g.input));
+static Tensor max_pool_forward(const Tensor& input, const Geometry& g, int64_t channels) {
+  if (channels == 0 || g.output_volume == 0)
+    return aten<"empty.memory_format">({0}, options(input));
+  const auto x = aten<"reshape">(input, with_channels(channels, g.input));
   return std::get<0>(max_pool_with_indices(x, g));
 }
 
-static at::Tensor max_pool_backward(
-    const at::Tensor& input, const at::Tensor& gradient, const Geometry& g, int64_t channels) {
-  if (gradient.numel() == 0) return at::zeros_like(input);
-  const auto x = input.reshape(with_channels(channels, g.input));
-  const auto grad = gradient.reshape(with_channels(channels, g.output));
+static Tensor max_pool_backward(
+    const Tensor& input, const Tensor& gradient, const Geometry& g, int64_t channels) {
+  if (gradient.numel() == 0) return aten<"zeros_like">(input);
+  const auto x = aten<"reshape">(input, with_channels(channels, g.input));
+  const auto grad = aten<"reshape">(gradient, with_channels(channels, g.output));
   const PoolArguments args(g);
   const auto indices = args.batched(std::get<1>(max_pool_with_indices(x, g)), g);
   const auto dy = args.batched(grad, g), source = args.batched(x, g);
   const auto result = g.input.size() == 3
-      ? at::max_pool3d_with_indices_backward(
+      ? aten<"max_pool3d_with_indices_backward">(
             dy, source, args.kernel, args.stride, args.padding, args.dilation, false, indices)
-      : at::max_pool2d_with_indices_backward(
+      : aten<"max_pool2d_with_indices_backward">(
             dy, source, args.kernel, args.stride, args.padding, args.dilation, false, indices);
   return args.unbatched(result, g);
 }
 
-static at::Tensor avg_pool_forward(const at::Tensor& input, const Geometry& g, int64_t channels) {
-  if (channels == 0 || g.output_volume == 0) return at::empty({0}, input.options());
-  const auto x = input.reshape(with_channels(channels, g.input));
+static Tensor avg_pool_forward(const Tensor& input, const Geometry& g, int64_t channels) {
+  if (channels == 0 || g.output_volume == 0)
+    return aten<"empty.memory_format">({0}, options(input));
+  const auto x = aten<"reshape">(input, with_channels(channels, g.input));
   const PoolArguments args(g, true);
   auto source = args.batched(x, g);
   if (!args.explicit_padding.empty())
-    source = at::constant_pad_nd(source, args.explicit_padding, 0);
+    source = zero_pad(source, args.explicit_padding);
   const auto result = g.input.size() == 3
-      ? at::avg_pool3d(source, args.kernel, args.stride, args.padding, false, true, std::nullopt)
-      : at::avg_pool2d(source, args.kernel, args.stride, args.padding, false, true, std::nullopt);
+      ? aten<"avg_pool3d">(source, args.kernel, args.stride, args.padding, false, true,
+                           std::nullopt)
+      : aten<"avg_pool2d">(source, args.kernel, args.stride, args.padding, false, true,
+                           std::nullopt);
   return args.unbatched(result, g);
 }
 
-static at::Tensor avg_pool_backward(
-    const at::Tensor& gradient, const Geometry& g, int64_t channels) {
+static Tensor avg_pool_backward(
+    const Tensor& gradient, const Geometry& g, int64_t channels) {
   const auto count = volume(with_channels(channels, g.input));
-  if (gradient.numel() == 0) return at::zeros({count}, gradient.options());
-  const auto grad = gradient.reshape(with_channels(channels, g.output));
+  if (gradient.numel() == 0) return aten<"zeros">({count}, options(gradient));
+  const auto grad = aten<"reshape">(gradient, with_channels(channels, g.output));
   const PoolArguments args(g, true);
   // The upstream backward needs the input's shape, but never its values.
   auto input_shape = with_channels(channels, g.input);
   if (!args.explicit_padding.empty())
     for (size_t axis = 0; axis < g.input.size(); ++axis)
       input_shape[axis + 1] += 2 * g.padding[axis];
-  const auto source = args.batched(at::empty(input_shape, grad.options()), g);
+  const auto source =
+      args.batched(aten<"empty.memory_format">(input_shape, options(grad)), g);
   const auto dy = args.batched(grad, g);
   auto result = g.input.size() == 3
-      ? at::avg_pool3d_backward(
+      ? aten<"avg_pool3d_backward">(
             dy, source, args.kernel, args.stride, args.padding, false, true, std::nullopt)
-      : at::avg_pool2d_backward(
+      : aten<"avg_pool2d_backward">(
             dy, source, args.kernel, args.stride, args.padding, false, true, std::nullopt);
   if (!args.explicit_padding.empty())
     for (size_t axis = 0; axis < g.input.size(); ++axis)
-      result = result.narrow(axis + 2, g.padding[axis], g.input[axis]);
+      result = aten<"narrow">(result, axis + 2, g.padding[axis], g.input[axis]);
   return args.unbatched(result, g);
 }
 
 // Widen before subtraction, not before scaling each operand. The latter loses nearby
 // differences, and a narrow subtraction can overflow for finite inputs of opposite signs.
-static at::Tensor smooth_pool_exp(const at::Tensor& values, const at::Tensor& shift,
-                                  double beta) {
+static Tensor smooth_pool_exp(const Tensor& values, const Tensor& shift, double beta) {
   const auto dtype = values.scalar_type();
-  if (dtype == at::kHalf || dtype == at::kBFloat16 || dtype == at::kFloat)
-    return ((values.to(at::kDouble) - shift.to(at::kDouble)) * beta).exp().to(dtype);
-  return ((values - shift) * beta).exp();
+  if (dtype == kHalf || dtype == kBFloat16 || dtype == kFloat) {
+    const auto difference =
+        sub(aten<"to.dtype">(values, kDouble), aten<"to.dtype">(shift, kDouble));
+    return aten<"to.dtype">(
+        aten<"exp">(aten<"mul.Tensor">(difference, scalar_for(difference, beta))), dtype);
+  }
+  const auto difference = sub(values, shift);
+  return aten<"exp">(aten<"mul.Tensor">(difference, scalar_for(difference, beta)));
 }
 
 // The window pivots (maxima for positive beta, minima otherwise) and the sums of exponentials
 // shifted by them. With zero_infinite_pivot, as Tensor.smoothMaxPoolShift, an infinite pivot
 // shifts by zero instead, where inf - inf would be NaN, and the first result is that shift.
-static std::tuple<at::Tensor, at::Tensor> smooth_pool_statistics(
-    const at::Tensor& x, const Geometry& g, double beta, bool zero_infinite_pivot) {
+static std::tuple<Tensor, Tensor> smooth_pool_statistics(
+    const Tensor& x, const Geometry& g, double beta, bool zero_infinite_pivot) {
   const auto output_shape = with_channels(x.size(0), g.output);
-  auto pivot = at::full(output_shape, beta > 0 ? -std::numeric_limits<float>::infinity()
-                                             : std::numeric_limits<float>::infinity(), x.options());
-  auto values = at::zeros(output_shape, x.options());
+  auto pivot = full(output_shape, beta > 0 ? -std::numeric_limits<float>::infinity()
+                                         : std::numeric_limits<float>::infinity(), options(x));
+  auto values = aten<"zeros">(output_shape, options(x));
   // Padding contributes the literal value zero, including to the pivot and denominator.
   for (size_t k = 0; k < g.kernel_volume; ++k) {
-    values.zero_();
+    aten<"zero_">(values);
     const Window window(g.input, g.output, g, k);
-    if (window.elements != 0) window.window_view(values).copy_(window.base_view(x));
-    pivot = beta > 0 ? at::fmax(pivot, values) : at::fmin(pivot, values);
+    if (window.elements != 0) aten<"copy_">(window.window_view(values), window.base_view(x));
+    pivot = beta > 0 ? aten<"fmax">(pivot, values) : aten<"fmin">(pivot, values);
   }
   const auto shift = zero_infinite_pivot
-      ? at::where(at::isinf(pivot), at::zeros_like(pivot), pivot) : pivot;
-  auto denominator = at::zeros_like(shift);
+      ? aten<"where.self">(aten<"isinf">(pivot), aten<"zeros_like">(pivot), pivot) : pivot;
+  auto denominator = aten<"zeros_like">(shift);
   for (size_t k = 0; k < g.kernel_volume; ++k) {
-    values.zero_();
+    aten<"zero_">(values);
     const Window window(g.input, g.output, g, k);
-    if (window.elements != 0) window.window_view(values).copy_(window.base_view(x));
-    denominator.add_(smooth_pool_exp(values, shift, beta));
+    if (window.elements != 0) aten<"copy_">(window.window_view(values), window.base_view(x));
+    add_(denominator, smooth_pool_exp(values, shift, beta));
   }
   return {shift, denominator};
 }
 
-static at::Tensor smooth_pool_forward(
-    const at::Tensor& input, const Geometry& g, int64_t channels, double beta) {
+static Tensor smooth_pool_forward(
+    const Tensor& input, const Geometry& g, int64_t channels, double beta) {
   // The forward ABI does not check beta when the output is empty.
-  if (channels == 0 || g.output_volume == 0) return at::empty({0}, input.options());
+  if (channels == 0 || g.output_volume == 0)
+    return aten<"empty.memory_format">({0}, options(input));
   const double b = checked_smoothmax_beta(beta, input.scalar_type(),
                                          "torchlean smooth pool: beta must be finite and nonzero");
-  const auto x = input.reshape(with_channels(channels, g.input));
+  const auto x = aten<"reshape">(input, with_channels(channels, g.input));
   const auto statistics = smooth_pool_statistics(x, g, b, true);
   // ATen's CUDA division by a CPU scalar multiplies by the scalar's rounded reciprocal, which
   // overflows at a subnormal `beta` such as binary32 `2^-149`, so a window whose sum is 1 would
   // give `0 * inf`, NaN. A device tensor divisor divides once, as `Tensor.smoothMaxPool` does.
-  return std::get<0>(statistics) +
-      at::div(std::get<1>(statistics).log(), at::scalar_tensor(b, x.options()));
+  return add(std::get<0>(statistics), aten<"div.Tensor">(aten<"log">(std::get<1>(statistics)),
+                                                      scalar_tensor(b, options(x))));
 }
 
-static at::Tensor smooth_pool_backward(
-    const at::Tensor& input, const at::Tensor& gradient,
+static Tensor smooth_pool_backward(
+    const Tensor& input, const Tensor& gradient,
     const Geometry& g, int64_t channels, double beta) {
   const double b = checked_smoothmax_beta(beta, input.scalar_type(),
                                          "torchlean smooth pool: beta must be finite and nonzero");
-  if (gradient.numel() == 0) return at::zeros_like(input);
-  const auto x = input.reshape(with_channels(channels, g.input));
-  const auto grad = gradient.reshape(with_channels(channels, g.output));
+  if (gradient.numel() == 0) return aten<"zeros_like">(input);
+  const auto x = aten<"reshape">(input, with_channels(channels, g.input));
+  const auto grad = aten<"reshape">(gradient, with_channels(channels, g.output));
   const auto statistics = smooth_pool_statistics(x, g, b, false);
-  auto dx = at::zeros_like(x);
+  auto dx = aten<"zeros_like">(x);
   for (size_t k = 0; k < g.kernel_volume; ++k) {
     const Window window(g.input, g.output, g, k);
     if (window.elements == 0) continue;
     const auto numerator = smooth_pool_exp(window.base_view(x),
         window.window_view(std::get<0>(statistics)), b);
-    const auto weight = numerator / window.window_view(std::get<1>(statistics));
-    window.base_view(dx).add_(window.window_view(grad) * weight);
+    const auto weight =
+        aten<"div.Tensor">(numerator, window.window_view(std::get<1>(statistics)));
+    add_(window.base_view(dx), aten<"mul.Tensor">(window.window_view(grad), weight));
   }
   return dx;
 }
@@ -415,7 +443,7 @@ static Geometry read_geometry(b_lean_obj_arg input, b_lean_obj_arg kernel,
                   dimensions(padding, "torchlean conv/pool: bad padding"), kind);
 }
 
-static const at::Tensor& checked_tensor(b_lean_obj_arg object, const Shape& shape) {
+static const Tensor& checked_tensor(b_lean_obj_arg object, const Shape& shape) {
   const auto& value = tensor(object);
   require(value.numel() == volume(shape), "torchlean conv/pool: buffer size mismatch");
   return value;
@@ -465,12 +493,12 @@ static lean_obj_res pooling_ffi(
   });
 }
 
-}  // namespace torchlean::conv_pool
+}  // namespace conv_pool
+}  // namespace torchlean
 
 namespace {
 
-using torchlean::io_dimensions;
-using torchlean::io_volume;
+using namespace torchlean;
 
 // A grouped convolution over the spatial suffix of an input `(batch..., C, spatial...)` with
 // PyTorch's packed kernel `(O, C / groups, window...)`, its padding before and after each axis and
@@ -494,42 +522,42 @@ GroupedConvolution grouped_convolution(
   c.dilation = io_dimensions(dilations);
   c.groups = groups;
   const size_t rank = c.stride.size();
-  TORCH_CHECK(rank >= 1 && rank <= torchlean::conv_pool::kMaxSpatialRank,
-              "LibTorch conv: spatial rank must be one, two, or three");
-  TORCH_CHECK(c.input.size() >= rank + 1 && c.weight.size() == rank + 2 &&
-              c.before.size() == rank && c.after.size() == rank && c.dilation.size() == rank,
-              "LibTorch conv: rank mismatch");
+  TORCHLEAN_CHECK(rank >= 1 && rank <= torchlean::conv_pool::kMaxSpatialRank,
+                  "LibTorch conv: spatial rank must be one, two, or three");
+  TORCHLEAN_CHECK(c.input.size() >= rank + 1 && c.weight.size() == rank + 2 &&
+                  c.before.size() == rank && c.after.size() == rank && c.dilation.size() == rank,
+                  "LibTorch conv: rank mismatch");
   const size_t channel_axis = c.input.size() - rank - 1;
   const int64_t in_channels = c.input[channel_axis], out_channels = c.weight[0];
-  TORCH_CHECK(groups > 0 && in_channels % groups == 0 && out_channels % groups == 0 &&
-              c.weight[1] == in_channels / groups, "LibTorch conv: invalid channel groups");
+  TORCHLEAN_CHECK(groups > 0 && in_channels % groups == 0 && out_channels % groups == 0 &&
+                  c.weight[1] == in_channels / groups, "LibTorch conv: invalid channel groups");
   const int64_t batch = io_volume(std::vector<int64_t>(c.input.begin(),
                                                        c.input.begin() + channel_axis));
-  TORCH_CHECK(batch <= UINT32_MAX, "LibTorch conv: batch exceeds ABI");
+  TORCHLEAN_CHECK(batch <= UINT32_MAX, "LibTorch conv: batch exceeds ABI");
   c.batched = {batch};
   c.batched.insert(c.batched.end(), c.input.begin() + channel_axis, c.input.end());
   c.output = {batch, out_channels};
   for (size_t axis = 0; axis < rank; ++axis) {
     const auto k = c.weight[axis + 2];
-    TORCH_CHECK(k > 0 && c.stride[axis] > 0 && c.dilation[axis] > 0,
-                "LibTorch conv: kernel, stride and dilation must be positive");
+    TORCHLEAN_CHECK(k > 0 && c.stride[axis] > 0 && c.dilation[axis] > 0,
+                    "LibTorch conv: kernel, stride and dilation must be positive");
     const uint64_t effective = static_cast<uint64_t>(k - 1) * c.dilation[axis] + 1;
     const uint64_t padded = static_cast<uint64_t>(c.batched[2 + axis]) + c.before[axis] +
                             c.after[axis];
     const uint64_t extent = padded < effective ? 0 : (padded - effective) / c.stride[axis] + 1;
-    TORCH_CHECK(extent <= UINT32_MAX, "LibTorch conv: output dimension exceeds ABI");
+    TORCHLEAN_CHECK(extent <= UINT32_MAX, "LibTorch conv: output dimension exceeds ABI");
     c.output.push_back(static_cast<int64_t>(extent));
     c.symmetric = c.symmetric && c.before[axis] == c.after[axis];
   }
-  TORCH_CHECK(io_volume(c.output) <= UINT32_MAX, "LibTorch conv: output exceeds ABI");
+  TORCHLEAN_CHECK(io_volume(c.output) <= UINT32_MAX, "LibTorch conv: output exceeds ABI");
   return c;
 }
 
 // The input with its zero padding: ATen pads symmetrically itself, so only an asymmetric padding,
 // or the padding of an input without entries, is materialized, in `constant_pad_nd`'s
 // last-axis-first order.
-at::Tensor padded_input(const GroupedConvolution& c, const at::Tensor& x,
-                        std::vector<int64_t>& padding) {
+Tensor padded_input(const GroupedConvolution& c, const Tensor& x,
+                    std::vector<int64_t>& padding) {
   if (c.symmetric && x.numel() != 0) {
     padding = c.before;
     return x;
@@ -540,15 +568,15 @@ at::Tensor padded_input(const GroupedConvolution& c, const at::Tensor& x,
     pads.push_back(c.after[axis]);
   }
   padding.assign(c.stride.size(), 0);
-  return at::constant_pad_nd(x, pads, 0);
+  return zero_pad(x, pads);
 }
 
 // The bias gradient: the output gradient summed over every axis but the feature axis.
-at::Tensor bias_gradient(const at::Tensor& gradient, const GroupedConvolution& c) {
-  if (gradient.numel() == 0) return at::zeros({c.weight[0]}, gradient.options());
+Tensor bias_gradient(const Tensor& gradient, const GroupedConvolution& c) {
+  if (gradient.numel() == 0) return aten<"zeros">({c.weight[0]}, options(gradient));
   std::vector<int64_t> axes{0};
   for (size_t axis = 2; axis < c.output.size(); ++axis) axes.push_back(static_cast<int64_t>(axis));
-  return gradient.reshape(c.output).sum(axes);
+  return aten<"sum.dim_IntList">(aten<"reshape">(gradient, c.output), axes);
 }
 
 }  // namespace
@@ -565,20 +593,21 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_conv_io(
     const auto& x_flat = io_tensor(input, c.input);
     const auto& w_flat = io_tensor(kernel, c.weight);
     const auto& b = io_tensor(bias, std::vector<int64_t>{c.weight[0]});
-    if (io_volume(c.output) == 0) return box(at::empty({0}, x_flat.options()));
+    if (io_volume(c.output) == 0)
+      return box(aten<"empty.memory_format">({0}, options(x_flat)));
     // Without input channels every window is empty: each output is the empty sum `+0` plus the
     // bias, which is `+0` for a `-0` bias.
     if (c.weight[1] == 0) {
       std::vector<int64_t> singleton(c.output.size(), 1);
       singleton[1] = c.weight[0];
-      return box(at::zeros(c.output, b.options()) + b.reshape(singleton));
+      return box(add(aten<"zeros">(c.output, options(b)), aten<"reshape">(b, singleton)));
     }
     std::vector<int64_t> padding;
-    const auto x = padded_input(c, x_flat.reshape(c.batched), padding);
+    const auto x = padded_input(c, aten<"reshape">(x_flat, c.batched), padding);
     const std::vector<int64_t> zeros(c.stride.size(), 0);
-    const auto result = at::convolution(x, w_flat.reshape(c.weight), b, c.stride, padding,
-                                        c.dilation, false, zeros, c.groups);
-    TORCH_CHECK(result.sizes().vec() == c.output, "LibTorch conv: unexpected output geometry");
+    const auto result = aten<"convolution">(x, aten<"reshape">(w_flat, c.weight), b, c.stride,
+                                            padding, c.dilation, false, zeros, c.groups);
+    TORCHLEAN_CHECK(result.sizes().vec() == c.output, "LibTorch conv: unexpected output geometry");
     return box(result);
   });
 }
@@ -596,18 +625,20 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_conv_bwd(
     const auto& w_flat = io_tensor(kernel, c.weight);
     const auto& g_flat = io_tensor(gradient, c.output);
     if (g_flat.numel() == 0 || c.weight[1] == 0)
-      return triple(at::zeros_like(w_flat), bias_gradient(g_flat, c), at::zeros_like(x_flat));
+      return triple(aten<"zeros_like">(w_flat), bias_gradient(g_flat, c),
+                    aten<"zeros_like">(x_flat));
     std::vector<int64_t> padding;
-    const auto x = padded_input(c, x_flat.reshape(c.batched), padding);
+    const auto x = padded_input(c, aten<"reshape">(x_flat, c.batched), padding);
     const std::vector<int64_t> zeros(c.stride.size(), 0), bias_shape{c.weight[0]};
-    const auto result = at::convolution_backward(
-        g_flat.reshape(c.output), x, w_flat.reshape(c.weight), at::IntArrayRef(bias_shape),
+    const auto result = aten<"convolution_backward">(
+        aten<"reshape">(g_flat, c.output), x, aten<"reshape">(w_flat, c.weight), bias_shape,
         c.stride, padding, c.dilation, false, zeros, c.groups,
         std::array<bool, 3>{true, true, true});
     auto dx = std::get<0>(result);
     if (!c.symmetric || x_flat.numel() == 0)
       for (size_t axis = 0; axis < c.stride.size(); ++axis)
-        dx = dx.narrow(static_cast<int64_t>(axis + 2), c.before[axis], c.batched[axis + 2]);
+        dx = aten<"narrow">(dx, static_cast<int64_t>(axis + 2), c.before[axis],
+                            c.batched[axis + 2]);
     // ATen returns (input, weight, bias), and the Lean ABI is (weight, bias, input).
     return triple(std::get<1>(result), std::get<2>(result), dx);
   });

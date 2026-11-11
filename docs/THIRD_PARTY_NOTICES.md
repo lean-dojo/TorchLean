@@ -25,7 +25,7 @@ The main Lean dependencies are pinned in `lake-manifest.json`, in the guide's
 | doc-gen4 | Generates the API documentation built by `scripts/docs/build_site.sh`. | Source project: `leanprover/doc-gen4`, Apache-2.0 licensed. |
 | Verso, VersoBlueprint, verso-slides, SubVerso, Illuminate | Build the TorchLean guide/blueprint documentation. | Upstream Lean documentation tooling. |
 | CUDA toolkit and NVIDIA runtime libraries | Dependencies of the selected CUDA-enabled LibTorch SDK when building with `scripts/lake.sh -Kcuda=true build`. | Users provide a compatible SDK and toolkit installation. |
-| LibTorch and ATen | CUDA tensor evaluation and local gradient operations, called by TorchLean's differentiation tape. | External C++ SDK; its bundled dependencies and license notices accompany the selected distribution. |
+| LibTorch and ATen | CUDA tensor evaluation and local gradient operations, called by TorchLean's differentiation tape through the LibTorch Stable ABI of torch 2.13 or later. | External C++ SDK; its bundled dependencies and license notices accompany the selected distribution. |
 | PyTorch and ONNX tooling | Checkpoint exchange, graph capture, and IR import/export. | External systems; TorchLean checks imported JSON/IR artifacts and documents their trust boundaries separately. |
 | Jekyll and Ruby gems | Website build tooling for `home_page/`. | Used to build the public site. |
 

@@ -21,8 +21,11 @@ that call them lives here, in the module that forms the trust boundary.
 ## Trust boundary
 
 The CUDA backend crosses a C++/LibTorch FFI boundary, and Lean does not prove the compiled native
-implementation correct. The trusted pieces include LibTorch and ATen, their CUDA libraries,
-compiler and runtime, GPU hardware, and Lean's external-object ABI and finalizers.
+implementation correct. The trusted pieces include LibTorch and ATen, the dispatcher and C shims of
+the LibTorch Stable ABI through which the bridge calls them, their CUDA libraries, NVRTC and the
+CUDA driver, compiler and runtime, GPU hardware, and Lean's external-object ABI and finalizers.
+"LibTorch Stable ABI" in `docs/TRUST_BOUNDARIES.md` lists each operator schema, C shim and other
+torch symbol the bridge calls.
 
 TorchLean keeps its own tape and selected local VJPs, while ATen computes tensor values and local
 backward operations with autograd recording disabled. Proof-facing kernel specifications, float32
@@ -39,8 +42,8 @@ parity tests give evidence for one build on the inputs they run.
   Shared implementation of storage ownership, allocation, transfers, seeded random values,
   runtime controls, tensor operations, and direct calls to ATen backward operators.
   It implements elementwise operations, reductions, indexing, matrix multiplication,
-  normalization, Fourier transforms and scans, and it compiles and launches generated kernels
-  through NVRTC.
+  normalization, Fourier transforms and scans, and generates the kernels of `Buffer.axpy` and the
+  ordered sums.
   Lean modules: `TorchLean.CUDA.LibTorch.Buffer`, `TorchLean.CUDA.LibTorch.Kernels`,
   `TorchLean.CUDA.LibTorch.Controls` and `TorchLean.CUDA.Kernel.Launch`.
   Lean composes attention in `TorchLean.NN.LibTorch.Attention` and the multi-head node of
@@ -53,6 +56,30 @@ parity tests give evidence for one build on the inputs they run.
   Grouped and transposed convolutions and max, average and smooth max pools through ATen, each
   with its own backward call.
   Lean modules: `TorchLean.CUDA.LibTorch.ConvPool` and `TorchLean.CUDA.LibTorch.Kernels`.
+
+- `csrc/libtorch/tree.cpp`
+  Tree arenas in device memory and the launches of the row kernels of folds, expansions and
+  unfolds, level by level.
+  Lean modules: `TorchLean.CUDA.Tree.Device`, `TorchLean.CUDA.Tree.Expand` and
+  `TorchLean.CUDA.Tree.Run`.
+
+- `csrc/libtorch/kernels.cpp`
+  Generated CUDA kernels: NVRTC compiles each for the device's architecture, and the CUDA driver
+  loads it in torch's context and launches it on torch's current stream. Also the device count,
+  memory and synchronization of the runtime controls. `torchlean.cpp` and `tree.cpp` call it for
+  `TorchLean.CUDA.Kernel.Launch`, `TorchLean.CUDA.LibTorch.Buffer`,
+  `TorchLean.CUDA.LibTorch.Controls` and the tree modules.
+
+- `csrc/libtorch/stable.h` and `csrc/libtorch/schemas.h`
+  The bridge's calls into torch through the LibTorch Stable ABI of torch 2.13: each ATen operator
+  by its schema, checked at compile time against the generated table `schemas.h` and called
+  through torch's dispatcher, and the C shims for tensor handles, scalar operands, addition,
+  padding, grad mode, and the CUDA device guard and stream. No Lean module calls them directly.
+
+- `csrc/libtorch/unstable.cpp` and `csrc/libtorch/unstable.h`
+  The one source compiled against torch's C++ API: the process-wide backend settings and the CUDA
+  caching allocator's statistics, `emptyCache` and memory fraction, which the Stable ABI cannot
+  express. `torchlean.cpp` calls it for `TorchLean.CUDA.LibTorch.Controls`.
 
 - `csrc/libtorch/binary.h`
   Device addition, multiplication and division in configured binary formats, which NVRTC receives
@@ -70,7 +97,7 @@ parity tests give evidence for one build on the inputs they run.
 
 - `csrc/libtorch/tests/elementwise/regression.cpp`
   A C++ regression executable for the production backend's elementwise C ABI, built against the
-  backend's SDK. No Lean module calls it.
+  ATen C++ API of the torch release it runs with. No Lean module calls it.
 
 - `csrc/cpu/torchlean_tensor.c`
   Packed CPU kernels over `FloatArray` and `Array` storage: slice append, two-dimensional

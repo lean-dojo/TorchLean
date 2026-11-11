@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 project(TorchLeanElementwiseRegression LANGUAGES CXX)
 
-# Configure against the same LibTorch SDK and Lean toolchain as the production backend build.
+# Configure against the torch package or SDK to run with and the backend's Lean toolchain. The
+# backend may be built against an earlier release: it uses only the LibTorch Stable ABI.
 # Link the production backend so that the tests exercise its actual C ABI and invoke guard.
 foreach(required TORCHLEAN_LIBTORCH_HOME TORCHLEAN_LEAN_PREFIX TORCHLEAN_BACKEND_LIBRARY)
   if(NOT DEFINED ${required})
@@ -41,7 +42,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(torchlean_elementwise_regression regression.cpp)
-target_compile_definitions(torchlean_elementwise_regression PRIVATE TORCHLEAN_LIBTORCH)
+# USE_CUDA declares the CUDA shims of the Stable ABI, which the bridge's header uses.
+target_compile_definitions(torchlean_elementwise_regression PRIVATE TORCHLEAN_LIBTORCH USE_CUDA)
 target_include_directories(torchlean_elementwise_regression PRIVATE
   "${TORCHLEAN_LEAN_PREFIX}/include")
 # Lean's shared runtime also exports _Unwind_* symbols. Select the host unwinder

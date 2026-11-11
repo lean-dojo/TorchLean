@@ -303,7 +303,7 @@ likewise compose FFT, frequency mixing and inverse FFT through the numerical pri
 LibTorch, its compiler, CUDA libraries and hardware remain outside Lean's proof kernel.
 
 Select the SDK with `-Klibtorch_home=PATH` or `TORCHLEAN_LIBTORCH_HOME`; a CUDA-enabled pip
-PyTorch installation works as the SDK root. The [SDK notes](https://github.com/lean-dojo/TorchLean/blob/main/csrc/libtorch/README.md#tested-sdk-versions)
+PyTorch installation works as the SDK root. The [SDK notes](https://github.com/lean-dojo/TorchLean/blob/main/csrc/libtorch/README.md#torch-versions)
 record the tested versions and GPU checks; other SDK versions need their own CUDA suite results.
 Build with `-Kcuda=true`, then select `--device cuda` or `--device gpu`. An unavailable GPU is an
 error. The default CPU build needs no SDK or toolkit.

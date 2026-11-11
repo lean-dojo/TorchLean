@@ -65,16 +65,19 @@ in the source. -/
 abbrev ReifyM := StateT (Array Lean.Expr) TermElabM
 
 /-- Rewrite `source` with the first of `equations` that applies, instead of unfolding the
-recursive implementation. -/
+recursive implementation. Returns the rewritten term, the equation used and a proof that `source`
+equals the rewritten term. -/
 def equationBody (source : Lean.Expr) (equations : Array Name) :
-    TermElabM (Lean.Expr × Name) := do
+    TermElabM (Lean.Expr × Name × Lean.Expr) := do
   let goal ← mkFreshExprMVar (mkConst ``True)
   for equation in equations do
     let saved ← saveState
     try
       let result ← goal.mvarId!.rewrite source (← mkConstWithFreshMVarLevels equation)
       unless result.mvarIds.isEmpty do throwError "recursive equation has unresolved premises"
-      return (← instantiateMVars result.eNew, equation)
+      let body ← instantiateMVars result.eNew
+      let proof ← mkExpectedTypeHint (← instantiateMVars result.eqProof) (← mkEq source body)
+      return (body, equation, proof)
     catch _ => saved.restore
   throwError "Program.of: no constructor equation for {source}"
 
@@ -103,10 +106,10 @@ private def recurrence? (α : Lean.Expr) (source : Lean.Expr) :
   let wrap (value : Lean.Expr) : MetaM Lean.Expr :=
     if pureResult then mkAppOptM ``Except.ok #[some (mkConst ``Kernel.Error), some α,
       some value] else pure value
-  let (zero, zeroEquation) ← equationBody (apply (mkNatLit 0)) equations
+  let (zero, zeroEquation, _) ← equationBody (apply (mkNatLit 0)) equations
   withLocalDeclD `n (mkConst ``Nat) fun n => do
     let previous := apply n
-    let (successor, succEquation) ← equationBody (apply (← mkAppM ``Nat.succ #[n])) equations
+    let (successor, succEquation, _) ← equationBody (apply (← mkAppM ``Nat.succ #[n])) equations
     -- Only recursive helper functions need the recurrence bridge, so this one unfolds normally.
     unless (successor.find? (·.isConstOf name)).isSome do return none
     withLocalDeclD `i (mkConst ``UInt64) fun i => do

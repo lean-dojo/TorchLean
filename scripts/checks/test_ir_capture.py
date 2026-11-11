@@ -54,14 +54,19 @@ def _statuses(report):
 
 
 def _outputs(report):
-    # The executed result words as tensors of their dtypes.
+    # The executed results as tensors: a binary or integer result from its words, a Boolean one
+    # from its 0s and 1s, and a result of index tuples as the int64 tensor of their components.
     import torch
 
     tensors = []
     for output in report["outputs"]:
+        if output["element_type"] in ("index", "bool"):
+            dtype = torch.int64 if output["element_type"] == "index" else torch.bool
+            tensors.append(torch.tensor(output["bits"], dtype=dtype).reshape(output["shape"]))
+            continue
         dtype = getattr(torch, output["element_type"])
-        width = {torch.float16: 16, torch.bfloat16: 16, torch.float32: 32, torch.float64: 64}[dtype]
-        integer = {16: torch.int16, 32: torch.int32, 64: torch.int64}[width]
+        width = torch.finfo(dtype).bits if dtype.is_floating_point else torch.iinfo(dtype).bits
+        integer = {8: torch.int8, 16: torch.int16, 32: torch.int32, 64: torch.int64}[width]
         words = [word - (1 << width) if word >= 1 << (width - 1) else word
                  for word in output["bits"]]
         tensors.append(torch.tensor(words, dtype=integer).view(dtype).reshape(output["shape"]))
@@ -500,6 +505,24 @@ class PyTorchCaptureTests(CheckerCase):
         self.assert_passes(report)
         self.assertEqual([output.tolist() for output in _outputs(report)],
                          [[16777216.0] * 3, [16777216.0] * 3, [16908288.0, 3.0]])
+
+    def test_comparison_rejects_a_conversion_pytorch_rounds_twice(self):
+        # Binary64 1 + 2^-8 + 2^-40 (0x3FF0100000001000) lies just above the bfloat16 midpoint
+        # 1 + 2^-8. The IR rounds it once, to 0x3F81 (1.0078125). PyTorch rounds it to binary32
+        # first, which gives that midpoint (0x3F808000), and then to even, 0x3F80 (1.0). So the
+        # comparison with PyTorch rejects the conversion, by design.
+        torch = self.torch
+        x = torch.tensor([1 + 2 ** -8 + 2 ** -40, 1.5], dtype=torch.float64)
+        self.assertEqual(int(x[0].view(torch.int64)), 0x3FF0100000001000)
+        self.assertEqual(int(x[0].to(torch.float32).view(torch.int32)), 0x3F808000)
+        self.assertEqual(int(x[0].to(torch.bfloat16).view(torch.int16)), 0x3F80)
+        report = self.verify(lambda v: v.to(torch.bfloat16), x, checks=COMPARE)
+        statuses = _statuses(report)
+        self.assertEqual(statuses["execute"][0], "executed", statuses)
+        self.assertEqual(report["outputs"][0]["bits"], [0x3F81, 0x3FC0])
+        self.assertEqual(statuses["compare"], ("failed", "IR comparison: results differ in their "
+                                               "interchange words: result 0: 1 of 2 elements "
+                                               "differ"))
 
     def test_python_constants_round_once_at_format_boundaries(self):
         # Python constants and fill values become bfloat16 and binary16 words in one rounding,
@@ -1205,6 +1228,219 @@ class PyTorchCaptureTests(CheckerCase):
                                      checks=("structure",))
                 self.assertFalse(report["ok"])
 
+    def test_argument_aliases_bind_once_on_every_path(self):
+        # PyTorch's parser reads NumPy's `axis` and `keepdims` as `dim` and `keepdim`, so every
+        # spelling of a reduction keeps its axis through torch.export, FX and Dynamo alike.
+        from torchlean._fx import _tensor_value
+
+        torch = self.torch
+
+        class Call(torch.nn.Module):
+            def __init__(self, function):
+                super().__init__()
+                self.function = function
+
+            def forward(self, x):
+                return self.function(x)
+
+        x = torch.arange(6.).reshape(2, 3) - 2
+        spellings = {
+            "torch.sum axis keepdims": lambda v: torch.sum(v, axis=1, keepdims=True),
+            "torch.sum dim keepdim": lambda v: torch.sum(v, dim=1, keepdim=True),
+            "torch.sum axis -1": lambda v: torch.sum(v, axis=-1, keepdims=True),
+            "Tensor.sum axis keepdims": lambda v: v.sum(axis=1, keepdims=True),
+            "torch.mean axis keepdims": lambda v: torch.mean(v, axis=1, keepdims=True),
+            "torch.mean dim -1 keepdim": lambda v: torch.mean(v, dim=-1, keepdim=True),
+            "Tensor.mean dim -1 keepdims": lambda v: v.mean(dim=-1, keepdims=True),
+            # The fuzzer's seed 5: FX lowered `axis` before binding it (TypeError).
+            "torch.cumsum axis": lambda v: torch.cumsum(v, axis=1),
+            "Tensor.cumsum axis -2": lambda v: v.cumsum(axis=-2),
+        }
+        for name, function in spellings.items():
+            expected = function(x)
+            self.assertEqual(tuple(expected.shape), (2, 3) if "cumsum" in name else (2, 1))
+            compiled = torchlean.compile(checker=CHECKER)(function)
+            torch.testing.assert_close(compiled(x), expected)
+            dynamo = compiled.torchlean.graphs[-1]["artifact"]
+            dynamo["arguments"] = [_tensor_value(x)]
+            dynamo["reference_outputs"] = [_tensor_value(expected)]
+            with tempfile.TemporaryDirectory() as directory:
+                reports = {"export": self.verify(function, x, checks=COMPARE),
+                           "fx": self.compare_fx(directory, Call(function), x)[1],
+                           "dynamo": torchlean.verify(dynamo, checks=COMPARE, checker=CHECKER)}
+            for path, report in reports.items():
+                with self.subTest(case=name, path=path):
+                    self.assert_passes(report)
+                    self.assertEqual(report["outputs"][0]["shape"], list(expected.shape))
+
+    def test_records_without_an_integer_or_boolean_form_are_refused(self):
+        # TLFIX-8x: a record Lean's decoder has only at a binary format (a reduction, abs, relu, a
+        # product) is refused at Booleans and integer types with that reason, not exported to fail
+        # at the import.
+        torch = self.torch
+        m = torch.tensor([[1, 2, 3], [4, 5, 6]], dtype=torch.int32)
+        cases = {
+            "sum": (lambda v: torch.sum(v, axis=1, keepdims=True), "reduce runs at"),
+            "prod": (lambda v: torch.prod(v, dim=1), "runs at a binary format only"),
+            "Boolean sum": (lambda v: (v > 2).sum(dim=1), "runs at a binary format only"),
+            "abs": (torch.abs, "abs runs at a binary format only"),
+            "relu": (torch.relu, "runs at a binary format only"),
+            "matmul": (lambda v: v @ v.transpose(0, 1), "runs at a binary format only"),
+        }
+        for name, (function, text) in cases.items():
+            with self.subTest(case=name):
+                self.assert_refused(self.verify(function, m), text)
+
+    def test_floating_trunc_division_truncates_the_rounded_quotient(self):
+        # Fable hunt H1: PyTorch truncates the rounded quotient (`10` at `(1, 0.1)`), where the
+        # IR's `trunc` mode truncates the exact one (`9`). Binary32, and bfloat16 with a scalar
+        # divisor, which ATen divides in binary32.
+        torch = self.torch
+        for dtype in (torch.float32, torch.bfloat16):
+            with self.subTest(dtype=str(dtype)):
+                v = torch.tensor([1.0, 0.3, 7.0, -1.0], dtype=dtype)
+                for function in (lambda v: torch.div(v, 0.1, rounding_mode="trunc"),
+                                 lambda v: v.div(torch.full_like(v, 0.1), rounding_mode="trunc")):
+                    report = self.verify(function, v, checks=COMPARE)
+                    self.assert_passes(report)
+                    self.assertEqual(_outputs(report)[0].tolist(), function(v).tolist())
+
+    def test_one_parameter_given_twice_is_refused(self):
+        # A call that gives one parameter under two spellings, or a keyword its target does not
+        # take, binds to no overload, and the binder names the call.
+        import torch.fx
+        from torchlean._bind import bind_arguments, canonical
+
+        torch = self.torch
+        self.assertEqual(canonical("call_function", torch.sum, ("x",),
+                                   {"axis": 1, "keepdims": True}), {"dim": 1, "keepdim": True})
+        self.assertEqual(canonical("call_method", "mean", ("x",), {"axis": 1}), {"dim": 1})
+        cases = {
+            "dim and axis": ("call_function", torch.sum, {"dim": 1, "axis": 1},
+                             "torch.sum: the parameter 'dim' is given as 'dim' and 'axis'"),
+            "keepdim and keepdims": ("call_method", "sum", {"dim": 1, "keepdim": True,
+                                                            "keepdims": True},
+                                     "Tensor.sum: the parameter 'keepdim' is given as 'keepdim' "
+                                     "and 'keepdims'"),
+            "axis for dims": ("call_function", torch.flip, {"axis": 0}, "no overload binds them"),
+        }
+        for name, (op, target, kwargs, message) in cases.items():
+            with self.subTest(case=name):
+                graph = torch.fx.Graph()
+                x = graph.placeholder("x")
+                call = graph.call_function if op == "call_function" else graph.call_method
+                graph.output(call(target, (x,), kwargs))
+                with self.assertRaises(NotImplementedError) as refused:
+                    bind_arguments(graph)
+                self.assertIn(message, str(refused.exception))
+
+    def test_declared_types_must_match_the_program(self):
+        # The capture declares each lowered value's element type and shape from PyTorch's own
+        # metadata, and the checker refuses a program that gives a value another type. Without
+        # the binder the importer reads `torch.sum(v, axis=1, keepdims=True)` as a sum of every
+        # entry, and this check refuses it.
+        from unittest import mock
+
+        from torchlean._fx import _tensor_value
+        from torchlean.export import export_torchlean_graph_json
+
+        torch = self.torch
+
+        class Reduced(torch.nn.Module):
+            def forward(self, v):
+                return torch.sum(v, axis=1, keepdims=True)
+
+        x = torch.arange(6.).reshape(2, 3) - 2
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "graph.json")
+            document = export_torchlean_graph_json(Reduced(), (x,), path,
+                                                   prefer_torch_export=False)
+            with mock.patch("torchlean._graph.bind_arguments", lambda graph: None):
+                unbound = export_torchlean_graph_json(Reduced(), (x,), path,
+                                                      prefer_torch_export=False)
+        for value in (document, unbound):
+            value["arguments"] = [_tensor_value(x)]
+        self.assert_passes(torchlean.verify(document, checks=EXECUTE, checker=CHECKER))
+        float64 = copy.deepcopy(document)
+        (entry,) = [entry for entry in float64["declared_types"] if entry["shape"] == [2, 1]]
+        entry["dtype"] = "float64"
+        undeclared = copy.deepcopy(document)
+        del undeclared["declared_types"]
+        cases = {
+            "aliases left unbound": (unbound, "the IR computes float32 [], the capture declares "
+                                              "float32 [2, 1]"),
+            "another element type": (float64, "the IR computes float32 [2, 1], the capture "
+                                              "declares float64 [2, 1]"),
+            "no declared types": (undeclared, "IR types: the capture declares no value types "
+                                              "(declared_types)"),
+        }
+        for name, (value, message) in cases.items():
+            with self.subTest(case=name):
+                report = torchlean.verify(value, checks=EXECUTE, checker=CHECKER)
+                statuses = _statuses(report)
+                self.assertFalse(report["ok"])
+                self.assertEqual(statuses["types"][0], "failed", statuses)
+                self.assertTrue(statuses["types"][1].startswith("IR types: "), statuses)
+                self.assertIn(message, statuses["types"][1])
+                self.assertEqual(statuses["execute"], statuses["types"])
+
+    def test_report_gives_the_complete_conversion_status(self):
+        # int16 256 and -1 wrap to uint8 0 and 255, and the report gives all seven flags of the
+        # run's conversion status.
+        torch = self.torch
+        report = self.verify(lambda n: n.to(torch.uint8),
+                             torch.tensor([256, -1, 7], dtype=torch.int16), checks=COMPARE)
+        self.assert_passes(report)
+        self.assertEqual(report["outputs"][0]["bits"], [0, 255, 7])
+        self.assertEqual(report["conversion_flags"], {
+            "inexact": False, "overflow": False, "underflow": False, "saturated": False,
+            "wrapped": True, "mapped_special": False, "invalid": False})
+
+    def test_index_results_are_reported(self):
+        # A raw IR program may return index tuples, here argmax's: the report gives them with
+        # their port, and comparing them with a reference tensor fails with a reason.
+        from torchlean._fx import _tensor_value
+
+        torch = self.torch
+        x = torch.tensor([[0., 3, 1], [5, 2, 4]])
+        captured = torchlean._capture(lambda v: torch.argmax(v, 1), (x,), "pytorch", EXECUTE)
+        artifact = captured["artifact"]
+        (k,) = [k for k, step in enumerate(artifact["nodes"])
+                if "op" in step and step["op"]["record"]["tag"] == "argmax"]
+        for key in ("nodes", "scalars", "constants"):
+            artifact[key] = artifact[key][:k + 1]
+        artifact["outputs"] = [[k, 0]]
+        document = {"artifact": artifact, "arguments": captured["arguments"]}
+        report = torchlean.verify(document, checks=EXECUTE, checker=CHECKER)
+        self.assert_passes(report)
+        self.assertEqual(report["outputs"], [{
+            "element_type": "index", "dtype": None,
+            "port": {"index": {"bounds": [3], "shape": [2]}}, "shape": [2], "bits": [1, 0]}])
+        self.assertTrue(torch.equal(_outputs(report)[0], torch.argmax(x, 1)))
+        document["reference_outputs"] = [_tensor_value(torch.argmax(x, 1))]
+        compare = _statuses(torchlean.verify(document, checks=COMPARE, checker=CHECKER))["compare"]
+        self.assertEqual(compare[0], "failed")
+        self.assertIn("result 0 has index tuples below [3], and a reference tensor holds no "
+                      "index tuples", compare[1])
+
+    def test_a_document_without_utf8_json_text_fails_every_check(self):
+        # TLFIX-H14: a lone surrogate, a NaN or a value JSON lacks fails every request and
+        # writes no export, where `verify` used to raise.
+        document = torchlean._capture(lambda v, w: v + w, (self.x, self.y), "pytorch", EXECUTE)
+        self.assert_passes(torchlean.verify(document, checks=EXECUTE, checker=CHECKER))
+        with tempfile.TemporaryDirectory() as directory:
+            for name, value in (("surrogate", "\ud800"), ("nan", float("nan")),
+                                ("object", object())):
+                with self.subTest(name=name):
+                    export = Path(directory) / f"{name}.json"
+                    report = torchlean.verify(dict(document, zzz=value), checks=EXECUTE,
+                                              checker=CHECKER, export=export)
+                    self.assertFalse(report["ok"])
+                    self.assertEqual(report["checker"], "not_run")
+                    self.assertEqual([c["status"] for c in report["checks"]], ["failed"] * 3)
+                    self.assertIn("no UTF-8 JSON text", report["checks"][0]["message"])
+                    self.assertFalse(export.exists())
+
 
 @unittest.skipUnless(CHECKER and HAS_JAX, "needs the built verify executable and JAX")
 class JaxCaptureTests(CheckerCase):
@@ -1221,6 +1457,34 @@ class JaxCaptureTests(CheckerCase):
     def verify(self, function, *inputs, checks=EXECUTE):
         return torchlean.verify(function, *inputs, frontend="jax", checks=checks,
                                 checker=CHECKER)
+
+    def test_records_without_an_integer_or_boolean_form_are_refused(self):
+        # TLFIX-8x: integer abs and product records, and Boolean arithmetic, which Lean's decoder
+        # does not have, are refused with the reason.
+        jnp, np = self.jnp, self.np
+        m = np.array([[1, 2], [3, 4]], dtype=np.int32)
+        b = np.array([True, False])
+        cases = {
+            "abs": (jnp.abs, m, "abs runs at a binary format only"),
+            "product": (lambda v: v @ v, m, "runs at a binary format only"),
+            "Boolean minimum": (lambda v: jnp.minimum(v, v), b, "min has no Boolean form"),
+        }
+        for name, (function, value, text) in cases.items():
+            with self.subTest(case=name):
+                self.assert_refused(self.verify(function, value), text)
+
+    def test_an_uncopyable_model_is_refused(self):
+        # Fable hunt H11: the capture copies the model, and a model holding a lock is refused.
+        import threading
+
+        class Locked:
+            def __init__(self):
+                self.lock = threading.Lock()
+
+            def __call__(self, v):
+                return v * 2
+
+        self.assert_refused(self.verify(Locked(), self.x), "the JAX capture copies the model")
 
     def advice(self, report):
         # Every mismatch fails, and the behaviours whose emulation reproduces it are advice.
@@ -1290,6 +1554,40 @@ class JaxCaptureTests(CheckerCase):
             return x / y, -x, x ** 3, x ** -2, x / 2.0
 
         self.assert_passes(self.verify(exact, self.x, self.y, checks=COMPARE))
+
+    def test_numpy_inputs_are_captured_as_jax_reads_them(self):
+        # With 64-bit mode off JAX reads NumPy float64, int64 and uint64 values as float32, int32
+        # and uint32 (2 ** 33 + 7 is 7), and with it on as they are. The capture traces,
+        # serializes and compares those same values, and a NumPy output leaf too, in
+        # torchlean.verify and in a document from export, encode and references. A container
+        # argument of references keeps its structure, with each leaf read so.
+        from torchlean.jaxpr import references
+
+        jax, np = self.jax, self.np
+        inputs = (np.array([1 + 2 ** -30, -3.5]), np.array([1, -2], dtype=np.int64),
+                  np.array([1, 2 ** 33 + 7], dtype=np.uint64), np.float64(0.1))
+
+        def function(x, n, u, s):
+            return x * s, n + 1, u * 2, np.arange(2.0)
+
+        for x64, width in ((False, 32), (True, 64)):
+            with self.subTest(x64=x64), jax.enable_x64(x64):
+                document = torchlean._capture(function, inputs, "jax", COMPARE)
+                floating = f"float{width}"
+                self.assertEqual([argument["dtype"] for argument in document["arguments"]], [
+                    floating, {"kind": "integer", "signed": True, "width": width},
+                    {"kind": "integer", "signed": False, "width": width}, floating])
+                self.assertEqual(document["arguments"][2]["bits"], [1, 2 ** 33 + 7 if x64 else 7])
+                self.assertEqual(document["reference_outputs"][3]["dtype"], floating)
+                self.assert_passes(self.verify(function, *inputs, checks=COMPARE))
+                exported = self.artifact(function, *inputs)
+                self.assertEqual(exported["arguments"], document["arguments"])
+                self.assert_passes(torchlean.verify(exported, checks=COMPARE, checker=CHECKER))
+        with jax.enable_x64(False):
+            record = references(lambda p: p["w"] * p["v"][1],
+                                {"w": np.float64(3.0), "v": [np.zeros(2), np.ones(3)]})
+        self.assertEqual(record["reference_outputs"],
+                         [dict(dtype="float32", shape=[3], bits=[0x40400000] * 3)])
 
     def test_dot_algorithms_are_not_erased(self):
         # All operands and the result may be FP32 even when the selected algorithm multiplies
@@ -1677,6 +1975,11 @@ class JaxCaptureTests(CheckerCase):
         self.assert_passes(report)
         self.assertEqual([output["bits"] for output in report["outputs"]],
                          [[1, 2 ** 32 - 1, 2, 3, 0], [44, 255, 7]])
+        # The report gives the run's complete conversion status: truncating 1.7 is inexact, and
+        # 300 and -1 wrap.
+        self.assertEqual(report["conversion_flags"], {
+            "inexact": True, "overflow": False, "underflow": False, "saturated": False,
+            "wrapped": True, "mapped_special": False, "invalid": False})
         self.assert_unsupported_execution(self.verify(
             lambda x: x.astype(jnp.int32), jnp.array([3e9], jnp.float32), checks=EXECUTE),
             "does not fit")

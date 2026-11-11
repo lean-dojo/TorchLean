@@ -20,9 +20,10 @@ requested ball in a box of the model's scalar type, runs the chosen algorithm an
 box as a validated `Verification.Report`. On a rounded scalar `alphaCROWN` runs directed CROWN, and
 the report names `crown`, the algorithm that ran.
 
-The bounds hold for the recorded verifier graph. Native slices and selections copy source entries
-unchanged, but no finite-precision theorem identifies the whole lowered graph with the source model,
-so applying a report to the original execution needs that correspondence argument.
+At host `Float` and binary32, which have no `LawfulBoundOps` instance, no theorem says the bounds
+enclose the recorded verifier graph. Native slices and selections copy source entries unchanged,
+but no finite-precision theorem identifies the whole lowered graph with the source model, so
+applying a report to the original execution needs that correspondence argument.
 
 A call reads `trained.verify center (radius := r)`, and the input region is the L∞ ball of radius
 `r` around `center`. Verifier graphs are built directly with `TorchLean.Verify.Lowering`.
@@ -59,8 +60,8 @@ def inputBoxFromFloat {α : Type} [TorchLean.Storage α] [Context α]
     hi := Tensor.map (fun x => ofFloat (α := α) x (mode := .up)) box.hi }
 
 /--
-Verify the lowering `lowered` of a trained model over the L∞ ball of radius `radius` around
-`center`.
+Bound the lowering `lowered` of a trained model over the L∞ ball of radius `radius` around
+`center`, and check the requested property on those bounds.
 
 The bounds are computed on the lowered graph's import as a graph of registered operators
 (`IR.LoweredModel.toImported`, `CROWN.Op`), so applying them to the source model needs a
@@ -110,7 +111,8 @@ def forLowered {σ : Shape} {α : Type}
 end Verification
 
 /--
-Verify the trained model over the L∞ ball of radius `radius` around `center`.
+Bound the trained model over the L∞ ball of radius `radius` around `center`, and check the
+requested property on those bounds.
 
 `property` and `algorithm` have defaults, so checking output bounds needs only `center` and
 `radius`. It throws a user error when the result carries no lowered model, as results of

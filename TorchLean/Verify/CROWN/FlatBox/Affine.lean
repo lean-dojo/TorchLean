@@ -85,7 +85,7 @@ the sign split `W = W⁺ + W⁻` (`W⁺ ≥ 0`, `W⁻ ≤ 0`) gives the componen
 In binary32 each sum and product rounds to nearest, and the result need not enclose `W v + b`:
 with the parent form `x + 1`, the weight `1` and the bias `2 ^ -24`, the offset `1 + 2 ^ -24` is
 a tie that rounds to `1`, and the upper form `x + 1` is `0` at `x = -1`, below `W v + b = 2 ^ -24`.
-The α-CROWN certificate checker `Certificate.CROWNNode.check` replays this rule in binary32, and
+The replay diagnostic `Certificate.CROWNNode.replayDiagnostic` replays this rule in binary32, and
 the graph runner selects directed backward propagation for rounded backends.
 -/
 @[expose]

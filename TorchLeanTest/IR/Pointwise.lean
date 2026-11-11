@@ -423,12 +423,29 @@ even. -/
 def convert (j n : Nat) (d : IR.DType) : Step :=
   { node := .cast .nearest ⟨j, 0⟩ (.value [n]), dtype := d }
 
+/-- One entry of a document's `declared_types`: node `node`, held at the step output `ref`, of
+element type `d` and shape `s`. -/
+def declaredJson (node : Nat) (ref : IR.Ref) (d : IR.DType) (s : Shape) : Json :=
+  Json.mkObj [("node", toJson node), ("ref", IR.Ref.toJson ref), ("origin", toJson s!"step {node}"),
+    ("source", toJson "capture"), ("dtype", toJson d), ("shape", toJson s)]
+
+/-- The `declared_types` of a capture that records the type the program gives each value: every
+step output that has an element type, at that element type and shape (`Program.typedBefore`). -/
+def typesOf (a : IR.Artifact) : Json :=
+  let p := a.program
+  Json.arr <| ((List.range p.nodes.size).flatMap fun i =>
+    (List.range ((p.nodes[i]?.map (·.outs.length)).getD 0)).filterMap fun o => do
+      let t ← p.typedBefore p.nodes.size ⟨i, o⟩
+      pure (declaredJson i ⟨i, o⟩ (← t.dtype?) t.port.shape)).toArray
+
 /-- The capture document of a JAX program of `steps` on `arguments`. Its `computation` gives, for
 each step, the computation that XLA compiles it in, `none` where no equation produced the step,
-and its `primitive_index` is null at every step. -/
+and its `primitive_index` is null at every step. Its `declared_types` give each value the type the
+program gives it (`typesOf`). -/
 def jaxProgram (steps : List (Step × Option Nat)) (arguments : List Json) : Json :=
   Json.mkObj [("artifact", (artifact (steps.map (·.1))).toJson),
     ("arguments", Json.arr arguments.toArray), ("frontend", "jaxpr"),
+    ("declared_types", typesOf (artifact (steps.map (·.1)))),
     ("reference_execution", "eager"), ("jit_computations", Json.arr #[]),
     ("computation", toJson (steps.map (·.2))),
     ("primitive_index", toJson (steps.map fun _ => (none : Option Nat)))]
@@ -628,19 +645,136 @@ def runComparisons : IO Unit := do
   for case in comparisonCases do
     expectComparison case.name case.document case.request case.status case.advice case.emulated
 
+/-! ## Capture reports: declared types, conversion status and index results -/
+
+/-- `x * x` on a binary32 argument of shape `[2]`. -/
+def square : List Step := [input 0 2, operation ⟨_, _, Op.mul (s := [2])⟩ [0, 0]]
+
+/-- The PyTorch capture document of `square` at `[1, 2]`, with the `declared_types` `types`, and
+without the field when `types` is none. -/
+def declaredDocument (types : Option Json) : Json :=
+  Json.mkObj ([("artifact", (artifact square).toJson), ("frontend", toJson "pytorch"),
+    ("arguments", Json.arr #[tensorJson .float32 [1065353216, 1073741824]])] ++
+    (types.map fun t => [("declared_types", t)]).getD [])
+
+/-- The status and message of the check `name` of a report. -/
+def checkOf (report : Json) (name : String) : String × String :=
+  let checks := ((report.getObjValD "checks").getArr?).toOption.getD #[]
+  match checks.find? (·.getObjValD "name" == toJson name) with
+  | some c => ((c.getObjValD "status").getStr?.toOption.getD "",
+      (c.getObjValD "message").getStr?.toOption.getD "")
+  | none => ("", "")
+
+/-- Require the check `name` of `report` to end with `status` and a message that contains
+`message`. -/
+def expectCheck (case : String) (report : Json) (name status message : String) : IO Unit := do
+  let (actual, text) := checkOf report name
+  unless actual == status && (text.splitOn message).length > 1 do
+    throw <| IO.userError s!"report {case}: expected {name} {status} with \"{message}\", got \
+      {summary report}"
+  IO.println s!"  report {case}: {name} {status}"
+
+/-- A document whose `declared_types` disagree with its program fails to load, with the value, its
+step output and both types in the message, and so does a PyTorch document without the field. -/
+def runDeclared : IO Unit := do
+  let ok := report (declaredDocument (some (typesOf (artifact square))))
+  unless ok.getObjValD "ok" == .bool true do
+    throw <| IO.userError s!"report declared types: checks failed: {summary ok}"
+  IO.println "  report declared types: every value has its declared type"
+  let mismatches : List (String × Json × String) := [
+    ("a shape the IR does not compute", Json.arr #[declaredJson 1 ⟨1, 0⟩ .float32 [2, 1]],
+      "IR types: node 1 (step 1, step 1 output 0): the IR computes float32 [2], the capture \
+        declares float32 [2, 1]"),
+    ("an element type the IR does not compute", Json.arr #[declaredJson 1 ⟨1, 0⟩ .float64 [2]],
+      "IR types: node 1 (step 1, step 1 output 0): the IR computes float32 [2], the capture \
+        declares float64 [2]"),
+    ("a value the IR does not hold", Json.arr #[declaredJson 1 ⟨5, 0⟩ .float32 [2]],
+      "IR types: node 1 (step 1): no step output 0 of step 5")]
+  for (case, types, message) in mismatches do
+    let r := report (declaredDocument (some types))
+    expectCheck case r "types" "failed" message
+    expectCheck case r "execute" "failed" message
+  expectCheck "no declared types" (report (declaredDocument none)) "types" "failed"
+    "IR types: the capture declares no value types (declared_types)"
+
+/-- The JSON of a conversion status with the flags `raised` set, and every other flag clear. -/
+def flagsWith (raised : List String) : Json :=
+  Json.mkObj (["inexact", "overflow", "underflow", "saturated", "wrapped", "mapped_special",
+    "invalid"].map fun flag => (flag, toJson (raised.contains flag)))
+
+/-- A report gives the run's complete conversion status: int16 `256, -1, 7` to uint8 wraps to
+`0, 255, 7`, and binary32 `65520` to binary16 overflows to infinity, inexactly. -/
+def runFlags : IO Unit := do
+  let cases : List (String × Except String Json × List Nat × List String) := [
+    ("int16 to uint8", castChain (.integer true (some 16)) [.integer false (some 8)]
+      [256, 65535, 7], [0, 255, 7], ["wrapped"]),
+    ("float32 to float16", castChain .float32 [.float16] [1199566848], [31744],
+      ["inexact", "overflow"])]
+  for (name, document, words, raised) in cases do
+    expectWords s!"flags {name}" document words (floating := false)
+    let document ← IO.ofExcept document
+    let flags := (report document).getObjValD "conversion_flags"
+    unless flags == flagsWith raised do
+      throw <| IO.userError s!"report flags {name}: expected {(flagsWith raised).compress}, got \
+        {flags.compress}"
+    IO.println s!"  report flags {name}: {flags.compress}"
+
+/-- `argmax` along the last axis of a binary32 argument of shape `[2, 3]`, holding the rows
+`0, 3, 1` and `5, 2, 4`: a raw IR document, with no frontend, whose result is index tuples. -/
+def argmaxDocument : Json :=
+  let steps : List Step := [{ node := .node (.input 0 (.value [2, 3])) },
+    operation ⟨_, _, Op.argmax (s := [2, 3]) ⟨1, by decide⟩ false (by decide)⟩ [0]]
+  Json.mkObj [("artifact", (artifact steps).toJson), ("arguments", Json.arr #[Json.mkObj [
+    ("dtype", toJson IR.DType.float32), ("shape", toJson [2, 3]),
+    ("bits", toJson [0, 1077936128, 1065353216, 1084227584, 1073741824, 1082130432])]])]
+
+/-- A result of index tuples is reported, with its port and components. A result that cannot be
+written fails `execute`, and comparing index tuples with a reference tensor fails with a message
+that says so. -/
+def runIndexResults : IO Unit := do
+  let r := report argmaxDocument
+  let expected := Json.mkObj [("element_type", toJson "index"), ("dtype", Json.null),
+    ("port", Json.mkObj [("index", Json.mkObj [("bounds", toJson [3]), ("shape", toJson [2])])]),
+    ("shape", toJson [2]), ("bits", toJson [1, 0])]
+  unless r.getObjValD "ok" == .bool true && r.getObjValD "outputs" == Json.arr #[expected] do
+    throw <| IO.userError s!"report index result: got {r.compress}"
+  IO.println s!"  report index result: {(r.getObjValD "outputs").compress}"
+  let unwritten := Capture.check argmaxDocument #["structure", "types", "execute"]
+    (fun _ => throw "no writer")
+  expectCheck "unwritten result" unwritten "execute" "failed"
+    "IR: result 0 cannot be serialized: no writer"
+  unless unwritten.getObjValD "outputs" == .null do
+    throw <| IO.userError s!"report unwritten result: outputs {unwritten.compress}"
+  let compared := argmaxDocument.setObjVal! "reference_outputs" (Json.arr #[Json.mkObj [
+    ("dtype", toJson (IR.DType.integer true (some 64))), ("shape", toJson [2]),
+    ("bits", toJson [1, 0])]])
+  expectCheck "index result against a tensor"
+    (Capture.check compared #["structure", "types", "execute", "compare"]) "compare" "failed"
+    "result 0 has index tuples below [3], and a reference tensor holds no index tuples"
+
+/-- Run the report cases. -/
+def runReports : IO Unit := do
+  runDeclared
+  runFlags
+  runIndexResults
+
 /--
-Capture the same operators live from PyTorch and JAX with `scripts/checks/test_ir_capture.py` and
-check them with the built `verify` executable. The script skips any frontend that is not installed,
+Capture the same operators live from PyTorch and JAX with `scripts/checks/test_ir_capture.py`, and
+seeded random programs with the differential fuzzer `scripts/checks/test_frontend_fuzz.py`, and
+check them with the built `verify` executable. The scripts skip any frontend that is not installed,
 and every case when the checker has not been built.
 -/
 def runCaptures : IO Unit := do
-  let out ← IO.Process.output
-    { cmd := "python3", args := #["scripts/checks/test_ir_capture.py"], cwd := some "." }
-  let summary := (out.stderr.splitOn "\n").filter (fun line => line.startsWith "Ran " ||
-    line.startsWith "OK" || line.startsWith "FAILED")
-  unless out.exitCode == 0 do
-    throw <| IO.userError s!"pointwise captures failed:\n{out.stderr}"
-  IO.println s!"  PyTorch and JAX captures: {" ".intercalate summary}"
+  for (script, what) in [("test_ir_capture.py", "PyTorch and JAX captures"),
+      ("test_frontend_fuzz.py", "differential fuzzer")] do
+    let out ← IO.Process.output
+      { cmd := "python3", args := #[s!"scripts/checks/{script}"], cwd := some "." }
+    let summary := (out.stderr.splitOn "\n").filter (fun line => line.startsWith "Ran " ||
+      line.startsWith "OK" || line.startsWith "FAILED" || line.startsWith "PyTorch:" ||
+      line.startsWith "JAX:")
+    unless out.exitCode == 0 do
+      throw <| IO.userError s!"{what} failed:\n{out.stderr}"
+    IO.println s!"  {what}: {" ".intercalate summary}"
 
 /-- Run the pointwise cases, the comparisons and the live captures. -/
 def run : IO Unit := do
@@ -649,6 +783,7 @@ def run : IO Unit := do
   runInteger
   runConversions
   runComparisons
+  runReports
   runCaptures
 
 end TorchLean.Test.Pointwise

@@ -86,10 +86,13 @@ structure _root_.TorchLean.Capture.Mismatch where
   /-- Elements of the result. -/
   total : Nat := 0
 
-/-- Compare one result with its reference. Two NaNs agree unless `bitwise` is set. -/
+/-- Compare one result with its reference. Two NaNs agree unless `bitwise` is set. A result of
+index tuples fails, since a reference tensor has an element type and holds no index tuples. -/
 def _root_.TorchLean.Capture.compareResult (bitwise : Bool)
     (output expected : Value Machine.reference) :
     Except String Capture.Mismatch := do
+  if let .index bounds := output.typed.port.kind then
+    throw s!"index tuples below {bounds}, and a reference tensor holds no index tuples"
   unless output.typed.dtype? == expected.typed.dtype? &&
       output.typed.port.shape == expected.typed.port.shape do
     throw "a different element type or shape"
@@ -1062,12 +1065,30 @@ def _root_.TorchLean.Capture.compareFinding (name : String) (document : Json) (p
                     attributed to XLA's documented behaviour."
                     [report, ("eager_reference", eager)])
 
-/-- Serialize computed results for inspection without a lossy numerical display conversion. -/
-def _root_.TorchLean.Capture.resultJson (value : Value Machine.reference) : Except String Json := do
-  let (dtype, shape, words) ← IR.words value
-  pure <| Json.mkObj [
-    ("element_type", toJson dtype.describe), ("dtype", toJson dtype),
-    ("shape", toJson shape), ("bits", toJson words)]
+/-- Serialize one computed result without a lossy numerical display conversion. A Boolean,
+integer or scalar result has its element type, shape and words (`IR.words`). A result of index
+tuples has `"element_type": "index"`, a null `dtype`, its port (`Port.toJson`), the shape of the
+integer tensor that holds its tuples (`Port.irShape`) and the components of its tuples in that
+layout. -/
+def _root_.TorchLean.Capture.resultJson : Value Machine.reference → Except String Json
+  | ⟨⟨⟨.index bounds, s⟩, _⟩, x⟩ => pure <| Json.mkObj [
+      ("element_type", toJson "index"), ("dtype", .null), ("port", Port.toJson ⟨.index bounds, s⟩),
+      ("shape", toJson (Port.irShape ⟨.index bounds, s⟩)),
+      ("bits", toJson ((Tensor.Rep.data x).toList.flatMap (Port.IndexTuple.components bounds)))]
+  | value => do
+      let (dtype, shape, words) ← IR.words value
+      pure <| Json.mkObj [
+        ("element_type", toJson dtype.describe), ("dtype", toJson dtype),
+        ("shape", toJson shape), ("bits", toJson words)]
+
+/-- The JSON of a run's conversion status: each of its seven flags, raised or not. The flags are
+read by destructuring the status, so a flag added to `ConversionStatus` cannot be left out. -/
+def _root_.TorchLean.Capture.flagsJson (flags : FloatLib.Floats.ExecFloat.ConversionStatus) :
+    Json :=
+  let ⟨inexact, overflow, underflow, saturated, wrapped, mappedSpecial, invalid⟩ := flags
+  Json.mkObj [("inexact", toJson inexact), ("overflow", toJson overflow),
+    ("underflow", toJson underflow), ("saturated", toJson saturated), ("wrapped", toJson wrapped),
+    ("mapped_special", toJson mappedSpecial), ("invalid", toJson invalid)]
 
 end XLA
 
@@ -1076,8 +1097,13 @@ end XLA
 `execute`, `compare` and `compare_bitwise` concern only `arguments` stored in the document. A
 comparison can expose legitimate differences in reduction or elementary-function implementations,
 so a mismatch alone does not identify a bug, but it always fails.
+
+After a run, the report's `outputs` holds each result as `render` writes it (`Capture.resultJson`
+by default), and `conversion_flags` the run's complete conversion status (`Capture.flagsJson`). A
+result that `render` cannot write fails `execute` and the comparisons with its message.
 -/
-def Capture.check (document : Json) (requests : Array String := #["structure", "types"]) :
+def Capture.check (document : Json) (requests : Array String := #["structure", "types"])
+    (render : Value Machine.reference → Except String Json := Capture.resultJson) :
     Json := Id.run do
   let mut findings : Array Json := #[]
   let mut ok := true
@@ -1092,14 +1118,12 @@ def Capture.check (document : Json) (requests : Array String := #["structure", "
     let arguments ← IR.loadArguments Machine.reference document
     let (steps, flags) ← program.run Machine.reference payload arguments
     let results ← program.outputs.mapM (·.read steps)
-    pure (program, payload, arguments, steps, results, flags)
-  if let .ok (_, _, _, _, results, flags) := execution then
-    match results.mapM resultJson with
-    | .ok results => outputs := toJson results
-    | .error _ => pure ()
-    conversionFlags := Json.mkObj [
-      ("inexact", toJson flags.inexact), ("overflow", toJson flags.overflow),
-      ("underflow", toJson flags.underflow), ("invalid", toJson flags.invalid)]
+    let written ← results.mapIdxM fun i result =>
+      (render result).mapError (s!"IR: result {i} cannot be serialized: " ++ ·)
+    pure (program, payload, arguments, steps, results, flags, written)
+  if let .ok (_, _, _, _, _, flags, written) := execution then
+    outputs := toJson written
+    conversionFlags := flagsJson flags
   for request in requests do
     let (passed, entry) :=
       match request with
@@ -1111,7 +1135,7 @@ def Capture.check (document : Json) (requests : Array String := #["structure", "
       | "execute" | "compare" | "compare_bitwise" =>
           match execution with
           | .error message => (false, finding request "failed" message)
-          | .ok (program, payload, arguments, steps, results, _) =>
+          | .ok (program, payload, arguments, steps, results, _, _) =>
               if request == "execute" then
                 (true, finding request "executed"
                   "CPU reference execution completed for the supplied arguments.")

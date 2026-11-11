@@ -4,6 +4,11 @@
 Lake calls this helper even on cache hits, so a change to the SDK, toolchain, flags or source
 contents never reuses an incompatible backend. Compilation needs a Linux host with a full LibTorch
 SDK, while --resolve-home only checks the SDK layout and prints its path.
+
+After a build, and again whenever the checker or docs/TRUST_BOUNDARIES.md changes, the helper runs
+scripts/checks/libtorch_abi.py on the library: the operators it names and the torch symbols it
+imports must be the TRUST lists, and the SDK must register each listed schema and define each torch
+symbol the library imports. A failed check fails the build.
 """
 
 from __future__ import annotations
@@ -21,7 +26,8 @@ import tempfile
 
 
 SOURCES = (
-    "torchlean.cpp", "conv_pool.cpp", "tree.cpp", "torchlean_libtorch.h", "operations.h", "binary.h",
+    "torchlean.cpp", "conv_pool.cpp", "tree.cpp", "kernels.cpp", "unstable.cpp",
+    "torchlean_libtorch.h", "operations.h", "binary.h", "stable.h", "schemas.h", "unstable.h",
     "CMakeLists.txt",
 )
 BUILD_ENV = (
@@ -168,6 +174,24 @@ def run(command: list[str], *, env: dict[str, str]) -> None:
     subprocess.run(command, check=True, env=env, stdout=sys.stderr)
 
 
+def check_abi(package: Path, home: Path, output: Path, build: str, env: dict[str, str]) -> None:
+    """Run the ABI check on `output`, the library of the build with digest `build`, unless it passed
+    with the same checker and TRUST file. The record is kept outside build.json, so a TRUST edit
+    reruns the check without changing the fingerprint Lake sees."""
+    checker = package / "scripts/checks/libtorch_abi.py"
+    record_file = output.parent / "abi_check.json"
+    record = {"build": build, "checker": file_record(checker),
+              "trust": file_record(package / "docs/TRUST_BOUNDARIES.md")}
+    try:
+        if json.loads(record_file.read_text()) == record:
+            return
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    record_file.unlink(missing_ok=True)
+    run([sys.executable, str(checker), "--torch", str(home), "--library", str(output)], env=env)
+    write_json(record_file, record)
+
+
 def build(args: argparse.Namespace, package: Path, home: Path) -> str:
     if sys.platform != "linux":
         raise ValueError("cuda=true requires a Linux LibTorch SDK")
@@ -223,6 +247,10 @@ def build(args: argparse.Namespace, package: Path, home: Path) -> str:
     }
     build_root = Path(args.build_dir).resolve() / "libtorch"
     build_root.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    # TorchConfig.cmake also reads this variable. Pinning it keeps a second SDK from winning
+    # discovery.
+    env["TORCH_INSTALL_PREFIX"] = str(home)
     # Lock here as well: direct Lake or helper invocations skip the wrapper's checkout lock.
     import fcntl
     with (build_root / "build.lock").open("w") as lock:
@@ -240,6 +268,7 @@ def build(args: argparse.Namespace, package: Path, home: Path) -> str:
                 and previous.get("discovered") == discovered
                 and output.is_file()
                 and previous.get("output_sha256") == file_hash(output)):
+            check_abi(package, home, output, digest(previous), env)
             return digest(previous)
 
         # A changed compiler, SDK, header or flag must not survive CMake's own timestamp cache,
@@ -249,10 +278,6 @@ def build(args: argparse.Namespace, package: Path, home: Path) -> str:
         query = directory / ".cmake/api/v1/query"
         query.mkdir(parents=True)
         (query / "cmakeFiles-v1").touch()
-        env = dict(os.environ)
-        # TorchConfig.cmake also reads this variable. Pinning it keeps a second SDK from winning
-        # discovery.
-        env["TORCH_INSTALL_PREFIX"] = str(home)
         command = [
             str(cmake), "-S", str(source), "-B", str(directory), "-G", "Unix Makefiles",
             "-DCMAKE_BUILD_TYPE=Release", f"-DCMAKE_CXX_COMPILER={compiler}",
@@ -281,6 +306,7 @@ def build(args: argparse.Namespace, package: Path, home: Path) -> str:
             "output": str(output), "output_sha256": file_hash(output),
         }
         write_json(state_file, state)
+        check_abi(package, home, output, digest(state), env)
         return digest(state)
 
 

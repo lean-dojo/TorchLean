@@ -36,9 +36,10 @@ the reals of the rounded constants (`RealConsts`) and whose graph inputs the see
 the boxes of `Op.runIBP`.
 
 Both laws hold at `ℝ` and at `FP32`, the binary32 model with an unbounded exponent
-(`TorchLean.Verify.CROWN.BoundOps.FP32`). The IBP certificate checker runs the pass at the
-executable `ExecFloat.Binary 8 23`, which holds infinities and NaN and gets no global lawful
-instance, and native `Float` and `Float32` get none either.
+(`TorchLean.Verify.CROWN.BoundOps.FP32`). The IBP node certificate checker
+`Certificate.IBPNode.check` runs the pass at the executable `ExecFloat.Binary 8 23`, which holds
+infinities and NaN and gets no global lawful instance, so its acceptance has no theorem over `ℝ`.
+Native `Float` and `Float32` get no instance either.
 -/
 
 @[expose] public section

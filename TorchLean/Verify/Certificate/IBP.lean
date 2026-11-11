@@ -132,7 +132,8 @@ def check (G : IR.Graph) (P : IR.Payload Float) (inputs : List (FlatBox Float))
   let okLo := boundsOrdered claimedLo outB.lo
   let okHi := boundsOrdered outB.hi claimedHi
   if okLo && okHi then
-    return { lines := #["IBP certificate verified: serialized bounds enclose Lean recomputation."] }
+    return { lines := #["IBP certificate accepted: serialized bounds contain Lean's " ++
+      "host-Float recomputation."] }
   let pyLoStr :=
     String.intercalate ", " ((List.finRange n).map (fun i => toString (loVec i)))
   let pyHiStr :=

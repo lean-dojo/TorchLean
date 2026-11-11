@@ -15,7 +15,9 @@ public import TorchLean.NN.Autograd.Frontend
 `f.run input (device := .cpu)` applies an ordinary Lean scalar function to a tensor.
 `f.run input (device := .cuda)` uses generated CUDA for supported scalar functions, and LibTorch
 operations for supported whole-tensor functions. With `grad := true`, `run` records either kind
-with the autograd operations and returns the forward value and the input pullback.
+with the autograd operations and returns the forward value and the input pullback. A function that
+the recorder cannot record (an unsupported operation, or an instance that computes something other
+than the element context's operation) is then an elaboration error.
 `f.zip left right` combines two equally shaped tensors with a binary scalar function.
 
 Captured parameters are constants. Scalar mapping preserves the input shape, and a whole-tensor
@@ -184,7 +186,10 @@ namespace TorchLean.Kernel.Elab
 open Lean Meta Lean.Elab Term Tactic
 
 /-- Infer scalar mapping or whole-tensor execution from the function's type and prepare its
-recording with the autograd operations. A scalar function with `grad := false` has no recording. -/
+recording with the autograd operations. A scalar function with `grad := false` has no recording.
+When `grad` is literally `true`, a failed recording is an elaboration error. Otherwise the failure
+is kept as an `Except.error` message, which the GPU forward path and a `grad` known only at run
+time raise as an IO error. -/
 elab "prepare_function_execution" : tactic => withMainContext do
   let goal ← getMainGoal
   let target ← goal.getType
@@ -243,8 +248,10 @@ elab "prepare_function_execution" : tactic => withMainContext do
         synthesizeSyntheticMVarsNoPostponing
         instantiateMVars result
       catch error =>
-        let message ← error.toMessageData.toString
         saved.restore
+        -- With `grad := true` the recording is the result, so its failure is an elaboration error.
+        if grad.isConstOf ``Bool.true then throw error
+        let message ← error.toMessageData.toString
         elabTermEnsuringType (← `(Except.error $(quote message))) (some recordingType)
     let recording ← exprToSyntax recording
     let forward ← if elementwise then
@@ -280,11 +287,13 @@ open TorchLean Backend.Device
 
 A scalar function maps over the entries, and a tensor function receives the whole input. A
 forward-only call on CPU evaluates the Lean function itself. With `grad := true`, `run` records
-the supported operations on the autograd tape and returns a value with `backward` and `close`, and
-an unsupported recording fails. Native `Float32` and `Float` keep binary32 and binary64 on the same
-GPU tape. Configured binary arithmetic keeps complete words on that tape, with a narrower operator
-subset than native LibTorch's. CPU-only carriers keep their precision through a reported fallback.
-Scalar branch decisions synchronize to Lean and record only the chosen path. The
+the supported operations on the autograd tape and returns a value with `backward` and `close`. A
+function the recorder cannot record faithfully (an unsupported operation, or an instance that
+differs from the element context's) is an elaboration error when `grad` is literally `true`, and an
+IO error when `grad` is known only at run time. Native `Float32` and `Float` keep binary32 and
+binary64 on the same GPU tape. Configured binary arithmetic keeps complete words on that tape, with
+a narrower operator subset than native LibTorch's. CPU-only carriers keep their precision through a
+reported fallback. Scalar branch decisions synchronize to Lean and record only the chosen path. The
 `prepare_function_execution` tactic prepares the execution argument at the call site.
 -/
 def run {α ι ο : Type} [Storage α] {input output : Shape}

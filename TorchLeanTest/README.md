@@ -53,6 +53,14 @@ with `#guard`: `OpTable.lean` and `Tensor/OnlineSoftmax.lean`.
   cross-entropy, and check hand-written backward passes against them. `OpDerivScatter.lean` does
   the same through the scatters and instantiates the certificates of `Op.scatter`, and
   `OpDerivCat.lean` through a concatenation, instantiating the certificate of `Op.cat`.
+  `OpCert.lean` checks that `op_cert` rejects derivative certificates that are not in the
+  canonical `DerivCert` form, among them the tautology `backward = backward`, and registers four
+  that are. `Recorder.lean` checks that `record_function%` records ordinary programs with their
+  checked equality and rejects instances that compute something other than the recorded operator.
+  `CertificateVerdict.lean` checks that `CROWNNode.check` decides by `FiniteArtifact.accepts`, on
+  an artifact that the binary32 replay accepts and the verdict rejects.
+  `RoundoffBaseline.lean` runs the comparison of the roundoff coverage with
+  `scripts/checks/roundoff_baseline.jsonl` on rows that differ in one way each.
   `GradientKernel.lean` proves that the gradient kernels of `x / (x² + 1)` and of a branched
   rational function away from its kink compute the adjoints of their derivatives, and
   `KernelMap.lean` proves it for `x * x + 1` written with `Program.of` over binary32 and over

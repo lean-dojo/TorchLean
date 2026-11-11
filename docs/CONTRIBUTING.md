@@ -25,7 +25,8 @@ each pinned toolchain and holds a checkout lock that plain `lake` doesn't take, 
 for every build when you switch profiles. Blueprint builds use the parent library's CPU cache, even
 after a CUDA build.
 
-For GPU checks, select a CUDA-enabled LibTorch SDK and require a visible device:
+For GPU checks, select a CUDA-enabled LibTorch SDK of torch 2.13 or later and require a visible
+device:
 
 ```bash
 export TORCHLEAN_LIBTORCH_HOME=/path/to/torch
@@ -126,13 +127,17 @@ rules. It also checks Lake's glob ownership, where `@[extern]` declarations live
 agreement with the C sources, and the imports of the library check `scripts/checks/Library.lean`,
 which must reach every module of the libraries but the root modules of the executables.
 `scripts/lake.sh lint` builds the libraries and then runs the `torchlean_lint` executable, which
-runs `scripts/checks/repo_lint.py`, the gate and the library check. The library check fails unless
+runs `scripts/checks/repo_lint.py`, the gate, the LibTorch ABI check
+`scripts/checks/libtorch_abi.py` and the library check. The ABI check fails unless the ATen
+operators and torch C functions that the LibTorch bridge's sources call are the lists of
+[the trust boundaries](TRUST_BOUNDARIES.md#libtorch-stable-abi). The library check fails unless
 every theorem of the libraries depends on at most `propext`, `Classical.choice` and `Quot.sound`.
 Its coverage check fails unless every public operator specification and tape constructor under
 `TorchLean/` is registered with `#roundoff_coverage`, every operator of the table with a rule has
 its equation lemma and, when one of its ports holds the scalar, a route analyzed for the configured
-scalar, and every `op_cert` certificate speaks about a route of its operator. Run the gate alone
-with:
+scalar, and every `op_cert` certificate speaks about a route of its operator. It also fails when
+the outcomes of the analyses differ from `scripts/checks/roundoff_baseline.jsonl`. Run the gate
+alone with:
 
 ```bash
 python3 scripts/checks/dependency_audit.py --fail-on-error

@@ -3,31 +3,14 @@ name: Publish documentation
 on:
   push:
     branches: ["main"]
-    paths:
-      - ".github/workflows/blueprint.yml"
-      - "**/*.lean"
-      - "csrc/**"
-      - "home_page/**"
-      - "docs/**"
-      - "scripts/**"
-      - "lakefile.lean"
-      - "lake-manifest.json"
-      - "lean-toolchain"
-      - "README.md"
   pull_request:
     branches: ["main"]
-    paths:
-      - ".github/workflows/blueprint.yml"
-      - "**/*.lean"
-      - "csrc/**"
-      - "home_page/**"
-      - "docs/**"
-      - "scripts/**"
-      - "lakefile.lean"
-      - "lake-manifest.json"
-      - "lean-toolchain"
-      - "README.md"
   workflow_dispatch:
+    inputs:
+      rebuild_lean_docs:
+        description: Rebuild Lean documentation (API, guide and dependency graphs)
+        type: boolean
+        default: false
 
 concurrency:
   group: documentation-${{ github.ref }}
@@ -55,19 +38,28 @@ jobs:
 
       - name: Reuse generated documentation
         id: generated_docs
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             home_page/docs
             _out/blueprint/html-multi
             home_page/importgraph/index.html
             home_page/graphs/dependency-audit.json
-          # Exact matches only: changed Lean, guide assets, dependencies or build tools
-          # must regenerate these pages. Ordinary Jekyll prose and styles can reuse them.
-          key: GeneratedDocs-v1-${{ runner.os }}-${{ hashFiles('**/*.lean', '**/lake-manifest.json', '**/lean-toolchain', 'csrc/**', 'scripts/**', 'home_page/blueprint/**', '.github/workflows/blueprint.yml', '!.lake/**', '!**/.lake/**', '!_out/**') }}
+          key: GeneratedDocs-v1-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: GeneratedDocs-v1-${{ runner.os }}-
+
+      - name: Restore published documentation if the cache expired
+        if: ${{ !inputs.rebuild_lean_docs && steps.generated_docs.outputs.cache-matched-key == '' }}
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            https://lean-dojo.github.io/TorchLean/generated-docs.tar.gz \
+            --output "$RUNNER_TEMP/generated-docs.tar.gz"
+          tar --extract --gzip --file "$RUNNER_TEMP/generated-docs.tar.gz" --no-same-owner -- \
+            home_page/docs _out/blueprint/html-multi \
+            home_page/importgraph/index.html home_page/graphs/dependency-audit.json
 
       - name: Free runner disk space
-        if: steps.generated_docs.outputs.cache-hit != 'true'
+        if: inputs.rebuild_lean_docs
         run: |
           df -h
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
@@ -76,30 +68,30 @@ jobs:
           df -h
 
       - name: Install elan
-        if: steps.generated_docs.outputs.cache-hit != 'true'
+        if: inputs.rebuild_lean_docs
         run: |
           curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Get Mathlib cache
-        if: steps.generated_docs.outputs.cache-hit != 'true'
+        if: inputs.rebuild_lean_docs
         run: |
           scripts/lake.sh -Kcuda=false exe cache get || true
           rm -f ~/.cache/mathlib/*.ltar || true
 
       - name: Build project API documentation
-        if: steps.generated_docs.outputs.cache-hit != 'true'
+        if: inputs.rebuild_lean_docs
         run: scripts/docs/build_site.sh api
 
       - name: Build Verso guide from `home_page/blueprint`
-        if: steps.generated_docs.outputs.cache-hit != 'true'
+        if: inputs.rebuild_lean_docs
         run: |
           TORCHLEAN_PACKAGE_ROOT="$PWD/home_page/blueprint" scripts/lake.sh exe cache get || true
           rm -f ~/.cache/mathlib/*.ltar || true
           scripts/docs/build_site.sh guide
 
       - name: Build dependency graphs
-        if: steps.generated_docs.outputs.cache-hit != 'true'
+        if: inputs.rebuild_lean_docs
         run: scripts/docs/build_site.sh graphs
 
       - name: Bundle dependencies
@@ -121,6 +113,23 @@ jobs:
 
       - name: Check generated links and anchors
         run: scripts/docs/build_site.sh links
+
+      - name: Save regenerated documentation
+        if: inputs.rebuild_lean_docs
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            home_page/docs
+            _out/blueprint/html-multi
+            home_page/importgraph/index.html
+            home_page/graphs/dependency-audit.json
+          key: ${{ steps.generated_docs.outputs.cache-primary-key }}
+
+      - name: Keep generated documentation with the published site
+        run: |
+          tar --create --gzip --file home_page/_site/generated-docs.tar.gz \
+            home_page/docs _out/blueprint/html-multi \
+            home_page/importgraph/index.html home_page/graphs/dependency-audit.json
 
       - name: "Upload website (API documentation, blueprint and any home page)"
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

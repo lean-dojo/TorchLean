@@ -160,7 +160,7 @@ step_timings() {
 
 step_website() {
   echo "==> Building Jekyll site"
-  # The API reference, guide and graphs come from their steps or, in CI, from the cache.
+  # The API reference, guide and graphs come from their steps or from a saved documentation build.
   local generated
   for generated in home_page/docs/index.html \
     _out/blueprint/html-multi/-verso-data/blueprint-manifest.json \

@@ -202,13 +202,16 @@ removes local dependency pages and points their links upstream, and a second run
 `--importgraph PAGE` styles the import viewer. The guide post-processor polishes the generated
 HTML and checks the KaTeX runtime, section anchors and page layout.
 
-Public-site CI runs these steps in production mode, except `lean` (the API step builds the
-modules it documents) and `bundle` (`ruby/setup-ruby` installs the bundle). It caches the
-generated API reference, guide and import graphs, keyed on their Lean, dependency, guide-asset and
-build-tool inputs. On an exact cache hit, a Markdown or CSS change rebuilds only Jekyll and runs
-the link checks before deployment. A changed input or an unavailable cache runs the full
-documentation build, and generated pages are reused only under their own input key. The first
-successful build seeds the cache.
+Every push to `main` builds the Jekyll pages, refreshes the timing data and checks links before
+deployment. CI reuses the last generated API reference, guide and import graphs from the cache,
+or from the published site's archive if the cache has expired. Regular pushes do not install
+Lean or run Lake.
+
+After changing the API or guide, open **Actions → Publish documentation → Run workflow** and
+select **Rebuild Lean documentation**. That run regenerates the API reference, checks the guide,
+rebuilds the graphs and saves them for later publishes. The API step compiles the Lean modules it
+documents. The equivalent command is
+`gh workflow run blueprint.yml -f rebuild_lean_docs=true`.
 
 The performance page reads `home_page/assets/ci-timings.json`, which the `timings` step
 refreshes. It shows the API documentation, guide, website and link-check times of the CI job

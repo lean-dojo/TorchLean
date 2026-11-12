@@ -1467,18 +1467,33 @@ where
       | .mdata _ inner => visit inner state
       | _ => state
 
-/-- Whether `term` decodes or classifies a scalar that is not an input read. The configured
-scalar and native `Float32` decode through `ExecFloat.Binary.toReal`, `toModel` and `isFinite`,
-and the rounded reals through their field `NF.val`, which may appear as a projection. The error of
-a `TrackedSum` decodes the partial sums it was formed from. -/
+/-- Whether `term` decodes or classifies a scalar that is not an input read. This includes
+comparisons of computed scalars: a reference that retains such a branch still depends on the
+rounded computation that selects it. The error of a `TrackedSum` decodes its partial sums. -/
 def decodesComputedValue (term : Expr) : MetaM Bool := do
   unless (applicationsOf #[``TrackedSum.error] term).isEmpty do return true
   let observations := applicationsOf #[``ExecFloat.Binary.toReal, ``ExecFloat.Binary.toModel,
-    ``ExecFloat.Binary.isFinite, ``FloatLib.Floats.Formats.Flocq.NF.val] term
+    ``ExecFloat.Binary.isFinite, ``ExecFloat.Binary.isNaN, ``ExecFloat.Binary.isInf,
+    ``ExecFloat.Binary.isZero, ``FloatLib.Floats.Formats.Flocq.NF.val] term
     (structures := #[``FloatLib.Floats.Formats.Flocq.NF])
-  observations.anyM fun
+  if ← observations.anyM fun
     | .proj _ _ value => return !(← isInputRead value)
-    | observation => return !(← isInputRead observation.appArg!)
+    | observation => return !(← isInputRead observation.appArg!) then
+    return true
+  for comparison in applicationsOf #[``LT.lt, ``LE.le, ``BEq.beq, ``Ord.compare, ``Eq, ``Ne] term do
+    let arguments := comparison.getAppArgs
+    let first := if comparison.isAppOfArity ``Eq 3 || comparison.isAppOfArity ``Ne 3 then 1 else 2
+    unless arguments.size == first + 2 do continue
+    let scalar ← withCanUnfoldPred (fun config info =>
+      if info.name == ``ExecFloat then pure false else canUnfoldDefault config info)
+      (whnfD arguments[0]!)
+    unless scalar.isAppOf ``ExecFloat || scalar.isConstOf ``Float32 ||
+        scalar.isAppOf ``FloatLib.Floats.Formats.Flocq.NF do continue
+    for value in arguments.extract first do
+      let negativeLiteral := value.isAppOf ``Neg.neg &&
+        (value.appArg!.isAppOf ``OfNat.ofNat || value.appArg!.isAppOf ``OfScientific.ofScientific)
+      unless negativeLiteral || (← isInputRead value) do return true
+  return false
 
 /-- The number of distinct subterms of `terms`. -/
 private partial def distinctSubterms (terms : Array Expr) : Nat :=

@@ -843,14 +843,27 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
         points = [batch, rows, cols]
         image = apply_at({'kind': "permute", 'dims': [0, 2, 3, 1]}, [source],
                          [batch, height, width, channels])
+        invalid = []
         def coordinate(component, size):
-            # A NaN grid entry reads as -1, as PyTorch documents.
             value = apply_at({'kind': "slice", 'dims': [3], 'starts': [component],
                               'stops': [component + 1], 'steps': [1]}, [grid], points + [1])
             value = apply_at(_reshape_kind(), [value], points)
-            missing = apply_at({'kind': 'isnan'}, [value], points, 'bool')
-            value = apply_at({'kind': 'where'},
-                             [missing, constant_at(-1, points), value], points)
+            if plan['padding'] == 0:
+                # CPU zeros padding gives NaN for a nonfinite bilinear coordinate and zero for
+                # nearest. Keep that decision separately and use a finite coordinate for gather.
+                missing = apply_at({'kind': 'logical_not'}, [apply_at(
+                    {'kind': 'isfinite'}, [value], points, 'bool')], points, 'bool')
+                invalid.append(missing)
+                value = apply_at({'kind': 'where'},
+                                 [missing, constant_at(0, points), value], points)
+            else:
+                # Border clipping sends NaN to the low edge. A singleton axis always reads its
+                # only pixel, including when an infinite coordinate would otherwise form inf*0.
+                if size == 1:
+                    return constant_at(0, points)
+                missing = apply_at({'kind': 'isnan'}, [value], points, 'bool')
+                value = apply_at({'kind': 'where'},
+                                 [missing, constant_at(-1, points), value], points)
             shifted = apply_at({'kind': "add"}, [value, constant_at(1, points)], points)
             if plan['align']:
                 value = apply_at({'kind': "mul_elem"}, [apply_at({'kind': "div"}, [
@@ -912,6 +925,14 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
                 term = corner(row, col, spread(apply_at({'kind': "mul_elem"}, [a, b], points)))
                 result = term if result is None else apply_at({'kind': "add"}, [result, term],
                                                               points + [channels])
+        if invalid:
+            missing = apply_at({'kind': 'logical_or'}, invalid, points, 'bool')
+            missing = _broadcast_to(nodes, apply_at(_reshape_kind(), [missing],
+                                                     points + [1], 'bool'), points + [channels])
+            outside = 0 if plan['mode'] == 1 else float('nan')
+            result = apply_at({'kind': 'where'},
+                              [missing, constant_at(outside, points + [channels]), result],
+                              points + [channels])
         return apply_at({'kind': "permute", 'dims': [0, 3, 1, 2]}, [result],
                         [batch, channels, rows, cols])
     if op == 'random':

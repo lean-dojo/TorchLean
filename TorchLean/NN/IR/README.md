@@ -65,8 +65,8 @@ import TorchLean.NN.IR.Eval
 - `Pretty.lean`: `Node.prettyLine` and `Graph.toDot`, the text and GraphViz renderers of operator
   graphs.
 - `Tangent.lean`: `Graph.tangent` appends the forward-mode tangent of every node along given
-  seeds, by its own rule per operator written with registered operators (no theorem relates these
-  rules to `jvp?`), and outputs the graph's outputs followed by their tangents.
+  seeds at value ports with matching shapes, using registered operators for its own per-operator
+  rules (no theorem relates them to `jvp?`), and outputs the graph's outputs followed by their tangents.
 - `Program.lean`: typed programs (`IR.Program`). Their steps are graph nodes, conversions
   and registered calls, with one scalar per step for its value, frozen and detached ports, and
   native Boolean, integer and index ports. `Program.Typed.ofDType?` gives the type of a tensor from

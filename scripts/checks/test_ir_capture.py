@@ -3587,6 +3587,30 @@ class PyTorchGeneralOperatorTests(CheckerCase):
                     report = self.verify(model, *arguments, checks=("structure",), core=core)
                     self.assert_refused(report, text)
 
+    def test_grid_sampling_nonfinite_coordinates_match_eager(self):
+        # CPU zero padding propagates nonfinite coordinates in bilinear mode and returns zero
+        # in nearest mode. Border padding clamps them, including on singleton spatial axes.
+        torch = self.torch
+        grid = torch.tensor([[[[float("nan"), 0.0], [float("inf"), 0.0],
+                               [-float("inf"), 0.0], [0.0, float("nan")],
+                               [0.0, float("inf")], [0.0, -float("inf")],
+                               [0.0, 0.0], [-1.0, -1.0], [1.0, 1.0]]]])
+        image = torch.arange(1.0, 5.0).reshape(1, 1, 2, 2)
+        singleton = torch.ones(1, 1, 1, 1)
+
+        def sampled(image, singleton, grid):
+            return tuple(torch.nn.functional.grid_sample(
+                value, grid, mode=mode, padding_mode=padding, align_corners=align)
+                for value in (image, singleton) for mode in ("bilinear", "nearest")
+                for padding in ("zeros", "border") for align in (False, True))
+
+        for dtype in (torch.float32, torch.float64):
+            for core in (False, True):
+                with self.subTest(dtype=dtype, core=core):
+                    arguments = tuple(value.to(dtype) for value in (image, singleton, grid))
+                    report = self.verify(sampled, *arguments, checks=COMPARE, core=core)
+                    self.assert_passes(report)
+
     def test_distances_interpolation_and_grid_sampling_within_tolerance(self):
         # cdist (direct, and the matmul expansion beyond 25 rows), pdist, linear and bilinear
         # upsampling with PyTorch's per-axis indices and weights, and grid_sampler_2d through a

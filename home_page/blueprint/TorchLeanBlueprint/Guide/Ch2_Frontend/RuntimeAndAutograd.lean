@@ -694,7 +694,8 @@ values (`TorchLean.Op.invoke`, `Op.rule?`), and a custom operation runs the chec
 program that the payload holds for its node. Those same rules carry pullbacks and (for some
 operators) forward-mode rules, but the evaluator computes no gradients: the reverse sweep belongs
 to the eager tape. `IR.Graph.tangent` appends tangent calculations using a separate set of graph
-rewrite rules. No theorem yet connects those rewrites to `Op.Rule.jvp?` or to a derivative, so a
+rewrite rules. Each supplied seed must name an existing value output with the same shape as the
+node being seeded. No theorem yet connects those rewrites to `Op.Rule.jvp?` or to a derivative, so a
 tangent graph is not itself a checked derivative proof. An operator's correctness certificates are
 separate theorems attached by the `op_cert` attribute.
 

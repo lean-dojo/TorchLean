@@ -306,8 +306,10 @@ the CPU kernel's windows and divisions, and nearest upsampling gathers at PyTorc
 `view_as_real` of `rfft` and `irfft` of `view_as_complex` are `Op.rfft` and `Op.irfft` on the
 paired-real form. Group norm, the training batch norm (its running statistics below), `cdist`,
 `pdist`, linear and bilinear upsampling and `grid_sampler_2d` (bilinear or nearest, zeros or border
-padding) are compositions. The tests compare them with the CPU kernels on their fixtures within
-stated tolerances (no uniform error bound). `masked_scatter`, `nonzero_static` and
+padding) are compositions. For CPU grid sampling, nonfinite coordinates with zeros padding give
+NaN in bilinear mode and zero in nearest mode. Border padding clamps them to an edge; a singleton
+axis reads its only pixel. The tests compare these compositions with the CPU kernels on their
+fixtures within stated tolerances (no uniform error bound). `masked_scatter`, `nonzero_static` and
 `_embedding_bag` with constant offsets are captured too, and `nonzero` (a data-dependent shape) is
 refused.
 

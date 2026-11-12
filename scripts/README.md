@@ -51,7 +51,7 @@ scripts/lake.sh -Kcuda=false lint
 That requirements file pins CPU PyTorch 2.8.0 for the interoperability checks. The live operator
 captures in `scripts/checks/test_ir_capture.py` and the differential fuzzer
 `scripts/checks/test_frontend_fuzz.py` (seeded random programs through torch.export, FX, Dynamo and
-`jax.jit`, every value compared with the framework's; `TORCHLEAN_FUZZ_SEED`, `TORCHLEAN_FUZZ_COUNT`)
+eager JAX, every value compared with the framework's; `TORCHLEAN_FUZZ_SEED`, `TORCHLEAN_FUZZ_COUNT`)
 also need the `verify` executable built above; `lake test` runs both.
 Their JAX cases run only where JAX is installed, and `TORCHLEAN_REQUIRE_JAX=1` turns a missing JAX
 into an error. The requirements file does not select the LibTorch backend SDK. Install the

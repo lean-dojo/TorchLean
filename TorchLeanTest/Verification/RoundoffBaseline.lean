@@ -29,6 +29,29 @@ namespace TorchLeanTest.RoundoffBaseline
 open Lean Elab Command TorchLean.Roundoff TorchLean.Roundoff.Baseline
 open FloatLib.Floats.Formats.BinaryInterchange
 
+-- A zero budget against a reference that keeps a rounded branch is not an a priori bound.
+run_cmd liftTermElabM do
+  let check (termSyntax : Syntax) (conditional : Bool) : TermElabM Unit := do
+    let computation ← Term.elabTerm termSyntax none
+    let proof ← generateProof computation false
+    let entry ← describeTheorem
+      { family := `Audit, operator := `selection, route := "value", backend := "configured",
+        mode := "absolute", status := .conditional }
+      2 (← Meta.inferType proof) proof #[]
+    unless (entry.status == .conditional) == conditional do
+      throwError "the rounded branch was classified incorrectly: {entry.reference}"
+  check (← `(fun (x y : FloatLib.Floats.Binary32) =>
+    FloatLib.Floats.ExecFloat.Binary.toReal (if x < y then x else y))) false
+  check (← `(fun (x y : FloatLib.Floats.Binary32) =>
+    FloatLib.Floats.ExecFloat.Binary.toReal (if x < -1 then x else y))) false
+  check (← `(fun (x y : FloatLib.Floats.Binary32) =>
+    FloatLib.Floats.ExecFloat.Binary.toReal (if x * x < y then x else y))) true
+  check (← `(fun (x y : FloatLib.Floats.Binary32) =>
+    FloatLib.Floats.ExecFloat.Binary.toReal (if x * x = y then x else y))) true
+  check (← `(fun (x y : FloatLib.Floats.Binary32) =>
+    FloatLib.Floats.ExecFloat.Binary.toReal
+      (if FloatLib.Floats.ExecFloat.Binary.isNaN (x * x) then x else y))) true
+
 /-- The budget `name` with the hash `hash` and the values `values` at binary16, bfloat16,
 binary32 and binary64. -/
 def budget (name : String) (hash : UInt64) (values : Array Rat) : Budget :=

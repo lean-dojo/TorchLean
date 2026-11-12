@@ -590,8 +590,9 @@ for a configured scalar over an arbitrary IEEE format, once for an absolute boun
 mixed one, and once each for native `Float32` and for the rounded reals `FP32`.
 
 A route is proved when its theorem has no premise and its reference and budget decode only inputs,
-and conditional when it has premises or caveats. A caveat marks a budget or reference that decodes
-computed values, or an enclosure used in place of a rounding theorem. In absolute mode most
+and conditional when it has premises or caveats. A caveat marks a budget or reference that depends
+on computed values, including branch decisions made by rounded arithmetic, or uses an enclosure
+in place of a rounding theorem. In absolute mode most
 conditional routes are conditional on computed values: such a theorem holds, but its premises,
 budget or reference mention values the computation produces, so it isn't an a priori bound. A route
 is unsupported when the analysis met an operation without a numerical rule. For native `Float32`

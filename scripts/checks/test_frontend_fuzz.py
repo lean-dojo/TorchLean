@@ -5,9 +5,9 @@ JAX frontends, with the argument spellings their frameworks accept (`dim`/`axis`
 `keepdim`/`keepdims`, positional and keyword, Tensor methods, `torch.*` functions and Python
 operators), negative dimensions, every dtype, broadcasting, Python scalars and 0-d tensors, empty
 and size-1 dimensions, and for JAX NumPy and jnp inputs with 64-bit mode on and off. Every program
-returns every value it computes. The framework runs it first, PyTorch eagerly and JAX under
-`jax.jit` (a NumPy input then follows JAX's types, not NumPy's); a program the framework rejects is
-redrawn. The capture then goes through one path, in turn torch.export, FX's symbolic trace and
+returns every value it computes. The framework runs it first, PyTorch and JAX eagerly, with JAX
+inputs converted as its trace reads them; a program the framework rejects is redrawn. The capture
+then goes through one path, in turn torch.export, FX's symbolic trace and
 Dynamo (`torchlean.compile`) for PyTorch, and `verify(..., frontend="jax")` for JAX, and `verify`
 executes it. Every executed value must have the framework's shape and dtype, and its words: exactly
 for a value whose operation and operands are exact; for the others within 4 units in the last place,
@@ -30,6 +30,11 @@ The seed is `TORCHLEAN_FUZZ_SEED` (default 20261111) and the number of programs 
 `TORCHLEAN_FUZZ_COUNT` (default 40). The test skips without the built `verify` executable or a
 framework, and fails like `test_ir_capture.py` under `TORCHLEAN_REQUIRE_INTEROP=1` or
 `TORCHLEAN_REQUIRE_JAX=1`.
+
+An exact JAX mismatch is counted separately as a documented numerical difference only when the
+checker's existing reciprocal-division emulation reproduces every differing result. It remains
+an unsuccessful comparison, not a matched program. This covers eager XLA division by a broadcast
+scalar; every other exact mismatch fails.
 """
 
 import importlib.util
@@ -132,13 +137,17 @@ def _difference(output, expected, exact, dtype_name, scale, zeros=False):
             width = 2 if dtype_name in ("float16", "bfloat16") else expected.dtype.itemsize
             nan = _is_nan(g, dtype_name) and _is_nan(w, dtype_name)
             sign = 1 << (8 * width - 1)
-            if nan or (zeros and g & ~sign == 0 and w & ~sign == 0) or \
-                    (not exact and _ulps(g, w, width) <= 4):
+            if nan or (zeros and g & ~sign == 0 and w & ~sign == 0):
                 continue
-            if not exact and not _is_nan(g, dtype_name) and not _is_nan(w, dtype_name):
-                gap = abs(_value(g, dtype_name) - _value(w, dtype_name))
-                if gap <= 64 * 2.0 ** -FORMATS[dtype_name][1] * scale:
-                    continue
+            if not exact:
+                actual, reference = _value(g, dtype_name), _value(w, dtype_name)
+                # The largest finite word neighbors infinity, and signaling NaNs neighbor it
+                # too. Neither is a small numerical error across that boundary.
+                if math.isfinite(actual) and math.isfinite(reference):
+                    if _ulps(g, w, width) <= 4 or \
+                            abs(actual - reference) <= \
+                            64 * 2.0 ** -FORMATS[dtype_name][1] * scale:
+                        continue
         return f"element {index}: word {g:#x}, framework {w:#x}"
     return None
 
@@ -150,6 +159,36 @@ def _is_nan(word, dtype_name):
     exponent, fraction = FORMATS[dtype_name]
     return (word >> fraction) & ((1 << exponent) - 1) == (1 << exponent) - 1 and \
         word & ((1 << fraction) - 1) != 0
+
+
+class ComparisonTests(unittest.TestCase):
+    def test_tolerances_do_not_cross_nonfinite_boundaries(self):
+        for dtype_name, (exponent, fraction) in FORMATS.items():
+            width = (1 + exponent + fraction) // 8
+            infinity = ((1 << exponent) - 1) << fraction
+            sign = 1 << (exponent + fraction)
+
+            def compare(actual, expected, *, exact=False, zeros=False):
+                values = np.array([expected], dtype=WIDTHS[width])
+                if dtype_name != "bfloat16":
+                    values = values.view(dtype_name)
+                output = dict(shape=[1], element_type=dtype_name, bits=[actual])
+                return _difference(output, values, exact, dtype_name, 1.0, zeros)
+
+            with self.subTest(dtype=dtype_name), np.errstate(invalid="ignore"):
+                for negative in (0, sign):
+                    finite, inf, nan = [word | negative for word in
+                                        (infinity - 1, infinity, infinity + 1)]
+                    for a, b in ((finite, inf), (inf, finite), (inf, nan), (nan, inf),
+                                 (nan, finite), (finite, nan)):
+                        self.assertIsNotNone(compare(a, b))
+                    self.assertIsNone(compare(inf, inf))
+                    self.assertIsNone(compare(nan, (infinity + 3) | negative))
+                self.assertIsNotNone(compare(infinity, infinity | sign))
+                self.assertIsNone(compare(infinity - 2, infinity - 1))
+                self.assertIsNotNone(compare(infinity - 2, infinity - 1, exact=True))
+                self.assertIsNotNone(compare(0, sign, exact=True))
+                self.assertIsNone(compare(0, sign, exact=True, zeros=True))
 
 
 def _statuses(report):
@@ -621,6 +660,7 @@ class Outcomes:
 
     def __init__(self, framework):
         self.framework, self.accepted, self.refused, self.failures = framework, 0, {}, []
+        self.documented_differences = 0
 
     def refuse(self, reason):
         key = " ".join(reason.split())[:110]
@@ -630,7 +670,9 @@ class Outcomes:
         reasons = "".join(f"\n  refused {n}: {reason}" for reason, n in
                           sorted(self.refused.items(), key=lambda item: -item[1]))
         return (f"{self.framework}: {self.accepted} accepted and matched, "
-                f"{sum(self.refused.values())} refused, {len(self.failures)} failed"
+                f"{sum(self.refused.values())} refused, "
+                f"{self.documented_differences} documented numerical differences, "
+                f"{len(self.failures)} failed"
                 f"{reasons}")
 
 
@@ -713,6 +755,8 @@ class JaxFuzz(unittest.TestCase):
     def test_programs_match_eager(self):
         import jax
         import jax.numpy as jnp
+        from torchlean import jaxpr
+
         rng = random.Random(SEED + 1)
         outcomes = Outcomes("JAX")
         for index in range(COUNT):
@@ -720,7 +764,8 @@ class JaxFuzz(unittest.TestCase):
             with jax.enable_x64(x64):
                 generator = Jax(rng)
                 while True:
-                    # The program as JAX traces it: a program jit rejects is redrawn.
+                    # NumPy inputs must follow JAX's types. Compiling the whole function here
+                    # would change the computation boundaries recorded by the eager capture.
                     program = generator.draw()
                     source = program.source(f"program{index}")
                     namespace = {"jnp": jnp}
@@ -728,7 +773,7 @@ class JaxFuzz(unittest.TestCase):
                     function = namespace[f"program{index}"]
                     inputs = [value for _, value in program.inputs]
                     try:
-                        values = [np.asarray(v) for v in jax.jit(function)(*inputs)]
+                        values = [np.asarray(v) for v in function(*jaxpr.canonical(inputs))]
                     except Exception:  # noqa: BLE001 - JAX rejects the program
                         continue
                     break
@@ -751,7 +796,24 @@ class JaxFuzz(unittest.TestCase):
                         outcomes.failures.append(
                             f"{label}: {type(error).__name__}: {error}\n{source}")
                     continue
+                failures = len(outcomes.failures)
                 _judge(outcomes, label, program, source, report, expected, scale)
+                if len(outcomes.failures) > failures and report["ok"]:
+                    compared = torchlean.verify(function, *inputs, frontend="jax",
+                                                checks=(*EXECUTE, "compare"), checker=CHECKER)
+                    checks = {check["name"]: check for check in compared["checks"]}
+                    comparison = checks.get("compare", {})
+                    results = comparison.get("results", [])
+                    if (all(checks.get(name, {}).get("status") == _statuses(report)[name]
+                            for name in EXECUTE)
+                            and compared.get("outputs") == report["outputs"]
+                            and comparison.get("status") == "failed"
+                            and comparison.get("consistent_with") == ["divisor_reciprocal"]
+                            and results and all(result.get("not_reproduced") == 0
+                                and result.get("differing") == result.get("reproduced")
+                                and result.get("window") is None for result in results)):
+                        outcomes.failures.pop()
+                        outcomes.documented_differences += 1
         print("\n" + outcomes.summary(), file=sys.stderr)
         self.assertEqual([], outcomes.failures, "\n\n".join(outcomes.failures))
         self.assertGreater(outcomes.accepted, COUNT // 4, outcomes.summary())

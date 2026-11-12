@@ -14,7 +14,8 @@ public import TorchLean.NN.IR.Builder
 `Graph.tangent G P seed` appends to the graph `G` of registered operators, with payload `P`, the
 nodes that compute the tangent of each node along the given seeds, and returns the extended graph,
 its payload and the reference of each node's tangent. The tangent of node `j` is the reference
-`seed j` when there is one. Otherwise it is zero at a graph input and at a constant, and at an
+`seed j` when there is one, which must name a value port of the same shape as node `j`'s value.
+Otherwise it is zero at a graph input and at a constant, and at an
 operator node it is the rule of the table below on the node's inputs and their tangents, written
 with registered operators. These rules are separate from the op table's forward-mode rules
 (`Op.Rule.jvp?`), and no theorem relates a tangent graph to those rules or to a derivative. A
@@ -238,7 +239,16 @@ or the rule of its operator on the tangents of its inputs. -/
 def step (G : Graph) (seed : Nat → Option Ref) (st : State α) (j : Nat) :
     Except String (State α) := do
   let (st, t) ← match seed j, G.nodes[j]? with
-    | some r, _ => pure (st, some r)
+    | some r, some n => do
+        let some p := n.outs.head? | throw s!"tangent: node {j} has no output to seed"
+        unless p.kind = .value do
+          throw s!"tangent: node {j} has no value output to seed"
+        let some q := (st.builder.nodes[r.node]?).bind (·.outs[r.out]?)
+          | throw s!"tangent: seed of node {j} names no output {r.out} of node {r.node}"
+        unless q = p do
+          throw s!"tangent: seed of node {j} is at port {repr q}, expected {repr p}"
+        pure (st, some r)
+    | some _, none => throw s!"tangent: no node {j} to seed"
     | none, some (.op o refs) => do
         let dxs ← (o.1.zip refs.toList).mapM fun (p, r) => do
           let d := if p.kind = .value then (st.tangents[r.node]?).join else none

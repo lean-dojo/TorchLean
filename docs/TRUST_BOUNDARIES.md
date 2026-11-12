@@ -129,7 +129,8 @@ or to FloatLib's rules can loosen it without failing the build. The lint compare
 of the analyses that `#roundoff_coverage` records, as described next.
 
 `#roundoff_coverage` records the outcome of each route's analysis: proved, conditional, unsupported
-or failed. The coverage check of `scripts/lake.sh lint` compares the outcomes with
+or failed. Caveats include references that retain branch decisions made by rounded arithmetic.
+The coverage check of `scripts/lake.sh lint` compares the outcomes with
 `scripts/checks/roundoff_baseline.jsonl`. It fails when a status gets lower, a budget of the bound
 gets larger at binary16, bfloat16, binary32 or binary64, a budget without values at these formats
 or the reference changes, a premise or caveat appears at the same status, or an analysis is gone.

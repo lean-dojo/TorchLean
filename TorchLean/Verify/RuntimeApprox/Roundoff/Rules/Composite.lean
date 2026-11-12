@@ -24,9 +24,12 @@ import TorchLean.Tensor.List
 This module registers the read lemmas of the general composites. Softmax (with and without a mask),
 log-softmax along any axis, their JVP and VJPs, the log-probabilities of cross-entropy and the top-k
 routing mask are read as their vector kernels on the fiber through the coordinate, with
-`roundoff_read`, so they unfold where the shape is literal. Log-sum-exp, the cosine loss and the
-variance over any axes are read with `roundoff_rule` as their computations on the fiber of the
-output coordinate.
+`roundoff_read`, so they unfold where the shape is literal. Log-sum-exp, the cosine loss, the
+two-pass variance and the variance over any axes are read with `roundoff_rule` as their
+computations on the fiber of the output coordinate. `Context.rescale old x f` of a finite `old` is
+`old` (`isFinite_rescale`, `abs_toReal_rescale_sub_le`, `mixedError_toReal_rescale`), so the
+variance and the inner sum of the two-level cross-entropy normalizer have the bounds of their
+unscaled values where those are finite.
 
 Layer and batch normalization unfold into broadcasts, sums and variances over their axes. Their
 detached scale `Tensor.normalizationScale` has rules of its own: the largest magnitude of finite
@@ -66,6 +69,7 @@ attribute [roundoff_read]
 attribute [roundoff_rule]
   TorchLean.Tensor.logsumexp_apply
   TorchLean.Tensor.cosineLoss_apply
+  TorchLean.Tensor.twoPassVar_apply
   TorchLean.Tensor.var_apply
 
 namespace TorchLean.Shape
@@ -361,10 +365,45 @@ theorem mixedError_toReal_normalizationScale [Storage Value] {s : Shape}
 
 end Scale
 
+section Rescale
+
+variable {format : FloatFormat} {plan : Configured.StoragePlan format} {code : Type}
+  [ExecFloat.ModelCodec plan (Model format) code]
+
+local notation "Value" => ExecFloat (Configured.Family format code plan)
+
+/-- `Context.rescale old x f` of a finite `old` is `old`, so it is finite. -/
+theorem isFinite_rescale {n : Nat} {old : Value} {x : Fin n → Value}
+    {f : (Fin n → Value) → Value → Value} (finite : isFinite old = true) :
+    isFinite (Context.rescale old x f) = true := by
+  rw [Context.rescale_eq_self x f (context_isFinite_of_isFinite finite)]
+  exact finite
+
+/-- `Context.rescale old x f` of a finite `old` is `old`, so it has the absolute bound of `old`. -/
+theorem abs_toReal_rescale_sub_le {n : Nat} {old : Value} {x : Fin n → Value}
+    {f : (Fin n → Value) → Value → Value} {reference error : ℝ}
+    (bound : |toReal old - reference| ≤ error) (finite : isFinite old = true) :
+    |toReal (Context.rescale old x f) - reference| ≤ error := by
+  rw [Context.rescale_eq_self x f (context_isFinite_of_isFinite finite)]
+  exact bound
+
+/-- `Context.rescale old x f` of a finite `old` is `old`, so it has the mixed bound of `old`. -/
+theorem mixedError_toReal_rescale {n : Nat} {old : Value} {x : Fin n → Value}
+    {f : (Fin n → Value) → Value → Value} {reference relative absolute : ℝ}
+    (bound : MixedError (toReal old) reference relative absolute) (finite : isFinite old = true) :
+    MixedError (toReal (Context.rescale old x f)) reference relative absolute := by
+  rw [Context.rescale_eq_self x f (context_isFinite_of_isFinite finite)]
+  exact bound
+
+end Rescale
+
 attribute [roundoff_rule]
   isFinite_normalizationScale
   abs_toReal_normalizationScale_sub_le
   mixedError_toReal_normalizationScale
+  isFinite_rescale
+  abs_toReal_rescale_sub_le
+  mixedError_toReal_rescale
 
 end TorchLean.Roundoff
 

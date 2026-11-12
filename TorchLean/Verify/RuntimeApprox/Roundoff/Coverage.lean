@@ -86,10 +86,11 @@ hypothesis that each input tensor or scalar lies within real budgets of real ref
 reference reads those references instead of the input. The statement of
 `TorchLean.Normalization.normalize` reads each input tensor at one coordinate, the output coordinate
 or its broadcast position, and its propagation theorem bounds each input at that coordinate alone,
-with a real reference and real budgets (`localizedCallees`). The second analysis, with a budget of
-its own, applies these theorems as rules and supplies their hypotheses from the analysis of the
-arguments. A proof that takes one of them from its own conditions, as `roundoff` binds the premises
-it does not discharge, is rejected.
+with a real reference and real budgets (`localizedCallees`). The second analysis applies these
+theorems as rules and supplies their hypotheses from the analysis of the arguments. A proof that
+takes one of them from its own conditions, as `roundoff` binds the premises it does not discharge,
+is rejected. The second analysis and the reading of its proof each have a heartbeat budget of their
+own.
 The propagation theorems and auxiliary lemmas a proof uses, directly or through those it keeps, are
 declared with it. Its record names the propagation theorems, inherits their primitive theorems and
 says whether its reference decodes a computed value.
@@ -2251,8 +2252,8 @@ def propagationArms (base : Environment) (computation : Expr) (mixed : Bool) :
 outcome. The binders at `added` belong to the contracts of functions, whose hypotheses are at
 `hypotheses`, and the theorem keeps those its proof uses. A configured route over the heartbeat
 budget, and only such a route, is analyzed once more when its callees have propagation theorems
-(`propagationArms`), with these as rules and a budget of its own, keeping the ones its proof applies
-(`armClosure`) as its arms. -/
+(`propagationArms`), with these as rules, keeping the ones its proof applies (`armClosure`) as its
+arms. That analysis and the reading of its proof each have a budget of their own. -/
 def coverRoute (entry : CoverageEntry) (computation : Expr) (mixed : Bool) (name : Name)
     (ref : Syntax) (added : Array Nat := #[]) (hypotheses : Array (Nat × String) := #[]) :
     TermElabM CoverageEntry := do
@@ -2296,13 +2297,14 @@ def coverRoute (entry : CoverageEntry) (computation : Expr) (mixed : Bool) (name
         else
           -- The propagation theorems and auxiliary lemmas the proof uses are kept, and nothing
           -- else of the attempt.
-          let attempt ← tryCatchRuntimeEx (Except.ok <$> withCurrHeartbeats do
-              let result ← analyze
-              let kept ← addedDeclarations base #[result.1, result.2.1]
-              let unsupplied ← unsuppliedBounds result.2.1 kept
-              unless unsupplied.isEmpty do
-                throwError "roundoff: the input bounds of {unsupplied} are premises"
-              return (result, ← armClosure #[result.1, result.2.1] kept, kept))
+          let attempt ← tryCatchRuntimeEx (Except.ok <$> do
+              let result ← withCurrHeartbeats analyze
+              withCurrHeartbeats do
+                let kept ← addedDeclarations base #[result.1, result.2.1]
+                let unsupplied ← unsuppliedBounds result.2.1 kept
+                unless unsupplied.isEmpty do
+                  throwError "roundoff: the input bounds of {unsupplied} are premises"
+                return (result, ← armClosure #[result.1, result.2.1] kept, kept))
             (pure ∘ Except.error)
           saved.restore
           match attempt with

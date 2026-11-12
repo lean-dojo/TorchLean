@@ -7,14 +7,25 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.Tensor.Reduce.Backward
+public import TorchLean.Tensor.Rescale
 
 /-!
 # Variance over any axes
 
-`var x dims keepdim correction` is the variance of each fiber of `x` over `dims`, in two passes:
-the mean is the row-major sum divided once by the number of entries, and the sum of squared
-deviations is divided once by that number less `correction` (`TorchLean.Context.divNat`). An empty
-fiber divides by one. With `correction = 0` this is the population variance.
+`twoPassVar x dims keepdim correction` is the variance of each fiber of `x` over `dims`, in two
+passes (`fiberVar`): the mean is the row-major sum divided once by the number of entries, and the
+sum of squared deviations is divided once by that number less `correction`
+(`TorchLean.Context.divNat`). An empty fiber divides by one. With `correction = 0` this is the
+population variance.
+
+`var` is `twoPassVar` wherever that is finite (`var_eq_twoPassVar`), so it is finite wherever
+`twoPassVar` is (`var_finite`). Where `twoPassVar` is not finite, `var` takes `fiberVar` of the
+fiber's entries divided by `2 ^ k` and divides it twice by `1 / 2 ^ k`, each quotient rounded once,
+for the least `k` from `1` to `Nat.log2 n + 2` that gives a finite value
+(`TorchLean.Context.rescale`), and keeps the two-pass value when none does. In binary16 the
+deviations of `[181, -1447/8]` from its mean round to `±181` and their squares to `32768`, whose sum
+`65536` overflows, so `twoPassVar` is `+∞`. The variance is about `32738.4`, and `var` is `32768`,
+from the fiber halved.
 
 Written by hand, the two passes take the divisor of `torch.var` (PyTorch 2.8 docs),
 `max(0, N - correction)`. The default differs: ours is `0`, the biased estimator that the
@@ -24,8 +35,10 @@ On `Float` the small counts agree with torch: `[5]` at `correction = 1` is `0 / 
 `[1, 3]` at `correction = 2` is `+∞`. No test compares `var` with torch, since the importer
 lowers `torch.var` through other operators.
 
-`var_apply` reads an entry as its two folds. `castShape_var_singleton_apply` reads the variance
-over one axis, cast to the shape without that axis, as the variance of the vector along it.
+`twoPassVar_apply` reads an entry through the two folds, and `var_apply` reads an entry of `var`
+as `Context.rescale` of the entry of `twoPassVar`. `castShape_twoPassVar_singleton_apply` reads
+the two-pass variance over one axis, cast to the shape without that axis, as the two-pass variance
+of the vector along it.
 -/
 
 @[expose] public section
@@ -43,30 +56,32 @@ namespace Tensor
 
 variable {α : Type} [Storage α] {s : Shape}
 
-/-- The variance of `x` over the axes `dims`: per fiber in row-major order, the sum of squared
-deviations from the mean divided once by the number of entries less `correction` (in `Nat`, so
-zero when there are at most `correction` entries), or by one when the fiber is empty. The mean
-divides the sum once by the number of entries, or by one when there is none. -/
-def var [Context α] (x : Tensor α s)
+omit [Storage α] in
+/-- The two-pass variance of `value`: the sum of squared deviations from the mean divided once by
+`n - correction` (in `Nat`, so zero when `n ≤ correction`), or by one when `n = 0`. The mean
+divides the sum once by `n`, or by one when `n = 0`. Both sums fold in index order. -/
+def fiberVar [Context α] {n : Nat} (value : Fin n → α) (correction : Nat) : α :=
+  let mean := Context.divNat ((List.finRange n).foldl (fun acc i => acc + value i) 0)
+    (if n = 0 then 1 else n)
+  Context.divNat ((List.finRange n).foldl (fun acc i =>
+      let difference := value i - mean
+      acc + difference * difference) 0)
+    (if n = 0 then 1 else n - correction)
+
+/-- The two-pass variance (`fiberVar`) of each fiber of `x` over the axes `dims`, the fiber's
+entries in row-major order. -/
+def twoPassVar [Context α] (x : Tensor α s)
     (dims : List (Fin s.rank)) (keepdim : Bool) (correction : Nat := 0) :
     Tensor α (s.reduce dims keepdim) :=
-  Rep.ofFn fun o =>
-    let n := Shape.size (s.selectAxes dims)
-    let value := fun i : Fin n =>
-      x (s.reduceSource dims keepdim o (Shape.Coord.unlinearize i))
-    let mean := Context.divNat ((List.finRange n).foldl (fun acc i => acc + value i) 0)
-      (if n = 0 then 1 else n)
-    Context.divNat ((List.finRange n).foldl (fun acc i =>
-        let difference := value i - mean
-        acc + difference * difference) 0)
-      (if n = 0 then 1 else n - correction)
+  Rep.ofFn fun o => fiberVar (fun i : Fin (Shape.size (s.selectAxes dims)) =>
+    x (s.reduceSource dims keepdim o (Shape.Coord.unlinearize i))) correction
 
-/-- An entry of `var x dims keepdim correction` is the sum of squared deviations of its fiber from
-the fiber's mean, divided by the corrected count. -/
-theorem var_apply [Context α] (x : Tensor α s)
+/-- An entry of `twoPassVar x dims keepdim correction` is the sum of squared deviations of its
+fiber from the fiber's mean, divided by the corrected count. -/
+theorem twoPassVar_apply [Context α] (x : Tensor α s)
     (dims : List (Fin s.rank)) (keepdim : Bool) (correction : Nat)
     (o : (s.reduce dims keepdim).Coord) :
-    var x dims keepdim correction o =
+    twoPassVar x dims keepdim correction o =
       let n := Shape.size (s.selectAxes dims)
       let value := fun i : Fin n =>
         x (s.reduceSource dims keepdim o (Shape.Coord.unlinearize i))
@@ -78,14 +93,56 @@ theorem var_apply [Context α] (x : Tensor α s)
         (if n = 0 then 1 else n - correction) :=
   Rep.get_ofFn _ o
 
-/-- An entry of the population variance over one axis, read through a cast to the shape without
-that axis, is the two-pass variance of the vector along the axis. The sum of the vector and the sum
-of its squared deviations from the mean are each divided by the length, or by one when the axis is
-empty. -/
-theorem castShape_var_singleton_apply [Context α]
+/-- The variance of `x` over the axes `dims`: per fiber of `n` entries, the two-pass variance
+`fiberVar` where it is finite. Where it is not, the first finite `fiberVar y correction / c / c`
+for `k = 1, ..., Nat.log2 n + 2`, where `y` is the entries divided by `2 ^ k` and `c = 1 / 2 ^ k`
+(`Context.rescale`), or the two-pass value when none is finite. -/
+def var [Context α] (x : Tensor α s)
+    (dims : List (Fin s.rank)) (keepdim : Bool) (correction : Nat := 0) :
+    Tensor α (s.reduce dims keepdim) :=
+  Rep.ofFn fun o =>
+    let value := fun i : Fin (Shape.size (s.selectAxes dims)) =>
+      x (s.reduceSource dims keepdim o (Shape.Coord.unlinearize i))
+    Context.rescale (fiberVar value correction) value fun y c => fiberVar y correction / c / c
+
+/-- An entry of `var x dims keepdim correction` is `Context.rescale` of the entry of `twoPassVar`,
+with the entries of its fiber and the two-pass variance of the scaled entries. -/
+theorem var_apply [Context α] (x : Tensor α s)
+    (dims : List (Fin s.rank)) (keepdim : Bool) (correction : Nat)
+    (o : (s.reduce dims keepdim).Coord) :
+    var x dims keepdim correction o =
+      Context.rescale (twoPassVar x dims keepdim correction o)
+        (fun i : Fin (Shape.size (s.selectAxes dims)) =>
+          x (s.reduceSource dims keepdim o (Shape.Coord.unlinearize i)))
+        fun y c => fiberVar y correction / c / c := by
+  simp only [var, twoPassVar, Rep.get_ofFn]
+
+/-- An entry of `var` is the entry of `twoPassVar` when that is finite. -/
+theorem var_eq_twoPassVar [Context α] (x : Tensor α s)
+    (dims : List (Fin s.rank)) (keepdim : Bool) (correction : Nat)
+    (o : (s.reduce dims keepdim).Coord)
+    (h : Context.isFinite (twoPassVar x dims keepdim correction o) = true) :
+    var x dims keepdim correction o = twoPassVar x dims keepdim correction o := by
+  rw [var_apply]
+  exact Context.rescale_eq_self _ _ h
+
+/-- An entry of `var` is finite where the entry of `twoPassVar` is. -/
+theorem var_finite [Context α] (x : Tensor α s)
+    (dims : List (Fin s.rank)) (keepdim : Bool) (correction : Nat)
+    (o : (s.reduce dims keepdim).Coord)
+    (h : Context.isFinite (twoPassVar x dims keepdim correction o) = true) :
+    Context.isFinite (var x dims keepdim correction o) = true := by
+  rw [var_eq_twoPassVar x dims keepdim correction o h]
+  exact h
+
+/-- An entry of the two-pass population variance over one axis, read through a cast to the shape
+without that axis, is the two-pass variance of the vector along the axis. The sum of the vector and
+the sum of its squared deviations from the mean are each divided by the length, or by one when the
+axis is empty. -/
+theorem castShape_twoPassVar_singleton_apply [Context α]
     (x : Tensor α s) (dim : Fin s.rank)
     (q : s.reduce [dim] false = s.eraseIdx dim) (c : Shape.Coord (s.eraseIdx dim)) :
-    castShape (var x [dim] false) q c =
+    castShape (twoPassVar x [dim] false) q c =
       let value := fun j : Fin (s.axisSize dim) =>
         x ((Shape.Coord.axisEquiv dim (shape := s)).symm (j, c))
       let count := if s.axisSize dim = 0 then 1 else s.axisSize dim
@@ -139,7 +196,7 @@ theorem castShape_var_singleton_apply [Context α]
       else Shape.size (s.selectAxes [dim])) =
       (if s.axisSize dim = 0 then 1 else s.axisSize dim) := by
     rw [hsize]
-  rw [castShape_apply, var_apply]
+  rw [castShape_apply, twoPassVar_apply]
   dsimp only
   rw [Nat.sub_zero, hden, ← hsum (fun v => v)]
   congr 1

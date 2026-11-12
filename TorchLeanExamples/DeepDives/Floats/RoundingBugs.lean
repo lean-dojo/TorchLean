@@ -76,6 +76,8 @@ in IEEE formats and theorems about the stable formulas TorchLean computes.
 * `CosineGuard`: a cosine loss guarded by a positive epsilon falls back to `1 - p̂ · t̂` at a
   nonpositive epsilon, although the stable formula holds there. `cosineLoss` uses the stable
   formula whenever both norms are positive and above their floors.
+* `Variance`: in binary16 the two-pass variance of `[181, -1447/8]` overflows although the
+  variance is about `32738.4`. `Tensor.var` recomputes it from the halved entries.
 -/
 
 @[expose] public section
@@ -683,8 +685,9 @@ computed `exp (-18)` of the tail is zero, so the one-level formula gives the tar
 value zero, while the two-level normalizer keeps it at `-2⁻²⁴` (`binary16_toRat?`). The theorem
 also specializes to bfloat16 logits over a vocabulary of 50257 classes, where the length times the
 unit roundoff is about 196. In the IEEE format with exponent width 3 and fraction width 5, at the
-logits `[0, -6, …, -6]` of 18 classes, the computed exponential of the log-sum-exp of the other
-classes overflows, so the log-probabilities are the one-level ones.
+logits `[0, -6, …, -6]` of 18 classes, the computed sum of the sixteen exponentials of the other
+classes overflows. `CrossEntropy.log1pSum` takes its `log1p` from the halved exponentials, so the
+log-probability of class `0` is the two-level `-5/128` and not the one-level zero.
 -/
 
 
@@ -794,7 +797,7 @@ theorem gradient_sign [Storage Value] {n : Nat}
     let inner : Tensor Value [n + 1] := Tensor.ofFn fun j =>
       if j = pivot ∨ j = runner then 0
       else MathFunctions.exp (logits.getScalar j - logits.getScalar runner)
-    let others := MathFunctions.exp (shift.getScalar runner + Context.log1p (Tensor.sum inner))
+    let others := MathFunctions.exp (shift.getScalar runner + CrossEntropy.log1pSum inner)
     let twoLevel := shift - Tensor.full _ (Context.log1p others)
     let logp := CrossEntropy.logProbs logits ⟨0, Nat.one_pos⟩
     let gradient := Tensor.crossEntropyBackward .logits logits
@@ -837,7 +840,7 @@ theorem mean_sign_of_pivot [Storage Value] {n : Nat}
     let inner : Tensor Value [n + 1] := Tensor.ofFn fun j =>
       if j = pivot ∨ j = runner then 0
       else MathFunctions.exp (logits.getScalar j - logits.getScalar runner)
-    let others := MathFunctions.exp (shift.getScalar runner + Context.log1p (Tensor.sum inner))
+    let others := MathFunctions.exp (shift.getScalar runner + CrossEntropy.log1pSum inner)
     let twoLevel := shift - Tensor.full _ (Context.log1p others)
     let logp := CrossEntropy.logProbs logits ⟨0, Nat.one_pos⟩
     let gradient := Tensor.crossEntropyBackward .logits logits
@@ -923,7 +926,7 @@ theorem batch_sign [Storage Value] {batch n : Nat}
     let inner : Tensor Value [n + 1] := Tensor.ofFn fun j =>
       if j = pivot ∨ j = runner then 0
       else MathFunctions.exp (row.getScalar j - row.getScalar runner)
-    let others := MathFunctions.exp (shift.getScalar runner + Context.log1p (Tensor.sum inner))
+    let others := MathFunctions.exp (shift.getScalar runner + CrossEntropy.log1pSum inner)
     let twoLevel := shift - Tensor.full _ (Context.log1p others)
     let logp := CrossEntropy.logProbs row ⟨0, Nat.one_pos⟩
     let summed := Tensor.crossEntropyBackward .logits row
@@ -1025,16 +1028,14 @@ theorem binary16_toRat? :
 
 /-- In the IEEE format with exponent width 3 and fraction width 5, whose largest finite value is
 `15.75`, at the logits `[0, -6, …, -6]` of 18 classes the computed tail is zero and the computed
-sum of the sixteen exponentials `exp 0` of the other classes overflows, so the two-level test
-fails and the log-probabilities are the one-level `LogSoftmax.vec`. -/
+sum of the sixteen exponentials `exp 0` of the other classes overflows. `CrossEntropy.log1pSum`
+takes its `log1p` from the halved exponentials, so the log-probability of class `0` decodes to
+`-5/128`, while the one-level `LogSoftmax.vec` gives zero. The exact value is about `-0.0413`. -/
 example :
     let logits : Tensor (ExecFloat.Binary 3 5) [18] := Tensor.ofFn fun i => if i = 0 then 0 else -6
-    CrossEntropy.vectorLogProbs logits = LogSoftmax.vec logits := by
-  have h : CrossEntropy.twoLevelAt
-      (Tensor.ofFn fun i => if i = 0 then 0 else -6 : Tensor (ExecFloat.Binary 3 5) [18]) =
-        false := by
-    decide +kernel
-  simp only [CrossEntropy.vectorLogProbs, h, Bool.false_eq_true, ↓reduceIte]
+    ExecFloat.Binary.toRat? ((CrossEntropy.vectorLogProbs logits).getScalar 0) = some (-5 / 128) ∧
+      ExecFloat.Binary.toRat? ((LogSoftmax.vec logits).getScalar 0) = some 0 := by
+  decide +kernel
 
 /-- `gradient_sign` for bfloat16 logits over a vocabulary of 50257 classes, where the length times
 the unit roundoff is about 196. -/
@@ -1048,7 +1049,7 @@ theorem gradient_sign_vocabulary (logits : Tensor BFloat16 [50257])
     let inner : Tensor BFloat16 [50257] := Tensor.ofFn fun j =>
       if j = pivot ∨ j = runner then 0
       else MathFunctions.exp (logits.getScalar j - logits.getScalar runner)
-    let others := MathFunctions.exp (shift.getScalar runner + Context.log1p (Tensor.sum inner))
+    let others := MathFunctions.exp (shift.getScalar runner + CrossEntropy.log1pSum inner)
     let twoLevel := shift - Tensor.full _ (Context.log1p others)
     let logp := CrossEntropy.logProbs logits ⟨0, Nat.one_pos⟩
     let gradient := Tensor.crossEntropyBackward .logits logits
@@ -2079,6 +2080,30 @@ theorem binary64_stable :
     (by norm_num [Model.unitRoundoffAt_eq, FloatFormat.binary64])
 
 end CosineGuard
+
+/-!
+## The two-pass variance near the overflow threshold
+
+In binary16 the deviations of `[181, -1447/8]` from its mean `1/16` round to `±181` and their
+squares to `32768`, whose sum `65536` overflows, so the two-pass variance `Tensor.twoPassVar` is
+`+∞` although the variance is about `32738.4`. `Tensor.var` recomputes it from the halved entries.
+-/
+
+namespace Variance
+
+open FloatLib.Floats
+
+/-- In binary16 the two-pass variance of `[181, -1447/8]` is `+∞`, and `Tensor.var` decodes to
+`32768`. -/
+example :
+    let x : Tensor Binary16 [2] := Tensor.ofFn fun i => if i = 0 then 181 else -1447 / 8
+    let entry (v : Tensor Binary16 (Shape.reduce [2] [⟨0, by decide⟩] false)) :=
+      Tensor.item (Tensor.castShape v (Shape.reduce_singleton _ _))
+    ExecFloat.Binary.isInf (entry (Tensor.twoPassVar x [⟨0, by decide⟩] false)) = true ∧
+      ExecFloat.Binary.toRat? (entry (Tensor.var x [⟨0, by decide⟩] false)) = some 32768 := by
+  decide +kernel
+
+end Variance
 
 end TorchLean.Examples
 

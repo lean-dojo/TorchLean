@@ -1504,7 +1504,10 @@ Tensor cross_entropy_normalizer(const Tensor& x, const Tensor& shifted,
   if (x.size(axis) <= 1) return normalizer;
 
   // Individual tail exponentials may round to zero even when their combined mass is
-  // representable. Match CrossEntropy.twoLevelAt, including its per-row finiteness guard.
+  // representable. This uses the formula and the branch tests of CrossEntropy.twoLevelAt, not
+  // its bits: ATen sums in its own order, half and bfloat16 in float32, and its exp and log1p are
+  // not correctly rounded. Unlike CrossEntropy.log1pSum it does not rescale the inner sum, so a
+  // row where log1p of that sum is not finite takes the one-level normalizer.
   const auto without_pivot = aten<"scatter.src">(
       x, axis, pivot, add(zeros, scalar_for(x, kNegativeInfinity)));
   const auto runner_up = aten<"argmax">(without_pivot, axis, true);

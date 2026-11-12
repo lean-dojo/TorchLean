@@ -8,6 +8,7 @@ module
 
 public import TorchLean.Tensor.Layers.Activation
 public import TorchLean.Tensor.Layers.Softmax
+public import TorchLean.Tensor.Rescale
 
 /-!
 # Loss functions (spec layer)
@@ -34,10 +35,12 @@ exponential of the log-sum-exp of the other classes and every entry of the two-l
 finite. Then it takes the two-level normalizer of Barron, Gnanapragasam and Tschannen, "A Fix for
 Softmax and Cross-Entropy" (2026, arXiv:2610.31642): the exponentials of the classes other than
 the pivot are taken relative to the largest of them and summed, and that log-sum-exp enters the
-normalizer through a softplus. For finite logits in an IEEE format, an entry of the two-level
-result is negative when it, its shifted logit and that computed exponential are finite and the
-exponential is positive (`Roundoff.CrossEntropy.twoLevel_neg`), with no condition on the computed
-tail. An entry of the result is finite wherever that entry of `LogSoftmax.vec` is
+normalizer through a softplus. Where `log1p` of that sum is not finite, as when the sum
+overflows, `CrossEntropy.log1pSum` takes it from the exponentials divided by a power of two
+(`Context.rescale`). For finite logits in an IEEE format, an entry of the two-level result is
+negative when it, its shifted logit and that computed exponential are finite and the exponential
+is positive (`Roundoff.CrossEntropy.twoLevel_neg`), with no condition on the computed tail. An
+entry of the result is finite wherever that entry of `LogSoftmax.vec` is
 (`CrossEntropy.vectorLogProbs_finite`).
 
 The student gradient against teacher logits (`distillLossBackward`) uses logit differences,
@@ -185,13 +188,22 @@ def runnerUp {n : Nat} (t : Tensor α [n + 1]) (p : Fin (n + 1)) : Fin (n + 1) :
     (fun best j => if j ≠ p ∧ t.getScalar j > t.getScalar best then j else best)
     (if p = 0 then Fin.last n else 0)
 
+/-- `log1p` of the sum of the entries of `inner`. Where that is not finite, the first finite
+`log (c + Σ i, y i) - log c` for `k = 1, ..., Nat.log2 n + 2`, where `y` is the entries divided by
+`2 ^ k` and `c = 1 / 2 ^ k` (`Context.rescale`), or the unscaled value when none is finite. Over ℝ
+the two agree: `log (c * (1 + Σ i, x i)) - log c = log1p (Σ i, x i)` for `c > 0` and
+`1 + Σ i, x i > 0`. -/
+def log1pSum {n : Nat} (inner : Tensor α [n]) : α :=
+  Context.rescale (Context.log1p (Tensor.sum inner)) inner.getScalar fun y c =>
+    MathFunctions.log (c + Tensor.sum (Tensor.ofFn y)) - MathFunctions.log c
+
 /-- Whether `vectorLogProbs` takes the two-level normalizer at `t`. With the pivot
 `p = Softmax.pivot t` and the runner-up `q = runnerUp t p`, it holds when `q ≠ p`, neither `t p`
 nor `t q` is infinite, the computed tail `Σ_{j ≠ p} exp (t j - t p)` is zero, and the computed
 `exp s` of the log-sum-exp `s = (t q - t p) + log1p (Σ_{j ∉ {p, q}} exp (t j - t q))` of the
-other classes and every entry of the two-level result `(t i - t p) - log1p (exp s)` are finite
-(`Context.isFinite`: neither infinite nor NaN). The definition is irreducible, so the roundoff
-analysis keeps the test as one opaque branch guard. -/
+other classes, its `log1p` of the sum taken by `log1pSum`, and every entry of the two-level result
+`(t i - t p) - log1p (exp s)` are finite (`Context.isFinite`: neither infinite nor NaN). The
+definition is irreducible, so the roundoff analysis keeps the test as one opaque branch guard. -/
 @[irreducible] def twoLevelAt {n : Nat} (t : Tensor α [n + 1]) : Bool :=
   let p : Fin (n + 1) := Softmax.pivot t
   let q := runnerUp t p
@@ -200,7 +212,7 @@ analysis keeps the test as one opaque branch guard. -/
     if i = p then 0 else MathFunctions.exp (shifted.getScalar i)
   let inner : Tensor α [n + 1] := Tensor.ofFn fun i =>
     if i = p ∨ i = q then 0 else MathFunctions.exp (t.getScalar i - t.getScalar q)
-  let others := MathFunctions.exp (shifted.getScalar q + Context.log1p (Tensor.sum inner))
+  let others := MathFunctions.exp (shifted.getScalar q + log1pSum inner)
   let twoLevel := shifted - Tensor.full _ (Context.log1p others)
   decide (q ≠ p) && !Context.isInf (t.getScalar p) && !Context.isInf (t.getScalar q) &&
     Tensor.sum tail == 0 && Context.isFinite others &&
@@ -210,9 +222,9 @@ analysis keeps the test as one opaque branch guard. -/
 In that case, with the pivot `p = Softmax.pivot t` and the runner-up `q = runnerUp t p`, the
 log-sum-exp of the classes other than `p`,
 `s = (t q - t p) + log1p (Σ_{j ∉ {p, q}} exp (t j - t q))`, has its inner sum shifted by its
-largest entry `t q`, and entry `i` is `(t i - t p) - log1p (exp s)`, the two-level normalizer of
-Barron, Gnanapragasam and Tschannen. Over ℝ both forms are the log-softmax
-(`vectorLogProbs_real`). -/
+largest entry `t q` and its `log1p` of that sum taken by `log1pSum`, and entry `i` is
+`(t i - t p) - log1p (exp s)`, the two-level normalizer of Barron, Gnanapragasam and Tschannen.
+Over ℝ both forms are the log-softmax (`vectorLogProbs_real`). -/
 def vectorLogProbs {n : Nat} (t : Tensor α [n]) : Tensor α [n] :=
   match n with
   | 0 => t
@@ -223,7 +235,7 @@ def vectorLogProbs {n : Nat} (t : Tensor α [n]) : Tensor α [n] :=
         let shifted := t - Tensor.full _ (t.getScalar p)
         let inner : Tensor α [n + 1] := Tensor.ofFn fun i =>
           if i = p ∨ i = q then 0 else MathFunctions.exp (t.getScalar i - t.getScalar q)
-        let others := shifted.getScalar q + Context.log1p (Tensor.sum inner)
+        let others := shifted.getScalar q + log1pSum inner
         shifted - Tensor.full _ (Context.log1p (MathFunctions.exp others))
       else LogSoftmax.vec t
 

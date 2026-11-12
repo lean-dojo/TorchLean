@@ -17,9 +17,9 @@ public import TorchLean.Tensor.Layers.SpecialForms
 `layerNorm x dims gamma beta epsilon` normalizes every fiber of `x` over the axes `dims`, at any
 rank. Each fiber has its mean subtracted, and the centered fiber is divided by
 `scale = maximum (max |centered|) (sqrt |epsilon|)` (`Tensor.normalizationScale`, gradient
-stopped). `var` takes the variance `v` of the scaled fiber, centering it a second time, and each
-scaled entry is divided by `sqrt (max (v + epsilon / scale / scale) 0)` before `gamma` scales and
-`beta` shifts it. No unscaled square is summed, so a fiber whose sum of squared deviations
+stopped). `twoPassVar` takes the variance `v` of the scaled fiber, centering it a second time, and
+each scaled entry is divided by `sqrt (max (v + epsilon / scale / scale) 0)` before `gamma` scales
+and `beta` shifts it. No unscaled square is summed, so a fiber whose sum of squared deviations
 overflows the format, but whose variance does not, normalizes without overflow: in binary16, four
 entries at `±128` give `±1`. The mean is the unscaled running sum of the entries divided by their
 count, so a fiber where that sum overflows, such as `[32544, 32992]` in binary16, gives NaN at every
@@ -85,9 +85,9 @@ norm, and batch norm over batch statistics, from moments.
 * `Shape.keptAxis` and `Shape.listedAxis` place the axes of the reduced and the selected shape
   among the axes of `s`, and `Shape.broadcastDims_eraseAxes`, `Shape.broadcastDims_selectAxes`
   and `Shape.broadcastDims_axis` broadcast those shapes and a channel vector back to `s`.
-* `var_eq_mean_centered_mul_self` writes the variance over `dims` as the mean of the squared
-  deviations from the mean, so `layerNorm` is a composition of means, broadcasts and elementwise
-  operations.
+* `twoPassVar_eq_mean_centered_mul_self` writes the two-pass variance over `dims` as the mean of
+  the squared deviations from the mean, so `layerNorm` is a composition of means, broadcasts and
+  elementwise operations.
 * Over the axes from `axis` on, `layerNorm` is layer normalization along the rows of the matrix
   view of `x`, with the same operations in the same order (`layerNorm_axesFrom_eq_reshape`).
 -/
@@ -209,8 +209,8 @@ def Tensor.layerNorm (x : Tensor α s) (dims : List (Fin s.rank))
   let regularizer := full (s.reduce dims false) epsilon
   let scale := normalizationScale centered dims regularizer
   let scaled := centered / spread scale
-  Normalization.normalize scaled (var scaled dims false) ((regularizer / scale) / scale) gamma beta
-    (s.broadcastDims_eraseAxes dims) (s.broadcastDims_selectAxes dims)
+  Normalization.normalize scaled (twoPassVar scaled dims false) ((regularizer / scale) / scale)
+    gamma beta (s.broadcastDims_eraseAxes dims) (s.broadcastDims_selectAxes dims)
     (s.broadcastDims_selectAxes dims)
 
 /-- RMS normalization of `x` over the axes `dims`: each fiber is divided by
@@ -843,17 +843,17 @@ theorem reshape_castShape {source target t : Shape} (g : Tensor α source) (h : 
 
 variable [Context α]
 
-/-- Over `dims`, the variance is the mean of the squared deviations from the mean, the mean
-broadcast back along the kept axes: the same sums and divisions in the same order. -/
-theorem var_eq_mean_centered_mul_self (x : Tensor α s) (dims : List (Fin s.rank)) :
-    var x dims false =
+/-- Over `dims`, the two-pass variance is the mean of the squared deviations from the mean, the
+mean broadcast back along the kept axes: the same sums and divisions in the same order. -/
+theorem twoPassVar_eq_mean_centered_mul_self (x : Tensor α s) (dims : List (Fin s.rank)) :
+    twoPassVar x dims false =
       mean ((x - broadcast (s := s.eraseAxes dims) (mean x dims false) s (s.keptAxis dims)
           (s.broadcastDims_eraseAxes dims)) *
         (x - broadcast (s := s.eraseAxes dims) (mean x dims false) s (s.keptAxis dims)
           (s.broadcastDims_eraseAxes dims))) dims false := by
   apply Rep.ext
   intro o
-  simp only [var_apply, mean, Tensor.map_apply, reduce_sum_apply, mul_def, sub_def,
+  simp only [twoPassVar_apply, mean, Tensor.map_apply, reduce_sum_apply, mul_def, sub_def,
     zipWith_apply, broadcast_keptAxis_apply, keptCoord_reduceSource]
   rfl
 
@@ -908,7 +908,7 @@ private theorem layerNorm_apply_entry (x : Tensor α s) (dims : List (Fin s.rank
       Tensor.sqrt, zipWith_apply]
     rw [broadcast_listedAxis_apply, broadcast_listedAxis_apply]
     simp only [hstd, broadcast_keptAxis_apply, Tensor.map_apply, zipWith_apply,
-      full_apply, var_apply, reduce_sum_apply, reduce_max_apply, detach_apply, Tensor.abs,
+      full_apply, twoPassVar_apply, reduce_sum_apply, reduce_max_apply, detach_apply, Tensor.abs,
       keptCoord_reduceSource, normalizedEntry, dite_eq_left (Shape.size_selectAxes_pos hpos)]
   · exfalso
     push Not at hpos

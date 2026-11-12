@@ -160,10 +160,10 @@ A training step updates the running statistics with
 `next = (1 - momentum) * running + momentum * batch`. The batch mean and variance are
 `Tensor.mean` and `Tensor.var` of the same channel-first view over its other axes: over the reals,
 the statistics the forward normalizes with. At a float they differ: the forward divides each
-centered channel by its scale before squaring it, while the sum of squared deviations in
-`Tensor.var` is unscaled and can overflow to infinity where the variance itself is finite. The
-running variance uses the unbiased estimate when there is more than one sample, and the finite
-biased value for a single sample.
+centered channel by its scale before squaring it, while `Tensor.var` squares the unscaled
+deviations and, where that two-pass value is not finite, recomputes it from the entries divided by
+a power of two (`Context.rescale`). The running variance uses the unbiased estimate when there is
+more than one sample, and the finite biased value for a single sample.
 
 Model state contains scale, bias, running mean, running variance, and momentum in that order.
 Only scale and bias receive gradients. Scale and running variance start at one, and bias and

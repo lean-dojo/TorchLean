@@ -326,6 +326,7 @@ theorem CrossEntropy.vectorLogProbs_real {n : Nat} (t : Tensor ℝ [n]) :
         rw [LogSoftmax.getScalar_vec_eq_sub_log]
         have h := log_two_level (fun j => t.getScalar j) (runnerUp_ne_of_twoLevelAt htwo)
         simp only [Tensor.sub_def, Tensor.getScalar_zipWith, Tensor.getScalar_full,
+          CrossEntropy.log1pSum, Context.rescale_eq_self _ _ (Context.isFinite_real _),
           Context.log1p_eq_log_one_add, MathFunctions.exp, Tensor.sum_vec, Tensor.getScalar_ofFn]
         rw [h]
         ring

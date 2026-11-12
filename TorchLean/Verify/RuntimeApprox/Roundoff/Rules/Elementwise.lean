@@ -639,6 +639,12 @@ theorem isNaN_of_isFinite {x : Value} (hx : isFinite x = true) : Context.isNaN x
 theorem isInf_of_isFinite {x : Value} (hx : isFinite x = true) : Context.isInf x = false :=
   Model.isInf_eq_false_of_isFinite_eq_true _ hx
 
+/-- A finite configured value is finite in the sense of `Context.isFinite`. -/
+theorem context_isFinite_of_isFinite {x : Value} (hx : isFinite x = true) :
+    Context.isFinite x = true := by
+  rw [Context.isFinite, isNaN_of_isFinite hx, isInf_of_isFinite hx]
+  rfl
+
 /-- A finite configured value equals itself, so the NaN test `!(x == x)` of a maximum fold such as
 `Tensor.maxAbs` is false at it. -/
 theorem not_beq_self_of_isFinite {x : Value} (hx : isFinite x = true) : (!(x == x)) = false := by

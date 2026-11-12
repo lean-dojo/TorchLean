@@ -34,6 +34,12 @@ In every IEEE binary format, a program that computes a target
 In every configured binary format, `t.prog` returns `+0` at the finite inputs of `D` where `F` is
 zero (`prog_zero`).
 
+The repair `t.repair p` of a program `p` returns the result of `p` where it is finite and not zero
+(`repair_eq`), and the result of `t.prog` where it is zero or not finite (`repair_eq_prog`). In
+every IEEE binary format, its result is finite and not zero at the finite inputs of `D` where `|F|`
+lies in the band `(η, Θ)` (`repair_finite`), and at every finite input of `D` it is rejected
+exactly where `p` is rejected with a result that is finite and not zero (`rejected_repair_iff`).
+
 Targets come from functions that are rational at the rational points of the domain (`ofRat`) and
 from ratios `(α * exp r + β) / (γ * exp r + δ)` whose coefficients and exponent are rational at the
 rational points (`ofExp`). The reciprocal square root `(√x)⁻¹` on `x > 0` is a target (`rsqrt`), and
@@ -45,7 +51,8 @@ exclusive or of the sign bits of `a` and `b`, as IEEE 754 signs `a / b`. It comp
 it returns that signed zero at the finite inputs where `b ≠ 0` and `⌊a / b⌋ = 0`
 (`floorDivProg_zero`).
 
-The results hold for every target, every program that computes it and every IEEE binary format.
+The results hold for every target. Those on `Computes` hold for every program that computes it,
+and those on `repair` for every program.
 -/
 
 @[expose] public section
@@ -229,6 +236,67 @@ theorem Computes.cert (h : t.Computes p) (s : Fin n → SignType)
         exact hD
       · rw [hx]
         exact mem_band hd h1 h3
+
+/-! ## Repair -/
+
+variable (t)
+
+/-- The program that returns the result of `p` where it is finite and not zero, and the result of
+`t.prog`, the target rounded once, where it is zero or not finite. -/
+noncomputable def repair (p : Prog Binary.Desc n) : Prog Binary.Desc n where
+  real := p.real
+  float d x :=
+    if isFinite (p.float d x) && !Model.isZero (Binary.toModel (p.float d x)) then p.float d x
+    else t.prog.float d x
+
+/-- Where the result of `p` is finite and not zero, `t.repair p` returns it. -/
+theorem repair_eq {d : Binary.Desc} {x : Fin n → Val d} (hf : isFinite (p.float d x) = true)
+    (h0 : toReal (p.float d x) ≠ 0) : (t.repair p).float d x = p.float d x := by
+  have hz : Model.isZero (Binary.toModel (p.float d x)) = false :=
+    Bool.eq_false_iff.mpr fun hz => h0 (Model.toReal_eq_zero_of_isZero _ hz)
+  simp [repair, hf, hz]
+
+/-- Where the result of `p` is zero or not finite, `t.repair p` returns the target rounded once. -/
+theorem repair_eq_prog {d : Binary.Desc} {x : Fin n → Val d}
+    (h : isFinite (p.float d x) = true → toReal (p.float d x) = 0) :
+    (t.repair p).float d x = t.prog.float d x := by
+  cases hf : isFinite (p.float d x)
+  · simp [repair, hf]
+  · have hz : Model.isZero (Binary.toModel (p.float d x)) = true :=
+      (Model.isZero_eq_true_iff_toReal_eq_zero (Binary.toModel (p.float d x)) hf).mpr (h hf)
+    simp [repair, hf, hz]
+
+/-- In every IEEE binary format, at the finite inputs of the domain where `|F|` lies in the band
+`(η, Θ)`, the result of `t.repair p` is finite and not zero, for every program `p`. -/
+theorem repair_finite (p : Prog Binary.Desc n) {d : Binary.Desc} (hd : valid d)
+    {x : Fin n → Val d} (hx : x ∈ Inputs (fun _ => t.D) d)
+    (hb : |t.F (toReal ∘ x)| ∈ Once.band d) :
+    isFinite ((t.repair p).float d x) = true ∧ toReal ((t.repair p).float d x) ≠ 0 := by
+  by_cases h : isFinite (p.float d x) = true ∧ toReal (p.float d x) ≠ 0
+  · rw [t.repair_eq h.1 h.2]
+    exact h
+  · rw [t.repair_eq_prog fun hf => not_not.mp fun h0 => h ⟨hf, h0⟩]
+    obtain ⟨h1, h2, -⟩ := (t.computes_prog.covers hd).band.excludes (Set.mem_singleton d) hx hb
+    exact ⟨h1, left_ne_zero_of_mul h2.ne'⟩
+
+/-- In every IEEE binary format, at the finite inputs of the domain, `t.repair p` is rejected
+exactly where `p` is rejected with a result that is finite and not zero. -/
+theorem rejected_repair_iff {d : Binary.Desc} (hd : valid d) {x : Fin n → Val d}
+    (hx : x ∈ Inputs (fun _ => t.D) d) :
+    Rejected (t.repair p) t.F d x ↔
+      Rejected p t.F d x ∧ isFinite (p.float d x) = true ∧ toReal (p.float d x) ≠ 0 := by
+  by_cases h : isFinite (p.float d x) = true ∧ toReal (p.float d x) ≠ 0
+  · have he : ∀ q : Prog Binary.Desc n, q.real = p.real → q.float d x = p.float d x →
+        (Rejected q t.F d x ↔ Rejected p t.F d x) := fun q hr hf => by
+      unfold Rejected
+      rw [hr, hf]
+    rw [he (t.repair p) rfl (t.repair_eq h.1 h.2)]
+    exact ⟨fun hr => ⟨hr, h⟩, And.left⟩
+  · refine iff_of_false (fun hr => ?_) fun hr => h hr.2
+    obtain ⟨h1, -, h3, h4⟩ := hr
+    rw [t.repair_eq_prog fun hf => not_not.mp fun h0 => h ⟨hf, h0⟩] at h4
+    exact (t.computes_prog.covers hd).band.not_rejected (Set.mem_singleton d) hx h3
+      ⟨h1, rfl, h3, h4⟩
 
 end Target
 

@@ -17,8 +17,8 @@ public import TorchLean.Tensor.List
 # Entrywise formulas for row-normalization tensors
 
 The normalization specs are written with sums and variances over one axis of an `[m, n]` matrix
-(`reduce .sum` and `var` cast to the shape without that axis), broadcasts back along that axis,
-column broadcasts and pointwise tensor arithmetic. The lemmas here work out what each of those
+(`reduce .sum` and `twoPassVar` cast to the shape without that axis), broadcasts back along that
+axis, column broadcasts and pointwise tensor arithmetic. The lemmas here work out what each of those
 operations does to a single entry `get2 t i j`, so that the LayerNorm and BatchNorm proofs can
 reason with plain real sums. Entries of filled tensors come from `TorchLean.Tensor.getScalar_full`
 and `TorchLean.Tensor.get2_full`, and `Matmul.toVec_idxMN` reads `toVec` of a matrix at
@@ -123,14 +123,16 @@ theorem getScalar_rowMean (x : Tensor ℝ [m, n]) (i : Fin m) :
       (∑ j : Fin n, Tensor.get2 x i j) / n := by
   rw [getScalar_map, getScalar_rowSum, Context.divNat_real]
 
-/-- For `0 < n`, entry `i` of `var x` over the last axis is the population variance of row `i`. -/
+/-- For `0 < n`, entry `i` of `twoPassVar x` over the last axis is the population variance of row
+`i`. -/
 theorem getScalar_rowVar (hn : 0 < n) (x : Tensor ℝ [m, n]) (i : Fin m) :
-    getScalar (castShape (var x [⟨1, Nat.one_lt_two⟩] false) (Shape.reduce_singleton _ _)) i =
+    getScalar (castShape (twoPassVar x [⟨1, Nat.one_lt_two⟩] false) (Shape.reduce_singleton _ _))
+      i =
       (∑ j : Fin n,
         (Tensor.get2 x i j - (∑ k : Fin n, Tensor.get2 x i k) / n) *
           (Tensor.get2 x i j - (∑ k : Fin n, Tensor.get2 x i k) / n)) / n := by
   rw [Tensor.getScalar_eq_apply]
-  erw [castShape_var_singleton_apply x ⟨1, Nat.one_lt_two⟩]
+  erw [castShape_twoPassVar_singleton_apply x ⟨1, Nat.one_lt_two⟩]
   dsimp only
   have hcount : (if Shape.axisSize [m, n] 1 = 0 then 1 else Shape.axisSize [m, n] 1) = n := by
     rw [ite_eq_right (by simp; omega)]
@@ -490,7 +492,7 @@ theorem layerNorm_eq_rowsGiven (hn : 0 < n) (ε : ℝ) (x : Tensor ℝ [m, n])
     erw [broadcast_eraseIdx_apply (s := [m, n]) 1]
   have hvar (c : Tensor ℝ [m, n]) :
       lnMean ((c - rowBroadcast (lnMean c)) * (c - rowBroadcast (lnMean c))) =
-        castShape (var c [⟨1, Nat.one_lt_two⟩] false) (Shape.reduce_singleton _ _) := by
+        castShape (twoPassVar c [⟨1, Nat.one_lt_two⟩] false) (Shape.reduce_singleton _ _) := by
     apply Tensor.ext_vector
     intro i
     refine Eq.trans ?_ (getScalar_rowVar hn c i).symm

@@ -18,7 +18,10 @@ one-level log-softmax `LogSoftmax.vec` by default, and the two-level normalizer 
 exists, neither the pivot logit nor the runner-up is infinite, the computed sum of the
 exponentials other than the pivot's is zero, and the computed exponential of the log-sum-exp of
 the other classes and every entry of the two-level result are finite (`CrossEntropy.twoLevelAt`).
-Over ℝ both branches are the log-softmax (`CrossEntropy.vectorLogProbs_real`).
+On that branch the `log1p` of the inner sum is `CrossEntropy.log1pSum`, which is that `log1p`
+wherever it is finite (`Context.rescale_eq_self`) and has its bounds there
+(`Roundoff.mixedError_toReal_rescale`). Over ℝ both branches are the log-softmax
+(`CrossEntropy.vectorLogProbs_real`).
 `roundoff mixed theorem` infers the error of the combined program for every IEEE format and every
 length (`log_probs_error`). The reference is the exact log-softmax of the decoded logits on both
 branches (`log_probs_reference`), and the budgets split on the guard `twoLevelAt`, which
@@ -335,7 +338,7 @@ theorem twoLevel_neg [Storage Value] {n : Nat} (t : Tensor Value [n + 1])
     let shift := t - Tensor.full _ (t.getScalar p)
     let inner : Tensor Value [n + 1] := Tensor.ofFn fun j =>
       if j = p ∨ j = q then 0 else MathFunctions.exp (t.getScalar j - t.getScalar q)
-    let others := MathFunctions.exp (shift.getScalar q + Context.log1p (Tensor.sum inner))
+    let others := MathFunctions.exp (shift.getScalar q + CrossEntropy.log1pSum inner)
     ExecFloat.Binary.isFinite (shift.getScalar i) = true →
       ExecFloat.Binary.isFinite others = true →
       ExecFloat.Binary.isFinite ((shift - Tensor.full _ (Context.log1p others)).getScalar i) =
@@ -362,7 +365,7 @@ theorem vectorLogProbs_neg [Storage Value] {n : Nat} (t : Tensor Value [n + 1])
       if j = p then 0 else MathFunctions.exp (shift.getScalar j)
     let inner : Tensor Value [n + 1] := Tensor.ofFn fun j =>
       if j = p ∨ j = q then 0 else MathFunctions.exp (t.getScalar j - t.getScalar q)
-    let others := MathFunctions.exp (shift.getScalar q + Context.log1p (Tensor.sum inner))
+    let others := MathFunctions.exp (shift.getScalar q + CrossEntropy.log1pSum inner)
     let twoLevel := shift - Tensor.full _ (Context.log1p others)
     ExecFloat.Binary.isFinite (shift.getScalar i) = true →
       ExecFloat.Binary.isFinite (Tensor.sum tail) = true →
@@ -395,17 +398,13 @@ theorem vectorLogProbs_neg [Storage Value] {n : Nat} (t : Tensor Value [n + 1])
         have hbeq : (Tensor.sum tail == 0) = true :=
           ExecFloat.Binary.beq_zero_iff.mpr ⟨hsum, h.symm⟩
         obtain ⟨hothers, -, hentries⟩ := htwo hbeq
-        have hcontext {x : Value} (hx : ExecFloat.Binary.isFinite x = true) :
-            Context.isFinite x = true := by
-          rw [Context.isFinite, isNaN_of_isFinite hx, isInf_of_isFinite hx]
-          rfl
         have hall : ((List.finRange (n + 1)).all fun j => Context.isFinite (twoLevel.getScalar j)) =
             true :=
-          List.all_eq_true.mpr fun j _ => hcontext (hentries j)
+          List.all_eq_true.mpr fun j _ => context_isFinite_of_isFinite (hentries j)
         unfold CrossEntropy.twoLevelAt
         dsimp only
         rw [decide_eq_true hq, isInf_of_isFinite (hfinite _), isInf_of_isFinite (hfinite _), hbeq,
-          hcontext hothers, hall]
+          context_isFinite_of_isFinite hothers, hall]
         rfl))
 
 end TorchLean.Roundoff.CrossEntropy

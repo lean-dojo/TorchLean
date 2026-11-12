@@ -17,10 +17,11 @@ public import TorchLean.Tensor.Elementwise
 when none is finite. In the binary formats of FloatLib an overflow rounds to an infinity in the
 encoding `ieee` and to a NaN in `finiteMaxNaN` and `finiteUnsignedZero`, so either starts the
 search. In `finite` it saturates at the largest finite value, so `old` is kept. The caller's `f`
-evaluates its formula at the scaled inputs and undoes the scale from `c = 1 / 2 ^ k`. In a binary
-format a division by a power of two is exact unless the quotient underflows, so the least such `k`
-loses the fewest digits. At the last scale the magnitudes of `n` finite inputs, each divided, sum
-to less than half the largest finite value, since `2 ^ (Nat.log2 n + 2) > 2 n`.
+evaluates its formula at the scaled inputs and undoes the scale from `c = 1 / 2 ^ k`. Scaling by a
+power of two avoids rounding a binary significand unless the result enters the subnormal range.
+Trying smaller scales first avoids unnecessary underflow of the inputs. The search is bounded:
+it does not guarantee that a candidate is finite or more accurate. Those properties depend on
+the inputs, the scalar format, and the formula supplied by the caller.
 
 The variance `Tensor.var` and the inner sum `CrossEntropy.log1pSum` of the two-level cross-entropy
 normalizer recompute their sums this way. `rescale_eq_self` reads `rescale` at a finite `old`.

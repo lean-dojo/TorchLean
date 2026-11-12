@@ -30,13 +30,15 @@ certificate of `Once.claim` in every IEEE binary format (`cert_sigmoid`, `cert_s
 is the nearest-even rounding of the answer, within the mixed budget `(u, max 0 (η - u |F|))`, which
 is informative on the band `η < |F| < Θ`.
 
-TorchLean's soft-margin gradient rounds the sigmoid before the product with `y`. In binary32 at
+The soft-margin example `LossBugs.SoftMargin.lossBackward` rounds the sigmoid before the product
+with `y`. In binary32 at
 `x = 53/8` and `y = 16` the sigmoid of `-106` rounds to zero, so the computed gradient is zero,
-while the gradient is about `-1.48e-45`, in the band. `softMarginRepaired`, TorchLean's gradient
+while the gradient is about `-1.48e-45`, in the band. `softMarginRepaired`, that computation
 repaired by the gradient rounded once (`Target.repair`), returns `-2⁻¹⁴⁹` there. In every IEEE
-binary format it returns TorchLean's result wherever that is finite and not zero
+binary format it returns the example's result wherever that is finite and not zero
 (`Target.repair_eq`), and its result is finite and not zero wherever the magnitude of the gradient
-lies in the band (`Target.repair_finite`).
+lies in the band (`Target.repair_finite`). This is a noncomputable reference construction for
+proofs.
 -/
 
 @[expose] public section
@@ -79,12 +81,12 @@ theorem cert_softMargin :
     norm_num [softMargin, Target.ofExp, LossBugs.SoftMargin.lossBackward,
       Context.sigmoid_eq_inv_exp]
 
-/-- TorchLean's soft-margin gradient `LossBugs.SoftMargin.lossBackward` where its result is finite
+/-- The example `LossBugs.SoftMargin.lossBackward` where its result is finite
 and not zero, and the gradient rounded once where it is zero or not finite. -/
 noncomputable def softMarginRepaired : Prog Binary.Desc 2 :=
   softMargin.repair (Prog.ofContext fun v => LossBugs.SoftMargin.lossBackward (v 0) (v 1))
 
-/-- In binary32 at `x = 53/8` and `y = 16` TorchLean's soft-margin gradient is zero, while the
+/-- In binary32 at `x = 53/8` and `y = 16` the example's sigmoid-based gradient is zero, while the
 repaired gradient decodes to `-2⁻¹⁴⁹`, the gradient rounded once. -/
 example :
     let x : Fin 2 → Binary32 := ![53 / 8, 16]

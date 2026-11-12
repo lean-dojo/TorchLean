@@ -168,6 +168,14 @@ Cross-entropy also uses a second shift when the individual tail exponentials und
 combined mass can still be represented. For example, binary16 logits $[9,-9,-9]$ retain a target
 gradient of $-2^{-24}$; the one-level formula returns zero. The CPU result is checked by a Lean
 theorem, and the CUDA implementation has separate runtime checks in binary32 and binary64.
+
+If the inner sum in the configured two-level formula overflows, it retries with the terms divided
+by powers of two. `Tensor.var` uses the same helper when its two-pass result is not finite. For
+binary16 inputs $[181,-1447/8]$, this recovers a variance of $32768$ from an overflowing sum of
+squares. Both operations keep every already finite result unchanged. Their roundoff rules
+currently carry the bounds of the unscaled computation under its finiteness conditions; the
+recovered cases have separate checked examples in `RoundingBugs.lean`.
+
 `TorchLeanExamples/DeepDives/Floats/LibraryBugs.lean` applies the same analysis to nine formulas
 from other libraries. Four come from PyTorch, JAX and Hugging Face Transformers: the soft-margin
 loss, the KL divergence of two normal distributions, the tanh approximation of GELU and the clamp

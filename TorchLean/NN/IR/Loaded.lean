@@ -21,11 +21,12 @@ wrote it. The words keep every bit of a value, so loading never goes through JSO
 `load` decodes the artifact and loads it under the reference runtime with no registered custom
 operations or calls (`TorchLean.IR.Artifact.load`), and `load_ok` proves that the program it returns
 passes `Program.check .reference` and its payload passes `Payload.check`. Then `load` checks the
-document's `"declared_types"`: one entry per value that the frontend's capture typed, with the
-step output holding it and the element type and shape the capture recorded. `declaredTypes` reads
-them, and `Program.checkDeclared` requires the program's type at each output to have that element
-type and shape, so a lowering that changes a captured value's type fails the load. A document that
-names a `"frontend"` must declare them, and a raw IR document without one declares none.
+document's `"declared_types"`, where the PyTorch and JAX captures write one entry per value they
+typed: the step output holding it and the element type and shape the capture recorded.
+`declaredTypes` reads the entries, and `Program.checkDeclared` requires the program's type at each
+listed output to have that element type and shape, so a lowering that changes a listed value's type
+fails the load. Only the listed values are checked, so an empty list passes. A document that names
+a `"frontend"` must have `"declared_types"`, and one that names none and lacks it declares no types.
 `load_declared` proves that a loaded program gives every declared value its declared element type
 and shape. `loadArguments` reads the arguments under a runtime, `loadValue` one tensor, and `words`
 gives the element type, shape and words of a value back.
@@ -46,7 +47,7 @@ structure Declared where
   node : Nat
   /-- The step output that holds the node's value. -/
   ref : Ref
-  /-- The framework operation or variable the node was made for. -/
+  /-- The framework operation or variable the node is made for. -/
   origin : String
   /-- The element type the capture recorded. -/
   dtype : DType

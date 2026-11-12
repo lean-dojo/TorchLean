@@ -73,9 +73,10 @@ build_and_validation:
     command: "scripts/lake.sh -Kcuda=true build"
     note: >
       Builds the C++ backend against a LibTorch SDK of torch 2.13 or later, whose
-      Stable ABI it calls, so it also runs with later releases. Its CMake configuration may
-      require a CUDA development toolkit. Executing CUDA examples additionally
-      requires a working NVIDIA driver and GPU.
+      Stable ABI it calls, so it also runs with later releases, apart from the CUDA caching
+      allocator's statistics and controls, which fail unless the runtime is torch 2.13, 2.14 or
+      2.15. Its CMake configuration may require a CUDA development toolkit. Executing CUDA
+      examples additionally requires a working NVIDIA driver and GPU.
   non_cuda_build:
     command: "scripts/lake.sh -Kcuda=false build"
   documentation_build:

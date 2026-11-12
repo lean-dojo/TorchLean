@@ -38,7 +38,12 @@ Targets come from functions that are rational at the rational points of the doma
 from ratios `(α * exp r + β) / (γ * exp r + δ)` whose coefficients and exponent are rational at the
 rational points (`ofExp`). The reciprocal square root `(√x)⁻¹` on `x > 0` is a target (`rsqrt`), and
 FloatLib's `rsqrt` computes it (`computes_rsqrt`), with a certificate (`cert_rsqrt`). The floor of a
-quotient `⌊a / b⌋` on `b ≠ 0` is a rational target (`floorDiv`, `cert_floorDiv`).
+quotient `⌊a / b⌋` on `b ≠ 0` is a rational target (`floorDiv`). Floor division rounded once
+(`floorDivProg`) returns `floorDiv.once`, except that a zero result is the zero signed by the
+exclusive or of the sign bits of `a` and `b`, as IEEE 754 signs `a / b`. It computes the target
+(`computes_floorDiv`), with a certificate (`cert_floorDiv`), and in every configured binary format
+it returns that signed zero at the finite inputs where `b ≠ 0` and `⌊a / b⌋ = 0`
+(`floorDivProg_zero`).
 
 The results hold for every target, every program that computes it and every IEEE binary format.
 -/
@@ -300,11 +305,57 @@ noncomputable def floorDiv : Target 2 :=
     show (⌊(q 0 : ℝ) / q 1⌋ : ℝ) = ((⌊q 0 / q 1⌋ : ℚ) : ℝ)
     rw [← Rat.cast_div, Rat.floor_cast, Rat.cast_intCast]
 
+/-- Floor division rounded once: `floorDiv.once`, except that a zero result is the zero signed by
+the exclusive or of the sign bits of `a` and `b`, as IEEE 754 signs `a / b`. A format without a
+signed zero returns its one zero. -/
+noncomputable def floorDivProg : Prog Binary.Desc 2 where
+  real := floorDiv.F
+  float d x := Binary.ofModel <|
+    if Model.isZero (floorDiv.once d x) then
+      Model.zero d.format
+        (Bool.xor (Model.signBit (Binary.toModel (x 0))) (Model.signBit (Binary.toModel (x 1))))
+    else floorDiv.once d x
+
+/-- Floor division rounded once computes the floor of a quotient on `b ≠ 0`. -/
+theorem computes_floorDiv : floorDiv.Computes floorDivProg := by
+  have he : ∀ d x, Binary.toModel (floorDivProg.float d x) =
+      if Model.isZero (floorDiv.once d x) then
+        Model.zero d.format
+          (Bool.xor (Model.signBit (Binary.toModel (x 0))) (Model.signBit (Binary.toModel (x 1))))
+      else floorDiv.once d x :=
+    fun _ _ => ExecFloat.Binary.toModel_ofModel _
+  refine ⟨fun _ _ => rfl, fun d _ x _ h => ?_, fun d _ x _ h => ?_⟩
+  · show Model.isFinite (Binary.toModel (floorDivProg.float d x)) = true ∧
+      Model.toReal (Binary.toModel (floorDivProg.float d x)) = _
+    by_cases hz : Model.isZero (floorDiv.once d x) = true
+    · rw [he, ite_eq_left hz]
+      exact ⟨Model.isFinite_eq_true_of_isZero_eq_true _ (Model.isZero_zero _ _),
+        (Model.toReal_zero _ _).trans (Model.toReal_eq_zero_of_isZero _ hz).symm⟩
+    · rw [he, ite_eq_right hz]
+      exact ⟨h, rfl⟩
+  · have hz : ¬Model.isZero (floorDiv.once d x) = true := fun hz =>
+      absurd (Model.isFinite_eq_true_of_isZero_eq_true _ hz) (by rw [h]; decide)
+    exact (he d x).trans (ite_eq_right hz)
+
+/-- In every configured binary format, at finite inputs `a` and `b` with `b ≠ 0` and
+`⌊a / b⌋ = 0`, floor division rounded once returns the zero signed by the exclusive or of the sign
+bits of `a` and `b`. -/
+theorem floorDivProg_zero {d : Binary.Desc} {x : Fin 2 → Val d} (hx : ∀ i, isFinite (x i) = true)
+    (hb : toReal (x 1) ≠ 0) (h0 : ⌊toReal (x 0) / toReal (x 1)⌋ = 0) :
+    Binary.toModel (floorDivProg.float d x) = Model.zero d.format
+      (Bool.xor (Model.signBit (Binary.toModel (x 0))) (Model.signBit (Binary.toModel (x 1)))) := by
+  have hz : Model.isZero (floorDiv.once d x) = true := by
+    rw [floorDiv.once_zero ⟨hx, hb⟩ (by
+      show ((⌊toReal (x 0) / toReal (x 1)⌋ : ℤ) : ℝ) = 0
+      rw [h0, Int.cast_zero])]
+    exact Model.isZero_zero _ _
+  exact (ExecFloat.Binary.toModel_ofModel _).trans (ite_eq_left hz)
+
 /-- Floor division rounded once has the certificate of `Once.claim` on `b ≠ 0` in every IEEE
 binary format. -/
 theorem cert_floorDiv :
-    Cert floorDiv.prog floorDiv.F {d | valid d} (Once.claim floorDiv.F fun _ => floorDiv.D) := by
-  refine floorDiv.computes_prog.cert (fun _ => .pos) ?_ ?_ ?_ <;> norm_num [floorDiv, ofRat]
+    Cert floorDivProg floorDiv.F {d | valid d} (Once.claim floorDiv.F fun _ => floorDiv.D) := by
+  refine computes_floorDiv.cert (fun _ => .pos) ?_ ?_ ?_ <;> norm_num [floorDiv, ofRat]
 
 end Target
 

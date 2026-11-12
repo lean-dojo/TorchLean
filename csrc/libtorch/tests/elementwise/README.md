@@ -4,9 +4,10 @@ The C++ executable `torchlean_elementwise_regression`, built from `regression.cp
 production backend, ATen and the Lean runtime, and checks the backend's elementwise C ABI against
 the Lean binary32 reference and against host arithmetic. It needs a Linux host and a CUDA device.
 The harness computes its oracles with ATen's C++ API, so it is built against the torch package or
-SDK it runs with. The backend uses only the Stable ABI, so it can be a library built against an
-earlier release (see [Torch versions](../../README.md#torch-versions)). A tensor crosses between
-the two as an `AtenTensorHandle`, which both read as the same ATen tensor.
+SDK it runs with. The backend can be a library built against an earlier release (see
+[Torch versions](../../README.md#torch-versions)), but its allocator calls fail on a runtime other
+than torch 2.13, 2.14 and 2.15. A tensor crosses between the two as an `AtenTensorHandle`, which
+both read as the same ATen tensor.
 
 From the source root, after building the production LibTorch backend:
 
@@ -26,7 +27,7 @@ build and reference directory and prints its path, and `--skip-build` reuses the
 executable (the C++ harness is built either way). The default sweep adds 200000 random cases to the
 curated ones. Start with `--sweep 1024` to time a short run. Every case is checked: each FMA case
 through one scalar AXPY call, and add, mul, div and sqrt in batches. The reference file must contain
-all five primitives. To run the backend with another release than the one it was built against,
+all five primitives. To run the backend with a release other than the one it is built against,
 set `TORCHLEAN_LIBTORCH_HOME` to that release and put its `torch/lib` and NVIDIA libraries first in
 `LD_LIBRARY_PATH`.
 
@@ -124,7 +125,7 @@ format, and NVRTC compiles it with `--fmad=false`. Each entry rounds once with a
 The harness also checks ATen's `addcmul` with `value` one on every FMA case, as an oracle
 independent of the backend: with the coefficient as a CPU 0-dim tensor and as a CUDA 0-dim tensor
 in `tensor2`, and with tensor operands. For CUDA float32 and `value == 1`, both of its kernel paths
-call `pointwise_op_impl`, which returns `std::fma(tensor1, tensor2, input)`; for any other `value`
+call `pointwise_op_impl`, which returns `std::fma(tensor1, tensor2, input)`. For any other `value`
 it first rounds the product, then computes `std::fma(value, product, input)`, so moving a factor
 into `value` moves a rounding boundary. `ATen/native/cuda/DeviceAddCmulCdiv.cuh` holds that helper,
 the same file in the headers of torch 2.13.0 and 2.15.0. These checks test the loaded runtime's
@@ -137,5 +138,5 @@ the exact product is the midpoint between float32 `0x3fc00001` and `0x3fc00002`.
 addend selects the lower neighbor in a true float32 FMA, but a binary64 add loses it, and the
 result rounds to the upper, even neighbor.
 
-The executable prints the version of the LibTorch headers it was built against. Keep it with the
+The executable prints the version of the LibTorch headers it is built against. Keep it with the
 results, with the backend's `TorchLean.LibTorch.version` and build manifest.

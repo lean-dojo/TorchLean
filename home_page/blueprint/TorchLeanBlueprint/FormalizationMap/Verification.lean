@@ -400,15 +400,16 @@ branch-and-bound search of the external alpha-beta-CROWN verifier.
 
 :::definition "crown_node_checker" (parent := "bound_propagation") (lean := "TorchLean.Certificate.CROWNNode.check")
 The executable safety verdict parses a FloatLib binary32 node certificate on a graph of registered
-operators and decides it with `TorchLean.Certificate.FiniteArtifact.accepts`, which checks every
-affine entry against the exact rational transfer of its parent over the input box. For linear and
-ReLU chains, `TorchLean.Certificate.FiniteArtifact.accepts_graph_sound` proves the requested output
-inequalities of an accepted artifact for every real input in the box, and the verdict rejects every
-other graph. Agreement with the operator graph's forward α-CROWN pass replayed in binary32, with or
-without ReLU phases, is the separate diagnostic `TorchLean.Certificate.CROWNNode.replayDiagnostic`,
-which is not a safety verdict. That replay gives no real enclosure, because it rounds to nearest:
-after the layers $`h = x + 1` and $`y = h + 2^{-24}` at $`x = -1`, where $`y = 2^{-24}`, the
-replayed upper form of $`y` is $`x + 1`, which is $`0` there.
+operators and decides it with `TorchLean.Certificate.FiniteArtifact.accepts`, which checks the
+affine entries of the input node and of each `Op.linear` and `Op.relu` node against exact rational
+transfers over the input box. For linear and ReLU chains,
+`TorchLean.Certificate.FiniteArtifact.accepts_graph_sound` proves the requested output inequalities
+of an accepted artifact for every real input in the box, and the verdict rejects every other graph.
+Agreement with the operator graph's forward α-CROWN pass replayed in binary32, with or without ReLU
+phases, is the separate diagnostic `TorchLean.Certificate.CROWNNode.replayDiagnostic`, which is not
+a safety verdict. That replay gives no real enclosure, because it rounds to nearest: after the
+layers $`h = x + 1` and $`y = h + 2^{-24}` at $`x = -1`, where $`y = 2^{-24}`, the replayed upper
+form of $`y` is $`x + 1`, which is $`0` there.
 :::
 
 :::theorem "crown_node_replay_agreement" (parent := "bound_propagation") (lean := "TorchLean.Certificate.CROWNNode.replayAgrees_spec")

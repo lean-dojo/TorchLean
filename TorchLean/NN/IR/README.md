@@ -66,7 +66,8 @@ import TorchLean.NN.IR.Eval
   graphs.
 - `Tangent.lean`: `Graph.tangent` appends the forward-mode tangent of every node along given
   seeds at value ports with matching shapes, using registered operators for its own per-operator
-  rules (no theorem relates them to `jvp?`), and outputs the graph's outputs followed by their tangents.
+  rules (no theorem relates them to `jvp?`), and outputs the graph's outputs followed by their
+  tangents.
 - `Program.lean`: typed programs (`IR.Program`). Their steps are graph nodes, conversions
   and registered calls, with one scalar per step for its value, frozen and detached ports, and
   native Boolean, integer and index ports. `Program.Typed.ofDType?` gives the type of a tensor from
@@ -133,12 +134,13 @@ loads the artifact under the reference runtime with no registered custom operati
 `TorchLean.IR.load_ok` proves that the program it returns passes `Program.check .reference` and its
 payload `Payload.check`. `load` then requires the program to give every declared value its declared
 element type and shape (`Program.checkDeclared`), and `TorchLean.IR.load_declared` proves that a
-loaded program does. So a lowering that changes a value's type fails the load, with a message
-`IR types: ...` that names the value, the type the IR computes and the declared one. A document
-that names a frontend must declare these types, and a raw IR document declares none.
-`TorchLean.JAX.load` first checks that the frontend is `jaxpr` and has the same guarantee
-(`TorchLean.JAX.load_ok`). `TorchLean.IR.loadArguments` reads the arguments under a runtime, and
-`TorchLean.IR.words` gives the element type, shape and words of a value back.
+loaded program does. So a lowering that changes a declared value's type fails the load, with a
+message `IR types: ...` that names the value, the type the IR computes and the declared one. Only
+the listed values are checked, so an empty list passes. A document that names a frontend must have
+`"declared_types"`, and a raw IR document without it declares no types. `TorchLean.JAX.load` checks
+that the frontend is `jaxpr` and then runs `load`, and `TorchLean.JAX.load_ok` proves for it what
+`TorchLean.IR.load_ok` proves for `load`. `TorchLean.IR.loadArguments` reads the arguments under a
+runtime, and `TorchLean.IR.words` gives the element type, shape and words of a value back.
 
 The PyTorch capture in `python/torchlean/` and the Jaxpr capture (`python/torchlean/jaxpr.py`) lower
 their graphs to these steps (`_artifact.lower` in `python/torchlean/_artifact.py`), and the ONNX
@@ -498,7 +500,7 @@ Other divisions and products convert both operands to the result dtype and round
 is the flooring schedule above, in which the exact remainder corrects the rounded quotient, as
 Python's `//` does (`1 // 0.1` is `9`). The IR's `trunc` mode runs that schedule on the magnitudes
 with the sign of the quotient (`9` at `(1, 0.1)`). PyTorch truncates the rounded quotient (`10`), so
-the capture lowers a floating `trunc` division as `div` then `trunc`; an integer one is the IR's
+the capture lowers a floating `trunc` division as `div` then `trunc`. An integer one is the IR's
 `trunc` mode, which is exact there. Python's
 `s / x` is true division, the IR's `div` of the converted operands, which `torch.div(s, x)` computes
 too. PyTorch's `Tensor.__rtruediv__` computes `reciprocal(x) * s`, which differs from the correctly
@@ -822,9 +824,9 @@ Add `export="Model.lean"` to `verify` to keep the same capture as a self-contain
 embeds the capture and defines `Model.program`, the program of its typed artifact. Lean checks the
 included proofs of artifact decoding and `Program.check .reference` by kernel reduction when the
 module is compiled, and export does not launch a compiler. `IR.load` also validates the constant
-payload and `declared_types`; the export includes no proof of those load checks. Mathematical
+payload and `declared_types`. The export includes no proof of those load checks. Mathematical
 properties can refer to that program and the embedded constants, and they need their own proofs.
-A `.json` export keeps the capture document instead. Neither export replaces an existing file. The
+A `.json` export keeps the capture document instead. Neither export overwrites a file. The
 [captured-computation example](../../../home_page/examples/verify/index.md) exports a captured
 `square` function to `Proofs/Square.lean`.
 

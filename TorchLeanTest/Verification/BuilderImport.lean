@@ -17,8 +17,9 @@ registered operators: the bundled `zero_mlp`, `one_mlp` and `zero_siren` files u
 `TorchLeanExamples/Verification/ODE/`, and a tanh and a ReLU checkpoint written here. The ODE
 corridor graphs with their tangent graphs are built from the MLP, SIREN and tanh files on the
 direct path and from the MLP and tanh files on the TorchLean model path. Each must load and build
-(`Graph.Builder.build`, which runs `Graph.check`), and `run` fails when one is refused.
-Tangent seeds must also retain the seeded value's shape and value-port kind.
+(`Graph.Builder.build`, which runs `Graph.check`), and `run` fails when one is refused. `run`
+also checks that `Graph.tangent` accepts a seed only from a value output of the seeded input's
+shape.
 
 Whether another checkpoint builds depends on its own graph, payload and outputs, and a built graph
 says nothing about a certificate's soundness.
@@ -76,12 +77,12 @@ def cases (tanhPath reluPath : System.FilePath) : List (String × IO (Except Str
     ("ODE torchlean one_mlp", odeCheckpoint .torchlean (ode / "one_mlp.json")),
     ("ODE torchlean tanh", odeCheckpoint .torchlean tanhPath) ]
 
-/-- Check tangent seed types, write the tanh and ReLU checkpoints under
-`.lake/build/tmp/builder-import`, build every
-case of `cases` and print its node count, and fail when a case is refused. -/
+/-- Check which tangent seeds `Graph.tangent` accepts, write the tanh and ReLU checkpoints under
+`.lake/build/tmp/builder-import`, build every case of `cases` and print its node count, and fail
+when a case is refused. -/
 def run : IO Unit := do
-  -- An identity graph must retain its value's shape and kind in its tangent output too.
-  for port in [Port.value [2], Port.value [3], Port.bool [2], Port.frozen [2]] do
+  -- A seed is accepted only from a value output of the seeded input's shape.
+  for port in [Port.value [2], Port.value [3], Port.bool [2]] do
     let g : IR.Graph := ⟨#[.input 0 (.value [2]), .input 1 port], #[⟨0, 0⟩]⟩
     let result := g.tangent ({} : IR.Payload Float)
       (fun j => if j = 0 then some ⟨1, 0⟩ else none)

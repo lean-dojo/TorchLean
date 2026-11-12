@@ -7,8 +7,9 @@ SDK, while --resolve-home only checks the SDK layout and prints its path.
 
 After a build, and again whenever the checker or docs/TRUST_BOUNDARIES.md changes, the helper runs
 scripts/checks/libtorch_abi.py on the library: the operators it names and the torch symbols it
-imports must be the TRUST lists, and the SDK must register each listed schema and define each torch
-symbol the library imports. A failed check fails the build.
+imports must be the TRUST lists, the SDK's generated operator headers must declare each listed
+schema, and the SDK must define each torch symbol the library imports. A failed check fails the
+build.
 """
 
 from __future__ import annotations

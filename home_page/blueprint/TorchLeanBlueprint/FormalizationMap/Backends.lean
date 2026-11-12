@@ -240,9 +240,9 @@ The loader reads the `"artifact"` of a capture document, a typed artifact of for
 It decodes each record into a {uses "pytorch_op_wire_format"}[registered operator], checks each
 reference against the port of the input that reads it, the element type of each step and the
 outputs, and builds the payload of the constants under the reference runtime. It then requires the
-program to give each value of the document's `declared_types` its declared element type and shape,
-and refuses a document that names a frontend without them. A document without an artifact is
-refused.
+program to give each value listed in the document's `declared_types` its declared element type and
+shape, and refuses a document that names a frontend but has no `declared_types`. A document without
+an artifact is refused.
 :::
 
 :::theorem "pytorch_graph_import_well_shaped" (parent := "external_graph_bridges") (lean := "TorchLean.IR.load_ok")
@@ -265,7 +265,7 @@ document without an artifact, and `TorchLean.IR.Artifact.load_ok` gives the two 
 Every program returned successfully by {uses "pytorch_graph_import"}[the loader] gives each value
 of the document's `declared_types` the element type and shape declared there. The declarations
 come from the capture, so this catches a lowering that disagrees with the framework's metadata, not
-a wrong declaration.
+a wrong or missing declaration.
 :::
 
 :::proof "pytorch_graph_import_declared"

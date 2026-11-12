@@ -728,9 +728,8 @@ def argmaxDocument : Json :=
     ("dtype", toJson IR.DType.float32), ("shape", toJson [2, 3]),
     ("bits", toJson [0, 1077936128, 1065353216, 1084227584, 1073741824, 1082130432])]])]
 
-/-- A result of index tuples is reported, with its port and components. A result that cannot be
-written fails `execute`, and comparing index tuples with a reference tensor fails with a message
-that says so. -/
+/-- A result of index tuples is reported, with its port and components, and comparing index tuples
+with a reference tensor fails with a message that says so. -/
 def runIndexResults : IO Unit := do
   let r := report argmaxDocument
   let expected := Json.mkObj [("element_type", toJson "index"), ("dtype", Json.null),
@@ -739,12 +738,6 @@ def runIndexResults : IO Unit := do
   unless r.getObjValD "ok" == .bool true && r.getObjValD "outputs" == Json.arr #[expected] do
     throw <| IO.userError s!"report index result: got {r.compress}"
   IO.println s!"  report index result: {(r.getObjValD "outputs").compress}"
-  let unwritten := Capture.check argmaxDocument #["structure", "types", "execute"]
-    (fun _ => throw "no writer")
-  expectCheck "unwritten result" unwritten "execute" "failed"
-    "IR: result 0 cannot be serialized: no writer"
-  unless unwritten.getObjValD "outputs" == .null do
-    throw <| IO.userError s!"report unwritten result: outputs {unwritten.compress}"
   let compared := argmaxDocument.setObjVal! "reference_outputs" (Json.arr #[Json.mkObj [
     ("dtype", toJson (IR.DType.integer true (some 64))), ("shape", toJson [2]),
     ("bits", toJson [1, 0])]])

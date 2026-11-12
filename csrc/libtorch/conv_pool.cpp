@@ -10,8 +10,8 @@
 #include <tuple>
 #include <vector>
 
-// The ATen schemas we call are in schemas.h; the build checks them against the torch it builds
-// with.
+// The ATen schemas we call are in schemas.h, and the build checks them against the torch it
+// builds with.
 // Backward calls return explicit cotangents to the Lean tape and record no autograd graph.
 namespace torchlean __attribute__((visibility("hidden"))) {
 namespace conv_pool {

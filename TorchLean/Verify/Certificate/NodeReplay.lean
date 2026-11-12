@@ -237,11 +237,11 @@ def affineFormOk {n m : Nat} (upper : Bool) (a : Linear (ExecFloat.Binary 8 23) 
 Parse flattened affine bounds `{"loA": [[...]], "loC": [...], "hiA": [[...]], "hiC": [...]}` from
 JSON, with `null` for no bound.
 
-The affine transcript must equal Lean's binary32 replay bit for bit, so each exact decimal
-coefficient is read as the binary32 value nearest to it, with a single rounding that keeps the sign
-of a zero. A matrix entry whose binary32 value is not finite is refused. An offset may be the
-infinity that bounds nothing on its side, `-∞` in `loC` and `+∞` in `hiC` (written `-1e39` and
-`1e39`, as by `endpointValue`), and an offset rounding to the other infinity is refused.
+The replay diagnostic compares the affine transcript with Lean's binary32 replay bit for bit, so
+each exact decimal coefficient is read as the binary32 value nearest to it, with a single rounding
+that keeps the sign of a zero. A matrix entry whose binary32 value is not finite is refused. An
+offset may be the infinity that bounds nothing on its side, `-∞` in `loC` and `+∞` in `hiC` (written
+`-1e39` and `1e39`, as by `endpointValue`), and an offset rounding to the other infinity is refused.
 -/
 def parseAffineBounds? (inDim outDim : Nat) (v : Value) :
     IO (Option (FlatAffineBounds (ExecFloat.Binary 8 23))) := do

@@ -205,7 +205,7 @@ void initialize() {
   std::call_once(initialization, [] {
     unstable::initialize(deterministic_reductions_requested());
     // An empty tensor on the device initializes torch's CUDA state, as
-    // `at::globalContext().lazyInitDevice(kCUDA)` did.
+    // `at::globalContext().lazyInitDevice(kCUDA)` does.
     aten<"empty.memory_format">({0}, tensor_options{}.dtype(kByte).device(device()));
   });
 }
@@ -214,8 +214,8 @@ std::int32_t device_index() { return selected_device.load(); }
 
 tensor_options options() { return tensor_options{}.dtype(kFloat).device(device()); }
 
-// A buffer's tensor never requires gradients: every entry point runs in no-grad mode, the bridge
-// never requests gradients, and the native tests check the tensors they box with `of_handle`.
+// A buffer's tensor never requires gradients: the bridge never requests them, the entry points
+// other than `of_handle` compute in no-grad mode, and the native tests check what they box.
 const Tensor& tensor(b_lean_obj_arg object) {
   const auto* buffer = torchlean_cuda_buffer_unbox(object);
   TORCHLEAN_CHECK(buffer->tensor.has_value(), "LibTorch: buffer has been released");
@@ -578,7 +578,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_bytes_io(
   return io([&] { return torchlean::box(upload_bytes(object, scalar_type(dtype), scalar_type(source))); });
 }
 
-// The release of the loaded torch runtime, which may be later than the release the bridge was
+// The release of the loaded torch runtime, which may be later than the release the bridge is
 // built against.
 extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_version() {
   const uint64_t version = aoti_torch_abi_version();
@@ -1425,8 +1425,8 @@ Tensor device_indices(const std::vector<int64_t>& values, const Tensor& like) {
 // The sums of segments of the rows of a rank-two input, each column of a segment folded in order
 // from `initial`: a segment of rows r, r + 1, ... gives (((initial + data[r, c]) + data[r + 1, c])
 // + ...) in column c, one rounding per row. CUDA segment_reduce computes this "sum" of a rank-two
-// input on axis 0 (segment_reduce_forward_kernel in aten/src/ATen/native/cuda/SegmentReduce.cu;
-// rank one selects a CUB reduction instead), but its `str reduce` and `Scalar? initial` cannot
+// input on axis 0 (segment_reduce_forward_kernel in aten/src/ATen/native/cuda/SegmentReduce.cu,
+// with a CUB reduction at rank one), but its `str reduce` and `Scalar? initial` cannot
 // pass the stable dispatcher, and ATen does not promise the order. A generated kernel therefore
 // folds each column of a segment in one thread. TorchLeanTest/CUDA/Numerics.lean checks the order.
 Tensor ordered_segments(const Tensor& data, const std::vector<int64_t>& lengths,
@@ -1489,7 +1489,7 @@ Tensor max_ignoring_nan(const Tensor& input, int64_t axis, bool keepdim = false)
 
 Tensor log_normalizer(const Tensor& shifted, const Tensor& pivot, int64_t axis) {
   // scatter.src with zeros writes what scatter.value with 0 writes, whose Scalar the stable
-  // dispatcher cannot pass; each row has one pivot.
+  // dispatcher cannot pass. Each row has one pivot.
   const auto others = aten<"scatter.src">(aten<"exp">(shifted), axis, pivot,
                                           aten<"zeros">(pivot.sizes(), options(shifted)));
   return aten<"log1p">(aten<"sum.dim_IntList">(others, {axis}, true));

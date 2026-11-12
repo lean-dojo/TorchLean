@@ -17,12 +17,14 @@ Per-node α-CROWN certificates on graphs of registered operators (`TorchLean.IR.
 optional ReLU phases: the safety verdict `check` and the replay diagnostic `replayDiagnostic`.
 
 `check` reads a certificate and decides it with `TorchLean.Certificate.FiniteArtifact.accepts`
-(`verdict_ok`). The graph must be one vector input followed by linear layers and ReLU nodes. Each
-affine entry is read as its exact rational value and must dominate the exact transfer of its
-parent's entry over the input box, and the requested output inequalities must hold on the output's
-bounds. `FiniteArtifact.accepts_graph_sound` then proves the inequalities for every real input in
-the box, on the graph evaluated in real arithmetic on the exact values of its binary32 constants.
-`check` rejects every other graph.
+(`verdict_ok`). The graph must be one vector input followed by linear layers and ReLU nodes.
+`accepts` decodes the affine entries of the input node and of each `Op.linear` and `Op.relu` node as
+exact rational values, and ignores those of the weight and bias constants. Over the input box, the
+input's entry must dominate the identity, each other decoded entry must dominate the exact transfer
+of its parent's entry, and the requested output inequalities must hold on the output's bounds.
+`FiniteArtifact.accepts_graph_sound` then proves the inequalities for every real input in the box,
+on the graph evaluated in real arithmetic on the exact values of its binary32 constants. `check`
+rejects every other graph.
 
 `replayDiagnostic` mirrors `TorchLean.Certificate.IBPNode` for the affine bounds of a CROWN/DeepPoly
 pass, with optional α-parameters for the ReLU lower relaxation (α-CROWN). Lean replays each node
@@ -66,7 +68,7 @@ no information beyond IBP: with none given the replay is plain α-CROWN, and wit
 
 Trust boundary notes:
 - The certificate is untrusted. `check` accepts it only if `FiniteArtifact.accepts` does, which
-  refuses every infinite or NaN coefficient.
+  refuses an infinite or NaN coefficient in every entry it decodes.
 - `replayDiagnostic` reports where the binary32 affine transcript differs from Lean's replay. The
   replay rounds each sum, product and quotient to nearest, so a transcript equal to it need not
   enclose the graph, and agreement is not a safety verdict. After the layers `h = x + 1` and

@@ -96,7 +96,7 @@ def _check_static(leaves: Sequence[Any], dynamic: Sequence[bool], framework: str
 
 
 def _copy(value: Any, what: str) -> Any:
-    """A deep copy of ``value``, the JAX capture's ``what``; an object that cannot be copied (one
+    """A deep copy of ``value``, the JAX capture's ``what``. An object that cannot be copied (one
     holding a lock, say) is refused."""
     try:
         return copy.deepcopy(value)
@@ -349,7 +349,7 @@ typed TorchLean IR program with the words of its constants. The constants, types
 input/output order belong to the same capture as the check report. The proofs below establish
 artifact decoding and `Program.check .reference`, the program's dependency, shape, type and
 interface checks. The report also validates the constant payload and `declared_types` through
-`IR.load`; those load checks, frontend equivalence and kernel equivalence are not proved here.
+`IR.load`. Those load checks, frontend equivalence and kernel equivalence are not proved here.
 Further properties can use the tensor semantics, with constants decoded by `artifact.load`.
 -/
 
@@ -425,8 +425,8 @@ def verify(model: Any, example: Any = _NO_EXAMPLE, *examples: Any, frontend: str
     Capture and translation are automatic. Optional ``export="model.json"`` saves the JSON
     document sent to Lean, and ``export="Model.lean"`` embeds it in a Lean module exposing
     ``Model.program`` and proofs of artifact decoding and ``Program.check .reference``. The
-    report also validates the constant payload and ``declared_types`` through ``IR.load``;
-    the export includes no proof of those load checks. Further mathematical proofs can refer to
+    report also validates the constant payload and ``declared_types`` through ``IR.load``.
+    The export includes no proof of those load checks. Further mathematical proofs can refer to
     this program without recapturing the function. Export writes proof source: opening or
     compiling the Lean module checks its proofs. The Lean filename must be an ASCII identifier.
     Existing files are never replaced. The export is written before the checks run, so a failed

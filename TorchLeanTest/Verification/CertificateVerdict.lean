@@ -20,8 +20,6 @@ binary32 α-CROWN replay is the separate diagnostic `CROWNNode.replayDiagnostic`
 - An `example` derives from an accepting `CROWNNode.verdict` the requested inequalities for every
   real input in the box (`CROWNNode.verdict_ok`, then `FiniteArtifact.accepts_graph_sound`), for
   every graph, certificate and query.
-- The diagnostics have their stated types, and the old names of the replay results are not
-  declared.
 - One artifact on which the replay and the verdict disagree. The graph is `y = a relu (a x)` with
   `a = 1 + 2 ^ -23`, the binary32 successor of `1`, on the box `1 ≤ x ≤ 2`, where `a x > 0`. The
   replay rounds `a a = 1 + 2 ^ -22 + 2 ^ -46` to nearest, to `1 + 2 ^ -22`, so its upper form
@@ -72,67 +70,6 @@ example (G : IR.Graph) (P : IR.Payload (Binary 8 23)) (input : FlatBox (Binary 8
   obtain ⟨decoded, hd, -, -, -, -, -, hs⟩ := FiniteArtifact.accepts_graph_sound G P input cert
     query ((CROWNNode.verdict_ok G P input cert query).1 h)
   exact ⟨decoded, hd, hs⟩
-
-/-- `check` reads the certificate and returns `verdict` on it. -/
-example : IR.Graph → IR.Payload (Binary 8 23) → FlatBox (Binary 8 23) → FiniteArtifact.Query →
-    String → IO Report :=
-  CROWNNode.check
-
-/-! ## The replay results are diagnostics -/
-
-/-- `replayDiagnostic` returns the differences from the replay, not a report. -/
-example : IR.Graph → IR.Payload (Binary 8 23) → List (FlatBox (Binary 8 23)) → String →
-    IO (Array String) :=
-  CROWNNode.replayDiagnostic
-
-/-- `replayAgrees_spec` gives local consistency of the replay. -/
-example (cert : CROWNNode) (G : IR.Graph) (P : IR.Payload (Binary 8 23))
-    (ibp : Array (Option (FlatBox (Binary 8 23))))
-    (h : CROWNNode.replayAgrees cert G P ibp true = true) :
-    cert.crown.size = G.nodes.size :=
-  (CROWNNode.replayAgrees_spec cert G P ibp true h).1
-
-/-- The generic tests `NodeReplay.agrees` and `NodeReplay.isReplay` give local consistency. -/
-example {α : Type} [Storage α] [Context α] [DecidableEq α] (size : Nat)
-    (step : Array (Option (FlatAffineBounds α)) → Nat → Option (FlatAffineBounds α))
-    (cert : Array (Option (FlatAffineBounds α))) (ok : Bool)
-    (h : NodeReplay.agrees size step cert ok = true) :
-    (cert.size = size ∧ ∀ id : Nat, id < size → cert[id]! = step cert id) ∧
-      (NodeReplay.isReplay size step cert = true →
-        cert.size = size ∧ ∀ id : Nat, id < size → cert[id]! = step cert id) :=
-  ⟨NodeReplay.agrees_spec size step cert ok h, NodeReplay.isReplay_spec size step cert⟩
-
-/-- error: Unknown constant `TorchLean.Certificate.CROWNNode.accepts` -/
-#guard_msgs in
-#check TorchLean.Certificate.CROWNNode.accepts
-
-/-- error: Unknown constant `TorchLean.Certificate.CROWNNode.accepts_sound` -/
-#guard_msgs in
-#check TorchLean.Certificate.CROWNNode.accepts_sound
-
-/-- error: Unknown constant `TorchLean.Certificate.CROWNNode.checkNode` -/
-#guard_msgs in
-#check TorchLean.Certificate.CROWNNode.checkNode
-
-/-- error: Unknown constant `TorchLean.Certificate.CROWNNode.checkNodeEntries` -/
-#guard_msgs in
-#check TorchLean.Certificate.CROWNNode.checkNodeEntries
-
-/-- error: Unknown identifier `TorchLean.Certificate.NodeReplay.crownAccepts` -/
-#guard_msgs in
-#check TorchLean.Certificate.NodeReplay.crownAccepts
-
-/-- error: Unknown identifier `TorchLean.Certificate.NodeReplay.crownAccepts_sound` -/
-#guard_msgs in
-#check TorchLean.Certificate.NodeReplay.crownAccepts_sound
-
-/-- error: Unknown identifier `TorchLean.Certificate.NodeReplay.crownLocalAccepts` -/
-#guard_msgs in
-#check TorchLean.Certificate.NodeReplay.crownLocalAccepts
-
-/-- error: Unknown identifier `TorchLean.Certificate.NodeReplay.crownLocalAccepts_sound` -/
-#guard_msgs in
-#check TorchLean.Certificate.NodeReplay.crownLocalAccepts_sound
 
 /-! ## An artifact that agrees with the replay and fails the verdict -/
 

@@ -109,7 +109,7 @@ Each requested check has its own result:
 | --- | --- |
 | `structure` | The typed artifact passes the shared dependency, arity, and shape checks. |
 | `types` | Operand/result types, explicit casts, and the program interface are consistent, and the program gives every value the capture lowered the element type and shape that PyTorch or JAX recorded for it (`declared_types`). |
-| `execute` | CPU reference execution completed for the supplied arguments, and every result was written to `report["outputs"]`. |
+| `execute` | CPU reference execution completed for the supplied arguments, and `report["outputs"]` holds every result. |
 | `compare` | Its output types, shapes, and complete binary words match the supplied reference for those arguments. Two NaN results match whatever their sign and payload, which the IR leaves unspecified. |
 | `compare_bitwise` | As `compare`, with NaN words compared too. |
 
@@ -248,7 +248,7 @@ Export uses the artifact from this call, not another run of the Python function,
 retain their complete element words. Existing files are never replaced. When you only want the
 interchange artifact, use a `.json` filename instead. Unsupported capture creates no export. A
 failed check can still leave an export for inspection. The report also validates the constant
-payload and `declared_types` through `IR.load`; the generated module includes no proof of those
+payload and `declared_types` through `IR.load`. The generated module includes no proof of those
 load checks.
 
 We can also state theorems about the graph itself. Our JAX example proves permutation invariance of

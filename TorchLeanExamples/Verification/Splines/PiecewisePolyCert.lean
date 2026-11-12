@@ -266,7 +266,7 @@ success message.
 def checkJson (j : Json) : IO Unit := do
   let cert ← Certificate.parse j
   Certificate.checkRat cert
-  IO.println "Piecewise polynomial certificate verified."
+  IO.println "Piecewise polynomial certificate accepted by the exact rational check."
 
 /--
 Convert a rational to an *exact* finite `Binary32` value, raising an error otherwise.
@@ -340,14 +340,14 @@ def Certificate.checkBinary32 (cert : Certificate) : IO Unit := do
             s!"(bits {ExecFloat.Binary.toBits32 pHi32} vs " ++
             s!"{ExecFloat.Binary.toBits32 yHi32})")
 
-  IO.println "binary32 check verified (exact representability + endpoint equalities)."
+  IO.println "binary32 check passed: exact representability and endpoint equalities."
 
 /-- Check a piecewise-polynomial certificate stored as JSON exactly over `Rat`, then replay its
 endpoint equalities under `Binary32` arithmetic. -/
 def checkJsonBinary32 (j : Json) : IO Unit := do
   let cert ← Certificate.parse j
   Certificate.checkRat cert
-  IO.println "Piecewise polynomial certificate verified."
+  IO.println "Piecewise polynomial certificate accepted by the exact rational check."
   Certificate.checkBinary32 cert
 
 end TorchLean.Examples.Splines

@@ -824,7 +824,8 @@ finite value and `2 ^ 128`) is the infinity of its sign, and a smaller one is fi
 `NodeReplay.affineBoundsValue?` emit `±1e39`. The replay diagnostic reports a `crown` entry that
 differs from Lean's replay in any bit. Matrix entries must be finite, and an offset may be the
 infinity that bounds nothing on its side (`-∞` in `loC` and `+∞` in `hiC`), but the other infinity
-is refused. `CROWNNode.check` refuses every infinite coefficient.
+is refused. `CROWNNode.check` refuses an infinite coefficient in every entry it decodes: those of
+the input node and of the `Op.linear` and `Op.relu` nodes.
 
 `IBP.check` instead uses host `Float` and takes the index of a graph output. Its artifact
 stores the box of that output, not a trace for every node.

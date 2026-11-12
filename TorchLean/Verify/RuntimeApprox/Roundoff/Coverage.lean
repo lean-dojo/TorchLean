@@ -1467,9 +1467,10 @@ where
       | .mdata _ inner => visit inner state
       | _ => state
 
-/-- Whether `term` decodes or classifies a scalar that is not an input read. This includes
-comparisons of computed scalars: a reference that retains such a branch still depends on the
-rounded computation that selects it. The error of a `TrackedSum` decodes its partial sums. -/
+/-- Whether `term` reads a computed scalar: a decoding or classification of a scalar that is not
+an input read, a comparison of floating-point scalars with an operand that is neither an input read
+nor a negated literal, or the error of a `TrackedSum`, which decodes its partial sums. A reference
+that branches on such a comparison depends on the rounded computation. -/
 def decodesComputedValue (term : Expr) : MetaM Bool := do
   unless (applicationsOf #[``TrackedSum.error] term).isEmpty do return true
   let observations := applicationsOf #[``ExecFloat.Binary.toReal, ``ExecFloat.Binary.toModel,
@@ -1480,7 +1481,9 @@ def decodesComputedValue (term : Expr) : MetaM Bool := do
     | .proj _ _ value => return !(← isInputRead value)
     | observation => return !(← isInputRead observation.appArg!) then
     return true
-  for comparison in applicationsOf #[``LT.lt, ``LE.le, ``BEq.beq, ``Ord.compare, ``Eq, ``Ne] term do
+  let comparisons := applicationsOf #[``LT.lt, ``LE.le, ``GT.gt, ``GE.ge, ``BEq.beq, ``bne,
+    ``Ord.compare, ``Eq, ``Ne] term
+  for comparison in comparisons do
     let arguments := comparison.getAppArgs
     let first := if comparison.isAppOfArity ``Eq 3 || comparison.isAppOfArity ``Ne 3 then 1 else 2
     unless arguments.size == first + 2 do continue

@@ -27,25 +27,28 @@ Shared local bindings stay shared. Eager execution records the calls on its tape
 differentiation engine and gradient representation handle them.
 
 Every recording of a function `f` adds a kernel-checked theorem about `f` itself: the recorded
-program, run by the pure interpreter (`TorchLean.instOpsId`, which applies each operator's rule;
-never another `Ops Id` instance in scope) in the recording's element context, maps every
-input `t` to `Tensor.map f t` for a scalar function, to `f t` for a tensor function and to
-`Tensor.scalar (f t)` for a function from a tensor to a scalar. The recorder proves it node by
-node. At every recorded operation it proves that the operator's forward, in the recording's
-element context and at arbitrary operands, equals the source application with the source's own
-instances: definitionally within a heartbeat bound, through FloatLib's `Capability.run_eq_spec`
-when two capabilities of a configured format have one specification, or by an operator lemma such
-as `pureApply_matmul`. An operation whose source instance computes something else than the
-operator in that context, for example a local `Mul` instance that subtracts, is an error. No ring
-simplification, reassociation, precision conversion or speculative derivative is used.
+program, run by the pure interpreter `TorchLean.instOpsId` in the recording's element context, maps
+every input `t` to `Tensor.map f t` for a scalar function, to `f t` for a tensor function and to
+`Tensor.scalar (f t)` for a function from a tensor to a scalar. The interpreter applies each
+operator's rule, and no other `Ops Id` instance in scope takes its place. The recorder proves the
+theorem node by node. At every recorded operation it proves that the operator's forward, in the
+recording's element context and at arbitrary operands, equals the source application with the
+source's own instances: definitionally within a heartbeat bound, through FloatLib's
+`Capability.run_eq_spec` when two capabilities of a configured format have one specification, or by
+an operator lemma such as `pureApply_matmul`. An operation whose source instance computes something
+other than the operator in that context, for example a local `Mul` instance that subtracts, is an
+error. No ring simplification, reassociation, precision conversion or speculative derivative is
+used.
 
-The theorem covers the pure interpreter only. That the eager tape computes the same values, and
-that its backward is the derivative, rest on the local derivative laws and the graph-composition
-theorems and are not part of this check. A foreign backend's implementation lies outside it. The
-element context is the recording's own, which `Function.run` finds by instance search, local
-instances included. The theorem holds in that context, and the gradient is the backward of the
-operators' rules in it; the derivative laws are proved over `ℝ`, so in a context whose
-multiplication is not the scalar's the gradient need not be the derivative of the source.
+The theorem covers the pure interpreter only. When a scalar function does not record at its input's
+shape, `Function.run` records it at shape `[]` and lifts that recording to every entry with
+`Recording.elementwise`, and no theorem covers the lifted program. That the eager tape computes the
+same values, and that its backward is the derivative, rest on the local derivative laws and the
+graph-composition theorems and are not part of this check. A foreign backend's implementation lies
+outside it. The element context is the recording's own, which `Function.run` finds by instance
+search, local instances included. The theorem holds in that context, and the gradient is the
+backward of the operators' rules in it. The derivative laws are proved over `ℝ`, so in a context
+whose multiplication is not the scalar's the gradient need not be the derivative of the source.
 
 The call site's input supplies the element type and shape. Captured scalars and tensors are
 constants and receive no gradient. Scalar conditionals inspect the current value and record only
@@ -106,8 +109,9 @@ theorem iterate_induction {β : Type} (R : Nat → β → Prop) (step : Nat → 
   | zero => exact zero
   | succ n ih => exact succ n _ ih
 
-/-- Constructor equations identify a recurrence without imposing algebraic laws or reassociation.
-A corollary of `iterate_induction`. -/
+/-- A function `f` with `f 0 = initial` and `f (n + 1) = step n (f n)` for every `n` equals the
+recursion `Nat.rec initial step` at every `n`. The equations impose no algebraic law or
+reassociation. -/
 theorem recurrence_eq {α : Type} (f : Nat → α) (initial : α) (step : Nat → α → α)
     (hzero : f 0 = initial) (hsucc : ∀ n, f (n + 1) = step n (f n)) (n : Nat) :
     Nat.rec initial step n = f n :=
@@ -280,8 +284,8 @@ private def rel (env : Env) (shape : Lean.Expr) (tensorKind : Bool) (v s : Lean.
 private def idSubst (env : Env) (e : Lean.Expr) : Lean.Expr :=
   e.replaceFVars #[env.monad, env.monadInst, env.ops] #[env.idM, env.idMonad, env.idOps]
 
-/-- Run `k` with a budget of `budget` thousand heartbeats; `none` on any failure, with the state
-restored. -/
+/-- Run `k` with a budget of `budget` thousand heartbeats, counted from the call. The result is
+`none` on any failure, and then the state is restored. -/
 private def bounded {β : Type} (budget : Nat) (k : MetaM β) : MetaM (Option β) := do
   let saved ← saveState
   tryCatchRuntimeEx
@@ -289,7 +293,7 @@ private def bounded {β : Type} (budget : Nat) (k : MetaM β) : MetaM (Option β
       (withCurrHeartbeats (some <$> k)))
     (fun _ => do saved.restore; return none)
 
-/-- Bounded definitional equality at `mode`, assigning no existing metavariable. -/
+/-- Bounded definitional equality at `mode`, treating the caller's metavariables as constants. -/
 private def boundedDefEq (mode : TransparencyMode) (budget : Nat) (a b : Lean.Expr) :
     MetaM Bool :=
   return (← bounded budget (withNewMCtxDepth (withTransparency mode (isDefEq a b)))) == some true
@@ -481,7 +485,7 @@ private def forwardStep (operator : Name) (forward : Lean.Expr) :
 
 /-- A proof of `rel (top at fresh operands) (source head at fresh operands)`, or the error of
 `reject`. Nodes marked `exact` are compared as a whole after the context's instances replace the
-source's; the others also entry by entry (`pw`, `agree`). -/
+source's. The others are also compared entry by entry (`pw`, `agree`). -/
 private def proveFact (env : Env) (exact : Bool) (shape topW : Lean.Expr) (tensorKind : Bool)
     (srcW source : Lean.Expr) (operator : Name) : MetaM Lean.Expr := do
   let lhs := if tensorKind then topW else getAt env shape topW env.coord
@@ -844,10 +848,11 @@ syntax (name := programStx) "record_function% " term:max : term
 open Lean Meta Elab Term
 
 /-- Elaborates `record_function% f` as an `Ops` computation of the expected program type, and adds
-a kernel-checked auxiliary theorem (kind `_recordedArithmetic`) that the computation, run in `Id`,
-is `f`: `∀ t, program t = Tensor.map f t` for a scalar function `f`, `program t = f t` for a tensor
-function and `program t = Tensor.scalar (f t)` for a function from a tensor to a scalar. An
-operation that the recorded operator does not compute, instance included, is an error. -/
+a kernel-checked auxiliary theorem (kind `_recordedArithmetic`) that the computation, run by the
+pure interpreter `TorchLean.instOpsId`, is `f`: `∀ t, program t = Tensor.map f t` for a scalar
+function `f`, `program t = f t` for a tensor function and `program t = Tensor.scalar (f t)` for a
+function from a tensor to a scalar. An operation whose source instance computes something other
+than its recorded operator is an error. -/
 @[term_elab programStx]
 def elaborateProgram : TermElab := fun stx expectedType? => withRef stx do
   let `(record_function% $source) := stx | throwUnsupportedSyntax
@@ -890,7 +895,7 @@ def elaborateProgram : TermElab := fun stx expectedType? => withRef stx do
         throwError "recording: the {label} is not known when the program is recorded"
     if function.hasExprMVar then
       throwError "recording: the function has unknown parts: {function}"
-    -- the theorem is about the pure interpreter itself, never an instance found in scope
+    -- The theorem is about the pure interpreter itself, never an `Ops Id` instance in scope.
     let idM := Lean.mkConst ``Id [Level.zero]
     let idMonad := Lean.mkConst ``Id.instMonad [Level.zero]
     let idOps := mkAppN (Lean.mkConst ``TorchLean.instOpsId)

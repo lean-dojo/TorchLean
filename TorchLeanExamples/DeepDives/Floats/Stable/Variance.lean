@@ -186,4 +186,10 @@ theorem sampleVar_zero {n : ℕ} (hn : 2 ≤ n) {d : Binary.Desc} {x : Fin n →
   show (∑ i, ((toReal ∘ x) i - (∑ j, (toReal ∘ x) j) / n) ^ 2) / (n - 1) = 0
   rw [he, sum_sq_sub_mean_const (by omega), zero_div]
 
+/-- In binary32, floor division rounded once returns `-0` at `(0, -1)`, as `0.0 // -1` does in
+CPython. -/
+example : Binary.toModel (Target.floorDivProg.float Binary.binary32
+    ![Binary.ofSign _ .zero, Binary.ofSign _ .neg]) = Model.negZero _ := by
+  decide +kernel
+
 end TorchLean.Examples.Stable

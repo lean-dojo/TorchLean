@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 project(TorchLeanElementwiseRegression LANGUAGES CXX)
 
 # Configure against the torch package or SDK to run with and the backend's Lean toolchain. The
-# backend may be built against an earlier release: it uses only the LibTorch Stable ABI.
+# backend may be built against an earlier release: outside unstable.cpp it uses only the Stable ABI.
 # Link the production backend so that the tests exercise its actual C ABI and invoke guard.
 foreach(required TORCHLEAN_LIBTORCH_HOME TORCHLEAN_LEAN_PREFIX TORCHLEAN_BACKEND_LIBRARY)
   if(NOT DEFINED ${required})

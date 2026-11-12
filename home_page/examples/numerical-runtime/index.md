@@ -241,9 +241,9 @@ is `proved` when its theorem has no premise and its reference and budget decode 
 without a numerical rule, and `failed` when it stopped otherwise. Failed and unsupported routes
 supply no error bound. Current failures include value-dependent integer casts in max/min gradients
 and analyses that exceed the heartbeat budget. The premises are counted by class.
-A caveat marks a budget or reference that depends on computed values or uses an enclosure in place
-of a rounding theorem. This includes references that keep branch decisions made by rounded
-arithmetic. The theorem holds, but it is not an a priori bound. Graph lowerings, which
+A caveat marks a budget or reference that decodes computed values, such as a reference that
+branches on a comparison of computed scalars, or a proof that uses an enclosure in place of a
+rounding theorem. The theorem holds, but it is not an a priori bound. Graph lowerings, which
 build whole tapes from the graph they are given, and the LibTorch tape builders, which run device
 kernels, are not analyzed. The coverage check of `scripts/lake.sh lint` fails unless every public
 operator specification and tape constructor under `TorchLean/` is registered with

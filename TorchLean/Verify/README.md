@@ -174,7 +174,7 @@ diagnostics.
 | `Capture.checkError`, `Capture.checkPrediction` | A, about the binary reference runtime, not `ℝ` | `checkError_sound`, `checkPrediction_sound` |
 | `IBPNode.check` | C | binary32 has no `LawfulBoundOps` instance, so `Op.Directed.encloses_of_run` does not apply |
 | `IBP.check` (`ibp-cert`) | C | host `Float` |
-| `AbCROWNLeaf.check` (`abcrown-leaf`) | C | exact rational consistency of the leaves only; the format has no graph |
+| `AbCROWNLeaf.check` (`abcrown-leaf`) | C | exact rational consistency of the leaves only, as the format has no graph |
 | `Capture.check` (`ir`, Python `torchlean.verify`) | C | structure, types and runs on the reference runtime |
 | `Trainer.Result.verify`, `Verification.forLowered`, `Verification.Result.fromBounds` (`torchlean-mlp-workflow`) | C | host `Float` bounds |
 | `NumericalCertificate.check` | C | binary32 execution with no real enclosure |

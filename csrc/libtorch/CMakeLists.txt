@@ -50,9 +50,9 @@ foreach(include_dir IN LISTS TORCH_INCLUDE_DIRS)
   endif()
 endforeach()
 # torchlean.cpp, conv_pool.cpp, tree.cpp and kernels.cpp call torch only through the LibTorch Stable
-# ABI of torch 2.13 (TORCH_TARGET_VERSION is TORCH_VERSION_2_13_0), so the library also runs with
-# later releases. unstable.cpp holds what that ABI cannot express; docs/TRUST_BOUNDARIES.md lists
-# both.
+# ABI of torch 2.13 (TORCH_TARGET_VERSION is TORCH_VERSION_2_13_0), so their calls also run with
+# later releases. unstable.cpp holds what that ABI cannot express, and docs/TRUST_BOUNDARIES.md
+# lists both.
 if(torch_sdk_version VERSION_LESS 2.13)
   message(FATAL_ERROR "The LibTorch bridge needs torch 2.13 or later, not ${torch_sdk_version}.")
 endif()

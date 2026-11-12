@@ -135,11 +135,13 @@ to the inputs). For each recording the frontend adds a kernel-checked theorem: t
 program, run by the pure interpreter, computes our function. Each operation is recorded only when
 it computes what the recorded operator computes in the element type's context, instance included,
 so an `x * y` whose `Mul` instance means something else is an error rather than a wrong gradient.
-The theorem covers the pure interpreter, not the eager tape or a GPU kernel. There's no separate
-custom-gradient tape. Captured tensors are constants, and backward differentiates the supplied
-input. Division and direct negation use that same interface. Scalar input-dependent conditionals
-record only the chosen branch, while fixed-parameter scalar recurrences record each step (and the
-count must be independent of differentiable inputs).
+The theorem covers the pure interpreter, not the eager tape or a GPU kernel. When a scalar function
+doesn't record at its input's shape, `run` records it at shape `[]` and lifts it to every entry, and
+no theorem covers that lift. There's no separate custom-gradient tape. Captured tensors are
+constants, and backward differentiates the supplied input. Division and direct negation use that
+same interface. Scalar input-dependent conditionals record only the chosen branch, while
+fixed-parameter scalar recurrences record each step (and the count must be independent of
+differentiable inputs).
 
 Backward consumes the recording, even on failure. Its default seed is all ones, which gives the
 derivative of the sum of output entries. Pass `result.backward seed` to supply different output

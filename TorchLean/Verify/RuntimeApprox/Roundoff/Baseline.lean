@@ -25,10 +25,10 @@ The library check `scripts/checks/Library.lean` computes the same rows from the 
 - a budget that is larger at one of binary16, bfloat16, binary32 and binary64. The budgets are
   `r` and `a` of a mixed bound and `ε` of an absolute one, evaluated by `norm_num` after the unit
   roundoff and the underflow error of the format are unfolded, and compared whenever both have
-  values at the same formats, whatever their terms. A budget without a value is compared by a hash
-  of its term and a hash of the definitions it uses (`mixUses`: the types, values and constructors
-  of the constants of TorchLean and FloatLib it uses, and of those these use in turn), and a
-  change of either is a regression;
+  values at the same formats, whatever their terms. Otherwise a change of the hash of the term, of
+  a hash of the definitions it uses (`mixUses`: the types, values and constructors of the constants
+  of TorchLean and FloatLib it uses, and of those these use in turn) or of the values is a
+  regression;
 - at an equal status, a new premise, compared by a hash of its statement, or a new caveat;
 - a key that is gone.
 
@@ -38,14 +38,15 @@ with one line each, and on each line of the file that is not a row. With
 `TORCHLEAN_ROUNDOFF_BASELINE=update` it writes the rows to the file instead, unless there is a
 regression or such a line, and with `TORCHLEAN_ROUNDOFF_BASELINE=accept` it writes them in any
 case and prints each regression. The rows are written in the same order with the same text each
-time. The evidence, the class counts
-of the premises, `usesIEEE` and the reason are recorded for information and not compared.
+time. The evidence, the class counts of the premises, `usesIEEE` and the reason are recorded for
+information and not compared.
 
 The budget comparison is sound only at the four formats. If `r' ≤ r` and `a' ≤ a` at a format,
 then `|x - x₀| ≤ r' * |x₀| + a'` implies `|x - x₀| ≤ r * |x₀| + a` there, so the new bound implies
 the old one at the four formats and at no other. Budgets without values count as equal when their
-terms and definitions have the same hashes; a change in Mathlib or core behind the same term is
-not seen.
+terms and definitions have the same hashes, so a change in Mathlib or core behind the same term is
+not seen. The rows do not record whether a mixed bound comes with the finiteness of the computed
+value, so a theorem that loses that conjunct is not a regression.
 -/
 
 public meta section
@@ -114,7 +115,7 @@ structure Row where
   operator : String
   /-- The route, empty when the declaration is not analyzed. -/
   route : String
-  /-- The scalar the route was analyzed for. -/
+  /-- The scalar the route is analyzed for. -/
   backend : String
   /-- `absolute` or `mixed`, empty without a route. -/
   mode : String
@@ -430,13 +431,17 @@ def atFormat (format : String) : String :=
 
 /-- The differences between the budget `old` of the file and the budget `new` of the analysis
 `row` with the same name. They are compared by their values when both have values at the same
-formats, and by the hashes of their terms and definitions otherwise. -/
+formats. Otherwise a change of the hash of the term, of the definitions or of the values is a
+regression. -/
 def compareBudget (row : Row) (old new : Budget) : Array Difference := Id.run do
   let same := old.hash == new.hash && old.definitions == new.definitions
   let valued := !old.values.isEmpty && old.values.map (·.1) == new.values.map (·.1) &&
     (old.values ++ new.values).all (·.2.isSome)
   unless valued do
     if same && old.values == new.values then return #[]
+    if same then
+      return #[worse row s!"budget {new.name}: the values of its term {new.term} changed, and it \
+        is not comparable"]
     if old.hash == new.hash then
       return #[worse row s!"budget {new.name}: a definition that its term {new.term} uses \
         changed, and it is not comparable"]

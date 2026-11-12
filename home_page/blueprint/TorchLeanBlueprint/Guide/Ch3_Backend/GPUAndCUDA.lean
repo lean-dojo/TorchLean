@@ -92,7 +92,7 @@ selection on later `build`, `exe`, and `env` commands. Our build helper records 
 inputs so that a changed native configuration can't silently reuse an incompatible adapter. The
 adapter calls torch only through the LibTorch Stable ABI of torch 2.13, apart from one file for
 the backend settings and the CUDA allocator. The tensor operations can run with a later torch
-runtime; allocator statistics and controls have the version limit described below. The trust
+runtime, but the allocator statistics and controls have the version limit described below. The trust
 boundaries list every ATen operator schema it calls.
 
 Compilation and session creation answer different questions. A linked adapter still needs a

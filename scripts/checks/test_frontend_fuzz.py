@@ -1,40 +1,43 @@
 """Differential fuzzing of the PyTorch and JAX frontends against their own frameworks.
 
-A seeded generator draws small programs, one to three calls over the operators of the PyTorch and
-JAX frontends, with the argument spellings their frameworks accept (`dim`/`axis`,
+A seeded generator draws small programs of one to three calls from a fixed vocabulary of each
+frontend's operators. The calls use the argument spellings the frameworks accept (`dim`/`axis`,
 `keepdim`/`keepdims`, positional and keyword, Tensor methods, `torch.*` functions and Python
-operators), negative dimensions, every dtype, broadcasting, Python scalars and 0-d tensors, empty
-and size-1 dimensions, and for JAX NumPy and jnp inputs with 64-bit mode on and off. Every program
-returns every value it computes. The framework runs it first, PyTorch and JAX eagerly, with JAX
-inputs converted as its trace reads them; a program the framework rejects is redrawn. The capture
-then goes through one path, in turn torch.export, FX's symbolic trace and
-Dynamo (`torchlean.compile`) for PyTorch, and `verify(..., frontend="jax")` for JAX, and `verify`
-executes it. Every executed value must have the framework's shape and dtype, and its words: exactly
-for a value whose operation and operands are exact; for the others within 4 units in the last place,
-or within 64 units of the format's precision times the largest finite magnitude among the program's
-values (a sum or a softmax may cancel). NaNs agree whatever their sign and payload, and for JAX so
-do zeros of either sign: JAX gives `0.0` for `x * -1.25` at a Boolean `False`, eagerly and under
-`jax.jit`, where IEEE multiplication of the converted `0.0` gives `-0.0`, which the IR computes.
+operators), negative dimensions, binary floating, integer and Boolean dtypes, broadcasting, Python
+scalars and 0-d tensors, empty and size-1 dimensions, and for JAX NumPy and jnp inputs with 64-bit
+mode on and off. Every program returns every value it computes. The framework runs it first,
+PyTorch and JAX eagerly, with JAX inputs converted as its trace reads them, and a program the
+framework rejects is redrawn. The capture then goes through one path, in turn torch.export, FX's
+symbolic trace and Dynamo (`torchlean.compile`) for PyTorch, and `verify(..., frontend="jax")` for
+JAX, and `verify` executes it.
+
+Every executed value must have the framework's shape and dtype. Its words must equal the
+framework's when its operation and operands are exact. Otherwise a floating value may differ by 4
+units in the last place, or by `64 * 2 ** -p` times the largest finite magnitude among the
+program's values for a format with `p` fraction bits, since a sum or a softmax may cancel. NaNs
+agree whatever their sign and payload, and for JAX so do zeros of either sign: JAX gives `0.0` for
+`x * -1.25` at a Boolean `False`, eagerly and under `jax.jit`, where IEEE multiplication of the
+converted `0.0` gives `-0.0`, which the IR computes.
 
 A capture the frontend refuses (`NotImplementedError`, also when Dynamo wraps it, a Dynamo graph
 break, or `unsupported` checks) is counted, not a failure. Any other outcome fails the test with the
 seed, the program and the difference: a mismatch, a failed check, or an exception inside torchlean.
-Behaviours that are documented as different from the framework or undefined in it (XLA's subnormal
-flushing, floor division of an infinity or a NaN, a conversion of a NaN, an infinity or an
-out-of-range value to an integer type, and a zero of PyTorch's floating `remainder`, whose sign
-`Context.remainder` takes from Python's documented `%` and PyTorch's CPU kernel from `fmod`) are not
-drawn. Every input is used, and the inputs are listed in the order of their first use, which is the
-order of Dynamo's graph inputs.
+Results that are documented to differ from the framework's, or that the framework leaves undefined,
+are not drawn: XLA's subnormal flushing, floor division of an infinity or a NaN, a conversion of a
+NaN, an infinity or an out-of-range value to an integer type, and a zero of PyTorch's floating
+`remainder`, whose sign `Context.remainder` takes from Python's documented `%` and PyTorch's CPU
+kernel from `fmod`. Every input is used, and the inputs are listed in the order of their first use,
+which is the order of Dynamo's graph inputs.
+
+A JAX mismatch counts as a documented numerical difference, not as a matched program, when the
+checker's `compare` reproduces every differing result with its divisor-reciprocal emulation, which
+models eager XLA division by a broadcast scalar. Every other mismatch fails.
 
 The seed is `TORCHLEAN_FUZZ_SEED` (default 20261111) and the number of programs per framework
-`TORCHLEAN_FUZZ_COUNT` (default 40). The test skips without the built `verify` executable or a
-framework, and fails like `test_ir_capture.py` under `TORCHLEAN_REQUIRE_INTEROP=1` or
-`TORCHLEAN_REQUIRE_JAX=1`.
-
-An exact JAX mismatch is counted separately as a documented numerical difference only when the
-checker's existing reciprocal-division emulation reproduces every differing result. It remains
-an unsuccessful comparison, not a matched program. This covers eager XLA division by a broadcast
-scalar; every other exact mismatch fails.
+`TORCHLEAN_FUZZ_COUNT` (default 40). The tests skip without the built `verify` executable or the
+framework, except that the module exits with an error, as `test_ir_capture.py` does, when
+`TORCHLEAN_REQUIRE_INTEROP=1` and PyTorch or the executable is missing, or when
+`TORCHLEAN_REQUIRE_JAX=1` and JAX or the executable is missing.
 """
 
 import importlib.util
@@ -75,16 +78,16 @@ COUNT = int(os.environ.get("TORCHLEAN_FUZZ_COUNT", "40"))
 EXECUTE = ("structure", "types", "execute")
 WIDTHS = {1: np.uint8, 2: np.uint16, 4: np.uint32, 8: np.uint64}
 
-# The operations whose results the frameworks round once, or compute exactly. The other floating
-# results may differ by 4 units in the last place (transcendental functions and reductions, whose
-# order of summation is the framework's).
+# The drawn operations whose results the frameworks round once or compute exactly. The other
+# floating results, of transcendental functions and of reductions, whose order of summation is the
+# framework's, get the tolerances of the module doc.
 EXACT = {"neg", "abs", "floor", "ceil", "trunc", "round", "sign", "relu", "square", "sqrt",
-         "add", "sub", "mul", "div", "maximum", "minimum", "max", "min", "amax", "amin", "where",
-         "clamp", "eq", "ne", "lt", "le", "gt", "ge", "reshape", "transpose", "permute", "flip",
-         "squeeze", "unsqueeze", "cat", "slice", "flatten", "to", "argmax", "argmin", "all",
-         "any", "logical_not", "logical_and", "logical_or", "bitwise_not", "bitwise_and",
-         "bitwise_or", "bitwise_xor", "floor_divide", "trunc_divide", "remainder", "isnan",
-         "isfinite", "expand_dims", "concatenate", "astype", "negative", "T", "count_nonzero"}
+         "add", "sub", "mul", "div", "maximum", "minimum", "max", "min", "amax", "amin", "eq",
+         "ne", "lt", "le", "gt", "ge", "reshape", "transpose", "permute", "flip", "squeeze",
+         "unsqueeze", "cat", "slice", "flatten", "to", "argmax", "argmin", "all", "any",
+         "logical_not", "logical_and", "logical_or", "bitwise_not", "bitwise_and", "bitwise_or",
+         "bitwise_xor", "floor_divide", "trunc_divide", "remainder", "isnan", "isfinite",
+         "expand_dims", "concatenate", "astype", "T"}
 
 
 def _words(array):
@@ -113,9 +116,9 @@ def _value(word, dtype_name):
 
 
 def _difference(output, expected, exact, dtype_name, scale, zeros=False):
-    """None when the executed `output` is the framework's `expected` value, else the difference.
-    `scale` is the largest finite magnitude among the program's values; with `zeros` a zero
-    matches a zero of either sign."""
+    """None when the executed `output` matches the framework's `expected` value, within the module
+    doc's tolerances unless `exact`, else the first difference. `scale` is the largest finite
+    magnitude among the program's values, and with `zeros` a zero matches a zero of either sign."""
     shape = list(expected.shape)
     if list(output["shape"]) != shape:
         return f"shape {output['shape']}, framework {shape}"
@@ -204,8 +207,9 @@ def _convertible(values, dtype_name):
         return True
     values = np.asarray(values, dtype=np.float64)
     info = np.iinfo(dtype_name)
+    # `info.max + 1` is a power of two, so the float64 comparison is exact.
     return bool(np.all(np.isfinite(values))) and \
-        bool(np.all((np.trunc(values) >= info.min) & (np.trunc(values) <= info.max)))
+        bool(np.all((np.trunc(values) >= info.min) & (np.trunc(values) < info.max + 1)))
 
 
 def _used(program, name):
@@ -213,7 +217,7 @@ def _used(program, name):
 
 
 def _extend(program, unit, evaluate, source=None):
-    # Add one line drawn by `unit` that `evaluate` runs; False after 20 rejected draws.
+    # Add a line drawn by `unit` that `evaluate` runs, or return False after 20 rejected draws.
     for _attempt in range(20):
         line = unit(program, source)
         try:
@@ -290,17 +294,18 @@ class Torch:
     SHAPES = [(2, 3), (3,), (), (1, 3), (2, 1, 2), (0, 3), (3, 1)]
     FLOATS = [0.0, -0.0, 1.0, -1.5, 2.5, 3.0, 0.1, -7.25, 1000.0, 1e-40, float("inf"),
               -float("inf"), float("nan")]
-    # Forms that every path refuses (`logsumexp`, `std`, `nansum`, `count_nonzero`, a
-    # `torch.tensor` call in the program) are left to the curated refusal tests.
+    # Every path refuses `logsumexp`, `std`, `nansum`, `count_nonzero` and a `torch.tensor` call
+    # in the program, so the vocabulary leaves them out.
     REDUCTIONS = ["sum", "mean", "amax", "amin", "prod", "argmax", "argmin", "all", "any",
                   "var", "max", "min", "cumsum", "softmax", "log_softmax"]
     UNARY = ["neg", "abs", "exp", "log", "sqrt", "floor", "ceil", "round", "trunc", "sign", "relu",
              "sigmoid", "tanh", "sin", "reciprocal", "square", "logical_not", "bitwise_not",
              "isnan", "isfinite", "expm1", "log1p"]
     BINARY = {"add": "+", "sub": "-", "mul": "*", "div": "/", "floor_divide": "//",
-              "trunc_divide": None, "remainder": "%", "maximum": None, "minimum": None, "eq": "==", "ne": "!=",
-              "lt": "<", "le": "<=", "gt": ">", "ge": ">=", "logical_and": None,
-              "logical_or": None, "bitwise_and": "&", "bitwise_or": "|", "bitwise_xor": "^"}
+              "trunc_divide": None, "remainder": "%", "maximum": None, "minimum": None,
+              "eq": "==", "ne": "!=", "lt": "<", "le": "<=", "gt": ">", "ge": ">=",
+              "logical_and": None, "logical_or": None, "bitwise_and": "&", "bitwise_or": "|",
+              "bitwise_xor": "^"}
     ALIASES = {"sub": "subtract", "mul": "multiply", "div": "true_divide", "gt": "greater",
                "lt": "less", "ge": "greater_equal", "le": "less_equal", "ne": "not_equal"}
 
@@ -330,7 +335,8 @@ class Torch:
         if rng.random() < 0.5:
             return [first]
         # A second input of a broadcastable shape and maybe another dtype.
-        other = rng.choice([shape, shape[1:], (1,) * len(shape), shape[:-1] + (1,) if shape else ()])
+        other = rng.choice([shape, shape[1:], (1,) * len(shape),
+                            shape[:-1] + (1,) if shape else ()])
         return [first, ("y", self.tensor(other, rng.choice(self.DTYPES)))]
 
     def scalar(self):
@@ -380,7 +386,8 @@ class Torch:
             op = rng.choice(list(self.BINARY))
             other = rng.choice([self.scalar(), rng.choice(program.values)[0]])
             if op in ("floor_divide", "remainder", "trunc_divide"):
-                # Integer division by zero raises; floor division of an infinity is documented.
+                # Integer division by zero raises and floor division of an infinity is documented,
+                # so the divisor is a finite nonzero literal.
                 other = rng.choice(["2", "3", "-2", "0.5", "0.1"])
             forms = [f"torch.{op}({name}, {other})", f"{name}.{op}({other})",
                      f"torch.{op}({name}, other={other})"]
@@ -580,7 +587,8 @@ class Jax:
                 not _convertible(array.astype(np.float64), dtype):
             dtype = rng.choice(["float32", "float64", "float16", "bfloat16", "bool"])
         program.operations.append("astype")
-        return rng.choice([f"{name}.astype(jnp.{dtype})", f"jnp.asarray({name}, dtype=jnp.{dtype})"])
+        return rng.choice([f"{name}.astype(jnp.{dtype})",
+                           f"jnp.asarray({name}, dtype=jnp.{dtype})"])
 
     def draw(self):
         """A program the framework runs, and its eager values."""
@@ -642,7 +650,7 @@ def _dtype_name(value):
 
 
 def _refusal(error):
-    """The reason of a refusal that `error` is or wraps (Dynamo wraps a backend's error), else None."""
+    """The reason of the refusal that `error` is or wraps (Dynamo wraps a backend's), else None."""
     seen = set()
     while error is not None and id(error) not in seen:
         seen.add(id(error))
@@ -652,7 +660,6 @@ def _refusal(error):
             return f"Dynamo: {error}"
         error = getattr(error, "inner_exception", None) or error.__cause__ or error.__context__
     return None
-
 
 
 class Outcomes:
@@ -677,7 +684,7 @@ class Outcomes:
 
 
 def _scale(arrays):
-    # The largest finite magnitude among the floating `arrays`, at least 1.
+    # The largest finite magnitude among the floating `arrays`, or 1 when they hold no finite value.
     finite = [np.abs(a[np.isfinite(a)]).max() for a in arrays if a.size and np.isfinite(a).any()]
     return float(max(finite, default=1.0))
 

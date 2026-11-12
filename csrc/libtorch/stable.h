@@ -24,14 +24,14 @@
 //   ScalarType? dtype, Layout? layout, Device? device, bool? pin_memory
 //                                   const tensor_options&: layout and pin_memory are always None,
 //                                   so every tensor is strided and not pinned
-//   str? (default None)             always None; a call passes no parameter from it on
+//   str? (default None)             always None, and a call passes no parameter from it on
 //
 // Other types do not compile, among them `Scalar`, which the dispatcher does not convert, and
 // `str`, which the torch 2.13 runtime leaks. The rest of this header is what the bridge needs
 // besides operators: the CPU 0-dim tensors that stand for Scalar arguments, addition and
 // subtraction (whose schemas have a Scalar `alpha`), zero padding (whose schema has a Scalar
 // `value`), constants, items, host views, grad mode, and the CUDA device guard and stream. Errors
-// throw without printing anything; an operator's error, and a failure to pass its arguments,
+// throw without printing anything. An operator's error, and a failure to pass its arguments,
 // carries torch's message without its backtrace. csrc/libtorch/README.md explains the design,
 // and "LibTorch Stable ABI" in docs/TRUST_BOUNDARIES.md lists each schema and C shim the bridge
 // uses.
@@ -186,7 +186,7 @@ constexpr bool is_integral(ScalarType dtype, bool with_bool) {
 
 /// A CPU 0-dim tensor that stands for a Scalar argument, made by `cpu_scalar` or `scalar_for`.
 /// ATen's CUDA kernel of an operator declared with a device check rejects it beside CUDA tensors,
-/// so it is an argument only of the operators in `schema::no_device_check`; passing it to any other
+/// so it is an argument only of the operators in `schema::no_device_check`. Passing it to any other
 /// operator does not compile.
 struct scalar_operand {
   Tensor tensor;
@@ -450,7 +450,7 @@ consteval parameter typed(const declaration& item) {
   return result;
 }
 
-/// The number of returns of `text` (what follows ` -> `); every return must be a Tensor.
+/// The number of returns of `text` (what follows ` -> `). Every return must be a Tensor.
 consteval std::size_t tensor_returns(std::string_view text) {
   if (text.starts_with('(')) {
     if (!text.ends_with(')')) unsupported("unclosed return list");
@@ -856,8 +856,8 @@ inline scalar_operand cpu_scalar(double value) { return {detail::cpu_tensor(valu
 
 /// The operand that makes the `.Tensor` overload of an operator compute with `x` exactly what its
 /// `.Scalar` overload computes with `value`: a CPU 0-dim tensor, which ATen passes to the kernel
-/// as a scalar like the Scalar overload's wrapped number. Its dtype makes type promotion agree:
-/// an integer takes the dtype of an integer `x` and is Long otherwise; a floating value takes the
+/// as a scalar like the Scalar overload's wrapped number. Its dtype makes type promotion agree.
+/// An integer takes the dtype of an integer `x` and is Long otherwise. A floating value takes the
 /// dtype of a Float or Double `x` and is Float for an integer or Bool `x` and a Half or BFloat16
 /// `x` of rank one or more. Promotion differs for a 0-dim Half or BFloat16 `x` and for a complex
 /// `x`, which therefore fail.
@@ -916,7 +916,7 @@ inline Tensor integer_sum(const Tensor& a, const Tensor& b, bool negate) {
 
 /// `at::add(a, b)` and `at::sub(a, b)` (alpha 1), for a tensor or a `scalar_operand` `b`.
 /// Floating operands go through the C shim `subtract.Tensor` with alpha -1 or 1, which runs ATen's
-/// add kernel with alpha 1 or -1 as `add` and `sub` do; integer and Bool operands through
+/// add kernel with alpha 1 or -1 as `add` and `sub` do. Integer and Bool operands go through
 /// `detail::integer_sum`. A CPU 0-dim `b` beside a CUDA `a` reaches `sub.Tensor`, which
 /// `subtract.Tensor` calls, or `fill_.Tensor`, and neither checks devices.
 static_assert(detail::no_device_check("sub.Tensor"));
@@ -1020,7 +1020,7 @@ inline Tensor host_view(void* data, std::int64_t size, ScalarType dtype) {
   return Tensor(result);
 }
 
-/// `at::NoGradGuard`: grad mode is off while it lives and then as it was.
+/// `at::NoGradGuard`: grad mode is off while it lives and is restored when it is destroyed.
 class no_grad {
  public:
   no_grad() : previous_(aoti_torch_grad_mode_is_enabled()) {

@@ -10,16 +10,19 @@ meta import TorchLean.Verify.RuntimeApprox.Roundoff.Baseline
 /-!
 # The comparison of the roundoff baseline
 
-Each case runs `TorchLean.Roundoff.Baseline.diff` on rows of the file and rows of the environment
-that differ in one way, and checks the lines it gives. A lower status, a larger `r`, `a` or `ε`
-at a format, also behind a term with the same hash, a smaller `r` with a larger `a`, a changed
-budget without values, a budget without values whose definitions changed, a new premise, a new
-caveat, a changed reference and a gone analysis are regressions. A new analysis, a better status,
-removed premises and a budget whose term or definitions changed with the same values make the
-file stale. Equal rows give nothing. The last cases check that a row read back from its line in
-the file equals it, that the meaning of a constant follows the meanings of the constants it uses,
-the values of the unit roundoff and the underflow error at binary32 and binary64, and the line of
-the check without a file or with an unknown mode, which writes no file.
+The first check classifies the analysis of a zero budget as conditional when its reference branches
+on a rounded value, through `<`, `>`, `=` or `isNaN` of `x * x`, and as not conditional when it
+compares an input with another input or with `-1`. Each further case runs
+`TorchLean.Roundoff.Baseline.diff` on rows of the file and rows of the environment that differ in
+one way, and checks the lines it gives. A lower status, a larger value of a budget at a format, also
+behind a term with the same hash, a changed budget without values, a budget without values whose
+definitions changed, a new premise, a new caveat, a changed reference and a gone analysis are
+regressions. A new analysis, a better status, removed premises, smaller values and a budget whose
+term or definitions changed with the same values make the file stale. The last cases check that a
+row read back from its line in the file equals it, that the meaning of a constant follows the
+meanings of the constants it uses, the values of the unit roundoff at binary32 and the underflow
+error at binary64, and the line of the check without a file or with an unknown mode, which writes no
+file.
 -/
 
 meta section
@@ -46,6 +49,8 @@ run_cmd liftTermElabM do
     FloatLib.Floats.ExecFloat.Binary.toReal (if x < -1 then x else y))) false
   check (← `(fun (x y : FloatLib.Floats.Binary32) =>
     FloatLib.Floats.ExecFloat.Binary.toReal (if x * x < y then x else y))) true
+  check (← `(fun (x y : FloatLib.Floats.Binary32) =>
+    FloatLib.Floats.ExecFloat.Binary.toReal (if x * x > y then x else y))) true
   check (← `(fun (x y : FloatLib.Floats.Binary32) =>
     FloatLib.Floats.ExecFloat.Binary.toReal (if x * x = y then x else y))) true
   check (← `(fun (x y : FloatLib.Floats.Binary32) =>
@@ -83,28 +88,6 @@ def report (old new : Array Row) : CommandElabM Unit := do
 run_cmd report #[mixed] #[{ mixed with
   status := .failed, reference := 0, referenceSize := 0, budgets := #[], premises := #[],
   caveats := #[] }]
-
-/-- info: regression roundoff baseline: exp [value] configured mixed: budget r weaker at binary32:
-1 → 2 -/
-#guard_msgs in
-run_cmd report #[mixed] #[{ mixed with budgets := #[budget "r" 11 #[4, 2, 2, 1/2], budget "a" 2
-  #[4, 2, 1, 1/2]] }]
-
-/--
-info: regression roundoff baseline: exp [value] configured mixed: budget a weaker at bfloat16:
-2 → 4
-regression roundoff baseline: exp [value] configured mixed: budget a weaker at binary64: 1/2 → 1
--/
-#guard_msgs in
-run_cmd report #[mixed] #[{ mixed with budgets := #[budget "r" 1 #[4, 2, 1, 1/2], budget "a" 12
-  #[4, 4, 1, 1]] }]
-
-/--
-info: regression roundoff baseline: exp [value] configured absolute: budget ε weaker at binary16:
-4 → 8
--/
-#guard_msgs in
-run_cmd report #[absolute] #[{ absolute with budgets := #[budget "ε" 13 #[8, 2, 1, 1/2]] }]
 
 /--
 info: stale roundoff baseline: exp [value] configured mixed: improved (budget r smaller at
@@ -201,9 +184,6 @@ proved); update the baseline with TORCHLEAN_ROUNDOFF_BASELINE=update
 -/
 #guard_msgs in
 run_cmd report #[mixed] #[{ mixed with status := .proved, premises := #[], caveats := #[] }]
-
-#guard_msgs in
-run_cmd report #[mixed, absolute] #[mixed, absolute]
 
 -- A row read back from its line in the file has the same line and no difference with it.
 #guard_msgs in

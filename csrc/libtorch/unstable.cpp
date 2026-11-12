@@ -1,10 +1,10 @@
 // The unstable boundary of the LibTorch bridge (see unstable.h). Each `at::Context` function used
-// here is defined out of line in libtorch_cpu, so it binds by symbol name; torch 2.13, 2.14 and
+// here is defined out of line in libtorch_cpu, so it binds by symbol name, and torch 2.13, 2.14 and
 // 2.15 export each with the same signature. The caching allocator is reached through inline
 // functions that call virtual functions of the exported
 // `c10::cuda::CUDACachingAllocator::allocator`, which depends on the layout of its classes, so
-// those calls run only on the releases checked. Exceptions propagate unchanged; the bridge's `io`
-// reports them as Lean errors.
+// those calls run only on the releases checked. Exceptions propagate unchanged, and the bridge's
+// `io` reports them as Lean errors.
 #include "unstable.h"
 
 #include <ATen/Context.h>
@@ -22,7 +22,7 @@ namespace {
 namespace allocator = c10::cuda::CUDACachingAllocator;
 
 // The torch releases in which the four allocator functions called below have the vtable slots,
-// and the `DeviceStats` fields read below the offsets, that the bridge was checked against. A
+// and the `DeviceStats` fields read below the offsets, that the bridge is checked against. A
 // runtime of another release fails the call.
 void check_allocator_abi() {
   const std::uint64_t version = aoti_torch_abi_version();

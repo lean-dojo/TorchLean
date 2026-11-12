@@ -15,12 +15,12 @@ public import TorchLean.NN.IR.Builder
 nodes that compute the tangent of each node along the given seeds, and returns the extended graph,
 its payload and the reference of each node's tangent. The tangent of node `j` is the reference
 `seed j` when there is one, which must name a value port of the same shape as node `j`'s value.
-Otherwise it is zero at a graph input and at a constant, and at an
-operator node it is the rule of the table below on the node's inputs and their tangents, written
-with registered operators. These rules are separate from the op table's forward-mode rules
-(`Op.Rule.jvp?`), and no theorem relates a tangent graph to those rules or to a derivative. A
-tangent that is zero is not built: its entry is `none`. The graph's outputs are `G`'s outputs
-followed by their tangents (a zero tangent as a constant of zeros).
+Otherwise it is zero at a graph input and at a constant, and at an operator node it is the rule of
+the table below on the node's inputs and their tangents, written with registered operators. These
+rules are separate from the op table's forward-mode rules (`Op.Rule.jvp?`), and no theorem relates a
+tangent graph to those rules or to a derivative. A tangent that is zero is not built: its entry is
+`none`. The graph's outputs are `G`'s outputs followed by their tangents (a zero tangent as a
+constant of zeros).
 
 The rules, `x` the input, `y` the node's value and `dx` the input's tangent:
 

@@ -24,11 +24,11 @@ The backend builds into one shared library, `libtorchlean_libtorch.so`, from the
 | `binary.h` | The NVRTC header, bundled into the library, for configured binary arithmetic. |
 | `CMakeLists.txt` | The CMake project `scripts/libtorch_build.py` configures against the SDK. |
 
-A build without LibTorch links `unavailable.c` instead. It exports the same symbols, reports
-`RuntimeStatus.notLinked`, and fails every buffer operation with a message that says how to
-rebuild. The Lean tape owns differentiation, and native calls run with torch's grad mode off. Lean
-loads the CPU tensor library (Lake target `torchlean_tensor_cpu_shared`) for `#eval`, and the GPU
-tests run as compiled executables.
+A build without LibTorch links `unavailable.c` instead. It exports every symbol that a Lean `extern`
+names, reports `RuntimeStatus.notLinked`, and fails every buffer operation with a message that says
+how to rebuild. The Lean tape owns differentiation, and native calls run with torch's grad mode off.
+Lean loads the CPU tensor library (Lake target `torchlean_tensor_cpu_shared`) for `#eval`, and the
+GPU tests run as compiled executables.
 
 On Linux, interpreted GPU calls can load Lean's bundled exception unwinder alongside the unwinder
 of the GCC-built bridge and torch. If a caught C++ exception aborts under `#eval` or `lean --run`,
@@ -48,35 +48,37 @@ compile their CUDA source with them at runtime, so they need no handwritten kern
 ## Torch versions
 
 The bridge builds against torch 2.13 or later and runs with the torch runtime the process loads,
-torch 2.13 or a later release, without a rebuild. `torchlean.cpp`, `conv_pool.cpp`, `tree.cpp` and
-`kernels.cpp` are compiled with `TORCH_TARGET_VERSION` set to torch 2.13 and include from torch only
-the headers of the LibTorch Stable ABI. Each ATen operator call names its schema,
-`aten<"name.overload">(...)`: `stable.h` checks the arguments against the schema in the generated
-table `schemas.h` at compile time, and torch's dispatcher finds the operator by name when the call
-runs. A scalar operand is a CPU 0-dim tensor, which ATen's elementwise operators take as they take a
-`Scalar` overload's wrapped number. An operator that ATen registers with a device check rejects such
-a tensor beside a CUDA tensor, so a scalar operand has its own C++ type, which `aten<Key>` accepts
-only for the operators of the list `no_device_check` in `schemas.h`, generated from torch's
-declarations, and passing one to any other operator does not compile. Everything else these files
-take from torch goes through its C shims. `unstable.cpp` holds what the Stable ABI cannot express,
-the process-wide backend settings and the CUDA caching allocator's statistics and controls. It is
-compiled against torch's C++ API and binds each function it calls by name. The allocator calls go
-through virtual functions whose order a release may change, so they run only on torch 2.13 to 2.15
-and fail with an error on any other release.
-[LibTorch Stable ABI](../../docs/TRUST_BOUNDARIES.md#libtorch-stable-abi) lists each schema, C shim
-and unstable symbol the library uses, and the operators its C shims run, with the minimum version
-and a reason.
+torch 2.13 or a later release, without a rebuild, apart from the allocator calls below.
+`torchlean.cpp`, `conv_pool.cpp`, `tree.cpp` and `kernels.cpp` are compiled with
+`TORCH_TARGET_VERSION` set to torch 2.13 and include from torch only the headers of the LibTorch
+Stable ABI. Each ATen operator call names its schema, `aten<"name.overload">(...)`: `stable.h`
+checks the arguments against the schema in the generated table `schemas.h` at compile time, and
+torch's dispatcher finds the operator by name when the call runs. A scalar operand is a CPU 0-dim
+tensor, which ATen's elementwise operators take as they take a `Scalar` overload's wrapped number.
+An operator that ATen registers with a device check rejects such a tensor beside a CUDA tensor, so a
+scalar operand has its own C++ type, which `aten<Key>` accepts only for the operators of the list
+`no_device_check` in `schemas.h`, generated from torch's declarations, and passing one to any other
+operator does not compile. Everything else these files take from torch goes through its C shims.
+`unstable.cpp` holds what the Stable ABI cannot express, the process-wide backend settings and the
+CUDA caching allocator's statistics and controls. It is compiled against torch's C++ API. The
+settings functions bind by name, and the allocator calls go through virtual functions at the slots
+of the headers the library is built against. Torch 2.13, 2.14 and 2.15 have the same slots, and the
+allocator calls fail with an error unless the loaded runtime is one of these releases. The check
+reads only the runtime's release, so it guards the slots only for a library built against one of
+these releases. [LibTorch Stable ABI](../../docs/TRUST_BOUNDARIES.md#libtorch-stable-abi) lists each
+schema, C shim and unstable symbol the library uses, and the operators its C shims run, with the
+minimum version and a reason.
 
 `scripts/checks/libtorch_abi.py` checks those lists, and `scripts/lake.sh lint` runs it on the
 sources, which also checks that `call` in `stable.h` is the only use of the dispatcher. After each
-build, `scripts/libtorch_build.py` runs it on the library and the SDK it was built against and
-records the result in `libtorch/abi_check.json`: the SDK registers each listed schema verbatim and
-defines every torch symbol the library imports, and the library names exactly the table's
-operators, imports exactly the listed C shims and nothing else from torch but the unstable
-remainder, apart from functions of the C++ standard library that `libtorch.so` also exports, and
-does not link the CUDA runtime. A failed check fails the build. With a pip package's `torchgen`
-beside the SDK, it also checks `no_device_check` against the package's declarations.
-`libtorch_abi.py --torch DIR` checks the registry of another torch package without a build,
+build, `scripts/libtorch_build.py` runs it on the library and the SDK it is built against and
+records the result in `libtorch/abi_check.json`: the SDK's generated operator headers declare each
+listed schema verbatim, the SDK defines every torch symbol the library imports, and the library
+names exactly the table's operators, imports exactly the listed C shims and nothing else from torch
+but the unstable remainder, apart from functions of the C++ standard library that `libtorch.so` also
+exports, and does not link the CUDA runtime. A failed check fails the build. With a pip package's
+`torchgen` beside the SDK, it also checks `no_device_check` against the package's declarations.
+`libtorch_abi.py --torch DIR` checks the operator headers of another torch package without a build,
 `--torch DIR --library SO` also checks that the package defines every torch symbol a built library
 imports, and `--write --torch DIR` regenerates `schemas.h` after a source adds an operator.
 
@@ -293,9 +295,9 @@ operator's schema is checked at compile time, with no operator-ID switch, and to
 finds the operator by name when the call runs. Operations with shape metadata or saved backward
 state keep adapters of their own.
 
-To add a CUDA symbol outside that list, add its failing export to `unavailable.c`, add a row to
-the table above, and test it against the Lean CPU tape at least once. If the symbol takes part in
-autograd, test the forward value and the VJP or gradient buffers. If it uses atomics, decide
+To add a symbol that Lean calls outside that list, add its failing export to `unavailable.c`, add a
+row to the table above, and test it against the Lean CPU tape at least once. If the symbol takes
+part in autograd, test the forward value and the VJP or gradient buffers. If it uses atomics, decide
 whether deterministic mode needs a test of its own.
 
 The separate [elementwise C++ harness](tests/elementwise/README.md) links the production backend

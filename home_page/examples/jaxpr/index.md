@@ -349,7 +349,7 @@ Lean checks those proofs when we open the module or compile it:
 scripts/lake.sh env lean Proofs/SumSquares.lean
 ```
 
-The report also validates the constant payload and `declared_types` through `IR.load`; the
+The report also validates the constant payload and `declared_types` through `IR.load`. The
 export includes no proof of those load checks.
 
 We can import `Proofs.SumSquares` in our proof project and state further properties
@@ -357,7 +357,7 @@ about this program. The export never replaces an existing file, so rerunning a
 capture cannot overwrite a proof we've started writing.
 
 The module embeds JSON constructors rather than calling a file parser at runtime.
-The decoding and `Program.check` proofs use kernel reduction; no `native_decide` is used.
+The decoding and `Program.check` proofs use kernel reduction and no `native_decide`.
 The permutation argument below supplies the mathematical property, and more involved
 computations need their own arguments.
 

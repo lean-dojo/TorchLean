@@ -272,7 +272,8 @@ if [[ -n "$cuda_home" ]]; then
   if [[ "$cuda_home" != /* ]]; then
     cuda_home="$repo_root/$cuda_home"
   fi
-  # Select the sanitizer from this toolkit. The backend's SDK-derived RPATH owns library lookup.
+  # Select the sanitizer from this toolkit. Library lookup stays with the backend's RUNPATH and
+  # the caller's LD_LIBRARY_PATH.
   export PATH="$cuda_home/bin:$PATH"
 fi
 

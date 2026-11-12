@@ -1,5 +1,5 @@
 // No CUDA code: this executable calls the production C ABI and upstream ATen.
-// Build against the production backend's SDK; see README.md for the Lean reference input.
+// Build it against the torch package or SDK it runs with. README.md gives the Lean reference input.
 #include "../../torchlean_libtorch.h"
 
 #include <ATen/ATen.h>
@@ -267,7 +267,7 @@ void external_buffer_class_regression() {
   const Object other(lean_alloc_external(other_class, nullptr));
   bool rejected = false;
   try {
-    // The bridge exports only its entry points; `handle` unboxes before anything else.
+    // The bridge exports only its entry points, and `handle` unboxes before anything else.
     (void)torchlean_cuda_buffer_handle(other);
   } catch (const std::exception& error) {
     rejected = std::string(error.what()).find("not a tensor buffer") != std::string::npos;

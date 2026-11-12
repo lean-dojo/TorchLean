@@ -35,28 +35,28 @@ only the listed input positions, the others held fixed. Each kind names what the
 these and, when the operator's input list reduces to a literal list, that every listed position
 is an input of it. It also checks that the declaration is a theorem whose statement mentions the
 operator's rule (`TorchLean.Op.rule?` at that constructor). For the kinds other than `derivative`
-it does not check that the statement says what its kind says. A certificate of an existing
+it does not check that the statement says what its kind says. A certificate of an `AdjointOp`
 record, for instance, is a theorem identifying the record's operator with the arm (as in
 `TorchLean.NN.Op.Certificates`).
 
 For `derivative` it checks the statement against one proposition, `TorchLean.DerivCert f x δ v`
-(`TorchLean.NN.FDeriv.DerivCert`): `f` is the real forward of the operator in the listed inputs,
-the value outputs collected in their L2 product and the other inputs fixed; `x` is the point of
-the listed inputs in the L2 product of their tangent spaces; `δ` is a cotangent of the value
-outputs; and `v` is the operator's backward at those inputs and `δ`. With no positions listed, the
-listed inputs are the value inputs; a listed input that is not a value port is rejected. When the
-inputs are a mapped list `l.map g`, as for `Op.cat`, they vary together and the point is their
+(`TorchLean.NN.FDeriv.DerivCert`). Here `f` is the real forward of the operator in the listed
+inputs, with the value outputs collected in their L2 product and the other inputs fixed, `x` is the
+point of the listed inputs in the L2 product of their tangent spaces, `δ` is a cotangent of the
+value outputs, and `v` is the operator's backward at those inputs and `δ`. With no positions listed,
+the listed inputs are the value inputs. A listed input that is not a value port is rejected. When
+the inputs are a mapped list `l.map g`, as for `Op.cat`, they vary together and the point is their
 family by position (`TorchLean.TProd.parts`). A statement `HasFDerivAt f D x ∧ R` counts as
-`DifferentiableAt ℝ f x ∧ R`. The match is up to definitional unfolding, and the kernel confirms
-it. Every input and `δ` must be a distinct variable of the statement that does not occur in the
+`DifferentiableAt ℝ f x ∧ R`. The match is up to definitional unfolding, and the kernel confirms it.
+Every input and `δ` must be a distinct variable of the statement that does not occur in the
 operator, and every other variable an argument of the operator or a proposition. The rules on the
-propositions, the proofs the operator takes included, are: (a) none mentions `δ`, (b) each
-mentions a variable, (c) none is `False` or an equation with a varying input as one side, and (d)
-`decide`, `simp_all` or `omega` does not refute them together. A proposition that is not an
-argument of the operator is a domain premise. The match, the refutation and the kernel's check
-are bounded in heartbeats. A failure is an error naming the theorem, the operator, the positions
-and what failed. Arguments of the operator fixed to constants or to each other are allowed here;
-the library check counts only certificates that fix none.
+propositions, the proofs the operator takes included, are: (a) none mentions `δ`, (b) each mentions
+a variable, (c) none is `False` or an equation with a varying input as one side, and (d) neither
+`simp_all` nor `omega` refutes them together. A proposition that is not an argument of the operator
+is a domain premise. The match, the refutation and the kernel's check are bounded in heartbeats. A
+failure is an error naming the theorem, the operator, the positions and what failed. Arguments of
+the operator fixed to constants or to each other are allowed here, and the library check counts only
+certificates that fix none.
 
 `Op.certificates` lists the registrations of one operator and `#op_certs Op.<operator>` prints
 them. `Op.derivEntry?` gives what the `derivative` check found: the varying positions, the domain
@@ -95,8 +95,8 @@ initialize certExtension : SimplePersistentEnvExtension CertEntry (Array CertEnt
 structure DerivEntry where
   /-- The registered theorem. -/
   certificate : Name
-  /-- The input positions in which the forward is differentiated, in increasing order; empty when
-  the inputs are a mapped list, which vary together. -/
+  /-- The input positions in which the forward is differentiated, in increasing order. It is empty
+  when the inputs are a mapped list, which vary together. -/
   varying : List Nat
   /-- The names of the domain premises. -/
   premises : List Name
@@ -135,8 +135,8 @@ def matchHeartbeats : Nat := 100000
 /-- The heartbeats, in thousands, of the attempt to refute the premises. -/
 def refuteHeartbeats : Nat := 4000
 
-/-- `x` with at most `heartbeats` thousand heartbeats from now, or `none` when it throws or runs
-out, the state restored. -/
+/-- Run `x` with at most `heartbeats` thousand heartbeats, counted from the call. The result is
+`none` when `x` throws or runs out, and then the state is restored. -/
 def bounded {α : Type} (heartbeats : Nat) (x : MetaM α) : MetaM (Option α) := do
   let s ← saveState
   tryCatchRuntimeEx
@@ -149,13 +149,14 @@ def portKind (port : Expr) : MetaM (Bool × Expr) := do
   let kind ← whnf (mkApp (mkConst ``TorchLean.Port.kind) port)
   return (kind.isConstOf ``TorchLean.Port.Kind.value, kind)
 
-/-- The L2 product `WithLp 2 (t × …)` of `types`, right-nested, the last factor unwrapped. -/
+/-- The L2 product `WithLp 2 (t × …)` of a list of types, right-nested, the last factor
+unwrapped. -/
 def nestType (two : Expr) : List Expr → MetaM Expr
   | [] => throwError "op_cert: an empty product"
   | [t] => pure t
   | t :: ts => do mkAppM `WithLp #[two, ← mkAppM ``Prod #[t, ← nestType two ts]]
 
-/-- The point of `nestType` with the coordinates `xs`. -/
+/-- The point of `nestType` with a list of coordinates. -/
 def nestPoint (two : Expr) : List Expr → MetaM Expr
   | [] => throwError "op_cert: an empty product"
   | [x] => pure x
@@ -225,7 +226,7 @@ def check (declaration operator : Name) (positions : List Nat) : MetaM DerivEntr
     whnf (mkApp3 (mkConst ``TorchLean.Port.Tangent) real instS port)
   let carrier (port : Expr) : MetaM Expr :=
     whnf (mkApp3 (mkConst ``TorchLean.Port.Carrier) real instS port)
-  -- the cotangent of the value outputs, and the tangents of the outputs it gives
+  -- The cotangent `δ` of the value outputs, and the cotangent of every output it gives.
   let δ ← mkFreshExprMVar (← nestType two (← values.mapM fun o => tangent outPorts[o]!))
   let cot ← mkTuple (← (List.range outPorts.length).mapM fun o =>
     match values.idxOf? o with
@@ -236,7 +237,7 @@ def check (declaration operator : Name) (positions : List Nat) : MetaM DerivEntr
   let isSome ← mkEq (← mkAppM ``Option.isSome #[ruleOpt]) (mkConst ``Bool.true)
   let rule ← mkAppOptM ``Option.get #[none, ruleOpt, ← mkFreshExprMVar isSome]
   let output (y : Expr) : MetaM Expr := do nestPoint two (← values.mapM (tupleProj y ·))
-  -- the varying positions, the input variables, the point, the forward and the pullback
+  -- The varying positions, the input variables, the point, the forward and the pullback.
   let (S, inputs, varying, p₀, f, v) ← match ← literalPorts ins with
     | some inPorts => do
       let S ← if positions.isEmpty then
@@ -291,7 +292,7 @@ def check (declaration operator : Name) (positions : List Nat) : MetaM DerivEntr
       pure ([], [xs], [xs], ← parts (mkApp2 (mkConst ``TorchLean.Port.Carrier) real instS) xs, f,
         ← parts (mkApp2 (mkConst ``TorchLean.Port.Tangent) real instS) pullback)
   let expected ← mkAppM `TorchLean.DerivCert #[f, p₀, δ, v]
-  -- the rule (d) goal, in the context of the binders only
+  -- The goal of rule (d), in the context of the binders only.
   let refutation ← mkFreshExprMVar (mkConst ``False)
   withLocalDeclD `h body fun h => do
   let strong := body.isAppOfArity ``And 2 && body.appFn!.appArg!.isAppOf `HasFDerivAt
@@ -304,7 +305,7 @@ def check (declaration operator : Name) (positions : List Nat) : MetaM DerivEntr
     fail S m!"its statement is not `DerivCert f x δ v` with `f` the operator's forward in these \
       inputs, `x` a point of them, `δ` a cotangent of its value outputs and `v` its pullback of \
       `δ` at these inputs"
-  -- every input and the cotangent are distinct variables of the statement
+  -- Every input and the cotangent are distinct variables of the statement.
   let mut seen : Array Expr := #[]
   for (x, what) in inputs.zipIdx.map (fun (x, i) => (x, m!"input {i}")) ++
       [(δ, m!"the cotangent")] do
@@ -318,8 +319,8 @@ def check (declaration operator : Name) (positions : List Nat) : MetaM DerivEntr
     seen := seen.push x
   let δ ← instantiateMVars δ
   let varying ← varying.mapM instantiateMVars
-  -- every other binder is an argument of the operator or a proposition; every proposition passes
-  -- the premise rules, and the domain premises are those that are not arguments of the operator
+  -- Every other binder is an argument of the operator or a proposition. Every proposition passes
+  -- the premise rules, and the domain premises are the propositions that are not arguments.
   let arguments := op.getAppArgs
   let mut propositions := #[]
   let mut premises := #[]
@@ -343,16 +344,16 @@ def check (declaration operator : Name) (positions : List Nat) : MetaM DerivEntr
     unless arguments.contains b do premises := premises.push name
   unless propositions.isEmpty do
     let s ← saveState
-    let tactic ← `(tactic| first | decide | simp_all | omega)
+    let tactic ← `(tactic| first | (simp_all; done) | omega)
     let refuted ← bounded refuteHeartbeats do
       let goals ← Term.TermElabM.run' <|
         Tactic.run refutation.mvarId! (Tactic.evalTactic tactic)
       return goals.isEmpty
     s.restore
     if refuted == some true then
-      fail S m!"the premises {toString propositions.toList} are rejected by rule (d): `first | \
-        decide | simp_all | omega` refutes them"
-  -- the kernel confirms the match, on a copy of the environment that is then dropped
+      fail S m!"the premises {toString propositions.toList} are rejected by rule (d): `simp_all` \
+        or `omega` refutes them"
+  -- The kernel confirms the match, on a copy of the environment that is then dropped.
   let type ← instantiateMVars (← mkForallFVars (bs.push h) expected)
   let value ← instantiateMVars (← mkLambdaFVars (bs.push h) proof)
   if type.hasMVar || value.hasMVar then

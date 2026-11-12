@@ -128,10 +128,11 @@ agreement with the C sources, and the imports of the library check `scripts/chec
 which must reach every module of the libraries but the root modules of the executables.
 `scripts/lake.sh lint` builds the libraries and then runs the `torchlean_lint` executable, which
 runs `scripts/checks/repo_lint.py`, the gate, the LibTorch ABI check
-`scripts/checks/libtorch_abi.py` and the library check. The ABI check fails unless the ATen
-operators and torch C functions that the LibTorch bridge's sources call are the lists of
-[the trust boundaries](TRUST_BOUNDARIES.md#libtorch-stable-abi). The library check fails unless
-every theorem of the libraries depends on at most `propext`, `Classical.choice` and `Quot.sound`.
+`scripts/checks/libtorch_abi.py` and the library check. The ABI check fails unless the LibTorch
+bridge's sources call exactly the ATen operators of
+[the trust boundaries](TRUST_BOUNDARIES.md#libtorch-stable-abi) and only C shims listed there. The
+library check fails unless every theorem of the libraries depends on at most `propext`,
+`Classical.choice` and `Quot.sound`.
 Its coverage check fails unless every public operator specification and tape constructor under
 `TorchLean/` is registered with `#roundoff_coverage`, every operator of the table with a rule has
 its equation lemma and, when one of its ports holds the scalar, a route analyzed for the configured

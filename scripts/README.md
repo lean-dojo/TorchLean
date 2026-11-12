@@ -10,7 +10,7 @@ Run commands from the repository root, and pass `--help` to any command-line too
 | `checks/repo_lint.py` | Check source hygiene, public interfaces, and documentation references. |
 | `checks/dependency_audit.py` | Inspect imports and check library dependency boundaries. |
 | `checks/libtorch_abi.py` | Check the ATen operator schemas and torch C functions the LibTorch bridge calls against `docs/TRUST_BOUNDARIES.md`, and regenerate `csrc/libtorch/schemas.h`. `lake.sh lint` runs the source checks, and `libtorch_build.py` checks the LibTorch SDK and the built library. |
-| `checks/Library.lean` | Check that every theorem of the libraries depends on at most `propext`, `Classical.choice` and `Quot.sound`, that the operators have their `#roundoff_coverage` registrations, equation lemmas and routes, and that the outcomes of their analyses match `checks/roundoff_baseline.jsonl`. `lake.sh lint` runs it. A worse outcome fails, and so does a new or better one until `TORCHLEAN_ROUNDOFF_BASELINE=update scripts/lake.sh env lean scripts/checks/Library.lean` rewrites the file; that refuses while there are regressions, which `TORCHLEAN_ROUNDOFF_BASELINE=accept` writes too. |
+| `checks/Library.lean` | Check that every theorem of the libraries depends on at most `propext`, `Classical.choice` and `Quot.sound`, that the operators have their `#roundoff_coverage` registrations, equation lemmas and routes, and that the outcomes of their analyses match `checks/roundoff_baseline.jsonl`. `lake.sh lint` runs it. A worse outcome fails, and so does a new or better one until `TORCHLEAN_ROUNDOFF_BASELINE=update scripts/lake.sh env lean scripts/checks/Library.lean` rewrites the file. That command refuses while there are regressions, which `TORCHLEAN_ROUNDOFF_BASELINE=accept` writes too. |
 | `checks/cuda.sh` | Run GPU `parity` (binary32 vs ATen/C ABI) or `sanitize` (Compute Sanitizer). |
 | `lean_allocator.py`, `checks/allocator.py` | Build the private Linux allocator and check its memory-release behavior. |
 | `docs/build_site.sh` | Build the API reference, Lean guide, import graph, and Jekyll website. |
@@ -51,10 +51,10 @@ scripts/lake.sh -Kcuda=false lint
 That requirements file pins CPU PyTorch 2.8.0 for the interoperability checks. The live operator
 captures in `scripts/checks/test_ir_capture.py` and the differential fuzzer
 `scripts/checks/test_frontend_fuzz.py` (seeded random programs through torch.export, FX, Dynamo and
-eager JAX, every value compared with the framework's; `TORCHLEAN_FUZZ_SEED`, `TORCHLEAN_FUZZ_COUNT`)
-also need the `verify` executable built above; `lake test` runs both.
-Their JAX cases run only where JAX is installed, and `TORCHLEAN_REQUIRE_JAX=1` turns a missing JAX
-into an error. The requirements file does not select the LibTorch backend SDK. Install the
+eager JAX, every value compared with the framework's, `TORCHLEAN_FUZZ_COUNT` programs per framework
+from the seed `TORCHLEAN_FUZZ_SEED`) also need the `verify` executable built above. `lake test` runs
+both. Their JAX cases run only where JAX is installed, and `TORCHLEAN_REQUIRE_JAX=1` turns a missing
+JAX into an error. The requirements file does not select the LibTorch backend SDK. Install the
 requirements in a separate Python environment: in a GPU SDK environment they can replace its
 CUDA PyTorch package.
 
@@ -79,11 +79,12 @@ for the scope of these checks.
 `-Kcuda=true` builds the complete LibTorch backend and needs a Linux host with a CUDA-capable GPU
 and a full LibTorch SDK of torch 2.13 or later, whose root contains `include/`, `lib/` and
 `share/cmake/Torch/TorchConfig.cmake`. A CUDA-enabled Python PyTorch installation can provide this
-root, but partial header snapshots cannot. The backend calls torch through the LibTorch Stable
-ABI, so the built library also runs with the runtime of a later release, and the [backend's notes
-on torch versions](../csrc/libtorch/README.md#torch-versions) list the tested releases. Attention
-and its local VJP are composed in Lean from LibTorch numerical primitives. There is no fused
-attention selector.
+root, but partial header snapshots cannot. The backend calls torch through the LibTorch Stable ABI,
+so the built library also runs with the runtime of a later release, apart from the CUDA caching
+allocator's statistics and controls, which fail unless the runtime is torch 2.13, 2.14 or 2.15. The
+[backend's notes on torch versions](../csrc/libtorch/README.md#torch-versions) list the tested
+releases. Attention and its local VJP are composed in Lean from LibTorch numerical primitives. There
+is no fused attention selector.
 
 The SDK root is `-Klibtorch_home=PATH` if given, then `TORCHLEAN_LIBTORCH_HOME`, then `libtorch/`
 under the package root, and relative paths resolve against the package. The build requires Linux,

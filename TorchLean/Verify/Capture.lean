@@ -1098,12 +1098,11 @@ end XLA
 comparison can expose legitimate differences in reduction or elementary-function implementations,
 so a mismatch alone does not identify a bug, but it always fails.
 
-After a run, the report's `outputs` holds each result as `render` writes it (`Capture.resultJson`
-by default), and `conversion_flags` the run's complete conversion status (`Capture.flagsJson`). A
-result that `render` cannot write fails `execute` and the comparisons with its message.
+After a run, the report's `outputs` holds each result as `Capture.resultJson` writes it, and
+`conversion_flags` the run's complete conversion status (`Capture.flagsJson`). A result that
+`Capture.resultJson` cannot write fails `execute`, `compare` and `compare_bitwise` with its message.
 -/
-def Capture.check (document : Json) (requests : Array String := #["structure", "types"])
-    (render : Value Machine.reference → Except String Json := Capture.resultJson) :
+def Capture.check (document : Json) (requests : Array String := #["structure", "types"]) :
     Json := Id.run do
   let mut findings : Array Json := #[]
   let mut ok := true
@@ -1119,7 +1118,7 @@ def Capture.check (document : Json) (requests : Array String := #["structure", "
     let (steps, flags) ← program.run Machine.reference payload arguments
     let results ← program.outputs.mapM (·.read steps)
     let written ← results.mapIdxM fun i result =>
-      (render result).mapError (s!"IR: result {i} cannot be serialized: " ++ ·)
+      (Capture.resultJson result).mapError (s!"IR: result {i} cannot be serialized: " ++ ·)
     pure (program, payload, arguments, steps, results, flags, written)
   if let .ok (_, _, _, _, _, flags, written) := execution then
     outputs := toJson written

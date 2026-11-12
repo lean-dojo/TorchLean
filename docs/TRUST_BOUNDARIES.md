@@ -51,14 +51,14 @@ builds that proposition from the operator's rule, and the kernel checks that the
 Every other variable of the statement must be an argument of the operator or a proposition. The
 attribute rejects a proposition, a proof the operator takes included, that mentions `δ`, is `False`,
 is an equation with a varying input as one side or mentions no variable, and propositions that
-`decide`, `simp_all` or `omega` refute together. No theorem shows that the other premises can hold,
-and a premise from which such an equation follows without being one passes (TLFIX-2e in the bugs
-ledger). The library check counts a certificate as covering a gradient only when it leaves every
-argument of the operator a distinct variable. For the other kinds the attribute checks only that the
-statement mentions the operator's rule. `op_deriv` in `TorchLean/NN/Tactic/OpDeriv.lean` proves
-statements of the same form for programs outside the table. Its proofs go through Lean's kernel, so
-the tactic can fail on a true goal but cannot prove a false one. No theorem bounds the rounding of a
-stored backward in `Float` or `Float32`.
+`simp_all` or `omega` refutes together. No theorem shows that the other premises can hold, and a
+premise from which such an equation follows without being one passes. The library check counts a
+certificate as covering a gradient only when it leaves every argument of the operator a distinct
+variable. For the other kinds the attribute checks only that the statement mentions the operator's
+rule. `op_deriv` in `TorchLean/NN/Tactic/OpDeriv.lean` proves statements of the same form for
+programs outside the table. Its proofs go through Lean's kernel, so the tactic can fail on a true
+goal but cannot prove a false one. No theorem bounds the rounding of a stored backward in `Float` or
+`Float32`.
 
 For a correctness claim, cite the applicable theorem and hypotheses, checker predicate, or native
 validation evidence. A successful command, an accepted artifact, and a proof are different results.
@@ -129,17 +129,17 @@ or to FloatLib's rules can loosen it without failing the build. The lint compare
 of the analyses that `#roundoff_coverage` records, as described next.
 
 `#roundoff_coverage` records the outcome of each route's analysis: proved, conditional, unsupported
-or failed. Caveats include references that retain branch decisions made by rounded arithmetic.
-The coverage check of `scripts/lake.sh lint` compares the outcomes with
-`scripts/checks/roundoff_baseline.jsonl`. It fails when a status gets lower, a budget of the bound
-gets larger at binary16, bfloat16, binary32 or binary64, a budget without values at these formats
-or the reference changes, a premise or caveat appears at the same status, or an analysis is gone.
-Budgets with values at these formats are compared by their values, whatever their terms. A budget
-without values is compared by the hash of its term together with a hash of the TorchLean and
-FloatLib definitions the term uses, so a changed definition behind the same term fails the lint
-too; a change in Mathlib or Lean's core behind the same term is not seen. The budgets are compared
-at these four formats only, so a budget can still get larger at another format without failing the
-lint, and premises are compared by hash.
+or failed. A reference that branches on a comparison of computed scalars depends on the rounded
+computation, so its outcome carries a caveat. The coverage check of `scripts/lake.sh lint` compares
+the outcomes with `scripts/checks/roundoff_baseline.jsonl`. It fails when a status gets lower, a
+budget of the bound gets larger at binary16, bfloat16, binary32 or binary64, a budget without values
+at these formats or the reference changes, a premise or caveat appears at the same status, or an
+analysis is gone. Budgets with values at these formats are compared by their values, whatever their
+terms. A budget without values is compared by the hash of its term together with a hash of the
+TorchLean and FloatLib definitions the term uses, so a changed definition behind the same term fails
+the lint too. A change in Mathlib or Lean's core behind the same term is not seen. The budgets are
+compared at these four formats only, so a budget can still get larger at another format without
+failing the lint, and premises are compared by hash.
 
 ## Prop-Valued Contracts
 
@@ -388,22 +388,23 @@ an option for them, because the Lean executables load the bridge without an inte
 Dispatcher Schemas, C Shims and Unstable Remainder lists record exactly what the built library
 names in torch. Operators Behind C Shims lists the operators that those shims run in turn.
 
-- Minimum version: torch 2.13 for every entry. The build refuses an older LibTorch, the library
-  imports C shims first present in torch 2.13, and torch 2.13, 2.14 and 2.15 register every schema
-  below verbatim and export every C shim and unstable symbol below. A library built against torch
-  2.13 has run the CUDA tests against the torch 2.13 and 2.15 runtimes without a rebuild
-  (csrc/libtorch/README.md says which); against torch 2.14 only these static checks have run.
+- Minimum version: torch 2.13 for every entry. The build refuses an older LibTorch, and the library
+  imports C shims first present in torch 2.13. The generated operator headers of torch 2.13, 2.14
+  and 2.15 declare every schema below verbatim, and these releases export every C shim and unstable
+  symbol below. A library built against torch 2.13 has run the CUDA tests against the torch 2.13 and
+  2.15 runtimes without a rebuild (csrc/libtorch/README.md says which), and against torch 2.14 only
+  these static checks have run.
 - `scripts/checks/libtorch_abi.py` checks the lists. `scripts/lake.sh lint` checks that the sources'
   operator keys are the table's, the table is the schema list, the one call of the dispatcher is
   `call` in `stable.h`, with the names of an operator key, every C shim the stable sources name is
   in the shim list, and they include only Stable ABI headers. The build also checks that the
-  LibTorch it builds against registers each schema under Dispatcher Schemas and Operators Behind
-  C Shims verbatim (`--torch`), that the built library names exactly the table's operators and no
-  other `aten::` operator, imports exactly the listed C shims, imports from torch nothing else but
-  the unstable remainder, apart from functions of the C++ standard library (next item), and does
-  not link the CUDA runtime (`--library`), and that the LibTorch defines every torch symbol the
-  library imports (both options). `--torch` and `--library` on a later release's package check that
-  release.
+  generated operator headers of the LibTorch it builds against declare each schema under Dispatcher
+  Schemas and Operators Behind C Shims verbatim (`--torch`), that the built library names exactly
+  the table's operators and no other `aten::` operator, imports exactly the listed C shims, imports
+  from torch nothing else but the unstable remainder, apart from functions of the C++ standard
+  library (next item), and does not link the CUDA runtime (`--library`), and that the LibTorch
+  defines every torch symbol the library imports (both options). `--torch` and `--library` on a
+  later release's package check that release.
 - The library imports five functions of the C++ standard library without a symbol version:
   `std::__cxx11::basic_stringbuf::str` (both overloads), the default constructors of
   `std::__cxx11::basic_stringstream` and `std::__cxx11::basic_ostringstream`, and
@@ -421,12 +422,14 @@ names in torch. Operators Behind C Shims lists the operators that those shims ru
   leaves the list unchecked.
 - The Stable ABI of torch 2.13 to 2.15 has no C shim that reads whether a tensor requires gradients.
   No tensor the bridge makes does: no listed schema or C shim takes `requires_grad` or sets the
-  flag, and every call runs with grad mode off. A native test that boxes its own tensor with
-  `torchlean_cuda_buffer_of_handle` checks the flag itself.
+  flag, and every entry point that Lean calls computes with grad mode off.
+  `torchlean_cuda_buffer_of_handle`, which only the native tests call, computes with the caller's
+  grad mode, so a native test checks that a tensor it boxes doesn't require gradients.
 
 ### Dispatcher Schemas
 
-Each ATen operator schema the bridge calls through the dispatcher, exactly as torch registers it.
+Each ATen operator schema the bridge calls through the dispatcher, exactly as torch's generated
+operator headers declare it.
 
 - `empty.memory_format(SymInt[] size, *, ScalarType? dtype=None, Layout? layout=None, Device?
   device=None, bool? pin_memory=None, MemoryFormat? memory_format=None) -> Tensor`,
@@ -446,8 +449,8 @@ Each ATen operator schema the bridge calls through the dispatcher, exactly as to
   non_blocking=False, bool copy=False, MemoryFormat? memory_format=None) -> Tensor(a)`,
   `to.dtype_layout(Tensor(a) self, *, ScalarType? dtype=None, Layout? layout=None, Device?
   device=None, bool? pin_memory=None, bool non_blocking=False, bool copy=False, MemoryFormat?
-  memory_format=None) -> Tensor(a)`: owned contiguous copies of results and views, copies into an
-  existing buffer, dtype conversions, and transfers between the host and the selected device.
+  memory_format=None) -> Tensor(a)`: owned contiguous copies of results and views, copies into a
+  given buffer, dtype conversions, and transfers between the host and the selected device.
 - `expand(Tensor(a) self, SymInt[] size, *, bool implicit=False) -> Tensor(a)`, `expand_as(Tensor(a)
   self, Tensor other) -> Tensor(a)`, `narrow(Tensor(a) self, int dim, SymInt start, SymInt length)
   -> Tensor(a)`, `permute(Tensor(a) self, int[] dims) -> Tensor(a)`, `reshape(Tensor(a) self,
@@ -534,9 +537,9 @@ Each ATen operator schema the bridge calls through the dispatcher, exactly as to
 - `fft_rfft(Tensor self, SymInt? n=None, int dim=-1, str? norm=None) -> Tensor`,
   `view_as_real(Tensor(a) self) -> Tensor(a)`, `view_as_complex(Tensor(a) self) -> Tensor(a)`,
   `imag(Tensor(a) self) -> Tensor(a)`, `_fft_c2r(Tensor self, int[] dim, int normalization, SymInt
-  last_dim_size) -> Tensor`: the real FFT and its inverse; `_fft_c2r` is the operator inside
+  last_dim_size) -> Tensor`: the real FFT and its inverse. `_fft_c2r` is the operator inside
   `fft_irfft`, called directly because `fft_irfft` takes its normalization as a `str`, which the
-  torch 2.13 dispatcher leaks, and `libtorch_abi.py --torch` checks a release's registry for a
+  torch 2.13 dispatcher leaks. `libtorch_abi.py --torch` checks a release's operator headers for a
   change to its schema.
 
 ### C Shims
@@ -553,7 +556,7 @@ and the two message functions from 2.13, and the others in earlier releases.
 - `torch_call_dispatcher`, `torch_new_stable_ivalue`, `torch_delete_stable_ivalue`,
   `torch_new_list_reserve_size`, `torch_list_push_back`, `torch_list_size`, `torch_list_get_item`,
   `torch_delete_list`: the boxed call of every schema above, with torch-allocated payloads for
-  present optional arguments and lists for list arguments, which the dispatcher takes over;
+  present optional arguments and lists for list arguments, which the dispatcher takes over.
   `stable.h` frees them itself when a later argument of the call fails to box.
 - `torch_exception_get_what`, `torch_exception_get_what_without_backtrace`: the message of a failed
   C call, which `stable.h` throws without the backtrace and torch's inline error check also prints,
@@ -590,23 +593,24 @@ and the two message functions from 2.13, and the others in earlier releases.
   `aoti_torch_get_current_cuda_stream`, `aoti_torch_grad_mode_is_enabled`,
   `aoti_torch_grad_mode_set_enabled`: the CUDA device guard around calls on the selected device,
   torch's current stream, on which the generated kernels launch, and the grad mode that every entry
-  point turns off.
+  point Lean calls turns off.
 - `aoti_torch_abi_version`: the release of the loaded torch runtime, which
   `TorchLean.LibTorch.version` reports and the allocator calls of `unstable.cpp` check.
 
 ### Operators Behind C Shims
 
-Each ATen operator that a listed C shim runs for the bridge, exactly as torch registers it, read
-off the shims' code and the functions it calls in torch 2.13, 2.14 and 2.15, which run the same
-operators. `libtorch_abi.py --torch` checks each schema against a release's registry and reads its
-device check from torchgen's declarations; it does not follow the shims' code again.
+Each ATen operator that a listed C shim runs for the bridge, exactly as torch's generated operator
+headers declare it, read off the shims' code and the functions it calls in torch 2.13, 2.14 and
+2.15, which run the same operators. `libtorch_abi.py --torch` checks each schema against a release's
+operator headers and reads its device check from torchgen's declarations, but it does not follow the
+shims' code again.
 
-- `subtract.Tensor(Tensor self, Tensor other, *, Scalar alpha=1) -> Tensor`: floating-point
-  addition and subtraction, through `aoti_torch_aten_subtract_Tensor`; a composite operator, so it
-  has no device check of its own.
+- `subtract.Tensor(Tensor self, Tensor other, *, Scalar alpha=1) -> Tensor`: floating-point addition
+  and subtraction, through `aoti_torch_aten_subtract_Tensor`. It is a composite operator, so it has
+  no device check of its own.
 - `sub.Tensor(Tensor self, Tensor other, *, Scalar alpha=1) -> Tensor`: the operator
   `subtract.Tensor` calls, which receives the CPU 0-dim operand of `add` and `sub` in `stable.h`
-  beside a CUDA tensor; `stable.h` checks at compile time that torch declares it without a device
+  beside a CUDA tensor. `stable.h` checks at compile time that torch declares it without a device
   check.
 - `pad(Tensor self, SymInt[] pad, str mode="constant", float? value=None) -> Tensor`: zero padding,
   through `aoti_torch_aten_pad`.
@@ -616,13 +620,13 @@ device check from torchgen's declarations; it does not follow the shims' code ag
   bool? pin_memory=None) -> Tensor`: the CPU 0-dim tensor of a scalar operand, through
   `aoti_torch_scalar_to_tensor_float64` and `aoti_torch_scalar_to_tensor_int64`.
 - `clone(Tensor self, *, MemoryFormat? memory_format=None) -> Tensor`: the copy the shims of
-  `subtract.Tensor` and `pad` make of an input whose conjugate or negative bit is set; no tensor of
+  `subtract.Tensor` and `pad` make of an input whose conjugate or negative bit is set. No tensor of
   the bridge has either bit, since no operator it calls sets the conjugate bit, and `imag`, the one
   that can set the negative bit, sets it only on a conjugate input.
 - `empty_strided(SymInt[] size, SymInt[] stride, *, ScalarType? dtype=None, Layout? layout=None,
   Device? device=None, bool? pin_memory=None) -> Tensor`: the tensor
   `aoti_torch_create_tensor_from_blob` makes for a null data pointer, which `host_view` passes for
-  an empty buffer; with no elements, it and a view of the buffer agree.
+  an empty buffer. With no elements, it and a view of the buffer agree.
 
 ### Unstable Remainder
 
@@ -647,9 +651,10 @@ mangled name in torch 2.13, 2.14 and 2.15, so the library binds it by name.
   cuDNN benchmarking, deterministic algorithms on request) and the runtime settings of
   `TorchLean.LibTorch`, IDs 0 to 8.
 - `c10::cuda::CUDACachingAllocator::allocator`: the CUDA caching allocator's statistics,
-  `emptyCache` and memory fraction, which no C shim exposes; the calls go through its virtual
-  functions, whose order a release may change, so they run only on torch 2.13, 2.14 and 2.15 and
-  throw on any other release.
+  `emptyCache` and memory fraction, which no C shim exposes. The calls go through its virtual
+  functions at the slots of the headers the library is built against, and throw unless the loaded
+  runtime is torch 2.13, 2.14 or 2.15, which have the same slots. The check reads only the runtime's
+  release, so it guards the slots only for a library built against one of these releases.
 
 ## Custom Tensor Computations
 
@@ -676,19 +681,18 @@ implements those operations, even if its Lean source-equivalence certificate is 
 
 Automatic recording adds a kernel-checked theorem that the recorded program, run by the pure
 interpreter `TorchLean.instOpsId` (named, never an `Ops Id` instance found in scope), computes the
-source function. Every recorded operation must compute what its operator computes in the
-recording's element context, instance included, so neither the table from source functions to
-recorded operators nor the operand wiring is trusted. That context is the one `Function.run` finds
-by instance search, local instances included; the gradient is the backward of the operators' rules
-in it, and the derivative laws are proved over `ℝ`, so in a context whose arithmetic is not the
-scalar's the gradient need not be the derivative of the source (TLFIX-1f in the bugs ledger). A
-function that only the elementwise fallback records has the theorem at one scalar, not one about
-the batched program (TLFIX-1h). The theorem does not cover the eager tape, which runs the same
-program on another interpreter, or the GPU kernels.
-Scalar branches record only the selected path and synchronize to Lean for the decision.
+source function. Every recorded operation must compute what its operator computes in the recording's
+element context, instance included, so neither the table from source functions to recorded operators
+nor the operand wiring is trusted. That context is the one `Function.run` finds by instance search,
+local instances included. The gradient is the backward of the operators' rules in it, and the
+derivative laws are proved over `ℝ`, so in a context whose arithmetic is not the scalar's the
+gradient need not be the derivative of the source. A function that only the elementwise fallback
+records has the theorem at shape `[]` only, and no theorem covers its lift to the input's shape. The
+theorem does not cover the eager tape, which runs the same program on another interpreter, or the
+GPU kernels. Scalar branches record only the selected path and synchronize to Lean for the decision.
 Fixed-parameter recurrences record their ordered steps. These source equalities do not establish
-differentiability at branch boundaries or turn floating-point VJPs into exact real derivatives.
-The derivative laws apply only under their domain assumptions.
+differentiability at branch boundaries or turn floating-point VJPs into exact real derivatives. The
+derivative laws apply only under their domain assumptions.
 
 CPU evaluates the original scalar function. CPU-only carriers keep their type through a reported
 fallback, and unsupported source for a GPU-capable carrier is an error. Canonical IR stores a custom

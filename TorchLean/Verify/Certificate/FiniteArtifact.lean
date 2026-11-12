@@ -15,11 +15,12 @@ public import TorchLean.Tensor.Rep.Traversal.Sequence
 /-!
 # Finite binary32 affine artifacts
 
-Each binary32 coefficient of a CROWN certificate is read here as its exact rational value, and an
-infinity or a NaN is refused. Agreement with the rounded affine replay gives no enclosure of the
-decoded program's real computation on its own. Local dominance checks in rational arithmetic close
-that gap: over the input box, each supplied bound must dominate the exact transfer of its parent's
-bound (`Chain.check`).
+The entries of a CROWN certificate at the input node and at each `Op.linear` and `Op.relu` node are
+read here, each binary32 coefficient as its exact rational value, and an infinity or a NaN is
+refused. The entries at the weight and bias constants are not read. Agreement with the rounded
+affine replay gives no enclosure of the decoded program's real computation on its own. Local
+dominance checks in rational arithmetic close that gap: over the input box, each supplied bound must
+dominate the exact transfer of its parent's bound (`Chain.check`).
 
 The supported fragment is a graph of registered operators (`IR.Graph`) with one nonempty
 vector input followed by linear layers and ReLU nodes, whose last node is the graph's one output. A

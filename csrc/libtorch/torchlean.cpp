@@ -1495,11 +1495,43 @@ Tensor log_normalizer(const Tensor& shifted, const Tensor& pivot, int64_t axis) 
   return aten<"log1p">(aten<"sum.dim_IntList">(others, {axis}, true));
 }
 
+Tensor cross_entropy_normalizer(const Tensor& x, const Tensor& shifted,
+                                const Tensor& pivot, int64_t axis) {
+  const auto zeros = aten<"zeros">(pivot.sizes(), options(x));
+  const auto tail = aten<"sum.dim_IntList">(
+      aten<"scatter.src">(aten<"exp">(shifted), axis, pivot, zeros), {axis}, true);
+  const auto normalizer = aten<"log1p">(tail);
+  if (x.size(axis) <= 1) return normalizer;
+
+  // Individual tail exponentials may round to zero even when their combined mass is
+  // representable. Match CrossEntropy.twoLevelAt, including its per-row finiteness guard.
+  const auto without_pivot = aten<"scatter.src">(
+      x, axis, pivot, add(zeros, scalar_for(x, kNegativeInfinity)));
+  const auto runner_up = aten<"argmax">(without_pivot, axis, true);
+  const auto runner_value = aten<"gather">(x, axis, runner_up);
+  const auto largest = aten<"gather">(x, axis, pivot);
+  const auto inner = aten<"scatter.src">(
+      aten<"scatter.src">(aten<"exp">(sub(x, runner_value)), axis, pivot, zeros),
+      axis, runner_up, zeros);
+  const auto others = aten<"exp">(add(sub(runner_value, largest),
+      aten<"log1p">(aten<"sum.dim_IntList">(inner, {axis}, true))));
+  const auto two_level = aten<"log1p">(others);
+  const auto finite_result = aten<"logical_not">(aten<"any.dim">(
+      aten<"logical_not">(aten<"isfinite">(sub(shifted, two_level))), axis, true));
+  const auto use_two_level = aten<"logical_and">(
+      aten<"ne.Tensor">(runner_up, pivot), aten<"logical_and">(
+      aten<"logical_not">(aten<"isinf">(largest)), aten<"logical_and">(
+      aten<"logical_not">(aten<"isinf">(runner_value)), aten<"logical_and">(
+      aten<"eq.Tensor">(tail, zeros), aten<"logical_and">(
+      aten<"isfinite">(others), finite_result)))));
+  return aten<"where.self">(use_two_level, two_level, normalizer);
+}
+
 Tensor weighted_log_softmax(const Tensor& x, const Tensor& weights, int64_t axis) {
   const auto pivot = aten<"argmax">(x, axis, true);
   const auto largest = aten<"gather">(x, axis, pivot);
   const auto shifted = sub(x, largest);
-  const auto normalizer = log_normalizer(shifted, pivot, axis);
+  const auto normalizer = cross_entropy_normalizer(x, shifted, pivot, axis);
   const auto logp = sub(shifted, normalizer);
   const auto finite = aten<"isfinite">(logp);
   const auto direct = aten<"mul.Tensor">(
@@ -1835,7 +1867,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_cross_entropy_bwd(
     const auto weights = shaped(target, shape);
     const auto pivot = aten<"argmax">(x, axis, true);
     const auto shifted = sub(x, aten<"gather">(x, axis, pivot));
-    const auto logp = sub(shifted, log_normalizer(shifted, pivot, axis));
+    const auto logp = sub(shifted, cross_entropy_normalizer(x, shifted, pivot, axis));
     const auto probabilities = aten<"exp">(logp);
     const auto upstream = aten<"neg">(weights);
     // scatter.src with zeros, as scatter.value with 0 (see log_normalizer).

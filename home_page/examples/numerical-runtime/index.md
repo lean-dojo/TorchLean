@@ -164,6 +164,10 @@ roundoff, so the computed gradient is not zero.
 `TorchLeanExamples/DeepDives/Floats/RoundingBugs.lean` proves, for every length and under
 conditions on the forward computation, that the cross-entropy gradient of a one-hot target is
 negative at the target and nonnegative elsewhere.
+Cross-entropy also uses a second shift when the individual tail exponentials underflow but their
+combined mass can still be represented. For example, binary16 logits $[9,-9,-9]$ retain a target
+gradient of $-2^{-24}$; the one-level formula returns zero. The CPU result is checked by a Lean
+theorem, and the CUDA implementation has separate runtime checks in binary32 and binary64.
 `TorchLeanExamples/DeepDives/Floats/LibraryBugs.lean` applies the same analysis to nine formulas
 from other libraries. Four come from PyTorch, JAX and Hugging Face Transformers: the soft-margin
 loss, the KL divergence of two normal distributions, the tanh approximation of GELU and the clamp

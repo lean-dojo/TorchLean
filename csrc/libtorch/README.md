@@ -269,7 +269,7 @@ Coverage by test module:
 
 | Test module | Main coverage |
 | --- | --- |
-| `TorchLeanTest/CUDA/Numerics.lean` | The evaluation orders of the generated kernels behind `Buffer.axpy` and the ordered sums, in binary32 and binary64. |
+| `TorchLeanTest/CUDA/Numerics.lean` | Fused `Buffer.axpy`, ordered sums, and cross-entropy retaining a representable combined tail when individual exponentials underflow, in binary32 and binary64. |
 | `TorchLeanTest/CUDA/Softmax.lean` | `softmax` and `log_softmax`, forward and backward. |
 | `TorchLeanTest/CUDA/Elementwise.lean` | Scalar elementwise ops, activations, safe logs, products, `sum`, `dropout` against its binary32 specification, and the Huber terms and slopes (`huberTerms`, `huberSlope`) against the CPU rules. |
 | `TorchLeanTest/CUDA/Attention.lean` | Attention values and gradients against the CPU reference, including batches. |

@@ -32,16 +32,20 @@ failures: invalid domains for `log`, `sqrt`, division, `exp`, and related math A
 - Wang et al., “An Empirical Study on Numerical Bugs in Deep Learning Programs”, ASE NIER 2022.
   https://doi.org/10.1145/3551349.3559561
 
-TorchLean cannot repair an arbitrary hand-written unstable loss after the fact. What it does is
-give stable primitives and domain-aware variants a named place in the spec. For logits, users
-should reach for `crossEntropy .logits`. It uses the log-softmax kernel behind
-`Tensor.logSoftmax`, and when an unweighted log-probability overflows it rebuilds the weighted
-term from the original logits. That avoids the fragile `softmax` followed by `log`, and the
+TorchLean cannot repair an arbitrary hand-written unstable loss after the fact. What it does is give
+stable primitives and domain-aware variants a named place in the spec. For logits, users should
+reach for `crossEntropy .logits`. Its log-probabilities come from `CrossEntropy.vectorLogProbs`: by
+default the one-level log-softmax `LogSoftmax.vec` behind `Tensor.logSoftmax`, and the two-level
+normalizer when `CrossEntropy.twoLevelAt` holds: another class exists, neither the largest logit
+nor the runner-up is infinite, the computed sum of the exponentials of the classes other than the
+largest is zero, and the computed exponential of the log-sum-exp of those classes and every entry
+of the two-level result are finite. When an unweighted log-probability overflows it rebuilds the
+weighted term from the original logits. That avoids the fragile `softmax` followed by `log`, and the
 zero-times-infinity of an overflowing logit difference. Its real formula and both derivatives are
-proved in `TorchLean.NN.Softmax.Correctness`. Those are identities over `ℝ`, and two
-floating-point schedules of the same formula can differ in their bits. In the same way, `safeDiv`
-(the registered operator `TorchLean.Op.safeDiv`) puts epsilon-protected division into the graph as
-a node of its own.
+proved in `TorchLean.NN.Softmax.Correctness`. Those are identities over `ℝ`, and two floating-point
+schedules of the same formula can differ in their bits. In the same way, `safeDiv` (the registered
+operator `TorchLean.Op.safeDiv`) puts epsilon-protected division into the graph as a node of its
+own.
 
 Bug-shaped PyTorch sketches:
 

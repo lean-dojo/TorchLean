@@ -182,6 +182,9 @@ import TorchLeanExamples.DeepDives.Floats.LibraryBugs
 import TorchLeanExamples.DeepDives.Floats.LossBugs.FocalPower
 import TorchLeanExamples.DeepDives.Floats.ProbBugs.SurvivalComplement
 import TorchLeanExamples.DeepDives.Floats.RoundingBugs
+import TorchLeanExamples.DeepDives.Floats.Stable.Exp
+import TorchLeanExamples.DeepDives.Floats.Stable.K3
+import TorchLeanExamples.DeepDives.Floats.Stable.Variance
 import TorchLeanExamples.DeepDives.Muon
 import TorchLeanExamples.DeepDives.Stability.RidgeRegression1D
 import TorchLeanExamples.DeepDives.TensorOperations

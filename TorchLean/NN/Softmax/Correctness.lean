@@ -28,6 +28,9 @@ Over `ℝ`, the results below close that gap:
   the adjoint of the true derivative (`softmaxBackward_eq_fderiv`, `logSoftmaxBackward_eq_fderiv`).
 - `hasFDerivAt_distillLoss` identifies the cancellation-resistant student pullback with
   the derivative of the teacher-logit loss, with the teacher held fixed.
+- `CrossEntropy.vectorLogProbs_real` and `CrossEntropy.logProbs_real` identify the
+  log-probabilities of cross-entropy, in both the one-level and the two-level form, with the
+  log-softmax. `CrossEntropy.log_two_level` is the identity behind the two-level normalizer.
 - `CrossEntropy.hasFDerivAt_logits` and `CrossEntropy.hasFDerivAt_target` prove
   the logits and target-weight derivatives of the weighted loss. Targets need not sum to one.
 -/
@@ -261,9 +264,84 @@ theorem Tensor.logSoftmaxBackward_eq_fderiv {n : Nat} (x δ : Tensor ℝ [n]) :
 
 /-! ## Weighted logits cross-entropy -/
 
-private theorem CrossEntropy.vectorTerms_eq_mul {n : Nat} (x target : Tensor ℝ [n]) :
-    CrossEntropy.vectorTerms x target = target *
-        LogSoftmax.vec x := by
+/-- The two-level normalizer over the reals: for `q ≠ p`, `log (1 + exp (x q - x p + log (1 + I)))`
+with `I = ∑_{j ∉ {p, q}} exp (x j - x q)` is `log (∑ j, exp (x j)) - x p`. -/
+theorem CrossEntropy.log_two_level {n : Nat} (x : Fin n → ℝ) {p q : Fin n} (hq : q ≠ p) :
+    Real.log (1 + Real.exp (x q - x p + Real.log
+        (1 + ∑ j, if j = p ∨ j = q then 0 else Real.exp (x j - x q)))) =
+      Real.log (∑ j, Real.exp (x j)) - x p := by
+  have hI : 0 ≤ ∑ j, (if j = p ∨ j = q then 0 else Real.exp (x j - x q)) :=
+    Finset.sum_nonneg fun j _ => by split_ifs <;> positivity
+  have hsplit : ∑ j, (if j = p then 0 else Real.exp (x j - x q)) =
+      1 + ∑ j, (if j = p ∨ j = q then 0 else Real.exp (x j - x q)) := by
+    have hpt (j : Fin n) : (if j = p then 0 else Real.exp (x j - x q)) =
+        (if j = q then 1 else 0) + (if j = p ∨ j = q then 0 else Real.exp (x j - x q)) := by
+      by_cases hjp : j = p
+      · simp [hjp, hq.symm]
+      · by_cases hjq : j = q
+        · subst hjq
+          simp [hjp]
+        · simp [hjp, hjq]
+    rw [Finset.sum_congr rfl fun j _ => hpt j, Finset.sum_add_distrib]
+    simp
+  have hscale : Real.exp (x q - x p) * ∑ j, (if j = p then 0 else Real.exp (x j - x q)) =
+      ∑ j, if j = p then 0 else Real.exp (x j - x p) := by
+    rw [Finset.mul_sum]
+    refine Finset.sum_congr rfl fun j _ => ?_
+    split_ifs
+    · rw [mul_zero]
+    · rw [← Real.exp_add]
+      congr 1
+      ring
+  have htail : 1 + ∑ j, (if j = p then 0 else Real.exp (x j - x p)) =
+      ∑ j, Real.exp (x j - x p) := by
+    have hpt (j : Fin n) : Real.exp (x j - x p) =
+        (if j = p then 1 else 0) + (if j = p then 0 else Real.exp (x j - x p)) := by
+      by_cases hjp : j = p
+      · subst hjp
+        simp
+      · simp [hjp]
+    rw [Finset.sum_congr rfl fun j _ => hpt j, Finset.sum_add_distrib]
+    simp
+  have hweight : ∑ j, Real.exp (x j - x p) = (∑ j, Real.exp (x j)) * Real.exp (-x p) := by
+    simp_rw [sub_eq_add_neg, Real.exp_add]
+    rw [Finset.sum_mul]
+  have hS : 0 < ∑ j, Real.exp (x j) :=
+    Finset.sum_pos (fun j _ => Real.exp_pos _) ⟨p, Finset.mem_univ p⟩
+  rw [Real.exp_add, Real.exp_log (by linarith), ← hsplit, hscale, htail, hweight,
+    Real.log_mul hS.ne' (Real.exp_ne_zero _), Real.log_exp, sub_eq_add_neg]
+
+/-- Over the reals, `vectorLogProbs` is the stable log-softmax `LogSoftmax.vec`, in both its
+one-level and its two-level branch. -/
+theorem CrossEntropy.vectorLogProbs_real {n : Nat} (t : Tensor ℝ [n]) :
+    vectorLogProbs t = LogSoftmax.vec t := by
+  match n with
+  | 0 => rfl
+  | n + 1 =>
+      apply Tensor.ext_vector
+      intro i
+      simp only [vectorLogProbs]
+      split
+      · rename_i htwo
+        rw [LogSoftmax.getScalar_vec_eq_sub_log]
+        have h := log_two_level (fun j => t.getScalar j) (runnerUp_ne_of_twoLevelAt htwo)
+        simp only [Tensor.sub_def, Tensor.getScalar_zipWith, Tensor.getScalar_full,
+          Context.log1p_eq_log_one_add, MathFunctions.exp, Tensor.sum_vec, Tensor.getScalar_ofFn]
+        rw [h]
+        ring
+      · rfl
+
+/-- Over the reals, `logProbs x dim` is the log-softmax of `x` along `dim`. -/
+theorem CrossEntropy.logProbs_real {s : Shape} (x : Tensor ℝ s) (dim : Fin s.rank) :
+    logProbs x dim = Tensor.logSoftmax x dim := by
+  apply Tensor.Rep.ext
+  intro c
+  rw [logProbs_apply, Tensor.logSoftmax_apply, vectorLogProbs_real]
+
+/-- Over the reals, the weighted terms of one class vector are the target times the vector
+log-softmax of the logits. -/
+theorem CrossEntropy.vectorTerms_real {n : Nat} (x t : Tensor ℝ [n]) :
+    CrossEntropy.vectorTerms x t = t * LogSoftmax.vec x := by
   cases n with
   | zero =>
       apply Tensor.ext_vector
@@ -272,8 +350,8 @@ private theorem CrossEntropy.vectorTerms_eq_mul {n : Nat} (x target : Tensor ℝ
   | succ n =>
       apply Tensor.ext_vector
       intro i
-      simp only [CrossEntropy.vectorTerms, getScalar_ofFn, sub_self, beq_self_eq_true, ite_true,
-        mul_def, getScalar_zipWith]
+      simp only [CrossEntropy.vectorTerms, vectorLogProbs_real, getScalar_ofFn, sub_self,
+        beq_self_eq_true, ite_true, mul_def, getScalar_zipWith]
 
 /-- Over `ℝ`, the overflow-aware weighted loss equals the cross-entropy formula, the negated dot
 product of `target` with the log-softmax of `x`. Rounded evaluations of the two schedules can
@@ -282,7 +360,7 @@ theorem CrossEntropy.logits_eq_dot {n : Nat} (x target : Tensor ℝ [n]) :
     Tensor.crossEntropy .logits x target ⟨0, Shape.AxisInBounds.proof⟩ =
       -(innerSL ℝ (getScalarE target)) (getScalarE (Tensor.logSoftmax x ⟨0, Nat.one_pos⟩)) := by
   change -Tensor.sum (CrossEntropy.vectorTerms x target) / ((1 : Nat) : ℝ) = _
-  rw [vectorTerms_eq_mul, Nat.cast_one, div_one, Tensor.logSoftmax_zero_vec]
+  rw [vectorTerms_real, Nat.cast_one, div_one, Tensor.logSoftmax_zero_vec]
   simp only [Tensor.sum_vec, mul_def, getScalar_zipWith, innerSL_apply_apply, inner_eq_sum_mul,
     getScalarE_ofLp]
 
@@ -292,7 +370,7 @@ private theorem CrossEntropy.getScalarE_backward {n : Nat} (x : Vec n)
       logSoftmaxVJP x (-getScalarE target) := by
   have same := getScalarE_logSoftmaxBackward (ofFnE x)
     (Tensor.map (fun value => -value) target)
-  simp only [Tensor.crossEntropyBackward, reduceIte,
+  simp only [Tensor.crossEntropyBackward, logProbs_real, reduceIte,
     show axisMeanDenom [n] ⟨0, Shape.AxisInBounds.proof⟩ = 1 from rfl, Context.divNat_real,
     Nat.cast_one, div_one]
   have hid (t : Tensor ℝ [n]) : Tensor.map (fun value => value) t = t := by
@@ -343,7 +421,7 @@ theorem CrossEntropy.hasFDerivAt_target {n : Nat} (logits : Tensor ℝ [n])
       -getScalarE (Tensor.logSoftmax logits ⟨0, Shape.AxisInBounds.proof⟩) := by
     change getScalarE (Tensor.map (fun value => -value / ((1 : Nat) : ℝ))
       (CrossEntropy.vectorTerms logits (Tensor.full [n] 1))) = _
-    rw [vectorTerms_eq_mul, Tensor.logSoftmax_zero_vec]
+    rw [vectorTerms_real, Tensor.logSoftmax_zero_vec]
     ext i
     simp [getScalarE_ofLp, mul_def]
   have hderiv :

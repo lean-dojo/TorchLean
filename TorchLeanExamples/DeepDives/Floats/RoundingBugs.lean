@@ -44,6 +44,7 @@ public import TorchLean.Tensor.Layers.Loss.Axis
 public import TorchLean.NN.Models.GradientBoostedTrees
 import FloatLib.Numerics.Enclosure.Elementary.Proof
 import TorchLean.NN.Softmax.Correctness
+import TorchLean.Verify.RuntimeApprox.Roundoff.CrossEntropy
 import TorchLean.NN.Loss.Clamp
 import TorchLean.NN.Loss.Cosine
 public import FloatLib.Numerics.Automation.Attributes
@@ -64,8 +65,8 @@ in IEEE formats and theorems about the stable formulas TorchLean computes.
   TorchLean's operators on the example in native `Float32` as part of `lake test`, and
   `SoftmaxCollapse` proves the collapse.
 * `SoftmaxSign`: under conditions on the computed values, the stable cross-entropy gradient of a
-  one-hot target is negative at the target and nonnegative elsewhere, in every IEEE format and at
-  every length.
+  one-hot target over two or more classes is negative at the target and nonnegative elsewhere, in
+  every IEEE format and at every length.
 * `Cancellation`: the cosine loss `1 - p̂ · t̂` and the Gini impurity `1 - Σ p²` cancel
   catastrophically, which the stable formulas avoid.
 * `Clamp`: at the upper clamp the standard cross-entropy of probabilities and binary
@@ -393,7 +394,7 @@ theorem gradient_real (m : ℝ) : gradient m = -tailMass (2 * m) := by
       (Tensor.map (fun x => -x) SoftmaxCrossEntropy.target))
   have coordinate : gradient m = -1 + Real.exp m / (Real.exp m + 2 * Real.exp (-m)) := by
     have hdenom : axisMeanDenom [3] ⟨0, Shape.AxisInBounds.proof⟩ = 1 := rfl
-    simp only [gradient, Tensor.crossEntropyBackward, reduceIte, hdenom]
+    simp only [gradient, Tensor.crossEntropyBackward, CrossEntropy.logProbs_real, reduceIte, hdenom]
     simp [Vec.logSoftmaxVJP, Vec.softmax, Vec.sumExp,
       Fin.sum_univ_three, logits, SoftmaxCrossEntropy.target] at connected ⊢
     rw [connected]
@@ -665,16 +666,25 @@ once and is negative when the computed exponential is below one. `roundoff` prov
 theorems.
 
 The cross-entropy gradient `Tensor.crossEntropyBackward .logits` of a one-hot target is this
-pullback at the computed log-probabilities. A finite forward computation in which some
-exponential other than the pivot's is positive gives negative log-probabilities, so the summed
-gradient has these signs. Mean reduction divides each entry once by the slice count `m`: the
-entries stay finite, nonpositive at the target and nonnegative elsewhere, and the target entry
-stays negative when `η < |g_t| / m`. For a single class slice the division is exact. At the
-logits `[9, -9, -9]` the
-kernel decides every condition in binary32 and bfloat16, and in bfloat16 also for a batch of two
-rows. In binary32 the standard formulas of `SoftmaxCollapse` give the target gradient at these
-logits the value zero. The theorem also specializes to bfloat16 logits over a vocabulary of 50257
-classes, where the length times the unit roundoff is about 196.
+pullback at the computed log-probabilities `CrossEntropy.logProbs`. For finite logits with two or
+more classes they are negative wherever the forward computation is finite, provided that
+whenever the computed tail is zero, the computed exponential of the log-sum-exp of the other
+classes is finite and positive and every entry of the two-level result is finite: on the
+one-level branch the failed test `CrossEntropy.twoLevelAt` then makes the computed tail positive
+(`Roundoff.CrossEntropy.vectorLogProbs_neg`). So the summed gradient has these signs. Mean
+reduction divides each entry once by the slice count `m`: the entries stay finite, nonpositive at
+the target and nonnegative elsewhere, and the target entry stays negative when `η < |g_t| / m`.
+For a single class slice the division is exact.
+
+At the logits `[9, -9, -9]` the kernel decides every condition in binary32, bfloat16 and binary16,
+and in bfloat16 also for a batch of two rows. In binary32 the standard formulas of
+`SoftmaxCollapse` give the target gradient at these logits the value zero. In binary16 each
+computed `exp (-18)` of the tail is zero, so the one-level formula gives the target gradient the
+value zero, while the two-level normalizer keeps it at `-2⁻²⁴` (`binary16_toRat?`). The theorem
+also specializes to bfloat16 logits over a vocabulary of 50257 classes, where the length times the
+unit roundoff is about 196. In the IEEE format with exponent width 3 and fraction width 5, at the
+logits `[0, -6, …, -6]` of 18 classes, the computed exponential of the log-sum-exp of the other
+classes overflows, so the log-probabilities are the one-level ones.
 -/
 
 
@@ -701,7 +711,8 @@ theorem unstack_crossEntropyBackward {batch n : Nat}
   change (Tensor.unstack (Tensor.map (Context.divNat · _) (Tensor.dim fun b =>
       LogSoftmax.vecBackward
         (Tensor.unstack
-          (Tensor.dim fun b => Tensor.logSoftmax (Tensor.unstack logits b) ⟨0, Nat.one_pos⟩) b)
+          (Tensor.dim fun b =>
+            CrossEntropy.logProbs (Tensor.unstack logits b) ⟨0, Nat.one_pos⟩) b)
         (Tensor.unstack (Tensor.map (fun x => -x) target) b))) b).getScalar i = _
   simp only [Tensor.unstack_map, Tensor.unstack_dim]
   rfl
@@ -766,96 +777,86 @@ theorem pullback_sign_of_exp_lt_one [Storage Value] {n : Nat}
 
 /-! ## The cross-entropy gradient -/
 
-/-- The summed cross-entropy gradient of a one-hot target `t` that is the pivot of the
-pullback: if the forward computation is finite and an exponential other than the forward
-pivot's is positive, the gradient is finite and negative at `t` and finite and nonnegative
-elsewhere. -/
-theorem gradient_sign_of_pivot [Storage Value] {n : Nat}
-    (logits : Tensor Value [n + 1]) (t k : Fin (n + 1)) (hformat : format.isIEEE = true)
-    (hfinite : ∀ i, ExecFloat.Binary.isFinite (logits.getScalar i) = true) :
+/-- The summed cross-entropy gradient of a one-hot target `t`, for finite logits with two or more
+classes in an IEEE format: if the forward computation is finite, `t` is the pivot of the pullback
+or the pullback's computed `exp` at `t` is below one, and, whenever the computed tail is zero, the
+computed exponential `others` of the log-sum-exp of the other classes is finite and positive and
+every entry `(logits i - logits pivot) - log1p others` of the two-level result is finite, the
+gradient is finite and negative at `t` and finite and nonnegative elsewhere. -/
+theorem gradient_sign [Storage Value] {n : Nat}
+    (logits : Tensor Value [n + 1]) (t : Fin (n + 1)) (hformat : format.isIEEE = true)
+    (hfinite : ∀ i, ExecFloat.Binary.isFinite (logits.getScalar i) = true) (hn : n ≠ 0) :
     let pivot : Fin (n + 1) := Softmax.pivot logits
+    let runner := CrossEntropy.runnerUp logits pivot
     let shift := logits - Tensor.full _ (logits.getScalar pivot)
     let tail : Tensor Value [n + 1] := Tensor.ofFn fun j => if j = pivot then 0
       else MathFunctions.exp (shift.getScalar j)
-    let logp := Tensor.logSoftmax logits ⟨0, Nat.one_pos⟩
+    let inner : Tensor Value [n + 1] := Tensor.ofFn fun j =>
+      if j = pivot ∨ j = runner then 0
+      else MathFunctions.exp (logits.getScalar j - logits.getScalar runner)
+    let others := MathFunctions.exp (shift.getScalar runner + Context.log1p (Tensor.sum inner))
+    let twoLevel := shift - Tensor.full _ (Context.log1p others)
+    let logp := CrossEntropy.logProbs logits ⟨0, Nat.one_pos⟩
     let gradient := Tensor.crossEntropyBackward .logits logits
       (Tensor.ofFn fun i => if i = t then 1 else 0) ⟨0, by exact Nat.zero_lt_succ _⟩ false
     (∀ i, ExecFloat.Binary.isFinite (shift.getScalar i) = true) →
       ExecFloat.Binary.isFinite (Tensor.sum tail) = true →
       (∀ i, ExecFloat.Binary.isFinite (logp.getScalar i) = true) →
-      Softmax.pivot logp = t →
-      0 < ExecFloat.Binary.toReal (tail.getScalar k) →
+      (Softmax.pivot logp = t ∨ ExecFloat.Binary.toReal
+        (MathFunctions.exp (self := Context.toMathFunctions) (logp.getScalar t)) < 1) →
+      ((Tensor.sum tail == 0) = true →
+        ExecFloat.Binary.isFinite others = true ∧ 0 < ExecFloat.Binary.toReal others ∧
+          ∀ i, ExecFloat.Binary.isFinite (twoLevel.getScalar i) = true) →
       (ExecFloat.Binary.isFinite (gradient.getScalar t) = true ∧
           ExecFloat.Binary.toReal (gradient.getScalar t) < 0) ∧
         ∀ i, i ≠ t → ExecFloat.Binary.isFinite (gradient.getScalar i) = true ∧
           0 ≤ ExecFloat.Binary.toReal (gradient.getScalar i) := by
-  intro pivot shift tail logp gradient hshift hsum hlogp hbackward hpositive
+  intro pivot runner shift tail inner others twoLevel logp gradient hshift hsum hlogp hbackward
+    htwo
   have hneg (i : Fin (n + 1)) :=
-    LogSoftmax.vec_neg_of_exp_pos logits hformat
-      hfinite i k (hshift i) hsum (hlogp i) hpositive
-  exact pullback_sign_of_pivot logp t hformat hlogp (fun i => (hneg i).le) hbackward
-    (hneg t)
-
-/-- The summed cross-entropy gradient of a one-hot target `t` that is not the pivot of the
-pullback: if the forward computation is finite, an exponential other than the forward pivot's is
-positive and the pullback's computed `exp` at `t` is below one, the gradient is finite and
-negative at `t` and finite and nonnegative elsewhere. -/
-theorem gradient_sign_of_exp_lt_one [Storage Value] {n : Nat}
-    (logits : Tensor Value [n + 1]) (t k : Fin (n + 1)) (hformat : format.isIEEE = true)
-    (hfinite : ∀ i, ExecFloat.Binary.isFinite (logits.getScalar i) = true) :
-    let pivot : Fin (n + 1) := Softmax.pivot logits
-    let shift := logits - Tensor.full _ (logits.getScalar pivot)
-    let tail : Tensor Value [n + 1] := Tensor.ofFn fun j => if j = pivot then 0
-      else MathFunctions.exp (shift.getScalar j)
-    let logp := Tensor.logSoftmax logits ⟨0, Nat.one_pos⟩
-    let gradient := Tensor.crossEntropyBackward .logits logits
-      (Tensor.ofFn fun i => if i = t then 1 else 0) ⟨0, by exact Nat.zero_lt_succ _⟩ false
-    (∀ i, ExecFloat.Binary.isFinite (shift.getScalar i) = true) →
-      ExecFloat.Binary.isFinite (Tensor.sum tail) = true →
-      (∀ i, ExecFloat.Binary.isFinite (logp.getScalar i) = true) →
-      Softmax.pivot logp ≠ t →
-      ExecFloat.Binary.toReal
-        (MathFunctions.exp (self := Context.toMathFunctions) (logp.getScalar t)) < 1 →
-      0 < ExecFloat.Binary.toReal (tail.getScalar k) →
-      (ExecFloat.Binary.isFinite (gradient.getScalar t) = true ∧
-          ExecFloat.Binary.toReal (gradient.getScalar t) < 0) ∧
-        ∀ i, i ≠ t → ExecFloat.Binary.isFinite (gradient.getScalar i) = true ∧
-          0 ≤ ExecFloat.Binary.toReal (gradient.getScalar i) := by
-  intro pivot shift tail logp gradient hshift hsum hlogp hbackward hexp hpositive
-  have hneg (i : Fin (n + 1)) :=
-    LogSoftmax.vec_neg_of_exp_pos logits hformat
-      hfinite i k (hshift i) hsum (hlogp i) hpositive
-  exact pullback_sign_of_exp_lt_one logp t hformat hlogp (fun i => (hneg i).le)
-    hbackward hexp
+    Roundoff.CrossEntropy.vectorLogProbs_neg logits hformat hfinite i hn (hshift i) hsum
+      (hlogp i) htwo
+  by_cases hpivot : Softmax.pivot logp = t
+  · exact pullback_sign_of_pivot logp t hformat hlogp (fun i => (hneg i).le) hpivot (hneg t)
+  · exact pullback_sign_of_exp_lt_one logp t hformat hlogp (fun i => (hneg i).le) hpivot
+      (hbackward.resolve_left hpivot)
 
 /-! ## Mean reduction -/
 
 /-- The mean cross-entropy gradient of a one-hot target `t` that is the pivot of the pullback,
-under the conditions of `gradient_sign_of_pivot`: the division by a single class
-slice is exact, so the gradient is again finite and negative at `t` and finite and nonnegative
-elsewhere. -/
+under the other conditions of `gradient_sign`: the division by a single class slice is exact, so
+the gradient is again finite and negative at `t` and finite and nonnegative elsewhere. -/
 theorem mean_sign_of_pivot [Storage Value] {n : Nat}
-    (logits : Tensor Value [n + 1]) (t k : Fin (n + 1)) (hformat : format.isIEEE = true)
-    (hfinite : ∀ i, ExecFloat.Binary.isFinite (logits.getScalar i) = true) :
+    (logits : Tensor Value [n + 1]) (t : Fin (n + 1)) (hformat : format.isIEEE = true)
+    (hfinite : ∀ i, ExecFloat.Binary.isFinite (logits.getScalar i) = true) (hn : n ≠ 0) :
     let pivot : Fin (n + 1) := Softmax.pivot logits
+    let runner := CrossEntropy.runnerUp logits pivot
     let shift := logits - Tensor.full _ (logits.getScalar pivot)
     let tail : Tensor Value [n + 1] := Tensor.ofFn fun j => if j = pivot then 0
       else MathFunctions.exp (shift.getScalar j)
-    let logp := Tensor.logSoftmax logits ⟨0, Nat.one_pos⟩
+    let inner : Tensor Value [n + 1] := Tensor.ofFn fun j =>
+      if j = pivot ∨ j = runner then 0
+      else MathFunctions.exp (logits.getScalar j - logits.getScalar runner)
+    let others := MathFunctions.exp (shift.getScalar runner + Context.log1p (Tensor.sum inner))
+    let twoLevel := shift - Tensor.full _ (Context.log1p others)
+    let logp := CrossEntropy.logProbs logits ⟨0, Nat.one_pos⟩
     let gradient := Tensor.crossEntropyBackward .logits logits
       (Tensor.ofFn fun i => if i = t then 1 else 0) ⟨0, by exact Nat.zero_lt_succ _⟩
     (∀ i, ExecFloat.Binary.isFinite (shift.getScalar i) = true) →
       ExecFloat.Binary.isFinite (Tensor.sum tail) = true →
       (∀ i, ExecFloat.Binary.isFinite (logp.getScalar i) = true) →
       Softmax.pivot logp = t →
-      0 < ExecFloat.Binary.toReal (tail.getScalar k) →
+      ((Tensor.sum tail == 0) = true →
+        ExecFloat.Binary.isFinite others = true ∧ 0 < ExecFloat.Binary.toReal others ∧
+          ∀ i, ExecFloat.Binary.isFinite (twoLevel.getScalar i) = true) →
       (ExecFloat.Binary.isFinite (gradient.getScalar t) = true ∧
           ExecFloat.Binary.toReal (gradient.getScalar t) < 0) ∧
         ∀ i, i ≠ t → ExecFloat.Binary.isFinite (gradient.getScalar i) = true ∧
           0 ≤ ExecFloat.Binary.toReal (gradient.getScalar i) := by
-  intro pivot shift tail logp gradient hshift hsum hlogp hbackward hpositive
-  obtain ⟨⟨hfiniteTarget, htarget⟩, hothers⟩ := gradient_sign_of_pivot logits t k
-    hformat hfinite hshift hsum hlogp hbackward hpositive
+  intro pivot runner shift tail inner others twoLevel logp gradient hshift hsum hlogp hbackward
+    htwo
+  obtain ⟨⟨hfiniteTarget, htarget⟩, hothers⟩ := gradient_sign logits t hformat hfinite hn hshift
+    hsum hlogp (.inl hbackward) htwo
   have hentry (i : Fin (n + 1)) : gradient.getScalar i =
       Context.divNat ((Tensor.crossEntropyBackward .logits logits
         (Tensor.ofFn fun i => if i = t then 1 else 0)
@@ -904,21 +905,27 @@ theorem divNat_sign [Storage Value] {n : Nat} (gradient : Tensor Value [n]) (t :
     rw [abs_of_neg htarget, neg_div] at hlarge
     linarith
 
-/-- Row `b` of the mean cross-entropy gradient of a batch with one-hot labels, for a label that
-is the pivot of the row's pullback, under the conditions of `gradient_sign_of_pivot`
-on the row: it is finite and nonpositive at the label and finite and nonnegative elsewhere. For
-the slice count `m` it is negative at the label when `η < |g| / m`, for the row's summed gradient
-`g` at the label. -/
-theorem batch_sign_of_pivot [Storage Value] {batch n : Nat}
+/-- Row `b` of the mean cross-entropy gradient of a batch with one-hot labels, under the
+conditions of `gradient_sign` on the row: it is finite and nonpositive at the label and finite and
+nonnegative elsewhere. For the slice count `m` it is negative at the label when `η < |g| / m`, for
+the row's summed gradient `g` at the label. -/
+theorem batch_sign [Storage Value] {batch n : Nat}
     (logits : Tensor Value [batch, n + 1]) (labels : Fin batch → Fin (n + 1)) (b : Fin batch)
-    (k : Fin (n + 1)) (hformat : format.isIEEE = true)
-    (hfinite : ∀ i, ExecFloat.Binary.isFinite ((Tensor.unstack logits b).getScalar i) = true) :
+    (hformat : format.isIEEE = true)
+    (hfinite : ∀ i, ExecFloat.Binary.isFinite ((Tensor.unstack logits b).getScalar i) = true)
+    (hn : n ≠ 0) :
     let row := Tensor.unstack logits b
     let pivot : Fin (n + 1) := Softmax.pivot row
+    let runner := CrossEntropy.runnerUp row pivot
     let shift := row - Tensor.full _ (row.getScalar pivot)
     let tail : Tensor Value [n + 1] := Tensor.ofFn fun j => if j = pivot then 0
       else MathFunctions.exp (shift.getScalar j)
-    let logp := Tensor.logSoftmax row ⟨0, Nat.one_pos⟩
+    let inner : Tensor Value [n + 1] := Tensor.ofFn fun j =>
+      if j = pivot ∨ j = runner then 0
+      else MathFunctions.exp (row.getScalar j - row.getScalar runner)
+    let others := MathFunctions.exp (shift.getScalar runner + Context.log1p (Tensor.sum inner))
+    let twoLevel := shift - Tensor.full _ (Context.log1p others)
+    let logp := CrossEntropy.logProbs row ⟨0, Nat.one_pos⟩
     let summed := Tensor.crossEntropyBackward .logits row
       (Tensor.ofFn fun i => if i = labels b then 1 else 0) ⟨0, by exact Nat.zero_lt_succ _⟩ false
     let gradient := Tensor.crossEntropyBackward .logits logits
@@ -927,8 +934,11 @@ theorem batch_sign_of_pivot [Storage Value] {batch n : Nat}
     (∀ i, ExecFloat.Binary.isFinite (shift.getScalar i) = true) →
       ExecFloat.Binary.isFinite (Tensor.sum tail) = true →
       (∀ i, ExecFloat.Binary.isFinite (logp.getScalar i) = true) →
-      Softmax.pivot logp = labels b →
-      0 < ExecFloat.Binary.toReal (tail.getScalar k) →
+      (Softmax.pivot logp = labels b ∨ ExecFloat.Binary.toReal
+        (MathFunctions.exp (self := Context.toMathFunctions) (logp.getScalar (labels b))) < 1) →
+      ((Tensor.sum tail == 0) = true →
+        ExecFloat.Binary.isFinite others = true ∧ 0 < ExecFloat.Binary.toReal others ∧
+          ∀ i, ExecFloat.Binary.isFinite (twoLevel.getScalar i) = true) →
       ((ExecFloat.Binary.isFinite ((Tensor.unstack gradient b).getScalar (labels b)) = true ∧
           ExecFloat.Binary.toReal ((Tensor.unstack gradient b).getScalar (labels b)) ≤ 0) ∧
           ∀ i, i ≠ labels b →
@@ -937,56 +947,12 @@ theorem batch_sign_of_pivot [Storage Value] {batch n : Nat}
         (Model.underflowErrorAt format < |ExecFloat.Binary.toReal (summed.getScalar (labels b))| /
             Tensor.axisMeanDenom [batch, n + 1] ⟨1, Shape.AxisInBounds.proof⟩ →
           ExecFloat.Binary.toReal ((Tensor.unstack gradient b).getScalar (labels b)) < 0) := by
-  intro row pivot shift tail logp summed gradient hshift hsum hlogp hbackward hpositive
+  intro row pivot runner shift tail inner others twoLevel logp summed gradient hshift hsum hlogp
+    hbackward htwo
   have hsign := divNat_sign summed (labels b)
     (m := Tensor.axisMeanDenom [batch, n + 1] ⟨1, Shape.AxisInBounds.proof⟩) hformat
     (Tensor.axisMeanDenom_pos _ _)
-    (gradient_sign_of_pivot row (labels b) k hformat hfinite hshift hsum hlogp
-      hbackward hpositive)
-  simp only [gradient, unstack_crossEntropyBackward, Tensor.unstack_dim]
-  exact hsign
-
-/-- Row `b` of the mean cross-entropy gradient of a batch with one-hot labels, for a label that
-is not the pivot of the row's pullback, under the conditions of
-`gradient_sign_of_exp_lt_one` on the row: it is finite and nonpositive at the label
-and finite and nonnegative elsewhere. For the slice count `m` it is negative at the label when
-`η < |g| / m`, for the row's summed gradient `g` at the label. -/
-theorem batch_sign_of_exp_lt_one [Storage Value] {batch n : Nat}
-    (logits : Tensor Value [batch, n + 1]) (labels : Fin batch → Fin (n + 1)) (b : Fin batch)
-    (k : Fin (n + 1)) (hformat : format.isIEEE = true)
-    (hfinite : ∀ i, ExecFloat.Binary.isFinite ((Tensor.unstack logits b).getScalar i) = true) :
-    let row := Tensor.unstack logits b
-    let pivot : Fin (n + 1) := Softmax.pivot row
-    let shift := row - Tensor.full _ (row.getScalar pivot)
-    let tail : Tensor Value [n + 1] := Tensor.ofFn fun j => if j = pivot then 0
-      else MathFunctions.exp (shift.getScalar j)
-    let logp := Tensor.logSoftmax row ⟨0, Nat.one_pos⟩
-    let summed := Tensor.crossEntropyBackward .logits row
-      (Tensor.ofFn fun i => if i = labels b then 1 else 0) ⟨0, by exact Nat.zero_lt_succ _⟩ false
-    let gradient := Tensor.crossEntropyBackward .logits logits
-      (Tensor.dim fun b => Tensor.ofFn fun i => if i = labels b then 1 else 0)
-      ⟨1, by exact Nat.one_lt_succ_succ _⟩
-    (∀ i, ExecFloat.Binary.isFinite (shift.getScalar i) = true) →
-      ExecFloat.Binary.isFinite (Tensor.sum tail) = true →
-      (∀ i, ExecFloat.Binary.isFinite (logp.getScalar i) = true) →
-      Softmax.pivot logp ≠ labels b →
-      ExecFloat.Binary.toReal
-        (MathFunctions.exp (self := Context.toMathFunctions) (logp.getScalar (labels b))) < 1 →
-      0 < ExecFloat.Binary.toReal (tail.getScalar k) →
-      ((ExecFloat.Binary.isFinite ((Tensor.unstack gradient b).getScalar (labels b)) = true ∧
-          ExecFloat.Binary.toReal ((Tensor.unstack gradient b).getScalar (labels b)) ≤ 0) ∧
-          ∀ i, i ≠ labels b →
-            ExecFloat.Binary.isFinite ((Tensor.unstack gradient b).getScalar i) = true ∧
-              0 ≤ ExecFloat.Binary.toReal ((Tensor.unstack gradient b).getScalar i)) ∧
-        (Model.underflowErrorAt format < |ExecFloat.Binary.toReal (summed.getScalar (labels b))| /
-            Tensor.axisMeanDenom [batch, n + 1] ⟨1, Shape.AxisInBounds.proof⟩ →
-          ExecFloat.Binary.toReal ((Tensor.unstack gradient b).getScalar (labels b)) < 0) := by
-  intro row pivot shift tail logp summed gradient hshift hsum hlogp hbackward hexp hpositive
-  have hsign := divNat_sign summed (labels b)
-    (m := Tensor.axisMeanDenom [batch, n + 1] ⟨1, Shape.AxisInBounds.proof⟩) hformat
-    (Tensor.axisMeanDenom_pos _ _)
-    (gradient_sign_of_exp_lt_one row (labels b) k hformat hfinite hshift hsum hlogp
-      hbackward hexp hpositive)
+    (gradient_sign row (labels b) hformat hfinite hn hshift hsum hlogp hbackward htwo)
   simp only [gradient, unstack_crossEntropyBackward, Tensor.unstack_dim]
   exact hsign
 
@@ -995,9 +961,11 @@ end General
 /-! ## Instances
 
 At the logits `[9, -9, -9]` of Barron, Gnanapragasam and Tschannen, with target `0`, the
-conditions of `mean_sign_of_pivot` hold in binary32 and bfloat16, and
-those of `batch_sign_of_pivot` hold for two such rows in bfloat16. The
-kernel decides them, with the computed `exp (-18)` as the positive exponential. -/
+conditions of `mean_sign_of_pivot` hold in binary32, bfloat16 and binary16, and those of
+`batch_sign` hold for two such rows in bfloat16. The kernel decides them. In binary32 and
+bfloat16 the computed tail is positive and the one-level branch is taken. In binary16 both
+computed exponentials `exp (-18)` of the tail are zero, the two-level branch is taken, and the
+computed exponential of the log-sum-exp of the other classes is `2⁻²⁴`. -/
 
 
 /-- The binary32 mean cross-entropy gradient at `[9, -9, -9]` is finite and negative at the
@@ -1009,10 +977,9 @@ theorem gradient_sign_binary32 :
         ExecFloat.Binary.toReal (gradient.getScalar 0) < 0) ∧
       ∀ i, i ≠ 0 → ExecFloat.Binary.isFinite (gradient.getScalar i) = true ∧
         0 ≤ ExecFloat.Binary.toReal (gradient.getScalar i) :=
-  mean_sign_of_pivot _ 0 1 (by decide) (by decide +kernel)
-    (by decide +kernel) (by decide +kernel) (by decide +kernel) (by decide +kernel)
-    (by rw [ExecFloat.Binary.toReal_of_toRat?_eq_some (q := 2143429 / 2 ^ 47) (by decide +kernel)]
-        norm_num)
+  mean_sign_of_pivot _ 0 (by decide) (by decide +kernel) (by decide) (by decide +kernel)
+    (by decide +kernel) (by decide +kernel) (by decide +kernel)
+    (fun h => absurd h (by decide +kernel))
 
 /-- The bfloat16 mean cross-entropy gradient at `[9, -9, -9]` is finite and negative at the
 target `0` and finite and nonnegative elsewhere. -/
@@ -1023,32 +990,82 @@ theorem gradient_sign_bfloat16 :
         ExecFloat.Binary.toReal (gradient.getScalar 0) < 0) ∧
       ∀ i, i ≠ 0 → ExecFloat.Binary.isFinite (gradient.getScalar i) = true ∧
         0 ≤ ExecFloat.Binary.toReal (gradient.getScalar i) :=
-  mean_sign_of_pivot _ 0 1 (by decide) (by decide +kernel)
-    (by decide +kernel) (by decide +kernel) (by decide +kernel) (by decide +kernel)
-    (by rw [ExecFloat.Binary.toReal_of_toRat?_eq_some (q := 131 / 2 ^ 33) (by decide +kernel)]
-        norm_num)
+  mean_sign_of_pivot _ 0 (by decide) (by decide +kernel) (by decide) (by decide +kernel)
+    (by decide +kernel) (by decide +kernel) (by decide +kernel)
+    (fun h => absurd h (by decide +kernel))
 
-/-- `gradient_sign_of_pivot` for bfloat16 logits over a vocabulary of 50257
-classes, where the length times the unit roundoff is about 196. -/
+/-- The binary16 mean cross-entropy gradient at `[9, -9, -9]` is finite and negative at the
+target `0` and finite and nonnegative elsewhere. The computed tail is zero there, and the
+two-level branch is taken. -/
+theorem gradient_sign_binary16 :
+    let gradient := Tensor.crossEntropyBackward .logits (SoftmaxCollapse.logits (9 : Binary16))
+      SoftmaxCrossEntropy.target ⟨0, by exact Nat.zero_lt_succ _⟩
+    (ExecFloat.Binary.isFinite (gradient.getScalar 0) = true ∧
+        ExecFloat.Binary.toReal (gradient.getScalar 0) < 0) ∧
+      ∀ i, i ≠ 0 → ExecFloat.Binary.isFinite (gradient.getScalar i) = true ∧
+        0 ≤ ExecFloat.Binary.toReal (gradient.getScalar i) :=
+  mean_sign_of_pivot _ 0 (by decide) (by decide +kernel) (by decide) (by decide +kernel)
+    (by decide +kernel) (by decide +kernel) (by decide +kernel)
+    (fun _ => ⟨by decide +kernel, by
+      rw [ExecFloat.Binary.toReal_of_toRat?_eq_some (q := 1 / 2 ^ 24) (by decide +kernel)]
+      norm_num, by decide +kernel⟩)
+
+/-- In binary16 the target entry of the mean cross-entropy gradient at `[9, -9, -9]` decodes to
+`-2⁻²⁴`. The log-softmax VJP of the negated one-hot target at the one-level log-softmax
+`Tensor.logSoftmax`, whose computed tail is zero there, decodes to zero. -/
+theorem binary16_toRat? :
+    ExecFloat.Binary.toRat? ((Tensor.crossEntropyBackward .logits
+        (SoftmaxCollapse.logits (9 : Binary16)) SoftmaxCrossEntropy.target
+        ⟨0, by exact Nat.zero_lt_succ _⟩).getScalar 0) = some (-1 / 2 ^ 24) ∧
+      ExecFloat.Binary.toRat? ((Tensor.logSoftmaxBackward
+        (Tensor.logSoftmax (SoftmaxCollapse.logits (9 : Binary16)) ⟨0, Nat.one_pos⟩)
+        (Tensor.map (fun x => -x) SoftmaxCrossEntropy.target) ⟨0, Nat.one_pos⟩).getScalar 0) =
+        some 0 := by
+  decide +kernel
+
+/-- In the IEEE format with exponent width 3 and fraction width 5, whose largest finite value is
+`15.75`, at the logits `[0, -6, …, -6]` of 18 classes the computed tail is zero and the computed
+sum of the sixteen exponentials `exp 0` of the other classes overflows, so the two-level test
+fails and the log-probabilities are the one-level `LogSoftmax.vec`. -/
+example :
+    let logits : Tensor (ExecFloat.Binary 3 5) [18] := Tensor.ofFn fun i => if i = 0 then 0 else -6
+    CrossEntropy.vectorLogProbs logits = LogSoftmax.vec logits := by
+  have h : CrossEntropy.twoLevelAt
+      (Tensor.ofFn fun i => if i = 0 then 0 else -6 : Tensor (ExecFloat.Binary 3 5) [18]) =
+        false := by
+    decide +kernel
+  simp only [CrossEntropy.vectorLogProbs, h, Bool.false_eq_true, ↓reduceIte]
+
+/-- `gradient_sign` for bfloat16 logits over a vocabulary of 50257 classes, where the length times
+the unit roundoff is about 196. -/
 theorem gradient_sign_vocabulary (logits : Tensor BFloat16 [50257])
-    (t k : Fin 50257) (hfinite : ∀ i, ExecFloat.Binary.isFinite (logits.getScalar i) = true) :
+    (t : Fin 50257) (hfinite : ∀ i, ExecFloat.Binary.isFinite (logits.getScalar i) = true) :
     let pivot : Fin 50257 := Softmax.pivot logits
+    let runner := CrossEntropy.runnerUp logits pivot
     let shift := logits - Tensor.full _ (logits.getScalar pivot)
     let tail : Tensor BFloat16 [50257] := Tensor.ofFn fun j => if j = pivot then 0
       else MathFunctions.exp (shift.getScalar j)
-    let logp := Tensor.logSoftmax logits ⟨0, Nat.one_pos⟩
+    let inner : Tensor BFloat16 [50257] := Tensor.ofFn fun j =>
+      if j = pivot ∨ j = runner then 0
+      else MathFunctions.exp (logits.getScalar j - logits.getScalar runner)
+    let others := MathFunctions.exp (shift.getScalar runner + Context.log1p (Tensor.sum inner))
+    let twoLevel := shift - Tensor.full _ (Context.log1p others)
+    let logp := CrossEntropy.logProbs logits ⟨0, Nat.one_pos⟩
     let gradient := Tensor.crossEntropyBackward .logits logits
       (Tensor.ofFn fun i => if i = t then 1 else 0) ⟨0, by exact Nat.zero_lt_succ _⟩ false
     (∀ i, ExecFloat.Binary.isFinite (shift.getScalar i) = true) →
       ExecFloat.Binary.isFinite (Tensor.sum tail) = true →
       (∀ i, ExecFloat.Binary.isFinite (logp.getScalar i) = true) →
-      Softmax.pivot logp = t →
-      0 < ExecFloat.Binary.toReal (tail.getScalar k) →
+      (Softmax.pivot logp = t ∨ ExecFloat.Binary.toReal
+        (MathFunctions.exp (self := Context.toMathFunctions) (logp.getScalar t)) < 1) →
+      ((Tensor.sum tail == 0) = true →
+        ExecFloat.Binary.isFinite others = true ∧ 0 < ExecFloat.Binary.toReal others ∧
+          ∀ i, ExecFloat.Binary.isFinite (twoLevel.getScalar i) = true) →
       (ExecFloat.Binary.isFinite (gradient.getScalar t) = true ∧
           ExecFloat.Binary.toReal (gradient.getScalar t) < 0) ∧
         ∀ i, i ≠ t → ExecFloat.Binary.isFinite (gradient.getScalar i) = true ∧
           0 ≤ ExecFloat.Binary.toReal (gradient.getScalar i) :=
-  gradient_sign_of_pivot logits t k (by decide) hfinite
+  gradient_sign logits t (by decide) hfinite (by decide)
 
 /-- Row `0` of the bfloat16 mean cross-entropy gradient of two rows `[9, -9, -9]` with labels `0`
 is finite and negative at the label and finite and nonnegative elsewhere. Each entry is divided by
@@ -1062,13 +1079,10 @@ theorem batch_sign_bfloat16 :
         ExecFloat.Binary.toReal (gradient.getScalar 0) < 0) ∧
       ∀ i, i ≠ 0 → ExecFloat.Binary.isFinite (gradient.getScalar i) = true ∧
         0 ≤ ExecFloat.Binary.toReal (gradient.getScalar i) := by
-  obtain ⟨⟨⟨hfinite, -⟩, hothers⟩, hstrict⟩ := batch_sign_of_pivot
-    (Tensor.dim fun _ => SoftmaxCollapse.logits 9 : Tensor BFloat16 [2, 3]) (fun _ => 0) 0 1
-    (by decide)
-    (by decide +kernel) (by decide +kernel)
-    (by decide +kernel) (by decide +kernel) (by decide +kernel)
-    (by rw [ExecFloat.Binary.toReal_of_toRat?_eq_some (q := 131 / 2 ^ 33) (by decide +kernel)]
-        norm_num)
+  obtain ⟨⟨⟨hfinite, -⟩, hothers⟩, hstrict⟩ := batch_sign
+    (Tensor.dim fun _ => SoftmaxCollapse.logits 9 : Tensor BFloat16 [2, 3]) (fun _ => 0) 0
+    (by decide) (by decide +kernel) (by decide) (by decide +kernel) (by decide +kernel)
+    (by decide +kernel) (.inl (by decide +kernel)) (fun h => absurd h (by decide +kernel))
   refine ⟨⟨hfinite, hstrict ?_⟩, hothers⟩
   have hcount : Tensor.axisMeanDenom [2, 3] ⟨1, Shape.AxisInBounds.proof⟩ = 2 := rfl
   rw [hcount, ExecFloat.Binary.toReal_of_toRat?_eq_some (q := -131 / 2 ^ 32) (by decide +kernel)]

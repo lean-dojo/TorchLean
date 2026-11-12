@@ -569,21 +569,6 @@ theorem getScalar_fiber_self {α : Type} [Storage α] (F : Tensor α s) (dim : F
 
 end Tensor
 
-/-- Over the reals, the weighted terms of one class vector are the target times the vector
-log-softmax of the logits. -/
-theorem CrossEntropy.vectorTerms_real {n : Nat} (x t : Tensor ℝ [n]) :
-    CrossEntropy.vectorTerms x t = t * LogSoftmax.vec x := by
-  cases n with
-  | zero =>
-      apply Tensor.ext_vector
-      intro i
-      exact i.elim0
-  | succ n =>
-      apply Tensor.ext_vector
-      intro i
-      simp only [CrossEntropy.vectorTerms, Tensor.getScalar_ofFn, sub_self, beq_self_eq_true,
-        ite_true, Tensor.mul_def, Tensor.getScalar_zipWith]
-
 /-- Over the reals, the weighted cross-entropy terms along `dim` are the target times the
 log-softmax of the logits along `dim`. -/
 @[op_deriv_simps] theorem CrossEntropy.terms_real {s : Shape} (dim : Fin s.rank)
@@ -998,9 +983,10 @@ log-softmax pullback of the target, divided by the number of fibers when `mean` 
   have hneg : Tensor.map (fun v => -v) t = (-1 : ℝ) • t :=
     Rep.ext fun c => by simp only [Tensor.map_apply, Rep.smul_apply, smul_eq_mul]; ring
   cases mean
-  · simp only [crossEntropyBackward, hneg, Op.logSoftmaxBackward_smul, Bool.false_eq_true,
+  · simp only [crossEntropyBackward, CrossEntropy.logProbs_real, hneg, Op.logSoftmaxBackward_smul,
+      Bool.false_eq_true, ↓reduceIte]
+  · simp only [crossEntropyBackward, CrossEntropy.logProbs_real, hneg, Op.logSoftmaxBackward_smul,
       ↓reduceIte]
-  · simp only [crossEntropyBackward, hneg, Op.logSoftmaxBackward_smul, ↓reduceIte]
     refine Rep.ext fun c => ?_
     simp only [Tensor.map_apply, Context.divNat_real, Rep.smul_apply, smul_eq_mul]
     ring

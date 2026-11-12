@@ -6,6 +6,7 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Softmax
+public import TorchLean.Verify.RuntimeApprox.Roundoff.CrossEntropy
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured
 public import TorchLean.Tensor.Layers.Embedding
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Rules.Composite
@@ -15,10 +16,10 @@ public import TorchLean.Verify.RuntimeApprox.Roundoff.Rules.Reduction
 /-!
 # Rounding error of cross-entropy of logits and of the embedding lookup
 
-At finite logits `roundoff` reads each term of cross-entropy of logits through the log-softmax of
-its fiber, and the embedding lookup is exact at any index shape in every format, IEEE or not. The
-other tensor composites are analyzed by their coverage theorems in
-`TorchLean.Coverage.TensorComposites`.
+At finite logits `roundoff` reads each term of cross-entropy of logits through the
+log-probabilities of its fiber (`CrossEntropy.log_probs_error`), and the embedding lookup is exact
+at any index shape in every format, IEEE or not. The other tensor composites are analyzed by their
+coverage theorems in `TorchLean.Coverage.TensorComposites`.
 -/
 
 public section
@@ -36,10 +37,10 @@ local notation "Value" => ExecFloat (Configured.Family format code plan)
 
 section
 
-attribute [local roundoff_rule] softmax_error log_softmax_error
+attribute [local roundoff_rule] softmax_error log_softmax_error CrossEntropy.log_probs_error
 
-/-- Cross-entropy of logits with classes along any axis: each term reads the log-softmax of its
-fiber, and the terms are summed in one flat fold. -/
+/-- Cross-entropy of logits with classes along any axis: each term reads the log-probabilities of
+its fiber through `CrossEntropy.log_probs_error`, and the terms are summed in one flat fold. -/
 roundoff theorem CrossEntropy.logits_error :=
   fun [Storage Value] {s : Shape} (dim : Fin s.rank) (x target : Tensor Value s)
     (_hformat : format.isIEEE = true) (_hfinite : ∀ c, ExecFloat.Binary.isFinite (x c) = true) =>

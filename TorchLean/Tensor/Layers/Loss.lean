@@ -26,11 +26,25 @@ Estimation of a Location Parameter", Ann. Math. Statist. 35(1):73-101, 1964
 `BinaryCrossEntropy.term` clips the probability into `[epsilon, 1 - epsilon]`, with the default
 `Context.defaultEpsilon` (`1e-6` for `Float`), while `BCELoss` clamps each logarithm at `-100`.
 
+Cross-entropy takes its log-probabilities from `CrossEntropy.vectorLogProbs`. It computes
+`LogSoftmax.vec`, the shift by the largest logit followed by `log1p` of the summed exponentials of
+the other classes, unless `CrossEntropy.twoLevelAt` holds: another class exists, neither the
+largest logit nor the runner-up is infinite, that computed sum is zero, and the computed
+exponential of the log-sum-exp of the other classes and every entry of the two-level result are
+finite. Then it takes the two-level normalizer of Barron, Gnanapragasam and Tschannen, "A Fix for
+Softmax and Cross-Entropy" (2026, arXiv:2610.31642): the exponentials of the classes other than
+the pivot are taken relative to the largest of them and summed, and that log-sum-exp enters the
+normalizer through a softplus. For finite logits in an IEEE format, an entry of the two-level
+result is negative when it, its shifted logit and that computed exponential are finite and the
+exponential is positive (`Roundoff.CrossEntropy.twoLevel_neg`), with no condition on the computed
+tail. An entry of the result is finite wherever that entry of `LogSoftmax.vec` is
+(`CrossEntropy.vectorLogProbs_finite`).
+
 The student gradient against teacher logits (`distillLossBackward`) uses logit differences,
-centering, and a residual correction as in Barron, Gnanapragasam and Tschannen, "A Fix for Softmax
-and Cross-Entropy" (2026, arXiv:2610.31642), eq. (9) of Sec. 3, falling back to `q - p` where the
-log-ratio has magnitude at least one, as they do. Its near-field expression retains small
-gradients that would be lost by subtracting two separately rounded probability vectors.
+centering, and a residual correction as in eq. (9) of Sec. 3 of that paper, falling back to
+`q - p` where the log-ratio has magnitude at least one, as they do. Its near-field expression
+retains small gradients that would be lost by subtracting two independently rounded probability
+vectors.
 -/
 
 @[expose] public section
@@ -162,14 +176,135 @@ def Tensor.huberLossBackward {s : Shape} (predicted : Tensor α s) (target : Ten
 
 namespace CrossEntropy
 
-/-- Target-weighted log-probabilities of one class vector. Where an unweighted log-probability is
-not finite, the weighted term is rebuilt from the logits: the negated sum of the weight times the
-shifted normalizer and the weighted gap between the largest logit and this one. -/
+/-- The runner-up of `t` beside `p`. Starting from `Fin.last n` when `p = 0` and from `0`
+otherwise, a left-to-right scan over the indices other than `p` moves to each entry strictly
+larger than the current one. Without NaN entries it ends at a largest entry other than the one at
+`p`. With two or more entries it differs from `p` (`runnerUp_ne`), and with one entry it is `p`. -/
+def runnerUp {n : Nat} (t : Tensor α [n + 1]) (p : Fin (n + 1)) : Fin (n + 1) :=
+  (List.finRange (n + 1)).foldl
+    (fun best j => if j ≠ p ∧ t.getScalar j > t.getScalar best then j else best)
+    (if p = 0 then Fin.last n else 0)
+
+/-- Whether `vectorLogProbs` takes the two-level normalizer at `t`. With the pivot
+`p = Softmax.pivot t` and the runner-up `q = runnerUp t p`, it holds when `q ≠ p`, neither `t p`
+nor `t q` is infinite, the computed tail `Σ_{j ≠ p} exp (t j - t p)` is zero, and the computed
+`exp s` of the log-sum-exp `s = (t q - t p) + log1p (Σ_{j ∉ {p, q}} exp (t j - t q))` of the
+other classes and every entry of the two-level result `(t i - t p) - log1p (exp s)` are finite
+(`Context.isFinite`: neither infinite nor NaN). The definition is irreducible, so the roundoff
+analysis keeps the test as one opaque branch guard. -/
+@[irreducible] def twoLevelAt {n : Nat} (t : Tensor α [n + 1]) : Bool :=
+  let p : Fin (n + 1) := Softmax.pivot t
+  let q := runnerUp t p
+  let shifted := t - Tensor.full _ (t.getScalar p)
+  let tail : Tensor α [n + 1] := Tensor.ofFn fun i =>
+    if i = p then 0 else MathFunctions.exp (shifted.getScalar i)
+  let inner : Tensor α [n + 1] := Tensor.ofFn fun i =>
+    if i = p ∨ i = q then 0 else MathFunctions.exp (t.getScalar i - t.getScalar q)
+  let others := MathFunctions.exp (shifted.getScalar q + Context.log1p (Tensor.sum inner))
+  let twoLevel := shifted - Tensor.full _ (Context.log1p others)
+  decide (q ≠ p) && !Context.isInf (t.getScalar p) && !Context.isInf (t.getScalar q) &&
+    Tensor.sum tail == 0 && Context.isFinite others &&
+    (List.finRange (n + 1)).all fun i => Context.isFinite (twoLevel.getScalar i)
+
+/-- Log-probabilities of one class vector `t`: `LogSoftmax.vec t` unless `twoLevelAt t` holds.
+In that case, with the pivot `p = Softmax.pivot t` and the runner-up `q = runnerUp t p`, the
+log-sum-exp of the classes other than `p`,
+`s = (t q - t p) + log1p (Σ_{j ∉ {p, q}} exp (t j - t q))`, has its inner sum shifted by its
+largest entry `t q`, and entry `i` is `(t i - t p) - log1p (exp s)`, the two-level normalizer of
+Barron, Gnanapragasam and Tschannen. Over ℝ both forms are the log-softmax
+(`vectorLogProbs_real`). -/
+def vectorLogProbs {n : Nat} (t : Tensor α [n]) : Tensor α [n] :=
+  match n with
+  | 0 => t
+  | n + 1 =>
+      if twoLevelAt t then
+        let p : Fin (n + 1) := Softmax.pivot t
+        let q := runnerUp t p
+        let shifted := t - Tensor.full _ (t.getScalar p)
+        let inner : Tensor α [n + 1] := Tensor.ofFn fun i =>
+          if i = p ∨ i = q then 0 else MathFunctions.exp (t.getScalar i - t.getScalar q)
+        let others := shifted.getScalar q + Context.log1p (Tensor.sum inner)
+        shifted - Tensor.full _ (Context.log1p (MathFunctions.exp others))
+      else LogSoftmax.vec t
+
+/-- With two or more entries the runner-up differs from the index it leaves out. -/
+theorem runnerUp_ne {n : Nat} (t : Tensor α [n + 1]) (p : Fin (n + 1)) (hn : n ≠ 0) :
+    runnerUp t p ≠ p := by
+  unfold runnerUp
+  suffices h : ∀ (l : List (Fin (n + 1))) (b : Fin (n + 1)), b ≠ p →
+      l.foldl (fun best j => if j ≠ p ∧ t.getScalar j > t.getScalar best then j else best) b ≠
+        p from
+    h _ _ (by
+      by_cases hp : p = 0
+      · rw [ite_eq_left hp, hp]
+        intro h
+        exact hn (by simpa [Fin.ext_iff] using h)
+      · rw [ite_eq_right hp]
+        exact Ne.symm hp)
+  intro l
+  induction l with
+  | nil => exact fun b hb => hb
+  | cons j l ih =>
+      intro b hb
+      rw [List.foldl_cons]
+      apply ih
+      by_cases h : j ≠ p ∧ t.getScalar j > t.getScalar b
+      · rw [ite_eq_left h]
+        exact h.1
+      · rw [ite_eq_right h]
+        exact hb
+
+/-- The two-level test implies that the runner-up differs from the pivot. -/
+theorem runnerUp_ne_of_twoLevelAt {n : Nat} {t : Tensor α [n + 1]} (h : twoLevelAt t = true) :
+    runnerUp t (Softmax.pivot t) ≠ Softmax.pivot t :=
+  fun hq => by simp [twoLevelAt, hq] at h
+
+/-- For every scalar type and every length, an entry of `vectorLogProbs t` is finite
+(`Context.isFinite`) wherever that entry of `LogSoftmax.vec t` is: on the two-level branch every
+entry is finite, and otherwise the two agree. -/
+theorem vectorLogProbs_finite {n : Nat} (t : Tensor α [n + 1]) (i : Fin (n + 1))
+    (h : Context.isFinite ((LogSoftmax.vec t).getScalar i) = true) :
+    Context.isFinite ((vectorLogProbs t).getScalar i) = true := by
+  simp only [vectorLogProbs]
+  split_ifs with htwo
+  · unfold twoLevelAt at htwo
+    simp only [Bool.and_eq_true, List.all_eq_true] at htwo
+    exact htwo.2 i (List.mem_finRange i)
+  · exact h
+
+/-- `vectorLogProbs` along the last axis (recurses over outer dimensions). -/
+def innermostLogProbs : {s : Shape} → Tensor α s → Tensor α s :=
+  Tensor.lastAxisMap 0 fun _ => vectorLogProbs
+
+/-- Last-axis log-probabilities at a coordinate: the entry of `vectorLogProbs` on the row through
+it, `0` on a scalar. -/
+theorem innermostLogProbs_apply {s : Shape} (x : Tensor α s) (p : s.Coord) :
+    innermostLogProbs x p =
+      if s = .scalar then 0
+      else (vectorLogProbs (x.row p)).getScalar (Shape.Coord.getLast p) :=
+  Tensor.lastAxisMap_apply 0 (fun _ => vectorLogProbs) x p
+
+/-- Log-probabilities of `x` with the classes along `dim`: `vectorLogProbs` on every fiber along
+`dim`, computed by moving `dim` last, applying the last-axis kernel and moving it back. -/
+def logProbs {s : Shape} (x : Tensor α s) (dim : Fin s.rank) : Tensor α s :=
+  Tensor.alongAxis dim (fun x => innermostLogProbs x) x
+
+/-- An entry of `logProbs x dim` is the entry of `vectorLogProbs` on the fiber through it, at its
+index along `dim`. -/
+theorem logProbs_apply {s : Shape} (x : Tensor α s) (dim : Fin s.rank) (c : s.Coord) :
+    logProbs x dim c = (vectorLogProbs (x.fiber dim c)).getScalar
+      (Shape.Coord.axisEquiv dim (shape := s) c).1 :=
+  Tensor.alongAxis_apply (fun x => innermostLogProbs x) (fun _ => rfl) dim x c
+
+/-- Target-weighted log-probabilities of one class vector, from `vectorLogProbs`. Where an
+unweighted log-probability is not finite, the weighted term is rebuilt from the logits: the
+negated sum of the weight times the shifted normalizer and the weighted gap between the largest
+logit and this one. -/
 def vectorTerms {n : Nat} (logits target : Tensor α [n]) : Tensor α [n] :=
   match n with
   | 0 => logits
   | n + 1 =>
-      let logp := LogSoftmax.vec logits
+      let logp := vectorLogProbs logits
       let pivot : Fin (n + 1) := Softmax.pivot logits
       let largest := logits.getScalar pivot
       let normalizer := -logp.getScalar pivot

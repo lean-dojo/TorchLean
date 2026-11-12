@@ -148,33 +148,6 @@ theorem _root_.TorchLean.LogSoftmax.vec_neg_of_tail_pos [Storage Value] {n : Nat
   rw [LogSoftmax.vec_eq_of_isFinite t hfinite]
   roundoff
 
-/-- A finite log-probability is negative when the shift of its logit and the sum of the
-exponentials other than the pivot's are finite and one of those exponentials is positive: a
-finite sum of nonnegative values is at least each of them. -/
-theorem _root_.TorchLean.LogSoftmax.vec_neg_of_exp_pos [Storage Value] {n : Nat}
-    (t : Tensor Value [n + 1]) (hformat : format.isIEEE = true)
-    (hfinite : ∀ i, ExecFloat.Binary.isFinite (t.getScalar i) = true) (i k : Fin (n + 1)) :
-    let pivot : Fin (n + 1) := Softmax.pivot t
-    let shift := t - Tensor.full _ (t.getScalar pivot)
-    let tail : Tensor Value [n + 1] := Tensor.ofFn fun j => if j = pivot then 0
-      else MathFunctions.exp (shift.getScalar j)
-    ExecFloat.Binary.isFinite (shift.getScalar i) = true →
-      ExecFloat.Binary.isFinite (Tensor.sum tail) = true →
-      ExecFloat.Binary.isFinite ((LogSoftmax.vec t).getScalar i) = true →
-      0 < ExecFloat.Binary.toReal (tail.getScalar k) →
-      ExecFloat.Binary.toReal ((LogSoftmax.vec t).getScalar i) < 0 := by
-  intro pivot shift tail hshift hsum houtput hpositive
-  have hnonneg : ∀ j ∈ List.finRange (n + 1), 0 ≤ ExecFloat.Binary.toReal (tail.getScalar j) :=
-    fun j _ => by simp only [tail]; roundoff
-  have hsumFold := hsum
-  rw [Tensor.sum_eq_foldl, foldl_eq_fin_foldl, Fin.foldl_eq_foldl_finRange] at hsumFold
-  have hdominates := (ExecFloat.Binary.le_toReal_foldl_add hsumFold hnonneg
-    ExecFloat.Binary.toReal_zero.ge).2 k (List.mem_finRange k)
-  rw [← Fin.foldl_eq_foldl_finRange, ← foldl_eq_fin_foldl,
-    ← Tensor.sum_eq_foldl] at hdominates
-  exact LogSoftmax.vec_neg_of_tail_pos t hformat hfinite i hshift hsum houtput
-    (hpositive.trans_le hdominates)
-
 end LogSoftmax
 
 end TorchLean.Roundoff

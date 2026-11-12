@@ -22,10 +22,11 @@ import TorchLean.Tensor.List
 # Composites along any axes for `roundoff`
 
 This module registers the read lemmas of the general composites. Softmax (with and without a mask),
-log-softmax along any axis, their JVP and VJPs, and the top-k routing mask are read as their vector
-kernels on the fiber through the coordinate, with `roundoff_read`, so they unfold where the shape is
-literal. Log-sum-exp, the cosine loss and the variance over any axes are read with `roundoff_rule`
-as their computations on the fiber of the output coordinate.
+log-softmax along any axis, their JVP and VJPs, the log-probabilities of cross-entropy and the top-k
+routing mask are read as their vector kernels on the fiber through the coordinate, with
+`roundoff_read`, so they unfold where the shape is literal. Log-sum-exp, the cosine loss and the
+variance over any axes are read with `roundoff_rule` as their computations on the fiber of the
+output coordinate.
 
 Layer and batch normalization unfold into broadcasts, sums and variances over their axes. Their
 detached scale `Tensor.normalizationScale` has rules of its own: the largest magnitude of finite
@@ -60,6 +61,7 @@ attribute [roundoff_read]
   TorchLean.Tensor.logSoftmax_apply
   TorchLean.Tensor.logSoftmaxJVP_apply
   TorchLean.Tensor.logSoftmaxBackward_apply
+  TorchLean.CrossEntropy.logProbs_apply
 
 attribute [roundoff_rule]
   TorchLean.Tensor.logsumexp_apply

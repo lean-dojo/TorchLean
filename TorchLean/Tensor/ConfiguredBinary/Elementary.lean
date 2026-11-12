@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.Tensor.ConfiguredBinary.InverseTrigonometric
+public import TorchLean.Tensor.ConfiguredBinary.RoundSigned
 public import FloatLib.Numerics.Exact.Hyperbolic.Runtime
 public import FloatLib.Numerics.Exact.RationalPower.Runtime
 
@@ -58,11 +59,7 @@ def tan (x : Model fmt) : Model fmt :=
   if isNaN x then quietNaN x
   else if isZero x then x
   else match toRat? x with
-    | some a =>
-        let tangent := TrigonometricComparison.prepareTan a levels
-        if tangent.compare 0 = .lt then
-          AlgebraicRounding.round fmt true fun b => (tangent.compare (-b)).swap
-        else AlgebraicRounding.round fmt false tangent.compare
+    | some a => roundSigned fmt (TrigonometricComparison.prepareTan a levels).compare
     | none => invalidResult fmt
 
 /-- `2 ^ x` rounded once to nearest even, with `exp2 (-∞) = +0` and `exp2 (+∞) = +∞`. -/

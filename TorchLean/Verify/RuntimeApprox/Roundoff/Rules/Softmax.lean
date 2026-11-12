@@ -14,9 +14,9 @@ public import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
 /-!
 # Softmax reads for `roundoff`
 
-Softmax, log-softmax, their derivatives and the cross-entropy terms are read at a coordinate as
-their vector kernels on the row or fiber through it. The last-axis kernels are read by their row
-here, and their reads at any `Fin` axis are in
+Softmax, log-softmax, their derivatives, the log-probabilities of cross-entropy and its terms are
+read at a coordinate as their vector kernels on the row or fiber through it. The last-axis kernels
+are read by their row here, and their reads at any `Fin` axis are in
 `TorchLean.Verify.RuntimeApprox.Roundoff.Rules.Composite`. The batched attention products and
 weights, and the value and multiplier cotangents of the normalized matrix product, are read as their
 unbatched forms on the slices at the batch coordinate. All of these reads are registered with
@@ -37,6 +37,7 @@ attribute [roundoff_read]
   TorchLean.LogSoftmax.innermost_apply
   TorchLean.LogSoftmax.innermostJVP_apply
   TorchLean.LogSoftmax.innermostBackward_apply
+  TorchLean.CrossEntropy.innermostLogProbs_apply
   TorchLean.CrossEntropy.terms_apply
   TorchLean.Attention.scaledProducts_apply
   TorchLean.Attention.weights_apply

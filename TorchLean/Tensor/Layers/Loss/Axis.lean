@@ -15,18 +15,23 @@ public import TorchLean.Tensor.Layers.Loss
 `crossEntropy input x target dim` is the cross-entropy with classes along `dim`, at any positive
 rank, and `input` says what `x` holds. With `.probabilities epsilon` the probabilities are clamped
 into `[epsilon, 1 - epsilon]` before the logarithm, and the logarithm at the upper clamp is
-`log1p (-epsilon)`. With `.logits` the logits are normalized by log-softmax, and a weighted term
-whose log-probability is not finite is rebuilt from the shifted normalizer and a rescaled logit
-difference. Both sum the weighted log-probabilities in one flat row-major fold over the whole
-tensor and divide by the number of fibers along `dim` when `mean` holds.
+`log1p (-epsilon)`. With `.logits` the log-probabilities of each fiber come from
+`CrossEntropy.vectorLogProbs`, and a weighted term whose log-probability is not finite is rebuilt
+from the shifted normalizer and a rescaled logit difference. Both sum the weighted
+log-probabilities in one flat row-major fold over the whole tensor and divide by the number of
+fibers along `dim` when `mean` holds.
 
 The `.logits` case is `torch.nn.CrossEntropyLoss` (PyTorch 2.8 docs) with class-probability
 targets, `l_n = -Σ_c y_{n,c} log softmax(x_n)_c` averaged as `Σ_n l_n / N`, at torch's defaults
 `weight=None` and `label_smoothing=0.0`, coded by hand. Targets are probabilities or other
-weights, never class indices. The log-probabilities come from `LogSoftmax.vec`, which shifts the
-largest logit to an exact zero and takes `log1p` of the other exponentials. Over ℝ that's eq. (5)
-of Barron, Gnanapragasam and Tschannen, "A Fix for Softmax and Cross-Entropy" (2026,
-arXiv:2610.31642), who reach the same value through a softplus of the others' log-sum-exp.
+weights, never class indices. By default the log-probabilities come from `LogSoftmax.vec`, which
+shifts the largest logit to an exact zero and takes `log1p` of the other exponentials. When
+another class exists, neither the largest logit nor the runner-up is infinite, that computed sum
+of exponentials is zero, and the computed exponential of the log-sum-exp of the other classes and
+every entry of the two-level result are finite (`CrossEntropy.twoLevelAt`), they come from the
+two-level normalizer of Barron, Gnanapragasam and Tschannen, "A Fix for Softmax and
+Cross-Entropy" (2026, arXiv:2610.31642): a softplus of the log-sum-exp of the other classes, whose
+inner sum is shifted by the runner-up logit. Over ℝ both are eq. (5) of that paper.
 `CrossEntropyLoss` expects unnormalized logits, so the `.probabilities` case has no counterpart
 there.
 
@@ -90,7 +95,8 @@ def crossEntropy (input : CrossEntropy.Input α) (x target : Tensor α s) (dim :
 /-- The gradient of `crossEntropy input x target dim mean` with respect to `x`, divided by the
 number of fibers along `dim` when `mean`. For probabilities it is `-target / x` strictly inside
 the clamp window `(epsilon, 1 - epsilon)` and zero elsewhere, including at the two clamp kinks.
-For logits it is the log-softmax VJP of `-target`, so each class fiber contributes
+For logits it is the log-softmax VJP of `-target` at the log-probabilities
+`CrossEntropy.logProbs x dim` of the loss, so each class fiber contributes
 `softmax x * sum target - target`, the gradient of the loss for weighted, unnormalized and zero
 targets alike. -/
 def crossEntropyBackward (input : CrossEntropy.Input α) (x target : Tensor α s) (dim : Fin s.rank)
@@ -101,7 +107,7 @@ def crossEntropyBackward (input : CrossEntropy.Input α) (x target : Tensor α s
           if q < (1 : α) - epsilon then -p / q else 0
         else
           0) x target
-    | .logits => logSoftmaxBackward (logSoftmax x dim) (map (fun x => -x) target) dim
+    | .logits => logSoftmaxBackward (CrossEntropy.logProbs x dim) (map (fun x => -x) target) dim
   if mean then map (Context.divNat · (axisMeanDenom s dim)) grad else grad
 
 /-- The gradient of `crossEntropy .logits x target dim mean` with respect to `target`, multiplied

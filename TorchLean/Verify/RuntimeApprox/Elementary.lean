@@ -70,7 +70,7 @@ theorem tan_eq_round {x : Model fmt} {a : ℚ} (hx : isFinite x = true)
           fun b => ((TrigonometricComparison.prepareTan a levels).compare (-b)).swap
       else AlgebraicRounding.round fmt false
         (TrigonometricComparison.prepareTan a levels).compare := by
-  simp [tan, isNaN_eq_false_of_isFinite_eq_true x hx, hzero, hdecode]
+  simp [tan, roundSigned, isNaN_eq_false_of_isFinite_eq_true x hx, hzero, hdecode]
 
 /-- At a finite input, `tan` is finite when the tangent is below the overflow threshold in
 magnitude. -/

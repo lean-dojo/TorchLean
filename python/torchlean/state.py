@@ -46,7 +46,7 @@ def _words(tensor: torch.Tensor) -> list[int]:
     if flat.dtype == torch.bool:
         return [int(item) for item in flat.tolist()]
     mask = (1 << (8 * flat.element_size())) - 1
-    return [word & mask for word in flat.view(_SIGNED[flat.element_size()]).tolist()]
+    return [word & mask for word in flat.resolve_neg().view(_SIGNED[flat.element_size()]).tolist()]
 
 
 def _entry(name: str, tensor: object) -> dict:

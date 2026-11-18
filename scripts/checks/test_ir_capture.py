@@ -159,6 +159,19 @@ def _same(case, actual, expected, message=None):
             case.assertEqual((a, math.copysign(1.0, a)), (b, math.copysign(1.0, b)), message)
 
 
+@unittest.skipUnless(HAS_TORCH, "needs PyTorch")
+class StateWordTests(unittest.TestCase):
+    def test_negated_real_view_words(self):
+        import torch
+        from torchlean import state
+
+        for imag, word in ((2.0, 0xc0000000), (0.0, 0x80000000)):
+            with self.subTest(imag=imag):
+                value = torch.tensor(complex(1, imag), dtype=torch.complex64).conj().imag
+                entry = state.document({"w": value})["entries"]["w"]
+                self.assertEqual(entry, {"dtype": "float32", "shape": [], "words": [word]})
+
+
 class OperatorTableTests(unittest.TestCase):
     def test_environment_overrides_select_their_own_table(self):
         from types import SimpleNamespace

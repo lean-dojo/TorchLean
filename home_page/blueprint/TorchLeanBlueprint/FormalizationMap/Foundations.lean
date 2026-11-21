@@ -17,14 +17,13 @@ open Verso.Genre
 open Verso.Genre.Manual
 open Informal
 
+/-! Theorem index: shape-indexed tensors, sequential models and the graph IR. -/
+
 #doc (Manual) "Tensors and Graphs" =>
 
-TorchLean starts with shape-indexed tensors and then describes computations at two ends of one
-pipeline. A sequential model is typed layer syntax whose layers are programs over one operation
-interface, and a graph of registered operators (`TorchLean.IR.Graph`) is used at runtime boundaries.
-The typed graph of the training runtime lies between them. The registered operators `TorchLean.Op`
-have at most one executable rule each (`TorchLean.Op.rule?`), and the graph applies them. Keeping
-those representations distinct makes the claims attached to each one easier to read.
+A layer whose input is `[d]` composes with a preceding layer only when that layer produces `[d]`.
+The tensor definition and its coordinate laws state those dimensions; the registered operator
+table and graph carry them through the computation.
 
 :::group "tensor_foundations"
 Scalar operations, tensor shapes, and the algebra used by model specifications.

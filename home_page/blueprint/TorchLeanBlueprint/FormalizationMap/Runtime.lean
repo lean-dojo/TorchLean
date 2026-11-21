@@ -24,10 +24,13 @@ open Verso.Genre
 open Verso.Genre.Manual
 open Informal
 
+/-! Theorem index: the dynamic tape, the typed SSA builder and their autograd. -/
+
 #doc (Manual) "Autograd and Execution" =>
 
-TorchLean's runtime has a dynamic tape for eager execution and a typed SSA builder for typed graph
-execution. Both sit below the layer API.
+Take a tensor used in two different operations. When we differentiate the result, both paths
+back to that tensor have to contribute. The definitions below record those references and carry
+their gradients back in eager execution and in a typed graph.
 
 :::group "autograd_execution"
 Programs, tapes, and typed graphs.

@@ -10,18 +10,19 @@ from __future__ import annotations
 
 import json
 import math
+import operator
 
 import torch
 import torch.nn.functional as F
 
-from ._artifact import _splitmix64
-from ._fx import (_FLOATING, _INDEX_DTYPES, _INT64, _REDUCED_FLOATS, _TENSOR_VALUES,
-                  _broadcast_kind, _constant, _convolution_payload, _is_getitem, _is_op,
+from ._fx import (_FLOATING, _INDEX_DTYPES, _INT64, _TENSOR_VALUES, _broadcast_kind, _constant,
+                  _convolution_payload, _held_shape, _is_getattr, _is_getitem, _is_op,
                   _node_dtype, _node_shape, _normalization, _normalize_axis, _op_table,
-                  _reshape_kind, _resolve_tensor, _shape_from_arg, _shape_of, _spatial_tuple,
-                  _target_name, _top_k_mask, _torch_dtype)
+                  _reshape_kind, _shape_from_arg, _spatial_tuple, _target_name, _top_k_mask,
+                  _torch_dtype, _zeros_like)
+from ._artifact import _LEFT_FOLD, _element, _integer
 from ._pointwise import (_append_node, _argument, _broadcast_to, _cast_to, _round_once,
-                         _scalar_constant, _scalar_tensor)
+                         _scalar_constant)
 
 
 _COMPONENTS = {
@@ -36,8 +37,10 @@ _COMPONENTS = {
     'aten.max.dim': (0, 1),
     'aten.min.dim': (0, 1),
     'aten.topk.default': (0, 1),
+    'aten.frexp.Tensor': (0, 1),
     'aten.native_group_norm.default': (0, 1, 2),
     'aten._native_batch_norm_legit.no_stats': (0, 1, 2),
+    'aten._native_batch_norm_legit.default': (0, 1, 2),
     'aten._native_batch_norm_legit_functional.default': (0, 1, 2, 3, 4),
     'aten.native_dropout.default': (0, 1),
     'aten._embedding_bag.default': (0,),
@@ -45,6 +48,12 @@ _COMPONENTS = {
     'aten.split_with_sizes.default': None,
     'aten.split.Tensor': None,
     'aten.chunk.default': None,
+    'aten.unbind.int': None,
+}
+# The tuple-valued operators FX records as a Python callable or a Tensor method, with the field
+# names of PyTorch's result, which FX projects by `getattr`: (callables, methods, fields).
+_FX_COMPONENTS = {
+    'aten.frexp.Tensor': ((torch.frexp,), ('frexp',), ('mantissa', 'exponent')),
 }
 _COMPONENT_OWNERS = {
     'aten.native_layer_norm.default': 'the mean and reciprocal standard deviation outputs',
@@ -62,25 +71,49 @@ _ORDER_COMPONENTS = ('aten.cummax.default', 'aten.cummin.default', 'aten.sort.st
 # at::acc_type on the CPU, in which cpu_cum_base_kernel accumulates cumsum and cumprod.
 _SCAN_ACCUMULATORS = {'float64': 'float64', 'float32': 'float64', 'bfloat16': 'float32',
                       'float16': 'float32'}
+class _UninitializedRead(NotImplementedError):
+    """The captured program reads an allocation before it has a defined value."""
+
+
+# Uninitialized allocations accepted only as destinations for full writes.
+_EMPTY = ('aten.empty.memory_format', 'aten.empty_strided.default', 'aten.empty_permuted.default',
+          'aten.empty_like.default', 'aten.new_empty.default', 'aten.new_empty_strided.default')
 _CREATION = ('aten.full.default', 'aten.ones.default', 'aten.zeros.default',
              'aten.scalar_tensor.default', 'aten.arange.default', 'aten.arange.start',
-             'aten.arange.start_step')
+             'aten.arange.start_step', 'aten.linspace.default', 'aten.logspace.default')
+# zero_ and fill_ write one value over a fresh destination (_fresh_destination).
+_IN_PLACE_FILLS = ('aten.zero_.default', 'aten.fill_.Scalar')
 _SHAPED_CREATION = ('aten.full_like.default', 'aten.ones_like.default',
                     'aten.fill.Scalar', 'aten.new_full.default', 'aten.new_ones.default',
-                    'aten.new_zeros.default')
+                    'aten.new_zeros.default', *_IN_PLACE_FILLS)
 _ALIASES = ('aten.clone.default', 'aten.alias.default', 'aten.lift_fresh_copy.default')
 
 # The default graph's tensor literal is lift_fresh_copy then detach_. As detach_ writes autograd
-# state, not data, a folded detach_ is its operand's value.
+# state, not data, a detach_ of such a literal, folded or not, and of an integer or Boolean value
+# is its operand's value; of another floating value it is Op.detach (_structure_kind), as is the
+# out-of-place detach of a floating value, which a decomposed program writes as alias
+# (_decomposed_detach).
 _DETACH = ('aten.detach_.default',)
+_DETACH_COPY = ('aten.detach.default',)
+
+
+def _decomposed_detach(node):
+    # Whether `node` is the detach of a decomposed program: run_decompositions() writes it as
+    # alias and records detach as the node's original_aten.
+    return _is_op(node, ('aten.alias.default',)) and \
+        str(node.meta.get('original_aten')) == 'aten.detach.default'
+
+
 _STRUCTURE_PLANS = ('select', 'addmm', 'repeat', 'pad', 'reflect', 'replicate', 'reduce', 'var',
                     'scan', 'extremum', 'leaky_relu', 'diagonal', 'scatter', 'normalization',
                     'registered', 'gather_at', 'scatter_at', 'embedding', 'index', 'index_put',
-                    'boolean_reduce', 'col2im', 'scatter_mean', 'take_along_dim',
-                    'adaptive_pool', 'upsample_nearest', 'rfft', 'irfft', 'moments',
+                    'boolean_reduce', 'col2im', 'scatter_mean',
+                    'adaptive_pool', 'upsample_nearest', 'rfft', 'irfft', 'complex', 'moments',
                     'distance', 'upsample_linear', 'grid_sample', 'random', 'dropout',
-                    'masked_scatter', 'nonzero_static', 'embedding_bag', 'topk',
-                    'pool_indices', 'scatter_fold', 'buffer_update', 'attention')
+                    'masked_scatter', 'nonzero_static', 'embedding_bag', 'topk', 'filled',
+                    'vector_norm', 'pool_indices', 'scatter_fold', 'buffer_update', 'attention',
+                    'householder_product', 'ormqr', 'stack', 'interleave', 'roll', 'unfold',
+                    'triangle', 'conv_transpose')
 _FOLDED = {}
 
 
@@ -93,6 +126,7 @@ def _folds(node):
     dtype = getattr(meta, 'dtype', None)
     return (node.op == 'call_function' and isinstance(node.target, torch._ops.OpOverload) and
             torch.Tag.nondeterministic_seeded not in node.target.tags and
+            not _is_op(node, _EMPTY) and
             (not _mutates(node) or _is_op(node, _DETACH)) and
             dtype is not None and not dtype.is_floating_point and not dtype.is_complex)
 
@@ -198,17 +232,19 @@ def _wrapped_index(nodes, index, extent):
                                 'dtype': _INT64})
 
 
-def _advanced_indices(nodes, node_to_id, values, axes, extents, positions):
+def _advanced_indices(nodes, node_to_id, values, axes, extents, positions, wrap=True):
     # The index tuples of PyTorch's advanced indexing along `axes`: each index broadcast to
     # `positions`, a negative entry i read as i + extent, stacked when there are several. A
-    # constant index is wrapped at capture, and refused outside [-extent, extent).
+    # constant index is wrapped at capture, and refused outside [-extent, extent). Without
+    # `wrap` (index_add and index_copy, which reject a negative index) a negative entry is
+    # outside its axis.
     components = []
     for value, axis in zip(values, axes):
         extent = extents[axis]
         constant = _index_constant(value)
         if constant is not None:
             constant = constant.long()
-            wrapped = torch.where(constant < 0, constant + extent, constant)
+            wrapped = torch.where(constant < 0, constant + extent, constant) if wrap else constant
             if ((wrapped < 0) | (wrapped >= extent)).any():
                 raise NotImplementedError(f'an index is outside an axis of extent {extent}')
             index = _append_node(nodes, {'parents': [], **_constant(
@@ -216,18 +252,28 @@ def _advanced_indices(nodes, node_to_id, values, axes, extents, positions):
         else:
             index = node_to_id.get(value)
             if index is None: raise NotImplementedError('an index operand has no tensor lowering')
-            index = _broadcast_to(nodes, _wrapped_index(nodes, index, extent), positions)
+            index = _wrapped_index(nodes, index, extent) if wrap else \
+                _cast_to(nodes, index, _INT64)
+            index = _broadcast_to(nodes, index, positions)
         components.append(index)
     return _index_tuples(nodes, components, positions)
 
 
-def _advanced_axes(node, source, indices):
+def _check_moved(name, dtype, accumulate=False):
+    # A runtime gather and a write that replaces move their entries without reading them, at the
+    # element of Op.gather and Op.scatter: a floating, integer or Boolean type (a float8 value is
+    # `_graph._check_float8`'s). A write that sums reads them and is imported at a floating type.
+    if dtype in _FLOATING or not accumulate and (dtype == 'bool' or _integer(dtype) is not None):
+        return
+    raise NotImplementedError(f'{name} of a {dtype} tensor is not imported')
+
+
+def _advanced_axes(node, source, indices, accumulate=False):
     # The indexed axes and the broadcast index shape of index.Tensor and index_put. A Boolean or
     # uint8 mask index has a data-dependent result shape and is refused.
     name = _target_name(node.target)
     extents = _shape_from_arg(source)
-    if _node_dtype(source) not in _FLOATING:
-        raise NotImplementedError(f'{name} of a {_node_dtype(source)} tensor is not imported')
+    _check_moved(name, _node_dtype(source), accumulate)
     if len(indices) > len(extents):
         raise NotImplementedError(f'{name}: more indices than axes')
     axes = [axis for axis, index in enumerate(indices) if index is not None]
@@ -263,32 +309,45 @@ def _coordinates(index, dim, extents):
     return coords
 
 
-# Producers of complex values. The IR has no complex dtype: a real Fourier transform is read only
-# through view_as_real or an inverse transform, and view_as_complex of a real tensor only through an
-# inverse transform, possibly after slices.
-_COMPLEX_PRODUCERS = ('aten._fft_r2c.default', 'aten.fft_rfft.default',
-                      'aten.view_as_complex.default')
-_COMPLEX_SLICES = ('aten.slice.Tensor',)
+def _storage_words(shape, stride, offset):
+    # The storage word of every entry of a tensor of this shape, stride and storage offset.
+    grids = torch.meshgrid(*[torch.arange(n) for n in shape], indexing='ij') if shape else ()
+    return sum((grid * step for grid, step in zip(grids, stride)),
+               torch.full(list(shape), offset, dtype=torch.long))
+
+
+# Complex values. The IR has no complex dtype: a complex64 or complex128 value is held in its
+# paired-real form, its real and imaginary parts on a last axis of 2 in binary32 or binary64, as
+# Op.rfft gives a transform and view_as_real reads one. `_complex_kind` lowers the operators below
+# on that form, and any other reader of a complex value is refused (`_complex_reader`).
 _INVERSE_TRANSFORMS = ('aten._fft_c2r.default', 'aten.fft_irfft.default')
+_COMPLEX_RESHAPES = ('aten.unsqueeze.default', 'aten.view.default', 'aten.reshape.default')
+_COMPLEX_OPERATORS = ('aten._fft_r2c.default', 'aten.fft_rfft.default',
+                      'aten.view_as_complex.default', 'aten.slice.Tensor', 'aten.select.int',
+                      'aten.div.Tensor', 'aten.mul.Tensor') + _COMPLEX_RESHAPES
+_COMPLEX_READERS = ('aten.view_as_real.default', 'aten.real.default',
+                    'aten.imag.default') + _INVERSE_TRANSFORMS
 
 
-def _complex_producer(node):
-    if node.op != 'call_function': return False
-    if _is_op(node, _COMPLEX_SLICES):
-        meta = node.meta.get('val', node.meta.get('tensor_meta'))
-        return getattr(getattr(meta, 'dtype', None), 'is_complex', False)
-    return _is_op(node, _COMPLEX_PRODUCERS)
+def _complex_value(value):
+    meta = value.meta.get('val', value.meta.get('tensor_meta')) if hasattr(value, 'meta') else None
+    return getattr(getattr(meta, 'dtype', None), 'is_complex', False)
 
 
-def _complex_consumer(user, producer):
-    # Whether `user` reads the complex value `producer` in its paired-real form: view_as_real
-    # or an inverse transform of a forward transform, an inverse transform or a slice of
-    # view_as_complex or of a complex slice.
-    if _is_op(producer, ('aten.view_as_complex.default',) + _COMPLEX_SLICES):
-        return (_is_op(user, _INVERSE_TRANSFORMS + _COMPLEX_SLICES) and
-                user.args[0] is producer)
-    return _is_op(user, ('aten.view_as_real.default',)) or (
-        _is_op(user, _INVERSE_TRANSFORMS) and user.args[0] is producer)
+def _paired_dtype(value):
+    # The format of the parts of a complex64 or complex128 value, else None.
+    meta = value.meta.get('val', value.meta.get('tensor_meta')) if hasattr(value, 'meta') else None
+    return {torch.complex64: 'float32', torch.complex128: 'float64'}.get(
+        getattr(meta, 'dtype', None))
+
+
+def _complex_reader(user, value):
+    # Whether the capture lowers `user`'s reading of the complex `value`: an operator of
+    # `_COMPLEX_OPERATORS` with a complex result, or view_as_real, real, imag or an inverse
+    # transform of `value`.
+    if _complex_value(user):
+        return user.op == 'call_function' and _is_op(user, _COMPLEX_OPERATORS)
+    return _is_op(user, _COMPLEX_READERS) and user.args[0] is value
 
 
 def _forward_transform(producer):
@@ -326,18 +385,177 @@ def _fourier_scale(code, n, dtype, inverse):
     return None
 
 
+def _selected(node):
+    # The axis and the nonnegative position that the select `node` keeps.
+    source = _shape_from_arg(node.args[0])
+    dim = _normalize_axis(_argument(node, 1, 'dim'), len(source))
+    index = int(_argument(node, 2, 'index'))
+    index = index + source[dim] if index < 0 else index
+    if not 0 <= index < source[dim]:
+        raise NotImplementedError(f'select index {index} is outside extent {source[dim]}')
+    return dim, index
+
+
+def _complex_kind(node):
+    # The lowering on the paired-real form (above) of a node with a complex result or operand, or
+    # None for another node:
+    # - rfft and _fft_r2c are Op.rfft, scaled for the normalization, and view_as_complex of a real
+    #   [..., 2] tensor and view_as_real are that tensor;
+    # - slices and selects along a complex axis, unsqueeze, view and reshape are the same of the
+    #   parts, the pair axis kept last;
+    # - real and imag read one part, and irfft and _fft_c2r are Op.irfft of the parts;
+    # - a quotient by a nonzero finite number d is c10::complex's operator/= at (d, 0)
+    #   (torch/headeronly/util/complex.h:246-282 of PyTorch 2.13): rat = 0 / d and
+    #   scl = 1 / (d + 0 * rat) in the parts' format, then ((a + b*rat) * scl, (b - a*rat) * scl);
+    # - a product of two complex tensors is (ac - bd, ad + bc), rounded per operation. PyTorch's
+    #   AVX512 kernel fuses the multiply-adds outside whole vectors, so the IR's
+    #   product agrees with it within a tolerance, as the transforms do.
+    name = _target_name(node.target) if node.op == 'call_function' else str(node.target)
+    operand = node.args[0] if node.args else None
+    if not _complex_value(node):
+        if not _complex_value(operand):
+            return None
+        if _paired_dtype(operand) is None:
+            raise NotImplementedError(f'{name} of a {_complex_dtype(operand)} value: only '
+                                      'complex64 and complex128 are imported')
+        if _is_op(node, ('aten.view_as_real.default',)):
+            return {'_alias': operand}
+        if _is_op(node, ('aten.real.default', 'aten.imag.default')):
+            part = int(_is_op(node, ('aten.imag.default',)))
+            return {'kind': "custom", '_plan': {'op': 'complex', 'form': 'part', 'part': part,
+                                                'operands': [operand]}}
+        if not _is_op(node, _INVERSE_TRANSFORMS):
+            raise NotImplementedError(f'{name} of a complex value is not imported')
+        # dim is an axis of the complex value. The raw _fft_c2r reads exactly n // 2 + 1 bins,
+        # and fft_irfft crops or zero-pads to them.
+        bins = _shape_from_arg(operand)
+        if _is_op(node, ('aten._fft_c2r.default',)):
+            dims, code, n = node.args[1], node.args[2], int(node.args[3])
+            if len(dims) != 1:
+                raise NotImplementedError('an inverse real Fourier transform along several axes '
+                                          'is not imported')
+            dim = _normalize_axis(dims[0], len(bins))
+            scale = {2: None, 1: 'sqrt', 0: 'n'}[int(code)]
+            if bins[dim] != n // 2 + 1:
+                raise NotImplementedError('_fft_c2r of other than n // 2 + 1 bins')
+        else:
+            n, dim, norm = (_argument(node, 1, 'n'), _argument(node, 2, 'dim'),
+                            _argument(node, 3, 'norm'))
+            dim = _normalize_axis(-1 if dim is None else dim, len(bins))
+            n = 2 * (bins[dim] - 1) if n is None else int(n)
+            scale = {None: None, 'backward': None, 'ortho': 'sqrt', 'forward': 'n'}[norm]
+        if n <= 0:
+            raise NotImplementedError('irfft needs n > 0')
+        return {'kind': "custom", '_plan': {'op': 'irfft', 'operands': [operand], 'dim': dim,
+                                          'n': n, 'scale': scale}}
+    part = _paired_dtype(node)
+    if part is None:
+        raise NotImplementedError(f'{name}: a {_complex_dtype(node)} value is not imported, only '
+                                  'complex64 and complex128')
+    if node.op != 'call_function' or not _is_op(node, _COMPLEX_OPERATORS):
+        raise NotImplementedError(f'{name} with a complex result is not imported')
+    if _is_op(node, ('aten._fft_r2c.default', 'aten.fft_rfft.default')):
+        forward = _forward_transform(node)
+        return {'kind': "custom", '_plan': {'op': 'rfft', 'operands': [forward['source']],
+                                          'forward': forward}}
+    if _is_op(node, ('aten.view_as_complex.default',)):
+        return {'_alias': operand}
+    if any(_complex_value(arg) and _paired_dtype(arg) != part for arg in node.args):
+        raise NotImplementedError(f'{name} of complex operands of different types is not '
+                                  'imported')
+    if _is_op(node, _COMPLEX_RESHAPES):
+        return {'kind': "custom", '_plan': {'op': 'complex', 'form': 'reshape',
+                                            'operands': [operand]}}
+    if _is_op(node, ('aten.slice.Tensor',)):
+        extents = _shape_from_arg(operand)
+        dim, start, end, step = [_argument(node, a, key) for a, key in
+                                 enumerate(('self', 'dim', 'start', 'end', 'step'))][1:]
+        dim = _normalize_axis(dim or 0, len(extents))
+        kept = _slice_positions(extents[dim], start, end, step)
+        return {'kind': "custom", '_plan': {'op': 'complex', 'form': 'slice', 'dim': dim,
+                                            'start': kept[0] if kept else 0,
+                                            'stop': kept[-1] + 1 if kept else 0,
+                                            'step': 1 if step is None else int(step),
+                                            'operands': [operand]}}
+    if _is_op(node, ('aten.select.int',)):
+        dim, index = _selected(node)
+        return {'kind': "custom", '_plan': {'op': 'complex', 'form': 'select', 'dim': dim,
+                                            'index': index, 'operands': [operand]}}
+    other = _argument(node, 1, 'other')
+    if _is_op(node, ('aten.mul.Tensor',)):
+        if not (_complex_value(operand) and _complex_value(other)):
+            raise NotImplementedError('mul of a complex and a real value is not imported')
+        return {'kind': "custom", '_plan': {'op': 'complex', 'form': 'mul',
+                                            'operands': [operand, other]}}
+    if (not _complex_value(operand) or isinstance(other, bool) or
+            not isinstance(other, (int, float)) or node.kwargs.get('rounding_mode') is not None):
+        raise NotImplementedError('div of a complex value is imported only by a real number')
+    divisor = torch.tensor(other, dtype=_torch_dtype(part))
+    if divisor == 0 or not torch.isfinite(divisor):
+        raise NotImplementedError('a complex quotient by zero or a non-finite number is not '
+                                  'imported')
+    zero, one = torch.zeros((), dtype=divisor.dtype), torch.ones((), dtype=divisor.dtype)
+    rat = zero / divisor
+    scale = one / (divisor + zero * rat)
+    return {'kind': "custom", '_plan': {'op': 'complex', 'form': 'div', 'rat': rat.item(),
+                                        'scale': scale.item(), 'operands': [operand]}}
+
+
+def _complex_dtype(value):
+    meta = value.meta.get('val', value.meta.get('tensor_meta'))
+    return str(getattr(meta, 'dtype', None)).removeprefix('torch.')
+
+
+def _component_name(node):
+    # The ATen name of the tuple-valued operator that `node` calls and the IR imports by
+    # component, or None: its overload under torch.export, its callable or method under FX.
+    if node.op == 'call_function' and _is_op(node, tuple(_COMPONENTS)):
+        return _target_name(node.target)
+    for name, (functions, methods, _) in _FX_COMPONENTS.items():
+        if _is_op(node, functions=functions, methods=methods): return name
+    return None
+
+
 def _component_producer(node):
-    return node.op == 'call_function' and _is_op(node, tuple(_COMPONENTS))
+    return _component_name(node) is not None
+
+
+def _arity(producer):
+    # The number of components of the producer's result: its field names under FX, else the
+    # length of the value torch.export records, or None where the graph records neither.
+    name = _component_name(producer)
+    if name in _FX_COMPONENTS: return len(_FX_COMPONENTS[name][2])
+    value = producer.meta.get('val')
+    return len(value) if isinstance(value, (tuple, list)) else None
 
 
 def _projection(node):
     # (producer, index) when `node` projects one component of a tuple-valued operator the IR
-    # imports by component.
-    if not _is_getitem(node) or len(node.args) != 2: return None
+    # imports by component: by position, or under FX by the field name of PyTorch's result. A
+    # negative position counts from the end of the result, as in Python.
+    if not (_is_getitem(node) or _is_getattr(node)) or len(node.args) != 2: return None
     producer, index = node.args
-    if not isinstance(producer, torch.fx.Node) or type(index) is not int: return None
-    if not _component_producer(producer): return None
-    return producer, index
+    if not isinstance(producer, torch.fx.Node) or not _component_producer(producer): return None
+    if _is_getattr(node):
+        fields = _FX_COMPONENTS.get(_component_name(producer), ((), (), ()))[2]
+        if index not in fields: return None
+        index = fields.index(index)
+    if type(index) is not int: return None
+    arity = _arity(producer)
+    return producer, (index + arity if arity is not None and -arity <= index < 0 else index)
+
+
+def _project_results(graph):
+    # FX keeps a tuple-valued result that the program returns whole as one node. The output reads
+    # its components instead, as torch.export writes it, so every use of the producer projects.
+    output = next(node for node in graph.nodes if node.op == 'output')
+    for node in list(graph.nodes):
+        name = _component_name(node)
+        if name not in _FX_COMPONENTS or output not in node.users: continue
+        with graph.inserting_before(output):
+            parts = tuple(graph.call_function(operator.getitem, (node, index))
+                          for index in range(len(_FX_COMPONENTS[name][2])))
+        output.args = torch.fx.node.map_arg(output.args, lambda x: parts if x is node else x)
 
 
 def _split_windows(producer):
@@ -358,6 +576,18 @@ def _split_windows(producer):
     return dim, list(zip(starts, sizes))
 
 
+def _running_kind(producer, source, eps):
+    # Batch norm over channel axis 1 with the running statistics of `producer`, whose arguments
+    # start (input, weight, bias, running_mean, running_var): held, or graph inputs.
+    shape = _shape_from_arg(source)
+    if len(shape) < 2: raise NotImplementedError('batch norm needs a channel axis 1')
+    return _normalization("batch_norm", source, eps, {'dim': 1}, [int(shape[1])],
+                          gamma=_argument(producer, 1, 'weight'),
+                          beta=_argument(producer, 2, 'bias'),
+                          mean=_argument(producer, 3, 'running_mean'),
+                          var=_argument(producer, 4, 'running_var'))
+
+
 def _moments_kind(source, mode, weight, bias, eps, output, groups=1, running=None,
                   record=False):
     # A group norm (statistics over each group of channels and the spatial axes) or a training
@@ -365,15 +595,13 @@ def _moments_kind(source, mode, weight, bias, eps, output, groups=1, running=Non
     # means and 2 the reciprocal standard deviations. With running = (running_mean,
     # running_var, momentum) outputs 3 and 4 are the updated running statistics, and `record`
     # keeps them as the updates of those buffers (_BUFFER_UPDATES) when output 0 is emitted.
+    # The root of var + eps is taken as it stands, as in PyTorch: NaN where the sum is negative.
     extents = _shape_from_arg(source)
     if len(extents) < 2 or _node_dtype(source) not in _FLOATING:
         raise NotImplementedError(f'{mode} norm needs a floating operand with a channel axis 1')
     if extents[1] % groups:
         raise NotImplementedError('group norm needs the groups to divide the channels')
     eps = float(eps)
-    if not eps >= 0:
-        raise NotImplementedError('a negative or NaN eps: PyTorch takes the square root of '
-                                  'var + eps, which the IR clamps at zero')
     plan = {'op': 'moments', 'operands': [source, weight, bias], 'mode': mode,
             'groups': groups, 'eps': eps, 'output': output}
     if running is not None:
@@ -450,10 +678,12 @@ def _updated_buffers():
             if name in _BUFFER_UPDATES or name in _OUTPUT_TARGETS]
 
 
-def _program_outputs(refs):
+def _program_outputs(refs, convert, example_tensors):
     # The program's outputs: the graph's user outputs, then the value of each updated buffer in
     # the order of the buffer placeholders, from a core graph's BUFFER_MUTATION outputs or a
-    # default graph's batch_norm and add_ rules. The IR holds no mutation.
+    # default graph's batch_norm and add_ rules. The IR holds no mutation. PyTorch copies a
+    # BUFFER_MUTATION output into its buffer, so `convert(ref, name)` converts it to the dtype of
+    # the buffer `name`.
     if all(target is None for target in _OUTPUT_TARGETS) and not _BUFFER_UPDATES:
         return refs
     if _OUTPUT_TARGETS and len(_OUTPUT_TARGETS) != len(refs):
@@ -463,10 +693,13 @@ def _program_outputs(refs):
     # the update there. Disjoint views of one storage are refused too.
     def storage(value):
         if isinstance(value, torch.Tensor) and value.numel():
-            return value.untyped_storage().data_ptr()
+            return value.device, value.untyped_storage().data_ptr()
         return None
+    input_storage = {storage(tensor) for tensor in example_tensors}
     for name in _updated_buffers():
         mine = storage(_TENSOR_VALUES.get(name))
+        if mine is not None and mine in input_storage:
+            raise NotImplementedError(f'the updated buffer {name} shares storage with an input')
         if mine is not None and any(other != name and storage(value) == mine
                                     for other, value in _TENSOR_VALUES.items()):
             raise NotImplementedError(f'the updated buffer {name} shares storage with another '
@@ -478,27 +711,16 @@ def _program_outputs(refs):
         elif target in updates:
             raise NotImplementedError(f'buffer {target} is updated twice')
         else:
-            updates[target] = ref
+            updates[target] = convert(ref, target)
     return user + [updates[name] for name in _BUFFERS if name in updates]
 
 
-def _random_key(position, counter_count):
-    # The key of the RNG node at capture position j: splitmix64(0) + j * 2 ** 32 modulo 2 ** 64.
-    # The node reads the counters key + t for t < counter_count, one per entry for
-    # Op.randUniform and Op.bernoulliMask and two per entry for Op.randn. Nodes reading at most
-    # 2 ** 32 counters at positions below 2 ** 32 therefore read disjoint counters, though not
-    # always distinct values: the reduction modulo 2 ** 32 and the rounding can repeat one.
-    # Running the artifact again repeats its draws, and editing the graph can move a node and
-    # change them.
-    if position < 0 or counter_count < 0:
-        raise ValueError('an RNG node position and counter count are nonnegative')
-    if position >= 2 ** 32 or counter_count > 2 ** 32:
-        raise NotImplementedError('an RNG node at or beyond position 2 ** 32 or reading more '
-                                  'than 2 ** 32 counters')
-    return (_splitmix64(0) + position * 2 ** 32) % 2 ** 64
-
-
 _DROPOUT_MASKS = {}
+# The ATen operators whose rules draw from TorchLean's generator under their node's key: rand,
+# randn and randperm (`_artifact._random_key`), and dropout and native_dropout where their train
+# flag (argument 2) is set, by Op.bernoulliMask.
+_SAMPLERS = ('aten.rand.default', 'aten.randn.default', 'aten.randperm.default')
+_DROPOUTS = ('aten.dropout.default', 'aten.native_dropout.default')
 
 
 def _dropout_kind(source, p, train, output, producer=None):
@@ -555,11 +777,24 @@ def _embedding_bag_kind(producer):
 
 
 def _component_kind(node, producer, index):
-    name = _target_name(producer.target)
+    name = _component_name(producer)
     allowed = _COMPONENTS[name]
     if allowed is not None and index not in allowed:
-        raise NotImplementedError(f'{name}: {_COMPONENT_OWNERS[name]} are not imported')
-    source = producer.args[0]
+        # An operator without an owner entry imports all its components, so there the index is
+        # outside the result.
+        owners = _COMPONENT_OWNERS.get(name)
+        raise NotImplementedError(f'{name}: {owners} are not imported' if owners else
+                                  f'{name}: component {index} is out of range')
+    source = _argument(producer, 0, 'self', 'input')
+    if name == 'aten.unbind.int':
+        # unbind returns every slice along dim without that axis (the PyTorch 2.13 docstring of
+        # torch.unbind): component i is select(dim, i).
+        extents = _shape_from_arg(source)
+        dim = _normalize_axis(_argument(producer, 1, 'dim') or 0, len(extents))
+        if not 0 <= index < extents[dim]:
+            raise NotImplementedError(f'{name}: component {index} is out of range')
+        return {'kind': "slice", '_plan': {'op': 'select', 'operands': [source], 'dim': dim,
+                                           'index': index}}
     if allowed is None:
         dim, windows = _split_windows(producer)
         if not 0 <= index < len(windows):
@@ -569,6 +804,12 @@ def _component_kind(node, producer, index):
                 'steps': [1], '_operands': [source]}
     if name in _ORDER_COMPONENTS:
         return _order_kind(name, producer, source, index)
+    if name == 'aten.frexp.Tensor':
+        # C's frexp, Op.frexp: the mantissa (component 0) and the int32 exponent (component 1).
+        shape, dtype = _shape_from_arg(source), _node_dtype(source)
+        if dtype not in _FLOATING:
+            raise NotImplementedError(f'frexp of a {dtype} tensor is not imported')
+        return _registered_kind('frexp', [{'shape': shape}], [source], shape, shape, index)
     if name == 'aten.native_layer_norm.default':
         normalized = [int(size) for size in producer.args[1]]
         weight, bias = _argument(producer, 2, 'weight'), _argument(producer, 3, 'bias')
@@ -589,11 +830,45 @@ def _component_kind(node, producer, index):
         # eps): the statistics of the batch.
         return _moments_kind(source, 'batch', producer.args[1], producer.args[2],
                              producer.args[5], index)
+    if name == 'aten._native_batch_norm_legit.default':
+        # (input, weight, bias, running_mean, running_var, training, momentum, eps). Outside
+        # training it is batch norm with the running statistics, and outputs 1 and 2 are empty.
+        # In training the batch statistics normalize, and the running statistics, updated in
+        # place, must be buffers that only this node reads, as for aten.batch_norm
+        # (_emit_structure): their updates are kept when output 0 is emitted.
+        if _argument(producer, 5, 'training') is not True:
+            if index != 0:
+                raise NotImplementedError(f'{name}: the empty saved statistics outputs outside '
+                                          'training are not imported')
+            return _running_kind(producer, source, _argument(producer, 7, 'eps'))
+        running = (_argument(producer, 3, 'running_mean'), _argument(producer, 4, 'running_var'))
+        if not all(isinstance(value, torch.fx.Node) and value.op == 'placeholder' and
+                   value.name in _BUFFERS and set(value.users) == {producer}
+                   for value in running) or running[0] is running[1]:
+            raise NotImplementedError(f'{name} in training updates its running statistics in '
+                                      'place: they must be two buffers that only it reads')
+        if not any(_projection(user) == (producer, 0) for user in producer.users):
+            raise NotImplementedError(f'{name} in training whose normalized output is unused')
+        return _moments_kind(source, 'batch', producer.args[1], producer.args[2],
+                             _argument(producer, 7, 'eps'), index,
+                             running=(*running, _argument(producer, 6, 'momentum')),
+                             record=index == 0)
     if name == 'aten._native_batch_norm_legit_functional.default':
-        # The core graph's training batch norm (weight, bias, running_mean, running_var,
-        # training, momentum, eps): outputs 3 and 4 are the updated running statistics.
+        # The core graph's batch norm (weight, bias, running_mean, running_var, training,
+        # momentum, eps). In training outputs 3 and 4 are the updated running statistics.
+        # Outside training output 0 is batch norm with the running statistics, outputs 1 and 2
+        # are empty, and outputs 3 and 4 are the running statistics unchanged, converted to the
+        # computing dtype (binary32 for binary16 and bfloat16).
         if producer.args[5] is not True:
-            raise NotImplementedError('_native_batch_norm_legit_functional outside training')
+            if index in (3, 4):
+                statistic = producer.args[index]
+                if _node_dtype(statistic) == _node_dtype(node):
+                    return {'_alias': statistic}
+                return {'kind': "custom", '_plan': {'op': 'convert', 'operands': [statistic]}}
+            if index != 0:
+                raise NotImplementedError(f'{name}: the empty saved statistics outputs outside '
+                                          'training are not imported')
+            return _running_kind(producer, source, producer.args[7])
         if producer.args[3] is producer.args[4]:
             raise NotImplementedError('_native_batch_norm_legit_functional: the running '
                                       'statistics must be two distinct buffers')
@@ -601,14 +876,7 @@ def _component_kind(node, producer, index):
                              producer.args[7], index,
                              running=(producer.args[3], producer.args[4], producer.args[6]))
     if name == 'aten._native_batch_norm_legit_no_training.default':
-        shape = _shape_from_arg(source)
-        if len(shape) < 2: raise NotImplementedError('batch norm needs a channel axis 1')
-        channels = int(shape[1])
-        weight, bias = _argument(producer, 1, 'weight'), _argument(producer, 2, 'bias')
-        return _normalization("batch_norm", source, _argument(producer, 6, 'eps'), {'dim': 1},
-                              [channels], gamma=weight, beta=bias,
-                              mean=_argument(producer, 3, 'running_mean'),
-                              var=_argument(producer, 4, 'running_var'))
+        return _running_kind(producer, source, _argument(producer, 6, 'eps'))
     if name == 'aten.topk.default':
         return _topk_kind(producer, source, index)
     rank = 2 if name == 'aten.max_pool2d_with_indices.default' else 3
@@ -630,14 +898,16 @@ def _component_kind(node, producer, index):
             'padding': padding, '_operands': [source]}
 
 
-def _registered_kind(tag, fields, source, input_shape, result_shape, output=0):
+def _registered_kind(tag, fields, operands, input_shape, result_shape, output=0,
+                     broadcast=False):
     # Output `output` of the registered operator `tag` of TorchLean.Op, its codec record's fields
-    # in binder order and its value ports at the operand's dtype. The operand is reshaped to
-    # `input_shape` first when that differs from its shape.
-    return {'kind': tag, '_plan': {'op': 'registered', 'operands': [source], 'tag': tag,
-                                   'fields': fields, 'scalar': _node_dtype(source),
+    # in binder order and its value ports at the first operand's dtype. Each operand is reshaped
+    # to `input_shape` first when that differs from its shape, or broadcast to it with
+    # `broadcast`.
+    return {'kind': tag, '_plan': {'op': 'registered', 'operands': operands, 'tag': tag,
+                                   'fields': fields, 'scalar': _node_dtype(operands[0]),
                                    'output': output, 'input_shape': input_shape,
-                                   'result_shape': result_shape}}
+                                   'result_shape': result_shape, 'broadcast': broadcast}}
 
 
 def _topk_kind(producer, source, index):
@@ -671,7 +941,7 @@ def _mutates(node):
 _ALLOCATING = ('aten.zeros.default', 'aten.ones.default', 'aten.zeros_like.default',
                'aten.ones_like.default', 'aten.full_like.default', 'aten.new_zeros.default',
                'aten.new_ones.default', 'aten.new_full.default', 'aten._to_copy.default',
-               'aten.lift_fresh_copy.default')
+               'aten.lift_fresh_copy.default', *_EMPTY)
 
 
 def _allocates(node):
@@ -691,25 +961,34 @@ def _allocates(node):
         all(value.alias_info is None for value in schema.returns)
 
 
+# The in-place writes that the default graph keeps, read as their functional operators.
+_SCATTER_WRITES = ('aten.scatter_.src', 'aten.scatter_.value', 'aten.scatter_add_.default')
+_IN_PLACE_WRITES = ('aten.index_put_.default', 'aten.index_add_.default',
+                    'aten.index_copy_.default', 'aten.copy_.default', *_SCATTER_WRITES,
+                    *_IN_PLACE_FILLS)
+
+
 def _fresh_destination(node):
-    # torch.export's default graph keeps index_put_ and reads the written tensor afterwards
-    # through the index_put_ node. The functional index_put is exact when the destination is
-    # fresh (an allocating operator's result or an accepted index_put_), the index_put_ is its
-    # only reader from then on, and its earlier readers allocate their results.
+    # torch.export's default graph keeps index_put_, index_add_, index_copy_, copy_, scatter_,
+    # scatter_add_, zero_ and fill_ and reads the written tensor afterwards through their node.
+    # The functional operator is exact when the destination is fresh (an allocating operator's
+    # result or an accepted in-place write), the in-place node is its only reader from then on,
+    # and its earlier readers allocate their results.
+    name = _target_name(node.target).split('.')[1]
     target = node.args[0]
     if not isinstance(target, torch.fx.Node) or target.op != 'call_function':
-        raise NotImplementedError('index_put_ into an input, parameter or buffer is outside the '
+        raise NotImplementedError(f'{name} into an input, parameter or buffer is outside the '
                                   'pure graph contract')
-    if not _allocates(target) and not _is_op(target, ('aten.index_put_.default',)):
-        raise NotImplementedError('index_put_ into a view or a tensor that may alias another '
-                                  'is not imported')
-    if any(value is target for value in list(node.args[1]) + [node.args[2]]):
-        raise NotImplementedError('index_put_ whose indices or values are its destination')
+    if not _allocates(target) and not _is_op(target, _IN_PLACE_WRITES):
+        raise NotImplementedError(f'{name} into a view or a tensor that may alias another is not '
+                                  'imported')
+    if any(value is target for argument in node.args[1:]
+           for value in (argument if isinstance(argument, (list, tuple)) else [argument])):
+        raise NotImplementedError(f'{name} whose other operands include its destination')
     order = {other: position for position, other in enumerate(node.graph.nodes)}
     for user in target.users:
         if user is not node and (order[user] > order[node] or not _allocates(user)):
-            raise NotImplementedError('index_put_ into a tensor that a view or a later node '
-                                      'reads')
+            raise NotImplementedError(f'{name} into a tensor that a view or a later node reads')
 
 
 def _order_kind(name, producer, source, index=0):
@@ -718,25 +997,28 @@ def _order_kind(name, producer, source, index=0):
     shape, dtype = _shape_from_arg(source), _node_dtype(source)
     if not shape:
         raise NotImplementedError(f'{name} of a rank-0 tensor is not imported')
-    if dtype not in _FLOATING:
+    sort = name in ('aten.sort.stable', 'aten.sort.default')
+    # The IR sort also runs at Booleans, false first, and at integer types by their values.
+    if dtype not in _FLOATING and not (sort and (dtype == 'bool' or isinstance(dtype, dict))):
         raise NotImplementedError(f'{name} of a {dtype} tensor is not imported')
-    if name in ('aten.sort.stable', 'aten.sort.default'):
+    if sort:
         if name == 'aten.sort.default' or producer.kwargs.get('stable') is not True:
             raise NotImplementedError('sort without stable=True: ATen orders equal entries, -0 '
                                       'and +0 among them, either way; the IR sort is stable')
         dim = _normalize_axis(producer.kwargs.get('dim', -1), len(shape))
         descending = bool(producer.kwargs.get('descending', False))
         if index == 1:
-            return _registered_kind('sort', [{'shape': shape}, {'nat': dim},
-                                             {'bool': descending}], source, shape, shape, 1)
+            return _registered_kind('sort', [{'shape': shape}, {'nat': dim}, {'bool': descending},
+                                             {'element': _element(dtype, _op_table())}],
+                                    [source], shape, shape, 1)
         return {'kind': "sort", 'dim': dim, 'descending': descending, '_operands': [source]}
     dim = _normalize_axis(_argument(producer, 1, 'dim'), len(shape))
     if name in ('aten.cummax.default', 'aten.cummin.default'):
         # cummax_cummin_helper takes a later equal entry and a later NaN, as the IR does.
         tag = 'cummax' if name == 'aten.cummax.default' else 'cummin'
         if index == 1:
-            return _registered_kind(tag, [{'shape': shape}, {'nat': dim}], source, shape, shape,
-                                    1)
+            return _registered_kind(tag, [{'shape': shape}, {'nat': dim}, _LEFT_FOLD], [source],
+                                    shape, shape, 1)
         return {'kind': "cummax" if name == 'aten.cummax.default' else "cummin", 'dim': dim,
                 '_operands': [source]}
     if shape[dim] == 0:
@@ -771,7 +1053,7 @@ def _extremum_index_kind(tag, source, dim, keepdim):
     reduced = [1 if axis == dim else extent for axis, extent in enumerate(input_shape)
                if keepdim or axis != dim]
     return _registered_kind(tag, [{'shape': input_shape}, {'nat': dim}, {'bool': keepdim}],
-                            source, input_shape, reduced)
+                            [source], input_shape, reduced)
 
 
 def _filled(shape, fill, dtype):
@@ -782,29 +1064,51 @@ def _filled(shape, fill, dtype):
     return torch.full(shape, fill, dtype=dtype)
 
 
-def _creation_value(node):
-    # The tensor PyTorch creates, computed with the same arguments on the CPU, except that a
-    # fill value becomes binary16 or bfloat16 in one rounding (_filled).
+def _fill(node):
+    # The one value of a creation operator's tensor, as a 0-d tensor of its dtype, or None for
+    # arange, linspace and logspace. It is the value PyTorch creates with the same arguments at
+    # shape (), except that a Python fill value becomes binary16 or bfloat16 in one rounding
+    # (_filled).
     meta = node.meta.get('val', node.meta.get('tensor_meta'))
-    shape, dtype = _node_shape(node), getattr(meta, 'dtype', None)
+    dtype = getattr(meta, 'dtype', None)
     if _is_op(node, _SHAPED_CREATION):
         if _is_op(node, ('aten.ones_like.default', 'aten.new_ones.default')):
             fill = 1
-        elif _is_op(node, ('aten.new_zeros.default',)):
+        elif _is_op(node, ('aten.new_zeros.default', 'aten.zero_.default')):
             fill = 0
-        elif _is_op(node, ('aten.full_like.default', 'aten.fill.Scalar')):
+        elif _is_op(node, ('aten.full_like.default', 'aten.fill.Scalar', 'aten.fill_.Scalar')):
             fill = node.args[1]
         else:
             fill = node.args[2]
         if isinstance(fill, torch.fx.Node):
             raise NotImplementedError('a fill value computed by the graph is not a constant')
-        return _filled(shape, fill, dtype)
+        return _filled([], fill, dtype)
     if any(isinstance(value, torch.fx.Node) for value in (*node.args, *node.kwargs.values())):
         raise NotImplementedError('creation operator with a tensor operand')
+    if not _is_op(node, ('aten.full.default', 'aten.ones.default', 'aten.zeros.default',
+                         'aten.scalar_tensor.default')):
+        return None
     if dtype in (torch.float16, torch.bfloat16) and _is_op(
             node, ('aten.full.default', 'aten.scalar_tensor.default')):
         fill = node.args[1] if _is_op(node, ('aten.full.default',)) else node.args[0]
-        return _filled(shape, fill, dtype)
+        return _filled([], fill, dtype)
+    keywords = {key: value for key, value in node.kwargs.items()
+                if key not in ('device', 'pin_memory', 'layout')}
+    args = node.args if _is_op(node, ('aten.scalar_tensor.default',)) else ([], *node.args[1:])
+    value = node.target(*args, **keywords)
+    if value.dtype != dtype:
+        raise NotImplementedError('a created constant differs from its captured metadata')
+    return value
+
+
+def _creation_value(node):
+    # The tensor PyTorch creates, computed with the same arguments on the CPU, except that a
+    # fill value becomes binary16 or bfloat16 in one rounding (_fill).
+    meta = node.meta.get('val', node.meta.get('tensor_meta'))
+    shape, dtype = _node_shape(node), getattr(meta, 'dtype', None)
+    fill = _fill(node)
+    if fill is not None:
+        return fill.expand(shape).contiguous()
     keywords = {key: value for key, value in node.kwargs.items()
                 if key not in ('device', 'pin_memory', 'layout')}
     value = node.target(*node.args, **keywords)
@@ -826,27 +1130,13 @@ def _structure_kind(node, model=None):
                                          'buffer': buffer.name,
                                          'value': torch.add(_TENSOR_VALUES[buffer.name],
                                                             _argument(node, 1, 'other'))}}
+    complex_kind = _complex_kind(node)
+    if complex_kind is not None:
+        return complex_kind
     if _folds(node) and not _is_op(node, _CREATION + _SHAPED_CREATION):
         value = _index_constant(node)
         if value is not None:
             return {'_constant': value}
-    if _is_op(node, ('aten.take_along_dim.default',), (torch.take_along_dim,),
-              ('take_along_dim',)):
-        # ATen's take_along_dim broadcasts the operands except along dim and gathers at the
-        # index modulo the extent (a negative or too large index wraps). Without dim it gathers
-        # from the flattening, where such an index is an error.
-        source, index = _argument(node, 0, 'input', 'self'), _argument(node, 1, 'indices')
-        dim = _argument(node, 2, 'dim')
-        _index_operand(index, 'take_along_dim')
-        if _node_dtype(source) not in _FLOATING:
-            raise NotImplementedError(f'take_along_dim of a {_node_dtype(source)} tensor')
-        extents, positions = _shape_from_arg(source), _shape_from_arg(index)
-        if dim is not None:
-            dim = _normalize_axis(dim, len(extents))
-            if len(positions) != len(extents):
-                raise NotImplementedError('take_along_dim needs an index of the input rank')
-        return {'kind': "gather", '_plan': {'op': 'take_along_dim', 'operands': [source, index],
-                                            'dim': dim}}
     if _is_op(node, ('aten.argmax.default', 'aten.argmin.default'), (torch.argmax, torch.argmin),
               ('argmax', 'argmin')):
         source = _argument(node, 0, 'input', 'self')
@@ -855,20 +1145,73 @@ def _structure_kind(node, model=None):
                                  ('argmin',)) else 'argmax'
         return _extremum_index_kind(tag, source, None if dim is None else int(dim),
                                     bool(_argument(node, 2, 'keepdim')))
+    if _is_op(node, _EMPTY):
+        # The complete overwrite uses the destination's shape and dtype only. Outside this
+        # pattern a fixed IR value would depend on PyTorch's deterministic-fill settings.
+        overwrites = (*_SHAPED_CREATION, 'aten.copy_.default', 'aten.copy.default')
+        for user in node.users:
+            writes_all = _is_op(user, overwrites) or _zeros_like(user)
+            if not writes_all or user.args[0] is not node or node in user.args[1:] or \
+                    node in user.kwargs.values():
+                raise _UninitializedRead('a read of an uninitialized PyTorch allocation')
+        return {'_overwritten_allocation': True}
     if _is_op(node, _CREATION + _SHAPED_CREATION):
-        return {'_constant': _creation_value(node)}
-    if _is_op(node, _ALIASES, (torch.clone,), ('clone',)):
+        # A tensor of one value is that value broadcast to the shape, which keeps the artifact
+        # one word long however large the tensor.
+        if _is_op(node, _IN_PLACE_FILLS):
+            _fresh_destination(node)
+        fill = _fill(node)
+        if fill is None:
+            return {'_constant': _creation_value(node)}
+        return {'kind': "broadcast", '_plan': {'op': 'filled', 'value': fill, 'operands': []}}
+    if (_is_op(node, _DETACH, (), ('detach_',)) and _node_dtype(node) in _FLOATING and
+            not _is_op(_argument(node, 0, 'self', 'input'), ('aten.lift_fresh_copy.default',))):
+        # Tensor.detach_ stops the gradient of its operand where the program reads it next:
+        # Op.detach, whose tangent is zero. torch.export writes those reads as uses of detach_'s
+        # result. A symbolic trace keeps them on the operand, where they would miss Op.detach, and
+        # is refused.
+        source = _argument(node, 0, 'self', 'input')
+        order = {each: index for index, each in enumerate(node.graph.nodes)}
+        if any(order[user] > order[node] for user in source.users if user is not node):
+            raise NotImplementedError('detach_ of a value the graph reads after it from the '
+                                      'operand')
+        return {'kind': "detach"}
+    if (_is_op(node, _DETACH_COPY, (torch.detach,), ('detach',)) or _decomposed_detach(node)) \
+            and _node_dtype(node) in _FLOATING:
+        # Tensor.detach: the operand's value, read through the result without its gradient.
+        source = _argument(node, 0, 'self', 'input')
+        if _node_dtype(source) != _node_dtype(node) or _node_shape(source) != _node_shape(node):
+            raise NotImplementedError('detach must keep its operand shape and dtype')
+        return {'kind': "detach"}
+    if _is_op(node, _ALIASES + _DETACH + _DETACH_COPY, (torch.clone, torch.detach),
+              ('clone', 'detach_', 'detach')):
         source = _argument(node, 0, 'self', 'input')
         if _node_dtype(source) != _node_dtype(node) or _node_shape(source) != _node_shape(node):
             raise NotImplementedError('an alias must keep its operand shape and dtype')
         return {'_alias': source}
-    if _is_op(node, ('aten.copy.default',)):
-        # Functional copy_: the source broadcast to the destination and converted to its dtype.
+    if _is_op(node, ('aten.copy.default', 'aten.copy_.default')):
+        # Functional copy_, or copy_ into a fresh destination: the source broadcast to the
+        # destination and converted to its dtype.
+        if _is_op(node, ('aten.copy_.default',)):
+            _fresh_destination(node)
         return {'kind': "custom", '_plan': {'op': 'convert', 'operands': [node.args[1]]}}
     if _is_op(node, ('aten.t.default',), (torch.t,), ('t',)):
         source = node.args[0]
         if len(_shape_from_arg(source)) < 2: return {'_alias': source}
         return {'kind': "permute", 'dims': [1, 0]}
+    if _is_op(node, ('aten.numpy_T.default', 'aten.mT.default', 'aten.mH.default',
+                     'aten.adjoint.default', 'aten.matrix_H.default'), (torch.adjoint,),
+              ('adjoint',)):
+        # Tensor.T reverses the axes and is its operand below rank 2. Tensor.mT swaps the last two
+        # axes, and Tensor.mH, Tensor.H and torch.adjoint swap them and conjugate, which leaves a
+        # real tensor as it is (the PyTorch 2.13 docstrings of these five). Complex tensors are
+        # refused with their element type.
+        source = _argument(node, 0, 'self', 'input')
+        rank = len(_shape_from_arg(source))
+        if _is_op(node, ('aten.numpy_T.default',)):
+            if rank < 2: return {'_alias': source}
+            return {'kind': "permute", 'dims': list(range(rank))[::-1]}
+        return {'kind': "permute", 'dims': [*range(rank - 2), rank - 1, rank - 2]}
     if _is_op(node, ('aten.expand.default',), (), ('expand',)):
         return _broadcast_kind(_shape_from_arg(node.args[0]), _node_shape(node))
     if _is_op(node, ('aten.unsqueeze.default', 'aten.squeeze.dim', 'aten.squeeze.dims',
@@ -880,8 +1223,6 @@ def _structure_kind(node, model=None):
     if _is_op(node, ('aten.cumsum.default', 'aten.cumprod.default'),
               (torch.cumsum, torch.cumprod), ('cumsum', 'cumprod')):
         source, dtype = _argument(node, 0, 'input', 'self'), _node_dtype(node)
-        if _argument(node, 2, 'dtype') is not None or _node_dtype(source) != dtype:
-            raise NotImplementedError('a cumulative sum or product with a dtype conversion')
         if not isinstance(dtype, str) or dtype not in _SCAN_ACCUMULATORS:
             raise NotImplementedError(f'a cumulative sum or product of a {dtype} tensor')
         dim = _normalize_axis(_argument(node, 1, 'dim'), len(_shape_from_arg(source)))
@@ -900,13 +1241,8 @@ def _structure_kind(node, model=None):
             raise NotImplementedError(f'leaky_relu of a {dtype} tensor is not imported')
         if isinstance(slope, bool) or not isinstance(slope, (int, float)):
             raise NotImplementedError('leaky_relu needs a Python number as its slope')
-        opmath = 'float32' if dtype in _REDUCED_FLOATS else dtype
-        rounded = _scalar_tensor(slope, opmath).item()
-        if not rounded > 0:
-            raise NotImplementedError('leaky_relu with a slope that is not positive is not a '
-                                      'maximum or minimum of x and x * slope')
-        return {'kind': "maximum", '_plan': {'op': 'leaky_relu', 'operands': [source],
-                                             'slope': slope, 'largest': rounded <= 1}}
+        return {'kind': "leaky_relu", '_plan': {'op': 'leaky_relu', 'operands': [source],
+                                                'slope': slope}}
     if _is_op(node, ('aten.embedding.default',)):
         # padding_idx, scale_grad_by_freq and sparse change only the gradient.
         weight, index = node.args[0], node.args[1]
@@ -924,13 +1260,47 @@ def _structure_kind(node, model=None):
         if _is_op(node, ('aten.index_put_.default',)):
             _fresh_destination(node)
         source, indices, values = node.args[0], list(node.args[1]), node.args[2]
-        axes, positions = _advanced_axes(node, source, indices)
+        axes, positions = _advanced_axes(node, source, indices,
+                                         bool(_argument(node, 3, 'accumulate')))
         if not isinstance(values, torch.fx.Node) or _node_dtype(values) != _node_dtype(source):
             raise NotImplementedError('index_put needs values of the destination dtype')
         return {'kind': "scatter", '_plan': {
             'op': 'index_put', 'axes': axes, 'positions': positions,
             'accumulate': bool(_argument(node, 3, 'accumulate')),
             'operands': [source, values] + [indices[a] for a in axes]}}
+    if _is_op(node, tuple(f'aten.{name}.default' for name in ('index_add', 'index_add_',
+                                                              'index_copy', 'index_copy_')),
+              (torch.index_add, torch.index_copy), ('index_add', 'index_copy')):
+        # index_add(self, dim, index, source) accumulates source[..., i, ...] into
+        # self[..., index[i], ...] along dim, in the order given in index (the PyTorch 2.13
+        # docstring of Tensor.index_add_): index_put with accumulate at the one axis dim, each
+        # step rounded in the dtype, as PyTorch's decomposition (torch._refs.index_add) and its
+        # CPU kernel of a vector do. Its CPU kernel of a matrix or higher sums binary16 and
+        # bfloat16 in binary32 (measured). ATen fuses alpha into the sum, as in add, so alpha
+        # other than 1 is refused as there. index_copy copies there instead: index_put without
+        # accumulate, as torch._refs.index_copy decomposes it. Its docstring leaves a repeated
+        # target nondeterministic, and the CPU kernel keeps the last copy (measured), as the
+        # scatter does. Both reject a negative index, which index_put wraps.
+        accumulate = 'index_add' in _target_name(node.target)
+        name = 'index_add' if accumulate else 'index_copy'
+        if _is_op(node, ('aten.index_add_.default', 'aten.index_copy_.default')):
+            _fresh_destination(node)
+        source, index, values = _argument(node, 0, 'input', 'self'), \
+            _argument(node, 2, 'index'), _argument(node, 3, 'source')
+        if accumulate and _argument(node, 4, 'alpha') not in (None, 1):
+            raise NotImplementedError('index_add with alpha other than 1 is not imported')
+        extents = _shape_from_arg(source)
+        dim = _normalize_axis(_argument(node, 1, 'dim'), max(len(extents), 1))
+        axes, positions = _advanced_axes(node, source, [None] * dim + [index], accumulate)
+        if len(_shape_from_arg(index)) != 1:
+            raise NotImplementedError(f'{name} needs an index vector')
+        if not isinstance(values, torch.fx.Node) or _node_dtype(values) != _node_dtype(source) \
+                or _shape_from_arg(values) != extents[:dim] + positions + extents[dim + 1:]:
+            raise NotImplementedError(f'{name} needs a source of the destination dtype, as '
+                                      'long as the index along dim and equal elsewhere')
+        return {'kind': "scatter", '_plan': {
+            'op': 'index_put', 'axes': axes, 'positions': positions, 'accumulate': accumulate,
+            'wrap': False, 'operands': [source, values, index]}}
     if _is_op(node, tuple(f'aten.{name}.{form}' for name in ('any', 'all')
                           for form in ('default', 'dim', 'dims')), (torch.any, torch.all),
               ('any', 'all')):
@@ -1036,70 +1406,6 @@ def _structure_kind(node, model=None):
             raise NotImplementedError(f'{name}: the per-axis indices do not match the output')
         return {'kind': "gather", '_plan': {'op': 'upsample_nearest', 'operands': [source],
                                             'indices': indices}}
-    if _is_op(node, ('aten.view_as_real.default',)):
-        producer = node.args[0]
-        if not (isinstance(producer, torch.fx.Node) and
-                _is_op(producer, ('aten._fft_r2c.default', 'aten.fft_rfft.default'))):
-            raise NotImplementedError('view_as_real of a complex value other than a real '
-                                      'Fourier transform')
-        forward = _forward_transform(producer)
-        return {'kind': "custom", '_plan': {'op': 'rfft', 'operands': [forward['source']],
-                                          'forward': forward}}
-    if _is_op(node, _INVERSE_TRANSFORMS):
-        # The complex operand is view_as_complex of a real [..., 2] tensor or a forward
-        # transform, and dim is an axis of the complex value. The raw _fft_c2r reads exactly
-        # n // 2 + 1 bins, and fft_irfft crops or zero-pads to them.
-        producer = node.args[0]
-        slices = []
-        while isinstance(producer, torch.fx.Node) and _is_op(producer, _COMPLEX_SLICES):
-            # A slice of the complex value is the same slice of its paired-real form.
-            slices.insert(0, [_argument(producer, a, key) for a, key in
-                              enumerate(('self', 'dim', 'start', 'end', 'step'))][1:])
-            producer = producer.args[0]
-        if slices and not _is_op(producer, ('aten.view_as_complex.default',)):
-            raise NotImplementedError('a slice of a Fourier transform is not imported')
-        if not isinstance(producer, torch.fx.Node) or not _is_op(
-                producer, ('aten.view_as_complex.default', 'aten._fft_r2c.default',
-                           'aten.fft_rfft.default')):
-            raise NotImplementedError('an inverse real Fourier transform of a complex value other '
-                                      'than view_as_complex or a real Fourier transform')
-        if _is_op(producer, ('aten.view_as_complex.default',)):
-            source, forward = producer.args[0], None
-            paired = _shape_from_arg(source)
-            if not paired or paired[-1] != 2:
-                raise NotImplementedError('view_as_complex needs a trailing axis of 2')
-            bins = paired[:-1]
-            for index, (dim, start, end, step) in enumerate(slices):
-                dim = _normalize_axis(dim or 0, len(bins))
-                kept = _slice_positions(bins[dim], start, end, step)
-                slices[index] = (dim, kept[0] if kept else 0, kept[-1] + 1 if kept else 0,
-                                 1 if step is None else int(step))
-                bins[dim] = len(kept)
-        else:
-            forward = _forward_transform(producer)
-            source = forward['source']
-            bins = list(_shape_from_arg(source))
-            bins[forward['dim']] = forward['n'] // 2 + 1
-        if _is_op(node, ('aten._fft_c2r.default',)):
-            dims, code, n = node.args[1], node.args[2], int(node.args[3])
-            if len(dims) != 1:
-                raise NotImplementedError('an inverse real Fourier transform along several axes '
-                                          'is not imported')
-            dim = _normalize_axis(dims[0], len(bins))
-            scale = {2: None, 1: 'sqrt', 0: 'n'}[int(code)]
-            if bins[dim] != n // 2 + 1:
-                raise NotImplementedError('_fft_c2r of other than n // 2 + 1 bins')
-        else:
-            n, dim, norm = (_argument(node, 1, 'n'), _argument(node, 2, 'dim'),
-                            _argument(node, 3, 'norm'))
-            dim = _normalize_axis(-1 if dim is None else dim, len(bins))
-            n = 2 * (bins[dim] - 1) if n is None else int(n)
-            scale = {None: None, 'backward': None, 'ortho': 'sqrt', 'forward': 'n'}[norm]
-        if _node_dtype(source) not in ('float32', 'float64') or n <= 0:
-            raise NotImplementedError('irfft needs a binary32 or binary64 operand and n > 0')
-        return {'kind': "custom", '_plan': {'op': 'irfft', 'operands': [source], 'dim': dim, 'n': n,
-                                          'scale': scale, 'forward': forward,
-                                          'slices': slices}}
     if _is_op(node, ('aten.group_norm.default',), (F.group_norm,)):
         # group_norm(input, num_groups, weight, bias, eps), whose core form is native_group_norm.
         eps = _argument(node, 4, 'eps')
@@ -1147,6 +1453,21 @@ def _structure_kind(node, model=None):
                                             'operands': [query, key, value, mask],
                                             'scale': scale, 'causal': causal, 'group': group,
                                             'batch': batch, 'query': q, 'value': v}}
+    if _is_op(node, ('aten.linalg_householder_product.default', 'aten.orgqr.default'),
+              (torch.linalg.householder_product, torch.orgqr), ('orgqr',)):
+        # householder_product(input, tau) and its alias orgqr(input, input2) (the bindings'
+        # names; the docstrings say A and tau): the first n columns of H_1 ... H_k for an input
+        # of shape (*, m, n), as LinalgImport.householder_product builds it.
+        return {'kind': "matmul", '_plan': {'op': 'householder_product', 'operands': [
+            _argument(node, 0, 'input', 'self'), _argument(node, 1, 'tau', 'input2')]}}
+    if _is_op(node, ('aten.ormqr.default',), (torch.ormqr,), ('ormqr',)):
+        # ormqr(input, input2, input3, left=True, transpose=False) (the docstring's input, tau
+        # and other): op(Q) other, or other op(Q), as LinalgImport.reflected builds it.
+        left, transpose = _argument(node, 3, 'left'), _argument(node, 4, 'transpose')
+        return {'kind': "matmul", '_plan': {'op': 'ormqr', 'operands': [
+            _argument(node, 0, 'input', 'self'), _argument(node, 1, 'input2'),
+            _argument(node, 2, 'input3')], 'left': True if left is None else bool(left),
+            'transpose': bool(transpose)}}
     if _is_op(node, ('aten.cdist.default', 'aten._cdist_forward.default'), (torch.cdist,)):
         # cdist_impl: for p = 2 the matmul expansion where compute_mode asks for it (mode 1, or
         # the default mode 0 with more than 25 rows on a side), else the distance of each pair.
@@ -1240,7 +1561,7 @@ def _structure_kind(node, model=None):
                                       'or border padding are imported')
         return {'kind': "gather", '_plan': {'op': 'grid_sample', 'operands': [source, grid],
                                             'mode': mode, 'padding': padding, 'align': align}}
-    if _is_op(node, ('aten.rand.default', 'aten.randn.default', 'aten.randperm.default')):
+    if _is_op(node, _SAMPLERS):
         # TorchLean's generator under a key fixed at capture (Op.randUniform, Op.randn, Op.sort
         # of a uniform draw for a permutation), not PyTorch's stream. The overloads that take a
         # generator are other targets, refused.
@@ -1306,8 +1627,7 @@ def _structure_kind(node, model=None):
         positions = _shape_from_arg(index)
         selecting = _is_op(node, ('aten.index_select.default',), (torch.index_select,),
                            ('index_select',))
-        if _node_dtype(source) not in _FLOATING:
-            raise NotImplementedError(f'gather of a {_node_dtype(source)} tensor is not imported')
+        _check_moved(_target_name(node.target), _node_dtype(source))
         if selecting and len(positions) != 1:
             raise NotImplementedError('index_select needs a one-dimensional index')
         if not selecting and (len(positions) != len(extents) or any(
@@ -1332,6 +1652,36 @@ def _structure_kind(node, model=None):
         return {'kind': "gather", 'dims': list(range(len(extents))), 'batch_dims': [],
                 'indices': {'shape': list(index.shape),
                             'values': coords.reshape(-1).tolist()},
+                '_operands': [source]}
+    if _is_op(node, ('aten.as_strided.default',)):
+        # Entry i of as_strided(x, size, stride, offset) is the storage word at offset +
+        # sum_k i_k * stride_k (offset defaults to x's own). When each word read holds an entry
+        # of x in the layout the capture's metadata gives x, that is a gather of those entries.
+        # PyTorch's value is that one when the inputs are laid out as the captured ones, which
+        # torch.export does not check (export.py records a constraint).
+        source = _argument(node, 0, 'input', 'self')
+        size, stride = _argument(node, 1, 'size'), _argument(node, 2, 'stride')
+        offset = _argument(node, 3, 'storage_offset')
+        meta = source.meta.get('val') if isinstance(source, torch.fx.Node) else None
+        _check_moved('as_strided', _node_dtype(source))
+        if not isinstance(meta, torch.Tensor) or not all(
+                isinstance(n, int) for n in (*size, *stride, *meta.stride(), meta.storage_offset(),
+                                             0 if offset is None else offset)):
+            raise NotImplementedError('as_strided needs a size, stride, offset and operand '
+                                      'layout known at capture')
+        extents = list(meta.shape)
+        held = _storage_words(extents, meta.stride(), meta.storage_offset())
+        read = _storage_words(size, stride, meta.storage_offset() if offset is None else offset)
+        # A stable sort keeps the first tensor entry at each storage word. Search those
+        # words without allocating space for unrelated storage or gaps between strides.
+        words, entries = torch.sort(held.reshape(-1), stable=True)
+        positions = torch.searchsorted(words, read)
+        if (positions == words.numel()).any() or (words[positions] != read).any():
+            raise NotImplementedError('as_strided reading memory outside its operand')
+        coords = torch.stack(torch.unravel_index(entries[positions], extents), -1) if extents else \
+            torch.zeros([*size, 0], dtype=torch.long)
+        return {'kind': "gather", 'dims': list(range(len(extents))), 'batch_dims': [],
+                'indices': {'shape': list(size), 'values': coords.reshape(-1).tolist()},
                 '_operands': [source]}
     if _is_op(node, ('aten.scatter_reduce.two',), (torch.scatter_reduce,), ('scatter_reduce',)):
         # Without include_self the base entry at a written target takes no part (a sum or a mean
@@ -1360,8 +1710,12 @@ def _structure_kind(node, model=None):
         return {'kind': "scatter", '_plan': {
             'op': 'scatter_mean', 'operands': [base, index, update], 'dim': dim,
             'mean': reduce == 'mean', 'include_self': include_self}}
-    if _is_op(node, ('aten.scatter.src', 'aten.scatter.value', 'aten.scatter_add.default'),
-              (torch.scatter, torch.scatter_add), ('scatter', 'scatter_add')) and \
+    scatters = ('aten.scatter.src', 'aten.scatter.value', 'aten.scatter_add.default',
+                *_SCATTER_WRITES)
+    sums = ('aten.scatter_add.default', 'aten.scatter_add_.default')
+    if _is_op(node, _SCATTER_WRITES):
+        _fresh_destination(node)
+    if _is_op(node, scatters, (torch.scatter, torch.scatter_add), ('scatter', 'scatter_add')) and \
             _top_k_mask(node) is None and _index_constant(_argument(node, 2, 'index')) is None:
         # Op.scatter on a runtime index, at complete coordinates built in the IR.
         base = _argument(node, 0, 'input', 'self')
@@ -1371,8 +1725,10 @@ def _structure_kind(node, model=None):
         update = _argument(node, 3, 'src', 'value')
         if node.kwargs.get('reduce') is not None:
             raise NotImplementedError('scatter with a reduce argument is not imported')
-        if _node_dtype(base) not in _FLOATING:
-            raise NotImplementedError(f'scatter into a {_node_dtype(base)} tensor is not imported')
+        summing = _is_op(node, sums, (torch.scatter_add,), ('scatter_add',))
+        # A Python value is imported into a floating destination only.
+        _check_moved(_target_name(node.target), _node_dtype(base),
+                     summing or not isinstance(update, torch.fx.Node))
         positions = _shape_from_arg(index)
         if len(positions) != len(extents) or any(
                 positions[a] > extents[a] for a in range(len(extents)) if a != dim):
@@ -1383,12 +1739,10 @@ def _structure_kind(node, model=None):
                 any(size < extent for size, extent in zip(_shape_from_arg(update), positions))):
             raise NotImplementedError('scatter needs a source of the destination dtype, no '
                                       'shorter than the index')
-        reduce = 'sum' if _is_op(node, ('aten.scatter_add.default',), (torch.scatter_add,),
-                                 ('scatter_add',)) else 'replace'
+        reduce = 'sum' if summing else 'replace'
         return {'kind': "scatter", '_plan': {'op': 'scatter_at', 'operands': [base, index, update],
                                              'dim': dim, 'reduce': reduce}}
-    if _is_op(node, ('aten.scatter.src', 'aten.scatter.value', 'aten.scatter_add.default'),
-              (torch.scatter, torch.scatter_add), ('scatter', 'scatter_add')) and \
+    if _is_op(node, scatters, (torch.scatter, torch.scatter_add), ('scatter', 'scatter_add')) and \
             _top_k_mask(node) is None:
         base = _argument(node, 0, 'input', 'self')
         extents = _shape_from_arg(base)
@@ -1403,9 +1757,8 @@ def _structure_kind(node, model=None):
         if len({tuple(c) for c in coords.reshape(-1, len(extents)).tolist()}) != index.numel():
             # PyTorch leaves the winner of a replacement, and the order of a sum, unspecified.
             raise NotImplementedError('scatter with a repeated target is not imported')
-        reduce = 'sum' if _is_op(node, ('aten.scatter_add.default',),
-                                         (torch.scatter_add,), ('scatter_add',)) \
-            else 'replace'
+        reduce = 'sum' if _is_op(node, sums, (torch.scatter_add,), ('scatter_add',)) else \
+            'replace'
         return {'kind': "scatter", '_plan': {
             'op': 'scatter', 'operands': [base, update], 'reduce': reduce,
             'dims': list(range(len(extents))),
@@ -1423,12 +1776,7 @@ def _structure_kind(node, model=None):
         return {'kind': "slice", '_plan': {'op': 'diagonal', 'operands': [source],
                                            'offset': offset, 'dim1': dim1, 'dim2': dim2}}
     if _is_op(node, ('aten.select.int',), (torch.select,), ('select',)):
-        source = _shape_from_arg(node.args[0])
-        dim = _normalize_axis(_argument(node, 1, 'dim'), len(source))
-        index = int(_argument(node, 2, 'index'))
-        index = index + source[dim] if index < 0 else index
-        if not 0 <= index < source[dim]:
-            raise NotImplementedError(f'select index {index} is outside extent {source[dim]}')
+        dim, index = _selected(node)
         return {'kind': "slice", '_plan': {'op': 'select', 'operands': [node.args[0]],
                                            'dim': dim, 'index': index}}
     if _is_op(node, ('aten.addmm.default',), (torch.addmm,), ('addmm',)):
@@ -1443,6 +1791,63 @@ def _structure_kind(node, model=None):
         repeats = list(node.args[1:]) if len(node.args) > 2 else list(node.args[1])
         return {'kind': "reshape", '_plan': {'op': 'repeat', 'operands': [node.args[0]],
                                              'repeats': [int(r) for r in repeats]}}
+    if _is_op(node, ('aten.stack.default',), (torch.stack,), ()):
+        # torch.stack concatenates its tensors along a new axis `dim` (the PyTorch 2.13
+        # docstring).
+        tensors = list(_argument(node, 0, 'tensors'))
+        if not tensors or any(_node_dtype(t) != _node_dtype(tensors[0]) for t in tensors):
+            raise NotImplementedError('stack operands must be tensors of one dtype')
+        dim = _argument(node, 1, 'dim')
+        return {'kind': "cat", '_plan': {'op': 'stack', 'operands': tensors, 'dim':
+                                         _normalize_axis(dim or 0, len(_node_shape(node)))}}
+    if _is_op(node, ('aten.repeat_interleave.self_int',), (torch.repeat_interleave,),
+              ('repeat_interleave',)):
+        # repeat_interleave with an int count repeats each entry `repeats` times in a row along
+        # `dim`, or along the flattened tensor without one (the PyTorch 2.13 docstring).
+        source = _argument(node, 0, 'input', 'self')
+        repeats, dim = _argument(node, 1, 'repeats'), _argument(node, 2, 'dim')
+        if not isinstance(repeats, int) or repeats < 0:
+            raise NotImplementedError('repeat_interleave needs a nonnegative int count')
+        rank = len(_shape_from_arg(source))
+        return {'kind': "reshape", '_plan': {'op': 'interleave', 'operands': [source],
+                                             'repeats': repeats, 'dim':
+                                             None if dim is None else _normalize_axis(dim, rank)}}
+    if _is_op(node, ('aten.roll.default',), (torch.roll,), ('roll',)):
+        # torch.roll moves the entries `shift` places along each axis in `dims`, wrapping around,
+        # and rolls the flattened tensor when `dims` is empty (the PyTorch 2.13 docstring).
+        source = _argument(node, 0, 'input', 'self')
+        rank = len(_shape_from_arg(source))
+        shifts, dims = _argument(node, 1, 'shifts'), _argument(node, 2, 'dims')
+        shifts = [shifts] if isinstance(shifts, int) else list(shifts)
+        dims = [] if dims is None else [dims] if isinstance(dims, int) else list(dims)
+        if len(shifts) != max(len(dims), 1):
+            raise NotImplementedError(f'roll shifts {shifts} do not pair with axes {dims}')
+        return {'kind': "cat", '_plan': {'op': 'roll', 'operands': [source],
+                                         'shifts': [int(shift) for shift in shifts],
+                                         'dims': [_normalize_axis(d, rank) for d in dims]}}
+    if _is_op(node, ('aten.unfold.default',), (), ('unfold',)):
+        # Tensor.unfold(dimension, size, step) holds every slice of `size` entries along
+        # `dimension` whose starts are `step` apart, as a new last axis of extent `size` (the
+        # PyTorch 2.13 docstring). torch.nn.functional.unfold is im2col, another operator.
+        source = _argument(node, 0, 'self', 'input')
+        extents = _shape_from_arg(source)
+        dim, size, step = (_argument(node, 1, 'dimension'), _argument(node, 2, 'size'),
+                           _argument(node, 3, 'step'))
+        if not extents or size == 0:
+            raise NotImplementedError('unfold of a rank-0 tensor or into windows of size 0 is '
+                                      'not imported')
+        return {'kind': "cat", '_plan': {'op': 'unfold', 'operands': [source],
+                                         'dim': _normalize_axis(dim, len(extents)),
+                                         'step': int(step)}}
+    if _is_op(node, ('aten.tril.default', 'aten.triu.default'), (torch.tril, torch.triu),
+              ('tril', 'triu')):
+        # torch.tril keeps the entries (i, j) of the last two axes with j - i <= diagonal, and
+        # torch.triu those with j - i >= diagonal. Both write zero elsewhere (the PyTorch 2.13
+        # docstrings), and PyTorch refuses an operand of rank below 2 when it traces them.
+        source = _argument(node, 0, 'input', 'self')
+        lower = _is_op(node, ('aten.tril.default',), (torch.tril,), ('tril',))
+        return {'kind': "where", '_plan': {'op': 'triangle', 'operands': [source], 'lower': lower,
+                                           'diagonal': int(_argument(node, 1, 'diagonal') or 0)}}
     pads = {f'aten.{mode}_pad{d}d.default': mode for mode in ('reflection', 'replication')
             for d in (1, 2, 3)}
     if _is_op(node, tuple(pads)):
@@ -1453,19 +1858,29 @@ def _structure_kind(node, model=None):
     if _is_op(node, ('aten.convolution.default',)):
         source, weight_arg, bias_arg, stride, padding, dilation, transposed, output_padding, \
             groups = node.args[:9]
-        if transposed:
-            raise NotImplementedError('transposed convolution waits for the general convTranspose')
-        weight = _resolve_tensor(weight_arg)
-        rank = len(_shape_of(weight)) - 2
+        shape = _held_shape(weight_arg)
+        rank = len(shape) - 2
         input_shape = _shape_from_arg(source)
         if len(input_shape) != rank + 2:
             raise NotImplementedError(
                 f'convolution expected rank {rank + 2}, got {len(input_shape)}')
         padding = _spatial_tuple(padding, rank, 0)
-        return {'kind': "conv", 'spatial_rank': rank,
-                'kernel': [int(v) for v in _shape_of(weight)[2:]],
+        if transposed:
+            # The weight is (in, out / groups, kernel...), and the bias, if any, one entry per
+            # output channel; `_emit_structure` writes the convolution.
+            groups = int(groups)
+            if rank < 1 or groups <= 0 or shape[0] % groups:
+                raise NotImplementedError(
+                    f'transposed convolution of weight {tuple(shape)} in {groups} groups')
+            return {'kind': "conv", '_plan': {
+                'op': 'conv_transpose', 'operands': [source, weight_arg, bias_arg],
+                'kernel': [int(v) for v in shape[2:]], 'stride': _spatial_tuple(stride, rank, 1),
+                'padding': padding, 'dilation': _spatial_tuple(dilation, rank, 1),
+                'output_padding': _spatial_tuple(output_padding, rank, 0), 'groups': groups}}
+        # A weight or bias not known at capture is an operand after the source too.
+        return {'kind': "conv", 'spatial_rank': rank, 'kernel': [int(v) for v in shape[2:]],
                 'stride': _spatial_tuple(stride, rank, 1), 'padding': padding,
                 'padding_after': padding, 'dilation': _spatial_tuple(dilation, rank, 1),
                 'groups': int(groups), 'channel_axis': 1, 'input_spatial': input_shape[2:],
-                **_convolution_payload(weight, bias_arg, groups), '_operands': [source]}
+                '_operands': [source], **_convolution_payload(weight_arg, bias_arg, groups, source)}
     return None

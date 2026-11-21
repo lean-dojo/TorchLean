@@ -38,7 +38,7 @@ namespace TorchLean.Kernel.Elab
 open Lean Lean.Meta Lean.Elab.Term Lean.Elab.Tactic
 
 /-- Prepare a certified GPU representation of a unary or binary scalar function. -/
-elab "prepare_tensor_function" : tactic => withMainContext do
+elab (name := prepareTensorFunction) "prepare_tensor_function" : tactic => withMainContext do
   let goal ← getMainGoal
   let target ← goal.getType
   unless target.isAppOf ``Except && target.getAppArgs.size == 2 do
@@ -105,12 +105,15 @@ function from a tensor to a scalar has the shape `[]`. -/
 class Signature (α ι ο : Type) [Storage α] (input : Shape)
     (output : outParam Shape) : Prop where
 
+/-- A scalar function keeps its input shape. -/
 @[default_instance] instance (priority := high) {α : Type} [Storage α] {input : Shape} :
     Signature α α α input input := ⟨⟩
 
+/-- A tensor function has the shape of its result type. -/
 instance {α : Type} [Storage α] {input output : Shape} :
     Signature α (Tensor α input) (Tensor α output) input output := ⟨⟩
 
+/-- A function from a tensor to a scalar has the shape `[]`. -/
 instance {α : Type} [Storage α] {input : Shape} :
     Signature α (Tensor α input) α input Shape.scalar := ⟨⟩
 
@@ -190,7 +193,7 @@ recording with the autograd operations. A scalar function with `grad := false` h
 When `grad` is literally `true`, a failed recording is an elaboration error. Otherwise the failure
 is kept as an `Except.error` message, which the GPU forward path and a `grad` known only at run
 time raise as an IO error. -/
-elab "prepare_function_execution" : tactic => withMainContext do
+elab (name := prepareFunctionExecution) "prepare_function_execution" : tactic => withMainContext do
   let goal ← getMainGoal
   let target ← goal.getType
   let args := target.getAppArgs

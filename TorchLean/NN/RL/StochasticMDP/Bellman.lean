@@ -168,7 +168,7 @@ theorem toMarkov_transition (mdp : StochasticMDP nStates nActions) (state : Fin 
 theorem isMarkovKernel_toMarkov (mdp : StochasticMDP nStates nActions) (valid : Valid mdp) :
     IsMarkovKernel (toMarkov mdp).transition := by
   refine ⟨fun ⟨state, action⟩ => ⟨?_⟩⟩
-  rw [toMarkov_transition, Measure.finsetSum_apply]
+  rw [toMarkov_transition, _root_.sum_apply]
   simp only [Measure.coe_nnreal_smul_apply, measure_univ, mul_one]
   rw [← ENNReal.ofNNReal_finsetSum, ← Real.toNNReal_sum_of_nonneg fun nextState _ =>
     valid.transition_nonneg state action nextState, valid.transition_sums_to_one state action]
@@ -228,7 +228,6 @@ end MarkovTransfer
 /-- For a valid `mdp`, at each state and action the expected next values of two tables differ by at
 most their sup distance. -/
 theorem expectedNextValue_abs_sub_le
-    [Fact (0 < nStates)]
     (mdp : StochasticMDP nStates nActions)
     (valid : Valid mdp)
     (values₁ values₂ : ValueFunction ℝ nStates)
@@ -237,7 +236,6 @@ theorem expectedNextValue_abs_sub_le
     |expectedNextValue mdp values₁ state action - expectedNextValue mdp values₂ state action|
       ≤ dist (vectorEquiv nStates values₁) (vectorEquiv nStates values₂) := by
   have := isMarkovKernel_toMarkov mdp valid
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   rw [← MDP.valueSupDist_eq_dist, ← expectedNextValue_toMarkov mdp valid,
     ← expectedNextValue_toMarkov mdp valid]
   exact MDP.expectedNextValue_abs_sub_le (toMarkov mdp) _ _ (measurable_of_finite _)
@@ -246,7 +244,6 @@ theorem expectedNextValue_abs_sub_le
 
 /-- State-action Bellman values are Lipschitz with constant `γ` in the sup metric. -/
 theorem actionValue_abs_sub_le
-    [Fact (0 < nStates)]
     (mdp : StochasticMDP nStates nActions)
     (valid : Valid mdp)
     (values₁ values₂ : ValueFunction ℝ nStates)
@@ -255,7 +252,6 @@ theorem actionValue_abs_sub_le
     |actionValue mdp values₁ state action - actionValue mdp values₂ state action|
       ≤ mdp.discount * dist (vectorEquiv nStates values₁) (vectorEquiv nStates values₂) := by
   have := isMarkovKernel_toMarkov mdp valid
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   rw [← MDP.valueSupDist_eq_dist, ← actionValue_toMarkov mdp valid,
     ← actionValue_toMarkov mdp valid]
   exact MDP.actionValue_abs_sub_le (toMarkov mdp) valid.discount_nonneg _ _
@@ -267,7 +263,6 @@ theorem actionValue_abs_sub_le
 `dist (T^π values₁) (T^π values₂) ≤ γ * dist values₁ values₂`, the tables read through
 `Tensor.vectorEquiv`. -/
 theorem bellmanPolicy_contraction
-    [Fact (0 < nStates)]
     (mdp : StochasticMDP nStates nActions)
     (valid : Valid mdp)
     (policy : Policy nStates nActions)
@@ -276,7 +271,6 @@ theorem bellmanPolicy_contraction
         (vectorEquiv nStates (bellmanPolicy mdp policy values₂))
       ≤ mdp.discount * dist (vectorEquiv nStates values₁) (vectorEquiv nStates values₂) := by
   have := isMarkovKernel_toMarkov mdp valid
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   rw [← MDP.valueSupDist_eq_dist, ← MDP.valueSupDist_eq_dist,
     vectorEquiv_bellmanPolicy mdp valid, vectorEquiv_bellmanPolicy mdp valid]
   exact MDP.bellmanPolicy_contraction (toMarkov mdp) valid.discount_nonneg policy _ _
@@ -308,7 +302,7 @@ theorem bellmanPolicy_le_bellmanMax
 
 /-- At a fixed state, Bellman optimality is a contraction with modulus `γ`. -/
 theorem bellmanMax_abs_sub_le
-    [Fact (0 < nStates)] [Fact (0 < nActions)]
+    [Fact (0 < nActions)]
     (mdp : StochasticMDP nStates nActions)
     (valid : Valid mdp)
     (values₁ values₂ : ValueFunction ℝ nStates)
@@ -317,7 +311,6 @@ theorem bellmanMax_abs_sub_le
         Tensor.getScalar (bellmanMax mdp values₂) state|
       ≤ mdp.discount * dist (vectorEquiv nStates values₁) (vectorEquiv nStates values₂) := by
   have := isMarkovKernel_toMarkov mdp valid
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   have : Nonempty (Fin nActions) := ⟨⟨0, Fact.out⟩⟩
   have h := MDP.bellmanMax_abs_sub_le (toMarkov mdp) valid.discount_nonneg
     (vectorEquiv nStates values₁) (vectorEquiv nStates values₂) (measurable_of_finite _)
@@ -330,7 +323,7 @@ theorem bellmanMax_abs_sub_le
 `dist (T* values₁) (T* values₂) ≤ γ * dist values₁ values₂`, the tables read through
 `Tensor.vectorEquiv`. -/
 theorem bellmanMax_contraction
-    [Fact (0 < nStates)] [Fact (0 < nActions)]
+    [Fact (0 < nActions)]
     (mdp : StochasticMDP nStates nActions)
     (valid : Valid mdp)
     (values₁ values₂ : ValueFunction ℝ nStates) :
@@ -338,7 +331,6 @@ theorem bellmanMax_contraction
         (vectorEquiv nStates (bellmanMax mdp values₂))
       ≤ mdp.discount * dist (vectorEquiv nStates values₁) (vectorEquiv nStates values₂) := by
   have := isMarkovKernel_toMarkov mdp valid
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   have : Nonempty (Fin nActions) := ⟨⟨0, Fact.out⟩⟩
   rw [← MDP.valueSupDist_eq_dist, ← MDP.valueSupDist_eq_dist,
     vectorEquiv_bellmanMax mdp valid, vectorEquiv_bellmanMax mdp valid]
@@ -356,7 +348,6 @@ start. The theorems below name the consequences most often cited.
 
 section FixedPoints
 
-variable [Fact (0 < nStates)]
 
 /-- Policy evaluation is a `SupContraction`. -/
 theorem bellmanPolicy_supContraction

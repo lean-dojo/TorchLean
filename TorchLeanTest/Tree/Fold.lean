@@ -46,6 +46,7 @@ refused, and so is, with two devices visible, a fold over an arena on the other 
 namespace TorchLean.Test.Tree.Folds
 
 open Kernel Examples.Tree Arenas
+open TorchLean.Random (splitmix64)
 
 variable {α : Type}
 
@@ -72,7 +73,7 @@ def allSame [Scalar α] (xs ys : Array (Except Error α)) : Bool :=
 def moderate [Scalar α] (w : UInt64) : α :=
   let (e, f) := fieldWidths (Scalar.precision α)
   let x := bits (scalarOf w : α)
-  let exponent := 2 ^ (e - 1) - 5 + (BTree.mix w).toNat % 8
+  let exponent := 2 ^ (e - 1) - 5 + (splitmix64 w).toNat % 8
   Numeric.Word.ofNatBits (x / 2 ^ (e + f) % 2 * 2 ^ (e + f) + exponent * 2 ^ f + x % 2 ^ f)
 
 /-- The special encodings of the format of `α` as scalars. -/

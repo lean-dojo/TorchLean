@@ -562,6 +562,7 @@ by the independent contraction semantics.
 def EinsumPattern.check (pattern : EinsumPattern)
     (inputShapes : List Shape) : Result Einsum := do
   if hCount : pattern.inputs.length = inputShapes.length then
+    -- The diagnostic checks, each with its own error.
     checkSurface pattern
     checkRanks pattern.inputs inputShapes 0
     let inputAxes := EinsumPattern.inputAxes pattern inputShapes
@@ -593,6 +594,8 @@ def EinsumPattern.check (pattern : EinsumPattern)
                     s!"{actual} and {expected}; one must be singleton"
                 span := pattern.span }
           | none =>
+              -- The decidable facts the `Einsum` fields carry. The checks above imply them, so
+              -- a failure here is an internal error.
               if hSurface : isSupported pattern = true then
                 if hRepeatedValid :
                     repeatedDimensionsValid pattern inputShapes = true then

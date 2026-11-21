@@ -40,8 +40,9 @@ $yx^{y-1}x'$, without evaluating a logarithm. A varying exponent uses
 $x^y(y'\log x+yx'/x)$ on its domain. Mathematical derivative theorems state their domain
 assumptions in the separate `fderiv` proof layer.
 
-`log1p` and `expm1` follow analytic chain rules and ignore the rounding-dependent branches of
-their compensated defaults, which also preserves higher derivatives when dual numbers are nested.
+`log1p`, `expm1` and `expm1x` follow analytic chain rules and ignore the rounding-dependent
+branches of their compensated defaults, which also preserves higher derivatives when dual numbers
+are nested. The tangent of `expm1x` is `expm1 x * x'`.
 The tangents of `exp` and `expm1` are `TorchLean.Context.expMul x x'`, so a backend that rounds
 `exp x * x'` once keeps them finite when `exp x` alone overflows. Nested duals differentiate
 `expMul x w` as `exp x * (x' * w + w')`.
@@ -170,7 +171,7 @@ native semantics. Carriers without checked coefficient arithmetic evaluate $(x'y
 is zero or not finite or that tangent is not finite, while the inputs and the quotient are finite
 and the quotient of a nonzero numerator is nonzero, they evaluate $(x'-(x/y)y')/y$.
 -/
-@[inline] instance instDiv {α : Type} [Div α] [Mul α] [Sub α] [Add α] [BEq α] [Zero α]
+@[inline] instance instDiv {α : Type} [Div α] [Mul α] [Sub α] [BEq α] [Zero α]
     [Numeric.QuotientArithmetic α] : Div (Dual α) :=
   ⟨fun x y =>
     let ops : Numeric.QuotientArithmetic (Dual α) := inferInstance
@@ -214,9 +215,10 @@ arguments, matching the graph's elementwise maximum rule. The shared average sca
 and replays finite coefficients if halving loses range. Neither an overflowing raw sum nor two
 rounded-zero halves should erase a representable average. An unordered pair also averages the
 tangents, and its primal is the scalar's `Max.max`. For `Float` and `Float32` that is core
-`maxOfLe`, which keeps a NaN first primal and drops a NaN second one.
+`Float.maximum` and `Float32.maximum`, IEEE 754-2019 `maximum`: a NaN where either primal is a NaN,
+and `+0` for two zeros of opposite signs.
 -/
-instance {α : Type} [Storage α] [Context α] : Max (Dual α) where
+instance {α : Type} [Context α] : Max (Dual α) where
   max x y :=
     if x.re > y.re then x
     else if y.re > x.re then y
@@ -225,8 +227,9 @@ instance {α : Type} [Storage α] [Context α] : Max (Dual α) where
 
 /-- Elementwise minimum uses the same equal split at a tie as the graph's minimum rule. An
 unordered pair also averages the tangents, and its primal is the scalar's `Min.min`. For `Float`
-and `Float32` that is core `minOfLe`, which keeps a NaN second primal and drops a NaN first one. -/
-instance {α : Type} [Storage α] [Context α] : Min (Dual α) where
+and `Float32` that is core `Float.minimum` and `Float32.minimum`, IEEE 754-2019 `minimum`: a NaN
+where either primal is a NaN, and `-0` for two zeros of opposite signs. -/
+instance {α : Type} [Context α] : Min (Dual α) where
   min x y :=
     if x.re < y.re then x
     else if y.re < x.re then y
@@ -234,11 +237,11 @@ instance {α : Type} [Storage α] [Context α] : Min (Dual α) where
       ⟨Min.min x.re y.re, Numeric.average x.du y.du⟩
 
 /-- Coerce naturals into dual numbers with zero tangent. -/
-instance {α : Type} [Storage α] [Context α] : NatCast (Dual α) where
+instance {α : Type} [Context α] : NatCast (Dual α) where
   natCast n := ⟨(n : α), 0⟩
 
 /-- Forward-mode chain rule implementations for `MathFunctions` over dual numbers. -/
-instance instMathFunctions {α : Type} [Storage α] [Context α] : MathFunctions (Dual α) where
+instance instMathFunctions {α : Type} [Context α] : MathFunctions (Dual α) where
   exp x := ⟨MathFunctions.exp x.re, Context.expMul x.re x.du⟩
   tanh x :=
     let th := MathFunctions.tanh x.re
@@ -270,7 +273,7 @@ inputs. The zero test inspects all nested coefficients, primals and tangents ali
 exponent uses the logarithmic rule on the scalar backend's domain. When its arithmetic loses
 range, a bounded positive-base enclosure combines both directions before rounding.
 -/
-instance {α : Type} [Storage α] [Context α] : Pow (Dual α) (Dual α) where
+instance {α : Type} [Context α] : Pow (Dual α) (Dual α) where
   pow x y :=
     let r : α := x.re ^ y.re
     let dr : α :=
@@ -281,7 +284,7 @@ instance {α : Type} [Storage α] [Context α] : Pow (Dual α) (Dual α) where
     ⟨r, dr⟩
 
 /-- Lift a scalar `Context` to dual numbers by deciding comparisons on primals. -/
-instance {α : Type} [Storage α] [Context α] : Context (Dual α) where
+instance instContext {α : Type} [Context α] : Context (Dual α) where
   sqrtNat n := ⟨Context.sqrtNat (α := α) n, 0⟩
   isZero x := Context.isZero x.re && Context.isZero x.du
   defaultEpsilon := ⟨Context.defaultEpsilon (α := α), 0⟩
@@ -294,6 +297,8 @@ instance {α : Type} [Storage α] [Context α] : Context (Dual α) where
   sigmoid x := ⟨Context.sigmoid x.re, Numeric.sigmoidBackward x.re x.du⟩
   log1p x := ⟨Context.log1p x.re, Numeric.log1pBackward x.re x.du⟩
   expm1 x := ⟨Context.expm1 x.re, Context.expMul x.re x.du⟩
+  -- `(exp x - 1 - x)' = (exp x - 1) * x'`.
+  expm1x x := ⟨Context.expm1x x.re, Context.expm1 x.re * x.du⟩
   -- The product rule for `exp x * w` with `(exp x)' = exp x * x'`.
   expMul x w := ⟨Context.expMul x.re w.re, Context.expMul x.re (x.du * w.re + w.du)⟩
   copysign x y := ⟨Context.copysign x.re y.re, Context.copysignTangent x.re y.re x.du⟩
@@ -329,7 +334,7 @@ instance {α : Type} [Storage α] [Context α] : Context (Dual α) where
 for the truncated exact quotient `n`, locally constant, so its tangent is `x' - y' n`, with `n`
 from `Context.fmodQuotient x y`, exact while `|n| < 2 ^ (p - 2)` at precision `p` (PyTorch's
 truncates the rounded quotient). -/
-instance {α : Type} [Storage α] [Context α] [Rounding α] : Rounding (Dual α) where
+instance {α : Type} [Context α] [Rounding α] : Rounding (Dual α) where
   floor x := ⟨Rounding.floor x.re, 0⟩
   ceil x := ⟨Rounding.ceil x.re, 0⟩
   trunc x := ⟨Rounding.trunc x.re, 0⟩
@@ -337,7 +342,7 @@ instance {α : Type} [Storage α] [Context α] [Rounding α] : Rounding (Dual α
   fmod x y := ⟨Rounding.fmod x.re y.re, x.du - y.du * Context.fmodQuotient x.re y.re⟩
 
 /-- The error function with tangent `2 / √π * exp (-x²) * x'`. -/
-instance {α : Type} [Storage α] [Context α] [Erf α] : Erf (Dual α) where
+instance {α : Type} [Context α] [Erf α] : Erf (Dual α) where
   erf x :=
     ⟨Erf.erf x.re, (1 + 1) / MathFunctions.sqrt (MathFunctions.pi : α) *
       MathFunctions.exp (-(x.re * x.re)) * x.du⟩
@@ -354,7 +359,7 @@ scaled seeds lose range or their products cancel. The tangents of `atan`, `asin`
 and `-(dx / √((1 - x)(1 + x)))`, as `Tensor.atanBackward`, `asinBackward` and `acosBackward` compute
 them.
 -/
-instance instInverseTrig {α : Type} [Storage α] [Context α] [InverseTrig α] :
+instance instInverseTrig {α : Type} [Context α] [InverseTrig α] :
     InverseTrig (Dual α) where
   atan2 y x :=
     ⟨InverseTrig.atan2 y.re x.re,

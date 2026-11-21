@@ -111,8 +111,8 @@ theorem Op.storageForward?_isSome {s : Shape} {signed signed' : Bool} {width : N
 
 /-- Operators with an element argument that have a storage forward: the comparisons and the
 arithmetic operators other than true division at integer words, and every movement, `pad`, `gather`,
-`select` and a replacing `scatter` at Booleans and integer words. At integer words `scatter` has one
-by every rule. -/
+`select`, `sort` and a replacing `scatter` at Booleans and integer words. At integer words `scatter`
+has one by every rule. -/
 theorem Op.storageForward?_isSome_element {s t : Shape} {signed : Bool} {width : Nat} :
     (Op.neg (s := s) (.integer signed width)).storageForward?.isSome ∧
     (Op.add (s := s) (.integer signed width)).storageForward?.isSome ∧
@@ -158,6 +158,9 @@ theorem Op.storageForward?_isSome_element {s t : Shape} {signed : Bool} {width :
       (Op.scatter (t := t) .replace dims h (.integer signed width)).storageForward?.isSome) ∧
     (∀ (dim : Fin s.rank) (sizes : List Nat), (Op.cat dim sizes .bool).storageForward?.isSome ∧
       (Op.cat dim sizes (.integer signed width)).storageForward?.isSome) ∧
+    (∀ (dim : Fin s.rank) (descending : Bool),
+      (Op.sort dim descending .bool).storageForward?.isSome ∧
+      (Op.sort dim descending (.integer signed width)).storageForward?.isSome) ∧
     (∀ (rule : Tensor.ScatterReduce) (dims : List (Fin s.rank)) (h : dims.Nodup),
       (Op.scatter (t := t) rule dims h (.integer signed width)).storageForward?.isSome) :=
   ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
@@ -166,7 +169,7 @@ theorem Op.storageForward?_isSome_element {s t : Shape} {signed : Bool} {width :
     fun _ _ => ⟨rfl, rfl⟩,
     fun _ _ => ⟨Op.storageForward?_isSome_of_native _ (by simp [Port.Kind.isScalar]),
       Op.storageForward?_isSome_of_native _ (by simp [Port.Kind.isScalar])⟩,
-    fun _ _ _ => rfl⟩
+    fun _ _ => ⟨rfl, rfl⟩, fun _ _ _ => rfl⟩
 
 /-- A tensor built by one action per entry fails where it has an entry and every action fails. -/
 private theorem Tensor.generateFlatM_isOk {β : Type} [Storage β] {s : Shape}
@@ -470,7 +473,8 @@ theorem Op.rule?_native {β : Type} [Storage β] [Context β] [Op.Capabilities �
       simp only [Values.toErased, hparts]
       exact .cons (by constructor) .nil
   all_goals (try cases ‹Op.Element›) <;> (try cases ‹Op.NumericElement›) <;>
-    (try cases ‹DivRounding›) <;> (try cases ‹Tensor.ScatterReduce›)
+    (try cases ‹DivRounding›) <;> (try cases ‹Tensor.ScatterReduce›) <;>
+    (try cases ‹Tensor.ReduceOrder›)
   all_goals first
     | (simp [Port.Kind.isScalar] at hn; done)
     | (cases hr; done)
@@ -499,7 +503,9 @@ theorem Op.rule?_native {β : Type} [Storage β] [Context β] [Op.Capabilities �
             simp only [Values.toErased, List.forall₂_cons] at h
             obtain ⟨h₁, -⟩ := h
             cases h₁
-            exact ⟨rfl, .cons (by constructor) .nil⟩))
+            first
+              | exact ⟨rfl, .cons (by constructor) .nil⟩
+              | exact ⟨rfl, .cons (by constructor) (.cons (by constructor) .nil)⟩))
 
 /-- Where an operator has a storage forward and a rule, the storage forward is the rule's
 value-domain check followed by its forward map. -/

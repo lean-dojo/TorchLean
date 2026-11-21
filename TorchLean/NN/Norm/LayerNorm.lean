@@ -19,17 +19,17 @@ row-wise normalizer is broadcast back over each token, and the affine parameters
 broadcast over the sequence dimension. The runtime API and the typed graph path both route through
 that spec definition, and the theorems here prove the corresponding reverse-mode graph rule.
 
-The proof graph uses the clamped square root `sqrt (max x 0)` and the reciprocal, so the main
-theorem is pointwise (`RealGraph.FDerivCorrectAt`): away from the clamp kink and a zero
-denominator, backprop is the adjoint of the Fréchet derivative. The `OfDomain` and `_of_domain`
+The proof graph uses the square root and the reciprocal, so the main theorem is pointwise
+(`RealGraph.FDerivCorrectAt`): away from a zero root argument and a zero denominator, backprop is
+the adjoint of the Fréchet derivative. The `OfDomain` and `_of_domain`
 variants take the two domain assumptions at the execution point, positive `var + ε` and nonzero
 `std`. The main statements take only `0 < ε`, since the row variance is a mean of squares and
 therefore nonnegative (`varEps_pos_of_eps_pos` and `std_ne_zero_of_eps_pos` in
 `TorchLean.NN.Norm.LayerNorm.Eval`).
 
 The last section connects the graph to the spec. Before squaring, `Tensor.layerNorm` divides each
-centered row by `Tensor.normalizationScale`, so that no unscaled square is summed, and it clamps
-the scaled `var + ε` at zero inside the square root. Over the reals the scale cancels, so for a
+centered row by `Tensor.normalizationScale`, so that no unscaled square is summed, and it takes
+the root of the scaled `var + ε`. Over the reals the scale cancels, so for a
 nonempty last axis `outputCLM_evalVec_graph` shows that the output block of the graph
 evaluation is `Tensor.toVec (Tensor.layerNorm X gamma beta)` for the packed inputs.
 `LayerNorm.hasFDerivAt_forwardVec` and `LayerNorm.backprop_eq_fderiv_forwardVec` then state
@@ -67,8 +67,8 @@ open Tape.RealNode CtxVec
 Pointwise proof that `graph` satisfies `Tape.RealGraph.FDerivCorrectAt` at `xV`, under the two
 domain conditions there.
 
-`hVarEpsPos` (every entry of `var + ε` is positive) makes the clamped square root differentiable
-at the execution point, and `hStdNe0` (every entry of `std` is nonzero) does the same for the
+`hVarEpsPos` (every entry of `var + ε` is positive) makes the square root differentiable at the
+execution point, and `hStdNe0` (every entry of `std` is nonzero) does the same for the
 reciprocal. `graphFDerivAt` discharges both from `0 < ε`.
 -/
 def graphFDerivAtOfDomain
@@ -161,8 +161,8 @@ def graphFDerivAtOfDomain
         (idx := idxVarEps (m := m) (n := n))
         (xV := Tape.GraphData.evalVec (Γ := ctx m n) (ss := ssVarEps m n)
           (graphVarEps (m := m) (n := n) ε).toData () xV)
-        (cert := fun δ => Op.sqrt_clampNegative_backward_eq_adjoint _ δ
-          ((CtxVec.forall_getTensorCLM_iff _ _ (0 < ·)).2 hVarEpsPos))
+        (cert := fun δ => Op.sqrt_backward_eq_adjoint _ δ
+          ((CtxVec.forall_getTensorCLM_iff (P := (· ≠ 0))).2 fun i => (hVarEpsPos i).ne'))
     simpa [graphStd, nodeStd] using hStdAt
 
   -- inv_std
@@ -179,7 +179,7 @@ def graphFDerivAtOfDomain
         (xV := Tape.GraphData.evalVec (Γ := ctx m n) (ss := ssStd m n)
           (graphStd (m := m) (n := n) ε).toData () xV)
         (cert := fun δ => Op.reciprocal_backward_eq_adjoint _ δ
-          ((CtxVec.forall_getTensorCLM_iff _ _ (· ≠ 0)).2 hStdNe0))
+          ((CtxVec.forall_getTensorCLM_iff (P := (· ≠ 0))).2 hStdNe0))
     simpa [graphInvStd, nodeInvStd] using hInvAt
 
   -- inv_std_b
@@ -266,8 +266,8 @@ def graphFDerivAt
 Pointwise end-to-end result under the two domain conditions at `xV`: backprop of `graph`
 equals `(fderiv eval)†`.
 
-`hVarEpsPos` and `hStdNe0` are the conditions under which the clamped square root and the
-reciprocal are differentiable at the execution point.
+`hVarEpsPos` and `hStdNe0` are the conditions under which the square root and the reciprocal are
+differentiable at the execution point.
 -/
 theorem backprop_eq_fderiv_of_domain
     {m n : Nat} (ε : ℝ)
@@ -395,7 +395,7 @@ def node {Γ : List Shape} {m n : Nat} (inputs : Inputs Γ m n) (ε : ℝ) :
 Pointwise derivative certificate for `node`.
 
 Only `0 < ε` is needed: the row variance computed inside the packed LayerNorm graph is a mean of
-squares, so `var + ε` is positive and the clamped standard deviation is nonzero at every point.
+squares, so `var + ε` is positive and the standard deviation is nonzero at every point.
 -/
 def nodeFDerivAt {Γ : List Shape} {m n : Nat}
     (inputs : Inputs Γ m n) (ε : ℝ) (xV : CtxVec Γ) (hε : 0 < ε) :
@@ -523,7 +523,7 @@ theorem valVar_apply (xV : CtxVec (ctx m n)) (i : Fin m) :
 /-- The broadcast inverse standard deviation block. -/
 theorem valInvStdB_idxMN (xV : CtxVec (ctx m n)) (ε : ℝ) (i : Fin m) (j : Fin n) :
     valInvStdB xV ε (idxMN (m := m) (n := n) i j) =
-      (Real.sqrt (max (TorchLean.var (Tensor.get2 (inputX xV) i) + ε) 0))⁻¹ := by
+      (Real.sqrt (TorchLean.var (Tensor.get2 (inputX xV) i) + ε))⁻¹ := by
   rw [valInvStdB, RowNorm.broadcastRowCLM_idxMN, LinearIsometryEquiv.piLpCongrLeft_apply,
     Equiv.piCongrLeft'_apply, finCongr_symm_apply]
   simp only [valInvStd, valStd, valVarEps, PiLp.toLp_apply, valVar_apply]
@@ -532,7 +532,7 @@ theorem valInvStdB_idxMN (xV : CtxVec (ctx m n)) (ε : ℝ) (i : Fin m) (j : Fin
 theorem valY_idxMN (xV : CtxVec (ctx m n)) (ε : ℝ) (i : Fin m) (j : Fin n) :
     valY xV ε (idxMN (m := m) (n := n) i j) =
       (Tensor.get2 (inputX xV) i j - 𝔼 k, Tensor.get2 (inputX xV) i k) *
-          (Real.sqrt (max (TorchLean.var (Tensor.get2 (inputX xV) i) + ε) 0))⁻¹ *
+          (Real.sqrt (TorchLean.var (Tensor.get2 (inputX xV) i) + ε))⁻¹ *
             Tensor.getScalar (inputGamma xV) j +
         Tensor.getScalar (inputBeta xV) j := by
   simp only [valY, PiLp.add_apply, valScaled, valNorm, PiLp.toLp_apply, valGammaB, valBetaB,

@@ -48,7 +48,7 @@ omit [Context α] in
 /-! ## Loss identities -/
 
 /-- At commitment weight $\beta=0$, the VQ-VAE loss is reconstruction plus codebook loss. -/
-@[simp] theorem loss_zero_beta
+theorem loss_zero_beta
     (model : VQVAE ℝ obs latent numCodes) (x : Tensor ℝ obs) (idx : Fin numCodes) :
     loss model 0 x idx = reconstructionLoss model x idx + codebookLoss model x idx := by
   simp [loss]

@@ -235,7 +235,7 @@ theorem scalarAffineScan_append {α : Type} [Mul α] [Add α] (h0 : α)
 
 /-- Each fiber of `Tensor.selectiveScan` is a scalar affine scan: the states of the transitions
 `h ↦ a t * h + b t * x t` from `initial`, in order, at every scalar. -/
-theorem scanStates_eq_scalarAffineScan {α : Type} [Storage α] [Context α] {n : Nat}
+theorem scanStates_eq_scalarAffineScan {α : Type} [Context α] {n : Nat}
     (a b x : Fin n → α) (initial : α) :
     scanStates a b x initial =
       (scalarAffineScan initial
@@ -282,7 +282,7 @@ theorem _root_.TorchLean.Tensor.selectiveScan_apply {α : Type} [Storage α] [Co
 
 /-- Splitting the steps of a fiber: the states of the first `n` steps, then those of the last `k`
 steps from the state the first `n` reach. -/
-theorem scanStates_append {α : Type} [Storage α] [Context α] {n k : Nat}
+theorem scanStates_append {α : Type} [Context α] {n k : Nat}
     (a b x : Fin (n + k) → α) (initial : α) :
     scanStates a b x initial =
       scanStates (fun t => a (t.castLE (Nat.le_add_right n k)))

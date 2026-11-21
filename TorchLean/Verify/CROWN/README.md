@@ -15,7 +15,7 @@ interval boxes (`Box`) and the evaluation of an affine form `W x + b` on a box
 the CROWN linear rule (`propagateLinearBounds`) uses.
 
 1. `FlatBox.lean` and `FlatBox/`: `FlatBox`, the interval container over flattened tensor values,
-   and what the passes over both graph forms share and what depends on neither IR.
+   and the machinery shared by both graph forms but independent of the IR.
    `FlatBox/Transfer.lean` has the interval transfers on flat boxes, with their directed and real
    enclosure lemmas in `FlatBox/Directed.lean` and `FlatBox/Real.lean`. `Flatten.lean` flattens
    shaped values, `Matmul.lean` holds the interval matrix product, and `Concat.lean` holds

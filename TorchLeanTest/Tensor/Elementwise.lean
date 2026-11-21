@@ -14,11 +14,13 @@ public import TorchLean.Tensor.Tactic.Init
 
 Hand-computed values of the elementwise operators of `TorchLean.Tensor.Elementwise` on
 host binary64 tensors, at the cases where a policy matters: ties of `round`, signed zeros, NaN
-operands of `sign`, `maximum` and `fmax`, the signs of `fmod` and `remainder`, and both branches of
-`lerp`. The expected values are IEEE 754-2019's, Python's `%` on CPU for `remainder`
+operands of `sign`, `relu`, `maximum` and `fmax`, the signs of `fmod` and `remainder`, and both
+branches of `lerp`. The expected values are IEEE 754-2019's, Python's `%` on CPU for `remainder`
 (`pythonRemainders`), and `jax.lax.sign`'s for `sign`. PyTorch 2.13 returns them too, except
-`torch.sign` at a NaN and at `-0` and the sign of a zero `torch.remainder`. `run` executes the
-compiled checks.
+`torch.sign` at a NaN and at `-0`, the sign of a zero `torch.remainder`, and `torch.relu` at `-0`,
+which is `-0` there and `+0` here. Core `max` and `min` of `Float`, which `relu`, the primals of
+dual-number extrema and `linfNorm` use, are checked as Lean 4.36 defines them, IEEE 754-2019
+`maximum` and `minimum`. `run` executes the compiled checks.
 -/
 
 @[expose] public section
@@ -113,6 +115,13 @@ def run : IO Unit := do
   expect "clamp of -0 at a +0 lower bound" <|
     sameBits (entries (Tensor.clamp ([-0.0] : Tensor Float [1]) (Tensor.full [1] 0.0)
       (Tensor.full [1] 1.0))) #[0.0]
+  expect "relu keeps a NaN and gives +0 at both zeros" <|
+    let r := entries (Tensor.relu ([nan, -0.0, 0.0, -1.0, 2.0] : Tensor Float [5]))
+    r[0]!.isNaN && sameBits (r.extract 1 5) #[0.0, 0.0, 0.0, 2.0]
+  expect "core max and min: a NaN on either side, and +0 above -0" <|
+    [max 1.0 nan, max nan 1.0, min 1.0 nan, min nan 1.0].all Float.isNaN &&
+      sameBits #[max 0.0 (-0.0), max (-0.0) 0.0, min 0.0 (-0.0), min (-0.0) 0.0]
+        #[0.0, 0.0, -0.0, -0.0]
   expect "fmax ignores NaN" <|
     sameBits (entries (Tensor.fmax left right)) #[1.0, 1.0, 0.0]
   expect "fmax and fmin on signed zeros, IEEE 754-2019 maximumNumber and minimumNumber" <|

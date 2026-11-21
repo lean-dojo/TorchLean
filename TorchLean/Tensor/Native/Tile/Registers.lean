@@ -6,6 +6,7 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.Tensor.Native.Tile
+public import FloatLib.Util.Declaration
 import Mathlib.Tactic.FinCases
 
 /-!
@@ -106,8 +107,9 @@ def outputTileCommands (tile : OutputTile) : MacroM (Array (TSyntax `command)) :
   let ident (name : Name) : Ident := mkIdent (name.replacePrefix `TorchLean.Native .anonymous)
   let identDot (name : Name) (field : String) : Ident :=
     mkIdent (.str (name.replacePrefix `TorchLean.Native .anonymous) field)
-  let doc (text : String) : TSyntax ``Parser.Command.docComment :=
-    ⟨mkNode ``Parser.Command.docComment #[mkAtom "/--", mkAtom s!" {text} -/"]⟩
+  -- Docstrings are generated, since their text depends on the width.
+  let doc (text : String) := FloatLib.Floats.ExecFloat.generatedDoc s!" {text}"
+  -- Append the lane values in lane order, one `let output := storage.push output _` each.
   let pushChain (emitted : Array Term) : MacroM Term := do
     let mut body ← `(storage.push output $(emitted[lastLane]!))
     for lane in (List.range lastLane).reverse do
@@ -120,6 +122,7 @@ def outputTileCommands (tile : OutputTile) : MacroM (Array (TSyntax `command)) :
   let updateGet := outputTileName width "update_get"
   let indexFamily ← `((index : USize) → index.toNat < length → α)
   let initials ← lanes.mapM fun _ => `(initial)
+  -- One loop step: lane `i` adds `value{i} index` to `total{i}`.
   let step ← lanes.mapM fun lane =>
     `(($(total[lane]!):ident + $(value[lane]!):ident index _hIndexNat))
   let updateLanes ← value.mapM fun lane => `(($lane index hIndex))
@@ -424,6 +427,7 @@ def outputTileCommands (tile : OutputTile) : MacroM (Array (TSyntax `command)) :
         rw [$(identDot finalizeLoop "eq_1"):ident, dite_eq_right hIndex]
         rw [$(identDot loop "eq_1"):ident, dite_eq_right hIndex]
         simp [$(ident tile.push):ident, $(ident tile.select):ident])
+  -- `step (… (step initial 0) …) (width - 1)`.
   let mut unrolled ← `(initial)
   for lane in lanes do
     unrolled ← `(step $unrolled $(laneLit[lane]!))

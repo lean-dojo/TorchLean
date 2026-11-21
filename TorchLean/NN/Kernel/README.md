@@ -43,6 +43,7 @@ We can record an ordinary function without changing its definition:
 
 ```lean
 import TorchLean.NN.Kernel.Function
+import TorchLean.Tensor.Literal
 open TorchLean
 
 def square {α : Type} [Mul α] (x : α) : α := x * x
@@ -189,8 +190,7 @@ lowering and PyTorch export do not export arbitrary custom bodies.
 The CUDA entries for GELU, SiLU, softplus, `exp`, `log`, `sin`, `cos`, sigmoid and `tanh` compute
 through ATen with the CUDA vendor math library, GELU by its staged formula with vendor
 transcendental operations. Their results need not equal the Lean reference bit for bit, the CPU
-reference is the specification, and their capsule reports carry this qualification. In a
-15-input binary32 GELU sample, 12 outputs agree with the reference and 3 differ by one ulp.
+reference is the specification, and their capsule reports carry this qualification.
 `remainder`, `fmax` and `fmin` have no registered CUDA entry, so the CUDA tape refuses them.
 
 Source correspondence for a custom body is neither a real-enclosure theorem nor a derivative

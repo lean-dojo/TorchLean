@@ -3,8 +3,8 @@
 `TorchLeanTest` holds the checks of TorchLean against references outside Lean: PyTorch, JAX and
 ONNX, LibTorch on CUDA, the C kernels in `csrc/`, CPython, mpmath and numpy, the host's floating
 point, and files in the NPY, CSV, PPM and certificate formats. `Suite.lean` is the root of the
-`nn_tests_suite` executable, which `scripts/lake.sh test` runs. Two modules check at build time
-with `#guard`: `OpTable.lean` and `Tensor/OnlineSoftmax.lean`.
+`nn_tests_suite` executable, which `scripts/lake.sh test` runs. Build-time `#guard` checks also
+cover operator records, scalar capabilities, tensor arithmetic and proof registration.
 
 - `Data/`: `NPY.lean` decodes `.npy` payloads bit for bit, signed zeros and infinities included, and
   every NaN as the canonical NaN. `Text.lean` covers the decimal parser behind CSV cells, CLI float
@@ -18,7 +18,8 @@ with `#guard`: `OpTable.lean` and `Tensor/OnlineSoftmax.lean`.
   `Pointwise.lean` runs one-node IR artifacts against the words eager PyTorch 2.13 returns on CPU,
   apart from the two deviations it lists, with JAX 0.11.2 for the comparison cases.
   `Capture.lean` writes Lean's op table to a file for the Python captures and runs them on the
-  repository's `python` package.
+  repository's `python` package. `Flow.lean` checks branches, scans, while-loop fuel and typed
+  block composition, with derivative and rounding examples for the real-valued flow language.
 - `OpTable.lean`: the gradients of `scatter_reduce` with `prod`, `amax` and `amin` against
   torch autograd's, in `Float` and `Float32`.
 - `CUDA/`: the LibTorch CUDA kernels against the CPU tape or the specification's bits, and stress
@@ -34,11 +35,15 @@ with `#guard`: `OpTable.lean` and `Tensor/OnlineSoftmax.lean`.
 - `Interop/`: the PyTorch module `PyTorch.emit` writes. It also covers the checked-in MLP, CNN and
   transformer weights through PyTorch, strict JSON integers from an RL process, and ONNX models
   through `python3 -m torchlean.onnx`.
+- `RL/`: `PolicyKL.lean` checks the policy KL divergences and `expm1x` against 100-digit mpmath
+  on binary64 and native `Float32` and `Float`.
 - `Tensor/`: `Elementary.lean` against 400-digit mpmath, CPython's `cmath` and numpy,
   `Elementwise.lean` against IEEE 754-2019, Python's `%` and `jax.lax.sign`, and `EinopsLexer.lean`
   against the Unicode predicates of CPython 3.12.13. `Operations.lean` and `Storage.lean` run the C
   kernels of `csrc/cpu/torchlean_tensor.c` against the host's scalar operations.
   `OnlineSoftmax.lean` checks the online softmax step on native `Float32` and `Float`.
+  `Special.lean`, `Fma.lean`, `Frexp.lean` and `Order.lean` check special-function capabilities,
+  fused arithmetic, mantissa/exponent decomposition and explicit reduction orders at build time.
 - `Tree/`: `Main.lean` is the root of the `tree_tests` executable. It checks tree arenas, derived
   signatures, folds, folds compiled with `Fold.of`, hylomorphisms, unfolds, scalars held as their
   encodings and unary functions as kernel tables on the host, then on the device when LibTorch and a
@@ -63,6 +68,18 @@ with `#guard`: `OpTable.lean` and `Tensor/OnlineSoftmax.lean`.
   `RoundoffBaseline.lean` checks that a reference that branches on a rounded value makes an
   analysis conditional, and runs the comparison of the roundoff coverage with
   `scripts/checks/roundoff_baseline.jsonl` on rows that differ in one way each.
+  `RoundoffBinders.lean` checks that a generated theorem takes the hypothesis that the format is
+  IEEE exactly where its proof uses it, over every configured route of the imported coverage
+  modules, and applies the absolute theorem of `Tensor.fmax` at OCP's E4M3 format.
+  `RoundoffMatcher.lean` checks that the splitter and equations of a private matcher, of this
+  module or an imported one, are realized again after a restored state dropped them, from the
+  matcher they belong to when `RoundoffMatcherTwin.lean` has a private matcher of the same name.
+  `RoundoffReuse.lean` checks that an analysis applied under an imported propagation theorem with
+  its statement keeps the arms and primitive theorems the declaring module recorded, and that
+  `#roundoff_propagation` of the same route declares nothing.
+  `SoftmaxBound.lean` proves with `softmax_bound` the closed form of online softmax at 1024 keys in
+  blocks of 64, and checks that it leaves a bound in a variable open and proves neither a bound
+  below the evaluated closed form nor a range premise below the normalizer's range.
   `GradientKernel.lean` proves that the gradient kernels of `x / (x² + 1)` and of a branched
   rational function away from its kink compute the adjoints of their derivatives, and
   `KernelMap.lean` proves it for `x * x + 1` written with `Program.of` over binary32 and over

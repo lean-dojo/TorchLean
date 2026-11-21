@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-import Mathlib.Algebra.BigOperators.Field
 public import TorchLean.NN.Softmax.Correctness
 public import TorchLean.Tensor.Layers.Attention
 
@@ -55,7 +54,7 @@ are visited disappear when the common exponential factor is cancelled below. -/
 private theorem scan_eq_none {n : Nat} (mask : Tensor Bool [n])
     (step : Option ℝ → Fin n → Option ℝ)
     (hstep : ∀ best i, step best i = none ↔ best = none ∧ mask.getScalar i = false)
-    (indices : List (Fin n)) (initial : Option ℝ) :
+    {indices : List (Fin n)} {initial : Option ℝ} :
     indices.foldl step initial = none ↔
       initial = none ∧ ∀ i ∈ indices, mask.getScalar i = false := by
   induction indices generalizing initial with

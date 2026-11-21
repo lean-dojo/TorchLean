@@ -30,7 +30,8 @@ namespace TorchLean.Op
 `scatter` other than `replace` has a rule at a scalar with every capability but `Cbrt`,
 `NextAfter` and `Bits`. -/
 theorem rule?_isSome_or_custom {α : Type} [Storage α] [Context α] [Rounding α] [Erf α]
-    [InverseTrig α] [DecidableEq α] {ins outs : List Port} (op : Op ins outs) :
+    [InverseTrig α] [Special α] [Frexp α] [Fma α] [ComplexFunctions α] {ins outs : List Port}
+    (op : Op ins outs) :
     (op.rule? (α := α)).isSome ∨ (∃ name inputs output, HEq op (Op.custom name inputs output)) ∨
       (∃ s, HEq op (Op.cbrt (s := s))) ∨ (∃ s, HEq op (Op.nextafter (s := s))) ∨
       (∃ s width source target, (source = .scalar ∨ target = .scalar) ∧
@@ -76,6 +77,7 @@ theorem rule?_isSome_or_custom {α : Type} [Storage α] [Context α] [Rounding �
     | exact Or.inl rfl
     | cases ‹Op.NumericElement› <;> exact Or.inl rfl
     | cases ‹Op.Element› <;> exact Or.inl rfl
+    | cases ‹Tensor.ReduceOrder› <;> exact Or.inl rfl
 
 /-- At a scalar with `Cbrt`, `NextAfter` and `Bits`, `cbrt`, `nextafter` and every `bitcast` at the
 scalar's word width have rules. -/

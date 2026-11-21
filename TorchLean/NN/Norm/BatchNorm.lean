@@ -21,7 +21,9 @@ BatchNorm definitions, so one statement covers vectors, images, volumes and high
 
 The companion module `TorchLean.NN.Norm.BatchNorm.FDeriv` proves that
 `TorchLean.BatchNorm.jvp` is the Fréchet derivative of `Tensor.batchNorm x 0 gamma beta .batch ε` in
-`(x, gamma, beta)` whenever `0 < ε` (`hasFDerivAt_forwardVec`, `fderiv_forwardVec_eq_jvp`).
+`(x, gamma, beta)` where the spatial shape has a single position or every channel of `x` has a
+nonzero sum of its variance and `ε`, which every `0 < ε` gives (`hasFDerivAt_forwardVec`,
+`fderiv_forwardVec_eq_jvp`).
 With the adjointness proved here, `TorchLean.BatchNorm.backward` is the adjoint of that derivative.
 -/
 
@@ -39,27 +41,12 @@ noncomputable section
 
 open scoped BigOperators
 
-private theorem inner_getScalarE_cast {n m : Nat} (h : n = m)
-    (a b : Tensor ℝ [n]) :
-    inner ℝ (getScalarE (h ▸ a)) (getScalarE (h ▸ b)) =
-      inner ℝ (getScalarE a) (getScalarE b) := by
-  subst m
-  rfl
-
-private theorem dot_reshape {s₁ s₂ : Shape} (a b : Tensor ℝ s₁)
-    (h : s₁.size = s₂.size) :
-    Rep.dot (Tensor.reshape a _ h) (Tensor.reshape b _ h) = Rep.dot a b := by
-  rw [dot_eq_inner_toVec, dot_eq_inner_toVec]
-  unfold toVec
-  rw [reshape_vector_reshape, reshape_vector_reshape]
-  exact inner_getScalarE_cast h _ _
-
 private theorem dot_reshape_left {s₁ s₂ : Shape} (a : Tensor ℝ s₁)
     (b : Tensor ℝ s₂) (h : s₁.size = s₂.size) :
     Rep.dot (Tensor.reshape a _ h) b = Rep.dot a (Tensor.reshape b _ h.symm) := by
-  have hDot := dot_reshape a (Tensor.reshape b _ h.symm) h
-  rw [reshape_reshape_self] at hDot
-  exact hDot
+  change Rep.dot (Rep.reshape h a) b = Rep.dot a (Rep.reshape h.symm b)
+  rw [Rep.reshape_eq_reindex, Rep.reshape_eq_reindex, Shape.Coord.reshapeEquiv_symm h]
+  exact Rep.dot_reindex_left (Shape.Coord.reshapeEquiv h) a b
 
 private theorem channel_normalization_adjoint
     (positions : Nat) (hPositions : 0 < positions)
@@ -78,6 +65,8 @@ private theorem channel_normalization_adjoint
                   ((∑ k, gradOutput k * gamma * xHat k) / positions)))) +
         dgamma * (∑ position, gradOutput position * xHat position) +
         dbeta * (∑ position, gradOutput position) := by
+  -- Expand both sides into the same five sums, with the means as constants, then factor `gamma`
+  -- out of the means of `gradOutput * gamma` and clear `positions`.
   let meanTangent := (∑ k, tangent k) / (positions : ℝ)
   let meanTangentXHat := (∑ k, tangent k * xHat k) / (positions : ℝ)
   let meanGradGamma := (∑ k, gradOutput k * gamma) / (positions : ℝ)

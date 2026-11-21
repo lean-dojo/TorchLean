@@ -7,7 +7,7 @@ module
 
 public import TorchLean.NN.Tape.SavedBackward
 public meta import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension
+public import FloatLib.Tactic.Roundoff.Extension
 
 /-!
 # Indexed forward and saved reverse execution for `roundoff`

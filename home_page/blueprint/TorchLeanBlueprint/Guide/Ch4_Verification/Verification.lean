@@ -36,13 +36,15 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
+/-! Guide page: neural network verification, starting from a two-input classifier. -/
+
 #doc (Manual) "Neural Network Verification" =>
 %%%
 tag := "verification"
 %%%
 
-Consider a classifier with two inputs and two possible labels. Give it the point `[1.5, 0.0]` and
-it returns two scores (one for class zero, one for class one), and the larger score determines the
+Consider a classifier with two inputs and two possible labels. At `[1.5, 0.0]` it returns two
+scores, one for each class; the larger score determines the
 prediction. We can evaluate the model at this point and see which class wins. We can also move the
 input a little and evaluate it again. Both computations tell us what happened at the points we
 chose, but neither tells us what happens at every nearby point.
@@ -62,8 +64,8 @@ all belong to the statement: verifying one square around one point doesn't estab
 everywhere, and preserving a prediction doesn't show that the prediction is the correct label in
 the first place.
 
-I'll start with a classifier because its property is easy to read from the outputs: there are only
-two scores to compare, and the same comparison extends to more classes. Let `f` return the
+A two-class classifier makes the property easy to read from the outputs: there are only two scores
+to compare, and the same comparison extends to more classes. Let `f` return the
 classifier's logits (a logit is a score before a probability normalization, and it may be
 negative), let `X` be the input region, and let `y` and `j` be the intended and competing classes.
 To show that class `y` stays ahead of class `j` throughout the region, we seek
@@ -80,7 +82,7 @@ For the two-class model, this is one inequality. With ten classes, it's nine ine
 against each competitor. Strict positivity also removes a possible tie: the conclusion doesn't
 depend on which class an implementation selects when two scores are equal. What's left is finding a
 lower bound that applies to the whole input region and justifying how it was computed. The training
-run below gives us a concrete model and margin to follow.
+run gives a concrete model and margin to follow.
 
 # Classifier Training And Verification
 
@@ -102,7 +104,7 @@ report.printSummary
 ```
 
 Tensor shapes use the public notation: `[]` for a scalar tensor, `[n]` for a vector, and `[m, n]`
-for a matrix. Nothing in the call above exposes recursive shape constructors, graph nodes, flat
+for a matrix. Nothing in the `verify` call exposes recursive shape constructors, graph nodes, flat
 boxes, or parameter stores.
 
 Run it with either maintained CPU arithmetic mode:
@@ -128,7 +130,7 @@ CROWN radius=0.100000 lower=[1.781388, -3.287453] upper=[2.229471, -2.722632]
 The report lower-bounds class zero by `1.781388` and upper-bounds its only competitor by
 `-2.722632`. Their difference is the positive reported margin `4.504020`, so the chosen bound pass
 reports `certified=true` for the requested input box. Interpreting that report as a theorem
-requires the semantic and arithmetic bridges below.
+requires both the graph-semantics bridge and the rounded-arithmetic bridge.
 
 The loss describes fitting the training examples. A small training loss says nothing by itself
 about the entire perturbation region. A single forward evaluation produces the
@@ -140,7 +142,7 @@ and class one's highest allowed score. Comparing the two center scores would mis
 The input region is the L∞ ball of radius `0.10` around the center: each input coordinate may move
 independently by at most the radius. In real coordinates the intended region is
 `[1.4, 1.6] × [-0.1, 0.1]`. This geometric meaning is part of the verification request, while the
-representation and rounding of its endpoints belong to the arithmetic obligations below.
+representation and rounding of its endpoints belong to the Float32 soundness obligations.
 
 The reported margin subtracts the competitor's upper endpoint from class zero's lower endpoint.
 Using the displayed values gives:
@@ -160,9 +162,9 @@ def competitorUpper : Float := -2.722632
 4.504020
 ```
 
-The flag tests the computed margin. Since the six-decimal endpoints above have also been rounded
-for display, subtracting their printed values checks the displayed arithmetic, not the exact
-internal margin or a theorem about every point in the box.
+The flag tests the computed margin. Since the six-decimal endpoints printed by the run have also
+been rounded for display, subtracting their printed values checks the displayed arithmetic, not
+the exact internal margin or a theorem about every point in the box.
 
 A proof of the reported property would connect the source model to the lowered graph, show that
 the propagated boxes contain its outputs throughout the input region, and use the positive margin
@@ -194,8 +196,8 @@ its declared element sort and shape.
 Both are Lean semantic statements over an abstract scalar `Context`. Neither says that a PyTorch
 module, CUDA kernel, or vendor library agrees with the graph.
 
-When the page builds, Lean checks the following signature against the imported TorchLean modules.
-That signature exposes the scalar type and the success conditions needed to apply the result.
+Lean checks the following signature against the imported modules. It exposes the scalar type and
+the success conditions needed to apply the result.
 
 ```lean (name := loweringThms)
 -- The values a successful run computes at a node are at
@@ -243,8 +245,8 @@ where $`W^+=\max(W,0)` and $`W^-=\min(W,0)`. Monotone activations transform endp
 $`[\ell,u]` to $`[\max(0,\ell),\max(0,u)]`. Elementwise multiplication needs all endpoint products.
 
 For one weighted input, a nonnegative weight preserves the order of the endpoints and a
-nonpositive weight reverses it. Splitting the weight into these two parts gives the lower and upper
-bounds below. Summing this scalar argument across a row gives the affine-layer rule.
+nonpositive weight reverses it. Splitting the weight into these two parts gives the next two scalar
+inequalities. Summing this argument across a row gives the affine-layer rule.
 
 ```lean
 /-- Every real number is the sum of its positive and
@@ -710,7 +712,8 @@ snapshot and accepts a tensor center and named choices such as `radius`, `proper
 `algorithm`. A result obtained from `session.finish` uses the same snapshot semantics:
 further training or loading a checkpoint into the session does not change the model it verifies.
 
-Import `TorchLean.Verify.Trainer` to use the `trained.verify` call shown above. The default method
+Import `TorchLean.Verify.Trainer` to use the `trained.verify` call in *Classifier Training And
+Verification*. The default method
 is `crown`. `ibp` and `alphaCROWN` (fixed-relaxation alpha-CROWN with the ReLU phases IBP proves)
 are available for comparison. On a rounded scalar such as binary32, `crown` runs directed CROWN,
 rounding coefficients and constants outward, and `alphaCROWN` runs directed CROWN too, so its
@@ -749,7 +752,7 @@ lower bound with another's upper bound. How those endpoints are computed depends
 bound method and arithmetic. In TorchLean, the real-semantic transfer theorems and local
 certificate predicates describe the evidence needed to justify them, but applying those theorems to
 the high-level Float report still requires proofs about the produced data and rounded arithmetic
-(the trust ledger below records those obligations).
+(the final evidence table records those obligations).
 
 # CROWN And Alpha-CROWN
 
@@ -1006,7 +1009,8 @@ those two and the output of the previous layer (the node before the two constant
 an exact rational value. We can therefore check whether the supplied coefficients enclose a real
 computation without first replacing them with a different certificate.
 
-Here is the rounding issue that this check catches. Put two scalar linear layers in sequence,
+The following two-layer calculation isolates the rounding issue that this check catches. Put two
+scalar linear layers in sequence,
 each with weight $`a=1+2^{-23}` and zero bias. Their exact composed weight is
 
 $$`a^2=1+2^{-22}+2^{-46}.`
@@ -1024,8 +1028,8 @@ inequalities are separate choices, so a zero margin can't satisfy a strict reque
 
 `FiniteArtifact.accepts_graph_sound` connects this decision to the graph's evaluator `Graph.eval`,
 using the exact real values of its decoded binary32 constants: for every real input inside the
-decoded box, the graph evaluates successfully and all requested inequalities hold. And the
-statement includes the actual artifact entry at the designated output. The decision reads the
+decoded box, the graph evaluates successfully and all requested inequalities hold. The statement
+also includes the actual artifact entry at the designated output. The decision reads the
 affine entries at the input, at every linear operator and at every ReLU, which are mandatory, and
 the slope vector at every ReLU, which is optional (without one it takes slope `1` where the upper
 bound exceeds minus the lower bound and `0` elsewhere). A missing affine entry there, a nonfinite
@@ -1034,10 +1038,10 @@ inequalities, and an output id that doesn't cover the whole chain are rejected. 
 constant nodes and the interval and phase fields aren't read.
 
 This decision covers nonempty vector linear/ReLU chains in that layout, and the node-certificate
-verdict `CROWNNode.check` decides with it (`CROWNNode.verdict_ok`). The replay diagnostic above
-keeps only its local-consistency conclusion. And the real computation in the stronger theorem
-differs from a native floating-point run, so relating a LibTorch result to that real value still
-requires an execution-error bound.
+verdict `CROWNNode.check` decides with it (`CROWNNode.verdict_ok`). `CROWNNode.replayDiagnostic`
+keeps only its local-consistency conclusion. The stronger theorem concerns a real computation,
+not a native floating-point run; relating a LibTorch result to it still requires an execution-error
+bound.
 
 # Directed Arithmetic In The Executable Pass
 
@@ -1092,9 +1096,10 @@ CROWN's output query `Op.outputBoxCROWN?` runs the backward pass at every scalar
 coefficients and constants outward. Where a node has an IBP box but no coefficient rule, that box
 bounds the active objective without sending coefficients to the node's parents. ReLU, LayerNorm,
 softmax, and MSE loss take this fallback, so the backward pass treats every ReLU of an MLP by its
-interval box. Binary products use the McCormick planes described above. A few operators (such as
-gather, padding, and custom operators) end the sweep, and the query then keeps the output's
-interval box. So finishing a CROWN pass doesn't guarantee a tighter result than IBP. The
+interval box. Binary products use the McCormick planes from *Tensor Geometry In A Bound Pass*. A
+few operators (such as gather, padding, and custom operators) end the sweep, and the query then
+keeps the output's interval box. So finishing a CROWN pass doesn't guarantee a tighter result than
+IBP. The
 {src "TorchLean/Verify/CROWN/Op/Backward.lean"}[backward theorems] cover coefficient propagation,
 the box fallback, and final interval evaluation at a supplied real point of the graph, while
 `Op.outputBoxCROWN?_of_run` and `Op.backwardObjectiveBox?_of_run` take that point
@@ -1125,7 +1130,8 @@ $$`f_y^{run}(x)-f_j^{run}(x)
 \ge L_y-U_j-\varepsilon_y-\varepsilon_j.`
 
 The right-hand side must remain positive. A real CROWN theorem alone doesn't prove the native
-binary32 claim (the FP32 and runtime-approximation sections describe the additional bridge).
+binary32 claim; {ref "fp32-soundness"}[*Float32 Soundness*] and
+{ref "runtime-approximation"}[*Runtime Approximation*] describe the additional bridge.
 
 Both error terms are subtracted because rounding can move the two scores in opposite unfavorable
 directions (down for the chosen class and up for its competitor), which also explains why a very
@@ -1143,7 +1149,7 @@ A graph numerical certificate records source ranges, derived node ranges and a b
 while checking each intermediate tensor. A range transfer (`RangeTransfer`) is an executable
 function with no semantic soundness field, so a proof-level error trace also requires a separately
 constructed `RealEnclosure` (whose fields supply the real denotation and enclosure proof).
-See the runtime-approximation section for the complete boundary.
+{ref "runtime-approximation"}[*Runtime Approximation*] gives the complete boundary.
 
 `AbCROWNLeaf.check`, the external alpha-beta-CROWN leaf checker, validates the JSON schema,
 finite ordered root and leaf boxes, dimensions, containment of each represented leaf in the root,

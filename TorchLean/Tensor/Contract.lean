@@ -47,10 +47,10 @@ first, as in the batched `torch.matmul`. Each product is rounded before its add.
 (MKL, AVX-512) torch 2.8.0's CPU `matmul` rounds once per multiply-add: for 200 random pairs of
 binary32 vectors of length 2 its dot equals a fused left fold every time, and ours in 150 of them.
 At `[[-0]] @ [[1]]` both give `+0`, since our fold starts from `+0`. The capture test
-`test_data_movement_and_contraction` in `scripts/checks/test_ir_capture.py` compares a batched
-`jnp.einsum` with eager JAX on integer-valued binary32 inputs, and
-`test_softmax_family_and_products` runs `torch.bmm` and `torch.matmul` without comparing the
-results with eager PyTorch.
+`test_data_movement_and_contraction` in `scripts/checks/ir_capture_jax_operators.py` compares a
+batched `jnp.einsum` with eager JAX on integer-valued binary32 inputs, and
+`test_softmax_family_and_products` in `scripts/checks/ir_capture_pytorch_operators.py` runs
+`torch.bmm` and `torch.matmul` without comparing the results with eager PyTorch.
 -/
 
 @[expose] public section
@@ -602,22 +602,33 @@ def matMulLoop [Add α] [Mul α] [Zero α] {m n p : Nat} (A : Tensor α [m, n]) 
     (List.finRange n).foldl (fun sum k => sum + get2 A c.1 k * get2 B k c.2.1) 0
 
 /-- `contract` with the matrix-vector, vector-matrix and matrix products computed by their loops
-over the shared axis, and every other contraction by `contractFold`. -/
+over the shared axis, and every other contraction by `contractFold`. Each arm also proves that
+it is `contract`, so `contractFast_eq` needs no case split on the match. -/
 def contractFast {s t : Shape} [Add α] [Mul α] [Zero α] (x : Tensor α s) (y : Tensor α t)
     (dims batchDims : List (Fin s.rank × Fin t.rank)) (out : Shape)
     (h : Shape.ContractValid s t dims batchDims)
     (hout : out = s.contract t dims batchDims) : Tensor α out :=
-  match s, t, x, y, dims, batchDims, h, hout with
-  | [_, _], [_], x, y, [(⟨1, _⟩, ⟨0, _⟩)], [], h, hout =>
-      castShape (matVecLoop x (castShape y (congrArg (fun k => [k])
-        (h.extent_eq _ (List.mem_singleton_self _)).symm))) hout.symm
-  | [_], [_, _], x, y, [(⟨0, _⟩, ⟨0, _⟩)], [], h, hout =>
-      castShape (vecMatLoop (castShape x (congrArg (fun k => [k])
-        (h.extent_eq _ (List.mem_singleton_self _)))) y) hout.symm
-  | [_, _], [_, p], x, y, [(⟨1, _⟩, ⟨0, _⟩)], [], h, hout =>
-      castShape (matMulLoop x (castShape y (congrArg (fun k => [k, p])
-        (h.extent_eq _ (List.mem_singleton_self _)).symm))) hout.symm
-  | _, _, x, y, dims, batchDims, h, hout => contractFold x y dims batchDims out h hout
+  (match s, t, x, y, dims, batchDims, h, hout with
+  | [_, n], [n'], x, y, [(⟨1, _⟩, ⟨0, _⟩)], [], h, hout =>
+      ⟨castShape (matVecLoop x (castShape y (congrArg (fun k => [k])
+        (h.extent_eq _ (List.mem_singleton_self _)).symm))) hout.symm, by
+        obtain ⟨⟩ : n = n' := h.extent_eq _ (List.mem_singleton_self _)
+        subst hout
+        exact (contract_matVec_eq_ofFn x y).symm⟩
+  | [m], [m', _], x, y, [(⟨0, _⟩, ⟨0, _⟩)], [], h, hout =>
+      ⟨castShape (vecMatLoop (castShape x (congrArg (fun k => [k])
+        (h.extent_eq _ (List.mem_singleton_self _)))) y) hout.symm, by
+        obtain ⟨⟩ : m = m' := h.extent_eq _ (List.mem_singleton_self _)
+        subst hout
+        exact (contract_vecMat_eq_ofFn x y).symm⟩
+  | [_, n], [n', p], x, y, [(⟨1, _⟩, ⟨0, _⟩)], [], h, hout =>
+      ⟨castShape (matMulLoop x (castShape y (congrArg (fun k => [k, p])
+        (h.extent_eq _ (List.mem_singleton_self _)).symm))) hout.symm, by
+        obtain ⟨⟩ : n = n' := h.extent_eq _ (List.mem_singleton_self _)
+        subst hout
+        exact (contract_matMul_eq_ofFn x y).symm⟩
+  | _, _, x, y, dims, batchDims, h, hout => ⟨contractFold x y dims batchDims out h hout, rfl⟩ :
+    {r : Tensor α out // r = contract x y dims batchDims out h hout}).1
 
 end
 
@@ -625,21 +636,7 @@ end
 as their loops over the shared axis. -/
 @[csimp] theorem contractFast_eq : @contract = @contractFast := by
   funext α _ s t _ _ _ x y dims batchDims out h hout
-  unfold contractFast
-  split
-  · rename_i _ n n' A v _ _ hv hout
-    obtain ⟨⟩ : n = n' := hv.extent_eq _ (List.mem_singleton_self _)
-    subst hout
-    exact contract_matVec_eq_ofFn A v
-  · rename_i m m' _ v A _ _ hv hout
-    obtain ⟨⟩ : m = m' := hv.extent_eq _ (List.mem_singleton_self _)
-    subst hout
-    exact contract_vecMat_eq_ofFn v A
-  · rename_i _ n n' _ A B _ _ hv hout
-    obtain ⟨⟩ : n = n' := hv.extent_eq _ (List.mem_singleton_self _)
-    subst hout
-    exact contract_matMul_eq_ofFn A B
-  · rfl
+  exact Eq.symm (Subtype.property (p := (· = contract x y dims batchDims out h hout)) _)
 
 /-! ## Matrix multiplication -/
 

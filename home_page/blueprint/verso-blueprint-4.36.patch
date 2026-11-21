@@ -1,0 +1,2047 @@
+Lean 4.36 compatibility for VersoBlueprint 5a5bfc7e17ddba0cbce176d0fe3bfe6a257b16ec.
+SPDX-License-Identifier: Apache-2.0
+
+diff --git a/src/VersoBlueprint/Cite.lean b/src/VersoBlueprint/Cite.lean
+index 06f7f38..a368c34 100644
+--- a/src/VersoBlueprint/Cite.lean
++++ b/src/VersoBlueprint/Cite.lean
+@@ -466,7 +466,7 @@ def citationPreviewBody (entryHtml : Verso.Output.Html)
+         | some loc =>
+           {{<div class="bp_bibliography_hover_meta">
+               <span class="bp_bibliography_hover_meta_label">"Locator"</span>
+-              <span class="bp_bibliography_hover_meta_value">{{.text true loc}}</span>
++              <span class="bp_bibliography_hover_meta_value">{{.text loc}}</span>
+             </div>}}
+         | Option.none => .empty}}
+     </div>
+@@ -577,8 +577,8 @@ inline_extension Inline.bpCite (citations : List CiteItem) (style : CitationStyl
+         let txt := pieceText cfg.style item.citation
+         let linkNode : Output.Html :=
+           match href? with
+-          | some href => {{<a href={{href}}>{{.text true txt}}</a>}}
+-          | Option.none => {{<span>{{.text true txt}}</span>}}
++          | some href => {{<a href={{href}}>{{.text txt}}</a>}}
++          | Option.none => {{<span>{{.text txt}}</span>}}
+         if inPreviewRender then
+           pure linkNode
+         else
+@@ -588,7 +588,7 @@ inline_extension Inline.bpCite (citations : List CiteItem) (style : CitationStyl
+           pure <| Informal.HoverRender.inlinePreviewTargetNode linkNode previewTarget
+       let links ← cfg.citations.mapM mkLink
+       let body := joinHtml {{<span>"; "</span>}} links
+-      let locatorHtml? := (locatorText cfg.kind cfg.index).map (fun loc => {{<span>{{.text true loc}}</span>}})
++      let locatorHtml? := (locatorText cfg.kind cfg.index).map (fun loc => {{<span>{{.text loc}}</span>}})
+       let htmlNote? : Option Output.Html ←
+         if content.isEmpty then
+           pure Option.none
+@@ -646,7 +646,7 @@ private def mkItems (config : Cite.CiteConfig) : DocElabM (Array (TSyntax `term)
+     `(Informal.Cite.CiteItem.mk $(quote label) $(mkIdent decl))
+ 
+ private def citeRoleImpl (style : Cite.CitationStyle) (config : Cite.CiteConfig)
+-    (extra : Array (TSyntax `inline)) : DocElabM Term := do
++    (extra : Array (Lean.Doc.VersoInline)) : DocElabM Term := do
+   let items ← mkItems config
+   let inlines ← extra.mapM elabInline
+   ``(Verso.Doc.Inline.other
+diff --git a/src/VersoBlueprint/Commands/Bibliography.lean b/src/VersoBlueprint/Commands/Bibliography.lean
+index e1a7a58..b070227 100644
+--- a/src/VersoBlueprint/Commands/Bibliography.lean
++++ b/src/VersoBlueprint/Commands/Bibliography.lean
+@@ -99,12 +99,12 @@ block_extension Block.bibliography (biblio : BibliographyData) where
+                 match detailText? with
+                 | some detail =>
+                   {{<span class="bp_bibliography_use_inline_meta">
+-                    {{.text true s!" - {detail}"}}
++                    {{.text s!" - {detail}"}}
+                   </span>}}
+                 | Option.none => .empty
+               let lineNode : Output.Html := {{
+                 <a href={{use.href}} class="bp_bibliography_use_line">
+-                  {{.text true summaryText}}
++                  {{.text summaryText}}
+                   {{inlineMeta}}
+                 </a>}}
+               let previewLine : Output.Html :=
+@@ -149,8 +149,8 @@ block_extension Block.bibliography (biblio : BibliographyData) where
+ open Verso Doc Elab Syntax in
+ def mkBibliographyPart (stx : Syntax) (endPos : String.Pos.Raw) : PartElabM FinishedPart := do
+   let titlePreview := "Blueprint Bibliography"
+-  let titleInlines ← `(inline | "Blueprint Bibliography")
+-  let expandedTitle ← #[titleInlines].mapM (elabInline ·)
++  let titleInline ← ``(Verso.Doc.Inline.text $(quote titlePreview))
++  let expandedTitle := #[titleInline]
+   let metadata : Option (TSyntax `term) := some (← `(term| { number := false }))
+   let entries := Informal.Cite.allBibEntries (← getEnv)
+   if verso.blueprint.debug.commands.get (← Lean.getOptions) then
+@@ -164,9 +164,12 @@ def mkBibliographyPart (stx : Syntax) (endPos : String.Pos.Raw) : PartElabM Fini
+   pure <| FinishedPart.mk stx stx expandedTitle titlePreview metadata #[block] subParts endPos
+ 
+ open Verso Doc Elab Syntax PartElabM in
+-@[part_command Lean.Doc.Syntax.command]
++@[part_command Lean.Doc.Parser.Block.command]
+ public meta def blueprintBibliographyCmd : PartCommand
+-  | stx@`(block|command{blueprint_bibliography}) => do
++  | .command view => do
++    unless view.name.getId == `blueprint_bibliography && view.args.isEmpty do
++      Lean.Elab.throwUnsupportedSyntax
++    let stx := view.stx.raw
+     let endPos := stx.getTailPos?.get!
+     closePartsUntil 1 endPos
+     addPart (← mkBibliographyPart stx endPos)
+diff --git a/src/VersoBlueprint/Commands/Graph.lean b/src/VersoBlueprint/Commands/Graph.lean
+index 0c613fa..87755b1 100644
+--- a/src/VersoBlueprint/Commands/Graph.lean
++++ b/src/VersoBlueprint/Commands/Graph.lean
+@@ -124,7 +124,7 @@ private def graphToHtml
+               match group.summary? with
+               | some summary => {{
+                   <p class="bp_graph_legend_group_summary">
+-                    {{.text false summary}}
++                    {{.raw summary}}
+                   </p>
+                 }}
+               | Option.none => .empty
+@@ -134,18 +134,18 @@ private def graphToHtml
+                 | some swatch => {{
+                     <span class="bp_graph_legend_item">
+                       <span class="bp_graph_legend_swatch" "style"={{swatch.inlineStyle}}></span>
+-                      {{.text false item.label}}
++                      {{.raw item.label}}
+                     </span>
+                   }}
+                 | Option.none => {{
+                     <span class="bp_graph_legend_item">
+-                      {{.text false item.label}}
++                      {{.raw item.label}}
+                     </span>
+                   }}
+             {{
+               <section class="bp_graph_legend_group">
+                 <div class="bp_graph_legend_group_header">
+-                  <span class="bp_graph_legend_group_title">{{.text false group.title}}</span>
++                  <span class="bp_graph_legend_group_title">{{.raw group.title}}</span>
+                   {{summaryHtml}}
+                 </div>
+                 <div class="bp_graph_legend_items">
+@@ -157,7 +157,7 @@ private def graphToHtml
+           match note? with
+           | some note => {{
+               <p class="bp_graph_legend_note">
+-                {{.text false note}}
++                {{.raw note}}
+               </p>
+             }}
+           | Option.none => .empty
+@@ -321,7 +321,7 @@ private def graphToHtml
+             "data-bp-graph-pack"={{graphPackDefault}}
+           >
+             <script type="application/json" class="bp-graph-data">
+-              {{.text false s!"{publicGraphDataJson}"}}
++              {{.raw s!"{publicGraphDataJson}"}}
+             </script>
+           </div>
+           {{previewPanel}}
+@@ -492,8 +492,8 @@ def mkGraphPart (stx : Syntax) (endPos : String.Pos.Raw) (options : GraphOptions
+     (previewPlacement : Informal.HoverRender.PreviewPlacement := .docked) :
+     PartElabM FinishedPart := do
+   let titlePreview := "Dependency Graph"
+-  let titleInlines ← `(inline | "Dependency Graph")
+-  let expandedTitle ← #[titleInlines].mapM (elabInline ·)
++  let titleInline ← ``(Verso.Doc.Inline.text $(quote titlePreview))
++  let expandedTitle := #[titleInline]
+   let metadata : Option (TSyntax `term) := some (← `(term| { number := false }))
+   reportImportedConflicts
+   if verso.blueprint.debug.commands.get (← Lean.getOptions) then
+@@ -505,10 +505,12 @@ def mkGraphPart (stx : Syntax) (endPos : String.Pos.Raw) (options : GraphOptions
+   pure <| FinishedPart.mk stx stx expandedTitle titlePreview metadata #[block] subParts endPos
+ 
+ open Verso Doc Elab Syntax PartElabM in
+-@[part_command Lean.Doc.Syntax.command]
++@[part_command Lean.Doc.Parser.Block.command]
+ public meta def depGraph : PartCommand
+-  | stx@`(block|command{blueprint_graph $args*}) => do
+-    let cfg ← Verso.ArgParse.parseThe BlueprintGraphConfig (← parseArgs args)
++  | .command view => do
++    unless view.name.getId == `blueprint_graph do Lean.Elab.throwUnsupportedSyntax
++    let stx := view.stx.raw
++    let cfg ← Verso.ArgParse.parseThe BlueprintGraphConfig (← parseArgs view.args)
+     let options ← parseGraphOptions cfg
+     let previewMode ← parseGraphPreviewMode cfg
+     let previewPlacement ← parseGraphPreviewPlacement cfg
+diff --git a/src/VersoBlueprint/Commands/Summary.lean b/src/VersoBlueprint/Commands/Summary.lean
+index c212460..461c758 100644
+--- a/src/VersoBlueprint/Commands/Summary.lean
++++ b/src/VersoBlueprint/Commands/Summary.lean
+@@ -21,8 +21,8 @@ open Informal Data Environment
+ open Verso Doc Elab Syntax in
+ def mkSummaryPart (stx : Syntax) (endPos : String.Pos.Raw) : PartElabM FinishedPart := do
+   let titlePreview := "Blueprint Summary"
+-  let titleInlines ← `(inline | "Blueprint Summary")
+-  let expandedTitle ← #[titleInlines].mapM (elabInline ·)
++  let titleInline ← ``(Verso.Doc.Inline.text $(quote titlePreview))
++  let expandedTitle := #[titleInline]
+   let metadata : Option (TSyntax `term) := some (← `(term| { number := false }))
+   reportImportedConflicts
+   let options ← Lean.getOptions
+@@ -35,9 +35,12 @@ def mkSummaryPart (stx : Syntax) (endPos : String.Pos.Raw) : PartElabM FinishedP
+   pure <| FinishedPart.mk stx stx expandedTitle titlePreview metadata #[block] subParts endPos
+ 
+ open Verso Doc Elab Syntax PartElabM in
+-@[part_command Lean.Doc.Syntax.command]
++@[part_command Lean.Doc.Parser.Block.command]
+ public meta def blueprintSummaryCmd : PartCommand
+-  | stx@`(block|command{blueprint_summary}) => do
++  | .command view => do
++    unless view.name.getId == `blueprint_summary && view.args.isEmpty do
++      Lean.Elab.throwUnsupportedSyntax
++    let stx := view.stx.raw
+     let endPos := stx.getTailPos?.get!
+     closePartsUntil 1 endPos
+     addPart (← mkSummaryPart stx endPos)
+diff --git a/src/VersoBlueprint/Commands/Summary/Html.lean b/src/VersoBlueprint/Commands/Summary/Html.lean
+index 8e0c580..0d324b3 100644
+--- a/src/VersoBlueprint/Commands/Summary/Html.lean
++++ b/src/VersoBlueprint/Commands/Summary/Html.lean
+@@ -211,7 +211,7 @@ private def summaryMetadataBadges (metadata : MetadataPresentation) : Array Outp
+ 
+ private def summaryMetadataActionLinks (metadata : MetadataPresentation) : Array Output.Html :=
+   metadata.summaryActionLinks.map fun action =>
+-    {{ <a class="bp_code_link" href={{action.href}}>{{.text true action.label}}</a> }}
++    {{ <a class="bp_code_link" href={{action.href}}>{{.text action.label}}</a> }}
+ 
+ private def summaryActionLinksRow (actionLinks : Array Output.Html) : Output.Html :=
+   if Array.isEmpty actionLinks then
+@@ -228,11 +228,11 @@ def summaryCard (label value : String) (status? : Option String := Option.none)
+     (className : String := summaryCardClass) : Output.Html :=
+   let statusNode : Output.Html :=
+     match status? with
+-    | Option.some status => {{<span class="bp_summary_status">{{.text true status}}</span>}}
++    | Option.some status => {{<span class="bp_summary_status">{{.text status}}</span>}}
+     | Option.none => .empty
+   {{ <div class={{className}}>
+-      <span class="bp_summary_label">{{.text true label}}</span>
+-      <span class="bp_summary_value">{{.text true value}}</span>
++      <span class="bp_summary_label">{{.text label}}</span>
++      <span class="bp_summary_value">{{.text value}}</span>
+       {{statusNode}}
+     </div> }}
+ 
+@@ -280,7 +280,7 @@ def summaryDetailsList (title : String) (rows : Array Output.Html)
+     else
+       #[("class", className)]
+   {{ <details {{attrs}}>
+-      <summary>{{.text true title}}</summary>
++      <summary>{{.text title}}</summary>
+       <ul class="bp_summary_list">
+         {{rows}}
+       </ul>
+@@ -294,7 +294,7 @@ def summarySection (title : String) (content : Output.Html)
+     else
+       #[("class", "bp_summary_section")]
+   {{ <details {{attrs}}>
+-      <summary>{{.text true title}}</summary>
++      <summary>{{.text title}}</summary>
+       {{content}}
+     </details> }}
+ 
+@@ -331,7 +331,7 @@ private def summaryItemBody (body : Output.Html) : Output.Html :=
+   {{ <div class="bp_summary_item_body">{{body}}</div> }}
+ 
+ private def summaryItemTextBody (text : String) : Output.Html :=
+-  summaryItemBody (.text true text)
++  summaryItemBody (.text text)
+ 
+ private def summaryItemActions (body : Output.Html) : Output.Html :=
+   {{ <div class="bp_summary_item_actions">{{body}}</div> }}
+@@ -356,7 +356,7 @@ private def SummaryHtmlContext.associatedDecls (ctx : SummaryHtmlContext) (label
+ private def SummaryHtmlContext.leanRow (ctx : SummaryHtmlContext) (label : Name) (kind : String)
+     (leanObjects : List Name) : Output.Html :=
+   let entryRef := ctx.entryRef label
+-  summaryItemShell entryRef (some (.text true s!"({kind})"))
++  summaryItemShell entryRef (some (.text s!"({kind})"))
+     .empty #[] #[ctx.associatedDecls label leanObjects]
+ 
+ private def SummaryHtmlContext.leanRows (ctx : SummaryHtmlContext) (items : List IndexItem) :
+@@ -400,13 +400,13 @@ private def SummaryHtmlContext.sorryRow (ctx : SummaryHtmlContext) (item : Sorry
+   let badgeClass := summaryBadgeClassForStatus item.status
+   let body := {{
+     <div class="bp_summary_item_body">
+-      {{.text true declPrefix}} {{declLink}} " "
++      {{.text declPrefix}} {{declLink}} " "
+       <span class={{badgeClass}}>
+         s!"[{if item.isTheorem then "theorem/lemma" else "definition"}; {statusLabel}; {whereTxt}; refs: {refsTxt}]"
+       </span>
+     </div>
+   }}
+-  pure <| summaryItemShell entryRef (some (.text true s!"({item.kind})")) body #[] #[]
++  pure <| summaryItemShell entryRef (some (.text s!"({item.kind})")) body #[] #[]
+ 
+ private def SummaryHtmlContext.externalDeclNode (ctx : SummaryHtmlContext) (label written canonical : Name) :
+     Output.Html :=
+@@ -428,11 +428,11 @@ private def SummaryHtmlContext.externalDeclIssueRow (ctx : SummaryHtmlContext) (
+   let declNode := ctx.externalDeclNode label written canonical
+   let body := {{
+     <div class="bp_summary_item_body">
+-        {{.text true bodyPrefix}} {{declNode}} " "
++        {{.text bodyPrefix}} {{declNode}} " "
+         {{badge}}
+     </div>
+   }}
+-  summaryItemShell entryRef (some (.text true s!"({kind})")) body #[] #[actions]
++  summaryItemShell entryRef (some (.text s!"({kind})")) body #[] #[actions]
+ 
+ private def SummaryHtmlContext.missingRow (ctx : SummaryHtmlContext) (item : MissingLeanDeclItem) :
+     Output.Html :=
+@@ -443,7 +443,7 @@ private def SummaryHtmlContext.renderFailureRow (ctx : SummaryHtmlContext) (item
+     Output.Html :=
+   ctx.externalDeclIssueRow item.label item.kind item.written item.canonical
+     "External render failed for " (summaryWarnBadge "[render failure]")
+-    (summaryItemActions {{<code>{{.text true item.message}}</code>}})
++    (summaryItemActions {{<code>{{.text item.message}}</code>}})
+ 
+ private def SummaryHtmlContext.priorityRow (ctx : SummaryHtmlContext) (item : PriorityItem) :
+     Output.Html :=
+@@ -457,7 +457,7 @@ private def SummaryHtmlContext.priorityRow (ctx : SummaryHtmlContext) (item : Pr
+       summaryMetricBadge "stage" item.stage,
+       summaryMetricBadge "statement" item.statementStatus
+     ] ++ summaryUsageBadges item.directUses item.downstreamUses ++ proofBadges
+-  summaryItemShell entryRef (some (.text true s!"({item.kind})"))
++  summaryItemShell entryRef (some (.text s!"({item.kind})"))
+     (summaryItemTextBody s!"Ready for {item.stage} work.")
+     badges
+     #[ctx.associatedDecls item.label item.leanObjects, summaryActionLinksRow actionLinks]
+@@ -470,7 +470,7 @@ private def SummaryHtmlContext.usageRow (ctx : SummaryHtmlContext) (item : Usage
+       summaryWarnMetricBadge primaryLabel primaryCount,
+       summaryMetricBadge secondaryLabel secondaryCount
+     ] ++ summaryUsageBadges item.directUses item.downstreamUses
+-  summaryItemShell entryRef (some (.text true s!"({item.kind})"))
++  summaryItemShell entryRef (some (.text s!"({item.kind})"))
+     (summaryItemTextBody bodyText)
+     badges
+     #[ctx.associatedDecls item.label item.leanObjects]
+@@ -496,7 +496,7 @@ private def SummaryHtmlContext.dependencyLoadRow (ctx : SummaryHtmlContext)
+       summaryMetricBadge "statement deps" item.statementDeps,
+       summaryMetricBadge "proof deps" item.proofDeps
+     ] ++ summaryUsageBadges item.directUses item.downstreamUses
+-  summaryItemShell entryRef (some (.text true s!"({item.kind})"))
++  summaryItemShell entryRef (some (.text s!"({item.kind})"))
+     (summaryItemTextBody "Prerequisite fan-in measured from the current statement/proof dependency graph.")
+     badges
+     #[ctx.associatedDecls item.label item.leanObjects]
+@@ -510,7 +510,7 @@ private def summaryProofDebtHotspotRow (item : DebtHotspotItem) : Output.Html :=
+       summaryMetricBadge "total debt" item.totalDebt
+     ]
+   summaryItemShell
+-    (.text true item.header)
++    (.text item.header)
+     (some {{<code>s!"{item.parent}"</code>}})
+     (summaryItemTextBody "Grouped proof/code debt derived from the current incomplete-declaration snapshots.")
+     badges
+@@ -529,7 +529,7 @@ private def summaryOwnerRollupRow (item : OwnerRollupItem) : Output.Html :=
+   let badges :=
+     summaryRollupBadges item.totalEntries item.actionableEntries item.quickWins item.linkedPrs
+   summaryItemShell
+-    (.text true item.displayName)
++    (.text item.displayName)
+     (some {{<code>s!"{item.owner}"</code>}})
+     .empty
+     badges
+@@ -551,7 +551,7 @@ private def SummaryHtmlContext.metadataEntryRow (ctx : SummaryHtmlContext) (item
+   let metadata := metadataPresentationOfMetadataEntryItem item
+   let badges := summaryMetadataBadges metadata
+   let actionLinks := summaryMetadataActionLinks metadata
+-  summaryItemShell entryRef (some (.text true s!"({item.kind})"))
++  summaryItemShell entryRef (some (.text s!"({item.kind})"))
+     (summaryItemTextBody bodyText)
+     badges
+     #[ctx.associatedDecls item.label item.leanObjects, summaryActionLinksRow actionLinks]
+@@ -575,11 +575,11 @@ private def SummaryHtmlContext.groupHealthRow (ctx : SummaryHtmlContext) (item :
+   match item.nextPriority? with
+   | Option.none =>
+     summaryItemShell
+-      (.text true item.header)
++      (.text item.header)
+       (some {{<code>s!"{item.parent}"</code>}})
+       (summaryItemTextBody "Grouped view over entries sharing the same parent.")
+       badges
+-      #[summaryItemActions (.text true "Next: no ready child currently unlocks downstream work.")]
++      #[summaryItemActions (.text "Next: no ready child currently unlocks downstream work.")]
+   | Option.some next =>
+     let nextRef := ctx.entryRef next.label
+     let priorityBadges : Array Output.Html :=
+@@ -587,7 +587,7 @@ private def SummaryHtmlContext.groupHealthRow (ctx : SummaryHtmlContext) (item :
+       | Option.some priority => #[summaryWarnMetricBadge "priority" priority]
+       | Option.none => #[]
+     summaryItemShell
+-      (.text true item.header)
++      (.text item.header)
+       (some {{<code>s!"{item.parent}"</code>}})
+       (summaryItemTextBody "Grouped view over entries sharing the same parent.")
+       badges
+diff --git a/src/VersoBlueprint/Docstring.lean b/src/VersoBlueprint/Docstring.lean
+index cdc2896..24336a8 100644
+--- a/src/VersoBlueprint/Docstring.lean
++++ b/src/VersoBlueprint/Docstring.lean
+@@ -52,13 +52,15 @@ private def blockToHtml
+ 
+ private def rewriteMathHtml
+     (texPrelude : String) (html : Verso.Output.Html) : Verso.Output.Html :=
+-  html.visitM (m := Id) (tag := fun name attrs contents =>
+-    if name == "code" && attrs.contains ("class", "math inline") then
+-      some (.tag name (mathAttrs .inline texPrelude) contents)
+-    else if name == "code" && attrs.contains ("class", "math display") then
+-      some (.tag name (mathAttrs .display texPrelude) contents)
+-    else
+-      none)
++  html.rewritePost fun
++    | node@(.element name attrs contents) =>
++      if name == "code" && attrs.contains ("class", "math inline") then
++        .element name (mathAttrs .inline texPrelude) contents
++      else if name == "code" && attrs.contains ("class", "math display") then
++        .element name (mathAttrs .display texPrelude) contents
++      else
++        node
++    | node => node
+ 
+ /--
+ Render the standard structural subset of an elaborated Verso docstring as
+@@ -82,8 +84,8 @@ where
+       if part.title.isEmpty then
+         .empty
+       else
+-        .tag "p" #[] <|
+-          .tag "strong" #[] (.seq <| part.title.map inlineToHtml)
++        .element "p" #[] <|
++          .element "strong" #[] (.seq <| part.title.map inlineToHtml)
+     let content := .seq <| part.content.map blockToHtml
+     let children := .seq <| part.subParts.map partToHtml
+     .seq #[title, content, children]
+diff --git a/src/VersoBlueprint/Docstring/References.lean b/src/VersoBlueprint/Docstring/References.lean
+index 11fbacb..8285cd6 100644
+--- a/src/VersoBlueprint/Docstring/References.lean
++++ b/src/VersoBlueprint/Docstring/References.lean
+@@ -22,7 +22,7 @@ def Reference.label (reference : Reference) : Data.Label :=
+   reference.target.elim id (·.label)
+ 
+ private def referenceInline (target : Data.Label ⊕ Data.UseRef)
+-    (contents : TSyntaxArray `inline) :
++    (contents : Array Lean.Doc.VersoInline) :
+     Lean.Doc.DocM (Lean.Doc.Inline Lean.ElabInline) := do
+   let reference : Reference := { target, hasCustomText := !contents.isEmpty }
+   let contents ← contents.mapM Lean.Doc.elabInline
+@@ -36,7 +36,7 @@ private def referenceInline (target : Data.Label ⊕ Data.UseRef)
+ /-- Preserve dependency metadata without requiring an enclosing Manual directive. -/
+ @[doc_role Informal.uses]
+ def uses (label : StrLit) (origin : String := "manual") (intent : String := "regular")
+-    (contents : TSyntaxArray `inline) :
++    (contents : Array Lean.Doc.VersoInline) :
+     Lean.Doc.DocM (Lean.Doc.Inline Lean.ElabInline) := do
+   let cfg := UsesConfig.ofArgs { val := label.getString, «syntax» := label.raw }
+     (some origin) (some intent)
+@@ -45,7 +45,7 @@ def uses (label : StrLit) (origin : String := "manual") (intent : String := "reg
+ 
+ /-- Preserve a Blueprint prose link without creating a dependency edge. -/
+ @[doc_role Informal.bpref]
+-def bpref (label : StrLit) (contents : TSyntaxArray `inline) :
++def bpref (label : StrLit) (contents : Array Lean.Doc.VersoInline) :
+     Lean.Doc.DocM (Lean.Doc.Inline Lean.ElabInline) :=
+   referenceInline (.inl (LabelNameParsing.parse label.getString)) contents
+ 
+diff --git a/src/VersoBlueprint/ExternalDeclRender.lean b/src/VersoBlueprint/ExternalDeclRender.lean
+index a986b2c..33e6931 100644
+--- a/src/VersoBlueprint/ExternalDeclRender.lean
++++ b/src/VersoBlueprint/ExternalDeclRender.lean
+@@ -200,32 +200,35 @@ private def templateVersoHoverAttrs
+     (html : ExternalDeclHtml) (hoverDedup : Verso.Code.Hover.Dedup ExternalDeclHtml) :
+     ExternalDeclHtml :=
+   Id.run <|
+-    html.visitM (tag := fun name attrs contents => do
+-      let mut marker? : Option Nat := none
+-      let mut attrs' : Array (String × String) := #[]
+-      for attr in attrs do
+-        match attr with
+-        | ("data-verso-hover", value) =>
+-            match value.toNat? with
+-            | some localId =>
+-                if (hoverDedup.get? localId).isSome then
+-                  marker? := some localId
+-                  attrs' := attrs'.push (externalDeclHoverLocalAttrName, value)
+-                else
+-                  attrs' := attrs'.push attr
+-            | none => attrs' := attrs'.push attr
+-        | attr => attrs' := attrs'.push attr
+-      let contents :=
+-        match marker? with
+-        | some localId =>
+-            contents ++ .tag "span" #[(externalDeclHoverInlineMarkerAttrName, toString localId)] .empty
+-        | none => contents
+-      pure <| some <| .tag name attrs' contents)
++    html.rewritePostM (m := Id) fun
++      | .element name attrs contents => do
++        let mut marker? : Option Nat := none
++        let mut attrs' : Array (String × String) := #[]
++        for attr in attrs do
++          match attr with
++          | ("data-verso-hover", value) =>
++              match value.toNat? with
++              | some localId =>
++                  if (hoverDedup.get? localId).isSome then
++                    marker? := some localId
++                    attrs' := attrs'.push (externalDeclHoverLocalAttrName, value)
++                  else
++                    attrs' := attrs'.push attr
++              | none => attrs' := attrs'.push attr
++          | attr => attrs' := attrs'.push attr
++        let contents :=
++          match marker? with
++          | some localId =>
++              contents ++ .element "span"
++                #[(externalDeclHoverInlineMarkerAttrName, toString localId)] .empty
++          | none => contents
++        pure <| .element name attrs' contents
++      | node => pure node
+ 
+ private def hoverPayloads
+     (hoverDedup : Verso.Code.Hover.Dedup ExternalDeclHtml) : Array ExternalDeclHoverPayload :=
+   hoverDedup.contentId.fold (init := #[]) (fun out localId html =>
+-    out.push { localId, html := html.asString })
++    out.push { localId, html := html.render })
+   |>.qsort (fun a b => a.localId < b.localId)
+ 
+ /--
+@@ -247,7 +250,7 @@ private def renderWithHoverPayloads
+     (html : ExternalDeclHighlightRender ExternalDeclHtml) : ExternalDeclRenderedHtml :=
+   let (html, hoverState) := html.run {}
+   {
+-    html := (templateVersoHoverAttrs html hoverState.dedup).asString
++    html := (templateVersoHoverAttrs html hoverState.dedup).render
+     hoverPayloads := hoverPayloads hoverState.dedup
+   }
+ 
+@@ -262,7 +265,7 @@ private def renderExternalDeclSignatureVariant
+   let signatureHtml ← highlightedToHtml signature
+   pure {{
+     <pre class="bp_external_decl_signature signature hl lean block">
+-      <span class="keyword token">{{.text true keywordText}}</span> " " {{signatureHtml}}
++      <span class="keyword token">{{.text keywordText}}</span> " " {{signatureHtml}}
+     </pre>
+   }}
+ 
+@@ -283,11 +286,11 @@ private def plainDocstringHtml (docs? : Option String) : ExternalDeclHtml :=
+   match docs? with
+   | none => .empty
+   | some docs =>
+-    {{<pre class="docstring">{{.text true docs}}</pre>}}
++    {{<pre class="docstring">{{.text docs}}</pre>}}
+ 
+ private def structuralDocstringHtml
+     (doc : Lean.VersoDocString) (texPrelude : String) : ExternalDeclHtml :=
+-  .tag "div" #[("class", "docstring")]
++  .element "div" #[("class", "docstring")]
+     (Informal.Docstring.versoDocstringToHtml doc texPrelude)
+ 
+ private def internalDocstringHtml
+@@ -322,7 +325,7 @@ private def renderTitledSection? (decl : Name) (title : String) (rows : Array Ex
+     let labelId := externalDeclSectionLabelId decl title
+     some {{
+       <div class="bp_external_decl_section" role="group" aria-labelledby={{labelId}}>
+-        <p class="bp_external_decl_section_label" id={{labelId}}>{{.text true title}}</p>
++        <p class="bp_external_decl_section_label" id={{labelId}}>{{.text title}}</p>
+         {{rows}}
+       </div>
+     }}
+@@ -401,7 +404,7 @@ private def renderExternalDeclWrapper
+     if headerMeta.isEmpty then
+       .empty
+     else
+-      {{<span class="bp_external_decl_header_meta">{{.text true s!"({String.intercalate ", " headerMeta.toList})"}}</span>}}
++      {{<span class="bp_external_decl_header_meta">{{.text s!"({String.intercalate ", " headerMeta.toList})"}}</span>}}
+   let headerSourceHtml : ExternalDeclHtml :=
+     match headerSource? with
+     | none => .empty
+@@ -409,9 +412,9 @@ private def renderExternalDeclWrapper
+       let sourceNode : ExternalDeclHtml :=
+         match source.href? with
+         | some href =>
+-          {{<a class="bp_external_decl_source_path" href={{href}}>{{.text true source.text}}</a>}}
++          {{<a class="bp_external_decl_source_path" href={{href}}>{{.text source.text}}</a>}}
+         | none =>
+-          {{<span class="bp_external_decl_source_path">{{.text true source.text}}</span>}}
++          {{<span class="bp_external_decl_source_path">{{.text source.text}}</span>}}
+       {{
+         <span class="bp_external_decl_source">
+           "defined in " {{sourceNode}}
+@@ -421,13 +424,13 @@ private def renderExternalDeclWrapper
+     <div class={{s!"declaration decl {kindClass}"}} data-decl={{decl.toString}} data-kind={{kindMarker}}>
+       <div class="bp_external_decl_kicker">
+         <div class="bp_external_decl_kicker_main">
+-          <span class="bp_external_decl_kind">{{.text true kindMarker}}</span>
++          <span class="bp_external_decl_kind">{{.text kindMarker}}</span>
+           {{headerMetaHtml}}
+           {{headerSourceHtml}}
+         </div>
+         <div class="bp_external_decl_kicker_status">
+           {{if let some badge := headerBadge? then
+-            {{<span class={{s!"bp_external_status_badge bp_external_decl_header_status {badge.className}"}}>{{.text true badge.text}}</span>}}
++            {{<span class={{s!"bp_external_status_badge bp_external_decl_header_status {badge.className}"}}>{{.text badge.text}}</span>}}
+           else .empty}}
+         </div>
+       </div>
+@@ -467,7 +470,7 @@ private def renderFieldSignature
+     else
+       let inheritedRows : Array ExternalDeclHtml :=
+         field.fieldFrom.toArray.map fun parent =>
+-          {{<li><code>{{.text true parent.name.toString}}</code></li>}}
++          {{<li><code>{{.text parent.name.toString}}</code></li>}}
+       {{
+         <div class="inheritance docs">
+           "Inherited from "
+@@ -653,7 +656,7 @@ def renderDeclHtmlNodeDirect? (decl : Name) : MetaM (Option ExternalDeclHtml) :=
+     let some cinfo := env.find? decl
+       | return none
+     match ← renderDeclHtmlDirectFromInfoE decl cinfo with
+-    | .ok html => return some (.text false html.selfContained)
++    | .ok html => return some (.raw html.selfContained)
+     | .error err =>
+       logError m!"External declaration rendering failed for {decl}: {err.message}"
+       return none
+diff --git a/src/VersoBlueprint/Graft.lean b/src/VersoBlueprint/Graft.lean
+index f2ccba2..e40740f 100644
+--- a/src/VersoBlueprint/Graft.lean
++++ b/src/VersoBlueprint/Graft.lean
+@@ -102,7 +102,7 @@ private def renderLeanCodeBodies
+     match ← renderLeanCodePreviewBody? goB state id resolved.preview.label key with
+     | none => pure ()
+     | some (body, codeData) =>
+-        if body.asString.trimAscii.isEmpty then
++        if body.render.trimAscii.isEmpty then
+           pure ()
+         else
+           bodies := bodies.push body
+@@ -121,10 +121,10 @@ private def renderManualGraftNode
+   match RenderingResolution.facetByKey? state node.key with
+   | .error error =>
+       Verso.reportError error
+-      pure <| Html.tag "div" (manualNodeAttrs node) <|
++      pure <| Lean.Html.element "div" (manualNodeAttrs node) <|
+         renderNotice "bp_graft_node_notice" "error" "Invalid Blueprint node" error
+   | .ok none =>
+-      pure <| Html.tag "div" (manualNodeAttrs node) <|
++      pure <| Lean.Html.element "div" (manualNodeAttrs node) <|
+         renderNotice "bp_graft_node_notice" "error" "Blueprint node not found"
+           node.selectionDescription
+   | .ok (some resolved) =>
+@@ -136,7 +136,7 @@ private def renderManualGraftNode
+       let externalBody? := if preview.facet == .statement then
+         Informal.ExternalMarkupRender.previewBody? {} entry.externalMarkup else none
+       if !preview.hasRenderedBody && entry.leanCodePreviewKeys.isEmpty && externalBody?.isNone then
+-        pure <| Html.tag "div" (manualNodeAttrs node) <|
++        pure <| Lean.Html.element "div" (manualNodeAttrs node) <|
+           renderNotice "bp_graft_node_notice" "error"
+             "Blueprint node has no cached content" node.key
+       else
+@@ -220,7 +220,7 @@ block_extension Block.blueprintGraftSideBySide (cfg : Informal.Graft.SideBySideC
+         | some cfg => pure cfg
+         | Option.none => pure {}
+       let content ← blocks.mapM goB
+-      pure <| Html.tag "div" cfg.attrs (Html.seq content)
++      pure <| Lean.Html.element "div" cfg.attrs (Html.seq content)
+ 
+ private meta def currentGenreIs (genreTerm : Term) : DocElabM Bool := do
+   let current := (← readThe DocElabContext).genre
+diff --git a/src/VersoBlueprint/Graft/Render.lean b/src/VersoBlueprint/Graft/Render.lean
+index c4d6160..5cd6e5d 100644
+--- a/src/VersoBlueprint/Graft/Render.lean
++++ b/src/VersoBlueprint/Graft/Render.lean
+@@ -61,13 +61,13 @@ end RenderContext
+ public def renderNotice (baseClass kind title detail : String) : Html :=
+   {{
+     <div class={{baseClass ++ " " ++ baseClass ++ "_" ++ kind}}>
+-      <strong>{{Html.ofString title}}</strong><br/>
+-      {{Html.ofString detail}}
++      <strong>{{Lean.Html.text title}}</strong><br/>
++      {{Lean.Html.text detail}}
+     </div>
+   }}
+ 
+ private def defaultRenderMissingNode (node : BlueprintNode) (title detail : String) : Html :=
+-  .tag "div" node.renderedAttrs <|
++  .element "div" node.renderedAttrs <|
+     renderNotice "bp_graft_node_notice" "error" title detail
+ 
+ public structure ManifestRenderConfig where
+@@ -90,7 +90,7 @@ public def renderNodeWithContent
+     (entry : Informal.PreviewManifest.Entry)
+     (content : Informal.PreviewManifest.BlockRender.RenderedContent)
+     (group? : Option Informal.PreviewManifest.GroupRelation := none) : Html :=
+-  .tag "div" (cfg.nodeAttrs node) <|
++  .element "div" (cfg.nodeAttrs node) <|
+     Informal.PreviewManifest.BlockRender.renderWithRenderedContent
+       cfg.blockRenderConfig
+       entry
+diff --git a/src/VersoBlueprint/Html.lean b/src/VersoBlueprint/Html.lean
+index 5a17d99..71e3fb7 100644
+--- a/src/VersoBlueprint/Html.lean
++++ b/src/VersoBlueprint/Html.lean
+@@ -13,16 +13,15 @@ open Verso.Output
+ /--
+ Escape plain text for insertion into HTML text content.
+ 
+-This intentionally returns raw escaped text because the current Verso
+-`Html.text true` renderer escapes `<` and `>` but not `&`. Use this helper only
+-for text content that must preserve literal ampersands faithfully.
++Use this helper only for text content. The result is already escaped and must be
++inserted as raw HTML to preserve literal ampersands without escaping them twice.
+ -/
+ def escapeText (text : String) : String :=
+   ((text.replace "&" "&amp;").replace "<" "&lt;").replace ">" "&gt;"
+ 
+ /-- Plain HTML text content escaped with `escapeText`. -/
+ def text (text : String) : Html :=
+-  Verso.Output.Html.text false <| escapeText text
++  Lean.Html.raw <| escapeText text
+ 
+ /--
+ Append an HTML node unless an existing node renders to the same string.
+@@ -31,8 +30,8 @@ Use this for structured head snippets where `Html` does not provide a semantic
+ equality instance but repeated asset installation should remain idempotent.
+ -/
+ def pushIfRenderedMissing (values : Array Html) (value : Html) : Array Html :=
+-  let valueString := Html.asString value
+-  if values.any (fun item => Html.asString item == valueString) then
++  let valueString := Lean.Html.render value
++  if values.any (fun item => Lean.Html.render item == valueString) then
+     values
+   else
+     values.push value
+diff --git a/src/VersoBlueprint/Informal/Author.lean b/src/VersoBlueprint/Informal/Author.lean
+index 2263d3f..323ce44 100644
+--- a/src/VersoBlueprint/Informal/Author.lean
++++ b/src/VersoBlueprint/Informal/Author.lean
+@@ -14,7 +14,7 @@ import VersoBlueprint.Profiling
+ open Verso Doc Elab
+ open Verso.Genre Manual
+ open Verso.ArgParse
+-open Lean.Doc.Syntax
++open Lean.Doc.Parser
+ open Lean Elab
+ 
+ namespace Informal
+@@ -51,16 +51,16 @@ private def collapseWhitespace (s : String) : String :=
+   let s := s.replace "\t" " "
+   String.intercalate " " <| (s.splitOn " ").filter (fun chunk => !chunk.isEmpty)
+ 
+-private def blockChunkText (env : Environment) (block : TSyntax `block) : String :=
+-  match block with
+-  | `(block|para[$inlines*]) =>
+-    Verso.Doc.Elab.inlinesToString env inlines
+-  | `(block|header($_){$inlines*}) =>
+-    Verso.Doc.Elab.inlinesToString env inlines
++private def blockChunkText (env : Environment) (block : Lean.Doc.VersoBlock) : String :=
++  match Lean.Doc.BlockView.of block with
++  | some (.para view) =>
++    Verso.Doc.Elab.inlinesToString env view.content
++  | some (.header view) =>
++    Verso.Doc.Elab.inlinesToString env view.content
+   | _ =>
+     (Syntax.reprint block.raw).getD ""
+ 
+-private def authorNameFromContents (contents : Array (TSyntax `block)) : DocElabM String := do
++private def authorNameFromContents (contents : Array (Lean.Doc.VersoBlock)) : DocElabM String := do
+   let env ← getEnv
+   let raw := contents.foldl (init := "") fun acc block =>
+     let chunk := (blockChunkText env block).trimAscii.toString
+diff --git a/src/VersoBlueprint/Informal/Block.lean b/src/VersoBlueprint/Informal/Block.lean
+index 2dc42df..a304ea4 100644
+--- a/src/VersoBlueprint/Informal/Block.lean
++++ b/src/VersoBlueprint/Informal/Block.lean
+@@ -40,7 +40,7 @@ open Verso Doc Elab
+ open Verso.Genre Manual
+ open Verso.ArgParse
+ open Verso.Output.Html
+-open Lean.Doc.Syntax
++open Lean.Doc.Parser
+ open Lean Elab
+ 
+ namespace Informal
+@@ -189,10 +189,10 @@ def Block.withPreviewAvailability (impls : ExtensionImpls)
+ 
+ private structure ParsedDirectiveContents where
+   sourceRef? : Option Source.Ref := none
+-  body : Array (TSyntax `block) := #[]
++  body : Array (Lean.Doc.VersoBlock) := #[]
+ 
+ private def parseDirectiveSourceMetadata
+-    (cfg : Config) (contents : Array (TSyntax `block)) : DocElabM ParsedDirectiveContents := do
++    (cfg : Config) (contents : Array (Lean.Doc.VersoBlock)) : DocElabM ParsedDirectiveContents := do
+   let leading ← Source.Metadata.splitLeadingMetadata contents
+   let sourceRef? ←
+     match leading.term? with
+diff --git a/src/VersoBlueprint/Informal/Block/Common.lean b/src/VersoBlueprint/Informal/Block/Common.lean
+index 4b98638..388ef4f 100644
+--- a/src/VersoBlueprint/Informal/Block/Common.lean
++++ b/src/VersoBlueprint/Informal/Block/Common.lean
+@@ -63,7 +63,7 @@ def BlockStatusMark.text (s : BlockStatusMark) : String :=
+ 
+ def BlockStatusMark.toHtml (s : BlockStatusMark) : Output.Html :=
+   open Verso.Output.Html in
+-  {{ <span class="bp_status_mark" title={{s.title}}>{{.text true s.text}}</span> }}
++  {{ <span class="bp_status_mark" title={{s.title}}>{{.text s.text}}</span> }}
+ 
+ def codeHoverListItem (body : Output.Html) : Output.Html :=
+   open Verso.Output.Html in
+@@ -71,23 +71,23 @@ def codeHoverListItem (body : Output.Html) : Output.Html :=
+ 
+ def codeHoverTextItem (text : String) : Output.Html :=
+   open Verso.Output.Html in
+-  let body : Output.Html := .text true text
++  let body : Output.Html := .text text
+   codeHoverListItem body
+ 
+ def codeHoverEmptyItem (text : String) : Output.Html :=
+   open Verso.Output.Html in
+-  {{<li class="bp_code_hover_none">{{.text true text}}</li>}}
++  {{<li class="bp_code_hover_none">{{.text text}}</li>}}
+ 
+ def codeHoverCodeItem (text : String) : Output.Html :=
+   open Verso.Output.Html in
+-  let body : Output.Html := {{<code>{{.text true text}}</code>}}
++  let body : Output.Html := {{<code>{{.text text}}</code>}}
+   codeHoverListItem body
+ 
+ def codeHoverSection (title : String) (items : Array Output.Html) : Output.Html :=
+   open Verso.Output.Html in
+   {{
+     <div class="bp_code_hover_section">
+-      <span class="bp_code_hover_label">{{.text true title}}</span>
++      <span class="bp_code_hover_label">{{.text title}}</span>
+       <ul class="bp_code_hover_list">
+         {{.seq items}}
+       </ul>
+@@ -158,9 +158,9 @@ def mkCodePanel
+       <details class="bp_code_block bp_code_panel" {{attrs}}>
+         <summary class="bp_heading lemma_thmheading" title={{summaryTitle}}>
+           <span class="bp_heading_title_row">
+-            <span class="bp_caption lemma_thmcaption bp_code_summary_text">{{.text true header.caption}}</span>
++            <span class="bp_caption lemma_thmcaption bp_code_summary_text">{{.text header.caption}}</span>
+             {{if let some number := header.number? then
+-                {{<span class="bp_label lemma_thmlabel bp_code_summary_label">{{.text true number}}</span>}}
++                {{<span class="bp_label lemma_thmlabel bp_code_summary_label">{{.text number}}</span>}}
+               else
+                 .empty}}
+           </span>
+diff --git a/src/VersoBlueprint/Informal/Block/RelatedPanel.lean b/src/VersoBlueprint/Informal/Block/RelatedPanel.lean
+index 840f827..142099d 100644
+--- a/src/VersoBlueprint/Informal/Block/RelatedPanel.lean
++++ b/src/VersoBlueprint/Informal/Block/RelatedPanel.lean
+@@ -383,7 +383,7 @@ private def groupPreviewId (targetLabel sourceLabel : Data.Label) : String :=
+ /-- Render a relation-row badge with semantic relation styling classes. -/
+ private def relationBadge (className title text : String) : Output.Html :=
+   open Verso.Output.Html in
+-  {{<span class={{className}} title={{title}}>{{.text true text}}</span>}}
++  {{<span class={{className}} title={{title}}>{{.text text}}</span>}}
+ 
+ private def relationBadgeBaseClass : String :=
+   "bp_relation_axis_badge"
+@@ -500,7 +500,7 @@ private def loadingBody (detail : String) : Output.Html :=
+   {{
+     <div class="bp_relation_preview_message" "data-bp-preview-message"="loading">
+       <div class="bp_relation_preview_message_title">"Loading preview"</div>
+-      <div class="bp_relation_preview_message_detail">{{.text true detail}}</div>
++      <div class="bp_relation_preview_message_detail">{{.text detail}}</div>
+     </div>
+   }}
+ 
+@@ -522,13 +522,13 @@ private def panelEntryActive (selectedEntry? : Option PanelEntry) (entry : Panel
+   | none => entry.active
+ 
+ private def scriptJson (json : Json) : Output.Html :=
+-  .text false (json.compress.replace "<" "\\u003c")
++  .raw (json.compress.replace "<" "\\u003c")
+ 
+ /-- Assemble JSON leaves structurally so preview keys can be selected before
+ serialization. No HTML or JSON string is parsed during resource finalization. -/
+ private def jsonArrayHtml (values : Array Output.Html) : Output.Html :=
+-  .seq (#[.text false "["] ++
+-    (values.toList.intersperse (.text false ",")).toArray ++ #[.text false "]"])
++  .seq (#[.raw "["] ++
++    (values.toList.intersperse (.raw ",")).toArray ++ #[.raw "]"])
+ 
+ /-- Runtime row: [title, previewKey?, label, href?, badgeCodes, active]. -/
+ private def panelEntryDataHtml (renderPreview : PreviewResources.Render)
+@@ -551,17 +551,17 @@ def renderPanel (cfg : PanelConfig) (entries : Array PanelEntry)
+     (renderPreview : PreviewResources.Render := PreviewResources.immediate) : Output.Html :=
+   open Verso.Output.Html in Id.run do
+   let renderChip (chipClass : String) (chipTitle : String) (n : Nat) : Output.Html :=
+-    {{<span class={{chipClass}} title={{chipTitle}}>{{.text true (cfg.chipText n)}}</span>}}
++    {{<span class={{chipClass}} title={{chipTitle}}>{{.text (cfg.chipText n)}}</span>}}
+   let renderInlinePreview (entry : PanelEntry) : Output.Html :=
+     let chipNode : Output.Html :=
+       if let some href := entry.href then
+         {{<a class={{s!"{cfg.chipClass} bp_code_link"}} href={{href}} title={{cfg.singleTitle entry}}>
+-            {{.text true (cfg.chipText 1)}}
++            {{.text (cfg.chipText 1)}}
+           </a>}}
+       else
+         renderChip cfg.chipClass (cfg.singleTitle entry) 1
+     let previewFooterHtml? :=
+-      let html := renderRelationBadgeCodes entry.badgeCodes |>.asString
++      let html := renderRelationBadgeCodes entry.badgeCodes |>.render
+       if html.isEmpty then none else some html
+     Informal.HoverRender.inlinePreviewNode
+       chipNode entry.previewId entry.previewTitle
+@@ -580,18 +580,18 @@ def renderPanel (cfg : PanelConfig) (entries : Array PanelEntry)
+     let previewBody : Output.Html := loadingBody cfg.previewEmptyText
+     let rowData := jsonArrayHtml (entries.map (panelEntryDataHtml renderPreview selectedEntry?))
+     let rowList : Output.Html :=
+-      .tag "ul" #[("class", "bp_relation_list")] <|
++      .element "ul" #[("class", "bp_relation_list")] <|
+         {{
+           <script type="application/json" class="bp-relation-entries">
+             {{rowData}}
+           </script>
+         }}
+     let panel : Output.Html :=
+-      .tag "div" (#[("class", cfg.panelClass)] ++ cfg.panelAttrs) <|
++      .element "div" (#[("class", cfg.panelClass)] ++ cfg.panelAttrs) <|
+         {{
+           <div class="bp_relation_panel_header">
+-            <div class="bp_relation_panel_title">{{.text true (cfg.panelTitle entries.size)}}</div>
+-            <div class={{cfg.panelMetaClass}}>{{.text true cfg.panelMeta}}</div>
++            <div class="bp_relation_panel_title">{{.text (cfg.panelTitle entries.size)}}</div>
++            <div class={{cfg.panelMetaClass}}>{{.text cfg.panelMeta}}</div>
+           </div>
+           <div class="bp_relation_panel_body">
+             {{rowList}}
+@@ -599,7 +599,7 @@ def renderPanel (cfg : PanelConfig) (entries : Array PanelEntry)
+               <div class="bp_relation_preview_header">
+                 <div class="bp_relation_preview_label">"Preview"</div>
+                 <div class="bp_relation_preview_heading bp_preview_header_heading">
+-                  <div class="bp_relation_preview_title">{{.text true previewTitle}}</div>
++                  <div class="bp_relation_preview_title">{{.text previewTitle}}</div>
+                   <a class="bp_relation_preview_header_label bp_preview_header_label" hidden></a>
+                 </div>
+               </div>
+@@ -610,10 +610,10 @@ def renderPanel (cfg : PanelConfig) (entries : Array PanelEntry)
+           </div>
+         }}
+     let panelShell : Output.Html :=
+-      .tag "div" #[("class", cfg.wrapClass)] <|
++      .element "div" #[("class", cfg.wrapClass)] <|
+         {{
+           <button type="button" class={{cfg.chipClass}} title={{cfg.chipTitle entries.size}} "aria-expanded"="false">
+-            {{.text true (cfg.chipText entries.size)}}
++            {{.text (cfg.chipText entries.size)}}
+           </button>
+           {{panel}}
+         }}
+diff --git a/src/VersoBlueprint/Informal/Block/Render.lean b/src/VersoBlueprint/Informal/Block/Render.lean
+index dc031dc..6e70520 100644
+--- a/src/VersoBlueprint/Informal/Block/Render.lean
++++ b/src/VersoBlueprint/Informal/Block/Render.lean
+@@ -108,8 +108,8 @@ def renderBlockTitleRow (style : BlockKindRenderStyle)
+   let labelClass := s!"bp_label bp_kind_{style.kindCss}_label {style.labelCss}"
+   {{
+     <div class={{titleRowClass}}>
+-      <span class={{captionClass}} title={{labelText}}> {{.text true captionText}} </span>
+-      {{ if style.showLabel then {{<span class={{labelClass}}> {{.text true numberText}} </span>}} else .empty }}
++      <span class={{captionClass}} title={{labelText}}> {{.text captionText}} </span>
++      {{ if style.showLabel then {{<span class={{labelClass}}> {{.text numberText}} </span>}} else .empty }}
+     </div>
+   }}
+ 
+@@ -329,14 +329,14 @@ private def renderExternalMarkupBadge
+   let cls := s!"bp_external_markup_badge bp_external_markup_badge_{language.key}"
+   let slotAttr := String.intercalate "," slots.toList
+   let prefixHtml :=
+-    Verso.Output.Html.tag "span"
++    Lean.Html.element "span"
+       #[("class", "bp_external_markup_badge_prefix")]
+-      (.text true "markup")
++      (.text "markup")
+   let languageText :=
+-    Verso.Output.Html.tag "span"
++    Lean.Html.element "span"
+       #[("class", "bp_external_markup_badge_language")]
+-      (.text true (externalMarkupBadgeText language))
+-  Verso.Output.Html.tag "span"
++      (.text (externalMarkupBadgeText language))
++  Lean.Html.element "span"
+     #[("class", cls),
+       ("title", title),
+       ("aria-label", title),
+@@ -351,7 +351,7 @@ def renderExternalMarkupBadges (markup : Array Data.ExternalMarkup) : Verso.Outp
+   else
+     let badges := languages.map fun language =>
+       renderExternalMarkupBadge language (externalMarkupSlotsFor markup language)
+-    Verso.Output.Html.tag "span"
++    Lean.Html.element "span"
+       #[("class", "bp_external_markup_badges"),
+         ("title", "External source markup attached")]
+       (.seq badges)
+@@ -373,16 +373,16 @@ private def renderMetadataItem (key : String) (value : Verso.Output.Html) (extra
+       s!"bp_metadata_item {extraClass}"
+   {{
+     <span class={{itemClass}}>
+-      <span class="bp_metadata_key">{{.text true key}}</span>
++      <span class="bp_metadata_key">{{.text key}}</span>
+       {{value}}
+     </span>
+   }}
+ 
+ private def renderMetadataTextValue (value : String) : Verso.Output.Html :=
+-  {{<span class="bp_metadata_value">{{.text true value}}</span>}}
++  {{<span class="bp_metadata_value">{{.text value}}</span>}}
+ 
+ private def renderMetadataLinkValue (href : String) (label : String) : Verso.Output.Html :=
+-  {{<a class="bp_metadata_link bp_metadata_value" href={{href}}>{{.text true label}}</a>}}
++  {{<a class="bp_metadata_link bp_metadata_value" href={{href}}>{{.text label}}</a>}}
+ 
+ private def renderMetadataCodeValue (value : Data.AuthorId) : Verso.Output.Html :=
+   {{<span class="bp_metadata_value"><code>s!"{value}"</code></span>}}
+@@ -495,7 +495,7 @@ private def renderSourceSpanPreview (span : Source.Span) : Verso.Output.Html :=
+   let summary := sourceSpanPreviewText span
+   {{
+     <li class="bp_source_ref_panel_span">
+-      <span class="bp_source_ref_panel_span_text">{{.text true summary}}</span>
++      <span class="bp_source_ref_panel_span_text">{{.text summary}}</span>
+     </li>
+   }}
+ 
+@@ -518,9 +518,9 @@ private def renderSourceRefPreviewItem (sourceRef : Source.Ref) : Verso.Output.H
+         data-bp-source-document={{sourceRef.document}}>
+       <div class="bp_source_ref_panel_document">
+         <span class="bp_source_ref_panel_key">"Document"</span>
+-        <code>{{.text true sourceRef.document}}</code>
++        <code>{{.text sourceRef.document}}</code>
+       </div>
+-      <div class="bp_source_ref_panel_summary">{{.text true summary}}</div>
++      <div class="bp_source_ref_panel_summary">{{.text summary}}</div>
+       <ul class="bp_source_ref_panel_spans">
+         {{spanNodes}}
+       </ul>
+@@ -540,19 +540,19 @@ private def renderSourceRefPreview (sourceRefs : Array Source.Ref) : Verso.Outpu
+           class="bp_relation_chip bp_source_ref_chip"
+           title={{chipTitle}}
+           aria-expanded="false">
+-        {{.text true chipText}}
++        {{.text chipText}}
+       </button>
+       <div class="bp_relation_panel bp_source_ref_panel">
+         <div class="bp_relation_panel_header">
+-          <div class="bp_relation_panel_title">{{.text true panelTitle}}</div>
+-          <div class="bp_relation_panel_meta">{{.text true panelMeta}}</div>
++          <div class="bp_relation_panel_title">{{.text panelTitle}}</div>
++          <div class="bp_relation_panel_meta">{{.text panelMeta}}</div>
+         </div>
+         <div class="bp_relation_panel_body bp_source_ref_panel_body">
+           <div class="bp_relation_preview_surface bp_source_ref_preview_surface">
+             <div class="bp_relation_preview_header">
+               <div class="bp_relation_preview_label">"Preview"</div>
+               <div class="bp_relation_preview_heading bp_preview_header_heading">
+-                <div class="bp_relation_preview_title">{{.text true panelTitle}}</div>
++                <div class="bp_relation_preview_title">{{.text panelTitle}}</div>
+                 <a class="bp_relation_preview_header_label bp_preview_header_label" hidden></a>
+               </div>
+             </div>
+@@ -622,7 +622,7 @@ private def renderStatementMetadataPanel (data : BlockData) : Verso.Output.Html
+     else
+       renderMetadataItem "Tags" {{
+         <span class="bp_metadata_tags">
+-          {{metadata.tags.map (fun tag => {{ <span class="bp_metadata_tag">{{.text true tag}}</span> }})}}
++          {{metadata.tags.map (fun tag => {{ <span class="bp_metadata_tag">{{.text tag}}</span> }})}}
+         </span>
+       }}
+   if metadata.hasAny then
+@@ -733,7 +733,7 @@ structure InformalBlockShell where
+ private def renderShellTitleRow (shell : InformalBlockShell) : Verso.Output.Html :=
+   let titleRow := renderBlockTitleRow shell.style shell.labelText shell.numberText shell.captionText
+   match shell.titleRowAttrs? with
+-  | some attrs => .tag "a" attrs titleRow
++  | some attrs => .element "a" attrs titleRow
+   | none => titleRow
+ 
+ def renderInformalBlockShell (shell : InformalBlockShell)
+@@ -817,7 +817,7 @@ def renderInformalBlockModel (model : InformalBlockRenderModel) : Verso.Output.H
+     (showHeader := model.showHeader)
+   let html := Verso.Output.Html.seq (#[blockHtml] ++ model.companionPanels)
+   match model.wrapperClass? with
+-  | some className => Verso.Output.Html.tag "div" (htmlClassAttrs className) html
++  | some className => Lean.Html.element "div" (htmlClassAttrs className) html
+   | none => html
+ 
+ end Informal
+diff --git a/src/VersoBlueprint/Informal/Code.lean b/src/VersoBlueprint/Informal/Code.lean
+index 8bc4c0f..5b6469a 100644
+--- a/src/VersoBlueprint/Informal/Code.lean
++++ b/src/VersoBlueprint/Informal/Code.lean
+@@ -26,7 +26,7 @@ open Verso Doc Elab
+ open Verso.Genre Manual
+ open Verso.ArgParse
+ open Lean Lean.Elab
+-open Lean.Doc.Syntax
++open Lean.Doc.Parser
+ 
+ namespace Informal
+ open CodeSummary
+@@ -369,7 +369,7 @@ def internal : CodeBlockExpanderOf Unit
+ 
+ private def rocqImpl : CodeBlockExpanderOf Unit
+   | _cfg, contents => do
+-    ``(Block.code $contents)
++    ``(Block.code $(quote contents.getVersoCodeBlock))
+ 
+ @[code_block]
+ def rocq : CodeBlockExpanderOf Unit
+@@ -401,7 +401,7 @@ private def externalMarkupImpl
+     (language : Data.ExternalMarkupLanguage) : CodeBlockExpanderOf ExternalMarkupConfig
+   | cfg, contents => do
+     let location? ← cfg.location?
+-    let raw := contents.getString
++    let raw := contents.getVersoCodeBlock
+     let markup : Data.ExternalMarkup := {
+       language
+       slot := cfg.slot
+diff --git a/src/VersoBlueprint/Informal/CodeSummary.lean b/src/VersoBlueprint/Informal/CodeSummary.lean
+index c0abe31..ec6ba5c 100644
+--- a/src/VersoBlueprint/Informal/CodeSummary.lean
++++ b/src/VersoBlueprint/Informal/CodeSummary.lean
+@@ -103,7 +103,7 @@ private def renderDeclSummaryItems (items : Array DeclSummaryItem) : Array Outpu
+   open Verso.Output.Html in
+   items.map fun item =>
+     let nameNode : Output.Html :=
+-      let txt := {{<code>{{.text true s!"{item.displayName}"}}</code>}}
++      let txt := {{<code>{{.text s!"{item.displayName}"}}</code>}}
+       match item.href with
+       | some href =>
+         Informal.LeanCodeLink.renderResolved
+@@ -115,7 +115,7 @@ private def renderDeclSummaryItems (items : Array DeclSummaryItem) : Array Outpu
+       <li class="bp_code_decl_item">
+         <span class="bp_code_decl_name">{{nameNode}}</span>
+         <span class={{s!"bp_code_decl_status {declSummaryStatusClass item}"}}>
+-          {{.text true s!"[{declSummaryStatusText item}]"}}
++          {{.text s!"[{declSummaryStatusText item}]"}}
+         </span>
+       </li>
+     }}
+@@ -148,7 +148,7 @@ private def renderExternalRenderFailureItems (failures : Array ExternalRenderFai
+       else
+         hrefOf failure.decl.written
+     let declNode :=
+-      let txt := {{<code>{{.text true s!"{failure.decl.written}"}}</code>}}
++      let txt := {{<code>{{.text s!"{failure.decl.written}"}}</code>}}
+       match href with
+       | some href =>
+         Informal.LeanCodeLink.renderResolved
+@@ -156,7 +156,7 @@ private def renderExternalRenderFailureItems (failures : Array ExternalRenderFai
+           (previewTitle := s!"{failure.decl.canonical}")
+       | none => txt
+     codeHoverListItem {{
+-      <span>{{declNode}}": " {{.text true failure.message}}</span>
++      <span>{{declNode}}": " {{.text failure.message}}</span>
+     }}
+ 
+ private def inlineDeclSummaryItems (definedDefs definedTheorems : Array CodeDeclData)
+@@ -298,7 +298,7 @@ private def renderCodeEntryNode (href : Option String) (title : String) (visual
+     (if visual.absent then " bp_code_link_empty" else "")
+   let body : Output.Html := {{
+     {{renderCodeHeadingRenderHealthBadge renderHealth}}
+-    <span class="bp_code_status_symbol">{{.text true visual.symbol}}</span>
++    <span class="bp_code_status_symbol">{{.text visual.symbol}}</span>
+     <span class="bp_code_link_label">"L∃∀N"</span>
+   }}
+   match href with
+@@ -568,8 +568,8 @@ private def renderExternalPanelIndicator (decls : Array Data.ExternalRef)
+     appendRenderHealthSummary presentation.title renderHealth
+   let badge : Output.Html := {{
+     <span class={{s!"bp_external_status_badge bp_external_status_badge_summary {presentation.className}"}} title={{badgeTitle}}>
+-      <span class={{s!"bp_external_status_icon {presentation.className}"}}>{{.text true presentation.iconText}}</span>
+-      <span class="bp_external_status_badge_text">{{.text true presentation.badgeText}}</span>
++      <span class={{s!"bp_external_status_icon {presentation.className}"}}>{{.text presentation.iconText}}</span>
++      <span class="bp_external_status_badge_text">{{.text presentation.badgeText}}</span>
+     </span>
+   }}
+   {
+diff --git a/src/VersoBlueprint/Informal/ExternalCode.lean b/src/VersoBlueprint/Informal/ExternalCode.lean
+index 108d0e1..93d47e3 100644
+--- a/src/VersoBlueprint/Informal/ExternalCode.lean
++++ b/src/VersoBlueprint/Informal/ExternalCode.lean
+@@ -183,7 +183,7 @@ private def externalDeclStatusView (item : LinkedExternalDecl) : ExternalDeclSta
+ 
+ private def externalDeclNode (item : LinkedExternalDecl) : Output.Html :=
+   open Verso.Output.Html in
+-  let declTxt := {{<code>{{.text true s!"{item.decl.written}"}}</code>}}
++  let declTxt := {{<code>{{.text s!"{item.decl.written}"}}</code>}}
+   if let some href := item.href then
+     Informal.LeanCodeLink.renderResolved
+       item.decl.canonical declTxt "" (some href)
+@@ -210,7 +210,7 @@ private def externalDeclHead (item : LinkedExternalDecl) (status : ExternalDeclS
+   {{
+     <div class="bp_external_decl_head">
+       {{externalDeclNode item}}
+-      <span class={{status.className}}>{{.text true status.panelText}}</span>
++      <span class={{status.className}}>{{.text status.panelText}}</span>
+     </div>
+   }}
+ 
+@@ -220,7 +220,7 @@ private def externalDeclRenderedMeta
+   let metaText := status.panelText
+   let statusBadge : Output.Html :=
+     if !metaText.isEmpty then
+-      {{<span class={{s!"bp_external_status_badge bp_external_decl_footer_status {status.className}"}}>{{.text true metaText}}</span>}}
++      {{<span class={{s!"bp_external_status_badge bp_external_decl_footer_status {status.className}"}}>{{.text metaText}}</span>}}
+     else
+       .empty
+   let sourceRef? := externalDeclSourceRef? item
+@@ -244,11 +244,11 @@ private def externalDeclRenderedWith [Monad m]
+   match item.decl.render with
+   | .ok renderedHtml =>
+     let renderedHtml ← renderHtml renderedHtml
+-    pure <| .tag "div" #[("class", "bp_external_decl_rendered")] (.text false renderedHtml)
++    pure <| .element "div" #[("class", "bp_external_decl_rendered")] (.raw renderedHtml)
+   | .error err =>
+-    pure <| .tag "pre"
++    pure <| .element "pre"
+       #[("class", "bp_external_decl_stmt bp_external_decl_render_error")]
+-      (.text true s!"Render failed: {err.message}")
++      (.text s!"Render failed: {err.message}")
+ 
+ private def externalDeclRendered (item : LinkedExternalDecl) : Output.Html :=
+   Id.run <| externalDeclRenderedWith (fun renderedHtml => pure renderedHtml.selfContained) item
+@@ -257,7 +257,7 @@ private def registerPageHoverPayload [Monad m]
+     (payload : ExternalDeclHoverPayload) :
+     Verso.Doc.Html.HtmlT Verso.Genre.Manual m Nat :=
+   modifyGet fun st =>
+-    let (id, dedup) := st.dedup.insert (.text false payload.html)
++    let (id, dedup) := st.dedup.insert (.raw payload.html)
+     (id, { st with dedup })
+ 
+ private def renderedHtmlWithHoverTable [Monad m]
+@@ -301,7 +301,7 @@ private def missingExternalDeclBody : Output.Html :=
+   open Verso.Output.Html in
+   {{
+     <pre class="bp_external_decl_stmt bp_code_hover_none">
+-      {{.text true s!"declaration not found ({Data.ExternalDeclLookupError.message .notPresentAtRegistration})"}}
++      {{.text s!"declaration not found ({Data.ExternalDeclLookupError.message .notPresentAtRegistration})"}}
+     </pre>
+   }}
+ 
+@@ -370,7 +370,7 @@ private abbrev ExternalDeclCacheHoverRender :=
+ private def registerCacheHoverPayload (payload : ExternalDeclHoverPayload) :
+     ExternalDeclCacheHoverRender Nat :=
+   modifyGet fun st =>
+-    let (id, dedup) := st.dedup.insert (.text false payload.html)
++    let (id, dedup) := st.dedup.insert (.raw payload.html)
+     (id, { st with dedup })
+ 
+ private def renderedHtmlWithCacheHovers
+diff --git a/src/VersoBlueprint/Informal/ExternalMarkupRender.lean b/src/VersoBlueprint/Informal/ExternalMarkupRender.lean
+index 1dbd58c..787943c 100644
+--- a/src/VersoBlueprint/Informal/ExternalMarkupRender.lean
++++ b/src/VersoBlueprint/Informal/ExternalMarkupRender.lean
+@@ -140,14 +140,14 @@ def sourceBackedAttrs (markup : Informal.Data.ExternalMarkup) : Array (String ×
+ def noticeHtml (markup : Informal.Data.ExternalMarkup) : Verso.Output.Html :=
+   let text :=
+     s!"Rendered from {Informal.ExternalMarkupView.sourceSummary markup}; no native Verso body is available."
+-  Verso.Output.Html.tag "p"
++  Lean.Html.element "p"
+     #[("class", "bp_external_markup_notice"), ("role", "note")]
+     (VersoBlueprint.Html.text text)
+ 
+ private def renderMarkdownBody? (raw : String) : Option Verso.Output.Html := do
+   let html ← MD4Lean.renderHtml raw
+-  some <| Verso.Output.Html.tag "div" #[("class", "bp_external_markdown_body")]
+-    (Verso.Output.Html.text false html)
++  some <| Lean.Html.element "div" #[("class", "bp_external_markdown_body")]
++    (Lean.Html.raw html)
+ 
+ def body?
+     (cfg : Config)
+@@ -181,6 +181,6 @@ def selectedContent?
+ def previewBody? (cfg : Config) (markup : Array Informal.Data.ExternalMarkup) :
+     Option Verso.Output.Html := do
+   let (selected, content) ← selectedContent? cfg markup
+-  return .tag "div" (sourceBackedAttrs selected) (.seq content)
++  return .element "div" (sourceBackedAttrs selected) (.seq content)
+ 
+ end Informal.ExternalMarkupRender
+diff --git a/src/VersoBlueprint/Informal/ExternalMarkupView.lean b/src/VersoBlueprint/Informal/ExternalMarkupView.lean
+index 2fa617e..703b7dc 100644
+--- a/src/VersoBlueprint/Informal/ExternalMarkupView.lean
++++ b/src/VersoBlueprint/Informal/ExternalMarkupView.lean
+@@ -37,24 +37,24 @@ def sourceSummary (markup : Informal.Data.ExternalMarkup) : String :=
+ 
+ /-- Summary-only rendered external-markup source witness. -/
+ def summaryHtml (summary : String) : Verso.Output.Html :=
+-  Verso.Output.Html.tag "p"
++  Lean.Html.element "p"
+     #[("class", "bp_external_markup_summary")]
+     (VersoBlueprint.Html.text summary)
+ 
+ /-- Escaped source block shared by source displays and source-backed preview fragments. -/
+ def sourcePreHtml (markup : Informal.Data.ExternalMarkup) : Verso.Output.Html :=
+-  let code := Verso.Output.Html.tag "code"
++  let code := Lean.Html.element "code"
+     #[("class", s!"language-{markup.language.key}")]
+     (VersoBlueprint.Html.text markup.raw)
+-  Verso.Output.Html.tag "pre"
++  Lean.Html.element "pre"
+     #[("class", s!"bp_external_markup_source bp_external_markup_source_{markup.language.key}")]
+     code
+ 
+ /-- Source-displaying external-markup witness at its original source position. -/
+ def sourceDetailsHtml (markup : Informal.Data.ExternalMarkup) : Verso.Output.Html :=
+-  let summaryHtml := Verso.Output.Html.tag "summary" #[]
++  let summaryHtml := Lean.Html.element "summary" #[]
+     (VersoBlueprint.Html.text (displaySummary markup))
+-  Verso.Output.Html.tag "details" #[("class", "bp_external_markup")]
++  Lean.Html.element "details" #[("class", "bp_external_markup")]
+     (Verso.Output.Html.seq #[summaryHtml, sourcePreHtml markup])
+ 
+ end Informal.ExternalMarkupView
+diff --git a/src/VersoBlueprint/Informal/Group.lean b/src/VersoBlueprint/Informal/Group.lean
+index 6c2ec50..8102106 100644
+--- a/src/VersoBlueprint/Informal/Group.lean
++++ b/src/VersoBlueprint/Informal/Group.lean
+@@ -18,7 +18,7 @@ import VersoBlueprint.TraversalIndex
+ open Verso Doc Elab
+ open Verso.Genre Manual
+ open Verso.ArgParse
+-open Lean.Doc.Syntax
++open Lean.Doc.Parser
+ open Lean Elab
+ 
+ namespace Informal
+@@ -69,16 +69,16 @@ private def collapseWhitespace (s : String) : String :=
+   let s := s.replace "\t" " "
+   String.intercalate " " <| (s.splitOn " ").filter (fun chunk => !chunk.isEmpty)
+ 
+-private def blockChunkText (env : Environment) (block : TSyntax `block) : String :=
+-  match block with
+-  | `(block|para[$inlines*]) =>
+-    Verso.Doc.Elab.inlinesToString env inlines
+-  | `(block|header($_){$inlines*}) =>
+-    Verso.Doc.Elab.inlinesToString env inlines
++private def blockChunkText (env : Environment) (block : Lean.Doc.VersoBlock) : String :=
++  match Lean.Doc.BlockView.of block with
++  | some (.para view) =>
++    Verso.Doc.Elab.inlinesToString env view.content
++  | some (.header view) =>
++    Verso.Doc.Elab.inlinesToString env view.content
+   | _ =>
+     (Syntax.reprint block.raw).getD ""
+ 
+-private def groupHeaderFromContents (contents : Array (TSyntax `block)) : DocElabM String := do
++private def groupHeaderFromContents (contents : Array (Lean.Doc.VersoBlock)) : DocElabM String := do
+   let env ← getEnv
+   let raw := contents.foldl (init := "") fun acc block =>
+     let chunk := (blockChunkText env block).trimAscii.toString
+diff --git a/src/VersoBlueprint/Informal/LeanCodeLink.lean b/src/VersoBlueprint/Informal/LeanCodeLink.lean
+index 0f93042..32c0387 100644
+--- a/src/VersoBlueprint/Informal/LeanCodeLink.lean
++++ b/src/VersoBlueprint/Informal/LeanCodeLink.lean
+@@ -49,8 +49,8 @@ private def renderLinkNode
+     | some title => attrs.push ("title", title)
+     | none => attrs
+   match href? with
+-  | some href => .tag "a" (attrs.push ("href", href)) node
+-  | none => .tag "span" attrs node
++  | some href => .element "a" (attrs.push ("href", href)) node
++  | none => .element "span" attrs node
+ 
+ def renderResolved
+     (decl : Name)
+diff --git a/src/VersoBlueprint/Informal/RustBlock.lean b/src/VersoBlueprint/Informal/RustBlock.lean
+index d2b90c4..d09bc40 100644
+--- a/src/VersoBlueprint/Informal/RustBlock.lean
++++ b/src/VersoBlueprint/Informal/RustBlock.lean
+@@ -68,10 +68,11 @@ private def rustImpl : CodeBlockExpanderOf Informal.CodeConfig
+   | cfg, contents => do
+     let data : Informal.Rust.InlineCodeData := {
+       label := cfg.label
+-      raw := contents.getString
++      raw := contents.getVersoCodeBlock
+       foldCodeBlock := verso.blueprint.foldCodeBlocks.get (← getOptions)
+     }
+-    let some _ ← Environment.contribute cfg.label { rustCode := some { raw := contents.getString } }
++    let some _ ← Environment.contribute cfg.label
++      { rustCode := some { raw := contents.getVersoCodeBlock } }
+       | ``(Block.concat #[])
+     ``(Block.other (Block.informalRustCode $(quote data)) #[])
+ 
+diff --git a/src/VersoBlueprint/Informal/Uses.lean b/src/VersoBlueprint/Informal/Uses.lean
+index 414c33a..0b2509c 100644
+--- a/src/VersoBlueprint/Informal/Uses.lean
++++ b/src/VersoBlueprint/Informal/Uses.lean
+@@ -22,7 +22,7 @@ open Verso Doc Elab
+ open Verso.Genre Manual
+ open Verso.ArgParse
+ open Lean Lean.Elab
+-open Lean.Doc.Syntax
++open Lean.Doc.Parser
+ 
+ namespace Informal
+ 
+@@ -128,7 +128,7 @@ private def informalReferenceToHtml (renderPreview : PreviewResources.Render :=
+         | pure .empty
+       let some reference ← ExtensionDecode.report? (RenderingResolution.reference (← HtmlT.state) label)
+         | pure .empty
+-      let content ← if inlines.isEmpty then pure #[.text true reference.title] else inlines.mapM goI
++      let content ← if inlines.isEmpty then pure #[.text reference.title] else inlines.mapM goI
+       let labelText := label.toString (escape := false)
+       let node := match reference.href with
+         | some href => {{<a href={{href}} title={{labelText}}>{{content}}</a>}}
+diff --git a/src/VersoBlueprint/Lean.lean b/src/VersoBlueprint/Lean.lean
+index fad79cc..993a1a7 100644
+--- a/src/VersoBlueprint/Lean.lean
++++ b/src/VersoBlueprint/Lean.lean
+@@ -26,7 +26,7 @@ open Verso Doc Elab Genre.Manual
+ open Lean Elab
+ open SubVerso.Highlighting
+ 
+-open Verso.SyntaxUtils (parserInputString)
++open Verso.SyntaxUtils (strLitInputContext)
+ open Verso.Genre.Manual (warnLongLines)
+ open Verso.Genre.Manual.InlineLean (saveOutputs)
+ open Verso.Genre.Manual.InlineLean.Scopes (getScopes setScopes)
+@@ -105,7 +105,8 @@ private def quoteHighlightViaSerialization (hls : Highlighted) : DocElabM Term :
+     let repr := hlToExport hls
+     ``(hlFromExport! $(quote repr))
+ 
+-private def toHighlightedLeanBlock (shouldShow : Bool) (hls : Highlighted) (str: StrLit) : DocElabM Term := do
++private def toHighlightedLeanBlock (shouldShow : Bool) (hls : Highlighted)
++    (str : Lean.Doc.VersoCodeBlock) : DocElabM Term := do
+   if !shouldShow then
+     return ← ``(Block.concat #[])
+ 
+@@ -118,7 +119,7 @@ private def toHighlightedLeanBlock (shouldShow : Bool) (hls : Highlighted) (str:
+   let range := range.map (← getFileMap).utf8RangeToLspRange
+   ``(Block.other
+       (Verso.Genre.Manual.InlineLean.Block.lean $(← quoteHighlightViaSerialization hls) (some $(quote (← getFileName))) $(quote range))
+-      #[Block.code $(quote str.getString)])
++      #[Block.code $(quote str.getVersoCodeBlock)])
+ 
+ private def commandLineSpan (fileMap : FileMap) (stx : Syntax) : Nat :=
+   match stx.getRange? with
+@@ -293,9 +294,11 @@ private def cmdAnalysis (cmd : Syntax) (cmdIndex : Nat) : CmdAnalysis :=
+     refs
+   }
+ 
+-def elabCommands (config : LeanBlockConfig) (str : StrLit) : DocElabM ElabCommandResult :=
++def elabCommands (config : LeanBlockConfig) (str : Lean.Doc.VersoCodeBlock) :
++    DocElabM ElabCommandResult :=
+   withoutAsync <| do
+-    PointOfInterest.save (← getRef) ((config.name.map (·.toString)).getD (abbrevFirstLine 20 str.getString))
++    PointOfInterest.save (← getRef) ((config.name.map (·.toString)).getD
++      (abbrevFirstLine 20 str.getVersoCodeBlock))
+       (kind := Lsp.SymbolKind.file)
+       (detail? := some ("Lean code" ++ config.outlineMeta))
+ 
+@@ -303,15 +306,13 @@ def elabCommands (config : LeanBlockConfig) (str : StrLit) : DocElabM ElabComman
+     let shouldAnalyze := !inServer
+     let shouldHighlight := !inServer
+     let envBefore ← getEnv
+-    let col? := (← getRef).getPos? |>.map (← getFileMap).utf8PosToLspPos |>.map (·.character)
+     let origScopes := (← getScopes).modifyHead fun sc =>
+-      { sc with opts := pp.tagAppFns.set (Elab.async.set sc.opts false) true }
++      { sc with opts := pp.tagAppFns.set (Elab.async.set sc.opts false) true, isPublic := true }
+ 
+-    let altStr ← parserInputString str
+-    let ictx := Parser.mkInputContext altStr (← getFileName)
++    let (ictx, startPos) ← strLitInputContext str.raw (← getFileName)
+     let cctx : Command.Context := {
+       fileName := ← getFileName
+-      fileMap := FileMap.ofString altStr
++      fileMap := ← getFileMap
+       snap? := none
+       cancelTk? := none
+     }
+@@ -321,7 +322,7 @@ def elabCommands (config : LeanBlockConfig) (str : StrLit) : DocElabM ElabComman
+       maxRecDepth := ← MonadRecDepth.getMaxRecDepth
+       scopes := origScopes
+     }
+-    let mut pstate := {pos := 0, recovering := false}
++    let mut pstate := {pos := startPos, recovering := false, hasLeading := false}
+     let mut cmds := #[]
+     let mut cmdAnalyses : Array CmdAnalysis := #[]
+     let mut cmdIndex := 0
+@@ -363,7 +364,7 @@ def elabCommands (config : LeanBlockConfig) (str : StrLit) : DocElabM ElabComman
+           lastPos := (cmd.getTrailingTailPos?).getD lastPos
+         pure hls
+       else
+-        pure <| Highlighted.text str.getString
++        pure <| Highlighted.text str.getVersoCodeBlock
+ 
+     if let some name := config.name then
+       let nonSilentMsgs := cmdState.messages.toList.filter (!·.isSilent)
+@@ -372,7 +373,7 @@ def elabCommands (config : LeanBlockConfig) (str : StrLit) : DocElabM ElabComman
+ 
+     reportMessages cmdState.messages
+     if config.show then
+-      warnLongLines col? str
++      warnLongLines str
+ 
+     let block ← toHighlightedLeanBlock config.show hls str
+     let (definedDefs, definedTheorems) ←
+diff --git a/src/VersoBlueprint/Lib/HoverRender.lean b/src/VersoBlueprint/Lib/HoverRender.lean
+index 04f9152..4981956 100644
+--- a/src/VersoBlueprint/Lib/HoverRender.lean
++++ b/src/VersoBlueprint/Lib/HoverRender.lean
+@@ -237,7 +237,7 @@ def summaryPreviewWrap
+         if let some previewKey := previewLookupKey? then
+           attrs := attrs.push ("data-bp-preview-key", previewKey)
+         pure attrs
+-      .tag "span" attrs labelNode
++      .element "span" attrs labelNode
+   | none => {{
+       <span class="bp_summary_preview_wrap">
+         {{labelNode}}
+@@ -331,7 +331,7 @@ def inlinePreviewRef
+     (previewHeaderHref? : Option String := none)
+     (previewFooterHtml? : Option String := none) :
+     Verso.Output.Html :=
+-  .tag "span"
++  .element "span"
+     (inlinePreviewRefAttrs previewId previewTitle previewLookupKey? previewHeaderLabel?
+       previewHeaderHref? previewFooterHtml?)
+     node
+diff --git a/src/VersoBlueprint/Lib/PreviewResources.lean b/src/VersoBlueprint/Lib/PreviewResources.lean
+index ba66f3c..3c281b1 100644
+--- a/src/VersoBlueprint/Lib/PreviewResources.lean
++++ b/src/VersoBlueprint/Lib/PreviewResources.lean
+@@ -25,7 +25,7 @@ private def marker := "verso-blueprint-preview-choice"
+ /-- Retain both presentations until resource availability is known. There is no
+ mutable session, side table, or function stored in the resulting fragment. -/
+ def deferred : Render := fun key present absent =>
+-  .tag marker #[("key", key.value)] (.seq #[present (), absent ()])
++  .element marker #[("key", key.value)] (.seq #[present (), absent ()])
+ 
+ /-- Blank text under the browser cache's `String.trim()` contract. Includes
+ ECMAScript whitespace and line terminators, including nonbreaking space and BOM. -/
+@@ -39,9 +39,9 @@ def textIsBlank (text : String) : Bool :=
+ /-- Recognize blank fragments structurally, without serializing choices.
+ Finalization rejects choices whose branches disagree about body presence. -/
+ partial def htmlIsBlank : Html → Bool
+-  | .text _ text => textIsBlank text
++  | .text text | .raw text => textIsBlank text
+   | .seq children => children.all htmlIsBlank
+-  | .tag name attrs contents =>
++  | .element name attrs contents =>
+     if name != marker then false
+     else
+       match attrs, contents with
+@@ -55,9 +55,10 @@ selected path or branches that disagree about body presence are diagnosed.
+ Discarded alternatives are not recursively validated. Raw HTML stays opaque.
+ The result still has type `Html`: callers must enforce this serialization boundary. -/
+ partial def finish (available : PreviewKey → Bool) : Html → Except String Html
+-  | .text escape text => pure (.text escape text)
++  | .text text => pure (.text text)
++  | .raw text => pure (.raw text)
+   | .seq children => .seq <$> children.mapM (finish available)
+-  | .tag name attrs contents => do
++  | .element name attrs contents => do
+     if name == marker then
+       let (#[ ("key", key) ], .seq #[present, absent]) := (attrs, contents)
+         | throw "Malformed Blueprint preview choice"
+@@ -67,6 +68,6 @@ partial def finish (available : PreviewKey → Bool) : Html → Except String Ht
+         | throw "Empty Blueprint preview choice key"
+       finish available (if available key then present else absent)
+     else
+-      return .tag name attrs (← finish available contents)
++      return .element name attrs (← finish available contents)
+ 
+ end Informal.PreviewResources
+diff --git a/src/VersoBlueprint/Math.lean b/src/VersoBlueprint/Math.lean
+index a5a7027..4cc3226 100644
+--- a/src/VersoBlueprint/Math.lean
++++ b/src/VersoBlueprint/Math.lean
+@@ -17,7 +17,7 @@ open Verso.Genre Manual
+ namespace Informal.Math
+ 
+ open Lean Elab Syntax
+-open Lean.Doc.Syntax
++open Lean.Doc.Parser
+ 
+ instance : Quote MathMode where
+   quote
+@@ -58,15 +58,18 @@ private def isDisplayMathSource (source : String) : Bool :=
+ 
+ /-- Narrow the warning site from the whole math literal down to the offending source slice when possible. -/
+ private def lintWarningRef? [Monad m] [MonadFileMap m]
+-    (ref : TSyntax `str) (failure : Informal.MathLint.Failure) : m (Option Syntax) := do
++    (ref : Syntax) (source : String) (failure : Informal.MathLint.Failure) : m (Option Syntax) := do
+   let some sourceSpan := (match failure.site with
+     | .source source _katexInput => some source
+     | _ => none)
+     | return none
+   let fileMap ← getFileMap
+-  let some range := ref.raw.getRange?
++  let some range := ref.getRange?
+     | return none
+   let rawSource := range.start.extract fileMap.source range.stop
++  -- Indentation or delimiter normalization can change a token's contents. Keep
++  -- the whole-token warning when the decoded text is not this exact source slice.
++  unless rawSource == source do return none
+   let some (localStart, localStop) := Informal.MathLint.inlineCodeRawRangeOfDecodedSpan? rawSource sourceSpan
+     | return none
+   let start := range.start.offsetBy localStart
+@@ -76,7 +79,7 @@ private def lintWarningRef? [Monad m] [MonadFileMap m]
+ /-- Run the KaTeX lint check during elaboration and log a warning immediately instead of waiting for final HTML render. -/
+ private def lintBpMathTerm [Monad m] [MonadLiftT IO m] [MonadOptions m]
+     [MonadRef m] [MonadLog m] [AddMessageContext m] [MonadFileMap m]
+-    (ref : TSyntax `str) (mode : MathMode) (source texPrelude : String) : m Unit := do
++    (ref : Syntax) (mode : MathMode) (source texPrelude : String) : m Unit := do
+   unless Informal.MathLint.enabled (← getOptions) do
+     return
+   let lintMode :=
+@@ -85,7 +88,7 @@ private def lintBpMathTerm [Monad m] [MonadLiftT IO m] [MonadOptions m]
+     | .display => Informal.MathLint.Mode.display
+   match ← liftM <| Informal.MathLint.lint? { mode := lintMode, source, texPrelude } with
+   | some failure =>
+-    let warningRef ← lintWarningRef? ref failure
++    let warningRef ← lintWarningRef? ref source failure
+     logWarningAt (warningRef.getD ref) failure.toMessageData
+   | none => pure ()
+ 
+@@ -132,7 +135,7 @@ inline_extension Inline.bpMath (data : BpMathData) where
+           #[("class", mathClasses mode)]
+         else
+           #[("class", mathClasses mode), ("data-bp-tex-prelude-id", "default")]
+-      pure <| .tag "code" attrs (.text true source)
++      pure <| .element "code" attrs (.text source)
+ 
+ /-- Build the serialized inline node shared by both the plain and linted elaboration paths. -/
+ private def mkBpMathInlineTermCore [Monad m] [MonadQuotation m]
+@@ -153,21 +156,25 @@ def mkBpMathInlineTerm [Monad m] [MonadEnv m] [MonadQuotation m]
+ def mkBpMathInlineTermLinted [Monad m] [MonadEnv m] [MonadQuotation m]
+     [MonadLiftT IO m] [MonadOptions m] [MonadRef m] [MonadLog m] [AddMessageContext m]
+     [MonadFileMap m]
+-    (ref : TSyntax `str) (mode : MathMode) (source : String) : m (TSyntax `term) := do
++    (ref : Syntax) (mode : MathMode) (source : String) : m (TSyntax `term) := do
+   let texPrelude ← Informal.Macros.getTexPrelude
+   lintBpMathTerm ref mode source texPrelude
+   mkBpMathInlineTermCore mode source texPrelude
+ 
+-@[inline_expander Lean.Doc.Syntax.inline_math]
++@[inline_expander Lean.Doc.Parser.Inline.inline_math]
+ public meta def _root_.Informal.Math.inlineMathExpand : InlineExpander
+-  | `(inline| \math code( $s )) =>
+-    mkBpMathInlineTermLinted s .inline s.getString
++  | .math view =>
++    match view.mode with
++    | .inline => mkBpMathInlineTermLinted view.code.content .inline view.getVersoCode
++    | .display => Lean.Elab.throwUnsupportedSyntax
+   | _ => Lean.Elab.throwUnsupportedSyntax
+ 
+-@[inline_expander Lean.Doc.Syntax.display_math]
++@[inline_expander Lean.Doc.Parser.Inline.display_math]
+ public meta def _root_.Informal.Math.displayMathExpand : InlineExpander
+-  | `(inline| \displaymath code( $s )) =>
+-    mkBpMathInlineTermLinted s .display s.getString
++  | .math view =>
++    match view.mode with
++    | .display => mkBpMathInlineTermLinted view.code.content .display view.getVersoCode
++    | .inline => Lean.Elab.throwUnsupportedSyntax
+   | _ => Lean.Elab.throwUnsupportedSyntax
+ 
+ end Informal.Math
+diff --git a/src/VersoBlueprint/MathLint.lean b/src/VersoBlueprint/MathLint.lean
+index feec877..b4b3061 100644
+--- a/src/VersoBlueprint/MathLint.lean
++++ b/src/VersoBlueprint/MathLint.lean
+@@ -148,12 +148,10 @@ private def mkSpan? (start? length? : Option Nat) : Option Span := do
+   pure { start, length }
+ 
+ /--
+-Map a decoded span back onto the raw inline-code contents parsed by Verso.
++Map a character span to byte positions in literal inline-code contents.
+ 
+-We cannot recover the raw source slice with `offsetBy` alone because KaTeX reports positions in the
+-decoded string, while the original inline-code text may contain width-changing escapes. In Verso
+-inline code, only `\``, `\\`, and `\n` collapse to a single decoded character; ordinary TeX
+-backslashes like `\alpha` still occupy source text one-for-one.
++Verso code tokens preserve backslashes. The caller must check that the token's decoded contents
++equal this source slice; normalized indentation requires falling back to the whole token instead.
+ -/
+ def inlineCodeRawRangeOfDecodedSpan? (rawSource : String) (span : Span) :
+     Option (String.Pos.Raw × String.Pos.Raw) := Id.run do
+@@ -167,23 +165,8 @@ def inlineCodeRawRangeOfDecodedSpan? (rawSource : String) (span : Span) :
+       startPos? := some pos
+     if stopPos?.isNone && decodedIndex == stop then
+       stopPos? := some pos
+-    let c := pos.get rawSource
+-    let nextPos := pos.next rawSource
+-    if c == '\\' then
+-      if nextPos.atEnd rawSource then
+-        pos := nextPos
+-        decodedIndex := decodedIndex + 1
+-      else
+-        let escaped := nextPos.get rawSource
+-        if escaped == '`' || escaped == '\\' || escaped == 'n' then
+-          pos := nextPos.next rawSource
+-          decodedIndex := decodedIndex + 1
+-        else
+-          pos := nextPos
+-          decodedIndex := decodedIndex + 1
+-    else
+-      pos := nextPos
+-      decodedIndex := decodedIndex + 1
++    pos := pos.next rawSource
++    decodedIndex := decodedIndex + 1
+   if startPos?.isNone && decodedIndex == span.start then
+     startPos? := some pos
+   if stopPos?.isNone && decodedIndex == stop then
+diff --git a/src/VersoBlueprint/ModuleInclude.lean b/src/VersoBlueprint/ModuleInclude.lean
+index 0407fd0..4a8ac66 100644
+--- a/src/VersoBlueprint/ModuleInclude.lean
++++ b/src/VersoBlueprint/ModuleInclude.lean
+@@ -70,9 +70,11 @@ the named imported Lean module as a source-ordered Manual part. The optional lea
+ level controls where the part is inserted; omitting it creates a child part.
+ Use {lit}`(title := "...")` to replace the default final module-name component.
+ -/
+-@[part_command Lean.Doc.Syntax.command]
++@[part_command Lean.Doc.Parser.Block.command]
+ public meta def includeBlueprintModuleCmd : PartCommand
+-  | stx@`(block|command{includeBlueprintModule $args*}) => do
++  | .command view => do
++    unless view.name.getId == `includeBlueprintModule do Lean.Elab.throwUnsupportedSyntax
++    let stx := view.stx.raw
+     let ref ← getRef
+     Hover.addCustomHover ref
+       r#"Includes merged Blueprint nodes whose labels have attribute applications in the named imported Lean module, as one Manual part.
+@@ -83,7 +85,7 @@ public meta def includeBlueprintModuleCmd : PartCommand
+ 
+ The named module must already be available through the document module's Lean imports.
+   "#
+-    let cfg ← Verso.ArgParse.parseThe BlueprintModuleConfig (← parseArgs args)
++    let cfg ← Verso.ArgParse.parseThe BlueprintModuleConfig (← parseArgs view.args)
+     let endPos := stx.getTailPos?.get!
+     let part ← mkBlueprintModulePart stx endPos cfg
+     if let some level := cfg.level? then
+diff --git a/src/VersoBlueprint/PreviewManifest.lean b/src/VersoBlueprint/PreviewManifest.lean
+index c82e968..e2087d1 100644
+--- a/src/VersoBlueprint/PreviewManifest.lean
++++ b/src/VersoBlueprint/PreviewManifest.lean
+@@ -512,17 +512,17 @@ def readBuildMetadata : IO BuildMetadata := do
+ private def buildMetadataLabelHtml (label : String) (href? : Option String) : Output.Html :=
+   match href? with
+   | some href =>
+-      Output.Html.tag "a"
++      Lean.Html.element "a"
+         #[("class", "bp_build_metadata_label bp_build_metadata_link"), ("href", href)]
+         (VersoBlueprint.Html.text label)
+   | none =>
+-      Output.Html.tag "span" #[("class", "bp_build_metadata_label")] (VersoBlueprint.Html.text label)
++      Lean.Html.element "span" #[("class", "bp_build_metadata_label")] (VersoBlueprint.Html.text label)
+ 
+ private def buildMetadataCodeHtml (value : String) (href? : Option String) : Output.Html :=
+-  let code := Output.Html.tag "code" #[("class", "bp_build_metadata_commit")] (VersoBlueprint.Html.text value)
++  let code := Lean.Html.element "code" #[("class", "bp_build_metadata_commit")] (VersoBlueprint.Html.text value)
+   match href? with
+   | some href =>
+-      Output.Html.tag "a" #[("class", "bp_build_metadata_commit_link"), ("href", href)] code
++      Lean.Html.element "a" #[("class", "bp_build_metadata_commit_link"), ("href", href)] code
+   | none => code
+ 
+ def buildMetadataHtml (metadata : BuildMetadata) : Output.Html :=
+@@ -563,7 +563,7 @@ def buildMetadataHtml (metadata : BuildMetadata) : Output.Html :=
+   }}
+ 
+ def buildMetadataHtmlString (metadata : BuildMetadata) : String :=
+-  Output.Html.asString <| buildMetadataHtml metadata
++  Lean.Html.render <| buildMetadataHtml metadata
+ 
+ def insertBuildMetadataHtml? (html metadataHtml : String) : Option String :=
+   if html.contains "class=\"bp_build_metadata\"" then
+@@ -1122,10 +1122,11 @@ def File.findHtml? (file : File) (key : String) : Option String :=
+ 
+ def initialHoverState : Verso.Code.Hover.State Output.Html :=
+   { dedup := { ({} : Verso.Code.Hover.Dedup Output.Html) with nextId := hoverIdStart }
+-    idSupply := {} }
++    idSupply := {}
++    tokenHovers := {} }
+ 
+ def HoverDoc.toHtml (doc : HoverDoc) : Output.Html :=
+-  Output.Html.text false doc.html
++  Lean.Html.raw doc.html
+ 
+ def File.hoverDocsJson (file : File) : Json :=
+   file.hoverDocs.foldl (init := Json.mkObj []) fun out doc =>
+@@ -1145,7 +1146,8 @@ def File.hoverDedup (file : File) : Verso.Code.Hover.Dedup Output.Html :=
+ 
+ def File.hoverState (file : File) : Verso.Code.Hover.State Output.Html :=
+   { dedup := file.hoverDedup
+-    idSupply := {} }
++    idSupply := {}
++    tokenHovers := {} }
+ 
+ /--
+ Rendered Lean-code preview keys and bodies, deduplicated by preview identity.
+@@ -2155,7 +2157,7 @@ private def buildTraversalEntries
+             continue
+           pure html
+         else
+-          pure (externalBody?.getD (.text false codeOnlyBlockPreviewHtml))
++          pure (externalBody?.getD (.raw codeOnlyBlockPreviewHtml))
+       let manifestEntry := { blockEntryOfFacet state resolved with
+         codeOnlyPreview := !entry.hasRenderedBody && externalBody?.isNone }
+       entries := entries.push manifestEntry
+@@ -2207,7 +2209,7 @@ private def buildExternalMarkupEntries
+         let heading := manifestEntry.heading
+         if let some html := renderExternalMarkupEntryHtml renderConfig manifestEntry.blockData
+             heading.caption heading.label markup manifestEntry.externalMarkup manifestEntry.sources then
+-          htmlEntries := htmlEntries.push { key := manifestEntry.key, html := .text false html }
++          htmlEntries := htmlEntries.push { key := manifestEntry.key, html := .raw html }
+   pure (entries, htmlEntries)
+ 
+ private def declarationRangeToLspRange (range : Lean.DeclarationRange) : Lean.Lsp.Range := {
+@@ -2475,12 +2477,12 @@ def buildPreviewDataFiles
+     let html ← match resolve entry.html with
+       | .ok html => pure html
+       | .error error => throw (IO.userError s!"Blueprint resource {entry.key}: {error}")
+-    pure ({ key := entry.key, html := html.asString } : HtmlCache.Entry)
++    pure ({ key := entry.key, html := html.render } : HtmlCache.Entry)
+   let hoverDocs ← hoverState.dedup.contentId.toArray.mapM fun (id, html) => do
+     let html ← match resolve html with
+       | .ok html => pure html
+       | .error error => throw (IO.userError s!"Blueprint hover {id}: {error}")
+-    pure ({ id, html := html.asString } : HtmlCache.HoverDoc)
++    pure ({ id, html := html.render } : HtmlCache.HoverDoc)
+   if verbose then
+     let serializeFinish ← IO.monoMsNow
+     let bytes := resolvedEntries.foldl (fun n entry => n + entry.html.utf8ByteSize) 0
+diff --git a/src/VersoBlueprint/PreviewManifest/BlockRender.lean b/src/VersoBlueprint/PreviewManifest/BlockRender.lean
+index 460af8a..0260a22 100644
+--- a/src/VersoBlueprint/PreviewManifest/BlockRender.lean
++++ b/src/VersoBlueprint/PreviewManifest/BlockRender.lean
+@@ -19,7 +19,7 @@ open Verso.Output.Html
+ 
+ /-- Re-inject already-rendered HTML fragments as HTML, not escaped text. -/
+ def htmlFragment (html : String) : Html :=
+-  .text false html
++  .raw html
+ 
+ /-- Related-entry panel positions available in a preview-data-backed block header. -/
+ inductive RelationPanelKind where
+@@ -152,7 +152,7 @@ private def renderCodePanel
+       { source := content.codeData.nonempty? }
+       (fun _ => none)
+     let codeHtml := .seq content.codeBodies
+-    let body := Html.tag "div" (Informal.htmlClassAttrs cfg.codeBodyClass) codeHtml
++    let body := Lean.Html.element "div" (Informal.htmlClassAttrs cfg.codeBodyClass) codeHtml
+     let header := if entry.facet == .proof then Informal.proofReferencesPanelHeader else
+       { caption := s!"Lean code for {title.caption}", number? := some title.label }
+     Informal.mkCodePanel
+diff --git a/src/VersoBlueprint/PreviewManifest/ExternalMarkupRender.lean b/src/VersoBlueprint/PreviewManifest/ExternalMarkupRender.lean
+index 6c14cbd..728e30a 100644
+--- a/src/VersoBlueprint/PreviewManifest/ExternalMarkupRender.lean
++++ b/src/VersoBlueprint/PreviewManifest/ExternalMarkupRender.lean
+@@ -34,6 +34,6 @@ def renderExternalMarkupEntryHtml
+     content
+     wrapperClass? := some "bp_preview_data_node_blueprint bp_external_markup_node"
+   }
+-  some <| Verso.Output.Html.asString html
++  some <| Lean.Html.render html
+ 
+ end Informal.PreviewManifest
+diff --git a/src/VersoBlueprint/Rust.lean b/src/VersoBlueprint/Rust.lean
+index 8707e06..a0f058a 100644
+--- a/src/VersoBlueprint/Rust.lean
++++ b/src/VersoBlueprint/Rust.lean
+@@ -72,9 +72,9 @@ private def isIdentRest (c : Char) : Bool :=
+ 
+ private def tokenNode (cls txt : String) : Verso.Output.Html :=
+   if cls.isEmpty then
+-    Verso.Output.Html.text true txt
++    Lean.Html.text txt
+   else
+-    Verso.Output.Html.tag "span" #[("class", cls)] (Verso.Output.Html.text true txt)
++    Lean.Html.element "span" #[("class", cls)] (Lean.Html.text txt)
+ 
+ private def classifyIdent (txt : String) : String :=
+   if keywordSet.contains txt then
+@@ -152,8 +152,8 @@ def highlightHtml (source : String) : Verso.Output.Html :=
+         out := out.push <| tokenNode "bp_rust_num" (pos.extract source stop)
+         pos := stop
+       else
+-        out := out.push <| Verso.Output.Html.text true (pos.extract source nextPos)
++        out := out.push <| Lean.Html.text (pos.extract source nextPos)
+         pos := nextPos
+-    return Verso.Output.Html.tag "pre" #[("class", "bp_external_decl_stmt hl rust block bp_rust_code")] (Verso.Output.Html.seq out)
++    return Lean.Html.element "pre" #[("class", "bp_external_decl_stmt hl rust block bp_rust_code")] (Verso.Output.Html.seq out)
+ 
+ end Informal.Rust
+diff --git a/src/VersoBlueprint/Slides.lean b/src/VersoBlueprint/Slides.lean
+index b59902b..f4ed981 100644
+--- a/src/VersoBlueprint/Slides.lean
++++ b/src/VersoBlueprint/Slides.lean
+@@ -95,14 +95,14 @@ private def slidesMainWithBlueprintRenderer
+   let render : Verso.Doc.Html.HtmlT VersoSlides.Slides (Verso.BuildLogT IO) Verso.Output.Html :=
+     VersoSlides.renderDocument config doc
+   let (slidesHtml, hoverState) ←
+-    ((render.run ctx).run initialHoverState).run logger
++    (render.run ctx initialHoverState).run logger
+   let title := VersoSlides.inlinesToPlainText doc.title
+   let fullHtml := VersoSlides.renderFullHtml config title slidesHtml traverseState.cssBlocks
+   let dir := config.outputDir
+   if !(← dir.pathExists) then
+     IO.FS.createDirAll dir
+   let indexPath := dir / "index.html"
+-  IO.FS.writeFile indexPath ("<!doctype html>\n" ++ fullHtml.asString)
++  IO.FS.writeFile indexPath ("<!doctype html>\n" ++ fullHtml.render)
+   IO.FS.writeFile (dir / "-verso-docs.json") (toString hoverState.dedup.docJson)
+   VersoSlides.writeVendoredAssets dir config.theme
+   writeSlideAssets dir assetPlan
+diff --git a/src/VersoBlueprint/Slides/Render.lean b/src/VersoBlueprint/Slides/Render.lean
+index f657dda..0a2e17e 100644
+--- a/src/VersoBlueprint/Slides/Render.lean
++++ b/src/VersoBlueprint/Slides/Render.lean
+@@ -42,7 +42,7 @@ private def slideNodeAttrs (node : Informal.Graft.BlueprintNode) : Array (String
+   renderedBlueprintNodeAttrs node
+ 
+ private def renderMissingNode (node : Informal.Graft.BlueprintNode) (title detail : String) : Html :=
+-  .tag "div" (slideNodeAttrs node) <|
++  .element "div" (slideNodeAttrs node) <|
+     Informal.Graft.renderNotice "bp_slide_node_notice" "error" title detail
+ 
+ private def slideManifestRenderConfig : Informal.Graft.ManifestRenderConfig :=
+diff --git a/src/VersoBlueprint/Source.lean b/src/VersoBlueprint/Source.lean
+index a64425e..cf4310b 100644
+--- a/src/VersoBlueprint/Source.lean
++++ b/src/VersoBlueprint/Source.lean
+@@ -56,14 +56,14 @@ block_extension Block.sourceDocument (document : Document) where
+     some <| fun _ _ _ _ _ => pure .empty
+ 
+ private def reportUnexpectedSourceDocumentBlock
+-    (cfg : DocumentConfig) (block : TSyntax `block) : DocElabM Unit := do
++    (cfg : DocumentConfig) (block : Lean.Doc.VersoBlock) : DocElabM Unit := do
+   if ← Metadata.isMetadataBlock block then
+     logErrorAt block m!"Source document '{cfg.id}' has an extra metadata block; source_document directives accept exactly one leading metadata block"
+   else
+     logErrorAt block m!"Source document '{cfg.id}' has unexpected body content; source_document directives accept exactly one metadata block and no visible body"
+ 
+ private def sourceDocumentMetadataTerm
+-    (cfg : DocumentConfig) (contents : Array (TSyntax `block)) :
++    (cfg : DocumentConfig) (contents : Array (Lean.Doc.VersoBlock)) :
+     DocElabM (Option (TSyntax `term)) := do
+   let leading ← Metadata.splitLeadingMetadata contents
+   match leading.term? with
+diff --git a/src/VersoBlueprint/Source/Metadata.lean b/src/VersoBlueprint/Source/Metadata.lean
+index 47e35eb..569a7ce 100644
+--- a/src/VersoBlueprint/Source/Metadata.lean
++++ b/src/VersoBlueprint/Source/Metadata.lean
+@@ -11,28 +11,26 @@ namespace Informal.Source.Metadata
+ 
+ open Lean Elab Term
+ open Verso Doc Elab
+-open Lean.Doc.Syntax
++open Lean.Doc.Parser
+ 
+ /-- Reconstruct the Lean structure-initializer term carried by a Verso metadata block. -/
+-def metadataTerm? (block : TSyntax `block) : DocElabM (Option (TSyntax `term)) := do
+-  match block with
+-  | `(block|%%%%$_ $fieldOrAbbrev* %%%%$_) =>
+-      return some (← `(term| { $fieldOrAbbrev* }))
+-  | _ =>
+-      return none
++def metadataTerm? (block : Lean.Doc.VersoBlock) : DocElabM (Option (TSyntax `term)) := do
++  let some view := Lean.Doc.MetadataView.of block | return none
++  let fields := view.fields
++  return some ⟨(← `(Lean.Parser.Term.structInst| { $[$fields],* })).raw⟩
+ 
+-def isMetadataBlock (block : TSyntax `block) : DocElabM Bool := do
++def isMetadataBlock (block : Lean.Doc.VersoBlock) : DocElabM Bool := do
+   return (← metadataTerm? block).isSome
+ 
+ structure LeadingMetadata where
+   term? : Option (TSyntax `term) := none
+-  body : Array (TSyntax `block) := #[]
++  body : Array (Lean.Doc.VersoBlock) := #[]
+ 
+ /--
+ Split off the optional leading metadata block used by Blueprint source syntax.
+ The remaining blocks stay in original order so callers can render or reject them.
+ -/
+-def splitLeadingMetadata (contents : Array (TSyntax `block)) : DocElabM LeadingMetadata := do
++def splitLeadingMetadata (contents : Array (Lean.Doc.VersoBlock)) : DocElabM LeadingMetadata := do
+   match contents[0]? with
+   | some first =>
+       match ← metadataTerm? first with
+@@ -43,9 +41,9 @@ def splitLeadingMetadata (contents : Array (TSyntax `block)) : DocElabM LeadingM
+ 
+ /-- Keep visible blocks while letting callers report metadata that appears too late. -/
+ def visibleBlocksWithoutMetadata
+-    (contents : Array (TSyntax `block))
+-    (onMetadataBlock : TSyntax `block → DocElabM Unit) :
+-    DocElabM (Array (TSyntax `block)) := do
++    (contents : Array (Lean.Doc.VersoBlock))
++    (onMetadataBlock : Lean.Doc.VersoBlock → DocElabM Unit) :
++    DocElabM (Array (Lean.Doc.VersoBlock)) := do
+   let mut body := #[]
+   for block in contents do
+     if ← isMetadataBlock block then
+diff --git a/src/VersoBlueprint/Widget.lean b/src/VersoBlueprint/Widget.lean
+index b975a6d..38a2f60 100644
+--- a/src/VersoBlueprint/Widget.lean
++++ b/src/VersoBlueprint/Widget.lean
+@@ -168,8 +168,8 @@ def blueprintWidget : Component GraphParams where
+           if (typeof node === 'string') return node;
+           if (Array.isArray(node)) return node.map(extractText).join('');
+           if (!node || typeof node !== 'object') return '';
+-          if (typeof node.raw === 'string') return node.raw;
+-          if (typeof node.tag === 'string') return extractText(node.content);
++          if (typeof node.r === 'string') return node.r;
++          if (typeof node.t === 'string') return extractText(node.c);
+           return '';
+         };
+         const renderHtml = (node, key = 'root') => {
+@@ -184,23 +184,23 @@ def blueprintWidget : Component GraphParams where
+           if (!node || typeof node !== 'object') {
+             return React.createElement('span', { key }, String(node));
+           }
+-          if (typeof node.raw === 'string') {
+-            return React.createElement('span', { key, dangerouslySetInnerHTML: { __html: node.raw } });
++          if (typeof node.r === 'string') {
++            return React.createElement('span', { key, dangerouslySetInnerHTML: { __html: node.r } });
+           }
+-          if (typeof node.tag === 'string') {
++          if (typeof node.t === 'string') {
+             const props = { key };
+-            const attrs = Array.isArray(node.attrs) ? node.attrs : [];
+-            const classAttr = attrs.find(a => a && a.name === 'class');
+-            const classes = typeof classAttr?.value === 'string' ? classAttr.value : '';
+-            if (node.tag === 'code' && classes.includes('bp_math')) {
+-              const tex = extractText(node.content);
++            const attrs = Array.isArray(node.a) ? node.a : [];
++            const classAttr = attrs.find(a => Array.isArray(a) && a[0] === 'class');
++            const classes = typeof classAttr?.[1] === 'string' ? classAttr[1] : '';
++            if (node.t === 'code' && classes.includes('bp_math')) {
++              const tex = extractText(node.c);
+               const displayMode = classes.includes('display');
+               const preludeTable =
+                 window.bpTexPreludeTable && typeof window.bpTexPreludeTable === 'object'
+                   ? window.bpTexPreludeTable
+                   : {};
+-              const preludeIdAttr = attrs.find(a => a && a.name === 'data-bp-tex-prelude-id');
+-              const preludeId = typeof preludeIdAttr?.value === 'string' ? preludeIdAttr.value.trim() : '';
++              const preludeIdAttr = attrs.find(a => Array.isArray(a) && a[0] === 'data-bp-tex-prelude-id');
++              const preludeId = typeof preludeIdAttr?.[1] === 'string' ? preludeIdAttr[1].trim() : '';
+               const prelude =
+                 preludeId.length > 0 && typeof preludeTable[preludeId] === 'string'
+                   ? preludeTable[preludeId].trim()
+@@ -216,11 +216,11 @@ def blueprintWidget : Component GraphParams where
+               });
+             }
+             for (const attr of attrs) {
+-              if (!attr || typeof attr.name !== 'string') continue;
+-              const name = attr.name === 'class' ? 'className' : attr.name;
+-              props[name] = typeof attr.value === 'string' ? attr.value : '';
++              if (!Array.isArray(attr) || typeof attr[0] !== 'string') continue;
++              const name = attr[0] === 'class' ? 'className' : attr[0];
++              props[name] = typeof attr[1] === 'string' ? attr[1] : '';
+             }
+-            return React.createElement(node.tag, props, renderHtml(node.content, `${key}-content`));
++            return React.createElement(node.t, props, renderHtml(node.c, `${key}-content`));
+           }
+           return React.createElement('code', { key }, JSON.stringify(node));
+         };

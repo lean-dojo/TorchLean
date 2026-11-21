@@ -8,7 +8,7 @@ module
 public import TorchLean.Tensor.Cumulative
 public import TorchLean.Tensor.Sort
 public meta import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension
+public import FloatLib.Tactic.Roundoff.Extension
 
 /-!
 # Cumulative reductions and sorting for `roundoff`

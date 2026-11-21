@@ -35,8 +35,9 @@ implements, and a stronger claim needs one of the theorems named below.
   verdict. Both are library APIs with no `scripts/lake.sh exe verify` command.
 - `Coverage/`: the `#roundoff_coverage` runs over the operator specifications, by family
   (elementwise, indexing, layers, losses, ordering, pointwise, tensor composites and tensor
-  operations) and for the structure specifications and tape operations. Each run declares a
-  theorem for every route it proves.
+  operations), for the structure specifications and tape operations, and for the scalar and
+  tensor functions of `TorchLean/NN/RL/` and `TorchLean/NN/Optimizer/` (`Coverage/Training.lean`).
+  Each run declares a theorem for every route it proves.
 - [`Floats/`](Floats/README.md): the rounded-real binary32 model `FP32` and finite configured
   arithmetic for reduction proofs (`Floats/IEEE754.lean`).
 - [`LibTorch/`](LibTorch/README.md): the agreement contract for native LibTorch arithmetic in the
@@ -88,7 +89,7 @@ TorchLean verification work has five recurring shapes.
 
 4. A theorem-backed fragment connects the executable checker to a mathematical statement. A checked
    artifact then becomes part of a formal claim, with the Lean hypotheses and the producer
-   assumptions left open visible at the call site.
+   assumptions visible at the call site.
 
 5. A domain-specific checker tests a smaller artifact predicate: projected-corner containment,
    ODE corridor inequalities, PINN residual bounds, or a classifier margin derived from computed
@@ -113,7 +114,9 @@ checks that output `label` stays strictly above every other output:
 ```lean
 -- Inside a `do` block, with a `trainer`, a `dataset` and an input `center`:
 let trained ← trainer.train dataset { steps := 120 }
-let report ← trained.verify center (radius := 0.10) (property := .topLabel 0)
+let report ← trained.verify center
+  (radius := 0.10)
+  (property := .topLabel 0)
 report.printSummary
 ```
 

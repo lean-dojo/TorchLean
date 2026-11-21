@@ -36,14 +36,15 @@ theorem Node.plan?_eq_some {policy : KernelPolicy} {impls : Array Implementation
   split at h
   · simp [pure, Except.pure] at h
   · simp [pure, Except.pure] at h
-  · simp [pure, Except.pure] at h
-  · rename_i ins outs o refs _
-    cases hp : planOp policy impls o with
-    | error e => simp [hp, bind, Except.bind] at h
-    | ok pk =>
-      simp only [hp, bind, Except.bind, pure, Except.pure, Except.ok.injEq,
-        Option.some.injEq] at h
-      exact ⟨ins, outs, o, refs, pk, rfl, hp, h.symm⟩
+  · rename_i ins outs o refs
+    split_ifs at h
+    · simp [pure, Except.pure] at h
+    · cases hp : planOp policy impls o with
+      | error e => simp [hp, bind, Except.bind] at h
+      | ok pk =>
+        simp only [hp, bind, Except.bind, pure, Except.pure, Except.ok.injEq,
+          Option.some.injEq] at h
+        exact ⟨ins, outs, o, refs, pk, rfl, hp, h.symm⟩
 
 /-- An entry of a successful `filterMapM` in `Except` is the result of `f` at an element. -/
 private theorem mem_of_filterMapM_eq_ok {α β : Type} {f : α → Except String (Option β)} :

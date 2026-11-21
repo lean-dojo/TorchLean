@@ -15,7 +15,9 @@ public import TorchLeanTest.Harness
 `run` checks that `TorchLean.Json.parseNatStrict`, the reader of integer fields in rollout JSON
 written by an external process, accepts a number only when its decimal value is the integer it
 returns. `1.00`, `1e3`, `2^53` and the largest `UInt64` pass. Fractions, a fractional tail that
-`Float` loses, `2^53 + 1`, `2^64`, negative numbers and tiny exponents are refused.
+`Float` loses, `2^53 + 1`, `2^64`, negative numbers and tiny exponents are refused. It also checks
+that Lean's `Json.parse`, which `TorchLean.Json.readFile` and the RL clients use, refuses an object
+that repeats a key, at the top level and nested, where Lean 4.35 kept the last value.
 -/
 
 @[expose] public section
@@ -44,9 +46,17 @@ def checkStrictNaturalJson : IO Unit := do
     | .ok value => throw <| IO.userError s!"strict natural JSON accepted {source} as {value}"
     | .error _ => pure ()
 
-/-- Run the strict JSON integer check. -/
+/-- An object that repeats a key does not parse, so no reader picks one of the two values. -/
+def checkRepeatedKey : IO Unit := do
+  for source in [r#"{"action": 1, "action": 2}"#, r#"{"step": {"reward": 0, "reward": 1}}"#] do
+    match Lean.Json.parse source with
+    | .ok json => throw <| IO.userError s!"JSON with a repeated key parsed as {json.compress}"
+    | .error _ => pure ()
+
+/-- Run the strict JSON integer and repeated key checks. -/
 def run : IO Unit := do
   checkStrictNaturalJson
+  checkRepeatedKey
   IO.println "rl_check: ok"
 
 end RL

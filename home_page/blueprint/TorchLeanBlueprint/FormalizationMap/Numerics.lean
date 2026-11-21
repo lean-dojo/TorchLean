@@ -24,15 +24,14 @@ open Informal
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
+/-! Theorem index: FloatLib's formats, the executable scalars and the binary32 models. -/
+
 #doc (Manual) "Floating-Point Numerics" =>
 
-The numerical map starts with FloatLib's generic formats and configured executable scalars.
-TorchLean keeps two binary32 specializations in view: `FP32` is the imported rounded-real model
-with binary32's gradual-underflow grid, and `ExecFloat.Binary 8 23` includes signed zeros,
-infinities, and NaNs. Bridge theorems connect their finite cases. TorchLean's runtime-approximation
-layer then composes local operator bounds over whole forward and backward graphs. Other configured
-widths share FloatLib's public scalar API, but a network error bound must use the format and
-operation sequence actually selected.
+The numerical chain begins with a bit-level operation and ends with its mathematical meaning. For
+binary32, the executable format includes signed zeros, infinities, and NaNs; finite values then
+connect to the rounded-real `FP32` model. Scalar bounds carry the resulting error through a tensor
+operation or a graph.
 
 :::group "generic_numerics"
 Generic formats, rounding, and quantization.
@@ -43,8 +42,8 @@ Generic formats, rounding, and quantization.
 the exact value of that pair.
 :::
 
-:::definition "representable_float_grid" (parent := "generic_numerics") (lean := "FloatLib.Floats.Formats.Flocq.genericFormat")
-`genericFormat` says when a real number belongs to the grid selected by a radix and a valid
+:::definition "representable_float_grid" (parent := "generic_numerics") (lean := "FloatLib.Floats.Formats.Flocq.GenericRepresentable")
+`GenericRepresentable` says when a real number belongs to the grid selected by a radix and a valid
 exponent policy. Fixed, unbounded, and gradual-underflow formats are instances of this setup.
 :::
 
@@ -201,7 +200,7 @@ and threads the local backward bounds through the accumulated cotangent context.
 
 We state the accumulation law as a numerical premise: when two graph paths reach one variable,
 their cotangents are added, so bounds for the two local VJPs must also account for that rounded
-sum. And analytic correctness requires identifying the ideal VJP with the forward derivative.
+sum; analytic correctness also requires identifying the ideal VJP with the forward derivative.
 :::
 
 :::definition "nf_positive_division_bound" (parent := "runtime_error_bounds") (lean := "TorchLean.NF.divPosErrorBound")

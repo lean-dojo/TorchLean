@@ -18,8 +18,8 @@ public import TorchLean.Tensor.Layers.PositionalEncoding
 `#roundoff_coverage` runs `roundoff` on the value of softmax (with and without a mask, by either
 schedule), log-softmax and log-sum-exp along any axes and of their JVP and VJPs, at a coordinate of
 the result. Shapes, axes, block sizes and every other parameter are variables, so each theorem holds
-at every axis and rank. Each route is analyzed for the configured scalar of an arbitrary IEEE
-format, for native `Float32` and for the rounded reals `FP32`. Softmax has one route per mask and
+at every axis and rank. Each route is analyzed for the configured scalar of an arbitrary format,
+for native `Float32` and for the rounded reals `FP32`. Softmax has one route per mask and
 schedule constructor. The online schedule folds a triple of running values over its blocks, which
 `roundoff` does not analyze. `TorchLean.Verify.RuntimeApprox.OnlineSoftmax` bounds the online
 softmax weights by hand (`onlineWeight_error`). The theorems are declared in the namespace

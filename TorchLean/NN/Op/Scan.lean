@@ -36,14 +36,6 @@ namespace Tensor
 
 /-! ## Folds over prefixes -/
 
-/-- A left fold over `Tensor.ofFn f` is the fold of `f` over `List.finRange n`. -/
-private theorem foldl_ofFn {β γ : Type} [Storage β] {n : Nat} (step : γ → β → γ) (init : γ)
-    (f : Fin n → β) :
-    Tensor.foldl step init (Tensor.ofFn f) =
-      (List.finRange n).foldl (fun acc i => step acc (f i)) init := by
-  rw [Tensor.ofFn, Rep.ofFn_eq_map_coordinates, Rep.foldl_map,
-    ← Fin.foldl_eq_foldl_finRange, fin_foldl_eq_coordinates]
-
 /-- A product over `Fin (k + 1)` read through `Fin.castLE` is the product over the indices of
 `Fin n` at most `k`. -/
 @[to_additive /-- A sum over `Fin (k + 1)` read through `Fin.castLE` is the sum over the indices
@@ -93,17 +85,6 @@ private theorem foldl_mul_prefix_erase {n : Nat} (k i : Fin n) (f : Fin n → �
   congr 1
   split_ifs <;> simp_all
 
-/-- A left fold over `List.finRange n` adding the values of `f` at the indices satisfying `p` is
-the sum of `f` over those indices. -/
-private theorem foldl_ite_add {n : Nat} (p : Fin n → Prop) [DecidablePred p] (f : Fin n → ℝ) :
-    (List.finRange n).foldl (fun acc j => if p j then acc + f j else acc) 0 =
-      ∑ j ∈ Finset.univ.filter p, f j := by
-  have hstep : (fun (acc : ℝ) (j : Fin n) => if p j then acc + f j else acc) =
-      fun acc j => acc + if p j then f j else 0 := by
-    funext acc j
-    split_ifs <;> simp
-  rw [hstep, Finset.sum_filter, Fin.sum_univ_def, List.sum_eq_foldl, List.foldl_map]
-
 /-- A sum over `Finset.Iic k` is the sum over `Fin n` of the values at the indices at most `k`. -/
 private theorem sum_Iic_eq_sum_ite {n : Nat} (k : Fin n) (f : Fin n → ℝ) :
     ∑ i ∈ Finset.Iic k, f i = ∑ i, if i ≤ k then f i else 0 := by
@@ -145,7 +126,8 @@ theorem cumprodBackward_apply_eq_sum (x g : Tensor ℝ s) (dim : Fin s.rank) (c 
         ∏ i ∈ (Finset.Iic j).erase (Shape.Coord.get c dim), x (Shape.Coord.update c dim i) := by
   rw [cumprodBackward_apply]
   simp only [foldl_mul_prefix_erase]
-  rw [foldl_ite_add, Finset.filter_le_eq_Ici]
+  rw [List.finRange_foldl_ite_add_eq_add_sum, zero_add, ← Finset.sum_filter,
+    Finset.filter_le_eq_Ici]
 
 /-- The derivative of the real cumulative product along `dim` at `x`, as a continuous linear map:
 it sends a tangent `u` to `cumprodJVP x u dim`. -/
@@ -224,15 +206,20 @@ theorem cumprod (dim : Fin s.rank) (hf : HasPullbackAt f Df bf x) :
 
 end HasPullbackAt
 
-/-- The backward of `Op.cumprod dim` is the adjoint of the derivative of its forward at every
-input, zero entries included. -/
+/-- The backward of `Op.cumprod dim order` is the adjoint of the derivative of its forward at
+every input, zero entries included, in every order that covers the length of the axis. -/
 @[op_cert TorchLean.Op.cumprod derivative]
-theorem Op.cumprod_backward_eq_adjoint {s : Shape} (dim : Fin s.rank) (x δ : Tensor ℝ s) :
+theorem Op.cumprod_backward_eq_adjoint {s : Shape} (dim : Fin s.rank)
+    (order : Tensor.ReduceOrder) (hcov : order.Covers (s.extent dim)) (x δ : Tensor ℝ s) :
     DifferentiableAt ℝ (fun x' =>
-        (((Op.cumprod dim).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x ∧
-    (((Op.cumprod dim).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, ())).1 =
+        (((Op.cumprod dim order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward (x', ())).1) x ∧
+    (((Op.cumprod dim order).rule? (α := ℝ)
+      |>.get (by cases order <;> rfl)).backward (x, ()) (δ, ())).1 =
       (fderiv ℝ (fun x' =>
-        (((Op.cumprod dim).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x).adjoint δ := by
+        (((Op.cumprod dim order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward (x', ())).1) x).adjoint δ := by
+  simp only [Op.rule?_cumprod, Option.get_some, Tensor.scanIn_mul_real _ dim hcov]
   op_deriv
 
 namespace StateSpace

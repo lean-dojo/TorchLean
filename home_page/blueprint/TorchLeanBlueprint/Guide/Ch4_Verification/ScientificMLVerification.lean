@@ -28,6 +28,8 @@ open Splines Splines.Certificate
 -- each message exactly as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: guarantees for PINNs and ODE solvers between sample points. -/
+
 #doc (Manual) "Scientific ML Verification" =>
 %%%
 tag := "scientific-ml-verification"
@@ -37,9 +39,8 @@ Scientific models need guarantees between the points where they are evaluated. A
 may look accurate on a plot while violating its PDE between sample points. A numerical ODE
 trajectory may look smooth while accumulated error takes it outside the claimed corridor.
 A spline fit may be excellent at the knots and deviate from the target inside one interval.
-TorchLean's scientific
-checkers examine finite certificates: proposed corridors, residual intervals, or polynomial pieces
-whose conditions can be recomputed.
+The maintained scientific checkers examine finite certificates: proposed corridors, residual
+intervals, or polynomial pieces whose conditions can be recomputed.
 
 All three maintained paths share a producer-and-checker shape, but they check different things. For
 candidate corridor networks, the ODE command tests interval subsolution, supersolution, ordering,
@@ -64,8 +65,8 @@ You can list the registered verification tools with:
 scripts/lake.sh exe verify -- list
 ```
 
-Three entries cover the scientific workflows described here (shown without the default artifact
-paths that the real listing prints after each description):
+Three entries cover ODE, PINN, and spline checks (shown without the default artifact paths that the
+real listing prints after each description):
 
 ```
 pinn-cert [<path>]    -- PINN certificate recomputation check
@@ -111,7 +112,7 @@ endpoints equals the declared knot values over exact rationals. If you change on
 rerun the checker, it should report an endpoint mismatch. In the spline section we build a
 certificate in Lean and watch that message appear.
 
-Two flags expose useful neighboring checks:
+`--arithmetic ieee` and `--regen` exercise two neighboring checks:
 
 ```terminal
 # Request binary32 endpoint replay or regenerate the
@@ -417,7 +418,7 @@ doesn't depend on an external integrator's explanation of the run: the checker p
 expression, runs its interval-shaped endpoint calculation over each segment, and tests the
 candidate tube's subsolution, supersolution, ordering, and initial-value conditions. That
 calculation is an executable screening condition. A theorem about the true trajectory still needs
-the outward-bound and real-analysis links described below.
+the outward-rounding and real-analysis links required by the enclosure theorem.
 
 On the mathematical side we have an ODE
 
@@ -548,7 +549,7 @@ A uniform PINN guarantee needs several pieces of evidence:
 3. the residual is bounded over the domain
 4. boundary or dataset constraints are respected
 
-TorchLean gives each piece a small object. The
+The following modules represent those four pieces. The
 {src "TorchLeanExamples/Verification/PINN/Architecture.lean"}[PINN architecture API] names
 sequential network records and graph construction, and the
 {src "TorchLeanExamples/Verification/PINN/PDEAST.lean"}[PDE expression API] names the PDE language.
@@ -613,13 +614,13 @@ Except.ok 12
 
 The graph has `12` nodes: after the input, each linear layer is three nodes (its weight and bias
 constants and `Op.linear`), with a tanh node between consecutive layers, and its output is the last
-`Op.linear` (node `11`). By design, the bundled `pinn-cert` path is smaller than the full target
-sketched above. Its graph is that fixed tanh network `referenceModel 1`, with the deterministic
-parameters `referenceLayers 1` (both defined in Lean), and the JSON supplies sample points, box
-radii, a PDE expression, value intervals, and two kinds of residual interval. `Certificate.verify`
-recomputes values and derivatives with the Float bound implementation, on the graph and its
-tangent graphs (`Derivatives.ofGraph`), then compares the stored value and residual intervals
-using `certTol`.
+`Op.linear` (node `11`). By design, the bundled `pinn-cert` path is narrower than the
+checkpoint-driven PINN workflow just listed. Its graph is the fixed tanh network `referenceModel
+1`, with deterministic parameters `referenceLayers 1` (both defined in Lean). The JSON supplies
+sample points, box radii, a PDE expression, value intervals, and two kinds of residual interval.
+`Certificate.verify` recomputes values and derivatives with the Float bound implementation on the
+graph and its tangent graphs (`Derivatives.ofGraph`). It then compares the stored value and
+residual intervals using `certTol`.
 Individual derivative intervals are printed, but they aren't separate artifact fields checked for
 equality. The command returns success or an error. It doesn't construct a proof object for a
 uniform residual proposition.
@@ -709,7 +710,7 @@ the values vary together along the network. Both residual fields are checked, ma
 independent stencil intervals visible alongside the direct derivative calculation. Relating the
 difference quotient to the derivative would also require a truncation-error bound.
 
-## The Residual Language
+## PINN Residual Expression Language
 
 Residuals are written in a small expression language and evaluated on the primitive enclosures that
 the graph propagation produced:
@@ -958,12 +959,12 @@ describe another polynomial whenever `lo` is nonzero, so the checker computes th
 before comparing endpoint values, tying each piece's coefficients to its declared interval.
 
 Matching endpoint values can support continuity when adjacent pieces share the same knot value, but
-it doesn't also match their derivatives. For example, the bump below has derivative `1` at its left
-endpoint and `-1` at its right endpoint, so joining it to a zero polynomial with the same endpoint
-value produces a derivative jump. A certificate for a smooth surrogate would need to check the
-appropriate derivative equalities at each join as well. This is especially relevant when that
-surrogate is later differentiated to form an ODE or PDE residual: interpolation data alone doesn't
-determine the residual at the joins.
+it doesn't also match their derivatives. For example, the quadratic bump $`t-t^2` has derivative
+`1` at its left endpoint and `-1` at its right endpoint. Joining it to a zero polynomial with the
+same endpoint value produces a derivative jump. A certificate for a smooth surrogate would need to
+check the appropriate derivative equalities at each join as well. This matters when that surrogate
+is later differentiated to form an ODE or PDE residual: interpolation data alone doesn't determine
+the residual at the joins.
 
 An interior range theorem would instead need a statement such as
 

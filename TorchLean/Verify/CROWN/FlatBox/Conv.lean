@@ -244,7 +244,7 @@ theorem _root_.TorchLean.CROWN.ibpConv_sound
           groups (Tensor.map value layer.kernel) (Tensor.map value layer.bias)) input) := by
   induction leading with
   | scalar =>
-    apply (Box.contains_iff_apply _ _).mpr
+    apply Box.contains_iff_apply.mpr
     intro index
     rcases index with ⟨outChannel, outIndex⟩
     simp only [realBox, map_value_apply, ibpConv, ibpConv.mapRows,
@@ -318,7 +318,7 @@ theorem rowEncloses_flatten {s : Shape} {box : Box α s} {input : Tensor ℝ s}
       ⟨s.size, Tensor.reshape box.lo [_] (Shape.size_vector _).symm,
           Tensor.reshape box.hi [_] (Shape.size_vector _).symm⟩ s.size
       (fun i => getAtOrZero (Tensor.reshape input [_] (Shape.size_vector _).symm) [i]) := by
-  have hf := (Box.contains_flattenBox_iff (realBox box) input).mpr h
+  have hf := Box.contains_flattenBox_iff.mpr h
   rw [← realBox_flattenBox] at hf
   rw [rowEncloses_iff]
   intro i
@@ -337,7 +337,7 @@ theorem realBox_contains_ibpUnflatten {s : Shape} {box : FlatBox α} {n : Nat}
   rcases box with ⟨d, lo, hi⟩
   change d = s.size at hdim
   subst d n
-  apply (Box.contains_flattenBox_iff _ _).mp
+  apply Box.contains_flattenBox_iff.mp
   rw [← realBox_flattenBox]
   simp only [flattenBox, ibpUnflatten, castShape_self, reshape_reshape_self]
   intro i

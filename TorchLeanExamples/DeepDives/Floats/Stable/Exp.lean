@@ -10,7 +10,6 @@ public import TorchLean.Verify.Stable.Once
 public import TorchLeanExamples.DeepDives.Floats.LibraryBugs
 public import TorchLeanExamples.DeepDives.Floats.ProbBugs.SurvivalComplement
 public import TorchLean.NN.Gradients.Activation
-import Mathlib.Analysis.Complex.ExponentialBounds
 
 /-!
 # Rewrites with one exponential, rounded once

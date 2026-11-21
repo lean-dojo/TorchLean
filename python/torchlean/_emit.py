@@ -13,18 +13,82 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ._artifact import _SCALAR
-from ._fx import (_FLOATING, _INT64, _REDUCED_FLOATS, _binary_payload, _broadcast_kind, _constant,
-                  _convolution_payload, _dtype_of, _is_getattr, _is_op, _linear_payload,
-                  _node_dtype, _node_shape, _normalization, _normalize_axis, _op_table,
-                  _reduction_axes, _reshape_kind, _resolve_tensor, _shape_from_arg, _shape_of,
+from ._artifact import _SCALAR, _element, _random_key
+from ._fx import (_CONVERSIONS, _FLOATING, _INT64, _REDUCED_FLOATS, _binary_payload,
+                  _broadcast_kind, _constant, _convolution_payload, _dtype_of, _held_shape,
+                  _is_getattr, _is_op, _linear_payload, _node_dtype, _node_shape, _normalization,
+                  _normalize_axis, _op_table, _reduction_axes, _reshape_kind, _shape_from_arg,
                   _spatial_tuple, _target_name, _top_k_mask, _torch_dtype)
 from ._pointwise import (_append_node, _argument, _arithmetic_kind, _broadcast_to, _cast_to,
+                         _conversion_saturates,
                          _pointwise_kind, _scalar_constant, _scalar_tensor)
+from ._linalg import LinalgImport
 from ._structure import (_BUFFERS, _BUFFER_UPDATES, _DROPOUT_MASKS, _advanced_indices, _coordinates,
                          _fourier_scale, _index_constant, _index_operand, _index_tuples, _iota,
-                         _moments_kind, _random_key, _registered_kind, _registered_node,
+                         _moments_kind, _registered_kind, _registered_node,
                          _structure_kind)
+
+# The unary torch.special functions, the members of TorchLean's SpecialFn 1, keyed by the
+# member's torch.special name (SpecialFn.torchName), the name field of Op.special's codec record:
+# the ATen overloads torch.export records, the Python functions and the Tensor methods FX records.
+_SPECIAL = {
+    'erfc': (('aten.erfc.default', 'aten.special_erfc.default'), (torch.erfc, torch.special.erfc),
+             ('erfc',)),
+    'erfcx': (('aten.special_erfcx.default',), (torch.special.erfcx,), ()),
+    'erfinv': (('aten.erfinv.default', 'aten.special_erfinv.default'),
+               (torch.erfinv, torch.special.erfinv), ('erfinv',)),
+    'ndtr': (('aten.special_ndtr.default',), (torch.special.ndtr,), ()),
+    'ndtri': (('aten.special_ndtri.default',), (torch.special.ndtri,), ()),
+    'gammaln': (('aten.lgamma.default', 'aten.special_gammaln.default'),
+                (torch.lgamma, torch.special.gammaln), ('lgamma',)),
+    'digamma': (('aten.digamma.default', 'aten.special_digamma.default',
+                 'aten.special_psi.default'),
+                (torch.digamma, torch.special.digamma, torch.special.psi), ('digamma',)),
+    'bessel_j0': (('aten.special_bessel_j0.default',), (torch.special.bessel_j0,), ()),
+    'bessel_j1': (('aten.special_bessel_j1.default',), (torch.special.bessel_j1,), ()),
+    'i0': (('aten.i0.default', 'aten.special_i0.default'), (torch.i0, torch.special.i0), ('i0',)),
+    'i1': (('aten.special_i1.default',), (torch.special.i1,), ()),
+    'i0e': (('aten.special_i0e.default',), (torch.special.i0e,), ()),
+    'i1e': (('aten.special_i1e.default',), (torch.special.i1e,), ()),
+    'spherical_bessel_j0': (('aten.special_spherical_bessel_j0.default',),
+                            (torch.special.spherical_bessel_j0,), ()),
+}
+
+# The binary torch.special functions, the members of TorchLean's SpecialFn 2, keyed by the
+# member's torch.special name (SpecialFn.torchName), as in _SPECIAL. The scalar overloads of
+# special_zeta are listed only so that a Python-number operand is refused with a reason.
+_SPECIAL2 = {
+    'gammainc': (('aten.igamma.default', 'aten.special_gammainc.default'),
+                 (torch.igamma, torch.special.gammainc), ('igamma',)),
+    'gammaincc': (('aten.igammac.default', 'aten.special_gammaincc.default'),
+                  (torch.igammac, torch.special.gammaincc), ('igammac',)),
+    'zeta': (('aten.special_zeta.default', 'aten.special_zeta.self_scalar',
+              'aten.special_zeta.other_scalar'), (torch.special.zeta,), ()),
+}
+
+
+class _LinalgNodes(LinalgImport):
+    # LinalgImport over the capture's node list: its nodes have the result dtype unless given
+    # one, and its refusals are the capture's NotImplementedError.
+    refusal = NotImplementedError
+
+    def __init__(self, nodes, dtype):
+        self.nodes, self.current_dtype = nodes, dtype
+
+    def node(self, kind, parents, shape, dtype=None, **attributes):
+        return _append_node(self.nodes, {'kind': kind, **attributes, 'parents': parents,
+                                         'shape': shape, 'dtype': dtype or self.current_dtype})
+
+    def flags(self, value):
+        # The Boolean constant of the NumPy array `value`.
+        import numpy as np
+
+        return _append_node(self.nodes, {'parents': [], **_constant(
+            torch.from_numpy(np.asarray(value, dtype=bool)))})
+
+    def scalar(self, value, dtype, shape):
+        # The Python number `value` converted once to `dtype` (_scalar_tensor), broadcast.
+        return self.broadcast(_scalar_constant(self.nodes, value, dtype), shape, [])
 
 
 def _normalization_payload(plan, dtype):
@@ -51,6 +115,9 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
         result = _append_node(nodes, {'parents': [], **_constant(plan['value'])})
         _BUFFER_UPDATES[plan['buffer']] = result
         return result
+    if op == 'filled':
+        value = _append_node(nodes, {'parents': [], **_constant(plan['value'])})
+        return _broadcast_to(nodes, value, shape)
     def parent(value):
         index = node_to_id.get(value)
         if index is None: raise NotImplementedError(f'{op} operand has no tensor lowering')
@@ -58,6 +125,9 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
     def emit(attributes, parents, out_shape):
         return _append_node(nodes, {**attributes, 'parents': parents, 'shape': out_shape,
                                     'dtype': dtype})
+    # The element field of a gather or scatter that moves the node's words: Booleans, an integer
+    # type or "scalar" (`_structure._check_moved`).
+    element = {'element': _element(dtype, _op_table())}
     def reshape(index, out_shape):
         if nodes[index]['shape'] == out_shape: return index
         return emit(_reshape_kind(), [index], out_shape)
@@ -94,9 +164,26 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
         if compute not in ('float32', 'float64'):
             raise NotImplementedError(f"{plan['attributes']['kind']} of a {dtype} tensor")
         index = _cast_to(nodes, parent(plan['operands'][0]), compute)
+        # A weight or bias not known at capture is a parent after the input, as a payload
+        # parameter of the same dtype would be.
+        runtime = []
+        for operand in plan['operands'][1:]:
+            held = nodes[parent(operand)]['dtype']
+            if held != compute and not (compute == 'float32' and held in _REDUCED_FLOATS):
+                raise NotImplementedError(f"a {held} parameter of a {compute} "
+                                          f"{plan['attributes']['kind']}")
+            runtime.append(_cast_to(nodes, parent(operand), compute))
         result = _append_node(nodes, {**plan['attributes'], **_normalization_payload(plan, compute),
-                                      'parents': [index], 'shape': shape, 'dtype': compute})
+                                      'parents': [index, *runtime], 'shape': shape,
+                                      'dtype': compute})
         return _cast_to(nodes, result, dtype)
+    if op in ('householder_product', 'ormqr'):
+        linalg = _LinalgNodes(nodes, dtype)
+        a, taus = parent(plan['operands'][0]), parent(plan['operands'][1])
+        if op == 'householder_product':
+            return linalg.householder_product(a, taus, shape)
+        return linalg.reflected('ormqr', a, taus, parent(plan['operands'][2]), plan['left'],
+                                plan['transpose'])
     if op == 'attention':
         # The docstring's equivalent code: softmax(q @ k^T * scale + bias, dim=-1) @ v, with
         # k and v repeated head by head for enable_gqa. The bias is built as that code builds it:
@@ -173,9 +260,20 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
     if op == 'reduce':
         index = parent(plan['operands'][0])
         if nodes[index]['dtype'] != dtype:
-            # PyTorch accumulates sums and products of Boolean and integer tensors in int64.
+            # PyTorch accumulates sums and products of Boolean and integer tensors in int64, and
+            # a dtype argument casts the input to dtype before the operation (the PyTorch 2.13
+            # docstrings of sum, prod, mean, softmax and log_softmax).
             index = _cast_to(nodes, index, dtype)
-        return emit(plan['attributes'], [index], shape)
+        attributes = plan['attributes']
+        if dtype in ('float16', 'bfloat16') and \
+                (attributes['kind'] == "mean" or attributes.get('op') == 'sum'):
+            # ATen's CPU sum and mean of binary16 and bfloat16 accumulate in binary32 and round
+            # once to the format; its prod rounds each step in the format, as the IR's reduce does.
+            wide = _cast_to(nodes, index, 'float32')
+            wide = _append_node(nodes, {**attributes, 'parents': [wide], 'shape': shape,
+                                        'dtype': 'float32'})
+            return _cast_to(nodes, wide, dtype)
+        return emit(attributes, [index], shape)
     if op == 'var':
         index = parent(plan['operands'][0])
         source, dims = nodes[index]['shape'], plan['dims']
@@ -246,10 +344,125 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
         if nodes[index]['shape'] != shape:
             raise NotImplementedError(f'{op} padding produced an unexpected shape')
         return index
+    if op == 'stack':
+        # An axis of extent one at `dim` in each operand, then their concatenation along it.
+        dim, pieces = plan['dim'], []
+        for value in plan['operands']:
+            extents = list(nodes[parent(value)]['shape'])
+            pieces.append(reshape(parent(value), extents[:dim] + [1] + extents[dim:]))
+        return concat(pieces, dim)
+    if op == 'interleave':
+        # An axis of extent one after `dim`, broadcast to `repeats` and merged into `dim`. Without
+        # an axis, that of the flattened tensor.
+        index, dim = parent(plan['operands'][0]), plan['dim']
+        extents = list(nodes[index]['shape'])
+        if dim is None:
+            size = 1
+            for extent in extents: size *= extent
+            extents, dim = [size], 0
+        single = extents[:dim + 1] + [1] + extents[dim + 1:]
+        tiled = extents[:dim + 1] + [plan['repeats']] + extents[dim + 1:]
+        return reshape(broadcast(reshape(index, single), tiled), shape)
+    if op == 'roll':
+        # Along each axis the last `shift` entries, the shift taken modulo the extent, then the
+        # others. With no axis listed, the flattened tensor rolls and is reshaped back.
+        index, dims = parent(plan['operands'][0]), plan['dims']
+        if not dims:
+            size = 1
+            for extent in shape: size *= extent
+            index, dims = reshape(index, [size]), [0]
+        for shift, dim in zip(plan['shifts'], dims):
+            extent = nodes[index]['shape'][dim]
+            if extent and shift % extent:
+                cut = extent - shift % extent
+                index = concat([window(index, dim, cut, extent), window(index, dim, 0, cut)], dim)
+        return reshape(index, shape)
+    if op == 'unfold':
+        # Entry j of window i along dim is entry i * step + j (_structure_kind): slice j takes
+        # entries j, j + step, ... of every window, and the slices are stacked on a last axis.
+        index, dim, step = parent(plan['operands'][0]), plan['dim'], plan['step']
+        extents = list(nodes[index]['shape'])
+        extents[dim] = windows = shape[dim]
+        pieces = [reshape(emit({'kind': "slice", 'dims': [dim], 'starts': [j],
+                                'stops': [j + (windows - 1) * step + 1], 'steps': [step]},
+                               [index], extents), extents + [1])
+                  for j in range(shape[-1])]
+        return concat(pieces, len(extents))
+    if op == 'conv_transpose':
+        # The transposed convolution sums, for each output position y, input entry i times kernel
+        # entry j wherever y = i * stride - padding + j * dilation (the adjoint of the strided
+        # convolution, as conv_transpose2d's docstring defines it). That is the convolution at
+        # stride 1, dilation unchanged, of the input with stride - 1 zeros between its entries and
+        # dilation * (kernel - 1) - padding at each end, output_padding more after, a negative
+        # amount cropping, by the kernel with each group's two channel axes swapped and its
+        # spatial axes reversed. A zero entry multiplies the kernel there, which eager PyTorch
+        # does not: its product with an infinite or NaN kernel entry is NaN.
+        source, weight, bias = plan['operands']
+        index, kernel = parent(source), parent(weight)
+        extents, packed = nodes[index]['shape'], nodes[kernel]['shape']
+        rank, groups = len(extents) - 2, plan['groups']
+        in_c, width = packed[0], packed[1]
+        if any(extent == 0 for extent in extents[2:] + plan['kernel']):
+            raise NotImplementedError('transposed convolution of an empty axis')
+        if packed[2:] != plan['kernel'] or extents[1] != in_c:
+            raise NotImplementedError('transposed convolution weight does not match its input')
+        reach = [d * (k - 1) for d, k in zip(plan['dilation'], plan['kernel'])]
+        low = [r - p for r, p in zip(reach, plan['padding'])]
+        high = [lo + extra for lo, extra in zip(low, plan['output_padding'])]
+        gaps = [s - 1 for s in plan['stride']]
+        if any(gap < 0 for gap in gaps) or any(d <= 0 for d in plan['dilation']):
+            raise NotImplementedError('transposed convolution with a stride or dilation below 1')
+        spread = [n + (n - 1) * g + max(0, lo) + max(0, hi)
+                  for n, g, lo, hi in zip(extents[2:], gaps, low, high)]
+        if any(g > 0 for g in gaps) or any(p > 0 for p in low + high):
+            value = _scalar_constant(nodes, 0, dtype)
+            index = emit({'kind': "pad", 'low': [0, 0] + [max(0, p) for p in low],
+                          'high': [0, 0] + [max(0, p) for p in high], 'interior': [0, 0] + gaps},
+                         [index, value], extents[:2] + spread)
+        cropped = [axis + 2 for axis in range(rank) if low[axis] < 0 or high[axis] < 0]
+        if cropped:
+            starts = [max(0, -low[axis - 2]) for axis in cropped]
+            stops = [spread[axis - 2] - max(0, -high[axis - 2]) for axis in cropped]
+            if any(stop <= start for start, stop in zip(starts, stops)):
+                raise NotImplementedError('transposed convolution padding exceeds its output')
+            index = crop(index, cropped, starts, stops)
+        spatial = nodes[index]['shape'][2:]
+        out_c = groups * width
+        # (in, out / groups) per group to (out, in / groups), then the reversed spatial axes.
+        kernel = reshape(kernel, [groups, in_c // groups, width] + plan['kernel'])
+        kernel = emit({'kind': "permute", 'dims': [0, 2, 1] + list(range(3, rank + 3))},
+                      [kernel], [groups, width, in_c // groups] + plan['kernel'])
+        kernel = reshape(kernel, [out_c, in_c // groups] + plan['kernel'])
+        kernel = emit({'kind': "flip", 'dims': list(range(2, rank + 2))}, [kernel],
+                      nodes[kernel]['shape'])
+        attributes = {'kind': "conv", 'spatial_rank': rank, 'kernel': plan['kernel'],
+                      'stride': [1] * rank, 'padding': [0] * rank, 'padding_after': [0] * rank,
+                      'dilation': plan['dilation'], 'groups': groups, 'channel_axis': 1,
+                      'input_spatial': spatial, 'in_channels': in_c, 'out_channels': out_c}
+        parents = [index, kernel]
+        if bias is None:
+            # Word 0 is +0 in every binary format.
+            attributes.update(bias_bits=[0] * out_c, bias_dtype=dtype)
+        else:
+            parents.append(parent(bias))
+        if extents[:1] + [out_c] + [n - r for n, r in zip(spatial, reach)] != shape:
+            raise NotImplementedError('transposed convolution produced an unexpected shape')
+        return emit(attributes, parents, shape)
+    if op == 'triangle':
+        # A constant mask of the kept entries (i, j) of the last two axes selects the operand's
+        # word, and zero of its dtype elsewhere.
+        rows, columns = shape[-2:]
+        offsets = torch.arange(columns)[None, :] - torch.arange(rows)[:, None]
+        kept = offsets <= plan['diagonal'] if plan['lower'] else offsets >= plan['diagonal']
+        mask = _broadcast_to(nodes, _append_node(nodes, {'parents': [], **_constant(kept)}), shape)
+        zero = _broadcast_to(nodes, _scalar_constant(nodes, 0, dtype), shape)
+        return emit({'kind': "where"}, [mask, parent(plan['operands'][0]), zero], shape)
     if op == 'scan':
         # cpu_cum_base_kernel accumulates from 0 or 1 in at::acc_type (binary64 for binary32 and
-        # binary64, binary32 for binary16 and bfloat16) and rounds every prefix to the result.
-        index = _cast_to(nodes, parent(plan['operands'][0]), plan['accumulator'])
+        # binary64, binary32 for binary16 and bfloat16) and rounds every prefix to the result. A
+        # dtype argument casts the input to dtype first (the PyTorch 2.13 docstring of cumsum).
+        index = _cast_to(nodes, _cast_to(nodes, parent(plan['operands'][0]), dtype),
+                         plan['accumulator'])
         scanned = _append_node(nodes, {'kind': plan['scan'], 'dim': plan['dim'],
                                        'parents': [index], 'shape': shape,
                                        'dtype': plan['accumulator']})
@@ -269,7 +482,7 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
         if plan['select']:
             rest = [extent for axis, extent in enumerate(extents) if axis != dim]
             index = _registered_node(nodes, 'gather', [{'shape': extents}, {'shape': positions},
-                                                       {'nats': [dim]}, {'pairs': []}, _SCALAR],
+                                                       {'nats': [dim]}, {'pairs': []}, element],
                                      [source, index], positions + rest, dtype)
             order = list(range(1, dim + 1)) + [0] + list(range(dim + 1, len(extents)))
             if order != list(range(len(extents))):
@@ -282,14 +495,16 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
         kept = list(nodes[source]['shape'])
         pairs = [[axis, axis] for axis in range(len(extents)) if axis != dim]
         return _registered_node(nodes, 'gather', [{'shape': kept}, {'shape': positions},
-                                                  {'nats': [dim]}, {'pairs': pairs}, _SCALAR],
+                                                  {'nats': [dim]}, {'pairs': pairs}, element],
                                 [source, index], positions, dtype)
     def scatter_rule(base, tuples, updates, axes, positions, rule):
         # Op.scatter's record fields, the node from the one constructor.
         extents = list(nodes[base]['shape'])
         code = _op_table()['codes']['scatter'][rule]
         return _registered_node(nodes, 'scatter', [{'shape': extents}, {'shape': positions},
-                                                   {'nat': code}, {'nats': axes}, _SCALAR],
+                                                   {'nat': code}, {'nats': axes},
+                                                   {'element': _element(nodes[base]['dtype'],
+                                                                        _op_table())}],
                                 [base, tuples, updates], extents, nodes[base]['dtype'])
     def wide(index):
         # The CPU scatter kernels accumulate binary16 and bfloat16 sums and products in
@@ -323,12 +538,7 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
             return _cast_to(nodes, scatter_rule(wide(base), tuples, wide(updates),
                                                 list(range(rank)), positions, 'sum'), dtype)
         return scatter_rule(base, tuples, updates, list(range(rank)), positions, 'replace')
-    if op == 'scatter_mean':
-        # scatter_reduce with reduce 'sum' or 'mean'. Without include_self the scattered entries
-        # are first zero. The mean divides the sum by the count of folded values (one more with
-        # include_self), a count of zero read as one, as scatter_reduce_two does. The sum and
-        # the count of binary16 or bfloat16 accumulate in binary32, each rounded once, and
-        # their quotient is one division in the dtype.
+    if op in ('scatter_mean', 'scatter_fold'):
         base_value, index_value, update = plan['operands']
         base = parent(base_value)
         extents = list(nodes[base]['shape'])
@@ -343,31 +553,36 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
                 positions[a] > extents[a] for a in range(rank) if a != dim):
             raise NotImplementedError('scatter_reduce needs an index of the input rank, no '
                                       'longer than the input along the other axes')
-        tuples = complete_tuples(index, rank, dim)
-        axes = list(range(rank))
-        def zeros(at_shape):
-            return _broadcast_to(nodes, _scalar_constant(nodes, 0, dtype), at_shape)
-        def ones(at_shape):
-            return _broadcast_to(nodes, _scalar_constant(nodes, 1, dtype), at_shape)
-        seeded = wide(base)
-        if not plan['include_self']:
-            seeded = scatter_rule(seeded, tuples, wide(zeros(positions)), axes, positions,
-                                  'replace')
-        total = _cast_to(nodes, scatter_rule(seeded, tuples, wide(updates_of(update, positions)),
-                                             axes, positions, 'sum'), dtype)
-        if not plan['mean']:
-            return total
-        start = ones(extents) if plan['include_self'] else zeros(extents)
-        count = _cast_to(nodes, scatter_rule(wide(start), tuples, wide(ones(positions)), axes,
-                                             positions, 'sum'), dtype)
-        empty = _append_node(nodes, {'kind': 'eq',
-                                     'parents': [count, zeros(extents)], 'shape': extents,
-                                     'dtype': 'bool'})
-        count = _append_node(nodes, {'kind': 'where',
-                                     'parents': [empty, ones(extents), count], 'shape': extents,
-                                     'dtype': dtype})
-        return emit({'kind': "div"}, [total, count], extents)
-    if op == 'scatter_fold':
+        if op == 'scatter_mean':
+            # Without include_self, scattered entries start at zero. A mean divides their sum
+            # by the count (one more with include_self), reading a zero count as one, as
+            # scatter_reduce_two does. Binary16 and bfloat16 sums and counts accumulate in
+            # binary32 and round once; the quotient is one division in the result dtype.
+            tuples = complete_tuples(index, rank, dim)
+            axes = list(range(rank))
+            def zeros(at_shape):
+                return _broadcast_to(nodes, _scalar_constant(nodes, 0, dtype), at_shape)
+            def ones(at_shape):
+                return _broadcast_to(nodes, _scalar_constant(nodes, 1, dtype), at_shape)
+            seeded = wide(base)
+            if not plan['include_self']:
+                seeded = scatter_rule(seeded, tuples, wide(zeros(positions)), axes, positions,
+                                      'replace')
+            total = _cast_to(nodes, scatter_rule(seeded, tuples,
+                                                 wide(updates_of(update, positions)), axes,
+                                                 positions, 'sum'), dtype)
+            if not plan['mean']:
+                return total
+            start = ones(extents) if plan['include_self'] else zeros(extents)
+            count = _cast_to(nodes, scatter_rule(wide(start), tuples, wide(ones(positions)), axes,
+                                                 positions, 'sum'), dtype)
+            empty = _append_node(nodes, {'kind': 'eq',
+                                         'parents': [count, zeros(extents)], 'shape': extents,
+                                         'dtype': 'bool'})
+            count = _append_node(nodes, {'kind': 'where',
+                                         'parents': [empty, ones(extents), count], 'shape': extents,
+                                         'dtype': dtype})
+            return emit({'kind': "div"}, [total, count], extents)
         # scatter_reduce with prod, amax or amin: one Op.scatter at complete coordinates with the
         # rule prod, max or min, a repeated target folding its updates in index order along dim,
         # as scatter_reduce_two does. The rules max and min are IEEE maximum and minimum, whose
@@ -376,20 +591,7 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
         # product starts from 1, written there by a replacing scatter, and a maximum or minimum
         # from the target's first update, so that an infinite result is not tied by an infinite
         # seed. A product of binary16 or bfloat16 runs in binary32 and rounds once.
-        base_value, index_value, update = plan['operands']
-        base = parent(base_value)
-        extents = list(nodes[base]['shape'])
-        rank, dim, reduce = len(extents), plan['dim'], plan['reduce']
-        constant = _index_constant(index_value)
-        if constant is not None:
-            index = _append_node(nodes, {'parents': [], **_constant(constant.long())})
-        else:
-            index = parent(_index_operand(index_value, 'scatter_reduce'))
-        positions = list(nodes[index]['shape'])
-        if len(positions) != rank or any(
-                positions[a] > extents[a] for a in range(rank) if a != dim):
-            raise NotImplementedError('scatter_reduce needs an index of the input rank, no '
-                                      'longer than the input along the other axes')
+        reduce = plan['reduce']
         if 0 in positions:
             # No update lands anywhere: every rule returns the base.
             return base
@@ -468,13 +670,14 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
         source = parent(plan['operands'][0])
         extents = list(nodes[source]['shape'])
         values = plan['operands'][1:] if op == 'index' else plan['operands'][2:]
-        tuples = _advanced_indices(nodes, node_to_id, values, axes, extents, positions)
+        tuples = _advanced_indices(nodes, node_to_id, values, axes, extents, positions,
+                                   plan.get('wrap', True))
         rest = [extent for axis, extent in enumerate(extents) if axis not in axes]
         first, count = axes[0], len(positions)
         moved = axes == list(range(first, first + len(axes))) and first > 0
         if op == 'index':
             index = _registered_node(nodes, 'gather', [{'shape': extents}, {'shape': positions},
-                                                       {'nats': axes}, {'pairs': []}, _SCALAR],
+                                                       {'nats': axes}, {'pairs': []}, element],
                                      [source, tuples], positions + rest, dtype)
             if moved:
                 order = (list(range(count, count + first)) + list(range(count)) +
@@ -547,6 +750,17 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
             joined[lead + axis] = len(pieces)
             return wide({'kind': "cat", 'dim': lead + axis}, pieces, joined)
         return _cast_to(nodes, build(0, []), dtype)
+    def gather_axis(index, dim, picked):
+        extents = list(nodes[index]['shape'])
+        target = list(extents)
+        target[dim] = len(picked)
+        view = [-1 if a == dim else 1 for a in range(len(extents))]
+        positions = torch.tensor(picked, dtype=torch.int64).reshape(view).expand(target)
+        coords = _coordinates(positions, dim, extents)
+        return _append_node(nodes, {'kind': "gather", 'dims': list(range(len(extents))),
+                                    'batch_dims': [], 'indices': {'shape': target,
+                                        'values': coords.reshape(-1).tolist()}, 'parents': [index],
+                                    'shape': target, 'dtype': nodes[index]['dtype']})
     if op == 'upsample_nearest':
         # One constant gather per resized axis, at the source indices PyTorch computes.
         index = parent(plan['operands'][0])
@@ -554,14 +768,7 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
             dim = 2 + axis
             extents = list(nodes[index]['shape'])
             if picked == list(range(extents[dim])): continue
-            target = list(extents)
-            target[dim] = len(picked)
-            view = [-1 if a == dim else 1 for a in range(len(extents))]
-            positions = torch.tensor(picked, dtype=torch.int64).reshape(view).expand(target)
-            coords = _coordinates(positions, dim, extents)
-            index = emit({'kind': "gather", 'dims': list(range(len(extents))), 'batch_dims': [],
-                          'indices': {'shape': target, 'values': coords.reshape(-1).tolist()}},
-                         [index], target)
+            index = gather_axis(index, dim, picked)
         return reshape(index, shape)
     def transform(index, inverse, dim, n, code):
         # Op.rfft (unnormalized) or Op.irfft (its coefficients divided by n) along dim, the
@@ -581,6 +788,18 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
                           'interior': [0] * len(source)}, [index, zero], padded)
         operand = list(nodes[index]['shape'])
         if inverse:
+            # The irfft page ignores the imaginary part of frequency 0, and pocketfft's c2r reads
+            # that of n // 2 for an even n as zero too, a real signal's spectrum being real there.
+            # Op.irfft multiplies those parts by a zero coefficient, which a NaN or an infinity
+            # would turn into a NaN, so they are set to +0 first.
+            ignored = torch.zeros(operand[dim], 2, dtype=torch.bool)
+            ignored[[0, n // 2] if n % 2 == 0 else [0], 1] = True
+            mask = _append_node(nodes, {'kind': "broadcast", 'dims': [dim, len(operand) - 1],
+                                        'parents': [_append_node(nodes, {'parents': [],
+                                                                         **_constant(ignored)})],
+                                        'shape': operand, 'dtype': 'bool'})
+            zero = _broadcast_to(nodes, _scalar_constant(nodes, 0, dtype), operand)
+            index = emit({'kind': "where"}, [mask, zero, index], operand)
             out = operand[:-1]
             out[dim] = n
             index = _registered_node(nodes, 'irfft', [{'shape': out}, {'nat': dim}, {'nat': n}],
@@ -596,19 +815,48 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
             scale = _broadcast_to(nodes, _scalar_constant(nodes, factor, dtype), out)
             index = emit({'kind': "mul_elem"}, [index, scale], out)
         return index
-    if op == 'rfft' or op == 'irfft':
-        index = parent(plan['operands'][0])
+    if op == 'rfft':
         forward = plan['forward']
-        for dim, start, stop, step in plan.get('slices', []):
-            extents = list(nodes[index]['shape'])
-            extents[dim] = len(range(start, stop, step))
-            index = emit({'kind': "slice", 'dims': [dim], 'starts': [start], 'stops': [stop],
-                          'steps': [step]}, [index], extents)
-        if forward is not None:
-            index = transform(index, False, forward['dim'], forward['n'], forward['scale'])
-        if op == 'irfft':
-            index = transform(index, True, plan['dim'], plan['n'], plan['scale'])
+        return transform(parent(plan['operands'][0]), False, forward['dim'], forward['n'],
+                         forward['scale'])
+    if op == 'irfft':
+        index = transform(parent(plan['operands'][0]), True, plan['dim'], plan['n'],
+                          plan['scale'])
         return reshape(index, shape)
+    if op == 'complex':
+        # A complex value in its paired-real form, its parts on a last axis of 2, `shape` the
+        # complex one (_structure._complex_kind).
+        form, index, paired = plan['form'], parent(plan['operands'][0]), shape + [2]
+        if form == 'reshape':
+            return reshape(index, paired)
+        if form == 'slice':
+            return emit({'kind': "slice", 'dims': [plan['dim']], 'starts': [plan['start']],
+                         'stops': [plan['stop']], 'steps': [plan['step']]}, [index], paired)
+        if form == 'select':
+            return reshape(window(index, plan['dim'], plan['index'], plan['index'] + 1), paired)
+        def part(at, k):
+            # Part k of the paired value at `at`, broadcast to `shape`.
+            extents = nodes[at]['shape']
+            return broadcast(reshape(crop(at, [len(extents) - 1], [k], [k + 1]), extents[:-1]),
+                             shape)
+        if form == 'part':
+            return part(index, plan['part'])
+        def arithmetic(kind, left, right):
+            return emit({'kind': kind}, [left, right], shape)
+        def constant(value):
+            return _broadcast_to(nodes, _scalar_constant(nodes, value, dtype), shape)
+        a, b = part(index, 0), part(index, 1)
+        if form == 'div':
+            rat, scale = constant(plan['rat']), constant(plan['scale'])
+            re = arithmetic('add', a, arithmetic('mul_elem', b, rat))
+            im = arithmetic('sub', b, arithmetic('mul_elem', a, rat))
+            re, im = arithmetic('mul_elem', re, scale), arithmetic('mul_elem', im, scale)
+        else:
+            other = parent(plan['operands'][1])
+            c, d = part(other, 0), part(other, 1)
+            re = arithmetic('sub', arithmetic('mul_elem', a, c), arithmetic('mul_elem', b, d))
+            im = arithmetic('add', arithmetic('mul_elem', a, d), arithmetic('mul_elem', b, c))
+        return concat([reshape(re, shape + [1]), reshape(im, shape + [1])], len(shape))
     if op == 'moments':
         # GroupNormKernel.cpp and batch_norm_cpu: per group (or channel) the mean and the biased
         # variance in the opmath type, rstd = 1 / sqrt(var + eps). Without weight and bias the
@@ -711,6 +959,41 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
     def apply_at(kind, parents, at_shape, at_dtype=None):
         return _append_node(nodes, {**kind, 'parents': parents, 'shape': at_shape,
                                     'dtype': dtype if at_dtype is None else at_dtype})
+    if op == 'vector_norm':
+        # torch.linalg.vector_norm of the operand cast to the result's dtype (_lower_kind). ATen's
+        # CPU kernel computes a binary16 or bfloat16 norm in binary32 and rounds it once, with
+        # ord and 1/ord in that type. Its vectorized sums can differ from the IR's left fold.
+        index = parent(plan['operands'][0])
+        wide = 'float32' if dtype in _REDUCED_FLOATS else dtype
+        if nodes[index]['dtype'] != dtype:
+            index = _cast_to(nodes, index, dtype)
+        index = _cast_to(nodes, index, wide)
+        extents, order = list(nodes[index]['shape']), plan['ord']
+        def total(op, values):
+            return apply_at({'kind': "reduce", 'op': op, 'dims': plan['dims'],
+                             'keepdim': plan['keepdim']}, [values], shape, wide)
+        if order == 0:
+            nonzero = apply_at({'kind': 'ne'}, [index, constant_at(0, extents, wide)], extents,
+                               'bool')
+            result = total('sum', _cast_to(nodes, nonzero, wide))
+        elif order == 2:
+            square = apply_at({'kind': "mul_elem"}, [index, index], extents, wide)
+            result = apply_at({'kind': "sqrt"}, [total('sum', square)], shape, wide)
+        else:
+            magnitude = apply_at({'kind': "abs"}, [index], extents, wide)
+            if order in (float('inf'), float('-inf')):
+                result = total('max' if order > 0 else 'min', magnitude)
+            elif order == 1:
+                result = total('sum', magnitude)
+            else:
+                typed = _torch_dtype(wide)
+                exponent = torch.tensor(order, dtype=typed)
+                powered = apply_at({'kind': 'pow'}, [magnitude, constant_at(
+                    exponent.item(), extents, wide)], extents, wide)
+                root = (torch.tensor(1, dtype=typed) / exponent).item()
+                result = apply_at({'kind': 'pow'}, [total('sum', powered),
+                                                    constant_at(root, shape, wide)], shape, wide)
+        return _cast_to(nodes, result, dtype)
     if op == 'distance':
         # The p-norm distance of row pairs: p = 0 counts nonzero differences, 1 sums their
         # absolute values and 2 is the root of the sum of squares. For p = inf it is the largest
@@ -797,17 +1080,6 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
         # evaluation order is not reproduced, so values agree within a tolerance.
         index = parent(plan['operands'][0])
         opmath = 'float32' if dtype in _REDUCED_FLOATS else dtype
-        def along(value, axis, picked):
-            dim = 2 + axis
-            extents = list(nodes[value]['shape'])
-            target = list(extents)
-            target[dim] = len(picked)
-            view = [-1 if a == dim else 1 for a in range(len(extents))]
-            positions = torch.tensor(picked, dtype=torch.int64).reshape(view).expand(target)
-            coords = _coordinates(positions, dim, extents)
-            return apply_at({'kind': "gather", 'dims': list(range(len(extents))), 'batch_dims': [],
-                             'indices': {'shape': target, 'values': coords.reshape(-1).tolist()}},
-                            [value], target, nodes[value]['dtype'])
         def weight(values, axis, at_shape):
             view = [len(values) if a == 2 + axis else 1 for a in range(len(at_shape))]
             node = _append_node(nodes, {'parents': [], **_constant(
@@ -815,8 +1087,8 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
             return _broadcast_to(nodes, _cast_to(nodes, node, opmath), at_shape)
         def blend(value, axis):
             picks = plan['axes'][axis]
-            low = along(value, axis, [i0 for i0, _, _, _ in picks])
-            high = along(value, axis, [i1 for _, i1, _, _ in picks])
+            low = gather_axis(value, 2 + axis, [i0 for i0, _, _, _ in picks])
+            high = gather_axis(value, 2 + axis, [i1 for _, i1, _, _ in picks])
             at_shape = list(nodes[low]['shape'])
             low = apply_at({'kind': "mul_elem"}, [low, weight([w0 for _, _, w0, _ in picks], axis,
                                                          at_shape)], at_shape, opmath)
@@ -834,9 +1106,12 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
         # corners floor(x) + {0, 1} by the fractional parts. A corner outside the image has its
         # whole weighted contribution selected away to zero (zeros padding), its index clamped
         # into the image in binary before the int64 conversion. The corners index a runtime
-        # Op.gather with the batch as a batch axis. Values agree with the CPU kernel within a
-        # tolerance, and nearest picks the same pixel unless a coordinate lies within rounding of a
-        # tie.
+        # Op.gather with the batch as a batch axis. A NaN coordinate reads as -1, as
+        # torch.nn.functional.grid_sample's docstring says, and an infinite one as the limit of
+        # the finite ones beyond it; with zeros padding the CPU kernel gives NaN in bilinear mode
+        # at both and 0 in nearest mode at NaN instead. At finite coordinates values agree with
+        # the CPU kernel within a tolerance, and nearest picks the same pixel unless a coordinate
+        # lies within rounding of a tie.
         source, grid = (parent(value) for value in plan['operands'])
         batch, channels, height, width = nodes[source]['shape']
         _, rows, cols, _ = nodes[grid]['shape']
@@ -848,22 +1123,22 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
             value = apply_at({'kind': "slice", 'dims': [3], 'starts': [component],
                               'stops': [component + 1], 'steps': [1]}, [grid], points + [1])
             value = apply_at(_reshape_kind(), [value], points)
+            if size == 1 and (plan['align'] or plan['padding'] == 1):
+                # A singleton axis reads its only pixel at every finite coordinate, as
+                # (g + 1) / 2 (size - 1) is 0 and border clipping keeps it there, so at an
+                # infinite one too, where the unnormalization would form inf * 0.
+                return constant_at(0, points)
+            missing = apply_at({'kind': 'isnan'}, [value], points, 'bool')
+            value = apply_at({'kind': 'where'},
+                             [missing, constant_at(-1, points), value], points)
             if plan['padding'] == 0:
-                # CPU zeros padding gives NaN for a nonfinite bilinear coordinate and zero for
-                # nearest. Keep that decision separately and use a finite coordinate for gather.
+                # An infinite coordinate lies outside the image, where zeros padding reads 0.
+                # Keep that decision separately and use a finite coordinate for gather.
                 missing = apply_at({'kind': 'logical_not'}, [apply_at(
                     {'kind': 'isfinite'}, [value], points, 'bool')], points, 'bool')
                 invalid.append(missing)
                 value = apply_at({'kind': 'where'},
                                  [missing, constant_at(0, points), value], points)
-            else:
-                # Border clipping sends NaN to the low edge. A singleton axis always reads its
-                # only pixel, including when an infinite coordinate would otherwise form inf*0.
-                if size == 1:
-                    return constant_at(0, points)
-                missing = apply_at({'kind': 'isnan'}, [value], points, 'bool')
-                value = apply_at({'kind': 'where'},
-                                 [missing, constant_at(-1, points), value], points)
             shifted = apply_at({'kind': "add"}, [value, constant_at(1, points)], points)
             if plan['align']:
                 value = apply_at({'kind': "mul_elem"}, [apply_at({'kind': "div"}, [
@@ -926,12 +1201,13 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
                 result = term if result is None else apply_at({'kind': "add"}, [result, term],
                                                               points + [channels])
         if invalid:
-            missing = apply_at({'kind': 'logical_or'}, invalid, points, 'bool')
+            # A singleton axis that align_corners or border padding keeps adds no mask.
+            missing = invalid[0] if len(invalid) == 1 else apply_at(
+                {'kind': 'logical_or'}, invalid, points, 'bool')
             missing = _broadcast_to(nodes, apply_at(_reshape_kind(), [missing],
                                                      points + [1], 'bool'), points + [channels])
-            outside = 0 if plan['mode'] == 1 else float('nan')
             result = apply_at({'kind': 'where'},
-                              [missing, constant_at(outside, points + [channels]), result],
+                              [missing, constant_at(0, points + [channels]), result],
                               points + [channels])
         return apply_at({'kind': "permute", 'dims': [0, 3, 1, 2]}, [result],
                         [batch, channels, rows, cols])
@@ -948,8 +1224,8 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
                                     [{'shape': shape}, {'nat': key}], [], shape, dtype)
         draw = _registered_node(nodes, 'randUniform', [{'shape': shape}, {'nat': key}], [], shape,
                                 'float64')
-        return _registered_node(nodes, 'sort', [{'shape': shape}, {'nat': 0}, {'bool': False}],
-                                [draw], shape, dtype, 'float64', 1)
+        return _registered_node(nodes, 'sort', [{'shape': shape}, {'nat': 0}, {'bool': False},
+                                                _SCALAR], [draw], shape, dtype, 'float64', 1)
     if op == 'dropout':
         # native_dropout_cpu: mask = bernoulli(1 - p), output = input.mul(mask).mul_(scale) with
         # scale = 1 / (1 - p), or 0 at p = 1, the scalar product in binary32 for binary16 and
@@ -1110,38 +1386,6 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
             pieces.append(reduced)
         if len(pieces) == 1: return reshape(pieces[0], shape)
         return emit({'kind': "cat", 'dim': 0}, pieces, [len(pieces), width])
-    if op == 'take_along_dim':
-        source, index = (parent(value) for value in plan['operands'])
-        dim = plan['dim']
-        if dim is None:
-            total = 1
-            for extent in nodes[source]['shape']: total *= extent
-            count = 1
-            for extent in nodes[index]['shape']: count *= extent
-            source = reshape(source, [total])
-            index = _append_node(nodes, {**_reshape_kind(), 'parents': [index], 'shape': [count],
-                                         'dtype': nodes[index]['dtype']})
-            gathered = _registered_node(nodes, 'gather', [{'shape': [total]}, {'shape': [count]},
-                                                          {'nats': [0]}, {'pairs': []}, _SCALAR],
-                                        [source, index], [count], dtype)
-            return reshape(gathered, shape)
-        extents, positions = list(nodes[source]['shape']), list(nodes[index]['shape'])
-        common = list(torch.broadcast_shapes(
-            tuple(e for a, e in enumerate(extents) if a != dim),
-            tuple(e for a, e in enumerate(positions) if a != dim)))
-        source = broadcast(source, common[:dim] + [extents[dim]] + common[dim:])
-        target = common[:dim] + [positions[dim]] + common[dim:]
-        index = _broadcast_to(nodes, index, target)
-        extent = _broadcast_to(nodes, _scalar_constant(nodes, extents[dim], nodes[index]['dtype']),
-                               target)
-        index = _append_node(nodes, {'kind': 'remainder',
-                                     'parents': [index, extent], 'shape': target,
-                                     'dtype': nodes[index]['dtype']})
-        pairs = [[axis, axis] for axis in range(len(target)) if axis != dim]
-        return _registered_node(nodes, 'gather', [{'shape': nodes[source]['shape']},
-                                                  {'shape': target}, {'nats': [dim]},
-                                                  {'pairs': pairs}, _SCALAR], [source, index],
-                                target, dtype)
     if op == 'boolean_reduce':
         # any is ne(sum(x as binary32), 0) and all is eq(sum(not x as binary32), 0). A sum of
         # terms 0 and 1 rounded to nearest is zero exactly when every term is, and an empty fiber
@@ -1204,12 +1448,17 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
         return reshape(index, image if batched else image[1:])
     if op == 'registered':
         # One custom node whose primitive is the registered operator of plan['record'].
-        index = parent(plan['operands'][0])
-        if nodes[index]['shape'] != plan['input_shape']:
-            index = _append_node(nodes, {**_reshape_kind(), 'parents': [index],
-                                         'shape': plan['input_shape'],
-                                         'dtype': nodes[index]['dtype']})
-        index = _registered_node(nodes, plan['tag'], plan['fields'], [index],
+        operands = []
+        for operand in plan['operands']:
+            index = parent(operand)
+            if plan['broadcast']:
+                index = broadcast(index, plan['input_shape'])
+            elif nodes[index]['shape'] != plan['input_shape']:
+                index = _append_node(nodes, {**_reshape_kind(), 'parents': [index],
+                                             'shape': plan['input_shape'],
+                                             'dtype': nodes[index]['dtype']})
+            operands.append(index)
+        index = _registered_node(nodes, plan['tag'], plan['fields'], operands,
                                  plan['result_shape'], dtype, plan['scalar'], plan['output'])
         return reshape(index, shape)
     if op == 'topk':
@@ -1350,17 +1599,13 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
         return reshape(index, shape)
     if op == 'leaky_relu':
         # leaky_relu_kernel gives x where x > 0 and x * slope elsewhere, with the slope and, for
-        # binary16 and bfloat16, x in binary32. Rounding is monotone, so for 0 < slope <= 1 that
-        # is maximum(x, x * slope) and for slope > 1 minimum(x, x * slope), at every signed zero,
-        # infinity and NaN.
+        # binary16 and bfloat16, x in binary32: Op.leakyReLU at the slope, a frozen scalar. Its
+        # pullback takes the slope wherever x > 0 fails, as leaky_relu_backward does.
         opmath = 'float32' if dtype in _REDUCED_FLOATS else dtype
         index = _cast_to(nodes, parent(plan['operands'][0]), opmath)
-        slope = _broadcast_to(nodes, _scalar_constant(nodes, plan['slope'], opmath), shape)
-        def wide(kind, parents):
-            return _append_node(nodes, {'kind': kind, 'parents': parents, 'shape': shape,
-                                        'dtype': opmath})
-        product = wide("mul_elem", [index, slope])
-        chosen = wide("maximum" if plan['largest'] else "minimum", [index, product])
+        chosen = _append_node(nodes, {'kind': "leaky_relu", 'parents': [index], 'shape': shape,
+                                      'dtype': opmath, **_binary_payload(
+                                          'slope', _scalar_tensor(plan['slope'], opmath))})
         return _cast_to(nodes, chosen, dtype)
     if op == 'scatter':
         # Each update is combined with the entry at its complete target coordinate. The targets
@@ -1398,6 +1643,12 @@ def _emit_structure(plan, nodes, node_to_id, shape, dtype):
     raise NotImplementedError(f'no structural lowering for {op}')
 
 
+class _UnsupportedOperator(NotImplementedError):
+    # The refusal of an operator the capture has no lowering of. _graph replaces such a node by
+    # ATen's composite of it where the operator is one (_inline_composite).
+    pass
+
+
 def _lower_kind(node, model=None):
     name = _target_name(node.target)
     args = node.args
@@ -1429,14 +1680,14 @@ def _lower_kind(node, model=None):
                 mod.normalized_shape, gamma=mod.weight, beta=mod.bias)
         if isinstance(mod, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
             rank = len(tuple(mod.kernel_size))
-            input_rank = len(_shape_from_arg(args[0])) if args else 0
+            input_shape = _shape_from_arg(_argument(node, 0, 'input'))
+            input_rank = len(input_shape)
             if input_rank not in (rank + 1, rank + 2): raise NotImplementedError(f"convolution expected rank {rank + 1} or {rank + 2}, got {input_rank}")
             channel_axis = input_rank - rank - 1
             if mod.padding_mode != "zeros":
                 raise NotImplementedError(f"convolution padding_mode={mod.padding_mode!r} is "
                                           "outside the TorchLean IR import subset")
             padding = _spatial_tuple(mod.padding, rank, 0)
-            input_shape = _shape_from_arg(args[0])
             return {"kind": "conv", "spatial_rank": rank, "kernel": _spatial_tuple(mod.kernel_size, rank, 1), "stride": _spatial_tuple(mod.stride, rank, 1), "padding": padding, "padding_after": padding, "dilation": _spatial_tuple(mod.dilation, rank, 1), "groups": int(mod.groups), "channel_axis": channel_axis, "input_spatial": input_shape[channel_axis + 1:], **_convolution_payload(mod.weight, mod.bias, mod.groups)}
         if isinstance(mod, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
             if mod.training:
@@ -1470,9 +1721,15 @@ def _lower_kind(node, model=None):
                 raise NotImplementedError("padded average pooling with count_include_pad=False "
                                           "is outside the TorchLean IR import subset")
             return {"kind": "avg_pool", "spatial_rank": rank, "kernel": _spatial_tuple(mod.kernel_size, rank, 1), "stride": _spatial_tuple(mod.stride if mod.stride is not None else mod.kernel_size, rank, 1), "padding": padding}
-    if _is_op(node, ('aten._to_copy.default', 'aten.to.dtype'), (),
-              ('to', 'float', 'double', 'half', 'bfloat16')):
-        return {"kind": "custom", '_plan': {'op': 'convert', 'operands': [args[0]]}}
+    if _is_op(node, *_CONVERSIONS):
+        # A conversion to the node's dtype (_CONVERSIONS). The report leaves the device unchecked
+        # (`frontend_device_layout_constraints`), and a layout other than the dense one is
+        # refused.
+        if kwargs.get('layout') not in (None, torch.strided):
+            raise NotImplementedError(f"a conversion to the {kwargs['layout']} layout is "
+                                      "unsupported")
+        return {"kind": "custom", '_plan': {'op': 'convert', 'operands': [args[0]],
+                                            'saturate': _conversion_saturates(node)}}
     if _is_op(node, ("aten.add.Tensor", "aten.add.Scalar"), (operator.add, torch.add), ("add",)):
         alpha = kwargs.get("alpha", args[2] if len(args) > 2 else 1)
         if alpha != 1:
@@ -1483,6 +1740,13 @@ def _lower_kind(node, model=None):
         if alpha != 1:
             raise NotImplementedError("torch.sub with alpha != 1 is unsupported")
         return _arithmetic_kind(node, 'sub')
+    if _is_op(node, ("aten.rsub.Tensor", "aten.rsub.Scalar"), (torch.rsub,), ()):
+        # ATen's rsub(self, other, alpha) is sub(other, self, alpha), and torch.export writes
+        # Python's s - x as rsub.Scalar(x, s).
+        alpha = kwargs.get("alpha", args[2] if len(args) > 2 else 1)
+        if alpha != 1:
+            raise NotImplementedError("torch.rsub with alpha != 1 is unsupported")
+        return _arithmetic_kind(node, 'sub', reflected=True)
     if _is_op(node, ("aten.mul.Tensor", "aten.mul.Scalar"), (operator.mul, torch.mul, torch.multiply), ("mul", "multiply")):
         return _arithmetic_kind(node, 'mul')
     if _top_k_mask(node) is not None:
@@ -1512,7 +1776,54 @@ def _lower_kind(node, model=None):
         if root_dtype not in _FLOATING:
             raise NotImplementedError(f'sqrt of a {root_dtype} tensor is not imported')
         fields = [{'shape': root_shape}, {'nat': _op_table()['codes']['sqrt']['raw']}]
-        return _registered_kind('sqrt', fields, source, root_shape, root_shape)
+        return _registered_kind('sqrt', fields, [source], root_shape, root_shape)
+    for special, (aten, functions, methods) in _SPECIAL.items():
+        if _is_op(node, aten, functions, methods):
+            # One Op.special node. Its meaning is the real function, and no binary format has a
+            # rule for it, so a run at one refuses the step, as for erf. How PyTorch rounds these
+            # functions on binary16 and bfloat16 operands is not modeled, so those are refused.
+            source = args[0] if args else kwargs.get('input', kwargs.get('self'))
+            shape, dtype = _shape_from_arg(source), _node_dtype(source)
+            if dtype not in ('float32', 'float64'):
+                raise NotImplementedError(f'torch.special.{special} of a {dtype} tensor is not '
+                                          'imported: only float32 and float64 operands are')
+            return _registered_kind('special', [{'name': special}, {'nats': [0]},
+                                                {'shape': shape}], [source], shape, shape)
+    if _is_op(node, ('aten.polygamma.default', 'aten.special_polygamma.default'),
+              (torch.polygamma, torch.special.polygamma), ('polygamma',)):
+        # polygamma n is the derivative of order n of digamma: one Op.special node of digamma at
+        # that order. The Tensor method takes the tensor first, the functions the order first.
+        if node.op == 'call_method':
+            source, order = args[0], _argument(node, 1, 'n')
+        else:
+            order, source = _argument(node, 0, 'n'), _argument(node, 1, 'input', 'self')
+        if not isinstance(order, int) or isinstance(order, bool) or order < 0:
+            raise NotImplementedError(f'torch.special.polygamma of order {order!r} is not '
+                                      'imported: the order must be a natural number')
+        shape, dtype = _shape_from_arg(source), _node_dtype(source)
+        if dtype not in ('float32', 'float64'):
+            raise NotImplementedError(f'torch.special.polygamma of a {dtype} tensor is not '
+                                      'imported: only float32 and float64 operands are')
+        return _registered_kind('special', [{'name': 'digamma'}, {'nats': [order]},
+                                            {'shape': shape}], [source], shape, shape)
+    for special, (aten, functions, methods) in _SPECIAL2.items():
+        if _is_op(node, aten, functions, methods):
+            # One Op.special node of orders [0, 0], as for _SPECIAL, of two tensors of one dtype
+            # broadcast to the result's shape. A Python number or two dtypes, which PyTorch would
+            # promote, are refused.
+            operands = [_argument(node, 0, 'input', 'self'), _argument(node, 1, 'other')]
+            if not all(isinstance(operand, torch.fx.Node) for operand in operands):
+                raise NotImplementedError(f'torch.special.{special} of a Python number is not '
+                                          'imported: both operands must be tensors')
+            first, second = (_node_dtype(operand) for operand in operands)
+            if first != second or first not in ('float32', 'float64'):
+                raise NotImplementedError(f'torch.special.{special} of a {first} and a {second} '
+                                          'tensor is not imported: only two float32 or two '
+                                          'float64 operands are')
+            shape = _shape_from_arg(node)
+            return _registered_kind('special',
+                                    [{'name': special}, {'nats': [0, 0]}, {'shape': shape}],
+                                    operands, shape, shape, broadcast=True)
     if _is_op(node, ("aten.reciprocal.default",), (torch.reciprocal,), ("reciprocal",)):
         return {"kind": "inv"}
     if _is_op(node, ("aten.maximum.default",), (torch.maximum,), ("maximum",)):
@@ -1539,8 +1850,6 @@ def _lower_kind(node, model=None):
                               'aten.min.default', 'aten.mean.default'))
         dims = _reduction_axes(None if total else axis, input_rank, name)
         keepdim = not total and bool(_argument(node, 2, 'keepdim'))
-        if kwargs.get('dtype', args[3] if len(args) > 3 and not total else None) is not None:
-            raise NotImplementedError('reduction dtype casts are outside the scalar contract')
         if reduction == 'mean':
             source = _shape_from_arg(operand)
             if 0 in [source[axis] for axis in dims] and 0 not in _node_shape(node):
@@ -1551,6 +1860,26 @@ def _lower_kind(node, model=None):
             attributes = {'kind': "reduce", 'op': reduction, 'dims': dims, 'keepdim': keepdim}
         return {**attributes, '_plan': {'op': 'reduce', 'operands': [operand],
                                         'attributes': attributes}}
+    if _is_op(node, ('aten.linalg_vector_norm.default',), (torch.linalg.vector_norm,), ()):
+        # torch.linalg.vector_norm (the PyTorch 2.13 docstring): ord inf is max(abs(x)), -inf
+        # min(abs(x)), 0 sum(x != 0) and another ord sum(abs(x)**ord)**(1./ord), over the axes of
+        # dim, every axis for None, of the input cast to dtype when one is given. A negative or
+        # infinite ord of an empty fiber has no value, and PyTorch raises.
+        operand = _argument(node, 0, 'self', 'input')
+        order = _argument(node, 1, 'ord')
+        order = 2.0 if order is None else float(order)
+        dim = _argument(node, 2, 'dim')
+        if isinstance(dim, (list, tuple)) and not dim:
+            raise NotImplementedError('vector_norm with an empty dim list is not imported')
+        if _node_dtype(operand) not in _FLOATING or order != order:
+            raise NotImplementedError('vector_norm needs a real floating input and a number ord')
+        source = _shape_from_arg(operand)
+        dims = _reduction_axes(dim, len(source), name)
+        if (order < 0 or order == float('inf')) and 0 in [source[axis] for axis in dims]:
+            raise NotImplementedError(f'vector_norm of ord {order} over an empty fiber')
+        return {'kind': "reduce", '_plan': {'op': 'vector_norm', 'operands': [operand],
+                                            'ord': order, 'dims': dims,
+                                            'keepdim': bool(_argument(node, 3, 'keepdim'))}}
     if _is_op(node, ('aten.var.correction', 'aten.var.dim', 'aten.var.default'), (torch.var,),
               ('var',)):
         # var.default and var.dim take an unbiased flag, var.correction a correction count.
@@ -1594,14 +1923,16 @@ def _lower_kind(node, model=None):
         else:
             dtype_pos = 3 if node.target in (F.softmax, F.log_softmax) else 2
             dtype = kwargs.get("dtype", args[dtype_pos] if len(args) > dtype_pos else None)
-        if dtype is not None:
-            raise NotImplementedError("softmax dtype casts are outside the scalar contract")
         rank = len(_node_shape(node))
         if axis is None and node.target in (F.softmax, F.log_softmax):
             axis = 0 if rank in (0, 1, 3) else 1
         if axis is None: raise NotImplementedError("softmax requires a static dimension")
-        return {"kind": "log_softmax" if logarithm else "softmax",
-                "dim": _normalize_axis(axis, rank)}
+        attributes = {"kind": "log_softmax" if logarithm else "softmax",
+                      "dim": _normalize_axis(axis, rank)}
+        if dtype is None:
+            return attributes
+        return {**attributes, '_plan': {'op': 'reduce', 'attributes': attributes,
+                                        'operands': [_argument(node, 0, 'input', 'self')]}}
     if _is_op(node, ("aten.reshape.default", "aten.view.default"), (torch.reshape,),
               ("reshape", "view")):
         if node.op == "call_method" and node.target == "view":
@@ -1634,13 +1965,38 @@ def _lower_kind(node, model=None):
         start, end, _ = slice(start, end).indices(source[dim])
         return {"kind": "slice", "dims": [dim], "starts": [start], "stops": [max(start, end)],
                 "steps": [step]}
-    if _is_op(node, ("aten.transpose.int",), (torch.transpose,), ("transpose",)):
+    if _is_op(node, ("aten.transpose.int", "aten.swapdims.default", "aten.swapaxes.default"),
+              (torch.transpose, torch.swapdims, torch.swapaxes),
+              ("transpose", "swapdims", "swapaxes")):
+        # swapdims and swapaxes are aliases of transpose (PyTorch 2.13 docstrings).
         rank = len(_shape_from_arg(args[0]))
-        d0 = _normalize_axis(kwargs.get("dim0", args[1] if len(args) > 1 else None), rank)
-        d1 = _normalize_axis(kwargs.get("dim1", args[2] if len(args) > 2 else None), rank)
+        first = args[1] if len(args) > 1 else kwargs.get("dim0", kwargs.get("axis0"))
+        second = args[2] if len(args) > 2 else kwargs.get("dim1", kwargs.get("axis1"))
+        d0, d1 = _normalize_axis(first, rank), _normalize_axis(second, rank)
         dims = list(range(rank))
         dims[d0], dims[d1] = dims[d1], dims[d0]
         return {"kind": "permute", "dims": dims}
+    if _is_op(node, ("aten.movedim.int", "aten.movedim.intlist", "aten.moveaxis.int",
+                     "aten.moveaxis.intlist"), (torch.movedim, torch.moveaxis),
+              ("movedim", "moveaxis")):
+        # The axes at `source` move to `destination`, and the others keep their order in the
+        # remaining positions (the PyTorch 2.13 docstring of torch.movedim).
+        rank = len(_shape_from_arg(args[0]))
+        source = kwargs.get("source", args[1] if len(args) > 1 else None)
+        destination = kwargs.get("destination", args[2] if len(args) > 2 else None)
+        source = [source] if isinstance(source, int) else list(source)
+        destination = [destination] if isinstance(destination, int) else list(destination)
+        source = [_normalize_axis(a, rank) for a in source]
+        destination = [_normalize_axis(a, rank) for a in destination]
+        if (len(source) != len(destination) or len(set(source)) != len(source)
+                or len(set(destination)) != len(destination)):
+            raise NotImplementedError(f'movedim from {source} to {destination} is not a '
+                                      'permutation')
+        dims = [None] * rank
+        for a, b in zip(source, destination):
+            dims[b] = a
+        rest = iter(a for a in range(rank) if a not in source)
+        return {"kind": "permute", "dims": [next(rest) if a is None else a for a in dims]}
     if _is_op(node, ("aten.flip.default",), (torch.flip,), ("flip",)):
         rank = len(_shape_from_arg(args[0]))
         dims = kwargs.get("dims", args[1] if len(args) > 1 else ())
@@ -1690,21 +2046,22 @@ def _lower_kind(node, model=None):
     if _is_op(node, ("aten.linear.default",), (F.linear,), ()):
         weight = kwargs.get("weight", args[1] if len(args) > 1 else None)
         bias = kwargs.get("bias", args[2] if len(args) > 2 else None)
-        return {"kind": "linear", **_linear_payload(weight, bias)}
+        # A weight or bias not known at capture is an operand after the input.
+        return {"kind": "linear", **_linear_payload(weight, bias, _argument(node, 0, 'input'))}
     if _is_op(node, ("aten.batch_norm.default",), (F.batch_norm, torch.batch_norm), ()):
         training = bool(kwargs.get("training", args[5] if len(args) > 5 else False))
         is_aten = node.target is not F.batch_norm
         mean_pos, var_pos = (3, 4) if is_aten else (1, 2)
         weight_pos, bias_pos = (1, 2) if is_aten else (3, 4)
+        eps = kwargs.get("eps", args[7] if len(args) > 7 else 1e-5)
+        weight = kwargs.get("weight", args[weight_pos] if len(args) > weight_pos else None)
+        bias = kwargs.get("bias", args[bias_pos] if len(args) > bias_pos else None)
         if training:
             # Batch statistics. The running statistics, updated in place, must be buffers that
             # only this node reads: their updates become outputs of the program
             # (_program_outputs), not a mutation.
             running = [kwargs.get(name, args[pos] if len(args) > pos else None)
                        for name, pos in (("running_mean", mean_pos), ("running_var", var_pos))]
-            eps = kwargs.get("eps", args[7] if len(args) > 7 else 1e-5)
-            weight = kwargs.get("weight", args[weight_pos] if len(args) > weight_pos else None)
-            bias = kwargs.get("bias", args[bias_pos] if len(args) > bias_pos else None)
             if all(value is None for value in running):
                 return _moments_kind(args[0], 'batch', weight, bias, eps, 0)
             if not all(isinstance(value, torch.fx.Node) and value.op == 'placeholder' and
@@ -1725,28 +2082,27 @@ def _lower_kind(node, model=None):
                                       "eval-mode TorchLean IR operation")
         shape = _node_shape(node)
         channels = int(shape[1]) if len(shape) >= 2 else 0
-        eps = kwargs.get("eps", args[7] if len(args) > 7 else 1e-5)
-        weight = kwargs.get("weight", args[weight_pos] if len(args) > weight_pos else None)
-        bias = kwargs.get("bias", args[bias_pos] if len(args) > bias_pos else None)
         return _normalization("batch_norm", _argument(node, 0, 'input'), eps, {"dim": 1},
                               [channels], gamma=weight, beta=bias, mean=running_mean,
                               var=running_var)
 
     if _is_op(node, ("aten.conv1d.default", "aten.conv2d.default", "aten.conv3d.default"), (F.conv1d, F.conv2d, F.conv3d), ()):
+        source = _argument(node, 0, 'input')
         weight_arg = kwargs.get("weight", args[1] if len(args) > 1 else None)
         bias_arg = kwargs.get("bias", args[2] if len(args) > 2 else None)
-        weight = _resolve_tensor(weight_arg)
-        wshape = _shape_of(weight)
+        wshape = _held_shape(weight_arg)
         rank = max(0, len(wshape) - 2)
-        input_rank = len(_shape_from_arg(args[0])) if args else 0
+        input_shape = _shape_from_arg(source)
+        input_rank = len(input_shape)
         if input_rank not in (rank + 1, rank + 2): raise NotImplementedError(f"convolution expected rank {rank + 1} or {rank + 2}, got {input_rank}")
         channel_axis = input_rank - rank - 1
         stride = _spatial_tuple(kwargs.get("stride", args[3] if len(args) > 3 else 1), rank, 1)
         padding = _spatial_tuple(kwargs.get("padding", args[4] if len(args) > 4 else 0), rank, 0)
         dilation = _spatial_tuple(kwargs.get("dilation", args[5] if len(args) > 5 else 1), rank, 1)
         groups = int(kwargs.get("groups", args[6] if len(args) > 6 else 1))
-        input_shape = _shape_from_arg(args[0])
-        return {"kind": "conv", "spatial_rank": rank, "kernel": [int(v) for v in wshape[2:]], "stride": stride, "padding": padding, "padding_after": padding, "dilation": dilation, "groups": groups, "channel_axis": channel_axis, "input_spatial": input_shape[channel_axis + 1:], **_convolution_payload(weight, bias_arg, groups)}
+        return {"kind": "conv", "spatial_rank": rank, "kernel": [int(v) for v in wshape[2:]], "stride": stride, "padding": padding, "padding_after": padding, "dilation": dilation, "groups": groups, "channel_axis": channel_axis, "input_spatial": input_shape[channel_axis + 1:],
+                # A weight or bias not known at capture is an operand after the input.
+                **_convolution_payload(weight_arg, bias_arg, groups, source)}
     if _is_op(node, ("aten.max_pool1d.default", "aten.max_pool2d.default", "aten.max_pool3d.default"), (F.max_pool1d, F.max_pool2d, F.max_pool3d), ()):
         rank = next(d for d in (1, 2, 3) if _is_op(node, (f"aten.max_pool{d}d.default",), (getattr(F, f"max_pool{d}d"),)))
         kernel = _spatial_tuple(args[1] if len(args) > 1 else kwargs.get("kernel_size", 1), rank, 1)
@@ -1786,4 +2142,4 @@ def _lower_kind(node, model=None):
     if _is_getattr(node):
         attr = args[1] if len(args) > 1 else "<unknown>"
         raise NotImplementedError(f"unsupported PyTorch attribute projection: {attr}. If this came from a tuple-returning op such as torch.sort(...).values, add a value-graph/lowering rule for that producer instead of treating the attribute as an ordinary tensor op.")
-    raise NotImplementedError(f"unsupported PyTorch op: {name}")
+    raise _UnsupportedOperator(f"unsupported PyTorch op: {name}")

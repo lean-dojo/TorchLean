@@ -258,7 +258,8 @@ Runtime flags may come before the command name, so `torchlean mlp --device cpu` 
 `torchlean --device cpu mlp` both work.
 -/
 def splitCommandArgs? (args : List String) : Option (List String × String × List String) :=
-  let rec go (prefixRev : List String) : List String → Option (List String × String × List String)
+  let rec /-- Scan for the command name, with the flags before it in reverse in `prefixRev`. -/
+  go (prefixRev : List String) : List String → Option (List String × String × List String)
     | .nil => none
     | a :: b :: rest =>
         if prefixFlagTakesValue a then
@@ -294,7 +295,7 @@ other answer. An empty answer picks CPU. -/
 partial def askDevice : IO (List String) := do
   IO.println "Runtime device:"
   IO.println "  1) CPU    portable default"
-  IO.println "  2) CUDA   GPU runtime, requires `scripts/lake.sh -K cuda=true exe ...`"
+  IO.println "  2) CUDA   GPU runtime, requires `scripts/lake.sh -Kcuda=true exe ...`"
   IO.print "Select device [1]: "
   (← IO.getStdout).flush
   match (← readPromptLine).toLower with

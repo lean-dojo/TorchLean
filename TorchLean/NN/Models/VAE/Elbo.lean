@@ -98,7 +98,7 @@ theorem meanKLToStandard_nonneg (mu logvar : Tensor ℝ latent) :
 /--
 Over `ℝ`, the diagonal-Gaussian KL term vanishes exactly at zero mean and zero log-variance.
 -/
-theorem meanKLToStandard_eq_zero_iff (mu logvar : Tensor ℝ latent) :
+theorem meanKLToStandard_eq_zero_iff {mu logvar : Tensor ℝ latent} :
     meanKLToStandard mu logvar = 0 ↔ mu = 0 ∧ logvar = 0 := by
   have hterm : ∀ c : latent.Coord, 0 ≤ Real.exp (logvar c) + mu c ^ 2 - 1 - logvar c :=
     fun c => by linarith [Real.add_one_le_exp (logvar c), sq_nonneg (mu c)]
@@ -123,7 +123,7 @@ theorem meanKLToStandard_eq_zero_iff (mu logvar : Tensor ℝ latent) :
 /-! ## Loss identities -/
 
 /-- At $\beta=0$, the VAE objective reduces to reconstruction loss. -/
-@[simp] theorem loss_zero_beta
+theorem loss_zero_beta
     (model : VAE ℝ obs latent) (x : Tensor ℝ obs) (eps : Tensor ℝ latent) :
     loss model 0 x eps = reconstructionLoss model x eps := by
   simp [loss]

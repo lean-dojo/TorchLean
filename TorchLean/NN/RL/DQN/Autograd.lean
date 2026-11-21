@@ -47,7 +47,7 @@ Outside `[-delta, delta]` the derivative has magnitude `delta`. Huber loss is `d
 Smooth L1 loss with `beta = delta`, so the two agree only for `delta = 1`.
 -/
 def huber
-    {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
+    {m : Type → Type} [Ops (m := m) (α := α)]
     {s : Shape}
     (prediction target : Ref (m := m) (α := α) s)
     (delta : α := 1) (reduction : Loss.Reduction := .mean) :

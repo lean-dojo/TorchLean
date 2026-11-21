@@ -145,25 +145,27 @@ def leakyReLUDeriv {α : Type} [Zero α] [One α] [LT α] [DecidableRel ((· > �
   (x : α) (αₗ : α) : α :=
   if x > 0 then 1 else αₗ
 
-/-- ELU (Exponential Linear Unit):
+/-- ELU (Exponential Linear Unit) with PyTorch's coefficient and scales:
 
-$\operatorname{ELU}(x;\alpha)=x$ if $x>0$, else $\alpha(\exp(x)-1)$.
+$\operatorname{ELU}(x;\alpha,s,t)=x s$ if $x>0$, else $\operatorname{expm1}(x t)\,(\alpha s)$.
 
-PyTorch analogy: `torch.nn.functional.elu` with `alpha = α`.
+PyTorch analogy: `torch.nn.functional.elu` with `alpha = α` is `s = t = 1`, `selu` is
+`elu x α λ 1` with SELU's constants and `celu` with `alpha = α` is `elu x α 1 (1 / α)`
+(`aten.elu(x, alpha, scale, input_scale)`).
 
 The negative branch uses the scalar context's `expm1`, so small inputs do not disappear when
 `exp x` rounds to one. Differentiation carriers supply its chain rule.
 -/
-def elu {α : Type} [Context α] (x : α) (alpha : α) : α :=
-  if x > 0 then x else alpha * Context.expm1 x
+def elu {α : Type} [Context α] (x alpha scale inputScale : α) : α :=
+  if x > 0 then x * scale else Context.expm1 (x * inputScale) * (alpha * scale)
 
 /-- Derivative of ELU:
 
-$\operatorname{ELU}'(x;\alpha)=1$ if $x>0$, else $\alpha\exp(x)$.
+$\operatorname{ELU}'(x;\alpha,s,t)=s$ if $x>0$, else $\alpha s t \exp(x t)$.
 -/
-def eluDeriv {α : Type} [Zero α] [One α] [LT α] [DecidableRel ((· > ·) : α → α → Prop)]
-  [MathFunctions α] [Mul α] (x : α) (alpha : α) : α :=
-  if x > 0 then 1 else alpha * MathFunctions.exp x
+def eluDeriv {α : Type} [LT α] [DecidableRel ((· > ·) : α → α → Prop)] [Zero α]
+    [MathFunctions α] [Mul α] (x alpha scale inputScale : α) : α :=
+  if x > 0 then scale else alpha * scale * inputScale * MathFunctions.exp (x * inputScale)
 
 /-- The constant `√(2 / π)` of the tanh GELU, computed in the scalar type: exact over the reals,
 and in a binary format the square root of the rounded quotient of `2` by the rounded `π`. In
@@ -188,7 +190,7 @@ computation type. Once `tanh` rounds to `-1`, a finite negative input gives `-0`
 order does. At `±∞` the result is the limit, `+∞` or `-0`. At `-∞` PyTorch's order computes
 `-∞ · 0`, a NaN.
 -/
-def geluTanh {α : Type} [Storage α] [Context α] (x : α) : α :=
+def geluTanh {α : Type} [Context α] (x : α) : α :=
   if Context.isInf x then (if x > 0 then x else -0) else
   let inner := geluBeta * (x + geluKappa * (x * x * x))
   (Rat.cast (1 / 2) : α) * x * (1 + MathFunctions.tanh inner)
@@ -197,7 +199,7 @@ def geluTanh {α : Type} [Storage α] [Context α] (x : α) : α :=
 `u = β (x + κ x³)`: the gate `1 + tanh u` is evaluated as `2 sigmoid (2 u)`, and the second term
 is dropped where `TorchLean.Numeric.tanhDeriv u` is zero. At `±∞` it is the limit, `1` or
 `-0`, which the slope approaches from below at `-∞`. -/
-def geluTanhDeriv {α : Type} [Storage α] [Context α] (x : α) : α :=
+def geluTanhDeriv {α : Type} [Context α] (x : α) : α :=
   if Context.isInf x then (if x > 0 then 1 else -0) else
   let two : α := (1 : α) + (1 : α)
   let three : α := (1 : α) + (1 : α) + (1 : α)

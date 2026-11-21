@@ -1,6 +1,11 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite the TorchLean repository and the TorchLean paper."
+message: "If TorchLean is useful in your work, please cite the paper below and the software version you used."
 title: "TorchLean"
+abstract: >-
+  TorchLean is a Lean 4 library for shape-checked tensor computation, neural-network training,
+  graph import and transformation, numerical verification, and proofs about machine-learning
+  programs. It provides CPU execution, CUDA backends, automatic differentiation, configurable
+  floating-point semantics, and verification tools within one formal system.
 authors:
   - family-names: "George"
     given-names: "Robert Joseph"
@@ -18,11 +23,18 @@ authors:
     given-names: "Anima"
     affiliation: "California Institute of Technology"
 version: "0.1.0"
-url: "https://github.com/lean-dojo/TorchLean"
+url: "https://lean-dojo.github.io/TorchLean/"
 repository-code: "https://github.com/lean-dojo/TorchLean"
 license: "MIT"
+keywords:
+  - "Lean 4"
+  - "tensor computation"
+  - "machine learning"
+  - "formal verification"
+  - "floating-point arithmetic"
+  - "CUDA"
 preferred-citation:
-  type: generic
+  type: article
   title: "TorchLean: Formalizing Neural Networks in Lean"
   authors:
     - family-names: "George"

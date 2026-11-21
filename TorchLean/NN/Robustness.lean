@@ -39,10 +39,10 @@ Apart from one `rfl` unfolding, the module holds definitions. Whether this norm 
 satisfy the usual metric laws depends on further algebraic and order assumptions on `α`, and those
 theorems belong in dedicated proof developments.
 
-At `Float`, the fold of `linfNorm` skips a NaN entry (`max 0 NaN` is `0`).
-Executable `Float` code uses `Tensor.maxAbs` and `Tensor.maxAbsDiff` for the L∞ norm and distance,
-which propagate NaN, and `TorchLean.Robustness` holds the scaled Euclidean norm
-`l2NormFloat`.
+At `Float`, the fold of `linfNorm` returns a NaN when an entry is a NaN: core's `max` is IEEE
+754-2019 `maximum`, so `max 0 NaN` is a NaN. Executable `Float` code uses `Tensor.maxAbs` and
+`Tensor.maxAbsDiff` for the L∞ norm and distance, which also propagate NaN, and
+`TorchLean.Robustness` holds the scaled Euclidean norm `l2NormFloat`.
 Verified bounds and certificates are proved elsewhere, for example Lipschitz bounds in
 `TorchLean.NN.Lipschitz.Network` and certified robustness procedures in
 `CROWN`.

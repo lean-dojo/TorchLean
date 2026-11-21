@@ -4,21 +4,15 @@ This directory holds the `verify` command (`Main.lean`, with its command registr
 the example checkers and workflows it runs, the small artifacts they read, and a CROWN margin
 theorem for a small ReLU MLP. Reusable checkers and proof APIs live under `TorchLean/Verify`.
 
-## Start Here
-
-List the available commands:
+The best first example is a bound that TorchLean recomputes from the model, rather than a parser for
+an external certificate. List the available commands, then run the small IBP workflow:
 
 ```bash
 scripts/lake.sh exe verify -- list
-```
-
-Start with a small model whose bounds Lean recomputes:
-
-```bash
 scripts/lake.sh exe verify -- torchlean-ibp
 ```
 
-Then run the routine local suite:
+The routine local suite checks the bundled artifact examples:
 
 ```bash
 scripts/lake.sh exe verify -- all

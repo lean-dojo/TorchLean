@@ -38,9 +38,9 @@ open UI
 /-- Turn an `Except` check into a badge, showing the message when the check failed. -/
 private def checkBadge (name : String) (r : Except String Unit) : ProofWidgets.Html :=
   match r with
-  | .ok _ => <span>{okBadge name}</span>
-  | .error msg => <span>{warnBadge name} <span style={json% {"margin-left": "6px"}}>{monospace
-    msg}</span></span>
+  | .ok _ => jsx%{<span>{okBadge name}</span>}
+  | .error msg => jsx%{<span>{warnBadge name} <span style={json% {"margin-left": "6px"}}>{monospace
+    msg}</span></span>}
 
 /-- Result of a step-by-step graph execution: the outputs produced, and where it stopped. -/
 private structure Trace (α : Type) [Storage α] where
@@ -92,17 +92,17 @@ private def nodeRowHtml {α : Type} [Storage α] [ToString α]
         | none => okBadge "ok"
         | some n => if vs.map (·.1) = n.outs then okBadge "ok" else warnBadge "port mismatch"
   ;
-  <details style={json% {"margin": "6px 0"}}>
+  jsx%{<details style={json% {"margin": "6px 0"}}>
     <summary>
       {monospace s!"{i}: {op}"} {pill s!"inputs={inputs}"} {pill s!"out={declared}"} {status}
     </summary>
     {match outs? with
       | none => ProofWidgets.Html.text ""
       | some vs =>
-          <div style={json% {"margin-top": "8px", "padding-left": "10px"}}>
+          jsx%{<div style={json% {"margin-top": "8px", "padding-left": "10px"}}>
             {... vs.toArray.map (valueHtml (α := α))}
-          </div>}
-  </details>
+          </div>}}
+  </details>}
 
 /-- Run `g` on `inputs` node by node and render the trace: the node count and input ports, the
 `Graph.check` badge, the evaluation status and one expandable row per node. -/
@@ -116,7 +116,7 @@ def irExecTraceHtml
     (Array.range g.nodes.size).map (fun i => tr.outs[i]?)
   let inputPorts := "[" ++ ", ".intercalate (inputs.map fun v => v.1.pretty) ++ "]"
   ;
-  <div style={json% {
+  jsx%{<div style={json% {
     "padding": "10px",
     "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
     "border-radius": "10px",
@@ -131,21 +131,21 @@ def irExecTraceHtml
       "margin-bottom": "10px"}}>
       <div>{checkBadge "Graph.check" checked}</div>
       {match tr.failedAt? with
-        | none => <div>{okBadge "eval ok"} {pill s!"computed={tr.outs.size}"}</div>
+        | none => jsx%{<div>{okBadge "eval ok"} {pill s!"computed={tr.outs.size}"}</div>}
         | some (i, msg) =>
-            <div>
+            jsx%{<div>
               {errBadge s!"eval failed at node {i}"} <span style={json% {"margin-left":
                 "8px"}}>{monospace msg}</span>
               <span style={json% {"margin-left": "8px"}}>{pill s!"computed={tr.outs.size}"}</span>
-            </div>}
+            </div>}}
     </div>
-    <details «open»={true}>
+    <details open={true}>
       <summary>{.text "Trace (expand nodes)"}</summary>
       <div style={json% {"margin-top": "8px"}}>
         {... (Array.range g.nodes.size).map (fun i => nodeRowHtml (α := α) g i outs[i]!)}
       </div>
     </details>
-  </div>
+  </div>}
 
 /-!
 ## Commands

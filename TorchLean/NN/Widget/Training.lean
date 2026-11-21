@@ -87,7 +87,7 @@ private def sparklinePath (w h : Nat) (xs : Array Float) : String := Id.run do
 private def sparklineSvg (xs : Array Float) (stroke : String) (w : Nat := 240) (h : Nat := 52) :
   ProofWidgets.Html :=
   let pts := sparklinePath w h xs;
-  <svg
+  jsx%{<svg
     width={toString w}
     height={toString h}
     viewBox={s!"0 0 {w} {h}"}
@@ -102,7 +102,7 @@ private def sparklineSvg (xs : Array Float) (stroke : String) (w : Nat := 240) (
       stroke={stroke}
       strokeWidth="2"
       d={pts} />
-  </svg>
+  </svg>}
 
 /-- First and last value of a metric series, which is how the panel reports improvement. -/
 private def seriesStartEnd (xs : Array Float) : Option (Float × Float) :=
@@ -118,7 +118,7 @@ def trainLogHtml (log : Training.TrainLog) (maxRows : Nat := 20) : ProofWidgets.
   let n := log.series.foldl (fun acc series => max acc series.values.size) log.steps.size
   let steps := (Array.range n).map (fun i => log.steps[i]?.getD i)
   let rows := (Array.range (min n maxRows)).map (fun i => n - min n maxRows + i);
-  <div style={json% {
+  jsx%{<div style={json% {
     "padding": "10px",
     "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
     "border-radius": "10px",
@@ -137,15 +137,15 @@ def trainLogHtml (log : Training.TrainLog) (maxRows : Nat := 20) : ProofWidgets.
     </div>
 
     {if log.notes.isEmpty then ProofWidgets.Html.text "" else
-      <details «open»={false} style={json% {"margin-bottom": "10px"}}>
+      jsx%{<details open={false} style={json% {"margin-bottom": "10px"}}>
         <summary>{.text "Notes"}</summary>
         <div style={json% {"margin-top": "8px", "display": "grid", "grid-template-columns": "1fr",
           "gap": "6px"}}>
           {... log.notes.map (fun s =>
-            <pre style={json% {"white-space": "pre-wrap", "overflow-wrap": "anywhere",
-              "margin": "0"}}>{.text s}</pre>)}
+            jsx%{<pre style={json% {"white-space": "pre-wrap", "overflow-wrap": "anywhere",
+              "margin": "0"}}>{.text s}</pre>})}
         </div>
-      </details>}
+      </details>}}
 
     <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
       {... log.series.map (fun s =>
@@ -159,17 +159,17 @@ def trainLogHtml (log : Training.TrainLog) (maxRows : Nat := 20) : ProofWidgets.
           match se with
           | none => "?"
           | some p => toString (p.2 - p.1);
-        <div>
+        jsx%{<div>
           <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "align-items":
             "center", "margin-bottom": "6px"}}>
             {pill s.name} {pill s!"n={s.values.size}"} {pill s!"start={startS}"} {pill
               s!"end={endS}"} {pill s!"Δ={deltaS}"} {pill s!"min={minS}"} {pill s!"max={maxS}"}
           </div>
           {sparklineSvg s.values s.color}
-        </div>)}
+        </div>})}
     </div>
 
-    <details «open»={false} style={json% {"margin-top": "10px"}}>
+    <details open={false} style={json% {"margin-top": "10px"}}>
       <summary>{.text s!"Last {maxRows} steps (table)"}</summary>
       <div style={json% {"margin-top": "8px", "overflow": "auto", "max-height": "360px",
         "border": "1px solid var(--vscode-panel-border, #e5e5e5)", "border-radius": "10px"}}>
@@ -179,31 +179,31 @@ def trainLogHtml (log : Training.TrainLog) (maxRows : Nat := 20) : ProofWidgets.
               <th style={json% {"text-align": "left", "padding": "6px 8px", "border-bottom":
                 "1px solid var(--vscode-panel-border, #e5e5e5)"}}>{.text "step"}</th>
               {... log.series.map (fun s =>
-                <th style={json% {"text-align": "left", "padding": "6px 8px", "border-bottom":
+                jsx%{<th style={json% {"text-align": "left", "padding": "6px 8px", "border-bottom":
                   "1px solid var(--vscode-panel-border, #e5e5e5)"}}>
                   {monospace s.name}
-                </th>)}
+                </th>})}
             </tr>
           </thead>
           <tbody>
             {... rows.map (fun i =>
-              <tr>
+              jsx%{<tr>
                 <td style={json% {"padding": "6px 8px", "border-bottom":
                   "1px solid rgba(127,127,127,0.18)"}}>
                   {monospace (toString steps[i]!)}
                 </td>
                 {... log.series.map (fun s =>
                   let v := if i < s.values.size then toString s.values[i]! else "?";
-                  <td style={json% {"padding": "6px 8px", "border-bottom":
+                  jsx%{<td style={json% {"padding": "6px 8px", "border-bottom":
                     "1px solid rgba(127,127,127,0.18)"}}>
                     {monospace v}
-                  </td>)}
-              </tr>)}
+                  </td>})}
+              </tr>})}
           </tbody>
         </table>
       </div>
     </details>
-  </div>
+  </div>}
 
 /-!
 ## Confusion Matrix
@@ -221,7 +221,7 @@ def confusionHtml (labels : Array String) (cm : Training.ConfusionMatrix) (maxLa
       throw "confusion matrix labels must match its class count"
     cm.classStatistics
   match result with
-  | .error message => <div>{errBadge message}</div>
+  | .error message => jsx%{<div>{errBadge message}</div>}
   | .ok stats => Id.run do
     let clipped := n > maxLabels
     let ids := Array.range (min n maxLabels)
@@ -231,7 +231,7 @@ def confusionHtml (labels : Array String) (cm : Training.ConfusionMatrix) (maxLa
     let total := stats.total
     let accPct := if total == 0 then "n/a" else
       s!"{100.0 * Float.ofNat correct / Float.ofNat total}%"
-    return <div style={json% {
+    return jsx%{<div style={json% {
       "padding": "10px",
       "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
       "border-radius": "10px",
@@ -255,15 +255,15 @@ def confusionHtml (labels : Array String) (cm : Training.ConfusionMatrix) (maxLa
                 {.text "true\\pred"}
               </th>
               {... ids.map (fun j =>
-                <th style={json% {"padding": "6px 8px", "border-bottom":
+                jsx%{<th style={json% {"padding": "6px 8px", "border-bottom":
                   "1px solid var(--vscode-panel-border, #e5e5e5)"}}>
                   {monospace labels[j]!}
-                </th>)}
+                </th>})}
             </tr>
           </thead>
           <tbody>
             {... ids.map (fun i =>
-              <tr>
+              jsx%{<tr>
                 <th style={json% {"position": "sticky", "left": "0", "background":
                   "var(--vscode-editor-background, #fff)",
                   "padding": "6px 8px", "border-bottom": "1px solid rgba(127,127,127,0.18)"}}>
@@ -273,20 +273,20 @@ def confusionHtml (labels : Array String) (cm : Training.ConfusionMatrix) (maxLa
                   let row := cm.counts[i]!
                   let v := if j < row.size then row[j]! else 0
                   if i = j then
-                    <td style={json% {"padding": "6px 8px", "border-bottom":
+                    jsx%{<td style={json% {"padding": "6px 8px", "border-bottom":
                       "1px solid rgba(127,127,127,0.18)", "background": "rgba(0, 200, 120, 0.14)"}}>
                       {monospace (toString v)}
-                    </td>
+                    </td>}
                   else
-                    <td style={json% {"padding": "6px 8px", "border-bottom":
+                    jsx%{<td style={json% {"padding": "6px 8px", "border-bottom":
                       "1px solid rgba(127,127,127,0.18)"}}>
                       {monospace (toString v)}
-                    </td>)}
-              </tr>)}
+                    </td>})}
+              </tr>})}
           </tbody>
         </table>
       </div>
-      <details «open»={false} style={json% {"margin-top": "10px"}}>
+      <details open={false} style={json% {"margin-top": "10px"}}>
         <summary>{.text "Per-class precision/recall"}</summary>
         <div style={json% {"margin-top": "8px", "overflow": "auto", "border":
           "1px solid var(--vscode-panel-border, #e5e5e5)", "border-radius": "10px"}}>
@@ -313,7 +313,7 @@ def confusionHtml (labels : Array String) (cm : Training.ConfusionMatrix) (maxLa
                 s!"{100.0 * Float.ofNat tp / Float.ofNat pred}%";
                 let recallRate := if sup = 0 then "n/a" else
                 s!"{100.0 * Float.ofNat tp / Float.ofNat sup}%";
-                <tr>
+                jsx%{<tr>
                   <td style={json% {"padding": "6px 8px", "border-bottom":
                     "1px solid rgba(127,127,127,0.18)"}}>{monospace labels[i]!}</td>
                   <td style={json% {"padding": "6px 8px", "border-bottom":
@@ -322,12 +322,12 @@ def confusionHtml (labels : Array String) (cm : Training.ConfusionMatrix) (maxLa
                     "1px solid rgba(127,127,127,0.18)"}}>{monospace precision}</td>
                   <td style={json% {"padding": "6px 8px", "border-bottom":
                     "1px solid rgba(127,127,127,0.18)"}}>{monospace recallRate}</td>
-                </tr>)}
+                </tr>})}
             </tbody>
           </table>
         </div>
       </details>
-    </div>
+    </div>}
 
 /-!
 ## Commands
@@ -359,7 +359,7 @@ macro "#train_log_file_view " path:term : command =>
       pure (trainLogHtml log)
     catch e =>
       pure <|
-        <div style={json% {"padding": "10px"}}>
+        jsx%{<div style={json% {"padding": "10px"}}>
           {warnBadge "train_log_file_view"}
           <div style={json% {"margin-top": "8px"}}>
             {.text "Could not read a TrainLog JSON file at: "}
@@ -373,7 +373,7 @@ macro "#train_log_file_view " path:term : command =>
           <div style={json% {"margin-top": "6px"}}>
             {monospace (toString e)}
           </div>
-        </div>))
+        </div>}))
 
 /--
 Render a confusion matrix report in the infoview from an array of class labels and a

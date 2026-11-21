@@ -136,13 +136,12 @@ introduced with `intro` is unfolded, also one whose value is an operator's table
 table entry, and `@[aesop safe apply (rule_sets := [OpDeriv])]` a scalar derivative.
 
 The tactic fails on a wrong backward pass, and on the square root, `relu` or `a ^ (1 / 2)`
-without the hypothesis that no entry is zero. `TorchLeanTest/Verification/OpDeriv.lean` proves
-with it 61 theorems about programs outside the operator table, among them the backward passes of
-a dense layer with `Linear.backward`, of a two-layer network in its four parameters, of masked
-attention with `matmulBackward` and `maskedSoftmaxBackward`, of cross-entropy through `logSoftmax`
-and of an ordered weighted sum with `sortBackward`. Each proof takes at most 14,600 heartbeats of
-the default 200,000, each rejection at most 5,400, and the file compiles in 17 s. Most derivative
-certificates in `TorchLean/NN/Op` come from the same rules, through `op_deriv` or `fun_prop`.
+without the hypothesis that no entry is zero. `TorchLeanTest/Verification/OpDeriv.lean` uses it on
+programs outside the operator table, among them the backward passes of a dense layer with
+`Linear.backward`, a two-layer network in its four parameters, masked attention with
+`matmulBackward` and `maskedSoftmaxBackward`, cross-entropy through `logSoftmax`, and an ordered
+weighted sum with `sortBackward`. Most derivative certificates in `TorchLean/NN/Op` come from the
+same rules, through `op_deriv` or `fun_prop`.
 
 ## Arbitrary derivative order
 

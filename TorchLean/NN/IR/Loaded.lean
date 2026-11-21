@@ -23,13 +23,18 @@ operations or calls (`TorchLean.IR.Artifact.load`), and `load_ok` proves that th
 passes `Program.check .reference` and its payload passes `Payload.check`. Then `load` checks the
 document's `"declared_types"`, where the PyTorch and JAX captures write one entry per value they
 typed: the step output holding it and the element type and shape the capture recorded.
-`declaredTypes` reads the entries, and `Program.checkDeclared` requires the program's type at each
-listed output to have that element type and shape, so a lowering that changes a listed value's type
-fails the load. Only the listed values are checked, so an empty list passes. A document that names
-a `"frontend"` must have `"declared_types"`, and one that names none and lacks it declares no types.
+`declaredTypes` reads the entries, and `checkDeclared` requires the program's type at each listed
+output to have that element type and shape, so a lowering that changes a listed value's type fails
+the load. Only the listed values are checked, so an empty list passes. A document that names a
+`"frontend"` must have `"declared_types"`, and one that names none and lacks it declares no types.
 `load_declared` proves that a loaded program gives every declared value its declared element type
-and shape. `loadArguments` reads the arguments under a runtime, `loadValue` one tensor, and `words`
-gives the element type, shape and words of a value back.
+and shape.
+
+`loadFlow` also reads an artifact with control flow (`TorchLean.IR.FlowArtifact`): it loads every
+block and checks each declared value in the block its entry names, and an artifact without a flow
+is the flow of its one block. `loadFlow_ok` proves the same two facts for every block.
+`loadArguments` reads the arguments under a runtime, `loadValue` one tensor, and `words` gives the
+element type, shape and words of a value back.
 -/
 
 @[expose] public section
@@ -40,12 +45,15 @@ open Lean
 open FloatLib.Floats.Formats.BinaryInterchange
 
 /-- One entry of a capture document's `"declared_types"`: the capture's internal node `node`, made
-for the framework value `origin`, whose value the program holds at the step output `ref`, with the
-element type and shape that the capture recorded for it. -/
+for the framework value `origin`, whose value block `block` of the artifact holds at the step output
+`ref`, with the element type and shape that the capture recorded for it. -/
 structure Declared where
   /-- The capture's internal node. -/
   node : Nat
-  /-- The step output that holds the node's value. -/
+  /-- The block that holds the value, in the order of `Flow.blocks`: 0 in an artifact without a
+  flow, whose program is its one block. -/
+  block : Nat
+  /-- The step output of the block that holds the node's value. -/
   ref : Ref
   /-- The framework operation or variable the node is made for. -/
   origin : String
@@ -55,12 +63,19 @@ structure Declared where
   shape : Shape
 
 /-- The entry of the JSON object with exactly the keys `node`, `ref` (`[step, output]`), `origin`,
-`source`, `dtype` and `shape`. `source` says where the capture took the type from (both captures
-write `capture`: the framework's own metadata), and no check reads it. -/
+`source`, `dtype` and `shape`, and optionally `block`, which both captures write where the artifact
+has a flow. An entry without `block` names block 0, and the key is read on any document: on a flat
+one only block 0, its one program, passes `checkDeclared`. `source` says where the capture took
+the type from (both captures write `capture`: the framework's own metadata), and no check reads
+it. -/
 def Declared.ofJson (json : Json) : Except String Declared := do
   let ctx := "declared_types"
-  let o ← Json.exactObject ctx ["node", "ref", "origin", "source", "dtype", "shape"] json
-  pure { node := ← Json.natField ctx "node" o, ref := ← Ref.ofJson (← Json.field ctx "ref" o),
+  let keys := ["node", "ref", "origin", "source", "dtype", "shape"]
+  let flow := (json.getObjVal? "block").toOption.isSome
+  let o ← Json.exactObject ctx (if flow then "block" :: keys else keys) json
+  pure { node := ← Json.natField ctx "node" o,
+         block := ← if flow then Json.natField ctx "block" o else pure 0,
+         ref := ← Ref.ofJson (← Json.field ctx "ref" o),
          origin := ← Json.string s!"{ctx}.origin" (← Json.field ctx "origin" o),
          dtype := ← DType.fromJson (← Json.field ctx "dtype" o),
          shape := ← Json.shapeField ctx "shape" o }
@@ -96,10 +111,12 @@ def Program.checkType (p : Program) (e : Declared) : Except String Unit :=
       else throw s!"IR types: node {e.node} ({e.origin}, step {e.ref.node} output {e.ref.out}): \
         the IR computes {t.describe}, the capture declares {e.dtype} {e.shape}"
 
-/-- The check that the program gives every value of `declared` its declared type, first failure
-first. -/
-def Program.checkDeclared (p : Program) (declared : List Declared) : Except String Unit :=
-  declared.forM p.checkType
+/-- The check that the blocks `programs` give every value of `declared` its declared type, each
+in the block it names, first failure first. -/
+def checkDeclared (programs : List Program) (declared : List Declared) : Except String Unit :=
+  declared.forM fun e => match programs[e.block]? with
+    | some p => p.checkType e
+    | none => throw s!"IR types: node {e.node} ({e.origin}): no block {e.block}"
 
 /-- A passing `checkType` means the program gives the value its declared type. -/
 theorem Program.checkType_ok {p : Program} {e : Declared} (h : p.checkType e = .ok ()) :
@@ -113,28 +130,33 @@ theorem Program.checkType_ok {p : Program} {e : Declared} (h : p.checkType e = .
       exact ⟨t, ht, hd⟩
     · cases h
 
-/-- A passing `checkDeclared` means the program gives every declared value its declared type. -/
-theorem Program.checkDeclared_ok {p : Program} :
-    ∀ {declared : List Declared}, p.checkDeclared declared = .ok () → ∀ e ∈ declared, p.declares e
+/-- A passing `checkDeclared` means the block each declared value names gives it its declared
+type. -/
+theorem checkDeclared_ok {programs : List Program} :
+    ∀ {declared : List Declared}, checkDeclared programs declared = .ok () →
+      ∀ e ∈ declared, ∃ p, programs[e.block]? = some p ∧ p.declares e
   | [], _, e, he => by cases he
   | d :: rest, h, e, he => by
       unfold checkDeclared at h
       simp only [List.forM] at h
       obtain ⟨⟨⟩, hd, h⟩ := IR.bind_eq_ok.1 h
       rcases List.mem_cons.1 he with rfl | he
-      · exact checkType_ok hd
+      · split at hd
+        · rename_i p hp
+          exact ⟨p, hp, Program.checkType_ok hd⟩
+        · cases hd
       · exact checkDeclared_ok h e he
 
 /-- The program and payload of a capture document's artifact under the reference runtime, with no
-registered custom operations or calls, once the program gives every value of the document's
-`declaredTypes` its declared type (`Program.checkDeclared`). A document without an `"artifact"`
+registered custom operations or calls, once the program, its one block, gives every value of the
+document's `declaredTypes` its declared type (`checkDeclared`). A document without an `"artifact"`
 field is refused. -/
 def load (document : Json) :
     Except String (IR.Program × IR.Program.Payload .reference) := do
   let some artifact := (document.getObjVal? "artifact").toOption
     | throw "IR: the document has no artifact"
   let (p, P) ← (← IR.Artifact.ofJson artifact).load .reference ⟨fun _ => none, fun _ => none⟩
-  p.checkDeclared (← declaredTypes document)
+  checkDeclared [p] (← declaredTypes document)
   pure (p, P)
 
 /-- A loaded document's artifact loads to its program and payload, and the program gives every
@@ -144,7 +166,7 @@ theorem load_eq_ok {document : Json} {p : IR.Program}
     ∃ artifact a declared, document.getObjVal? "artifact" = .ok artifact ∧
       IR.Artifact.ofJson artifact = .ok a ∧
       a.load .reference ⟨fun _ => none, fun _ => none⟩ = .ok (p, P) ∧
-      declaredTypes document = .ok declared ∧ p.checkDeclared declared = .ok () := by
+      declaredTypes document = .ok declared ∧ checkDeclared [p] declared = .ok () := by
   unfold load at h
   split at h
   · rename_i artifact hartifact
@@ -171,7 +193,54 @@ theorem load_declared {document : Json} {p : IR.Program}
     {P : IR.Program.Payload .reference} (h : load document = .ok (p, P)) :
     ∃ declared, declaredTypes document = .ok declared ∧ ∀ e ∈ declared, p.declares e := by
   obtain ⟨_, _, declared, -, -, -, hd, hc⟩ := load_eq_ok h
-  exact ⟨declared, hd, Program.checkDeclared_ok hc⟩
+  refine ⟨declared, hd, fun e he => ?_⟩
+  obtain ⟨q, hq, hd⟩ := checkDeclared_ok hc e he
+  cases hb : e.block <;> simp_all
+
+/-- The flow of a capture document's artifact under the reference runtime, with no registered
+custom operations or calls, and the fuel of its loops, once its blocks give every value of the
+document's `declaredTypes` its declared type, each in the block it names (`checkDeclared`). An
+artifact without a `"flow"` field is the flow of its one program (`load`), with fuel 0. -/
+def loadFlow (document : Json) :
+    Except String (Flow (IR.Program × IR.Program.Payload .reference) × Nat) := do
+  let some artifact := (document.getObjVal? "artifact").toOption
+    | throw "IR: the document has no artifact"
+  if (artifact.getObjVal? "flow").toOption.isNone then
+    pure (.block (← load document), 0)
+  else
+    let a ← FlowArtifact.ofJson artifact
+    let flow ← a.load .reference ⟨fun _ => none, fun _ => none⟩
+    checkDeclared (flow.blocks.map (·.1)) (← declaredTypes document)
+    pure (flow, a.fuel)
+
+/-- Each block of a loaded flow has a program that passes `Program.check .reference` and a payload
+that passes `Payload.check`, and the block each value of the document's `declaredTypes` names
+gives it its declared element type and shape. -/
+theorem loadFlow_ok {document : Json} {flow : Flow (IR.Program × IR.Program.Payload .reference)}
+    {fuel : Nat} (h : loadFlow document = .ok (flow, fuel)) :
+    (∀ b ∈ flow.blocks, b.1.check .reference = .ok () ∧ b.2.check b.1 = .ok ()) ∧
+      ∃ declared, declaredTypes document = .ok declared ∧
+        ∀ e ∈ declared, ∃ p, (flow.blocks.map (·.1))[e.block]? = some p ∧ p.declares e := by
+  unfold loadFlow at h
+  split at h
+  · rename_i artifact _
+    split at h
+    · obtain ⟨⟨p, P⟩, hl, h⟩ := IR.bind_eq_ok.1 h
+      cases h
+      obtain ⟨_, _, declared, -, -, -, hd, hc⟩ := load_eq_ok hl
+      refine ⟨fun b hb => ?_, declared, hd, checkDeclared_ok hc⟩
+      simp only [Flow.blocks, List.mem_singleton] at hb
+      subst hb
+      exact load_ok hl
+    · obtain ⟨a, -, h⟩ := IR.bind_eq_ok.1 h
+      obtain ⟨g, hg, h⟩ := IR.bind_eq_ok.1 h
+      obtain ⟨declared, hd, h⟩ := IR.bind_eq_ok.1 h
+      obtain ⟨⟨⟩, hc, h⟩ := IR.bind_eq_ok.1 h
+      cases h
+      refine ⟨fun b hb => ?_, declared, hd, checkDeclared_ok hc⟩
+      obtain ⟨_, -, -, hb⟩ := FlowArtifact.load_ok hg b hb
+      exact hb
+  · cases h
 
 /-- A tensor under the runtime `R` from its declared element type, shape and complete interchange
 words, decoded at the type of that element type and shape (`Program.Typed.decode`). -/

@@ -55,6 +55,7 @@ def compileInputViewRead
       let hInputIndex ←
         finIndexEquality logicalSize inputIndex certifiedInputIndex
           hInputIndexValue
+      -- Map the logical index into the source, and simplify the affine source index.
       let sourceIndex := mkApp inputFlatMap inputIndex
       let certifiedSourceIndex := mkApp inputFlatMap certifiedInputIndex
       let hSourceIndex ←
@@ -84,6 +85,7 @@ def compileInputViewRead
         withTransparency .all <|
           mkExpectedTypeHint hOptimizedSourceIndexValue
             (← mkEq optimizedSourceIndexValue certifiedSourceIndexValue)
+      -- Read the source, natively when its shape allows, and transport the read by `hRead`.
       let sourceTensorType ← whnf (← inferType sourceTensor)
       let sourceTensorType := sourceTensorType.consumeMData
       unless sourceTensorType.isAppOfArity ``Rep 3 do
@@ -109,6 +111,7 @@ def compileInputViewRead
         withTransparency .all <|
           mkExpectedTypeHint hValue (← mkEq sourceValue logicalValue)
       return (sourceValue, hValue)
+  -- Without a view, read the logical operand directly.
   compileInputRead logicalTensor logicalSize inputIndexValue
     normalizedInputIndexValue certifiedInputIndex hInputIndexValue
     useNativeLogicalIndex

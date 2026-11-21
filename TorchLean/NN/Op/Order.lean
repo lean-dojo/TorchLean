@@ -18,9 +18,10 @@ public import TorchLean.Tensor.Cumulative
 
 We prove that the stored backward of `Op.sort`, `Op.topk`, `Op.cummax` and `Op.cummin` is the
 adjoint of the derivative of the value output of the real forward, on the exact set where this
-holds. For each operator a `convention` certificate states the stored backward at every real input
-in closed form, so its routing at ties is on record. The index outputs are index ports and carry
-no gradient.
+holds, for `cummax` and `cummin` in every order that covers the length of the axis
+(`Tensor.cummaxIn_real`, `Tensor.cumminIn_real`). For each operator a `convention` certificate
+states the stored backward at every real input in closed form, so its routing at ties is on record.
+The index outputs are index ports and carry no gradient.
 
 Each value output reads its input along its own index output (`sort_fst_apply`, `topk_fst`,
 `cummax_fst_apply`). Where the comparisons that pick those indices are strict, they persist near
@@ -64,8 +65,8 @@ end Shape
 namespace Shape.Coord
 
 /-- Replacing the index of `c` along `dim` by `i` gives `c` exactly when `i` is that index. -/
-theorem update_eq_self_iff {s : Shape} (c : s.Coord) (dim : Fin s.rank)
-    (i : Fin (s.extent dim)) : update c dim i = c ↔ i = get c dim := by
+theorem update_eq_self_iff {s : Shape} {c : s.Coord} {dim : Fin s.rank}
+    {i : Fin (s.extent dim)} : update c dim i = c ↔ i = get c dim := by
   constructor
   · intro h
     simpa using congrArg (fun c' => get c' dim) h
@@ -683,61 +684,79 @@ theorem sort_backward_eq {s : Shape} (dim : Fin s.rank) (descending : Bool) (x �
   simp only [Op.rule?_sort, Option.get_some]
   exact Tensor.sortBackward_eq_sumFibers x δ dim descending
 
-/-- The forward of `Op.cummax dim` is differentiable at a real input in which every tie
+/-- The forward of `Op.cummax dim order` is differentiable at a real input in which every tie
 `x i = x j` with `i < j` of a fiber along `dim` has an entry before `j` above `x j`, and its
-backward is the adjoint of the derivative of the value output there. The set is exact: where
-`x j` equals the maximum of the entries before it, output `j` is near the input the maximum of a
-tie group, which has no derivative, as at `x = (0, 0, 2)` at output `1`. -/
+backward is the adjoint of the derivative of the value output there, in every order that covers
+the length of the axis. The set is exact: where `x j` equals the maximum of the entries before it,
+output `j` is near the input the maximum of a tie group, which has no derivative, as at
+`x = (0, 0, 2)` at output `1`. -/
 @[op_cert TorchLean.Op.cummax derivative]
-theorem cummax_backward_eq_adjoint {s : Shape} (dim : Fin s.rank) (x : Tensor ℝ s)
+theorem cummax_backward_eq_adjoint {s : Shape} (dim : Fin s.rank) (order : Tensor.ReduceOrder)
+    (hcov : order.Covers (s.extent dim)) (x : Tensor ℝ s)
     (hx : ∀ (c : s.Coord) (i j : Fin (s.extent dim)), i < j →
       x (Shape.Coord.update c dim i) = x (Shape.Coord.update c dim j) →
         ∃ l < j, x (Shape.Coord.update c dim j) < x (Shape.Coord.update c dim l))
     (δ : Tensor ℝ s) :
     DifferentiableAt ℝ (fun x' =>
-        (((Op.cummax dim).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x ∧
-    (((Op.cummax dim).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, (), ())).1 =
+        (((Op.cummax dim order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward (x', ())).1) x ∧
+    (((Op.cummax dim order).rule? (α := ℝ)
+      |>.get (by cases order <;> rfl)).backward (x, ()) (δ, (), ())).1 =
       (fderiv ℝ (fun x' =>
-        (((Op.cummax dim).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x).adjoint δ := by
+        (((Op.cummax dim order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward (x', ())).1) x).adjoint δ := by
+  simp only [Op.rule?_cummax, Option.get_some, Tensor.cummaxIn_real _ dim hcov]
   op_deriv
 
-/-- At every real input, the backward of `Op.cummax dim` adds the incoming gradient at each
-coordinate to the entry of the input at the index output of `Tensor.cummax` there, the latest
-maximizer of the prefix. At a tie each output adds its `δ` times its right partial in the latest
-maximizer and times its left partial in the other maximizers of the prefix. -/
+/-- At every real input and in every order, the backward of `Op.cummax dim order` adds the
+incoming gradient at each coordinate to the entry of the input at the index output of
+`Tensor.cummax` there, the latest maximizer of the prefix. At a tie each output adds its `δ` times
+its right partial in the latest maximizer and times its left partial in the other maximizers of the
+prefix. -/
 @[op_cert TorchLean.Op.cummax convention]
-theorem cummax_backward_eq {s : Shape} (dim : Fin s.rank) (x δ : Tensor ℝ s) :
-    (((Op.cummax dim).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, (), ())).1 =
+theorem cummax_backward_eq {s : Shape} (dim : Fin s.rank) (order : Tensor.ReduceOrder)
+    (x δ : Tensor ℝ s) :
+    (((Op.cummax dim order).rule? (α := ℝ)
+      |>.get (by cases order <;> rfl)).backward (x, ()) (δ, (), ())).1 =
       Tensor.Rep.sumFibers
         (fun c => Shape.Coord.update c dim ((Tensor.cummax x dim).2 c)) δ := by
   simp only [Op.rule?_cummax, Option.get_some]
   exact Tensor.cummaxBackward_eq_sumFibers x δ dim
 
-/-- The forward of `Op.cummin dim` is differentiable at a real input in which every tie
+/-- The forward of `Op.cummin dim order` is differentiable at a real input in which every tie
 `x i = x j` with `i < j` of a fiber along `dim` has an entry before `j` below `x j`, and its
-backward is the adjoint of the derivative of the value output there. The set is exact: where
-`x j` equals the minimum of the entries before it, output `j` is near the input the minimum of a
-tie group, which has no derivative, as at `x = (0, 0, 2)` at output `1`. -/
+backward is the adjoint of the derivative of the value output there, in every order that covers
+the length of the axis. The set is exact: where `x j` equals the minimum of the entries before it,
+output `j` is near the input the minimum of a tie group, which has no derivative, as at
+`x = (0, 0, 2)` at output `1`. -/
 @[op_cert TorchLean.Op.cummin derivative]
-theorem cummin_backward_eq_adjoint {s : Shape} (dim : Fin s.rank) (x : Tensor ℝ s)
+theorem cummin_backward_eq_adjoint {s : Shape} (dim : Fin s.rank) (order : Tensor.ReduceOrder)
+    (hcov : order.Covers (s.extent dim)) (x : Tensor ℝ s)
     (hx : ∀ (c : s.Coord) (i j : Fin (s.extent dim)), i < j →
       x (Shape.Coord.update c dim i) = x (Shape.Coord.update c dim j) →
         ∃ l < j, x (Shape.Coord.update c dim l) < x (Shape.Coord.update c dim j))
     (δ : Tensor ℝ s) :
     DifferentiableAt ℝ (fun x' =>
-        (((Op.cummin dim).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x ∧
-    (((Op.cummin dim).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, (), ())).1 =
+        (((Op.cummin dim order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward (x', ())).1) x ∧
+    (((Op.cummin dim order).rule? (α := ℝ)
+      |>.get (by cases order <;> rfl)).backward (x, ()) (δ, (), ())).1 =
       (fderiv ℝ (fun x' =>
-        (((Op.cummin dim).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x).adjoint δ := by
+        (((Op.cummin dim order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward (x', ())).1) x).adjoint δ := by
+  simp only [Op.rule?_cummin, Option.get_some, Tensor.cumminIn_real _ dim hcov]
   op_deriv
 
-/-- At every real input, the backward of `Op.cummin dim` adds the incoming gradient at each
-coordinate to the entry of the input at the index output of `Tensor.cummin` there, the latest
-minimizer of the prefix. At a tie each output adds its `δ` times its left partial in the latest
-minimizer and times its right partial in the other minimizers of the prefix. -/
+/-- At every real input and in every order, the backward of `Op.cummin dim order` adds the
+incoming gradient at each coordinate to the entry of the input at the index output of
+`Tensor.cummin` there, the latest minimizer of the prefix. At a tie each output adds its `δ` times
+its left partial in the latest minimizer and times its right partial in the other minimizers of the
+prefix. -/
 @[op_cert TorchLean.Op.cummin convention]
-theorem cummin_backward_eq {s : Shape} (dim : Fin s.rank) (x δ : Tensor ℝ s) :
-    (((Op.cummin dim).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, (), ())).1 =
+theorem cummin_backward_eq {s : Shape} (dim : Fin s.rank) (order : Tensor.ReduceOrder)
+    (x δ : Tensor ℝ s) :
+    (((Op.cummin dim order).rule? (α := ℝ)
+      |>.get (by cases order <;> rfl)).backward (x, ()) (δ, (), ())).1 =
       Tensor.Rep.sumFibers
         (fun c => Shape.Coord.update c dim ((Tensor.cummin x dim).2 c)) δ := by
   simp only [Op.rule?_cummin, Option.get_some]

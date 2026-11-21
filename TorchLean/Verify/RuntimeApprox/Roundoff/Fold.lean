@@ -89,9 +89,9 @@ def AllSteps.check (step : α → β → α) (condition : α → β → Prop)
     (step state.1 value, state.2 && decide (condition state.1 value))) (initial, true) input).2
 
 /-- `AllSteps.check` returns `true` exactly when `AllSteps` holds. -/
-theorem AllSteps.check_eq_true_iff (step : α → β → α) (condition : α → β → Prop)
+theorem AllSteps.check_eq_true_iff {step : α → β → α} {condition : α → β → Prop}
     [∀ state value, Decidable (condition state value)]
-    (initial : α) (input : Tensor β shape) :
+    {initial : α} {input : Tensor β shape} :
     AllSteps.check step condition initial input = true ↔ AllSteps step condition initial input := by
   have related := Tensor.Rep.foldl_rel input input
     (fun state value => (step state.1 value, state.2 && decide (condition state.1 value)))
@@ -109,7 +109,7 @@ theorem AllSteps.check_eq_true_iff (step : α → β → α) (condition : α →
 instance AllSteps.instDecidable (step : α → β → α) (condition : α → β → Prop)
     [∀ state value, Decidable (condition state value)]
     (initial : α) (input : Tensor β shape) : Decidable (AllSteps step condition initial input) :=
-  decidable_of_iff _ (AllSteps.check_eq_true_iff step condition initial input)
+  decidable_of_iff _ AllSteps.check_eq_true_iff
 
 /-- An invariant of the initial accumulator that every step meeting `condition` preserves holds of
 the result of a fold whose steps all meet `condition`. -/

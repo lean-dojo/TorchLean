@@ -11,6 +11,8 @@ open Verso.Genre.Manual.InlineLean
 -- lines inside Verso's narrow code column.
 open TorchLean.SelfSupervised
 
+/-! Guide page: masked, JEPA and alignment objectives of self-supervised learning. -/
+
 #doc (Manual) "Self-Supervised Objectives" =>
 %%%
 tag := "self-supervised-theory"
@@ -20,14 +22,13 @@ An MAE loss depends on which patches were hidden. A JEPA loss depends on which b
 target representation. An alignment objective can be minimized by mapping every view to the same
 vector unless another term prevents collapse.
 
-TorchLean isolates the first of these choices in an executable block masker. Its theorems identify
+The executable block masker isolates the first of these choices. Its theorems identify
 every coordinate of the masked tensor, and the masker materializes the hidden positions as an index
 array. TorchLean does not formalize a complete MAE or JEPA training run, and it does not prove that
 minimizing one of these objectives learns useful representations.
 
-A plausible loss value can hide a mask read with the wrong polarity. Small examples let us change
-the mask policy and calculate its effect. Named Lean blocks and their outputs are checked while the
-page is built.
+A plausible loss value can hide a mask read with the wrong polarity. A four-entry example changes
+the mask policy and calculates which entries the learner can actually see.
 
 # Block Masks And Tensor Objectives
 
@@ -67,7 +68,7 @@ Hiding the even congruence class zeroes the first block and leaves the second al
 
 TorchLean's `BlockMask.apply_scalar_at` theorem identifies every coordinate of the masked tensor: a
 hidden entry becomes zero and a visible entry is preserved. Its two corollaries,
-`hidden_scalar_eq_zero` and `visible_scalar_eq_input`, expose those cases. In the example above,
+`hidden_scalar_eq_zero` and `visible_scalar_eq_input`, expose those cases. In `blockApply`,
 the scalar-generic operation is instantiated at `Float`. Called on its own, the mask predicate
 reports that position `1` is hidden:
 

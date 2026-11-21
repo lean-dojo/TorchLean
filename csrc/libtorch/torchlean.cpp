@@ -141,7 +141,7 @@ lean_obj_res download(b_lean_obj_arg object) {
   lean_sarray_set_size(out, buffer->size);
   if (buffer->size != 0)
     std::memcpy(lean_float_array_cptr(out), host->const_data_ptr<double>(),
-                checked_bytes_size(buffer->size, sizeof(double), "FloatArray size overflow"));
+                checked_mul_size(buffer->size, sizeof(double), "FloatArray size overflow"));
   return out;
 }
 
@@ -171,7 +171,7 @@ Tensor upload_bytes(b_lean_obj_arg object, ScalarType dtype, ScalarType source_d
 lean_obj_res download_bytes(b_lean_obj_arg object, ScalarType dtype) {
   const auto* buffer = torchlean_cuda_buffer_unbox(object);
   const size_t bytes =
-      checked_bytes_size(buffer->size, element_size(dtype), "checkpoint size overflow");
+      checked_mul_size(buffer->size, element_size(dtype), "checkpoint size overflow");
   std::optional<Tensor> host;
   if (bytes != 0) host = host_copy(torchlean::tensor(object), dtype);
   lean_object* out = lean_alloc_sarray(1, bytes, bytes);
@@ -235,7 +235,7 @@ torchlean_cuda_buffer* owned(Tensor value) {
   auto buffer = std::make_unique<torchlean_cuda_buffer>();
   buffer->tensor = aten<"contiguous">(aten<"reshape">(value, {-1}));
   buffer->size = static_cast<size_t>(buffer->tensor->numel());
-  const auto bytes = checked_bytes_size(buffer->size, buffer->tensor->element_size(),
+  const auto bytes = checked_mul_size(buffer->size, buffer->tensor->element_size(),
                                          "LibTorch buffer byte size overflow");
   if (buffer->size != 0) payloads.add(bytes);
   return buffer.release();
@@ -2012,7 +2012,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_layer_norm_fwd(
     auto centered = sub(x, aten<"div.Tensor">(aten<"sum.dim_IntList">(x, {1}, true), divisor));
     // Normalization.normalizedRows: each centered row is divided by Tensor.normalizationScale,
     // the IEEE maximum of its largest magnitude and sqrt |epsilon|, before it is squared. The
-    // variance of the scaled row centers it again, and its maximum with 0 keeps a NaN.
+    // variance of the scaled row centers it again, and its root is taken as it stands.
     auto regularizer = full({1, 1}, epsilon, options(x));
     auto scale = aten<"maximum">(aten<"amax">(aten<"abs">(centered), {1}, true),
                                  aten<"sqrt">(aten<"abs">(regularizer)));
@@ -2022,8 +2022,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_layer_norm_fwd(
     auto variance = add(
         aten<"div.Tensor">(aten<"sum.dim_IntList">(aten<"square">(deviation), {1}, true), divisor),
         aten<"div.Tensor">(aten<"div.Tensor">(regularizer, scale), scale));
-    auto standard_deviation = aten<"sqrt">(
-        aten<"maximum">(variance, scalar_for(variance, std::int64_t{0})));
+    auto standard_deviation = aten<"sqrt">(variance);
     auto normalized =
         aten<"to.dtype">(aten<"div.Tensor">(scaled, standard_deviation), weight.scalar_type());
     auto inverse = aten<"to.dtype">(

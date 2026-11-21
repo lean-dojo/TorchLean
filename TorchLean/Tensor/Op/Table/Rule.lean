@@ -14,10 +14,10 @@ public import TorchLean.Tensor.Op.Table
 `Op.rule?` gives each operator its executable rule (`Op.Rule`): the tensor operator, its pullback
 and, where they differ from the defaults, its prepared pullback, contribution order, alias rule,
 value-domain check and forward-mode rule. An operator that needs a capability the scalar lacks
-(`Rounding`, `Erf`, `InverseTrig`, `Cbrt`, `NextAfter`, or `Bits` of the operator's width) has no
-rule there. Every operator but `custom` has an equation lemma for one or more of its arms
-(`Op.rule?_relu`, ...), so a proof about one operator rewrites with that lemma or reduces that one
-arm, never the whole table.
+(`Rounding`, `Erf`, `InverseTrig`, `Cbrt`, `NextAfter`, `Bits` of the operator's width, `Special`,
+`Frexp`, `Fma` or `ComplexFunctions`) has no rule there. Every operator but `custom` has an equation
+lemma for one or more of its arms (`Op.rule?_relu`, ...), so a proof about one operator rewrites
+with that lemma or reduces that one arm, never the whole table.
 
 The definitions before `Op.rule?` are the pieces its arms share: the parts and gradient blocks of
 `cat` (`Op.catElementParts`, `Op.catGrads`), the index tuples of `gather` and `scatter`
@@ -163,11 +163,13 @@ def indexComponents {bounds : List Nat} {s : Shape} (x : Tensor (Port.IndexTuple
   (Rep.data x).toList.flatMap (Port.IndexTuple.components bounds)
 
 /-- The words of `width` bits of the components of the index tuples of `x`, in the layout of
-`Port.irShape`, each component `c` as `BitVec.ofNat width c`. -/
+`Port.irShape`, each component `c` as `BitVec.ofNat width c`. The components are listed once, into
+an array: listed at each word, they took time quadratic in the number of tuples. -/
 def indexWords {bounds : List Nat} {s : Shape} (width : Nat)
     (x : Tensor (Port.IndexTuple bounds) s) :
     Tensor (BitVec width) (Port.irShape ⟨.index bounds, s⟩) :=
-  Rep.ofFlatFn fun j => BitVec.ofNat width ((indexComponents x).getD j.val 0)
+  let components := (indexComponents x).toArray
+  Rep.ofFlatFn fun j => BitVec.ofNat width (components.getD j.val 0)
 
 /-- Whether every component of the index tuples of `x` is a value of the integer type of `width`
 bits, signed when `signed`: an error at the first that is not. -/
@@ -419,10 +421,14 @@ def Op.rule? [Op.Capabilities α] :
   | _, _, .min (.integer signed _) => some
       { forward := fun xs => (Tensor.zipWith (Word.minimum signed) xs.1 xs.2.1, ())
         backward := fun _ _ => ((), (), ()) }
-  | _, _, .cumsum dim => some
+  | _, _, .cumsum dim .leftFold => some
       { forward := fun xs => (Tensor.cumsum xs.1 dim, ())
         backward := fun _ g => (Tensor.cumsumBackward g.1 dim, ())
         jvp? := some fun _ dxs => (Tensor.cumsum dxs.1 dim, ()) }
+  | _, _, .cumsum dim order => some
+      { forward := fun xs => (Tensor.scanIn order (· + ·) 0 xs.1 dim, ())
+        backward := fun _ g => (Tensor.cumsumBackward g.1 dim, ())
+        jvp? := some fun _ dxs => (Tensor.scanIn order (· + ·) 0 dxs.1 dim, ()) }
   | _, _, .safeLog => some
       { forward := fun xs =>
           (Tensor.map (fun x => Activation.safeLog x xs.2.1.item) xs.1, ())
@@ -449,14 +455,14 @@ def Op.rule? [Op.Capabilities α] :
         jvp? := some fun xs dxs => (Tensor.scale dxs.1 xs.2.1.item, ()) }
   | _, _, .elu => some
       { forward := fun xs =>
-          let alpha := xs.2.1.item
-          (Tensor.map (fun x => Activation.elu x alpha) xs.1, ())
+          (Tensor.map (fun x => Activation.elu x xs.2.1.item xs.2.2.1.item xs.2.2.2.1.item)
+            xs.1, ())
         backward := fun xs g =>
-          let alpha := xs.2.1.item
-          (Tensor.map (fun x => Activation.eluDeriv x alpha) xs.1 * g.1, (), ())
+          (Tensor.map (fun x => Activation.eluDeriv x xs.2.1.item xs.2.2.1.item xs.2.2.2.1.item)
+            xs.1 * g.1, (), (), (), ())
         jvp? := some fun xs dxs =>
-          let alpha := xs.2.1.item
-          (Tensor.map (fun x => Activation.eluDeriv x alpha) xs.1 * dxs.1, ()) }
+          (Tensor.map (fun x => Activation.eluDeriv x xs.2.1.item xs.2.2.1.item xs.2.2.2.1.item)
+            xs.1 * dxs.1, ()) }
   | _, _, .leakyReLU => some
       { forward := fun xs =>
           let slope := xs.2.1.item
@@ -541,6 +547,16 @@ def Op.rule? [Op.Capabilities α] :
         jvp? := some fun xs dxs =>
           (Tensor.Rep.ofFn fun c =>
             dxs.1 (Shape.Coord.update c dim ((Tensor.sort xs.1 dim descending).2 c)), (), ()) }
+  | _, _, .sort dim descending .bool => some
+      { forward := fun xs =>
+          let sorted := Tensor.sortOn Bool.toNat xs.1 dim descending
+          (sorted.1, sorted.2, ())
+        backward := fun _ _ => ((), ()) }
+  | _, _, .sort dim descending (.integer signed _) => some
+      { forward := fun xs =>
+          let sorted := Tensor.sortOn (Word.toInteger signed) xs.1 dim descending
+          (sorted.1, sorted.2, ())
+        backward := fun _ _ => ((), ()) }
   | _, _, .topk (s := s) dim k largest h => some
       { forward := fun xs =>
           let top := Tensor.topk xs.1 dim k largest h
@@ -834,11 +850,15 @@ def Op.rule? [Op.Capabilities α] :
   | _, _, .pow (.integer signed _) => some
       { forward := fun xs => (Tensor.zipWith (Word.pow signed) xs.1 xs.2.1, ())
         backward := fun _ _ => ((), (), ()) }
-  | _, _, .cumprod dim => some
+  | _, _, .cumprod dim .leftFold => some
       { forward := fun xs => (Tensor.cumprod xs.1 dim, ())
         backward := fun xs g => (Tensor.cumprodBackward xs.1 g.1 dim, ())
         jvp? := some fun xs dxs => (Tensor.cumprodJVP xs.1 dxs.1 dim, ()) }
-  | _, _, .cummax dim => some
+  | _, _, .cumprod dim order => some
+      { forward := fun xs => (Tensor.scanIn order (· * ·) 1 xs.1 dim, ())
+        backward := fun xs g => (Tensor.cumprodBackward xs.1 g.1 dim, ())
+        jvp? := some fun xs dxs => (Tensor.cumprodJVP xs.1 dxs.1 dim, ()) }
+  | _, _, .cummax dim .leftFold => some
       { forward := fun xs =>
           let running := Tensor.cummax xs.1 dim
           (running.1, running.2, ())
@@ -846,9 +866,25 @@ def Op.rule? [Op.Capabilities α] :
         jvp? := some fun xs dxs =>
           (Tensor.Rep.ofFn fun c =>
             dxs.1 (Shape.Coord.update c dim ((Tensor.cummax xs.1 dim).2 c)), (), ()) }
-  | _, _, .cummin dim => some
+  | _, _, .cummax dim order => some
+      { forward := fun xs =>
+          let running := Tensor.cummaxIn order xs.1 dim
+          (running.1, running.2, ())
+        backward := fun xs g => (Tensor.cummaxBackward xs.1 g.1 dim, ())
+        jvp? := some fun xs dxs =>
+          (Tensor.Rep.ofFn fun c =>
+            dxs.1 (Shape.Coord.update c dim ((Tensor.cummax xs.1 dim).2 c)), (), ()) }
+  | _, _, .cummin dim .leftFold => some
       { forward := fun xs =>
           let running := Tensor.cummin xs.1 dim
+          (running.1, running.2, ())
+        backward := fun xs g => (Tensor.cumminBackward xs.1 g.1 dim, ())
+        jvp? := some fun xs dxs =>
+          (Tensor.Rep.ofFn fun c =>
+            dxs.1 (Shape.Coord.update c dim ((Tensor.cummin xs.1 dim).2 c)), (), ()) }
+  | _, _, .cummin dim order => some
+      { forward := fun xs =>
+          let running := Tensor.cumminIn order xs.1 dim
           (running.1, running.2, ())
         backward := fun xs g => (Tensor.cumminBackward xs.1 g.1 dim, ())
         jvp? := some fun xs dxs =>
@@ -984,7 +1020,7 @@ def Op.rule? [Op.Capabilities α] :
       { forward := fun xs => (Tensor.embedding xs.1 xs.2.1, ())
         backward := fun xs g => (Tensor.embeddingBackward xs.2.1 g.1, (), ())
         jvp? := some fun xs dxs => (Tensor.embedding dxs.1 xs.2.1, ()) }
-  | _, _, .matmul _ _ hl hr broadcastA broadcastB => some
+  | _, _, .matmul _ _ hl hr broadcastA broadcastB .leftFold => some
       { forward := fun xs =>
           (Tensor.reshape (Tensor.batchMatmul broadcastA broadcastB
               (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
@@ -1005,9 +1041,50 @@ def Op.rule? [Op.Capabilities α] :
                 (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
                 (Tensor.reshape dxs.2.1 _ (Shape.size_matmulRight hr _ _)))
             _ (Shape.size_matmulOut hl hr _).symm, ()) }
-  | _, _, .scaledMatmul _ _ hl hr broadcastA broadcastB => some
+  | _, _, .matmul _ _ hl hr broadcastA broadcastB order => some
+      { forward := fun xs =>
+          (Tensor.reshape (Tensor.batchMatmulIn order broadcastA broadcastB
+              (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
+              (Tensor.reshape xs.2.1 _ (Shape.size_matmulRight hr _ _)))
+            _ (Shape.size_matmulOut hl hr _).symm, ())
+        backward := fun xs g =>
+          let gradients := Tensor.matmulBackward broadcastA broadcastB
+            (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
+            (Tensor.reshape xs.2.1 _ (Shape.size_matmulRight hr _ _))
+            (Tensor.reshape g.1 _ (Shape.size_matmulOut hl hr _))
+          (Tensor.reshape gradients.1 _ (Shape.size_matmulLeft hl _ _).symm,
+            Tensor.reshape gradients.2 _ (Shape.size_matmulRight hr _ _).symm, ())
+        jvp? := some fun xs dxs =>
+          (Tensor.reshape (Tensor.batchMatmulIn order broadcastA broadcastB
+                (Tensor.reshape dxs.1 _ (Shape.size_matmulLeft hl _ _))
+                (Tensor.reshape xs.2.1 _ (Shape.size_matmulRight hr _ _)) +
+              Tensor.batchMatmulIn order broadcastA broadcastB
+                (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
+                (Tensor.reshape dxs.2.1 _ (Shape.size_matmulRight hr _ _)))
+            _ (Shape.size_matmulOut hl hr _).symm, ()) }
+  | _, _, .scaledMatmul _ _ hl hr broadcastA broadcastB .leftFold => some
       { forward := fun xs =>
           (Tensor.reshape (Attention.scaledMatmul broadcastA broadcastB
+              (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
+              (Tensor.reshape xs.2.1 _ (Shape.size_matmulRight hr _ _)) xs.2.2.1.item)
+            _ (Shape.size_matmulOut hl hr _).symm, ())
+        backward := fun xs g =>
+          let gradients := Attention.scaledMatmulBackward broadcastA broadcastB
+            (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
+            (Tensor.reshape xs.2.1 _ (Shape.size_matmulRight hr _ _))
+            (Tensor.reshape g.1 _ (Shape.size_matmulOut hl hr _)) xs.2.2.1.item
+          (Tensor.reshape gradients.1 _ (Shape.size_matmulLeft hl _ _).symm,
+            Tensor.reshape gradients.2 _ (Shape.size_matmulRight hr _ _).symm, (), ())
+        jvp? := some fun xs dxs =>
+          (Tensor.reshape (Attention.scaledMatmulJVP broadcastA broadcastB
+              (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
+              (Tensor.reshape dxs.1 _ (Shape.size_matmulLeft hl _ _))
+              (Tensor.reshape xs.2.1 _ (Shape.size_matmulRight hr _ _))
+              (Tensor.reshape dxs.2.1 _ (Shape.size_matmulRight hr _ _)) xs.2.2.1.item)
+            _ (Shape.size_matmulOut hl hr _).symm, ()) }
+  | _, _, .scaledMatmul _ _ hl hr broadcastA broadcastB order => some
+      { forward := fun xs =>
+          (Tensor.reshape (Attention.scaledMatmulIn order broadcastA broadcastB
               (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
               (Tensor.reshape xs.2.1 _ (Shape.size_matmulRight hr _ _)) xs.2.2.1.item)
             _ (Shape.size_matmulOut hl hr _).symm, ())
@@ -1063,9 +1140,17 @@ def Op.rule? [Op.Capabilities α] :
                   dxs.1 dims stride padLow padHigh (fun _ => 1) dilation groups 1 +
                 bias dxs.2.1))
             _ (Shape.size_conv_expandAxis hlead hy), ()) }
-  | _, _, .pool op dims kernel stride padLow padHigh dilation ceilMode => some
+  | _, _, .pool op dims kernel stride padLow padHigh dilation ceilMode .leftFold => some
       { forward := fun xs =>
           (Tensor.pool op xs.1 dims kernel stride padLow padHigh dilation ceilMode, ())
+        backward := fun xs g =>
+          (Tensor.poolBackward op xs.1 dims kernel stride padLow padHigh dilation ceilMode g.1,
+              ())
+        jvp? := some fun xs dxs =>
+          (Tensor.poolJVP op xs.1 dxs.1 dims kernel stride padLow padHigh dilation ceilMode, ()) }
+  | _, _, .pool op dims kernel stride padLow padHigh dilation ceilMode order => some
+      { forward := fun xs =>
+          (Tensor.poolIn order op xs.1 dims kernel stride padLow padHigh dilation ceilMode, ())
         backward := fun xs g =>
           (Tensor.poolBackward op xs.1 dims kernel stride padLow padHigh dilation ceilMode g.1,
               ())
@@ -1130,8 +1215,7 @@ def Op.rule? [Op.Capabilities α] :
         jvp? := some fun xs dxs =>
           let spread := fun t : Tensor α [s.extent dim] =>
             Tensor.broadcast t s _ (s.broadcastDims_axis dim)
-          let std := Tensor.sqrt (spread (Tensor.maximum xs.2.2.2.2.1 (Tensor.full _ 0)) +
-            Tensor.full s xs.2.2.2.2.2.1.item) .clampNegative
+          let std := Tensor.sqrt (spread xs.2.2.2.2.1 + Tensor.full s xs.2.2.2.2.2.1.item)
           (((dxs.1 * spread xs.2.1) / std + ((xs.1 - spread xs.2.2.2.1) / std) * spread dxs.2.1) +
             spread dxs.2.2.1, ()) }
   | _, _, .multiheadAttention (batch := batch) (n := n) (numHeads := numHeads)
@@ -1320,6 +1404,18 @@ def Op.rule? [Op.Capabilities α] :
           let y := Cbrt.cbrt x
           dx * (((1 / 3 : Rat) : α) * (1 / (y * y)))) xs.1 dxs.1, ()) }
     | none => none
+  | _, _, @Op.special orders f s => match Op.Capabilities.special? (α := α) with
+    | some instance_ => haveI := instance_; some
+      { forward := fun xs =>
+          (Tensor.special f orders.get (TProd.parts (fun _ => Port.value s) orders xs), ())
+        backward := fun xs g => TProd.ofParts (fun _ => Port.value s) orders fun i =>
+          Tensor.Rep.ofFn fun c => g.1 c * Special.deriv f (orders.get + Pi.single i 1)
+            fun j => TProd.parts (fun _ => Port.value s) orders xs j c
+        jvp? := some fun xs dxs => (Tensor.Rep.ofFn fun c => Special.leftSum fun i =>
+          TProd.parts (fun _ => Port.value s) orders dxs i c *
+            Special.deriv f (orders.get + Pi.single i 1)
+              fun j => TProd.parts (fun _ => Port.value s) orders xs j c, ()) }
+    | none => none
   | _, _, .nextafter => match Op.Capabilities.nextafter? (α := α) with
     | some instance_ => haveI := instance_; some
       { forward := fun xs => (Tensor.zipWith NextAfter.nextafter xs.1 xs.2.1, ())
@@ -1370,7 +1466,7 @@ def Op.rule? [Op.Capabilities α] :
         jvp? := some fun xs dxs =>
           (Tensor.attentionJVP xs.1 xs.2.1 xs.2.2.1 xs.2.2.2.1.item mask none dxs.1 dxs.2.1
             dxs.2.2.1 none, ()) }
-  | _, _, .reduce op dims keepdim h => some
+  | _, _, .reduce op dims keepdim h .leftFold => some
       { forward := fun xs => (match op, h with
           | .sum, _ => Tensor.reduce .sum xs.1 dims keepdim
           | .prod, _ => Tensor.reduce .prod xs.1 dims keepdim
@@ -1380,11 +1476,25 @@ def Op.rule? [Op.Capabilities α] :
         jvp? := match op with
           | .sum => some fun _ dxs => (Tensor.reduce .sum dxs.1 dims keepdim, ())
           | _ => some fun xs dxs => (Tensor.reduceJVP _ xs.1 dims keepdim h dxs.1, ()) }
-  | _, _, .mean dims keepdim => some
+  | _, _, .reduce op dims keepdim h order => some
+      { forward := fun xs => (match op, h with
+          | .sum, _ => Tensor.reduceIn order .sum xs.1 dims keepdim
+          | .prod, _ => Tensor.reduceIn order .prod xs.1 dims keepdim
+          | .max, h => Tensor.reduceIn order .max xs.1 dims keepdim fun _ => h (Or.inl rfl)
+          | .min, h => Tensor.reduceIn order .min xs.1 dims keepdim fun _ => h (Or.inr rfl), ())
+        backward := fun xs g => (Tensor.reduceBackward op xs.1 dims keepdim h g.1, ())
+        jvp? := match op with
+          | .sum => some fun _ dxs => (Tensor.reduceIn order .sum dxs.1 dims keepdim, ())
+          | _ => some fun xs dxs => (Tensor.reduceJVP _ xs.1 dims keepdim h dxs.1, ()) }
+  | _, _, .mean dims keepdim .leftFold => some
       { forward := fun xs => (Tensor.mean xs.1 dims keepdim, ())
         backward := fun _ g => (Tensor.meanBackward dims keepdim g.1, ())
         jvp? := some fun _ dxs => (Tensor.mean dxs.1 dims keepdim, ()) }
-  | _, _, .contract dims batchDims h => some
+  | _, _, .mean dims keepdim order => some
+      { forward := fun xs => (Tensor.meanIn order xs.1 dims keepdim, ())
+        backward := fun _ g => (Tensor.meanBackward dims keepdim g.1, ())
+        jvp? := some fun _ dxs => (Tensor.meanIn order dxs.1 dims keepdim, ()) }
+  | _, _, .contract dims batchDims h .leftFold => some
       { forward := fun xs => (Tensor.contract xs.1 xs.2.1 dims batchDims _ h rfl, ())
         backward := fun xs g =>
           (Tensor.contractBackwardLeft dims batchDims h g.1 xs.2.1,
@@ -1392,6 +1502,14 @@ def Op.rule? [Op.Capabilities α] :
         jvp? := some fun xs dxs =>
           (Tensor.contract dxs.1 xs.2.1 dims batchDims _ h rfl +
             Tensor.contract xs.1 dxs.2.1 dims batchDims _ h rfl, ()) }
+  | _, _, .contract dims batchDims h order => some
+      { forward := fun xs => (Tensor.contractIn order xs.1 xs.2.1 dims batchDims _ h rfl, ())
+        backward := fun xs g =>
+          (Tensor.contractBackwardLeft dims batchDims h g.1 xs.2.1,
+            Tensor.contractBackwardRight dims batchDims h xs.1 g.1, ())
+        jvp? := some fun xs dxs =>
+          (Tensor.contractIn order dxs.1 xs.2.1 dims batchDims _ h rfl +
+            Tensor.contractIn order xs.1 dxs.2.1 dims batchDims _ h rfl, ()) }
   | _, _, .maskedSoftmax dim => some
       { forward := fun xs => (Tensor.softmax xs.1 dim (some xs.2.1), ())
         backward := fun xs g => (Tensor.maskedSoftmaxBackward xs.1 xs.2.1 g.1 dim, (), ())
@@ -1507,6 +1625,54 @@ def Op.rule? [Op.Capabilities α] :
         jvp? := some fun xs dxs =>
           (Tensor.selectiveScanJVP dim sharedA sharedB xs.1 xs.2.1 xs.2.2.1 xs.2.2.2.1 dxs.1
             dxs.2.1 dxs.2.2.1 dxs.2.2.2.1, ()) }
+  | _, _, .frexp => match Op.Capabilities.frexp? (α := α) with
+    | some instance_ => haveI := instance_; some
+      { forward := fun xs => (Tensor.map (fun x => (Frexp.frexp x).1) xs.1,
+          Tensor.map (fun x => BitVec.ofInt 32 (Frexp.frexp x).2) xs.1, ())
+        backward := fun xs g => (Tensor.zipWith (fun x seed =>
+          Frexp.ldexp seed (-(Frexp.frexp x).2)) xs.1 g.1, ())
+        jvp? := some fun xs dxs => (Tensor.zipWith (fun x dx =>
+          Frexp.ldexp dx (-(Frexp.frexp x).2)) xs.1 dxs.1, (), ()) }
+    | none => none
+  | _, _, .fma => match Op.Capabilities.fma? (α := α) with
+    | some instance_ => haveI := instance_; some
+      { forward := fun xs => (Tensor.zipWith3 Fma.fma xs.1 xs.2.1 xs.2.2.1, ())
+        backward := fun xs g => (g.1 * xs.2.1, g.1 * xs.1, g.1, ())
+        jvp? := some fun xs dxs => ((dxs.1 * xs.2.1 + xs.1 * dxs.2.1) + dxs.2.2.1, ()) }
+    | none => none
+  | _, _, .complex f => match Op.Capabilities.complex? (α := α) with
+    | some instance_ => haveI := instance_; some
+      { forward := fun xs => (Tensor.ofPairs fun c => ComplexFunctions.apply f (xs.1.pairAt c), ())
+        backward := fun xs g => (Tensor.ofPairs (fun c =>
+          let d := ComplexFunctions.deriv f (xs.1.pairAt c)
+          let w := g.1.pairAt c
+          (d.1 * w.1 + d.2 * w.2, d.1 * w.2 - d.2 * w.1)), ())
+        jvp? := some fun xs dxs => (Tensor.ofPairs (fun c =>
+          let d := ComplexFunctions.deriv f (xs.1.pairAt c)
+          let w := dxs.1.pairAt c
+          (d.1 * w.1 - d.2 * w.2, d.2 * w.1 + d.1 * w.2)), ()) }
+    | none => none
+  | _, _, .complexPow => match Op.Capabilities.complex? (α := α) with
+    | some instance_ => haveI := instance_; some
+      { forward := fun xs => (Tensor.ofPairs fun c =>
+          ComplexFunctions.pow (xs.1.pairAt c) (xs.2.1.pairAt c), ())
+        backward := fun xs g =>
+          let d := fun c => ComplexFunctions.powDeriv (xs.1.pairAt c) (xs.2.1.pairAt c)
+          (Tensor.ofPairs (fun c =>
+            let a := (d c).1
+            let w := g.1.pairAt c
+            (a.1 * w.1 + a.2 * w.2, a.1 * w.2 - a.2 * w.1)),
+          Tensor.ofPairs (fun c =>
+            let b := (d c).2
+            let w := g.1.pairAt c
+            (b.1 * w.1 + b.2 * w.2, b.1 * w.2 - b.2 * w.1)), ())
+        jvp? := some fun xs dxs => (Tensor.ofPairs (fun c =>
+          let d := ComplexFunctions.powDeriv (xs.1.pairAt c) (xs.2.1.pairAt c)
+          let u := dxs.1.pairAt c
+          let v := dxs.2.1.pairAt c
+          (d.1.1 * u.1 - d.1.2 * u.2 + (d.2.1 * v.1 - d.2.2 * v.2),
+            d.1.2 * u.1 + d.1.1 * u.2 + (d.2.2 * v.1 + d.2.1 * v.2))), ()) }
+    | none => none
   | _, _, .custom .. => none
 
 end TorchLean

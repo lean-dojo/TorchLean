@@ -44,8 +44,8 @@ of Java 8's SplittableRandom generator" in his words, the generator of Steele, L
 `mix64variant13` (Figure 16), David Stafford's Mix13. So `splitmix64 0` is `0xe220a8397b1dcdaf`,
 the first output of Vigna's generator from the state `0`. Our keys don't split the way the paper's
 generators do: a key is `splitmix64` of the Weyl sequence above. The capture test
-`test_random_operators_use_keyed_streams` in `scripts/checks/test_ir_capture.py` recomputes the
-uniform draws with its own copy of the mixer.
+`test_random_operators_use_keyed_streams` in `scripts/checks/ir_capture_pytorch_operators.py`
+recomputes the uniform draws with its own copy of the mixer.
 
 The module lives in the spec layer because the registered operators `Op.randUniform`, `Op.randn`
 and `Op.bernoulliMask` (`TorchLean.Tensor.Op.Table`) denote pure tensors through it. Runtime
@@ -169,9 +169,9 @@ We clamp `u1` below by the backend's default safeguard (`Context.defaultEpsilon`
 alone does not give. The sampler is deterministic and meant for examples and benchmarks. It is
 not a cryptographic generator. Box and Muller give a pair of normals from `u1` and `u2`, the cosine
 one and a sine one, and we keep the cosine one, so `normalScalar` spends two draws per sample.
-The capture test `test_randn_uses_a_keyed_normal_sampler` (`scripts/checks/test_ir_capture.py`)
-compares `normal` with a binary64 evaluation of this formula on the same rounded draws, to within
-a tolerance of the dtype.
+The capture test `test_randn_uses_a_keyed_normal_sampler`
+(`scripts/checks/ir_capture_pytorch_operators.py`) compares `normal` with a binary64 evaluation
+of this formula on the same rounded draws, to within a tolerance of the dtype.
 
 Reference: G. E. P. Box and Mervin E. Muller (1958), "A Note on the Generation of Random Normal
 Deviates", The Annals of Mathematical Statistics 29(2), 610-611,

@@ -231,15 +231,15 @@ lean_exe torchlean where
 
 -- Shared executable numerical formats and refinement proofs.
 require floatlib from git
-  "https://github.com/lean-dojo/FloatLib" @ "main"
+  "https://github.com/lean-dojo/FloatLib" @ "v4.1.0"
 
 -- API documentation (HTML): `build TorchLean.Tensor:docInfo TorchLean.CUDA:docInfo
 -- TorchLean.NN:docInfo TorchLean.Verify:docInfo TorchLeanExamples:docInfo +FloatLib:docInfo`,
 -- then `exe doc-gen4 fromDb` with no module roots (scripts/docs/build_site.sh). A
 -- library's `:docs` facet renders only its root modules.
 require «doc-gen4» from git
-  "https://github.com/leanprover/doc-gen4" @ "v4.35.0"
+  "https://github.com/leanprover/doc-gen4" @ "v4.36.0"
 
 -- Keep `mathlib` last so Mathlib’s dependency versions win, which is required for cache tooling.
 require mathlib from git
-  "https://github.com/leanprover-community/mathlib4" @ "v4.35.0"
+  "https://github.com/leanprover-community/mathlib4" @ "v4.36.0"

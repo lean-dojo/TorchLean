@@ -12,7 +12,6 @@ public import FloatLib.Numerics.ErrorBound
 public import Mathlib.Analysis.Calculus.Deriv.Basic
 public import Mathlib.Analysis.Real.Sqrt
 public import Mathlib.Topology.MetricSpace.Lipschitz
-import Mathlib.Tactic.Linarith
 
 /-!
 # Scalar error propagation

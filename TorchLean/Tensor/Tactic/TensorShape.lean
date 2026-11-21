@@ -25,7 +25,7 @@ register_simp_attr tensor_shape_simps
 public meta section
 
 /-- Prove the output-shape equation of a general tensor operator. -/
-macro "tensor_shape" : tactic =>
+macro (name := tensorShapeTactic) "tensor_shape" : tactic =>
   `(tactic| first
     | rfl
     | (simp only [tensor_shape_simps]; done)

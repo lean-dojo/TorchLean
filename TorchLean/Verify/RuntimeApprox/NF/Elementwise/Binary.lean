@@ -51,21 +51,9 @@ theorem add {s : Shape} :
           (xS + yS) (xR + yR)
           (linfNorm (addBoundTensor (β := β) (fexp := fexp) epsx epsy xR yR)) := by
   intro xS yS xR yR epsx epsy hx hy
-  have h :=
-    zipWith
-      (α := R) (toSpec := NF.toReal)
-      (s := s)
-      (fS := fun a b => a + b) (fR := fun a b => a + b)
-      (bnd := fun a b epsx epsy =>
-        epsx + epsy + ulp β fexp (a + b) / 2)
-      (xS := xS) (yS := yS) (xR := xR) (yR := yR)
-      (epsx := epsx) (epsy := epsy)
-      hx hy (by
-        intro x y xR yR hx hy
-        simpa using
-          (NF.approx_add (β := β) (fexp := fexp) (rnd := rnd)
-            (x := x) (y := y) (xR := xR) (yR := yR) hx hy))
-  simpa [add_def, addBoundTensor] using h
+  simpa [add_def, addBoundTensor] using zipWith (α := R) (toSpec := NF.toReal) (· + ·) (· + ·)
+    (fun a b epsx epsy => epsx + epsy + ulp β fexp (a + b) / 2) hx hy
+    fun hx hy => by simpa using NF.approx_add (rnd := rnd) hx hy
 
 /--
 `ApproxTensor` bound for elementwise subtraction (`-`) over arbitrary tensor shapes.
@@ -81,20 +69,9 @@ theorem sub {s : Shape} :
           (xS - yS) (xR - yR)
           (linfNorm (subBoundTensor (β := β) (fexp := fexp) epsx epsy xR yR)) := by
   intro xS yS xR yR epsx epsy hx hy
-  have h :=
-    zipWith (α := R)
-      (toSpec := NF.toReal)
-      (s := s)
-      (fS := fun a b => a - b) (fR := fun a b => a - b)
-      (bnd := fun a b epsx epsy =>
-        epsx + epsy + ulp β fexp (a - b) / 2)
-      (xS := xS) (yS := yS) (xR := xR) (yR := yR) (epsx := epsx) (epsy := epsy)
-      hx hy (by
-        intro x y xR yR hx hy
-        simpa using
-          (NF.approx_sub (β := β) (fexp := fexp) (rnd := rnd) (x := x) (y := y) (xR := xR) (yR :=
-            yR) hx hy))
-  simpa [sub_def, subBoundTensor] using h
+  simpa [sub_def, subBoundTensor] using zipWith (α := R) (toSpec := NF.toReal) (· - ·) (· - ·)
+    (fun a b epsx epsy => epsx + epsy + ulp β fexp (a - b) / 2) hx hy
+    fun hx hy => by simpa using NF.approx_sub (rnd := rnd) hx hy
 
 /--
 `ApproxTensor` bound for elementwise multiplication (`*`) over arbitrary tensor shapes.
@@ -110,22 +87,10 @@ theorem mul {s : Shape} :
           (xS * yS) (xR * yR)
           (linfNorm (mulBoundTensor (β := β) (fexp := fexp) epsx epsy xR yR)) := by
   intro xS yS xR yR epsx epsy hx hy
-  have h :=
-    zipWith
-      (α := R) (toSpec := NF.toReal)
-      (s := s)
-      (fS := fun a b => a * b) (fR := fun a b => a * b)
-      (bnd := fun a b epsx epsy =>
-        (abs a + epsx) * epsy + (abs b + epsy) * epsx +
-          ulp β fexp (a * b) / 2)
-      (xS := xS) (yS := yS) (xR := xR) (yR := yR)
-      (epsx := epsx) (epsy := epsy)
-      hx hy (by
-        intro x y xR yR hx hy
-        simpa using
-          (NF.approx_mul (β := β) (fexp := fexp) (rnd := rnd)
-            (x := x) (y := y) (xR := xR) (yR := yR) hx hy))
-  simpa [mul_def, mulBoundTensor] using h
+  simpa [mul_def, mulBoundTensor] using zipWith (α := R) (toSpec := NF.toReal) (· * ·) (· * ·)
+    (fun a b epsx epsy => (abs a + epsx) * epsy + (abs b + epsy) * epsx + ulp β fexp (a * b) / 2)
+    hx hy
+    fun hx hy => by simpa using NF.approx_mul (rnd := rnd) hx hy
 
 /-- Squaring is elementwise multiplication of a tensor with itself, so its budget is the
 multiplication budget `mulBoundTensor eps eps xR xR`. -/
@@ -136,9 +101,7 @@ theorem square {s : Shape} :
           (Tensor.square xS) (Tensor.square xR)
           (linfNorm (mulBoundTensor (β := β) (fexp := fexp) eps eps xR xR)) := by
   intro xS xR eps hx
-  have h := mul
-    (β := β) (fexp := fexp) (rnd := rnd) hx hx
-  simpa only [square_eq_mul] using h
+  simpa only [square_eq_mul] using mul (rnd := rnd) hx hx
 
 end
 

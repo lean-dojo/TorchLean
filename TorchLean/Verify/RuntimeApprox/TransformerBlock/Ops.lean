@@ -20,8 +20,8 @@ At the reals, `layerNorm`, `softmax`, `attention`, `heads` and `block` of
 `TorchLean.Verify.RuntimeApprox.TransformerBlock` are op-table forwards, read entry by entry. They
 are `Op.layerNorm`, `Op.softmax` on the last axis, `Op.attention`, and for `block` their composition
 with `Op.linear`, `Op.reshape`, `Op.permute` and `Op.add`, the heads batched in one `Op.attention`.
-The attention statements hold for both schedules, without a mask and with a mask whose allowed
-entries in a row are the keys of that row.
+The attention statements hold for both schedules and an optional mask: row `t` attends over
+`allowed mask t`, every key without a mask and the keys the mask allows in row `t` with one.
 -/
 
 @[expose] public section
@@ -31,11 +31,6 @@ open TorchLean.Shape (rank size)
 namespace TorchLean.TransformerBlock
 
 open Tensor
-
-private theorem sqrt_max_zero (a : ℝ) : √(max a 0) = √a := by
-  rcases le_total a 0 with h | h
-  · rw [max_eq_right h, Real.sqrt_zero, Real.sqrt_eq_zero_of_nonpos h]
-  · rw [max_eq_left h]
 
 /-- The forward of `Op.layerNorm` on a matrix with positive extents is `layerNorm` of each row,
 with the weight, bias and epsilon of the op. -/
@@ -48,7 +43,7 @@ theorem get2_layerNorm_forward {n d : ℕ} (hn : n > 0) (hd : d > 0) (hlead : n 
         (fun i => get2 x t i) j := by
   change get2 (Tensor.layerNorm x [⟨1, Nat.one_lt_two⟩] γ β ε.item) t j = _
   rw [Normalization.get2_layerNorm hd]
-  simp only [layerNorm, sqrt_max_zero]
+  simp only [layerNorm]
   ring
 
 /-- The forward of `Op.softmax` on the last axis of a matrix is `softmax` over all keys of each
@@ -61,6 +56,20 @@ theorem get2_softmax_forward {n d : ℕ} (x : Tensor ℝ [n, d]) (t : Fin n) (j 
     (fun x => Softmax.innermost x) x) t j = _
   rw [Tensor.alongAxis_of_last _ _ x rfl, get2_eq_getScalar_unstack]
   rw [Softmax.unstack_innermost_matrix, Softmax.getScalar_vec_eq_exp_div]
+  rfl
+
+/-- The keys row `t` attends over: every key without a mask, the keys the mask allows in row `t`
+with one. -/
+def allowed {n m : ℕ} (mask : Option (Tensor Bool [n, m])) (t : Fin n) : Finset (Fin m) :=
+  Finset.univ.filter fun j => mask.elim true (fun mask => get2 mask t j) = true
+
+@[simp] theorem allowed_none {n m : ℕ} :
+    allowed (none : Option (Tensor Bool [n, m])) = fun _ => Finset.univ := by
+  funext t
+  simp [allowed]
+
+@[simp] theorem allowed_some {n m : ℕ} (mask : Tensor Bool [n, m]) :
+    allowed (some mask) = fun t => Finset.univ.filter fun j => get2 mask t j = true :=
   rfl
 
 private theorem batchSlice_unit {α : Type} [Storage α] {s : Shape}
@@ -107,12 +116,12 @@ private theorem attention_twoPass_apply {n m d w : ℕ} (q : Tensor ℝ [n, d])
     (k : Tensor ℝ [m, d]) (v : Tensor ℝ [m, w]) (s : ℝ) (mask : Option (Tensor Bool [n, m]))
     (t : Fin n) (c : Fin w) :
     get2 (Tensor.attention (batch := []) q k v s mask none) t c =
-      attention s (Finset.univ.filter fun j => mask.elim true (fun mask => get2 mask t j) = true)
-        (fun i => get2 q t i) (fun j i => get2 k j i) (fun j c => get2 v j c) c := by
+      attention s (allowed mask t) (fun i => get2 q t i) (fun j i => get2 k j i)
+        (fun j c => get2 v j c) c := by
   rw [get2_eq_apply]
   dsimp only [Tensor.attention]
   rw [attentionValues_apply_unit _ v mask t c (fun j => (∑ i, get2 q t i * get2 k j i) * s) ?hS]
-  · simp only [attention, softmax, Finset.sum_filter, Finset.sum_div]
+  · simp only [attention, softmax, allowed, Finset.sum_filter, Finset.sum_div]
     refine Finset.sum_congr rfl fun j _ => ?_
     split_ifs <;> simp only [mul_comm s, div_mul_eq_mul_div, zero_div]
   · intro j
@@ -126,59 +135,36 @@ private theorem attention_apply {n m d w : ℕ} (q : Tensor ℝ [n, d]) (k : Ten
     (v : Tensor ℝ [m, w]) (s : ℝ) (mask : Option (Tensor Bool [n, m]))
     (schedule : Softmax.Schedule) (t : Fin n) (c : Fin w) :
     get2 (Tensor.attention (batch := []) q k v s mask none schedule) t c =
-      attention s (Finset.univ.filter fun j => mask.elim true (fun mask => get2 mask t j) = true)
-        (fun i => get2 q t i) (fun j i => get2 k j i) (fun j c => get2 v j c) c := by
+      attention s (allowed mask t) (fun i => get2 q t i) (fun j i => get2 k j i)
+        (fun j c => get2 v j c) c := by
   cases schedule with
   | twoPass => exact attention_twoPass_apply q k v s mask t c
   | online blocks =>
     rw [Tensor.attention_online_eq (batch := [])]
     exact attention_twoPass_apply q k v s mask t c
 
-/-- The forward of `Op.attention` without a mask, for every schedule, is `attention` over all keys
-with the frozen scale, at each row and column. -/
-theorem get2_attention_forward {n m d w : ℕ} (schedule : Softmax.Schedule)
-    (q : Tensor ℝ [n, d]) (k : Tensor ℝ [m, d]) (v : Tensor ℝ [m, w]) (τ : Tensor ℝ [])
-    (t : Fin n) (c : Fin w) :
-    get2 (((Op.attention (batch := []) (rows := n) (keys := m) (depth := d) (width := w)
-        none schedule).rule? (α := ℝ) |>.get rfl).forward (q, k, v, τ, ())).1 t c =
-      attention τ.item Finset.univ (fun i => get2 q t i) (fun j i => get2 k j i)
-        (fun j c => get2 v j c) c := by
-  change get2 (Tensor.attention (batch := []) q k v τ.item none none schedule) t c = _
-  rw [attention_apply]
-  simp only [Option.elim_none, Finset.filter_true]
-
-/-- The forward of `Op.attention` with a mask, for every schedule, is `attention` over the keys
-the mask allows in the row. A row without an allowed key gives zero on both sides. -/
-theorem get2_attention_forward_mask {n m d w : ℕ} (mask : Tensor Bool [n, m])
+/-- The forward of `Op.attention` with an optional mask, for every schedule, is `attention` over the
+keys `allowed mask t` of each row `t` with the frozen scale, at each row and column. A row without
+an allowed key gives zero on both sides. -/
+theorem get2_attention_forward {n m d w : ℕ} (mask : Option (Tensor Bool [n, m]))
     (schedule : Softmax.Schedule) (q : Tensor ℝ [n, d]) (k : Tensor ℝ [m, d])
     (v : Tensor ℝ [m, w]) (τ : Tensor ℝ []) (t : Fin n) (c : Fin w) :
     get2 (((Op.attention (batch := []) (rows := n) (keys := m) (depth := d) (width := w)
-        (some mask) schedule).rule? (α := ℝ) |>.get rfl).forward (q, k, v, τ, ())).1 t c =
-      attention τ.item (Finset.univ.filter fun j => get2 mask t j = true) (fun i => get2 q t i)
-        (fun j i => get2 k j i) (fun j c => get2 v j c) c :=
-  attention_apply q k v τ.item (some mask) schedule t c
+        mask schedule).rule? (α := ℝ) |>.get rfl).forward (q, k, v, τ, ())).1 t c =
+      attention τ.item (allowed mask t) (fun i => get2 q t i) (fun j i => get2 k j i)
+        (fun j c => get2 v j c) c :=
+  attention_apply q k v τ.item mask schedule t c
 
-/-- Head `z` of `heads` over all keys is the forward of `Op.attention` without a mask on the
-slices `q z`, `k z` and `v z` of head `z`, for every schedule. -/
-theorem heads_eq_attention_forward {n h e : ℕ} (schedule : Softmax.Schedule)
-    (q k v : Fin h → Tensor ℝ [n, e]) (τ : Tensor ℝ []) (t : Fin n) (z : Fin h) (c : Fin e) :
-    heads τ.item (fun _ => Finset.univ) (fun t p => get2 (q p.1) t p.2)
-        (fun j p => get2 (k p.1) j p.2) (fun j p => get2 (v p.1) j p.2) t (z, c) =
-      get2 (((Op.attention (batch := []) (rows := n) (keys := n) (depth := e) (width := e)
-        none schedule).rule? (α := ℝ) |>.get rfl).forward (q z, k z, v z, τ, ())).1 t c :=
-  (get2_attention_forward schedule (q z) (k z) (v z) τ t c).symm
-
-/-- Head `z` of `heads`, token `t` attending over the keys the mask allows in row `t`, is the
-forward of `Op.attention` with that mask on the slices of head `z`, for every schedule. -/
-theorem heads_eq_attention_forward_mask {n h e : ℕ} (mask : Tensor Bool [n, n])
+/-- Head `z` of `heads`, token `t` attending over `allowed mask t`, is the forward of `Op.attention`
+with that optional mask on the slices `q z`, `k z` and `v z` of head `z`, for every schedule. -/
+theorem heads_eq_attention_forward {n h e : ℕ} (mask : Option (Tensor Bool [n, n]))
     (schedule : Softmax.Schedule) (q k v : Fin h → Tensor ℝ [n, e]) (τ : Tensor ℝ [])
     (t : Fin n) (z : Fin h) (c : Fin e) :
-    heads τ.item (fun t => Finset.univ.filter fun j => get2 mask t j = true)
-        (fun t p => get2 (q p.1) t p.2) (fun j p => get2 (k p.1) j p.2)
+    heads τ.item (allowed mask) (fun t p => get2 (q p.1) t p.2) (fun j p => get2 (k p.1) j p.2)
         (fun j p => get2 (v p.1) j p.2) t (z, c) =
       get2 (((Op.attention (batch := []) (rows := n) (keys := n) (depth := e) (width := e)
-        (some mask) schedule).rule? (α := ℝ) |>.get rfl).forward (q z, k z, v z, τ, ())).1 t c :=
-  (get2_attention_forward_mask mask schedule (q z) (k z) (v z) τ t c).symm
+        mask schedule).rule? (α := ℝ) |>.get rfl).forward (q z, k z, v z, τ, ())).1 t c :=
+  (get2_attention_forward mask schedule (q z) (k z) (v z) τ t c).symm
 
 private theorem batchSlice_heads {α : Type} [Storage α] {h : ℕ} {s : Shape}
     (x : Tensor α (h :: s)) (b : Shape.Coord [h]) :
@@ -233,12 +219,12 @@ private theorem attention_twoPass_apply_heads {h n m d w : ℕ}
     (v : Tensor ℝ [h, m, w]) (s : ℝ)
     (mask : Option (Tensor Bool [n, m])) (z : Fin h) (t : Fin n) (c : Fin w) :
     (Tensor.attention (batch := [h]) q k v s mask none) (z, t, c, ()) =
-      attention s (Finset.univ.filter fun j => mask.elim true (fun mask => get2 mask t j) = true)
-        (fun i => q (z, t, i, ())) (fun j i => k (z, j, i, ())) (fun j c => v (z, j, c, ())) c := by
+      attention s (allowed mask t) (fun i => q (z, t, i, ())) (fun j i => k (z, j, i, ()))
+        (fun j c => v (z, j, c, ())) c := by
   dsimp only [Tensor.attention]
   rw [attentionValues_apply_heads _ v mask z t c
     (fun j => (∑ i, q (z, t, i, ()) * k (z, j, i, ())) * s) ?hS]
-  · simp only [attention, softmax, Finset.sum_filter, Finset.sum_div]
+  · simp only [attention, softmax, allowed, Finset.sum_filter, Finset.sum_div]
     refine Finset.sum_congr rfl fun j _ => ?_
     split_ifs <;> simp only [mul_comm s, div_mul_eq_mul_div, zero_div]
   · intro j
@@ -253,35 +239,23 @@ private theorem attention_apply_heads {h n m d w : ℕ} (q : Tensor ℝ [h, n, d
     (mask : Option (Tensor Bool [n, m])) (schedule : Softmax.Schedule) (z : Fin h) (t : Fin n)
     (c : Fin w) :
     Tensor.attention (batch := [h]) q k v s mask none schedule (z, t, c, ()) =
-      attention s (Finset.univ.filter fun j => mask.elim true (fun mask => get2 mask t j) = true)
-        (fun i => q (z, t, i, ())) (fun j i => k (z, j, i, ())) (fun j c => v (z, j, c, ())) c := by
+      attention s (allowed mask t) (fun i => q (z, t, i, ())) (fun j i => k (z, j, i, ()))
+        (fun j c => v (z, j, c, ())) c := by
   cases schedule with
   | twoPass => exact attention_twoPass_apply_heads q k v s mask z t c
   | online blocks =>
     rw [Tensor.attention_online_eq (batch := [h])]
     exact attention_twoPass_apply_heads q k v s mask z t c
 
-private theorem attention_forward_apply_heads {h n m d w : ℕ} (schedule : Softmax.Schedule)
-    (q : Tensor ℝ [h, n, d]) (k : Tensor ℝ [h, m, d])
-    (v : Tensor ℝ [h, m, w]) (τ : Tensor ℝ []) (z : Fin h) (t : Fin n)
+private theorem attention_forward_apply_heads {h n m d w : ℕ}
+    (mask : Option (Tensor Bool [n, m])) (schedule : Softmax.Schedule) (q : Tensor ℝ [h, n, d])
+    (k : Tensor ℝ [h, m, d]) (v : Tensor ℝ [h, m, w]) (τ : Tensor ℝ []) (z : Fin h) (t : Fin n)
     (c : Fin w) :
     (((Op.attention (batch := [h]) (rows := n) (keys := m) (depth := d) (width := w)
-        none schedule).rule? (α := ℝ) |>.get rfl).forward (q, k, v, τ, ())).1 (z, t, c, ()) =
-      attention τ.item Finset.univ (fun i => q (z, t, i, ())) (fun j i => k (z, j, i, ()))
-        (fun j c => v (z, j, c, ())) c := by
-  change Tensor.attention (batch := [h]) q k v τ.item none none schedule (z, t, c, ()) = _
-  rw [attention_apply_heads]
-  simp only [Option.elim_none, Finset.filter_true]
-
-private theorem attention_forward_apply_heads_mask {h n m d w : ℕ} (mask : Tensor Bool [n, m])
-    (schedule : Softmax.Schedule) (q : Tensor ℝ [h, n, d])
-    (k : Tensor ℝ [h, m, d]) (v : Tensor ℝ [h, m, w])
-    (τ : Tensor ℝ []) (z : Fin h) (t : Fin n) (c : Fin w) :
-    (((Op.attention (batch := [h]) (rows := n) (keys := m) (depth := d) (width := w)
-        (some mask) schedule).rule? (α := ℝ) |>.get rfl).forward (q, k, v, τ, ())).1 (z, t, c, ()) =
-      attention τ.item (Finset.univ.filter fun j => get2 mask t j = true)
-        (fun i => q (z, t, i, ())) (fun j i => k (z, j, i, ())) (fun j c => v (z, j, c, ())) c :=
-  attention_apply_heads q k v τ.item (some mask) schedule z t c
+        mask schedule).rule? (α := ℝ) |>.get rfl).forward (q, k, v, τ, ())).1 (z, t, c, ()) =
+      attention τ.item (allowed mask t) (fun i => q (z, t, i, ())) (fun j i => k (z, j, i, ()))
+        (fun j c => v (z, j, c, ())) c :=
+  attention_apply_heads q k v τ.item mask schedule z t c
 
 private theorem get2_add_forward {n d : ℕ} (x y : Tensor ℝ [n, d]) (t : Fin n) (i : Fin d) :
     get2 (((Op.add (s := [n, d])).rule? (α := ℝ) |>.get rfl).forward (x, y, ())).1 t i =
@@ -307,14 +281,10 @@ private theorem reshape_apply_of_val {s t : Shape} (y : Tensor ℝ s) (h : s.siz
     (i : t.Coord) (c : s.Coord)
     (hv : (Shape.Coord.linearize i).val = (Shape.Coord.linearize c).val) :
     Tensor.reshape y t h i = y c := by
-  have e : Tensor.reshape y t h i = y (Shape.Coord.unlinearize
-      (finCongr h.symm (Shape.Coord.linearize i))) :=
-    Tensor.Rep.reshape_apply _ y i
-  rw [e]
-  congr 1
-  apply Shape.Coord.linearize_injective
-  rw [Shape.Coord.linearize_unlinearize]
-  exact Fin.ext (by simp [hv])
+  change (Tensor.Rep.reshape h y).getFlat (Shape.Coord.linearize i) =
+    y.getFlat (Shape.Coord.linearize c)
+  rw [Tensor.Rep.getFlat_reshape]
+  exact congrArg y.getFlat (Fin.ext hv)
 
 private theorem linearize_heads {n h e : ℕ} (t : Fin n) (z : Fin h) (c : Fin e) :
     (Shape.Coord.linearize (s := [n, h, e]) (t, z, c, ())).val =
@@ -363,9 +333,10 @@ private theorem sum_merge_forward {n h e : ℕ} (o : Tensor ℝ [h, n, e])
 
 /-- With positive extents and an op `σ` acting entrywise as `act`, `block` at token `t`, entry `i`
 is a composition of op forwards. It runs `Op.layerNorm`, `Op.linear`, `Op.reshape` and `Op.permute`
-to the head axis, `Op.attention` without a mask for every schedule, the way back, and `Op.add` for
-the residuals. The parameters are read from the tensors, head `z` and column `c` at index
-`finProdFinEquiv (z, c)`. -/
+to the head axis, `Op.attention` with an optional mask for every schedule (token `t` attends over
+`allowed mask t`), the way back, and `Op.add` for the residuals. A row without an allowed key gives
+zero attention on both sides. The parameters are read from the tensors, head `z` and column `c` at
+index `finProdFinEquiv (z, c)`. -/
 theorem block_eq_forward {n d h e f : ℕ} (hn : n > 0) (hd : d > 0) (hlead : n = Shape.size [n])
     (hx : [n, d] = [n, d])
     (hsplit : Shape.size [n, h * e] = Shape.size [n, h, e])
@@ -375,7 +346,8 @@ theorem block_eq_forward {n d h e f : ℕ} (hn : n > 0) (hd : d > 0) (hlead : n 
     (hmerge : Shape.size [n, h, e] = Shape.size [n, h * e])
     (act : ℝ → ℝ) (σ : Op [.value [n, f]] [.value [n, f]]) (hσ : (σ.rule? (α := ℝ)).isSome)
     (hact : ∀ y t c, get2 ((σ.rule?.get hσ).forward (y, ())).1 t c = act (get2 y t c))
-    (schedule : Softmax.Schedule) (x : Tensor ℝ [n, d]) (γ1 β1 γ2 β2 bo b2 : Tensor ℝ [d])
+    (mask : Option (Tensor Bool [n, n])) (schedule : Softmax.Schedule) (x : Tensor ℝ [n, d])
+    (γ1 β1 γ2 β2 bo b2 : Tensor ℝ [d])
     (ε τ : Tensor ℝ []) (Wq Wk Wv : Tensor ℝ [h * e, d]) (bq bk bv : Tensor ℝ [h * e])
     (Wo : Tensor ℝ [d, h * e]) (W1 : Tensor ℝ [f, d]) (b1 : Tensor ℝ [f])
     (W2 : Tensor ℝ [d, f]) (t : Fin n) (i : Fin d) :
@@ -389,7 +361,7 @@ theorem block_eq_forward {n d h e f : ℕ} (hn : n > 0) (hd : d > 0) (hlead : n 
               |>.get rfl).forward (W, b, norm x γ1 β1, ())).1, ())).1, ())).1
     let o : Tensor ℝ [h, n, e] :=
       (((Op.attention (batch := [h]) (rows := n) (keys := n) (depth := e) (width := e)
-        none schedule).rule? (α := ℝ) |>.get rfl).forward
+        mask schedule).rule? (α := ℝ) |>.get rfl).forward
           (split Wq bq, split Wk bk, split Wv bv, τ, ())).1
     let m : Tensor ℝ [n, h * e] :=
       (((Op.reshape hmerge).rule? (α := ℝ) |>.get rfl).forward
@@ -413,7 +385,7 @@ theorem block_eq_forward {n d h e f : ℕ} (hn : n > 0) (hd : d > 0) (hlead : n 
           γ2 := Tensor.getScalar γ2, β2 := Tensor.getScalar β2
           w1 := fun j c => get2 W1 c j, b1 := Tensor.getScalar b1
           w2 := fun c j => get2 W2 j c, b2 := Tensor.getScalar b2 }
-        ε.item τ.item (fun _ => Finset.univ) (fun t j => get2 x t j) t i =
+        ε.item τ.item (allowed mask) (fun t j => get2 x t j) t i =
       get2 (((Op.add (s := [n, d])).rule? (α := ℝ) |>.get rfl).forward
         (s, (((Op.linear (lead := [n]) (inDim := f) (outDim := d)).rule? (α := ℝ)
           |>.get rfl).forward (W2, b2, g, ())).1, ())).1 t i := by
@@ -425,90 +397,10 @@ theorem block_eq_forward {n d h e f : ℕ} (hn : n > 0) (hd : d > 0) (hlead : n 
       (c : Fin e), split W b (z, t, c, ()) = Tensor.getScalar b (finProdFinEquiv (z, c)) +
         ∑ j, get2 (norm x γ1 β1) t j * get2 W (finProdFinEquiv (z, c)) j :=
     fun W b z t c => (split_forward_apply _ hsplit hto z t c).trans (get2_linear_forward W b _ t _)
-  have ho : ∀ z t c, o (z, t, c, ()) = attention τ.item Finset.univ
+  have ho : ∀ z t c, o (z, t, c, ()) = attention τ.item (allowed mask t)
       (fun i => split Wq bq (z, t, i, ())) (fun j i => split Wk bk (z, j, i, ()))
       (fun j c => split Wv bv (z, j, c, ())) c :=
-    fun z t c => attention_forward_apply_heads schedule _ _ _ τ z t c
-  have hS : ∀ t i, get2 s t i = get2 x t i + (Tensor.getScalar bo i +
-      ∑ zc : Fin h × Fin e, o (zc.1, t, zc.2, ()) * get2 Wo i (finProdFinEquiv zc)) :=
-    fun t i => (get2_add_forward x _ t i).trans (congrArg (get2 x t i + ·)
-      ((get2_linear_forward Wo bo m t i).trans (congrArg (Tensor.getScalar bo i + ·)
-        (sum_merge_forward o hfrom hmerge t fun p => get2 Wo i p))))
-  have hG : ∀ t c, get2 g t c =
-      act (Tensor.getScalar b1 c + ∑ j, get2 (norm s γ2 β2) t j * get2 W1 c j) :=
-    fun t c => (hact _ t c).trans (congrArg act (get2_linear_forward W1 b1 _ t c))
-  refine Eq.trans ?_ ((get2_add_forward s _ t i).trans
-    (congrArg (get2 s t i + ·) (get2_linear_forward W2 b2 g t i))).symm
-  simp only [block, heads, hS, hG, hA, ho, hQ]
-
-/-- `block_eq_forward` with a mask: token `t` attends over the keys the mask allows in row `t`, and
-`Op.attention` takes that mask. A row without an allowed key gives zero attention on both sides. -/
-theorem block_eq_forward_mask {n d h e f : ℕ} (hn : n > 0) (hd : d > 0) (hlead : n = Shape.size [n])
-    (hx : [n, d] = [n, d])
-    (hsplit : Shape.size [n, h * e] = Shape.size [n, h, e])
-    (hto : [h, n, e] = Shape.permute [n, h, e] (Shape.adjacentSwap [n, h, e] 0))
-    (hfrom : [n, h, e] = Shape.permute [h, n, e]
-      (Shape.adjacentSwap [h, n, e] 0))
-    (hmerge : Shape.size [n, h, e] = Shape.size [n, h * e])
-    (mask : Tensor Bool [n, n]) (act : ℝ → ℝ) (σ : Op [.value [n, f]] [.value [n, f]])
-    (hσ : (σ.rule? (α := ℝ)).isSome)
-    (hact : ∀ y t c, get2 ((σ.rule?.get hσ).forward (y, ())).1 t c = act (get2 y t c))
-    (schedule : Softmax.Schedule) (x : Tensor ℝ [n, d]) (γ1 β1 γ2 β2 bo b2 : Tensor ℝ [d])
-    (ε τ : Tensor ℝ []) (Wq Wk Wv : Tensor ℝ [h * e, d]) (bq bk bv : Tensor ℝ [h * e])
-    (Wo : Tensor ℝ [d, h * e]) (W1 : Tensor ℝ [f, d]) (b1 : Tensor ℝ [f])
-    (W2 : Tensor ℝ [d, f]) (t : Fin n) (i : Fin d) :
-    let norm : Tensor ℝ [n, d] → Tensor ℝ [d] → Tensor ℝ [d] → Tensor ℝ [n, d] := fun y γ β =>
-      (((Op.layerNorm hn hd hlead hx).rule? (α := ℝ) |>.get rfl).forward (y, γ, β, ε, ())).1
-    let split : Tensor ℝ [h * e, d] → Tensor ℝ [h * e] → Tensor ℝ [h, n, e] :=
-      fun W b =>
-        (((Op.permute (Shape.adjacentSwap [n, h, e] 0) [h, n, e] hto).rule?
-          (α := ℝ) |>.get rfl).forward ((((Op.reshape hsplit).rule? (α := ℝ) |>.get rfl).forward
-            ((((Op.linear (lead := [n]) (inDim := d) (outDim := h * e)).rule? (α := ℝ)
-              |>.get rfl).forward (W, b, norm x γ1 β1, ())).1, ())).1, ())).1
-    let o : Tensor ℝ [h, n, e] :=
-      (((Op.attention (batch := [h]) (rows := n) (keys := n) (depth := e) (width := e)
-        (some mask) schedule).rule? (α := ℝ) |>.get rfl).forward
-          (split Wq bq, split Wk bk, split Wv bv, τ, ())).1
-    let m : Tensor ℝ [n, h * e] :=
-      (((Op.reshape hmerge).rule? (α := ℝ) |>.get rfl).forward
-        ((((Op.permute (Shape.adjacentSwap [h, n, e] 0) [n, h, e] hfrom).rule?
-          (α := ℝ) |>.get rfl).forward (o, ())).1, ())).1
-    let s : Tensor ℝ [n, d] := (((Op.add (s := [n, d])).rule? (α := ℝ) |>.get rfl).forward
-      (x, (((Op.linear (lead := [n]) (inDim := h * e) (outDim := d)).rule? (α := ℝ)
-        |>.get rfl).forward (Wo, bo, m, ())).1, ())).1
-    let g : Tensor ℝ [n, f] := ((σ.rule?.get hσ).forward
-      ((((Op.linear (lead := [n]) (inDim := d) (outDim := f)).rule? (α := ℝ) |>.get rfl).forward
-        (W1, b1, norm s γ2 β2, ())).1, ())).1
-    block act
-        { γ1 := Tensor.getScalar γ1, β1 := Tensor.getScalar β1
-          wq := fun j p => get2 Wq (finProdFinEquiv p) j
-          bq := fun p => Tensor.getScalar bq (finProdFinEquiv p)
-          wk := fun j p => get2 Wk (finProdFinEquiv p) j
-          bk := fun p => Tensor.getScalar bk (finProdFinEquiv p)
-          wv := fun j p => get2 Wv (finProdFinEquiv p) j
-          bv := fun p => Tensor.getScalar bv (finProdFinEquiv p)
-          wo := fun p j => get2 Wo j (finProdFinEquiv p), bo := Tensor.getScalar bo
-          γ2 := Tensor.getScalar γ2, β2 := Tensor.getScalar β2
-          w1 := fun j c => get2 W1 c j, b1 := Tensor.getScalar b1
-          w2 := fun c j => get2 W2 j c, b2 := Tensor.getScalar b2 }
-        ε.item τ.item (fun t => Finset.univ.filter fun j => get2 mask t j = true)
-        (fun t j => get2 x t j) t i =
-      get2 (((Op.add (s := [n, d])).rule? (α := ℝ) |>.get rfl).forward
-        (s, (((Op.linear (lead := [n]) (inDim := f) (outDim := d)).rule? (α := ℝ)
-          |>.get rfl).forward (W2, b2, g, ())).1, ())).1 t i := by
-  intro norm split o m s g
-  have hA : ∀ (y : Tensor ℝ [n, d]) (γ β : Tensor ℝ [d]) t j, get2 (norm y γ β) t j =
-      layerNorm (Tensor.getScalar γ) (Tensor.getScalar β) ε.item (fun i => get2 y t i) j :=
-    fun y γ β t j => get2_layerNorm_forward hn hd hlead hx y γ β ε t j
-  have hQ : ∀ (W : Tensor ℝ [h * e, d]) (b : Tensor ℝ [h * e]) (z : Fin h) (t : Fin n)
-      (c : Fin e), split W b (z, t, c, ()) = Tensor.getScalar b (finProdFinEquiv (z, c)) +
-        ∑ j, get2 (norm x γ1 β1) t j * get2 W (finProdFinEquiv (z, c)) j :=
-    fun W b z t c => (split_forward_apply _ hsplit hto z t c).trans (get2_linear_forward W b _ t _)
-  have ho : ∀ z t c, o (z, t, c, ()) =
-      attention τ.item (Finset.univ.filter fun j => get2 mask t j = true)
-        (fun i => split Wq bq (z, t, i, ())) (fun j i => split Wk bk (z, j, i, ()))
-        (fun j c => split Wv bv (z, j, c, ())) c :=
-    fun z t c => attention_forward_apply_heads_mask mask schedule _ _ _ τ z t c
+    fun z t c => attention_forward_apply_heads mask schedule _ _ _ τ z t c
   have hS : ∀ t i, get2 s t i = get2 x t i + (Tensor.getScalar bo i +
       ∑ zc : Fin h × Fin e, o (zc.1, t, zc.2, ()) * get2 Wo i (finProdFinEquiv zc)) :=
     fun t i => (get2_add_forward x _ t i).trans (congrArg (get2 x t i + ·)

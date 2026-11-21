@@ -33,15 +33,17 @@ open VJPOp Vec
 -- message exactly as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: Gaussian lemmas and the local derivative proofs of the primitives. -/
+
 #doc (Manual) "Probability and Local Gradient Proofs" =>
 %%%
 tag := "probability-and-gradients"
 %%%
 
-Large-model proofs are rarely completed in one piece. A diffusion theorem needs a reusable statement
-about affine images of Gaussian noise. An autograd theorem needs the derivative of each primitive.
-A linear-layer proof needs to agree on whether weights are stored by input or output coordinate.
-TorchLean keeps these local facts small enough to use independently.
+Three local obligations recur in larger proofs. A diffusion argument needs an affine-image theorem
+for Gaussian noise. An autograd argument needs derivatives of its primitives. A linear-layer proof
+must fix whether weights are indexed by output or input coordinate. Proving these facts separately
+lets later model theorems reuse them without reopening their local calculations.
 
 Because the noise coefficients are arguments to the theorem, the Gaussian calculation can be reused
 across diffusion schedules. For backward rules, reuse depends on the points where we apply them:
@@ -66,10 +68,10 @@ the analytic derivative contract. Algebraic tape theorems first prove adjointnes
 JVP/VJP rules. In words, the identity specifies how a change in the input affects the
 cotangent-weighted output. For a scalar loss, $`m=1`, and choosing $`\delta=1` gives the gradient.
 
-Two consequences shape everything below. First, a backward rule can be *stated* without mentioning
+Two consequences matter. First, a backward rule can be *stated* without mentioning
 tapes, graphs, or memory: it's an identity between two vectors. Second, identifying that rule with
 the adjoint of an actual derivative requires differentiability. A chosen linear rule can have an
-adjoint at a kink even when it isn't a derivative there, so the analytic theorems below carry
+adjoint at a kink even when it isn't a derivative there, so the analytic theorems carry
 domain hypotheses for nonsmooth primitives. Baydin and coauthors {Informal.citep baydin2018}[]
 survey the wider automatic-differentiation context (including why reverse mode is the right choice
 when $`m\ll n`).
@@ -138,7 +140,8 @@ A pushforward describes a distribution by what happens to its samples: draw `z` 
 measure, then apply the displayed map. Formally, the probability assigned to an output event is the
 original measure of its preimage. So the first `map` changes the noise scale, and the second moves
 its center. `Measure E` in the return type is more general than a probability measure, and the
-mass-one theorem below supplies the normalization fact for this construction. Our definition also
+theorem `forwardNoising_univ` supplies the normalization fact for this construction. The definition
+also
 admits `b = 0` (the entire distribution is then concentrated at `a • x`). Gaussian closure here
 includes such degenerate distributions, so there's no nonzero-noise hypothesis to discharge.
 
@@ -296,8 +299,8 @@ mean remains `a • x` in either case.
 
 # Gaussian Noising Proofs
 
-Lean checks the following proofs as the page builds. Their section header carries the same instance
-list the library file uses:
+The next two proofs use the same instance list as the library theorem: first the kernel is shown to
+have total mass one, then its variance is specialized to a unit direction.
 
 ```lean
 -- Rewrite the kernel to its measure before applying the
@@ -370,15 +373,14 @@ pushforward along a continuous map is not known to be measurable. Deleting
 a finite orthonormal basis. These instances connect the topology, measurable structure, and
 Gaussian construction used by the theorem.
 
-This file does not sample noise, execute a diffusion network, or prove a reverse-time sampler.
-Those are different objects. It proves the measure-theoretic forward transition that such
-developments may cite.
+These results do not sample noise, execute a diffusion network, or prove a reverse-time sampler.
+They establish the measure-theoretic forward transition that such developments may cite.
 
 # Gaussian Noising In PyTorch
 
-The theorems above are exact statements about a measure. A sampling experiment gives a finite
-statistical check of the same formula. Take $`\bar\alpha_t=0.36` (so $`a=0.6` and $`b=0.8` in the
-real formula) and a clean state $`x_0=(1,-2,0.5)`:
+The mean and variance theorems are exact statements about a measure. A sampling experiment gives a
+finite statistical check of the same formula. Take $`\bar\alpha_t=0.36` (so $`a=0.6` and $`b=0.8`
+in the real formula) and a clean state $`x_0=(1,-2,0.5)`:
 
 ```
 # Compare sampled coordinate moments with the conditional
@@ -453,8 +455,8 @@ $$`\bar x=W^\top\bar y,\qquad
 \bar W=\bar y\,x^\top,\qquad
 \bar b=\bar y.`
 
-In {src "TorchLean/NN/Gradients/Linear.lean"}[`TorchLean.NN.Gradients.Linear`] we
-record these three equations using TorchLean tensors. Here's the weight rule:
+{src "TorchLean/NN/Gradients/Linear.lean"}[`TorchLean.NN.Gradients.Linear`] records these three
+equations using tensors. The weight rule is:
 
 ```lean (name := wRule)
 -- Weight cotangents have the same output-by-input
@@ -505,12 +507,12 @@ of its result, beside the weight gradient (there's no separate calculation to ru
 TorchLean's tensor types also prevent transposing the outer product accidentally:
 $`\delta\otimes x` has shape `[outDim, inDim]`, while $`x\otimes\delta` has shape
 `[inDim, outDim]`. For different input and output dimensions, the swapped outer product has the
-wrong type, but the square example below still needs a value-level check.
+wrong type, but the worked two-by-two example still needs a value-level check.
 
 # Linear-Layer Gradient Example
 
 Because the specs are polymorphic over any scalar type with the right algebra, the same definitions
-the theorems are about can be executed at `Float`. Take
+used in the theorems can be executed at `Float`. Take
 
 $$`W=\begin{pmatrix}1&2\\-1&3\end{pmatrix},
 \quad x=\begin{pmatrix}4\\5\end{pmatrix},
@@ -578,7 +580,7 @@ in these operations.
 
 # Linear-Layer Gradients In PyTorch
 
-Same numbers, same layout, PyTorch's own autograd doing the differentiation:
+The PyTorch comparison uses the same numbers and layout with its own autograd:
 
 ```
 # Backpropagate the same two-output cotangent through
@@ -611,9 +613,9 @@ theorem would need to relate their definitions across all inputs, including thei
 
 # Batched Linear-Layer Gradients
 
-Each rule above takes one vector. Real training passes a batch, and the interesting part is that
-the three gradients don't batch the same way: the input gradient gets one row per sample, while the
-weight and bias gradients *accumulate* across samples. `weightsDerivLeading` and
+Each unbatched rule takes one vector. Real training passes a batch, and the important distinction
+is that the three gradients don't batch the same way: the input gradient gets one row per sample,
+while the weight and bias gradients *accumulate* across samples. `weightsDerivLeading` and
 `biasDerivLeading` do this over any leading shape by flattening the leading axes: each entry
 is one sum from zero over the samples in row-major order, so an empty leading axis gives zero
 gradients. `inputDerivLeading` gives each sample its input gradient. `Op.linear` at a leading
@@ -678,7 +680,7 @@ inside the layer would divide twice. In the Python block we reset `W.grad` and `
 batched call, because those shared parameters were used in the preceding experiment (otherwise
 PyTorch's accumulation would mix the two demonstrations).
 
-These batched gradients have no correctness theorem. The unbatched identities above don't establish
+These batched gradients have no correctness theorem. The unbatched identities don't establish
 that their flattening, accumulation, and output layout implement the batched derivative. In
 TorchLean the proved batched path goes through the tape-node layer instead, where matmul and
 reduction nodes carry their own adjointness theorems and a batch is a shape, not a special case.
@@ -837,7 +839,7 @@ That convention is outside the derivative theorem:
 ```
 
 In the recorded PyTorch comparison, ReLU at a scalar tensor containing `0.0` has gradient `0.0`,
-and sigmoid at that input has gradient `0.25` (matching the two sigmoid values above). So the ReLU
+and sigmoid at that input has gradient `0.25` (matching the two values in `kinkRun`). So the ReLU
 subgradient convention agrees. At signed zero, though, the forward value has a separate behavior:
 
 ```lean (name := signedZero)
@@ -925,7 +927,7 @@ Composing the affine and activation derivatives gives a theorem about the full M
           δ.getScalarE
 ```
 
-Read the conclusion against the definition from the opening section. On the left is what the
+Read the conclusion against the definition in *Vector-Jacobian Products*. On the left is what the
 spec-level backward rule returns for a cotangent `δ`. On the right, `ContinuousLinearMap.adjoint`
 of `fderiv ℝ f x` is the adjoint of the Fréchet derivative of `f` at `x`, so the right-hand side is
 the true analytic vector-Jacobian product. The hypothesis is the lifted kink condition, stated at
@@ -961,9 +963,9 @@ a denoising objective, and an executable sampler.
 
 To extend these local results to the corresponding model and runtime proofs, we need:
 
-* the reverse-time transition and any statement about a denoising objective, which this file does
-  not touch
-* a correctness theorem for the batched gradients executed above
+* the reverse-time transition and any statement about a denoising objective, which is not covered
+  here
+* a correctness theorem for the batched gradients executed by `batchRun`
 * Fréchet-derivative statements for the tensor-typed linear map itself, as opposed to its
   vectorization through `getScalarE`
 * the runtime-layout lowering theorems that connect proved SSA graphs to the executable model

@@ -115,7 +115,7 @@ def normalize {α : Type} [Storage α] [Context α]
             Ops.apply (.mean [⟨axis, Shape.AxisInBounds.proof⟩] false) (squares, ()))
       let regularizer ← Ops.apply .div
           ((← Ops.apply .div (epsilon, scale, ())), scale, ())
-      let denominator ← Ops.apply (.sqrt .clampNegative)
+      let denominator ← Ops.apply (.sqrt .raw)
           ((← Ops.apply .add (meanSquare, regularizer, ())), ())
       let denominator ← Ops.apply
           (.broadcast (shapeAfterSumKeepDim_canBroadcastTo s axis).dims

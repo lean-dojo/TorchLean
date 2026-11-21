@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import TorchLean.NN.FDeriv.PullbackTensor
+public import TorchLean.NN.Tactic.OpDeriv
 public import TorchLean.Tensor.Op.Table.Linear
 public import TorchLean.Tensor.Op.Cert
 
@@ -212,10 +212,7 @@ theorem rfft_backward_eq_adjoint {s : Shape} (dim : Fin s.rank) (n : Nat) (hn : 
       (((Op.rfft dim n hn).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, ())).1 =
         (fderiv ℝ (fun x' =>
           (((Op.rfft dim n hn).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x).adjoint δ := by
-  simp only [Op.rule?_rfft, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · rfl
+  op_deriv
 
 /-- The forward of `Op.irfft` is differentiable at every input, and its backward is the adjoint of
 its derivative. -/
@@ -228,10 +225,7 @@ theorem irfft_backward_eq_adjoint {s : Shape} (dim : Fin s.rank) (n : Nat) (hn :
       (((Op.irfft dim n hn).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, ())).1 =
         (fderiv ℝ (fun x' =>
           (((Op.irfft dim n hn).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x).adjoint δ := by
-  simp only [Op.rule?_irfft, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · rfl
+  op_deriv
 
 end Op
 

@@ -103,10 +103,12 @@ Use:
 For an upstream model-output gradient:
 
 ```lean
--- Inside a `do` block, with an output-shaped tensor `seed`:
-let (gradient, inputGradient) ← autograd.model.vjp model state input seed
-IO.println s!"state gradient = {reprStr gradient}"
-IO.println s!"input gradient = {reprStr inputGradient}"
+-- `seed` has the model's output shape.
+def pullBack {σ τ : Shape} (model : nn.Sequential σ τ) (state : autograd.model.State model Float)
+    (input : Tensor Float σ) (seed : Tensor Float τ) : IO Unit := do
+  let (gradient, inputGradient) ← autograd.model.vjp model state input seed
+  IO.println s!"state gradient = {reprStr gradient}"
+  IO.println s!"input gradient = {reprStr inputGradient}"
 ```
 
 Plain `Tensor` values have no mutable gradient field. Session inputs default to no gradient, and

@@ -54,7 +54,7 @@ theorem decodeGraph_check (G : IR.Graph) (P : IR.Payload (ExecFloat.Binary 8 23)
   next hc => exact hc
 
 /-- A constant the decoder reads is the real evaluator's constant at its node. -/
-private theorem exactPayload_const' {P : IR.Payload (ExecFloat.Binary 8 23)} {id : Nat}
+private theorem exactPayload_const_of_decode {P : IR.Payload (ExecFloat.Binary 8 23)} {id : Nat}
     {s : Shape} {q : Tensor ℚ s} (h : constTensor? P id s = some q) :
     (exactPayload P).const? id = some ⟨.value s, realTensor q⟩ := by
   unfold constTensor? at h
@@ -95,6 +95,7 @@ private theorem decodeTail_run (P : IR.Payload (ExecFloat.Binary 8 23)) {n : Nat
   have hprev : ∀ (more : Array (List (Op.Value ℝ))),
       (⟨program.length - 1, 0⟩ : IR.Ref).read (values ++ more) =
         .ok ⟨.value [m], program.eval x⟩ := fun more => IR.Ref.read_append hlast more
+  -- The decoder reads a ReLU node, or a weight, bias and linear node, then the rest.
   match rest, hdecode with
   | [], hdecode =>
       cases Option.some.inj hdecode
@@ -105,6 +106,7 @@ private theorem decodeTail_run (P : IR.Payload (ExecFloat.Binary 8 23)) {n : Nat
       next hvalid =>
         obtain ⟨ho, hr⟩ := hvalid
         subst ho hr
+        -- The ReLU node reads the last value and pushes the next one.
         let value : Op.Value ℝ := ⟨.value [m], (Program.relu program).eval x⟩
         have hstep : (IR.Node.op ⟨_, _, Op.relu (s := [m])⟩
             #[⟨program.length - 1, 0⟩]).eval (exactPayload P) inputs values values.size =
@@ -135,8 +137,10 @@ private theorem decodeTail_run (P : IR.Payload (ExecFloat.Binary 8 23)) {n : Nat
             let vb : Op.Value ℝ := ⟨.value [k], realTensor b⟩
             let value : Op.Value ℝ :=
               ⟨.value [k], (Program.linear program ⟨w, b⟩).eval x⟩
-            have hw' := exactPayload_const' hw
-            have hb' := exactPayload_const' hb
+            -- The two constant nodes load the weight and the bias, and the linear node reads
+            -- them with the last value.
+            have hw' := exactPayload_const_of_decode hw
+            have hb' := exactPayload_const_of_decode hb
             have h1 : (IR.Node.const (.value [k, m])).eval (exactPayload P) inputs values
                 values.size = .ok [vw] := eval_const (by rw [hsize]; exact hw')
             have h2 : (IR.Node.const (.value [k])).eval (exactPayload P) inputs
@@ -182,6 +186,7 @@ private theorem decodeTail_run (P : IR.Payload (ExecFloat.Binary 8 23)) {n : Nat
           next => contradiction
         next => contradiction
       next => contradiction
+  -- Every other node sequence is rejected by the decoder.
   | .input _ _ :: _, hdecode => simp [decodeTail] at hdecode
   | .const _ :: [], hdecode => simp [decodeTail] at hdecode
   | .const _ :: .input _ _ :: _, hdecode => simp [decodeTail] at hdecode

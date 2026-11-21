@@ -1,0 +1,2 @@
+# Unified diffs use a space to mark empty context lines.
+home_page/blueprint/*.patch -whitespace

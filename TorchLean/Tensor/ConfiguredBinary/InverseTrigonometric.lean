@@ -53,7 +53,8 @@ def levels : Nat := 16
 /-- The arctangent rounded once to nearest even, with `atan (±∞)` equal to `±π/2` rounded. -/
 def atan (x : Model fmt) : Model fmt :=
   if isNaN x then quietNaN x
-  else if isInf x then AlgebraicRounding.round fmt (signBit x) (prepareAtan2 0 1 levels).compare
+  else if isInfinite x then
+    AlgebraicRounding.round fmt (signBit x) (prepareAtan2 0 1 levels).compare
   else match toRat? x with
     | some a => AlgebraicRounding.round fmt (signBit x) (prepareArctan |a| levels).compare
     | none => invalidResult fmt
@@ -81,8 +82,8 @@ def acos (x : Model fmt) : Model fmt :=
 otherwise. -/
 def atan2Point (y x : Model fmt) : Option (Rat × Rat) :=
   let direction (v : Model fmt) : Rat := if signBit v then -1 else 1
-  if isInf y then some (if isInf x then direction x else 0, 1)
-  else if isInf x then some (direction x, 0)
+  if isInfinite y then some (if isInfinite x then direction x else 0, 1)
+  else if isInfinite x then some (direction x, 0)
   else (toRat? x).bind fun a => (toRat? y).map fun b => (a, |b|)
 
 /-- `atan2 y x`, the polar angle of `(x, y)` rounded once to nearest even, with the sign of `y`.

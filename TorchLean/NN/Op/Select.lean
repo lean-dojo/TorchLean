@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import TorchLean.NN.FDeriv.PullbackTensor
+public import TorchLean.NN.Tactic.OpDeriv
 public import TorchLean.Tensor.Op.Table.Elementwise
 public import TorchLean.Tensor.Op.Table.Movement
 public import TorchLean.Tensor.Op.Table.Random
@@ -412,9 +412,9 @@ private theorem gatherSources_apply_eq_source (h : Shape.GatherValid s t dims ba
 /-- The coordinate that `gather` reads at the index coordinate `u` and the remaining part `r` is
 `c` exactly when `Op.gatherSources` stores the indices of `c` at `u` and `r` holds the other
 indices of `c`. -/
-private theorem source_eq_iff (h : Shape.GatherValid s t dims batchDims)
-    (tuples : Tensor (Einops.AxisTuple s.extent dims) t) (u : t.Coord)
-    (r : (s.eraseAxes (dims ++ batchDims.map Prod.fst)).Coord) (c : s.Coord) :
+private theorem source_eq_iff {h : Shape.GatherValid s t dims batchDims}
+    {tuples : Tensor (Einops.AxisTuple s.extent dims) t} {u : t.Coord}
+    {r : (s.eraseAxes (dims ++ batchDims.map Prod.fst)).Coord} {c : s.Coord} :
     h.source (tuples u) u r = c ↔
       Op.gatherSources h tuples u =
           some (fun k => Shape.Coord.get c ((dims ++ batchDims.map Prod.fst).get k)) ∧
@@ -478,11 +478,11 @@ theorem scatter_gatherSources_eq_sumFibers (h : Shape.GatherValid s t dims batch
     · by_cases hu : Op.gatherSources h tuples u =
           some (fun k => Shape.Coord.get c ((dims ++ batchDims.map Prod.fst).get k))
       · rw [ite_eq_left hu, ite_eq_left]
-        exact (source_eq_iff h tuples u _ c).mpr ⟨hu, rfl⟩
+        exact source_eq_iff.mpr ⟨hu, rfl⟩
       · rw [ite_eq_right hu, ite_eq_right]
-        exact fun hc => hu ((source_eq_iff h tuples u _ c).mp hc).1
+        exact fun hc => hu (source_eq_iff.mp hc).1
     · intro r hr
-      exact ite_eq_right fun hc => hr ((source_eq_iff h tuples u r c).mp hc).2
+      exact ite_eq_right fun hc => hr (source_eq_iff.mp hc).2
 
 /-- The real gather at fixed index tuples, as a continuous linear map of its input. -/
 noncomputable def gatherCLM (h : Shape.GatherValid s t dims batchDims)
@@ -606,10 +606,7 @@ theorem indexAt_backward_eq_adjoint {s : Shape} (dim : Fin s.rank) (index : Fin 
     (((Op.indexAt dim index).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, ())).1 =
       (fderiv ℝ (fun x' =>
         (((Op.indexAt dim index).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x).adjoint δ := by
-  simp only [Op.rule?_indexAt, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · rfl
+  op_deriv
 
 /-- The forward of `Op.fullLike` is constant in its value input, so its derivative there is zero,
 and its backward, zero, is the adjoint of that derivative. -/
@@ -622,11 +619,7 @@ theorem fullLike_backward_eq_adjoint {s : Shape} (x : Tensor ℝ s) (value : Ten
       (fderiv ℝ (fun x' =>
         (((Op.fullLike (s := s)).rule? (α := ℝ) |>.get rfl).forward (x', value, ())).1)
         x).adjoint δ := by
-  simp only [Op.rule?_fullLike, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · exact Tensor.Rep.ext fun c => by
-      simp only [Tensor.map_apply, Tensor.Rep.zero_apply]
+  op_deriv
 
 /-- With a fixed sample and probability, the forward of `Op.dropout` is differentiable in its
 value input, and its backward is the adjoint of that derivative. -/
@@ -639,10 +632,7 @@ theorem dropout_backward_eq_adjoint {s : Shape} (x sample : Tensor ℝ s) (p : T
       (fderiv ℝ (fun x' =>
         (((Op.dropout (s := s)).rule? (α := ℝ) |>.get rfl).forward (x', sample, p, ())).1)
         x).adjoint δ := by
-  simp only [Op.rule?_dropout, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · rfl
+  op_deriv
 
 /-- The forward of `Op.embedding` is differentiable in its table at every index tensor, and its
 backward in the table is the adjoint of that derivative. -/
@@ -657,10 +647,7 @@ theorem embedding_backward_eq_adjoint {num dim : Nat} {t : Shape} (w : Tensor �
       (fderiv ℝ (fun w' =>
         (((Op.embedding (num := num) (dim := dim) (t := t)).rule? (α := ℝ) |>.get rfl).forward
           (w', indices, ())).1) w).adjoint δ := by
-  simp only [Op.rule?_embedding, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · rfl
+  op_deriv
 
 /-- The forward of `Op.slice` is differentiable in its input, and its backward, the upstream
 gradient written back where the slice read it, is the adjoint of that derivative. -/
@@ -676,10 +663,7 @@ theorem slice_backward_eq_adjoint {s : Shape} (dims : List (Fin s.rank))
       (fderiv ℝ (fun x' =>
         (((Op.slice dims starts stops steps h).rule? (α := ℝ) |>.get rfl).forward
           (x', ())).1) x).adjoint δ := by
-  simp only [Op.rule?_slice, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · rfl
+  op_deriv
 
 /-- The forward of `Op.gather` is differentiable in its input at every index tensor, and its
 backward in the input, the sum-scatter of the upstream gradient at the gathered coordinates, is
@@ -697,10 +681,7 @@ theorem gather_backward_eq_adjoint {s t : Shape} (dims : List (Fin s.rank))
       (fderiv ℝ (fun x' =>
         (((Op.gather dims batchDims h).rule? (α := ℝ) |>.get rfl).forward
           (x', index, ())).1) x).adjoint δ := by
-  simp only [Op.rule?_gather, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · rfl
+  op_deriv
 
 /-- At a fixed condition, the forward of `Op.select` is differentiable in its two value inputs
 together, on their L2 product, and its pair of pullbacks is the adjoint of that derivative. -/
@@ -719,11 +700,6 @@ theorem select_prod_backward_eq_adjoint {s : Shape} (cond : Tensor Bool s) (x y 
         (((Op.select (s := s)).rule? (α := ℝ) |>.get rfl).forward
           (cond, p.fst, p.snd, ())).1)
         (WithLp.toLp 2 (x, y))).adjoint δ := by
-  simp only [Op.rule?_select, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · refine withLp_prod_ext ?_ ?_ <;>
-      simp only [WithLp.add_fst, WithLp.add_snd, WithLp.toLp_fst, WithLp.toLp_snd, add_zero,
-        zero_add]
+  op_deriv
 
 end TorchLean

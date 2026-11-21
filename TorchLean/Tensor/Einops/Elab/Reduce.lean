@@ -188,11 +188,14 @@ def compileNativeReduceFold?
   let sourceShape := sourceTensorType.getAppArgs[1]!
   let sourceSize ← mkAppM ``Shape.size #[sourceShape]
   let sourceDimensions? ← staticListElements? sourceShape
+  -- Read the source at a `USize` index when its static shape allows it.
   let useNativeSourceIndex ←
     match sourceDimensions? with
     | some sourceDimensions =>
         supportsNativeInputIndex sourceDimensions
     | none => pure false
+  -- The read at output index `o` and fiber index `f`, with its proof that it is
+  -- `read` at the logical input index of `(o, f)`.
   let nativeReadData ←
     withLocalDeclD `outputIndex (mkConst ``USize) fun outputIndex => do
       let outputIndexNat ← mkAppM ``USize.toNat #[outputIndex]
@@ -228,6 +231,7 @@ def compileNativeReduceFold?
             let hCompiledLogicalIndex ←
               finIndexEquality logicalInputSize compiledLogicalIndex
                 logicalIndex hCompiledLogicalValue
+            -- The source map sends the logical index to the source tensor's flat index.
             let sourceIndex := mkApp inputFlatMap compiledLogicalIndex
             let semanticSourceIndex := mkApp inputFlatMap logicalIndex
             let sourceIndexValueFunction ←
@@ -240,6 +244,7 @@ def compileNativeReduceFold?
               mkAppM ``congrArg #[
                 sourceIndexValueFunction, hCompiledLogicalIndex]
             let sourceIndexValue ← mkAppM ``Fin.val #[sourceIndex]
+            -- Simplify the source index as an affine expression of the loop indices.
             let normalizedSourceIndexValue ← zetaReduce sourceIndexValue
             let (optimizedSourceIndexValue, hSourceIndexOptimized) ←
               simplifyAffineIndex normalizedSourceIndexValue
@@ -279,6 +284,7 @@ def compileNativeReduceFold?
   let nativeRead ← sealAuxDefinition `_einops_native_reduce_callback nativeRead
   let hNativeReadType ← inferType hNativeRead
   let hNativeRead ← sealCertificate hNativeReadType hNativeRead
+  -- The native loops, the flat-reader fold and the reference fold, proved equal in turn.
   let implementation ←
     mkAppM ``Native.reduceFoldView #[
       step, initial, finish, checked, hKind, inputTensor, read, hRead,
@@ -302,6 +308,7 @@ def compileNativeReduceFold?
     reference, compiled, implementation, hCompiled, hImplementation]
   if inputTensor == semanticInputTensor then
     return some nativeKernel
+  -- Carry the result from the compiled input back to the semantic input.
   let inputTensorType ← inferType inputTensor
   let reduceInput ←
     withLocalDeclD `logicalInput inputTensorType fun logicalInput => do

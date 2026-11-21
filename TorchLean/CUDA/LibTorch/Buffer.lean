@@ -326,6 +326,11 @@ native allocation, so the release invalidates every alias, and no alias may be u
 @[never_extract, extern "torchlean_cuda_buffer_release_io"]
 opaque releaseIO (b : @& Buffer) : IO UInt32
 
+/-- Release `b` at this point of the `IO` sequence, ignoring `releaseIO`'s count. Releasing it
+again, or finalizing it later, is safe. -/
+def release (b : Buffer) : IO Unit :=
+  discard <| releaseIO b
+
 /--
 Release `workspace` and return `keep`, such as a buffer computed from the workspace or the gradient
 array the autograd tape continues with after retiring a contribution no node keeps. As with

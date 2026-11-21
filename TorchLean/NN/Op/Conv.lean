@@ -277,10 +277,10 @@ theorem convBackwardWeight_eq_sum (x : Tensor ℝ s) (dims : Shape.ConvDims s t 
     omega
 
 /-- The relations of `conv` and of its weight gradient agree. -/
-theorem convRel_iff_convBackwardWeightRel (dims : Shape.ConvDims s t r)
-    (stride padLow padHigh dilation : Fin r → Nat) (groups : Nat)
-    (o : (s.conv t dims stride padLow padHigh (fun _ => 1) dilation 1).Coord) (c : s.Coord)
-    (w : t.Coord) :
+theorem convRel_iff_convBackwardWeightRel {dims : Shape.ConvDims s t r}
+    {stride padLow padHigh dilation : Fin r → Nat} {groups : Nat}
+    {o : (s.conv t dims stride padLow padHigh (fun _ => 1) dilation 1).Coord} {c : s.Coord}
+    {w : t.Coord} :
     convRel dims stride padLow padHigh dilation groups o c w ↔
       convBackwardWeightRel dims stride padLow padHigh dilation groups w c o := by
   have ho := fun p => Shape.index_conv_lt dims o p
@@ -288,6 +288,7 @@ theorem convRel_iff_convBackwardWeightRel (dims : Shape.ConvDims s t r)
       t.extent (dims.kernel ⟨0, by omega⟩) := ho ⟨1, by omega⟩
   constructor
   · rintro ⟨k, ⟨hal, hc⟩, hw⟩
+    -- The backward window `q` is the batch index and the spatial coordinates of `o`.
     obtain ⟨q', hq'⟩ := Shape.Coord.exists_ofFn
       (fun i : Fin r => Shape.convExtent s t dims stride padLow padHigh (fun _ => 1) dilation 1
         i.succ.succ) (fun j => Shape.Coord.index o (dims.input j.succ.succ).val)
@@ -303,6 +304,8 @@ theorem convRel_iff_convBackwardWeightRel (dims : Shape.ConvDims s t r)
       simpa only [Shape.ConvDims.kernelCoord, Shape.Coord.index_ofPositions] using this
     simp only [Shape.ConvDims.kernelCoord, Shape.Coord.index_ofPositions,
       Shape.ConvDims.outFeature] at hw0 hw1
+    -- `q` is above the low padding, as `k` is aligned, and the backward relation reads `c` and
+    -- `o` back from it.
     refine ⟨q, ⟨?_, ?_⟩, ?_⟩
     · simp only [Shape.ConvDims.backwardWeightAbovePadLow, decide_eq_true_eq, fin_succ_succ]
       intro j
@@ -324,6 +327,7 @@ theorem convRel_iff_convBackwardWeightRel (dims : Shape.ConvDims s t r)
       · simp only [Shape.ConvDims.backwardWeightOutputIndex, val_output, hw0]
       · simp only [Shape.ConvDims.backwardWeightOutputIndex, val_output, hq j]
   · rintro ⟨q, ⟨hapl, hc⟩, ho'⟩
+    -- The forward window `k` is the coordinates of `w` after its output channel.
     obtain ⟨k, hk⟩ : ∃ k : (t.convWindow dims).Coord, ∀ p : Fin (r + 1),
         Shape.Coord.index k p.val = Shape.Coord.index w (dims.kernel p.succ).val :=
       Shape.Coord.exists_ofFn _ _ fun p => Shape.Coord.index_lt w (dims.kernel p.succ).isLt
@@ -339,6 +343,8 @@ theorem convRel_iff_convBackwardWeightRel (dims : Shape.ConvDims s t r)
       simpa only [Shape.ConvDims.backwardWeightOutputIndex, val_output] using this
     simp only [Shape.ConvDims.backwardWeightOutputIndex, val_output] at ho0 ho1'
     simp only [Shape.ConvDims.backwardWeightAbovePadLow, decide_eq_true_eq, fin_succ_succ] at hapl
+    -- `k` is aligned, as `q` is above the low padding, reads the input at `c`, and its kernel
+    -- coordinate is `w`.
     refine ⟨k, ⟨?_, ?_⟩, ?_⟩
     · refine forall_fin_add_two.mpr ⟨rfl, rfl, fun j => ?_⟩
       simp only [Shape.ConvDims.inputAligned, Bool.and_eq_true, decide_eq_true_eq, Fin.eta,
@@ -430,12 +436,12 @@ theorem convBackwardInput_eq_sum (w : Tensor ℝ t) (dims : Shape.ConvDims s t r
 
 /-- Where `groups` is positive and at most the kernel's output features, or the kernel has no
 output features, the relations of `conv` and of its input gradient agree. -/
-theorem convRel_iff_convBackwardInputRel (dims : Shape.ConvDims s t r)
-    (stride padLow padHigh dilation : Fin r → Nat) (groups : Nat)
+theorem convRel_iff_convBackwardInputRel {dims : Shape.ConvDims s t r}
+    {stride padLow padHigh dilation : Fin r → Nat} {groups : Nat}
     (hO : 0 < t.extent (dims.kernel ⟨0, by omega⟩) / groups ∨
       t.extent (dims.kernel ⟨0, by omega⟩) = 0)
-    (o : (s.conv t dims stride padLow padHigh (fun _ => 1) dilation 1).Coord) (c : s.Coord)
-    (w : t.Coord) :
+    {o : (s.conv t dims stride padLow padHigh (fun _ => 1) dilation 1).Coord} {c : s.Coord}
+    {w : t.Coord} :
     convRel dims stride padLow padHigh dilation groups o c w ↔
       convBackwardInputRel dims stride padLow padHigh dilation groups c o w := by
   have ho := fun p => Shape.index_conv_lt dims o p
@@ -445,6 +451,8 @@ theorem convRel_iff_convBackwardInputRel (dims : Shape.ConvDims s t r)
   constructor
   · rintro ⟨k, ⟨hal, hc⟩, hw⟩
     have hO : 0 < t.extent (dims.kernel ⟨0, by omega⟩) / groups := hO.resolve_right (by omega)
+    -- The backward window `m` is the output channel within its group and the spatial
+    -- kernel offset of `w`.
     obtain ⟨m', hm'⟩ := Shape.Coord.exists_spatial dims.kernel w
     let m : (t.convBackwardInputWindow dims groups).Coord :=
       (⟨Shape.Coord.index o (dims.input ⟨1, by omega⟩).val %
@@ -461,6 +469,8 @@ theorem convRel_iff_convBackwardInputRel (dims : Shape.ConvDims s t r)
     have hk0 : Shape.Coord.index k 0 < t.extent (dims.kernel ⟨1, by omega⟩) :=
       hw1 ▸ Shape.Coord.index_lt w (dims.kernel ⟨1, by omega⟩).isLt
     obtain ⟨hc0, hc1⟩ := And.intro (hc ⟨0, by omega⟩) (hc ⟨1, by omega⟩)
+    -- Along each spatial axis `c = o * stride + k * dilation - padLow`, and by `halj` the
+    -- subtraction does not truncate.
     have hcj : ∀ j : Fin r, Shape.Coord.index c (dims.input ⟨j.val + 2, by omega⟩).val =
         Shape.Coord.index o (dims.input ⟨j.val + 2, by omega⟩).val * stride j +
           Shape.Coord.index k (j.val + 1) * dilation j - padLow j := fun j => by
@@ -477,12 +487,15 @@ theorem convRel_iff_convBackwardInputRel (dims : Shape.ConvDims s t r)
     simp only [Shape.ConvDims.inputIndex, Shape.ConvDims.inputOffset] at hc1
     have hdiv := div_eq_of_eq_mul_add hc1 hk0
     have hmod := mod_eq_of_eq_mul_add hc1 hk0
+    -- So `c + padLow - w * dilation = o * stride`, which the backward relation divides by the
+    -- stride.
     have hsp : ∀ j : Fin r, Shape.Coord.index c (dims.input ⟨j.val + 2, by omega⟩).val + padLow j -
           Shape.Coord.index w (dims.kernel ⟨j.val + 2, by omega⟩).val * dilation j =
             Shape.Coord.index o (dims.input ⟨j.val + 2, by omega⟩).val * stride j := fun j => by
       rw [hcj j, hwj j]
       have := halj j
       omega
+    -- `m` is aligned, and the backward relation reads `o` and `w` back from it.
     refine ⟨m, ⟨?_, ?_⟩, ?_⟩
     · simp only [Shape.ConvDims.backwardInputAligned, decide_eq_true_eq, fin_succ_succ]
       intro j
@@ -502,6 +515,7 @@ theorem convRel_iff_convBackwardInputRel (dims : Shape.ConvDims s t r)
         exact (Nat.div_add_mod' _ _).symm
       · simp only [Shape.ConvDims.backwardInputKernelIndex, hmod, hw1]
       · simp only [Shape.ConvDims.backwardInputKernelIndex, hm j]
+  -- The forward window `k` is the input channel and the spatial kernel offset of `w`.
   · rintro ⟨m, ⟨hal, ho'⟩, hw⟩
     obtain ⟨k, hk⟩ : ∃ k : (t.convWindow dims).Coord, ∀ p : Fin (r + 1),
         Shape.Coord.index k p.val = Shape.Coord.index w (dims.kernel p.succ).val :=
@@ -523,12 +537,14 @@ theorem convRel_iff_convBackwardInputRel (dims : Shape.ConvDims s t r)
       have := ho' ⟨j.val + 2, by omega⟩
       simpa only [Shape.ConvDims.backwardInputOutputIndex, val_output, Fin.eta] using this
     simp only [Shape.ConvDims.backwardInputAligned, decide_eq_true_eq, fin_succ_succ] at hal
+    -- Alignment makes the stride divide `c + padLow - m * dilation`, so `o * stride` is it.
     have hmul : ∀ j : Fin r, Shape.Coord.index o (dims.input ⟨j.val + 2, by omega⟩).val * stride j =
           Shape.Coord.index c (dims.input ⟨j.val + 2, by omega⟩).val + padLow j -
             Shape.Coord.index m (j.val + 1) * dilation j := fun j => by
       rw [hoj j]
       exact Nat.div_mul_cancel (Nat.dvd_of_mod_eq_zero (hal j).2.2)
     have hdiv := div_eq_of_eq_mul_add ho1' m.1.isLt
+    -- `k` is aligned, reads the input at `c`, and its kernel coordinate is `w`.
     refine ⟨k, ⟨?_, ?_⟩, ?_⟩
     · refine forall_fin_add_two.mpr ⟨rfl, rfl, fun j => ?_⟩
       simp only [Shape.ConvDims.inputAligned, Bool.and_eq_true, decide_eq_true_eq, Fin.eta,
@@ -564,7 +580,7 @@ theorem inner_conv_eq_inner_convBackwardInput (x : Tensor ℝ s) (w : Tensor ℝ
   refine Eq.trans Finset.sum_comm ?_
   refine Finset.sum_congr rfl fun c _ => Finset.sum_congr rfl fun o _ =>
     Finset.sum_congr rfl fun w' _ => ?_
-  rw [convRel_iff_convBackwardInputRel dims stride padLow padHigh dilation groups hO]
+  rw [convRel_iff_convBackwardInputRel hO]
   split_ifs <;> ring
 
 /-- The axes of the output of `convTranspose` have the numbers of the input's. -/
@@ -759,14 +775,14 @@ theorem convTransposeBackwardWeight_eq_sum (x : Tensor ℝ s) (dims : Shape.Conv
 /-- Where `groups` is at most one, or the input and the kernel have the same positive number of
 input features per group, or the input has no features, the relations of `convTranspose` and of
 its input gradient agree. -/
-theorem convTransposeRel_iff_convTransposeBackwardInputRel (dims : Shape.ConvDims s t r)
-    (stride padLow padHigh outputPadding dilation : Fin r → Nat) (groups : Nat)
+theorem convTransposeRel_iff_convTransposeBackwardInputRel {dims : Shape.ConvDims s t r}
+    {stride padLow padHigh outputPadding dilation : Fin r → Nat} {groups : Nat}
     (hC : groups ≤ 1 ∨ (0 < s.extent (dims.input ⟨1, by omega⟩) / groups ∧
         s.extent (dims.input ⟨1, by omega⟩) / groups =
           t.extent (dims.kernel ⟨1, by omega⟩) / groups) ∨
       s.extent (dims.input ⟨1, by omega⟩) = 0)
-    (o : (s.convTranspose t dims stride padLow padHigh outputPadding dilation groups).Coord)
-    (c : s.Coord) (w : t.Coord) :
+    {o : (s.convTranspose t dims stride padLow padHigh outputPadding dilation groups).Coord}
+    {c : s.Coord} {w : t.Coord} :
     convTransposeRel dims stride padLow padHigh outputPadding dilation groups o c w ↔
       convTransposeBackwardInputRel dims stride padLow padHigh outputPadding dilation groups c w
         o := by
@@ -777,6 +793,8 @@ theorem convTransposeRel_iff_convTransposeBackwardInputRel (dims : Shape.ConvDim
     stride_ne_zero_of_lt_convTransposeOutDim (ho ⟨j.val + 2, by omega⟩)
   have hcl : Shape.Coord.index c (dims.input ⟨1, by omega⟩).val <
       s.extent (dims.input ⟨1, by omega⟩) := Shape.Coord.index_lt c _
+  -- `hC` without its empty cases: with `groups = 0` there is no output channel, and with no
+  -- input features there is no `c`.
   have hg : groups = 1 ∨ (0 < s.extent (dims.input ⟨1, by omega⟩) / groups ∧
       s.extent (dims.input ⟨1, by omega⟩) / groups =
         t.extent (dims.kernel ⟨1, by omega⟩) / groups) := by
@@ -788,6 +806,8 @@ theorem convTransposeRel_iff_convTransposeBackwardInputRel (dims : Shape.ConvDim
   constructor
   · rintro ⟨k, ⟨hal, hc⟩, hw⟩
     have hO : 0 < t.extent (dims.kernel ⟨0, by omega⟩) := Nat.pos_of_lt_mul_left ho1
+    -- The backward window `m` is the output channel within its group and the spatial kernel
+    -- offset of `w`.
     obtain ⟨m', hm'⟩ := Shape.Coord.exists_spatial dims.kernel w
     let m : (t.convTransposeBackwardInputWindow dims).Coord :=
       (⟨Shape.Coord.index o (dims.input ⟨1, by omega⟩).val %
@@ -815,6 +835,8 @@ theorem convTransposeRel_iff_convTransposeBackwardInputRel (dims : Shape.ConvDim
       have := hal ⟨j.val + 2, by omega⟩
       simp only [convTransposeAligned, Bool.and_eq_true, decide_eq_true_eq] at this
       simpa only [convTransposeOffset, Fin.eta] using this
+    -- Along each spatial axis `c * stride = o + padLow - k * dilation`, as alignment makes the
+    -- stride divide the right side.
     have hmul : ∀ j : Fin r, Shape.Coord.index c (dims.input ⟨j.val + 2, by omega⟩).val * stride j =
           Shape.Coord.index o (dims.input ⟨j.val + 2, by omega⟩).val + padLow j -
             Shape.Coord.index k (j.val + 1) * dilation j := fun j => by
@@ -824,6 +846,7 @@ theorem convTransposeRel_iff_convTransposeBackwardInputRel (dims : Shape.ConvDim
       exact Nat.div_mul_cancel (Nat.dvd_of_mod_eq_zero (halj j).2)
     have hdiv := div_eq_of_eq_mul_add hc1 hk0
     have hmod := mod_eq_of_eq_mul_add hc1 hk0
+    -- `m` is above the low padding, and the backward relation reads `w` and `o` back from it.
     refine ⟨m, ⟨?_, ?_⟩, ?_⟩
     · simp only [Shape.ConvDims.transposeBackwardInputAbovePadLow, decide_eq_true_eq, fin_succ_succ]
       intro j
@@ -858,6 +881,8 @@ theorem convTransposeRel_iff_convTransposeBackwardInputRel (dims : Shape.ConvDim
         omega
       · rw [← h]
         exact Nat.mod_lt _ h0
+    -- The forward window `k` is the input channel within its group and the spatial kernel
+    -- offset of `w`.
     let k : (s.convTransposeWindow t dims groups).Coord :=
       (⟨Shape.Coord.index c (dims.input ⟨1, by omega⟩).val %
         (s.extent (dims.input ⟨1, by omega⟩) / groups), hk0⟩, k')
@@ -874,6 +899,7 @@ theorem convTransposeRel_iff_convTransposeBackwardInputRel (dims : Shape.ConvDim
         Fin.eta] using ho' ⟨j.val + 2, by omega⟩
     simp only [Shape.ConvDims.transposeBackwardInputAbovePadLow, decide_eq_true_eq,
       fin_succ_succ] at hab
+    -- Above the low padding the subtraction does not truncate, so this is `c * stride`.
     have hsp : ∀ j : Fin r, Shape.Coord.index o (dims.input ⟨j.val + 2, by omega⟩).val + padLow j -
           Shape.Coord.index m (j.val + 1) * dilation j =
             Shape.Coord.index c (dims.input ⟨j.val + 2, by omega⟩).val * stride j := fun j => by
@@ -882,6 +908,7 @@ theorem convTransposeRel_iff_convTransposeBackwardInputRel (dims : Shape.ConvDim
       omega
     have hdiv := div_eq_of_eq_mul_add ho1' m.1.isLt
     have hmod := mod_eq_of_eq_mul_add ho1' m.1.isLt
+    -- `k` is aligned, and the forward relation reads `c` and `w` back from it.
     refine ⟨k, ⟨?_, ?_⟩, ?_⟩
     · refine forall_fin_add_two.mpr ⟨rfl, rfl, fun j => ?_⟩
       simp only [convTransposeAligned, convTransposeOffset, Bool.and_eq_true, decide_eq_true_eq,
@@ -902,18 +929,19 @@ theorem convTransposeRel_iff_convTransposeBackwardInputRel (dims : Shape.ConvDim
 /-- Where `groups` is at most one or at most the kernel's input features, or the kernel has no
 input features, or the input has no features, the relations of `convTranspose` and of its weight
 gradient agree. -/
-theorem convTransposeRel_iff_convTransposeBackwardWeightRel (dims : Shape.ConvDims s t r)
-    (stride padLow padHigh outputPadding dilation : Fin r → Nat) (groups : Nat)
+theorem convTransposeRel_iff_convTransposeBackwardWeightRel {dims : Shape.ConvDims s t r}
+    {stride padLow padHigh outputPadding dilation : Fin r → Nat} {groups : Nat}
     (hI : groups ≤ 1 ∨ 0 < t.extent (dims.kernel ⟨1, by omega⟩) / groups ∨
       t.extent (dims.kernel ⟨1, by omega⟩) = 0 ∨ s.extent (dims.input ⟨1, by omega⟩) = 0)
-    (o : (s.convTranspose t dims stride padLow padHigh outputPadding dilation groups).Coord)
-    (c : s.Coord) (w : t.Coord) :
+    {o : (s.convTranspose t dims stride padLow padHigh outputPadding dilation groups).Coord}
+    {c : s.Coord} {w : t.Coord} :
     convTransposeRel dims stride padLow padHigh outputPadding dilation groups o c w ↔
       convTransposeBackwardWeightRel dims stride padLow padHigh outputPadding dilation groups w c
         o := by
   have ho := fun p => Shape.index_convTranspose_lt dims o p
   have hst : ∀ j : Fin r, stride j ≠ 0 := fun j =>
     stride_ne_zero_of_lt_convTransposeOutDim (ho ⟨j.val + 2, by omega⟩)
+  -- Each group has a kernel channel: in the other cases of `hI` there is no `w`, `o` or `c`.
   have hG : 0 < t.extent (dims.kernel ⟨1, by omega⟩) / groups := by
     have : Shape.Coord.index w (dims.kernel ⟨1, by omega⟩).val <
         t.extent (dims.kernel ⟨1, by omega⟩) := Shape.Coord.index_lt w _
@@ -929,6 +957,7 @@ theorem convTransposeRel_iff_convTransposeBackwardWeightRel (dims : Shape.ConvDi
   have hw0lt := Shape.Coord.index_lt w (dims.kernel ⟨0, by omega⟩).isLt
   constructor
   · rintro ⟨k, ⟨hal, hc⟩, hw⟩
+    -- The backward window `q` is the batch index of `o` and the spatial coordinates of `c`.
     obtain ⟨q', hq'⟩ := Shape.Coord.exists_spatial dims.input c
     let q : (s.convTransposeBackwardWeightWindow dims).Coord :=
       (⟨Shape.Coord.index o (dims.input ⟨0, by omega⟩).val, ho ⟨0, by omega⟩⟩, q')
@@ -948,6 +977,8 @@ theorem convTransposeRel_iff_convTransposeBackwardWeightRel (dims : Shape.ConvDi
       have := hal ⟨j.val + 2, by omega⟩
       simp only [convTransposeAligned, Bool.and_eq_true, decide_eq_true_eq] at this
       simpa only [convTransposeOffset, Fin.eta] using this
+    -- Along each spatial axis `c * stride = o + padLow - k * dilation`, as alignment makes the
+    -- stride divide the right side.
     have hmul : ∀ j : Fin r, Shape.Coord.index c (dims.input ⟨j.val + 2, by omega⟩).val * stride j =
           Shape.Coord.index o (dims.input ⟨j.val + 2, by omega⟩).val + padLow j -
             Shape.Coord.index k (j.val + 1) * dilation j := fun j => by
@@ -957,6 +988,7 @@ theorem convTransposeRel_iff_convTransposeBackwardWeightRel (dims : Shape.ConvDi
       exact Nat.div_mul_cancel (Nat.dvd_of_mod_eq_zero (halj j).2)
     have hdiv := div_eq_of_eq_mul_add hw1 k.1.isLt
     have hmod := mod_eq_of_eq_mul_add hw1 k.1.isLt
+    -- `q` is above the low padding, and the backward relation reads `c` and `o` back from it.
     refine ⟨q, ⟨?_, ?_⟩, ?_⟩
     · simp only [Shape.ConvDims.transposeBackwardWeightAbovePadLow, decide_eq_true_eq,
         fin_succ_succ]
@@ -980,6 +1012,7 @@ theorem convTransposeRel_iff_convTransposeBackwardWeightRel (dims : Shape.ConvDi
         omega
   · rintro ⟨q, ⟨hab, hc⟩, ho'⟩
     obtain ⟨k', hk'⟩ := Shape.Coord.exists_spatial dims.kernel w
+    -- The forward window `k` is the channel of `w` within its group and its spatial offset.
     let k : (s.convTransposeWindow t dims groups).Coord :=
       (⟨Shape.Coord.index w (dims.kernel ⟨1, by omega⟩).val %
         (t.extent (dims.kernel ⟨1, by omega⟩) / groups), Nat.mod_lt _ hG⟩, k')
@@ -999,6 +1032,7 @@ theorem convTransposeRel_iff_convTransposeBackwardWeightRel (dims : Shape.ConvDi
           Fin.eta] using ho' ⟨j.val + 2, by omega⟩
     simp only [Shape.ConvDims.transposeBackwardWeightAbovePadLow, decide_eq_true_eq,
       fin_succ_succ] at hab
+    -- Above the low padding the subtraction does not truncate, so this is `q * stride`.
     have hsp : ∀ j : Fin r, Shape.Coord.index o (dims.input ⟨j.val + 2, by omega⟩).val + padLow j -
           Shape.Coord.index w (dims.kernel ⟨j.val + 2, by omega⟩).val * dilation j =
             Shape.Coord.index q (j.val + 1) * stride j := fun j => by
@@ -1007,6 +1041,7 @@ theorem convTransposeRel_iff_convTransposeBackwardWeightRel (dims : Shape.ConvDi
       omega
     have hdiv := div_eq_of_eq_mul_add ho1' hw0lt
     have hmod := mod_eq_of_eq_mul_add ho1' hw0lt
+    -- `k` is aligned, and the forward relation reads `c` and `w` back from it.
     refine ⟨k, ⟨?_, ?_⟩, ?_⟩
     · refine forall_fin_add_two.mpr ⟨rfl, rfl, fun j => ?_⟩
       simp only [convTransposeAligned, convTransposeOffset, Bool.and_eq_true, decide_eq_true_eq,
@@ -1043,7 +1078,7 @@ theorem inner_convTranspose_eq_inner_convTransposeBackwardWeight (x : Tensor ℝ
   refine Eq.trans ?_ (sum_comm_three _).symm
   refine Finset.sum_congr rfl fun o _ => Finset.sum_congr rfl fun c _ =>
     Finset.sum_congr rfl fun w' _ => ?_
-  rw [convTransposeRel_iff_convTransposeBackwardWeightRel _ _ _ _ _ _ _ hI]
+  rw [convTransposeRel_iff_convTransposeBackwardWeightRel hI]
   split_ifs <;> ring
 
 /-- Where `groups` is at most one, or the input and the kernel have the same positive number of
@@ -1066,7 +1101,7 @@ theorem inner_convTranspose_eq_inner_convTransposeBackwardInput (x : Tensor ℝ 
   refine Eq.trans Finset.sum_comm ?_
   refine Finset.sum_congr rfl fun c _ => Eq.trans Finset.sum_comm ?_
   refine Finset.sum_congr rfl fun w' _ => Finset.sum_congr rfl fun o _ => ?_
-  rw [convTransposeRel_iff_convTransposeBackwardInputRel _ _ _ _ _ _ _ hC]
+  rw [convTransposeRel_iff_convTransposeBackwardInputRel hC]
   split_ifs <;> ring
 
 /-- Summing over every axis but `d` and casting to a vector of length `n` is the reduction

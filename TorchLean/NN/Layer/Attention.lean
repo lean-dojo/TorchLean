@@ -249,6 +249,8 @@ def attention
           let (keyBias, extra) := Attention.takeOptional inputBias projectionShape extra
           let (valueBias, extra) := Attention.takeOptional inputBias projectionShape extra
           let (outputBias, _) := Attention.takeOptional outputBias outputShape extra
+          -- Without input biases or dropout the layer is the registered `multiheadAttention`
+          -- operator (through `functional.attention`); otherwise the composed `Attention.forward`.
           if !inputBias && dropout?.isNone then
             functional.attention (m := m) (α := α)
               (leadingShape := [batchSize]) (n := sequenceLength) (numHeads := headCount)

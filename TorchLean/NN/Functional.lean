@@ -34,7 +34,7 @@ Elementwise square: $x\mapsto x^2$, recorded as `.mul` of `x` with itself.
 PyTorch analogue: `torch.square`.
 -/
 def square {α : Type} [Storage α] [Context α]
-    {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
+    {m : Type → Type} [Ops (m := m) (α := α)]
     {s : Shape} (x : Ref (m := m) (α := α) s) : m (Ref (m := m) (α := α) s) :=
   -- Not `.square`: eager CUDA execution has no LibTorch kernel for it (`LibTorch.Kernel.ofOp`), and
   -- the verifier recorder (`TorchLean.IR.record`) refuses it as outside its fragment.

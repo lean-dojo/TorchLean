@@ -42,8 +42,7 @@ public meta import TorchLean.Tensor.Einops.Elab.Pack
 public meta import TorchLean.Tensor.Literal
 public meta import TorchLean.Tensor.Einops.Elab.Transform
 public meta import TorchLean.Tensor.Tactic.Einops.Report
-import FloatLib.Numerics.Enclosure.Elementary.Proof
-public import FloatLib.Numerics.Automation.Attributes
+public import FloatLib.Tactic.Numerics.Attribute
 public import TorchLean.Tensor.Literal
 public import TorchLean.Tensor.Tactic.Init
 public import TorchLean.Verify.RuntimeApprox.Roundoff
@@ -124,7 +123,7 @@ theorem division_pullback_subnormal :
     ExecFloat.Binary.toRat? ((value / value).getScalar 0) = some 1 := by
   dsimp only
   roundoff
-  all_goals decide +kernel
+  decide +kernel
 
 /-- In an IEEE format, when every step is finite, the sum of the scale pullback
 `Tensor.scale seed factor` is within `foldError` of the real fold, one rounding per multiplication
@@ -148,7 +147,7 @@ theorem summed_scale_pullback_error [Storage Value] {shape : Shape}
   roundoff
 
 /-- The library's dot product uses the same proof generator across arbitrary tensor shapes. -/
-theorem exact_dot_error [Storage Rat] {shape : Shape} (x y : Tensor Rat shape) :
+theorem exact_dot_error {storage : Storage Rat} {shape : Shape} (x y : Tensor Rat shape) :
     |((Tensor.dot x y : Rat) : ℝ) -
         Tensor.dot (x.map (fun value : Rat => (value : ℝ)))
           (y.map (fun value : Rat => (value : ℝ)))| ≤ 0 := by
@@ -156,7 +155,7 @@ theorem exact_dot_error [Storage Rat] {shape : Shape} (x y : Tensor Rat shape) :
 
 /-- The matrix pullback uses only addition, multiplication and zero, so over the rationals it is
 exact, with no transcendental context or separate gradient specification. -/
-theorem exact_matmul_pullback_error [Storage Rat] {m n p : Nat}
+theorem exact_matmul_pullback_error {storage : Storage Rat} {m n p : Nat}
     (left : Tensor Rat [m, n]) (right : Tensor Rat [n, p]) (seed : Tensor Rat [m, p])
     (row : Fin m) (column : Fin n) :
     |((Tensor.get2 (Tensor.matmulBackward (batchA := []) (batchB := []) (batch := [])
@@ -220,6 +219,7 @@ roundoff theorem matmul_right_gradient_error :=
       ((Tensor.matmulBackward (Shape.CanBroadcastTo.refl batch)
         (Shape.CanBroadcastTo.refl batch) left right upstream).2 index)
 
+/-- The left input gradient, at the same batch rank as the right one. -/
 roundoff theorem matmul_left_gradient_error :=
   fun [Storage ConfiguredValue] {batch : Shape} {m n p : Nat}
     (left : Tensor ConfiguredValue (batch ++ [m, n]))
@@ -503,7 +503,7 @@ theorem log_softmax_gradient_binary32 :
       | decide +kernel
       | exact (ExecFloat.Binary.CorrectlyRounded.isFinite_exp_iff (by decide +kernel)
           (budget := {})).mp (by decide +kernel)
-      | exact (ExecFloat.Binary.CorrectlyRounded.isFinite_expMinus1_iff (by decide +kernel)
+      | exact (ExecFloat.Binary.CorrectlyRounded.isFinite_expm1_iff (by decide +kernel)
           (budget := {})).mp (by decide +kernel))
   clear bound
   decide +kernel
@@ -617,7 +617,7 @@ theorem expm1_rounding_error_binary32 :
       Model.halfUlpAt FloatFormat.binary32 (Real.exp (ExecFloat.Binary.toReal x) - 1) := by
   intro x
   have hx : ExecFloat.Binary.isFinite x = true := by decide +kernel
-  have hrange := (ExecFloat.Binary.CorrectlyRounded.isFinite_expMinus1_iff hx
+  have hrange := (ExecFloat.Binary.CorrectlyRounded.isFinite_expm1_iff hx
     (budget := {})).mp (by decide +kernel)
   exact expm1_error x rfl hx hrange
 

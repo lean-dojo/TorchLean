@@ -30,8 +30,9 @@ without decimal places or a decimal string, and `parseNatStrict` the naturals th
 binary64 and then to `UInt64` returns unchanged. `asFloat?` reads a float from a number or a
 numeric string, `parseFiniteFloat` and its array and matrix forms require it finite,
 `float` also reads the strings `NaN`, `Infinity` and `-Infinity`, and `floatField` reads a
-number field. `readFile` reads and parses a JSON file. `rounding` reads the rounding direction of
-a conversion, every `IEEERoundingMode` constructor by its name in `ofRounding`.
+number field. `readFile` reads and parses a JSON file with Lean's `Json.parse`, which refuses an
+object that repeats a key. `rounding` reads the rounding direction of a conversion, every
+`IEEERoundingMode` constructor by its name in `ofRounding`.
 
 `rounding_ofRounding` proves that `rounding` returns what `ofRounding` wrote, and `nat_toJson`,
 `nats_toJson` and `shape_toJson` prove the same for the Lean JSON of naturals and shapes. The round

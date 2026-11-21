@@ -245,6 +245,7 @@ def compileInputRead
   let certifiedInputValue ←
     withTransparency .all <|
       mkAppM ``Rep.getFlat #[tensor, certifiedInputIndex]
+  -- A read at an index whose value equals the certified index reads the certified entry.
   let readEquality
       (inputIndex hIndexValue : Expr) : MetaM Expr := do
     let inputIndexEquality ←
@@ -272,6 +273,8 @@ def compileInputRead
             certifyInputIndexBound normalizedInputIndexValue inputSize
           withTransparency .all <|
             mkExpectedTypeHint directIndexBound nativeIndexFits
+    -- The `USize` index and the proof that its `toNat` is the index, from the bound alone or
+    -- from the caller's facts.
     let (nativeIndex, hNativeIndex) ←
       if nativeIndexAssumptions.isEmpty then
         let nativeIndex ← nativeIndexValue normalizedInputIndexValue
@@ -290,6 +293,8 @@ def compileInputRead
         match certifiedNativeIndex? with
         | some result => pure result
         | none => do
+          -- Bound each intermediate term of the native arithmetic in turn, then prove the
+          -- index under all those bounds.
           let (nativeIndex, nativeIntermediates) ←
             nativeIndexValueWithTerms normalizedInputIndexValue
           let nativeIndexNat ← mkAppM ``USize.toNat #[nativeIndex]
@@ -356,6 +361,7 @@ def compileInputRead
     let inputValueCorrect ←
       mkAppM ``Eq.trans #[hNativeRead, hFinRead]
     return (nativeInputValue, inputValueCorrect)
+  -- Otherwise read at the natural-number index.
   let inputIndex ←
     mkAppOptM ``Fin.mk #[
       some inputSize, some inputIndexValue, some inputIndexBound]

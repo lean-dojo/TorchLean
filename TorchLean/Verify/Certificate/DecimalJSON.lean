@@ -114,7 +114,7 @@ def toRat? (d : Decimal) : Option Rat :=
 
 /-- `toRat? d` is `some q` exactly when `d` is zero or its exponent is within the bound and `q` is
 the rational `d` denotes. -/
-theorem toRat?_eq_some_iff (d : Decimal) (q : Rat) :
+theorem toRat?_eq_some_iff {d : Decimal} {q : Rat} :
     toRat? d = some q ↔
       (d.significand = 0 ∨ d.exponent.natAbs ≤ 2 ^ 11 + d.significand.log2) ∧ d.toRat = q := by
   unfold toRat?
@@ -485,7 +485,8 @@ def string (v : Value) (ctx : String) : Except String String :=
   | _ => .error s!"{ctx}: expected a string"
 
 /-- `string` returns `s` exactly for the string value `s`. -/
-theorem string_eq_ok_iff (v : Value) (ctx s : String) : v.string ctx = .ok s ↔ v = .str s := by
+theorem string_eq_ok_iff {v : Value} (ctx : String) {s : String} :
+    v.string ctx = .ok s ↔ v = .str s := by
   cases v <;> simp [string, eq_comm]
 
 /-- The decimal of a number, or of a string that `parse` reads as one number. -/
@@ -499,7 +500,7 @@ def decimal? : Value → Option Decimal
 
 /-- `decimal?` returns `d` exactly for the number `d` and for a string that `parse` reads as
 the number `d`. -/
-theorem decimal?_eq_some_iff (v : Value) (d : Decimal) :
+theorem decimal?_eq_some_iff {v : Value} {d : Decimal} :
     v.decimal? = some d ↔ v = .num d ∨ ∃ s, v = .str s ∧ parse s = .ok (.num d) := by
   cases v with
   | num e => simp [decimal?, eq_comm]

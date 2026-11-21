@@ -21,8 +21,8 @@ prefixes are all named definitions, so the calculus proofs in
 `TorchLean.NN.Norm.LayerNorm.Eval` can refer to each prefix.
 
 The row mean, the row and column broadcasts and the epsilon shift are shape-generic tape nodes.
-The subtraction, the products, the output sum, the clamped square root `sqrt (max x 0)` and the
-reciprocal are operator arms, made into nodes by `Tape.LawfulNode.ofArm` with their certificates.
+The subtraction, the products, the output sum, the square root and the reciprocal are operator
+arms, made into nodes by `Tape.LawfulNode.ofArm` with their certificates.
 -/
 
 @[expose] public section
@@ -182,16 +182,15 @@ def idxVarEps {m n : Nat} : Idx (ctx m n ++ ssVarEps m n) [m] :=
     (τ := [m])
 
 /--
-Standard deviation: `std := sqrt (max var_eps 0)`, the `clampNegative` square root arm.
+Standard deviation: `std := sqrt var_eps`, the square root arm.
 
 The development becomes pointwise at this node, because its certificate
-`Op.sqrt_clampNegative_backward_eq_adjoint` needs every entry of `var_eps` to be positive at the
-evaluation point.
+`Op.sqrt_backward_eq_adjoint` needs every entry of `var_eps` to be nonzero at the evaluation point.
 -/
 def nodeStd {m n : Nat} : Tape.LawfulNode (α := ℝ) Unit (ctx m n ++ ssVarEps m n) [m] :=
-  Tape.LawfulNode.ofArm (Op.sqrt (s := [m]) .clampNegative) rfl
+  Tape.LawfulNode.ofArm (Op.sqrt (s := [m])) rfl
     (Γ := ctx m n ++ ssVarEps m n) (idxVarEps (m := m) (n := n), ())
-    (Arm.adj_of_jvp₁ rfl fun xs dxs δ => Op.sqrt_clampNegative_jvp_adjoint xs.1 dxs.1 δ)
+    (Arm.adj_of_jvp₁ rfl fun xs dxs δ => Op.sqrt_jvp_adjoint xs.1 dxs.1 δ)
 
 /-- Graph prefix computing `ssStd` (adds `std`). -/
 def graphStd {m n : Nat} (ε : ℝ) : Tape.Graph (α := ℝ) Unit (ctx m n) (ssStd m n) :=

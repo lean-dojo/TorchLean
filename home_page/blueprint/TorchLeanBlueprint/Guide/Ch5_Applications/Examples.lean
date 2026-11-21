@@ -41,21 +41,22 @@ open Verso.Genre.Manual.InlineLean
 open TorchLean
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
-#doc (Manual) "Examples" =>
+/-! Guide page: worked examples of shapes, scalar types and small calculations. -/
+
+#doc (Manual) "Worked Calculations" =>
 %%%
 tag := "examples"
 file := "Worked-Examples"
 %%%
 
-Two tensors can print the same decimal digits and still contain different numbers. We start there,
-with four entries whose sums we can check by hand. Keeping the calculations small also lets us
+Two tensors can print the same decimal digits and still contain different numbers. Four entries
+whose sums can be checked by hand make that difference visible. The small calculations also let us
 follow a gradient back to its factors and an interval bound back to its endpoints, and when the
 examples reach training and imported graphs, those calculations give us something concrete to
 compare with the command output.
 
-Every Lean block on this page is elaborated when the site is built, and its output is checked
-against the accompanying expected output. Shell and Python commands let you compare the
-calculations with your executable and external dependencies.
+Try the four-entry sum yourself before looking at its output. Later examples use the same habit:
+work out what should happen on paper, then compare that answer with the program.
 
 # Tensor Shapes And Scalar Types
 
@@ -99,6 +100,11 @@ operations, while the four-element examples let us inspect how a reduction combi
 values into that same scalar shape.
 
 ## Floating-Point And Rational Arithmetic
+
+
+Two sums can look equal when we print them to six decimal places. Here we ask Lean
+to compare the values themselves. The individual pair of tenths and the sum of all four
+make a nice example of how rounding errors can cancel.
 
 ```lean (name := exExact)
 -- Test equality separately from the rounded tensor display.
@@ -147,6 +153,11 @@ conversion and rounding. I use these decimals because we can keep their exact me
 while comparing the two arithmetic paths.
 
 ## Rank, Slices, And The Reshape Guard
+
+
+Selecting a slice of a rank-three tensor removes one axis. Reshaping four values
+into two rows keeps the flat order. Run both operations and see what Lean checks
+when the requested reshape has the wrong size.
 
 ```lean (name := exCube)
 -- Reinterpret four stored elements as two rows without
@@ -382,6 +393,11 @@ optimizer can update the weights and biases without flattening them into one unt
 
 ## Higher-Order And Directional Transforms
 
+
+A gradient tells us how one scalar output changes. Sometimes we want to follow a whole
+vector of outputs or see how the gradient itself changes along a direction. The square
+is small enough to work both of those out by hand before checking the program's answer.
+
 ```terminal
 # Inspect Jacobian, Hessian, directional, and detached-state
 # results together.
@@ -406,7 +422,7 @@ We rewrapped the Hessian-vector product and the detached state gradient to fit h
 prints each on one line).
 
 For $`x\mapsto x^2` the Jacobian is diagonal with entries $`2x_i`, so the rows above say the input
-was $`(0.5,-1.2)`. And the Hessian of $`\tfrac1n\sum x_i^2` is $`\tfrac2n I`, which at $`n=2` is
+was $`(0.5,-1.2)`; the Hessian of $`\tfrac1n\sum x_i^2` is $`\tfrac2n I`, which at $`n=2` is
 the identity at every input, so these columns don't depend on the evaluation point.
 
 After detaching the model output, every component of the state gradient
@@ -485,6 +501,10 @@ gradient calculation, and optimizer update. Compare the initial loss, final loss
 prediction with the native run. Equality of decimal displays alone doesn't establish bitwise
 agreement. For the rounding steps behind these comparisons, see the {ref "floats"}[floating-point
 chapter].
+
+The `ieee` command-line choice is the bundled binary32 reference, not the general precision API.
+Code using the typed trainer can choose another FloatLib format through its scalar type, including
+binary16, binary64, binary128, or a configured exponent and fraction width.
 
 Not every command is arithmetic-polymorphic. Command-specific validation rejects an unsupported
 combination with an error, preserving the arithmetic requested by the caller.
@@ -659,6 +679,10 @@ box and that midpoint argument would need to be reconsidered.
 
 ## IBP Workflow
 
+
+Give the verifier the same input box used in the hand calculation. Comparing the endpoints shows
+where the executable interval pass needs to round outwards.
+
 ```terminal
 # Lower the fixed model and propagate its input box with
 # native bound arithmetic.
@@ -828,7 +852,7 @@ The example certifies and replays a small scalar graph and a ten-node MLP, and a
 interval of the scalar certificate so that validation rejects it. These definitions exercise
 artifact generation and execution. They do not supply a proof of enclosure for every real input.
 
-Here are the checker and its proof layer:
+The checker and its proof layer live in:
 
 - {src "TorchLeanExamples/DeepDives/Floats/GraphNumericalCertificate.lean"}[
   `GraphNumericalCertificate.lean`].
@@ -847,12 +871,14 @@ Supported PyTorch graphs enter Lean as typed programs of registered operators
 ```
 Python/PyTorch producer
   -> JSON capture document with a torchlean.ir artifact
-  -> Lean loader (TorchLean.IR.load): references, ports and constants checked
+  -> Lean loader (TorchLean.IR.load, or TorchLean.IR.loadFlow for control flow):
+     references, ports and constants checked
   -> program of registered operators or explicit rejection
 ```
 
 `TorchLean.IR.load_ok` establishes the structural property of a successful import: the program
-passes the shape, type and interface check and its payload the payload check. Numerical agreement
+passes the shape, type and interface check, its payload passes the payload check, and
+`TorchLean.IR.loadFlow_ok` establishes it for every block of a flow artifact. Numerical agreement
 needs a separate comparison or semantic proof: a graph with correct shapes can still compute the
 wrong function. Structural validation doesn't prove the Python exporter correct. Unsupported
 operations and malformed artifacts must be rejected at the capture or import boundary (see

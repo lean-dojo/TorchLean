@@ -29,6 +29,7 @@ generation options.
 - `GPT2BlockBound.lean`: a theorem file, not a runnable command. It evaluates the transformer
   block bound of `TorchLean/Verify/RuntimeApprox/TransformerBlock.lean` under the nearest rounding
   of `TorchLean/Verify/RuntimeApprox/TransformerBlock/Nearest.lean` at GPT-2 small in `binary32`.
+  The bound covers that file's own rounding schedule of the block, not the op table's block.
 
 ## Why There Are Several GPT Paths
 

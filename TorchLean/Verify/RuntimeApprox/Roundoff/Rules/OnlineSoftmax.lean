@@ -7,8 +7,8 @@ module
 
 public import TorchLean.Verify.RuntimeApprox.OnlineSoftmax
 public meta import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
-import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Rules
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension
+import FloatLib.Tactic.Roundoff.Rules
+public import FloatLib.Tactic.Roundoff.Extension
 
 /-!
 # Online softmax rules for `roundoff`
@@ -298,7 +298,7 @@ private theorem onlineAttend_mixedError_of_keys (hformat : format.isIEEE = true)
       unfold Softmax.onlineAttend
       rw [hkeys]
       simp only [mathFunctions_exp_eq hformat, Softmax.onlineStart_of_isInf_eq_false
-        first rest (Model.isInf_eq_false_of_isFinite_eq_true _ hfirst.1)]
+        first rest (Model.isInfinite_eq_false_of_isFinite_eq_true _ hfirst.1)]
     have hshift (x : ℝ) : Real.exp (x - M) = Real.exp x * Real.exp (-M) := by
       rw [← Real.exp_add]; ring_nf
     have href : O / S = (∑ i, if allowed i then Real.exp (ExecFloat.Binary.toReal (score i)) *

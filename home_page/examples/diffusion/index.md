@@ -2,16 +2,18 @@
 title: Diffusion Walkthrough
 ---
 
-In this example, we'll add noise to images and train a small network to predict the noise we
-added. Then we'll use its predictions to reconstruct or generate an image. We'll work in Lean
-for the model, training code, sampler, and mathematical definitions.
+Take an image and add noise we know. That gives us a training pair for a denoiser.
+Once it can predict the noise, we can run the reverse steps and see what image we get back.
+We write the model, training loop, and sampler in Lean.
 
-<div class="media-slab">
+<figure class="media-slab">
   <img src="{{ '/assets/media/examples/diffusion_imagenette64_real_vs_generated_plot.png' | relative_url }}" alt="Real Imagenette image, diffusion-generated sample, and diffusion reconstruction"/>
-</div>
+  <figcaption>Figure 1. Left to right: a real 64×64 Imagenette image, a sample of the diffusion
+  example trained on the <code>imagenet64</code> data, and the model's reconstruction of the real
+  image, each enlarged five times with bicubic interpolation.</figcaption>
+</figure>
 
-The saved comparison above uses Imagenette-derived 64×64 images, enlarged for display. Its
-generated sample is still noisy, and it isn't the output of the one-step CIFAR-10 run below.
+The sample in the middle still has visible noise. It comes from the longer Imagenette run.
 
 ## Run It First
 
@@ -39,12 +41,8 @@ scripts/lake.sh -Kcuda=true exe torchlean diffusion --device cuda \
 
 ## Data: Where Images Come From
 
-TorchLean doesn't decode JPEG/PNG inside Lean. Image decoding and resizing happen before Lean, and
-the Lean side receives fixed-layout `.npy` tensors and checks their shapes.
-
-Once the arrays exist, Lean loads tensors with axes ordered as
-`[batch, channel, height, width]`, checks their shapes and class range, and batches them. This is a
-layout convention for the dataset, not a separate image tensor type.
+The preparation script decodes and resizes images into `.npy` files. Lean loads the arrays in
+`[batch, channel, height, width]` order, checks their shapes and class labels, and batches them.
 
 `TorchLeanExamples.Models.Generative.Diffusion` has two dataset modes:
 
@@ -92,8 +90,7 @@ cumulative coefficient and then at a schedule timestep:
 def qSampleAt (alphaBar : α) (x0 eps : Tensor α s) : Tensor α s :=
   Tensor.scale x0 (sqrtNonneg alphaBar) + Tensor.scale eps (sqrtNonneg (1 - alphaBar))
 
-def qSample (sched : VPSchedule α T)
-    (x0 : Tensor α s) (t : Fin (T + 1)) (eps : Tensor α s) :
+def qSample (sched : VPSchedule α T) (x0 : Tensor α s) (t : Fin (T + 1)) (eps : Tensor α s) :
     Tensor α s :=
   qSampleAt (sched.alphaBar t) x0 eps
 ```
@@ -103,10 +100,10 @@ To measure how well our denoiser predicts the added noise, we use mean squared e
 ```lean
 def epsPredLoss (sched : VPSchedule α T) (model : EpsModel α s)
     (x0 : Tensor α s) (t : Fin (T + 1)) (eps : Tensor α s) : α :=
-  let x_t := qSample sched x0 t eps
+  let x_t := qSample (α := α) (T := T) (s := s) sched x0 t eps
   let tScalar : α := VPSchedule.timeOfIndex (α := α) (T := T) t
   let epsHat := model.eps x_t tScalar
-  Tensor.meanSquaredError epsHat eps
+  Tensor.meanSquaredError (α := α) (shape := s) epsHat eps
 ```
 
 Then the surrounding spec modules define:
@@ -138,7 +135,9 @@ To append the time channel, provide the leading dimensions and spatial extents, 
 returns a tensor with one additional channel:
 
 ```lean
-let modelInput :=
+def modelInput {batchSize c h w : Nat}
+    (x_t : Tensor Float (Diffusion.sampleShape [batchSize] c ([h, w] : Tensor Nat [2])))
+    (tNorm : Float) :=
   Diffusion.appendTimeChannel [batchSize] ([h, w] : Tensor Nat [2]) x_t tNorm
 ```
 
@@ -154,12 +153,14 @@ def config (c h w hiddenChannels : Nat) :
     kernelRadius := [1, 1] }
 
 def model (c h w hiddenChannels : Nat) :
-    nn.Builder (nn.Sequential (input c h w) (output c h w)) := by
-  let built := nn.NoisePredictor.residual
-    (config c h w hiddenChannels) (batchShape := [batchSize])
-  rw [nn.NoisePredictor.Config.inputShape,
-    nn.NoisePredictor.Config.outputShape] at built
-  simpa [input, output, config] using built
+    nn.Builder (nn.Sequential (input c h w) (output c h w)) :=
+  by
+    let built :=
+      nn.NoisePredictor.residual
+        (config c h w hiddenChannels) (batchShape := [batchSize])
+    rw [nn.NoisePredictor.Config.inputShape,
+      nn.NoisePredictor.Config.outputShape] at built
+    simpa [input, output, config] using built
 ```
 
 Here `2` is the spatial rank, and a kernel radius of one means every convolution is a `3 x 3`
@@ -187,11 +188,15 @@ That helper performs the schedule lookup, noising formula, time-channel append a
 construction. We can choose a seed or supply the noise tensor ourselves:
 
 ```lean
-let sample :=
-  Diffusion.sample [batchSize] ([h, w] : Tensor Nat [2]) schedule x0
-    (seed := runtime.seed) (step := step)
-let sampleFromNoise :=
-  Diffusion.sample [batchSize] ([h, w] : Tensor Nat [2]) schedule x0 step (noise := eps)
+def samples {batchSize c h w T : Nat} (schedule : Diffusion.Schedule T)
+    (x0 eps : Tensor Float (Diffusion.sampleShape [batchSize] c ([h, w] : Tensor Nat [2])))
+    (seed step : Nat) :=
+  let sample :=
+    Diffusion.sample [batchSize] ([h, w] : Tensor Nat [2]) schedule x0
+      (seed := seed) (step := step)
+  let sampleFromNoise :=
+    Diffusion.sample [batchSize] ([h, w] : Tensor Nat [2]) schedule x0 step (noise := eps)
+  (sample, sampleFromNoise)
 ```
 
 Schedule length is part of the type, so a `Schedule T` for `T` diffusion steps can't be used with a
@@ -215,15 +220,18 @@ The step takes the denominator floor, the adjacent schedule coefficients, the cu
 the predicted noise:
 
 ```lean
-let previous := ImageDDIM.stepFromEps 1e-12 abPrev ab x_t epsHat
+def previous {s : Shape} (abPrev ab : Float) (x_t epsHat : Tensor Float s) : Tensor Float s :=
+  Diffusion.ImageDDIM.stepFromEps 1e-12 abPrev ab x_t epsHat
 ```
 
 With the optional `postprocess` argument, we can change the operation applied to the estimated
 clean image before remixing (it must preserve the tensor shape). For an unclipped reconstruction:
 
 ```lean
-let previous := ImageDDIM.stepFromEps 1e-12 abPrev ab x_t epsHat
-  (postprocess := fun reconstructed => reconstructed)
+def previousUnclipped {s : Shape} (abPrev ab : Float) (x_t epsHat : Tensor Float s) :
+    Tensor Float s :=
+  Diffusion.ImageDDIM.stepFromEps 1e-12 abPrev ab x_t epsHat
+    (postprocess := fun reconstructed => reconstructed)
 ```
 
 The denominator uses $\sqrt{\bar\alpha_t}$ when that value is strictly greater than

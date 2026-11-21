@@ -101,7 +101,7 @@ The seed is divided by twice the root in one rounding. If checked arithmetic los
 weighted quotient is replayed over finite rational coefficients, where `2` is exact even when its
 scalar cast overflows. The replay starts from the supplied root, so the rounding of the root itself
 stays in the result. Nonfinite inputs keep the ordinary result. -/
-@[expose] def sqrtBackward {α : Type} [NatCast α] [One α] [Mul α] [Div α]
+@[expose] def sqrtBackward {α : Type} [NatCast α] [Mul α] [Div α]
     [ops : QuotientArithmetic α] (root seed : α) : α :=
   let two : α := (2 : Nat)
   if !ops.supported then

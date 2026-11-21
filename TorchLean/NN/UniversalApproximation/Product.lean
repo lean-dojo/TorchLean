@@ -30,7 +30,7 @@ open Activation (relu)
 
 /-- The box `[-M,M]^n` as a subset of `Tensor ℝ [n]`. -/
 noncomputable def boxN (n : Nat) (M : ℝ) : Set (Tensor ℝ [n]) :=
-  fun x => ∀ i : Fin n, Tensor.getScalar x i ∈ Set.Icc (-M) M
+  {x | ∀ i : Fin n, Tensor.getScalar x i ∈ Set.Icc (-M) M}
 
 /-- The target multiplication map: multiply the two coordinates. -/
 noncomputable def mulFun (x : Tensor ℝ [2]) : ℝ :=

@@ -254,10 +254,14 @@ reward and both of its observations satisfy the corresponding `Holds` predicates
 -/
 structure ContractHolds (c : Contract obsShape nActions) (t : Transition obsShape nActions) :
     Prop where
+  /-- The done flags meet the contract. -/
   doneFlags :
     DoneFlagsHolds (obsShape := obsShape) (nActions := nActions) c t.terminated t.truncated
+  /-- The reward meets the contract. -/
   reward : RewardHolds (obsShape := obsShape) (nActions := nActions) c t.reward
+  /-- The observation before the step meets the contract. -/
   observation : ObservationHolds (obsShape := obsShape) (nActions := nActions) c t.observation
+  /-- The observation after the step meets the contract. -/
   nextObservation :
     ObservationHolds (obsShape := obsShape) (nActions := nActions) c t.nextObservation
 

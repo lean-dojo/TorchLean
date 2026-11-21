@@ -126,7 +126,7 @@ theorem ApproxR.absOnly_trans {x y z eps₁ eps₂ : ℝ} (h₁ : 0 ≤ eps₁) 
 
 Scaling by one argument would make the relation asymmetric and force every proof to fix which side
 is the reference value. -/
-theorem approxR_comm (x y : ℝ) (t : ApproxTol) : ApproxR x y t ↔ ApproxR y x t := by
+theorem approxR_comm {x y : ℝ} {t : ApproxTol} : ApproxR x y t ↔ ApproxR y x t := by
   constructor <;> intro h <;> simpa [ApproxR, ApproxTol.bound, abs_sub_comm, max_comm] using h
 
 /-! ## Notation
@@ -136,6 +136,7 @@ Use `open scoped ApproxTol` to enable:
 `x ≈[t] y`  meaning: `ApproxR x y t`.
 -/
 
+/-- `x ≈[t] y` is `ApproxR x y t`: `x` and `y` agree within the tolerance `t`. -/
 scoped[TorchLean.ApproxTol] notation:50 x " ≈[" t "] " y => ApproxR x y t
 
 end TorchLean

@@ -61,13 +61,21 @@ def imageNet64Classes : Nat := 1000
 /-- Default row budget for ImageNet64 model example runs. -/
 def defaultImageNet64Rows : Nat := 200
 
+/-- `cifarChannels` is positive. -/
 instance : NeZero cifarChannels := ⟨by decide⟩
+/-- `cifarHeight` is positive. -/
 instance : NeZero cifarHeight := ⟨by decide⟩
+/-- `cifarWidth` is positive. -/
 instance : NeZero cifarWidth := ⟨by decide⟩
+/-- `cifarClasses` is positive. -/
 instance : NeZero cifarClasses := ⟨by decide⟩
+/-- `imageNet64Channels` is positive. -/
 instance : NeZero imageNet64Channels := ⟨by decide⟩
+/-- `imageNet64Height` is positive. -/
 instance : NeZero imageNet64Height := ⟨by decide⟩
+/-- `imageNet64Width` is positive. -/
 instance : NeZero imageNet64Width := ⟨by decide⟩
+/-- `imageNet64Classes` is positive. -/
 instance : NeZero imageNet64Classes := ⟨by decide⟩
 
 /-- Shape of one CIFAR-10 image after conversion to channel-first layout. -/

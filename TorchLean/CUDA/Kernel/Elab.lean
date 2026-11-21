@@ -6,7 +6,7 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.CUDA.Kernel.Program
-public import FloatLib.Floats.ExecFloat.Proof.Arithmetic
+public import FloatLib.Kernels.Execution.Proof
 public meta import TorchLean.CUDA.Kernel.Expr
 public meta import Lean.Elab.Tactic.Omega
 public meta import Lean.Elab.Tactic.Split
@@ -163,7 +163,8 @@ private def recurrence? (α : Lean.Expr) (source : Lean.Expr) :
         let lowered ← instantiateMVars lowered
         return some (lowered, bridge)
 
-private def typeExpr : Ty → Lean.Expr
+/-- The constant of an expression-language type. -/
+def typeExpr : Ty → Lean.Expr
   | .scalar => mkConst ``Ty.scalar
   | .index => mkConst ``Ty.index
   | .predicate => mkConst ``Ty.predicate

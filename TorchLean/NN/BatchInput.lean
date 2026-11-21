@@ -24,8 +24,10 @@ class BatchInput (single many : Type) (batch : Bool) (Input : outParam Type) : P
   so batching never converts an arbitrary input. -/
   type_eq : Input = if batch then many else single
 
+/-- Without batching the input is one sample. -/
 instance {single many : Type} : BatchInput single many false single := ⟨rfl⟩
 
+/-- With batching the input is a batch of samples. -/
 instance {single many : Type} : BatchInput single many true many := ⟨rfl⟩
 
 end TorchLean

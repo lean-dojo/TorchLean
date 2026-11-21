@@ -443,8 +443,8 @@ theorem run_snd_of_length_zero : {inputWidth outputWidth : Nat} →
 
 /-- The states of the stack of a list of cells are defined exactly when there is one state per
 cell. -/
-theorem isSome_states?_ofList {m : Type → Type} [Monad m] [Ops m α] {State : Type} {width : Nat}
-    (layers : List (Cell m α State width width)) (initial : List State) :
+theorem isSome_states?_ofList {m : Type → Type} [Ops m α] {State : Type} {width : Nat}
+    {layers : List (Cell m α State width width)} {initial : List State} :
     ((Stack.ofList layers).states? initial).isSome ↔ initial.length = layers.length := by
   induction layers generalizing initial with
   | nil =>
@@ -456,11 +456,11 @@ theorem isSome_states?_ofList {m : Type → Type} [Monad m] [Ops m α] {State : 
       | nil => simp [Stack.ofList, Stack.states?]
       | cons state states =>
           simp only [Stack.ofList, Stack.states?, List.length_cons, Nat.add_right_cancel_iff]
-          rw [← ih states]
+          rw [← ih (initial := states)]
           cases (Stack.ofList cells).states? states <;> rfl
 
 /-- The states accepted from a list give that list back. -/
-theorem statesList_of_states?_eq_some {m : Type → Type} [Monad m] [Ops m α] {State : Type}
+theorem statesList_of_states?_eq_some {m : Type → Type} [Ops m α] {State : Type}
     {width : Nat} (layers : List (Cell m α State width width)) (initial : List State)
     (states : (Stack.ofList layers).States)
     (h : (Stack.ofList layers).states? initial = some states) :
@@ -481,7 +481,7 @@ theorem statesList_of_states?_eq_some {m : Type → Type} [Monad m] [Ops m α] {
               rw [ih rest tail htail]
 
 /-- The state list of the stack of a list of cells has one state per cell. -/
-theorem length_statesList_ofList {m : Type → Type} [Monad m] [Ops m α] {State : Type}
+theorem length_statesList_ofList {m : Type → Type} [Ops m α] {State : Type}
     {width : Nat} (layers : List (Cell m α State width width))
     (states : (Stack.ofList layers).States) :
     ((Stack.ofList layers).statesList states).length = layers.length := by
@@ -505,8 +505,8 @@ theorem stacked_nil {StateOf : Nat → Type} {length width outputWidth : Nat}
 one state per layer. -/
 theorem languageModel_eq_none_iff {State : Type} {length tokenWidth width outputWidth : Nat}
     (embedding : Tensor α [tokenWidth] → Tensor α [width])
-    (layers : List (Cell Id α State width width))
-    (head : Tensor α [width] → Tensor α [outputWidth]) (initial : List State)
+    {layers : List (Cell Id α State width width)}
+    (head : Tensor α [width] → Tensor α [outputWidth]) {initial : List State}
     (tokens : Tensor α [length, tokenWidth]) :
     languageModel (m := Id) embedding layers head initial tokens = none ↔
       initial.length ≠ layers.length := by

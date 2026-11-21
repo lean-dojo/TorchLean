@@ -30,8 +30,12 @@ Boolean and integer tensors, and `RealConsts` and `ConstsReal` say that a real p
 real values of the rounded constants.
 
 The lemmas here are stated at a scalar with lawful endpoint operations (`LawfulBoundOps`), and the
-few that also need the nonlinear ones take them as instance arguments. The boxes of pointwise and
-binary maps enclose the real images (`encloses_unary`, `encloses_binary`, `binaryBox?_encloses`).
+few that also need the nonlinear ones take them as instance arguments. At a node of an operator
+from one or two value ports to a value port, a transfer that encloses the rule's real forward on
+every enclosed input encloses the node's flat value (`encloses_one`, `encloses_two`). The boxes of
+pointwise and binary maps enclose the real images (`encloses_unary`, `encloses_binary`,
+`binaryBox?_encloses`), and so do the coordinatewise boxes of scalar enclosures
+(`encloses_bounds`).
 The re-indexings and extrema commute with `toReal` and their real maps are monotone, so their
 endpoint boxes enclose their real outputs (`encloses_endpoints`). The box of a sum over one axis
 encloses the exact axis sum, and a mean over one axis divides that box by an enclosure of the exact
@@ -630,14 +634,14 @@ def ConstsReal (G : IR.Graph) (P : IR.Payload α)
   ∀ r ∈ refs, ∀ w, r.read earlier = .ok w → r.out = 0 → ∀ v, constValue? G P r.node = some v →
     w = realValue v
 
-/-- A reference that names a rounded constant tensor at a value port reads, at that port, the
-constant's real tensor. -/
-theorem read_constAt? {G : IR.Graph} {P : IR.Payload α}
+/-- A reference that names a rounded constant at a port reads, at that port, the constant's real
+carrier. -/
+theorem read_constAt?_carrier {G : IR.Graph} {P : IR.Payload α}
     {earlier : Array (List (Op.Value ℝ))} {refs : List IR.Ref}
-    (hc : ConstsReal G P earlier refs) {r : IR.Ref} (hr : r ∈ refs) {s : Shape}
-    {x : Tensor α s} (h : constAt? G P r (.value s) = some x) {w : Op.Value ℝ}
-    (hw : r.read earlier = .ok w) {y : Tensor ℝ s} (hy : (Port.value s).read w = .ok y) :
-    y = Tensor.map value x := by
+    (hc : ConstsReal G P earlier refs) {r : IR.Ref} (hr : r ∈ refs) {p : Port}
+    {x : p.Carrier α} (h : constAt? G P r p = some x) {w : Op.Value ℝ}
+    (hw : r.read earlier = .ok w) {y : p.Carrier ℝ} (hy : p.read w = .ok y) :
+    y = realCarrier p x := by
   unfold constAt? at h
   by_cases h0 : r.out = 0
   · simp only [h0, ↓reduceIte] at h
@@ -647,7 +651,7 @@ theorem read_constAt? {G : IR.Graph} {P : IR.Payload α}
       simp only [hcv, Option.bind_eq_bind, Option.bind_some] at h
       obtain rfl := hc r hr w hw h0 v hcv
       rw [read_realValue] at hy
-      cases hrv : (Port.value s).read v with
+      cases hrv : p.read v with
       | error e => simp [hrv, Except.map] at hy
       | ok z =>
         simp only [hrv, Except.toOption, Option.some.injEq] at h
@@ -656,9 +660,86 @@ theorem read_constAt? {G : IR.Graph} {P : IR.Payload α}
         exact hy.symm
   · simp [h0] at h
 
-/-- A unary operator whose real forward is the pointwise map `f`, with a transfer `T` enclosing
-`F = f` coordinatewise: at a node of a run whose reference's box encloses the value it reads, the
-transfer's box encloses the node's flat value. -/
+/-- `read_constAt?_carrier` at a value port: the constant's real tensor. -/
+theorem read_constAt? {G : IR.Graph} {P : IR.Payload α}
+    {earlier : Array (List (Op.Value ℝ))} {refs : List IR.Ref}
+    (hc : ConstsReal G P earlier refs) {r : IR.Ref} (hr : r ∈ refs) {s : Shape}
+    {x : Tensor α s} (h : constAt? G P r (.value s) = some x) {w : Op.Value ℝ}
+    (hw : r.read earlier = .ok w) {y : Tensor ℝ s} (hy : (Port.value s).read w = .ok y) :
+    y = Tensor.map value x :=
+  read_constAt?_carrier hc hr h hw hy
+
+/-- A box enclosing the flat tensor of `y` encloses the flat value of the outputs `[y]` at a value
+port. -/
+theorem encloses_out {t : Shape} {y : Tensor ℝ t} {B : FlatBox α}
+    (h : Encloses B (Graph.flatOfSome ⟨t, y⟩)) :
+    ∀ v, (([⟨.value t, y⟩] : List (Op.Value ℝ))[0]? >>= flatOf) = some v → Encloses B v := by
+  intro v hv
+  obtain rfl := Option.some.inj hv
+  exact h
+
+/-- When each reference among `refs` has a box enclosing the value it reads, the box of a reference
+among them encloses the flat tensor it reads at a value port. -/
+theorem encloses_read {boxes : Array (Option (FlatBox α))} {earlier : Array (List (Op.Value ℝ))}
+    {refs : List IR.Ref}
+    (hpe : ∀ r ∈ refs, ∀ (Br : FlatBox α) (w : Op.Value ℝ) (v : FlatTensor ℝ),
+      box? boxes r = some Br → r.read earlier = .ok w → flatOf w = some v → Encloses Br v)
+    {r : IR.Ref} (hr : r ∈ refs) {Br : FlatBox α} (hB : box? boxes r = some Br)
+    {w : Op.Value ℝ} (hread : r.read earlier = .ok w) {s : Shape} {x : Tensor ℝ s}
+    (hx : (Port.value s).read w = .ok x) : Encloses Br (Graph.flatOfSome ⟨s, x⟩) :=
+  hpe r hr Br w _ hB hread ((flatOf_of_read (Or.inl rfl) hx).trans (flatOf_value x))
+
+/-- An operator from one value port to one value port, with a transfer `T` taking each box that
+encloses the flat entries of an input `x` to a box enclosing those of the rule's forward value on
+`x`: at a node of a run whose reference's box encloses the value it reads, the transfer's box
+encloses the node's flat value. The box `B` is given by a function `C` of the node's references
+(`ibp?` or `cert?` at the operator) whose box on one reference is the transfer's. -/
+theorem encloses_one {s t : Shape} {op : Op [.value s] [.value t]}
+    {rule : Op.Rule ℝ [.value s] [.value t]} (hs : op.rule? (α := ℝ) = some rule)
+    {T : FlatBox α → Option (FlatBox α)}
+    (hT : ∀ {x : Tensor ℝ s} {Bx B : FlatBox α}, Encloses Bx (Graph.flatOfSome ⟨s, x⟩) →
+      T Bx = some B → Encloses B (Graph.flatOfSome ⟨t, (rule.forward (x, ())).1⟩))
+    {boxes : Array (Option (FlatBox α))} {earlier : Array (List (Op.Value ℝ))}
+    {refs : Array IR.Ref} {B : FlatBox α} {outs : List (Op.Value ℝ)}
+    (hpe : ∀ r ∈ refs.toList, ∀ (Br : FlatBox α) (w : Op.Value ℝ) (v : FlatTensor ℝ),
+      box? boxes r = some Br → r.read earlier = .ok w → flatOf w = some v → Encloses Br v)
+    {C : List IR.Ref → Option (FlatBox α)} (hc : C refs.toList = some B)
+    (hC : ∀ r, C [r] = some B → (box? boxes r >>= T) = some B)
+    (h : op.invoke (refs.toList.mapM (·.read earlier)) = .ok outs) :
+    ∀ v, (outs[0]? >>= flatOf) = some v → Encloses B v := by
+  obtain ⟨r, w, x, hr, hread, hx, rfl⟩ := invoke_one hs h
+  rw [hr] at hc hpe
+  obtain ⟨Br, hBr, hT'⟩ := Option.bind_eq_some_iff.mp (hC r hc)
+  exact encloses_out (hT (encloses_read hpe (by simp) hBr hread hx) hT')
+
+/-- An operator from two value ports to one value port, with a transfer `T` taking boxes that
+enclose the flat entries of inputs `x₁` and `x₂` to a box enclosing those of the rule's forward
+value on them: at a node of a run whose references' boxes enclose the values they read, the
+transfer's box encloses the node's flat value. As in `encloses_one`, `B` is given by a function `C`
+of the node's references whose box on two references is the transfer's. -/
+theorem encloses_two {s₁ s₂ t : Shape} {op : Op [.value s₁, .value s₂] [.value t]}
+    {rule : Op.Rule ℝ [.value s₁, .value s₂] [.value t]} (hs : op.rule? (α := ℝ) = some rule)
+    {T : FlatBox α → FlatBox α → Option (FlatBox α)}
+    (hT : ∀ {x₁ : Tensor ℝ s₁} {x₂ : Tensor ℝ s₂} {B₁ B₂ B : FlatBox α},
+      Encloses B₁ (Graph.flatOfSome ⟨s₁, x₁⟩) → Encloses B₂ (Graph.flatOfSome ⟨s₂, x₂⟩) →
+      T B₁ B₂ = some B → Encloses B (Graph.flatOfSome ⟨t, (rule.forward (x₁, x₂, ())).1⟩))
+    {boxes : Array (Option (FlatBox α))} {earlier : Array (List (Op.Value ℝ))}
+    {refs : Array IR.Ref} {B : FlatBox α} {outs : List (Op.Value ℝ)}
+    (hpe : ∀ r ∈ refs.toList, ∀ (Br : FlatBox α) (w : Op.Value ℝ) (v : FlatTensor ℝ),
+      box? boxes r = some Br → r.read earlier = .ok w → flatOf w = some v → Encloses Br v)
+    {C : List IR.Ref → Option (FlatBox α)} (hc : C refs.toList = some B)
+    (hC : ∀ r₁ r₂, C [r₁, r₂] = some B → ∃ B₁ B₂, box? boxes r₁ = some B₁ ∧
+      box? boxes r₂ = some B₂ ∧ T B₁ B₂ = some B)
+    (h : op.invoke (refs.toList.mapM (·.read earlier)) = .ok outs) :
+    ∀ v, (outs[0]? >>= flatOf) = some v → Encloses B v := by
+  obtain ⟨r₁, r₂, w₁, w₂, x₁, x₂, hr, hread₁, hread₂, hx₁, hx₂, rfl⟩ := invoke_two hs h
+  rw [hr] at hc hpe
+  obtain ⟨B₁, B₂, hB₁, hB₂, hT'⟩ := hC r₁ r₂ hc
+  exact encloses_out (hT (encloses_read hpe (by simp) hB₁ hread₁ hx₁)
+    (encloses_read hpe (by simp) hB₂ hread₂ hx₂) hT')
+
+/-- `encloses_one` for a unary operator whose real forward is the pointwise map `f`, with a
+transfer `T` enclosing `F = f` coordinatewise. -/
 theorem encloses_unary {s : Shape} {op : Op [.value s] [.value s]}
     {rule : Op.Rule ℝ [.value s] [.value s]} (hs : op.rule? (α := ℝ) = some rule)
     {f F : ℝ → ℝ} (hforward : ∀ x, (rule.forward (x, ())).1 = Tensor.map f x)
@@ -669,23 +750,31 @@ theorem encloses_unary {s : Shape} {op : Op [.value s] [.value s]}
     {refs : Array IR.Ref} {B : FlatBox α} {outs : List (Op.Value ℝ)}
     (hpe : ∀ r ∈ refs.toList, ∀ (Br : FlatBox α) (w : Op.Value ℝ) (v : FlatTensor ℝ),
       box? boxes r = some Br → r.read earlier = .ok w → flatOf w = some v → Encloses Br v)
-    (hc : ∀ r, refs.toList = [r] → (box? boxes r >>= T) = some B)
+    {C : List IR.Ref → Option (FlatBox α)} (hc : C refs.toList = some B)
+    (hC : ∀ r, C [r] = some B → (box? boxes r >>= T) = some B)
     (h : op.invoke (refs.toList.mapM (·.read earlier)) = .ok outs) :
-    ∀ v, (outs[0]? >>= flatOf) = some v → Encloses B v := by
-  obtain ⟨r, w, x, hr, hread, hx, rfl⟩ := invoke_one hs h
-  obtain ⟨Br, hBr, hT'⟩ := Option.bind_eq_some_iff.mp (hc r hr)
-  rw [hr] at hpe
-  intro v hv
-  simp only [List.getElem?_cons_zero, Option.bind_eq_bind, Option.bind_some, hforward,
-    flatOf_value, Option.some.injEq] at hv
-  subst hv
-  exact encloses_map hf
-    (hpe r (by simp) Br w _ hBr hread ((flatOf_of_read (Or.inl rfl) hx).trans (flatOf_value x)))
-    fun hg => hT hg hT'
+    ∀ v, (outs[0]? >>= flatOf) = some v → Encloses B v :=
+  encloses_one hs (fun hx hB => by rw [hforward]; exact encloses_map hf hx fun hg => hT hg hB)
+    hpe hc hC h
 
-/-- A binary operator whose real forward is the pointwise `zipWith f`, with a transfer `T`
-enclosing `F = f` coordinatewise: at a node of a run whose references' boxes enclose the values they
-read, the transfer's box encloses the node's flat value. -/
+/-- `encloses_unary` with the transfer `boxUnaryEnclosure? enclose` of a scalar enclosure
+`enclose` of `F`. -/
+theorem encloses_bounds {s : Shape} {op : Op [.value s] [.value s]}
+    {rule : Op.Rule ℝ [.value s] [.value s]} (hs : op.rule? (α := ℝ) = some rule)
+    {f F : ℝ → ℝ} (hforward : ∀ x, (rule.forward (x, ())).1 = Tensor.map f x)
+    (hf : ∀ z, f z = F z) {enclose : α → α → Option (α × α)} (hE : UnaryEnclosure F enclose)
+    {boxes : Array (Option (FlatBox α))} {earlier : Array (List (Op.Value ℝ))}
+    {refs : Array IR.Ref} {B : FlatBox α} {outs : List (Op.Value ℝ)}
+    (hpe : ∀ r ∈ refs.toList, ∀ (Br : FlatBox α) (w : Op.Value ℝ) (v : FlatTensor ℝ),
+      box? boxes r = some Br → r.read earlier = .ok w → flatOf w = some v → Encloses Br v)
+    {C : List IR.Ref → Option (FlatBox α)} (hc : C refs.toList = some B)
+    (hC : ∀ r, C [r] = some B → (box? boxes r >>= boxUnaryEnclosure? enclose) = some B)
+    (h : op.invoke (refs.toList.mapM (·.read earlier)) = .ok outs) :
+    ∀ v, (outs[0]? >>= flatOf) = some v → Encloses B v :=
+  encloses_unary hs hforward hf (fun hx hb => boxUnaryEnclosure?_encloses hE hx hb) hpe hc hC h
+
+/-- `encloses_two` for a binary operator whose real forward is the pointwise `zipWith f`, with a
+transfer `T` enclosing `F = f` coordinatewise. -/
 theorem encloses_binary {s : Shape} {op : Op [.value s, .value s] [.value s]}
     {rule : Op.Rule ℝ [.value s, .value s] [.value s]}
     (hs : op.rule? (α := ℝ) = some rule) {f F : ℝ → ℝ → ℝ}
@@ -697,23 +786,13 @@ theorem encloses_binary {s : Shape} {op : Op [.value s, .value s] [.value s]}
     {refs : Array IR.Ref} {B : FlatBox α} {outs : List (Op.Value ℝ)}
     (hpe : ∀ r ∈ refs.toList, ∀ (Br : FlatBox α) (w : Op.Value ℝ) (v : FlatTensor ℝ),
       box? boxes r = some Br → r.read earlier = .ok w → flatOf w = some v → Encloses Br v)
-    (hc : ∀ r₁ r₂, refs.toList = [r₁, r₂] → ∃ B₁ B₂, box? boxes r₁ = some B₁ ∧
+    {C : List IR.Ref → Option (FlatBox α)} (hc : C refs.toList = some B)
+    (hC : ∀ r₁ r₂, C [r₁, r₂] = some B → ∃ B₁ B₂, box? boxes r₁ = some B₁ ∧
       box? boxes r₂ = some B₂ ∧ T B₁ B₂ = some B)
     (h : op.invoke (refs.toList.mapM (·.read earlier)) = .ok outs) :
-    ∀ v, (outs[0]? >>= flatOf) = some v → Encloses B v := by
-  obtain ⟨r₁, r₂, w₁, w₂, x₁, x₂, hr, hread₁, hread₂, hx₁, hx₂, rfl⟩ := invoke_two hs h
-  obtain ⟨B₁, B₂, hB₁, hB₂, hT'⟩ := hc r₁ r₂ hr
-  rw [hr] at hpe
-  intro v hv
-  simp only [List.getElem?_cons_zero, Option.bind_eq_bind, Option.bind_some, hforward,
-    flatOf_value, Option.some.injEq] at hv
-  subst hv
-  exact encloses_zipWith hf
-    (hpe r₁ (by simp) B₁ w₁ _ hB₁ hread₁
-      ((flatOf_of_read (Or.inl rfl) hx₁).trans (flatOf_value x₁)))
-    (hpe r₂ (by simp) B₂ w₂ _ hB₂ hread₂
-      ((flatOf_of_read (Or.inl rfl) hx₂).trans (flatOf_value x₂)))
-    fun hg hh => hT hg hh hT'
+    ∀ v, (outs[0]? >>= flatOf) = some v → Encloses B v :=
+  encloses_two hs (fun hx hy hB => by
+    rw [hforward]; exact encloses_zipWith hf hx hy fun hg hh => hT hg hh hB) hpe hc hC h
 
 /-- Enclosure at a width is enclosure at an equal width. -/
 theorem rowEncloses_width {B : FlatBox α} {n n' : Nat} {f : Nat → ℝ} (h : n = n')
@@ -1106,18 +1185,11 @@ theorem encloses_endpoints {s t : Shape} {op : Op [.value s] [.value t]}
     {refs : Array IR.Ref} {B : FlatBox α} {outs : List (Op.Value ℝ)}
     (hpe : ∀ r ∈ refs.toList, ∀ (Br : FlatBox α) (w : Op.Value ℝ) (v : FlatTensor ℝ),
       box? boxes r = some Br → r.read earlier = .ok w → flatOf w = some v → Encloses Br v)
-    (hc : ∀ r, refs.toList = [r] → (box? boxes r >>= endpointsBox? op) = some B)
+    {C : List IR.Ref → Option (FlatBox α)} (hc : C refs.toList = some B)
+    (hC : ∀ r, C [r] = some B → (box? boxes r >>= endpointsBox? op) = some B)
     (h : op.invoke (refs.toList.mapM (·.read earlier)) = .ok outs) :
-    ∀ v, (outs[0]? >>= flatOf) = some v → Encloses B v := by
-  obtain ⟨r, w, x, hr, hread, hx, rfl⟩ := invoke_one hsR h
-  obtain ⟨Br, hBr, hB⟩ := Option.bind_eq_some_iff.mp (hc r hr)
-  rw [hr] at hpe
-  intro v hv
-  simp only [List.getElem?_cons_zero, Option.bind_eq_bind, Option.bind_some, flatOf_value,
-    Option.some.injEq] at hv
-  subst hv
-  exact endpointsBox?_encloses hs hnat hmono
-    (hpe r (by simp) Br w _ hBr hread ((flatOf_of_read (Or.inl rfl) hx).trans (flatOf_value x))) hB
+    ∀ v, (outs[0]? >>= flatOf) = some v → Encloses B v :=
+  encloses_one hsR (fun hx hB => endpointsBox?_encloses hs hnat hmono hx hB) hpe hc hC h
 
 /-- The maximum's choice between `a` and a candidate `b` denotes the real maximum for every tie
 test `tie`: under the order law, two mutually non-greater values denote the same real number. -/
@@ -1245,7 +1317,7 @@ theorem poolBox?_encloses [NonlinearBoundOps α] {s : Shape} {op : PoolOp}
     Encloses B (Graph.flatOfSome
       ⟨_, Tensor.pool op x dims kernel stride padLow padHigh dilation ceilMode⟩) := by
   refine endpointsBox?_encloses
-    (Op.rule?_pool op dims kernel stride padLow padHigh dilation ceilMode)
+    (Op.rule?_pool_leftFold op dims kernel stride padLow padHigh dilation ceilMode)
     (F := (Tensor.pool op · dims kernel stride padLow padHigh dilation ceilMode))
     (value_pool hop) (fun _ _ hxy => pool_mono hop hxy) hx ?_
   rcases hop with rfl | rfl <;> exact hB
@@ -1351,88 +1423,6 @@ theorem _root_.TorchLean.CROWN.Directed.softplusBounds_enclosure :
       _ ≤ value (BoundOps.addUp (Context.maximum hi 0) 1) :=
         LawfulBoundOps.le_addUp _ _
 
-/-- A reference that names a rounded constant at a port reads, at that port, the constant's real
-carrier. -/
-theorem read_constAt?_carrier {G : IR.Graph} {P : IR.Payload α}
-    {earlier : Array (List (Op.Value ℝ))} {refs : List IR.Ref}
-    (hc : ConstsReal G P earlier refs) {r : IR.Ref} (hr : r ∈ refs) {p : Port}
-    {x : p.Carrier α} (h : constAt? G P r p = some x) {w : Op.Value ℝ}
-    (hw : r.read earlier = .ok w) {y : p.Carrier ℝ} (hy : p.read w = .ok y) :
-    y = realCarrier p x := by
-  unfold constAt? at h
-  by_cases h0 : r.out = 0
-  · simp only [h0, ↓reduceIte] at h
-    cases hcv : constValue? G P r.node with
-    | none => simp [hcv] at h
-    | some v =>
-      simp only [hcv, Option.bind_eq_bind, Option.bind_some] at h
-      obtain rfl := hc r hr w hw h0 v hcv
-      rw [read_realValue] at hy
-      cases hrv : p.read v with
-      | error e => simp [hrv, Except.map] at hy
-      | ok z =>
-        simp only [hrv, Except.toOption, Option.some.injEq] at h
-        subst h
-        simp only [hrv, Except.map, Except.ok.injEq] at hy
-        exact hy.symm
-  · simp [h0] at h
-
-omit [Storage α] [Context α] [BoundOps α] [LawfulBoundOps α] in
-/-- A successful read of references at the ports `p :: ps` reads the first reference at `p` and
-the others at `ps`. -/
-theorem read_cons {p : Port} {ps : List Port} {refs : List IR.Ref}
-    {earlier : Array (List (Op.Value ℝ))} {values : List (Op.Value ℝ)}
-    {xs : Values ℝ (p :: ps)} (hin : refs.mapM (·.read earlier) = .ok values)
-    (hx : Values.ofErased (p :: ps) values = .ok xs) :
-    ∃ r rest v vs, refs = r :: rest ∧ r.read earlier = .ok v ∧ p.read v = .ok xs.1 ∧
-      rest.mapM (·.read earlier) = .ok vs ∧ Values.ofErased ps vs = .ok xs.2 := by
-  match refs, hin with
-  | [], hin =>
-    simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at hin
-    subst hin
-    simp [Values.ofErased, throw, throwThe, MonadExceptOf.throw] at hx
-  | r :: rest, hin =>
-    simp only [List.mapM_cons, bind, Except.bind] at hin
-    cases hr : r.read earlier with
-    | error e => simp [hr] at hin
-    | ok v =>
-      cases hm : rest.mapM (·.read earlier) with
-      | error e => simp [hr, hm] at hin
-      | ok vs =>
-        simp only [hr, hm, pure, Except.pure, Except.ok.injEq] at hin
-        subst hin
-        simp only [Values.ofErased, bind, Except.bind] at hx
-        cases hp : p.read v with
-        | error e => simp [hp] at hx
-        | ok y =>
-          simp only [hp] at hx
-          cases hrest : Values.ofErased ps vs with
-          | error e => simp [hrest] at hx
-          | ok ys =>
-            simp only [hrest, pure, Except.pure] at hx
-            cases hx
-            exact ⟨r, rest, v, vs, rfl, hr, hp, hm, hrest⟩
-
-omit [Storage α] [Context α] [BoundOps α] [LawfulBoundOps α] in
-/-- A successful read of references at no ports reads no references. -/
-theorem read_nil {refs : List IR.Ref} {earlier : Array (List (Op.Value ℝ))}
-    {values : List (Op.Value ℝ)} {xs : Values ℝ []}
-    (hin : refs.mapM (·.read earlier) = .ok values) (hx : Values.ofErased [] values = .ok xs) :
-    refs = [] := by
-  match refs, hin with
-  | [], _ => rfl
-  | r :: rest, hin =>
-    simp only [List.mapM_cons, bind, Except.bind] at hin
-    cases hr : r.read earlier with
-    | error e => simp [hr] at hin
-    | ok v =>
-      cases hm : rest.mapM (·.read earlier) with
-      | error e => simp [hr, hm] at hin
-      | ok vs =>
-        simp only [hr, hm, pure, Except.pure, Except.ok.injEq] at hin
-        subst hin
-        simp [Values.ofErased, throw, throwThe, MonadExceptOf.throw] at hx
-
 /-- An operator with a frozen scalar parameter whose real forward is the pointwise map `f c` at
 the parameter `c`, with a transfer `T c` enclosing `F (value c) = f (value c)` coordinatewise for
 each rounded parameter `c`: at a node of a run whose references' boxes enclose the values they
@@ -1451,25 +1441,22 @@ theorem encloses_param {s : Shape} {op : Op [.value s, .frozen []] [.value s]}
     (hconsts : ConstsReal G P earlier refs.toList)
     (hpe : ∀ r ∈ refs.toList, ∀ (Br : FlatBox α) (w : Op.Value ℝ) (v : FlatTensor ℝ),
       box? boxes r = some Br → r.read earlier = .ok w → flatOf w = some v → Encloses Br v)
-    (hc : ∀ rx rc, refs.toList = [rx, rc] → (do
+    {C : List IR.Ref → Option (FlatBox α)} (hc : C refs.toList = some B)
+    (hC : ∀ rx rc, C [rx, rc] = some B → (do
         let c ← constAt? G P rc (.frozen [])
         box? boxes rx >>= T (Tensor.item c)) = some B)
     (h : op.invoke (refs.toList.mapM (·.read earlier)) = .ok outs) :
     ∀ v, (outs[0]? >>= flatOf) = some v → Encloses B v := by
   obtain ⟨rx, rc, wx, wc, x, c, hr, hreadx, hreadc, hx, hcx, rfl⟩ := invoke_two hs h
-  have hc' := hc rx rc hr
+  rw [hr] at hc hpe hconsts
+  have hc' := hC rx rc hc
   simp only [Option.bind_eq_bind] at hc'
   obtain ⟨c', hc'', hc'⟩ := Option.bind_eq_some_iff.mp hc'
   obtain ⟨Bx, hBx, hT'⟩ := Option.bind_eq_some_iff.mp hc'
-  rw [hr] at hpe hconsts
   obtain rfl := read_constAt?_carrier hconsts (by simp) hc'' hreadc hcx
-  intro v hv
-  simp only [List.getElem?_cons_zero, Option.bind_eq_bind, Option.bind_some, hforward,
-    flatOf_value, Option.some.injEq] at hv
-  subst hv
-  simp only [realCarrier, item_map]
-  exact encloses_map (hf _) (hpe rx (by simp) Bx wx _ hBx hreadx
-    ((flatOf_of_read (Or.inl rfl) hx).trans (flatOf_value x))) fun hg => hT hg hT'
+  refine encloses_out ?_
+  simp only [hforward, realCarrier, item_map]
+  exact encloses_map (hf _) (encloses_read hpe (by simp) hBx hreadx hx) fun hg => hT hg hT'
 
 /-- At `ℝ`, clamping to the scalar bounds `a` and `b` is the pointwise `min (max · a) b`. -/
 theorem clamp_full_real {s : Shape} (x : Tensor ℝ s) (a b : ℝ) :

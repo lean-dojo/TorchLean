@@ -1,18 +1,18 @@
 {
-  "generatedAt": "2026-11-09T15:19:28.000111+00:00",
-  "measuredAt": "2026-11-09T15:19:27Z",
+  "generatedAt": "2026-11-21T02:51:06.395968+00:00",
+  "measuredAt": "2026-11-21T02:50:18Z",
   "tool": "scripts/bench/bench.py",
   "suite": "quick",
   "repetitions": 5,
   "tree": {
-    "commit": null,
-    "modified": null,
-    "sourceDigest": "c60fed7c34aedf04",
-    "sourceFiles": 1198,
-    "leanToolchain": "leanprover/lean4:v4.35.0",
+    "commit": "534b505e1169c95a8942692ce6a4159385b7cc02",
+    "modified": true,
+    "sourceDigest": "5d8b3ce00af758f0",
+    "sourceFiles": 1348,
+    "leanToolchain": "leanprover/lean4:v4.36.0",
     "executables": {
-      "torchlean": "782e282b28904a03",
-      "verify": "66779092b763aaba"
+      "torchlean": "78f10ce1d0353366",
+      "verify": "5e36659a7e377027"
     },
     "inputs": {
       "text/tiny_shakespeare.txt": "86c4e6aa9db7c042",
@@ -20,11 +20,11 @@
     }
   },
   "machine": {
-    "cpu": "Intel(R) Xeon(R) Platinum 8275CL CPU @ 3.00GHz",
-    "cpus": 96,
-    "system": "Linux-6.12.95-124.187.amzn2023.x86_64-x86_64-with-glibc2.34",
-    "coresAllowed": 8,
-    "counters": "perf_event_open"
+    "cpu": "AMD EPYC 7742 64-Core Processor",
+    "cpus": 128,
+    "system": "Linux-5.4.0-216-generic-x86_64-with-glibc2.31",
+    "coresAllowed": 128,
+    "counters": "none (perf_event_paranoid 3)"
   },
   "benchmarks": [
     {
@@ -33,14 +33,14 @@
       "command": "torchlean quickstart_mlp --device cpu --arithmetic ieee --steps 5000 --seed 0",
       "runsPerRepetition": 1,
       "repetitions": 5,
-      "instructions": 46457706506,
-      "instructionsMin": 46457702577,
-      "instructionsMax": 46457720299,
-      "cpuSeconds": 5.541,
-      "cpuSecondsMin": 5.522,
-      "cpuSecondsMax": 5.764,
-      "wallSeconds": 5.557,
-      "maxRssKiB": 76824,
+      "instructions": null,
+      "instructionsMin": null,
+      "instructionsMax": null,
+      "cpuSeconds": 5.832,
+      "cpuSecondsMin": 5.824,
+      "cpuSecondsMax": 5.889,
+      "wallSeconds": 5.847,
+      "maxRssKiB": 80252,
       "outputSha256": [
         "efa322ce8a18eb79"
       ]
@@ -51,14 +51,14 @@
       "command": "torchlean gpt2 --device cpu --data-file data/real/text/tiny_shakespeare.txt --steps 400 --log false --seed 0",
       "runsPerRepetition": 1,
       "repetitions": 5,
-      "instructions": 76398243774,
-      "instructionsMin": 76396629081,
-      "instructionsMax": 76399088778,
-      "cpuSeconds": 7.958,
-      "cpuSecondsMin": 7.956,
-      "cpuSecondsMax": 8.0,
-      "wallSeconds": 7.966,
-      "maxRssKiB": 89084,
+      "instructions": null,
+      "instructionsMin": null,
+      "instructionsMax": null,
+      "cpuSeconds": 10.587,
+      "cpuSecondsMin": 10.511,
+      "cpuSecondsMax": 10.991,
+      "wallSeconds": 10.592,
+      "maxRssKiB": 92112,
       "outputSha256": [
         "d3787d4926cf916c"
       ]
@@ -69,14 +69,14 @@
       "command": "verify crown-query q-24-48x3-8.json",
       "runsPerRepetition": 1,
       "repetitions": 5,
-      "instructions": 66935045860,
-      "instructionsMin": 66935041848,
-      "instructionsMax": 66935045988,
-      "cpuSeconds": 7.023,
-      "cpuSecondsMin": 7.019,
-      "cpuSecondsMax": 7.052,
-      "wallSeconds": 7.042,
-      "maxRssKiB": 105228,
+      "instructions": null,
+      "instructionsMin": null,
+      "instructionsMax": null,
+      "cpuSeconds": 6.456,
+      "cpuSecondsMin": 6.435,
+      "cpuSecondsMax": 6.486,
+      "wallSeconds": 6.47,
+      "maxRssKiB": 108456,
       "outputSha256": [
         "5a3dbeed5bd89cd0"
       ]

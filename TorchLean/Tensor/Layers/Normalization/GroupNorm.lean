@@ -78,6 +78,7 @@ def reference
     simp [groupSize, spatialSize, Nat.mul_assoc]
   have hFlatSize : Shape.size inputShape = Shape.size flatShape := by
     simp [inputShape, flatShape, spatialSize]
+  -- One row per batch entry and group, of the group's channels and spatial entries.
   let grouped : Tensor α groupedShape := Tensor.reshape x _ hGroupedSize
   let axis := Shape.rank groupedShape - 1
   let hAxis : Shape.HasNonemptyAxis axis groupedShape :=
@@ -89,6 +90,8 @@ def reference
       (groupedShape.eraseIdx_broadcastDims axis)
   let centered := grouped - meanBroadcast
   let regularizer := Tensor.full (groupedShape.eraseIdx axis) epsilon
+  -- Divide each centered row by its largest magnitude, at least `sqrt |epsilon|` and detached, so
+  -- its squares do not overflow; `epsilon / scale / scale` keeps the quotient the same.
   let largest : Tensor α (groupedShape.eraseIdx axis) := castShape
     (Rep.ofFn fun o =>
       maxAbs (ofFn fun i : Fin (Shape.size (groupedShape.selectAxes [rowAxis])) =>
@@ -101,7 +104,7 @@ def reference
   let meanSquare := Tensor.map (Context.divNat · groupSize)
     (castShape (Tensor.reduce .sum (scaled * scaled) [rowAxis] false) (Shape.reduce_singleton _ _))
   let denominator :=
-    Tensor.sqrt (meanSquare + ((regularizer / scale) / scale)) .clampNegative
+    Tensor.sqrt (meanSquare + ((regularizer / scale) / scale))
   let normalized :=
     scaled /
         Tensor.broadcast denominator groupedShape _ (groupedShape.eraseIdx_broadcastDims axis)
@@ -109,6 +112,7 @@ def reference
     Tensor.reshape normalized _ hGroupedSize.symm
   let normalizedFlat : Tensor α flatShape :=
     Tensor.reshape normalizedInput _ hFlatSize
+  -- `gamma` and `beta` per channel, broadcast over the batch and spatial entries.
   let channelSpatialShape : Shape := [channels, spatialSize]
   letI : Shape.WellFormed channelSpatialShape :=
     ⟨⟨hChannels, ⟨hSpatial, trivial⟩⟩⟩
@@ -144,7 +148,7 @@ def normalizeGroups {B g n : Nat} (input : Tensor α [B, g, n]) (epsilon : α) :
   let scaled := centered / spread scale
   let meanSquared : Tensor α (grouped.eraseAxes [last]) := Tensor.map (Context.divNat · n)
     (Tensor.reduce .sum (scaled * scaled) [last] false)
-  let std := Tensor.sqrt (meanSquared + ((regularizer / scale) / scale)) .clampNegative
+  let std := Tensor.sqrt (meanSquared + ((regularizer / scale) / scale))
   scaled / spread std
 
 /-- `Tensor.groupNorm` is `normalizeGroups` on the `[B, groups, n]` view of `x`, viewed back as
@@ -266,14 +270,16 @@ theorem reference_eq {batch channels groups : Nat} {spatial : Shape}
   unfold reference normalizeGroups
   rfl
 
-/-- `groupNorm_one_eq_reference` for any proof that axis 1 is in range. -/
-theorem groupNorm_one_eq_reference' {batch channels groups : Nat} {spatial : Shape}
+/-- `Tensor.groupNorm` with the channels on axis 1 equals `reference` on every input of shape
+`[batch, channels] ++ spatial`, under exactly `reference`'s hypotheses. -/
+theorem groupNorm_one_eq_reference {batch channels groups : Nat} {spatial : Shape}
     (x : Tensor α (batch :: channels :: spatial)) (gamma beta : Tensor α [channels])
     (hGroups : groups > 0) (hGroupsLe : channels ≥ groups) (hDiv : channels % groups = 0)
-    (epsilon : α) [Shape.WellFormed (batch :: channels :: spatial)]
-    (h1 : 1 < Shape.rank (batch :: channels :: spatial)) :
-    Tensor.groupNorm x ⟨1, h1⟩ groups gamma beta (Nat.dvd_of_mod_eq_zero hDiv) epsilon =
+    (epsilon : α) [Shape.WellFormed (batch :: channels :: spatial)] :
+    Tensor.groupNorm x ⟨1, by simp⟩ groups gamma beta (Nat.dvd_of_mod_eq_zero hDiv)
+        epsilon =
       reference x gamma beta hGroups hGroupsLe hDiv epsilon := by
+  have h1 : 1 < Shape.rank (batch :: channels :: spatial) := by simp
   have hG : Shape.size (batch :: channels :: spatial) =
       Shape.size [batch, groups, channels / groups * Shape.size spatial] := by
     have h := Shape.size_eq_take_extent_drop (batch :: channels :: spatial) ⟨1, h1⟩
@@ -290,16 +296,5 @@ theorem groupNorm_one_eq_reference' {batch channels groups : Nat} {spatial : Sha
     reference_eq x gamma beta hGroups hGroupsLe hDiv epsilon hG hF, reshape_mul_add,
     reshape_broadcast_channel gamma h1, reshape_broadcast_channel beta h1]
   rfl
-
-/-- `Tensor.groupNorm` with the channels on axis 1 equals `reference` on every input of shape
-`[batch, channels] ++ spatial`, under exactly `reference`'s hypotheses. -/
-theorem groupNorm_one_eq_reference {batch channels groups : Nat} {spatial : Shape}
-    (x : Tensor α (batch :: channels :: spatial)) (gamma beta : Tensor α [channels])
-    (hGroups : groups > 0) (hGroupsLe : channels ≥ groups) (hDiv : channels % groups = 0)
-    (epsilon : α) [Shape.WellFormed (batch :: channels :: spatial)] :
-    Tensor.groupNorm x ⟨1, by simp⟩ groups gamma beta (Nat.dvd_of_mod_eq_zero hDiv)
-        epsilon =
-      reference x gamma beta hGroups hGroupsLe hDiv epsilon :=
-  groupNorm_one_eq_reference' x gamma beta hGroups hGroupsLe hDiv epsilon _
 
 end TorchLean.GroupNorm

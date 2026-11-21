@@ -58,8 +58,7 @@ variable {α : Type} [Storage α] [Context α]
 variable {T : Nat} {s : Shape}
 
 /-- The VP schedule convention is $\bar{\alpha}_0 = 1$. -/
-@[simp] theorem VPSchedule.alphaBar_zero (sched : VPSchedule α T) :
-    sched.alphaBar ⟨0, Nat.succ_pos T⟩ = 1 := by
+@[simp] theorem VPSchedule.alphaBar_zero (sched : VPSchedule α T) : sched.alphaBar 0 = 1 := by
   rfl
 
 /-- With no reverse steps, DDPM returns its initial terminal-noise state. -/

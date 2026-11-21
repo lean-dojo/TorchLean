@@ -41,13 +41,18 @@ open Verso.Genre.Manual.InlineLean
 open TorchLean Arithmetic Trainer.Objective
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: the namespaces and tensor operations of the TorchLean API. -/
+
 #doc (Manual) "TorchLean API" =>
 %%%
 tag := "torchlean-api"
 file := "The-TorchLean-API"
 %%%
 
-The chapter's examples start with these five lines:
+`Tensor.dot x y` accepts two tensors of the same shape and returns one scalar. Its type exposes both
+facts before execution. The examples build outward from that pattern: inspect an operation's shape
+contract, compose the operations into a model, and then choose how the model runs. The following
+imports cover the tensor, model, and training examples:
 
 ```
 import TorchLean.NN.Autograd.Function
@@ -57,27 +62,24 @@ import TorchLean.NN.Trainer.Train
 open TorchLean
 ```
 
-These imports supply the tensors, model builders, and training operations used below. A file that
-also proves a property or inspects a backend can add the relevant module to its imports.
-
-Keeping those dependencies separate limits what a training script needs to elaborate. Lean's module
-system determines which declarations are available in a file {Informal.citep lean4}[], and the
-import list records those dependencies.
+The imports bring in tensor operations, model builders, and training. Add a proof or backend
+module only when the file needs it. Lean's module system makes those dependencies explicit
+{Informal.citep lean4}[].
 
 Arithmetic and device are separate choices in the trainer configuration. The imports leave them
 open: we can keep a model's layers and shapes fixed while changing how a training run executes.
 
-Our XOR example below uses the same architecture and optimizer in TorchLean and PyTorch
-{Informal.citep pytorch2019}[]. Both fit the four training rows, yet predict differently away from
-them. First come the calculations that establish the tensor and shape conventions needed to read
-that comparison. Named Lean blocks are build-checked, while shell and PyTorch transcripts document
-separate runs.
+The training example under *A Complete Training Program* uses the same architecture and optimizer
+in TorchLean and PyTorch {Informal.citep pytorch2019}[]. Their final losses and their predictions
+away from the four training rows disagree. The tensor examples first establish the shape rules
+needed to read that comparison.
 
-# The Namespaces
+# Namespace Map
 
-`Tensor` represents values, `nn` defines models, `Data` supplies examples, and `Trainer` carries
-the model through optimization and prediction. The other namespaces expose configuration,
-derivatives, and mathematical interfaces:
+`Tensor` contains shape-indexed values and operations. `nn` composes those operations into layers
+and models. `Trainer` attaches an objective and executes updates once the model and data are ready.
+The remaining namespaces separate data loading, optimization, differentiation, runtime selection,
+and verification:
 
 :::table +header
 *
@@ -114,13 +116,13 @@ derivatives, and mathematical interfaces:
 
 `nn.linear`, `nn.op`, and `optim.adam`, all lowercase, are the canonical spellings. Specification,
 runtime, and proof declarations all sit under the `TorchLean` root with short names. Import the
-module that holds a declaration when the application needs it (the public names above cover the
+module that holds a declaration when the application needs it (the table's public names cover the
 model and training operations shown here).
 
 # Tensor Operations
 
-Tensor operations establish the shape conventions used by the model API. Each vector and matrix
-below declares its shape, which Lean reports as part of its type:
+Tensor operations establish the shape conventions used by the model API. The first declarations
+give two vectors and two matrices explicit shapes, which Lean reports as part of their types:
 
 ```lean (name := apiVecs)
 -- The matrix annotations retain row and column dimensions
@@ -167,8 +169,9 @@ $`1\cdot4+2\cdot5+3\cdot6=32`, and `torch.dot` agrees:
 dot        : 32.0
 ```
 
-`Tensor.dot` is the scalar-polymorphic reference definition used by proofs. It can also execute at
-`Float`, as above. Other plain tensor operations, including `matmul`, are scalar-polymorphic too,
+`Tensor.dot` is the scalar-polymorphic reference definition used by proofs. The `apiDot` example
+also executes it at `Float`. Other plain tensor operations, including `matmul`, are
+scalar-polymorphic too,
 and calling one doesn't by itself imply native dispatch or a different trust boundary.
 Use the runtime backend configuration when provider selection matters.
 
@@ -385,8 +388,8 @@ occupy them, and whether any values are duplicated or discarded.
 
 ## Linear Layer Operations
 
-Everything above composes into the operation a dense layer performs, and it is worth writing once
-without any model machinery:
+A dense layer combines matrix multiplication, bias expansion, and addition. The following block
+writes that computation without any model machinery:
 
 ```lean (name := apiLinear)
 -- One weight and bias pair is reused for each of these four
@@ -455,13 +458,13 @@ reshape. Instance search checks the trailing feature width while retaining the p
 
 Dot syntax is used when the value before the dot is the natural subject of the operation:
 `tensor.reshape`, `module.forward`, `trainer.train`, `trained.predict`, and `result.printSummary`.
-That's why the reshape above is written `apiV1.reshape [3, 1]`. A choice such as a device or a loss
+For example, the reshape is written `apiV1.reshape [3, 1]`. A choice such as a device or a loss
 is a constructor of its own type. Where Lean expects that type, a leading dot names it, as in
 `device := .cpu`, and opening the type's namespace allows the plain name: devices `cpu` and `cuda`
 in `Backend.Device`, arithmetic `native`, `ieee` and `complex` in `Arithmetic`, losses `mse` and
 `oneHotCrossEntropy` in `Trainer.Objective`, activations such as `relu` in `Activation.Kind`, the
 verifier's `ibp` and `crown` in `Verification.Algorithm`, and its `outputBounds` and `topLabel` in
-`Verification.Property`. This chapter opens `Arithmetic` and `Trainer.Objective`. The verifier's
+`Verification.Property`. This file opens `Arithmetic` and `Trainer.Objective`. The verifier's
 choices are written with a leading dot, as in `(algorithm := .ibp)` and
 `(property := .topLabel 0)`. A choice whose word is generic is written with its type instead, such
 as `nn.Mode.eval` or `Loss.Reduction.sum`, so that it can't capture a variable of the same name.
@@ -478,10 +481,10 @@ at the call site without requiring callers to unpack the runtime representation.
 
 # A Complete Training Program
 
-XOR supplies four input rows and a scalar target for each. Our program trains a two-layer network
+XOR supplies four input rows and a scalar target for each. The program trains a two-layer network
 with mean-squared error and Adam, then evaluates it at a point outside those four rows. Save the
-declarations and `main` in `Scratch.lean` at the repository root (with the imports and `open` shown
-above).
+declarations and `main` in `Scratch.lean` at the repository root, together with the opening import
+block.
 
 Since the model, data, and trainer are ordinary declarations, we can elaborate them right here and
 read their types before running anything:
@@ -524,8 +527,8 @@ one input sample and one target sample: the dataset constructor removes the lead
 (its size only has to agree between the two arguments).
 
 Materializing this dataset will therefore yield four paired items, not one item containing all four
-rows. And the model still consumes a `[2]` input and returns a `[1]` prediction. In the `main`
-below, `samplesPerStep := 4` gathers the four item gradients at one parameter point before Adam
+rows. And the model still consumes a `[2]` input and returns a `[1]` prediction. In `main`,
+`samplesPerStep := 4` gathers the four item gradients at one parameter point before Adam
 updates it, and that grouping belongs to the training loop: it hasn't changed the model's shape
 into `[4, 2] → [4, 1]`. You can see in the constructor signature where the shared row count is
 required:
@@ -811,8 +814,8 @@ without touching the optimizer or the objective.
 `Arithmetic` isn't a storage dtype. It chooses the arithmetic for an executable run.
 `native` selects Lean's native binary32 `Float32`, `ieee` selects FloatLib binary32, and `complex`
 selects complex numbers over FloatLib binary32. That choice changes the meaning of arithmetic
-operations instead of attaching a label to an untyped buffer. This is why the scratch run above
-reported `arithmetic=native scalar=Float32` in its summary line: the run states its own semantics.
+operations instead of attaching a label to an untyped buffer. The `Scratch.lean` run reports
+`arithmetic=native scalar=Float32` in its summary line because the run states its own semantics.
 
 Trainer-facing datasets are commonly authored as `Tensor Float ...`, where `Float` is Lean's host
 binary64 type. Each dataset materializes its samples in the scalar selected by the trainer. This is
@@ -836,11 +839,11 @@ real-data interface into a complex-data interface.
 Try `scripts/lake.sh exe torchlean complex_regression` for a complete complex binary32 example.
 It fits a weight and bias against a real squared-residual loss and prints a held-out prediction.
 
-Each direct tensor calculation above uses the `Float` written in its annotations. None of them is
-silently redirected through a trainer's `native` setting. The same is true of the explicit
-derivative example below (its input is a `Tensor Float [3]`). Conversion to native `Float32`
-belongs to the high-level training boundary. Keeping that boundary visible avoids attributing a
-binary64 calculation to binary32 merely because both print six decimal places.
+The direct calculations in `Tensor Operations` use the `Float` written in their annotations. None
+of them is silently redirected through a trainer's `native` setting. The same is true of
+`apiEnergy` in `Explicit Differentiation`, whose input is a `Tensor Float [3]`. Conversion to
+native `Float32` belongs to the high-level training boundary. Keeping that boundary visible avoids
+attributing a binary64 calculation to binary32 merely because both print six decimal places.
 
 # Runtime-Polymorphic Data
 
@@ -902,8 +905,8 @@ the loss require rounding when represented as `Float`. PyTorch's `backward` on t
 value: 4.666666507720947 grad: [0.6666666865348816, 1.3333333730697632, 2.0]
 ```
 
-Same numbers, to the last displayed digit of TorchLean's six-decimal formatting. And the shipped
-quickstart prints the same result from a compiled binary, not from elaboration:
+The results agree to the last digit shown by TorchLean's six-decimal formatting. The shipped
+quickstart also prints the result from a compiled binary rather than during elaboration:
 
 ```terminal +output
 == Differentiate a tensor function ==
@@ -924,7 +927,8 @@ instead of mutating tensors. `jacrev` builds the Jacobian by reverse mode, one r
 [0.666667, 1.333333, 2.000000]
 ```
 
-A scalar output has no axes, so this Jacobian has the input shape and equals the gradient above.
+A scalar output has no axes, so this Jacobian has the input shape and equals the gradient returned
+by `autograd.grad apiEnergy apiVec`.
 
 In general the Jacobian shape is the output shape followed by the input shape. Here the empty
 output shape adds no dimensions, leaving `[3]`. The Hessian differentiates that three-coordinate
@@ -959,7 +963,7 @@ Derivatives are returned as values. Parameter derivatives have the same dependen
 structure as the parameters, and there's no mutable `.grad` field on `Tensor` values. That's a
 consequence of the host language, not a stylistic preference: Lean values are immutable, and its
 compiler recovers in-place updates through reference counting instead
-{Informal.citep immutablebeans2019}[] . Each query returns a fresh gradient result without
+{Informal.citep immutablebeans2019}[]. Each query returns a fresh gradient result without
 accumulating into a persistent tensor field. Callers can still accidentally reuse an old returned
 value or explicitly combine the wrong packs. There's no `zero_grad` in this API because there's
 nothing to zero. A model `vjp` returns a state gradient and input gradient from one reverse pass,
@@ -978,24 +982,24 @@ Each entry is labeled by its shape (`[1, 2]` for the weight and `[1]` for the bi
 gradient has the same structure as the parameters it differentiates.
 
 In the weight entry, the two numbers are derivatives with respect to the two separate weights,
-while the bias entry has only one coordinate. Printed above the pack, the scalar loss is the
-objective value at the same model state at which those derivatives were taken. That's enough to
-feed an optimizer or compare a derivative calculation, but it isn't itself an update: a gradient
-result leaves the choice of learning rate, optimizer memory, and parameter replacement to its
-caller.
+while the bias entry has only one coordinate. The quickstart prints the scalar loss immediately
+before the pack; it is the objective value at the same model state at which those derivatives were
+taken. That's enough to feed an optimizer or compare a derivative calculation, but it isn't itself
+an update: a gradient result leaves the choice of learning rate, optimizer memory, and parameter
+replacement to its caller.
 
 # Functional Tensor Operations
 
-Use `nn.functional` when constructing a differentiable tensor program, as `apiEnergy` did above. An
-arbitrary Lean function over `TorchLean.Tensor` is useful for specifications, and the `Tensor`
-operations from the first section of this chapter are exactly that, but a plain function doesn't
-carry runtime graph and derivative behavior. `nn.functional.square` and `Tensor.square` compute the
-same mathematics, while only the first one can be differentiated by the transforms above.
+Use `nn.functional` when constructing a differentiable tensor program, as in `apiEnergy`. An
+arbitrary Lean function over `TorchLean.Tensor` is useful for specifications, and the operations in
+`Tensor Operations` are exactly that, but a plain function doesn't carry runtime graph and
+derivative behavior. `nn.functional.square` and `Tensor.square` compute the same mathematics,
+while only the first one can be differentiated by `autograd.grad`, `jacrev`, and `hessian`.
 
 This is the usual distinction for an embedded differentiable language: operations must register the
 semantics that execution and automatic differentiation need. Tracing frameworks reach the same
 place from the other direction, by recording a graph while ordinary code runs
-{Informal.citep fx2022}[] . Here the graph is what the `autograd.Function` monad builds, so
+{Informal.citep fx2022}[]. Here the graph is what the `autograd.Function` monad builds, so
 typechecking establishes the operation interface and shapes, though a selected transform can still
 reject operations whose derivative lowering it doesn't support.
 
@@ -1005,7 +1009,7 @@ TorchLean's k-nearest-neighbor classifier stores labeled points and votes among 
 are no layers to initialize). Its definition lives in `TorchLean/NN/Models`, alongside other
 classical models that use the same shape-indexed tensors.
 
-The chapter's opening imports don't bring in these models, so a file that uses them adds one
+The opening imports don't bring in these models, so a file that uses them adds one
 focused import. Here is a complete executable k-nearest-neighbor classifier: the model stores its
 labeled samples, while evaluation computes distances and applies a deterministic majority vote
 (ties are broken deterministically by neighbor order).
@@ -1084,8 +1088,8 @@ classify : (α β : Type) →
 With the decidable ordering the classifier can rank distances, and with `BEq` and `Hashable` it can
 tally labels. `Inhabited` supplies a default label when there are no neighbors to vote. Callers
 that require a vote-supported prediction must therefore ensure that neighbors exist. Other
-families, including the GMM and HMM likelihood operations below, expose invalid inputs through
-optional results.
+families, including the GMM and HMM likelihood operations in the table, expose invalid inputs
+through optional results.
 
 We deliberately expose different amounts of fitting and inference machinery across the exported
 families:
@@ -1165,8 +1169,8 @@ import TorchLean.Verify.Lowering
 ```
 
 Prefer the narrowest stable import that expresses the file's responsibility. For a concrete case,
-take the kNN section above: the chapter's opening imports don't carry the classical models, so the
-example adds `import TorchLean.NN.Models.KNN` and nothing else. A numerical theorem should not
+take `Classical Models`: the opening imports don't carry the classical models, so the example adds
+`import TorchLean.NN.Models.KNN` and nothing else. A numerical theorem should not
 import the entire executable example catalog merely for convenience, and a training script should
 not depend on the internal tape API.
 
@@ -1211,7 +1215,7 @@ Use the generated API search:
 ```
 
 On the published project site the prefix is `/TorchLean/docs/search.html`, while a root-mounted
-local preview uses `/docs/search.html` . Website navigation supplies the configured prefix. For
+local preview uses `/docs/search.html`. Website navigation supplies the configured prefix. For
 source search:
 
 ```terminal

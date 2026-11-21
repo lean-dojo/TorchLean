@@ -87,23 +87,26 @@ View a dataset tensor as a function `Fin n → Z`.
 
 - define replace/remove operations via `Function.update` and `Fin.removeNth`, and
 - transport the standard product measurable space / IID sampling measure to the tensor type.
+
+It is a definition, not an abbreviation, so that `simp` does not rewrite `toFn S i` to
+`getScalar S i` and the simp lemmas below about `toFn` apply.
 -/
-abbrev toFn (S : Dataset n Z) : Fin n → Z :=
+def toFn (S : Dataset n Z) : Fin n → Z :=
   Tensor.vectorEquiv (α := Z) n S
 
 /-- Build a dataset tensor from a function `Fin n → Z`. -/
-abbrev ofFn (f : Fin n → Z) : Dataset n Z :=
+def ofFn (f : Fin n → Z) : Dataset n Z :=
   (Tensor.vectorEquiv (α := Z) n).symm f
 
 /-- Reading back a dataset built from a function recovers the function. -/
-@[simp] theorem toFn_ofFn (f : Fin n → Z) :
+theorem toFn_ofFn (f : Fin n → Z) :
     toFn (n := n) (Z := Z) (ofFn (n := n) (Z := Z) f) = f := by
   simp [toFn, ofFn]
 
 /-- The other round trip. Together with `toFn_ofFn` this is what lets stability arguments move
 freely between the tensor representation of a sample and the function view the measure theory
 prefers. -/
-@[simp] theorem ofFn_toFn (S : Dataset n Z) :
+theorem ofFn_toFn (S : Dataset n Z) :
     ofFn (n := n) (Z := Z) (toFn (n := n) (Z := Z) S) = S := by
   simp [toFn, ofFn]
 

@@ -374,7 +374,7 @@ For a function `p : Fin d → Fin d`, all fiber cardinalities are odd iff `p` is
 
 Since `Fin d` is finite of size `d`, odd fibers force every fiber to have size `1`.
 -/
-theorem forall_odd_fiberCount_iff {d : Nat} (p : Fin d → Fin d) :
+theorem forall_odd_fiberCount_iff {d : Nat} {p : Fin d → Fin d} :
     (∀ j : Fin d, Odd (fiberCount (d := d) p j)) ↔ Function.Bijective p := by
   classical
   constructor
@@ -411,12 +411,12 @@ theorem signCoeff_eq_ite_bijective {d : Nat} (p : Fin d → Fin d) :
   · -- reduce the goal with `hb`, then use the all-odd characterization.
     rw [ite_eq_left hb]
     have hall : ∀ j : Fin d, Odd (fiberCount (d := d) p j) :=
-      (forall_odd_fiberCount_iff (d := d) p).2 hb
+      forall_odd_fiberCount_iff.2 hb
     simpa [hall] using h
   · rw [ite_eq_right hb]
     have hall : ¬ (∀ j : Fin d, Odd (fiberCount (d := d) p j)) := by
       intro hall
-      exact hb ((forall_odd_fiberCount_iff (d := d) p).1 hall)
+      exact hb (forall_odd_fiberCount_iff.1 hall)
     simpa [hall] using h
 
 /-! ## Polarization identity -/

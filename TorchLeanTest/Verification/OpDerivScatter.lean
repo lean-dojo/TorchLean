@@ -131,7 +131,7 @@ example (hd : DifferentiableAt ℝ
     (Tensor.map_apply _ index j).trans (congrArg some (Tensor.map_apply _ index j).symm)
   Op.scatter_prod_backward_eq_adjoint (s := [3]) (t := [2]) .max [(0 : Fin 1)]
     (List.nodup_singleton _) base index updates
-    (fun _ => (differentiableAt_scatter_max_iff _ _ _ hP _).mp hd) nofun δ
+    (fun _ => (differentiableAt_scatter_max_iff _ _ hP).mp hd) nofun δ
 
 /-- We apply the joint scatter certificate for a minimum on `[3]` along its axis at index tensors
 of shape `[2]` at every input where the forward is differentiable, so that its hypothesis asks
@@ -147,7 +147,7 @@ example (hd : DifferentiableAt ℝ
     (Tensor.map_apply _ index j).trans (congrArg some (Tensor.map_apply _ index j).symm)
   Op.scatter_prod_backward_eq_adjoint (s := [3]) (t := [2]) .min [(0 : Fin 1)]
     (List.nodup_singleton _) base index updates nofun
-    (fun _ => (differentiableAt_scatter_min_iff _ _ _ hP _).mp hd) δ
+    (fun _ => (differentiableAt_scatter_min_iff _ _ hP).mp hd) δ
 
 end Concrete
 

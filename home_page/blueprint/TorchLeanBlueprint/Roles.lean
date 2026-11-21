@@ -18,14 +18,14 @@ namespace TorchLeanBlueprint.Roles
 def repoUrl : String := "https://github.com/lean-dojo/TorchLean/"
 
 /-- Links `text` to a file in the TorchLean repository at `blob/main/PATH`. -/
-def repoFileLink (path : String) (inlines : TSyntaxArray `inline) :
+def repoFileLink (path : String) (inlines : Array Lean.Doc.VersoInline) :
     DocElabM (Array (TSyntax `term)) := do
   let url := repoUrl ++ "blob/main/" ++ path
   let content ← inlines.mapM elabInline
   pure #[← ``(Verso.Doc.Inline.link #[$content,*] $(quote url))]
 
 /-- Links `text` to a directory in the TorchLean repository at `tree/main/PATH`. -/
-def repoDirLink (path : String) (inlines : TSyntaxArray `inline) :
+def repoDirLink (path : String) (inlines : Array Lean.Doc.VersoInline) :
     DocElabM (Array (TSyntax `term)) := do
   let url := repoUrl ++ "tree/main/" ++ path
   let content ← inlines.mapM elabInline
@@ -62,14 +62,14 @@ block_extension terminalBlock (output : Bool) where
     open Verso.Output.Html in
     some <| fun _ blockHtml _ data content => do
       let output := (fromJson? data : Except String Bool).toOption.getD false
-      pure {{
-        <div class="tl-terminal" data-output={{if output then "true" else "false"}}>
+      pure html%{
+        <div class="tl-terminal" data-output={if output then "true" else "false"}>
           <div class="tl-terminal-heading">
-            {{if output then "Recorded output" else "Terminal"}}
+            {if output then "Recorded output" else "Terminal"}
           </div>
-          {{← content.mapM blockHtml}}
+          {← content.mapM blockHtml}
         </div>
-      }}
+      }
   toTeX := some <| fun _ blockTeX _ _ content => .seq <$> content.mapM blockTeX
 
 /-- Display shell input with `terminal`, or a recorded result with `terminal +output`.
@@ -82,5 +82,5 @@ def terminal : CodeBlockExpander
     let output ← ArgParse.run (.flag `output false) args
     let block ←
       ``(Verso.Doc.Block.other (terminalBlock $(quote output))
-        #[Verso.Doc.Block.code $(quote str.getString)])
+        #[Verso.Doc.Block.code $(quote str.getVersoCodeBlock)])
     pure #[block]

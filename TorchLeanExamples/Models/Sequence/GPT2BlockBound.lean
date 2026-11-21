@@ -18,7 +18,8 @@ per token. The stage inequalities are checked by `norm_num` and `linarith` from 
 the square roots, exponentials and summation constants that occur. The file applies the generic
 bound `Arithmetic.sqrt_sum_sq_block_sub_le` of `TorchLean.Verify.RuntimeApprox.TransformerBlock`
 to `nearestContract`, which `TorchLean.Verify.RuntimeApprox.TransformerBlock.Nearest` builds for
-nearest rounding in any IEEE format.
+nearest rounding in any IEEE format. Like that bound, it covers the rounding schedule of
+`Arithmetic.block`, not the block the op table executes.
 -/
 
 @[expose] public section

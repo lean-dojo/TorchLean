@@ -88,7 +88,7 @@ def nodes (xs : List (Σ s, T s)) : Nat → List (Σ s, T s)
   | r + 1 => (nodes xs r).flatMap children
 
 /-- Level `r + 1` below some values is level `r` below their children. -/
-theorem nodes_succ' (xs : List (Σ s, T s)) (r : Nat) :
+theorem nodes_succ (xs : List (Σ s, T s)) (r : Nat) :
     nodes xs (r + 1) = nodes (xs.flatMap children) r := by
   induction r with
   | zero => rfl
@@ -121,7 +121,7 @@ theorem length_nodes_le (xs : List (Σ s, T s)) (r : Nat) :
     simp only [nodes]
     omega
   | succ r ih =>
-    rw [nodes_succ']
+    rw [nodes_succ]
     have := ih (xs.flatMap children)
     have := sum_count_flatMap xs
     omega
@@ -497,7 +497,7 @@ theorem getElem?_encodeAux (xs : List (Σ s, T s)) (acc : Array (Arena.Level α)
     · simp [nodes, h]
     · have h₁ : ¬r < acc.size + 1 := by omega
       have h₂ : ¬r < acc.size := by omega
-      rw [show r - acc.size = r - (acc.size + 1) + 1 by omega, nodes_succ' xs (r - (acc.size + 1))]
+      rw [show r - acc.size = r - (acc.size + 1) + 1 by omega, nodes_succ xs (r - (acc.size + 1))]
       simp only [h₁, h₂, ↓reduceIte]
       rfl
 

@@ -140,6 +140,7 @@ theorem layerNormDerivRow?_encloses
     · contradiction
     · obtain ⟨⟨reciprocalLo, t⟩, hreciprocal, hout⟩ := Option.bind_eq_some_iff.mp hout
       obtain ⟨_, _, hout⟩ := Option.bind_eq_some_iff.mp hout
+      -- `t` bounds `1 / sqrt ε` above; `ht3` and `ht5` bound its cube and fifth power.
       have hrootBounds := LawfulNonlinearBoundOps.sqrtBounds_enclosure hroot le_rfl le_rfl
       have htBounds := LawfulNonlinearBoundOps.divBounds_enclosure hreciprocal
         (le_of_eq (LawfulBoundOps.toReal_one (α := α)))
@@ -155,6 +156,7 @@ theorem layerNormDerivRow?_encloses
       obtain ⟨a, haResult, hout⟩ := Option.bind_eq_some_iff.mp hout
       obtain ⟨b, hbResult, hout⟩ := Option.bind_eq_some_iff.mp hout
       obtain ⟨c, hcResult, hout⟩ := Option.bind_eq_some_iff.mp hout
+      -- `u`, `a`, `b` and `c` bound the centered input and the three centered differentials.
       have hu := centeredRadii?_encloses hn input _ hx huResult
       have hca := centeredRadii?_encloses hn left _ ha haResult
       have hcb := centeredRadii?_encloses hn right _ hb hbResult
@@ -178,6 +180,7 @@ theorem layerNormDerivRow?_encloses
       have htwoBounds : 0 ≤ (2 : ℝ) ∧ 2 ≤ value (2 : α) := by
         rw [htwo]
         norm_num
+      -- `qLeft`, `qRight` and `qMixed` bound `varianceFirstRadius` and `varianceMixedRadius`.
       obtain ⟨qLeft, hqLeft, hout⟩ := Option.bind_eq_some_iff.mp hout
       obtain ⟨qRight, hqRight, hout⟩ := Option.bind_eq_some_iff.mp hout
       obtain ⟨qMixed, hqMixed, hout⟩ := Option.bind_eq_some_iff.mp hout
@@ -198,6 +201,8 @@ theorem layerNormDerivRow?_encloses
           (fun j => value (b j)) (fun j => value (c j)) ∧
         varianceMixedRadius (fun j => value (u j)) (fun j => value (a j))
           (fun j => value (b j)) (fun j => value (c j)) ≤ value qMixed at hqM
+      -- With `1/2` and `3/4` rounded up, `hrL`, `hrR` and `hrM` bound `inverseFirstRadius` and
+      -- `inverseMixedRadius`.
       obtain ⟨⟨halfLo, halfHi⟩, hhalf, hout⟩ := Option.bind_eq_some_iff.mp hout
       obtain ⟨⟨threeQuartersLo, threeQuartersHi⟩, hthreeQuarters, hout⟩ :=
         Option.bind_eq_some_iff.mp hout
@@ -220,6 +225,8 @@ theorem layerNormDerivRow?_encloses
       have hpoint := Tensor.sequenceFinM_get_of_eq_some hradii
       have houtEq := Option.some.inj hout
       cases houtEq
+      -- At entry `j` both intervals are symmetric about `0`, with radius `|γ j|` times a bound on
+      -- the analytic differential.
       intro j
       simp only [Tensor.getScalar_ofFn]
       have hj := hpoint j
@@ -302,7 +309,7 @@ theorem layerNormDerivRow?_sound
         (fun q => value (gamma.getScalar j) * nrm (X q) (value epsilon) i j + beta j)
         (value (gamma.getScalar j) •
           (nrmD (X p) (value epsilon) i j).comp (fderiv ℝ X p)) p :=
-      (((hasFDerivAt_nrm hε (X p) i j).comp p (hX p).hasFDerivAt).const_mul
+      (((hasFDerivAt_nrm (X p) i j (rowVar_add_pos hε _ i)).comp p (hX p).hasFDerivAt).const_mul
         (value (gamma.getScalar j))).add_const (beta j)
     exact congrArg (fun D : E →L[ℝ] ℝ => D v) hd.fderiv
   rw [hfirst, fderiv_fderiv_affine_nrm_comp hε X p v w hX DA hA]

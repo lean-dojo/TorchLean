@@ -409,16 +409,16 @@ def balanced : Nat → Ast
 /-- A pseudorandom expression of depth at most `n` from `seed`, with variables below `6`. -/
 def random : Nat → UInt64 → Ast
   | 0, seed =>
-    let z := BTree.mix seed
+    let z := Random.splitmix64 seed
     if z % 2 = 0 then .lit (moderate z) else .var (z % 6)
   | n + 1, seed =>
-    let z := BTree.mix seed
-    let a := random n (BTree.mix (seed ^^^ 1))
+    let z := Random.splitmix64 seed
+    let a := random n (Random.splitmix64 (seed ^^^ 1))
     match (z % 8).toNat with
     | 0 => .lit (moderate z)
     | 1 => .var (z % 6)
-    | 2 | 3 | 4 => .add a (random n (BTree.mix (seed ^^^ 3)))
-    | 5 | 6 => .mul a (random n (BTree.mix (seed ^^^ 3)))
+    | 2 | 3 | 4 => .add a (random n (Random.splitmix64 (seed ^^^ 3)))
+    | 5 | 6 => .mul a (random n (Random.splitmix64 (seed ^^^ 3)))
     | _ => .neg a
 
 end Ast

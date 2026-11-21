@@ -591,8 +591,8 @@ theorem backwardRule_sound [Op.Capabilities α] (dir : BackwardDir)
         · simp [LawfulBoundOps.toReal_zero]
       · exact DirInvariant.of_eq (Or.inl rfl)
     · exact DirInvariant.of_eq (Or.inl rfl)
-  case matmul bA bB b m n p lv rv hl hr hA hB =>
-    rcases l with _ | ⟨r₁, _ | ⟨r₂, _ | ⟨r₃, l⟩⟩⟩
+  case matmul bA bB b m n p lv rv hl hr hA hB order =>
+    cases order <;> rcases l with _ | ⟨r₁, _ | ⟨r₂, _ | ⟨r₃, l⟩⟩⟩
     all_goals try exact hd
     have hp := hpar r₁ (by simp)
     have hq := hpar r₂ (by simp)
@@ -630,8 +630,8 @@ theorem backwardRule_sound [Op.Capabilities α] (dir : BackwardDir)
         · simp [LawfulBoundOps.toReal_zero]
       · exact DirInvariant.of_eq (Or.inl rfl)
     · exact DirInvariant.of_eq (Or.inl rfl)
-  case scaledMatmul bA bB b m n p lv rv hl hr hA hB =>
-    rcases l with _ | ⟨r₁, _ | ⟨r₂, _ | ⟨r₃, _ | ⟨r₄, l⟩⟩⟩⟩
+  case scaledMatmul bA bB b m n p lv rv hl hr hA hB order =>
+    cases order <;> rcases l with _ | ⟨r₁, _ | ⟨r₂, _ | ⟨r₃, _ | ⟨r₄, l⟩⟩⟩⟩
     all_goals try exact hd
     have hp := hpar r₁ (by simp)
     have hq := hpar r₂ (by simp)
@@ -697,7 +697,7 @@ theorem backwardRule_sound [Op.Capabilities α] (dir : BackwardDir)
 
 omit [LawfulBoundOps α] in
 /-- The tighter of two forms is one of them. -/
-theorem tighterForm_eq_or [Op.Capabilities α] (lower : Bool)
+theorem tighterForm_eq_or (lower : Bool)
     (xB? : Option (FlatBox α)) {n : Nat} (a b : Linear α n 1) :
     tighterForm lower xB? a b = a ∨ tighterForm lower xB? a b = b := by
   unfold tighterForm
@@ -853,7 +853,7 @@ theorem nodeBounds?_encloses [Op.Capabilities α] {G : IR.Graph}
 /-- The box of `backwardObjectiveBox?` at graph output `i` encloses the objective `obj · v out` of
 its node `out` at a real point of the graph whose operator nodes satisfy their real equations, when
 the box `xB` encloses the point's input. -/
-theorem backwardObjectiveBox?_encloses [Op.Capabilities α] [NonlinearBoundOps α]
+theorem backwardObjectiveBox?_encloses [Op.Capabilities α]
     {G : IR.Graph} {P : IR.Payload α} {ibp : Array (Option (FlatBox α))} {xB : FlatBox α}
     {i out : Nat} {ctx : AffineCtx} (hctx : outputContext G xB i = .ok (out, ctx))
     {dims : Nat → Nat} {v : Nat → Nat → ℝ} (hG : GraphPoint G P ibp ctx dims v)

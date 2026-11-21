@@ -105,7 +105,7 @@ variable (format : FloatFormat)
 The Boolean zero test compares real values. A zero-valued input therefore returns a scalar whose
 value is zero, and the remaining branch selects the input or zero according to the same real order.
 Both cases give $\max(x.\mathrm{val},0)$ exactly, with no rounding error. -/
-@[simp] theorem relu_val (x : Rounded format) :
+theorem relu_val (x : Rounded format) :
     (Activation.relu x).val = Activation.relu x.val := by
   rw [Activation.relu_eq_max, Activation.relu_eq_max]
   by_cases hx : (0 : Rounded format) ≤ x

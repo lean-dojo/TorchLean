@@ -27,7 +27,7 @@ public meta import TorchLean.Tensor.Tactic.Einops.Report
 public meta import FloatLib.Floats.Formats.BinaryInterchange.Configured.Value.Core
 public meta import TorchLean.Tensor.Elementwise
 public meta import TorchLean.Tensor.ConfiguredBinary
-public import FloatLib.Numerics.Automation.Attributes
+public import FloatLib.Tactic.Numerics.Attribute
 public import TorchLean.Tensor.Literal
 public import TorchLean.Tensor.Tactic.Init
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Rules.Elementwise

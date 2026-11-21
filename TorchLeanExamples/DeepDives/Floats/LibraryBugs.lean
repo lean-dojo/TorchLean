@@ -27,7 +27,7 @@ public import TorchLean.Tensor.Layers.Activation
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Real
 public import FloatLib.Numerics.MixedError.Basic
 import TorchLean.NN.Gradients.Activation
-public import FloatLib.Numerics.Automation.Attributes
+public import FloatLib.Tactic.Numerics.Attribute
 public import TorchLean.Tensor.Literal
 public import TorchLean.Tensor.Tactic.Init
 public import TorchLean.Verify.RuntimeApprox.Roundoff
@@ -714,13 +714,6 @@ end Formulas
 /-- The change-of-variables term `log (1 - tanh² u)`. -/
 noncomputable def exact (u : ℝ) : ℝ := Real.log (1 - Real.tanh u ^ 2)
 
-/-- Softplus over the reals is `log (1 + exp m)`. -/
-private theorem softplus_real (m : ℝ) :
-    Activation.softplus m = Real.log (1 + Real.exp m) := by
-  have h := SoftMargin.loss_real (-m) 1
-  simp only [SoftMargin.loss, SoftMargin.libraryLoss, one_mul, neg_neg, mul_one] at h
-  rw [h, MathFunctions.exp_real, Context.log1p_eq_log_one_add]
-
 /-- Over the reals, Stable-Baselines3's term without its epsilon and `correction` are the
 change-of-variables term. -/
 theorem correction_real (u : ℝ) : libraryCorrection u 0 = exact u ∧ correction u = exact u := by
@@ -737,7 +730,7 @@ theorem correction_real (u : ℝ) : libraryCorrection u 0 = exact u ∧ correcti
   have hsum : 1 + Real.exp (-(u + u)) = Real.exp (-u) * (Real.exp u + Real.exp (-u)) := by
     rw [mul_add, ← Real.exp_add, ← Real.exp_add, show -u + u = 0 by ring,
       show -u + -u = -(u + u) by ring, Real.exp_zero]
-  simp only [correction, exact, softplus_real, MathFunctions.log]
+  simp only [correction, exact, Activation.softplus_eq_log_one_add_exp, MathFunctions.log]
   rw [hsech, hsum, Real.log_mul hn.ne' hs.ne', Real.log_exp,
     Real.log_div (by norm_num) (by positivity), Real.log_pow, show (4 : ℝ) = 2 ^ 2 by norm_num,
     Real.log_pow]
@@ -753,7 +746,7 @@ def binary32Epsilon : Binary32 := 1 / (10 ^ 6 : ℕ)
 private theorem exact_ten_mem :
     exact 10 ∈ Set.Icc (2 * Real.log 2 - 20 - 2 * Real.exp (-20)) (2 * Real.log 2 - 20) := by
   rw [← (correction_real 10).2]
-  simp only [correction, softplus_real, MathFunctions.log]
+  simp only [correction, Activation.softplus_eq_log_one_add_exp, MathFunctions.log]
   have hpos : 0 < Real.exp (-(10 + 10 : ℝ)) := Real.exp_pos _
   have hlog := Real.log_le_sub_one_of_pos (by positivity : (0 : ℝ) < 1 + Real.exp (-(10 + 10)))
   have hnn := Real.log_nonneg (by linarith : (1 : ℝ) ≤ 1 + Real.exp (-(10 + 10)))

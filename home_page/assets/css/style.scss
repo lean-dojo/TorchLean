@@ -26,6 +26,8 @@
   --tl-small-size: clamp(0.92rem, calc(0.88rem + 0.12vw), 1rem);
   --tl-code-size: clamp(0.9rem, calc(0.86rem + 0.10vw), 0.98rem);
   --tl-copy-line: 1.66;
+  --tl-site-width: 1200px;
+  --tl-site-gutter: clamp(1rem, 3vw, 2.5rem);
 }
 
 :root[data-theme="dark"] {
@@ -167,20 +169,12 @@ body {
   border-bottom: 0;
 }
 
-@media screen and (min-width: 64em) {
-  .main-content {
-    box-sizing: border-box;
-    width: min(1120px, calc(100vw - 2rem));
-    max-width: none;
-    padding: clamp(1.15rem, 2vw, 2.1rem) clamp(1.5rem, 2.6vw, 2.6rem) clamp(2rem, 3.2vw, 3.4rem);
-  }
-}
-
-@media screen and (min-width: 42em) and (max-width: 64em) {
-  .main-content {
-    box-sizing: border-box;
-    padding: clamp(0.95rem, 2.3vw, 1.65rem) clamp(1.25rem, 3vw, 2.25rem) clamp(1.25rem, 3vw, 2.25rem);
-  }
+.main-content {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--tl-site-width);
+  margin-inline: auto;
+  padding: clamp(1rem, 2vw, 2.1rem) var(--tl-site-gutter) clamp(2rem, 3.2vw, 3.4rem);
 }
 
 .page-header {
@@ -199,10 +193,10 @@ body {
   display: flex;
   align-items: center;
   gap: clamp(0.7rem, 1.8vw, 1.4rem);
-  width: min(1120px, 100%);
+  width: min(var(--tl-site-width), 100%);
   min-height: 4.1rem;
   margin: 0 auto;
-  padding: 0.52rem clamp(1rem, 3vw, 2.2rem);
+  padding: 0.52rem var(--tl-site-gutter);
 }
 
 .project-name {
@@ -322,15 +316,6 @@ body {
 
 /* --- TorchLean docs site components --- */
 
-.lede {
-  font-size: clamp(1.5rem, calc(1.18rem + 1vw), 2.22rem);
-  line-height: 1.22;
-  margin-top: 0.25rem;
-  margin-bottom: 1.15rem;
-  color: var(--tl-ink);
-  max-width: 980px;
-}
-
 .home-intro {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
@@ -389,6 +374,39 @@ body {
   display: block;
   margin-bottom: 0.45rem;
   color: var(--tl-ink);
+}
+
+.home-overview {
+  min-width: 0;
+  width: 90%;
+  justify-self: end;
+  margin: 0.2rem 0 0;
+}
+
+.home-overview a {
+  display: block;
+  border: 1px solid var(--tl-border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #ffffff;
+  line-height: 0;
+}
+
+.home-overview a:hover {
+  border-color: var(--tl-subtle);
+}
+
+.home-overview img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.home-overview figcaption {
+  margin-top: 0.55rem;
+  color: var(--tl-subtle);
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .primary-link,
@@ -471,34 +489,11 @@ body {
   font-style: normal;
 }
 
-.home-overview {
-  min-width: 0;
-  width: 90%;
-  justify-self: end;
-  margin: 0.2rem 0 0;
+.media-slab {
+  margin: 0 0 1.1rem;
 }
 
-.home-overview a {
-  display: block;
-  border: 1px solid var(--tl-border);
-  border-radius: 6px;
-  overflow: hidden;
-  background: #ffffff;
-  line-height: 0;
-}
-
-.home-overview a:hover {
-  border-color: var(--tl-subtle);
-}
-
-.home-overview img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
-.home-overview figcaption {
-  margin-top: 0.55rem;
+.media-slab figcaption {
   color: var(--tl-subtle);
   font-size: 0.82rem;
   line-height: 1.45;
@@ -512,7 +507,7 @@ body {
   border: 1px solid rgba(0, 0, 0, 0.12);
   background: radial-gradient(1200px 380px at 40% 0%, rgba(21, 120, 120, 0.12), rgba(255, 255, 255, 0));
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.07);
-  margin: 0.9rem 0 1.1rem;
+  margin: 0.9rem 0 0.55rem;
 }
 
 /* The tools page is a directory, so its cards hold several destinations instead
@@ -532,15 +527,6 @@ body {
   border: 1px solid var(--tl-border);
   border-radius: 8px;
   background: var(--tl-panel);
-}
-
-.tool-card .tool-kind {
-  margin: 0 0 0.3rem;
-  color: var(--tl-green);
-  font-size: 0.8rem;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .tool-card h2 {
@@ -770,38 +756,6 @@ input.search-input[type="search"] {
   padding: 0.75rem 0.15rem 0.25rem;
   color: var(--tl-muted);
   font-size: 0.94rem;
-}
-
-.timeline-nav {
-  display: flex;
-  gap: 0.5rem;
-  max-width: 100%;
-  margin: 1.2rem 0 1.8rem;
-  padding: 0.4rem 0 0.75rem;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--tl-border);
-  scrollbar-width: thin;
-}
-
-.timeline-nav a {
-  flex: 0 0 auto;
-  border: 1px solid var(--tl-border);
-  border-radius: 999px;
-  padding: 0.48rem 0.72rem;
-  background: var(--tl-panel);
-  color: var(--tl-muted);
-  font-size: 0.88rem;
-  font-weight: 700;
-  line-height: 1;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.timeline-nav a:hover {
-  background: var(--tl-soft);
-  border-color: var(--tl-border-strong);
-  color: var(--tl-ink);
-  text-decoration: none;
 }
 
 .updates-timeline {
@@ -1095,20 +1049,6 @@ input.search-input[type="search"] {
 
 /* --- CI performance history --- */
 
-.performance-lede {
-  max-width: 880px;
-}
-
-.performance-provenance {
-  margin: 1.25rem 0 1.5rem;
-  padding: 0.9rem 1rem;
-  border-left: 3px solid var(--tl-green);
-  border-radius: 0 8px 8px 0;
-  background: var(--tl-soft);
-  color: var(--tl-muted);
-  font-size: var(--tl-small-size);
-}
-
 .performance-dashboard {
   display: grid;
   gap: 1rem;
@@ -1145,6 +1085,12 @@ input.search-input[type="search"] {
 
 .performance-panel h2 {
   margin-top: 0;
+}
+
+.performance-panel summary {
+  display: list-item;
+  cursor: pointer;
+  color: var(--tl-blue);
 }
 
 .performance-panel-intro {
@@ -1408,16 +1354,6 @@ input.search-input[type="search"] {
     font-size: 0.86rem;
   }
 
-  .lede {
-    font-size: clamp(1.34rem, calc(1.12rem + 1.8vw), 1.75rem);
-  }
-
-  .home-intro-copy,
-  .home-highlights {
-    font-size: 1rem;
-    line-height: 1.65;
-  }
-
   .home-highlights > ul {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1481,18 +1417,6 @@ input.search-input[type="search"] {
 
   .update-card {
     grid-template-columns: 1fr;
-  }
-
-  .timeline-nav {
-    flex-wrap: wrap;
-    overflow-x: visible;
-  }
-
-  .timeline-nav a {
-    white-space: normal;
-  }
-
-  .update-card {
     gap: 0.5rem;
   }
 

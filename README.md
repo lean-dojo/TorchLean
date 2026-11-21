@@ -9,15 +9,16 @@ our own tensor functions, or build and train neural networks, from small example
 GPU-backed training runs. Lean is both a functional programming language and a theorem prover,
 so we can run a calculation and reason about it in the same language.
 
-The same model definition serves training, graph transformations, certificate checks and proofs.
-The verification tools answer questions such as whether a classifier keeps its prediction across
-an input region. Through FloatLib, we can choose the numerical precision and prove bounds on
-rounding and numerical error under stated assumptions. One autograd tape serves CPU tensors and
-GPU buffers. Both record operators from `TorchLean.Op`, the same table used by graph lowering and
-verification. The CPU executes the operator's forward and gradient rule; the GPU uses its
-LibTorch implementation. Automatic differentiation is TorchLean's own: the tape
-and the backward pass are Lean code, and on the GPU, LibTorch's ATen operations compute the tensor
-values and local gradients. That external GPU code is a trust boundary, outside the Lean proofs.
+We reuse the same tensor or model definition for training, graph transformations, certificate
+checks, and proofs. In Lean we can state the property we care about and prove it for that
+definition: an algebraic identity, a gradient formula, a symmetry or invariance, the correctness
+of a graph rewrite, or that a classifier keeps its prediction across an input region. FloatLib
+adds roundoff bounds for a chosen arithmetic format. Each theorem states the assumptions it needs.
+
+On CPU and CUDA, one Lean autograd tape records operators from `TorchLean.Op`, the same table used
+for graph lowering and verification. The CPU runs their Lean rules. On CUDA, registered native
+model operators use LibTorch ATen, while custom and configured computations use generated kernels.
+Both paths record on the same Lean tape.
 
 ## Installation
 
@@ -38,20 +39,16 @@ Windows/WSL and CUDA with LibTorch, and explains TorchLean's backend architectur
 ## Quickstart
 
 ```bash
-scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 10 --arithmetic ieee
-scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 10
+scripts/lake.sh exe torchlean quickstart_mlp --device cpu --steps 50
 
-# Optional GPU run with a CUDA-enabled LibTorch SDK of torch 2.13 or later, its toolkit and a GPU:
+# Optional CUDA run
 export TORCHLEAN_LIBTORCH_HOME=/absolute/path/to/libtorch
 scripts/lake.sh -Kcuda=true build
-scripts/lake.sh -Kcuda=true exe torchlean quickstart_mlp --device cuda --steps 10
+scripts/lake.sh -Kcuda=true exe torchlean quickstart_mlp --device cuda --steps 50
 ```
 
-The first quickstart command uses [FloatLib](https://github.com/lean-dojo/FloatLib)'s binary32
-arithmetic and the second uses Lean's native `Float32`. Typed tensors and models accept other
-FloatLib binary formats too (see [Precision](#precision)). The CUDA command runs on LibTorch's GPU
-runtime while TorchLean keeps its own differentiation tape, and it reports an error when CUDA is
-unavailable.
+The trainer uses `Float32` by default. For binary128 or a custom format, set the scalar type
+in the [typed training example](TorchLeanExamples/Quickstart/TypedTraining.lean).
 
 Application code writes concrete tensor types as `Tensor α [dims...]`, with the element type first.
 For example, `Tensor Float [4, 2]` is a four-by-two tensor of `Float` values:
@@ -83,13 +80,10 @@ def ys : Tensor Float [4, 1] :=
 def data : Trainer.Dataset [2] [1] := Data.fromTensors xs ys
 
 def trainOnce : IO Unit := do
-  -- Select the loss and train on the CPU with FloatLib binary32 arithmetic.
   let trainer :=
     Trainer.create model
       { objective := mse
-        optimizer := optim.sgd { lr := 0.05 }
-        device := .cpu
-        arithmetic := .ieee }
+        optimizer := optim.sgd { lr := 0.05 } }
   -- Inspect the initialized model before any parameter updates.
   let initialPrediction ← trainer.predict ([0.5, -0.25] : Tensor Float [2])
   IO.println s!"initial={reprStr initialPrediction}"
@@ -225,107 +219,68 @@ programs, lowering proofs and the native execution boundary.
 
 ### Proved gradients
 
-Over the reals, the stored gradients of the operator table are proved to be adjoints of Fréchet
-derivatives. The operators with a fixed number of inputs (all but `cat` and `custom`) have 166 value
-inputs, and the gradient of each has a `derivative` certificate in all the value inputs together.
-The certificate holds at the points its hypotheses name, such as nonzero divisors for division.
-`op_cert` registers a `derivative` certificate only when its statement is `TorchLean.DerivCert`
-of the operator's forward and stored backward, so a tautology such as `backward = backward` is
-rejected. `scripts/checks/Library.lean` fails when one of these gradients has no such certificate.
-`cat` has `cat_backward_eq_adjoint`. At kinks, such as `relu` at zero, `convention` certificates
-state the stored backward. `#op_certs Op.relu` lists the certificates of `relu`.
+Except for `custom`, the operator table supplies a forward map and backward rule where the scalar
+has the required capabilities. Where registered, real-valued derivative certificates prove that
+the backward rule is the adjoint of the Fréchet derivative under the stated domain hypotheses. At
+a kink, a convention certificate states the selected rule. `#op_certs Op.relu` lists the
+certificates for ReLU.
 
-`op_deriv` proves the same statement for a backward pass written by hand, here for softplus
-applied entrywise:
-
-```lean
-import TorchLean.NN.Tactic.OpDeriv
-open TorchLean
-
-example {s : Shape} (x δ : Tensor ℝ s) :
-    DifferentiableAt ℝ (fun y : Tensor ℝ s => Tensor.map (fun a => Real.log (1 + Real.exp a)) y)
-        x ∧
-      δ * Tensor.map (fun a => Real.exp a / (1 + Real.exp a)) x =
-        (fderiv ℝ (fun y : Tensor ℝ s => Tensor.map (fun a => Real.log (1 + Real.exp a)) y)
-          x).adjoint δ := by
-  op_deriv
-```
-
-A wrong backward pass fails with the equations the tactic could not close. The certificates and
-the tactic are about real arithmetic and bound no rounding error. The
-[tactic guide](TorchLean/NN/Tactic/README.md#backward-passes) lists the rules and side conditions.
+The `op_deriv` tactic checks a handwritten backward pass against its forward definition. These are
+real-arithmetic results; rounding error needs a separate bound. The
+[derivative guide](TorchLean/NN/Tactic/README.md#backward-passes) gives examples and side conditions.
 
 ### Recursion over trees
 
-`TorchLean.CUDA.Tree` runs recursive functions over inductive types on the GPU. A type that derives
-`Sig.Inductive` is stored by levels, the children of level `r` on level `r + 1`. `Fold.of` turns a
-structurally recursive function into a fold, one kernel launch per level, with a proof that the fold
-computes the function:
+`TorchLean.CUDA.Tree` runs structurally recursive functions over inductive types on the GPU.
+Derive `Sig.Inductive` for the type, then use `Fold.of` on the Lean function. The compiler stores
+the tree by levels and runs one kernel per level, with a Lean proof that the fold computes the
+source function. Hylomorphisms cover recursion whose calls do not follow an input tree, and
+unfolds build trees on the GPU.
 
-```lean
-import TorchLean.CUDA.Tree.Elab
-import TorchLean.CUDA.Tree.Run
-open TorchLean.Kernel
-
-inductive BTree where
-  | leaf
-  | node (l : BTree) (x : Float) (r : BTree)
-  deriving Sig.Inductive
-
-def BTree.sum : BTree → Float
-  | .leaf => 0
-  | .node l x r => l.sum + x + r.sum
-
-def sumFold := Fold.of BTree.sum
-
-def small : BTree := .node (.node .leaf 1 .leaf) 2 (.node .leaf 3 .leaf)
-
-#eval sumFold.eval (Reader.ofArrays #[])
-  (Arena.encode (σ := BTree.sig) (T := fun _ => BTree) (s := 0) small)
--- Except.ok 6.000000
-```
-
-`Fold.run` runs the fold over an arena that `Arena.upload` puts in device memory. Hylomorphisms
-cover recursion whose calls do not follow a value, and unfolds build trees on the GPU. The
-[tree guide](TorchLean/CUDA/Tree/README.md) states what is proved and what is trusted.
+The [tree guide](TorchLean/CUDA/Tree/README.md) works through a binary-tree sum and explains the
+supported recursion, device API and native execution boundary.
 
 ### Precision
 
 [FloatLib](https://github.com/lean-dojo/FloatLib) supplies configurable arithmetic and numerical
-proofs. TorchLean's CPU tensors and typed models can use binary32, binary128 or a custom binary
-format without converting through native floats. Custom GPU computations accept configured binary
-types too. They pick compatible hardware operations automatically and use integer-limb software
-arithmetic for custom formats and for precisions beyond native floats. The LibTorch tape keeps
-`Float32` in binary32 and `Float` in binary64, gradients and optimizer state included. Configured
-binary arithmetic also records on the GPU tape, which saves values and gradients as complete words.
-The arithmetic operations in the
-[custom-operation guide](TorchLean/NN/Kernel/README.md#recording-a-calculation-for-differentiation)
-record this way, while native model operators and optimizer checkpoints require native dtypes.
-Decimal and posit formats run on CPU.
+proofs. Typed CPU tensors and models can use binary32, binary128 or a custom binary format without
+converting through native floats. Custom GPU computations use compatible hardware instructions or
+integer-limb arithmetic for configured binary formats. The LibTorch tape also records configured
+arithmetic, while native model operators and optimizer checkpoints require native dtypes. Decimal
+and posit formats run on CPU. See the [custom-operation guide](TorchLean/NN/Kernel/README.md).
 
-FloatLib's `roundoff` tactic reads the Lean code of an operator and proves a bound on its rounding
-error, absolute or mixed relative and absolute, for every IEEE format. TorchLean registers its
-tensors with the tactic (`TorchLean.Verify.RuntimeApprox.Roundoff`), so it also reads tensor
-entries, folds and the general operators, at any axes and shape. The
+FloatLib's `roundoff` tactic reads the Lean code of a numerical operation and proves absolute or
+mixed error bounds under explicit assumptions. TorchLean extends it to tensor entries, folds and
+operators. Successful analyses produce bound theorems; registration alone does not. The
 [numerical runtime example](https://lean-dojo.github.io/TorchLean/examples/numerical-runtime/)
-explains its theorems. `#roundoff_coverage` runs it on every registered operator and tape
-constructor, and `scripts/lake.sh lint` fails when a public one isn't registered or when an
-analysis gets a worse outcome than `scripts/checks/roundoff_baseline.jsonl` records. The guide's
-[operator chapter](https://lean-dojo.github.io/TorchLean/blueprint/Semantics-and-Graphs/The-Operator-Table/)
-lists the operators of the table by family, with their CUDA entries, certificates and bound
-propagations.
+and [runtime approximation guide](TorchLean/Verify/RuntimeApprox/README.md) explain the supported
+bounds and the remaining gaps.
 
-`TorchLean.Verify.RuntimeApprox.OnlineSoftmax` bounds the rounding error of FlashAttention's online
-softmax in every IEEE format, with the scores and values as inputs.
-`TorchLean.Verify.RuntimeApprox.TransformerBlock` bounds the rounding error of a pre-normalization
-transformer block in any arithmetic that meets its error contract, given bounds on the exact stages
-and the weights.
+Use `Tensor.sumIn` to run the same sum in a left fold, in blocks, or in a pairwise tree.
+The IR can store the order for sums, contractions, matrix products, and other reductions.
+PyTorch, JAX and ONNX captures record left folds for those operators. The
+[reduction-order example](https://lean-dojo.github.io/TorchLean/examples/numerical-runtime/#choosing-a-reduction-order)
+shows what changes in binary32 and which bounds apply.
 
-The [typed-training example](TorchLeanExamples/Quickstart/TypedTraining.lean) trains in binary128,
-and the [tensor guide](https://lean-dojo.github.io/TorchLean/blueprint/Building-Models/Tensors-That-Remember-Their-Shapes/)
-covers precision, shapes and derivatives. Import `TorchLean.NN.Sequential.Training` for typed graphs
-and SGD on typed model state, `TorchLean.NN.Trainer.Session` for typed trainer sessions, or
-`FloatLib` itself for standalone numerical work.
+The [typed-training example](TorchLeanExamples/Quickstart/TypedTraining.lean) trains in binary128.
+Import `TorchLean.NN.Sequential.Training` for typed graphs and SGD on typed model state, or
+`TorchLean.NN.Trainer.Session` for typed trainer sessions.
+
+## Versions and Coverage
+
+TorchLean uses Lean 4.36.0, Mathlib v4.36.0, and FloatLib v4.1.0. The guide and optional Python
+binding use the same toolchain and inherit the library's pinned dependencies.
+
+The Python frontend imports supported tensor computations from JAX and PyTorch, including
+conditionals, scans and bounded while loops. It preserves element descriptors and explicit
+conversions in the artifact. The wire format is version 5; version 4 artifacts need to be
+recaptured. Supported types include standard binary floats, float8 formats, fixed-width integers,
+Booleans and paired-real complex values. Operation coverage differs by frontend and type.
+
+The [IR guide](TorchLean/NN/IR/README.md) and [PyTorch guide](TorchLean/NN/PyTorch/README.md) give the
+supported operations, precision rules, control-flow semantics and refusal cases. The
+[trust guide](docs/TRUST_BOUNDARIES.md) separates graph checks, real-valued proofs, numerical bounds
+and external execution assumptions.
 
 ## Repository Map
 

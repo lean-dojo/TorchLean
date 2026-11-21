@@ -332,7 +332,7 @@ def boxSqrt? [NonlinearBoundOps α] (B : FlatBox α) : Option (FlatBox α) :=
 
 /-- Softplus bounds, applied independently at every tensor coordinate. -/
 @[expose]
-def boxSoftplus? [NonlinearBoundOps α] (B : FlatBox α) : Option (FlatBox α) :=
+def boxSoftplus? (B : FlatBox α) : Option (FlatBox α) :=
   boxUnaryEnclosure? (α := α) NonlinearBoundOps.softplusBounds B
 
 /-- SafeLog bounds with one shared scalar epsilon interval.

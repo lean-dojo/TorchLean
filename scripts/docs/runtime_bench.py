@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import sys
 import textwrap
+from zoneinfo import ZoneInfo
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -95,61 +96,53 @@ def render(data: dict) -> str:
     """The page section of the saved results, between the two markers."""
     rows = data["benchmarks"]
     instr, cpu = spread(rows, "instructions"), spread(rows, "cpuSeconds")
-    varied = "Between repetitions "
+    intro = (f"We ran each command {data['repetitions']} times. The table shows the medians. "
+             f"CPU times varied by at most {cpu:.1f}%.")
     if instr is not None:
-        varied += ("the instruction counts varied by less than 0.01%" if instr < 0.01
-                   else f"the instruction counts varied by at most {instr:.2f}%") + " and "
-    varied += f"the CPU time by at most {cpu:.1f}%."
-    intro = (f"We ran the {data['suite']} suite of {code(data['tool'])}: {len(rows)} commands, "
-             f"{data['repetitions']} times each. The table shows the median of each measurement. "
-             + varied)
+        variation = "less than 0.01%" if instr < 0.01 else f"at most {instr:.2f}%"
+        intro += f" Instruction counts varied by {variation}."
+    show_instructions = any(row["instructions"] is not None for row in rows)
     out = [START, '<div class="performance-dashboard">',
            '  <section class="performance-panel" aria-labelledby="performance-runtime-title">',
            '    <h2 id="performance-runtime-title">Runtime benchmarks</h2>']
     out += paragraph("performance-panel-intro", intro)
     out += ['    <div class="performance-table-wrap">', '      <table class="performance-table">',
             "        <thead>", "          <tr>"]
-    out += [f"            <th>{h}</th>" for h in
-            ("Benchmark", "What it runs", "Instructions", "CPU time", "Wall time", "Max RSS")]
+    headers = ["Benchmark", "Workload"]
+    if show_instructions:
+        headers.append("Instructions")
+    headers.extend(("CPU time", "Wall time", "Peak memory"))
+    out += [f'            <th scope="col">{header}</th>' for header in headers]
     out += ["          </tr>", "        </thead>", "        <tbody>"]
-    for r in rows:
-        runs = f", {r['runsPerRepetition']} runs" if r["runsPerRepetition"] > 1 else ""
-        cells = [code(r["name"]), html.escape(r["about"], quote=False) + runs,
-                 "n/a" if r["instructions"] is None
-                 else f"{r['instructions'] / 1e9:.1f} billion",
-                 f"{r['cpuSeconds']:.2f} s", f"{r['wallSeconds']:.2f} s",
-                 f"{r['maxRssKiB'] / 1024:.0f} MiB"]
-        out += ["          <tr>", *(f"            <td>{c}</td>" for c in cells), "          </tr>"]
+    for row in rows:
+        runs = f", {row['runsPerRepetition']} runs" if row["runsPerRepetition"] > 1 else ""
+        cells = [code(row["name"]), html.escape(row["about"], quote=False) + runs]
+        if show_instructions:
+            instructions = row["instructions"]
+            cells.append("n/a" if instructions is None else f"{instructions / 1e9:.1f} billion")
+        cells.extend((f"{row['cpuSeconds']:.2f} s", f"{row['wallSeconds']:.2f} s",
+                      f"{row['maxRssKiB'] / 1024:.0f} MiB"))
+        out += ["          <tr>", *(f"            <td>{cell}</td>" for cell in cells), "          </tr>"]
     out += ["        </tbody>", "      </table>", "    </div>"]
-    out += paragraph("performance-chart-caption",
-                     f"The commands, run in the checkout with the example data of "
-                     f"{code('scripts/datasets/download_example_data.py')} in {code('data/real')} "
-                     f"and the query file that {code('scripts/bench/gen_query.py')} writes:")
-    out += ["    <ul>"]
-    for r in rows:
-        out += textwrap.wrap(code(r["command"]), 95, initial_indent="      <li>",
-                             subsequent_indent="        ", break_long_words=False,
+    tree, machine = data["tree"], data["machine"]
+    lean = html.escape(tree["leanToolchain"].rsplit(":", 1)[-1].lstrip("v"))
+    cpu_name = html.escape(machine["cpu"])
+    measured_at = datetime.fromisoformat(data["measuredAt"].replace("Z", "+00:00"))
+    date = measured_at.astimezone(ZoneInfo("America/Los_Angeles")).date()
+    measured = f"Measured on {date} with Lean {lean} on {cpu_name}."
+    if tree["commit"]:
+        measured += f" Source commit {code(tree['commit'][:12])}"
+        measured += " with local changes." if tree["modified"] else "."
+    out += paragraph("performance-chart-caption", measured)
+    out += ['    <details>',
+            '      <summary>Commands</summary>',
+            '      <ul>']
+    for row in rows:
+        out += textwrap.wrap(code(row["command"]), 95, initial_indent="        <li>",
+                             subsequent_indent="          ", break_long_words=False,
                              break_on_hyphens=False)
         out[-1] += "</li>"
-    out += ["    </ul>"]
-    tree, machine = data["tree"], data["machine"]
-    if tree.get("commit"):
-        where = f"commit {code(tree['commit'][:12])}"
-        if tree["modified"]:
-            where += " with local changes"
-    else:
-        where = (f"a checkout whose {tree['sourceFiles']} source files have the bench.py digest "
-                 f"{code(tree['sourceDigest'])}")
-    cores = (f", with {machine['coresAllowed']} of its {machine['cpus']} logical CPUs available"
-             if machine.get("coresAllowed") else "")
-    counted = ("Instructions are user-space counts from perf_event_open. "
-               if machine["counters"] == "perf_event_open" else "")
-    out += paragraph("performance-chart-caption",
-                     f"Measured on {data['measuredAt'][:10]} at {where}, with "
-                     f"{html.escape(tree['leanToolchain'])}, on {html.escape(machine['cpu'])}"
-                     f"{cores}. {counted}Max RSS is the largest resident set of the command's "
-                     "process tree.")
-    out += ["  </section>", "</div>", END]
+    out += ["      </ul>", "    </details>", "  </section>", "</div>", END]
     text = "\n".join(out) + "\n"
     if "{{" in text or "{%" in text:
         raise ValueError("the section would contain Liquid syntax")

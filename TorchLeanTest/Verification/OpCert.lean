@@ -8,7 +8,6 @@ module
 public import TorchLean.NN.Op.Layout
 public import TorchLean.NN.Op.Pointwise
 public import TorchLean.NN.Op.Select
-meta import TorchLean.Tensor.Op.Cert
 
 /-!
 # `op_cert` registers a derivative certificate only in the canonical form
@@ -17,7 +16,8 @@ meta import TorchLean.Tensor.Op.Cert
 `TorchLean.DerivCert f x δ v` for the operator's forward `f` in the listed inputs, a point `x` of
 them, a cotangent `δ` of its value outputs and its pullback `v` of `δ`, under premises that pass
 the rules of `TorchLean.Tensor.Op.Cert`. Each theorem below is true, mentions the operator's rule,
-and is rejected with the error shown. The last check confirms that none of them is registered and
+and is rejected with the error shown, as is the library's certificate of `select` registered at
+its Boolean condition too. The last check confirms that none of the theorems is registered and
 that the check finds the expected varying positions, domain premises and form in the library's
 certificates of `relu`, `exp`, `cat` and `pad`.
 -/
@@ -85,17 +85,14 @@ theorem padInputAdjoint (low high interior : Fin s.rank → Nat) (value : Tensor
     type_of% (Op.pad_backward_eq_adjoint low high interior value x δ).2 :=
   (Op.pad_backward_eq_adjoint low high interior value x δ).2
 
+-- The library's certificate of `select` in its two value inputs, registered at its Boolean
+-- condition too.
 /--
-error: op_cert: TorchLeanTest.OpCert.selectAtCondition is not a derivative certificate of
+error: op_cert: TorchLean.select_prod_backward_eq_adjoint is not a derivative certificate of
 TorchLean.Op.select at the inputs [0, 1, 2]: input 0 is a Port.Kind.bool port, not a value port
 -/
 #guard_msgs in
-/-- The certificate of `select` in its two value inputs, registered at its Boolean condition
-too. -/
-@[op_cert TorchLean.Op.select derivative 0 1 2]
-theorem selectAtCondition (cond : Tensor Bool s) (x y δ : Tensor ℝ s) :
-    type_of% (select_prod_backward_eq_adjoint cond x y δ) :=
-  select_prod_backward_eq_adjoint cond x y δ
+attribute [op_cert TorchLean.Op.select derivative 0 1 2] select_prod_backward_eq_adjoint
 
 /--
 error: op_cert: TorchLeanTest.OpCert.reluCotangent is not a derivative certificate of
@@ -190,11 +187,13 @@ open Lean in
 run_meta do
   let env ← getEnv
   for name in [``reluBackwardRefl, ``expAtZero, ``negAtInput, ``padInputAdjoint,
-      ``selectAtCondition, ``reluCotangent, ``reluFixed, ``reluRefuted, ``reluEmptyShape,
+      ``reluCotangent, ``reluFixed, ``reluRefuted, ``reluEmptyShape,
       ``expPLift, ``reshapeFalse, ``reshapeVacuous] do
     if (Op.certExtension.getState env).any (·.certificate == name) ||
         (Op.derivEntry? env name).isSome then
       throwError "{name} is registered"
+  if (Op.certificates env ``Op.select).any (·.inputs == [0, 1, 2]) then
+    throwError "the certificate of select is registered at its Boolean condition"
   for (name, varying, premises, strong) in [(``Op.relu_backward_eq_adjoint, [0], [`hx], true),
       (``Op.exp_backward_eq_adjoint, [0], [], true), (``cat_backward_eq_adjoint, [], [], false),
       (``Op.pad_backward_eq_adjoint, [0], [], false),

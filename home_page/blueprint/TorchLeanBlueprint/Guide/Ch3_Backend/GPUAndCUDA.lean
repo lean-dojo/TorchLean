@@ -1,5 +1,5 @@
 import VersoManual
--- Everything the live blocks in this chapter evaluate: the tensor type with its literal notation,
+-- Everything the live blocks evaluate: the tensor type with its literal notation,
 -- the backend report and the profile table, the LibTorch contracts and CUDA implementation table,
 -- the reference CPU contracts the CUDA ones get compared against, and the two softmax
 -- specifications the masking section contrasts.
@@ -33,6 +33,8 @@ open Backend
 -- as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: from a tensor operation to a GPU kernel. -/
+
 #doc (Manual) "GPU and CUDA" =>
 %%%
 tag := "gpu-and-cuda"
@@ -56,8 +58,8 @@ TorchLean still owns the differentiation tape: it records each operation, retain
 selects its local vector-Jacobian product (VJP), and accumulates the resulting gradients. Calling
 an ATen backward operator doesn't create a second autograd graph.
 
-CUDA is the maintained accelerator, and the runtime lookup below shows the profile each device
-selects.
+CUDA is the maintained accelerator. The `gpuDeviceTable` example prints the maintained profile
+selected for each device name.
 
 # Building With LibTorch
 
@@ -92,8 +94,8 @@ selection on later `build`, `exe`, and `env` commands. Our build helper records 
 inputs so that a changed native configuration can't silently reuse an incompatible adapter. The
 adapter calls torch only through the LibTorch Stable ABI of torch 2.13, apart from one file for
 the backend settings and the CUDA allocator. The tensor operations can run with a later torch
-runtime, but the allocator statistics and controls have the version limit described below. The trust
-boundaries list every ATen operator schema it calls.
+runtime, but the allocator statistics and controls support torch runtimes 2.13 through 2.15. The
+trust boundaries list every ATen operator schema it calls.
 
 Compilation and session creation answer different questions. A linked adapter still needs a
 visible, supported GPU to open a CUDA session, and a CPU build doesn't execute the CUDA adapter, so
@@ -242,35 +244,29 @@ results on its selected cases. Printing a suite's name doesn't execute it or cer
 particular build passed. No theorem entry claims that ATen refines the specification. The
 `implementationDefined` reduction policy further limits which arithmetic certificates can apply.
 
-## Shape contract
+## Four Contract Fields
 
-For matrix multiplication, the inner dimensions must agree and determine the result shape.
-Lean-side runtime guards and shape-indexed source objects often support this field. In the linear
-layer above, multiplying `[8,2]` by `[2]` must produce `[8]`.
+The shape contract for matrix multiplication requires the inner dimensions to agree and determine
+the result shape. Lean-side runtime guards and shape-indexed source objects often support this
+field. In the `[8,2] × [2]` linear-layer example, the result must have shape `[8]`.
 
-## Layout contract
-
-For contiguous row-major storage, `[m,n]` means that the last axis varies fastest: the first `n`
-elements form the first row. Both the wrapper and the native kernel must use the same
-interpretation. A correct matrix formula paired with a transposed native layout still computes the
-wrong model.
+The layout contract states how dimensions map to storage. For contiguous row-major storage,
+`[m,n]` means that the last axis varies fastest: the first `n` elements form the first row. The
+wrapper and native kernel must use the same interpretation. A correct matrix formula paired with a
+transposed native layout still computes the wrong model.
 
 For the `[8,2]` weight, row `i` occupies flat positions `2*i` and `2*i+1`. A column-major reading
 would instead group values from different output neurons. Both interpretations use sixteen
 scalars, which is why the shape and layout descriptors are separate. Reshaping a view can preserve
 storage, whereas changing this interpretation may require different strides or a physical copy.
 
-## Value contract
-
-A value contract names the mathematical function the forward result should refine. Its evidence is a
-shared canonical definition, a runtime guard, a test suite, an explicit trusted boundary, or
+The value contract names the mathematical function the forward result should refine. Its evidence
+is a shared canonical definition, a runtime guard, a test suite, an explicit trusted boundary, or
 `notApplicable`, and there's no theorem variant for a Lean proof covering the native code. Reports
 show the evidence variant, so a reader can tell a checked input condition from a tested numerical
 result.
 
-## VJP contract
-
-A VJP contract records backward ownership and the derivative specification to implement. With
+The VJP contract records backward ownership and the derivative specification to implement. With
 `backend-vjp`, the runtime calls a backend derivative kernel while retaining TorchLean's tape
 structure, and a capsule marked `torchLeanTape` composes its local VJP from TorchLean runtime
 operations. A profile requesting `torchLeanTape` admits both kinds of capsule: TorchLean owns the
@@ -380,14 +376,15 @@ executed operation
 ```
 
 At the first transition, `TorchLean.IR.Graph.accept` exposes an `AcceptedGraphKernelPlan` only
-after planning, grouping, and the contract check accept every obligation. Execution then checks the
-implementation identities shown above. Neither step probes the hardware: a profile's `Availability`
-declares which devices and providers planning may consider, while CUDA session creation calls
+after planning, grouping, and the contract check accept every obligation. Execution then applies
+the `KernelCapsule.implements` identity check. Neither step probes the hardware: a profile's
+`Availability` declares which devices and providers planning may consider, while CUDA session
+creation calls
 `LibTorch.Buffer.requireNativeRuntime` to distinguish native CUDA, a native build with no
 visible GPU,
 and a build without LibTorch.
 
-We can inspect profiles and plans on a machine with no GPU. Here are the default profiles:
+Profile metadata can be inspected on a machine with no GPU. The default profiles are:
 
 ```lean (name := gpuProfiles)
 -- Compare forward assurance with ownership of the whole
@@ -412,7 +409,7 @@ also records how one node computes its contribution. For matmul, Lean composes t
 products in the local derivative, so both entries say `vjp=torchlean-tape`. An operation such as
 convolution uses `vjp=backend-vjp` because its local rule calls a native backward primitive.
 
-We can also print the CUDA matmul plan on this CPU build:
+`Profile.checkedCUDA.planReport` can also print the CUDA matmul plan on this CPU build:
 
 ```lean (name := gpuPlanReport)
 -- Plan one CUDA operation from metadata. Printing the plan
@@ -792,11 +789,11 @@ Reduction order is one of several choices that affect native floating-point valu
 - Multiplication and addition may be contracted into FMA.
 - Parallel reductions can choose a tree that differs from the pure interpreter's order.
 
-Input and accumulator precision matter too. With the LibTorch controls below, a run can permit TF32
-for matrix products or cuDNN convolutions, or request IEEE input precision. Those settings
-constrain eligible implementations, but they don't specify every intermediate rounding or the
-reduction tree. A native result's repeatability, accuracy, and relationship to the real-valued
-specification are separate questions.
+Input and accumulator precision matter too. With the LibTorch controls in `Controls.lean`, a run
+can permit TF32 for matrix products or cuDNN convolutions, or request IEEE input precision. Those
+settings constrain eligible implementations, but they don't specify every intermediate rounding
+or the reduction tree. A native result's repeatability, accuracy, and relationship to the
+real-valued specification are separate questions.
 
 A reduction tree matters at all because floating-point addition isn't associative:
 
@@ -877,7 +874,7 @@ over the same stored inputs and state its precision. A count of distinct outputs
 repeatability, while an error against the reference measures something else. Neither measurement on
 its own measures speed.
 
-## Attention Controls And Saved State
+## Attention Controls And Mutable State
 
 `setSDPEnabled` accepts `.flash`, `.efficient`, `.math`, or `.cuDNN` and a Boolean permission.
 These SDK permissions don't select an implementation for TorchLean's composed attention: despite
@@ -889,12 +886,10 @@ output cotangent explicitly, with no native attention context holding a selected
 and backward kernels. Configure precision and determinism before the workload so that its numerical
 primitive calls run under the intended settings.
 
-## Reading Mutable Native State
-
 A runtime setting must be read at the point where the program needs it. The public controls use
-`IO`: execute the setter, then the getter in the same sequence, as `gpuConfigure` does above.
-Boolean setters also check the readback, so a rejected request cannot be reported as a successful
-configuration.
+`IO`: execute the setter, then the getter in the same sequence. `gpuConfigure` performs both
+actions in one `IO` block. Boolean setters also check the readback, so a rejected request cannot
+be reported as a successful configuration.
 
 Memory reporting follows the same rule: `Buffer.Memory.read` observes the native counters when the
 action runs. Device selection is effectful too: `deviceCount` reports visible devices, `getDevice`
@@ -908,7 +903,7 @@ returns the stub index zero, but that index doesn't establish availability: the 
 
 The LibTorch allocator owns device storage and its reuse policy. TorchLean's counters report
 something related but different: which logical payloads and Lean buffer wrappers remain owned.
-The allocator statistics and controls below require a torch runtime from 2.13 to 2.15. Other
+The allocator statistics and controls require a torch runtime from 2.13 to 2.15. Other
 versions return an error. Read both levels at the point in the workload whose lifetime matters:
 
 ```lean (name := gpuMemory)
@@ -983,8 +978,7 @@ statistics, and gather/scatter have retained checks.
 
 A capsule names its test source but doesn't store a passing result for the current build. To assess
 a run, keep its complete test output with the revision, SDK, driver, GPU, and relevant settings.
-The chapter's executable planner examples and scalar calculations establish only what those
-examples evaluate.
+The executable planner blocks and scalar calculations establish only what those examples evaluate.
 
 Passing device checks establishes that their cases worked on the recorded configuration. A claim
 that ATen, its dependencies, the compiler, and the GPU refine every TorchLean specification would

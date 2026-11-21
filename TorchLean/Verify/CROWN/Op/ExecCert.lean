@@ -16,8 +16,8 @@ At `ℝ`, on a graph without tanh, sigmoid, sine and cosine (`NoBackendEnclosure
 table has every box of the certificate (`runIBP_of_certify`). The engine's rules for those four
 (`BackendEnclosure`) are the backend's enclosures, while the certificate rule `cert?` keeps
 endpoint min-max and clipped midpoints. For every other operator `cert?` is the shared rule
-`shared?` (`cert?_eq_shared?`, in `TorchLean.Verify.CROWN.Op.Cert`), and `shared?` keeps each box
-it gives on every table that extends the one it read (`shared?_mono`, `Extends`). On a graph
+`shared?` (`cert?_eq_shared?`), and `shared?` keeps each box it gives on every table that extends
+the one it read (`Extends`, and `shared?_mono`, in `TorchLean.Verify.CROWN.Op.Cert`). On a graph
 without those four, each box of the certificate is the engine's box at its node and encloses the
 node's flat value in every successful real run whose inputs the seed boxes enclose
 (`runIBP_encloses_of_run`).
@@ -26,8 +26,7 @@ The engine's table is in general not a certificate (`CertLocalOK` is equality wi
 step at every node): it has boxes where the certificate has none, at reshape, softmax or layer
 norm and their consumers. On a graph whose every operator has kind `shared` or `none`
 (`SharedOnly`), the two tables are equal (`runIBP_eq_certify`), so on a sorted such graph the
-engine's table is a certificate (`runIBP_localOK`). Apart from `shared?_mono`, which holds at any
-scalar, nothing here is about a rounded scalar.
+engine's table is a certificate (`runIBP_localOK`). Nothing here is about a rounded scalar.
 -/
 
 @[expose] public section
@@ -61,98 +60,6 @@ theorem Extends.box?_eq_some {β : Type} {c c' : Array (Option β)} (h : Extends
       simp [h r.node _ hc]
   · cases hr
 
-/-- Reading the boxes of a list of references from an extending table keeps every read box. -/
-theorem Extends.mapM_box?_eq_some {β : Type} {c c' : Array (Option β)} (h : Extends c c') :
-    ∀ {refs : List IR.Ref} {xs : List β}, refs.mapM (box? c) = some xs →
-      refs.mapM (box? c') = some xs
-  | [], xs, hx => hx
-  | r :: rs, xs, hx => by
-      simp only [List.mapM_cons, Option.bind_eq_bind, Option.bind_eq_some_iff,
-        Option.pure_def, Option.some.injEq] at hx ⊢
-      obtain ⟨x, hr, ys, hys, rfl⟩ := hx
-      exact ⟨x, h.box?_eq_some hr, ys, h.mapM_box?_eq_some hys, rfl⟩
-
-/-- Wherever `shared?` gives operator `o` a box on the table `c`, it gives the same box on every
-table that extends `c`. -/
-theorem shared?_mono {α : Type} [Storage α] [Context α] [BoundOps α] [NonlinearBoundOps α]
-    {G : IR.Graph} {P : IR.Payload α} {c c' : Array (Option (FlatBox α))}
-    (hc : Extends c c') {o : IR.Operator} {refs : List IR.Ref} {B : FlatBox α}
-    (h : shared? G P c o refs = some B) : shared? G P c' o refs = some B := by
-  unfold shared? at h
-  split at h
-  case h_13 | h_14 | h_15 => cases h
-  case h_16 =>
-    unfold catBox? at h
-    split at h
-    · simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at h
-      obtain ⟨xs, hxs, hB⟩ := h
-      simp only [shared?, catBox?, Option.bind_eq_bind, Option.bind_eq_some_iff]
-      exact ⟨xs, hc.mapM_box?_eq_some hxs, hB⟩
-    all_goals cases h
-  case h_1 =>
-    simp only [shared?]
-    exact hc.box?_eq_some h
-  case h_2 =>
-    split at h
-    · rename_i h₁ h₂
-      simp only [shared?, hc.box?_eq_some h₁, hc.box?_eq_some h₂]
-      exact h
-    · cases h
-  case h_3 =>
-    split at h
-    · rename_i h₁ h₂
-      simp only [shared?, hc.box?_eq_some h₁, hc.box?_eq_some h₂]
-      exact h
-    · cases h
-  case h_4 =>
-    split at h
-    · rename_i h₁ h₂
-      simp only [shared?, hc.box?_eq_some h₁, hc.box?_eq_some h₂]
-      exact h
-    · cases h
-  case h_5 =>
-    simp only [Option.map_eq_some_iff] at h
-    obtain ⟨X, hX, rfl⟩ := h
-    simp only [shared?, hc.box?_eq_some hX, Option.map_some]
-  case h_6 =>
-    simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at h
-    obtain ⟨X, hX, hB⟩ := h
-    simp only [shared?, hc.box?_eq_some hX]
-    exact hB
-  case h_7 =>
-    simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at h
-    obtain ⟨X, hX, hB⟩ := h
-    simp only [shared?, hc.box?_eq_some hX]
-    exact hB
-  case h_8 =>
-    split at h
-    · rename_i h₁ h₂
-      simp only [shared?, hc.box?_eq_some h₁, hc.box?_eq_some h₂]
-      exact h
-    · cases h
-  case h_9 =>
-    simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at h
-    obtain ⟨W, hW, b, hb, X, hX, hB⟩ := h
-    simp only [shared?, Option.bind_eq_bind, Option.bind_eq_some_iff]
-    exact ⟨W, hW, b, hb, X, hc.box?_eq_some hX, hB⟩
-  case h_10 =>
-    split at h
-    · rename_i h₁ h₂
-      simp only [shared?, hc.box?_eq_some h₁, hc.box?_eq_some h₂]
-      exact h
-    · cases h
-  case h_11 =>
-    split at h
-    · rename_i h₁ h₂ h₃
-      simp only [shared?, hc.box?_eq_some h₁, hc.box?_eq_some h₂, hc.box?_eq_some h₃]
-      exact h
-    · cases h
-  case h_12 =>
-    simp only [Option.bind_eq_bind, Option.bind_eq_some_iff] at h
-    obtain ⟨W, hW, b, hb, X, hX, hB⟩ := h
-    simp only [shared?, Option.bind_eq_bind, Option.bind_eq_some_iff]
-    exact ⟨W, hW, b, hb, X, hc.box?_eq_some hX, hB⟩
-
 variable {G : IR.Graph} {P : IR.Payload ℝ}
 
 /-- Wherever the certificate step gives node `id` a box, the engine's step at ℝ gives the same box
@@ -178,7 +85,7 @@ theorem step?_ibp?_of_step?_cert? {seeds : Nat → Option (FlatBox ℝ)}
       split at h
       · rename_i hall
         rw [cert?_eq_shared? (hG id o refs hn)] at h
-        simp only [hall, ↓reduceIte, ibp?, shared?_mono hc h]
+        simp only [hall, ↓reduceIte, ibp?, shared?_mono (fun _ _ _ => hc.box?_eq_some) h]
       · cases h
 
 /-- Tables computed node by node: when each step of `g` gives every box the step of `f` gives, on
@@ -261,6 +168,7 @@ theorem directed?_of_sharedRule {c : Array (Option (FlatBox ℝ))} {o : IR.Opera
   rcases h with h | h
   · rcases o with ⟨_, _, op⟩
     cases op <;> (try cases ‹Op.NumericElement›) <;> (try cases ‹Op.Element›) <;>
+      (try cases ‹Tensor.ReduceOrder›) <;>
       simp only [ruleKind.eq_def, ite_eq_iff, reduceCtorEq, and_false, or_self] at h <;>
       rcases refs with _ | ⟨_, _ | ⟨_, _ | ⟨_, _ | ⟨_, _⟩⟩⟩⟩ <;> rfl
   · -- At kind `none` the engine gives no box, so neither does its directed rule.

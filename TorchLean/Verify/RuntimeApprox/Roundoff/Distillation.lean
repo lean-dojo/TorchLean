@@ -41,7 +41,7 @@ public import TorchLean.Verify.RuntimeApprox.TransformerBlock
 public import TorchLean.Verify.RuntimeApprox.Roundoff.SoftmaxShift
 public import TorchLean.Tensor.Layers.Loss.Axis
 public import TorchLean.NN.Models.GradientBoostedTrees
-public import FloatLib.Numerics.Automation.Attributes
+public import FloatLib.Tactic.Numerics.Attribute
 public import TorchLean.Tensor.Literal
 public import TorchLean.Tensor.Tactic.Init
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Rules.Movement

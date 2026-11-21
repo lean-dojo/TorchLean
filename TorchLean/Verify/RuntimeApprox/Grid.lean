@@ -91,7 +91,7 @@ theorem gap_ge (x : ℝ) :
     linarith [mul_lt_mul_of_pos_left hm hu]
 
 /-- A representable `x` with `|x| < 2^e` has `|x| ≤ (1 - u) * 2^e`. -/
-theorem abs_le_of_lt {x : ℝ} {e : ℤ} (hx : genericFormat Numerics.binaryRadix (fexpOf fmt) x)
+theorem abs_le_of_lt {x : ℝ} {e : ℤ} (hx : GenericRepresentable Numerics.binaryRadix (fexpOf fmt) x)
     (h : |x| < bpow Numerics.binaryRadix e) :
     |x| ≤ (1 - unitRoundoffAt fmt) * bpow Numerics.binaryRadix e := by
   have hu := unitRoundoffAt_lt_one fmt
@@ -99,7 +99,7 @@ theorem abs_le_of_lt {x : ℝ} {e : ℤ} (hx : genericFormat Numerics.binaryRadi
   · rw [abs_zero]
     exact mul_nonneg (by linarith) (bpow.nonneg _ _)
   have hpos : 0 < |x| := abs_pos.mpr h0
-  have hs := succ_le_magnitude_bpow_of_pos hpos ((generic_format_abs_iff x).mpr hx)
+  have hs := succ_le_magnitude_bpow_of_pos hpos ((genericRepresentable_abs_iff x).mpr hx)
   rw [succ_eq_of_nonneg hpos.le] at hs
   have hg := ulp_ge (fmt := fmt) hpos.ne'
   have hm := magnitude_le_of_abs_lt_bpow Numerics.binaryRadix |x| e hpos.ne' (by rwa [abs_abs])
@@ -118,7 +118,7 @@ theorem abs_exp_sub_quadratic_le {x : ℝ} (hx : |x| ≤ 1) :
 /-- A real strictly less than half of the adjacent gap on its side away from a representable `x`
 rounds to `x`. -/
 theorem roundAt_eq_of_near {x y : ℝ}
-    (hx : genericFormat Numerics.binaryRadix (fexpOf fmt) x)
+    (hx : GenericRepresentable Numerics.binaryRadix (fexpOf fmt) x)
     (hlo : x - y < (x - pred (β := Numerics.binaryRadix) (fexp := fexpOf fmt) x) / 2)
     (hhi : y - x < (succ (β := Numerics.binaryRadix) (fexp := fexpOf fmt) x - x) / 2) :
     roundAt fmt y = x := by
@@ -132,7 +132,7 @@ theorem roundAt_eq_of_near {x y : ℝ}
   by_contra hne
   rcases lt_or_gt_of_ne hne with hrx | hxr
   · have hs := succ_le_of_lt (β := Numerics.binaryRadix) (fexp := fexpOf fmt)
-      (generic_format_neg x hx) (generic_format_neg r hr) (neg_lt_neg hrx)
+      (genericRepresentable_neg x hx) (genericRepresentable_neg r hr) (neg_lt_neg hrx)
     have hp : r ≤ pred (β := Numerics.binaryRadix) (fexp := fexpOf fmt) x := by
       simp only [pred]
       linarith
@@ -149,7 +149,7 @@ theorem roundAt_eq_of_near {x y : ℝ}
       linarith
 
 /-- A representable `x` with `|x| < u` is the rounding of `exp x - 1`. -/
-theorem roundAt_expm1 {x : ℝ} (hx : genericFormat Numerics.binaryRadix (fexpOf fmt) x)
+theorem roundAt_expm1 {x : ℝ} (hx : GenericRepresentable Numerics.binaryRadix (fexpOf fmt) x)
     (h : |x| < unitRoundoffAt fmt) : roundAt fmt (Real.exp x - 1) = x := by
   rcases eq_or_ne x 0 with rfl | h0
   · simp
@@ -199,13 +199,13 @@ theorem pred_one (h : 2 ≤ fmt.exponentBias) :
   rw [pred_bpow, he, bpow_binaryRadix, bpow_binaryRadix, unitRoundoffAt_eq, zpow_zero]
 
 /-- `1` is representable. -/
-theorem format_one : genericFormat Numerics.binaryRadix (fexpOf fmt) 1 := by
+theorem format_one : GenericRepresentable Numerics.binaryRadix (fexpOf fmt) 1 := by
   simpa using toReal_genericFormat_of_isFinite (posOne fmt) (isFinite_posOne fmt)
 
 /-- With exponent bias at least `2`, `u` is representable. -/
 theorem format_unitRoundoff (h : 2 ≤ fmt.exponentBias) :
-    genericFormat Numerics.binaryRadix (fexpOf fmt) (unitRoundoffAt fmt) :=
-  generic_format_bpow (β := Numerics.binaryRadix) (fexp := fexpOf fmt)
+    GenericRepresentable Numerics.binaryRadix (fexpOf fmt) (unitRoundoffAt fmt) :=
+  genericRepresentable_bpow (β := Numerics.binaryRadix) (fexp := fexpOf fmt)
     (-Int.ofNat (fmt.fracWidth + 1)) (by
       simp only [fexpOf, fltExp, FloatFormat.minSubnormalExponent, FloatFormat.minNormalExponent,
         Int.ofNat_eq_natCast]
@@ -244,9 +244,9 @@ theorem roundAt_eq_one {y : ℝ} (h1 : 1 ≤ y) (h2 : y < 1 + unitRoundoffAt fmt
 /-- With exponent bias at least `2`, every real in `(1 - u, 1 - u/2)` rounds to `1 - u`. -/
 theorem roundAt_eq_one_sub (h : 2 ≤ fmt.exponentBias) {y : ℝ} (h1 : 1 - unitRoundoffAt fmt < y)
     (h2 : y < 1 - unitRoundoffAt fmt / 2) : roundAt fmt y = 1 - unitRoundoffAt fmt := by
-  have hf : genericFormat Numerics.binaryRadix (fexpOf fmt) (1 - unitRoundoffAt fmt) := by
+  have hf : GenericRepresentable Numerics.binaryRadix (fexpOf fmt) (1 - unitRoundoffAt fmt) := by
     rw [← pred_one h]
-    exact generic_format_pred format_one
+    exact genericRepresentable_pred format_one
   refine roundAt_eq_of_near hf ?_ ?_
   · have := pred_le (β := Numerics.binaryRadix) (fexp := fexpOf fmt) (1 - unitRoundoffAt fmt)
     linarith

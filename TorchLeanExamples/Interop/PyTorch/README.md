@@ -32,10 +32,11 @@ PyTorch's `load_state_dict`.
 
 For model-agnostic graph capture, run
 `PYTHONPATH=python python3 -m torchlean.export MODULE CTOR JSON --example-shape 1,4` from the
-repository root. `TorchLean.IR.load` reads the document it writes: `TorchLean.IR.Artifact.ofJson`
-decodes its `torchlean.ir` artifact and `TorchLean.IR.Artifact.load` checks it. The
-[graph-import guide](https://lean-dojo.github.io/TorchLean/examples/verify/) explains capture and
-reference comparisons. The round-trip commands above print a Lean prediction and do not compare it
-with PyTorch. Loading checks every step's ports and element types
-(`TorchLean.IR.Program.check`). Semantic preservation and native execution require their
-corresponding library contracts.
+repository root. `TorchLean.IR.load` reads the document it writes for a model without `torch.cond`,
+`while_loop` or `map`: `TorchLean.IR.Artifact.ofJson` decodes its `torchlean.ir` artifact and
+`TorchLean.IR.Artifact.load` checks it. `TorchLean.IR.loadFlow` reads every document it writes, a
+flow artifact block by block. The [graph-import
+guide](https://lean-dojo.github.io/TorchLean/examples/verify/) explains capture and reference
+comparisons. The round-trip commands above print a Lean prediction and do not compare it with
+PyTorch. Loading checks every step's ports and element types (`TorchLean.IR.Program.check`).
+Semantic preservation and native execution require their corresponding library contracts.

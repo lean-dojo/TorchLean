@@ -37,7 +37,8 @@ are one step of themselves on their operands, in port order. The others are reco
   the value's. A scalar context with differentiation metadata is refused, because the graph cannot
   conditionally clear its tangents at the bounds.
 - `scaledMatmul` is itself where `QuotientArithmetic.supported` holds, and otherwise a matrix
-  product followed by a product with a filled constant, as `scaledProductsSlice` computes it.
+  product in its order followed by a product with a filled constant, as
+  `Attention.scaledProductIn` computes it.
 - `linear`, `layerNorm` and `batchNormRunning` are themselves. Their weights, scale, bias, running
   statistics and epsilon must be constants, and they become constants after the activation is
   resolved.
@@ -365,9 +366,11 @@ private def direct? {ins outs : List Port} : (o : Op ins outs) → Option (PLift
   | .add | .sub | .mul | .max | .min | .abs | .sqrt .raw | .sqrt .clampNegative | .relu | .sigmoid
   | .silu | .tanh | .softplus | .exp | .sin | .cos | .log | .reciprocal | .detach | .safeLog
   | .mseLoss
-  | .matmul false false _ _ _ _ | .broadcast _ _ | .reshape _ | .permute _ _ _ | .reduce _ _ _ _
-  | .mean _ _ | .slice _ _ _ _ _ | .cat _ _ | .softmax _ | .logSoftmax _ | .topKMask _ _ =>
+  | .broadcast _ _ | .reshape _ | .permute _ _ _ | .slice _ _ _ _ _ | .cat _ _ | .softmax _
+  | .logSoftmax _ | .topKMask _ _ =>
       some ⟨fun _ _ _ _ => rfl⟩
+  | .matmul false false _ _ _ _ order | .reduce _ _ _ _ order | .mean _ _ order =>
+      some ⟨fun _ _ _ _ => by cases order <;> rfl⟩
   | _ => none
 
 /-- The refusal of a random operator: graph random nodes derive their keys from node positions,
@@ -432,6 +435,7 @@ def record {ins rest : List Port} {s : Shape} (op : Op ins (.value s :: rest))
     RecordM α σ (RecordM.Ref α s) :=
   match op, args with
   | .scale (s := s), (x, c, ()) => do
+      -- `x * c` with the constant scalar `c` filled to the shape of `x`.
       let c ← RecordM.getConst c
       RecordM.op (Op.mul (s := s)) (fun _ _ _ _ => rfl)
         [⟨_, x⟩, ⟨_, .const (Tensor.full s c.item)⟩]
@@ -443,6 +447,7 @@ def record {ins rest : List Port} {s : Shape} (op : Op ins (.value s :: rest))
               "verifier IR fragment; use eager execution for conditional " ++
               "tangent clearing.")
       | none =>
+          -- `min hi (max lo x)`, with constant bounds.
           let lo ← RecordM.getConst lo
           let hi ← RecordM.getConst hi
           let y : RecordM.Ref α s ← RecordM.op (Op.max (s := s)) (fun _ _ _ _ => rfl)
@@ -450,20 +455,21 @@ def record {ins rest : List Port} {s : Shape} (op : Op ins (.value s :: rest))
           RecordM.op (Op.min (s := s)) (fun _ _ _ _ => rfl)
             [⟨_, .const (Tensor.full s hi.item)⟩, ⟨_, y⟩]
   | .scaledMatmul (batchA := batchA) (batchB := batchB) (batch := batch) (m := m) (n := n)
-      (p := p) false false hl hr broadcastA broadcastB, (a, b, c, ()) =>
+      (p := p) false false hl hr broadcastA broadcastB order, (a, b, c, ()) =>
       if (inferInstance : Numeric.QuotientArithmetic α).supported then
         RecordM.op (Op.scaledMatmul (batchA := batchA) (batchB := batchB) (batch := batch)
-            (m := m) (n := n) (p := p) false false hl hr broadcastA broadcastB)
-          (fun _ _ _ _ => rfl) [⟨_, a⟩, ⟨_, b⟩, ⟨_, c⟩]
+            (m := m) (n := n) (p := p) false false hl hr broadcastA broadcastB order)
+          (fun _ _ _ _ => by cases order <;> rfl) [⟨_, a⟩, ⟨_, b⟩, ⟨_, c⟩]
       else do
         let c ← RecordM.getConst c
         let y : RecordM.Ref α s ← RecordM.op (Op.matmul (batchA := batchA) (batchB := batchB)
-            (batch := batch) (m := m) (n := n) (p := p) false false hl hr broadcastA broadcastB)
-          (fun _ _ _ _ => rfl) [⟨_, a⟩, ⟨_, b⟩]
+            (batch := batch) (m := m) (n := n) (p := p) false false hl hr broadcastA broadcastB
+            order)
+          (fun _ _ _ _ => by cases order <;> rfl) [⟨_, a⟩, ⟨_, b⟩]
         RecordM.op (Op.mul (s := s)) (fun _ _ _ _ => rfl)
           [⟨_, y⟩, ⟨_, .const (Tensor.full s c.item)⟩]
-  | .matmul true _ _ _ _ _, _ | .matmul false true _ _ _ _, _
-  | .scaledMatmul _ _ _ _ _ _, _ => throw matmulVectorRefusal
+  | .matmul true .., _ | .matmul false true .., _
+  | .scaledMatmul _ _ _ _ _ _ _, _ => throw matmulVectorRefusal
   | .attentionFromScores mask, (scores, value, weights, ()) =>
       RecordM.attentionFromScores mask scores value weights
   | .multiheadAttention (batch := .scalar) _ mask, (wq, wk, wv, wo, x, ()) =>
@@ -471,6 +477,7 @@ def record {ins rest : List Port} {s : Shape} (op : Op ins (.value s :: rest))
   | .multiheadAttention (batch := .dim (b + 1) inner) _ mask, (wq, wk, wv, wo, x, ()) =>
       RecordM.multiheadAttentionOver wq wk wv wo mask (.dim (b + 1) inner) x
   | .indexAt (s := s) dim index, (x, ()) => do
+      -- A slice of length one along `dim`, then a reshape that drops the axis.
       let sliced : RecordM.Ref α (s.set dim 1) ←
         match sliceDims s #[dim.val] #[index.val] #[index.val + 1] #[1] with
         | .ok ds =>
@@ -483,6 +490,7 @@ def record {ins rest : List Port} {s : Shape} (op : Op ins (.value s :: rest))
         (fun _ _ _ _ => rfl) stride padLow padHigh dilation groups lead
         (refusal (Op.conv dims stride padLow padHigh dilation groups hlead hx hy)) w b x
   | .linear (lead := lead) (inDim := inDim) (outDim := outDim), (w, b, x, ()) => do
+      -- The parameters must be constants: `getConst` refuses a graph value.
       let _ ← RecordM.getConst w
       let _ ← RecordM.getConst b
       let xId ← RecordM.materialize x
@@ -512,7 +520,7 @@ def record {ins rest : List Port} {s : Shape} (op : Op ins (.value s :: rest))
       let vId ← RecordM.materialize var
       let eId ← RecordM.materialize epsilon
       RecordM.push (Op.batchNormRunning dim) (fun _ _ _ _ => rfl) [xId, gId, bId, mId, vId, eId]
-  | .pool (s := s₀) pop dims kernel stride padLow padHigh dilation ceilMode, (x, ()) =>
+  | .pool (s := s₀) pop dims kernel stride padLow padHigh dilation ceilMode order, (x, ()) =>
       let name? : Option String := match pop with
         | .max => some "max_pool"
         | .avg true => some "avg_pool"
@@ -520,8 +528,8 @@ def record {ins rest : List Port} {s : Shape} (op : Op ins (.value s :: rest))
       match name?, RecordM.window? dims kernel stride padLow padHigh dilation ceilMode with
       | some name, some config => do
           RecordM.requireContract <| IR.inferWindowOutShape name config s₀
-          RecordM.op (Op.pool pop dims kernel stride padLow padHigh dilation ceilMode)
-            (fun _ _ _ _ => rfl) [⟨_, x⟩]
+          RecordM.op (Op.pool pop dims kernel stride padLow padHigh dilation ceilMode order)
+            (fun _ _ _ _ => by cases order <;> rfl) [⟨_, x⟩]
       | _, _ =>
           throw ("TorchLean→IR: pooling other than max or padded average over every " ++
             "axis after the first, with symmetric padding, unit dilation and floor mode, is " ++

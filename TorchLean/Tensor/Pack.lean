@@ -227,7 +227,7 @@ theorem cast_cons {s : ι} {ss₁ ss₂ : List ι} (h : s :: ss₁ = s :: ss₂)
   rfl
 
 /-- A cast followed by its inverse is the identity. -/
-@[simp] theorem cast_symm {ss₁ ss₂ : List ι} (h : ss₁ = ss₂) (xs : Pack F ss₁) :
+theorem cast_symm {ss₁ ss₂ : List ι} (h : ss₁ = ss₂) (xs : Pack F ss₁) :
     cast h.symm (cast h xs) = xs := by
   cases h
   rfl

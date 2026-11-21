@@ -860,7 +860,11 @@ inline scalar_operand cpu_scalar(double value) { return {detail::cpu_tensor(valu
 /// An integer takes the dtype of an integer `x` and is Long otherwise. A floating value takes the
 /// dtype of a Float or Double `x` and is Float for an integer or Bool `x` and a Half or BFloat16
 /// `x` of rank one or more. Promotion differs for a 0-dim Half or BFloat16 `x` and for a complex
-/// `x`, which therefore fail.
+/// `x`, which therefore fail. CUDA `div` is the exception: it reads the scalar in Double and
+/// multiplies by its reciprocal, computed in Double and converted to `opmath_t` (torch v2.13.0,
+/// native/cuda/BinaryDivTrueKernel.cu:41-46), so beside an `x` that is not Double the operand
+/// gives the Scalar's quotient when its dtype holds `value` and can differ otherwise. The one
+/// `div` caller divides a Double tensor.
 inline scalar_operand scalar_for(const Tensor& x, std::int64_t value) {
   const auto dtype = x.scalar_type();
   const auto result = detail::cpu_tensor(value);

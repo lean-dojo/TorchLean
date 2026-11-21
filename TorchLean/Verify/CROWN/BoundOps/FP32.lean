@@ -49,7 +49,7 @@ rounded CROWN statements over `FP32` use these laws.
 -/
 noncomputable instance : LawfulBoundOps FP32 :=
   .outward (formatRounder binaryRadix (Model.fexpOf FloatFormat.binary32)) <| by
-    simpa using generic_format_bpow (β := binaryRadix)
+    simpa using genericRepresentable_bpow (β := binaryRadix)
       (fexp := Model.fexpOf FloatFormat.binary32) 0 (by decide)
 
 /-- Exact real nonlinear transfers rounded outward to the binary32 grid. -/

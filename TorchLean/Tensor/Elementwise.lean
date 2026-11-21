@@ -48,15 +48,15 @@ binary32. `sign` gives a NaN at a NaN and keeps the sign of a zero, as `jax.lax.
 `torch.sign` gives `0` at both. `remainder` gives a zero result the divisor's sign, as Python's `%`
 and NumPy do and as `torch.remainder` documents. PyTorch 2.13 and JAX 0.12 return the dividend's.
 
-We wrote the scalar functions by hand against the PyTorch 2.8 docs and `jax.lax`, and `lerp` from
-ATen's `Lerp.h`. Torch 2.8.0, the version the parity checks pin, behaves as measured above. On our
-AVX-512 machine its binary32 `torch.maximum` of `-0` and `0` gives `-0` at each of 8 entries and
+The scalar functions follow the PyTorch 2.8 docs and `jax.lax`. The `lerp` formula follows
+ATen's `Lerp.h`. On our AVX-512 machine, PyTorch 2.8.0's binary32 `torch.maximum` of `-0` and `0`
+gives `-0` at each of 8 entries and
 `0` at the first 32 of 33. `torch.remainder` of `-4` by `2` is `-0`, and `torch.sign` maps a NaN
 and `-0` to `0`. Its `fmax` of `-0` and `0` is `-0` at 1, 16 and 33 entries, where ours is `0`.
 The capture tests `test_exact_roundings_match_eager_words` and
-`test_binary_functions_match_eager_words` in `scripts/checks/test_ir_capture.py` compare the
-roundings, `frac`, `copysign` and `fmod` with eager PyTorch, and `fmax` and `fmin` away from tied
-zeros. `test_remainder_is_python_modulus` compares `remainder` with Python's `%`.
+`test_binary_functions_match_eager_words` in `scripts/checks/ir_capture_pytorch_operators.py`
+compare the roundings, `frac`, `copysign` and `fmod` with eager PyTorch, and `fmax` and `fmin`
+away from tied zeros. `test_remainder_is_python_modulus` compares `remainder` with Python's `%`.
 
 The integral roundings and remainders need a `Rounding` instance, `atan2`, `atan`, `asin` and
 `acos` an `InverseTrig` instance, which supplies each function, and `erf` an `Erf` instance. A

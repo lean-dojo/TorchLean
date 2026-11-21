@@ -10,7 +10,7 @@ public import TorchLean.Verify.Floats.FP32
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured.MixedError.Rounding
 public import FloatLib.Floats.Formats.IEEE754.Native
-public import FloatLib.Floats.ExecFloat.Proof.Arithmetic
+public import FloatLib.Kernels.Execution.Proof
 
 /-!
 # Finite configured arithmetic for reduction proofs
@@ -73,15 +73,15 @@ private theorem model_div_eq_roundAt (x y : Model format)
         have hn := Model.isFinite_eq_false_of_isNaN (Model.isNaN_of_chooseNaN2_eq_some hchoose)
         simp [Model.Spec.divSpecial, hchoose, hn] at hfin
     | none =>
-        have hxInf : Model.isInf x = false := by
-          cases hi : Model.isInf x with
+        have hxInf : Model.isInfinite x = false := by
+          cases hi : Model.isInfinite x with
           | false => rfl
           | true =>
               simp only [Model.Spec.divSpecial, hchoose, hi, ↓reduceIte] at hfin
               split at hfin
               · simp only [Model.isFinite_invalidResult hformat, Bool.false_eq_true] at hfin
               · simp only [Model.isFinite_nativeOverflow hformat, Bool.false_eq_true] at hfin
-        cases hyInf : Model.isInf y with
+        cases hyInf : Model.isInfinite y with
         | false =>
             simp only [Model.Spec.divSpecial, hchoose, hxInf, hyInf,
               Model.isFinite_invalidResult hformat, Bool.false_eq_true, ↓reduceIte] at hfin
@@ -90,7 +90,7 @@ private theorem model_div_eq_roundAt (x y : Model format)
               cases hd : Model.toDyadic? y with
               | none => rfl
               | some d =>
-                  have := Model.isInf_eq_false_of_toDyadic?_some hd
+                  have := Model.isInfinite_eq_false_of_toDyadic?_some hd
                   simp [hyInf] at this
             have hyReal : Model.toReal y = 0 := by
               simp only [Model.toReal_eq, hyDecode]
@@ -181,8 +181,8 @@ theorem toReal_sqrt_eq_round {x : Value}
       have hcontra : false = true := hn.symm.trans hnfinite
       cases hcontra
   | none =>
-      have hxInf : Model.isInf (toModel x) = false := by
-        cases hi : Model.isInf (toModel x) with
+      have hxInf : Model.isInfinite (toModel x) = false := by
+        cases hi : Model.isInfinite (toModel x) with
         | false => rfl
         | true =>
             simp only [Model.Spec.sqrt, hchoose, hi, ↓reduceIte] at hmodel
@@ -191,7 +191,7 @@ theorem toReal_sqrt_eq_round {x : Value}
               exact hbad.symm.trans (Model.isFinite_invalidResult hformat)
             · have hbad : Model.isFinite (Model.nativeOverflow format false) = true := hmodel
               exact hbad.symm.trans (Model.isFinite_nativeOverflow hformat false)
-      have hxfinite := Model.isFinite_eq_true_of_isNaN_eq_false_of_isInf_eq_false
+      have hxfinite := Model.isFinite_eq_true_of_isNaN_eq_false_of_isInfinite_eq_false
         (toModel x) ((Model.chooseNaN1_eq_none_iff (toModel x)).mp hchoose) hxInf
       have hdomain : Model.isZero (toModel x) = true ∨ Model.signBit (toModel x) = false := by
         by_cases hzero : Model.isZero (toModel x) = true

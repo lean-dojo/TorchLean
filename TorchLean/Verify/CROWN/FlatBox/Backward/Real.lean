@@ -867,6 +867,18 @@ theorem represents_copy {dims : Nat → Nat} {v : Nat → Nat → ℝ} {input k 
     simp only [dot, dotProduct, Function.comp_apply, heq.2]
   simpa only [hd] using represents_add h pid hp hlive aB a hb
 
+/-- Adding a box that encloses `a` at the pending parent `p` and one that encloses `b` at the
+pending parent `q` adds both pairings to the represented value. The parents may coincide. -/
+private theorem represents_add_add {dims : Nat → Nat} {v : Nat → Nat → ℝ} {input k p q : Nat}
+    {st : State α} {z : ℝ} (h : Represents dims v input k st z) (hp : p < st.coeffs.size)
+    (hq : q < st.coeffs.size) (hplive : p ∈ pending input k) (hqlive : q ∈ pending input k)
+    (aB bB : FlatBox α) (a b : Nat → ℝ) (ha : RowEncloses aB (dims p) a)
+    (hb : RowEncloses bB (dims q) b) :
+    Represents dims v input k (addCoeff (addCoeff st p aB) q bB)
+      (z + (dot (dims p) a (v p) + dot (dims q) b (v q))) := by
+  simpa only [add_assoc] using
+    represents_add (represents_add h p hp hplive aB a ha) q (by simpa using hq) hqlive bB b hb
+
 /-- Adding a box that encloses `a` at both pending parents `p` and `q` of a sum `id` adds the
 pairing of `a` with the coordinates of `id` to the represented value. -/
 theorem represents_addParents {dims : Nat → Nat} {v : Nat → Nat → ℝ}
@@ -878,15 +890,9 @@ theorem represents_addParents {dims : Nat → Nat} {v : Nat → Nat → ℝ}
     (hy : ∀ i : Fin (dims id), v id i.val = v p i.val + v q i.val) :
     Represents dims v input k (addCoeff (addCoeff st p aB) q aB)
       (z + dot (dims id) a (v id)) := by
-  have hap : RowEncloses aB (dims p) a := by simpa only [hdp] using ha
-  have haq : RowEncloses aB (dims q) a := by simpa only [hdq] using ha
-  have h₁ := represents_add h p hp hplive aB a hap
-  have h₂ := represents_add h₁ q (by simpa using hq) hqlive aB a haq
-  have hd : dot (dims id) a (v id) =
-      dot (dims p) a (v p) + dot (dims q) a (v q) := by
-    rw [hdp, hdq]
-    simp only [dot, dotProduct, Function.comp_apply, hy, mul_add, Finset.sum_add_distrib]
-  simpa only [hd, add_assoc] using h₂
+  convert represents_add_add h hp hq hplive hqlive aB aB a a (hdp ▸ ha) (hdq ▸ ha) using 2
+  rw [hdp, hdq]
+  simp only [dot, dotProduct, Function.comp_apply, hy, mul_add, Finset.sum_add_distrib]
 
 /-- Adding a box that encloses `a` at the pending parent `p` of a difference `id` and its negation
 at the pending parent `q` adds the pairing of `a` with the coordinates of `id` to the represented
@@ -902,19 +908,12 @@ theorem represents_subParents
     Represents dims v input k
       (addCoeff (addCoeff st p aB) q (boxNeg aB))
       (z + dot (dims id) a (v id)) := by
-  have hap : RowEncloses aB (dims p) a := by simpa only [hdp] using ha
-  have haq : RowEncloses (boxNeg aB) (dims q) (fun i => -a i) := by
-    simpa only [hdq] using boxNeg_encloses ha
-  have h₁ := represents_add h p hp hplive aB a hap
-  have h₂ := represents_add h₁ q (by simpa using hq) hqlive
-    (boxNeg aB) (fun i => -a i) haq
-  have hd : dot (dims id) a (v id) =
-      dot (dims p) a (v p) + dot (dims q) (fun i => -a i) (v q) := by
-    rw [hdp, hdq]
-    simp only [dot, dotProduct, Function.comp_apply, hy, mul_sub, Finset.sum_sub_distrib,
-      neg_mul, Finset.sum_neg_distrib]
-    ring
-  simpa only [hd, add_assoc] using h₂
+  convert represents_add_add h hp hq hplive hqlive aB (boxNeg aB) a (fun i => -a i) (hdp ▸ ha)
+    (hdq ▸ boxNeg_encloses ha) using 2
+  rw [hdp, hdq]
+  simp only [dot, dotProduct, Function.comp_apply, hy, mul_sub, Finset.sum_sub_distrib, neg_mul,
+    Finset.sum_neg_distrib]
+  ring
 
 /-- Repeating a one-entry box that holds `a` over `n` entries gives a box that encloses `n` copies
 of `a`, the coefficients that a sum over every axis passes to its parent. -/

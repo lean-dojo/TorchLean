@@ -78,6 +78,7 @@ check.
 -/
 def contextLength : Nat := 4
 
+/-- `contextLength` is positive. -/
 local instance : NeZero contextLength := ⟨by decide⟩
 
 /-! ## Corpus, tokenizer and prompt options -/
@@ -235,6 +236,7 @@ namespace Byte
 /-- Byte vocabulary: one class for each of the 256 byte values. -/
 def vocabularySize : Nat := 256
 
+/-- `vocabularySize` is positive. -/
 local instance : NeZero vocabularySize := ⟨by decide⟩
 
 /-- A byte id as a vocabulary index, reduced modulo 256 by `Fin.ofNat`. -/
@@ -244,6 +246,7 @@ def index (id : Nat) : Fin vocabularySize :=
 /-- Single-sequence batch for the byte-level corpus path. -/
 def batchSize : Nat := 1
 
+/-- `batchSize` is positive. -/
 instance : NeZero batchSize := ⟨by decide⟩
 
 /-- Number of attention heads in the compact byte-level Transformer. -/
@@ -261,6 +264,7 @@ def feedForwardWidth : Nat := 8
 /-- Number of Transformer blocks. -/
 def transformerLayers : Nat := 1
 
+/-- `modelWidth` is positive. -/
 local instance : NeZero modelWidth := ⟨by decide⟩
 
 /-- Causal Transformer configuration of the byte model, built from the constants above. -/
@@ -323,7 +327,8 @@ partial def interactive
   IO.println ("  interactive: enter a prompt; empty line or :q exits "
     ++ s!"(window={window}, generate={newTokenCount})")
   let stdin ← IO.getStdin
-  let rec loop : IO Unit := do
+  let rec /-- Read prompts and print each response. -/
+  loop : IO Unit := do
     IO.print "  prompt> "
     let line ← stdin.getLine
     let prompt := line.trimAscii.toString
@@ -347,11 +352,13 @@ example is about the tokenizer and data path.
 -/
 def vocabularySize : Nat := 512
 
+/-- `vocabularySize` is positive. -/
 instance : NeZero vocabularySize := ⟨by decide⟩
 
 /-- Batch size for the BPE corpus path. -/
 def batchSize : Nat := 2
 
+/-- `batchSize` is positive. -/
 instance : NeZero batchSize := ⟨by decide⟩
 
 /-- Number of attention heads in the miniature BPE Transformer. -/
@@ -369,6 +376,7 @@ def feedForwardWidth : Nat := 32
 /-- Number of Transformer blocks. -/
 def transformerLayers : Nat := 1
 
+/-- `modelWidth` is positive. -/
 local instance : NeZero modelWidth := ⟨by decide⟩
 
 /-- Causal Transformer configuration of the BPE model, built from the constants above. -/

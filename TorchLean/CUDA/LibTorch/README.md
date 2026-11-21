@@ -3,8 +3,8 @@
 The Lean side of the LibTorch CUDA backend: the opaque buffer type, the foreign-function
 declarations of the ATen operations TorchLean calls, and the process-wide runtime controls.
 TorchLean keeps its own tape and selected local VJPs, so native calls never record a LibTorch
-autograd graph. `scripts/lake.sh -Kcuda=true build` links `csrc/libtorch/torchlean.cpp`,
-`csrc/libtorch/conv_pool.cpp` and `csrc/libtorch/tree.cpp`. The default build links
+autograd graph. `scripts/lake.sh -Kcuda=true build` links the native bridge in `csrc/libtorch`.
+The default build links
 `csrc/libtorch/unavailable.c`, which reports `.notLinked`, reads settings as off and memory
 statistics as zero, and fails every buffer operation. Lean does not prove the compiled native
 code correct, and [`docs/TRUST_BOUNDARIES.md`](../../../docs/TRUST_BOUNDARIES.md) lists what is

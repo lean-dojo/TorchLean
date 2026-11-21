@@ -541,6 +541,7 @@ GroupedConvolution grouped_convolution(
     const auto k = c.weight[axis + 2];
     TORCHLEAN_CHECK(k > 0 && c.stride[axis] > 0 && c.dilation[axis] > 0,
                     "LibTorch conv: kernel, stride and dilation must be positive");
+    // The dilated window's extent and the number of strided positions it fits in the padded axis.
     const uint64_t effective = static_cast<uint64_t>(k - 1) * c.dilation[axis] + 1;
     const uint64_t padded = static_cast<uint64_t>(c.batched[2 + axis]) + c.before[axis] +
                             c.after[axis];

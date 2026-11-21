@@ -7,6 +7,9 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Coverage
+public import TorchLean.Verify.Coverage.Elementwise.Arithmetic -- shake: keep
+public import TorchLean.Verify.Coverage.TensorOperations.Movement -- shake: keep
+public import TorchLean.Verify.Coverage.TensorOperations.Reduction -- shake: keep
 public import TorchLean.Tensor.Op.Table.Rule
 
 /-!
@@ -15,6 +18,11 @@ public import TorchLean.Tensor.Op.Table.Rule
 `#roundoff_coverage` reads the routes of each registered operator from its arm of
 `TorchLean.Op.rule?`. The theorems are declared in the namespace `TorchLean.Coverage.Layers`,
 which every module under `TorchLean/Verify/Coverage/Layers/` shares.
+
+It imports the coverage of the arithmetic of the operator table (`Elementwise/Arithmetic.lean`) and
+of the general data movement and reductions (`TensorOperations/Movement.lean`,
+`TensorOperations/Reduction.lean`), so that a route with the statement of a route there records that
+theorem instead of declaring another.
 -/
 
 public section

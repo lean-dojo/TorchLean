@@ -19,11 +19,13 @@ open FloatLib.Floats.Formats.Flocq
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 open TorchLean
 
--- Verso checks `leanOutput` blocks against the real compiler message. A few of the
--- records and signatures below print wider than this file's 100-column limit, so
+-- Verso checks `leanOutput` blocks against the real compiler message. Some records and signatures
+-- print wider than this file's 100-column limit, so
 -- those blocks ask for `whitespace := lax`, which ignores where the expected text
 -- was wrapped. The rendered page still shows the message exactly as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
+
+/-! Guide page: FloatLib's formats, rounding rules and the executable scalars. -/
 
 #doc (Manual) "Floating-Point Semantics" =>
 %%%
@@ -33,12 +35,12 @@ tag := "floats"
 Adding three numbers is enough to expose a numerical choice in a model. In binary32, adding one
 to a large value can lose the one before a later subtraction brings the answer back near zero.
 Change the order, or give the intermediate result more precision, and that contribution may survive.
-We can reproduce the calculation with FloatLib, inspect its exact encodings, and then explain the
-result using the format's rounding rule.
+FloatLib reproduces the calculation from exact encodings; the format's rounding rule then explains
+the result.
 
 # Choose A Format From FloatLib
 
-I'll use binary32 for the first calculation. FloatLib's `ExecFloat.Binary` selects it with eight
+The first calculation uses binary32. FloatLib's `ExecFloat.Binary` selects it with eight
 exponent bits and 23 stored fraction bits, and the implicit leading bit gives normal values 24 bits
 of significand precision:
 
@@ -54,13 +56,14 @@ also use configured binary arithmetic on CUDA, while unsupported carriers retain
 CPU.
 
 For the scalar examples, FloatLib is all we need, and TorchLean imports its definitions and proofs
-directly. Its dependency declaration follows FloatLib's `main` branch (the manifest records the
-exact revision a build used), so updating FloatLib requires updating that manifest and rebuilding.
+directly. Its dependency declaration pins FloatLib 4.1.0 by its tag `v4.1.0`, whose commit the
+manifest records, so updating FloatLib means changing that tag, updating the manifest and
+rebuilding.
 
-From here on, `lean` blocks are elaborated while the page is built, and their `leanOutput` blocks
-are checked against Lean messages. Plain-text sketches illustrate the interfaces. On this page we
-open `FloatLib.Numerics`, `FloatLib.Floats.Formats.Flocq`, and `TorchLean`, and use
-`ExecFloat` and `Model` for FloatLib's executable and reference APIs.
+Lean elaborates every `lean` block and checks each `leanOutput` against the compiler message.
+Plain-text sketches illustrate interfaces. The examples open `FloatLib.Numerics`,
+`FloatLib.Floats.Formats.Flocq`, and `TorchLean`, and use `ExecFloat` and `Model` for FloatLib's
+executable and reference APIs.
 
 # Nonassociative Binary32 Addition
 
@@ -127,8 +130,8 @@ The printed integers encode the results: `0` is `0x00000000`, which is $`+0`, an
 in {Informal.citet goldberg1991}[]. A reduction's error bound must account for the order in which
 its additions run.
 
-We can isolate the effect of the tie by changing the small addend.
-Replace the $`1` by $`2` and the two groupings agree, because $`2^{24}+2` lands exactly on the
+Changing the small addend isolates the effect of the tie. Replace the $`1` by $`2` and the two
+groupings agree, because $`2^{24}+2` lands exactly on the
 grid:
 
 ```lean
@@ -187,8 +190,8 @@ Among these three increments, only $`b=1` changes the answer with grouping. Its 
 addition is a tie, while $`1-2^{24}` is exactly representable. The $`b=0.5` negative-side addition
 is also a tie, but rounds to $`-2^{24}`.
 
-We can examine the same calculation at three levels. The spacing of the binary32 grid and the
-nearest-even rule explain the rounded value. An executable model must also determine its bits and
+The same calculation has three levels. The spacing of the binary32 grid and the nearest-even rule
+explain the rounded value. An executable model must also determine its bits and
 handle signs, subnormals, infinities, and NaNs. A backend contract must then identify the
 parenthesization or fused instruction used by the actual reduction.
 
@@ -269,7 +272,7 @@ its literature and FloatLib's Lean source, the corresponding names are:
 *
   * representable grid
   * `generic_format`
-  * `genericFormat`
+  * `GenericRepresentable`
 *
   * fixed, unbounded, gradual formats
   * `FIX`, `FLX`, `FLT`
@@ -345,7 +348,7 @@ different precisions.
 A format is added as a predicate on the real value, and its parameter `fexp` chooses the exponent
 at which representability is tested. Informally,
 
-$$`\operatorname{genericFormat}(\beta,f_{\rm exp},x)`
+$$`\operatorname{GenericRepresentable}(\beta,f_{\rm exp},x)`
 
 means that after scaling $`x` by the exponent selected by `fexp`, the resulting mantissa is an
 integer. Precision and underflow enter through the exponent policy.
@@ -365,7 +368,7 @@ $$`f_{\mathrm{exp}}:\mathbb Z\to\mathbb Z`.
 
 For a nonzero real $`x`, its magnitude identifies the power of $`\beta` immediately above
 $`|x|`. Applying `fexp` to that magnitude gives the canonical exponent at which the mantissa must
-be integral. FloatLib's `genericFormat β fexp x` says precisely that $`x` lies on this grid.
+be integral. FloatLib's `GenericRepresentable β fexp x` says precisely that $`x` lies on this grid.
 
 Three standard policies explain most uses:
 
@@ -394,7 +397,7 @@ while `fixExp (-4)` would use the $`1/16` grid everywhere. These three policies 
 format implementations. They're three choices for the same exponent function interface.
 
 These policies are ordinary integer functions. At magnitude $`1`, the gradual format chooses
-exponent $`-2`, giving the $`1/4` spacing of the example above:
+exponent $`-2`, giving the $`1/4` spacing of the toy three-bit example:
 
 ```lean (name := fltNormal)
 -- The normal regime chooses spacing from magnitude minus
@@ -684,8 +687,8 @@ def wideIncrement : ChapterBinary128 :=
   1 / 1267650600228229401496703205376
 ```
 
-The finite-result observer returns the exact rational represented by each computed encoding. Its
-expected values below are rational arithmetic, independent of the floating-point implementation:
+The finite-result observer returns the exact rational represented by each computed encoding. The
+expected equalities use rational arithmetic, independent of the floating-point implementation:
 
 ```lean (name := precisionWitness)
 #eval
@@ -740,9 +743,9 @@ integer and dyadic calculations, so it can be evaluated without delegating the o
 host's floating-point instruction. The format parameters fix the encoding, range, and spacing,
 while the operation's rounding mode fixes how an exact intermediate lands on that grid.
 
-At $`1`, one ULP is $`2^{-23}` and half an ULP is $`2^{-24}`. Here are three increments (a quarter
-of a unit in the last place, half a unit, and a full unit) added to the `unit` defined at the top
-of the chapter:
+At $`1`, one ULP is $`2^{-23}` and half an ULP is $`2^{-24}`. Three encoded increments—a quarter,
+half, and a full unit in the last place—are added to `unit`, the binary32 encoding of one used in
+the nonassociativity calculation:
 
 ```lean
 -- Choose increments below, at, and above the nearest-even
@@ -838,9 +841,9 @@ For $`0` divided by $`+0`, the rule returns the canonical NaN and raises `invali
 quiet NaN). Both statuses are derived from the same exact dyadic or rational intermediate used by
 the arithmetic operation, and no host floating-point instruction is called to guess the flag.
 
-Transcendentals have a different status from basic arithmetic because IEEE 754 doesn't prescribe
-one correctly rounded bit pattern for every elementary function. FloatLib supplies explicit
-approximation kernels, and for IEEE formats correctly rounded `exp`, `log`, `expMinus1`, `logPlus1`
+Transcendental functions require different treatment because IEEE 754 doesn't prescribe one
+correctly rounded bit pattern for every elementary function. FloatLib supplies explicit
+approximation kernels, and for IEEE formats correctly rounded `exp`, `log`, `expm1`, `logp1`
 and `expMul`, which TorchLean's configured `Context` uses. TorchLean adds correctly rounded `atan`,
 `asin`, `acos` and `atan2` for IEEE formats
 ({src "TorchLean/Tensor/ConfiguredBinary/InverseTrigonometric.lean"}[the inverse
@@ -1053,7 +1056,7 @@ real arithmetic is being applied to genuine decoded values.
 
 # Addition Across Numerical Models
 
-There are four useful interpretations of the addition above.
+The addition `unit + quarterUlpAtOne` has four useful interpretations.
 
 First, the ideal real expression is
 
@@ -1185,7 +1188,7 @@ example {a b : ExecFloat.Binary 8 23}
 ```
 
 FloatLib's `Formats.BinaryInterchange.Analysis.Sterbenz` supplies both the rounded-real and
-executable model theorems above, and its executable proof uses FloatLib's subtraction specification
+executable Sterbenz theorems, and its executable proof uses FloatLib's subtraction specification
 and codec round trip directly. We get the other links used here from the
 {src "TorchLean/Verify/Floats/IEEE754.lean"}[finite arithmetic bridge], which also
 states the absorption contract. In each case, the generic result supplies the rounding argument,
@@ -1230,14 +1233,14 @@ reduction-tree statements remain necessary for the corresponding tensor and back
 exact-accumulation theorem can't be substituted for their local rounding premises.
 
 `TorchLean.Verify.Floats.IEEE754.Reductions` evaluates FloatLib `ReductionTree` schedules with the
-executable operations of a configured IEEE format. Its `IEEE754.SumResult.enclosure` and
-`IEEE754.DotResult.enclosure` rest on FloatLib's
-`Model.ReductionTree.abs_toReal_eval_sub_sum_le_geometric`. That theorem applies
-`abs_eval_sub_exact_le_geometric`, whose premise is local to the tree: each of its rounded
-additions $`x+y` errs by at most $`u(|x|+|y|)`. Finite evaluation at every leaf and internal node
-gives that premise with the format's unit roundoff, $`2^{-24}` for binary32, subnormal sums
-included. No relative bound on rounding arbitrary reals is assumed. Binary32 has none with
-$`u=2^{-24}`, because subnormal results need an absolute error term. The dot-product enclosure
+executable operations of a configured IEEE format. Its `IEEE754.evalSum_enclosure_depth` rests
+on FloatLib's `Model.ReductionTree.abs_toReal_eval_sub_sum_le_depth`, in the depth of the tree,
+and `IEEE754.SumResult.enclosure` and `IEEE754.DotResult.enclosure` weaken it to the number of
+additions. The FloatLib theorem applies `abs_eval_sub_exact_le_depth`, whose premise is local to the
+tree: each of its rounded additions $`x+y` errs by at most $`u(|x|+|y|)`. Finite evaluation at every
+leaf and internal node gives that premise with the format's unit roundoff, $`2^{-24}` for binary32,
+subnormal sums included. No relative bound on rounding arbitrary reals is assumed. Binary32 has none
+with $`u=2^{-24}`, because subnormal results need an absolute error term. The dot-product enclosure
 bounds accumulation error relative to the exact sum of already-rounded products. Bounding the
 earlier product errors is a separate step.
 
@@ -1266,9 +1269,9 @@ A zero point shifts the code grid, but it doesn't remove the need to check for s
 
 # Proving A Real Bound
 
-Sometimes we want a bound on a formula before choosing its floating-point implementation.
-For example, suppose a coordinate lies between one and two and we raise it to a real power.
-We can give FloatLib's `interval` tactic those assumptions and ask Lean to check an upper bound:
+Sometimes a formula needs a bound before its floating-point implementation is chosen. Take a
+coordinate between one and two and raise it to a real power. FloatLib's `interval` tactic can use
+those assumptions to check an upper bound:
 
 ```lean
 example (x y : ℝ)
@@ -1287,13 +1290,13 @@ To support another named function, `@[interval_extension]` registers an executab
 together with its containment proof, and the tactic evaluates that enclosure again when it
 subdivides an input box. We use the upstream API and don't keep a second registry in TorchLean.
 These proofs concern real expressions, so relating them to a rounded tensor computation still
-requires the arithmetic and backend contracts below.
+requires arithmetic and native-backend contracts.
 
 # Native Backend Contracts
 
 Lean `Float32`, C and CUDA `float`, cuBLAS reductions, and LibTorch tensors can all appear in an
 execution path. FloatLib connects Lean's logical native models to configured software arithmetic
-through the operation-specific theorems above. TorchLean's runtime contracts separately connect
+through operation-specific bridge theorems. TorchLean's runtime contracts separately connect
 provider results to configured binary32 error bounds. Native instructions require provider evidence.
 
 For a native provider, a kernel capsule records:
@@ -1306,7 +1309,7 @@ For a native provider, a kernel capsule records:
 
 A capsule makes reduction policy available to graph-level error analysis. Its `Contract.Evidence`
 type records a shared definition, runtime guard, test suite, trusted boundary, or `notApplicable`
-(the type has no theorem constructor). The bridge proved above for `Float32.Model` concerns the
+(the type has no theorem constructor). The `Float32.Model` bridge concerns the
 logical arithmetic model, and it doesn't become a proof about a native provider merely because a
 capsule names that provider.
 
@@ -1380,7 +1383,7 @@ order. `Tensor.map` applies FloatLib's real-scale or rational quantizer at every
 
 - Lean FRO,
   [`Float32.Model` source
-  ](https://github.com/leanprover/lean4/blob/v4.35.0/src/Init/Data/Float/Model/Float32.lean).
+  ](https://github.com/leanprover/lean4/blob/v4.36.0/src/Init/Data/Float/Model/Float32.lean).
 - The Lean Language Reference,
   [Floating-Point
   Numbers](https://lean-lang.org/doc/reference/latest/Basic-Types/Floating-Point-Numbers/).

@@ -88,7 +88,9 @@ def cifarCropHeight : Nat := 4
 /-- Cropped CIFAR width for the compact runnable diffusion example. -/
 def cifarCropWidth : Nat := 4
 
+/-- `cifarCropHeight` is positive. -/
 local instance : NeZero cifarCropHeight := ⟨by decide⟩
+/-- `cifarCropWidth` is positive. -/
 local instance : NeZero cifarCropWidth := ⟨by decide⟩
 
 /-- Shape of a clean image batch $x_0$: NCHW with the fixed `batchSize`. -/
@@ -246,6 +248,7 @@ def trainLoop
   let evalX0 := batchAt 0
   let alphaBars := schedule.alphaBars
   let evalStep := config.schedule.timesteps / 2
+  -- The evaluation sample: the first batch noised to the middle timestep.
   let evalSample : Sample.Supervised Float (input c h w) (output c h w) := by
     simpa [input, output] using
       Diffusion.sample [batchSize] ([h, w] : Tensor Nat [2])
@@ -259,6 +262,8 @@ def trainLoop
   trainer.printSummary
   let curveEvery : Nat := Nat.max 1 (config.training.steps / 50)
   let trained ← trainer.trainStream runtime
+    -- Step `step` noises batch `step % count` with fresh noise. Its timestep moves by one on
+    -- each pass over the batches, cycling through the schedule.
     (fun step =>
       let x0 := batchAt step
       show Sample.Supervised Float (input c h w) (output c h w) from by
@@ -272,6 +277,7 @@ def trainLoop
     (curveEvery := curveEvery)
   let curve := trained.curve
   trained.printSummary
+  -- Images are in `[-1, 1]` and are written as `(x + 1) / 2`.
   match config.artifacts.referencePPM? with
   | none => pure ()
   | some path => Data.Image.writeFirstPPM path (evalX0.map fun x => (x + 1.0) / 2.0)

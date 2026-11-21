@@ -21,32 +21,31 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
+/-! Guide page: the graph IR read by importers, exporters and verifiers. -/
+
 #doc (Manual) "Graph IR" =>
 %%%
 tag := "graphs-and-ir"
 file := "The-Canonical-Graph-IR"
 %%%
 
-A sequential model preserves architecture and shape constraints in its type. Importers, exporters,
-and verification passes need something else: a first-order representation that can be read before it
-is known to be valid. `IR.Graph` is that representation, an array of nodes of registered
-operators that can be traversed, serialized, checked, and assigned to kernels.
+A captured two-layer MLP becomes a topologically ordered array of ten nodes: one input, four
+constants, two linear operations, ReLU, a reduction, and `tanh`. Each operator names the earlier
+outputs it consumes. `IR.Graph` stores that array, checks its references and shapes, evaluates it,
+and presents the same nodes to verifiers.
 
-I'll keep the ten-node graph from
-{src "TorchLeanExamples/DeepDives/GraphSemantics.lean"}[`GraphSemantics.lean`] fixed as we
-change its parameter payload and scalar interpretation. We can then compare the computed values,
-propagated intervals, and kernel plan for the same nodes. A PyTorch trace provides a second view
-of their connections. Every Lean
-block below is elaborated while this page is built. The Python examples and shell commands let
-you inspect the graph and compare its interpretations in your build.
+The examples keep the graph from
+{src "TorchLeanExamples/DeepDives/GraphSemantics.lean"}[`GraphSemantics.lean`] fixed while changing
+its parameters and scalar arithmetic. Its intermediate values, interval bounds, and kernel plan
+can then be compared node by node. An FX trace exposes the corresponding PyTorch connections.
 
 # Executable Graph Types And Lowering
 
-`TypedGraph` stores shape-indexed executable functions for forward evaluation, JVPs, and
-VJPs, together with a typed reference selecting its output. The canonical IR has no second
-executable form: `Graph.eval` runs the graph itself, by the rules of its registered operators, and
-computes forward values only. {ref "runtime-autograd"}[Runtime and Autograd] explains what the
-typed graph can justify.
+Differentiating a model needs the local derivative rules and the values they read.
+A forward capture from Python gives us operator records and edges specifying their inputs.
+`TypedGraph` gives us executable forward, JVP, and VJP rules with shape-indexed references.
+`IR.Graph` is the form we inspect for forward execution.
+{ref "runtime-autograd"}[Runtime and Autograd] works through the derivative path.
 
 Here are the principal executable paths:
 
@@ -255,7 +254,8 @@ print("fx node has a shape field:", hasattr(list(g.graph.nodes)[0], "shape"))
 ```
 
 Compare the printed operation names, parent arguments, parameter references, and output selection
-with the ten-node listing above. Keep the output value for the numerical comparison below.
+with the `irPretty` ten-node listing. The `irFloat` and `irIEEE` blocks evaluate the same `x0`
+through the IR.
 
 An FX node's `target` is a Python object: a builtin, a submodule path, a method name, or any
 function you happened to call. TorchLean's operator is a constructor of a single inductive type
@@ -293,12 +293,14 @@ inside its two `call_module` nodes, where TorchLean has four constant nodes. Tor
 graph's outputs by reference in `Graph.outputs`, here output 0 of node 9, and `Graph.eval` returns
 their values. That extra FX node selects the result and adds no tensor calculation.
 
-We can compare the printed PyTorch output at `x0` with the IR evaluator after supplying the
-parameter payload.
+Supplying the parameter payload lets the IR evaluator compute the same `x0` used by the PyTorch
+snippet.
 
 # The Node Record
 
-Validation and evaluation use the information in the node record:
+Open one operator node and trace the values it reads. You need an operation, the outputs of
+earlier nodes that feed it, and the type of each input and output. TorchLean calls that type
+information a port. A port says what kind of element we have and gives its shape.
 
 ```
 /-- Output `out` of node `node`. -/
@@ -354,8 +356,8 @@ every edge. `build` ran it on our graph, and running it again gives the same ans
 Except.ok ()
 ```
 
-Let's break it three ways, one field at a time. First, give the ReLU node the wrong shape, leaving
-its reference untouched:
+Three one-field mutations isolate the structural checks. The first gives the ReLU node the wrong
+shape while leaving its reference untouched:
 
 ```lean (name := irBadShape)
 -- Keep the edges valid while changing only the shape the
@@ -671,8 +673,8 @@ Except.ok "0.027713"
 The two checked Lean evaluations agree to six decimals. The first uses hardware `Float`
 double-precision arithmetic, and the second uses FloatLib binary32 with its rounding spelled out
 {Informal.citep goldberg1991}[]. Its final conversion picks a decimal display without changing
-the arithmetic inside the graph. Compare these values with the PyTorch output from the command
-above. Agreement at the displayed precision doesn't establish agreement of stored values, and
+the arithmetic inside the graph. Compare these values with the PyTorch output from the FX snippet.
+Agreement at the displayed precision doesn't establish agreement of stored values, and
 {ref "floats"}[Floating-Point Semantics] follows individual rounding steps to explain how such
 differences arise.
 
@@ -836,7 +838,7 @@ evaluation requires a further backend theorem.
 
 `FloatLib.Floats.Interval.Quantized` defines the generic real interval construction. Its
 `RInterval.tanh` is noncomputable: it applies `Real.tanh` to each endpoint and rounds outward.
-TorchLean's executable instance above uses the global codomain instead. A tighter executable
+TorchLean's executable binary32 instance uses the global codomain instead. A tighter executable
 interval needs justified upper and lower bounds for the transcendental operation, while `[-1, 1]`
 already encloses the ideal real `tanh` range. Relating executable transcendental outputs to that
 range is a separate backend obligation. Nearest rounding at an endpoint can round inward (a lower
@@ -936,14 +938,15 @@ on `Pr`. Under those assumptions, every box the rounded pass returns encloses th
 in that run. On its own, it doesn't establish that the real run succeeds, or that a node gets a
 box.
 
-No premise constrains the operators: every operator `Op.runIBP` gives a box has a proved rule (the
-sum at node 8 and the `tanh` at node 9 among them), so the theorem covers the ten-node graph as
-written. Its scalar requirements hold for the reals and for rounded-real `FP32`. But FloatLib's
+No premise constrains the operators: every operator for which `Op.runIBP` returns a box has a proved
+rule (the sum at node 8 and the `tanh` at node 9 among them), so the theorem covers the ten-node
+graph as written. Its scalar requirements hold for the reals and for rounded-real `FP32`. But
+FloatLib's
 executable binary32 carrier has no `LawfulBoundOps` instance, so the theorem doesn't apply to the
-boxes the command above computes.
+boxes computed by `irIBP`.
 
-In the theorem, the real run is at `ℝ`, whereas the command above uses FloatLib binary32. Relating
-that rounded propagation to real arithmetic takes another argument, which
+In the theorem, the real run is at `ℝ`, whereas `irIBP` uses FloatLib binary32. Relating that
+rounded propagation to real arithmetic takes another argument, which
 {ref "verification"}[Verification And Certificates] and {ref "fp32-soundness"}[Floating-Point
 Soundness] develop. Applying the enclosure theorem to an execution requires both its payload and
 input hypotheses and this connection between scalar semantics.
@@ -953,9 +956,8 @@ initial enclosure from which the propagation proof starts. The Boolean containme
 compares an already supplied point and box. It performs neither this induction nor a check of
 universal input hypotheses.
 
-# Executable Coverage And Proof Coverage
-
-`Graph.eval` runs every registered operator by its rule in the operator table, so there's nothing
+The enclosure theorem does not limit which operators `Graph.eval` can execute. `Graph.eval` runs
+every registered operator by its rule in the operator table, so there's nothing
 to lower before a graph runs: the value table shown earlier is the execution. It returns an error
 when an operator's checks refuse its inputs (`Op.invoke`), while a raw logarithm of a nonpositive
 input returns the scalar's IEEE values (a NaN below zero, $`-\infty` at zero), as `Tensor.log`
@@ -1054,7 +1056,7 @@ implementation of the same operator, provider, and device.
 Keeping that distinction prevents a common architecture mistake:
 
 ```
--- Each stage below answers a different question about
+-- Each stage answers a different question about
 -- backend support.
 registered     ≠ selectable
 selectable     ≠ executable
@@ -1124,7 +1126,8 @@ Here's the source map:
 
 # Variations On The Ten-Node Graph
 
-Changing one field at a time isolates the checks and interpretations used above.
+Changing one field at a time isolates the checks and interpretations used throughout the ten-node
+experiment.
 
 1. Add an eleventh node, `Op.relu` at shape `[3]` on node 9, and predict what `build` reports
    before running it. Then give it shape `[]` and predict again.

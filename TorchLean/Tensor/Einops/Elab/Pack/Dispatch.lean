@@ -63,6 +63,8 @@ private def compileNativePackLeaf
     mkAppM ``Pack.inputShapes #[specializedChecked]
   let inputShape ← mkAppM ``List.get #[inputShapes, component]
   let inputSize ← mkAppM ``Shape.size #[inputShape]
+  -- The generated code uses the literal sizes of the checked pack, each proved equal to the
+  -- checked term below.
   let literalInputSize :=
     mkNatLit (Shape.size checkedValue.inputShapes[componentIndex]!)
   let leadingSize := Shape.size checkedValue.leadingShape
@@ -92,6 +94,7 @@ private def compileNativePackLeaf
     certifyGeneratedInvariant
       "that native pack uses the checked packed-axis length"
       (← mkEq literalPackedAxisLength checkedPackedAxisLength)
+  -- The component's offset is the sum of the segment lengths before it.
   let componentValue ← mkAppM ``Fin.val #[component]
   let checkedSegmentLengths ←
     mkAppM ``Pack.segmentLengths #[specializedChecked]
@@ -108,6 +111,7 @@ private def compileNativePackLeaf
   let hOffset ←
     mkAppM ``Eq.trans #[
       hLiteralPrefix, ← mkAppM ``Eq.symm #[hCheckedPrefix]]
+  -- The component's flat index of the output entry, in row-major arithmetic.
   let directIndex ←
     mkAppM ``Pack.packDirect #[
       literalStarShape, literalTrailingShape,
@@ -115,6 +119,7 @@ private def compileNativePackLeaf
   let (compiledIndexValue, hCompiledIndexValue) ←
     compileRowMajorIndex directIndex #[
       ``Pack.packDirect]
+  -- The dispatcher's comparisons place the packed-axis position in this segment.
   let hLower ←
     certifyNativeArithmeticFact
       "that a packed output lies after its selected component prefix"
@@ -174,6 +179,7 @@ private def compileNativePackLeaf
       useNativeInputIndex (some hInputBound)
       #[hLiteralOutputBound, hNativeOutputIndex, hPositionDecomposition,
         hLower, hUpper, hLiteralInputBound]
+  -- That component entry is the pack denotation's value at the output entry.
   let hIndex ←
     mkAppM
       ``Pack.unpackFlat_eq_of_packDirect' #[
@@ -190,6 +196,7 @@ private def compileNativePackLeaf
   let hValue ←
     withTransparency .all <|
       mkExpectedTypeHint hValue (← mkEq sourceValue expectedValue)
+  -- Turn the native read into a copy of that entry onto the output buffer.
   let sourceValue := sourceValue.consumeMData
   unless sourceValue.isAppOfArity ``Rep.getFlatUSize 6 do
     throwError
@@ -234,6 +241,7 @@ private partial def compileNativePackDispatch
         checkedValue componentCount trailingSize
         packedAxisLength segment pathAssumptions expectedValue
   | _ =>
+      -- Split at the first offset of the right half; each half compiles under its comparison.
       let split := segments.length / 2
       let left := segments.take split
       let right := segments.drop split
@@ -281,6 +289,7 @@ private partial def compileNativePackDispatch
           return (rightFunction, hRightFunction)
       let rightFunction := rightResult.1
       let hRightFunction := rightResult.2
+      -- Both branches push the expected value, so the `dite` does (`dite_eq_iff'`).
       let value ←
         mkAppM ``dite #[condition, leftFunction, rightFunction]
       let expectedOutput ←

@@ -10,6 +10,7 @@ public import TorchLeanExamples.DeepDives.Floats.RoundingBugs
 public import TorchLean.NN.Session.Lifecycle
 public import TorchLeanTest.Data.NPY
 public import TorchLeanTest.Data.Text
+public import TorchLeanTest.IR.Flow
 public import TorchLeanTest.IR.Pointwise
 public import TorchLeanTest.IR.MoEImport
 public import TorchLeanTest.Verification.BuilderImport
@@ -26,6 +27,7 @@ public import TorchLeanTest.Tensor.EinopsLexer
 public import TorchLeanTest.Tensor.Elementary
 public import TorchLeanTest.Tensor.Operations
 public import TorchLeanTest.Tensor.Storage
+public import TorchLeanTest.RL.PolicyKL
 
 /-!
 # Suite
@@ -74,6 +76,7 @@ def run : IO Unit := do
     TorchLean.Test.TextData.run
     TorchLean.Test.MoEImport.run
     TorchLean.Test.Pointwise.run
+    TorchLean.Test.Flow.run
     TorchLean.Test.BuilderImport.run
     TorchLean.Test.CameraCertificates.run
     TorchLean.Test.CertificateParsing.run
@@ -83,6 +86,7 @@ def run : IO Unit := do
     TorchLean.Test.Tensor.run
     TorchLean.Examples.SoftmaxCrossEntropy.run
     TorchLean.Test.Storage.run
+    TorchLean.Test.PolicyKL.run
     TorchLean.Test.Floats.run
     TorchLean.Test.Tree.run
     TorchLean.Test.KernelGradient.run .cpu

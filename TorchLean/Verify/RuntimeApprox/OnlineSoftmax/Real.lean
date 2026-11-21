@@ -33,7 +33,8 @@ every term it scales. `step_residual_le` grows the underflow residual by `residu
 and adds `blockResidual`. Gibbs' inequality `∑ w (M - s) ≤ S (log N - log S)`
 (`sum_exp_mul_sub_le`) turns the termwise budgets into closed forms (`closed_form_le`,
 `budget_closed_form`). `closed_form_le_of_bounds` and `stored_closed_form_le_of_bounds` evaluate
-these from upper bounds on their exponentials and powers.
+these from upper bounds on their exponentials and powers, and `closed_form_le_of_interval` from
+`exp x ≤ 1 / (1 - x)`.
 -/
 
 @[expose] public section
@@ -742,6 +743,37 @@ theorem one_add_pow_le_inv {u : ℝ} (n : ℕ) (hu : 0 ≤ u) (hn : n * u < 1) :
         gcongr; linarith [Real.add_one_le_exp u]
     _ = Real.exp (n * u) := by rw [← Real.exp_nat_mul]
     _ ≤ 1 / (1 - n * u) := Real.exp_bound_div_one_sub_of_interval (by positivity) hn
+
+/-- `closed_form_le_of_bounds` with `exp x ≤ 1 / (1 - x)` at `cl`, `co` and `u` in `[0, 1)`: the
+budget premise, the range premises up to `M ≤ mx` and the bound `b` of the closed form follow from
+five inequalities at those bounds. They are between rationals when `u`, `η`, `V`, `uL`, `ηL`, `cl`,
+`co`, `Lg` and `Pw` are. -/
+theorem closed_form_le_of_interval {u η V uL ηL cl co Lg Pw M mx b : ℝ} {N B T : ℕ}
+    (hu : 0 ≤ u) (hu1 : u < 1) (hη : 0 ≤ η) (hV : 0 ≤ V) (huL : 0 ≤ uL) (hηL : 0 ≤ ηL)
+    (hcl : 0 ≤ cl) (hcl1 : cl < 1) (hco : 0 ≤ co) (hco1 : co < 1) (hLg : Real.log N ≤ Lg)
+    (hPw : (1 + u) ^ (B + 1) ≤ Pw) (hM : M ≤ mx) :
+    let al := (Real.exp cl - 1) + 2 * u * Real.exp cl * Real.log N
+    let ao := (Real.exp co - 1) + 2 * u * Real.exp co * Real.log N
+    let ρl := T * residualGrowth u η ^ T * blockResidual u η N B 1 cl η
+    let ρo := T * residualGrowth u η ^ T * blockResidual u η N B V co (productResidual u η uL ηL V)
+    let al' := (1 / (1 - cl) - 1) + 2 * u * (1 / (1 - cl)) * Lg
+    let ao' := (1 / (1 - co) - 1) + 2 * u * (1 / (1 - co)) * Lg
+    let κ := (1 + u) ^ 2 * (1 / (1 - u) + η)
+    let ρl' := T * κ ^ T * ((1 + u) ^ 2 * η * N * 1 * (1 / (1 - cl)) + (1 + u) * η + Pw * B * η)
+    let ρo' := T * κ ^ T * ((1 + u) ^ 2 * η * N * V * (1 / (1 - co)) + (1 + u) * η +
+      Pw * B * ((1 + u) * (((1 + uL) * η + ηL) * V) + η))
+    al' + ρl' < 1 → N * 1 * (1 / (1 - cl)) + ρl' ≤ M → N * V * (1 / (1 - co)) + ρo' ≤ M →
+      (V + V * ao' + ρo') / (1 - al' - ρl') ≤ M →
+      (1 + u) * ((V * (ao' + al' + ρl') + ρo') / (1 - al' - ρl')) + u * V + η ≤ b →
+      al + ρl < 1 ∧ (N : ℝ) * 1 * Real.exp cl + ρl ≤ mx ∧ (N : ℝ) * V * Real.exp co + ρo ≤ mx ∧
+        (V + V * ao + ρo) / (1 - al - ρl) ≤ mx ∧
+        (1 + u) * ((V * (ao + al + ρl) + ρo) / (1 - al - ρl)) + u * V + η ≤ b := by
+  intro al ao ρl ρo al' ao' κ ρl' ρo' h1 h2 h3 h4 h5
+  obtain ⟨k1, k2, k3, k4, k5⟩ := closed_form_le_of_bounds (T := T) hu hη hV huL hηL hcl hco
+    (Real.exp_bound_div_one_sub_of_interval hcl hcl1)
+    (Real.exp_bound_div_one_sub_of_interval hco hco1)
+    (Real.exp_bound_div_one_sub_of_interval hu hu1) hLg hPw h1
+  exact ⟨k1, k2.trans (h2.trans hM), k3.trans (h3.trans hM), k4.trans (h4.trans hM), k5.trans h5⟩
 
 /-- With one exponent `c` for every term, the termwise allowance is the sum of magnitudes times
 `exp c - 1`. -/

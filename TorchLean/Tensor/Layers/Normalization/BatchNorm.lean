@@ -19,7 +19,9 @@ batch or running statistics along any channel axis.
 
 Both rules are hand-derived. Over `ℝ` and with every extent positive (`Shape.WellFormed`),
 `TorchLean.BatchNorm.fderiv_forwardVec_eq_jvp` (`TorchLean/NN/Norm/BatchNorm/FDeriv.lean`) proves
-that `BatchNorm.jvp` is the derivative of the `.batch` forward when `epsilon` is positive, and
+that `BatchNorm.jvp` is the derivative of the `.batch` forward where the spatial shape has a single
+position or every channel has a nonzero sum of its variance and `epsilon`, as for every positive
+`epsilon`, and
 `TorchLean.BatchNorm.jvp_backward_adjoint` (`TorchLean/NN/Norm/BatchNorm.lean`) that
 `BatchNorm.backward` is adjoint to it at any `epsilon`.
 -/

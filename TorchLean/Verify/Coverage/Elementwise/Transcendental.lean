@@ -7,15 +7,22 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Coverage
+public import TorchLean.Verify.Coverage.Pointwise.Transcendental -- shake: keep
 public import TorchLean.Tensor.Op.Table.Rule
 
 /-!
 # Roundoff coverage of the transcendental functions of the operator table
 
 `#roundoff_coverage` reads the routes of each registered operator from its arm of
-`TorchLean.Op.rule?`. The theorems are declared in the namespace
-`TorchLean.Coverage.Elementwise`, which every module under
-`TorchLean/Verify/Coverage/Elementwise/` shares.
+`TorchLean.Op.rule?`. `Op.special`, whose input ports are mapped from its `orders` attribute, is
+read at one, two and three orders, each a variable, the numbers of arguments a special function
+has, and at a variable function of that many arguments. `Op.complex` is read at each of its
+functions (`ComplexFn`), one constructor at a time. The theorems are declared in the namespace
+`TorchLean.Coverage.Elementwise`, which every module under `TorchLean/Verify/Coverage/Elementwise/`
+shares.
+
+It imports the coverage of the tensor transcendental functions (`Pointwise/Transcendental.lean`), so
+that a route with the statement of a route there records that theorem instead of declaring another.
 -/
 
 public section
@@ -26,6 +33,6 @@ namespace TorchLean.Coverage.Elementwise
   elementwise :=
     Op.exp, Op.sin, Op.cos, Op.log, Op.safeLog, Op.exp2, Op.expm1, Op.log2, Op.log10, Op.log1p,
     Op.tan, Op.asinh, Op.acosh, Op.atanh, Op.atan, Op.asin, Op.acos, Op.erf, Op.atan2, Op.sinh,
-    Op.cosh
+    Op.cosh, Op.special, Op.complex, Op.complexPow
 
 end TorchLean.Coverage.Elementwise

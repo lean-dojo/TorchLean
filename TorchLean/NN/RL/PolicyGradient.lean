@@ -37,9 +37,16 @@ From PPO come `ratio` (eq. (6)), `PPO.objective` (eq. (7)), `klLoss` (eq. (8), n
 `PPO.loss` (eq. (9), negated). `kl` puts the policy that sampled the batch first, as their eqs. (4)
 and (8) do. The defaults of `PPO.loss` take $c_1 = 1$ from their Table 5 and leave out the entropy
 bonus, as their MuJoCo runs in Section 6.1 do. `sacActorLoss` is eq. (12) of Christodoulou, which
-computes the expectation over actions in eq. (7) of Haarnoja et al. as a sum.
+computes the expectation over actions in eq. (7) of Haarnoja et al. as a sum. `kl` and
+`klFromLogits` compute the divergence with `klTilted`, the form of Section 4.1 of Amos (2026),
+which does not subtract the nearly equal logarithms of the textbook sum, centered at the largest
+log-ratio instead of the mean, and with the old policy given by its logarithms. Their values over
+ℝ are in `TorchLean.NN.RL.PolicyGradient.Real`. In floating point nothing is proved:
+`klFromLogits`'s docstring states the logit range, the inputs that `TorchLeanTest.RL.PolicyKL`
+checks and two limits of the rounding.
 `RL.PolicyGradient.toReal_ratio_self` proves that `ratio x x` decodes to 1 for a finite `x` at
-IEEE formats. No TorchLeanTest test runs these objectives.
+IEEE formats. `TorchLeanTest.RL.PolicyKL` checks `kl` and `klFromLogits` against mpmath, and no
+TorchLeanTest test runs the other objectives.
 
 Primary references:
 
@@ -60,6 +67,8 @@ Primary references:
   eq. (7): https://arxiv.org/abs/1812.05905
 - Christodoulou, "Soft Actor-Critic for Discrete Action Settings" (2019), arXiv:1910.07207,
   eq. (12): https://arxiv.org/abs/1910.07207
+- Amos, "On numerical issues of divergences between nearly equal distributions" (2026),
+  arXiv:2611.18511, Section 4.1, "Fixing the forward KL": https://arxiv.org/abs/2611.18511
 -/
 
 @[expose] public section
@@ -144,40 +153,169 @@ def actorCriticLoss {nActions : Nat} (logits : Tensor α [nActions])
 def ratio (newLogProb oldLogProb : α) : α :=
   MathFunctions.exp (newLogProb - oldLogProb)
 
-/--
-Categorical KL divergence `Σ_a old(a) * (log old(a) - log new(a))` after each probability vector
-is clamped into `[epsilon, 1-epsilon]` and divided by its sum.
+/-- `exp l * (exp s - 1 - s)`, a term of `klTilted` whose weight is given by its logarithm `l`,
+where `x` is `l + s` and `quarter` is `s / 4` as `klTilted` evaluates them. From `s = -2` to
+`s = 1` it is `exp l * Context.expm1x s`, which FloatLib rounds once and never makes negative.
+Above `1` it is `exp x - exp l - exp l * s`, where `exp s` alone can overflow, and a weight `exp l`
+that underflows to zero still contributes `exp x`. Below `-2` it is
+`exp x - exp l - 4 * (exp l * quarter)`, so a log-ratio `s` that overflowed to `-∞` still
+contributes its finite share. A term below half the least subnormal rounds to `0` in every order,
+as at binary32 `l = -110` and `s = 1/2`, where the term is about `2.51e-49`. -/
+def weightedExpm1x (l s x quarter : α) : α :=
+  let p := MathFunctions.exp l
+  if s > 1 then MathFunctions.exp x - p - p * s
+  else if -s > 2 then
+    let pq := p * quarter
+    MathFunctions.exp x - p - ((pq + pq) + (pq + pq))
+  else p * Context.expm1x s
 
-For finite inputs and `0 < epsilon < 1/2` the guarded vectors are probability distributions, and
-the result is `KL(old || new)` up to floating-point rounding when clamping leaves normalized
-inputs unchanged. An empty action vector gives `0`.
+/-- `log (Σ_a exp (l(a) + d(a))) - t` as two parts `(u, r)` whose sum it is, for log-weights `l`
+whose exponentials sum to one, exponents `d` at most `0`, some of them possibly `-∞`, `gap` the sum
+`Σ_a exp (l(a)) * expm1 (d(a))`, and `e = (d - t) + l` as `klTilted` rounds it, with `t = 0` when
+`gap` is above `-1/2`. There `u` is `0` and `r` is `log1p gap`, which keeps the small values of a
+near-equality accurate. Otherwise `u` is the first strict maximum of `e` and `r` is
+`log (Σ_a exp (e(a) - u))`, the logarithm of a sum of at least one even where the weights at the
+largest exponents underflow to zero. The parts stay apart from `t` and each other because `r`, at
+most `log nActions`, can be below half a unit in the last place of `t`: binary32 `t = -2^27` and
+`r = log 2` round to the sum `-2^27`. -/
+def logWeightedMass {nActions : Nat} (gap : α) (e : Tensor α [nActions]) (h : 0 < nActions) :
+    α × α :=
+  if gap > -((1 : α) / 2) then (0, Context.log1p gap)
+  else
+    let top := e.getScalar (Softmax.pivot e h)
+    (top, MathFunctions.log (Tensor.sum (Tensor.exp (e - Tensor.full _ top))))
+
+/-- A vector less its entry at `Softmax.pivot`, its first strict maximum, so that every entry is
+at most `0`. -/
+def centered {nActions : Nat} (t : Tensor α [nActions]) (h : 0 < nActions) :
+    Tensor α [nActions] :=
+  t - Tensor.full _ (t.getScalar (Softmax.pivot t h))
+
+/-- A quarter of `t`, `centered`: `t / 4` less its largest entry. Its entries lie between minus half
+the largest finite value and `0`, so the difference of two of them is finite, and so is that
+difference `centered` again. -/
+def quarterCentered {nActions : Nat} (t : Tensor α [nActions]) (h : 0 < nActions) :
+    Tensor α [nActions] :=
+  centered (t / Tensor.full _ (4 : α)) h
+
+/--
+The relative entropy `KL(p || q) = Σ_a p(a) * (log p(a) - log q(a))` of the tilted distribution
+`q ∝ p * exp δ` from the weights `p = exp l`, for log-weights `l` and the shift `δ = a - b`, in the
+form of Amos (2026), Section 4.1: `Σ_a p(a) * expm1x (s(a))` with
+`s = δ - log (Σ_a p(a) * exp (δ(a)))`, where `expm1x s = exp s - 1 - s`.
+
+The textbook sum subtracts nearly equal logarithms when `q` is close to `p`, and its rounding
+error can then exceed the divergence and make it negative. Here each term is `weightedExpm1x`,
+which is `p(a) * Context.expm1x (s(a))` from `s(a) = -2` to `1`. Amos centers `δ` by its mean
+`Σ_a p(a) * δ(a)`, where `expm1` overflows once the two policies are far apart (binary32 logits
+`[0, 0]` and `[-100, 100]`) or a weight is far below the rounding unit (`kl` in binary16 with its
+default `epsilon`). This form instead takes `d = 4 * centered (quarterCentered a - quarterCentered
+b)`, which is at most `0`, and `gap = Σ_a p(a) * expm1 (d(a))`. When `gap` is above `-1/2`, `t`
+is `0`; otherwise `t` is the first strict maximum of `d + l`. Then `e = (d - t) + l`, rounded once
+in that order, the parts `(u, r)` of `logWeightedMass gap e`, and `s = ((d - t) - u) - r`. A
+quarter of `d` is finite for any finite `a` and `b`, while `d` itself may overflow to `-∞`, and
+then `weightedExpm1x` takes the term's linear part from the quarter. The weights enter by their
+logarithms, so a weight that underflows to zero keeps its share `exp ((e - u) - r)` of the mass.
+That exponent `l + s` comes from the same rounded `e` whose largest entry `logWeightedMass` takes as
+`u`, so in the log-sum-exp branch each entry of `e` is at most `u` and `r` is the logarithm of a
+sum with the term `exp 0 = 1`, and the exponent is at most `0`; in the `log1p` branch, where `t`
+and `u` are `0`, it is at most about `log 2`. That is an argument about the rounding, not a
+theorem. `d - t` is exact where `d` is near `t`, so `e` keeps `l` at the precision of the term's
+own exponent, not at that of `d`. Two other orders failed: `(d - t) + l - r` with `u` left out
+could be positive by about half a unit in the last place of an entry of `d` (binary32
+`klFromLogits [0, -384, -2^33] [0, 2^33, 2^32]` gave `+∞`, where the divergence rounds to
+`2^33`), and `(d + l - t) - r` lost `l` at the precision of `d`, so `exp (l + s)` could fall below
+the linear part `exp l * (1 + s)` (`[0.5625, 0, -2^26]` against `[0.5625, 2.25, -2^25]` gave about
+`-0.214`). The value of the form does not depend on the centering. Over ℝ, for log-weights
+whose exponentials sum to one, the value is `log (Σ_a p(a) * exp (δ(a))) - Σ_a p(a) * δ(a)`
+(`RL.PolicyGradient.klTilted_eq_log_sum_exp`). An empty vector gives `0`.
+
+In floating point no theorem bounds the result. `d` is rounded at the magnitude of its entries
+and of the centered quarters of `a` and `b`, so a part of the shift below about half a unit in
+the last place of those values is lost; `klFromLogits` gives two such inputs.
+-/
+def klTilted {nActions : Nat} (logWeights a b : Tensor α [nActions]) : α :=
+  if h : 0 < nActions then
+    let quarter := centered (quarterCentered a h - quarterCentered b h) h
+    let d := (quarter + quarter) + (quarter + quarter)
+    let gap := Tensor.sum (Tensor.exp logWeights * Tensor.expm1 d)
+    let w := d + logWeights
+    let t := if gap > -((1 : α) / 2) then 0 else w.getScalar (Softmax.pivot w h)
+    let e := (d - Tensor.full _ t) + logWeights
+    let mass := logWeightedMass gap e h
+    Tensor.sum (Tensor.ofFn fun i =>
+      weightedExpm1x (logWeights.getScalar i) (d.getScalar i - t - mass.1 - mass.2)
+        (e.getScalar i - mass.1 - mass.2)
+        (quarter.getScalar i - t / (4 : α) - mass.1 / (4 : α) - mass.2 / (4 : α)))
+  else 0
+
+/-- The probabilities that `kl` compares: each entry `p` replaced by
+`Context.clamp p epsilon (1 - epsilon)`, that is `min (max p epsilon) (1 - epsilon)`, then the
+vector divided by its sum. A NaN `p` stays NaN, and `1 - epsilon` wins when `epsilon > 1 - epsilon`:
+at `epsilon = 0.75` every entry is `0.25` before the division. The tangent of an entry is cleared
+unless `epsilon < p < 1 - epsilon` (`Tensor.clamp` at `.interior`). -/
+def guardedProbabilities {nActions : Nat} (probs : Tensor α [nActions]) (epsilon : α) :
+    Tensor α [nActions] :=
+  let clamped := Tensor.clamp probs (Tensor.full _ epsilon) (Tensor.full _ ((1 : α) - epsilon))
+    .interior
+  clamped / Tensor.full _ (Tensor.sum clamped)
+
+/--
+Categorical KL divergence `KL(old || new) = Σ_a old(a) * (log old(a) - log new(a))` of the
+probability vectors after `guardedProbabilities` limits each entry by `epsilon` and `1 - epsilon`
+and divides the vector by its sum. It is `klTilted` of the logarithms of the guarded old vector
+and the shift `log new - log old` (the second vector `0`).
+
+Over ℝ, for `0 < epsilon < 1`, the result is the sum above for the guarded vectors
+(`RL.PolicyGradient.kl_eq_sum`), which is `KL(old || new)` when clamping leaves normalized inputs
+unchanged. An empty action vector gives `0`.
 -/
 def kl {nActions : Nat}
     (oldProbs newProbs : Tensor α [nActions])
     (epsilon : α := Context.defaultEpsilon) : α :=
-  match nActions with
-  | 0 => 0
-  | Nat.succ _ =>
-      let oldClamped := Tensor.clamp oldProbs (Tensor.full _ epsilon) (Tensor.full _ ((1 : α) -
-          epsilon)) .interior
-      let newClamped := Tensor.clamp newProbs (Tensor.full _ epsilon) (Tensor.full _ ((1 : α) -
-          epsilon)) .interior
-      let oldNormalized := oldClamped / Tensor.full _ (Tensor.sum oldClamped)
-      let newNormalized := newClamped / Tensor.full _ (Tensor.sum newClamped)
-      Tensor.sum (oldNormalized *
-        (Tensor.log oldNormalized - Tensor.log newNormalized))
+  let oldLog := Tensor.log (guardedProbabilities oldProbs epsilon)
+  let newLog := Tensor.log (guardedProbabilities newProbs epsilon)
+  klTilted oldLog (newLog - oldLog) (Tensor.full _ 0)
 
 /--
-Categorical KL divergence from logits, using the clamped, normalized policies of
-`kl`.
+Categorical KL divergence `KL(softmax old || softmax new)` from logits: `klTilted` of the old
+policy's log-softmax and the shift `new - old`, which `klTilted` forms from a quarter of each logit
+vector, first `centered` at its own largest entry. `klTilted` does not change when a constant is
+added to the shift, so the difference stands in for the log-ratios without either softmax's
+normalizer, and nothing is clamped. The old weights enter as the log-softmax, so an old
+probability that underflows keeps its share of the mass.
+
+In floating point nothing is proved. `TorchLeanTest.RL.PolicyKL` compares these binary32 inputs,
+and only these, with 100-digit values: equal policies at a common offset (`[2^127, 2^127]`
+against `[-2^127, -2^127]` gives `0`), a small change (`[1, 1]` against `[0, 2^(-26)]`), old
+probabilities that underflow (`[0, -110]`, `[0, -2^27]` and `[0, -2^127]` against `[0, 0]` give
+`log 2`), policies as far apart as the format allows (`[0, 0]` against `[-2^127, 2^127]` gives
+`2^127`, the divergence `log (cosh (2^127))` rounded), and the two cases of `klTilted`'s exponent
+order (`[0, -384, -2^33]` against `[0, 2^33, 2^32]` gives `2^33`, the divergence rounded, and
+`[0.5625, 0, -2^26]` against `[0.5625, 2.25, -2^25]` gives about `0.4737`, the second limit
+below, where the divergence is about `0.5896`). Rounding the shift in the input format limits the
+accuracy, and the tests check these two limits too:
+- a change of a logit below about half a unit in the last place of its distance from its
+  vector's largest entry reads as `0`: `[0, 1]` against `[2^(-26), 1]` gives `0`, where the
+  divergence is about `2.2e-17`;
+- an entry of the shift far below its largest entry keeps only the precision of that distance,
+  so the result can be off by about half a unit in the last place of the distance: against
+  `[0, 5]`, where the divergence is about `5.0067`, `[0, -2^24]` gives `log (1 + e^4)`, about
+  `4.0181`, since `-2^24 - 5` rounds to `-2^24 - 4`, and `[0, -2^100]` gives `log 2`.
+
+The old logits' log-softmax overflows to `-∞` when their entries are more than the largest finite
+value apart, and then the result can be NaN (`[-2^127, 2^127]` against `[0, 0]`). While they are
+at most that far apart, the only infinite values a step forms from finite logits are entries of
+`d` in `klTilted`, which `weightedExpm1x` replaces by their quarters, exponents below the most
+negative finite value, whose exponential is `0` either way, and a term or a sum beyond the
+largest finite value. Each term's exponent is at most about `log 2`, as `klTilted` argues; that
+is an argument about the ranges of the steps, not a theorem.
+
+Over ℝ the result is `Σ_a p(a) * (log p(a) - log q(a))` for the softmaxes `p` and `q` of the two
+logit vectors (`RL.PolicyGradient.klFromLogits_eq_sum`). An empty action vector gives `0`.
 -/
-def klFromLogits {nActions : Nat}
-    (oldLogits newLogits : Tensor α [nActions])
-    (epsilon : α := Context.defaultEpsilon) : α :=
-  kl (α := α)
-    (oldProbs := probabilities (α := α) oldLogits)
-    (newProbs := probabilities (α := α) newLogits)
-    (epsilon := epsilon)
+def klFromLogits {nActions : Nat} (oldLogits newLogits : Tensor α [nActions]) : α :=
+  klTilted (Tensor.logSoftmax oldLogits ⟨0, Nat.one_pos⟩) newLogits oldLogits
 
 /--
 KL-penalized policy-gradient loss `-(ratio * A) + β * KL(old || new)` with `β = penaltyCoef`.

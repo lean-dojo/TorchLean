@@ -90,6 +90,7 @@ def usage : String :=
 /-- Batch size for the byte-level causal Transformer. -/
 def batchSize : Nat := 1
 
+/-- `batchSize` is positive. -/
 local instance : NeZero batchSize := ⟨by decide⟩
 
 /-- Prompt/target window length for the runnable GPT example. -/
@@ -98,6 +99,7 @@ def contextLength : Nat := 4
 /-- Size of the byte vocabulary, which is also the width of each one-hot input row. -/
 def vocabularySize : Nat := 256
 
+/-- `vocabularySize` is positive. -/
 local instance : NeZero vocabularySize := ⟨by decide⟩
 
 /-- Map a byte id into the 256-entry byte vocabulary, reducing it modulo 256. -/
@@ -119,7 +121,9 @@ def feedForwardWidth : Nat := 8
 /-- Number of causal Transformer blocks. -/
 def transformerLayers : Nat := 1
 
+/-- `contextLength` is positive. -/
 local instance : NeZero contextLength := ⟨by decide⟩
+/-- `modelWidth` is positive. -/
 local instance : NeZero modelWidth := ⟨by decide⟩
 
 /-- Shape of the batched byte-level one-hot token windows, and of the model's vocabulary logits,
@@ -275,7 +279,8 @@ partial def interactiveLoop
   IO.println ("  interactive: enter text; :q exits, :clear resets, :show prints context "
     ++ s!"(window={contextLength} bytes)")
   let stdin ← IO.getStdin
-  let rec loop {count : Nat} (ctx : Tensor Nat [count]) : IO Unit := do
+  let rec /-- Read prompts, extending the byte context `ctx` with each. -/
+  loop {count : Nat} (ctx : Tensor Nat [count]) : IO Unit := do
     IO.print "  prompt> "
     let line ← stdin.getLine
     let prompt := line.trimAscii.toString

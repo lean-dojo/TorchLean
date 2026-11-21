@@ -9,7 +9,6 @@ module
 public import FloatLib.Floats.Formats.BinaryInterchange.Rounding.Proof
 public import TorchLean.Tensor.ConfiguredBinary
 import FloatLib.Floats.Formats.BinaryInterchange.Algebraic.Rounding.SqrtProof
-import FloatLib.Floats.Formats.BinaryInterchange.Configured.Value.CoreProof
 
 /-!
 # Roots of dimension constants

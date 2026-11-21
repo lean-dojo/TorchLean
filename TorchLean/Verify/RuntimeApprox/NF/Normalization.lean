@@ -7,19 +7,20 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.Verify.RuntimeApprox.NF.ShapeOps
-public import TorchLean.Tensor.Layers.Normalization.LayerNorm
+public import TorchLean.Tensor.Layers.Normalization
 
 /-!
 # Rounded Normalization Certificates
 
-This module bounds `TorchLean.Normalization.normalize` in the rounded-real `NF` model when it
-normalizes the input less a broadcast mean with a constant `epsilon` as the stabilizer, as
-`Tensor.batchNorm` does with running statistics. The proof is rank-generic: the mean, the variance
-and the affine parameters are certified separately and then supplied as inputs here.
+This module bounds, in the rounded-real `NF` model, the input less a broadcast mean, divided by
+the root of a broadcast variance plus a constant `epsilon`, scaled and shifted: batch normalization
+with running statistics (`ApproxTensor.batchNorm_running`). The proof is rank-generic: the mean,
+the variance and the affine parameters are certified separately and then supplied as inputs here.
 
-If the exact stabilized variance is at least `η > 0`, the square-root stage is controlled by
-`1 / sqrt η`. The division theorem requires square-root error strictly smaller than `sqrt η`, so
-the rounded denominator cannot cross zero. The result is a conditional mathematical bound, and
+If the exact stabilized variance is at least `η > 0` and its error is below `η`, every rounded
+input of the root is positive and the square-root stage is controlled by `1 / sqrt η`. The
+division theorem requires square-root error strictly smaller than `sqrt η`, so the rounded
+denominator cannot cross zero. The result is a conditional mathematical bound, and
 executable certificate checking and native normalization kernels lie outside it.
 
 References:
@@ -35,7 +36,6 @@ References:
 
 namespace TorchLean
 
-open Normalization
 open TorchLean.Tensor
 open Robustness
 
@@ -71,8 +71,9 @@ structure NF.NormalizationErrorTrace where
   /-- The error after the final shift. -/
   outputError : ℝ
 
-/-- Compositional error trace of `Normalization.normalize` in the rounded-real model, applied to
-`xR` less the broadcast `meanR` with the stabilizer `epsilonR` at every entry. -/
+/-- Compositional error trace in the rounded-real model of `xR` less the broadcast `meanR`, divided
+by the root of the broadcast `varianceR` plus `epsilonR`, times the broadcast `gammaR`, plus the
+broadcast `betaR`. -/
 def NF.normalizeErrorTrace
     {s sMean sVar sGamma sBeta : Shape}
     {meanDims : Fin sMean.rank → Fin s.rank} (hMean : sMean.BroadcastDims s meanDims)
@@ -100,7 +101,7 @@ def NF.normalizeErrorTrace
     linfNorm
       (addBoundTensor (β := β) (fexp := fexp) epsVariance epsEpsilon
         varianceBroadcastR epsilonFillR)
-  let stdR := Tensor.sqrt stabilizedR .clampNegative
+  let stdR := Tensor.sqrt stabilizedR
   let stdError :=
     linfNorm
       (sqrtPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
@@ -126,8 +127,8 @@ def NF.normalizeErrorTrace
 The five input tensor hypotheses can come from reductions or earlier graph nodes, and the epsilon
 scalar is treated like any other rounded constant. The exact stabilized variance must have the
 pointwise lower bound `η`. The theorem keeps two strict error-margin premises about the
-noncomputable error trace. Its proof uses the square-root margin for division and leaves the
-stabilized-variance margin unused, because `Tensor.sqrt _ .clampNegative` clamps its input.
+noncomputable error trace: the stabilized-variance error below `η` keeps every rounded input of the
+root positive, and the square-root error below `sqrt η` keeps the rounded denominator positive.
 -/
 theorem ApproxTensor.normalize
     {s sMean sVar sGamma sBeta : Shape}
@@ -165,14 +166,16 @@ theorem ApproxTensor.normalize
     trace.stabilizedError < η →
     trace.stdError < Real.sqrt η →
       ApproxTensor (α := R) (toSpec := NF.toReal)
-        (Normalization.normalize (xS - Tensor.broadcast meanS _ meanDims hMean) varianceS
-          (Tensor.full sVar epsilonS) gammaS betaS hVar hGamma hBeta)
-        (Normalization.normalize (xR - Tensor.broadcast meanR _ meanDims hMean) varianceR
-          (Tensor.full sVar epsilonR) gammaR betaR hVar hGamma hBeta)
+        ((xS - Tensor.broadcast meanS _ meanDims hMean) /
+            Tensor.sqrt (Tensor.broadcast varianceS _ varDims hVar + Tensor.full s epsilonS) *
+          Tensor.broadcast gammaS _ gammaDims hGamma + Tensor.broadcast betaS _ betaDims hBeta)
+        ((xR - Tensor.broadcast meanR _ meanDims hMean) /
+            Tensor.sqrt (Tensor.broadcast varianceR _ varDims hVar + Tensor.full s epsilonR) *
+          Tensor.broadcast gammaR _ gammaDims hGamma + Tensor.broadcast betaR _ betaDims hBeta)
         trace.outputError := by
   dsimp only
-  intro _hstabilizedMargin hstdMargin
-  rw [normalize_full, normalize_full]
+  intro hstabilizedMargin hstdMargin
+  -- The exact (`S`) and rounded (`R`) stages and their errors, as `normalizeErrorTrace` has them.
   let meanBroadcastS := Tensor.broadcast meanS _ meanDims hMean
   let meanBroadcastR := Tensor.broadcast meanR _ meanDims hMean
   let varianceBroadcastS := Tensor.broadcast varianceS _ varDims hVar
@@ -193,8 +196,8 @@ theorem ApproxTensor.normalize
     linfNorm
       (addBoundTensor (β := β) (fexp := fexp) epsVariance epsEpsilon
         varianceBroadcastR epsilonFillR)
-  let stdS := Tensor.sqrt stabilizedS .clampNegative
-  let stdR := Tensor.sqrt stabilizedR .clampNegative
+  let stdS := Tensor.sqrt stabilizedS
+  let stdR := Tensor.sqrt stabilizedR
   let stdError :=
     linfNorm
       (sqrtPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
@@ -211,7 +214,7 @@ theorem ApproxTensor.normalize
     linfNorm
       (mulBoundTensor (β := β) (fexp := fexp)
         normalizedError epsGamma normalizedR gammaBroadcastR)
-
+  -- Each stage approximates its exact counterpart, in pipeline order.
   have hmeanBroadcast := broadcast
     (β := β) (fexp := fexp) (rnd := rnd) meanDims hMean hmean
   have hvarianceBroadcast := broadcast
@@ -226,15 +229,15 @@ theorem ApproxTensor.normalize
     (β := β) (fexp := fexp) (rnd := rnd) hx hmeanBroadcast
   have hstabilizedApprox := add
     (β := β) (fexp := fexp) (rnd := rnd) hvarianceBroadcast hepsilonFill
-  have hstd := sqrt_of_pos_lb
+  have hstd := sqrt_of_pos_lb_of_error
     (β := β) (fexp := fexp) (rnd := rnd) η hη
-    hstabilizedApprox hstabilized
+    hstabilizedApprox hstabilizedMargin hstabilized
+  -- Division needs the exact denominator at least `√η`.
   have hstdLower : Tensor.Forall (fun z : ℝ => Real.sqrt η ≤ z) stdS := by
-    rw [show stdS = _ from Tensor.sqrt_clampNegative stabilizedS]
+    rw [show stdS = _ from Tensor.sqrt_raw stabilizedS]
     apply Tensor.forall_map hstabilized
     intro z hz
-    change Real.sqrt η ≤ Real.sqrt (max z 0)
-    exact Real.sqrt_le_sqrt (le_trans hz (le_max_left z 0))
+    exact Real.sqrt_le_sqrt hz
   have hnormalized := div_of_pos_lb
     (β := β) (fexp := fexp) (rnd := rnd) (Real.sqrt η)
     hcentered hstd hstdLower hstdMargin
@@ -247,6 +250,38 @@ theorem ApproxTensor.normalize
     betaBroadcastS, betaBroadcastR, epsilonFillS, epsilonFillR, centeredS, centeredR,
     stabilizedS, stabilizedR, centeredError, stabilizedError, stdS, stdR, stdError,
     normalizedS, normalizedR, normalizedError, scaledS, scaledR, scaledError] using houtput
+
+/-- `ApproxTensor.normalize` along `dim` is the bound of batch normalization with running
+statistics (`Tensor.batchNorm_running_eq`). -/
+theorem ApproxTensor.batchNorm_running {s : Shape} (dim : Fin s.rank) (epsilonS : ℝ)
+    (epsilonR : R) {xS : Tensor ℝ s} {xR : Tensor R s}
+    {meanS varianceS gammaS betaS : Tensor ℝ [s.extent dim]}
+    {meanR varianceR gammaR betaR : Tensor R [s.extent dim]}
+    {epsX epsMean epsVariance epsGamma epsBeta epsEpsilon η : ℝ}
+    (hη : 0 < η)
+    (hx : ApproxTensor (α := R) (toSpec := NF.toReal) xS xR epsX)
+    (hmean : ApproxTensor (α := R) (toSpec := NF.toReal) meanS meanR epsMean)
+    (hvariance : ApproxTensor (α := R) (toSpec := NF.toReal) varianceS varianceR epsVariance)
+    (hgamma : ApproxTensor (α := R) (toSpec := NF.toReal) gammaS gammaR epsGamma)
+    (hbeta : ApproxTensor (α := R) (toSpec := NF.toReal) betaS betaR epsBeta)
+    (hepsilon : _root_.abs (NF.toReal epsilonR - epsilonS) ≤ epsEpsilon)
+    (hstabilized :
+      Tensor.Forall (fun z : ℝ => η ≤ z)
+        (Tensor.broadcast varianceS s _ (s.broadcastDims_axis dim) + Tensor.full s epsilonS)) :
+    let trace := normalizeErrorTrace (β := β) (fexp := fexp) (rnd := rnd)
+      (s.broadcastDims_axis dim) (s.broadcastDims_axis dim) (s.broadcastDims_axis dim)
+      (s.broadcastDims_axis dim) epsilonR xR meanR varianceR gammaR betaR
+      epsX epsMean epsVariance epsGamma epsBeta epsEpsilon η
+    trace.stabilizedError < η →
+    trace.stdError < Real.sqrt η →
+      ApproxTensor (α := R) (toSpec := NF.toReal)
+        (Tensor.batchNorm xS dim gammaS betaS (.running meanS varianceS) epsilonS)
+        (Tensor.batchNorm xR dim gammaR betaR (.running meanR varianceR) epsilonR)
+        trace.outputError := by
+  rw [Tensor.batchNorm_running_eq, Tensor.batchNorm_running_eq]
+  exact ApproxTensor.normalize (s.broadcastDims_axis dim) (s.broadcastDims_axis dim)
+    (s.broadcastDims_axis dim) (s.broadcastDims_axis dim) epsilonS epsilonR hη hx hmean hvariance
+    hgamma hbeta hepsilon hstabilized
 
 end
 

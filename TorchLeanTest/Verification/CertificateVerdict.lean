@@ -68,7 +68,7 @@ example (G : IR.Graph) (P : IR.Payload (Binary 8 23)) (input : FlatBox (Binary 8
               realTensor decoded.inequalities.bias
             if decoded.strict then margin.getScalar i < 0 else margin.getScalar i ≤ 0 := by
   obtain ⟨decoded, hd, -, -, -, -, -, hs⟩ := FiniteArtifact.accepts_graph_sound G P input cert
-    query ((CROWNNode.verdict_ok G P input cert query).1 h)
+    query (CROWNNode.verdict_ok.1 h)
   exact ⟨decoded, hd, hs⟩
 
 /-! ## An artifact that agrees with the replay and fails the verdict -/

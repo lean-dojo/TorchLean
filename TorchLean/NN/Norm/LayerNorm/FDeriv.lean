@@ -52,23 +52,21 @@ theorem rowVarE_inputX (q : CtxVec (ctx m n)) (i : Fin m) :
       TorchLean.var fun j => valX q (idxMN (m := m) (n := n) i j) := by
   simp only [valX_idxMN]
 
-/-- For positive `ε`, the spec's inverse standard deviation `invStd` agrees with
-`RowNorm.invStd`, because the standard-deviation clamp is inactive in every row. -/
-theorem invStd_inputX {ε : ℝ} (hε : 0 < ε) (q : CtxVec (ctx m n)) (i : Fin m) :
+/-- The spec's inverse standard deviation `invStd` is `RowNorm.invStd`. -/
+theorem invStd_inputX {ε : ℝ} (q : CtxVec (ctx m n)) (i : Fin m) :
     getScalar (invStd (inputX q) ε) i =
       RowNorm.invStd (valX q) ε i := by
   rw [invStd, Tensor.getScalar_div, getScalar_full, Normalization.getScalar_lnStd,
-    rowVarE_inputX, max_eq_left (RowNorm.rowVar_add_pos hε (valX q) i).le, one_div]
+    rowVarE_inputX, one_div]
   rfl
 
-/-- For positive `n` and `ε`, one output entry is the normalized input times its own scale, plus
-its own bias. -/
-theorem forwardVec_idxMN (hn : 0 < n) {ε : ℝ} (hε : 0 < ε)
+/-- For positive `n`, one output entry is the normalized input times its own scale, plus its own
+bias. -/
+theorem forwardVec_idxMN (hn : 0 < n) {ε : ℝ}
     (q : CtxVec (ctx m n)) (i : Fin m) (j : Fin n) :
     forwardVec ε q (idxMN (m := m) (n := n) i j) =
       RowNorm.nrm (valX q) ε i j * valGamma q j + valBeta q j := by
   rw [forwardVec_eq_valY hn, valY_idxMN, rowVarE_inputX,
-    max_eq_left (RowNorm.rowVar_add_pos hε (valX q) i).le,
     ← valX_idxMN, rowMeanE_inputX, ← valGamma_apply, ← valBeta_apply]
   rfl
 
@@ -111,7 +109,8 @@ theorem fderiv_forwardVec_idxMN (hn : 0 < n) {ε : ℝ} (hε : 0 < ε)
   have hb : HasFDerivAt (fun p : CtxVec (ctx m n) => valBeta p j) bias q :=
     bias.hasFDerivAt.congr_of_eventuallyEq
       (Filter.Eventually.of_forall fun p => (hbias p).symm)
-  have hentry := (((RowNorm.hasFDerivAt_nrm hε (valX q) i j).comp q hX).mul hg).add hb
+  have hentry := (((RowNorm.hasFDerivAt_nrm (valX q) i j
+    (RowNorm.rowVar_add_pos hε _ i)).comp q hX).mul hg).add hb
   let read := EuclideanSpace.proj (𝕜 := ℝ) (idxMN (m := m) (n := n) i j)
   have hcoord := read.hasFDerivAt.comp q
     (differentiableAt_forwardVec hn hε q).hasFDerivAt
@@ -120,7 +119,7 @@ theorem fderiv_forwardVec_idxMN (hn : 0 < n) {ε : ℝ} (hε : 0 < ε)
         fun p : CtxVec (ctx m n) =>
           RowNorm.nrm (valX p) ε i j * valGamma p j + valBeta p j := by
     funext p
-    exact forwardVec_idxMN hn hε p i j
+    exact forwardVec_idxMN hn p i j
   rw [hfun] at hcoord
   have h := congrArg (fun D : CtxVec (ctx m n) →L[ℝ] ℝ => D dq)
     (hcoord.unique hentry)
@@ -128,21 +127,21 @@ theorem fderiv_forwardVec_idxMN (hn : 0 < n) {ε : ℝ} (hε : 0 < ε)
     fderiv ℝ (forwardVec ε) q dq (idxMN (m := m) (n := n) i j) =
       (RowNorm.nrm (valX q) ε i j * scale dq +
         valGamma q j * RowNorm.nrmD (valX q) ε i j (input dq)) + bias dq at h
-  rw [hinput, hscale, hbias, RowNorm.nrmD_apply hn hε] at h
+  rw [hinput, hscale, hbias, RowNorm.nrmD_apply _ i j (RowNorm.rowVar_add_pos hε _ i)] at h
   simpa only [mul_comm, add_comm] using h
 
-/-- For positive `m`, `n` and `ε`, each entry of `LayerNorm.jvp` is the row differential
-that `fderiv_forwardVec_idxMN` obtains from the forward formula, with the same epsilon and
-the same scale and bias perturbations. -/
+/-- For positive `m` and `n`, each entry of `LayerNorm.jvp` is the row differential that
+`fderiv_forwardVec_idxMN` obtains from the forward formula, with the same epsilon and the same
+scale and bias perturbations. -/
 theorem get2_jvp_eq_row_differential (hm : 0 < m) (hn : 0 < n)
-    {ε : ℝ} (hε : 0 < ε) (q dq : CtxVec (ctx m n)) (i : Fin m) (j : Fin n) :
+    {ε : ℝ} (q dq : CtxVec (ctx m n)) (i : Fin m) (j : Fin n) :
     Tensor.get2
         (jvp hm hn (inputX q) (inputX dq)
           (inputGamma q) (inputGamma dq) (inputBeta q) (inputBeta dq) ε) i j =
       RowNorm.nrmJVP (valX q) ε (valX dq) i j * valGamma q j +
         RowNorm.nrm (valX q) ε i j * valGamma dq j + valBeta dq j := by
   rw [jvp_eq_jvpMat]
-  simp only [get2_jvpMat, Normalization.get2_lnCentered, invStd_inputX hε, ← valX_idxMN,
+  simp only [get2_jvpMat, Normalization.get2_lnCentered, invStd_inputX, ← valX_idxMN,
     ← valGamma_apply, ← valBeta_apply, RowNorm.nrmJVP, RowNorm.nrm, RowNorm.centered,
     Fintype.expect_eq_sum_div_card, Fintype.card_fin]
 
@@ -160,7 +159,7 @@ theorem fderiv_forwardVec_eq_jvp (hm : 0 < m) (hn : 0 < n)
   apply Normalization.vec_ext_idxMN
   intro i j
   rw [fderiv_forwardVec_idxMN hn hε, Matmul.toVec_idxMN,
-    get2_jvp_eq_row_differential hm hn hε]
+    get2_jvp_eq_row_differential hm hn]
 
 /-- Tensor form of the derivative bridge, with arbitrary input, scale, and bias tangents. -/
 theorem fderiv_eq_jvp (hm : 0 < m) (hn : 0 < n)

@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 import functools
 import inspect
+import struct
 import sys
 import threading
 import types
@@ -76,21 +77,23 @@ def _torch_guard_scope():
 
 def _module_entry(function):
     """Give native module entry methods a traceable frame shared by their class."""
-    @functools.wraps(function)
-    def invoke(*args, **kwargs):
-        return function(*args, **kwargs)
+    entry = function.__func__
 
-    # A single wrapper code object would put unrelated model classes into the
-    # same small Dynamo recompile cache. Copies and instances of one class must
-    # share it, rather than spending one cache entry on each instance.
-    model_type = type(function.__self__)
+    @functools.wraps(entry)
+    def invoke(instance, *args, **kwargs):
+        return entry(instance, *args, **kwargs)
+
+    # Dynamo guards a bound method in a closure by identity. Pass the module
+    # as an argument so instances of one class can reuse compiled graphs.
+    instance = function.__self__
+    model_type = type(instance)
     with _torch_compile_lock:
         code = _module_entry_codes.get(model_type)
         if code is None:
             code = invoke.__code__.replace()
             _module_entry_codes[model_type] = code
     invoke.__code__ = code
-    return invoke
+    return types.MethodType(invoke, instance)
 
 
 class _Compilation:
@@ -186,7 +189,8 @@ class _Compilation:
             if not any(dynamic):
                 raise NotImplementedError("TorchLean compilation needs a tensor argument")
             _check_static(leaves, dynamic, "JAX")
-            static = tuple((type(value), value.hex() if type(value) is float else value)
+            # Python can inspect the sign and payload of a static NaN before tracing.
+            static = tuple((type(value), struct.pack(">d", value) if type(value) is float else value)
                            for value, tensor in zip(leaves, dynamic) if not tensor)
             key = (structure, dynamic, static)
             if key not in specializations:

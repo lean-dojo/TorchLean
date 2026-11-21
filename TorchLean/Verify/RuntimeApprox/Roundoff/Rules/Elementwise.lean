@@ -12,14 +12,15 @@ public import FloatLib.Floats.Formats.BinaryInterchange.Configured.MixedError.Ro
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Operations.Proof
 public import FloatLib.Floats.Formats.BinaryInterchange.Dyadic.Classification
 public import FloatLib.Floats.Formats.BinaryInterchange.Model.Packing.Special
-public import FloatLib.Floats.Formats.BinaryInterchange.Operations.Proof.RoundToIntegral
+public import FloatLib.Floats.Formats.BinaryInterchange.Operations.Proof.RoundToIntegral.Encoding
+public import FloatLib.Floats.Formats.BinaryInterchange.Operations.Proof.RoundToIntegral.Real
 public import TorchLean.Verify.RuntimeApprox.Elementary
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Recovery
 public import TorchLean.Tensor.Context.Real
 public import TorchLean.Tensor.Elementwise
 public import TorchLean.Tensor.ConfiguredBinary
 public meta import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension
+public import FloatLib.Tactic.Roundoff.Extension
 
 /-!
 # Elementwise operators for `roundoff`
@@ -55,6 +56,17 @@ value `1 / 2` (`toReal_ratCast_half`), since one half is `2 ^ (-1)`.
 `hypot` of exact operands of values `a` and `b` rounds `√(a² + b²)` once when the result is finite,
 by FloatLib's `toReal_hypot_eq_roundAt`. For operands within `εx` and `εy` of `a` and `b`, it is
 within half an ulp of its exact value plus `εx + εy` of `√(a² + b²)`.
+
+A finite fused multiply-add of configured values rounds the exact `x y + z` of their values once
+(`ConfiguredBinary.toReal_fma`), so it is within half an ulp of it and has the mixed error of one
+rounding (`abs_toReal_fma_sub_le`, `fma_rounding`). These are local rules, as FloatLib's for a
+product, which the analysis composes with the errors of the operands.
+
+The configured cube root, FloatLib's `rootn x 3`, of a finite value rounds the real cube root
+`Context.cbrtReal` of its value once when the result is finite (`toReal_cbrt`). For an exact finite
+operand that is within half an ulp and has the mixed error of one rounding
+(`abs_toReal_cbrt_sub_le`, `mixedError_toReal_cbrt`). The operand must be exact, as the cube root
+has no Lipschitz bound at zero.
 
 `atanBackward x g`, the derivative of `atan` at `x` times `g`, divides `g` by `x * x + 1`, or by `x`
 twice when `x * x + 1` overflows. For exact finite operands of values `a` and `b` both branches give
@@ -637,7 +649,7 @@ theorem isNaN_of_isFinite {x : Value} (hx : isFinite x = true) : Context.isNaN x
 
 /-- A finite configured value is not an infinity. -/
 theorem isInf_of_isFinite {x : Value} (hx : isFinite x = true) : Context.isInf x = false :=
-  Model.isInf_eq_false_of_isFinite_eq_true _ hx
+  Model.isInfinite_eq_false_of_isFinite_eq_true _ hx
 
 /-- A finite configured value is finite in the sense of `Context.isFinite`. -/
 theorem context_isFinite_of_isFinite {x : Value} (hx : isFinite x = true) :
@@ -772,8 +784,8 @@ theorem isFinite_minimum {x y : Value} (hx : isFinite x = true) (hy : isFinite y
   simp only [Bool.false_eq_true, ↓reduceIte, hr]
   split_ifs <;> assumption
 
-/-- On a finite configured value, the IEEE maximum against zero, a clamp at zero such as a
-normalization's variance clamp, has the real value `max (toReal x) 0`. -/
+/-- On a finite configured value, the IEEE maximum against zero, a clamp at zero, has the real
+value `max (toReal x) 0`. -/
 theorem toReal_maximum_zero {x : Value} (hx : isFinite x = true) :
     toReal (Context.maximum x 0) = max (toReal x) 0 := by
   rw [toReal_maximum hx ExecFloat.Binary.isFinite_zero, ExecFloat.Binary.toReal_zero]
@@ -790,7 +802,7 @@ private theorem roundAt_half : Model.roundAt format (1 / 2) = 1 / 2 := by
     simp [Formats.Flocq.bpow, binaryRadix, Radix.toReal]
   rw [Model.roundAt_eq_round, hb]
   apply Formats.Flocq.round_preserves_generic
-  apply Formats.Flocq.generic_format_bpow
+  apply Formats.Flocq.genericRepresentable_bpow
   have := format.exponentBias_pos
   have := format.fracWidth_pos
   simp only [Model.fexpOf, Formats.Flocq.fltExp, FloatFormat.minSubnormalExponent,
@@ -2299,6 +2311,71 @@ theorem mixedError_toReal_atanh {x : Value} {a : ℝ} (hformat : format.isIEEE =
       (ConfiguredBinary.abs_toReal_lt_one_of_isFinite_atanh hxf hfinite hformat)
       hfinite hformat, ha]
 
+/-- A finite configured fused multiply-add is within half an ulp of the exact `x y + z` of its
+operands' values, which it rounds once (`ConfiguredBinary.toReal_fma`): the local rounding, which
+`roundoff` composes with the operands' errors as it composes FloatLib's `abs_toReal_mul_sub_le`
+for a product. -/
+theorem abs_toReal_fma_sub_le {x y z : Value} (hformat : format.isIEEE = true)
+    (hfinite : isFinite (Configured.Spec.fma x y z) = true) :
+    |toReal (Configured.Spec.fma x y z) - (toReal x * toReal y + toReal z)| ≤
+      Model.halfUlpAt format (toReal x * toReal y + toReal z) := by
+  have h : toReal (Configured.Spec.fma x y z) =
+      Model.roundAt format (toReal x * toReal y + toReal z) :=
+    ConfiguredBinary.toReal_fma x y z hfinite hformat
+  rw [h]
+  exact Model.abs_roundAt_sub_le _ _
+
+/-- A finite configured fused multiply-add has the mixed error of one rounding against the exact
+`x y + z` of its operands' values, as FloatLib's `mul_rounding` for a product. -/
+theorem fma_rounding {x y z : Value} (hformat : format.isIEEE = true)
+    (hfinite : isFinite (Configured.Spec.fma x y z) = true) :
+    MixedError (toReal (Configured.Spec.fma x y z)) (toReal x * toReal y + toReal z)
+      (Model.unitRoundoffAt format) (Model.underflowErrorAt format) :=
+  ExecFloat.Binary.mixedError_toReal_of_eq_roundAt
+    (ConfiguredBinary.toReal_fma x y z hfinite hformat)
+
+/-- A finite configured cube root, FloatLib's `rootn x 3`, of a finite value rounds the real cube
+root of its value once. FloatLib's `toReal_rootn_eq_roundAt` rounds `-|a| ^ (1 / 3)` where the sign
+bit is set and `|a| ^ (1 / 3)` elsewhere, which is `Context.cbrtReal a` at every finite value, a
+zero of either sign included. -/
+theorem toReal_cbrt {x : Value} (hformat : format.isIEEE = true) (hx : isFinite x = true)
+    (hfinite : isFinite (ExecFloat.Binary.rootn x 3) = true) :
+    toReal (ExecFloat.Binary.rootn x 3) = Model.roundAt format (Context.cbrtReal (toReal x)) := by
+  rw [ExecFloat.Binary.toReal_rootn_eq_roundAt x 3 hx hfinite hformat]
+  congr 1
+  unfold Context.cbrtReal
+  rcases lt_or_ge (toReal x) 0 with hneg | hnonneg
+  · have hsign : ExecFloat.Binary.signBit x = true := by
+      by_contra h
+      exact absurd hneg (not_lt.mpr
+        (Model.toReal_nonneg_of_signBit_eq_false (x := toModel x)
+          (by simpa [ExecFloat.Binary.signBit] using h)))
+    simp [hsign, hneg, abs_of_neg hneg, one_div]
+  · rcases ExecFloat.Binary.isZero_or_signBit_eq_false_of_toReal_nonneg hx hnonneg with hz | hsign
+    · rw [(ExecFloat.Binary.isZero_eq_true_iff_toReal_eq_zero hx).mp hz]
+      simp [Real.zero_rpow]
+    · simp [hsign, not_lt.mpr hnonneg, abs_of_nonneg hnonneg, one_div]
+
+/-- A finite cube root of an exact finite operand is rounded once: an absolute bound. -/
+theorem abs_toReal_cbrt_sub_le {x : Value} {a : ℝ} (hformat : format.isIEEE = true)
+    (hx : |toReal x - a| ≤ 0) (hxf : isFinite x = true)
+    (hfinite : isFinite (ExecFloat.Binary.rootn x 3) = true) :
+    |toReal (ExecFloat.Binary.rootn x 3) - Context.cbrtReal a| ≤
+      Model.halfUlpAt format (Context.cbrtReal a) := by
+  have ha : toReal x = a := by simpa [sub_eq_zero] using hx
+  rw [toReal_cbrt hformat hxf hfinite, ha]
+  exact Model.abs_roundAt_sub_le _ _
+
+/-- A finite cube root of an exact finite operand is rounded once: a mixed bound. -/
+theorem mixedError_toReal_cbrt {x : Value} {a : ℝ} (hformat : format.isIEEE = true)
+    (hx : MixedError (toReal x) a 0 0) (hxf : isFinite x = true)
+    (hfinite : isFinite (ExecFloat.Binary.rootn x 3) = true) :
+    MixedError (toReal (ExecFloat.Binary.rootn x 3)) (Context.cbrtReal a)
+      (Model.unitRoundoffAt format) (Model.underflowErrorAt format) := by
+  have ha := mixedError_zero_zero_iff.mp hx
+  exact ExecFloat.Binary.mixedError_toReal_of_eq_roundAt <| by
+    rw [toReal_cbrt hformat hxf hfinite, ha]
+
 attribute [roundoff_rule] isFinite_floor isFinite_ceil isFinite_round isFinite_trunc
   abs_toReal_floor_sub_le abs_toReal_ceil_sub_le abs_toReal_round_sub_le abs_toReal_trunc_sub_le
   mixedError_toReal_floor mixedError_toReal_ceil mixedError_toReal_round mixedError_toReal_trunc
@@ -2316,6 +2393,8 @@ attribute [roundoff_rule] isFinite_floor isFinite_ceil isFinite_round isFinite_t
   isFinite_asinh abs_toReal_asinh_sub_le mixedError_toReal_asinh
   abs_toReal_acosh_sub_le isFinite_acosh mixedError_toReal_acosh
   isFinite_atanh abs_toReal_atanh_sub_le mixedError_toReal_atanh
+  abs_toReal_fma_sub_le fma_rounding
+  abs_toReal_cbrt_sub_le mixedError_toReal_cbrt
 
 -- After `abs_toReal_hypot_sub_le`, which keeps the a priori budget of exact operands.
 attribute [roundoff_rule] abs_toReal_hypot_sub_le_add

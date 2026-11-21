@@ -40,11 +40,18 @@ open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 open TorchLean
 
+/-! Guide page: why running a model is not enough to support a claim about it. -/
+
 #doc (Manual) "Motivation" =>
 %%%
 tag := "motivation"
 file := "Why-Execution-Alone-Is-Not-Enough"
 %%%
+
+Changing an implementation for speed raises a concrete question: which behavior must remain
+unchanged? For an attention layer, the answer might include the exact mask. For a lower-precision
+run, it might be an error bound on the logits. Lean lets us state those requirements against the
+operations that run and inspect the assumptions each proof needs.
 
 Suppose a classifier returns class `3` on an image. We've learned what happened at one point. A
 robustness claim asks a larger question: whether class `3` remains ahead of every competitor
@@ -752,30 +759,6 @@ leaf-artifact checker checks box coverage and threshold witnesses without repeat
 it doesn't recompute the claimed bounds. That chapter treats this consistency check separately from
 theorem-backed bound checking.
 
-# Executable Verification Workflows
-
-The command
-
-```terminal
-# Discover the workflow names before choosing the checker
-# and its artifact.
-scripts/lake.sh exe verify -- list
-```
-
-lists the executable verification workflows in the current checkout. Selected entries include:
-
-```
-  ibp-cert [<path>]   -- IBP certificate check for a 3 → 4 → 2 ReLU MLP
-  pinn-cert [<path>]   -- PINN certificate recomputation check
-  torchlean-ibp   -- TorchLean → IR → IBP workflow (MLP)
-  torchlean-crown-ops   -- TorchLean → IR → IBP+CROWN workflow (softmax/mse_loss ops)
-  ode   -- ODE enclosure verification (sub/super NN bounds)
-  vnncomp-mnistfc   -- VNN-COMP-style suite: MNIST-FC (vnncomp2022) via exported JSON
-  twostage-torchlean-cegis-van   -- all-in-Lean two-stage/CEGIS Lyapunov refinement and bound check
-```
-
-Each tool's default artifact path appears in the full output as well.
-
 # Floating-Point Arithmetic
 
 For real numbers $`a`, $`b`, and $`c`, the expression
@@ -880,11 +863,12 @@ evaluation). This is a useful example of separating two goals: avoid an infinite
 describe the error of the finite answer that remains. The algebraic rewrite addresses the first,
 but the second still needs a numerical error statement.
 
-TorchLean uses the same shifted weights in the forward and derivative paths, except that the
-forward shifts by zero when the extreme input is infinite, where $`x_i - p` would be NaN (the
-derivative weights are then NaN), and executable entry points reject zero or non-finite $`\beta`.
-The real identity explains the transformation, while the specification over $`\mathbb{R}` fixes the
-intended function. Validation and backend tests check its executable form in the selected format.
+TorchLean uses the same shifted weights in the forward and derivative paths. When the extreme input
+is infinite, the forward path uses a zero shift so that it does not form $`\infty-\infty`; the
+derivative weights remain NaN in that case. Executable entry points also reject zero or non-finite
+$`\beta`. The real identity explains the transformation, while the specification over
+$`\mathbb{R}` fixes the intended function. Validation and backend tests check its executable form in
+the selected format.
 
 # Proof Dependencies And Executable Examples
 
@@ -897,6 +881,16 @@ The named Lean output blocks provide another check: the guide build reruns the b
 checks the two bit patterns of `0.6`. Shell transcripts such as the IBP workflow and Python examples
 still need separate execution, and prose claims need review. Executable documentation catches
 drift in the examples it actually runs.
+
+The current verification commands are listed by:
+
+```terminal
+scripts/lake.sh exe verify -- list
+```
+
+That catalogue includes certificate replay, TorchLean-to-IR bound propagation, ODE and PINN
+checks, a VNN-COMP-style MNIST-FC run, and the all-in-Lean Lyapunov workflow. The full output names
+each command's default artifact as well.
 
 # References
 

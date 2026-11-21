@@ -107,6 +107,7 @@ theorem correct [Inhabited α] (A : Arithmetic α) :
   simp only [tag, empty, hi, lo, Expr.eval, Row.get_env_indexVar, Fin.val_zero, Fin.val_one,
     Compare.index, Bind.bind, Except.bind, Pure.pure, Except.pure] at htag
   have hb := (index 1).toNat_lt
+  -- An empty range is a leaf with no children.
   by_cases hle : index 1 ≤ index 0
   · have hle' : (index 1).toNat ≤ (index 0).toNat := UInt64.le_iff_toNat_le.1 hle
     simp only [hle, decide_true, Bool.cond_true, Except.ok.injEq] at hcalls htag
@@ -136,6 +137,7 @@ theorem correct [Inhabited α] (A : Arithmetic α) :
       rw [← h]
       show (default : α) = ([] : List α).getD i default
       simp
+  -- Otherwise a node with two children, on the ranges below and above the middle entry.
   · have hlt : (index 0).toNat < (index 1).toNat := by
       simpa [UInt64.le_iff_toNat_le] using hle
     simp only [hle, decide_false, Bool.cond_false, Except.ok.injEq] at hcalls htag
@@ -145,6 +147,7 @@ theorem correct [Inhabited α] (A : Arithmetic α) :
       simp only [UInt64.reduceToNat] at this
       omega
     obtain ⟨y0, y1, rfl⟩ := List.length_eq_two.1 hlen
+    -- The `UInt64` middle `lo + (hi - lo) / 2` does not wrap.
     have hsub : (index 1 - index 0).toNat = (index 1).toNat - (index 0).toNat :=
       UInt64.toNat_sub_of_le _ _ (UInt64.le_of_lt (by simpa using hle))
     have hmid : (index 0 + (index 1 - index 0) / 2).toNat =
@@ -157,6 +160,8 @@ theorem correct [Inhabited α] (A : Arithmetic α) :
       rw [UInt64.toNat_add, hmid]
       simp only [UInt64.reduceToNat]
       omega
+    -- The children's seeds are `(lo, mid)` and `(mid + 1, hi)`, and their trees are the
+    -- references of those ranges.
     obtain ⟨i0, v0, hi0, -, e0⟩ := hargs 0 (by simp)
     obtain ⟨i1, v1, hi1, -, e1⟩ := hargs 1 (by simp)
     have a0 := hi0 0

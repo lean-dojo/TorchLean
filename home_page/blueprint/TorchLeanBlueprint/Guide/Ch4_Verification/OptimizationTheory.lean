@@ -53,17 +53,16 @@ open GD FirstOrderStrongConvex
 -- rewrapped to fit this file's line budget without changing what is being asserted.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: when optimizer updates make progress. -/
+
 #doc (Manual) "Optimization Theory" =>
 %%%
 tag := "optimization-theory"
 %%%
 
-Training code executes updates. Optimization theory explains when those updates should make
-progress.
-
-A TorchLean training run may call SGD or Adam, but a convergence theorem can't come from the name
-of the optimizer alone: it needs an ideal update map, assumptions on the objective or gradient, and
-a step size condition.
+One optimizer step produces a new parameter value. Repeating the update approaches a minimum only
+when the update equation, loss geometry, and step size satisfy the needed hypotheses. Calling the
+optimizer `SGD` does not supply those assumptions.
 
 Even two updates that print the same parameter can differ: Adam's epsilon changes its recurrence
 by less than the six-decimal display reveals. We can expose that difference on a single parameter
@@ -71,7 +70,7 @@ before asking which identities hold for arbitrary states.
 
 # The Optimization Contract
 
-TorchLean's optimization contract has three layers:
+An optimizer proof separates three layers:
 
 - *Runtime update*: the concrete operation that writes new values into parameter tensors, such as
   one SGD, momentum, or Adam-style step.
@@ -85,16 +84,10 @@ pairs of states, so it needs more information than that curve supplies.
 
 # First Order Updates
 
-We start with a first order optimizer state: parameters, gradients, an optional buffer, and a time
-counter. Its executable equation belongs in the definition of the update itself, and TorchLean
-doesn't add a theorem merely to restate each record field after reduction. The theory layer begins
-when two distinct updates are related.
-
-## Scalar Optimizer Comparison
-
 Start a single parameter at $`1`, supply the constant gradient $`1` at every step, and use a
-learning rate of $`0.1`. Holding the gradient fixed isolates the effect of the update rule and its
-state: any difference between the runs comes from momentum, adaptive normalization, or decay.
+learning rate of $`0.1`. SGD subtracts the same amount each time. Momentum and Adam also carry
+state from one update to the next. Holding the gradient fixed lets us see what that state and
+weight decay do over three steps.
 
 ```lean (name := otRuns)
 -- Feed three identical gradients through each optimizer
@@ -183,9 +176,9 @@ $`0.7003815`, whereas decoupled decay reaches $`0.5721250`. Adam's adaptive norm
 how an L2 gradient penalty affects the step. Here the public tensor Adam API exposes no
 weight-decay argument, while AdamW exposes separate decoupled decay {Informal.citep adamw2019}[].
 
-TorchLean shows six decimals, and $`0.7000000030` rounds to `0.700000` at that precision. To see
-the difference the display hides, the checks below compare TorchLean Adam with its own zero-decay
-AdamW and measure the residual from `0.7` (they don't compare PyTorch bits):
+The formatter shows six decimals, and $`0.7000000030` rounds to `0.700000` at that precision. To
+expose the hidden difference, `otAdamEq` compares Adam with its zero-decay AdamW counterpart and
+measures the residual from `0.7` (it does not compare PyTorch bits):
 
 ```lean (name := otAdamEq)
 -- Compare full values to expose the Adam difference hidden
@@ -249,10 +242,9 @@ from those arguments. Since the statement quantifies over `state`, it applies to
 state as well as an initialized one, provided the zero-decay equality is available.
 
 Here the scalar type is `ℝ`, and the proof simplifies the decay term using algebraic laws such as
-`x * 0 = 0`, which fail for IEEE infinities and NaNs. In floating point, the run above checks
-agreement on one finite input, but the real theorem doesn't establish it for arbitrary floating
-states. That gap between the two claims gets its own bounds in the chapter on
-{ref "runtime-approximation"}[runtime approximation].
+`x * 0 = 0`, which fail for IEEE infinities and NaNs. In floating point, `otRuns` checks agreement
+on one finite input, but the real theorem doesn't establish it for arbitrary floating states.
+{ref "runtime-approximation"}[*Runtime Approximation*] bounds the gap between those two claims.
 
 The conclusion is about `.parameters`, not equality of the whole state or the loss curve of a
 training run. Generalization would require a separate statistical theorem.
@@ -280,8 +272,8 @@ optimizer" is a value that theorems can quantify over, not a string in a config 
 ```
 
 ```leanOutput otLaws (whitespace := lax)
-@adamw : {α : Type} → [inst : Storage α] → [inst_1 : Context α] → [DecidableRel
-  fun x1 x2 => x1 > x2] → α → α → α → α → α → TensorOptimizer α
+@adamw : {α : Type} → [inst : Storage α] → [inst_1 : Context α] →
+  α → α → α → α → α → TensorOptimizer α
 ```
 
 ```leanOutput otLaws (whitespace := lax)
@@ -303,8 +295,8 @@ optimizer" is a value that theorems can quantify over, not a string in a config 
 ```
 
 `TensorOptimizer.adamw` takes five scalar arguments in order: learning rate, weight decay, `beta1`,
-`beta2`, and epsilon. Their types are identical, so you need the calls above to identify which
-setting each experiment uses.
+`beta2`, and epsilon. Their types are identical, so the five `otRun` calls identify which setting
+each experiment uses.
 
 `TensorOptimizer.runSteps_append` is the associativity of running a stream of gradients, and it
 applies to every packaged optimizer at once, because the optimizer is an argument. It is the lemma
@@ -332,9 +324,9 @@ low-rank projector needs its own contract.
 
 # Optimizer Extension Points: Muon And GaLore-Style Updates
 
-Modern optimizer work often mixes a familiar base update with a specialized backend. TorchLean
-models that mix: its runtime layer gives the executable update equation, and its theory layer
-states what has to be true of the backend output before the update can be cited in a proof.
+Modern optimizer work often mixes a familiar base update with a specialized backend. The runtime
+layer gives the executable update equation, while the theory layer states what must hold of the
+backend output before that update can be cited in a proof.
 
 Muon is represented as momentum followed by an orthogonalization backend. One step first updates the
 momentum buffer
@@ -392,8 +384,8 @@ require enough ambient coordinates to accommodate those columns.
 
 TorchLean's Newton-Schulz orthogonalizer forms the right Gram matrix $`G=Q^\top Q` and evaluates
 $`aQ+b\,QG+c\,(QG)G` repeatedly. Over the reals this is the same odd polynomial as the left-Gram
-form, but the two evaluation orders need not agree in floating arithmetic. Compare the Muon
-coefficient set below with the classical cubic $`\tfrac32 Q-\tfrac12 QQ^\top Q`. For exact Gram
+form, but the two evaluation orders need not agree in floating arithmetic. Compare `otQuintic`
+with the classical cubic $`\tfrac32 Q-\tfrac12 QQ^\top Q`. For exact Gram
 preservation, the library's theorem
 `step_hasExactColumnGram` needs $`(a+b+c)^2=1`,
 so start by asking whether each coefficient set even qualifies:
@@ -420,7 +412,7 @@ Gram matrix is the identity, so one polynomial step scales the whole matrix by t
 coefficients and its Gram matrix by the square of that sum. That explains the theorem's hypothesis
 and why it doesn't apply to the displayed quintic coefficients.
 
-Next, watch the residual on the matrix below, which has been divided by its Frobenius norm (Muon
+The next calculation tracks the residual of `otRaw` after dividing it by its Frobenius norm (Muon
 does the same to its momentum buffer before orthogonalizing):
 
 ```lean (name := otCubicRun)
@@ -527,8 +519,8 @@ singular value $`s`, the matrix polynomial applies $`s\mapsto as+bs^3+cs^5` in r
 the cubic coefficients, this is $`s\mapsto(3s-s^3)/2` (with a fixed point at $`s=1`). For large
 $`s`, the highest-degree term can dominate instead of moving the value toward one. Dividing by the
 Frobenius norm limits the initial singular values, but that alone isn't a proof of convergence for
-an arbitrary coefficient choice. The Gram-preservation theorem above answers the narrower algebraic
-question of what one step does when the Gram matrix is already exactly the identity.
+an arbitrary coefficient choice. `step_hasExactColumnGram` answers the narrower algebraic question
+of what one step does when the Gram matrix is already exactly the identity.
 
 `NewtonSchulz.orthogonalizer` leaves normalization to the caller. A residual-checked backend then
 checks the direction it actually returns. Input normalization and output certification are
@@ -667,7 +659,7 @@ projection as part of the mathematical object.
 
 # Gradient Descent As A Contractive Map
 
-TorchLean's core convergence theorem studies the ideal deterministic update
+The core convergence theorem studies the ideal deterministic update
 `step eta g x = x - eta * g x`.
 
 In mathematical notation:
@@ -783,7 +775,7 @@ and
 
 $$`\|g(x)-g(y)\|\le L\|x-y\|.`
 
-Here are the signatures of the one-step bound, its iteration, and the step-size conditions:
+The signatures separate the one-step bound, its iteration, and the step-size conditions:
 
 ```lean (name := otGdThms)
 -- Follow the one-step bound through iteration and the
@@ -869,10 +861,10 @@ Two companions turn the abstract condition on $`q` into a condition on the step 
 `q_lt_one_of_mul_sq_lt` shows $`q<1` whenever $`0<\eta` and $`\eta L^2<2\mu`, and
 `dist_sq_iterate_le_of_step_size` packages the geometric bound together with $`q<1` under
 $`0\le\mu\le L` and that step-size inequality, so a caller checks numbers, not an inequality about
-$`q`. Those are the numbers the demo above checked: $`\eta L^2=1` against $`2\mu=4`.
+$`q`. Those are the numbers checked by `gdDemo`: $`\eta L^2=1` against $`2\mu=4`.
 
-We prove the scalar specialization separately as `ScalarGD.abs_step_sub_target_lt` (the version
-closest to the rational demo above):
+The scalar specialization `ScalarGD.abs_step_sub_target_lt` is closest to the rational calculation
+in `gdDemo`:
 
 ```lean
 -- The scalar result isolates the error multiplier for a
@@ -975,8 +967,6 @@ need to be accumulated through training, not checked only at the final step, and
 the necessary inputs to such an argument: a uniform or stepwise numerical error bound and an ideal
 contraction theorem for the same update.
 
-# Training Theorem Assumptions
-
 A theorem about a particular training run must identify the gradient, scalar semantics, step-size
 condition, and any backend contract (such as a Muon orthogonalizer certificate or a projector law).
 The results here supply selected components, while the trainer must satisfy their premises and
@@ -984,14 +974,14 @@ connect its mutable state to the stated recurrence.
 
 # Sources
 
-Files behind this chapter:
+Source map:
 
 - {src "TorchLean/NN/Optimizer/AdamW.lean"}[AdamW.lean], the zero-decay
   AdamW/Adam agreement theorem.
 - {src "TorchLean/NN/Optimizer/Update.lean"}[Update.lean], the executable optimizer update
   equations.
 - {src "TorchLean/NN/Optimizer/TensorOptimizer.lean"}[TensorOptimizer.lean],
-  `TensorOptimizer`, the packaged optimizers used in the run above, and `StepLaw`.
+  `TensorOptimizer`, the packaged optimizers used by `otRuns`, and `StepLaw`.
 - {src "TorchLean/NN/Optimizer/Muon.lean"}[Optimizer/Muon.lean], the Gram predicates and the
   checked-backend contracts.
 - {srcDir "TorchLean/NN/Optimizer/Muon"}[the Muon directory], the Newton-Schulz iteration, the QR

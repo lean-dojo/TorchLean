@@ -28,9 +28,9 @@ softmax over `ℚ` is a typeclass error.
 The instances compute the field operations, the comparisons, `max`, `min`, `abs` and `x ^ y` at an
 integer `y` (`y.den = 1`) exactly. They do not compute the rest: `exp`, `log`, `sqrt`, `tanh`,
 `cosh`, `sin`, `cos`, `sinh` and the constant `pi` are `0`, and so is `x ^ y` at a non-integer `y`.
-The `Context` fields whose defaults call them (`sqrtNat`, `sigmoid`, `log1p`, `expm1`, `expMul`,
-`tan`, `exp2`, `log2`, `log10`, `asinh`, `acosh`, `atanh` and `hypot`) are not the mathematical
-functions over `ℚ` either.
+The `Context` fields whose defaults call them (`sqrtNat`, `sigmoid`, `log1p`, `expm1`, `expm1x`,
+`expMul`, `tan`, `exp2`, `log2`, `log10`, `asinh`, `acosh`, `atanh` and `hypot`) are not the
+mathematical functions over `ℚ` either.
 -/
 
 open FloatLib.Numerics (MathFunctions)

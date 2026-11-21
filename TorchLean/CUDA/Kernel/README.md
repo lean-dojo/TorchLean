@@ -84,6 +84,8 @@ outputs as operand `k` and computes the gradient in input `j`. Both are programs
 executes them on the CPU and, through the same emitter, on the GPU:
 
 ```lean
+open TorchLean Kernel
+
 def quotient : Kernel.Program Float32 :=
   Program.of (fun (read : Kernel.Reader Float32) (i : UInt64) => (do
     let a ← read 0 i
@@ -134,10 +136,10 @@ bits by a binary search over keys, unrolled into loads and comparisons. `Table.m
 `f` at every word of the type and returns a table only when the table gives `f` at every word, bit
 for bit (`Table.eval_eq_of_check`). A `Table.Of A f` carries that proof, and `Table.Of.eval_apply`
 shows that the table, with its keys and values read from two inputs of the kernel, computes `f`
-inside any kernel expression. In an IEEE format a table of FloatLib's `exp`, `expMinus1`, `log` or
-`logPlus1` gives the exact result rounded once to nearest at a finite argument in the domain whose
-result is below the overflow threshold (`Table.Of.toReal_exp`, `Table.Of.toReal_expMinus1`,
-`Table.Of.toReal_log`, `Table.Of.toReal_logPlus1`). The tests build these tables in e4m3, e5m2,
+inside any kernel expression. In an IEEE format a table of FloatLib's `exp`, `expm1`, `log` or
+`logp1` gives the exact result rounded once to nearest at a finite argument in the domain whose
+result is below the overflow threshold (`Table.Of.toReal_exp`, `Table.Of.toReal_expm1`,
+`Table.Of.toReal_log`, `Table.Of.toReal_logp1`). The tests build these tables in e4m3, e5m2,
 e4m3fn, e4m3fnuz, a 12-bit format, binary16 and bfloat16. `Table.maxWidth` is 20, so binary32 and
 binary64 get no table. Functions whose results at the NaNs and zeros take none of the forms of
 `Table.Special`, such as the absolute value, get no table either. `Table.Of.runDevice` runs the

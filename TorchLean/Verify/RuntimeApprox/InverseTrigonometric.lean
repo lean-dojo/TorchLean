@@ -25,12 +25,13 @@ descriptor, so its rounding is finite.
 
 The special values come in two forms. As equations of values, a NaN is quieted, `atan` and `asin`
 keep a signed zero, and `asin` and `acos` give the invalid result outside `[-1, 1]` and at an
-infinity. `atan2` of a zero `y` against `+0` or a positive `x`, and of a finite `y` against `+∞`,
-is the zero of the sign of `y`. As equations of real values, `atan (±∞)` is the rounding of
-`±π/2`. `atan2` takes the sign of `y` and is the rounding of `±π` at a zero `y` against `-0` or a
-finite `y` against `-∞`, of `±π/2` at an infinite `y` against a finite `x`, and of `±π/4` or
-`±3π/4` at two infinities. For configured binary values, the `ConfiguredBinary` theorems restate
-the rounding theorems.
+infinity, so a finite result of a finite input puts it in `[-1, 1]`
+(`abs_toReal_le_one_of_isFinite_asin`, `abs_toReal_le_one_of_isFinite_acos`). `atan2` of a zero
+`y` against `+0` or a positive `x`, and of a finite `y` against `+∞`, is the zero of the sign of
+`y`. As equations of real values, `atan (±∞)` is the rounding of `±π/2`. `atan2` takes the sign
+of `y` and is the rounding of `±π` at a zero `y` against `-0` or a finite `y` against `-∞`, of
+`±π/2` at an infinite `y` against a finite `x`, and of `±π/4` or `±3π/4` at two infinities. For
+configured binary values, the `ConfiguredBinary` theorems restate the rounding theorems.
 -/
 
 @[expose] public section
@@ -85,7 +86,7 @@ theorem round_cmp_zero (sign : Bool) :
       (AlgebraicRounding.lowerExponent fmt) := by
     rw [FloatLib.Floats.Formats.Flocq.bpow_binaryRadix]
     positivity
-  unfold AlgebraicRounding.round
+  rw [AlgebraicRounding.round_eq fmt sign (target := 0) fun _ => rfl]
   simp [cmp, cmpUsing, hpos]
 
 /-- At a finite input that decodes to `a`, `atan` rounds `arctan |a|` through its comparator, with
@@ -93,7 +94,7 @@ the sign of `x`. -/
 theorem atan_eq_round {x : Model fmt} {a : ℚ} (hx : isFinite x = true)
     (hdecode : toRat? x = some a) :
     atan x = AlgebraicRounding.round fmt (signBit x) (prepareArctan |a| levels).compare := by
-  simp [atan, isNaN_eq_false_of_isFinite_eq_true x hx, isInf_eq_false_of_isFinite_eq_true x hx,
+  simp [atan, isNaN_eq_false_of_isFinite_eq_true x hx, isInfinite_eq_false_of_isFinite_eq_true x hx,
     hdecode]
 
 /-- At a finite input that decodes to `a` with `|a| ≤ 1`, `asin` rounds `arcsin |a|` through its
@@ -152,8 +153,8 @@ theorem atan2_eq_round {y x : Model fmt} {a b : ℚ} (hy : isFinite y = true)
     atan2 y x = AlgebraicRounding.round fmt (signBit y)
       (prepareAtan2 (if |b| = 0 ∧ a = 0 ∧ signBit x then -1 else a) |b| levels).compare := by
   have hpoint : atan2Point y x = some (a, |b|) := by
-    simp [atan2Point, isInf_eq_false_of_isFinite_eq_true y hy,
-      isInf_eq_false_of_isFinite_eq_true x hx, hda, hdb]
+    simp [atan2Point, isInfinite_eq_false_of_isFinite_eq_true y hy,
+      isInfinite_eq_false_of_isFinite_eq_true x hx, hda, hdb]
   simp only [atan2, isNaN_eq_false_of_isFinite_eq_true y hy,
     isNaN_eq_false_of_isFinite_eq_true x hx, hpoint]
   rfl
@@ -302,9 +303,27 @@ theorem acos_of_not_mem {x : Model fmt} (hnan : isNaN x = false)
       · have : 1 < |a| := by exact_mod_cast (hreal ▸ h : 1 < |(a : ℝ)|)
         simp [acos, hnan, hdecode, this]
 
+/-- A finite `asin` of a finite input has an input in `[-1, 1]`: outside it the result is the
+invalid one (`asin_of_not_mem`). -/
+theorem abs_toReal_le_one_of_isFinite_asin (hfmt : fmt.isIEEE = true) {x : Model fmt}
+    (hx : isFinite x = true) (hfinite : isFinite (asin x) = true) : |toReal x| ≤ 1 := by
+  by_contra h
+  rw [asin_of_not_mem (isNaN_eq_false_of_isFinite_eq_true x hx) (.inr (lt_of_not_ge h)),
+    isFinite_invalidResult hfmt] at hfinite
+  cases hfinite
+
+/-- A finite `acos` of a finite input has an input in `[-1, 1]`: outside it the result is the
+invalid one (`acos_of_not_mem`). -/
+theorem abs_toReal_le_one_of_isFinite_acos (hfmt : fmt.isIEEE = true) {x : Model fmt}
+    (hx : isFinite x = true) (hfinite : isFinite (acos x) = true) : |toReal x| ≤ 1 := by
+  by_contra h
+  rw [acos_of_not_mem (isNaN_eq_false_of_isFinite_eq_true x hx) (.inr (lt_of_not_ge h)),
+    isFinite_invalidResult hfmt] at hfinite
+  cases hfinite
+
 /-- `atan (±∞)` is the rounding of `±π/2`. -/
 theorem toReal_atan_of_isInf (hfmt : fmt.isIEEE = true) {x : Model fmt} (hnan : isNaN x = false)
-    (hinf : isInf x = true) :
+    (hinf : isInfinite x = true) :
     toReal (atan x) = roundAt fmt (if signBit x then -(Real.pi / 2) else Real.pi / 2) := by
   have heq : atan x = AlgebraicRounding.round fmt (signBit x) (prepareAtan2 0 1 levels).compare :=
     by simp [atan, hnan, hinf]
@@ -388,12 +407,12 @@ theorem toReal_round_arg (hfmt : fmt.isIEEE = true) (sign : Bool) (a b : ℚ) (h
 /-- `atan2` of an infinite `y` against a finite `x` is the rounding of `±π/2`, with the sign of
 `y`. -/
 theorem toReal_atan2_of_isInf_left (hfmt : fmt.isIEEE = true) {y x : Model fmt}
-    (hnan : isNaN y = false) (hinf : isInf y = true) (hx : isFinite x = true) :
+    (hnan : isNaN y = false) (hinf : isInfinite y = true) (hx : isFinite x = true) :
     toReal (atan2 y x) = roundAt fmt (if signBit y then -(Real.pi / 2) else Real.pi / 2) := by
   have heq : atan2 y x =
       AlgebraicRounding.round fmt (signBit y) (prepareAtan2 0 1 levels).compare := by
     simp [atan2, atan2Point, hnan, hinf, isNaN_eq_false_of_isFinite_eq_true x hx,
-      isInf_eq_false_of_isFinite_eq_true x hx]
+      isInfinite_eq_false_of_isFinite_eq_true x hx]
   have harg : Complex.arg ⟨((0 : ℚ) : ℝ), ((1 : ℚ) : ℝ)⟩ = Real.pi / 2 := by
     simp only [Rat.cast_zero, Rat.cast_one]
     exact Complex.arg_I
@@ -401,12 +420,12 @@ theorem toReal_atan2_of_isInf_left (hfmt : fmt.isIEEE = true) {y x : Model fmt}
 
 /-- `atan2` of a finite `y` against `+∞` is the zero of the sign of `y`. -/
 theorem atan2_of_posInf_right {y x : Model fmt} (hy : isFinite y = true)
-    (hnan : isNaN x = false) (hinf : isInf x = true) (hsign : signBit x = false) :
+    (hnan : isNaN x = false) (hinf : isInfinite x = true) (hsign : signBit x = false) :
     atan2 y x = zero fmt (signBit y) := by
   have heq : atan2 y x =
       AlgebraicRounding.round fmt (signBit y) (prepareAtan2 1 0 levels).compare := by
     simp [atan2, atan2Point, hnan, hinf, hsign, isNaN_eq_false_of_isFinite_eq_true y hy,
-      isInf_eq_false_of_isFinite_eq_true y hy]
+      isInfinite_eq_false_of_isFinite_eq_true y hy]
   have hcompare : (prepareAtan2 1 0 levels).compare =
       fun boundary : ℚ => cmp (0 : ℝ) (boundary : ℝ) := by
     funext t
@@ -418,13 +437,13 @@ theorem atan2_of_posInf_right {y x : Model fmt} (hy : isFinite y = true)
 
 /-- `atan2` of a finite `y` against `-∞` is the rounding of `±π`, with the sign of `y`. -/
 theorem toReal_atan2_of_negInf_right (hfmt : fmt.isIEEE = true) {y x : Model fmt}
-    (hy : isFinite y = true) (hnan : isNaN x = false) (hinf : isInf x = true)
+    (hy : isFinite y = true) (hnan : isNaN x = false) (hinf : isInfinite x = true)
     (hsign : signBit x = true) :
     toReal (atan2 y x) = roundAt fmt (if signBit y then -Real.pi else Real.pi) := by
   have heq : atan2 y x =
       AlgebraicRounding.round fmt (signBit y) (prepareAtan2 (-1) 0 levels).compare := by
     simp [atan2, atan2Point, hnan, hinf, hsign, isNaN_eq_false_of_isFinite_eq_true y hy,
-      isInf_eq_false_of_isFinite_eq_true y hy]
+      isInfinite_eq_false_of_isFinite_eq_true y hy]
   have harg : Complex.arg ⟨((-1 : ℚ) : ℝ), ((0 : ℚ) : ℝ)⟩ = Real.pi := by
     have hpoint : (⟨((-1 : ℚ) : ℝ), ((0 : ℚ) : ℝ)⟩ : ℂ) = -1 := Complex.ext (by simp) (by simp)
     rw [hpoint]
@@ -434,7 +453,8 @@ theorem toReal_atan2_of_negInf_right (hfmt : fmt.isIEEE = true) {y x : Model fmt
 /-- `atan2` of two infinities is the rounding of the argument of `(±1, 1)`, the direction of
 `x` with a positive `y` (`π/4` against `+∞`, `3π/4` against `-∞`), with the sign of `y`. -/
 theorem toReal_atan2_of_isInf (hfmt : fmt.isIEEE = true) {y x : Model fmt}
-    (hny : isNaN y = false) (hy : isInf y = true) (hnx : isNaN x = false) (hx : isInf x = true) :
+    (hny : isNaN y = false) (hy : isInfinite y = true) (hnx : isNaN x = false)
+    (hx : isInfinite x = true) :
     toReal (atan2 y x) = roundAt fmt
       (if signBit y then -Complex.arg ⟨if signBit x then -1 else 1, 1⟩
         else Complex.arg ⟨if signBit x then -1 else 1, 1⟩) := by
@@ -484,6 +504,24 @@ theorem toReal_acos {x : Value} (hx : ExecFloat.Binary.isFinite x = true)
   simp only [acos, ExecFloat.Binary.toModel, Configured.Family.toModel,
     ExecFloat.ModelCodec.decode_liftUnary] at *
   exact InverseTrigonometric.toReal_acos hformat hx hdomain
+
+/-- A finite `asin` of a finite input has an input in `[-1, 1]`. -/
+theorem abs_toReal_le_one_of_isFinite_asin {x : Value} (hx : ExecFloat.Binary.isFinite x = true)
+    (hfinite : ExecFloat.Binary.isFinite (asin x) = true)
+    (hformat : format.isIEEE = true := by ieee_format) : |ExecFloat.Binary.toReal x| ≤ 1 := by
+  unfold ExecFloat.Binary.isFinite ExecFloat.Binary.toReal at *
+  simp only [asin, ExecFloat.Binary.toModel, Configured.Family.toModel,
+    ExecFloat.ModelCodec.decode_liftUnary] at *
+  exact InverseTrigonometric.abs_toReal_le_one_of_isFinite_asin hformat hx hfinite
+
+/-- A finite `acos` of a finite input has an input in `[-1, 1]`. -/
+theorem abs_toReal_le_one_of_isFinite_acos {x : Value} (hx : ExecFloat.Binary.isFinite x = true)
+    (hfinite : ExecFloat.Binary.isFinite (acos x) = true)
+    (hformat : format.isIEEE = true := by ieee_format) : |ExecFloat.Binary.toReal x| ≤ 1 := by
+  unfold ExecFloat.Binary.isFinite ExecFloat.Binary.toReal at *
+  simp only [acos, ExecFloat.Binary.toModel, Configured.Family.toModel,
+    ExecFloat.ModelCodec.decode_liftUnary] at *
+  exact InverseTrigonometric.abs_toReal_le_one_of_isFinite_acos hformat hx hfinite
 
 /-- At finite operands other than the origin, `atan2 y x` is the principal argument of `(x, |y|)`
 with the sign of `y`, rounded once (`InverseTrigonometric.toReal_atan2`). -/

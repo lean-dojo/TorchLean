@@ -44,13 +44,15 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
+/-! Guide page: bounds between the ideal and the rounded output of a graph. -/
+
 #doc (Manual) "Runtime Approximation" =>
 %%%
 tag := "runtime-approximation"
 %%%
 
-Suppose a graph has an ideal output `y_spec` and a rounded output `y_run`. To compare them, we
-first interpret the rounded scalar as a specification value with `toSpec`, and an approximation
+A graph has an ideal output `y_spec` and a rounded output `y_run`. Comparing them first requires an
+interpretation of the rounded scalar as a specification value with `toSpec`; an approximation
 statement then bounds the difference by a budget `ε`:
 
 $$`\operatorname{toSpec}(y_{\mathrm{run}})\approx_\varepsilon y_{\mathrm{spec}}`
@@ -157,8 +159,8 @@ them from the claim it needs and not treat the two fields as interchangeable.
 ## Tensor Approximation Contracts
 
 The relation defines what it means for two tensors to be close. A theorem using that relation can
-quantify over a whole family of inputs, or it can concern just one pair of tensors. Here are the
-two signatures that expose the scalar interpretation and the proposition to be proved:
+quantify over a whole family of inputs, or it can concern just one pair of tensors. The two
+signatures below expose the scalar interpretation and the proposition to be proved:
 
 ```lean (name := coreVocab)
 -- Separate pointwise interpretation from the proposition
@@ -255,7 +257,7 @@ You'll find the forward graph theorem in
 TorchLean.Verify.RuntimeApprox.Graph.Forward API]. It mirrors the structure of the autograd
 tape proof, but its invariant is approximation instead of derivative soundness.
 
-Here are the main objects:
+The forward proof uses five objects:
 
 - `EList`: list of scalar error budgets indexed by shape.
 - `ApproxCtx`: approximation relation for a whole context.
@@ -350,9 +352,8 @@ context invariant follows the same data dependencies as the computation.
 
 # Backward Graph Approximation
 
-Backward approximation is developed in the
-{src "TorchLean/Verify/RuntimeApprox/Graph/Backward.lean"}[backward approximation API].
-This file is the runtime approximation analogue of reverse mode AD.
+The {src "TorchLean/Verify/RuntimeApprox/Graph/Backward.lean"}[backward approximation API]
+develops the reverse-mode counterpart of forward runtime approximation.
 
 Its key objects are:
 
@@ -402,11 +403,9 @@ forward-mode differentiation. Nor do the two preservation theorems establish nat
 correctness or prove that the supplied reverse maps are derivatives.
 
 Put in words, the runtime approximation graph can be viewed as an autograd algebra graph once we
-forget the approximation evidence and keep the same forward/VJP structure. So the two layers
-compose cleanly:
-
-in autograd algebra the reverse pass is the correct ideal VJP, and in runtime approximation the
-executable reverse pass stays close to that ideal VJP.
+forget the approximation evidence and keep the same forward/VJP structure. The two layers then
+compose: autograd algebra proves that the reverse pass is the correct ideal VJP, while runtime
+approximation proves that the executable reverse pass stays close to that ideal VJP.
 
 For these results to compose, the spec reverse pass must be the one that the autograd proof
 identifies with the derivative. Approximating an arbitrary supplied VJP would establish numerical
@@ -501,9 +500,10 @@ most the upper endpoint minus the lower endpoint. The argument needs enclosure o
 checking the rounded replay alone leaves its real half unproved.
 
 Reduction order is read from the selected capsule. Ordinary reference matrix products and sums
-advertise the fixed left fold used by the canonical tensor semantics. Grouped scaled products
-instead advertise `fixedLeftOrExact` (matching their staged-or-exact recovery), and their
-certificate rule requires that policy. LibTorch CUDA accumulations are marked
+advertise their own order, by default the fixed left fold used by the canonical tensor semantics.
+Grouped scaled products instead advertise `fixedOrExact` in their order (matching their
+staged-or-exact recovery), and their certificate rule requires `fixedOrExact .leftFold`. LibTorch
+CUDA accumulations are marked
 implementation-defined, so a fixed-left certificate can't accidentally certify a cuBLAS, cuDNN,
 fused-attention, or parallel-reduction schedule. Those paths need the order-independent reduction
 bounds described in the floating-point chapter or a stronger backend-specific contract.
@@ -531,8 +531,11 @@ Merely shrinking a stored endpoint would invalidate one of those checks.
 
 # MLP Numerical Certificate Example
 
-Our executable example {src "TorchLeanExamples/DeepDives/Floats/GraphNumericalCertificate.lean"}[
-GraphNumericalCertificate.lean] ends with a two-layer MLP, not a single isolated operator.
+For the MLP, we can ask a smaller question before working toward a global error bound.
+Can we enclose each intermediate value in the binary32 run? The example propagates intervals
+through the registered operators and checks the concrete trace.
+{src "TorchLeanExamples/DeepDives/Floats/GraphNumericalCertificate.lean"}[
+GraphNumericalCertificate.lean]
 
 The model is a matrix pipeline with shapes that remain visible in the IR:
 
@@ -586,8 +589,10 @@ rule and no other route computes it, the gradient of each value input from the d
 and the prepared pullback where it is other code. We register the remaining operator
 specifications, the CPU tape builders, the
 gradient accumulation and the general tensor operators alongside, by family. Each route is analyzed
-for a configured scalar over an arbitrary IEEE format, once for an absolute bound and once for a
-mixed one, and once each for native `Float32` and for the rounded reals `FP32`.
+for a configured scalar over an arbitrary format, once for an absolute bound and once for a mixed
+one, and once each for native `Float32` and for the rounded reals `FP32`. The configured analysis
+assumes that the format is IEEE, and a theorem takes that hypothesis, or the scalar's storage, only
+where its proof uses it: the others hold at every format, OCP's E4M3 among them.
 
 A route is proved when its theorem has no premise and its reference and budget decode only inputs,
 and conditional when it has premises or caveats. A caveat marks a budget or reference that decodes
@@ -609,12 +614,17 @@ references for its inputs, so that the composite bound is a chain of its parts' 
 route's outcome names the theorems it was composed from (the two-pass forward of `Op.attention` is
 conditional in this way).
 
+A failed analysis gives no theorem. It can stop at an integer computed from rounded values, such
+as the exponent of `Op.frexp` or a tie count in a max gradient, or exceed its elaboration budget.
+The coverage report records the reason for each route. A conditional bound remains a theorem with
+the premises it lists; a failed route supplies no numerical guarantee.
+
 The analysis reads a tensor entry through TorchLean's `Storage` class, and it accepts such a read
 only with laws that give each method of the class a defining equality through the array observation
 `Storage.toArray` (among them `Storage.get_eq_toArray_getElem`, `Storage.uget_eq_toArray_uget` and
 `Storage.copyAt_eq_push_uget`). Those laws don't show that a generated reference agrees with a
 separately written specification. What remains assumed is stated by FloatLib, in the trust
-assumptions of `FloatLib/Floats/Formats/BinaryInterchange/Automation/Roundoff.lean`. Among them:
+assumptions of `FloatLib/Tactic/Roundoff.lean`. Among them:
 the types a storage class supplies stay abstract to index computations, the types that index data
 mentions aren't chosen by a rounded value, and the screen for storage types is syntactic and
 doesn't unfold definitions. The analysis also folds over states that are tuples, which is how
@@ -785,8 +795,8 @@ sum the errors across entries. That suits a later coordinatewise margin argument
 operation does sum those entries, its own reduction rule must propagate their uncertainty and add
 the rounding that sum introduces.
 
-Reduction order also affects the computed result. Both rows below have exact sum `2`, but left and
-right association need not agree:
+Reduction order also affects the computed result. The two test rows have exact sum `2`, but left
+and right association need not agree:
 
 ```lean (name := raOrder)
 section
@@ -1086,8 +1096,8 @@ next momentum buffer *and* a bound for the parameters. Because the next update n
 the buffer produced by the current one, returning both relations makes the conclusion usable as
 that update's hypothesis.
 
-AdamW keeps two buffers, a step counter, and a bias correction, and its statement is by far the
-longest in the chapter. Five of its hypotheses are error budgets for quantities Adam derives but
+AdamW keeps two buffers, a step counter, and a bias correction, giving it the longest optimizer
+signature here. Five of its hypotheses are error budgets for quantities Adam derives but
 doesn't store: `1 - beta1`, `1 - beta2`, and the two bias-correction reciprocals
 `1 / (1 - beta^(t+1))`, together with `lr * weightDecay`. Those are computed in floating point on
 every step, so they carry their own rounding (including the arithmetic used for the powers). The
@@ -1117,8 +1127,6 @@ The finite-run theorem organizes this induction once those step premises are ava
 infer a bound on an evolving gradient stream from a gradient comparison performed only at
 initialization.
 
-# Weakening Tolerances
-
 Weakening an absolute bound to an absolute-plus-relative tolerance needs no magnitude hypothesis:
 `ApproxTol.ofReal` builds the tolerance, `ApproxWith.approxWithTol_absOnly` turns an absolute
 bound into the absolute-only tolerance, and `ApproxWithTol.mono` loosens it. But the result retains
@@ -1145,8 +1153,8 @@ theorem covers the path being used.
 
 # Classifier Margin Example
 
-Suppose we have a two layer classifier whose hidden layer is $`\operatorname{ReLU}(W_1x+b_1)` and
-whose output is $`W_2h+b_2`.
+Take a two-layer classifier whose hidden layer is $`\operatorname{ReLU}(W_1x+b_1)` and whose output
+is $`W_2h+b_2`.
 
 An ideal proof might establish that, for all inputs in a box, the margin over the reals for class
 $`0` over class $`1` is at least $`0.05`.

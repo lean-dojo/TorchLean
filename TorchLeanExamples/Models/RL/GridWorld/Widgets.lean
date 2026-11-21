@@ -68,7 +68,7 @@ private def styleObj (xs : List (String × String)) : Lean.Json :=
 
 /-- One grid square: a fixed-size rounded box carrying a single label. -/
 private def cell (label : String) (bg : String) : ProofWidgets.Html :=
-  <div style={styleObj [
+  jsx%{<div style={styleObj [
     ("width", "34px"),
     ("height", "34px"),
     ("display", "flex"),
@@ -83,7 +83,7 @@ private def cell (label : String) (bg : String) : ProofWidgets.Html :=
     ("font-size", "13px"),
     ("font-weight", "600"),
     ("user-select", "none")
-  ]}>{.text label}</div>
+  ]}>{.text label}</div>}
 
 /-- Format a grid position as `(row,col)` for the header pills. -/
 private def posString {width height : Nat} (p : GridWorld.State width height) : String :=
@@ -93,13 +93,13 @@ private def posString {width height : Nat} (p : GridWorld.State width height) : 
 private def gridHtml {width : Nat}
     (cells : Array ProofWidgets.Html) : ProofWidgets.Html :=
   let cols : String := s!"repeat({width}, 34px)";
-  <div style={styleObj [
+  jsx%{<div style={styleObj [
     ("display", "grid"),
     ("grid-template-columns", cols),
     ("gap", "6px")
   ]}>
     {...cells}
-  </div>
+  </div>}
 
 /-!
 ## Renderers
@@ -127,14 +127,14 @@ def html {width height : Nat}
         else "rgba(120, 120, 120, 0.05)"
       cell label bg)
   ;
-  <div style={json% {"padding": "10px"}}>
+  jsx%{<div style={json% {"padding": "10px"}}>
     <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap",
         "margin-bottom": "10px"}}>
       {pill s!"GridWorld {width}x{height}"} {pill s!"pos={posString pos}"}
       {pill s!"start={posString gw.start}"} {pill s!"goal={posString gw.goal}"}
     </div>
     {gridHtml (width := width) cells}
-  </div>
+  </div>}
 
 /-- ASCII arrow for an action index, in the `up, down, left, right` order `GridWorld` uses. -/
 private def arrowOfAction {nActions : Nat} (a : Fin nActions) : String :=
@@ -158,14 +158,14 @@ def policyHtml {width height : Nat}
         else "rgba(120, 120, 120, 0.05)"
       cell label bg)
   ;
-  <div style={json% {"padding": "10px"}}>
+  jsx%{<div style={json% {"padding": "10px"}}>
     <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap",
         "margin-bottom": "10px"}}>
       {pill s!"GridWorld policy {width}x{height}"} {pill s!"start={posString gw.start}"}
       {pill s!"goal={posString gw.goal}"}
     </div>
     {gridHtml (width := width) cells}
-  </div>
+  </div>}
 
 /-
 Policy snapshots stored on disk (as JSON) record actions as `Nat` indices `0..3` in row-major order.
@@ -198,14 +198,14 @@ private def mkPos? {width height : Nat} (row col : Nat) : Option (GridWorld.Stat
 
 /-- Place two panels side by side, wrapping to one column when the panel gets narrow. -/
 private def twoUp (a b : ProofWidgets.Html) : ProofWidgets.Html :=
-  <div style={styleObj [
+  jsx%{<div style={styleObj [
     ("display", "grid"),
     ("grid-template-columns", "repeat(auto-fit, minmax(min(100%, 340px), 1fr))"),
     ("gap", "10px")
   ]}>
     <div>{a}</div>
     <div>{b}</div>
-  </div>
+  </div>}
 
 /-- Render a before/after policy snapshot (loaded from disk) as two GridWorld policy panels.
 Warning badges flag a width or height that differs from the grid's, an action array whose length
@@ -254,15 +254,15 @@ def policyDiffHtml {width height : Nat}
   let beforePol := policyOfActionArray (width := width) (height := height) diff.before
   let afterPol := policyOfActionArray (width := width) (height := height) diff.after
   ;
-  <div style={json% {"padding": "10px"}}>
+  jsx%{<div style={json% {"padding": "10px"}}>
     <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap",
         "margin-bottom": "10px"}}>
       {pill "GridWorld policy snapshot"} {pill s!"expected={expected}"} {... warns.map warnBadge}
     </div>
     {twoUp
-      (<div>{pill "before"}{policyHtml gw beforePol}</div>)
-      (<div>{pill "after"}{policyHtml gw afterPol}</div>)}
-  </div>
+      (jsx%{<div>{pill "before"}{policyHtml gw beforePol}</div>})
+      (jsx%{<div>{pill "after"}{policyHtml gw afterPol}</div>})}
+  </div>}
 
 /-- Render a rollout path on the grid. Each visited cell shows the index of its first visit, and an
 unvisited start or goal shows `S` or `G`. -/
@@ -288,14 +288,14 @@ def pathHtml {width height : Nat}
         else "rgba(120, 120, 120, 0.05)"
       cell label bg)
   ;
-  <div style={json% {"padding": "10px"}}>
+  jsx%{<div style={json% {"padding": "10px"}}>
     <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap",
         "margin-bottom": "10px"}}>
       {pill s!"GridWorld path {width}x{height}"} {pill s!"len={path.size}"}
       {pill s!"start={posString gw.start}"} {pill s!"goal={posString gw.goal}"}
     </div>
     {gridHtml (width := width) cells}
-  </div>
+  </div>}
 
 /-- Render a before/after episode path snapshot (loaded from disk) as two GridWorld path panels.
 Positions outside the grid are dropped before the visit indices are counted, and warning badges
@@ -332,15 +332,15 @@ def pathDiffHtml {width height : Nat}
     else
       warns
   ;
-  <div style={json% {"padding": "10px"}}>
+  jsx%{<div style={json% {"padding": "10px"}}>
     <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap",
         "margin-bottom": "10px"}}>
       {pill "GridWorld episode path"} {... warns.map warnBadge}
     </div>
     {twoUp
-      (<div>{pill "before"}{pathHtml gw beforePath}</div>)
-      (<div>{pill "after"}{pathHtml gw afterPath}</div>)}
-  </div>
+      (jsx%{<div>{pill "before"}{pathHtml gw beforePath}</div>})
+      (jsx%{<div>{pill "after"}{pathHtml gw afterPath}</div>})}
+  </div>}
 
 /-!
 ## Commands
@@ -387,7 +387,7 @@ macro "#gridworld_policy_file_view " gw:term ", " path:term : command =>
       pure (policyDiffHtml $gw diff)
     catch e =>
       pure <|
-        <div style={json% {"padding": "10px"}}>
+        jsx%{<div style={json% {"padding": "10px"}}>
           {warnBadge "gridworld_policy_file_view"}
           <div style={json% {"margin-top": "8px"}}>
             {.text "Could not read policy snapshot file: "}
@@ -399,7 +399,7 @@ macro "#gridworld_policy_file_view " gw:term ", " path:term : command =>
             {.text "You can also override the output path with `--policy <path>`."}
           </div>
           <div style={json% {"margin-top": "6px"}}>{monospace (toString e)}</div>
-        </div>))
+        </div>}))
 
 /--
 Read a saved GridWorld episode path snapshot (`before` vs `after`) from JSON and render it.
@@ -415,7 +415,7 @@ macro "#gridworld_path_file_view " gw:term ", " path:term : command =>
       pure (pathDiffHtml $gw diff)
     catch e =>
       pure <|
-        <div style={json% {"padding": "10px"}}>
+        jsx%{<div style={json% {"padding": "10px"}}>
           {warnBadge "gridworld_path_file_view"}
           <div style={json% {"margin-top": "8px"}}>
             {.text "Could not read path snapshot file: "}
@@ -427,7 +427,7 @@ macro "#gridworld_path_file_view " gw:term ", " path:term : command =>
             {.text "You can also override the output path with `--path <path>`."}
           </div>
           <div style={json% {"margin-top": "6px"}}>{monospace (toString e)}</div>
-        </div>))
+        </div>}))
 
 end
 

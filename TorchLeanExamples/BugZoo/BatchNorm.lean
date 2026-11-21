@@ -83,17 +83,17 @@ theorem BatchNorm.outsideSqrt_ne_insideSqrt :
 
 /-- Batch normalization along `dim` of the tensor with every entry `x`, with running mean `mean`,
 running variance `variance`, scale `gamma` and bias `beta` in every channel, is a constant tensor.
-Its entry is `(x - mean) / sqrt (max (max variance 0 + epsilon) 0) * gamma + beta`. -/
+Its entry is `(x - mean) / sqrt (variance + epsilon) * gamma + beta`. -/
 theorem BatchNorm.normalize_scalar {s : Shape} (dim : Fin s.rank)
     (x mean variance gamma beta epsilon : ℝ) :
     Tensor.batchNorm (Tensor.full s x) dim (Tensor.full _ gamma) (Tensor.full _ beta)
         (.running (Tensor.full _ mean) (Tensor.full _ variance)) epsilon =
       Tensor.full s
-        ((x - mean) / MathFunctions.sqrt (max (max variance 0 + epsilon) 0) * gamma + beta) := by
+        ((x - mean) / MathFunctions.sqrt (variance + epsilon) * gamma + beta) := by
   apply Tensor.Rep.ext
   intro c
   rw [Tensor.batchNorm_running_apply]
-  simp [Context.maximum_real]
+  simp
 
 /--
 Running statistics, part of the BatchNorm inference contract.
@@ -105,7 +105,7 @@ run, and that provenance is a separate obligation.
 structure RunningStats (channels : Nat) where
   /-- Inference-time running mean, usually accumulated during training. -/
   mean : Tensor ℝ [channels]
-  /-- Inference-time running variance, clamped at zero by the spec before normalization. -/
+  /-- Inference-time running variance. -/
   variance : Tensor ℝ [channels]
 
 /--
@@ -128,24 +128,22 @@ theorem RunningStats.batchNorm_affine
             epsilon =
           (x * scale) + bias := by
   let s : Shape := Shape.dim channels sSpatial
-  let runningVar :=
-    Tensor.maximum stats.variance (Tensor.full [channels] 0)
   let spread := fun t : Tensor ℝ [channels] =>
     Tensor.broadcast t s _ (Shape.broadcastDims_axis s ⟨0, Nat.succ_pos _⟩)
   let mean_b := spread stats.mean
-  let var_b := spread runningVar
+  let var_b := spread stats.variance
   let gamma_b := spread gamma
   let beta_b := spread beta
   let std :=
     Tensor.sqrt
-      (var_b + Tensor.full s epsilon) .clampNegative
+      (var_b + Tensor.full s epsilon)
   refine
     ⟨gamma_b / std,
       beta_b -
         (mean_b * (gamma_b / std)),
       ?_⟩
   intro x
-  simpa [s, spread, runningVar, mean_b, var_b, gamma_b, beta_b, std]
+  simpa [s, spread, mean_b, var_b, gamma_b, beta_b, std]
     using
       Tensor.batchNorm_running_eq_mul_add
         (x := x)

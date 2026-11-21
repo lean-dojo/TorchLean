@@ -34,14 +34,14 @@ open scoped BigOperators
 
 noncomputable section
 
-/-- For a nonempty row and a nonnegative `epsilon`, a centered row entry divided by its stabilized
-standard deviation has magnitude at most the square root of the row width. A zero denominator gives
-the quotient zero under Lean's real division. -/
+/-- For a nonempty row and a nonnegative `epsilon`, a centered row entry divided by its standard
+deviation `sqrt (var + epsilon)` has magnitude at most the square root of the row width. A zero
+denominator gives the quotient zero under Lean's real division. -/
 theorem layerNorm_abs_le_sqrt {m n : Nat} (hn : 0 < n)
     (x : Tensor ℝ [m, n]) (epsilon : ℝ) (hepsilon : 0 ≤ epsilon)
     (i : Fin m) (j : Fin n) :
     |(Tensor.get2 x i j - 𝔼 k, Tensor.get2 x i k) /
-        Real.sqrt (max (TorchLean.var (Tensor.get2 x i) + epsilon) 0)| ≤
+        Real.sqrt (TorchLean.var (Tensor.get2 x i) + epsilon)| ≤
       Real.sqrt n := by
   have hnreal : (0 : ℝ) < n := by exact_mod_cast hn
   have hentry :
@@ -53,15 +53,14 @@ theorem layerNorm_abs_le_sqrt {m n : Nat} (hn : 0 < n)
       (Finset.mem_univ j)
     simpa only [TorchLean.var, Fintype.expect_eq_sum_div_card, Fintype.card_fin,
       mul_div_cancel₀ _ hnreal.ne', pow_two] using hs
-  have ht : TorchLean.var (Tensor.get2 x i) ≤
-      max (TorchLean.var (Tensor.get2 x i) + epsilon) 0 :=
-    (le_add_of_nonneg_right hepsilon).trans (le_max_left _ _)
+  have ht : TorchLean.var (Tensor.get2 x i) ≤ TorchLean.var (Tensor.get2 x i) + epsilon :=
+    le_add_of_nonneg_right hepsilon
   have hsquare := hentry.trans (mul_le_mul_of_nonneg_left ht hnreal.le)
   have habs := Real.abs_le_sqrt hsquare
   rw [Real.sqrt_mul hnreal.le] at habs
-  by_cases hz : Real.sqrt (max (TorchLean.var (Tensor.get2 x i) + epsilon) 0) = 0
+  by_cases hz : Real.sqrt (TorchLean.var (Tensor.get2 x i) + epsilon) = 0
   · simp [hz, Real.sqrt_nonneg]
-  · have hp : 0 < Real.sqrt (max (TorchLean.var (Tensor.get2 x i) + epsilon) 0) :=
+  · have hp : 0 < Real.sqrt (TorchLean.var (Tensor.get2 x i) + epsilon) :=
       lt_of_le_of_ne (Real.sqrt_nonneg _) (Ne.symm hz)
     rw [abs_div, abs_of_nonneg (Real.sqrt_nonneg _)]
     exact (div_le_iff₀ hp).mpr habs
@@ -179,6 +178,7 @@ theorem layerNormRow?_encloses [NonlinearBoundOps α]
     have hmeanBounds := rowMean?_encloses hn _ _ hx hmean
     rw [hE] at hmeanBounds
     dsimp only at hout
+    -- Subtracting the mean bounds encloses the centered row.
     set centeredLo := Tensor.ofFn (fun j => subDown (lo.getScalar j) meanHi)
     set centeredHi := Tensor.ofFn (fun j => subUp (hi.getScalar j) meanLo)
     have hcentered (j : Fin n) :
@@ -190,6 +190,7 @@ theorem layerNormRow?_encloses [NonlinearBoundOps α]
     obtain ⟨⟨centerMeanLo, centerMeanHi⟩, hcenterMean, hout⟩ :=
       Option.bind_eq_some_iff.mp hout
     have hcenterMeanBounds := rowMean?_encloses hn _ _ hcentered hcenterMean
+    -- The centered row has mean zero, so subtracting its mean bounds again still encloses it.
     have h0 : ∑ j, (Tensor.get2 x row j - 𝔼 k, Tensor.get2 x row k) = 0 :=
       Fintype.sum_balance (Tensor.get2 x row)
     rw [h0, zero_div] at hcenterMeanBounds
@@ -206,6 +207,7 @@ theorem layerNormRow?_encloses [NonlinearBoundOps α]
     obtain ⟨_, _, hout⟩ := Option.bind_eq_some_iff.mp hout
     obtain ⟨⟨varianceLo, varianceHi⟩, hvariance, hout⟩ :=
       Option.bind_eq_some_iff.mp hout
+    -- The mean of the squared bounds encloses the variance, then clamp at zero and add `epsilon`.
     have hsquared (j : Fin n) :=
       square_encloses (hrecentered j).1 (hrecentered j).2
     have hvarianceBounds := rowMean?_encloses hn _ _
@@ -221,15 +223,19 @@ theorem layerNormRow?_encloses [NonlinearBoundOps α]
     subst stabilized
     obtain ⟨⟨denominatorLo, denominatorHi⟩, hdenominator, hout⟩ :=
       Option.bind_eq_some_iff.mp hout
+    -- The square root of the bounds clamped at zero encloses the real root of the sum.
     have hsqrtInput := max_zero_encloses hstabilized
     have hdenominatorBounds := LawfulNonlinearBoundOps.sqrtBounds_enclosure
       (finiteBounds?_bind_eq_some hdenominator) hsqrtInput.1 hsqrtInput.2
+    rw [sqrt_max_zero] at hdenominatorBounds
     split at hout
     · contradiction
     · obtain ⟨bounds, hbounds, hout⟩ := Option.bind_eq_some_iff.mp hout
       have hpoint := Tensor.sequenceFinM_get_of_eq_some hbounds
       have houtEq := Option.some.inj hout
       cases houtEq
+      -- Each output is the centered value over the denominator, scaled by `gamma` and shifted by
+      -- `beta`.
       intro j
       dsimp only
       have hl := get2_layerNorm hn (value epsilon) x

@@ -89,7 +89,8 @@ def ibpConv [BoundOps α]
           else BoundOps.addUp total (getAtOrZero layer.bias [outChannel.val])))
     { lo := endpoint true, hi := endpoint false : Box α
         (outC :: Tensor.to outSpatial (List Nat)) }
-  let rec mapRows : (batch : Shape) →
+  let rec /-- `row` applied at every index of the leading `batch` dimensions. -/
+  mapRows : (batch : Shape) →
       Box α (batch ++ (inC :: Tensor.to inSpatial (List Nat))) →
       Box α (batch ++ (outC :: Tensor.to outSpatial (List Nat)))
     | .scalar, input => row input

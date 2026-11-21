@@ -118,23 +118,6 @@ namespace Op
 
 variable {s : Shape} {n : Nat} {ι : Type}
 
-/-- If `f r` has derivative `L r` at the fiber at `r` of `x` for every `r`, a map `F` that applies
-`f r` to the fiber at `r` for every `r` has derivative `fiberwiseCLM e L` at `x`. -/
-theorem fiberwise_hasFDerivAt_family (e : s.Coord ≃ Fin n × ι) (F : Tensor ℝ s → Tensor ℝ s)
-    (f : ι → Vec n → Vec n) (L : ι → Vec n →L[ℝ] Vec n) (x : Tensor ℝ s)
-    (hF : ∀ y c, F y c = f (e c).2 (fiberCLM e (e c).2 y) (e c).1)
-    (hf : ∀ r, HasFDerivAt (f r) (L r) (fiberCLM e r x)) : HasFDerivAt F (fiberwiseCLM e L) x := by
-  refine Tensor.hasFDerivAt_of_coordinates F _ x fun c => ?_
-  have h := (EuclideanSpace.proj (𝕜 := ℝ) (e c).1).hasFDerivAt.comp x
-    ((hf (e c).2).comp x (fiberCLM e (e c).2).hasFDerivAt)
-  have hfun : (fun y => F y c) =
-      (EuclideanSpace.proj (𝕜 := ℝ) (e c).1) ∘ f (e c).2 ∘ (fiberCLM e (e c).2) := by
-    funext y
-    rw [hF]
-    rfl
-  rw [hfun]
-  exact h
-
 /-- The fiber at `r` of a Boolean mask under the splitting `e`: entry `j` is the entry of the mask
 at `e.symm (j, r)`. -/
 def maskFiber (e : s.Coord ≃ Fin n × ι) (mask : Tensor Bool s) (r : ι) : Tensor Bool [n] :=
@@ -180,7 +163,7 @@ theorem hasPullbackAt_maskedSoftmax (dim : Fin s.rank) (mask : Tensor Bool s) (x
     HasPullbackAt (fun y => Tensor.softmax y dim (some mask)) (maskedSoftmaxCLM x mask dim)
       (fun δ => Tensor.maskedSoftmaxBackward x mask δ dim) x :=
   HasPullbackAt.of_adjoint
-    (fiberwise_hasFDerivAt_family _ _
+    (fiberwise_hasFDerivAt _ _
       (fun r => HardMaskedSoftmax.weights (maskFiber (Coord.axisEquiv dim (shape := s)) mask r))
       _ x (fun y c => softmax_some_apply_weights y dim mask c)
       (fun _ => HardMaskedSoftmax.hasFDerivAt_weights _ _)) (fun δ => (fiberwiseCLM_adjoint _ _
@@ -1233,7 +1216,7 @@ theorem toParams_sum (mha : MultiHeadAttention ℝ numHeads dModel headDim)
     repeat' (first
       | refine withLp_prod_ext ?_ ?_
       | refine Tensor.Rep.ext fun _ => ?_)
-    all_goals try simp only [toParams, MultiHeadAttention.sum, WithLp.toLp_fst, WithLp.toLp_snd,
+    all_goals simp only [toParams, MultiHeadAttention.sum, WithLp.toLp_fst, WithLp.toLp_snd,
       WithLp.zero_fst, WithLp.zero_snd, Tensor.map_apply, Tensor.Rep.zero_apply]
   | cons first rest =>
     rw [MultiHeadAttention.sum, List.map_cons, List.sum_cons]

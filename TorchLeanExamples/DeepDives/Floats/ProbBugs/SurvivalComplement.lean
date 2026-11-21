@@ -27,8 +27,8 @@ public import TorchLean.Tensor.Layers.Activation
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Real
 public import FloatLib.Numerics.MixedError.Basic
 import TorchLean.NN.Gradients.Activation
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff
-public import FloatLib.Numerics.Automation.Attributes
+public import FloatLib.Tactic.Roundoff
+public import FloatLib.Tactic.Numerics.Attribute
 public import TorchLean.Tensor.Literal
 public import TorchLean.Tensor.Tactic.Init
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Mixed

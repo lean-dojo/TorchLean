@@ -273,8 +273,7 @@ theorem convKernelCoefficient_eq_sum
 
 /-- For positive dilation, selecting a stored coefficient commutes with any scalar map that
 preserves zero. -/
-theorem convKernelCoefficient_map {α β : Type} [Storage α] [Context α]
-    [Storage β] [Context β] (f : α → β) (hf : f 0 = 0)
+theorem convKernelCoefficient_map {α β : Type} [Context α] [Context β] (f : α → β) (hf : f 0 = 0)
     (kernel outIdx inputIdx stride dilation padding : List Nat) (weight : List Nat → α)
     (hdil : ∀ d ∈ dilation, 0 < d) :
     convKernelCoefficient kernel outIdx inputIdx stride dilation padding (fun k => f (weight k)) =

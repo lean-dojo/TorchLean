@@ -39,7 +39,7 @@ def Numeric.approxEq {α : Type} [Context α] (x y : α) (tol : α := Context.de
 /-- At a lawful `Context`, `approxEq x y tol` holds exactly when `|x - y| ≤ tol` and `tol` is not
 infinite. -/
 theorem approxEq_eq_true_iff {α : Type} [Field α] [LinearOrder α] [IsStrictOrderedRing α]
-    {context : Context α} [@LawfulContext α context _ _ _] (x y tol : α) :
+    {context : Context α} [@LawfulContext α context _ _ _] {x y tol : α} :
     Numeric.approxEq x y tol = true ↔ |x - y| ≤ tol ∧ Context.isInf tol = false := by
   simp only [Numeric.approxEq, Context.leBool, Context.gtBool, Bool.and_eq_true, Bool.or_eq_true,
     decide_eq_true_eq, Bool.not_eq_true', LawfulContext.beq_iff, LawfulContext.abs_eq,

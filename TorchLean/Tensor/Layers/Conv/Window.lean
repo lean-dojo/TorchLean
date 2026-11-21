@@ -114,7 +114,7 @@ theorem Tensor.getElem_data {α : Type} [Storage α] {d : Nat} (t : Tensor α [d
   exact getElem_data_toList t ⟨a, _⟩
 
 /-- The row-major list of a vector has its length. -/
-@[simp] theorem Tensor.length_data_toList {α : Type} [Storage α] {d : Nat} (t : Tensor α [d]) :
+theorem Tensor.length_data_toList {α : Type} [Storage α] {d : Nat} (t : Tensor α [d]) :
     t.data.toList.length = d := by
   simp [Rep.data_size, Shape.size]
 

@@ -134,14 +134,14 @@ theorem binarySum_get_computed (i : Fin width) :
 /-- Sterbenz's lemma certifies the concrete binary32 subtraction $2-1$ as exact. -/
 theorem two_sub_one_exact :
     Model.roundAt FloatFormat.binary32 ((2 : ℝ) - 1) = (2 : ℝ) - 1 := by
-  have hOne : genericFormat binaryRadix (Model.fexpOf FloatFormat.binary32) (1 : ℝ) := by
+  have hOne : GenericRepresentable binaryRadix (Model.fexpOf FloatFormat.binary32) (1 : ℝ) := by
     simpa [bpow, binaryRadix, Radix.toReal] using
-      (generic_format_bpow (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) 0
+      (genericRepresentable_bpow (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) 0
         (by norm_num [Model.fexpOf, FloatFormat.binary32, fltExp,
           FloatFormat.minSubnormalExponent, FloatFormat.minNormalExponent]))
-  have hTwo : genericFormat binaryRadix (Model.fexpOf FloatFormat.binary32) (2 : ℝ) := by
+  have hTwo : GenericRepresentable binaryRadix (Model.fexpOf FloatFormat.binary32) (2 : ℝ) := by
     simpa [bpow, binaryRadix, Radix.toReal] using
-      (generic_format_bpow (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) 1
+      (genericRepresentable_bpow (β := binaryRadix) (fexp := (Model.fexpOf FloatFormat.binary32)) 1
         (by norm_num [Model.fexpOf, FloatFormat.binary32, fltExp,
           FloatFormat.minSubnormalExponent, FloatFormat.minNormalExponent]))
   exact Model.roundAt_sub_eq_of_sterbenz FloatFormat.binary32 hTwo hOne (by norm_num) (by norm_num)
@@ -294,7 +294,7 @@ noncomputable def quantizer : RealAffineQuantizer where
   qmin := -128
   qmax := 127
   scale_pos := by norm_num
-  codeRange := by norm_num
+  code_range := by norm_num
 
 /-- Every code from `-128` to `127` comes back unchanged after dequantization and nearest-even
 requantization. -/

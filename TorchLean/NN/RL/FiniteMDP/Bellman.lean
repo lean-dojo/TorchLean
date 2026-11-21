@@ -78,7 +78,7 @@ from there.
 
 /-- `T` contracts the sup distance of value tables, read on `Fin n → ℝ`, by the factor
 `γ ∈ [0, 1)`. -/
-structure SupContraction [Fact (0 < nStates)] (γ : ℝ)
+structure SupContraction (γ : ℝ)
     (T : ValueFunction ℝ nStates → ValueFunction ℝ nStates) : Prop where
   /-- The factor is nonnegative. -/
   nonneg : 0 ≤ γ
@@ -91,7 +91,7 @@ structure SupContraction [Fact (0 < nStates)] (γ : ℝ)
 
 namespace SupContraction
 
-variable [Fact (0 < nStates)] {γ : ℝ} {T : ValueFunction ℝ nStates → ValueFunction ℝ nStates}
+variable {γ : ℝ} {T : ValueFunction ℝ nStates → ValueFunction ℝ nStates}
 
 /-- The operator `T` read on `Fin n → ℝ` is a Mathlib `ContractingWith` map. -/
 theorem contractingWith (h : SupContraction γ T) :
@@ -100,7 +100,6 @@ theorem contractingWith (h : SupContraction γ T) :
   simpa [h.nonneg] using
     h.dist_le ((vectorEquiv nStates).symm f) ((vectorEquiv nStates).symm g)
 
-omit [Fact (0 < nStates)] in
 private theorem iterate_apply (k : Nat) (values : ValueFunction ℝ nStates) :
     ((vectorEquiv nStates).conj T)^[k] (vectorEquiv nStates values) =
       vectorEquiv nStates (T^[k] values) :=
@@ -108,9 +107,7 @@ private theorem iterate_apply (k : Nat) (values : ValueFunction ℝ nStates) :
 
 /-- `T` read on `Fin n → ℝ` is a `MDP.BddContraction`. -/
 theorem toBdd (h : SupContraction γ T) :
-    haveI : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
     MDP.BddContraction γ ((vectorEquiv nStates).conj T) := by
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   refine ⟨h.nonneg, h.lt_one, fun _ _ => MDP.isBddMeas_of_finite _, fun f g _ _ => ?_⟩
   have := h.dist_le ((vectorEquiv nStates).symm f) ((vectorEquiv nStates).symm g)
   rw [Equiv.apply_symm_apply, Equiv.apply_symm_apply] at this
@@ -119,21 +116,18 @@ theorem toBdd (h : SupContraction γ T) :
 
 /-- The fixed point of `T` given by Banach's fixed-point theorem, through `toBdd`. -/
 noncomputable def fixedPoint (h : SupContraction γ T) : ValueFunction ℝ nStates :=
-  haveI : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   (vectorEquiv nStates).symm h.toBdd.fixedPoint
 
 /-- `fixedPoint` is a fixed point. -/
 theorem map_fixedPoint (h : SupContraction γ T) : T h.fixedPoint = h.fixedPoint := by
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   have hp := h.toBdd.map_fixedPoint
   rw [Equiv.conj_apply] at hp
   exact (vectorEquiv nStates).eq_symm_apply.mpr hp
 
 /-- Every fixed point of `T` is `fixedPoint`. -/
 theorem eq_fixedPoint (h : SupContraction γ T) {values : ValueFunction ℝ nStates}
-    (hfix : T values = values) : values = h.fixedPoint := by
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
-  exact (vectorEquiv nStates).eq_symm_apply.mpr
+    (hfix : T values = values) : values = h.fixedPoint :=
+  (vectorEquiv nStates).eq_symm_apply.mpr
     (h.toBdd.eq_fixedPoint (MDP.isBddMeas_of_finite _) (by simp [hfix]))
 
 /-- `T` has exactly one fixed point. -/
@@ -144,7 +138,6 @@ theorem existsUnique_fixedPoint (h : SupContraction γ T) : ∃! values, T value
 theorem iterate_le (h : SupContraction γ T) (k : Nat) (values₁ values₂ : ValueFunction ℝ nStates) :
     dist (vectorEquiv nStates (T^[k] values₁)) (vectorEquiv nStates (T^[k] values₂)) ≤
       γ ^ k * dist (vectorEquiv nStates values₁) (vectorEquiv nStates values₂) := by
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   rw [← MDP.valueSupDist_eq_dist, ← MDP.valueSupDist_eq_dist, ← iterate_apply,
     ← iterate_apply]
   exact h.toBdd.iterate_le k (MDP.isBddMeas_of_finite _) (MDP.isBddMeas_of_finite _)
@@ -154,7 +147,6 @@ theorem iterate_error (h : SupContraction γ T) {values vStar : ValueFunction �
     (hfix : T vStar = vStar) (k : Nat) :
     dist (vectorEquiv nStates (T^[k] values)) (vectorEquiv nStates vStar) ≤
       γ ^ k * dist (vectorEquiv nStates values) (vectorEquiv nStates vStar) := by
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   rw [← MDP.valueSupDist_eq_dist, ← MDP.valueSupDist_eq_dist, ← iterate_apply]
   exact h.toBdd.iterate_error (MDP.isBddMeas_of_finite _) (MDP.isBddMeas_of_finite _)
     (by simp [hfix]) k
@@ -163,7 +155,6 @@ theorem iterate_error (h : SupContraction γ T) {values vStar : ValueFunction �
 theorem apriori_error (h : SupContraction γ T) (values : ValueFunction ℝ nStates) (k : Nat) :
     dist (vectorEquiv nStates (T^[k] values)) (vectorEquiv nStates h.fixedPoint) ≤
       dist (vectorEquiv nStates values) (vectorEquiv nStates (T values)) * γ ^ k / (1 - γ) := by
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   have := h.toBdd.apriori_error (MDP.isBddMeas_of_finite (vectorEquiv nStates values)) k
   rw [iterate_apply, Equiv.conj_apply, Equiv.symm_apply_apply] at this
   rwa [← MDP.valueSupDist_eq_dist, ← MDP.valueSupDist_eq_dist, fixedPoint,
@@ -173,7 +164,6 @@ theorem apriori_error (h : SupContraction γ T) (values : ValueFunction ℝ nSta
 theorem tendsto_iterate (h : SupContraction γ T) (values : ValueFunction ℝ nStates) :
     Tendsto (fun k => dist (vectorEquiv nStates (T^[k] values)) (vectorEquiv nStates h.fixedPoint))
       atTop (𝓝 0) := by
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   simpa [MDP.valueSupDist_eq_dist, iterate_apply, fixedPoint] using
     h.toBdd.tendsto_iterate (MDP.isBddMeas_of_finite (vectorEquiv nStates values))
 
@@ -347,7 +337,6 @@ end MarkovTransfer
 
 /-- For `γ ≥ 0`, deterministic state-action Bellman values are Lipschitz with constant `γ`. -/
 theorem FiniteMDP.actionValue_abs_sub_le
-    [Fact (0 < nStates)]
     (mdp : FiniteMDP ℝ nStates nActions)
     (values₁ values₂ : ValueFunction ℝ nStates)
     (hγ₀ : 0 ≤ mdp.discount)
@@ -355,7 +344,6 @@ theorem FiniteMDP.actionValue_abs_sub_le
     (action : Fin nActions) :
     |actionValue mdp values₁ state action - actionValue mdp values₂ state action|
       ≤ mdp.discount * dist (vectorEquiv nStates values₁) (vectorEquiv nStates values₂) := by
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   rw [← MDP.valueSupDist_eq_dist, ← actionValue_toMarkov, ← actionValue_toMarkov]
   exact MDP.actionValue_abs_sub_le (toMarkov mdp) hγ₀ _ _ (measurable_of_finite _)
     (measurable_of_finite _) (Set.finite_range _).bddAbove (Set.finite_range _).bddAbove state
@@ -364,7 +352,6 @@ theorem FiniteMDP.actionValue_abs_sub_le
 /-- For `γ ≥ 0`, Bellman evaluation for a deterministic policy is a `γ`-contraction in the sup
 metric of `Fin n → ℝ`, the tables read through `Tensor.vectorEquiv`. -/
 theorem FiniteMDP.bellmanPolicy_contraction
-    [Fact (0 < nStates)]
     (mdp : FiniteMDP ℝ nStates nActions)
     (policy : Policy nStates nActions)
     (values₁ values₂ : ValueFunction ℝ nStates)
@@ -372,7 +359,6 @@ theorem FiniteMDP.bellmanPolicy_contraction
     dist (vectorEquiv nStates (bellmanPolicy mdp policy values₁))
         (vectorEquiv nStates (bellmanPolicy mdp policy values₂))
       ≤ mdp.discount * dist (vectorEquiv nStates values₁) (vectorEquiv nStates values₂) := by
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   rw [← MDP.valueSupDist_eq_dist, ← MDP.valueSupDist_eq_dist, vectorEquiv_bellmanPolicy,
     vectorEquiv_bellmanPolicy]
   exact MDP.bellmanPolicy_contraction (toMarkov mdp) hγ₀ policy _ _ (measurable_of_finite _)
@@ -380,7 +366,7 @@ theorem FiniteMDP.bellmanPolicy_contraction
 
 /-- For `γ ≥ 0` and at a fixed state, Bellman optimality is Lipschitz with constant `γ`. -/
 theorem FiniteMDP.bellmanMax_abs_sub_le
-    [Fact (0 < nStates)] [Fact (0 < nActions)]
+    [Fact (0 < nActions)]
     (mdp : FiniteMDP ℝ nStates nActions)
     (values₁ values₂ : ValueFunction ℝ nStates)
     (hγ₀ : 0 ≤ mdp.discount)
@@ -388,7 +374,6 @@ theorem FiniteMDP.bellmanMax_abs_sub_le
     |Tensor.getScalar (bellmanMax mdp values₁) state -
         Tensor.getScalar (bellmanMax mdp values₂) state|
       ≤ mdp.discount * dist (vectorEquiv nStates values₁) (vectorEquiv nStates values₂) := by
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   have : Nonempty (Fin nActions) := ⟨⟨0, Fact.out⟩⟩
   have h := MDP.bellmanMax_abs_sub_le (toMarkov mdp) hγ₀ (vectorEquiv nStates values₁)
     (vectorEquiv nStates values₂) (measurable_of_finite _) (measurable_of_finite _)
@@ -399,14 +384,13 @@ theorem FiniteMDP.bellmanMax_abs_sub_le
 /-- For `γ ≥ 0`, Bellman optimality is a `γ`-contraction in the sup metric of `Fin n → ℝ`, the
 tables read through `Tensor.vectorEquiv`. -/
 theorem FiniteMDP.bellmanMax_contraction
-    [Fact (0 < nStates)] [Fact (0 < nActions)]
+    [Fact (0 < nActions)]
     (mdp : FiniteMDP ℝ nStates nActions)
     (values₁ values₂ : ValueFunction ℝ nStates)
     (hγ₀ : 0 ≤ mdp.discount) :
     dist (vectorEquiv nStates (bellmanMax mdp values₁))
         (vectorEquiv nStates (bellmanMax mdp values₂))
       ≤ mdp.discount * dist (vectorEquiv nStates values₁) (vectorEquiv nStates values₂) := by
-  have : Nonempty (Fin nStates) := ⟨⟨0, Fact.out⟩⟩
   have : Nonempty (Fin nActions) := ⟨⟨0, Fact.out⟩⟩
   rw [← MDP.valueSupDist_eq_dist, ← MDP.valueSupDist_eq_dist, vectorEquiv_bellmanMax,
     vectorEquiv_bellmanMax]
@@ -416,7 +400,6 @@ theorem FiniteMDP.bellmanMax_contraction
 /-- For `0 ≤ γ < 1`, policy evaluation is a `SupContraction`: it has a unique fixed point and
 value iteration converges to it. -/
 theorem FiniteMDP.bellmanPolicy_supContraction
-    [Fact (0 < nStates)]
     (mdp : FiniteMDP ℝ nStates nActions)
     (policy : Policy nStates nActions)
     (hγ₀ : 0 ≤ mdp.discount) (hγ₁ : mdp.discount < 1) :
@@ -426,7 +409,7 @@ theorem FiniteMDP.bellmanPolicy_supContraction
 /-- For `0 ≤ γ < 1`, Bellman optimality is a `SupContraction`: the optimal value table exists, is
 unique, and value iteration converges to it. -/
 theorem FiniteMDP.bellmanMax_supContraction
-    [Fact (0 < nStates)] [Fact (0 < nActions)]
+    [Fact (0 < nActions)]
     (mdp : FiniteMDP ℝ nStates nActions)
     (hγ₀ : 0 ≤ mdp.discount) (hγ₁ : mdp.discount < 1) :
     SupContraction mdp.discount (bellmanMax mdp) :=

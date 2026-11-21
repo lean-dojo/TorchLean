@@ -7,7 +7,6 @@ Authors: TorchLean Team
 module
 
 import TorchLean.NN.RL.Boundary
-import TorchLean.NN.RL.Transition
 import TorchLean.NN.Widget.RL.Boundary
 
 /-!

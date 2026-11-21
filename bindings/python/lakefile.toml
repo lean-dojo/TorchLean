@@ -10,7 +10,7 @@ options = { cuda = "false", sharedRuntime = "true" }
 [[require]]
 name = "nerodia"
 git = "https://github.com/leanprover/nerodia"
-# The release/lean-v4.35 revision used by this optional binding.
+# Python FFI used by this optional binding.
 rev = "d7b741955107767bd0d47052a672775af58fe254"
 
 [[lean_lib]]

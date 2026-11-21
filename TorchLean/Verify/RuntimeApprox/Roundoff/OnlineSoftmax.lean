@@ -20,8 +20,8 @@ public import TorchLean.Verify.Floats.IEEE754.Reductions
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Rules.Autograd -- shake: keep
 public import TorchLean.Verify.RuntimeApprox.Roundoff.SoftmaxShift
 public import TorchLean.Verify.RuntimeApprox.TransformerBlock
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff
-public import FloatLib.Numerics.Automation.Attributes
+public import FloatLib.Tactic.Roundoff
+public import FloatLib.Tactic.Numerics.Attribute
 public import TorchLean.Tensor.Literal
 public import TorchLean.Tensor.Tactic.Init
 public import TorchLean.Verify.RuntimeApprox.OnlineSoftmax

@@ -43,7 +43,7 @@ exactly where `p` is rejected with a result that is finite and not zero (`reject
 Targets come from functions that are rational at the rational points of the domain (`ofRat`) and
 from ratios `(α * exp r + β) / (γ * exp r + δ)` whose coefficients and exponent are rational at the
 rational points (`ofExp`). The reciprocal square root `(√x)⁻¹` on `x > 0` is a target (`rsqrt`), and
-FloatLib's `rsqrt` computes it (`computes_rsqrt`), with a certificate (`cert_rsqrt`). The floor of a
+FloatLib's `rSqrt` computes it (`computes_rsqrt`), with a certificate (`cert_rsqrt`). The floor of a
 quotient `⌊a / b⌋` on `b ≠ 0` is a rational target (`floorDiv`). Floor division rounded once
 (`floorDivProg`) returns `floorDiv.once`, except that a zero result is the zero signed by the
 exclusive or of the sign bits of `a` and `b`, as IEEE 754 signs `a / b`. It computes the target
@@ -279,6 +279,7 @@ theorem repair_finite (p : Prog Binary.Desc n) {d : Binary.Desc} (hd : valid d)
     obtain ⟨h1, h2, -⟩ := (t.computes_prog.covers hd).band.excludes (Set.mem_singleton d) hx hb
     exact ⟨h1, left_ne_zero_of_mul h2.ne'⟩
 
+variable {t} in
 /-- In every IEEE binary format, at the finite inputs of the domain, `t.repair p` is rejected
 exactly where `p` is rejected with a result that is finite and not zero. -/
 theorem rejected_repair_iff {d : Binary.Desc} (hd : valid d) {x : Fin n → Val d}
@@ -344,15 +345,15 @@ noncomputable def rsqrt : Target 1 where
 /-- FloatLib's reciprocal square root, as a program of one input. -/
 noncomputable def rsqrtProg : Prog Binary.Desc 1 where
   real v := (Real.sqrt (v 0))⁻¹
-  float d x := ExecFloat.Binary.rsqrt (format := d.format) (plan := d.plan) (code := d.code) (x 0)
+  float d x := ExecFloat.Binary.rSqrt (format := d.format) (plan := d.plan) (code := d.code) (x 0)
 
-/-- FloatLib's `rsqrt` computes the reciprocal square root on `x > 0`. -/
+/-- FloatLib's `rSqrt` computes the reciprocal square root on `x > 0`. -/
 theorem computes_rsqrt : rsqrt.Computes rsqrtProg := by
   have he : ∀ d : Binary.Desc, ∀ x ∈ Inputs (fun _ => rsqrt.D) d,
       Binary.toModel (rsqrtProg.float d x) = rsqrt.once d x := by
     intro d x hx
     have hpos : 0 < Model.toReal (Binary.toModel (x 0)) := hx.2
-    refine (ExecFloat.Binary.toModel_rsqrt _).trans ?_
+    refine (ExecFloat.Binary.toModel_rSqrt _).trans ?_
     rw [Elementary.rsqrt_eq_roundSigned (hx.1 0) hpos]
     exact (Elementary.once_eq rsqrt.compare hx.1).symm
   refine ⟨fun _ _ => rfl, fun d _ x hx h => ?_, fun d _ x hx _ => he d x hx⟩
@@ -361,7 +362,7 @@ theorem computes_rsqrt : rsqrt.Computes rsqrtProg := by
   rw [he d x hx]
   exact ⟨h, rfl⟩
 
-/-- FloatLib's `rsqrt` has the certificate of `Once.claim` on `x > 0` in every IEEE binary
+/-- FloatLib's `rSqrt` has the certificate of `Once.claim` on `x > 0` in every IEEE binary
 format. -/
 theorem cert_rsqrt :
     Cert rsqrtProg rsqrt.F {d | valid d} (Once.claim rsqrt.F fun _ => rsqrt.D) := by

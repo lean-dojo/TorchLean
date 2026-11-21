@@ -50,7 +50,7 @@ instance : Finite Binary32 :=
 
 /-- Enumerating `Binary32` makes the interval hulls below finite constructions, so the abstract
 operations are exact. -/
-instance : Fintype Binary32 := Fintype.ofFinite Binary32
+instance instFintypeBinary32 : Fintype Binary32 := Fintype.ofFinite Binary32
 
 /-! ## The interval domain `I` -/
 
@@ -68,21 +68,21 @@ namespace I
 floats `x` with `a ≤ x` and `x ≤ b`. -/
 def γI : I → Set Binary32
   | top => Set.univ
-  | range a b => fun x => a ≤ x ∧ x ≤ b
+  | range a b => {x | a ≤ x ∧ x ≤ b}
 
 /-- Membership in an abstract interval is membership in its concretization `γI`. -/
 instance : Membership Binary32 I where
   mem J x := x ∈ γI J
 
 /-- Concretization of a box of abstract intervals, coordinatewise. -/
-def γ {d : Nat} (B : Fin d → I) : Set (Fin d → Binary32) := fun x => ∀ i, x i ∈ B i
+def γ {d : Nat} (B : Fin d → I) : Set (Fin d → Binary32) := {x | ∀ i, x i ∈ B i}
 
 /-- Every float lies in `top`, NaN included. -/
 @[simp] theorem mem_top (x : Binary32) : x ∈ (top : I) := by
   trivial
 
 /-- Membership in `range a b` is the pair of float comparisons `a ≤ x` and `x ≤ b`. -/
-@[simp] theorem mem_range_iff (x a b : Binary32) : x ∈ (range a b : I) ↔ a ≤ x ∧ x ≤ b :=
+@[simp] theorem mem_range_iff {x a b : Binary32} : x ∈ (range a b : I) ↔ a ≤ x ∧ x ≤ b :=
   Iff.rfl
 
 /-- The point interval `range x x`. -/
@@ -91,7 +91,7 @@ def γ {d : Nat} (B : Fin d → I) : Set (Fin d → Binary32) := fun x => ∀ i,
 /-- A float that is not NaN lies in its point interval. -/
 theorem mem_point_of_isNaN_false (x : Binary32) (hx : isNaN x = false) : x ∈ point x := by
   have h : x ≤ x := (ExecFloat.Binary.le_self_iff x).mpr hx
-  exact (mem_range_iff x x x).mpr ⟨h, h⟩
+  exact mem_range_iff.mpr ⟨h, h⟩
 
 /-- The point box of a vector: `point` in every coordinate. -/
 @[inline] def pointBox {d : Nat} (x : Fin d → Binary32) : Fin d → I := fun i => point (x i)
@@ -111,7 +111,7 @@ section
 open I
 
 /-- Away from NaN, the float order agrees with the order of the extended-real values. -/
-theorem le_iff_toEReal_le_of_isNaN_eq_false (x y : Binary32)
+theorem le_iff_toEReal_le_of_isNaN_eq_false {x y : Binary32}
     (hx : isNaN x = false) (hy : isNaN y = false) :
     x ≤ y ↔ Model.toEReal (toModel x) ≤ Model.toEReal (toModel y) := by
   rw [ExecFloat.Binary.le_iff_le_toModel]
@@ -153,7 +153,7 @@ theorem chooseMax_spec (s : Finset Binary32) (hs : s.Nonempty) :
 /-- When no member of `s` is NaN, `chooseMin s hs ≤ y` for every member `y` of `s`. -/
 theorem chooseMin_le_of_mem (s : Finset Binary32) (hs : s.Nonempty)
     (hn : ∀ z ∈ s, isNaN z = false) {y : Binary32} (hy : y ∈ s) : chooseMin s hs ≤ y := by
-  refine (le_iff_toEReal_le_of_isNaN_eq_false _ _ (hn _ (chooseMin_spec s hs).1)
+  refine (le_iff_toEReal_le_of_isNaN_eq_false (hn _ (chooseMin_spec s hs).1)
     (hn y hy)).2 ?_
   rw [(chooseMin_spec s hs).2]
   exact Finset.min'_le _ _ (Finset.mem_image_of_mem (fun y => Model.toEReal (toModel y)) hy)
@@ -161,7 +161,7 @@ theorem chooseMin_le_of_mem (s : Finset Binary32) (hs : s.Nonempty)
 /-- When no member of `s` is NaN, `y ≤ chooseMax s hs` for every member `y` of `s`. -/
 theorem le_chooseMax_of_mem (s : Finset Binary32) (hs : s.Nonempty)
     (hn : ∀ z ∈ s, isNaN z = false) {y : Binary32} (hy : y ∈ s) : y ≤ chooseMax s hs := by
-  refine (le_iff_toEReal_le_of_isNaN_eq_false _ _ (hn y hy)
+  refine (le_iff_toEReal_le_of_isNaN_eq_false (hn y hy)
     (hn _ (chooseMax_spec s hs).1)).2 ?_
   rw [(chooseMax_spec s hs).2]
   exact Finset.le_max' _ _ (Finset.mem_image_of_mem (fun y => Model.toEReal (toModel y)) hy)
@@ -203,7 +203,7 @@ def γFinsetBox {d : Nat} (B : Fin d → I) : Finset (Fin d → Binary32) := by
   exact Finset.univ.filter (fun x => ∀ i, x i ∈ B i)
 
 /-- Membership in `γFinsetBox B` is coordinatewise membership in `B`. -/
-theorem mem_γFinsetBox_iff {d : Nat} (B : Fin d → I) (x : Fin d → Binary32) :
+theorem mem_γFinsetBox_iff {d : Nat} {B : Fin d → I} {x : Fin d → Binary32} :
     x ∈ γFinsetBox B ↔ ∀ i, x i ∈ B i := by
   classical
   simp [γFinsetBox]
@@ -243,7 +243,7 @@ theorem add_sound (A B : I) :
       | top => simp [addSharp]
       | range c d =>
           have hp : ![x, y] ∈ γFinsetBox ![I.range a b, I.range c d] :=
-            (mem_γFinsetBox_iff _ _).2 (Fin.forall_fin_two.2 ⟨hx, hy⟩)
+            mem_γFinsetBox_iff.2 (Fin.forall_fin_two.2 ⟨hx, hy⟩)
           have hmem : ExecFloat.add x y ∈
               (γFinsetBox ![I.range a b, I.range c d]).image
                 fun p => ExecFloat.add (p 0) (p 1) :=
@@ -261,7 +261,7 @@ theorem mul_sound (A B : I) :
       | top => simp [mulSharp]
       | range c d =>
           have hp : ![x, y] ∈ γFinsetBox ![I.range a b, I.range c d] :=
-            (mem_γFinsetBox_iff _ _).2 (Fin.forall_fin_two.2 ⟨hx, hy⟩)
+            mem_γFinsetBox_iff.2 (Fin.forall_fin_two.2 ⟨hx, hy⟩)
           have hmem : ExecFloat.mul x y ∈
               (γFinsetBox ![I.range a b, I.range c d]).image
                 fun p => ExecFloat.mul (p 0) (p 1) :=

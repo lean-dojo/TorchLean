@@ -9,17 +9,23 @@ The modes of gelu and div are the keyword values of the op table's entries (`_ke
 from __future__ import annotations
 
 import fractions
+from functools import cache
 import operator
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ._fx import (_FLOATING, _INDEX_DTYPES, _REDUCED_FLOATS, _broadcast_kind, _constant, _dtype_of,
-                  _is_op, _node_dtype, _op_table, _torch_dtype)
+from ._artifact import _float8, _integer
+from ._fx import (_FLOATING, _INDEX_DTYPES, _REDUCED_FLOATS, _binary_payload, _broadcast_kind,
+                  _constant, _dtype_of, _is_op, _node_dtype, _op_table, _torch_dtype)
 
 
 _ARITHMETIC_KINDS = {'add': "add", 'sub': "sub", 'mul': "mul_elem"}
+
+# ATen's SELU_ALPHA and SELU_SCALE (aten/src/ATen/native/Activation.cpp), in binary64.
+_SELU_ALPHA = 1.6732632423543772848170429916717
+_SELU_SCALE = 1.0507009873554804934193349852946
 
 # Unary operators PyTorch's CPU kernels compute in the opmath type: a binary16 or bfloat16 operand
 # in binary32, rounded once to the result dtype. An integer operand is converted to the result's
@@ -64,7 +70,8 @@ _OPMATH_BINARY = {
 
 # Comparisons and class predicates, computed exactly on floating operands of one dtype, and the
 # logical operators, also on Boolean operands. Each result is Boolean.
-_COMPARISONS = ('eq', 'ne', 'lt', 'le', 'gt', 'ge')
+_COMPARISONS = {'eq': ('eq',), 'ne': ('ne', 'not_equal'), 'lt': ('lt', 'less'),
+                'le': ('le', 'less_equal'), 'gt': ('gt', 'greater'), 'ge': ('ge', 'greater_equal')}
 _PREDICATES = ('isnan', 'isinf', 'isfinite')
 _LOGICAL = {'and': operator.and_, 'or': operator.or_, 'xor': operator.xor}
 
@@ -125,6 +132,18 @@ def _reflected_division(node):
     return scalar, reciprocal.args[0]
 
 
+def _elu_plan(alpha, scale, input_scale, operand):
+    return {'op': 'elu', 'alpha': alpha, 'scale': scale, 'input_scale': input_scale,
+            'operands': [operand]}
+
+
+def _celu_plan(alpha, operand):
+    # ATen's celu(self, alpha) is elu(self, alpha, 1, 1 / alpha), the quotient in binary64.
+    if alpha == 0:
+        raise NotImplementedError('PyTorch refuses celu with alpha = 0')
+    return _elu_plan(alpha, 1.0, 1.0 / alpha, operand)
+
+
 def _pointwise_plan(node, model=None):
     # The pointwise operator a call computes, with its attributes and operands, or None.
     reflected = _reflected_division(node)
@@ -134,12 +153,17 @@ def _pointwise_plan(node, model=None):
         mod = model.get_submodule(str(node.target)) if model is not None else None
         if isinstance(mod, nn.GELU):
             return {'op': 'gelu', 'approximate': mod.approximate, 'operands': [node.args[0]]}
-        if isinstance(mod, (nn.ELU, nn.Hardtanh)) and mod.inplace:
+        if isinstance(mod, (nn.ELU, nn.SELU, nn.CELU, nn.Hardtanh, nn.SiLU)) and mod.inplace:
             raise NotImplementedError(f'in-place {type(mod).__name__} mutation is outside the '
                                       'pure TorchLean graph contract')
         if isinstance(mod, nn.ELU):
-            return {'op': 'elu', 'alpha': float(mod.alpha), 'scale': 1.0, 'input_scale': 1.0,
-                    'operands': [node.args[0]]}
+            return _elu_plan(float(mod.alpha), 1.0, 1.0, node.args[0])
+        if isinstance(mod, nn.SELU):
+            return _elu_plan(_SELU_ALPHA, _SELU_SCALE, 1.0, node.args[0])
+        if isinstance(mod, nn.CELU):
+            return _celu_plan(float(mod.alpha), node.args[0])
+        if isinstance(mod, nn.SiLU):
+            return {'op': 'silu', 'operands': [node.args[0]]}
         if isinstance(mod, nn.Softplus):
             return {'op': 'softplus', 'beta': float(mod.beta), 'threshold': float(mod.threshold),
                     'operands': [node.args[0]]}
@@ -188,9 +212,9 @@ def _pointwise_plan(node, model=None):
     for op, (aten, functions, methods) in (*_OPMATH_BINARY.items(), *_EXACT_BINARY.items()):
         if _is_op(node, aten, functions, methods):
             return {'op': op, 'operands': [first, second]}
-    for op in _COMPARISONS:
+    for op, names in _COMPARISONS.items():
         if _is_op(node, (f'aten.{op}.Tensor', f'aten.{op}.Scalar'),
-                  (getattr(torch, op), getattr(operator, op)), (op,)):
+                  (getattr(operator, op), *(getattr(torch, name) for name in names)), names):
             return {'op': 'boolean', 'kind': op, 'operands': [first, second]}
     for op in _PREDICATES:
         if _is_op(node, (f'aten.{op}.default',), (getattr(torch, op),), (op,)):
@@ -262,8 +286,26 @@ def _pointwise_plan(node, model=None):
         coefficients = [_argument(node, position, name) for position, name in names]
         alpha, scale, input_scale = [1.0 if value is None else float(value) for value in
                                      coefficients + [None] * (3 - len(coefficients))]
-        return {'op': 'elu', 'alpha': alpha, 'scale': scale, 'input_scale': input_scale,
-                'operands': [first]}
+        return _elu_plan(alpha, scale, input_scale, first)
+    if _is_op(node, ('aten.selu.default', 'aten.celu.default'), (F.selu, F.celu), ()):
+        # ATen's selu is elu(self, SELU_ALPHA, SELU_SCALE); torch.export keeps selu and celu.
+        selu = node.target is F.selu or str(node.target) == 'aten.selu.default'
+        if (node.target is F.selu or node.target is F.celu) and _argument(
+                node, 1 if selu else 2, 'inplace'):
+            raise NotImplementedError(f"in-place {'selu' if selu else 'celu'} mutation is outside "
+                                      'the pure TorchLean graph contract')
+        if selu:
+            return _elu_plan(_SELU_ALPHA, _SELU_SCALE, 1.0, first)
+        alpha = _argument(node, 1, 'alpha')
+        return _celu_plan(1.0 if alpha is None else float(alpha), first)
+    if _is_op(node, ('aten.silu.default',), (F.silu,), ()):
+        # The registered Op.silu. PyTorch 2.13's silu_kernel computes x / (1 + exp (-x)) instead,
+        # a NaN at -inf where Op.silu returns the limit -0, and -0 once exp (-x) overflows, where
+        # Op.silu keeps the tail: binary32 silu(-100) is about -3.72e-42.
+        if node.target is F.silu and _argument(node, 1, 'inplace'):
+            raise NotImplementedError('in-place silu mutation is outside the pure TorchLean '
+                                      'graph contract')
+        return {'op': 'silu', 'operands': [first]}
     if _is_op(node, ('aten.softplus.default',), (F.softplus,), ()):
         beta, threshold = _argument(node, 1, 'beta'), _argument(node, 2, 'threshold')
         return {'op': 'softplus', 'beta': 1.0 if beta is None else float(beta),
@@ -324,7 +366,7 @@ def _pointwise_kind(node, model=None):
         raise NotImplementedError(f"div has no rounding_mode={plan['rounding_mode']!r}")
     dtype = _node_dtype(node)
     if ((plan['op'] in _EXACT_UNARY or plan['op'] in _EXACT_BINARY
-         or plan['op'] in ('clamp', 'elu', 'softplus'))
+         or plan['op'] in ('clamp', 'elu', 'softplus', 'silu'))
             and dtype not in ('float64', 'float32', *_REDUCED_FLOATS)):
         raise NotImplementedError(f"{plan['op']} of a {dtype} tensor has no IR element rule")
     if plan['op'] == 'remainder' and dtype not in _FLOATING and dtype not in _INDEX_DTYPES:
@@ -363,15 +405,77 @@ def _append_node(nodes, entry):
     return entry['id']
 
 
-def _cast_to(nodes, parent, dtype):
+# The element types whose every value lies in [-448, 448], which a conversion to float8_e4m3fn
+# need not clamp (`_cast_to`).
+_BELOW_448 = ('bool', {'kind': 'integer', 'signed': True, 'width': 8},
+              {'kind': 'integer', 'signed': False, 'width': 8}, _float8('float8_e4m3fnuz'))
+
+
+@cache
+def _e4m3_saturates(source_device, target_device, non_blocking):
+    # PyTorch releases and devices differ on overflow: either NaN or the largest finite value.
+    # A compiler backend still has Dynamo's tracing context. Temporarily leave it and fake/proxy
+    # dispatch, so the probe runs on the captured devices and adds no node to the user's graph.
+    from torch._guards import tracing
+    from torch._subclasses.fake_tensor import unset_fake_temporarily
+    from torch.fx.experimental.proxy_tensor import disable_proxy_modes_tracing
+
+    try:
+        with tracing(None), unset_fake_temporarily(), disable_proxy_modes_tracing():
+            value = torch.tensor(float('inf'), dtype=torch.float32, device=source_device).to(
+                device=target_device, dtype=torch.float8_e4m3fn,
+                non_blocking=non_blocking).float().item()
+    except (RuntimeError, AssertionError, NotImplementedError) as error:
+        raise NotImplementedError('cannot establish float8 overflow behavior for '
+                                  f'{source_device} to {target_device}') from error
+    if value == 448:
+        return True
+    if value != value:
+        return False
+    raise NotImplementedError('unsupported float8 overflow behavior')
+
+
+def _conversion_saturates(node):
+    source = node.args[0]
+    if _node_dtype(node) != _float8('float8_e4m3fn') or \
+            _node_dtype(source) in (*_BELOW_448, _float8('float8_e4m3fn')):
+        return False
+    def device(value):
+        return getattr(value.meta.get('val'), 'device', value.meta.get('torchlean_device'))
+    source_device, target_device = device(source), device(node)
+    if source_device is None or target_device is None:
+        raise NotImplementedError('float8 conversion needs the captured source and target devices')
+    non_blocking = node.kwargs.get('non_blocking', False)
+    schema = getattr(node.target, '_schema', None)
+    if schema is not None:
+        for index, argument in enumerate(schema.arguments):
+            if argument.name == 'non_blocking' and index < len(node.args):
+                non_blocking = node.args[index]
+    return _e4m3_saturates(str(source_device), str(target_device), bool(non_blocking))
+
+
+def _cast_to(nodes, parent, dtype, *, saturate=False):
     # A conversion is one IR cast. To a floating type it rounds the exact value once, nearest even
     # (IEEE 754-2019 5.4.1, 5.4.2), also from an integer, Boolean or binary64 source to binary16 or
-    # bfloat16, which c10::convert rounds twice, through binary32. To an integer type a floating
-    # value truncates toward zero, and an integer the type cannot hold is an execution error. An
-    # integer value wraps modulo 2 ** width.
-    if nodes[parent]['dtype'] == dtype:
+    # bfloat16, which c10::convert rounds twice, through binary32, and to a float8 format, which
+    # c10 rounds through binary32 too. To an integer type a floating value
+    # truncates toward zero, and an integer the type cannot hold is an execution error. An
+    # integer value wraps modulo 2 ** width. A float8 value converts exactly to binary16,
+    # bfloat16 and wider. A saturating conversion to float8_e4m3fn clamps the operand to
+    # [-448, 448], which keeps a NaN, before it rounds once (_conversion_saturates): a
+    # floating operand in its own type, an integer or another float8 one in binary32, which holds
+    # its values in that range exactly and leaves the others outside it.
+    source = nodes[parent]['dtype']
+    if source == dtype:
         return parent
-    rounding = 'towardZero' if isinstance(dtype, dict) else 'nearestEven'
+    if saturate and dtype == _float8('float8_e4m3fn') and source not in _BELOW_448:
+        if source not in _FLOATING:
+            parent = _cast_to(nodes, parent, 'float32')
+            source = 'float32'
+        bounds = [_broadcast_to(nodes, _scalar_constant(nodes, bound, source),
+                                nodes[parent]['shape']) for bound in (-448, 448)]
+        parent = _pointwise_node(nodes, {'kind': 'clamp'}, [parent, *bounds])
+    rounding = 'towardZero' if _integer(dtype) is not None else 'nearestEven'
     return _append_node(nodes, {'kind': "custom", 'parents': [parent],
                                 'shape': nodes[parent]['shape'], 'dtype': dtype,
                                 'primitive': 'cast', 'rounding': rounding})
@@ -446,15 +550,18 @@ def _one_element(value, dtype):
         size == 1 or int(step) == 0 for size, step in zip(sizes, strides))
 
 
-def _arithmetic_kind(node, op):
-    # `add`, `sub` or `mul`. With two tensor operands this is the ordinary IR node. A Python
-    # scalar operand becomes a constant: add and sub convert it to the result dtype. A binary16
-    # or bfloat16 product with an operand that supplies one element and is not of the result
-    # dtype (a Python scalar, or a one-element tensor of another dtype) multiplies by that
-    # operand's own value in binary32 and rounds once. It does so on either side, so
-    # torch.mul(s, x) is x * s. ATen's mul_kernel takes that path for the right operand only and
-    # converts a left one to the tensor's dtype first (#199562).
+def _arithmetic_kind(node, op, reflected=False):
+    # `add`, `sub` or `mul`, and `rsub` as `sub` of its operands swapped (`reflected`). With two
+    # tensor operands in the call's order this is the ordinary IR node. A Python scalar operand
+    # becomes a constant: add and sub convert it to the result dtype. A binary16 or bfloat16
+    # product with an operand that supplies one element and is not of the result dtype (a Python
+    # scalar, or a one-element tensor of another dtype) multiplies by that operand's own value in
+    # binary32 and rounds once. It does so on either side, so torch.mul(s, x) is x * s. ATen's
+    # mul_kernel takes that path for the right operand only and converts a left one to the
+    # tensor's dtype first (#199562).
     left, right = _argument(node, 0, 'input', 'self'), _argument(node, 1, 'other')
+    if reflected:
+        left, right = right, left
     scalars = [not isinstance(value, torch.fx.Node) for value in (left, right)]
     for value, scalar in zip((left, right), scalars):
         if scalar and not isinstance(value, (bool, int, float)):
@@ -475,7 +582,7 @@ def _arithmetic_kind(node, op):
                         or reduced and single(left) and not single(right)):
         left, right = right, left
     wide = reduced and single(right)
-    if not any(scalars) and not wide:
+    if not any(scalars) and not wide and not reflected:
         return {'kind': _ARITHMETIC_KINDS[op]}
     return {'kind': _ARITHMETIC_KINDS[op],
             '_plan': {'op': op, 'wide': wide, 'operands': [left, right]}}
@@ -489,9 +596,9 @@ def _pointwise_node(nodes, kind, parents):
 
 def _emit_pointwise(plan, nodes, node_to_id, shape, dtype):
     # Append the IR nodes of one pointwise call, conversion, or arithmetic with a Python scalar,
-    # and return the last. Binary16 and bfloat16 compute rsqrt, erf, gelu, pow, _OPMATH_UNARY and
-    # _OPMATH_BINARY in binary32 (PyTorch's opmath type) and round once to the dtype, and division
-    # and multiplication too when an operand supplies one element.
+    # and return the last. Binary16 and bfloat16 compute rsqrt, erf, gelu, silu, pow, _OPMATH_UNARY
+    # and _OPMATH_BINARY in binary32 (PyTorch's opmath type) and round once to the dtype, and
+    # division and multiplication too when an operand supplies one element.
     op, operands = plan['op'], plan['operands']
     reduced = dtype in _REDUCED_FLOATS
     opmath = 'float32' if reduced else dtype
@@ -517,7 +624,8 @@ def _emit_pointwise(plan, nodes, node_to_id, shape, dtype):
                                     'parents': [condition, chosen, alternative],
                                     'dtype': nodes[chosen]['dtype']})
     if op == 'convert':
-        return operand(operands[0], dtype)
+        parent = operand(operands[0])
+        return _cast_to(nodes, parent, dtype, saturate=plan.get('saturate', False))
     if op == 'boolean':
         # Exact in the operands' dtype, to which a Python scalar converts as PyTorch converts it.
         parents = [operand(value, plan['common']) for value in operands]
@@ -532,24 +640,26 @@ def _emit_pointwise(plan, nodes, node_to_id, shape, dtype):
         return apply('clamp', [operand(value, dtype) for value in operands])
     if op == 'elu':
         # elu_kernel: x * scale where x > 0, else expm1 (x * input_scale) * (alpha * scale),
-        # binary16 and bfloat16 in binary32. A coefficient of one is not multiplied.
+        # binary16 and bfloat16 in binary32. That is Op.elu at alpha, scale and input_scale, frozen
+        # scalars each converted once to the computation's format.
         x = operand(operands[0], dtype, opmath)
-        def times(index, coefficient):
-            if coefficient == 1: return index
-            return other("mul_elem", [index, operand(coefficient, opmath)])
-        negative = _scalar_tensor(plan['alpha'], opmath) * _scalar_tensor(plan['scale'], opmath)
-        positive = times(x, plan['scale'])
-        below = times(apply('expm1', [times(x, plan['input_scale'])]), negative.item())
-        condition = _append_node(nodes, {'kind': 'gt', 'shape': shape,
-                                         'parents': [x, operand(0, opmath)], 'dtype': 'bool'})
-        return _cast_to(nodes, where(condition, positive, below), dtype)
+        payload = {}
+        for name in ('alpha', 'scale', 'input_scale'):
+            payload.update(_binary_payload(name, _scalar_tensor(plan[name], opmath)))
+        result = _append_node(nodes, {'kind': "elu", 'parents': [x], 'shape': shape,
+                                      'dtype': opmath, **payload})
+        return _cast_to(nodes, result, dtype)
     if op == 'softplus':
-        # softplus_kernel: x where x * beta > threshold, else log1p (exp (x * beta)) / beta,
-        # binary16 and bfloat16 in binary32. A beta of one is not multiplied or divided by.
+        # The documented (1 / beta) * log (1 + exp (beta * x)) as the registered Op.softplus of
+        # x * beta divided by beta, and x where x * beta > threshold, where the documentation says
+        # the implementation reverts to the linear function; binary16 and bfloat16 in binary32. A
+        # beta of one is not multiplied or divided by. PyTorch 2.13's softplus_kernel computes
+        # log1p (exp (x * beta)) instead, inf once exp overflows below a raised threshold, where
+        # Op.softplus keeps x: binary32 softplus(95, threshold=100) is inf there and 95 here.
         x = operand(operands[0], dtype, opmath)
         beta = plan['beta']
         scaled = x if beta == 1 else other("mul_elem", [x, operand(beta, opmath)])
-        smooth = apply('log1p', [other("exp", [scaled])])
+        smooth = other("softplus", [scaled])
         if beta != 1:
             smooth = apply('div', [smooth, operand(beta, opmath)])
         condition = _append_node(nodes, {'kind': 'gt', 'shape': shape,
@@ -581,7 +691,7 @@ def _emit_pointwise(plan, nodes, node_to_id, shape, dtype):
         # +0.0, where PyTorch's scalar-bound kernel keeps the tensor's -0.0.
         kind = "max_elem" if op == 'clamp_min' else "min_elem"
         return other(kind, [operand(operands[0], dtype), operand(operands[1], dtype)])
-    if op in ('rsqrt', 'erf', 'gelu'):
+    if op in ('rsqrt', 'erf', 'gelu', 'silu'):
         attributes = {_keyword('gelu')[0]: plan['approximate']} if op == 'gelu' else {}
         result = apply(op, [operand(operands[0], dtype, opmath)], **attributes)
         return _cast_to(nodes, result, dtype)

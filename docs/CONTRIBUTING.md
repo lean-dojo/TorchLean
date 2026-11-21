@@ -1,9 +1,13 @@
 # Contributing to TorchLean
 
-Use the pinned Lean 4.35.0 toolchain and Mathlib, and keep each change focused. Paths are relative
-to the repository root. FloatLib tracks `main` in `lakefile.lean`, and `lake-manifest.json` locks
-the revision. To update it, run `scripts/lake.sh update floatlib`, rebuild and test, then commit
-the manifest with any fixes.
+I'm always happy to hear from people who want to contribute to TorchLean :) Small fixes, proofs,
+operators, examples, runtime work, and clearer documentation are all welcome. If you're unsure
+where an idea fits, open an issue before putting a lot of work into it.
+
+Use the pinned Lean 4.36.0 toolchain and Mathlib, and keep each change focused. Paths are relative
+to the repository root. `lakefile.lean` pins FloatLib to a release tag, and `lake-manifest.json`
+locks the tag's commit. To update it, change the tag, run `scripts/lake.sh update floatlib`,
+rebuild, test and lint, then commit the lakefile and the manifest with any fixes.
 
 The guide has its own manifest. After updating FloatLib, refresh its inherited dependencies with
 `TORCHLEAN_PACKAGE_ROOT="$PWD/home_page/blueprint" scripts/lake.sh update TorchLean` and check the
@@ -161,16 +165,17 @@ operator is added there once:
    `Op.rule?_cast_bool` and `Op.rule?_cast_index`) in the module of its operator family under
    `TorchLean/Tensor/Op/Table/`. Attributes that the type does not check go in `Op.check`.
 4. In `TorchLean/Tensor/Op/Need.lean`, give the operator an arm of `Op.need` if its rule reads an
-   optional capability (`Rounding`, `Erf`, `InverseTrig`, `Cbrt`, `NextAfter` or
-   `Bits`). `Op.needsCapability` is computed from `Op.need`. In `TorchLean/Tensor/Op/Invoke.lean`,
-   list the operator in `Op.checksValues` if it checks its input values.
+   optional capability (`Rounding`, `Erf`, `InverseTrig`, `Cbrt`, `NextAfter`, `Bits`, `Special`,
+   `Frexp`, `Fma` or `ComplexFunctions`). `Op.needsCapability` is computed from `Op.need`. In
+   `TorchLean/Tensor/Op/Invoke.lean`, list the operator in `Op.checksValues` if it checks its input
+   values.
    `Op.rule?_capabilities` and `Op.validate_eq_ok` there, and `Node.eval_ports` in
    `TorchLean/NN/IR/Eval.lean`, go by cases on every constructor, and an arm that splits on an
    attribute or reads a capability needs its own case.
-5. Add its `Op.encode` and `Op.decode` arms in `TorchLean/Tensor/Op/Codec.lean`, with a
-   `decode_encode_<op>` lemma and its case in `Op.decode_encode`. A change that makes an existing
-   record name another operator or other attributes, or fail to decode, must raise
-   `Op.Wire.formatVersion`.
+5. Add its `Op.encode` and `Op.decode` arms in `TorchLean/Tensor/Op/Wire.lean`, with a
+   `decode_encode_<op>` lemma and its case in `Op.decode_encode` in
+   `TorchLean/Tensor/Op/Codec.lean`. A change that makes an existing record name another operator
+   or other attributes, or fail to decode, must raise `Op.Wire.formatVersion`.
 6. If PyTorch has a function for it, add its row to the PyTorch exporter
    (`TorchLean/NN/PyTorch/Export/IR.lean`), which refuses an operator without one.
 7. If LibTorch has a kernel for it, add its CUDA entry to `LibTorch.Kernel.ofOp`
@@ -262,30 +267,10 @@ The build treats warnings as errors. Check an individual module with
 
 ## AI Usage Disclosure
 
-TorchLean has been developed and formalized primarily by hand over an extended
-period of work. The core definitions, architecture, theorem statements, proof
-decisions, runtime boundaries, examples, and release choices were made and
-reviewed by the maintainers. We used AI assistance only as a limited support
-tool for some of the harder proof engineering and debugging work, not as an
-oracle and not as a replacement for manual formalization.
+We use OpenAI's GPT models, Codex and Harmonic for assistance with proof engineering, debugging,
+code maintenance and parts of the documentation. The maintainers remain responsible for the
+mathematical statements, definitions, implementation choices and validation of the resulting work.
 
-This included autograd proofs, runtime approximation, CROWN verification explanations,
-and IR lowering correctness, as well as native-runtime debugging and documentation.
-
-### Tools We Used
-
-- OpenAI GPT-5.2 Pro was used selectively as an interactive assistant for a few
-  difficult proof and engineering tasks. In particular, it helped with proof
-  planning, Lean search, refactoring long proof scripts, debugging stubborn Lean
-  goals, and explaining possible ways to organize large correctness arguments.
-- GPT-5.6 Pro was also useful while working around CUDA and native runtime
-  boundaries: reading error logs, thinking through FFI and memory ownership
-  issues, checking documentation language, and helping us separate what Lean
-  proves from what the CUDA/cuBLAS runtime must be trusted to do.
-- OpenAI Codex has helped with repository-wide cleanup, API and module
-  organization, Lean toolchain upgrades, and the build, test, and
-  documentation checks that accompany those changes. The maintainers
-  reviewed the resulting code and decided which changes belonged in TorchLean.
-- Harmonic was used in a narrower exploratory role for a small amount of
-  definition design and mathematical organization, especially before committing
-  some concepts to Lean.
+AI-assisted proofs follow the same kernel-checking and axiom requirements as the rest of the
+library. The [trust guide](TRUST_BOUNDARIES.md) states the assumptions of compiled code and
+external runtimes.

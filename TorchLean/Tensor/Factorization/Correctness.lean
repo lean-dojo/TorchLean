@@ -12,9 +12,10 @@ public import TorchLean.Tensor.Context.Real
 public import TorchLean.Tensor.ShapeChange.Flatten -- shake: keep
 
 /-!
-# Cholesky and QR factorization predicates
+# The Cholesky factorization predicate
 
-`IsCholesky` and `IsQR` state the factorization properties using mathlib matrices. The fold-indexing
+`IsCholesky` states the Cholesky factorization property using mathlib matrices; the QR predicate
+`IsQR`, over `ℝ` and `ℂ`, is in `TorchLean.Tensor.Factorization.Decomposition`. The fold-indexing
 lemmas track the columns appended by the Cholesky recurrence, and
 `cholesky_lower_triangular` shows that the Cholesky recurrence sets above-diagonal entries to
 zero without a pivot assumption.
@@ -40,19 +41,15 @@ variable {n : Nat}
 
 /-! ## Specifications
 
-`Factorization.IsCholesky` and `Factorization.IsQR` state each factorization as a predicate on real
-matrices. Over `ℝ`, `star = id`, so `conjTranspose = transpose`, and we write both predicates with
-`ᵀ`.
+`Factorization.IsCholesky` states the factorization as a predicate on real matrices. Over `ℝ`,
+`star = id`, so `conjTranspose = transpose`, and we write it with `ᵀ`.
 -/
 
-/-- `L` is a Cholesky factor of `A`: lower-triangular with `A = L · Lᵀ`. -/
+/-- `L` is a Cholesky factor of `A`: lower-triangular with a positive diagonal and `A = L · Lᵀ`.
+That is the factor of `torch.linalg.cholesky` (PyTorch 2.13 docs), "a lower triangular matrix with
+real positive diagonal". Without the diagonal condition `L = [-1]` would factor `A = [1]`. -/
 def IsCholesky (A L : Matrix (Fin n) (Fin n) ℝ) : Prop :=
-  (∀ i j, i < j → L i j = 0) ∧ A = L * Lᵀ
-
-/-- `(Q, R)` is a QR factorization of `A`: `Q` has orthonormal columns, `R` is upper-triangular,
-`A = Q · R`. -/
-def IsQR {m k : Nat} (A Q : Matrix (Fin m) (Fin k) ℝ) (R : Matrix (Fin k) (Fin k) ℝ) : Prop :=
-  Qᵀ * Q = 1 ∧ (∀ i j, j < i → R i j = 0) ∧ A = Q * R
+  (∀ i j, i < j → L i j = 0) ∧ (∀ i, 0 < L i i) ∧ A = L * Lᵀ
 
 /-! ### Fold-indexing for the column-building specs
 

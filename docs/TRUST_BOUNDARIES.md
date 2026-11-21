@@ -14,13 +14,37 @@ external producers, whose outputs Lean may check.
 | FFI/native runtime | LibTorch ATen, CUDA libraries, host tensor kernels | external implementation path |
 | External producer | Python, Julia, alpha-beta-CROWN | produces artifacts Lean may check |
 
-Two theorem families anchor the first row. `Graph.run_ports` in `TorchLean/NN/IR/Eval.lean`
-proves that entry `j` of a successful run of a graph of registered operators (`Graph.run`) is at the
-ports of node `j`, so every value has the element sort and shape its node declares. It needs no
+Two theorem families anchor the first row. `Graph.run_ports` in `TorchLean/NN/IR/Eval.lean` proves
+that entry `j` of a successful run of a graph of registered operators (`Graph.run`) is at the ports
+of node `j`, so every value has the element sort and shape its node declares. It needs no
 shape-check premise, because each operator is typed by its ports and `Node.eval` reads a graph input
 or constant at its node's port. `Node.eval_ports` is the per-node fact behind it. These graphs are
-the canonical IR (`IR.Graph`, run by `Graph.run` and `Graph.eval`). Results about them are
-forward statements, and the autograd theorems are about the proof-layer `Graph`.
+the canonical IR (`IR.Graph`, run by `Graph.run` and `Graph.eval`). Results about them are forward
+statements, and the autograd theorems are about the proof-layer `Graph`. The branches and loops over
+them (`IR.Flow` in `TorchLean/NN/IR/Flow.lean`) are total, with the fuel of a `while` loop a
+parameter of `Flow.eval`, and their theorems are forward statements too: a `scan` of `n` equals its
+body unrolled `n` times in every language, and in every language whose blocks only succeed or fail
+(`Except String`), as graphs' does, `cond` equals the evaluation of every branch wherever all
+branches are defined, and a `while` that stops after `k` iterations equals its body unrolled `k`
+times when `k` is at most its fuel. The checker runs flows of typed programs, which also merge
+conversion flags, and for them only the `scan` theorem is proved. The JAX importer decides at
+capture what it can, a `scan` and a `cond` or `while` that reads only values known at capture, and
+lowers it to straight-line steps, so its flows are a `cond` or `while` that it does not decide,
+and a `scan` that holds one where every iteration would be imported alike, as one `Flow.scan`;
+the PyTorch importer writes flows for `torch.cond`, `while_loop` and a `map` whose body does not
+draw from TorchLean's generator (it unrolls one that does). Both drop what gives no
+value the program returns before they write a flow (`_flow.prune`). Nothing proves either to be a
+translation of the frameworks'. A flow's tangent or roundoff bound is its run in a dual language,
+and `Flow.Follows.eval` in `TorchLean/NN/IR/Flow/Follows.lean` proves for every flow that wherever
+that run succeeds, it tracks the flow along a filter, given that the blocks, indices and tests of
+the two languages are related (`Flow.Follows`). Only the real-arithmetic language `Flow.Reals` is
+proved to satisfy that: with tangents near a point (`Flow.Reals.dual_follows`), and with error
+bounds under every rounding `rnd` with `|rnd z - z| ≤ err z` (`Flow.Reals.rounded_follows`), so its
+flows are the ones with derivatives and roundoff bounds. FloatLib's `roundAt` is such a rounding; it
+has no largest exponent, so these bounds do not cover overflow. Flows of IR graphs have neither,
+because no theorem relates `Graph.tangent` or `Op.Rule.jvp?` to a derivative and none bounds the
+rounding error of `Graph.eval`. `#roundoff_coverage` analyzes registered operators and tape
+constructors, so it has no rows for flow nodes.
 
 `GraphData.toTape` in `TorchLean/NN/TypedGraph.lean` lowers a proof-carrying `Graph` to the
 executable tape, with forward and backward correspondence theorems in
@@ -38,11 +62,13 @@ about the exact tape and spec models at the given carrier. Neither says anything
 rounding, compiled code or CUDA.
 
 The local rules carry certificates over `ℝ`, which `@[op_cert]` registers and `#op_certs` lists. The
-operators with a fixed number of inputs have 166 value inputs, and the gradient of each has a
+operators with a fixed number of inputs have 178 value inputs, and the gradient of each has a
 `derivative` certificate. At the points its hypotheses name, the stored backward is the adjoint of
-the Fréchet derivative of the forward in all the value inputs together. `cat` has
-`cat_backward_eq_adjoint`, and the pullback that a custom operation supplies claims no derivative.
-At kinks, `convention` certificates state the stored backward at every input.
+the Fréchet derivative of the forward in all the value inputs together. For `igamma` and `igammac`
+(`Op.special`) the hypotheses hold where both arguments are positive, for `betainc` at `(a, b, x)`
+with `a` and `b` positive and `x ∈ (0, 1)`, and for `zeta` at `(s, q)` with `s > 1` and `q > 0`.
+`cat` has `cat_backward_eq_adjoint`, and the pullback that a custom operation supplies claims no
+derivative. At kinks, `convention` certificates state the stored backward at every input.
 `scripts/checks/Library.lean` fails when such a gradient has no `derivative` certificate. For that
 kind, the attribute checks the statement against one proposition, `TorchLean.DerivCert f x δ v`: the
 operator's forward `f` in the listed inputs is differentiable at the point `x`, and `v`, the stored
@@ -723,8 +749,8 @@ at every input by `Table.eval_eq_of_check`, and its device run is trusted in the
 ## Executable Floating Point
 
 - FloatLib supplies the executable floating-point formats, software arithmetic, rounding theory and
-  interval semantics. `lakefile.lean` tracks its `main` branch, and `lake-manifest.json` locks the
-  checked-out revision. Consult that manifest for the exact pin. Lean and mathlib use 4.35.0.
+  interval semantics. `lakefile.lean` pins FloatLib 4.1.0 by its tag `v4.1.0`, and
+  `lake-manifest.json` locks the tag's commit. Lean and mathlib use 4.36.0.
   TorchLean's runtime and certificate interfaces use `ExecFloat.Binary 8 23`. The typed
   tensor/model API supports FloatLib's configured binary family, including custom precision with
   valid widths, bias and storage plans. It does not supply tensor `Context` instances for FloatLib's
@@ -751,6 +777,12 @@ at every input by `Table.eval_eq_of_check`, and its device run is trusted in the
     operands to be finite, including signed zeros and subnormals. Their results may overflow.
   - `ExecFloat.Binary.toFloat32_sqrt` covers every configured input through native export, which
     canonicalizes NaNs. It does not preserve arbitrary NaN payloads.
+- Core's `Float.fma` and `Float32.fma` back TorchLean's `Fma Float` and `Fma Float32` instances
+  (`TorchLean/Tensor/Context.lean`), so they are `Op.fma`'s rule at those scalars. The kernel sees
+  their models in `Float.Model` and `Float32.Model`, each `x * y + z` rounded once, and compiled
+  programs run C's `fma` and `fmaf` (C99 7.12.13.1) through `@[extern]`. No theorem here relates
+  either to FloatLib's `ExecFloat.fma`, so compiled `Op.fma` at `Float` or `Float32` trusts the C
+  library's fused multiply-add. No frontend emits `Op.fma`; it is an operator of the table only.
 - `TorchLean/Verify/` checks graph-wide binary32 interval
   traces against a graph of registered operators (`IR.Graph`). It rebuilds every range and
   trusts no claimed endpoint, rejects non-finite replay values and re-runs backend planning before
@@ -769,15 +801,16 @@ first keeps that earlier rounding, whatever the destination precision.
 The context makes the shared tensor and model specifications executable with software arithmetic.
 It does not supply a CUDA storage representation, a trainer/checkpoint encoding or an ordered field
 law for floating-point operations. Typed sessions obtain their checkpoint encoding separately from
-`Checkpoint.Encoding`. For an IEEE descriptor its `exp`, `log`, `log1p`, `expm1` and `expMul` are
-FloatLib's correctly rounded functions, and `ConfiguredBinary.exp_of_isIEEE` and its siblings prove
-that the dictionary selects them. Its `tan`, `exp2`, `log2`, `log10`, `asinh`, `acosh` and `atanh`
-round the real function once on every descriptor, with C99's special values
+`Checkpoint.Encoding`. For an IEEE descriptor its `exp`, `log`, `log1p`, `expm1`, `expm1x` and
+`expMul` are FloatLib's correctly rounded functions, and `ConfiguredBinary.exp_of_isIEEE` and its
+siblings prove that the dictionary selects them. Its `tan`, `exp2`, `log2`, `log10`, `asinh`,
+`acosh` and `atanh` round the real function once on every descriptor, with C99's special values
 (`TorchLean.Tensor.ConfiguredBinary.Elementary`), and
 `TorchLean.Verify.RuntimeApprox.Elementary` proves the rounding for an IEEE descriptor. Its `sin`,
-`cos`, `sinh`, `cosh` and `tanh`, and its `exp`, `log`, `log1p` and `expm1` for other descriptors,
-are FloatLib's deterministic approximations or compensated formulas, which have no general error or
-correct-rounding guarantee. A proof about those functions must supply the bounds it uses.
+`cos`, `sinh`, `cosh` and `tanh`, and its `exp`, `log`, `log1p`, `expm1` and `expm1x` for other
+descriptors, are FloatLib's deterministic approximations or compensated formulas, which have no
+general error or correct-rounding guarantee. A proof about those functions must supply the bounds
+it uses.
 
 The context's default safeguard is the rounded rational `1/1000000`. If that rounds to zero in a
 coarse format, the context uses its smallest positive subnormal instead. The fallback keeps the
@@ -791,16 +824,20 @@ normalization epsilon when the default is too small. Validation of a rational mo
 checks positivity before scalar conversion and does not establish positivity after rounding.
 
 Kernel capsules record one numerical choice, the reduction order (`NumericalPolicy.reduction`):
-`fixedLeft`, `fixedLeftOrExact`, `implementationDefined` or `notApplicable`. It is contract data
-for the audit and carries no proof. The certificate guard `fixedLeftGuard` in
-`TorchLean/Verify/NumericalCertificate/Contracts.lean` reads it as an `Except`
+`fixed order` or `fixedOrExact order` with a `Tensor.ReduceOrder`, `implementationDefined` or
+`notApplicable`. It is contract data for the audit and carries no proof. The certificate guard
+`fixedLeftGuard` in `TorchLean/Verify/NumericalCertificate/Contracts.lean` reads it as an `Except`
 precondition and rejects any node whose transfer folds a reduction from the left (`fixedLeftNode`)
-when its capsule does not advertise `fixedLeft`. The scaled matrix contraction transfer requires
-`fixedLeftOrExact` instead. Rounding mode, subnormal handling, and multiply-add contraction are not
-recorded. A certificate that depends on them must state the assumption itself. Portable reference
-accumulations advertise the fixed left fold, except that `scaledMatmul`, `softmax`, `maskedSoftmax`
-and `distill` advertise `fixedLeftOrExact` and the reference attention operators advertise
-`implementationDefined`. LibTorch matrix products, convolutions, normalizations, pooling operations,
+when its capsule does not advertise `fixed .leftFold`. The scaled matrix contraction transfer
+requires `fixedOrExact .leftFold` instead. A reduction, mean, matrix product, scaled matrix product
+or pool in an order other than the left fold has no range transfer. Rounding mode, subnormal
+handling, and multiply-add contraction are not recorded. A certificate that depends on them must
+state the assumption itself.
+Portable reference accumulations advertise the operator's order, the left fold for an operator
+that takes none, except that `scaledMatmul` advertises `fixedOrExact` in its order, `softmax`,
+`maskedSoftmax` and `distill` advertise `fixedOrExact .leftFold` and the reference attention
+operators advertise `implementationDefined`.
+LibTorch matrix products, convolutions, normalizations, pooling operations,
 FFT/FNO paths, scans and attention advertise implementation-dependent reductions, so the fixed-left
 graph certificate refuses to reuse its transfer for those accelerated paths. A theorem about such a
 path needs a backend-specific schedule or an applicable order-independent enclosure from
@@ -809,6 +846,35 @@ finiteness hypotheses, and its generic forms also take local-error bounds as hyp
 binary32 corollaries use FloatLib's tree-local unit-roundoff result. The dot-product corollary
 bounds the sum of rounded products, so multiplication errors are a separate obligation.
 None of these theorems covers an arbitrary ATen algorithm.
+
+`TorchLean/Tensor/Reduce/Order.lean` states sums, products, maxima, minima, means, contractions,
+sum and average pools, cumulative sums and products and running maxima and minima in an explicit
+order, a `Tensor.ReduceOrder` tree over the start value and the reduced entries, and
+`TorchLean/Tensor/Einops/Lowering/Einsum/Order.lean` states `einsum` in one. In the order `leftFold`
+each is the existing definition, and over the reals every order that covers each entry once gives
+the same value, and for running maxima and minima the same indices.
+`TorchLean/Verify/Floats/IEEE754/Order.lean` bounds a finite ordered sum in an IEEE format by
+`((1 + u) ^ d - 1)` times the sum of the absolute values, with `d` the depth of the order's tree, at
+most `⌈log₂ (n + 1)⌉` for `pairwise`. These theorems are about the stated order.
+`TorchLean/Verify/LibTorch/TreeSum.lean` proves that the deterministic CUDA sum's schedule
+`reduceSumTree` is the sum in the order `LibTorch.sumOrder` for every input list
+(`reduceSumTree_eq_fold`). That a native sum agrees with the schedule is checked on fixtures by
+`TorchLeanTest/CUDA/ReduceTree.lean`, not proved. Nothing proves that any other backend kernel uses
+a given order. The operator table's `reduce`, `mean`, `contract`, `matmul`, `pool`, `cumsum`,
+`cumprod`, `cummax` and `cummin` carry an order, the left fold by default, and the reference rule's
+forward folds in it. Its pullback is the left fold's in every order. At a configured binary format
+the running maxima and minima of every order that covers the axis are the left fold's, bit for bit
+(`TorchLean/Tensor/ConfiguredBinary/Order.lean`); the other operators in another order can round
+differently. The CROWN bounds and the
+numerical certificates give these operators no bound in another order, and their derivative
+certificates hold over the reals in every order that covers the count reduced. The roundoff rules of
+`TorchLean/Verify/RuntimeApprox/Roundoff/Rules/ReduceOrder.lean` bound a sum of the reference rule
+in such an order at the depth of its tree, and a product with the left fold's relative error and the
+absolute error from underflow that its tree accumulates, and read a maximum or minimum on finite
+entries as the left fold, which has the same real value. A running maximum or minimum in such an
+order reads the input at the index the order selects. The coverage rows of these operators in the
+pairwise, blocked and given-tree orders use them. They are about the reference rule, not a native
+kernel.
 
 For a checked replay, interval validity proves that each endpoint is finite and ordered. The replay
 also checks every computed entry for finiteness, and `executeIEEE32` returns a `CheckedExecution`
@@ -829,6 +895,14 @@ model or `TorchLean.IR.Graph` is lowered to a `RevGraph`, so the caller builds t
 optimizer contract carries those gradient bounds through SGD, momentum SGD and AdamW. For AdamW,
 the assumptions of each step include a lower bound on the complete denominator and an error margin
 for it. These are Lean theorems about the `NF` rounded-real scalar model.
+
+`Arithmetic.sqrt_sum_sq_block_sub_le` in `TorchLean/Verify/RuntimeApprox/TransformerBlock.lean`
+bounds `Arithmetic.block`, its own rounding schedule of a pre-normalization transformer block, not
+the block the op table executes. `Arithmetic.layerNorm` takes the variance of the unscaled centered
+entries and `Arithmetic.linear` starts its sum from the bias, while `Tensor.layerNorm` rescales by
+`Tensor.normalizationScale` and `Linear.forward` adds the bias last. Only the exact real block is
+tied to the op table (`TransformerBlock.Ops`), so neither the bound nor its GPT-2 small evaluation
+(`TorchLeanExamples/Models/Sequence/GPT2BlockBound.lean`) bounds an executed block.
 
 The ODE corridor theorems in `TorchLeanExamples/Verification/ODE/Enclosure.lean` require
 continuity, derivative identities, and corridor inequalities for a real interpretation. Discrete

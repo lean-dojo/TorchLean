@@ -16,8 +16,8 @@ import TorchLean.Tensor.Op.Pointwise.Real
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 
--- The live example below builds a graph of registered operators and evaluates it, so this
--- chapter needs the operator IR namespace, the tensor spec layer, and the recorder whose
+-- The live example builds and evaluates a graph of registered operators, so the declarations need
+-- the operator IR namespace, the tensor spec layer, and the recorder whose
 -- lowering theorem it names.
 open TorchLean
 open IR
@@ -25,6 +25,8 @@ open IR
 -- A value table is printed below at Lean's own line width rather than this file's, so its
 -- `leanOutput` block is wrapped by hand and compared with whitespace collapsed.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
+
+/-! Guide page: proof obligations beyond numerical bounds, such as lowering correctness. -/
 
 #doc (Manual) "Proof Systems" =>
 %%%
@@ -37,17 +39,17 @@ may still be well shaped, execute without an exception, and even receive a convi
 certificate. That certificate would then describe the wrong function. A lowering-correctness
 relation is what prevents that quiet change of subject.
 
-For the classifier from the previous chapter, this would undermine the entire margin argument.
-Suppose we prove that output zero of the lowered graph stays above output one on an input square.
-To conclude that the classifier keeps its label, we must know that those graph outputs are the
-classifier's scores with its actual trained parameters. Equal tensor dimensions only tell us
-that the scores can be compared. They do not tell us that the right function produced them.
+For a two-input classifier, such an error would undermine the entire margin argument. A proof that
+output zero of the lowered graph stays above output one on an input square establishes label
+stability only when those graph outputs are the classifier's scores with its actual trained
+parameters. Equal tensor dimensions merely show that the scores can be compared; they do not show
+that the right function produced them.
 
-This is why a verification library needs more than a bound algorithm. Every translation creates
-another place where meaning has to be preserved: a source layer becomes graph nodes, a parameter
-record becomes a payload, and graph nodes become executable operations. A proof names the two
-interpretations at one such boundary and explains why they agree. We can then compose that
-agreement with other results without pretending that one theorem covers the whole stack.
+A sound verification argument therefore needs more than a bound algorithm. Every translation
+creates another place where meaning must be preserved: a source layer becomes graph nodes, a
+parameter record becomes a payload, and graph nodes become executable operations. A proof names
+the two interpretations at one such boundary and explains why they agree. That agreement can then
+be composed with other results without pretending that one theorem covers the whole stack.
 
 Differential testing has found silent wrong-answer bugs as well as crashes in deep learning
 compilers: NNSmith reported 72 new bugs across TVM, TensorRT, ONNXRuntime and PyTorch
@@ -125,8 +127,8 @@ choosing reals or floats. But the theorem doesn't compare different scalar types
 at `Float` compares two Lean interpretations using that same `Float` context, while a real-to-float
 approximation is a separate relation.
 
-The example below makes a value table concrete, including a pre-activation that ReLU will partly
-erase.
+The *Affine-ReLU Example* makes the value table concrete, including a pre-activation that ReLU will
+partly erase.
 
 # Affine-ReLU Example
 
@@ -373,7 +375,7 @@ graph always succeeds.
 
 The `sequential` example takes a different path: it evaluates the MLP of
 {ref "sequential"}[the sequential models chapter] under the pure interpreter and then trains it on
-the eager runtime. It does not lower to the IR or instantiate the lowering theorem above.
+the eager runtime. It does not lower to the IR or instantiate `IR.OpGraph.eval_toOp`.
 
 ```terminal
 # Run the maintained example that evaluates and trains the
@@ -512,13 +514,15 @@ For the substitution to apply, the intermediate denotations must agree on parame
 and scalar interpretation. A theorem about a different payload or mask convention cannot supply the
 middle equality, even if its input and output tensor shapes match.
 
-The bias example above is the smallest instance of the failure. If source lowering drops `b`, then
+The `psGraph` bias example is the smallest instance of the failure. If source lowering drops `b`,
+then
 $`\llbracket M\rrbracket` and $`\llbracket G\rrbracket` are different functions, the first equation
 is false, and the chain still *looks* fine because every term in it has the right type. Only an
 equation between denotations catches it.
 
 An approximation claim also has a domain. If its error estimate holds only while intermediates
-remain finite or inputs stay in a box, those assumptions must survive the substitutions above. For
+remain finite or inputs stay in a box, those assumptions must survive the displayed substitutions.
+For
 a classifier, the resulting output-error bounds are charged against the verified score margin. For
 a regression model, they may be compared with a requested output tolerance. One lowering equality
 can support both uses, but the numerical budget and final property must be chosen for the
@@ -548,7 +552,7 @@ On the testing side, the relevant neighbors are differential and coverage-guided
 {Informal.citep nnsmith2023}[] {Informal.citep tensorfuzz2019}[], and on the certificate side the
 LiRPA family of bound producers {Informal.citep crown2018}[] {Informal.citep autolirpa2020}[]
 {Informal.citep betacrown2021}[]. Neither family competes with the lowering theorem: they answer
-the other questions in the table above.
+the other questions in the proof-composition table.
 
 # Kinds Of Verification Evidence
 

@@ -33,9 +33,9 @@ width `ξ` and the hidden width `κ` are arbitrary finite types, and the tokens 
 type in which each token `t` attends over a nonempty finite set `keys t`. The hypotheses are
 Euclidean bounds on the exact stages, spectral and Frobenius bounds on the weights (`LinearBound`),
 and one inequality per stage whose right side is the bound of its stage lemma at the errors of the
-stages before it. Those lemmas are `Arithmetic.sqrt_sum_sq_linear_sub_le'` for affine maps,
-`Arithmetic.sqrt_sum_sq_layerNorm_sub_le'` for layer normalization (`LayerNormCertificate`
-collects its internal errors), `Arithmetic.sqrt_sum_sq_attention_sub_le'` for one head,
+stages before it. Those lemmas are `Arithmetic.sqrt_sum_sq_linear_sub_le_of_sub_le` for affine maps,
+`Arithmetic.sqrt_sum_sq_layerNorm_sub_le_of_sub_le` for layer normalization (`LayerNormCertificate`
+collects its internal errors), `Arithmetic.sqrt_sum_sq_attention_sub_le_of_sub_le` for one head,
 `sqrt_sum_sq_store_act_sub_le` for the activation and `sqrt_sum_sq_store_add_sub_le` for the
 residual sums. They rest on two bounds of the exact operations. Layer normalization moves by at
 most `2 * G / √(var x + ε)` times the change of its input
@@ -328,7 +328,7 @@ structure LinearBound [Fintype κ] (W : ι → κ → ℝ) (b : κ → ℝ) (S F
 
 /-- A linear map evaluated in `A` at an input within `e` of `x`, where `‖x‖ ≤ X`, is within the
 local error at the computed input plus `S * e` of the exact map at `x`. -/
-theorem Arithmetic.sqrt_sum_sq_linear_sub_le' [Fintype κ] (A : Arithmetic) {g h : ℕ → ℝ}
+theorem Arithmetic.sqrt_sum_sq_linear_sub_le_of_sub_le [Fintype κ] (A : Arithmetic) {g h : ℕ → ℝ}
     {um ηm us ηs S F B X e : ℝ}
     (hS : ∀ l : List ℝ, |A.sum l - l.sum| ≤ g l.length * (l.map abs).sum + h l.length)
     (hg : 0 ≤ g (Fintype.card ι + 1)) (hh : 0 ≤ h (Fintype.card ι + 1)) (hum : 0 ≤ um)
@@ -933,6 +933,8 @@ private theorem abs_sub_mul_sub_le {lo hi r a : ℝ} (hr : lo ≤ r ∧ r ≤ hi
 theorem sum_abs_softmax_sub_le {s : Finset ν} (hs : s.Nonempty) {x x' : ν → ℝ} {t : ℝ}
     (ht : ∀ j ∈ s, |x' j - x j| ≤ t) :
     ∑ j ∈ s, |softmax s x' j - softmax s x j| ≤ 2 * (Real.exp t - 1) / (Real.exp t + 1) := by
+  -- With `r j = exp (x' j - x j)` in `[exp (-t), exp t]` and `A` its mean under `p = softmax s x`,
+  -- `softmax s x' j = p j r j / A`, so the distance is `D / A` for `D = ∑ p j |r j - A|`.
   obtain ⟨j0, hj0⟩ := hs
   have ht0 : 0 ≤ t := (abs_nonneg _).trans (ht j0 hj0)
   obtain ⟨Z, hZ⟩ : ∃ Z, Z = ∑ i ∈ s, Real.exp (x i) := ⟨_, rfl⟩
@@ -975,6 +977,7 @@ theorem sum_abs_softmax_sub_le {s : Finset ν} (hs : s.Nonempty) {x x' : ν → 
         _ = Real.exp t := by rw [← Finset.sum_mul, hsum1, one_mul]
   have hD0 : 0 ≤ D := hD ▸ Finset.sum_nonneg fun j _ =>
     mul_nonneg (softmax_nonneg s x j) (abs_nonneg _)
+  -- At `t = 0` the distributions agree.
   rcases ht0.eq_or_lt with h0 | hpos
   · subst h0
     have hr1 : ∀ j ∈ s, r j = 1 := fun j hj => by
@@ -988,6 +991,8 @@ theorem sum_abs_softmax_sub_le {s : Finset ν} (hs : s.Nonempty) {x x' : ν → 
   have hhilo : hi * lo = 1 := by rw [hhi, hlo, ← Real.exp_add]; simp
   have hhi1 : 1 < hi := Real.one_lt_exp_iff.2 hpos
   have hlo0 : 0 < lo := Real.exp_pos _
+  -- Each `|r j - A|` lies under the chord between `lo` and `hi`, and `(A - 1)² ≥ 0` with
+  -- `hi lo = 1` bounds the result by `2 A (hi + lo - 2)`. Then divide by `A (hi - lo)`.
   have hchord : D * (hi - lo) ≤ 2 * (hi - A) * (A - lo) := by
     calc D * (hi - lo) = ∑ j ∈ s, softmax s x j * (|r j - A| * (hi - lo)) := by
           rw [hD, Finset.sum_mul]; exact Finset.sum_congr rfl fun j _ => by ring
@@ -1288,6 +1293,8 @@ private theorem sqrt_sum_sq_sum_mul_sub_le [Fintype κ] {α : Type*} {S : List �
   set a := g s.card * (1 + um) + um
   set c0 := (1 + g s.card) * s.card * ηm + h s.card
   set L := ∑ j ∈ s, E j
+  -- Per channel: the rounding of the products and the sum against `∑ w j * v j c`, then the
+  -- weight errors against `∑ E j * v j c`.
   have hterm : ∀ c, |S (s.toList.map fun j => fm (w j * v j c)) - ∑ j ∈ s, E j * v j c| ≤
       a * |(∑ j ∈ s, |w j| * |v j c|)| + 1 * |(∑ j ∈ s, |w j - E j| * |v j c|)| + c0 :=
       fun c => by
@@ -1316,6 +1323,8 @@ private theorem sqrt_sum_sq_sum_mul_sub_le [Fintype κ] {α : Type*} {S : List �
   have hwE : ∑ j ∈ s, |w j - E j| ≤ θ * L + s.card * ηe := by
     calc _ ≤ ∑ j ∈ s, (θ * E j + ηe) := Finset.sum_le_sum hw
       _ = _ := by rw [Finset.sum_add_distrib, ← Finset.mul_sum]; simp [L]
+  -- Minkowski over the channels: the norm of a weighted sum of vectors is at most the weighted
+  -- sum of their norms, each at most `V`.
   have hmink : ∀ (r : α → ℝ) (y : α → κ → ℝ),
       √(∑ c, (∑ j ∈ s, r j * y j c) ^ 2) ≤ ∑ j ∈ s, |r j| * √(∑ c, y j c ^ 2) := fun r y => by
     have hsum : WithLp.toLp 2 (fun c => ∑ j ∈ s, r j * y j c) =
@@ -1341,6 +1350,7 @@ private theorem sqrt_sum_sq_sum_mul_sub_le [Fintype κ] {α : Type*} {S : List �
             exact mul_le_mul_of_nonneg_left (hv j hj) (abs_nonneg _)
       _ ≤ V * (θ * L + s.card * ηe) := by
           rw [← Finset.sum_mul, mul_comm]; exact mul_le_mul_of_nonneg_left hwE hV
+  -- Collect the terms, using `1 ≤ exp es * L` for those not proportional to `L`.
   have hL0 : 0 ≤ L := Finset.sum_nonneg hE
   have hgN0 : 0 ≤ gN := hg.trans hgN
   have hN0 : 0 ≤ N := (Nat.cast_nonneg _).trans hcard
@@ -1541,7 +1551,7 @@ theorem LayerNormCertificate.mono {g h : ℕ → ℝ} {d : ℕ} {u η G M σlo �
 
 /-- Layer normalization evaluated in `A` at an input within `e` of `x` is within the local error
 at the computed input plus `2 * G * e / σlo` of exact layer normalization at `x`. -/
-theorem Arithmetic.sqrt_sum_sq_layerNorm_sub_le' [Nonempty ι] (A : Arithmetic)
+theorem Arithmetic.sqrt_sum_sq_layerNorm_sub_le_of_sub_le [Nonempty ι] (A : Arithmetic)
     {g h : ℕ → ℝ} {u η us ηs : ℝ}
     (hS : ∀ l : List ℝ, |A.sum l - l.sum| ≤ g l.length * (l.map abs).sum + h l.length)
     (hg : 0 ≤ g (Fintype.card ι)) (hu : 0 ≤ u) (hη : 0 ≤ η) (hus : 0 ≤ us) (hηs : 0 ≤ ηs)
@@ -1684,7 +1694,7 @@ variable {ζ ξ : Type*}
 /-- Attention evaluated in `A` at queries, keys and values within `eq`, `ek` and `ev` of exact
 ones is within the local error at the computed inputs plus `ev + 2 * tanh (ω / 2) * V` of exact
 attention, where `ω` bounds the change of the scores. -/
-theorem Arithmetic.sqrt_sum_sq_attention_sub_le' [Fintype κ] (A : Arithmetic)
+theorem Arithmetic.sqrt_sum_sq_attention_sub_le_of_sub_le [Fintype κ] (A : Arithmetic)
     {g h : ℕ → ℝ} {u η um ηm us ηs ue ηe : ℝ}
     (hS : ∀ l : List ℝ, |A.sum l - l.sum| ≤ g l.length * (l.map abs).sum + h l.length)
     (hu : 0 ≤ u) (hη : 0 ≤ η) (hum : 0 ≤ um) (hηm : 0 ≤ ηm) (hus : 0 ≤ us) (hηs : 0 ≤ ηs)
@@ -1903,7 +1913,9 @@ theorem Arithmetic.exact_block [Fintype ζ] [Fintype ξ] [Fintype κ] (act : ℝ
 /-- Every token of the block evaluated in `A` is within Euclidean distance `ey` of the exact
 block. The exact stages `a, q, k, v, o, s, b, r` have the stated magnitudes, the weights satisfy
 their `LinearBound`s, and each stage error is at least the bound of its stage lemma at the errors
-of the stages before it. -/
+of the stages before it. The computed block is `Arithmetic.block`'s own rounding schedule, not the
+op table's block, which rescales inside its layer normalization and adds each bias last, so the
+bound does not cover the executed block. -/
 theorem Arithmetic.sqrt_sum_sq_block_sub_le [Nonempty ι] [Fintype ζ] [Fintype ξ] [Fintype κ]
     {A : Arithmetic} {act : ℝ → ℝ} (C : A.Contract act) (P : Parameters ι ζ ξ κ) {ε τ : ℝ}
     (hε : 0 < ε) (hτ : 0 ≤ τ) {keys : ν → Finset ν} (hkeys : ∀ t, (keys t).Nonempty)
@@ -2021,19 +2033,19 @@ theorem Arithmetic.sqrt_sum_sq_block_sub_le [Nonempty ι] [Fintype ζ] [Fintype 
       h9).trans hea
   have e2q : ∀ t z, √(∑ i, (q' t (z, i) - q t (z, i)) ^ 2) ≤ eq := fun t z => by
     subst hq hq'
-    exact (A.sqrt_sum_sq_linear_sub_le' C.sum_le (C.g_nonneg _) (C.h_nonneg _)
+    exact (A.sqrt_sum_sq_linear_sub_le_of_sub_le C.sum_le (C.g_nonneg _) (C.h_nonneg _)
       C.um_nonneg C.ηm_nonneg hus hηs C.roundMul_le C.store_le (hWq z) (hYa t) (e1 t)).trans heq
   have e2k : ∀ t z, √(∑ i, (k' t (z, i) - k t (z, i)) ^ 2) ≤ ek := fun t z => by
     subst hk hk'
-    exact (A.sqrt_sum_sq_linear_sub_le' C.sum_le (C.g_nonneg _) (C.h_nonneg _)
+    exact (A.sqrt_sum_sq_linear_sub_le_of_sub_le C.sum_le (C.g_nonneg _) (C.h_nonneg _)
       C.um_nonneg C.ηm_nonneg hus hηs C.roundMul_le C.store_le (hWk z) (hYa t) (e1 t)).trans hek
   have e2v : ∀ t z, √(∑ i, (v' t (z, i) - v t (z, i)) ^ 2) ≤ ev := fun t z => by
     subst hv hv'
-    exact (A.sqrt_sum_sq_linear_sub_le' C.sum_le (C.g_nonneg _) (C.h_nonneg _)
+    exact (A.sqrt_sum_sq_linear_sub_le_of_sub_le C.sum_le (C.g_nonneg _) (C.h_nonneg _)
       C.um_nonneg C.ηm_nonneg hus hηs C.roundMul_le C.store_le (hWv z) (hYa t) (e1 t)).trans hev
   have e3 : ∀ t z, √(∑ c, (o' t (z, c) - o t (z, c)) ^ 2) ≤ eo := fun t z => by
     subst ho ho'
-    exact (A.sqrt_sum_sq_attention_sub_le' C.sum_le hu hη C.um_nonneg C.ηm_nonneg hus hηs
+    exact (A.sqrt_sum_sq_attention_sub_le_of_sub_le C.sum_le hu hη C.um_nonneg C.ηm_nonneg hus hηs
       C.ue_nonneg C.ηe_nonneg C.round_le C.roundMul_le C.store_le C.exp_le hτ (hkeys t)
       (C.g_nonneg _) (C.g_nonneg _) (C.h_nonneg _) (hgN t) (hhN t) (hcard t) (hQ t z)
       (fun j _ => hK j z) (fun j _ => hV j z) (e2q t z) (fun j _ => e2k j z)
@@ -2042,7 +2054,7 @@ theorem Arithmetic.sqrt_sum_sq_block_sub_le [Nonempty ι] [Fintype ζ] [Fintype 
     sqrt_sum_sq_le_sqrt_card_mul (f := fun c => o' t c - o t c) (e3 t)
   have e5 : ∀ t, √(∑ i, (A.linear P.wo P.bo (o' t) i - (P.bo i + ∑ c, o t c * P.wo c i)) ^ 2) ≤
       ep := fun t =>
-    (A.sqrt_sum_sq_linear_sub_le' C.sum_le (C.g_nonneg _) (C.h_nonneg _) C.um_nonneg
+    (A.sqrt_sum_sq_linear_sub_le_of_sub_le C.sum_le (C.g_nonneg _) (C.h_nonneg _) C.um_nonneg
       C.ηm_nonneg hus hηs C.roundMul_le C.store_le hWo (hO t) (e4 t)).trans hep
   have e6 : ∀ t, √(∑ i, (s' t i - s t i) ^ 2) ≤ ez := fun t => by
     have h0 : √(∑ i, (x t i - x t i) ^ 2) ≤ 0 := by simp
@@ -2056,12 +2068,12 @@ theorem Arithmetic.sqrt_sum_sq_block_sub_le [Nonempty ι] [Fintype ζ] [Fintype 
   have e7 : ∀ t, √(∑ i, (b' t i - b t i) ^ 2) ≤ eb := fun t => by
     have hYbt := hYb t
     subst hb hb'
-    exact (A.sqrt_sum_sq_layerNorm_sub_le' C.sum_le (C.g_nonneg _) hu hη hus hηs
+    exact (A.sqrt_sum_sq_layerNorm_sub_le_of_sub_le C.sum_le (C.g_nonneg _) hu hη hus hηs
       C.round_le C.store_le hγ2 P.β2 hε (hZ t) (hσlo2 t) (hσhi2 t) hYbt (e6 t) hσlo2pos
       hLN2).trans heb
   have e8 : ∀ t, √(∑ c, (A.linear P.w1 P.b1 (b' t) c - r t c) ^ 2) ≤ er := fun t => by
     subst hr
-    exact (A.sqrt_sum_sq_linear_sub_le' C.sum_le (C.g_nonneg _) (C.h_nonneg _)
+    exact (A.sqrt_sum_sq_linear_sub_le_of_sub_le C.sum_le (C.g_nonneg _) (C.h_nonneg _)
       C.um_nonneg C.ηm_nonneg hus hηs C.roundMul_le C.store_le hW1 (hYb t) (e7 t)).trans her
   have e9 : ∀ t, √(∑ c, (m' t c - act (r t c)) ^ 2) ≤ em := fun t => by
     subst hm'
@@ -2071,7 +2083,7 @@ theorem Arithmetic.sqrt_sum_sq_block_sub_le [Nonempty ι] [Fintype ζ] [Fintype 
     linarith
   have e10 : ∀ t, √(∑ i, (A.linear P.w2 P.b2 (m' t) i -
       (P.b2 i + ∑ c, act (r t c) * P.w2 c i)) ^ 2) ≤ ef := fun t =>
-    (A.sqrt_sum_sq_linear_sub_le' C.sum_le (C.g_nonneg _) (C.h_nonneg _) C.um_nonneg
+    (A.sqrt_sum_sq_linear_sub_le_of_sub_le C.sum_le (C.g_nonneg _) (C.h_nonneg _) C.um_nonneg
       C.ηm_nonneg hus hηs C.roundMul_le C.store_le hW2 (x := fun c => act (r t c)) (hYm t)
       (e9 t)).trans hef
   simp only [hA, hE]

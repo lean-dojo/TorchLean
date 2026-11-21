@@ -17,11 +17,13 @@ import TorchLean.Tensor.ShapeChange.Flatten
 The facts about a successful run of an operator graph (`TorchLean.IR.Node.eval`,
 `TorchLean.IR.Graph.run`) that the enclosure proofs read. `runVals` is the table of flat values of
 output `0` of each node, `box?_runVals` reads it through a reference and `join_runVals` reads it at
-a node (`runVal`). `invoke_one`, `invoke_two` and `invoke_three` take a successful invocation
-apart, and `const_eval` and `input_eval` give the outputs of a constant node and of an input node.
-`flat_matmul` (through `IR.MatmulDims.matmulFlat_read`), `flat_scaledMatmul` and `flat_cat` give
-the flat values of the matrix product, the scaled product and the concatenation, and at `ℝ` the
-scaled product is the product times the scale (`scaledMatmul_eq_scale`).
+a node (`runVal`). `invoke_ok` takes a successful invocation of an operator with one output apart
+at any list of input ports, and `read_cons` and `read_nil` read its references one port at a time;
+`invoke_one` to `invoke_four` are its cases at one to four ports. `const_eval` and `input_eval`
+give the outputs of a constant node and of an input node. `flat_matmul` (through
+`IR.MatmulDims.matmulFlat_read`), `flat_scaledMatmul` and `flat_cat` give the flat values of the
+matrix product, the scaled product and the concatenation, and at `ℝ` the scaled product is the
+product times the scale (`scaledMatmul_eq_scale`).
 -/
 
 @[expose] public section
@@ -96,90 +98,75 @@ theorem flatOf_of_read {p : Port} {v : Op.Value ℝ} {x : p.Carrier ℝ}
        · cases h)
     | (cases h)
 
-/-- Reading one port's values from a list succeeds only on a singleton. -/
-theorem ofErased_singleton {p : Port} {values : List (Op.Value ℝ)}
-    {xs : Values ℝ [p]} (h : Values.ofErased [p] values = .ok xs) :
-    ∃ v, values = [v] ∧ p.read v = .ok xs.1 := by
-  match values, h with
-  | [], h => simp [Values.ofErased, throw, throwThe, MonadExceptOf.throw] at h
-  | [v], h =>
-    refine ⟨v, rfl, ?_⟩
-    simp only [Values.ofErased, bind, Except.bind, pure, Except.pure] at h
-    cases hr : p.read v with
-    | error e => simp [hr] at h
-    | ok y => simp only [hr] at h; cases h; rfl
-  | v :: w :: rest, h =>
-    simp only [Values.ofErased, bind, Except.bind] at h
-    cases hr : p.read v with
-    | error e => simp [hr] at h
-    | ok y => simp [hr, throw, throwThe, MonadExceptOf.throw] at h
-
-/-- Reading two ports' values from a list succeeds only on a pair. -/
-theorem ofErased_pair {p q : Port} {values : List (Op.Value ℝ)}
-    {xs : Values ℝ [p, q]} (h : Values.ofErased [p, q] values = .ok xs) :
-    ∃ v w, values = [v, w] ∧ p.read v = .ok xs.1 ∧ q.read w = .ok xs.2.1 := by
-  match values, h with
-  | [], h => simp [Values.ofErased, throw, throwThe, MonadExceptOf.throw] at h
-  | v :: rest, h =>
-    simp only [Values.ofErased, bind, Except.bind] at h
-    cases hr : p.read v with
-    | error e => simp [hr] at h
-    | ok y =>
-      simp only [hr] at h
-      cases hrest : Values.ofErased [q] rest with
-      | error e => simp [hrest] at h
-      | ok ys =>
-        simp only [hrest, pure, Except.pure] at h
-        cases h
-        obtain ⟨w, rfl, hw⟩ := ofErased_singleton hrest
-        exact ⟨v, w, rfl, hr, hw⟩
-
-/-- If reading a list of references gives one value, the list is one reference that reads it. -/
-theorem mapM_read_singleton {refs : List IR.Ref} {earlier : Array (List (Op.Value ℝ))}
-    {v : Op.Value ℝ} (h : refs.mapM (·.read earlier) = .ok [v]) :
-    ∃ r, refs = [r] ∧ r.read earlier = .ok v := by
-  match refs, h with
-  | [], h => simp [pure, Except.pure] at h
-  | [r], h =>
-    simp only [List.mapM_cons, List.mapM_nil, bind, Except.bind] at h
+/-- A successful read of references at the ports `p :: ps` reads the first reference at `p` and
+the others at `ps`. -/
+theorem read_cons {p : Port} {ps : List Port} {refs : List IR.Ref}
+    {earlier : Array (List (Op.Value ℝ))} {values : List (Op.Value ℝ)}
+    {xs : Values ℝ (p :: ps)} (hin : refs.mapM (·.read earlier) = .ok values)
+    (hx : Values.ofErased (p :: ps) values = .ok xs) :
+    ∃ r rest v vs, refs = r :: rest ∧ r.read earlier = .ok v ∧ p.read v = .ok xs.1 ∧
+      rest.mapM (·.read earlier) = .ok vs ∧ Values.ofErased ps vs = .ok xs.2 := by
+  match refs, hin with
+  | [], hin =>
+    simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at hin
+    subst hin
+    simp [Values.ofErased, throw, throwThe, MonadExceptOf.throw] at hx
+  | r :: rest, hin =>
+    simp only [List.mapM_cons, bind, Except.bind] at hin
     cases hr : r.read earlier with
-    | error e => simp [hr] at h
-    | ok y => simp [hr, pure, Except.pure] at h; exact ⟨r, rfl, hr ▸ congrArg Except.ok h⟩
-  | r :: s :: rest, h =>
-    simp only [List.mapM_cons, bind, Except.bind] at h
-    cases hr : r.read earlier with
-    | error e => simp [hr] at h
-    | ok y =>
-      cases hs : s.read earlier with
-      | error e => simp [hr, hs] at h
-      | ok z =>
-        cases hm : rest.mapM (·.read earlier) with
-        | error e => simp [hr, hs, hm] at h
-        | ok l => simp [hr, hs, hm, pure, Except.pure] at h
-
-/-- If reading a list of references gives two values, the list is two references that read them
-in order. -/
-theorem mapM_read_pair {refs : List IR.Ref} {earlier : Array (List (Op.Value ℝ))}
-    {v w : Op.Value ℝ} (h : refs.mapM (·.read earlier) = .ok [v, w]) :
-    ∃ r₁ r₂, refs = [r₁, r₂] ∧ r₁.read earlier = .ok v ∧ r₂.read earlier = .ok w := by
-  match refs, h with
-  | [], h => simp [pure, Except.pure] at h
-  | r :: rest, h =>
-    simp only [List.mapM_cons, bind, Except.bind] at h
-    cases hr : r.read earlier with
-    | error e => simp [hr] at h
-    | ok y =>
+    | error e => simp [hr] at hin
+    | ok v =>
       cases hm : rest.mapM (·.read earlier) with
-      | error e => simp [hr, hm] at h
-      | ok l =>
-        simp only [hr, hm, pure, Except.pure, Except.ok.injEq, List.cons.injEq] at h
-        obtain ⟨rfl, rfl⟩ := h
-        obtain ⟨s, rfl, hs⟩ := mapM_read_singleton hm
-        exact ⟨r, s, rfl, hr, hs⟩
+      | error e => simp [hr, hm] at hin
+      | ok vs =>
+        simp only [hr, hm, pure, Except.pure, Except.ok.injEq] at hin
+        subst hin
+        simp only [Values.ofErased, bind, Except.bind] at hx
+        cases hp : p.read v with
+        | error e => simp [hp] at hx
+        | ok y =>
+          simp only [hp] at hx
+          cases hrest : Values.ofErased ps vs with
+          | error e => simp [hrest] at hx
+          | ok ys =>
+            simp only [hrest, pure, Except.pure] at hx
+            cases hx
+            exact ⟨r, rest, v, vs, rfl, hr, hp, hm, hrest⟩
 
-/-- A successful invocation of an operator with one input port and one output port has one
-reference, which reads a value that the port reads as `x`, and outputs the rule's forward value on
-`x`. -/
+/-- A successful read of references at no ports reads no references. -/
+theorem read_nil {refs : List IR.Ref} {earlier : Array (List (Op.Value ℝ))}
+    {values : List (Op.Value ℝ)} {xs : Values ℝ []}
+    (hin : refs.mapM (·.read earlier) = .ok values) (hx : Values.ofErased [] values = .ok xs) :
+    refs = [] := by
+  match refs, hin with
+  | [], _ => rfl
+  | r :: rest, hin =>
+    simp only [List.mapM_cons, bind, Except.bind] at hin
+    cases hr : r.read earlier with
+    | error e => simp [hr] at hin
+    | ok v =>
+      cases hm : rest.mapM (·.read earlier) with
+      | error e => simp [hr, hm] at hin
+      | ok vs =>
+        simp only [hr, hm, pure, Except.pure, Except.ok.injEq] at hin
+        subst hin
+        simp [Values.ofErased, throw, throwThe, MonadExceptOf.throw] at hx
+
+/-- A successful invocation of an operator with one output port reads its references as values
+that its ports read as `xs`, and outputs the rule's forward value on `xs`. -/
+theorem invoke_ok {ps : List Port} {q : Port} {op : Op ps [q]}
+    {rule : Op.Rule ℝ ps [q]} (hs : op.rule? (α := ℝ) = some rule)
+    {refs : Array IR.Ref} {earlier : Array (List (Op.Value ℝ))}
+    {outs : List (Op.Value ℝ)}
+    (h : op.invoke (refs.toList.mapM (·.read earlier)) = .ok outs) :
+    ∃ values xs, refs.toList.mapM (·.read earlier) = .ok values ∧
+      Values.ofErased ps values = .ok xs ∧ outs = [⟨q, (rule.forward xs).1⟩] := by
+  obtain ⟨values, xs, rule', -, hin, hx, hs', -, rfl⟩ := Op.invoke_eq_ok h
+  rw [hs] at hs'
+  cases hs'
+  exact ⟨values, xs, hin, hx, rfl⟩
+
+/-- `invoke_ok` at one input port. -/
 theorem invoke_one {p q : Port} {op : Op [p] [q]}
     {rule : Op.Rule ℝ [p] [q]} (hs : op.rule? (α := ℝ) = some rule)
     {refs : Array IR.Ref} {earlier : Array (List (Op.Value ℝ))}
@@ -187,17 +174,12 @@ theorem invoke_one {p q : Port} {op : Op [p] [q]}
     (h : op.invoke (refs.toList.mapM (·.read earlier)) = .ok outs) :
     ∃ r v x, refs.toList = [r] ∧ r.read earlier = .ok v ∧ p.read v = .ok x ∧
       outs = [⟨q, (rule.forward (x, ())).1⟩] := by
-  obtain ⟨values, xs, rule', -, hin, hx, hs', -, rfl⟩ := Op.invoke_eq_ok h
-  rw [hs] at hs'
-  cases hs'
-  obtain ⟨v, rfl, hv⟩ := ofErased_singleton hx
-  obtain ⟨r, hr, hread⟩ := mapM_read_singleton hin
-  obtain ⟨x, ⟨⟩⟩ := xs
-  exact ⟨r, v, x, hr, hread, hv, rfl⟩
+  obtain ⟨values, xs, hin, hx, rfl⟩ := invoke_ok hs h
+  obtain ⟨r, rest, v, vs, hr, hread, hv, hin, hx⟩ := read_cons hin hx
+  obtain rfl := read_nil hin hx
+  exact ⟨r, v, xs.1, hr, hread, hv, rfl⟩
 
-/-- A successful invocation of an operator with two input ports and one output port has two
-references, which read values that the ports read as `x₁` and `x₂`, and outputs the rule's forward
-value on them. -/
+/-- `invoke_ok` at two input ports. -/
 theorem invoke_two {p₁ p₂ q : Port} {op : Op [p₁, p₂] [q]}
     {rule : Op.Rule ℝ [p₁, p₂] [q]} (hs : op.rule? (α := ℝ) = some rule)
     {refs : Array IR.Ref} {earlier : Array (List (Op.Value ℝ))}
@@ -206,17 +188,13 @@ theorem invoke_two {p₁ p₂ q : Port} {op : Op [p₁, p₂] [q]}
     ∃ r₁ r₂ v₁ v₂ x₁ x₂, refs.toList = [r₁, r₂] ∧ r₁.read earlier = .ok v₁ ∧
       r₂.read earlier = .ok v₂ ∧ p₁.read v₁ = .ok x₁ ∧ p₂.read v₂ = .ok x₂ ∧
       outs = [⟨q, (rule.forward (x₁, x₂, ())).1⟩] := by
-  obtain ⟨values, xs, rule', -, hin, hx, hs', -, rfl⟩ := Op.invoke_eq_ok h
-  rw [hs] at hs'
-  cases hs'
-  obtain ⟨v₁, v₂, rfl, h₁, h₂⟩ := ofErased_pair hx
-  obtain ⟨r₁, r₂, hr, hread₁, hread₂⟩ := mapM_read_pair hin
-  obtain ⟨x₁, x₂, ⟨⟩⟩ := xs
-  exact ⟨r₁, r₂, v₁, v₂, x₁, x₂, hr, hread₁, hread₂, h₁, h₂, rfl⟩
+  obtain ⟨values, xs, hin, hx, rfl⟩ := invoke_ok hs h
+  obtain ⟨r₁, rest, v₁, vs, hr, hread₁, h₁, hin, hx⟩ := read_cons hin hx
+  obtain ⟨r₂, rest, v₂, vs, rfl, hread₂, h₂, hin, hx⟩ := read_cons hin hx
+  obtain rfl := read_nil hin hx
+  exact ⟨r₁, r₂, v₁, v₂, xs.1, xs.2.1, hr, hread₁, hread₂, h₁, h₂, rfl⟩
 
-/-- A successful invocation of an operator with three input ports and one output port has three
-references, which read values that the ports read as `x₁`, `x₂` and `x₃`, and outputs the rule's
-forward value on them. -/
+/-- `invoke_ok` at three input ports. -/
 theorem invoke_three {p₁ p₂ p₃ q : Port} {op : Op [p₁, p₂, p₃] [q]}
     {rule : Op.Rule ℝ [p₁, p₂, p₃] [q]} (hs : op.rule? (α := ℝ) = some rule)
     {refs : Array IR.Ref} {earlier : Array (List (Op.Value ℝ))}
@@ -226,38 +204,34 @@ theorem invoke_three {p₁ p₂ p₃ q : Port} {op : Op [p₁, p₂, p₃] [q]}
       r₂.read earlier = .ok v₂ ∧ r₃.read earlier = .ok v₃ ∧ p₁.read v₁ = .ok x₁ ∧
       p₂.read v₂ = .ok x₂ ∧ p₃.read v₃ = .ok x₃ ∧
       outs = [⟨q, (rule.forward (x₁, x₂, x₃, ())).1⟩] := by
-  obtain ⟨values, xs, rule', -, hin, hx, hs', -, rfl⟩ := Op.invoke_eq_ok h
-  rw [hs] at hs'
-  cases hs'
-  match values, hx with
-  | [], hx => simp [Values.ofErased, throw, throwThe, MonadExceptOf.throw] at hx
-  | v₁ :: rest, hx =>
-    simp only [Values.ofErased, bind, Except.bind] at hx
-    cases h₁ : p₁.read v₁ with
-    | error e => simp [h₁] at hx
-    | ok y =>
-      simp only [h₁] at hx
-      cases hrest : Values.ofErased [p₂, p₃] rest with
-      | error e => simp [hrest] at hx
-      | ok ys =>
-        simp only [hrest, pure, Except.pure] at hx
-        cases hx
-        obtain ⟨v₂, v₃, rfl, h₂, h₃⟩ := ofErased_pair hrest
-        match refs.toList, hin with
-        | [], hin => simp [pure, Except.pure] at hin
-        | r₁ :: rs, hin =>
-          simp only [List.mapM_cons, bind, Except.bind] at hin
-          cases hr₁ : r₁.read earlier with
-          | error e => simp [hr₁] at hin
-          | ok z =>
-            cases hm : rs.mapM (·.read earlier) with
-            | error e => simp [hr₁, hm] at hin
-            | ok l =>
-              simp only [hr₁, hm, pure, Except.pure, Except.ok.injEq, List.cons.injEq] at hin
-              obtain ⟨rfl, rfl⟩ := hin
-              obtain ⟨r₂, r₃, rfl, hr₂, hr₃⟩ := mapM_read_pair hm
-              obtain ⟨y₂, y₃, ⟨⟩⟩ := ys
-              exact ⟨r₁, r₂, r₃, z, v₂, v₃, y, y₂, y₃, rfl, hr₁, hr₂, hr₃, h₁, h₂, h₃, rfl⟩
+  obtain ⟨values, xs, hin, hx, rfl⟩ := invoke_ok hs h
+  obtain ⟨r₁, rest, v₁, vs, hr, hread₁, h₁, hin, hx⟩ := read_cons hin hx
+  obtain ⟨r₂, rest, v₂, vs, rfl, hread₂, h₂, hin, hx⟩ := read_cons hin hx
+  obtain ⟨r₃, rest, v₃, vs, rfl, hread₃, h₃, hin, hx⟩ := read_cons hin hx
+  obtain rfl := read_nil hin hx
+  exact ⟨r₁, r₂, r₃, v₁, v₂, v₃, xs.1, xs.2.1, xs.2.2.1, hr, hread₁, hread₂, hread₃, h₁, h₂, h₃,
+    rfl⟩
+
+/-- `invoke_ok` at four input ports. -/
+theorem invoke_four {p₁ p₂ p₃ p₄ q : Port} {op : Op [p₁, p₂, p₃, p₄] [q]}
+    {rule : Op.Rule ℝ [p₁, p₂, p₃, p₄] [q]} (hs : op.rule? (α := ℝ) = some rule)
+    {refs : Array IR.Ref} {earlier : Array (List (Op.Value ℝ))}
+    {outs : List (Op.Value ℝ)}
+    (h : op.invoke (refs.toList.mapM (·.read earlier)) = .ok outs) :
+    ∃ r₁ r₂ r₃ r₄ v₁ v₂ v₃ v₄ x₁ x₂ x₃ x₄, refs.toList = [r₁, r₂, r₃, r₄] ∧
+      r₁.read earlier = .ok v₁ ∧ r₂.read earlier = .ok v₂ ∧ r₃.read earlier = .ok v₃ ∧
+      r₄.read earlier = .ok v₄ ∧ p₁.read v₁ = .ok x₁ ∧ p₂.read v₂ = .ok x₂ ∧
+      p₃.read v₃ = .ok x₃ ∧ p₄.read v₄ = .ok x₄ ∧
+      outs = [⟨q, (rule.forward (x₁, x₂, x₃, x₄, ())).1⟩] := by
+  obtain ⟨values, xs, hin, hx, rfl⟩ := invoke_ok hs h
+  obtain ⟨r₁, rest, v₁, vs, hr, hread₁, h₁, hin, hx⟩ := read_cons hin hx
+  obtain ⟨r₂, rest, v₂, vs, rfl, hread₂, h₂, hin, hx⟩ := read_cons hin hx
+  obtain ⟨r₃, rest, v₃, vs, rfl, hread₃, h₃, hin, hx⟩ := read_cons hin hx
+  obtain ⟨r₄, rest, v₄, vs, rfl, hread₄, h₄, hin, hx⟩ := read_cons hin hx
+  obtain rfl := read_nil hin hx
+  exact ⟨r₁, r₂, r₃, r₄, v₁, v₂, v₃, v₄, xs.1, xs.2.1, xs.2.2.1, xs.2.2.2.1, hr, hread₁, hread₂,
+    hread₃, hread₄, h₁, h₂, h₃, h₄, rfl⟩
+
 
 /-- The flat value of a value at a value port. -/
 theorem flatOf_value {s : Shape} (x : Tensor ℝ s) :
@@ -311,21 +285,6 @@ theorem flat_matmul {batchA batchB batch : Shape} {m n p : Nat} {lv rv : Bool}
   have hflat := congrArg (fun t => Tensor.reshape t [_] (Shape.size_vector _).symm) key
   simp only [Tensor.reshape_reshape_self] at hflat
   exact hflat
-
-/-- Reading values at a nonempty list of ports reads the first at the first port. -/
-theorem ofErased_cons {p : Port} {ps : List Port} {v : Op.Value ℝ}
-    {vs : List (Op.Value ℝ)} {xs : Values ℝ (p :: ps)}
-    (h : Values.ofErased (p :: ps) (v :: vs) = .ok xs) :
-    ∃ x xs', p.read v = .ok x ∧ Values.ofErased ps vs = .ok xs' ∧ xs = (x, xs') := by
-  simp only [Values.ofErased, bind, Except.bind] at h
-  cases hv : p.read v with
-  | error e => simp [hv] at h
-  | ok x =>
-    cases hvs : Values.ofErased ps vs with
-    | error e => simp [hv, hvs] at h
-    | ok xs' =>
-      simp only [hv, hvs, pure, Except.pure] at h
-      exact ⟨x, xs', rfl, rfl, (Except.ok.inj h).symm⟩
 
 /-- At `ℝ` the scaled matrix product is the matrix product times the scale: the reals have no
 quotient replay (`QuotientArithmetic.supported` is false). -/
@@ -402,42 +361,17 @@ theorem mapM_box?_cat {s : Shape} (dim : Fin s.rank) {earlier : Array (List (Op.
         some (List.ofFn fun i =>
           flatOfSome ⟨_, Op.catElementParts (e := .scalar) dim sizes xs i⟩)
   | [], refs, values, xs, hin, hx, hvals => by
-      cases values with
-      | cons v vs => simp [Values.ofErased, throw, throwThe, MonadExceptOf.throw] at hx
-      | nil =>
-        cases refs with
-        | nil => rfl
-        | cons r rs =>
-          simp only [List.mapM_cons, bind, Except.bind] at hin
-          cases hr : r.read earlier with
-          | error e => simp [hr] at hin
-          | ok y =>
-            cases hm : rs.mapM (·.read earlier) with
-            | error e => simp [hr, hm] at hin
-            | ok l => simp [hr, hm, pure, Except.pure] at hin
+      obtain rfl := read_nil hin hx
+      rfl
   | n :: rest, refs, values, xs, hin, hx, hvals => by
-      cases values with
-      | nil => simp [Values.ofErased, throw, throwThe, MonadExceptOf.throw] at hx
-      | cons v vs =>
-        obtain ⟨x, xs', hv, hvs, rfl⟩ := ofErased_cons (p := .value (s.set dim n))
-          (ps := rest.map fun n => .value (s.set dim n)) hx
-        cases refs with
-        | nil => simp [pure, Except.pure] at hin
-        | cons r rs =>
-          simp only [List.mapM_cons, bind, Except.bind] at hin
-          cases hr : r.read earlier with
-          | error e => simp [hr] at hin
-          | ok y =>
-            cases hm : rs.mapM (·.read earlier) with
-            | error e => simp [hr, hm] at hin
-            | ok l =>
-              simp only [hr, hm, pure, Except.pure, Except.ok.injEq, List.cons.injEq] at hin
-              obtain ⟨rfl, rfl⟩ := hin
-              have ih := mapM_box?_cat dim rest hm hvs fun r' hr' =>
-                hvals r' (List.mem_cons_of_mem _ hr')
-              rw [List.mapM_cons, hvals r (by simp) _ hr, flatOf_of_read (Or.inl rfl) hv,
-                flatOf_value, ih, List.ofFn_succ]
-              rfl
+      obtain ⟨x, xs'⟩ := xs
+      obtain ⟨r, rs, v, vs, rfl, hr, hv, hm, hvs⟩ := read_cons (p := .value (s.set dim n))
+        (ps := rest.map fun n => .value (s.set dim n)) hin hx
+      have ih := mapM_box?_cat dim rest hm hvs fun r' hr' =>
+        hvals r' (List.mem_cons_of_mem _ hr')
+      rw [List.mapM_cons, hvals r (by simp) _ hr, flatOf_of_read (Or.inl rfl) hv,
+        flatOf_value, ih, List.ofFn_succ]
+      rfl
 
 /-- The flat value of a concatenation is the checked flat concatenation over its layout
 (`catLayout`) of the flat values of its inputs. -/

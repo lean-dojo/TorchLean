@@ -162,8 +162,9 @@ theorem parabolaFloat32_gradient (m : UInt64) (θ₀ cot : EuclideanSpace ℝ (F
           ExecFloat.Binary.toReal (ExecFloat.Binary.ofFloat32 x : Binary32))
           (gradientInputs θ₀ cot) a.val.toUInt64 = .ok ((fderiv ℝ parabolaMap θ₀).adjoint cot a) ∧
         (fderiv ℝ parabolaMap θ₀).adjoint cot a = 2 * θ₀ a * cot a :=
-  evaluate_map_gradient_parabola toReal_ofFloat32_zero toReal_ofFloat32_one
-    parabolaFloat32_expression m θ₀ cot
+  evaluate_map_gradient_parabola
+    (f := fun x => ExecFloat.Binary.toReal (ExecFloat.Binary.ofFloat32 x : Binary32))
+    toReal_ofFloat32_zero toReal_ofFloat32_one parabolaFloat32_expression m θ₀ cot
 
 /-- Let `f` read the constants of `α` as reals and keep zero, and let `e` read input zero and
 compute `x * x + 1`. At an entry `i` below `m`, the real reading of the tangent kernel of `e` with
@@ -216,7 +217,9 @@ theorem parabolaFloat32_tangent {m i : UInt64} (hi : i < m) (x dx : Nat → UInt
     evaluate Arithmetic.ofOps ((parabolaFloat32.expression.tangent 1).map fun v =>
         ExecFloat.Binary.toReal (ExecFloat.Binary.ofFloat32 v : Binary32))
       ((oneInput m).dual 1 x dx) i = .ok (2 * x 0 i * dx 0 i) :=
-  evaluate_map_tangent_parabola toReal_ofFloat32_zero parabolaFloat32_expression hi x dx
+  evaluate_map_tangent_parabola
+    (f := fun x => ExecFloat.Binary.toReal (ExecFloat.Binary.ofFloat32 x : Binary32))
+    toReal_ofFloat32_zero parabolaFloat32_expression hi x dx
 
 /-- `a * b / (a * a + 1)` at each entry, with `a` read from input zero and `b` from input one,
 written with `Program.of` over Lean's native `Float32` as in the kernel README. -/
@@ -324,7 +327,9 @@ theorem quotient_gradient (n : UInt64) (θ₀ : EuclideanSpace ℝ (Σ _ : Fin 2
         r.val.toUInt64 = .ok (θ ⟨⟨o, ho⟩, r⟩) := by
     simp only [Reader.withValues, twoInputs, ho, hlt r, and_self, ↓reduceIte, Except.map,
       withInputs, hr, r.isLt, ↓reduceDIte]
-  refine Expr.map_gradient_eq_adjoint_withInputs toReal_ofFloat32_zero toReal_ofFloat32_one
+  refine Expr.map_gradient_eq_adjoint_withInputs
+    (f := fun x => ExecFloat.Binary.toReal (ExecFloat.Binary.ofFloat32 x : Binary32))
+    toReal_ofFloat32_zero toReal_ofFloat32_one
     quotient.expression (k := 2) (m := fun _ => n) (read := twoInputs n) (fun o i y h => ?_)
     (fun _ _ => 0) (θ₀ := θ₀) (F := quotientMap) (Eventually.of_forall fun θ r => ?_)
     (fun r => ?_) (R := quotientInputs θ₀ cot) (fun o i y h => ?_) (cot := cot) (fun r => ?_)

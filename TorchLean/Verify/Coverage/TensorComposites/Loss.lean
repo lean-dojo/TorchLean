@@ -24,7 +24,7 @@ the computed exponential of the log-sum-exp of the other classes and every entry
 result are finite. `roundoff` analyzes both branches and keeps the test `CrossEntropy.twoLevelAt`
 as one opaque branch condition. Shapes, axes, block sizes and every other parameter are variables,
 so each theorem holds at every axis and rank. Each route is analyzed for the configured scalar of an
-arbitrary IEEE format, for native `Float32` and for the rounded reals `FP32`. The theorems are
+arbitrary format, for native `Float32` and for the rounded reals `FP32`. The theorems are
 declared in the namespace `TorchLean.Coverage.TensorComposites`, which every module under
 `TorchLean/Verify/Coverage/TensorComposites/` shares.
 -/

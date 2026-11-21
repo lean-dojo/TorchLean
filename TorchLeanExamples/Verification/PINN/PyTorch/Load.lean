@@ -8,6 +8,7 @@ module
 
 public import TorchLean.NN.PyTorch.Import
 public import TorchLeanExamples.Verification.PINN.Architecture
+import Std.Data.TreeMap.Raw.Basic
 
 /-!
 # PINN PyTorch Checkpoint Loading

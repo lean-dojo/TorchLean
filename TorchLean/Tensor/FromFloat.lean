@@ -69,7 +69,7 @@ instance : FromFloat Float where
 
 /-- Round binary64 values to Lean's native binary32 representation: the native conversion to
 nearest, FloatLib's binary32 cast in the other modes. The native one is the C cast `(float)a` of
-`lean_float_to_float32` in Lean 4.35.0's `lean.h`, which C99 F.3 (WG14 N1256) makes IEC 60559's
+`lean_float_to_float32` in Lean 4.36.0's `lean.h`, which C99 F.3 (WG14 N1256) makes IEC 60559's
 conversion between precisions. `TorchLean.Test.DirectedConversion.run` checks that `0.1` lands on
 `0x3DCCCCCD`. -/
 instance : FromFloat Float32 where

@@ -36,6 +36,7 @@ gives each input half of the cotangent. For `relu`, `abs`, `leakyReLU`, `elu` an
 the stored backward at every input, and for `smoothAbs` at a zero entry, in `convention`
 certificates whose docstrings say which one-sided derivative, or which mean of the two, the stored
 value is `δ` times at each kink, a point where both one-sided derivatives exist and differ.
+`Activation.hasDerivAt_celu` proves that `elu` at CELU's scalars has no kink.
 -/
 
 @[expose] public section
@@ -402,6 +403,14 @@ theorem atan2 (h : ∀ c, f x c ≠ 0 ∨ 0 < g x c) (hf : HasPullbackAt f Df bf
 
 end HasPullbackAt
 
+/-- CELU has no kink: `celu(x, alpha)` is `elu` at `scale = 1` and `inputScale = 1 / alpha`, whose
+one-sided slopes at 0 are both 1 for a nonzero `alpha`, so it has derivative `eluDeriv` at every
+input. -/
+theorem Activation.hasDerivAt_celu (x alpha : ℝ) (h : alpha ≠ 0) :
+    HasDerivAt (fun y : ℝ => Activation.elu y alpha 1 (1 / alpha))
+      (Activation.eluDeriv x alpha 1 (1 / alpha)) x :=
+  Activation.hasDerivAt_elu x alpha 1 (1 / alpha) (.inr (by rw [mul_one, mul_one_div_cancel h]))
+
 namespace Op
 
 variable {s : Shape}
@@ -707,16 +716,20 @@ theorem leakyReLU_backward_eq (x δ : Tensor ℝ s) (slope : Tensor ℝ []) (c :
   simp only [Tensor.mul_def, Tensor.zipWith_apply, Tensor.map_apply,
     Activation.leakyReLUDeriv, gt_iff_lt, ite_mul, one_mul]
 
-/-- At every input, the stored backward of `elu` is `δ c` where `0 < x c` and
-`alpha.item * Real.exp (x c) * δ c` elsewhere. At the kink `x c = 0`, for a coefficient other than
-`1`, this is `alpha.item * δ c`, which is `δ c` times the left derivative `alpha.item`. -/
+/-- At every input, the stored backward of `elu` is `scale.item * δ c` where `0 < x c` and
+`alpha.item * scale.item * inputScale.item * Real.exp (x c * inputScale.item) * δ c` elsewhere. At
+the kink `x c = 0` this is `δ c` times the left slope `alpha.item * scale.item * inputScale.item`,
+as `torch.ops.aten.elu_backward` takes it. -/
 @[op_cert TorchLean.Op.elu convention]
-theorem elu_backward_eq (x δ : Tensor ℝ s) (alpha : Tensor ℝ []) (c : s.Coord) :
-    (((Op.elu (s := s)).rule? (α := ℝ) |>.get rfl).backward (x, alpha, ()) (δ, ())).1 c =
-      if 0 < x c then δ c else alpha.item * Real.exp (x c) * δ c := by
-  show (Tensor.map (fun z => Activation.eluDeriv z alpha.item) x * δ) c = _
+theorem elu_backward_eq (x δ : Tensor ℝ s) (alpha scale inputScale : Tensor ℝ []) (c : s.Coord) :
+    (((Op.elu (s := s)).rule? (α := ℝ) |>.get rfl).backward (x, alpha, scale, inputScale, ())
+        (δ, ())).1 c =
+      if 0 < x c then scale.item * δ c
+      else alpha.item * scale.item * inputScale.item * Real.exp (x c * inputScale.item) * δ c := by
+  show (Tensor.map (fun z => Activation.eluDeriv z alpha.item scale.item inputScale.item) x *
+    δ) c = _
   simp only [Tensor.mul_def, Tensor.zipWith_apply, Tensor.map_apply,
-    Activation.eluDeriv, MathFunctions.exp_real, gt_iff_lt, ite_mul, one_mul]
+    Activation.eluDeriv, MathFunctions.exp_real, gt_iff_lt, ite_mul]
 
 /-- At every input, the stored backward of `clamp` is `δ c` strictly between the bounds and zero
 elsewhere. For `lo.item < hi.item` this is `δ c` times the left derivative `0` at the kink

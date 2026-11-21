@@ -8,7 +8,7 @@ module
 public import TorchLean.Tensor.Layers.Attention
 public import TorchLean.Tensor.Layers.Loss
 public meta import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension
+public import FloatLib.Tactic.Roundoff.Extension
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
 
 /-!

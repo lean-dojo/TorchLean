@@ -38,7 +38,7 @@ cannot follow. A `Table.Of A f` is a table with the proof that it gives `f` at e
 `Table.Of.eval_apply` shows that such a table, read from two inputs, computes `f` of its argument
 inside any expression, failures of the argument included.
 
-For an IEEE format, a table of FloatLib's correctly rounded `exp`, `expMinus1`, `log` or `logPlus1`
+For an IEEE format, a table of FloatLib's correctly rounded `exp`, `expm1`, `log` or `logp1`
 makes a kernel compute that function rounded once to nearest, as `Table.Of.toReal_exp` and the
 theorems after it state. The tests find these tables at every word of binary16, bfloat16, a 12-bit
 format and the 8-bit formats e4m3 and e5m2. They find them also in e4m3fn and e4m3fnuz, which have
@@ -434,10 +434,10 @@ theorem Of.toReal_exp (T : Of A (ExecFloat.Binary.CorrectlyRounded.exp · {}))
   ⟨_, by rw [T.eval_apply hk hv, hx]; rfl,
     ExecFloat.Binary.CorrectlyRounded.toReal_exp_eq_roundAt hfinite hrange hformat⟩
 
-/-- Inside any expression of an IEEE format, a table of FloatLib's correctly rounded `expMinus1`
+/-- Inside any expression of an IEEE format, a table of FloatLib's correctly rounded `expm1`
 gives `exp v - 1` of a finite argument `v` rounded once to nearest, when the exact result is below
 the overflow threshold of the format. -/
-theorem Of.toReal_expMinus1 (T : Of A (ExecFloat.Binary.CorrectlyRounded.expMinus1 · {}))
+theorem Of.toReal_expm1 (T : Of A (ExecFloat.Binary.CorrectlyRounded.expm1 · {}))
     (hk : R.Holds keys T.table.keys) (hv : R.Holds values T.table.values)
     (hx : x.eval A R env = .ok v) (hfinite : ExecFloat.Binary.isFinite v = true)
     (hrange : Real.exp (ExecFloat.Binary.toReal v) - 1 <
@@ -447,7 +447,7 @@ theorem Of.toReal_expMinus1 (T : Of A (ExecFloat.Binary.CorrectlyRounded.expMinu
       ExecFloat.Binary.toReal y =
         Model.roundAt format (Real.exp (ExecFloat.Binary.toReal v) - 1) :=
   ⟨_, by rw [T.eval_apply hk hv, hx]; rfl,
-    ExecFloat.Binary.CorrectlyRounded.toReal_expMinus1_eq_roundAt hfinite hrange hformat⟩
+    ExecFloat.Binary.CorrectlyRounded.toReal_expm1_eq_roundAt hfinite hrange hformat⟩
 
 /-- Inside any expression of an IEEE format, a table of FloatLib's correctly rounded logarithm
 gives the logarithm of a finite positive argument rounded once to nearest, when the exact
@@ -464,10 +464,10 @@ theorem Of.toReal_log (T : Of A (ExecFloat.Binary.CorrectlyRounded.log · {}))
   ⟨_, by rw [T.eval_apply hk hv, hx]; rfl,
     ExecFloat.Binary.CorrectlyRounded.toReal_log_eq_roundAt hfinite hpositive hrange hformat⟩
 
-/-- Inside any expression of an IEEE format, a table of FloatLib's correctly rounded `logPlus1`
+/-- Inside any expression of an IEEE format, a table of FloatLib's correctly rounded `logp1`
 gives `log (1 + v)` of a finite argument `v` above `-1` rounded once to nearest, when the exact
 result is below the overflow threshold of the format in absolute value. -/
-theorem Of.toReal_logPlus1 (T : Of A (ExecFloat.Binary.CorrectlyRounded.logPlus1 · {}))
+theorem Of.toReal_logp1 (T : Of A (ExecFloat.Binary.CorrectlyRounded.logp1 · {}))
     (hk : R.Holds keys T.table.keys) (hv : R.Holds values T.table.values)
     (hx : x.eval A R env = .ok v) (hfinite : ExecFloat.Binary.isFinite v = true)
     (hdomain : -1 < ExecFloat.Binary.toReal v)
@@ -478,7 +478,7 @@ theorem Of.toReal_logPlus1 (T : Of A (ExecFloat.Binary.CorrectlyRounded.logPlus1
       ExecFloat.Binary.toReal y =
         Model.roundAt format (Real.log (1 + ExecFloat.Binary.toReal v)) :=
   ⟨_, by rw [T.eval_apply hk hv, hx]; rfl,
-    ExecFloat.Binary.CorrectlyRounded.toReal_logPlus1_eq_roundAt hfinite hdomain hrange hformat⟩
+    ExecFloat.Binary.CorrectlyRounded.toReal_logp1_eq_roundAt hfinite hdomain hrange hformat⟩
 
 end CorrectlyRounded
 

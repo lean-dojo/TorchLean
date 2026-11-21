@@ -52,89 +52,74 @@ open FloatLib.Floats (ExecFloat)
 -- rendered page still shows the message exactly as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: tensors whose types carry their shapes. -/
+
 #doc (Manual) "Tensors" =>
 %%%
 tag := "tensors-shapes"
 file := "Tensors-That-Remember-Their-Shapes"
 %%%
 
-Most tensor libraries carry a shape beside a buffer and check compatibility when an operation runs,
-and PyTorch is the reference point for that design {Informal.citep pytorch2019}[]. TorchLean also
-carries the shape in the Lean type, so a function that accepts a length-four vector can't
-accidentally receive a $`2\times 2` matrix, even though both contain four scalar values.
+Take a batch of eight RGB images, each 32 pixels high and 32 pixels wide. The first layer sees
+values arranged as `[8, 3, 32, 32]`: batch, channel, height, width. A text model has a similar
+problem with its batch, token position, and embedding dimensions. We need those axes to agree
+every time two layers are connected.
 
-For a classifier's output, `Tensor α [batch, classes]` puts examples on the first axis and scores
-on the second. Our program supplies the names `batch` and `classes`, and the tensor type enforces
-their sizes and order. A later layer must accept that shape, or we have to reshape, reduce, or
-rearrange it ourselves.
+Dependent types put a tensor's dimensions in its type. If one layer produces eight features and
+the next expects seven, Lean catches the mismatch when the model is written, before training. The
+same typed tensors can appear in a proof, for example to state which pixels contribute to one
+output of a convolution.
 
-Every marked Lean code block on this page is elaborated when the page is built, and the
-`leanOutput` blocks check the compiler results they display. Shell commands and unmarked
-reproduction snippets are separate instructions.
+```lean (name := tensorBatchType)
+-- Eight RGB images with 32 rows and 32 columns each.
+def imageBatch : Tensor Float [8, 3, 32, 32] :=
+  Tensor.zeros [8, 3, 32, 32]
 
-# Tensor Values And Shapes
-
-From the repository root, run:
-
-```terminal
-# Run the same tensor constructions across the executable
-# scalar types shown below.
-scripts/lake.sh exe torchlean quickstart_tensors
+#check imageBatch
+```
+```leanOutput tensorBatchType
+imageBatch : Tensor Float [8, 3, 32, 32]
 ```
 
-Here's the recorded output:
-
-```terminal +output
-== Quickstart: tensor basics ==
-Rank-zero tensor: 0.500000
-Float tensor:    [0.100000, 0.200000, 0.300000, 0.400000]
-Rational tensor: [(1 : Rat)/10, (1 : Rat)/5, (3 : Rat)/10, (2 : Rat)/5]
-Integer tensor:  [1, 2, 3, 4]
-Float32 cast:    [0.100000, 0.200000, 0.300000, 0.400000]
-Rank-3 tensor:   [[[1.000000, 2.000000], [3.000000, 4.000000]],
-                  [[5.000000, 6.000000], [7.000000, 8.000000]]]
-Reshaped matrix: [[0.100000, 0.200000], [0.300000, 0.400000]]
-```
-
-The first line is a rank-zero tensor (written `Tensor Float [] := 0.5`). Four length-four tensors
-then show that the same shape can carry different scalar meanings. `ℚ` displays exact fractions,
-`Float` is Lean's host binary64 type, and `Float32` uses Lean's native binary32 operations. Last
-come a rank-three literal and a shape-checked tensor reshape.
-
-That output comes from the complete program in
-{src "TorchLeanExamples/Quickstart/Tensors.lean"}[`Tensors.lean`], and the definitions
-that follow develop the same ideas one operation at a time.
-
-Everything from here on assumes these three lines at the top of the file:
-
-```
--- The builder and execution modules also supply the
--- tensor constructors and public shape notation.
-import TorchLean.NN.Builder
-import TorchLean.NN.Sequential.Execution
-open TorchLean
-```
-
-These imports cover the application examples. Theorem examples later in the chapter also require
-`TorchLean.Tensor.Algebra` and `TorchLean.Tensor.Reduce.Real`, and the explicit float
-example uses `FloatLib`. (We write `ExecFloat` for `FloatLib.Floats.ExecFloat`.)
+In `Tensor Float [8, 3, 32, 32]`, `Float` is the type of each value and the list gives the
+dimensions. A two-by-three matrix makes the representation easier to inspect.
 
 # Tensor Type
 
-A tensor's type answers two independent questions: what one entry is, and how the entries are
-indexed. In `Tensor Float [4, 2]`, `Float` answers the first and `[4, 2]` answers the second.
-Changing the scalar type can change rounding and the available arithmetic without changing any
-coordinate, and changing the shape can change which coordinates are meaningful even when every
-stored scalar stays the same. Keeping the two questions apart makes later conversions, reshapes,
-and model signatures easier to read.
+In the library, `Tensor α s` expands to:
 
-The canonical type is:
+```lean -show
+namespace TensorDefinitionInGuide
+universe u
+```
 
-$$`\operatorname{TorchLean.Tensor}\;\alpha\;s`.
+```lean
+abbrev Shape := List Nat
 
-Application code writes a tensor type with concrete dimensions as `Tensor α [dims...]`, where the
-first parameter is the element type and the second is the dimension list. All four of these are
-well-formed types, and Lean accepts them without any further annotation:
+structure Tensor.Rep (α : Type u) (s : Shape)
+    [storage : Storage α] where
+  buffer : storage.Buffer
+  size_eq : storage.size buffer = Shape.size s
+
+abbrev Tensor (α : Type u) (shape : Shape)
+    [Storage α] : Type u :=
+  Tensor.Rep α shape
+```
+
+```lean -show
+end TensorDefinitionInGuide
+```
+
+`Shape.size` multiplies the dimensions, so the buffer of `Tensor Float [2, 3]` has length
+six. The proof in `size_eq` ties that length to the shape. Lean erases the proof when it
+compiles the code. On the CPU, a `Float` tensor stores a packed `FloatArray`, a `UInt8` tensor
+uses a `ByteArray`, and the default `Storage` instance uses an `Array α`.
+{src "TorchLean/Tensor/Rep.lean"}[`Tensor/Rep.lean`]
+{src "TorchLean/Tensor/Shape/Coord.lean"}[`Tensor/Shape/Coord.lean`]
+
+The scalar type is a choice. We can use native `Float` to run a calculation, mathematical reals
+in a proof, or FloatLib's executable binary32. In each case the same `[4, 2]` tells Lean the
+tensor's dimensions:
 
 ```lean
 -- Keep the coordinates fixed while changing the scalar
@@ -226,22 +211,102 @@ from the operation or model: `[batch, channel, height, width]` and
 {Informal.citep transformer2017}[], PDE grids {Informal.citep fno2021}[], volumetric data, batched
 matrices, or an unusual scientific coordinate system.
 
-# Shape-Certified Storage
+# From Coordinates To Buffer Offsets
 
-A tensor owns one row-major buffer. Its erased proof field certifies that the physical buffer
-length equals the number of scalar coordinates in its static shape. `Storage α` selects that
-physical buffer: `Float` uses `FloatArray`, `UInt8` uses `ByteArray`, and arbitrary scalar types
-use the default `Array α` storage unless a custom instance selects another representation.
-`FloatArray` and `ByteArray` pack unboxed entries, while generic arrays may hold boxed values. So a
-flat representation doesn't give every scalar type the same memory layout or execution cost.
+A matrix formula uses two indices, and the CPU buffer uses one. In row-major order the entries
+of the first row come first, followed by the second row. With three columns, `(1, 2)` is the last
+entry of the second row, at offset `3 · 1 + 2 = 5`. The size proof connects the bounds on the
+matrix indices to the bounds on that flat offset.
 
-A tensor also acts as a total function from an in-bounds coordinate to a scalar. Statements and
-proofs use this observation view, which doesn't allocate a second recursive tensor at runtime. So
-the type gives us three facts:
+Lean gives each axis an index of type `Fin n`, which carries the bound `i < n`. The
+coordinate type pairs the index of the first axis with a coordinate for the remaining
+axes. The recursion ends at `PUnit`, which has one inhabitant. That's how a scalar tensor
+has one coordinate. If an axis has length zero, its `Fin 0` makes the coordinate type empty.
 
-- every axis has the length written in the shape
-- every legal index carries its own bounds proof
-- definitions and proofs can reason extensionally over all valid coordinates.
+```lean -show
+namespace TensorCoordinatesInGuide
+abbrev Shape := TorchLean.Shape
+```
+
+```lean
+def Shape.Coord : Shape → Type
+  | [] => PUnit
+  | n :: s => Fin n × Coord s
+```
+
+```lean -show
+end TensorCoordinatesInGuide
+```
+
+The function view comes from `get`. It turns the coordinate into a bounded flat
+index and hands it to `getFlat`, which uses `size_eq` to know that the offset fits
+the physical buffer. Lean lets us write `t i` as shorthand for `t.get i`.
+
+```lean -show
+namespace TensorReadInGuide
+open TorchLean.Shape (Coord)
+universe u
+abbrev Rep := @TorchLean.Tensor.Rep
+```
+
+```lean
+def get {α : Type u} [Storage α] {s : Shape}
+    (x : Rep α s) (i : Coord s) : α :=
+  x.getFlat (Coord.linearize i)
+```
+
+```lean -show
+end TensorReadInGuide
+```
+
+Now we can build a small matrix from a formula. `Tensor.Rep.ofFn` runs the function once
+at each valid coordinate to fill the flat buffer. Then we read it both ways. The value at the
+coordinate is the sixth entry
+of the flat array, so function notation and a buffer read give us the same value.
+
+```lean (name := tensorViews)
+-- Fill the matrix row by row from a formula.
+def storageGrid : Tensor Nat [2, 3] :=
+  Tensor.Rep.ofFn fun (row, column, _) =>
+    3 * row.val + column.val + 1
+
+-- Row one and column two, followed by the empty tuple.
+def storageIndex : Shape.Coord [2, 3] := (1, 2, ())
+
+#eval (Shape.Coord.linearize storageIndex).val
+#eval storageGrid storageIndex
+#eval storageGrid.data
+```
+
+```leanOutput tensorViews
+5
+```
+```leanOutput tensorViews
+6
+```
+```leanOutput tensorViews
+#[1, 2, 3, 4, 5, 6]
+```
+
+## Prove Equality By Reading Entries
+
+To prove two tensors equal, pick an arbitrary coordinate and show that both return the same value.
+`Tensor.Rep.ext` says that equality at every coordinate gives equality of the tensors.
+`Tensor.Rep.get_ofFn` says that reading a tensor built from a function gives that function's
+value. Here they show why rebuilding from all the reads gives the original tensor back.
+
+```lean
+example {α : Type} [Storage α] {s : Shape}
+    (t : Tensor α s) :
+    Tensor.Rep.ofFn (fun i => t i) = t := by
+  apply Tensor.Rep.ext
+  intro i
+  exact Tensor.Rep.get_ofFn _ i
+```
+
+The ordinary-array view, `t.data`, gives us a way to compare storage implementations and
+send data to an API that expects an array. That conversion can allocate for packed storage.
+For proofs about an operation like `map`, we usually work at a coordinate.
 
 For example, `Tensor.map` changes the element type while preserving every dimension:
 
@@ -265,10 +330,59 @@ With two `Storage` arguments, input and output can use different physical repres
 coordinate, `map` reads an `α`, applies `f`, and stores a `β`, so a numeric conversion can change
 the storage without changing which coordinate an entry occupies.
 
+# Tensor Values And Shapes
+
+A shape should work the same way for exact rationals, native floats, and integers.
+You can run that comparison from the checkout.
+
+```terminal
+# Run the same tensor constructions across the executable
+# scalar types shown below.
+scripts/lake.sh exe torchlean quickstart_tensors
+```
+
+The recorded output is:
+
+```terminal +output
+== Quickstart: tensor basics ==
+Rank-zero tensor: 0.500000
+Float tensor:    [0.100000, 0.200000, 0.300000, 0.400000]
+Rational tensor: [(1 : Rat)/10, (1 : Rat)/5, (3 : Rat)/10, (2 : Rat)/5]
+Integer tensor:  [1, 2, 3, 4]
+Float32 cast:    [0.100000, 0.200000, 0.300000, 0.400000]
+Rank-3 tensor:   [[[1.000000, 2.000000], [3.000000, 4.000000]],
+                  [[5.000000, 6.000000], [7.000000, 8.000000]]]
+Reshaped matrix: [[0.100000, 0.200000], [0.300000, 0.400000]]
+```
+
+The first line is a rank-zero tensor (written `Tensor Float [] := 0.5`). Four length-four tensors
+then show that the same shape can carry different scalar meanings. `ℚ` displays exact fractions,
+`Float` is Lean's host binary64 type, and `Float32` uses Lean's native binary32 operations. Last
+come a rank-three literal and a shape-checked tensor reshape.
+
+That output comes from the complete program in
+{src "TorchLeanExamples/Quickstart/Tensors.lean"}[`Tensors.lean`], and the definitions
+that follow develop the same ideas one operation at a time.
+
+To try the public tensor and model examples in a Lean file, start with these imports.
+
+```
+-- The builder and execution modules also supply the
+-- tensor constructors and public shape notation.
+import TorchLean.NN.Builder
+import TorchLean.NN.Sequential.Execution
+open TorchLean
+```
+
+These imports cover the application examples. Theorem examples later in the chapter also require
+`TorchLean.Tensor.Algebra` and `TorchLean.Tensor.Reduce.Real`, and the explicit float
+example uses `FloatLib`. (We write `ExecFloat` for `FloatLib.Floats.ExecFloat`.)
+
 # Tensor Literals And Shape Checking
 
-Ordinary bracket syntax constructs a tensor whenever the expected type is a positive-rank `Tensor`,
-and the elaborator checks every visible dimension:
+Here are two grids, one with scores and one with a correction for each score.
+Both need the same rows and columns for pointwise addition.
+The expected type tells Lean how deep the brackets go and how many values each row needs.
 
 ```lean
 -- Corrections line up coordinate by coordinate with the
@@ -459,7 +573,7 @@ Multiply and then sum is the dot product, and TorchLean defines it once under th
 Two details in that signature are deliberate. Because `s` is an arbitrary shape and not a single
 axis, the definition is "sum of elementwise products over all coordinates" and it applies to
 matrices and higher-rank tensors as written. And the definition really is `Tensor.sum (a * b)`, one
-line, which is what the executable path ran to produce `1.000000` above . The theorems in
+line, which is what the executable path ran to produce `1.000000`. The theorems in
 {src "TorchLean/Tensor/Algebra.lean"}[`TorchLean/Tensor/Algebra.lean`] reach it
 through the bridge lemma `Tensor.dot_eq_rep_dot`. Runtime dot and contraction kernels have
 separate implementations whose relation to this reference must be established by their contracts.
@@ -572,8 +686,9 @@ axis.
 
 ## No Implicit Broadcasting
 
-NumPy and PyTorch can broadcast a `[3]` vector across the rows of a `[2, 3]` matrix. But
-TorchLean's pointwise addition requires matching shapes, so this expression is rejected:
+Suppose we want to add the same three offsets to each row of `frame`. The ordinary add
+expects two tensors with the same shape. Lean rejects the vector here and asks us to make
+the intended expansion explicit.
 
 ```lean +error (name := noBroadcast)
 -- A vector and a matrix have different shapes even when
@@ -596,9 +711,8 @@ section below develops the notation for replication, rearrangement, and contract
 
 ## Dot-Product Theorems
 
-Theorem statements pair tensors with `Tensor.Rep.dot`, the exact finite sum
-`∑ i, a i * b i` over all coordinates. Over the reals, symmetry of `Tensor.dot` follows from
-the backend-generic algebra layer:
+Over the reals, each product agrees when we swap the two factors. The library lets us
+pass from the executable fold to the finite sum `∑ i, a i * b i` and apply its symmetry law.
 
 ```lean
 -- Move from the executable fold to the exact pairing,
@@ -630,10 +744,10 @@ adjoint identity that the backward pass of a linear layer relies on.
 
 # Total Indexing
 
-Specification-level indices use `Fin`, so every index includes a proof that it lies inside its
-axis. Indexing therefore doesn't return `Option` or throw an out-of-range exception, and its result
-type also records which axis was removed. Runtime APIs that receive an unchecked natural-number
-index validate it at the boundary before constructing the corresponding typed operation.
+Say we pass a row index down to several operations. With an ordinary natural number,
+each consumer has to trust or check the bound. With `Fin`, we establish the bound when we
+make the index, so any consumer can read the row directly. Indexing a tensor by one axis
+gives a tensor over the remaining axes.
 
 ```lean
 -- Each Fin index carries the proof that it lies within its
@@ -681,7 +795,9 @@ an arbitrary valid index and applies its induction hypothesis to the smaller ten
 
 # Trusted Memory And External Data
 
-An in-memory array already has an intrinsic length, so converting it is total:
+An array of measurements has a length we can read. A model that expects four features adds a
+requirement on that length. Constructing a vector from an arbitrary array first shows which fact is
+available before the fixed-length check.
 
 ```lean
 -- The returned tensor records the actual array length in
@@ -762,7 +878,9 @@ valid, and it doesn't certify the code that produced the file.
 
 # Scalar Types And Arithmetic Semantics
 
-These tensors have the same shape and different semantics:
+The same six positions can hold floats, rationals, or reals. For a derivative theorem
+we often work over the reals. To see how the calculation rounds, run it in a floating-point
+format and look at the bits it returns.
 
 :::table +header
 *
@@ -822,10 +940,9 @@ rounding error.
 
 ## Choosing Precision For A Tensor And Model
 
-An element type can also select a wider software format. For example, binary128 uses 15 exponent
-bits and 112 stored fraction bits, so a normal value has 113 significant bits (including the
-implicit leading bit). Shapes and precision answer different questions: `[1]` says there's one
-coordinate, and `Binary128` says how arithmetic on that coordinate rounds.
+Suppose we want to keep the small term in $`1 + 2^{-100}` through a model and its gradient. A
+native binary64 input would lose the term on the way in. Storing it directly in a binary128 tensor
+provides 113 bits of significand precision and keeps that scalar type through the model.
 
 ```lean
 abbrev TensorBinary128 :=
@@ -903,7 +1020,7 @@ typed training {src "TorchLeanExamples/Quickstart/TypedTraining.lean"}[code] imp
 for half squared error. The update preserves frozen state entries and rejects models with
 buffer-update hooks (including BatchNorm, whose running statistics need a separate update).
 
-This workflow runs through typed CPU operations. The chapter's imports bring in the configured
+This workflow runs through typed CPU operations. The file's imports bring in the configured
 scalar instances, but `nn.sgdStep` needs `TorchLean.NN.Sequential.Training`. A supervised loop can
 import `TorchLean.NN.Trainer.Session` and open
 `trainer.openTyped (α := TensorBinary128) (initialState? := some state)` to preserve typed samples,
@@ -925,10 +1042,9 @@ computation stays finite.
 
 # Mixed Element Types
 
-`Tensor α s` is homogeneous: it can't place an `Int`, FP16 value, and FP32 value in different
-entries. But different tensors may have different element types, and pointwise `+`, `-`, `*`, `/`,
-`Tensor.add`, `Tensor.sub`, `Tensor.mul`, and `Tensor.div` automatically choose the registered
-common type:
+A byte image and a floating-point correction can describe the same pixels. Each tensor has
+one scalar type, and pointwise arithmetic uses the registered common type when we combine
+two of them. For these bytes and offsets, that's `Float`.
 
 ```lean
 -- The mixed-scalar addition uses the supported
@@ -965,10 +1081,9 @@ numeric tensors.
 
 # Checked Shape Patterns
 
-The complete shape-pattern API works on the same ordinary `Tensor` type, and the chapter's imports
-include all of it. The pattern keywords are scoped syntax activated by `open TorchLean.Tensor`. The
-`expand` form is the einops `repeat` operation under a name that does not collide with Lean's
-`repeat`:
+Transpose a `[2, 3]` matrix and you get shape `[3, 2]`. A reshape can also give you
+`[3, 2]`, with the entries in a different order. Named patterns say where the axes go,
+and Lean checks the lengths. Open `TorchLean.Tensor` to use the syntax.
 
 ```lean
 -- Axis names describe rearrangement and contraction, and
@@ -1122,16 +1237,10 @@ their original boundaries from a single flattened buffer.
 
 # Tensors And Arrays
 
-TorchLean uses `Tensor` for numerical data. A length-$`n` value has type `Tensor α [n]`, including
-when `n` is computed at runtime, and since the shape already records its length, the value doesn't
-need a separate `Vector` wrapper. Arrays remain useful for JSON decoding and collections of
-heterogeneous records, while numerical algorithms consume tensors after decoding.
-
-Lists in types such as `Tensor α [batch, width]` are shape syntax. They also index dependent
-parameter packs whose tensors have different shapes.
-
-`Tensor.window` takes a one-dimensional tensor and constructs a fixed-length slice, filling
-positions beyond its end with the supplied padding value:
+For next-token prediction, the model expects a fixed number of context positions.
+A window at the end of the data may have fewer tokens, so we fill the remaining
+positions with an explicit pad value. `Tensor.window` makes the padding value an argument and
+keeps the requested length in the type.
 
 ```lean
 -- Both windows start at offset one, and the shorter source
@@ -1178,23 +1287,15 @@ mean.
 
 # Runtime Tensor Storage
 
-On the CPU, the tensor is also the native representation. Users write and receive `Tensor α shape`
-even though a CPU eager node internally stores `SomeTensor α` (which pairs one runtime shape with a
-`Tensor α shape`). Erasing the shape this way lets one autograd tape contain activations and
-gradients of different shapes in a single array. Recovering a typed tensor requires checking the
-stored shape before exposing the value.
+A small network can leave a matrix, a vector, and a scalar loss on the same autograd
+tape. If we're still recording, we only know which shapes are in that array as the
+operations run. Each CPU tape entry can keep a `SomeTensor α`, which pairs a runtime
+shape with a tensor of that shape. A typed read checks the stored shape.
 
-`TensorPack α shapes` solves a different problem. It's a statically heterogeneous tuple whose type
-keeps the full list of member shapes, and model parameters, gradients, and typed graph contexts use
-it when a fixed collection contains tensors of different shapes. It doesn't erase shapes, and it
-isn't an alternative input or output tensor type.
-
-For example, the two weights and two biases of a small MLP have four different positions in a known
-state layout, and a `TensorPack` can describe that whole layout statically. An eager tape, however,
-grows as operations execute and may contain a matrix, a vector, and a scalar loss. `SomeTensor`
-lets those entries share an array while retaining each entry's runtime shape. Both wrappers contain
-ordinary tensors. What differs is how much of the collection's structure the surrounding program
-knows before execution.
+Weights and biases have a different lifecycle. We know the shapes of all four parameter
+tensors of a two-layer MLP when we describe the model. `TensorPack α shapes` lets us keep
+that list of shapes in the type, so a reader can select a weight or bias with its
+particular tensor type.
 
 A model program does not pass those values around directly while it records a computation. It uses
 `Ops.Ref (m := m) (α := α) shape`, a shape-indexed handle owned by one session.
@@ -1212,9 +1313,10 @@ definition.
 
 # Linear Layers And Prefix Dimensions
 
-PyTorch's `Linear(in_features, out_features)` acts on the last axis {Informal.citep pytorch2019}[].
-TorchLean follows that useful convention while checking the complete map, and one layer constructor
-(with a prefix argument when needed) supports:
+A linear layer that maps two features to eight can run on one vector, a batch,
+or every token in a batch of sequences. PyTorch's linear layer works on the final
+axis {Informal.citep pytorch2019}[]. In TorchLean we can put that rule into the layer's type
+and keep the leading dimensions.
 
 ```
 -- The last axis changes width while every leading batch or
@@ -1301,24 +1403,10 @@ get the error when the model is defined, before initialization, data loading, or
 
 # Reshaping
 
-A reshape from `[2,3]` to `[6]` is permitted because both shapes contain six values, but it has to
-be written as an operation because the indexing interpretation changes. Conversely, reshaping
-`[2,3]` to `[2,4]` is impossible because the element counts differ.
-
-At the representation boundary, the layout convention matters. In row-major order:
-
-$$`\operatorname{flatIndex}(i,j)=3i+j`
-
-for a $`2\times 3` matrix (a column-major native library would use a different equation). Shape
-equality doesn't prove layout agreement, so backend capsules record layout requirements separately.
-
-# Proof Observation And Native Storage
-
-Proofs and CPU execution use the same tensor value. A proof observes the tensor through total
-coordinate lookup, while generated code traverses its contiguous storage. There's no
-materialization step between a proof tensor and a host tensor.
-
-For trusted memory, construction and reshape are separate:
+Take six readings from a sensor and group them into two rows of three. In the new shape,
+the coordinate $`(i,j)` refers to the old flat position $`3i+j`. A reshape checks that both
+shapes have the same number of entries and keeps their order. Here `Tensor.from` takes the
+initial length from the array, and `reshape [2, 3]` changes how we index and print the result.
 
 ```lean
 -- The flat array supplies six entries, and reshape groups
@@ -1360,8 +1448,8 @@ that wants to reconstruct those coordinates needs the dimensions separately.
 
 # Cost And Representation Notes
 
-Shape indices remove ambiguity, but they don't erase the cost of an operation. Here's the useful
-cost model:
+A reshape can keep the buffer. A map has to visit every entry and write the new values.
+That difference matters inside a training loop, where the same operations run on every step.
 
 :::table +header
 *
@@ -1392,16 +1480,11 @@ take $`O(mnk)` arithmetic operations while accumulating in different orders and 
 Float32 bits, which is why the graph and backend chapters keep the operation, provider, and
 numerical contract separate.
 
-# Comparing Tensor Performance
-
-TorchLean's checked representation doesn't make every scalar family equally fast, so compare the
-same operation, scalar type, input shape, and ownership conditions. Allocate inputs before timing,
-warm up each implementation, and check numerical results before you compare elapsed times. Record
-thread settings as well (a sequential baseline and a task-parallel contraction measure different
-execution policies).
-
-Measure end-to-end training separately. Graph construction, parameter initialization, autograd,
-and optimizer state can dominate even when individual tensor kernels are fast.
+To determine whether a tensor operation became faster, give both implementations the same inputs.
+Use the same shape, scalar type, and buffer ownership, and warm them up before timing. Check the
+outputs too, since a different accumulation order can be fast and give different bits. For an
+end-to-end training measurement, count the time spent on initialization, gradients, and the
+optimizer.
 
 # Tensor Inspection In The Lean Infoview
 
@@ -1422,24 +1505,21 @@ The first widget renders a tensor and the second summarizes its values. Move the
 
 # Shape Guarantees
 
-If a model accepts `Tensor α input`, Lean checks that every statically represented layer
-composes and that the final result has the declared output shape. It can also check that a parsed
-runtime payload has the length promised by its dimensions. That is not a small property: automated
-testing of production tensor frameworks keeps finding shape and type inconsistencies that survive
-review {Informal.citep nnsmith2023}[].
+A shape gives us some facts we can use immediately. The output width of one layer has to
+fit the input width of the next one. A loader can pass us a typed tensor once it has checked
+the number of entries. These are real checks, and production frameworks still find bugs
+in their shape and type rules {Informal.citep nnsmith2023}[].
 
-Shape safety does not, by itself, prove:
+The coordinates also have a meaning in the program. For example, a square weight matrix
+and its transpose have the same type. If the order matters, we can write a theorem about
+which source coordinate contributes to each result. Numerical error and convergence each
+need their own statements too.
 
-- that external memory uses the expected row-major layout
-- that two axes have the intended domain meaning
-- that a CUDA kernel wrote within bounds
-- that an arithmetic operation is numerically correct
-- that training converges.
+# Related Tensor Sources
 
-# Model Construction
-
-Layers and model architectures are built from these shape maps (the next chapter's subject), and
-the most useful sources to keep nearby are:
+One tensor carries its shape, and a linear layer changes only its last axis while preserving the
+prefix. Model construction composes that rule across a layer sequence. The relevant source files
+are:
 
 - {src "TorchLean/Tensor/README.md"}[TorchLean/Tensor/README.md] for the public tensor surface and
   its focused conversion, construction, printing, and operation modules

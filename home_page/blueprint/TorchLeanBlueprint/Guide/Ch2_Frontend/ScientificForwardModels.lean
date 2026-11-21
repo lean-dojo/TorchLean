@@ -41,6 +41,8 @@ open TorchLean
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 open FloatLib.Numerics (MathFunctions)
 
+/-! Guide page: differentiable scientific models and an inverse problem. -/
+
 #doc (Manual) "Differentiable Scientific Models" =>
 %%%
 tag := "scientific-forward-models"
@@ -48,8 +50,9 @@ tag := "scientific-forward-models"
 
 An exponential attenuation model gives us a gradient we can derive independently of autograd.
 That makes it a useful starting point for an inverse problem: we can check the update direction
-before asking an optimizer to fit observations. I'll start by varying one input, then let both
-factors in the exponent be unknown to see why correct derivatives alone cannot identify them.
+before asking an optimizer to fit observations. Varying one input isolates the chain rule; treating
+both factors in the exponent as unknown then exposes why correct derivatives alone cannot identify
+them.
 
 We evaluate the gradients, Jacobians, Hessians, and float counterexamples in named Lean blocks
 during the build. Closed-form calculations and separate PyTorch snippets provide comparison points.
@@ -289,8 +292,8 @@ and we can compose them and differentiate the result with the same transforms.
 
 `scale x c` is $`c\,x`, `shift x k` is $`x+k`, and `affine x c k` is $`c\,x+k`. Keeping `affine` as
 a named helper makes the formula readable. Its implementation composes `scale` and `shift`, so it
-isn't a fused primitive or a guarantee of one memory pass. Here's a short program that uses several
-primitives at once:
+isn't a fused primitive or a guarantee of one memory pass. The following program combines several
+primitives in one scalar objective:
 
 ```lean (name := sfmMixed)
 -- The mean contributes a factor of one third to each input
@@ -357,9 +360,10 @@ detached.
 
 # Inner Scaling And Derivatives
 
-{src "TorchLeanExamples/Transcendentals.lean"}[`exponential`] computes
-$`e^{\mathrm{scale}\,x}`. Changing `scale := -2` to `scale := -3` changes both the exponential's
-argument and the factor contributed by the chain rule:
+If I change the attenuation coefficient from `-2` to `-3`, how should the derivative
+with respect to the input change? The exponential changes value, and the chain rule
+contributes the new coefficient too. We can check both parts with the same function.
+{src "TorchLeanExamples/Transcendentals.lean"}[`exponential`]
 
 ```lean (name := sfmThree)
 -- Update the closed form when the inner coefficient
@@ -417,7 +421,7 @@ derivative of `exp` is a theorem about the operator table's `exp` arm, at every 
 In words, the theorem says two things: the map that multiplies each entry of a tangent by
 `Real.exp` of the input entry is the Fréchet derivative of the arm's forward map at `x`, and the
 arm's backward rule is the adjoint of that derivative for the Euclidean inner product of the
-tensors. Here's its axiom audit:
+tensors. Its axiom audit is:
 
 ```lean (name := sfmAxioms)
 -- Inspect the theorem dependencies separately from
@@ -849,7 +853,7 @@ the objective and optimizing it require derivatives with respect to different va
 - derivatives with respect to *parameters* drive the optimizer.
 
 The input-coordinate part is a function transform on a small map, which is what `jacfwd` and
-`hessian` above compute. Here's a residual you can check by hand. The transport equation
+`hessian` compute. The transport equation gives a residual that can be checked by hand:
 $`u_t+2u_x=0` has the travelling-wave solution $`u(x,t)=e^{x-2t}`, so the real input derivatives
 cancel exactly:
 

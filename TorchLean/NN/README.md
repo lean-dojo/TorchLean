@@ -40,8 +40,8 @@ The directories are topical: a runtime module, its specification and its theorem
 - Tools: [`Tactic/`](Tactic/README.md) (the `autograd`, `op_deriv` and `converges` tactics) and
   [`Widget/`](Widget/README.md) (infoview panels).
 
-Beside the directories sit 48 top-level files, such as `Trainer.lean`, `Tape.lean` and
-`StateSpace.lean` next to their directories, and single-file topics such as `Dynamics.lean`,
+Top-level modules include `Trainer.lean`, `Tape.lean` and `StateSpace.lean` next to their
+directories, and single-file topics such as `Dynamics.lean`,
 `VJPOp.lean`, `Json.lean`, `JAX.lean`, `MoE.lean` and `NormalCDF.lean`.
 
 ## Application API
@@ -175,7 +175,8 @@ Stateful objects use `state` to read their current tensors and `setState` to rep
 memory. `save` and `load` are reserved for checkpoints and external data, as in:
 
 ```lean
-let weights : Tensor Float [4, 8] ← Tensor.load "weights.npy"
+def weights : IO (Tensor Float [4, 8]) :=
+  Tensor.load "weights.npy"
 ```
 
 ### Models and modules
@@ -197,21 +198,31 @@ builders with `nn.Sequential![...]`, fix the seeds with `nn.build seed builder`,
 draw them. Combinators over built models (`nn.residual`, `nn.addBranches`, `nn.concatBranches`,
 `nn.mapLeading`) are plain functions on `nn.Sequential`.
 
-### Autograd
+### Direct autograd
 
 Use direct autograd when the goal is a derivative value rather than parameter updates, and choose
 by what owns the differentiable state:
 
 ```lean
-let (gradient, value) ← autograd.grad loss x (value := true)
+import TorchLean.NN.Autograd.Function
+import TorchLean.NN.Autograd.Model
+
+open TorchLean
+
+def lossGradient {σ : Shape} (loss : autograd.Function σ []) (x : Tensor Float σ) : IO Unit := do
+  let (gradient, value) ← autograd.grad loss x (value := true)
+  IO.println s!"value = {reprStr value}, gradient = {reprStr gradient}"
 ```
 
 uses a tensor function with no model parameters.
 
 ```lean
-let state := nn.initialState model
-let (gradient, lossValue) ←
-  autograd.model.grad model lossFn state input target (value := true)
+def modelGradient {σ τ υ : Shape} (model : nn.Sequential σ τ) (lossFn : autograd.model.Loss τ υ)
+    (input : Tensor Float σ) (target : Tensor Float υ) : IO Unit := do
+  let state := nn.initialState model
+  let (gradient, lossValue) ←
+    autograd.model.grad model lossFn state input target (value := true)
+  IO.println s!"loss = {reprStr lossValue}, gradient = {reprStr gradient}"
 ```
 
 differentiates a model loss once and returns the model-state gradient with its loss value.
@@ -250,13 +261,12 @@ Use `trainer.predict` before training and `trained.predict` after training. Give
 prediction literals their tensor type, for example
 `trained.predict ([0.25, -0.75] : Tensor Float [2])`. Tensor variables already carry their shape.
 
-The completed run is readable without positional tuples or implementation terms:
+The result exposes named fields:
 
 ```lean
-trained.report.loss.before
-trained.report.loss.after
-trained.report.steps
-trained.report.arithmetic
+def printReport (trained : Trainer.Result [2] [1]) : IO Unit := do
+  IO.println s!"loss {trained.report.loss.before} -> {trained.report.loss.after}"
+  IO.println s!"{trained.report.steps} steps, {reprStr trained.report.arithmetic}"
 ```
 
 ### Execution choices
@@ -269,13 +279,16 @@ accepted backend capsules.
 `Trainer.create` and in a stored `RunConfig`:
 
 ```lean
-let trainer :=
-  Trainer.create model
-    { objective := mse
-      arithmetic := .ieee
-      optimizer := optim.adam { lr := 0.001 } }
-let trained ← trainer.train data { steps := 200 }
-let prediction ← trained.predict input
+def run (model : nn.Sequential [2] [1]) (data : Trainer.Dataset [2] [1])
+    (input : Tensor Float [2]) : IO Unit := do
+  let trainer :=
+    Trainer.create model
+      { objective := mse
+        arithmetic := .ieee
+        optimizer := optim.adam { lr := 0.001 } }
+  let trained ← trainer.train data { steps := 200 }
+  let prediction ← trained.predict input
+  IO.println s!"prediction = {reprStr prediction}"
 ```
 
 These settings change how the same checked model runs. They don't create separate model types or
@@ -327,15 +340,15 @@ and scheduler settings start as `Float` too, so a wide scalar can't recover bits
 `nn.sgdStep` accepts a coefficient in `α` when the coefficient itself needs that precision. Typed
 results don't provide a verifier.
 
-On IEEE formats, `exp`, `log`, `log1p`, `expm1` and `Context.expMul` are FloatLib's correctly
-rounded functions. Exact comparisons without floating-point approximation decide the rounding of
-`tan`, `exp2`, `log2`, `log10`, `asinh`, `acosh` and `atanh` and of the pointwise `asin`, `acos`,
-`atan` and `atan2` (`TorchLean.Tensor.ConfiguredBinary.Elementary` and `InverseTrigonometric`). In
-an IEEE format, at a finite input in its domain with a finite result, each is the real function
-rounded once to nearest even (`TorchLean.Verify.RuntimeApprox.Elementary` and
-`InverseTrigonometric`). On other formats, `exp`, `log` and `Context.expMul` are deterministic
-approximations and `log1p` and `expm1` use compensated defaults. Those, and `sin`, `cos`, `sinh`,
-`cosh` and `tanh` in every format, carry no accuracy theorem.
+On IEEE formats, `exp`, `log`, `log1p`, `expm1`, `Context.expm1x` and `Context.expMul` are
+FloatLib's correctly rounded functions. Exact comparisons without floating-point approximation
+decide the rounding of `tan`, `exp2`, `log2`, `log10`, `asinh`, `acosh` and `atanh` and of the
+pointwise `asin`, `acos`, `atan` and `atan2` (`TorchLean.Tensor.ConfiguredBinary.Elementary` and
+`InverseTrigonometric`). In an IEEE format, at a finite input in its domain with a finite result,
+each is the real function rounded once to nearest even (`TorchLean.Verify.RuntimeApprox.Elementary`
+and `InverseTrigonometric`). On other formats, `exp`, `log` and `Context.expMul` are deterministic
+approximations, `log1p` and `expm1` use compensated defaults, and `expm1x` is `expm1 x - x`.
+Those, and `sin`, `cos`, `sinh`, `cosh` and `tanh` in every format, carry no accuracy theorem.
 
 The default safeguard `Context.defaultEpsilon` rounds `1/1000000` and falls back to the smallest
 positive subnormal when that rounds to zero. In a tiny format the fallback can be large, so choose
@@ -364,10 +377,13 @@ session advances its seeded random stream between forwards.
 ### Saving and restoring
 
 ```lean
-let trained ← trainer.train data { steps := 200 }
-trained.save "model.state"
-let state ← trained.state
-let restored ← trainer.load "model.state" data
+def saveAndRestore (trainer : Trainer [2] [1]) (data : Trainer.Dataset [2] [1]) : IO Unit := do
+  let trained ← trainer.train data { steps := 200 }
+  trained.save "model.state"
+  let state ← trained.state
+  IO.println s!"state = {reprStr state}"
+  let restored ← trainer.load "model.state" data
+  restored.printSummary
 ```
 
 `trained.state` reads a `TensorPack Float trained.stateShapes`, the layout of the trained model that
@@ -432,13 +448,16 @@ positive. `warmupCosine` starts at a positive first warm-up rate, `peak / warmup
 session:
 
 ```lean
-let session ← trainer.open (scheduler := some decay)
-for step in [0:steps] do
-  let loss ← session.step (sampleAt step) (loss := true)
-  if step % 100 = 0 then IO.println s!"step {step}: loss={loss}"
-let after ← session.eval data
-let trained ← session.finish { before, after }
-trained.save "model.state"
+def trainLoop (trainer : Trainer [2] [1]) (data : Trainer.Dataset [2] [1])
+    (sampleAt : Nat → Sample.Supervised Float [2] [1]) (steps : Nat) : IO Unit := do
+  let session ← trainer.open (scheduler := some decay)
+  let before ← session.eval data
+  for step in [0:steps] do
+    let loss ← session.step (sampleAt step) (loss := true)
+    if step % 100 = 0 then IO.println s!"step {step}: loss={loss}"
+  let after ← session.eval data
+  let trained ← session.finish { before, after }
+  trained.save "model.state"
 ```
 
 | Method | Meaning |
@@ -651,7 +670,7 @@ Tensor proofs and the shared list and real-function lemmas are in
 [TorchLean/Verify/RuntimeApprox](../Verify/RuntimeApprox/README.md), and ODE corridor proofs in
 [TorchLeanExamples/Verification/ODE](../../TorchLeanExamples/Verification/ODE/README.md).
 
-### Autograd
+### Autograd correctness
 
 `AdjointOp.lean` and `Tape/AdjointOp.lean` prove the adjointness law
 `⟪JVP(x, dx), δ⟫ = ⟪dx, VJP(x, δ)⟫` for selected operator specs, and `Tape/Graph.lean` proves
@@ -691,10 +710,11 @@ Analytic derivative facts sit under `FDeriv/`, `Softmax/`, `Attention/`, `Norm/`
 `Softmax/Correctness.lean` gives `Tensor.hasFDerivAt_softmax`, `FDerivOp.softmax`,
 `softmaxBackward_eq_fderiv` and the log-softmax analogues, and attention has
 `Attention.backprop_eq_fderiv`. For normalization, `LayerNorm.jvp_backward_adjoint` shows that the
-LayerNorm backward is adjoint to its JVP at every real `ε`, while the derivative theorems
-`fderiv_eq_jvp`, `adjoint_fderiv_eq_backward`, `BatchNorm.hasFDerivAt_forwardVec` and
-`BatchNorm.fderiv_forwardVec_eq_jvp` assume `0 < ε`. `Gradients/` holds smaller gradient facts for
-layers and activations.
+LayerNorm backward is adjoint to its JVP at every real `ε`, while its derivative theorems
+`fderiv_eq_jvp` and `adjoint_fderiv_eq_backward` assume `0 < ε`. `BatchNorm.hasFDerivAt_forwardVec`
+and `BatchNorm.fderiv_forwardVec_eq_jvp` assume that the spatial shape has a single position or
+that every channel has a nonzero sum of its variance and `ε`, which every `0 < ε` gives.
+`Gradients/` holds smaller gradient facts for layers and activations.
 
 ### Operators
 
@@ -705,6 +725,28 @@ derivatives of `pad` and `contract`. `Op/Pointwise.lean` has the derivatives of 
 operators and of binary arithmetic, `max` and `min` at every shape. `Op/BatchNorm.lean` and
 `Op/LayerNorm.lean` have the joint derivatives of `batchNormRunning` and `layerNorm`, and
 `Op/Softmax.lean` has the derivatives of `softmax` and `logSoftmax` along any axis.
+`Op/Complex.lean` proves that the pullback of `Op.complex f` is the adjoint of its derivative
+wherever `f` is complex differentiable at every entry, and gives each function a set on which it
+is (`ComplexFn.domain`): all of `ℂ` for `exp`, `expm1`, `sin`, `cos`, `sinh` and `cosh`, the
+points where `cos` and `cosh` are not zero for `tan` and `tanh`, and `ℂ` off the branch cut for
+the logarithms, roots and inverse functions: off `(-∞, 0]` for `log`, `sqrt` and `rsqrt`, off
+`(-∞, -1]` for `log1p`, off `(-∞, -1]` and `[1, ∞)` for `asin`, `acos` and `atanh`, off the points
+`y i` with `|y| ≥ 1` for `atan` and `asinh`, and off `(-∞, 1]` for `acosh`. It proves the same of
+`Op.complexPow` in both operands where every base entry is off `(-∞, 0]`, and in the exponent alone
+where each base or exponent entry is not zero, which includes the cut.
+`Op/ComplexRound.lean` states FloatLib's rounding at the two operators: in an IEEE configured
+format, at each entry whose argument is finite and not a point FloatLib's proofs leave out, each
+part of the result of `Op.complex f` is the part of FloatLib's exact result rounded once to nearest
+even (`Op.complex_forward_round`), and so is each part of `Op.complexPow` where FloatLib certifies
+the power (`Op.complexPow_forward_round`). Where FloatLib proves the exact result to be the value,
+that is `ComplexFn.value f z` or `z ^ w` rounded once (`Op.complex_forward_value`,
+`Op.complexPow_forward_value`). Off the branch cut that holds at every sign bit: FloatLib extends
+`asinh` from the closed first quadrant, and `acosh` and `acos` from the closed upper half-plane,
+by oddness and conjugation, and the principal expressions are odd and commute with conjugation off
+their cuts (`ComplexFn.value_asinh_neg`, `ComplexFn.value_asinh_conj`,
+`ComplexFn.value_acosh_conj` and `ComplexFn.value_acos_conj`; `asin z` is `-i asinh (i z)`,
+`ComplexFn.value_asin`). On the cut it holds where the sign bits select the side whose limit the
+principal expression is (`ConfiguredBinary.complexPrincipal`).
 
 ### Analysis, models and text
 
@@ -859,21 +901,9 @@ theorems and native execution evidence.
 
 ## Adding code
 
-Put a file in the topical directory of its main object, next to the runtime code and specs it
-talks about. Add a proof here when examples or checkers can reuse it. Other code goes elsewhere:
-
-- a runnable training script: `TorchLeanExamples`,
-- a one-off command test: `TorchLeanTest`,
-- a parsed artifact checker, a CLI, or a theorem about CROWN, rounding bounds or floating-point
-  execution: `TorchLean/Verify`,
-- a tensor or layer denotation, or a tensor fact: `TorchLean/Tensor`.
-
-Each theorem family you add gets a short module docstring that says:
-
-- what semantic object it defines or proves facts about, and what is proved,
-- whether the scalar world is exact `ℝ`, executable IEEE-style, `Float`, or another scalar model,
-- which runtime or external producer assumptions it leaves open,
-- which example or checker exercises the theorem, if any.
+Keep runtime definitions and their reusable proofs in the same topical directory. The
+[contributing guide](../../docs/CONTRIBUTING.md#module-boundaries) covers module placement,
+imports, proof style and documentation requirements.
 
 ## References
 

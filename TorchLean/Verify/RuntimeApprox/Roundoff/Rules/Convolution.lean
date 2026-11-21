@@ -8,7 +8,7 @@ module
 public import TorchLean.Tensor.Layers.Pooling
 public import TorchLean.Tensor.Window
 public meta import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension
+public import FloatLib.Tactic.Roundoff.Extension
 
 /-!
 # Convolution and pooling reads for `roundoff`

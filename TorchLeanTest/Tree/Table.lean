@@ -12,8 +12,8 @@ public import TorchLeanTest.Tree.Word
 /-!
 # Unary functions in kernels as checked tables
 
-The host checks build the tables of FloatLib's correctly rounded `exp`, `expMinus1`, `log` and
-`logPlus1` in the configured formats e4m3, e5m2, 12-bit, binary16 and bfloat16 and in the 8-bit
+The host checks build the tables of FloatLib's correctly rounded `exp`, `expm1`, `log` and
+`logp1` in the configured formats e4m3, e5m2, 12-bit, binary16 and bfloat16 and in the 8-bit
 formats without infinities e4m3fn and e4m3fnuz, of TorchLean's correctly rounded `tan`, negation,
 `0 - x`, the identity and a constant in the 8-bit formats, and of the reciprocal in e4m3 and
 e5m2. `Table.make` checks each table at every word, signed zeros, infinities and NaN payloads
@@ -61,14 +61,14 @@ section Functions
 variable {format : FloatFormat} {plan : Configured.StoragePlan format} {code : Type}
   [ExecFloat.ModelCodec plan (Model format) code]
 
-/-- FloatLib's correctly rounded `exp`, `expMinus1`, `log` and `logPlus1` in a configured format,
+/-- FloatLib's correctly rounded `exp`, `expm1`, `log` and `logp1` in a configured format,
 by name. -/
 def correctlyRounded : List (String × (ExecFloat (Configured.Family format code plan) →
     ExecFloat (Configured.Family format code plan))) :=
   [("exp", (ExecFloat.Binary.CorrectlyRounded.exp · {})),
-    ("expm1", (ExecFloat.Binary.CorrectlyRounded.expMinus1 · {})),
+    ("expm1", (ExecFloat.Binary.CorrectlyRounded.expm1 · {})),
     ("log", (ExecFloat.Binary.CorrectlyRounded.log · {})),
-    ("log1p", (ExecFloat.Binary.CorrectlyRounded.logPlus1 · {}))]
+    ("log1p", (ExecFloat.Binary.CorrectlyRounded.logp1 · {}))]
 
 /-- The functions of `correctlyRounded` and TorchLean's correctly rounded tangent. -/
 def withTan : List (String × (ExecFloat (Configured.Family format code plan) →
@@ -258,13 +258,13 @@ def run : IO Unit := do
   checkTables (α := ExecFloat.Binary 8 7) "bfloat16" correctlyRounded
   checkKernels (α := ExecFloat.Binary 5 6) "12-bit"
     (ExecFloat.Binary.CorrectlyRounded.exp · {})
-    (ExecFloat.Binary.CorrectlyRounded.logPlus1 · {})
+    (ExecFloat.Binary.CorrectlyRounded.logp1 · {})
   checkKernels (α := ExecFloat.Binary 5 10) "binary16"
     (ExecFloat.Binary.CorrectlyRounded.exp · {})
-    (ExecFloat.Binary.CorrectlyRounded.logPlus1 · {})
+    (ExecFloat.Binary.CorrectlyRounded.logp1 · {})
   checkKernels (α := ExecFloat.Binary 8 7) "bfloat16"
     (ExecFloat.Binary.CorrectlyRounded.exp · {})
-    (ExecFloat.Binary.CorrectlyRounded.logPlus1 · {})
+    (ExecFloat.Binary.CorrectlyRounded.logp1 · {})
   checkDepthZero
   checkRefusals
   checkTreeTables (α := ExecFloat.Binary 5 6) "12-bit" (ExecFloat.Binary.CorrectlyRounded.exp · {})
@@ -393,13 +393,13 @@ def runCUDA : IO Unit := do
   checkDeviceTables (α := ExecFloat.Binary 8 7) "bfloat16" correctlyRounded
   checkDeviceKernels (α := ExecFloat.Binary 5 6) "12-bit"
     (ExecFloat.Binary.CorrectlyRounded.exp · {})
-    (ExecFloat.Binary.CorrectlyRounded.logPlus1 · {})
+    (ExecFloat.Binary.CorrectlyRounded.logp1 · {})
   checkDeviceKernels (α := ExecFloat.Binary 5 10) "binary16"
     (ExecFloat.Binary.CorrectlyRounded.exp · {})
-    (ExecFloat.Binary.CorrectlyRounded.logPlus1 · {})
+    (ExecFloat.Binary.CorrectlyRounded.logp1 · {})
   checkDeviceKernels (α := ExecFloat.Binary 8 7) "bfloat16"
     (ExecFloat.Binary.CorrectlyRounded.exp · {})
-    (ExecFloat.Binary.CorrectlyRounded.logPlus1 · {})
+    (ExecFloat.Binary.CorrectlyRounded.logp1 · {})
   checkDeviceEdges (α := ExecFloat.Binary 5 6) "12-bit" (ExecFloat.Binary.CorrectlyRounded.exp · {})
   checkDeviceEdges (α := ExecFloat.Binary 5 10) "binary16"
     (ExecFloat.Binary.CorrectlyRounded.exp · {})

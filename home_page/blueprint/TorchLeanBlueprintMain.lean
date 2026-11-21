@@ -5,6 +5,8 @@ import TorchLeanBlueprint.Guide
 open Verso Doc
 open Verso.Genre Manual
 
+/-! The `blueprint-gen` executable, which renders the guide to HTML. -/
+
 /-- Keep numbered navigation at chapter and page level. Deeper headings stay within their page. -/
 private partial def readingLayout (part : Part Manual) (depth : Nat := 0) : Part Manual :=
   let metadata := part.metadata.getD {}

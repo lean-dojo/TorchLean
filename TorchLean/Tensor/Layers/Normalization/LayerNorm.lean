@@ -25,7 +25,8 @@ and most of them follow one pattern:
 LayerNorm and BatchNorm with batch statistics divide the centered data by
 `Tensor.normalizationScale` before squaring it, so no unscaled square is summed. LayerNorm then
 takes the variance of the scaled data, which centers it a second time, and simplifying that second
-centering changes floating-point execution.
+centering changes floating-point execution. Every standard deviation is the IEEE root of the sum as
+it stands, as in PyTorch, so a negative or NaN sum gives NaN.
 
 Reading the definitions as normalization, and their JVPs and VJPs as derivatives, needs a positive
 `epsilon` and the laws of real arithmetic, and the scalar-polymorphic definitions do not check
@@ -92,40 +93,23 @@ structure Normalization.Gradients (α : Type) [Storage α]
   biasGradient : Tensor α parameterShape
 deriving Repr
 
-/-- The normalization `y / sqrt (max (variance + stabilizer) 0) * gamma + beta`, with the root
-taken at the statistics' shape and broadcast to `s` along `statsDims`, and `gamma` and `beta`
-broadcast to `s` along `gammaDims` and `betaDims`. -/
+/-- The normalization `y / sqrt (variance + stabilizer) * gamma + beta`, with the root taken at the
+statistics' shape and broadcast to `s` along `statsDims`, and `gamma` and `beta` broadcast to `s`
+along `gammaDims` and `betaDims`. -/
 def Normalization.normalize {s sStats sGamma sBeta : Shape} (y : Tensor α s)
     (variance stabilizer : Tensor α sStats) (gamma : Tensor α sGamma) (beta : Tensor α sBeta)
     {statsDims : Fin sStats.rank → Fin s.rank} (hStats : sStats.BroadcastDims s statsDims)
     {gammaDims : Fin sGamma.rank → Fin s.rank} (hGamma : sGamma.BroadcastDims s gammaDims)
     {betaDims : Fin sBeta.rank → Fin s.rank} (hBeta : sBeta.BroadcastDims s betaDims) :
     Tensor α s :=
-  let std := Tensor.sqrt (variance + stabilizer) .clampNegative
+  let std := Tensor.sqrt (variance + stabilizer)
   ((y / Tensor.broadcast std s statsDims hStats) * Tensor.broadcast gamma s gammaDims hGamma) +
     Tensor.broadcast beta s betaDims hBeta
 
-omit [DecidableRel ((· > ·) : α → α → Prop)] in
-/-- `normalize` with the constant stabilizer `epsilon` is the normalization with the variance
-broadcast to `s` before `epsilon` is added and the root is taken. -/
-theorem Normalization.normalize_full {s sStats sGamma sBeta : Shape} (y : Tensor α s)
-    (variance : Tensor α sStats) (epsilon : α) (gamma : Tensor α sGamma) (beta : Tensor α sBeta)
-    {statsDims : Fin sStats.rank → Fin s.rank} (hStats : sStats.BroadcastDims s statsDims)
-    {gammaDims : Fin sGamma.rank → Fin s.rank} (hGamma : sGamma.BroadcastDims s gammaDims)
-    {betaDims : Fin sBeta.rank → Fin s.rank} (hBeta : sBeta.BroadcastDims s betaDims) :
-    normalize y variance (Tensor.full sStats epsilon) gamma beta hStats hGamma hBeta =
-      ((y / Tensor.sqrt (Tensor.broadcast variance s statsDims hStats + Tensor.full s epsilon)
-          .clampNegative) * Tensor.broadcast gamma s gammaDims hGamma) +
-        Tensor.broadcast beta s betaDims hBeta := by
-  apply Rep.ext
-  intro c
-  simp only [normalize, add_def, mul_def, div_def, zipWith_apply, broadcast_apply,
-    sqrt_clampNegative_apply, full_apply]
-
 /-- The rows of `x` normalized as `Tensor.layerNorm` and `Tensor.batchNorm` normalize a fiber, with
 the inverse standard deviation `1 / std / scale` of each row: the row less its mean, divided by
-`scale = Tensor.normalizationScale` of it and by `std = sqrt (max (m + epsilon / scale / scale) 0)`
-for the mean `m` of the squared scaled row, recentered first when `recenter`. The row mean sums
+`scale = Tensor.normalizationScale` of it and by `std = sqrt (m + epsilon / scale / scale)` for the
+mean `m` of the squared scaled row, recentered first when `recenter`. The row mean sums
 the raw row, so a finite row gives NaN when that sum or an entry less the mean overflows. -/
 def Normalization.normalizedRows {rows cols : Nat} (x : Tensor α [rows, cols]) (epsilon : α)
     (recenter : Bool) :
@@ -144,7 +128,7 @@ def Normalization.normalizedRows {rows cols : Nat} (x : Tensor α [rows, cols]) 
   let scaled := centered / spread scale
   let deviation := if recenter then scaled - spread (rowMean scaled) else scaled
   let meanSquare : Tensor α [rows] := rowMean (deviation * deviation)
-  let std := Tensor.sqrt (meanSquare + ((regularizer / scale) / scale)) .clampNegative
+  let std := Tensor.sqrt (meanSquare + ((regularizer / scale) / scale))
   (scaled / spread std, (Tensor.full _ 1 / std) / scale)
 
 

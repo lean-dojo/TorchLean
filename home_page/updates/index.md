@@ -2,17 +2,58 @@
 title: Updates
 ---
 
-<nav class="timeline-nav" aria-label="TorchLean update timeline">
-  <a href="#november-2026-proved-gradients">Proved gradients and trees</a>
-  <a href="#november-2026-operator-table">One operator table</a>
-  <a href="#october-2026-one-tape">One tape and MoE</a>
-  <a href="#october-2026-lean-435">Lean 4.35 and numerical fixes</a>
-  <a href="#october-2026-custom-computations">Custom computations</a>
-  <a href="#september-2026-libtorch">LibTorch backend</a>
-  <a href="#september-2026-floatlib">FloatLib and precision</a>
-</nav>
-
 <div class="updates-timeline">
+
+<article class="update-card" id="november-2026-lean-436" markdown="1">
+  <div class="update-date">November 2026</div>
+  <div class="update-body" markdown="1">
+
+## Lean 4.36 and broader Python graph import
+
+We moved to Lean 4.36 and FloatLib 4.1.0. Imported graphs can now retain supported branches
+and loops and record the order of a reduction. Captures from the previous wire format must
+be regenerated for operator-record version 5.
+
+- **Control flow.** Supported PyTorch structured control flow and JAX `lax` control flow can
+  stay in the captured IR and run on the supplied inputs. [Branches and loops]({{ '/examples/verify/#branches-and-loops' | relative_url }})
+- **Reduction order.** Store a left fold, blocked or pairwise sum, or an explicit
+  tree. The same four binary32 values now make a short example of why that choice
+  matters. [Choosing a reduction order]({{ '/examples/numerical-runtime/#choosing-a-reduction-order' | relative_url }})
+- **Linear algebra.** JAX capture handles Cholesky and its updates, triangular and
+  tridiagonal solves, Householder products, and LU-pivot permutations. The Lean library also
+  gives mathematical specifications and existence theorems for factorizations such as SVD
+  and real Schur. Connecting an imported computation to one of those specifications is a
+  separate proof. [Linear algebra]({{ '/examples/jaxpr/#linear-algebra' | relative_url }})
+- **More PyTorch operators.** Capture covers more indexing and sorting on integer and
+  Boolean tensors, transposed convolution, and graph-valued convolution weights and
+  normalization parameters. [PyTorch operator coverage](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/NN/PyTorch/README.md#captured-operators)
+
+PyTorch graphs can move and convert the four supported float8 formats. JAX captures can also
+compute over those formats for supported operations. JAX complex captures keep paired real and
+imaginary components through supported FFTs and elementary functions. Special functions such as
+`igamma` and `betainc` have real-valued specifications and derivative proofs on stated domains.
+Those special functions have no binary execution rule, so a binary reference run refuses a step
+that reaches one.
+The [operator table]({{ '/blueprint/Semantics-and-Graphs/The-Operator-Table/' | relative_url }})
+shows which rules, CUDA entries, and certificates each operator has.
+
+At IEEE scalar types, LayerNorm, RMSNorm, GroupNorm, and BatchNorm use the raw square root in
+their normalization denominator. A negative argument therefore produces NaN, as in PyTorch.
+
+Policy KL divergence uses an `expm1x` formulation adapted from Section 4.1 of
+[Amos (2026)](https://arxiv.org/abs/2611.18511). Over $\mathbb{R}$, `klFromLogits` is proved equal
+to the usual categorical KL. Selected floating-point tests cover close policies, widely separated
+policies, and underflowing old-policy probabilities. The
+[implementation notes](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/NN/RL/PolicyGradient.lean)
+state its range caveats and remaining rounding limits. `klFromLogits` no longer takes an `epsilon`
+argument.
+
+The [numerical-runtime walkthrough]({{ '/examples/numerical-runtime/' | relative_url }}) explains
+which computations have roundoff bounds, their assumptions, and what happens when an analysis
+cannot produce a bound.
+
+  </div>
+</article>
 
 <article class="update-card" id="november-2026-proved-gradients" markdown="1">
   <div class="update-date">November 2026</div>
@@ -20,9 +61,9 @@ title: Updates
 
 ## Proved Operator Gradients and Recursion over Trees
 
-Over the reals, the operators with a fixed number of inputs have 166 value inputs, and the gradient
-of each has a certificate. At the points its hypotheses name, the stored backward is the adjoint of
-the Fréchet derivative of the forward in all the value inputs together. `cat` has
+Across the fixed-arity real-valued operators, TorchLean has gradient certificates for 166
+value-input positions. At every regular point covered by one of those certificates, the stored
+backward computes the adjoint of the forward derivative in its value inputs. `cat` has
 `cat_backward_eq_adjoint`, and at kinks, such as `relu` at zero or `max` at a tie, a `convention`
 certificate states the stored backward. The `op_deriv` tactic proves the same statement for a
 backward pass written by hand: `fun_prop` composes the pullbacks of the operators, and a wrong
@@ -77,10 +118,11 @@ eager PyTorch.
 
 Every operation node of `IR.Graph` holds a registered operator, and a node can have several outputs.
 The graph also records its inputs and constants. The `torch.export` capture and the Jaxpr importer
-write typed programs over these operators in one JSON format, `torchlean.ir`, which `IR.load`
-checks and loads. Interval propagation runs on the graphs. For scalars with lawful endpoint operations,
-`TorchLean.CROWN.Op.runIBP_encloses` proves that its boxes enclose a successful real run
-of the graph (not a native run). The [IR
+write typed programs over these operators in one JSON format, `torchlean.ir`, which `IR.loadFlow`
+checks and loads (`IR.load` handles artifacts without control flow). Interval propagation runs on
+the graphs.
+For scalars with lawful endpoint operations, `TorchLean.CROWN.Op.runIBP_encloses` proves that its
+boxes enclose a successful real run of the graph (not a native run). The [IR
 chapter]({{ '/blueprint/Semantics-and-Graphs/The-Canonical-Graph-IR/' | relative_url }}) explains
 the graph and how it runs.
 
@@ -128,8 +170,9 @@ JVPs, VJPs and HVPs.
 device and seed when we create a trainer:
 
 ```lean
-let trainer := Trainer.create model
-  { runtime with optimizer := optim.adam { lr := 0.03 }, objective := .mse }
+def trainer (model : nn.Sequential [2] [1]) (runtime : Trainer.RunConfig) : Trainer [2] [1] :=
+  Trainer.create model
+    { runtime with optimizer := optim.adam { lr := 0.03 }, objective := .mse }
 ```
 
 Learning-rate schedules live in `Trainer.Scheduler`, and training logs record the run's settings
@@ -220,6 +263,7 @@ We can give an ordinary Lean function a tensor and choose the device when we run
 
 ```lean
 import TorchLean.NN.Kernel.Function
+import TorchLean.Tensor.Literal
 open TorchLean
 
 def square := fun (x : Float32) => x * x
@@ -335,8 +379,8 @@ calculation. This uses software arithmetic on the typed CPU path. `trainer.openT
 the chosen scalar in supervised samples, predictions, loss, reports and checkpoints. These typed
 sessions run on CPU and reject custom backend profiles. Their results carry no lowered model, so
 `Result.verify` on them raises an error.
-Initialization and optimizer settings enter through `Float`. The ordinary trainer's `ieee`
-option selects binary32.
+Initialization and optimizer settings enter through `Float`. The ordinary trainer can select its
+binary32 path through the runtime configuration.
 
 The numerical proofs distinguish rounded trees from exact accumulation followed by one final
 rounding. Their intermediate values can differ, so an error theorem for one does not justify the

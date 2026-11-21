@@ -4,13 +4,8 @@ title: Tools
 
 # Tools
 
-We've also been building a couple of projects alongside TorchLean. One helps us
-understand where our programs spend their time; the other gives us room to explore
-larger experiments and formalize the ideas behind recent model papers.
-
 <div class="tool-directory">
   <article class="tool-card">
-    <p class="tool-kind">Profiling</p>
     <h2>LeanProfiler</h2>
     <p>
       When a Lean program gets slower, we want to know where the time went. With
@@ -20,10 +15,9 @@ larger experiments and formalize the ideas behind recent model papers.
       reports from two runs.
     </p>
     <p>
-      We use it around an existing TorchLean model runner, but it works with other
-      compiled Lean programs too. For asynchronous GPU work, we can wait for the
-      work to finish before closing a measurement. That measures the time until
-      completion; individual kernel timings need a device profiler.
+      We use it around the TorchLean model runner. If a GPU operation launches work
+      asynchronously, synchronize the device before ending the timed region to measure
+      when that work finishes.
     </p>
     <nav class="tool-links" aria-label="LeanProfiler links">
       <a href="https://github.com/lean-dojo/LeanProfiler">Repository</a>
@@ -33,7 +27,6 @@ larger experiments and formalize the ideas behind recent model papers.
   </article>
 
   <article class="tool-card">
-    <p class="tool-kind">Experiments and proofs</p>
     <h2>TorchLean Verified Examples</h2>
     <p>
       This is where we take a machine-learning question and spend more time with

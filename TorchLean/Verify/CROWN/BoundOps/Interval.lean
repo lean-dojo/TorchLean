@@ -6,7 +6,7 @@ Authors: TorchLean Team
 module
 
 public import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
-public import FloatLib.Floats.Interval.RealBounds
+public import FloatLib.Numerics.Enclosure.Interval.Bounds
 public import FloatLib.Floats.Interval.Rounders
 public import TorchLean.Verify.CROWN.BoundOps.Lawful
 public import TorchLean.Verify.CROWN.FlatBox.Transfer
@@ -85,7 +85,7 @@ theorem Graph.intervalMul_encloses {al au bl bu : α} {x y : ℝ}
     (hbl : value bl ≤ y) (hbu : y ≤ value bu) :
     value (Graph.intervalMul al au bl bu).1 ≤ x * y ∧
       x * y ≤ value (Graph.intervalMul al au bl bu).2 := by
-  have h := FloatLib.Floats.Interval.mul_bounds_Icc _ _ _ _ x y ⟨hal, hau⟩ ⟨hbl, hbu⟩
+  have h := FloatLib.Numerics.Interval.mul_bounds_Icc _ _ _ _ x y ⟨hal, hau⟩ ⟨hbl, hbu⟩
   simp only [Graph.intervalMul, LawfulBoundOps.toReal_minimum, LawfulBoundOps.toReal_maximum]
   exact ⟨(min_le_min
       (min_le_min (LawfulBoundOps.mulDown_le al bl) (LawfulBoundOps.mulDown_le al bu))
@@ -136,13 +136,13 @@ noncomputable instance instLawfulNonlinearBoundOpsReal : LawfulNonlinearBoundOps
         have hz : 0 < bLo ∨ bHi < 0 := by
           simpa using hAvoidsZero
         exact hz.elim Or.inr Or.inl
-      have hExact := FloatLib.Floats.Interval.div_bounds_Icc
+      have hExact := FloatLib.Numerics.Interval.div_bounds_Icc
         aLo aHi bLo bHi x y ⟨hxLo, hxHi⟩ ⟨hyLo, hyHi⟩ hside
       change
         min (min (aLo / bLo) (aLo / bHi)) (min (aHi / bLo) (aHi / bHi)) ≤ x / y ∧
           x / y ≤ max (max (aLo / bLo) (aLo / bHi)) (max (aHi / bLo) (aHi / bHi))
-      simpa only [Set.mem_Icc, FloatLib.Floats.Interval.minOfFour,
-        FloatLib.Floats.Interval.maxOfFour] using hExact
+      simpa only [Set.mem_Icc, FloatLib.Numerics.Interval.minOfFour,
+        FloatLib.Numerics.Interval.maxOfFour] using hExact
     next hIncludesZero => simp at hout
   expBounds_enclosure := by
     change UnaryEnclosure (α := ℝ) Real.exp (fun lo hi ↦ some (Real.exp lo, Real.exp hi))
@@ -218,12 +218,12 @@ down and the upper endpoint rounded up by `R`. -/
 /-- Outward-rounded endpoints enclose exact real arithmetic. The hypothesis puts `1` on the grid,
 so that the endpoint `1` means `1`. -/
 @[instance_reducible] noncomputable def LawfulBoundOps.outward (R : Rounder)
-    (hone : genericFormat β fexp 1) :
+    (hone : GenericRepresentable β fexp 1) :
     @LawfulBoundOps (NF β fexp rnd) _ _ (BoundOps.outward R) :=
   letI := BoundOps.outward (β := β) (fexp := fexp) (rnd := rnd) R
   { toReal := NF.val
     lt_iff _ _ := Iff.rfl
-    toReal_zero := round_preserves_generic _ _ generic_format_zero
+    toReal_zero := round_preserves_generic _ _ genericRepresentable_zero
     toReal_one := round_preserves_generic _ _ hone
     toReal_max _ _ := Monotone.map_max fun _ _ h => h
     toReal_min _ _ := Monotone.map_min fun _ _ h => h
@@ -263,7 +263,7 @@ down and the upper endpoint rounded up by `R`. -/
     fun p => (⟨R.down p.1⟩, ⟨R.up p.2⟩)
   layerNormAbsBound n := (NonlinearBoundOps.layerNormAbsBound (α := ℝ) n).map fun r => ⟨R.up r⟩
 
-private theorem unaryEnclosure_outward (R : Rounder) (hone : genericFormat β fexp 1)
+private theorem unaryEnclosure_outward (R : Rounder) (hone : GenericRepresentable β fexp 1)
     {f : ℝ → ℝ} {transfer : ℝ → ℝ → Option (ℝ × ℝ)} (h : UnaryEnclosure f transfer) :
     @UnaryEnclosure (NF β fexp rnd) _ _ (BoundOps.outward R) (LawfulBoundOps.outward R hone) f
       fun lo hi => (transfer lo.val hi.val).map fun p => (⟨R.down p.1⟩, ⟨R.up p.2⟩) := by
@@ -273,7 +273,7 @@ private theorem unaryEnclosure_outward (R : Rounder) (hone : genericFormat β fe
   have hx := h hp hlo hhi
   exact ⟨(R.down_le pLo).trans hx.1, hx.2.trans (R.le_up pHi)⟩
 
-private theorem binaryEnclosure_outward (R : Rounder) (hone : genericFormat β fexp 1)
+private theorem binaryEnclosure_outward (R : Rounder) (hone : GenericRepresentable β fexp 1)
     {f : ℝ → ℝ → ℝ} {transfer : ℝ → ℝ → ℝ → ℝ → Option (ℝ × ℝ)}
     (h : BinaryEnclosure f transfer) :
     @BinaryEnclosure (NF β fexp rnd) _ _ (BoundOps.outward R) (LawfulBoundOps.outward R hone) f
@@ -288,7 +288,7 @@ private theorem binaryEnclosure_outward (R : Rounder) (hone : genericFormat β f
 /-- If `1` is on the grid, the outward-rounded transfers satisfy `LawfulNonlinearBoundOps`:
 rounding lower endpoints down and upper endpoints up keeps every exact real enclosure an
 enclosure. -/
-theorem LawfulNonlinearBoundOps.outward (R : Rounder) (hone : genericFormat β fexp 1) :
+theorem LawfulNonlinearBoundOps.outward (R : Rounder) (hone : GenericRepresentable β fexp 1) :
     @LawfulNonlinearBoundOps (NF β fexp rnd) _ _ (BoundOps.outward R)
       (LawfulBoundOps.outward R hone) (NonlinearBoundOps.outward R) :=
   letI := BoundOps.outward (β := β) (fexp := fexp) (rnd := rnd) R

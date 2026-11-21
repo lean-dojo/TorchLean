@@ -9,6 +9,7 @@ module
 public import TorchLean.Tensor.Numeric.InverseTrig.Real
 public import TorchLean.Tensor.Context
 public import TorchLean.Tensor.Erf
+public import TorchLean.Tensor.Numeric.Frexp
 public import Mathlib.Analysis.SpecialFunctions.Arcosh
 public import Mathlib.Analysis.SpecialFunctions.Artanh
 public import Mathlib.Analysis.SpecialFunctions.Arsinh
@@ -24,8 +25,10 @@ without selecting the real scalar instance.
 
 Alongside them are the real integral roundings, `Rounding ℝ` (`⌊x⌋`, `⌈x⌉`,
 `FloatLib.Floats.Formats.Flocq.truncRound`, the nearest integer with ties to even, and C's `fmod`
-as `TorchLean.Context.fmodReal`), the real error function, `Erf ℝ` (`TorchLean.erf`), and the real
-cube root, `Cbrt ℝ` (`TorchLean.Context.cbrtReal`).
+as `TorchLean.Context.fmodReal`), the real error function, `Erf ℝ` (`TorchLean.erf`), the real
+cube root, `Cbrt ℝ` (`TorchLean.Context.cbrtReal`), the real mantissa and exponent, `Frexp ℝ`
+(`TorchLean.frexpMantissa` and `TorchLean.frexpExponent`, with `ldexp x n = x 2ⁿ`), and the exact
+fused multiply-add, `Fma ℝ`.
 -/
 
 @[expose] public section
@@ -62,10 +65,22 @@ noncomputable instance : Cbrt ℝ := ⟨Context.cbrtReal⟩
 noncomputable instance : Context ℝ :=
   { defaultEpsilon := 1e-6, decidableGT := Classical.decRel _, ratCast := Rat.cast,
     tan := Real.tan, exp2 := fun x => (2 : ℝ) ^ x, log2 := Real.logb 2, log10 := Real.logb 10,
-    asinh := Real.arsinh, acosh := Real.arcosh, atanh := Real.artanh }
+    asinh := Real.arsinh, acosh := Real.arcosh, atanh := Real.artanh,
+    expm1x := fun x => Real.exp x - 1 - x }
+
+/-- The real mantissa and exponent of `torch.frexp`, and `ldexp x n = x 2ⁿ`. -/
+noncomputable instance : Frexp ℝ where
+  frexp x := (frexpMantissa x, frexpExponent x)
+  ldexp x n := x * 2 ^ n
+
+/-- The real fused multiply-add, `x y + z` exactly. -/
+noncomputable instance : Fma ℝ := ⟨fun x y z => x * y + z⟩
 
 /-- The real dictionary divides by a count as the field divides by its cast. -/
 @[simp] theorem Context.divNat_real (x : ℝ) (n : Nat) : Context.divNat x n = x / n := rfl
+
+/-- The real dictionary's `expm1x` is `exp x - 1 - x`. -/
+@[simp] theorem Context.expm1x_real (x : ℝ) : Context.expm1x x = Real.exp x - 1 - x := rfl
 
 /-- The real dictionary is an unsupported quotient carrier, so it uses the ordinary operations. -/
 theorem Numeric.QuotientArithmetic.supported_real :

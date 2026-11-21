@@ -154,7 +154,7 @@ def opDerivEntryLemmas : Array Name :=
 `AutogradDeriv` rules of `autograd`, or a sign condition, also after the entries of tensor
 arithmetic in it are computed and each `a * a` in it is written `a ^ 2`, and then also after each
 sum of a tensor in it is written as the sum of its entries. -/
-macro "op_deriv_disch" : tactic => `(tactic| first
+macro (name := opDerivDisch) "op_deriv_disch" : tactic => `(tactic| first
   | assumption
   | (intros
      try simp only [WithLp.toLp_fst, WithLp.toLp_snd]

@@ -217,6 +217,9 @@ RULE_PATH_RE = re.compile(
 
 # `{src "path"}` and `{srcDir "path"}` (TorchLeanBlueprint/Roles.lean) link a file or a directory.
 VERSO_SOURCE_ROLE_RE = re.compile(r'\{(src|srcDir)[ \t]+"((?:[^"\\\n]|\\.)*)"[ \t]*\}')
+SITE_FIGURE_RE = re.compile(r"<figure\b.*?</figure>", flags=re.DOTALL)
+SITE_IMAGE_RE = re.compile(r"<img\b|!\[[^\]\n]*\]\(")
+SITE_CAPTION_RE = re.compile(r"<figcaption>\s*Figure (\d+)\.")
 
 
 @dataclass(frozen=True)
@@ -638,6 +641,27 @@ def _check_python_native_decide(path: pathlib.Path, text: str, findings: list[Fi
                 "`native_decide` is banned in TorchLean, including in generated Lean proofs.",
             )
         )
+
+
+def _check_site_figures(path: pathlib.Path, text: str, findings: list[Finding]) -> None:
+    """Require each image of a website page to be a figure captioned `Figure N.` in page order."""
+
+    figures = list(SITE_FIGURE_RE.finditer(text))
+    for m in SITE_IMAGE_RE.finditer(text):
+        if not any(f.start() <= m.start() < f.end() for f in figures):
+            line, col = _line_col(text, m.start())
+            findings.append(
+                Finding("ERROR", path, line, col,
+                        "put the image in a `<figure>` with a numbered `<figcaption>`.")
+            )
+    for number, m in enumerate(figures, start=1):
+        caption = SITE_CAPTION_RE.search(m.group(0))
+        if caption is None or int(caption.group(1)) != number:
+            line, col = _line_col(text, m.start())
+            findings.append(
+                Finding("ERROR", path, line, col,
+                        f"start this figure's `<figcaption>` with `Figure {number}.`.")
+            )
 
 
 def lint_repo() -> list[Finding]:
@@ -1135,6 +1159,10 @@ def lint_repo() -> list[Finding]:
             findings.append(Finding("ERROR", path, None, None, f"failed to read file: {e}"))
             continue
         _check_python_native_decide(path, text, findings)
+
+    site = _iter_source_files(REPO_ROOT / "home_page", ".md", exclude_dirs={"blueprint", "docs"})
+    for path in site:
+        _check_site_figures(path, path.read_text(encoding="utf-8"), findings)
 
     return findings
 

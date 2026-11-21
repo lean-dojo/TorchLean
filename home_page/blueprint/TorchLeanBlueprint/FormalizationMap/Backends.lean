@@ -23,19 +23,14 @@ open Informal
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
+/-! Theorem index: backend capsules, the contract check and training. -/
+
 #doc (Manual) "Backends and Training" =>
 
-Backend selection is a planning step over declared data. A capsule names the registered operator
-with its attributes, provider, device, trust level, reduction policy, and the evidence behind its
-four contract claims. The contract check turns a plan audit into an accept or reject decision under
-an assurance policy, and eager execution runs the accepted capsule with an implementation of the
-same identity. Nothing in this group proves a kernel correct: its nodes record what is checked and
-what is assumed.
-
-Selecting CUDA matmul, for example, involves a shape obligation, a row-major layout obligation, and
-numerical obligations for forward and backward. Acceptance explains why this provider is allowed to
-run, but the native result still depends on the implementation satisfying its recorded contract.
-The training and import nodes below describe how values reach that boundary.
+A matrix product in a graph can run through different implementations. Before CUDA can read
+its data, we have to check the shape and layout, and we need to know which arithmetic and
+backward rule we expect. The capsule entries show which checks admit a provider and which claims
+still rely on its implementation.
 
 :::group "backend_selection"
 Kernel contracts, providers, and dispatch.
@@ -53,12 +48,12 @@ builds its capsule for one operator.
 :::
 
 :::definition "backend_numerical_policy" (parent := "backend_selection") (lean := "TorchLean.Backend.NumericalPolicy")
-A capsule's numerical policy is its reduction order: `fixedLeft` for the left fold used by the
-canonical tensor semantics, `fixedLeftOrExact` for that fold unless the checked arithmetic selects
-exact replay, `implementationDefined` for native and library accumulations, or `notApplicable`.
-Numerical certificates read this field so that a fixed-left range trace isn't reused for an
-implementation-defined schedule. Rounding mode, subnormal handling, and multiply-add contraction
-aren't recorded.
+A capsule's numerical policy is its reduction order: `fixed order` for a `Tensor.ReduceOrder`, with
+`fixed .leftFold` the left fold used by the canonical tensor semantics, `fixedOrExact order` for
+that order unless the checked arithmetic selects exact replay, `implementationDefined` for native
+and library accumulations, or `notApplicable`. Numerical certificates read this field so that a
+fixed-left range trace isn't reused for an implementation-defined schedule. Rounding mode,
+subnormal handling, and multiply-add contraction aren't recorded.
 
 Even for the same matrix dimensions the distinction matters: changing the accumulation tree changes
 the sequence of rounded additions. A shape proof can't substitute for the missing numerical-policy
@@ -269,8 +264,9 @@ a wrong or missing declaration.
 :::
 
 :::proof "pytorch_graph_import_declared"
-`TorchLean.IR.load_eq_ok` gives the successful `TorchLean.IR.Program.checkDeclared`, and
-`TorchLean.IR.Program.checkDeclared_ok` turns it into the property of each declared value.
+`TorchLean.IR.load_eq_ok` gives the successful `TorchLean.IR.checkDeclared` of the program as
+its one block, and `TorchLean.IR.checkDeclared_ok` turns it into the property of each declared
+value.
 :::
 
 :::definition "pytorch_state_import" (parent := "external_graph_bridges") (lean := "TorchLean.PyTorch.state")

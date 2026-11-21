@@ -7,9 +7,8 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.NN.Json
-public import TorchLean.NN.IR.Program
+public import TorchLean.NN.IR.Flow
 import all Lean.Data.Json.Basic
-import Std.Data.TreeMap.Raw.Lemmas
 import all Lean.Data.Json.FromToJson.Basic
 
 /-!
@@ -23,7 +22,7 @@ or null per step. A step has one key naming its form. It is `{"input": {"index":
 `{"const": P}`, `{"op": {"record": R, "inputs": [[0, 0], [1, 0]]}}`, `{"cast": {"rounding":
 "nearestEven", "source": [0, 0], "port": P}}` or `{"call": {"name": N, "inputs": [[0, 0]],
 "signature": [T], "port": P}}`. The record `R` is the operator's wire record (`Op.encode`) as
-`ofOpRecord` writes it, `{"version": 3, "tag": ..., "fields": [...]}` with the wire version
+`ofOpRecord` writes it, `{"version": 5, "tag": ..., "fields": [...]}` with the wire version
 `Op.Wire.formatVersion`. A declared type `T` is `{"port": P, "scalar": D}`. A port is
 `{"value": [2, 3]}` (or `frozen`, `detached`, `bool`) with its shape,
 `{"index": {"bounds": [4], "shape": [2]}}` or `{"integer": {"signed": true, "width": 32,
@@ -41,19 +40,47 @@ so printing and parsing text lie outside them. `Artifact.load` checks an artifac
 and builds its payload: the constants from their words (`Typed.decode`), the custom programs and
 calls from a registry (`Program.Env`). `Artifact.load_ok` proves that the program of an artifact it
 accepts passes `Program.check` and its payload `Payload.check`.
+
+An artifact with control flow (`FlowArtifact`) is a flow (`IR.Flow`) of artifacts with the fuel of
+its loops: `{"format": "torchlean.ir", "version": 1, "fuel": 64, "flow": F}`, with the flow version
+`Flow.formatVersion`. A flow `F` is an array of its form's name and its parts: `["block", A]` with
+an artifact `A` as above, `["skip"]`, `["seq", F, G]`, `["cond", F, ...]`, `["scan", 3, F]` and
+`["while", T, B]`. An artifact without control flow keeps the JSON above. `FlowArtifact.ofJson`
+checks the format name and the flow version, and `FlowArtifact.ofJson_toJson` proves that
+decoding the JSON of any artifact with control flow returns it. `FlowArtifact.load` loads every
+block with `Artifact.load`, and `FlowArtifact.load_ok` proves the facts of `Artifact.load_ok` for
+each block it returns.
 -/
 
 @[expose] public section
 
 open Lean TorchLean.Json
+open TorchLean.Tensor (ReduceOrder)
+open FloatLib.Numerics (ReductionTree)
 
 namespace TorchLean.Json
+
+/-- The tree of a reduction order from `null` (the start value), an index (that entry) or a pair
+`[left, right]` of trees. -/
+def orderTree : Json → Except String (ReductionTree (Option Nat))
+  | .null => return .leaf none
+  | .arr ⟨[left, right]⟩ => return .node (← orderTree left) (← orderTree right)
+  | .arr _ => throw "IR import: a reduction tree node has two entries"
+  | json => return .leaf (some (← nat "op field.order.tree" json))
+
+/-- The JSON `orderTree` reads for a tree. -/
+def ofOrderTree : ReductionTree (Option Nat) → Json
+  | .leaf none => Json.null
+  | .leaf (some i) => toJson i
+  | .node left right => Json.arr #[ofOrderTree left, ofOrderTree right]
 
 /-- One field of a registered operator's codec record, from an object with exactly one key, the
 field's form: `{"shape": [2, 3]}`, `{"shapes": [[2], []]}`, `{"nat": 1}`, `{"nats": [0, 2]}`,
 `{"pairs": [[0, 1]]}`, `{"bool": true}`, `{"mask": null}` or `{"mask": [true, false]}`,
-`{"name": "relu"}`, and `{"element": "scalar"}`, `{"element": "bool"}` or
-`{"element": {"integer": {"signed": true, "width": 32}}}`. -/
+`{"name": "relu"}`, `{"element": "scalar"}`, `{"element": "bool"}` or
+`{"element": {"integer": {"signed": true, "width": 32}}}`, and `{"order": "leftFold"}`,
+`{"order": "pairwise"}`, `{"order": {"blocked": 4}}` or `{"order": {"tree": [[null, 0], 1]}}`
+(`orderTree`). -/
 def opField (json : Json) : Except String Op.Field := do
   let [(form, value)] := (← object "op field" json).toList
     | throw s!"IR import: an operator field has exactly one key, its form, not {json.compress}"
@@ -89,6 +116,18 @@ def opField (json : Json) : Except String Op.Field := do
             (← field "op field.element" "integer" integer)
           return .element (.integer (← boolField "op field.element.integer" "signed" word)
             (← natField "op field.element.integer" "width" word))
+  | "order" =>
+      match value with
+      | .str "leftFold" => return .order .leftFold
+      | .str "pairwise" => return .order .pairwise
+      | .str name => throw s!"IR import: a reduction order of unknown form {name}"
+      | _ =>
+          let [(kind, inner)] := (← object "op field.order" value).toList
+            | throw s!"IR import: a reduction order has one key, its form, not {value.compress}"
+          match kind with
+          | "blocked" => return .order (.blocked (← nat "op field.order" inner))
+          | "tree" => return .order (.ofTree (← orderTree inner))
+          | kind => throw s!"IR import: a reduction order of unknown form {kind}"
   | form => throw s!"IR import: an operator field of unknown form {form}"
 
 /-- The object `opField` reads for a field. -/
@@ -106,8 +145,12 @@ def ofOpField : Op.Field → Json
   | .element .bool => Json.mkObj [("element", "bool")]
   | .element (.integer signed width) => Json.mkObj [("element", Json.mkObj [("integer",
       Json.mkObj [("signed", toJson signed), ("width", toJson width)])])]
+  | .order .leftFold => Json.mkObj [("order", "leftFold")]
+  | .order .pairwise => Json.mkObj [("order", "pairwise")]
+  | .order (.blocked width) => Json.mkObj [("order", Json.mkObj [("blocked", toJson width)])]
+  | .order (.ofTree tree) => Json.mkObj [("order", Json.mkObj [("tree", ofOrderTree tree)])]
 
-/-- A registered operator's codec record, `{"version": 3, "tag": "argmax", "fields": [...]}`. -/
+/-- A registered operator's codec record, `{"version": 5, "tag": "argmax", "fields": [...]}`. -/
 def opRecord (json : Json) : Except String Op.Wire := do
   let o ← object "op" json
   let version ← nat "op.version" (← field "op" "version" o)
@@ -224,6 +267,40 @@ theorem opField_element (e : Op.Element) :
       simp only [ofOpField, Json.mkObj, object, toList_ofList_singleton, bind, Except.bind]
       rfl
 
+/-- The tree of a reduction order reads back. -/
+theorem orderTree_ofOrderTree (t : ReductionTree (Option Nat)) :
+    orderTree (ofOrderTree t) = .ok t := by
+  induction t with
+  | leaf i =>
+      cases i with
+      | none => rfl
+      | some i =>
+          have h : toJson i = Json.num (JsonNumber.fromNat i) := rfl
+          rw [ofOrderTree, h, orderTree]
+          · rw [← h, nat_toJson]
+            rfl
+          all_goals simp
+  | node l r hl hr =>
+      rw [ofOrderTree, orderTree, hl, hr]
+      rfl
+
+/-- An order field reads back. -/
+theorem opField_order (order : ReduceOrder) :
+    opField (ofOpField (.order order)) = .ok (.order order) := by
+  unfold opField
+  cases order with
+  | blocked width =>
+      simp only [ofOpField, Json.mkObj, object, toList_ofList_singleton, bind, Except.bind]
+      rw [nat_toJson]
+      rfl
+  | ofTree t =>
+      simp only [ofOpField, Json.mkObj, object, toList_ofList_singleton, bind, Except.bind]
+      rw [orderTree_ofOrderTree]
+      rfl
+  | _ =>
+      simp only [ofOpField, Json.mkObj, object, toList_ofList_singleton, bind, Except.bind]
+      rfl
+
 /-- Every operator field reads back from the JSON `ofOpField` writes. -/
 theorem opField_ofOpField (f : Op.Field) : opField (ofOpField f) = .ok f := by
   cases f with
@@ -239,6 +316,7 @@ theorem opField_ofOpField (f : Op.Field) : opField (ofOpField f) = .ok f := by
       | some a => exact opField_maskSome a
   | name s => exact opField_name s
   | element e => exact opField_element e
+  | order o => exact opField_order o
 
 /-- Every wire record reads back from the JSON `ofOpRecord` writes. -/
 theorem opRecord_ofOpRecord (w : Op.Wire) : opRecord (ofOpRecord w) = .ok w := by
@@ -759,5 +837,151 @@ theorem Artifact.load_ok {R : Program.Machine} {env : Program.Env R} {a : Artifa
     exact ⟨rfl, hc, hP⟩
   · obtain ⟨_, h, -⟩ := bind_eq_ok.1 h
     cases h
+
+/-- The version of the flow wire format (`FlowArtifact`), which `FlowArtifact.ofJson` requires. -/
+def Flow.formatVersion : Nat := 1
+
+mutual
+
+/-- The JSON of a flow, each block `b` as `block b`: `["block", B]`, `["skip"]`, `["seq", F, G]`,
+`["cond", F, ...]` with one flow per branch, `["scan", n, F]` and `["while", T, F]`. -/
+def Flow.toJson {β : Type} (block : β → Json) : Flow β → Json
+  | .block b => .arr ⟨[.str "block", block b]⟩
+  | .skip => .arr ⟨[.str "skip"]⟩
+  | .seq f g => .arr ⟨[.str "seq", Flow.toJson block f, Flow.toJson block g]⟩
+  | .cond fs => .arr ⟨.str "cond" :: Flow.branchesJson block fs⟩
+  | .scan n body => .arr ⟨[.str "scan", Lean.toJson n, Flow.toJson block body]⟩
+  | .whileLoop test body =>
+      .arr ⟨[.str "while", Flow.toJson block test, Flow.toJson block body]⟩
+
+/-- The JSON of each branch of a `cond`. -/
+def Flow.branchesJson {β : Type} (block : β → Json) : List (Flow β) → List Json
+  | [] => []
+  | f :: fs => Flow.toJson block f :: Flow.branchesJson block fs
+
+end
+
+mutual
+
+/-- The flow of the JSON `Flow.toJson` writes, each block read by `block`. -/
+def Flow.ofJson {β : Type} (block : Json → Except String β) : Json → Except String (Flow β)
+  | .arr ⟨[.str "block", b]⟩ => do pure (.block (← block b))
+  | .arr ⟨[.str "skip"]⟩ => pure .skip
+  | .arr ⟨[.str "seq", f, g]⟩ => do pure (.seq (← Flow.ofJson block f) (← Flow.ofJson block g))
+  | .arr ⟨.str "cond" :: fs⟩ => do pure (.cond (← Flow.ofBranchesJson block fs))
+  | .arr ⟨[.str "scan", n, body]⟩ => do
+      pure (.scan (← nat "flow.scan" n) (← Flow.ofJson block body))
+  | .arr ⟨[.str "while", test, body]⟩ => do
+      pure (.whileLoop (← Flow.ofJson block test) (← Flow.ofJson block body))
+  | _ => throw "IR import: a flow is an array of its form's name and its parts"
+termination_by structural json => json
+
+/-- The branches of a `cond` from their JSON. -/
+def Flow.ofBranchesJson {β : Type} (block : Json → Except String β) :
+    List Json → Except String (List (Flow β))
+  | [] => pure []
+  | f :: fs => do pure ((← Flow.ofJson block f) :: (← Flow.ofBranchesJson block fs))
+termination_by structural fs => fs
+
+end
+
+mutual
+
+/-- Decoding the JSON of a flow returns it, where decoding the JSON of each block returns it. -/
+theorem Flow.ofJson_toJson {β : Type} {block : β → Json} {read : Json → Except String β}
+    (h : ∀ b, read (block b) = .ok b) : ∀ f : Flow β, Flow.ofJson read (f.toJson block) = .ok f
+  | .block b => by simp [Flow.toJson, Flow.ofJson, h, bind, Except.bind, pure, Except.pure]
+  | .skip => rfl
+  | .seq f g => by
+      simp [Flow.toJson, Flow.ofJson, Flow.ofJson_toJson h f, Flow.ofJson_toJson h g, bind,
+        Except.bind, pure, Except.pure]
+  | .cond fs => by
+      simp [Flow.toJson, Flow.ofJson, Flow.ofBranchesJson_branchesJson h fs, bind, Except.bind,
+        pure, Except.pure]
+  | .scan n body => by
+      simp [Flow.toJson, Flow.ofJson, Flow.ofJson_toJson h body, nat_toJson, bind, Except.bind,
+        pure, Except.pure]
+  | .whileLoop test body => by
+      simp [Flow.toJson, Flow.ofJson, Flow.ofJson_toJson h test, Flow.ofJson_toJson h body, bind,
+        Except.bind, pure, Except.pure]
+
+/-- Decoding the JSON of a `cond`'s branches returns them. -/
+theorem Flow.ofBranchesJson_branchesJson {β : Type} {block : β → Json}
+    {read : Json → Except String β} (h : ∀ b, read (block b) = .ok b) :
+    ∀ fs : List (Flow β), Flow.ofBranchesJson read (Flow.branchesJson block fs) = .ok fs
+  | [] => rfl
+  | f :: fs => by
+      simp [Flow.branchesJson, Flow.ofBranchesJson, Flow.ofJson_toJson h f,
+        Flow.ofBranchesJson_branchesJson h fs, bind, Except.bind, pure, Except.pure]
+
+end
+
+/-- A typed program with branches and loops: a flow (`IR.Flow`) of artifacts, each run on the
+state as its arguments, and the fuel of its loops, the most iterations each `whileLoop` runs each
+time it is entered (`Flow.eval`). -/
+structure FlowArtifact where
+  /-- The flow of artifacts. -/
+  flow : Flow Artifact
+  /-- The fuel of its loops. -/
+  fuel : Nat
+
+/-- The JSON of a flow artifact: `{"format": "torchlean.ir", "version": 1, "fuel": n,
+"flow": F}`, with the flow version `Flow.formatVersion` and each block of `F` an artifact's JSON
+(`Artifact.toJson`). -/
+def FlowArtifact.toJson (a : FlowArtifact) : Json :=
+  Json.mkObj [("format", Json.str formatName), ("version", Lean.toJson Flow.formatVersion),
+    ("fuel", Lean.toJson a.fuel), ("flow", a.flow.toJson Artifact.toJson)]
+
+/-- The flow artifact of the JSON `FlowArtifact.toJson` writes, of flow version
+`Flow.formatVersion` only. Decoding is structural, as for `Artifact.ofJson`. -/
+def FlowArtifact.ofJson (json : Json) : Except String FlowArtifact := do
+  let o ← exactObject "artifact" ["format", "version", "fuel", "flow"] json
+  let name ← string "artifact.format" (← field "artifact" "format" o)
+  unless name = formatName do throw s!"IR import: format {name}, not {formatName}"
+  let version ← nat "artifact.version" (← field "artifact" "version" o)
+  unless version = Flow.formatVersion do
+    throw s!"IR import: flow version {version}, not {Flow.formatVersion}"
+  let fuel ← nat "artifact.fuel" (← field "artifact" "fuel" o)
+  pure ⟨← Flow.ofJson Artifact.ofJson (← field "artifact" "flow" o), fuel⟩
+
+/-- Decoding the JSON of any flow artifact returns it. -/
+theorem FlowArtifact.ofJson_toJson (a : FlowArtifact) : FlowArtifact.ofJson a.toJson = .ok a := by
+  rcases a with ⟨flow, fuel⟩
+  have hf : field "artifact" "format" (Std.TreeMap.Raw.ofList [("format", Json.str formatName),
+      ("version", Lean.toJson Flow.formatVersion), ("fuel", Lean.toJson fuel),
+      ("flow", flow.toJson Artifact.toJson)] compare) = .ok (Json.str formatName) :=
+    field_ofList (by simp) (by simp)
+  have hv : field "artifact" "version" (Std.TreeMap.Raw.ofList [("format", Json.str formatName),
+      ("version", Lean.toJson Flow.formatVersion), ("fuel", Lean.toJson fuel),
+      ("flow", flow.toJson Artifact.toJson)] compare) = .ok (Lean.toJson Flow.formatVersion) :=
+    field_ofList (by simp) (by simp)
+  have hu : field "artifact" "fuel" (Std.TreeMap.Raw.ofList [("format", Json.str formatName),
+      ("version", Lean.toJson Flow.formatVersion), ("fuel", Lean.toJson fuel),
+      ("flow", flow.toJson Artifact.toJson)] compare) = .ok (Lean.toJson fuel) :=
+    field_ofList (by simp) (by simp)
+  have hl : field "artifact" "flow" (Std.TreeMap.Raw.ofList [("format", Json.str formatName),
+      ("version", Lean.toJson Flow.formatVersion), ("fuel", Lean.toJson fuel),
+      ("flow", flow.toJson Artifact.toJson)] compare) = .ok (flow.toJson Artifact.toJson) :=
+    field_ofList (by simp) (by simp)
+  simp (disch := simp) only [FlowArtifact.toJson, FlowArtifact.ofJson, Json.mkObj,
+    exactObject_ofList, bind, Except.bind, hf, hv, hu, hl, string, nat_toJson,
+    Flow.ofJson_toJson Artifact.ofJson_toJson]
+  rfl
+
+/-- The flow of a flow artifact's programs and payloads under `R`, each block loaded by
+`Artifact.load` with the custom operations and calls of `env`, in order. -/
+def FlowArtifact.load (R : Program.Machine) (env : Program.Env R) (a : FlowArtifact) :
+    Except String (Flow (Program × Program.Payload R)) :=
+  a.flow.mapM (Artifact.load R env)
+
+/-- Each block of the flow that `FlowArtifact.load` returns is a block's program, which passes
+`Program.check R`, with a payload that passes `Payload.check` on it. -/
+theorem FlowArtifact.load_ok {R : Program.Machine} {env : Program.Env R} {a : FlowArtifact}
+    {flow : Flow (Program × Program.Payload R)} (h : a.load R env = .ok flow) :
+    ∀ b ∈ flow.blocks, ∃ c ∈ a.flow.blocks, b.1 = c.program ∧ b.1.check R = .ok () ∧
+      b.2.check b.1 = .ok () := by
+  intro b hb
+  obtain ⟨c, hc, hl⟩ := Flow.mapM_blocks h b hb
+  exact ⟨c, hc, Artifact.load_ok hl⟩
 
 end TorchLean.IR

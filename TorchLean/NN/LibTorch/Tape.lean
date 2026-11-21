@@ -234,14 +234,10 @@ only for node ids selected by the caller.
 /-- Device gradients retained for selected tape node ids. -/
 abbrev SparseGradMap := Std.HashMap Nat SomeBuffer
 
-/-- Sequence a native buffer release inside `IO`. -/
-def releaseSparseBuffer (b : Buffer) : IO Unit := do
-  discard <| Buffer.releaseIO b
-
 /-- Release every buffer owned by a sparse gradient map. -/
 def releaseSparseGrads (grads : SparseGradMap) : IO Unit := do
   for (_id, grad) in grads.toList do
-    releaseSparseBuffer grad.buf
+    Buffer.release grad.buf
 
 /--
 Insert or accumulate an owned VJP contribution into the sparse gradient map.
@@ -254,20 +250,20 @@ def addSparseGrad (t : Tape SomeBuffer) (gradsRef : IO.Ref SparseGradMap)
   let node ← match t.getNode? id with
     | some node => pure node
     | none =>
-        releaseSparseBuffer g.buf
+        Buffer.release g.buf
         throw <| IO.userError "autograd: invalid parent id during sparse CUDA backward"
   if !node.requiresGrad then
-    releaseSparseBuffer g.buf
+    Buffer.release g.buf
   else if _h : g.s = node.value.s then
     match SomeBuffer.checkDtype g node.value with
     | .ok () => pure ()
     | .error message =>
-        releaseSparseBuffer g.buf
+        Buffer.release g.buf
         throw <| IO.userError message
     let contribution ← match SomeBuffer.validate { s := node.value.s, buf := g.buf } with
       | .ok contribution => pure contribution
       | .error msg =>
-          releaseSparseBuffer g.buf
+          Buffer.release g.buf
           throw <| IO.userError msg
     let grads ← gradsRef.get
     match grads.get? id with
@@ -284,16 +280,16 @@ def addSparseGrad (t : Tape SomeBuffer) (gradsRef : IO.Ref SparseGradMap)
           let summed ← match SomeBuffer.add old' contribution with
             | .ok summed => pure summed
             | .error msg =>
-                releaseSparseBuffer contribution.buf
+                Buffer.release contribution.buf
                 throw <| IO.userError msg
-          releaseSparseBuffer old'.buf
+          Buffer.release old'.buf
           gradsRef.set (grads.insert id summed)
-          releaseSparseBuffer contribution.buf
+          Buffer.release contribution.buf
         else
-          releaseSparseBuffer contribution.buf
+          Buffer.release contribution.buf
           throw <| IO.userError "autograd: sparse CUDA gradient shape mismatch"
   else
-    releaseSparseBuffer g.buf
+    Buffer.release g.buf
     throw <| IO.userError "autograd: sparse CUDA gradient contribution has wrong shape"
 
 /--
@@ -308,23 +304,23 @@ def backwardSparse (t : Tape SomeBuffer) (outId : Nat) (seed : SomeBuffer)
   let outNode ← match t.getNode? outId with
     | some node => pure node
     | none =>
-        releaseSparseBuffer seed.buf
+        Buffer.release seed.buf
         throw <| IO.userError "autograd: invalid output id"
   if _h : seed.s = outNode.value.s then
     match SomeBuffer.checkDtype seed outNode.value with
     | .ok () => pure ()
     | .error message =>
-        releaseSparseBuffer seed.buf
+        Buffer.release seed.buf
         throw <| IO.userError message
     let _ ← match SomeBuffer.validate outNode.value with
       | .ok value => pure value
       | .error msg =>
-          releaseSparseBuffer seed.buf
+          Buffer.release seed.buf
           throw <| IO.userError msg
     let seedChecked ← match SomeBuffer.validate { s := outNode.value.s, buf := seed.buf } with
       | .ok value => pure value
       | .error msg =>
-          releaseSparseBuffer seed.buf
+          Buffer.release seed.buf
           throw <| IO.userError msg
     let seedOwned : SomeBuffer := {
       s := outNode.value.s
@@ -359,21 +355,21 @@ def backwardSparse (t : Tape SomeBuffer) (outId : Nat) (seed : SomeBuffer)
                 -- Contributions already consumed by `addSparseGrad` have null native handles, so
                 -- releasing the whole list is idempotent and also retires every unvisited tail.
                 for (_parentId, contribution) in contributions do
-                  releaseSparseBuffer contribution.buf
+                  Buffer.release contribution.buf
                 throw e
             if !retain id then
               let current ← gradsRef.get
               match current.get? id with
               | none => pure ()
               | some stale =>
-                  releaseSparseBuffer stale.buf
+                  Buffer.release stale.buf
                   gradsRef.set (current.erase id)
       gradsRef.get
     catch e =>
       releaseSparseGrads (← gradsRef.get)
       throw e
   else
-    releaseSparseBuffer seed.buf
+    Buffer.release seed.buf
     throw <| IO.userError "autograd: seed gradient shape mismatch for sparse output"
 
 end Tape

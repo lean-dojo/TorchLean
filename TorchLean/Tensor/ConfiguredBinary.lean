@@ -12,6 +12,8 @@ public import FloatLib.Floats.Formats.BinaryInterchange.Configured
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Transcendentals
 public import TorchLean.Tensor.ConfiguredBinary.InverseTrigonometric
 public import TorchLean.Tensor.ConfiguredBinary.Elementary
+public import TorchLean.Tensor.ConfiguredBinary.Frexp
+public import TorchLean.Tensor.ConfiguredBinary.Complex
 
 /-!
 # Configured binary scalars for TorchLean specifications
@@ -26,13 +28,14 @@ parameterized formats must provide the proofs.
 
 Integer and rational casts round their exact value once in the destination format. The `pow`
 field is FloatLib's `ExecFloat.Binary.pow`, the model operation lifted without converting through
-a native `Float`. For an IEEE descriptor, `exp`, `log`, `log1p`, `expm1` and `expMul` are
-FloatLib's correctly rounded functions, and the last three round `log (1 + x)`, `exp x - 1` and
-`exp x * w` once. Other descriptors use FloatLib's deterministic approximations for `exp` and
-`log` and the compensated defaults for `log1p` and `expm1`. These, like `sin`, `cos`, `sinh`,
-`cosh` and `tanh` in every format, carry no accuracy theorem. `tan`, `exp2`, `log2`, `log10`,
-`asinh`, `acosh` and `atanh` are the real functions rounded once to nearest even, with the special
-values of C99 Annex F (`TorchLean.Tensor.ConfiguredBinary.Elementary`).
+a native `Float`. For an IEEE descriptor, `exp`, `log`, `log1p`, `expm1`, `expm1x` and `expMul`
+are FloatLib's correctly rounded functions, and the last four round `log (1 + x)`, `exp x - 1`,
+`exp x - 1 - x` and `exp x * w` once. Other descriptors use FloatLib's deterministic
+approximations for `exp` and `log`, the compensated defaults for `log1p` and `expm1`, and
+`expm1 x - x` for `expm1x`. These, like `sin`, `cos`, `sinh`, `cosh` and `tanh` in every format,
+carry no accuracy theorem. `tan`, `exp2`, `log2`, `log10`, `asinh`, `acosh` and `atanh` are the
+real functions rounded once to nearest even, with the special values of C99 Annex F
+(`TorchLean.Tensor.ConfiguredBinary.Elementary`).
 
 Dimension roots use the ordinary cast-then-root schedule unless the count overflows. That branch
 rounds the exact rational square root, so a representable root is not lost with the cast.
@@ -48,9 +51,14 @@ At a configured format the registered operators (`TorchLean.Op`) use FloatLib's 
 division and square root, `Rounding` (FloatLib's integral rounding in each direction and C's `fmod`
 from the exact IEEE remainder), FloatLib's power function, the `InverseTrig` instance of
 `TorchLean.Tensor.ConfiguredBinary.InverseTrigonometric`, whose functions round the real
-function once in an IEEE format, FloatLib's `rootN` as the cube root (IEEE 754-2019 `rootn(x, 3)`,
-which in an IEEE format rounds the real cube root once at a finite input with a finite result) and
-its `nextUp` and `nextDown` in `nextafter`. `hypot` is FloatLib's, which rounds the exact norm once.
+function once in an IEEE format, FloatLib's `rootn` as the cube root (IEEE 754-2019 `rootn(x, 3)`,
+which in an IEEE format rounds the real cube root once at a finite input with a finite result),
+its `nextUp` and `nextDown` in `nextafter`, and its exact `logB` and `scaleB` in `frexp`, which an
+IEEE format of exponent width at least three has (`TorchLean.Tensor.ConfiguredBinary.Frexp`).
+`hypot` is FloatLib's, which rounds the exact norm once, and `Fma` is its fused multiply-add,
+which rounds the exact `x y + z` once. `ComplexFunctions` is FloatLib's `ExecComplex` functions,
+whose parts in an IEEE format are the exact parts rounded once
+(`TorchLean.Tensor.ConfiguredBinary.Complex`).
 Flooring division (`Tensor.floorDivide`) runs `divFloorSchedule` with the format's rounded
 operations and `Rounding` functions, which gives the floor of the IEEE quotient at an infinite
 dividend. Over the reals the schedule computes `⌊a / b⌋` (`divFloorSchedule_real`). FloatLib has no
@@ -126,8 +134,8 @@ quiet NaN (the sum of the operands) where either is a NaN, `y` where `x == y` (s
 We wrote it by hand from C99 7.12.11.3 (WG14 N1256), and its NaN result `x + y` is the one glibc's
 `nextafterf` returns. PyTorch 2.8.0's CPU kernel calls `std::nextafter` in its scalar loop and
 SLEEF's `nextafter` in the vectorized loop it runs on AVX2 and AVX-512 CPUs.
-`test_integer_bitwise_operators_and_shifts` in `scripts/checks/test_ir_capture.py` checks seven
-binary32 results, `nextafter 3 (-∞) = 0x403fffff` among them.
+`test_integer_bitwise_operators_and_shifts` in `scripts/checks/ir_capture_pytorch_operators.py`
+checks seven binary32 results, `nextafter 3 (-∞) = 0x403fffff` among them.
 -/
 def nextafter (x y : Value) : Value :=
   if ExecFloat.Binary.isNaN x || ExecFloat.Binary.isNaN y then x + y
@@ -136,14 +144,44 @@ def nextafter (x y : Value) : Value :=
 
 end ConfiguredBinary
 
-/-- FloatLib's `rootN x 3`, IEEE 754-2019 `rootn(x, 3)`: in an IEEE format, at a finite input
-with a finite result, the real cube root rounded once (`toReal_rootN_eq_roundAt`).
-`test_cube_root_and_nextafter` in `scripts/checks/test_ir_capture.py` checks it in binary32,
-bfloat16 and binary16 against mpmath roots certified by the cubes of the midpoints. -/
-instance configuredBinaryCbrt : Cbrt Value := ⟨(ExecFloat.Binary.rootN · 3)⟩
+/-- FloatLib's `rootn x 3`, IEEE 754-2019 `rootn(x, 3)`: in an IEEE format, at a finite input
+with a finite result, the real cube root rounded once (`toReal_rootn_eq_roundAt`).
+`test_cube_root_and_nextafter` in `scripts/checks/ir_capture_jax_operators.py` checks it in
+binary32, bfloat16 and binary16 against mpmath roots certified by the cubes of the midpoints. -/
+instance configuredBinaryCbrt : Cbrt Value := ⟨(ExecFloat.Binary.rootn · 3)⟩
 
 /-- C's `nextafter`, `ConfiguredBinary.nextafter`. -/
 instance configuredBinaryNextAfter : NextAfter Value := ⟨ConfiguredBinary.nextafter⟩
+
+/-- IEEE 754-2019's `fusedMultiplyAdd` (5.4.1), FloatLib's `Configured.Spec.fma`: the exact
+`x × y + z` rounded once to nearest-even (`ConfiguredBinary.toReal_fma`), and a NaN where an
+operand is one or where an infinity meets a zero in the product or opposite infinities meet in
+the sum (7.2). -/
+instance configuredBinaryFma : Fma Value := ⟨Configured.Spec.fma⟩
+
+namespace ConfiguredBinary
+
+/-- The configured fused multiply-add decodes to FloatLib's `Model.Spec.fma` of the decoded
+operands. -/
+theorem toModel_fma (x y z : Value) :
+    ExecFloat.Binary.toModel (Fma.fma x y z) =
+      Model.Spec.fma (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel y)
+        (ExecFloat.Binary.toModel z) := by
+  simp [Fma.fma, Configured.Spec.fma, ExecFloat.Binary.toModel, Configured.Family.toModel]
+
+/-- In an IEEE format, a finite fused multiply-add is the exact `x y + z` rounded once to
+nearest-even. -/
+theorem toReal_fma (x y z : Value) (hresult : ExecFloat.Binary.isFinite (Fma.fma x y z) = true)
+    (hformat : format.isIEEE = true) :
+    ExecFloat.Binary.toReal (Fma.fma x y z) = Model.roundAt format
+      (ExecFloat.Binary.toReal x * ExecFloat.Binary.toReal y + ExecFloat.Binary.toReal z) := by
+  have h := Model.toReal_fma_eq_roundAt (ExecFloat.Binary.toModel x)
+    (ExecFloat.Binary.toModel y) (ExecFloat.Binary.toModel z) hformat
+    (by simpa only [ExecFloat.Binary.isFinite, toModel_fma, ← Model.Proof.fma_eq_spec]
+      using hresult)
+  simpa only [ExecFloat.Binary.toReal, toModel_fma, ← Model.Proof.fma_eq_spec] using h
+
+end ConfiguredBinary
 
 /-- FloatLib's complete interchange word of `format.bitWidth` bits, a bijection with the values. -/
 instance configuredBinaryBits : Bits Value where
@@ -169,16 +207,18 @@ instance configuredBinaryContext : Context Value where
       (Model.ofRat format (1 / 1000000 : Rat))
     if ExecFloat.Binary.isZero candidate then ExecFloat.Binary.ofNatBits 1 else candidate
   decidableGT := fun x y => inferInstanceAs (Decidable (x > y))
-  log1p x := if format.isIEEE then ExecFloat.Binary.CorrectlyRounded.logPlus1 x
+  log1p x := if format.isIEEE then ExecFloat.Binary.CorrectlyRounded.logp1 x
     else Numeric.log1p x
-  expm1 x := if format.isIEEE then ExecFloat.Binary.CorrectlyRounded.expMinus1 x
+  expm1 x := if format.isIEEE then ExecFloat.Binary.CorrectlyRounded.expm1 x
     else Numeric.expm1 x
+  expm1x x := if format.isIEEE then ExecFloat.Binary.CorrectlyRounded.expm1x x
+    else Numeric.expm1 x - x
   expMul x w := if format.isIEEE then ExecFloat.Binary.CorrectlyRounded.expMul x w
     else MathFunctions.exp x * w
   copysign := ExecFloat.Binary.copySign
   hypot := ExecFloat.Binary.hypot
   isNaN := ExecFloat.Binary.isNaN
-  isInf := ExecFloat.Binary.isInf
+  isInf := ExecFloat.Binary.isInfinite
   quietNaN x := ExecFloat.Binary.ofModel (Model.quietNaN (ExecFloat.Binary.toModel x))
   tan := ConfiguredBinary.tan
   exp2 := ConfiguredBinary.exp2
@@ -213,14 +253,19 @@ theorem log_of_isIEEE (hformat : format.isIEEE = true) (x : Value) :
       ExecFloat.Binary.CorrectlyRounded.log x :=
   ExecFloat.Binary.CorrectlyRounded.mathFunctions_log_of_isIEEE x
 
-/-- `log1p` is FloatLib's `logPlus1`, which rounds `log (1 + x)` once. -/
+/-- `log1p` is FloatLib's correctly rounded `logp1`, which rounds `log (1 + x)` once. -/
 theorem log1p_of_isIEEE (hformat : format.isIEEE = true) (x : Value) :
-    Context.log1p x = ExecFloat.Binary.CorrectlyRounded.logPlus1 x :=
+    Context.log1p x = ExecFloat.Binary.CorrectlyRounded.logp1 x :=
   ite_eq_left hformat
 
-/-- `expm1` is FloatLib's `expMinus1`, which rounds `exp x - 1` once. -/
+/-- `expm1` is FloatLib's correctly rounded one, which rounds `exp x - 1` once. -/
 theorem expm1_of_isIEEE (hformat : format.isIEEE = true) (x : Value) :
-    Context.expm1 x = ExecFloat.Binary.CorrectlyRounded.expMinus1 x :=
+    Context.expm1 x = ExecFloat.Binary.CorrectlyRounded.expm1 x :=
+  ite_eq_left hformat
+
+/-- `expm1x` is FloatLib's correctly rounded one, which rounds `exp x - 1 - x` once. -/
+theorem expm1x_of_isIEEE (hformat : format.isIEEE = true) (x : Value) :
+    Context.expm1x x = ExecFloat.Binary.CorrectlyRounded.expm1x x :=
   ite_eq_left hformat
 
 /-- `expMul` is FloatLib's `expMul`, which rounds `exp x * w` once. -/

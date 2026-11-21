@@ -42,7 +42,7 @@ import numpy as np
 import onnx
 from onnx import helper, numpy_helper, shape_inference
 
-from ._artifact import _SCALAR, _matmul, _matmul_out
+from ._artifact import _LEFT_FOLD, _SCALAR, _matmul, _matmul_out
 from ._table import op_table
 
 # The floating ONNX element types: the name of each one's element type in the op table, and the
@@ -213,7 +213,7 @@ class _Program:
         dims = _matmul(self.shapes[a], self.shapes[b])
         left, right, lead, rows, inner, cols, lv, rv = dims
         fields = [_shape(left), _shape(right), _shape(lead), _nat(rows), _nat(inner), _nat(cols),
-                  _bool(lv), _bool(rv)]
+                  _bool(lv), _bool(rv), _LEFT_FOLD]
         return self.op("matmul", fields, [a, b], _matmul_out(dims))
 
 # Operators of one operand, of two operands and of any number of operands, by ONNX type.
@@ -453,8 +453,9 @@ def _lower(program, node, inputs, input_names, out_shape, opset, initializers):
         if op == "ReduceSum":
             reduce_sum = op_table()["codes"]["reduce"]["sum"]
             return program.op("reduce", [_shape(x_shape), _nat(reduce_sum), _nats(axes),
-                                         _bool(keepdim)], [x], result)
-        return program.op("mean", [_shape(x_shape), _nats(axes), _bool(keepdim)], [x], result)
+                                         _bool(keepdim), _LEFT_FOLD], [x], result)
+        return program.op("mean", [_shape(x_shape), _nats(axes), _bool(keepdim), _LEFT_FOLD], [x],
+                          result)
     raise RuntimeError(f"Unsupported ONNX op for TorchLean IR import: {op}")
 
 

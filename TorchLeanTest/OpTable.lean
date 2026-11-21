@@ -17,7 +17,9 @@ public meta import TorchLean.Tensor.ConfiguredBinary
 # Gradients of `scatter_reduce` against torch autograd
 
 The Op rules composed as the PyTorch capture composes `scatter_reduce` with `prod`, `amax` and
-`amin` give torch autograd's gradients of the same vectors in `Float` and `Float32`.
+`amin` give torch autograd's gradients of the same vectors in `Float` and `Float32`. The last
+checks compare the gradient of `leaky_relu` at zero under `Op.leakyReLU`, which the capture
+writes, and under the maximum it wrote before.
 -/
 
 @[expose] public section
@@ -129,5 +131,28 @@ def upstream3f : Tensor Float32 [3] := [7, 8, 9]
     spreadUpdatesf spreadGradientf == some (#[0, 0, 9], #[7, 0, 8])
 #guard scatterReduceGradients .prod true productBasef reversed productUpdatesf upstream3f ==
   some (#[28, 8, 9], #[27 / 2, 54, 21 / 2])
+
+/-- The gradient at `x` of seed `1` through `leaky_relu` with slope `1 / 2`: by `Op.leakyReLU`,
+then by `maximum (x, x * slope)`, `Op.max` after `Op.mul`, the composition the PyTorch capture
+imported before it wrote `Op.leakyReLU`. -/
+def leakyReLUGradients (x : Float) : Option (Array Float × Array Float) := do
+  let leaky ← (Op.leakyReLU (s := [1])).rule? (α := Float)
+  let product ← (Op.mul (s := [1])).rule? (α := Float)
+  let larger ← (Op.max (s := [1])).rule? (α := Float)
+  let input : Tensor Float [1] := Tensor.full _ x
+  let slope : Tensor Float [1] := Tensor.full _ (1 / 2)
+  let seed : Tensor Float [1] := Tensor.full _ 1
+  let registered := (leaky.backward (input, Tensor.full [] (1 / 2), ()) (seed, ())).1
+  let scaled := (product.forward (input, slope, ())).1
+  let split := larger.backward (input, scaled, ()) (seed, ())
+  let composed := split.1 + (product.backward (input, slope, ()) (split.2.1, ())).1
+  pure (registered.to (Array Float), composed.to (Array Float))
+
+-- torch's `leaky_relu_backward` (torch 2.13, `torch/_decomp/decompositions.py:244`) sends the
+-- slope wherever `x > 0` fails, so `1 / 2` at zero. The maximum ties there and splits the seed,
+-- `1 / 2` to `x` and `1 / 2` to `x * slope`, which sends `1 / 4` more.
+#guard leakyReLUGradients 0 == some (#[1 / 2], #[3 / 4])
+#guard leakyReLUGradients (-2) == some (#[1 / 2], #[1 / 2])
+#guard leakyReLUGradients 2 == some (#[1], #[1])
 
 end TorchLean.Test.OpTable

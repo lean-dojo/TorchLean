@@ -62,7 +62,7 @@ private def diffRowHtml (r : DiffRow) : ProofWidgets.Html :=
   let leftS := match r.left? with | none => "<missing>" | some n => nodeSig r.index n
   let rightS := match r.right? with | none => "<missing>" | some n => nodeSig r.index n
   ;
-  <tr>
+  jsx%{<tr>
     <td style={json% {"padding": "6px 8px", "border-bottom":
       "1px solid rgba(127,127,127,0.18)"}}>{monospace (toString r.index)}</td>
     <td style={json% {"padding": "6px 8px", "border-bottom":
@@ -71,7 +71,7 @@ private def diffRowHtml (r : DiffRow) : ProofWidgets.Html :=
       "1px solid rgba(127,127,127,0.18)"}}>{monospace leftS}</td>
     <td style={json% {"padding": "6px 8px", "border-bottom":
       "1px solid rgba(127,127,127,0.18)"}}>{monospace rightS}</td>
-  </tr>
+  </tr>}
 
 /-- The `#graph_rewrite_view` panel: node counts, the number of changed rows and an outputs badge,
 the two graphs side by side in `irHtml`, and a collapsed diff table with one row per position. -/
@@ -84,7 +84,7 @@ def graphRewriteHtml (g₁ g₂ : Graph) : ProofWidgets.Html :=
       | _, _ => acc) 0
   let changedCount := rows.size - sameCount
   ;
-  <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
+  jsx%{<div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
     <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap"}}>
       {pill "Graph rewrite"} {pill s!"left={g₁.nodes.size} nodes"}
       {pill s!"right={g₂.nodes.size} nodes"}
@@ -101,7 +101,7 @@ def graphRewriteHtml (g₁ g₂ : Graph) : ProofWidgets.Html :=
         {irHtml g₂}
       </div>
     </div>
-    <details «open»={false}>
+    <details open={false}>
       <summary>{.text "Diff table (per array position)"}</summary>
       <div style={json% {"margin-top": "8px", "overflow": "auto", "max-height": "420px",
         "border": "1px solid var(--vscode-panel-border, #e5e5e5)", "border-radius": "10px"}}>
@@ -124,7 +124,7 @@ def graphRewriteHtml (g₁ g₂ : Graph) : ProofWidgets.Html :=
         </table>
       </div>
     </details>
-  </div>
+  </div>}
 
 /-!
 ## Command

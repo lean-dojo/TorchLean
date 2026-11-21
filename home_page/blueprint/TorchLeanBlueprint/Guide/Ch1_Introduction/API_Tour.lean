@@ -44,13 +44,17 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
+/-! Guide page: a first walk through the TorchLean API. -/
+
 #doc (Manual) "API Tour" =>
 %%%
 tag := "api_tour"
 file := "A-First-Walk-Through-The-API"
 %%%
 
-Application code uses the following imports:
+Four two-feature rows and a $`2\to8\to1` model are small enough to inspect end to end. The
+examples print the inputs, weights, and predictions, then show how training changes them. Put these
+imports at the top of the file to follow along.
 
 ```
 -- Application code imports the modules it uses and opens
@@ -67,9 +71,7 @@ Layers built with `nn` and trained with `Trainer` consume shape-indexed tensors.
 also ordinary values, and we can construct and inspect them before running a model, which is useful
 for checking how a reshape groups entries or which axis a matrix product sums over.
 
-Named Lean blocks run while this chapter builds, and their outputs are checked against the recorded
-messages, but the Python and PyTorch transcripts are separate comparisons (recorded with
-`torch 2.13.0+cu130`) that the Lean build doesn't execute.
+The PyTorch comparison later in the chapter was recorded with `torch 2.13.0+cu130`.
 
 # Tensors
 
@@ -908,7 +910,8 @@ the current parameters, averages their gradients, and applies Adam once, followi
 
 # Training Results
 
-This named block executes the loop during the guide build and checks the recorded output:
+The point `atHeldout` was kept out of the four training rows. Evaluating the trained model there
+shows how far the update trajectory moved its prediction away from the seeded value.
 
 ```lean (name := atTrain)
 -- Train on the four stored rows and inspect the returned
@@ -935,7 +938,7 @@ reads the parameters back as `Float` tensors, `trained.save path` writes a check
 `Trainer.load atTrainer path atDataset` rebuilds a result from that file. And the summary line
 records which arithmetic ran: `native` `Float32` here.
 
-Here's the same run in PyTorch (same architecture, same data, same optimizer settings):
+A PyTorch run with the same architecture, data, and optimizer settings gives:
 
 ```
 # This is a separate seeded training run; the two libraries
@@ -1031,7 +1034,7 @@ region, and the propagation state. Both {ref "graphs-and-ir"}[the graphs and IR 
 {ref "verification"}[the verification chapter] develop them carefully, and {ref "certificates"}[the
 certificates chapter] explains what a produced artifact does and doesn't certify.
 
-Note the extra import this section needed:
+Verification lowering requires one extra import:
 
 ```
 -- Lowering is an additional interface on top of the

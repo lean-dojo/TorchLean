@@ -50,7 +50,7 @@ variable {s : Shape} (x : Tensor α s)
 /-- Read through the cast of `Shape.reduce_singleton`, the arm of `Op.reduce` summing over the one
 axis `axis` is `Tensor.reduce .sum` over that axis, and its pullback broadcasts the upstream
 gradient along `axis`. -/
-theorem reduce_sum_singleton (axis : Nat) [Shape.HasNonemptyAxis axis s] [Shape.WellFormed s]
+theorem reduce_sum_singleton (axis : Nat) [Shape.HasNonemptyAxis axis s]
     (dz : Tensor α (s.eraseIdx axis)) :
     let rule := (Op.reduce (s := s) .sum [⟨axis, Shape.AxisInBounds.proof⟩] false
       (fun h => absurd h (by decide))).rule? (α := α) |>.get rfl
@@ -62,7 +62,7 @@ theorem reduce_sum_singleton (axis : Nat) [Shape.HasNonemptyAxis axis s] [Shape.
           (Shape.reduce_singleton s ⟨axis, Shape.AxisInBounds.proof⟩).symm, ())).1 =
         Tensor.broadcast dz s _ (s.eraseIdx_broadcastDims axis) := by
   refine ⟨rfl, ?_⟩
-  simp only [Op.rule?_reduce, Option.get_some, Tensor.reduceBackward]
+  simp only [Op.rule?_reduce_leftFold, Option.get_some, Tensor.reduceBackward]
   apply Tensor.broadcast_castShape
   intro i
   simp only [Shape.reduceAxes]
@@ -84,13 +84,14 @@ theorem reduce_sum :
     rfl
   · apply Tensor.Rep.ext
     intro c
-    simp only [Op.rule?_reduce, Option.get_some, Tensor.reduceBackward, Tensor.broadcast_apply,
+    simp only [Op.rule?_reduce_leftFold, Option.get_some, Tensor.reduceBackward,
+      Tensor.broadcast_apply,
       Tensor.castShape_apply, Tensor.full_apply, Tensor.item]
 
 /-- The arm of `Op.mean` over the one nonempty axis `axis`, read through the cast of
 `Shape.reduce_singleton`: it divides the sum once by the axis size, and its pullback broadcasts
 the upstream gradient along `axis` and divides each entry once by that size (`Context.divNat`). -/
-theorem mean_singleton (axis : Nat) [hv : Shape.HasNonemptyAxis axis s] [Shape.WellFormed s]
+theorem mean_singleton (axis : Nat) [hv : Shape.HasNonemptyAxis axis s]
     (dz : Tensor α (s.eraseIdx axis)) :
     let rule := (Op.mean (s := s) [⟨axis, Shape.AxisInBounds.proof⟩] false).rule? (α := α)
       |>.get rfl

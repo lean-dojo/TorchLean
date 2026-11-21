@@ -33,10 +33,10 @@ node's operator. The caller has already restricted `impls` with `Availability.fi
 def Node.plan? (policy : KernelPolicy) (impls : Array Implementation) (id : Nat) :
     Node → Except String (Option PlannedNodeKernel)
   | .input .. | .const _ => pure none
-  | .op ⟨_, _, .detach⟩ _ => pure none
-  | .op ⟨_, _, o⟩ _ => do
-      let k ← planOp policy impls o
-      pure (some { nodeId := id, op := k.op, capsule := k.capsule })
+  | .op ⟨_, _, o⟩ _ =>
+      if o matches .detach then pure none else do
+        let k ← planOp policy impls o
+        pure (some { nodeId := id, op := k.op, capsule := k.capsule })
 
 /-- The kernel plan of `g`: once `Graph.check` passes, every node is planned in order against the
 implementations `availability` admits. `IR.Graph.plan_sound` states what each planned kernel

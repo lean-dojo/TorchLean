@@ -12,7 +12,7 @@ public import TorchLean.Tensor.ConfiguredBinary
 public import TorchLean.Tensor.Word
 public import TorchLean.Tensor.Op.Capability
 public import TorchLean.Tensor.Op.Port
-public import FloatLib.Floats.ExecFloat.Conversion.Core
+public import FloatLib.Numerics.Executable.Conversion.Core
 public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Proof
 public import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Runtime
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Value.CoreProof
@@ -328,7 +328,7 @@ def arithmetic : (d : DType) → Option (Context (Carrier d))
 @[instance_reducible]
 def capabilities : (d : DType) → Op.Capabilities (Carrier d)
   | .binary format => inferInstanceAs (Op.Capabilities (Binary.Scalar format))
-  | _ => ⟨none, none, none, none, none, none⟩
+  | _ => ⟨none, none, none, none, none, none, none, none, none, none⟩
 
 end Reference
 

@@ -137,12 +137,12 @@ def TensorPack.ofVec : {Γ : List Shape} → CtxVec Γ → TensorPack ℝ Γ
       .cons (Tensor.ofVec (s := s) head) (ofVec (Γ := ss) tail)
 
 /-- Left half of a concatenation reads from the first vector. -/
-@[simp] theorem Vec.append_ofLp_castAdd {m n : Nat} (a : Vec m) (b : Vec n) (i : Fin m) :
+theorem Vec.append_ofLp_castAdd {m n : Nat} (a : Vec m) (b : Vec n) (i : Fin m) :
     ((EuclideanSpace.finAddEquivProd (𝕜 := ℝ)).symm (a, b)).ofLp (Fin.castAdd n i) = a.ofLp i :=
   congrArg (fun p => p.1.ofLp i) ((EuclideanSpace.finAddEquivProd (𝕜 := ℝ)).apply_symm_apply (a, b))
 
 /-- Right half of a concatenation reads from the second vector. -/
-@[simp] theorem Vec.append_ofLp_natAdd {m n : Nat} (a : Vec m) (b : Vec n) (i : Fin n) :
+theorem Vec.append_ofLp_natAdd {m n : Nat} (a : Vec m) (b : Vec n) (i : Fin n) :
     ((EuclideanSpace.finAddEquivProd (𝕜 := ℝ)).symm (a, b)).ofLp (Fin.natAdd m i) = b.ofLp i :=
   congrArg (fun p => p.2.ofLp i) ((EuclideanSpace.finAddEquivProd (𝕜 := ℝ)).apply_symm_apply (a, b))
 
@@ -639,40 +639,16 @@ theorem Tensor.toVec_add {s : Shape} (a b : Tensor ℝ s) :
   rw [hw, ← dot_eq_inner_toVec, inner_add_left, ← dot_eq_inner_toVec,
     ← dot_eq_inner_toVec, dot_add_left]
 
-/-- The context inner product is additive in its left argument. -/
-private theorem TensorPack.realDotList_add_left' {Γ : List Shape} (u v z : TensorPack ℝ Γ) :
-    TensorPack.dotList (TensorPack.add u v) z =
-      TensorPack.dotList u z + TensorPack.dotList v z := by
-  induction Γ with
-  | nil =>
-    cases u
-    cases v
-    cases z
-    simp [TensorPack.dotList, TensorPack.add]
-  | cons s Γ ih =>
-    cases u with
-    | cons uh ut =>
-      cases v with
-      | cons vh vt =>
-        cases z with
-        | cons zh zt =>
-          show TensorPack.dotList
-              (Pack.cons (uh + vh) (TensorPack.add ut vt))
-              (Pack.cons zh zt)
-              = _
-          simp only [TensorPack.dotList, Tensor.dot_add_left, ih]
-          ring
-
 /-- `toVec` maps context addition to vector addition. -/
 theorem TensorPack.toVec_add {Γ : List Shape} (u v : TensorPack ℝ Γ) :
     toVec (TensorPack.add u v) = toVec u + toVec v := by
-  refine ext_inner_right ℝ ?_
+  refine ext_inner_left ℝ ?_
   intro w
   have hw : w = toVec (ofVec (Γ := Γ) w) :=
     (toVec_ofVec (Γ := Γ) w).symm
-  rw [hw, ← realDotList_eq_inner_toVec, inner_add_left, ← realDotList_eq_inner_toVec,
+  rw [hw, ← realDotList_eq_inner_toVec, inner_add_right, ← realDotList_eq_inner_toVec,
     ← realDotList_eq_inner_toVec]
-  exact realDotList_add_left' u v _
+  exact dotList_add_right _ u v
 
 /-- `toVec` maps `TorchLean.Pack.snoc` to `CtxVec.snoc`. -/
 theorem TensorPack.toVec_snoc {Γ : List Shape} {τ : Shape} (xs : TensorPack ℝ Γ)

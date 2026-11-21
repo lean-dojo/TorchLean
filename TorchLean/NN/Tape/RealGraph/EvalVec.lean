@@ -73,7 +73,7 @@ theorem getBlock_ofLp :
       exact congrArg x.ofLp (Fin.ext (by simp [blockOffset, Nat.add_assoc]))
 
 /-- Every coordinate of the block selected by a typed index lies inside the context. -/
-theorem blockOffset_add_lt' {Γ : List Shape} {s : Shape} (idx : Idx Γ s)
+theorem blockOffset_idx_add_lt {Γ : List Shape} {s : Shape} (idx : Idx Γ s)
     (j : Fin (Shape.size s)) :
     blockOffset Γ idx.i.val + j.val < ctxSize Γ := by
   have h := blockOffset_add_lt idx.i (Fin.cast (congrArg Shape.size idx.h).symm j)
@@ -83,7 +83,7 @@ theorem blockOffset_add_lt' {Γ : List Shape} {s : Shape} (idx : Idx Γ s)
 theorem get_ofLp {Γ : List Shape} {s : Shape} (idx : Idx Γ s) (x : CtxVec Γ)
     (j : Fin (Shape.size s)) :
     (get (Γ := Γ) (s := s) idx x).ofLp j =
-      x.ofLp ⟨blockOffset Γ idx.i.val + j.val, blockOffset_add_lt' idx j⟩ := by
+      x.ofLp ⟨blockOffset Γ idx.i.val + j.val, blockOffset_idx_add_lt idx j⟩ := by
   simp only [get, LinearIsometryEquiv.piLpCongrLeft_apply, Equiv.piCongrLeft'_apply,
     finCongr_symm_apply]
   rw [getBlock_ofLp]
@@ -201,7 +201,7 @@ theorem get_evalVec_snoc_of_lt {Δ : Type} {Γ ss : List Shape} {τ s : Shape}
         CtxVec.blockOffset (Γ ++ ss) idx'.i.val := by
     rw [hv, ← List.append_assoc]
     exact CtxVec.blockOffset_append_of_lt _ _ _ idx'.i.isLt
-  rw [CtxVec.snoc_ofLp_of_lt _ _ _ (by simpa [hoff] using CtxVec.blockOffset_add_lt' idx' j)]
+  rw [CtxVec.snoc_ofLp_of_lt _ _ _ (by simpa [hoff] using CtxVec.blockOffset_idx_add_lt idx' j)]
   exact congrArg _ (Fin.ext (by simp [hoff]))
 
 /-- Read through the weakened index `Idx.weaken idx ss`, an input block is unchanged by evaluating

@@ -7,7 +7,6 @@ module
 
 public import TorchLean.NN.IR.Eval
 public import TorchLean.NN.LibTorch.Kernel
-import TorchLean.CUDA.Kernel.Launch
 import TorchLean.NN.TensorTransfer
 
 /-!

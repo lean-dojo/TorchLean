@@ -150,7 +150,7 @@ noncomputable def realAffineBounds (b : FlatAffineBounds ℚ) : FlatAffineBounds
   ⟨b.inDim, b.outDim, realAffine b.loAff, realAffine b.hiAff⟩
 
 /-- Casting the output dimension of an affine form along `m = m` leaves it unchanged. -/
-@[simp] theorem castAffineOut_self {α : Type} [Context α] {n m : Nat}
+@[simp] theorem castAffineOut_self {α : Type} {n m : Nat}
     (a : Linear α n m) (h : m = m) :
     CROWN.Graph.castAffineOut h a = a := by
   rfl

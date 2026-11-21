@@ -6,8 +6,8 @@ the Lean binary32 reference and against host arithmetic. It needs a Linux host a
 The harness computes its oracles with ATen's C++ API, so it is built against the torch package or
 SDK it runs with. The backend can be a library built against an earlier release (see
 [Torch versions](../../README.md#torch-versions)), but its allocator calls fail on a runtime other
-than torch 2.13, 2.14 and 2.15. A tensor crosses between the two as an `AtenTensorHandle`, which
-both read as the same ATen tensor.
+than torch 2.13, 2.14 and 2.15. The backend and harness exchange an `AtenTensorHandle`, which both
+read as the same ATen tensor.
 
 From the source root, after building the production LibTorch backend:
 

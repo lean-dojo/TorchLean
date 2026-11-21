@@ -6,6 +6,7 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.CUDA.Tree.Sig
+public import FloatLib.Util.Declaration
 public meta import Lean.Elab.Deriving.Basic
 
 /-!
@@ -58,6 +59,7 @@ public meta section
 namespace TorchLean.Kernel.Derive
 
 open Lean Meta Elab Term Command
+open FloatLib.Floats.ExecFloat (generatedDoc)
 
 /-- The shape of a constructor field, which fixes the `Field` that stores it. -/
 inductive Shape where
@@ -172,10 +174,6 @@ def analyze (declName : Name) : TermElabM Block := do
       | none, e => withOptions (·.setBool `pp.sanitizeNames false) (PrettyPrinter.delab e)
     return { types, params, scalar := scalarStx, ctors }
 
-/-- A doc comment holding `text`. -/
-def mkDoc (text : String) : TSyntax ``Parser.Command.docComment :=
-  ⟨mkNode ``Parser.Command.docComment #[mkAtom "/--", mkAtom (text ++ " -/")]⟩
-
 /-- An identifier that declares exactly the full name `n`, whatever the current namespace is. We
 drop the prefix of a private name here, since the modifier from `visOf` adds it back. -/
 def rootIdent (n : Name) : Ident :=
@@ -238,7 +236,7 @@ def mkSigCmd (b : Block) : TermElabM Command := do
     `(⟨$(← sortTerm b c.sort), [$fs,*]⟩)
   let doc := s!"The signature of `{privateToUserName base}`, made by `deriving Sig.Inductive`."
   `(command|
-    $(mkDoc doc):docComment $(⟨mkNode ``Parser.Command.public #[mkAtom "public"]⟩):visibility
+    $(generatedDoc doc):docComment $(⟨mkNode ``Parser.Command.public #[mkAtom "public"]⟩):visibility
     abbrev $(rootIdent (sigName b)) : $(mkCIdent ``Sig) :=
       { sorts := $(quote b.types.size), ctors := [$ctors,*] })
 
@@ -266,7 +264,7 @@ def mkSizeCmds (b : Block) : TermElabM (Array Command) := do
     let doc := s!"The number of constructors in a tree of type `{privateToUserName ty}`, made by \
       `deriving Sig.Inductive`."
     defs := defs.push (← `(command|
-      $(mkDoc doc):docComment $[$(visOf (sizeName ty)):visibility]?
+      $(generatedDoc doc):docComment $[$(visOf (sizeName ty)):visibility]?
       def $(rootIdent (sizeName ty)) $binders:bracketedBinder* (t : @$(mkCIdent ty) $ps*) : Nat :=
         match t with $alts:matchAlt*))
     sort := sort + 1
@@ -303,7 +301,7 @@ def mkInstCmd (b : Block) : TermElabM Command := do
   let doc := s!"The `Sig.Inductive` instance of `{privateToUserName ty}`, made by \
     `deriving Sig.Inductive`."
   `(command|
-    $(mkDoc doc):docComment $[$(visOf (ty ++ `instSigInductive)):visibility]?
+    $(generatedDoc doc):docComment $[$(visOf (ty ++ `instSigInductive)):visibility]?
     instance $(rootIdent (ty ++ `instSigInductive)):ident $binders:bracketedBinder* :
         $(mkCIdent ``Sig.Inductive) $(mkCIdent (sigName b)) $(b.scalar)
           (fun _ => @$(mkCIdent ty) $ps*) where
@@ -345,13 +343,13 @@ def mkMutualCmds (b : Block) : TermElabM (Array Command) := do
   let user := privateToUserName base
   let famDoc := s!"The types of the block of `{user}`, indexed by the sorts of `{user}.sig`."
   let famCmd ← `(command|
-    $(mkDoc famDoc):docComment $[$(visOf fam):visibility]?
+    $(generatedDoc famDoc):docComment $[$(visOf fam):visibility]?
     abbrev $(rootIdent fam) $binders:bracketedBinder* :=
       fun (s : Fin $(quote b.types.size)) => ([$tys,*][s.val]'s.isLt : Type))
   let instDoc := s!"The `Sig.Inductive` instance of the block of `{user}`, made by \
     `deriving Sig.Inductive`."
   let instCmd ← `(command|
-    $(mkDoc instDoc):docComment $[$(visOf (base ++ `instSigInductive)):visibility]?
+    $(generatedDoc instDoc):docComment $[$(visOf (base ++ `instSigInductive)):visibility]?
     instance $(rootIdent (base ++ `instSigInductive)):ident $binders:bracketedBinder* :
         $(mkCIdent ``Sig.Inductive) $(mkCIdent (sigName b)) $(b.scalar)
           (@$(mkCIdent fam) $ps*) where

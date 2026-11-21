@@ -1,7 +1,7 @@
 # Quickstart
 
-The quickstart is one short path through the public TorchLean API. These modules provide its
-tensors, models, autograd, datasets, and training:
+This is the route I use to explain the public API without bringing in downloads or CUDA: shaped
+tensors, differentiation, then a trained MLP. These modules provide the pieces:
 
 ```lean
 import TorchLean.NN.Autograd.Function
@@ -38,7 +38,8 @@ The wrapper uses the pinned Lean toolchain and keeps CPU/CUDA build profiles sep
 `scripts/lake.sh build TorchLeanExamples.Quickstart`.
 For optional editor panels, open the [widget gallery](../DeepDives/WidgetGallery.lean).
 
-Read them in the order of the table.
+If you are reading the source, I would follow the table from top to bottom once. After that, each
+file stands on its own.
 
 ## Train an MLP
 
@@ -46,10 +47,11 @@ Read them in the order of the table.
 
 ```lean
 let trainer := Trainer.create model
-  { objective := mse
-    optimizer := optim.adam { lr := 0.03 }
-    seed := 0 }
-let trained ← trainer.train data { steps := 200, logEvery := 25 }
+  { runtime with
+      objective := mse
+      optimizer := optim.adam { lr := 0.03 }
+      seed := seed }
+let trained ← trainer.train data { steps := steps, logEvery := 25 }
 trained.printSummary
 ```
 
@@ -66,17 +68,21 @@ the answer.
 Top-level `autograd` transforms have no model parameters:
 
 ```lean
-let (gradient, value) ← autograd.grad loss x (value := true)
+def lossGradient {σ : Shape} (loss : autograd.Function σ []) (x : Tensor Float σ) : IO Unit := do
+  let (gradient, value) ← autograd.grad loss x (value := true)
+  IO.println s!"value = {reprStr value}, gradient = {reprStr gradient}"
 ```
 
 `autograd.model` differentiates through a model:
 
 ```lean
-let state := nn.initialState model
-let (gradient, lossValue) ←
-  autograd.model.grad model lossFn state x target (value := true)
-IO.println s!"loss = {lossValue}"
-IO.println s!"gradient = {reprStr gradient}"
+def modelGradient {σ τ υ : Shape} (model : nn.Sequential σ τ) (lossFn : autograd.model.Loss τ υ)
+    (x : Tensor Float σ) (target : Tensor Float υ) : IO Unit := do
+  let state := nn.initialState model
+  let (gradient, lossValue) ←
+    autograd.model.grad model lossFn state x target (value := true)
+  IO.println s!"loss = {lossValue}"
+  IO.println s!"gradient = {reprStr gradient}"
 ```
 
 `Trainer` uses this machinery and adds parameter updates, optimizer state, gradient

@@ -36,13 +36,13 @@ local notation "Value" => ExecFloat (Configured.Family format code plan)
 
 /-- The stable log-softmax of a vector of any length `n`, at `i : Fin n`: the match on the length
 is read at `n - 1 + 1`. -/
-roundoff mixed theorem log_softmax_error' :=
+roundoff mixed theorem length_log_softmax_error :=
   fun [Storage Value] {n : Nat} (t : Tensor Value [n]) (_hformat : format.isIEEE = true)
     (_hfinite : ∀ i, ExecFloat.Binary.isFinite (t.getScalar i) = true) (i : Fin n) =>
     ExecFloat.Binary.toReal ((LogSoftmax.vec t).getScalar i)
 
 /-- The log-softmax VJP of vectors of any length `n`, at `i : Fin n`. -/
-roundoff mixed theorem log_softmax_backward_error' :=
+roundoff mixed theorem length_log_softmax_backward_error :=
   fun [Storage Value] {n : Nat} (y v : Tensor Value [n]) (_hformat : format.isIEEE = true)
     (_hy : ∀ i, ExecFloat.Binary.isFinite (y.getScalar i) = true)
     (_hv : ∀ i, ExecFloat.Binary.isFinite (v.getScalar i) = true) (i : Fin n) =>

@@ -272,6 +272,7 @@ def gruCell {α : Type} [Storage α] [Context α]
           (wNew, bNew, concat2, ())
       let n ← Ops.apply (m := m) (α := α) (.tanh (s := [hiddenWidth]))
           (n_pre, ())
+      -- `h = (1 - z) * n + z * previous`.
       let complementPre ← Ops.apply (m := m) (α := α)
           (.neg (s := [hiddenWidth])) (z_pre, ())
       let oneMinusZ ← Ops.apply (m := m) (α := α)
@@ -290,6 +291,8 @@ def gruCell {α : Type} [Storage α] [Context α]
       let hiddenGates ← Ops.apply (m := m) (α := α)
           (.linear (lead := []) (inDim := hiddenWidth) (outDim := 3 * hiddenWidth))
           (hiddenWeight, hiddenBias, previous, ())
+      -- The packed gates are the blocks reset, update and candidate, in that order, and
+      -- `gate values i` slices block `i`.
       let gate := fun (values : Ref (m := m) (α := α) [3 * hiddenWidth]) (index : Fin 3) =>
         (Ref.cast
               (Shape.slice_singleton (.dim _ .scalar) ⟨0, by simp⟩ (index.val * hiddenWidth)
@@ -322,6 +325,7 @@ def gruCell {α : Type} [Storage α] [Context α]
           (.add (s := [hiddenWidth])) (inputCandidate, resetCandidate, ())
       let candidate ← Ops.apply (m := m) (α := α)
           (.tanh (s := [hiddenWidth])) (candidatePre, ())
+      -- `h = (1 - update) * candidate + update * previous`.
       let complementPre ← Ops.apply (m := m) (α := α)
           (.neg (s := [hiddenWidth])) (updatePre, ())
       let oneMinusUpdate ← Ops.apply (m := m) (α := α)

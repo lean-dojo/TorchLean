@@ -9,7 +9,6 @@ module
 public import Mathlib.Analysis.Fourier.ZMod
 public import Mathlib.LinearAlgebra.Matrix.ConjTranspose
 public import TorchLean.Tensor.Layers.RealFFT.Real
-import Mathlib.LinearAlgebra.Matrix.SemiringInverse
 
 /-!
 # The packed real Fourier matrices and the complex DFT

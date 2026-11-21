@@ -9,55 +9,39 @@ module
 public import TorchLean.Tensor.Numeric.InverseTrig
 public import TorchLean.Tensor.Context
 public import TorchLean.Tensor.Elementwise
+public import TorchLean.Tensor.Special.Fn
+public import TorchLean.Tensor.ComplexFn
 
 /-!
 # Optional capabilities of a scalar type
 
 Some operators need an operation that not every scalar type has: the integral roundings and `fmod`
 (`Rounding`), the error function (`Erf`), the inverse trigonometric functions (`InverseTrig`),
-the cube root (`Cbrt`), C's `nextafter` (`NextAfter`) and the interchange word of a binary format
-(`Bits`, for `bitcast`). `Op.Capability C α` holds an instance of `C α` where synthesis finds one
-and `none` otherwise, and `Op.Capabilities α` bundles these six. An operator that needs a missing
-capability has no rule at that scalar. `Float` has `Rounding` and `InverseTrig` but no `Erf`,
-`Cbrt`, `NextAfter` or `Bits`, while the configured binary formats of
-FloatLib have every capability but `Erf`.
+the cube root (`Cbrt`), C's `nextafter` (`NextAfter`), the interchange word of a binary format
+(`Bits`, for `bitcast`), the special functions (`Special`), C's `frexp` and `ldexp` (`Frexp`), the
+fused multiply-add (`Fma`) and the complex functions and power (`ComplexFunctions`).
+`Op.Capability C α` (declared in `TorchLean.Tensor.Context`, beside most of the capability classes)
+holds an instance of `C α` where synthesis finds one and `none` otherwise, and `Op.Capabilities α`
+bundles these ten. An operator that needs a missing capability has no rule at that scalar. `Float`
+and `Float32` have `Rounding`, `InverseTrig` and `Fma` (core's `Float.fma` and `Float32.fma`) but
+no `Erf`, `Cbrt`, `NextAfter`, `Bits`, `Special`, `Frexp` or `ComplexFunctions`, while the
+configured binary formats of FloatLib have every capability but `Erf` and `Special`, and `Frexp`
+only in an IEEE format of exponent width at least three, so of bias at least two, where every
+normalized mantissa is a value, and where every exponent of a finite value fits in an int32, so
+never at exponent width 32 or more (`configuredBinaryFrexpCapability`). Only `ℝ` and its dual
+numbers have `Special`, and `ℝ` has `Frexp`, `Fma` and `ComplexFunctions`.
 -/
 
 @[expose] public section
 
 namespace TorchLean
 
-/-- An instance of `C α` when the scalar type has one. -/
-class Op.Capability (C : Type → Type) (α : Type) where
-  /-- The instance, or `none`. -/
-  get? : Option (C α)
-
-namespace Op.Capability
-
-variable {α : Type}
-
-/-- The low-priority fallback, `none`, for a scalar type without the capability. -/
-instance (priority := low) absent {C : Type → Type} : Op.Capability C α := ⟨none⟩
-
-/-- The integral roundings, where the scalar has them. -/
-instance rounding [instance_ : Rounding α] : Op.Capability Rounding α := ⟨some instance_⟩
-
-/-- The error function, where the scalar has it. -/
-instance erf [instance_ : Erf α] : Op.Capability Erf α := ⟨some instance_⟩
-
-/-- The inverse trigonometric functions, where the scalar has them. -/
-instance inverseTrig [instance_ : InverseTrig α] : Op.Capability InverseTrig α := ⟨some instance_⟩
-
-/-- The cube root, where the scalar has it. -/
-instance cbrt [instance_ : Cbrt α] : Op.Capability Cbrt α := ⟨some instance_⟩
-
-/-- C's `nextafter`, where the scalar has it. -/
-instance nextafter [instance_ : NextAfter α] : Op.Capability NextAfter α := ⟨some instance_⟩
-
-/-- The interchange word, where the scalar has one. -/
-instance bits [instance_ : Bits α] : Op.Capability Bits α := ⟨some instance_⟩
-
-end Op.Capability
+-- `C α` is a class at every use, though not before `C` is known.
+set_option checkBinderAnnotations false in
+/-- The instance of `C α`, where synthesis finds one. -/
+instance Op.Capability.present {C : Type → Type} {α : Type} [instance_ : C α] :
+    Op.Capability C α :=
+  ⟨some instance_⟩
 
 /-- The optional capabilities `Op.rule?` reads. -/
 class Op.Capabilities (α : Type) where
@@ -73,13 +57,24 @@ class Op.Capabilities (α : Type) where
   nextafter? : Option (NextAfter α)
   /-- The interchange word. -/
   bits? : Option (Bits α)
+  /-- The special functions. -/
+  special? : Option (Special α)
+  /-- C's `frexp` and `ldexp`. -/
+  frexp? : Option (Frexp α)
+  /-- The fused multiply-add. -/
+  fma? : Option (Fma α)
+  /-- The complex functions and the complex power. -/
+  complex? : Option (ComplexFunctions α)
 
 /-- The capabilities a scalar type has, each found by synthesis. -/
 instance Op.Capabilities.ofCapability {α : Type} [rounding : Op.Capability Rounding α]
     [erf : Op.Capability Erf α] [inverseTrig : Op.Capability InverseTrig α]
     [cbrt : Op.Capability Cbrt α]
-    [nextafter : Op.Capability NextAfter α] [bits : Op.Capability Bits α] : Op.Capabilities α :=
+    [nextafter : Op.Capability NextAfter α] [bits : Op.Capability Bits α]
+    [special : Op.Capability Special α] [frexp : Op.Capability Frexp α]
+    [fma : Op.Capability Fma α] [complex : Op.Capability ComplexFunctions α] :
+    Op.Capabilities α :=
   ⟨rounding.get?, erf.get?, inverseTrig.get?, cbrt.get?, nextafter.get?,
-    bits.get?⟩
+    bits.get?, special.get?, frexp.get?, fma.get?, complex.get?⟩
 
 end TorchLean

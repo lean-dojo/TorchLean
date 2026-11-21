@@ -16,6 +16,7 @@ public import TorchLean.Tensor.Cumulative
 public import TorchLean.Tensor.Scatter
 public import TorchLean.Tensor.Sort
 public import TorchLean.Tensor.Layers.Attention
+public import TorchLean.Tensor.Layers.Attention.Order
 public import TorchLean.Tensor.Layers.Linear
 public import TorchLean.Tensor.Layers.RealFFT
 public import TorchLean.Tensor.Layers.StateSpace
@@ -32,6 +33,7 @@ public import TorchLean.Tensor.Window
 public import TorchLean.Tensor.Contract
 public import TorchLean.Tensor.Movement
 public import TorchLean.Tensor.Reduce
+public import TorchLean.Tensor.Reduce.Order
 public import TorchLean.Tensor.Op.Pointwise
 
 /-!
@@ -54,8 +56,9 @@ the score product) and the fused `multiheadAttention` (over any leading axes). T
 `reduce` (a sum, product, maximum or minimum over any axes) and `mean`, and `maskedSoftmax` is the
 softmax of the entries a Boolean mask input allows. `topKMask` and `bernoulliMask` are masks of the
 scalar with no gradient, `rfft` and `irfft` are real Fourier transforms along any axis, and
-`selectiveScan` is a diagonal scan along any axis. `randUniform` and `randn` are keyed, and the rule
-of `custom` is the checked program of its node. Operators whose per-frontend definitions differ in
+`selectiveScan` is a diagonal scan along any axis. `randUniform` and `randn` are keyed. `custom`
+has no table rule; its checked node program supplies node-local semantics. Operators whose
+per-frontend definitions differ in
 their numerical policy are separate constructors, named for the policy (`max` and `fmax`,
 `crossEntropy` and `crossEntropyProbabilities`). Scalar attributes and captured operands are frozen
 inputs.
@@ -65,7 +68,10 @@ The logical operators `logicalAnd`, `logicalOr` and `logicalXor` take and return
 and `contract` adds products over any paired axes, with batch pairs. The bitwise operators, the
 shifts, `populationCount`, `countLeadingZeros` and `mulhi` take and return integer words, computed
 with `BitVec`'s operators and the functions of `Word`. `bitcast` reads each word at another
-sort of the same width, and `cbrt` and `nextafter` read the scalar's `Cbrt` and `NextAfter`.
+sort of the same width, `cbrt` and `nextafter` read the scalar's `Cbrt` and `NextAfter`,
+`special` reads its `Special`, `frexp` reads its `Frexp` and returns the exponents as `int32`
+words, `fma` reads its `Fma`, and `complex` and `complexPow` read its `ComplexFunctions` on complex
+tensors stored as pairs of parts (`Tensor.ofPairs`).
 `encodeIndex` and `decodeIndex` convert index tuples to and from integer words in the IR's layout
 (`Port.irShape`). Encoding fails at a component the integer type cannot hold and decoding at a
 component outside its bound. `decodeIndex` has a rule only where its output has a value (every bound
@@ -75,16 +81,25 @@ positive, or no entry).
 recorder runs it before reading any input, and the wire decoder does not.
 
 The element argument of `reshape`, `permute`, `broadcast`, `flip`, `slice`, `pad`, `cat`,
-`gather`, `scatter` and `select` (`Op.Element`) and of the arithmetic operators and comparisons
-(`Op.NumericElement`) defaults to `.scalar`, the model's scalar. At `.bool` or
+`gather`, `scatter`, `select` and `sort` (`Op.Element`) and of the arithmetic operators and
+comparisons (`Op.NumericElement`) defaults to `.scalar`, the model's scalar. At `.bool` or
 `.integer signed width` the operator moves Booleans or integer words as it moves scalars, or
 computes PyTorch's integer meaning with `BitVec` and `Word` (wrapping `+`, `-`, `*` and
 negation, the order of the type), without gradients. An integer division or remainder fails its
-value check at a zero divisor, an integer true division (`div .none`) has no rule, and a Boolean
-scatter only replaces.
+value check at a zero divisor, an integer true division (`div .none`) has no rule, a Boolean
+scatter only replaces, and a Boolean sort puts `false` before `true`.
 
 Elementwise operators take equal shapes and leave broadcasting to the separate operator
 `broadcast`.
+
+The reductions `reduce` and `mean`, the contractions `contract`, `matmul` and `scaledMatmul`,
+`pool`, the scans `cumsum` and `cumprod` and the running selections `cummax` and `cummin` take a
+`Tensor.ReduceOrder` last, the left fold by default. At the left fold the rule is that of the
+operator's left-fold `Tensor` function (`Tensor.reduce`, ...), and at another order the forward is
+the ordered function (`Tensor.reduceIn`, ...). The pullbacks are the left fold's at every order, as
+are the tangents of the nonlinear ones and of `scaledMatmul`, whose tangent replays both
+product-rule terms in one contraction. `Op.check` rejects an order that does not cover a count it
+reduces (`Tensor.ReduceOrder.Covers`).
 
 `Op.rule?` in `TorchLean.Tensor.Op.Table.Rule` gives each operator its rule. The equation lemmas of
 its arms are in one module per operator family: `TorchLean.Tensor.Op.Table.Elementwise`,
@@ -94,11 +109,10 @@ its arms are in one module per operator family: `TorchLean.Tensor.Op.Table.Eleme
 `TorchLean.Tensor.Op.Table.Normalization`, `TorchLean.Tensor.Op.Table.Attention`,
 `TorchLean.Tensor.Op.Table.Loss` and `TorchLean.Tensor.Op.Table.Random`.
 
-We wrote each arm of `Op.rule?` by hand: the forward from the operator's `Tensor` function, the
-pullback and the tangent from its derivative, and a scalar function such as `Activation.reluDeriv`
-or `Context.sign` to fix the value at a kink or a NaN. The notes on the activations, `abs`, `clamp`,
-`cumsum`, `mseLoss` and `scatter` compare those choices with torch 2.8.0, the version the parity
-checks pin (`scripts/checks/requirements-interop.txt`): its rules in
+Each arm of `Op.rule?` pairs the operator's `Tensor` function with its pullback and tangent.
+Scalar functions such as `Activation.reluDeriv` and `Context.sign` fix the value at a kink or a
+NaN. The notes on the activations, `abs`, `clamp`, `cumsum`, `mseLoss` and `scatter` compare
+those choices with PyTorch 2.8.0's rules in
 `tools/autograd/derivatives.yaml` and `torch/csrc/autograd/FunctionsManual.cpp`, and its CPU results
 in binary64. Over ℝ, the certificates of `TorchLean.NN.Op.Pointwise` and `TorchLean.NN.Op.Softmax`
 prove that the pullbacks of those activations, `abs` and `clamp` are the adjoints of their
@@ -150,8 +164,8 @@ abbrev Op.Word.output : Op.Word → Nat → Shape → Port
   | .integer signed, width, s => .integer signed width s
 
 /-- The element type of the data ports of a generalized operator (the movements, `select`,
-`gather`, `scatter` and `pad`): the model's scalar, Booleans, or words of `width` bits of an integer
-type, two's complement when `signed`. -/
+`gather`, `scatter`, `pad` and `sort`): the model's scalar, Booleans, or words of `width` bits of
+an integer type, two's complement when `signed`. -/
 inductive Op.Element where
   /-- The model's scalar, at the port's role (a value or a frozen scalar). -/
   | scalar
@@ -246,14 +260,15 @@ inductive Op : List Port → List Port → Type where
   cleared (`Context.stopGradient?`). The input is detached, so it receives no gradient, and the
   tangent is zero. -/
   | detach {s : Shape} : Op [.detached s] [.value s]
-  /-- Elementwise softplus. This is `torch.nn.functional.softplus` (PyTorch 2.8 docs) at `beta = 1`
+  /-- Elementwise softplus. This is `torch.nn.functional.softplus` (PyTorch 2.13 docs) at `beta = 1`
   without its `threshold = 20`, so at `21` we return `21.000000000758256` with slope
   `0.9999999992417439` in binary64 where torch returns `21` with slope `1`. The PyTorch capture
-  lowers `F.softplus` to torch's formula, threshold included (`python/torchlean/_pointwise.py`). -/
+  lowers `F.softplus(x, beta, threshold)` to this operator at `x * beta`, divided by `beta`, and to
+  `x` where `x * beta > threshold` (`python/torchlean/_pointwise.py`). -/
   | softplus {s : Shape} : Op [.value s] [.value s]
   /-- Elementwise SiLU, `x * sigmoid x`. It's the Sigmoid Linear Unit of Hendrycks and Gimpel (2016,
-  arXiv:1606.08415, Section 2) and of `torch.nn.functional.silu` (PyTorch 2.8 docs), except at `±∞`,
-  where we return the limits and torch gives a NaN at `-∞` and NaN slopes at both.
+  arXiv:1606.08415, Section 2) and of `torch.nn.functional.silu` (PyTorch 2.13 docs), except at
+  `±∞`, where we return the limits and torch gives a NaN at `-∞` and NaN slopes at both.
   `TorchLean.PyTorch.emit` selects the limits with `torch.where`, and
   `TorchLeanTest.Interop.IRPyTorch` checks the emitted values and slopes at both infinities. -/
   | silu {s : Shape} : Op [.value s] [.value s]
@@ -286,8 +301,10 @@ inductive Op : List Port → List Port → Type where
   /-- Cumulative sum along `dim`. The pullback is torch's `cumsum_backward`, the cumulative sum of
   `g` from the last index down (`Tensor.cumsumBackward`), so `cumsum [1, 2, 3]` with upstream
   `[0.5, -1, 2]` sends `[1.5, 1, 2]`. The tangent is the cumulative sum of the tangent, torch's
-  linear forward rule. -/
-  | cumsum {s : Shape} (dim : Fin s.rank) : Op [.value s] [.value s]
+  linear forward rule. The prefixes are added in the order `order` (`Tensor.scanIn`), as is the
+  tangent, and the pullback is that of the left fold. -/
+  | cumsum {s : Shape} (dim : Fin s.rank) (order : Tensor.ReduceOrder := .leftFold) :
+      Op [.value s] [.value s]
   /-- `log (softplus x + ε)`, with `ε` a frozen scalar input. -/
   | safeLog {s : Shape} : Op [.value s, .frozen []] [.value s]
   /-- Clamp to the frozen scalar bounds `[lo, hi]`, with pullback `g` where `lo < x < hi` and
@@ -296,9 +313,12 @@ inductive Op : List Port → List Port → Type where
   | clamp {s : Shape} : Op [.value s, .frozen [], .frozen []] [.value s]
   /-- Multiply by a frozen scalar input. -/
   | scale {s : Shape} : Op [.value s, .frozen []] [.value s]
-  /-- ELU with a frozen scalar `alpha`. At the kink we take the left slope `alpha * exp 0`, as
-  torch's `elu_backward` does, so with `alpha = 0.5` and seed `1` both send `0.5` at `x = 0`. -/
-  | elu {s : Shape} : Op [.value s, .frozen []] [.value s]
+  /-- ELU with the frozen scalars `alpha`, `scale` and `input_scale` of `torch.nn.functional.elu`
+  and `aten.elu`: `x * scale` above 0 and `expm1 (x * input_scale) * (alpha * scale)` elsewhere,
+  which gives SELU and CELU too. At the kink we take the left slope
+  `alpha * scale * input_scale`, as torch's `elu_backward` does, so with `alpha = 0.5`, the
+  scales `1` and seed `1` both send `0.5` at `x = 0`. -/
+  | elu {s : Shape} : Op [.value s, .frozen [], .frozen [], .frozen []] [.value s]
   /-- Leaky ReLU with a frozen scalar negative slope. As in torch's `leaky_relu_backward`, the
   pullback takes the negative slope wherever `x > 0` fails, `x = 0` and a NaN included
   (`Activation.leakyReLUDeriv`). -/
@@ -325,9 +345,10 @@ inductive Op : List Port → List Port → Type where
       (mask : Option (Tensor Bool [rows, keys])) :
       Op [.value (batch ++ [rows, keys]), .value (batch ++ [keys, width]),
         .value (batch ++ [rows, keys])] [.value (batch ++ [rows, width])]
-  /-- Stable sort along `dim`: the sorted values and the index each came from. -/
-  | sort {s : Shape} (dim : Fin s.rank) (descending : Bool) :
-      Op [.value s] [.value s, .index [s.extent dim] s]
+  /-- Stable sort along `dim`: the sorted values and the index each came from. Booleans sort with
+  `false` first and integer words by their values, signed or unsigned. -/
+  | sort {s : Shape} (dim : Fin s.rank) (descending : Bool) (e : Op.Element := .scalar) :
+      Op [e.port .value s] [e.port .value s, .index [s.extent dim] s]
   /-- The `k` largest, or smallest, entries along `dim` and their indices. -/
   | topk {s : Shape} (dim : Fin s.rank) (k : Nat) (largest : Bool) (h : k ≤ s.extent dim) :
       Op [.value s]
@@ -438,8 +459,8 @@ inductive Op : List Port → List Port → Type where
   | addcdiv {s : Shape} : Op [.value s, .value s, .value s, .frozen []] [.value s]
   /-- GELU with `torch.nn.functional.gelu`'s `approximate`: the tanh formula by default, the exact
   `x Φ(x)` at `.none`, each with the pullback of its derivative. The exact form needs `Erf`. Our
-  default differs from torch's, which is `'none'` (PyTorch 2.8 docs), so the PyTorch capture reads a
-  missing `approximate` as `'none'` (`python/torchlean/_pointwise.py`).
+  default differs from torch's, which is `'none'` (PyTorch 2.13 docs), so the PyTorch capture reads
+  a missing `approximate` as `'none'` (`python/torchlean/_pointwise.py`).
   `TorchLeanTest.Interop.IRPyTorch` compares both forms, as `TorchLean.PyTorch.emit` writes them,
   with ours at `±∞`, `±0`, a NaN and four finite points. -/
   | gelu {s : Shape} (approximate : GeluApproximation := .tanh) : Op [.value s] [.value s]
@@ -464,17 +485,23 @@ inductive Op : List Port → List Port → Type where
       Op [e.port .value s, e.port .frozen s] [e.port .value s]
   /-- Cumulative product along `dim`. The pullback at an entry adds, over the prefixes that contain
   it, the upstream gradient at the prefix's last entry times the product of the prefix without the
-  entry. -/
-  | cumprod {s : Shape} (dim : Fin s.rank) : Op [.value s] [.value s]
+  entry. The prefixes are multiplied in the order `order` (`Tensor.scanIn`), and the pullback and
+  the tangent are those of the left fold. -/
+  | cumprod {s : Shape} (dim : Fin s.rank) (order : Tensor.ReduceOrder := .leftFold) :
+      Op [.value s] [.value s]
   /-- Running maxima along `dim`, each with the index it comes from. The pullback adds the upstream
-  gradient at that index. -/
-  | cummax {s : Shape} (dim : Fin s.rank) : Op [.value s] [.value s, .index [s.extent dim] s]
+  gradient at that index. The indices of a prefix are folded in the order `order`
+  (`Tensor.cummaxIn`), and the pullback and the tangent are those of the left fold. -/
+  | cummax {s : Shape} (dim : Fin s.rank) (order : Tensor.ReduceOrder := .leftFold) :
+      Op [.value s] [.value s, .index [s.extent dim] s]
   /-- Running minima along `dim`, each with the index it comes from. The pullback adds the upstream
-  gradient at that index. -/
-  | cummin {s : Shape} (dim : Fin s.rank) : Op [.value s] [.value s, .index [s.extent dim] s]
+  gradient at that index. The indices of a prefix are folded in the order `order`
+  (`Tensor.cumminIn`), and the pullback and the tangent are those of the left fold. -/
+  | cummin {s : Shape} (dim : Fin s.rank) (order : Tensor.ReduceOrder := .leftFold) :
+      Op [.value s] [.value s, .index [s.extent dim] s]
   /-- The mean squared error of a prediction and a target, both differentiable: the target receives
   the negated prediction gradient. That's `torch.nn.functional.mse_loss` at its default
-  `reduction='mean'` (PyTorch 2.8 docs), and torch's `derivatives.yaml` gives the target the same
+  `reduction='mean'` (PyTorch 2.13 docs), and torch's `derivatives.yaml` gives the target the same
   negation, `mse_loss_backward` with the arguments swapped. On an empty input the loss is `0`
   (`meanDenominator` divides by one there) and torch's is a NaN. -/
   | mseLoss {s : Shape} : Op [.value s, .value s] [.value .scalar]
@@ -545,18 +572,24 @@ inductive Op : List Port → List Port → Type where
   pullbacks are the products with the transposed other operand, summed over broadcast axes. With
   `lv` the left operand is a vector, read as a one-row matrix, and with `rv` the right operand is a
   vector, read as a one-column matrix. The result leaves out the axis of each (`Shape.matmulLeft`,
-  `Shape.matmulRight`, `Shape.matmulOut`), and a vector's gradient is that of its matrix view. -/
+  `Shape.matmulRight`, `Shape.matmulOut`), and a vector's gradient is that of its matrix view.
+  Each entry adds its products in the order `order` (`Tensor.batchMatmulIn`), as does the tangent,
+  and the pullbacks are those of the left fold. -/
   | matmul {batchA batchB batch : Shape} {m n p : Nat} (lv rv : Bool) (hl : lv = true → m = 1)
       (hr : rv = true → p = 1) (broadcastA : Shape.CanBroadcastTo batchA batch)
-      (broadcastB : Shape.CanBroadcastTo batchB batch) :
+      (broadcastB : Shape.CanBroadcastTo batchB batch)
+      (order : Tensor.ReduceOrder := .leftFold) :
       Op [.value (Shape.matmulLeft lv batchA m n), .value (Shape.matmulRight rv batchB n p)]
         [.value (Shape.matmulOut lv rv batch m p)]
   /-- The matrix product with a frozen scalar scale kept inside each contraction, broadcast and with
-  vector operands as in `matmul`. The pullbacks keep the same scale in each product. -/
+  vector operands as in `matmul`. The pullbacks keep the same scale in each product. Each entry adds
+  its products in the order `order` (`Attention.scaledMatmulIn`), and the pullbacks and the tangent
+  are those of the left fold. -/
   | scaledMatmul {batchA batchB batch : Shape} {m n p : Nat} (lv rv : Bool)
       (hl : lv = true → m = 1) (hr : rv = true → p = 1)
       (broadcastA : Shape.CanBroadcastTo batchA batch)
-      (broadcastB : Shape.CanBroadcastTo batchB batch) :
+      (broadcastB : Shape.CanBroadcastTo batchB batch)
+      (order : Tensor.ReduceOrder := .leftFold) :
       Op [.value (Shape.matmulLeft lv batchA m n), .value (Shape.matmulRight rv batchB n p),
           .frozen []] [.value (Shape.matmulOut lv rv batch m p)]
   /-- Convolution with a kernel input, a bias of one entry per output feature and the input, with
@@ -579,9 +612,11 @@ inductive Op : List Port → List Port → Type where
       Op [.value k, .value [k.extent (dims.kernel ⟨0, by omega⟩)], .value x] [.value y]
   /-- Pooling over the axes `dims` with the reduction `op` (sum, maximum, minimum or average), with
   per-axis kernel, stride, padding before and after, dilation and ceil mode. `Op.check` rejects an
-  ill-formed window before any input is read. -/
+  ill-formed window before any input is read. A sum or average adds its window in the order
+  `order` (`Tensor.poolIn`), and the pullback and the tangent are those of the left fold. -/
   | pool {s : Shape} (op : PoolOp) (dims : List (Fin s.rank))
-      (kernel stride padLow padHigh dilation : List Nat) (ceilMode : Bool) :
+      (kernel stride padLow padHigh dilation : List Nat) (ceilMode : Bool)
+      (order : Tensor.ReduceOrder := .leftFold) :
       Op [.value s] [.value (s.pool dims kernel stride padLow padHigh dilation ceilMode)]
   /-- The log-sum-exp surrogate of max pooling with a frozen finite nonzero `beta`, over the axes
   `dims` with per-axis window parameters. `validate` rejects a zero or nonfinite `beta`. A recorder
@@ -714,9 +749,59 @@ inductive Op : List Port → List Port → Type where
   `g * (1/3 * (1 / (y * y)))` at the output `y`, JAX's order, with `1/3` rounded once. Over the
   reals that is the derivative at `x ≠ 0`, though the `Cbrt` class carries no proof of it. -/
   | cbrt {s : Shape} : Op [.value s] [.value s]
+  /-- The partial derivative of orders `orders` of the special function `f` of
+  `orders.length` arguments (`torch.special`, `jax.lax`, `SpecialFn`), the scalar's
+  `Special.deriv f orders.get`, of order `orders.get i` in input `i`. Orders all `0` are the
+  function itself, `torch.special.polygamma n` is `digamma` at orders `[n]`,
+  `lax.igamma_grad_a` is `igamma` at orders `[1, 0]`, and `lax.betainc` is `betainc`, the
+  regularized incomplete beta function `I_x(a, b)` (DLMF 8.17.1 and 8.17.2), with inputs `a`, `b`
+  and `x` in that order. The pullback to input `i` multiplies the seed by orders
+  `orders.get + Pi.single i 1`. Over the reals that is the adjoint of the derivative of the
+  forward, jointly in the inputs, wherever `f` is smooth at every tuple of entries
+  (`Op.special_backward_eq_adjoint_of_contDiffAt`). -/
+  | special (orders : List ℕ) (f : SpecialFn orders.length) {s : Shape} :
+      Op (orders.map fun _ => .value s) [.value s]
   /-- C's `nextafter` (`torch.nextafter`, `lax.nextafter`), the scalar's `NextAfter`. The inputs are
   frozen, since TorchLean gives it no derivative (PyTorch implements none). -/
   | nextafter {s : Shape} : Op [.frozen s, .frozen s] [.value s]
+  /-- C's `frexp` (`torch.frexp`, `jnp.frexp`), the scalar's `Frexp`: the mantissa of each entry
+  and its exponent as a word of `int32`, which wraps an exponent outside that range. Where the
+  exponents fit, as at binary64, the word and the mantissa rebuild the input
+  (`ConfiguredBinary.toReal_frexp_mul_toInt`, `Op.frexp_forward_reconstruct`). The pullback of
+  the mantissa is `ldexp g (-e)`, `g 2⁻ᵉ` at the exponent `e` of the input, rounded once; over the
+  reals that is the derivative away from zero and the powers of two (`hasDerivAt_frexpMantissa`).
+  The exponent has no gradient. -/
+  | frexp {s : Shape} : Op [.value s] [.value s, .integer true 32 s]
+  /-- The fused multiply-add `x × y + z` of each triple of entries, rounded once: IEEE 754-2019
+  `fusedMultiplyAdd` (5.4.1), the scalar's `Fma`. In FloatLib's configured formats it is FloatLib's
+  correctly rounded `Configured.Spec.fma` (`ConfiguredBinary.toReal_fma`), and at `Float` and
+  `Float32` core's `Float.fma` and `Float32.fma`, C's `fma` and `fmaf`. It is for TorchLean
+  programs and fused kernels, as the CUDA kernel of `Buffer.axpy` calls `fmaf` in binary32. No
+  frontend maps a framework operator to it, `addcmul` or `a * b + c` included, and it has no
+  LibTorch entry. The pullbacks are `g y`, `g x` and `g`, and over the reals they are the adjoint
+  of the derivative (`Op.fma_backward_eq_adjoint`). -/
+  | fma {s : Shape} : Op [.value s, .value s, .value s] [.value s]
+  /-- The complex function `f` (`ComplexFn`, a `jax.lax` primitive on complex arrays) of each pair
+  of a complex tensor of shape `s`, stored with the real part at index `0` of the last axis and the
+  imaginary part at `1`: the scalar's `ComplexFunctions.apply f`. In FloatLib's configured formats
+  it is FloatLib's `ExecComplex` function, whose parts are the exact parts rounded once in an IEEE
+  format (`TorchLean.Tensor.ConfiguredBinary.Complex`). The tangent is the complex derivative `D`
+  times the tangent and the pullback the conjugate `conj D` times the seed, the adjoint of
+  multiplication by `D` on the pairs. Over the reals that is the adjoint of the derivative of the
+  forward wherever `f` is complex differentiable at every pair
+  (`Op.complex_backward_eq_adjoint`). -/
+  | complex (f : ComplexFn) {s : Shape} : Op [.value (s ++ [2])] [.value (s ++ [2])]
+  /-- The principal power `z ^ w` (`lax.pow` on complex arrays) of each pair of entries of two
+  complex tensors of shape `s`, the base first, stored as for `complex`: the scalar's
+  `ComplexFunctions.pow`, `exp (w log z)` with the cut of `log` on the negative real axis of the
+  base. In FloatLib's configured formats it is FloatLib's `ExecComplex.pow`, C23's `cpow`, whose
+  parts are those of the exact result rounded once where FloatLib certifies it
+  (`TorchLean.Tensor.ConfiguredBinary.Complex`). The tangent is `A dz + B dw` and the pullbacks
+  `conj A` and `conj B` times the seed, for the partial complex derivatives `A` and `B` in the base
+  and the exponent (`ComplexFunctions.powDeriv`). Over the reals, where every base is off the closed
+  negative real axis, that is the adjoint of the derivative of the forward in both inputs
+  (`Op.complexPow_backward_eq_adjoint`). -/
+  | complexPow {s : Shape} : Op [.value (s ++ [2]), .value (s ++ [2])] [.value (s ++ [2])]
   /-- The index of the first largest entry along `dim`, or of the first NaN where there is one
   (`Tensor.argmax`), the axis kept with extent one when `keepdim`. The input is frozen, since an
   index has no gradient. -/
@@ -762,22 +847,27 @@ inductive Op : List Port → List Port → Type where
   needs every listed axis nonempty, and `Op.check` rejects a repeated axis. The pullback of a
   maximum or minimum splits the upstream gradient evenly among the entries equal to the extremum
   (by the scalar's `==`, a NaN equal to a NaN extremum), and its tangent is the mean of their
-  tangents (`Tensor.reduceJVP`). -/
+  tangents (`Tensor.reduceJVP`). Each fiber is folded in the order `order` (`Tensor.reduceIn`),
+  and the pullback and the tangent are those of the left fold, the tangent of a sum excepted,
+  which is the sum of the tangent in `order`. -/
   | reduce {s : Shape} (op : Tensor.ReduceOp) (dims : List (Fin s.rank)) (keepdim : Bool)
-      (h : op = .max ∨ op = .min → ∀ d ∈ dims, 0 < s.extent d) :
+      (h : op = .max ∨ op = .min → ∀ d ∈ dims, 0 < s.extent d)
+      (order : Tensor.ReduceOrder := .leftFold) :
       Op [.value s] [.value (s.reduce dims keepdim)]
   /-- The mean over the axes `dims` (`torch.mean`): each fiber's sum divided by its number of
   entries, and by one for an empty fiber (TorchLean's totalized mean). The pullback divides each
-  entry's upstream gradient once by the same count, and `Op.check` rejects a repeated axis. -/
-  | mean {s : Shape} (dims : List (Fin s.rank)) (keepdim : Bool) :
+  entry's upstream gradient once by the same count, and `Op.check` rejects a repeated axis. Each
+  fiber is added in the order `order` (`Tensor.meanIn`), as is the tangent. -/
+  | mean {s : Shape} (dims : List (Fin s.rank)) (keepdim : Bool)
+      (order : Tensor.ReduceOrder := .leftFold) :
       Op [.value s] [.value (s.reduce dims keepdim)]
   /-- The contraction of the paired axes `dims` with the batch pairs `batchDims`
-  (`Tensor.contract`): each output entry adds the products of the paired entries to zero in
-  row-major order of the contracted axes. Each pullback contracts the upstream gradient with the
-  other input over that input's other axes (`Tensor.contractBackwardLeft`,
+  (`Tensor.contractIn`): each output entry adds the products of the paired entries from zero in
+  the order `order`, as does the tangent. Each pullback contracts the upstream gradient with the
+  other input over that input's other axes in the left fold (`Tensor.contractBackwardLeft`,
   `Tensor.contractBackwardRight`). -/
   | contract {s t : Shape} (dims batchDims : List (Fin s.rank × Fin t.rank))
-      (h : Shape.ContractValid s t dims batchDims) :
+      (h : Shape.ContractValid s t dims batchDims) (order : Tensor.ReduceOrder := .leftFold) :
       Op [.value s, .value t] [.value (s.contract t dims batchDims)]
   /-- Softmax along `dim` of the entries a Boolean mask input allows (`Tensor.softmax` with the
   mask): a blocked entry has a zero numerator, so weight zero where the fiber's allowed scores are
@@ -895,6 +985,7 @@ def atElement (e : Op.Element) (o : Σ ins outs, Op ins outs) :
   | ⟨_, _, .pad low high interior .scalar⟩ => some ⟨_, _, .pad low high interior e⟩
   | ⟨_, _, .cat dim sizes .scalar⟩ => some ⟨_, _, .cat dim sizes e⟩
   | ⟨_, _, .scatter (t := t) rule dims h .scalar⟩ => some ⟨_, _, .scatter (t := t) rule dims h e⟩
+  | ⟨_, _, .sort (s := s) dim descending .scalar⟩ => some ⟨_, _, .sort (s := s) dim descending e⟩
   | o => if (o.1 ++ o.2.1).any (·.kind.isScalar) then none else some o
 
 /-- At the scalar element, `atElement` returns every operator unchanged. -/
@@ -916,21 +1007,47 @@ def Op.checkWindow {s : Shape} (label : String) (dims : List (Fin s.rank))
     throw s!"autograd: {label} requires kernel_size > 0 on every pooled axis"
   if stride.any (· = 0) then throw s!"autograd: {label} requires stride > 0 on every pooled axis"
 
+/-- The order `order` of a reduction over `count` entries covers them
+(`Tensor.ReduceOrder.Covers`). The left fold, the pairwise order and the blocked orders cover every
+count (`Op.checkOrder_eq_ok`), so only a given tree is checked. -/
+def Op.checkOrder (label : String) : Tensor.ReduceOrder → Nat → Except String Unit
+  | .ofTree tree, count =>
+      unless decide ((Tensor.ReduceOrder.ofTree tree).Covers count) do
+        throw s!"{label}: the order does not cover the {count} reduced entries"
+  | _, _ => .ok ()
+
+theorem Op.checkOrder_eq_ok (label : String) (order : Tensor.ReduceOrder) (count : Nat) :
+    Op.checkOrder label order count = .ok () ↔ order.Covers count := by
+  cases order with
+  | leftFold => exact iff_of_true rfl (Tensor.ReduceOrder.covers_leftFold count)
+  | pairwise => exact iff_of_true rfl (Tensor.ReduceOrder.covers_pairwise count)
+  | blocked w => exact iff_of_true rfl (Tensor.ReduceOrder.covers_blocked w count)
+  | ofTree tree =>
+    by_cases h : (Tensor.ReduceOrder.ofTree tree).Covers count
+    · exact iff_of_true (by simp [Op.checkOrder, h]; rfl) h
+    · exact iff_of_false (by simp [Op.checkOrder, h, throw, throwThe, MonadExceptOf.throw]) h
+
 /-- The check of an operator's attributes that their types do not make. It checks the window of a
 pooling (and at least one pooled axis for the smooth max pool) and, for a convolution, positive
 groups dividing the kernel's output-feature extent and an input feature extent of `groups` times the
 kernel's input-feature extent. For a transposed convolution it checks positive groups dividing the
 input's feature extent and a kernel with that input-feature extent. It also checks distinct axes for
 a reduction or a mean, a positive word width for `encodeIndex` and `decodeIndex`, a rounding for an
-integer division and the replacement rule for a Boolean scatter. A recorder runs it before reading
-any input, and decoding a wire record does not. -/
+integer division and the replacement rule for a Boolean scatter. The order of `reduce`, `mean`,
+`contract`, `matmul`, `scaledMatmul`, `pool`, `cumsum`, `cumprod`, `cummax` and `cummin` must cover
+the entries each output entry folds (`Op.checkOrder`): the reduced fiber, the contracted
+coordinates, the window, or the axis of a scan or a running selection, whose prefixes are smaller
+counts (`Tensor.ReduceOrder.Covers.mono`). A recorder runs it before reading any input, and decoding
+a wire record does not. -/
 def Op.check : {ins outs : List Port} → Op ins outs → Except String Unit
-  | _, _, .pool op dims kernel stride padLow padHigh dilation _ =>
-      Op.checkWindow (match op with
+  | _, _, .pool (s := s) op dims kernel stride padLow padHigh dilation _ order => do
+      let label := match op with
         | .sum => "sum_pool"
         | .max => "max_pool"
         | .min => "min_pool"
-        | .avg _ => "avg_pool") dims kernel stride padLow padHigh dilation
+        | .avg _ => "avg_pool"
+      Op.checkWindow label dims kernel stride padLow padHigh dilation
+      Op.checkOrder label order (Shape.size (s.poolWindow dims kernel))
   | _, _, .smoothMaxPool dims kernel stride padLow padHigh dilation _ => do
       if dims.isEmpty then throw "autograd: smooth_max_pool requires at least one pooled axis"
       Op.checkWindow "smooth_max_pool" dims kernel stride padLow padHigh dilation
@@ -947,8 +1064,20 @@ def Op.check : {ins outs : List Port} → Op ins outs → Except String Unit
         throw "conv_transpose: groups must divide the input's features"
       unless k.extent (dims.kernel ⟨1, by omega⟩) = s.extent (dims.input ⟨1, by omega⟩) do
         throw "conv_transpose: the kernel's input features must equal the input's features"
-  | _, _, .reduce _ dims _ _ => unless dims.Nodup do throw "reduce requires distinct axes"
-  | _, _, .mean dims _ => unless dims.Nodup do throw "mean requires distinct axes"
+  | _, _, .reduce (s := s) _ dims _ _ order => do
+      unless dims.Nodup do throw "reduce requires distinct axes"
+      Op.checkOrder "reduce" order (Shape.size (s.selectAxes dims))
+  | _, _, .mean (s := s) dims _ order => do
+      unless dims.Nodup do throw "mean requires distinct axes"
+      Op.checkOrder "mean" order (Shape.size (s.selectAxes dims))
+  | _, _, .contract (s := s) dims _ _ order =>
+      Op.checkOrder "contract" order (Shape.size ((dims.map Prod.fst).map s.extent))
+  | _, _, .matmul (n := n) _ _ _ _ _ _ order => Op.checkOrder "matmul" order n
+  | _, _, .scaledMatmul (n := n) _ _ _ _ _ _ order => Op.checkOrder "scaledMatmul" order n
+  | _, _, .cumsum (s := s) dim order => Op.checkOrder "cumsum" order (s.extent dim)
+  | _, _, .cumprod (s := s) dim order => Op.checkOrder "cumprod" order (s.extent dim)
+  | _, _, .cummax (s := s) dim order => Op.checkOrder "cummax" order (s.extent dim)
+  | _, _, .cummin (s := s) dim order => Op.checkOrder "cummin" order (s.extent dim)
   | _, _, .encodeIndex _ _ width | _, _, .decodeIndex _ _ width =>
       unless 0 < width do throw "an index adapter requires a positive width"
   | _, _, .div .none (.integer _ _) =>
@@ -963,7 +1092,7 @@ def Op.check : {ins outs : List Port} → Op ins outs → Except String Unit
 /-- The sum over every axis passes the attribute check of `Op.reduce`. -/
 theorem Op.reduce_check (shape : Shape) :
     (Op.reduce (s := shape) .sum (List.finRange shape.rank) false
-      (fun h => absurd h (by decide))).check = .ok () :=
-  ite_eq_left (List.nodup_finRange _)
+      (fun h => absurd h (by decide))).check = .ok () := by
+  simp [Op.check, Op.checkOrder, List.nodup_finRange]
 
 end TorchLean

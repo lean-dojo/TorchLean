@@ -47,8 +47,8 @@ compile their CUDA source with them at runtime, so they need no handwritten kern
 
 ## Torch versions
 
-The bridge builds against torch 2.13 or later and runs with the torch runtime the process loads,
-torch 2.13 or a later release, without a rebuild, apart from the allocator calls below.
+The bridge builds against torch 2.13 or later and loads torch 2.13 or a later runtime without a
+rebuild, apart from the allocator calls below.
 `torchlean.cpp`, `conv_pool.cpp`, `tree.cpp` and `kernels.cpp` are compiled with
 `TORCH_TARGET_VERSION` set to torch 2.13 and include from torch only the headers of the LibTorch
 Stable ABI. Each ATen operator call names its schema, `aten<"name.overload">(...)`: `stable.h`

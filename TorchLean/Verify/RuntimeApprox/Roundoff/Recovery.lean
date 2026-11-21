@@ -11,7 +11,7 @@ public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Real
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Value.CoreProof
 public import TorchLean.Tensor.Numeric.Enclosure
 public import TorchLean.Verify.RuntimeApprox.Rounding
-import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Rules
+import FloatLib.Tactic.Roundoff.Rules
 
 /-!
 # Rounding of recovered coefficients
@@ -490,6 +490,27 @@ theorem mixedError_enclosedPowerSlope (base exponent seed : Value)
   rw [enclosedPowerSlope_rounding base exponent seed hformat
     (Option.eq_some_of_isSome found), ← mul_assoc]
 
+/-- The tail `exp (-|x|)`, or `exp (-2 * |x|)` for tanh, of the slope that `enclosedSlope?`
+rounds. These macros inline the reference of `enclosedSlope_get_error`: roundoff only reads a rule
+whose conclusion is a `≤` itself, not one under `let`. -/
+local macro "slopeTail " input:term:max isTanh:term:max : term =>
+  `(Real.exp (-(if $isTanh then (2 : ℝ) else 1) * |ExecFloat.Binary.toReal $input|))
+
+/-- The seed (`1` without one) times the tail. The match does not generalize the hypotheses that
+mention the seed, so that the statement and its proof elaborate it alike. -/
+local macro "slopeNumerator " input:term:max seed:term:max isTanh:term:max : term =>
+  `((match (generalizing := false) $seed:term with
+    | none => 1
+    | some upstream => ExecFloat.Binary.toReal upstream) * slopeTail $input $isTanh)
+
+/-- The exact slope, in the arithmetic `enclosedSlope?` rounds. -/
+local macro "slopeReference " input:term:max seed:term:max isTanh:term:max : term =>
+  `((if $isTanh then
+      (slopeNumerator $input $seed $isTanh + slopeNumerator $input $seed $isTanh) +
+        (slopeNumerator $input $seed $isTanh + slopeNumerator $input $seed $isTanh)
+    else slopeNumerator $input $seed $isTanh) /
+    ((1 + slopeTail $input $isTanh) * (1 + slopeTail $input $isTanh)))
+
 /-- A successful `enclosedSlope?` is within `Model.halfUlpAt` of the exact slope at the real input
 `x` and seed `g` (`1` without a seed): `g * e / (1 + e) ^ 2` with `e = exp (-|x|)`, or for tanh
 `4 * g * e / (1 + e) ^ 2` with `e = exp (-2 * |x|)`. -/
@@ -498,28 +519,22 @@ theorem enclosedSlope_get_error (input : Value) (seed : Option Value) (isTanh : 
     (found : (@enclosedSlope? Value
       (QuotientArithmetic.configured (format := format) (plan := plan) (code := code))
       input seed isTanh).isSome) :
-    let tail := Real.exp (-(if isTanh then (2 : ℝ) else 1) * |ExecFloat.Binary.toReal input|)
-    let numerator := (match seed with
-      | none => 1
-      | some upstream => ExecFloat.Binary.toReal upstream) * tail
-    let reference :=
-      (if isTanh then (numerator + numerator) + (numerator + numerator) else numerator) /
-        ((1 + tail) * (1 + tail))
     |ExecFloat.Binary.toReal
         ((@enclosedSlope? Value
           (QuotientArithmetic.configured (format := format) (plan := plan) (code := code))
-          input seed isTanh).get found) - reference| ≤ Model.halfUlpAt format reference := by
-  intro tail numerator reference
+          input seed isTanh).get found) - slopeReference input seed isTanh| ≤
+      Model.halfUlpAt format (slopeReference input seed isTanh) := by
   have accepted := Option.eq_some_of_isSome found
   have rounded := enclosedSlope_rounding input seed isTanh hformat accepted
   rw [idealSlope_scalar] at rounded
   have observed : ExecFloat.Binary.toReal
       ((@enclosedSlope? Value
         (QuotientArithmetic.configured (format := format) (plan := plan) (code := code))
-        input seed isTanh).get found) = Model.roundAt format reference := by
+        input seed isTanh).get found) =
+        Model.roundAt format (slopeReference input seed isTanh) := by
     cases seed <;>
-      simpa only [tail, numerator, reference, ExecFloat.Binary.toRat?,
-        Model.cast_toRat_eq_toReal, ExecFloat.Binary.toReal, Rat.cast_one] using rounded
+      simpa only [ExecFloat.Binary.toRat?, Model.cast_toRat_eq_toReal, ExecFloat.Binary.toReal,
+        Rat.cast_one] using rounded
   rw [observed]
   exact Model.abs_roundAt_sub_le _ _
 

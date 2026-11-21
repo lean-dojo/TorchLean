@@ -5,7 +5,7 @@ Authors: TorchLean Team
 -/
 module
 
-public meta import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension
+public meta import FloatLib.Tactic.Roundoff.Extension
 
 /-!
 # Shape-dependent reads for `roundoff`
@@ -14,7 +14,7 @@ public meta import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff
 shape, or a bound on its entries, used where that shape is not literal. The attribute is separate
 from the tensor adapter, so rule modules can register reads and bounds without importing the
 analysis. The attribute for all other rules, `roundoff_rule`, is FloatLib's
-(`FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension`).
+(`FloatLib.Tactic.Roundoff.Extension`).
 -/
 
 public meta section

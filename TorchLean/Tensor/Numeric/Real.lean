@@ -16,7 +16,9 @@ public import Mathlib.Analysis.SpecialFunctions.Pow.Real
 Specifications call `MathFunctions.*` to stay polymorphic in `α`, and proofs specialize to `ℝ`.
 Over `ℝ` the methods are definitionally the `Real.*` functions, and the `rfl` lemmas `exp_real`,
 `sinh_real`, `cosh_real`, `tanh_real` and `sqrt_real` state this for `exp`, `sinh`, `cosh`, `tanh`
-and `sqrt`, so proof scripts rewrite uniformly without local copies.
+and `sqrt`, so proof scripts rewrite uniformly without local copies. `sqrt_max_zero` drops the
+clamp at zero under a real square root, and `MathFunctions.sqrt_max_zero` states it for
+`MathFunctions.sqrt`.
 -/
 
 @[expose] public section
@@ -39,5 +41,16 @@ theorem MathFunctions.tanh_real (x : ℝ) : MathFunctions.tanh x = Real.tanh x :
 
 /-- `MathFunctions.sqrt` is definitionally equal to `Real.sqrt` for `ℝ`. -/
 theorem MathFunctions.sqrt_real (x : ℝ) : MathFunctions.sqrt x = Real.sqrt x := rfl
+
+/-- Clamping at zero does not change a real square root, since `Real.sqrt` is zero at the numbers
+below zero. -/
+theorem sqrt_max_zero (x : ℝ) : Real.sqrt (max x 0) = Real.sqrt x := by
+  rcases le_total x 0 with h | h
+  · rw [max_eq_right h, Real.sqrt_zero, Real.sqrt_eq_zero_of_nonpos h]
+  · rw [max_eq_left h]
+
+/-- Over `ℝ`, `MathFunctions.sqrt (max x 0)` is `Real.sqrt x`. -/
+theorem MathFunctions.sqrt_max_zero (x : ℝ) : MathFunctions.sqrt (max x 0) = Real.sqrt x :=
+  TorchLean.sqrt_max_zero x
 
 end TorchLean

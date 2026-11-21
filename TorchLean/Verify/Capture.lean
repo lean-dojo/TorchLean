@@ -17,10 +17,17 @@ passing check covers the supplied arguments only, and the checks neither prove t
 translation nor validate external kernels.
 
 A capture document holds its typed artifact under the key `artifact`, and every check reads it
-through `TorchLean.IR.load`: `TorchLean.IR.Artifact.ofJson` decodes the artifact and
+through `TorchLean.IR.loadFlow`: `TorchLean.IR.Artifact.ofJson` decodes the artifact and
 `TorchLean.IR.Artifact.load` checks its program (`TorchLean.IR.Program.check`) and its payload
-(`TorchLean.IR.Program.Payload.check`). The `structure` and `types` findings report that check. The
-arguments and reference outputs are tensors that `TorchLean.IR.loadValue` reads.
+(`TorchLean.IR.Program.Payload.check`), every block's for an artifact with control flow
+(`TorchLean.IR.FlowArtifact`). The `structure` and `types` findings report that check and, for an
+artifact with control flow, that its blocks compose (`TorchLean.Capture.flowTypes`): each block is
+given values its arguments read, each `cond` selects by a value that can be a branch index, and
+each loop's test returns one scalar Boolean, in every typing that some path through the flow's
+branches and loop iterations gives its state, whether or not a run takes that path. The arguments
+are not part of the artifact, so this check leaves the values the flow starts on to execution. The
+arguments and reference outputs are tensors that `TorchLean.IR.loadValue` reads, and an artifact
+with control flow runs by `TorchLean.IR.Flow.eval` in the language `TorchLean.IR.Flow.programs`.
 
 The report preserves the document's `capture_constraints` as unchecked metadata. Structure,
 type and example-execution checks do not establish these conditions for all inputs.
@@ -39,9 +46,10 @@ If the second run reproduces every differing element, the failed finding lists t
 `consistent_with`. That field is advice: an importer error with the same effect on these arguments
 cannot be ruled out, and some importer errors coincide with XLA's own rewrites. Under `jax.jit`,
 listing them also requires the document's primitive-by-primitive reference, when there is one, to
-agree with the IR or to be reproduced without `jax.jit`'s rewrites. The checker trusts the
-document's record of how XLA compiled the reference, so a forged record can at most add this advice
-to a failure.
+agree with the IR or to be reproduced without `jax.jit`'s rewrites. An artifact with control flow
+is not emulated, and a mismatch in it fails without advice. The checker trusts the document's
+record of how XLA compiled the reference, so a forged record can at most add this advice to a
+failure.
 
 An unknown request is reported as unsupported and makes the report fail. Certificate checkers
 and proof APIs are separate tools with their own contracts.
@@ -738,7 +746,7 @@ def inWindow (format : FloatFormat) (emulated wanted low high : Nat) : Bool :=
   let y : Model format := Model.ofNatBits emulated
   if (Capture.binaryWordClass format emulated).1 ||
     (Capture.binaryWordClass format wanted).1 then false
-  else if x.signBit != y.signBit || x.isInf != y.isInf then false
+  else if x.signBit != y.signBit || x.isInfinite != y.isInfinite then false
   else
     let sign := 2 ^ (format.bitWidth - 1)
     let ordinal (word : Nat) : Int := if word ≥ sign then -((word - sign : Nat) : Int) else word
@@ -987,16 +995,18 @@ def _root_.TorchLean.Capture.eagerCheck (bitwise : Bool) (document : Json) (prog
   | .error message => (false, s!"the primitive-by-primitive reference could not be compared: \
       {message}", Json.mkObj [("status", "unreadable")])
 
-/-- The `compare` or `compare_bitwise` finding for the results `results` of the program `program`
-with the payload `payload`, whose run gave the outputs `steps`: any difference fails. For a Jaxpr
-document with a CPU reference, a failure whose differing elements the emulation of XLA's CPU code
-reproduces carries the behaviours in `consistent_with` as advice. With a `jax.jit` reference this
-also needs the document's primitive-by-primitive reference, when it has one, to agree with the IR
-or be reproduced without `jax.jit`. -/
-def _root_.TorchLean.Capture.compareFinding (name : String) (document : Json) (program : IR.Program)
-    (payload : Program.Payload Machine.reference) (arguments : Array (Value Machine.reference))
-    (steps : Array (List (Value Machine.reference))) (results : Array (Value Machine.reference)) :
-    Bool × Json :=
+/-- The `compare` or `compare_bitwise` finding for the results `results` of a run: any difference
+fails. `trace` holds the program, payload, arguments and step outputs of a run of an artifact whose
+flow is one block (an artifact without control flow, or a `"flow"` that is one `block`), and is
+`none` for any other flow. For a Jaxpr document with a CPU reference and a trace, a failure whose
+differing elements the emulation of XLA's CPU code reproduces carries the behaviours in
+`consistent_with` as advice. With a `jax.jit` reference this also needs the document's
+primitive-by-primitive reference, when it has one, to agree with the IR or be reproduced without
+`jax.jit`. -/
+def _root_.TorchLean.Capture.compareFinding (name : String) (document : Json)
+    (trace : Option (IR.Program × Program.Payload Machine.reference ×
+      Array (Value Machine.reference) × Array (List (Value Machine.reference))))
+    (results : Array (Value Machine.reference)) : Bool × Json :=
   let bitwise := name == "compare_bitwise"
   match Capture.mismatches bitwise document "reference_outputs" results with
   | .error message => (false, Capture.finding name "failed" message)
@@ -1022,7 +1032,10 @@ def _root_.TorchLean.Capture.compareFinding (name : String) (document : Json) (p
           s!"{failure}{counts}. The artifact does not record that \
           XLA's CPU backend computed the reference (reference_platform: {platform.compress}), so \
           XLA's CPU behaviour is not emulated.")
-      else
+      else match trace with
+      | none => (false, Capture.finding name "failed" s!"{failure}{counts}. The artifact has \
+          control flow, and the emulation of XLA's CPU code covers only artifacts without it.")
+      | some (program, payload, arguments, steps) =>
         let compilation := Compilation.read document
         match reproduce bitwise compilation program payload arguments steps results reference
             differing with
@@ -1092,6 +1105,130 @@ def _root_.TorchLean.Capture.flagsJson (flags : FloatLib.Floats.ExecFloat.Conver
 
 end XLA
 
+namespace Capture
+
+variable {P : Type}
+
+/-- The types of a program's arguments, in argument order: the type of the step reading each. -/
+def argumentTypes (p : IR.Program) : List Typed :=
+  (List.range p.arity).filterMap fun k => do
+    let i ← p.input? k
+    match p.nodes[i]? with
+    | some (.node (.input _ port)) => some (Typed.ofPort (p.scalar i) port)
+    | _ => none
+
+/-- The types of a program's results, in order. -/
+def resultTypes (p : IR.Program) : List Typed :=
+  p.outputs.toList.filterMap (p.typedBefore p.nodes.size)
+
+/-- The check that values of types `ts` can be the arguments of block `k`, the program `p`, as
+`Program.run` and its input steps read them: one value per argument, each at a port the step's
+port accepts (`Port.accepts`) and at the step's scalar. -/
+def checkArguments (k : Nat) (p : IR.Program) (ts : List Typed) : Except String Unit := do
+  unless ts.length = p.arity do
+    throw s!"IR types: block {k} takes {p.arity} values, given {ts.length}"
+  for (j, e, t) in (List.range ts.length).zip ((argumentTypes p).zip ts) do
+    unless e.port.accepts t.port && e.scalar == t.scalar do
+      throw s!"IR types: block {k} reads argument {j} at {e.describe}, given {t.describe}"
+
+/-- Whether a value of type `t` is a branch index as `Flow.toIndex` reads one: a scalar index,
+integer or Boolean value. -/
+def indexes : Typed → Bool
+  | ⟨⟨.index [_], .scalar⟩, _⟩ | ⟨⟨.integer .., .scalar⟩, _⟩ | ⟨⟨.bool, .scalar⟩, _⟩ => true
+  | _ => false
+
+/-- The types that a flow's state may have at a point of the flow, one entry for each typing that
+some path through its branches and loop iterations may give it: the types of its values, or `none`
+for the values the flow starts on, which are not part of its artifact. -/
+abbrev StateTypes := List (Option (List Typed))
+
+/-- The state types of `s` and those of `t`: the entries of `s`, then those of `t` that `s` lacks,
+in order. -/
+def union (s t : StateTypes) : StateTypes :=
+  t.foldl (fun r x => if r.contains x then r else r ++ [x]) s
+
+/-- Whether the state types `s` and `t` have the same entries. -/
+def same (s t : StateTypes) : Bool :=
+  s.all t.contains && t.all s.contains
+
+/-- The check that the results of a loop's test, of types `r`, are one scalar Boolean, as
+`Flow.holdsOf` and `Flow.toBool` read them. The loop is the one before block `k`. -/
+def checkTest (k : Nat) : Option (List Typed) → Except String Unit
+  | none | some [⟨⟨.bool, .scalar⟩, _⟩] => pure ()
+  | some [t] =>
+      throw s!"IR types: the test of the while loop before block {k} returns {t.describe}"
+  | some r =>
+      throw s!"IR types: the test of the while loop before block {k} returns {r.length} values"
+
+/-- The state types after `step` `n` times from state types `s`, `step` giving those after one. -/
+def iterateTypes (step : StateTypes → Except String StateTypes) :
+    Nat → StateTypes → Except String StateTypes
+  | 0, s => pure s
+  | n + 1, s => do
+      let r ← step s
+      if same r s then pure s else iterateTypes step n r
+
+/-- The state types of a loop's final state, `reached` holding those of the states reached so far
+and `last` those first reached by the last iteration, `test` checking the types of a state its
+test reads and `step` giving those after one more iteration. As `Flow.runWhile` with fuel `n`, the
+test reads every state reached within `n` iterations and the body every state reached within
+fewer, and the loop may end at any of them. -/
+def loopTypes (test : StateTypes → Except String Unit)
+    (step : StateTypes → Except String StateTypes) :
+    Nat → StateTypes → StateTypes → Except String StateTypes
+  | 0, reached, last => do
+      test last
+      pure reached
+  | n + 1, reached, last => do
+      test last
+      let next := (← step last).filter (!reached.contains ·)
+      if next.isEmpty then pure reached else loopTypes test step n (union reached next) next
+
+mutual
+
+/-- The state types after the flow from state types `s`, as `Flow.eval` in `Flow.programs` runs
+it with each loop running its body at most `fuel` times, or the first error in how the flow's
+blocks compose. The flow's blocks are numbered from `k`, in the order of `Flow.blocks`. A block
+must be given values its arguments read (`checkArguments`) in every typing that may reach it, a
+`cond` must have branches and select by a value that `Flow.toIndex` reads (`indexes`), and a
+loop's test must return one scalar Boolean (`checkTest`). Every branch and loop iteration is
+followed, whether or not a run takes it, and only the values the flow starts on (`none`), such as
+the arguments of a flat artifact's one block, are left to execution. -/
+def flowTypes (fuel : Nat) :
+    Flow (IR.Program × P) → Nat → StateTypes → Except String StateTypes
+  | .block (p, _), k, s => do
+      for t in s do
+        if let some ts := t then checkArguments k p ts
+      pure [some (resultTypes p)]
+  | .skip, _, s => pure s
+  | .seq f g, k, s => do flowTypes fuel g (k + f.blocks.length) (← flowTypes fuel f k s)
+  | .cond fs, k, s => do
+      if fs.isEmpty then throw s!"IR types: the cond before block {k} has no branches"
+      let rest : StateTypes ← s.mapM fun
+        | none => pure none
+        | some [] => throw s!"IR types: the cond before block {k} is given no values"
+        | some (t :: rest) => do
+            unless indexes t do
+              throw s!"IR types: the cond before block {k} selects by {t.describe}"
+            pure (some rest)
+      branchTypes fuel fs k (union [] rest)
+  | .scan n body, k, s => iterateTypes (flowTypes fuel body k) n s
+  | .whileLoop test body, k, s =>
+      loopTypes (fun s => do (← flowTypes fuel test k s).forM (checkTest k))
+        (flowTypes fuel body (k + test.blocks.length)) fuel s s
+
+/-- The state types after any of the branches `fs` from state types `s` (`union`), the branches'
+blocks numbered from `k`. -/
+def branchTypes (fuel : Nat) :
+    List (Flow (IR.Program × P)) → Nat → StateTypes → Except String StateTypes
+  | [], _, _ => pure []
+  | f :: fs, k, s => do
+      pure (union (← flowTypes fuel f k s) (← branchTypes fuel fs (k + f.blocks.length) s))
+
+end
+
+end Capture
+
 /-- Run requested checks, returning failures and unsupported requests as report entries.
 
 `execute`, `compare` and `compare_bitwise` concern only `arguments` stored in the document. A
@@ -1108,38 +1245,48 @@ def Capture.check (document : Json) (requests : Array String := #["structure", "
   let mut ok := true
   let mut outputs : Json := .null
   let mut conversionFlags : Json := .null
-  let loaded := IR.load document
+  let loaded := IR.loadFlow document
+  let typed : Except String Unit := do
+    let (flow, fuel) ← loaded
+    discard <| Capture.flowTypes fuel flow 0 [none]
   let execution : Except String _ := do
     unless requests.any (fun request =>
         request == "execute" || request == "compare" || request == "compare_bitwise") do
       throw "Execution was not requested."
-    let (program, payload) ← loaded
+    let (flow, fuel) ← loaded
     let arguments ← IR.loadArguments Machine.reference document
-    let (steps, flags) ← program.run Machine.reference payload arguments
-    let results ← program.outputs.mapM (·.read steps)
+    let (trace, results, flags) ← match flow with
+      | .block (program, payload) => do
+          let (steps, flags) ← program.run Machine.reference payload arguments
+          pure (some (program, payload, arguments, steps),
+            ← program.outputs.mapM (·.read steps), flags)
+      | flow => do
+          let (outputs, flags) ←
+            (flow.eval (Flow.programs Machine.reference) fuel arguments.toList).run {}
+          pure (none, outputs.toArray, flags)
     let written ← results.mapIdxM fun i result =>
       (Capture.resultJson result).mapError (s!"IR: result {i} cannot be serialized: " ++ ·)
-    pure (program, payload, arguments, steps, results, flags, written)
-  if let .ok (_, _, _, _, _, flags, written) := execution then
+    pure (trace, results, flags, written)
+  if let .ok (_, _, flags, written) := execution then
     outputs := toJson written
     conversionFlags := flagsJson flags
   for request in requests do
     let (passed, entry) :=
       match request with
       | "structure" | "types" =>
-          match loaded with
+          match typed with
           | .ok _ => (true, finding request "checked"
               "Declared dependencies, shapes, types and casts are consistent.")
           | .error message => (false, finding request "failed" message)
       | "execute" | "compare" | "compare_bitwise" =>
           match execution with
           | .error message => (false, finding request "failed" message)
-          | .ok (program, payload, arguments, steps, results, _, _) =>
+          | .ok (trace, results, _, _) =>
               if request == "execute" then
                 (true, finding request "executed"
                   "CPU reference execution completed for the supplied arguments.")
               else
-                compareFinding request document program payload arguments steps results
+                compareFinding request document trace results
       | _ =>
           (false, finding request "unsupported"
             s!"No checker for `{request}`; no proof was produced.")

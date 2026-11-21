@@ -1,10 +1,74 @@
-"""Lower Dynamo graphs while retaining their live tensor parameter inputs."""
+"""Snapshot PyTorch examples for verification and lower Dynamo graphs with live parameters."""
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Sequence
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
+
+
+def copy_input(value, memo):
+    """Copy a tensor and its storage aliases without retaining its backward graph."""
+    import torch
+
+    if id(value) in memo:
+        return memo[id(value)]
+    with torch.inference_mode(value.is_inference()), torch.set_grad_enabled(not value.is_leaf):
+        if value._base is not None:
+            # Replay the original view on the copied base, including dtype-changing views.
+            copied = value._view_func(copy_input(value._base, memo))
+            if copied is None:
+                raise NotImplementedError("PyTorch could not replay an input view on its copy")
+            copied.requires_grad_(value.requires_grad)
+        elif (value.is_leaf and type(value) is not torch.nn.Parameter
+              and not (value.is_neg() or value.is_conj())):
+            copied = copy.deepcopy(value, memo)
+        else:
+            # Tensor.deepcopy materializes a lazy sign or conjugation and loses the layout.
+            # Copy the physical storage first, then restore its interpretation on the copy.
+            raw = value.detach()
+            torch._C._set_neg(raw, False)
+            torch._C._set_conj(raw, False)
+            copied = copy.deepcopy(raw, memo)
+            torch._C._set_neg(copied, value.is_neg())
+            torch._C._set_conj(copied, value.is_conj())
+            if type(value) is torch.nn.Parameter:
+                copied = torch.nn.Parameter(copied, requires_grad=value.requires_grad)
+            if value.is_leaf:
+                copied.requires_grad_(value.requires_grad)
+            else:
+                # Mark the copy non-leaf without attaching it to the caller's tape.
+                torch._mirror_autograd_meta_to(value, copied)
+        # A storage copy starts its own counter. Only adjust the isolated snapshot.
+        if not value.is_inference() and copied._version != value._version:
+            torch._C._autograd._unsafe_set_version_counter([copied], [value._version])
+        memo[id(value)] = copied
+        if value.retains_grad:
+            copied.retain_grad()
+        if (value.is_leaf or value.retains_grad) and value.grad is not None:
+            copied.grad = copy_input(value.grad, memo)
+    return copied
+
+
+def reference_inputs(tensors):
+    """Refuse reads of backward history that a forward capture did not copy."""
+    import torch
+    from torch.overrides import TorchFunctionMode
+
+    inputs = {id(t) for t in tensors if not t.is_leaf}
+    inputs.update(id(t._base) for t in tensors if t._base is not None and not t._base.is_leaf)
+    if not inputs:
+        return nullcontext()
+
+    class ForwardInputs(TorchFunctionMode):
+        def __torch_function__(self, func, types, args=(), kwargs=None):
+            if func == torch.Tensor.grad_fn.__get__ and id(args[0]) in inputs:
+                raise NotImplementedError("sample comparison cannot inspect an input's backward graph")
+            return func(*args, **(kwargs or {}))
+
+    return ForwardInputs()
 
 
 def lower(graph_module: Any, example_inputs: Sequence[Any],

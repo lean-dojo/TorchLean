@@ -14,7 +14,7 @@ public import TorchLean.Verify.CROWN.Op.Cert
 `certify G P seeds` tabulates the certificate step (`tabulate`, in `TorchLean.Verify.CROWN.Op`).
 On a graph whose references name earlier nodes (`TopoSorted`) it is a certificate
 (`certify_localOK`), because the step at a node reads only the boxes of the nodes its references
-name.
+name (`cert?_congr`, in `TorchLean.Verify.CROWN.Op.Cert`).
 -/
 
 @[expose] public section
@@ -30,34 +30,6 @@ def certify (G : IR.Graph) (P : IR.Payload ℝ) (seeds : Nat → Option (FlatBox
   tabulate (step? G P (cert? G P) seeds) G.nodes.size
 
 variable {G : IR.Graph} {P : IR.Payload ℝ}
-
-/-- Reading entries through references depends only on the entries they name. -/
-theorem mapM_box?_congr {β : Type} {c c' : Array (Option β)} :
-    ∀ {refs : List IR.Ref}, (∀ r ∈ refs, box? c r = box? c' r) →
-      refs.mapM (box? c) = refs.mapM (box? c')
-  | [], _ => rfl
-  | r :: rs, h => by
-      simp only [List.mapM_cons, h r (by simp),
-        mapM_box?_congr fun r' hr' => h r' (List.mem_cons_of_mem _ hr')]
-
-/-- The certificate box of an operator depends only on the boxes its references name. -/
-theorem cert?_congr {c c' : Array (Option (FlatBox ℝ))} {o : IR.Operator}
-    {refs : List IR.Ref} (h : ∀ r ∈ refs, box? c r = box? c' r) :
-    cert? G P c o refs = cert? G P c' o refs := by
-  unfold cert?
-  split
-  case h_5 =>
-    unfold shared?
-    split
-    case h_12 =>
-      rename_i rK rb rx _ _ _ _
-      rw [h rx (by simp)]
-    case h_16 =>
-      rename_i ins outs op _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
-      cases op <;> (try cases ‹Op.Element›) <;> simp only [catBox?]
-      rw [mapM_box?_congr h]
-    all_goals simp_all
-  all_goals simp_all
 
 /-- On a sorted graph, the entries an operator node reads are those of earlier nodes. -/
 theorem box?_congr_of_topo (htopo : TopoSorted G) {β : Type} {c c' : Array (Option β)} {id : Nat}

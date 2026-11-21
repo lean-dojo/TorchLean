@@ -27,18 +27,19 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
+/-! Guide page: external verifiers that find bounds and Lean checkers that accept them. -/
+
 #doc (Manual) "Two-Stage Verification" =>
 %%%
 tag := "twostage"
 file := "Two-Stage-Verification-Workflows"
 %%%
 
-A two-stage workflow lets an external verifier search for bounds, then passes evidence to Lean for
-checking. Its producer may split boxes, optimize relaxations, and use GPU kernels, while the
-checker needs enough evidence to justify the result without reproducing every search decision.
-Which conclusion it can justify depends on what the artifact records.
+An external verifier may split boxes, optimize relaxations, and run GPU kernels before it finds a
+bound. A two-stage workflow discards that search history and asks Lean to check a finite artifact.
+The conclusion depends on what evidence the artifact records.
 
-Return to a classifier whose label should stay fixed in an input square. A producer may spend many
+For a classifier whose label should stay fixed in an input square, a producer may spend many
 passes trying to lower-bound the difference between two scores (adjusting an affine relaxation,
 splitting the square, or choosing the next region to examine). A consumer receiving the final
 result needs a more stable description: which model and square were checked, what bound is claimed
@@ -69,10 +70,10 @@ JSON artifact
 ```
 
 This producer/checker separation follows the proof-carrying-code approach of
-{Informal.citet necula1997}[]. TorchLean's paths implement different parts of that idea: the leaf
+{Informal.citet necula1997}[]. The available paths implement different parts of that idea: the leaf
 workflow checks a summary of terminal domains, while the controller workflows also run bound
-propagation. The examples below follow the data from producer to consumer and identify the evidence
-available at each step.
+propagation. The workflow examples follow the data from producer to consumer and identify the
+evidence available at each step.
 
 # External Search And Certificate Checking
 
@@ -92,9 +93,9 @@ a consistently misapplied sign or axis convention can still pass, because the ar
 network or transfer rules against which to check that convention.
 
 *Checked by Lean* can mean anything from parsing a JSON file to replaying every bound computation
-and deriving a theorem, and TorchLean's leaf checker sits near the parsing end. Where the
-{ref "certificates"}[certificate chapter] derives its predicates line by line, this chapter starts
-one step earlier (at the producer) and follows the data outward.
+and deriving a theorem, and the leaf checker sits near the parsing end. The
+{ref "certificates"}[certificate checks] derive their predicates line by line; the workflow here
+starts one step earlier, at the producer, and follows the data outward.
 
 # Producer Artifact Export
 
@@ -135,7 +136,7 @@ python3 scripts/verification/abcrown/export_leaf_artifact.py \
 ```
 
 Passing `--check` also runs the leaf checker (`scripts/lake.sh exe verify -- abcrown-leaf`) on the
-file the exporter just wrote. Here's the exported artifact:
+file the exporter just wrote. The exporter writes:
 
 ```
 {
@@ -157,7 +158,7 @@ file the exporter just wrote. Here's the exported artifact:
 }
 ```
 
-On disk, the file is taller than the listing above (which is reflowed to fit the page), because the
+On disk, the file is taller than this compact listing because the
 writer sorts keys and puts one array element per line. Field names and their order are the real
 ones. Sorting the keys isn't a stylistic preference: two runs of the exporter on the same input
 produce byte-identical files, which makes the artifact diffable in review and hashable in a report.
@@ -242,7 +243,7 @@ in their own environments, and the core Lean build needs only the exported JSON.
 Root endpoints identify the property region. If you omit them, the adapter constructs an envelope
 from the leaves, which changes what the containment check refers to.
 
-Here's a two-leaf dump that splits the unit square down the middle, with no root recorded:
+The next two-leaf dump splits the unit square down the middle and records no root:
 
 ```
 {
@@ -465,8 +466,8 @@ tree.
 
 # Artifact Rejection Tests
 
-In the {ref "certificates"}[certificate chapter], we evaluate the checker's predicates one at a
-time inside Lean. To exercise the command-line path as well, start from the good artifact above,
+The {ref "certificates"}[certificate checks] evaluate the predicates one at a time inside Lean.
+To exercise the command-line path as well, start from the exported one-leaf artifact,
 change or add one field in a separate copy, and check that the process rejects it.
 
 Push a leaf coordinate outside the root (`hi[1] = 2.0`) and save the copy as
@@ -522,9 +523,9 @@ remain positive, while a Lyapunov argument needs appropriate positivity and decr
 along with the other hypotheses of the stability result being used. Once the bounds are available,
 the sign calculation can be short. Establishing what those bounds refer to is the harder part.
 
-- {src "TorchLeanExamples/Verification/Lyapunov/AllInLean.lean"}[
-  `twostage-torchlean-cegis-van`] does initialization, sampled training, PGD-style candidate
-  search, refinement, and the final bound check in Lean, with no external stage one at all.
+The {src "TorchLeanExamples/Verification/Lyapunov/AllInLean.lean"}[
+`twostage-torchlean-cegis-van`] workflow does initialization, sampled training, PGD-style candidate
+search, refinement, and the final bound check in Lean, with no external stage one at all.
 
 Run the all-in-Lean workflow with its default settings:
 
@@ -746,7 +747,8 @@ read on its own terms, without crediting it by association with the name of an e
 
 A useful run record lets another person recover the claim and repeat the check. Keep the raw
 producer dump, the normalized artifact, the exact commands and their outputs, and the source and
-dependency revisions used for that run. The bundled dump above exercises the exporter and checker.
+dependency revisions used for that run. `example_raw_leaf_dump.json` exercises the exporter and
+checker.
 Evaluating an external solver also requires its repository revision, Python and solver environment,
 model checkpoint hash, and property file.
 
@@ -754,7 +756,7 @@ Record the dtype, device, numerical settings, original input region, and meaning
 margin alongside those files. A lower-bound vector changes meaning when the model, property, or
 margin convention changes. The leaf format doesn't identify all of those inputs, so a record
 outside the artifact must supply them. Reproducing the numbers still leaves the semantic proof
-obligations described below.
+obligations collected in *Workflow Limits And Proof Obligations*.
 
 # Workflow Limits And Proof Obligations
 
@@ -762,14 +764,14 @@ The leaf workflow checks that exported data satisfy its structural contract. Its
 concrete:
 
 - *Bounded coverage checking.* The endpoint-grid check rejects missing regions, as in the wide-root
-  and hole examples above. It refuses grids with more than one million cells.
+  and hole examples. It refuses grids with more than one million cells.
 - *No replay.* The lower bounds are read, not recomputed against the network.
 - *No soundness lemma for the predicates.* `boxWithin`, `refutesThreshold`, and
   `refutesThresholdAt` in {src "TorchLean/Verify/Tensor.lean"}[`Verify/Tensor.lean`] are `Bool`
   functions with no theorem tying them to a `Prop`-level statement about box inclusion or margin
   refutation. The endpoint-grid coverage check likewise has no theorem connecting acceptance to
   set-theoretic coverage. The local predicates compute the stated comparisons, and the
-  {ref "certificates"}[certificate chapter] tests them on both sides of every boundary, but no
+  {ref "certificates"}[certificate checks] test them on both sides of every boundary, but no
   proof covers them.
 
 The Lyapunov runner also computes bounds on a graph lowered from the trained TorchLean program. A

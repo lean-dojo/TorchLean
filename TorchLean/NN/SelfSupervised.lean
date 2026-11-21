@@ -237,7 +237,7 @@ The input is `x` with the hidden blocks of each data tensor set to zero, in its 
 The target is the first `reconstructionWidth` entries of each unmasked data tensor in row-major
 order, because TorchLean's compact decoder heads produce matrices.
 -/
-def sampleOfLE {α : Type} [Storage α] [Zero α] [Inhabited α]
+def sampleOfLE {α : Type} [Storage α] [Zero α]
     (batchShape : Shape) {dataShape : Shape} (reconstructionWidth : Nat)
     (blocks : Tensor (Option Nat) [dataShape.rank]) (period offset : Nat)
     (hReconstruction : reconstructionWidth ≤ dataShape.size)
@@ -297,7 +297,7 @@ The model input retains its original shape. The target is a row-major prefix of 
 An invalid reconstruction width is reported at the ordinary executable boundary rather than
 requiring callers to provide a theorem.
 -/
-def sample {α : Type} [Storage α] [Zero α] [Inhabited α]
+def sample {α : Type} [Storage α] [Zero α]
     (batchShape : Shape) {dataShape : Shape} (reconstructionWidth : Nat)
     (blocks : Tensor (Option Nat) [dataShape.rank]) (period offset : Nat)
     (x : Tensor α (batchShape ++ dataShape)) :

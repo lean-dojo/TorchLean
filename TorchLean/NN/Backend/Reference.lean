@@ -53,14 +53,18 @@ def checkedContract (tag : String) (vjp : Bool) (reduction : ReductionPolicy) : 
           evidence := .notApplicable }
     numericalPolicy := { reduction } }
 
-/-- The reduction order of `op`'s rule in `Op.rule?`, whose sums are left folds from zero. It is
-implementation-defined for the attention operators, and fixed-left or exact for `scaledMatmul`,
-`softmax`, `maskedSoftmax` and `distill`, whose rules replay a sum in exact arithmetic after range
-loss or an absorbed nonzero term. It is not applicable when neither the forward map nor the
-pullback adds terms, and fixed-left for every other operator. -/
+/-- The reduction order of `op`'s rule in `Op.rule?`. It is the operator's order for an operator
+that takes one (`reduce`, `mean`, `contract`, `matmul`, `pool`, `cumsum`, `cumprod`, `cummax`,
+`cummin`), whose forward map folds in it (the pullback is the left fold's). It is
+implementation-defined for the attention operators. For `scaledMatmul`, `softmax`,
+`maskedSoftmax` and `distill`, whose rules replay a sum in exact arithmetic after range loss or an
+absorbed nonzero term, it is that order or exact: the order of `scaledMatmul`, the left fold for
+the others. It is not applicable when neither the forward map nor the
+pullback adds terms, and the left fold from zero for every other operator. -/
 def reduction {ins outs : List Port} : Op ins outs → ReductionPolicy
   | .attentionFromScores .. | .multiheadAttention .. | .attention .. => .implementationDefined
-  | .scaledMatmul .. | .softmax .. | .maskedSoftmax .. | .distill .. => .fixedLeftOrExact
+  | .scaledMatmul (order := order) .. => .fixedOrExact order
+  | .softmax .. | .maskedSoftmax .. | .distill .. => .fixedOrExact .leftFold
   -- Pointwise maps, comparisons and conversions add no terms.
   | .relu | .sigmoid | .tanh | .exp | .abs | .sqrt .. | .sin | .cos | .neg .. | .add .. | .mul ..
   | .max .. | .log | .detach | .softplus | .silu | .square | .reciprocal | .sub .. | .div ..
@@ -72,13 +76,17 @@ def reduction {ins outs : List Port} : Op ins outs → ReductionPolicy
   | .le .. | .gt .. | .ge .. | .isNaN | .isInf | .isFinite | .logicalNot | .logicalAnd | .logicalOr
   | .logicalXor | .bitwiseAnd | .bitwiseOr | .bitwiseXor | .bitwiseNot | .bitwiseLeftShift
   | .shiftRightArithmetic | .shiftRightLogical | .populationCount | .countLeadingZeros | .mulhi
-  | .bitcast .. | .cbrt | .nextafter | .argmax .. | .argmin .. | .cast .. | .encodeIndex ..
-  | .decodeIndex .. => .notApplicable
+  | .bitcast .. | .cbrt | .special .. | .nextafter | .frexp | .fma | .complex .. | .complexPow
+  | .argmax .. | .argmin .. | .cast .. | .encodeIndex .. | .decodeIndex .. => .notApplicable
   -- Moves and selections of entries, random sources and masks add no terms.
   | .sort .. | .topk .. | .randUniform .. | .randn .. | .reshape .. | .permute .. | .flip ..
   | .indices .. | .slice .. | .indexAt .. | .cat .. | .topKMask .. | .bernoulliMask ..
     => .notApplicable
-  | _ => .fixedLeft
+  | .reduce (order := order) .. | .mean (order := order) .. | .contract (order := order) ..
+  | .matmul (order := order) .. | .pool (order := order) .. | .cumsum (order := order) ..
+  | .cumprod (order := order) .. | .cummax (order := order) .. | .cummin (order := order) ..
+    => .fixed order
+  | _ => .fixed .leftFold
 
 /-- The reference contract of multi-head attention, which names the multi-head attention
 definitions its rule runs. -/
@@ -117,19 +125,13 @@ def contract : {ins outs : List Port} → Op ins outs → KernelContract
 
 /-- The contract of `op` on the CPU tape, or `none` for `detach`, which the session records without
 a capsule, and for an operator without a rule (`Op.hasRule`). -/
-def contract? {ins outs : List Port} : Op ins outs → Option KernelContract
-  | .detach => none
-  | op => if op.hasRule then some (contract op) else none
+def contract? {ins outs : List Port} (op : Op ins outs) : Option KernelContract :=
+  if op.hasRule ∧ ¬(op matches .detach) then some (contract op) else none
 
 /-- `contract?` offers only `contract op`, and only for an operator with a rule. -/
 theorem contract?_eq_some {ins outs : List Port} {op : Op ins outs} {c : KernelContract}
-    (h : contract? op = some c) : op.hasRule = true ∧ contract op = c := by
-  unfold contract? at h
-  split at h
-  · simp at h
-  · split at h
-    · exact ⟨‹_›, Option.some.inj h⟩
-    · simp at h
+    (h : contract? op = some c) : op.hasRule = true ∧ contract op = c :=
+  (Option.ite_none_right_eq_some.mp h).imp And.left Option.some.inj
 
 /-- The reference CPU implementation table: the capsule of `contract? op` for each operator `op`. -/
 def implementation : Implementation :=

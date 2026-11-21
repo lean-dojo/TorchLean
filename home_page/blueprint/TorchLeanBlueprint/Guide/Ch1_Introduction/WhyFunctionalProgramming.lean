@@ -41,6 +41,8 @@ open TorchLean Trainer.Objective Backend.Device
 open Shape (size)
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: why a model is written as a function of its parameters and input. -/
+
 #doc (Manual) "Functional Programming" =>
 %%%
 tag := "why_functional"
@@ -524,8 +526,9 @@ changes the recurrence. Sharing one shape variable aligns parameters, gradients,
 coordinate by coordinate, while the storage and arithmetic instances supply their representation
 and operations.
 
-Let's run two steps of it from $`\theta_0 = 2`, with $`\eta = 0.1`, $`\mu = 0.9`, and a constant
-gradient $`g = 0.25`. By hand, $`v_1 = 0.25`, so $`\theta_1 = 2 - 0.025 = 1.975`, and then
+Two steps from $`\theta_0 = 2`, with $`\eta = 0.1`, $`\mu = 0.9`, and a constant gradient
+$`g = 0.25`, make the stored velocity visible. By hand, $`v_1 = 0.25`, so
+$`\theta_1 = 2 - 0.025 = 1.975`, and then
 $`v_2 = 0.9\cdot 0.25 + 0.25 = 0.475`, so $`\theta_2 = 1.975 - 0.0475 = 1.9275`.
 
 ```lean (name := wfMomentum)
@@ -703,7 +706,7 @@ def wfSgdStep : Tensor Float [1] :=
 ```
 
 Both steps agree, and `==` on the entries confirms it isn't a printing coincidence. We can promote
-that observation to a proof the same way we proved the affine example at the top of this chapter:
+that observation to a proof in the same way as the affine example near the beginning:
 
 ```lean (name := wfTensorRfl)
 -- Both sides are closed terms, so the kernel can compute

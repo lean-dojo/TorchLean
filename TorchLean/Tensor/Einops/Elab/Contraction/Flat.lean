@@ -53,6 +53,8 @@ def nativeCoordinateComponents
     match remainingLengths with
     | [] => return ([], [], [])
     | [length] => do
+        -- The last coordinate is the index itself, proved equal to the semantic `divNat` by
+        -- way of `index / 1`.
         let nativeHeadValue ←
           mkAppM ``USize.toNat #[nativeIndex]
         let nativeHead ←
@@ -113,6 +115,7 @@ def nativeCoordinateComponents
               (← mkEq nativeHead semanticHead)
         return ([nativeHead], [semanticHead], [hHead])
     | length :: tailLengths => do
+        -- The head coordinate is `index / tailSize`, and the tail decodes `index % tailSize`.
         let tailSize ← mkAppM ``Shape.size #[← shapeExpr tailLengths]
         let some (tailBound, hTailBound) ← nativeLoopBound? tailSize
           | throwError
@@ -213,6 +216,7 @@ def compileFlatCoordinateFold?
   if concreteLengths.length < 2 ||
       concreteLengths.any (· == 0) then
     return none
+  -- The state must be the vector of a tile in `outputTiles`.
   let stateType ←
     withTransparency .reducible <| whnf (← inferType initial)
   unless stateType.isAppOfArity ``Vector 2 do
@@ -230,6 +234,8 @@ def compileFlatCoordinateFold?
   let stateType ← inferType initial
   let flatIndexType ← mkAppM ``Fin #[flatSize]
   let coordinateType ← mkAppM ``Coord #[shape]
+  -- The step over the flat index of the coordinate, which `Coord.foldl_eq_fin_foldl` relates to
+  -- the reference.
   let flatStep ←
     withLocalDeclD `state stateType fun state =>
       withLocalDeclD `flatCoordinate flatIndexType
@@ -255,6 +261,7 @@ def compileFlatCoordinateFold?
             mkAppOptM ``Fin.mk #[
               some flatSize, some nativeFlatCoordinateNat,
               some hFlatCoordinate]
+          -- Decode the counter with native division and remainder.
           let (nativeComponents, semanticComponents,
               hComponents) ←
             nativeCoordinateComponents lengths
@@ -297,6 +304,7 @@ def compileFlatCoordinateFold?
             mkLambdaFVars callbackLocals nativeBody
           let semanticCallback ←
             mkLambdaFVars callbackLocals semanticBody
+          -- Extend the body's equality over the callback's three arguments.
           let mut hNativeCallback := hBody
           for localValue in callbackLocals.reverse do
             let hFunction ←

@@ -52,6 +52,8 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
+/-! Guide page: the problem TorchLean solves, from training to a checked claim. -/
+
 #doc (Manual) "Overview" =>
 %%%
 tag := "overview"
@@ -69,14 +71,15 @@ script may forget that the model expects normalized inputs. A compiler may repla
 multiplication and addition with an FMA, changing the result by an amount that a test's tolerance
 hides. Each program still runs, but computes a different function from the one we had in mind.
 
-We designed TorchLean around that problem. It's a neural-network library in which the architecture,
-parameter payload, graph, arithmetic, and property can be named in the same language. Numerical
-kernels may still run through optimized native providers, but their inputs, outputs, and
-assumptions stay attached to the computation we're studying.
+The goal is to follow one calculation from the model definition to the saved weights and an output
+claim. Lean supplies types for the tensor shapes and a place to write the property. The graph
+records the operations, and the arithmetic says what those operations mean at a chosen precision.
+A two-layer model keeps each stage small enough to inspect.
 
 # Model Definition And Initialization
 
-The model and the trainer below need two imports:
+The model accepts two features. Its first layer produces eight hidden values, and its second reads
+all eight. A builder keeps that architecture fixed while allowing different initialization seeds.
 
 ```
 -- The trainer modules provide the model builder and the
@@ -87,8 +90,7 @@ import TorchLean.NN.Trainer.Train
 open TorchLean
 ```
 
-When this page is built, its named Lean blocks are elaborated and their output is checked against
-the displayed results. Our first declaration is a two-layer regression model:
+The resulting two-layer regression model is:
 
 ```lean
 -- The hidden shape [8] must connect the first affine layer,
@@ -240,16 +242,13 @@ value-level questions open, such as whether a checkpoint contains the intended w
 
 # Model Representations
 
-Trainer, proof, and verifier each need a different view of the initialized model.
+## Seeded Model Description
 
-## The model description
+The trainer starts with an `nn.Sequential`. It stores the layers, the parameter shapes and
+initializers, the gradient flags, and the forward program. During training those same layers
+run with new parameter values at each step.
 
-An `nn.Sequential` stores layer definitions, parameter shapes, initialization values, gradient
-flags, and a forward program, and it's the object the high-level trainer uses. Training creates an
-effectful runtime runner whose parameters change over time, but it doesn't rewrite the source
-definition.
-
-## The equations
+## Real-Valued Specifications
 
 The specification layer defines tensors as shape-indexed objects and gives operations such as
 matrix multiplication, softmax, normalization, and loss functions their mathematical meanings.
@@ -259,7 +258,7 @@ TorchLean theorem about a gradient is a statement in Mathlib's analysis. Analyti
 use `fderiv`, while algebraic JVP/VJP adjointness theorems have a separate role and require an
 analytic bridge to identify a derivative.
 
-## The running program
+## Eager Runtime
 
 TorchLean's eager runtime owns autograd tape nodes, parameter and optimizer state, and optional
 accelerator buffers. Each operation it records is a registered operator of one table,
@@ -269,7 +268,7 @@ records it through its entry in `LibTorch.Kernel.ofOp`, which calls LibTorch ker
 theorem relates to the rule. A backend profile selects implementations without changing the source
 model, and the backend chapter explains the profiles we maintain and what their evidence supports.
 
-## The operation graph
+## Lowered Operation Graph
 
 A lowered graph (`IR.Graph`) is a straight-line graph of registered operators. Each node is
 the graph input, a constant, or an operator with one reference per input port. Constants, weights
@@ -314,7 +313,8 @@ graph's graph of registered operators node for node (`IR.OpGraph.toOp`). On ever
 lowered graph returns the typed graph's value at the output (`IR.lowerForward_eq_ok`). That
 recording is a construction, though: no theorem relates the recorded graph to the forward program
 it came from. The PyTorch and JAX captures write typed programs of these registered operators as
-JSON, in the `torchlean.ir` artifact format (`IR.Artifact`), and `IR.load` checks and loads them.
+JSON, in the `torchlean.ir` artifact format (`IR.Artifact`), and `IR.loadFlow` checks and loads them
+(`IR.load` those without control flow).
 
 ## Verification Artifacts
 

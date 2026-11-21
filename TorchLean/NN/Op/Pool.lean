@@ -45,24 +45,6 @@ open scoped RealInnerProductSpace
 
 open Filter Topology
 
-namespace List
-
-/-- A left fold over `finRange n` that adds `f i` exactly when `p i` holds adds the sum of the
-guarded terms to the initial value. -/
-theorem finRange_foldl_ite_add_eq_add_sum {β : Type} [AddCommMonoid β] {n : Nat}
-    (p : Fin n → Prop) [DecidablePred p] (f : Fin n → β) (acc : β) :
-    (List.finRange n).foldl (fun s i => if p i then s + f i else s) acc =
-      acc + ∑ i, if p i then f i else 0 := by
-  have h : (fun (s : β) (i : Fin n) => if p i then s + f i else s) =
-      fun s i => s + if p i then f i else 0 := by
-    funext s i
-    by_cases hi : p i
-    · rw [ite_eq_left hi, ite_eq_left hi]
-    · rw [ite_eq_right hi, ite_eq_right hi, add_zero]
-  rw [h, finRange_foldl_add_eq_add_sum]
-
-end List
-
 namespace TorchLean
 
 namespace Tensor
@@ -386,7 +368,7 @@ theorem foldl_finRange_eq_some_iff {κ β : Type*} [LinearOrder β] {n : Nat}
     (hnone : ∀ best i, src i = none → step best i = best)
     (hfirst : ∀ i d, src i = some d → step none i = some d)
     (hwin : ∀ i d b, src i = some d → v b < v d → step (some b) i = some d)
-    (hkeep : ∀ i d b, src i = some d → ¬v b < v d → step (some b) i = some b) (c : κ) :
+    (hkeep : ∀ i d b, src i = some d → ¬v b < v d → step (some b) i = some b) {c : κ} :
     (List.finRange n).foldl step none = some c ↔ ∃ j, src j = some c ∧
       (∀ i d, src i = some d → v d ≤ v c) ∧ ∀ i d, src i = some d → i < j → v d < v c := by
   rcases foldl_select_first_max hnone hfirst hwin hkeep _ (List.pairwise_lt_finRange n) with
@@ -409,27 +391,29 @@ theorem foldl_finRange_eq_some_iff {κ β : Type*} [LinearOrder β] {n : Nat}
       · exact hsj.symm.trans hj'
       · exact absurd (hle' j b hsj) (not_le.2 (hlt j' (List.mem_finRange j') c hj' hjj))
 
-/-- Over the reals a maximum pool selects `c` in the window of `o` exactly when some cell `k` of
-the window reads `c`, every entry the window reads is at most `x c`, and every entry read by a
-cell before `k` in row-major order is below `x c`. -/
-theorem poolIndices_true_eq_some_iff (x : Tensor ℝ s)
-    (o : (s.pool dims kernel stride padLow padHigh dilation ceilMode).Coord) (c : s.Coord) :
-    poolIndices true x dims kernel stride padLow padHigh dilation ceilMode o = some c ↔
-      ∃ k, poolSource o k = some c ∧ (∀ k' d, poolSource o k' = some d → x d ≤ x c) ∧
+/-- Over the reals, for an order `v` of the entries in which `poolWins largest` is `<`, the pool
+selects `c` in the window of `o` exactly when some cell `k` of the window reads `c`, every entry
+`d` the window reads has `v d ≤ v c`, and every entry read by a cell before `k` in row-major order
+has `v d < v c`. -/
+private theorem poolIndices_eq_some_iff {β : Type*} [LinearOrder β] {largest : Bool}
+    (v : ℝ → β) (hv : ∀ a b, poolWins largest a b = decide (v b < v a)) {x : Tensor ℝ s}
+    {o : (s.pool dims kernel stride padLow padHigh dilation ceilMode).Coord} {c : s.Coord} :
+    poolIndices largest x dims kernel stride padLow padHigh dilation ceilMode o = some c ↔
+      ∃ k, poolSource o k = some c ∧ (∀ k' d, poolSource o k' = some d → v (x d) ≤ v (x c)) ∧
         ∀ k' d, poolSource o k' = some d →
-          Shape.Coord.linearize k' < Shape.Coord.linearize k → x d < x c := by
+          Shape.Coord.linearize k' < Shape.Coord.linearize k → v (x d) < v (x c) := by
   simp only [poolIndices, Rep.get_ofFn]
   rw [foldl_finRange_eq_some_iff (src := fun i => poolSource o (Shape.Coord.unlinearize i))
-    (v := x) ?_ ?_ ?_ ?_]
+    (v := fun d => v (x d)) ?_ ?_ ?_ ?_]
   rotate_left
   · rintro best i (h : poolSource o (Shape.Coord.unlinearize i) = none)
     simp only [h]
   · rintro i d (h : poolSource o (Shape.Coord.unlinearize i) = some d)
     simp only [h]
   · rintro i d b (h : poolSource o (Shape.Coord.unlinearize i) = some d) hbd
-    simp only [h, poolWins_true, hbd, decide_true, ite_true]
+    simp only [h, hv, hbd, decide_true, ite_true]
   · rintro i d b (h : poolSource o (Shape.Coord.unlinearize i) = some d) hbd
-    simp only [h, poolWins_true, hbd, decide_false, Bool.false_eq_true, ite_false]
+    simp only [h, hv, hbd, decide_false, Bool.false_eq_true, ite_false]
   constructor
   · rintro ⟨j, hj, hle, hlt⟩
     refine ⟨Shape.Coord.unlinearize j, hj, fun k' d h => hle (Shape.Coord.linearize k') d ?_,
@@ -442,41 +426,27 @@ theorem poolIndices_true_eq_some_iff (x : Tensor ℝ s)
     · simpa only [Shape.Coord.unlinearize_linearize] using hk
     · simpa only [Shape.Coord.linearize_unlinearize] using hi
 
+/-- Over the reals a maximum pool selects `c` in the window of `o` exactly when some cell `k` of
+the window reads `c`, every entry the window reads is at most `x c`, and every entry read by a
+cell before `k` in row-major order is below `x c`. -/
+theorem poolIndices_true_eq_some_iff {x : Tensor ℝ s}
+    {o : (s.pool dims kernel stride padLow padHigh dilation ceilMode).Coord} {c : s.Coord} :
+    poolIndices true x dims kernel stride padLow padHigh dilation ceilMode o = some c ↔
+      ∃ k, poolSource o k = some c ∧ (∀ k' d, poolSource o k' = some d → x d ≤ x c) ∧
+        ∀ k' d, poolSource o k' = some d →
+          Shape.Coord.linearize k' < Shape.Coord.linearize k → x d < x c :=
+  poolIndices_eq_some_iff id poolWins_true
+
 /-- Over the reals a minimum pool selects `c` in the window of `o` exactly when some cell `k` of
 the window reads `c`, every entry the window reads is at least `x c`, and every entry read by a
 cell before `k` in row-major order is above `x c`. -/
-theorem poolIndices_false_eq_some_iff (x : Tensor ℝ s)
-    (o : (s.pool dims kernel stride padLow padHigh dilation ceilMode).Coord) (c : s.Coord) :
+theorem poolIndices_false_eq_some_iff {x : Tensor ℝ s}
+    {o : (s.pool dims kernel stride padLow padHigh dilation ceilMode).Coord} {c : s.Coord} :
     poolIndices false x dims kernel stride padLow padHigh dilation ceilMode o = some c ↔
       ∃ k, poolSource o k = some c ∧ (∀ k' d, poolSource o k' = some d → x c ≤ x d) ∧
         ∀ k' d, poolSource o k' = some d →
-          Shape.Coord.linearize k' < Shape.Coord.linearize k → x c < x d := by
-  simp only [poolIndices, Rep.get_ofFn]
-  rw [foldl_finRange_eq_some_iff (src := fun i => poolSource o (Shape.Coord.unlinearize i))
-    (v := fun d => OrderDual.toDual (x d)) ?_ ?_ ?_ ?_]
-  rotate_left
-  · rintro best i (h : poolSource o (Shape.Coord.unlinearize i) = none)
-    simp only [h]
-  · rintro i d (h : poolSource o (Shape.Coord.unlinearize i) = some d)
-    simp only [h]
-  · rintro i d b (h : poolSource o (Shape.Coord.unlinearize i) = some d) hbd
-    rw [OrderDual.toDual_lt_toDual] at hbd
-    simp only [h, poolWins_false, hbd, decide_true, ite_true]
-  · rintro i d b (h : poolSource o (Shape.Coord.unlinearize i) = some d) hbd
-    rw [OrderDual.toDual_lt_toDual] at hbd
-    simp only [h, poolWins_false, hbd, decide_false, Bool.false_eq_true, ite_false]
-  simp only [OrderDual.toDual_le_toDual, OrderDual.toDual_lt_toDual]
-  constructor
-  · rintro ⟨j, hj, hle, hlt⟩
-    refine ⟨Shape.Coord.unlinearize j, hj, fun k' d h => hle (Shape.Coord.linearize k') d ?_,
-      fun k' d h hk => hlt (Shape.Coord.linearize k') d ?_ ?_⟩
-    · simpa only [Shape.Coord.unlinearize_linearize] using h
-    · simpa only [Shape.Coord.unlinearize_linearize] using h
-    · simpa only [Shape.Coord.linearize_unlinearize] using hk
-  · rintro ⟨k, hk, hle, hlt⟩
-    refine ⟨Shape.Coord.linearize k, ?_, fun i d h => hle _ d h, fun i d h hi => hlt _ d h ?_⟩
-    · simpa only [Shape.Coord.unlinearize_linearize] using hk
-    · simpa only [Shape.Coord.linearize_unlinearize] using hi
+          Shape.Coord.linearize k' < Shape.Coord.linearize k → x c < x d :=
+  poolIndices_eq_some_iff OrderDual.toDual fun _ _ => by simp [poolWins_false]
 
 /-- If any two coordinates where `v` takes its largest value over the window of `o` are equal,
 then either the window is padding only or one coordinate `c` of the window has `v d < v c` for
@@ -754,7 +724,7 @@ theorem eq_of_differentiableAt_pool_min {x : Tensor ℝ s}
 
 /-- A pool is differentiable at `x` exactly when, for a maximum (minimum) pool, every window takes
 its largest (smallest) entry of `x` at one input coordinate only. -/
-theorem differentiableAt_pool_iff (op : PoolOp) (x : Tensor ℝ s) :
+theorem differentiableAt_pool_iff {op : PoolOp} {x : Tensor ℝ s} :
     DifferentiableAt ℝ (fun y => pool op y dims kernel stride padLow padHigh dilation ceilMode)
         x ↔
       (op = .max →
@@ -827,7 +797,8 @@ to the coordinate read by the first cell of the window of `o` in row-major order
 largest (smallest) entry (`pool_backward_eq`). -/
 @[op_cert TorchLean.Op.pool derivative]
 theorem pool_backward_eq_adjoint {s : Shape} (op : PoolOp) (dims : List (Fin s.rank))
-    (kernel stride padLow padHigh dilation : List Nat) (ceilMode : Bool) (x : Tensor ℝ s)
+    (kernel stride padLow padHigh dilation : List Nat) (ceilMode : Bool) (order : ReduceOrder)
+    (hcov : order.Covers (Shape.size (s.poolWindow dims kernel))) (x : Tensor ℝ s)
     (δ : Tensor ℝ (s.pool dims kernel stride padLow padHigh dilation ceilMode))
     (hmax : op = .max →
       ∀ (o : (s.pool dims kernel stride padLow padHigh dilation ceilMode).Coord)
@@ -840,18 +811,14 @@ theorem pool_backward_eq_adjoint {s : Shape} (op : PoolOp) (dims : List (Fin s.r
         poolSource o k = some c → poolSource o k' = some c' →
         (∀ k'' d, poolSource o k'' = some d → x c ≤ x d ∧ x c' ≤ x d) → c = c') :
     DifferentiableAt ℝ (fun x' =>
-        (((Op.pool op dims kernel stride padLow padHigh dilation ceilMode).rule? (α := ℝ)
-          |>.get rfl).forward (x', ())).1) x ∧
-      (((Op.pool op dims kernel stride padLow padHigh dilation ceilMode).rule? (α := ℝ)
-          |>.get rfl).backward (x, ()) (δ, ())).1 =
+        (((Op.pool op dims kernel stride padLow padHigh dilation ceilMode order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward (x', ())).1) x ∧
+      (((Op.pool op dims kernel stride padLow padHigh dilation ceilMode order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).backward (x, ()) (δ, ())).1 =
         (fderiv ℝ (fun x' =>
-          (((Op.pool op dims kernel stride padLow padHigh dilation ceilMode).rule? (α := ℝ)
-            |>.get rfl).forward (x', ())).1) x).adjoint δ := by
-  simp only [Op.rule?_pool, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · exact HasPullbackAt.pool op dims kernel stride padLow padHigh dilation ceilMode hmax hmin
-      (HasPullbackAt.id x)
-  · rfl
+          (((Op.pool op dims kernel stride padLow padHigh dilation ceilMode order).rule? (α := ℝ)
+            |>.get (by cases order <;> rfl)).forward (x', ())).1) x).adjoint δ := by
+  op_deriv [Tensor.poolIn_real op _ dims kernel stride padLow padHigh dilation ceilMode hcov]
 
 /-- At every input, entry `c` of the stored backward of `Op.pool` is
 `∑ o, poolWeight op x o c * δ o`, and for a maximum (minimum) pool it is the sum of `δ o` over
@@ -862,21 +829,23 @@ the right (for a minimum, the left) partial derivative of the entry `o` of the f
 other tied coordinate gets `δ o` times its left (right) partial derivative, which is zero. -/
 @[op_cert TorchLean.Op.pool convention]
 theorem pool_backward_eq {s : Shape} (op : PoolOp) (dims : List (Fin s.rank))
-    (kernel stride padLow padHigh dilation : List Nat) (ceilMode : Bool) (x : Tensor ℝ s)
-    (δ : Tensor ℝ (s.pool dims kernel stride padLow padHigh dilation ceilMode)) (c : s.Coord) :
-    (((Op.pool op dims kernel stride padLow padHigh dilation ceilMode).rule? (α := ℝ)
-        |>.get rfl).backward (x, ()) (δ, ())).1 c = ∑ o, poolWeight op x o c * δ o ∧
+    (kernel stride padLow padHigh dilation : List Nat) (ceilMode : Bool) (order : ReduceOrder)
+    (x : Tensor ℝ s) (δ : Tensor ℝ (s.pool dims kernel stride padLow padHigh dilation ceilMode))
+    (c : s.Coord) :
+    (((Op.pool op dims kernel stride padLow padHigh dilation ceilMode order).rule? (α := ℝ)
+        |>.get (by cases order <;> rfl)).backward (x, ()) (δ, ())).1 c =
+        ∑ o, poolWeight op x o c * δ o ∧
       (op = .max →
-        (((Op.pool op dims kernel stride padLow padHigh dilation ceilMode).rule? (α := ℝ)
-          |>.get rfl).backward (x, ()) (δ, ())).1 c =
+        (((Op.pool op dims kernel stride padLow padHigh dilation ceilMode order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).backward (x, ()) (δ, ())).1 c =
           ∑ o, if ∃ k, poolSource o k = some c ∧
               (∀ k' d, poolSource o k' = some d → x d ≤ x c) ∧
               ∀ k' d, poolSource o k' = some d →
                 Shape.Coord.linearize k' < Shape.Coord.linearize k → x d < x c
             then δ o else 0) ∧
       (op = .min →
-        (((Op.pool op dims kernel stride padLow padHigh dilation ceilMode).rule? (α := ℝ)
-          |>.get rfl).backward (x, ()) (δ, ())).1 c =
+        (((Op.pool op dims kernel stride padLow padHigh dilation ceilMode order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).backward (x, ()) (δ, ())).1 c =
           ∑ o, if ∃ k, poolSource o k = some c ∧
               (∀ k' d, poolSource o k' = some d → x c ≤ x d) ∧
               ∀ k' d, poolSource o k' = some d →
@@ -1267,34 +1236,15 @@ theorem rule?_smoothMaxPool_real {s : Shape} (dims : List (Fin s.rank))
   rfl
 
 /-- The forward of `Op.smoothMaxPool` with a fixed `beta` is differentiable at `x` and its backward
-is the adjoint of its derivative, for `beta.item ≠ 0` and every window configuration, which holds
-at every input that `validate` accepts. The exact set also contains the configurations with
-`beta = 0` where every window reads a single source, which `validate` rejects and
-`smoothMaxPool_backward_eq_adjoint_of_poolSource_eq` covers. -/
+is the adjoint of its derivative when `beta.item ≠ 0`, which holds at every input that `validate`
+accepts, or when every window reads a single source (all its cells read the same input coordinate,
+or all read padding). With `beta = 0`, which `validate` rejects, the forward is then the entry of
+`x` under each window, or zero. -/
 @[op_cert TorchLean.Op.smoothMaxPool derivative 0]
 theorem smoothMaxPool_backward_eq_adjoint {s : Shape} (dims : List (Fin s.rank))
     (kernel stride padLow padHigh dilation : List Nat) (ceilMode : Bool) (x : Tensor ℝ s)
-    (beta : Tensor ℝ []) (h : beta.item ≠ 0)
-    (δ : Tensor ℝ (s.pool dims kernel stride padLow padHigh dilation ceilMode)) :
-    DifferentiableAt ℝ (fun x' =>
-        (((Op.smoothMaxPool dims kernel stride padLow padHigh dilation ceilMode).rule? (α := ℝ)
-          |>.get rfl).forward (x', beta, ())).1) x ∧
-      (((Op.smoothMaxPool dims kernel stride padLow padHigh dilation ceilMode).rule? (α := ℝ)
-          |>.get rfl).backward (x, beta, ()) (δ, ())).1 =
-        (fderiv ℝ (fun x' =>
-          (((Op.smoothMaxPool dims kernel stride padLow padHigh dilation ceilMode).rule? (α := ℝ)
-            |>.get rfl).forward (x', beta, ())).1) x).adjoint δ := by
-  op_deriv
-
-/-- The forward of `Op.smoothMaxPool` with a fixed `beta` is differentiable at `x` and its backward
-is the adjoint of its derivative, for every `beta`, when every window reads a single source (all
-its cells read the same input coordinate, or all read padding). With `beta = 0` the forward is
-then the entry of `x` under each window, or zero. -/
-@[op_cert TorchLean.Op.smoothMaxPool derivative 0]
-theorem smoothMaxPool_backward_eq_adjoint_of_poolSource_eq {s : Shape} (dims : List (Fin s.rank))
-    (kernel stride padLow padHigh dilation : List Nat) (ceilMode : Bool) (x : Tensor ℝ s)
     (beta : Tensor ℝ [])
-    (hsrc : ∀ o : (s.pool dims kernel stride padLow padHigh dilation ceilMode).Coord,
+    (h : beta.item ≠ 0 ∨ ∀ o : (s.pool dims kernel stride padLow padHigh dilation ceilMode).Coord,
       ∃ σ, ∀ k, poolSource o k = σ)
     (δ : Tensor ℝ (s.pool dims kernel stride padLow padHigh dilation ceilMode)) :
     DifferentiableAt ℝ (fun x' =>
@@ -1305,7 +1255,7 @@ theorem smoothMaxPool_backward_eq_adjoint_of_poolSource_eq {s : Shape} (dims : L
         (fderiv ℝ (fun x' =>
           (((Op.smoothMaxPool dims kernel stride padLow padHigh dilation ceilMode).rule? (α := ℝ)
             |>.get rfl).forward (x', beta, ())).1) x).adjoint δ := by
-  op_deriv
+  rcases h with h | h <;> op_deriv
 
 /-- At every input and every `beta`, entry `c` of the stored backward of `Op.smoothMaxPool` is
 `∑ o, smoothMaxPoolWeight beta.item x o c * δ o`, where the weight adds the softmax weights at

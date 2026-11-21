@@ -155,8 +155,8 @@ theorem alphaStep?_phases {G : IR.Graph} {P : IR.Payload ℝ}
           rw [h s refs hn]
         unfold alpha?
         rw [hr]
-      case «reduce» s rop dims keepdim hop =>
-        cases rop <;> cases keepdim <;>
+      case «reduce» s rop dims keepdim hop order =>
+        cases rop <;> cases keepdim <;> cases order <;>
           rcases refs.toList with _ | ⟨_, _ | ⟨_, _ | ⟨_, _ | ⟨_, _⟩⟩⟩⟩ <;> rfl
       all_goals
         rcases refs.toList with _ | ⟨_, _ | ⟨_, _ | ⟨_, _ | ⟨_, _⟩⟩⟩⟩ <;> rfl
@@ -259,6 +259,7 @@ theorem alpha?_encloses {G : IR.Graph} {P : IR.Payload ℝ}
     (h : (IR.Node.op o refs).eval P inputs earlier id = .ok outs) :
     ∀ v, (outs[0]? >>= flatOf) = some v → EnclosesAtInput ctx x b v := by
   intro v hv
+  -- An operator without an affine rule gets the constant bounds of its own box.
   have hfallback : boxBounds? ibp ctx id = some b → EnclosesAtInput ctx x b v := by
     intro hB
     unfold boxBounds? at hB
@@ -269,6 +270,7 @@ theorem alpha?_encloses {G : IR.Graph} {P : IR.Payload ℝ}
   all_goals try (simp only [alpha?] at hc; exact hfallback hc)
   case matmul => simp [alpha?] at hc
   case custom => simp [alpha?] at hc
+  -- `detach` and `reshape` pass the parent's bounds on, `relu` relaxes them with slope `alpha`.
   case detach s =>
     obtain ⟨r, w, xt, hr, hread, hxt, rfl⟩ := invoke_one Op.rule?_detach h
     have hrm : r ∈ refs.toList := by rw [hr]; simp
@@ -327,6 +329,8 @@ theorem alpha?_encloses {G : IR.Graph} {P : IR.Payload ℝ}
     · rename_i hout
       have hdim : xin.outDim = (L ++ [n]).size := hpar.2.1
       have hcond : (flatOfSome ⟨L ++ [n], xt⟩).n = n := hdim.symm.trans hout
+      -- With no input features the output is the bias; otherwise the leading size is `1` and
+      -- `enclosesAtInput_linear` applies.
       by_cases h0 : n = 0
       · simp only [h0, ↓reduceIte, Option.some.injEq] at hc
         subst hc
@@ -352,13 +356,19 @@ theorem alpha?_encloses {G : IR.Graph} {P : IR.Payload ℝ}
         convert enclosesAtInput_linear W bv hout hcond hpar using 1
         exact flatTensor_eq_of_cast hm _ _ (flatten_mapLeading_of_size_one _ L hone xt hm hcond)
     · cases hc
-  case «reduce» s rop dims keepdim hop =>
+  case «reduce» s rop dims keepdim hop order =>
+    cases order
+    case pairwise | blocked | ofTree =>
+      generalize refs.toList = l at hc
+      cases rop <;> cases keepdim <;> rcases l with _ | ⟨_, _ | ⟨_, _⟩⟩ <;>
+        simp only [alpha?] at hc <;> exact hfallback hc
     obtain ⟨r, w, xt, hr, hread, hxt, rfl⟩ :=
-      invoke_one (Op.rule?_reduce rop dims keepdim hop) h
+      invoke_one (Op.rule?_reduce_leftFold rop dims keepdim hop) h
     have hrm : r ∈ refs.toList := by rw [hr]; simp
     rw [hr] at hc
     cases rop <;> cases keepdim <;> simp only [alpha?] at hc
     all_goals try exact hfallback hc
+    -- A sum over every axis is the linear map with one row of ones and zero bias.
     split at hc
     · rename_i hdims
       obtain rfl : dims = List.finRange s.rank :=

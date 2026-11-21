@@ -2,12 +2,10 @@
 title: Scientific ML
 ---
 
-Let's try two ways to train a neural network for a differential equation. First, we'll train
-a Fourier neural operator (FNO) on simulated solutions of Burgers' equation. Then we'll train a
-physics-informed neural network (PINN) using an equation and its boundary conditions as the loss.
-
-We'll run both examples in TorchLean. After training, we'll look at separate Lean checkers for
-exported PDE residuals and datasets, and work through what their results tell us.
+Suppose we know the starting state of a fluid and want to predict its state later on. A Fourier
+neural operator can learn that map from simulated solutions. A physics-informed network gives
+us another option when we have an equation and boundary conditions. We'll train one of each
+in Lean and use the PINN checkers to examine residuals and exported data.
 
 ## The Problem
 
@@ -18,19 +16,9 @@ $$
 $$
 
 Its solution is a scalar field $u(x,t)$. The nonlinear term $u\,u_x$ transports features through
-the domain, while the viscosity term $\nu u_{xx}$ smooths them. That combination makes Burgers a
-good compact benchmark for scientific ML: the model has to learn a time evolution pattern, not a
-static regression label.
-
-There are two common neural ways to approach this equation.
-
-An operator-learning model sees examples of whole functions: given an initial condition $u_0(x)$,
-it learns to predict a later field $u(x,T)$. Our FNO path below follows that setup.
-
-A physics-informed model represents a candidate solution $u_\theta(x,t)$ and asks whether that
-candidate satisfies the PDE residual at sampled points. Use the PINN-style checking path when the
-artifact to trust includes a residual, a bound, or a certificate
-attached to the PDE alongside the prediction curve.
+the domain, while the viscosity term $\nu u_{xx}$ smooths them. The FNO learns how a whole field
+evolves, from the initial condition $u_0(x)$ to the later field $u(x,T)$. In the PINN example, we
+train a candidate solution $u_\theta(x,t)$ by evaluating its PDE residual at sampled points.
 
 For our FNO, we'll pair each initial condition with the solution at a later time:
 

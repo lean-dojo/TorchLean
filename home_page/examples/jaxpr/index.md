@@ -2,41 +2,16 @@
 title: JAX Computations and Lean Proofs
 ---
 
-I've been thinking about how we can bring Lean closer to the code people already
-write for machine learning. If we have a model in JAX or PyTorch, can we keep that
-code and prove something about its computations without writing the model again
-in Lean? That's what we're working toward with TorchLean's intermediate
-representation (IR). The idea is to capture the tensor operations from the original code and translate
-the supported ones into our IR. Then we can work with their Lean definitions,
-reuse mathlib and our tensor lemmas, and bring in FloatLib when rounding matters.
-We need to keep the shapes, axes, constants and precision choices along the way.
-Otherwise, we could end up proving something about a different computation.
+I wanted to take a model someone had already written in JAX and use Lean to ask a question
+about it. Maybe we want to know if an attention implementation computes the formula in a
+paper, or what happens to the predictions when we lower the precision. I'd like to do that
+without rewriting the model or asking anyone to switch backends.
 
-Thinking about the future, I'd love to be able to take an attention implementation
-and ask whether it computes the formula we intended, or take a normalization layer
-and prove which transformations leave its output unchanged. We could also study
-what changes when we train or run a model at a lower precision. The model would
-still run with its usual backend; we'd use Lean to work through these questions
-about the imported computation.
-
-We're still building the IR and its importers. Today we accept supported Jaxpr
-and captured PyTorch graphs, check them, and run reference computations. Some
-graphs also have Lean proofs, including the permutation theorem below. Importing
-a graph does not itself prove the translation faithful or verify the kernels that
-JAX or PyTorch executes. The numerical issues we found were in our translation and reference paths. For
-example, replacing division with multiplication by a rounded reciprocal can
-change the answer. We corrected the JAX division path; the [PyTorch import
-notes](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/NN/PyTorch/README.md)
-describe where capture still differs from eager PyTorch. These examples have not identified a bug
-in JAX or XLA.
-
-For an ML engineer considering lower precision, this gives us a way to
-inspect where a captured model rounds its values and run that calculation in
-Lean. We can measure accuracy on test data, then state a separate mathematical
-property of the imported computation. The MNIST example below starts with that
-familiar train-and-evaluate workflow.
-
-Let's start with a JAX function we might already have in a project:
+TorchLean reads the supported operations in a traced Jaxpr into its tensor IR, keeping the
+axes, constants, and precision choices. We can inspect the graph, run it with FloatLib
+arithmetic, and use Lean to prove properties of its semantics. The JAX program still runs on
+its usual backend. Connecting a proof about the imported graph to that run requires a faithful
+translation and a model of the backend arithmetic.
 
 ```python
 import jax.numpy as jnp
@@ -45,12 +20,9 @@ def sum_squares(x):
     return jnp.sum(x * x)
 ```
 
-Reordering the entries should not change the sum of their squares. We can test a few
-permutations in Python, but here we'll state that property for every real vector and
-every permutation, and prove it about the graph's Lean semantics.
-
-We'll start small so we can follow the whole computation. After that, we'll bring
-in a two-layer JAX network, including its weights and biases, through the same IR.
+Reordering a real vector leaves its sum of squares unchanged. We'll prove that for every
+permutation of the imported graph's inputs. Then we'll bring in a two-layer network and a
+trained MNIST classifier to see what changing precision does to the predictions.
 
 ## Use the JAX function directly
 
@@ -79,6 +51,8 @@ Constants in other computations travel with the graph. Each argument is taken as
 JAX reads it (`jnp.asarray`), and the trace, the serialized arguments and the
 reference outputs all use those values. With 64-bit mode off, a NumPy float64,
 int64 or uint64 array becomes its 32-bit counterpart, as in any traced call.
+An operation traced inside a local `jax.enable_x64()` context keeps that recorded dtype
+during reference evaluation, even after the context ends.
 
 ```text
 input [4] → multiply input by itself [4] → sum []
@@ -86,10 +60,11 @@ input [4] → multiply input by itself [4] → sum []
 
 On the Lean side, `TorchLean.JAX.load` checks dependencies, operator arguments,
 shapes, and the element type of each node, and decodes each constant from its
-interchange words. `TorchLean.JAX.load_ok` proves that every program it returns passes
-these checks. The load also refuses a program that gives a value another element
+interchange words. `TorchLean.JAX.load_ok` proves that every program of the flow it
+returns passes these checks. The load also refuses a program that gives a value another element
 type or shape than JAX's trace records for it (the document's `declared_types`,
-which `TorchLean.IR.load` checks). It reads the same artifact format,
+which `TorchLean.IR.loadFlow` checks, each in the block its entry names). It reads
+the same artifact format,
 `torchlean.ir`, as the PyTorch capture, so JAX does not get a separate tensor
 representation.
 
@@ -349,8 +324,8 @@ Lean checks those proofs when we open the module or compile it:
 scripts/lake.sh env lean Proofs/SumSquares.lean
 ```
 
-The report also validates the constant payload and `declared_types` through `IR.load`. The
-export includes no proof of those load checks.
+The report also validates the constant payload and `declared_types` through `IR.loadFlow`, which
+is `IR.load` for an artifact without a flow. The export includes no proof of those load checks.
 
 We can import `Proofs.SumSquares` in our proof project and state further properties
 about this program. The export never replaces an existing file, so rerunning a
@@ -374,7 +349,7 @@ arithmetic:
 | Computation | What we checked |
 | --- | --- |
 | Two-layer MLP | Matrix products, bias broadcasting and ReLU; the binary64 output matched JAX's complete words. The five-input network above also passed an exact-word comparison. |
-| Batched contraction | The contraction axes lowered through shared tensor transformations and matrix multiplication; the supplied batched outputs agreed. |
+| Batched contraction | Batch and contraction axes were retained in the IR contraction operator; the supplied batched outputs were compared. |
 | `jax.grad(sum_squares)` | JAX's generated gradient program entered the IR and its sample output agreed. This did not prove the derivative rule. |
 | Reshape, transpose, broadcast and concatenation | The imported shapes and sample tensor entries agreed after the transformations. |
 | Several returned tensors | Every designated output was checked in the captured order. |
@@ -404,9 +379,9 @@ zero. An integer power imports as the multiplications XLA performs, square-and-m
 in JAX's order, because a correctly rounded power can differ from that product in
 the last bit.
 
-XLA's compiled CPU code does not always keep that meaning. It multiplies by the
-rounded reciprocal of a broadcast divisor, so its `x / 3.0` differs from the IEEE
-quotient on 1382 of 4096 binary32 samples. It also flushes subnormal values to zero,
+XLA's compiled CPU code does not always keep that meaning. It can multiply by the
+rounded reciprocal of a broadcast divisor, giving different words from the IEEE
+quotient. It also flushes subnormal values to zero,
 approximates the reciprocal square root, and under `jax.jit` rewrites some divisions
 and constant powers. The adapter does not copy these rewrites; it records whether the
 function is one `jax.jit` call. A comparison that finds different words fails. The
@@ -423,10 +398,9 @@ float64 → float32 → float64 round trip, the input `16777217` became `1677721
 The outputs agreed with JAX, and the typed run reported `inexact = true`.
 So both implementations agreed, even though the conversion lost the final digit.
 
-Square root needs similar care. JAX's raw square root and the IR's guarded square
-root behave differently for negative inputs and signed zero. The recognizer checks
-expression patterns that exclude negative values and negative zero; a positive
-capture sample cannot justify accepting the function for other inputs.
+Square root needs an explicit policy too. JAX's root imports as `Op.sqrt` with the `.raw` policy,
+including its behavior on negative inputs and signed zero. A guarded root is a different
+operation; agreement on a positive capture sample would not justify substituting it.
 
 These are findings about our import and reference-execution paths. We have not
 identified them as bugs in JAX or XLA. For a network, such details matter before
@@ -483,32 +457,63 @@ automatically produce such a bound for the MLP comparison above.
 
 ## Which computations can we import?
 
-The adapter handles static tensor computations built from supported
+The adapter (`torchlean.jaxpr`) imports 167 of the 219 `lax` primitives of JAX 0.11.1 and rejects
+the others by name. It handles static tensor computations built from supported
 elementwise arithmetic and elementary functions, explicit broadcasting, reshape,
-transpose, concatenation, sums, and `dot_general` contractions. Contractions expose
-their batch and contracted axes using permutations and reshapes before the existing
-IR matrix product. Supported `jit` and custom-JVP wrappers are inlined using their
+transpose, concatenation, sums, and `dot_general` contractions. Floating-point contractions
+record their batch and contracted axis pairs in the IR contraction operator.
+Supported `jit` and custom-JVP wrappers are inlined using their
 forward bodies; this does not verify their custom derivative rules.
-Nondefault dot precision and algorithm choices are rejected for now. FP32 inputs and outputs
-can still use BF16 or TF32 multiplication internally; we must represent that choice before
-accepting it, rather than silently turning it into an ordinary FP32 matrix product.
+Nondefault dot precision and algorithm choices are rejected: with them FP32 inputs and outputs
+can use BF16 or TF32 multiplication internally, which the IR's FP32 matrix product does not.
 
-Close over parameter tensors or pass them as runtime arguments with `export(function, *inputs)`.
+Close over parameter tensors or pass them as runtime arguments to `torchlean.verify`.
 Each argument keeps its own shape and dtype; the returned tensors may also have different shapes and
-dtypes. The artifact records the argument order in its input steps. A nested input pytree needs a
-container interface and is rejected. Dynamic control flow, effects and primitives without a lowering
-are rejected by name; `gather`, `scatter` and their relatives become registered operators at runtime
-indices. `div`, `pow`, `neg`, `rsqrt` and `erf` import as IR pointwise operators, so JAX's mean and
-LayerNorm expansions import; integer division rounds toward zero, as `lax.div` does. In binary16 and
-bfloat16, `pow`, `rsqrt` and `erf` are computed in binary32 and rounded once, as XLA's CPU backend
-computes them. A conversion imports as one cast, which rounds the exact value once; XLA's CPU
-backend rounds an integer or binary64 value converted to binary16 or bfloat16 twice, through
-binary32, so the two can differ near a rounding boundary. `integer_pow` imports as XLA's
-multiplication schedule. The reference target has no binary error function, so a graph using
-`erf` passes its structure and type checks but does not execute, and JAX's exact GELU uses `erfc`,
-which has no IR operator. Square root imports as IEEE's root at every operand, `Op.sqrt` at
-`.raw`. JAX's softmax expansion imports with its `reduce_max` and its non-finite
-constants, which keep only their exact element words.
+dtypes. The artifact records tensor argument order, including tensor leaves in built-in lists,
+tuples and dictionaries. The low-level `torchlean.jaxpr.export` interface takes flat tensor
+arguments. `cond`, `scan`, and `while` can preserve structured control flow in the IR.
+The [branches and loops example](../verify/#branches-and-loops) runs a loop whose trip
+count depends on a tensor input. `gather`, `scatter`, and their relatives become registered
+operators at runtime indices. Effects and primitives without a lowering are refused by name. `div`,
+`pow`, `neg`, `rsqrt` and `erf` import as IR pointwise operators, so JAX's mean and LayerNorm
+expansions import; integer division rounds toward zero, as `lax.div` does. In binary16 and bfloat16,
+`pow`, `rsqrt` and `erf` are computed in binary32 and rounded once, as XLA's CPU backend computes
+them. A conversion imports as one cast, which rounds the exact value once; XLA's CPU backend rounds
+an integer or binary64 value converted to binary16 or bfloat16 twice, through binary32, so the two
+can differ near a rounding boundary. `integer_pow` imports as XLA's multiplication schedule. The
+reference target has no binary error function, so a graph using `erf` passes its structure and type
+checks but does not execute. JAX's exact GELU uses `erfc`, which imports as `Op.special`, the real
+function; no binary format executes it, so such a graph does not execute either. Square root
+imports as IEEE's root at every operand, `Op.sqrt` at `.raw`. JAX's softmax expansion imports with
+its `reduce_max` and its non-finite constants, which keep only their exact element words.
+
+### Linear algebra
+
+For example, we can capture a Cholesky factorization and compare the reference run
+with JAX on a matrix whose factor has exactly representable entries.
+
+```python
+from jax import lax
+import jax.numpy as jnp
+import torchlean
+
+a = jnp.array([[4., 2.], [2., 2.]], dtype=jnp.float32)
+report = torchlean.verify(lax.linalg.cholesky, a, checks=("structure", "types", "compare"))
+print(report["ok"])  # True
+```
+
+Here the lower-triangular factor has rows $[2,0]$ and $[1,1]$. The importer also has
+programs for triangular solves, Cholesky updates, Householder products and applications,
+LU pivot permutations, and tridiagonal solves. Each has its own dtype and input
+restrictions in the [IR linear-algebra reference](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/NN/IR/README.md#jax-reductions-and-linear-algebra).
+
+On the proof side, we can specify what it means for an output to be a QR, LU, SVD,
+eigenvalue, Schur, Hessenberg, or tridiagonal decomposition. For example, the real
+Schur existence theorem gives an orthogonal $Q$ and a quasi-triangular $T$ with
+$A = QTQ^\top$. These relations give us statements to prove about a factorization.
+Connecting a JAX import or the output of a native routine to its relation requires
+a separate correctness proof. See [the factorization specifications](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/Tensor/Factorization/Decomposition.lean)
+and [the real Schur theorem](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/Tensor/Factorization/RealSchur.lean).
 
 ## Mixed precision
 
@@ -519,7 +524,10 @@ def mixed_square(x):
     y = x.astype(jnp.float32)
     return (y * y).astype(jnp.float16)
 
-document = export(mixed_square, jnp.array([1.25, 2.5], dtype=jnp.float64))
+report = torchlean.verify(
+    mixed_square, jnp.array([1.25, 2.5], dtype=jnp.float64), frontend="jax",
+    checks=("structure", "types", "compare"),
+)
 ```
 
 The graph contains two casts and a multiplication. Its input is binary64, its
@@ -531,18 +539,24 @@ Lean binary64 number.
 A typed program (`TorchLean.IR.Program`) records these types and the input/output
 interface with its steps. Ordinary arithmetic requires matching operand and result
 types. A missing cast is rejected. `TorchLean.JAX.load` imports the program under the
-reference runtime as a typed program of registered operators, whose run executes the
-numerical nodes with FloatLib's configured arithmetic and casts with its explicit
-rounding semantics:
+reference runtime as a flow of typed programs of registered operators, one program where
+the capture decides every `cond` and `while`, whose run executes the numerical
+nodes with FloatLib's configured arithmetic and casts with its explicit rounding semantics:
 
 ```lean
 import TorchLean.NN.JAX
 
--- After reading the exported JSON into `document`:
-let (program, payload) ← IO.ofExcept (TorchLean.JAX.load document)
--- The arguments are typed tensor values, loaded from their exact interchange words.
-let arguments ← IO.ofExcept (TorchLean.IR.loadArguments .reference document)
-let (outputs, conversionFlags) ← IO.ofExcept (program.eval .reference payload arguments)
+open TorchLean
+
+/-- The outputs of the flow of an exported document, run on the document's arguments. -/
+def runExport (document : Lean.Json) : IO (List (IR.Program.Value .reference)) := do
+  let (flow, fuel) ← IO.ofExcept (JAX.load document)
+  -- The arguments are typed tensor values, loaded from their exact interchange words.
+  let arguments ← IO.ofExcept (IR.loadArguments .reference document)
+  -- `run {}` also returns the conversion flags of the run.
+  let (outputs, _flags) ← IO.ofExcept
+    ((flow.eval (IR.Flow.programs .reference) fuel arguments.toList).run {})
+  pure outputs
 ```
 
 Try the companion's `mixed_precision.json`, `float16_sum.json`, `bfloat16_sum.json`, and
@@ -552,16 +566,24 @@ last selects entries through a Boolean comparison.
 
 The reference runtime accepts any validated FloatLib binary descriptor, including
 binary128 and custom exponent and fraction widths. JAX capture supplies
-float16, bfloat16, float32, and float64. Those are different limits: a precision can
-be supported by the Lean runtime without being a JAX array dtype.
+float16, bfloat16, float32, float64, and the float8 formats `float8_e5m2`, `float8_e4m3fn`,
+`float8_e4m3fnuz` and `float8_e5m2fnuz`. Those are different limits: a precision can
+be supported by the Lean runtime without being a JAX array dtype. Each float8 sum, difference and
+product is rounded once in the format, including intermediate sums and products in reductions.
+Contractions instead accumulate in binary32 and round the result to the format. Several other
+operations, including division and the elementary functions, also use binary32, which holds every
+float8 value, before rounding to the format. For the 20 elementary functions, such as
+`exp`, `log` and `tanh`, a test checks at every word of each format that this gives the exact
+value rounded once; no theorem proves it. Operations such as `atan2` and `pow` use binary64 before rounding.
 
 `TorchLean.IR.Binary.cast_value` proves that the binary cast returns FloatLib's specified
 directed conversion, including exceptional encodings. It does not verify XLA's
 implementation. Reductions follow TorchLean's reference order. The exponential and
 logarithm are FloatLib's correctly rounded ones in these IEEE formats, and the
 trigonometric and hyperbolic functions are FloatLib's approximations. XLA's need not
-agree with either. Heterogeneous dot products with a separate accumulator precision are
-rejected. Jaxpr capture also preserves Boolean, integer and complex
+agree with either. A contraction's `preferred_element_type` is accepted when that type can
+represent every operand value exactly: the operands are converted to it before contraction.
+Narrowing choices are rejected. Jaxpr capture also preserves Boolean, integer and complex
 component types and exact constant words. Complex words alternate real and imaginary
 components. The reference runtime executes Boolean and fixed-width
 integer layout operations, using the same shared tensor transformations. Integers also support
@@ -569,7 +591,19 @@ negation, truncating and flooring division, wrapping powers, `remainder`, `add`,
 modulo `2 ^ width`, `max` and `min` in the type's order, comparisons, and `clamp_min`. Integer and
 Boolean values cast to binary formats and between integer types, and binary values to integers in
 the cast's rounding direction. The bitwise operators, shifts and bit counts act on the integer
-words. Complex execution is unsupported.
+words. A complex value is held in paired-real form, its real and imaginary parts on an appended
+last axis. FFTs, complex products, and elementary functions such as `log` and `sqrt` preserve
+that representation. For the complex elementary functions, FloatLib supplies the configured
+binary implementation. Under the rounding theorems' premises, each component is the corresponding
+principal value rounded once. The derivative certificates concern the smooth domains of the exact
+functions. See [complex import and rounding](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/NN/IR/README.md#complex-values).
+
+The importer also accepts the special functions of `lax`, `rng_uniform` with TorchLean's generator,
+and `top_k`.
+The special functions (`Op.special`) are specified
+over the reals only: no binary format executes them, and their derivative certificate holds for
+`igamma` and `igammac` where both arguments are positive, for `zeta` where `s > 1` and `q > 0`, and
+for `betainc` where `a` and `b` are positive and `x ∈ (0, 1)`.
 
 The proofs on this page concern the accepted graph's Lean semantics. The Python
 translation and the link to XLA execution remain outside those proofs.
@@ -591,7 +625,9 @@ chapter describes the operators and their certificates.
 The Jaxpr adapter and the `torch.export` capture write one format, `torchlean.ir`: a
 typed program whose operator steps are registered operators (`TorchLean.IR.Artifact`),
 and `Artifact.ofJson_toJson` proves that decoding the JSON of any artifact returns it.
-`TorchLean.JAX.load` checks the frontend marker and loads the program with its payload.
+`TorchLean.JAX.load` checks the frontend marker and loads the flow of programs with their
+payloads, and the flow format (`TorchLean.IR.FlowArtifact`) holds the blocks between the branches
+and loops that the capture leaves to run time.
 
 Try changing the network's widths or the casts in the mixed-precision example and
 inspect what enters the graph. I'd love to hear which computations you'd want to bring

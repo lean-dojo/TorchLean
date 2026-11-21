@@ -51,7 +51,8 @@ theorem broadcast_eq_pull {α : Type} [Storage α] {s : Shape} (x : Tensor α s)
     broadcast x t dims h = Rep.pull (broadcastSource dims h) x :=
   rfl
 
-private theorem index_broadcastSource {s t : Shape} (dims : Fin s.rank → Fin t.rank)
+/-- The indices of the coordinate that broadcasting reads. -/
+theorem index_broadcastSource {s t : Shape} (dims : Fin s.rank → Fin t.rank)
     (h : Shape.BroadcastDims s t dims) (d : t.Coord) {k : Nat} (hk : k < s.rank) :
     Shape.Coord.index (broadcastSource dims h d) k =
       if s.extent ⟨k, hk⟩ = 1 then 0 else Shape.Coord.index d (dims ⟨k, hk⟩).val := by
@@ -82,10 +83,10 @@ private theorem broadcastSource_cons_of_avoids {s : Shape} {n : Nat} {t : Shape}
 the outer index to itself, or to zero at extent one, and the inner coordinate by the inner
 placement. -/
 private theorem broadcastSource_cons_eq_iff {m n : Nat} {s t : Shape}
-    (dims : Fin (Shape.dim m s).rank → Fin (Shape.dim n t).rank)
-    (h : Shape.BroadcastDims (.dim m s) (.dim n t) dims)
-    (placed : (dims ⟨0, Nat.succ_pos _⟩).val = 0) (i : Fin n) (d : t.Coord) (j : Fin m)
-    (c : s.Coord) :
+    {dims : Fin (Shape.dim m s).rank → Fin (Shape.dim n t).rank}
+    {h : Shape.BroadcastDims (.dim m s) (.dim n t) dims}
+    (placed : (dims ⟨0, Nat.succ_pos _⟩).val = 0) {i : Fin n} {d : t.Coord} {j : Fin m}
+    {c : s.Coord} :
     broadcastSource dims h (i, d) = (j, c) ↔ (if m = 1 then 0 else i.val) = j.val ∧
       broadcastSource (Shape.BroadcastDims.shiftDims (fun k => dims k.succ) h.avoids_succ)
         h.tail d = c := by
@@ -146,7 +147,7 @@ private theorem sum_ite_cons {α : Type} [Storage α] [AddCommMonoid α] {β : T
   rw [reduce_sum_zero_apply_eq_sum]
   split_ifs <;> simp
 
-private theorem reduceBroadcast_apply' {α : Type} [Storage α] [AddCommMonoid α]
+private theorem reduceBroadcast_apply_eq_sum_ite {α : Type} [Storage α] [AddCommMonoid α]
     {s t : Shape} (dims : Fin s.rank → Fin t.rank) (h : Shape.BroadcastDims s t dims)
     (g : Tensor α t) (c : s.Coord) :
     reduceBroadcast dims h g c =
@@ -172,12 +173,12 @@ private theorem reduceBroadcast_apply' {α : Type} [Storage α] [AddCommMonoid �
         have hj : (if n = 1 then 0 else j.val) = j.val := by
           have := j.isLt
           split_ifs <;> omega
-        simp only [broadcastSource_cons_eq_iff dims h placed, hj, true_and,
+        simp only [broadcastSource_cons_eq_iff placed, hj, true_and,
           Tensor.unstack_apply]
       · intro i _ hij
         apply Finset.sum_eq_zero
         intro d _
-        rw [ite_eq_right_iff, broadcastSource_cons_eq_iff dims h placed]
+        rw [ite_eq_right_iff, broadcastSource_cons_eq_iff placed]
         intro ⟨e, _⟩
         have := i.isLt
         have := j.isLt
@@ -200,7 +201,7 @@ private theorem reduceBroadcast_apply' {α : Type} [Storage α] [AddCommMonoid �
         have := j.isLt
         rw [ite_eq_left hm]
         omega
-      simp only [broadcastSource_cons_eq_iff dims h placed, hj, true_and]
+      simp only [broadcastSource_cons_eq_iff placed, hj, true_and]
   | case6 m s n t g dims h unplaced ih =>
       rw [reduceBroadcast, dite_eq_right unplaced, ih, ← sum_ite_cons g _ c]
       apply Finset.sum_congr rfl
@@ -214,7 +215,7 @@ theorem reduceBroadcast_apply {α : Type} [Storage α] [AddCommMonoid α]
     {s t : Shape} (dims : Fin s.rank → Fin t.rank) (h : Shape.BroadcastDims s t dims)
     (g : Tensor α t) (c : s.Coord) :
     reduceBroadcast dims h g c = ∑ d : {d : t.Coord // broadcastSource dims h d = c}, g d.1 := by
-  rw [reduceBroadcast_apply', ← Finset.sum_filter,
+  rw [reduceBroadcast_apply_eq_sum_ite, ← Finset.sum_filter,
     Finset.sum_subtype (p := fun d => broadcastSource dims h d = c) _ (fun d => by simp)]
 
 /-- Over a commutative additive monoid, `reduceBroadcast dims h` is the fiber sum

@@ -8,7 +8,6 @@ module
 
 public import TorchLean.Tensor.Random.Permutation
 public import TorchLean.NN.Models.GradientBoostedTrees
-import TorchLean.Tensor.Random
 
 /-!
 # Random Forest

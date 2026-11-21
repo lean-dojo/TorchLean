@@ -22,8 +22,8 @@ public import TorchLean.Verify.RuntimeApprox.Roundoff.SoftmaxShift
 public import TorchLean.Verify.RuntimeApprox.TransformerBlock
 public import TorchLean.Tensor.Layers.Pooling
 public import TorchLean.Tensor.Window
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff
-public import FloatLib.Numerics.Automation.Attributes
+public import FloatLib.Tactic.Roundoff
+public import FloatLib.Tactic.Numerics.Attribute
 public import Mathlib.Analysis.SpecialFunctions.Gamma.Basic
 public import Mathlib.Data.Nat.Factorial.DoubleFactorial
 public import TorchLean.Tensor.Literal

@@ -113,8 +113,8 @@ theorem rule?_conv_batch [Op.Capabilities α] {s k : Shape} {r : Nat} (dims : Sh
               bias dxs.2.1), ()) } :=
   rfl
 
-/-- The rule of `Op.pool`. -/
-theorem rule?_pool [Op.Capabilities α] {s : Shape} (op : PoolOp) (dims : List (Fin s.rank))
+/-- The rule of `Op.pool` in the left fold. -/
+theorem rule?_pool_leftFold [Op.Capabilities α] {s : Shape} (op : PoolOp) (dims : List (Fin s.rank))
     (kernel stride padLow padHigh dilation : List Nat) (ceilMode : Bool) :
     (Op.pool op dims kernel stride padLow padHigh dilation ceilMode).rule? (α := α) = some
       { forward := fun xs =>
@@ -126,6 +126,25 @@ theorem rule?_pool [Op.Capabilities α] {s : Shape} (op : PoolOp) (dims : List (
           (Tensor.poolJVP op xs.1 dxs.1 dims kernel stride padLow padHigh dilation ceilMode,
             ()) } :=
   rfl
+
+/-- The rule of `Op.pool` in the order `order`. -/
+theorem rule?_pool [Op.Capabilities α] {s : Shape} (op : PoolOp) (dims : List (Fin s.rank))
+    (kernel stride padLow padHigh dilation : List Nat) (ceilMode : Bool)
+    (order : ReduceOrder) :
+    (Op.pool op dims kernel stride padLow padHigh dilation ceilMode order).rule? (α := α) = some
+      { forward := fun xs =>
+          (Tensor.poolIn order op xs.1 dims kernel stride padLow padHigh dilation ceilMode, ())
+        backward := fun xs g =>
+          (Tensor.poolBackward op xs.1 dims kernel stride padLow padHigh dilation ceilMode g.1,
+              ())
+        jvp? := some fun xs dxs =>
+          (Tensor.poolJVP op xs.1 dxs.1 dims kernel stride padLow padHigh dilation ceilMode,
+            ()) } := by
+  cases order
+  · rw [rule?_pool_leftFold]
+    refine congrArg some (Op.Rule.ext_forward ?_ ?_) <;> simp only [poolIn_leftFold]
+    rfl
+  all_goals rfl
 
 /-- The rule of `Op.smoothMaxPool`. -/
 theorem rule?_smoothMaxPool [Op.Capabilities α] {s : Shape} (dims : List (Fin s.rank))

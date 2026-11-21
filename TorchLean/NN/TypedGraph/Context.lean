@@ -267,7 +267,7 @@ private theorem shape_back {shape : Shape} (ctx : TensorContext α (shapes ++ [s
    (ctx.values.back (by rw [size_values]; simp)).cast (shape_back ctx))
 
 /-- Popping the context of `xs.snoc value` gives the context of `xs` and `value`. -/
-@[simp] theorem pop_ofPack_snoc {shape : Shape} (xs : TensorPack α shapes)
+theorem pop_ofPack_snoc {shape : Shape} (xs : TensorPack α shapes)
     (value : Tensor α shape) :
     pop (ofPack (xs.snoc value)) = (ofPack xs, value) := by
   apply Prod.ext

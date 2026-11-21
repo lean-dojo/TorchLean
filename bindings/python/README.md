@@ -6,15 +6,19 @@ inside Python. It also returns Lean's op table (`_torchlean.op_table`, the JSON 
 differentiates the model itself.
 
 Use a virtual environment with CPython 3.14 or newer and a shared Python library. Nerodia does not
-support free-threaded Python. The binding uses TorchLean's pinned Lean toolchain and CPU build.
-From the TorchLean checkout, with that environment activated:
+support free-threaded Python. The binding uses Lean 4.36.0 and TorchLean's CPU runtime from this
+checkout. From the TorchLean checkout, with that environment activated:
 
 ```bash
 python -m pip install "setuptools>=82" setuptools-lean wheel
 TORCHLEAN_PACKAGE_ROOT="$PWD/bindings/python" PYTHON3="$(command -v python)" \
   scripts/lake.sh build +TorchLeanPython:nerodiaExt
-python -m pip install --no-build-isolation ./bindings/python
+TORCHLEAN_PACKAGE_ROOT="$PWD/bindings/python" PYTHON3="$(command -v python)" \
+  scripts/lake.sh env python -m pip install --no-build-isolation "$PWD/bindings/python"
 ```
+
+The wrapper keeps both the extension build and the packaging step in the CPU build profile and
+holds the checkout lock while they run.
 
 Keep using `import torchlean` from the checkout, with `python/` on `PYTHONPATH` or after
 `python -m pip install -e python`. It picks up the installed `_torchlean` extension, and a

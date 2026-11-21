@@ -17,6 +17,8 @@ open Verso.Genre.Manual.InlineLean
 open TorchLean Backend.Device
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: custom tensor computations on the tape. -/
+
 #doc (Manual) "Custom Tensor Computations" =>
 %%%
 tag := "custom-computations"
@@ -27,14 +29,12 @@ file := "Custom-Tensor-Computations"
 namespace Tutorial.CustomComputations
 ```
 
-Let's write a function and run it on a tensor. We'll start in Lean's Infoview with a square, then
-try parameters, row sums and repeated updates, and we'll also ask for a gradient without rewriting
-the function.
+The first calculation squares the tensor `[1, 2, 3]` elementwise. It is small enough to inspect in
+Lean's Infoview, run on CPU or CUDA, and differentiate without a second definition.
 
-Sometimes the calculation we want isn't a named LibTorch operation: we might want to change an
-activation, combine several elementwise steps, or read a small neighborhood of a tensor. We should
-be able to write that calculation in Lean without maintaining a second implementation in a CUDA
-file.
+Named LibTorch operations do not cover every scalar formula. A model may need a modified
+activation, several fused elementwise steps, or reads from a small tensor neighborhood. The custom
+computation interface expresses those calculations in Lean without a separate CUDA source file.
 
 ```lean (name := customSquare)
 def square := fun (x : Float32) => x * x
@@ -49,10 +49,10 @@ def input : Tensor Float32 [3] :=
 [1.000000, 4.000000, 9.000000]
 ```
 
-CPU is the default. Our result is a `Tensor Float32 [3]` like the input, and `#eval` prints it as
-is, so we don't need to convert our data to a list or unpack a native buffer.
+CPU is the default. The result is a `Tensor Float32 [3]`, like the input, and `#eval` prints it
+directly. No list conversion or native-buffer unpacking is needed.
 
-# Choosing a device
+# Choosing A Device
 
 Pass the device when you run the function:
 
@@ -82,9 +82,10 @@ API lets us supply our own scalar calculation without writing a separate CUDA so
 differentiation, we can record supported arithmetic at the call site (as in the next example), but
 arbitrary indexed custom bodies don't acquire backward rules from source equivalence.
 
-# Keeping the calculation on the tape
+# Keeping The Calculation On The Tape
 
-Let's keep the same square definition and ask for its gradient:
+Running `square` with `grad := true` records each multiplication. Backward uses an all-ones output
+seed by default, so this call differentiates the sum of the three squared entries:
 
 ```lean (name := customAutograd)
 #eval do
@@ -98,7 +99,8 @@ Let's keep the same square definition and ask for its gradient:
 [2.000000, 4.000000, 6.000000]
 ```
 
-We can pass the whole tensor to a function too. Here we sum its squared entries:
+The recorder also accepts a function of the complete tensor. `energy` sums the same three squared
+entries before running backward:
 
 ```lean (name := customEnergy)
 def energy (x : Tensor Float32 [3]) : Float32 :=
@@ -167,9 +169,9 @@ example (x : ℝ) :
 This is a mathematical derivative statement, not a claim that finite-precision arithmetic is a
 smooth real function or that foreign GPU instructions have been verified by Lean.
 
-# A conditional activation
+# A Conditional Activation
 
-Let's change the calculation. We'll discard negative entries and square the others:
+The next activation discards negative entries and squares the others:
 
 ```lean (name := customPositiveSquare)
 def positiveSquare := fun (x : Float32) =>
@@ -195,7 +197,7 @@ def activationOnGpu : IO (Tensor Float32 [3]) :=
 Only the chosen branch is evaluated, which matters when the other branch contains a division or
 another operation we don't want to execute for that input.
 
-We can ask for the activation's gradient without rewriting the conditional:
+Recording the same conditional returns the selected branch's gradient without rewriting it:
 
 ```lean (name := customBranchGradient)
 #eval do
@@ -218,9 +220,10 @@ branch's arithmetic and backward operations stay on GPU. Recording a branch this
 expensive than the forward-only compiled conditional, especially for a large tensor. The gradient
 follows the selected path, so at a branch boundary it need not be a mathematical derivative.
 
-# Parameters and two inputs
+# Parameters And Two Inputs
 
-Let's pass the activation slope as a parameter instead of giving every slope a different name:
+Treat the negative activation slope as a runtime parameter instead of defining a new function for
+every slope:
 
 ```lean (name := customParameter)
 def activate (slope : Float32) (xs : Tensor Float32 [3])
@@ -278,7 +281,7 @@ proofs). The software backend supports up to 30 exponent bits and 4096 fraction 
 descriptor selects IEEE, finite-with-NaN, unsigned-zero or fully finite conventions. Decimal and
 posit formats remain CPU-only.
 
-Let's try the same operation with a wider binary format:
+Binary128 runs the same squaring operation with 15 exponent bits and 112 fraction bits:
 
 ```lean (name := customWide)
 abbrev Wide := FloatLib.Floats.ExecFloat.Binary 15 112
@@ -299,9 +302,9 @@ def wideOnGpu : IO (Tensor Wide [2]) :=
 (some 9, some 25)
 ```
 
-The two format parameters choose 15 exponent bits and 112 fraction bits. We inspect the finite
+The two format parameters choose that binary128 layout. We inspect the finite
 results as exact rationals instead of converting them through a narrower native float (the tensor
-itself stores `Wide` values). Our editor output above comes from a CPU run, and `wideOnGpu` runs
+itself stores `Wide` values). The checked output comes from a CPU run, and `wideOnGpu` runs
 software binary128 arithmetic on CUDA. Binary16, bfloat16, FP8 and custom widths use the same API,
 with native operations selected only where compatible. This precision support applies to custom
 computations, while the LibTorch model runner retains native binary32 or binary64 buffers.
@@ -323,7 +326,7 @@ def wideGradientOnGpu :=
 (some 6, some 10)
 ```
 
-# Reading several tensors
+# Reading Several Tensors
 
 For indexed calculations, we supply a `Program` and put our input tensors in a `TensorPack`,
 keeping each one's shape. Here we read the same flat index from two tensors and add the
@@ -354,10 +357,10 @@ either is invalid. We asked for the output shape `[3]`, and passing `device := c
 program on GPU. Bounded folds are supported too, and they preserve the written sequential
 accumulation order.
 
-# Summing rows
+# Summing Rows
 
-An elementwise function only sees its own entry, so to sum a row we need to read several entries.
-We'll use a two-row, three-column tensor:
+An elementwise function only sees its own entry, so summing a row requires several indexed reads.
+The input is a two-row, three-column tensor:
 
 ```lean (name := customRowSum)
 def matrix : Tensor Float32 [2, 3] := [[1, 2, 3], [4, 5, 6]]
@@ -393,10 +396,10 @@ could change its result. This API doesn't make that replacement.
 This example explains indexed reads and folds. For ordinary tensor reductions we'd normally use the
 existing tensor API, and the model runtime can then use its CPU implementation or LibTorch on GPU.
 
-# Repeated updates
+# Repeated Updates
 
-A bounded loop can also evolve each tensor entry independently. We'll use the logistic update
-`x ↦ rate * x * (1 - x)` and pass both the rate and number of steps:
+A bounded loop can evolve each tensor entry independently. The following program applies the
+logistic update `x ↦ rate * x * (1 - x)` with runtime rate and step count:
 
 ```lean (name := customEvolution)
 def evolve (rate : Float32) (steps : UInt64) :
@@ -420,9 +423,10 @@ On GPU, output entries run independently, while the updates for each entry remai
 zero steps we recover the starting value. We can also write a numerical recurrence with Lean's
 ordinary recursive syntax.
 
-# Recursive source
+# Recursive Source
 
-Let's multiply by an input once per step, keeping the scalar type as a parameter:
+The same bounded recurrence can be written as ordinary recursion: `power` multiplies by its input
+once per step while keeping the scalar type generic.
 
 ```lean (name := customRecursivePower)
 def power {α : Type} [One α] [Mul α] (x : α) : Nat → α
@@ -524,7 +528,7 @@ route through the existing tape). Unsupported GPU source is rejected, not silent
 nested recurrences, pass the inner bounds as `UInt64` parameters too, because hard-coded inner
 counts can exceed Lean's normal proof-elaboration budget.
 
-# Recursion over trees
+# Recursion Over Trees
 
 The recurrences above follow a natural number. For a recursive function over an inductive type of
 our own, we derive `Sig.Inductive` for the type and pass the function to `Fold.of`:
@@ -593,15 +597,15 @@ sum by halves, level by level on the GPU. Unfolds build the arena of a tree in d
 folds run over it. The proofs cover the level schedule and the CUDA text of a row kernel for the
 native formats, and NVRTC and the device run stay outside them.
 
-# Checking the calculation
+# Checking The Calculation
 
-Lean is useful here because our function and theorems about it live in the same language. We can
-use [mathlib](https://leanprover-community.github.io/mathlib-overview.html) for mathematical
-results instead of rebuilding calculus and linear algebra for each program, and Lean's
+The function and theorems about it share one Lean definition.
+[Mathlib](https://leanprover-community.github.io/mathlib-overview.html) supplies the calculus and
+linear-algebra results, and Lean's
 [tactics](https://lean-lang.org/doc/reference/latest/Tactic-Proofs/Tactic-Reference/) construct
-proofs that its kernel checks. FloatLib adds executable arithmetic and theorems about its numerical
-behavior. Those are concrete reasons to build this inside Lean, not a claim that every Lean program
-is faster or that every calculation already has a proof.
+proof terms that its kernel checks. FloatLib supplies executable arithmetic together with laws and
+error bounds for that arithmetic. These components do not make every Lean program fast or every
+calculation proved; they make the definitions available to both execution and proof.
 
 We take inspiration from functional array languages such as
 [Accelerate](https://www.acceleratehs.org/), [Futhark](https://futhark-lang.org/) and

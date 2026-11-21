@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.Tensor.LinearAlgebra.Algorithms
+import Std.Data.TreeMap.Basic
 
 /-!
 # k‑Nearest Neighbors (kNN) (spec model)

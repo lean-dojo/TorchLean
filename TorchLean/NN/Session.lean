@@ -8,6 +8,7 @@ module
 
 public import TorchLean.NN.Tape.CPU
 public import TorchLean.NN.Session.Config
+import Std.Data.TreeMap.Basic
 
 /-!
 # Eager Session State

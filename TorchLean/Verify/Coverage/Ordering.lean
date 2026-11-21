@@ -15,7 +15,7 @@ public import TorchLean.Verify.RuntimeApprox.Roundoff.Coverage
 operators are recorded with the operator table's coverage. `dim`, `k`, the direction and the shapes
 are variables, so each theorem holds at every axis and rank. An index tensor is read through the
 cast of its entry into the scalar. Each route is analyzed for the configured scalar of an arbitrary
-IEEE format, for native `Float32` and for the rounded reals `FP32`.
+format, for native `Float32` and for the rounded reals `FP32`.
 -/
 
 public section

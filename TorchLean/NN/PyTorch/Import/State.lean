@@ -12,7 +12,6 @@ public import TorchLean.NN.Checkpoint.Encoding
 public import TorchLean.NN.Json
 public import TorchLean.Tensor.Constructors
 import all Lean.Data.Json.Basic
-import Std.Data.TreeMap.Raw.Lemmas
 import TorchLean.Tensor.Rep.Traversal.Sequence
 
 /-!

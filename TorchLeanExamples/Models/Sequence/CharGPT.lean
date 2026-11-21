@@ -334,6 +334,7 @@ def main (args : List String) : IO UInt32 := do
           throw <| IO.userError s!"{exeName}: corpus contains no characters"
       let tok := Text.Tokenizer.fromAlphabet alphabetFull unknownTokenId (unknownCharacter := '?')
       let vocabularySize := tok.vocabularySize
+      -- The alphabet holds `unknownTokenId`, so it is not empty.
       have hVocabularySize : vocabularySize ≠ 0 := by
         intro h
         have hAlphabet : alphabetFull.size = 0 := by
@@ -367,6 +368,7 @@ def main (args : List String) : IO UInt32 := do
         let encoded := tok.encode corpus
         let allTokens ← CLI.orThrow exeName <|
           Tensor.checkIndices vocabularySize (Tensor.from encoded)
+        -- The first 90% of the tokens train, the rest validate.
         let trainCount := encoded.size * 9 / 10
         let validationCount := encoded.size - trainCount
         let trainTokens := Tensor.window allTokens trainCount 0 unknownTokenId
@@ -379,6 +381,7 @@ def main (args : List String) : IO UInt32 := do
           Data.CausalLM.tokenSample [batchSize] contextLength <|
             Text.Corpus.randomTokenBatch trainTokens batchSize contextLength runtime.seed step
               unknownTokenId
+        -- Validation batches draw from their own seed.
         let validationBatchAt (step : Nat) :=
           Data.CausalLM.tokenSample [batchSize] contextLength <|
             Text.Corpus.randomTokenBatch valTokens batchSize contextLength
@@ -417,6 +420,7 @@ def main (args : List String) : IO UInt32 := do
           Trainer.Memory.cadence runtime train.training.steps train.training.cudaMemorySampleEvery
         let mut memorySample? ← Trainer.Memory.sample runtime watchEvery train.training.steps 0 none
         let mut lastEval? : Option Float := none
+        -- Evaluate every `evalEvery` steps and after the last one.
         for step in [0:train.training.steps] do
           let sample := trainingBatchAt step
           trainStep sample.input sample.target

@@ -1,4 +1,5 @@
 name = "TorchLeanBlueprint"
+packagesDir = "../../.lake/packages"
 defaultTargets = ["TorchLeanBlueprint", "blueprint-gen"]
 
 [[require]]
@@ -9,29 +10,34 @@ options = { cuda = "false" }
 [[require]]
 name = "VersoBlueprint"
 git = "https://github.com/leanprover/verso-blueprint"
-# Pin the matching maintenance branch; select stable dependencies below.
+# Its Lean 4.36 compatibility patch is applied by scripts/docs/build_site.sh.
 rev = "5a5bfc7e17ddba0cbce176d0fe3bfe6a257b16ec"
 
 [[require]]
 name = "verso-slides"
 git = "https://github.com/leanprover/verso-slides"
-rev = "v4.35.0"
+rev = "v4.36.0"
 
 [[require]]
 name = "verso"
 git = "https://github.com/leanprover/verso"
-rev = "v4.35.0"
+rev = "v4.36.0"
 
 [[require]]
 name = "subverso"
 git = "https://github.com/leanprover/subverso"
-rev = "verso-v4.35.0"
+rev = "verso-v4.36.0"
+
+[[require]]
+name = "lean_vir"
+git = "https://github.com/ejgallego/lean-vir"
+rev = "v4.36.0"
 
 # Match the parent package's mathlib dependencies, including its cached ProofWidgets revision.
 [[require]]
 name = "mathlib"
 git = "https://github.com/leanprover-community/mathlib4"
-rev = "v4.35.0"
+rev = "v4.36.0"
 
 [[lean_lib]]
 name = "TorchLeanBlueprint"

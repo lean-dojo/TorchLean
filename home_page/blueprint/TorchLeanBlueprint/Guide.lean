@@ -59,26 +59,26 @@ import TorchLeanBlueprint.Guide.Ch6_Conclusion.Conclusion
 open Verso.Genre Manual
 open Informal
 
+/-! The TorchLean guide: the book that includes every chapter and the theorem index. -/
+
 #doc (Manual) "TorchLean" =>
 %%%
 shortTitle := "TorchLean"
 tag := "torchlean"
 %%%
 
-TorchLean is a Lean 4 library for writing, training, and reasoning about neural networks. Tensor
-dimensions appear in types, model definitions are executable, and supported programs can be
-recorded as graphs for differentiation, export, and verification.
+Suppose a model gives you a surprising prediction. Was it the weights, the input normalization,
+the attention mask, or the way a reduction rounded on the GPU? A graph with the right shapes can
+still compute the wrong function. This guide is about following the calculation far enough to
+tell which claim you can actually make about it.
 
-The running example is a nonlinear regression model with two linear layers and a ReLU. We train it,
-inspect its parameters and gradients, run it through different numerical backends, and state exact
-claims about the corresponding mathematical definitions. That distinction matters: a theorem about
-real-valued matrix multiplication doesn't by itself verify the floating-point instructions issued
-by a GPU kernel.
-
-Larger models raise the same questions: an attention mask changes which tokens can influence a
-prediction, a reduction order changes where arithmetic rounds, and a certificate needs to identify
-the weights and input region it covers. We follow these connections from small calculations to
-transformers, ResNets, Fourier neural operators, diffusion, and reinforcement learning.
+The guide begins with a two-layer network small enough to calculate by hand: run it, train it, and
+inspect the tensors that change. That leads to harder questions. Which inputs can affect one
+output? Does a property hold over a whole region, rather than the few points we tested? How much
+can the answer move when arithmetic rounds? The tensor program and those questions can live
+together in Lean. Models that start in Python can enter through the supported
+[JAX or PyTorch capture path](https://lean-dojo.github.io/TorchLean/examples/verify/), after which
+their graphs can be inspected here.
 
 All commands are run from the repository root. Readers new to Lean may also use
 [*Functional Programming in Lean*](https://lean-lang.org/functional_programming_in_lean/),
@@ -87,17 +87,10 @@ All commands are run from the repository root. Readers new to Lean may also use
 
 # Introduction
 
-An architecture fixes how layers connect, but many different functions share that architecture.
-Weight values select one of them. A training run changes those values while retaining the same
-layer interfaces, and saving a checkpoint records one particular state of that process. When we
-later ask Lean to prove something about a model, the statement must identify which of these objects
-it concerns. A shape theorem may apply to every parameter state, while an output bound will usually
-depend on the weights.
-
-The running example keeps these distinctions visible in a small program. Its input has two
-coordinates and its output has one, so the forward map can be written out and compared with the
-layer definition. We use the same program to supply concrete tensors, gradients, and loss values
-for reading the API. Lean syntax enters as a way to express those objects and their relationships.
+What does it mean to verify a *trained* network? Before training, we know its layers and tensor
+shapes. After training, we also have particular weights. The layer shapes tell us which operations
+fit together; an output bound depends on the weights we actually saved. The first network remains
+small enough to see both kinds of information on the page.
 
 {include 2 TorchLeanBlueprint.Guide.Ch1_Introduction.Overview}
 
@@ -164,9 +157,9 @@ uses those gradients together with its running first and second moments to compu
 evaluate the next example with the updated parameter values, so even a repeated input can produce a
 different prediction.
 
-TorchLean's interfaces let us inspect each of these objects separately. The model definition
-specifies the layer composition and parameter layout. Initialization supplies a starting state, the
-dataset supplies examples, and the objective and optimizer specify how learning proceeds.
+The model definition specifies the layer composition and parameter layout. Initialization supplies
+a starting state, the dataset supplies examples, and the objective and optimizer specify how
+learning proceeds.
 `Trainer.create` brings these choices together, and `trainer.train` returns a result whose learned
 parameters we can inspect, save, and use for prediction. That separation pays off as soon as we
 change an experiment: trying another optimizer can keep the model and initialization, while loading
@@ -186,25 +179,13 @@ as code in the tensor and model definitions below.
 
 # Runtime, Autograd, and Interop
 
-Training changes the parameters in the forward map
+Take a ReLU that received `-2` on the forward pass. Its backward rule needs that value: the
+gradient through this unit is zero. The tape remembers it. Adam remembers different things, such
+as its running moments, between training steps. Losing either piece of state changes the next
+calculation.
 
-$$`f_\theta(x)=W_2\,\operatorname{ReLU}(W_1x+b_1)+b_2`.
-
-To compute an update, reverse mode needs intermediate values from the forward pass, and the
-optimizer may need state from earlier updates. As the model runs, the autograd tape retains that
-information. CUDA and LibTorch add a choice of implementation for the numerical operations.
-
-At the ReLU, reverse mode needs to know which pre-activations were positive. At a linear layer,
-it needs the input to form the weight gradient and the weight matrix to propagate sensitivity
-back toward the input. A forward pass therefore leaves information that a later backward pass
-will use. Execution choices affect where that information lives, how long it stays available,
-and which operations can consume it.
-
-Scalar arithmetic and execution strategy are separate choices. Recording a typed graph doesn't by
-itself choose CUDA, and moving tensors to a device doesn't change the mathematical definition of
-the loss. Interoperation adds another concrete question: whether the imported weights, layouts, and
-operation conventions describe the same model. Following one forward and backward calculation
-through these interfaces makes their roles easier to distinguish.
+The same calculation can run on a CPU or GPU, use a custom tensor function, or load weights from
+PyTorch. The next pages follow where each value and operation goes.
 
 {include 2 TorchLeanBlueprint.Guide.Ch2_Frontend.RunConfiguration}
 
@@ -223,23 +204,13 @@ through these interfaces makes their roles easier to distinguish.
 
 # Semantics and Graphs
 
-Verification needs a definition of what a model computes for every input covered by the claim. That
-mathematical function comes from the specification layer, and the operator table names each
-operator once, with the rule the tapes and the operator graph run for it. A sequential model
-records its architecture with shapes in the types, while the shared IR uses a node array that
-importers and verification passes can inspect.
+On paper, a linear layer computes a dot product and adds a bias. In a graph, we must also say which
+earlier node supplies each input. Swapping the weight and bias references, or dropping the bias,
+can leave a graph that still passes a shape check. How do we know which function that graph means?
 
-For a linear layer, the specification can say directly that each output is a dot product plus a
-bias. A graph must also say where the input came from, which parameter entry supplies the weights,
-and which node receives the result. That added structure lets an interpreter execute the program
-and a verifier inspect intermediate values. It also creates facts that need checking: a parent
-index must name an available node, and the chosen weights must fit the declared dimensions.
-
-These representations support different tasks. Shape-indexed composition makes incompatible layer
-interfaces difficult to express, while a node array spells out imported structure and local
-transformations. We prove that the lowered graph runs as the typed graph that lowering records
-(`IR.lowerForward_eq_ok`). No theorem relates that graph to the source model, so a bound on the
-graph applies to the model only if the recording is right.
+The formula, operator rules, and graph trace describe the same layer at three levels.
+`IR.lowerForward_eq_ok` connects the lowered graph to the typed graph that produced it. A captured
+Python model brings another question: did capture preserve the Python calculation?
 
 {include 2 TorchLeanBlueprint.Guide.Ch3_Backend.SpecLayer}
 
@@ -252,24 +223,13 @@ graph applies to the model only if the recording is right.
 
 # Floating Point and Native Boundaries
 
-A dot product looks like a sum of products on paper. To run it, we also choose a number format
-and an order of evaluation. Products and partial sums may round, so two implementations of the
-same real formula can return different values.
+Try adding `2²⁵ + 1 - 2²⁵` in binary32. If you add from left to right, the `1` disappears when
+it meets `2²⁵`. The result is zero, although the real-number sum is one. A GPU reduction can
+change where additions happen, so an error bound has to account for its arithmetic order.
 
-In TorchLean, the scalar type selects a format from FloatLib. We use binary32 for a first example,
-then change the precision through the same interface. Custom exponent and fraction widths work on
-the typed CPU path and in supported custom GPU forward computations, while the native GPU tape
-retains binary32 or binary64. Configured binary arithmetic can record supported operations on the
-same GPU tape, keeping complete words for saved values and gradients. Native optimizers and the
-full LibTorch operator catalogue aren't available for those configured formats. The useful question
-is what a precision change preserves in the actual calculation.
-
-An error bound adds another step. We need to relate the rounded operations to their real-valued
-specification, including what happens near zero, at overflow, and on exceptional inputs.
-FloatLib supplies the scalar arithmetic and rounding theorems. TorchLean carries the relevant
-bounds through tensor operations and records the numerical choices of native providers.
-A bound for one accumulation order applies to a kernel only once that kernel's order is accounted
-for.
+Small FloatLib calculations expose the scalar rounding results before the same tensor operations
+reach the CUDA path. Dtype, layout, and reduction order enter at different
+points, and we need to know which one a numerical claim uses.
 
 {include 2 TorchLeanBlueprint.Guide.Ch3_Backend.Floats}
 
@@ -350,18 +310,14 @@ rounding error in every IEEE format, and bounds the error of a transformer block
 
 # Examples and Applications
 
-A ResNet adds spatial layouts and skip connections to the operations used by the MLP. GPT adds
-token streams and causal masks. Fourier neural operators connect learned maps to PDE data, while
-diffusion and reinforcement learning introduce probabilistic transitions and evolving state.
-We can still trace a prediction through the familiar layer operations, provided we also account
-for these additional choices.
+In a language model, token five should not read token six when predicting token six. An attention
+mask enforces that rule, and one wrong comparison in the mask can leak the future while every
+tensor still has the expected shape. Similar details matter in a diffusion sampler's time step
+and a Fourier model's frequency layout.
 
-That extra structure changes what we need to inspect. For attention, two tensors can have the
-expected dimensions while using the wrong causal mask. For a Fourier layer, a transform convention
-or selected mode range affects the represented operator, and a diffusion step depends on a time
-index and noise schedule as well as learned weights. In the examples we keep these choices close to
-the code and outputs, so that the familiar layer operations stay connected to the actual model
-being run.
+These examples keep the model code close to the question. Each pairs a training or application run
+with a calculation small enough to check by hand, such as which attention entries a mask zeros or
+what a sampler does with an exact noise prediction.
 
 {include 2 TorchLeanBlueprint.Guide.Ch5_Applications.ModernModels}
 
@@ -384,19 +340,13 @@ being run.
 
 # Formalization Map
 
-The chapters below trace the main definitions, executable boundaries, and proved results through
-TorchLean. This is a declaration-level map: an edge records a mathematical or implementation
-dependency between selected entries, and we track theorem proof dependencies separately from
-statement dependencies. For Lean module imports, the website's Graphs tab is the place to look.
+An enclosure for a graph depends on smaller results. A matrix product has its own
+interval rule, and a ReLU has another. Follow those two rules to the theorem that combines
+them for the whole graph.
 
-Our selection favors declarations that explain an entire subsystem. Small helper lemmas stay in the
-API reference, where their full statements and source locations are easier to inspect.
-
-Use a map entry after the corresponding explanation has given its declaration a meaning. An
-enclosure theorem, for example, depends on local transfer laws and hypotheses about the graph, and
-following those entries shows where its premises come from. But a dependency edge alone doesn't say
-that a runtime path satisfies those premises. An entry's statement and explanatory text identify
-the objects being related, while its source link leads to the actual definition or proof.
+The map follows links at the level of Lean declarations: move from a theorem to the statements it
+uses, then open their source. For the imports between
+whole Lean files, use the site's Graphs tab.
 
 {include 2 TorchLeanBlueprint.FormalizationMap.Foundations}
 

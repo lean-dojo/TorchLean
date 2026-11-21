@@ -49,6 +49,7 @@ theorem cert?_encloses {G : IR.Graph} {P Pr : IR.Payload ℝ} :
       (by simp only [ibp?, hc]) h
   obtain ⟨ins, outs', op⟩ := o
   cases op <;> (try cases ‹Op.NumericElement›) <;> (try cases ‹Op.Element›) <;>
+    (try cases ‹Tensor.ReduceOrder›) <;>
     simp only [BackendEnclosure, ruleKind.eq_def, ite_eq_iff, reduceCtorEq, and_false,
       or_self] at ho
   case tanh s =>
@@ -60,11 +61,7 @@ theorem cert?_encloses {G : IR.Graph} {P Pr : IR.Payload ℝ} :
         obtain rfl := Option.some.inj hb
         exact rowEncloses_of_contains_map
           (fun x hx => mapMinmax_sound_real _ CROWN.tanh_monotone _ x hx) hx)
-      hpe (fun r hr => by
-        rw [hr] at hc
-        simp only [cert?] at hc
-        rw [← hc]
-        cases box? boxes r <;> rfl) h
+      hpe hc (fun _ hb => readBoxes_one hb rfl) h
   case sigmoid s =>
     exact Directed.encloses_unary (F := Context.sigmoid)
       (T := fun Bx => some (toFlatBox (α := ℝ) Bx.dim
@@ -74,11 +71,7 @@ theorem cert?_encloses {G : IR.Graph} {P Pr : IR.Payload ℝ} :
         obtain rfl := Option.some.inj hb
         exact rowEncloses_of_contains_map
           (fun x hx => mapMinmax_sound_real _ sigmoid_monotone_real _ x hx) hx)
-      hpe (fun r hr => by
-        rw [hr] at hc
-        simp only [cert?] at hc
-        rw [← hc]
-        cases box? boxes r <;> rfl) h
+      hpe hc (fun _ hb => readBoxes_one hb rfl) h
   case sin s =>
     exact Directed.encloses_unary (F := Real.sin)
       (T := fun Bx => some (toFlatBox (α := ℝ) Bx.dim
@@ -87,11 +80,7 @@ theorem cert?_encloses {G : IR.Graph} {P Pr : IR.Payload ℝ} :
       (fun hx hb => by
         obtain rfl := Option.some.inj hb
         exact rowEncloses_of_contains_map (fun x hx => sinMidpoint_sound_real _ x hx) hx)
-      hpe (fun r hr => by
-        rw [hr] at hc
-        simp only [cert?] at hc
-        rw [← hc]
-        cases box? boxes r <;> rfl) h
+      hpe hc (fun _ hb => readBoxes_one hb rfl) h
   case cos s =>
     exact Directed.encloses_unary (F := Real.cos)
       (T := fun Bx => some (toFlatBox (α := ℝ) Bx.dim
@@ -100,11 +89,7 @@ theorem cert?_encloses {G : IR.Graph} {P Pr : IR.Payload ℝ} :
       (fun hx hb => by
         obtain rfl := Option.some.inj hb
         exact rowEncloses_of_contains_map (fun x hx => cosMidpoint_sound_real _ x hx) hx)
-      hpe (fun r hr => by
-        rw [hr] at hc
-        simp only [cert?] at hc
-        rw [← hc]
-        cases box? boxes r <;> rfl) h
+      hpe hc (fun _ hb => readBoxes_one hb rfl) h
 
 /-- Every box of a certificate (`CertLocalOK`) encloses the flat value of its node in a table of
 node outputs that is the fixpoint of `evalNode?` (`SemLocalOK`), when every seed box encloses the

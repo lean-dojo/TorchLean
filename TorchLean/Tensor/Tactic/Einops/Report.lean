@@ -233,7 +233,7 @@ private def dropReportNumber (line : String) : String :=
 
 /-- Render one analyzer section as a collapsible `details` list, or `none` when it is empty. -/
 private def reportSectionHtml (report reportTitle displayTitle : String)
-    (ordered : Bool := false) (showCount : Bool := false) : Option Html :=
+    (ordered : Bool := false) (showCount : Bool := false) : Option ProofWidgets.Html :=
   let lines := reportSectionLines report reportTitle
   if lines.isEmpty then
     none
@@ -273,7 +273,7 @@ private def reportSectionHtml (report reportTitle displayTitle : String)
     ]
 
 /-- Render one operation as a compact summary followed by focused audit sections. -/
-private def transformationReportEntryHtml (report : String) : Html :=
+private def transformationReportEntryHtml (report : String) : ProofWidgets.Html :=
   let operation := reportOperation report
   let status :=
     if operation = "parse_shape (rejected metadata check)" then "Rejected"
@@ -298,7 +298,7 @@ private def transformationReportEntryHtml (report : String) : Html :=
       reportSectionHtml report "Shape-derived work estimate" "Static cost",
       reportSectionHtml report "Correctness" "Correctness",
       reportSectionHtml report "Performance note" "Benchmark note"
-    ] : List (Option Html)).filterMap id |>.toArray
+    ] : List (Option ProofWidgets.Html)).filterMap id |>.toArray
   Html.element "div" #[
     ("style", json% {
       "border-left": $("3px solid " ++ statusColor),
@@ -350,7 +350,7 @@ private def transformationReportEntryHtml (report : String) : Html :=
   ] ++ sections
 
 /-- Present all discovered operations in one layered InfoView panel. -/
-private def transformationReportHtml (reports : Array String) : Html :=
+private def transformationReportHtml (reports : Array String) : ProofWidgets.Html :=
   Html.element "div" #[("className", json% "mv2")] <| #[
     Html.element "strong" #[] #[Html.text "Einops analysis"]
   ] ++ reports.map transformationReportEntryHtml

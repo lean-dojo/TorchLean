@@ -18,7 +18,7 @@ public import TorchLean.Tensor.Layers.PositionalEncoding
 `#roundoff_coverage` runs `roundoff` on the value of attention by either schedule, its VJP and its
 JVP, at a coordinate of the result. Shapes, axes, block sizes and every other parameter are
 variables, so each theorem holds at every axis and rank. Each route is analyzed for the configured
-scalar of an arbitrary IEEE format, for native `Float32` and for the rounded reals `FP32`. Attention
+scalar of an arbitrary format, for native `Float32` and for the rounded reals `FP32`. Attention
 has one route per schedule, with its mask and multiplier as variables. The online schedule folds a
 triple of running values over its blocks, which `roundoff` does not analyze.
 `TorchLean.Verify.RuntimeApprox.OnlineSoftmax` bounds the online attention average by hand

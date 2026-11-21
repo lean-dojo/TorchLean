@@ -8,7 +8,6 @@ module
 
 public import TorchLean.Verify.RuntimeApprox.NF.Linalg
 public import TorchLean.Verify.RuntimeApprox.NF.Softmax
-import FloatLib.Floats.Formats.Flocq.Theory.Rounding.Order
 
 /-!
 # Rounded scaled dot-product attention

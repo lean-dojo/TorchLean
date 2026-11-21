@@ -30,6 +30,13 @@ import TorchLean.NN.IR.Eval
   rounding direction, with NaN, infinities and integers the type cannot hold as errors
   (`toInteger_cast_binary`). Integer types convert among themselves modulo `2 ^ width`, and integers
   and binary values convert to Booleans as `x != 0`.
+- `ReducePrecision.lean`: the JAX import's `reduce_precision` rounds once. In every IEEE format,
+  converting a finite value to that format with fewer fraction bits and back gives, where the first
+  conversion does not overflow, a finite result equal to the narrower format's rounding of the
+  value (`toReal_reduce_ieee`). For any formats the premises admit, converting a finite value to a
+  wider IEEE format, to a narrower format and back to each gives a finite result equal to the
+  narrower format's rounding of the value (`toReal_reduce`). At the six float8 settings it rounds
+  (`settings`) the premises hold at every word (`toReal_reduce_float8`).
 - `OpContracts.lean`: the shape helpers used by the model recorder and the bound passes: slices,
   matmul decomposition, pooling and convolution. Other operation shapes are checked when
   `Op.decode` constructs the registered operator from its wire record.
@@ -68,16 +75,68 @@ import TorchLean.NN.IR.Eval
   seeds at value ports with matching shapes, using registered operators for its own per-operator
   rules (no theorem relates them to `jvp?`), and outputs the graph's outputs followed by their
   tangents.
+- `Flow.lean`: `IR.Flow`, branches and loops over blocks such as graphs, on a state of values.
+  `cond` runs only the branch its index selects (the last one for an index out of range), `scan`
+  runs its body a fixed number of times on the carried state, and `whileLoop` runs its body while
+  its test holds. `Flow.eval` takes the fuel as a parameter: a `whileLoop` runs its body at most
+  `fuel` times each time it is entered and fails if its test still holds then. `Flow.Lang m` gives
+  the meaning of blocks and values in a monad `m`: `Flow.graphs` runs graphs by `Graph.eval` in
+  `Except String`, and `Flow.programs R` typed programs by `Program.eval` in `StateT
+  ConversionStatus (Except String)`, merging the conversion flags of every block it runs. For every
+  language, flow, fuel and state, `scan n` equals its body unrolled `n` times (`Flow.eval_scan`).
+  For every language in `Except String`, such as `Flow.graphs` and `Flow.Reals.lang`, and every
+  flow, fuel and state, `cond` equals evaluating every branch and selecting one wherever every
+  branch is defined (`Flow.eval_cond`), and a `whileLoop` whose test holds before exactly
+  `k ≤ fuel` iterations equals its body unrolled `k` times (`Flow.eval_whileLoop`). For
+  `Flow.programs`, the language of every imported flow, only `Flow.eval_scan` is proved, and the
+  `cond` equation is not proved and fails where an unselected branch raises a conversion flag that
+  the selected one does not: evaluating every branch merges the flags of all of them, and `cond`
+  those of the selected one. The JAX importer writes flows for a `cond` or `while` that the capture
+  does not decide, and the PyTorch importer for `torch.cond`, `while_loop` and a `map` whose body
+  does not draw from TorchLean's generator ([below](#frontend-lowering)).
+- `Flow/Follows.lean`: a flow can run in a second language on states that stand for states of a
+  first, such as a dual language whose values carry tangents or error bounds (`Flow.Lang.dual`).
+  `Flow.Follows.eval` proves, for every pair of languages whose blocks, indices and tests are
+  related along a filter (`Flow.Follows`) and for every flow, fuel and state, that wherever the
+  second run succeeds, the first succeeds eventually along the filter with a result related to the
+  second's. `Follows.cond` and `Follows.whileLoop` state that the second run of a `cond` is that of
+  the branch its index selects, and of a `whileLoop` that stops that of its body unrolled some
+  `k ≤ fuel` times, and that eventually along the filter the first run takes the same branch, and
+  its `whileLoop` and its body unrolled the same `k` times return one result. They do not state that
+  the first run's test fails after `k` iterations. `Follows.scan` states that eventually along the
+  filter the first run of a `scan` of `n` and of its body unrolled `n` times return one result; that
+  the second run is also that of the body unrolled is `Flow.eval_scan`, which holds in every
+  language.
+- `Flow/Reals.lean`: `Flow.Reals.lang`, whose blocks compute sums, products, negations and constants
+  of reals and comparisons `a < b`, with two duals. `dual E` applies the sum and product rules and
+  refuses a comparison of equal reals, and for all of its flows, wherever it succeeds, the flow near
+  the point takes its branches, each of its loops returns what its body unrolled as often as the
+  dual's loop runs returns, and it has the dual's values and Fréchet derivatives
+  (`Flow.Reals.dual_follows`). `rounded rnd err` rounds each constant, sum and product by `rnd`,
+  carries error bounds that add `err` of each exact result to the operands' propagated errors, and
+  refuses a comparison whose operands are within their bounds of each other. For every `rnd` and
+  `err` with `|rnd z - z| ≤ err z` and all of its flows, wherever it succeeds, the exact flow takes
+  its branches, each of its loops returns what its body unrolled as often as the rounded loop runs
+  returns, and its reals are within its bounds of the rounded ones (`Flow.Reals.rounded_follows`).
+  FloatLib's `roundAt fmt` is such an `rnd`, rounding to nearest-even on the format's grid without
+  overflow. `square_hasDerivAt` and `square_rounded` in
+  `TorchLeanTest/IR/Flow.lean` apply them to a loop. Flows of IR graphs have neither, because no
+  theorem relates `Graph.tangent` or `Op.Rule.jvp?` to a derivative and none bounds the rounding
+  error of `Graph.eval`.
 - `Program.lean`: typed programs (`IR.Program`). Their steps are graph nodes, conversions
   and registered calls, with one scalar per step for its value, frozen and detached ports, and
   native Boolean, integer and index ports. `Program.Typed.ofDType?` gives the type of a tensor from
   its element type and shape, and the module holds the reference runtime `Program.Machine.reference`
   over the element types of `Scalar.lean` and the structural checks `Program.check` and
-  `Payload.check`. The JSON format of the IR, the typed artifact (a typed program with the words of
-  its constants), and its loader are in `TorchLean.NN.IR.Artifact` ([below](#the-artifact)).
-- `Loaded.lean` and `Table.lean`: `TorchLean.IR.load`, which loads the document of a PyTorch or
-  JAX capture, and `TorchLean.IR.table`, the op table that the Python captures read
+  `Payload.check`. `Program/Graph.lean` runs a program whose steps are all graph nodes as its
+  graph (`Program.run_graph?_ok`, `Program.run_graph?_none`), and `Program/Step.lean` states single
+  steps (`Program.step_op_arithmetic`, `Program.step_op_native` and those of `bitcast`,
+  `decodeIndex` and `encodeIndex`). The JSON format of the IR, the typed artifact (a typed program
+  with the words of its constants), and its loader are in `TorchLean.NN.IR.Artifact`
   ([below](#the-artifact)).
+- `Loaded.lean` and `Table.lean`: `TorchLean.IR.load`, which loads the document of a PyTorch or JAX
+  capture without control flow, `TorchLean.IR.loadFlow`, which loads one with or without it, and
+  `TorchLean.IR.table`, the op table that the Python captures read ([below](#the-artifact)).
 - `Imported.lean`: `Imported`, an operator graph with its payload and the reference of each
   value of the source computation. The typed graphs of `OpGraph.lean` build one
   (`TorchLean.IR.OpGraph.toOp`), and so does the lowering of a recorded model.
@@ -125,6 +184,18 @@ and checks the payload (`Payload.check`). `Artifact.load_ok` proves that an arti
 gives back its own program, which passes `Program.check`, with a payload that passes
 `Payload.check`.
 
+An artifact with control flow (`TorchLean.IR.FlowArtifact`) is a flow of typed artifacts, each
+block run on the state as its arguments, with the fuel of its while loops: `{"format": "torchlean.ir",
+"version": 1, "fuel": n, "flow": F}`, where `version` is the flow version
+`TorchLean.IR.Flow.formatVersion` and `F` is `["block", A]` with an artifact `A`, `["skip"]`,
+`["seq", F, G]`, `["cond", F, ...]`, `["scan", n, F]` or `["while", T, B]`. The states between
+blocks hold no constant: each block that reads one holds it, and no other block does, so a weight
+that both branches of a `cond` read is written twice, and one read in each iteration of a `scan`
+that the capture unrolls with a flow per iteration is written in every iteration's blocks. An
+artifact without control flow keeps the format above, word for word. `FlowArtifact.ofJson_toJson`
+proves the round trip of every flow artifact, and `FlowArtifact.load` loads each block with
+`Artifact.load`, which `FlowArtifact.load_ok` states for every block.
+
 The PyTorch and JAX captures write one capture document per computation, which
 `TorchLean.NN.IR.Loaded` reads: the artifact, the arguments and reference outputs by element type,
 shape and complete interchange words, and the name of the capture that wrote it. Its
@@ -133,22 +204,34 @@ element type and shape that the framework's own metadata records for it. `TorchL
 loads the artifact under the reference runtime with no registered custom operation or call, and
 `TorchLean.IR.load_ok` proves that the program it returns passes `Program.check .reference` and its
 payload `Payload.check`. `load` then requires the program to give every declared value its declared
-element type and shape (`Program.checkDeclared`), and `TorchLean.IR.load_declared` proves that a
-loaded program does. So a lowering that changes a declared value's type fails the load, with a
-message `IR types: ...` that names the value, the type the IR computes and the declared one. Only
+element type and shape (`TorchLean.IR.checkDeclared`), and `TorchLean.IR.load_declared` proves
+that a loaded program does. So a lowering that changes a declared value's type fails the load, with
+a message `IR types: ...` that names the value, the type the IR computes and the declared one. Only
 the listed values are checked, so an empty list passes. A document that names a frontend must have
-`"declared_types"`, and a raw IR document without it declares no types. `TorchLean.JAX.load` checks
-that the frontend is `jaxpr` and then runs `load`, and `TorchLean.JAX.load_ok` proves for it what
-`TorchLean.IR.load_ok` proves for `load`. `TorchLean.IR.loadArguments` reads the arguments under a
-runtime, and `TorchLean.IR.words` gives the element type, shape and words of a value back.
+`"declared_types"`, and a raw IR document without it declares no types. `TorchLean.IR.loadFlow`
+loads an artifact with control flow as well: an entry of `"declared_types"` names its block
+(`"block"`, by the order of `Flow.blocks`, 0 where absent), and `TorchLean.IR.loadFlow_ok` proves
+for every block what `load_ok` and `load_declared` prove for the program. An artifact without
+control flow is the flow of its one block. `TorchLean.JAX.load` checks that the frontend is `jaxpr`
+and then runs `loadFlow`, and `TorchLean.JAX.load_ok` proves for it what `loadFlow_ok` proves for
+every block's program and payload. The checker (`TorchLean.Capture.check`) and the error budgets of
+`TorchLean.Verify.Capture.Error` load documents with `loadFlow` and run a flow by `Flow.eval` in
+`Flow.programs .reference`. The checker's `structure` and `types` findings also check that a flow's
+blocks compose (`TorchLean.Capture.flowTypes`): each block is given values its arguments read, in
+every typing that some path through the flow's branches and loop iterations gives them, whether or
+not a run takes that path. Values that come straight from the flow's arguments are left to
+execution.
+`TorchLean.IR.loadArguments` reads the arguments under a runtime, and `TorchLean.IR.words` gives
+the element type, shape and words of a value back.
 
 The PyTorch capture in `python/torchlean/` and the Jaxpr capture (`python/torchlean/jaxpr.py`) lower
 their graphs to these steps (`_artifact.lower` in `python/torchlean/_artifact.py`), and the ONNX
 adapter (`python/torchlean/onnx.py`) writes typed artifacts too. All three read the facts they need
 from Lean's op table, `TorchLean.IR.table` in `TorchLean.NN.IR.Table`, which
 `verify ir --op-table` and the Python binding `op_table` return. The table holds the format name,
-the wire version, the JSON of each element type, the codec's codes and the typed forms of the
-pointwise operators (`Pointwise.form?`). Lean checks every step when it loads the artifact.
+the wire version, the flow version, the JSON of each element type, the codec's codes and the
+typed forms of the pointwise operators (`Pointwise.form?`). Lean checks every step when it loads
+the artifact.
 Dimensions are natural numbers in a record, and `Op.decode` checks each against its operand's
 rank. The PyTorch capture adds the rank to a negative dimension once and refuses one outside
 `[-rank, rank)`.
@@ -208,6 +291,31 @@ are not enforced by the constructor's type, such as a pooling window or distinct
 | `topk` | A valid axis and `k` no larger than its extent |
 | dimensions of `softmax`, `logSoftmax`, `layerNorm`, `batchNorm`, `topKMask`, `cumsum`, `cumprod`, `cummax`, `cummin`, `sort`, `flip`, `indices` | Checked `Fin rank` axes |
 
+`reduce`, `mean`, `contract`, `matmul`, `scaledMatmul`, `pool`, `cumsum`, `cumprod`, `cummax` and
+`cummin` take a reduction order last (`Tensor.ReduceOrder`, in
+`TorchLean/Tensor/Reduce/Order.lean`): the left fold `leftFold`, the default, the balanced tree
+`pairwise`, the blocks `blocked w`, or a given tree `ofTree t`. In the left fold an operator means
+its tensor definition, which folds from the left in index order, and its rule is the rule it had
+before orders existed. In another order the forward folds in that order (`Tensor.reduceIn`,
+`meanIn`, `contractIn`, `batchMatmulIn`, `Attention.scaledMatmulIn`, `poolIn`, `scanIn`, `cummaxIn`,
+`cumminIn`), and so does the tangent of a sum, a mean, a contraction, a matrix product and a
+cumulative sum. The pullbacks are the left fold's. `Op.check` rejects an order that does not cover
+the count it reduces (`Tensor.ReduceOrder.Covers`), and over the reals every order that covers gives
+the left fold's value (`Tensor.reduceIn_sum_real` and the other `_real` theorems), and running
+maxima and minima the left fold's indices too (`Tensor.cummaxIn_real`, `Tensor.cumminIn_real`). At a
+configured binary format running maxima and minima in every covering order are the left fold's, bit
+for bit (`ConfiguredBinary.cummaxIn_eq`, `ConfiguredBinary.cumminIn_eq`). The wire record ends with
+the order (wire version 5), in JSON `{"order": "leftFold"}`, `{"order": "pairwise"}`,
+`{"order": {"blocked": 4}}` or `{"order": {"tree": t}}`, with `t` `null` (the start value), an
+entry's index or a pair `[left, right]`. PyTorch, JAX and ONNX fix no order for these operations, so
+their captures write the left fold. The deterministic CUDA sum is the order `LibTorch.sumOrder`
+(`LibTorch.reduceSumTree_eq_fold`). Because every lane starts from `+0`, it does not satisfy
+`ReduceOrder.Covers` for a positive input count.
+`TorchLean/NN/IR/Order.lean` sets every order of a graph to the left fold (`IR.Graph.leftFold`).
+Over the reals, a graph that evaluates produces the same outputs in the left fold
+(`IR.Graph.eval_leftFold_real`), since a node that passes `Op.check` has an order that covers its
+count.
+
 ## How Core ATen Operators Enter The IR
 
 A core ATen operator enters a typed artifact as steps of registered operators of `TorchLean.Op`,
@@ -263,20 +371,21 @@ A registered-operator table reached through a call would not satisfy one shape r
 its meaning is supplied per runtime by name (`Program.Env`). A pointwise operator therefore grows
 only `TorchLean.PointwiseOp` and the tables above. Operators whose operands or results are indices,
 integers or Booleans next to a scalar, such as `argmax`, the index outputs of `sort`, `cummax` and
-`cummin`, and `embedding`, are registered operators of `TorchLean.Op` with index, integer or Boolean
-ports. `Program.check` also requires such a step to declare a scalar exactly when it has value ports
-(`Program.checkScalar`). The lowering (`python/torchlean/_artifact.py`) writes `Op.decodeIndex`
-before an index operand and `Op.encodeIndex` after an index result, and Boolean and integer ports
-carry their elements natively (`BitVec width` at an integer type). The step succeeds exactly when
-invoking the operator on its inputs does (`TorchLean.IR.Program.step_op_arithmetic`,
-`step_op_native`), and `Op.invoke_eq_ok` states that a successful invocation returns the rule's
-forward values. A `decodeIndex` step outputs the index tuples its words hold and fails on a
-component outside its bound, and an `encodeIndex` step outputs the words of its tuples and fails on
-a component the integer type cannot hold (`TorchLean.IR.Program.step_decodeIndex`,
-`step_encodeIndex`). These are statements about one step. A program written directly in the IR can
-also return index tuples. The `verify` report writes such a result with `"element_type": "index"`,
-its port and the components of its tuples (`TorchLean.Capture.resultJson`), and a comparison with a
-reference tensor fails, since a tensor holds no index tuples.
+`cummin`, the `int32` exponent of `frexp`, and `embedding`, are registered operators of
+`TorchLean.Op` with index, integer or Boolean ports. `Program.check` also requires such a step to
+declare a scalar exactly when it has value ports (`Program.checkScalar`). The lowering
+(`python/torchlean/_artifact.py`) writes `Op.decodeIndex` before an index operand and
+`Op.encodeIndex` after an index result, and Boolean and integer ports carry their elements natively
+(`BitVec width` at an integer type). The step succeeds exactly when invoking the operator on its
+inputs does (`TorchLean.IR.Program.step_op_arithmetic`, `step_op_native`), and `Op.invoke_eq_ok`
+states that a successful invocation returns the rule's forward values. A `decodeIndex` step outputs
+the index tuples its words hold and fails on a component outside its bound, and an `encodeIndex`
+step outputs the words of its tuples and fails on a component the integer type cannot hold
+(`TorchLean.IR.Program.step_decodeIndex`, `step_encodeIndex`). These are statements about one step.
+A program written directly in the IR can also return index tuples. The `verify` report writes such a
+result with `"element_type": "index"`, its port and the components of its tuples
+(`TorchLean.Capture.resultJson`), and a comparison with a reference tensor fails, since a tensor
+holds no index tuples.
 
 A core ATen operator belongs to the family when its operands and result share one shape. In a
 graph over one scalar type, a comparison, a predicate or a logical operator returns `1` or `0` in
@@ -322,6 +431,28 @@ GELU as `x Φ(x)`, and `TorchLean.Tensor.gelu_eq_map_mul_cdf` states it for `Ten
 `TorchLean.Activation.geluTanh_real` gives the tanh GELU as
 `x (1 + tanh (√(2 / π) (x + 0.044715 x³))) / 2`, the approximation with its own constants.
 
+The unary `torch.special` functions that `TorchLean.SpecialFn` names (`erfc`, `erfcx`, `erfinv`,
+`ndtr`, `ndtri`, `lgamma` and `gammaln`, `digamma` and `psi`, `bessel_j0`, `bessel_j1`, `i0`,
+`i1`, `i0e`, `i1e`, `spherical_bessel_j0`, and the `torch.special` spellings of `erfc`, `erfinv`,
+`digamma` and `i0`) are captured from PyTorch as the registered operator `Op.special [0] f`, whose
+rule at the reals is `SpecialFn.real f`, and `polygamma n` (`torch.polygamma`,
+`torch.special.polygamma`, the Tensor method) as `Op.special [n] .digamma`, the derivative of order
+`n` of `digamma`. `Op.special orders f` is the partial derivative of `f` of order `orders[i]` in
+argument `i`, for a special function `f` of `orders.length` arguments. Like `erf`, it has no rule
+at any binary format, so a binary32 or binary64 run checks the graph and refuses the step at
+execution; binary16 and bfloat16 operands are refused at capture. The functions of two arguments
+(`gammainc` and `igamma`, `gammaincc` and `igammac`, and `zeta`) are captured the same way as
+`Op.special [0, 0] f`, from two float32 or two float64 tensors broadcast to the result's shape;
+operands of two dtypes, which PyTorch would promote, and a Python number are refused at capture.
+The JAX importer imports `erfc`, `erf_inv`, `lgamma`, `digamma`, `bessel_i0e` and `bessel_i1e` the
+same way, `polygamma` whose order is a constant natural number as `Op.special [n] .digamma`,
+`igamma`, `igammac` and `zeta` as `Op.special [0, 0] f`, and `igamma_grad_a`, the derivative of
+`igamma` in its first argument, as `Op.special [1, 0] .igamma`, and `regularized_incomplete_beta`
+(`lax.betainc(a, b, x)`) as `Op.special [0, 0, 0] .betainc` of its three operands. As from PyTorch,
+these imports check at binary32 and binary64 and refuse the step at execution, and binary16 and
+bfloat16 operands are refused at import. PyTorch has no incomplete beta function, so the exporter
+refuses `betainc`.
+
 Binary flooring division runs `divFloorSchedule`, and `divFloorSchedule_real` proves that
 the same schedule computes `⌊x / y⌋` in exact arithmetic. `remainderSchedule_real` proves that
 the remainder's schedule computes `x - y ⌊x / y⌋`. A zero remainder has the divisor's sign, as
@@ -332,16 +463,10 @@ FloatLib binary's inverse trigonometric functions are those of
 `TorchLean.Tensor.ConfiguredBinary.InverseTrigonometric`: FloatLib's exact comparisons of
 the real function with rational boundaries decide its nearest-even rounding.
 `TorchLean.Verify.RuntimeApprox.InverseTrigonometric` proves the results finite and correctly
-rounded at finite inputs in the domain, for every IEEE descriptor, with their special values. On
-4000 random binary32 and binary64 inputs each, eager PyTorch 2.13 on x86-64 with AVX-512 is within 1
-ulp of a 200-bit mpmath reference rounded to the format. PyTorch's asin is off by 1 ulp on 226
-and 339 inputs, acos on 340 and 371, atan on 0 and 2, and atan2 on 94 and 99. On the regression's
-inputs, XLA's CPU code (jax 0.12) is within 2, 2, 3 and 1 binary32 ulps of the IR. Binary16 and
-bfloat16 compute in binary32 and round once, in the IR as in both frameworks: the IR's result is
-`R16(R32(f(x)))`, and a framework's is `R16` of its own binary32 value. In every configured format
-the same functions, rounded once in that format, are its `InverseTrig` instance, which `Op.atan`,
-`Op.asin`, `Op.acos` and `Op.atan2` compute, though a captured binary16 or bfloat16 graph computes
-in binary32 first.
+rounded at finite inputs in the domain, for every IEEE descriptor, with their special values. Binary16 and bfloat16 captures compute in binary32 and round once to the result format. A
+framework uses its own binary32 approximation, so its final word need not match the IR's. The
+[inverse-trigonometric regression](../../../scripts/checks/ir_capture_pytorch_operators.py) compares
+selected PyTorch inputs and special values; those comparisons give no bound for other inputs.
 
 The IR's binary `pow` is FloatLib's `Model.pow`. For an IEEE format, a finite base and a finite
 exponent with an integer value, every finite result is the nearest-even rounding of the real power
@@ -355,14 +480,6 @@ a non-integral exponent gives NaN, and the branches for zeros, infinities, NaNs 
 `±0` and `1` follow IEEE 754-2019 9.2.1 (`pow (x, ±0) = 1` for every `x` but a signaling NaN,
 `pow (-0, 0.5) = +0`, `pow (-∞, 0.5) = +∞`, `pow (-0, -0.5) = +∞`).
 
-On 2000 random non-integral binary32 and 2000 binary64 powers and on 14 chosen pairs near overflow,
-underflow and exact results (`0.001 ^ 10.5`, `0.5 ^ 149.5`, `2.25 ^ 0.5`), every IR result equals
-the power mpmath computes at 300 or 400 bits, rounded to the format. That agreement is numerical
-evidence rather than a certificate. On 6000 integral powers the IR equals the exact power rounded.
-PyTorch's `torch.pow` differs from that reference by 1 ulp on 25 and 26 of the random ones, and
-`torch.pow(x, torch.tensor(3.0))` and `torch.pow(x, torch.tensor(4.0))`, SLEEF's `powf`, on 3 and 7
-of 256 binary32 values.
-
 `TorchLean.Activation.geluTanh` computes `β = √(2 / π)` in the format, rounds `κ = 0.044715` once,
 and then rounds each operation of PyTorch's kernel in its order, `κ x³` and `x + κ x³` separately.
 PyTorch rounds `√(2 / π)` once to binary64, its `kBeta`, and that value to the computation type. In
@@ -370,69 +487,19 @@ binary64 the two `β` are the same word, and the IR's words are those of the sam
 PyTorch's constants. In binary32 the IR's `β` is `0x3f4c4229`, one ulp below PyTorch's `0x3f4c422a`,
 so binary32, bfloat16 and binary16 results can differ from PyTorch's in the last bits.
 
-One PyTorch binary contains each CPU kernel at three capability levels, DEFAULT, AVX2 and AVX-512,
-and at run time selects the highest level the processor supports, or the one that
-`ATEN_CPU_CAPABILITY` names. On x86-64 (a Xeon Platinum 8275CL), both loops fuse the sum `x + κ x³`
-at the AVX2 and AVX-512 levels and round `κ x³` and the sum separately at DEFAULT, the order the IR
-follows. On 8192 normal samples with standard deviation 4, each loop at the AVX2 and AVX-512 levels
-equals the formula with the fused sum on all 8192 in binary32 and binary64. Against the formula with
-the unfused sum, the vectorized loop agrees on 8153 and 8161 samples and the scalar loop on 8156
-and 8157. At DEFAULT both loops equal the unfused formula on all 8192. These comparisons use
-PyTorch's constants. PyTorch on aarch64, on Apple processors and on CUDA was not measured.
+PyTorch's CPU kernels also select different arithmetic schedules by CPU capability. Vectorized
+kernels can fuse `x + κ x³` and use SLEEF's `tanh`, while other paths round the product and sum
+separately or call the C library. The IR follows its explicit, unfused schedule and uses
+FloatLib's `tanh`. A source-level formula alone therefore does not establish word-for-word
+agreement with a selected PyTorch kernel.
 
-At the AVX2 and AVX-512 levels the loops differ only in `tanh`: the vectorized loop calls SLEEF's
-and the scalar loop the C library's. At DEFAULT the vectorized loop applies the C library's `tanh`
-to each element. The IR calls FloatLib's `tanh`. On another 8192 normal samples with standard
-deviation 4 it returns the words of both DEFAULT loops on all but 1014 binary32 and 531 binary64
-samples. It differs from the AVX-512 vectorized loop on 1030 and 53 and from the AVX-512 scalar
-loop on 1017 and 564.
-
-The figures below compare the IR with the loops at the DEFAULT and AVX-512 levels and with the exact
-value of the tanh approximation, `x (1 + tanh (√(2 / π) (x + 0.044715 x³))) / 2`, computed with
-mpmath and rounded once. The comparisons use 2^18 normal samples with standard deviation 4 and 2^18
-evenly spaced inputs in `[-12, -2]` in binary32 and binary64. The bfloat16 and binary16 comparisons
-at the end of this section are of words, the IR's against PyTorch's, on every finite input. At
-DEFAULT the two loops return the same words on every sample and every finite bfloat16 and binary16
-input. For `x ≥ -1` the IR and PyTorch's AVX-512 vectorized loop are within 3 ulps of the exact
-result in binary32 and binary64, while the DEFAULT loops and the AVX-512 scalar loop are within
-4 ulps in both.
-
-For negative `x`, `1 + tanh(inner)` subtracts two numbers close to 1, so an error of a fraction of
-an ulp in `tanh(inner)` becomes a large error relative to the small result. The cancellation, not
-the IR, makes the ulp counts grow. Between `-3` and `-1` the IR is up to 201 binary32 ulps and 200
-binary64 ulps from the exact result. The DEFAULT loops are up to 200 and 200, the AVX-512 vectorized
-loop up to 198 and 201 and the AVX-512 scalar loop up to 198 and 200. Below `-3` the largest
-distances, millions of binary32 ulps and more in binary64, occur next to the `-0` cutoffs described
-below. Excluding inputs where one result is zero and the other is not, the IR differs from the
-DEFAULT loops by at most 297777 binary32 ulps (at `x = -4.54372`) and 1797 binary64 ulps (at
-`x = -3.50971`). With the same exclusion, it differs from each AVX-512 loop by up to 68856 binary32
-ulps (at `x = -4.20269`) and 16200 binary64 ulps (at `x = -3.95496`). There the absolute error is
-the meaningful measure. Over every measured `x < -1` the IR's distance from the once-rounded exact
-value is at most `0.847 |x| u` in binary32 and `0.782 |x| u` in binary64, where `u` is `2^-24` and
-`2^-53`. The AVX-512 vectorized loop's distance is at most `0.772 |x| u` and `0.782 |x| u`, while
-the DEFAULT loops' and the AVX-512 scalar loop's reach `1.083 |x| u` and `1.211 |x| u`. These are
-measured maxima, not proved bounds.
-
-Once `tanh(inner)` rounds to `-1`, the result is `-0`. In the negative tail, PyTorch's DEFAULT loops
-return `-0` from `x = -5.1578555` in binary32 and `x = -7.200040557303352` in binary64 on, its
-AVX-512 scalar loop from `-5.157855` and `-7.200040557303352` and its AVX-512 vectorized loop from
-`-5.061381` and `-7.145065874418114`. The exact result rounds to `-0` only from `-10.770868`
-and `-21.547075410436022` on. PyTorch's binary32 cutoffs hold for every input in `[-12, -4]`, and
-its binary64 cutoffs, found by bisection, hold on the `2^20` inputs past each. The exact cutoffs are
-bisections of the mpmath reference at 50 digits. The IR's cutoffs are the DEFAULT loops': it returns
-`-0` exactly where they do on the `10^5` consecutive inputs on each side of each cutoff and on every
-sample. At `x = -∞` the IR returns `-0`, the limit, and the loops a NaN, since they compute
-`x (1 + tanh(inner))` as `-∞ · 0`.
-Between the cutoffs of the IR and the AVX-512 vectorized loop, that loop returns `-0` and the IR a
-nonzero result, nearer the exact value at every one of the 3718 binary32 and 1712 binary64 samples
-in that band. Those are all the zero-versus-nonzero differences between the two.
-
-In bfloat16 and binary16 the IR computes in binary32 and rounds the result once, as the capture
-writes it and PyTorch computes it. So computed, in bfloat16 it returns the words of both DEFAULT
-loops and of the AVX-512 scalar loop for every finite input, and in binary16 for every finite input
-except `-0.249756`, `-1.99902` and `-2.01367`, where it differs by 1 ulp. It returns the AVX-512
-vectorized loop's words except for 4 bfloat16 and 25 binary16 inputs in `[-5.15625, -5.0625]`, where
-that loop returns `-0`, and the binary16 inputs `-1.99902` and `-2.01367`, 1 ulp away.
+For negative `x`, `1 + tanh(inner)` subtracts nearly equal values. Errors in `tanh` can become large
+relative errors in the small GELU result, and the result becomes `-0` once `tanh(inner)` rounds to
+`-1`. This can happen well before the exact approximation would round to zero. At `x = -∞`, the IR
+returns the limiting value `-0`; a direct evaluation of `x (1 + tanh(inner))` gives NaN through
+`-∞ · 0`. Binary16 and bfloat16 captures compute the formula in binary32 and round once to the
+result format. The [capture tests](../../../scripts/checks/test_ir_capture.py) exercise these
+rounded operations without claiming general bitwise agreement with the framework.
 
 ### Frontend lowering
 
@@ -444,6 +511,8 @@ exponentials, logarithms, `tan`, the hyperbolic functions and their inverses, `a
 `atan`, `atan2`, `hypot` and `remainder` are widened to binary32, where PyTorch computes them too.
 The binary32 result is rounded once, `R16(f32(x))` for the IR's binary32 operation `f32`, and
 `rsqrt`, for one, gives `R16(R32(1 / R32(√x)))`.
+
+#### Scalars and conversions
 
 A conversion is one IR cast, which rounds the exact value once (IEEE 754-2019 5.4.1 and 5.4.2), in
 both frontends. To an integer type a floating value truncates toward zero, as PyTorch's conversion
@@ -470,6 +539,20 @@ so under FX such a constant is the tensor PyTorch made, with its rounding throug
 int beyond `2^53` rounds once to binary32: `2^60 + 2^36 + 1` becomes `2^60 + 2^37`, where rounding
 through binary64 would give `2^60`. A scalar operand of `add` or `sub` is converted to the result
 dtype and the operation runs there.
+
+A Python float or complex number that a Jaxpr keeps as a literal, such as `jnp.clip`'s bounds, the
+values of `jnp.where`, `jnp.pad` and `jnp.nan_to_num`, and the NaN that `jnp.var` and `jnp.median`
+can select, is NumPy's conversion `np.array(value, dtype)` to the literal's declared type, as JAX
+0.11.1 lowers it. Without x64, `jnp.clip`'s bounds of a binary16, bfloat16 or float8 array are
+declared binary32, and the jitted function that reads them converts them to the array's type. So
+`jnp.clip` of a bfloat16 array at `1 + 2^-8 + 2^-25` clips at that bound rounded to binary32,
+`1 + 2^-8`, and then to bfloat16, `1`, a tie rounded to even, where the bfloat16 value nearest the
+bound is `1 + 2^-7`. A Python complex number that `jnp.where` or `jnp.pad` puts in a complex64
+array is declared complex64, each part rounded once to binary32. A literal that overflows its type,
+or an infinity that becomes a NaN in a float8 format without infinities, is refused. A NumPy scalar
+literal must equal its declared type's value exactly.
+The complete computation still needs supported primitives: a median trace that requests unstable
+sorting is rejected.
 
 `clamp_min(x, min)` is `max (x, min)`, the IR's `Op.max`, IEEE 754-2019 maximum, and
 `clamp_max(x, max)` is `min (x, max)`, `Op.min`, IEEE minimum. The bound is converted to the
@@ -548,6 +631,8 @@ It rounds the square root to the reduced format before dividing in bfloat16 and 
 and takes `pow` from the C library instead of SLEEF. For these operators the eager result, and a
 sample comparison with it, can depend on tensor length and layout.
 
+#### PyTorch reductions and normalization
+
 PyTorch's CPU `cumsum` and `cumprod` accumulate in `at::acc_type` (binary64 for binary32 and
 binary64, binary32 for binary16 and bfloat16) and round each prefix to the operand's format. The
 capture writes a cast to that type, the IR scan and a cast back, which return eager PyTorch's words
@@ -555,28 +640,43 @@ on binary32, binary16 and bfloat16 samples with signed zeros and NaN. `cummax` a
 later tie and a later NaN, as the IR's do. `max.dim` and `min.dim` keep the first extremum and the
 first NaN, and the capture writes them as the IR's stable `topk` with `k = 1`, between two exact
 negations for `min.dim`. `torch.sort` is imported with `stable=True` only, because ATen leaves the
-order of equal entries, `-0` and `+0` among them, unspecified. `torch.topk` is the stable `topk`
-where ATen's result is uniquely determined, and for `k > 0` execution fails where two adjacent
-entries of a fiber's first `min(k + 1, n)` in the requested order tie.
+order of equal entries, `-0` and `+0` among them, unspecified. Its integer and Boolean operands
+sort at their element, by value and with `false` first, as ATen's do. `torch.topk` is the stable
+`topk` where ATen's result is uniquely determined, and for `k > 0` execution fails where two
+adjacent entries of a fiber's first `min(k + 1, n)` in the requested order tie. `torch.frexp` is
+`Op.frexp`, C's `frexp`: the mantissa and the `int32` exponent `e` of each entry, the normalized
+mantissa of a subnormal, `(x, 0)` at a zero or an infinity, and the quiet NaN with the exponent `0`
+at a NaN, which quiets a signaling NaN as PyTorch does. The capture reads `aten.frexp.Tensor` and,
+under FX, `torch.frexp` and the `frexp` method, whose result the program may return whole or
+project by position or by its fields `mantissa` and `exponent`. A configured format has the
+operator only in an IEEE format of exponent width at least three, where every normalized mantissa
+is a value. Its pullback is `ldexp g (-e)`, rounded once. PyTorch 2.13's autograd divides by
+`exp2(e)` computed in binary32, which gives `0` for `e >= 128` and an infinity for `e <= -150`, in
+binary64 too.
 
-`leaky_relu` computes `x * slope` in binary32 for the reduced formats, with the slope rounded there.
-Rounding is monotone, so the result is `maximum(x, x * slope)` for `0 < slope <= 1` and
-`minimum(x, x * slope)` above one, at every signed zero, infinity and NaN. A slope that is not
-positive is refused: at `+inf` the product with `0` is NaN. Constant-index `gather` and `scatter`
+`leaky_relu` is `Op.leakyReLU` at the slope, in binary32 for the reduced formats with the slope
+rounded there, and the result rounded once to the format. Constant-index `gather` and `scatter`
 nodes hold the complete coordinates of every entry. A repeated scatter target is refused, since
 PyTorch leaves the stored value, and for `scatter_add` the order of the sum, unspecified.
 
 The weight, bias, eps and running statistics of a `layer_norm` or `batch_norm` node are constant
-steps, interchange words of the node's dtype that `Artifact.load` decodes. An absent weight or bias
-is one or zero, and eps is rounded to the computing dtype. Binary16 and bfloat16 normalizations
-are computed in binary32, PyTorch's opmath type, between two casts. PyTorch's CPU kernels compute
+steps, interchange words of the node's dtype that `Artifact.load` decodes. A weight, bias or running
+statistic that is not a parameter, buffer or constant, an input or a value computed from one, is a
+parent after the input instead, in the order weight, bias, mean, variance
+(`test_normalization_takes_a_weight_not_known_at_capture`). The statistics feed the frozen ports
+of `batchNormRunning`, which accept a parent's values. An absent weight or bias is one or zero, and
+eps is rounded to the computing dtype. Binary16 and bfloat16 normalizations are computed in
+binary32, PyTorch's opmath type, between two casts. PyTorch's CPU kernels compute
 `(x * rstd - mean * rstd) * gamma + beta` from Welford moments and
 `x * alpha + (beta - mean * alpha)`, while the IR computes
 `(x - mean) / sqrt (var + eps) * gamma + beta` with two-pass moments, so the words agree where every
-step is exact and otherwise differ in the last bits. A negative eps or running variance is refused,
-since PyTorch takes the square root of `var + eps` where the IR clamps the variance at zero. A mean
-over an empty fiber with a nonempty result is refused (PyTorch returns NaN, the IR mean divides by
-one). The variance there is `0 / 0`, NaN.
+step is exact and otherwise differ in the last bits. Layer norm, group norm and batch norm, with
+running or batch statistics, take the IEEE root of `var + eps` as it stands, as PyTorch does, so a
+negative or NaN sum gives NaN in its row, group or channel. Where the sum is 0 in inference batch
+norm, PyTorch's `alpha` is infinite and its output is NaN unless `x * alpha` and `-mean * alpha` are
+infinities of one sign, while the IR's quotient is the infinity of the sign of `x - mean` (NaN at
+`x = mean`). A mean over an empty fiber with a nonempty result is refused (PyTorch returns NaN, the
+IR mean divides by one). The variance there is `0 / 0`, NaN.
 
 Comparisons, `isnan`, `isinf`, `isfinite` and the logical operators are Boolean nodes. Comparisons
 take floating or integer operands of one dtype, with a Python scalar promoted as PyTorch's
@@ -599,36 +699,307 @@ head, binary16 and bfloat16 compute in binary32 and round once, and `dropout_p >
 
 `clamp`, `clip` and `hardtanh` with two bounds are the IR's `clamp`, `minimum (maximum x lo) hi`,
 the steps `Op.max` and `Op.min`. With only a lower bound they are `Op.max` and with only an upper
-bound `Op.min`. `elu` is `where (x > 0, x * scale, expm1 (x * input_scale) * (alpha * scale))` and
-`softplus` is `where (x * beta > threshold, x, log1p (exp (x * beta)) / beta)`, with binary16 and
-bfloat16 computed in binary32 and coefficients of one not multiplied, as in their kernels.
+bound `Op.min`. `elu`, `selu` and `celu` are `Op.elu` at frozen `alpha`, `scale` and `input_scale`,
+`x * scale` where `x > 0` and else `expm1 (x * input_scale) * (alpha * scale)`, the kernel's
+selection. `selu` is at ATen's `SELU_ALPHA` and `SELU_SCALE`, and `celu(x, alpha)` at `alpha`, `1`
+and `1 / alpha`, the quotient in binary64. `softplus` is
+`where (x * beta > threshold, x, Op.softplus (x * beta) / beta)`, the documented
+`log (1 + exp (beta * x)) / beta` with its reversion to the linear function above the threshold,
+and a `beta` of one is not multiplied or divided by. Binary16 and bfloat16 are computed in
+binary32, as in their kernels.
+
+#### JAX reductions and linear algebra
 
 The JAX importer lowers the comparisons of floating or integer operands, `is_finite` of floating
-operands and the logical operators of Boolean operands to Boolean nodes. It lowers
-`select_n(p, a, b)` with a Boolean predicate to `where(p, b, a)`, and `lax.clamp(lo, x, hi)` to
-`clamp(x, lo, hi)`, or to `Op.min (Op.max x lo) hi` for integers. Integer `add`, `sub` and `mul`
-wrap modulo `2 ^ width`. `and`, `or`, `xor` and `not` of integers, `shift_left`,
-`shift_right_arithmetic`, `shift_right_logical`, `population_count`, `clz` and `mulhi` are the IR's
-integer operators on the words (`mulhi` is the floor of the exact product over `2 ^ width`).
-`bitcast_convert_type` between types of one width is an `Op.bitcast` step, every bit kept
-(`TorchLean.IR.Program.step_bitcast_integer`, `step_bitcast_scalar_integer`,
-`step_bitcast_integer_scalar`).
+operands and the logical operators of Boolean operands to Boolean nodes. Boolean operands, false
+below true as in NumPy, are compared at 0 and 1 in binary64. It lowers `select_n(p, a, b)` with a
+Boolean predicate to `where(p, b, a)`, and `lax.clamp(lo, x, hi)` to `clamp(x, lo, hi)`, or to
+`Op.min (Op.max x lo) hi` for integers. That is the formula of StableHLO's `clamp` and of XLA, a
+refinement of the cases in `lax.clamp`'s docstring, which differ at a NaN bound, at `x = -0` and
+where `lo > hi`: `lax.clamp(nan, 1.0, 2.0)` is NaN here and `1.0` by the docstring, and
+`lax.clamp(2.0, 1.5, 1.0)` is `1.0` here and `2.0` by the docstring's first case. The import refuses
+neither case. Integer `add`, `sub` and `mul` wrap modulo `2 ^ width`. `and`, `or`, `xor` and `not`
+of integers, `shift_left`, `shift_right_arithmetic`, `shift_right_logical`, `population_count`,
+`clz` and `mulhi` are the IR's integer operators on the words (`mulhi` is the floor of the exact
+product over `2 ^ width`). `bitcast_convert_type` between types of one width is an `Op.bitcast`
+step, every bit kept (`TorchLean.IR.Program.step_bitcast_integer`, `step_bitcast_scalar_integer`,
+`step_bitcast_integer_scalar`). Integer `reduce_sum`, `reduce_prod`, `reduce_max`, `reduce_min`,
+`cumsum`, `cumprod`, `cummax` and `cummin` are trees of the IR's `add`, `mul`, `max` and `min` in
+the operand's type: a reduction halves the axis in each round, and a scan combines each entry with
+the one `2^k` before it in round `k`. These steps wrap modulo `2 ^ width` or follow the type's
+order, and each is associative and commutative, so every grouping gives the left fold's value.
+StableHLO leaves integer overflow implementation-defined (the "Errors" section of its
+specification), so wrapping, there and in `add`, `sub` and `mul`, is the importer's choice. XLA's
+CPU code at JAX 0.11.1 wraps in every case the tests check. Integer `argmax` and `argmin` are the
+least position whose entry equals the maximum or the minimum, both such trees, so the first extremum
+at every width; Boolean ones compare the values in binary64. Boolean `reduce_max` and `reduce_min`
+are `reduce_or` and `reduce_and`.
 
 `reduce_window_sum`, `reduce_window_max`, `reduce_window_min` and `reduce_window` with one add, mul,
 max or min as its body pad the operand with the init value (base dilation too). They then fold one
 strided slice per window cell into the init value in row-major cell order. `Op.max` and `Op.min` are
 IEEE maximum and minimum, so `+0` is above `-0` whatever their order, as XLA's CPU code computes.
 `lax.reduce` with another init or body is refused (its documentation calls the result undefined).
-`cbrt` is IEEE `rootn(x, 3)`, FloatLib's correctly rounded `rootN x 3` in the operand's format, and
+`cbrt` is IEEE `rootn(x, 3)`, FloatLib's correctly rounded `rootn x 3` in the operand's format, and
 `nextafter` is C's, FloatLib's `nextUp` and `nextDown`: these are the rules of `Op.cbrt` and
 `Op.nextafter` at the configured binary formats. `reduce_precision(x, e, m)` is two casts through
 the FloatLib format with the operand's exponent field and `m` fraction bits, then a signed infinity
-and a signed zero outside the normal range of `e` exponent bits, with a NaN word unchanged.
+and a signed zero outside the normal range of `e` exponent bits, with a NaN word unchanged but for a
+reduced float8 one. Where the first cast does not overflow, the two give the operand rounded once
+to `m` fraction bits, in every IEEE format (`toReal_reduce_ieee` in `ReducePrecision.lean`). A
+float8 operand is reduced in binary32, which holds its values, at the float8 format's exponents:
+through the format of one more exponent bit, the float8 bias and `m` fraction bits in IEEE's
+encoding, which has the float8 format's subnormal spacing at `m` bits and which no rounding
+overflows. The range step follows where `e` is narrower than the float8 exponent field, and the
+result is converted back once, so that a value past the format's largest finite one gives its
+infinity or, in a format without one, its NaN. Without the range step, a finite result is the
+rounding of the operand to that format of `m` fraction bits, one rounding, at every word
+(`toReal_reduce_float8`). Unless `e` and `m` are at least the format's,
+which gives the operand, a NaN keeps only its sign and payload: the IR has no float8 selection,
+FloatLib's conversions give a quiet NaN (IEEE 754-2019 6.2.3), and e5m2's signaling `0x7d` and
+`0xfd` give `0x7f` and `0xff`. XLA's CPU code reduces the operand converted to binary16 instead and
+converts the result back, and its words differ at 20 of the 96 settings of `e` from 1 to 6 and `m`
+from 1 to 4 in the four formats: at `e = 4`, where binary16's range step flushes the e4m3 formats'
+values below `2^-6` and takes e4m3fn's from 256 to its NaN, and at `m` below the fraction width,
+where it rounds some subnormals at binary16's spacing (`scripts/checks/ir_capture_jax.py`,
+`test_float8_reduce_precision_rounds_at_the_format_exponents`).
+
+`select_and_scatter_add`, the transpose of a windowed maximum or minimum, selects in each window,
+among its operand cells only as StableHLO's `select_and_scatter` does, the cell that a row-major
+left fold keeps, the first of equal extremes. One `scatter` from `+0` then adds each source value to
+its window's cell in row-major window order, and a window of padding alone adds nothing. JAX's
+default lowering is that operation, and the tests compare with XLA's CPU run of it, which for some
+windows padded on their last axis takes the cells in column-major order, so that a tie can select
+another cell than StableHLO's order does. JAX's CPU and GPU lowerings, a workaround for XLA crashes,
+instead pad the operand with the infinity that no cell exceeds, so a padding cell can tie with an
+infinite extreme or follow a NaN and take the source value, and JAX's words differ there on both.
+The transpose of a windowed maximum of `[-inf]` with window 2, padding `((1, 0),)` and source
+`[1.0]` is `[1.0]` here, from StableHLO's operation, and `[0.0]` in JAX on either target.
+`select_and_gather_add`, the tangent of a windowed maximum or minimum, folds the pairs of operand
+and tangent entries as `reduce_window` folds entries, from the init pair `(-inf, 0)` (`(+inf, 0)`
+for a minimum), the padding being init pairs. Its result is the tangent of the first of equal
+extremes. StableHLO leaves the tree of a window's fold open but not the order of its leaves, the
+window's entries in row-major order with init values interspersed. With `ge` or `le`, which keep
+their left argument at a tie, every such tree selects the first of equal extremes, so the tree
+decides only the cell of a window holding a NaN or whose extreme is the init value, and the rounding
+of a sum. XLA's CPU loop for `reduce_window` and `select_and_gather_add` skips the padding and, for
+some padded windows, takes the cells in another order, neither of which StableHLO allows, so its
+words can differ there. `cumlogsumexp` is the `reduce_window` of lax's `logaddexp` over each prefix
+(each suffix for `reverse`) that JAX lowers it to, folded the same way. The body is
+`max(a, b) + log1p(exp(-|a - b|))`, or `a + b` where `a - b` is NaN, so the result is the left fold
+of each prefix, or of each suffix from its first entry. XLA's CPU code folds in that order along up
+to 17 entries; along a longer axis it combines blocks of 16 entries, and its words can differ.
 
 `triangular_solve` is substitution (the dot products are left folds from `+0`), `cholesky` the
 left-looking column algorithm, NaN everywhere unless every pivot is positive, `cholesky_update` the
 factor of `R^T R + w w^T`, `symmetric_product` `alpha (a a^T) + beta c` and `custom_linear_solve`
-its solve jaxpr. Special functions, complex values and the other factorizations are refused.
+its solve jaxpr. `householder_product` and `ormqr` of binary32 and binary64 operands apply the
+reflectors `H_i = 1 - tau_i v_i v_i^T` that the columns of `a` store one at a time, in the order of
+`Q = H_0 ... H_{k-1}`: `c - tau_i (v_i (v_i^T c))` on the left and `c - tau_i ((c v_i) v_i^T)` on
+the right, the products left folds from `+0` (`householder_product` applies `Q` to the identity's
+first `n` columns). `lu_pivots_to_permutation` swaps the entries `i` and `pivots[i]` of `iota` in
+turn, its execution failing at a pivot outside `[0, permutation_size)`, for which JAX documents no
+result. `tridiagonal_solve` is LAPACK `gtsv`'s elimination with partial pivoting between
+neighbouring rows, then back substitution, each operation rounded once. JAX documents the solution
+and names an algorithm only under `perturb_singular`, so this is one admissible refinement, the one
+JAX's CPU lowering calls; its GPU lowering calls cuSPARSE's `gtsv2` from three rows, and its default
+lowering and the GPU's below three rows eliminate without pivoting, so their roundings differ. Both
+multipliers of a step are computed and one is selected; the other divides by 1, so that it is finite
+at finite operands and the zero cotangent the selection gives it stays zero in reverse mode (a zero
+subdiagonal entry would give `1 / 0`, and `0 * inf` is NaN). `cholesky_update` rotates `(1, 0)` in
+the branch it does not take, for the same reason. `tridiagonal_solve`'s execution fails at a zero
+pivot (in exact arithmetic, at a singular matrix, for which JAX documents no result), and
+`perturb_singular=True` is refused. Complex operands of the four are refused. The PyTorch capture
+imports `torch.linalg.householder_product`, its alias `torch.orgqr` and `torch.ormqr`
+(`aten.linalg_householder_product`, `aten.orgqr` and `aten.ormqr`, through torch.export and FX)
+by the same arithmetic, `LinalgImport` of `python/torchlean/_linalg.py`. The special functions are
+imported as `Op.special` (above). The other factorizations are
+refused.
+
+#### Complex values
+
+A complex value is held in paired-real form, its real and imaginary parts on an appended last axis
+of size two. A complex input or output of shape `s` is the IR's input or output of the parts' format
+and shape `s + [2]`, and is declared so, as each complex value inside is; `encode` writes complex
+arguments and reference outputs in this form, each element's real part before its imaginary part.
+`fft` of a binary32 or binary64 operand transforms the trailing axes
+that its lengths name. Along the last one, type RFFT is `Op.rfft` and type IRFFT `Op.irfft`, the
+transforms that PyTorch's `rfft` and `irfft` import as. Types FFT and IFFT, and RFFT and IRFFT along
+the other axes, transform one axis at a time from `Op.rfft` of each part: with `p + iq` the operand
+and `a + ib` and `c + id` the transforms of `p` and `q`, each `Op.rfft`'s frequencies followed by
+the conjugates of the ones a real signal repeats, the transform is `(a - d) + i(b + c)` and the
+inverse `((a + d) + i(c - b)) / n`. An IRFFT transforms its other axes before its last, as
+`numpy.fft.irfftn` does. These are TorchLean's sums, not XLA's FFT schedule, so their rounding can
+differ. The imaginary parts of frequency 0 and, for an even length `n`, `n / 2` of the last axis are
+set to `+0` before `Op.irfft`, as NumPy's `irfft` ignores them; `Op.irfft` multiplies them by a zero
+coefficient, which would turn an infinity or a NaN there into a NaN. `real` and `imag` read a part,
+`complex` pairs two, `conj` negates the imaginary part, and `add`, `sub` and `neg` act on each part,
+which is complex addition, subtraction and negation exactly; so are `reduce_sum` and `cumsum`, the
+IR's sum of each part, as XLA's CPU code sums each part. `mul` and `div` are
+written by hand from the definitions of the complex product and quotient, as Mathlib states them
+(`Complex.mul_re`, `Complex.mul_im`, `Complex.div_re`, `Complex.div_im`): of `a + ib` and `c + id`,
+the product's parts are `a c - b d` and `a d + b c`, and the quotient's `(a c + b d) / (c^2 + d^2)`
+and `(b c - a d) / (c^2 + d^2)`. The parts are converted exactly to a binary format chosen for their
+format (`_wide` in `python/torchlean/_jax_complex.py`): 581 significand bits and 11 exponent bits
+for binary32 parts, 4252 and 14 for binary64 parts. There the products of two parts and their sums
+are exact, and a quotient is rounded once at a precision, `2 (emax - emin) + 3 p + 3` for parts of
+precision `p` and exponents `emin` to `emax`, at which it never reaches or crosses a midpoint of the
+parts' format or its overflow threshold unless it is one (`_wide` gives the argument). Each result
+is then rounded once to the parts' format (`product` and `quotient`; the wide quotient is the
+registered `Op.div`, as the IR's `div` kind has forms only at the named dtypes). For finite operands
+and a nonzero divisor, a part is therefore the exact part rounded to nearest with ties to even, an
+infinity only where that overflows. Rounding to binary64 first would not do: the real part of
+`(31 2^51 + i)(1082401 2^52 + i)` is `2^128 - 2^103 - 1`, which rounds to the greatest finite
+binary32 value but to `2^128 - 2^103` in binary64, and that to `+inf`. `(2^127 + 2^127 i) /
+(2^127 + 2^127 i)` is `1 + 0i` in binary32. `lax.mul` with an `out_dtype` converts its operands to
+that type first, as JAX 0.11.1 lowers it: `_nary_lower_hlo` (`jax/_src/lax/lax.py`) applies
+StableHLO's `convert` to each operand, and the documentation of `lax.mul` says that this is
+typically how it is done and that some backends may use a custom kernel. A real operand is the
+real part, with imaginary part `+0`. A zero or infinite divisor, or an infinite or NaN part, gives
+what IEEE 754-2019's operations give the formula without rounding, where a product of finite parts
+is finite, so that `(inf + 2^600 i)(1 + 2^600 i)` is `inf + inf i` in binary64, and without the
+recovery of an infinite result that C99's Annex G (G.5.1, WG14 N1256) adds:
+`(inf + inf i)(inf + 0i)`, `(1 - i) / 0` and `(1 - i) / (inf + inf i)` are `NaN + NaN i`, where C's
+`_Cmultiply` gives `inf + inf i` for the first. XLA's CPU code computes both otherwise (below).
+`dot_general` is the product extended by linearity: four real contractions of the parts, each the
+IR's `contract` in its order, the real part `a c - b d` and the imaginary part `b c + a d`, so a
+contraction of one term rounds `a c` and `b d` apart where `mul` rounds once. A real operand is
+converted to the complex type first, with
+imaginary part `+0`, so that an infinite `d` makes the real part NaN through `0 inf`. XLA's CPU
+code (Eigen's complex GEBP) keeps the four contractions apart too. It gave these words for two
+matrices from 2 to 7 terms, in binary32 and binary64, eager and under `jax.jit`, and for a vector
+operand (`jnp.vdot`, a matrix times a vector) in binary64; in binary32 those differ in the last
+place at 5 terms. It contracts one term as its `mul`, from 8 terms it sums some places of the
+output in another order, even and odd terms apart in binary32, and the imaginary part it gives a
+real operand at an infinite `d` depends on the shape, so the words can differ there.
+`conv_general_dilated` is four real convolutions of the parts in the same way, each the IR's
+(below), with the kernel's parts as payloads where it is known at capture. XLA's CPU code sums in
+another order: its words are these where every sum is exact and differ in most last places
+elsewhere (`test_complex_convolution_is_four_real_convolutions`). `eq` holds where both parts are
+equal and `ne` where either differs.
+`abs` is the IR's `hypot` of the parts: JAX documents the modulus `sqrt(a^2 + b^2)`, and `hypot` is
+that exact value rounded once, `+inf` when a part is infinite even if the other is a quiet NaN, as
+IEEE 754-2019 9.2.1 specifies it, and a quiet NaN when a part is a signaling NaN. XLA's CPU code
+(jax 0.11.1) returned NaN there, was up to two units in the last place away at the random pairs
+sampled and gave 0 for the least subnormal pair. `sign` is the phase `z / |z|` that JAX documents,
+written by hand from that definition: `a / sqrt(a^2 + b^2)` and `b / sqrt(a^2 + b^2)` of `z = a +
+ib`, and `z` itself where both parts are zero, as `sign` keeps a real zero. They are computed in a
+binary format of 734 significand bits for binary32 parts and 5330 for binary64 parts (`phase` in
+`python/torchlean/_jax_complex.py`, which derives the precision), where `a^2 + b^2` is exact and the
+square root and the quotient are each rounded once, and rounding again to the parts' format gives
+each part of finite operands the exact part rounded once; an infinite part beside a finite one gives
+a NaN part and a zero, as the formula does (`inf + 1i` gives `NaN + 0i`). XLA's CPU code returned
+`z` where both parts are subnormal and `1 + 0i` at `2^-126 + 2^-127 i`, the results of zero parts
+(we infer that it loses subnormal parts, but have not read where), `0` at the greatest finite pair,
+and parts up to two units in the last place away at 1000 random pairs.
+`integer_pow` multiplies in the order of JAX's `lax._integer_pow`,
+square-and-multiply and then `1 / product` for a negative exponent, as a real `integer_pow` does,
+each product the complex `mul` above and the reciprocal its `div`; so each part of `z^2` and `z^-1`
+is the exact part rounded once, and the other powers round at each step. `z^0` is `1 + 0i`, at a NaN
+too, and `square` is `z^2`. XLA's CPU code differs at 115 of 500 random binary32 pairs in `square`,
+by one unit in the last place, and at 142 to 314 in `integer_pow` of the exponents 2, 3, 5, -1 and
+-2, by more where a part cancels. `max` and `min` compare the pairs lexicographically, which is all
+that JAX documents for complex operands: of pairs without a NaN part, `x` where the real parts
+compare so, or are equal and the imaginary parts do, and `y` elsewhere. Where a NaN part decides the
+comparison JAX documents nothing and IEEE 754-2019 has no complex maximum, so there the import
+follows, as our convention, JAX 0.11.1's lowering (`_minmax_hlo` in
+`jax/_src/interpreters/mlir.py`), whose IEEE comparisons are false at a NaN: `y` where the real
+parts are unordered, or equal beside unordered imaginary parts. So `max(NaN + 0i, 1 + 0i)` is `1 +
+0i`, `max(1 + 0i, NaN + 0i)` is `NaN + 0i` and `max(2 + NaN i, 1 + 0i)` is `2 + NaN i`. XLA gives
+the same words. A stable `sort`, as `jnp.sort`, `jnp.argsort` and `lax.sort_key_val` call it, orders
+complex keys as JAX's comparator does (`_sort_lt_comparator` in `jax/_src/lax/lax.py`):
+lexicographically, the real part first, as the docstring of `lax.sort` states, the parts with `-0`
+taken as `+0` and every NaN as one that follows `+inf`, equal entries in their order and every word
+kept. That is not NumPy's order, which puts `1 + 0i` before `0 + NaN i`. The import is the sort of
+several operands below, the real and the imaginary part of a complex key two keys, and gathers each
+part of a complex operand at the order. XLA gives the same words
+(scripts/checks/ir_capture_jax_complex.py, `test_complex_sort_orders_pairs_as_jax_does`), and an
+unstable sort is refused. `reduce_prod`, `reduce_max` and `reduce_min`, and `cumprod`, `cummax`
+and `cummin` over each prefix or suffix, are
+left folds of that complex product or of `max` or `min` from the first entry, the accumulator
+first, over the reduced coordinates in row-major order, last to first for a reverse scan, as the
+real folds are; over no entry they are `1 + 0i`, `-inf + 0i` and `inf + 0i`, the initial values of
+the `reduce` and `reduce_window` that JAX lowers them to. Those values are not identities here:
+`(1 + 0i)(inf + 0i)` is `inf + NaN i` and `max(-inf + 0i, -inf - i)` is `-inf + 0i`, and `max` is
+not associative at a NaN, where the docstring of `lax.reduce` leaves XLA's result undefined. So
+the folds do not start from them: the product of the one entry `inf + 0i` is `inf + 0i` and the
+maximum of `-inf - i` and `-inf - i` is `-inf - i`. At parts drawn from small integers, signed
+zeros, infinities and NaN, XLA's CPU code gave the words of the fold from the initial value along
+2 to 32 entries, over two axes too, and for a cumulative fold along 1 to 8, folding each suffix of
+a reverse one first to last (`test_complex_folds_start_from_the_first_entry`); it returns a lone
+entry of a reduction, and past 32 entries its extrema follow no fold. The complex
+`reduce_window_sum`, `reduce_window_max` and `reduce_window_min`, and `reduce_window` with one add,
+mul, max or min as its body, fold each window of the operand, padded and dilated with the init
+value's parts, from the init value in row-major order of its cells, by that sum, product, `max` or
+`min`, as the real window reductions do; the first three start from `0`, `-inf + 0i` and `inf + 0i`,
+the init values JAX 0.11.1 lowers them with. XLA's CPU words are the same where skipping an init
+cell or reordering the cells changes nothing, and differ elsewhere, as for real operands
+(`test_complex_window_reductions_fold_from_the_init_value`). `exp`, `expm1`, `log`, `log1p`,
+`sqrt`, `rsqrt`, `sin`, `cos`, `tan`, `sinh`, `cosh`, `tanh`, `asin`, `acos`, `atan`, `asinh`,
+`acosh` and `atanh` are `Op.complex` of that function: FloatLib's `ExecComplex` function of the
+pair of parts, each part of a finite argument the part of the exact result rounded once, with the
+special values and branch cuts of C23 7.3 and Annex G, where the sign of a zero part selects the
+side of a cut (`TorchLean/Tensor/ConfiguredBinary/Complex.lean` says where FloatLib proves the exact
+result to be the function's value). `sqrt` is the principal square root: of `z = a + ib`,
+`T + i copysign(U, b)` where `a` is not negative, `-0` included, and `U + i copysign(T, b)` where it
+is, for `T = sqrt((|z| + |a|) / 2)` and `U = |b| / (2 T)`, and `+0 + ib` at zero. An infinite `b`
+gives `+inf + ib`, beside a NaN too, `a = +inf` the real part `+inf` and `a = -inf` the imaginary
+part `copysign(inf, b)`. XLA's CPU code gave `0 + 2i` for `sqrt(-4 - 0i)` and the root of the
+conjugate at a negative subnormal `b`, the results of a `+0` part (again an inference from its
+words), `0` for a subnormal part of the root, `NaN + NaN i` where C's results are infinite beside a
+NaN, and a part one or two units in the last place away at about a quarter of the parts of 500
+random pairs. `rsqrt` is `1 / √z`, as JAX documents `lax.rsqrt`, each part the exact part rounded
+once, not `1` over the rounded root. Its values at `0` and `inf`, which JAX does not name, are
+C23's `(1 + 0i) / (0 + 0i)`, `+inf + NaN i`, and the limit `+0 - i copysign(0, b)`. XLA's CPU code
+gave `inf + NaN i` and `0 - 0i` there, a nonzero real part at `-4 ∓ 0i`, where `1 / √z` is
+`±0.5i`, and a part a unit in the last place from the correctly rounded one at `3 + 4i`
+(`test_complex_sqrt_rounds_its_definition_once`, `test_complex_rsqrt_rounds_each_part_once`,
+`test_complex_functions_round_each_part_once`). For the other sixteen functions, at 500 random
+pairs XLA's CPU parts differed from the exact parts rounded once at 2 to 449 of them for each
+function and part, by at most 7 units in the last place except in `expm1` (37 and 159 in
+binary32's real and imaginary parts, 58 and 26236 in binary64's), binary32's `tan` (17 and 15) and
+the real part of `sinh` and imaginary part of `cosh` (484276 and 605736 in binary32, 62174 and
+69129 in binary64); on the cuts its `asin`, `acos`, `acosh` and `asinh` gave the value of the
+`+0` side at `-0` too, `asin(2 - 0i) = π/2 + 1.317i` where C23 gives `π/2 - 1.317i`. `pow` of a
+complex base is `Op.complexPow`, FloatLib's `ExecComplex.pow`, C23's `cpow` `exp (w log z)`: at a
+finite base other than zero and a finite exponent, each part of a result FloatLib certifies is the
+exact part rounded once, the sign of the base's zero imaginary part selecting the side of the cut of
+`log`. `z^0` is `1 ± 0i`, at a NaN too, with the sign of the base's imaginary part; a zero base
+gives `+0 + 0i`, `inf + NaN i` or `NaN + NaN i` as the real part of the exponent is positive,
+negative or zero; any other infinite or NaN part gives `NaN + NaN i`. An integer exponent is
+converted to the complex type first, as JAX documents for `lax.pow`. `exp2` of a complex `z` is
+`2^z`, as JAX documents `lax.exp2`, the power of the base `2 + 0i`. XLA's CPU code gave
+`NaN + NaN i` at a zero base, `inf + 0i` for `inf^1`, a nonzero real part for `(-1 ± 0i)^0.5` and
+`(1 + i)^2`, and parts 4 and 2 units in the last place from the exact parts rounded once for
+`(1 + 2i)^(3 - i)` in binary32 (`test_complex_pow_rounds_each_part_once`). Over the reals the
+pullback of `Op.complexPow` is the adjoint of its derivative in both operands where the base is off
+the cut, and in the exponent wherever the base or the exponent is nonzero
+(`Op.complexPow_backward_eq_adjoint`, `Op.complexPow_backward_eq_adjoint_right`); JAX's own VJP of
+`pow` is holomorphic, without the conjugate. In every IEEE configured format, at each entry that
+meets FloatLib's premises, each part of both operators is the exact part rounded once
+(`Op.complex_forward_round`, `Op.complexPow_forward_round` and their `_value` forms in
+TorchLean/NN/Op/ComplexRound.lean). `logistic`, `cumlogsumexp`, `clamp` and
+`atan2` of complex operands, which JAX 0.11.1 traces and runs, are refused, and so are `argmax` and
+`argmin`, which it traces but does not lower.
+A complex constant, a literal or a captured array, is the pair of its parts.
+A conversion to a complex type converts the parts, a real value getting imaginary part `+0`.
+`reshape`, `squeeze`, `transpose`, `broadcast_in_dim`, `slice`, `rev`, `concatenate`, `stack`,
+`split`, `unstack`, `tile`, `copy` and `pad` move the pairs, a `reshape` with `dimensions` permuting
+the operand's axes first, and the pieces of a `split` or `unstack` are complex.
+`select_n`, `gather`, `dynamic_slice`, `dynamic_update_slice` and `scatter` move each part at the
+same real predicate or indices, `scatter-add` and `scatter-sub` add or subtract each part of the
+updates, and a `FILL_OR_DROP` gather fills each part with that part of its fill value, by default
+NaN converted to the complex type, `NaN + 0i`. `scatter-mul` multiplies each slice by its windows
+of updates in turn, in the row-major order of the index vectors in which a real scatter applies
+them, each step a gather, the complex `mul` and a replacement in the scatter's mode; StableHLO
+leaves the order to the implementation (`schedule`), and XLA's CPU words are these where every
+product is exact (`test_complex_scatter_products_multiply_in_index_order`). A scatter with batching
+dimensions (`jax.vmap`) is refused there. Every other primitive with a complex operand or result is
+refused.
+`stack` is one `cat` of its operands, each reshaped to an axis of size one at the new axis, and
+`unstack` is one slice of width one per output, reshaped to drop that axis.
+
+#### Runtime indexing
 
 `gather`, `dynamic_slice`, `scatter`, `scatter-add`, `scatter-sub` (the sum of the negated updates),
 `scatter-mul`, `scatter-max`, `scatter-min` and `dynamic_update_slice` of floating operands at
@@ -645,115 +1016,496 @@ and the last repeated `scatter` update stays. JAX leaves the order of colliding 
 the tests compare this order with CPU execution on their inputs. A scatter whose update computation
 is not its name's (as from `.at[...].apply`) and an operand without entries are refused.
 
+The same primitives at integer and Boolean operands are the registered `gather` and `scatter` at
+that element (`Op.Element`): an integer scatter sums, subtracts and multiplies modulo `2^width` and
+takes the type's maximum and minimum (`Op.rule?_scatter_integer`). JAX has no Boolean scatter but
+`scatter`, `scatter-max` and `scatter-min`, and the IR's Boolean scatter only replaces, so a Boolean
+maximum or minimum runs on the uint8 words 0 and 1 and comes back as the words that are not 0. A
+`FILL_OR_DROP` gather fills with the `fill_value` that `lax.gather` binds, by default the least
+signed value, the greatest unsigned one or `True`; a fill value that the type does not hold, such
+as `1.5` for int32, is refused. XLA's CPU code agrees at every width of both signs, eager and under
+`jax.jit`, in the test of these primitives (`test_runtime_indices_of_integers_and_booleans`).
+
 The JAX importer records supported operations, shapes, dtypes and casts. Reference execution uses
 TorchLean and FloatLib arithmetic: division is IEEE division, `rsqrt` is `1 / sqrt x` rounded twice
 (in binary64 `rsqrt 3` is one ulp above the correctly rounded `rSqrt 3`), and results underflow
 gradually. `div`, `pow`, `neg`, `rsqrt` and `erf` map to IR operators, and integer `div` rounds
-toward zero. Binary16 and bfloat16 `pow`, `rsqrt` and `erf` are computed in binary32 and rounded
-once, as XLA computes them. On 8192 samples per operator and format, the IR returns XLA's words for
-every binary16 `pow` and `rsqrt` sample and every bfloat16 `rsqrt` sample. It returns them for
-8191 bfloat16 `pow` samples: XLA's result is its own binary32 power rounded once, and FloatLib's
-binary32 power differs from it. The IR has no binary `erf`, so a graph using it does not execute.
-`integer_pow` becomes the products XLA computes, square-and-multiply in JAX's order with a final
-division for a negative exponent. On 4096 samples, XLA's `integer_pow` for the exponents 3, 5, 7
-and -3 equals that schedule rounded at each step in bfloat16, binary16 and binary32.
+toward zero. Integer `rem` is C's `%`, `x - trunc(x / y) * y` modulo 2^width (StableHLO's
+`remainder`), and integer `abs` is `-x` below 0 modulo 2^width, so the least signed value is its own
+magnitude. StableHLO leaves `rem` implementation-defined at the least signed value and -1 and at a
+zero divisor; XLA's CPU code gives 0 at the first and `x` at the second, and the IR gives 0 at the
+first and, as its integer division does, fails to execute at the second
+(`test_integer_remainders_and_magnitudes`). Binary16 and bfloat16 `pow`, `rsqrt`, `erf`,
+contractions and convolutions are computed in binary32 and rounded once, as XLA computes them. On
+8192 samples per operator and format, the IR returns XLA's words for every binary16 `pow` and
+`rsqrt` sample and every bfloat16 `rsqrt` sample. It returns them for 8191 bfloat16 `pow` samples:
+XLA's result is its own binary32 power rounded once, and FloatLib's binary32 power differs from it.
+The IR has no binary `erf`, so a graph using it does not execute. `integer_pow` becomes the products
+XLA computes, square-and-multiply in JAX's order with a final division for a negative exponent. On
+4096 samples, XLA's `integer_pow` for the exponents 3, 5, 7 and -3 equals that schedule rounded at
+each step in bfloat16, binary16 and binary32.
 
 `expm1`, `log1p`, `exp2`, `log2`, `tan`, the hyperbolic functions and their inverses, `asin`,
 `acos`, `atan` and `atan2` of binary16 and bfloat16 are computed in binary32 and rounded once, and
 an `accuracy` request is refused. The binary `log2` is `RN(RN(ln x) / RN(ln 2))`, not a correctly
 rounded `log2`. XLA's bfloat16 `log2` is within one ulp of the IR's on the tested samples, but it is
 not XLA's binary32 `log2` rounded once. `floor`, `ceil`, `round` with `TO_NEAREST_EVEN` and `rem`,
-the IR's `fmod`, are exact in the format. `lax.sort` with one operand, one key and `is_stable` keeps
-`-0` and `+0` in input order and puts NaN last, which is the IR's stable ascending sort. `lax.sign`
-keeps `-0` and NaN, as it documents, so it is a `where` around `copysign`, not the IR's `sign`,
-which maps both to `0`. `lax.sign` of integers is `-1`, `0` or `1`.
+the IR's `fmod`, are exact in the format, and so is `round` with `AWAY_FROM_ZERO`, `lax.round`'s
+default: `t + copysign(1, x)` where `|x - t| >= 1/2` and `t` elsewhere, for `t` the IR's `trunc` of
+`x`. `lax.sort` with `is_stable` and floating keys keeps `-0` and `+0` in input order and puts NaN
+last, which is the IR's stable ascending sort. With several operands, as from `jnp.argsort`,
+`lax.sort_key_val`, `jnp.lexsort` and the JVP of `jnp.sort`, it orders each fiber lexicographically
+by the first `num_keys` operands, the first primary, and gives every operand that permutation, as
+`lax.sort` documents: the importer sorts stably by each key in turn, from the last to the first,
+composes the orders from `Op.sort`'s index output and gathers every operand at the result, its words
+unchanged. The comparator compares an integer or Boolean key as it is, and so does `Op.sort` at the
+key's element: integer words by their values, signed or unsigned, and `false` below `true`. An
+unstable sort is refused. `lax.sign` keeps `-0` and NaN, as it documents, so it is a `where` around
+`copysign`, not the IR's `sign`, which maps both to `0`. `lax.sign` of integers is `-1`, `0` or
+`1`.
+
+#### Ordering and random draws
+
+`eq_to`, `lt_to` and `le_to`, which JAX's sort and search comparators use (so `jnp.searchsorted`,
+`jnp.digitize` and `jnp.histogram` reach them), are StableHLO's `compare` in TOTALORDER for floating
+operands and in the plain order for integer and Boolean ones. StableHLO's spec names IEEE 754-2019's
+totalOrder (section 5.10) without saying more, and the importer takes that relation: `-0` below
+`+0`, a NaN below every number if its sign is negative and above if positive, and NaNs of one sign
+ordered by quiet bit and payload. It reads each word as a signed integer of its width, flips the
+bits other than the sign where the sign is set, and compares those integers, in binary16 to
+binary64, bfloat16, float8_e5m2 and float8_e4m3fn. XLA's CPU code agrees at every pair of float8
+words and at special and random words of the other formats, eager and under `jax.jit`. The one NaN
+of a fnuz format, the word that would be `-0`, which IEEE 754 does not order, is placed above every
+number, as the IR's `sort` places a NaN. XLA's CPU code places it below
+(`test_total_order_comparisons`).
 
 `lax.top_k` is the IR's stable `topk`, its indices the second output of `Op.topk`: equal entries
 keep their input order, the order `lax.top_k` documents for `is_stable`. XLA's CPU code ranks in
 IEEE totalOrder, `+0` above `-0` and a NaN by its sign and payload, and `lax.top_k` documents
 nothing for NaN. For `k > 0` execution therefore fails where a fiber holds a NaN, or both a `-0` and
-a `+0` (a sufficient condition, stricter than needed), and elsewhere the two orders agree. `cumsum`
-and `cumprod` are the IR's left folds from `+0` and `1`, the order TorchLean chooses. XLA's CPU code
-combines the prefixes associatively, so the words agree where each partial result of either grouping
-is exact and zero signs and exceptional values are handled alike. `cummax` and `cummin` give the
-value and zero sign of the running IEEE maximum and minimum, a NaN propagating as the latest NaN's
-word. They are computed by the IR's scan, which takes a later equal entry as ATen does, and a
-second scan of a `+0` flag (a `-0` flag for `cummin`) that turns a zero result into `+0` (`-0`).
-`cumlogsumexp` is refused: no TorchLean scan computes a running logsumexp.
+a `+0` (a sufficient condition, stricter than needed), and elsewhere the two orders agree. Integer
+and Boolean entries, `false` below `true`, are the first `k` of the stable `sort` of each fiber's
+entries reversed by bitwise or logical not, which reverses the type's order, so equal entries keep
+their input order at every width; XLA's CPU code gives the same values, and with `is_stable` the
+same indices, on every tested fiber (`test_integer_and_boolean_top_k`). `cumsum` and `cumprod` are
+the IR's left folds from `+0` and `1`, the order TorchLean chooses and the capture writes
+(`{"order": "leftFold"}`). XLA's CPU code combines the prefixes associatively, so the words agree
+where each partial result of either grouping is exact and zero signs and exceptional values are
+handled alike. `cummax` and `cummin` give the value and zero sign of the running IEEE maximum and
+minimum, a NaN propagating as the latest NaN's word. They are computed by the IR's scan, which takes
+a later equal entry as ATen does, and a second scan of a `+0` flag (a `-0` flag for `cummin`) that
+turns a zero result into `+0` (`-0`).
+
+`approx_top_k` (`lax.approx_max_k` and `lax.approx_min_k`) documents an approximate result. Off
+TPU, JAX lowers it to XLA's `ApproxTopK` fallback, a stable sort of each fiber with its indices
+under `>` (`<` for the minimum), cut to the result's extent. That is the exact top or bottom of the
+fiber, equal entries, `-0` and `+0` among them, in input order, and the importer gives the IR's
+stable `topk` for it. Under `>` a NaN is equivalent to every entry, so execution fails where a fiber
+holds a NaN. XLA's CPU code rewrites the sort into a reduction that keeps a later one of equal
+extremes where the result keeps one entry per fiber, and for the largest binary32 entries cut
+short into its totalOrder `TopK`, so its indices of ties and its order of `-0` and `+0` can differ
+there.
+
+`rng_uniform` draws from TorchLean's generator, not XLA's stateful one, whose stream the API leaves
+to the implementation. It is `Op.randUniform` under the key of its node's position, as a PyTorch
+capture keys `rand`: each draw `u` in `[0, 1)` rounded once to the dtype, then
+`low + (high - low) * u` in the dtype's arithmetic, or `2 * (low / 2 + (high / 2 - low / 2) * u)`
+where `high - low` overflows. Rounding can reach `high`, and such an entry is `nextafter(high,
+low)`, the greatest value below `high`, so each entry lies in `[low, high)`, as JAX documents.
+An unrolled iteration of a `scan` has nodes of its own, so its draws have keys of their own, and a
+scan whose body draws is unrolled, not one `Flow.scan`. A region of a flow is one set of nodes, so
+the body of a `while` that the capture does not decide draws the same entries in every iteration.
+Execution fails unless both bounds are finite and `low < high`, since JAX leaves `high <= low`
+undefined. Integer bounds of at most 32 bits give
+`low + mulhi(d, high - low)`, `d` the 32-bit word of the binary64 draw `u = d / 2^32`: the high half
+of the product, `floor(d (high - low) / 2^32)`, so each entry lies in `[low, high)`, and each value
+takes `floor(2^32 / n)` or `ceil(2^32 / n)` of the words for `n = high - low`. Execution fails
+unless `low < high`. Wider integer bounds are refused, and so is `rng_bit_generator`, whose bits are
+a function of its key operand, while TorchLean's random operators take their key at capture.
+
+#### Branches and loops
+
+JAX's `cond`, `scan` and `while` are lowered by partial evaluation first: what is decided at capture
+is imported as straight-line steps, as the rest of the function is, and only what the capture does
+not decide becomes a flow. A `scan` is its body once per iteration, or one `Flow.scan` where its
+iterations would all be imported alike with a flow in each (below), a `cond` whose index is known
+at capture is the branch that the index selects, and a `while` whose test reads only values known at
+capture is its body once per iteration that it runs. Any other `cond` or `while` makes the artifact
+a flow artifact ([above](#the-artifact)), whose blocks are the runs of steps between them, and the
+state before each block, flow and region end holds the values that the rest of the computation
+reads, constants aside, which each block that reads one holds itself. A computation without them
+stays in the straight-line artifact format. A value is known at capture when it is a literal, a closed-over
+array, or an integer or Boolean value that shape operations, comparisons, selections and integer
+`add`, `sub`, `mul`, `neg`, `max` and `min` compute from known values alone (`known_value` in
+`python/torchlean/_jax_reference.py`), which JAX folds at capture: `bound[1] - bound[0]` for a
+closed-over `bound`, the counter of an iteration of a `scan` or of a `while` that the capture
+decides, or `platform_index` (below). A value computed from an input, or converted from a floating
+value, is not known, and neither is a floating value that a loop computes: a `while` whose test
+reads one, as the halving loop below does, remains a flow even if the initial values are
+constant. The scan tests compare the fallback artifact with one explicitly unrolled at capture and
+run the resulting program against JAX.
+
+The lowering's contract is two rules. Partial evaluation comes first: what the capture decides is
+lowered as straight-line steps, as the importer lowered it before it wrote flows. Dead-code
+elimination comes second, in a computation with a flow: every node and every `cond` or `while` that
+gives no value the computation returns, directly or through what reads it, is dropped before the
+flow is written (`prune` in `python/torchlean/_flow.py`), as JAX's `pe.dce_jaxpr` drops an equation
+without effects none of whose outputs is used. A flow that stays keeps all of its results, so every
+block has an output, and a computation none of whose flows gives a returned value, such as a `cond`
+whose branches return nothing, has the artifact of its other nodes that give one, without a flow
+(`test_what_gives_no_returned_value_is_dropped_before_the_flow`). A dropped `while` does not run, so
+one that would not stop does not fail, and a dropped node does not fail at execution. Where the
+capture decides all control flow, the artifact keeps every node, used or not, as before. The
+result is a straight-line artifact when capture resolves the control flow or no flow contributes
+to the returned values. Otherwise use `IR.loadFlow` or `TorchLean.JAX.load` to load the flow
+artifact. The control-flow tests check the resulting branch and loop structure and compare it
+with reference execution on concrete inputs.
+
+`cond`, which `lax.cond` and `lax.switch` bind, is `Flow.cond` when its index is not known at
+capture: each branch is a region on its operands, and only the branch that the index selects runs,
+as StableHLO's `case` selects it: branch `index` for `0 <= index < n` and branch `n - 1` otherwise
+(`lax.switch` clamps its index first). So an unselected branch never fails, as JAX never runs it:
+neither its integer division by zero, nor its conversion of an infinity or a NaN to an integer type,
+nor its failing read of `rng_uniform`'s bounds or `top_k`'s NaN, nor its loop that never stops. A
+selected branch fails where it would outside a `cond`. An index known at capture selects its branch
+there, and only that branch is imported, without a flow, so a branch that is never selected, as one
+that a scan's counter rules out in every iteration, may hold what the importer refuses.
+`lax.platform_dependent`, which `jnp.diagonal` and `jnp.diag` use for a square matrix, binds such an
+index, `platform_index`: the position of the branch for the platform that JAX lowers for, or else of
+the default branch. The IR's executions stand for JAX's on the CPU and on CUDA, so `platform_index`
+is the branch that both of them select, and it is refused where they select different branches or
+one of them none.
+
+`scan`, which `lax.scan` and `lax.fori_loop` with static bounds bind, imports its body once per
+iteration, as `lax.scan`'s reference implementation loops over it: iteration `i` reads the
+constants, the carry and entry `i` of each scanned operand along its leading axis (`length - 1 - i`
+in reverse), and its other outputs are entry `i` of the stacked outputs. So its steps are the
+unrolled computation, `length` times the body's size, and each iteration's counter is a constant,
+which a `cond` or `while` of the body reads at capture: `lax.cond(c[0] < 2, ...)` on a counter
+`c[0]` selects its branch in each iteration there. A `cond` or `while` of the body that the capture
+does not decide is a flow in each iteration. Where no iteration would decide at capture how a value
+it reads is lowered, and the body holds a flow, every iteration would be imported alike, and the
+scan is one `Flow.scan` of `length` iterations of one region of its body (`looped` and `trial` in
+`python/torchlean/jaxpr.py`): it carries a counter `i` from 0 where there are scanned operands or
+stacked outputs, reads entry `i` of each scanned operand by `Op.gather` and writes its outputs
+there, into stacked outputs that start at zeros, by `Op.scatter`, as PyTorch's `map` does (below,
+`_flow.entry`), so that its document is the size of one iteration, as a `lax.scan` of
+`lax.cond(c > 0, ...)` on its carry is at 100,000 iterations
+(`test_a_scan_of_conds_on_its_data_is_one_flow`). The carry that an unrolled iteration may know at
+capture is the carry known before the first one, as `lax.fori_loop`'s counter is, and the carry
+whose new value the body computes from such carry and constants alone, by the integer and Boolean
+equations that `known_value` folds, to a fixed point. The region reads that carry unknown, and
+wherever its import finds a value unknown at capture (a `cond`'s index, the operands that decide a
+`while`, a convolution's kernel, a nested scan's carry), the trial notes the nodes at which the fold
+stopped. Where they are all such carry, an unrolled iteration may decide what the region does not,
+and the scan is unrolled, as it is where the program reads a last carry that folds so after the
+scan, or where the region draws from `rng_uniform`, whose unrolled iterations draw under keys of
+their own. A nested scan's trial may decide otherwise where the enclosing scan's carry is known, so
+the enclosing scan is unrolled where any of the nested trial's folds stopped at such carry. So
+`lax.fori_loop(0, 1000, lambda i, c: flip(c), c)`, whose counter decides no `cond`, is one
+`Flow.scan`, and a `lax.cond(c[0] < 2, ...)` on the counter, a `cond` on carry that each iteration
+doubles from the counter, or one after the scan on its last counter keeps the scan unrolled
+(`test_a_scan_whose_known_carry_decides_a_flow_is_unrolled`). A scan whose scanned operands are
+known at capture in part is unrolled even where they decide none of its flows, and so is one with a
+complex or float8 scanned operand or stacked output, or a zero-sized carry, scanned operand or
+stacked output. The `Flow.scan` is a trial: where anything in its region is refused or fails while
+the region is built, its nodes are dropped and the scan is unrolled, so building it adds no refusal
+(`test_a_scan_that_its_flow_refuses_is_unrolled`); a region that is built and that the flow's
+writing (`_flow.lower`) then refuses is not retried unrolled, and no such region is known. The
+flow of a region runs its parts in a `seq` of the flows of its first and second halves
+(`_sequence` in `python/torchlean/_flow.py`), which `Flow.eval` runs in order in any bracketing, so
+the 1,000 iterations of an unrolled scan with a flow in each nest a few levels, not 1,000, and
+Python's `json` and `copy.deepcopy`, which recurse, take the document. A scan of length zero runs no
+iteration: its outputs are the carry and stacked outputs of zeros, without entries.
+
+`while`, which `lax.while_loop` binds, as does `lax.fori_loop` when its bounds are traced, is
+decided at capture when its test reads only values known there. The test reads some constants and
+carry entries, the body computes those entries from more of them, and every one must be known at
+capture, and every primitive of the test and of those parts of the body one of the integer and
+Boolean ones that `known_value` folds, whose results are the IR's, or a `jax.jit` call of them
+(`exact`). The importer counts the iterations by running the test and those parts of the body with
+JAX, one primitive at a time (`trips`), and imports the body once per iteration that it runs, as the
+Python loop of `lax.while_loop`'s docstring runs it. The test leaves no node, and a loop that runs
+no iteration, as that of `lax.fori_loop(0, 0, ...)`, has neither its test nor its body imported. The
+while loops of one import unroll at most 65,536 iterations into its document in all, nested ones
+included: a loop that would run more is a flow, and so is every later loop that runs an iteration,
+while a later loop of no iteration is still decided. A scan's trial that is dropped (above) gives
+back the iterations it counted, as it drops its nodes, so the importer may count more than 65,536
+iterations to write one document.
+
+Any other `while` is `Flow.whileLoop`: its test and body are regions on their constants and the
+carried values, and it runs the body while the test holds, as the Python loop of `lax.while_loop`'s
+docstring runs it, whatever the test reads, such as an input, the remainders of `jnp.gcd` and
+`jnp.lcm`, a floating or complex value or a nested `cond`, `scan` or `while`. Each loop runs at most
+the artifact's `fuel` of iterations each time it is entered, 65,536 unless `export`'s `fuel` names
+another, a Python or numpy integer that is not negative (`_flow.natural` refuses a Boolean, a tensor
+or an array before the capture): one whose test still holds then fails at execution
+(`while: out of fuel`), so a loop that never stops fails instead of running on. The IR's arithmetic
+in a loop is IEEE 754's, as everywhere: a binary32 value halved from `2^-126` while it is positive
+stops after 24 iterations, and after 1 in XLA's CPU code, which flushes subnormals to zero, so a
+test that reads a floating value is not counted at capture. `jnp.gcd` of vectors whose lanes stop at
+different iterations, and `jnp.lcm(0, 0)`, compute `lax.rem` by zero in lanes that a `select_n` then
+discards: JAX documents that remainder as implementation-defined, and the IR's integer division
+fails at a zero divisor, so their execution fails.
+
+A complex carry, scanned operand, stacked output or constant of a loop is carried, cut and stacked
+in its paired-real form, and a test may read a complex value
+(`test_complex_loops_carry_and_stack_pairs`). XLA compiles an eager `cond`, `scan` or `while` whole,
+as it compiles a `jax.jit` call, and `torchlean.jaxpr.evaluate` runs the selected branch, each
+iteration of a scan, and a while loop's test and body in turn, one primitive at a time. A flow's
+document has no `computation`, `jit_computations` or `primitive_index`, since the checker emulates
+XLA's CPU code (below) only for an artifact without control flow, and `TorchLean.IR.load` refuses
+it, while `TorchLean.IR.loadFlow` loads it.
+
+torch.export records `torch.cond`, `while_loop` and `map` (`torch._higher_order_ops`) as
+higher-order operators whose functions are graphs of their own, and the PyTorch capture lowers
+them to the same flows (`python/torchlean/_hop.py`). Each graph's placeholders read its node's
+operands, lifted parameters, buffers and constants among them, and a graph is lowered afresh each
+time a node reads it. `torch.cond` is `Flow.cond` on its predicate's truth, as Python's `if pred`
+reads a one-element tensor: a Boolean as it is and another value compared with zero, at shape `[]`
+or `[1]`. Branch 0 is the false graph and branch 1 the true graph, and only the selected one runs,
+so an unselected branch's integer division by zero or loop that never stops never fails. A
+predicate known at capture selects its graph there, and only that graph is checked and imported,
+without a flow, so the other graph may hold what the capture refuses, as an unselected JAX branch
+may. `while_loop` is `Flow.whileLoop`, which runs the body while the test's Boolean scalar holds,
+as the Python loop in `while_loop`'s docstring runs it, and at most the artifact's `fuel` of
+iterations each time it is entered, 65,536 unless `export_torchlean_graph_json`'s `fuel` names
+another, a Python or numpy integer that is not negative (`_flow.natural` refuses a Boolean, a tensor
+or an array before the capture): its trip count may depend on the inputs. Its additional inputs, the
+tensors its functions close over, are read by the test and the body and not carried. `map` is
+`Flow.scan` over the leading axis of its mapped operands: the state carries an `int64` counter `i`
+from 0 and the stacked outputs, which start at zeros, and iteration `i` reads entry `i` of each
+mapped operand by `Op.gather` and writes its outputs to entry `i` of the stacked outputs by
+`Op.scatter`; PyTorch refuses a map of length zero. Its body may hold a `torch.cond` or a
+`while_loop` of its own, a flow in the body of the `Flow.scan`. A flow's region is one set of nodes,
+so a `map` whose body draws from TorchLean's generator (`rand`, `randn`, `randperm`, dropout in
+training) is unrolled instead, iteration `i` reading and writing entry `i` at the constant `i`, and
+each iteration draws under keys of its own, as in a JAX scan whose body draws; the body of a
+`while_loop` draws the same entries in every iteration, as that of a JAX `while` does. PyTorch
+2.11's export records a call of a function marked by `mark_compile_region` as `invoke_subgraph`,
+whose graph is inlined at each call, and 2.13's export inlines the calls itself. Each lowering of a
+graph draws under keys of its own, its dropout masks too. The tests are `PyTorchFlowTests`
+(`scripts/checks/ir_capture_pytorch_flow.py`), on the CPU.
+
+#### Contractions
+
+`conv_general_dilated` is the IR's convolution. It holds a kernel known at capture as its payload:
+a constant, or a value that JAX computes from constants by `squeeze`, `reshape`,
+`broadcast_in_dim`, `transpose`, `rev`, `slice` and `concatenate`, which move its words, and `neg`
+and `conj`, which flip sign bits (IEEE 754-2019 5.5.1). The importer computes such a kernel at
+capture with JAX's own primitives, as `jnp.convolve` and `jax.scipy.signal.convolve2d` flip and
+broadcast their kernel and `jnp.correlate` broadcasts it and conjugates a complex one
+(`test_convolutions_execute_with_their_payload`). Any other kernel, an input or a value computed
+from one or by arithmetic, is the convolution's second operand, in JAX's layout of output channels
+and then each group's input channels (`test_convolutions_take_a_kernel_not_known_at_capture`). A
+padding cell is a zero times its kernel entry, as StableHLO's specification of `convolution` pads
+the input with zeros before its dot products, so an infinite or NaN kernel entry over padding gives
+NaN. XLA's CPU code does not always multiply the padding. Of 15 shapes sampled, with one to three
+spatial axes, strides, dilation and groups, 8 of them in float8 too, it gave that NaN in binary32,
+binary16, bfloat16 and float8 at all but a 5 × 5 kernel over a 3 × 3 input, and in binary64 only
+for a 5 × 5 kernel from 16 to 32 channels over a 20 × 20 input. Elsewhere it skips the padding, so
+its words can differ at an infinite or NaN kernel entry over padding.
+
+XLA's CPU code converts binary16 and bfloat16 operands of a contraction or a convolution to
+binary32, computes there and converts the result back once. On standard normal operands with 2, 4,
+32, 256 and 1024 products per entry, XLA's `x @ y` is the exact sum of products rounded once in
+every entry, and the IR's words equal XLA's in every entry but one of 640, where the IR's binary32
+fold and XLA's binary32 summation order round differently. The IR's convolutions with 4, 32 and 256
+products per entry equal XLA's in 432 of 432 entries.
+
+`ragged_dot_general` is imported in its three modes. With a ragged free axis of the left operand,
+the form `lax.ragged_dot` binds, the result at a position is the contraction with that position's
+group of the right operand: `+0` in no group, and the first group's where a negative size makes
+groups overlap. JAX's reference implementation, which XLA's CPU backend runs, contracts with every
+group, the left operand masked to zero outside it, so an infinity in one group of the right operand
+makes its column NaN in every group, and overlapping groups add. JAX documents only the shapes of
+the three modes, so the selection is TorchLean's reading, and the import refuses neither case. With
+a ragged contracting axis, entry `j` of the new leading axis is the contraction with both operands
+set to zero outside group `j`. With a ragged batch axis the result is `dot_general`'s and the sizes
+are not read. Both follow JAX's reference implementation. Group sizes of shape `p + [g]` give each
+position of their leading axes its own groups, as in JAX's reference implementation: the batch axes,
+then the left operand's free axes before the ragged one, or its contracting axes before it. A group
+offset is refused: JAX 0.11.1 cannot bind an array as that parameter, and its reference
+implementation raises `NotImplementedError` for one. `scaled_dot` is the decomposition of its
+`xla.scaled_dot` composite: along each contracting axis, entry `k` of a scale covers the `m`
+positions from `k * m` of its operand, each operand and its scale are rounded to bfloat16 and
+multiplied there, and the products are contracted as by `dot_general`, converted first to a wider
+result type. A result type that does not hold every bfloat16 value is refused.
+
+#### Float8 arithmetic
+
+The float8 formats of FloatLib's catalog, `float8_e5m2` (IEEE specials), `float8_e4m3fn` (one NaN of
+each sign, no infinity), `float8_e4m3fnuz` and `float8_e5m2fnuz` (one NaN, no infinity, no `-0`),
+import as the IR's binary descriptors, through `convert_element_type`, as `scaled_dot` operands and
+scales, whose rounding to bfloat16 is exact, as operands of a `dot_general`, `ragged_dot_general` or
+`conv_general_dilated` with a `preferred_element_type` that holds them or with a float8 result
+(below), and in movement (`reshape`, `squeeze`, `split`, `unstack`, `stack`,
+`transpose`, `broadcast_in_dim`, `concatenate`, `slice`, `pad`, `rev`, `copy`), `abs`, `max`, `min`,
+`add`, `sub`, `mul`, `square`, `reduce_sum`, `reduce_prod`, `cumsum`, `cumprod`, `integer_pow`,
+`scatter-add`, `scatter-sub` and `scatter-mul`, the IR's operations in the format, each sum,
+difference and product rounded once to nearest, ties to even, a reduction the IR's left fold from
+`0` or `1`, a scan its prefixes (reversed, the suffixes folded last to first, between two flips),
+`integer_pow` JAX's square-and-multiply and a scatter its updates in turn, in the order of the other
+formats (above). XLA's CPU code computes that arithmetic in binary16 and converts each result back,
+also inside a `jax.jit` fusion, and its words are the IR's at every word and pair of words of each
+format, at seven powers of every word, in sums and products of rows of 32 words and the forward
+scans of rows of 16, and in 512 updates scattered into 16 entries and 64 rows into 4, a NaN matching
+any NaN. Its sums of more than 32 entries are in another order (below), and its reverse scans fold
+each suffix first to last. The IR has no float8 `neg`, comparison, `where` or `div`, so `neg`, the
+comparisons, `select_n` and `div` convert their float8 operands to binary32, which holds every
+float8 value, and a float8 result back, and so do `sign`, `sqrt`, `floor`, `ceil` and `round`, each
+imported as for a binary32 operand, and the reciprocal of a negative `integer_pow`. The conversions
+are exact but for a quotient's and a square root's, which binary32 rounds to a value that rounds to
+the format as the exact one does (`_Builder.binary32`), and a `-0` of a format without one, which
+converts to `0`. `exp`, `exp2`, `expm1`, `log`, `log1p`, `sin`, `cos`, `tan`, `tanh`, `logistic`,
+`sinh`, `cosh`, `asinh`, `acosh`, `atanh`, `asin`, `acos`, `atan`, `rsqrt` and `cbrt` are binary32's
+function of the converted operand, rounded once to the format. At each of the 256 words of each
+format the exact value is a value of the format, more than a relative 2^-17 from every midpoint, or
+a midpoint that binary32 holds (`exp2(-10)` in e4m3fn, `exp2(-11)` in e4m3fnuz), so a binary32
+result within a relative 2^-17 rounds as the exact value does, and the IR's words are the exact
+value rounded once at every word (`_Builder.binary32`,
+`test_float8_elementary_functions_round_once_through_binary32`); FloatLib's binary32 `sin`, `cos`,
+`sinh`, `cosh`, `tanh` and `logistic` carry no accuracy theorem, and the words are what is checked.
+XLA's CPU code computes these in binary16, and its words are the exact value rounded to binary16 and
+then to the format but for `asinh`, `acosh`, `atanh`, `asin` and `acos`, which differ from the IR's
+by one place at 18 to 172 of the 1024 words, and `exp2` and `logistic`, at 112 and 262, `exp2` by up
+to seven places (`exp2(3)` is 7 in e5m2). `atan2` and `pow` are binary64's function of the
+converted operands, rounded once to the format (`_Builder.binary64`). At each of the 65536 pairs of
+words of each format the exact value is a value of the format, more than a relative 2^-38 from every
+midpoint, or a midpoint, which only powers reach. Binary32 would not do: it holds the e5m2 midpoint
+`3 * 2^-17`, within a relative 2^-32 of `atan2(3 * 2^-16, 2)`. The IR's binary64 `atan2` rounds the
+polar angle once, and its `pow`, FloatLib's `Model.pow`, is correctly rounded at an integral
+exponent with a finite result and where its certified search settles, and otherwise is binary64's
+`exp(y * log x)`, which carries no accuracy theorem. The IR's words are the exact value rounded once
+at every pair (`test_float8_atan2_and_pow_round_once_through_binary64`). XLA's CPU code computes
+both in binary16, and its words differ from the IR's by one place at 110 to 436 of the pairs for
+`atan2` and 12 to 64 for `pow`. `gather`, `dynamic_slice`, `dynamic_update_slice` and the
+scatters that replace or take a maximum or minimum read and write float8 values in binary32 too,
+exactly (`_Builder.indexed`), with a fill value only where the format holds it, and `reduce_max`,
+`reduce_min`, `argmax`, `argmin`, `cummax` and `cummin` reduce or scan the binary32 values, whose
+order, zero signs and NaNs are the format's: XLA's float8 maximum, minimum, `argmax` and `argmin`
+are the IR's at every pair of words of each format and at every word but the NaNs in one row, and
+its `cummax` and `cummin` at every pair of words and in rows of 32 words, NaNs among them, forward
+and reversed. `rem`, C's `fmod`, exact in every format, and `sort`, a NaN last and `-0` equal to
+`+0` as `lax.sort` documents, are binary32's too, and `top_k` and `approx_top_k` rank the binary32
+values. `clamp` is the IR's maximum then minimum in the format, StableHLO's `minimum(maximum(x, lo),
+hi)`, which is not what the cases of `lax.clamp`'s docstring give at a NaN bound, at `-0` or where
+`lo > hi`. The window reductions are the IR's left folds in the format from JAX's identities, which
+are the largest finite magnitudes in a format without infinities. `select_and_scatter_add` selects
+among the binary32 values and adds the source values in the format, each sum rounded once, and JAX's
+CPU lowering pads the operand with those identities, which a cell can equal. XLA's words are the
+IR's at every word between bounds drawn from NaN, the zeros, `±0.5`, `±1`, `-2`, the largest
+magnitudes and the infinities, at every pair of words in `rem`, and in sorts, rankings and 2 x 3
+windows of rows of 32 words, but for the fnuz formats' `sort`, which in XLA's CPU code puts the NaN
+first, and the `sort` and `top_k` of float8_e5m2fnuz, which there take the five values `2^-15` to
+`2^-14` of each sign as equal. With that lowering XLA's `select_and_scatter_add` words are the
+row-major fold's over the padded operand in 2-D windows that overlap, tile and lie partly in
+padding. `nextafter` is the IR's C `nextafter` in the format, `bitcast_convert_type` reads each word
+at an 8-bit integer type or another float8 format, and a float8 `iota` is each index rounded once,
+StableHLO's `iota`. XLA's words are the IR's at every pair of words in `nextafter`, at every word
+and 8-bit integer in the bitcasts, and in iotas of 600 entries, but for `nextafter` in the fnuz
+formats from the least negative value toward a larger one, which in XLA gives the word `0x80`, their
+NaN, and not `+0`. `reduce_precision` rounds the binary32 values at the format's exponents (above),
+where XLA's CPU code rounds binary16's. Any other primitive on a float8 value, among them `erf`, is
+refused. A conversion to one rounds once to nearest, ties to even, as XLA's CPU
+conversions do word for word: above 464 e4m3fn gives its NaN, and e5m2 from 61440 up an infinity. A
+NaN's sign and payload are left open, and XLA and the IR choose differently. From binary64,
+ml_dtypes, NumPy's float8, rounds through binary32 and so differs near a midpoint. `float8_e8m0fnu`,
+`scaled_dot`'s default scale type, has no sign and no fraction bit, which no binary descriptor
+holds, so it is refused, and with it `scaled_dot` without scales.
+
+#### Accumulation precision
+
+A `preferred_element_type` of `dot_general`, `conv_general_dilated`, `ragged_dot_general` or
+`scaled_dot` is, in JAX's documentation, the type the results are accumulated in and returned as.
+When that type holds every value of the operands' type (a binary format with at least their
+precision and greatest exponent and a smallest subnormal no larger, as each of binary16, bfloat16,
+binary32 and binary64 has for each float8 format, or one whose precision covers an integer type's
+magnitude bits), the operands are converted to it exactly, a constant kernel word by word, and the
+contraction runs there, as XLA's CPU code converts them. XLA contracts bfloat16 operands with a
+binary32 result unconverted, in another binary32 order, so those results agree within a tolerance,
+not word for word, and so do float8 operands with a binary32 result, which XLA converts and
+contracts in its binary32 order. A type that does not hold the operands, such as bfloat16 for
+binary32 operands, binary16 for bfloat16 or binary32 for int32, is refused.
+
+Integer and Boolean `dot_general` follows StableHLO's definition (its spec, "dot_general"): the
+operands are moved to their batch, free and contracted axes and broadcast to that joint shape,
+multiplied entrywise, and the contracted axes summed, or for Booleans with logical `and` and `or`
+(StableHLO's `multiply` and `add` of Booleans). Integer sums and products wrap modulo 2^width, the
+importer's choice for the overflow that StableHLO leaves implementation-defined, as for `add`. The
+joint product holds every term, so it takes the product of all those extents in memory. The maximum
+and minimum of Booleans, false below true, are logical `or` and `and` (StableHLO's `maximum` and
+`minimum`), from either frontend and in windows, where JAX's identities are false and true. XLA's
+CPU code agrees at full-range operands of every width, eager and under `jax.jit`
+(`test_integer_and_boolean_contractions`).
+
+JAX leaves the accumulation type of a `dot_general` or `conv_general_dilated` with a float8 result
+to the backend, and the importer contracts or convolves the float8 operands in binary32 and rounds
+the result once to the format (`_Builder.widened`), as it does for binary16 and bfloat16. With
+operands of magnitude 1/8 to 4, whose binary32 sums are exact in any order, the IR's words are the
+exact sums rounded once in 256 products of 16 terms and 304 convolution entries of 9 products in
+each format, and in the 30 products of 16 random finite words tried in each format they are the
+binary32 left fold rounded once (scripts/checks/ir_capture_jax_contraction.py,
+test_float8_contractions_convert_their_operands). A `ragged_dot_general` with a float8 result is
+contracted in binary32 too, its groups selected there and the result rounded once
+(`ContractionImport.ragged_dot`), and at operands of magnitude 1/8 to 4 the IR's words are the
+exact results rounded once in 120 entries of its three modes in each format. XLA's CPU code rounds
+twice (below).
 
 Nondefault dot precision and algorithms are rejected: a declared FP32 input and result do not say
 whether the multiplications use BF16, TF32 or FP32, and the matmul node has no separate arithmetic
 rule for operands and accumulator. A default matmul capture does not establish XLA's reduction order
 or backend equivalence.
 
-XLA's compiled CPU code departs from these meanings in the following ways, and the importer follows
-none of them. Eager JAX compiles each primitive, and each nested `jax.jit` call, as a computation of
-its own, while `jax.jit` compiles the whole function as one. XLA's results below are those of eager
-JAX unless `jax.jit` is stated, and counts are of binary32 samples unless another format is named.
+### Differences from XLA CPU execution
 
-- A division by a broadcast divisor is multiplication by the divisor's reciprocal rounded to the
-  format, `multiply(x, 0.333333343)` for `x / 3.0`, whose scalar divisor JAX broadcasts within the
-  division. The divisor need not be constant: a 0-d argument, or a `[64, 1]` divisor of a
-  `[64, 768]` array, is treated the same way. Under `jax.jit` so is a divisor computed from
-  constants alone, such as a closed-over array. Eager JAX divides by that array as written, and by a
-  divisor that `jnp.broadcast_to` broadcast in a primitive of its own. XLA's `x / 3.0` and
-  `x / 10.0` differ from the IEEE quotient on 1382 and 839 of 4096 samples. Binary16 multiplies by
-  the binary16 reciprocal and differs on 5487 of 16384 samples for `x / 3.0`. Bfloat16 multiplies in
-  binary32, and the rounded product equals the quotient on all 16384. `jnp.mean` divides its sums by
-  the broadcast element count this way: over 64 rows of 768, XLA's mean is the sum times binary32
-  `1/768` in all 64 rows and the sum divided by 768 in 40.
-- Under `jax.jit`, XLA's simplifier rewrites divisions: `x / sqrt(y)` becomes `x * rsqrt(y)`,
-  `x / rsqrt(y)` becomes `x * sqrt(y)`, `x / y ** c` becomes `x * y ** -c`, `(x / y) / z` becomes
-  `x / (y * z)` and `x / (y / z)` becomes `(x * z) / y`. The first, fourth and fifth differ from
-  the IR on 1622, 1443 and 1425 of 4096 samples. A broadcast divisor is replaced first, so
-  `(x / y) / 3.0` is `(x / y) * 0.333333343` in eager JAX too, and a rewrite's own division is
-  rewritten again: `x / (y / (z / w))` is `(x * z) / (y * w)`. Binary16 rewrites with every step
-  rounded to binary16. In bfloat16, which XLA computes in binary32, `(x / y) / z` and
-  `x / (y / z)` stay as written.
-- `pow` is XLA's power function, which is not correctly rounded for integral exponents: eager
-  `x ** 3.0` differs from the correctly rounded cube, which the IR computes, on 2 of 4096 samples.
-  Under `jax.jit`, XLA computes the constant exponents 2 and 3 as products and -1 as a reciprocal in
-  binary32 and binary64, an exponent that is a closed-over array included, and its `x * (x * x)`
-  differs from the cube on 1062. In binary16 it rounds each product to binary16, and in bfloat16 it
-  computes the products in binary32 and rounds once. On 8192 samples per class, binary32 and
-  binary64, XLA's power is within 1 ulp of the correctly rounded power. It differs from the IR's by
-  at most 1 ulp for integral exponents, where the IR is correctly rounded, and where
-  `|y log x| < 1`, where FloatLib's power is within 1 ulp of the correctly rounded one. Where
-  `|y log x| ≥ 1`, the samples do not compare XLA's power with FloatLib's.
-- `rsqrt` is XLA's own approximation, within 1 ulp of the correctly rounded result and within 2
-  ulps of the IR's `1 / sqrt x` rounded twice. It differs from the IR's result by 1 ulp on 5473906
-  and by 2 on 50830 of the 16777216 binary32 values in `[1, 4)`. On 2^20 random normal values in
-  each format, it differs by 2 ulps on 3106 binary32 and 1291 binary64 values. On 65536 samples it
-  differs on 22080 binary32 and 18763 binary64 values. In bfloat16 and binary16, which XLA computes
-  in binary32 and rounds once, as the IR does, XLA's words equal the IR's for every positive
-  normal input.
-- Subnormal operands and results are flushed to zero in binary32, binary64 and bfloat16. On 4096
-  subnormal operands per format, `x * 1.5`, `x / 1.5`, `x + x` and `x * 1` return zero and
-  `rsqrt(|x|)` returns infinity for all 4096, and squares whose IEEE value is subnormal return zero
-  for all 4096 operands. Subtraction, `max`, `min`, `sqrt`, `log`, `exp`, the logistic function,
-  sums, matrix products and binary64 `tanh` flush too, and so do conversions of binary32 and
-  bfloat16 to binary64. Negation, `abs`, `sin`, binary32 and bfloat16 `tanh`, layout
-  operations and conversions between binary32 and bfloat16 keep subnormal values, and so does
-  binary16 arithmetic, which XLA computes in binary32, where binary16 subnormals are normal. XLA
-  also converts binary64 values below binary32's normal range, such as `1e-40`, to zero in binary32
-  and bfloat16. Values that `jax.jit` folds at compile time are not flushed, until an operation at
-  run time uses them.
+The imported artifact states an arithmetic schedule; XLA can choose another when compiling it.
+Eager JAX compiles each primitive and nested control-flow or `jax.jit` call as a computation, while
+`jax.jit` can optimize the whole function. The
+[JAX capture regressions](../../../scripts/checks/ir_capture_jax.py) exercise these differences:
+
+- Division by a broadcast divisor can become multiplication by a rounded reciprocal. Under
+  `jax.jit`, a constant divisor can receive the same rewrite. A mean can therefore multiply by a
+  rounded reciprocal of the element count instead of dividing by that count.
+- Under `jax.jit`, quotient simplification can rewrite `x / sqrt(y)` to `x * rsqrt(y)`,
+  `(x / y) / z` to `x / (y * z)`, or `x / (y / z)` to `(x * z) / y`. The resulting roundings differ.
+- A multiplication can fuse into a following addition or subtraction. A complex multiplication
+  can fuse its component products even in eager JAX, because it is one primitive. The IR keeps the
+  schedule of its paired-real expansion.
+- Complex division can use Smith's algorithm with fused products and special-value recovery.
+  Its intermediate denominator can overflow even when the exact complex quotient is finite.
+- Powers can use an approximation or, for constant exponents under `jax.jit`, repeated products
+  or a reciprocal. Neither generally matches a single correctly rounded power.
+- XLA's reciprocal square root is an approximation; the IR rounds `sqrt(x)` and then `1 / sqrt(x)`.
+- Some CPU operations flush subnormal operands or results to zero. This can change values and
+  the control flow of a loop. Layout operations and binary16 arithmetic need separate treatment;
+  flushing is not applied uniformly to every operation or format.
+- Reductions can regroup their entries rather than use the IR's row-major left fold. Binary16,
+  bfloat16 and float8 sums can round partial sums in their own format.
+- Float8 contractions can round through binary16 before their final format. In e4m3fn,
+  `[1, 1/16, 1/64] · [1, 1, 1/64] = 4353/4096` rounds once to `1.125`, but rounds through binary16
+  to the midpoint `1.0625` and then to `1.0`. The IR contracts these operands in binary32 and
+  rounds once to float8.
+
+These are backend-dependent observations, not general error bounds. A default precision setting
+does not determine a backend's reduction tree, fused operations or transcendental implementation.
 
 `verify`'s `compare` fails whenever the IR's words differ from the reference's, under its NaN
 policy. For a Jaxpr document it then tries these rules on the mismatch, as advice for the reader.
-The JAX importer records `reference_execution`, `jit` for a function that is one `jax.jit` call
-and `eager` otherwise, the computation of each node in an eager function, and the primitive that
-produced each node. `torchlean.verify` records with the reference the platform that computed it
-and jaxlib's version. When `jax.jit` compiles any part of the function, it also records the outputs
-of evaluating the function one primitive at a time, inside nested `jax.jit` calls too, which XLA
-computes without `jax.jit`'s rewrites. Only a reference from XLA's CPU backend is emulated. The
-checker runs the program a second time as XLA's CPU code computes it, where that code is exactly
-emulable. Divisions by broadcast divisors, and under `jax.jit` by constant ones, become products
-with the rounded reciprocal. When `reference_execution` is `jit`, `jax.jit`'s rewrites apply:
-those of quotients of quotients and by quotients in binary16, binary32 and binary64, and those of
-divisions by square roots, reciprocal square roots and powers in binary32 and binary64. So do the
-products for the exponents 2, 3 and -1, in binary32 and binary64 and in binary16 with each product
-rounded to binary16. The flushing above applies to the operations listed.
+The JAX importer records `reference_execution`, `jit` for a function that is one `jax.jit` call and
+`eager` otherwise, the computation of each node in an eager function, and the primitive that
+produced each node. `torchlean.verify` records with the reference the platform that computed it and
+jaxlib's version. When `jax.jit` compiles any part of the function, or the function holds a `cond`,
+a `scan` or a `while`, it also records the outputs of evaluating the function one primitive at a
+time, inside nested `jax.jit` calls, the branch each `cond` selects and each iteration of a `scan`
+or a `while` loop too, which XLA computes without `jax.jit`'s rewrites. Only a reference from XLA's
+CPU backend, of an artifact without control flow, is emulated. The checker runs the program a second time as XLA's CPU code computes it,
+where that code is exactly emulable. Divisions by broadcast divisors, and under `jax.jit` by
+constant ones, become products with the rounded reciprocal. When `reference_execution` is `jit`,
+`jax.jit`'s rewrites apply: those of quotients of quotients and by quotients in binary16, binary32
+and binary64, and those of divisions by square roots, reciprocal square roots and powers in binary32
+and binary64. So do the products for the exponents 2, 3 and -1, in binary32 and binary64 and in
+binary16 with each product rounded to binary16. The flushing above applies to the operations listed.
 
 XLA's `rsqrt` and power function are not emulable. A value that one of them computes in binary32
 or binary64 counts as reproduced within 2 ulps of that format for `rsqrt` and 1 ulp for the power,
@@ -801,8 +1553,9 @@ TorchScript graph with explicit ports and external constant payloads.
 The IR represents general tensor computations too. A program need not contain a layer, a loss,
 parameters or an optimizer: its interface is an ordered collection of tensor inputs and results.
 Supported array operations and numerical algorithms get the same shape and element-type checks as
-model computations. TorchLean does not compile arbitrary Lean or Python programs: control flow and
-operations without a lowering rule are rejected.
+model computations. TorchLean does not compile arbitrary Lean or Python programs: control flow
+other than JAX's `cond`, `scan` and `while` and torch.export's `torch.cond`, `while_loop`, `map` and
+`invoke_subgraph`, and operations without a lowering rule, are rejected.
 
 From Python, decorate a function or a PyTorch module class with `@torchlean.compile`, or wrap an
 existing module with `model = torchlean.compile(model)`, then call it as usual. Capture is lazy:
@@ -821,11 +1574,15 @@ comparison. It selects the frontend in the same way, and other producers can pas
 dictionary. Optional execution and comparison concern only the supplied arguments.
 
 Add `export="Model.lean"` to `verify` to keep the same capture as a self-contained Lean module. It
-embeds the capture and defines `Model.program`, the program of its typed artifact. Lean checks the
-included proofs of artifact decoding and `Program.check .reference` by kernel reduction when the
-module is compiled, and export does not launch a compiler. `IR.load` also validates the constant
-payload and `declared_types`. The export includes no proof of those load checks. Mathematical
-properties can refer to that program and the embedded constants, and they need their own proofs.
+embeds the capture and defines `Model.artifact`, its decoded artifact, and `Model.program`, the
+program of a typed artifact (`Model.program_checked`); for an artifact with control flow it defines
+no `Model.program`, and `Model.programs_checked` covers the program of each block of
+`Model.artifact.flow`. Lean checks the included proofs of artifact decoding and
+`Program.check .reference` by kernel reduction when the module is compiled (`PyTorchFlowTests`
+compiles a module of each kind), and export does not launch a compiler. `IR.loadFlow` (`IR.load`
+for an artifact without control flow) also validates the constant payload and `declared_types`.
+The export includes no proof of those load checks. Mathematical properties can refer to that
+program or flow and the embedded constants, and they need their own proofs.
 A `.json` export keeps the capture document instead. Neither export overwrites a file. The
 [captured-computation example](../../../home_page/examples/verify/index.md) exports a captured
 `square` function to `Proofs/Square.lean`.
@@ -837,14 +1594,25 @@ There are several routes into the same graph language:
 - The PyTorch `torch.export` capture records positional tensor arguments, including unused
   arguments, from its graph signature and writes each as an input step of a typed artifact with its
   argument position, and its other nodes become typed steps (`python/torchlean/_artifact.py`).
-  Lean decodes and checks the artifact. The ONNX adapter (`python/torchlean/onnx.py`) writes each
-  graph input that is not an initializer as an input step, in the graph's order.
+  `torch.cond`, `while_loop` and `map` are lowered to the IR's flows, after what gives no value
+  the program returns is dropped (`_flow.prune`), a `map` whose body draws is unrolled, and
+  `invoke_subgraph` is inlined.
+  A convolution's or linear map's weight and bias are payload words where they are parameters,
+  buffers or constants. Another weight or bias, an input or a value computed from one, is an
+  operand after the node's input, the weight in PyTorch's layout: a convolution's of output
+  channels and then each group's input channels, and a linear map's of output and then input
+  features (`test_convolutions_take_a_weight_not_known_at_capture` and
+  `test_linear_takes_a_weight_not_known_at_capture`). Lean decodes and checks the artifact. The
+  ONNX adapter (`python/torchlean/onnx.py`) writes each graph input that is not an initializer as
+  an input step, in the graph's order.
 - The Jaxpr capture in `python/torchlean/jaxpr.py` lowers static tensor computations to a typed
   artifact in a capture document. Its tensor arguments are input steps in order, each with its own
-  shape and dtype. `TorchLean.JAX.load` checks the frontend and loads the program under the
-  reference runtime (`TorchLean.JAX.load_ok`), whose run uses FloatLib at each declared binary
-  precision and runs Booleans and integer words natively. Structured control flow is not lowered
-  (see the [JAX example](../../../home_page/examples/jaxpr/index.md)).
+  shape and dtype. `cond`, `scan` and `while` are lowered by partial evaluation, and a `cond` or
+  `while` that the capture does not decide to the IR's flows, after what gives no value the
+  computation returns is dropped (`_flow.prune`). `TorchLean.JAX.load` checks the
+  frontend and loads the flow of programs under the reference runtime (`TorchLean.JAX.load_ok`),
+  whose run uses FloatLib at each declared binary precision and runs Booleans and integer words
+  natively (see the [JAX example](../../../home_page/examples/jaxpr/index.md)).
 - Verification examples can build small graphs with `Graph.Builder` when the graph itself is the
   artifact under study.
 
@@ -863,8 +1631,11 @@ bit for bit.
 Frontend coverage is narrower than the graph's operator vocabulary. JAX division, mean and the
 LayerNorm expansion through `rsqrt` import directly, and square root as IEEE's root at every
 argument. `reduce_max` imports as one `reduce` node at `max` (refused on an empty axis), so JAX's
-softmax expansion and attention code that uses it import. JAX's exact GELU uses `erfc`, which has
-no IR operator.
+softmax expansion and attention code that uses it import. Its `max` is IEEE's maximum, a NaN where
+an entry is one, as `lax.max`'s `stablehlo.maximum` is. XLA's CPU code (JAX 0.11.1) can drop a NaN
+from a reduction of 4096 or more binary32 or binary64 entries: of 4095 ones and a NaN it gives 1
+with the NaN first and `-inf` with the NaN last, so COMPARE reports a difference there. JAX's exact
+GELU uses `erfc`, which imports as `Op.special`, the real function, which no binary format executes.
 
 ## Role And Scope
 

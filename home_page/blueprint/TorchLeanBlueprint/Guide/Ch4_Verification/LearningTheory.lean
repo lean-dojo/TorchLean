@@ -36,6 +36,9 @@ open MeasureTheory
 -- each message exactly as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: learning-theory statements for losses, attacks, private updates and ridge
+regression. -/
+
 #doc (Manual) "Learning Theory" =>
 %%%
 tag := "learning-theory"
@@ -46,13 +49,12 @@ regression model. To turn those computations into guarantees, we need to specify
 quantified: all neighboring datasets for privacy, all allowed perturbations for robustness, or
 all replacement examples for algorithmic stability.
 
-TorchLean defines these predicates alongside executable diagnostics. To use a diagnostic as
-evidence for a theorem, we have to show how its result addresses the theorem's quantifiers. A
-failed attack, for example, leaves open what happens at perturbations the attack never tried. Named
-Lean blocks below are checked during the page build, while Python and CLI transcripts record
-separate experiments.
+The definitions separate semantic claims from executable diagnostics. The central question is what
+a diagnostic lets us conclude. If an attack finds no adversarial example, it has checked the points
+it tried. A robustness theorem has to cover every allowed perturbation. The quantifiers therefore
+come before the experimental numbers.
 
-# Learning Theory Claims
+# Five Kinds Of Learning-Theory Claim
 
 We organize the learning theory material around five concrete objects:
 
@@ -78,10 +80,10 @@ stated before any runtime evidence is interpreted.
 
 # Differential Privacy
 
-TorchLean's core privacy definitions live in
+The core privacy definitions live in
 {src "TorchLean/NN/LearningTheory/DifferentialPrivacy.lean"}[
-TorchLean.NN.LearningTheory.DifferentialPrivacy API]. Here's the central definition as
-Lean prints it, not a paraphrase:
+TorchLean.NN.LearningTheory.DifferentialPrivacy API]. The central definition exposes the input
+relation, output measure, and both privacy budgets in its printed signature:
 
 ```lean (name := dpDef)
 -- Expose the input relation, output measure, and two
@@ -112,7 +114,7 @@ constructing a value of type `Mechanism α β` doesn't supply a proof of that pr
 Adjacency also determines the direction of comparison, and the definition doesn't require the
 relation to be symmetric. If an application uses symmetric adjacency, it can apply the same
 inequality with the datasets exchanged. Otherwise the reverse comparison needs its own adjacency
-premise. Direction matters when you read the ratios in the example below.
+premise. Direction matters when reading the ratios in the Laplace example.
 
 Budget restrictions are left to the caller as well. For the usual privacy guarantee, we use
 $`\varepsilon\ge0` and $`0\le\delta<1`. `ENNReal` ensures that delta is nonnegative, but permits
@@ -187,6 +189,11 @@ spell out how to use it: first give the budget comparison, then the existing pri
 result is the relaxed privacy proof.
 
 ## Postprocessing
+
+
+A released private model may be reformatted for an evaluator without spending more privacy budget.
+The formatting must read only the released output, and the theorem states the remaining condition
+on that function.
 
 ```lean (name := dpPost)
 -- The measurable output map is the only new premise for
@@ -272,7 +279,7 @@ Analytically, the tail probabilities are $`\tfrac12 e^{-1}` and $`\tfrac12 e^{-1
 ratio is exactly $`e^{1/2}`, so this event attains the privacy bound in the direction from the
 larger count to the smaller one.
 
-Look at the last three lines again. The empirical ratio is $`1.64968` and the bound is
+The empirical ratio in the output is $`1.64968` and the bound is
 $`e^{0.5}=1.64872`. So the estimate violates the inequality it's supposed to illustrate (by about
 six parts in ten thousand), because each probability was estimated from a finite sample. More
 samples can improve estimates for this fixed event, but they can't establish the inequality for
@@ -316,13 +323,14 @@ every input in the allowed ball must retain the specified label.
 
 Our central robustness predicates take input and output norms as separate arguments, which records
 the metric used by each step of an argument. A Lipschitz bound proved in $`\ell^2` can feed a
-margin argument using $`\ell^\infty` after a norm-comparison theorem connects them. The certificate
-below keeps `normIn` general while fixing the output norm needed to control logits.
+margin argument using $`\ell^\infty` after a norm-comparison theorem connects them. The theorem
+`IsCertifiedRobust.of_lipschitz` keeps `normIn` general while fixing the output norm needed to
+control logits.
 
 ## Tensor Norms And Perturbation Balls
 
-Everything on the runtime side is ordinary executable code. Here is a two by two linear map, its
-output, and the two norms:
+The runtime side is ordinary executable code. The next calculation applies a two-by-two linear map
+to two directions and compares their gains in two norms:
 
 ```lean
 -- Fix a linear map and two directions with different
@@ -670,8 +678,8 @@ Both norm slots hold `fun {s} x => ‖x‖`, Mathlib's Euclidean norm on real te
 {src "TorchLean/Tensor/Euclidean.lean"}[Euclidean], so every Mathlib lemma about norms and
 distances applies to the bound.
 
-From the ordering $`3.000000\le 3.256617\le 3.741657` above, you can see why an observed ratio
-alone can't supply the upper bound required by a Lipschitz certificate.
+The computed ordering $`3.000000\le 3.256617\le 3.741657` shows why an observed ratio alone cannot
+supply the upper bound required by a Lipschitz certificate.
 
 # Algorithmic Stability
 
@@ -775,7 +783,7 @@ $`(0,1,2)`, and the mean is $`1`. That checks the normalization: `empiricalError
 $`1/n` in its definition, so downstream constants don't silently absorb a factor of the sample
 size.
 
-Here's the stability predicate itself:
+The stability predicate makes all three quantifiers explicit:
 
 ```lean (name := stabDef)
 -- The proposition compares retrained losses at every common
@@ -891,7 +899,7 @@ sample size, but its inverse dependence on sample size becomes useful in that re
 displayed $`N=16` instantiation demonstrates the improvement. A smaller general constant would
 require a sharper proof.
 
-It's worth spelling out the last step of the argument. For two fits $`w,w'` evaluated at the same
+For two fits $`w,w'` evaluated at the same
 $`(x,y)`, the loss difference factors as
 
 $$`(wx-y)^2-(w'x-y)^2=(w-w')x\bigl((wx-y)+(w'x-y)\bigr).`
@@ -974,9 +982,9 @@ What the executable side proves is narrower than the agreement suggests:
       (fit lam S).toModel.toReal = fitReal lam S
 ```
 
-This theorem covers the fit we ran above. We prove that evaluating `fitExpr` gives exactly
-`fit`, with the same left-to-right additions, multiplications, and final division for any
-dataset. We need no associativity law for floating-point addition.
+This theorem covers the displayed binary32 fit. Evaluating `fitExpr` gives exactly `fit`, with the
+same left-to-right additions, multiplications, and final division for any dataset. No associativity
+law for floating-point addition is needed.
 
 The theorem is a finite-evaluation bridge: *if* the executable expression evaluates without
 overflowing to infinity or producing a NaN, then its real interpretation agrees with the
@@ -994,7 +1002,7 @@ error for both neighboring datasets, since both fits occur in the loss differenc
 of both executions is essential: bounding the error on the original training set alone leaves
 the replacement execution uncontrolled.
 
-# Runtime And Spec Splits
+# Separating Specifications From Diagnostics
 
 One pattern repeats across the learning theory tree: a spec predicate or theorem is kept separate
 from the executable runtime diagnostic, and a float32 or artifact bridge connects them only once

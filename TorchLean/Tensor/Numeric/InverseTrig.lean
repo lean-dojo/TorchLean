@@ -18,7 +18,7 @@ conventions.
 
 We took the `y, x` order and the ranges by hand from C99 (7.12.4.1 to 7.12.4.4 of WG14 N1256).
 C closes the `atan2` range at `-π`, and that end is the `-0` case the `atan2` field describes.
-Lean 4.35.0 binds `Float.atan2` to C's `atan2` with `@[extern "atan2"]`, and `Float32.atan2` to
+Lean 4.36.0 binds `Float.atan2` to C's `atan2` with `@[extern "atan2"]`, and `Float32.atan2` to
 `atan2f`.
 -/
 

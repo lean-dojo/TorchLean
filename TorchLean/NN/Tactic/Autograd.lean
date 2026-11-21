@@ -88,7 +88,7 @@ private partial def armOperator? (node : Expr) : MetaM (Option Name) := do
 open Lean Elab Tactic in
 /-- Prove `FDerivCorrect` or `FDerivCorrectAt` for a node built by `LawfulNode.ofArm`
 from a `derivative` certificate registered with `op_cert` for its operator. -/
-elab "autograd_arm_cert" : tactic => withMainContext do
+elab (name := autogradArmCert) "autograd_arm_cert" : tactic => withMainContext do
   let target ← instantiateMVars (← getMainTarget)
   unless target.isAppOfArity ``FDerivCorrect 5 ||
       target.isAppOfArity ``FDerivCorrectAt 6 do
@@ -97,8 +97,8 @@ elab "autograd_arm_cert" : tactic => withMainContext do
     | throwError "autograd_arm_cert: the node is not built from an operator arm"
   let side ← `(tactic| first
     | assumption
-    | exact (CtxVec.forall_getTensorCLM_iff _ _ (· ≠ 0)).2 (by assumption)
-    | exact (CtxVec.forall_getTensorCLM_iff _ _ (0 < ·)).2 (by assumption))
+    | exact (CtxVec.forall_getTensorCLM_iff (P := (· ≠ 0))).2 (by assumption)
+    | exact (CtxVec.forall_getTensorCLM_iff (P := (0 < ·))).2 (by assumption))
   for entry in Op.certificates (← getEnv) operator do
     unless entry.kind == `derivative do continue
     let cert := mkIdent entry.certificate

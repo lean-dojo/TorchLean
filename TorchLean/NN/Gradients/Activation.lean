@@ -134,64 +134,54 @@ theorem Context.expm1_eq_exp_sub_one (x : ℝ) :
     simp [Real.log_exp, hx]
   · rfl
 
-/--
-For `x ≠ 0`, ELU with parameter `α` has derivative `Activation.eluDeriv x α`.
+/-- ELU has derivative `Activation.eluDeriv` away from 0, and at 0 when its one-sided slopes
+`alpha * scale * inputScale` and `scale` agree.
 
-PyTorch: `torch.nn.functional.elu(x, alpha = α)`. For general `α` the one-sided derivatives at `0`
-are `α` on the left and `1` on the right, so the theorem is stated away from `0`.
--/
-theorem Activation.hasDerivAt_elu (x α : ℝ) (h : x ≠ 0) :
-    HasDerivAt (fun y : ℝ => Activation.elu y α)
-      (Activation.eluDeriv x α) x := by
-  unfold Activation.elu Activation.eluDeriv
+PyTorch: `torch.nn.functional.elu(x, alpha)` has `scale = inputScale = 1`, so the slopes at 0 are
+`alpha` and 1. `celu(x, alpha)` has `scale = 1` and `inputScale = 1 / alpha`, so they agree at
+every nonzero `alpha`. -/
+theorem Activation.hasDerivAt_elu (x alpha scale inputScale : ℝ)
+    (h : x ≠ 0 ∨ alpha * scale * inputScale = scale) :
+    HasDerivAt (fun y : ℝ => Activation.elu y alpha scale inputScale)
+      (Activation.eluDeriv x alpha scale inputScale) x := by
   have hexpm1 : (Context.expm1 : ℝ → ℝ) = fun y => Real.exp y - 1 :=
     funext Context.expm1_eq_exp_sub_one
-  simp only [hexpm1]
-  by_cases hx : 0 < x
-  · simp only [ite_eq_left hx]
-    apply (hasDerivAt_id' x).congr_of_eventuallyEq
+  have hf : (fun y : ℝ => Activation.elu y alpha scale inputScale) =
+      fun y => if 0 < y then y * scale else (Real.exp (y * inputScale) - 1) * (alpha * scale) := by
+    funext y
+    simp only [Activation.elu, hexpm1, gt_iff_lt]
+  have hpos : ∀ z : ℝ, HasDerivAt (fun y : ℝ => y * scale) scale z := fun z => by
+    simpa using (hasDerivAt_id z).mul_const scale
+  have hneg : ∀ z : ℝ, HasDerivAt (fun y : ℝ => (Real.exp (y * inputScale) - 1) * (alpha * scale))
+      (alpha * scale * inputScale * Real.exp (z * inputScale)) z := fun z => by
+    have := ((((hasDerivAt_id' z).mul_const inputScale).exp).sub_const 1).mul_const (alpha * scale)
+    convert this using 1
+    ring
+  have hd : Activation.eluDeriv x alpha scale inputScale =
+      if 0 < x then scale else alpha * scale * inputScale * Real.exp (x * inputScale) := by
+    simp only [Activation.eluDeriv, MathFunctions.exp_real, gt_iff_lt]
+  rw [hf, hd]
+  rcases lt_trichotomy x 0 with hx | rfl | hx
+  · rw [ite_eq_right (not_lt.mpr hx.le)]
+    refine (hneg x).congr_of_eventuallyEq ?_
+    filter_upwards [Iio_mem_nhds hx] with y hy
+    rw [ite_eq_right (not_lt.mpr (Set.mem_Iio.mp hy).le)]
+  · have hs := h.resolve_left fun h0 => h0 rfl
+    rw [ite_eq_right (lt_irrefl 0), zero_mul, Real.exp_zero, mul_one, hs, ← hasDerivWithinAt_univ,
+      ← Set.Iic_union_Ici (a := (0 : ℝ))]
+    refine HasDerivWithinAt.union ?_ ?_
+    · have h' := (hneg 0).hasDerivWithinAt (s := Set.Iic 0)
+      rw [zero_mul, Real.exp_zero, mul_one, hs] at h'
+      exact h'.congr_of_mem (fun y hy => ite_eq_right (not_lt.mpr (Set.mem_Iic.mp hy)))
+        Set.self_mem_Iic
+    · refine (hpos 0).hasDerivWithinAt.congr_of_mem (fun y hy => ?_) Set.self_mem_Ici
+      rcases (Set.mem_Ici.mp hy).lt_or_eq with hy | rfl
+      · exact ite_eq_left hy
+      · simp
+  · rw [ite_eq_left hx]
+    refine (hpos x).congr_of_eventuallyEq ?_
     filter_upwards [Ioi_mem_nhds hx] with y hy
-    have hy' : 0 < y := hy
-    simp [hy']
-  · push Not at hx
-    have hx' : x < 0 := lt_of_le_of_ne hx h
-    simp only [ite_eq_right (not_lt.mpr hx)]
-    have hbase : HasDerivAt (fun y : ℝ => Real.exp y - 1) (Real.exp x) x :=
-      (Real.hasDerivAt_exp x).sub_const 1
-    have hscaled : HasDerivAt (fun y : ℝ => α * (Real.exp y - 1)) (α * Real.exp x) x :=
-      hbase.const_mul α
-    have hscaled' :
-        HasDerivAt (fun y : ℝ => α * (MathFunctions.exp y - 1))
-          (α * MathFunctions.exp x) x := by
-      simpa [MathFunctions.exp_real] using hscaled
-    apply hscaled'.congr_of_eventuallyEq
-    filter_upwards [Iio_mem_nhds hx'] with y hy
-    have hy' : y < 0 := hy
-    simp [not_lt.mpr (le_of_lt hy'), MathFunctions.exp_real]
-
-/-- ELU with parameter one has derivative `eluDeriv x 1` at every `x`, since at `0` both one-sided
-derivatives are one. -/
-theorem Activation.hasDerivAt_elu_one (x : ℝ) :
-    HasDerivAt (fun y : ℝ => Activation.elu y 1) (Activation.eluDeriv x 1) x := by
-  rcases ne_or_eq x 0 with hx | rfl
-  · exact hasDerivAt_elu x 1 hx
-  have hexpm1 : (Context.expm1 : ℝ → ℝ) = fun y => Real.exp y - 1 :=
-    funext Context.expm1_eq_exp_sub_one
-  have h0 : Activation.elu (0 : ℝ) 1 = 0 := by
-    simp [Activation.elu, hexpm1]
-  have hd : Activation.eluDeriv (0 : ℝ) 1 = 1 := by
-    simp [Activation.eluDeriv, MathFunctions.exp_real]
-  rw [hd, ← hasDerivWithinAt_univ, ← Set.Iic_union_Ici (a := (0 : ℝ))]
-  refine HasDerivWithinAt.union ?_ ?_
-  · have h := ((Real.hasDerivAt_exp 0).sub_const 1).hasDerivWithinAt (s := Set.Iic 0)
-    rw [Real.exp_zero] at h
-    refine h.congr_of_mem (fun y hy => ?_) Set.self_mem_Iic
-    simp [Activation.elu, hexpm1, not_lt.mpr (Set.mem_Iic.mp hy)]
-  · refine (hasDerivWithinAt_id (0 : ℝ) (Set.Ici 0)).congr_of_mem (fun y hy => ?_)
-      Set.self_mem_Ici
-    rcases (Set.mem_Ici.mp hy).lt_or_eq with h | h
-    · simp [Activation.elu, h]
-    · rw [← h, h0, id]
+    rw [ite_eq_left (Set.mem_Ioi.mp hy)]
 
 /-- Both evaluation branches of sigmoid equal `(1 + exp (-x))⁻¹` over the reals.
 

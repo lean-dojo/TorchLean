@@ -44,6 +44,8 @@ open Verso.Genre.Manual.InlineLean
 open TorchLean
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: evaluating the weights of a PyTorch MLP in Lean. -/
+
 #doc (Manual) "PyTorch Interop" =>
 %%%
 tag := "pytorch-roundtrip"
@@ -67,10 +69,10 @@ reads three models this way: an MLP, a convolutional network and a transformer e
 Python writes their state dicts with {src "python/torchlean/state.py"}[`torchlean.state`], and the
 importer is {src "TorchLean/NN/PyTorch/Import/State.lean"}[`PyTorch.state`].
 
-Named Lean blocks are checked while this page is built. Shell and Python transcripts are recorded
-runs with their own reproduction commands, and the guide build does not execute them.
+The round-trip checks cover both names and values. A model that loads without an error can still
+predict the wrong value if one weight matrix was transposed.
 
-# Checking a captured computation
+# Checking A Captured Computation
 
 TorchLean's shared IR describes tensor programs, not only neural networks. An ordinary tensor
 function can have inputs, constants, casts, array operations and results without layers, trainable
@@ -110,13 +112,26 @@ GELU follows the order of the kernel's DEFAULT level. Where eager PyTorch depart
 {src "TorchLean/NN/PyTorch/README.md"}[PyTorch interop guide] list these rules operator by
 operator.
 
-When we're ready to write a theorem, add `export="Proofs/Model.lean"` to that same call. The file
-embeds the capture document and defines `Model.program`, its `torchlean.ir` program. Lean checks
-its proofs of artifact decoding and `Program.check .reference` when we open or compile the module
-(export itself doesn't launch a compiler). The report also validates the constant payload and
-`declared_types` through `IR.load`. The export includes no proof of those load checks. We can then
-import it and prove further properties, reusing the tensor semantics and the operation lemmas,
-and those mathematical proofs are separate from the check report. Export doesn't capture the
+Graphs also hold the four float8 formats `float8_e4m3fn`, `float8_e4m3fnuz`, `float8_e5m2` and
+`float8_e5m2fnuz`, as FloatLib's formats `e4m3`, `e4m3fnuz`, `e5m2` and `e5m2fnuz`. Only `e5m2`
+has the IEEE encoding, with infinities. `e4m3` has no infinities and one NaN pattern for each
+sign, so its largest finite value is `448` (FloatLib's `toReal_posMaxFinite_e4m3`), and the two
+`fnuz` formats have no negative zero. A PyTorch graph only converts and moves float8 values. In a
+JAX graph each float8 sum, difference and product is rounded once in the format, and the other
+float8 operations compute in binary32, which holds every float8 value, and round once to the
+format. For the 20 elementary functions at float8, such as `exp`, `log` and `tanh`, a test checks
+this at every word of each format, and no theorem proves it.
+
+A theorem-oriented export adds `export="Proofs/Model.lean"` to that same call. The file
+embeds the capture document and defines `Model.program`, its `torchlean.ir` program; for a capture
+whose artifact is a flow, as from a `torch.cond` on run-time data, a `while_loop` or a `map`, it
+defines `Model.artifact.flow`, its flow of programs, instead. Lean checks its proofs of artifact
+decoding and `Program.check .reference` (of each block's program, for a flow) when we open or
+compile the module (export itself doesn't launch a compiler).
+The report also validates the constant payload and `declared_types` through `IR.loadFlow`, which is
+`IR.load` for a capture without control flow. The export includes no proof of those load checks. We
+can then import it and prove further properties, reusing the tensor semantics and the operation
+lemmas, and those mathematical proofs are separate from the check report. Export doesn't capture the
 Python function again, and it never overwrites a file.
 With a `.json` filename, export saves the interchange artifact for inspection instead.
 
@@ -128,15 +143,17 @@ supplied implementation). TorchLean's default reference executes binary arithmet
 arbitrary-width integer operations: layout operations, integer arithmetic modulo `2 ^ width`,
 comparisons and conversions. Other element families and unimplemented custom calls are rejected.
 
-# Captured graphs from JAX
+# Captured Graphs From JAX
 
 Weights are not the only useful artifact we can bring into Lean. A captured tensor computation
 also tells us which operations use those weights. The Jaxpr adapter in
 {src "python/torchlean/jaxpr.py"}[`jaxpr.py`] lowers a static tensor computation to the same
 `torchlean.ir` artifact as the PyTorch capture, in a capture document whose frontend is `jaxpr`.
 The Lean entry point is `TorchLean.JAX.load`, from `TorchLean.NN.JAX`. It checks the
-frontend and loads the artifact with `TorchLean.IR.load`, and `TorchLean.JAX.load_ok` states that
-the program it returns passes `Program.check .reference` and its payload passes `Payload.check`.
+frontend and loads the artifact with `TorchLean.IR.loadFlow`, a flow of programs where the
+computation holds a `cond` or `while` that the capture does not decide and that gives a returned
+value, and one program otherwise, and `TorchLean.JAX.load_ok` states that each program passes
+`Program.check .reference` and its payload passes `Payload.check`.
 
 Use `torchlean.verify(function, *inputs, frontend="jax")` directly: it captures the Jaxpr and
 translates it to TorchLean IR inside the call. Arguments may have different shapes and element
@@ -168,8 +185,9 @@ connects its conversions to FloatLib's directed-rounding specification. Try `mix
 `float16_sum.json` or `bfloat16_sum.json`: the runner compares their recorded results by
 interchange word. These examples do not establish equivalence with every XLA execution or
 reduction schedule. The reference runtime also executes Boolean and fixed-width integer
-operations. Complex values, dynamic control flow and contractions with a separate accumulation
-type are rejected.
+operations. A complex value is held in paired-real form, and only a few primitives read or write
+one. Control flow other than `cond`, `scan` and `while`, and contractions whose accumulation type
+does not hold every operand value, are rejected.
 
 JAX division imports as IEEE division. XLA's CPU code multiplies by the reciprocal of a broadcast
 divisor, and of a constant divisor under `jax.jit`, which changes rounding and exceptional values.
@@ -287,7 +305,7 @@ value is 0.9999999112061961, the word `0x3fefffffd05445c4`, and the trained modu
 float64 computes the same word at this input. One output is not a proof that the two programs
 compute the same function on every input.
 
-Here's the complete document:
+The complete document contains:
 
 ```
 {"format": "torchlean.state", "entries": {
@@ -623,7 +641,7 @@ The identity weights make the naming test easy to check by hand. They would not 
 accidental transpose of the first weight matrix, since transposing an identity changes nothing.
 The transformer example below shows that mistake with an asymmetric matrix.
 
-# Example Models
+# Imported MLP, CNN, And Encoder States
 
 The three examples exercise different state layouts and forward paths. Each runs the ordinary
 executable `nn` model with the imported state in place of its seeded initialization.
@@ -1120,6 +1138,10 @@ chapters establish claims about all inputs in a region.
 
 # Interop Boundary Selection
 
+Choose the interop boundary from the intended Lean-side task. State import moves trained Python
+weights into a known Lean architecture; inspecting the operations recorded by Python requires a
+graph.
+
 :::table +header
 *
   * If
@@ -1140,7 +1162,7 @@ chapters establish claims about all inputs in a region.
 
 An imported model can be lowered to IR or exported again, and these choices combine.
 
-# Limits
+# State-Import Limits
 
 - Arbitrary PyTorch training needs its own semantic or artifact bridge. The round trip carries the
   state that training produces.

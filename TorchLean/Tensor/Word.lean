@@ -30,7 +30,7 @@ arithmetic shift fills with the top bit on an unsigned type too. Capping the amo
 before shifting also keeps the shift from building a number of `2 ^ 64` bits. Torch 2.8.0, the
 version the parity checks pin, gives those values too: in int32 `1 << 32` is `0`, `-8 >> 32` is
 `-1` and `-5 >> -1` is `-1`. The test `test_integer_bitwise_operators_and_shifts` in
-`scripts/checks/test_ir_capture.py` compares the shifts with Python integer arithmetic.
+`scripts/checks/ir_capture_pytorch_operators.py` compares the shifts with Python integer arithmetic.
 
 We took the division, remainder and power by hand from the PyTorch 2.8 docs and ATen at v2.8.0.
 `divTrunc` and `divFloor` are the `"trunc"` and `"floor"` rounding modes of `torch.div`, and

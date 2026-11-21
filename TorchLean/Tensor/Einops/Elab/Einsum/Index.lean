@@ -423,6 +423,7 @@ def certifyCompiledKernel
   unless proposition.isEq do
     throwError "internal error: expected an equality while proving {description}"
   let kernelGoal ← mkFreshExprSyntheticOpaqueMVar proposition
+  -- Unfold the plan to row-major arithmetic; `evalPlan_ite` lifts its conditionals for splitting.
   let mut simpTheorems ← getSimpTheorems
   for declaration in #[
       ``Lowering.indexPlan,
@@ -484,6 +485,7 @@ def certifyCompiledKernel
           closeGoal fuel negative.mvarId
         else
           closeLeaf remainingGoal
+  -- The term size bounds the nesting of conditionals, so it is enough fuel.
   closeGoal proposition.sizeWithoutSharing kernelGoal.mvarId!
   let certificate ← instantiateMVars kernelGoal
   if certificate.hasMVar then
@@ -569,6 +571,8 @@ partial def certifiedNativeIndexValue?
     (value : Expr) (assumptions : Array Expr) :
     TermElabM (Option (Expr × Expr)) := do
   let value := value.consumeMData
+  -- Literals and `USize.toNat` are already words. `+` and `*` need a bound so the word does not
+  -- wrap, `/` and `%` cannot wrap, and `-` needs the right operand at most the left one.
   if let some literal ← getNatValue? value then
     let some (nativeValue, hValue) ← nativeLoopBound? (mkNatLit literal)
       | return none

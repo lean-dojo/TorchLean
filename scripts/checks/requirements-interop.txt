@@ -1,5 +1,5 @@
-# CPU interoperability checks; use Python 3.12 in CI.
+# Optional CPU interoperability checks.
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.8.0+cpu
+torch==2.11.0+cpu
 numpy==2.2.6
 onnx==1.19.0

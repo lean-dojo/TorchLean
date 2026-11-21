@@ -13,6 +13,7 @@ import operator
 
 import torch
 
+from ._artifact import _FLOAT8, _float8
 from ._table import op_table
 from .state import _words
 
@@ -22,6 +23,8 @@ def _dtype_of(value):
     dtype = getattr(value, 'dtype', None)
     name = str(dtype).removeprefix('torch.')
     if name in ('float16', 'bfloat16', 'float32', 'float64', 'bool'): return name
+    if name in _FLOAT8:
+        return _float8(name)
     if name.startswith(('int', 'uint')) and name.lstrip('uint').isdigit():
         return {'kind': 'integer', 'signed': not name.startswith('uint'),
                 'width': int(name.lstrip('uint'))}
@@ -128,7 +131,7 @@ def _top_k_mask(node):
 
 def _tensor_bits(value):
     name = str(value.dtype).removeprefix('torch.')
-    if not (name in ('bool', 'float16', 'bfloat16', 'float32', 'float64')
+    if not (name in ('bool', 'float16', 'bfloat16', 'float32', 'float64', *_FLOAT8)
             or name.startswith(('int', 'uint'))):
         raise NotImplementedError(f'no binary word encoding for {name}')
     return _words(value)
@@ -164,59 +167,120 @@ def _resolve_tensor(value):
     raise NotImplementedError(f"could not resolve tensor argument {value!r} into the exported payload")
 
 
-def _linear_payload(weight, bias):
-    weight = _resolve_tensor(weight)
-    if weight.ndim != 2:
-        raise NotImplementedError(f"linear weight must have rank 2, got shape {tuple(weight.shape)}")
-    out_dim, in_dim = (int(value) for value in weight.shape)
-    bias = _resolve_tensor(bias) if bias is not None else weight.new_zeros(out_dim)
-    if tuple(bias.shape) != (out_dim,):
-        raise NotImplementedError(f"linear bias must have shape {(out_dim,)}, got {tuple(bias.shape)}")
-    return {"out_dim": out_dim, "in_dim": in_dim, **_binary_payload('weight', weight), **_binary_payload('bias', bias)}
+def _known(value):
+    # Whether the capture holds the tensor of `value` (`_resolve_tensor`).
+    return isinstance(value, torch.Tensor) or \
+        isinstance(value, torch.fx.Node) and value.name in _TENSOR_VALUES
 
 
-def _convolution_payload(weight, bias, groups):
-    weight = _resolve_tensor(weight)
+def _held_shape(value):
+    # The shape of the tensor of `value` where the capture holds it, and else of its FX node.
+    return _shape_of(_resolve_tensor(value)) if _known(value) else _shape_from_arg(value)
+
+
+def _linear_payload(weight, bias, source=None):
+    # The dimensions, and the weight and the bias as payload words where the capture holds their
+    # tensors. A weight or bias of another value, an input or a value computed from one, has no
+    # payload: it is an operand of the node after `source` (`_operands`), the weight first
+    # (`_artifact._project`). A missing bias is zero.
+    known = [_known(weight), _known(bias)]
+    shape = _held_shape(weight)
+    if len(shape) != 2:
+        raise NotImplementedError(f"linear weight must have rank 2, got shape {tuple(shape)}")
+    out_dim, in_dim = (int(value) for value in shape)
+    payload = {"out_dim": out_dim, "in_dim": in_dim}
+    if known[0]:
+        weight = _resolve_tensor(weight)
+        payload.update(_binary_payload('weight', weight))
+    if bias is None:
+        # Word 0 is +0 in every binary format.
+        payload.update(bias_bits=[0] * out_dim,
+                       bias_dtype=_dtype_of(weight) if known[0] else _node_dtype(weight))
+    else:
+        bias_shape = _held_shape(bias)
+        if bias_shape != [out_dim]:
+            raise NotImplementedError(f"linear bias must have shape {(out_dim,)}, got {tuple(bias_shape)}")
+        if known[1]:
+            payload.update(_binary_payload('bias', _resolve_tensor(bias)))
+    runtime = [value for value, held in zip((weight, bias), known)
+               if value is not None and not held]
+    if runtime:
+        payload['_operands'] = [source, *runtime]
+    return payload
+
+
+def _convolution_payload(weight, bias, groups, source=None):
+    # The channels, and the weight and the bias as payload words where the capture holds their
+    # tensors. A weight or bias of another value, an input or a value computed from one, has no
+    # payload: it is an operand of the node after `source` (`_operands`), the weight in PyTorch's
+    # layout, output channels then each group's input channels, which is the IR convolution's
+    # kernel operand (`_artifact._project`). A missing bias is zero.
     groups = int(groups)
-    if weight.ndim < 3:
-        raise NotImplementedError(f"convolution weight must have rank at least 3, got shape {tuple(weight.shape)}")
+    known = [_known(weight), _known(bias)]
+    shape = _held_shape(weight)
+    if len(shape) < 3:
+        raise NotImplementedError(f"convolution weight must have rank at least 3, got shape {tuple(shape)}")
     if groups <= 0:
         raise NotImplementedError(f"convolution groups must be positive, got {groups}")
-    out_channels = int(weight.shape[0])
-    in_channels_per_group = int(weight.shape[1])
+    out_channels = int(shape[0])
+    in_channels_per_group = int(shape[1])
     if out_channels % groups != 0:
         raise NotImplementedError(f"convolution out_channels={out_channels} is not divisible by groups={groups}")
     in_channels = in_channels_per_group * groups
-    if groups == 1:
-        dense_weight = weight
+    payload = {"in_channels": in_channels, "out_channels": out_channels}
+    if known[0]:
+        weight = _resolve_tensor(weight)
+        if groups == 1:
+            dense_weight = weight
+        else:
+            out_channels_per_group = out_channels // groups
+            dense_weight = weight.new_zeros((out_channels, in_channels, *weight.shape[2:]))
+            for group in range(groups):
+                out_start = group * out_channels_per_group
+                out_end = out_start + out_channels_per_group
+                in_start = group * in_channels_per_group
+                in_end = in_start + in_channels_per_group
+                dense_weight[out_start:out_end, in_start:in_end] = weight[out_start:out_end]
+        payload.update(_binary_payload('weight', dense_weight))
+    if bias is None:
+        # Word 0 is +0 in every binary format.
+        payload.update(bias_bits=[0] * out_channels,
+                       bias_dtype=_dtype_of(weight) if known[0] else _node_dtype(weight))
     else:
-        out_channels_per_group = out_channels // groups
-        dense_weight = weight.new_zeros((out_channels, in_channels, *weight.shape[2:]))
-        for group in range(groups):
-            out_start = group * out_channels_per_group
-            out_end = out_start + out_channels_per_group
-            in_start = group * in_channels_per_group
-            in_end = in_start + in_channels_per_group
-            dense_weight[out_start:out_end, in_start:in_end] = weight[out_start:out_end]
-    bias = _resolve_tensor(bias) if bias is not None else weight.new_zeros(out_channels)
-    if tuple(bias.shape) != (out_channels,):
-        raise NotImplementedError(f"convolution bias must have shape {(out_channels,)}, got {tuple(bias.shape)}")
-    return {"in_channels": in_channels, "out_channels": out_channels, **_binary_payload('weight', dense_weight), **_binary_payload('bias', bias)}
+        bias_shape = _held_shape(bias)
+        if bias_shape != [out_channels]:
+            raise NotImplementedError(f"convolution bias must have shape {(out_channels,)}, got {tuple(bias_shape)}")
+        if known[1]:
+            payload.update(_binary_payload('bias', _resolve_tensor(bias)))
+    runtime = [value for value, held in zip((weight, bias), known)
+               if value is not None and not held]
+    if runtime:
+        payload['_operands'] = [source, *runtime]
+    return payload
 
 
 def _normalization(kind, source, eps, attributes, shape, **parameters):
     # A layer_norm or batch_norm node, emitted with its parameters by _emit_structure.
-    # An absent weight or bias is one or zero of the computing dtype over `shape`.
+    # An absent weight or bias is one or zero of the computing dtype over `shape`. A weight, bias
+    # or running statistic the capture does not hold, an input or a value computed from one, has
+    # no payload: it is an operand after `source`, in the order gamma, beta, mean, var
+    # (`_artifact._project`). Both take the root of var + eps as it stands, as PyTorch does, so a
+    # negative or NaN sum gives NaN in its row or channel.
     eps = float(eps)
-    if not eps >= 0:
-        raise NotImplementedError('a negative or NaN eps: PyTorch takes the square root of var + eps, which the IR clamps at zero')
+    shape = [int(size) for size in shape]
+    runtime = []
+    for name in ('gamma', 'beta', 'mean', 'var'):
+        value = parameters.get(name)
+        if value is None or _known(value):
+            continue
+        if _held_shape(value) != shape:
+            raise NotImplementedError(f'a {kind} {name} of shape '
+                                      f'{tuple(_held_shape(value))} over {tuple(shape)}')
+        runtime.append(parameters.pop(name))
     parameters = {name: None if value is None else _resolve_tensor(value) for name, value in parameters.items()}
-    var = parameters.get('var')
-    if var is not None and bool((var < 0).any()):
-        raise NotImplementedError('a negative running variance: PyTorch takes the square root of var + eps, which the IR clamps at zero')
-    return {'kind': kind, '_plan': {'op': 'normalization', 'operands': [source],
+    return {'kind': kind, '_plan': {'op': 'normalization', 'operands': [source, *runtime],
             'attributes': {'kind': kind, **attributes}, 'eps': eps,
-            'shape': [int(size) for size in shape], 'parameters': parameters}}
+            'shape': shape, 'parameters': parameters}}
 
 
 def _reshape_kind():
@@ -254,10 +318,16 @@ _REDUCED_FLOATS = ('bfloat16', 'float16')
 def _torch_dtype(dtype):
     if isinstance(dtype, str):
         return getattr(torch, dtype)
+    if dtype['kind'] == 'binary':
+        return getattr(torch, next(name for name in _FLOAT8 if _float8(name) == dtype))
     return getattr(torch, ('int' if dtype['signed'] else 'uint') + str(dtype['width']))
 
 
 _FLOATING = ('float64', 'float32', 'bfloat16', 'float16')
+# The conversions to a node's dtype (`_emit._lower_kind`). torch.export writes Tensor.cpu() and
+# to(device=...) as to.dtype_layout, and to(device, dtype) and to(other) as to.device.
+_CONVERSIONS = (('aten._to_copy.default', 'aten.to.dtype', 'aten.to.dtype_layout',
+                 'aten.to.device'), (), ('to', 'float', 'double', 'half', 'bfloat16'))
 _INT64 = {'kind': 'integer', 'signed': True, 'width': 64}
 _INDEX_DTYPES = (_INT64, {'kind': 'integer', 'signed': True, 'width': 32})
 

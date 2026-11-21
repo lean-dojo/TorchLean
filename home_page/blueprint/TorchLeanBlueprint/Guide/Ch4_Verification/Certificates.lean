@@ -42,6 +42,8 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
+/-! Guide page: verification certificates and their checkers. -/
+
 #doc (Manual) "Verification Certificates" =>
 %%%
 tag := "certificates"
@@ -90,7 +92,7 @@ leaves satisfy the stated prune rule, and the fields fit together. The numeric b
 that produced each `lb` belongs to the external producer unless a separate recompute-and-compare
 certificate path is added.
 
-Here's the concrete path:
+For the bundled leaf artifact, the data path is:
 
 - α,β-CROWN performs branch and bound outside Lean
 - the producer exports or exposes terminal leaf domains
@@ -233,7 +235,7 @@ has dimension two, while `leafLb` and `leafThr` have one coordinate because this
 one property expression. A property's coordinate need not be a raw output class. It may already
 represent a linear combination of logits, such as a chosen class margin.
 
-Here are values on either side of the margin tolerance:
+The tolerance accepts the first pair and rejects the slightly wider second pair:
 
 ```lean (name := marginTol)
 #eval (approxEq (1.0 : ℚ) 1.000001,
@@ -495,7 +497,7 @@ cells.
 For an exported lower bound, the leaf artifact's check is $`lb_i>threshold_i`. A stronger artifact
 would also check that $`lb_i` is a sound lower bound for the graph on the leaf.
 
-There are three progressively stronger designs:
+The checker designs below establish progressively stronger claims:
 
 - *Structural checking:* the artifact is self-consistent and each exported witness passes its
   stated arithmetic test, with the leaves covering the root. This is what `abcrown-leaf` provides.
@@ -520,9 +522,9 @@ than calling every JSON file a proof.
 
 ## IBP On A Two-Layer Graph
 
-We can illustrate the propagation underlying the second level separately from JSON replay. Here's a
-graph small enough to fit on the page: two inputs, one hidden layer of width two, one output. We
-chose the weights so the composition is easy to name, and the input box is the unit square.
+A two-layer affine graph isolates the propagation underlying recompute-and-compare checking. It has
+two inputs, a hidden layer of width two, and one output. The weights make the composition easy to
+name, and the input box is the unit square.
 
 ```lean (name := ctIbp)
 -- Input node, two-coordinate affine layer, and
@@ -676,7 +678,7 @@ premise, because a successful run reads every reference from an earlier node.
 With those hypotheses, at each node where the certificate `Op.certify G P seeds` has a box, the
 pass returns the same box, and it encloses the node's value in the run. A node without a
 certificate box gets no claim, so the theorem is no promise that every node is bounded. Its
-statement is over $`ℝ`. Our demonstration above used `Float`, and applying the real theorem to a
+statement is over $`ℝ`. The `ctGraph` demonstration used `Float`, and applying the real theorem to a
 rounded pass requires an arithmetic bridge. Backends with `LawfulBoundOps` and
 `LawfulNonlinearBoundOps` have the full forward theorem `Op.Directed.encloses_of_run` (the
 rounded-real `FP32` model satisfies these scalar requirements). That theorem covers every operator
@@ -692,7 +694,7 @@ Host `Float` has no such lawful arithmetic instance. Using FloatLib binary32 in 
 fixes the reference binary32 operations for replay, but doesn't by itself provide that bridge. The
 {ref "fp32-soundness"}[floating-point soundness chapter] develops the relevant distinction.
 
-The {ref "certificates"}[leaf artifact described here] carries no graph or transfer evidence, so
+The leaf artifact above carries no graph or transfer evidence, so
 this theorem can't be applied to it directly. The CROWN replay diagnostic has a theorem,
 `CROWNNode.replayAgrees_spec`, establishing local consistency of its binary32 replay, but no real
 enclosure follows from it. The CROWN node verdict `CROWNNode.check` decides with
@@ -708,7 +710,7 @@ of the value lies between the corresponding lower and upper endpoints, but it sa
 how close those endpoints are to the true extrema, which is why the loose `[-4, 4]` result can
 still be a valid enclosure of this affine example.
 
-# Lean Entry Points
+# Checker Signatures And Inputs
 
 Checker signatures expose which checkers receive a network and which inspect only the artifact. The
 leaf entry point takes a file path:
@@ -723,11 +725,11 @@ leaf entry point takes a file path:
 AbCROWNLeaf.check : String → IO Report
 ```
 
-Each checker returns a `Report`: the lines that report the check and the reason for a rejection,
-`none` when the checker accepted the artifact (`Report.ok`). The checkers print nothing, so another
-Lean workflow can inspect the report. The `verify` CLI prints the lines and raises `IO.userError`
-with the reason, so a leaf that fails gives an unsuccessful shell exit. Reading and parsing the file
-may still raise an error before any report exists.
+Each checker returns a `Report`. Its lines describe the checks and the reason for a rejection; the
+reason is `none` when the artifact was accepted (`Report.ok`). The checkers print nothing, so
+another Lean workflow can inspect the report. The `verify` CLI prints the lines and raises
+`IO.userError` with the reason, so a leaf that fails gives an unsuccessful shell exit. Reading and
+parsing the file may still raise an error before any report exists.
 
 ```lean (name := nodeEntries)
 -- Check one host-Float output box, with an optional
@@ -904,7 +906,7 @@ Semantics:
   that leaf at the moment it was pruned or verified.
 - The exported prune test passes iff $`\exists i,\;lb_i>threshold_i`, which is a comparison of
   producer-supplied fields, not proof of a network bound.
-- `witness_idx` and `witness_margin` are an optional convenience witness for the check above:
+- `witness_idx` and `witness_margin` are an optional convenience witness for the prune check:
   $`witness\_margin=lb_{witness\_idx}-threshold_{witness\_idx}`. When `witness_idx` is present, the
   checker validates that exact coordinate and doesn't search for a different witness. When
   `witness_margin` is present, it must accompany the index and agree with the recomputed margin up
@@ -976,8 +978,8 @@ result, while the two-stage chapter shows where an external producer enters that
 # References
 
 For terminal subdomains and pruning, the branch-and-bound framework of {Informal.citet bunel2020}[]
-provides context. The β-CROWN, LiRPA, and proof-carrying-code references above describe the bound
-methods and the producer/checker separation.
+provides context. The cited β-CROWN, LiRPA, and proof-carrying-code work describes the bound methods
+and the producer/checker separation.
 
 The [α,β-CROWN project](https://github.com/Verified-Intelligence/alpha-beta-CROWN) contains the
 producer implementation whose terminal-domain output the exporter reads.

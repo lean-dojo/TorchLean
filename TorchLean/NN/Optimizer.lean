@@ -122,7 +122,7 @@ Initialize once per trainable storage and copy that immutable state into its ali
 Frozen slots get independent placeholder states, so the public shape-indexed list keeps one entry
 per parameter. All alias decisions use the same canonical-slot map as SGD and checkpoints.
 -/
-def initStateList {α : Type} [Storage α] [Context α]
+def initStateList {α : Type} [Storage α]
     {State : (α : Type) → [Storage α] → Shape → Type}
     {ss : List Shape}
     (initOne : {s : Shape} → Tensor α s → State α s)

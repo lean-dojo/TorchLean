@@ -203,7 +203,9 @@ def main (args : List String) : IO Unit := do
   let weights? := options.weights?
   let splitDepth := options.splitDepth
 
-  let rec split1D (x : Float) (eps : Float) (d : Nat)
+  let rec /-- Bounds over `[x - eps, x + eps]`: the hull of the bounds of `evalAt` on
+  `2 ^ d` pieces. -/
+  split1D (x : Float) (eps : Float) (d : Nat)
     (evalAt : Float → Float → IO (Float × Float)) : IO (Float × Float) := do
     match d with
     | 0 => evalAt x eps
@@ -213,7 +215,9 @@ def main (args : List String) : IO Unit := do
       let (l2, h2) ← split1D (x + eps') eps' d' evalAt
       pure (if l1 < l2 then l1 else l2, if h1 > h2 then h1 else h2)
 
-  let rec split2D (x y eps : Float) (d : Nat)
+  let rec /-- Bounds over the square of radius `eps` at `(x, y)`: the hull of the bounds of
+  `evalAt` on `4 ^ d` pieces. -/
+  split2D (x y eps : Float) (d : Nat)
     (evalAt : Float → Float → Float → IO (Float × Float)) : IO (Float × Float) := do
     match d with
     | 0 => evalAt x y eps

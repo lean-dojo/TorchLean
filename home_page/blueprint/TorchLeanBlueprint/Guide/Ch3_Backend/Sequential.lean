@@ -47,26 +47,26 @@ open scoped TorchLean.nn.Sequential
 open Examples.Sequential
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: sequential models, their parameter layout and their pure interpretation. -/
+
 #doc (Manual) "Sequential Models" =>
 %%%
 tag := "sequential"
 file := "Sequential-Models___-One-Architecture___-Several-Meanings"
 %%%
 
-In {ref "spec-layer"}[the specification chapter], we described the MLP by its pure formula:
+The two-layer MLP from {ref "spec-layer"}[the mathematical specification] has the pure formula:
 
 $$`x\mapsto W_2\operatorname{ReLU}(W_1x+b_1)+b_2.`
 
-Suppose we want to count its trainable scalars without running it, or replace the activation
-while keeping the layers on either side. A plain function does not expose a layer list to
-traverse. A sequential model, `nn.Sequential`, stores the architecture as data: a list of layers
-whose type records the input and output shapes, and whose parameter shapes can be read without
-examining tensor elements or running the model. The same value has a pure meaning for theorems and a
-program that the runtimes execute.
+At widths $`2\to3\to1`, its two weight matrices and two biases contain thirteen trainable scalars.
+A plain function computes the formula but does not expose that inventory or the layer boundary at
+which ReLU could be replaced. `nn.Sequential` stores the architecture as typed layer data, so its
+input, output, and parameter shapes can be inspected without reading tensor elements or running the
+model. The same value has a pure meaning for theorems and a program that runtimes execute.
 
-Every Lean block on this page is elaborated when the guide is built, and every printed value below
-is checked against that elaboration. Command transcripts below are recorded runs, separate from
-the page build.
+Lean elaborates every Lean block and checks each printed value during the guide build. Command
+transcripts are recorded runs, separate from elaboration.
 
 # Architecture Representation
 
@@ -105,7 +105,7 @@ provably runs as the typed graph it records, but no theorem relates that graph t
 
 # MLP Definition
 
-I'll use two input features, three hidden features, and one output. In
+The running instance uses two input features, three hidden features, and one output. In
 {src "TorchLeanExamples/DeepDives/Sequential/MLP.lean"}[
 `TorchLeanExamples/DeepDives/Sequential/MLP.lean`], the library MLP composes two linear layers and
 a ReLU:
@@ -193,7 +193,7 @@ shape, and their parameter lists concatenate in construction order:
 
 In the MLP, the first linear layer contributes `[[3, 2], [3]]`, ReLU contributes no parameters, and
 the second linear layer contributes `[[1, 3], [1]]`. A layer can still misread two same-shaped
-slots, as the swapped-bias example below shows.
+slots, as `sqSwapRun` demonstrates.
 
 Change the hidden width of the first linear layer to five while leaving the second layer's input
 width at three:
@@ -242,8 +242,7 @@ print(sum(p.numel() for p in bad.parameters()), "scalars")
 bad(torch.tensor([0.5, 0.8]))
 ```
 
-In the recorded run, PyTorch prints four lines and then raises, with the traceback ending in the
-last line below:
+In the recorded run, PyTorch prints four lines and then raises. The traceback ends with:
 
 ```
 [(3, 2), (3,), (1, 3), (1,)]
@@ -372,8 +371,8 @@ shapes agree. But the function changed anyway.
 
 A sequential model fixes the number and shapes of parameter slots and computes their positional
 order through composition. As the example shows, one obligation remains: the tensors assigned to
-those slots must have the intended roles. A layer's correctness theorem relates the slot order to
-its computation, as the MLP theorem below does.
+those slots must have the intended roles. `MLP.eval_model` relates that slot order to the MLP
+computation.
 
 # The MLP Theorem
 
@@ -403,7 +402,7 @@ formula of the specification chapter:
 The result is quantified over the scalar type with its `Storage` and `Context` instances, all three
 widths, both linear layers, and the input. Every pack of shapes
 `[[hidDim, inDim], [hidDim], [outDim, hidDim], [outDim]]` has this form, so the equality covers
-arbitrary well-shaped parameters, the deterministic initialization used below among them.
+arbitrary well-shaped parameters, including the deterministic `initState` values.
 `MLP.forward` of the specification chapter is the same formula by definition.
 
 The proof in
@@ -516,12 +515,13 @@ before any step is taken. Evaluate the model on its initial parameters:
 forward = [-0.011884]
 ```
 
-The command below reports `mean_loss(before training) = 1.023910`. With one sample and one output,
+The `sequential` transcript reports `mean_loss(before training) = 1.023910`. With one sample and
+one output,
 mean squared error is $`(y-t)^2`, and
 
 $$`(-0.011884-1)^2\approx1.023910.`
 
-Then PyTorch, loaded with the same four tensors printed above and given the same input, agrees to
+PyTorch, loaded with the same four tensors printed by `sqInit` and given the same input, agrees to
 the digits both sides print:
 
 ```
@@ -529,7 +529,7 @@ forward: -0.011884444393217564
 mse vs target 1.0: 1.0239101648330688
 ```
 
-The pure call uses `Float` (binary64), but the trainer transcript below uses `Float32`. Our
+The pure call uses `Float` (binary64), but the `sequential` trainer transcript uses `Float32`. Our
 comparison with PyTorch agrees at the displayed digits, not at a shared precision or at the bit
 level. It checks the wiring of this example. The MLP theorem addresses a different scope: it
 relates the pure model to the formula for every parameter pack and input.
@@ -570,7 +570,7 @@ records it once as shape-indexed SSA data that can be evaluated and differentiat
           IO (TypedGraph α (model.stateShapes ++ [σ]) τ)
 ```
 
-An executable tutorial in the repository trains the MLP above:
+An executable tutorial in the repository trains the same $`2\to3\to1` MLP:
 
 ```terminal
 # Run the sequential example on the CPU.
@@ -593,15 +593,15 @@ mean_loss(after training) = 0.260259
 steps=3 arithmetic=native scalar=Float32 loss=1.023910 -> 0.260259
 ```
 
-The model summary reads the parameter ABI back at runtime: `params=13` is the thirteen scalars of
-the table above, and the per-layer `[[3, 2], [3]]` and `[[1, 3], [1]]` are the two halves of the
-parameter list that `>>>` concatenated. `params` and `state` are equal here because this model has
-no non-trainable state. A model with persistent BatchNorm statistics would show a gap.
+The model summary reads the parameter ABI back at runtime: `params=13` is the thirteen scalars in
+the `MLP Definition` table. The per-layer `[[3, 2], [3]]` and `[[1, 3], [1]]` are the two halves
+of the parameter list that `>>>` concatenated. `params` and `state` are equal here because this
+model has no non-trainable state. A model with persistent BatchNorm statistics would show a gap.
 
 The command takes the standard runtime flags, `--arithmetic native|ieee`, `--device`, and
 `--show-backend` (see {ref "run-configuration"}[Choosing How A Model Runs] for what each target
 means). A three-step trajectory checks the optimizer and the tape as well as the initial forward
-value. To reason about arbitrary parameters and inputs, we need the pure equality above and the
+value. Reasoning about arbitrary parameters and inputs instead uses `MLP.eval_model` and the
 separate evidence connecting the runtime to it.
 
 # A Custom Layer
@@ -723,8 +723,9 @@ by step. One LSTM step returns both the hidden and the cell state:
 ```
 
 Operators are typed the same way, and their types separate the shape questions they answer.
-Matrix multiplication takes the contracted dimension `n` once, shared by both operands, and two
-witnesses that the operands' leading shapes broadcast to the output's batch shape:
+Matrix multiplication takes the contracted dimension `n` once, shared by both operands, two
+witnesses that the operands' leading shapes broadcast to the output's batch shape, and last the
+order in which each dot product is summed, by default the left fold:
 
 ```lean (name := sqMatmul)
 -- Both operands share the contracted dimension `n`, and
@@ -740,9 +741,10 @@ witnesses that the operands' leading shapes broadcast to the output's batch shap
         (rv = true → p = 1) →
           batchA.CanBroadcastTo batch →
             batchB.CanBroadcastTo batch →
-              Op [Port.value (Shape.matmulLeft lv batchA m n),
-                  Port.value (Shape.matmulRight rv batchB n p)]
-                [Port.value (Shape.matmulOut lv rv batch m p)]
+              optParam Tensor.ReduceOrder Tensor.ReduceOrder.leftFold →
+                Op [Port.value (Shape.matmulLeft lv batchA m n),
+                    Port.value (Shape.matmulRight rv batchB n p)]
+                  [Port.value (Shape.matmulOut lv rv batch m p)]
 ```
 
 Each scalar dot product is meaningful only if the contracted dimension matches, and the broadcast
@@ -796,8 +798,8 @@ determines the head's weight shape, and the head's parameters follow the four fe
 ```
 
 Annotating `sqCnnFeatures` with its type asks Lean to check every intermediate shape, so an
-inconsistent annotation gives the same kind of compile error as the width typo above. An identity
-feature model gives a classifier on the flattened input:
+inconsistent annotation gives the same kind of compile error as the `sqBroken` width typo. An
+identity feature model gives a classifier on the flattened input:
 
 ```lean (name := sqClassifierIdentity)
 example : nn.Sequential [2, 3] [4] :=
@@ -819,7 +821,7 @@ argument the types can't supply on their own:
 
 Steps one to three are code, and {ref "external-tools-and-ffi"}[the boundary chapter] shows the
 parser and its checks. Step four is a modeling assumption about someone else's file format, and the
-swapped-bias experiment above shows what it looks like when that assumption is wrong: all keys
+`sqSwapRun` swapped-bias experiment shows what it looks like when that assumption is wrong: all keys
 match, all shapes agree, the function is different. The import contract must record the mapping,
 because the architecture's shape constraints can't authenticate training provenance.
 
@@ -830,9 +832,9 @@ pack in that theorem.
 
 # Sequential Models And The Backend IR
 
-Sequential model syntax and the backend IR are the two ends of the pipeline drawn at the start of
-this page (between them, the typed graph records one program for repeated evaluation and
-differentiation). They carry different information.
+Sequential model syntax and the backend IR occupy the two ends of the lowering pipeline. Between
+them, the typed graph records one program for repeated evaluation and differentiation. The two
+representations carry different information.
 
 A sequential model is typed layer syntax. A model that connects incompatible shapes does not
 elaborate, and each layer's program is both its pure meaning and what the runtimes execute.
@@ -849,7 +851,7 @@ so a validator (`IR.Graph.check`) must check them.
 
 For the operators it supports, the verification lowering records a model's forward program as IR,
 and it refuses the others. Semantic theorems for selected paths state which meaning is preserved.
-{ref "graphs-and-ir"}[The next chapter] builds and inspects that lower-level representation
+{ref "graphs-and-ir"}[Graph IR] builds and inspects that lower-level representation
 directly.
 
 # Further Architecture Checks
@@ -864,8 +866,8 @@ interpretation, and semantic preservation.
    input from itself) and prove its pure meaning by `rfl`. Then evaluate it at `Float` and at `ℚ`.
 3. Evaluate `MLP.model 3 3 3` with the two weight matrices exchanged instead of the biases, and
    predict the output before running it.
-4. Run the tutorial with `--arithmetic ieee` and compare the two losses against the transcript
-   above. A difference here is a floating-point story, and {ref "floats"}[the floating-point
+4. Run the tutorial with `--arithmetic ieee` and compare the two losses against the `sequential`
+   transcript. A difference here is a floating-point story, and {ref "floats"}[the floating-point
    chapter] is where that story is told.
 5. Change a pooling stride in `sqCnnFeatures` from `[2, 2]` to `[3, 3]` and update the following
    spatial annotations. Inspect the head's weight shape with `stateShapes` before annotating the

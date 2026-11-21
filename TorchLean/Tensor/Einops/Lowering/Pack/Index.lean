@@ -372,6 +372,8 @@ theorem unpackDirect_packDirect
         (packDirect starShape trailingShape
           packedAxisLength offset outputIndex) =
       outputIndex := by
+  -- Read `outputIndex` as the digits `trailing`, `position` and `leading`; the segment index
+  -- is `position - offset`.
   let trailingSize := Shape.size trailingShape
   let segmentLength := Shape.size starShape
   let trailing := outputIndex % trailingSize
@@ -405,6 +407,7 @@ theorem unpackDirect_packDirect
       _ = trailing +
           trailingSize * (position + packedAxisLength * leading) := by
         rw [hOuter]
+  -- `packDirect` encodes `trailing`, `localIndex` and `leading`, and decoding gives them back.
   have hInput :
       packDirect starShape trailingShape
           packedAxisLength offset outputIndex =
@@ -515,6 +518,7 @@ theorem unpackDirect_eq (checked : Pack)
         inputIndex.val =
       unpackIndex checked component inputIndex := by
   dsimp only [unpackDirect, unpackIndex]
+  -- Split the component's coordinate into its leading, packed and trailing parts.
   let coordinate := Coord.unlinearize inputIndex
   let segment := checked.segmentEquiv component
   let segmentCoordinate :=
@@ -536,6 +540,7 @@ theorem unpackDirect_eq (checked : Pack)
   have hSegmentLength :
       segmentLength = Shape.size (checked.starShape component) := by
     exact checked.segmentLengths_segmentEquiv component
+  -- The flat input index in mixed radix: trailing, then packed, then leading digits.
   have hInputIndex :
       inputIndex.val =
         trailingIndex +
@@ -578,6 +583,7 @@ theorem unpackDirect_eq (checked : Pack)
         rw [hCons, Shape.size_cons]
         dsimp only [leadingIndex, localIndex, trailingIndex, trailingSize]
         ring
+  -- So `%` and `/` by the trailing and packed sizes recover the three digits.
   have hMod :
       inputIndex.val % trailingSize = trailingIndex := by
     rw [hInputIndex, MixedRadix.mod_encode _ _ _ hTrailing]

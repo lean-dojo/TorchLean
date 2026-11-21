@@ -40,30 +40,24 @@ open Verso.Genre.Manual.InlineLean
 open TorchLean Trainer.Objective Trainer Arithmetic
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: one training update of the running MLP, step by step. -/
+
 #doc (Manual) "Training" =>
 %%%
 tag := "training-from-scratch"
 file := "Training___-One-State-Transition-At-A-Time"
 %%%
 
-Follow one update of the running $`2\to8\to1` MLP. A sample enters the current model, the objective
-reduces its prediction to a scalar, and reverse mode produces one gradient tensor for each
-trainable state tensor. Then the optimizer consumes those gradients together with its own memory
-and installs the next parameters. With Adam, saving those parameters is enough to recover a
-prediction, but recovering the next update also requires the optimizer's moments and step counter.
-
-I'll first train the model, then open the loop to inspect what changes at each step. Named Lean
-blocks and their outputs are checked during the guide build. Command-line and Python transcripts
-are separately recorded runs, with commands supplied for reproduction.
+A $`2\to8\to1` ReLU network approximates a function from two numbers to one. Its training data is a
+$`5\times5` grid in $`[-1,1]^2`, and the held-out input $`x=(0.25,-0.75)` lies between
+the grid lines where the target is $`0.2`. The untrained network predicts `-0.047640` there. After
+200 Adam updates, it predicts `0.189033`.
 
 # MLP Training
 
-From the repository root, train the model on the CPU for 200 updates. The fixed seed makes this
-run reproducible under the same arithmetic and device:
+Run the two-layer model on the CPU with seed 2026.
 
 ```terminal
-# Fix the seed and update count for the MLP trace
-# interpreted below.
 scripts/lake.sh exe torchlean quickstart_mlp \
   --device cpu --steps 200 --seed 2026
 ```
@@ -87,40 +81,17 @@ steps=200 arithmetic=native scalar=Float32 loss=0.629263 -> 0.002308
 trained(heldout) = [0.189033]
 ```
 
-The source is
-{src "TorchLeanExamples/Quickstart/MLP.lean"}[`MLP.lean`].
-Its program structure is:
-
-```
--- Construction, data, and per-run options meet at the call
--- that returns the trained snapshot.
-model builder
-  + trainer configuration
-  + dataset
-  + train options
-  -> trained result
-```
-
-The log separates individual training losses from the mean loss over the dataset. Start with
-these entries:
-
-- `dataset size = 25` is the number of items the trainer got after materializing the dataset, not
-  the number of rows in a file (the {ref "datasets-loaders"}[data chapter] shows where that number
-  comes from).
-- `mean_loss(before training)` and `mean_loss(after training)` are the only two full-dataset
-  measurements in the run, which the trainer takes once each, at the boundaries.
-- Each `step k: loss=...` line counts completed updates and reports the single-sample loss measured
-  on the tape *before* update `k`. With this deterministic 25-sample dataset, logging every 25
-  updates measures the same final sample on successive passes, at different parameter points. Its
-  loss rises from `0.921334` at step 25 to `1.020417` at step 50, so even this same-sample sequence
-  isn't monotone. That increase alone doesn't establish that training diverged: the full-dataset
-  mean fell from `0.629263` to `0.002308`.
-- `arithmetic=native scalar=Float32` records which of TorchLean's executable semantics ran. A loss
-  curve without that label is ambiguous, and we say why below.
-- `untrained(heldout)` and `trained(heldout)` are the same held-out input `(0.25, -0.75)` before
-  and after: `-0.047640` moves to `0.189033` against a target of `0.200000`.
+Each update uses one point from the grid. The trainer visits the 25 points in a fixed order, so
+steps 25, 50, and 75 reach the last grid point on successive passes. The loss printed on those
+lines is measured before that update. It rises from `0.921334` to `1.020417` after the first pass,
+even though the mean loss over the whole grid eventually falls from `0.629263` to `0.002308`. The
+last line evaluates $`x=(0.25,-0.75)`, which is not one of the training points. The complete program
+is in {src "TorchLeanExamples/Quickstart/MLP.lean"}[`MLP.lean`].
 
 # Model Architecture
+
+The input has two coordinates and the output has one value. Between them sits a hidden layer with
+eight ReLU units. Those dimensions determine the two weight matrices before we choose their values.
 
 ```lean (name := tfModelDef)
 -- The hidden ReLU separates two affine maps with a shared
@@ -133,7 +104,8 @@ def tfModel : nn.Builder (nn.Sequential [2] [1]) :=
   ]
 ```
 
-Lean reports both the seeded construction stage and the model's input/output shapes:
+`#check` shows that initialization still needs a seed, while the input and output shapes are already
+fixed:
 
 ```lean (name := tfModelType)
 -- The builder type exposes the model boundary before
@@ -145,30 +117,27 @@ Lean reports both the seeded construction stage and the model's input/output sha
 tfModel : nn.Builder (nn.Sequential [2] [1])
 ```
 
-`nn.Builder` waits for a seed to construct the `nn.Sequential [2] [1]` model. Its architecture is
-already fixed, while the loss, optimizer, and device remain separate choices.
+`nn.Builder` waits for a seed before initializing the weights. The model's outer type records only
+the input and output shapes, `[2]` and `[1]`. The hidden width still fixes the internal weight
+shapes: `[8, 2]` for the first layer and `[1, 8]` for the second.
 
-The intermediate width eight belongs to the architecture even though only `[2]` and `[1]` appear at
-the outer boundary. It determines both the number of hidden activations for each sample and the
-shapes of the two weight matrices, whose values the builder doesn't choose until a seed is
-supplied. That delay lets the same architecture be initialized repeatedly for the seed comparison
-below, without rewriting its forward computation or changing what counts as a well-shaped input.
+# Loss And Optimizer
 
-# Objective And Optimizer Configuration
+For this regression problem, the loss is the squared difference between the prediction and the
+target. Adam {Informal.citet adam2015}[] turns its gradients into parameter updates. We use a
+learning rate of `0.03`. Passing seed 2026 here reproduces the initial weights used by the command.
 
 ```lean (name := tfTrainerDef)
--- Bind the objective, Adam configuration, arithmetic, and
--- seed to one reusable trainer.
+-- Use the same loss, optimizer, and initialization seed as
+-- the command-line run above.
 def tfTrainer (seed : Nat) : Trainer [2] [1] :=
   Trainer.create tfModel
     { objective := mse
       optimizer := optim.adam { lr := 0.03 }
-      arithmetic := native
       seed := seed }
 ```
 
-`Trainer.create` runs the seeded builder and stores persistent choices. It still doesn't consume
-data or update a parameter. Its summary shows the initialized model's layer shapes and state layout:
+The summary counts the parameters in each layer:
 
 ```lean (name := tfSummaryRun)
 -- The summary counts trainable parameters and all
@@ -184,10 +153,8 @@ Sequential: [2] -> [1], layers=3, params=33, state=33
   [2] Linear(8, 1): [8] -> [1] params=9, state=9 [[1, 8], [1]]
 ```
 
-Thirty three numbers: $`8\times2` weights and $`8` biases in the first affine layer, then
-$`1\times8` weights and $`1` bias in the second. `params` counts trainable scalars and `state`
-counts all model-state scalars, so a model with normalization buffers would show the two
-numbers disagreeing.
+The first affine layer has $`8\times2` weights and $`8` biases. The second has $`1\times8` weights
+and one bias, for 33 trainable numbers altogether.
 
 For regression, the default objective is mean-squared error. For a prediction and target with
 $`n` entries, where $`n>0`, the loss is:
@@ -199,52 +166,14 @@ L(\theta;x,y)
 \left(F_\theta(x)_i-y_i\right)^2.
 `
 
-Changing `mse` to `oneHotCrossEntropy axis` changes the objective and target convention without
-changing the architecture. Its zero-based `axis` may name any output dimension, and opening the
-trainer validates the objective and rejects an axis outside the output shape. A custom objective
-supplies a checked scalar loss program.
-
 Here the output has shape `[1]`, so the mean contains one squared residual. In the batched version,
 `[5, 1]` contains five residuals and the same objective averages all five. This reduction is part of
-the loss definition: it fixes the scale of the gradients passed to Adam. Changing a sum to a mean
-would therefore change more than the number printed in the log, even if the model and target tensors
-were otherwise identical.
-
-The optimizer can print its configuration in the syntax you would use to construct it:
-
-```lean (name := tfOptim)
--- Print the Adam configuration, including defaults omitted
--- from the constructor call.
-#eval (optim.adam { lr := 0.03 }).describe
-```
-
-```leanOutput tfOptim (whitespace := lax)
-"optim.adam { lr := 2.9999999999999999e-2,
-  beta1 := 9.0000000000000002e-1,
-  beta2 := 9.9900000000000000e-1,
-  epsilon := 1.0000000000000000e-8 }"
-```
-
-Its moment coefficients and epsilon match PyTorch's defaults. In PyTorch, the corresponding
-configuration prints:
-
-```
-lr, betas, eps = 0.03 (0.9, 0.999) 1e-08
-```
-
-FloatLib supplies the scientific decimal text. `describe` checks it with Lean's literal decoder
-and compares the reconstructed binary64 bits before returning it. When the check fails, it emits
-a `Float.ofBits` expression instead. This protects small stabilizers and coefficients near one
-from changing when their descriptions are copied.
-
-Adam is {Informal.citet adam2015}[], while the single-sample step underneath it is older than deep
-learning and goes back to {Informal.citet robbins1951}[].
+the loss definition because it fixes the scale of the gradients passed to Adam.
 
 # Initial Parameter Values
 
-Before any data arrives, building the model has fixed all 33 parameter values, and the first loss
-depends on these values together with the data, objective, mode, and arithmetic. Reading the
-initial state separates those choices from the later optimizer updates:
+Seed 2026 fixes all 33 initial parameter values. Reading them before training makes it clear which
+numbers came from initialization and which ones Adam later changed:
 
 ```lean (name := tfInitDef)
 -- Name the four state shapes so each initialized weight or
@@ -385,8 +314,8 @@ initialization, optimizer, or update grouping while using the same samples.
 
 # Training And Results
 
-A complete run is one `IO` action. This checked example trains the model and evaluates the same
-held-out input used by the command-line program:
+Here is the Lean call behind the command-line run. It trains for 200 updates, then evaluates the
+same point between the grid lines:
 
 ```lean (name := tfFullRun)
 -- The returned result evaluates held-out data using the
@@ -412,35 +341,10 @@ steps=200 arithmetic=native scalar=Float32 loss=0.629263 -> 0.002308
 trained(heldout) = [0.189033]
 ```
 
-The initial mean `0.629263`, the shared logged steps, the final mean `0.002308`, and the prediction
-`[0.189033]` agree with the command-line transcript. Only the logging interval changed, from 25
-updates to 50. The checked block recomputes these values when the page builds.
-
-The returned `Trainer.Result` retains:
-
-- final parameters and buffers, readable as `Float` tensors through `trained.state` and writable to
-  a checkpoint file through `trained.save path`
-- the completed step count and numeric before/after losses
-- prediction and verification closures.
-
-`Trainer.load trainer path data` restores a saved result for the same trainer. It evaluates `data`
-once so that the restored report carries the mean loss of the restored parameters instead of a
-copied number.
-
-`trained.report.loss.before` and `trained.report.loss.after` are ordinary host `Float` values,
-while the model still executes with the arithmetic selected by the trainer, including `ieee`.
-`session.loss stream (batch := true)` converts per-item losses to host `Float` before averaging,
-and the result stores those before/after means. So callers can compare, serialize, or plot losses
-without parsing printed backend values.
-
-Prediction accepts Float tensors and converts them into the arithmetic representation selected by
-the trainer. It doesn't rebuild or reinitialize the model.
-
-There is also an ownership boundary at the result. `Session.finish` freezes the model state used by
-the result's prediction and verification closures. Further steps or a later checkpoint load on the
-live session cannot silently change an already returned result. This matters when keeping several
-training milestones in memory: a reported loss and the model saved beside it must continue to refer
-to the same parameter snapshot while the experiment proceeds.
+The checked block reproduces the mean losses and final prediction from the transcript. Its logging
+interval is 50 updates, so it prints every second pass over the grid. `train` returns the final
+parameters together with the two mean losses. Calling `trained.predict` uses those parameters
+directly.
 
 ## Updated Parameters
 
@@ -887,30 +791,6 @@ scripts/lake.sh -Kcuda=true exe torchlean quickstart_mlp \
 {ref "backend-selection"}[backend chapter] explains the profile, provider, VJP, and evidence fields
 in that report).
 
-# Training Arithmetic
-
-The common executable selections are:
-
-```
-# These alternative flags choose the scalar arithmetic used
-# by a training run.
---arithmetic native
---arithmetic ieee
-```
-
-Native CPU arithmetic uses Lean's builtin `Float32` operations, while `ieee` uses FloatLib
-binary32, including its finite and exceptional cases. In {ref "run-configuration"}[Choosing How A
-Model Runs], checked comparisons run the same training problem through both implementations.
-Agreement in displayed losses alone wouldn't establish agreement in their bits. Proof-level `Real`
-and rounded-real `FP32` aren't executable trainer choices. `FP32` has binary32 precision and
-gradual-underflow parameters, but no upper exponent bound, NaN, infinity, or signed zero, so bridge
-theorems require finite and no-overflow hypotheses when relating it to FloatLib binary32. Those
-boundaries are drawn in {ref "floats"}[the floating-point chapter].
-
-A loss curve without its arithmetic semantics is incomplete. Even with the same architecture and
-seed, a run may round differently in native binary32, the bit-level reference, or a LibTorch
-operation with a different reduction order.
-
 # Model And Optimizer Checkpoints
 
 A checkpoint stores every scalar as its exact bits in one binary format, for `Float32`, `Float`,
@@ -1080,12 +960,13 @@ moments will affect the next update of the loaded parameters. Open a fresh sessi
 experiment is a fresh optimizer run from saved weights. Saving and loading model state alone does
 not decide that policy for the caller.
 
-## Keeping the selected precision through training
+## Training In Another Precision
 
-The session above accepts `Float` samples and runs in binary32. To keep a configured FloatLib
-scalar through the whole loop, open a typed session and supply its initial state yourself. I'll use
-$`a = 1 + 2^{-100}` and the model $`x \mapsto ax+a`: converting its parameters through binary64
-would erase the increment before training began.
+The quickstart MLP uses `Float32`. A typed CPU session can instead keep any configured FloatLib
+binary
+format through its parameters, predictions, loss, gradients, and optimizer state. For a concrete
+example, take $`a = 1 + 2^{-100}` and the model $`x \mapsto ax+a`. Binary64 would round $`a` to one
+before training starts, while binary128 retains it.
 
 For input two and target zero, mean squared error is $`(2w+b)^2`. At $`w=b=a`, its parameter
 gradients are $`12a` and $`6a`. A step of size $`1/16` therefore leaves
@@ -1139,7 +1020,7 @@ coefficient that itself needs extra precision, use `nn.sgdStep` with typed param
 initialization starts with the model's stored `Float` values, even in a typed session. A typed
 session doesn't supply a verifier or a CUDA provider.
 
-## Learning-rate schedules
+## Learning-Rate Schedules
 
 `Trainer.Scheduler.Config` provides constant rates, step and exponential decay, linear warm-up,
 cosine decay, cyclic triangles, one-cycle schedules, and warm-up followed by cosine decay. Here
@@ -1305,7 +1186,10 @@ initialization without updates, use a session evaluation as shown next.
 
 # Training Experiments
 
-## Initialization only
+Keep the held-out point fixed and change one thing about the training run at a time.
+That lets us see what came from initialization, the optimizer, or the choice of samples.
+
+## Initialization Only
 
 You do not need a zero-step run for this, because the quickstart already evaluates the untrained
 model on the held-out point and prints both:
@@ -1330,7 +1214,7 @@ evaluate the dataset before any step:
 initial loss = 0.629263
 ```
 
-## Seed sensitivity
+## Seed Sensitivity
 
 Changing the seed changes the initialized weights, while the biases keep their zero initialization.
 Because the dataset is a deterministic grid consumed in order, this experiment isolates
@@ -1367,7 +1251,7 @@ initialization, but identifying which ReLU activation patterns or parameter upda
 spread would require inspecting those runs. Comparing optimizers across several seeds gives a fuller
 account than selecting one final loss.
 
-## Optimizer sensitivity
+## Optimizer Sensitivity
 
 Keep the model, seed, dataset, and step count fixed and change only the optimizer:
 
@@ -1398,42 +1282,15 @@ mean_loss(before training) = 0.629263
 mean_loss(after training) = 0.056843
 ```
 
-The initial losses agree at the displayed precision, which is the control we wanted: the two runs
-start from the same
-parameters and see the same samples in the same order. After 100 updates Adam ends lower, at
+Both runs start from the same parameters and visit the same samples in the same order. After 100
+updates Adam ends lower, at
 `0.043302` against `0.056843`. PyTorch, running the same recipe from its own initialization,
 reports the same ordering with different magnitudes: `0.510072 -> 0.013152` for Adam against
-`0.510072 -> 0.049435` for SGD. Two
-frameworks, two initializations, and lower final loss for Adam after this fixed number of updates.
-This does not compare wall-clock speed or equally tuned optimizers.
+`0.510072 -> 0.049435` for SGD. This comparison fixes the update count. It does not compare
+wall-clock time or tune the two optimizers separately.
 
-## Backend report
-
-Add `--show-backend`. On CPU, inspect the reference capsules. On a CUDA build, inspect which native
-capsules are selected and whether any trusted external provider appears.
-
-# Training Evidence And Limits
-
-Each loss in the log comes from a particular traversal of this pipeline:
-
-```
--- The log records this configured execution; each arrow
--- still has its own semantic contract.
-data -> forward -> loss -> reverse pass -> optimizer -> parameters
-```
-
-Our seed experiment shows sensitivity over a fixed number of updates but leaves asymptotic
-convergence open. In the six-step session we measure visited-sample and dataset losses, with no
-unseen-data evaluation. To ask about convergence for all initializations or robustness throughout
-an input region, we need the statements and hypotheses developed in {ref "optimization-theory"}[the
-optimization chapter] and {ref "certificates"}[the certificate chapters].
-
-Saved parameters describe the resulting model, while backend audit rows describe the selected
-execution plan. Neither alone proves which native operations ran or their correctness.
-
-For a useful comparison, decide which quantity is being held fixed before interpreting a smaller
-loss. The accumulation example fixes update count but changes samples consumed, the optimizer
-example fixes samples and updates but changes the rule and its memory, and the seed example changes
-the starting parameters. Their logs answer those particular comparisons. None supplies a timing
-measurement, and a displayed held-out prediction is one evaluation point, not an estimate of
-performance over a held-out population.
+These runs describe this model on this grid for a fixed number of updates. The point
+$`(0.25,-0.75)` gives us one check between grid lines. Claims about convergence from every
+initialization or behavior throughout an input region need the hypotheses developed in
+{ref "optimization-theory"}[the optimization chapter] and {ref "certificates"}[the certificate
+chapters].

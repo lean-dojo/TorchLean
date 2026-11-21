@@ -2,8 +2,9 @@
 title: Examples
 ---
 
-Let's train a model, compute some gradients, or check a numerical claim in Lean.
-Pick an example below for the code and commands.
+I use these examples to try TorchLean on complete calculations rather than isolated API calls.
+Pick a model to train, a computation to bring in from Python, or a numerical claim to check in
+Lean. Each walkthrough links back to the source and spells out what its checks establish.
 
 - [Custom Tensor Computations]({{ '/examples/custom-computations/' | relative_url }}) Let's square
   a tensor with an ordinary Lean function, then choose CPU or GPU when we run it. Try the CPU

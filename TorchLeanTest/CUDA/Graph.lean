@@ -35,9 +35,9 @@ and an input without entries whose padding makes the output nonempty multiplies 
 by the weights. Rank-2 and rank-3 convolutions with per-axis geometry and the symmetric one-sample
 convolution match the CPU rule in value and pullbacks, and the eager API's convolution on a CUDA
 session matches it on a CPU session. Malformed native metadata is an IO error. Batch normalization
-with running statistics (a negative variance clamped to zero, a NaN variance kept) and `detach` run
-in graphs and on the tape, where `x + detach x` sends the gradient through the first use only.
-Every value compared with a hand-computed one or with the CPU rule is exact in binary32.
+with running statistics (NaN where the variance is NaN or below `-epsilon`, as in torch) and
+`detach` run in graphs and on the tape, where `x + detach x` sends the gradient through the first
+use only. Every value compared with a hand-computed one or with the CPU rule is exact in binary32.
 
 The runner reads an index constant (a gather), a value buffer at a frozen port (a scaled product of
 a vector and a matrix), refuses a graph with a later node without an entry or a later missing input
@@ -546,19 +546,19 @@ def checkConvMalformed : IO Unit := do
 
 /-- Running mean of the three channels along axis 1. -/
 def runningMean : Array Float := #[1, -1, 0]
-/-- Running variance of the three channels: after the clamp of `-5` at zero, `var + 1` is
-`4, 1, 16`, so every quotient is exact. -/
-def runningVar : Array Float := #[3, -5, 15]
+/-- Running variance of the three channels: `var + 1` is `4, 1, 16`, so every quotient is exact. -/
+def runningVar : Array Float := #[3, 0, 15]
 /-- Scale of the three channels. -/
 def bnGamma : Array Float := #[2, 1, 3]
 /-- Bias of the three channels. -/
 def bnBeta : Array Float := #[0.5, 0, -1]
-/-- The denominators `√(max var 0 + 1)` of the three channels, with epsilon `1`. -/
+/-- The denominators `√(var + 1)` of the three channels, with epsilon `1`. -/
 def bnDenominator : Array Float := #[2, 1, 4]
 
 /-- Batch normalization of `[2, 3]` along axis 1 with these running statistics and epsilon `1`,
 in a graph and on the tape, against the hand-computed value and input, scale and bias pullbacks.
-A NaN running variance gives NaN in its channel and leaves the other channels unchanged. -/
+A NaN running variance, and one below `-1`, give NaN in their channels and leave the other channel
+unchanged. -/
 def checkBatchNormRunning : IO Unit := do
   let x : Array Float := #[3, 4, 8, -1, -3, -4]
   let normalized := Array.ofFn fun i : Fin 6 =>
@@ -570,7 +570,7 @@ def checkBatchNormRunning : IO Unit := do
         | 1 => some ⟨.value [3], Tensor.from (#[2, 1, 3] : Array Float32)⟩
         | 2 => some ⟨.value [3], Tensor.from (#[0.5, 0, -1] : Array Float32)⟩
         | 3 => some ⟨.frozen [3], Tensor.from (#[1, -1, 0] : Array Float32)⟩
-        | 4 => some ⟨.frozen [3], Tensor.from (#[3, -5, 15] : Array Float32)⟩
+        | 4 => some ⟨.frozen [3], Tensor.from (#[3, 0, 15] : Array Float32)⟩
         | 5 => some ⟨.frozen [], Tensor.scalar 1⟩
         | _ => none }
   let (b, r) := ({} : IR.Graph.Builder).input 0 (.value [2, 3])
@@ -590,7 +590,7 @@ def checkBatchNormRunning : IO Unit := do
   let (t, result) ← LibTorch.Tape.apply t "batch_norm"
     (.batchNormRunning (s := [2, 3]) ⟨1, by decide⟩)
     (xId, gammaId, betaId, (Tensor.from (#[1, -1, 0] : Array Float) : Tensor Float [3]),
-      (Tensor.from (#[3, -5, 15] : Array Float) : Tensor Float [3]), Tensor.scalar 1, ())
+      (Tensor.from (#[3, 0, 15] : Array Float) : Tensor Float [3]), Tensor.scalar 1, ())
     (pure .float32)
   let (y, ()) ← IO.ofExcept result
   let some value := t.getValue? y | throw <| IO.userError "tape: no batch_norm node"
@@ -609,7 +609,7 @@ def checkBatchNormRunning : IO Unit := do
   assertFloatArrayEq "tape: batch_norm scale pullback" (← read gammaId "scale")
     (FloatArray.mk dGamma)
   assertFloatArrayEq "tape: batch_norm bias pullback" (← read betaId "bias") (FloatArray.mk dBeta)
-  -- A NaN running variance stays NaN through both clamps.
+  -- The root of a NaN and of `-5 + 1` is NaN.
   let (t, result) ← LibTorch.Tape.apply t "batch_norm"
     (.batchNormRunning (s := [2, 3]) ⟨1, by decide⟩)
     (xId, gammaId, betaId, (Tensor.from (#[1, -1, 0] : Array Float) : Tensor Float [3]),
@@ -618,8 +618,8 @@ def checkBatchNormRunning : IO Unit := do
   let (y, ()) ← IO.ofExcept result
   let some value := t.getValue? y | throw <| IO.userError "tape: no NaN batch_norm node"
   let got ← LibTorch.Buffer.toFloatArrayIO value.buf
-  unless (got.get! 0).isNaN && (got.get! 3).isNaN &&
-      [1, 2, 4, 5].all (fun i => got.get! i == expected[i]!) do
+  unless [0, 1, 3, 4].all (fun i => (got.get! i).isNaN) &&
+      [2, 5].all (fun i => got.get! i == expected[i]!) do
     throw <| IO.userError s!"tape: a NaN running variance gave {got}"
 
 /-- `detach` returns its parent's values in a graph, and on the tape its node borrows the parent's

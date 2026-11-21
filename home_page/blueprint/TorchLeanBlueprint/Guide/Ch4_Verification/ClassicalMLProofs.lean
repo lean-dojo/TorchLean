@@ -26,20 +26,20 @@ open TorchLean (Context)
 -- message exactly as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: structural proofs about models, such as Hopfield energy and ReLU identities. -/
+
 #doc (Manual) "Structural Model Proofs" =>
 %%%
 tag := "classical-ml-proofs"
 %%%
 
-Some neural-network properties are independent of any particular GPU kernel or training loop.
-Hopfield networks have an energy argument. ReLU networks have exact algebraic identities that make
-larger approximation constructions possible. Recurrent state-space models are causal because their
-output at time `t` is computed before future inputs are seen. These are structural facts about the
-mathematical models.
+Three examples isolate properties determined by model equations rather than by a particular GPU
+kernel or training loop. Asynchronous Hopfield updates admit an energy argument. ReLU satisfies
+exact algebraic identities used in larger approximation constructions. A recurrent state-space
+model is causal because it emits output at time `t` before seeing future inputs.
 
-We can study these properties in TorchLean's mathematical specifications. To carry a result over to
-a CUDA implementation, we'd also need to connect that implementation to the specification the
-theorem uses.
+The theorems concern the mathematical specifications. Carrying any result to a CUDA implementation
+also requires a correspondence between that implementation and the specification in the theorem.
 
 # Hopfield Dynamics
 
@@ -189,7 +189,7 @@ The states before and after updating neuron `1`:
 [true, true]
 ```
 
-And their energies:
+The corresponding energies are:
 
 ```lean (name := hopfieldEnergy)
 -- Compute the two rational energies exactly, before and
@@ -744,8 +744,8 @@ def antiNet : Params Rat 2 where
   W := fun i j => if i = j then 0 else -1
   θ := fun _ => 0
 
-/-- Every neuron reads the *old* state. This is the update
-the theorems on this page do not cover. -/
+/-- Every neuron reads the *old* state. The cyclic
+asynchronous theorems do not cover this update. -/
 def syncStep (p : Params Rat 2) (s : State 2) : State 2 :=
   fun u => decide (p.θ u ≤ net p s u)
 
@@ -811,8 +811,8 @@ that the other hinge is zero. In the second, the roles reverse and subtracting `
 So the proof covers zero without an extra exceptional case. Each rewrite names the order fact that
 permits selecting an argument of `max`.
 
-In `Activation.relu u - Activation.relu (-u)` one of the two operands is always the exact
-zero, so for finite IEEE values the result has the same numerical value, including at zero. Bitwise
+In `Activation.relu u - Activation.relu (-u)` one of the two operands is always exact zero, so for
+finite IEEE values the result has the same numerical value, including at zero. Bitwise
 signed-zero preservation is a separate question:
 
 ```lean (name := reluFloat)
@@ -875,10 +875,10 @@ layers whose types use that dimension. Only after those choices does the stateme
 inputs in `boxN 2 M`. A proof cannot satisfy it by selecting a separate network for each input
 point. The same returned pair of layers must meet the error budget throughout the entire box.
 
-`relu_mul_box` uses ridge-lifting and affine-combination lemmas inside a
-uniform approximation argument.
-For its construction, quantitative hypotheses, and the distinction between existence, checkpoint
-verification, and finite-precision execution, return to *Approximation Theory*.
+`relu_mul_box` uses ridge-lifting and affine-combination lemmas inside a uniform approximation
+argument. Its construction, quantitative hypotheses, and the distinction between existence,
+checkpoint verification, and finite-precision execution are developed in
+{ref "approximation-theory"}[*Approximation Theory*].
 
 # Causality In State-Space Models
 
@@ -1095,7 +1095,7 @@ equality of prefixes, and prefix equality survives rounding: whatever the arithm
 the first `xs.size` outputs, appending `ys` can't reach back and change it. That's why this theorem
 is polymorphic in the scalar while the approximation results are not.
 
-# Proof Boundary
+# What Each Structural Theorem Establishes
 
 These three developments establish different kinds of structure:
 

@@ -158,16 +158,19 @@ def fragment? (op : PointwiseOp) (s : Shape) : Option Fragment :=
   | .select => some [(ne, [.operand 0, .zero]), (select, [.node 0, .operand 1, .operand 2])]
   | .clamp => some [(⟨_, _, Op.max (s := s)⟩, [.operand 0, .operand 1]),
       (⟨_, _, Op.min (s := s)⟩, [.node 0, .operand 2])]
+  -- `x + (value * a) * b`, `value` being the last operand.
   | .addcmul => some [(⟨_, _, Op.mul (s := s)⟩, [.operand 3, .operand 1]),
       (⟨_, _, Op.mul (s := s)⟩, [.node 0, .operand 2]),
       (⟨_, _, Op.add (s := s)⟩, [.operand 0, .node 1])]
   | .addcdiv => some [(⟨_, _, Op.div (s := s)⟩, [.operand 1, .operand 2]),
       (⟨_, _, Op.mul (s := s)⟩, [.operand 3, .node 0]),
       (⟨_, _, Op.add (s := s)⟩, [.operand 0, .node 1])]
+  -- For operands `x, nan, posinf, neginf`: an infinity by its sign, then a NaN, else `x`.
   | .nanToNum => some [(⟨_, _, Op.isNaN (s := s)⟩, [.operand 0]),
       (⟨_, _, Op.isInf (s := s)⟩, [.operand 0]), (⟨_, _, Op.gt (s := s)⟩, [.operand 0, .zero]),
       (select, [.node 2, .operand 2, .operand 3]), (select, [.node 1, .node 3, .operand 0]),
       (select, [.node 0, .operand 1, .node 4])]
+  -- `bound` where `bound > x` or `bound` is a NaN (`bound = bound` fails), else `x`.
   | .clampMin => some [(⟨_, _, Op.gt (s := s)⟩, [.operand 1, .operand 0]),
       (⟨_, _, Op.eq (s := s)⟩, [.operand 1, .operand 1]),
       (select, [.node 1, .operand 0, .operand 1]), (select, [.node 0, .operand 1, .node 2])]

@@ -74,7 +74,7 @@ def rolloutHtml {obsShape : Shape} {nActions : Nat}
     let more := errs.size - shown.size
 
     let header : ProofWidgets.Html :=
-      <div className="torchlean-panel">
+      jsx%{<div className="torchlean-panel">
         <h3>RL rollout boundary report</h3>
         <div>{UI.monospace path.toString}</div>
         <ul>
@@ -82,52 +82,52 @@ def rolloutHtml {obsShape : Shape} {nActions : Nat}
           <li>ok: {UI.monospace s!"{okCount}"}</li>
           <li>errors: {UI.monospace s!"{errCount}"}</li>
         </ul>
-      </div>
+      </div>}
 
     if xs.isEmpty then
       pure <|
-        <div>
+        jsx%{<div>
           {header}
           <div className="torchlean-warn">
             {.text "No transitions were found; no boundary contract checks ran."}
           </div>
-        </div>
+        </div>}
     else if errCount = 0 then
       pure <|
-        <div>
+        jsx%{<div>
           {header}
           <div className="torchlean-ok">
             {.text "All transitions passed the boundary contract."}
           </div>
-        </div>
+        </div>}
     else
       pure <|
-        <div>
+        jsx%{<div>
           {header}
           <div className="torchlean-warn">
             {.text "Some transitions failed contract checks. First errors:"}
           </div>
           <ol>
             {... shown.map (fun (i, msg) =>
-              <li>
+              jsx%{<li>
                 <div>{UI.monospace s!"index={i}"}</div>
                 <pre>{.text msg}</pre>
-              </li>)}
+              </li>})}
           </ol>
           {
             if more = 0 then
-              (<div/>)
+              (jsx%{<div/>})
             else
-              (<div>{.text s!"({more} more errors omitted)"}</div>)
+              (jsx%{<div>{.text s!"({more} more errors omitted)"}</div>})
           }
-        </div>
+        </div>}
   catch e =>
     pure <|
-      <div className="torchlean-error">
+      jsx%{<div className="torchlean-error">
         <h3>{.text "RL rollout boundary report (error)"}</h3>
         <div>{UI.monospace path.toString}</div>
         <pre>{.text (toString e)}</pre>
-      </div>
+      </div>}
 
 /-- `#rl_boundary_rollout_file_view path, contract, maxErrors` shows the `rolloutHtml` report of the
 rollout file `path` checked against `contract`, with at most `maxErrors` error messages. -/

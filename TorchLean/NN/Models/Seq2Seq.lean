@@ -327,7 +327,6 @@ clamping this loss uses.
 -/
 def Seq2Seq.crossEntropyLossOneHot
   {srcVocabSize tgtVocabSize embedDim hiddenDim srcSeqLen tgtSeqLen : Nat}
-  [Shape.HasNonemptyAxis 1 (.dim tgtSeqLen (.dim tgtVocabSize .scalar))]
   (model : Seq2Seq α srcVocabSize tgtVocabSize embedDim hiddenDim)
   (srcOneHot : Tensor α [srcSeqLen, srcVocabSize])
   (tgtOneHot : Tensor α [tgtSeqLen, tgtVocabSize])

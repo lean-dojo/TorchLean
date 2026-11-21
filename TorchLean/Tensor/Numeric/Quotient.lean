@@ -179,7 +179,7 @@ class HostFloat (α : Type) extends Word α where
     intros; rfl
   /-- C's `copysign`: the magnitude of `x` with the sign bit of `y`. A NaN result is Lean's
   canonical NaN, `0x7FF8000000000000` in `Float` and `0x7FC00000` in `Float32`, whatever the sign
-  of `y`. Lean 4.35.0's bit conversions in `object.cpp` (`lean_float_of_bits` and the rest) map
+  of `y`. Lean 4.36.0's bit conversions in `object.cpp` (`lean_float_of_bits` and the rest) map
   every NaN to that quiet NaN, and so drop the sign that C23's `copysign` takes from `y`
   (7.12.11.1 of the draft WG14 N3096). -/
   copysign (x y : α) : α := ofBits ((Model.copySign (⟨(toBits x).cast width_eq⟩ : Model format)

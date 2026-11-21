@@ -21,7 +21,7 @@ PROBE = r"""
 #include <time.h>
 #include <atomic>
 #include <thread>
-// Lean 4.35 bundles its allocation entry point with mimalloc. This standalone
+// Lean 4.36 bundles its allocation entry point with mimalloc. This standalone
 // allocator probe needs only its fatal OOM callback, not the rest of Lean's runtime.
 extern "C" void lean_internal_panic_out_of_memory(void) { abort(); }
 static size_t rss() {
@@ -507,6 +507,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    # Resident memory may stay at most 64 MiB above its baseline.
     limit = 64 * 1024 * 1024
     results = {}
     with tempfile.TemporaryDirectory(prefix="torchlean-allocator-check-") as directory:
@@ -516,6 +517,8 @@ def main():
         shared = directory / "libtorchlean_allocator.so"
         subprocess.run(["c++", "-shared", str(args.object), "-o", str(shared)],
                        check=True, timeout=60)
+        # Link the probe with Lean's installed runtime, the private allocator object and a shared
+        # library of it.
         for name, obj in (("installed", args.lean_prefix / "lib/lean/libleanrt.a"),
                           ("private", args.object), ("private-shared", shared)):
             binary = directory / name
@@ -527,6 +530,7 @@ def main():
                 "-lc++", "-lc++abi", "-lunwind", "-lm", "-ldl", "-lpthread",
                 "-o", str(binary),
             ], check=True, timeout=60)
+            # Large blocks outside arenas: memory returns after the frees.
             env = {k: v for k, v in os.environ.items() if not k.startswith("MIMALLOC_")}
             env["MIMALLOC_DISALLOW_ARENA_ALLOC"] = "1"
             run = subprocess.run([str(binary)], env=env, check=True, capture_output=True,
@@ -535,6 +539,7 @@ def main():
             result["bounded"] = result["last"] <= result["first"] + limit
             result["releasedAll"] = result["released"] <= result["before"] + limit
             result["objectSha256"] = hashlib.sha256(obj.read_bytes()).hexdigest()
+            # One arena: freed memory is purged after the 100 ms purge delay.
             arena_env = {k: v for k, v in os.environ.items() if not k.startswith("MIMALLOC_")}
             arena_env.update(MIMALLOC_PURGE_DELAY="100", MIMALLOC_ARENA_PURGE_MULT="1")
             arena_run = subprocess.run([str(binary), "arena"], env=arena_env, check=True,
@@ -545,6 +550,8 @@ def main():
             arena["exercised"] = (arena["arenaExists"] == 1 and arena["arenaSize"] > 0 and
                                   arena["allocated"] >= arena["before"] + 350*1024*1024)
             result["arena"] = arena
+            # Two arenas freed 250 ms apart, with a 400 ms delay: a collection between the two
+            # deadlines and one after both, when both are purged.
             arena_env["MIMALLOC_PURGE_DELAY"] = "400"
             staggered_run = subprocess.run([str(binary), "staggered"], env=arena_env, check=True,
                                            capture_output=True, text=True, timeout=30)
@@ -557,6 +564,8 @@ def main():
                 400 <= staggered["firstCollectedMs"] < staggered["secondFreedMs"] + 400 and
                 staggered["secondCollectedMs"] >= staggered["firstCollectedMs"] + 400)
             result["staggered"] = staggered
+            # Four threads free their own arenas at staggered times while the main thread
+            # collects.
             arena_env["MIMALLOC_PURGE_DELAY"] = "100"
             concurrent_run = subprocess.run([str(binary), "concurrent"], env=arena_env, check=True,
                                             capture_output=True, text=True, timeout=30)
@@ -579,6 +588,7 @@ def main():
             recorded = directory / "controlled/result.json"
             if recorded.exists():
                 controlled["diagnostic"] = json.loads(recorded.read_text())
+        # Archive every probe file, then check the archive against the files' hashes.
         artifacts = {
             str(path.relative_to(directory)): {
                 "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),

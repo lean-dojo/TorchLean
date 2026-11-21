@@ -109,6 +109,7 @@ theorem AxisTuple.linearize_append_val {ι : Type*}
   intro left
   induction left with
   | nil =>
+      -- The empty left coordinate linearizes to 0.
       intro right leftCoordinate rightCoordinate
       have hLeftCoordinate :
           leftCoordinate = AxisTuple.coordEquiv length [] PUnit.unit := by
@@ -128,6 +129,7 @@ theorem AxisTuple.linearize_append_val {ι : Type*}
         exact (Equiv.apply_symm_apply _ _).symm
       rw [hLeftCoordinate]
       obtain ⟨headCoordinate, tailCoordinate⟩ := coordinate
+      -- Appending keeps the head coordinate and appends the tail.
       have hAppend :
           (AxisTuple.coordEquiv length (axis :: (left ++ right))).symm
               (AxisTuple.append (axis :: left)
@@ -184,6 +186,7 @@ theorem AxisTuple.linearize_append_val {ι : Type*}
               (Coord.linearize
                 (s := length axis :: left.map length)
                 (headCoordinate, tailCoordinate)).val
+      -- Peel the head digit on both sides and use the induction hypothesis on the tail.
       rw [Coord.linearize_cons_val, Coord.linearize_cons_val,
         inductionHypothesis right
           (AxisTuple.coordEquiv length left tailCoordinate)

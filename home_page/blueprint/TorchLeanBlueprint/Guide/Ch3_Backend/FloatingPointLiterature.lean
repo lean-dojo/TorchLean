@@ -19,14 +19,16 @@ open TorchLean
 -- Open the namespace containing the reduction theorems.
 open IEEE754
 
--- Verso checks `leanOutput` blocks against the real compiler message. The graph
--- theorems below print wider than this file's 100-column limit, so those blocks ask
+-- Verso checks `leanOutput` blocks against the real compiler message. The graph theorem signatures
+-- print wider than this file's 100-column limit, so those blocks ask
 -- for `whitespace := lax`, which ignores where the expected text was wrapped. The
 -- rendered page still shows the signature exactly as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+/-! Guide page: tracking rounding error through a network. -/
 
 #doc (Manual) "Numerical Error" =>
 %%%
@@ -38,10 +40,10 @@ A rounding error in the first linear layer becomes part of the input to ReLU and
 layer. Later operations may preserve, amplify, or reduce it while introducing errors of their own.
 So bounding each operation in isolation leaves out that dependence.
 
-I'll follow the error through the same two-layer MLP used in the executable comparison below. Our
-starting point is the local rounding analysis of {Informal.citet goldberg1991}[]. FloatLib supplies
-those scalar facts, and TorchLean's covered tensor operations turn them into bounds on output
-tensors. A graph theorem then composes the bounds in evaluation order.
+The running calculation evaluates one two-layer MLP with both native `Float32` and FloatLib
+binary32. Its starting point is the local rounding analysis of {Informal.citet goldberg1991}[].
+FloatLib supplies those scalar facts, and TorchLean's covered tensor operations turn them into
+bounds on output tensors. A graph theorem then composes the bounds in evaluation order.
 
 Training extends the calculation. Reverse mode reads saved forward values, so their errors
 affect the gradient. An optimizer then uses that gradient to change the parameters. With a
@@ -73,16 +75,16 @@ to be zero. For finite values a zero difference establishes more than agreement 
 decimals, but it doesn't distinguish signed zeros or inspect intermediate rounding steps.
 
 Across the two runs the input and parameter pack stay fixed while the scalar implementation
-changes. The approximation theorems below address quantified claims and state the assumptions
-needed to connect rounded calculations to real-valued ones.
+changes. The graph approximation theorems state the assumptions needed to connect rounded
+calculations to real-valued ones.
 
 The gradient comparison exercises a different part of the computation from the forward comparison.
 A scalar output seeded with one asks how that output changes with each parameter, so the printed
 weight and bias entries must follow the model's parameter order. Matching only the final output
 would miss, for example, a reverse rule that sends the right numbers to the wrong parameter tensor.
-Inspecting every gradient tensor checks that correspondence on this example, while the
-approximation theorems below explain how to make a statement with explicit input and arithmetic
-hypotheses.
+Inspecting every gradient tensor checks that correspondence on this example.
+`NF.eval_approx_graphData` and `NF.backprop_approx_graphData` turn the same comparison into
+statements with explicit input and arithmetic hypotheses.
 
 # The Approximation Relation
 
@@ -113,8 +115,8 @@ Lean's signature says the same thing more tersely:
 
 The last argument is the error bound. Because it's a separate argument, graph propagation can
 update the bound without rebuilding the tensor, and we can relate the same runtime value to several
-ideal values, each with its own error. And the `toSpec` argument selects how to interpret the
-runtime scalar.
+ideal values, each with its own error. The `toSpec` argument selects how to interpret the runtime
+scalar.
 
 A shared shape fixes which coordinates are compared. A budget of $`\varepsilon` permits that much
 error at each coordinate, so summing many coordinates can require a larger output budget even when
@@ -127,8 +129,9 @@ For one output coordinate, an exact affine layer computes
 
 $$`y_j=\sum_{k=0}^{n-1}W_{jk}x_k+b_j`.
 
-Here $`j` selects an output coordinate and $`n` is the input width. Suppose the runtime has
-approximations $`\widehat W`, $`\widehat x`, and $`\widehat b` with coordinatewise errors
+Here $`j` selects an output coordinate and $`n` is the input width. Let the runtime values
+$`\widehat W`, $`\widehat x`, and $`\widehat b` approximate their ideal operands with
+coordinatewise errors
 $`\varepsilon_W`, $`\varepsilon_x`, and $`\varepsilon_b`. In the following error calculation,
 the hatted operands denote their decoded real values. Before accounting for arithmetic rounding,
 one product satisfies
@@ -156,7 +159,7 @@ operands at once.
 
 Arithmetic introduces further error. Write $`P_k` for the total error charged to product $`k` and
 $`E_k` for the accumulated error after $`k` products, and let $`s_k` and $`p_k` be the ideal
-partial sum and product. In the recurrence below, $`\rho_{\rm mul}(W_{jk},x_k)` must bound
+partial sum and product. In this recurrence, $`\rho_{\rm mul}(W_{jk},x_k)` must bound
 multiplication rounding throughout the operand neighborhoods given by $`\varepsilon_W` and
 $`\varepsilon_x`, and $`\rho_{\rm add}(s_k,p_k)` must likewise cover the partial sum and product
 errors $`E_k` and $`P_k`. These error radii are implicit arguments of the notation. Evaluating
@@ -184,9 +187,9 @@ TorchLean's `NF` backend implements this style of propagation, with bounds compu
 operands. In `NF.dotStep`, the magnitude terms use the decoded rounded operands plus their
 error budgets, and the local rounding terms are half-ULP bounds at the runtime product and sum
 before rounding. (`dotBound` also conservatively charges half an ULP for its initial zero
-accumulator.) So the implementation follows the error decomposition above, but its bound expression
-isn't identical. Matrix multiplication, convolution, reductions, and scalar arithmetic each provide
-an error transformer and a theorem proving that transformer valid.
+accumulator.) The implementation therefore follows the displayed product-error decomposition, but
+its bound expression isn't identical. Matrix multiplication, convolution, reductions, and scalar
+arithmetic each provide an error transformer and a theorem proving that transformer valid.
 
 A dot product has two sources of uncertainty. Its represented weights and inputs may already differ
 from the intended real data, and each multiplication and addition introduces another rounding step.
@@ -200,11 +203,11 @@ different problems.
 
 Our dot-product recurrence bounds absolute errors without exploiting cancellation between local
 rounding errors, and it isn't automatically linear in the number of terms: local magnitudes and
-rounding bounds may also grow. Under the classical relative-error model, with $`nu<1` and no
+rounding bounds may also grow. Under the classical relative-error model, with $`n u<1` and no
 problematic underflow or overflow, a sequential sum satisfies
 
 $$`|\widehat S-S|\leq\gamma_n\sum_i|x_i|,\qquad
-\gamma_n=nu/(1-nu).`
+\gamma_n=(n u)/(1-n u).`
 
 Here $`u=2^{-24}` for binary32 (using $`n` instead of $`n-1` is a conservative convention). For
 nonnegative terms with nonzero sum, the sequential-sum bound becomes a relative bound of
@@ -263,18 +266,19 @@ establish a random-walk law or a $`\sqrt n` growth rate.
 A worst-case bound need not predict typical error. It can also be sharpened by using more facts
 about the inputs or intermediate values. Changing the program offers another route: compensated
 summation, a pairwise reduction with logarithmic depth, or a wider accumulator. Each needs an error
-contract matching the implemented arithmetic. The reduction theorem below makes its hypotheses
-explicit. It doesn't certify the printed $`\gamma_n` column unconditionally.
+contract matching the implemented arithmetic. `SumResult.enclosure` makes its hypotheses explicit;
+it doesn't certify the printed $`\gamma_n` column unconditionally.
 
 # Sequential, Pairwise, And Compensated Summation
 
 Keep the converted harmonic terms fixed and change only the accumulation algorithm. The naive
-column uses the `harm32` fold above, while the pairwise column adds neighbours in rounds until one
-value remains. Kahan summation keeps a correction for rounding lost at the previous addition and
-uses it to adjust the next term. All three are compared with the same binary64 reference.
+column uses the `harm32` fold from `gammaGrow`, while the pairwise column adds neighbours in rounds
+until one value remains. Kahan summation keeps a correction for rounding lost at the previous
+addition and uses it to adjust the next term. All three are compared with the same binary64
+reference.
 
 ```lean (name := sumStrategies)
--- The same term the naive fold above added.
+-- Match the term used by the naive `harm32` fold.
 def harmTerm (k : Nat) : (ExecFloat.Binary 8 23) :=
   (ExecFloat.Binary.ofFloat32 ∘ Float.toFloat32)
     (1.0 / Nat.toFloat (k + 1))
@@ -355,8 +359,7 @@ The factor `(1 + u) ^ t.nodeCount` is $`(1+u)^{n-1}` for $`n` leaves, since a tr
 performs $`n-1` additions. It doesn't depend on tree depth, so it charges the same factor to a
 balanced schedule and a sequential one. A sharper logarithmic-depth bound requires another theorem.
 The library also doesn't provide a complete compensated-summation error contract. Its proved
-Sterbenz subtraction lemma is a useful ingredient, but it doesn't by itself prove the Kahan program
-above.
+Sterbenz subtraction lemma is a useful ingredient, but it doesn't by itself prove `harmKahan32`.
 
 The witness tree records an allowed order. Its permutation condition preserves every supplied
 summand with multiplicity, so it doesn't permit dropping a term.
@@ -497,7 +500,7 @@ treatment). Those range facts control the local Lipschitz and rounding terms.
 
 For layer normalization, let $`\mu` be the mean over the normalized coordinates and $`\sigma^2`
 their variance. The positive stabilization constant $`\epsilon` is part of the operation (distinct
-from the approximation-error bounds above), and the calculation proceeds through
+from the approximation-error bounds denoted by $`\varepsilon`), and the calculation proceeds through
 
 $$`
 x
@@ -512,18 +515,18 @@ x
 
 Subtracting the mean produces centered values, and squaring and averaging them produces the
 variance. Adding $`\epsilon` gives the exact stabilized variance a positive lower bound. Rounding
-errors must also be small enough to preserve that margin. `ApproxTensor.normalize` assumes a
+errors must also be small enough to preserve that margin. `ApproxTensor.normalize`, which bounds
+batch normalization with running statistics $`\mu` and $`\sigma^2`, assumes a
 lower bound $`\eta>0` for the exact stabilized variance, with premises `stabilizedError < η` and
-`stdError < Real.sqrt η`. The first would keep the perturbed square-root input positive, but the
-proof doesn't use it, because `Tensor.sqrt _ .clampNegative` clamps its input to zero. And the
+`stdError < Real.sqrt η`. The first keeps the perturbed square-root input positive, and the
 second keeps the perturbed denominator away from zero. That theorem's error trace composes the
 subtraction, stabilization, square-root, division, and affine-scaling bounds, using the supplied
 error bounds for the input, mean, variance, and affine parameters.
 
-These two margins refer to different stages and have different units. For the clamped square-root
-proof, the standard-deviation error margin is the one needed to protect division. Positivity of
-epsilon alone doesn't establish that margin. Both are mathematical premises about a noncomputable
-trace, not comparisons performed by an executable checker.
+These two margins refer to different stages and have different units: the first protects the
+square root and the second the division. Positivity of epsilon alone doesn't establish either.
+Both are mathematical premises about a noncomputable trace, not comparisons performed by an
+executable checker.
 
 # Composition Over A Graph
 
@@ -618,9 +621,8 @@ error context. Our backward theorem adds a second `ApproxCtx` hypothesis for the
 ```
 
 So `GraphData.backpropCtx` stays inside the computed context whenever the inputs and seed satisfy
-their initial approximation relations. The two instance arguments are the price of using the
-nearest-rounding facts from the previous chapter: the exponent policy has to be a valid one and the
-integer rounder has to round to nearest.
+their initial approximation relations. The two instance arguments state the nearest-rounding
+hypotheses: the exponent policy has to be valid, and the integer rounder has to round to nearest.
 
 A cotangent seed is numerical input to the reverse computation. Scaling the seed scales the ideal
 VJP, and errors in that seed also propagate through the local reverse rules. Fanout adds a second
@@ -670,8 +672,6 @@ say that the updated loss decreases. A descent argument needs properties of the 
 step size, while a multi-step numerical argument must also relate the states and gradients supplied
 at every later step.
 
-# Runtime Optimizers And Proved Optimizer Contracts
-
 TorchLean's executable training layer covers more than those three numerical contracts.
 `TorchLean.Optimizer` implements SGD, momentum SGD, AdaGrad, RMSProp, Adam, AdamW,
 Adadelta, projected SGD, and Muon over shape-indexed parameter lists, and `Trainer.Scheduler` adds
@@ -692,7 +692,7 @@ registered operators (`TorchLean.IR.Graph`). The example constructs a two-layer 
 operations:
 
 ```
--- Each arrow below is an operation whose numerical rule
+-- Each arrow is an operation whose numerical rule
 -- must be available.
 input [1,2]
   -> matmul [2,3]
@@ -749,8 +749,6 @@ Nothing in the trace depends on the architecture. It identifies the parameter on
 that index. This is a proof-level reporting interface: its bounds are Lean reals, and an executable
 dashboard needs a computable representation and a justified conversion. Constructing a
 `TrainingStepTrace` record alone doesn't attach proofs to its arbitrary fields.
-
-# Training-Step Bound Assumptions
 
 Applying the combined theorem requires a graph of covered operators, initial approximation bounds,
 an optimizer with a numerical contract, and arithmetic assumptions matching the execution.

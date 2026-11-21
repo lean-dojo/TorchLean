@@ -26,7 +26,12 @@ same slopes is the adjoint of the derivative (`pointwise_backward_eq_adjoint`). 
 states both facts: the slope map is the derivative at `x`, and the pullback is its adjoint. A
 binary operator that applies `f c` to the entries of two tensors has as derivative, on their L2
 product, the sum of the slope maps of its two partial slopes, and its pair of pullbacks is the
-adjoint (`pointwise₂_backward_eq_adjoint`).
+adjoint (`pointwise₂_backward_eq_adjoint`). That adjoint splits by
+`adjoint_comp_fstL_add_comp_sndL`, which maps the adjoint of `A ∘ fst + B ∘ snd` to the pair of the
+adjoints of `A` and `B`. An operator of a family of `n` tensors, on their L2 product `PiLp 2`, has
+as derivative the map whose entry `c` is the sum of the partial slopes at `c` times the entries
+`c` of the inputs, and the family of pullbacks that multiply the cotangent by the slopes is its
+adjoint (`pointwisePi_backward_eq_adjoint`).
 
 The certificates are registered with `op_cert` at every shape, with a frozen coefficient, bound,
 epsilon or replacement value held fixed, on these domains, at every entry:
@@ -34,8 +39,9 @@ epsilon or replacement value held fixed, on these domains, at every entry:
 * Everywhere: `exp`, `exp2`, `expm1`, `sin`, `cos`, `neg`, `square`, `sinh`, `cosh`, `sigmoid`,
   `tanh`, `softplus`, `silu`, the tanh and the exact `gelu`, `asinh`, `atan`, `erf`, `scale` and
   `nanToNum`.
-* Away from zero: `log`, `log2`, `log10`, `reciprocal`, `sqrt`, `abs` and `relu`, and `elu` and
-  `leakyReLU` for every coefficient, everywhere at coefficient one.
+* Away from zero: `log`, `log2`, `log10`, `reciprocal`, `sqrt`, `abs` and `relu`, `leakyReLU`
+  for every coefficient, everywhere at coefficient one, and `elu` for all scalars, everywhere
+  where `alpha * scale * input_scale = scale`.
 * On other domains: `log1p` away from `-1`, `sqrt .clampNegative` and `rsqrt` for positive
   entries, `acosh` above one, `atanh` on `(-1, 1)`, `asin` and `acos` away from `-1` and `1`,
   `tan` where the cosine is nonzero, `safeInv` where `x + ε` is nonzero, `clamp` away from both
@@ -50,16 +56,16 @@ epsilon or replacement value held fixed, on these domains, at every entry:
 The kinks, the poles and the edges of the real domains have no certificate here.
 `TorchLean.NN.Op.Rounding` certifies `sign` and the rounding operators: the derivative off their
 jumps, and the stored zero pullback as a convention. The kinks are `relu` and `abs` at zero, `elu`
-and `leakyReLU` at zero for a coefficient other than one, `clamp` at a bound for `lo < hi`, and
-`max` and `min` at a tie. The poles are `log`, `log2`, `log10` and `reciprocal` at zero, `log1p` at
-`-1`, `tan` where the cosine vanishes, `safeInv` where `x + ε` vanishes, `safeLog` where
-`softplus x + ε` vanishes, and `div` in its second input at a zero denominator. The edges of the
-real domains and the points beyond them are `sqrt` at zero, `smoothAbs` where `x * x + ε` vanishes,
-`sqrt .clampNegative` and `rsqrt` at zero and below, `acosh` at one and below, `atanh` outside
-`(-1, 1)`, and `asin` and `acos` at `-1` and `1`. There the real root is the clamped `√(max x 0)`,
-and `rsqrt` is Lean's `1 / √x`. Beyond an edge the stored slope need not be the derivative of the
-real forward: below one the real `acosh` is `log x`, with derivative `2` at `1/2`, where the slope
-is zero.
+at zero where `alpha * scale * input_scale ≠ scale`, `leakyReLU` at zero for a coefficient other
+than one, `clamp` at a bound for `lo < hi`, and `max` and `min` at a tie. The poles are `log`,
+`log2`, `log10` and `reciprocal` at zero, `log1p` at `-1`, `tan` where the cosine vanishes,
+`safeInv` where `x + ε` vanishes, `safeLog` where `softplus x + ε` vanishes, and `div` in its second
+input at a zero denominator. The edges of the real domains and the points beyond them are `sqrt` at
+zero, `smoothAbs` where `x * x + ε` vanishes, `sqrt .clampNegative` and `rsqrt` at zero and below,
+`acosh` at one and below, `atanh` outside `(-1, 1)`, and `asin` and `acos` at `-1` and `1`. There
+the real root is the clamped `√(max x 0)`, and `rsqrt` is Lean's `1 / √x`. Beyond an edge the stored
+slope need not be the derivative of the real forward: below one the real `acosh` is `log x`, with
+derivative `2` at `1/2`, where the slope is zero.
 
 At every input, the forward-mode rule `jvp?` of `log`, `abs`, `reciprocal`, `sqrt` in both modes
 and `div` is adjoint to the pullback, registered as an `algebraic` certificate (`log_jvp_adjoint`,
@@ -122,6 +128,21 @@ theorem pointwise_backward_eq_adjoint (F : Tensor ℝ s → Tensor ℝ s) (f : s
 
 /-! ## Two inputs -/
 
+/-- On an L2 product, the adjoint of `A ∘ fst + B ∘ snd` maps `δ` to the pair of the adjoints of
+`A` and `B` at `δ`. -/
+theorem adjoint_comp_fstL_add_comp_sndL {X Y Z : Type*} [NormedAddCommGroup X]
+    [InnerProductSpace ℝ X] [CompleteSpace X] [NormedAddCommGroup Y] [InnerProductSpace ℝ Y]
+    [CompleteSpace Y] [NormedAddCommGroup Z] [InnerProductSpace ℝ Z] [CompleteSpace Z]
+    (A : X →L[ℝ] Z) (B : Y →L[ℝ] Z) (δ : Z) :
+    (A.comp (WithLp.fstL 2 ℝ X Y) + B.comp (WithLp.sndL 2 ℝ X Y)).adjoint δ =
+      WithLp.toLp 2 (A.adjoint δ, B.adjoint δ) := by
+  refine (ext_inner_left ℝ fun q => ?_).symm
+  rw [ContinuousLinearMap.adjoint_inner_right, WithLp.prod_inner_apply, _root_.add_apply,
+    inner_add_left]
+  simp only [ContinuousLinearMap.comp_apply, ContinuousLinearMap.adjoint_inner_right,
+    WithLp.fstL_apply, WithLp.sndL_apply]
+  rfl
+
 /-- A map that applies `f c` to the entries `c` of two tensors, where `f c` has partial slopes
 `d₀ c` and `d₁ c` at `(x c, y c)`, has the sum of the two slope maps on the L2 product as
 derivative at `(x, y)`. -/
@@ -177,14 +198,49 @@ theorem pointwise₂_backward_eq_adjoint (F : WithLp 2 (Tensor ℝ s × Tensor �
   have h₁ : g₁ = (slopeCLM d₁).adjoint δ := by
     rw [slopeCLM_adjoint]
     exact Tensor.Rep.ext fun c => by rw [slopeCLM_apply, hg₁]
-  rw [h.fderiv, h₀, h₁]
-  apply ext_inner_left ℝ
-  intro q
-  rw [ContinuousLinearMap.adjoint_inner_right, WithLp.prod_inner_apply, _root_.add_apply,
-    inner_add_left]
-  simp only [ContinuousLinearMap.comp_apply, ContinuousLinearMap.adjoint_inner_right,
-    WithLp.fstL_apply, WithLp.sndL_apply]
-  rfl
+  rw [h.fderiv, h₀, h₁, adjoint_comp_fstL_add_comp_sndL]
+
+/-! ## A family of inputs -/
+
+/-- If `F` applies `f c` to the entries `c` of a family `x` of `n` tensors and `f c` has partial
+slopes `d i c` at `fun i => x i c`, then the map whose entry `c` is `∑ i, d i c * p i c` at `p` is
+the derivative of `F` at `x` on the L2 product, and a family of cotangents `g i` that multiply `δ`
+by the slopes `d i` is the adjoint of that derivative applied to `δ`. -/
+theorem pointwisePi_backward_eq_adjoint {n : ℕ}
+    (F : PiLp 2 (fun _ : Fin n => Tensor ℝ s) → Tensor ℝ s) (f : s.Coord → (Fin n → ℝ) → ℝ)
+    (d : Fin n → s.Coord → ℝ) (x : Fin n → Tensor ℝ s) (δ : Tensor ℝ s)
+    (g : Fin n → Tensor ℝ s) (hF : ∀ p c, F p c = f c fun i => p i c)
+    (hf : ∀ c, HasFDerivAt (f c)
+      (∑ i, d i c • (ContinuousLinearMap.proj i : (Fin n → ℝ) →L[ℝ] ℝ)) fun i => x i c)
+    (hg : ∀ i c, g i c = d i c * δ c) :
+    HasFDerivAt F (Tensor.assemble fun c =>
+        ∑ i, d i c • (Tensor.coordinateCLM c).comp (PiLp.proj 2 (fun _ => Tensor ℝ s) i))
+      (WithLp.toLp 2 x) ∧
+      WithLp.toLp 2 g = (fderiv ℝ F (WithLp.toLp 2 x)).adjoint δ := by
+  -- Entry `c` of `F` is `f c` after the linear map that reads the entries `c` of the inputs.
+  let L := fun c => ContinuousLinearMap.pi fun i =>
+    (Tensor.coordinateCLM c).comp (PiLp.proj 2 (fun _ : Fin n => Tensor ℝ s) i)
+  have hc : ∀ c, HasFDerivAt (fun p => F p c)
+      (∑ i, d i c • (Tensor.coordinateCLM c).comp (PiLp.proj 2 (fun _ => Tensor ℝ s) i))
+      (WithLp.toLp 2 x) := fun c => by
+    have hp : HasFDerivAt (fun p : PiLp 2 (fun _ : Fin n => Tensor ℝ s) => fun i => p i c) (L c)
+        (WithLp.toLp 2 x) :=
+      (L c).hasFDerivAt
+    have h := (hf c).comp (WithLp.toLp 2 x) hp
+    simp only [Function.comp_def, ← hF] at h
+    refine h.congr_fderiv (ContinuousLinearMap.ext fun p => ?_)
+    simp only [ContinuousLinearMap.comp_apply, FunLike.coe_sum, Finset.sum_apply,
+      _root_.smul_apply, ContinuousLinearMap.proj_apply, ContinuousLinearMap.pi_apply, L]
+  have h := Tensor.hasFDerivAt_of_coordinates F _ _ hc
+  refine ⟨h, ?_⟩
+  rw [h.fderiv]
+  refine (ext_inner_left ℝ fun q => ?_).symm
+  rw [ContinuousLinearMap.adjoint_inner_right, PiLp.inner_apply, Tensor.inner_eq_sum]
+  simp only [Tensor.assemble_apply, FunLike.coe_sum, Finset.sum_apply,
+    _root_.smul_apply, ContinuousLinearMap.comp_apply, Tensor.coordinateCLM_apply,
+    PiLp.proj_apply, smul_eq_mul, Finset.sum_mul, Tensor.inner_eq_sum, hg]
+  rw [Finset.sum_comm]
+  exact Finset.sum_congr rfl fun i _ => Finset.sum_congr rfl fun c _ => by ring
 
 /-! ## Scalar derivatives -/
 
@@ -1017,27 +1073,29 @@ theorem leakyReLU_backward_eq_adjoint (x δ : Tensor ℝ s) (slope : Tensor ℝ 
       show (Tensor.map (fun z => Activation.leakyReLUDeriv z slope.item) x * δ) c = _
       simp only [Tensor.mul_def, Tensor.zipWith_apply, Tensor.map_apply])
 
-/-- Where the coefficient is one or no entry is zero, `elu` has its slope map as derivative, the
-coefficient fixed, and its pullback is the adjoint of the derivative. This is the exact set: at a
-zero entry the one-sided slopes are the coefficient and one. -/
+/-- Where the one-sided slopes at 0 agree or no entry is zero, `elu` has its slope map as
+derivative, the scalars fixed, and its pullback is the adjoint of the derivative. This is the exact
+set: at a zero entry the one-sided slopes are `alpha * scale * inputScale` and `scale`. -/
 @[op_cert TorchLean.Op.elu derivative 0]
-theorem elu_backward_eq_adjoint (x δ : Tensor ℝ s) (alpha : Tensor ℝ [])
-    (h : alpha.item = 1 ∨ ∀ c, x c ≠ 0) :
+theorem elu_backward_eq_adjoint (x δ : Tensor ℝ s) (alpha scale inputScale : Tensor ℝ [])
+    (h : alpha.item * scale.item * inputScale.item = scale.item ∨ ∀ c, x c ≠ 0) :
     HasFDerivAt (fun y => (((Op.elu (s := s)).rule? (α := ℝ) |>.get rfl).forward
-          (y, alpha, ())).1)
-        (slopeCLM fun c => Activation.eluDeriv (x c) alpha.item) x ∧
-      (((Op.elu (s := s)).rule? (α := ℝ) |>.get rfl).backward (x, alpha, ()) (δ, ())).1 =
+          (y, alpha, scale, inputScale, ())).1)
+        (slopeCLM fun c => Activation.eluDeriv (x c) alpha.item scale.item inputScale.item) x ∧
+      (((Op.elu (s := s)).rule? (α := ℝ) |>.get rfl).backward (x, alpha, scale, inputScale, ())
+          (δ, ())).1 =
         (fderiv ℝ (fun y => (((Op.elu (s := s)).rule? (α := ℝ) |>.get rfl).forward
-          (y, alpha, ())).1) x).adjoint δ :=
-  pointwise_backward_eq_adjoint _ (fun _ y => Activation.elu y alpha.item)
-    (fun c => Activation.eluDeriv (x c) alpha.item) x δ _
+          (y, alpha, scale, inputScale, ())).1) x).adjoint δ :=
+  pointwise_backward_eq_adjoint _
+    (fun _ y => Activation.elu y alpha.item scale.item inputScale.item)
+    (fun c => Activation.eluDeriv (x c) alpha.item scale.item inputScale.item) x δ _
     (fun y c => by
-      show (Tensor.map (fun z => Activation.elu z alpha.item) y) c = _
+      show (Tensor.map (fun z => Activation.elu z alpha.item scale.item inputScale.item) y) c = _
       simp only [Tensor.map_apply])
-    (fun c => h.elim (fun h1 => by rw [h1]; exact Activation.hasDerivAt_elu_one (x c))
-      fun hx => Activation.hasDerivAt_elu (x c) alpha.item (hx c))
+    (fun c => Activation.hasDerivAt_elu (x c) _ _ _ (h.symm.imp (· c) id))
     (fun c => by
-      show (Tensor.map (fun z => Activation.eluDeriv z alpha.item) x * δ) c = _
+      show (Tensor.map (fun z => Activation.eluDeriv z alpha.item scale.item inputScale.item) x *
+        δ) c = _
       simp only [Tensor.mul_def, Tensor.zipWith_apply, Tensor.map_apply])
 
 /-- Where no entry of `softplus x + ε` is zero, `safeLog` has its slope map as derivative, epsilon

@@ -12,7 +12,6 @@ public import FloatLib.Numerics.Enclosure.Interval.Real
 public import TorchLean.Tensor.Numeric.Quotient
 import FloatLib.Numerics.Enclosure.Elementary.BinaryGridProof
 import Mathlib.Algebra.Ring.Int.Parity
-import Mathlib.Analysis.SpecialFunctions.Pow.Real
 
 /-!
 # Finite enclosures for weighted scalar coefficients
@@ -348,7 +347,7 @@ private theorem rpow_integer_sign (x : ℝ) (exponent : Rat)
       if exponent.num % 2 = 0 then (-x) ^ (exponent : ℝ)
       else -((-x) ^ (exponent : ℝ)) := by
   have hcast : (exponent : ℝ) = (exponent.num : ℝ) := by
-    exact_mod_cast (Rat.coe_int_num_of_den_eq_one hden).symm
+    exact_mod_cast (Rat.intCast_num_of_den_eq_one hden).symm
   rw [hcast, Real.rpow_intCast, Real.rpow_intCast]
   by_cases heven : exponent.num % 2 = 0
   · rw [ite_eq_left heven]

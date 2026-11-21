@@ -72,7 +72,7 @@ def sameIntervalBits (a b : Interval (Binary 8 23)) : Bool :=
     ExecFloat.Binary.toBits32 a.hi == ExecFloat.Binary.toBits32 b.hi
 
 /-- `Binary.Interval.leB` decides the proposition-level IEEE non-strict order. -/
-theorem leB_eq_true_iff (x y : Binary 8 23) :
+theorem leB_eq_true_iff {x y : Binary 8 23} :
     Binary.Interval.leB x y = true <-> LE.le x y :=
   (Model.Interval.le_iff_leB_eq_true
     (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel y)).symm.trans
@@ -496,8 +496,8 @@ def IEEETensorEnclosed (interval : Interval (Binary 8 23)) :
   | .dim _ _, tensor => ∀ i, IEEETensorEnclosed interval (tensor.unstack i)
 
 /-- `tensorWithinRange` returns `true` exactly when `IEEETensorEnclosed` holds. -/
-theorem tensorWithinRange_eq_true_iff (interval : Interval (Binary 8 23))
-    {shape : Shape} (tensor : Tensor (Binary 8 23) shape) :
+theorem tensorWithinRange_eq_true_iff {interval : Interval (Binary 8 23)}
+    {shape : Shape} {tensor : Tensor (Binary 8 23) shape} :
     tensorWithinRange interval tensor = true <-> IEEETensorEnclosed interval tensor := by
   induction shape with
   | scalar =>
@@ -584,7 +584,7 @@ theorem TensorErrorLe.of_check {interval : Interval (Binary 8 23)}
     TensorErrorLe (intervalWidth interval) exact computed :=
   of_enclosed hexact <|
     decodedTensorEnclosed_of_ieee valid <|
-      (tensorWithinRange_eq_true_iff interval computed).mp hcheck
+      tensorWithinRange_eq_true_iff.mp hcheck
 
 /-- Check source ranges once, rejecting malformed intervals and duplicate node ids. -/
 def checkSources (sources : Array SourceRange) : Except String (Array CheckedSourceRange) := do

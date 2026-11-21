@@ -26,6 +26,14 @@ from typing import Any, Callable
 
 _MASK64 = (1 << 64) - 1
 
+# The 8-bit formats of FloatLib's catalog (FloatFormat.e5m2, e4m3fn, e4m3fnuz, e5m2fnuz), by their
+# NumPy (ml_dtypes) and PyTorch names: exponent and fraction widths, bias and the encoding of the
+# exceptional values. ``float8_e8m0fnu`` has no sign bit and no fraction, which no IR binary
+# descriptor holds.
+_FLOAT8 = {'float8_e5m2': (5, 2, 15, 'ieee'), 'float8_e4m3fn': (4, 3, 7, 'finiteMaxNaN'),
+           'float8_e4m3fnuz': (4, 3, 8, 'finiteUnsignedZero'),
+           'float8_e5m2fnuz': (5, 2, 16, 'finiteUnsignedZero')}
+
 Refuse = Callable[[str], str]
 
 
@@ -46,6 +54,15 @@ def _binary(dtype: Any, table: dict) -> dict | None:
     if isinstance(dtype, dict) and dtype.get('kind') == 'binary':
         return dict(dtype)
     return None
+
+
+def _float8(name: str) -> dict | None:
+    """The binary descriptor of the float8 format `name` of `_FLOAT8`, else None."""
+    if name not in _FLOAT8:
+        return None
+    exponent, fraction, bias, encoding = _FLOAT8[name]
+    return dict(kind='binary', exponent_bits=exponent, fraction_bits=fraction, bias=bias,
+                encoding=encoding)
 
 
 def _name(dtype: Any) -> str | None:
@@ -69,6 +86,11 @@ def _describe(dtype: Any) -> str:
 
 # The element field of a record at a binary format, `Op.Element.scalar`.
 _SCALAR = {'element': 'scalar'}
+
+# The order field of a reduction, mean, contraction, matrix product, pool, cumulative sum,
+# product, maximum or minimum in the left fold, `Tensor.ReduceOrder.leftFold`, the last field of
+# its record. PyTorch, JAX and ONNX fix no order for these, so a capture writes the left fold.
+_LEFT_FOLD = {'order': 'leftFold'}
 
 
 def _element(dtype: Any, table: dict) -> Any:
@@ -183,10 +205,26 @@ def _splitmix64(x: int) -> int:
     return z ^ (z >> 31)
 
 
+def _random_key(position: int, counter_count: int) -> int:
+    # The key of the RNG node at capture position j: splitmix64(0) + j * 2 ** 32 modulo 2 ** 64.
+    # The node reads the counters key + t for t < counter_count, one per entry for
+    # Op.randUniform and Op.bernoulliMask and two per entry for Op.randn. Nodes reading at most
+    # 2 ** 32 counters at positions below 2 ** 32 therefore read disjoint counters, though not
+    # always distinct values: the reduction modulo 2 ** 32 and the rounding can repeat one.
+    # Running the artifact again repeats its draws, and editing the graph can move a node and
+    # change them.
+    if position < 0 or counter_count < 0:
+        raise ValueError('an RNG node position and counter count are nonnegative')
+    if position >= 2 ** 32 or counter_count > 2 ** 32:
+        raise NotImplementedError('an RNG node at or beyond position 2 ** 32 or reading more '
+                                  'than 2 ** 32 counters')
+    return (_splitmix64(0) + position * 2 ** 32) % 2 ** 64
+
+
 # The capture vocabulary's operators of one shape: the kind and its tag.
 _UNARY = {'abs': 'abs', 'inv': 'reciprocal', 'relu': 'relu', 'tanh': 'tanh',
           'sigmoid': 'sigmoid', 'exp': 'exp', 'log': 'log', 'sin': 'sin', 'cos': 'cos',
-          'detach': 'detach'}
+          'silu': 'silu', 'softplus': 'softplus', 'detach': 'detach'}
 _BINARY = {'add': 'add', 'sub': 'sub', 'mul_elem': 'mul', 'max_elem': 'max', 'min_elem': 'min'}
 _ALONG = {'log_softmax': 'logSoftmax', 'cumsum': 'cumsum', 'cumprod': 'cumprod',
           'cummax': 'cummax', 'cummin': 'cummin'}
@@ -195,7 +233,7 @@ _ALONG = {'log_softmax': 'logSoftmax', 'cumsum': 'cumsum', 'cumprod': 'cumprod',
 _PROJECTED = frozenset(_UNARY) | frozenset(_BINARY) | frozenset(_ALONG) | frozenset({
     'sqrt', 'contract', 'reshape', 'broadcast', 'permute', 'slice', 'pad', 'cat', 'flip', 'gather',
     'scatter', 'reduce', 'mean', 'matmul', 'linear', 'softmax', 'sort', 'layer_norm', 'batch_norm',
-    'top_k_mask', 'topk', 'conv', 'max_pool', 'avg_pool'})
+    'top_k_mask', 'topk', 'conv', 'max_pool', 'avg_pool', 'leaky_relu', 'elu'})
 
 
 def _words(node: dict, name: str, refuse: Refuse) -> list[int]:
@@ -222,8 +260,8 @@ def _contract(node: dict, s: list[int], t: list[int], out: list[int], refuse: Re
              + [e for b, e in enumerate(t) if b not in rights])
     if shape != out:
         raise NotImplementedError(refuse(f'the contracted shape is not the declared {out}'))
-    return ('contract', [{'shape': s}, {'shape': t}, {'pairs': dims}, {'pairs': batch}],
-            [('parent', 0, s), ('parent', 1, t)], 0, shape)
+    return ('contract', [{'shape': s}, {'shape': t}, {'pairs': dims}, {'pairs': batch},
+                         _LEFT_FOLD], [('parent', 0, s), ('parent', 1, t)], 0, shape)
 
 
 def _project(node: dict, hints: list, refuse: Refuse, located: Refuse, table: dict) -> tuple:
@@ -343,7 +381,8 @@ def _project(node: dict, hints: list, refuse: Refuse, located: Refuse, table: di
         if op in ('max', 'min') and any(s[a] == 0 for a in dims):
             raise NotImplementedError(refuse(f'reduce: {op} over an empty dimension'))
         return ('reduce', [{'shape': s}, {'nat': codes['reduce'][op]}, {'nats': dims},
-                           {'bool': bool(node['keepdim'])}], [('parent', 0, s)], 0, out)
+                           {'bool': bool(node['keepdim'])}, _LEFT_FOLD], [('parent', 0, s)], 0,
+                out)
     if kind == 'mean':
         parents(1)
         s = ps[0]
@@ -353,17 +392,21 @@ def _project(node: dict, hints: list, refuse: Refuse, located: Refuse, table: di
             raise NotImplementedError(refuse('a mean over an empty fiber is refused: PyTorch and '
                                              'JAX return NaN, the IR mean divides the empty sum '
                                              'by one'))
-        return ('mean', [{'shape': s}, {'nats': dims}, {'bool': bool(node['keepdim'])}],
-                [('parent', 0, s)], 0, out)
+        return ('mean', [{'shape': s}, {'nats': dims}, {'bool': bool(node['keepdim'])},
+                         _LEFT_FOLD], [('parent', 0, s)], 0, out)
     if kind == 'matmul':
         parents(2)
         dims = _matmul(ps[0], ps[1])
         left, right, lead, rows, inner, cols, lv, rv = dims
         return ('matmul', [{'shape': left}, {'shape': right}, {'shape': lead}, {'nat': rows},
-                           {'nat': inner}, {'nat': cols}, {'bool': lv}, {'bool': rv}],
+                           {'nat': inner}, {'nat': cols}, {'bool': lv}, {'bool': rv},
+                           _LEFT_FOLD],
                 [('parent', 0, ps[0]), ('parent', 1, ps[1])], 0, _matmul_out(dims))
     if kind == 'linear':
-        parents(1)
+        # The weight and the bias are the payload, or the next parents where they are not known
+        # at capture, the weight first.
+        operands = [name for name in ('weight', 'bias') if f'{name}_bits' not in node]
+        parents(1 + len(operands))
         s = ps[0]
         if not s:
             raise NotImplementedError(refuse('unsupported lowering (a linear node of a scalar '
@@ -372,7 +415,9 @@ def _project(node: dict, hints: list, refuse: Refuse, located: Refuse, table: di
         out_dim = out[-1] if out else 0
         dtype = node['dtype']
         return ('linear', [{'shape': lead}, {'nat': in_dim}, {'nat': out_dim}],
-                [('const', _port(dtype, [out_dim, in_dim], table), _words(node, 'weight', refuse)),
+                [('parent', 1, [out_dim, in_dim]) if 'weight' in operands else
+                 ('const', _port(dtype, [out_dim, in_dim], table), _words(node, 'weight', refuse)),
+                 ('parent', len(operands), [out_dim]) if 'bias' in operands else
                  ('const', _port(dtype, [out_dim], table), _words(node, 'bias', refuse)),
                  ('parent', 0, s)], 0, lead + [out_dim])
     if kind == 'softmax':
@@ -397,10 +442,15 @@ def _project(node: dict, hints: list, refuse: Refuse, located: Refuse, table: di
         dim = _dim(kind, s, node['dim'])
         fields = [{'shape': s}, {'nat': dim}]
         if kind == 'sort':
-            fields.append({'bool': bool(node['descending'])})
+            fields += [{'bool': bool(node['descending'])}, element]
+        elif kind in ('cumsum', 'cumprod', 'cummax', 'cummin'):
+            fields.append(_LEFT_FOLD)
         return _ALONG.get(kind, 'sort'), fields, [('parent', 0, s)], 0, s
     if kind == 'layer_norm':
-        parents(1)
+        # gamma and beta are the payload, or the next parents where they are not known at
+        # capture, gamma first.
+        operands = [name for name in ('gamma', 'beta') if f'{name}_bits' not in node]
+        parents(1 + len(operands))
         s = ps[0]
         dims = _dims('layer_norm', s, node['dims'])
         if dims != [len(s) - 1] or _size(s[:-1]) <= 0 or s[-1] <= 0:
@@ -411,23 +461,41 @@ def _project(node: dict, hints: list, refuse: Refuse, located: Refuse, table: di
         frozen = {'frozen': frozen['value']} if frozen and 'value' in frozen else frozen
         return ('layerNorm', [{'nat': _size(s[:-1])}, {'nat': last}, {'shape': s[:-1]}],
                 [('parent', 0, s),
+                 ('parent', 1, [last]) if 'gamma' in operands else
                  ('const', _port(dtype, [last], table), _words(node, 'gamma', refuse)),
+                 ('parent', len(operands), [last]) if 'beta' in operands else
                  ('const', _port(dtype, [last], table), _words(node, 'beta', refuse)),
                  ('const', frozen, _words(node, 'eps', refuse))], 0, s)
     if kind == 'batch_norm':
-        parents(1)
+        # As for layer_norm, gamma, beta, mean and var are the payload or the next parents, in
+        # that order. The statistics feed frozen ports, which accept a parent's values.
+        operands = [name for name in ('gamma', 'beta', 'mean', 'var')
+                    if f'{name}_bits' not in node]
+        parents(1 + len(operands))
         s = ps[0]
         dim = _dim('batch_norm', s, node['dim'])
         channels, dtype = s[dim], node['dtype']
         value = _port(dtype, [channels], table)
         frozen = {'frozen': [channels]} if value and 'value' in value else value
         eps = {'frozen': []} if value and 'value' in value else _port(dtype, [], table)
+        def feed(name, port):
+            if name in operands:
+                return ('parent', 1 + operands.index(name), [channels])
+            return ('const', port, _words(node, name, refuse))
         return ('batchNormRunning', [{'shape': s}, {'nat': dim}],
-                [('parent', 0, s), ('const', value, _words(node, 'gamma', refuse)),
-                 ('const', value, _words(node, 'beta', refuse)),
-                 ('const', frozen, _words(node, 'mean', refuse)),
-                 ('const', frozen, _words(node, 'var', refuse)),
+                [('parent', 0, s), feed('gamma', value), feed('beta', value),
+                 feed('mean', frozen), feed('var', frozen),
                  ('const', eps, _words(node, 'eps', refuse))], 0, s)
+    if kind in ('leaky_relu', 'elu'):
+        # Op.leakyReLU with the negative slope and Op.elu with alpha, scale and input_scale, the
+        # payload, as frozen scalar inputs.
+        parents(1)
+        frozen = _port(node['dtype'], [], table)
+        frozen = {'frozen': frozen['value']} if frozen and 'value' in frozen else frozen
+        names = ('slope',) if kind == 'leaky_relu' else ('alpha', 'scale', 'input_scale')
+        return ('leakyRelu' if kind == 'leaky_relu' else 'elu', [{'shape': out}],
+                [('parent', 0, out)]
+                + [('const', frozen, _words(node, name, refuse)) for name in names], 0, out)
     if kind == 'top_k_mask':
         parents(1)
         s = ps[0]
@@ -444,7 +512,10 @@ def _project(node: dict, hints: list, refuse: Refuse, located: Refuse, table: di
         return ('topk', [{'shape': s}, {'nat': dim}, {'nat': k}, {'bool': bool(node['largest'])}],
                 [('parent', 0, s)], 0, kept)
     if kind == 'conv':
-        parents(1)
+        # The kernel and the bias are the payload, or the next parents where they are not known
+        # at capture, the kernel first.
+        operands = [name for name in ('weight', 'bias') if f'{name}_bits' not in node]
+        parents(1 + len(operands))
         s = ps[0]
         r, axis = int(node['spatial_rank']), int(node['channel_axis'])
         spatial = s[axis + 1:]
@@ -459,10 +530,14 @@ def _project(node: dict, hints: list, refuse: Refuse, located: Refuse, table: di
                                              'divide its output channels)'))
         packed = [out_c, in_c // groups] + kernel
         dtype = node['dtype']
-        # `Conv.packedKernel`: output channel o reads the input channels of its group.
-        full, cells, width = _words(node, 'weight', refuse), _size(kernel), in_c // groups
-        weights = [full[(o * in_c + o // (out_c // groups) * width + c) * cells + k]
-                   for o in range(out_c) for c in range(width) for k in range(cells)]
+        if 'weight' in operands:
+            weights = ('parent', 1, packed)
+        else:
+            # `Conv.packedKernel`: output channel o reads the input channels of its group.
+            full, cells, width = _words(node, 'weight', refuse), _size(kernel), in_c // groups
+            weights = ('const', _port(dtype, packed, table),
+                       [full[(o * in_c + o // (out_c // groups) * width + c) * cells + k]
+                        for o in range(out_c) for c in range(width) for k in range(cells)])
         return ('conv', [{'shape': [_size(lead), in_c] + spatial}, {'shape': packed}, {'nat': r},
                          {'nats': list(range(r + 2))}, {'nats': list(range(r + 2))},
                          {'nats': [int(a) for a in node['stride']]},
@@ -470,7 +545,7 @@ def _project(node: dict, hints: list, refuse: Refuse, located: Refuse, table: di
                          {'nats': [int(a) for a in node['padding_after']]},
                          {'nats': [int(a) for a in node['dilation']]}, {'nat': groups},
                          {'shape': lead}],
-                [('const', _port(dtype, packed, table), weights),
+                [weights, ('parent', len(operands), [out_c]) if 'bias' in operands else
                  ('const', _port(dtype, [out_c], table), _words(node, 'bias', refuse)),
                  ('parent', 0, s)], 0, out)
     if kind in ('max_pool', 'avg_pool'):
@@ -486,7 +561,7 @@ def _project(node: dict, hints: list, refuse: Refuse, located: Refuse, table: di
                          {'nats': list(range(len(s) - r, len(s)))},
                          {'nats': [int(a) for a in node['kernel']]},
                          {'nats': [int(a) for a in node['stride']]}, {'nats': padding},
-                         {'nats': padding}, {'nats': [1] * r}, {'bool': False}],
+                         {'nats': padding}, {'nats': [1] * r}, {'bool': False}, _LEFT_FOLD],
                 [('parent', 0, s)], 0, out)
     raise NotImplementedError(refuse('unsupported node'))
 
@@ -619,6 +694,11 @@ def _block(nodes: list, input_ids: list[int], refs: list, base: int, i: int, nod
     """The steps of node `i`, the first at `base`, as (step, scalar, words), and the reference of
     its value."""
     d, s, kind = node.get('dtype'), list(node['shape']), node['kind']
+    if d == 'bool' and kind in ('max_elem', 'min_elem'):
+        # The Boolean maximum and minimum, false below true, are logical or and and, as StableHLO
+        # defines `maximum` and `minimum` of Booleans (its spec, "maximum" and "minimum") and
+        # PyTorch's `maximum` and `minimum` of Boolean tensors compute them.
+        kind = 'logical_or' if kind == 'max_elem' else 'logical_and'
 
     def refuse(what: str) -> str:
         return f'IR import: node {i}: {what} ({kind})'
@@ -690,7 +770,8 @@ def _block(nodes: list, input_ids: list[int], refs: list, base: int, i: int, nod
             raise NotImplementedError(refuse('a custom node without a primitive'))
         record, k = node['op'], int(node.get('output', 0))
         value = _binary(node.get('scalar'), table)
-        if value is None:
+        if value is None and _at_scalar(record):
+            # A record at Booleans or an integer type books no scalar (`_booked`).
             raise NotImplementedError(refuse(f"an operator record at "
                                              f"{_describe(node.get('scalar'))}, which is not a "
                                              'binary format'))

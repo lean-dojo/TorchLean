@@ -79,10 +79,6 @@ inline size_t checked_mul_size(size_t a, size_t b, const char* msg) {
   return a * b;
 }
 
-inline size_t checked_bytes_size(size_t count, size_t elemSize, const char* msg) {
-  return checked_mul_size(count, elemSize, msg);
-}
-
 namespace torchlean __attribute__((visibility("hidden"))) {
 
 // Exported for the native tests, whose copies of `invoke` call them.

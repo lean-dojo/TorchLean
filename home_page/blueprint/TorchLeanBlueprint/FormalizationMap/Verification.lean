@@ -35,25 +35,17 @@ open Verso.Genre
 open Verso.Genre.Manual
 open Informal
 
+/-! Theorem index: the proofs from local algebra to the executable checkers. -/
+
 #doc (Manual) "Verification" =>
 
-This part of the map follows proofs from local algebra to executable checkers. A solid dependency
-edge means the later statement uses the earlier definition or theorem. Runtime checkers that lack a
-proved acceptance-to-semantics bridge are described beside the matching proof work, without adding
-a dependency edge.
+A bound on a graph output depends on the rule at each node and the hypotheses of those rules. The
+entries connect that chain. When a checker's acceptance theorem still needs a bridge to the
+intended graph, its entry states exactly what acceptance establishes.
 
-For autograd, the first step is a local identity between a Jacobian-vector product (JVP) and a
-vector-Jacobian product (VJP). Graph induction extends that identity to a whole computation.
-Derivative theorems also require the local operations to be differentiable, and runtime theorems
-identify which executable accumulation agrees with the proved graph. We keep these steps in
-separate entries so that the assumptions needed for each conclusion remain visible.
-
-Read a linked declaration as a function from assumptions to a conclusion. A binder such as
-`(h : TopoSorted g)` asks the caller for evidence about this particular graph, while a result
-quantified by `∀ x` applies to every input satisfying its later premises. Proof entries explain
-where that evidence comes from. This matters when following an application backward: an enclosure
-result may need both a theorem about the propagation rule and a separate theorem identifying the
-program whose values it encloses.
+For gradients, the local pairing law connects a JVP to a VJP, and graph induction extends that law
+across shared inputs. A theorem's arguments identify its scope: a premise such as `TopoSorted g`
+is evidence about the graph, while an input bound states where the conclusion applies.
 
 :::group "autograd_correctness"
 Algebraic, executable, and analytic accounts of reverse-mode differentiation.
@@ -524,20 +516,21 @@ make the stabilized denominator differentiable.
 :::
 
 :::theorem "batchnorm_fderiv" (parent := "spec_bridges") (lean := "TorchLean.BatchNorm.hasFDerivAt_forwardVec")
-For a well-formed channel-first shape and $`0 < \varepsilon`, the map sending input, scale, and
-shift to `Tensor.batchNorm` along the leading channel axis with batch statistics is Fréchet
-differentiable on the flattened vectors.
+For a well-formed channel-first shape whose spatial part has a single position or whose every
+channel has a nonzero sum of its variance and $`\varepsilon` (as for every $`0 < \varepsilon`), the
+map sending input, scale, and shift to `Tensor.batchNorm` along the leading channel axis with batch
+statistics is Fréchet differentiable on the flattened vectors.
 :::
 
 :::proof "batchnorm_fderiv"
 BatchNorm flattens the spatial axes to a channel-by-position matrix and normalizes each row. We
-compose the derivative of one normalized row entry with the reshaping and affine stages, and show
-that the clamps in the specification are inactive because the variance is a mean of squares.
+compose the derivative of one normalized row entry with the reshaping and affine stages.
 
-Positive epsilon makes the stabilized variance strictly positive even when every value in a channel
-is identical. That is where the hypothesis enters the calculus: square root and reciprocal are
-differentiated away from their singular points. Separately, the channel-first shape hypothesis
-justifies which coordinates are collected into each normalization row.
+Where the stabilized variance of a channel is positive, square root and reciprocal are
+differentiated away from their singular points. Where it is negative, the normalized row is zero
+before scale and shift near the point, and with a single position every centered entry is zero.
+Separately, the channel-first shape hypothesis justifies which coordinates are collected into each
+normalization row.
 :::
 
 :::theorem "batchnorm_fderiv_is_jvp" (parent := "spec_bridges") (lean := "TorchLean.BatchNorm.fderiv_forwardVec_eq_jvp")

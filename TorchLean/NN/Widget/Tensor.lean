@@ -68,7 +68,7 @@ def renderVector {α : Type} [Storage α] [TensorElemView α] (maxCols : Nat) {n
     (t : Tensor α [n]) : ProofWidgets.Html :=
   let xs := prefixEntries t maxCols;
   let clipped : Bool := decide (n > maxCols);
-  <div>
+  jsx%{<div>
     <div style={json% {"margin-bottom": "6px"}}>
       {pill s!"rank one, size={n}"} {pill s!"showing={xs.size}"} {pill s!"clipped={clipped}"}
     </div>
@@ -77,21 +77,22 @@ def renderVector {α : Type} [Storage α] [TensorElemView α] (maxCols : Nat) {n
         <tbody>
           <tr>
             {... xs.map (fun x =>
-              <td style={json% {"border": "1px solid #ddd", "padding": "4px 6px", "text-align":
+              jsx%{<td style={json% {"border": "1px solid #ddd", "padding": "4px 6px", "text-align":
                 "right"}}>
                 {TensorElemView.render x}
-              </td>)}
+              </td>})}
             {if clipped then
-              <td style={json% {"border": "1px solid #ddd", "padding": "4px 6px", "opacity": 0.7}}>
+              jsx%{<td style={json% {"border": "1px solid #ddd", "padding": "4px 6px",
+                "opacity": 0.7}}>
                 ...
-              </td>
+              </td>}
              else
               ProofWidgets.Html.text ""}
           </tr>
         </tbody>
       </table>
     </div>
-  </div>
+  </div>}
 
 /-- A matrix as a table of at most `maxRows` by `maxCols` cells, marking clipped rows and
 columns. -/
@@ -105,7 +106,7 @@ def renderMatrix {α : Type} [Storage α] [TensorElemView α]
       prefixEntries row maxCols);
   let clippedRows : Bool := decide (n > maxRows);
   let clippedCols : Bool := decide (m > maxCols);
-  <div>
+  jsx%{<div>
     <div style={json% {"margin-bottom": "6px"}}>
       {pill s!"matrix {n}×{m}"} {pill s!"rows={rows.size}"} {pill s!"clippedRows={clippedRows}"}
         {pill s!"clippedCols={clippedCols}"}
@@ -114,30 +115,31 @@ def renderMatrix {α : Type} [Storage α] [TensorElemView α]
       <table style={json% {"border-collapse": "collapse"}}>
         <tbody>
           {... rows.map (fun row =>
-            <tr>
+            jsx%{<tr>
               {... row.map (fun x =>
-                <td style={json% {"border": "1px solid #ddd", "padding": "4px 6px", "text-align":
+                jsx%{<td style={json% {"border": "1px solid #ddd", "padding": "4px 6px",
+                  "text-align":
                   "right"}}>
                   {TensorElemView.render x}
-                </td>)}
+                </td>})}
               {if clippedCols then
-                <td style={json% {"border": "1px solid #ddd", "padding": "4px 6px", "opacity":
+                jsx%{<td style={json% {"border": "1px solid #ddd", "padding": "4px 6px", "opacity":
                   0.7}}>
                   ...
-                </td>
+                </td>}
                else
                 ProofWidgets.Html.text ""}
-            </tr>)}
+            </tr>})}
         </tbody>
       </table>
       {if clippedRows then
-        <div style={json% {"padding": "6px", "opacity": 0.7}}>
+        jsx%{<div style={json% {"padding": "6px", "opacity": 0.7}}>
           ... (more rows)
-        </div>
+        </div>}
        else
         ProofWidgets.Html.text ""}
     </div>
-  </div>
+  </div>}
 
 /-- First `maxElems` entries of a tensor in row-major order, with a marker when there are more.
 
@@ -153,12 +155,12 @@ def renderFlatPreview {α : Type} [Storage α] [ToString α] (maxElems : Nat) {s
     else
       "[" ++ String.intercalate ", " (head.toList.map toString) ++
         (if clipped then ", ..." else "") ++ "]";
-  <details style={json% {"margin-top": "10px"}}>
+  jsx%{<details style={json% {"margin-top": "10px"}}>
     <summary>{.text s!"Flat preview (first {maxElems})"}</summary>
     <div style={json% {"margin-top": "6px"}}>
       {monospace preview}
     </div>
-  </details>
+  </details>}
 
 /--
 Render a tensor as an HTML panel headed by its shape, rank and size.
@@ -178,9 +180,9 @@ def tensorHtml {α : Type} [Storage α] [ToString α] [TensorElemView α]
     | depth + 1 =>
         match s with
         | .scalar =>
-            <div>
+            jsx%{<div>
               {pill "scalar"} {TensorElemView.render (Tensor.item t)}
-            </div>
+            </div>}
         | .dim n .scalar =>
             renderVector (α := α) (n := n) maxCols t
         | .dim n (.dim m .scalar) =>
@@ -191,8 +193,8 @@ def tensorHtml {α : Type} [Storage α] [ToString α] [TensorElemView α]
             let idxs := (Array.finRange (min n maxSlices)).map (fun i =>
               (⟨i.val, Nat.lt_of_lt_of_le i.isLt (Nat.min_le_left _ _)⟩ : Fin n));
             let clipped : Bool := decide (n > maxSlices);
-            <div>
-              <details «open»={true}>
+            jsx%{<div>
+              <details open={true}>
                 <summary>
                       {pill s!"leading slices={idxs.size}"} {pill s!"clipped={clipped}"} {pill
                         s!"sliceShape={s'}"}
@@ -200,29 +202,29 @@ def tensorHtml {α : Type} [Storage α] [ToString α] [TensorElemView α]
                 <div style={json% {"margin-top": "8px"}}>
                   {... idxs.map (fun i =>
                     let slice : Tensor α s' := Tensor.unstack t i;
-                    <details style={json% {"margin": "8px 0"}}>
+                    jsx%{<details style={json% {"margin": "8px 0"}}>
                       <summary>{.text s!"[{i.1}]"}</summary>
                       <div style={json% {"margin-top": "6px", "padding-left": "8px"}}>
                         {go (s := s') slice depth}
                       </div>
-                    </details>)}
+                    </details>})}
                   {if clipped then
-                    <div style={json% {"opacity": 0.7}}>{.text "... (more slices)"}</div>
+                    jsx%{<div style={json% {"opacity": 0.7}}>{.text "... (more slices)"}</div>}
                    else
                     ProofWidgets.Html.text ""}
                 </div>
               </details>
               {renderFlatPreview (α := α) (s := .dim n s') maxElems t}
-            </div>
+            </div>}
 
   let header :=
-    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom":
+    jsx%{<div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap", "margin-bottom":
       "8px"}}>
       {pill s!"shape={s}"} {pill s!"rank={Shape.rank s}"} {pill
         s!"size={Shape.size s}"}
-    </div>;
+    </div>};
   let body := go (s := s) (t := t) (depth := 2);
-  <div style={json% {
+  jsx%{<div style={json% {
     "padding": "10px",
     "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
     "border-radius": "10px",
@@ -231,7 +233,7 @@ def tensorHtml {α : Type} [Storage α] [ToString α] [TensorElemView α]
   }}>
     {header}
     {body}
-  </div>
+  </div>}
 
 /-!
 ## Runtime Wrappers
@@ -258,9 +260,9 @@ def tensorStatsHtml {α : Type} [Storage α] [Context α] [ToString α] {s : Sha
   let xs : Array α := Tensor.to t (Array α)
   match xs[0]? with
   | none =>
-      <div style={json% {"padding": "10px"}}>
+      jsx%{<div style={json% {"padding": "10px"}}>
         {pill "Tensor stats"} {pill "empty tensor"} {pill s!"shape={s}"}
-      </div>
+      </div>}
   | some x =>
       let rest := xs.extract 1 xs.size
       let n : Nat := xs.size
@@ -274,7 +276,7 @@ def tensorStatsHtml {α : Type} [Storage α] [Context α] [ToString α] {s : Sha
       let sqsum := rest.foldl (fun acc y => acc + (y * y)) (x * x)
       let l2 := MathFunctions.sqrt (α := α) sqsum
       ;
-      <div style={json% {
+      jsx%{<div style={json% {
         "padding": "10px",
         "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
         "border-radius": "10px",
@@ -294,7 +296,7 @@ def tensorStatsHtml {α : Type} [Storage α] [Context α] [ToString α] {s : Sha
           {pill s!"l1={toString l1}"}
           {pill s!"l2={toString l2}"}
         </div>
-      </div>
+      </div>}
 
 /-!
 ## Commands

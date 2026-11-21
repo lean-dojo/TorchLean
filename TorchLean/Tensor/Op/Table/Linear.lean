@@ -83,9 +83,9 @@ theorem rule?_linear_leading [Op.Capabilities α] {n : Nat} {rest : Shape} {inDi
               dxs.2.2.1, ()) } :=
   rfl
 
-/-- The rule of `Op.matmul`. -/
-theorem rule?_matmul [Op.Capabilities α] {batchA batchB batch : Shape} {m n p : Nat} (lv rv : Bool)
-    (hl : lv = true → m = 1) (hr : rv = true → p = 1)
+/-- The rule of `Op.matmul` in the left fold. -/
+theorem rule?_matmul_leftFold [Op.Capabilities α] {batchA batchB batch : Shape} {m n p : Nat}
+    (lv rv : Bool) (hl : lv = true → m = 1) (hr : rv = true → p = 1)
     (broadcastA : Shape.CanBroadcastTo batchA batch)
     (broadcastB : Shape.CanBroadcastTo batchB batch) :
     (Op.matmul (m := m) (n := n) (p := p) lv rv hl hr broadcastA broadcastB).rule? (α := α) = some
@@ -111,25 +111,58 @@ theorem rule?_matmul [Op.Capabilities α] {batchA batchB batch : Shape} {m n p :
             _ (Shape.size_matmulOut hl hr _).symm, ()) } :=
   rfl
 
-/-- The rule of `Op.matmul` with matrix operands. -/
+/-- The rule of `Op.matmul` in the order `order`. -/
+theorem rule?_matmul [Op.Capabilities α] {batchA batchB batch : Shape} {m n p : Nat} (lv rv : Bool)
+    (hl : lv = true → m = 1) (hr : rv = true → p = 1)
+    (broadcastA : Shape.CanBroadcastTo batchA batch)
+    (broadcastB : Shape.CanBroadcastTo batchB batch) (order : ReduceOrder) :
+    (Op.matmul (m := m) (n := n) (p := p) lv rv hl hr broadcastA broadcastB order).rule? (α := α) =
+      some
+      { forward := fun xs =>
+          (Tensor.reshape (Tensor.batchMatmulIn order broadcastA broadcastB
+              (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
+              (Tensor.reshape xs.2.1 _ (Shape.size_matmulRight hr _ _)))
+            _ (Shape.size_matmulOut hl hr _).symm, ())
+        backward := fun xs g =>
+          let gradients := Tensor.matmulBackward broadcastA broadcastB
+            (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
+            (Tensor.reshape xs.2.1 _ (Shape.size_matmulRight hr _ _))
+            (Tensor.reshape g.1 _ (Shape.size_matmulOut hl hr _))
+          (Tensor.reshape gradients.1 _ (Shape.size_matmulLeft hl _ _).symm,
+            Tensor.reshape gradients.2 _ (Shape.size_matmulRight hr _ _).symm, ())
+        jvp? := some fun xs dxs =>
+          (Tensor.reshape (Tensor.batchMatmulIn order broadcastA broadcastB
+                (Tensor.reshape dxs.1 _ (Shape.size_matmulLeft hl _ _))
+                (Tensor.reshape xs.2.1 _ (Shape.size_matmulRight hr _ _)) +
+              Tensor.batchMatmulIn order broadcastA broadcastB
+                (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
+                (Tensor.reshape dxs.2.1 _ (Shape.size_matmulRight hr _ _)))
+            _ (Shape.size_matmulOut hl hr _).symm, ()) } := by
+  cases order
+  · rw [rule?_matmul_leftFold]
+    refine congrArg some (Op.Rule.ext_forward ?_ ?_) <;> simp only [batchMatmulIn_leftFold]
+    rfl
+  all_goals rfl
+
+/-- The rule of `Op.matmul` with matrix operands, in the order `order`. -/
 theorem rule?_matmul_matrix [Op.Capabilities α] {batchA batchB batch : Shape} {m n p : Nat}
     (hl : false = true → m = 1) (hr : false = true → p = 1)
     (broadcastA : Shape.CanBroadcastTo batchA batch)
-    (broadcastB : Shape.CanBroadcastTo batchB batch) :
-    (Op.matmul (m := m) (n := n) (p := p) false false hl hr broadcastA broadcastB).rule? (α := α) =
-      some
-      { forward := fun xs => (Tensor.batchMatmul broadcastA broadcastB xs.1 xs.2.1, ())
+    (broadcastB : Shape.CanBroadcastTo batchB batch) (order : ReduceOrder) :
+    (Op.matmul (m := m) (n := n) (p := p) false false hl hr broadcastA broadcastB order).rule?
+      (α := α) = some
+      { forward := fun xs => (Tensor.batchMatmulIn order broadcastA broadcastB xs.1 xs.2.1, ())
         backward := fun xs g =>
           let gradients := Tensor.matmulBackward broadcastA broadcastB xs.1 xs.2.1 g.1
           (gradients.1, gradients.2, ())
         jvp? := some fun xs dxs =>
-          (Tensor.batchMatmul broadcastA broadcastB dxs.1 xs.2.1 +
-            Tensor.batchMatmul broadcastA broadcastB xs.1 dxs.2.1, ()) } :=
-  rfl
+          (Tensor.batchMatmulIn order broadcastA broadcastB dxs.1 xs.2.1 +
+            Tensor.batchMatmulIn order broadcastA broadcastB xs.1 dxs.2.1, ()) } :=
+  rule?_matmul false false hl hr broadcastA broadcastB order
 
-/-- The rule of `Op.scaledMatmul`. -/
-theorem rule?_scaledMatmul [Op.Capabilities α] {batchA batchB batch : Shape} {m n p : Nat}
-    (lv rv : Bool) (hl : lv = true → m = 1) (hr : rv = true → p = 1)
+/-- The rule of `Op.scaledMatmul` in the left fold. -/
+theorem rule?_scaledMatmul_leftFold [Op.Capabilities α] {batchA batchB batch : Shape}
+    {m n p : Nat} (lv rv : Bool) (hl : lv = true → m = 1) (hr : rv = true → p = 1)
     (broadcastA : Shape.CanBroadcastTo batchA batch)
     (broadcastB : Shape.CanBroadcastTo batchB batch) :
     (Op.scaledMatmul (m := m) (n := n) (p := p) lv rv hl hr broadcastA broadcastB).rule? (α := α) =
@@ -155,15 +188,48 @@ theorem rule?_scaledMatmul [Op.Capabilities α] {batchA batchB batch : Shape} {m
             _ (Shape.size_matmulOut hl hr _).symm, ()) } :=
   rfl
 
-/-- The rule of `Op.scaledMatmul` with matrix operands. -/
+/-- The rule of `Op.scaledMatmul` in the order `order`: the forward is `Attention.scaledMatmulIn`,
+the pullback and the tangent are those of the left fold. -/
+theorem rule?_scaledMatmul [Op.Capabilities α] {batchA batchB batch : Shape} {m n p : Nat}
+    (lv rv : Bool) (hl : lv = true → m = 1) (hr : rv = true → p = 1)
+    (broadcastA : Shape.CanBroadcastTo batchA batch)
+    (broadcastB : Shape.CanBroadcastTo batchB batch) (order : ReduceOrder) :
+    (Op.scaledMatmul (m := m) (n := n) (p := p) lv rv hl hr broadcastA broadcastB
+        order).rule? (α := α) = some
+      { forward := fun xs =>
+          (Tensor.reshape (Attention.scaledMatmulIn order broadcastA broadcastB
+              (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
+              (Tensor.reshape xs.2.1 _ (Shape.size_matmulRight hr _ _)) xs.2.2.1.item)
+            _ (Shape.size_matmulOut hl hr _).symm, ())
+        backward := fun xs g =>
+          let gradients := Attention.scaledMatmulBackward broadcastA broadcastB
+            (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
+            (Tensor.reshape xs.2.1 _ (Shape.size_matmulRight hr _ _))
+            (Tensor.reshape g.1 _ (Shape.size_matmulOut hl hr _)) xs.2.2.1.item
+          (Tensor.reshape gradients.1 _ (Shape.size_matmulLeft hl _ _).symm,
+            Tensor.reshape gradients.2 _ (Shape.size_matmulRight hr _ _).symm, (), ())
+        jvp? := some fun xs dxs =>
+          (Tensor.reshape (Attention.scaledMatmulJVP broadcastA broadcastB
+              (Tensor.reshape xs.1 _ (Shape.size_matmulLeft hl _ _))
+              (Tensor.reshape dxs.1 _ (Shape.size_matmulLeft hl _ _))
+              (Tensor.reshape xs.2.1 _ (Shape.size_matmulRight hr _ _))
+              (Tensor.reshape dxs.2.1 _ (Shape.size_matmulRight hr _ _)) xs.2.2.1.item)
+            _ (Shape.size_matmulOut hl hr _).symm, ()) } := by
+  cases order
+  · rw [rule?_scaledMatmul_leftFold]
+    refine congrArg some (Op.Rule.ext_forward (funext fun xs => ?_) rfl)
+    rw [Attention.scaledMatmulIn_leftFold]
+  all_goals rfl
+
+/-- The rule of `Op.scaledMatmul` with matrix operands, in the order `order`. -/
 theorem rule?_scaledMatmul_matrix [Op.Capabilities α] {batchA batchB batch : Shape} {m n p : Nat}
     (hl : false = true → m = 1) (hr : false = true → p = 1)
     (broadcastA : Shape.CanBroadcastTo batchA batch)
-    (broadcastB : Shape.CanBroadcastTo batchB batch) :
+    (broadcastB : Shape.CanBroadcastTo batchB batch) (order : ReduceOrder) :
     (Op.scaledMatmul (m := m) (n := n) (p := p) false false hl hr broadcastA
-        broadcastB).rule? (α := α) = some
+        broadcastB order).rule? (α := α) = some
       { forward := fun xs =>
-          (Attention.scaledMatmul broadcastA broadcastB xs.1 xs.2.1 xs.2.2.1.item, ())
+          (Attention.scaledMatmulIn order broadcastA broadcastB xs.1 xs.2.1 xs.2.2.1.item, ())
         backward := fun xs g =>
           let gradients :=
             Attention.scaledMatmulBackward broadcastA broadcastB xs.1 xs.2.1 g.1 xs.2.2.1.item
@@ -171,10 +237,10 @@ theorem rule?_scaledMatmul_matrix [Op.Capabilities α] {batchA batchB batch : Sh
         jvp? := some fun xs dxs =>
           (Attention.scaledMatmulJVP broadcastA broadcastB xs.1 dxs.1 xs.2.1 dxs.2.1
             xs.2.2.1.item, ()) } :=
-  rfl
+  rule?_scaledMatmul false false hl hr broadcastA broadcastB order
 
-/-- The rule of `Op.contract`. -/
-theorem rule?_contract [Op.Capabilities α] {s t : Shape}
+/-- The rule of `Op.contract` in the left fold. -/
+theorem rule?_contract_leftFold [Op.Capabilities α] {s t : Shape}
     (dims batchDims : List (Fin s.rank × Fin t.rank)) (h : Shape.ContractValid s t dims batchDims) :
     (Op.contract dims batchDims h).rule? (α := α) = some
       { forward := fun xs => (Tensor.contract xs.1 xs.2.1 dims batchDims _ h rfl, ())
@@ -185,6 +251,24 @@ theorem rule?_contract [Op.Capabilities α] {s t : Shape}
           (Tensor.contract dxs.1 xs.2.1 dims batchDims _ h rfl +
             Tensor.contract xs.1 dxs.2.1 dims batchDims _ h rfl, ()) } :=
   rfl
+
+/-- The rule of `Op.contract` in the order `order`. -/
+theorem rule?_contract [Op.Capabilities α] {s t : Shape}
+    (dims batchDims : List (Fin s.rank × Fin t.rank)) (h : Shape.ContractValid s t dims batchDims)
+    (order : ReduceOrder) :
+    (Op.contract dims batchDims h order).rule? (α := α) = some
+      { forward := fun xs => (Tensor.contractIn order xs.1 xs.2.1 dims batchDims _ h rfl, ())
+        backward := fun xs g =>
+          (Tensor.contractBackwardLeft dims batchDims h g.1 xs.2.1,
+            Tensor.contractBackwardRight dims batchDims h xs.1 g.1, ())
+        jvp? := some fun xs dxs =>
+          (Tensor.contractIn order dxs.1 xs.2.1 dims batchDims _ h rfl +
+            Tensor.contractIn order xs.1 dxs.2.1 dims batchDims _ h rfl, ()) } := by
+  cases order
+  · rw [rule?_contract_leftFold]
+    refine congrArg some (Op.Rule.ext_forward ?_ ?_) <;> simp only [contractIn_leftFold]
+    rfl
+  all_goals rfl
 
 /-- The rule of `Op.rfft`. -/
 theorem rule?_rfft [Op.Capabilities α] {s : Shape} (dim : Fin s.rank) (n : Nat) (hn : 0 < n) :

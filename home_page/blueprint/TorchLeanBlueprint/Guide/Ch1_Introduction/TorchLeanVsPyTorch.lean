@@ -48,18 +48,18 @@ open Verso.Genre.Manual.InlineLean
 open TorchLean Backend.Device Trainer.Objective
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: one model followed through the TorchLean and PyTorch interfaces. -/
+
 #doc (Manual) "TorchLean and PyTorch" =>
 %%%
 tag := "torchlean_vs_pytorch"
 %%%
 
 TorchLean and PyTorch both organize training around tensors, modules, parameters, autograd, and
-optimizers. Following the same model through those interfaces makes the comparison more precise: we
-can ask where its shape is recorded, how we obtain its current weights, which function a backward
-rule differentiates, and what arithmetic evaluates that rule.
-
-Named Lean blocks are elaborated when this page is built, and their recorded outputs are checked.
-Each Python example records a run against PyTorch 2.13.0 (the guide build doesn't execute it).
+optimizers. Following one small network through those interfaces makes the comparison precise: the
+examples inspect where its shapes are recorded, how its current weights are obtained, which
+function a backward rule differentiates, and what arithmetic evaluates that rule. The Python
+transcripts were recorded with PyTorch 2.13.0.
 
 # MLP Definitions
 
@@ -80,7 +80,7 @@ x = torch.zeros(4)
 logits = net(x)
 ```
 
-Here's the corresponding TorchLean builder:
+The corresponding TorchLean builder is:
 
 ```lean (name := tpModelDef)
 -- Match the Python architecture while retaining its input
@@ -1049,17 +1049,14 @@ shape-typed model
 
 Each arrow is an interface that can be tested, checked, or proved independently where coverage
 allows.
-
-# PyTorch Integration
-
 Training can remain in PyTorch while TorchLean checks a supported exported artifact, or run in
 TorchLean while selected operations use PyTorch kernels. In either arrangement, a claim about the
 executed model must identify the imported weights, graph semantics, and kernel contracts.
 
 # References
 
-We compare against the system described in {Informal.citet pytorch2019}[] throughout this chapter,
-and the reverse-mode machinery both libraries implement is surveyed in
+The comparison uses the system described in {Informal.citet pytorch2019}[], and the reverse-mode
+machinery both libraries implement is surveyed in
 {Informal.citet baydin2018}[]. For floating-point design, the references are
 {Informal.citet flocq2011}[] and {Informal.citet boldo2015}[]. These PyTorch documentation pages
 were used for the transcripts above:

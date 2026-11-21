@@ -6,6 +6,7 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.CUDA.Tree.Derive
+public import TorchLean.Tensor.Random
 
 /-!
 # Sample tree types
@@ -21,6 +22,7 @@ and terms of a given number of nodes for the tests and the benchmarks.
 namespace TorchLean.Examples.Tree
 
 open Kernel
+open TorchLean.Random (splitmix64)
 
 /-- Binary trees with a scalar at each node. -/
 inductive BTree (α : Type) where
@@ -53,21 +55,14 @@ def caterpillar (x : α) : Nat → BTree α
   | 0 => .leaf
   | n + 1 => .node (caterpillar x n) x .leaf
 
-/-- One step of the SplitMix64 generator. -/
-def mix (z : UInt64) : UInt64 :=
-  let z := z + 0x9e3779b97f4a7c15
-  let z := (z ^^^ (z >>> 30)) * 0xbf58476d1ce4e5b9
-  let z := (z ^^^ (z >>> 27)) * 0x94d049bb133111eb
-  z ^^^ (z >>> 31)
-
 /-- A pseudorandom tree of `n` nodes from `seed`: the left subtree gets a uniform share of the
 other nodes, and node scalars are `scalar` of pseudorandom words. -/
 def random (scalar : UInt64 → α) : (n : Nat) → (seed : UInt64) → BTree α
   | 0, _ => .leaf
   | n + 1, seed =>
-    let k := (mix seed).toNat % (n + 1)
-    .node (random scalar k (mix (seed ^^^ 1))) (scalar (mix (seed ^^^ 2)))
-      (random scalar (n - k) (mix (seed ^^^ 3)))
+    let k := (splitmix64 seed).toNat % (n + 1)
+    .node (random scalar k (splitmix64 (seed ^^^ 1))) (scalar (splitmix64 (seed ^^^ 2)))
+      (random scalar (n - k) (splitmix64 (seed ^^^ 3)))
 termination_by n => n
 decreasing_by
   · exact Nat.mod_lt _ (Nat.succ_pos n)
@@ -104,7 +99,7 @@ def ofBTree : BTree α → List (Rose α)
 /-- A pseudorandom rose tree of `n + 1` nodes from `seed`, with node scalars `scalar` of
 pseudorandom words. -/
 def random (scalar : UInt64 → α) (n : Nat) (seed : UInt64) : Rose α :=
-  .node (scalar seed) (ofBTree (BTree.random scalar n (BTree.mix seed)))
+  .node (scalar seed) (ofBTree (BTree.random scalar n (splitmix64 seed)))
 
 end Rose
 
@@ -126,13 +121,13 @@ share of the other operations, and a leaf is a literal `scalar w` of a pseudoran
 variable whose index is a pseudorandom word modulo `vars`, with even odds. -/
 def random (scalar : UInt64 → α) (vars : UInt64) : (n : Nat) → (seed : UInt64) → Term α
   | 0, seed =>
-    let z := BTree.mix seed
-    if z % 2 = 0 then .lit (scalar (BTree.mix z)) else .var (BTree.mix z % vars)
+    let z := splitmix64 seed
+    if z % 2 = 0 then .lit (scalar (splitmix64 z)) else .var (splitmix64 z % vars)
   | n + 1, seed =>
-    let k := (BTree.mix seed).toNat % (n + 1)
-    let a := random scalar vars k (BTree.mix (seed ^^^ 1))
-    let b := random scalar vars (n - k) (BTree.mix (seed ^^^ 3))
-    if BTree.mix (seed ^^^ 2) % 2 = 0 then .add a b else .mul a b
+    let k := (splitmix64 seed).toNat % (n + 1)
+    let a := random scalar vars k (splitmix64 (seed ^^^ 1))
+    let b := random scalar vars (n - k) (splitmix64 (seed ^^^ 3))
+    if splitmix64 (seed ^^^ 2) % 2 = 0 then .add a b else .mul a b
 termination_by n => n
 decreasing_by
   · exact Nat.mod_lt _ (Nat.succ_pos n)

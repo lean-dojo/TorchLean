@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import TorchLean.NN.FDeriv.PullbackTensor
+public import TorchLean.NN.Tactic.OpDeriv
 public import TorchLean.NN.FDeriv.Reindex
 public import TorchLean.NN.Op.Pointwise
 public import TorchLean.Tensor.Op.Cert
@@ -25,14 +25,15 @@ and to its indices along the listed axes. A sum is therefore `reduceBroadcast` a
 A cumulative sum along `dim` adds the entries of a fiber up to an index, and its stored backward
 adds the gradient from an index up, so the adjoint identity is a swap of the two indices along
 `dim`. A product is smooth, and its stored backward multiplies the gradient by the product of the
-other entries of the fiber, which is its partial derivative. A maximum or a minimum is
-differentiable exactly where every fiber has a unique extremal entry
-(`differentiableAt_reduce_max_iff`). There it agrees near the input with the read of the extremal
-entries, and the stored backward sends each gradient to that entry. At a tie we move one of the
-tied entries along a line, on which the forward is a translate of `max t 0` (or `min t 0`), and
-this function is not differentiable at zero. At every input, ties included, the stored backward
-splits the gradient at an output evenly over the entries of its fiber equal to the extremum
-(`Op.reduce_backward_eq`).
+other entries of the fiber, which is its partial derivative. A maximum is differentiable exactly
+where every fiber has a unique largest entry (`differentiableAt_reduce_max_iff`). There it agrees
+near the input with the read of the largest entries, and the stored backward sends each gradient
+to that entry. At a tie we move one of the tied entries along a line, on which the forward is a
+translate of `max t 0`, and this function is not differentiable at zero. A minimum is the negated
+maximum of the negated input (`reduce_min_eq_neg`), and its stored backward at `x` is that of the
+maximum at `-x` (`reduceBackward_min_eq_neg`), so each statement about the minimum follows from the
+one about the maximum. At every input, ties included, the stored backward splits the gradient at an
+output evenly over the entries of its fiber equal to the extremum (`Op.reduce_backward_eq`).
 -/
 
 @[expose] public section
@@ -50,16 +51,6 @@ variable {s : Shape}
 section Fibers
 
 variable {dims : List (Fin s.rank)} {keepdim : Bool}
-
-/-- The indices of the coordinate that broadcasting reads. -/
-private theorem index_broadcastSource_of_lt {s t : Shape} (dims : Fin s.rank → Fin t.rank)
-    (h : Shape.BroadcastDims s t dims) (d : t.Coord) {k : Nat} (hk : k < s.rank) :
-    Shape.Coord.index (broadcastSource dims h d) k =
-      if s.extent ⟨k, hk⟩ = 1 then 0 else Shape.Coord.index d (dims ⟨k, hk⟩).val := by
-  rw [broadcastSource, Shape.Coord.index_ofFun, dite_eq_left hk]
-  split_ifs with hi
-  · rfl
-  · rw [Fin.val_cast, Shape.Coord.val_get]
 
 /-- An output axis of a reduction placed at a listed axis has extent one. -/
 private theorem extent_reduce_of_mem (j : Fin (s.reduce dims keepdim).rank)
@@ -105,23 +96,6 @@ private theorem extent_reduce_keptIndex {a : Fin s.rank} (ha : a ∉ dims) :
     simp only [Shape.extent, Shape.keepAxes, List.getElem_ofFn]
     simp [ha]
 
-/-- The coordinate of the selected shape that `c` lies over, with the indices of `c` along the
-listed axes. -/
-def listedCoord (dims : List (Fin s.rank)) (c : s.Coord) : (s.selectAxes dims).Coord :=
-  Shape.Coord.ofFun fun i => Fin.cast (s.extent_listedAxis dims i).symm
-    (Shape.Coord.get c (s.listedAxis dims i))
-
-/-- The indices of `listedCoord dims c` are those of `c` along the listed axes. -/
-private theorem index_listedCoord (dims : List (Fin s.rank)) (c : s.Coord) (k : Nat) :
-    Shape.Coord.index (listedCoord dims c) k =
-      if h : k < (s.selectAxes dims).rank then
-        Shape.Coord.index c (s.listedAxis dims ⟨k, h⟩).val
-      else 0 := by
-  rw [listedCoord, Shape.Coord.index_ofFun]
-  split_ifs
-  · simp [Shape.Coord.val_get]
-  · rfl
-
 /-- A coordinate read by a reduction broadcasts from the output coordinate it is read for. -/
 private theorem broadcastSource_reduceSource (o : (s.reduce dims keepdim).Coord)
     (r : (s.selectAxes dims).Coord) :
@@ -129,7 +103,7 @@ private theorem broadcastSource_reduceSource (o : (s.reduce dims keepdim).Coord)
       (s.reduceSource dims keepdim o r) = o := by
   apply Shape.Coord.ext_index
   intro k hk
-  rw [index_broadcastSource_of_lt _ _ _ hk]
+  rw [index_broadcastSource _ _ _ hk]
   split_ifs with h1
   · have h2 := Shape.Coord.index_lt o hk
     omega
@@ -137,20 +111,6 @@ private theorem broadcastSource_reduceSource (o : (s.reduce dims keepdim).Coord)
       h1 (extent_reduce_of_mem _ hm)
     rw [Shape.index_reduceSource, dite_eq_left (Fin.isLt _)]
     simp only [Fin.eta, hnot, ↓reduceIte, keptIndex_reduceAxes]
-
-/-- A coordinate read by a reduction lies over the reduced coordinate it is read at. -/
-private theorem listedCoord_reduceSource (o : (s.reduce dims keepdim).Coord)
-    (r : (s.selectAxes dims).Coord) :
-    listedCoord dims (s.reduceSource dims keepdim o r) = r := by
-  apply Shape.Coord.ext_index
-  intro k hk
-  have hlen : k < (s.sortedAxes dims).length := by
-    simpa [Shape.selectAxes, Shape.rank_eq_length] using hk
-  have hmem : (s.sortedAxes dims)[k] ∈ dims :=
-    Shape.mem_sortedAxes.mp (List.getElem_mem hlen)
-  have hnd : (s.sortedAxes dims).Nodup := (List.nodup_finRange s.rank).filter _
-  rw [index_listedCoord, dite_eq_left hk, Shape.index_reduceSource, dite_eq_left (Fin.isLt _)]
-  simp only [Shape.listedAxis, Fin.eta, hmem, ↓reduceIte, hnd.idxOf_getElem k hlen]
 
 /-- A coordinate is read by a reduction at the coordinate it broadcasts from and the reduced
 coordinate it lies over. -/
@@ -167,7 +127,7 @@ private theorem reduceSource_broadcastSource_listedCoord (c : s.Coord) :
       simpa [Shape.selectAxes, Shape.rank_eq_length] using List.idxOf_lt_length_iff.mpr hmem
     rw [index_listedCoord, dite_eq_left hlt]
     simp only [Shape.listedAxis, List.getElem_idxOf]
-  · rw [index_broadcastSource_of_lt _ _ _ (keptIndex_lt hd), reduceAxes_keptIndex hd,
+  · rw [index_broadcastSource _ _ _ (keptIndex_lt hd), reduceAxes_keptIndex hd,
       extent_reduce_keptIndex hd]
     split_ifs with h1
     · have h2 := Shape.Coord.index_lt c hk
@@ -413,8 +373,13 @@ section Extremum
 variable (dims : List (Fin s.rank)) (keepdim : Bool)
 
 /-- Over the reals, an entry ties an extremum exactly when they are equal. -/
-private theorem extremumTie_real (a b : ℝ) : extremumTie a b = true ↔ a = b := by
+private theorem extremumTie_real {a b : ℝ} : extremumTie a b = true ↔ a = b := by
   simp [extremumTie]
+
+/-- Over the reals, an entry ties a negated extremum exactly when its negation ties the
+extremum. -/
+private theorem extremumTie_neg (a b : ℝ) : extremumTie a (-b) = extremumTie (-a) b :=
+  Bool.eq_iff_iff.mpr (by rw [extremumTie_real, extremumTie_real]; exact neg_eq_iff_eq_neg.symm)
 
 /-- In a fiber whose entry read at `r` differs from all its other entries, exactly one entry ties
 the entry read at `r`. -/
@@ -479,20 +444,11 @@ private theorem foldl_max_eq {ι : Type} (v : ι → ℝ) (j : ι) (hv : ∀ i, 
       · exact Or.inl h
     · exact Or.inr (by rw [h]; exact max_eq_left (hv i))
 
-/-- A left fold of `min` from a value at least `v j`, over a list in which every value is at least
-`v j`, is `v j` when `j` is in the list or the initial value is `v j`. -/
-private theorem foldl_min_eq {ι : Type} (v : ι → ℝ) (j : ι) (hv : ∀ i, v j ≤ v i) :
-    ∀ (l : List ι) (a : ℝ), v j ≤ a → (j ∈ l ∨ a = v j) →
-      l.foldl (fun acc i => min acc (v i)) a = v j
-  | [], _, _, h => h.resolve_left (by simp)
-  | i :: l, a, ha, h => by
-    rw [List.foldl_cons]
-    refine foldl_min_eq v j hv l _ (le_min ha (hv i)) ?_
-    rcases h with h | h
-    · rcases List.mem_cons.mp h with h | h
-      · exact Or.inr (by rw [← h]; exact min_eq_right ha)
-      · exact Or.inl h
-    · exact Or.inr (by rw [h]; exact min_eq_left (hv i))
+/-- A left fold of `min` is the negated left fold of `max` over the negated values. -/
+private theorem foldl_min_eq_neg {ι : Type} (v : ι → ℝ) (l : List ι) (a : ℝ) :
+    l.foldl (fun acc i => min acc (v i)) a = -l.foldl (fun acc i => max acc (-v i)) (-a) := by
+  rw [List.foldl_hom Neg.neg (g₁ := fun acc i => min acc (v i))
+    (g₂ := fun acc i => max acc (-v i)) fun a i => max_neg_neg a (v i), neg_neg]
 
 /-- Where the entry read at `r` is a largest entry of the fiber of `o`, the real maximum over `dims`
 at `o` is that entry. -/
@@ -513,26 +469,6 @@ theorem reduce_max_apply_of_le (x : Tensor ℝ s) (hpos : ∀ d ∈ dims, 0 < s.
   rw [foldl_max_eq (fun i => x (s.reduceSource dims keepdim o (Shape.Coord.unlinearize i))) _ hv
     _ _ (hv _) (Or.inl (List.mem_finRange _)), hunl]
 
-/-- Where the entry read at `r` is a smallest entry of the fiber of `o`, the real minimum over
-`dims` at `o` is that entry. -/
-theorem reduce_min_apply_of_le (x : Tensor ℝ s) (hpos : ∀ d ∈ dims, 0 < s.extent d)
-    (o : (s.reduce dims keepdim).Coord) (r : (s.selectAxes dims).Coord)
-    (hr : ∀ q, x (s.reduceSource dims keepdim o r) ≤ x (s.reduceSource dims keepdim o q)) :
-    (reduce .min x dims keepdim fun _ => hpos) o = x (s.reduceSource dims keepdim o r) := by
-  have hunl : Shape.Coord.unlinearize (Shape.Coord.equivFin (s.selectAxes dims) r) = r :=
-    (Shape.Coord.equivFin _).symm_apply_apply r
-  have hv : ∀ i,
-      x (s.reduceSource dims keepdim o
-        (Shape.Coord.unlinearize (Shape.Coord.equivFin (s.selectAxes dims) r))) ≤
-        x (s.reduceSource dims keepdim o (Shape.Coord.unlinearize i)) :=
-    fun i => by
-      rw [hunl]
-      exact hr _
-  rw [reduce_min_apply]
-  simp only [Context.minimum_real]
-  rw [foldl_min_eq (fun i => x (s.reduceSource dims keepdim o (Shape.Coord.unlinearize i))) _ hv
-    _ _ (hv _) (Or.inl (List.mem_finRange _)), hunl]
-
 /-- Where the entry read at `r` is larger than every other entry of the fiber of `o`, the real
 maximum over `dims` at `o` is that entry. -/
 theorem reduce_max_apply_of_lt (x : Tensor ℝ s) (hpos : ∀ d ∈ dims, 0 < s.extent d)
@@ -545,33 +481,34 @@ theorem reduce_max_apply_of_lt (x : Tensor ℝ s) (hpos : ∀ d ∈ dims, 0 < s.
     · rw [hq]
     · exact (hr q hq).le
 
-/-- Where the entry read at `r` is smaller than every other entry of the fiber of `o`, the real
-minimum over `dims` at `o` is that entry. -/
-theorem reduce_min_apply_of_lt (x : Tensor ℝ s) (hpos : ∀ d ∈ dims, 0 < s.extent d)
-    (o : (s.reduce dims keepdim).Coord) (r : (s.selectAxes dims).Coord)
-    (hr : ∀ r', r' ≠ r →
-      x (s.reduceSource dims keepdim o r) < x (s.reduceSource dims keepdim o r')) :
-    (reduce .min x dims keepdim fun _ => hpos) o = x (s.reduceSource dims keepdim o r) :=
-  reduce_min_apply_of_le dims keepdim x hpos o r fun q => by
-    by_cases hq : q = r
-    · rw [hq]
-    · exact (hr q hq).le
+/-- Over the reals, a minimum over `dims` is the negated maximum of the negated input, so the
+derivative, the points of differentiability and the stored pullback of a minimum are those of the
+maximum at `-x`. -/
+theorem reduce_min_eq_neg (x : Tensor ℝ s) (hpos : ∀ d ∈ dims, 0 < s.extent d) :
+    (reduce .min x dims keepdim fun _ => hpos) = -reduce .max (-x) dims keepdim fun _ => hpos := by
+  refine Rep.ext fun o => ?_
+  rw [Rep.neg_apply, reduce_min_apply, reduce_max_apply]
+  simp only [Context.minimum_real, Context.maximum_real, Rep.neg_apply]
+  exact foldl_min_eq_neg _ _ _
+
+variable {dims keepdim} in
+/-- Every fiber of `x` has an entry smaller than all its other entries exactly when every fiber of
+`-x` has an entry larger than all its other entries. -/
+private theorem uniqueMin_iff {x : Tensor ℝ s} :
+    (∀ o, ∃ r, ∀ r', r' ≠ r →
+      x (s.reduceSource dims keepdim o r) < x (s.reduceSource dims keepdim o r')) ↔
+    ∀ o, ∃ r, ∀ r', r' ≠ r →
+      (-x) (s.reduceSource dims keepdim o r') < (-x) (s.reduceSource dims keepdim o r) := by
+  simp only [Rep.neg_apply, neg_lt_neg_iff]
 
 /-- The weight of the entry `c` in `reduceMaxCLM`, which is the derivative of a real maximum over
 `dims` at `x` when every fiber of `x` has a unique largest entry (`hasFDerivAt_reduce_max`): one if
-`x c` is larger than every other entry of the fiber of `c`, zero otherwise. -/
+`x c` is larger than every other entry of the fiber of `c`, zero otherwise. At `-x` it weighs the
+unique smallest entries of `x`. -/
 noncomputable def reduceMaxSlope (x : Tensor ℝ s) (c : s.Coord) : ℝ :=
   if ∀ r, r ≠ listedCoord dims c → x (s.reduceSource dims keepdim
       (broadcastSource (s.reduceAxes dims keepdim) (s.reduce_broadcastDims dims keepdim) c) r) <
       x c then 1 else 0
-
-/-- The weight of the entry `c` in `reduceMinCLM`, which is the derivative of a real minimum over
-`dims` at `x` when every fiber of `x` has a unique smallest entry (`hasFDerivAt_reduce_min`): one
-if `x c` is smaller than every other entry of the fiber of `c`, zero otherwise. -/
-noncomputable def reduceMinSlope (x : Tensor ℝ s) (c : s.Coord) : ℝ :=
-  if ∀ r, r ≠ listedCoord dims c → x c < x (s.reduceSource dims keepdim
-      (broadcastSource (s.reduceAxes dims keepdim) (s.reduce_broadcastDims dims keepdim) c) r)
-    then 1 else 0
 
 /-- At the entry read at `o` and `r`, `reduceMaxSlope` is one if that entry is larger than every
 other entry of the fiber of `o`, zero otherwise. -/
@@ -583,19 +520,10 @@ theorem reduceMaxSlope_reduceSource (x : Tensor ℝ s) (o : (s.reduce dims keepd
       then 1 else 0 := by
   rw [reduceMaxSlope, listedCoord_reduceSource, broadcastSource_reduceSource]
 
-/-- At the entry read at `o` and `r`, `reduceMinSlope` is one if that entry is smaller than every
-other entry of the fiber of `o`, zero otherwise. -/
-theorem reduceMinSlope_reduceSource (x : Tensor ℝ s) (o : (s.reduce dims keepdim).Coord)
-    (r : (s.selectAxes dims).Coord) :
-    reduceMinSlope dims keepdim x (s.reduceSource dims keepdim o r) =
-      if ∀ r', r' ≠ r →
-        x (s.reduceSource dims keepdim o r) < x (s.reduceSource dims keepdim o r')
-      then 1 else 0 := by
-  rw [reduceMinSlope, listedCoord_reduceSource, broadcastSource_reduceSource]
-
 /-- The sum over `dims` of the tangent scaled entrywise by `reduceMaxSlope`, which is the
 derivative of the real maximum at inputs whose fibers have unique largest entries
-(`hasFDerivAt_reduce_max`). -/
+(`hasFDerivAt_reduce_max`). At `-x` it is the derivative of the real minimum at `x`
+(`hasFDerivAt_reduce_min`). -/
 noncomputable def reduceMaxCLM (x : Tensor ℝ s) :
     Tensor ℝ s →L[ℝ] Tensor ℝ (s.reduce dims keepdim) :=
   (reduceSumCLM dims keepdim).comp (Op.slopeCLM (reduceMaxSlope dims keepdim x))
@@ -605,20 +533,6 @@ noncomputable def reduceMaxCLM (x : Tensor ℝ s) :
 @[simp] theorem reduceMaxCLM_apply (x v : Tensor ℝ s) :
     reduceMaxCLM dims keepdim x v =
       reduce .sum (Op.slopeCLM (reduceMaxSlope dims keepdim x) v) dims keepdim :=
-  rfl
-
-/-- The sum over `dims` of the tangent scaled entrywise by `reduceMinSlope`, which is the
-derivative of the real minimum at inputs whose fibers have unique smallest entries
-(`hasFDerivAt_reduce_min`). -/
-noncomputable def reduceMinCLM (x : Tensor ℝ s) :
-    Tensor ℝ s →L[ℝ] Tensor ℝ (s.reduce dims keepdim) :=
-  (reduceSumCLM dims keepdim).comp (Op.slopeCLM (reduceMinSlope dims keepdim x))
-
-/-- `reduceMinCLM dims keepdim x` applied to `v` is the sum over `dims` of `v` scaled entrywise by
-`reduceMinSlope`. -/
-@[simp] theorem reduceMinCLM_apply (x v : Tensor ℝ s) :
-    reduceMinCLM dims keepdim x v =
-      reduce .sum (Op.slopeCLM (reduceMinSlope dims keepdim x) v) dims keepdim :=
   rfl
 
 /-- At a real input each of whose fibers has an entry larger than all its other entries, the
@@ -651,34 +565,17 @@ theorem hasFDerivAt_reduce_max (x : Tensor ℝ s) (hpos : ∀ d ∈ dims, 0 < s.
         ite_eq_right fun hall => lt_asymm (hm o r hr) (hall (m o) (Ne.symm hr)), zero_mul]
 
 /-- At a real input each of whose fibers has an entry smaller than all its other entries, the
-minimum over `dims` has derivative `reduceMinCLM dims keepdim x`. -/
+minimum over `dims` has derivative `reduceMaxCLM dims keepdim (-x)`. -/
 theorem hasFDerivAt_reduce_min (x : Tensor ℝ s) (hpos : ∀ d ∈ dims, 0 < s.extent d)
     (hx : ∀ o, ∃ r, ∀ r', r' ≠ r →
       x (s.reduceSource dims keepdim o r) < x (s.reduceSource dims keepdim o r')) :
     HasFDerivAt (fun y : Tensor ℝ s => reduce .min y dims keepdim fun _ => hpos)
-      (reduceMinCLM dims keepdim x) x := by
-  choose m hm using hx
-  have hev : ∀ᶠ y in nhds x, ∀ o r, r ≠ m o →
-      y (s.reduceSource dims keepdim o (m o)) < y (s.reduceSource dims keepdim o r) := by
-    refine Filter.eventually_all.mpr fun o => Filter.eventually_all.mpr fun r => ?_
-    by_cases hr : r = m o
-    · exact Filter.Eventually.of_forall fun _ h => absurd hr h
-    · exact ((coordinateCLM
-        (s.reduceSource dims keepdim o (m o))).continuous.continuousAt.eventually_lt
-        (coordinateCLM (s.reduceSource dims keepdim o r)).continuous.continuousAt
-        (hm o r hr)).mono fun _ hy _ => hy
-  refine ((Rep.pullCLM fun o =>
-    s.reduceSource dims keepdim o (m o)).hasFDerivAt.congr_of_eventuallyEq ?_).congr_fderiv ?_
-  · filter_upwards [hev] with y hy
-    refine Rep.ext fun o => ?_
-    rw [Rep.pullCLM_apply, Rep.pull_apply]
-    exact reduce_min_apply_of_lt dims keepdim y hpos o (m o) (hy o)
-  · refine ContinuousLinearMap.ext fun v => Rep.ext fun o => ?_
-    rw [Rep.pullCLM_apply, Rep.pull_apply, reduceMinCLM_apply, reduce_sum_apply_eq_sum]
-    refine Eq.trans ?_ (Fintype.sum_eq_single (m o) fun r hr => ?_).symm
-    · rw [Op.slopeCLM_apply, reduceMinSlope_reduceSource, ite_eq_left (hm o), one_mul]
-    · rw [Op.slopeCLM_apply, reduceMinSlope_reduceSource,
-        ite_eq_right fun hall => lt_asymm (hm o r hr) (hall (m o) (Ne.symm hr)), zero_mul]
+      (reduceMaxCLM dims keepdim (-x)) x := by
+  simp only [reduce_min_eq_neg dims keepdim _ hpos]
+  refine ((hasFDerivAt_reduce_max dims keepdim (-x) hpos (uniqueMin_iff.mp
+    hx)).comp x (hasFDerivAt_id x).neg).neg.congr_fderiv (ContinuousLinearMap.ext fun v => ?_)
+  simp only [_root_.neg_apply, ContinuousLinearMap.comp_apply, ContinuousLinearMap.id_apply,
+    map_neg, neg_neg]
 
 /-- Moving an input along the tensor that is one at the entry read at `o` and `r` and zero
 elsewhere moves only that entry of the fiber of `o`. -/
@@ -746,6 +643,17 @@ theorem not_differentiableAt_reduce_max (x : Tensor ℝ s) (hpos : ∀ d ∈ dim
   rw [habs]
   exact ((hg.const_mul 2).sub_const _).sub differentiableAt_id
 
+variable {dims keepdim} in
+/-- A real minimum over `dims` is differentiable at `x` exactly when the maximum is differentiable
+at `-x`. -/
+private theorem differentiableAt_reduce_min_iff_max {x : Tensor ℝ s}
+    {hpos : ∀ d ∈ dims, 0 < s.extent d} :
+    DifferentiableAt ℝ (fun y : Tensor ℝ s => reduce .min y dims keepdim fun _ => hpos) x ↔
+      DifferentiableAt ℝ (fun y : Tensor ℝ s => reduce .max y dims keepdim fun _ => hpos) (-x) := by
+  simp only [reduce_min_eq_neg dims keepdim _ hpos, differentiableAt_fun_neg_iff]
+  exact (ContinuousLinearEquiv.neg ℝ).comp_right_differentiableAt_iff
+    (f := fun y : Tensor ℝ s => reduce .max y dims keepdim fun _ => hpos)
+
 /-- A real minimum over `dims` is not differentiable at an input with a fiber whose smallest
 entry, read at `r`, is also read at another `r'`. -/
 theorem not_differentiableAt_reduce_min (x : Tensor ℝ s) (hpos : ∀ d ∈ dims, 0 < s.extent d)
@@ -753,52 +661,15 @@ theorem not_differentiableAt_reduce_min (x : Tensor ℝ s) (hpos : ∀ d ∈ dim
     (hle : ∀ q, x (s.reduceSource dims keepdim o r) ≤ x (s.reduceSource dims keepdim o q))
     (heq : x (s.reduceSource dims keepdim o r') = x (s.reduceSource dims keepdim o r)) :
     ¬ DifferentiableAt ℝ (fun y : Tensor ℝ s => reduce .min y dims keepdim fun _ => hpos) x := by
-  intro hd
-  obtain ⟨e, hy⟩ := exists_fiber_line dims keepdim x o r
-  have hline : ∀ t : ℝ, (reduce .min (x + t • e) dims keepdim fun _ => hpos) o =
-      x (s.reduceSource dims keepdim o r) + min t 0 := fun t => by
-    rcases le_total 0 t with ht | ht
-    · have hm : ∀ q, (x + t • e) (s.reduceSource dims keepdim o r') ≤
-          (x + t • e) (s.reduceSource dims keepdim o q) := fun q => by
-        rw [hy, hy, ite_eq_right hne, add_zero, heq]
-        by_cases hq : q = r
-        · rw [ite_eq_left hq, hq]
-          linarith
-        · rw [ite_eq_right hq, add_zero]
-          exact hle q
-      rw [reduce_min_apply_of_le dims keepdim _ hpos o r' hm, hy, ite_eq_right hne, add_zero, heq,
-        min_eq_right ht, add_zero]
-    · have hm : ∀ q, (x + t • e) (s.reduceSource dims keepdim o r) ≤
-          (x + t • e) (s.reduceSource dims keepdim o q) := fun q => by
-        rw [hy, hy, ite_eq_left rfl]
-        by_cases hq : q = r
-        · exact le_of_eq (by rw [ite_eq_left hq, hq])
-        · rw [ite_eq_right hq, add_zero]
-          linarith [hle q]
-      rw [reduce_min_apply_of_le dims keepdim _ hpos o r hm, hy, ite_eq_left rfl, min_eq_left ht]
-  have hd0 : DifferentiableAt ℝ (fun y : Tensor ℝ s => reduce .min y dims keepdim fun _ => hpos)
-      (x + (0 : ℝ) • e) := by
-    rwa [zero_smul, add_zero]
-  have hl : DifferentiableAt ℝ (fun t : ℝ => x + t • e) 0 := by fun_prop
-  have hg : DifferentiableAt ℝ (fun t : ℝ => x (s.reduceSource dims keepdim o r) + min t 0) 0 :=
-    (DifferentiableAt.fun_comp' (0 : ℝ) (coordinateCLM o).differentiableAt
-      (DifferentiableAt.fun_comp' (f := fun t : ℝ => x + t • e) (0 : ℝ) hd0
-        hl)).congr_of_eventuallyEq (Filter.Eventually.of_forall fun t => (hline t).symm)
-  refine not_differentiableAt_abs_zero ?_
-  have habs : (_root_.abs : ℝ → ℝ) = fun t =>
-      2 * x (s.reduceSource dims keepdim o r) -
-        2 * (x (s.reduceSource dims keepdim o r) + min t 0) + t := funext fun t => by
-    rcases le_total 0 t with ht | ht
-    · rw [abs_of_nonneg ht, min_eq_right ht]
-      ring
-    · rw [abs_of_nonpos ht, min_eq_left ht]
-      ring
-  rw [habs]
-  exact ((hg.const_mul 2).const_sub _).add differentiableAt_id
+  rw [differentiableAt_reduce_min_iff_max]
+  exact not_differentiableAt_reduce_max dims keepdim (-x) hpos o hne
+    (fun q => by simpa only [Rep.neg_apply, neg_le_neg_iff] using hle q)
+    (by simp only [Rep.neg_apply, heq])
 
+variable {dims keepdim} in
 /-- A real maximum over `dims` is differentiable at `x` exactly when every fiber of `x` has an
 entry larger than all its other entries. -/
-theorem differentiableAt_reduce_max_iff (x : Tensor ℝ s) (hpos : ∀ d ∈ dims, 0 < s.extent d) :
+theorem differentiableAt_reduce_max_iff {x : Tensor ℝ s} (hpos : ∀ d ∈ dims, 0 < s.extent d) :
     DifferentiableAt ℝ (fun y : Tensor ℝ s => reduce .max y dims keepdim fun _ => hpos) x ↔
       ∀ o, ∃ r, ∀ r', r' ≠ r →
         x (s.reduceSource dims keepdim o r') < x (s.reduceSource dims keepdim o r) := by
@@ -811,20 +682,14 @@ theorem differentiableAt_reduce_max_iff (x : Tensor ℝ s) (hpos : ∀ d ∈ dim
     not_differentiableAt_reduce_max dims keepdim x hpos o hr' (fun q => hr q (Finset.mem_univ _))
       heq hd⟩
 
+variable {dims keepdim} in
 /-- A real minimum over `dims` is differentiable at `x` exactly when every fiber of `x` has an
 entry smaller than all its other entries. -/
-theorem differentiableAt_reduce_min_iff (x : Tensor ℝ s) (hpos : ∀ d ∈ dims, 0 < s.extent d) :
+theorem differentiableAt_reduce_min_iff {x : Tensor ℝ s} (hpos : ∀ d ∈ dims, 0 < s.extent d) :
     DifferentiableAt ℝ (fun y : Tensor ℝ s => reduce .min y dims keepdim fun _ => hpos) x ↔
       ∀ o, ∃ r, ∀ r', r' ≠ r →
         x (s.reduceSource dims keepdim o r) < x (s.reduceSource dims keepdim o r') := by
-  refine ⟨fun hd o => ?_, fun hx =>
-    (hasFDerivAt_reduce_min dims keepdim x hpos hx).differentiableAt⟩
-  obtain ⟨r, -, hr⟩ := Finset.exists_min_image Finset.univ
-    (fun q => x (s.reduceSource dims keepdim o q))
-    ⟨Shape.Coord.unlinearize ⟨0, Shape.size_selectAxes_pos hpos⟩, Finset.mem_univ _⟩
-  exact ⟨r, fun r' hr' => (hr r' (Finset.mem_univ _)).lt_of_ne' fun heq =>
-    not_differentiableAt_reduce_min dims keepdim x hpos o hr' (fun q => hr q (Finset.mem_univ _))
-      heq hd⟩
+  rw [differentiableAt_reduce_min_iff_max, differentiableAt_reduce_max_iff, uniqueMin_iff]
 
 /-- An entry of the stored pullback of a real maximum, with the fiber read through
 `broadcastSource`. -/
@@ -864,6 +729,17 @@ private theorem reduceBackward_min_apply (x : Tensor ℝ s)
       else 0 :=
   Rep.get_ofFn _ c
 
+/-- Over the reals, the stored pullback of a minimum over `dims` at `x` is the stored pullback of
+the maximum at `-x`. -/
+theorem reduceBackward_min_eq_neg (x : Tensor ℝ s)
+    (h : ReduceOp.min = .max ∨ ReduceOp.min = .min → ∀ d ∈ dims, 0 < s.extent d)
+    (δ : Tensor ℝ (s.reduce dims keepdim)) :
+    reduceBackward .min x dims keepdim h δ =
+      reduceBackward .max (-x) dims keepdim (fun _ => h (Or.inr rfl)) δ := by
+  refine Rep.ext fun c => ?_
+  rw [reduceBackward_min_apply, reduceBackward_max_apply, reduce_min_eq_neg]
+  simp only [broadcast_eq_pull, Rep.pull_apply, Rep.neg_apply, extremumTie_neg]
+
 /-- At every real input, the stored pullback of a maximum over `dims` gives the entry read at `o`
 and `r` the gradient at `o` divided by the number of entries of the fiber of `o` equal to it when it
 is a largest entry of that fiber, and zero otherwise. -/
@@ -887,10 +763,10 @@ theorem reduceBackward_max_reduceSource (x : Tensor ℝ s)
   by_cases hr : ∀ q, x (s.reduceSource dims keepdim o q) ≤ x (s.reduceSource dims keepdim o r)
   · have he : x (s.reduceSource dims keepdim o r) = x (s.reduceSource dims keepdim o m) :=
       le_antisymm (hm r (Finset.mem_univ _)) (hr m)
-    rw [ite_eq_left ((extremumTie_real _ _).mpr he), ite_eq_left hr, he]
+    rw [ite_eq_left (extremumTie_real.mpr he), ite_eq_left hr, he]
   · have hne : ¬extremumTie (x (s.reduceSource dims keepdim o r))
         (x (s.reduceSource dims keepdim o m)) = true := fun ht =>
-      hr fun q => (hm q (Finset.mem_univ _)).trans_eq ((extremumTie_real _ _).mp ht).symm
+      hr fun q => (hm q (Finset.mem_univ _)).trans_eq (extremumTie_real.mp ht).symm
     rw [ite_eq_right hne, ite_eq_right hr]
 
 /-- At every real input, the stored pullback of a minimum over `dims` gives the entry read at `o`
@@ -905,22 +781,8 @@ theorem reduceBackward_min_reduceSource (x : Tensor ℝ s)
         δ o / (Finset.univ.filter fun q =>
           x (s.reduceSource dims keepdim o q) = x (s.reduceSource dims keepdim o r)).card
       else 0 := by
-  rw [reduceBackward_min_apply]
-  simp only [broadcast_eq_pull, Rep.pull_apply, broadcastSource_reduceSource]
-  obtain ⟨m, -, hm⟩ := Finset.exists_min_image Finset.univ
-    (fun q => x (s.reduceSource dims keepdim o q))
-    ⟨Shape.Coord.unlinearize ⟨0, Shape.size_selectAxes_pos (h (Or.inr rfl))⟩, Finset.mem_univ _⟩
-  rw [reduce_min_apply_of_le dims keepdim x (h (Or.inr rfl)) o m
-    (fun q => hm q (Finset.mem_univ _)), countP_fiber_eq_card dims keepdim x o,
-    Context.divNat_real]
-  by_cases hr : ∀ q, x (s.reduceSource dims keepdim o r) ≤ x (s.reduceSource dims keepdim o q)
-  · have he : x (s.reduceSource dims keepdim o r) = x (s.reduceSource dims keepdim o m) :=
-      le_antisymm (hr m) (hm r (Finset.mem_univ _))
-    rw [ite_eq_left ((extremumTie_real _ _).mpr he), ite_eq_left hr, he]
-  · have hne : ¬extremumTie (x (s.reduceSource dims keepdim o r))
-        (x (s.reduceSource dims keepdim o m)) = true := fun ht =>
-      hr fun q => ((extremumTie_real _ _).mp ht).trans_le (hm q (Finset.mem_univ _))
-    rw [ite_eq_right hne, ite_eq_right hr]
+  rw [reduceBackward_min_eq_neg, reduceBackward_max_reduceSource]
+  simp only [Rep.neg_apply, neg_le_neg_iff, neg_inj]
 
 /-- At a real input each of whose fibers has an entry larger than all its other entries, the
 stored pullback of a maximum over `dims` scales the broadcast back of the gradient entrywise by
@@ -943,37 +805,10 @@ theorem reduceBackward_max (x : Tensor ℝ s)
     reduceMaxSlope_reduceSource]
   by_cases hr : r = m o
   · subst hr
-    rw [ite_eq_left ((extremumTie_real _ _).mpr rfl), ite_eq_left (hm o),
+    rw [ite_eq_left (extremumTie_real.mpr rfl), ite_eq_left (hm o),
       countP_fiber_eq_one dims keepdim x o (m o) fun r' hr' => (hm o r' hr').ne,
       Context.divNat_real, Nat.cast_one, div_one, one_mul]
-  · rw [ite_eq_right fun ht => (hm o r hr).ne ((extremumTie_real _ _).mp ht),
-      ite_eq_right fun hall => lt_asymm (hm o r hr) (hall (m o) (Ne.symm hr)), zero_mul]
-
-/-- At a real input each of whose fibers has an entry smaller than all its other entries, the
-stored pullback of a minimum over `dims` scales the broadcast back of the gradient entrywise by
-`reduceMinSlope`. -/
-theorem reduceBackward_min (x : Tensor ℝ s)
-    (h : ReduceOp.min = .max ∨ ReduceOp.min = .min → ∀ d ∈ dims, 0 < s.extent d)
-    (hx : ∀ o, ∃ r, ∀ r', r' ≠ r →
-      x (s.reduceSource dims keepdim o r) < x (s.reduceSource dims keepdim o r'))
-    (δ : Tensor ℝ (s.reduce dims keepdim)) :
-    reduceBackward .min x dims keepdim h δ =
-      Op.slopeCLM (reduceMinSlope dims keepdim x)
-        (broadcast δ s (s.reduceAxes dims keepdim) (s.reduce_broadcastDims dims keepdim)) := by
-  choose m hm using hx
-  refine Rep.ext fun c => ?_
-  obtain ⟨o, r, rfl⟩ : ∃ o r, s.reduceSource dims keepdim o r = c :=
-    ⟨_, _, reduceSource_broadcastSource_listedCoord c⟩
-  rw [reduceBackward_min_apply, Op.slopeCLM_apply]
-  simp only [broadcast_eq_pull, Rep.pull_apply, broadcastSource_reduceSource]
-  rw [reduce_min_apply_of_lt dims keepdim x (h (Or.inr rfl)) o (m o) (hm o),
-    reduceMinSlope_reduceSource]
-  by_cases hr : r = m o
-  · subst hr
-    rw [ite_eq_left ((extremumTie_real _ _).mpr rfl), ite_eq_left (hm o),
-      countP_fiber_eq_one dims keepdim x o (m o) fun r' hr' => (hm o r' hr').ne',
-      Context.divNat_real, Nat.cast_one, div_one, one_mul]
-  · rw [ite_eq_right fun ht => (hm o r hr).ne' ((extremumTie_real _ _).mp ht),
+  · rw [ite_eq_right fun ht => (hm o r hr).ne (extremumTie_real.mp ht),
       ite_eq_right fun hall => lt_asymm (hm o r hr) (hall (m o) (Ne.symm hr)), zero_mul]
 
 /-- Over the reals, a maximum over `dims` at an input each of whose fibers has an entry larger than
@@ -990,17 +825,18 @@ theorem hasPullbackAt_reduce_max (x : Tensor ℝ s) (hpos : ∀ d ∈ dims, 0 < 
     rw [reduceMaxCLM_apply, inner_reduce_sum_slopeCLM, reduceBackward_max dims keepdim x _ hx]
 
 /-- Over the reals, a minimum over `dims` at an input each of whose fibers has an entry smaller
-than all its other entries has the derivative `reduceMinCLM` and the stored pullback
+than all its other entries has the derivative `reduceMaxCLM` at `-x` and the stored pullback
 `reduceBackward .min`. -/
 theorem hasPullbackAt_reduce_min (x : Tensor ℝ s) (hpos : ∀ d ∈ dims, 0 < s.extent d)
     (hx : ∀ o, ∃ r, ∀ r', r' ≠ r →
       x (s.reduceSource dims keepdim o r) < x (s.reduceSource dims keepdim o r')) :
     HasPullbackAt (fun y : Tensor ℝ s => reduce .min y dims keepdim fun _ => hpos)
-      (reduceMinCLM dims keepdim x)
+      (reduceMaxCLM dims keepdim (-x))
       (fun δ => reduceBackward .min x dims keepdim (fun _ => hpos) δ) x where
   hasFDerivAt := hasFDerivAt_reduce_min dims keepdim x hpos hx
   inner_eq u δ := by
-    rw [reduceMinCLM_apply, inner_reduce_sum_slopeCLM, reduceBackward_min dims keepdim x _ hx]
+    rw [reduceMaxCLM_apply, inner_reduce_sum_slopeCLM, reduceBackward_min_eq_neg,
+      reduceBackward_max dims keepdim (-x) _ (uniqueMin_iff.mp hx)]
 
 end Extremum
 
@@ -1009,14 +845,6 @@ end Extremum
 section Cumsum
 
 variable {α : Type} [Storage α] [AddCommMonoid α]
-
-/-- A left fold over `Tensor.ofFn f` is the fold of `f` over `List.finRange n`. -/
-private theorem foldl_ofFn {β γ : Type} [Storage β] {n : Nat} (step : γ → β → γ) (init : γ)
-    (f : Fin n → β) :
-    Tensor.foldl step init (Tensor.ofFn f) =
-      (List.finRange n).foldl (fun acc i => step acc (f i)) init := by
-  rw [Tensor.ofFn, Rep.ofFn_eq_map_coordinates, Rep.foldl_map,
-    ← Fin.foldl_eq_foldl_finRange, fin_foldl_eq_coordinates]
 
 /-- Over a commutative additive monoid, an entry of `cumsum x dim` is the sum of the entries of
 its fiber along `dim` with index at most its own. -/
@@ -1155,7 +983,7 @@ theorem reduce_min (dims : List (Fin s.rank)) (keepdim : Bool)
       f x (s.reduceSource dims keepdim o r) < f x (s.reduceSource dims keepdim o r'))
     (hf : HasPullbackAt f Df bf x) :
     HasPullbackAt (fun y => Tensor.reduce .min (f y) dims keepdim fun _ => hpos)
-      ((reduceMinCLM dims keepdim (f x)).comp Df)
+      ((reduceMaxCLM dims keepdim (-f x)).comp Df)
       (fun δ => bf (Tensor.reduceBackward .min (f x) dims keepdim (fun _ => hpos) δ)) x :=
   (hasPullbackAt_reduce_min dims keepdim (f x) hpos hx).comp hf
 
@@ -1181,68 +1009,74 @@ end HasPullbackAt
 
 /-! ## Certificates -/
 
-/-- The backward of `Op.cumsum dim` is the adjoint of the derivative of its forward at every
-input. -/
+/-- The backward of `Op.cumsum dim order` is the adjoint of the derivative of its forward at every
+input, in every order that covers the length of the axis. -/
 @[op_cert TorchLean.Op.cumsum derivative]
-theorem cumsum_backward_eq_adjoint {s : Shape} (dim : Fin s.rank) (x δ : Tensor ℝ s) :
+theorem cumsum_backward_eq_adjoint {s : Shape} (dim : Fin s.rank) (order : Tensor.ReduceOrder)
+    (hcov : order.Covers (s.extent dim)) (x δ : Tensor ℝ s) :
     DifferentiableAt ℝ (fun x' =>
-        (((Op.cumsum dim).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x ∧
-    (((Op.cumsum dim).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, ())).1 =
+        (((Op.cumsum dim order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward (x', ())).1) x ∧
+    (((Op.cumsum dim order).rule? (α := ℝ)
+      |>.get (by cases order <;> rfl)).backward (x, ()) (δ, ())).1 =
       (fderiv ℝ (fun x' =>
-        (((Op.cumsum dim).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x).adjoint δ := by
-  simp only [Op.rule?_cumsum, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · rfl
+        (((Op.cumsum dim order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward (x', ())).1) x).adjoint δ := by
+  op_deriv [Tensor.scanIn_add_real _ dim hcov]
 
-/-- The backward of `Op.mean dims keepdim` is the adjoint of the derivative of its forward at
-every input. -/
+/-- The backward of `Op.mean dims keepdim order` is the adjoint of the derivative of its forward
+at every input, in every order that covers the fiber. -/
 @[op_cert TorchLean.Op.mean derivative]
 theorem mean_backward_eq_adjoint {s : Shape} (dims : List (Fin s.rank)) (keepdim : Bool)
+    (order : Tensor.ReduceOrder) (hcov : order.Covers (Shape.size (s.selectAxes dims)))
     (x : Tensor ℝ s) (δ : Tensor ℝ (s.reduce dims keepdim)) :
     DifferentiableAt ℝ (fun x' =>
-        (((Op.mean dims keepdim).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x ∧
-    (((Op.mean dims keepdim).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, ())).1 =
+        (((Op.mean dims keepdim order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward (x', ())).1) x ∧
+    (((Op.mean dims keepdim order).rule? (α := ℝ)
+      |>.get (by cases order <;> rfl)).backward (x, ()) (δ, ())).1 =
       (fderiv ℝ (fun x' =>
-        (((Op.mean dims keepdim).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x).adjoint
-        δ := by
-  simp only [Op.rule?_mean, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · rfl
+        (((Op.mean dims keepdim order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward (x', ())).1) x).adjoint δ := by
+  op_deriv [Tensor.meanIn_real _ dims keepdim hcov]
 
-/-- The backward of `Op.reduce op dims keepdim h` is the adjoint of the derivative of its forward
-at `x`, for a sum or a product at every input. For a maximum (a minimum) we assume that every
-fiber of `x` has an entry larger (smaller) than all its other entries, which is exactly where the
-forward is differentiable (`differentiableAt_reduce_max_iff`, `differentiableAt_reduce_min_iff`). -/
+/-- The backward of `Op.reduce op dims keepdim h order` is the adjoint of the derivative of its
+forward at `x`, in every order that covers the fiber, for a sum or a product at every input. For a
+maximum (a minimum) we assume that every fiber of `x` has an entry larger (smaller) than all its
+other entries, which is exactly where the forward is differentiable
+(`differentiableAt_reduce_max_iff`, `differentiableAt_reduce_min_iff`). -/
 @[op_cert TorchLean.Op.reduce derivative]
 theorem reduce_backward_eq_adjoint {s : Shape} (op : Tensor.ReduceOp) (dims : List (Fin s.rank))
-    (keepdim : Bool) (h : op = .max ∨ op = .min → ∀ d ∈ dims, 0 < s.extent d) (x : Tensor ℝ s)
+    (keepdim : Bool) (h : op = .max ∨ op = .min → ∀ d ∈ dims, 0 < s.extent d)
+    (order : Tensor.ReduceOrder) (hcov : order.Covers (Shape.size (s.selectAxes dims)))
+    (x : Tensor ℝ s)
     (hmax : op = .max → ∀ o, ∃ r, ∀ r', r' ≠ r →
       x (s.reduceSource dims keepdim o r') < x (s.reduceSource dims keepdim o r))
     (hmin : op = .min → ∀ o, ∃ r, ∀ r', r' ≠ r →
       x (s.reduceSource dims keepdim o r) < x (s.reduceSource dims keepdim o r'))
     (δ : Tensor ℝ (s.reduce dims keepdim)) :
     DifferentiableAt ℝ (fun x' =>
-        (((Op.reduce op dims keepdim h).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x ∧
-    (((Op.reduce op dims keepdim h).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, ())).1 =
+        (((Op.reduce op dims keepdim h order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward (x', ())).1) x ∧
+    (((Op.reduce op dims keepdim h order).rule? (α := ℝ)
+      |>.get (by cases order <;> rfl)).backward (x, ()) (δ, ())).1 =
       (fderiv ℝ (fun x' =>
-        (((Op.reduce op dims keepdim h).rule? (α := ℝ) |>.get rfl).forward (x', ())).1)
-        x).adjoint δ := by
+        (((Op.reduce op dims keepdim h order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward (x', ())).1) x).adjoint δ := by
   simp only [Op.rule?_reduce, Option.get_some]
   cases op with
   | sum =>
+    simp only [Tensor.reduceIn_sum_real _ dims keepdim hcov]
     apply HasPullbackAt.differentiableAt_and
     · fun_prop
     · rfl
-  | prod =>
-    apply HasPullbackAt.differentiableAt_and
-    · fun_prop
-    · rfl
+  | prod => op_deriv [Tensor.reduceIn_prod_real _ dims keepdim hcov]
   | max =>
+    simp only [Tensor.reduceIn_max_real _ dims keepdim (h (Or.inl rfl)) hcov]
     exact HasPullbackAt.differentiableAt_and
       (Tensor.hasPullbackAt_reduce_max dims keepdim x (h (Or.inl rfl)) (hmax rfl)) rfl
   | min =>
+    simp only [Tensor.reduceIn_min_real _ dims keepdim (h (Or.inr rfl)) hcov]
     exact HasPullbackAt.differentiableAt_and
       (Tensor.hasPullbackAt_reduce_min dims keepdim x (h (Or.inr rfl)) (hmin rfl)) rfl
 
@@ -1253,18 +1087,21 @@ thus split `δ o` evenly, so `x = (1, 1)` reduced over its one axis with `δ = 1
 `(1 / 2, 1 / 2)`. -/
 @[op_cert TorchLean.Op.reduce convention]
 theorem Op.reduce_backward_eq {s : Shape} (op : Tensor.ReduceOp) (dims : List (Fin s.rank))
-    (keepdim : Bool) (h : op = .max ∨ op = .min → ∀ d ∈ dims, 0 < s.extent d) (x : Tensor ℝ s)
+    (keepdim : Bool) (h : op = .max ∨ op = .min → ∀ d ∈ dims, 0 < s.extent d)
+    (order : Tensor.ReduceOrder) (x : Tensor ℝ s)
     (δ : Tensor ℝ (s.reduce dims keepdim)) (o : (s.reduce dims keepdim).Coord)
     (r : (s.selectAxes dims).Coord) :
     (op = .max →
-      (((Op.reduce op dims keepdim h).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, ())).1
+      (((Op.reduce op dims keepdim h order).rule? (α := ℝ)
+        |>.get (by cases order <;> rfl)).backward (x, ()) (δ, ())).1
           (s.reduceSource dims keepdim o r) =
         if ∀ q, x (s.reduceSource dims keepdim o q) ≤ x (s.reduceSource dims keepdim o r) then
           δ o / (Finset.univ.filter fun q =>
             x (s.reduceSource dims keepdim o q) = x (s.reduceSource dims keepdim o r)).card
         else 0) ∧
     (op = .min →
-      (((Op.reduce op dims keepdim h).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, ())).1
+      (((Op.reduce op dims keepdim h order).rule? (α := ℝ)
+        |>.get (by cases order <;> rfl)).backward (x, ()) (δ, ())).1
           (s.reduceSource dims keepdim o r) =
         if ∀ q, x (s.reduceSource dims keepdim o r) ≤ x (s.reduceSource dims keepdim o q) then
           δ o / (Finset.univ.filter fun q =>

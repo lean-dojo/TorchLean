@@ -205,21 +205,21 @@ def prepare {α Δ : Type} [Storage α] {Γ : List Shape} {τ : Shape}
   next h => simp only [TensorContext.toPack_ofPack]
 
 /-- The prepared value of a node on the context of a pack is its `forward` on the pack. -/
-@[simp] theorem prepare_value_ofPack {α Δ : Type} [Storage α]
+theorem prepare_value_ofPack {α Δ : Type} [Storage α]
     {Γ : List Shape} {τ : Shape} (node : NodeData α Δ Γ τ)
     (ctx : TensorPack α Γ) (data : Δ) :
     (node.prepare (TensorContext.ofPack ctx) data).value = fun _ => node.forward ctx data :=
   congrArg PreparedPrograms.value (prepare_ofPack node ctx data)
 
 /-- The prepared VJP of a node on the context of a pack is its `vjp` on the pack. -/
-@[simp] theorem prepare_vjp_ofPack {α Δ : Type} [Storage α]
+theorem prepare_vjp_ofPack {α Δ : Type} [Storage α]
     {Γ : List Shape} {τ : Shape} (node : NodeData α Δ Γ τ)
     (ctx : TensorPack α Γ) (data : Δ) :
     (node.prepare (TensorContext.ofPack ctx) data).vjp = node.vjp ctx data :=
   congrArg PreparedPrograms.vjp (prepare_ofPack node ctx data)
 
 /-- The prepared validation of a node on the context of a pack is its `validate` on the pack. -/
-@[simp] theorem prepare_validate_ofPack {α Δ : Type} [Storage α]
+theorem prepare_validate_ofPack {α Δ : Type} [Storage α]
     {Γ : List Shape} {τ : Shape} (node : NodeData α Δ Γ τ)
     (ctx : TensorPack α Γ) (data : Δ) :
     (node.prepare (TensorContext.ofPack ctx) data).validate = fun _ => node.validate ctx data :=

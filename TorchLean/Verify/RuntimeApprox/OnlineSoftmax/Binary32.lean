@@ -21,7 +21,8 @@ conclusion. `online_4096_128_output`, `stored_4096_128_output` and `flash2_4096_
 them with the closed-form theorems into bounds on the computed output. `binary32` meets their format
 hypotheses (`unitRoundoff_binary32`, `underflow_binary32`, `maxFinite_binary32`). The exponentials
 and logarithms are bounded by `exp x ≤ 1 / (1 - x)` and `log 2 < 0.6931471808`, and `norm_num`
-decides the remaining rational inequalities in the kernel.
+decides the remaining rational inequalities in the kernel. The tactic `softmax_bound` proves the
+closed-form theorems at any sizes this way, through `closed_form_le_of_interval`.
 -/
 
 public section
@@ -66,6 +67,18 @@ theorem unitRoundoff_bfloat16 : Model.unitRoundoffAt FloatFormat.bfloat16 = 2 ^ 
 theorem underflow_bfloat16 : Model.underflowErrorAt FloatFormat.bfloat16 = 2 ^ (-134 : ℤ) := by
   rw [Model.underflowErrorAt_eq]; rfl
 
+/-- `softmax_bound hmx hLg hPw` proves the budget premise, the range premises and the bound of the
+closed form of `onlineAverage_blocks_error`, as `closed_form_le_of_interval` concludes them. The
+unit roundoff and the underflow allowance are fixed by equations `u = _` and `η = _` among the
+hypotheses, `hmx : M ≤ mx` bounds the largest finite value, and `hLg : log N ≤ Lg` and
+`hPw : (1 + u) ^ (B + 1) ≤ Pw` bound the logarithm and the power. The tactic substitutes the
+equations, applies `closed_form_le_of_interval` and runs `norm_num` on each of its conditions,
+leaving open those that `norm_num` does not prove. -/
+macro "softmax_bound " hmx:term:max hLg:term:max hPw:term:max : tactic => `(tactic| (
+  subst_vars
+  refine closed_form_le_of_interval ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ $hLg $hPw $hmx ?_ ?_ ?_ ?_ ?_ <;>
+    try norm_num))
+
 /-- Online softmax, 4096 keys in blocks of 128, weights kept in `binary32`, with values of magnitude
 at most one, for a working format with the unit roundoff and underflow allowance of `binary32` and
 largest finite value at least `2 ^ 100`: the numerical budget and range premises of the closed form
@@ -84,30 +97,7 @@ theorem online_4096_128 {u η mx : ℝ} (hu : u = 2 ^ (-24 : ℤ)) (hη : η = 2
     al + ρl < 1 ∧ ((4096 : ℕ) : ℝ) * 1 * Real.exp cl + ρl ≤ mx ∧
       ((4096 : ℕ) : ℝ) * 1 * Real.exp co + ρo ≤ mx ∧ (1 + 1 * ao + ρo) / (1 - al - ρl) ≤ mx ∧
       (1 + u) * ((1 * (ao + al + ρl) + ρo) / (1 - al - ρl)) + u * 1 + η ≤ 29 / 1000000 := by
-  intro uL ηL cl co al ao ρl ρo
-  have huL : uL = 0 := rfl
-  have hηL : ηL = 0 := rfl
-  have hcl : cl = 223 * 2 ^ (-24 : ℤ) := by simp only [cl, hu]; push_cast; ring
-  have hco : co = 224 * 2 ^ (-24 : ℤ) := by simp only [co, hu, huL]; push_cast; ring
-  have hcl0 : 0 ≤ cl := by rw [hcl]; positivity
-  have hco0 : 0 ≤ co := by rw [hco]; positivity
-  have hcl1 : cl < 1 := by rw [hcl]; norm_num
-  have hco1 : co < 1 := by rw [hco]; norm_num
-  have hu0 : 0 ≤ u := by rw [hu]; positivity
-  have hu1 : u < 1 := by rw [hu]; norm_num
-  have key := closed_form_le_of_bounds (u := u) (η := η) (V := 1) (uL := uL) (ηL := ηL)
-    (N := 4096) (B := 128) (T := 32) (Pw := (1 + u) ^ (128 + 1))
-    hu0 (by rw [hη]; positivity) zero_le_one (le_rfl) (le_rfl)
-    hcl0 hco0 (Real.exp_bound_div_one_sub_of_interval hcl0 hcl1)
-    (Real.exp_bound_div_one_sub_of_interval hco0 hco1)
-    (Real.exp_bound_div_one_sub_of_interval hu0 hu1) (log_two_pow_le 12) le_rfl
-  have hmax := hmx
-  obtain ⟨h1, h2, h3, h4, h5⟩ := key (by rw [hcl, hu, hη]; norm_num)
-  refine ⟨h1, h2.trans (le_trans (by rw [hcl, hu, hη]; norm_num) hmax),
-    h3.trans (le_trans (by unfold productResidual; rw [hco, hu, hη, huL, hηL]; norm_num) hmax),
-    h4.trans (le_trans (by unfold productResidual; rw [hcl, hco, hu, hη, huL, hηL]; norm_num)
-      hmax), h5.trans ?_⟩
-  unfold productResidual; rw [hcl, hco, hu, hη, huL, hηL]; norm_num
+  softmax_bound hmx (log_two_pow_le 12) le_rfl
 
 /-- Online softmax, 4096 keys in blocks of 128, weights stored in `bfloat16`, with values of
 magnitude at most one, for a working format with the unit roundoff and underflow allowance of
@@ -127,30 +117,8 @@ theorem online_4096_128_bfloat16 {u η mx : ℝ} (hu : u = 2 ^ (-24 : ℤ)) (hη
     al + ρl < 1 ∧ ((4096 : ℕ) : ℝ) * 1 * Real.exp cl + ρl ≤ mx ∧
       ((4096 : ℕ) : ℝ) * 1 * Real.exp co + ρo ≤ mx ∧ (1 + 1 * ao + ρo) / (1 - al - ρl) ≤ mx ∧
       (1 + u) * ((1 * (ao + al + ρl) + ρo) / (1 - al - ρl)) + u * 1 + η ≤ 4 / 1000 := by
-  intro uL ηL cl co al ao ρl ρo
-  have huL : uL = 2 ^ (-8 : ℤ) := unitRoundoff_bfloat16
-  have hηL : ηL = 2 ^ (-134 : ℤ) := underflow_bfloat16
-  have hcl : cl = 223 * 2 ^ (-24 : ℤ) := by simp only [cl, hu]; push_cast; ring
-  have hco : co = 224 * 2 ^ (-24 : ℤ) + 2 ^ (-8 : ℤ) := by simp only [co, hu, huL]; push_cast; ring
-  have hcl0 : 0 ≤ cl := by rw [hcl]; positivity
-  have hco0 : 0 ≤ co := by rw [hco]; positivity
-  have hcl1 : cl < 1 := by rw [hcl]; norm_num
-  have hco1 : co < 1 := by rw [hco]; norm_num
-  have hu0 : 0 ≤ u := by rw [hu]; positivity
-  have hu1 : u < 1 := by rw [hu]; norm_num
-  have key := closed_form_le_of_bounds (u := u) (η := η) (V := 1) (uL := uL) (ηL := ηL)
-    (N := 4096) (B := 128) (T := 32) (Pw := (1 + u) ^ (128 + 1))
-    hu0 (by rw [hη]; positivity) zero_le_one (by rw [huL]; positivity) (by rw [hηL]; positivity)
-    hcl0 hco0 (Real.exp_bound_div_one_sub_of_interval hcl0 hcl1)
-    (Real.exp_bound_div_one_sub_of_interval hco0 hco1)
-    (Real.exp_bound_div_one_sub_of_interval hu0 hu1) (log_two_pow_le 12) le_rfl
-  have hmax := hmx
-  obtain ⟨h1, h2, h3, h4, h5⟩ := key (by rw [hcl, hu, hη]; norm_num)
-  refine ⟨h1, h2.trans (le_trans (by rw [hcl, hu, hη]; norm_num) hmax),
-    h3.trans (le_trans (by unfold productResidual; rw [hco, hu, hη, huL, hηL]; norm_num) hmax),
-    h4.trans (le_trans (by unfold productResidual; rw [hcl, hco, hu, hη, huL, hηL]; norm_num)
-      hmax), h5.trans ?_⟩
-  unfold productResidual; rw [hcl, hco, hu, hη, huL, hηL]; norm_num
+  rw [unitRoundoff_bfloat16, underflow_bfloat16]
+  softmax_bound hmx (log_two_pow_le 12) le_rfl
 
 /-- The blocked two-pass softmax, 4096 keys in blocks of 128, with values of magnitude at most one,
 for a working format with the unit roundoff and underflow allowance of `binary32` and largest finite
@@ -170,30 +138,7 @@ theorem twoPass_4096_128 {u η mx : ℝ} (hu : u = 2 ^ (-24 : ℤ)) (hη : η = 
     al + ρl < 1 ∧ ((4096 : ℕ) : ℝ) * 1 * Real.exp cl + ρl ≤ mx ∧
       ((4096 : ℕ) : ℝ) * 1 * Real.exp co + ρo ≤ mx ∧ (1 + 1 * ao + ρo) / (1 - al - ρl) ≤ mx ∧
       (1 + u) * ((1 * (ao + al + ρl) + ρo) / (1 - al - ρl)) + u * 1 + η ≤ 22 / 1000000 := by
-  intro uL ηL cl co al ao ρl ρo
-  have huL : uL = 0 := rfl
-  have hηL : ηL = 0 := rfl
-  have hcl : cl = 161 * 2 ^ (-24 : ℤ) := by simp only [cl, hu]; push_cast; ring
-  have hco : co = 162 * 2 ^ (-24 : ℤ) := by simp only [co, hu, huL]; push_cast; ring
-  have hcl0 : 0 ≤ cl := by rw [hcl]; positivity
-  have hco0 : 0 ≤ co := by rw [hco]; positivity
-  have hcl1 : cl < 1 := by rw [hcl]; norm_num
-  have hco1 : co < 1 := by rw [hco]; norm_num
-  have hu0 : 0 ≤ u := by rw [hu]; positivity
-  have hu1 : u < 1 := by rw [hu]; norm_num
-  have key := closed_form_le_of_bounds (u := u) (η := η) (V := 1) (uL := uL) (ηL := ηL)
-    (N := 4096) (B := 128) (T := 32) (Pw := (1 + u) ^ (128 + 1))
-    hu0 (by rw [hη]; positivity) zero_le_one (le_rfl) (le_rfl)
-    hcl0 hco0 (Real.exp_bound_div_one_sub_of_interval hcl0 hcl1)
-    (Real.exp_bound_div_one_sub_of_interval hco0 hco1)
-    (Real.exp_bound_div_one_sub_of_interval hu0 hu1) (log_two_pow_le 12) le_rfl
-  have hmax := hmx
-  obtain ⟨h1, h2, h3, h4, h5⟩ := key (by rw [hcl, hu, hη]; norm_num)
-  refine ⟨h1, h2.trans (le_trans (by rw [hcl, hu, hη]; norm_num) hmax),
-    h3.trans (le_trans (by unfold productResidual; rw [hco, hu, hη, huL, hηL]; norm_num) hmax),
-    h4.trans (le_trans (by unfold productResidual; rw [hcl, hco, hu, hη, huL, hηL]; norm_num)
-      hmax), h5.trans ?_⟩
-  unfold productResidual; rw [hcl, hco, hu, hη, huL, hηL]; norm_num
+  softmax_bound hmx (log_two_pow_le 12) le_rfl
 
 /-- One block of 4096 keys, the two-pass softmax with sequential sums, with values of magnitude at
 most one, for a working format with the unit roundoff and underflow allowance of `binary32` and
@@ -213,31 +158,7 @@ theorem online_4096_4096 {u η mx : ℝ} (hu : u = 2 ^ (-24 : ℤ)) (hη : η = 
     al + ρl < 1 ∧ ((4096 : ℕ) : ℝ) * 1 * Real.exp cl + ρl ≤ mx ∧
       ((4096 : ℕ) : ℝ) * 1 * Real.exp co + ρo ≤ mx ∧ (1 + 1 * ao + ρo) / (1 - al - ρl) ≤ mx ∧
       (1 + u) * ((1 * (ao + al + ρl) + ρo) / (1 - al - ρl)) + u * 1 + η ≤ 492 / 1000000 := by
-  intro uL ηL cl co al ao ρl ρo
-  have huL : uL = 0 := rfl
-  have hηL : ηL = 0 := rfl
-  have hcl : cl = 4098 * 2 ^ (-24 : ℤ) := by simp only [cl, hu]; push_cast; ring
-  have hco : co = 4099 * 2 ^ (-24 : ℤ) := by simp only [co, hu, huL]; push_cast; ring
-  have hcl0 : 0 ≤ cl := by rw [hcl]; positivity
-  have hco0 : 0 ≤ co := by rw [hco]; positivity
-  have hcl1 : cl < 1 := by rw [hcl]; norm_num
-  have hco1 : co < 1 := by rw [hco]; norm_num
-  have hu0 : 0 ≤ u := by rw [hu]; positivity
-  have hu1 : u < 1 := by rw [hu]; norm_num
-  have key := closed_form_le_of_bounds (u := u) (η := η) (V := 1) (uL := uL) (ηL := ηL)
-    (N := 4096) (B := 4096) (T := 1) (Pw := 1 / (1 - ((4096 + 1 : ℕ) : ℝ) * u))
-    hu0 (by rw [hη]; positivity) zero_le_one (le_rfl) (le_rfl)
-    hcl0 hco0 (Real.exp_bound_div_one_sub_of_interval hcl0 hcl1)
-    (Real.exp_bound_div_one_sub_of_interval hco0 hco1)
-    (Real.exp_bound_div_one_sub_of_interval hu0 hu1) (log_two_pow_le 12)
-    (one_add_pow_le_inv (4096 + 1) hu0 (by rw [hu]; norm_num))
-  have hmax := hmx
-  obtain ⟨h1, h2, h3, h4, h5⟩ := key (by rw [hcl, hu, hη]; norm_num)
-  refine ⟨h1, h2.trans (le_trans (by rw [hcl, hu, hη]; norm_num) hmax),
-    h3.trans (le_trans (by unfold productResidual; rw [hco, hu, hη, huL, hηL]; norm_num) hmax),
-    h4.trans (le_trans (by unfold productResidual; rw [hcl, hco, hu, hη, huL, hηL]; norm_num)
-      hmax), h5.trans ?_⟩
-  unfold productResidual; rw [hcl, hco, hu, hη, huL, hηL]; norm_num
+  softmax_bound hmx (log_two_pow_le 12) (one_add_pow_le_inv (4096 + 1) (by norm_num) (by norm_num))
 
 /-- Online softmax, 16384 keys in blocks of 128, weights kept in `binary32`, with values of
 magnitude at most one, for a working format with the unit roundoff and underflow allowance of
@@ -257,30 +178,7 @@ theorem online_16384_128 {u η mx : ℝ} (hu : u = 2 ^ (-24 : ℤ)) (hη : η = 
     al + ρl < 1 ∧ ((16384 : ℕ) : ℝ) * 1 * Real.exp cl + ρl ≤ mx ∧
       ((16384 : ℕ) : ℝ) * 1 * Real.exp co + ρo ≤ mx ∧ (1 + 1 * ao + ρo) / (1 - al - ρl) ≤ mx ∧
       (1 + u) * ((1 * (ao + al + ρl) + ρo) / (1 - al - ρl)) + u * 1 + η ≤ 64 / 1000000 := by
-  intro uL ηL cl co al ao ρl ρo
-  have huL : uL = 0 := rfl
-  have hηL : ηL = 0 := rfl
-  have hcl : cl = 511 * 2 ^ (-24 : ℤ) := by simp only [cl, hu]; push_cast; ring
-  have hco : co = 512 * 2 ^ (-24 : ℤ) := by simp only [co, hu, huL]; push_cast; ring
-  have hcl0 : 0 ≤ cl := by rw [hcl]; positivity
-  have hco0 : 0 ≤ co := by rw [hco]; positivity
-  have hcl1 : cl < 1 := by rw [hcl]; norm_num
-  have hco1 : co < 1 := by rw [hco]; norm_num
-  have hu0 : 0 ≤ u := by rw [hu]; positivity
-  have hu1 : u < 1 := by rw [hu]; norm_num
-  have key := closed_form_le_of_bounds (u := u) (η := η) (V := 1) (uL := uL) (ηL := ηL)
-    (N := 16384) (B := 128) (T := 128) (Pw := (1 + u) ^ (128 + 1))
-    hu0 (by rw [hη]; positivity) zero_le_one (le_rfl) (le_rfl)
-    hcl0 hco0 (Real.exp_bound_div_one_sub_of_interval hcl0 hcl1)
-    (Real.exp_bound_div_one_sub_of_interval hco0 hco1)
-    (Real.exp_bound_div_one_sub_of_interval hu0 hu1) (log_two_pow_le 14) le_rfl
-  have hmax := hmx
-  obtain ⟨h1, h2, h3, h4, h5⟩ := key (by rw [hcl, hu, hη]; norm_num)
-  refine ⟨h1, h2.trans (le_trans (by rw [hcl, hu, hη]; norm_num) hmax),
-    h3.trans (le_trans (by unfold productResidual; rw [hco, hu, hη, huL, hηL]; norm_num) hmax),
-    h4.trans (le_trans (by unfold productResidual; rw [hcl, hco, hu, hη, huL, hηL]; norm_num)
-      hmax), h5.trans ?_⟩
-  unfold productResidual; rw [hcl, hco, hu, hη, huL, hηL]; norm_num
+  softmax_bound hmx (log_two_pow_le 14) le_rfl
 
 /-- Online softmax over 4096 keys in 32 blocks of at most 128 that sums the weights it stores, with
 values of magnitude at most one, for a working format with the unit roundoff and underflow

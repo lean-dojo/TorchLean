@@ -1,5 +1,5 @@
 title: TorchLean
-description: "Lean 4 tools for neural-network semantics, runtime experiments, and verification."
+description: "Tensor computation, machine learning, and verification in Lean 4."
 baseurl: "/TorchLean"
 url: "https://lean-dojo.github.io"
 twitter_username:
@@ -7,7 +7,7 @@ github_username: lean-dojo
 repository: lean-dojo/TorchLean
 repository_url: "https://github.com/lean-dojo/TorchLean"
 repository_name: "TorchLean"
-project_tagline: "Lean 4 tools for neural-network semantics, runtime experiments, and verification."
+project_tagline: "Tensor computation, machine learning, and verification in Lean 4."
 build_revision: "local"
 
 remote_theme: pages-themes/cayman@v0.2.0

@@ -2,20 +2,13 @@
 title: Numerical Runtime Certificates
 ---
 
-Let's take a small two-layer MLP and check its intermediate results as we run it. We'll compute a
-range for each result, then use bit-level binary32 arithmetic to check that the computed values
-stay within those ranges.
-
-We'll represent our model with `TorchLean.IR.Graph`, a graph of registered operators and their
-dependencies. For each supported operation, such as matrix multiplication or ReLU, the checker uses
-a range rule, and other models built from the same operations can use those rules too.
-
-`RevGraph` is a separate graph representation whose nodes carry proofs of forward and gradient
-error bounds, but the certificate example doesn't construct those proofs automatically.
+Pick one input to a two-layer MLP. Before we run it, can we give an interval for each result,
+including the values in the hidden layer? We'll compute those intervals from the graph, run
+the same operations in binary32, and check each intermediate value against its interval.
 
 ## Build the Example
 
-The example builds with the other examples. From the TorchLean repository:
+From the TorchLean checkout, run the certificate example.
 
 ```bash
 scripts/lake.sh build TorchLeanExamples
@@ -48,9 +41,9 @@ graph, inputs, certificate, and replay used below.
 
 ### 1. Check operation coverage
 
-`rangeTransfer?` gives each supported operator, by its constructor of `TorchLean.Op`, a rule for
-computing its output range from its input ranges. TorchLean checks coverage before propagation
-starts. If a rule is missing, it reports the node id and operation name and stops.
+`rangeTransfer?` gives each supported `TorchLean.Op` constructor a rule for computing its output
+range from its input ranges. TorchLean checks coverage before propagation starts. If a rule is
+missing, it reports the node id and operation name and stops.
 
 ### 2. Propagate source ranges
 
@@ -176,20 +169,13 @@ squares. Both operations keep every already finite result unchanged. Their round
 currently carry the bounds of the unscaled computation under its finiteness conditions; the
 recovered cases have separate checked examples in `RoundingBugs.lean`.
 
-`TorchLeanExamples/DeepDives/Floats/LibraryBugs.lean` applies the same analysis to nine formulas
-from other libraries. Four come from PyTorch, JAX and Hugging Face Transformers: the soft-margin
-loss, the KL divergence of two normal distributions, the tanh approximation of GELU and the clamp
-of `torch.special.logit`. Two come from reinforcement-learning libraries: the k3 KL estimator of
-TRL and the tanh-squashed action log-probability of Stable-Baselines3. Two more are a reduction and
-an update of PyTorch: the label-smoothing term of `cross_entropy` and the moving average of
-`torch.optim.swa_utils`. The last is the noise level of diffusers' `add_noise` at small timesteps.
-For each it checks a failing input with the kernel and states mixed bounds for a stable formula
-with the same real value. `TorchLeanExamples/DeepDives/Floats/ProbBugs/SurvivalComplement.lean` does
-the same for the float16 sum of PyTorch's `logsumexp` and `log_softmax`, the one-pass variance of
-PyTorch Geometric's variance aggregation and the survival function of TensorFlow Probability's
-Weibull distribution. `TorchLeanExamples/DeepDives/Floats/LossBugs/FocalPower.lean` does the same
-for the gradient of torchvision's focal loss below exponent one, the forget factors of xLSTM's
-parallel mLSTM backend and PyTorch's backward of a norm of order three.
+[`LibraryBugs.lean`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/DeepDives/Floats/LibraryBugs.lean)
+applies the same analysis to formulas from other libraries, including soft-margin loss, normal KL
+divergence, approximate GELU and label smoothing. For each it checks a failing input with the
+kernel and states mixed bounds for a stable formula with the same real value. The
+[Bug Zoo]({{ '/examples/bug-zoo/' | relative_url }}) links the further examples in probability,
+losses and recurrent models. These checks concern the formulas written in Lean; they don't prove
+that an installed library executes those formulas.
 
 ### Functions, shapes and layers
 
@@ -208,8 +194,9 @@ chapter [Rounding Error In
 Attention]({{ '/blueprint/Verification-and-Certificates/Rounding-Error-In-Attention/' | relative_url }})
 explains the schedule and its bounds. The general data-movement operators
 `broadcast`, `permute`, `reshape`, `slice`, `pad`, `cat`, `flip` and `gather` are read through the
-input coordinate each output coordinate selects, at any axes, and add no error. `reduce`,
-`contract` and `scatter` read as one left fold per output entry. Log-sum-exp, the variance and the
+input coordinate each output coordinate selects, at any axes, and add no error. Reductions and
+contractions use the order recorded by the operator. Scatter updates follow their specified fold.
+Log-sum-exp, the variance and the
 cosine loss over any axes, cross-entropy of probabilities and of logits, and layer, RMS and batch
 normalization over their axes are analyzed the same way, by the coverage theorems of
 `TorchLean/Verify/Coverage/TensorComposites/` (`Softmax.lean`, `Loss.lean` and
@@ -232,6 +219,37 @@ logits, $\exp(-20)/(1+\exp(-20))$. In binary32 the stable result has absolute er
 $10^{-16}$ and relative error at most $10^{-7}$, and is strictly positive. Lean evaluates the
 binary32 result exactly, and FloatLib's exponential enclosure supplies the real-number bounds.
 
+### Choosing a reduction order
+
+In binary32, there is room for every integer through $2^{24}$. Above that, adjacent values
+are two apart. Add three ones to $2^{24}$ and the result depends on when those ones meet.
+
+```lean
+import TorchLean.Tensor.ConfiguredBinary
+import TorchLean.Tensor.Reduce.Order
+
+open TorchLean FloatLib.Floats
+
+def samples : Tensor Binary32 [4] :=
+  Tensor.Rep.ofArray #[16777216, 1, 1, 1] (by decide)
+
+#eval ExecFloat.Binary.toRat? (Tensor.sumIn .leftFold samples)    -- some 16777216
+#eval ExecFloat.Binary.toRat? (Tensor.sumIn (.blocked 2) samples) -- some 16777218
+#eval ExecFloat.Binary.toRat? (Tensor.sumIn .pairwise samples)    -- some 16777220
+```
+
+The exact sum is $16{,}777{,}219$. The left fold loses each one to rounding. The blocked
+sum keeps the last two ones together. The pairwise tree adds the three ones before
+combining them with $2^{24}$, so the final tie rounds to $16{,}777{,}220$. The ordered-sum
+bounds use the tree's depth, along with premises on the IEEE format and finite results.
+See [the ordered-sum theorems](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/Verify/RuntimeApprox/Roundoff/Rules/ReduceOrder.lean).
+
+This choice also lives in the IR. A version 5 reduction record can end in
+`{"order": "pairwise"}`; an explicit tree has to use the start value and every reduced
+entry exactly once. Imports from PyTorch, JAX, and ONNX use left folds for these
+operators. Check the backend's arithmetic schedule before applying a bound for a
+particular order to a native run. See [the IR operator reference](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/NN/IR/README.md#one-shape-rule-per-operation).
+
 ### Checks and assumptions
 
 `scripts/lake.sh lint` fails unless every theorem of the modules under `TorchLean/`,
@@ -239,31 +257,26 @@ binary32 result exactly, and FloatLib's exponential enclosure supplies the real-
 at most `propext`, `Classical.choice` and `Quot.sound`. The file that runs the check,
 `scripts/checks/Library.lean`, leaves out the root modules of the executables.
 
-`#roundoff_coverage` records the outcome of `roundoff` on every route of every registered
-declaration. An operator of the operator table `TorchLean.Op` has the routes of its arm of
-`Op.rule?`: the forward value at each output, the forward-mode tangent at each output unless
-another route computes it, the gradient of each value input, and the prepared pullback where it
-is other code. The other declarations are the
-remaining operator specifications with their forward map and pullback, the CPU tape builders with
-their forward value and parent gradients, the sum that accumulates gradients, and the general tensor
-operators with their value. Each route is analyzed for a configured scalar of an arbitrary IEEE
-format in both modes, and once each for native `Float32` and for the rounded reals `FP32`. A route
-is `proved` when its theorem has no premise and its reference and budget decode only inputs,
-`conditional` when it has premises or caveats, `unsupported` when the analysis met an operation
-without a numerical rule, and `failed` when it stopped otherwise. Failed and unsupported routes
-supply no error bound. Current failures include value-dependent integer casts in max/min gradients
-and analyses that exceed the heartbeat budget. The premises are counted by class.
+`#roundoff_coverage` records analysis attempts for the forward values, tangents and pullbacks of
+registered operators, together with CPU tape builders and tensor composites. Each route is analyzed
+for configured IEEE arithmetic in absolute and mixed modes, and for native `Float32` and the rounded
+reals `FP32`. A route is `proved` when its theorem has no premise and its reference and budget decode
+only inputs, `conditional` when it has premises or caveats, `unsupported` when it meets an operation
+without a numerical rule, and `failed` when analysis stops otherwise. Failed and unsupported routes
+supply no error bound.
+
 A caveat marks a budget or reference that decodes computed values, such as a reference that
-branches on a comparison of computed scalars, or a proof that uses an enclosure in place of a
-rounding theorem. The theorem holds, but it is not an a priori bound. Graph lowerings, which
-build whole tapes from the graph they are given, and the LibTorch tape builders, which run device
-kernels, are not analyzed. The coverage check of `scripts/lake.sh lint` fails unless every public
-operator specification and tape constructor under `TorchLean/` is registered with
-`#roundoff_coverage`, every operator of the table with a rule has its equation lemma and, when one
-of its ports holds the scalar, a route analyzed for the configured scalar, and every `op_cert`
-certificate speaks about a route of its operator. It also fails when an analysis has a worse
-outcome than `scripts/checks/roundoff_baseline.jsonl` records, and on a new or better one until
-that file is updated. Its message counts by status the routes analyzed for the configured scalar.
+branches on a computed comparison, or a proof that uses an enclosure in place of a rounding theorem.
+The theorem holds, but it is not an a priori bound. Graph lowerings that build whole tapes, and
+LibTorch tape builders that run device kernels, are outside this analysis.
+
+The coverage check in `scripts/lake.sh lint` requires registration of public operator specifications
+and CPU tape constructors under `TorchLean/`, equation lemmas and configured-scalar analyses for the
+operator table, and certificates that speak about their operators' routes. It compares outcomes,
+references, budgets, premises and caveats with `scripts/checks/roundoff_baseline.jsonl`; both
+regressions and unrecorded changes fail the check. The
+[runtime-approximation README](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/Verify/RuntimeApprox/README.md)
+explains coverage and lists the remaining failed analyses.
 
 A route whose analysis exceeds the heartbeat budget of one declaration is analyzed once more with
 the generated theorems of the operations it calls as rules, each stated against real references
@@ -280,7 +293,7 @@ method of the class a defining equality through the array observation `Storage.t
 `Storage.get_eq_toArray_getElem`. The laws do not show that a generated reference agrees with a
 separately written specification, and assumptions about storage types and index data remain.
 FloatLib states them in the trust assumptions of
-`FloatLib/Floats/Formats/BinaryInterchange/Automation/Roundoff.lean`. Real derivative theorems
+`FloatLib/Tactic/Roundoff.lean`. Real derivative theorems
 establish what the backward formula differentiates. Correspondence with a native kernel needs its
 own evidence. A missing numerical rule stops the analyzer, and its error names the expression it
 stopped at.
@@ -322,12 +335,9 @@ proof-bearing reverse graph from it automatically.
 
 ## Adding Another Architecture
 
-To try this with another model, we first build it as a graph of registered operators and check
-whether all its operations have range rules. We don't need a new architecture wrapper:
-
-```lean
-let _ <- TorchLean.NumericalCertificate.requireCoverage graph
-```
+To try this with another model, we first build it as a graph of registered operators. We don't
+need a new architecture wrapper. `TorchLean.NumericalCertificate.requireCoverage graph` checks
+whether all its operations have range rules, and its error names the nodes that don't.
 
 Covered graphs use the same certificate and replay APIs, subject to the shape, finite-range,
 payload, and backend-policy checks described above. If one operation is missing, add its executable

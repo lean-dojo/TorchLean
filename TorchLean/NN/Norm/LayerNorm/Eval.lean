@@ -18,7 +18,7 @@ the corresponding node computes from the packed input `[X, gamma, beta]`, and ea
 identifies the block of `Tape.GraphData.evalVec` at that stage with its closed form.
 
 Two consequences drive the calculus: the per-row variance block is a mean of squares, so it is
-nonnegative, and therefore `var + ε` is positive and the clamped square root is nonzero as soon as
+nonnegative, and therefore `var + ε` is positive and its square root is nonzero as soon as
 `0 < ε`. Those two facts are the domain hypotheses of the LayerNorm graph theorem, proved here as
 `varEps_pos_of_eps_pos` and `std_ne_zero_of_eps_pos`.
 -/
@@ -80,9 +80,9 @@ def valVar (xV : CtxVec (ctx m n)) : Vec (Shape.size [m]) :=
 def valVarEps (xV : CtxVec (ctx m n)) (ε : ℝ) : Vec (Shape.size [m]) :=
   WithLp.toLp 2 fun i => valVar xV i + ε
 
-/-- Clamped standard deviation `sqrt (max (var + ε) 0)`. -/
+/-- Standard deviation `sqrt (var + ε)`. -/
 def valStd (xV : CtxVec (ctx m n)) (ε : ℝ) : Vec (Shape.size [m]) :=
-  WithLp.toLp 2 fun i => Real.sqrt (max (valVarEps xV ε i) 0)
+  WithLp.toLp 2 fun i => Real.sqrt (valVarEps xV ε i)
 
 /-- Inverse standard deviation. -/
 def valInvStd (xV : CtxVec (ctx m n)) (ε : ℝ) : Vec (Shape.size [m]) :=
@@ -223,7 +223,7 @@ theorem get_graphStd (ε : ℝ) (xV : CtxVec (ctx m n)) :
     (graphVarEps (m := m) (n := n) ε).toData (nodeStd (m := m) (n := n)).toNodeData () xV
     (idxStd (m := m) (n := n)) rfl).trans ?_
   rw [Tape.NodeData.forwardVec_of_map (idxVarEps (m := m) (n := n))
-    (fun v => FloatLib.Numerics.MathFunctions.sqrt (Max.max v 0))]
+    FloatLib.Numerics.MathFunctions.sqrt]
   rw [get_graphVarEps]
   rfl
 
@@ -451,12 +451,12 @@ theorem valVarEps_pos {ε : ℝ} (hε : 0 < ε) (xV : CtxVec (ctx m n))
   simp only [valVarEps, PiLp.toLp_apply]
   exact add_pos_of_nonneg_of_pos (valVar_nonneg xV i) hε
 
-/-- With positive `ε`, every clamped standard deviation is positive. -/
+/-- With positive `ε`, every standard deviation is positive. -/
 theorem valStd_pos {ε : ℝ} (hε : 0 < ε) (xV : CtxVec (ctx m n))
     (i : Fin (Shape.size [m])) :
     0 < valStd xV ε i := by
   simp only [valStd, PiLp.toLp_apply]
-  exact Real.sqrt_pos.2 (lt_max_of_lt_left (valVarEps_pos hε xV i))
+  exact Real.sqrt_pos.2 (valVarEps_pos hε xV i)
 
 /-- The domain hypothesis of the LayerNorm square root follows from `0 < ε`. -/
 theorem varEps_pos_of_eps_pos {ε : ℝ} (hε : 0 < ε) (xV : CtxVec (ctx m n)) :

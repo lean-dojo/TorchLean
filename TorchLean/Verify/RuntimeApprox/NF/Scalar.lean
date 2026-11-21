@@ -10,7 +10,6 @@ public import Mathlib.Analysis.SpecialFunctions.Log.Deriv
 public import TorchLean.Verify.RuntimeApprox.Rounding
 public import TorchLean.Tensor.NF
 public import TorchLean.Verify.RuntimeApprox.ApproxTensor -- shake: keep
-import FloatLib.Numerics.MixedError.Elementary
 
 /-!
 # NF Scalar Primitive Bounds

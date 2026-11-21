@@ -10,9 +10,6 @@ public import TorchLean.NN.Widget.Tensor
 public import TorchLean.Tensor.Einops.Elab.Einsum
 public import TorchLean.Tensor.Literal
 public import TorchLean.Tensor.Operations
-meta import TorchLean.Tensor.Einops.Elab.Einsum
-meta import TorchLean.Tensor.Literal
-meta import TorchLean.Tensor.Operations
 
 /-!
 # Tensor Operations

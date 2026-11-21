@@ -29,11 +29,10 @@ products of inputs without a gradient, as `Op.linear` does (`apply_linear_backwa
 computes the sweep of its dense pullback.
 
 For `max` and `min` of one node with itself, the alias rule is concrete. When the scalar supports
-quotient arithmetic, the recorded node has that node as its only parent
-(`apply_extremum_self_parents`), and its backward sends the parent one contribution when the
-parent needs a gradient: the alias rule's average of the gradient with itself
-(`apply_extremum_self_backward`). Without quotient arithmetic, both positions are kept
-(`apply_extremum_self_parents'`).
+quotient arithmetic, the recorded node has that node as its only parent, and otherwise at both
+positions (`apply_extremum_self_parents`). With quotient arithmetic its backward sends the parent
+one contribution when the parent needs a gradient: the alias rule's average of the gradient with
+itself (`apply_extremum_self_backward`).
 -/
 
 @[expose] public section
@@ -598,22 +597,19 @@ end Sweeps
 
 section Alias
 
-/-- With the alias rule enabled, `max` or `min` of one node with itself records that node once,
-whatever its gradient flag. -/
+/-- `max` or `min` of one node with itself records that node once when the scalar supports
+quotient arithmetic (the alias rule) and at both positions otherwise, whatever its gradient flag. -/
 theorem apply_extremum_self_parents {t t' : Tape (SomeTensor α)} {name : String} {s : Shape}
     {op : Op [Port.value s, Port.value s] [Port.value s]} {i : Nat} {o : Outs α [Port.value s]}
     {x : Tensor α s} (hop : op = Op.max (s := s) ∨ op = Op.min (s := s))
     (h : apply t name op (i, i, ()) = .ok (t', o))
-    (hx : Args.read t [Port.value s, Port.value s] (i, i, ()) = .ok (x, x, ()))
-    (hen : (inferInstance : Numeric.QuotientArithmetic α).supported = true) :
-    (t'.getNode? t.size).map (·.parents) = some #[i] := by
-  rcases hop with rfl | rfl
-  · rw [apply_node h Op.rule?_max hx rfl]
-    simp [recordedNode, prepared, aliasOf, hen, Args.ids, Arg.id?]
-    all_goals rfl
-  · rw [apply_node h Op.rule?_min hx rfl]
-    simp [recordedNode, prepared, aliasOf, hen, Args.ids, Arg.id?]
-    all_goals rfl
+    (hx : Args.read t [Port.value s, Port.value s] (i, i, ()) = .ok (x, x, ())) :
+    (t'.getNode? t.size).map (·.parents) = some
+      (if (inferInstance : Numeric.QuotientArithmetic α).supported then #[i] else #[i, i]) := by
+  rcases hop with rfl | rfl <;>
+    (first | rw [apply_node h Op.rule?_max hx rfl] | rw [apply_node h Op.rule?_min hx rfl]) <;>
+    cases (inferInstance : Numeric.QuotientArithmetic α).supported <;>
+    simp [recordedNode, prepared, aliasOf, Args.ids, Arg.id?] <;> rfl
 
 /-- With the alias rule enabled, the backward of `max` or `min` of one node with itself checks the
 upstream gradient and, when that node needs a gradient, sends it one contribution, the alias rule's
@@ -630,37 +626,13 @@ theorem apply_extremum_self_backward {t t' : Tape (SomeTensor α)} {name : Strin
         if (t.getNode? i).any (·.requiresGrad) then #[(i, SomeTensor.ofTensor
           (Tensor.map (fun gradient =>
             Numeric.average gradient gradient) g'))] else #[]) := by
-  rcases hop with rfl | rfl
-  · rw [apply_node h Op.rule?_max hx rfl]
-    simp only [Option.map_some, recordedNode, prepared, aliasOf, hen]
+  rcases hop with rfl | rfl <;>
+    (first | rw [apply_node h Op.rule?_max hx rfl] | rw [apply_node h Op.rule?_min hx rfl]) <;>
+    simp only [Option.map_some, recordedNode, prepared, aliasOf, hen] <;>
     simp [Args.ids, Arg.id?, Args.flags, seed, emit, Grads.contributions, bind, Except.bind,
-      pure, Except.pure, Except.map]
+      pure, Except.pure, Except.map] <;>
     cases requireGrad (τ := s) g <;> by_cases hb : (t.getNode? i).any (·.requiresGrad) = true <;>
-      simp only [hb, ↓reduceIte] <;> rfl
-  · rw [apply_node h Op.rule?_min hx rfl]
-    simp only [Option.map_some, recordedNode, prepared, aliasOf, hen]
-    simp [Args.ids, Arg.id?, Args.flags, seed, emit, Grads.contributions, bind, Except.bind,
-      pure, Except.pure, Except.map]
-    cases requireGrad (τ := s) g <;> by_cases hb : (t.getNode? i).any (·.requiresGrad) = true <;>
-      simp only [hb, ↓reduceIte] <;> rfl
-
-/-- With the alias rule disabled, `max` or `min` of one node with itself records that node at both
-positions. -/
-theorem apply_extremum_self_parents' {t t' : Tape (SomeTensor α)}
-    {name : String} {s : Shape} {op : Op [Port.value s, Port.value s] [Port.value s]} {i : Nat}
-    {o : Outs α [Port.value s]} {x : Tensor α s}
-    (hop : op = Op.max (s := s) ∨ op = Op.min (s := s))
-    (h : apply t name op (i, i, ()) = .ok (t', o))
-    (hx : Args.read t [Port.value s, Port.value s] (i, i, ()) = .ok (x, x, ()))
-    (hen : (inferInstance : Numeric.QuotientArithmetic α).supported = false) :
-    (t'.getNode? t.size).map (·.parents) = some #[i, i] := by
-  rcases hop with rfl | rfl
-  · rw [apply_node h Op.rule?_max hx rfl]
-    simp [recordedNode, prepared, aliasOf, hen, Args.ids, Arg.id?]
-    all_goals rfl
-  · rw [apply_node h Op.rule?_min hx rfl]
-    simp [recordedNode, prepared, aliasOf, hen, Args.ids, Arg.id?]
-    all_goals rfl
+    simp only [hb, ↓reduceIte] <;> rfl
 
 end Alias
 

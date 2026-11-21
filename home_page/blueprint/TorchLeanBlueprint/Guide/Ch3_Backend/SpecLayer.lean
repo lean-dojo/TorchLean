@@ -48,13 +48,15 @@ open TorchLean Softmax Dropout Attention Conv
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 open FloatLib.Numerics (MathFunctions)
 
+/-! Guide page: the mathematical specification of a model. -/
+
 #doc (Manual) "Mathematical Specification" =>
 %%%
 tag := "spec-layer"
 file := "The-Mathematical-Specification"
 %%%
 
-We can write the model we trained earlier on one line:
+The two-layer MLP used in the backend examples computes
 
 $$`F_\theta(x)=W_2\,\operatorname{ReLU}(W_1x+b_1)+b_2.`
 
@@ -67,11 +69,11 @@ A reference Lean loop, a native CPU loop, cuBLAS, and an ATen kernel can all eva
 layer. They store and combine the values differently, but the specification gives them one
 statement to satisfy.
 
-We can run the algebraic part of this specification with exact rational arithmetic. Most of the
-spec layer is parametric in the scalar type, and `ℚ` supplies the operations this MLP needs. That
-lets us inspect each intermediate value as a fraction before comparing it with floating-point
-execution. Each named Lean block below is checked while the page is built, and the Python examples
-record the corresponding framework behavior.
+The algebraic part of this specification runs with exact rational arithmetic. Most definitions are
+parametric in the scalar type, and `ℚ` supplies the operations this MLP needs. Each intermediate
+can therefore be inspected as a fraction before comparison with floating-point execution. Lean
+checks every named Lean block during the documentation build; the Python examples record
+corresponding framework behavior.
 
 # Tensors
 
@@ -284,7 +286,8 @@ def slSecond : Linear ℚ 2 1 :=
   inputGradient := [(4 : Rat)/5, (-2 : Rat)/5] }
 ```
 
-Check each gradient against the formula above. The weight gradient $`g\,x^\mathsf{T}` is the hidden
+Check each gradient against the displayed backward formula. The weight gradient
+$`g\,x^\mathsf{T}` is the hidden
 activation written as a row. Since $`\partial y/\partial b` is the identity, the bias gradient is
 $`g` unchanged. And the input gradient $`W^\mathsf{T}g` is the weight row transposed. All three are
 exact rationals that can be compared directly with the three expressions.
@@ -315,8 +318,8 @@ Our running model composes two linear specifications and a pointwise activation:
   Linear α inDim hidDim → Linear α hidDim outDim → Tensor α [inDim] → Tensor α [outDim]
 ```
 
-`MLP.forward` runs it on one input vector. Give it the weights from the formula at
-the top of the chapter,
+`MLP.forward` runs it on one input vector. Give it the weights from the displayed definition of
+$`F_\theta`,
 
 $$`
 W_1=\begin{bmatrix}1&1\\-1&1\end{bmatrix},
@@ -343,7 +346,7 @@ open scoped RationalAlgebraic in
 [(1 : Rat)/5]
 ```
 
-We can also evaluate the three stages separately:
+Evaluating the three stages separately exposes the two negative preactivations before ReLU:
 
 ```lean (name := slStages)
 -- Display the linear result, the selected ReLU branch, and
@@ -373,8 +376,8 @@ evaluates to `MLP.forward` at every scalar.
 
 These rational evaluations also predict which parameter changes can affect the output. As long as
 both hidden preactivations remain negative, changing the first layer or the second weight matrix
-leaves the output unchanged. Crossing an activation boundary opens a path through the hidden layer
-(the bias perturbation below shows this).
+leaves the output unchanged. Crossing an activation boundary opens a path through the hidden
+layer, as the `slPerturb` calculation demonstrates.
 
 ## The selected backward rule at zero
 
@@ -467,8 +470,9 @@ disagreement visible: it comes from the two branches of ReLU.
 
 # Runtime And Specification Comparison
 
-We can evaluate the same inputs at `Float`. `Tensor.linear` is the runtime operation and
-`Linear.forward` is its pure specification. Here we compare their results for this input:
+At `Float`, `Tensor.linear` is the runtime operation and `Linear.forward` is its pure
+specification. `slRuntime` computes both on the same parameters and input, then compares their
+stored outputs:
 
 ```lean (name := slRuntime)
 -- Compare the runtime linear route with the same formula at
@@ -511,8 +515,8 @@ Both routes agree here, and PyTorch agrees with both:
 [0.68]
 ```
 
-So far we've compared a single vector input. But `Tensor.linear` also applies along the final axis
-of a tensor with leading dimensions, so a batch of rows comes back as a batch of rows:
+`Tensor.linear` also applies along the final axis of a tensor with leading dimensions, so a batch
+of rows comes back as a batch of rows:
 
 ```lean (name := slBatch)
 -- Apply the shared affine map independently to each row of
@@ -568,7 +572,8 @@ affine calculation shows why formatted output is insufficient for an exact numer
 {Informal.citet goldberg1991}[] is the standard account, and {ref "runtime-approximation"}[the
 runtime approximation chapter] states what TorchLean actually proves about the gap.
 
-Our tensor examples above evaluate forward operations and don't construct an autograd tape. In
+The `slRuntime`, `slBatch`, and `slNotSix` examples evaluate forward operations and don't construct
+an autograd tape. In
 model execution, the `nn.linear` builder fixes the parameter shapes and emits the runtime linear
 operation, while the graph interpreter assigns `.linear` its `Linear.forward` denotation. And the
 VJP proof relates the selected backward rule to `Linear.backward`. These connections use the same
@@ -648,7 +653,7 @@ TorchLean reuses the tensor structure at several scalar interpretations:
 
 `Context ℚ` is a *scoped* instance in
 {src "TorchLean/Tensor/Context/Rational.lean"}[`Context/Rational.lean`], which is why the
-MLP evaluation above had to write `open scoped RationalAlgebraic` to get at it. Since the real
+`slMlp` evaluation writes `open scoped RationalAlgebraic` to get at it. Since the real
 exponential doesn't return a rational in general, this algebraic context supplies zero placeholders
 for the transcendental operations:
 
@@ -663,7 +668,8 @@ open scoped RationalAlgebraic in
 (0, 0)
 ```
 
-Evaluating softmax with these placeholder transcendental operations produces the result below. For
+Evaluating softmax with these placeholder transcendental operations gives the `slQSoftmax` result.
+For
 `Tensor.softmax`, the second argument is the axis (a `Fin` of the tensor's rank), so
 `⟨0, Nat.one_pos⟩` is axis `0` and an axis out of range doesn't typecheck:
 
@@ -771,8 +777,6 @@ a recorder prepares. TorchLean's CPU tape records an operator through this rule
 operators of the same table. An operator whose scalar lacks a capability (such as the error
 function on `Float`) has no rule at that scalar.
 
-# Shapes And Element Types
-
 A tensor's shape index $`s` and element type $`\alpha` answer different questions. `Tensor α s`
 fixes both for one value, and `IR.Graph.eval` follows the homogeneous-element contract from
 *Tensors And Shapes*: it evaluates a graph at one scalar type `α`. A value, frozen or detached port
@@ -782,9 +786,8 @@ only to a table of values at different ports, not to a graph over several scalar
 
 # Specification Conventions
 
-Shapes are only one source of ambiguity, and the spec layer also fixes choices that a model name
-doesn't determine. Each subsection below is a place where two reasonable libraries could differ, so
-the definition has to say which one TorchLean means.
+Shapes are only one source of ambiguity. Four definitions settle choices on which reasonable
+libraries can differ: loss reduction, attention masks, dropout, and invalid convolution windows.
 
 ## Loss reductions
 
@@ -856,7 +859,7 @@ the mass. Row 1 sees positions 0 and 1 with scores $`0` and $`1`, and
 $`e/(1+e)\approx0.731059` is exactly the logistic function at $`1` . Row 2 sees all three. Every
 blocked
 entry is a hard zero, not a small number. PyTorch's `masked_fill` with $`-\infty` agrees at the
-six-decimal precision displayed above:
+six-decimal precision printed by `slCausal`:
 
 ```
 >>> # Apply the same causal support to the comparison
@@ -1140,7 +1143,7 @@ arguments.
 
 # Sources
 
-The definitions above, in the order they appear:
+Source files for the definitions used here, in order of first use:
 
 - {src "TorchLean/Tensor/Layers/Linear.lean"}[`Layers/Linear.lean`], `Linear` and the four
   forward and backward definitions

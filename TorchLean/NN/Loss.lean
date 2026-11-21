@@ -122,11 +122,11 @@ For integer class labels, use `crossEntropy`, whose `Fin classes` target tensor 
 bound in its element type.
 -/
 def oneHotCrossEntropy {α : Type} [TorchLean.Storage α] [Context α]
-    {m : Type → Type} [Monad m] [Ops (m := m) (α := α)]
+    {m : Type → Type} [Ops (m := m) (α := α)]
     {s : Shape} (axis : Nat) [Shape.AxisInBounds axis s]
     (logits targetOneHot : Ref (m := m) (α := α) s)
     (reduction : Reduction := .mean) :
-    m (Ref (m := m) (α := α) Shape.scalar) := do
+    m (Ref (m := m) (α := α) Shape.scalar) :=
   Ops.apply (.crossEntropy ⟨axis, Shape.AxisInBounds.proof⟩ (reduction == .mean))
       (logits, targetOneHot, ())
 

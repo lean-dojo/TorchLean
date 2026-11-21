@@ -100,6 +100,20 @@ theorem finRange_foldl_add_eq_add_sum {β : Type} [AddCommMonoid β] {n : Nat}
     List.foldl_assoc (op := (· + ·)) (ha := ⟨add_assoc⟩) (l := (List.finRange n).map f)
       (a₁ := acc) (a₂ := 0)
 
+/-- A left fold over `finRange n` that adds `f i` exactly when `p i` holds adds the sum of the
+guarded terms to the initial value. -/
+theorem finRange_foldl_ite_add_eq_add_sum {β : Type} [AddCommMonoid β] {n : Nat}
+    (p : Fin n → Prop) [DecidablePred p] (f : Fin n → β) (acc : β) :
+    (List.finRange n).foldl (fun s i => if p i then s + f i else s) acc =
+      acc + ∑ i, if p i then f i else 0 := by
+  have h : (fun (s : β) (i : Fin n) => if p i then s + f i else s) =
+      fun s i => s + if p i then f i else 0 := by
+    funext s i
+    by_cases hi : p i
+    · rw [ite_eq_left hi, ite_eq_left hi]
+    · rw [ite_eq_right hi, ite_eq_right hi, add_zero]
+  rw [h, finRange_foldl_add_eq_add_sum]
+
 /-- A successful list `mapM` in `Except` is a successful optional `mapM` of any reader that agrees
 with it, after a conversion, on the successes of the list's entries. -/
 theorem mapM_option_of_except {ε β γ δ : Type} {check : β → Except ε γ}

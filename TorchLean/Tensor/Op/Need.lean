@@ -17,17 +17,22 @@ public import TorchLean.Tensor.Op.Table.Rule
 `op`: `Rounding` for the roundings and for the rounded divisions, `fmod` and `remainder` at the
 scalar, `Erf` for `erf` and the exact GELU, `InverseTrig` for the inverse trigonometric functions
 and `atan2`, `Cbrt` for `cbrt`, `NextAfter` for `nextafter`, `Bits` of the operator's width for a
-`bitcast` with a scalar side, and none for every other operator. An instance of
+`bitcast` with a scalar side, `Special` for `special`, `Frexp` for `frexp`, `Fma` for `fma`,
+`ComplexFunctions` for `complex` and `complexPow`, and none for every other operator. An instance of
 `Op.Need.Supplied α n` is a capability record that holds `n`, found from `Rounding α`, `Erf α`,
-`InverseTrig α`, `Cbrt α`, `NextAfter α` or `Bits α`, so `Op.Supported α op` is
-synthesized at a call site that names the operator exactly when the scalar has what it needs. The
-eager CPU tape and the typed graph run `Op.rule?` with that record, the eager CUDA tape runs the
-operator's LibTorch entry, and the verifier recorder reads no record: it lowers only operators whose
-lowering reads no optional capability. `Op.isSome_rule?_iff` states that the classification agrees
-with the whole table: for every operator with `Op.hasRule` (all but `custom`, a `decodeIndex` with a
-zero bound and entries, an integer true division and a Boolean scatter other than a replacement),
-`Op.rule?` has a rule at a capability record exactly when the record holds the capability the
-operator needs.
+`InverseTrig α`, `Cbrt α`, `NextAfter α`, `Bits α`, `Special α`, `Frexp α`, `Fma α` or
+`ComplexFunctions α`, so `Op.Supported α op` is
+synthesized at a call site that names the operator when the scalar has an instance of what it
+needs. A scalar can have a capability only under a condition, as a configured format has `Frexp`
+(`configuredBinaryFrexpCapability`): a call site then passes the record `Op.Capabilities α` with
+`decide`'s proof that it holds the capability. The eager CPU tape and the typed graph run
+`Op.rule?` with that record, the eager CUDA tape runs the operator's LibTorch entry, and
+the verifier recorder reads no record: it lowers only operators whose lowering reads no optional
+capability.
+`Op.isSome_rule?_iff` states that the classification agrees with the whole table: for every
+operator with `Op.hasRule` (all but `custom`, a `decodeIndex` with a zero bound and entries, an
+integer true division and a Boolean scatter other than a replacement), `Op.rule?` has a rule at a
+capability record exactly when the record holds the capability the operator needs.
 
 `Op.withKey? op` replaces the key of a random operator (`randUniform`, `randn`, `bernoulliMask`)
 and is `none` for every other operator. The replacement keeps the capability the operator needs
@@ -54,6 +59,14 @@ inductive Op.Need where
   | nextafter
   /-- The interchange word of `width` bits: `Bits α` with `Numeric.Word.width α = width`. -/
   | bits (width : Nat)
+  /-- The special functions, `Special`. -/
+  | special
+  /-- C's `frexp` and `ldexp`, `Frexp`. -/
+  | frexp
+  /-- The fused multiply-add, `Fma`. -/
+  | fma
+  /-- The complex functions, `ComplexFunctions`. -/
+  | complex
   deriving DecidableEq, Repr, Inhabited
 
 /-- The capability `Op.rule?` reads for `op`, `.none` for an operator that reads none. -/
@@ -65,6 +78,10 @@ inductive Op.Need where
   | _, _, .erf | _, _, .gelu .none => .erf
   | _, _, .cbrt => .cbrt
   | _, _, .nextafter => .nextafter
+  | _, _, .special _ _ => .special
+  | _, _, .frexp => .frexp
+  | _, _, .fma => .fma
+  | _, _, .complex _ | _, _, .complexPow => .complex
   | _, _, .bitcast width .scalar _ | _, _, .bitcast width _ .scalar => .bits width
   | _, _, _ => .none
 
@@ -78,19 +95,15 @@ def Op.Need.Available {α : Type} (n : Op.Need) (caps : Op.Capabilities α) : Pr
   | .cbrt => caps.cbrt?.isSome = true
   | .nextafter => caps.nextafter?.isSome = true
   | .bits width => (caps.bits?.any fun b => decide (b.width = width)) = true
+  | .special => caps.special?.isSome = true
+  | .frexp => caps.frexp?.isSome = true
+  | .fma => caps.fma?.isSome = true
+  | .complex => caps.complex?.isSome = true
 
 /-- Whether a capability record holds a capability is decided from its options. -/
 instance Op.Need.decidableAvailable {α : Type} (n : Op.Need) (caps : Op.Capabilities α) :
-    Decidable (n.Available caps) :=
-  match n with
-  | .none => inferInstanceAs (Decidable True)
-  | .rounding => inferInstanceAs (Decidable (caps.rounding?.isSome = true))
-  | .erf => inferInstanceAs (Decidable (caps.erf?.isSome = true))
-  | .inverseTrig => inferInstanceAs (Decidable (caps.inverseTrig?.isSome = true))
-  | .cbrt => inferInstanceAs (Decidable (caps.cbrt?.isSome = true))
-  | .nextafter => inferInstanceAs (Decidable (caps.nextafter?.isSome = true))
-  | .bits width => inferInstanceAs
-      (Decidable ((caps.bits?.any fun b => decide (b.width = width)) = true))
+    Decidable (n.Available caps) := by
+  cases n <;> dsimp only [Op.Need.Available] <;> infer_instance
 
 /-- A capability record of the scalar `α` that holds the capability `n`. The eager CPU tape and
 the typed graph run `Op.rule?` with `caps`, and the eager CUDA tape and the verifier recorder never
@@ -103,31 +116,26 @@ class Op.Need.Supplied (α : Type) (n : Op.Need) where
 
 /-- The record without capabilities, for an operator that needs none. -/
 instance Op.Need.Supplied.empty {α : Type} : Op.Need.Supplied α .none :=
-  ⟨⟨Option.none, Option.none, Option.none, Option.none, Option.none, Option.none⟩,
-    trivial⟩
+  ⟨⟨Option.none, Option.none, Option.none, Option.none, Option.none, Option.none, Option.none,
+    Option.none, Option.none, Option.none⟩, trivial⟩
 
-/-- The record holding the scalar's `Rounding`. -/
-instance Op.Need.Supplied.rounding {α : Type} [instance_ : Rounding α] :
-    Op.Need.Supplied α .rounding :=
-  ⟨Op.Capabilities.ofCapability, rfl⟩
+/-- `supplied_instances (n : C)*` declares, for each capability `n` read from the class `C`, the
+instance `Op.Need.Supplied.n`: the record holding the scalar's `C α`. -/
+local syntax "supplied_instances" ("(" ident " : " ident ")")* : command
 
-/-- The record holding the scalar's `Erf`. -/
-instance Op.Need.Supplied.erf {α : Type} [instance_ : Erf α] : Op.Need.Supplied α .erf :=
-  ⟨Op.Capabilities.ofCapability, rfl⟩
+set_option hygiene false in
+macro_rules
+  | `(supplied_instances $[($needs : $classes)]*) => do
+    let commands ← (needs.zip classes).mapM fun (need, class_) =>
+      `(/-- The record holding the scalar's instance of a capability class. -/
+        instance $(Lean.mkIdent (`Op.Need.Supplied ++ need.getId)):ident {α : Type}
+            [instance_ : $class_ α] : Op.Need.Supplied α $(Lean.mkIdent (`Op.Need ++ need.getId)) :=
+          ⟨Op.Capabilities.ofCapability, rfl⟩)
+    return Lean.mkNullNode commands
 
-/-- The record holding the scalar's `InverseTrig`. -/
-instance Op.Need.Supplied.inverseTrig {α : Type} [instance_ : InverseTrig α] :
-    Op.Need.Supplied α .inverseTrig :=
-  ⟨Op.Capabilities.ofCapability, rfl⟩
-
-/-- The record holding the scalar's `Cbrt`. -/
-instance Op.Need.Supplied.cbrt {α : Type} [instance_ : Cbrt α] : Op.Need.Supplied α .cbrt :=
-  ⟨Op.Capabilities.ofCapability, rfl⟩
-
-/-- The record holding the scalar's `NextAfter`. -/
-instance Op.Need.Supplied.nextafter {α : Type} [instance_ : NextAfter α] :
-    Op.Need.Supplied α .nextafter :=
-  ⟨Op.Capabilities.ofCapability, rfl⟩
+supplied_instances (rounding : Rounding) (erf : Erf) (inverseTrig : InverseTrig) (cbrt : Cbrt)
+  (nextafter : NextAfter) (special : Special) (frexp : Frexp) (fma : Fma)
+  (complex : ComplexFunctions)
 
 /-- The record holding the scalar's `Bits`, for the width of its words. -/
 instance Op.Need.Supplied.bits {α : Type} [instance_ : Bits α] :
@@ -167,7 +175,7 @@ what the operator needs. -/
 theorem isSome_rule?_iff (caps : Op.Capabilities α) {ins outs : List Port} (op : Op ins outs)
     (h : op.hasRule = true) :
     (@Op.rule? α _ _ caps ins outs op).isSome = true ↔ op.need.Available caps := by
-  obtain ⟨rounding, erf, inverseTrig, cbrt, nextafter, bits⟩ := caps
+  obtain ⟨rounding, erf, inverseTrig, cbrt, nextafter, bits, special, frexp, fma, complex⟩ := caps
   cases op
   case div mode e => cases mode <;> cases e <;> first
     | exact iff_of_true rfl trivial
@@ -188,13 +196,18 @@ theorem isSome_rule?_iff (caps : Op.Capabilities α) {ins outs : List Port} (op 
       | cases bits with
         | none => rfl
         | some b => exact Option.isSome_dite.trans decide_eq_true_iff.symm
-  all_goals (try cases ‹Op.Element›) <;> (try cases ‹Op.NumericElement›) <;> first
+  all_goals (try cases ‹Op.Element›) <;> (try cases ‹Op.NumericElement›) <;>
+    (try cases ‹Tensor.ReduceOrder›) <;> first
     | exact iff_of_true rfl trivial
     | cases rounding <;> rfl
     | cases erf <;> rfl
     | cases inverseTrig <;> rfl
     | cases cbrt <;> rfl
     | cases nextafter <;> rfl
+    | cases special <;> rfl
+    | cases frexp <;> rfl
+    | cases fma <;> rfl
+    | cases complex <;> rfl
 
 /-- Replacing the key of a random operator keeps the capability it needs. -/
 theorem need_withKey {ins outs : List Port} {op : Op ins outs} {f : UInt64 → Op ins outs}

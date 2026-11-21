@@ -44,20 +44,21 @@ open Verso.Genre.Manual.InlineLean
 open TorchLean Backend.Device nn.ResNet.Shortcut nn.ViT.Pooling
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: modern architectures and the shape requirements their types state. -/
+
 #doc (Manual) "Modern Models" =>
 %%%
 tag := "modern-models"
 %%%
 
 A batch of eight examples should share one set of model parameters. A residual addition needs both
-branches to produce the same shape. These are small requirements, but they're good places to start
-reading a model: we can inspect the parameter list, or try to construct mismatched branches and see
-what the API requires.
+branches to produce the same shape. Inspecting the parameter list reveals whether the batch shares
+weights, while constructing mismatched branches shows exactly which residual shapes must agree.
 
-I'll keep that level of detail as the models get more involved. For a vision Transformer, we can
-follow the pixels that survive patch extraction. For causal attention and a recurrent scan, we can
-append tokens and inspect the earlier outputs. Shapes identify the objects in these calculations,
-while the mask and scan definitions determine which inputs can affect them.
+The same reading strategy scales to larger architectures. For a vision Transformer, follow the
+pixels that survive patch extraction. For causal attention and a recurrent scan, append tokens and
+inspect the earlier outputs. Shapes identify the objects in these calculations; the mask and scan
+definitions determine which inputs can affect them.
 
 Our Lean blocks compute shapes from the model configurations. The PyTorch transcripts that
 accompany them record shapes from corresponding operations {Informal.citep pytorch2019}[].
@@ -65,8 +66,8 @@ accompany them record shapes from corresponding operations {Informal.citep pytor
 TorchLean's reusable constructors live under
 {srcDir "TorchLean/NN/Models"}[`TorchLean/NN/Models`] and the runnable applications under
 {srcDir "TorchLeanExamples/Models"}[`TorchLeanExamples/Models`]. A constructor such as
-`nn.resnet` is reusable and rank-polymorphic. For the `resnet` command we chose a small
-CIFAR configuration on purpose, so that you can run the whole data and training path locally.
+`nn.resnet` is reusable and rank-polymorphic. The `resnet` command uses a compact CIFAR
+configuration so the complete data and training path remains a practical local run.
 
 A file imports only the modules it uses. For the causal Transformer that's a single module, and its
 imports bring in the layers the model is built from:
@@ -318,6 +319,8 @@ abbrev mmResNet : nn.ResNet.Config 2 :=
 ([8, 3, 32, 32], [8, 32, 16, 16], [8, 10])
 ```
 
+Validate the same configuration before building it:
+
 ```lean (name := mmResNetValidation)
 #eval mmResNet.validate
 ```
@@ -365,8 +368,8 @@ print(tuple(pooled.shape), tuple(nn.Linear(16, 10)(pooled).shape))
 
 TorchLean's ResNet constructor uses a convolutional stem, the configured list of residual stages,
 global average pooling over all $`d` spatial axes, and a linear classifier. An empty stage list
-pools the stem output, and the stem geometry and a positive class count are still validated. And
-the model API isn't tied to images, to two dimensions, or to one batch axis.
+pools the stem output, and the stem geometry and a positive class count are still validated. The
+model API isn't tied to images, to two dimensions, or to one batch axis.
 
 The isolated stem above produces sixteen pooled features, and the Lean model's residual stage
 produces thirty-two. That final channel count, not the spatial grid, is what the classifier
@@ -882,8 +885,8 @@ dependency. Their shapes identify the positions, but don't establish that depend
 
 ## Finite Sentinels And Exact Masking
 
-A common implementation replaces blocked logits by a large negative constant before the softmax. We
-set blocked softmax numerators to zero instead. And the difference matters even though a
+A common implementation replaces blocked logits by a large negative constant before the softmax.
+We set blocked softmax numerators to zero instead, and the difference matters even though a
 sufficiently negative binary64 input can underflow:
 
 ```lean (name := mmSentinel)
@@ -923,7 +926,7 @@ Every strict-future attention weight is exactly zero. We evaluated this same spe
 error bounds for rounded operations, but those bounds have their own hypotheses and don't by
 themselves prove this entire attention execution equivalent to its real-valued specification.
 
-## The GPT-Family Constructor
+## GPT-Family Constructor
 
 In
 {src "TorchLean/NN/Models/CausalTransformer.lean"}[`TorchLean.NN.Models.CausalTransformer`],

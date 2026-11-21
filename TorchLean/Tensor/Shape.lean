@@ -131,7 +131,7 @@ A depth without such a pair leaves the shape unchanged. -/
   | _, _ => s  -- invalid depth, return unchanged
 
 /-- At rank two, swapping at depth zero is the ordinary matrix transpose of the shape. -/
-@[simp] theorem swapAdjacentAtDepth_pair_zero (m n : Nat) :
+theorem swapAdjacentAtDepth_pair_zero (m n : Nat) :
     swapAdjacentAtDepth [m, n] 0 = [n, m] := rfl
 
 /-- Swapping adjacent dims at depth `depth` twice returns the original shape. -/
@@ -449,7 +449,7 @@ theorem EndsWith.Witness.leadingShape_append {extent : Nat} {shape : Shape}
   | @leading n rest inner ih => exact congrArg (Shape.dim n) ih
 
 /-- Its leading axes followed by `outputExtent` are the shape with the final extent replaced. -/
-theorem EndsWith.Witness.leadingShape_append' {extent : Nat} {shape : Shape}
+theorem EndsWith.Witness.leadingShape_append_replaceLast {extent : Nat} {shape : Shape}
     (evidence : EndsWith.Witness extent shape) (outputExtent : Nat) :
     evidence.leadingShape ++ [outputExtent] = shape.replaceLast outputExtent := by
   induction evidence with

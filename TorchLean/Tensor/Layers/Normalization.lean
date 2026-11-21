@@ -18,8 +18,8 @@ public import TorchLean.Tensor.Layers.SpecialForms
 rank. Each fiber has its mean subtracted, and the centered fiber is divided by
 `scale = maximum (max |centered|) (sqrt |epsilon|)` (`Tensor.normalizationScale`, gradient
 stopped). `twoPassVar` takes the variance `v` of the scaled fiber, centering it a second time, and
-each scaled entry is divided by `sqrt (max (v + epsilon / scale / scale) 0)` before `gamma` scales
-and `beta` shifts it. No unscaled square is summed, so a fiber whose sum of squared deviations
+each scaled entry is divided by `sqrt (v + epsilon / scale / scale)` before `gamma` scales and
+`beta` shifts it. No unscaled square is summed, so a fiber whose sum of squared deviations
 overflows the format, but whose variance does not, normalizes without overflow: in binary16, four
 entries at `±128` give `±1`. The mean is the unscaled running sum of the entries divided by their
 count, so a fiber where that sum overflows, such as `[32544, 32992]` in binary16, gives NaN at every
@@ -29,8 +29,8 @@ axes `dims` and broadcast along the others.
 
 `rmsNorm x dims gamma epsilon` divides every fiber of `x` over `dims` by
 `scale = maximum (maxAbs fiber) (sqrt |epsilon|)`, with the gradient stopped, then by
-`sqrt (max (m + epsilon / scale / scale) 0)` for the mean `m` of the squared scaled fiber, and
-multiplies by `gamma` along `dims`. Dividing by `scale` first avoids summing unscaled squares. In
+`sqrt (m + epsilon / scale / scale)` for the mean `m` of the squared scaled fiber, and multiplies by
+`gamma` along `dims`. Dividing by `scale` first avoids summing unscaled squares. In
 real arithmetic, with a nonnegative `epsilon` and a positive scale, the result is
 `x / sqrt (mean x^2 + epsilon) * gamma`, as in PyTorch's `F.rms_norm` with `normalized_shape` the
 trailing axes.
@@ -45,8 +45,8 @@ other axis. That variance is the mean of the squared centered entries after thei
 contiguous groups. For every index of the axes before `dim`, each group's entries over its
 channels and every axis after `dim` are centered by their mean. They are then divided by
 `scale = maximum (maxAbs centered) (sqrt |epsilon|)`, with the gradient stopped, and by
-`sqrt (max (m + epsilon / scale / scale) 0)` for the mean `m` of the squared scaled group, before
-`gamma` scales and `beta` shifts each channel. No unscaled square is summed: in binary16 the
+`sqrt (m + epsilon / scale / scale)` for the mean `m` of the squared scaled group, before `gamma`
+scales and `beta` shifts each channel. No unscaled square is summed: in binary16 the
 squared deviations of four entries at `±128` sum to `65536`, past the largest finite value, yet
 the group gives `±1`. The mean is the unscaled running sum of the group's entries divided by their
 count, so a group where that sum overflows gives NaN at every entry of the group. In real
@@ -70,17 +70,21 @@ The default `normalizationEpsilon` is `1e-5`, torch's `eps` for those three. `to
 defaults to `torch.finfo(x.dtype).eps`, `2^-23` in binary32, so a caller matching it passes that.
 With `.running mean var` the result is step 11 of Ioffe and Szegedy's Algorithm 2 over `ℝ`, and
 `batchNorm` never updates the statistics (torch's training mode does, at `momentum=0.1` by
-default). A negative `var` is clamped to `0`, where torch takes the root of `var + eps` as it
-stands and gives NaN at `var = -1`.
+default). Every denominator, with either statistics and in each normalization, is the root of
+the sum as it stands, as in torch: NaN where the sum is below zero or NaN in IEEE formats, and over
+`ℝ` the root `0` below zero.
 
 In `scripts/checks/test_ir_capture.py`, the `PyTorchCaptureTests` test
 `test_normalizations_execute_with_their_payload` runs `Op.layerNorm` (`layerNorm` over the last
 axis) and `Op.batchNormRunning` against PyTorch. On the layer norm rows `[1, 1, 1, 5]`,
 `[-3, -3, -3, 1]` and `[5, 5, 5, 5]`, and batch norms of integers from `-4` to `4` whose running
 variances plus eps are 1, 4 and 16, the outputs agree bit for bit in binary64, binary32, binary16
-and bfloat16. Random binary32 data agrees within `1e-5` relative and `1e-6` absolute. None of the
-PyTorch tests we found reaches `groupNorm`, `rmsNorm` or `.batch`. The Python importer builds group
-norm, and batch norm over batch statistics, from moments.
+and bfloat16. Random binary32 data agrees within `1e-5` relative and `1e-6` absolute, and a
+running variance below `-epsilon` gives NaN in its channel in both. The test
+`test_normalization_takes_a_weight_not_known_at_capture` feeds the scale, the shift and the
+statistics from graph values. None of the PyTorch tests we found reaches `groupNorm`, `rmsNorm` or
+`.batch`. The Python importer builds group norm, and batch norm over batch statistics, from
+moments.
 
 * `Shape.keptAxis` and `Shape.listedAxis` place the axes of the reduced and the selected shape
   among the axes of `s`, and `Shape.broadcastDims_eraseAxes`, `Shape.broadcastDims_selectAxes`
@@ -195,8 +199,8 @@ variable {α : Type} [Storage α] [Context α] {s : Shape}
 
 /-- Layer normalization of `x` over the axes `dims`: each entry less the mean of its fiber, divided
 by `scale = normalizationScale` of the centered fiber (gradient stopped), then by
-`sqrt (max (v + epsilon / scale / scale) 0)` for the variance `v` of the scaled fiber, then scaled
-by `gamma` and shifted by `beta` along `dims`. The mean sums the raw fiber, so a finite fiber
+`sqrt (v + epsilon / scale / scale)` for the variance `v` of the scaled fiber, then scaled by
+`gamma` and shifted by `beta` along `dims`. The mean sums the raw fiber, so a finite fiber
 gives NaN when that sum or an entry less the mean overflows, as binary64 `[2^1023, 2^1023]` does. -/
 def Tensor.layerNorm (x : Tensor α s) (dims : List (Fin s.rank))
     (gamma beta : Tensor α (s.selectAxes dims)) (epsilon : α := TorchLean.normalizationEpsilon) :
@@ -232,7 +236,7 @@ def Tensor.rmsNorm (x : Tensor α s) (dims : List (Fin s.rank))
   let scaled := x / spread scale
   let meanSquared : Tensor α (s.eraseAxes dims) := map (Context.divNat · (if n = 0 then 1 else n))
     (reduce .sum (square scaled) dims false)
-  let denominator := Tensor.sqrt (meanSquared + ((regularizer / scale) / scale)) .clampNegative
+  let denominator := Tensor.sqrt (meanSquared + ((regularizer / scale) / scale))
   (scaled / spread denominator) *
     broadcast gamma s (s.listedAxis dims) (s.broadcastDims_selectAxes dims)
 
@@ -246,10 +250,10 @@ inductive BatchNorm.Stats (α : Type) [Storage α] (c : Nat)
 /-- Batch normalization of `x` with channels along `dim`, scaled by `gamma` and shifted by `beta`
 per channel. With `.batch` each entry less its channel's mean over every other axis is divided by
 `scale = normalizationScale` of the centered channel (gradient stopped) and by
-`sqrt (max (m + epsilon / scale / scale) 0)` for the mean `m` of its squared scaled entries. The
+`sqrt (m + epsilon / scale / scale)` for the mean `m` of its squared scaled entries. The
 channel mean sums the raw channel, so a finite channel gives NaN when that sum or an entry less the
-mean overflows. With `.running mean var` the entry less `mean` is divided by
-`sqrt (max (maximum var 0 + epsilon) 0)`. -/
+mean overflows. With `.running mean var` the entry less `mean` is divided by `sqrt (var + epsilon)`,
+the root taken per channel and broadcast. -/
 def Tensor.batchNorm (x : Tensor α s) (dim : Fin s.rank) (gamma beta : Tensor α [s.extent dim])
     (stats : BatchNorm.Stats α (s.extent dim) := .batch)
     (epsilon : α := TorchLean.normalizationEpsilon) : Tensor α s :=
@@ -269,16 +273,15 @@ def Tensor.batchNorm (x : Tensor α s) (dim : Fin s.rank) (gamma beta : Tensor �
       Normalization.normalize scaled meanSquare ((regularizer / scale) / scale) gamma beta
         (s.broadcastDims_eraseAxes others) (s.broadcastDims_axis dim) (s.broadcastDims_axis dim)
   | .running mean var =>
-      Normalization.normalize (x - broadcast mean s _ (s.broadcastDims_axis dim))
-        (Tensor.maximum var (full _ 0)) (full _ epsilon) gamma beta (s.broadcastDims_axis dim)
-        (s.broadcastDims_axis dim) (s.broadcastDims_axis dim)
+      let spread := fun t : Tensor α [s.extent dim] => broadcast t s _ (s.broadcastDims_axis dim)
+      (x - spread mean) / spread (Tensor.sqrt (var + full _ epsilon)) * spread gamma + spread beta
 
 /-- Group normalization of `x` with channels along `dim`, split into `groups` contiguous groups of
 `s.extent dim / groups` channels. `x` is viewed as `[size before, groups, group size]` for the axes
 before `dim` and the group's channels times the axes after `dim`. Each centered group `c` (its
 entries less their mean) is divided by `scale = maximum (maxAbs c) (sqrt |epsilon|)` (IEEE maximum,
-gradient stopped), then by `sqrt (max (m + epsilon / scale / scale) 0)` for the mean `m` of the
-squared scaled group, then scaled by `gamma` and shifted by `beta` per channel. The mean sums the
+gradient stopped), then by `sqrt (m + epsilon / scale / scale)` for the mean `m` of the squared
+scaled group, then scaled by `gamma` and shifted by `beta` per channel. The mean sums the
 raw group, so a finite group gives NaN when that sum or an entry less the mean overflows. With no
 axis before `dim` there is one batch item, and with none after it, one position. A group has no
 entries only when `x` has none. -/
@@ -307,7 +310,7 @@ def Tensor.groupNorm (x : Tensor α s) (dim : Fin s.rank) (groups : Nat)
   let scaled := centered / spread scale
   let meanSquared : Tensor α (grouped.eraseAxes [last]) :=
     map (Context.divNat · groupSize) (reduce .sum (scaled * scaled) [last] false)
-  let std := Tensor.sqrt (meanSquared + ((regularizer / scale) / scale)) .clampNegative
+  let std := Tensor.sqrt (meanSquared + ((regularizer / scale) / scale))
   let channel := fun t : Tensor α [s.extent dim] => broadcast t s _ (s.broadcastDims_axis dim)
   (reshape (scaled / spread std) s hSize.symm * channel gamma) + channel beta
 
@@ -574,8 +577,9 @@ private def keptCoord (dims : List (Fin s.rank)) (c : s.Coord) : (s.reduce dims 
   Shape.Coord.ofFun (s := s.eraseAxes dims) fun i => Fin.cast (s.extent_keptAxis dims i).symm
     (Shape.Coord.get c (s.keptAxis dims i))
 
-/-- The coordinate of the selected shape that `c` lies over. -/
-private def listedCoord (dims : List (Fin s.rank)) (c : s.Coord) : (s.selectAxes dims).Coord :=
+/-- The coordinate of the selected shape that `c` lies over, with the indices of `c` along the
+listed axes. -/
+def listedCoord (dims : List (Fin s.rank)) (c : s.Coord) : (s.selectAxes dims).Coord :=
   Shape.Coord.ofFun fun i => Fin.cast (s.extent_listedAxis dims i).symm
     (Shape.Coord.get c (s.listedAxis dims i))
 
@@ -592,7 +596,7 @@ private theorem index_keptCoord (dims : List (Fin s.rank)) (c : s.Coord) (k : Na
   · rfl
 
 /-- The indices of `listedCoord dims c` are those of `c` along the listed axes. -/
-private theorem index_listedCoord (dims : List (Fin s.rank)) (c : s.Coord) (k : Nat) :
+theorem index_listedCoord (dims : List (Fin s.rank)) (c : s.Coord) (k : Nat) :
     Shape.Coord.index (listedCoord dims c) k =
       if h : k < (s.selectAxes dims).rank then
         Shape.Coord.index c (s.listedAxis dims ⟨k, h⟩).val
@@ -618,9 +622,9 @@ private theorem keptCoord_reduceSource (dims : List (Fin s.rank))
     (s.nodup_otherAxes dims).idxOf_getElem k hlen]
 
 /-- A coordinate read by a reduction lies over the reduced coordinate it is read at. -/
-private theorem listedCoord_reduceSource (dims : List (Fin s.rank))
-    (o : (s.reduce dims false).Coord) (r : (s.selectAxes dims).Coord) :
-    listedCoord dims (s.reduceSource dims false o r) = r := by
+theorem listedCoord_reduceSource {dims : List (Fin s.rank)} {keepdim : Bool}
+    (o : (s.reduce dims keepdim).Coord) (r : (s.selectAxes dims).Coord) :
+    listedCoord dims (s.reduceSource dims keepdim o r) = r := by
   apply Shape.Coord.ext_index
   intro k hk
   have hlen : k < (s.sortedAxes dims).length := by
@@ -669,7 +673,7 @@ private theorem reduce_sum_apply_eq_sum_ite [AddCommMonoid α] (w : Tensor α s)
   · intro c _
     exact Finset.mem_univ _
   · intro r _
-    exact listedCoord_reduceSource dims o r
+    exact listedCoord_reduceSource o r
   · intro c hc
     rw [← (Finset.mem_filter.mp hc).2]
     exact reduceSource_keptCoord_listedCoord dims c
@@ -685,9 +689,9 @@ private theorem keptAxis_otherAxes_singleton (dim : Fin s.rank)
 
 /-- In a sum over every axis but `dim`, a coordinate lies over an output coordinate exactly when
 their indices along `dim` agree. -/
-private theorem keptCoord_otherAxes_eq_iff (dim : Fin s.rank)
-    (h : s.reduce (s.otherAxes [dim]) false = [s.extent dim]) (c : s.Coord)
-    (o : Shape.Coord [s.extent dim]) :
+private theorem keptCoord_otherAxes_eq_iff {dim : Fin s.rank}
+    (h : s.reduce (s.otherAxes [dim]) false = [s.extent dim]) {c : s.Coord}
+    {o : Shape.Coord [s.extent dim]} :
     keptCoord (s.otherAxes [dim]) c = _root_.cast (congrArg Shape.Coord h.symm) o ↔
       Shape.Coord.get c dim = o.1 := by
   have hrank : (s.eraseAxes (s.otherAxes [dim])).rank = 1 := by
@@ -724,7 +728,7 @@ theorem reduce_sum_otherAxes_apply [AddCommMonoid α] (dim : Fin s.rank)
     Shape.eraseAxes_otherAxes_singleton s dim
   show castShape (Tensor.reduce .sum w (s.otherAxes [dim]) false) h o = _
   rw [castShape_apply, reduce_sum_apply_eq_sum_ite]
-  exact Finset.sum_congr rfl fun c _ => if_congr (keptCoord_otherAxes_eq_iff dim h c o) rfl rfl
+  exact Finset.sum_congr rfl fun c _ => if_congr (keptCoord_otherAxes_eq_iff h) rfl rfl
 
 /-- Broadcasting a reduced tensor back reads it at the coordinate `keptCoord dims c` that `c` lies
 over. -/
@@ -884,7 +888,7 @@ private def normalizedEntry (n : Nat) (value : Fin n → α) (xc g b epsilon : �
       let difference := (value i - mean) / scale - scaledMean
       acc + difference * difference) 0)
     (if n = 0 then 1 else n - 0)
-  (xc - mean) / scale / MathFunctions.sqrt (Max.max (variance + epsilon / scale / scale) 0) * g + b
+  (xc - mean) / scale / MathFunctions.sqrt (variance + epsilon / scale / scale) * g + b
 
 /-- An entry of `layerNorm` is `normalizedEntry` of its fiber, entry and parameters. -/
 private theorem layerNorm_apply_entry (x : Tensor α s) (dims : List (Fin s.rank))
@@ -990,21 +994,6 @@ theorem layerNorm_axesFrom_eq_reshape (x : Tensor α s) {axis : Nat} (haxis : ax
   · exact hl2.symm.trans (hn ▸ hl1)
   · exact hl2.symm.trans (hn ▸ hl1)
 
-/-- `layerNorm_axesFrom_eq_reshape` with the affine parameters given on the suffix shape
-`s.drop axis`, as a payload stores them. -/
-theorem layerNorm_axesFrom_eq_reshape' (x : Tensor α s) {axis : Nat}
-    (haxis : axis ≤ s.rank) (gamma beta : Tensor α (s.drop axis)) (epsilon : α)
-    (hx : s.size = Shape.size [(s.take axis).prod, (s.drop axis).prod])
-    (hg : Shape.size (s.drop axis) = Shape.size [(s.drop axis).prod]) :
-    layerNorm x (s.axesFrom axis) (castShape gamma (Shape.selectAxes_axesFrom haxis).symm)
-        (castShape beta (Shape.selectAxes_axesFrom haxis).symm) epsilon =
-      reshape (layerNorm (reshape x _ hx) [⟨1, Nat.one_lt_two⟩]
-          (reshape gamma [(s.drop axis).prod] hg) (reshape beta [(s.drop axis).prod] hg)
-          epsilon)
-        s hx.symm := by
-  rw [layerNorm_axesFrom_eq_reshape x haxis _ _ epsilon hx (Shape.size_selectAxes_axesFrom haxis),
-    reshape_castShape, reshape_castShape]
-
 /-- Layer normalization over the last axis of `x : Tensor α s`, `s = lead ++ [n]`, is layer
 normalization along the rows of its matrix view of `m = lead.size` rows, reshaped back to `s`,
 with the scale and bias given on `[n]`. Both sides compute the same operations in the same order.
@@ -1022,10 +1011,6 @@ theorem layerNorm_last_eq_reshape {lead : Shape} {m n : Nat} (hm : m = lead.size
   have hdrop : (lead ++ [n]).drop lead.length = [n] := by
     simp
   obtain rfl := Shape.eq_axesFrom_last hds
-  have hcast : ∀ t : Tensor α [n], castShape t hg =
-      castShape (castShape t hdrop.symm) (Shape.selectAxes_axesFrom haxis).symm := by
-    intro t
-    rw [castShape_trans]
   have key : ∀ {a b : Nat} (ha : a = m) (hb : b = n)
       (hx : (lead ++ [n]).size = Shape.size [a, b]) (hg' : Shape.size [n] = Shape.size [b]),
       reshape (layerNorm (reshape x [a, b] hx) [⟨1, Nat.one_lt_two⟩] (reshape gamma [b] hg')
@@ -1035,9 +1020,8 @@ theorem layerNorm_last_eq_reshape {lead : Shape} {m n : Nat} (hm : m = lead.size
     intro a b ha hb hx hg'
     subst ha hb
     rfl
-  rw [hcast gamma, hcast beta, layerNorm_axesFrom_eq_reshape' x haxis _ _ epsilon
-    (Shape.size_eq_size_take_drop _ _) (by rw [hdrop]; simp), reshape_castShape,
-    reshape_castShape]
+  rw [layerNorm_axesFrom_eq_reshape x haxis _ _ epsilon (Shape.size_eq_size_take_drop _ _)
+    (Shape.size_selectAxes_axesFrom haxis), reshape_castShape, reshape_castShape]
   refine key ?_ ?_ _ _
   · rw [hm, Shape.size_eq_prod]
     simp
@@ -1110,12 +1094,10 @@ theorem batchNorm_running_apply (x : Tensor α s) (dim : Fin s.rank)
     (gamma beta mean var : Tensor α [s.extent dim]) (epsilon : α) (c : s.Coord) :
     batchNorm x dim gamma beta (.running mean var) epsilon c =
       (x c - mean.getScalar (Shape.Coord.get c dim)) /
-          MathFunctions.sqrt
-            (Max.max (Context.maximum (var.getScalar (Shape.Coord.get c dim)) 0 + epsilon) 0) *
+          MathFunctions.sqrt (var.getScalar (Shape.Coord.get c dim) + epsilon) *
         gamma.getScalar (Shape.Coord.get c dim) + beta.getScalar (Shape.Coord.get c dim) := by
-  simp only [batchNorm, Normalization.normalize, add_def, mul_def, div_def, sub_def, Tensor.sqrt,
-    Tensor.maximum, zipWith_apply, Tensor.map_apply, full_apply,
-    broadcast_axis_apply, getScalar_eq_apply]
+  simp only [batchNorm, add_def, mul_def, div_def, sub_def, Tensor.sqrt, zipWith_apply,
+    Tensor.map_apply, full_apply, broadcast_axis_apply, getScalar_eq_apply]
 
 /-- `batchNorm_running_apply` along the outermost axis, with the parameters indexed by its
 extent. -/
@@ -1123,8 +1105,7 @@ theorem batchNorm_running_zero_apply {n : Nat} {t : Shape} (x : Tensor α (.dim 
     (h : 0 < (Shape.dim n t).rank) (gamma beta mean var : Tensor α [n]) (epsilon : α)
     (c : (Shape.dim n t).Coord) :
     batchNorm x ⟨0, h⟩ gamma beta (.running mean var) epsilon c =
-      (x c - mean.getScalar c.1) /
-          MathFunctions.sqrt (Max.max (Context.maximum (var.getScalar c.1) 0 + epsilon) 0) *
+      (x c - mean.getScalar c.1) / MathFunctions.sqrt (var.getScalar c.1 + epsilon) *
         gamma.getScalar c.1 + beta.getScalar c.1 :=
   batchNorm_running_apply x ⟨0, h⟩ gamma beta mean var epsilon c
 
@@ -1172,8 +1153,8 @@ variable {α : Type} [Storage α] [Context α] {s : Shape}
 /-- Reverse rule of `Tensor.batchNorm x dim gamma beta (.running mean var) epsilon`, with the
 running mean, the running variance and epsilon held fixed. Let `g` be the output gradient and
 `spread` the broadcast of a channel vector along `dim`. `std` is the forward's denominator
-`sqrt (max (spread (maximum var 0) + epsilon) 0)`, both clamps kept: every input of it is fixed,
-so it contributes no derivative factor. `(g * spread gamma) / std` is the input gradient, the
+`sqrt (spread var + epsilon)`: every input of it is fixed, so it contributes no derivative
+factor. `(g * spread gamma) / std` is the input gradient, the
 product rule's pullback followed by the quotient rule's, as `Op.mul` and `Op.div` compose. Over
 every axis but `dim`, the scale gradient sums `g * ((x - spread mean) / std)` and the bias gradient
 sums `g`. -/
@@ -1182,8 +1163,7 @@ def BatchNorm.runningBackward (x : Tensor α s) (dim : Fin s.rank)
     Gradients α s [s.extent dim] :=
   let spread := fun t : Tensor α [s.extent dim] => broadcast t s _ (s.broadcastDims_axis dim)
   let others := s.otherAxes [dim]
-  let std := Tensor.sqrt (spread (Tensor.maximum var (full _ 0)) + full s epsilon)
-    .clampNegative
+  let std := Tensor.sqrt (spread var + full s epsilon)
   { inputGradient := (gradOutput * spread gamma) / std
     scaleGradient := castShape (reduce .sum (gradOutput * ((x - spread mean) / std)) others false)
       (Shape.eraseAxes_otherAxes_singleton s dim)
@@ -1191,16 +1171,18 @@ def BatchNorm.runningBackward (x : Tensor α s) (dim : Fin s.rank)
       (Shape.eraseAxes_otherAxes_singleton s dim) }
 
 /-- The forward of batch normalization with running statistics, in the terms of
-`BatchNorm.runningBackward`: the centered input divided by its denominator, times the broadcast
-scale, plus the broadcast bias. -/
+`BatchNorm.runningBackward`: the centered input divided by its denominator, the root of the
+broadcast variance plus epsilon, times the broadcast scale, plus the broadcast bias. -/
 theorem Tensor.batchNorm_running_eq (x : Tensor α s) (dim : Fin s.rank)
     (gamma beta mean var : Tensor α [s.extent dim]) (epsilon : α) :
     Tensor.batchNorm x dim gamma beta (.running mean var) epsilon =
       ((x - broadcast mean s _ (s.broadcastDims_axis dim)) /
-          Tensor.sqrt (broadcast (Tensor.maximum var (full _ 0)) s _
-            (s.broadcastDims_axis dim) + full s epsilon) .clampNegative) *
+          Tensor.sqrt (broadcast var s _ (s.broadcastDims_axis dim) + full s epsilon)) *
         broadcast gamma s _ (s.broadcastDims_axis dim) +
-      broadcast beta s _ (s.broadcastDims_axis dim) :=
-  normalize_full _ _ _ _ _ _ _ _
+      broadcast beta s _ (s.broadcastDims_axis dim) := by
+  apply Rep.ext
+  intro c
+  simp only [batchNorm, add_def, mul_def, div_def, sub_def, zipWith_apply, broadcast_apply,
+    sqrt_apply, full_apply]
 
 end TorchLean

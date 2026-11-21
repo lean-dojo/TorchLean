@@ -9,7 +9,6 @@ public import TorchLean.Tensor.Einops.Elab.Transform.View
 public import TorchLean.Tensor.Einops.Lowering.Pack
 public import TorchLean.Tensor.Einops.MixedRadix -- shake: keep
 public import TorchLean.Tensor.Einops.Lowering.Reduce -- shake: keep
-import Mathlib.Algebra.Order.Field.Basic
 public meta import Mathlib.Util.SynthesizeUsing
 public meta import TorchLean.Tensor.Tactic.Einops.Table
 public meta import TorchLean.Tensor.Tactic.Init

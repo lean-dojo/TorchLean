@@ -2,20 +2,9 @@
 title: 3D Vision Projection Certificates
 ---
 
-In this example, we'll take a detector's 3D points and check whether their projections fit inside
-its claimed 2D image box. We'll export the camera matrix, points, image dimensions, and box to
-JSON, then check their geometry in Lean.
-
-The checker projects the points and tests whether the box encloses them, allowing a stated
-nonnegative tolerance. A cuboid has eight corners, but the certificate also supports other point
-counts.
-
-<div class="media-slab">
-  <img src="{{ '/assets/media/examples/showcase/projection-certificate-workflow.png' | relative_url }}" alt="Export a projection matrix, 3D points and image box, then check projected depth and enclosure"/>
-</div>
-
-The illustration sketches the workflow. Here we check projection and enclosure for the supplied
-points, but nothing about the pose, dimensions, or perpendicular edges of a detected cuboid.
+A 3D detector can give us a box in the image and a set of corners in space. On the
+WildDet3D image below, the projected corners stick out of the detector's own 2D box. We can
+check that directly in Lean from the exported camera matrix, corners, image size, and box.
 
 ## Checked Geometry
 
@@ -34,17 +23,17 @@ point.
 Lean checks that image dimensions are positive, the box is ordered and inside the image, all
 supplied points have positive projected depth, every projected point is inside the image, and every
 projected point is enclosed by the claimed 2D box expanded by `tol` in each direction. That
-tolerance must be nonnegative, and it doesn't relax the positive-depth or image-bound checks. These
-checks don't establish that the points form a cuboid or that a detector found the right object. An
-empty point set is allowed by the Lean structure (the pointwise conditions are then vacuous), but
-the JSON importer requires at least one point.
+tolerance must be nonnegative, and it doesn't relax the positive-depth or image-bound checks. The
+JSON importer requires at least one point. The certificate covers projection and enclosure of
+those points.
 
-We'll collect these tensors in a camera certificate. In the excerpts that follow, we work in the
-`TorchLean.Examples.Geometry3D` namespace and omit the surrounding scalar-instance parameters:
+We'll collect these tensors in a camera certificate. The excerpts that follow are from the [3D
+geometry verification
+source](https://github.com/lean-dojo/TorchLean/tree/main/TorchLeanExamples/Verification/Geometry3D)
+(`Box3D.lean`, namespace `TorchLean.Examples.Geometry3D`):
 
 ```lean
-structure BoxCameraCert (α : Type)
-    [TorchLean.Storage α] where
+structure BoxCameraCert (α : Type) [Storage α] where
   pointCount : Nat := 8
   width : α
   height : α
@@ -57,7 +46,9 @@ structure BoxCameraCert (α : Type)
 The executable checker is a Boolean function:
 
 ```lean
-def checkCert (cert : BoxCameraCert α) : Bool :=
+def checkCert {α : Type} [Storage α] [OfNat α 0] [OfNat α 1] [Add α] [Sub α] [Mul α]
+    [Div α] [LE α] [LT α] [DecidableRel (α := α) (· ≤ ·)] [DecidableRel (α := α) (· < ·)]
+    (cert : BoxCameraCert α) : Bool :=
   checkPositiveImageSize cert &&
     checkBBoxOrdered cert &&
     checkBBoxInsideImage cert &&
@@ -66,13 +57,11 @@ def checkCert (cert : BoxCameraCert α) : Bool :=
     checkEncloses cert
 ```
 
-When the checker returns `true`, this theorem gives us `Verified cert`. We've left out the
-standard arithmetic/typeclass parameters here, and the full theorem is in the [3D geometry
-verification
-source](https://github.com/lean-dojo/TorchLean/tree/main/TorchLeanExamples/Verification/Geometry3D):
+When the checker returns `true`, this theorem gives us `Verified cert`:
 
 ```lean
-theorem checkCert_sound
+theorem checkCert_sound {α : Type} [Storage α] [OfNat α 0] [OfNat α 1] [Add α] [Sub α]
+    [Mul α] [Div α] [LE α] [LT α] [DecidableRel (α := α) (· ≤ ·)] [DecidableRel (α := α) (· < ·)]
     {cert : BoxCameraCert α} (h : checkCert cert = true) :
     Verified cert
 ```
@@ -121,9 +110,14 @@ Choose the claimed box with `--bbox-source`:
 - `projected-envelope` always uses the image-clipped projected footprint with the requested
   padding.
 
-<div class="media-slab">
+<figure class="media-slab">
   <img src="{{ '/assets/media/examples/bug-zoo/geometry3d-wilddet3d-bbox-diagnostic.png' | relative_url }}" alt="WildDet3D model 2D box compared with projected 3D footprint"/>
-</div>
+  <figcaption>Figure 1. The pixel intervals of one WildDet3D detection in a 640 by 480 image, x
+  above and y below: the model's 2D box in red (x 339.7 to 640.0, y 26.3 to 377.8), the projected
+  3D corners in blue (x 311.8 to 622.6, y 74.5 to 364.5) and the exported certificate's box in
+  green, equal to the blue one. The model's box doesn't enclose the projected corners, so
+  <code>auto</code> exported the projected footprint.</figcaption>
+</figure>
 
 ### Combining A Detector With Depth
 
@@ -167,8 +161,7 @@ is `torchlean.camera.box3d.v2`.
 }
 ```
 
-For Cube R-CNN, Omni3D, or another detector, the export path is the same: export $K$ or $P$, image
-size, corners, and a claimed box, then run the Lean checker.
+Pass the exported artifact to the checker.
 
 ```bash
 python3 TorchLeanExamples/Verification/Geometry3D/export_omni3d_box3d_cert.py \
@@ -204,11 +197,23 @@ it.
 
 We can also reason about uncertainty in the projection using intervals. If homogeneous projection
 numerator/depth intervals divide into a pixel interval contained in the bbox, every concrete camera
-choice represented by those intervals stays inside the same bbox. We display the statement in its
-readable shape, and the full theorem includes the interval hypotheses.
+choice represented by those intervals stays inside the same bbox:
 
 ```lean
-theorem ofHomogeneous_inside_bbox :
+theorem ofHomogeneous_inside_bbox
+    {α : Type} [Storage α] [Field α] [LinearOrder α] [IsStrictOrderedRing α]
+    {cert : BoxCameraCert α}
+    {uNumI vNumI zI : FloatLib.Numerics.Interval α}
+    {uNum vNum z : α}
+    (huNumNonneg : NonnegativeInterval uNumI)
+    (hvNumNonneg : NonnegativeInterval vNumI)
+    (hzPos : 0 < zI.lo)
+    (hinside :
+      PixelIntervalInsideBBox cert
+        (PixelInterval2D.ofHomogeneous uNumI vNumI zI))
+    (huNum : InInterval uNumI uNum)
+    (hvNum : InInterval vNumI vNum)
+    (hz : InInterval zI z) :
     xmin cert ≤ uNum / z ∧
       uNum / z ≤ xmax cert ∧
       ymin cert ≤ vNum / z ∧

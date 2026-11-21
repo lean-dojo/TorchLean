@@ -7,11 +7,10 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.NN.Attention.Adjoint
-public import TorchLean.NN.FDeriv.PullbackTensor
+public import TorchLean.NN.Tactic.OpDeriv
 public import TorchLean.Tensor.Op.Table.Linear
 public import TorchLean.NN.Gradients.Linear
 public import TorchLean.NN.Op.Certificates
-public import TorchLean.NN.Tactic.Init
 public import TorchLean.Tensor.Op.Cert
 public import TorchLean.Tensor.Operations
 
@@ -32,7 +31,8 @@ over a leading shape as the matrix-vector product with the weights at every lead
 bias repeated at every leading index. The transpose in the input maps `inputDeriv` over the leading
 shape, the transpose in the weights flattens the leading shape to one axis and applies
 `dot_matmul_left_adjoint`, and the transpose of the repeated bias is `biasDerivLeading`. The
-certificates then follow from the composition rules by `fun_prop`.
+certificates follow from the composition rules: `op_deriv` proves those of `Op.matmul`,
+`Op.scaledMatmul` and `Op.contract`, and `fun_prop` each case of `Op.linear`.
 
 The same construction gives continuous bilinear maps and `fun_prop` rules for the common-batch
 product `matmulCommonBatch` and for the general contraction `Tensor.contract`, and the joint
@@ -713,64 +713,68 @@ end HasPullbackAt
 namespace Op
 
 /-- The forward map of `Op.matmul` is differentiable in both operands jointly, and its stored
-pullback is the adjoint of that derivative, for vector or matrix operands and broadcast batch
-prefixes. -/
+pullback is the adjoint of that derivative, for vector or matrix operands, broadcast batch
+prefixes and every order that covers the inner dimension. -/
 @[op_cert TorchLean.Op.matmul derivative 0 1]
 theorem matmul_prod_backward_eq_adjoint {batchA batchB batch : Shape} {m n p : Nat}
     (lv rv : Bool) (hl : lv = true → m = 1) (hr : rv = true → p = 1)
     (broadcastA : Shape.CanBroadcastTo batchA batch)
-    (broadcastB : Shape.CanBroadcastTo batchB batch)
-    (a : Tensor ℝ (Shape.matmulLeft lv batchA m n)) (b : Tensor ℝ (Shape.matmulRight rv batchB n p))
+    (broadcastB : Shape.CanBroadcastTo batchB batch) (order : Tensor.ReduceOrder)
+    (hcov : order.Covers n) (a : Tensor ℝ (Shape.matmulLeft lv batchA m n))
+    (b : Tensor ℝ (Shape.matmulRight rv batchB n p))
     (δ : Tensor ℝ (Shape.matmulOut lv rv batch m p)) :
     DifferentiableAt ℝ (fun q : WithLp 2 (Tensor ℝ (Shape.matmulLeft lv batchA m n) ×
           Tensor ℝ (Shape.matmulRight rv batchB n p)) =>
-        (((Op.matmul lv rv hl hr broadcastA broadcastB).rule? (α := ℝ) |>.get rfl).forward
+        (((Op.matmul lv rv hl hr broadcastA broadcastB order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward
           (q.fst, q.snd, ())).1)
       (WithLp.toLp 2 (a, b)) ∧
     WithLp.toLp 2
-        ((((Op.matmul lv rv hl hr broadcastA broadcastB).rule? (α := ℝ) |>.get rfl).backward
+        ((((Op.matmul lv rv hl hr broadcastA broadcastB order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).backward
           (a, b, ()) (δ, ())).1,
-        (((Op.matmul lv rv hl hr broadcastA broadcastB).rule? (α := ℝ) |>.get rfl).backward
+        (((Op.matmul lv rv hl hr broadcastA broadcastB order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).backward
           (a, b, ()) (δ, ())).2.1) =
       (fderiv ℝ (fun q : WithLp 2 (Tensor ℝ (Shape.matmulLeft lv batchA m n) ×
           Tensor ℝ (Shape.matmulRight rv batchB n p)) =>
-        (((Op.matmul lv rv hl hr broadcastA broadcastB).rule? (α := ℝ) |>.get rfl).forward
+        (((Op.matmul lv rv hl hr broadcastA broadcastB order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward
           (q.fst, q.snd, ())).1)
         (WithLp.toLp 2 (a, b))).adjoint δ := by
-  simp only [Op.rule?_matmul, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · refine withLp_prod_ext ?_ ?_ <;> simp
+  op_deriv [Tensor.batchMatmulIn_eq_batchMatmul _ _ _ _ hcov]
 
 /-- The forward map of `Op.scaledMatmul` with a frozen scale `s` is differentiable in both operands
-jointly, and its stored pullback is the adjoint of that derivative, for vector or matrix operands
-and broadcast batch prefixes. -/
+jointly, and its stored pullback is the adjoint of that derivative, for vector or matrix operands,
+broadcast batch prefixes and every order that covers the inner dimension. -/
 @[op_cert TorchLean.Op.scaledMatmul derivative 0 1]
 theorem scaledMatmul_prod_backward_eq_adjoint {batchA batchB batch : Shape} {m n p : Nat}
     (lv rv : Bool) (hl : lv = true → m = 1) (hr : rv = true → p = 1)
     (broadcastA : Shape.CanBroadcastTo batchA batch)
-    (broadcastB : Shape.CanBroadcastTo batchB batch)
-    (a : Tensor ℝ (Shape.matmulLeft lv batchA m n)) (b : Tensor ℝ (Shape.matmulRight rv batchB n p))
+    (broadcastB : Shape.CanBroadcastTo batchB batch) (order : Tensor.ReduceOrder)
+    (hcov : order.Covers n) (a : Tensor ℝ (Shape.matmulLeft lv batchA m n))
+    (b : Tensor ℝ (Shape.matmulRight rv batchB n p))
     (s : Tensor ℝ []) (δ : Tensor ℝ (Shape.matmulOut lv rv batch m p)) :
     DifferentiableAt ℝ (fun q : WithLp 2 (Tensor ℝ (Shape.matmulLeft lv batchA m n) ×
           Tensor ℝ (Shape.matmulRight rv batchB n p)) =>
-        (((Op.scaledMatmul lv rv hl hr broadcastA broadcastB).rule? (α := ℝ) |>.get rfl).forward
+        (((Op.scaledMatmul lv rv hl hr broadcastA broadcastB order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward
           (q.fst, q.snd, s, ())).1)
       (WithLp.toLp 2 (a, b)) ∧
     WithLp.toLp 2
-        ((((Op.scaledMatmul lv rv hl hr broadcastA broadcastB).rule? (α := ℝ) |>.get rfl).backward
+        ((((Op.scaledMatmul lv rv hl hr broadcastA broadcastB order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).backward
           (a, b, s, ()) (δ, ())).1,
-        (((Op.scaledMatmul lv rv hl hr broadcastA broadcastB).rule? (α := ℝ) |>.get rfl).backward
+        (((Op.scaledMatmul lv rv hl hr broadcastA broadcastB order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).backward
           (a, b, s, ()) (δ, ())).2.1) =
       (fderiv ℝ (fun q : WithLp 2 (Tensor ℝ (Shape.matmulLeft lv batchA m n) ×
           Tensor ℝ (Shape.matmulRight rv batchB n p)) =>
-        (((Op.scaledMatmul lv rv hl hr broadcastA broadcastB).rule? (α := ℝ) |>.get rfl).forward
+        (((Op.scaledMatmul lv rv hl hr broadcastA broadcastB order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward
           (q.fst, q.snd, s, ())).1)
         (WithLp.toLp 2 (a, b))).adjoint δ := by
-  simp only [Op.rule?_scaledMatmul, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · refine withLp_prod_ext ?_ ?_ <;> simp
+  op_deriv [Attention.scaledMatmulIn_real _ _ _ _ _ hcov]
 
 /-- The forward map of `Op.linear` is differentiable in the weights, the bias and the input
 jointly, and its stored pullback is the adjoint of that derivative, at every leading shape
@@ -810,27 +814,31 @@ theorem linear_prod_backward_eq_adjoint {lead : Shape} {inDim outDim : Nat}
     · refine withLp_prod_ext ?_ (withLp_prod_ext ?_ ?_) <;> simp
 
 /-- The forward map of `Op.contract` is differentiable in both operands jointly, and its stored
-pullback is the adjoint of that derivative. -/
+pullback is the adjoint of that derivative, in every order that covers the contracted
+coordinates. -/
 @[op_cert TorchLean.Op.contract derivative 0 1]
 theorem contract_prod_backward_eq_adjoint {s t : Shape}
     (dims batchDims : List (Fin s.rank × Fin t.rank))
-    (h : Shape.ContractValid s t dims batchDims) (x : Tensor ℝ s) (y : Tensor ℝ t)
+    (h : Shape.ContractValid s t dims batchDims) (order : Tensor.ReduceOrder)
+    (hcov : order.Covers (Shape.size ((dims.map Prod.fst).map s.extent))) (x : Tensor ℝ s)
+    (y : Tensor ℝ t)
     (δ : Tensor ℝ (s.contract t dims batchDims)) :
     DifferentiableAt ℝ (fun q : WithLp 2 (Tensor ℝ s × Tensor ℝ t) =>
-        (((Op.contract dims batchDims h).rule? (α := ℝ) |>.get rfl).forward
+        (((Op.contract dims batchDims h order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward
           (q.fst, q.snd, ())).1) (WithLp.toLp 2 (x, y)) ∧
     WithLp.toLp 2
-        ((((Op.contract dims batchDims h).rule? (α := ℝ) |>.get rfl).backward
+        ((((Op.contract dims batchDims h order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).backward
           (x, y, ()) (δ, ())).1,
-        (((Op.contract dims batchDims h).rule? (α := ℝ) |>.get rfl).backward
+        (((Op.contract dims batchDims h order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).backward
           (x, y, ()) (δ, ())).2.1) =
       (fderiv ℝ (fun q : WithLp 2 (Tensor ℝ s × Tensor ℝ t) =>
-        (((Op.contract dims batchDims h).rule? (α := ℝ) |>.get rfl).forward
+        (((Op.contract dims batchDims h order).rule? (α := ℝ)
+          |>.get (by cases order <;> rfl)).forward
           (q.fst, q.snd, ())).1) (WithLp.toLp 2 (x, y))).adjoint δ := by
-  simp only [Op.rule?_contract, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · refine withLp_prod_ext ?_ ?_ <;> simp
+  op_deriv [Tensor.contractIn_real _ _ dims batchDims _ h _ hcov]
 
 end Op
 

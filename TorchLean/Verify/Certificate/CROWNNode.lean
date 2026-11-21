@@ -295,9 +295,9 @@ def verdict (G : IR.Graph) (P : IR.Payload (ExecFloat.Binary 8 23))
             "that does not dominate its exact transfer, or a failed margin") }
 
 /-- The report of `verdict` accepts exactly when `FiniteArtifact.accepts` accepts. -/
-theorem verdict_ok (G : IR.Graph) (P : IR.Payload (ExecFloat.Binary 8 23))
-    (input : FlatBox (ExecFloat.Binary 8 23)) (cert : CROWNNode)
-    (query : FiniteArtifact.Query) :
+theorem verdict_ok {G : IR.Graph} {P : IR.Payload (ExecFloat.Binary 8 23)}
+    {input : FlatBox (ExecFloat.Binary 8 23)} {cert : CROWNNode}
+    {query : FiniteArtifact.Query} :
     (verdict G P input cert query).ok = true ↔
       FiniteArtifact.accepts G P input cert query = true := by
   unfold verdict FiniteArtifact.accepts

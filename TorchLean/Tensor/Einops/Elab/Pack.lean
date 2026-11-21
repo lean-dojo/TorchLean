@@ -351,6 +351,7 @@ def elabUnpack : TermElab := fun stx expectedType? => withRef stx do
   let some naturalShapeExpressions ← staticListElements? componentShapes
     | throwErrorAt packedSyntax
         "packed component shapes must have a statically known list structure"
+  -- The component shapes as the integer lists the checker takes, and as dimension terms.
   let integerListType ← mkAppM ``List #[mkConst ``Int]
   let mut integerShapeExpressions : List Expr := []
   let mut symbolicRequestedShapes : List (List Expr) := []
@@ -375,6 +376,7 @@ def elabUnpack : TermElab := fun stx expectedType? => withRef stx do
     concreteRequestedShapes? requestedShapes
   let (checked, hOutputShape, arithmeticFacts,
       checkedResult?, checkedValue?) ←
+    -- Concrete shapes are checked now; symbolic ones give a plan with arithmetic side facts.
     match concretePackedShape?, concreteRequestedShapes? with
     | some packedShape, some concreteRequestedShapes =>
         let checkedValue ←
@@ -405,6 +407,7 @@ def elabUnpack : TermElab := fun stx expectedType? => withRef stx do
         pure (checked, hOutputShape, arithmeticFacts, none, none)
   let packedTensor ←
     mkAppM ``TorchLean.Tensor.castShape #[packedTensor, ← mkAppM ``Eq.symm #[hOutputShape]]
+  -- A concrete plan tries the native kernels; otherwise, or when they fail, the lowering.
   let result ←
     match checkedValue? with
     | some checkedValue =>

@@ -42,7 +42,7 @@ Lean-native environment or from an external sampler.
 
 ## CLI flags
 
-- `--device cuda`: run the Torch backend on CUDA (requires building with `-K cuda=true`).
+- `--device cuda`: run the Torch backend on CUDA (requires building with `-Kcuda=true`).
 - `--updates <n>`: number of PPO updates to run (default 2000).
 - `--eval-every <n>`: evaluate the greedy policy every `n` updates (default 50).
 - `--eval-episodes <n>`: number of evaluation episodes per checkpoint (default 20).
@@ -142,7 +142,7 @@ def defaultEvaluationInterval : Nat := 50
 /-- Default number of evaluation episodes per checkpoint (`--eval-episodes`). -/
 def defaultEvaluationEpisodes : Nat := 20
 
-instance : NeZero horizon := ⟨by decide⟩
+/-- `actionCount` is positive. -/
 instance : NeZero actionCount := ⟨by decide⟩
 
 /-- Shape of one GridWorld observation, a one-hot vector of length `stateCount`. -/

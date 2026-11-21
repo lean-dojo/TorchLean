@@ -347,6 +347,7 @@ private theorem good {read : Reader ℝ} {k : Nat} (hk : ∀ j i y, read j i = .
     Good θ₀ t (fun θ => e.eval Arithmetic.ofOps (read.withValues (x θ)) (env θ))
       (fun u => (e.tangent k).eval Arithmetic.ofOps (read.dual k (x θ₀) fun j i => x' j i u)
         (denv u)) := by
+  -- Where the primal reader succeeds, the dual reader returns the same value.
   have hread : ∀ (u : P) j i y, read.withValues (x θ₀) j i = .ok y →
       read.dual k (x θ₀) (fun j i => x' j i u) j i = .ok y :=
     fun u j i y h => Reader.dual_eq_ok hk _ _ h
@@ -376,6 +377,7 @@ private theorem good {read : Reader ℝ} {k : Nat} (hk : ∀ j i y, read j i = .
       obtain ⟨a, ha, hy⟩ := except_bind_eq_ok.mp hy
       obtain ⟨b, hb, -⟩ := ih htr ⟨a, ha⟩ hreg
       rw [Except.ok.inj (ha.symm.trans hb.self_of_nhds)] at hy
+      -- The index is `b` near `θ₀`, so the load reads `x θ j b`, whose derivative is `x' j b`.
       obtain ⟨z, hz, -⟩ := Reader.exists_ok_of_withValues hy
       refine ⟨fun θ => x θ j b, x' j b, hb.mono fun θ hθ => ?_, hx j b z hz, fun u => ?_⟩
       · simp only [eval, hθ, ← except_pure, pure_bind, Reader.withValues_of_ok hz]
@@ -417,6 +419,7 @@ private theorem good {read : Reader ℝ} {k : Nat} (hk : ∀ j i y, read j i = .
           congr 1
           ring
       | div =>
+          -- Regularity gives `g₂ θ₀ ≠ 0`; then `g₁ / g₂ = g₁ * g₂⁻¹` and the product rule.
           have hne : g₂ θ₀ ≠ 0 := hdiv rfl (g₂ θ₀) hF₂.self_of_nhds
           have hinv : HasFDerivAt (fun θ => (g₂ θ)⁻¹)
               ((ContinuousLinearMap.toSpanSingleton ℝ (-(g₂ θ₀ ^ 2)⁻¹)).comp D₂) θ₀ :=
@@ -461,6 +464,7 @@ private theorem good {read : Reader ℝ} {k : Nat} (hk : ∀ j i y, read j i = .
       obtain ⟨b, hb, -⟩ := except_bind_eq_ok.mp hy
       obtain ⟨hreg₁, hreg₂⟩ := hreg
       obtain ⟨hreg₂, hne⟩ := hreg₂ a ha
+      -- Two constant operands compare the same way at every `θ`.
       by_cases hcst : e₁.IsConstant ∧ e₂.IsConstant
       · have hF : ∀ᶠ θ in 𝓝 θ₀, (compare op e₁ e₂).eval Arithmetic.ofOps
             (read.withValues (x θ)) (env θ) =
@@ -473,6 +477,8 @@ private theorem good {read : Reader ℝ} {k : Nat} (hk : ∀ j i y, read j i = .
             simp only [eval, h₁, h₂, ← except_pure, pure_bind]
         exact ⟨_, hF, fun u =>
           eval_primal _ (hread u) (compare op e₁ e₂) (htr.primal u) hF.self_of_nhds⟩
+      -- Otherwise regularity gives `a ≠ b`, and by continuity the operands keep their order
+      -- near `θ₀`.
       replace hne : ∀ b, e₂.eval Arithmetic.ofOps (read.withValues (x θ₀)) (env θ₀) = .ok b →
           a ≠ b := fun b hb => (hne b hb).resolve_right hcst
       obtain ⟨g₁, D₁, hF₁, hg₁, -⟩ := ih₁ htr ⟨a, ha⟩ hreg₁
@@ -508,6 +514,7 @@ private theorem good {read : Reader ℝ} {k : Nat} (hk : ∀ j i y, read j i = .
       obtain ⟨c, hc, hy⟩ := except_bind_eq_ok.mp hy
       obtain ⟨hregp, hregy, hregn⟩ := hreg
       obtain ⟨c', hFp, -⟩ := ihp htr ⟨c, hc⟩ hregp
+      -- The predicate is `c'` near `θ₀`, so both sides take the same branch.
       have hec := Except.ok.inj (hc.symm.trans hFp.self_of_nhds)
       rw [hec] at hc hy
       have hpp : ∀ u, p.primal.eval Arithmetic.ofOps (read.dual k (x θ₀) fun j i => x' j i u)
@@ -527,6 +534,7 @@ private theorem good {read : Reader ℝ} {k : Nat} (hk : ∀ j i y, read j i = .
       simp only [eval] at hy
       obtain ⟨a, ha, hy⟩ := except_bind_eq_ok.mp hy
       obtain ⟨hregv, hregb⟩ := hreg
+      -- Extend `Tracks` by the bound value, with its derivative `Dv` when it is a scalar.
       cases s with
       | scalar =>
           obtain ⟨gv, Dv, hFv, hgv, hTv⟩ := ihv htr ⟨a, ha⟩ hregv
@@ -619,6 +627,8 @@ private theorem good {read : Reader ℝ} {k : Nat} (hk : ∀ j i y, read j i = .
       have hi₀ : ∀ u, initial.primal.eval Arithmetic.ofOps
           (read.dual k (x θ₀) fun j i => x' j i u) (denv u) = .ok (g₀ θ₀) :=
         fun u => eval_primal _ (hread u) initial (htr.primal u) ha
+      -- By induction on the step count `n`: the accumulator after `n` steps has a derivative,
+      -- and `n` steps of the tangent fold compute it.
       have claim : ∀ n, n ≤ c'.toNat → ∃ (g : P → ℝ) (D : P →L[ℝ] ℝ),
           (∀ᶠ θ in 𝓝 θ₀, iterate (fun i acc => body.eval Arithmetic.ofOps
             (read.withValues (x θ))
@@ -666,6 +676,7 @@ private theorem good {read : Reader ℝ} {k : Nat} (hk : ∀ j i y, read j i = .
                   | succ v =>
                       cases v with
                       | succ v => exact htr.predicate v θ }
+            -- The body at step `n` sees the accumulator `g` and the index `n`.
             obtain ⟨g', D', hF', hg', hT'⟩ :=
               ihb htr₂ ⟨z, hz⟩ (hregb (g₀ θ₀) ha n hlt (g θ₀) hF.self_of_nhds)
             refine ⟨g', D', (hF.and hF').mono fun θ h => ?_, hg', fun u => ?_⟩

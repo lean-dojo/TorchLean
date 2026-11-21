@@ -38,21 +38,22 @@ open TorchLean Activation.Kind
 open Shape (size)
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: three end-to-end case studies, CharGPT among them. -/
+
 #doc (Manual) "Case Studies" =>
 %%%
 tag := "model-examples-deep-dive"
 file := "Three-End-to-End-Case-Studies"
 %%%
 
-A training loss becomes easier to interpret when we know what the model predicts, how its
-parameters are arranged, and which data enter the evaluation. CharGPT predicts the next character,
-the vision models classify images, and the Burgers neural operator predicts an entire field. Each
-task gives its reported numbers a different meaning.
+What does a reported loss tell us? For CharGPT it concerns the next character. For an image
+classifier it concerns class labels. A Burgers neural operator predicts a whole field. Before
+comparing their numbers, we need to know what each model predicts and which data enter the loss.
 
 I use the same approach for all three: inspect the typed computation before interpreting the
-training result. Lean blocks on this page derive shapes and parameter counts from the model
-definitions, while the commands produce checkpoints, logs, and predictions to inspect in a
-particular run. A count can expose a missing bias, a different width, or accidental weight sharing,
+training result. The Lean calculations derive shapes and parameter counts from the model
+definitions; the commands produce checkpoints, logs, and predictions from a particular run. A
+count can expose a missing bias, a different width, or accidental weight sharing,
 though it can't establish equality of forward computations.
 
 # Uniform Predictions As A Loss Baseline
@@ -91,8 +92,8 @@ F.cross_entropy(torch.zeros(1, 10), torch.tensor([3])).item()
 F.cross_entropy(torch.zeros(1, 65), torch.tensor([21])).item()
 ```
 
-You can compare the ten-class and 65-character examples below with 2.302585 and 4.174387. A
-nonuniform initial prediction can give a higher or lower loss on one label. Its average loss also
+The ten-class and 65-character examples can be compared with 2.302585 and 4.174387. A nonuniform
+initial prediction can give a higher or lower loss on one label. Its average loss also
 depends on the predictions and label distribution, so a deviation from $`\log V` alone doesn't
 diagnose a configuration error.
 
@@ -301,7 +302,7 @@ That closed form agrees with the built smoke model. Applied to the lecture confi
 gives 10,788,929 trainable scalars (about 359 times as many) without allocating those tensors.
 
 A model's stored state can hold tensors that no optimizer updates (running statistics, for
-example). Dropout doesn't: its probability is configuration that `validateConfig` checks, so
+example). Dropout doesn't: its probability is a configuration value that `validateConfig` checks, so
 turning it on leaves the stored state equal to the parameters {Informal.citep dropout2014}[]:
 
 ```lean (name := dpDropDef)
@@ -342,14 +343,14 @@ tensor, so a checkpoint of the smoke model fits the model with dropout. When sto
 state differ (as they do for a model with running statistics), the command reports a separate
 `non_trainable_state_scalars` count.
 
-## The Architecture
+## CharGPT Architecture
 
 Let $`B` be the batch size, $`T` the window length, $`V` the vocabulary size, and $`D` the model
 width. A batch of token windows $`I\in\mathbb{N}^{B\times T}` contains ids smaller than $`V`, and
 the indexed API represents each id with this bound. Looking up the token embedding table $`E`
 produces
 
-$$`E[I]\in\mathbb{R}^{B\times T\times D},`
+$$`E[I]\in\mathbb{R}^{B\times T\times D}.`
 
 To these embeddings, the model adds a learned positional table and then applies two pre-normalized
 Transformer blocks. For a block input $`X`, attention mixes visible token positions and the
@@ -698,15 +699,11 @@ examples.
 
 # Burgers Neural Operator
 
-Here the Fourier neural operator example {Informal.citep fno2021}[] learns the terminal-time
-solution map for the viscous Burgers equation
-
-$$`\partial_t u+u\,\partial_xu=\nu\,\partial_{xx}u,
-\qquad x\in[0,1],`
-
-from sampled initial conditions. Each training pair is
-
-$$`u_0(x_i)\longmapsto u_T(x_i),\qquad i=0,\ldots,31.`
+Here the Fourier neural operator {Informal.citep fno2021}[] learns what happens to a field under
+the viscous Burgers equation $`\partial_t u+u\,\partial_xu=\nu\,\partial_{xx}u` on $`[0,1]`.
+Give it the values of the initial field at 32 grid points and it predicts the values at a later
+time: $`u_0(x_i)\mapsto u_T(x_i)` for $`i=0,\ldots,31`. Each row of the dataset is thus one
+whole field, not one spatial point. The model can learn relationships between distant positions.
 
 Prepare the dataset:
 
@@ -738,13 +735,9 @@ python3 TorchLeanExamples/Data/plot_fno1d_burgers.py \
   --csv /tmp/fno-predictions.csv
 ```
 
-Each row in the Burgers dataset is an entire sampled field. Its target is the later field for that
-initial condition, so the learned map can couple distant grid locations. That's different from
-fitting a scalar function of a spatial coordinate: the model receives thirty-two initial values
-together and returns thirty-two terminal values together. The reported train and test MSEs assess
-these field-to-field predictions on different rows. With the prediction CSV, you can see whether an
-error is localized around a steep feature or spread across the grid (information an averaged loss
-removes).
+The reported train and test MSEs assess predictions on different fields. The prediction CSV lets
+us see whether an error is concentrated near a steep feature or spread across the grid, which an
+averaged loss hides.
 
 ## Spectral Layer
 
@@ -752,13 +745,11 @@ Let $`v\in\mathbb R^{N\times C}` be a field with $`C` latent channels. The spect
 a discrete Fourier transform, retains a configured frequency band, multiplies those modes by
 learned complex weights, and transforms back:
 
-$$`\widehat v_k
-=\sum_{j=0}^{N-1}v_j e^{-2\pi i jk/N},`
-
-$$`\widehat y_k
-=R_{\theta,k}\widehat v_k
-\quad\text{for retained }k,\qquad
-y=\mathcal F^{-1}(\widehat y).`
+$$`\begin{aligned}
+\widehat v_k &= \sum_{j=0}^{N-1}v_j e^{-2\pi i jk/N},\\
+\widehat y_k &= R_{\theta,k}\widehat v_k \quad\text{for retained }k,\\
+y &= \mathcal F^{-1}(\widehat y).
+\end{aligned}`
 
 A pointwise linear branch is added before the activation. The command uses grid $`N=32`, width
 $`8`, a mode budget of eight, and one spectral residual block.

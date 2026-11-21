@@ -122,15 +122,9 @@ private def FoldSource.result (src : FoldSource) (read t : Lean.Expr) : MetaM Le
   else
     return call
 
-/-- The constant of an expression-language type. -/
-private def tyConst : Ty → Lean.Expr
-  | .scalar => mkConst ``Ty.scalar
-  | .index => mkConst ``Ty.index
-  | .predicate => mkConst ``Ty.predicate
-
 /-- The list literal of expression-language types. -/
 private def tyList (types : List Ty) : MetaM Lean.Expr :=
-  mkListLit (mkConst ``Ty) (types.map tyConst)
+  mkListLit (mkConst ``Ty) (types.map typeExpr)
 
 /-- Whether the definition `name` applied to `args` is a `match` on its last argument. -/
 private def casesOnLast (name : Name) (levels : List Level) (args : Array Lean.Expr) :
@@ -486,7 +480,7 @@ private def proveCase (src : FoldSource) (arith inputs reference : Lean.Expr) (n
     let mut tail : List Ty := []
     for (t, v) in (row.zip values).reverse do
       env ← mkAppOptM ``Kernel.Env.push
-        #[some α, some (← tyList tail), some (tyConst t), some v, some env]
+        #[some α, some (← tyList tail), some (typeExpr t), some v, some env]
       tail := t :: tail
     let lhs := mkAppN (mkConst ``Kernel.Expr.eval)
       #[α, arith, R, ← tyList row, mkConst ``Ty.scalar, env, e]

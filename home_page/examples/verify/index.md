@@ -2,14 +2,11 @@
 title: Checking a Captured Computation
 ---
 
-Suppose we already have a tensor calculation in Python. We'd like to bring its
-operations into Lean without rewriting the model, inspect its precision changes,
-and ask which checks we can run on that graph. Put `@torchlean.compile` on the model class or
-function, then call it as usual. TorchLean detects
-PyTorch or JAX from the model and its tensor arguments. The first call captures the computation for
-the whole tensor or batch, so you don't need a loop that checks samples one at a time. TorchLean
-translates supported operations into its IR and checks the graph in Lean, while the framework
-executes the captured computation on its device, with its automatic differentiation intact.
+If you have a PyTorch model or JAX function, add `@torchlean.compile` and call it on a tensor
+or batch as usual. TorchLean captures the supported operations into its IR and asks Lean to
+check their types and shapes. PyTorch or JAX still runs the computation and handles automatic
+differentiation. To compare actual outputs with the Lean reference, call `torchlean.verify`
+on the inputs you want to compare.
 
 From the TorchLean repository root, install the Python package and build the checker first:
 
@@ -71,9 +68,9 @@ For an existing model, use `model = torchlean.compile(model)` and keep calling t
 (its `parameters`, `train`, `eval`, and `state_dict` methods remain available). If its class
 overrides `__call__`, decorate the class instead (so that the override is captured too). Compatible
 calls reuse the captured graph, and changes that require a new specialization are captured and
-checked automatically. The linear layers above keep their weights and biases as live graph inputs,
-so optimizer updates reach subsequent calls, but parameterized convolution and normalization raise
-during compilation because their live-state lowering isn't implemented.
+checked automatically. Supported linear, convolution, and normalization calls keep their lifted
+parameters as inputs to the compiled graph. Updating a parameter therefore changes subsequent
+calls, including calls that reuse the same capture.
 
 A compiled callable's `.torchlean.artifact` and `.torchlean.report` describe its most recently
 compiled graph. A later call can reuse a different specialization without changing these fields. To
@@ -108,7 +105,7 @@ Each requested check has its own result:
 | Request | A successful result means |
 | --- | --- |
 | `structure` | The typed artifact passes the shared dependency, arity, and shape checks. |
-| `types` | Operand/result types, explicit casts, and the program interface are consistent, and the program gives every value the capture lowered the element type and shape that PyTorch or JAX recorded for it (`declared_types`). |
+| `types` | Operand/result types, explicit casts, and the program interface are consistent, and every lowered value has the element type and shape that PyTorch or JAX recorded in the capture (`declared_types`). |
 | `execute` | CPU reference execution completed for the supplied arguments, and `report["outputs"]` holds every result. |
 | `compare` | Its output types, shapes, and complete binary words match the supplied reference for those arguments. Two NaN results match whatever their sign and payload, which the IR leaves unspecified. |
 | `compare_bitwise` | As `compare`, with NaN words compared too. |
@@ -164,12 +161,7 @@ and captured device/layout constraints are marked unchecked.
 
 ## Use JAX or another producer
 
-A captured graph is a tensor program, not a neural-network-only format. We can capture an ordinary
-tensor function without defining layers or a model class, and its inputs, constants, array
-operations, and outputs go through the same checks as a network. What matters is whether the
-frontend can lower the operations involved.
-
-Use the same decorator for a JAX function:
+The same decorator works on a JAX tensor function.
 
 ```python
 import jax.numpy as jnp
@@ -209,8 +201,10 @@ broadcast, permutation, transpose, flatten and concatenation can be executed and
 retain their complete words at any positive declared width (signedness stays in the type). On
 integers, the reference supports addition, subtraction and multiplication modulo `2 ^ width`,
 negation, truncating and floor division, wrapping powers, remainders, `clamp_min` and comparisons,
-and conversions between integer types modulo `2 ^ width`. Complex descriptors can pass
-structural/type checks, but complex execution needs an implementation.
+and conversions between integer types modulo `2 ^ width`. Supported complex captures lower to
+real and imaginary components and execute through binary tensor operations. Their reports use the
+component dtype and a final axis of size two. A raw complex descriptor in an artifact still needs
+a runtime implementation.
 
 Other producers can describe configured binary and decimal formats, integer widths, posit widths,
 complex component types, and named element representations. Our shared `DType` decoder validates
@@ -226,6 +220,63 @@ nonnumeric elements without inventing arithmetic for them. Booleans and fixed-wi
 stored natively in a typed program (as `Bool` and `BitVec`), and additional types need their own
 representation. `detach` is different: for dual-valued scalars it must clear differentiation
 metadata too, so that operation retains its scalar-context semantics.
+
+## Branches and loops
+
+A tensor can decide what runs next. In PyTorch, use a structured branch such as `torch.cond`.
+Both branches appear in the imported program, and the checker executes the one selected by the
+supplied predicate.
+
+```python
+import torch
+import torchlean
+
+def choose(pred, x):
+    return torch.cond(pred, lambda y: y * 2, lambda y: y - 1, (x,))
+
+x = torch.tensor([2., 3.])
+for pred in (True, False):
+    report = torchlean.verify(
+        choose, torch.tensor(pred), x, checks=("structure", "types", "compare")
+    )
+    print(report["ok"])  # True for each branch
+```
+
+The same IR represents loops whose trip count depends on an input. This JAX function sums the
+integers below `n`. The initial state has two scalar integers, and each iteration advances the
+counter and adds its previous value to the running sum.
+
+```python
+from jax import lax
+import jax.numpy as jnp
+import torchlean
+
+def sum_to(n):
+    def step(state):
+        k, total = state
+        return k + 1, total + k
+
+    _, total = lax.while_loop(
+        lambda state: state[0] < n, step, (jnp.int32(0), jnp.int32(0))
+    )
+    return total
+
+report = torchlean.verify(
+    sum_to, jnp.int32(5), checks=("structure", "types", "compare")
+)
+print(report["ok"], report["outputs"][0]["bits"][0])  # True 10
+```
+
+The saved artifact contains the test and body as regions, so the reference run can use a different
+value of `n` with the same shape and type. Each reference while loop has an iteration budget.
+Reaching it while the loop condition still holds makes execution fail. When JAX control flow can
+be resolved during capture, the importer can emit straight-line steps. A supported scan can also
+retain one body and reuse it across iterations. See the [IR control-flow reference](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/NN/IR/README.md#branches-and-loops).
+
+A Lean export of a flow exposes `artifact.flow` and proves the program checks for its blocks.
+The flow library also has derivative and rounding theorems for blocks made from simple real
+arithmetic and comparisons. Applying either theorem to an imported computation needs a proof
+relating its blocks to that arithmetic model. See [the real-arithmetic flow definitions](https://github.com/lean-dojo/TorchLean/blob/main/TorchLean/NN/IR/Flow/Reals.lean).
 
 ## Where the proofs enter
 
@@ -248,8 +299,8 @@ Export uses the artifact from this call, not another run of the Python function,
 retain their complete element words. Existing files are never replaced. When you only want the
 interchange artifact, use a `.json` filename instead. Unsupported capture creates no export. A
 failed check can still leave an export for inspection. The report also validates the constant
-payload and `declared_types` through `IR.load`. The generated module includes no proof of those
-load checks.
+payload and `declared_types` through `IR.loadFlow`, which is `IR.load` for an artifact without a
+flow. The generated module includes no proof of those load checks.
 
 We can also state theorems about the graph itself. Our JAX example proves permutation invariance of
 the real-valued sum-of-squares graph for every vector length and every permutation, and

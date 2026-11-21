@@ -27,8 +27,8 @@ The tie rule is the documented one: the PyTorch 2.8 pages of `torch.argmax` and 
 say they return the first of several extremal entries. The NaN rule isn't on those pages, so we
 measured it on torch 2.8.0, where `[1, 3, 3, NaN, 2, NaN]` gives `3` for both operators. `-0` and
 `0` are equal, so they tie and the first index stays. The capture test
-`test_index_outputs_match_eager` in `scripts/checks/test_ir_capture.py` compares the indices with
-eager PyTorch in binary32, binary64, bfloat16 and binary16.
+`test_index_outputs_match_eager` in `scripts/checks/ir_capture_pytorch_operators.py` compares the
+indices with eager PyTorch in binary32, binary64, bfloat16 and binary16.
 
 * `Shape.axisSource` is the input coordinate a reduction over one axis reads at an output
   coordinate and an index along that axis, `Shape.axisTarget` the output coordinate whose fiber
@@ -74,8 +74,8 @@ theorem get_axisSource_of_ne (s : Shape) {dim : Fin s.rank} (keepdim : Bool)
     ite_eq_right (by simpa using hd)]
 
 /-- Two indices along `dim` read the same coordinate of the other axes. -/
-theorem axisSource_eq_iff (s : Shape) (dim : Fin s.rank) (keepdim : Bool)
-    (o : (s.reduce [dim] keepdim).Coord) (i j : Fin (s.extent dim)) :
+theorem axisSource_eq_iff {s : Shape} {dim : Fin s.rank} (keepdim : Bool)
+    (o : (s.reduce [dim] keepdim).Coord) {i j : Fin (s.extent dim)} :
     s.axisSource dim keepdim o i = s.axisSource dim keepdim o j ↔ i = j := by
   constructor
   · intro h

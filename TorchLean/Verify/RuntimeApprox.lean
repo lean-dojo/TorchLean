@@ -130,6 +130,7 @@ After `open scoped ApproxTol`, `spec ≈ᵀ[toSpec, tol] runtime` stands for
 `ApproxTensorWithTol toSpec spec runtime tol`.
 -/
 
+/-- `spec ≈ᵀ[toSpec, tol] runtime` is `ApproxTensorWithTol toSpec spec runtime tol`. -/
 scoped[TorchLean.ApproxTol] notation:50 spec " ≈ᵀ[" toSpec ", " tol "] " runtime =>
   ApproxTensorWithTol (toSpec := toSpec) spec runtime tol
 

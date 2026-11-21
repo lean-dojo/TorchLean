@@ -70,8 +70,7 @@ parameters. Each stored log-probability is `PolicyGradient.logProb` of the `pred
 output, the program that `PPO.Autograd.objective` records, and that docstring states when the
 ratio at the collection's parameters is exactly one.
 -/
-def collect {obsShape : Shape} {nActions horizon : Nat}
-    [NeZero horizon] [NeZero nActions]
+def collect {obsShape : Shape} {nActions horizon : Nat} [NeZero nActions]
     (session : Session.Checked obsShape nActions)
     (castObservation : Float → α)
     (castReward : Float → α)

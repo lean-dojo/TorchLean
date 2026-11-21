@@ -322,8 +322,7 @@ def AdaGrad.init {α : Type} [Storage α] [Zero α] {s : Shape}
   { lr := lr, epsilon := epsilon, squaredGradientSum := Tensor.full s 0 }
 
 /-- One AdaGrad step. -/
-def AdaGrad.update {α : Type} [Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def AdaGrad.update {α : Type} [Storage α] [Context α] {s : Shape}
     (state : AdaGrad.State α s) (parameters gradients : Tensor α s) :
     OptimizerStep α s (AdaGrad.State α s) :=
   let squaredGradients := Tensor.square gradients
@@ -363,8 +362,7 @@ def RMSProp.init {α : Type} [Storage α] [Zero α] {s : Shape}
     squaredGradientAverage := Tensor.full s 0 }
 
 /-- One RMSProp step. -/
-def RMSProp.update {α : Type} [Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def RMSProp.update {α : Type} [Storage α] [Context α] {s : Shape}
     (state : RMSProp.State α s) (parameters gradients : Tensor α s) :
     OptimizerStep α s (RMSProp.State α s) :=
   let nextSquaredGradientAverage := Tensor.scale state.squaredGradientAverage state.decay +
@@ -433,8 +431,7 @@ The learning rate is applied after normalization, and supported scalars replay t
 coefficient trees when that product or the quotient loses range (`Optimizer.normalizedUpdate`).
 Stored moments and final updates can overflow the chosen scalar format.
 -/
-def Adam.update {α : Type} [Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def Adam.update {α : Type} [Storage α] [Context α] {s : Shape}
     (state : Adam.State α s) (parameters gradients : Tensor α s) :
     OptimizerStep α s (Adam.State α s) :=
   let nextStepCount := state.stepCount + 1
@@ -460,8 +457,7 @@ def Adam.update {α : Type} [Storage α] [Context α]
         Optimizer.normalizedUpdate state.lr state.epsilon correctedFirstMoment correctedRoot }
 
 /-- Adam increments its step counter by one on every update. -/
-@[simp] theorem Adam.update_stepCount {α : Type} [Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+@[simp] theorem Adam.update_stepCount {α : Type} [Storage α] [Context α] {s : Shape}
     (state : Adam.State α s) (parameters gradients : Tensor α s) :
     (Adam.update state parameters gradients).optimizerState.stepCount =
       state.stepCount + 1 := rfl
@@ -502,8 +498,7 @@ $\eta_t\alpha$, so our `wd` is their $\lambda/\alpha$, and torch's default `weig
 `1 - lr * weight_decay` factor, while our `p - p * (lr * wd)` turns `±∞` into NaN and `-0` into
 `+0`, the results that `TorchLean.Test.CUDA.Trainer.checkAdamSpec` checks for the CUDA AdamW.
 -/
-def AdamW.update {α : Type} [Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def AdamW.update {α : Type} [Storage α] [Context α] {s : Shape}
     (state : AdamW.State α s) (parameters gradients : Tensor α s) :
     OptimizerStep α s (AdamW.State α s) :=
   let decayedParameters :=
@@ -514,8 +509,7 @@ def AdamW.update {α : Type} [Storage α] [Context α]
     parameters := result.parameters }
 
 /-- AdamW increments its step counter by one on every update. -/
-@[simp] theorem AdamW.update_stepCount {α : Type} [Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+@[simp] theorem AdamW.update_stepCount {α : Type} [Storage α] [Context α] {s : Shape}
     (state : AdamW.State α s) (parameters gradients : Tensor α s) :
     (AdamW.update state parameters gradients).optimizerState.stepCount =
       state.stepCount + 1 := rfl
@@ -565,8 +559,7 @@ The $\varepsilon$ placement is inside the RMS terms, matching Zeiler's Adadelta 
 With `lr = 1` these lines are eq. (14) and Algorithm 1 of Zeiler (2012). For any other `lr` we
 follow `torch.optim.Adadelta`, which also feeds the unscaled $\Delta p$ into the update average.
 -/
-def Adadelta.update {α : Type} [Storage α] [Context α]
-    [DecidableRel ((· > ·) : α → α → Prop)] {s : Shape}
+def Adadelta.update {α : Type} [Storage α] [Context α] {s : Shape}
     (state : Adadelta.State α s) (parameters gradients : Tensor α s) :
     OptimizerStep α s (Adadelta.State α s) :=
   let nextSquaredGradientAverage :=

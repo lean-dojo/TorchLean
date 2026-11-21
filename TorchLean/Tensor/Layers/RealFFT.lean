@@ -36,7 +36,7 @@ differently. The `irfft` page says an imaginary part in the zero-frequency term 
 and the zero coefficient above ignores it too on finite values.
 `TorchLean.RealFFT.get2_forwardMatrix` and `TorchLean.RealFFT.get2_inverseMatrix`
 (`TorchLean/Tensor/Layers/RealFFT/Complex.lean`) prove the entries over `ℝ` for `n ≠ 0` from the
-kernels of Mathlib's `ZMod.dft`. In `scripts/checks/test_ir_capture.py`,
+kernels of Mathlib's `ZMod.dft`. In `scripts/checks/ir_capture_pytorch_operators.py`,
 `test_real_fourier_transforms_within_tolerance` of `PyTorchGeneralOperatorTests` runs `Op.rfft`
 and `Op.irfft` against torch at all three norms in binary32 and binary64, within `1e-4` relative
 and `1e-5` absolute.

@@ -15,7 +15,8 @@ Each lemma here states one arm of `Op.rule?` for an operator that acts entry by 
 activations, the arithmetic, transcendental and rounding operators, `clamp`, `select`, `detach` and
 `nanToNum`. An arithmetic operator at integer words has a lemma of its own (`Op.rule?_add_integer`),
 and a lemma whose rule reads a capability of the scalar (`Rounding`, `Erf`, `InverseTrig`, `Cbrt`,
-`NextAfter`) assumes it.
+`NextAfter`, `Special`, `Frexp`, `Fma`, `ComplexFunctions`) assumes it. `complex` and `complexPow`
+act pair by pair, on the parts of each complex entry.
 -/
 
 @[expose] public section
@@ -396,14 +397,14 @@ theorem rule?_scale [Op.Capabilities α] {s : Shape} :
 theorem rule?_elu [Op.Capabilities α] {s : Shape} :
     (Op.elu (s := s)).rule? (α := α) = some
       { forward := fun xs =>
-          let alpha := xs.2.1.item
-          (Tensor.map (fun x => Activation.elu x alpha) xs.1, ())
+          (Tensor.map (fun x => Activation.elu x xs.2.1.item xs.2.2.1.item xs.2.2.2.1.item)
+            xs.1, ())
         backward := fun xs g =>
-          let alpha := xs.2.1.item
-          (Tensor.map (fun x => Activation.eluDeriv x alpha) xs.1 * g.1, (), ())
+          (Tensor.map (fun x => Activation.eluDeriv x xs.2.1.item xs.2.2.1.item xs.2.2.2.1.item)
+            xs.1 * g.1, (), (), (), ())
         jvp? := some fun xs dxs =>
-          let alpha := xs.2.1.item
-          (Tensor.map (fun x => Activation.eluDeriv x alpha) xs.1 * dxs.1, ()) } :=
+          (Tensor.map (fun x => Activation.eluDeriv x xs.2.1.item xs.2.2.1.item xs.2.2.2.1.item)
+            xs.1 * dxs.1, ()) } :=
   rfl
 
 /-- The rule of `Op.leakyReLU`. -/
@@ -846,12 +847,82 @@ theorem rule?_cbrt [Cbrt α] {s : Shape} :
           dx * (((1 / 3 : Rat) : α) * (1 / (y * y)))) xs.1 dxs.1, ()) } :=
   rfl
 
+/-- The rule of `Op.special orders f`, where the scalar has `Special`. -/
+theorem rule?_special [Special α] (orders : List ℕ) (f : SpecialFn orders.length) {s : Shape} :
+    (Op.special orders f (s := s)).rule? (α := α) = some
+      { forward := fun xs =>
+          (Tensor.special f orders.get (TProd.parts (fun _ => Port.value s) orders xs), ())
+        backward := fun xs g => TProd.ofParts (fun _ => Port.value s) orders fun i =>
+          Tensor.Rep.ofFn fun c => g.1 c * Special.deriv f (orders.get + Pi.single i 1)
+            fun j => TProd.parts (fun _ => Port.value s) orders xs j c
+        jvp? := some fun xs dxs => (Tensor.Rep.ofFn fun c => Special.leftSum fun i =>
+          TProd.parts (fun _ => Port.value s) orders dxs i c *
+            Special.deriv f (orders.get + Pi.single i 1)
+              fun j => TProd.parts (fun _ => Port.value s) orders xs j c, ()) } :=
+  rfl
+
 /-- The rule of `Op.nextafter`, where the scalar has `NextAfter`. -/
 theorem rule?_nextafter [NextAfter α] {s : Shape} :
     (Op.nextafter (s := s)).rule? (α := α) = some
       { forward := fun xs => (Tensor.zipWith NextAfter.nextafter xs.1 xs.2.1, ())
         backward := fun _ _ => ((), (), ())
         jvp? := some fun _ _ => (Tensor.full _ 0, ()) } :=
+  rfl
+
+/-- The rule of `Op.frexp`, where the scalar has `Frexp`. -/
+theorem rule?_frexp [Frexp α] {s : Shape} :
+    (Op.frexp (s := s)).rule? (α := α) = some
+      { forward := fun xs => (Tensor.map (fun x => (Frexp.frexp x).1) xs.1,
+          Tensor.map (fun x => BitVec.ofInt 32 (Frexp.frexp x).2) xs.1, ())
+        backward := fun xs g => (Tensor.zipWith (fun x seed =>
+          Frexp.ldexp seed (-(Frexp.frexp x).2)) xs.1 g.1, ())
+        jvp? := some fun xs dxs => (Tensor.zipWith (fun x dx =>
+          Frexp.ldexp dx (-(Frexp.frexp x).2)) xs.1 dxs.1, (), ()) } :=
+  rfl
+
+/-- The rule of `Op.fma`, where the scalar has `Fma`. -/
+theorem rule?_fma [Fma α] {s : Shape} :
+    (Op.fma (s := s)).rule? (α := α) = some
+      { forward := fun xs => (Tensor.zipWith3 Fma.fma xs.1 xs.2.1 xs.2.2.1, ())
+        backward := fun xs g => (g.1 * xs.2.1, g.1 * xs.1, g.1, ())
+        jvp? := some fun xs dxs => ((dxs.1 * xs.2.1 + xs.1 * dxs.2.1) + dxs.2.2.1, ()) } :=
+  rfl
+
+/-- The rule of `Op.complex f`, where the scalar has `ComplexFunctions`. -/
+theorem rule?_complex [ComplexFunctions α] (f : ComplexFn) {s : Shape} :
+    (Op.complex f (s := s)).rule? (α := α) = some
+      { forward := fun xs => (Tensor.ofPairs fun c => ComplexFunctions.apply f (xs.1.pairAt c), ())
+        backward := fun xs g => (Tensor.ofPairs (fun c =>
+          let d := ComplexFunctions.deriv f (xs.1.pairAt c)
+          let w := g.1.pairAt c
+          (d.1 * w.1 + d.2 * w.2, d.1 * w.2 - d.2 * w.1)), ())
+        jvp? := some fun xs dxs => (Tensor.ofPairs (fun c =>
+          let d := ComplexFunctions.deriv f (xs.1.pairAt c)
+          let w := dxs.1.pairAt c
+          (d.1 * w.1 - d.2 * w.2, d.2 * w.1 + d.1 * w.2)), ()) } :=
+  rfl
+
+/-- The rule of `Op.complexPow`, where the scalar has `ComplexFunctions`. -/
+theorem rule?_complexPow [ComplexFunctions α] {s : Shape} :
+    (Op.complexPow (s := s)).rule? (α := α) = some
+      { forward := fun xs => (Tensor.ofPairs fun c =>
+          ComplexFunctions.pow (xs.1.pairAt c) (xs.2.1.pairAt c), ())
+        backward := fun xs g =>
+          let d := fun c => ComplexFunctions.powDeriv (xs.1.pairAt c) (xs.2.1.pairAt c)
+          (Tensor.ofPairs (fun c =>
+            let a := (d c).1
+            let w := g.1.pairAt c
+            (a.1 * w.1 + a.2 * w.2, a.1 * w.2 - a.2 * w.1)),
+          Tensor.ofPairs (fun c =>
+            let b := (d c).2
+            let w := g.1.pairAt c
+            (b.1 * w.1 + b.2 * w.2, b.1 * w.2 - b.2 * w.1)), ())
+        jvp? := some fun xs dxs => (Tensor.ofPairs (fun c =>
+          let d := ComplexFunctions.powDeriv (xs.1.pairAt c) (xs.2.1.pairAt c)
+          let u := dxs.1.pairAt c
+          let v := dxs.2.1.pairAt c
+          (d.1.1 * u.1 - d.1.2 * u.2 + (d.2.1 * v.1 - d.2.2 * v.2),
+            d.1.2 * u.1 + d.1.1 * u.2 + (d.2.2 * v.1 + d.2.1 * v.2))), ()) } :=
   rfl
 
 end Op

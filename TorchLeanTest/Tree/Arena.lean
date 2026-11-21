@@ -48,7 +48,7 @@ def scalarOf [Numeric.Word α] (w : UInt64) : α := Id.run do
   let mut state := w
   for j in [:Numeric.Word.width α / 64 + 1] do
     word := word + state.toNat * 2 ^ (64 * j)
-    state := BTree.mix state
+    state := Random.splitmix64 state
   return Numeric.Word.ofNatBits word
 
 /-- The exponent and fraction widths of a precision. -/

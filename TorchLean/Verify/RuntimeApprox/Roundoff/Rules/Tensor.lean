@@ -9,7 +9,7 @@ public import TorchLean.Tensor.Fiber
 public import TorchLean.Tensor.Reduce
 public import TorchLean.Tensor.Conversion
 public meta import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension
+public import FloatLib.Tactic.Roundoff.Extension
 
 /-!
 # Tensor reads for `roundoff`

@@ -29,7 +29,7 @@ open scoped BigOperators
 open Shape (size_toList_flatten)
 
 /-- A box contains a tensor exactly when every coordinate of the tensor lies between the bounds. -/
-theorem Box.contains_iff_apply {s : Shape} (box : Box ℝ s) (input : Tensor ℝ s) :
+theorem Box.contains_iff_apply {s : Shape} {box : Box ℝ s} {input : Tensor ℝ s} :
     Box.Contains box input ↔
       ∀ coordinate : s.Coord,
         box.lo coordinate ≤ input coordinate ∧ input coordinate ≤ box.hi coordinate := by
@@ -46,16 +46,16 @@ theorem Box.contains_iff_apply {s : Shape} (box : Box ℝ s) (input : Tensor ℝ
       · intro h coordinate
         rcases coordinate with ⟨head, tail⟩
         simpa only [Tensor.unstack_apply] using
-          (ih ⟨box.lo.unstack head, box.hi.unstack head⟩
-            (input.unstack head)).mp (h head) tail
+          (ih (box := ⟨box.lo.unstack head, box.hi.unstack head⟩)
+            (input := input.unstack head)).mp (h head) tail
       · intro h head
-        apply (ih ⟨box.lo.unstack head, box.hi.unstack head⟩
-          (input.unstack head)).mpr
+        apply (ih (box := ⟨box.lo.unstack head, box.hi.unstack head⟩)
+          (input := input.unstack head)).mpr
         intro tail
         simpa only [Tensor.unstack_apply] using h (head, tail)
 
 /-- Flattening preserves and reflects every component inequality of a real tensor box. -/
-theorem Box.contains_flattenBox_iff {s : Shape} (box : Box ℝ s) (input : Tensor ℝ s) :
+theorem Box.contains_flattenBox_iff {s : Shape} {box : Box ℝ s} {input : Tensor ℝ s} :
     Box.Contains (flattenBox box) (Tensor.reshape input [_]
         (Shape.size_vector _).symm) ↔ Box.Contains box input := by
   rw [contains_iff_apply, contains_iff_apply]

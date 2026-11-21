@@ -6,7 +6,6 @@ Authors: TorchLean Team
 
 module
 
-import Mathlib.Algebra.BigOperators.Field
 import TorchLean.Tensor.Elementwise.Real
 public import TorchLean.Tensor.LinearAlgebra.Real
 public import TorchLean.Tensor.Numeric.Real

@@ -333,17 +333,6 @@ private theorem toDigits_head (m : Nat) (hm : m ≠ 0) :
 termination_by m
 decreasing_by omega
 
-private theorem toString_int (e : Int) :
-    toString e = (if decide (e < 0) = true then "-" else "") ++ toString e.natAbs := by
-  rw [Int.toString_eq_repr, Int.repr_eq_ite]
-  by_cases h : 0 ≤ e
-  · rw [ite_eq_left h, decide_eq_false (show ¬e < 0 by omega),
-      show e.toNat = e.natAbs by omega]
-    simp
-  · rw [ite_eq_right h, decide_eq_true (show e < 0 by omega),
-      show (-e).toNat = e.natAbs by omega]
-    simp
-
 private theorem exp_natAbs (e : Int) :
     (if decide (e < 0) = true then -(e.natAbs : Int) else (e.natAbs : Int)) = e := by
   by_cases h : e < 0
@@ -445,7 +434,8 @@ private theorem decimal_neg_zero {s : String} {p : s.Pos} {t₁ t₂ : String}
   have h4 := h3.next
   have h4' := splits_of_toList h4 rfl
     (by simp : (String.singleton '0' ++ t₂).toList = (String.ofList ['0'] ++ t₂).toList)
-  obtain ⟨q, hq, hrun⟩ := natCoreNumDigits_eq ['0'] (by decide) 0 0 h4'
+  obtain ⟨q, hq, hrun⟩ := natCoreNumDigits_eq ['0']
+    (fun c hc => by obtain rfl := List.mem_singleton.mp hc; decide) 0 0 h4'
     (ht.head (by decide) (by decide) (by decide))
   refine ⟨q, splits_of_toList hq (by simp) rfl, ?_⟩
   simp only [Nat.ofDigitChars_cons, Nat.ofDigitChars_nil, List.length_cons, List.length_nil]

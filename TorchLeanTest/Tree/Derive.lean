@@ -24,6 +24,7 @@ namespace TorchLean.Test.Tree.Derived
 
 open Kernel Examples.Tree Arenas
 open FloatLib.Floats
+open TorchLean.Random (splitmix64)
 
 /-- Binary trees of keys with no scalars: a leaf, or a node with two subtrees and a key. -/
 inductive Keys where
@@ -82,7 +83,7 @@ def keyTrees : List (String × Keys) :=
   [("leaf", .leaf),
     ("extremes", Keys.ofArray #[0x8000000000000000, 0, 0xFFFFFFFFFFFFFFFF, 1, 0x7FFFFFFFFFFFFFFF]),
     ("chain", Keys.ofArray ((Array.range 500).map Nat.toUInt64)),
-    ("random", Keys.ofArray ((Array.range 20000).map fun i => BTree.mix i.toUInt64))]
+    ("random", Keys.ofArray ((Array.range 20000).map fun i => splitmix64 i.toUInt64))]
 
 /-- A term with the shape of a binary tree: a leaf is a variable, a node with two leaves is a
 constant, and the other nodes are sums and products, chosen by the words of `seed`. -/
@@ -90,8 +91,8 @@ def termOf (seed : UInt64) : BTree α → Term α
   | .leaf => .var seed
   | .node .leaf x .leaf => .const x
   | .node l x r =>
-    if seed % 2 == 0 then .add (termOf (BTree.mix seed) l) (termOf (BTree.mix (seed + 1)) r)
-    else .mul (termOf (BTree.mix seed) l) (.add (.const x) (termOf (BTree.mix (seed + 1)) r))
+    if seed % 2 == 0 then .add (termOf (splitmix64 seed) l) (termOf (splitmix64 (seed + 1)) r)
+    else .mul (termOf (splitmix64 seed) l) (.add (.const x) (termOf (splitmix64 (seed + 1)) r))
 
 mutual
 /-- A program with the shape of a rose tree of words: a leaf assigns a term to a variable, and

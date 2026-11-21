@@ -71,7 +71,7 @@ theorem robust (x : Tensor ℝ [1]) (hx : |x.getScalar 0| ≤ 1 / 4) :
     (3 : ℝ) / 4 ≤ (network.toCertificate.model.eval network.toCertificate.params x).getScalar 0 -
       (network.toCertificate.model.eval network.toCertificate.params x).getScalar 1 := by
   -- Lean checks CROWN's rational computation, then applies its general soundness theorem.
-  have h := query.check_sound (by decide +kernel) x ((encloses_iff_getScalar _ _ x).mpr (by
+  have h := query.check_sound (by decide +kernel) x ((encloses_iff_getScalar (x := x)).mpr (by
     intro i
     fin_cases i
     simpa [query, neg_div] using (abs_le.mp hx))) ⟨0, by decide⟩

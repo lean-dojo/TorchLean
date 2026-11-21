@@ -235,6 +235,8 @@ def block {d : Nat} (spatial modes : Tensor Nat [d]) (width : Nat)
         let xMatrix ← Ops.apply (m := m) (α := α)
           (.reshape (size_fieldShape spatial width)) (x, ())
         have grid_eq : grid = (spatial.to Shape).prod := Tensor.prod_eq_to_list_prod spatial
+        -- The DFT of each channel over the grid: `nn.functional.fft` on the automatic path,
+        -- products with the DFT matrices otherwise.
         let (xReal, xImag) ← if positive : 0 < grid ∧ path = .automatic then do
           let zero ← Ops.const (Tensor.zeros (α := α) flat)
           let transformed ← nn.functional.fft (α := α) (m := m) (channels := width)
@@ -255,6 +257,8 @@ def block {d : Nat} (spatial modes : Tensor Nat [d]) (width : Nat)
                 (fun h => nomatch h) Shape.BroadcastTo.proof Shape.BroadcastTo.proof)
               (negSinRef, xMatrix, ())
           pure (realPart, imagPart)
+        -- At each frequency, the complex product of the `[1, width]` row with the
+        -- `[width, width]` weight: `(a + ib)(c + id) = (ac - bd) + i(ad + bc)`.
         let xRealBatched ← Ops.apply
             (.reshape (s := [grid, width]) (t := [grid, 1, width]) (by simp))
             (xReal, ())
@@ -291,6 +295,7 @@ def block {d : Nat} (spatial modes : Tensor Nat [d]) (width : Nat)
             (transformedReal, maskRef, ())
         let retainedImag ← Ops.apply (m := m) (α := α) (.mul (s := flat))
             (transformedImag, maskRef, ())
+        -- The real part of the inverse DFT of the retained frequencies.
         let spectralMatrix ← if positive : 0 < grid ∧ path = .automatic then do
           let (realPart, _) ← nn.functional.fft (α := α) (m := m) (channels := width)
             (spatial.to Shape)
@@ -315,6 +320,7 @@ def block {d : Nat} (spatial modes : Tensor Nat [d]) (width : Nat)
           Ops.apply .sub (realPart, imagPart, ())
         let spectralResult ← Ops.apply (m := m) (α := α)
           (.reshape (size_fieldShape spatial width).symm) (spectralMatrix, ())
+        -- The skip `x skip + bias` at every grid point.
         let skipMatrix ← Ops.apply (m := m) (α := α)
             (.matmul (batchA := .scalar) (batchB := .scalar) (batch := .scalar) (m := grid)
               (n := width) (p := width) false false (fun h => nomatch h) (fun h => nomatch h)

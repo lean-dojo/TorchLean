@@ -17,8 +17,8 @@ point of the graph (`GraphPoint`) whose operator nodes satisfy their real equati
 the rounded constants (`Op.Directed.RealConsts`). The point is the run's table of flat values
 (`runVals`), read by `dimsOf` and `pointOf`. A node that evaluates reads every reference
 (`read_of_eval`), so the run orders the graph (`topoSorted_of_run`), and a reference whose value has
-a flat tensor names output `0` (`out_eq_zero`): every later output of an operator is an index tensor
-(`index_of_outs`).
+a flat tensor names output `0` (`out_eq_zero`): no later output of an operator holds the scalar
+(`not_isScalar_of_outs`).
 
 `equation_of_eval` and `productEquation_of_eval` give the real equations of a node from its
 evaluation, one lemma per clause: `detach_eq`, `reshape_eq`, `add_eq`, `sub_eq`, `linear_eq`,
@@ -78,20 +78,25 @@ theorem pointOf_eq {vals : Array (Option (FlatTensor ℝ))} {id : Nat} {t : Flat
 
 /-! ## Reads in a run -/
 
-/-- Every output of an operator after its first is an index tensor: the positions that `sort`,
-`topk`, `cummax` and `cummin` return beside their values. -/
-theorem index_of_outs {ins outs : List Port} (op : Op ins outs) {k : Nat} {q : Port}
-    (h : outs[k + 1]? = some q) : ∃ b, q.kind = .index b := by
-  cases op <;> rcases k with _ | k <;> simp at h <;> (subst h; exact ⟨_, rfl⟩)
+/-- No output of an operator after its first holds the scalar: those are the positions that
+`sort`, `topk`, `cummax` and `cummin` return beside their values and the integer exponents of
+`frexp`. -/
+theorem not_isScalar_of_outs {ins outs : List Port} (op : Op ins outs) {k : Nat} {q : Port}
+    (h : outs[k + 1]? = some q) : q.kind.isScalar = false := by
+  cases op <;> rcases k with _ | k <;> simp at h <;> (subst h; rfl)
+
+/-- A value with a flat tensor is at a port of the scalar. -/
+theorem isScalar_of_flatOf {w : Op.Value ℝ} {t : FlatTensor ℝ} (h : flatOf w = some t) :
+    w.1.kind.isScalar = true := by
+  obtain ⟨⟨d, s⟩, x⟩ := w
+  cases d <;> first | rfl | simp [flatOf] at h
 
 /-- A value with a flat tensor is not an index tensor. -/
 theorem kind_ne_index {w : Op.Value ℝ} {t : FlatTensor ℝ} (h : flatOf w = some t)
-    (b : List Nat) : w.1.kind ≠ .index b := by
-  obtain ⟨⟨d, s⟩, x⟩ := w
-  intro hd
-  simp only at hd
-  subst hd
-  simp [flatOf] at h
+    (b : List Nat) : w.1.kind ≠ .index b := fun hb => by
+  have hscalar := isScalar_of_flatOf h
+  rw [hb] at hscalar
+  cases hscalar
 
 /-- In a successful run, a reference that reads a value with a flat tensor names output `0`. -/
 theorem out_eq_zero {G : IR.Graph} {P : IR.Payload ℝ} {inputs : List (Op.Value ℝ)}
@@ -126,8 +131,7 @@ theorem out_eq_zero {G : IR.Graph} {P : IR.Payload ℝ} {inputs : List (Op.Value
   | const p => simp [IR.Node.outs] at hq
   | op o refs =>
     obtain ⟨ins, outs, op⟩ := o
-    obtain ⟨b, hb⟩ := index_of_outs op hq
-    exact kind_ne_index ht b hb
+    cases (not_isScalar_of_outs op hq).symm.trans (isScalar_of_flatOf ht)
 
 /-- In a successful run, `box?` finds in the run's table, for each reference a node reads, the
 flat tensor of the value the reference reads, and none when that value has no flat tensor. -/
@@ -349,7 +353,7 @@ theorem sum_eq {s : Shape} {axes : List (Fin s.rank)}
     Equation G P (dimsOf vals) (pointOf vals) id ⟨_, _, .reduce .sum axes false hop⟩
       refs.toList := by
   obtain ⟨r, w, x, hr, hread, hx, rfl⟩ :=
-    invoke_one (Op.rule?_reduce .sum axes false hop) h
+    invoke_one (Op.rule?_reduce_leftFold .sum axes false hop) h
   have hb : (vals[r.node]?).join = some (flatOfSome ⟨s, x⟩) := join_of_box?
     ((hvals r (by simp [hr]) w hread).trans
       ((flatOf_of_read (Or.inl rfl) hx).trans (flatOf_value x)))
@@ -391,7 +395,7 @@ theorem matmul_eq {bA bB b : Shape} {m n p : Nat} {lv rv : Bool} {hl : lv = true
     ProductEquation (dimsOf vals) (pointOf vals) id ⟨_, _, .matmul (n := n) lv rv hl hr hA hB⟩
       refs.toList := by
   obtain ⟨r₁, r₂, w₁, w₂, x₁, x₂, hrefs, hread₁, hread₂, hx₁, hx₂, rfl⟩ :=
-    invoke_two (Op.rule?_matmul lv rv hl hr hA hB) h
+    invoke_two (Op.rule?_matmul_leftFold lv rv hl hr hA hB) h
   have h₁ : (vals[r₁.node]?).join = some (flatOfSome ⟨_, x₁⟩) := join_of_box?
     ((hvals r₁ (by simp [hrefs]) w₁ hread₁).trans
       ((flatOf_of_read (Or.inl rfl) hx₁).trans (flatOf_value x₁)))
@@ -416,7 +420,7 @@ theorem scaledMatmul_eq {bA bB b : Shape} {m n p : Nat} {lv rv : Bool}
     ProductEquation (dimsOf vals) (pointOf vals) id
       ⟨_, _, .scaledMatmul (n := n) lv rv hl hr hA hB⟩ refs.toList := by
   obtain ⟨r₁, r₂, r₃, w₁, w₂, w₃, x₁, x₂, x₃, hrefs, hread₁, hread₂, hread₃, hx₁, hx₂, hx₃,
-    rfl⟩ := invoke_three (Op.rule?_scaledMatmul lv rv hl hr hA hB) h
+    rfl⟩ := invoke_three (Op.rule?_scaledMatmul_leftFold lv rv hl hr hA hB) h
   have h₁ : (vals[r₁.node]?).join = some (flatOfSome ⟨_, x₁⟩) := join_of_box?
     ((hvals r₁ (by simp [hrefs]) w₁ hread₁).trans
       ((flatOf_of_read (Or.inl rfl) hx₁).trans (flatOf_value x₁)))
@@ -588,8 +592,9 @@ theorem equation_of_eval {o : IR.Operator}
   case add => exact add_eq h hvals hself
   case sub => exact sub_eq h hvals hself
   case linear => exact linear_eq h hconsts hvals hself
-  case «reduce» rop _ kd _ =>
-    cases rop <;> cases kd <;> first | exact sum_eq h hvals hself | exact True.intro
+  case «reduce» rop _ kd _ order =>
+    cases rop <;> cases kd <;> cases order <;>
+      first | exact sum_eq h hvals hself | exact True.intro
   case slice => exact slice_eq h hvals hself
   case cat => exact cat_eq h hvals hself
   case permute => exact permute_eq h hvals hself
@@ -607,8 +612,10 @@ theorem productEquation_of_eval {o : IR.Operator}
   obtain ⟨ins, outs', op⟩ := o
   cases op <;> (try cases ‹Op.NumericElement›) <;> (try cases ‹Op.Element›)
   case mul => exact mul_eq h hvals hself
-  case matmul => exact matmul_eq h hvals hself
-  case scaledMatmul => exact scaledMatmul_eq h hvals hself
+  case matmul order =>
+    cases order <;> first | exact matmul_eq h hvals hself | exact True.intro
+  case scaledMatmul order =>
+    cases order <;> first | exact scaledMatmul_eq h hvals hself | exact True.intro
   all_goals exact True.intro
 
 end Clauses
@@ -1007,7 +1014,7 @@ theorem nodeBounds?_of_run [Op.Capabilities α] (hrun : G.run Pr inputs = .ok va
 at graph output `i` encloses the objective `obj · t`, where `t` is the flat value of the output's
 node and `obj` has its width. The payload must hold the reals of the rounded constants, and graph
 input `0` must be a real tensor that `xB` encloses. -/
-theorem backwardObjectiveBox?_of_run [Op.Capabilities α] [NonlinearBoundOps α]
+theorem backwardObjectiveBox?_of_run [Op.Capabilities α]
     (hrun : G.run Pr inputs = .ok values) (hP : Op.Directed.RealConsts Pr P)
     {ibp : Array (Option (FlatBox α))}
     (hibp : ∀ id B, (ibp[id]?).join = some B →

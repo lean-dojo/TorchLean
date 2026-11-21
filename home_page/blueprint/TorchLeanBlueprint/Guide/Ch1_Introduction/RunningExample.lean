@@ -44,6 +44,8 @@ open TorchLean
 open CROWN.FlatBox (lInfBall)
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: the `quickstart_mlp` program, which fits a two-layer network to a known function. -/
+
 #doc (Manual) "Running Example" =>
 %%%
 tag := "running-example"
@@ -53,10 +55,9 @@ file := "A-Running-Example"
 The `quickstart_mlp` program fits a two-layer network to a known function. Knowing the target lets
 us do more than watch the loss fall: we can write down weights that represent it exactly and
 compare them with the weights Adam finds. We can also perturb individual weights to check the
-backward pass, and enlarge the input region to see how the output bounds change. You'll find the
-source in {src "TorchLeanExamples/Quickstart/MLP.lean"}[
-`TorchLeanExamples/Quickstart/MLP.lean`], and the chapter uses its definitions alongside
-commands for comparing training configurations.
+backward pass, and enlarge the input region to see how the output bounds change. The source is
+{src "TorchLeanExamples/Quickstart/MLP.lean"}[`TorchLeanExamples/Quickstart/MLP.lean`]; the
+examples here reuse its definitions while comparing training configurations.
 
 The task is to learn the piecewise-linear function
 
@@ -330,9 +331,9 @@ bound-propagation example where the two do disagree.
 
 ## PyTorch Training Comparison
 
-For comparison, here's a PyTorch program with the same architecture, 25-point grid, target, mean
-squared error, and Adam learning rate. Its loop uses a full batch at each step, and that difference
-matters when comparing the results.
+For comparison, the following PyTorch program uses the same architecture, 25-point grid, target,
+mean squared error, and Adam learning rate. Its loop uses a full batch at each step, and that
+difference matters when comparing the results.
 
 ```terminal
 python3 - <<'PY'
@@ -886,12 +887,12 @@ constants, and shape adjustments. Its node count is:
 Except.ok 18
 ```
 
-Eighteen nodes for a three-layer network, because lowering spells everything out: node `0` is the
-graph input, each parameter becomes a constant node, a linear layer becomes a reshape, a transpose
-of its weight (`permute`), a matmul, a broadcast of its bias, an add, and a reshape back, and ReLU
-is one node. Each operator node records the references it reads, and its output ports follow from
-its operator (`IR.Node.outs`). We walk the node list in {ref "graphs-and-ir"}[the IR
-chapter].
+Eighteen nodes for a two-linear-layer network with an intervening ReLU, because lowering spells
+everything out: node `0` is the graph input, each parameter becomes a constant node, a linear layer
+becomes a reshape, a transpose of its weight (`permute`), a matmul, a broadcast of its bias, an add,
+and a reshape back, and ReLU is one node. Each operator node records the references it reads, and
+its output ports follow from its operator (`IR.Node.outs`). We walk the node list in
+{ref "graphs-and-ir"}[the IR chapter].
 
 Using `nn.initialState reInit` analyzes the initial model. For a supported training result, call
 `trained.verify` to analyze its snapshot, or read `trained.state` when constructing a graph-level
@@ -1028,11 +1029,12 @@ $$`0.2-\delta\leq \ell
 provided a soundness theorem covers the graph operations, payload, input bounds, and scalar
 semantics used by the pass.
 
-For $`\varepsilon=0.05`, the computed outer interval would require $`\delta` of about `0.312` to
-pass this sufficient interval test. A loose outer interval can't establish the smallest possible
-tolerance or refute a property by itself, but at the center the prediction already supplies a
-numerical counterexample to tolerances much smaller than `0.288`. Conditional on a sound enclosure
-bridge, the upper endpoint would also establish that every output in this region is below `-0.06`.
+For $`\varepsilon=0.05`, the computed interval `[-0.060287, -0.034993]` requires
+$`\delta \ge 0.260287` to pass this sufficient interval test. A loose outer interval can't establish
+the smallest possible tolerance or refute a property by itself, but the center prediction already
+refutes every tolerance below `0.247640`. Conditional on a sound enclosure bridge, the upper
+endpoint establishes that every output in this region is negative; it does not establish an upper
+bound of `-0.06`.
 
 # Verification Parameters
 

@@ -56,11 +56,11 @@ theorem exactIntervalImage_constant {d : Nat} (c : Binary32)
   · rintro _ ⟨_, _, rfl⟩
     exact hcc
   · ext x
-    change Model.Interval.mem (Binary.Interval.toModel (Binary.Interval.point c))
+    change Model.Interval.Mem (Binary.Interval.toModel (Binary.Interval.point c))
       (ExecFloat.Binary.toModel x) ↔ (c ≤ x ∧ x ≤ c)
     simp only [Binary.Interval.toModel_point]
-    change (Model.le (ExecFloat.Binary.toModel c) (ExecFloat.Binary.toModel x) ∧
-      Model.le (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel c)) ↔ (c ≤ x ∧ x ≤ c)
+    change (Model.Le (ExecFloat.Binary.toModel c) (ExecFloat.Binary.toModel x) ∧
+      Model.Le (ExecFloat.Binary.toModel x) (ExecFloat.Binary.toModel c)) ↔ (c ≤ x ∧ x ≤ c)
     simp only [ExecFloat.Binary.le_iff_le_toModel]
 
 end FloatIntervalApprox.ConstantTarget

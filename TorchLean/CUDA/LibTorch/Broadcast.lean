@@ -2,10 +2,16 @@
 Copyright (c) 2026 TorchLean
 Released under MIT license as described in the file LICENSE.
 Authors: TorchLean Team
+-/
 
-CUDA helpers: broadcast metadata for `Shape` values.
+module
 
-CUDA broadcast kernels take three runtime arrays:
+public import TorchLean.Tensor.Reduce
+
+/-!
+# LibTorch Broadcast Metadata
+
+Broadcast metadata of `Shape` values for the CUDA kernels, which take three runtime arrays:
 - `inDims  : Array Nat` (outermost first)
 - `outDims : Array Nat` (outermost first)
 - `axisMap : Array Nat` of length `outDims.size`
@@ -18,10 +24,6 @@ The `axisMap` encoding matches `csrc/libtorch/torchlean.cpp`:
 The native side checks that each input axis appears once, with extent `1` or the extent of its
 output axis. `Broadcast.axisMap` builds the map from a `Shape.CanBroadcastTo` proof.
 -/
-
-module
-
-public import TorchLean.Tensor.Reduce
 
 @[expose] public section
 

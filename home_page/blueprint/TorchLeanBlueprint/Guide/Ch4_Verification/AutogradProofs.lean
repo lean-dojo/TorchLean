@@ -69,6 +69,8 @@ open TorchLean.Softmax
 -- message exactly as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: the proof obligations of autograd and the proofs that discharge them. -/
+
 #doc (Manual) "Autograd Proofs" =>
 %%%
 tag := "autograd-proofs"
@@ -87,13 +89,11 @@ cotangent back to the inputs. Under the Euclidean inner products used here, this
 adjoint of the derivative, represented by the transposed Jacobian (the program doesn't have to
 build the Jacobian matrix).
 
-TorchLean proves this connection in layers under
-{srcDir "TorchLean/NN/Tape"}[TorchLean/NN/Tape]. First,
-local forward and reverse rules satisfy an algebraic pairing law. A graph induction extends that
-law to reverse accumulation. Analytic proofs then identify the forward rules with derivatives of
-the functions the graph evaluates. Runtime links connect this proof graph to an executed tape.
-
-Here's the proof pipeline:
+The proof splits into layers under
+{srcDir "TorchLean/NN/Tape"}[TorchLean/NN/Tape]. Local forward and reverse rules first satisfy an
+algebraic pairing law. A graph induction extends that law to reverse accumulation. Analytic proofs
+then identify the forward rules with derivatives of the functions the graph evaluates. Runtime
+links connect this proof graph to an executed tape. The dependencies are:
 
 ```
 -- Each step connects a different object: a derivative, its
@@ -155,6 +155,7 @@ derivative:
 example (a b c : ℝ) :
     HasDerivAt (fun t : ℝ => (t ^ 2 + b + c) / 3)
       (2 * a / 3) a := by
+  apply HasDerivAt.div_const
   autograd
 ```
 
@@ -176,7 +177,10 @@ example (w₁ w₂ b t x₁ x₂ : ℝ) :
     HasDerivAt
       (fun w : ℝ => (w * x₁ + w₂ * x₂ + b - t) ^ 2)
       (2 * (w₁ * x₁ + w₂ * x₂ + b - t) * x₁) w₁ := by
-  autograd
+  have residual : HasDerivAt
+      (fun w : ℝ => w * x₁ + w₂ * x₂ + b - t) x₁ w₁ := by
+    autograd
+  simpa using residual.fun_pow 2
 ```
 
 `autograd` composes mathlib's derivative rules and checks the resulting formula (it doesn't
@@ -226,15 +230,17 @@ certificate explains why each of the two contributions was correct in the first 
 
 # Tape Soundness: The Algebraic Core
 
-{src "TorchLean/NN/Tape/Graph.lean"}[
-TorchLean.NN.Tape.Graph API] is the central algebraic file. It defines the proof-carrying nodes and
-graphs `LawfulNode` and `Graph` used by the rest of the autograd proofs and proves their soundness
-theorem `Graph.jvpCtx_backpropCtx_adjoint`. Their executable data, `NodeData` and `GraphData`, is
-defined in {src "TorchLean/NN/TypedGraph/Data.lean"}[`TypedGraph/Data.lean`] over the shared
-`TensorPack` and the context indices `Idx` of
-{src "TorchLean/NN/TypedGraph/Idx.lean"}[`TypedGraph/Idx.lean`].
 
-Here are the objects to track:
+For $`f(x)=x^2`, multiplication reads the same input twice. A correct local multiplication rule is
+therefore only part of the proof: the reverse pass must also add both contributions at their shared
+input.
+`LawfulNode` gives us a law for one operation. `Graph.jvpCtx_backpropCtx_adjoint` carries it
+through a graph with shared references. The graph, node data, and typed indices are defined in
+{src "TorchLean/NN/Tape/Graph.lean"}[Tape/Graph.lean],
+{src "TorchLean/NN/TypedGraph/Data.lean"}[TypedGraph/Data.lean], and
+{src "TorchLean/NN/TypedGraph/Idx.lean"}[TypedGraph/Idx.lean].
+
+The graph proof tracks seven objects:
 
 - `TensorPack`: a typed tuple of tensors indexed by a list of shapes. It carries model state,
   inputs, and cotangents without introducing another tensor representation.
@@ -656,8 +662,9 @@ shows the masked and unmasked code paths agree when every position is allowed. F
 `outputCLM_evalVec_graph` identifies the graph output with `Tensor.layerNorm`, and
 `TorchLean.LayerNorm.jvp_backward_adjoint` shows the spec backward rule is adjoint to the spec JVP
 in all three cotangents. For BatchNorm, `TorchLean.BatchNorm.hasFDerivAt_forwardVec` and
-`fderiv_forwardVec_eq_jvp` prove, for `0 < ε`, that the spec map is differentiable and that its
-derivative equals `TorchLean.BatchNorm.jvp`.
+`fderiv_forwardVec_eq_jvp` prove that the spec map is differentiable and that its derivative equals
+`TorchLean.BatchNorm.jvp`, wherever the spatial shape has a single position or every channel has a
+nonzero sum of its variance and `ε`, which every `0 < ε` gives.
 
 ```lean (name := layerLevel)
 -- These are distinct bridges: forward equality, analytic
@@ -692,11 +699,12 @@ LayerNorm's adjoint theorem then pairs input, scale, and bias tangents with thei
 cotangents (epsilon is an argument there, without a positivity hypothesis in that algebraic
 identity).
 
-BatchNorm's declarations supply an analytic step. They require a well-formed input shape and
-positive epsilon, differentiate jointly in input, scale, and bias, and identify the resulting
-derivative applied to a tangent triple with `TorchLean.BatchNorm.jvp`. (Positive epsilon keeps the
-variance-plus-epsilon denominator away from zero.) Combined with the separate backward adjoint
-identity, these facts justify the analytic reverse rule for that specification.
+BatchNorm's declarations supply an analytic step. They require a well-formed input shape and a
+nonzero sum of variance and epsilon in every channel (or a single spatial position), differentiate
+jointly in input, scale, and bias, and identify the resulting derivative applied to a tangent triple
+with `TorchLean.BatchNorm.jvp`. Where that sum is negative the real square root makes the channel
+zero nearby, and positive epsilon always gives a positive sum. Combined with the separate backward
+adjoint identity, these facts justify the analytic reverse rule for that specification.
 
 
 When every mask entry is true, the mask lemma lets us substitute the unmasked function. Other masks
@@ -759,12 +767,16 @@ give each input half of the cotangent.
 
 # Proving Backward Passes With `op_deriv`
 
-Over the reals, the operators with a fixed number of inputs (every operator but `cat` and `custom`)
-have 166 value inputs, and the gradient of each has a `derivative` certificate in all the value
-inputs together. Up to unfolding, its statement is `DerivCert f x δ v` for the operator's forward
-and stored backward, which `op_cert` checks on registration. The certificate holds at the points
-its hypotheses name, such as nonzero divisors for division. `scripts/checks/Library.lean` fails
-when one of these gradients has no such certificate. `cat` has `cat_backward_eq_adjoint`.
+For each fixed-arity operator over the reals, the registry contains a `derivative` certificate that
+covers all of that operator's value inputs. Across those operators (every operator except `cat` and
+`custom`), the arities total 178 value-input positions. Up to unfolding, each certificate states
+`DerivCert f x δ v` for the operator's forward and stored backward, which `op_cert` checks on
+registration. The certificate holds at the points
+its hypotheses name, such as nonzero divisors for division, positive arguments for `igamma` and
+`igammac`, `s > 1` with `q > 0` for `zeta`, and positive `a` and `b` with `x ∈ (0, 1)` for
+`betainc` (`Op.special`).
+`scripts/checks/Library.lean` fails when one of these gradients has no such certificate. `cat` has
+`cat_backward_eq_adjoint`.
 
 The tactic `op_deriv` in {src "TorchLean/NN/Tactic/OpDeriv.lean"}[`OpDeriv.lean`] proves
 statements of this form for programs outside the table. `fun_prop` composes the `HasPullbackAt`
@@ -805,7 +817,8 @@ over the reals that it computes the adjoint of the derivative where the evaluati
 
 # Runtime Autograd Link
 
-The theorem stack above is mathematical, and the runtime autograd engine is another object.
+The algebraic and Fréchet-derivative theorems concern mathematical graphs; the runtime autograd
+engine is another object.
 TorchLean therefore keeps a link layer between executed reverse graphs and proof graphs:
 
 - {src "TorchLean/NN/Tape/Lowering.lean"}[runtime/autograd link core]
@@ -954,7 +967,7 @@ We kept the definitions close to what a reader would write on a whiteboard:
 - `TorchLean.VJPOp.mlp_backward_eq_fderiv`, which equates the spec-level backward pass with the
   adjoint of that derivative.
 
-Here's the theorem pattern:
+The theorem has the form
 
 $$`\operatorname{backward}(x,\delta)
 =
@@ -1058,7 +1071,7 @@ theorem does not itself establish that runtime correspondence.
 Backprop correctness is about gradients. Training correctness also needs a clean account of how
 those gradients are seeded and consumed.
 
-There are two pieces to keep separate.
+Two steps connect the proved backward pass to an optimizer update.
 
 First, scalar losses are an application of `TorchLean.Tape.Graph.jvpCtx_backpropCtx_adjoint` (the
 algebraic pairing law) to the seed that is zero on every non-output cotangent and the scalar
@@ -1076,8 +1089,8 @@ training loop from becoming an opaque execution artifact. A realistic optimizer 
 statistics, clipping, or weight decay, and the same file defines momentum SGD, Adam, AdamW and the
 other updates beside it.
 
-For larger update records, the optimizer theory page extends this idea. This page doesn't prove
-optimizer convergence. It proves the gradient side of the handoff:
+Larger update records use the same separation in the optimizer theory. No optimizer convergence
+claim follows from these gradient results; they prove the gradient side of the handoff:
 
 $$`\text{reverse pass returns }(D_\theta L(\theta))^{\ast} 1.`
 
@@ -1093,8 +1106,8 @@ any of them.
 
 # Autograd Proof Dependencies
 
-An autograd claim is easiest to audit from the graph theorem down to the local derivative rules and
-then back up to training. There are four levels in the proof stack:
+Audit an autograd claim from the graph theorem down to its local derivative rules and then back up
+to training. The proof stack has four levels:
 
 1. The
    {src "TorchLean/NN/Tape/Graph.lean"}[tape algebra soundness API]
@@ -1116,6 +1129,6 @@ For a given model, the dependency chain identifies both the local rules used by 
 the hypotheses under which those rules are derivatives, and the runtime link then determines
 whether the executed tape has that same meaning.
 
-So the next question is numerical, not differential. We know how the ideal reverse pass is
-assembled from local rules, and the runtime-approximation chapter asks how far an executable
-reverse pass can drift when those rules run with rounded arithmetic.
+The remaining question is numerical rather than differential: the ideal reverse pass is assembled
+from local rules, while {ref "runtime-approximation"}[Runtime Approximation] bounds how far an
+executable reverse pass can drift when those rules use rounded arithmetic.

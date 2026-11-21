@@ -9,6 +9,7 @@ module
 public import TorchLean.NN.Softmax
 public import TorchLean.Tensor.Layers.MoE
 import Mathlib.Algebra.BigOperators.Field
+import Mathlib.Algebra.BigOperators.Group.List.Basic
 
 /-!
 # Mixture of experts
@@ -60,15 +61,18 @@ theorem _root_.TorchLean.Context.gtBool_eq_false {x y : α} :
 
 /-- Expert `j` beats expert `i` exactly when the score of `j` is above that of `i`, or `j < i` and
 the score of `i` is not above that of `j`. -/
-theorem beats_eq_true {E : ℕ} (scores : Fin E → α) (j i : Fin E) :
+theorem beats_eq_true {E : ℕ} {scores : Fin E → α} {j i : Fin E} :
     beats scores j i = true ↔ scores j > scores i ∨ (j < i ∧ ¬ scores i > scores j) := by
   simp [beats, Context.gtBool_eq_true, Context.gtBool_eq_false]
 
 /-- The comparison of `scores` is a strict weak order: no score is above itself, `>` is
 transitive, and whenever `a > c` every other score is below `a` or above `c`. -/
 structure StrictWeak {E : ℕ} (scores : Fin E → α) : Prop where
+  /-- No score is above itself. -/
   irrefl : ∀ i, ¬ scores i > scores i
+  /-- `>` is transitive. -/
   trans : ∀ a b c, scores a > scores b → scores b > scores c → scores a > scores c
+  /-- If `a > c`, every other score is below `a` or above `c`. -/
   split : ∀ a b c, scores a > scores c → scores a > scores b ∨ scores b > scores c
 
 /-- Real scores are compared by a strict weak order. -/
@@ -86,7 +90,7 @@ variable {E : ℕ} {scores : Fin E → α}
 theorem beats_self (h : StrictWeak scores) (i : Fin E) : beats scores i i = false := by
   cases hb : beats scores i i
   · rfl
-  · rcases (beats_eq_true scores i i).mp hb with hb | ⟨hlt, _⟩
+  · rcases beats_eq_true.mp hb with hb | ⟨hlt, _⟩
     · exact absurd hb (h.irrefl i)
     · exact absurd hlt (lt_irrefl i)
 
@@ -181,7 +185,7 @@ unless the displaced expert has the larger index. -/
 theorem kept_dominates {scores : Fin E → ℝ} {k : ℕ} {i i' : Fin E}
     (hi : kept k scores i = true) (hi' : kept k scores i' = false) :
     scores i' < scores i ∨ (scores i' = scores i ∧ i < i') := by
-  rcases (beats_eq_true scores i i').mp (beats_of_kept (strictWeak_real scores) hi hi') with
+  rcases beats_eq_true.mp (beats_of_kept (strictWeak_real scores) hi hi') with
     h | ⟨hlt, hle⟩
   · exact Or.inl h
   · rcases lt_or_ge (scores i') (scores i) with h | h
@@ -319,10 +323,7 @@ private theorem foldl_add_apply {ι : Type} (f : ι → Tensor ℝ s) (l : List 
 
 private theorem sum_map_filter {ι : Type} (q : ι → Bool) (f : ι → ℝ) (l : List ι) :
     ((l.filter q).map f).sum = (l.map fun e => if q e then f e else 0).sum := by
-  induction l with
-  | nil => rfl
-  | cons e l ih =>
-      by_cases he : q e <;> simp [he, ih]
+  simpa using (List.sum_map_ite (fun e => q e) f (fun _ => (0 : ℝ)) l).symm
 
 /-- One coordinate of the combined output, over `ℝ`. -/
 theorem combine_apply (gates : Tensor ℝ [E]) (outputs : Fin E → Tensor ℝ s) (c : s.Coord) :

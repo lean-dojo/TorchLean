@@ -183,23 +183,10 @@ theorem _root_.TorchLean.Tensor.getScalar_div {k : Nat} (a b : Tensor ℝ [k]) (
     getScalar (a / b) i = getScalar a i / getScalar b i := by
   simp [div_def]
 
-/-- Entries of a pointwise vector maximum. -/
-theorem _root_.TorchLean.Tensor.getScalar_maximum {k : Nat} (a b : Tensor ℝ [k]) (i : Fin k) :
-    getScalar (Tensor.maximum a b) i = max (getScalar a i) (getScalar b i) := by
-  simp [Tensor.maximum, Context.maximum_real]
-
-/-- Entries of the clamped square root. -/
-theorem _root_.TorchLean.Tensor.getScalar_sqrt_clampNegative {k : Nat} (a : Tensor ℝ [k])
-    (i : Fin k) :
-    getScalar (Tensor.sqrt a .clampNegative) i = Real.sqrt (max (getScalar a i) 0) := by
-  simp [Tensor.sqrt]
-  rfl
-
-/-- Entries of the clamped square root of a matrix. -/
-theorem get2_sqrt_clampNegative (a : Tensor ℝ [m, n]) (i : Fin m) (j : Fin n) :
-    Tensor.get2 (Tensor.sqrt a .clampNegative) i j = Real.sqrt (max (Tensor.get2 a i j) 0) := by
-  simp [Tensor.sqrt]
-  rfl
+/-- Entries of the square root of a vector. -/
+theorem _root_.TorchLean.Tensor.getScalar_sqrt {k : Nat} (a : Tensor ℝ [k]) (i : Fin k) :
+    getScalar (Tensor.sqrt a) i = Real.sqrt (getScalar a i) :=
+  getScalar_map MathFunctions.sqrt a i
 
 /-! ## Layer normalization of a matrix entrywise -/
 
@@ -215,12 +202,11 @@ def lnMean (x : Tensor ℝ [m, n]) : Tensor ℝ [m] :=
 def lnCentered (x : Tensor ℝ [m, n]) : Tensor ℝ [m, n] :=
   x - rowBroadcast (lnMean x)
 
-/-- Clamped LayerNorm standard deviation `sqrt (max (max var 0 + ε) 0)`, where `var` is the mean
-square of the centered input after centering it a second time. -/
+/-- LayerNorm standard deviation `sqrt (var + ε)`, where `var` is the mean square of the centered
+input after centering it a second time. -/
 def lnStd (x : Tensor ℝ [m, n]) (ε : ℝ) : Tensor ℝ [m] :=
   let deviation := lnCentered x - rowBroadcast (lnMean (lnCentered x))
-  Tensor.sqrt ((Tensor.maximum (lnMean (deviation * deviation)) (Tensor.full (.dim m .scalar) 0)) +
-    Tensor.full (.dim m .scalar) ε) .clampNegative
+  Tensor.sqrt (lnMean (deviation * deviation) + Tensor.full (.dim m .scalar) ε)
 
 /-- Entries of the LayerNorm row means. -/
 theorem getScalar_lnMean (x : Tensor ℝ [m, n]) (i : Fin m) :
@@ -232,44 +218,38 @@ theorem get2_lnCentered (x : Tensor ℝ [m, n]) (i : Fin m) (j : Fin n) :
     Tensor.get2 (lnCentered x) i j = Tensor.get2 x i j - 𝔼 k, Tensor.get2 x i k := by
   rw [lnCentered, get2_sub, get2_rowBroadcast, getScalar_lnMean]
 
-/-- Entry `i` of `lnStd x ε` is `sqrt (max (TorchLean.var (get2 x i) + ε) 0)`: the second centering
-changes nothing and the clamp `max var 0` is inactive. -/
+/-- Entry `i` of `lnStd x ε` is `sqrt (TorchLean.var (get2 x i) + ε)`: the second centering
+changes nothing. -/
 theorem getScalar_lnStd (x : Tensor ℝ [m, n]) (ε : ℝ) (i : Fin m) :
-    getScalar (lnStd x ε) i = Real.sqrt (max (TorchLean.var (Tensor.get2 x i) + ε) 0) := by
+    getScalar (lnStd x ε) i = Real.sqrt (TorchLean.var (Tensor.get2 x i) + ε) := by
   have h0 : 𝔼 k, (Tensor.get2 x i k - 𝔼 j, Tensor.get2 x i j) = 0 :=
     Fintype.expect_balance (Tensor.get2 x i)
-  rw [lnStd, getScalar_sqrt_clampNegative, getScalar_add_apply, getScalar_maximum,
-    getScalar_full, getScalar_full, getScalar_lnMean]
+  rw [lnStd, getScalar_sqrt, getScalar_add_apply, getScalar_full, getScalar_lnMean]
   simp only [get2_mul, get2_sub, get2_rowBroadcast, getScalar_lnMean, get2_lnCentered, h0,
     sub_zero]
-  change Real.sqrt (max (max (TorchLean.var (Tensor.get2 x i)) 0 + ε) 0) = _
-  rw [max_eq_left (var_nonneg (Tensor.get2 x i))]
+  rfl
 
 /-! ## Dividing each row by its scale -/
 
-/-- Dividing a row by `σ ≥ 0` and `ε` by `σ * σ` divides the clamped root of the row's mean square
-plus `ε` by `σ`. -/
+/-- Dividing a row by `σ ≥ 0` and `ε` by `σ * σ` divides the root of the row's mean square plus
+`ε` by `σ`. -/
 theorem sqrt_div_scale_eq {N : Nat} (c : Fin N → ℝ) {σ : ℝ} (hσ : 0 ≤ σ) (ε : ℝ) :
-    Real.sqrt (max ((∑ k, c k / σ * (c k / σ)) / N + ε / σ / σ) 0) =
-      Real.sqrt (max ((∑ k, c k * c k) / N + ε) 0) / σ := by
+    Real.sqrt ((∑ k, c k / σ * (c k / σ)) / N + ε / σ / σ) =
+      Real.sqrt ((∑ k, c k * c k) / N + ε) / σ := by
   have hsum : (∑ k, c k / σ * (c k / σ)) / N + ε / σ / σ =
       ((∑ k, c k * c k) / N + ε) / (σ * σ) := by
     rw [show (∑ k, c k / σ * (c k / σ)) = (∑ k, c k * c k) / (σ * σ) by
       rw [Finset.sum_div]
       exact Finset.sum_congr rfl fun k _ => by ring]
     ring
-  have hmax : max (((∑ k, c k * c k) / N + ε) / (σ * σ)) 0 =
-      max ((∑ k, c k * c k) / N + ε) 0 / (σ * σ) := by
-    rw [← max_div_div_right (mul_self_nonneg σ), zero_div]
-  rw [hsum, hmax, Real.sqrt_div' _ (mul_self_nonneg σ), Real.sqrt_mul_self hσ]
+  rw [hsum, Real.sqrt_div' _ (mul_self_nonneg σ), Real.sqrt_mul_self hσ]
 
-/-- If `σ` bounds every `|c k|` and `sqrt |ε|`, the scale cancels: `c j / σ` over the clamped root
-of the scaled mean square plus `ε / σ / σ` is `c j` over the clamped root of the mean square plus
-`ε`. -/
+/-- If `σ` bounds every `|c k|` and `sqrt |ε|`, the scale cancels: `c j / σ` over the root of the
+scaled mean square plus `ε / σ / σ` is `c j` over the root of the mean square plus `ε`. -/
 theorem div_scale_div_sqrt {N : Nat} (c : Fin N → ℝ) {σ : ℝ} (ε : ℝ) (hc : ∀ k, |c k| ≤ σ)
     (hε : Real.sqrt |ε| ≤ σ) (j : Fin N) :
-    c j / σ / Real.sqrt (max ((∑ k, c k / σ * (c k / σ)) / N + ε / σ / σ) 0) =
-      c j / Real.sqrt (max ((∑ k, c k * c k) / N + ε) 0) := by
+    c j / σ / Real.sqrt ((∑ k, c k / σ * (c k / σ)) / N + ε / σ / σ) =
+      c j / Real.sqrt ((∑ k, c k * c k) / N + ε) := by
   have hσ : 0 ≤ σ := (Real.sqrt_nonneg _).trans hε
   rw [sqrt_div_scale_eq c hσ ε]
   rcases hσ.eq_or_lt with h0 | hpos
@@ -279,12 +259,12 @@ theorem div_scale_div_sqrt {N : Nat} (c : Fin N → ℝ) {σ : ℝ} (ε : ℝ) (
   · exact div_div_div_cancel_right₀ hpos.ne' _ _
 
 /-- If `σ` bounds every `|c k|` and `sqrt |ε|`, the scale cancels in the inverse standard deviation:
-one over the clamped root of the scaled mean square plus `ε / σ / σ`, divided by `σ`, is one over
-the clamped root of the mean square plus `ε`. -/
+one over the root of the scaled mean square plus `ε / σ / σ`, divided by `σ`, is one over the root
+of the mean square plus `ε`. -/
 theorem one_div_sqrt_div_scale {N : Nat} (c : Fin N → ℝ) {σ : ℝ} (ε : ℝ) (hc : ∀ k, |c k| ≤ σ)
     (hε : Real.sqrt |ε| ≤ σ) :
-    1 / Real.sqrt (max ((∑ k, c k / σ * (c k / σ)) / N + ε / σ / σ) 0) / σ =
-      1 / Real.sqrt (max ((∑ k, c k * c k) / N + ε) 0) := by
+    1 / Real.sqrt ((∑ k, c k / σ * (c k / σ)) / N + ε / σ / σ) / σ =
+      1 / Real.sqrt ((∑ k, c k * c k) / N + ε) := by
   have hσ : 0 ≤ σ := (Real.sqrt_nonneg _).trans hε
   rw [sqrt_div_scale_eq c hσ ε]
   rcases hσ.eq_or_lt with h0 | hpos
@@ -294,7 +274,7 @@ theorem one_div_sqrt_div_scale {N : Nat} (c : Fin N → ℝ) {σ : ℝ} (ε : �
       rwa [Real.sqrt_eq_zero (abs_nonneg ε), abs_eq_zero] at h
     rw [← h0]
     simp [hck, hε0]
-  · rw [one_div_div, div_div_cancel_left' hpos.ne', one_div]
+  · rw [one_div_div, div_div_cancel_left₀ hpos.ne', one_div]
 
 /-- `normalizedRows` computed with each row's scale taken from `scale`: the normalized rows,
 and the inverse standard deviations divided by `scale`. -/
@@ -302,8 +282,7 @@ def rowsGiven (x : Tensor ℝ [m, n]) (scale : Tensor ℝ [m]) (ε : ℝ) (recen
     Tensor ℝ [m, n] × Tensor ℝ [m] :=
   let scaled := lnCentered x / rowBroadcast scale
   let deviation := if recenter then scaled - rowBroadcast (lnMean scaled) else scaled
-  let std := Tensor.sqrt (lnMean (deviation * deviation) +
-    ((Tensor.full [m] ε / scale) / scale)) .clampNegative
+  let std := Tensor.sqrt (lnMean (deviation * deviation) + ((Tensor.full [m] ε / scale) / scale))
   (scaled / rowBroadcast std, (Tensor.full [m] 1 / std) / scale)
 
 /-- The scale `Tensor.normalizationScale` of each centered row of `x`. -/
@@ -322,7 +301,7 @@ theorem rowsGiven_fst_true (x : Tensor ℝ [m, n]) (scale : Tensor ℝ [m]) (ε 
       let scaled := lnCentered x / rowBroadcast scale
       let deviation := scaled - rowBroadcast (lnMean scaled)
       scaled / rowBroadcast (Tensor.sqrt (lnMean (deviation * deviation) +
-        ((Tensor.full [m] ε / scale) / scale)) .clampNegative) := rfl
+        ((Tensor.full [m] ε / scale) / scale))) := rfl
 
 /-- The rows of the centered input divided by a scale have mean zero. -/
 theorem rowMeanE_lnCentered_div (x : Tensor ℝ [m, n]) (scale : Tensor ℝ [m]) (i : Fin m) :
@@ -359,10 +338,10 @@ theorem get2_rowsGiven_fst (x : Tensor ℝ [m, n]) (scale : Tensor ℝ [m]) (ε 
     (hε : Real.sqrt |ε| ≤ getScalar scale i) (j : Fin n) :
     Tensor.get2 (rowsGiven x scale ε recenter).1 i j =
       (Tensor.get2 x i j - 𝔼 k, Tensor.get2 x i k) /
-        Real.sqrt (max (TorchLean.var (Tensor.get2 x i) + ε) 0) := by
+        Real.sqrt (TorchLean.var (Tensor.get2 x i) + ε) := by
   simp only [rowsGiven]
   rw [get2_div, get2_div, get2_rowBroadcast, get2_rowBroadcast, get2_lnCentered,
-    getScalar_sqrt_clampNegative, getScalar_add_apply, getScalar_div, getScalar_div, getScalar_full,
+    getScalar_sqrt, getScalar_add_apply, getScalar_div, getScalar_div, getScalar_full,
     getScalar_lnMean_mul_self _ (get2_rowsGiven_deviation x scale recenter i), TorchLean.var,
     Fintype.expect_eq_sum_div_card fun k =>
       (Tensor.get2 x i k - 𝔼 l, Tensor.get2 x i l) * (Tensor.get2 x i k - 𝔼 l, Tensor.get2 x i l),
@@ -376,9 +355,9 @@ theorem getScalar_rowsGiven_snd (x : Tensor ℝ [m, n]) (scale : Tensor ℝ [m])
     (hc : ∀ j, |Tensor.get2 x i j - 𝔼 k, Tensor.get2 x i k| ≤ getScalar scale i)
     (hε : Real.sqrt |ε| ≤ getScalar scale i) :
     getScalar (rowsGiven x scale ε recenter).2 i =
-      1 / Real.sqrt (max (TorchLean.var (Tensor.get2 x i) + ε) 0) := by
+      1 / Real.sqrt (TorchLean.var (Tensor.get2 x i) + ε) := by
   simp only [rowsGiven]
-  rw [getScalar_div, getScalar_div, getScalar_full, getScalar_sqrt_clampNegative,
+  rw [getScalar_div, getScalar_div, getScalar_full, getScalar_sqrt,
     getScalar_add_apply, getScalar_div, getScalar_div, getScalar_full,
     getScalar_lnMean_mul_self _ (get2_rowsGiven_deviation x scale recenter i), TorchLean.var,
     Fintype.expect_eq_sum_div_card fun k =>
@@ -524,13 +503,13 @@ theorem layerNorm_eq_rowsGiven (hn : 0 < n) (ε : ℝ) (x : Tensor ℝ [m, n])
   rfl
 
 /-- Entries of layer normalization over the last axis of a matrix: each row is centered, divided
-by the clamped standard deviation of that row, then scaled and shifted by the per-column
+by the standard deviation `sqrt (var + ε)` of that row, then scaled and shifted by the per-column
 parameters. -/
 theorem get2_layerNorm (hn : 0 < n) (ε : ℝ) (x : Tensor ℝ [m, n])
     (gamma beta : Tensor ℝ [n]) (i : Fin m) (j : Fin n) :
     Tensor.get2 (Tensor.layerNorm x [⟨1, Nat.one_lt_two⟩] gamma beta ε) i j =
       (Tensor.get2 x i j - 𝔼 k, Tensor.get2 x i k) /
-          Real.sqrt (max (TorchLean.var (Tensor.get2 x i) + ε) 0) * getScalar gamma j +
+          Real.sqrt (TorchLean.var (Tensor.get2 x i) + ε) * getScalar gamma j +
         getScalar beta j := by
   obtain ⟨hc, hε⟩ := le_getScalar_rowScale hn x ε i
   rw [layerNorm_eq_rowsGiven hn, get2_add, get2_mul, get2_rowsGiven_fst x _ ε true i hc hε,

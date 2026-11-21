@@ -376,6 +376,7 @@ def AdamW.traceStep {s : Shape} (stateError : StateError s)
   let nextStepCount := runtimeState.stepCount + 1
   let oneMinusBeta1 := 1 - runtimeState.beta1
   let oneMinusBeta2 := 1 - runtimeState.beta2
+  -- `m = β₁ m + (1 - β₁) g`.
   let firstMomentLeft := Tensor.scale runtimeState.firstMoment runtimeState.beta1
   let firstMomentLeftError := linfNorm
     (scaleApproxBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
@@ -389,6 +390,7 @@ def AdamW.traceStep {s : Shape} (stateError : StateError s)
   let firstMomentError := linfNorm
     (addBoundTensor (β := β) (fexp := fexp)
       firstMomentLeftError firstMomentRightError firstMomentLeft firstMomentRight)
+  -- `v = β₂ v + (1 - β₂) g²`.
   let squaredGradients := Tensor.square runtimeGradients
   let squaredGradientError := linfNorm
     (mulBoundTensor (β := β) (fexp := fexp)
@@ -406,6 +408,7 @@ def AdamW.traceStep {s : Shape} (stateError : StateError s)
   let secondMomentError := linfNorm
     (addBoundTensor (β := β) (fexp := fexp)
       secondMomentLeftError secondMomentRightError secondMomentLeft secondMomentRight)
+  -- Bias correction by `1 / (1 - βᵗ)` at the new step count `t`.
   let firstMomentBiasInverse :=
     1 / (1 - npowRec nextStepCount runtimeState.beta1)
   let secondMomentBiasInverse :=
@@ -434,6 +437,7 @@ def AdamW.traceStep {s : Shape} (stateError : StateError s)
     (divPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
       minimumDenominator correctedFirstMomentError
       denominatorError correctedFirstMoment denominator)
+  -- The new parameters are `(p - lr wd p) - lr m̂ / (sqrt v̂ + ε)`.
   let adaptiveUpdate := Tensor.scale normalizedMoment runtimeState.lr
   let adaptiveUpdateError := linfNorm
     (scaleApproxBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
@@ -526,6 +530,7 @@ theorem AdamW.approxTensor_update {s : Shape}
   have finiteNF (x : R) : (x - x == 0) = true := sub_self_beq x
   have nfReplay : (inferInstance : Numeric.QuotientArithmetic R).supported = false := rfl
   rcases hstate with ⟨hlr, hbeta1, hbeta2, hepsilon, hweightDecay, hm, hv, ht⟩
+  -- The exact (`S`) and rounded (`R`) moments and bias corrections, as `AdamW.update` has them.
   let mS := Tensor.scale stateS.firstMoment stateS.beta1 +
     Tensor.scale gradsS (1 - stateS.beta1)
   let mR := Tensor.scale stateR.firstMoment stateR.beta1 +
@@ -544,6 +549,7 @@ theorem AdamW.approxTensor_update {s : Shape}
   let vHatR := Tensor.scale vR bias2R
   let trace := traceStep (β := β) (fexp := fexp) (rnd := rnd)
     stateError derivedErrors paramsError gradsError η stateR paramsR gradsR
+  -- Carry the error bound through each operation of the step, in the order of `traceStep`.
   have hmLeft := ApproxTensor.scale_of_approx
     (β := β) (fexp := fexp) (rnd := rnd) stateS.beta1 stateR.beta1 hm hbeta1
   have hmRight := ApproxTensor.scale_of_approx
@@ -572,6 +578,7 @@ theorem AdamW.approxTensor_update {s : Shape}
   have hdenominatorLower : Tensor.Forall (fun z : ℝ => η ≤ z)
       (Tensor.sqrt vHatS .clampNegative + Tensor.full s stateS.epsilon) := by
     simpa [vHatS, vS, bias2S] using hDenominatorLower
+  -- The division needs the exact denominator at least `η` and its error below `η`.
   have hnormalized := ApproxTensor.div_of_pos_lb
     (β := β) (fexp := fexp) (rnd := rnd) η
     hmHat hdenominator hdenominatorLower hDenominatorMargin
@@ -585,6 +592,7 @@ theorem AdamW.approxTensor_update {s : Shape}
     (β := β) (fexp := fexp) (rnd := rnd) hparams hdecayUpdate
   have hnext := ApproxTensor.sub
     (β := β) (fexp := fexp) (rnd := rnd) hdecayed hadamUpdate
+  -- The new state keeps the hyperparameters and takes the new moments; then the parameters.
   constructor
   · refine ⟨hlr, hbeta1, hbeta2, hepsilon, hweightDecay, ?_, ?_, ?_⟩
     · simpa [AdamW.update, Adam.update, trace, traceStep, mS, mR] using hm'

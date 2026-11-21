@@ -56,7 +56,7 @@ theorem length_applyMerge_le (left right : String) (pieces : List String) :
       omega
   | case3 pieces h => simp [applyMerge]
 
-private theorem pair_infix_cons_iff (left right first second : String) (rest : List String) :
+private theorem pair_infix_cons_iff {left right first second : String} {rest : List String} :
     [left, right] <:+: first :: second :: rest ↔
       (left = first ∧ right = second) ∨ [left, right] <:+: second :: rest := by
   rw [List.infix_cons_iff]
@@ -84,7 +84,7 @@ private theorem bestMerge?_spec_aux (tokenizer : Tables) (pieces : List String) 
                   simp only [bestMerge?, hr, Option.map_none, ht]
                   simp only [ht] at ih
                   intro left right rank hadj havail
-                  rcases (pair_infix_cons_iff left right first second rest).mp hadj with
+                  rcases pair_infix_cons_iff.mp hadj with
                     ⟨rfl, rfl⟩ | htail
                   · simp [hr] at havail
                   · exact ih left right rank htail havail
@@ -93,7 +93,7 @@ private theorem bestMerge?_spec_aux (tokenizer : Tables) (pieces : List String) 
                   simp only [ht] at ih
                   refine ⟨List.infix_cons ih.1, ih.2.1, ?_⟩
                   intro left right rank hadj havail
-                  rcases (pair_infix_cons_iff left right first second rest).mp hadj with
+                  rcases pair_infix_cons_iff.mp hadj with
                     ⟨rfl, rfl⟩ | htail
                   · simp [hr] at havail
                   · exact ih.2.2 left right rank htail havail
@@ -104,7 +104,7 @@ private theorem bestMerge?_spec_aux (tokenizer : Tables) (pieces : List String) 
                   simp only [ht] at ih
                   refine ⟨⟨[], rest, rfl⟩, trivial, ?_⟩
                   intro left right otherRank hadj havail
-                  rcases (pair_infix_cons_iff left right first second rest).mp hadj with
+                  rcases pair_infix_cons_iff.mp hadj with
                     ⟨rfl, rfl⟩ | htail
                   · simp only [hr, Option.some.injEq] at havail
                     omega
@@ -116,7 +116,7 @@ private theorem bestMerge?_spec_aux (tokenizer : Tables) (pieces : List String) 
                   · simp only [ite_eq_left hle]
                     refine ⟨⟨[], rest, rfl⟩, hr, ?_⟩
                     intro left right otherRank hadj havail
-                    rcases (pair_infix_cons_iff left right first second rest).mp hadj with
+                    rcases pair_infix_cons_iff.mp hadj with
                       ⟨rfl, rfl⟩ | htail
                     · simp only [hr, Option.some.injEq] at havail
                       omega
@@ -124,7 +124,7 @@ private theorem bestMerge?_spec_aux (tokenizer : Tables) (pieces : List String) 
                   · simp only [ite_eq_right hle]
                     refine ⟨List.infix_cons ih.1, ih.2.1, ?_⟩
                     intro left right otherRank hadj havail
-                    rcases (pair_infix_cons_iff left right first second rest).mp hadj with
+                    rcases pair_infix_cons_iff.mp hadj with
                       ⟨rfl, rfl⟩ | htail
                     · simp only [hr, Option.some.injEq] at havail
                       omega

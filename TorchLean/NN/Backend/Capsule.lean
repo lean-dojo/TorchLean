@@ -138,12 +138,14 @@ end Contract.Descriptor
 /-- Ordering contract for reductions. Different valid orders need not be bitwise equal.
 
 The fixed-left graph certificate propagates a reduction only when the selected capsule promises
-the same left fold as the canonical tensor semantics.
+the same left fold as the canonical tensor semantics (`fixed .leftFold`).
 -/
 inductive ReductionPolicy where
-  | fixedLeft
-  /-- Preserve fixed-left arithmetic unless its checked arithmetic selects exact replay. -/
-  | fixedLeftOrExact
+  /-- The forward folds are in the given order (`Tensor.ReduceOrder`). -/
+  | fixed (order : Tensor.ReduceOrder)
+  /-- The forward folds are in the given order unless its checked arithmetic selects exact
+  replay. -/
+  | fixedOrExact (order : Tensor.ReduceOrder)
   | implementationDefined
   | notApplicable
   deriving DecidableEq, Repr
@@ -152,8 +154,14 @@ namespace ReductionPolicy
 
 /-- Stable report label for reduction order. -/
 def label : ReductionPolicy → String
-  | .fixedLeft => "fixed-left"
-  | .fixedLeftOrExact => "fixed-left-or-exact"
+  | .fixed .leftFold => "fixed-left"
+  | .fixed .pairwise => "fixed-pairwise"
+  | .fixed (.blocked width) => s!"fixed-blocked-{width}"
+  | .fixed (.ofTree _) => "fixed-tree"
+  | .fixedOrExact .leftFold => "fixed-left-or-exact"
+  | .fixedOrExact .pairwise => "fixed-pairwise-or-exact"
+  | .fixedOrExact (.blocked width) => s!"fixed-blocked-{width}-or-exact"
+  | .fixedOrExact (.ofTree _) => "fixed-tree-or-exact"
   | .implementationDefined => "implementation-defined"
   | .notApplicable => "n/a"
 
@@ -397,10 +405,13 @@ structure Implementation where
   device : Device
   /-- The capsule offered for an operator with its attributes, or `none`. -/
   capsule? : {ins outs : List Port} → Op ins outs → Option KernelCapsule
+  /-- Every offered capsule names the operator it is offered for. -/
   capsule_op : ∀ {ins outs : List Port} (op : Op ins outs) (c : KernelCapsule),
     capsule? op = some c → c.op = Op.encode ⟨ins, outs, op⟩
+  /-- Every offered capsule has the table's provider. -/
   capsule_provider : ∀ {ins outs : List Port} (op : Op ins outs) (c : KernelCapsule),
     capsule? op = some c → c.provider = provider
+  /-- Every offered capsule has the table's device. -/
   capsule_device : ∀ {ins outs : List Port} (op : Op ins outs) (c : KernelCapsule),
     capsule? op = some c → c.device = device
 

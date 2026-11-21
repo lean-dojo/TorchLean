@@ -11,19 +11,18 @@ data, the helper scripts below place it under the ignored `data/` directory.
 
 The main Lean dependencies are pinned in `lake-manifest.json`, in the guide's
 `home_page/blueprint/lake-manifest.json` and in the Python binding's
-`bindings/python/lake-manifest.json`. Lake fetches them, with their license files, into
-`.lake/packages/` for the root package and the Python binding, and into
-`home_page/blueprint/.lake/packages/` for the guide.
+`bindings/python/lake-manifest.json`. The packages share `.lake/packages/`, where Lake fetches
+their source and license files.
 
 | Component | Role in TorchLean | Notice |
 | --- | --- | --- |
 | Lean 4, Lake, and Std | Compiler, package manager, and standard library, selected by `lean-toolchain`. | Source project: `leanprover/lean4`. |
 | mimalloc 3.4.5 | Private allocator object for TorchLean's Linux native executables and shared libraries, with a narrow global purge-wakeup repair. TorchLean does not modify the allocator of the installed Lean toolchain. | Source project: `microsoft/mimalloc`, MIT licensed. `scripts/lean_allocator.py` pins and checks the source archive, which includes `LICENSE`, and the SDK header. |
-| Mathlib | Formal mathematics used by specifications, proofs, probability, real analysis, tensors, and optimization files. | Source project: `leanprover-community/mathlib4`, pinned to the Lean 4.35 line here. Mathlib is Apache-2.0 licensed. |
-| FloatLib | Configurable executable scalars, reference semantics, generic rounding theory, and arithmetic refinement proofs. | Source project: `lean-dojo/FloatLib`, tracking `main` with the exact revision locked in `lake-manifest.json`. MIT licensed; its license and third-party notices are distributed with the dependency. |
+| Mathlib | Formal mathematics used by specifications, proofs, probability, real analysis, tensors, and optimization files. | Source project: `leanprover-community/mathlib4`, pinned to the Lean 4.36 line here. Mathlib is Apache-2.0 licensed. |
+| FloatLib | Configurable executable scalars, reference semantics, generic rounding theory, and arithmetic refinement proofs. | Source project: `lean-dojo/FloatLib`, pinned to the release tag `v4.1.0` in `lakefile.lean` and locked to its commit in `lake-manifest.json`. MIT licensed; its license and third-party notices are distributed with the dependency. |
 | Batteries, Aesop, Qq, ProofWidgets, LeanSearchClient, importGraph, plausible, Cli, leansqlite, MD4Lean, BibtexQuery, UnicodeBasic, lean_vir, nerodia | Lean ecosystem packages pulled directly or transitively for proofs, tactics, widgets, documentation, dependency analysis, command-line tooling, and the optional Python binding (nerodia). | Their license files are fetched with the Lake package cache. |
 | doc-gen4 | Generates the API documentation built by `scripts/docs/build_site.sh`. | Source project: `leanprover/doc-gen4`, Apache-2.0 licensed. |
-| Verso, VersoBlueprint, verso-slides, SubVerso, Illuminate | Build the TorchLean guide/blueprint documentation. | Upstream Lean documentation tooling. |
+| Verso, VersoBlueprint, verso-slides, SubVerso, Illuminate | Build the TorchLean guide/blueprint documentation. | Upstream Lean documentation tooling. The guide applies an Apache-2.0 compatibility [patch](../home_page/blueprint/verso-blueprint-4.36.patch) to its pinned VersoBlueprint release. |
 | CUDA toolkit and NVIDIA runtime libraries | Dependencies of the selected CUDA-enabled LibTorch SDK when building with `scripts/lake.sh -Kcuda=true build`. | Users provide a compatible SDK and toolkit installation. |
 | LibTorch and ATen | CUDA tensor evaluation and local gradient operations, called by TorchLean's differentiation tape through the LibTorch Stable ABI of torch 2.13 or later. | External C++ SDK; its bundled dependencies and license notices accompany the selected distribution. |
 | PyTorch and ONNX tooling | Checkpoint exchange, graph capture, and IR import/export. | External systems; TorchLean checks imported JSON/IR artifacts and documents their trust boundaries separately. |

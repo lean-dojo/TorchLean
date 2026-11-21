@@ -10,6 +10,7 @@ public import TorchLean.NN.Session.Apply
 public import TorchLean.NN.Session.Optimizer
 public import TorchLean.NN.ScalarTrainer.Checkpoint
 public import TorchLean.Tensor.Literal
+import Std.Data.TreeMap.Basic -- shake: keep
 
 /-!
 # Parameter Storage Aliases

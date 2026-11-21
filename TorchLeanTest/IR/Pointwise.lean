@@ -761,7 +761,7 @@ def runCaptures : IO Unit := do
   for (script, what) in [("test_ir_capture.py", "PyTorch and JAX captures"),
       ("test_frontend_fuzz.py", "differential fuzzer")] do
     let out ← IO.Process.output
-      { cmd := "python3", args := #[s!"scripts/checks/{script}"], cwd := some "." }
+      { cmd := "python3", args := #["-B", s!"scripts/checks/{script}"], cwd := some "." }
     let summary := (out.stderr.splitOn "\n").filter (fun line => line.startsWith "Ran " ||
       line.startsWith "OK" || line.startsWith "FAILED" || line.startsWith "PyTorch:" ||
       line.startsWith "JAX:")

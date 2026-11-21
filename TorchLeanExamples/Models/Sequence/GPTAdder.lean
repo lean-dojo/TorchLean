@@ -88,6 +88,7 @@ two batched greedy forward passes.
 -/
 def batchSize : Nat := 100
 
+/-- `batchSize` is positive. -/
 local instance : NeZero batchSize := ⟨by decide⟩
 
 /--
@@ -143,7 +144,9 @@ the normalization that minGPT gets from `ignore_index=-1`.
 def activeTargetCount : Nat :=
   batchSize * activeTargetPositions
 
+/-- `contextLength` is positive. -/
 local instance : NeZero contextLength := ⟨by decide⟩
+/-- `modelWidth` is positive. -/
 local instance : NeZero modelWidth := ⟨by decide⟩
 
 /-- GPT configuration shared by the typed shapes and model constructor. -/
@@ -584,7 +587,8 @@ partial def interactiveLoop (predict : Predictor) :
     IO Unit := do
   IO.println "  interactive: enter one-digit prompts like 7+8; empty line or :q exits"
   let stdin ← IO.getStdin
-  let rec loop : IO Unit := do
+  let rec /-- Read prompts and print each answer. -/
+  loop : IO Unit := do
     IO.print "  add> "
     let line ← stdin.getLine
     let prompt := line.trimAscii.toString

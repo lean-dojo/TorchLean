@@ -40,6 +40,8 @@ open Verso.Genre.Manual.InlineLean
 open TorchLean
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: from files to typed minibatches. -/
+
 #doc (Manual) "Data and Loaders" =>
 %%%
 tag := "datasets-loaders"
@@ -50,9 +52,8 @@ A model type tells Lean the shape of one input and one output. In the end a data
 values of exactly those shapes, but real data begins in a less orderly form: rows in a CSV file,
 arrays in an NPY file, text tokens, simulator output, or tensors generated on demand.
 
-TorchLean treats loading as a boundary. Parsing and dimension checks happen before a value becomes
-a typed training sample. Once the boundary succeeds, the training loop does not need to ask on
-every step whether a row had the right number of columns.
+Loading is where we parse the data and check its dimensions. Once a row becomes a typed training
+sample, the training loop can rely on its shape at every step.
 
 It helps to follow one row through that boundary. Two feature columns and one target column
 become a pair of tensors with shapes `[2]` and `[1]`. A loader may then join five such pairs
@@ -60,14 +61,13 @@ into one item with shapes `[5, 2]` and `[5, 1]`. Neither the file's row count no
 changes what one feature means. Keeping source rows, dataset items, and model axes separate is
 what lets the same training loop consume an in-memory table or a checked file.
 
-Named Lean blocks and their outputs are checked when this page is built. Shell and Python blocks
-show how to generate and compare the data. We check this example by comparing the same twenty-five
-rows through three file boundaries. But printed losses that agree don't, on their own, establish
-identical tensor bits or parser equivalence.
+The later CSV, NPY, and PyTorch comparison loads the same twenty-five rows, then checks the
+resulting samples. Matching printed losses are a useful first check, though they cannot tell us
+whether every tensor bit or parsing rule agrees.
 
 # The Dataset Type
 
-Here is the trainer-facing type:
+The trainer consumes:
 
 ```
 -- The two shape parameters describe one input item and one
@@ -171,7 +171,7 @@ Data failures are easier to diagnose when each fact is tied to the boundary wher
   * numerical failure, unsupported operation, or backend rejection
 :::
 
-Later runs on this page produce these file, parsing, shape, dtype, and layout failures:
+The validation examples exercise file, parsing, shape, dtype, and layout failures:
 
 ```
 data_csv: missing CSV dataset: TorchLeanExamples/Data/small_regression.csv
@@ -914,12 +914,11 @@ equivalence.
 
 # Tensor Batching And Gradient Accumulation
 
-Stacking samples changes the shape a model receives. Accumulating their gradients changes how much
-data contributes to an optimizer update. TorchLean provides both operations.
+## Tensor Minibatches
 
-## Tensor minibatches
-
-`Data.batch` changes the item shapes, so the batch axis becomes part of the type:
+With `Data.batch`, stacking two samples of shape `[2]` gives the model a tensor of shape
+`[2, 2]`. Gradient accumulation keeps the original input shape and averages gradients across
+samples before updating the weights.
 
 ```lean (name := dlBatchType)
 -- Batching pairs of items adds a leading two to both sample
@@ -985,7 +984,7 @@ whole tensor minibatch.
 In `[2, 2]`, the outer axis selects an example and the inner axis selects a feature. Both happen
 to have size two in this batch, so the dimensions alone would not reveal an accidental axis swap.
 
-## Groups of unbatched samples
+## Groups Of Unbatched Samples
 
 `Trainer.TrainOptions.samplesPerStep` counts dataset items per optimizer update, and it defaults to
 one item:
@@ -1054,9 +1053,9 @@ drop_last=False: 5 batches, shapes [[5, 1], [5, 1], [5, 1], [5, 1], [3, 1]]
 batch_size=30, drop_last=True: 0 batches
 ```
 
-The `[3, 1]` final batch in the second line is precisely what a shape-typed model cannot accept, so
-`drop_last=False` has no counterpart here. Notice also that PyTorch agrees on the batch-size-30
-case: zero batches, no error.
+The `[3, 1]` final batch in the second line is precisely what this fixed-size typed loader cannot
+pass to a model expecting `[5, 1]`, so its batching path has no `drop_last=False` counterpart.
+Notice also that PyTorch agrees on the batch-size-30 case: zero batches, no error.
 
 The empty dataset is a valid batching result, but a positive-step training request rejects it.
 For example, a batch larger than this 25-row CSV cannot silently report a trained model:

@@ -10,6 +10,7 @@ public import FloatLib.Floats.Formats.IEEE754.Native
 public import FloatLib.Kernels.FixedWord.Core.Runtime
 import FloatLib.Floats.Formats.BinaryInterchange.Conversion.Cast.Proof
 import FloatLib.Floats.Formats.BinaryInterchange.DirectedSemantics.Basic
+import FloatLib.Floats.Formats.BinaryInterchange.DirectedSemantics.Exact
 import FloatLib.Floats.Formats.BinaryInterchange.Model.Fields.Optimized
 import FloatLib.Floats.Formats.BinaryInterchange.Rounding.Directed.Dyadic
 import FloatLib.Kernels.FixedWord.Core.Proof.Word
@@ -232,18 +233,6 @@ private theorem roundDyadic_binary64 (mode : Model.IEEERoundingMode) (neg : Bool
       Model.roundDyadicAway, htie, beq_iff_eq, hm, ite_false, Bool.false_eq_true, ite_true,
       hgen, hup, hdown]
 
-/-- Every rounding direction sends a zero significand to the binary64 zero of the same sign. -/
-private theorem roundDyadic_binary64_zero (mode : Model.IEEERoundingMode) (neg : Bool)
-    (q : Int) :
-    Model.Internal.Directed.roundDyadic .binary64 mode ⟨neg, 0, q⟩ = Model.zero .binary64 neg := by
-  have hgen : Model.roundDyadic .binary64 ⟨neg, 0, q⟩ = Model.zero .binary64 neg := by
-    rw [← Model.roundDyadicGeneral_eq_roundDyadic]
-    simp [Model.roundDyadicGeneral]
-  cases mode <;>
-    simp [Model.Internal.Directed.roundDyadic, Model.roundDyadicNearestAway,
-      Model.roundDyadicTowardZero, Model.roundDyadicUp, Model.roundDyadicDown,
-      Model.roundDyadicAway, hgen]
-
 /-! ## Interchange words of the binary64 cast -/
 
 /-- The interchange word of `Model.ofFields` places the sign, the exponent field, and the fraction
@@ -313,6 +302,8 @@ private theorem toNatBits_cast_binary64_of_isFinite {fmt : FloatFormat}
   have he := Model.expField_lt_pow2 x
   have hf := Model.fracField_lt_pow2 x
   have hemax := Model.expField_le_maxFiniteExpField_of_isFinite x hx
+  -- A format with binary64's exponent field widens exactly: the fields are copied and the
+  -- fraction shifted left.
   by_cases hcompat : fmt.expWidth = 11 ∧ fmt.exponentBias = 1023 ∧ fmt.encoding = .ieee
   · obtain ⟨h1, h2, h3⟩ := hcompat
     rw [Model.cast_eq_widenExact_of_compatibleWidening x h1 h2 h3 hfrac hx mode]
@@ -335,8 +326,9 @@ private theorem toNatBits_cast_binary64_of_isFinite {fmt : FloatFormat}
         omega
     · rw [ite_eq_right he0, ite_eq_left (by omega)]
       omega
+  -- Otherwise the cast rounds the value's dyadic form, which binary64 holds exactly.
   · have hnan := Model.isNaN_eq_false_of_isFinite_eq_true x hx
-    have hinf := Model.isInf_eq_false_of_isFinite_eq_true x hx
+    have hinf := Model.isInfinite_eq_false_of_isFinite_eq_true x hx
     have hformat : fmt ≠ .binary64 := by
       rintro rfl
       exact hcompat ⟨rfl, rfl, rfl⟩
@@ -352,10 +344,11 @@ private theorem toNatBits_cast_binary64_of_isFinite {fmt : FloatFormat}
       (Model.fracField x) he hf (by rw [Model.ofFields_signBit_expField_fracField]; exact hx)
     rw [Model.ofFields_signBit_expField_fracField] at hdecode
     rw [hcast]
+    -- A zero, a subnormal or a normal value, as `toDyadic?` decodes it.
     by_cases he0 : Model.expField x = 0
     · by_cases hf0 : Model.fracField x = 0
       · rw [ite_eq_left he0, ite_eq_left hf0] at hdecode
-        rw [Model.finiteDyadic_eq_of_toDyadic hx hdecode, roundDyadic_binary64_zero,
+        rw [Model.finiteDyadic_eq_of_toDyadic hx hdecode, Model.Internal.Directed.roundDyadic_zero,
           toNatBits_zero_binary64, ite_eq_left he0, ite_eq_left hf0]
       · rw [ite_eq_left he0, ite_eq_right hf0] at hdecode
         rw [Model.finiteDyadic_eq_of_toDyadic hx hdecode, ite_eq_left he0, ite_eq_right hf0]
@@ -368,6 +361,8 @@ private theorem toNatBits_cast_binary64_of_isFinite {fmt : FloatFormat}
         have hnlo := two_pow_le_shiftLeft_sub_log2 52 _ hf0
         have hnhi : Model.fracField x <<< (52 - (Model.fracField x).log2) < 2 ^ 53 :=
           shiftLeft_sub_log2_lt_two_pow 52 _ (by omega)
+        -- Normal in binary64 when its leading one is at or above binary64's least normal
+        -- exponent.
         by_cases hS : fmt.exponentBias + fmt.fracWidth ≤ (Model.fracField x).log2 + 1023
         · rw [ite_eq_right (by rw [hsub]; omega), ite_eq_left hS,
             toNatBits_ofFields_binary64 _ _ _ (by rw [hsub]; omega) (by omega)]
@@ -393,6 +388,7 @@ private theorem toNatBits_cast_binary64_of_isFinite {fmt : FloatFormat}
             (Model.expField x : Int) - fmt.exponentBias - fmt.fracWidth := by
         simp only [Int.ofNat_eq_natCast]
       rw [hq, roundDyadic_binary64 mode _ _ _ hm0 (by omega) (by omega) (by omega), hlog]
+      -- Normal in binary64 when the rebiased exponent field is positive.
       by_cases hN : fmt.exponentBias ≤ Model.expField x + 1022
       · have hsplit : (2 ^ fmt.fracWidth + Model.fracField x) <<< (52 - fmt.fracWidth) =
             2 ^ 52 + Model.fracField x <<< (52 - fmt.fracWidth) := by
@@ -418,10 +414,10 @@ private theorem toNatBits_cast_binary64_of_isFinite {fmt : FloatFormat}
 
 /-- The binary64 cast of an infinity in any mode is the binary64 infinity of the same sign. -/
 private theorem toNatBits_cast_binary64_of_isInf {fmt : FloatFormat} (x : Model fmt)
-    (hinf : Model.isInf x = true) (mode : Model.IEEERoundingMode) :
+    (hinf : Model.isInfinite x = true) (mode : Model.IEEERoundingMode) :
     (Model.cast fmt .binary64 x mode).toNatBits =
       2 ^ 63 * (Model.signBit x).toNat + 0x7FF0000000000000 := by
-  have hnan := Model.isNaN_eq_false_of_isInf_eq_true x hinf
+  have hnan := Model.isNaN_eq_false_of_isInfinite_eq_true x hinf
   have hcast : Model.cast fmt .binary64 x mode =
       Model.nativeOverflow .binary64 (Model.signBit x) := by
     cases mode <;>
@@ -439,10 +435,10 @@ private theorem nanPayload_eq {fmt : FloatFormat} (x : Model fmt) (hnan : Model.
   have hf := Model.fracField_lt_pow2 x
   unfold Model.nanPayload Model.payloadOfNaNField
   cases henc : fmt.encoding
-  · have hsnan : Model.isSNaN x = !(Model.fracField x).testBit (fmt.fracWidth - 1) := by
+  · have hsnan : Model.isSignaling x = !(Model.fracField x).testBit (fmt.fracWidth - 1) := by
       have hq := Model.and_quietBit_eq_zero_iff x
       have hn : Model.IEEE.isNaN x = true := by simpa [Model.isNaN, henc] using hnan
-      simp only [Model.isSNaN, henc, Model.IEEE.isSNaN, hn, Bool.true_and, hq]
+      simp only [Model.isSignaling, henc, Model.IEEE.isSignaling, hn, Bool.true_and, hq]
     have hpow : 2 ^ fmt.fracWidth = 2 ^ (fmt.fracWidth - 1) * 2 := by
       rw [← Nat.pow_succ]; congr 1; omega
     have hdiv : Model.fracField x / 2 ^ (fmt.fracWidth - 1) < 2 :=
@@ -554,6 +550,8 @@ theorem toWord64_eq_widenToWord64 {fmt : FloatFormat} (hfrac : fmt.fracWidth ≤
   have he := Model.expField_lt_pow2 x
   have hf := Model.fracField_lt_pow2 x
   have hs : (Model.signBit x).toNat ≤ 1 := Bool.toNat_le _
+  -- The exponent and fraction fields fit below the sign bit, and `hsplit` splits the word into
+  -- the sign, exponent and fraction fields.
   have hlow : 2 ^ fmt.fracWidth * Model.expField x + Model.fracField x <
       2 ^ (fmt.expWidth + fmt.fracWidth) := by
     calc 2 ^ fmt.fracWidth * Model.expField x + Model.fracField x <
@@ -567,6 +565,7 @@ theorem toWord64_eq_widenToWord64 {fmt : FloatFormat} (hfrac : fmt.fracWidth ≤
   have hn : x.toNatBits < 2 ^ 64 := lt_of_lt_of_le (Model.toNatBits_lt_two_pow x)
     (Nat.pow_le_pow_right (by decide) (by unfold FloatFormat.bitWidth; omega))
   have hbits : (UInt64.ofNat x.toNatBits).toNat = x.toNatBits := UInt64.toNat_ofNat_of_lt' hn
+  -- `UInt64` shifts and masks that stay below `2 ^ 64` are the natural-number ones.
   have hpow : ∀ k : UInt64, k.toNat < 64 → ((1 : UInt64) <<< k).toNat = 2 ^ k.toNat := by
     intro k hk
     rw [UInt64.toNat_shiftLeft, UInt64.toNat_one, Nat.mod_eq_of_lt hk, Nat.one_shiftLeft,
@@ -584,6 +583,7 @@ theorem toWord64_eq_widenToWord64 {fmt : FloatFormat} (hfrac : fmt.fracWidth ≤
     Model.Internal.Status.cast_eq, Model.value_cast]
   unfold widenToWord64
   extract_lets ew w bias sign e f nan finite
+  -- Each `UInt64` let of `widenToWord64` is the field or constant it names.
   have hewU : ew.toNat = fmt.expWidth := UInt64.toNat_ofNat_of_lt' (by unfold UInt64.size; omega)
   have hwU : w.toNat = fmt.fracWidth := UInt64.toNat_ofNat_of_lt' (by unfold UInt64.size; omega)
   have hbU : bias.toNat = fmt.exponentBias :=
@@ -613,12 +613,14 @@ theorem toWord64_eq_widenToWord64 {fmt : FloatFormat} (hfrac : fmt.fracWidth ≤
     rw [UInt64.toNat_add, hS]
     simp only [UInt64.reduceToNat]
     omega
+  -- A finite value casts to the word `finite`.
   have hfin : Model.isFinite x = true →
       finite.toNat = (Model.cast fmt .binary64 x mode).toNatBits := by
     intro hx
     have hemax := Model.expField_le_maxFiniteExpField_of_isFinite x hx
     rw [toNatBits_cast_binary64_of_isFinite hfrac hmin hmax x hx mode]
     simp only [finite]
+    -- A zero exponent field: a zero or a subnormal value.
     by_cases he0 : Model.expField x = 0
     · rw [ite_eq_left (show e = 0 from UInt64.toNat_inj.mp (by rw [hE, he0]; rfl)),
         ite_eq_left he0]
@@ -629,6 +631,7 @@ theorem toWord64_eq_widenToWord64 {fmt : FloatFormat} (hfrac : fmt.fracWidth ≤
           ite_eq_right hf0]
         have hlog : (log2Word f).toNat = (Model.fracField x).log2 := by rw [log2Word_toNat, hF]
         have hL : (Model.fracField x).log2 < fmt.fracWidth := (Nat.log2_lt hf0).mpr hf
+        -- A subnormal that is normal in binary64: its leading one moves to bit 52.
         by_cases hnorm : fmt.exponentBias + fmt.fracWidth ≤ (Model.fracField x).log2 + 1023
         · rw [ite_eq_left (show bias + w ≤ log2Word f + 1023 by
               rw [UInt64.le_iff_toNat_le, UInt64.toNat_add, UInt64.toNat_add, hbU, hwU, hlog]
@@ -665,6 +668,7 @@ theorem toWord64_eq_widenToWord64 {fmt : FloatFormat} (hfrac : fmt.fracWidth ≤
               simp only [UInt64.reduceToNat]
               omega),
             ite_eq_right hnorm]
+          -- Otherwise it stays subnormal and the fraction shifts left by the exponent offset.
           have hamt : (1075 - bias - w).toNat = 1075 - fmt.exponentBias - fmt.fracWidth := by
             rw [UInt64.toNat_sub, UInt64.toNat_sub, hbU, hwU]
             simp only [UInt64.reduceToNat]
@@ -679,6 +683,7 @@ theorem toWord64_eq_widenToWord64 {fmt : FloatFormat} (hfrac : fmt.fracWidth ≤
           generalize Model.fracField x <<< (1075 - fmt.exponentBias - fmt.fracWidth) = T at hlt ⊢
           omega
     · rw [ite_eq_right (show ¬e = 0 from fun h => he0 (by rw [← hE, h]; rfl)), ite_eq_right he0]
+      -- A normal value that is normal in binary64: rebias the exponent, widen the fraction.
       by_cases hnorm : fmt.exponentBias ≤ Model.expField x + 1022
       · rw [ite_eq_left (show bias ≤ e + 1022 by
             rw [UInt64.le_iff_toNat_le, UInt64.toNat_add, hbU, hE]
@@ -713,6 +718,7 @@ theorem toWord64_eq_widenToWord64 {fmt : FloatFormat} (hfrac : fmt.fracWidth ≤
             simp only [UInt64.reduceToNat]
             omega),
           ite_eq_right hnorm]
+        -- A normal value that is subnormal in binary64: the implicit one joins the fraction.
         have hamt : (e + 1074 - bias - w).toNat =
             Model.expField x + 1074 - fmt.exponentBias - fmt.fracWidth := by
           rw [UInt64.toNat_sub, UInt64.toNat_sub, UInt64.toNat_add, hE, hbU, hwU]
@@ -745,16 +751,18 @@ theorem toWord64_eq_widenToWord64 {fmt : FloatFormat} (hfrac : fmt.fracWidth ≤
   apply UInt64.toNat_inj.mp
   rw [UInt64.toNat_ofNat_of_lt' hc]
   cases henc : fmt.encoding
+  -- IEEE: the all-ones exponent field holds the infinities (zero fraction) and the NaNs.
   · simp only []
     by_cases hE1 : Model.expField x = fmt.expAllOnesNat
     · rw [ite_eq_left (UInt64.toNat_inj.mp (by rw [hE, hexp, hE1]))]
       by_cases hF0 : Model.fracField x = 0
       · rw [ite_eq_left (show f = 0 from UInt64.toNat_inj.mp (by rw [hF, hF0]; rfl))]
-        have hinf : Model.isInf x = true := by
-          simp [Model.isInf, henc, Model.IEEE.isInf, hE1, hF0]
+        have hinf : Model.isInfinite x = true := by
+          simp [Model.isInfinite, henc, Model.IEEE.isInfinite, hE1, hF0]
         rw [toNatBits_cast_binary64_of_isInf x hinf mode, UInt64.toNat_add, hS]
         simp only [UInt64.reduceToNat]
         omega
+      -- A NaN becomes the quiet NaN with the low `w - 1` fraction bits as its payload.
       · rw [ite_eq_right (show ¬f = 0 from fun h => hF0 (by rw [← hF, h]; rfl))]
         have hnan : Model.isNaN x = true := by
           simp [Model.isNaN, henc, Model.IEEE.isNaN, hE1, hF0]
@@ -774,6 +782,7 @@ theorem toWord64_eq_widenToWord64 {fmt : FloatFormat} (hfrac : fmt.fracWidth ≤
         omega
     · rw [ite_eq_right (fun h => hE1 (by rw [← hE, h, hexp]))]
       exact (hfin (by simp [Model.isFinite, henc, Model.IEEE.isFinite, hE1])).symm
+  -- `finiteMaxNaN`: the one NaN has all-ones exponent and fraction fields.
   · simp only []
     by_cases hN : Model.expField x = fmt.expAllOnesNat ∧ Model.fracField x = fmt.fracMaskNat
     · rw [ite_eq_left ⟨UInt64.toNat_inj.mp (by rw [hE, hexp, hN.1]),
@@ -786,6 +795,7 @@ theorem toWord64_eq_widenToWord64 {fmt : FloatFormat} (hfrac : fmt.fracWidth ≤
       simp only [Model.isFinite, Model.isNaN, henc]
       by_contra hc
       exact hN (by simpa using hc)
+  -- `finiteUnsignedZero`: the one NaN is the word with only the sign bit set.
   · simp only []
     have hiff : x.bits = FloatFormat.signMask fmt ↔
         x.toNatBits = 2 ^ (fmt.expWidth + fmt.fracWidth) := by
@@ -804,6 +814,7 @@ theorem toWord64_eq_widenToWord64 {fmt : FloatFormat} (hfrac : fmt.fracWidth ≤
       refine (hfin ?_).symm
       simp only [Model.isFinite, Model.isNaN, henc]
       simpa [hiff] using hN
+  -- `finite`: every value is finite.
   · exact (hfin (by simp [Model.isFinite, henc])).symm
 
 /--

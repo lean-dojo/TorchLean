@@ -76,7 +76,7 @@ theorem affine_interval_encloses {n m : Nat} (a : Linear ℚ n m)
         (realTensor (IBP.linear a.weights input ⟨a.bias, a.bias⟩).hi).getScalar i := by
   have h := IBP.linear_sound_real
     (realTensor a.weights) (realBox input) (Box.point (realTensor a.bias))
-    x (realTensor a.bias) ((encloses_iff_getScalar _ _ x).mp hx) (Box.contains_point_self _)
+    x (realTensor a.bias) ((encloses_iff_getScalar (x := x)).mp hx) (Box.contains_point_self _)
   have hm := realBox_linear a.weights input ⟨a.bias, a.bias⟩
   have hlo := congrArg Box.lo hm
   have hhi := congrArg Box.hi hm
@@ -178,9 +178,9 @@ theorem Bounds.linear_encloses {n m k : Nat} (b : Bounds n m)
     (y : Tensor ℝ [m]) (h : b.Encloses x y) :
     (b.linear w bias).Encloses x
       (Tensor.contract (realTensor w) y _ _ [k] .matVec + realTensor bias) := by
-  have hbox := (encloses_iff_getScalar _ _ _).mpr h
+  have hbox := encloses_iff_getScalar.mpr h
   have hs := encloses_linear_signSplit (realTensor w) (realTensor bias) _ _ y hbox
-  have hs' := (encloses_iff_getScalar _ _ _).mp hs
+  have hs' := encloses_iff_getScalar.mp hs
   rw [← Linear.forward_linear_pair (IBP.matPos (realTensor w)) (IBP.matNeg (realTensor w))
     (realAffine b.lo) (realAffine b.hi) (realTensor bias) x] at hs'
   rw [← Linear.forward_linear_pair (IBP.matPos (realTensor w)) (IBP.matNeg (realTensor w))

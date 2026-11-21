@@ -24,7 +24,8 @@ pivots are hypotheses of the theorems, not a runtime success check.
 
 * `isCholesky_of_pos`: for a symmetric `A : Fin n → Fin n → ℝ` whose executable Cholesky pivots are
   all positive (`0 < choleskyFn A j j`), the factor `L = choleskyFn A` satisfies
-  `TorchLean.Factorization.IsCholesky`: it is lower-triangular and `A = L · Lᵀ`.
+  `TorchLean.Factorization.IsCholesky`: it is lower-triangular with a positive diagonal and
+  `A = L · Lᵀ`.
   `cholesky_reconstruction` is the tensor-level corollary.
 * `qr_mul_eq`: for `A : Fin m → Fin n → ℝ` whose executable Gram–Schmidt `R`-pivots are positive
   (`0 < rMat A j j`), the factors `Q` and `R` satisfy `A = Q · R`, with `R` upper-triangular
@@ -289,11 +290,11 @@ theorem choleskyFn_dot (A : Fin n → Fin n → ℝ) (hsymm : ∀ i j, A i j = A
 
 /-- For a symmetric `A` whose specification Cholesky pivots are all
 positive (`0 < L[j,j]`), the factor `L = choleskyFn A` is a
-Cholesky factor: lower-triangular with `A = L · Lᵀ`. -/
+Cholesky factor: lower-triangular with a positive diagonal and `A = L · Lᵀ`. -/
 theorem isCholesky_of_pos (A : Fin n → Fin n → ℝ) (hsymm : ∀ i j, A i j = A j i)
     (hpos : ∀ j : Fin n, 0 < Factorization.choleskyFn A j j) :
     Factorization.IsCholesky (Matrix.of A) (Matrix.of (Factorization.choleskyFn A)) := by
-  refine ⟨?_, ?_⟩
+  refine ⟨?_, hpos, ?_⟩
   · intro a b hab
     show Factorization.choleskyFn A a b = 0
     exact Factorization.choleskyFn_lower_triangular A (Fin.lt_def.mp hab)

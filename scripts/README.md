@@ -48,8 +48,10 @@ TORCHLEAN_REQUIRE_INTEROP=1 scripts/lake.sh -Kcuda=false test
 scripts/lake.sh -Kcuda=false lint
 ```
 
-That requirements file pins CPU PyTorch 2.8.0 for the interoperability checks. The live operator
-captures in `scripts/checks/test_ir_capture.py` and the differential fuzzer
+That requirements file pins CPU PyTorch 2.11.0 for the interoperability checks. The live operator
+captures that `scripts/checks/test_ir_capture.py` runs (including operator-family and control-flow
+cases in the sibling `ir_capture_*.py` modules, with helpers in `ir_capture_support.py`) and the
+differential fuzzer
 `scripts/checks/test_frontend_fuzz.py` (seeded random programs through torch.export, FX, Dynamo and
 eager JAX, every value compared with the framework's, `TORCHLEAN_FUZZ_COUNT` programs per framework
 from the seed `TORCHLEAN_FUZZ_SEED`) also need the `verify` executable built above. `lake test` runs

@@ -362,6 +362,7 @@ theorem Statement.denotes_lower (format : Format) (arithmetic : Arithmetic forma
       Statement.Denotes format arithmetic inputs size load text
         (statement.eval arithmetic read) := by
   induction block generalizing first with
+  -- A result renders as one assignment, or as nothing for a variable.
   | result value =>
       cases value with
       | scalar value =>
@@ -457,6 +458,8 @@ theorem Statement.denotes_lower (format : Format) (arithmetic : Arithmetic forma
       have hAcc : ¬ (Name.temporary first : Name .scalar).Before first := by
         change ¬ first < first
         omega
+      -- Writing the counter or the accumulator leaves the bound unchanged, and a body run
+      -- keeps the counter and the bound.
       intro text h
       apply Statement.denotes_render_loop format arithmetic read inputs size load
         (.temporary first) (.temporary (first + 1)) (Atom.lower names.get count)

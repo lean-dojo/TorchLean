@@ -64,3 +64,8 @@ main .tl-copy-code, main .tl-code-action, main .tl-copy-command {
 .tl-lean-operator, .highlight :is(.o, .ow, .p, .n, .nn, .nx, .w), .hl.lean .token.var {
   color: var(--tl-code-ink); font-weight: normal;
 }
+.tl-raw-keyword { color: var(--tl-code-keyword); font-weight: 600; }
+.tl-raw-type { color: var(--tl-code-type); }
+.tl-raw-comment { color: var(--tl-code-comment); }
+.tl-raw-string { color: var(--tl-code-string); }
+.tl-raw-number { color: var(--tl-code-number); }

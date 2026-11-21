@@ -75,7 +75,7 @@ private def rowHtml (r : Row) : ProofWidgets.Html :=
     | none => okBadge "ok"
     | some _ => errBadge "error"
   ;
-  <tr>
+  jsx%{<tr>
     <td style={json% {"padding": "6px 8px", "border-bottom": "1px solid rgba(127,127,127,0.18)"}}>
       {monospace (toString r.id)}
     </td>
@@ -99,9 +99,9 @@ private def rowHtml (r : Row) : ProofWidgets.Html :=
       {match r.err? with
         | none => ProofWidgets.Html.text ""
         | some msg =>
-            <span style={json% {"margin-left": "8px", "opacity": 0.9}}>{monospace msg}</span>}
+            jsx%{<span style={json% {"margin-left": "8px", "opacity": 0.9}}>{monospace msg}</span>}}
     </td>
-  </tr>
+  </tr>}
 
 /-- Render the `#shape_infer_view` panel: a header with the graph's outputs and their ports, then
 the per-node table of the ports each operator expects, reads and produces. -/
@@ -112,7 +112,7 @@ def shapeInferHtml (g : Graph) : ProofWidgets.Html :=
     | none => s!"{r.pretty}: ?"
   let outputsOk := g.outputs.all fun r => (g.portBefore g.nodes.size r).isSome
   ;
-  <div style={json% {
+  jsx%{<div style={json% {
     "padding": "10px",
     "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
     "border-radius": "10px",
@@ -151,7 +151,7 @@ def shapeInferHtml (g : Graph) : ProofWidgets.Html :=
         </tbody>
       </table>
     </div>
-  </div>
+  </div>}
 
 /-!
 ## Command

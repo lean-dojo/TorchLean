@@ -7,6 +7,8 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.Tensor.Conversion
+import Lean.Data.Json.Basic
+import Lean.Data.Json.Parser
 import Mathlib.Data.String.Defs
 
 /-!

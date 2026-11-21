@@ -221,10 +221,10 @@ def rule (st : State α) (y : Ref) (o : Operator) (xs : List Ref) (dxs : List (O
           | some d => some1 (st.apply o [a, d])
           | none => (st, none)
         pure (st.add out t₁ t₂)
-    | ⟨_, _, .reduce .sum _ _ _⟩, _, [some d] | ⟨_, _, .mean ..⟩, _, [some d]
+    | ⟨_, _, .reduce .sum ..⟩, _, [some d] | ⟨_, _, .mean ..⟩, _, [some d]
     | ⟨_, _, .reshape _⟩, _, [some d] | ⟨_, _, .permute ..⟩, _, [some d]
     | ⟨_, _, .broadcast ..⟩, _, [some d] | ⟨_, _, .slice ..⟩, _, [some d]
-    | ⟨_, _, .flip _⟩, _, [some d] | ⟨_, _, .cumsum _⟩, _, [some d] =>
+    | ⟨_, _, .flip _⟩, _, [some d] | ⟨_, _, .cumsum ..⟩, _, [some d] =>
         pure (some1 (st.apply o [d]))
     | ⟨_, _, .scale⟩, [_, k], [some d, _] => pure (some1 (st.apply o [d, k]))
     | ⟨_, _, .cat ..⟩, _, ds =>

@@ -529,6 +529,11 @@ def polish_importgraph(page: Path) -> None:
         f'    const base = upstream.includes(path[0]) ? "{UPSTREAM_DOCGEN_BASE}" : doc_url;\n'
         '    window.open(base + path.join(\'/\') + ".html");',
     )
+    html = re.sub(r"<title>import graph for [^<]*</title>", "<title>TorchLean import graph</title>", html)
+    html = re.sub(r"<h1>Import Graph for [^<]*</h1>", "<h1>TorchLean import graph</h1>", html)
+    if 'name="viewport"' not in html:
+        html = html.replace("</head>",
+                            '<meta name="viewport" content="width=device-width, initial-scale=1">\n</head>', 1)
     if 'id="torchlean-importgraph-controls"' not in html:
         controls = """<style id="torchlean-importgraph-controls">
     @media (max-width: 700px) {

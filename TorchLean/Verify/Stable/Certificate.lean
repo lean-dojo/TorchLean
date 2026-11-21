@@ -400,7 +400,7 @@ noncomputable instance : Once Binary.Desc where
   Ω d := Model.toReal (Model.posMaxFinite d.format)
   overflow d s v := Binary.toModel v = Model.nativeOverflow d.format s
   mixed _ _ := once_mixedError _ _
-  informative _ hy := ⟨hy.2, (once_informative_iff _ _).mpr hy.1⟩
+  informative _ hy := ⟨hy.2, once_informative_iff.mpr hy.1⟩
   pos _ hy := (Model.underflowErrorAt_pos _).trans hy.1
   zero hd := by
     refine ⟨?_, Model.roundAt_zero _⟩

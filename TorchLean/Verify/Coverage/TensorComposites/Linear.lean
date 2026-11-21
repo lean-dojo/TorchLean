@@ -20,7 +20,7 @@ shape and of its flattened weight and bias gradients and its input gradient, at 
 result. These are the four computations of `Op.linear` at a leading shape of positive rank. The
 table's own entry for `Op.linear` is its vector rule, read at the empty leading shape. Shapes, axes,
 block sizes and every other parameter are variables, so each theorem holds at every axis and rank.
-Each route is analyzed for the configured scalar of an arbitrary IEEE format, for native `Float32`
+Each route is analyzed for the configured scalar of an arbitrary format, for native `Float32`
 and for the rounded reals `FP32`. The theorems are declared in the namespace
 `TorchLean.Coverage.TensorComposites`, which every module under
 `TorchLean/Verify/Coverage/TensorComposites/` shares.

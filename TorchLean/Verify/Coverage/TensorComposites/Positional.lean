@@ -18,7 +18,7 @@ public import TorchLean.Tensor.Layers.PositionalEncoding
 `#roundoff_coverage` runs `roundoff` on the value of the sinusoidal positional encoding, of the RoPE
 factor tables and of RoPE, at a coordinate of the result. Shapes, axes, block sizes and every other
 parameter are variables, so each theorem holds at every axis and rank. Each route is analyzed for
-the configured scalar of an arbitrary IEEE format, for native `Float32` and for the rounded reals
+the configured scalar of an arbitrary format, for native `Float32` and for the rounded reals
 `FP32`. The theorems are declared in the namespace
 `TorchLean.Coverage.TensorComposites`, which every module under
 `TorchLean/Verify/Coverage/TensorComposites/` shares.

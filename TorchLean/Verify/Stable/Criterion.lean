@@ -167,7 +167,7 @@ theorem once_mixedError (fmt : FloatFormat) (x : ℝ) :
     linarith
 
 /-- The bound of `once_mixedError` is informative iff `|x|` is above `η`. -/
-theorem once_informative_iff (fmt : FloatFormat) (x : ℝ) :
+theorem once_informative_iff {fmt : FloatFormat} {x : ℝ} :
     Informative x (unitRoundoffAt fmt)
         (max 0 (underflowErrorAt fmt - unitRoundoffAt fmt * |x|)) ↔
       underflowErrorAt fmt < |x| := by
@@ -207,7 +207,7 @@ theorem exists_informative_iff (hfmt : fmt.isIEEE = true) :
         (c := fun q : ℚ => cmp y (q : ℝ)) (fun _ => rfl) hΘ
       refine ⟨_, hfin, ?_⟩
       rw [hval]
-      exact lt_of_le_of_lt (once_mixedError fmt y).bound ((once_informative_iff fmt y).mpr hy)
+      exact lt_of_le_of_lt (once_mixedError fmt y).bound (once_informative_iff.mpr hy)
     · have hΩ := toReal_posMaxFinite_pos fmt
       have hΩy : toReal (posMaxFinite fmt) < |y| :=
         lt_of_lt_of_le (posMaxFinite_lt_overflowThreshold hfmt) (not_lt.mp hΘ)
@@ -233,6 +233,6 @@ theorem optimal (hfmt : fmt.isIEEE = true) {c : ℚ → Ordering} (hc : ∀ q : 
   refine ⟨hfin, fun h => ⟨_, hfin, h⟩, fun h => ?_⟩
   rw [hval]
   exact lt_of_le_of_lt (once_mixedError fmt y).bound
-    ((once_informative_iff fmt y).mpr ((exists_informative_iff hfmt).mp h))
+    (once_informative_iff.mpr ((exists_informative_iff hfmt).mp h))
 
 end TorchLean.Stable

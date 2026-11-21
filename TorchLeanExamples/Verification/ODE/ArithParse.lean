@@ -98,7 +98,8 @@ mutual
     | 0 => .error "parser: out of fuel"
     | Nat.succ fuel =>
       let (term0, st1) ← termFuel g fuel st
-      let rec loop (fuel : Nat) (acc : E) (st : TextCursor) : Except String (E × TextCursor) := do
+      let rec /-- Fold the terms after `+` and `-` into `acc`, with `fuel` bounding the steps. -/
+      loop (fuel : Nat) (acc : E) (st : TextCursor) : Except String (E × TextCursor) := do
         match fuel with
         | 0 => .ok (acc, st)
         | Nat.succ fuel =>
@@ -119,7 +120,8 @@ mutual
     | 0 => .error "parser: out of fuel"
     | Nat.succ fuel =>
       let (f, st1) ← unaryFuel g fuel st
-      let rec loop (fuel : Nat) (acc : E) (st : TextCursor) : Except String (E × TextCursor) := do
+      let rec /-- Fold the factors after `*` and `/` into `acc`, with `fuel` bounding the steps. -/
+      loop (fuel : Nat) (acc : E) (st : TextCursor) : Except String (E × TextCursor) := do
         match fuel with
         | 0 => .ok (acc, st)
         | Nat.succ fuel =>

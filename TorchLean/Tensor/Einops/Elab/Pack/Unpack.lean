@@ -45,6 +45,7 @@ private def compileUnpackFlatMap
     (componentIndex componentCount : Nat) :
     TermElabM (Expr × Expr) := do
   let specializedChecked ← zetaReduce checked
+  -- The component's shapes, packed length and offset, as literals and as terms of the plan.
   let component ← finIndexExpr componentCount componentIndex
   let inputShapeValue := checkedValue.inputShapes[componentIndex]!
   let starShapeValue :=
@@ -83,6 +84,7 @@ private def compileUnpackFlatMap
     let checkedPrefix ←
       mkAppM ``List.take #[componentValue, checkedSegmentLengths]
     let checkedPrefixSum ← mkAppM ``List.sum #[checkedPrefix]
+    -- `Pack.unpackDirect` on the literals; each literal is certified equal to its plan term.
     let literalDirectIndex ←
       mkAppM ``Pack.unpackDirect #[
         literalStarShape,
@@ -120,6 +122,7 @@ private def compileUnpackFlatMap
         some literalOffset, some checkedOffset, some inputValue,
         some hStarShape, some hTrailingShape,
         some hPackedAxisLength, some hOffset]
+    -- Compile the literal index, then chain the equalities down to `Pack.unpackFlat`.
     let (compiledValue, hCompiledLiteral) ←
       compileRowMajorIndex literalDirectIndex #[
         ``Pack.unpackDirect]
@@ -144,6 +147,7 @@ private def compileUnpackFlatMap
     let hCompiledIndex ←
       finIndexEquality outputSize compiledIndex compactFlatIndex
         hCompiledCompact
+    -- Abstract the input index and state the equality against the unreduced plan.
     let flatMap ← mkLambdaFVars #[inputIndex] compiledIndex
     let hFlatMap ← mkLambdaFVars #[inputIndex] hCompiledIndex
     let originalCompactFlatMap ←

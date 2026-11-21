@@ -45,6 +45,7 @@ def modelWidth : Nat := 4
 /-- Default `--windows`: the number of evenly spaced corpus windows in the training set. -/
 def defaultWindows : Nat := 16
 
+/-- `modelWidth` is positive. -/
 local instance : NeZero modelWidth := ⟨by decide⟩
 
 /-- Byte id `b` as bucket `b % 4`. Distinct bytes share buckets on purpose, to keep four classes. -/

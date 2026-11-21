@@ -21,8 +21,9 @@ arithmetic, and the contract itself, quantified over all inputs and covering the
 assumption.
 
 Lean's native `Float32` calls host binary32 arithmetic for `add`, `mul`, `div` and `sqrt`, which
-the harness compares directly. Core has no `Float32` fused multiply-add, so `fma` is checked on the
-CUDA side only: `--emit-cases` prints the reference bits of all five operations, and
+the harness compares directly. Core's `Float32.fma`, C's `fmaf`, is not compared here (the module
+`TorchLeanTest.Tensor.Fma` checks it at six triples), so `fma` is checked on the CUDA side:
+`--emit-cases` prints the reference bits of all five operations, and
 `scripts/checks/cuda.sh parity` compares host `std::fma`, ATen tensor operations and TorchLean's
 production C interface with them.
 

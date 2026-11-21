@@ -6,7 +6,7 @@ Authors: TorchLean Team
 
 module
 
-public import TorchLean.NN.FDeriv.PullbackTensor
+public import TorchLean.NN.Tactic.OpDeriv
 public import TorchLean.NN.Op.Certificates
 public import TorchLean.Tensor.AdjacentSwap.Adjoint
 public import TorchLean.Tensor.Op.Cert
@@ -180,10 +180,7 @@ theorem reshape_backward_eq_adjoint {s t : Shape} (h : s.size = t.size) (x : Ten
     (((Op.reshape h).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, ())).1 =
       (fderiv ℝ (fun x' =>
         (((Op.reshape h).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x).adjoint δ := by
-  simp only [Op.rule?_reshape, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · rfl
+  op_deriv
 
 /-- The forward of `Op.permute` is differentiable in its input, and its backward, the permutation
 back by `s.unpermute perm hout`, is the adjoint of that derivative. -/
@@ -196,10 +193,7 @@ theorem permute_backward_eq_adjoint {s : Shape} (perm : Equiv.Perm (Fin s.rank))
       (fderiv ℝ (fun x' =>
         (((Op.permute perm out hout).rule? (α := ℝ) |>.get rfl).forward (x', ())).1)
         x).adjoint δ := by
-  simp only [Op.rule?_permute, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · rfl
+  op_deriv
 
 /-- The forward of `Op.broadcast` is differentiable in its input, and its backward,
 `Tensor.reduceBroadcast`, is the adjoint of that derivative. -/
@@ -211,10 +205,7 @@ theorem broadcast_backward_eq_adjoint {s t : Shape} (dims : Fin s.rank → Fin t
     (((Op.broadcast dims h).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, ())).1 =
       (fderiv ℝ (fun x' =>
         (((Op.broadcast dims h).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x).adjoint δ := by
-  simp only [Op.rule?_broadcast, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · rfl
+  op_deriv
 
 /-- The forward of `Op.flip` is differentiable in its input, and its backward, the flip along the
 same axes, is the adjoint of that derivative. -/
@@ -225,10 +216,7 @@ theorem flip_backward_eq_adjoint {s : Shape} (dims : List (Fin s.rank)) (x δ : 
     (((Op.flip dims).rule? (α := ℝ) |>.get rfl).backward (x, ()) (δ, ())).1 =
       (fderiv ℝ (fun x' =>
         (((Op.flip dims).rule? (α := ℝ) |>.get rfl).forward (x', ())).1) x).adjoint δ := by
-  simp only [Op.rule?_flip, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · rfl
+  op_deriv
 
 /-- The forward of `Op.pad` is differentiable in the input and the padding value together, on
 their L2 product, and its pair of pullbacks is the adjoint of that derivative. -/
@@ -248,12 +236,7 @@ theorem pad_prod_backward_eq_adjoint {s : Shape} (low high interior : Fin s.rank
         (((Op.pad (s := s) low high interior).rule? (α := ℝ) |>.get rfl).forward
           (p.fst, p.snd, ())).1)
         (WithLp.toLp 2 (x, value))).adjoint δ := by
-  simp only [Op.rule?_pad, Option.get_some]
-  apply HasPullbackAt.differentiableAt_and
-  · fun_prop
-  · refine withLp_prod_ext ?_ ?_ <;>
-      simp only [WithLp.add_fst, WithLp.add_snd, WithLp.toLp_fst, WithLp.toLp_snd, add_zero,
-        zero_add]
+  op_deriv
 
 /-! ## Concatenation -/
 

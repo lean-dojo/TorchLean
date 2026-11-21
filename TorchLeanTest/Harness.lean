@@ -21,7 +21,7 @@ namespace TorchLean.Test
 namespace Harness
 
 /-- Return `available`, so a test can skip itself when its Python dependency `name` is missing.
-When CI sets `TORCHLEAN_REQUIRE_INTEROP=1`, a missing dependency throws instead. -/
+With `TORCHLEAN_REQUIRE_INTEROP=1`, a missing dependency throws instead. -/
 def checkInteropDependency (name : String) (available : Bool) : IO Bool := do
   if !available && (← IO.getEnv "TORCHLEAN_REQUIRE_INTEROP") == some "1" then
     throw <| IO.userError <|

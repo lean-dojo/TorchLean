@@ -145,7 +145,7 @@ def ScalarTrainer.eager {α δ : Type} [Storage α] [Storage δ]
                 LibTorch.Buffer.meanUpdate total sampleLoss sampleWeight
           lossAccumulator.set (some mean)
           if let some previous := previous then
-            Session.releaseCUDABuffer previous
+            LibTorch.Buffer.release previous
         let gradients ←
           Session.paramGradsCUDA
             (α := α) session lossRef
@@ -163,7 +163,7 @@ def ScalarTrainer.eager {α δ : Type} [Storage α] [Storage δ]
       try
         LibTorch.Tape.releaseSparseGrads (← accumulator.get)
         if let some total ← lossAccumulator.get then
-          Session.releaseCUDABuffer total
+          LibTorch.Buffer.release total
       finally
         finishRecording
   let lossFn :

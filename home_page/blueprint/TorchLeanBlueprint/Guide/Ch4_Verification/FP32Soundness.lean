@@ -33,14 +33,16 @@ open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.ExecFloat.Binary (ofBits32 ofFloat32)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
+/-! Guide page: carrying a real-valued verification result to Float32 execution. -/
+
 #doc (Manual) "Float32 Soundness" =>
 %%%
 tag := "fp32-soundness"
 %%%
 
-Suppose a real-valued verifier proves that the winning logit leads a competitor by `0.12`. On its
-own, that isn't a statement about Float32 execution. If each rounded logit may move by `0.03`, the
-winner may move down while the competitor moves up, leaving only
+A real-valued verifier proves that the winning logit leads a competitor by `0.12`. That margin is
+not yet a statement about Float32 execution. If each rounded logit may move by `0.03`, the winner
+may move down while the competitor moves up, leaving only
 
 $$`0.12-0.03-0.03=0.06.`
 
@@ -75,7 +77,7 @@ counterexample to the network's property.
 
 The error depends on the spacing of representable values. Choose `ExecFloat.Binary 8 23` for
 binary32: eight exponent bits and twenty-three stored fraction bits. FloatLib can expose its
-encoding as a `UInt32` and decode a finite value as a dyadic rational. In the records below,
+encoding as a `UInt32` and decode a finite value as a dyadic rational. In the four decoded records,
 `significand` is a nonnegative integer, and `exponent` gives its power-of-two scale. With
 `negative := false`, the value is `significand * 2^exponent`, and a true `negative` flag negates
 it.
@@ -128,7 +130,7 @@ some (1 / 713623846352979940529142984724747568191373312)
 
 The two exponents `-23` and `-149` are precisely the two numbers that define the proof model. Its
 exponent function is `fltExp (-149) 24`, and evaluating that function at a large and a small
-magnitude recovers the two regimes visible above:
+magnitude recovers the normal and subnormal regimes shown by those decoded values:
 
 ```lean
 -- The same exponent policy describes normal spacing and the
@@ -376,7 +378,7 @@ doesn't. At the bottom, the two models agree, because `FP32` keeps the same smal
 example :
     Model.ulpAt FloatFormat.binary32 0 =
       bpow binaryRadix (-149) := by
-  exact ulp_zero_FLT (β := binaryRadix)
+  exact ulp_zero_flt (β := binaryRadix)
     FloatFormat.binary32.minSubnormalExponent
     (FloatFormat.binary32.fracWidth + 1) (by positivity)
 ```
@@ -402,7 +404,7 @@ real value:
 ```lean (name := fpsOverflow)
 -- Finite operands can overflow, so input finiteness alone
 -- is insufficient for a bridge.
-#eval ExecFloat.Binary.isInf
+#eval ExecFloat.Binary.isInfinite
   (ofBits32 0x7f7fffff + ofBits32 0x7f7fffff)
 ```
 
@@ -462,7 +464,7 @@ Its source docstrings record the following correspondences:
   * `scaledMantissa`
 *
   * `generic_format`
-  * `genericFormat`
+  * `GenericRepresentable`
 *
   * `negligible_exp`
   * `negligibleExp`
@@ -515,8 +517,8 @@ specialization and network error bounds build on those Lean definitions and proo
 
 # Rounding Error For A Single Operation
 
-Everything above the format is built from a single kind of fact: one arithmetic operation, one
-rounding, half an ULP of the exact real result. Here it is for addition.
+Each local arithmetic-rounding term reduces to one kind of fact: one operation, one rounding, and
+half an ULP of the exact real result. Addition gives the basic example.
 
 ```lean
 -- The bound covers only the rounding of the addition
@@ -546,8 +548,8 @@ For the transcendental operations, the single-operation statement concerns the N
 evaluate the specified real function and round its result once. It therefore has a local rounding
 bound without choosing a polynomial approximation, table, or range-reduction algorithm. An
 executable implementation of that function can introduce approximation error before its final
-rounding, and the theorem above doesn't estimate that additional error. This is why the later tanh
-network result is meaningful over `FP32` while its executable transcendental bridge remains a
+rounding, and `Model.abs_roundAt_sub_le` doesn't estimate that additional error. This is why the
+tanh network result is meaningful over `FP32` while its executable transcendental bridge remains a
 separate obligation.
 
 Even for addition, the local theorem can be conservative. If the exact sum is already a grid point,
@@ -628,8 +630,8 @@ for the layer. You'll find the source in
 Two things follow from that shape. First, the bound depends on the actual runtime weights and
 input, not only on their sizes, because `ulp` is evaluated at the intermediate values. A network
 whose activations sit near `1` gets a much smaller budget than one whose activations sit near
-`10^4`, and the expression says so. And the bound is tied to the left-to-right fold (the formal
-echo of the non-associativity experiment above). Reassociate the sum and this isn't the right bound
+`10^4`, and the expression says so. The bound is tied to the left-to-right fold, as the
+non-associativity experiment demonstrates. Reassociate the sum and this isn't the right bound
 for it.
 
 That's also the concrete difference between a proved budget and a tuned tolerance. PyTorch users
@@ -670,7 +672,7 @@ an existential tolerance.
 Five real errors go into this budget: weights and bias of each layer, and the input. Printing the
 composed correctness theorems in full would obscure the point (they're long), so the page
 elaborates them without displaying the result. Their conclusion has the same shape as
-`approxTensor_linear` above, with the network's forward expression in place of the single
+`approxTensor_linear`, with the network's forward expression in place of the single
 `Linear.forward` call:
 
 ```lean
@@ -806,7 +808,7 @@ round once in the same sense (`ConfiguredBinary.toReal_atan`, `toReal_asin`, `to
 `toReal_atan2`). Their real results are at most $`\pi` in magnitude, so a finite input in the
 domain never overflows. `roundoff` has no numerical rule for them, so `#roundoff_coverage` records
 their routes as unsupported. FloatLib's `tanh` is an approximation without such a theorem, so the
-tanh MLP theorem above remains a result about the `FP32` proof model.
+three-layer tanh MLP theorem remains a result about the `FP32` proof model.
 
 FloatLib also proves correspondence with Lean's logical native float model. Its native round-trip
 theorem covers every value. Addition and subtraction correspondence require finite inputs, while
@@ -946,9 +948,9 @@ real property
 ```
 
 Some applications stop earlier because their theorem is intentionally about the rounded-real model.
-That's a legitimate claim as long as it says so. For the construction of the two numerical
-representations, read *Floating-Point Semantics*. For the graph and checker side of the argument,
-return to *Neural Network Verification*.
+That's a legitimate claim as long as it says so. {ref "floats"}[*Floating-Point Semantics*]
+constructs the two numerical representations, while {ref "verification"}[*Neural Network
+Verification*] develops the graph and checker side of the argument.
 
 The finite-result implication retains the sign of zero, which conversion to a real number erases.
 
@@ -981,11 +983,11 @@ toolchain boundary.
 Binary32 is defined by the [IEEE 754-2019
 standard](https://standards.ieee.org/standard/754-2019.html), and the
 [Flocq](https://flocq.gitlabpages.inria.fr/) Rocq development supplies the generic-format
-vocabulary compared with the Lean definitions above.
+vocabulary used by the Lean definitions.
 
 - Higham, *Accuracy and Stability of Numerical Algorithms* (2nd ed., SIAM, 2002), the standard
   numerical analysis reference for forward error and stability arguments of the kind TorchLean
-  packages into margin-transfer lemmas, and the source of the unit roundoff notation used above.
+  packages into margin-transfer lemmas, and the source of the unit roundoff notation used here.
 - Boldo and Melquiond, *Computer Arithmetic and Formal Proofs: Verifying Floating-point Algorithms
   with the Coq System* (ISTE Press, 2017), the book-length account of the library this float layer
   is modelled on.

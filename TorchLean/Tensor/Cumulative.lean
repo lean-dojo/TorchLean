@@ -41,8 +41,8 @@ and `torch.cummin` give the running extremum and its index but no rule for ties 
 the rule from torch 2.8.0 itself. Its `cummax` of `[1, 3, 3, 2, 3]` has indices `[0, 1, 2, 2, 4]`,
 and of `[1, NaN, 2, NaN, 0]` indices `[0, 1, 1, 3, 3]`. PyTorch seeds `cumsum` with zero too, so
 `[-0, -0]` gives `[0, 0]` in both. The capture test `test_index_outputs_match_eager` in
-`scripts/checks/test_ir_capture.py` compares the indices of `cummax` and `cummin` with eager
-PyTorch on rows of repeats, signed zeros and NaNs.
+`scripts/checks/ir_capture_pytorch_operators.py` compares the indices of `cummax` and `cummin`
+with eager PyTorch on rows of repeats, signed zeros and NaNs.
 -/
 
 @[expose] public section
@@ -129,14 +129,6 @@ theorem cumprod_last [Mul α] [One α] (x : Tensor α s) (dim : Fin s.rank) (h :
       reduce .prod x [dim] false (by simp) o := by
   rw [cumprod_apply, reduce_prod_apply]
   exact foldl_prefix_last (· * ·) 1 x dim h o
-
-/-- A left fold over `Tensor.ofFn f` is the fold of `f` over `List.finRange n`. -/
-private theorem foldl_ofFn {β γ : Type} [Storage β] {n : Nat} (step : γ → β → γ) (init : γ)
-    (f : Fin n → β) :
-    Tensor.foldl step init (Tensor.ofFn f) =
-      (List.finRange n).foldl (fun acc i => step acc (f i)) init := by
-  rw [Tensor.ofFn, Rep.ofFn_eq_map_coordinates, Rep.foldl_map,
-    ← Fin.foldl_eq_foldl_finRange, fin_foldl_eq_coordinates]
 
 /-- The prefix folds of every fiber along `dim`, each computed by one scan. -/
 def prefixFolds (step : α → α → α) (seed : α) (x : Tensor α s) (dim : Fin s.rank) :

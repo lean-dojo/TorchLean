@@ -688,6 +688,7 @@ with no conjugation and no analytic derivative.
         Rep.dot rightTensor leftTensor :=
     dotProduct_comm (fun coordinate => leftTensor coordinate)
       (fun coordinate => rightTensor coordinate)
+  -- Move the output's push onto the cotangent as a pull.
   calc
     Rep.dot
           (denoteEinsum checked
@@ -703,6 +704,8 @@ with no conjugation and no analytic derivative.
           (einsumProduct checked
             (Function.update inputTensors operand inputTangent))
           outputCotangent
+    -- Factor the tangent out of each product: what is left is the product of the other
+    -- operands, `1` standing at `operand`.
     _ =
         Rep.dot
           (Rep.pull
@@ -757,6 +760,7 @@ with no conjugation and no analytic derivative.
           (Rep.pull
             (checked.inputOfGlobal operand) inputTangent) :=
       dot_comm _ _
+    -- Move the tangent's pull onto the other side as a push, which is the VJP.
     _ =
         Rep.dot
           (Rep.push

@@ -8,7 +8,6 @@ module
 
 public import TorchLean.NN.IR.Loaded
 public import FloatLib.Floats.Formats.BinaryInterchange.Analysis.Error
-import Mathlib.Tactic.Linarith
 
 /-!
 # Concrete numerical certificates for captured programs
@@ -201,13 +200,37 @@ theorem OutputsErrorLe.at {bound : Rat} {left right : Array (Value Machine.refer
   | none => simp [hr] at hi
   | some value => exact ⟨value, rfl, by simpa [hr] using hi⟩
 
-/-- Execute a capture document's own program and arguments on the reference runtime. No saved
-output is accepted as its result. -/
+/-- Execute a capture document's own flow (`IR.loadFlow`) and arguments on the reference runtime.
+No saved output is accepted as its result. -/
 def execute (document : Json) : Except String (Array (Value Machine.reference)) := do
-  let (program, payload) ← IR.load document
+  let (flow, fuel) ← IR.loadFlow document
   let arguments ← IR.loadArguments Machine.reference document
-  let (outputs, _) ← program.eval Machine.reference payload arguments
+  let (outputs, _) ← (flow.eval (IR.Flow.programs Machine.reference) fuel arguments.toList).run {}
   pure outputs.toArray
+
+/-- An artifact without a `"flow"` field executes as its one program does: `IR.load`, then
+`Program.eval` on the document's arguments, which is `execute` before flows. -/
+theorem execute_of_flat {document artifact : Json}
+    (ha : (document.getObjVal? "artifact").toOption = some artifact)
+    (hf : (artifact.getObjVal? "flow").toOption = none) :
+    execute document = (do
+      let (program, payload) ← IR.load document
+      let arguments ← IR.loadArguments Machine.reference document
+      let (outputs, _) ← program.eval Machine.reference payload arguments
+      pure outputs.toArray) := by
+  unfold execute IR.loadFlow
+  simp only [ha, hf, Option.isNone_none, ite_true]
+  cases IR.load document with
+  | error => rfl
+  | ok loaded =>
+      obtain ⟨p, P⟩ := loaded
+      cases IR.loadArguments Machine.reference document with
+      | error => rfl
+      | ok arguments =>
+          cases hp : p.eval Machine.reference P arguments <;>
+            simp [IR.Flow.eval, IR.Flow.programs, hp, StateT.run, StateT.lift, StateT.bind,
+              StateT.pure, bind, pure, Except.bind, Except.pure, modify, modifyGet,
+              MonadStateOf.modifyGet, StateT.modifyGet]
 
 /-- Check a concrete execution-error budget, rejecting failed execution and nonfinite outputs. -/
 def checkError (left right : Json) (bound : Rat) : Bool :=

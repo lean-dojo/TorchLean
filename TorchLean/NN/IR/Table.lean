@@ -13,11 +13,11 @@ public import TorchLean.NN.IR.Artifact
 # The op table of the Python captures
 
 `TorchLean.IR.table dtypes` is the JSON of the facts that the Python captures read from Lean. It
-holds the format name, the wire version, the JSON of each element type of `dtypes` and the codes
-that the codec writes for division rounding, GELU approximation, reductions, pools, scatters, square
-root policies, bitcast sides and cast sources. It also holds the typed forms of the pointwise
-operators (`Pointwise.form?`) between the element types of `dtypes`, their steps encoded at the
-shape `[]`.
+holds the format name, the wire version, the version of the flow format (`Flow.formatVersion`),
+the JSON of each element type of `dtypes` and the codes that the codec writes for division
+rounding, GELU approximation, reductions, pools, scatters, square root policies, bitcast sides and
+cast sources. It also holds the typed forms of the pointwise operators (`Pointwise.form?`) between
+the element types of `dtypes`, their steps encoded at the shape `[]`.
 
 Python replaces every `{"shape": []}` field of a step by the shape of the node it lowers. We check
 that replacement at the shape `[2, 3]` (`checkTable`) and do not prove it. `tableOfNames` reads
@@ -70,6 +70,7 @@ the pointwise operators at the shape `[]` (`Pointwise.form?`). No property of it
 def table (dtypes : List DType) : Json :=
   Json.mkObj [("format", Json.str formatName),
     ("version", Lean.toJson Op.Wire.formatVersion),
+    ("flow_version", Lean.toJson Flow.formatVersion),
     ("dtypes", Json.mkObj (dtypes.map fun d => (d.describe, d.toJson))),
     ("codes", codes),
     ("pointwise", Json.mkObj (names.map fun name => (name, Json.arr

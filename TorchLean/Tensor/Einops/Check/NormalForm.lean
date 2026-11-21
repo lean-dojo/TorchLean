@@ -317,6 +317,7 @@ def TransformPattern.normalize (kind : TransformKind) (pattern : TransformPatter
       if hLeftBare : pattern.left.hasParenthesizedEllipsis = false then
         if hRightSource :
             pattern.right.ellipsisCount = 0 ∨ pattern.left.ellipsisCount = 1 then
+          -- Expand each ellipsis into the axes it covers, then check the expanded form.
           let ellipsisRank ← checkRank pattern inputShape
           let ellipsisAxes := (List.range ellipsisRank).map AxisId.ellipsis
           let candidate : NormalForm :=

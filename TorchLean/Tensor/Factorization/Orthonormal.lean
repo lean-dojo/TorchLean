@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import Mathlib.Analysis.InnerProductSpace.GramSchmidtOrtho
+public import TorchLean.Tensor.Factorization.Decomposition
 public import TorchLean.Tensor.Factorization.Reconstruction
 
 /-!
@@ -24,9 +25,11 @@ Mathlib's `gramSchmidtNormed_orthonormal'`.
 * `qCol_orthonormal`: `dotFn (qCol A a) (qCol A b) = if a = b then 1 else 0` under positive `R`
   pivots.
 * `qMat_transpose_mul_self` and `isQR_of_pos`: the matrix-level `Qᵀ Q = 1`, and the full
-  `Factorization.IsQR` predicate for the executable factors, which adds the reconstruction
-  `A = Q · R` and the upper-triangular `R` from
-  `TorchLean.Tensor.Factorization.Reconstruction`.
+  `Factorization.IsQR` predicate of `TorchLean.Tensor.Factorization.Decomposition` for the
+  executable factors, which adds the reconstruction `A = Q · R` and the upper-triangular `R` from
+  `TorchLean.Tensor.Factorization.Reconstruction` (a real diagonal holds over `ℝ`).
+* `eq_of_isQR`: under positive pivots the executable factors are the only QR factorization of
+  `A` whose `R` has a positive diagonal (`IsQR.isQR_iff`).
 * `qrQ_orthonormal`: the tensor-level corollary for the `Q` factor `(Factorization.qr A).1`.
 
 ## Method
@@ -217,16 +220,48 @@ theorem qMat_transpose_mul_self (A : Fin m → Fin n → ℝ) (hrank : ∀ j : F
         rw [dotFn_eq_sum]; rfl,
     qCol_orthonormal A hrank a b]
 
-/-- For `A` with positive specification `R`-pivots, the
-Gram–Schmidt factors satisfy `Factorization.IsQR`: `Qᵀ Q = 1`, `R` upper-triangular,
-and `A = Q · R`. -/
+/-- For `A` with positive specification `R`-pivots, the Gram–Schmidt factors satisfy
+`Factorization.IsQR`: `Qᴴ Q = Qᵀ Q = 1`, `R` upper-triangular with a real diagonal (as every real
+number is), and `A = Q · R`. -/
 theorem isQR_of_pos (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < rMat A j j) :
     Factorization.IsQR (Matrix.of A) (Matrix.of (fun i k => qMat A i k))
       (Matrix.of (fun k j => rMat A k j)) := by
-  refine ⟨qMat_transpose_mul_self A hrank, ?_, qr_mul_eq A hrank⟩
-  intro i j hji
+  refine ⟨by rw [conjTranspose_eq_transpose_of_trivial]; exact qMat_transpose_mul_self A hrank,
+    fun i j hji => ?_, fun _ => IsSelfAdjoint.all _, qr_mul_eq A hrank⟩
   show rMat A i j = 0
-  exact rMat_upper_triangular A (Fin.lt_def.mp hji)
+  exact rMat_upper_triangular A hji
+
+/-- For `A` with positive `R`-pivots, the Gram–Schmidt factors are the only QR factorization of
+`A` whose `R` has a positive diagonal: by `IsQR.isQR_iff` another differs by signs, and positive
+diagonals leave each sign `1`. -/
+theorem eq_of_isQR (A : Fin m → Fin n → ℝ) (hrank : ∀ j : Fin n, 0 < rMat A j j)
+    {Q : Matrix (Fin m) (Fin n) ℝ} {R : Matrix (Fin n) (Fin n) ℝ}
+    (h : Factorization.IsQR (Matrix.of A) Q R) (hR : ∀ j, 0 < R j j) :
+    Q = Matrix.of (fun i k => qMat A i k) ∧ R = Matrix.of (fun k j => rMat A k j) := by
+  have h₀ := isQR_of_pos A hrank
+  have hu : IsUnit (Matrix.of fun k j => rMat A k j).det := by
+    rw [det_of_isUpperTriangular (upperBand_zero_iff.mp h₀.2.1)]
+    exact (Finset.prod_pos fun j _ => hrank j).ne'.isUnit
+  have hA : LinearIndependent ℝ ((Matrix.of A).submatrix id (Fin.castLE le_rfl)).col := by
+    refine mulVec_injective_iff.mp fun v w hvw => ?_
+    have e : ∀ u, (Matrix.of fun k j => rMat A k j) *ᵥ u = (Matrix.of fun i k => qMat A i k)ᴴ *ᵥ
+        ((Matrix.of A).submatrix id (Fin.castLE le_rfl) *ᵥ u) := fun u => by
+      rw [Fin.castLE_rfl, submatrix_id_id, h₀.2.2.2, mulVec_mulVec, ← Matrix.mul_assoc, h₀.1,
+        Matrix.one_mul]
+    apply mulVec_injective_iff_isUnit.mpr ((isUnit_iff_isUnit_det _).mpr hu)
+    rw [e, e, hvw]
+  obtain ⟨s, hs, hQ, hR'⟩ := (h₀.isQR_iff le_rfl hA).mp h
+  have hs1 : diagonal s = 1 := by
+    rw [← diagonal_one]
+    congr 1
+    funext j
+    refine (hs j).resolve_right fun e => ?_
+    have h2 := hR j
+    have h3 := hrank j
+    rw [hR', diagonal_mul, e] at h2
+    simp only [Matrix.of_apply] at h2
+    linarith
+  exact ⟨by rw [hQ, hs1, Matrix.mul_one], by rw [hR', hs1, Matrix.one_mul]⟩
 
 /-- For a tensor `A` whose `qr` `R` factor has positive diagonal pivots, the columns of the
 `Q` factor `(qr A).1` are orthonormal: `Σ_i Q[i,a]·Q[i,b] = δₐᵦ`. -/

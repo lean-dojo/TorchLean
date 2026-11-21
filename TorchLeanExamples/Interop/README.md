@@ -6,9 +6,10 @@ from the repository root.
 ## JAX captures
 
 `JAX/export.py` captures a small MLP, sums, broadcasts, reshapes, axis permutations, a batched
-contraction, a comparison and functions returning several tensors, one capture document each. It
-names every computation it cannot capture and writes the others. `torchlean jaxpr`, defined in
-`JAX.lean`, loads a document with `TorchLean.JAX.load`, runs its program on the recorded arguments
+contraction, a comparison, functions returning several tensors, a `cond`, a `scan` and a `while`
+loop, one capture document each. It names every computation it cannot capture and writes the others.
+`torchlean jaxpr`, defined in `JAX.lean`, loads a document with `TorchLean.JAX.load`, runs its flow
+of programs (one program where the capture decides every branch and loop) on the recorded arguments
 under the reference runtime and compares the element type, shape and interchange words of every
 output with the recorded JAX output. The script needs JAX in the running Python.
 
@@ -18,7 +19,10 @@ scripts/lake.sh exe torchlean jaxpr /tmp/torchlean-jax-examples/sum_squares.json
 ```
 
 A passing document prints `bit-for-bit match for this input` for every output. The comparison
-covers the recorded arguments only. `JAX.lean` proves that the real-valued evaluation of the
+covers the recorded arguments only. JAX fixes no order for a sum, a mean, a contraction or a
+matrix product, so the capture writes each of them in the left fold, the field
+`{"order": "leftFold"}` (`Tensor.ReduceOrder.leftFold`), and a match says that the left fold and
+the order JAX ran agree on those arguments. `JAX.lean` proves that the real-valued evaluation of the
 `sum(x * x)` graph is unchanged by every permutation of a vector of any length, and the runner
 prints `matches the graph covered by sumSquaresGraph_permutation` for a document holding that graph.
 

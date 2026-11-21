@@ -2,11 +2,9 @@
 title: Custom Tensor Computations
 ---
 
-Let's write a function in Lean and run it on a tensor. We'll start with a square in the editor,
-then add parameters, sum rows and repeat an update. We'll also ask for a gradient without
-rewriting the function. LibTorch already handles our standard GPU model operations. For a different
-activation or a small custom calculation, we'd like to write it in Lean without maintaining a second
-implementation in CUDA, and the examples below show which calculations we can run this way.
+I wanted to write a custom activation in Lean and run it on the GPU without writing a second
+version in CUDA. We'll start with a square you can try in the editor, then read several tensors,
+repeat an update, and ask for a gradient of the function we wrote.
 
 ## Start with a square
 
@@ -24,13 +22,11 @@ def input : Tensor Float32 [3] :=
 -- [1.000000, 4.000000, 9.000000]
 ```
 
-The result keeps the input shape, and `#eval` prints the tensor itself, so our example needs no
-list conversion or buffer handling. CPU is the default.
+`#eval` prints the result as a tensor with the same shape. This call runs on the CPU.
 
 ## Run on GPU
 
-We select the device at the call site. Its type is `Backend.Device`, and we write its constructors
-with a leading dot:
+Pass `device := .cuda` to run the same function on an NVIDIA GPU.
 
 ```lean
 def onCpu : IO (Tensor Float32 [3]) :=
@@ -408,12 +404,6 @@ reaches has a zero divisor, and no comparison has equal operands unless both are
 When we want the gradient, we keep the function definition and turn on recording at the call site:
 
 ```lean
-import TorchLean.NN.Kernel.Function
-import TorchLean.Tensor.Literal
-open TorchLean
-
-def square {α : Type} [Mul α] (x : α) : α := x * x
-
 def trainingInput : Tensor Float32 [3] := [1, 2, 3]
 #eval do
   let result ← square.run trainingInput (grad := true)

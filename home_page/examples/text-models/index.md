@@ -2,13 +2,12 @@
 title: Text Models Walkthrough
 ---
 
-In this walkthrough, we'll train a small GPT-style transformer and a Mamba model on text.
-We'll start with a text file, turn it into next-token prediction samples, and pass those samples
-to TorchLean's trainer. With the GPT example, we'll also save a checkpoint, reload it, and
-generate text from a prompt.
+Start with a text file. We'll cut it into windows, turn each window into a next-token
+prediction problem, and train a small transformer in Lean. Then we'll save its weights
+and sample text from a prompt. A second run swaps the attention block for a Mamba block.
 
-Run the shell commands from the repository root. Since the CUDA examples need a compatible LibTorch
-SDK and GPU, follow the [installation guide]({{ '/installation/' | relative_url }}) first.
+Run the shell commands from the repository root. For the examples that use CUDA, follow
+the [installation guide]({{ '/installation/#nvidia-cuda' | relative_url }}) first.
 
 ## Load the text
 
@@ -55,11 +54,12 @@ weights or use the full GPT-2 output vocabulary.
 Now we need to pair each input with the tokens we want the model to predict. We'll store the
 input and target tensors together in a `Sample.Supervised` value.
 
-For GPT-2, the sample is a one-hot matrix for causal language modeling:
+For GPT-2, the sample is a one-hot matrix for causal language modeling, and the model's output has
+the same shape, one row of vocabulary logits per token position:
 
 ```lean
-abbrev input : Shape := [batchSize, contextLength, vocabularySize]
-abbrev output : Shape := input
+abbrev input : Shape :=
+  [batchSize, contextLength, vocabularySize]
 ```
 
 `Data.CausalLM.oneHotSample` converts a token tensor whose final axis has length
@@ -70,7 +70,7 @@ We construct a sample with:
 
 ```lean
 def batchSampleFromTokenIds (idsByBatch : Tensor Nat [batchSize, contextLength + 1]) :
-    Sample.Supervised Float input output :=
+    Sample.Supervised Float input input :=
   Data.CausalLM.oneHotSample (α := Float) [batchSize] contextLength vocabularySize
     (idsByBatch.map byteIndex)
 ```
@@ -90,7 +90,7 @@ the GPT-style architecture, not pretrained GPT-2 weights.
 We can build the transformer with this Lean definition:
 
 ```lean
-def model : nn.Builder (nn.Sequential input output) :=
+def model : nn.Builder (nn.Sequential input input) :=
   nn.CausalTransformer.oneHot
     { sequenceLength := contextLength
       vocabularySize := vocabularySize
@@ -113,17 +113,20 @@ let trainer := Trainer.create model <|
   { runtime with
       optimizer := optim.adam { lr := options.training.lr }
       objective := oneHotCrossEntropy 2 }
-let trained ← trainer.train (Data.fromStream samples)
+let trained ← trainer.train
+  (Data.fromStream samples)
   { steps := options.training.steps
     samplesPerStep := options.training.batchSize
+    cudaMemorySampleEvery := options.training.cudaMemorySampleEvery
     loadCheckpoint? := options.checkpoint.loadCheckpoint?
     saveCheckpoint? := options.checkpoint.saveCheckpoint? }
 trained.printSummary
 ```
 
 Starting from the parsed `--device` and `--seed` flags, the record update adds the optimizer and
-the loss. `TrainOptions.steps` is required, and `samplesPerStep` is the number of dataset items
-whose gradients are averaged before one update. In the surrounding code, we build a bank of token
+the loss. `TrainOptions.steps` is required, `samplesPerStep` is the number of dataset items
+whose gradients are averaged before one update, and `cudaMemorySampleEvery` is the number of steps
+between samples of the CUDA allocator. In the surrounding code, we build a bank of token
 windows from the corpus, report before/after predictions, save checkpoints when requested, and
 sample text from the trained prediction closure.
 
@@ -151,15 +154,9 @@ scripts/lake.sh -Kcuda=true exe torchlean gpt2 --device cuda --tiny-shakespeare 
 
 ## Saving and Reloading A Model
 
-Once we've trained the model, we can save its state for another run. TorchLean's checkpoint
-format stores the shape-indexed state in JSON and preserves the exact IEEE-754 bit patterns.
-
-`gpt2_saved` loads a state pack, checks its checkpoint format and tensor shapes,
-and samples without opening an optimizer. Those checks do not establish architecture identity.
-
-With `--save-checkpoint`, the GPT-2 command writes a checkpoint, and the inference example reloads
-the same shape-indexed state before sampling. If the shape list doesn't match the model, loading
-fails before the weights are used.
+Pass `--save-checkpoint` to save the state as JSON with the exact IEEE bit patterns.
+`gpt2_saved` loads those tensors, checks the file format and shapes, and samples
+without opening an optimizer. Use a checkpoint from the same architecture.
 
 <a id="mamba"></a>
 
@@ -194,7 +191,14 @@ let trainer := Trainer.create model <|
   { runtime with
       optimizer := optim.adam { lr := options.training.lr }
       objective := oneHotCrossEntropy 1 }
-let trained ← trainer.train (Data.fromStream samples) (options.training.trainOptions)
+let trained ← trainer.train
+  (Data.fromStream samples)
+  (options.training.trainOptions
+    (enableLog := false)
+    (logTitle := "Mamba text training")
+    (logNotes := #[Training.deviceNote runtime, s!"windows={options.windows}",
+      Training.cudaMemoryNote runtime options.training.steps
+        options.training.cudaMemorySampleEvery]))
 trained.printSummary
 ```
 

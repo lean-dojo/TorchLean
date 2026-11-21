@@ -46,7 +46,11 @@ def _words(tensor: torch.Tensor) -> list[int]:
     if flat.dtype == torch.bool:
         return [int(item) for item in flat.tolist()]
     mask = (1 << (8 * flat.element_size())) - 1
-    return [word & mask for word in flat.view(_SIGNED[flat.element_size()]).tolist()]
+    # The imaginary part of a conjugate is a view with PyTorch's negative bit, which `view` to
+    # another dtype refuses until it is resolved. Only complex dtypes, none in `DTYPES`, carry the
+    # conjugate bit.
+    signed = flat.resolve_neg().view(_SIGNED[flat.element_size()])
+    return [word & mask for word in signed.tolist()]
 
 
 def _entry(name: str, tensor: object) -> dict:

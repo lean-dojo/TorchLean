@@ -12,7 +12,7 @@ public import TorchLean.Tensor.Layers.MoE
 public import TorchLean.Tensor.Layers.Normalization
 public import TorchLean.Tensor.Layers.Softmax
 public meta import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension
+public import FloatLib.Tactic.Roundoff.Extension
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Rules.Elementwise
 import FloatLib.Floats.Formats.BinaryInterchange.Analysis.Rational
@@ -149,7 +149,7 @@ theorem groupNorm_def [Context α] (x : Tensor α s) (dim : Fin s.rank) (groups 
       let scaled := centered / spread scale
       let meanSquared : Tensor α (grouped.reduce [last] false) :=
         map (Context.divNat · groupSize) (reduce .sum (scaled * scaled) [last] false)
-      let std := Tensor.sqrt (meanSquared + ((regularizer / scale) / scale)) .clampNegative
+      let std := Tensor.sqrt (meanSquared + ((regularizer / scale) / scale))
       let channel := fun t : Tensor α [s.extent dim] => broadcast t s _ (s.broadcastDims_axis dim)
       (reshape (scaled / spread std) s hSize.symm * channel gamma) + channel beta :=
   rfl

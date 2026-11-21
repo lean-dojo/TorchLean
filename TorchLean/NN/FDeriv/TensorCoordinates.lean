@@ -59,7 +59,7 @@ variable {E : Type*} [NormedAddCommGroup E] [NormedSpace ℝ E]
 
 /-- Local smoothness of a tensor is equivalent to local smoothness of every coordinate. -/
 theorem contDiffAt_iff_coordinates {shape : Shape} {n : ℕ∞ω}
-    (f : E → Tensor ℝ shape) (x : E) :
+    {f : E → Tensor ℝ shape} {x : E} :
     ContDiffAt ℝ n f x ↔ ∀ i, ContDiffAt ℝ n (fun y => f y i) x := by
   rw [← (coordinateEquiv shape).comp_contDiffAt_iff, contDiffAt_pi]
   rfl
@@ -68,14 +68,14 @@ theorem contDiffAt_iff_coordinates {shape : Shape} {n : ℕ∞ω}
 @[fun_prop] theorem contDiffAt_coordinate {shape : Shape} {n : ℕ∞ω}
     {f : E → Tensor ℝ shape} {x : E} (hf : ContDiffAt ℝ n f x) (i : shape.Coord) :
     ContDiffAt ℝ n (fun y => f y i) x :=
-  (contDiffAt_iff_coordinates f x).1 hf i
+  contDiffAt_iff_coordinates.1 hf i
 
 /-- An elementwise map needs smoothness only at the current coordinate values. -/
 @[fun_prop] theorem contDiffAt_map {shape : Shape} {n : ℕ∞ω}
     {g : ℝ → ℝ} {f : E → Tensor ℝ shape} {x : E}
     (hg : ∀ i, ContDiffAt ℝ n g (f x i)) (hf : ContDiffAt ℝ n f x) :
     ContDiffAt ℝ n (fun y => Tensor.map g (f y)) x := by
-  apply (contDiffAt_iff_coordinates _ x).2
+  apply contDiffAt_iff_coordinates.2
   intro i
   simpa only [Tensor.map_apply, Function.comp_def] using
     (hg i).comp x (contDiffAt_coordinate hf i)
@@ -84,7 +84,7 @@ theorem contDiffAt_iff_coordinates {shape : Shape} {n : ℕ∞ω}
 @[fun_prop] theorem Rep.contDiffAt_ofFn {shape : Shape} {n : ℕ∞ω}
     {f : E → shape.Coord → ℝ} {x : E} (hf : ∀ i, ContDiffAt ℝ n (fun y => f y i) x) :
     ContDiffAt ℝ n (fun y => Rep.ofFn (f y)) x := by
-  apply (contDiffAt_iff_coordinates _ x).2
+  apply contDiffAt_iff_coordinates.2
   intro i
   simpa only [Rep.get_ofFn] using hf i
 
@@ -94,13 +94,13 @@ theorem contDiffAt_iff_coordinates {shape : Shape} {n : ℕ∞ω}
     (hop : ∀ i, ContDiffAt ℝ n (fun p : ℝ × ℝ => op p.1 p.2) (f x i, g x i))
     (hf : ContDiffAt ℝ n f x) (hg : ContDiffAt ℝ n g x) :
     ContDiffAt ℝ n (fun y => Tensor.zipWith op (f y) (g y)) x := by
-  apply (contDiffAt_iff_coordinates _ x).2
+  apply contDiffAt_iff_coordinates.2
   intro i
   simpa only [Tensor.zipWith_apply, Function.comp_def] using
     (hop i).comp x ((contDiffAt_coordinate hf i).prodMk (contDiffAt_coordinate hg i))
 
 /-- Tensor smoothness is equivalent to smoothness of its finitely many coordinates. -/
-theorem contDiff_iff_coordinates {shape : Shape} {n : ℕ∞ω} (f : E → Tensor ℝ shape) :
+theorem contDiff_iff_coordinates {shape : Shape} {n : ℕ∞ω} {f : E → Tensor ℝ shape} :
     ContDiff ℝ n f ↔ ∀ i, ContDiff ℝ n (fun x => f x i) := by
   simp only [contDiff_iff_contDiffAt, contDiffAt_iff_coordinates]
   exact forall_comm
@@ -109,7 +109,7 @@ theorem contDiff_iff_coordinates {shape : Shape} {n : ℕ∞ω} (f : E → Tenso
 @[fun_prop] theorem contDiff_coordinate {shape : Shape} {n : ℕ∞ω}
     {f : E → Tensor ℝ shape} (hf : ContDiff ℝ n f) (i : shape.Coord) :
     ContDiff ℝ n (fun x => f x i) :=
-  (contDiff_iff_coordinates f).1 hf i
+  contDiff_iff_coordinates.1 hf i
 
 /-- Mapping a smooth scalar function over a smooth tensor preserves its differentiability order. -/
 @[fun_prop] theorem contDiff_map {shape : Shape} {n : ℕ∞ω}

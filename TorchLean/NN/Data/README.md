@@ -1,11 +1,8 @@
 # `TorchLean/NN/Data`
 
 This folder holds the `Data` namespace, in the modules `TorchLean.NN.Data.*`: the constructors
-and file sources for `Trainer.Dataset`, the one supervised-data type of application code:
-
-```lean
-Trainer.Dataset input target
-```
+and file sources for `Trainer.Dataset input target`, the one supervised-data type of application
+code.
 
 The type carries the sample shapes and delays scalar conversion until the trainer picks its
 runtime. `Data.fromTensors`, `Data.fromSamples`, `Data.fromSupervisedSource` and the other
@@ -31,7 +28,9 @@ happens when a sample is requested.
 Fixed-size manual loops can turn that stream into a typed loader:
 
 ```lean
-def loader : Data.Loader Float 32 [features] [targets] :=
+def loader {features targets : Nat}
+    (samples : Data.SampleStream (Sample.Supervised Float [features] [targets])) :
+    Data.Loader Float 32 [features] [targets] :=
   Data.Loader.fromStream samples 32 (shuffle := true) (seed := 7)
 ```
 

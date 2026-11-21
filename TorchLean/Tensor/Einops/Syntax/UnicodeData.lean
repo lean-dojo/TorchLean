@@ -341,6 +341,8 @@ The structural fuel keeps lookup reducible in kernel proofs of the lexer. The pi
 def lookup? (char : Char) : Option Interval :=
   search char.val intervals.size 0 intervals.size
 where
+  /-- Binary search of `intervals` between `lo` and `hi` for the run containing `codepoint`,
+  in at most `fuel` steps. -/
   search (codepoint : UInt32) : (fuel lo hi : Nat) → Option Interval
     | 0, _, _ => none
     | fuel + 1, lo, hi =>

@@ -419,6 +419,8 @@ by semantics.
                   s!"length {packedAxisLength}"
               span }
       else
+        -- One `-1`: the other shapes take `knownTotal`, and the `-1` is what remains divided by
+        -- the product of the known dimensions of its shape.
         let knownTotal :=
           (requestedShapes.map fun requestedShape =>
             if requestedShape.contains (-1) then

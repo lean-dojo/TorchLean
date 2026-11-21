@@ -33,8 +33,9 @@ The reductions are folds we wrote by hand. At a tie of `-0` and `0` torch 2.8.0 
 two, the first in `torch.amax` (`[-0, 0]` gives `-0`) and the last in a full `torch.max` (`[0, -0]`
 gives `-0`), and we give `0` in both orders. Empty fibers sum to `0` and multiply to `1` in both.
 Where `torch.amax` raises on one, `reduce .max` and `.min` take a proof `h` that the listed axes are
-nonempty. The capture test `test_reductions_are_one_node` in `scripts/checks/test_ir_capture.py`
-compares `torch.amax`, `torch.amin`, `sum`, `prod` and `mean` over several axes with eager PyTorch.
+nonempty. The capture test `test_reductions_are_one_node` in
+`scripts/checks/ir_capture_pytorch_operators.py` compares `torch.amax`, `torch.amin`, `sum`,
+`prod` and `mean` over several axes with eager PyTorch.
 
 * `Shape.sortedAxes`, `Shape.selectAxes`, `Shape.keepAxes` and `Shape.reduce` are the listed axes,
   their shape, the shape with extent one along them, and the output shape.
@@ -605,6 +606,14 @@ theorem fin_foldl_eq_coordinates {δ : Type} (n : Nat) (step : δ → Fin n → 
   apply Fin.ext
   simp [Shape.Coord.unlinearizeFast_eq, Shape.Coord.unlinearizeFast]
   rfl
+
+/-- A left fold over `Tensor.ofFn f` is the fold of `f` over `List.finRange n`. -/
+theorem foldl_ofFn {β γ : Type} [Storage β] {n : Nat} (step : γ → β → γ) (init : γ)
+    (f : Fin n → β) :
+    Tensor.foldl step init (Tensor.ofFn f) =
+      (List.finRange n).foldl (fun acc i => step acc (f i)) init := by
+  rw [Tensor.ofFn, Rep.ofFn_eq_map_coordinates, Rep.foldl_map,
+    ← Fin.foldl_eq_foldl_finRange, fin_foldl_eq_coordinates]
 
 /-! ## The sum of every entry -/
 

@@ -147,8 +147,8 @@ def dtypeCode : LibTorch.Dtype → Nat
 /-- Release every device buffer owned by an Adam state map. -/
 def releaseAdam (state : CUDAAdamState) : IO Unit := do
   for (_, entry) in state.toList do
-    releaseCUDABuffer entry.m
-    releaseCUDABuffer entry.v
+    LibTorch.Buffer.release entry.m
+    LibTorch.Buffer.release entry.v
 
 /--
 Bind an in-memory moment map to one optimizer configuration.
@@ -325,7 +325,7 @@ def readCheckpoint
       let v ← try
         LibTorch.Buffer.ofBytesIO vBytes dtype
       catch error =>
-        releaseCUDABuffer m
+        LibTorch.Buffer.release m
         throw error
       unless powers.contains step do
         powers := powers.insert step

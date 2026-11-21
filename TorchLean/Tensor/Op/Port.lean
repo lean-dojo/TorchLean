@@ -42,6 +42,11 @@ exist for value ports only, and a frozen, detached, index, Boolean or integer po
 `Flags` holds one Boolean per input, the runtime `requiresGrad` of each parent, and `Grads` the
 contributions a prepared pullback sends: `some` for an active value port, `none` for an inactive
 one. `Grads.mask` keeps the contributions of the inputs whose flag is set.
+
+When the inputs of an operator are a mapped list `l.map g`, as for `Op.cat` and `Op.special`, the
+inputs by position form a family over `Fin l.length`. `TProd.parts` reads a tuple of `List.TProd`
+over `l.map g` as that family, `TProd.ofParts` builds the tuple from it, and `TProd.parts_ofParts`
+says that the first undoes the second.
 -/
 
 @[expose] public section
@@ -262,5 +267,30 @@ def mask {α : Type} [Storage α] : (ps : List Port) → Flags ps → Grads α p
   | p :: ps, (active, flags), (g, gs) => (p.mask active g, mask ps flags gs)
 
 end Grads
+
+namespace TProd
+
+variable {ι κ : Type*} {β : κ → Type*} (g : ι → κ)
+
+/-- The components of a tuple over `l.map g`, by position in `l`. -/
+def parts : (l : List ι) → List.TProd β (l.map g) → (i : Fin l.length) → β (g (l.get i))
+  | [], _, i => i.elim0
+  | _ :: _, (x, _), ⟨0, _⟩ => x
+  | _ :: rest, (_, xs), ⟨k + 1, h⟩ => parts rest xs ⟨k, Nat.lt_of_succ_lt_succ h⟩
+
+/-- The tuple over `l.map g` whose component at position `i` of `l` is `xs i`. -/
+def ofParts : (l : List ι) → ((i : Fin l.length) → β (g (l.get i))) → List.TProd β (l.map g)
+  | [], _ => PUnit.unit
+  | _ :: rest, xs => (xs ⟨0, Nat.zero_lt_succ _⟩, ofParts rest fun i => xs i.succ)
+
+/-- The components of the tuple built from a family are the family. -/
+@[simp] theorem parts_ofParts : (l : List ι) → (xs : (i : Fin l.length) → β (g (l.get i))) →
+    parts g l (ofParts g l xs) = xs
+  | [], _ => funext fun i => i.elim0
+  | _ :: rest, xs => funext fun
+    | ⟨0, _⟩ => rfl
+    | ⟨k + 1, hk⟩ => congrFun (parts_ofParts rest fun i => xs i.succ) ⟨k, Nat.lt_of_succ_lt_succ hk⟩
+
+end TProd
 
 end TorchLean

@@ -33,14 +33,15 @@ compensated summation, the last method the paper examines, falls outside it and 
 For a schedule that stays finite, we bound the distance to the exact real sum by an enclosure
 whose parameters depend only on:
 
-- `n` (the number of leaves), and
+- the depth `d` of the tree, at most `n - 1` for `n` leaves, and
 - $A=\sum_i|\mathtt{leaf}_i|$ (a scale factor).
 
-The bound uses the geometric factor $(1+u)^{n-1}-1$, not the rational $\gamma_k$ bound, with the
-format's unit roundoff `u = Model.unitRoundoffAt format` (`2⁻²⁴` for binary32). A tree with $n$
-leaves performs `t.nodeCount = n - 1` additions, so the statements write the factor as
-`(1 + u) ^ t.nodeCount - 1`. It comes from FloatLib's
-`Model.ReductionTree.abs_toReal_eval_sub_sum_le_geometric`, which bounds each addition on the
+`evalSum_enclosure_depth` bounds it by the geometric factor $(1+u)^d-1$, not the rational
+$\gamma_k$ bound, with the format's unit roundoff `u = Model.unitRoundoffAt format` (`2⁻²⁴` for
+binary32). A tree with $n$ leaves performs `t.nodeCount = n - 1` additions, so `evalSum_enclosure`,
+`SumResult.enclosure` and `DotResult.enclosure`, which hold for every tree of the leaves, write
+the factor as `(1 + u) ^ t.nodeCount - 1`. The bound comes from FloatLib's
+`Model.ReductionTree.abs_toReal_eval_sub_sum_le_depth`, which bounds each addition on the
 tree's own representable operands. The enclosure therefore covers subnormal sums under the
 finite-execution hypothesis alone. These are mathematical enclosures, not native-kernel checks.
 
@@ -213,23 +214,34 @@ theorem toReal_evalSum
   rw [toModel_evalSum]
   exact Model.ReductionTree.toReal_eval (t.map toModel) hformat (finiteEval_map_toModel t finite)
 
-/-- A finite sum has the usual unit-roundoff enclosure of its format, including subnormal sums.
+/-- A finite sum has the unit-roundoff enclosure of its format in the depth of its tree, including
+subnormal sums.
 
 FloatLib bounds addition on this tree's own representable operands, so the result needs no
 rounding assumption beyond finiteness.
 -/
+theorem evalSum_enclosure_depth
+    [cap : ExecFloat.Add (Configured.Family format code plan)]
+    [ExecFloat.Capability.HasSpec cap Configured.Spec.add] (t : ReductionTree Value)
+    (finite : FiniteSum t) (hformat : format.isIEEE = true := by ieee_format) :
+    |(toModel (evalSum t)).toReal - exactSum t| ≤
+      ((1 + Model.unitRoundoffAt format) ^ t.depth - 1) * sumAbs t := by
+  have bound := Model.ReductionTree.abs_toReal_eval_sub_sum_le_depth
+    (t.map toModel) hformat (finiteEval_map_toModel t finite)
+  rw [← toModel_evalSum t, ReductionTree.leaves_map, List.map_map,
+    ← ReductionTree.eval_add_eq_sum, ReductionTree.depth_map, ReductionTree.sumAbs,
+    ReductionTree.eval_map] at bound
+  exact bound
+
+/-- A finite sum has the unit-roundoff enclosure of its format in its number of additions. -/
 theorem evalSum_enclosure
     [cap : ExecFloat.Add (Configured.Family format code plan)]
     [ExecFloat.Capability.HasSpec cap Configured.Spec.add] (t : ReductionTree Value)
     (finite : FiniteSum t) (hformat : format.isIEEE = true := by ieee_format) :
     |(toModel (evalSum t)).toReal - exactSum t| ≤
-      ((1 + Model.unitRoundoffAt format) ^ t.nodeCount - 1) * sumAbs t := by
-  have bound := Model.ReductionTree.abs_toReal_eval_sub_sum_le_geometric
-    (t.map toModel) hformat (finiteEval_map_toModel t finite)
-  rw [← toModel_evalSum t, ReductionTree.leaves_map, List.map_map,
-    ← ReductionTree.eval_add_eq_sum, nodeCount_map, ReductionTree.sumAbs,
-    ReductionTree.eval_map] at bound
-  exact bound
+      ((1 + Model.unitRoundoffAt format) ^ t.nodeCount - 1) * sumAbs t :=
+  (evalSum_enclosure_depth t finite hformat).trans
+    (t.depth_factor_le _ _ (Model.unitRoundoffAt_pos format).le)
 
 /-- Every finite sum schedule has the tree-local unit-roundoff enclosure of its format. -/
 theorem SumResult.enclosure

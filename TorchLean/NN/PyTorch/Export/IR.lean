@@ -56,7 +56,10 @@ the operator gives `9`.
 
 The rows don't match `Graph.eval` everywhere. Sums, means, matrix products, contractions,
 convolutions and cumulative sums and products are PyTorch's own, so their rounding can differ from
-`Graph.eval`'s left folds. At a NaN operand `torch.maximum` and `torch.minimum` give the whole
+`Graph.eval`'s left folds. A reduction, mean, matrix product, scaled matrix product, contraction,
+pool or cumulative sum, product, maximum or minimum in an order other than the left fold
+(`Tensor.ReduceOrder`) is refused, as PyTorch fixes no order. At a NaN operand `torch.maximum` and
+`torch.minimum` give the whole
 gradient to both operands, where the operators give each half. At a NaN extremum `torch.amax` and
 `torch.amin` give every entry of the fiber a NaN gradient, where the reductions split it among the
 NaN entries. At an infinite or NaN upstream gradient they give a NaN gradient to the entries that
@@ -67,15 +70,15 @@ differ. A scaled product is the product, then the scale. When a product or parti
 inputs overflows or is subnormal, a product of nonzero factors rounds to zero or a nonzero term is
 absorbed, `Graph.eval` rounds the exact coefficients once (`scaledProductsSlice`) and the emitted
 product doesn't. The gradient of a pad's value is autograd's sum of the upstream gradient at the
-padding entries, in its own order. The emitted gradient of `abs` is torch's `grad * x.sgn()`,
-which at seed `1` is `+0` at `-0` and at a NaN, where the operator's pullback sends `-0` and a
-NaN. A replacing scatter is `index_put` with `accumulate=False`. Where several updates land on
-one entry, torch leaves the written value unspecified and sends the upstream gradient to each
-of them, while the operator keeps the last update and sends the gradient only to it. The emitted
-mean squared error is `mse_loss`, whose sum is PyTorch's own, and when every difference `d` is
-finite but the sum of their squares overflows, `Tensor.meanSquaredError` adds the terms
-`d * (d / n)` over the `n` entries instead: at the binary64 differences `[2e154, 0, 0, 0]` it gives
-`1e308`, where `mse_loss` gives `+∞`.
+padding entries, in its own order. The emitted gradient of `abs` is torch's `grad * x.sgn()`, which
+at seed `1` is `+0` at `-0` and at a NaN, where the operator's pullback sends `-0` and a NaN. A
+replacing scatter is `index_put` with `accumulate=False`. Where several updates land on one entry,
+torch leaves the written value unspecified and sends the upstream gradient to each of them, while
+the operator keeps the last update and sends the gradient only to it. The emitted mean squared error
+is `mse_loss`, whose sum is PyTorch's own, and when every difference `d` is finite but the sum of
+their squares overflows, `Tensor.meanSquaredError` adds the terms `d * (d / n)` over the `n` entries
+instead: at the binary64 differences `[2e154, 0, 0, 0]` it gives `1e308`, where `mse_loss` gives
+`+∞`.
 
 Emission fails with an `Except String` message on a graph without an output or without input `0`,
 or with an output reference to no node output. It also fails on another graph input, a missing
@@ -242,6 +245,19 @@ private def poolFunction? : Tensor.PoolOp → Nat → Option (String × String)
       else none
   | _, _ => none
 
+/-- The PyTorch call of the derivative of orders `orders` of the special function `f` at the
+arguments `xs`: `torch.special`'s function at orders all `0`, `torch.special.polygamma` for a
+derivative of `digamma`, and otherwise why there is none (`lax.betainc` has no PyTorch function). -/
+private def specialCall {n : Nat} (f : SpecialFn n) (orders : List Nat) (xs : List String) :
+    Except String String :=
+  match n, f, orders with
+  | _, .betainc, _ => .error "betainc has no PyTorch translation"
+  | _, .digamma, [k + 1] => .ok s!"torch.special.polygamma({k + 1}, {", ".intercalate xs})"
+  | _, f, orders =>
+      if orders.all (· == 0) then .ok s!"torch.special.{f.torchName}({", ".intercalate xs})"
+      else .error s!"PyTorch has no function for the derivative of orders {orders} of \
+        {f.torchName}"
+
 /-- The `forward` lines of operator node `id`, whose inputs are the Python expressions `xs` in port
 order, where `literal k` is input `k` written as a literal when it is a scalar constant and `dtype`
 is the Python dtype of values: one row per `TorchLean.Op` constructor, a call of one PyTorch
@@ -296,6 +312,10 @@ private def opLines (id : Nat) (dtype : String) (literal : Nat → Option String
   | ⟨_, _, .asinh⟩ => pure (call "torch.asinh")
   | ⟨_, _, .acosh⟩ => pure (call "torch.acosh")
   | ⟨_, _, .atanh⟩ => pure (call "torch.atanh")
+  | ⟨_, _, .special orders f⟩ =>
+      (match specialCall f orders xs.toList with
+        | .ok rhs => pure (line rhs)
+        | .error what => refuse what)
   | ⟨_, _, .add⟩ => pure (call "torch.add")
   | ⟨_, _, .sub⟩ => pure (call "torch.sub")
   | ⟨_, _, .mul⟩ => pure (call "torch.mul")
@@ -354,7 +374,7 @@ private def opLines (id : Nat) (dtype : String) (literal : Nat → Option String
   | ⟨_, _, .cat d _⟩ =>
       if xs.isEmpty then refuse "a concatenation of no inputs has no PyTorch translation"
       else pure (line s!"torch.cat([{", ".intercalate xs.toList}], dim={d.val})")
-  | ⟨_, _, .matmul ..⟩ => pure (call "torch.matmul")
+  | ⟨_, _, .matmul (order := .leftFold) ..⟩ => pure (call "torch.matmul")
   | ⟨_, _, .mseLoss (s := s)⟩ =>
       -- `Tensor.meanSquaredError` divides an empty input's sum `+0` by one, where `mse_loss` gives
       -- a NaN.
@@ -395,7 +415,7 @@ private def opLines (id : Nat) (dtype : String) (literal : Nat → Option String
   | ⟨_, _, .layerNorm (embedDim := e) (lead := lead) ..⟩ =>
       -- The specification's formula (`Tensor.layerNorm`): each centred row is divided by its scale,
       -- the maximum of its largest magnitude and `sqrt |epsilon|`, before it is squared. The
-      -- variance of the scaled row centres it again.
+      -- variance of the scaled row centres it again, and the root takes the sum as it stands.
       let d := lead.length
       let view := ", ".intercalate ((List.range (d + 1)).map fun a =>
         if a = d then toString e else "1")
@@ -408,8 +428,8 @@ private def opLines (id : Nat) (dtype : String) (literal : Nat → Option String
         indent 4 s!"_u{id} = _c{id} / _s{id}",
         indent 4 s!"_w{id} = _u{id} - _u{id}.mean(dim=({d},), keepdim=True)",
         indent 4 s!"_v{id} = (_w{id} * _w{id}).mean(dim=({d},), keepdim=True)",
-        indent 4 <| s!"{out} = _u{id} / torch.sqrt(torch.clamp(_v{id} + _e{id} / _s{id} / " ++
-          s!"_s{id}, min=0)) * {x 1}.reshape(({view},)) + {x 2}.reshape(({view},))"]
+        indent 4 <| s!"{out} = _u{id} / torch.sqrt(_v{id} + _e{id} / _s{id} / _s{id}) * " ++
+          s!"{x 1}.reshape(({view},)) + {x 2}.reshape(({view},))"]
   | ⟨_, _, .batchNormRunning (s := s) d⟩ =>
       pure #[indent 4 s!"_x = {x 0}",
         indent 4 s!"_view = [1] * {s.rank}",
@@ -419,10 +439,7 @@ private def opLines (id : Nat) (dtype : String) (literal : Nat → Option String
         indent 4 s!"_gamma = {x 1}.reshape(_view)",
         indent 4 s!"_beta = {x 2}.reshape(_view)",
         indent 4 s!"_eps = {(literal 5).getD (x 5)}",
-        -- `Tensor.batchNorm`: the variance clamped at zero, plus epsilon, clamped at zero
-        -- again under the root, each clamp the comparison `v <= 0` (it maps -0 to +0).
-        indent 4 "_var = torch.where(_var <= 0, torch.zeros_like(_var), _var) + _eps",
-        indent 4 "_std = torch.sqrt(torch.where(_var <= 0, torch.zeros_like(_var), _var))",
+        indent 4 "_std = torch.sqrt(_var + _eps)",
         indent 4 s!"{out} = (_x - _mean) / _std * _gamma + _beta"]
   | ⟨_, _, .conv (s := s) (k := k) (r := r) dims stride padLow padHigh dilation groups
       (lead := lead) ..⟩ =>
@@ -650,20 +667,26 @@ private def opLines (id : Nat) (dtype : String) (literal : Nat → Option String
           s!"_i{id}.narrow({d.val}, 0, {k})"]
   | ⟨_, _, .cummax d⟩ => pure (pair s!"torch.cummax({x 0}, dim={d.val})")
   | ⟨_, _, .cummin d⟩ => pure (pair s!"torch.cummin({x 0}, dim={d.val})")
+  | ⟨_, _, .frexp⟩ => pure (pair s!"torch.frexp({x 0})")
   | ⟨_, _, .randUniform ..⟩ => pure (line s!"self.draws_{id}")
   | ⟨_, _, .bernoulliMask ..⟩ =>
       -- `Random.keepBit`: zero unless the probability is above zero, one from one up, and
       -- otherwise one where the probability is above the draw.
       pure (line <| s!"torch.where({x 0} > 0, torch.where({x 0} < 1, " ++
         s!"({x 0} > self.draws_{id}).to({dtype}), 1), 0)")
-  | ⟨_, _, .scaledMatmul ..⟩ =>
+  | ⟨_, _, .scaledMatmul (order := .leftFold) ..⟩ =>
       -- The product, then the scale, as in the reference `scaledProductsSlice`. The reference
       -- sums each dot product left to right (`torch.matmul` fixes no order) and, on finite
       -- inputs, replays the exact coefficients when an intermediate leaves the range or a nonzero
       -- product is absorbed by the running sum. This line does not replay.
       pure (line s!"torch.matmul({x 0}, {x 1}) * {x 2}")
   | ⟨_, _, .custom name ..⟩ => refuse s!"custom {name} has no Python body translation"
-  | o' => refuse s!"{(Op.encode o').tag} has no PyTorch translation"
+  | o' =>
+      let wire := Op.encode o'
+      if wire.fields.any (fun | .order order => order != .leftFold | _ => false) then
+        refuse s!"{wire.tag} in an order other than the left fold has no PyTorch translation, \
+          as PyTorch fixes no order"
+      else refuse s!"{wire.tag} has no PyTorch translation"
 
 /-- The literal of input `k` of a node reading `refs`, when it is a scalar constant. -/
 private def scalarArg (g : Graph) (P : Payload Float) (refs : Array Ref) (k : Nat) :
@@ -739,6 +762,8 @@ def emit (imported : IR.Imported Float) (options : Options := {}) : Except Strin
     if !options.includeTrainingSkeleton then
       #[]
     else
+      -- A graph ending in an MSE loss trains on its output; any other graph is fitted to a
+      -- target `y` by MSE.
       let outIsLoss : Bool :=
         match g.nodes[output.node]? with
         | some (.op ⟨_, _, .mseLoss⟩ _) => true

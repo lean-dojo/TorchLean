@@ -40,6 +40,8 @@ open Verso.Genre.Manual.InlineLean
 open TorchLean Arithmetic Backend.Device Trainer.Objective
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: the runtime configuration and flags of a model run. -/
+
 #doc (Manual) "Choosing How A Model Runs" =>
 %%%
 tag := "run-configuration"
@@ -54,8 +56,9 @@ $$`F_\theta:[2]\to[1]`
 Its type stays `[2] → [1]` whether it runs on the CPU, with FloatLib's bit-level binary32, or with
 LibTorch's CUDA operations. Every run records the same autograd tape, and the device only chooses
 who executes each operation. Holding the architecture, seed, and data fixed lets us compare these
-choices on the same training problem. Each transcript below records the binary's output on the
-machine used for this guide, and the embedded Lean comparisons also run when the page is built.
+choices on the same training problem. The CPU, IEEE, and CUDA transcripts record the binary's
+output on the machine used for the guide, and the embedded Lean comparisons also run during the
+build.
 
 # Runtime Configuration
 
@@ -83,8 +86,9 @@ the computation:
 :::
 
 Changing the device selects implementations of the model's operations. Changing train or evaluation
-mode can change the operations' behavior, as dropout will show below. Recording both choices is
-necessary to distinguish a provider comparison from a comparison of different forward computations.
+mode can change the operations' behavior; the dropout experiment under *Train And Evaluation Mode*
+makes that difference visible. Recording both choices is necessary to distinguish a provider
+comparison from a comparison of different forward computations.
 
 ```lean (name := runArith)
 -- The dispatcher vocabulary is broader than the trainer's
@@ -343,8 +347,8 @@ selections.
 With the tape you can inspect provider choices and use the maintained CUDA runtime, and a manually
 assembled eager session can record a different operation sequence on each call. But the model
 frontend hides tensor elements behind `Function`, so the tape alone doesn't enable arbitrary
-tensor-dependent Lean branches. *Dynamic Control Flow And Typed Graphs* below explains this
-frontend boundary.
+tensor-dependent Lean branches. *Dynamic Control Flow And Typed Graphs* explains this frontend
+boundary directly.
 
 There are three different loss observations in this short run. The initial `0.629263` is an average
 over the 25 training examples. At `step 0`, the loss `0.330237` belongs to the example used for
@@ -500,6 +504,10 @@ its active branch near zero. To investigate a discrepancy, compare the inputs an
 first differing operation before attributing the final loss difference to the optimizer.
 
 # Executable Binary32 Arithmetic
+
+
+To study what the arithmetic itself does, keep the model, seed, and device fixed.
+The `ieee` setting gives us a binary32 reference run whose operations we can inspect.
 
 ```terminal
 # Use executable binary32 arithmetic for the same short CPU
@@ -726,9 +734,10 @@ checks their agreement without requiring a separate symbolic derivative
 {Informal.citep baydin2018}[]. Retaining the graph lets all three calls use the same recorded
 operations.
 
-Two lifetimes to keep straight. `nn.Sequential.lowerToTypedGraph` hands you a graph that lives as
-long as the reference does. An eager session instead records one tape per recording phase, and
-`resetTape` starts a fresh one. When the graph itself must survive across calls, lower it.
+The typed graph and eager tape have different lifetimes. `nn.Sequential.lowerToTypedGraph` returns
+a graph that lives as long as the reference does. An eager session instead records one tape per
+recording phase, and `resetTape` starts a fresh one. When the graph itself must survive across
+calls, lower it.
 
 This example runs in `Float`, so it isn't another execution of the trainer's binary32 comparison,
 despite the similar printed initial prediction.
@@ -1035,6 +1044,10 @@ Record the accepted configuration and actual provider so that a requested device
 evidence of where an operation ran.
 
 # Choosing A Configuration
+
+Choose the configuration from the question the run should answer. CPU supplies the ordinary
+training baseline. To investigate a numerical discrepancy, keep the input and seed fixed and use
+the IEEE reference.
 
 :::table +header
 *

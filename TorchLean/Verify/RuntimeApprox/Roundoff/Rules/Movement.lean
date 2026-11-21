@@ -7,7 +7,7 @@ module
 
 public import TorchLean.Tensor.Movement
 public meta import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension
+public import FloatLib.Tactic.Roundoff.Extension
 
 /-!
 # General data movement for `roundoff`

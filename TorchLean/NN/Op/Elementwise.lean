@@ -13,14 +13,14 @@ public import TorchLean.Tensor.Elementwise.Real
 /-!
 # Derivatives of interpolation, fused multiply-add, the Euclidean norm, the roots and GELU
 
-Certificates that the stored backward of `Op.lerp`, `Op.addcmul`, `Op.addcdiv`, `Op.hypot`,
-`Op.cbrt`, `Op.sqrt`, `Op.rsqrt` and `Op.gelu` is the adjoint of the Fréchet derivative of the real
-forward.
-Over `ℝ` the first five forwards are `a + w (b - a)`, `x + v a b`, `x + v (a / b)`, `√(a² + b²)`
-and `∛x` at every entry. We register these forms with `@[op_deriv_simps]`, and `op_deriv` proves
-the certificates from them.
+Certificates that the stored backward of `Op.lerp`, `Op.addcmul`, `Op.fma`, `Op.addcdiv`,
+`Op.hypot`, `Op.cbrt`, `Op.sqrt`, `Op.rsqrt` and `Op.gelu` is the adjoint of the Fréchet derivative
+of the real forward.
+Over `ℝ` the first six forwards are `a + w (b - a)`, `x + v a b`, `x y + z`, `x + v (a / b)`,
+`√(a² + b²)` and `∛x` at every entry. We register these forms with `@[op_deriv_simps]`, and
+`op_deriv` proves the certificates from them.
 
-`lerp` and `addcmul` are polynomial, so their certificates hold at every input. `addcdiv` is
+`lerp`, `addcmul` and `fma` are polynomial, so their certificates hold at every input. `addcdiv` is
 differentiable in its three inputs exactly where `v = 0` or every entry of the divisor is nonzero,
 in its first input and in its second input alone at every input, and in its divisor alone exactly
 where `v = 0` or each coordinate has a nonzero divisor or a zero numerator. Its stored pullbacks
@@ -68,6 +68,13 @@ variable {s : Shape}
   Rep.ext fun c => by
     simp only [addcmul_apply, Context.addcmul, Tensor.add_apply, Rep.smul_apply, Tensor.mul_apply,
       smul_eq_mul, mul_assoc]
+
+/-- Over the reals, the fused multiply-add of each triple of entries is `x * y + z`. -/
+@[op_deriv_simps] theorem zipWith3_fma_real (x y z : Tensor ℝ s) :
+    zipWith3 Fma.fma x y z = x * y + z :=
+  Rep.ext fun c => by
+    simp only [zipWith3_apply, Tensor.add_apply, Tensor.mul_apply]
+    rfl
 
 /-- Over the reals, `addcdiv x a b v` is `x + v • (a / b)`. -/
 @[op_deriv_simps] theorem addcdiv_real (x a b : Tensor ℝ s) (v : ℝ) :
@@ -208,6 +215,26 @@ theorem addcmul_backward_eq_adjoint (x a b : Tensor ℝ s) (value : Tensor ℝ [
           (p.fst, p.snd.fst, p.snd.snd, value, ())).1)
         (WithLp.toLp 2 (x, WithLp.toLp 2 (a, b)))).adjoint δ := by
   op_deriv [Tensor.addcmulBackward]
+
+/-- The real forward of `Op.fma` is differentiable in its three inputs at every input, and its
+stored backward is the adjoint of the derivative. -/
+@[op_cert TorchLean.Op.fma derivative 0 1 2]
+theorem fma_backward_eq_adjoint (x y z δ : Tensor ℝ s) :
+    DifferentiableAt ℝ (fun p : WithLp 2 (Tensor ℝ s × WithLp 2 (Tensor ℝ s × Tensor ℝ s)) =>
+        (((Op.fma (s := s)).rule? (α := ℝ) |>.get rfl).forward
+          (p.fst, p.snd.fst, p.snd.snd, ())).1)
+      (WithLp.toLp 2 (x, WithLp.toLp 2 (y, z))) ∧
+    WithLp.toLp 2
+        ((((Op.fma (s := s)).rule? (α := ℝ) |>.get rfl).backward (x, y, z, ()) (δ, ())).1,
+        WithLp.toLp 2
+          ((((Op.fma (s := s)).rule? (α := ℝ) |>.get rfl).backward (x, y, z, ()) (δ, ())).2.1,
+          (((Op.fma (s := s)).rule? (α := ℝ) |>.get rfl).backward (x, y, z, ()) (δ, ())).2.2.1)) =
+      (fderiv ℝ (fun p : WithLp 2 (Tensor ℝ s × WithLp 2 (Tensor ℝ s × Tensor ℝ s)) =>
+        (((Op.fma (s := s)).rule? (α := ℝ) |>.get rfl).forward
+          (p.fst, p.snd.fst, p.snd.snd, ())).1)
+        (WithLp.toLp 2 (x, WithLp.toLp 2 (y, z)))).adjoint δ := by
+  have e : (Op.fma (s := s)).rule? (α := ℝ) = _ := Op.rule?_fma (α := ℝ) (s := s)
+  op_deriv [e]
 
 /-- Where `value` is zero or every entry of the divisor `b` is nonzero, the real forward of
 `Op.addcdiv` is differentiable in its three tensor inputs and its stored backward is the adjoint

@@ -8,9 +8,8 @@ module
 
 import TorchLeanExamples.Models.RL.GridWorld.Env
 import TorchLean.Verify.CROWN.Op.ExecCROWN
-meta import TorchLean.Verify.CROWN.Op.ExecCROWN
+meta import TorchLean.Verify.CROWN.Op.ExecCROWN -- shake: keep
 import TorchLean.NN.Tape.Apply
-import TorchLean.NN.RL.Transition
 import TorchLean.NN.Training
 import TorchLean.NN.Widget.IR.ExecutionTrace
 import TorchLean.NN.Widget.IR.Rewrite

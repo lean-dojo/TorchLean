@@ -52,6 +52,7 @@ LEAN_EXPORT lean_obj_res torchlean_float_array_append_slice(
   }
   size_t needed = output_size + length;
 
+  // A uniquely owned output with room is extended in place; otherwise copy into a larger array.
   if (lean_is_exclusive(output) &&
       lean_sarray_capacity(output) >= needed) {
     double *output_data = lean_float_array_cptr(output);

@@ -47,7 +47,7 @@ that metric and before advancing the seed. `evaluationEvery = 0` disables evalua
 early stopping.
 -/
 def train {α : Type} [Storage α] [Context α] {observation : Shape} {actions horizon : Nat}
-    [NeZero actions] [NeZero horizon] (gamma lam : α) (config : TrainConfig)
+    (gamma lam : α) (config : TrainConfig)
     (collect : Nat → Nat → Nat → IO (Rollout α observation actions horizon × Nat))
     (updateBatch : TrainingBatch α observation actions horizon → IO Unit)
     (evaluate : Nat → IO (Float × Bool))

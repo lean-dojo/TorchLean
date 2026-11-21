@@ -6,9 +6,10 @@ produces typed datasets.
 
 For the API design and source types, read `TorchLean/NN/Data/README.md`.
 
-## Start Here
+## A Small Local Run
 
-Generate the small local fixtures and run all three loader commands:
+To see both sides of the data boundary without downloading a dataset, generate the local fixtures
+and run the three loader commands:
 
 ```bash
 python3 TorchLeanExamples/Data/generate_small_data.py

@@ -183,7 +183,7 @@ def CROWN.Graph.AlphaOK (alpha : Array (Option (FlatTensor ℝ))) : Prop :=
 /-- The box with endpoints `lo` and `hi` encloses the entries of `x` (`RowEncloses`) exactly when
 every coordinate of `x` lies between those of `lo` and `hi`. -/
 theorem CROWN.Graph.encloses_iff_getScalar {n : Nat}
-    (lo hi x : Tensor ℝ [n]) :
+    {lo hi x : Tensor ℝ [n]} :
     RowEncloses { dim := n, lo := lo, hi := hi } n (fun i => getAtOrZero x [i]) ↔
       ∀ i : Fin n, getScalar lo i ≤ getScalar x i ∧ getScalar x i ≤ getScalar hi i := by
   rw [Directed.rowEncloses_iff]
@@ -922,8 +922,8 @@ theorem Graph.alphaRelax_getScalar_bounds {inDim n : Nat} (lo hi αt z : Tensor 
         getScalar (Linear.forward (α := ℝ)
           (ReLU.propagateAffine (α := ℝ) (ReLU.relaxVector (α := ℝ) lo hi)
             xHi) x') i := by
-  obtain ⟨hzLo, hzHi⟩ := (encloses_iff_getScalar _ _ _).1 hzAff i
-  obtain ⟨hzIlo, hzIhi⟩ := (encloses_iff_getScalar _ _ _).1 hzIbp i
+  obtain ⟨hzLo, hzHi⟩ := encloses_iff_getScalar.1 hzAff i
+  obtain ⟨hzIlo, hzIhi⟩ := encloses_iff_getScalar.1 hzIbp i
   simp only [Linear.forward_propagateAffine, getScalar_alphaRelaxLowerVec,
     ReLU.getScalar_relaxVector, Tensor.relu, Tensor.getScalar_map]
   exact ⟨alphaRelaxLowerScalar_sound_of_le _ _ _ _ _ hzIlo hzIhi (hαrange i).1 (hαrange i).2 hzLo,
@@ -963,7 +963,7 @@ theorem Graph.enclosesAtInput_relu_propagate {ctx : AffineCtx} {x : Tensor ℝ [
   refine ⟨hinDim, ?_⟩
   obtain ⟨n, v⟩ := vp
   obtain rfl : preB.dim = n := hdimIbp
-  have hr := (encloses_iff_getScalar (n := preB.dim) _ _ _).2 fun i =>
+  have hr := (encloses_iff_getScalar (n := preB.dim)).2 fun i =>
     alphaRelax_getScalar_bounds preB.lo preB.hi αt _ _ _ _ hαrange hzAff hzIbp i
   exact hr
 
@@ -1011,8 +1011,8 @@ theorem phaseRelax_getScalar_bounds {n : Nat}
         Activation.relu (α := ℝ) (getScalar z i) ∧
       Activation.relu (α := ℝ) (getScalar z i) ≤
         (getScalar relaxHi i).slope * getScalar uAff i + (getScalar relaxHi i).bias := by
-  obtain ⟨hzLo, hzHi⟩ := (encloses_iff_getScalar (n := n) lAff uAff z).1 hzAff i
-  obtain ⟨hzIlo, hzIhi⟩ := (encloses_iff_getScalar (n := n) lo hi z).1 hzIbp i
+  obtain ⟨hzLo, hzHi⟩ := (encloses_iff_getScalar (lo := lAff) (hi := uAff) (x := z)).1 hzAff i
+  obtain ⟨hzIlo, hzIhi⟩ := (encloses_iff_getScalar (lo := lo) (hi := hi) (x := z)).1 hzIbp i
   obtain ⟨ph, hcons, hrHi, hrLo⟩ :=
     (phaseRelaxVec?_some_getScalar lo hi αt phases relaxLo relaxHi hrelax).2 i
   obtain ⟨hai0, hai1⟩ := hαrange i
@@ -1056,7 +1056,7 @@ theorem encloses_relu_propagateAffine {inDim n : Nat}
           (CROWN.ReLU.propagateAffine (α := ℝ)
             (inDim := inDim) (hidDim := n) relaxHi xHi) x' }
       n fun j => getAtOrZero (Tensor.relu (α := ℝ) z) [j] := by
-  refine (encloses_iff_getScalar (n := n) _ _ _).2 ?_
+  refine (encloses_iff_getScalar (n := n)).2 ?_
   intro i
   rw [Linear.forward_propagateAffine, Linear.forward_propagateAffine,
     Tensor.relu, Tensor.getScalar_map]

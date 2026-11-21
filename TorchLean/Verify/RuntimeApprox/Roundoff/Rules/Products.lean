@@ -8,8 +8,10 @@ module
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Recovery
 public import TorchLean.Tensor.ConfiguredBinary
 public import TorchLean.Tensor.Layers.Attention
+public import TorchLean.Tensor.Layers.Attention.Order
+public import TorchLean.Verify.RuntimeApprox.Roundoff.Rules.ReduceOrder
 public meta import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension
+public import FloatLib.Tactic.Roundoff.Extension
 
 /-!
 # Scaled products for `roundoff`
@@ -24,6 +26,13 @@ inputs' values rounded once, stated absolutely and as a mixed error. The exact s
 the grouping of the ordinary schedule (each product from zero, then the products in order), so
 both branches have the same reference.
 
+In an order (`Attention.scaledProductsIn`), an entry is `Attention.scaledProductIn` on the batch
+slices at its batch coordinate (`Attention.scaledProductsIn_apply`, a `roundoff_read`). Its ordinary
+schedule folds the checked products with `Attention.checkedAdd` in the order, and the computed
+value of that fold is the order's sum of the products' values (`checkedAdd_fold_fst`), which the
+sum rules of `Tensor.ReduceOrder` bound against the left fold. A replay is that of the left fold,
+so in an order that covers the entries both branches have the same reference.
+
 The attention value and multiplier cotangents replay in the same way a contraction whose terms also
 carry pointwise factors (`TorchLean.Attention.replayWeightedValues?`,
 `TorchLean.Attention.replayWeightedProducts?`). At finite entries, their finite replays are the
@@ -31,6 +40,24 @@ exact sums rounded once.
 -/
 
 public section
+
+namespace TorchLean.Attention
+
+/-- An entry of `scaledProductsIn` is the entry of `scaledProductIn` on the batch slices at its
+batch coordinate. -/
+theorem scaledProductsIn_apply {α : Type} [Storage α] [Context α] (order : Tensor.ReduceOrder)
+    {batch : Shape} {m n p : Nat} (a : Tensor α (batch ++ [m, n]))
+    (b : Tensor α (batch ++ [n, p])) (scale : α) (c : (batch ++ [m, p]).Coord) :
+    scaledProductsIn order a b scale c =
+      let split := Shape.Coord.appendEquiv batch [m, p] c
+      scaledProductIn order (a.batchSlice split.1) (b.batchSlice split.1) scale split.2 :=
+  Tensor.batchwise_apply (shapes := Sum.elim (fun _ : Unit => [m, n]) fun _ : Unit => [n, p])
+    (fun inputs => scaledProductsIn order (inputs (.inl ())) (inputs (.inr ())) scale)
+    (fun _ => rfl) (fun | .inl _ => a | .inr _ => b) c
+
+attribute [roundoff_read] scaledProductsIn_apply
+
+end TorchLean.Attention
 
 namespace TorchLean.Roundoff
 
@@ -44,6 +71,17 @@ variable {format : FloatFormat} {plan : Configured.StoragePlan format} {code : T
 
 local notation "Value" => ExecFloat (Configured.Family format code plan)
 
+/-- A fold whose step sends each scalar `total` and index `i` to the scalar `f total i` sends a
+scalar to the scalar of the rational fold of `f`. -/
+private theorem foldl_scalar {ι : Type} (indices : List ι)
+    (step : Option (QuotientCoefficients 0) → ι → Option (QuotientCoefficients 0))
+    (f : ℚ → ι → ℚ) (h : ∀ total i, step (some (.scalar total)) i = some (.scalar (f total i)))
+    (initial : ℚ) :
+    indices.foldl step (some (.scalar initial)) = some (.scalar (indices.foldl f initial)) := by
+  induction indices generalizing initial with
+  | nil => rfl
+  | cons i rest ih => simp only [List.foldl_cons, h, ih]
+
 /-- A running sum of finite encoded products is the encoding of the rational running sum. -/
 private theorem foldl_encode_products {ι : Type} (indices : List ι) (x y : ι → Value)
     (hx : ∀ i, isFinite (x i) = true)
@@ -56,13 +94,10 @@ private theorem foldl_encode_products {ι : Type} (indices : List ι) (x y : ι 
       (some (.scalar initial) : Option (QuotientCoefficients 0)) =
       some (.scalar (indices.foldl (fun total i =>
         total + (toRat? (x i)).getD 0 * (toRat? (y i)).getD 0)
-          initial)) := by
-  induction indices generalizing initial with
-  | nil => rfl
-  | cons i rest ih =>
-      simp only [List.foldl_cons, configured_encode_of_isFinite (hx i),
-        configured_encode_of_isFinite (hy i)]
-      exact ih _
+          initial)) :=
+  foldl_scalar indices _ _ (fun _ i => by
+    simp only [configured_encode_of_isFinite (hx i), configured_encode_of_isFinite (hy i)]
+    rfl) initial
 
 /-- At finite inputs the coefficient of a scaled contraction is the rational running sum of the
 products of the inputs' values, scaled. -/
@@ -175,6 +210,25 @@ private theorem toReal_replaySelect (q : ℚ) (ordinary : Value) (hformat : form
     simp only [isFinite, toReal, ExecFloat.Binary.toModel_ofModel] at hfinite ⊢
     exact Model.toReal_ofRat_eq_roundAt _ hformat hfinite
 
+section Ordered
+
+variable [ExecFloat.Backend.PolicyFor (Configured.Family format code plan)]
+  [cap : ExecFloat.Add (Configured.Family format code plan)]
+  [ExecFloat.Capability.HasSpec cap Configured.Spec.add]
+
+/-- The computed value of a checked fold in an order is the order's sum of the computed values. -/
+@[roundoff_rule]
+theorem checkedAdd_fold_fst (order : Tensor.ReduceOrder) (n : Nat) (start : Value × UInt8)
+    (value : Fin n → Value × UInt8) :
+    (order.fold n Attention.checkedAdd start value).1 =
+      order.fold n (· + ·) start.1 fun i => (value i).1 :=
+  (Tensor.ReduceOrder.map_fold_of_forall (p := fun _ => True) (step := Attention.checkedAdd)
+    (step' := (· + ·)) order n Prod.fst (fun _ _ _ _ => trivial)
+    (fun ⟨_, _⟩ ⟨_, _⟩ _ _ => configured_addWithFlags_fst _ _) start value trivial
+    fun _ => trivial).2
+
+end Ordered
+
 /-- At finite inputs, a finite replay of a nonempty scaled contraction is its exact value rounded
 once: the scaled sum of the products of the inputs' values. -/
 theorem toReal_replayProducts [Storage Value] {m n p groups : Nat}
@@ -276,13 +330,11 @@ private theorem foldl_encode_triples {ι : Type} (indices : List ι) (x y z : ι
       (some (.scalar initial) : Option (QuotientCoefficients 0)) =
       some (.scalar (indices.foldl (fun total i =>
         total + (toRat? (x i)).getD 0 * (toRat? (y i)).getD 0 * (toRat? (z i)).getD 0)
-          initial)) := by
-  induction indices generalizing initial with
-  | nil => rfl
-  | cons i rest ih =>
-      simp only [List.foldl_cons, configured_encode_of_isFinite (hx i),
-        configured_encode_of_isFinite (hy i), configured_encode_of_isFinite (hz i)]
-      exact ih _
+          initial)) :=
+  foldl_scalar indices _ _ (fun _ i => by
+    simp only [configured_encode_of_isFinite (hx i), configured_encode_of_isFinite (hy i),
+      configured_encode_of_isFinite (hz i)]
+    rfl) initial
 
 /-- At finite entries the coefficient of a weighted contraction is the rational running sum of the
 products of the entries' values, times the unit scale and the factor. -/

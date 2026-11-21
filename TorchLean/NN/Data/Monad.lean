@@ -28,6 +28,7 @@ public section
 
 namespace TorchLean
 
+/-- `attach` on `EST` returns the value of the program it attaches. -/
 instance {ε σ : Type} : WeaklyLawfulMonadAttach (EST ε σ) where
   map_attach {α} {x} := by
     funext s
@@ -51,6 +52,7 @@ instance {ε σ : Type} : WeaklyLawfulMonadAttach (EST ε σ) where
         subst hs
         exact hx.symm
 
+/-- A value an `EST` program can return satisfies the predicate `attach` gives it. -/
 instance {ε σ : Type} : LawfulMonadAttach (EST ε σ) where
   canReturn_map_imp {α P x a} h := by
     obtain ⟨s, s', h⟩ := h
@@ -62,9 +64,11 @@ instance {ε σ : Type} : LawfulMonadAttach (EST ε σ) where
       exact ha ▸ b.property
     · cases h
 
+/-- `EIO` is `EST` at `IO.RealWorld`. -/
 instance {ε : Type} : WeaklyLawfulMonadAttach (EIO ε) :=
   inferInstanceAs (WeaklyLawfulMonadAttach (EST ε IO.RealWorld))
 
+/-- `EIO` is `EST` at `IO.RealWorld`. -/
 instance {ε : Type} : LawfulMonadAttach (EIO ε) :=
   inferInstanceAs (LawfulMonadAttach (EST ε IO.RealWorld))
 

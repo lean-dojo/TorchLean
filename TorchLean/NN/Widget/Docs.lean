@@ -33,18 +33,18 @@ open UI
 
 /-- Monospaced `<pre>` block that wraps long lines, for signatures and docstrings. -/
 def preWrap (s : String) : ProofWidgets.Html :=
-  <pre style={json% {
+  jsx%{<pre style={json% {
     "margin": "0",
     "white-space": "pre-wrap",
     "word-break": "break-word",
     "font-family":
       "var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \
       monospace)"
-  }}>{.text s}</pre>
+  }}>{.text s}</pre>}
 
 /-- One declaration rendered as a card: name, type, and docstring, themed to the editor. -/
 def docPanel (declName typeStr docStr : String) : ProofWidgets.Html :=
-  <div style={json% {
+  jsx%{<div style={json% {
     "padding": "12px 12px 10px 12px",
     "border": "1px solid var(--vscode-panel-border, #e0e0e0)",
     "border-radius": "10px",
@@ -55,18 +55,18 @@ def docPanel (declName typeStr docStr : String) : ProofWidgets.Html :=
       {pill "TorchLean docs"} {monospace declName}
     </div>
     <div style={json% {"margin-top": "10px"}}>
-      <details «open»={true}>
+      <details open={true}>
         <summary>{.text "Type"}</summary>
         <div style={json% {"margin-top": "6px"}}>{preWrap typeStr}</div>
       </details>
     </div>
     <div style={json% {"margin-top": "10px"}}>
-      <details «open»={true}>
+      <details open={true}>
         <summary>{.text "Docs"}</summary>
         <div style={json% {"margin-top": "6px"}}>{preWrap docStr}</div>
       </details>
     </div>
-  </div>
+  </div>}
 
 
 /-- Return the head constant name of an application, if one exists. -/

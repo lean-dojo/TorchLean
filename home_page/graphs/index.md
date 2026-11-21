@@ -7,12 +7,9 @@ title: Graphs
   <a class="secondary-link" href="{{ '/performance/' | relative_url }}">View build performance</a>
 </div>
 
-Search the Lean import graph by module name to inspect its dependencies, reverse dependencies, and
-the part of the source tree affected by a change.
-
-FloatLib supplies the generic scalar formats and numerical theory, and
-`TorchLean.Verify.Floats.FP32` and `TorchLean.Verify.Floats.IEEE754` adapt them to
-TorchLean. External imports appear in the explorer, but their source trees aren't expanded here.
+When I change a Lean module, I usually want to know what else will need a rebuild.
+Search for the module below to see what it imports and which modules import it.
+External imports such as FloatLib appear by name.
 
 <div class="dep-dashboard" id="dep-dashboard">
   <section class="dep-panel dep-summary graph-overview">
@@ -30,9 +27,7 @@ TorchLean. External imports appear in the explorer, but their source trees aren'
   <section class="dep-panel">
     <h2>Source Snapshot</h2>
     <p class="dep-panel-intro">
-      The site build reads these counts from the TorchLean checkout, including tests and guide
-      sources. Dependency sources, including FloatLib, are excluded. Declaration headers measure
-      source size, not proof coverage.
+      These counts come from TorchLean's Lean source, including tests and guide chapters.
     </p>
     <div class="dep-stat-grid" id="dep-code-cards">
       <div class="dep-loading">Loading source statistics…</div>

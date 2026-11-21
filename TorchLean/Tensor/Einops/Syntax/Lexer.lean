@@ -146,7 +146,6 @@ private theorem decimalValue_of_isDigit (character : Char)
   unfold PythonUnicode.decimalValue?
   rw [lookup_of_isDigit character hDigit]
   simp [PythonUnicode.decimalFlag]
-  decide
 
 /-- The decimal scanner agrees with `Nat.ofDigitChars` on ASCII digit lists. -/
 private theorem pythonDecimalToNat_go_eq (characters : List Char)

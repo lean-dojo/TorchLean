@@ -131,28 +131,19 @@ theorem jet_add {n : Nat} (directions : Fin n → E) {f g : E → ℝ} {x : E}
     · rw [jet_congr _ heq]
       exact ih _ hf' hg'
 
+/-- On nested duals, adding a negation is subtraction, at every level. -/
+private theorem nested_add_neg {n : Nat} (a b : Nested ℝ n) : a + -b = a - b := by
+  induction n with
+  | zero => exact (sub_eq_add_neg (G := ℝ) a b).symm
+  | succ n ih =>
+    change Dual.mk _ _ = Dual.mk _ _
+    congr 1 <;> exact ih _ _
+
 /-- Subtracting jets computes the jet of `f - g` when `f` and `g` are `C^n` at `x`. -/
 theorem jet_sub {n : Nat} (directions : Fin n → E) {f g : E → ℝ} {x : E}
     (hf : ContDiffAt ℝ n f x) (hg : ContDiffAt ℝ n g x) :
     jet directions (fun y => f y - g y) x = jet directions f x - jet directions g x := by
-  induction n generalizing f g with
-  | zero => rfl
-  | succ n ih =>
-    let v := directions (Fin.last n)
-    have hf' : ContDiffAt ℝ n (fun y => fderiv ℝ f y v) x :=
-      (hf.fderiv_right (by simp)).clm_apply contDiffAt_const
-    have hg' : ContDiffAt ℝ n (fun y => fderiv ℝ g y v) x :=
-      (hg.fderiv_right (by simp)).clm_apply contDiffAt_const
-    have heq : (fun y => fderiv ℝ (fun z => f z - g z) y v) =ᶠ[𝓝 x]
-        fun y => fderiv ℝ f y v - fderiv ℝ g y v := by
-      filter_upwards [hf.eventually (by simp), hg.eventually (by simp)] with y hfy hgy
-      rw [fderiv_fun_sub (hfy.differentiableAt (by simp)) (hgy.differentiableAt (by simp))]
-      rfl
-    change Dual.mk _ _ = Dual.mk _ _
-    congr 1
-    · exact ih _ (hf.of_le (by simp)) (hg.of_le (by simp))
-    · rw [jet_congr _ heq]
-      exact ih _ hf' hg'
+  simpa only [← sub_eq_add_neg, jet_neg, nested_add_neg] using jet_add directions hf hg.neg
 
 /-- Multiplying the jets of `f` and `g` gives the jet of `f * g` whenever both are `C^n` at `x`. -/
 theorem jet_mul {n : Nat} (directions : Fin n → E) {f g : E → ℝ} {x : E}
@@ -380,7 +371,7 @@ theorem jet_div {n : Nat} (directions : Fin n → E) {f g : E → ℝ} {x : E}
     · exact (jet_congr ds heq).trans htan
 
 /-- Strict positivity of a jet depends only on its primal value. -/
-theorem jet_pos {n : Nat} (directions : Fin n → E) (f : E → ℝ) (x : E) :
+theorem jet_pos {n : Nat} (directions : Fin n → E) {f : E → ℝ} {x : E} :
     0 < jet directions f x ↔ 0 < f x := by
   induction n with
   | zero => rfl
@@ -417,12 +408,12 @@ private theorem jet_sigmoidDeriv {n : Nat} (directions : Fin n → E) {f : E →
   simp only [Numeric.applySlope, nested_unsupported,
     Bool.not_false, Bool.false_eq_true, ↓reduceIte]
   by_cases hx : 0 < f x
-  · rw [ite_eq_left ((jet_pos directions f x).mpr hx), ← jet_neg]
+  · rw [ite_eq_left ((jet_pos directions).mpr hx), ← jet_neg]
     rw [show (fun y => Numeric.sigmoidDeriv (f y)) =
       (fun y => Real.exp (-f y) / ((1 + Real.exp (-f y)) * (1 + Real.exp (-f y)))) from
       funext fun y => hnegative (f y)]
     exact hjet _ hf.neg
-  · rw [ite_eq_right (fun h => hx ((jet_pos directions f x).mp h))]
+  · rw [ite_eq_right (fun h => hx ((jet_pos directions).mp h))]
     rw [show (fun y => Numeric.sigmoidDeriv (f y)) =
       (fun y => Real.exp (f y) / ((1 + Real.exp (f y)) * (1 + Real.exp (f y)))) from
       funext fun y => hformula (f y)]
@@ -508,7 +499,7 @@ private theorem jet_tanhDeriv {n : Nat} (directions : Fin n → E) {f : E → �
   simp only [Numeric.applySlope, nested_unsupported,
     Bool.not_false, ↓reduceIte]
   by_cases hx : 0 < f x
-  · rw [ite_eq_left ((jet_pos directions f x).mpr hx), ← jet_neg]
+  · rw [ite_eq_left ((jet_pos directions).mpr hx), ← jet_neg]
     have heq : (fun y => 1 - Real.tanh (f y) * Real.tanh (f y)) =
         (fun y =>
           let z := Real.exp (-f y)
@@ -518,7 +509,7 @@ private theorem jet_tanhDeriv {n : Nat} (directions : Fin n → E) {f : E → �
       simpa only [Real.tanh_neg, neg_mul_neg] using hformula (-f y)
     rw [heq]
     exact hjet _ hf.neg
-  · rw [ite_eq_right (fun h => hx ((jet_pos directions f x).mp h))]
+  · rw [ite_eq_right (fun h => hx ((jet_pos directions).mp h))]
     have heq : (fun y => 1 - Real.tanh (f y) * Real.tanh (f y)) =
         (fun y =>
           let z := Real.exp (f y)

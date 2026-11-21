@@ -8,6 +8,7 @@ module
 
 public import TorchLean.NN.CLI.Parser
 public import TorchLean.NN.IR.Builder
+public import TorchLean.NN.IR.Program.Graph
 public import TorchLean.Tensor.Op.Table.Elementwise
 public import TorchLean.Tensor.Op.Table.Reduce
 public import TorchLean.Tensor.LinearAlgebra.Real
@@ -24,11 +25,11 @@ public meta import TorchLean.Tensor.Tactic.Einops.Report
 # From Jaxpr to a permutation-invariance proof
 
 The Python companion captures `sum(x * x)` and several other tensor computations as capture
-documents. `run` loads each with `TorchLean.JAX.load`, runs its program on the recorded arguments
-under the reference runtime and compares the interchange words of every output with the recorded JAX
-output. For `sum(x * x)`, a graph built in Lean comes with a proof over the reals that it gives the
-same value on a vector and on every permutation of its entries, at every vector length. `check`
-reports each imported graph that equals it.
+documents. `run` loads each with `TorchLean.JAX.load`, runs its flow of programs on the recorded
+arguments under the reference runtime and compares the interchange words of every output with the
+recorded JAX output. For `sum(x * x)`, a graph built in Lean comes with a proof over the reals
+that it gives the same value on a vector and on every permutation of its entries, at every vector
+length. `check` reports each imported graph that equals it.
 
 The proof uses exact real addition, and a floating-point sum can round differently when its terms
 are reordered. Neither the proof nor the numerical checks certify the Python adapter or XLA.
@@ -104,12 +105,12 @@ theorem sumSquaresGraph_eval {shape : Shape} (x : Tensor ℝ shape) :
     rw [s1] at r2
     exact r2
   obtain ⟨E3, h3, -, r3, -⟩ := IR.runNodes_cons_of_eval
-    (IR.Node.eval_unary _ (Op.reduce_check shape) rfl (Op.rule?_reduce _ _ _ _) r2) _
+    (IR.Node.eval_unary _ (Op.reduce_check shape) rfl (Op.rule?_reduce_leftFold _ _ _ _) r2) _
   have r3 : (⟨2, 0⟩ : IR.Ref).read E3 = .ok ⟨.value .scalar, Tensor.scalar (sumSquares x)⟩ := by
     rw [s2, s1] at r3
     exact r3.trans (congrArg Except.ok (Op.value_eq_scalar _ (Shape.reduce_finRange shape)))
   refine IR.bind_eq_ok.2 ⟨_, sumSquaresGraph_eq shape,
-    IR.bind_eq_ok.2 ⟨E3, ?_, IR.mapM_eq_ok_iff.2 (.cons r3 .nil)⟩⟩
+    IR.bind_eq_ok.2 ⟨E3, ?_, List.mapM_eq_ok_iff_forall₂.2 (.cons r3 .nil)⟩⟩
   show IR.runNodes _ _ _ [_, _, _] = _
   rw [h1, h2, h3, IR.runNodes_nil]
 
@@ -121,17 +122,19 @@ theorem sumSquaresGraph_permutation {n : Nat} (permutation : Equiv.Perm (Fin n))
       (sumSquaresGraph [n] >>= fun g => g.eval {} [⟨.value [n], x⟩]) := by
   rw [sumSquaresGraph_eval, sumSquaresGraph_eval, sumSquares_permutation permutation x y h]
 
-/-- Load a Jaxpr capture document, run its program on its arguments under the reference runtime and
-compare the element type, shape and interchange words of every output with the recorded JAX output.
-Also report whether the program is the vector graph that `sumSquaresGraph_permutation` covers.
+/-- Load a Jaxpr capture document, run its flow of programs on its arguments under the reference
+runtime with its fuel and compare the element type, shape and interchange words of every output
+with the recorded JAX output. Also report whether the flow is one program, the vector graph that
+`sumSquaresGraph_permutation` covers.
 
 This checks the recorded arguments, not all inputs or XLA's reduction schedule. The companion
 chooses arguments whose reductions are exact at their precision.
 -/
 def check (document : Lean.Json) : IO Unit := do
-  let (program, payload) ← IO.ofExcept (JAX.load document)
+  let (flow, fuel) ← IO.ofExcept (JAX.load document)
   let arguments ← IO.ofExcept (IR.loadArguments .reference document)
-  let (outputs, flags) ← IO.ofExcept (program.eval .reference payload arguments)
+  let (outputs, flags) ← IO.ofExcept
+    ((flow.eval (IR.Flow.programs .reference) fuel arguments.toList).run {})
   let outputs := outputs.toArray
   let expected ← IO.ofExcept
     ((← IO.ofExcept (document.getObjVal? "reference_outputs")).getArr?)
@@ -153,14 +156,15 @@ def check (document : Lean.Json) : IO Unit := do
     IO.println s!"  output {i}: {dtype} at shape {repr shape}, bit-for-bit match for this input"
   IO.println s!"  conversion flags: {repr flags}"
   -- Matching the complete graph connects this document to the general theorem above.
-  if let some (graph, _) := program.graph? then
-    let input := graph.nodes.findSome? fun
-      | .input _ ⟨.value, s⟩ => some s
-      | _ => none
-    if let some shape := input then
-      if (sumSquaresGraph shape).toOption == some graph && shape.rank == 1 then
-        IO.println "  matches the graph covered by sumSquaresGraph_permutation"
-  IO.println s!"  checked {program.nodes.size} typed IR steps"
+  if let .block (program, _) := flow then
+    if let some (graph, _) := program.graph? then
+      let input := graph.nodes.findSome? fun
+        | .input _ ⟨.value, s⟩ => some s
+        | _ => none
+      if let some shape := input then
+        if (sumSquaresGraph shape).toOption == some graph && shape.rank == 1 then
+          IO.println "  matches the graph covered by sumSquaresGraph_permutation"
+  IO.println s!"  checked {(flow.blocks.map (·.1.nodes.size)).sum} typed IR steps"
 
 /-- Check one or more capture documents produced by the Python companion. With `--help` or `-h`,
 print the usage line instead. -/

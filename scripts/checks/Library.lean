@@ -13,8 +13,12 @@ import TorchLean.NN.Attention.ScaledDotProduct.FDeriv
 import TorchLean.NN.Backend.Graph.Soundness
 import TorchLean.NN.Backend.Session
 import TorchLean.NN.Conv.FDeriv
+import TorchLean.NN.Dual.Special
 import TorchLean.NN.FDeriv.MLP
 import TorchLean.NN.IR.CustomRule
+import TorchLean.NN.IR.Flow.Reals
+import TorchLean.NN.IR.Program.Step
+import TorchLean.NN.IR.ReducePrecision
 import TorchLean.NN.LearningTheory.DifferentialPrivacy
 import TorchLean.NN.LoRA
 import TorchLean.NN.MoE
@@ -50,8 +54,11 @@ import TorchLean.NN.Norm.BatchNorm
 import TorchLean.NN.Norm.LayerNorm.Eager
 import TorchLean.NN.NormalCDF
 import TorchLean.NN.Op.BatchNorm
+import TorchLean.NN.Op.Complex
+import TorchLean.NN.Op.ComplexRound
 import TorchLean.NN.Op.Conv
 import TorchLean.NN.Op.Fourier
+import TorchLean.NN.Op.Frexp
 import TorchLean.NN.Op.LayerNorm
 import TorchLean.NN.Op.Piecewise
 import TorchLean.NN.Op.Pool
@@ -59,6 +66,7 @@ import TorchLean.NN.Op.Power
 import TorchLean.NN.Op.Reduce
 import TorchLean.NN.Op.Rounding
 import TorchLean.NN.Op.Scan
+import TorchLean.NN.Op.Special
 import TorchLean.NN.Optimizer.AdamW
 import TorchLean.NN.Optimizer.GD.StrongConvexity
 import TorchLean.NN.Optimizer.TensorOptimizer
@@ -66,6 +74,7 @@ import TorchLean.NN.RL.Bandits
 import TorchLean.NN.RL.Boundary.Soundness
 import TorchLean.NN.RL.DQN.SoftUpdate
 import TorchLean.NN.RL.Environment.Safety
+import TorchLean.NN.RL.PolicyGradient.Real
 import TorchLean.NN.RL.Replay.Capacity
 import TorchLean.NN.RL.StochasticMDP.Bellman
 import TorchLean.NN.RL.Tabular
@@ -79,16 +88,26 @@ import TorchLean.NN.UniversalApproximation.Rate
 import TorchLean.NN.Widget.Docs
 import TorchLean.NN.Widget.RL.PPO
 import TorchLean.Tensor.AdjacentSwap.Adjoint
+import TorchLean.Tensor.ConfiguredBinary.Order
+import TorchLean.Tensor.Einops.Lowering.Einsum.Order
 import TorchLean.Tensor.Einops.Lowering.Reduce.Mean
+import TorchLean.Tensor.Factorization.RealSchur
 import TorchLean.Tensor.Factorization.Solve
 import TorchLean.Tensor.Layers.Normalization.GroupNorm
 import TorchLean.Tensor.Layers.RealFFT.Complex
 import TorchLean.Tensor.LinearAlgebra
+import TorchLean.Tensor.Numeric.Frexp
 import TorchLean.Tensor.Op.Bitcast
 import TorchLean.Tensor.Op.Table.Compare
 import TorchLean.Tensor.Op.Vocabulary
 import TorchLean.Tensor.Rep.Fiber.Product.DualNumber
 import TorchLean.Tensor.Rep.Matrix
+import TorchLean.Tensor.Special.Bessel
+import TorchLean.Tensor.Special.Fn
+import TorchLean.Tensor.Special.Gamma
+import TorchLean.Tensor.Special.GammaCDF
+import TorchLean.Tensor.Special.Hurwitz
+import TorchLean.Tensor.Special.Zeta
 import TorchLean.Tensor.Tactic.Verify.Lowering
 import TorchLean.Verify.Approximation.FloatInterval.ConstantTarget
 import TorchLean.Verify.CROWN.Conv.Derivatives
@@ -148,6 +167,8 @@ import TorchLean.Verify.Coverage.TensorComposites.Softmax
 import TorchLean.Verify.Coverage.TensorOperations.Movement
 import TorchLean.Verify.Coverage.TensorOperations.Reduction
 import TorchLean.Verify.Coverage.TensorOperations.Window
+import TorchLean.Verify.Coverage.Training
+import TorchLean.Verify.Floats.IEEE754.Order
 import TorchLean.Verify.Monotonicity.JSON
 import TorchLean.Verify.NumericalCertificate.NumericalPolicy
 import TorchLean.Verify.Robustness.LipschitzCertified
@@ -208,15 +229,22 @@ import TorchLeanTest.CUDA.Suite
 import TorchLeanTest.Data.NPY
 import TorchLeanTest.Data.Text
 import TorchLeanTest.Floats.NativePrimitives
+import TorchLeanTest.IR.Flow
 import TorchLeanTest.IR.MoEImport
 import TorchLeanTest.IR.Pointwise
 import TorchLeanTest.Interop.Suite
 import TorchLeanTest.OpTable
+import TorchLeanTest.RL.PolicyKL
+import TorchLeanTest.Tensor.Complex
 import TorchLeanTest.Tensor.EinopsLexer
 import TorchLeanTest.Tensor.Elementary
 import TorchLeanTest.Tensor.Elementwise
+import TorchLeanTest.Tensor.Frexp
+import TorchLeanTest.Tensor.Fma
 import TorchLeanTest.Tensor.OnlineSoftmax
 import TorchLeanTest.Tensor.Operations
+import TorchLeanTest.Tensor.Order
+import TorchLeanTest.Tensor.Special
 import TorchLeanTest.Tensor.Storage
 import TorchLeanTest.Tree.Suite
 import TorchLeanTest.Verification.BuilderImport
@@ -230,6 +258,11 @@ import TorchLeanTest.Verification.OpDerivCat
 import TorchLeanTest.Verification.OpDerivScatter
 import TorchLeanTest.Verification.Recorder
 import TorchLeanTest.Verification.RoundoffBaseline
+import TorchLeanTest.Verification.RoundoffBinders
+import TorchLeanTest.Verification.RoundoffMatcher
+import TorchLeanTest.Verification.RoundoffMatcherTwin
+import TorchLeanTest.Verification.RoundoffReuse
+import TorchLeanTest.Verification.SoftmaxBound
 
 /-!
 # Checks on the built libraries
@@ -260,18 +293,26 @@ of its ports holds the model's scalar (`TorchLean.Port.Kind.isScalar`), and ever
 certificate of the imported modules speaks about a route of its operator: an analyzed route, the
 gradient of one of its value inputs or its tangent. Every `derivative` certificate must have passed
 the check of `op_cert` against `TorchLean.DerivCert`, the operator's forward and pullback at a
-point. The gradient of every value input of a constructor whose number of inputs does not depend
-on its attributes must also have such a certificate under `TorchLean/` in all the value inputs of
-the constructor together that leaves each of its arguments a distinct variable, an element at the
-scalar and a proof the constructor takes excepted. The message counts the `derivative`
-certificates under `TorchLean/` and those of them without domain premises. A function that takes a
-graph lowers the whole graph to a tape and needs no registration. The outcomes of the
-analyses must also match `scripts/checks/roundoff_baseline.jsonl`, as
+point. The gradient of every value input of a constructor with a rule must also have such a
+certificate under `TorchLean/` in all the value inputs of the constructor together that leaves each
+of its arguments a distinct variable, an element at the scalar and a proof the constructor takes
+excepted. A constructor whose input ports are mapped from a list attribute is read at each length
+`TorchLean.Roundoff.listLengths` gives, as `Op.special` at one, two and three orders and `Op.cat`
+at two sizes. At an attribute of an inductive family with indices, as the special function of
+`Op.special`, the check takes each member of the family the attribute's type admits and finds the
+certificates that claim nothing there, as one of their premises is `False` after its binders. Such a
+premise still holds where the types of its binders are empty, so those certificates state only that
+case, as a tensor without entries. Some certificate must claim something at each member, and
+those of each gradient at some member. The message counts the `derivative` certificates under
+`TorchLean/`, those of them without domain premises, and the gradients. A function that takes a
+graph lowers the whole graph to a tape and needs no registration. The routes that record one
+generated theorem must describe it alike (status, reference, budget, premises, caveats, primitive
+theorems, use of IEEE, assumed contracts and arms), and no two generated theorems may have one
+statement. The outcomes of the analyses must also match `scripts/checks/roundoff_baseline.jsonl`, as
 `TorchLean.Roundoff.Baseline.check` compares them: the check fails on a lower status, a weaker
-budget, a new premise or caveat, a changed reference and a gone analysis, and on a new analysis
-or an improvement until the file is updated with `TORCHLEAN_ROUNDOFF_BASELINE=update`. Its
-message counts the outcomes for the configured scalar.
--/
+budget, a new premise or caveat, a changed reference and a gone analysis, and on a new analysis or
+an improvement until the file is updated with `TORCHLEAN_ROUNDOFF_BASELINE=update`. Its message
+counts the outcomes for the configured scalar. -/
 
 open Lean Meta Elab Command
 
@@ -393,9 +434,12 @@ def isTapeConstructor (type : Expr) : MetaM Bool := do
   unless ← TorchLean.Roundoff.recordsNode type do return false
   return !(← takesGraph type)
 
-/-- A constructor of the operator table with fresh variables for its attributes and every element
-at the scalar, as `#roundoff_coverage` analyzes it. -/
-structure TableConstructor where
+/-- A constructor of the operator table at one length of each list attribute that its ports are
+mapped from (`TorchLean.Roundoff.attributeChoices`), with fresh variables for its other attributes
+and every element at the scalar, as `#roundoff_coverage` analyzes it. -/
+structure TableSample where
+  /-- The lengths, as `two sizes`, or empty for a constructor without such an attribute. -/
+  label : String
   /-- Whether `TorchLean.Op.hasRule` reduces to `false` at it. -/
   ruleless : Bool
   /-- Whether one of its ports holds the model's scalar (`TorchLean.Port.Kind.isScalar`). A port
@@ -405,29 +449,80 @@ structure TableConstructor where
   /-- The gradient routes of its value inputs: `backward` for one input, `backward k` for the
   input at position `k`. -/
   gradients : Array String
+  /-- The constructors of the inductive families among its attributes (`familyMembers`), each with
+  the certificates that claim something at it (`claimsNothingAt`). -/
+  members : Array (Name × Array Name)
 
-/-- The constructor `operator` of the operator table as `TableConstructor` reads it. -/
-def tableConstructor (operator : Name) : Term.TermElabM TableConstructor := do
-  TorchLean.Roundoff.withAttributes (← mkConstWithFreshMVarLevels operator) []
-      fun op _ => do
-    let rule ← whnf (← mkAppM ``TorchLean.Op.hasRule #[op])
-    let #[ins, outs] := (← whnf (← inferType op)).getAppArgs |
-      throwError "the coverage check: {operator} is not an operator"
-    let sorts (ports : Expr) : MetaM (Array (Option Expr)) := do
-      let ports ← try TorchLean.Roundoff.portList ports catch _ => pure #[]
-      ports.mapM fun port => do
-        try return some (← TorchLean.Roundoff.portParts port).1 catch _ => return none
-    let isScalar (dtype : Option Expr) : Term.TermElabM Bool := do
-      let some dtype := dtype | return false
-      return (← whnf (mkApp (mkConst ``TorchLean.Port.Kind.isScalar) dtype)).isConstOf ``Bool.true
-    let inputs ← sorts ins
-    let mut gradients := #[]
-    for h : position in [:inputs.size] do
-      if inputs[position].any (·.isConstOf ``TorchLean.Port.Kind.value) then
-        gradients := gradients.push
-          (if inputs.size == 1 then "backward" else s!"backward {position}")
-    return { ruleless := rule.isConstOf ``Bool.false,
-             scalar := ← (inputs ++ (← sorts outs)).anyM isScalar, gradients }
+/-- The constructors of the inductive family `type` that have that type, each applied to new
+metavariables for its parameters and fields, when `type` has indices, as the special functions of
+two arguments are the constructors of `SpecialFn 2`. -/
+def familyMembers (type : Expr) : MetaM (Array (Name × Expr)) := do
+  let type ← whnfR type
+  let .const typeName _ := type.getAppFn | return #[]
+  let some (.inductInfo info) := (← getEnv).find? typeName | return #[]
+  if info.numIndices == 0 then return #[]
+  info.ctors.toArray.filterMapM fun constructor => do
+    let value ← mkConstWithFreshMVarLevels constructor
+    let (fields, _, result) ← forallMetaTelescope (← inferType value)
+    return if ← isDefEq result type then some (constructor, mkAppN value fields) else none
+
+/-- Whether the certificate `certificate` of `operator` claims nothing at the operator `op`: its
+occurrence of the rule unifies with `op`, and then one of its premises is `False` after its
+binders, as the premise that every tuple of entries lies in an empty smooth domain. Such a premise
+holds only where the types of its binders are empty, as for inputs without entries. -/
+def claimsNothingAt (operator certificate : Name) (op : Expr) : MetaM Bool :=
+  withNewMCtxDepth do
+    let (locals, _, body) ←
+      forallMetaTelescope (← inferType (← mkConstWithFreshMVarLevels certificate))
+    let some ruleApp := body.find? fun e =>
+        e.isAppOf ``TorchLean.Op.rule? && e.getAppNumArgs > 0 &&
+          e.getAppArgs.back!.getAppFn.constName? == some operator
+      | return false
+    unless ← isDefEq ruleApp.getAppArgs.back! op do return false
+    locals.anyM fun premise => do
+      let type ← instantiateMVars (← inferType premise)
+      unless ← isProp type do return false
+      forallTelescope type fun _ conclusion => return (← whnf conclusion).isConstOf ``False
+
+/-- The constructor `operator` of the operator table, applied as `op` to the variables
+`attributes` at the lengths `label`, as `TableSample` reads it, with the certificates of
+`certificates` that claim something at each member of a family among its attributes. -/
+def tableSample (operator : Name) (certificates : Array Name) (label : String) (op : Expr)
+    (attributes : Array Expr) : Term.TermElabM TableSample := do
+  let rule ← whnf (← mkAppM ``TorchLean.Op.hasRule #[op])
+  let #[ins, outs] := (← whnf (← inferType op)).getAppArgs |
+    throwError "the coverage check: {operator} is not an operator"
+  let sorts (ports : Expr) : MetaM (Array (Option Expr)) := do
+    let ports ← try TorchLean.Roundoff.portList ports catch _ => pure #[]
+    ports.mapM fun port => do
+      try return some (← TorchLean.Roundoff.portParts port).1 catch _ => return none
+  let isScalar (dtype : Option Expr) : Term.TermElabM Bool := do
+    let some dtype := dtype | return false
+    return (← whnf (mkApp (mkConst ``TorchLean.Port.Kind.isScalar) dtype)).isConstOf ``Bool.true
+  let inputs ← sorts ins
+  let mut gradients := #[]
+  for h : position in [:inputs.size] do
+    if inputs[position].any (·.isConstOf ``TorchLean.Port.Kind.value) then
+      gradients := gradients.push
+        (if inputs.size == 1 then "backward" else s!"backward {position}")
+  let mut members := #[]
+  for binder in attributes do
+    for (member, value) in ← familyMembers (← inferType binder) do
+      let atMember := op.replaceFVar binder value
+      members := members.push (member,
+        ← certificates.filterM fun c => return !(← claimsNothingAt operator c atMember))
+  return { label, ruleless := rule.isConstOf ``Bool.false,
+           scalar := ← (inputs ++ (← sorts outs)).anyM isScalar, gradients, members }
+
+/-- The constructor `operator` of the operator table as `TableSample` reads it, at each choice of
+lengths of the list attributes that its ports are mapped from, with the certificates of
+`certificates` that claim something at each member of a family among its attributes. -/
+def tableConstructor (operator : Name) (certificates : Array Name) :
+    Term.TermElabM (Array TableSample) := do
+  let constant ← mkConstWithFreshMVarLevels operator
+  (← TorchLean.Roundoff.attributeChoices constant (constructors := false)).toArray.mapM
+    fun (choice, label) => TorchLean.Roundoff.withAttributes constant choice
+      (tableSample operator certificates label)
 
 /-- The scalar elements. An operand whose element is a constructor argument, as those of `add`,
 is a value port exactly at the scalar element. -/
@@ -441,11 +536,11 @@ def fixesNoArgument (operator : Name) (type : Expr) : MetaM Bool := do
   let proofs ← forallTelescope (← getConstInfo operator).type fun binders _ =>
     binders.mapM fun binder => do isProp (← inferType binder)
   forallTelescope type fun locals body => do
-    let some spec := body.find? fun e =>
+    let some ruleApp := body.find? fun e =>
         e.isAppOf ``TorchLean.Op.rule? && e.getAppNumArgs > 0 &&
           e.getAppArgs.back!.getAppFn.constName? == some operator
       | return false
-    let arguments := (spec.getAppArgs.back!.getAppArgs.zip proofs).filterMap
+    let arguments := (ruleApp.getAppArgs.back!.getAppArgs.zip proofs).filterMap
       fun (argument, proof) =>
         if proof || scalarElements.any argument.isConstOf then none else some argument
     return arguments.all (fun a => a.isFVar && locals.contains a) &&
@@ -464,6 +559,29 @@ run_cmd do
       TorchLean.Roundoff.coverageExtension env index
   let registered := entries.foldl (fun names entry => names.insert entry.operator) NameSet.empty
   let mut problems : Array String := #[]
+  -- The routes that record one generated theorem describe it alike, and no two generated
+  -- theorems have one statement.
+  let mut described : Std.HashMap Name TorchLean.Roundoff.CoverageEntry := {}
+  let mut statements : Std.HashMap Expr Name := {}
+  for entry in entries do
+    if entry.evidence.isAnonymous then continue
+    match described[entry.evidence]? with
+    | some first =>
+      unless first.status == entry.status && first.reference == entry.reference &&
+          first.budget == entry.budget && first.premises == entry.premises &&
+          first.caveats == entry.caveats && first.contracts == entry.contracts &&
+          first.usesIEEE == entry.usesIEEE && first.functions == entry.functions &&
+          first.arms == entry.arms do
+        problems := problems.push s!"the {entry.route} route of {entry.operator} \
+          ({entry.backend}, {entry.mode}) describes {entry.evidence} otherwise than the \
+          {first.route} route of {first.operator}"
+    | none =>
+      described := described.insert entry.evidence entry
+      let some info := env.find? entry.evidence | continue
+      if let some other := statements[info.type]? then
+        problems := problems.push s!"the generated theorems {other} and {entry.evidence} have \
+          one statement"
+      statements := statements.insert info.type entry.evidence
   let specifications ← liftTermElabM <| publicDefinitions isOperatorType
   let recorders ← liftTermElabM <| publicDefinitions isTapeConstructor
   for name in specifications ++ recorders do
@@ -485,34 +603,12 @@ run_cmd do
     entry.backend == "configured" && !entry.route.isEmpty
   let mut certified : Nat := 0
   let mut positions : Nat := 0
-  let mut jointly : Nat := 0
   let mut canonical : Nat := 0
   let mut unconditional : Nat := 0
   for operator in table.ctors do
-    let found ← liftTermElabM <| tableConstructor operator
-    let short := operator.getString!
-    let rows := configured.filter (·.operator == operator)
-    let named (name : String) := name == stem ++ short || name.startsWith (stem ++ short ++ "_")
-    unless found.ruleless do
-      unless lemmas.any named do
-        problems := problems.push s!"{operator} has no equation lemma {rule}_{short}"
-      if found.scalar && rows.isEmpty then
-        problems := problems.push s!"{operator} has a port of scalars and no route analyzed for \
-          the configured scalar"
-    let routes := rows.foldl (fun routes entry =>
-      let route := (splitRoute entry.route).2
-      if routes.contains route then routes else routes.push route) found.gradients
-    for entry in TorchLean.Op.certificates env operator do
-      certified := certified + 1
-      let fields ← liftTermElabM <| ruleFields (← getConstInfo entry.certificate).type
-      unless fields.jvp || routes.any (speaksAbout fields entry.inputs) do
-        problems := problems.push s!"{operator}: the certificate {entry.certificate} speaks \
-          about no route"
     -- Every derivative certificate passed the check of `op_cert`. Those declared under
-    -- `coverageRoots` count, and the ones in all the value inputs together (their varying
-    -- positions, or a mapped list of inputs) that fix no argument cover the gradients.
-    let values := found.gradients.map routePosition
-    let mut joint : Array (RuleFields × List Nat) := #[]
+    -- `coverageRoots` count, and the ones that fix no argument may cover the gradients.
+    let mut candidates : Array (Name × RuleFields × List Nat) := #[]
     for entry in TorchLean.Op.certificates env operator do
       unless entry.kind == `derivative do continue
       let some checked := TorchLean.Op.derivEntry? env entry.certificate |
@@ -521,18 +617,55 @@ run_cmd do
       unless inCoverageRoots env entry.certificate do continue
       canonical := canonical + 1
       if checked.premises.isEmpty then unconditional := unconditional + 1
-      unless checked.varying.isEmpty || values.all checked.varying.contains do continue
       let type := (← getConstInfo entry.certificate).type
       if ← liftTermElabM <| fixesNoArgument operator type then
-        joint := joint.push (← liftTermElabM <| ruleFields type, checked.varying)
-    for route in found.gradients do
-      positions := positions + 1
-      if joint.any fun (fields, inputs) => speaksAbout fields inputs route then
-        jointly := jointly + 1
-      else
-        problems := problems.push s!"{operator}: its gradient {route} has no derivative \
-          certificate of the canonical form in all its value inputs together that leaves its \
-          arguments distinct variables"
+        candidates := candidates.push
+          (entry.certificate, ← liftTermElabM <| ruleFields type, checked.varying)
+    let samples ← liftTermElabM <| tableConstructor operator (candidates.map (·.1))
+    let gradients := samples.foldl (fun all sample => sample.gradients.foldl
+      (fun all route => if all.contains route then all else all.push route) all) #[]
+    let short := operator.getString!
+    let rows := configured.filter (·.operator == operator)
+    let named (name : String) := name == stem ++ short || name.startsWith (stem ++ short ++ "_")
+    unless samples.all (·.ruleless) do
+      unless lemmas.any named do
+        problems := problems.push s!"{operator} has no equation lemma {rule}_{short}"
+      if samples.any (·.scalar) && rows.isEmpty then
+        problems := problems.push s!"{operator} has a port of scalars and no route analyzed for \
+          the configured scalar"
+    let routes := rows.foldl (fun routes entry =>
+      let route := (splitRoute entry.route).2
+      if routes.contains route then routes else routes.push route) gradients
+    for entry in TorchLean.Op.certificates env operator do
+      certified := certified + 1
+      let fields ← liftTermElabM <| ruleFields (← getConstInfo entry.certificate).type
+      unless fields.jvp || routes.any (speaksAbout fields entry.inputs) do
+        problems := problems.push s!"{operator}: the certificate {entry.certificate} speaks \
+          about no route"
+    -- At each sample with a rule, the certificates in all the value inputs together (their
+    -- varying positions, or a mapped list of inputs) cover the gradients, and claim something at
+    -- each member of a family among the attributes.
+    for sample in samples do
+      if sample.ruleless then continue
+      let values := sample.gradients.map routePosition
+      let joint := candidates.filter fun (_, _, varying) =>
+        varying.isEmpty || values.all varying.contains
+      for (member, claiming) in sample.members do
+        unless joint.any (claiming.contains ·.1) do
+          problems := problems.push s!"{operator}: no derivative certificate claims anything at \
+            {member}"
+      for route in sample.gradients do
+        positions := positions + 1
+        let speaking := joint.filter fun (_, fields, inputs) => speaksAbout fields inputs route
+        let label := " ".intercalate ([sample.label, route].filter (!·.isEmpty))
+        if speaking.isEmpty then
+          problems := problems.push s!"{operator}: its gradient {label} has no derivative \
+            certificate of the canonical form in all its value inputs together that leaves its \
+            arguments distinct variables"
+        else if !sample.members.isEmpty && sample.members.all fun (_, claiming) =>
+            !speaking.any (claiming.contains ·.1) then
+          problems := problems.push s!"{operator}: the derivative certificates of its gradient \
+            {label} claim nothing at any member of a family among its attributes"
   -- The outcomes of the analyses against the baseline next to this file.
   problems := problems ++ (← TorchLean.Roundoff.Baseline.check entries
     ((System.FilePath.mk (← getFileName)).withFileName "roundoff_baseline.jsonl"))
@@ -544,9 +677,10 @@ run_cmd do
     constructors are registered with #roundoff_coverage. The {table.ctors.length} constructors \
     of the operator table have the equation lemmas and routes they need, and their {certified} \
     certificates speak about routes. {canonical} derivative certificates have the canonical \
-    form, {unconditional} of them without domain premises, and {jointly} of the {positions} \
-    gradients of their value inputs have one in all the value inputs together that leaves the \
-    operator's arguments distinct variables. Of the {configured.size} analyses for the \
+    form, {unconditional} of them without domain premises, and each of the {positions} gradients \
+    of their value inputs has one in all the value inputs together that leaves the operator's \
+    arguments distinct variables and claims something at a member of each family among its \
+    attributes. Of the {configured.size} analyses for the \
     configured scalar, {count .proved} are proved, {count .conditional} conditional, \
     {count .unsupported} unsupported and {count .failed} failed."
 

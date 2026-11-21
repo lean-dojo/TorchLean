@@ -302,6 +302,7 @@ opaque HandlePointed : NonemptyType.{0}
 /-- Lean type of the native handles of device arenas. Only `Arena.Handle.ofBlocks` creates one. -/
 def Handle : Type := HandlePointed.type
 
+/-- `Handle` is nonempty, as the `extern` declarations that return one need. -/
 instance : Nonempty Handle := HandlePointed.property
 
 /-- A native handle holding the blocks `words` and `scalars` of `count` rows with `indexSlots` index

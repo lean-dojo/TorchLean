@@ -41,6 +41,8 @@ open TorchLean
 open Shape (rank size)
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: enough Lean to read the rest of the guide. -/
+
 #doc (Manual) "Lean Basics" =>
 %%%
 tag := "lean_ecosystem"
@@ -56,9 +58,7 @@ Much of a TorchLean program can be read from its types. A layer's type tells us 
 accepts, and a trainer's prediction method tells us that execution takes place in `IO`. We can ask
 Lean to print those types before running the model.
 
-Named Lean blocks are elaborated when this guide builds, and their output blocks are checked
-against Lean's messages (with the declared whitespace policy). Shell and Python examples are
-separate transcripts.
+You can paste the Lean blocks into a file and ask Lean to check the types as you read.
 
 # Running Lean Files
 
@@ -97,7 +97,9 @@ compiler option, so inspect any warnings as well as errors.
 
 # Imports And Namespaces
 
-Begin the file with:
+We want Lean to know how a TorchLean trainer is constructed and run. The imports bring those
+definitions into the file. Opening the namespace lets us use names like `Tensor` without writing
+`TorchLean` in front of every one.
 
 ```
 -- Import the trainer constructor, then make the short
@@ -332,7 +334,7 @@ when checking the surrounding program:
   * `torch.Size([])`
 :::
 
-# The Basic Operations
+# Shape-Checked Tensor Operations
 
 With shapes in their types, tensor operations can require equal dimensions or describe how an
 output shape is computed. Two vectors illustrate the equal-shape case:
@@ -793,7 +795,8 @@ implementation).
 
 # Structures
 
-A `structure` groups named fields:
+A trainer needs several settings at once. Use a structure to give the learning rate and
+the other settings named fields that the training function can read.
 
 ```lean (name := langAffine)
 -- Store an affine function's two coefficients together and
@@ -999,7 +1002,7 @@ To audit this result, read its conclusion and hypotheses alongside that list, ch
 unexpected axioms or unfinished proofs. Since the report concerns the named theorem, it gives no
 guarantee about a compiler or foreign kernel outside that theorem's statement.
 
-Here's a theorem that connects a public operation to its specification:
+The following theorem connects a public operation to its specification:
 
 ```lean (name := langBridge)
 -- Where the sum of the squared differences is finite, the
@@ -1030,7 +1033,7 @@ That connection comes from the theorem and its hypotheses.
 
 # Effects And IO
 
-A pure function just returns its value:
+A pure function returns its value directly:
 
 ```lean (name := langIncrement)
 -- Pure computation returns a number and performs no

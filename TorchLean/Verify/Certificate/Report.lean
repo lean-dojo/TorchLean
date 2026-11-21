@@ -36,7 +36,7 @@ def ok (report : Report) : Bool :=
   report.rejection.isNone
 
 /-- A report accepts exactly when it gives no reason for a rejection. -/
-theorem ok_iff (report : Report) : report.ok = true ↔ report.rejection = none := by
+theorem ok_iff {report : Report} : report.ok = true ↔ report.rejection = none := by
   simp [ok]
 
 end Report

@@ -462,6 +462,7 @@ private theorem evalPlan_indexPlan
             outputCoordinate
             (AxisTuple.coordEquiv checked.axisLength
               checked.contractedAxes contractionCoordinate))).val := by
+  -- The coordinate on the output axes followed by the contracted axes, and the operand's part.
   let canonicalCoordinate :=
     AxisTuple.append checked.outputAxes
       (checked.outputCoordEquiv outputCoordinate)
@@ -478,6 +479,7 @@ private theorem evalPlan_indexPlan
   let logicalOperandCoordinate :=
     (AxisTuple.coordEquiv checked.axisLength
       (checked.operandAxes operand)).symm selectedOperandCoordinate
+  -- The plan reads each operand axis at its coordinate in that tuple.
   have hPlannedCoordinates :
       ∀ position,
         plannedCoord checked.outputAxes
@@ -501,6 +503,7 @@ private theorem evalPlan_indexPlan
       (fun axis hOutput hContracted =>
         contractedAxes_disjoint_output checked hContracted hOutput)
       hOperandCanonical outputCoordinate contractionCoordinate position
+  -- The plan computes the broadcast index, which is the linearized operand coordinate.
   calc
     evalPlan
           checked.output

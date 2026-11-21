@@ -15,7 +15,7 @@ of `TorchLean.Tensor.scatter` for each way of combining updates, of the pullback
 placement `TorchLean.Tensor.reduceBroadcast` and of the general contraction
 `TorchLean.Tensor.contract`, at a coordinate of the result. Shapes, axes and every other parameter
 are variables, so each theorem holds at every axis and rank. Each route is analyzed for the
-configured scalar of an arbitrary IEEE format, for native `Float32` and for the rounded reals
+configured scalar of an arbitrary format, for native `Float32` and for the rounded reals
 `FP32`. The theorems are declared in the namespace
 `TorchLean.Coverage.TensorOperations`, which every module under
 `TorchLean/Verify/Coverage/TensorOperations/` shares.

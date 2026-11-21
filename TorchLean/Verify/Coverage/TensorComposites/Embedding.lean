@@ -18,7 +18,7 @@ public import TorchLean.Tensor.Layers.PositionalEncoding
 `#roundoff_coverage` runs `roundoff` on the value of the embedding lookup and of its table gradient,
 at a coordinate of the result. Shapes, axes, block sizes and every other parameter are variables, so
 each theorem holds at every axis and rank. Each route is analyzed for the configured scalar of an
-arbitrary IEEE format, for native `Float32` and for the rounded reals `FP32`. The theorems are
+arbitrary format, for native `Float32` and for the rounded reals `FP32`. The theorems are
 declared in the namespace `TorchLean.Coverage.TensorComposites`, which every
 module under `TorchLean/Verify/Coverage/TensorComposites/` shares.
 -/

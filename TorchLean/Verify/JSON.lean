@@ -53,7 +53,7 @@ def parseDecimalRat (ctx : String) (v : Value) : Except String Rat :=
       | none => .error s!"{ctx}: decimal exponent out of range"
 
 /-- `parseDecimalRat` returns `q` exactly when `v` holds a decimal whose `Decimal.toRat?` is `q`. -/
-theorem parseDecimalRat_eq_ok_iff (ctx : String) (v : Value) (q : Rat) :
+theorem parseDecimalRat_eq_ok_iff (ctx : String) {v : Value} {q : Rat} :
     parseDecimalRat ctx v = .ok q ↔
       ∃ d, v.decimal? = some d ∧ Certificate.DecimalJson.Decimal.toRat? d = some q := by
   unfold parseDecimalRat
@@ -207,7 +207,7 @@ def expectFormat (format expected : String) (ctx : String := "top-level") : Exce
   else .error s!"{ctx}.format: unsupported format `{format}` (expected `{expected}`)"
 
 /-- `expectFormat` accepts exactly the format string `expected`. -/
-theorem expectFormat_eq_ok_iff (format expected ctx : String) :
+theorem expectFormat_eq_ok_iff {format expected : String} (ctx : String) :
     expectFormat format expected ctx = .ok () ↔ format = expected := by
   unfold expectFormat
   split <;> simp_all

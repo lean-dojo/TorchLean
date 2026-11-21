@@ -1,9 +1,9 @@
 # Deep Dives
 
-The deep dives are for readers who know the quickstart and want a closer look at TorchLean's
-internal boundaries. They cover advanced autograd, float semantics, rounding failures of standard
-and library formulas, sequential models, IR shape behavior, widgets, PyTorch export, graph-based
-verification, and the certificate of one Muon optimizer step.
+I keep the details that would overwhelm the quickstart here: advanced autograd, floating-point
+semantics, rounding failures in standard and library formulas, sequential models, IR shape
+behavior, widgets, PyTorch export, graph-based verification, and the certificate of one Muon
+optimizer step.
 
 Most deep dives are single files at the top level. Three subdirectories hold the rest:
 
@@ -31,7 +31,7 @@ scripts/lake.sh build TorchLeanExamples
 | `Stability/RidgeRegression1D.lean` | open in an editor | 1D ridge stability, real and binary32. |
 | `Sequential.lean` | `scripts/lake.sh exe torchlean sequential` | The MLP as a sequential model. |
 | `IRAxisOps.lean` | `scripts/lake.sh exe torchlean ir_axis_ops` | Middle-axis softmax, LayerNorm, and concatenation as checked graphs of registered operators (`IR`), evaluated on CPU in the scalar type that `--arithmetic` selects. |
-| `TorchIRPyTorch.lean` | `scripts/lake.sh exe torchlean torch_ir_pytorch --arch mlp > exported_model.py` | Emitting readable PyTorch code from the operator graph of a lowered model. |
+| `TorchIRPyTorch.lean` | `scripts/lake.sh exe torchlean torch_ir_pytorch --arch mlp > exported_model.py` | Exporting a lowered operator graph as a PyTorch module. |
 | `GraphSemantics.lean` | `scripts/lake.sh exe torchlean graph_semantics` | One IR graph evaluated in executable binary32, its interval bounds, and the checker's soundness theorem. |
 | `WidgetGallery.lean` | open in the Lean infoview | Widget commands on small examples. |
 | `Muon.lean` | `scripts/lake.sh build TorchLeanExamples.DeepDives.Muon` | A certified Muon step. |

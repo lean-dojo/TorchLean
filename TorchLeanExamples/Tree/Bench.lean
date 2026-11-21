@@ -249,7 +249,7 @@ def unfolds (k : Nat) (device : Bool) : IO Unit := do
 /-- The scalars of `n` pseudorandom words of `α`. -/
 def randomWords {α : Type} [Numeric.Word α] (n : Nat) : Array α :=
   (Array.range n).map fun i =>
-    Numeric.Word.ofNatBits ((BTree.mix i.toUInt64).toNat % 2 ^ Numeric.Word.width (α := α))
+    Numeric.Word.ofNatBits ((Random.splitmix64 i.toUInt64).toNat % 2 ^ Numeric.Word.width (α := α))
 
 /-- Whether the results `ys` of a search are the scalars `zs`, bit for bit. -/
 def sameWords {α : Type} [Numeric.Word α] (ys : Array (Except Error α)) (zs : Array α) : Bool :=

@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.NN.Norm.LayerNorm.Bounds
+import FloatLib.Numerics.ErrorBound.Algebra
 
 /-!
 # Mixed LayerNorm derivatives
@@ -26,6 +27,7 @@ open TorchLean.Shape (size)
 namespace TorchLean.RowNorm
 
 open scoped BigOperators
+open FloatLib.Numerics.Backward (abs_add_le_add abs_mul_le_mul)
 
 noncomputable section
 
@@ -95,7 +97,7 @@ private theorem exists_nrmD_comp_derivative {ε : ℝ} (hε : 0 < ε)
         ∀ v, D v = normalizedMixed (X p) (A p) (DX v) (DA v) ε i j := by
   have hz (k : Fin n) := (hasFDerivAt_centered (X p) i k).comp p hX
   have ha (k : Fin n) := (hasFDerivAt_centered (A p) i k).comp p hA
-  have hr := (hasFDerivAt_invStd hε (X p) i).comp p hX
+  have hr := (hasFDerivAt_invStd (X p) i (rowVar_add_pos hε _ i)).comp p hX
   have hq := ((HasFDerivAt.sum (u := Finset.univ)
     (fun k _ => (hz k).mul (ha k))).const_mul 2).mul_const ((n : ℝ)⁻¹)
   simp only [← div_eq_mul_inv] at hq
@@ -151,7 +153,7 @@ theorem fderiv_fderiv_nrm {ε : ℝ} (hε : 0 < ε)
   have hfun : (fun Y => fderiv ℝ (fun Z => nrm Z ε i j) Y A) =
       fun Y => nrmD Y ε i j A := by
     funext Y
-    rw [(hasFDerivAt_nrm hε Y i j).fderiv]
+    rw [(hasFDerivAt_nrm Y i j (rowVar_add_pos hε Y i)).fderiv]
   rw [hfun]
   exact fderiv_nrmD_comp hε id (fun _ => A) X (ContinuousLinearMap.id ℝ _)
     0 (hasFDerivAt_id X) (hasFDerivAt_const A X) i j B
@@ -177,7 +179,7 @@ theorem fderiv_fderiv_affine_nrm_comp {ε : ℝ} (hε : 0 < ε)
     funext q
     have hcomp : HasFDerivAt (fun y => gamma * nrm (X y) ε i j + beta)
         (gamma • (nrmD (X q) ε i j).comp (fderiv ℝ X q)) q :=
-      (((hasFDerivAt_nrm hε (X q) i j).comp q
+      (((hasFDerivAt_nrm (X q) i j (rowVar_add_pos hε _ i)).comp q
         (hX q).hasFDerivAt).const_mul gamma).add_const beta
     exact congrArg (fun D : E →L[ℝ] ℝ => D left) hcomp.fderiv
   rw [hfun, (hD.const_mul gamma).fderiv]
@@ -226,21 +228,12 @@ def centeredMixedRadius (ε : ℝ) (u a b c : Fin n → ℝ) (j : Fin n) : ℝ :
   c j * (Real.sqrt ε)⁻¹ + a j * inverseFirstRadius ε u b +
     b j * inverseFirstRadius ε u a + u j * inverseMixedRadius ε u a b c
 
-private theorem abs_mul_bound {x y a b : ℝ} (hx : |x| ≤ a) (hy : |y| ≤ b) :
-    |x * y| ≤ a * b := by
-  rw [abs_mul]
-  exact mul_le_mul hx hy (abs_nonneg _) ((abs_nonneg _).trans hx)
-
-private theorem abs_add_bound {x y a b : ℝ} (hx : |x| ≤ a) (hy : |y| ≤ b) :
-    |x + y| ≤ a + b :=
-  (abs_add_le _ _).trans (add_le_add hx hy)
-
 /-- Centered bounds on the input and one direction enclose the variance differential. -/
 theorem abs_varianceFirst_le (X A : Vec (Shape.size [m, n])) (i : Fin m)
     (u a : Fin n → ℝ) (hu : ∀ k, |centered X i k| ≤ u k)
     (ha : ∀ k, |centered A i k| ≤ a k) :
     |varianceFirst X A i| ≤ varianceFirstRadius u a := by
-  have h := abs_sum_div_le _ _ (fun k => abs_mul_bound (hu k) (ha k))
+  have h := abs_sum_div_le _ _ (fun k => abs_mul_le_mul (hu k) (ha k))
   simpa only [varianceFirst, varianceFirstRadius, mul_div_assoc, abs_mul,
     abs_of_pos (by norm_num : (0 : ℝ) < 2)] using
     mul_le_mul_of_nonneg_left h (by norm_num : (0 : ℝ) ≤ 2)
@@ -252,7 +245,7 @@ theorem abs_varianceMixed_le (X A B C : Vec (Shape.size [m, n])) (i : Fin m)
     (hc : ∀ k, |centered C i k| ≤ c k) :
     |varianceMixed X A B C i| ≤ varianceMixedRadius u a b c := by
   have h := abs_sum_div_le _ _ fun k =>
-    abs_add_bound (abs_mul_bound (ha k) (hb k)) (abs_mul_bound (hu k) (hc k))
+    abs_add_le_add (abs_mul_le_mul (ha k) (hb k)) (abs_mul_le_mul (hu k) (hc k))
   simpa only [varianceMixed, varianceMixedRadius, mul_div_assoc, abs_mul,
     abs_of_pos (by norm_num : (0 : ℝ) < 2)] using
     mul_le_mul_of_nonneg_left h (by norm_num : (0 : ℝ) ≤ 2)
@@ -267,8 +260,8 @@ theorem abs_inverseFirst_le {ε : ℝ} (hε : 0 < ε)
   have hr : |invStd X ε i ^ 3| ≤ (Real.sqrt ε)⁻¹ ^ 3 := by
     rw [abs_pow, abs_of_nonneg (invStd_nonneg X ε i)]
     exact pow_le_pow_left₀ (invStd_nonneg X ε i) (invStd_le_inv_sqrt hε X i) 3
-  exact abs_mul_bound
-    (abs_mul_bound (by norm_num : |-(1 / 2 : ℝ)| ≤ (1 / 2 : ℝ)) hr)
+  exact abs_mul_le_mul
+    (abs_mul_le_mul (by norm_num : |-(1 / 2 : ℝ)| ≤ (1 / 2 : ℝ)) hr)
     (abs_varianceFirst_le X A i u a hu ha)
 
 /-- Centered bounds enclose the mixed inverse-standard-deviation differential. -/
@@ -281,13 +274,13 @@ theorem abs_inverseMixed_le {ε : ℝ} (hε : 0 < ε)
   have hr (power : Nat) : |invStd X ε i ^ power| ≤ (Real.sqrt ε)⁻¹ ^ power := by
     rw [abs_pow, abs_of_nonneg (invStd_nonneg X ε i)]
     exact pow_le_pow_left₀ (invStd_nonneg X ε i) (invStd_le_inv_sqrt hε X i) power
-  have hfirst := abs_mul_bound
-    (abs_mul_bound
-      (abs_mul_bound (by norm_num : |(3 / 4 : ℝ)| ≤ (3 / 4 : ℝ)) (hr 5))
+  have hfirst := abs_mul_le_mul
+    (abs_mul_le_mul
+      (abs_mul_le_mul (by norm_num : |(3 / 4 : ℝ)| ≤ (3 / 4 : ℝ)) (hr 5))
       (abs_varianceFirst_le X A i u a hu ha))
     (abs_varianceFirst_le X B i u b hu hb)
-  have hsecond := abs_mul_bound
-    (abs_mul_bound (by norm_num : |(1 / 2 : ℝ)| ≤ (1 / 2 : ℝ)) (hr 3))
+  have hsecond := abs_mul_le_mul
+    (abs_mul_le_mul (by norm_num : |(1 / 2 : ℝ)| ≤ (1 / 2 : ℝ)) (hr 3))
     (abs_varianceMixed_le X A B C i u a b c hu ha hb hc)
   rw [inverseMixed, inverseMixedRadius]
   exact (abs_sub _ _).trans (add_le_add hfirst hsecond)
@@ -300,11 +293,11 @@ theorem abs_nrmD_le_centered {ε : ℝ} (hε : 0 < ε)
     (ha : ∀ k, |centered A i k| ≤ a k) :
     |nrmD X ε i j A| ≤ centeredFirstRadius ε u a j := by
   rw [nrmD_apply_centered hε]
-  exact abs_add_bound
-    (abs_mul_bound (ha j) (by
+  exact abs_add_le_add
+    (abs_mul_le_mul (ha j) (by
       rw [abs_of_nonneg (invStd_nonneg X ε i)]
       exact invStd_le_inv_sqrt hε X i))
-    (abs_mul_bound (hu j) (abs_inverseFirst_le hε X A i u a hu ha))
+    (abs_mul_le_mul (hu j) (abs_inverseFirst_le hε X A i u a hu ha))
 
 /-- Centered magnitudes enclose all four terms of the analytic mixed chain formula. -/
 theorem abs_normalizedMixed_le {ε : ℝ} (hε : 0 < ε)
@@ -313,15 +306,15 @@ theorem abs_normalizedMixed_le {ε : ℝ} (hε : 0 < ε)
     (ha : ∀ k, |centered A i k| ≤ a k) (hb : ∀ k, |centered B i k| ≤ b k)
     (hc : ∀ k, |centered C i k| ≤ c k) :
     |normalizedMixed X A B C ε i j| ≤ centeredMixedRadius ε u a b c j := by
-  exact abs_add_bound
-    (abs_add_bound
-      (abs_add_bound
-        (abs_mul_bound (hc j) (by
+  exact abs_add_le_add
+    (abs_add_le_add
+      (abs_add_le_add
+        (abs_mul_le_mul (hc j) (by
           rw [abs_of_nonneg (invStd_nonneg X ε i)]
           exact invStd_le_inv_sqrt hε X i))
-        (abs_mul_bound (ha j) (abs_inverseFirst_le hε X B i u b hu hb)))
-      (abs_mul_bound (hb j) (abs_inverseFirst_le hε X A i u a hu ha)))
-    (abs_mul_bound (hu j) (abs_inverseMixed_le hε X A B C i u a b c hu ha hb hc))
+        (abs_mul_le_mul (ha j) (abs_inverseFirst_le hε X B i u b hu hb)))
+      (abs_mul_le_mul (hb j) (abs_inverseFirst_le hε X A i u a hu ha)))
+    (abs_mul_le_mul (hu j) (abs_inverseMixed_le hε X A B C i u a b c hu ha hb hc))
 
 /-- The mixed derivative of `gamma * nrm + beta` on a composed row lies in `[-r, r]` for
 `r = |gamma| * centeredMixedRadius ε u a b c j`. -/
@@ -340,7 +333,7 @@ theorem fderiv_fderiv_affine_nrm_comp_mem_Icc {ε : ℝ} (hε : 0 < ε)
       Set.Icc (-(|gamma| * centeredMixedRadius ε u a b c j))
         (|gamma| * centeredMixedRadius ε u a b c j) := by
   rw [fderiv_fderiv_affine_nrm_comp hε X p left right hX DA hA]
-  exact abs_le.mp (abs_mul_bound (le_refl |gamma|)
+  exact abs_le.mp (abs_mul_le_mul (le_refl |gamma|)
     (abs_normalizedMixed_le hε _ _ _ _ i j u a b c hu ha hb hc))
 
 end

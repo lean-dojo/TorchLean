@@ -75,18 +75,17 @@ theorem inner_eq_sum_fiberCLM [Fintype ι] (e : s.Coord ≃ Fin n × ι) (a b : 
   refine Finset.sum_congr rfl fun r _ => ?_
   simp only [PiLp.inner_apply, fiberCLM_apply, RCLike.inner_apply, conj_trivial, mul_comm]
 
-/-- If `f` has derivative `L r` at the fiber at `r` of `x` for every `r`, a map `F` that applies
-`f` to every fiber has derivative `fiberwiseCLM e L` at `x`. -/
+/-- If `f r` has derivative `L r` at the fiber at `r` of `x` for every `r`, a map `F` that applies
+`f r` to the fiber at `r` for every `r` has derivative `fiberwiseCLM e L` at `x`. -/
 theorem fiberwise_hasFDerivAt (e : s.Coord ≃ Fin n × ι) (F : Tensor ℝ s → Tensor ℝ s)
-    (f : Vec n → Vec n) (L : ι → Vec n →L[ℝ] Vec n) (x : Tensor ℝ s)
-    (hF : ∀ y c, F y c = f (fiberCLM e (e c).2 y) (e c).1)
-    (hf : ∀ r, HasFDerivAt f (L r) (fiberCLM e r x)) :
-    HasFDerivAt F (fiberwiseCLM e L) x := by
+    (f : ι → Vec n → Vec n) (L : ι → Vec n →L[ℝ] Vec n) (x : Tensor ℝ s)
+    (hF : ∀ y c, F y c = f (e c).2 (fiberCLM e (e c).2 y) (e c).1)
+    (hf : ∀ r, HasFDerivAt (f r) (L r) (fiberCLM e r x)) : HasFDerivAt F (fiberwiseCLM e L) x := by
   refine Tensor.hasFDerivAt_of_coordinates F _ x fun c => ?_
   have h := (EuclideanSpace.proj (𝕜 := ℝ) (e c).1).hasFDerivAt.comp x
     ((hf (e c).2).comp x (fiberCLM e (e c).2).hasFDerivAt)
-  have hfun :
-      (fun y => F y c) = (EuclideanSpace.proj (𝕜 := ℝ) (e c).1) ∘ f ∘ (fiberCLM e (e c).2) := by
+  have hfun : (fun y => F y c) =
+      (EuclideanSpace.proj (𝕜 := ℝ) (e c).1) ∘ f (e c).2 ∘ (fiberCLM e (e c).2) := by
     funext y
     rw [hF]
     rfl
@@ -118,7 +117,7 @@ theorem fiberwise_backward_eq_adjoint [Fintype ι] (e : s.Coord ≃ Fin n × ι)
     (hf : ∀ r, HasFDerivAt f (L r) (fiberCLM e r x)) (hB : ∀ r u w, ⟪L r u, w⟫ = ⟪u, B r w⟫)
     (hG : ∀ c, G c = B (e c).2 (fiberCLM e (e c).2 δ) (e c).1) :
     HasFDerivAt F (fiberwiseCLM e L) x ∧ G = (fderiv ℝ F x).adjoint δ := by
-  have h := fiberwise_hasFDerivAt e F f L x hF hf
+  have h := fiberwise_hasFDerivAt e F (fun _ => f) L x hF hf
   exact ⟨h, by rw [h.fderiv, fiberwiseCLM_adjoint e L B hB δ G hG]⟩
 
 /-! ## Fibers along an axis -/

@@ -62,8 +62,9 @@ at the index tuples of `selectSources`.
 
 Each operator is a hand transcription of the PyTorch and JAX semantics in the table. The capture
 tests `test_data_movement` and `test_constant_index_gather_and_scatter_match_eager_words` in
-`scripts/checks/test_ir_capture.py` compare `pad`, `flip`, `broadcast`, `slice`, `cat`, `permute`,
-`reshape` and `gather` with eager PyTorch, and `test_data_movement_and_contraction` compares
+`scripts/checks/ir_capture_pytorch_operators.py` compare `pad`, `flip`, `broadcast`, `slice`,
+`cat`, `permute`, `reshape` and `gather` with eager PyTorch, and
+`test_data_movement_and_contraction` in `scripts/checks/ir_capture_jax_operators.py` compares
 `slice`, `pad`, `flip`, `cat` and `broadcast` with eager JAX. An imported index outside its axis
 stops the run, as torch raises (`test_runtime_index_outside_its_axis_fails_execution`).
 -/

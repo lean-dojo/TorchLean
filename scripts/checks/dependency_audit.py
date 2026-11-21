@@ -879,7 +879,7 @@ def _needs_disambiguation(mangled: str) -> bool:
 
 
 def lean_symbol(package: str, name: str, boxed: bool = False) -> str:
-    """The C symbol Lean v4.35 gives a declaration of `package` (`mkPackageSymbolPrefix` and
+    """The C symbol Lean v4.36 gives a declaration of `package` (`mkPackageSymbolPrefix` and
     `Name.mangle`), or its boxed wrapper (`mkMangledBoxedName`)."""
     out = ""
     previous: tuple[str, str] | None = None

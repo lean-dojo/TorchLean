@@ -5,7 +5,7 @@ Authors: TorchLean Team
 -/
 module
 
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff
+public import FloatLib.Tactic.Roundoff
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Transcendentals
 public import TorchLean.Tensor.ConfiguredBinary
 public import TorchLean.Tensor.SomeTensor
@@ -14,6 +14,7 @@ public import TorchLean.Tensor.Contract
 public import TorchLean.Tensor.Cumulative
 public import TorchLean.Tensor.Layers.Activation
 public import TorchLean.Tensor.Reduce.Fold
+public import TorchLean.Tensor.Reduce.Order
 public import TorchLean.Verify.RuntimeApprox.Rounding
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Recovery
 public import Mathlib.Data.Rat.Cast.Lemmas
@@ -23,16 +24,16 @@ public import TorchLean.Tensor.List
 public meta import Mathlib.Util.Qq
 public meta import Lean.Meta.Match.MatcherInfo
 public meta import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension
+public import FloatLib.Tactic.Roundoff.Extension
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
 
 /-!
 # Tensors in `roundoff`
 
 FloatLib's `roundoff` analysis constructs numerical proofs from configured floating-point code
-(`FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff`), and TorchLean's tensors join it
-as one `Extension`. Tensors and their storage stay folded during program normalization, an entry
-is read by `Tensor.Rep.get` at a coordinate, and the coordinate laws read it through the
+(`FloatLib.Tactic.Roundoff`), and TorchLean's tensors join it as one `Extension`. Tensors and
+their storage stay folded during program normalization, an entry is read by `Tensor.Rep.get` at
+a coordinate, and the coordinate laws read it through the
 specification operation that computes it. Tensor folds and finite index loops reuse one scalar
 invariant theorem through the coordinates (`fold_error`, `fold_mixedError`), without unrolling
 their elements, and operations on several tensors reduce over their shared coordinates. Sums are
@@ -61,7 +62,7 @@ and a permutation by `Shape.adjacentSwap` at the coordinate with the two swapped
 
 On an IEEE descriptor, the `exp` and `log` of the configured `MathFunctions` TorchLean selects and
 the scalar context's `expm1`, `log1p` and `Context.expMul` are registered as FloatLib's correctly
-rounded `exp`, `log`, `expMinus1`, `logPlus1` and `expMul`. The theorems below give the real value
+rounded `exp`, `log`, `expm1`, `logp1` and `expMul`. The theorems below give the real value
 of a max-absolute reduction of finite values, bound every entry of a finite vector by its entry at
 `argmax` or at `Softmax.pivot`, and decode tensor folds through the codecs around their
 steps.
@@ -638,8 +639,19 @@ def tensors : Extension where
   -- selected index and an adjacent swap at the coordinate with the two indices exchanged. A
   -- two-block `cat` is read as its two branches, and a `cat` of more blocks as its first block and
   -- the `cat` of the others (of one block as that block). `maximum` and `minimum` are read as their
-  -- `zipWith`, and a policy argument of an elementwise operator as the branch it selects.
-  programRewrites := #[(``Tensor.maximum_def, eval_prio high),
+  -- `zipWith`, and a policy argument of an elementwise operator as the branch it selects. A
+  -- reduction, contraction, pool, scan or running selection in the left fold is its left-fold
+  -- function.
+  programRewrites := #[(``Tensor.reduceIn_leftFold, eval_prio high),
+    (``Tensor.meanIn_leftFold, eval_prio high),
+    (``Tensor.contractIn_leftFold, eval_prio high),
+    (``Tensor.batchMatmulIn_leftFold, eval_prio high),
+    (``Tensor.poolIn_leftFold, eval_prio high),
+    (``Tensor.scanIn_add_leftFold, eval_prio high),
+    (``Tensor.scanIn_mul_leftFold, eval_prio high),
+    (``Tensor.cummaxIn_leftFold, eval_prio high),
+    (``Tensor.cumminIn_leftFold, eval_prio high),
+    (``Tensor.maximum_def, eval_prio high),
     (``Tensor.minimum_def, eval_prio high),
     (``Tensor.sqrt_raw, eval_prio high),
     (``Tensor.sqrt_clampNegative, eval_prio high),
@@ -676,8 +688,8 @@ def tensors : Extension where
       ``ExecFloat.Binary.CorrectlyRounded.mathFunctions_exp_of_isIEEE),
     (``ExecFloat.Binary.CorrectlyRounded.log,
       ``ExecFloat.Binary.CorrectlyRounded.mathFunctions_log_of_isIEEE),
-    (``ExecFloat.Binary.CorrectlyRounded.expMinus1, ``ConfiguredBinary.expm1_of_isIEEE),
-    (``ExecFloat.Binary.CorrectlyRounded.logPlus1, ``ConfiguredBinary.log1p_of_isIEEE),
+    (``ExecFloat.Binary.CorrectlyRounded.expm1, ``ConfiguredBinary.expm1_of_isIEEE),
+    (``ExecFloat.Binary.CorrectlyRounded.logp1, ``ConfiguredBinary.log1p_of_isIEEE),
     (``ExecFloat.Binary.CorrectlyRounded.expMul, ``ConfiguredBinary.expMul_of_isIEEE)]
   exactOperations := #[(``toReal_natCast_one, none)]
   roundings := #[(``Nat.cast, ``natCast_rounding)]

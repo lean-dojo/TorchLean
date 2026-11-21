@@ -104,6 +104,7 @@ def planContraction?
       contractedAxes.length != contractedLengths.length ||
       inputAxes.length != inputDimensions.length then
     return none
+  -- Reordering the sum needs a commutative addition.
   let addCommMonoidType ← mkAppM ``AddCommMonoid #[scalarType]
   let .some _ ← trySynthInstance addCommMonoidType
     | return none
@@ -145,6 +146,8 @@ def planContraction?
       axisLength, hOriginal, hLiteralPermutation]
   let plannedShape ← shapeExpr plannedLengths
   let plannedCoordinateType ← mkAppM ``Shape.Coord #[plannedShape]
+  -- A planned coordinate maps to the source coordinate whose axis `a` is the planned component
+  -- at `a`'s planned position, which is `coordinateEquiv` by `rfl`.
   let (coordinateMap, hCoordinateMap) ←
     withLocalDeclD `contractionCoordinate plannedCoordinateType
         fun coordinate => do

@@ -147,7 +147,7 @@ theorem mulVec_solveRidgeFn (K : Fin n → Fin n → ℝ) (γ : ℝ) (hsymm : �
     by_cases h : i = j
     · rw [h]
     · simp only [Factorization.addScaledIdFn, hsymm i j, ite_eq_right h, ite_eq_right (Ne.symm h)]
-  obtain ⟨hlow, hmul⟩ := isCholesky_of_pos _ hsymmA hpos
+  obtain ⟨hlow, -, hmul⟩ := isCholesky_of_pos _ hsymmA hpos
   rw [hA, hmul]
   exact mulVec_cholSolveFn _ hlow (fun j => (hpos j).ne') b
 

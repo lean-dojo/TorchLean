@@ -1,8 +1,9 @@
 # Model Examples
 
-Runnable TorchLean models live here, from a small MLP up to attention and reinforcement learning.
-Start with `mlp`, since the larger models often need downloaded datasets or CUDA. Each family
-README covers its own inputs and outputs.
+These are complete runnable models rather than architecture sketches. I use `mlp` for a quick
+check of the everyday training path; the larger examples are where data loading, CUDA, sequence
+state, sampling, and saved artifacts become visible. Each family README explains its inputs,
+commands, and outputs.
 
 ## Layout
 
@@ -34,10 +35,14 @@ Each model command's own `--help` explains its data and runtime options.
 Most examples use this training lifecycle:
 
 ```lean
-let trainer := Trainer.create model config
-let trained ← trainer.train dataset options
-trained.printSummary
-let prediction ← trained.predict input
+def run (model : nn.Sequential [2] [1]) (config : Trainer.Config [2] [1])
+    (dataset : Trainer.Dataset [2] [1]) (options : Trainer.TrainOptions)
+    (input : Tensor Float [2]) : IO Unit := do
+  let trainer := Trainer.create model config
+  let trained ← trainer.train dataset options
+  trained.printSummary
+  let prediction ← trained.predict input
+  IO.println s!"prediction = {reprStr prediction}"
 ```
 
 The shared command helpers parse data and runtime flags around this lifecycle. They do not define a

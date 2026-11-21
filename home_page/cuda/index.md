@@ -11,20 +11,8 @@ Model shapes and graph construction use the same Lean API as CPU execution.
 
 ## Build and Run
 
-Select a CUDA-enabled LibTorch SDK of torch 2.13 or later and build:
-
-```bash
-export TORCHLEAN_LIBTORCH_HOME=/opt/libtorch
-scripts/lake.sh -Kcuda=true build
-```
-
-Run a small CUDA example with a built-in dataset:
-
-```bash
-scripts/lake.sh -Kcuda=true exe torchlean quickstart_mlp --device cuda --steps 100
-```
-
-Run the maintained numerical and native-boundary suite:
+Start with the [CUDA installation steps]({{ '/installation/#nvidia-cuda' | relative_url }}).
+To run the tests and require a working CUDA device, use:
 
 ```bash
 TORCHLEAN_REQUIRE_CUDA=1 scripts/lake.sh -Kcuda=true test

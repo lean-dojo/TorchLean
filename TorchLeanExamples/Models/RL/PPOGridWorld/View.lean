@@ -8,9 +8,8 @@ module
 
 import TorchLeanExamples.Models.RL.GridWorld.Env
 import TorchLeanExamples.Models.Training
-meta import TorchLeanExamples.Models.Training
+meta import TorchLeanExamples.Models.Training -- shake: keep
 public meta import TorchLeanExamples.Models.RL.GridWorld.Artifacts
-import TorchLean.NN.RL.Transition
 import TorchLeanExamples.Models.RL.GridWorld.Widgets
 import TorchLean.NN.Widget.Training
 

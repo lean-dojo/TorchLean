@@ -30,7 +30,7 @@ open scoped BigOperators
 noncomputable section
 
 /-- Coordinate `i` of `Tensor.map f (Tensor.ofFnE xV)` is `f (xV i)`. -/
-@[simp] theorem Tensor.getScalar_map_ofFnE {n : Nat} (f : ℝ → ℝ) (xV : Vec n) (i : Fin n) :
+theorem Tensor.getScalar_map_ofFnE {n : Nat} (f : ℝ → ℝ) (xV : Vec n) (i : Fin n) :
     Tensor.getScalar (Tensor.map f (ofFnE xV)) i = f (xV i) := by
   simp [ofFnE]
 

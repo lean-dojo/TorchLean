@@ -143,7 +143,7 @@ theorem libraryK3_eq (hformat : format.isIEEE = true) (hbias : 2 ≤ format.expo
     have h0 : ExecFloat.Binary.toReal (lr - lp) = 0 :=
       Model.toReal_eq_zero_of_isFinite_eq_false (Bool.eq_false_iff.mpr hn)
     linarith
-  have hg : genericFormat Numerics.binaryRadix (fexpOf format)
+  have hg : GenericRepresentable Numerics.binaryRadix (fexpOf format)
       (ExecFloat.Binary.toReal (lr - lp)) :=
     toReal_genericFormat_of_isFinite _ htf
   have ht : ExecFloat.Binary.toReal (lr - lp) ≤
@@ -180,7 +180,7 @@ theorem libraryK3_eq (hformat : format.isIEEE = true) (hbias : 2 ≤ format.expo
   refine ⟨hrf, ?_⟩
   rw [ExecFloat.Binary.toReal_sub_eq_roundAt hrf, hs, ExecFloat.Binary.toReal_one hformat,
     sub_sub_cancel_left]
-  exact roundAt_of_genericFormat _ (generic_format_neg _ (Grid.format_unitRoundoff hbias))
+  exact roundAt_of_genericFormat _ (genericRepresentable_neg _ (Grid.format_unitRoundoff hbias))
 
 /-- In every IEEE format, the rewrite `expm1 (lr - lp) - (lr - lp)` is finite and equal to `0` at
 every `lp`, `lr` whose computed difference is finite and below the unit roundoff `u` in
@@ -198,13 +198,13 @@ theorem k3_eq_zero (hformat : format.isIEEE = true) {lp lr : Value}
     have := Real.exp_le_exp.mpr (show ExecFloat.Binary.toReal (lr - lp) ≤ 1 by
       linarith [le_abs_self (ExecFloat.Binary.toReal (lr - lp))])
     linarith [Real.exp_one_lt_d9, Real.pi_gt_three]
-  have hmf := ExecFloat.Binary.CorrectlyRounded.isFinite_expMinus1 (budget := {}) ht hexp
-  have hm : ExecFloat.Binary.toReal (ExecFloat.Binary.CorrectlyRounded.expMinus1 (lr - lp)) =
+  have hmf := ExecFloat.Binary.CorrectlyRounded.isFinite_expm1 (budget := {}) ht hexp
+  have hm : ExecFloat.Binary.toReal (ExecFloat.Binary.CorrectlyRounded.expm1 (lr - lp)) =
       ExecFloat.Binary.toReal (lr - lp) := by
-    rw [ExecFloat.Binary.CorrectlyRounded.toReal_expMinus1_eq_roundAt (budget := {}) ht hexp]
+    rw [ExecFloat.Binary.CorrectlyRounded.toReal_expm1_eq_roundAt (budget := {}) ht hexp]
     exact Grid.roundAt_expm1 (toReal_genericFormat_of_isFinite _ ht) h
   have hf : ExecFloat.Binary.isFinite
-      (ExecFloat.Binary.CorrectlyRounded.expMinus1 (lr - lp) - (lr - lp)) = true :=
+      (ExecFloat.Binary.CorrectlyRounded.expm1 (lr - lp) - (lr - lp)) = true :=
     ExecFloat.Binary.isFinite_sub_of_mixedError hmf ht (.refl _)
       (by rw [hm, sub_self, abs_zero, mul_zero, add_zero]; linarith)
   unfold LossBugs.KLEstimator.k3
@@ -291,10 +291,10 @@ theorem exists_rejected {d : Binary.Desc} (hd : valid d)
   have hpred : pred (β := Numerics.binaryRadix) (fexp := fexpOf d.format)
       (unitRoundoffAt d.format) = unitRoundoffAt d.format - unitRoundoffAt d.format ^ 2 := by
     rw [unitRoundoffAt, pred_bpow, hfe, bpow.add_exp, sq]
-  have hrep : genericFormat Numerics.binaryRadix (fexpOf d.format)
+  have hrep : GenericRepresentable Numerics.binaryRadix (fexpOf d.format)
       (unitRoundoffAt d.format - unitRoundoffAt d.format ^ 2) := by
     rw [← hpred]
-    exact generic_format_pred (Grid.format_unitRoundoff (by omega))
+    exact genericRepresentable_pred (Grid.format_unitRoundoff (by omega))
   have hy0 : 0 < unitRoundoffAt d.format - unitRoundoffAt d.format ^ 2 := by nlinarith
   have hΘ := Model.Transcendentals.CorrectlyRounded.one_lt_overflowThreshold hd'
   obtain ⟨hfin, hval⟩ := Elementary.roundSigned_eq_roundAt hd'

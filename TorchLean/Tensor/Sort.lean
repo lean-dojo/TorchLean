@@ -28,8 +28,8 @@ torch 2.8.0: the stable sort of `[1, NaN, 0, 3, -0, 1, NaN, -∞, 3]` has the in
 `sort`. The lower-index ties of `topk` are our choice. The `torch.topk` page says the indices of
 tied elements aren't guaranteed to be stable, so the exporter writes `topk` as a prefix of the
 stable sort (`TorchLean.NN.PyTorch.Export.IR`). The capture test
-`test_index_outputs_match_eager` in `scripts/checks/test_ir_capture.py` compares stable-sort
-indices with eager PyTorch.
+`test_index_outputs_match_eager` in `scripts/checks/ir_capture_pytorch_operators.py` compares
+stable-sort indices with eager PyTorch.
 
 * `sort_snd_apply` and `sort_fst_apply` read the indices and the values, and `sortFast_eq`
   runs `sort` with each fiber's order computed once.
@@ -40,6 +40,8 @@ indices with eager PyTorch.
   `topk_snd`). `Shape.slice_prefix` shows that the prefix slice replaces the extent of `dim` by
   `k`, and `slice_prefixCoord` reads it at `Shape.prefixCoord`, which takes an index `j` along
   `dim` and the indices of a coordinate `c` of `s` along the other axes.
+* `sortOn` sorts the entries of a tensor by keys of another type: the entries at the indices of
+  `sort` of the keys.
 * `sortBackward` and `topkBackward` write each incoming gradient entry at its source index in a
   tensor of zeros.
 -/
@@ -286,6 +288,16 @@ theorem le_sort_fst (x : Tensor α s) (dim : Fin s.rank) (c : s.Coord) (observe 
     simpa using List.pairwise_iff_getElem.mp (pairwise_sort x dim true c observe hself horder)
       p.val q.val (by simp) (by simp) hpq
   · exact le_rfl
+
+omit [BEq α] [LT α] [DecidableRel ((· > ·) : α → α → Prop)] in
+/-- Sort `x` along `dim` by the keys `key` gives its entries: the entries of `x` at the indices of
+`sort` of the keys, and those indices. `Op.sort` sorts Booleans by `Bool.toNat` and integer words
+by their values (`Word.toInteger`). -/
+def sortOn {β : Type} [Storage β] [BEq β] [LT β] [DecidableRel ((· > ·) : β → β → Prop)]
+    (key : α → β) (x : Tensor α s) (dim : Fin s.rank) (descending : Bool) :
+    Tensor α s × Tensor (Fin (s.extent dim)) s :=
+  let indices := (sort (map key x) dim descending).2
+  (Rep.ofFn fun c => x (Shape.Coord.update c dim (indices c)), indices)
 
 /-! ## Top-k -/
 

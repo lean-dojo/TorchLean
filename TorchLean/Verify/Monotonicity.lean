@@ -77,7 +77,7 @@ def Certificate.check {s t : Shape} : Certificate s t → Bool
   | .relu _ => true
   | .comp a b => check a && check b
 
-private theorem vector_order_iff {α : Type} [Storage α] [LE α] {n : Nat} (x y : Tensor α [n]) :
+private theorem vector_order_iff {α : Type} [Storage α] [LE α] {n : Nat} {x y : Tensor α [n]} :
     Tensor.Forall₂ (· ≤ ·) x y ↔ ∀ i, x.getScalar i ≤ y.getScalar i := by
   rfl
 
@@ -93,13 +93,13 @@ theorem preservesOrder_linear {α : Type} [Storage α] [CommRing α] [LinearOrde
     (hw : ∀ i j, 0 ≤ get2 layer.weights i j) :
     PreservesOrder (Linear.forward layer) := by
   intro x y hxy
-  apply (vector_order_iff _ _).mpr
+  apply vector_order_iff.mpr
   intro i
   simp only [Linear.forward, Tensor.add_def, Tensor.getScalar_zipWith,
     Tensor.getScalar_contract_matVec_eq_sum]
   refine add_le_add ?_ le_rfl
   exact Finset.sum_le_sum fun j _ =>
-    mul_le_mul_of_nonneg_left ((vector_order_iff x y).mp hxy j) (hw i j)
+    mul_le_mul_of_nonneg_left (vector_order_iff.mp hxy j) (hw i j)
 
 /-- ReLU preserves componentwise order at every tensor rank. -/
 theorem preservesOrder_relu {α : Type} [Storage α] [LinearOrder α] [Zero α] (s : Shape) :

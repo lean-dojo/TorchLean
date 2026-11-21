@@ -437,7 +437,7 @@ private def batchNorm {channels : Nat} {spatial : Shape} :
     let beta ← Tape.requireValue t betaId (.dim channels .scalar)
     -- As `Normalization.normalizedRows` without recentering: the row less its mean, divided by its
     -- scale (the IEEE maximum of its largest magnitude and `sqrt |epsilon|`), then by
-    -- `std = sqrt (max (m + epsilon / scale / scale) 0)` for the mean `m` of its squares, each
+    -- `std = sqrt (m + epsilon / scale / scale)` for the mean `m` of its squares, each
     -- row sum divided once by the number of positions. `reduceMaxByRow` skips a NaN, which changes
     -- no output: a centered row has a NaN only when its mean is NaN or infinite, and then every
     -- output of the row is NaN either way.
@@ -459,7 +459,7 @@ private def batchNorm {channels : Nat} {spatial : Shape} :
     let epsScaled := Buffer.div epsVec scale
     let epsScaled2 := Buffer.div epsScaled scale
     let shifted := Buffer.add meanSquare epsScaled2
-    let std := Buffer.sqrtClampNegative shifted
+    let std := Buffer.sqrt shifted
     let stdB := Buffer.broadcastVecToCols std rows32 cols32
     let xHat := Buffer.div scaled stdB
     let gammaB := Buffer.broadcastVecToCols gamma rows32 cols32
@@ -519,12 +519,12 @@ private def batchNorm {channels : Nat} {spatial : Shape} :
     pure (t.addNode node)
 
 /-- Batch normalization along `dim` with frozen running statistics
-(`Tensor.batchNorm x dim gamma beta (.running mean var) epsilon`). The denominator is
-`sqrt (max (max var 0 + epsilon) 0)` per channel, with clamps that keep a NaN (`Buffer.relu`,
-`Buffer.sqrtClampNegative`), and the result is `(x - mean) / denominator * gamma + beta` with each
-channel vector broadcast along `dim`. The statistics are uploaded in the input's dtype, and neither
-they nor epsilon receive a gradient. The node keeps the normalized input and the broadcast `gamma`
-and denominator for the pullback. A failed upload is the entry's error. -/
+(`Tensor.batchNorm x dim gamma beta (.running mean var) epsilon`). The denominator is the IEEE
+root `sqrt (var + epsilon)` per channel (`Buffer.sqrt`), and the result is
+`(x - mean) / denominator * gamma + beta` with each channel vector broadcast along `dim`. The
+statistics are uploaded in the input's dtype, and neither they nor epsilon receive a gradient. The
+node keeps the normalized input and the broadcast `gamma` and denominator for the pullback. A
+failed upload is the entry's error. -/
 private def batchNormRunning {s : Shape} (dim : Fin s.rank) :
     Kernel [.value s, .value [s.extent dim], .value [s.extent dim], .frozen [s.extent dim],
       .frozen [s.extent dim], .frozen []] [.value s] where
@@ -547,10 +547,9 @@ private def batchNormRunning {s : Shape} (dim : Fin s.rank) :
         let outDims := s.toArray
         let axisMap := Array.ofFn fun j : Fin s.rank => if j = dim then 1 else 0
         let spread := fun v => Buffer.broadcastTo v inDims outDims axisMap
-        let varClamped := Buffer.relu varBuf
         let epsVec := Buffer.full channels32 epsilon.item dtype
-        let varEps := Buffer.add varClamped epsVec
-        let denominator := Buffer.sqrtClampNegative varEps
+        let varEps := Buffer.add varBuf epsVec
+        let denominator := Buffer.sqrt varEps
         let meanB := spread meanBuf
         let centered := Buffer.sub x meanB
         let denominatorB := spread denominator
@@ -559,8 +558,7 @@ private def batchNormRunning {s : Shape} (dim : Fin s.rank) :
         let betaB := spread beta
         let scaled := Buffer.mul xHat gammaB
         let y := Buffer.releaseManyThen
-          #[meanBuf, varBuf, varClamped, epsVec, varEps, denominator, meanB, centered, betaB,
-            scaled]
+          #[meanBuf, varBuf, epsVec, varEps, denominator, meanB, centered, betaB, scaled]
           (Buffer.add scaled betaB)
         let node : Node SomeBuffer :=
           { name := some name
@@ -1961,12 +1959,12 @@ def Kernel.ofOp {ins outs : List Port} : Op ins outs → Option (Kernel ins outs
       if s.rank == 2 && dim.val == 0 && sharedA == sharedB then
         some (Kernel.selectiveScan dim sharedA sharedB)
       else none
-  | @Op.reduce s .sum dims false _ =>
+  | @Op.reduce s .sum dims false _ .leftFold =>
       if dims.map (·.val) == List.range s.rank then some (Kernel.reduceSumAll dims)
       else match dims with
         | [axis] => some (Kernel.reduceSumAxis axis)
         | _ => none
-  | @Op.mean s dims false =>
+  | @Op.mean s dims false .leftFold =>
       if dims.map (·.val) == List.range s.rank then some (Kernel.meanAll dims)
       else match dims with
         | [axis] => some (Kernel.mean axis)
@@ -1981,7 +1979,7 @@ def Kernel.ofOp {ins outs : List Port} : Op ins outs → Option (Kernel ins outs
   | .matmul lv rv _ _ broadcastA broadcastB => some (Kernel.matmul lv rv broadcastA broadcastB)
   | .scaledMatmul lv rv _ _ broadcastA broadcastB =>
       some (Kernel.scaledMatmul lv rv broadcastA broadcastB)
-  | .pool .max dims kernel stride padLow padHigh dilation ceilMode =>
+  | .pool .max dims kernel stride padLow padHigh dilation ceilMode _ =>
       if Kernel.nativePool dims kernel stride padLow padHigh dilation ceilMode then
         some (Kernel.maxPool dims kernel stride padLow padHigh dilation ceilMode)
       else none

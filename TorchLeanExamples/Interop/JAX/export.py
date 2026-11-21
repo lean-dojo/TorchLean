@@ -3,7 +3,7 @@
 Change the functions below to try another computation. Parameters are closed over, the input is
 one tensor, and a function may return several tensor outputs. Each capture document records the
 input as ``arguments`` and JAX's outputs as ``reference_outputs``, which the runner compares with
-the outputs of the loaded program.
+the outputs of the loaded program, or of its flow where a ``cond`` or ``while`` reads the input.
 """
 
 import argparse
@@ -17,6 +17,18 @@ import jax.numpy as jnp
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "python"))
 
 from torchlean.jaxpr import Unsupported, encode, export, references
+
+
+def steps(artifact: dict) -> int:
+    """The number of steps of an artifact, or of the blocks of a flow artifact's flow."""
+    pending, count = [artifact["flow"]] if "flow" in artifact else [["block", artifact]], 0
+    while pending:
+        tag, *parts = pending.pop()
+        if tag == "block":
+            count += len(parts[0]["nodes"])
+        else:
+            pending += [part for part in parts if isinstance(part, list)]
+    return count
 
 
 def main() -> None:
@@ -59,6 +71,11 @@ def main() -> None:
             vector.astype(jnp.float64)),
         "float16_sum": (lambda x: jnp.sum(x), vector.astype(jnp.float16)),
         "bfloat16_sum": (lambda x: jnp.sum(x), vector.astype(jnp.bfloat16)),
+        "cond": (lambda x: jax.lax.cond(jnp.sum(x) > 4, lambda u: u * 2, lambda u: -u, x),
+                 vector),
+        "scan": (lambda x: jax.lax.scan(lambda c, v: (c + v, c * v), jnp.zeros(n), x), matrix),
+        "while": (lambda x: jax.lax.while_loop(lambda c: c[0] < 3, lambda c: (
+            c[0] + 1, c[1] * 2), (0, x))[1], vector),
     }
     for name, (function, example) in examples.items():
         try:
@@ -70,7 +87,7 @@ def main() -> None:
         document.update(references(function, example))
         path = args.directory / f"{name}.json"
         path.write_text(json.dumps(document, allow_nan=False) + "\n")
-        print(f"{name}: {len(document['artifact']['nodes'])} typed IR steps -> {path}")
+        print(f"{name}: {steps(document['artifact'])} typed IR steps -> {path}")
 
 if __name__ == "__main__":
     main()

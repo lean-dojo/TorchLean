@@ -87,6 +87,7 @@ def vocabularySize : Nat := 8
 /-- Default number of distinct corpus windows exposed to the trainer. -/
 def defaultWindows : Nat := 16
 
+/-- `vocabularySize` is positive. -/
 local instance : NeZero vocabularySize := ⟨by decide⟩
 
 /-- Compact byte vocabulary: encode byte id `b` as `b % 8`. Collisions are intentional. -/

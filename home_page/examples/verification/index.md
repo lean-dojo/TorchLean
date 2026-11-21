@@ -2,66 +2,46 @@
 title: Verification Bounds
 ---
 
-Let's look at what happens when we perturb a model's input. We'll compute bounds on its outputs
-over an input region, starting with interval bound propagation (IBP). Then we'll try CROWN, which
-can retain more information about how the outputs depend on the inputs.
+Take a classifier that calls one image a 7. If we let each pixel move a little, can
+another class overtake 7? We can answer that for an entire box of inputs if we can bound
+the gap between its logit and each competitor.
 
-We'll also check certificates exported by other tools. Each checker has a specific job:
-some recompute bounds, while others only check the consistency of supplied bounds and witnesses.
-
-<div class="media-slab">
-  <img src="{{ '/assets/media/examples/showcase/verification-bounds.png' | relative_url }}" alt="IBP and alpha-CROWN verification example"/>
-</div>
+We'll first use interval bound propagation (IBP) to bound the logits, then use CROWN to
+bound a difference directly. We'll also look at what Lean checks when another tool
+supplies the bounds.
 
 ## The Question
 
-Here's the robustness question we'll work with:
-
-> For every input inside a small box around the example point, can the model’s output still satisfy the
-> desired margin or safety condition?
-
-To ask it in TorchLean, we need four things:
-
-- a model, written in the same API used for training examples
-- a lowered graph of registered operators (`TorchLean.IR.Graph`), so verifier code can traverse its
-  nodes by id
-- an input box, with lower and upper bounds for every input coordinate
-- an output property, usually a margin such as
-  $\operatorname{logit}\_{\mathrm{true}}-\operatorname{logit}\_{\mathrm{other}}>0$ for every other
-  class
-
-So the common path is:
-
-1. write or import a TorchLean model,
-2. lower it to a graph of registered operators (`TorchLean.IR.Graph`),
-3. attach an input box,
-4. run a bound engine,
-5. inspect or check the output bounds.
-
-Our reusable workflows under `TorchLean/Verify/CROWN/` keep the model, input box, output
-property, and bound pass together. Imported weights need to be attached to a supported graph.
-External verifier leaves go through a separate artifact reader, which doesn't recompute their
-bounds.
+We need a model, an input box, and a property to check. TorchLean lowers the model to an
+`IR.Graph` and propagates bounds over its registered operations. For a classifier, we want
+the target logit minus every competing logit to be strictly positive throughout the box.
 
 Let's build an input box for a small MLP. We'll use `inputCenter` as its center and `eps` as its
-radius, and take the lowered graph with its payload as an import (`LoweredModel.toImported`), whose
-input `0` takes the flattened `inputBox`:
+radius. The definitions on this page work over any scalar `α` with the verifier's bound
+operations:
 
 ```lean
-let inputCenter : Tensor α [2] :=
-  Tensor.map cast ([0.5, 0.8] : Tensor Float [2])
-let eps : α := ofFloat 0.1
-let inputBox : FlatBox α := FlatBox.lInfBall (α := α) inputCenter eps
-let imported := lowered.toImported
+open CROWN
+
+variable {α : Type} [Storage α] [Context α] [FromFloat α]
+  [BoundOps α] [NonlinearBoundOps α] [Op.Capabilities α]
+
+def inputBox : FlatBox α :=
+  let inputCenter : Tensor α [2] := Tensor.map ofFloat ([0.5, 0.8] : Tensor Float [2])
+  let eps : α := ofFloat 0.1
+  FlatBox.lInfBall inputCenter eps
 ```
 
+The bound passes run on an import (`IR.Imported`): the lowered graph with its payload, which
+`LoweredModel.toImported` gives for a lowered model. Its input `0` takes the flattened `inputBox`.
 IBP propagates the input box
 
 $$[\mathtt{inputCenter}-\mathtt{eps},\mathtt{inputCenter}+\mathtt{eps}].$$
 
 ```lean
-let ibp := imported.runIBP inputBox
-let outB ← IO.ofExcept (imported.outputBox? ibp)
+def ibpOutput (imported : IR.Imported α) : IO (FlatBox α) := do
+  let ibp := imported.runIBP inputBox
+  IO.ofExcept (imported.outputBox? ibp)
 ```
 
 IBP returns node-indexed `FlatBox` values, each storing a flattened dimension plus lower and upper
@@ -158,7 +138,8 @@ backend (interval coefficients swept from the output to the input with outward r
 node without an affine transfer keeps its IBP enclosure:
 
 ```lean
-let crown ← IO.ofExcept (imported.outputBoxCROWN? inputBox)
+def crownOutput (imported : IR.Imported α) : IO (FlatBox α) :=
+  IO.ofExcept (imported.outputBoxCROWN? inputBox)
 ```
 
 The result is another `FlatBox` for the output node. It need not improve on IBP. The forward α-CROWN
@@ -173,19 +154,19 @@ $\operatorname{logit}_0-\operatorname{logit}_1$, so the verifier can push a sing
 backward through the graph instead of bounding every output independently:
 
 ```lean
-let objV : Tensor α [3] :=
-  Tensor.map cast ([1.0, -1.0, 0.0] : Tensor Float [3])
-let obj : FlatTensor α := { n := 3, v := objV }
-
-let objectiveBox ← IO.ofExcept (imported.backwardObjectiveBox? ibp inputBox obj)
-let margin := Tensor.getAtOrZero objectiveBox.lo [0]
+def margin (imported : IR.Imported α) : IO α := do
+  let ibp := imported.runIBP inputBox
+  let objV : Tensor α [3] := Tensor.map ofFloat ([1.0, -1.0, 0.0] : Tensor Float [3])
+  let obj : Graph.FlatTensor α := { n := 3, v := objV }
+  let objectiveBox ← IO.ofExcept (imported.backwardObjectiveBox? ibp inputBox obj)
+  pure (Tensor.getAtOrZero objectiveBox.lo [0])
 ```
 
 `margin` is the reported candidate lower bound on $p_0 - p_1$ over the input box. Its semantic
 guarantee has the same soundness obligations as the output enclosure above.
 
-`backwardObjectiveBox?` reads the affine context of the import's input `0` and output itself, so
-the caller does not build that context by hand.
+`backwardObjectiveBox?` reads the affine context of the import's input `0` and output node, so the
+caller does not build that context by hand.
 
 The model, graph, bounds, and certificate checks all refer to the same node ids and tensor shapes.
 

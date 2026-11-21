@@ -155,7 +155,7 @@ def linear {α : Type} [TorchLean.Storage α] [Add α] [Mul α] [Zero α]
   Tensor.castShape
     (Linear.forwardLeading endsWith.proof.leadingShape { weights := weight, bias := bias }
       (Tensor.castShape input endsWith.proof.leadingShape_append.symm))
-    (endsWith.proof.leadingShape_append' outputWidth)
+    (endsWith.proof.leadingShape_append_replaceLast outputWidth)
 
 /-- Read one scalar at a statically valid coordinate. -/
 @[inline] def «at» {α : Type} [TorchLean.Storage α]

@@ -14,7 +14,7 @@ public import TorchLean.Tensor.Elementwise
 
 `#roundoff_coverage` runs `roundoff` on the value of each extremum, clamp and selection operator of
 `TorchLean.Tensor.Elementwise` at a coordinate of the result, for the configured scalar of
-an arbitrary IEEE format, for native `Float32` and for the rounded reals `FP32`. Shapes are
+an arbitrary format, for native `Float32` and for the rounded reals `FP32`. Shapes are
 variables, so each theorem holds at every shape. `clamp` has one route for each constructor of its
 policy argument `ClampPolicy`. The theorems are declared in the namespace
 `TorchLean.Coverage.Pointwise`, which every module under

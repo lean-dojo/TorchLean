@@ -24,7 +24,7 @@ public import TorchLean.NN.FDeriv
 
 `#roundoff_coverage` runs `roundoff` on the forward map and the pullback of the structure
 specifications: the composition combinators and the model specifications, for the configured
-scalar of an arbitrary IEEE format, for native `Float32` and for the rounded reals
+scalar of an arbitrary format, for native `Float32` and for the rounded reals
 `FP32`. It declares a theorem for each route it proves.
 -/
 

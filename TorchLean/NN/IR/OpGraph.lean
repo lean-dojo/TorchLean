@@ -232,6 +232,7 @@ theorem run_builder (val : (p : Port) → K p → p.Carrier α) (x : Tensor α �
         earlier.size = (g.builder val).1.nodes.size ∧ (g.builder val).2.2.size = ps.length ∧
         ∀ (j : Nat) (hj : j < ps.length), ∃ r, (g.builder val).2.2[j]? = some r ∧
           r.read earlier = .ok ⟨ps.get ⟨j, hj⟩, Values.get (g.eval val x) ⟨j, hj⟩⟩
+  -- The input graph is one input node, whose reference `⟨0, 0⟩` reads `x`.
   | _, .input, Q, _ => by
       refine ⟨#[[⟨.value σ, x⟩]], ?_, rfl, rfl, ?_⟩
       · simp [builder, IR.Graph.Builder.input, IR.runNodes, IR.Node.eval,
@@ -246,7 +247,9 @@ theorem run_builder (val : (p : Port) → K p → p.Carrier α) (x : Tensor α �
             refs ++ ((List.range outs.length).map fun k => (⟨b.nodes.size, k⟩ : Ref)).toArray) := by
         simp only [builder, hbg, IR.Graph.Builder.op, IR.Graph.Builder.add,
           IR.Node.outs]
+      -- An operator step appends one node and a reference to each of its outputs.
       rw [hb] at hQ ⊢
+      -- The earlier nodes run, since `Q` agrees with the built payload on them.
       obtain ⟨earlier, hrun, hsize, hrefsSize, hrefs⟩ := run_builder val x g Q (by
         rw [hbg]
         dsimp only
@@ -258,6 +261,7 @@ theorem run_builder (val : (p : Port) → K p → p.Carrier α) (x : Tensor α �
       let rule := (o.rule? (α := α)).get (h.hasRuleEverywhere α)
       have hs : o.rule? (α := α) = some rule := (Option.some_get _).symm
       obtain ⟨values, hm, ho⟩ := args_read vs refs earlier hrefs args
+      -- The new node reads its arguments and runs the operator's rule.
       have hnode : (IR.Node.op ⟨_, _, o⟩ (args.refs refs).toArray).eval Q
           [⟨.value σ, x⟩] earlier earlier.size =
             .ok (Values.toErased outs (rule.forward (args.read vs))) :=
@@ -267,6 +271,7 @@ theorem run_builder (val : (p : Port) → K p → p.Carrier α) (x : Tensor α �
         exact IR.runNodes_singleton hnode
       · simp [hsize]
       · simp [hrefsSize]
+      -- Earlier references read the same values; the new ones read the operator's outputs.
       · intro j hj
         by_cases hlt : j < ps.length
         · obtain ⟨r, hr, hread⟩ := hrefs j hlt
@@ -296,6 +301,7 @@ theorem run_builder (val : (p : Port) → K p → p.Carrier α) (x : Tensor α �
               const? := fun m => if m = b.nodes.size then some ⟨p, val p c⟩ else P.const? m },
             refs.push ⟨b.nodes.size, 0⟩) := by
         simp only [builder, hbg, IR.Graph.Builder.constant]
+      -- A constant step appends one node, its payload entry and one reference.
       rw [hb] at hQ ⊢
       obtain ⟨earlier, hrun, hsize, hrefsSize, hrefs⟩ := run_builder val x g Q (by
         rw [hbg]
@@ -305,6 +311,7 @@ theorem run_builder (val : (p : Port) → K p → p.Carrier α) (x : Tensor α �
         simpa [Nat.ne_of_lt hm] using this)
       rw [hbg] at hrun hsize hrefsSize hrefs
       simp only at hrun hsize hrefsSize hrefs
+      -- `Q` agrees with the built payload at the new node, so the node loads the constant.
       have hc : Q.const? earlier.size = some ⟨p, val p c⟩ := by
         have := hQ b.nodes.size (by simp)
         simpa [hsize] using this
@@ -316,6 +323,7 @@ theorem run_builder (val : (p : Port) → K p → p.Carrier α) (x : Tensor α �
         exact IR.runNodes_singleton hnode
       · simp [hsize]
       · simp [hrefsSize]
+      -- Earlier references read the same values; the new one reads the constant.
       · intro j hj
         by_cases hlt : j < ps.length
         · obtain ⟨r, hr, hread⟩ := hrefs j hlt

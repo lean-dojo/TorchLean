@@ -174,9 +174,7 @@ The policy term receives z-score normalized advantages, a common PPO variance-re
 while the value targets (lambda-returns) come from the *unnormalized* advantages. Episode
 boundaries are handled as in `generalizedAdvantages`.
 -/
-def trainingBatch {obsShape : Shape} {nActions horizon : Nat}
-    [NeZero horizon] [NeZero nActions]
-    (gamma lam : α)
+def trainingBatch {obsShape : Shape} {nActions horizon : Nat} (gamma lam : α)
     (r : Rollout α obsShape nActions horizon) :
     IO (TrainingBatch α obsShape nActions horizon) := do
   let stepAt (index : Fin horizon) :=

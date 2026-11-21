@@ -8,7 +8,7 @@ module
 public import TorchLean.Tensor.Reduce.Backward
 public import TorchLean.Tensor.Scatter
 public meta import TorchLean.Verify.RuntimeApprox.Roundoff.Rules
-public import FloatLib.Floats.Formats.BinaryInterchange.Automation.Roundoff.Extension
+public import FloatLib.Tactic.Roundoff.Extension
 
 /-!
 # Reductions and scatters over any axes for `roundoff`

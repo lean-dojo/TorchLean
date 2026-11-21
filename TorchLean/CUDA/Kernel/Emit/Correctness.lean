@@ -68,6 +68,7 @@ theorem lower_bounds {α : Type} {Γ : List Ty} {t : Ty} (block : Target.Block �
     first ≤ finish ∧ result.Before finish ∧ Statement.WritesAfter first statement := by
   induction block generalizing first with
   | result value =>
+      -- A literal takes one fresh temporary, a variable none.
       cases value with
       | scalar value =>
           change first ≤ first + 1 ∧ first < first + 1 ∧ ¬ first < first
@@ -83,6 +84,7 @@ theorem lower_bounds {α : Type} {Γ : List Ty} {t : Ty} (block : Target.Block �
       change first ≤ first + 1 ∧ first < first + 1 ∧ ¬ first < first
       omega
   | branch p yes no ihYes ihNo =>
+      -- A branch takes the temporary `first` and lowers both arms after it.
       change let ((yc, y), ny) := (lower names yes).run (first + 1)
         let ((nc, n), nn) := (lower names no).run ny
         first ≤ nn ∧ (Name.temporary first : Name _).Before nn ∧
@@ -105,6 +107,7 @@ theorem lower_bounds {α : Type} {Γ : List Ty} {t : Ty} (block : Target.Block �
       · exact Statement.writesAfter_mono yc (Nat.le_succ first) hYes.2.2
       · exact Statement.writesAfter_mono nc (by omega) hNo.2.2
   | bind value body ihValue ihBody =>
+      -- The value is lowered first, and its result extends the body's scope.
       change let ((vc, v), nv) := (lower names value).run first
         let ((bc, b), nb) := (lower (names.push v) body).run nv
         first ≤ nb ∧ b.Before nb ∧ Statement.WritesAfter first (.seq vc bc)
@@ -125,6 +128,8 @@ theorem lower_bounds {α : Type} {Γ : List Ty} {t : Ty} (block : Target.Block �
       exact ⟨Nat.le_trans hValue.1 hBody.1, hBody.2.1, hValue.2.2,
         Statement.writesAfter_mono bc hValue.1 hBody.2.2⟩
   | loop count initial body ih =>
+      -- A loop takes `first` for the accumulator and `first + 1` for the counter, and lowers its
+      -- body after both.
       change let ((bc, b), nb) := (lower
           ((names.push (.temporary (first + 1) : Name .index)).push
             (.temporary first : Name .scalar)) body).run (first + 2)
@@ -243,6 +248,7 @@ theorem Statement.eval_frame {α : Type} (arithmetic : Arithmetic α) (read : Re
       cases hResult
       exact fun _ _ _ => rfl
   | assign value =>
+      -- An assignment writes one name, which is not before `first`.
       change value.eval arithmetic read locals = some (Except.ok (ε := Error) after) at hResult
       cases hEval : value.operation.eval arithmetic read locals.get with
       | none => simp [Assignment.eval, hEval] at hResult
@@ -266,6 +272,7 @@ theorem Statement.eval_frame {α : Type} (arithmetic : Arithmetic α) (read : Re
               simp only [hEval] at hResult
               exact Locals.Frame.trans (ihA hWrites.1 _ _ hEval) (ihB hWrites.2 _ _ hResult)
   | branch name condition yes y no n ihYes ihNo =>
+      -- The taken arm keeps the names before `first`, and so does copying its result to `name`.
       cases hCondition : condition.eval locals.get with
       | false =>
           simp only [Statement.eval, hCondition, Bool.false_eq_true, ↓reduceIte] at hResult
@@ -314,6 +321,7 @@ theorem Statement.eval_frame {α : Type} (arithmetic : Arithmetic α) (read : Re
                   rw [Locals.get_set_fresh _ _ _ _ hName hWrites.1]
                   exact ihYes hWrites.2.1 _ _ hEval _ other hName
   | loop acc counter count initial body next ih =>
+      -- Setting the accumulator and each step of the body keep the names before `first`.
       have hLoop := steps_frame first (body.eval arithmetic read)
         (fun before after h => ih hWrites.2.2 before after h) acc counter next
         (count.eval locals.get) hWrites.1 hWrites.2.1 _ 0
@@ -448,6 +456,7 @@ theorem eval_lower {α : Type} {Γ : List Ty} {t : Ty} (block : Target.Block α 
     (statement.eval arithmetic read locals).run.map (·.map (·.get result)) =
       some (block.eval arithmetic read env) := by
   induction block generalizing first locals with
+  -- A result stores its value into the fresh temporary `first`, or names the variable's local.
   | result value =>
       cases value with
       | scalar value =>
@@ -481,6 +490,8 @@ theorem eval_lower {α : Type} {Γ : List Ty} {t : Ty} (block : Target.Block α 
         ((Statement.branch (.temporary first) (Atom.lower names.get p) yc y nc n).eval
           arithmetic read locals).run.map (·.map (·.get (.temporary first))) =
             some ((Target.Block.branch p yes no).eval arithmetic read env)
+      -- `first` holds the result; the branches are allocated from `first + 1`, one after the
+      -- other, and both read the same scope.
       have hYesNames : ∀ {s : Ty} (v : Var _ s), (names.get v).Before (first + 1) :=
         fun v => before_mono _ (Nat.le_succ first) (hNames v)
       have hYes := ihYes names (first + 1) locals env hYesNames hScope
@@ -513,6 +524,8 @@ theorem eval_lower {α : Type} {Γ : List Ty} {t : Ty} (block : Target.Block α 
         cases w with
         | zero => exact hBounds.2.1
         | succ w => exact before_mono _ hBounds.1 (hNames w)
+      -- An error in the value stops the sequence; otherwise the locals after the value
+      -- represent the scope extended by its result.
       cases hValueEval : value.eval arithmetic read env with
       | error error =>
           rw [hValueEval] at hValue
@@ -550,6 +563,8 @@ theorem eval_lower {α : Type} {Γ : List Ty} {t : Ty} (block : Target.Block α 
           (Atom.lower names.get count) (Atom.lower names.get initial) bc next).eval
           arithmetic read locals).run.map (·.map (·.get (.temporary first))) =
             some ((Target.Block.loop count initial body).eval arithmetic read env)
+      -- The accumulator is `first`, the counter `first + 1`, and the body is allocated from
+      -- `first + 2`.
       let bodyNames := (names.push (.temporary (first + 1) : Name .index)).push
         (.temporary first : Name .scalar)
       have hBodyNames : ∀ {s : Ty} (w : Var _ s), (bodyNames.get w).Before (first + 2) := by
@@ -563,6 +578,7 @@ theorem eval_lower {α : Type} {Γ : List Ty} {t : Ty} (block : Target.Block α 
       have hBounds := lower_bounds body bodyNames (first + 2) hBodyNames
       generalize hB : (lower bodyNames body).run (first + 2) = br at hBounds ⊢
       rcases br with ⟨⟨bc, next⟩, nb⟩
+      -- Between iterations the locals still represent the source scope.
       let invariant := fun current : Locals α =>
         ∀ (s : Ty) (v : Var _ s), current.get (names.get v) = env.get v
       let step := fun i acc => body.eval arithmetic read
@@ -571,6 +587,7 @@ theorem eval_lower {α : Type} {Γ : List Ty} {t : Ty} (block : Target.Block α 
         change ¬ first + 1 < first; omega
       have hAcc : ¬ (Name.temporary first : Name .scalar).Before first := by
         change ¬ first < first; omega
+      -- One iteration with counter `i` computes the source body's step.
       have hBody : ∀ i current, invariant current →
           (bc.eval arithmetic read (current.set (.temporary (first + 1) : Name .index) i)).run.map
             (·.map (·.get next)) = some (step i (current.get (.temporary first))) := by
@@ -598,6 +615,7 @@ theorem eval_lower {α : Type} {Γ : List Ty} {t : Ty} (block : Target.Block α 
           ((env.push i).push (current.get (.temporary first : Name .scalar)))
           hBodyNames hBodyScope
         simpa only [hB] using h
+      -- Writing the counter, running the body and storing the accumulator keep the invariant.
       have hNext : ∀ (i : UInt64) (current after : Locals α), invariant current →
           (bc.eval arithmetic read (current.set (.temporary (first + 1) : Name .index) i)).run =
             some (.ok after) →

@@ -23,7 +23,7 @@ description: "Tensor computation, floating-point verification, and machine learn
         alt="TorchLean overview: typed tensors, shared graph IR, autograd proofs, IEEE-754 semantics, certificate checking, PyTorch interoperability, CUDA providers, and model analysis."
         loading="eager" />
     </a>
-    <figcaption>From a typed model to execution, analysis, and proof.</figcaption>
+    <figcaption>Figure 1. From a typed model to execution, analysis, and proof.</figcaption>
   </figure>
 
 </section>
@@ -44,7 +44,10 @@ A few highlights we're excited about:
 - **Floating-point behavior is part of the mathematics.** Through [FloatLib](https://lean-dojo.github.io/FloatLib/), TorchLean supports configurable binary formats, executable arithmetic, and proofs about rounding and numerical error. The [floating-point guide]({{ '/blueprint/Floating-Point-and-Native-Boundaries/Floating-Point-Semantics/' | relative_url }}) explains the arithmetic models and how they relate to native execution.
 - **Ask questions about a whole range of inputs.** For a classifier, we can establish conditions under which its prediction stays the same throughout an input region. The [verification tools]({{ '/blueprint/Verification-and-Certificates/Neural-Network-Verification/' | relative_url }}) include interval bounds and certificate checking, with Lean proofs for the mathematical guarantees.
 - **Write your own tensor calculations.** Apply an ordinary Lean function with `f.run input`, choose CPU or GPU at the call site, or add `grad := true` to record supported operations on the existing autograd tape. The [custom computations example]({{ '/examples/custom-computations/' | relative_url }}) covers parameters, recursive updates and configured binary precision, including binary128 values and gradients on GPU.
-- **Gradients with proofs.** Over the reals, the stored gradients of the built-in operators are proved to be the adjoints of their Fréchet derivatives at the points their hypotheses name, and the `op_deriv` tactic proves the same of a backward pass you write. The [autograd proofs chapter]({{ '/blueprint/Verification-and-Certificates/Autograd-Proofs/' | relative_url }}) shows both.
+- **Gradients with proofs.** For registered real-valued operators, derivative certificates show
+  that the stored backward rule is the adjoint of the Fréchet derivative under its stated domain
+  conditions. The `op_deriv` tactic can prove the corresponding property for a backward pass you
+  write. The [autograd proofs chapter]({{ '/blueprint/Verification-and-Certificates/Autograd-Proofs/' | relative_url }}) shows both.
 - **Recursion over trees on the GPU.** Derive `Sig.Inductive` for an inductive type, and `Fold.of` turns a structurally recursive function over it into a fold that runs level by level on the GPU, with a proof that the fold computes the function. The [custom computations example]({{ '/examples/custom-computations/' | relative_url }}) folds a tree.
 
 The [guide]({{ '/blueprint/' | relative_url }}) walks through the library step by step. If you'd rather start by running something, try the [examples]({{ '/examples/' | relative_url }}).

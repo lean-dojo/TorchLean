@@ -1034,6 +1034,8 @@ theorem convBack?_sound {s k : Shape} {r : Nat} {dims : Shape.ConvDims s k r}
       simp only [Option.some.injEq, Prod.mk.injEq] at hback
       obtain ⟨rfl, rfl⟩ := hback
       subst hI
+      -- State the spatial shape, kernel shape, strides, paddings and dilations as tensors of
+      -- length `d`, the form `grouped` takes.
       obtain ⟨d, T, hT⟩ : ∃ d, ∃ T : Tensor Nat [d], T.data.toList = sp :=
         ⟨_, vecOf sp rfl, vecOf_toList sp rfl⟩
       subst hT hsp
@@ -1059,6 +1061,7 @@ theorem convBack?_sound {s k : Shape} {r : Nat} {dims : Shape.ConvDims s k r}
           lead ++ (C :: Tensor.to T (List Nat)) := by
         rfl
       have h₃ := congrArg Shape.size hxs
+      -- The rule's output, flattened, is `grouped` on each leading slice (`flat_conv`).
       have hF : flatOfSome ⟨_, (rule.forward (Tensor.map value K, Tensor.map value b, x, ())).1⟩ =
           flatOfSome ⟨_, Tensor.mapLeading lead
             (grouped (inSpatial := T) (stride := sT) (dilation := dT)
@@ -1093,9 +1096,13 @@ theorem convBack?_sound {s k : Shape} {r : Nat} {dims : Shape.ConvDims s k r}
               (paddingBefore := lT) (paddingAfter := hT) groups
               (Tensor.map value (denseKernel groups K)) (Tensor.map value b))
             (Tensor.reshape x _ h₃)⟩).v [o]
+      -- The coefficients and the constant interval accumulated so far enclose a `g` and an `e`
+      -- with `g · x + e = R`.
       let Rel : PartialCoeffs α × α × α → ℝ → Prop := fun acc R =>
         ∃ g e, PartialEncloses acc.1 X.dim g ∧ value acc.2.1 ≤ e ∧ e ≤ value acc.2.2 ∧
           Directed.dot X.dim g xf + e = R
+      -- `Rel` holds through the fold over the leading index, output channel and output position,
+      -- with `R` the sum of `a o * (conv x) o` so far.
       have key : Rel (cx, c') ((List.range lead.size).foldl (fun R n => (List.range O).foldl
           (fun R oc => Conv.foldlIndices (outSpatialDilated T KT sT dT lT
               hT).data.toList R fun R outIdx =>
@@ -1160,6 +1167,8 @@ theorem convBack?_sound {s k : Shape} {r : Nat} {dims : Shape.ConvDims s k r}
                 hT).data.toList) (⟨oc, hoc'⟩, cout)),
             Tensor.getAtOrZero_reshape_toFin]
           rfl
+        -- An output entry adds its bias term to the constant, then one tap per input channel of
+        -- its group and kernel offset.
         rw [hmf, grouped_apply]
         refine bias_step he₁ he₂ hR hao (getAtOrZero_map_value b [oc]).symm ?_
         let Rin : PartialCoeffs α → ℝ → Prop := fun cxb accb => ∃ g', PartialEncloses cxb X.dim
@@ -1174,6 +1183,8 @@ theorem convBack?_sound {s k : Shape} {r : Nat} {dims : Shape.ConvDims s k r}
         intro ck cxk acck hk
         obtain ⟨g₁, hpe₁, hd₁⟩ := hk
         dsimp only [Rin]
+        -- A tap with no input index adds nothing, one in bounds adds its kernel entry times
+        -- `a o` to that input's coefficient, and one in the padding reads `0`.
         cases hmk : Conv.mkDilatedInputIdx? (Shape.Coord.toList
             (outSpatialDilated T KT sT dT lT hT).data.toList cout)
             (Shape.Coord.toList KT.data.toList ck) sT.data.toList dT.data.toList
@@ -1216,6 +1227,7 @@ theorem convBack?_sound {s k : Shape} {r : Nat} {dims : Shape.ConvDims s k r}
             refine getAtOrZero_eq_zero_of_not_all (l := C :: T.data.toList) _ fun h => hinb ?_
             simp only [List.zip_cons_cons, List.all_cons, Bool.and_eq_true] at h
             exact h.2
+      -- The final accumulator gives `a'` and `d`; the fold's sum is the pairing with the output.
       obtain ⟨g, e, hpe, he₁, he₂, hR⟩ := key
       refine ⟨g, e, fun B hB => by rw [← hX]; exact coeffBox_encloses hpe hB,
         fun h y => by rw [← hX]; exact coeffBox_none hpe h y, he₁, he₂, ?_⟩
@@ -1356,6 +1368,8 @@ theorem directedRule_sound [Op.Capabilities α] (dir : BackwardDir)
     hG.topo k hlt o refs hnode r (Array.mem_toList_iff.mp hr)
   have hop := heq o refs hnode
   generalize refs.toList = l at hpar hop
+  -- Per operator: with a parent count the rule does not match, the coefficients are discharged
+  -- against the node's box (`consumeAt_sound`), and a failing rule keeps the invariant.
   obtain ⟨ins, outs, op⟩ := o
   cases op <;> (try cases ‹Op.NumericElement›) <;> (try cases ‹Op.Element›)
   case linear =>
@@ -1368,8 +1382,8 @@ theorem directedRule_sound [Op.Capabilities α] (dir : BackwardDir)
       obtain ⟨hdp, hdk, hlin⟩ := hop W b hW hb
       exact linear_sound h hk (hpar _ (by simp)) hdp hdk hlin ha
     · exact Or.inl rfl
-  case «reduce» s rop axes kd _ =>
-    cases rop <;> cases kd <;> rcases l with _ | ⟨r, _ | ⟨r₂, l⟩⟩
+  case «reduce» s rop axes kd _ order =>
+    cases rop <;> cases kd <;> cases order <;> rcases l with _ | ⟨r, _ | ⟨r₂, l⟩⟩
     all_goals try exact consumeAt_sound hG h ha
     unfold directedRule
     dsimp only
@@ -1401,6 +1415,7 @@ theorem directedRule_sound [Op.Capabilities α] (dir : BackwardDir)
               obtain ⟨r, hr, rfl⟩ := List.mem_map.mp hp
               exact hpar r hr)
             (fun j => ?_) (hop hlen') ha hcs
+          -- Part `j`'s box has the dimension of parent `j`.
           have hj : j.val < l.length := by
             have := j.isLt; simp only [catLayout] at this; omega
           have hj' : j.val < boxes.length := by omega
@@ -1460,6 +1475,7 @@ theorem directedRule_sound [Op.Capabilities α] (dir : BackwardDir)
       obtain ⟨hdp, hdk, hy'⟩ := hop K b hK hb
       exact conv_sound h hk (hpar _ (by simp)) hc (box?_encloses hG hXb).1 hdp hdk hy' ha
     · exact Or.inl rfl
+  -- The other operators: no rule, the copy rule, or the rules of `add` and `sub`.
   all_goals first
     | exact Or.inl rfl
     | exact consumeAt_sound hG h ha

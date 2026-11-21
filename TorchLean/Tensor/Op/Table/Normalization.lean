@@ -115,8 +115,7 @@ theorem rule?_batchNormRunning [Op.Capabilities α] {s : Shape} (dim : Fin s.ran
         jvp? := some fun xs dxs =>
           let spread := fun t : Tensor α [s.extent dim] =>
             Tensor.broadcast t s _ (s.broadcastDims_axis dim)
-          let std := Tensor.sqrt (spread (Tensor.maximum xs.2.2.2.2.1 (Tensor.full _ 0)) +
-            Tensor.full s xs.2.2.2.2.2.1.item) .clampNegative
+          let std := Tensor.sqrt (spread xs.2.2.2.2.1 + Tensor.full s xs.2.2.2.2.2.1.item)
           (((dxs.1 * spread xs.2.1) / std + ((xs.1 - spread xs.2.2.2.1) / std) * spread dxs.2.1) +
             spread dxs.2.2.1, ()) } :=
   rfl

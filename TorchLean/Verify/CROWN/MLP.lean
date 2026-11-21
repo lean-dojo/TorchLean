@@ -11,7 +11,6 @@ public import TorchLean.Verify.CROWN.Activation.ReLU
 public import TorchLean.Verify.CROWN.Op.ExecCROWN
 public import TorchLean.NN.IR.Builder
 public import TorchLean.Tensor.Layers.Linear
-import TorchLean.Tensor.Algebra
 public import TorchLean.Verify.CROWN.BoundOps.Lawful
 public import TorchLean.Verify.CROWN.FlatBox.Real
 

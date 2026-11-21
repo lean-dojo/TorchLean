@@ -216,6 +216,7 @@ theorem eval_primal (arithmetic : Arithmetic α) {read dread : Reader α}
   | load j i ih =>
       simp only [eval, primal] at h ⊢
       obtain ⟨a, ha, h⟩ := except_bind_eq_ok.mp h
+      -- `dread` agrees with `read` where `read` succeeds.
       rw [ih henv ha]
       exact hread j a y h
   | binary op x y hx hy =>
@@ -258,6 +259,8 @@ theorem eval_primal (arithmetic : Arithmetic α) {read dread : Reader α}
       simp only [eval] at h
       obtain ⟨a, ha, h⟩ := except_bind_eq_ok.mp h
       have hv' := hv henv ha
+      -- A scalar binding takes two slots of the dual scope, and the primal translation fills
+      -- both with the value. Index and predicate bindings take one.
       cases s with
       | scalar =>
           simp only [primal, bindDual, eval, Env.get_push_zero]
@@ -289,6 +292,8 @@ theorem eval_primal (arithmetic : Arithmetic α) {read dread : Reader α}
       obtain ⟨a, ha, h⟩ := except_bind_eq_ok.mp h
       simp only [primal, eval]
       refine except_bind_eq_ok.mpr ⟨c, hc henv hcount, except_bind_eq_ok.mpr ⟨a, hi henv ha, ?_⟩⟩
+      -- Each step runs the body with the index and the accumulator, whose two slots both hold
+      -- the accumulator.
       refine iterate_eq_ok_of_imp (fun i acc b hstep => ?_) c.toNat 0 a h
       refine except_bind_eq_ok.mpr ⟨acc, rfl, ?_⟩
       refine hb (env := (env.push i).push acc) (denv := ((denv.push i).push acc).push acc) ?_ hstep

@@ -92,6 +92,15 @@ step_api() {
 
 step_guide() {
   echo "==> Building Verso Guide (Blueprint Package)"
+  # The pinned Blueprint release uses Lean 4.35's HTML and documentation APIs. Fetch its
+  # dependencies and apply the tracked 4.36 port under the same lock as other guide builds.
+  TORCHLEAN_PACKAGE_ROOT="$ROOT/home_page/blueprint" \
+    "$LAKE" env bash -c '
+      if ! git -C "$1" apply --reverse --check "$2" >/dev/null 2>&1; then
+        git -C "$1" apply "$2"
+      fi
+    ' _ "$ROOT/.lake/packages/VersoBlueprint" \
+      "$ROOT/home_page/blueprint/verso-blueprint-4.36.patch"
   rm -rf _out/blueprint
   TORCHLEAN_PACKAGE_ROOT="$ROOT/home_page/blueprint" \
     "$LAKE" exe vbp build --output ../../_out/blueprint
@@ -174,6 +183,7 @@ step_website() {
   done
   select_bundler
   (cd home_page && rm -rf _site && "${BUNDLE_CMD[@]}" exec jekyll build --config "$jekyll_config")
+  python3 scripts/docs/polish_docgen.py --importgraph home_page/_site/importgraph/index.html
   mkdir -p home_page/_site/blueprint
   cp -r _out/blueprint/html-multi/. home_page/_site/blueprint/
   local jekyll_content_pages=0

@@ -394,7 +394,7 @@ from, and it is why a vector can be handed to Mathlib lemmas about functions on 
   rfl
 
 /-- Building a vector from a function and reading it back returns the function. -/
-@[simp] theorem getScalar_dim {α : Type} [TorchLean.Storage α]
+theorem getScalar_dim {α : Type} [TorchLean.Storage α]
     {n : Nat} (values : Fin n → α) (index : Fin n) :
     getScalar (dim (fun i => scalar (values i))) index = values index := by
   simp [getScalar]

@@ -51,6 +51,7 @@ loops.
 def compileCoordinateFold
     (lengths : List Expr) (step initial reference : Expr) :
     TermElabM (Expr × Expr) := do
+  -- A literal zero axis leaves no coordinates, so the fold is `initial`.
   if ← hasConcreteZeroDimension lengths then
     let shape ← shapeExpr lengths
     let hSize ← certifyWithTactic
@@ -82,6 +83,7 @@ def compileCoordinateFold
         let body := step.beta #[accumulator, coordinate]
         return (body, body, ← mkEqRefl body)
     | length :: remainingLengths => do
+        -- Unroll a closed literal axis of at most `maxUnrolledAxisLength` that fits the budget.
         let unrolledLength? ←
           match ← getNatValue? length with
           | some lengthValue =>
@@ -98,6 +100,7 @@ def compileCoordinateFold
           | _ => pure none
         if unrolledLength? == some 0 then
           return (accumulator, accumulator, ← mkEqRefl accumulator)
+        -- An unrolled axis divides the budget among the copies of the inner loops.
         let childUnrollBudget :=
           match unrolledLength? with
           | some lengthValue => unrollBudget / lengthValue
@@ -124,6 +127,7 @@ def compileCoordinateFold
               mkAppM ``Fin.foldl #[length, nativeStep, accumulator]
             let referenceLoop ←
               mkAppM ``Fin.foldl #[length, referenceStep, accumulator]
+            -- The `Fin.foldl` over the native body equals the reference fold, step by step.
             let hFinLoops ←
               withLocalDeclD `step (← inferType nativeStep) fun step => do
                 let fold ←
@@ -151,6 +155,7 @@ def compileCoordinateFold
               let hUnrolledReference ←
                 mkAppM ``Eq.trans #[hUnrolledFin, hFinLoops]
               return (unrolled, referenceLoop, hUnrolledReference)
+            -- A `USize` counter where the length fits every target, else `Fin.foldl`.
             let some (nativeBound, hBound) ← nativeLoopBound? length
               | return (nativeFinLoop, referenceLoop, hFinLoops)
             let (nativeLoop, hNativeFin) ←
@@ -188,6 +193,7 @@ def compileCoordinateFold
                       withTransparency .all <|
                         mkExpectedTypeHint hOrdinaryFin
                           (← mkEq ordinaryLoop nativeFinLoop)
+                    -- A tile update loop becomes a sum with one scalar total per lane.
                     let some scalarized ←
                         scalarizeTileNativeFold?
                           length nativeBound hBound nativeState
@@ -200,6 +206,7 @@ def compileCoordinateFold
             return (nativeLoop, referenceLoop, hNativeReference)
   let (nativeLoops, referenceLoops, hNativeReference) ←
     buildLoops lengths [] initial totalUnrollBudget
+  -- The reference unfolds to the nested reference folds by `rfl`.
   let hReferenceLoops ←
     withTransparency .all <|
       mkExpectedTypeHint

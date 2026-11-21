@@ -45,6 +45,8 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
+/-! Guide page: the infoview widgets for tensors, graphs, floats and verification state. -/
+
 #doc (Manual) "Widgets" =>
 %%%
 tag := "widgets"
@@ -75,7 +77,7 @@ inconclusive verification result, node-by-node interval widths help locate preci
 stalled training run may instead call for comparing the tape, accumulated gradients, and metric
 log.
 
-You can evaluate, view, and check the same named object:
+The same named object can be evaluated, viewed, and checked:
 
 1. Keep the value that matters as a named Lean definition or as an artifact at an explicit path.
 2. Run the evaluator or checker whose semantics the eventual claim uses.
@@ -95,7 +97,7 @@ The available views expose different parts of these objects:
 :::table +header
 *
   * When the question is about…
-  * Start with
+  * Useful views
   * What it exposes
 *
   * tensor values or representation
@@ -269,7 +271,7 @@ A coordinate-coded grid is useful because a transposition can preserve both the 
 and their minimum and maximum, so a summary might look unchanged while the model reads the wrong
 axis as channels or time. Here the hundreds digit identifies the first coordinate, the tens digit
 the second, and the units digit the third. Reading the nesting and the digits together checks their
-correspondence. And the precision example tests another kind of lost information: decimal
+correspondence. The precision example tests another kind of lost information: decimal
 formatting can preserve the visual pattern while hiding different stored numbers.
 
 # IR Graph Viewer
@@ -427,6 +429,10 @@ the search. Nodes marked unexecuted are consequences of that stop, not additiona
 failures. Inspect the first error before interpreting later empty rows.
 
 # Float32 Bit Layout Viewer
+
+
+A printed NaN hides its sign and payload. The bit viewer shows the sign, exponent,
+and fraction for a NaN and an ordinary binary32 value.
 
 ```lean
 -- Use explicit bit patterns to contrast a finite value with
@@ -716,7 +722,7 @@ contribution was omitted or computed incorrectly.
 
 You can read the reverse traversal off the two internal gradients as well. As the selected scalar
 output, the final addition is seeded with one. Its multiplication parent receives one, and that
-parent sends `b` to `a` and `a` to `b`. And the direct addition edge supplies the extra one to `b`.
+parent sends `b` to `a` and `a` to `b`. The direct addition edge supplies the extra one to `b`.
 Looking only at the final leaf numbers would miss this route through the graph. In reverse node
 order, the trace panel shows each local VJP applied to its final accumulated cotangent: it can
 explain the contributions from several consumers, but it doesn't show the accumulator after each
@@ -924,7 +930,7 @@ executable CNN.
 Open {src "TorchLeanExamples/DeepDives/WidgetGallery.lean"}[
   TorchLeanExamples/DeepDives/WidgetGallery.lean] in
 VS Code with the Lean extension enabled. Put the cursor on each widget command and open the
-Infoview. We kept the file small enough to elaborate interactively.
+Infoview. The file is small enough to elaborate interactively.
 
 Work through four changes:
 
@@ -987,8 +993,6 @@ behavior makes the viewer usable during an experiment, but it means successful e
 isn't evidence that the intended artifact was displayed. Inspect the panel's path and status as
 well as its curves. If a file is replaced between checking and viewing, the two operations don't
 necessarily refer to the same data. When you document a result, retain the accepted artifact.
-
-# View Data Sources
 
 Keep the definition or producer path near its view, so that a graph panel can be traced to the
 graph record, a bound to its verifier state, and a training curve to the parsed file. This makes a

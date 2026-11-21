@@ -735,6 +735,8 @@ theorem approx_conv_inputDeriv
           (getAtOrZero roundedLayer.kernel
             (index.1.val :: inChannel.val :: index.2))
           gradOutputError weightError
+  -- Each term is zero where the kernel tap reaches no output, else a product of two
+  -- approximate factors.
   have hTerm : ∀ index ∈ indices,
       abs (NF.toReal (roundedTerm index) -
         idealTerm index) ≤ termError index := by
@@ -758,6 +760,7 @@ theorem approx_conv_inputDeriv
         simpa [roundedTerm, idealTerm, termError, inputGradientTermValue,
           hIndex, hIndexData, productError] using
           (approx_mul (β := β) (fexp := fexp) (rnd := rnd) hGrad hKernel)
+  -- Both gradients fold the terms over the output channels and kernel taps.
   have hBound := approx_fold (β := β) (fexp := fexp) (rnd := rnd)
     indices idealTerm roundedTerm termError hTerm
   have hRounded :

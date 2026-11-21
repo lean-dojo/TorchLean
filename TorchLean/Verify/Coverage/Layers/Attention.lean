@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Coverage
+public import TorchLean.Verify.Coverage.TensorComposites.Attention -- shake: keep
 public import TorchLean.Tensor.Op.Table.Rule
 
 /-!
@@ -14,8 +15,10 @@ public import TorchLean.Tensor.Op.Table.Rule
 
 `#roundoff_coverage` reads the routes of each registered operator from its arm of
 `TorchLean.Op.rule?`. Both compose the propagation theorems of the same callees, which a namespace
-declares once, so they share a module. The theorems are declared in the namespace
-`TorchLean.Coverage.Layers`, which every module under
+declares once, so they share a module. Those of `TorchLean.Tensor.matmul` and
+`TorchLean.Attention.scaledMatmul` are the ones that
+`TorchLean.Verify.Coverage.TensorComposites.Attention` declares, which has their statements. The
+theorems are declared in the namespace `TorchLean.Coverage.Layers`, which every module under
 `TorchLean/Verify/Coverage/Layers/` shares.
 -/
 

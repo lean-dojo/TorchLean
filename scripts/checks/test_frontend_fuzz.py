@@ -520,7 +520,7 @@ class Jax:
         return [("x", first), ("y", self.array(other, rng.choice(self.DTYPES)))]
 
     def unit(self, program, source=None):
-        rng, jnp = self.rng, self.jnp
+        rng = self.rng
         name, value = source or rng.choice(program.values)
         rank = np.ndim(value)
         kind = rng.choice(["reduce", "unary", "binary", "binary", "structure", "convert"])

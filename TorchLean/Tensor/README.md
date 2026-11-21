@@ -2,11 +2,12 @@
 
 This folder is TorchLean's tensor layer: one shape-indexed `Tensor` type that proofs and CPU
 execution share, the reference definitions of the operators and layers written on it, and the
-theorems about them. Tensor-only code imports the modules it uses:
+theorems about them. Tensor-only code imports the modules it uses and opens `TorchLean`:
 
 ```lean
 import TorchLean.Tensor.LinearAlgebra
 import TorchLean.Tensor.Literal
+open TorchLean
 ```
 
 `LinearAlgebra` brings construction, conversion, arithmetic, reductions and factorizations, and
@@ -20,12 +21,17 @@ RL specs. The layer depends on FloatLib and Mathlib and imports no other TorchLe
 - `AdjacentSwap/`: the adjoint and derivative of an axis permutation.
 - `Algebra/`: algebraic identities for real tensors.
 - `ConfiguredBinary/`: correctly rounded elementary and inverse trigonometric functions of
-  FloatLib's configured binary scalars.
+  FloatLib's configured binary scalars, their complex functions and power (FloatLib's
+  `ExecComplex`), and their running maxima and minima in every order.
 - `Context/`: the real and the scoped rational `Context` instances.
 - `Einops/`: the shape-pattern syntax, checks, elaborators, semantics, lowering and laws.
 - `Elementwise/`: the meanings of the elementwise operators over `ℝ`.
 - `Factorization/`: the Cholesky and QR predicates, exact reconstruction, the orthonormality of `Q`,
-  and the exact triangular and ridge solves over `ℝ`.
+  and the exact triangular and ridge solves over `ℝ`. `Decomposition.lean` states the relations of
+  the LAPACK-style decompositions (`IsQR`, `IsPivotedQR`, `IsGeqrf`, `IsGeqp3`, `IsLU`, `IsEigh`,
+  `IsEig`, `IsSVD`, `IsSchur`, `IsRealSchur`, `IsHessenberg`, `IsGehrd`, `IsTridiagonal`, `IsSytrd`,
+  `IsTridiagonalSolve`), with existence proofs for most. No operator of the operator table is
+  specified by them, and no theorem connects a captured decomposition program with them.
 - `Layers/`: forward and backward specs of common layers.
 - `LinearAlgebra/`: the identity matrix, reference numerics, and norms and linear algebra over `ℝ`.
 - `Movement/`: the adjoint of broadcasting, and coordinate lemmas for `cat`, `permute` and
@@ -38,7 +44,7 @@ RL specs. The layer depends on FloatLib and Mathlib and imports no other TorchLe
 - `Op/`: the registered operators with their rules, wire codec and certificates.
 - `Random/`: keyed Fisher-Yates permutations.
 - `Reduce/`: the largest absolute difference of two tensors, sums over one axis and the pullbacks
-  of reductions, and sums and folds of real tensors.
+  of reductions, sums and folds of real tensors, and reductions in a chosen order.
 - `Rep/`: `full`, `map`, `zipWith`, `zipWith3`, `dim` and `unstack` with their compiled
   implementations, reindexing, segments, traversal and finite fibers of `Rep`, the native tensor
   representation, and its correspondence with Mathlib matrices.
@@ -179,10 +185,13 @@ a wrong rank or an out-of-bounds index.
 
 `TorchLean.Tensor.Einops.Elab.Transform`, `TorchLean.Tensor.Einops.Elab.Einsum` and
 `TorchLean.Tensor.Einops.Elab.Pack` provide the checked shape-pattern operations on the ordinary
-`Tensor` type. Their keywords are scoped syntax, so a file turns them on with
+`Tensor` type. Their keywords are scoped syntax, so a file imports them and turns them on with
 `open TorchLean.Tensor`:
 
 ```lean
+import TorchLean.Tensor.Einops.Elab.Einsum
+import TorchLean.Tensor.Einops.Elab.Pack
+import TorchLean.Tensor.Einops.Elab.Transform
 open TorchLean.Tensor
 
 def matrix : Tensor Float [2, 3] :=
@@ -278,6 +287,59 @@ kernels.
 `Factorization/Orthonormal.lean` the orthonormality of `Q`. The Muon orthogonalization
 certificates in `TorchLean/NN/Optimizer/Muon/QR.lean` use the latter.
 
+### Reduction Order
+
+`Reduce/Order.lean` defines `ReduceOrder`, which gives for every count `n` of reduced entries a
+binary tree over the start value and the `n` entries, and `ReduceOrder.fold`, which evaluates it.
+`reduceIn` (sum, product, maximum, minimum), `sumIn`, `meanIn`, `dotIn`, `contractIn`, `matmulIn`,
+`batchMatmulIn`, `poolIn` (sum and average pools) and `scanIn` (the prefixes of `cumsum` and
+`cumprod`) take an order and reduce through `ReduceOrder.fold`, and so does `einsumIn` in
+`Einops/Lowering/Einsum/Order.lean`, which adds the contracted products of `einsum` in the order.
+`cummaxIn` and `cumminIn` fold the indices of each prefix with the order's tree and
+`ReduceOrder.pick`, which keeps one of two indices (`selectIn`). Maximum and minimum pools select
+an entry and give `pool` in every order. A scan folds the prefix of `k` entries with the order's
+tree over `k` entries. Four orders are defined:
+
+- `leftFold`, the order of `reduce`, `contract`, `pool`, `cumsum`, `cumprod`, `cummax` and
+  `cummin`, and the operator table's default. `reduceIn_leftFold` and its companions prove that each
+  ordered operation gives the existing one in this order.
+- `pairwise`, a balanced split of depth at most `⌈log₂ (n + 1)⌉`.
+- `blocked w`, the addition order of FloatLib's `BlockedDot.kernelEntry`: one partial per block of
+  `w` entries, added left to right. A block chains its entries from its first one, where the
+  kernel chains fused multiply-adds from zero.
+- `ofTree t`, a given tree over `Option ℕ`, with `none` the start value and `some i` entry `i`.
+  Over `n` entries it drops the leaves `some i` with `n ≤ i`. Every order is, at each count, the
+  `ofTree` of its own tree there (`tree_ofTree`).
+
+An order `Covers` `n` entries when its tree over them has the start value and each entry as
+leaves, once each. Coverage is decidable and passes to smaller counts (`Covers.mono`), and
+`leftFold`, `pairwise` and `blocked w` cover every count. For an associative, commutative step an
+order gives the left fold at every count it covers (`reduceIn_eq_reduce`,
+`contractIn_eq_contract`, `meanIn_eq_mean`, `poolIn_eq_pool`, `scanIn_eq_leftFold`,
+`einsumIn_eq_einsum`, each with the coverage of the count it reduces). Over `ℝ` this holds for
+sums, products, maxima and minima, so every covering order computes the same real value
+(`reduceIn_sum_real` and its companions), and the same running maxima and minima with the same
+indices (`cummaxIn_real`, `cumminIn_real`). Running maxima and minima are the left fold's at every
+scalar whose tests compare the images of the entries in a linear order (`cummaxIn_eq_leftFold`,
+`cumminIn_eq_leftFold`, through `ReduceOrder.pick_assoc` and `selectIn_eq_leftFold`). At a
+configured binary format, with the extended real as the image and NaN above every value, every
+covering order gives the left fold's words and indices (`ConfiguredBinary.cummaxIn_eq`,
+`ConfiguredBinary.cumminIn_eq`). `TorchLean/Verify/Floats/IEEE754/Order.lean` bounds the
+rounding error of a finite ordered sum in an IEEE format by `((1 + u) ^ d - 1)` times the sum of
+the absolute values, with `d` the depth of the order's tree. It bounds no product, maximum or
+minimum. The deterministic CUDA sum is the order `LibTorch.sumOrder n` over its `n` inputs
+(`LibTorch.reduceSumTree_eq_fold`). For `n ≥ 1` that `ofTree` does not satisfy
+`ReduceOrder.Covers`, because each lane starts from a start-value leaf.
+`Layers/Attention/Order.lean` defines `Attention.scaledMatmulIn`,
+the scaled matrix product of attention in an order: on a supported carrier an entry folds its
+checked products in the order and is replayed exactly as in the left fold when a flag is set. In the
+left fold it is `Attention.scaledMatmul` (`scaledMatmulIn_leftFold`), and over `ℝ` it is in every
+order that covers the inner dimension (`scaledMatmulIn_real`). The operator table's `reduce`,
+`mean`, `contract`, `matmul`, `scaledMatmul`, `pool`, `cumsum`, `cumprod`, `cummax` and `cummin`
+take an order last, `leftFold` by default, the graph IR and the wire records carry it, and
+`Op.check` rejects an order that does not cover its count. The PyTorch, JAX and ONNX captures write
+`leftFold`.
+
 ## Runtime Relationship
 
 Specifications, proofs and native CPU operations share one certified buffer representation, and
@@ -353,8 +415,9 @@ restates the arms as equation lemmas: `Op/Table/Elementwise.lean`, `Op/Table/Com
 `Op/Table/Conv.lean`, `Op/Table/Normalization.lean`, `Op/Table/Attention.lean`,
 `Op/Table/Loss.lean` and `Op/Table/Random.lean`. `Op/Rule.lean` holds the executable rules
 (`Op.Rule`) and `Op/Capability.lean` the optional scalar capabilities that `Op.rule?` reads.
-`Op/Codec.lean` is the wire codec with its round trip. Its records are version 3, and
-`Op.decode` accepts version 3 only.
+`Op/Wire.lean` is the wire codec, whose records are version 5, and `Op.decode` accepts version 5
+only. A record of an operator that takes an order ends with it. `Op/Codec.lean` proves its round
+trip.
 `Op/Run.lean` gives checked invocation of an operator on erased values, and `Op/Cert.lean` the
 `op_cert` registration of operator certificates.
 
@@ -503,8 +566,11 @@ backward meaning is written down too.
 - `ConfiguredBinary.lean`: the storage and `Context` instances of FloatLib's configured binary
   scalars (`FloatLib.Floats.ExecFloat.Binary`). `ConfiguredBinary/Elementary.lean` and
   `ConfiguredBinary/InverseTrigonometric.lean` give their correctly rounded elementary and inverse
-  trigonometric functions, and `NF.lean` a noncomputable `Context` for FloatLib's rounded-real
-  `NF`.
+  trigonometric functions, `ConfiguredBinary/Complex.lean` their `ComplexFunctions`, FloatLib's
+  `ExecComplex` functions and power with each part rounded once (the power where FloatLib certifies
+  it), `ConfiguredBinary/Order.lean` proves that every order that covers an axis gives their
+  running maxima and minima of the left fold, bit for bit, and `NF.lean` a noncomputable `Context`
+  for FloatLib's rounded-real `NF`.
 - `FromFloat.lean`: `FromFloat` and `ofFloat`, which convert Lean `Float`
   constants into a runtime element type in a chosen rounding mode.
 - `Numeric.lean`: `Numeric.sigmoid`, the input-based slopes `sigmoidDeriv` and `tanhDeriv` with
@@ -516,6 +582,10 @@ backward meaning is written down too.
 - `Erf.lean`: the Gauss error function `erf` on the reals, with the facts `torch.erf` and the exact
   GELU rely on.
 - `Complex.lean`: small complex-number support for FFT and FNO-style specifications.
+- `ComplexFn.lean`: the 18 complex functions of `jax.lax` that `Op.complex` applies (`ComplexFn`),
+  their values over `ℂ`, the capability `ComplexFunctions`, which also gives the power that
+  `Op.complexPow` applies, and the layout `s ++ [2]` of complex tensors as pairs of parts
+  (`Tensor.pairAt`, `Tensor.ofPairs`).
 
 ### Operators
 
@@ -534,8 +604,8 @@ backward meaning is written down too.
     `meanDenominator` (the element count, or one for an empty shape), the scalar `sum` and
     `meanSquaredError`, folds such as `maxAbs`, `all` and `dot`, and the splits of a coordinate at
     an axis (`Coord.axisEquiv`, and `Coord.setEquiv` for a replaced extent). `Reduce/Backward.lean`
-    holds sums over one axis and the pullbacks of reductions, and `Reduce/Fold.lean` holds
-    `maxAbsDiff`.
+    holds sums over one axis and the pullbacks of reductions, `Reduce/Fold.lean` holds
+    `maxAbsDiff`, and `Reduce/Order.lean` holds the reductions in a chosen order.
   - `ArgMax.lean`: `argmax` and `argmin`. `Cumulative.lean`: `cumsum`, `cumprod`, `cummax` and
     `cummin`. `Sort.lean`: `sort` and `topk`.
   - `Contract.lean`: `contract`. `Scatter.lean`: `scatter`. `Statistics.lean`: the variance `var`.

@@ -138,11 +138,14 @@ private def withRawAtCoordinate (setup : OutputSetup) (outputIndex : Expr)
     withTransparency .all <|
       mkExpectedTypeHint hSemanticOutputIndex
         (← mkEq semanticOutputCoordinate unlinearizedOutputCoordinate)
+  -- Beta-reduce a function of the output coordinate at `outputCoordinate`.
   let applyAtOutput (function : Expr) : Expr :=
     match function.consumeMData with
     | .lam _ _ functionBody _ =>
         functionBody.instantiate1 outputCoordinate
     | _ => mkApp function outputCoordinate
+  -- From the equality of the finalized output with the planned contraction, chain to the
+  -- checked einsum's contraction and then to the reference entry at `outputIndex`.
   let finish
       (productAtOutput rawOutput finalizeOutput
         finalizedOutput hFinalizedReference : Expr) :
@@ -181,6 +184,7 @@ private def withRawAtCoordinate (setup : OutputSetup) (outputIndex : Expr)
     body productAtOutput rawOutput finalizeOutput correctness
   match inputFactorization? with
   | none =>
+      -- The raw output is the contraction of the product, and the finalizer is the identity.
       let appliedInputProduct := applyAtOutput inputProduct
       withLeadingLetPair appliedInputProduct
           fun leadingLocals productAtOutput => do
@@ -233,6 +237,8 @@ private def withRawAtCoordinate (setup : OutputSetup) (outputIndex : Expr)
         finish productAtOutput rawOutput finalizeOutput
           rawOutput hRawReference
   | some (leftFactor, middleProduct, rightFactor, hFactoredProduct) =>
+      -- The raw output contracts the middle product only, and the finalizer multiplies it by
+      -- the left and right factors (`Semantics.mul_contraction_mul`).
       let leftAtOutput := applyAtOutput leftFactor
       let appliedMiddleProduct := applyAtOutput middleProduct
       let rightAtOutput := applyAtOutput rightFactor

@@ -4,14 +4,9 @@ title: Bug Zoo
 
 # Bug Zoo
 
-Here we'll look at mistakes that are easy to miss in ordinary machine-learning tests. Our program
-may still return a tensor, loss, or token sequence even when it computes something different from
-what we intended.
-
-We'll keep each example small: state the intended behavior in Lean, examine how an implementation
-can depart from it, and identify any runtime assumptions left outside the proof. Between them, the
-examples cover attention, decoding, data boundaries, normalization, losses, compilation, floating
-point, and geometry.
+A loss can round to zero while the true loss is positive. An attention mask can leak a small
+weight onto a future token. We put these failures in Lean so we can pin down the calculation
+and try a formula or representation that avoids it.
 
 ## Attention and Autoregressive Decoding
 
@@ -70,8 +65,10 @@ Some formulas fail from rounding alone.
 takes standard formulas such as softmax cross-entropy at the logits `[9, -9, -9]` in binary32, the
 cosine loss, and the probability clamp at `1 - epsilon`. For each one, the kernel checks an input
 on which it fails, and a theorem covers the stable formula TorchLean computes.
-[`LibraryBugs.lean`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/DeepDives/Floats/LibraryBugs.lean)
-and its two continuations do the same for formulas from PyTorch, JAX, Hugging Face Transformers,
+[`LibraryBugs.lean`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/DeepDives/Floats/LibraryBugs.lean),
+[`SurvivalComplement.lean`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/DeepDives/Floats/ProbBugs/SurvivalComplement.lean)
+and [`FocalPower.lean`](https://github.com/lean-dojo/TorchLean/blob/main/TorchLeanExamples/DeepDives/Floats/LossBugs/FocalPower.lean)
+do the same for formulas from PyTorch, JAX, Hugging Face Transformers,
 TRL, Stable-Baselines3, diffusers, PyTorch Geometric, TensorFlow Probability, torchvision and
 xLSTM, each beside a formula with the same real value that doesn't fail there. These files check
 the formulas as written in Lean, but they don't establish that an installed library executes
@@ -97,7 +94,7 @@ scripts/lake.sh exe verify -- camera-box3d-cert
 ```
 
 You inspect the other entries through their checked Lean definitions and theorems. A separate
-command, `scripts/lake.sh exe verify -- all`, runs the five bundled checks opted in through
+command, `scripts/lake.sh exe verify -- all`, runs the bundled checks opted in through
 `includeInAll` and leaves out external, interactive, and longer workflows (`verify -- list` shows
 the complete registry).
 
@@ -137,7 +134,7 @@ import FloatLib.Floats.Formats.IEEE754
 open FloatLib.Floats
 
 example (a b : Float32) (ha : a.isFinite = true) (hb : b.isFinite = true) :
-    ExecFloat.Binary.ofFloat32 (a + b) =
+    (ExecFloat.Binary.ofFloat32 (a + b) : Binary32) =
       ExecFloat.Binary.ofFloat32 a + ExecFloat.Binary.ofFloat32 b :=
   ExecFloat.Binary.ofFloat32_add_of_isFinite a b ha hb
 ```

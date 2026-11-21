@@ -43,6 +43,7 @@ import TorchLean.NN.Session.Random
 import TorchLean.NN.RL.Numerics.Advantage
 import TorchLean.NN.RL.Numerics.Intervals
 import TorchLean.NN.RL.Numerics.PPO
+import TorchLean.NN.RL.PolicyGradient
 import TorchLean.Verify.Trainer
 
 open Verso.Genre Manual
@@ -52,6 +53,8 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
 open FloatLib.Floats (ExecFloat Binary32)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
+
+/-! Guide page: reinforcement learning, from a PPO GridWorld run to policy gradients. -/
 
 #doc (Manual) "Reinforcement Learning" =>
 %%%
@@ -70,9 +73,9 @@ $$`\text{environment}
 \longrightarrow\text{policy/value update}.`
 
 Each arrow carries assumptions about observation shape, valid actions, finite rewards, episode
-boundaries, and alignment of rollout fields. TorchLean represents these assumptions in types,
-runtime checks, and theorem hypotheses, and before using a result we need to know which one we
-have.
+boundaries, and alignment of rollout fields. Observation and action shapes appear in the types;
+external transitions pass runtime checks; mathematical results state the remaining assumptions as
+theorem hypotheses. A result is only as broad as the layer that produced it.
 
 We split these responsibilities across {src "TorchLean/NN/RL.lean"}[`TorchLean.NN.RL`] and its
 submodules in {srcDir "TorchLean/NN/RL"}[`TorchLean/NN/RL`]:
@@ -86,8 +89,8 @@ submodules in {srcDir "TorchLean/NN/RL"}[`TorchLean/NN/RL`]:
   `Bellman` modules under the MDP modules prove structural, numerical, and dynamic-programming
   facts about named objects from the first two groups.
 
-Since the definitions are polymorphic in the scalar type, you can run the algebraic return and
-advantage recurrences at `ℚ` and inspect them as exact fractions before running at `Float`.
+The algebraic return and advantage recurrences are polymorphic in the scalar type. Running them at
+`ℚ` exposes exact fractions before the same recurrence is evaluated at `Float`.
 Exponentials, logarithms, and other analytic operations need a different scalar interpretation
 (scalar polymorphism alone doesn't make them exact rational computations). We use this distinction
 in the examples to separate the recurrence from rounding.
@@ -207,8 +210,8 @@ let progress := goalDistance pos - goalDistance nextPos
   truncated := false }
 ```
 
-with reward $`+1` for entering the goal, $`0` once at the goal, and a declared reward range of
-$`[-1.05, 1]`.
+The shaped variant gives reward $`+1` for entering the goal, $`0` once at the goal, and a declared
+reward range of $`[-1.05, 1]`.
 
 Reward shaping changes the objective presented to the learner, and the example records it next to
 the transition code. So we have two environments to distinguish: the sparse specification used by
@@ -287,9 +290,9 @@ rewards repeatedly and wouldn't reproduce the episode metric.
 
 # GridWorld Definition
 
-{src "TorchLeanExamples/Models/RL/GridWorld/Env.lean"}[`TorchLeanExamples.Models.RL.GridWorld.Env`]
-defines the state, actions, movement, and sparse reward in Lean, and the MDP theorems use these
-same definitions.
+If an agent tries to move up from the top row, I want the training run and the MDP proof
+to agree on what happens. Both use the same transition and reward definitions.
+{src "TorchLeanExamples/Models/RL/GridWorld/Env.lean"}[GridWorld/Env.lean]
 
 The state is a pair of `Fin` coordinates, and an action is one of four directions. Movement is
 border-clamped instead of wrapping or erroring:
@@ -340,8 +343,8 @@ open Examples.GridWorld in
 That mathlib equivalence supplies both the encoding and its inverse laws, so later proofs can use
 the flattening as a bijection.
 
-Now the reward. Here is the specification environment, instantiated at the grid the examples use,
-together with the reward on a step that does not reach the goal:
+The following definition fixes the $`4\times4` grid and its reward rule. The theorem then calculates
+the reward for a step that does not reach the goal:
 
 ```lean (name := rlGridDefs)
 /-- The 4x4 grid used throughout this chapter. -/
@@ -539,7 +542,7 @@ The runtime's shape abbreviations compute these dimensions:
 ```
 
 The horizon invariant makes every step lookup in the packing valid. `trainingBatch` returns
-`IO (TrainingBatch ...)`, not an `Except` for mismatched field lengths. And the length proof
+`IO (TrainingBatch ...)`, not an `Except` for mismatched field lengths; the length proof
 establishes neither finite numerical results nor successful allocation. Value targets use the
 *unnormalized* advantages, and only the policy term sees z-score normalized advantages. Normalizing
 the advantages that feed the value target would change what the critic regresses to, which is a
@@ -766,7 +769,7 @@ and so on. The shared shape parameter expresses that coordinatewise pairing, whi
 accidental critic column needs an explicit reshape before it can take part in this target
 calculation.
 
-# The PPO Objective
+# PPO's Clipped Objective
 
 For the sampled action at timestep $`t`, the importance ratio is
 
@@ -903,6 +906,56 @@ different purpose: it fits the return target that is used in estimating advantag
 coefficient, the entropy term rewards a less concentrated action distribution. These terms can pull
 shared parameters in different directions, so the flat branch of one sample's surrogate isn't a
 bound on the complete update.
+
+A KL penalty (`RL.PolicyGradient.klLoss`) needs the divergence of the new policy from the old one,
+which is small when the update is. The textbook sum $`\sum_a p(a)\,(\log p(a)-\log q(a))` then
+subtracts nearly equal logarithms, and its rounding error can exceed the divergence and make it
+negative. `RL.PolicyGradient.kl` and `klFromLogits` use the form of Section 4.1 of
+[Amos (2026)](https://arxiv.org/abs/2611.18511) instead (`RL.PolicyGradient.klTilted`), with the
+log-ratios centered at their largest value instead of their mean. From $`s=-2` to $`s=1` each term
+is a weight times $`e^s-1-s`, which FloatLib rounds once and never makes negative. `klFromLogits`
+centers a quarter of each logit vector at its largest entry before the difference and takes the old
+weights from the log-softmax, so an old probability that underflows keeps its mass. Tests check
+these inputs only, and no theorem bounds the rounding: binary32
+`klFromLogits [0, 0] [-2^127, 2^127]` is `2^127` and `klFromLogits [0, -384, -2^33] [0, 2^33, 2^32]`
+is `2^33`, each the divergence rounded. The docstring states the range limit: old logits may be at
+most one largest-finite value apart. It also names two limits of rounding the shift between the
+logit vectors: a change of a logit below about half a unit in the last place of its distance from
+its vector's largest entry reads as `0` (binary32 `[0, 1]` against `[2^-26, 1]`), and an entry of
+the shift far below its largest one keeps only the precision of that distance (against `[0, 5]`,
+where
+the divergence is about `5.0067`, `[0, -2^24]` gives about `4.0181` and `[0, -2^100]` gives `log
+2`). Over the reals, `kl_eq_sum` and `klFromLogits_eq_sum` in
+{src "TorchLean/NN/RL/PolicyGradient/Real.lean"}[`TorchLean.NN.RL.PolicyGradient.Real`] prove that
+both are the textbook sum, of the clamped and renormalized probabilities for `kl` and of the two
+softmax policies for `klFromLogits`.
+
+In binary32, policies far apart give the divergence $`100-\log 2`, about $`99.3069`:
+
+```lean (name := rlKlFar)
+-- The old policy is uniform, and the new one puts nearly
+-- all of its mass on the second action.
+#eval RL.PolicyGradient.klFromLogits
+  ([0, 0] : Tensor Float32 [2]) [-100, 100]
+```
+
+```leanOutput rlKlFar (whitespace := lax)
+99.306854
+```
+
+An old probability that underflows binary32 does not make `klFromLogits` nonfinite: against a
+uniform new policy, the old logits `[0, -110]` give about $`\log 2`:
+
+```lean (name := rlKlUnderflow)
+-- The old probability of the second action is e^(-110),
+-- below the smallest binary32 subnormal.
+#eval RL.PolicyGradient.klFromLogits
+  ([0, -110] : Tensor Float32 [2]) [0, 0]
+```
+
+```leanOutput rlKlUnderflow (whitespace := lax)
+0.693147
+```
 
 # Checked Arithmetic For Returns And Ratios
 
@@ -1081,8 +1134,7 @@ open RL.StochasticMDP in
 
 ```leanOutput rlContraction (whitespace := lax)
 @bellmanMax_contraction : ∀ {nStates nActions : ℕ}
-  [Fact (0 < nStates)] [inst : Fact (0 < nActions)]
-  (mdp : RL.StochasticMDP nStates nActions),
+  [inst : Fact (0 < nActions)] (mdp : RL.StochasticMDP nStates nActions),
   mdp.Valid →
     ∀ (values₁ values₂ : RL.ValueFunction ℝ nStates),
       dist ((vectorEquiv nStates) (mdp.bellmanMax values₁))
@@ -1091,11 +1143,10 @@ open RL.StochasticMDP in
           dist ((vectorEquiv nStates) values₁) ((vectorEquiv nStates) values₂)
 ```
 
-The discount bound arrives through
-`Valid mdp`, which also requires the transition rows to be probability distributions. The state and
-action counts are positive by instance arguments. The distance is Mathlib's sup distance on
-`Fin nStates → ℝ`, between the tables read through `Tensor.vectorEquiv`. Nothing here is inferred
-from a simulator run.
+The discount bound arrives through `Valid mdp`, which also requires the transition rows to be
+probability distributions. The action count is positive by an instance argument, and the state
+count may be zero. The distance is Mathlib's sup distance on `Fin nStates → ℝ`, between the tables
+read through `Tensor.vectorEquiv`. Nothing here is inferred from a simulator run.
 
 Iterating that inequality gives a geometric error bound for value iteration:
 
@@ -1109,8 +1160,8 @@ open RL.StochasticMDP in
 
 ```leanOutput rlIterate (whitespace := lax)
 @bellmanMax_iterate_error : ∀
-  {nStates nActions : ℕ} [Fact (0 < nStates)]
-  [inst : Fact (0 < nActions)] (mdp : RL.StochasticMDP nStates nActions),
+  {nStates nActions : ℕ} [inst : Fact (0 < nActions)]
+  (mdp : RL.StochasticMDP nStates nActions),
   mdp.Valid →
     ∀ (v vStar : RL.ValueFunction ℝ nStates),
       mdp.bellmanMax vStar = vStar →
@@ -1423,8 +1474,9 @@ intended dynamics requires a separate specification.
 
 CartPole exercises the same collector with an external environment.
 
-`ppo_cartpole` runs the same PPO loop against Gymnasium. Here is a recorded 30-update run with the
-shipped hyperparameters, evaluating every fifth update over five episodes with a 200-step cap:
+`ppo_cartpole` runs the same PPO loop against Gymnasium. The following transcript records 30
+updates with the shipped hyperparameters, evaluating every fifth update over five episodes with a
+200-step cap:
 
 ```terminal +output
 $ torchlean ppo_cartpole --updates 30 --eval-every 5 \
@@ -1549,7 +1601,7 @@ dqn_replay: ok
 each transition twice. This deterministic wraparound repeats data without decorrelating samples.
 Callers needing randomized replay must choose a sampler with that policy.
 
-Here are the pieces. The observations are two-dimensional, there are three actions, and both
+The observations are two-dimensional, there are three actions, and both
 Q-functions are affine in the features:
 
 ```lean (name := rlDqnSetup)
@@ -1599,10 +1651,6 @@ $`|e|-\tfrac12=0.66`. Transition B took action $`0` from $`s'=[1,0]`, predicting
 terminal, so the target is just $`r=0.5`. Its error is $`0.7`, squared $`0.49`, Huber
 $`\tfrac12(0.7)^2=0.245`. Lean agrees with all four:
 
-`RL.DQN.loss` uses squared error by default. Supply `error` to choose another scalar loss,
-`batch := true` to average a replay batch, or `double := true` to select next actions with the
-online network and evaluate them with the target network.
-
 ```lean (name := rlDqnLossA)
 -- The nonterminal target includes the maximum next-state
 -- target value.
@@ -1645,6 +1693,10 @@ online network and evaluate them with the target network.
 ```leanOutput rlDqnHuberB (whitespace := lax)
 0.245000
 ```
+
+`RL.DQN.loss` uses squared error by default. Supply `error` to choose another scalar loss,
+`batch := true` to average a replay batch, or `double := true` to select next actions with the
+online network and evaluate them with the target network.
 
 Both minibatch losses are means, and because the batch is `[A, B, A, B]` the mean over four equals
 the mean over two: $`(1.3456+0.49)/2=0.9178` and $`(0.66+0.245)/2=0.4525`. Those are the two
@@ -1810,6 +1862,10 @@ sections state these contracts beside the corresponding code.
 
 # Contract Exercises
 
+Try following one rollout closely enough to recompute its return. Once you've done
+that, you can change the horizon, the arithmetic, or a done flag and see which
+assumptions each check uses.
+
 1. Run `torchlean ppo_gridworld --updates 40 --eval-episodes 1 --eval-max-steps 8
    --log /tmp/rl.json --path /tmp/rl-path.json`. Recompute the final return from that path
    and the shaped reward, rather than assuming it follows the one-update path shown above.
@@ -1828,8 +1884,6 @@ sections state these contracts beside the corresponding code.
    up, and read both messages.
 8. Run `ppo_cartpole` with `--eval-max-steps 8` and then with `--eval-max-steps 500`, and compare
    how the cap limits what each return curve can establish.
-
-# Related Verification Chapters
 
 {ref "verification"}[Verification Overview] explains how executable checks connect to mathematical
 claims. {ref "scientific-ml-verification"}[Scientific ML Verification] examines the corresponding

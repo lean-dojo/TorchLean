@@ -23,7 +23,7 @@ magnitude it is finite with the value `roundAt fmt y` (`roundSigned_eq_roundAt`)
 format and every comparator of a real.
 
 At finite inputs `once c` is `roundSigned` of `c` at the decoded inputs (`once_eq`), which are the
-real values of the inputs (`rats_cast`). At a finite positive value FloatLib's `rsqrt` is
+real values of the inputs (`rats_cast`). At a finite positive value FloatLib's `rSqrt` is
 `roundSigned` of the comparator of `1 / √x` by exact squares (`rsqrt_eq_roundSigned`).
 
 If `E` compares a real `e` with rationals, then `linCompare E c c₀` compares `c * e + c₀` with
@@ -113,7 +113,7 @@ theorem once_eq {n : ℕ} (c : (Fin n → ℚ) → ℚ → Ordering) {x : Fin n 
 /-- At a finite positive value, `rsqrt` is the signed rounding through the comparator of
 `1 / √x` by exact squares. -/
 theorem rsqrt_eq_roundSigned {v : Model fmt} (hv : isFinite v = true) (hpos : 0 < toReal v) :
-    rsqrt v =
+    rSqrt v =
       roundSigned fmt (Formats.Posit.Model.RootRounding.compareRoot ((toRat? v).getD 0)⁻¹ 2) := by
   have hzero : isZero v = false := by
     cases h : isZero v
@@ -125,9 +125,9 @@ theorem rsqrt_eq_roundSigned {v : Model fmt} (hv : isFinite v = true) (hpos : 0 
   have hq0 : 0 < q := by
     have : (0 : ℝ) < q := hr ▸ hpos
     exact_mod_cast this
-  have heq : rsqrt v = AlgebraicRounding.sqrtRat fmt false q⁻¹ := by
-    simp [rsqrt, chooseNaN1_none_of_isFinite v hv, hzero, hsign,
-      isInf_eq_false_of_isFinite_eq_true v hv, hq]
+  have heq : rSqrt v = AlgebraicRounding.sqrtRat fmt false q⁻¹ := by
+    simp [rSqrt, chooseNaN1_none_of_isFinite v hv, hzero, hsign,
+      isInfinite_eq_false_of_isFinite_eq_true v hv, hq]
   rw [heq, AlgebraicRounding.sqrtRat_eq_root, hq, Option.getD_some, roundSigned, ite_eq_right]
   · rfl
   · rw [Formats.Posit.Model.RootRounding.compareRoot, ite_eq_right (lt_irrefl 0), ite_eq_left rfl,

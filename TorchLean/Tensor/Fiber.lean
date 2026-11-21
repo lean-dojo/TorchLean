@@ -360,15 +360,6 @@ theorem batchSlice_apply {batch s : Shape} (tensor : Tensor α (batch ++ s)) (b 
     tensor.batchSlice b q = tensor ((Coord.appendEquiv batch s).symm (b, q)) :=
   Rep.get_ofFn _ q
 
-/-- A cast of a coordinate along an equality of nonempty shapes with equal outer extent keeps the
-outer index. -/
-private theorem cast_dim {source target : Shape} {n : Nat} (h : source = target)
-    (c : Shape.Coord (.dim n source)) :
-    _root_.cast (congrArg Shape.Coord (congrArg (List.cons n) h)) c =
-      (c.1, _root_.cast (congrArg Shape.Coord h) c.2) := by
-  cases h
-  rfl
-
 /-- The slice at `(i, b)` is the slice at `b` of the outer slice `i`. -/
 theorem batchSlice_mk {n : Nat} {batch s : Shape}
     (tensor : Tensor α ((Shape.dim n batch) ++ s)) (i : Fin n) (b : batch.Coord) :

@@ -40,6 +40,8 @@ open Verso.Genre.Manual.InlineLean
 open TorchLean
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: the commands of the `torchlean` and `verify` executables. -/
+
 #doc (Manual) "Command-Line Reference" =>
 %%%
 tag := "cli"
@@ -66,13 +68,13 @@ Both dispatch tables are ordinary Lean definitions:
 - {src "TorchLeanExamples/Verification/CLI.lean"}[`TorchLeanExamples/Verification/CLI.lean`] routes
   the `verify` tools.
 
-You reach these workflows through the commands below, but the help from your executable remains
-authoritative for command names and flags. Terminal transcripts below are recorded examples:
-numerical output, banners, and backend reports can change with the build.
+The executable's own `--help` output is authoritative for command names and flags. The terminal
+transcripts on this page are recorded examples; numerical output, banners, and backend reports can
+change with the build.
 
 # Discovering Commands
 
-You get grouped help and a machine-readable list from the dispatcher:
+The dispatcher provides grouped help and a machine-readable command list:
 
 ```terminal
 # Compare grouped help with the flat list used by scripts.
@@ -80,8 +82,8 @@ scripts/lake.sh exe torchlean --help
 scripts/lake.sh exe torchlean --list
 ```
 
-`--help` explains the command groups and gives a starting path. `--list` prints exactly one
-registered command name per line, which is what you want in a script.
+`--help` explains the command groups. `--list` prints exactly one registered command name per line,
+so scripts can parse it without the descriptions.
 Running `scripts/lake.sh exe torchlean`
 with no arguments prints the same help and exits with status `1`, so a bare invocation in a
 Makefile fails rather than silently doing nothing.
@@ -120,8 +122,8 @@ That invocation exits with status `1`.
 
 # Command Implementation
 
-You can see how the shared parser connects to a trainer in the MLP quickstart, whose `main` first
-handles help and arguments, then constructs the training configuration:
+The MLP quickstart shows how the shared parser connects to a trainer. Its `main` handles help and
+arguments before constructing the training configuration:
 
 ```
 -- Dispatch selects the registered command; that command
@@ -191,8 +193,8 @@ arguments, and each can also return an error message. `checkNoArgs` returns only
 and succeeds only for an empty list. Calling it on the final remainder rejects flags that no parser
 consumed.
 
-If you know Python's `argparse`, `parse_args` also rejects unknown arguments by default, while
-`parse_known_args` returns them to its caller. Here we can see that choice in the call to
+Python's `argparse` makes the same distinction: `parse_args` rejects unknown arguments by default,
+while `parse_known_args` returns them to its caller. Here that choice appears in the call to
 `checkNoArgs`.
 
 In these signatures, `Except` and `Option` answer separate questions. `Except.error` means that the
@@ -204,8 +206,8 @@ parser doesn't establish that the whole command line is valid.
 
 # Parser Results
 
-You can evaluate the parsers on their own. This call consumes `--steps 20` and leaves the unrelated
-path flag in the remainder:
+The parsers can also be evaluated on their own. This call consumes `--steps 20` and leaves the
+unrelated path flag in the remainder:
 
 ```lean (name := cliTake)
 -- The steps parser removes its flag while preserving the
@@ -381,9 +383,8 @@ scripts/lake.sh exe torchlean --device cpu quickstart_mlp \
 ```
 
 The runner collects prefix flags, finds the command, and forwards those flags together with the
-arguments after it, so the selected command parses both. I put the command first in these examples
-so we can read what will run before its options. A leading separator is accepted for wrappers that
-require one:
+arguments after it, so the selected command parses both. The examples put the command first to keep
+the operation next to its options. A leading separator is accepted for wrappers that require one:
 
 ```terminal
 # The separator is removed before the command parses its
@@ -437,7 +438,7 @@ new option, consuming it and placing its value in the eventual configuration bot
 
 # Runtime Flags
 
-Here's what the common runtime parser recognizes:
+The common runtime parser recognizes these flags:
 
 :::table +header
 *
@@ -639,7 +640,7 @@ keeping the initialization, data, optimizer settings, and number of updates fixe
 completed command establishes that its selected path ran, and the printed loss describes that run's
 objective.
 
-# The Interactive Device Chooser
+# Interactive Device Selection
 
 Use `--choose` when running a command by hand and you do not want to remember the device flag:
 
@@ -675,7 +676,7 @@ preserved and suppresses the prompt, but the selected command still validates th
 
 # Command-Specific Flags
 
-Ask the subcommand:
+Each subcommand documents its own flags. For example:
 
 ```terminal
 # Inspect the text model dimensions, data path, and
@@ -943,13 +944,16 @@ retroactively verify the process that produced the artifact.
 
 ## `all` Coverage
 
+For a quick local check, run the bundled jobs that can use the inputs in the checkout.
+The registry above shows which jobs are included.
+
 ```terminal
 # Run the registry entries whose includeInAll field is
 # enabled.
 scripts/lake.sh exe verify -- all
 ```
 
-runs the bundled checks marked `yes` above, one after another:
+The command runs the bundled checks marked `yes` above, one after another:
 
 ```terminal +output
 == ibp-cert ==
@@ -1055,6 +1059,9 @@ explanation still makes sense with them.
 
 # Command Exercises
 
+The following exercises vary one part of a run at a time. Check the accepted options first, then
+compare the resulting output or failure.
+
 1. Run `scripts/lake.sh exe torchlean --list | wc -l` and account for the commands across the
    groups shown by `--help`.
 2. Pick any training command and pass a flag from a different one. Read the message and identify
@@ -1068,8 +1075,6 @@ explanation still makes sense with them.
    much of the registry a green `all` left untouched.
 7. Write a `--log` under a new directory and inspect the created parent directories. Then try a
    path whose parent is a regular file and inspect the reported write failure.
-
-# Command Results
 
 A successful process, a backend selection report, and an accepted certificate answer different
 questions. When recording a result, keep the command, selected implementation, and the tool's

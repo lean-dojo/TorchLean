@@ -23,8 +23,8 @@ derivative is the sum of the slope map on the input, the scale tangent map and t
 the bias. The three backward components form the adjoint of that derivative, and the forward-mode
 rule applies it to the tangents (`batchNormRunning_jvp_eq_fderiv`). The scale and bias gradients
 are sums over every axis but `dim`, and that sum is the pullback of broadcasting along `dim`
-(`reduce_otherAxes_eq_reduceBroadcast`). Real division by zero is zero, so the
-denominator needs no hypothesis.
+(`reduce_otherAxes_eq_reduceBroadcast`). The real root of a negative number is zero, and real
+division by zero is zero, so the denominator needs no hypothesis.
 
 With batch statistics, `Op.batchNorm` normalizes each channel by the mean and variance of its own
 entries. Where the spatial shape has a single position or every channel has a nonzero sum of its
@@ -137,13 +137,11 @@ theorem Op.batchNormRunning_prod_hasFDerivAt (dim : Fin s.rank) (x : Tensor ℝ 
           (p.fst, p.snd.fst, p.snd.snd, mean, var, epsilon, ())).1)
       (BatchNorm.runningCLM dim gamma
         ((x - Tensor.broadcast mean s _ (s.broadcastDims_axis dim)) /
-          Tensor.sqrt (Tensor.broadcast (Tensor.maximum var (full _ 0)) s _
-            (s.broadcastDims_axis dim) + full s epsilon.item) .clampNegative)
-        (Tensor.sqrt (Tensor.broadcast (Tensor.maximum var (full _ 0)) s _
-          (s.broadcastDims_axis dim) + full s epsilon.item) .clampNegative))
+          Tensor.sqrt (Tensor.broadcast var s _ (s.broadcastDims_axis dim) + full s epsilon.item))
+        (Tensor.sqrt (Tensor.broadcast var s _ (s.broadcastDims_axis dim) + full s epsilon.item)))
       (WithLp.toLp 2 (x, WithLp.toLp 2 (gamma, beta))) := by
-  set std := Tensor.sqrt (Tensor.broadcast (Tensor.maximum var (full _ 0)) s _
-    (s.broadcastDims_axis dim) + full s epsilon.item) .clampNegative with hstd
+  set std := Tensor.sqrt (Tensor.broadcast var s _ (s.broadcastDims_axis dim) +
+    full s epsilon.item) with hstd
   set spreadMean := Tensor.broadcast mean s _ (s.broadcastDims_axis dim) with hmean
   set L := BatchNorm.runningCLM dim gamma ((x - spreadMean) / std) std with hL
   have hF : ∀ (p : WithLp 2 (Tensor ℝ s ×
@@ -208,10 +206,8 @@ theorem Op.batchNormRunning_prod_backward_eq_adjoint (dim : Fin s.rank) (x : Ten
           (p.fst, p.snd.fst, p.snd.snd, mean, var, epsilon, ())).1)
       (BatchNorm.runningCLM dim gamma
         ((x - Tensor.broadcast mean s _ (s.broadcastDims_axis dim)) /
-          Tensor.sqrt (Tensor.broadcast (Tensor.maximum var (full _ 0)) s _
-            (s.broadcastDims_axis dim) + full s epsilon.item) .clampNegative)
-        (Tensor.sqrt (Tensor.broadcast (Tensor.maximum var (full _ 0)) s _
-          (s.broadcastDims_axis dim) + full s epsilon.item) .clampNegative))
+          Tensor.sqrt (Tensor.broadcast var s _ (s.broadcastDims_axis dim) + full s epsilon.item))
+        (Tensor.sqrt (Tensor.broadcast var s _ (s.broadcastDims_axis dim) + full s epsilon.item)))
       (WithLp.toLp 2 (x, WithLp.toLp 2 (gamma, beta))) ∧
     WithLp.toLp 2
         ((((Op.batchNormRunning dim).rule? (α := ℝ) |>.get rfl).backward
@@ -229,11 +225,10 @@ theorem Op.batchNormRunning_prod_backward_eq_adjoint (dim : Fin s.rank) (x : Ten
   have h := batchNormRunning_prod_hasFDerivAt dim x gamma beta mean var epsilon
   refine ⟨h, ?_⟩
   have hinput : slopeCLM (fun c => Tensor.broadcast gamma s _ (s.broadcastDims_axis dim) c /
-      Tensor.sqrt (Tensor.broadcast (Tensor.maximum var (full _ 0)) s _
-        (s.broadcastDims_axis dim) + full s epsilon.item) .clampNegative c) δ =
+      (Tensor.sqrt (Tensor.broadcast var s _ (s.broadcastDims_axis dim) +
+        full s epsilon.item)) c) δ =
       (δ * Tensor.broadcast gamma s _ (s.broadcastDims_axis dim)) /
-        Tensor.sqrt (Tensor.broadcast (Tensor.maximum var (full _ 0)) s _
-          (s.broadcastDims_axis dim) + full s epsilon.item) .clampNegative :=
+        Tensor.sqrt (Tensor.broadcast var s _ (s.broadcastDims_axis dim) + full s epsilon.item) :=
     Rep.ext fun c => by
       simp only [slopeCLM_apply, Tensor.mul_apply, Tensor.div_apply]
       ring
@@ -257,11 +252,9 @@ theorem Op.batchNormRunning_jvp_eq_fderiv (dim : Fin s.rank) (x : Tensor ℝ s)
         (WithLp.toLp 2 (dx, WithLp.toLp 2 (dgamma, dbeta))) := by
   rw [(batchNormRunning_prod_hasFDerivAt dim x gamma beta mean var epsilon).fderiv]
   show ((dx * Tensor.broadcast gamma s _ (s.broadcastDims_axis dim)) /
-        Tensor.sqrt (Tensor.broadcast (Tensor.maximum var (full _ 0)) s _
-          (s.broadcastDims_axis dim) + full s epsilon.item) .clampNegative +
+        Tensor.sqrt (Tensor.broadcast var s _ (s.broadcastDims_axis dim) + full s epsilon.item) +
       ((x - Tensor.broadcast mean s _ (s.broadcastDims_axis dim)) /
-        Tensor.sqrt (Tensor.broadcast (Tensor.maximum var (full _ 0)) s _
-          (s.broadcastDims_axis dim) + full s epsilon.item) .clampNegative) *
+        Tensor.sqrt (Tensor.broadcast var s _ (s.broadcastDims_axis dim) + full s epsilon.item)) *
         Tensor.broadcast dgamma s _ (s.broadcastDims_axis dim)) +
       Tensor.broadcast dbeta s _ (s.broadcastDims_axis dim) = _
   refine Rep.ext fun c => ?_
@@ -293,85 +286,6 @@ theorem rowSum_eq_reduceBroadcast (w : Tensor ℝ [m, n]) :
 
 end Normalization
 
-namespace RowNorm
-
-open Matmul
-
-variable {m n : Nat}
-
-/-- If row `i` of `X` has a positive sum of its variance and `ε`, the inverse standard deviation of
-that row has derivative `invD` at `X`. -/
-theorem hasFDerivAt_invStd_of_pos {ε : ℝ} (X : Vec (Shape.size [m, n])) (i : Fin m)
-    (hpos : 0 < TorchLean.var (fun j => X (idxMN (m := m) (n := n) i j)) + ε) :
-    HasFDerivAt (fun Y : Vec (Shape.size [m, n]) => invStd Y ε i) (invD X ε i) X :=
-  (hasDerivAt_inv (Real.sqrt_pos.2 hpos).ne').comp_hasFDerivAt X
-    (((hasFDerivAt_rowVar X i).add_const ε).sqrt hpos.ne')
-
-/-- If row `i` of `X` has a positive sum of its variance and `ε`, the derivative `nrmD` of the
-normalized entry `(i, j)` at `X` is the closed-form JVP `nrmJVP`. -/
-theorem nrmD_apply_of_pos {ε : ℝ} (X : Vec (Shape.size [m, n])) (i : Fin m) (j : Fin n)
-    (hpos : 0 < TorchLean.var (fun k => X (idxMN (m := m) (n := n) i k)) + ε)
-    (dX : Vec (Shape.size [m, n])) :
-    nrmD X ε i j dX = nrmJVP X ε dX i j := by
-  have hn' : (n : ℝ) ≠ 0 := by exact_mod_cast j.pos.ne'
-  have hs := Real.sqrt_pos.2 hpos
-  have hsum :
-      ∑ k : Fin n, dX (idxMN (m := m) (n := n) i k) * nrm X ε i k =
-        (∑ k : Fin n, centered X i k * dX (idxMN (m := m) (n := n) i k)) * invStd X ε i := by
-    rw [Finset.sum_mul]
-    exact Finset.sum_congr rfl fun k _ => by simp only [nrm]; ring
-  simp only [nrmD, invD, sqrtD, _root_.add_apply, _root_.smul_apply, smul_eq_mul, centD_apply,
-    varD_apply, nrmJVP]
-  rw [hsum]
-  simp only [nrm, invStd]
-  field_simp
-  ring
-
-/-- If the rows have a single entry or row `i` of `X` has a nonzero sum of its variance and `ε`,
-the normalized entry `(i, j)` has the closed-form JVP as derivative at `X`. -/
-theorem hasFDerivAt_nrm_of_ne {ε : ℝ} (X : Vec (Shape.size [m, n])) (i : Fin m) (j : Fin n)
-    (h : n = 1 ∨ TorchLean.var (fun k => X (idxMN (m := m) (n := n) i k)) + ε ≠ 0) :
-    HasFDerivAt (fun Y : Vec (Shape.size [m, n]) => nrm Y ε i j)
-      ((EuclideanSpace.proj (𝕜 := ℝ) (idxMN (m := m) (n := n) i j) :
-        Vec (Shape.size [m, n]) →L[ℝ] ℝ).comp (nrmJVPCLM X ε)) X := by
-  rcases h with rfl | hne
-  · have hc : ∀ Y : Vec (Shape.size [m, 1]), centered Y i j = 0 := fun Y => by
-      rw [centered, Finset.expect_congr rfl fun k _ =>
-        congrArg (fun k => Y (idxMN (m := m) (n := 1) i k)) (Subsingleton.elim k j),
-        Fintype.expect_const, sub_self]
-    have hf : (fun Y : Vec (Shape.size [m, 1]) => nrm Y ε i j) = fun _ => 0 :=
-      funext fun Y => by rw [nrm, hc, zero_mul]
-    rw [hf]
-    refine (hasFDerivAt_const 0 X).congr_fderiv (ContinuousLinearMap.ext fun dX => ?_)
-    have hd := hc dX
-    rw [centered] at hd
-    simp only [_root_.zero_apply, ContinuousLinearMap.comp_apply, PiLp.proj_apply,
-      nrmJVPCLM_apply, rowOf_idxMN, colOf_idxMN, nrmJVP, hd, nrm, hc, zero_mul, sub_zero,
-      mul_zero]
-  · rcases hne.lt_or_gt with hneg | hpos
-    · have hz : ∀ Y : Vec (Shape.size [m, n]),
-          TorchLean.var (fun k => Y (idxMN (m := m) (n := n) i k)) + ε < 0 → invStd Y ε i = 0 :=
-        fun Y hY => by rw [invStd, Real.sqrt_eq_zero_of_nonpos hY.le, inv_zero]
-      have hev : ∀ᶠ Y in nhds X,
-          TorchLean.var (fun k => Y (idxMN (m := m) (n := n) i k)) + ε < 0 :=
-        ((hasFDerivAt_rowVar X i).continuousAt.add continuousAt_const).eventually_lt
-          continuousAt_const hneg
-      refine ((hasFDerivAt_const (0 : ℝ) X).congr_of_eventuallyEq
-        (hev.mono fun Y hY => ?_)).congr_fderiv (ContinuousLinearMap.ext fun dX => ?_)
-      · show nrm Y ε i j = 0
-        rw [nrm, hz Y hY, mul_zero]
-      · simp only [_root_.zero_apply, ContinuousLinearMap.comp_apply,
-          PiLp.proj_apply, nrmJVPCLM_apply, rowOf_idxMN, colOf_idxMN, nrmJVP, hz X hneg,
-          zero_mul]
-    · refine ((hasFDerivAt_centered X i j).mul (hasFDerivAt_invStd_of_pos X i hpos)).congr_fderiv
-        (ContinuousLinearMap.ext fun dX => ?_)
-      show nrmD X ε i j dX = _
-      rw [nrmD_apply_of_pos X i j hpos]
-      simp only [ContinuousLinearMap.comp_apply, PiLp.proj_apply, nrmJVPCLM_apply, rowOf_idxMN,
-        colOf_idxMN]
-
-end RowNorm
-
 namespace BatchNorm
 
 open Normalization
@@ -390,8 +304,7 @@ theorem flat_batchNorm [Shape.WellFormed (.dim channels sSpatial)]
   Tensor.ext_get2 fun c p => by
     rw [get2_flat_batchNorm, get2_add, get2_mul,
       normalizedRows_fst (size_pos_of_wellFormed_dim channels), get2_div, get2_rowBroadcast,
-      get2_rowBroadcast, get2_rowBroadcast, get2_lnCentered, getScalar_lnStd,
-      max_eq_left (var_nonneg _)]
+      get2_rowBroadcast, get2_rowBroadcast, get2_lnCentered, getScalar_lnStd]
 
 /-- Over the reals, at every epsilon, batch normalization along the leading axis with batch
 statistics is affine in the scale and the bias: it reshapes the normalized matrix of
@@ -406,7 +319,7 @@ theorem batchNorm_eq_reshape [Shape.WellFormed (.dim channels sSpatial)]
 
 /-- The scale gradient of `BatchNorm.backward` is the row sum of the flattened cotangent times the
 normalized matrix of `normalizedRows`. -/
-theorem backward_scaleGradient [Shape.WellFormed (.dim channels sSpatial)]
+theorem backward_scaleGradient
     (x δ : Tensor ℝ (.dim channels sSpatial)) (gamma : Tensor ℝ [channels]) (ε : ℝ) :
     (BatchNorm.backward x gamma δ ε).scaleGradient =
       rowSum (Tensor.reshape δ _ (size_flat channels sSpatial) *
@@ -414,7 +327,7 @@ theorem backward_scaleGradient [Shape.WellFormed (.dim channels sSpatial)]
   rfl
 
 /-- The bias gradient of `BatchNorm.backward` is the row sum of the flattened cotangent. -/
-theorem backward_biasGradient [Shape.WellFormed (.dim channels sSpatial)]
+theorem backward_biasGradient
     (x δ : Tensor ℝ (.dim channels sSpatial)) (gamma : Tensor ℝ [channels]) (ε : ℝ) :
     (BatchNorm.backward x gamma δ ε).biasGradient =
       rowSum (Tensor.reshape δ _ (size_flat channels sSpatial)) :=
@@ -440,172 +353,6 @@ noncomputable def toDomainCLM :
     toDomainCLM p = (toVec p.fst, toVec p.snd.fst, toVec p.snd.snd) :=
   rfl
 
-section ClosedForm
-
-open RowNorm Matmul
-
-/-- Clamping at zero does not change a real square root. -/
-private theorem sqrt_max_zero (a : ℝ) : Real.sqrt (max a 0) = Real.sqrt a := by
-  rcases le_total a 0 with h | h
-  · rw [max_eq_right h, Real.sqrt_zero, Real.sqrt_eq_zero_of_nonpos h]
-  · rw [max_eq_left h]
-
-/-- At every `ε`, the vectorized batch normalization `forwardVec` is its closed form `closedForm`.
-The variance clamp is inactive, and the clamp under the square root changes nothing, since the real
-square root of a negative number is zero. -/
-theorem forwardVec_eq_closedForm' [Shape.WellFormed (.dim channels sSpatial)] {ε : ℝ} :
-    forwardVec (channels := channels) (sSpatial := sSpatial) ε = closedForm ε := by
-  funext q
-  apply PiLp.ext
-  intro k
-  have hL : (forwardVec ε q).ofLp k =
-      Tensor.get2
-        (Tensor.reshape (Tensor.batchNorm (ofVec (s := .dim channels sSpatial) q.1)
-            ⟨0, Nat.succ_pos _⟩ (ofVec (s := .dim channels .scalar) q.2.1)
-            (ofVec (s := .dim channels .scalar) q.2.2) .batch ε) _
-            (size_flat channels sSpatial))
-        (rowIdx k) (colIdx k) := by
-    rw [← Matmul.toVec_idxMN, ← cast_eq_idxMN, toVec_reshape_apply]
-    rfl
-  rw [hL, get2_flat_batchNorm, get2_flat_ofVec, rowMeanE_flat, rowVarE_flat,
-    toVec_ofVec, getScalar_chan, getScalar_chan, toVec_ofVec,
-    toVec_ofVec,
-    max_eq_left (var_nonneg fun p =>
-      matVec q.1 (idxMN (m := channels) (n := sSpatial.size) (rowIdx k) p)),
-    sqrt_max_zero]
-  simp only [closedForm, PiLp.toLp_apply, nrm, centered, invStd, chanIdx, div_eq_mul_inv]
-
-/-- If the spatial shape has a single position or every channel of the input part of `q` has a
-nonzero sum of its variance and `ε`, the closed form has Fréchet derivative `derivative` at `q`. -/
-theorem hasFDerivAt_closedForm_of_ne {ε : ℝ} (q : Domain channels sSpatial)
-    (h : sSpatial.size = 1 ∨ ∀ c : Fin channels,
-      TorchLean.var (fun p => matVec q.1 (idxMN (m := channels) (n := sSpatial.size) c p)) +
-        ε ≠ 0) :
-    HasFDerivAt (closedForm (channels := channels) (sSpatial := sSpatial) ε)
-      (derivative (matVec q.1) q.2.1 ε) q := by
-  rw [← hasFDerivWithinAt_univ, hasFDerivWithinAt_euclidean]
-  intro k
-  rw [hasFDerivWithinAt_univ]
-  have hX : HasFDerivAt (fun d : Domain channels sSpatial => matVec d.1)
-      (ContinuousLinearMap.comp
-        (LinearIsometryEquiv.piLpCongrLeft 2 ℝ ℝ
-          (finCongr (size_flat channels sSpatial))).toContinuousLinearEquiv.toContinuousLinearMap
-        (ContinuousLinearMap.fst ℝ (Vec (Shape.size (Shape.dim channels sSpatial)))
-          (Vec (Shape.size [channels]) × Vec (Shape.size [channels])))) q :=
-    (LinearIsometryEquiv.piLpCongrLeft 2 ℝ ℝ
-      (finCongr (size_flat channels sSpatial))).toContinuousLinearEquiv.toContinuousLinearMap
-      |>.hasFDerivAt.comp q hasFDerivAt_fst
-  have hnrm := (hasFDerivAt_nrm_of_ne (matVec q.1) (rowIdx k) (colIdx k)
-    (h.imp_right fun h => h (rowIdx k))).comp q hX
-  have hg : HasFDerivAt (fun d : Domain channels sSpatial => d.2.1 (chanIdx k))
-      ((EuclideanSpace.proj (𝕜 := ℝ) (chanIdx k) : Vec (Shape.size [channels]) →L[ℝ] ℝ).comp
-        ((ContinuousLinearMap.fst ℝ (Vec (Shape.size [channels]))
-          (Vec (Shape.size [channels]))).comp
-          (ContinuousLinearMap.snd ℝ (Vec (Shape.size (Shape.dim channels sSpatial)))
-            (Vec (Shape.size [channels]) × Vec (Shape.size [channels]))))) q :=
-    (EuclideanSpace.proj (𝕜 := ℝ) (chanIdx k)).hasFDerivAt.comp q
-      (hasFDerivAt_fst.comp q hasFDerivAt_snd)
-  have hb : HasFDerivAt (fun d : Domain channels sSpatial => d.2.2 (chanIdx k))
-      ((EuclideanSpace.proj (𝕜 := ℝ) (chanIdx k) : Vec (Shape.size [channels]) →L[ℝ] ℝ).comp
-        ((ContinuousLinearMap.snd ℝ (Vec (Shape.size [channels]))
-          (Vec (Shape.size [channels]))).comp
-          (ContinuousLinearMap.snd ℝ (Vec (Shape.size (Shape.dim channels sSpatial)))
-            (Vec (Shape.size [channels]) × Vec (Shape.size [channels]))))) q :=
-    (EuclideanSpace.proj (𝕜 := ℝ) (chanIdx k)).hasFDerivAt.comp q
-      (hasFDerivAt_snd.comp q hasFDerivAt_snd)
-  have hfun : (fun d : Domain channels sSpatial => closedForm ε d k) =
-      fun d : Domain channels sSpatial =>
-        nrm (matVec d.1) ε (rowIdx k) (colIdx k) * d.2.1 (chanIdx k) + d.2.2 (chanIdx k) := by
-    funext d
-    simp [closedForm, -Shape.size_cons]
-  rw [hfun]
-  refine ((hnrm.mul hg).add hb).congr_fderiv (ContinuousLinearMap.ext fun d => ?_)
-  simp only [ContinuousLinearMap.comp_apply, _root_.add_apply, _root_.smul_apply, smul_eq_mul,
-    PiLp.proj_apply, ContinuousLinearMap.coe_fst', ContinuousLinearMap.coe_snd', derivative_apply,
-    nrmJVPCLM_apply, rowOf_idxMN, colOf_idxMN, ContinuousLinearEquiv.coe_coe,
-    LinearIsometryEquiv.coe_toContinuousLinearEquiv, matVec, Function.comp_def]
-  ring
-
-/-- If the spatial shape has a single position or every channel of `v` has a nonzero sum of its
-variance and `ε` or a zero scale in `g`, the closed form with the scale `g` and the bias `b` fixed
-has Fréchet derivative `derivative` on input tangents at `v`. -/
-theorem hasFDerivAt_closedForm_input {ε : ℝ} (v : Vec (Shape.size (Shape.dim channels sSpatial)))
-    (g b : Vec (Shape.size [channels]))
-    (h : sSpatial.size = 1 ∨ ∀ c : Fin channels,
-      TorchLean.var (fun p => matVec v (idxMN (m := channels) (n := sSpatial.size) c p)) +
-        ε ≠ 0 ∨ g (Fin.cast (Shape.size_vector channels).symm c) = 0) :
-    HasFDerivAt (fun w => closedForm (channels := channels) (sSpatial := sSpatial) ε (w, g, b))
-      ((derivative (matVec v) g ε).comp (ContinuousLinearMap.inl ℝ _ _)) v := by
-  rw [← hasFDerivWithinAt_univ, hasFDerivWithinAt_euclidean]
-  intro k
-  rw [hasFDerivWithinAt_univ]
-  have hfun : (fun w => closedForm (channels := channels) (sSpatial := sSpatial) ε (w, g, b) k) =
-      fun w => nrm (matVec w) ε (rowIdx k) (colIdx k) * g (chanIdx k) + b (chanIdx k) := by
-    funext w
-    simp [closedForm, -Shape.size_cons]
-  rw [hfun]
-  by_cases hg : g (chanIdx k) = 0
-  · simp only [hg, mul_zero, zero_add]
-    refine (hasFDerivAt_const (b (chanIdx k)) v).congr_fderiv
-      (ContinuousLinearMap.ext fun d => ?_)
-    simp only [_root_.zero_apply, ContinuousLinearMap.comp_apply, PiLp.proj_apply,
-      ContinuousLinearMap.inl_apply, derivative_apply, Prod.fst_zero, Prod.snd_zero,
-      PiLp.zero_apply, hg, mul_zero, add_zero]
-  · have hX : HasFDerivAt (fun w : Vec (Shape.size (Shape.dim channels sSpatial)) => matVec w)
-        ((LinearIsometryEquiv.piLpCongrLeft 2 ℝ ℝ
-          (finCongr (size_flat channels sSpatial))).toContinuousLinearEquiv.toContinuousLinearMap)
-        v :=
-      (LinearIsometryEquiv.piLpCongrLeft 2 ℝ ℝ
-        (finCongr (size_flat channels sSpatial))).toContinuousLinearEquiv.toContinuousLinearMap
-        |>.hasFDerivAt
-    have hnrm := (hasFDerivAt_nrm_of_ne (matVec v) (rowIdx k) (colIdx k)
-      (h.imp_right fun h => (h (rowIdx k)).resolve_right hg)).comp v hX
-    refine ((hnrm.mul_const (g (chanIdx k))).add_const (b (chanIdx k))).congr_fderiv
-      (ContinuousLinearMap.ext fun d => ?_)
-    simp only [_root_.smul_apply, smul_eq_mul, ContinuousLinearMap.comp_apply, PiLp.proj_apply,
-      ContinuousLinearMap.inl_apply, derivative_apply, Prod.fst_zero, Prod.snd_zero,
-      PiLp.zero_apply, nrmJVPCLM_apply, rowOf_idxMN, colOf_idxMN, ContinuousLinearEquiv.coe_coe,
-      LinearIsometryEquiv.coe_toContinuousLinearEquiv, matVec, mul_zero, add_zero]
-    ring
-
-/-- At every `ε`, the entries of `jvp` in the flattened matrix are the closed-form row
-differential. -/
-theorem get2_flat_jvp' [Shape.WellFormed (.dim channels sSpatial)] {ε : ℝ}
-    (x dx : Tensor ℝ (.dim channels sSpatial)) (gamma dgamma beta dbeta : Tensor ℝ [channels])
-    (c : Fin channels) (p : Fin sSpatial.size) :
-    Tensor.get2
-        (Tensor.reshape (jvp x dx gamma dgamma beta dbeta ε) _
-            (size_flat channels sSpatial)) c p =
-      nrmJVP (matVec (toVec x)) ε (matVec (toVec dx)) c p * getScalar gamma c +
-        nrm (matVec (toVec x)) ε c p * getScalar dgamma c + getScalar dbeta c := by
-  have hP : 0 < sSpatial.size := size_pos_of_wellFormed_dim channels
-  rw [jvp_eq_reshape_normalizedJVP]
-  simp only [reshape_reshape_self, get2_normalizedJVP, normalizedRows_fst hP,
-    normalizedRows_snd hP, get2_div, get2_rowBroadcast, get2_lnCentered, getScalar_div,
-    getScalar_full, getScalar_lnStd, rowVarE_flat, get2_flat]
-  simp only [sqrt_max_zero, nrmJVP, nrm, centered, invStd, Fintype.expect_eq_sum_div_card,
-    Fintype.card_fin, div_eq_mul_inv, one_mul]
-
-/-- At every `ε`, the derivative `derivative` applied to packed tangents is `jvp`. -/
-theorem derivative_eq_jvp' [Shape.WellFormed (.dim channels sSpatial)] {ε : ℝ}
-    (x dx : Tensor ℝ (.dim channels sSpatial)) (gamma dgamma beta dbeta : Tensor ℝ [channels]) :
-    derivative (matVec (toVec x)) (toVec gamma) ε
-        (toVec dx, toVec dgamma, toVec dbeta) =
-      toVec (jvp x dx gamma dgamma beta dbeta ε) := by
-  apply PiLp.ext
-  intro k
-  have hRHS : (toVec (jvp x dx gamma dgamma beta dbeta ε)).ofLp k =
-      Tensor.get2
-        (Tensor.reshape (jvp x dx gamma dgamma beta dbeta ε) _
-            (size_flat channels sSpatial)) (rowIdx k) (colIdx k) := by
-    rw [← Matmul.toVec_idxMN, ← cast_eq_idxMN, toVec_reshape_apply]
-    rfl
-  rw [hRHS, get2_flat_jvp', derivative_apply, nrmJVPCLM_apply, rowOf_idxMN, colOf_idxMN,
-    getScalar_chan, getScalar_chan, getScalar_chan]
-  rfl
-
-end ClosedForm
-
 /-- Where the spatial shape has a single position or every channel of `x` has a nonzero sum of its
 variance and `ε`, batch normalization along the leading axis with batch statistics, as a map of
 the input, the scale and the bias on their L2 product, has the derivative `derivative` read
@@ -628,10 +375,8 @@ theorem hasPullbackAt_prod [Shape.WellFormed (.dim channels sSpatial)] {ε : ℝ
   refine ⟨?_, fun u δ => ?_⟩
   · have hD : HasFDerivAt (forwardVec (channels := channels) (sSpatial := sSpatial) ε)
         (derivative (matVec (toVec x)) (toVec gamma) ε)
-        (toDomainCLM (WithLp.toLp 2 (x, WithLp.toLp 2 (gamma, beta)))) := by
-      rw [forwardVec_eq_closedForm']
-      exact hasFDerivAt_closedForm_of_ne (toVec x, toVec gamma, toVec beta)
-        (h.imp_right fun h c => by simpa only [rowVarE_flat] using h c)
+        (toDomainCLM (WithLp.toLp 2 (x, WithLp.toLp 2 (gamma, beta)))) :=
+      hasFDerivAt_forwardVec x gamma beta h
     refine (((toVecₗᵢ (.dim channels sSpatial)).symm : Vec (Shape.size (.dim channels sSpatial))
         →L[ℝ] Tensor ℝ (.dim channels sSpatial)).hasFDerivAt.comp _
           (hD.comp _ toDomainCLM.hasFDerivAt)).congr_of_eventuallyEq
@@ -639,7 +384,7 @@ theorem hasPullbackAt_prod [Shape.WellFormed (.dim channels sSpatial)] {ε : ℝ
     simp only [Function.comp_apply, toDomainCLM_apply, forwardVec, LinearIsometryEquiv.coe_coe'',
       toVecₗᵢ_symm_apply, ofVec_toVec]
   · simp only [ContinuousLinearMap.comp_apply, toDomainCLM_apply, LinearIsometryEquiv.coe_coe'']
-    rw [derivative_eq_jvp' x u.fst gamma u.snd.fst beta u.snd.snd, toVecₗᵢ_symm_apply,
+    rw [derivative_eq_jvp x u.fst gamma u.snd.fst beta u.snd.snd, toVecₗᵢ_symm_apply,
       ofVec_toVec, ← dot_eq_inner, jvp_backward_adjoint x u.fst δ gamma u.snd.fst beta
         u.snd.snd ε]
     simp only [WithLp.prod_inner_apply, dot_eq_inner, add_assoc]
@@ -668,7 +413,7 @@ theorem hasPullbackAt_input [Shape.WellFormed (.dim channels sSpatial)] {ε : �
           (w, toVec gamma, toVec beta))
         ((derivative (matVec (toVec x)) (toVec gamma) ε).comp (ContinuousLinearMap.inl ℝ _ _))
         (toVec x) := by
-      rw [forwardVec_eq_closedForm']
+      rw [forwardVec_eq_closedForm]
       exact hasFDerivAt_closedForm_input (toVec x) (toVec gamma) (toVec beta)
         (h.imp_right fun h c => by simpa only [rowVarE_flat, getScalar_chan] using h c)
     have hV : HasFDerivAt (fun y : Tensor ℝ (.dim channels sSpatial) => toVec y)
@@ -683,7 +428,7 @@ theorem hasPullbackAt_input [Shape.WellFormed (.dim channels sSpatial)] {ε : �
       toVecₗᵢ_symm_apply, ofVec_toVec]
   · have hd : ((derivative (matVec (toVec x)) (toVec gamma) ε).comp
         (ContinuousLinearMap.inl ℝ _ _)) (toVec u) = toVec (jvp x u gamma 0 beta 0 ε) := by
-      rw [← derivative_eq_jvp' x u gamma 0 beta 0, h0]
+      rw [← derivative_eq_jvp x u gamma 0 beta 0, h0]
       rfl
     simp only [ContinuousLinearMap.comp_apply, LinearIsometryEquiv.coe_coe'',
       toVecₗᵢ_apply] at hd ⊢

@@ -43,6 +43,9 @@ This file lists those sources, each with the files whose specifications follow i
 - Alshiekh, Bloem, Ehlers, Könighofer, Niekum and Topcu (2018), "Safe Reinforcement Learning via
   Shielding", AAAI 2018, 32(1), arXiv:1708.08611.
   Specs: `TorchLean/NN/RL/Environment/Safety.lean`.
+- Amos (2026), "On numerical issues of divergences between nearly equal distributions",
+  arXiv:2611.18511, Section 4.1.
+  Specs: `TorchLean/NN/RL/PolicyGradient.lean` and `TorchLean/NN/RL/PolicyGradient/Real.lean`.
 - Edward Anderson (2017), "Algorithm 978: Safe Scaling in the Level 1 BLAS", ACM Transactions on
   Mathematical Software 44(1), 1-28, doi:10.1145/3061665.
   Specs: `TorchLean/Tensor/LinearAlgebra/Algorithms.lean`.
@@ -535,7 +538,7 @@ This file lists those sources, each with the files whose specifications follow i
   Specs: `TorchLean/Tensor/Layers/MoE.lean`.
 - JAX documentation, the jax.lax module.
   Specs: `TorchLean/Tensor/Elementwise.lean`.
-- Lean 4.35.0 source: src/Init/Data/Float/Float.lean, src/Init/Data/Float/Float32.lean,
+- Lean 4.36.0 source: src/Init/Data/Float/Float.lean, src/Init/Data/Float/Float32.lean,
   src/include/lean/lean.h and src/runtime/object.cpp.
   Specs: `TorchLean/Tensor/FromFloat.lean`, `TorchLean/Tensor/Numeric/InverseTrig.lean`,
   `TorchLean/Tensor/Numeric/Quotient.lean` and `TorchLean/Tensor/Numeric/Widening.lean`.

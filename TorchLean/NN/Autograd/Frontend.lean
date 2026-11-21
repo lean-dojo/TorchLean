@@ -344,6 +344,18 @@ private partial def pw (ty inst shape e c : Lean.Expr) : MetaM (Lean.Expr × Lea
     let rhs ← getOf ty inst shape r c
     return (rhs, ← reflHint lhs (← mkEq lhs rhs))
 
+/-- The field that `e`, a projection of class instances, reduces to at default transparency
+(`unfoldProjInst?`). FloatLib's static and portfolio capabilities of one operation are
+different structures with the same `spec` field, and at a two-word storage plan the kernel takes
+over 50 s on `Capability.spec a = Capability.spec b` by `rfl`, but a millisecond on each of
+`Capability.spec a = s`, `s = t` and `t = Capability.spec b` for the fields `s` and `t`. -/
+private def projField (e : Lean.Expr) : MetaM Lean.Expr := withTransparency .default do
+  let mut e := e
+  for _ in [0:8] do
+    let some e' ← unfoldProjInst? e | break
+    e := e'
+  return e
+
 mutual
 /-- A proof of `lhs = rhs`: definitional at instance transparency, through two FloatLib
 capabilities with the same specification, or definitional within a heartbeat bound. -/
@@ -360,7 +372,7 @@ private partial def agree (lhs rhs : Lean.Expr) : MetaM (Option Lean.Expr) := do
   return none
 
 /-- A proof that two applications of `Capability.run` agree: same format, encoding and operation,
-specifications that agree definitionally, and arguments that `agree`. -/
+specifications whose fields (`projField`) agree definitionally, and arguments that `agree`. -/
 private partial def agreeRun (l r : Lean.Expr) : MetaM (Option Lean.Expr) := do
   let la := l.getAppArgs
   let ra := r.getAppArgs
@@ -371,10 +383,13 @@ private partial def agreeRun (l r : Lean.Expr) : MetaM (Option Lean.Expr) := do
   let lv := l.getAppFn.constLevels!
   let spec (x : Array Lean.Expr) :=
     mkAppN (mkConst ``FloatLib.Floats.ExecFloat.Capability.spec lv) (x.extract 0 5)
-  unless ← boundedDefEq .default 20000 (spec la) (spec ra) do return none
+  let sl := (← bounded 2000 (projField (spec la))).getD (spec la)
+  let sr := (← bounded 2000 (projField (spec ra))).getD (spec ra)
+  unless ← boundedDefEq .default 20000 sl sr do return none
   let runSpec (x : Array Lean.Expr) :=
     mkAppN (mkConst ``FloatLib.Floats.ExecFloat.Capability.run_eq_spec lv) (x.extract 0 5)
-  let h ← reflHint (spec la) (← mkEq (spec la) (spec ra))
+  let h ← mkEqTrans (← reflHint (spec la) (← mkEq (spec la) sl))
+    (← mkEqTrans (← reflHint sl (← mkEq sl sr)) (← reflHint sr (← mkEq sr (spec ra))))
   let mut proof ← mkEqTrans (runSpec la) (← mkEqTrans h (← mkEqSymm (runSpec ra)))
   for i in [5:la.size] do
     let some p ← agree la[i]! ra[i]! | return none

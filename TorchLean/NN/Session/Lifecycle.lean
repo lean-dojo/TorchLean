@@ -68,13 +68,9 @@ def create {α : Type} [Storage α] [TensorTransfer α]
       refOwner := refOwner
       refGeneration := refGeneration }
 
-/-- Release a CUDA allocation. Releasing it again, or finalizing it later, is safe. -/
-def releaseCUDABuffer (b : LibTorch.Buffer) : IO Unit :=
-  discard <| LibTorch.Buffer.releaseIO b
-
 /-- Force-release a shape-erased CUDA buffer. -/
 def releaseCUDASomeBuffer (b : LibTorch.SomeBuffer) : IO Unit :=
-  releaseCUDABuffer b.buf
+  LibTorch.Buffer.release b.buf
 
 /-- Release the values the tape owns and each node's cleanup buffers. Parameter leaves are left to
 reference counting, since other sessions may share their snapshots. -/
@@ -89,7 +85,7 @@ private def releaseCUDATapeValues {α : Type} [Storage α]
         if node.ownsValue && !parameters.contains id then
           releaseCUDASomeBuffer node.value
         for buffer in node.cleanup do
-          releaseCUDABuffer buffer.buf
+          LibTorch.Buffer.release buffer.buf
 
 /--
 Run an action that borrows a sparse CUDA gradient map, then release every buffer in the map.

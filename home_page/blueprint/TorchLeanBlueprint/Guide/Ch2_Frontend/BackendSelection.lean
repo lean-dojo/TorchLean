@@ -27,15 +27,17 @@ open TorchLean Backend.Device Trainer.Objective
 open Backend Contract
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: how the backend planner chooses an implementation for an operation. -/
+
 #doc (Manual) "Backend Selection" =>
 %%%
 tag := "backend-selection"
 file := "Inside-The-Backend-Planner"
 %%%
 
-Selecting CPU or CUDA through the runtime API, as on the previous page, leaves a less visible
-decision: when a graph asks for matrix multiplication, attention, or a reduction, TorchLean has to
-decide which implementation is allowed to answer.
+A graph may request matrix multiplication, attention, or a reduction without naming an
+implementation. Selecting CPU or CUDA narrows the candidates, but TorchLean must still decide
+which implementation is allowed to answer.
 
 A device name isn't enough. TorchLean's CUDA attention, for instance, composes matrix products and
 softmax in Lean over ATen numerical primitives, and its intermediate storage, backward rule, and
@@ -168,9 +170,9 @@ Distinct tables can still offer the same operator, and the profile decides which
 
 # Capsule Contracts And Evidence
 
-Each capsule has four obligations: shape, layout, forward value, and VJP. Each is a
-`Descriptor`: a structured `Claim`, a one-line summary for readers, and the evidence
-behind the claim.
+Two implementations can accept matrices of the same shape while differing in memory layout,
+computed value, or backward support. A capsule's contract records those obligations beside the
+shape check.
 
 Each claim is one of shape safety, compatibility with a named tensor layout, refinement of a
 forward specification, refinement of a VJP specification, or `vjpUnavailable` for a forward-only
@@ -242,11 +244,12 @@ checkable certificate with its binary. A capsule carries a weaker record: a clas
 its evidence source. So the checker verifies that classification and the caller's policy, without
 verifying the kernel.
 
-`NumericalPolicy` has one field, `reduction : ReductionPolicy`, with values `fixedLeft`,
-`fixedLeftOrExact`, `implementationDefined`, and `notApplicable`. Of the portable capsules, the
-matrix product records the fixed left fold used by the tensor semantics, and the scaled matrix
-product records `fixedLeftOrExact`: the fixed left fold unless its checked arithmetic selects exact
-replay. Each LibTorch CUDA capsule of a reduction or accumulation records an implementation-defined
+`NumericalPolicy` has one field, `reduction : ReductionPolicy`, with values `fixed order` and
+`fixedOrExact order` for a `Tensor.ReduceOrder`, `implementationDefined`, and `notApplicable`. Of
+the portable capsules, the matrix product records its own order, by default the left fold used by
+the tensor semantics (`fixed .leftFold`), and the scaled matrix product records
+`fixedOrExact order`: its own order unless its checked arithmetic selects exact replay. Each
+LibTorch CUDA capsule of a reduction or accumulation records an implementation-defined
 reduction, so a fixed-left range trace can't be reused for an ATen schedule merely because both
 capsules implement `matmul`. There are precision and deterministic-algorithm controls in the
 runtime, but the capsule doesn't audit their readbacks or specify every rounding, subnormal, and
@@ -415,7 +418,7 @@ iterator. No memory-traffic model is defined. An axiom audit of the specificatio
   axioms: [propext, Classical.choice, Quot.sound]
 ```
 
-Just the three standard Lean axioms, and no `sorryAx`. You'll find the theorem in
+The audit lists the three standard Lean axioms and no `sorryAx`. The theorem is in
 {src "TorchLean/Verify/RuntimeApprox/OnlineSoftmax/Real.lean"}[`OnlineSoftmax/Real.lean`].
 
 That theorem is about a Lean specification over the reals. It doesn't compare CPU and CUDA
@@ -747,7 +750,7 @@ without LibTorch rejects this request when the session opens.
 
 # Graph Kernel Planning
 
-Everything above planned a list of operators. Graph-level planning (`IR.Graph.plan`) plans
+The earlier examples planned a flat list of operators. Graph-level planning (`IR.Graph.plan`) plans
 the registered operator of each node and also records source node identities: some nodes need no
 kernel, and adjacent selections with the same capsule can share one audit row. Each planned kernel
 names its node and the wire record of its operator (printed below by its tag). Lower the model to
@@ -813,7 +816,7 @@ provider gap arises without changing the model's public shape interface.
 ## Kernel Groups In Audit Reports
 
 Adjacent nodes that selected the same capsule for the same operation are collected into one
-`KernelGroup`. On the graph above it never fires:
+`KernelGroup`. The lowered MLP graph contains no such adjacent pair:
 
 ```lean (name := bsGroups)
 -- Count audit groups separately from the kernels
@@ -956,8 +959,6 @@ evidence covers. The retained CUDA comparison of `max` and `min`, for instance, 
 pullbacks bit for bit at ties, infinities, signed zeros and NaN operands, but their values on
 finite nonzero inputs only. At a NaN or a signed zero, the CUDA values rest on the adapter's
 construction of the IEEE 754-2019 maximum and minimum, not on that comparison.
-
-# Related Chapters
 
 Read {ref "run-configuration"}[Choosing How A Model Runs] for the runtime API, and
 {ref "gpu-and-cuda"}[GPU and CUDA] for the native implementation details.

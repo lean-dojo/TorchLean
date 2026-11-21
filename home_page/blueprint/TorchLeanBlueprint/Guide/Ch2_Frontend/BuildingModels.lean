@@ -40,75 +40,32 @@ open Verso.Genre.Manual.InlineLean
 open TorchLean
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: building a model as a map between tensor shapes. -/
+
 #doc (Manual) "Models" =>
 %%%
 tag := "building-models"
 file := "Building-A-Model"
 %%%
 
-A TorchLean model begins as a map between tensor shapes. Initialization, loss functions, optimizer
-state, and execution devices are attached later. This separation is useful even before proving a
-theorem: the architecture can be inspected without allocating parameters, and the same model can
-be initialized twice with different seeds or interpreted by different runtimes.
-
-I'll start with a $`2\to8\to1` regression MLP and follow the tensor through each layer. Its hidden
-width determines two weight matrices, so changing that one number changes both the intermediate
-shape and the parameter count. That reasoning carries over to the convolutional classifier and
-transformer encoder block {Informal.citep transformer2017}[] below.
-
-Each Lean summary exposes every parameter shape alongside its count, and comparing those shapes
-with PyTorch {Informal.citep pytorch2019}[] reveals a detail a total can hide: the transformer
-examples use different attention-bias conventions. Later, masking changes the model's input while a
-low-rank adapter changes a projection's weights.
+A `2 → 8 → 1` network has weight matrices of shapes `[8, 2]` and `[1, 8]`. Changing the hidden
+width to seven removes a row from the first matrix and a column from the second. The same shape
+accounting applies to the convolutional classifier and transformer encoder block
+{Informal.citep transformer2017}[]. Comparing the encoder's parameter shapes with PyTorch's
+{Informal.citep pytorch2019}[] reveals which attention projections use biases.
 
 # Layer Types And Shape Checking
 
-A layer's type is:
+Lean can spot a mismatch between the layers before we choose any weights. If
+$`f:s_0\to s_1` and $`g:s_1\to s_2`, the shared shape $`s_1` is what lets us put $`g` after $`f`.
+`nn.Layer input output` names the two shapes of a layer, and `nn.Sequential input output` records
+the endpoints of the chain. A vector of shape `[8]` and a matrix of shape `[2, 4]` have the same
+number of values, so we can reshape one into the other explicitly. The shared shape in a chain
+checks the dimensions themselves.
 
-```
--- A layer names the shape it consumes and the shape it
--- produces.
-nn.Layer input output
-```
-
-A sequential model has:
-
-```
--- A sequential model retains its outer shapes while
--- checking each internal connection.
-nn.Sequential input output
-```
-
-Input and output shapes are indices of the type, so composition requires equality at the boundary.
-If:
-
-$$`f:s_0\to s_1`
-
-and
-
-$$`g:s_1\to s_2`,
-
-then $`g` may follow $`f`. A layer expecting $`s_3` cannot be inserted there merely because the two
-shapes contain the same number of values.
-
-For the MLP, `[8]` and `[2, 4]` have the same scalar count but different layer interfaces. Changing
-between them requires an explicit reshape (sequential composition won't invent one).
-
-Model builders use:
-
-```
--- A builder delays the seed-dependent construction of its
--- result A.
-nn.Builder A
-```
-
-which is a seeded construction of `A`. It allocates deterministic seeds for parameterized layers
-but does not run a forward pass or optimizer update.
-
-# Layer Definition Fields
-
-An `nn.Layer σ τ` stores the pieces that must remain aligned from model construction through
-execution:
+The builder takes a seed to initialize the state. For a linear layer that state is a weight matrix
+and a bias vector. A layer also gives the forward program and says which entries can receive
+gradients or change during training.
 
 :::table +header
 *
@@ -584,28 +541,14 @@ the chosen batch size.
 
 # A Rank-Generic Convolutional Model
 
-TorchLean doesn't need separate tensor types for signals, images, and volumes. A convolution is
-parameterized by a vector of spatial sizes, and the length of that vector determines the spatial
-rank.
+A batch of images has shape `[batch, channels, height, width]`. For signals the shape is
+`[batch, channels, length]`. The same `nn.conv` takes two kernel sizes for the images and one
+for the signals. Transposed convolution, pooling, and channel normalization also use the
+number of spatial dimensions to determine the rank.
 
-For a two-dimensional input, the conventional shape is:
-
-$$`
-[\mathrm{batch},\mathrm{channels},\mathrm{height},\mathrm{width}].
-`
-
-For one-dimensional signals it is:
-
-$$`
-[\mathrm{batch},\mathrm{channels},\mathrm{length}].
-`
-
-The public layer surface uses `nn.conv`, `nn.convTranspose`, `nn.maxPool`, `nn.avgPool`,
-`nn.globalAvgPool`, and the rank-polymorphic channel-normalization constructors, and the length of
-each spatial tensor determines the rank. `nn.CNN.Config` records the input channels, spatial
-sizes, an ordered list of feature stages, and the class count. Each stage chooses its own
-convolution, activation, optional dropout, and pooling. Start with one stage so that we can account
-for every parameter:
+In `nn.CNN.Config`, we specify the input channels and spatial dimensions, the feature stages,
+and the class count. The first configuration has three input channels, one convolution with four
+filters, and a pooling step, so its classifier width can be worked out by hand.
 
 ```lean (name := bmCnn)
 -- The convolution and pooling geometries determine the
@@ -892,7 +835,7 @@ scripts/lake.sh exe torchlean transformer \
   --device cpu --steps 1 --log false
 ```
 
-Here's what the recorded run reports:
+The recorded run reports:
 
 ```terminal +output
 [TorchLean] arithmetic: native binary32
@@ -908,8 +851,8 @@ transformer: ok
 That log identifies the arithmetic and device chosen for this run (the runtime chapters that follow
 explain how those choices are made).
 
-This transcript comes from the causal next-byte example, not the standalone encoder block above.
-Its dataset and loss belong to that complete training task.
+This transcript comes from the causal next-byte example, not the standalone encoder block under
+*A Transformer Encoder*. Its dataset and loss belong to that complete training task.
 
 # Model Family Constructors
 

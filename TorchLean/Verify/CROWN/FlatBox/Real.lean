@@ -10,7 +10,6 @@ public import TorchLean.Verify.CROWN.FlatBox.Directed
 public import TorchLean.NN.Gradients.Activation
 public import TorchLean.Tensor.Layers.Linear
 import TorchLean.Tensor.Algebra
-import TorchLean.Tensor.Rep.Traversal.Sequence
 
 /-!
 # Real facts for the flat-box transfers
@@ -142,8 +141,8 @@ theorem CROWN.Graph.rowEncloses_of_contains_map {F : ℝ → ℝ} {B : FlatBox �
 
 /-- Viewing a flat box at a checked dimension and casting a point along the same equality does not
 change containment. -/
-theorem CROWN.Graph.contains_getScalarBox_iff (B : FlatBox ℝ) {m : Nat} (h : B.dim = m)
-    (x : Tensor ℝ [B.dim]) :
+theorem CROWN.Graph.contains_getScalarBox_iff {B : FlatBox ℝ} {m : Nat} (h : B.dim = m)
+    {x : Tensor ℝ [B.dim]} :
     Box.Contains (α := ℝ) (B.getScalarBox h) (castDimScalar (α := ℝ) h x) ↔
       Box.Contains (α := ℝ) (ofFlatBox (α := ℝ) B) x := by
   subst h

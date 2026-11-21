@@ -73,10 +73,10 @@ def bitPill (label bits : String) (bg : String) : ProofWidgets.Html :=
       ("line-height", Lean.Json.str "18px")
     ]
   ;
-  <span style={styleObj}>
+  jsx%{<span style={styleObj}>
     <span style={json% {"opacity": 0.85}}>{.text label}</span>
     {monospace bits}
-  </span>
+  </span>}
 
 /-- The name of `format` in FloatLib's catalog, such as `binary32` or `e4m3fn`, and otherwise
 `e<E>m<M>` from its exponent and fraction widths. -/
@@ -84,7 +84,7 @@ def formatName (format : FloatFormat) : String :=
   let catalog : List (FloatFormat × String) :=
     [(.binary16, "binary16"), (.bfloat16, "bfloat16"), (.binary32, "binary32"),
       (.binary64, "binary64"), (.binary128, "binary128"), (.binary256, "binary256"),
-      (.tf32, "tf32"), (.e5m2, "e5m2"), (.e4m3fn, "e4m3fn"), (.e4m3fnuz, "e4m3fnuz"),
+      (.tf32, "tf32"), (.e5m2, "e5m2"), (.e4m3, "e4m3fn"), (.e4m3fnuz, "e4m3fnuz"),
       (.e5m2fnuz, "e5m2fnuz"), (.e2m1, "e2m1"), (.e2m3, "e2m3"), (.e3m2, "e3m2")]
   (catalog.lookup format).getD s!"e{format.expWidth}m{format.fracWidth}"
 
@@ -135,7 +135,7 @@ def html (x : Value) : ProofWidgets.Html :=
   let signBits := if s then "1" else "0"
   let expBits := bitsPadded format.expWidth e
   let fracBits := bitsPadded format.fracWidth f;
-  <div style={json% {
+  jsx%{<div style={json% {
     "display": "block",
     "padding": "10px",
     "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
@@ -155,13 +155,13 @@ def html (x : Value) : ProofWidgets.Html :=
       {bitPill "frac" fracBits "rgba(0, 200, 120, 0.14)"}
     </div>
     <div style={json% {"display": "flex", "gap": "6px", "flex-wrap": "wrap"}}>
-      {flagBadge "NaN" (ExecFloat.Binary.isNaN x)} {flagBadge "Inf" (ExecFloat.Binary.isInf x)}
+      {flagBadge "NaN" (ExecFloat.Binary.isNaN x)} {flagBadge "Inf" (ExecFloat.Binary.isInfinite x)}
       {flagBadge "Zero" (ExecFloat.Binary.isZero x)} {flagBadge "Finite" (ExecFloat.Binary.isFinite
         x)}
       {flagBadge "qNaN" (ExecFloat.Binary.isQNaN x)} {flagBadge "sNaN"
-        (ExecFloat.Binary.isSNaN x)}
+        (ExecFloat.Binary.isSignaling x)}
     </div>
-    <details style={json% {"margin-top": "10px"}} «open»={false}>
+    <details style={json% {"margin-top": "10px"}} open={false}>
       <summary>{.text "Raw fields"}</summary>
       <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "6px",
         "margin-top": "8px"}}>
@@ -173,15 +173,15 @@ def html (x : Value) : ProofWidgets.Html :=
           0))}</div>
       </div>
     </details>
-    <details style={json% {"margin-top": "10px"}} «open»={false}>
+    <details style={json% {"margin-top": "10px"}} open={false}>
       <summary>{.text "Exact value (dyadic) when finite"}</summary>
       <div style={json% {"margin-top": "8px"}}>
         {match dyadic? with
-          | none => <span style={json% {"opacity": 0.75}}>{.text "(none: NaN/Inf)"}</span>
+          | none => jsx%{<span style={json% {"opacity": 0.75}}>{.text "(none: NaN/Inf)"}</span>}
           | some d => monospace (dyadicString d)}
       </div>
     </details>
-  </div>
+  </div>}
 
 /-- Tensor views show a configured binary entry `x` as `displayFloat x`, with its class, its
 interchange word and that value in a tooltip. -/
@@ -191,7 +191,7 @@ instance : TensorElemView Value :=
     let v := displayFloat x
     let bits := hex (ExecFloat.Binary.toModel x).toBits
     let title := s!"class={cls}\nbits={bits}\ndisplay(binary64)={toString v}";
-    <span title={title}>{monospace (toString v)}</span>⟩
+    jsx%{<span title={title}>{monospace (toString v)}</span>}⟩
 
 /-- HTML views of `x` and `y` side by side, with whether their interchange words are equal and the
 xor of the two words. -/
@@ -200,7 +200,7 @@ def compareHtml (x y : Value) : ProofWidgets.Html :=
   let byBits := (ExecFloat.Binary.toModel y).toBits
   let diff := bx ^^^ byBits
   let same := decide (bx = byBits);
-  <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
+  jsx%{<div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
     <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap"}}>
       {pill s!"{formatName format} compare"} {pill s!"sameBits={same}"} {pill s!"xor={hex diff}"}
     </div>
@@ -216,7 +216,7 @@ def compareHtml (x y : Value) : ProofWidgets.Html :=
         {html y}
       </div>
     </div>
-  </div>
+  </div>}
 
 end
 
@@ -230,7 +230,7 @@ def roundHtml (format : FloatFormat) (x : Float) : ProofWidgets.Html :=
       format.exponentBias_le_maxFinite := ExecFloat.Binary.ofFloat x
   let y := displayFloat rounded
   let err : Float := y - x;
-  <span style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
+  jsx%{<span style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px"}}>
     <span style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap"}}>
       {pill s!"native binary64 → FloatLib {formatName format}"}
       {pill s!"input(native binary64)={toString x}"}
@@ -239,7 +239,7 @@ def roundHtml (format : FloatFormat) (x : Float) : ProofWidgets.Html :=
       {pill s!"difference(binary64)={toString err}"}
     </span>
     {html rounded}
-  </span>
+  </span>}
 
 end Float32
 

@@ -84,6 +84,7 @@ abbrev modelConfig : nn.Mamba.Config :=
   { vocabularySize := vocabularySize
     modelWidths := [modelWidth] }
 
+/-- `vocabularySize` is positive. -/
 local instance : NeZero vocabularySize := ⟨by decide⟩
 
 /-- Map a byte id into the 256-entry byte vocabulary, reducing it modulo 256. -/

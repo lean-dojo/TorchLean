@@ -89,8 +89,7 @@ $x\,\frac{\gamma}{\operatorname{std}}
 +\left(\beta-\mu\frac{\gamma}{\operatorname{std}}\right)$
 
 once the channel parameters are broadcast to the input shape. Here $\mu$ is the running mean and
-$\operatorname{std}=\sqrt{\max(v,0)+\varepsilon}$ for the running variance $v$, which the spec
-clamps at zero.
+$\operatorname{std}=\sqrt{v+\varepsilon}$ for the running variance $v$.
 -/
 theorem Tensor.batchNorm_running_eq_mul_add
     {channels : Nat} {sSpatial : Shape}
@@ -105,12 +104,11 @@ theorem Tensor.batchNorm_running_eq_mul_add
     let s : Shape := .dim channels sSpatial
     let spread := fun t : Tensor ℝ [channels] =>
       Tensor.broadcast t s _ (s.broadcastDims_axis ⟨0, Nat.succ_pos _⟩)
-    let runningVar := Tensor.maximum runningVar (Tensor.full (.dim channels .scalar) 0)
     let mean_b := spread runningMean
     let var_b := spread runningVar
     let gamma_b := spread gamma
     let beta_b := spread beta
-    let std := Tensor.sqrt (var_b + Tensor.full s epsilon) .clampNegative
+    let std := Tensor.sqrt (var_b + Tensor.full s epsilon)
     (x * (gamma_b / std)) +
       (beta_b - (mean_b * (gamma_b / std))) := by
   exact (batchNorm_running_eq x ⟨0, Nat.succ_pos _⟩ gamma beta runningMean runningVar

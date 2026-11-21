@@ -121,6 +121,8 @@ def unet {d : Nat} (config : UNet.Config d) (batchShape : Shape := []) :
           convolution.convOutputSpatial config.pooledSpatial = config.pooledSpatial :=
         Window.convOutputSpatial_samePadding config.pooledSpatial config.kernelRadius
       do
+        -- Each layer is built with its computed output shape, and `simpa` restates that shape as
+        -- the grid it preserves or restores.
         let builtFirstStemConvolution ←
           conv config.spatial (convolution.convolution config.baseChannels)
             (inputChannels := config.inputChannels)
@@ -175,6 +177,7 @@ def unet {d : Nat} (config : UNet.Config d) (batchShape : Shape := []) :
         let deep := nn.compose![downsample, bottleneck, upsample]
         let skip :=
           Sequential.id (Shape.dim config.baseChannels (config.spatial.to Shape))
+        -- The stem's features beside the upsampled bottleneck: `doubledChannels` channels.
         let merge := concatBranches skip deep
 
         let builtFirstDecoderConvolution ←

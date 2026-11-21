@@ -51,27 +51,18 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
+/-! Guide page: where the pieces meet, for the regression model. -/
+
 #doc (Manual) "Conclusion" =>
 %%%
 tag := "conclusion"
 file := "Where-The-Pieces-Meet"
 %%%
 
-Return to the regression model. After training, its parameter tuple $`\theta` contains weight
-matrices
-$`W_1,W_2` and bias vectors $`b_1,b_2`:
-
-$$`
-F_\theta(x)
-=
-W_2\operatorname{ReLU}(W_1x+b_1)+b_2.
-`
-
-We can save those parameters, evaluate the network, or ask Lean for a bound on its output.
-For that bound to describe the saved model's predictions, it must use the same weights and input
-domain. We must also connect the arithmetic in the theorem to the arithmetic used in execution:
-the formula can denote a real-valued function, a FloatLib binary32 computation, or a native
-runtime calculation.
+Return to the regression model, $`F_\theta(x)=W_2\operatorname{ReLU}(W_1x+b_1)+b_2`.
+Suppose we save the weights and biases and want a bound on the saved model's predictions.
+The theorem must use those parameters and the inputs we care about. If the theorem uses real
+arithmetic and the model runs in binary32, we also need a bound on what rounding changes.
 
 Following a prediction back to the model gives us a sequence of objects to check:
 
@@ -86,15 +77,14 @@ typed model
 
 Shapes constrain composition, parameter artifacts identify the function being evaluated, and
 numerical semantics determine how operations round. At the last step, a checker soundness theorem
-states what follows from acceptance. We'll use a shifted ReLU to make these obligations small
-enough to inspect together.
+states what follows from acceptance. A shifted ReLU keeps these obligations small enough to
+inspect together.
 
-# Verification Evidence
+# One Function, Four Kinds Of Evidence
 
-Over the reals, the shifted ReLU below is flat at 1 for inputs at most 1 and grows with slope 2
-above that point.
-It lets us compare a universal theorem, an evaluation, a membership check, and the theorem that
-relates acceptance to membership on the same function.
+Consider a shifted ReLU that is flat at 1 for real inputs at most 1 and grows with slope 2 after
+that point. The same definition supports a universal theorem, two concrete evaluations, a box
+membership check, and the soundness theorem that turns checker acceptance into membership.
 
 ```lean (name := ccDef)
 -- Keep one expression fixed while choosing its scalar
@@ -135,6 +125,10 @@ arithmetic is exact real arithmetic, so relating it to an execution will require
 argument.
 
 ## Float Evaluation
+
+
+The real formula is piecewise affine. We can pick one input on either side of the ReLU's
+threshold and check the same two branches with executable floats.
 
 ```lean (name := ccEvalHigh)
 -- Above the threshold one, the shifted input is positive
@@ -225,7 +219,7 @@ open CROWN in
 Read `α` as the scalar representation and `s` as the common tensor shape. `Storage` and `Context`
 supply the required tensor and scalar operations, and `DecidableRel` supplies a decision procedure
 for the scalar relation `≤`. The explicit arguments are the box `b` and the particular tensor `x`.
-Finally, the arrow takes evidence that the Boolean check equals `true` and returns `b.Contains x`:
+The final arrow takes evidence that the Boolean check equals `true` and returns `b.Contains x`:
 every coordinate lies between its matching lower and upper entries. No graph, network, or input
 region occurs in this statement. So applying it to a network output doesn't add a universal
 quantifier over that network's inputs.
@@ -251,6 +245,11 @@ native overrides is a further runtime obligation.
 
 ## Evidence Scope
 
+After proving the real bound and evaluating the concrete float cases, the remaining question is
+what can be claimed about a new input. A float evaluation gives a concrete result for one run; a
+theorem describes every input that meets its hypotheses. The other evidence used here falls between
+those two:
+
 :::table +header
 *
   * evidence
@@ -258,7 +257,7 @@ native overrides is a further runtime obligation.
   * does not cover
 *
   * theorem at `ℝ`
-  * every input, exactly
+  * exact values for inputs satisfying the hypotheses
   * rounding, kernels, devices, data
 *
   * `#eval` at `Float`
@@ -361,8 +360,8 @@ additional argument developed in {ref "fp32-soundness"}[the FP32 soundness chapt
 
 # Validation Commands
 
-Each small demonstration above explains an individual idea. Before relying on a larger change, use
-the validation command that reaches the relevant boundary:
+Each small demonstration isolates one idea. Before relying on a larger change, run the validation
+command that reaches the relevant boundary:
 
 ```terminal
 # Compile and run the curated CPU suite without LibTorch.
@@ -514,13 +513,14 @@ To find the statement behind a particular operation, use the corresponding sourc
   * execution and public interfaces, connected to selected proved models
 :::
 
-Start with the declaration supporting your claim and follow its imports and hypotheses. Having many
+Find the declaration supporting the claim and follow its imports and hypotheses. Having many
 theorems nearby doesn't prove a runtime implementation, and a thin API module can still expose a
 well-supported operation by delegating to a proved specification.
 
 ## Theorem Hypotheses
 
-The following declarations illustrate three different sets of hypotheses.
+The two declarations below, together with the checker soundness theorem above, illustrate three
+different sets of hypotheses.
 
 Derivative rules use mathlib's `HasDerivAt`, which states differentiability with a specified
 derivative at a point {Informal.citep mathlib2020}[]:
@@ -583,7 +583,7 @@ witness establish the resulting proposition {Informal.citep necula1997}[].
 
 ## Runtime Boundaries
 
-Real training crosses boundaries the Lean kernel can't inspect directly:
+An end-to-end ML workflow crosses boundaries that the Lean kernel can't inspect directly:
 
 :::table +header
 *
@@ -662,7 +662,7 @@ signed difference multiplied by a billion. Before evaluating the function in its
 the binary32 path converts the input `x`. So its discrepancy includes input representation as well
 as subsequent rounding, and can't be assigned entirely to the final addition. Converting the
 binary32 result to binary64 exposes its value without restoring digits that the narrower path
-discarded. And the positive last component says this path's answer is slightly larger for the
+discarded. The positive last component says this path's answer is slightly larger for the
 particular input 1.1.
 
 Both displayed values are `1.200000`, but their difference is about $`4.768\times 10^{-8}`, roughly
@@ -737,8 +737,8 @@ With inner matrix dimensions of 3 and 2, the multiplication is ill-typed, and th
 reports the incompatible shapes before evaluation.
 
 Next comes parsing at a boundary, where shapes crossing from outside can't be checked by the
-elaborator, because the payload is a string when the program is already running. So the PyTorch
-`state_dict` importer returns an option, and we turn it into a message:
+elaborator, because the payload is a string when the program is already running. The low-level
+PyTorch JSON tensor parser returns an `Option`, which this wrapper turns into a message:
 
 ```lean (name := ccParseDef)
 -- Parse JSON and validate both axis lengths before treating
@@ -788,8 +788,8 @@ So is a JSON object where an array was expected:
 "refused: shape does not match [2, 2]"
 ```
 
-The rejected matrix has two rows but three entries per row, so it fails the inner extent check. And
-the object containing a `weight` key, though syntactically valid JSON, fails a different
+The rejected matrix has two rows but three entries per row, so it fails the inner extent check.
+The object containing a `weight` key, though syntactically valid JSON, fails a different
 requirement: this parser expects the tensor itself, not a state-dictionary wrapper. A caller
 handling such a wrapper must select the intended field before asking for a tensor. These checks
 establish the shape and encoding of the imported value, but not that its numbers are the intended
@@ -908,11 +908,10 @@ may not cover. Validation should include the paths an application actually uses.
 
 # Application Requirements
 
-Start from the property your application needs, then follow its hypotheses through the model,
-arithmetic, and selected runtime. We give the relevant contracts in earlier chapters, beside the
-operations and checkers that use them. For example, a classifier needs a positive verified margin,
-and an ODE candidate needs successful certificate replay over its stated domain. A training loss
-alone doesn't establish either property.
+Begin with the property the application needs, then follow its hypotheses through the model,
+arithmetic, and selected runtime. A classifier may need a positive verified margin; an ODE
+candidate may need successful certificate replay over its stated domain. A training loss alone
+doesn't establish either property.
 
 Use the public tensor API for numerical values and select a runtime with an implemented provider.
 Run the corresponding verification workflow and backend checks for your deployment. The command
@@ -941,9 +940,9 @@ implementation runs (it isn't a log of completed calls). Loss definition, data p
 application assumptions must come from the model and workflow artifacts.
 
 Compare the shifted ReLU above with a training workflow such as `chargpt` or `fno1d_burgers`. The
-former has a theorem over every real input but no training artifact, while the latter adds
-parameter state, data, optimization, and backend choices. Identify which component theorems apply
-and which claimed connections still rely on tests or assumptions.
+shifted ReLU has a theorem over every real input but no training artifact, while either training
+workflow adds parameter state, data, optimization, and backend choices. Identify which component
+theorems apply and which claimed connections still rely on tests or assumptions.
 
 For a result built with TorchLean {Informal.citep torchlean2026}[], record the exact model and
 artifact, the proposition established, and the evidence connecting that proposition to the selected

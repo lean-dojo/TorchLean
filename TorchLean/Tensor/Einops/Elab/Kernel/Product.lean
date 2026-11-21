@@ -189,6 +189,8 @@ private def compileInputProductAtOutput
         let axesArray := inputAxes.toArray
         let dimensionsArray := inputDimensions.toArray
         let logicalDimensionsArray := inputLogicalDimensions.toArray
+        -- Per operand: the output coordinate of each of its axes (`none` for a contracted axis)
+        -- and, where `shouldHoistOutputIndexTerms` allows, the part of its flat index they give.
         let mut operandOutputCoordinates :
             List (List (Option Expr)) := []
         let mut outputBaseSlots : List Bool := []
@@ -227,6 +229,7 @@ private def compileInputProductAtOutput
               outputBaseBindings.concat
                 (Name.mkSimple s!"input{operandIndex}OutputBase", outputBase)
         withGeneratedLetResults outputBaseBindings fun outputBaseValues => do
+          -- Hand each bound base back to its operand, in operand order.
           let outputBaseArray := outputBaseValues.toArray
           let mut nextOutputBase := 0
           let mut operandOutputBases : List (Option Expr) := []
@@ -269,6 +272,8 @@ private def compileInputProductAtOutput
             let outputCoordinatesArray :=
               operandOutputCoordinates.toArray
             let outputBasesArray := operandOutputBases.toArray
+            -- Every contracted axis but the innermost adds to an operand's base, so the base
+            -- stays fixed across the innermost contraction loop.
             let mut contractionBaseSlots : List Bool := []
             let mut contractionBaseAxes :
                 List (List EinsumAxis) := []
@@ -317,6 +322,7 @@ private def compileInputProductAtOutput
               let contractionBaseArray :=
                 contractionBaseValues.toArray
               let mut nextContractionBase := 0
+              -- An operand without a contraction base keeps its output base.
               let mut operandIndexBases : List (Option Expr) := []
               for operandIndex in [:inputTensors.length] do
                 if contractionBaseSlots[operandIndex]! then
@@ -350,6 +356,8 @@ private def compileInputProductAtOutput
                 let indexBasesArray := operandIndexBases.toArray
                 let contractionBaseAxesArray :=
                   contractionBaseAxes.toArray
+                -- Read each operand at its compiled flat index, proved equal to the index of
+                -- the verified plan, `Lowering.einsumInputFlatIndex`.
                 let mut inputReadBindings : List (Name × Expr) := []
                 let mut inputReadCorrectness : List Expr := []
                 let mut certifiedInputValues : List Expr := []
@@ -438,6 +446,8 @@ private def compileInputProductAtOutput
                     inputReadCorrectness.toArray
                   let certifiedInputValueArray :=
                     certifiedInputValues.toArray
+                  -- Multiply the reads from `1` in source order, beside the product of the
+                  -- certified reads and the equality of the two.
                   let mut product ← mkNumeral scalarType 1
                   let mut certifiedProduct := product
                   let mut productCorrect ← mkEqRefl product
@@ -472,6 +482,8 @@ private def compileInputProductAtOutput
                       mkAppM ``Eq.trans #[leftCorrect, rightCorrect]
                     product := nextProduct
                     certifiedProduct := nextCertifiedProduct
+                  -- The reference is a `Fin.foldl` over the operands. It unfolds to the
+                  -- certified product by `rfl`, or through `unrollFiniteFold` when a view is read.
                   let hReferenceFold ←
                     mkAppM ``Lowering.einsumInputProduct_eq_foldl #[
                       checked, inputTensorFamily, outputCoordinate,
@@ -514,6 +526,7 @@ private def compileInputProductAtOutput
                   let correctness ←
                     mkAppM ``Eq.trans #[
                       productCorrect, hCertifiedProduct]
+                  -- Drop the leading `1 *`.
                   let mut identityTheorems : SimpTheorems := {}
                   for theoremName in #[``one_mul, ``mul_one] do
                     identityTheorems ← identityTheorems.addConst theoremName
@@ -540,6 +553,8 @@ private def compileInputProductAtOutput
                   | none =>
                       pure #[simplifiedProduct.expr, correctness]
                   | some (prefixCount, suffixStart) =>
+                      -- Over a semiring the product is also split as left factor, middle
+                      -- product and right factor, the outer two free of contracted axes.
                       let buildProduct
                           (start stop : Nat) :
                           MetaM (Expr × Expr × Expr) := do
@@ -692,6 +707,7 @@ def compileEinsumInputProduct
     einsumFactorBounds? scalarType inputAxes inputDimensions outputAxes contractedAxes
   let axisLengthAssignments :=
     outputAxes.zip outputLengths ++ contractedAxes.zip contractedLengths
+  -- An operand's logical dimensions are the resolved lengths of its axes.
   let mut inputLogicalDimensions : List (List Expr) := []
   for operandAxes in inputAxes do
     let mut logicalDimensions : List Expr := []

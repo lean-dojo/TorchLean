@@ -27,6 +27,8 @@ open Tensor
 -- each message exactly as Lean printed it.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: the Cholesky and QR factorizations and the checks of their results. -/
+
 #doc (Manual) "Cholesky and QR" =>
 %%%
 tag := "factorizations-cholesky-qr"
@@ -38,44 +40,50 @@ algebraic requirements: a Cholesky factor could
 contain entries above the diagonal, a QR routine could reconstruct the input with a non-orthogonal
 `Q`, or a zero pivot could be hidden behind a NaN. Shape safety catches none of these errors.
 
-TorchLean therefore gives each factorization two parts:
+Each factorization therefore needs two parts:
 
 - a public executable operation, `Tensor.cholesky` or `Tensor.qr`, that constructs tensors of a
   fixed shape
 - a proposition describing the algebraic object that the program must return.
 
-Application code uses the public `Tensor.*` factorization API, and the examples below also inspect
-the generic `Factorization.*` definitions that describe the arithmetic recurrences. Their
-real-valued instances are the objects of the exact theorems, while a floating-point evaluation is
-a separate claim. We examine later how the runtime overrides of the Cholesky-based operations
-relate to the specification.
+The executable examples use the public `Tensor.*` API. The exact theorems inspect the generic
+`Factorization.*` definitions that describe the arithmetic recurrences. Their real-valued
+instances are the theorem objects; a floating-point evaluation is a separate claim. The final
+sections identify how the runtime overrides of the Cholesky-based operations relate to the
+specification.
 
 For Cholesky, the proposition is
 
 $$`\operatorname{IsCholesky}(A,L)
 \;:\!\iff\;
 \bigl(\forall i<j,\;L_{ij}=0\bigr)
+\land\bigl(\forall i,\;0<L_{ii}\bigr)
 \land A=LL^\top.`
 
-For a tall or square $`m\times k` matrix, the proof-side QR proposition is
+For an $`m\times n` matrix $`A`, a $`Q` of shape $`m\times k` and an $`R` of shape $`k\times n`,
+over $`\mathbb{R}` or $`\mathbb{C}`, the proof-side QR proposition is
 
 $$`\operatorname{IsQR}(A,Q,R)
 \;:\!\iff\;
-Q^\top Q=I
+Q^{\mathsf H} Q=I
 \land\bigl(\forall j<i,\;R_{ij}=0\bigr)
+\land\bigl(\forall i,\;R_{ii}\in\mathbb{R}\bigr)
 \land A=QR.`
+
+It lives in `TorchLean.Tensor.Factorization.Decomposition`, beside the other decompositions of
+PyTorch's and JAX's linear algebra, stated as relations.
 
 The two propositions separate properties a caller may need for different reasons. In a covariance
 model, Cholesky reconstruction connects the factor to the covariance, while triangularity makes
 substitution possible. For least squares, QR reconstruction connects the factors to the design
 matrix, and orthonormality lets one preserve Euclidean lengths in the column coordinates. A small
-reconstruction residual alone does not establish that second fact. Also, `IsCholesky` as defined
-here does not demand a positive diagonal: positivity belongs to the algorithm theorem's premises.
-Keeping the predicate distinct from the sufficient conditions prevents us from reading an
-algorithm-specific convention into every candidate factor.
+reconstruction residual alone does not establish that second fact. `IsCholesky` also demands a
+positive diagonal, as `torch.linalg.cholesky` documents its factor: without it `L = [-1]` would
+factor `A = [1]`. The algorithm theorem's premise that the pivots are positive is what gives that
+condition for the computed factor.
 
-The Lean blocks on this page are elaborated while the book is built. Python and shell transcripts
-are separate executable examples, and the Lean document compiler doesn't check them.
+Lean elaborates every Lean block during the book build. Python and shell transcripts are separate
+executable examples, and the Lean document compiler doesn't check them.
 
 # Dot Products And Norms
 
@@ -272,12 +280,13 @@ The two propositions are ordinary definitions, and their types say where they li
 ```
 
 ```leanOutput preds (whitespace := lax)
-@IsQR : {m k : ℕ} → Matrix (Fin m) (Fin k) ℝ → Matrix (Fin m) (Fin k) ℝ →
-  Matrix (Fin k) (Fin k) ℝ → Prop
+@IsQR : {𝕜 : Type u_1} →
+  [RCLike 𝕜] → {m n k : ℕ} → Matrix (Fin m) (Fin n) 𝕜 → Matrix (Fin m) (Fin k) 𝕜 →
+    Matrix (Fin k) (Fin n) 𝕜 → Prop
 ```
 
-Both take real-valued Mathlib `Matrix` values. Their equalities are exact, and a floating-point
-residual tolerance is a separate property.
+`IsCholesky` takes real-valued Mathlib `Matrix` values, and `IsQR` values over any `RCLike` field.
+Their equalities are exact, and a floating-point residual tolerance is a separate property.
 
 The factor itself is the generic function, so it can be read at either scalar type:
 
@@ -394,28 +403,31 @@ def choleskyL : Matrix (Fin 3) (Fin 3) ℝ :=
   !![2, 0, 0; 1, 2, 0; 1, 1, 2]
 
 example : IsCholesky choleskyA choleskyL := by
-  refine ⟨?_, ?_⟩
+  refine ⟨?_, ?_, ?_⟩
   · intro i j hij
     fin_cases i <;> fin_cases j <;> simp_all [choleskyL]
+  · intro i
+    fin_cases i <;> simp [choleskyL]
   · ext i j
     fin_cases i <;> fin_cases j <;>
       simp [choleskyA, choleskyL, Matrix.mul_apply,
         Fin.sum_univ_three] <;> norm_num
 ```
 
-The two bullets prove triangularity and reconstruction. Since the candidate contains only integers,
-the proof needs no square-root computation or floating tolerance. The first bullet enumerates the
-nine index pairs and discards the six where `i < j` fails (the surviving three are literal zeros),
-while the second turns $`A=LL^\top` into nine scalar equations, expands the matrix product with
+The three bullets prove triangularity, the positive diagonal and reconstruction. Since the
+candidate contains only integers, the proof needs no square-root computation or floating tolerance.
+The first bullet enumerates the nine index pairs and discards the six where `i < j` fails (the
+surviving three are literal zeros), the second reads the three diagonal entries `2`, and the third
+turns $`A=LL^\top` into nine scalar equations, expands the matrix product with
 `Fin.sum_univ_three`, and lets `norm_num` finish. For instance the $`(2,1)` entry asks
 $`1\cdot1+1\cdot2+2\cdot0=3`, using row `2` of `L` and row `1` of `L`.
 
 Here we supply `L` ourselves. Applying `isCholesky_of_pos choleskyA` would instead require
 $`0<\operatorname{choleskyFn}A\,j\,j` for each `j`, and those pivots are `MathFunctions.sqrt`
 applied to real arguments. Discharging that hypothesis requires unfolding the chosen algorithm and
-scalar operations, then proving the square-root identities for its diagonal entries. Our proof
-above checks the candidate factor itself. It doesn't prove that `choleskyFn` returns that
-candidate.
+scalar operations, then proving the square-root identities for its diagonal entries. The explicit
+`IsCholesky` proof checks the candidate factor itself. It doesn't prove that `choleskyFn` returns
+that candidate.
 
 # Cholesky Execution
 
@@ -449,7 +461,7 @@ def spd3 : Tensor Float [3, 3] :=
 ```
 
 `Tensor.to ... (Array Float)` flattens row-major, so read that as three rows of three: `2 0 0`,
-then `1 2 0`, then `1 1 2`. These entries agree with the candidate `L` above.
+then `1 2 0`, then `1 1 2`. These entries agree with the displayed candidate `L`.
 
 Tracing the recurrence explains this agreement. Every intermediate value in this run is a small
 integer or a dyadic rational: $`\sqrt4=2`, then $`2/2=1`, then $`\sqrt{5-1}=2`, then $`(3-1)/2=1`,
@@ -457,8 +469,8 @@ then $`\sqrt{6-1-1}=2`. Each is exactly representable in binary64 and each opera
 the float run lands on the real answer. Changing `A 0 0` from `4` to `3` makes the first pivot
 $`\sqrt3`, and the floating factor then requires a rounding comparison with the real one. Our
 candidate-factor proof is over $`\mathbb R`, while this `Float` output is a measurement on one
-input. The executable implementation described later in the chapter is proved equal to the
-definition on every scalar type, so it adds nothing to that rounding comparison.
+input. The array implementation discussed under *Exact Proofs And Floating Execution* is proved
+equal to the definition on every scalar type, so it adds nothing to that rounding comparison.
 
 Consider the symmetric but indefinite matrix
 
@@ -486,9 +498,10 @@ $`L_{10}=2/1=2`. Only the second pivot fails, because it asks for $`\sqrt{1-2^2}
 the real specification. Real and floating square roots handle a negative argument differently, so
 this run illustrates a failed pivot without constituting a direct application of the theorem.
 
-For this negative control, the example intentionally uses a sum of squared entrywise errors,
-because IEEE `max` can ignore a NaN operand. That detail is part of the test's meaning: even a
-diagnostic norm must choose NaN behavior deliberately.
+For this negative control, the example intentionally uses a sum of squared entrywise errors.
+Comparison-based maxima and IEEE `maxNum`-style operations may return the finite operand when the
+other operand is NaN. That detail is part of the test's meaning: even a diagnostic norm must choose
+its NaN behavior deliberately.
 
 # Cholesky In PyTorch
 
@@ -539,9 +552,9 @@ pivots: rounding and the different implementation would need their own analysis.
 
 A successful numerical run is commonly described by $`A\approx LL^\top`, but applying such a
 statement requires an error measure and bound. The Lean theorem here is exact over $`\mathbb R`,
-while the `Float` examples only measure residuals. This chapter supplies no proved backward-error
-bound for either displayed floating result. The FP32 soundness chapter describes rounding machinery
-that a proof for TorchLean's factorization would need.
+while the `Float` examples only measure residuals. No proved backward-error bound is supplied for
+either displayed floating result. The FP32 soundness development describes rounding machinery that
+a proof for the factorization would need.
 
 # Classical Gram-Schmidt As QR
 
@@ -603,10 +616,11 @@ Every shape runs the same `gramSchmidtFn` schedule, which builds at most `min m 
 The entries of `Tensor.qr` are those of `Factorization.qr` cut to the reduced shapes, and the cut
 columns of `Q` and rows of `R` are zero. When `n ≤ m`, the shapes reduce to `[m, n]` and `[n, n]`
 and nothing is cut. For a wide matrix, $`R_{jj}=0` for every `j ≥ m`, so the positive-pivot
-hypothesis of the theorems below never holds: they don't cover wide inputs.
+hypothesis of `qMat_transpose_mul_self` and `isQR_of_pos` never holds: those theorems don't cover
+wide inputs.
 
-Three separate theorems correspond to the three conjuncts of `IsQR`. Upper-triangularity, like its
-Cholesky counterpart, needs no hypothesis:
+Three separate theorems correspond to the conjuncts of `IsQR` (over `ℝ` its diagonal is real with
+no proof needed). Upper-triangularity, like its Cholesky counterpart, needs no hypothesis:
 
 ```lean (name := upperTri)
 -- Entries below the R diagonal vanish by construction,
@@ -727,7 +741,7 @@ hypothesis excludes that case. Floating execution can also encounter NaN or over
 
 The first column of `Q` is $`(0.857143,0.428571,-0.285714)`, which is
 $`(12,6,-4)/14=(6/7,3/7,-2/7)`. The divisor `14` is $`\|a_0\|=\sqrt{144+36+16}=\sqrt{196}`, so it
-is also the `R` entry printed above, and the two factors share that number by construction.
+is also `R[0,0]`, and the two factors share that number by construction.
 
 Now measure the orthonormality that the theorem asserts over $`\mathbb R`:
 
@@ -833,10 +847,14 @@ tensor([[ -14.,  -21.,   14.],
 Every sign is flipped. LAPACK computes QR by Householder reflections, and the reflection at step
 `j` is chosen for numerical reasons that leave $`r_{jj}` negative here. Since $`(-Q)(-R)=QR`, this
 is a perfectly good factorization of the same matrix. The predicate `IsQR` itself allows negative
-diagonal entries. The implementation theorems `isQR_of_pos` and `qrQ_orthonormal` concern
-TorchLean's own real Gram-Schmidt factors, not arbitrary factors returned by LAPACK. Relating those
-results requires more than checking or normalizing the signs: one must connect the algorithms and
-account for floating arithmetic.
+diagonal entries, and in exact arithmetic signs are all it leaves free: `IsQR.isQR_iff` shows that
+when the first `k` columns of `A` are linearly independent, the condition under which PyTorch's
+documentation calls the decomposition unique up to the signs of `R`'s diagonal, two factorizations
+differ by a diagonal of `±1`, and `eq_of_isQR` that the Gram-Schmidt factors are the only ones whose
+`R` has a positive diagonal. The implementation theorems `isQR_of_pos` and
+`qrQ_orthonormal` concern TorchLean's own real Gram-Schmidt factors, not the floating factors
+returned by LAPACK; relating those needs, beyond normalizing the signs, an account of both
+algorithms' floating arithmetic.
 
 In the displayed run, LAPACK's reconstruction error is $`2.8\times10^{-14}`, while the Gram-Schmidt
 residual displays as zero even after scaling. For LAPACK, the measured orthonormality error is
@@ -1001,7 +1019,7 @@ The relevant definitions and checks provide different guarantees:
     the proved `gramSchmidtFn` schedule for every shape
 *
   * `IsCholesky`, `IsQR`
-  * `ℝ`
+  * `ℝ` (`IsQR`: `ℝ` or `ℂ`)
   * exact algebraic specification
 *
   * `Tensor.cholesky`, `Factorization.qr` in the proofs
@@ -1014,9 +1032,10 @@ The relevant definitions and checks provide different guarantees:
 :::
 
 The `Float` output is evidence that the executable definitions behave as expected on those inputs.
-It isn't the proof of $`A=LL^\top` or $`Q^\top Q=I`: the $`-2.08\times10^{-17}` above is a concrete
-demonstration that machine arithmetic doesn't generally satisfy those identities. Conversely, the
-real theorem doesn't prove a forward-error or backward-error bound for the Float execution.
+It isn't the proof of $`A=LL^\top` or $`Q^\top Q=I`: the $`-2.08\times10^{-17}` from `qrDots` is a
+concrete demonstration that machine arithmetic doesn't generally satisfy those identities.
+Conversely, the real theorem doesn't prove a forward-error or backward-error bound for the Float
+execution.
 
 Flocq {Informal.citep flocq2011}[] provides a floating-point formalization in Rocq with rounding
 predicates and error lemmas. Such machinery supports a separate question: how far a rounded

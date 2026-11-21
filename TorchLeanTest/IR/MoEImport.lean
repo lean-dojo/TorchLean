@@ -8,6 +8,7 @@ module
 
 public import TorchLean.NN.Subprocess
 public import TorchLean.NN.IR.Loaded
+public import TorchLean.NN.IR.Program.Graph
 public import TorchLean.Tensor.Reduce.Fold
 public import TorchLean.Tensor.Layers.MoE
 public import TorchLeanTest.IR.Capture

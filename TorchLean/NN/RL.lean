@@ -51,7 +51,12 @@ def discountedBackup [Add α] [Mul α]
     (reward gamma bootstrap : α) (done : Bool) : α :=
   if done then reward else reward + gamma * bootstrap
 
-/-- TD residual / Bellman error: `discountedBackup reward gamma nextValue done - value`. -/
+/-- TD residual / Bellman error: `discountedBackup reward gamma nextValue done - value`.
+
+Where `reward + gamma * nextValue` is close to `value` the difference is ill-conditioned, and in
+floating point no order of evaluation in the input format fixes its sign at every input: binary32
+`value = 1.5`, `reward = 0.1`, `gamma = 0.99` and `nextValue = 1.4141414` give `0`, where the
+residual of these inputs is about `1.736e-8`. -/
 def tdResidual [Add α] [Mul α] [Sub α]
     (value reward gamma nextValue : α) (done : Bool) : α :=
   discountedBackup (α := α) reward gamma nextValue done - value

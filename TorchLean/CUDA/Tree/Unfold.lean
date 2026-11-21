@@ -232,6 +232,7 @@ theorem nodeLevel_round (U : Unfold σ α T m s) {read : Reader α} {budget : Na
       xs.flatMap children = ys ∧ out = Arena.Level.encode xs := by
   obtain ⟨c, htag, hindex, hscalar, hsize, htotal, hcalls, hargs⟩ := Expansion.round_spec hr
   obtain ⟨hts, his, hic, hss, hsc, hrows⟩ := nodeLevel_spec hn
+  -- Row `k` has `c k` children, which start after the earlier rows' children in `ys`.
   have hlevel : level.tag.size = frontier.tag.size := by simp [htag]
   have hle : ∀ k, k < frontier.tag.size →
       ((List.range k).map c).sum + c k ≤ ((List.range frontier.tag.size).map c).sum := by
@@ -244,6 +245,8 @@ theorem nodeLevel_round (U : Unfold σ α T m s) {read : Reader α} {budget : Na
     have := hle k hk
     simp only [List.length_take, List.length_drop]
     omega
+  -- Each frontier row reads a node whose children are its slice of `ys` (`U.correct`), and
+  -- whose fields are the row of `out`.
   have hrow : ∀ k (hk : k < frontier.tag.size), ∃ x : Σ i, T i,
       U.reference read (frontier.slots m s k) = .ok x ∧
       children x = (ys.drop ((List.range k).map c).sum).take (c k) ∧
@@ -290,6 +293,8 @@ theorem nodeLevel_round (U : Unfold σ α T m s) {read : Reader α} {budget : Na
       firstChild (List.ofFn fun k : Fin frontier.tag.size => x k.1 k.2) k =
         ((List.range k).map c).sum :=
     fun k hk => firstChild_ofFn (fun k => by rw [(hx k.1 k.2).2.1, hlen k.1 k.2]) hk
+  -- These nodes in row order: their children concatenate to `ys`, and `out` is their encoding
+  -- column by column.
   refine ⟨List.ofFn fun k : Fin frontier.tag.size => x k.1 k.2, by simp, fun k hk => ?_, ?_, ?_⟩
   · simp only [List.getElem_ofFn]
     exact (hx k _).1
@@ -367,13 +372,13 @@ theorem build_expandAux (U : Unfold σ α T m s) (read : Reader α) :
             omega
           rw [List.getElem?_cons_zero, ite_eq_right hne, hnl']
           rfl
-        | succ r => rw [List.getElem?_cons_succ, hlev r, nodes_succ', hch]
+        | succ r => rw [List.getElem?_cons_succ, hlev r, nodes_succ, hch]
       · cases r with
         | zero =>
           simp only [nodes, hch]
           omega
         | succ r =>
-          rw [nodes_succ', hch]
+          rw [nodes_succ, hch]
           exact hbound r
 
 /-- A built arena is the arena of the reference values of the roots, which have fewer than

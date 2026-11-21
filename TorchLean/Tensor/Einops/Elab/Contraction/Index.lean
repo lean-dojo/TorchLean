@@ -135,6 +135,7 @@ private def simpRecombine
   let some (quotientTerm, base) :=
       nativeBinaryOperands? ``HAdd.hAdd right
     | return .continue
+  -- The scaled case: `scale * (i % d) + (stride * (i / d) + base)` is `scale * i + base`.
   if let some (scale, remainder) :=
       nativeBinaryOperands? ``HMul.hMul left then
     let some (index, divisor) :=
@@ -176,6 +177,7 @@ private def simpRecombine
       proof? := some correctness
       cache := false
     }
+  -- The plain case: `i % d + (i / d * d + base)` is `i + base`, with the product either way.
   let some (index, divisor) :=
       nativeBinaryOperands? ``HMod.hMod left
     | return .continue

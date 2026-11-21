@@ -23,7 +23,7 @@ namespace TorchLean.Backend
 
 /-- A group can absorb a node if and only if the node has the group's operation and complete
 capsule. -/
-theorem KernelGroup.canAppend_iff (group : KernelGroup) (kernel : PlannedNodeKernel) :
+theorem KernelGroup.canAppend_iff {group : KernelGroup} {kernel : PlannedNodeKernel} :
     group.canAppend kernel = true ↔
       group.op = kernel.op ∧ group.capsule = kernel.capsule := by
   simp [KernelGroup.canAppend]
@@ -41,7 +41,7 @@ private theorem pushKernel_expands
   · obtain ⟨groups, group, rfl⟩ := Array.exists_push_of_ne_empty hempty
     simp only [GraphKernelPlan.pushKernel, Array.back?_push]
     by_cases hsame : group.canAppend kernel = true
-    · rcases (group.canAppend_iff kernel).mp hsame with ⟨hop, hcapsule⟩
+    · rcases KernelGroup.canAppend_iff.mp hsame with ⟨hop, hcapsule⟩
       simp [hsame, KernelGroup.appendNode, hop, hcapsule]
     · simp [hsame, PlannedNodeKernel.toSingletonGroup]
 
@@ -90,7 +90,7 @@ theorem GraphKernelPlan.node_mem_coalesced
 /-- A grouped plan passes the acceptance gate if and only if every group, projected to a planned
 kernel, passes it. -/
 theorem GroupedKernelPlan.acceptable_iff
-    (plan : GroupedKernelPlan) (policy : KernelPolicy) :
+    {plan : GroupedKernelPlan} {policy : KernelPolicy} :
     plan.acceptable policy = true ↔
       ∀ group ∈ plan.groups, group.toPlannedKernel.acceptable policy = true := by
   rw [GroupedKernelPlan.acceptable, Array.all_eq_true_iff_forall_mem]
@@ -110,7 +110,7 @@ theorem GraphKernelPlan.node_acceptable
     ({ op := kernel.op, capsule := kernel.capsule } : PlannedKernel).acceptable policy = true := by
   rcases plan.node_mem_coalesced kernel hkernel with
     ⟨group, hgroup, _, hop, hcapsule⟩
-  have haccepted := (plan.toCoalescedGroups.acceptable_iff policy).mp haccepted group hgroup
+  have haccepted := GroupedKernelPlan.acceptable_iff.mp haccepted group hgroup
   simpa [KernelGroup.toPlannedKernel, hop, hcapsule] using haccepted
 
 /-- Every node in an accepted graph plan passes the same complete policy and evidence gate. -/

@@ -53,6 +53,7 @@ import TorchLean.NN.Models.Diffusion.ForwardProcess.Gaussian
 import TorchLean.NN.Models.Hopfield.Convergence
 import TorchLean.NN.Models.Hopfield.Dynamics
 import TorchLean.NN.RL.MDP.Bellman
+import TorchLean.NN.RL.PolicyGradient.Real
 import TorchLean.NN.Attention.CausalMask
 import TorchLean.NN.StateSpace.Causality
 import TorchLean.NN.Loss
@@ -63,17 +64,14 @@ open Verso.Genre
 open Verso.Genre.Manual
 open Informal
 
+/-! Theorem index: the model API, the example models and the mathematical model families. -/
+
 #doc (Manual) "Models and Mathematical Examples" =>
 
-TorchLean's model API provides seeded architecture builders, and the proof library also studies
-compact mathematical models in their own right. Among the examples are an implemented MLP,
-reference specifications, and theorem families for approximation, diffusion, associative memory,
-reinforcement learning, attention, state-space models, and self-supervised objectives.
-
-Each result below links to the model semantics it uses. An approximation theorem constructs
-parameters, a transition theorem describes a probability law, and a causality theorem compares
-executions with shared prefixes. Their conclusions answer different questions, even when the
-surrounding application uses all three ideas.
+Opening the mathematics of a model reveals different obligations. The running MLP has parameter
+shapes and a training update to track; attention has a set of tokens admitted by its mask; a
+sampler has the probability law of one step. The entries connect each model theorem to the
+definitions it uses.
 
 :::group "model_api"
 Seeded construction of executable models.
@@ -177,8 +175,8 @@ For two real value functions, the distance is the supremum of their pointwise ab
 :::
 
 :::theorem "bellman_optimality_contraction" (parent := "model_theorems") (lean := "TorchLean.RL.MDP.bellmanMax_contraction")
-For an MDP with a nonempty state space and a finite nonempty action space whose transition is a
-Markov kernel and whose discount is nonnegative, the Bellman optimality operator contracts
+For an MDP with a finite nonempty action space whose transition is a Markov kernel and whose
+discount is nonnegative, the Bellman optimality operator contracts
 {uses "bellman_value_distance"}[the sup distance] between bounded measurable value functions by
 the discount factor.
 :::
@@ -189,9 +187,9 @@ nonexpansive, while integration scales the remaining pointwise difference by the
 :::
 
 :::theorem "bellman_fixed_point_unique" (parent := "model_theorems") (lean := "TorchLean.RL.MDP.bellmanMax_fixedPoint_unique")
-For a valid MDP with a nonempty state space and a finite nonempty action space,
-{uses "bellman_optimality_contraction"}[the contraction bound] shows that bounded measurable fixed
-points of the Bellman optimality operator coincide.
+For a valid MDP with a finite nonempty action space, {uses "bellman_optimality_contraction"}[the
+contraction bound] shows that bounded measurable fixed points of the Bellman optimality operator
+coincide.
 :::
 
 :::proof "bellman_fixed_point_unique"
@@ -200,6 +198,37 @@ $`d\le\gamma d`, and since $`d\ge0` and $`\gamma<1`, their sup distance is zero,
 pointwise equality. Boundedness makes the distance a usable finite quantity, and the strict
 discount bound excludes the case where the inequality merely says $`d\le d`. This result identifies
 a fixed point uniquely if one exists, but it doesn't construct one here.
+:::
+
+:::definition "policy_kl_tilted" (parent := "model_theorems") (lean := "TorchLean.RL.PolicyGradient.klTilted")
+For log-weights $`l` with weights $`p=e^{l}` and a shift $`\delta=a-b`, the policy KL uses the
+form of Section 4.1 of [Amos (2026)](https://arxiv.org/abs/2611.18511), centered at the largest
+shift instead of the mean: with $`c_i=\delta_i-\max_j\delta_j` and
+$`t_i=c_i-\log\sum_j p_j e^{c_j}`, it sums $`p_i(e^{t_i}-1-t_i)`. From $`t_i=-2` to $`t_i=1` a
+term is a weight times $`\operatorname{expm1x}t_i`, which FloatLib rounds once and never makes
+negative. Above it the term is $`e^{t_i+l_i}-p_i-p_i t_i`, and below it the same with
+$`p_i t_i` taken as four times $`p_i t_i/4`. Since every $`c_i\le0`, no $`e^{c_i}` overflows. The
+form computes $`c/4` from a quarter of $`a` and of $`b`, each centered at its largest entry, so
+$`c/4` is finite when $`c` is not. The value doesn't depend on the centering.
+:::
+
+:::theorem "policy_kl_tilted_exact" (parent := "model_theorems") (lean := "TorchLean.RL.PolicyGradient.klTilted_eq_log_sum_exp")
+Over the reals, for log-weights whose exponentials $`p_i=e^{l_i}` sum to one,
+{uses "policy_kl_tilted"}[the tilted form] is $`\log\sum_i p_i e^{\delta_i}-\sum_i p_i\delta_i`,
+$`\operatorname{KL}(p\,\|\,q)`, where $`q_i\propto p_i e^{\delta_i}`.
+:::
+
+:::theorem "policy_kl_from_logits" (parent := "model_theorems") (lean := "TorchLean.RL.PolicyGradient.klFromLogits_eq_sum")
+Over the reals, {uses "policy_kl_tilted"}[the tilted form] of the old policy's log-softmax and the
+shift from the old logits to the new is $`\sum_i p_i(\log p_i-\log q_i)` for the softmaxes $`p`
+and $`q` of the two logit vectors. Nothing is clamped.
+:::
+
+:::theorem "policy_kl_from_probabilities" (parent := "model_theorems") (lean := "TorchLean.RL.PolicyGradient.kl_eq_sum")
+Over the reals, for $`0<\epsilon<1`, the KL of two probability vectors, computed with
+{uses "policy_kl_tilted"}[the tilted form] of the old vector and the log-ratios, is
+$`\sum_i p_i(\log p_i-\log q_i)` for the vectors $`p` and $`q` after each entry $`x` is replaced by
+$`\min(\max(x,\epsilon),1-\epsilon)` and each vector is divided by its sum.
 :::
 
 :::theorem "causal_mask_blocks_future" (parent := "model_theorems") (lean := "TorchLean.Attention.get2_causalMask_eq_false_of_lt")

@@ -50,10 +50,11 @@ precision must keep values in the configured carrier and use its exact conversio
 `FloatLib.Floats.Formats.BinaryInterchange.Configured.Transcendentals`. The
 `ExecFloat.Binary.exp`, `log`, and other elementary functions defined there are deterministic
 approximations with no real-error or correct-rounding theorem. For IEEE formats,
-`ExecFloat.Binary.CorrectlyRounded.exp`, `log`, `expMinus1`, `logPlus1`, and `expMul` are
-correctly rounded. TorchLean's configured `Context` uses all five on IEEE formats, as
-`ConfiguredBinary.exp_of_isIEEE`, `log_of_isIEEE`, `log1p_of_isIEEE`, `expm1_of_isIEEE` and
-`expMul_of_isIEEE` state.
+`ExecFloat.Binary.CorrectlyRounded.exp`, `log`, `expm1`, `logp1`, and `expMul` are
+correctly rounded, and so is `expm1x` of the named import
+`FloatLib.Floats.Formats.BinaryInterchange.Configured.Expm1x`. TorchLean's configured `Context`
+uses all six on IEEE formats, as `ConfiguredBinary.exp_of_isIEEE`, `log_of_isIEEE`,
+`log1p_of_isIEEE`, `expm1_of_isIEEE`, `expm1x_of_isIEEE` and `expMul_of_isIEEE` state.
 
 In `TorchLean/Tensor/ConfiguredBinary/InverseTrigonometric.lean`, TorchLean's own
 `InverseTrigonometric.atan`, `asin`, `acos`, and `atan2` round the real function once in every
@@ -115,10 +116,11 @@ the executable operations of a configured IEEE format and applies FloatLib's red
 bounds. These bounds account for rounding at each node of the chosen tree, whereas FloatLib's exact
 sum and dot-product accumulators round once, at the end.
 
-The enclosures `evalSum_enclosure` and `SumResult.enclosure` use the
-format's unit roundoff `Model.unitRoundoffAt format` (`2⁻²⁴` for binary32) on the tree's
-representable operands. They require finite leaves and finite intermediate sums, and they cover
-subnormal sums without a global relative-error bound on all real inputs.
+The enclosures `evalSum_enclosure_depth`, in the depth of the tree, and `evalSum_enclosure` and
+`SumResult.enclosure`, in its number of additions, use the format's unit roundoff
+`Model.unitRoundoffAt format` (`2⁻²⁴` for binary32) on the tree's representable operands. They
+require finite leaves and finite intermediate sums, and they cover subnormal sums without a global
+relative-error bound on all real inputs.
 `DotResult.enclosure` bounds the accumulation relative to the exact sum of the
 already-rounded products. A bound on the real dot product must also account for the
 multiplications. An external reduction needs evidence that it follows one of these tree
@@ -147,7 +149,7 @@ fraction at least as wide compiles to one shift of the stored word. FloatLib's e
 products also determine the sign of a zero total and keep an invalid flag raised by any term. None
 of these changes the accumulation order of TorchLean's tensor sums or of native GPU kernels.
 
-For real inequalities, `interval` from `FloatLib.Numerics.Automation.Interval` proves bounds
+For real inequalities, `interval` from `FloatLib.Tactic.Interval` proves bounds
 directly. It handles real powers on a strictly positive base interval, `Real.logb` and the inverse
 hyperbolic functions, checking each operation's domain. `@[interval_extension]` registers a
 function's executable enclosure with its containment theorem, and the tactic evaluates that

@@ -338,6 +338,7 @@ def compileNativeSlices?
   let sourceSize ← mkAppM ``Shape.size #[sourceShape]
   let rowType ← mkAppM ``Fin #[literalRowCount]
   let columnType ← mkAppM ``Fin #[literalRowLength]
+  -- Every source row `[r * sourceStride + sourceOffset, + rowLength)` fits in the source.
   let hRanges ←
     withLocalDeclD `row rowType fun row => do
       let rowValue ← mkAppM ``Fin.val #[row]
@@ -358,6 +359,7 @@ def compileNativeSlices?
         mkAppM ``Rep.getFlat #[
           sourceTensor, mkApp flatMap outputIndex]
       mkLambdaFVars #[outputIndex] value
+  -- Entry `(row, column)` of the copy is the pullback's value at the same output index.
   let hValues ←
     withLocalDeclD `row rowType fun row => do
       withLocalDeclD `column columnType fun column => do
@@ -515,6 +517,7 @@ def compileNativeTransform?
       specializedChecked, specializedHAxes]
   let (compiledCheckedFlatMap, hCompiledCheckedFlatMap) ←
     checkedFlatProjection specializedChecked specializedHAxes
+  -- After a shape-only chain, the source index composes the chain's map with this one's.
   let runtimeFlatMap ←
     if hasPrecedingTransform then
       explicitComposition
@@ -546,6 +549,7 @@ def compileNativeTransform?
     withLocalDeclD `outputIndex outputIndexType fun outputIndex => do
       let sourceIndex := mkApp runtimeFlatMap outputIndex
       mkLambdaFVars #[outputIndex] (← mkEqRefl sourceIndex)
+  -- The pull through the compiled map equals the reference.
   let compiled ←
     mkAppM ``Rep.pullFlat #[runtimeFlatMap, sourceTensor]
   let hCompiledSemantic ←
@@ -559,6 +563,7 @@ def compileNativeTransform?
         (← mkEq semantic reference)
   let hCompiled ←
     mkAppM ``Eq.trans #[hCompiledSemantic, hSemanticReference]
+  -- A lone transform first tries a 2D transpose or a slice expansion, then the general gather.
   let specializedImplementation? ←
     if hasPrecedingTransform then
       pure none

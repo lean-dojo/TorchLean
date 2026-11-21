@@ -628,7 +628,7 @@ def ofList {α : Type u} [Storage α] (values : List α) :
     size_eq := by simpa using Storage.size_ofFn getValue }
 
 /-- A rank-one tensor built from a list reads the corresponding list entry. -/
-@[simp, grind =] theorem ofList_apply {α : Type u} [storage : Storage α]
+@[grind =] theorem ofList_apply {α : Type u} [storage : Storage α]
     (values : List α) (index : Fin values.length) :
     (ofList values : Rep α [values.length]) (index, PUnit.unit) =
       values.get index := by

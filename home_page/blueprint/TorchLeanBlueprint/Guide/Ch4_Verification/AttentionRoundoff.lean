@@ -20,6 +20,8 @@ open FloatLib.Floats.Formats.BinaryInterchange
 -- ask for `whitespace := lax` and are wrapped in the source.
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: rounding-error bounds for attention. -/
+
 #doc (Manual) "Rounding Error In Attention" =>
 %%%
 tag := "attention-roundoff"
@@ -38,10 +40,10 @@ quantities per query, so the row of weights is never stored. Over the reals the 
 compute the same number. In floating point they round at different places, and their errors
 differ.
 
-We state FlashAttention's procedure as a schedule of TorchLean's own softmax and attention, and
-prove that it computes the two-pass value over the reals. Then we bound the schedule's rounding
-error in every IEEE format, with kernel-checked numbers at 4096 keys. The last part bounds a whole
-transformer block.
+The online and two-pass schedules are equal over the reals, but that equality does not bound their
+floating-point difference. The results here first prove the real equality, then derive rounding
+budgets for arbitrary IEEE formats, specialize those budgets at 4096 keys, and finally propagate
+them through a transformer block.
 
 # The Online Softmax Schedule
 
@@ -71,7 +73,7 @@ The three function arguments are the exponential and two roundings of each weigh
 the weight enters the normalizer and one before it multiplies its value. In exact arithmetic
 both are the identity. A later section uses them for weights stored in a narrower format.
 
-Here are five keys, each a score and a value, in blocks of two, with the state $`(m,l,o)` after
+The example groups five score-value pairs into blocks of two and prints the state $`(m,l,o)` after
 each block:
 
 ```lean (name := arTrace)
@@ -197,7 +199,7 @@ blocks of at most $`B` keys and every number of keys, with gradual underflow. Ev
 the configured IEEE operation with nearest-even rounding and FloatLib's correctly rounded
 exponential.
 
-Our proof follows each key's weight $`e^{s-M}`, with $`M` the final running maximum. A key first
+The proof follows each key's weight $`e^{s-M}`, with $`M` the final running maximum. A key first
 seen against the maximum $`m_k` has its shift $`s-m_k` rounded, and each later change of the
 maximum that rescales it is rounded too. Each rounding is at most the unit roundoff $`u` times its
 shift, and the shifts add up to $`M-s` because the maximum only grows. So the shift errors
@@ -227,17 +229,20 @@ $`(e^c-1)+2ue^c\log N` plus its underflow residual.
 
 `onlineWeight_error` bounds one weight of the online `Tensor.softmax` the same way, against the
 softmax weight of its key among the allowed keys (`onlineWeight_reference_eq`). It uses the
-normalizer allowance above and one rounded shift, exponential and division for the key itself.
+closed-form normalizer allowance and one rounded shift, exponential and division for the key
+itself.
 
 # Bounds At 4096 Keys
 
 Once the sizes are fixed, the closed forms become numbers. The theorems of
 {src "TorchLean/Verify/RuntimeApprox/OnlineSoftmax/Binary32.lean"}[`OnlineSoftmax/Binary32.lean`]
 evaluate them for a working format with the unit roundoff and underflow allowance of `binary32`,
-values of magnitude at most one, and a largest finite value at least $`2^{100}`. `norm_num`
-decides the rational inequalities in the kernel, from $`e^x\le 1/(1-x)` and
-$`\log 2<0.6931471808`. Each theorem states that the budget and range premises of its closed form
-hold at those sizes and bounds its conclusion:
+values of magnitude at most one, and a largest finite value at least $`2^{100}`. The tactic
+`softmax_bound` proves each one: it applies `closed_form_le_of_interval`, which bounds the
+exponentials by $`e^x\le 1/(1-x)`, and `norm_num` decides the remaining rational inequalities in
+the kernel, with $`\log 2<0.6931471808`. At other sizes the tactic proves the same statement, or
+leaves open the inequalities that fail. Each theorem states that the budget and range premises of
+its closed form hold at those sizes and bounds its conclusion:
 
 :::table +header
 *
@@ -292,7 +297,7 @@ the tensor-core product with the values. Its normalizer sums the `binary32` weig
 weighted sum multiplies the values by their stored copies. The numerator then uses weights that the
 denominator never saw, so the output isn't an average of the values: when every value is one, the
 output need not be one. This mismatch was reported before, in flash-attention pull request #2721.
-TorchLean bounds both recipes.
+The two recipes therefore need separate bounds.
 
 In `onlineStep` the two roundings are `roundSum` and `round`. FlashAttention-2's recipe is
 `roundSum = id` and `round = roundTo low`, where `roundTo low x` stores `x` in the format `low` and
@@ -390,7 +395,7 @@ generates conditional theorems for the online forward routes of `Tensor.softmax`
 `Tensor.attention` and `Op.attention`, in both modes. Under both schedules, the backward routes of
 `Op.attention` are unsupported or failed.
 
-# A Transformer Block
+# Transformer-Block Roundoff Bound
 
 Attention is one stage of a transformer block. Our
 {src "TorchLean/Verify/RuntimeApprox/TransformerBlock.lean"}[transformer-block bound] treats a
@@ -444,9 +449,9 @@ grid of the format, which has no upper exponent bound, so the bound describes ex
 only when nothing overflows. It bounds the rounding schedule `Arithmetic.block`. The executed
 op-table block normalizes and adds biases differently, and the bound does not cover it.
 
-# What The Bounds Cover
+# Scope And Native-Kernel Boundary
 
-Our online-softmax theorems are statements about the Lean schedule: `onlineAverage` for one query
+The online-softmax theorems are statements about the Lean schedule: `onlineAverage` for one query
 and the weights of `Tensor.softmax` under `.online blocks`, in a configured IEEE format with
 nearest-even operations and FloatLib's correctly rounded exponential. Each rounding theorem also
 keeps its own hypotheses: finite inputs, scores at most half the largest finite value, bounded

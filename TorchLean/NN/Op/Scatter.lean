@@ -21,7 +21,9 @@ the updates jointly on their L2 product, has the stored backward as the adjoint 
 This holds at every input for the sum, the replacement and the product, and for the maximum and
 the minimum where every output entry has a unique extremal participant, which is exactly where
 they are differentiable. At ties we state the stored backward of the maximum and the minimum in
-closed form, as a convention: the tied participants share the cotangent evenly.
+closed form, as a convention: the tied participants share the cotangent evenly. A scatter minimum
+is the negated scatter maximum of the negated base and updates (`scatter_min_eq_neg`), so we derive
+the statements about the minimum from those about the maximum.
 
 We write every rule as the weighted map `scatterCLM`, which scales the base and the updates
 entrywise and adds every update to the entry it lands on, and we register `@[fun_prop]` rules for
@@ -215,24 +217,13 @@ section Folds
 
 variable {ι : Type*} (p : ι → Prop) [DecidablePred p] (f : ι → ℝ)
 
-/-- A left fold whose step `m` is addition, applied at the entries satisfying `p`, is the seed
-plus the sum of those entries. -/
-private theorem foldl_ite_add (m : ℝ → ℝ → ℝ) (hm : ∀ a b, m a b = a + b) (l : List ι)
-    (x : ℝ) : l.foldl (fun acc i => if p i then m acc (f i) else acc) x =
-      x + (l.map fun i => if p i then f i else 0).sum := by
-  induction l generalizing x with
-  | nil => simp
-  | cons i l ih =>
-    simp only [List.foldl_cons, List.map_cons, List.sum_cons]
-    rw [ih]
-    by_cases hi : p i
-    · rw [ite_eq_left hi, ite_eq_left hi, hm, add_assoc]
-    · rw [ite_eq_right hi, ite_eq_right hi, zero_add]
-
 /-- A left fold whose step `m` is multiplication, applied at the entries satisfying `p`, is the
 seed times the product of those entries. -/
-private theorem foldl_ite_mul (m : ℝ → ℝ → ℝ) (hm : ∀ a b, m a b = a * b) (l : List ι)
-    (x : ℝ) : l.foldl (fun acc i => if p i then m acc (f i) else acc) x =
+@[to_additive /-- A left fold whose step `m` is addition, applied at the entries satisfying `p`,
+is the seed plus the sum of those entries. -/]
+private theorem foldl_ite_mul {M : Type*} [Monoid M] (p : ι → Prop) [DecidablePred p]
+    (f : ι → M) (m : M → M → M) (hm : ∀ a b, m a b = a * b) (l : List ι)
+    (x : M) : l.foldl (fun acc i => if p i then m acc (f i) else acc) x =
       x * (l.map fun i => if p i then f i else 1).prod := by
   induction l generalizing x with
   | nil => simp
@@ -243,10 +234,11 @@ private theorem foldl_ite_mul (m : ℝ → ℝ → ℝ) (hm : ∀ a b, m a b = a
     · rw [ite_eq_left hi, ite_eq_left hi, hm, mul_assoc]
     · rw [ite_eq_right hi, ite_eq_right hi, one_mul]
 
+variable {p f} in
 /-- A left fold whose step `m` is the maximum, applied at the entries satisfying `p`, is at most
 `y` exactly when the seed and those entries are. -/
-private theorem foldl_ite_max_le_iff (m : ℝ → ℝ → ℝ) (hm : ∀ a b, m a b = max a b) (y : ℝ)
-    (l : List ι) (x : ℝ) :
+private theorem foldl_ite_max_le_iff (m : ℝ → ℝ → ℝ) (hm : ∀ a b, m a b = max a b) {y : ℝ}
+    {l : List ι} {x : ℝ} :
     l.foldl (fun acc i => if p i then m acc (f i) else acc) x ≤ y ↔
       x ≤ y ∧ ∀ i ∈ l, p i → f i ≤ y := by
   induction l generalizing x with
@@ -259,45 +251,27 @@ private theorem foldl_ite_max_le_iff (m : ℝ → ℝ → ℝ) (hm : ∀ a b, m 
         true_implies, and_assoc]
     · simp only [hi, ↓reduceIte, List.mem_cons, forall_eq_or_imp, false_implies, true_and]
 
-/-- A left fold whose step `m` is the minimum, applied at the entries satisfying `p`, is at least
-`y` exactly when the seed and those entries are. -/
-private theorem le_foldl_ite_min_iff (m : ℝ → ℝ → ℝ) (hm : ∀ a b, m a b = min a b) (y : ℝ)
-    (l : List ι) (x : ℝ) :
-    y ≤ l.foldl (fun acc i => if p i then m acc (f i) else acc) x ↔
-      y ≤ x ∧ ∀ i ∈ l, p i → y ≤ f i := by
-  induction l generalizing x with
-  | nil => simp
-  | cons i l ih =>
-    simp only [List.foldl_cons]
-    rw [ih]
-    by_cases hi : p i
-    · simp only [hi, ↓reduceIte, hm, le_min_iff, List.mem_cons, forall_eq_or_imp,
-        true_implies, and_assoc]
-    · simp only [hi, ↓reduceIte, List.mem_cons, forall_eq_or_imp, false_implies, true_and]
-
 /-- A left fold whose step `m` is the maximum, applied at the entries satisfying `p`, is `y` when
 the seed and those entries are at most `y` and one of them is `y`. -/
 private theorem foldl_ite_max_eq (m : ℝ → ℝ → ℝ) (hm : ∀ a b, m a b = max a b) (l : List ι)
     (x y : ℝ) (hx : x ≤ y) (hf : ∀ i ∈ l, p i → f i ≤ y)
     (hy : x = y ∨ ∃ i ∈ l, p i ∧ f i = y) :
     l.foldl (fun acc i => if p i then m acc (f i) else acc) x = y := by
-  have hlow := (foldl_ite_max_le_iff p f m hm _ l x).mp le_rfl
-  refine le_antisymm ((foldl_ite_max_le_iff p f m hm y l x).mpr ⟨hx, hf⟩) ?_
+  have hlow := (foldl_ite_max_le_iff (p := p) (f := f) m hm (l := l) (x := x)).mp le_rfl
+  refine le_antisymm ((foldl_ite_max_le_iff m hm).mpr ⟨hx, hf⟩) ?_
   rcases hy with rfl | ⟨i, hi, hpi, rfl⟩
   · exact hlow.1
   · exact hlow.2 i hi hpi
 
-/-- A left fold whose step `m` is the minimum, applied at the entries satisfying `p`, is `y` when
-the seed and those entries are at least `y` and one of them is `y`. -/
-private theorem foldl_ite_min_eq (m : ℝ → ℝ → ℝ) (hm : ∀ a b, m a b = min a b) (l : List ι)
-    (x y : ℝ) (hx : y ≤ x) (hf : ∀ i ∈ l, p i → y ≤ f i)
-    (hy : x = y ∨ ∃ i ∈ l, p i ∧ f i = y) :
-    l.foldl (fun acc i => if p i then m acc (f i) else acc) x = y := by
-  have hup := (le_foldl_ite_min_iff p f m hm _ l x).mp le_rfl
-  refine le_antisymm ?_ ((le_foldl_ite_min_iff p f m hm y l x).mpr ⟨hx, hf⟩)
-  rcases hy with rfl | ⟨i, hi, hpi, rfl⟩
-  · exact hup.1
-  · exact hup.2 i hi hpi
+/-- A left fold whose step `m` is the minimum, applied at the entries satisfying `p`, is the
+negated fold whose step `m'` is the maximum, over the negated seed and entries. -/
+private theorem foldl_ite_min_eq_neg (m m' : ℝ → ℝ → ℝ) (hm : ∀ a b, m a b = min a b)
+    (hm' : ∀ a b, m' a b = max a b) (l : List ι) (x : ℝ) :
+    l.foldl (fun acc i => if p i then m acc (f i) else acc) x =
+      -l.foldl (fun acc i => if p i then m' acc (-f i) else acc) (-x) := by
+  rw [List.foldl_hom Neg.neg (g₁ := fun acc i => if p i then m acc (f i) else acc)
+    (g₂ := fun acc i => if p i then m' acc (-f i) else acc) fun a i => by
+      by_cases hi : p i <;> simp only [hi, ↓reduceIte, hm, hm', max_neg_neg], neg_neg]
 
 end Folds
 
@@ -655,6 +629,22 @@ noncomputable def scatterShare (b : Tensor ℝ s) (u : Tensor ℝ (t ++ s.eraseA
     else scatterTies dims h indices u y (scatterTarget dims h indices v) : ℕ) : ℝ))⁻¹
   else 0
 
+/-- Over the reals, the base shares with output `-y` at `b` and `u` are those with output `y` at
+`-b` and `-u`. -/
+private theorem scatterShareBase_neg (b : Tensor ℝ s) (u : Tensor ℝ (t ++ s.eraseAxes dims))
+    (y : Tensor ℝ s) :
+    scatterShareBase dims h indices b u (-y) = scatterShareBase dims h indices (-b) (-u) y := by
+  funext c
+  simp only [scatterShareBase, scatterTies, Rep.neg_apply, neg_eq_iff_eq_neg]
+
+/-- Over the reals, the update shares with output `-y` at `b` and `u` are those with output `y` at
+`-b` and `-u`. -/
+private theorem scatterShare_neg (b : Tensor ℝ s) (u : Tensor ℝ (t ++ s.eraseAxes dims))
+    (y : Tensor ℝ s) :
+    scatterShare dims h indices b u (-y) = scatterShare dims h indices (-b) (-u) y := by
+  funext v
+  simp only [scatterShare, scatterTies, Rep.neg_apply, neg_eq_iff_eq_neg]
+
 /-- The pullback that `scatterExtremumBackward` stores for a scatter maximum or minimum with output
 `y`, in closed form: the participants of an entry that equal `y` there share the cotangent evenly,
 through `scatterShareBase` and `scatterShare`. -/
@@ -708,23 +698,17 @@ theorem scatter_max_apply_eq (hP : ∀ j, P j = some (indices j)) (b : Tensor �
       List.mem_finRange _, ?_, congrArg u (scatterUpdate_scatterTarget dims h indices v)⟩
     rw [hP, Shape.Coord.unlinearize_linearize, get_scatterTarget_dims]
 
-/-- An entry of a scatter minimum at the index tuples `indices` is `m` when the participants of
-the entry are at least `m` and one of them is `m`. -/
-theorem scatter_min_apply_eq (hP : ∀ j, P j = some (indices j)) (b : Tensor ℝ s)
-    (u : Tensor ℝ (t ++ s.eraseAxes dims)) (c : s.Coord) (m : ℝ) (hb : m ≤ b c)
-    (hu : ∀ v, scatterTarget dims h indices v = c → m ≤ u v)
-    (hm : b c = m ∨ ∃ v, scatterTarget dims h indices v = c ∧ u v = m) :
-    scatter .min b dims P u c = m := by
-  rw [scatter_apply]
-  refine foldl_ite_min_eq _ (fun i => u (scatterUpdate dims c i))
-    (ScatterReduce.Scalar.combine (op := .min)) (fun a b => Context.minimum_real a b) _ _ _ hb
-    (fun i _ hi => hu _ (scatterTarget_scatterUpdate dims h indices
-      (Option.some.inj ((hP _).symm.trans hi)))) ?_
-  rcases hm with hm | ⟨v, rfl, rfl⟩
-  · exact Or.inl hm
-  · refine Or.inr ⟨Shape.Coord.linearize (Shape.Coord.appendEquiv t (s.eraseAxes dims) v).1,
-      List.mem_finRange _, ?_, congrArg u (scatterUpdate_scatterTarget dims h indices v)⟩
-    rw [hP, Shape.Coord.unlinearize_linearize, get_scatterTarget_dims]
+/-- Over the reals, a scatter minimum at any index tuples `P` is the negated scatter maximum of the
+negated base and updates, so the derivative, the points of differentiability and the stored
+pullback of a scatter minimum are those of the maximum at the negated inputs. -/
+theorem scatter_min_eq_neg (b : Tensor ℝ s) (u : Tensor ℝ (t ++ s.eraseAxes dims)) :
+    scatter .min b dims P u = -scatter .max (-b) dims P (-u) := by
+  refine Rep.ext fun c => ?_
+  rw [Rep.neg_apply, scatter_apply, scatter_apply]
+  simp only [Rep.neg_apply]
+  exact foldl_ite_min_eq_neg _ _ (ScatterReduce.Scalar.combine (op := .min))
+    (ScatterReduce.Scalar.combine (op := .max)) (fun a b => Context.minimum_real a b)
+    (fun a b => Context.maximum_real a b) _ _
 
 /-- Near `x`, every strict inequality at `x` between an entry of the base and an update, or
 between two updates, holds. -/
@@ -805,7 +789,7 @@ private theorem scatter_max_eq_scatterCLM (hP : ∀ j, P j = some (indices j))
 
 /-- At a point `p` near `x`, where every entry of a scatter minimum has a unique smallest
 participant, the entry at `c` of the scatter minimum is that of `scatterCLM` with the shares at
-`x`. -/
+`x`, by the maximum's statement at `-x` and `-p`. -/
 private theorem scatter_min_eq_scatterCLM (hP : ∀ j, P j = some (indices j))
     {x p : WithLp 2 (Tensor ℝ s × Tensor ℝ (t ++ s.eraseAxes dims))} (c : s.Coord)
     (hc : (∀ v, scatterTarget dims h indices v = c → x.fst c < x.snd v) ∨
@@ -818,44 +802,16 @@ private theorem scatter_min_eq_scatterCLM (hP : ∀ j, P j = some (indices j))
       scatterCLM dims h indices
         (scatterShareBase dims h indices x.fst x.snd (scatter .min x.fst dims P x.snd))
         (scatterShare dims h indices x.fst x.snd (scatter .min x.fst dims P x.snd)) p c := by
-  rw [scatterCLM_apply]
-  rcases hc with hc | ⟨v0, hv0, hb0, huniq⟩
-  · have hy : scatter .min x.fst dims P x.snd c = x.fst c :=
-      scatter_min_apply_eq dims h indices hP _ _ c _ le_rfl (fun v hv => (hc v hv).le)
-        (Or.inl rfl)
-    have hties : scatterTies dims h indices x.snd (scatter .min x.fst dims P x.snd) c = 0 := by
-      rw [scatterTies, Finset.card_eq_zero, Finset.filter_eq_empty_iff]
-      rintro v - ⟨hv, hvy⟩
-      exact (hc v hv).ne' (hvy.trans hy)
-    rw [scatter_min_apply_eq dims h indices hP _ _ c (p.fst c) le_rfl
-        (fun v hv => (hp2 v (hc v hv)).le) (Or.inl rfl), scatterShareBase, ite_eq_left hy.symm,
-      hties, Nat.cast_zero, zero_add, inv_one, one_mul, Finset.sum_eq_zero, add_zero]
-    intro v _
-    refine ite_eq_right_iff.mpr fun hv => ?_
-    rw [scatterShare, hv, hy, ite_eq_right (hc v hv).ne', zero_mul]
-  · have hle : ∀ v, scatterTarget dims h indices v = c → x.snd v0 ≤ x.snd v := fun v hv => by
-      rcases eq_or_ne v v0 with rfl | hne
-      exacts [le_rfl, (huniq v hv hne).le]
-    have hy : scatter .min x.fst dims P x.snd c = x.snd v0 :=
-      scatter_min_apply_eq dims h indices hP _ _ c _ hb0.le hle (Or.inr ⟨v0, hv0, rfl⟩)
-    have hties : scatterTies dims h indices x.snd (scatter .min x.fst dims P x.snd) c = 1 := by
-      rw [scatterTies, Finset.card_eq_one]
-      refine ⟨v0, Finset.eq_singleton_iff_unique_mem.mpr
-        ⟨Finset.mem_filter.mpr ⟨Finset.mem_univ _, hv0, hy.symm⟩, fun v hv => ?_⟩⟩
-      obtain ⟨-, hvc, hvy⟩ := Finset.mem_filter.mp hv
-      by_contra hne
-      exact (huniq v hvc hne).ne' (hvy.trans hy)
-    rw [scatter_min_apply_eq dims h indices hP _ _ c (p.snd v0) (hp1 v0 hb0).le
-        (fun v hv => by
-          rcases eq_or_ne v v0 with rfl | hne
-          exacts [le_rfl, (hp3 v v0 (huniq v hv hne)).le])
-        (Or.inr ⟨v0, hv0, rfl⟩), scatterShareBase, hy, ite_eq_right hb0.ne', zero_mul, zero_add,
-      Finset.sum_eq_single v0, ite_eq_left hv0, scatterShare, hv0, hy, ite_eq_left rfl,
-      ite_eq_right hb0.ne', hties, Nat.cast_one, inv_one, one_mul]
-    · intro v _ hne
-      refine ite_eq_right_iff.mpr fun hvc => ?_
-      rw [scatterShare, hvc, hy, ite_eq_right (huniq v hvc hne).ne', zero_mul]
-    · exact fun hn => absurd (Finset.mem_univ v0) hn
+  have key := scatter_max_eq_scatterCLM dims h indices hP (x := -x) (p := -p) c
+    (by simpa only [WithLp.neg_fst, WithLp.neg_snd, Rep.neg_apply, neg_lt_neg_iff] using hc)
+    (fun v => by
+      simpa only [WithLp.neg_fst, WithLp.neg_snd, Rep.neg_apply, neg_lt_neg_iff] using hp2 v)
+    (fun v => by
+      simpa only [WithLp.neg_fst, WithLp.neg_snd, Rep.neg_apply, neg_lt_neg_iff] using hp1 v)
+    (fun v v' => by simpa only [WithLp.neg_snd, Rep.neg_apply, neg_lt_neg_iff] using hp3 v' v)
+  simp only [WithLp.neg_fst, WithLp.neg_snd, map_neg, Rep.neg_apply] at key
+  rw [scatter_min_eq_neg, scatter_min_eq_neg, scatterShareBase_neg, scatterShare_neg,
+    Rep.neg_apply, key, neg_neg]
 
 /-- A scatter maximum at the index tuples `indices`, as a map of the base and the updates jointly,
 has at `x` the derivative `scatterCLM` with the shares at `x`, and the stored pullback pairs with
@@ -960,6 +916,19 @@ theorem not_differentiableAt_scatter_max (hP : ∀ j, P j = some (indices j))
   rw [habs]
   exact ((hg.const_mul 2).sub_const _).sub differentiableAt_id
 
+variable {dims} in
+/-- A scatter minimum, as a map of the base and the updates jointly, is differentiable at `x`
+exactly when the scatter maximum is differentiable at `-x`. -/
+private theorem differentiableAt_scatter_min_iff_max
+    {x : WithLp 2 (Tensor ℝ s × Tensor ℝ (t ++ s.eraseAxes dims))} :
+    DifferentiableAt ℝ (fun p => scatter .min p.fst dims P p.snd) x ↔
+      DifferentiableAt ℝ (fun p => scatter .max p.fst dims P p.snd) (-x) := by
+  simp only [scatter_min_eq_neg, differentiableAt_fun_neg_iff, ← WithLp.neg_fst,
+    ← WithLp.neg_snd]
+  exact (ContinuousLinearEquiv.neg ℝ).comp_right_differentiableAt_iff
+    (f := fun p : WithLp 2 (Tensor ℝ s × Tensor ℝ (t ++ s.eraseAxes dims)) =>
+      scatter .max p.fst dims P p.snd)
+
 /-- A scatter minimum, as a map of the base and the updates jointly, is not differentiable at an
 `x` where the smallest participant of the entry at `c`, the update at `v0`, ties with the base
 entry or with another update that lands on `c`. -/
@@ -970,63 +939,17 @@ theorem not_differentiableAt_scatter_min (hP : ∀ j, P j = some (indices j))
     (htie : x.fst c = x.snd v0 ∨
       ∃ v, v ≠ v0 ∧ scatterTarget dims h indices v = c ∧ x.snd v = x.snd v0) :
     ¬ DifferentiableAt ℝ (fun p => scatter .min p.fst dims P p.snd) x := by
-  intro hd
-  let e : WithLp 2 (Tensor ℝ s × Tensor ℝ (t ++ s.eraseAxes dims)) :=
-    WithLp.toLp 2 (0, Rep.ofFn fun v => if v = v0 then 1 else 0)
-  have hfst (τ : ℝ) : (x + τ • e).fst = x.fst := by
-    simp only [e, WithLp.add_fst, WithLp.smul_fst, WithLp.toLp_fst, smul_zero, add_zero]
-  have hsnd (τ : ℝ) (v : (t ++ s.eraseAxes dims).Coord) :
-      (x + τ • e).snd v = x.snd v + if v = v0 then τ else 0 := by
-    simp only [e, WithLp.add_snd, WithLp.smul_snd, WithLp.toLp_snd, Tensor.add_apply,
-      Tensor.Rep.smul_apply, Rep.get_ofFn, smul_eq_mul, mul_ite, mul_one, mul_zero]
-  have hline (τ : ℝ) :
-      scatter .min (x + τ • e).fst dims P (x + τ • e).snd c = x.snd v0 + min τ 0 := by
-    rw [hfst]
-    rcases le_total 0 τ with hτ | hτ
-    · rw [min_eq_right hτ, add_zero]
-      refine scatter_min_apply_eq dims h indices hP _ _ c _ hb (fun v hv => ?_) ?_
-      · rw [hsnd]
-        by_cases hv' : v = v0
-        · subst hv'
-          rw [ite_eq_left rfl]
-          exact le_add_of_nonneg_right hτ
-        · rw [ite_eq_right hv', add_zero]
-          exact hu v hv
-      · rcases htie with htie | ⟨v1, hne, hv1, heq⟩
-        · exact Or.inl htie
-        · exact Or.inr ⟨v1, hv1, by rw [hsnd, ite_eq_right hne, add_zero, heq]⟩
-    · rw [min_eq_left hτ]
-      refine scatter_min_apply_eq dims h indices hP _ _ c _ ((add_le_of_nonpos_right hτ).trans hb)
-        (fun v hv => ?_) (Or.inr ⟨v0, hv0, by rw [hsnd, ite_eq_left rfl]⟩)
-      rw [hsnd]
-      by_cases hv' : v = v0
-      · subst hv'
-        rw [ite_eq_left rfl]
-      · rw [ite_eq_right hv', add_zero]
-        exact (add_le_of_nonpos_right hτ).trans (hu v hv)
-  have hd0 : DifferentiableAt ℝ (fun p : WithLp 2 (Tensor ℝ s × Tensor ℝ (t ++ s.eraseAxes dims)) =>
-      scatter .min p.fst dims P p.snd) (x + (0 : ℝ) • e) := by
-    rwa [zero_smul, add_zero]
-  have hl : DifferentiableAt ℝ (fun τ : ℝ => x + τ • e) 0 := by fun_prop
-  have hg : DifferentiableAt ℝ (fun τ : ℝ => x.snd v0 + min τ 0) 0 :=
-    (DifferentiableAt.fun_comp' (0 : ℝ) (coordinateCLM c).differentiableAt
-      (DifferentiableAt.fun_comp' (f := fun τ : ℝ => x + τ • e) (0 : ℝ) hd0
-        hl)).congr_of_eventuallyEq (Eventually.of_forall fun τ => (hline τ).symm)
-  refine not_differentiableAt_abs_zero ?_
-  have habs : (_root_.abs : ℝ → ℝ) = fun τ => 2 * x.snd v0 - 2 * (x.snd v0 + min τ 0) + τ :=
-    funext fun τ => by
-      rcases le_total 0 τ with hτ | hτ
-      · rw [abs_of_nonneg hτ, min_eq_right hτ]
-        ring
-      · rw [abs_of_nonpos hτ, min_eq_left hτ]
-        ring
-  rw [habs]
-  exact ((hg.const_mul 2).const_sub _).add differentiableAt_id
+  rw [differentiableAt_scatter_min_iff_max]
+  exact not_differentiableAt_scatter_max dims h indices hP (-x) c hv0
+    (by simpa only [WithLp.neg_fst, WithLp.neg_snd, Rep.neg_apply, neg_le_neg_iff] using hb)
+    (fun v hv => by simpa only [WithLp.neg_snd, Rep.neg_apply, neg_le_neg_iff] using hu v hv)
+    (by simpa only [WithLp.neg_fst, WithLp.neg_snd, Rep.neg_apply, neg_inj] using htie)
 
+variable {dims} in
 /-- A scatter maximum, as a map of the base and the updates jointly, is differentiable at `x`
 exactly when every entry has a unique largest participant at `x`. -/
 theorem differentiableAt_scatter_max_iff (hP : ∀ j, P j = some (indices j))
-    (x : WithLp 2 (Tensor ℝ s × Tensor ℝ (t ++ s.eraseAxes dims))) :
+    {x : WithLp 2 (Tensor ℝ s × Tensor ℝ (t ++ s.eraseAxes dims))} :
     DifferentiableAt ℝ (fun p => scatter .max p.fst dims P p.snd) x ↔
       ∀ c, (∀ v, scatterTarget dims h indices v = c → x.snd v < x.fst c) ∨
         ∃ v, scatterTarget dims h indices v = c ∧ x.fst c < x.snd v ∧
@@ -1051,33 +974,17 @@ theorem differentiableAt_scatter_max_iff (hP : ∀ j, P j = some (indices j))
   · exact absurd hd
       (not_differentiableAt_scatter_max dims h indices hP x c hv0 hb.le hu (Or.inl hb))
 
+variable {dims} in
 /-- A scatter minimum, as a map of the base and the updates jointly, is differentiable at `x`
 exactly when every entry has a unique smallest participant at `x`. -/
 theorem differentiableAt_scatter_min_iff (hP : ∀ j, P j = some (indices j))
-    (x : WithLp 2 (Tensor ℝ s × Tensor ℝ (t ++ s.eraseAxes dims))) :
+    {x : WithLp 2 (Tensor ℝ s × Tensor ℝ (t ++ s.eraseAxes dims))} :
     DifferentiableAt ℝ (fun p => scatter .min p.fst dims P p.snd) x ↔
       ∀ c, (∀ v, scatterTarget dims h indices v = c → x.fst c < x.snd v) ∨
         ∃ v, scatterTarget dims h indices v = c ∧ x.snd v < x.fst c ∧
           ∀ v', scatterTarget dims h indices v' = c → v' ≠ v → x.snd v < x.snd v' := by
-  refine ⟨fun hd c => ?_, fun hx =>
-    (hasPullbackAt_scatter_min dims h indices hP x hx).hasFDerivAt.differentiableAt⟩
-  by_cases hlt : ∀ v, scatterTarget dims h indices v = c → x.fst c < x.snd v
-  · exact Or.inl hlt
-  obtain ⟨v1, hv1, hle1⟩ : ∃ v, scatterTarget dims h indices v = c ∧ x.snd v ≤ x.fst c := by
-    by_contra hno
-    exact hlt fun v hv => not_le.mp fun hle => hno ⟨v, hv, hle⟩
-  obtain ⟨v0, hv0mem, hv0min⟩ := Finset.exists_min_image
-    (Finset.univ.filter fun v => scatterTarget dims h indices v = c) x.snd
-    ⟨v1, Finset.mem_filter.mpr ⟨Finset.mem_univ _, hv1⟩⟩
-  have hv0 : scatterTarget dims h indices v0 = c := (Finset.mem_filter.mp hv0mem).2
-  have hu (v) (hv : scatterTarget dims h indices v = c) : x.snd v0 ≤ x.snd v :=
-    hv0min v (Finset.mem_filter.mpr ⟨Finset.mem_univ _, hv⟩)
-  rcases ((hu v1 hv1).trans hle1).lt_or_eq with hb | hb
-  · refine Or.inr ⟨v0, hv0, hb, fun v' hv' hne => (hu v' hv').lt_of_ne' fun heq =>
-      not_differentiableAt_scatter_min dims h indices hP x c hv0 hb.le hu
-        (Or.inr ⟨v', hne, hv', heq⟩) hd⟩
-  · exact absurd hd
-      (not_differentiableAt_scatter_min dims h indices hP x c hv0 hb.le hu (Or.inl hb.symm))
+  rw [differentiableAt_scatter_min_iff_max, differentiableAt_scatter_max_iff h indices hP]
+  simp only [WithLp.neg_fst, WithLp.neg_snd, Rep.neg_apply, neg_lt_neg_iff]
 
 end Extremum
 

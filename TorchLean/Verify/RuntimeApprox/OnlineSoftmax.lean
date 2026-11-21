@@ -1865,6 +1865,7 @@ theorem foldl_storedStep_invariant (hformat : format.isIEEE = true)
         (u * (B + 1 + 2 * T)) (T * (1 + u) ^ (2 * T) * η)
         (T * (1 + u) ^ (2 * T) * (η + (1 + u) ^ B * (B * η)))
   | [], P, state, shadow, t, ht, _, _, _, hinv => by
+      -- No block is left, so `t = T`.
       simp only [List.length_nil, add_zero] at ht
       subst ht
       simpa using hinv
@@ -1890,6 +1891,8 @@ theorem foldl_storedStep_invariant (hformat : format.isIEEE = true)
       have hQ0 : 0 ≤ η + (1 + u) ^ B * (B * η) := by positivity
       have hub := mul_le_mul_of_nonneg_left hbBr hu
       have hut := mul_nonneg hu ht0
+      -- One block step takes the invariant from `t` blocks to `t + 1`. Its allowance, residual
+      -- and range premises follow from `t + 1 ≤ T` and the block's at most `B` keys.
       have hstep := storedStep_invariant hformat roundSum round hηs hroundSum hround hroundSum_one
         hround_one hdiff (P := P) (block := block) (state := state) (shadow := shadow)
         (Cl := u * (B + 2 * ((t + 1 : ℕ) : ℝ))) (Co := u * (B + 1 + 2 * ((t + 1 : ℕ) : ℝ)))
@@ -1927,6 +1930,7 @@ theorem foldl_storedStep_invariant (hformat : format.isIEEE = true)
           have h3 := mul_le_mul_of_nonneg_right (mul_le_mul hT1 hpowT (by positivity)
             (Nat.cast_nonneg T)) hQ0
           linarith)
+      -- The remaining blocks by recursion, from `t + 1`.
       have := foldl_storedStep_invariant hformat roundSum round hηs hroundSum hround hroundSum_one
         hround_one hdiff hK hV hrangel hrangeo blocks (P ++ block) _ _ (t + 1)
         (by simp at ht ⊢; omega) (by simpa [List.flatten_cons, List.append_assoc] using hN)
@@ -2271,6 +2275,7 @@ private theorem onlineWeight_error_of_keys (hformat : format.isIEEE = true)
     ExecFloat.Binary.isFinite (Softmax.onlineWeight blocks score allowed j) = true ∧
       |ExecFloat.Binary.toReal (Softmax.onlineWeight blocks score allowed j) - W / S| ≤
         (1 + u) * ((Eo + W / S * El) / (S - El)) + u * (W / S) + η := by
+  -- The key of `j` is in the list, so the list is not empty.
   have hjkey : (score j, (0 : Value)) ∈ keys := by
     rw [← hkeys]
     simp only [Softmax.onlineKeys, List.mem_map, List.mem_filter, List.mem_finRange,
@@ -2296,6 +2301,8 @@ private theorem onlineWeight_error_of_keys (hformat : format.isIEEE = true)
     obtain ⟨i, hi, rfl⟩ := hmem e he
     exact ⟨(hscore i hi).1, ExecFloat.Binary.isFinite_zero, (hscore i hi).2⟩
   have hfirst := hkeyfacts first (by rw [hflat]; exact List.mem_cons_self ..)
+  -- Run the online fold with zero values; its normalizer is within `El` of `S`. The keys carry
+  -- the value 0, so the range premise of the output sum holds.
   have hrangeo : (N : ℝ) * 0 * Real.exp (u * (B + 3 * T) + 0) +
       T * residualGrowth u η ^ T *
         blockResidual u η N B 0 (u * (B + 3 * T) + 0) (productResidual u η 0 0 0) ≤
@@ -2321,6 +2328,7 @@ private theorem onlineWeight_error_of_keys (hformat : format.isIEEE = true)
   set final := (List.toChunks blocks.size (first :: rest)).foldl
     (onlineStep (fun x => ExecFloat.Binary.CorrectlyRounded.exp x) id id) (first.1, 0, 0)
     with hfinal
+  -- The fold's maximum is `M`, whichever key the fold of `max` starts from.
   have hM : ExecFloat.Binary.toReal final.1 = M := by
     rw [foldl_onlineStep_fst, hflat]
     rw [(toReal_foldl_maximum Prod.fst (first :: rest) first.1 hfirst.1
@@ -2341,6 +2349,7 @@ private theorem onlineWeight_error_of_keys (hformat : format.isIEEE = true)
     obtain ⟨h1, h2⟩ := abs_le.mp hsj.2
     obtain ⟨h3, h4⟩ := abs_le.mp hMK
     exact abs_le.mpr ⟨by linarith, by linarith⟩
+  -- The key's rounded shift and exponential are within `Eo` of `W`; divide with rounding.
   obtain ⟨hof, -, hoerr⟩ := exp_sub_error hformat hsj.1 hmf hjle hrange
   rw [hM] at hoerr
   have hW : 0 < W := Real.exp_pos _

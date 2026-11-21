@@ -1,6 +1,10 @@
 # TorchLean Examples
 
-Start with three CPU examples that need no external data:
+I wrote these examples to be changed, not only read. The small ones make it easy to try a tensor
+operation or alter a model and see what Lean accepts. The larger ones exercise the same APIs on
+training, imported graphs, numerical failures, and verification problems where the details matter.
+
+If TorchLean is new to you, this is the shortest useful first pass:
 
 ```bash
 scripts/lake.sh exe torchlean quickstart_tensors
@@ -8,85 +12,36 @@ scripts/lake.sh exe torchlean quickstart_autograd
 scripts/lake.sh exe torchlean quickstart_mlp --steps 20
 ```
 
-The first prints tensor operations, the second differentiates a tensor function and a model loss,
-and the third trains a two-layer regression model. The [quickstart guide](Quickstart/README.md)
-explains the model, dataset, training call, and prediction.
+All three use the CPU and in-memory inputs. The first command works with shaped tensors, the second
+differentiates a tensor function and a model loss, and the third trains a two-layer regression
+model. Their source is short enough to keep beside the Infoview while you experiment. The
+[quickstart guide](Quickstart/README.md) explains the model, dataset, training call, and prediction.
 
-Learning the application API starts with these commands. Verification is a separate step for
-supported model fragments:
-
-```text
-Tensor values
-    ↓
-nn model or differentiable tensor function
-    ↓
-autograd computes gradients
-    ↓
-Trainer applies optimizer updates
-    ↓
-verification checks a stated property
-```
-
-Examples hold runnable demonstrations, worked proofs, and their input fixtures. Reusable tensor
-operations, model adapters, and training APIs belong in the library. Numerical values stay in
-tensors, while collections describe commands, graph structure, or external file formats.
-`scripts/lake.sh build TorchLeanExamples` checks the proof-only modules, which print no training
-result. Each subdirectory README gives the command, the required inputs, and what success means.
-
-## Where To Read
+After that, follow the question you care about rather than a fixed sequence:
 
 | Path | Purpose |
 | --- | --- |
-| `Quickstart/` | The learning path: tensors, autograd, training, proofs, plus optional widgets. |
-| `Models/` | Maintained model commands grouped by supervised, vision, sequence, generative, operator, and RL workloads. |
-| `Data/` | CSV/NPY loading and dataset boundaries. |
+| [`Quickstart/`](Quickstart/README.md) | Tensors, autograd, training, and a first proof. |
+| [`Models/`](Models/README.md) | Supervised, vision, sequence, generative, operator-learning, and RL workloads. |
+| [`Data/`](Data/README.md) | CSV/NPY loading and dataset boundaries. |
 | `Transcendentals.lean` | A custom differentiable scalar function and the theorem behind its gradient. |
-| `Verification/` | Runnable property checks and small certificate artifacts. |
-| `Interop/` | JAX captures replayed through the IR, and PyTorch state dicts read into the ordinary `nn` models. |
+| [`Verification/`](Verification/README.md) | Runnable property checks, proofs, and small certificate artifacts. |
+| [`Interop/`](Interop/README.md) | JAX graphs and PyTorch state dictionaries crossing into TorchLean. |
 | `Tree/` | Folds, hylomorphisms and unfolds over sample trees with their certificates, and the `tree_bench` benchmark. |
-| `DeepDives/` | Advanced autograd, float semantics, graph IR, and runtime internals. |
-| `BugZoo/` | Small checked case studies of ML failure modes. |
+| [`DeepDives/`](DeepDives/README.md) | Advanced autograd, floating-point semantics, graph IR, and runtime internals. |
+| [`BugZoo/`](BugZoo/README.md) | Small checked case studies of ML failure modes. |
 | `DeepDives/Muon.lean` | Proofs about one Muon step: direction, momentum buffer and updated parameters. |
 
-## Public Usage
+Some files are programs, some are proofs, and several deliberately show the boundary between the
+two. A successful training run is evidence about that run. A theorem is checked when its module
+builds. The verification READMEs say exactly what each certificate checker accepts and what that
+acceptance does not establish.
 
-Ordinary application examples import modules of the application API. These five provide every
-concept in the table below:
+Reusable operations and runtimes stay under `TorchLean/`; this directory keeps the examples and
+their small fixtures. When an example grows a reusable API, the API moves into the library and the
+example remains as a compact tour.
 
-```lean
-import TorchLean.NN.Autograd.Function
-import TorchLean.NN.Autograd.Model
-import TorchLean.NN.Data.Dataset
-import TorchLean.NN.Trainer.Constructor
-import TorchLean.NN.Trainer.Train
-open TorchLean
-```
-
-The main concepts are:
-
-| Concept | Public entry point |
-| --- | --- |
-| Shaped values | `Tensor α shape` |
-| Models and layers | `nn` |
-| Tensor-function differentiation | `autograd` |
-| Model-state differentiation | `autograd.model` |
-| Datasets | `Data` |
-| Training | `Trainer` |
-| Optimizers | `optim` |
-
-Files that import runtime, specification, or proof modules outside the application API teach
-internals, formal semantics, or trust boundaries, and ordinary training code should not use them as
-a template.
-
-Derivative proofs import `TorchLean.NN.Tactic.Autograd` and check their formulas with `by autograd`.
-The tactic shares its name with the `autograd` runtime namespace above, which computes gradients.
-The [proof quickstart](Quickstart.lean) proves scalar loss derivatives with it, and the
-[autograd deep dive](DeepDives/AutogradTransforms.lean) connects recorded execution to mathlib at
-arbitrary derivative order. The [derivative tactic guide](../TorchLean/NN/Tactic/README.md)
-explains custom rules. The [tensor tactic guide](../TorchLean/Tensor/Tactic/README.md) explains
-the difference between tensor expression syntax and proof automation.
-
-## Commands
+## Finding And Building Examples
 
 The command registries list the runnable commands:
 
@@ -96,16 +51,16 @@ scripts/lake.sh exe torchlean --list
 scripts/lake.sh exe verify -- list
 ```
 
-Representative next steps:
+Every command has its own help. For example:
 
 ```bash
 scripts/lake.sh exe torchlean data_csv --help
 scripts/lake.sh exe torchlean mlp --help
-scripts/lake.sh -K cuda=true exe torchlean cnn --device cuda --help
+scripts/lake.sh -Kcuda=true exe torchlean cnn --device cuda --help
 scripts/lake.sh exe torchlean pytorch_roundtrip --help
 ```
 
-Build every example module with:
+To check every example module, including the proof-only files:
 
 ```bash
 scripts/lake.sh build TorchLeanExamples

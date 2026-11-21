@@ -31,7 +31,10 @@ The linear solves that ride on the Cholesky factor sit here too:
 
 `Tensor.cholesky` and `qr` come with reconstruction and structural theorems (`IsCholesky` /
 `IsQR`, lower- and upper-triangularity, orthonormality) in `TorchLean.Tensor.Factorization.*`,
-over `ℝ` under positive-pivot success hypotheses and, for Cholesky reconstruction, symmetry. The
+over `ℝ` under positive-pivot success hypotheses and, for Cholesky reconstruction, symmetry.
+`TorchLean.Tensor.Factorization.Decomposition` states the decompositions of PyTorch's and JAX's
+linear algebra (QR, LU, eigendecompositions, SVD, Schur, Hessenberg and tridiagonal forms) as
+relations over `ℝ` and `ℂ`. The
 triangular and ridge solves follow the standard substitution formulas over the function
 representation. Over `ℝ`, `TorchLean.Tensor.Factorization.Solve` proves that they
 return exact solutions: `triSolveLowerFn`, `triSolveUpperFn` and `cholSolveFn` for triangular

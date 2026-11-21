@@ -162,7 +162,7 @@ def ArraysRelated {α β : Type} (relation : α → β → Prop)
 
 /-- A successful replay check is exactly a size match plus a successful check at every node. -/
 theorem withinRanges_eq_true_iff
-    (ranges : Array CheckedNodeRange) (values : Array (SomeTensor (Binary 8 23))) :
+    {ranges : Array CheckedNodeRange} {values : Array (SomeTensor (Binary 8 23))} :
     withinRanges ranges values = true ↔
       ArraysRelated (fun range value => dvalWithinRange range value = true) ranges values := by
   constructor
@@ -201,7 +201,7 @@ theorem ErrorTrace.of_check
     (hcomputed : withinRanges ranges computed = true) :
     ErrorTrace ranges exact computed := by
   rcases hexact with ⟨hexactSize, hexactAt⟩
-  rcases (withinRanges_eq_true_iff ranges computed).mp hcomputed with
+  rcases withinRanges_eq_true_iff.mp hcomputed with
     ⟨hcomputedSize, hcomputedAt⟩
   refine ⟨hexactSize, hcomputedSize, ?_⟩
   intro i hrange hexactIndex hcomputedIndex
@@ -251,11 +251,11 @@ def fixedLeftGuard (plan : AcceptedGraphKernelPlan) (id : Nat) (node : Node) :
     Except String Unit :=
   match nodePolicy plan id with
   | some policy =>
-      if policy.reduction = .fixedLeft then
+      if policy.reduction = .fixed .leftFold then
         pure ()
       else
         throw (s!"numerical certificate: node {id} ({node.tag}) uses reduction " ++
-          s!"policy {repr policy.reduction}; fixedLeft is required by this transfer")
+          s!"policy {repr policy.reduction}; fixed .leftFold is required by this transfer")
   | none =>
       throw (s!"numerical certificate: node {id} ({node.tag}) has no backend " ++
         "numerical policy")
@@ -346,9 +346,10 @@ def hullContract (op : String) : RangeTransfer := fun context id node =>
       pure (.hull (refs.map (·.node)), enclosure)
   | _ => throw (arityError op id node "inputs")
 
-/-- The reduction, window size and whether any padding is set, of a pooling operator. -/
+/-- The reduction, window size and whether any padding is set, of a pooling operator in the left
+fold. -/
 def poolParams? : Operator → Option (Tensor.PoolOp × Nat × Bool)
-  | ⟨_, _, @Op.pool s op dims kernel _ padLow padHigh _ _⟩ =>
+  | ⟨_, _, @Op.pool s op dims kernel _ padLow padHigh _ _ .leftFold⟩ =>
       some (op, (s.poolWindow dims kernel).size, padLow.any (· != 0) || padHigh.any (· != 0))
   | _ => none
 
@@ -399,14 +400,14 @@ def inverseContract : RangeTransfer := fun context id node =>
       pure (.inv r.node, Binary.Interval.inv enclosure)
   | _ => throw (arityError "reciprocal" id node "one input")
 
-/-- Sum (`Op.reduce .sum`) and mean (`Op.mean`) transfer over any dimensions: each output entry
-folds the entries of its fiber, whose count is the product of the extents of the listed
+/-- Sum (`Op.reduce .sum`) and mean (`Op.mean`) transfer in the left fold over any dimensions: each
+output entry folds the entries of its fiber, whose count is the product of the extents of the listed
 dimensions. -/
 def reductionContract (mean : Bool) : RangeTransfer := fun context id node => do
   let (r, count) <- match node, mean with
-    | .op ⟨_, _, @Op.reduce s .sum dims _ _⟩ #[r], false =>
+    | .op ⟨_, _, @Op.reduce s .sum dims _ _ .leftFold⟩ #[r], false =>
         pure (r, (s.selectAxes dims).size)
-    | .op ⟨_, _, @Op.mean s dims _⟩ #[r], true => pure (r, (s.selectAxes dims).size)
+    | .op ⟨_, _, @Op.mean s dims _ .leftFold⟩ #[r], true => pure (r, (s.selectAxes dims).size)
     | _, _ => throw s!"numerical certificate: node {id} is not a fixed-left reduction"
   let input <- parentRange context.ranges r
   if mean then
@@ -416,27 +417,28 @@ def reductionContract (mean : Bool) : RangeTransfer := fun context id node => do
   else
     pure (.sumLeft r.node count, sumLeftRange count input)
 
-/-- Matrix multiplication transfer using the selected fixed-left accumulation schedule over the
-operator's inner extent. -/
+/-- Matrix multiplication transfer in the left fold, using the selected fixed-left accumulation
+schedule over the operator's inner extent. -/
 def matmulContract : RangeTransfer := fun context id node =>
   match node with
-  | .op ⟨_, _, @Op.matmul _ _ _ _ n _ _ _ _ _ _ _⟩ #[left, right] => do
+  | .op ⟨_, _, @Op.matmul _ _ _ _ n _ _ _ _ _ _ _ .leftFold⟩ #[left, right] => do
       let a <- parentRange context.ranges left
       let b <- parentRange context.ranges right
       let product := Binary.Interval.mul a b
       pure (.matmulLeft left.node right.node n, sumLeftRange n product)
   | _ => throw (arityError "matrix multiplication" id node "two inputs")
 
-/-- Grouped contractions require the reference's checked fixed-left-or-exact policy. The transfer
-rejects nodes with an implementation-defined native schedule or with no numerical policy. -/
+/-- Grouped contractions in the left fold require the reference's checked fixed-left-or-exact policy
+(`fixedOrExact .leftFold`). The transfer rejects nodes with an implementation-defined native
+schedule or with no numerical policy. -/
 def scaledMatmulContract : RangeTransfer := fun context id node => do
   match nodePolicy context.plan id with
   | some policy =>
-      unless policy.reduction == .fixedLeftOrExact do
-        throw s!"numerical certificate: node {id}: fixedLeftOrExact is required"
+      unless policy.reduction == .fixedOrExact .leftFold do
+        throw s!"numerical certificate: node {id}: fixedOrExact .leftFold is required"
   | none => throw s!"numerical certificate: node {id}: missing numerical policy"
   match node with
-  | .op ⟨_, _, @Op.scaledMatmul _ _ _ _ n _ _ _ _ _ _ _⟩ #[left, right, scale] => do
+  | .op ⟨_, _, @Op.scaledMatmul _ _ _ _ n _ _ _ _ _ _ _ .leftFold⟩ #[left, right, scale] => do
       let a ← parentRange context.ranges left
       let b ← parentRange context.ranges right
       let c ← parentRange context.ranges scale
@@ -544,7 +546,8 @@ def boundedUnaryContract (op : String) (rule : Nat -> RangeRule)
 
 /-- The range transfer of a node, read off its constructor of `TorchLean.Op`: the source transfer
 for a range source, one transfer per supported operator, grouped by operation semantics and never
-by architecture, and `none` for an operator without one. -/
+by architecture, and `none` for an operator without one. A reduction in an order other than the
+left fold has none. -/
 def rangeTransfer? : Node → Option RangeTransfer
   | .input .. | .const _ => some sourceContract
   | .op ⟨_, _, .randUniform _⟩ _ | .op ⟨_, _, .bernoulliMask _⟩ _ => some sourceContract
@@ -553,7 +556,7 @@ def rangeTransfer? : Node → Option RangeTransfer
   | .op ⟨_, _, .broadcast ..⟩ _ => some (preserveTransfer "broadcast")
   | .op ⟨_, _, .reshape ..⟩ _ => some (preserveTransfer "reshape")
   | .op ⟨_, _, .slice ..⟩ _ => some (preserveTransfer "slice")
-  | .op ⟨_, _, .pool ..⟩ _ => some poolContract
+  | .op ⟨_, _, .pool (order := .leftFold) ..⟩ _ => some poolContract
   | .op ⟨_, _, .add ..⟩ _ => some (binaryContract "add" .add Binary.Interval.add)
   | .op ⟨_, _, .sub ..⟩ _ => some (binaryContract "sub" .sub Binary.Interval.sub)
   | .op ⟨_, _, .mul ..⟩ _ => some (binaryContract "mul" .mul Binary.Interval.mul)
@@ -561,10 +564,10 @@ def rangeTransfer? : Node → Option RangeTransfer
   | .op ⟨_, _, .max ..⟩ _ => some (hullContract "max")
   | .op ⟨_, _, .min ..⟩ _ => some (hullContract "min")
   | .op ⟨_, _, .cat ..⟩ _ => some (hullContract "cat")
-  | .op ⟨_, _, .reduce ..⟩ _ => some (reductionContract false)
-  | .op ⟨_, _, .mean ..⟩ _ => some (reductionContract true)
-  | .op ⟨_, _, .matmul ..⟩ _ => some matmulContract
-  | .op ⟨_, _, .scaledMatmul ..⟩ _ => some scaledMatmulContract
+  | .op ⟨_, _, .reduce (order := .leftFold) ..⟩ _ => some (reductionContract false)
+  | .op ⟨_, _, .mean (order := .leftFold) ..⟩ _ => some (reductionContract true)
+  | .op ⟨_, _, .matmul (order := .leftFold) ..⟩ _ => some matmulContract
+  | .op ⟨_, _, .scaledMatmul (order := .leftFold) ..⟩ _ => some scaledMatmulContract
   | .op ⟨_, _, .mseLoss ..⟩ _ => some mseContract
   | .op ⟨_, _, .layerNorm ..⟩ _ => some layerNormContract
   | .op ⟨_, _, .softmax ..⟩ _ => some softmaxContract
@@ -580,12 +583,14 @@ def rangeTransfer? : Node → Option RangeTransfer
   | .op _ _ => none
 
 /-- Whether a node counts as a reduction folded from the left: matrix products, every `Op.reduce`
-(only the sum has a transfer), means, average pooling, mean squared error and LayerNorm.
+(only the sum has a transfer), means and average pooling, each in the left fold, mean squared error
+and LayerNorm.
 `deriveNodeRange` admits such a node only after `fixedLeftGuard` accepts its selected
 capsule. -/
 def fixedLeftNode : Node → Bool
-  | .op ⟨_, _, .matmul ..⟩ _ | .op ⟨_, _, .reduce ..⟩ _ | .op ⟨_, _, .mean ..⟩ _
-  | .op ⟨_, _, .pool (.avg _) ..⟩ _ | .op ⟨_, _, .mseLoss ..⟩ _
+  | .op ⟨_, _, .matmul (order := .leftFold) ..⟩ _ | .op ⟨_, _, .reduce (order := .leftFold) ..⟩ _
+  | .op ⟨_, _, .mean (order := .leftFold) ..⟩ _
+  | .op ⟨_, _, .pool (.avg _) (order := .leftFold) ..⟩ _ | .op ⟨_, _, .mseLoss ..⟩ _
   | .op ⟨_, _, .layerNorm ..⟩ _ => true
   | _ => false
 

@@ -162,7 +162,7 @@ theorem boxReLU_encloses {x : FlatBox α} {n : Nat} {f : Nat → ℝ}
 
 /-- If `enclose` satisfies `UnaryEnclosure F` and `boxUnaryEnclosure? enclose`, which applies it
 coordinatewise, returns a box, that box encloses the image of `f` under `F`. -/
-theorem boxUnaryEnclosure?_encloses [NonlinearBoundOps α]
+theorem boxUnaryEnclosure?_encloses
     {F : ℝ → ℝ} {enclose : α → α → Option (α × α)} (hF : UnaryEnclosure F enclose)
     {x box : FlatBox α} {n : Nat} {f : Nat → ℝ}
     (hx : RowEncloses x n f) (hbox : boxUnaryEnclosure? enclose x = some box) :
@@ -359,13 +359,6 @@ theorem get2_map_toReal {m n : Nat} (W : Tensor α [m, n]) (i : Fin m) (j : Fin 
     Tensor.get2 (Tensor.map value W) i j = value (Tensor.get2 W i j) := by
   simp [Tensor.get2, Tensor.getScalar, Tensor.item]
 
-/-- Over `ℝ`, `MathFunctions.sqrt (max z 0)` is `Real.sqrt z`. -/
-theorem _root_.TorchLean.MathFunctions.sqrt_max_zero (z : ℝ) :
-    MathFunctions.sqrt (max z 0) = Real.sqrt z := by
-  rw [MathFunctions.sqrt_real]
-  rcases le_total z 0 with h | h
-  · rw [max_eq_right h, Real.sqrt_zero, Real.sqrt_eq_zero'.mpr h]
-  · rw [max_eq_left h]
 
 end
 

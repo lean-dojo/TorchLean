@@ -91,8 +91,8 @@ theorem CtxVec.toVec_getTensorCLM {Γ : List Shape} {s : Shape} (idx : Idx Γ s)
 
 /-- A condition holds at every entry of the tensor read from a flattened context exactly when it
 holds at every coordinate of the block read from it. -/
-theorem CtxVec.forall_getTensorCLM_iff {Γ : List Shape} {s : Shape} (idx : Idx Γ s)
-    (x : CtxVec Γ) (P : ℝ → Prop) :
+theorem CtxVec.forall_getTensorCLM_iff {Γ : List Shape} {s : Shape} {idx : Idx Γ s}
+    {x : CtxVec Γ} {P : ℝ → Prop} :
     (∀ c, P (CtxVec.getTensorCLM idx x c)) ↔ ∀ i, P (CtxVec.get idx x i) := by
   rw [(Shape.Coord.equivFin s).forall_congr_left]
   simp only [← toVec_apply, CtxVec.toVec_getTensorCLM]

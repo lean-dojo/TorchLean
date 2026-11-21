@@ -70,6 +70,44 @@
 
   function highlightAll() {
     document.querySelectorAll("pre code.language-lean, .language-lean pre code").forEach(highlight);
+    document.querySelectorAll("main pre:not([class])").forEach(highlightRaw);
+  }
+
+  const rawKeywords = new Set((
+    "as assert await break class continue def del elif else except finally for from global if " +
+    "import in is lambda nonlocal pass raise return try while with yield True False None " +
+    "lake git python python3 curl bash export echo cd lean torchlean verify " +
+    "abbrev axiom by calc class def deriving do end example fun have if import in inductive " +
+    "instance let match namespace open partial private return section structure theorem then where with"
+  ).split(/\s+/));
+
+  // Verso's ordinary fences render as bare <pre> elements. They are useful for
+  // incomplete signatures and Python transcripts that cannot be Lean-elaborated.
+  function highlightRaw(pre) {
+    if (pre.dataset.tlHighlighted || pre.querySelector("code")) return;
+    const source = pre.textContent;
+    const code = document.createElement("code");
+    code.className = "tl-raw-code";
+    const tokens = /(?:--|\/\/|#(?!check\b|eval\b|print\b|guard\b))[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:0[xX][\da-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|[#]?[\p{L}_][\p{L}\p{N}_'!?]*/gu;
+    let cursor = 0;
+    for (const match of source.matchAll(tokens)) {
+      const start = match.index;
+      if (start > cursor) code.append(document.createTextNode(source.slice(cursor, start)));
+      const value = match[0];
+      let kind = "";
+      if (value.startsWith("--") || value.startsWith("//") || value.startsWith("# ")) kind = "comment";
+      else if (value.startsWith('"') || value.startsWith("'")) kind = "string";
+      else if (/^(?:0[xX]|\d)/.test(value)) kind = "number";
+      else if (rawKeywords.has(value) || keywords.has(value)) kind = "keyword";
+      else if (/^[\p{Lu}ℕℤℚℝℂ]/u.test(value)) kind = "type";
+      const node = kind ? document.createElement("span") : document.createTextNode(value);
+      if (kind) { node.className = "tl-raw-" + kind; node.textContent = value; }
+      code.append(node);
+      cursor = start + value.length;
+    }
+    if (cursor < source.length) code.append(document.createTextNode(source.slice(cursor)));
+    pre.replaceChildren(code);
+    pre.dataset.tlHighlighted = "true";
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", highlightAll);
   else highlightAll();

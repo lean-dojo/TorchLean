@@ -14,6 +14,7 @@ public import FloatLib.Floats.Formats.BinaryInterchange.Algebraic.Rounding.SqrtR
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Algebraic.Runtime
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Operations.Runtime
 public import FloatLib.Floats.Formats.BinaryInterchange.Configured.CorrectlyRounded
+public import FloatLib.Floats.Formats.BinaryInterchange.Configured.Expm1x
 
 /-!
 # `Context α`: the scalar interface for models and proofs
@@ -168,6 +169,11 @@ class Context (α : Type) extends
   expm1 : α → α :=
     letI : DecidableRel ((· > ·) : α → α → Prop) := decidableGT
     Numeric.expm1
+  /-- `exp x - 1 - x`, about `x ^ 2 / 2` near zero. Configured IEEE formats and the native `Float`
+  and `Float32` contexts round it once with FloatLib's `expm1x`. The default `expm1 x - x` loses
+  relative accuracy as `|x|` shrinks, because the result is about `|x| / 2` times either term.
+  Differentiation carriers supply its chain rule, the tangent `expm1 x * x'`. -/
+  expm1x : α → α := fun x => expm1 x - x
   /-- `exp x * w`. Differentiation carriers use it for the tangents of `exp` and `expm1`, and
   `Op.exp` and `Op.expm1` for their pullbacks. The default multiplies the rounded exponential. A
   backend that rounds the product once keeps it finite when `exp x` alone overflows, and zero when
@@ -270,12 +276,40 @@ class NextAfter (α : Type) where
   /-- The neighbour of the first operand toward the second. -/
   nextafter : α → α → α
 
+/-- C's `frexp` and `ldexp` (C99 7.12.6.4 and 7.12.6.6, WG14 N1256), for scalar types with a
+binary exponent. -/
+class Frexp (α : Type) where
+  /-- The mantissa `m` and the exponent `e` of `x = m 2ᵉ` with `1/2 ≤ |m| < 1`, and the exponent
+  `0` at a zero, an infinity or a NaN, with the mantissa `x` at a zero or an infinity and a quiet
+  NaN at a NaN, as `torch.frexp` returns them. -/
+  frexp : α → α × ℤ
+  /-- `x 2ⁿ`, rounded once in a binary format. -/
+  ldexp : α → ℤ → α
+
+/-- IEEE 754-2019's `fusedMultiplyAdd` (5.4.1), C99's `fma` (7.12.13.1, WG14 N1256), for scalar
+types that have it: `x × y + z` computed as if with unbounded range and precision and rounded once
+to the format, so no rounding, overflow or underflow of the product alone. -/
+class Fma (α : Type) where
+  /-- `x × y + z`, rounded once. -/
+  fma : α → α → α → α
+
 /-- The interchange word of a binary floating-point scalar (IEEE 754-2019 3.4) where every word of
 `TorchLean.Numeric.Word.width α` bits is the word of one value, NaN payloads and signaling NaNs
 included. -/
 class Bits (α : Type) extends Numeric.Word α where
   /-- A word is the word of its value. -/
   toBits_ofBits : ∀ b, toBits (ofBits b) = b
+
+/-- An instance of `C α` where the scalar type has one, for the capabilities above that the
+operators read (`TorchLean.Tensor.Op.Capability`), and `none` otherwise. A scalar type whose
+formats differ in a capability decides it from the format. -/
+class Op.Capability (C : Type → Type) (α : Type) where
+  /-- The instance, or `none`. -/
+  get? : Option (C α)
+
+/-- The low-priority fallback, `none`, for a scalar type without the capability. -/
+instance (priority := low) Op.Capability.absent {C : Type → Type} {α : Type} :
+    Op.Capability C α := ⟨none⟩
 
 namespace Context
 
@@ -480,6 +514,9 @@ end Numeric.HostFloat
       (FloatLib.Floats.ExecFloat.Binary.CorrectlyRounded.expMul
         (FloatLib.Floats.ExecFloat.Binary.ofFloat x : FloatLib.Floats.Binary64)
         (FloatLib.Floats.ExecFloat.Binary.ofFloat w))
+  expm1x x := FloatLib.Floats.ExecFloat.Binary.toFloat
+    (FloatLib.Floats.ExecFloat.Binary.CorrectlyRounded.expm1x
+      (FloatLib.Floats.ExecFloat.Binary.ofFloat x : FloatLib.Floats.Binary64))
   isNaN := Float.isNaN
   isInf := Float.isInf
   tan := Float.tan
@@ -508,6 +545,9 @@ end Numeric.HostFloat
       (FloatLib.Floats.ExecFloat.Binary.CorrectlyRounded.expMul
         (FloatLib.Floats.ExecFloat.Binary.ofFloat32 x : FloatLib.Floats.Binary32)
         (FloatLib.Floats.ExecFloat.Binary.ofFloat32 w))
+  expm1x x := FloatLib.Floats.ExecFloat.Binary.toFloat32
+    (FloatLib.Floats.ExecFloat.Binary.CorrectlyRounded.expm1x
+      (FloatLib.Floats.ExecFloat.Binary.ofFloat32 x : FloatLib.Floats.Binary32))
   isNaN := Float32.isNaN
   isInf := Float32.isInf
   tan := Float32.tan
@@ -523,6 +563,13 @@ instance : Rounding Float := Numeric.HostFloat.rounding
 
 /-- `Rounding` for `Float32`: `TorchLean.Numeric.HostFloat.rounding`. -/
 instance : Rounding Float32 := Numeric.HostFloat.rounding
+
+/-- `Fma` for `Float`: core's `Float.fma`, compiled to C's `fma` (C99 7.12.13.1, WG14 N1256),
+which rounds `x × y + z` once. -/
+instance : Fma Float := ⟨Float.fma⟩
+
+/-- `Fma` for `Float32`: core's `Float32.fma`, compiled to C's `fmaf` (C99 7.12.13.1). -/
+instance : Fma Float32 := ⟨Float32.fma⟩
 
 end TorchLean
 

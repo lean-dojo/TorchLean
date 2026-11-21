@@ -46,7 +46,7 @@ pairing `sum (dL/dre * direction.re + dL/dim * direction.im)`. The result is the
 `(value, tangent)`, as from PyTorch's `torch.func.jvp`.
 -/
 def jvp {shapes : List Shape} (objective : Objective shapes)
-    {α : Type} [Storage α] [Context α] [InverseTrig α]
+    {α : Type} [Context α] [InverseTrig α]
     (state direction : TensorPack (Complex α) shapes) : IO (α × α) := do
   let seeded : TensorPack (Complex (Dual α)) shapes :=
     state.zipWith (fun parameter tangent =>

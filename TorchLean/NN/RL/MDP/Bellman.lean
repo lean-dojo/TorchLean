@@ -75,11 +75,11 @@ section SupDist
 variable {S : Type}
 
 /-- Sup distance on value functions, using `sSup` over pointwise absolute differences. -/
-noncomputable def valueSupDist [Nonempty S] (values₁ values₂ : ValueFunction S) : ℝ :=
+noncomputable def valueSupDist (values₁ values₂ : ValueFunction S) : ℝ :=
   sSup (Set.range fun s => |values₁ s - values₂ s|)
 
 /-- If the pointwise absolute differences are bounded above, each is at most the sup distance. -/
-theorem abs_sub_le_valueSupDist [Nonempty S]
+theorem abs_sub_le_valueSupDist
     (values₁ values₂ : ValueFunction S)
     (hBdd : BddAbove (Set.range fun s => |values₁ s - values₂ s|))
     (state : S) :
@@ -87,20 +87,20 @@ theorem abs_sub_le_valueSupDist [Nonempty S]
   le_csSup hBdd ⟨state, rfl⟩
 
 /-- The sup distance is nonnegative. -/
-theorem valueSupDist_nonneg [Nonempty S] (values₁ values₂ : ValueFunction S) :
+theorem valueSupDist_nonneg (values₁ values₂ : ValueFunction S) :
     0 ≤ valueSupDist values₁ values₂ :=
   Real.sSup_nonneg (Set.forall_mem_range.2 fun _ => abs_nonneg _)
 
-/-- A uniform bound on pointwise differences bounds the sup distance. -/
-theorem valueSupDist_le [Nonempty S] {values₁ values₂ : ValueFunction S} {bound : ℝ}
-    (h : ∀ state, |values₁ state - values₂ state| ≤ bound) :
+/-- A nonnegative uniform bound on pointwise differences bounds the sup distance. -/
+theorem valueSupDist_le {values₁ values₂ : ValueFunction S} {bound : ℝ}
+    (h : ∀ state, |values₁ state - values₂ state| ≤ bound) (hbound : 0 ≤ bound) :
     valueSupDist values₁ values₂ ≤ bound :=
-  csSup_le (Set.range_nonempty _) (Set.forall_mem_range.2 h)
+  Real.sSup_le (Set.forall_mem_range.2 h) hbound
 
 /-- On a finite state space `valueSupDist` is Mathlib's sup distance on `S → ℝ`. -/
-theorem valueSupDist_eq_dist [Fintype S] [Nonempty S] (values₁ values₂ : ValueFunction S) :
+theorem valueSupDist_eq_dist [Fintype S] (values₁ values₂ : ValueFunction S) :
     valueSupDist values₁ values₂ = dist values₁ values₂ :=
-  le_antisymm (valueSupDist_le fun state => dist_le_pi_dist values₁ values₂ state)
+  le_antisymm (valueSupDist_le (fun state => dist_le_pi_dist values₁ values₂ state) dist_nonneg)
     ((dist_pi_le_iff (valueSupDist_nonneg values₁ values₂)).2 fun state =>
       abs_sub_le_valueSupDist values₁ values₂ (Set.finite_range _).bddAbove state)
 
@@ -121,8 +121,7 @@ For bounded value functions, `valueSupDist = 0` iff they are equal.
 The boundedness hypotheses matter because `valueSupDist` is an `sSup`: in Mathlib the `sSup` of a
 set of reals that is not bounded above is `0`, so without them the forward direction fails.
 -/
-theorem valueSupDist_eq_zero_iff [Nonempty S]
-    (values₁ values₂ : ValueFunction S)
+theorem valueSupDist_eq_zero_iff {values₁ values₂ : ValueFunction S}
     (hBdd₁ : BddAbove (Set.range fun s => |values₁ s|))
     (hBdd₂ : BddAbove (Set.range fun s => |values₂ s|)) :
     valueSupDist values₁ values₂ = 0 ↔ values₁ = values₂ := by
@@ -130,18 +129,19 @@ theorem valueSupDist_eq_zero_iff [Nonempty S]
   · simpa [h0] using abs_sub_le_valueSupDist values₁ values₂
       (bddAbove_abs_sub values₁ values₂ hBdd₁ hBdd₂) state
   · subst h
-    simp [valueSupDist]
+    exact le_antisymm (Real.sSup_nonpos (Set.forall_mem_range.2 fun _ => by simp))
+      (valueSupDist_nonneg _ _)
 
 /-- Two bounded fixed points of `T` are equal when `T` shrinks their `valueSupDist` by a factor
 `γ < 1`. -/
-private theorem fixedPoint_unique [Nonempty S] {T : ValueFunction S → ValueFunction S} {γ : ℝ}
+private theorem fixedPoint_unique {T : ValueFunction S → ValueFunction S} {γ : ℝ}
     (hγ : γ < 1) {v w : ValueFunction S} (hv : T v = v) (hw : T w = w)
     (hBddV : BddAbove (Set.range fun s => |v s|))
     (hBddW : BddAbove (Set.range fun s => |w s|))
     (hT : valueSupDist (T v) (T w) ≤ γ * valueSupDist v w) :
     v = w := by
   rw [hv, hw] at hT
-  exact (valueSupDist_eq_zero_iff v w hBddV hBddW).1
+  exact (valueSupDist_eq_zero_iff hBddV hBddW).1
     (eq_zero_of_le_mul hγ (valueSupDist_nonneg v w) hT)
 
 end SupDist
@@ -184,7 +184,7 @@ private instance : CompleteSpace (BddMeas S) := isClosed_measurable.isComplete.c
 
 private instance : Nonempty (BddMeas S) := ⟨⟨0, by rw [lp.coeFn_zero]; exact measurable_const⟩⟩
 
-private theorem dist_eq_valueSupDist [Nonempty S] (f g : BddMeas S) :
+private theorem dist_eq_valueSupDist (f g : BddMeas S) :
     dist f g = valueSupDist (f.1 : S → ℝ) g.1 := by
   simp [Subtype.dist_eq, dist_eq_norm, lp.norm_eq_ciSup, valueSupDist, iSup, Real.norm_eq_abs]
 
@@ -197,7 +197,7 @@ private def BddMeas.mk (v : ValueFunction S) (hv : IsBddMeas v) : BddMeas S :=
 
 /-- `T` keeps bounded measurable value functions bounded and measurable and, on them, contracts
 `valueSupDist` by the factor `γ ∈ [0, 1)`. -/
-structure BddContraction [Nonempty S] (γ : ℝ) (T : ValueFunction S → ValueFunction S) :
+structure BddContraction (γ : ℝ) (T : ValueFunction S → ValueFunction S) :
     Prop where
   /-- The factor is nonnegative. -/
   nonneg : 0 ≤ γ
@@ -211,7 +211,7 @@ structure BddContraction [Nonempty S] (γ : ℝ) (T : ValueFunction S → ValueF
 
 namespace BddContraction
 
-variable [Nonempty S] {γ : ℝ} {T : ValueFunction S → ValueFunction S}
+variable {γ : ℝ} {T : ValueFunction S → ValueFunction S}
 
 /-- `T` on `BddMeas S`. -/
 private def onBddMeas (h : BddContraction γ T) (f : BddMeas S) : BddMeas S :=
@@ -323,7 +323,7 @@ variable {S A : Type} [MeasurableSpace S] [MeasurableSpace A]
 
 /-- For a Markov kernel, the expected next values of two bounded measurable value functions differ
 by at most their sup distance. -/
-theorem expectedNextValue_abs_sub_le [Nonempty S]
+theorem expectedNextValue_abs_sub_le
     (mdp : MDP S A)
     [IsMarkovKernel mdp.transition]
     (values₁ values₂ : ValueFunction S)
@@ -360,7 +360,7 @@ theorem expectedNextValue_abs_sub_le [Nonempty S]
 
 /-- For a Markov kernel and a nonnegative discount, Bellman state-action values are Lipschitz with
 constant `γ` in the sup metric. -/
-theorem actionValue_abs_sub_le [Nonempty S]
+theorem actionValue_abs_sub_le
     (mdp : MDP S A)
     [IsMarkovKernel mdp.transition]
     (hγ₀ : 0 ≤ mdp.discount)
@@ -380,7 +380,7 @@ theorem actionValue_abs_sub_le [Nonempty S]
 is a `γ`-contraction in the sup metric:
 
 `valueSupDist (T^π values₁) (T^π values₂) ≤ γ * valueSupDist values₁ values₂`. -/
-theorem bellmanPolicy_contraction [Nonempty S]
+theorem bellmanPolicy_contraction
     (mdp : MDP S A)
     [IsMarkovKernel mdp.transition]
     (hγ₀ : 0 ≤ mdp.discount)
@@ -392,13 +392,13 @@ theorem bellmanPolicy_contraction [Nonempty S]
     (hBdd₂ : BddAbove (Set.range fun s => |values₂ s|)) :
     valueSupDist (bellmanPolicy mdp policy values₁) (bellmanPolicy mdp policy values₂)
       ≤ mdp.discount * valueSupDist values₁ values₂ :=
-  valueSupDist_le fun state =>
+  valueSupDist_le (fun state =>
     actionValue_abs_sub_le mdp hγ₀ values₁ values₂ hMeas₁ hMeas₂ hBdd₁ hBdd₂ state
-      (policy state)
+      (policy state)) (mul_nonneg hγ₀ (valueSupDist_nonneg _ _))
 
 /-- For a Markov kernel and a nonnegative discount, at a fixed state, Bellman optimality is a
 contraction with modulus `γ` (finite action space). -/
-theorem bellmanMax_abs_sub_le [Nonempty S]
+theorem bellmanMax_abs_sub_le
     (mdp : MDP S A)
     [IsMarkovKernel mdp.transition]
     (hγ₀ : 0 ≤ mdp.discount)
@@ -418,7 +418,7 @@ theorem bellmanMax_abs_sub_le [Nonempty S]
 sup metric (finite action space):
 
 `valueSupDist (T* values₁) (T* values₂) ≤ γ * valueSupDist values₁ values₂`. -/
-theorem bellmanMax_contraction [Nonempty S]
+theorem bellmanMax_contraction
     (mdp : MDP S A)
     [IsMarkovKernel mdp.transition]
     (hγ₀ : 0 ≤ mdp.discount)
@@ -430,8 +430,8 @@ theorem bellmanMax_contraction [Nonempty S]
     (hBdd₂ : BddAbove (Set.range fun s => |values₂ s|)) :
     valueSupDist (bellmanMax mdp values₁) (bellmanMax mdp values₂)
       ≤ mdp.discount * valueSupDist values₁ values₂ :=
-  valueSupDist_le
-    (bellmanMax_abs_sub_le mdp hγ₀ values₁ values₂ hMeas₁ hMeas₂ hBdd₁ hBdd₂)
+  valueSupDist_le (bellmanMax_abs_sub_le mdp hγ₀ values₁ values₂ hMeas₁ hMeas₂ hBdd₁ hBdd₂)
+    (mul_nonneg hγ₀ (valueSupDist_nonneg _ _))
 
 /-!
 ## Fixed Point Uniqueness
@@ -447,7 +447,7 @@ section FixedPoints
 If the Bellman expectation operator for a fixed deterministic policy has a fixed point, it is
 unique (among bounded measurable value functions).
 -/
-theorem bellmanPolicy_fixedPoint_unique [Nonempty S]
+theorem bellmanPolicy_fixedPoint_unique
     (mdp : MDP S A)
     (valid : Valid (S := S) (A := A) mdp)
     (policy : Policy S A)
@@ -467,7 +467,7 @@ theorem bellmanPolicy_fixedPoint_unique [Nonempty S]
 If the Bellman optimality operator has a fixed point, it is unique among bounded measurable value
 functions (finite action space).
 -/
-theorem bellmanMax_fixedPoint_unique [Nonempty S]
+theorem bellmanMax_fixedPoint_unique
     (mdp : MDP S A)
     (valid : Valid (S := S) (A := A) mdp)
     [Fintype A] [Nonempty A]
@@ -506,13 +506,13 @@ private theorem measurable_actionValue (mdp : MDP S A) (valid : Valid (S := S) (
   exact Measurable.ite hTerminal valid.measurable_reward
     (valid.measurable_reward.add (measurable_const.mul hE))
 
-private theorem abs_actionValue_le [Nonempty S] (mdp : MDP S A)
+private theorem abs_actionValue_le (mdp : MDP S A)
     (valid : Valid (S := S) (A := A) mdp)
     {v : ValueFunction S} {R B : ℝ} (hR : ∀ s a, |mdp.reward s a| ≤ R) (hB : ∀ s, |v s| ≤ B)
     (s : S) (a : A) :
     |actionValue mdp v s a| ≤ R + mdp.discount * B := by
   have : IsMarkovKernel mdp.transition := valid.isMarkov
-  have hB0 : 0 ≤ B := (abs_nonneg _).trans (hB (Classical.arbitrary S))
+  have hB0 : 0 ≤ B := (abs_nonneg _).trans (hB s)
   have hE : |expectedNextValue mdp v s a| ≤ B := by
     simpa [expectedNextValue, transitionMeasure] using
       norm_integral_le_of_norm_le_const (μ := mdp.transition (s, a))
@@ -533,7 +533,7 @@ private theorem bddAbove_of_abs_le {v : ValueFunction S} {C : ℝ} (h : ∀ s, |
 
 /-- For a valid MDP with bounded rewards and a measurable policy, policy evaluation is a
 `BddContraction` with factor `γ`. -/
-theorem bellmanPolicy_bddContraction [Nonempty S]
+theorem bellmanPolicy_bddContraction
     (mdp : MDP S A) (valid : Valid (S := S) (A := A) mdp)
     (policy : Policy S A) (hPolicy : Measurable policy)
     {R : ℝ} (hR : ∀ s a, |mdp.reward s a| ≤ R) :
@@ -549,7 +549,7 @@ theorem bellmanPolicy_bddContraction [Nonempty S]
 
 /-- For a valid MDP with bounded rewards and a finite nonempty action space, Bellman optimality is
 a `BddContraction` with factor `γ`. -/
-theorem bellmanMax_bddContraction [Nonempty S]
+theorem bellmanMax_bddContraction
     (mdp : MDP S A) (valid : Valid (S := S) (A := A) mdp)
     [Fintype A] [Nonempty A]
     {R : ℝ} (hR : ∀ s a, |mdp.reward s a| ≤ R) :
@@ -573,7 +573,7 @@ theorem bellmanMax_bddContraction [Nonempty S]
 
 /-- For bounded rewards and a measurable policy, policy evaluation has exactly one bounded
 measurable fixed point. -/
-theorem bellmanPolicy_existsUnique_fixedPoint [Nonempty S]
+theorem bellmanPolicy_existsUnique_fixedPoint
     (mdp : MDP S A) (valid : Valid (S := S) (A := A) mdp)
     (policy : Policy S A) (hPolicy : Measurable policy)
     {R : ℝ} (hR : ∀ s a, |mdp.reward s a| ≤ R) :
@@ -583,7 +583,7 @@ theorem bellmanPolicy_existsUnique_fixedPoint [Nonempty S]
 
 /-- For bounded rewards and a finite action space, Bellman optimality has exactly one bounded
 measurable fixed point. -/
-theorem bellmanMax_existsUnique_fixedPoint [Nonempty S]
+theorem bellmanMax_existsUnique_fixedPoint
     (mdp : MDP S A) (valid : Valid (S := S) (A := A) mdp)
     [Fintype A] [Nonempty A]
     {R : ℝ} (hR : ∀ s a, |mdp.reward s a| ≤ R) :
@@ -593,7 +593,7 @@ theorem bellmanMax_existsUnique_fixedPoint [Nonempty S]
 
 /-- For bounded rewards and a finite action space, value iteration converges to the bounded
 measurable fixed point of Bellman optimality from every bounded measurable start. -/
-theorem tendsto_iterate_bellmanMax [Nonempty S]
+theorem tendsto_iterate_bellmanMax
     (mdp : MDP S A) (valid : Valid (S := S) (A := A) mdp)
     [Fintype A] [Nonempty A]
     {R : ℝ} (hR : ∀ s a, |mdp.reward s a| ≤ R)

@@ -139,32 +139,32 @@ def _preserve_random_state():
 
 def _lower_pytorch_graph(model: Any, graph: Any, input_names: Sequence[str], *,
                          tensor_values: Mapping[str, Any] | None = None,
-                         signature: Any = None,
-                         checker: str | Path | Sequence[str] | None = None
+                         signature: Any = None, example_tensors: Sequence[Any] = (),
+                         checker: str | Path | Sequence[str] | None = None,
+                         dialect: str | None = None
                          ) -> tuple[dict[str, Any], list[str]]:
     """Return the capture document of the PyTorch graph ``graph`` and the buffers it updates.
 
     ``tensor_values`` maps lifted placeholders to their tensors, and ``signature`` is the graph
-    signature of an exported program (None for an FX graph, which updates no buffer). The records
-    follow the op table of ``checker``, a checker as in ``verify``.
+    signature of an exported program (None for an FX graph, which updates no buffer). ``dialect``
+    is the exported program's (``"TRAINING"`` for ``torch.export.export``, ``"ATEN"`` after
+    ``run_decompositions``), None for an FX graph. The records follow the op table of
+    ``checker``, a checker as in ``verify``.
     """
-    import torch
+    from . import _fx, _hop, _structure, export
+    from ._graph import _DIALECT, _capture_state, _check_graph_operators, _mode_refusal
 
-    from . import _fx, _structure, export
-    from ._graph import _LOCK, _check_graph_operators, _reset
-
-    with _LOCK:
-        _reset(signature, checker)
+    with _capture_state(signature, checker):
+        _DIALECT[0] = dialect
         _fx._TENSOR_VALUES.update(tensor_values or {})
-        for node in graph.nodes:
-            if node.op == "get_attr":
-                value = model
-                for part in str(node.target).split("."):
-                    value = getattr(value, part)
-                if isinstance(value, torch.Tensor):
-                    _fx._TENSOR_VALUES[node.name] = value
+        # Mode regions may own submodules outside the model; refuse them before reading attrs.
+        mode_refusal = _mode_refusal(graph)
+        if mode_refusal is not None:
+            raise NotImplementedError(mode_refusal)
+        _fx._TENSOR_VALUES.update(_hop.tensor_attributes(graph, model))
         _check_graph_operators(graph, model)
-        return export._document(model, graph, list(input_names)), _structure._updated_buffers()
+        document = export._document(model, graph, input_names, example_tensors=example_tensors)
+        return document, _structure._updated_buffers()
 
 
 def _capture(model: Any, examples: tuple[Any, ...], frontend: str, checks: Sequence[str], *,
@@ -185,7 +185,8 @@ def _capture(model: Any, examples: tuple[Any, ...], frontend: str, checks: Seque
         model = original.__get__(owner, type(owner)) if owner is not None else original
     if frontend == "jax":
         import jax
-        from .jaxpr import Unsupported, canonical, encode, lower, references
+        from .jaxpr import Unsupported, canonical, encode, lower
+        from ._jax_reference import reference_outputs
 
         leaves, structure = jax.tree.flatten(_copy((examples, kwargs), "arguments"))
         dynamic = [hasattr(value, "shape") and hasattr(value, "dtype") for value in leaves]
@@ -199,18 +200,21 @@ def _capture(model: Any, examples: tuple[Any, ...], frontend: str, checks: Seque
 
         try:
             with _preserve_random_state():
-                document = lower(jax.make_jaxpr(flattened)(*tensors), checker)
+                closed = jax.make_jaxpr(flattened)(*tensors)
+                document = lower(closed, checker)
                 if execute:
                     document["arguments"] = [encode(value) for value in tensors]
                 if compare:
-                    document.update(references(flattened, *tensors))
+                    document.update(reference_outputs(closed, tensors, flattened(*tensors)))
         except Unsupported as error:
             raise NotImplementedError(str(error)) from error
         return document
     import torch
 
     from . import _fx
+    from ._graph import _export_inputs
     from ._compiler import _capture_scope
+    from ._pytorch import copy_input, reference_inputs
 
     # Capture may execute code, so it runs on deep copies of the model and input. Other effects
     # of user Python code are outside this API.
@@ -228,37 +232,24 @@ def _capture(model: Any, examples: tuple[Any, ...], frontend: str, checks: Seque
 
         model = Function(model)
     memo: dict[int, Any] = {}
-    model = copy.deepcopy(model, memo)
     leaves, structure = torch.utils._pytree.tree_flatten((examples, kwargs))
     _check_static(leaves, [isinstance(value, torch.Tensor) for value in leaves], "PyTorch")
-    for value in leaves:
-        if isinstance(value, torch.Tensor) and id(value) not in memo:
-            # clone() compacts non-dense views and can change a layout-dependent
-            # branch. Tensor's deepcopy preserves strides and shared storage, and
-            # detaching first also accepts non-leaf arguments without their tape.
-            memo[id(value)] = copy.deepcopy(value.detach(), memo).requires_grad_(value.requires_grad)
-    tensors = [memo[id(value)] for value in leaves if isinstance(value, torch.Tensor)]
+    copied = [copy_input(value, memo) if isinstance(value, torch.Tensor) else value
+              for value in leaves]
+    tensors = [value for value in copied if isinstance(value, torch.Tensor)]
     if not tensors:
         raise NotImplementedError("PyTorch capture requires at least one tensor argument")
-    copied = [memo[id(value)] if isinstance(value, torch.Tensor) else value for value in leaves]
+    # A buffer can be a view or even the same tensor as an argument. Seed deepcopy
+    # with the tensor snapshots so the model and the example see the same aliases.
+    for tensor in (*model.parameters(), *model.buffers()):
+        if not torch.nn.parameter.is_lazy(tensor):
+            copy_input(tensor, memo)
+    model = copy.deepcopy(model, memo)
     examples, kwargs = torch.utils._pytree.tree_unflatten(copied, structure)
     devices = list(range(torch.cuda.device_count())) if torch.cuda.is_initialized() else []
     with _capture_scope(), _preserve_random_state(), torch.random.fork_rng(devices=devices):
         exported = torch.export.export(model, examples, kwargs=kwargs)
-        names = []
-        tensor_values = {}
-        state = dict(exported.state_dict)
-        constants = dict(exported.constants)
-        for input_spec in exported.graph_signature.input_specs:
-            if input_spec.kind.name == "USER_INPUT":
-                if isinstance(input_spec.arg, torch.export.graph_signature.TensorArgument):
-                    names.append(input_spec.arg.name)
-                elif not isinstance(input_spec.arg, torch.export.graph_signature.ConstantArgument):
-                    raise NotImplementedError("exported non-tensor dynamic inputs are unsupported")
-            else:
-                value = state.get(input_spec.target, constants.get(input_spec.target))
-                if isinstance(value, torch.Tensor):
-                    tensor_values[input_spec.arg.name] = value
+        names, tensor_values = _export_inputs(exported)
         if len(names) != len(tensors):
             raise NotImplementedError(
                 "exported tensor input order does not match the example pytree")
@@ -266,19 +257,14 @@ def _capture(model: Any, examples: tuple[Any, ...], frontend: str, checks: Seque
         document, updated = _lower_pytorch_graph(model, exported.graph, names,
                                                  tensor_values=tensor_values,
                                                  signature=exported.graph_signature,
-                                                 checker=checker)
-        # An input sharing storage with an updated buffer would see the update in eager
-        # execution, while the program reads the input as passed.
-        inputs = {value.untyped_storage().data_ptr() for value in tensors if value.numel()}
-        for name in updated:
-            value = tensor_values.get(name)
-            if isinstance(value, torch.Tensor) and value.numel() and \
-                    value.untyped_storage().data_ptr() in inputs:
-                raise NotImplementedError(f"the updated buffer {name} shares storage with an input")
+                                                 example_tensors=tensors,
+                                                 checker=checker,
+                                                 dialect=getattr(exported, "dialect", None))
         if execute:
             document["arguments"] = [_fx._tensor_value(value) for value in tensors]
         if compare:
-            with torch.no_grad():
+            # Use the capture's grad mode: a model can branch on torch.is_grad_enabled().
+            with reference_inputs([*tensors, *model.buffers()]):
                 outputs, _ = torch.utils._pytree.tree_flatten(model(*examples, **kwargs))
             if not all(isinstance(value, torch.Tensor) for value in outputs):
                 raise ValueError("sample comparison requires tensor outputs")
@@ -331,6 +317,45 @@ def _capture_module(document: Mapping[str, Any], name: str) -> str:
     # Json.parse is partial and cannot reduce in the kernel. Quote its data
     # constructors, decoding decimal literals without another float conversion.
     literal = _lean_json(document)
+    if "flow" not in document.get("artifact", {}):
+        kind = "Artifact"
+        decoded = "The typed program and constant words of the document's artifact."
+        paragraph = """\
+typed TorchLean IR program with the words of its constants. The constants, types, casts and
+input/output order belong to the same capture as the check report. The proofs below establish
+artifact decoding and `Program.check .reference`, the program's dependency, shape, type and
+interface checks. The report also validates the constant payload and `declared_types` through
+`IR.load`. Those load checks, frontend equivalence and kernel equivalence are not proved here."""
+        checked = '''/-- The captured typed program. -/
+def program : TorchLean.IR.Program := artifact.program
+
+/-- The program passes `Program.check` at the reference runtime. -/
+theorem program_checked : program.check .reference = .ok () := by
+  have success : (program.check .reference).toBool = true := by decide +kernel
+  cases h : program.check .reference with
+  | error message => simp [h, Except.toBool] at success
+  | ok value => rfl'''
+    else:
+        kind = "FlowArtifact"
+        decoded = "The flow of typed programs, their constant words and the fuel of the artifact."
+        paragraph = """\
+flow of typed TorchLean IR programs (`IR.FlowArtifact`) with the words of their constants. The
+constants, types, casts and input/output order belong to the same capture as the check report.
+The proofs below establish artifact decoding and `Program.check .reference` of the program of
+each block, its dependency, shape, type and interface checks. The report also validates the
+constant payload and `declared_types` through `IR.loadFlow`. Those load checks, frontend
+equivalence and kernel equivalence are not proved here."""
+        checked = '''/-- The program of each block of the captured flow passes `Program.check` at
+the reference runtime. -/
+theorem programs_checked :
+    ∀ a ∈ artifact.flow.blocks, a.program.check .reference = .ok () := by
+  have success : artifact.flow.blocks.all (fun a => (a.program.check .reference).toBool) := by
+    decide +kernel
+  intro a member
+  have holds := List.all_eq_true.1 success a member
+  cases h : a.program.check .reference with
+  | error message => simp [h, Except.toBool] at holds
+  | ok value => rfl'''
     return f'''module
 
 public import TorchLean.NN.IR.Loaded
@@ -345,11 +370,7 @@ import all Init.Meta.Defs
 # Captured tensor program
 
 This module embeds the capture document written by `torchlean.verify`, whose artifact is a
-typed TorchLean IR program with the words of its constants. The constants, types, casts and
-input/output order belong to the same capture as the check report. The proofs below establish
-artifact decoding and `Program.check .reference`, the program's dependency, shape, type and
-interface checks. The report also validates the constant payload and `declared_types` through
-`IR.load`. Those load checks, frontend equivalence and kernel equivalence are not proved here.
+{paragraph}
 Further properties can use the tensor semantics, with constants decoded by `artifact.load`.
 -/
 
@@ -361,29 +382,21 @@ namespace «{name}»
 def document : Lean.Json :=
   {literal}
 
-/-- The typed program and constant words of the document's artifact. -/
-def artifact : TorchLean.IR.Artifact :=
-  (TorchLean.IR.Artifact.ofJson (document.getObjValD "artifact")).toOption.get (by decide +kernel)
+/-- {decoded} -/
+def artifact : TorchLean.IR.{kind} :=
+  (TorchLean.IR.{kind}.ofJson (document.getObjValD "artifact")).toOption.get (by decide +kernel)
 
 /-- `artifact` is the decoding of this exact document's artifact. -/
 theorem artifact_decoded :
-    TorchLean.IR.Artifact.ofJson (document.getObjValD "artifact") = .ok artifact := by
+    TorchLean.IR.{kind}.ofJson (document.getObjValD "artifact") = .ok artifact := by
   have success :
-      (TorchLean.IR.Artifact.ofJson (document.getObjValD "artifact")).toOption.isSome := by
+      (TorchLean.IR.{kind}.ofJson (document.getObjValD "artifact")).toOption.isSome := by
     decide +kernel
-  cases h : TorchLean.IR.Artifact.ofJson (document.getObjValD "artifact") with
+  cases h : TorchLean.IR.{kind}.ofJson (document.getObjValD "artifact") with
   | error message => simp [h, Except.toOption] at success
   | ok value => simp [artifact, h, Except.toOption]
 
-/-- The captured typed program. -/
-def program : TorchLean.IR.Program := artifact.program
-
-/-- The program passes `Program.check` at the reference runtime. -/
-theorem program_checked : program.check .reference = .ok () := by
-  have success : (program.check .reference).toBool = true := by decide +kernel
-  cases h : program.check .reference with
-  | error message => simp [h, Except.toBool] at success
-  | ok value => rfl
+{checked}
 
 end «{name}»
 '''
@@ -424,8 +437,10 @@ def verify(model: Any, example: Any = _NO_EXAMPLE, *examples: Any, frontend: str
 
     Capture and translation are automatic. Optional ``export="model.json"`` saves the JSON
     document sent to Lean, and ``export="Model.lean"`` embeds it in a Lean module exposing
-    ``Model.program`` and proofs of artifact decoding and ``Program.check .reference``. The
-    report also validates the constant payload and ``declared_types`` through ``IR.load``.
+    ``Model.program`` and proofs of artifact decoding and ``Program.check .reference``; for an
+    artifact with control flow, ``Model.artifact.flow`` and that check of each block's program.
+    The report also validates the constant payload and ``declared_types`` through ``IR.load``
+    (``IR.loadFlow`` with control flow).
     The export includes no proof of those load checks. Further mathematical proofs can refer to
     this program without recapturing the function. Export writes proof source: opening or
     compiling the Lean module checks its proofs. The Lean filename must be an ASCII identifier.
@@ -442,7 +457,8 @@ def verify(model: Any, example: Any = _NO_EXAMPLE, *examples: Any, frontend: str
     the same checker, unless ``TORCHLEAN_OP_TABLE`` names the table's file.
 
     The returned ``ok`` covers only the requested checks. Inspect ``checks`` for
-    their scope. In particular, a sample comparison is not an all-input theorem,
+    their scope. PyTorch sample comparison copies the inputs and refuses inspection of a
+    non-leaf input's backward graph. A sample comparison is not an all-input theorem,
     and a mismatch may reflect different reduction or transcendental
     implementations rather than a frontend bug. PyTorch's tanh GELU depends on the
     CPU capability level its kernel runs at. The IR follows the DEFAULT level, which
@@ -453,14 +469,14 @@ def verify(model: Any, example: Any = _NO_EXAMPLE, *examples: Any, frontend: str
     ``reference_execution``: ``"jit"`` for a ``jax.jit`` function, ``"eager"`` otherwise, with
     the platform that computed it and the jaxlib version. When ``jax.jit`` compiles any part of
     the function, the document also holds the outputs of evaluating it one primitive at a time.
-    Every mismatch fails. When the reference came from XLA's CPU backend and re-running the
-    program as XLA's CPU code computes it (as far as that is exactly emulable) reproduces every
-    differing element, the failed entry lists those documented behaviours in
-    ``consistent_with``. Under ``jax.jit`` this also needs the primitive-by-primitive outputs to
-    agree with the IR or to be reproduced the same way. The field is advice: an importer error
-    with the same effect cannot be ruled out, and some coincide with XLA's own rewrites. The
-    checker trusts the recorded execution, platform and outputs, so a forged record can at most
-    add this advice to a failure.
+    Every mismatch fails. When the reference came from XLA's CPU backend, the artifact has no
+    control flow and re-running the program as XLA's CPU code computes it (as far as that is
+    exactly emulable) reproduces every differing element, the failed entry lists those
+    documented behaviours in ``consistent_with``. Under ``jax.jit`` this also needs the
+    primitive-by-primitive outputs to agree with the IR or to be reproduced the same way. The
+    field is advice: an importer error with the same effect cannot be ruled out, and some
+    coincide with XLA's own rewrites. The checker trusts the recorded execution, platform and
+    outputs, so a forged record can at most add this advice to a failure.
     """
     if (isinstance(checks, str) or not isinstance(checks, Sequence)
             or not all(isinstance(name, str) for name in checks)):

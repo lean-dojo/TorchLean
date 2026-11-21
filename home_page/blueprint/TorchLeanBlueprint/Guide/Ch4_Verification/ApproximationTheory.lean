@@ -25,15 +25,17 @@ open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 open FloatLib.Floats (ExecFloat)
 open FloatLib.Floats.Formats.BinaryInterchange (Model FloatFormat)
 
+/-! Guide page: approximation theorems for ReLU networks. -/
+
 #doc (Manual) "Approximation Theory" =>
 %%%
 tag := "approximation-theory"
 %%%
 
-Suppose we want a ReLU network to represent a function `f` on an interval. An approximation theorem
-may tell us that suitable weights *exist*. Once we choose weights, a verifier can try to enclose
-that particular network's values on an input box, and to say what its binary32 execution does we
-also need to account for rounding. Writing out the quantifiers shows why these are separate claims:
+Given a function `f` on an interval and a tolerance $`\varepsilon`, the representation question is
+whether one ReLU network approximates `f` uniformly. An existence theorem may answer that question
+without choosing the weights of a trained model. Once weights are fixed, enclosure and binary32
+execution pose two further questions. The quantifiers separate the three claims:
 
 $$`\begin{aligned}
 \text{representation:}\quad&
@@ -48,8 +50,7 @@ $$`\begin{aligned}
 
 Only the first line is universal approximation. It doesn't certify a trained checkpoint, choose the
 parameters for an optimizer, or prove that floating-point evaluation is close to the real network.
-TorchLean keeps these statements near one another because they have to be composed, but it doesn't
-identify them.
+The three statements may eventually be composed, but they are not interchangeable.
 
 Where $`\exists\theta` sits is doing real work. We choose the target and tolerance first, then
 obtain one parameter vector that works for every input in the domain. Moving the existential inside
@@ -138,8 +139,9 @@ the width is minimal, or that gradient descent will discover these hinge paramet
 
 # Approximation Rate And Network Width
 
-Each `#check` below displays a declaration behind the width formula and is checked when the page
-builds. The width takes four real arguments and returns a natural number:
+The next three `#check` blocks expose the declarations behind the width formula. Lean checks each
+signature during the documentation build. The width takes four real arguments and returns a
+natural number:
 
 ```lean (name := widthSig)
 -- The width is a natural count computed from four
@@ -269,7 +271,7 @@ coeffs [0.250000, 0.500000, 0.500000, 0.500000]
 A hinge
 $`c_i\operatorname{ReLU}(x-t_i)` is inert to the left of its knot and contributes slope $`c_i` to
 the right, so between knots the sum has slope $`\sum_{t_i\leq x} c_i`. For that running total to
-match the chord slopes $`s_0,\dots,s_{N-1}` printed above, the coefficients have to be the
+match the chord slopes $`s_0,\dots,s_{N-1}` printed by `meshParams`, the coefficients have to be the
 *increments*: $`c_0=s_0` and $`c_i=s_i-s_{i-1}`. Slopes $`0.25,0.75,1.25,1.75` therefore give
 coefficients $`0.25,0.5,0.5,0.5`. For example, after the second knot the first two hinges are
 active: their coefficients add to the second chord's slope. This cumulative addition is why
@@ -277,8 +279,8 @@ active: their coefficients add to the second chord's slope. This cumulative addi
 
 At $`x=3/8`, only the knots at zero and one quarter contribute. Their terms are $`(1/4)(3/8)=3/32`
 and $`(1/2)(1/8)=1/16`, giving $`H(x)=5/32`. Since the target is $`9/64`, the difference is $`1/64`
-(the `0.015625` in the table below). This also explains the tensor layout in the PyTorch
-transcription below: each hidden coordinate stores one distance from a knot, and the output weight
+(the `0.015625` reported by `meshRun`). This also explains the tensor layout in the PyTorch
+transcription: each hidden coordinate stores one distance from a knot, and the output weight
 on that coordinate stores a slope change. So the four coefficients aren't four independent chord
 slopes. Copying the printed slope list into the output layer would change the function, even though
 all layer dimensions would still match.
@@ -462,7 +464,7 @@ with torch.no_grad():
     ys = net(xs).squeeze(1)
 ```
 
-On CPU, the PyTorch transcription produces the nine `H` values printed above. Every input,
+On CPU, the PyTorch transcription produces the nine `H` values printed by `meshRun`. Every input,
 parameter, product, and partial sum on this grid is exactly representable in binary32. This check
 covers these inputs on one backend, not every input or backend {Informal.citep pytorch2019}[].
 
@@ -759,7 +761,8 @@ representation, parameter-rounding, and executable-rounding error. Unlike the hi
 one takes all three budgets (including the execution bound) as hypotheses and composes them by the
 triangle inequality.
 
-The theorem is checked as this page builds. Hovering over it shows its hypotheses:
+Lean checks the theorem declaration during the documentation build; its signature exposes the
+hypotheses:
 
 ```lean (name := endpoints)
 -- The network theorem takes all three error budgets as

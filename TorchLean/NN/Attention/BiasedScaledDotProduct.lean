@@ -57,6 +57,8 @@ logits.
 def biasedScaledDotProductDGraph {m d : Nat}
     (c : ℝ) (bias : Vec (Shape.size (Shape.dim m (.dim m .scalar))) := 0) :
     DGraph (qkvCtx m d) (ssBiasedScaledDotProduct m d) := by
+  -- Each `DGraph.snoc` appends one node with its derivative certificate, and the `Idx.last`
+  -- after it reads that node's value.
   let dg0 : DGraph (qkvCtx m d) [] := DGraph.nil
 
   let nodeKt : Tape.LawfulNode (α := ℝ) Unit (qkvCtx m d) (.dim d (.dim m .scalar)) :=

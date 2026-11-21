@@ -12,7 +12,11 @@ particular build, not a theorem about the native code.
   the exact result. `scripts/checks/cuda.sh parity` compares binary32 addition, multiplication,
   division, square root and fused multiply-add bit for bit, except NaN encodings.
 - `TreeSum.lean`: the schedule `treeSum` of the deterministic CUDA sum, its evaluation
-  `reduceSumTree`, and the unit-roundoff enclosure of a finite native sum that agrees with it.
+  `reduceSumTree`, and the unit-roundoff enclosure, in the depth of the schedule, of a finite
+  native sum that agrees with it. `reduceSumTree_eq_fold` proves for every input list that the
+  sum is `Tensor.ReduceOrder.fold` in the order `sumOrder`. That order is not `blocked`, since a
+  lane adds entries one stride apart. For a nonempty input it does not satisfy
+  `ReduceOrder.Covers`, because every lane starts from a padding leaf.
   `TorchLeanTest/CUDA/ReduceTree.lean` compares native binary32 sums with it on fixtures.
 
 The buffers and FFI declarations these contracts describe are in

@@ -58,6 +58,8 @@ open Examples.BugZoo
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 open FloatLib.Numerics (MathFunctions)
 
+/-! Guide page: the BugZoo catalog of bugs that keep shapes and change meaning. -/
+
 #doc (Manual) "BugZoo Catalog" =>
 %%%
 tag := "bugzoo-catalog"
@@ -80,13 +82,9 @@ and layout mistakes going back to the original architecture {Informal.citep tran
 
 Each entry isolates a contract such as “strict-future attention weight is zero.” Its motivating
 incident explains where the condition can fail, and its Lean declaration states the inputs and
-hypotheses under which it holds.
-
-When the guide builds, the `leanOutput` blocks below are checked. Each computation sits beside its
-general contract, so we can inspect both a concrete value and the conditions behind a theorem.
-
-I choose small inputs that let us isolate a cause: repeated attention scores make the mask the only
-reason rows differ, a one-feature normalization axis makes its centered activation exactly zero,
+hypotheses under which it holds. The calculations use small inputs that isolate one cause: repeated
+attention scores make the mask the only reason rows differ, a one-feature normalization axis makes
+its centered activation exactly zero,
 and a camera with rational coordinates lets you inspect the projection arithmetic by hand. Inputs
 like these remove competing explanations for a surprising result, and the companion general
 statements then show which conclusion survives beyond those particular numbers. Read the value, its
@@ -94,7 +92,7 @@ scalar type, and the theorem's hypotheses together: a tensor shape can express a
 checked example can expose a discrepancy, and a quantified equality can identify the behavior
 another implementation must preserve.
 
-# Catalog Build
+# Building The Catalog
 
 {src "TorchLeanExamples/BugZoo/README.md"}[TorchLeanExamples/BugZoo/README.md] lists the entries.
 The `TorchLeanExamples` library builds every module under `TorchLeanExamples/`, the catalog entries
@@ -108,13 +106,8 @@ scripts/lake.sh build TorchLeanExamples
 A successful build means every definition and theorem in the catalog elaborated. It doesn't mean
 that every external framework implementation satisfies those contracts.
 
-The `TorchLeanExamples` library takes every module under `TorchLeanExamples/`, so this build covers
-every `.lean` file under `TorchLeanExamples/BugZoo/`. The contracts describe TorchLean reference
-objects. External framework conformance requires a separate importer, refinement theorem, or
-explicit assumption.
-
-This chapter imports each non-attention entry individually. The attention entry also states
-$`\exp(-\infty)=0` in `EReal`, but the chapter uses the real-valued hard-mask theorem directly,
+The examples on this page import each non-attention entry individually. The attention entry also
+states $`\exp(-\infty)=0` in `EReal`; the calculation here uses the real-valued hard-mask theorem,
 through {lean}`Softmax.hardMasked_causalMask_eq_zero`, which needs no
 extended reals.
 
@@ -135,7 +128,7 @@ Open the file in the Lean Infoview. Its shape declarations expose the singleton 
 the proof-carrying broadcast as different operations. These are the contracts. The motivating
 PyTorch snippets in the source comments explain the bug family, but aren't imported as evidence.
 
-# Example Anatomy
+# What Each Entry Checks
 
 A good BugZoo example has four parts:
 
@@ -193,16 +186,12 @@ The condition depends on the operation:
   * an accepted certificate implies the projection lies inside the claimed box
 :::
 
-# The Examples
-
 ## Shape And Broadcast
 
-{src "TorchLeanExamples/BugZoo/Broadcasting.lean"}[TorchLeanExamples.BugZoo.Broadcasting
-source] uses a missing batch dimension and a reduction followed by broadcasting. In NumPy-style
-tensor libraries, a reduced vector can silently expand across a matrix, but TorchLean's ordinary
-elementwise operations require equal shapes, and an explicit broadcast carries its placement with
-`Shape.BroadcastDims` evidence (or `Shape.CanBroadcastTo` evidence, for PyTorch's right-aligned
-`broadcast_to`).
+Sum this matrix down to three column totals, then add them back. The broadcast needs
+to put one total under each column, repeated across the rows. In TorchLean the
+add takes equal shapes, and the separate broadcast carries the evidence for that placement.
+{src "TorchLeanExamples/BugZoo/Broadcasting.lean"}[Broadcasting.lean]
 
 Summing the rows of a two by three matrix removes the leading dimension:
 
@@ -520,7 +509,7 @@ overflowing reductions still need separate treatment.
 ### Correcting an optimizer moment
 
 Adam averages squared gradients and then corrects the initial bias in that average. These are
-two opportunities to overflow before a representable update. Let's take a single FP32 gradient
+two opportunities to overflow before a representable update. Take a single FP32 gradient
 of $`2^{68}` and set both decay coefficients to $`1-2^{-10}`:
 
 ```lean (name := bzAdamRange)
@@ -560,7 +549,7 @@ context doesn't enable finite-coefficient replay. Its theorem doesn't establish 
 adapter's execution. Stored moments, parameter updates and their sums can still overflow. This
 example doesn't guarantee that every finite gradient produces a finite optimizer state.
 
-### The same failures in other libraries
+### Numerical Range And Cancellation Failures In Other Libraries
 
 `TorchLeanExamples.DeepDives.Floats.LibraryBugs` writes formulas from PyTorch, JAX, Hugging Face
 Transformers, TRL, Stable-Baselines3 and diffusers with TorchLean's scalar operations, in nine
@@ -624,11 +613,11 @@ default linear schedule `sqrt (1 - alpha_bar)` is zero instead of about `0.0148`
 
 ## Ignored Labels
 
-{src "TorchLeanExamples/BugZoo/IgnoredLabel.lean"}[TorchLeanExamples.BugZoo.IgnoredLabel
-source] examines a mean loss when no labels remain active. [PyTorch
-issue #75181](https://github.com/pytorch/pytorch/issues/75181) reported an `ignore_index` case
-where every label was ignored and the result was `nan`. A mean over no active labels needs a
-convention: dividing a zero loss sum by a zero active count doesn't supply one.
+Suppose every label in a batch is padding. We can skip each contribution, but dividing by
+the number of remaining labels now means dividing by zero. The loss needs an explicit
+empty-batch convention.
+{src "TorchLeanExamples/BugZoo/IgnoredLabel.lean"}[IgnoredLabel.lean]
+[PyTorch issue #75181](https://github.com/pytorch/pytorch/issues/75181)
 
 TorchLean's cross-entropy losses take no ignore mask, so the example defines each label's
 contribution through an active flag:
@@ -700,6 +689,9 @@ zero. A caller handling arbitrary external counts must establish their meaning b
 the denominator policy.
 
 ## Autograd Domain
+
+A mask can hide a bad entry from the result after we've already divided by zero.
+Follow that division into backward and you can still see its effect.
 
 {src "TorchLeanExamples/BugZoo/AutogradDomain.lean"}[TorchLeanExamples.BugZoo.AutogradDomain
 source] follows [PyTorch's own autograd note about division by
@@ -774,6 +766,9 @@ derivative argument would have to follow the guarded forward formula that the lo
 theorem specifies.
 
 ## Attention Mask
+
+With three tokens, the first query gets one key, the second gets two, and the third gets
+all three. We can read those choices directly from the rows of the mask.
 
 {src "TorchLeanExamples/BugZoo/AttentionMask.lean"}[TorchLeanExamples.BugZoo.AttentionMask source]
 is the catalog entry for causal mask semantics. Attention masks fail by polarity, layout, fake
@@ -911,8 +906,8 @@ scalar metadata before treating a weight row as zero.
 
 ## Compiler Boundary
 
-This entry is about optimized graphs that run, return tensors, and are nevertheless not the same
-computation as the source program. [NNSmith](https://arxiv.org/abs/2207.13066) found compiler bugs
+Optimized graphs can run and return tensors while computing a different function from the source
+program. [NNSmith](https://arxiv.org/abs/2207.13066) found compiler bugs
 across TVM, TensorRT, ONNXRuntime, and PyTorch, [FreeFuzz](https://arxiv.org/abs/2201.06589) found
 framework and API bugs by mining real snippets, and a recent [PyTorch compiler correctness
 study](https://arxiv.org/abs/2604.08720) focuses on silent `torch.compile` wrong outputs.
@@ -928,7 +923,7 @@ Generated machine code and external kernels require separate conformance evidenc
 
 ## Float Boundary
 
-This entry separates real arithmetic from the binary32 model. Finite precision, exceptional values,
+Real and binary32 arithmetic support different claims. Finite precision, exceptional values,
 fused operations, subnormal behavior, and changed reduction order can invalidate a property proved
 only over reals {Informal.citep jiarinard2020}[]. Goldberg describes the underlying rounding
 effects {Informal.citep goldberg1991}[], while Flocq {Informal.citep flocq2011}[] and the Coq
@@ -1147,12 +1142,11 @@ open Examples.BugZoo.BatchNorm in
         (Tensor.full [s.extent dim] variance))
       epsilon =
     Tensor.full s
-      ((x - mean) / MathFunctions.sqrt (max (max variance 0 + epsilon) 0) * gamma + beta)
+      ((x - mean) / MathFunctions.sqrt (variance + epsilon) * gamma + beta)
 ```
 
-The formula clamps the running variance at zero and clamps its sum with epsilon at zero before
-taking the square root. These guards are part of the reference expression. They do not say that an
-unguarded native square root returns zero on negative inputs.
+The formula takes the square root of the running variance plus epsilon as it stands, as PyTorch
+does. Over the reals that root is zero below zero, and in IEEE formats it is NaN there.
 
 BatchNorm inference also depends on its running statistics, and passing them as arguments lets the
 reference theorem fix that state and show that inference is affine in the input:
@@ -1191,11 +1185,10 @@ requires a statement about the state update as well.
 
 ## LayerNorm Degenerate Axis
 
-{src "TorchLeanExamples/BugZoo/LayerNormAxis.lean"}[
-TorchLeanExamples.BugZoo.LayerNormAxis source] records a related but different
-normalization bug family. LayerNorm can receive an axis with one element. Its tensor output still
-has the expected shape, but the variance term is zero and the epsilon convention decides whether
-the result is finite and meaningful.
+If a normalized row has one feature, its mean is the feature itself. After subtracting
+the mean we get zero, and the variance is zero too. The epsilon matters right there.
+We can check that the output is the bias and see what this implies for each gradient.
+{src "TorchLeanExamples/BugZoo/LayerNormAxis.lean"}[LayerNormAxis.lean]
 
 Over real arithmetic, one feature has centred value $`x-x=0`, so the output is the bias and the
 input and scale gradients vanish when epsilon is positive, but the bias gradient doesn't vanish in
@@ -1257,6 +1250,9 @@ native-framework residuals or training accuracy.
 
 ## Constant Normalization Slice
 
+A whole row of padding can have zero variance too. A constant slice shows which values the
+normalization and its gradient can still depend on.
+
 {src "TorchLeanExamples/BugZoo/ConstantSlice.lean"}[
 TorchLeanExamples.BugZoo.ConstantSlice source] keeps the constant-slice case visible.
 A constant row or channel slice isn't exotic: it appears in padding-heavy batches, masked tokens,
@@ -1297,8 +1293,8 @@ values in the statement.
 
 ## Batch Invariance
 
-This entry is about serving systems that change outputs depending on which other requests share a
-batch. Such changes can come from dynamic batching, kernel selection, reduction order, and
+Serving systems can change an output depending on which other requests share its batch. Such
+changes can come from dynamic batching, kernel selection, reduction order, and
 scheduling details even when user randomness is off. We point to recent LLM serving work: [Thinking
 Machines on inference
 nondeterminism](https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/) and an
@@ -1317,7 +1313,7 @@ independently. Take the second row out of a batched squaring:
 [16.000000, 25.000000, 36.000000]
 ```
 
-and then compute that row on its own:
+Compute the same row on its own:
 
 ```lean (name := bzBatchOne)
 -- Compare with squaring that same row outside the batch
@@ -1357,11 +1353,11 @@ numerical error bound. A small observed discrepancy supplies neither by itself.
 
 ## KV Cache
 
-{src "TorchLeanExamples/BugZoo/KVCache.lean"}[TorchLeanExamples.BugZoo.KVCache source] models cache
-accounting in autoregressive inference. LLM engines fail through shifted caches, wrong cache slots,
-config and shape mismatches, resource scheduling, and interactions with positions or tokenizers.
-Again, the broader source trail is the [LLM inference engine bug
-study](https://arxiv.org/abs/2506.09713).
+For each new token, the decoder appends a key and a value. An off-by-one write can
+keep the cache the right shape and put the wrong value where attention reads it. We can state the
+append rule at the level of the entries.
+{src "TorchLeanExamples/BugZoo/KVCache.lean"}[KVCache.lean]
+[LLM inference engine bug study](https://arxiv.org/abs/2506.09713)
 
 Append a key and a value to a one-token cache and look at the keys:
 
@@ -1412,13 +1408,13 @@ proved here.
 
 ## RoPE Position
 
-{src "TorchLeanExamples/BugZoo/RoPEPosition.lean"}[TorchLeanExamples.BugZoo.RoPEPosition source]
-pairs naturally with the KV cache example. Rotary position embeddings make position accounting part
-of the model's meaning. A decode position off by one can be hard to notice because the shapes still
-line up and the model still produces tokens.
+The next cache slot also needs the right position for its rotary embedding. If the
+position is off by one, the same shapes still line up and generation can continue. Keeping the
+positions visible shows which one the append operation chooses.
+{src "TorchLeanExamples/BugZoo/RoPEPosition.lean"}[RoPEPosition.lean]
 
-We'll keep the positions in a tensor. Appending grows its length by one, and the default position
-is the old sequence length:
+The positions live in a tensor. Appending grows its length by one, and the default position is the
+old sequence length:
 
 ```lean (name := bzRope)
 /-- Positions already issued for two decoded tokens. -/
@@ -1463,11 +1459,11 @@ positions to a rotation implementation.
 
 ## Tokenizer Boundary
 
-{src "TorchLeanExamples/BugZoo/Tokenizer.lean"}[TorchLeanExamples.BugZoo.Tokenizer
-source] marks the boundary before tensors even reach the model. Tokenizer and config mismatches can
-disagree about vocabulary size, padding, end-of-sequence, or special token ids while the network
-code itself looks ordinary. The [LLM inference engine bug study](https://arxiv.org/abs/2506.09713)
-lists this as a real serving class.
+A model can have eight vocabulary entries while the tokenizer emits id eight.
+We can catch that before it becomes an embedding lookup by giving every id an
+index type with the vocabulary bound. We also name the padding id and the id that
+ends a sequence so they can be compared with the model configuration.
+{src "TorchLeanExamples/BugZoo/Tokenizer.lean"}[Tokenizer.lean]
 
 A contract is a vocabulary size plus the special ids, each carrying its own bound:
 
@@ -1517,6 +1513,9 @@ meanings and special-token conventions.
 
 ## Geometry 3D Projection
 
+The camera divides by depth to get image coordinates. A point at zero depth gives
+us a quick example of why the check has to say when that division is valid.
+
 {src "TorchLeanExamples/Verification/Geometry3D/Box3D.lean"}[TorchLean.Examples.Geometry3D
 source] checks a camera projection. Vision and robotics pipelines use a camera matrix to project 3D
 points to image coordinates:
@@ -1527,7 +1526,7 @@ up to intrinsics and coordinate conventions. Projection can fail when depth is z
 wrong sign, coordinate frames are swapped, or the denominator convention is implicit. A tensor can
 still be emitted, but the geometry claim doesn't match the camera model.
 
-This entry uses a decidable certificate check. The example camera has focal length 100 and
+The camera certificate check is decidable. The example camera has focal length 100 and
 principal point at the image centre:
 
 ```lean (name := bzCam)
@@ -1658,8 +1657,8 @@ Remaining obligations and scope distinctions:
 - The KV cache theorems cover one append: the final slot (`appendToken_last`) and every earlier slot
   (`appendToken_past`). Agreement of cached decoding with full-sequence attention is not proved.
 - The attention entry also proves $`\exp(-\infty)=0` in `EReal`, using the pinned Mathlib
-  extended-real exponential. This chapter uses the real-valued hard-mask theorem directly, while the
-  maintained `TorchLeanExamples` build includes the extended-real entry.
+  extended-real exponential. The calculations here use the real-valued hard-mask theorem directly,
+  while the maintained `TorchLeanExamples` build includes the extended-real entry.
 - The one-feature LayerNorm scale-gradient theorem concerns the `scaleGradient` of
   `LayerNorm.backward`, and the constant-slice theorem concerns a scalar expression. They are
   separate propositions.

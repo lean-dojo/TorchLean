@@ -4,20 +4,69 @@ title: Performance
 
 # Performance
 
-<p class="lede performance-lede">
-  How long TorchLean takes to build its API documentation, guide, and website, and how fast its
-  executables run.
-</p>
+We time three CPU workloads on the release checkout. Below those results are the timings from
+our [GitHub Actions site builds](https://github.com/lean-dojo/TorchLean/actions/workflows/blueprint.yml).
 
-Recent successful builds, broken down into API documentation, the guide, and website assembly.
-GitHub-hosted runners vary, so these are build timings, not model runtime benchmarks.
-
-<aside class="performance-provenance">
-  The commit-by-commit view is inspired by
-  <a href="https://radar.lean-lang.org/about">Lean Radar</a>. This page reports TorchLean's
-  existing GitHub Actions timings and labels them accordingly.
-  <a href="https://github.com/lean-dojo/TorchLean/actions/workflows/blueprint.yml">View the source runs.</a>
-</aside>
+<!-- runtime-bench:start (scripts/docs/runtime_bench.py renders this section) -->
+<div class="performance-dashboard">
+  <section class="performance-panel" aria-labelledby="performance-runtime-title">
+    <h2 id="performance-runtime-title">Runtime benchmarks</h2>
+    <p class="performance-panel-intro">
+      We ran each command 5 times. The table shows the medians. CPU times varied by at most 4.5%.
+    </p>
+    <div class="performance-table-wrap">
+      <table class="performance-table">
+        <thead>
+          <tr>
+            <th scope="col">Benchmark</th>
+            <th scope="col">Workload</th>
+            <th scope="col">CPU time</th>
+            <th scope="col">Wall time</th>
+            <th scope="col">Peak memory</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>qs_mlp_ieee</code></td>
+            <td>the quickstart MLP's training loop and Adam in FloatLib binary32</td>
+            <td>5.83 s</td>
+            <td>5.85 s</td>
+            <td>78 MiB</td>
+          </tr>
+          <tr>
+            <td><code>gpt2</code></td>
+            <td>a byte-level GPT on Tiny Shakespeare</td>
+            <td>10.59 s</td>
+            <td>10.59 s</td>
+            <td>90 MiB</td>
+          </tr>
+          <tr>
+            <td><code>crown_query</code></td>
+            <td>exact-rational CROWN bounds of a 24-48-48-48-8 ReLU chain</td>
+            <td>6.46 s</td>
+            <td>6.47 s</td>
+            <td>106 MiB</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="performance-chart-caption">
+      Measured on 2026-11-20 with Lean 4.36.0 on AMD EPYC 7742 64-Core Processor. Source commit
+      <code>534b505e1169</code> with local changes.
+    </p>
+    <details>
+      <summary>Commands</summary>
+      <ul>
+        <li><code>torchlean quickstart_mlp --device cpu --arithmetic ieee --steps 5000 --seed
+          0</code></li>
+        <li><code>torchlean gpt2 --device cpu --data-file data/real/text/tiny_shakespeare.txt
+          --steps 400 --log false --seed 0</code></li>
+        <li><code>verify crown-query q-24-48x3-8.json</code></li>
+      </ul>
+    </details>
+  </section>
+</div>
+<!-- runtime-bench:end -->
 
 <div class="performance-dashboard" id="performance-dashboard">
   <div class="performance-notice" id="performance-notice" role="status" aria-live="polite">
@@ -29,7 +78,7 @@ GitHub-hosted runners vary, so these are build timings, not model runtime benchm
       <div>
         <h2 id="performance-latest-title">Latest build</h2>
         <p class="performance-panel-intro">
-          Time spent on each part of the site build.
+          Times for the latest successful site build.
         </p>
       </div>
       <div class="performance-latest" id="performance-latest"></div>
@@ -44,7 +93,7 @@ GitHub-hosted runners vary, so these are build timings, not model runtime benchm
       <div>
         <h2 id="performance-history-title">Recent builds</h2>
         <p class="performance-panel-intro">
-          Successful pushes to <code>main</code>, ordered by run start time.
+          Successful documentation builds on <code>main</code>. Some runs reuse the API reference and guide.
         </p>
       </div>
       <label for="performance-metric">
@@ -52,7 +101,7 @@ GitHub-hosted runners vary, so these are build timings, not model runtime benchm
         <select id="performance-metric">
           <option value="api">API documentation</option>
           <option value="guide">Verso guide</option>
-          <option value="website">Website assembly</option>
+          <option value="website" selected>Website assembly</option>
           <option value="links">Website links and anchors</option>
           <option value="total">Complete build job</option>
         </select>
@@ -85,78 +134,6 @@ GitHub-hosted runners vary, so these are build timings, not model runtime benchm
     </div>
   </section>
 </div>
-
-<!-- runtime-bench:start (scripts/docs/runtime_bench.py renders this section) -->
-<div class="performance-dashboard">
-  <section class="performance-panel" aria-labelledby="performance-runtime-title">
-    <h2 id="performance-runtime-title">Runtime benchmarks</h2>
-    <p class="performance-panel-intro">
-      We ran the quick suite of <code>scripts/bench/bench.py</code>: 3 commands, 5 times each. The
-      table shows the median of each measurement. Between repetitions the instruction counts varied
-      by less than 0.01% and the CPU time by at most 4.4%.
-    </p>
-    <div class="performance-table-wrap">
-      <table class="performance-table">
-        <thead>
-          <tr>
-            <th>Benchmark</th>
-            <th>What it runs</th>
-            <th>Instructions</th>
-            <th>CPU time</th>
-            <th>Wall time</th>
-            <th>Max RSS</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><code>qs_mlp_ieee</code></td>
-            <td>the quickstart MLP's training loop and Adam in FloatLib binary32</td>
-            <td>46.5 billion</td>
-            <td>5.54 s</td>
-            <td>5.56 s</td>
-            <td>75 MiB</td>
-          </tr>
-          <tr>
-            <td><code>gpt2</code></td>
-            <td>a byte-level GPT on Tiny Shakespeare</td>
-            <td>76.4 billion</td>
-            <td>7.96 s</td>
-            <td>7.97 s</td>
-            <td>87 MiB</td>
-          </tr>
-          <tr>
-            <td><code>crown_query</code></td>
-            <td>exact-rational CROWN bounds of a 24-48-48-48-8 ReLU chain</td>
-            <td>66.9 billion</td>
-            <td>7.02 s</td>
-            <td>7.04 s</td>
-            <td>103 MiB</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="performance-chart-caption">
-      The commands, run in the checkout with the example data of
-      <code>scripts/datasets/download_example_data.py</code> in <code>data/real</code> and the query
-      file that <code>scripts/bench/gen_query.py</code> writes:
-    </p>
-    <ul>
-      <li><code>torchlean quickstart_mlp --device cpu --arithmetic ieee --steps 5000 --seed
-        0</code></li>
-      <li><code>torchlean gpt2 --device cpu --data-file data/real/text/tiny_shakespeare.txt
-        --steps 400 --log false --seed 0</code></li>
-      <li><code>verify crown-query q-24-48x3-8.json</code></li>
-    </ul>
-    <p class="performance-chart-caption">
-      Measured on 2026-11-09 at a checkout whose 1198 source files have the bench.py digest
-      <code>c60fed7c34aedf04</code>, with leanprover/lean4:v4.35.0, on Intel(R) Xeon(R) Platinum
-      8275CL CPU @ 3.00GHz, with 8 of its 96 logical CPUs available. Instructions are user-space
-      counts from perf_event_open. Max RSS is the largest resident set of the command's process
-      tree.
-    </p>
-  </section>
-</div>
-<!-- runtime-bench:end -->
 
 <script>
 (() => {
@@ -275,6 +252,8 @@ GitHub-hosted runners vary, so these are build timings, not model runtime benchm
   const renderCards = records => {
     const latest = records.at(-1);
     const previous = records.at(-2);
+    const sameBuildSteps = ["api", "guide"].every(key =>
+      Number.isFinite(latest.durations[key]) === Number.isFinite(previous?.durations[key]));
     cards.replaceChildren();
     for (const key of ["api", "guide", "website", "total"]) {
       const card = document.createElement("div");
@@ -282,7 +261,7 @@ GitHub-hosted runners vary, so these are build timings, not model runtime benchm
 
       const value = document.createElement("div");
       value.className = "performance-value";
-      value.textContent = formatDuration(latest.durations[key]);
+      value.textContent = latest.durations[key] == null ? "Reused" : formatDuration(latest.durations[key]);
 
       const label = document.createElement("div");
       label.className = "performance-label";
@@ -294,7 +273,10 @@ GitHub-hosted runners vary, so these are build timings, not model runtime benchm
       change.dataset.direction = comparison.direction;
       change.textContent = comparison.text;
 
-      card.append(value, label, change);
+      card.append(value, label);
+      if (latest.durations[key] != null && (key !== "total" || sameBuildSteps)) {
+        card.append(change);
+      }
       cards.append(card);
     }
 

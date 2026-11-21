@@ -15,9 +15,9 @@ public import TorchLean.Tensor.Elementwise
 
 Tensor bounds for the unary elementwise `NF` operations: scaling, negation, absolute value,
 exponential, square root, `tanh` and ReLU. Each theorem lifts a scalar bound entrywise and takes the
-`linfNorm` of a per-entry budget tensor as its output epsilon. The clamped square root has two
-bounds, a Hölder bound `√eps` that holds at zero entries and a bound `eps / √η`, linear in `eps`,
-for exact inputs at least `η > 0`.
+`linfNorm` of a per-entry budget tensor as its output epsilon. The square root has two bounds: a
+Hölder bound `√eps` for the clamped root, which holds at zero entries, and a bound `eps / √η`,
+linear in `eps`, for the IEEE root on exact inputs at least `η > 0` with an input error below `η`.
 -/
 
 @[expose] public section
@@ -195,36 +195,31 @@ theorem ApproxTensor.sqrt {s : Shape}
         approx_sqrt_clamp (β := β) (fexp := fexp) (rnd := rnd) hx)
   simpa [Tensor.sqrt, sqrtBoundTensor] using bound
 
-/-- Shape-generic square-root approximation on a certified positive tensor domain.
-
-The lower bound `η ≤ x` holds at every entry of the exact tensor, as a `Tensor.Forall` hypothesis.
-The runtime operation is the clamped `sqrt (max · 0)`, so no margin between `eps` and `η` is needed:
-the scalar bound `approx_sqrt_clamp_of_lb` holds even when a rounded input falls below zero.
--/
-theorem ApproxTensor.sqrt_of_pos_lb {s : Shape} (η : ℝ) (hη : 0 < η) :
+/-- Shape-generic approximation of the IEEE root `Tensor.sqrt` on a certified positive tensor
+domain. The lower bound `η ≤ x` holds at every entry of the exact tensor, as a `Tensor.Forall`
+hypothesis, and the input error `eps` is below `η`, so every rounded input is positive too
+(`approx_sqrt_of_pos_lb_of_error`). -/
+theorem ApproxTensor.sqrt_of_pos_lb_of_error {s : Shape} (η : ℝ) (hη : 0 < η) :
     ∀ {xS : Tensor ℝ s} {xR : Tensor R s} {eps : ℝ},
-      ApproxTensor (α := R) (toSpec := NF.toReal) xS xR eps →
+      ApproxTensor (α := R) (toSpec := NF.toReal) xS xR eps → eps < η →
       Tensor.Forall (fun x : ℝ => η ≤ x) xS →
-        ApproxTensor (α := R) (toSpec := NF.toReal)
-          (Tensor.sqrt xS .clampNegative) (Tensor.sqrt xR .clampNegative)
+        ApproxTensor (α := R) (toSpec := NF.toReal) (Tensor.sqrt xS) (Tensor.sqrt xR)
           (linfNorm (sqrtPosBoundTensor (β := β) (fexp := fexp) (rnd := rnd)
             (s := s) η eps xR)) := by
-  intro xS xR eps hx hdom
+  intro xS xR eps hx hbudget hdom
   have h :=
     map_of_forall
       (α := R) (toSpec := NF.toReal)
       (s := s) (predicate := fun x : ℝ => η ≤ x)
-      (fS := fun x => Numerics.MathFunctions.sqrt (max x 0))
-      (fR := fun xR => Numerics.MathFunctions.sqrt (max xR 0))
+      (fS := Numerics.MathFunctions.sqrt) (fR := Numerics.MathFunctions.sqrt)
       (bnd := fun a eps =>
         eps / Real.sqrt η +
           ulp β fexp (Real.sqrt (max a 0)) / 2)
       (xS := xS) (xR := xR) (eps := eps) hx hdom (by
         intro x xR hdomain hx
-        simpa [MathFunctions.sqrt_real] using
-          (approx_sqrt_clamp_of_lb
-            (β := β) (fexp := fexp) (rnd := rnd)
-            hη (le_trans hdomain (le_max_left x 0)) hx))
+        simpa [MathFunctions.sqrt_real, sqrt_max_zero] using
+          (approx_sqrt_of_pos_lb_of_error
+            (β := β) (fexp := fexp) (rnd := rnd) hη hdomain hbudget hx))
   simpa [Tensor.sqrt, sqrtPosBoundTensor] using h
 
 /--

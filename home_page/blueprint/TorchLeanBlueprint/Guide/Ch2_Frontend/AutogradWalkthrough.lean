@@ -46,6 +46,8 @@ open AdjointOp Tape
 open Tensor.Rep (dot)
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: reverse-mode differentiation worked through small examples. -/
+
 #doc (Manual) "Differentiation" =>
 %%%
 tag := "autograd-walkthrough"
@@ -57,10 +59,9 @@ weight one on each output, and to give the second output ten times the influence
 weight to ten. Those weights form the output cotangent. Together with the function and its input,
 they determine the vector-Jacobian product.
 
-I'll keep the input fixed while changing the derivative query, then apply the same reasoning to an
-affine model with every parameter spelled out, so we can calculate its loss, parameter gradient,
-and curvature by hand before comparing the returned tensors. Named Lean blocks and their outputs
-are checked when this page is built, while shell and PyTorch transcripts record separate runs.
+Keep the input fixed and change only the output cotangent. Which input gradient changes, and by
+how much? After that, an affine model with explicit parameters lets us calculate the loss,
+parameter gradient, and curvature by hand and compare them with the returned tensors.
 
 After the command-line examples, the tensor calculations use:
 
@@ -265,6 +266,9 @@ polymorphic `Function` signature promise that every backend implements every pri
 selected interpreter has to support the operations the function calls.
 
 ## PyTorch Gradients
+
+The same square in PyTorch exposes a small decimal difference in the second derivative entry. Its
+source is the input dtype, not the differentiation rule:
 
 ```
 # Keep PyTorch's default float32 visible when comparing
@@ -522,7 +526,7 @@ state gradient = [[3, 2]: [[0.500000, -1.200000],
 input gradient = [0.300000, 0.300000]
 ```
 
-All three predictions, from one call. PyTorch's
+One call returns all three predictions. PyTorch's
 `torch.autograd.grad(out, [lin.weight, lin.bias, xi], grad_outputs=torch.ones(3))` returns the same
 three objects with the same numbers.
 
@@ -974,9 +978,9 @@ Differentiation connects three distinct objects:
 2. the derivative program TorchLean's transform builds
 3. the numbers a CPU, a CUDA kernel, or an external provider produces when it runs.
 
-Claims 1 and 2 are related by Lean theorems for supported primitives and well-formed graphs, and
-this chapter showed both halves of that (the adjointness bundles and the `fderiv` results). Claim 3
-needs a rounding argument or an explicit backend boundary. A CUDA kernel may implement the same
+The adjointness bundles and the `fderiv` results relate claims 1 and 2 for supported primitives and
+well-formed graphs. Claim 3 needs a rounding argument or an explicit backend boundary. A CUDA
+kernel may implement the same
 formal VJP equation with a different reduction tree and produce different last bits, which isn't a
 bug in either the kernel or the theorem, and is precisely why they're counted as different claims.
 

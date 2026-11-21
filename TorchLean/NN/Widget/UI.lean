@@ -43,15 +43,15 @@ where
 
 /-- Render a string as monospace code, using VS Code theme fonts when available. -/
 def monospace (s : String) : ProofWidgets.Html :=
-  <code style={json% {
+  jsx%{<code style={json% {
     "font-family":
       "var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \
       monospace)"
-  }}>{.text s}</code>
+  }}>{.text s}</code>}
 
 /-- Render a small “pill” badge (used for compact key/value metadata). -/
 def pill (s : String) : ProofWidgets.Html :=
-  <span
+  jsx%{<span
     style={json% {
       "display": "inline-block",
       "padding": "2px 8px",
@@ -61,12 +61,12 @@ def pill (s : String) : ProofWidgets.Html :=
       "border": "1px solid var(--vscode-panel-border, #e0e0e0)",
       "font-size": "12px",
       "line-height": "18px"
-    }}>{.text s}</span>
+    }}>{.text s}</span>}
 
 /-- Badge layout shared by `okBadge`, `warnBadge` and `errBadge`, which pass a tinted background
 and a theme text color. -/
 private def statusBadge (s background color : String) : ProofWidgets.Html :=
-  <span style={json% {
+  jsx%{<span style={json% {
     "display": "inline-block",
     "padding": "2px 8px",
     "border-radius": "999px",
@@ -76,7 +76,7 @@ private def statusBadge (s background color : String) : ProofWidgets.Html :=
     "line-height": "18px",
     "color": $(Lean.toJson color),
     "font-weight": 600
-  }}>{.text s}</span>
+  }}>{.text s}</span>}
 
 /-- Render a success badge. -/
 def okBadge (s : String) : ProofWidgets.Html :=

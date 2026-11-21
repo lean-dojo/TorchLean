@@ -300,8 +300,8 @@ def applyAdamUpdateCUDA {α : Type} [Storage α]
         let updatedDev : LibTorch.SomeBuffer :=
           { s := p.s, buf := updated }
         p.setCUDA updatedDev
-        releaseCUDABuffer st.m
-        releaseCUDABuffer st.v
+        LibTorch.Buffer.release st.m
+        LibTorch.Buffer.release st.v
         pure ({ m := m', v := v', t := t', firstPower, secondPower } : CUDAAdamParamState)
       else
         throw <| IO.userError s!"torch: internal grad shape mismatch during {operation}"
@@ -312,8 +312,8 @@ def applyAdamUpdateCUDA {α : Type} [Storage α]
     if params.contains id then
       pure ()
     else
-      releaseCUDABuffer st.m
-      releaseCUDABuffer st.v
+      LibTorch.Buffer.release st.m
+      LibTorch.Buffer.release st.v
       state := state.erase id
   stateRef.set state
 

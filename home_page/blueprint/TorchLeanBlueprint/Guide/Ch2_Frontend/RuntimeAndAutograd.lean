@@ -47,6 +47,8 @@ open TorchLean
 open Tape
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: the runtime, its tape and the gradients it accumulates. -/
+
 #doc (Manual) "Runtime and Autograd" =>
 %%%
 tag := "runtime-autograd"
@@ -63,10 +65,6 @@ record the operation sequence once and supply new values later. Comparing the tw
 public calls in {ref "autograd-walkthrough"}[Differentiation By Example] construct.
 {ref "run-configuration"}[Choosing How A Model Runs] explains how a trainer's arithmetic and device
 are chosen.
-
-Named Lean blocks are elaborated while this page is built, together with checks of their displayed
-outputs, but the command-line and PyTorch transcripts record separate runs that the page build
-doesn't execute.
 
 # API Entry Points And Runtime Artifacts
 
@@ -88,7 +86,7 @@ Training and a standalone `autograd.grad` call build different runtime artifacts
 *
   * `Tape`
   * a tape you own, as pure data
-  * inspection, tests, and this chapter
+  * inspection and tests
 :::
 
 The `autograd.*` transforms don't consult the trainer's settings. In
@@ -140,7 +138,7 @@ Backend.GraphKernelPlan : Type
 `SomeTensor α`, CUDA stores device buffers, and the nodes, parents, and reverse sweep are the
 same for both. Each stored value still carries its own shape, but the tape's type does not record a
 context of node shapes, so agreement between a node and the parents named by its identifiers is
-checked at runtime. That is a deliberate trade, and we come back to it below.
+checked at runtime. *Shape Erasure And Recovery* shows the corresponding checked cast.
 
 `TypedGraph α Γ τ` carries a context `Γ : List Shape` and an output shape `τ`. A node cannot
 refer to a parent at the wrong shape, because the shape is part of the graph's type. This is the
@@ -592,17 +590,20 @@ On CUDA, the eager tape runs the operators' LibTorch entries instead. Two inputs
 one handle use the operator's alias rule, chosen by node identity and not by equal values: `max` or
 `min` of a handle with itself gives each entry the average of its cotangent with itself, while two
 handles that hold equal values get the rule's two halves, whose sum can differ in the last bit at a
-subnormal cotangent. A node sends its contributions in its rule's `order` (for the fused multi-head
-attention, the input's gradient comes first), and the reverse sweep adds them in that order. A
-smooth max pool with `beta = 0` is refused by the eager CPU tape, which validates the inputs before
-it records. A typed graph does record it, and checked execution refuses it when it validates the
-inputs. A convolution with leading axes is one node on the CPU tape and in the typed graph. When
-the input must be reshaped to the batch shape of the CUDA entry, the CUDA tape folds the leading
-axes into the batch axis instead: a reshape, the convolution and a reshape, recorded as one tape
-transaction that keeps all three nodes on success and restores the tape on failure. Batched
-attention is one node with its own reduction order, so its rounded parameter gradients can differ
-from those of one single-sequence node per sequence. The one-ulp difference observed in the
-projection weights' gradients is an observation on the tested inputs, not an error bound.
+subnormal cotangent. A node sends its contributions in its rule's `order`, and the reverse sweep
+adds them in that order.
+
+Input validation follows the same distinction between recording and execution. A smooth max pool
+with `beta = 0` is refused by the eager CPU tape before it records. A typed graph can record the
+node, but checked execution refuses it when it validates the inputs. A convolution with leading
+axes is one logical node on the CPU tape and in the typed graph. When the CUDA entry requires a
+batch shape, its tape records reshape, convolution, and reshape as one transaction: it keeps all
+three nodes on success and restores the tape on failure.
+
+Reduction order remains part of an operation's numerical behavior. Fused multi-head attention
+sends the input's gradient contribution first, and batched attention reduces parameter gradients
+in a different order from one single-sequence node per sequence. The one-ulp difference observed
+in the projection weights on the tested inputs is an observation, not an error bound.
 
 The maintained eager handle also records a session owner and generation. A reset can reuse numeric
 node `0`, so its number alone can't establish that an old handle belongs to the new recording.
@@ -770,10 +771,6 @@ in the application
 Second, `ofTensor_cast` says that casting a packed tensor to the matching shape and repacking it
 returns the original packed value. Its stored shape and values survive the round trip.
 
-The instantiated runner also holds parameter
-names, bounded token inputs, RNG state, optimizer memory, mutable model buffers, and the train or
-eval flag.
-
 The cast signature takes an equality from the stored shape to the requested shape. Its direction
 matters: it transports the existing tensor without reshaping, truncating, padding, or
 reinterpreting the buffer. The roundtrip theorem says that packing a tensor and recovering it with
@@ -784,6 +781,9 @@ In the diagnostic above, the printed metavariable names are elaborator details. 
 the demanded equality with `[2]`.
 
 # Model Mode And Random State
+
+The instantiated runner holds parameter names, bounded token inputs, RNG state, optimizer memory,
+mutable model buffers, and the train or eval flag.
 
 Some operations depend on mode. Dropout samples a mask during training and applies its
 deterministic inference behavior during evaluation {Informal.citep dropout2014}[]. Batch

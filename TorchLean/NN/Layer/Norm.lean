@@ -206,6 +206,8 @@ def batchNorm
       | .eval, _ => pure ps
       | .train, .cons weight (.cons bias (.cons runningMean (.cons runningVariance
           (.cons momentumT .nil)))) =>
+          -- Swap batch and channel axes, so each channel's statistics are over the axes after the
+          -- first.
           let channelFirst : Tensor _ (.dim channels (.dim batch spatial)) :=
             Tensor.permute x (Shape.adjacentSwap (.dim batch (.dim channels spatial)) 0)
               (Shape.swapAdjacentAtDepth (.dim batch (.dim channels spatial)) 0)
@@ -229,6 +231,8 @@ def batchNorm
             (Tensor.scalar (eps : α))
           match mode with
           | .train =>
+              -- The `batchNorm` operator normalizes over the axes after the first, so the
+              -- channel axis moves to the front and back.
               show m (Ops.Ref m α _) from do
               let channelFirst :
                   Ops.Ref m α (.dim channels (.dim batch spatial)) ←

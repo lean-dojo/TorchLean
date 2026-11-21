@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Coverage
+public import TorchLean.Verify.Coverage.Pointwise.Selection -- shake: keep
 public import TorchLean.Tensor.Op.Table.Rule
 
 /-!
@@ -16,6 +17,9 @@ public import TorchLean.Tensor.Op.Table.Rule
 `TorchLean.Op.rule?`. The theorems are declared in the namespace
 `TorchLean.Coverage.Elementwise`, which every module under
 `TorchLean/Verify/Coverage/Elementwise/` shares.
+
+It imports the coverage of the tensor extrema and selections (`Pointwise/Selection.lean`), so that a
+route with the statement of a route there records that theorem instead of declaring another.
 -/
 
 public section

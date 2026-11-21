@@ -13,6 +13,8 @@ open Verso.Genre.Manual.InlineLean
 open Lean
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: what is checked when graphs and data cross Lean's boundary. -/
+
 #doc (Manual) "External Tools and FFI" =>
 %%%
 tag := "external-tools-and-ffi"
@@ -21,8 +23,8 @@ file := "Crossing-Lean___s-Boundary"
 
 A captured PyTorch graph arrives as a document naming operations, edges, and tensor shapes.
 Lean can parse those bytes, check the shapes, and evaluate the graph. None of those steps alone
-establishes that the document describes the intended Python model. We can see the gap by changing
-one activation name: both documents pass the shape checker, but their outputs differ.
+establishes that the document describes the intended Python model. Changing one activation name
+exposes the gap: both documents pass the shape checker, but their outputs differ.
 
 There are two main boundaries, and they fail differently:
 
@@ -34,8 +36,8 @@ may exchange opaque handles to native allocations, where native code can allocat
 and free storage outside Lean's type guarantees. For a GPU tensor, the contract must account for
 the allocation's lifetime as well as its shape and contents.
 
-Each JSON example below builds its document as a Lean string literal and prints the parser's
-verdict during the page build.
+The JSON examples build each document as a Lean string literal and print the parser's verdict
+during elaboration.
 
 # Subprocess Output Validation
 
@@ -62,7 +64,7 @@ def runJson
 carries the command, arguments, status, and standard error). `runJson` then requires all of
 standard output to be one JSON document.
 
-Suppose Python prints:
+A producer might print this bound document:
 
 ```
 {"format":"torchlean.bound.v1","lower":0.12,"upper":0.31}
@@ -122,11 +124,12 @@ enough to violate a finite-box contract.
 ## Duplicate JSON Keys
 
 Duplicate keys create a different problem at the parsing step. JSON's grammar does not forbid
-repeating a key, and Lean's parser keeps the last occurrence:
+repeating a key, and parsers disagree on what such an object means: Python's `json` module keeps
+the last occurrence, while Lean's parser refuses the object, at any depth:
 
 ```lean (name := ffiDup)
--- Print the parsed object to reveal which duplicate-key
--- value survived.
+-- Parse an object that repeats a key and print what the
+-- checker would read.
 #eval show IO Unit from do
   match Json.parse "{\"upper\": 0.1, \"upper\": 9.9}" with
   | .error e => IO.println s!"json error: {e}"
@@ -137,21 +140,17 @@ repeating a key, and Lean's parser keeps the last occurrence:
     | .ok x => IO.println s!"checker read upper = {x}"
 ```
 ```leanOutput ffiDup
-parsed  = {"upper":9.9}
-checker read upper = 9.900000
+json error: offset 22: duplicate object key "upper"
 ```
 
-Only `9.9` survives in the parsed object, and a later check of that object can't recover the
-earlier `0.1` or detect the duplicate. So a reader inspecting the original text might remember a
-different bound from the one the checker used.
+A checker that reads its file with `Json.parse` never chooses between `0.1` and `9.9`, while a
+Python tool reading the same file uses `9.9` without a warning.
 
-This page's examples print back the values they used (the region example echoes `lo` and `hi` in
-its accepting message), so a reader can compare the checked values with the file. Refusing
-duplicate keys outright would be another possible policy. But echoing recognized fields doesn't by
-itself detect duplicates or report unknown fields that the schema ignores.
-
-A policy that rejects duplicates must operate while reading the text, or retain additional parsing
-evidence. By the time a checker receives this `Json` object, the first occurrence is gone.
+The refusal happens while reading the text: a parsed `Json` object keeps one value per key, so a
+checker that receives an object built some other way can't tell that a key was repeated. This
+page's examples also print back the values they used (the region example echoes `lo` and `hi` in
+its accepting message), so a reader can compare the checked values with the file. Echoing the
+recognized fields doesn't report unknown fields that the schema ignores.
 
 ## Input Region Validation
 
@@ -217,8 +216,6 @@ rejected: region: endpoint fields (`lo`, `hi`) cannot be
 
 In the last document, the center and radius describe `[0.4, 0.6]`, while the endpoint fields
 describe `[0.0, 1.0]`. Rejecting the mixed notation avoids choosing one of two different regions.
-We rewrapped the fourth message to fit this page.
-
 In the center form, radius `0.1` is subtracted from and added to each coordinate independently,
 giving a box around `[0.5, 0.8]`. When a declared dimension is supplied, the parser also checks the
 arrays against it.
@@ -228,7 +225,7 @@ as rationals, and each endpoint is then rounded once outward, the lower one down
 up, so the accepted box contains the box the document states. Each endpoint goes through FloatLib's
 directed rounding, for which `TorchLean.DecimalRounding.toEReal_convertDecimalText_down_le`,
 `Model.toEReal_ofRat_down_le` and their upward forms prove the outward direction. All four
-rejection messages above localize structural and finite-value failures before any certificate
+`ffiRegionBad` diagnostics localize structural and finite-value failures before any certificate
 theorem is considered.
 
 # PyTorch Graph Capture
@@ -238,13 +235,15 @@ The Python package {srcDir "python/torchlean"}[`python/torchlean`] captures a su
 jaxpr. Both write a capture document whose `"artifact"` field holds a typed artifact of format
 `torchlean.ir`. The format name, the record version, the operator codes and the pointwise forms
 they write come from the op table that Lean computes (`TorchLean.IR.table`). Lean reads the document
-of either capture with one loader, `TorchLean.IR.load`, whose structural theorem is
-`TorchLean.IR.load_ok`. `TorchLean.IR.load_declared` states that the loaded program gives every
-declared value its recorded element type and shape.
+of either capture without control flow with one loader, `TorchLean.IR.load`, whose structural
+theorem is `TorchLean.IR.load_ok`. `TorchLean.IR.load_declared` states that the loaded program gives
+every declared value its recorded element type and shape. `load` refuses an artifact with a `cond`
+or a loop, a flow of programs, which `TorchLean.IR.loadFlow` reads, and `TorchLean.IR.loadFlow_ok`
+states both properties for each of its blocks.
 
-The examples below inspect that theorem and exercise malformed documents. Numerical agreement is
-a separate question: shape validation cannot detect a missing affine bias or a changed
-normalization epsilon.
+The `ffiThm`, `ffiMeaning`, and `ffiReject` examples inspect that theorem and exercise malformed
+documents. Numerical agreement is a separate question: shape validation cannot detect a missing
+affine bias or a changed normalization epsilon.
 
 Here the loader is {src "TorchLean/NN/IR/Loaded.lean"}[`TorchLean.IR.load`], and the artifact reader
 it calls is {src "TorchLean/NN/IR/Artifact.lean"}[`TorchLean.IR.Artifact.ofJson`].
@@ -255,9 +254,9 @@ We use a program of three steps. Step 0 reads the input, of shape `[1, 4]`. Step
 to each entry and keeps that shape. Step 2 sums all four entries to a scalar, of shape `[]`. A
 step's id is its position in `"nodes"`, and the reference `[j, 0]` reads the first output of step
 `j`. Each operator step holds the codec record of a registered operator. The record of the sum
-holds the input shape, the code `0` of a sum, the summed dimensions and `keepdim`. The
-`"scalars"` array names the element type of each step, and `"constants"` holds the words of each
-constant step and `null` at the other steps:
+holds the input shape, the code `0` of a sum, the summed dimensions, `keepdim` and the order of
+the sum, here the left fold. The `"scalars"` array names the element type of each step, and
+`"constants"` holds the words of each constant step and `null` at the other steps:
 
 ```lean (name := ffiJson)
 -- Record the input, a shape-preserving activation and a
@@ -267,14 +266,15 @@ def ffiGood : String := "{\"artifact\": {
   \"nodes\": [
     {\"input\": {\"index\": 0,
        \"port\": {\"value\": [1, 4]}}},
-    {\"op\": {\"record\": {\"version\": 3,
+    {\"op\": {\"record\": {\"version\": 5,
        \"tag\": \"relu\",
        \"fields\": [{\"shape\": [1, 4]}]},
      \"inputs\": [[0, 0]]}},
-    {\"op\": {\"record\": {\"version\": 3,
+    {\"op\": {\"record\": {\"version\": 5,
        \"tag\": \"reduce\",
        \"fields\": [{\"shape\": [1, 4]}, {\"nat\": 0},
-         {\"nats\": [0, 1]}, {\"bool\": false}]},
+         {\"nats\": [0, 1]}, {\"bool\": false},
+         {\"order\": \"leftFold\"}]},
      \"inputs\": [[1, 0]]}}
   ],
   \"outputs\": [[2, 0]],
@@ -283,7 +283,7 @@ def ffiGood : String := "{\"artifact\": {
 }}"
 ```
 
-That string is a Lean value, so we can run the loader on it. One helper reports the verdict:
+Because the document is a Lean string value, `ffiParse` can run the loader and report its verdict:
 
 ```lean (name := ffiParseDef)
 /-- Load a capture document and report the verdict. -/
@@ -483,7 +483,7 @@ These errors identify four stages of validation:
 - The *forward reference* rejection is the one that keeps cycles out. A step may read only the
   outputs of strictly earlier steps, so a document whose step 1 reads step 2 is rejected.
 
-We rewrapped the third message to fit the page. The runtime prints each message on one line.
+The runtime prints each message on one line; the third diagnostic is wrapped here for readability.
 
 Successful captures do not test every unsupported translation. Reflect padding
 could become zero padding, scaled addition could lose its scale, a dtype cast could disappear, or
@@ -541,9 +541,10 @@ proposition, conditional on the bytes received. Establishing the third takes a t
 for the supported producer or a stated trust assumption about capture and lowering.
 
 Numerical parity tests provide execution evidence for that assumption. The deterministic linear and
-normalization probes above can expose transposes, axis errors, and missing biases, though checking
-mask translation would require an attention probe. Their conclusions concern the tested cases, with
-no universal quantification over parameters and inputs. Coverage-guided fuzzing
+normalization probes in the capture experiment can expose transposes, axis errors, and missing
+biases, though checking mask translation would require an attention probe. Their conclusions
+concern the tested cases, with no universal quantification over parameters and inputs.
+Coverage-guided fuzzing
 {Informal.citep tensorfuzz2019}[] and generated well-typed graphs {Informal.citep nnsmith2023}[]
 extend this approach by exploring cases beyond a fixed collection of hand-written examples (both
 have found defects in production frameworks).
@@ -683,7 +684,7 @@ closed-term extraction and common subexpression elimination for the primitive. S
 already guards against those optimizations, though its pure type still doesn't express when the
 upload happens, how allocation can fail, or when releasing a buffer is safe.
 
-As shown above, the effectful entry point declares the native call itself in `IO`.
+The effectful entry point declares the native call itself in `IO`.
 
 `ofFloatArrayIO a` describes an action. Executing it performs the upload at that point in the
 surrounding `IO` sequence, and executing it again with the same host array allocates a separate
@@ -849,9 +850,9 @@ claim attached to the check, test, or assumption that supports it.
 
 # Boundary Failure Tests
 
-The live blocks above exercise numeric parsing, region validation, graph acceptance, and graph
-rejection during the page build, and the earlier capture command exercises the external process. To
-also exercise a CUDA training call, run:
+The `ffiInf`, `ffiRegionBad`, `ffiParseGood`, and `ffiReject` blocks exercise numeric parsing,
+region validation, graph acceptance, and graph rejection during elaboration. A full capture that
+starts Python remains a separate subprocess test. To exercise a CUDA training call as well, run:
 
 ```terminal
 # Exercise a separately configured CUDA runtime call.

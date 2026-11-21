@@ -44,7 +44,7 @@ open UI
 /-- Show a flat interval box as its two endpoint vectors side by side. -/
 private def flatBoxHtml {α : Type} [Storage α] [Context α] [ToString α] (b : FlatBox α) :
     ProofWidgets.Html :=
-  <div style={json% {
+  jsx%{<div style={json% {
     "display": "grid",
     "grid-template-columns": "1fr 1fr",
     "gap": "10px",
@@ -60,14 +60,15 @@ private def flatBoxHtml {α : Type} [Storage α] [Context α] [ToString α] (b :
       {tensorHtml (α := α) (s := .dim b.dim .scalar) b.hi (maxRows := 12) (maxCols := 16) (maxElems
         := 64)}
     </div>
-  </div>
+  </div>}
 
 /-- Show an affine form as two collapsed panels, the coefficient matrix and the offset. -/
 private def affineVecHtml {α : Type} [Storage α] [ToString α] {inDim outDim : Nat}
     (aff : Linear α inDim outDim) : ProofWidgets.Html :=
-  <div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px", "margin-top":
+  jsx%{<div style={json% {"display": "grid", "grid-template-columns": "1fr", "gap": "10px",
+    "margin-top":
     "8px"}}>
-    <details «open»={false}>
+    <details open={false}>
       <summary>
         {pill s!"A : {outDim}×{inDim}"} {pill "coeffs"}
       </summary>
@@ -76,7 +77,7 @@ private def affineVecHtml {α : Type} [Storage α] [ToString α] {inDim outDim :
           (maxCols := 12) (maxElems := 64)}
       </div>
     </details>
-    <details «open»={false}>
+    <details open={false}>
       <summary>
         {pill s!"c : {outDim}"} {pill "offset"}
       </summary>
@@ -85,7 +86,7 @@ private def affineVecHtml {α : Type} [Storage α] [ToString α] {inDim outDim :
           (maxElems := 64)}
       </div>
     </details>
-  </div>
+  </div>}
 
 /-- One collapsible entry of the per-node list: the node's line with IBP and affine status badges,
 then its output shapes, its box and its lower and upper affine bounds when they exist. -/
@@ -107,47 +108,47 @@ private def nodeStateHtml {α : Type} [Storage α] [Context α] [ToString α]
       | none => warnBadge "Affine: none"
       | some _ => okBadge "Affine: some"
     ;
-    <span
+    jsx%{<span
       style={json% {"display": "inline-flex", "gap": "6px", "flex-wrap": "wrap"}}
-    >{ibpB} {affB}</span>
+    >{ibpB} {affB}</span>}
   ;
-  <details style={json% {"margin": "6px 0"}}>
+  jsx%{<details style={json% {"margin": "6px 0"}}>
     <summary>{monospace summaryLine}
       <span style={json% {"margin-left": "8px"}}>{statusBadges}</span>
     </summary>
     <div style={json% {"margin-top": "8px", "padding-left": "10px"}}>
       {match box?, aff? with
         | none, none =>
-            <div style={json% {"opacity": 0.8}}>{.text
-              "No bound state available for this node id."}</div>
+            jsx%{<div style={json% {"opacity": 0.8}}>{.text
+              "No bound state available for this node id."}</div>}
         | _, _ =>
-            <div>
+            jsx%{<div>
               {match n? with
                 | none => ProofWidgets.Html.text ""
                 | some n =>
-                    <div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap"}}>
+                    jsx%{<div style={json% {"display": "flex", "gap": "8px", "flex-wrap": "wrap"}}>
                       {pill s!"out={n.outsPretty}"}
-                    </div>}
+                    </div>}}
               {match box? with
                 | none => ProofWidgets.Html.text ""
                 | some b =>
-                    <details style={json% {"margin-top": "10px"}} «open»={false}>
+                    jsx%{<details style={json% {"margin-top": "10px"}} open={false}>
                       <summary>{pill s!"IBP box (dim={b.dim})"}</summary>
                       {flatBoxHtml (α := α) b}
-                    </details>}
+                    </details>}}
               {match aff? with
                 | none => ProofWidgets.Html.text ""
                 | some a =>
-                    <details style={json% {"margin-top": "10px"}} «open»={false}>
+                    jsx%{<details style={json% {"margin-top": "10px"}} open={false}>
                       <summary>{pill s!"Affine bounds (in={a.inDim}, out={a.outDim})"}</summary>
                       <div style={json% {"margin-top": "8px"}}>{pill "lower"}</div>
                       {affineVecHtml (α := α) (inDim := a.inDim) (outDim := a.outDim) a.loAff}
                       <div style={json% {"margin-top": "8px"}}>{pill "upper"}</div>
                       {affineVecHtml (α := α) (inDim := a.inDim) (outDim := a.outDim) a.hiAff}
-                    </details>}
-            </div>}
+                    </details>}}
+            </div>}}
     </div>
-  </details>
+  </details>}
 
 /-- One-line preview `lo=[...], hi=[...]` of a box: the first `maxElems` entries of each endpoint,
 read without converting the full buffers, followed by `...` when the box has more. -/
@@ -187,7 +188,7 @@ private def compactTableHtml {α : Type} [Storage α] [Context α] [ToString α]
   let n := max g.nodes.size (max boxes.size affine.size)
   let ids := List.range (min n maxNodes)
   let clipped : Bool := decide (n > maxNodes);
-  <div style={json% {"overflow": "auto", "max-height": "360px", "border":
+  jsx%{<div style={json% {"overflow": "auto", "max-height": "360px", "border":
     "1px solid var(--vscode-panel-border, #e5e5e5)", "border-radius": "10px"}}>
     <table style={json% {"border-collapse": "collapse", "width": "100%"}}>
       <thead>
@@ -214,7 +215,7 @@ private def compactTableHtml {α : Type} [Storage α] [Context α] [ToString α]
           let ibp := match box? with | none => "IBP:none" | some _ => "IBP:some"
           let aff := match aff? with | none => "Aff:none" | some _ => "Aff:some"
           let preview := match box? with | none => "" | some b => flatBoxPreview (α := α) b 3;
-          <tr>
+          jsx%{<tr>
             <td style={json% {"padding": "6px 8px", "border-bottom":
               "1px solid rgba(127,127,127,0.18)"}}>{monospace (toString nid)}</td>
             <td style={json% {"padding": "6px 8px", "border-bottom":
@@ -225,14 +226,15 @@ private def compactTableHtml {α : Type} [Storage α] [Context α] [ToString α]
               "1px solid rgba(127,127,127,0.18)"}}>{monospace (ibp ++ " " ++ aff)}</td>
             <td style={json% {"padding": "6px 8px", "border-bottom":
               "1px solid rgba(127,127,127,0.18)", "white-space": "nowrap"}}>{monospace preview}</td>
-          </tr>)}
+          </tr>})}
       </tbody>
     </table>
     {if clipped then
-      <div style={json% {"padding": "6px 8px", "opacity": 0.7}}>{.text "... (more nodes)"}</div>
+      jsx%{<div style={json% {"padding": "6px 8px",
+        "opacity": 0.7}}>{.text "... (more nodes)"}</div>}
      else
       ProofWidgets.Html.text ""}
-  </div>
+  </div>}
 
 /-- Render the boxes of `TorchLean.CROWN.Op.runIBP` and the affine bounds of
 `TorchLean.CROWN.Op.runCROWN` over a graph of registered operators as an HTML panel. It holds
@@ -252,7 +254,7 @@ def crownPropHtml {α : Type} [Storage α] [Context α] [ToString α] (g : Graph
       dot
     else
       (dot.take 6000).toString ++ "\n... (clipped)";
-  <div style={json% {
+  jsx%{<div style={json% {
     "padding": "10px",
     "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
     "border-radius": "10px",
@@ -273,13 +275,13 @@ def crownPropHtml {α : Type} [Storage α] [Context α] [ToString α] (g : Graph
       {.text ("This viewer displays optional IBP boxes and affine bounds per graph node id. " ++
           "Their presence is diagnostic state, not a checked certificate.")}
     </div>
-    <details «open»={false} style={json% {"margin-bottom": "10px"}}>
+    <details open={false} style={json% {"margin-bottom": "10px"}}>
       <summary>{.text "Compact summary (table)"}</summary>
       <div style={json% {"margin-top": "8px"}}>
         {compactTableHtml (α := α) g boxes affine (maxNodes := maxNodes)}
       </div>
     </details>
-    <details «open»={false} style={json% {"margin-bottom": "10px"}}>
+    <details open={false} style={json% {"margin-bottom": "10px"}}>
       <summary>{.text "GraphViz DOT (colored by state coverage)"}</summary>
       <pre style={json% {
         "white-space": "pre",
@@ -291,18 +293,19 @@ def crownPropHtml {α : Type} [Storage α] [Context α] [ToString α] (g : Graph
         "background": "var(--vscode-textCodeBlock-background, rgba(127,127,127,0.12))"
       }}>{.text dotPreview}</pre>
     </details>
-    <details «open»={true}>
+    <details open={true}>
       <summary>{.text "Per-node states"}</summary>
       <div style={json% {"margin-top": "8px"}}>
         {... ids.toArray.map (fun nid =>
           nodeStateHtml (α := α) nid g.nodes[nid]? boxes[nid]?.join affine[nid]?.join)}
         {if clipped then
-          <div style={json% {"margin-top": "8px", "opacity": 0.7}}>{.text "... (more nodes)"}</div>
+          jsx%{<div style={json% {"margin-top": "8px",
+            "opacity": 0.7}}>{.text "... (more nodes)"}</div>}
          else
           ProofWidgets.Html.text ""}
       </div>
     </details>
-  </div>
+  </div>}
 
 /-!
 ## Bounds Tightness
@@ -313,7 +316,7 @@ collapsed panel, and flags the nodes without a box.
 -/
 
 /-- `(min, max, mean)` of an array, or `none` when it is empty. -/
-private def arrayStats {α : Type} [Storage α] [Context α] (xs : Array α) :
+private def arrayStats {α : Type} [Context α] (xs : Array α) :
     Option (α × α × α) :=
   xs[0]?.map fun x =>
     let rest := xs.extract 1 xs.size
@@ -340,7 +343,7 @@ def boundsTightnessHtml {α : Type} [Storage α] [Context α] [ToString α]
   let ids := List.range (min n maxNodes)
   let clipped : Bool := decide (n > maxNodes)
   ;
-  <div style={json% {
+  jsx%{<div style={json% {
     "padding": "10px",
     "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
     "border-radius": "10px",
@@ -386,7 +389,7 @@ def boundsTightnessHtml {α : Type} [Storage α] [Context α] [ToString α]
             let shape := match n? with | none => "?" | some n => n.outsPretty
             match boxes[nid]? with
             | none =>
-                <tr>
+                jsx%{<tr>
                   <td style={json% {"padding": "6px 8px", "border-bottom":
                     "1px solid rgba(127,127,127,0.18)"}}>{monospace (toString nid)}</td>
                   <td style={json% {"padding": "6px 8px", "border-bottom":
@@ -401,11 +404,11 @@ def boundsTightnessHtml {α : Type} [Storage α] [Context α] [ToString α]
                     "1px solid rgba(127,127,127,0.18)"}}>{ProofWidgets.Html.text ""}</td>
                   <td style={json% {"padding": "6px 8px", "border-bottom":
                     "1px solid rgba(127,127,127,0.18)"}}>{ProofWidgets.Html.text ""}</td>
-                </tr>
+                </tr>}
             | some box? =>
                 match box? with
                 | none =>
-                    <tr>
+                    jsx%{<tr>
                       <td style={json% {"padding": "6px 8px", "border-bottom":
                         "1px solid rgba(127,127,127,0.18)"}}>{monospace (toString nid)}</td>
                       <td style={json% {"padding": "6px 8px", "border-bottom":
@@ -420,7 +423,7 @@ def boundsTightnessHtml {α : Type} [Storage α] [Context α] [ToString α]
                         "1px solid rgba(127,127,127,0.18)"}}>{ProofWidgets.Html.text ""}</td>
                       <td style={json% {"padding": "6px 8px", "border-bottom":
                         "1px solid rgba(127,127,127,0.18)"}}>{ProofWidgets.Html.text ""}</td>
-                    </tr>
+                    </tr>}
                 | some b =>
                     let wT := flatBoxWidthTensor (α := α) b
                     let ws : Array α := Tensor.to wT (Array α)
@@ -428,7 +431,7 @@ def boundsTightnessHtml {α : Type} [Storage α] [Context α] [ToString α]
                     let mxS := match stats with | none => "?" | some s => toString s.2.1
                     let meanS := match stats with | none => "?" | some s => toString s.2.2
                     ;
-                    <tr>
+                    jsx%{<tr>
                       <td style={json% {"padding": "6px 8px", "border-bottom":
                         "1px solid rgba(127,127,127,0.18)"}}>{monospace (toString nid)}</td>
                       <td style={json% {"padding": "6px 8px", "border-bottom":
@@ -443,7 +446,7 @@ def boundsTightnessHtml {α : Type} [Storage α] [Context α] [ToString α]
                         "1px solid rgba(127,127,127,0.18)"}}>{monospace meanS}</td>
                       <td style={json% {"padding": "6px 8px", "border-bottom":
                         "1px solid rgba(127,127,127,0.18)"}}>
-                        <details «open»={false}>
+                        <details open={false}>
                           <summary>{pill "width vector"}</summary>
                           <div style={json% {"margin-top": "6px"}}>
                             {tensorHtml (α := α) (s := .dim b.dim .scalar) wT (maxRows := 12)
@@ -451,12 +454,12 @@ def boundsTightnessHtml {α : Type} [Storage α] [Context α] [ToString α]
                           </div>
                         </details>
                       </td>
-                    </tr>
+                    </tr>}
           )}
         </tbody>
       </table>
     </div>
-  </div>
+  </div>}
 
 /-!
 ## Commands

@@ -50,6 +50,8 @@ open TorchLean Backend.Device
 open Diffusion
 open Lean.Elab.Tactic.GuardMsgs.WhitespaceMode (lax)
 
+/-! Guide page: diffusion models, their noise schedules and samplers. -/
+
 #doc (Manual) "Generative Models" =>
 %%%
 tag := "generative-models"
@@ -60,11 +62,15 @@ below, the prediction loss is zero, but the sampler run with a denominator floor
 `0.467440` from an original value of `0.5`. Supplying the noise ourselves lets us isolate that
 arithmetic before asking what a learned denoiser can do.
 
-I spell out the inputs in the latent-model examples for the same reason: we can calculate a KL term
-or a codebook loss by hand, then compare it with the definition and its printed value. When this
-guide is built, its Lean blocks are elaborated, and their output blocks record Lean's evaluations
-and type checks. Command-line and PyTorch transcripts are recorded examples from earlier runs.
-Nothing in the guide build executes them, and they may differ with the data, version, or backend.
+A generative model is useful when the desired output is not a single label attached to an input. An
+image can have many plausible completions, and many images can belong to the same class. Diffusion
+moves between noise levels in observation space; latent models decode a smaller continuous or
+discrete representation. That choice determines what the network consumes, what its loss compares,
+and how a trained network produces a new observation.
+
+The latent-model examples keep their inputs small enough to calculate a KL term or codebook loss by
+hand. The command-line and PyTorch transcripts are separate runs and include the commands that
+produced them.
 
 # Implementation Layers
 
@@ -99,14 +105,7 @@ Spec-layer functions are executable, and most evaluations below call them at `Fl
 those values to a training run requires matching the definitions and scalar arithmetic, then
 accounting for any implementation refinement.
 
-A generative model is useful when the desired output is not a single label attached to an input. An
-image can have many plausible completions, and many images can belong to the same class. These
-examples separate two ways of representing that variation: diffusion moves between noise levels in
-observation space, while latent models decode a smaller continuous or discrete representation. That
-distinction determines what the network consumes, what its loss compares, and how we could use a
-trained network to produce a new observation.
-
-# The Noise Schedule
+# Noise Schedules
 
 Diffusion needs a variance schedule before it needs a network. Let $`\beta_t` be the per-step
 variance, $`\alpha_t=1-\beta_t`, and
@@ -146,7 +145,7 @@ Both outputs agree to the precision each side prints: TorchLean evaluated in Lea
 
 For this variance-preserving process, cumulative coefficients must stay in $`[0,1]` and must not
 increase. TorchLean's diffusion code guards square roots by applying `max x 0` first, in
-`sqrtNonneg` from {src "TorchLean/NN/Models/Diffusion.lean"}[the spec] , which the
+`sqrtNonneg` from {src "TorchLean/NN/Models/Diffusion.lean"}[the spec], which the
 runnable noising and DDIM steps call. A negative finite input to that guarded expression therefore
 becomes zero before the square root is taken (a property of the guard, not of native `Float.sqrt`).
 But clamping alone would conceal an invalid schedule, so the runnable constructor validates the
@@ -232,7 +231,7 @@ def genSched : VPSchedule Float 4 :=
 Four betas give five cumulative coefficients, because the spec sets $`\bar\alpha_0=1` and defines
 $`\bar\alpha_{t+1}=\bar\alpha_t\alpha_t` (a product over $`s<t`). In the runnable layer,
 $`\bar\alpha_t` is the product over $`s\le t`, so its first entry is already $`1-\beta_0`. Both are
-standardand both are self-consistent. That relationship is recorded in the image-sampling
+standard, and both are self-consistent. That relationship is recorded in the image-sampling
 specification. In {src "TorchLean/NN/Models/Diffusion/ImageDDIM.lean"}[`ImageDDIM.lean`],
 `VPSchedule.noisyAlphaBars` drops the clean-state entry, and `ImageDDIM.alphaBar_noisyAlphaBars`
 proves that putting it back recovers the original cumulative coefficient at every state index. Then
@@ -282,7 +281,7 @@ target = [[[1.000000, -1.000000]]]
 
 Read the input as a one-image batch with two channels over a two-pixel row. Its first channel is
 $`x_2`, and the second is the constant $`0.5` (the normalized timestep broadcast across the
-pixels). And the target is the noise, unchanged: this is epsilon prediction, so the network's job
+pixels). The target is the unchanged noise: this is epsilon prediction, so the network's job
 is to recover $`\epsilon`, not the clean image.
 
 For the first pixel, $`\bar\alpha_2=0.504`. Its clean-image contribution is
@@ -320,7 +319,7 @@ For batch $`B`, data channels $`C`, and spatial extent $`S`, the denoiser contra
 
 $$`B\times(C+1)\times S
 \longrightarrow
-B\times C\times S,`
+B\times C\times S.`
 
 The builders in
 {src "TorchLean/NN/Models/Diffusion/NoisePredictor.lean"}[
@@ -536,7 +535,7 @@ establish the same constant near the end of a schedule. In the oracle example, t
 fixed to study arithmetic, while a learned denoiser introduces input sensitivity as a separate
 quantity that these hypotheses must control.
 
-# The Denoiser
+# Denoiser Architecture
 
 An ordinary TorchLean model predicts $`\widehat\epsilon`. Its architecture is described by a
 config, and the config computes the input and output shapes, so the extra time channel can't be
@@ -609,9 +608,9 @@ near-zero output. Training updates the parameters through the same model interfa
 
 Because the residual constructor is parameterized by spatial rank, a single definition serves one,
 two, or three spatial axes. It has no downsampling, upsampling, multi-scale skip concatenation,
-attention blocks, or learned timestep embeddings. And the example has no exponential moving average
-of the weights. Those choices limit comparisons with diffusion systems that use a multiscale U-Net
-and weight averaging.
+attention blocks, or learned timestep embeddings. The example also has no exponential moving
+average of the weights. Those choices limit comparisons with diffusion systems that use a
+multiscale U-Net and weight averaging.
 
 # Diffusion Training And Sampling
 
@@ -791,7 +790,7 @@ objective hasn't specified which such vectors should be sampled. In a VAE, the p
 address that missing distributional choice, while a discrete codebook restricts which latent
 vectors the decoder encounters.
 
-# The VAE Objective
+# VAE Objective
 
 A VAE adds an approximate posterior $`q_\phi(z\mid x)` and a prior $`p(z)`. When $`\beta=1`, the
 objective below is the negative evidence lower bound, and varying $`\beta` reweights the KL penalty
@@ -937,7 +936,7 @@ The equality case identifies the posterior at which the regularizer vanishes:
 ```
 ```leanOutput genVaeKlZero (whitespace := lax)
 @VAE.meanKLToStandard_eq_zero_iff :
-  ∀ {latent : Shape} (mu logvar : Tensor ℝ latent),
+  ∀ {latent : Shape} {mu logvar : Tensor ℝ latent},
     VAE.meanKLToStandard mu logvar = 0 ↔ mu = 0 ∧ logvar = 0
 ```
 
@@ -1090,7 +1089,7 @@ weight fixed while changing from a sum to a mean changes the update relative to 
 Codebook and commitment losses share a scalar value, but that removes neither this scaling choice
 nor their different stop-gradient roles.
 
-## The Nearest-Code Hypothesis
+## Nearest-Code Hypothesis
 
 The theory layer does not prove that any particular argmin is correct. It states the nearest-code
 predicate with the Euclidean distance and proves that a nonempty codebook always has a nearest
@@ -1352,7 +1351,7 @@ The MAE and autoencoder losses have different architectures, normalization, and 
 Their differing magnitudes don't establish that masking is implemented correctly. The hidden-index
 calculation above is the relevant check that the mask and scoring support agree.
 
-# Result Scope
+# What The Runs Establish
 
 Each result's source determines its scope:
 
@@ -1391,7 +1390,7 @@ Each result's source determines its scope:
   * how one accelerated operation was provided
 :::
 
-# Implementation And Proof Gaps
+# Remaining Proof Obligations
 
 These examples expose three missing connections:
 

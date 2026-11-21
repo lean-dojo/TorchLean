@@ -59,7 +59,7 @@ variable {format : FloatFormat} {plan : Configured.StoragePlan format} {code : T
 local notation "Value" => ExecFloat (Configured.Family format code plan)
 
 /-- The degenerate interval `[0,0]` is the default interval value. -/
-instance : Inhabited (Interval Value) where
+instance instInhabitedInterval : Inhabited (Interval Value) where
   default := Binary.Interval.point 0
 
 /-!

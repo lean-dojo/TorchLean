@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build Lean's pinned mimalloc for TorchLean executables and shared libraries.
 
-Lean 4.35 pins mimalloc 3.4.5. Its arena collector clears the purge wakeup at the end of a scan,
+Lean 4.36 pins mimalloc 3.4.5. Its arena collector clears the purge wakeup at the end of a scan,
 which can erase a wakeup that another thread publishes during that scan. The patch `ARENA_PATCHES`
 publishes arena deadlines before their wakeup, clears the wakeup before scanning, and keeps
 concurrent deadlines and mimalloc's retry timing. Lean's installed static allocator uses local-exec

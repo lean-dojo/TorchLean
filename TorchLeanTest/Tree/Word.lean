@@ -30,6 +30,7 @@ bit for bit, payloads included, and the device checks of the other modules run o
 namespace TorchLean.Test.Tree.Words
 
 open Kernel Examples.Tree Arenas Folds Hylos Unfolds
+open TorchLean.Random (splitmix64)
 
 variable {α β : Type}
 
@@ -49,7 +50,7 @@ def exactLevels [Numeric.Word α] (xs ys : List (Arena.Level α)) : Bool :=
 /-- The words of the checks in a format with `e` exponent and `f` fraction bits: its special
 encodings and pseudorandom words. -/
 def words (e f : Nat) : List Nat :=
-  specials e f ++ (List.range 1000).map fun k => (BTree.mix k.toUInt64).toNat % 2 ^ (1 + e + f)
+  specials e f ++ (List.range 1000).map fun k => (splitmix64 k.toUInt64).toNat % 2 ^ (1 + e + f)
 
 /-- Checks that the scalars of type `α` hold every word of `words`, and that the scalars of type
 `native`, Lean's own type of the format, give all the NaN words of `specials` one encoding. -/

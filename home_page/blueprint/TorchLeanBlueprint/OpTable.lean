@@ -523,7 +523,8 @@ def portsOf (op : Expr) : MetaM (Expr × Expr) := do
   return (ins, outs)
 
 /-- `k` at the constructor `c` applied to fresh attributes. With `scalar`, each element attribute is
-the scalar and a list attribute the inputs are computed from has two entries. -/
+the scalar, reduction orders are left folds, and list attributes used to compute the input ports
+have two entries where needed. -/
 def withOp (c : Name) (scalar : Bool) (k : Expr → MetaM α) : MetaM α := do
   let info ← getConstInfoCtor c
   forallTelescope info.type fun xs _ => do
@@ -535,6 +536,8 @@ def withOp (c : Name) (scalar : Bool) (k : Expr → MetaM α) : MetaM α := do
         op := op.replaceFVar x (mkConst ``TorchLean.Op.Element.scalar)
       else if t.isConstOf ``TorchLean.Op.NumericElement then
         op := op.replaceFVar x (mkConst ``TorchLean.Op.NumericElement.scalar)
+      else if t.isConstOf ``TorchLean.Tensor.ReduceOrder then
+        op := op.replaceFVar x (mkConst ``TorchLean.Tensor.ReduceOrder.leftFold)
     let (ins, _) ← portsOf op
     if (← portList ins).isSome then return ← k op
     for x in xs do
@@ -661,7 +664,9 @@ def needClasses : List (Name × String) :=
   [(``TorchLean.Op.Need.rounding, "Rounding"), (``TorchLean.Op.Need.erf, "Erf"),
    (``TorchLean.Op.Need.inverseTrig, "InverseTrig"),
    (``TorchLean.Op.Need.cbrt, "Cbrt"), (``TorchLean.Op.Need.nextafter, "NextAfter"),
-   (``TorchLean.Op.Need.bits, "Bits")]
+   (``TorchLean.Op.Need.bits, "Bits"), (``TorchLean.Op.Need.special, "Special"),
+   (``TorchLean.Op.Need.frexp, "Frexp"), (``TorchLean.Op.Need.fma, "Fma"),
+   (``TorchLean.Op.Need.complex, "ComplexFunctions")]
 
 /-- The rule cell: the capabilities `Op.rule?` reads for the rule, and where there is no rule. -/
 def ruleCell (c : Name) (need hasRule : Tree) : MetaM String := do
@@ -766,6 +771,17 @@ def boundsCell (c : Name) (cert ibp crown : Tree) : MetaM String := do
   let enclosed := (← certsOf c).any (·.1.kind == `enclosure)
   return if enclosed then s!"{cell}; `enclosure`" else cell
 
+/-- Compute the checker route even when the test in `cert?` is stuck on attributes.
+If the backend transfer is absent and the shared transfer gives no box, both branches fail. -/
+def checkerLeaves (op : Expr) (n : Nat) : MetaM Tree := do
+  let cert ← boundLeaves ``TorchLean.CROWN.Op.cert? op n {} posBox
+  if let .unknown _ := cert.reach posBox then
+    let backend ← whnf (mkApp (mkConst ``TorchLean.CROWN.Op.backendTransfer) (← operatorOf op))
+    if backend.isAppOf ``Option.none then
+      let shared ← boundLeaves ``TorchLean.CROWN.Op.shared? op n {} posBox
+      if shared.reach posBox == .never then return .leaf (.ctor ``Option.none)
+  return cert
+
 /-- The cells of the row of the operator `c`: its name, rule, CUDA, gradient and bounds. -/
 def row (c : Name) : MetaM (Array String) := withOp c true fun op => do
   let facts ← factsOf op
@@ -775,7 +791,7 @@ def row (c : Name) : MetaM (Array String) := withOp c true fun op => do
   let some values ← valueInputs op | throwError "the input ports of {c} do not reduce"
   let jvp ← jvpLeaves op posBool
   let n := values.size
-  let cert ← boundLeaves ``TorchLean.CROWN.Op.cert? op n {} posBox
+  let cert ← checkerLeaves op n
   let ibp ← boundLeaves ``TorchLean.CROWN.Op.ibp? op n {} posBox
   let crown ← boundLeaves ``TorchLean.CROWN.Op.backwardRule op n crownStops posOwn
   return #[s!"`{c.getString!}`", ← ruleCell c need hasRule, ← cudaCell c kernel,
@@ -828,7 +844,7 @@ def operators : CodeBlockExpander
     ArgParse.run .done args
     let ctors ← opCtors
     let mut rows := #[]
-    for word in str.getString.splitToList Char.isWhitespace do
+    for word in str.getVersoCodeBlock.splitToList Char.isWhitespace do
       if word.isEmpty then continue
       let c := ``TorchLean.Op ++ word.toName
       unless ctors.contains c do throwErrorAt str "`{word}` is not an operator of `TorchLean.Op`"

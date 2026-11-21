@@ -8,6 +8,7 @@ module
 
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Coverage
 public import TorchLean.Verify.RuntimeApprox.Roundoff.Rules.NormalizedRows -- shake: keep
+public import TorchLean.Verify.Coverage.TensorComposites.Normalization -- shake: keep
 public import TorchLean.Tensor.Op.Table.Rule
 
 /-!
@@ -19,7 +20,9 @@ which every module under `TorchLean/Verify/Coverage/Layers/` shares.
 
 `#roundoff_propagation` declares the absolute propagation theorems of
 `TorchLean.Normalization.normalize`, `TorchLean.Tensor.abs` and `TorchLean.Tensor.detach`, each an
-error bound under real bounds on its inputs.
+error bound under real bounds on its inputs. The mixed ones that the tangents and gradients apply
+are those that `TorchLean.Verify.Coverage.TensorComposites.Normalization` declares, which has their
+statements.
 
 This is the one coverage module that imports the rules of
 `TorchLean.Verify.RuntimeApprox.Roundoff.Rules.NormalizedRows`: no other module analyzes a program

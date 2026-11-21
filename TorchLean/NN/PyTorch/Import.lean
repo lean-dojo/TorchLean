@@ -7,6 +7,7 @@ Authors: TorchLean Team
 module
 
 public import TorchLean.Tensor.Layers.Linear
+import Lean.Data.Json.Basic
 
 /-!
 # Float tensors from nested JSON arrays

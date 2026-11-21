@@ -51,33 +51,13 @@ theorem bind_eq_ok {ε β γ : Type} {x : Except ε β} {f : β → Except ε γ
   | error e => exact ⟨fun h => (by cases h), fun ⟨_, h, _⟩ => (by cases h)⟩
   | ok b => exact ⟨fun h => ⟨b, rfl, h⟩, fun ⟨_, h, hf⟩ => (by cases h; exact hf)⟩
 
-/-- A traversal succeeds with the results `cs` exactly when each entry's action returns its
-result. -/
-theorem mapM_eq_ok_iff {ε β γ : Type} {f : β → Except ε γ} :
-    ∀ {l : List β} {cs : List γ}, l.mapM f = .ok cs ↔ List.Forall₂ (fun b c => f b = .ok c) l cs
-  | [], cs => by
-      cases cs <;> simp [pure, Except.pure]
-  | b :: l, cs => by
-      rw [List.mapM_cons]
-      constructor
-      · intro h
-        obtain ⟨c, hc, h⟩ := IR.bind_eq_ok.1 h
-        obtain ⟨cs', hcs, h⟩ := IR.bind_eq_ok.1 h
-        cases h
-        exact .cons hc (mapM_eq_ok_iff.1 hcs)
-      · intro h
-        cases h with
-        | cons hc hcs =>
-            exact IR.bind_eq_ok.2 ⟨_, hc, IR.bind_eq_ok.2
-              ⟨_, mapM_eq_ok_iff.2 hcs, rfl⟩⟩
-
 /-- A traversal by `f` then `g` succeeds exactly where the traversal by `f` does and `g` succeeds on
 each of its results. -/
 theorem mapM_bind_eq_ok {ε β γ δ : Type} {f : β → Except ε γ}
     {g : γ → Except ε δ} {l : List β} {zs : List δ} :
     l.mapM (fun b => f b >>= g) = .ok zs ↔
       ∃ ws, l.mapM f = .ok ws ∧ List.Forall₂ (fun w z => g w = .ok z) ws zs := by
-  rw [IR.mapM_eq_ok_iff]
+  rw [List.mapM_eq_ok_iff_forall₂]
   induction l generalizing zs with
   | nil =>
       constructor
@@ -142,20 +122,11 @@ theorem forIn_eq_ok_of {ε β : Type} {f : β → PUnit → Except ε (ForInStep
       simp only [List.forIn_cons, h a List.mem_cons_self, bind, Except.bind]
       exact forIn_eq_ok_of fun b hb => h b (List.mem_cons_of_mem _ hb)
 
-/-- A traversal succeeds where its function succeeds on every entry. -/
-theorem exists_mapM_eq_ok {ε β γ : Type} {f : β → Except ε γ} :
-    ∀ {l : List β}, (∀ x ∈ l, ∃ y, f x = .ok y) → ∃ ys, l.mapM f = .ok ys
-  | [], _ => ⟨[], rfl⟩
-  | x :: l, h => by
-    obtain ⟨y, hy⟩ := h x List.mem_cons_self
-    obtain ⟨ys, hys⟩ := exists_mapM_eq_ok fun z hz => h z (List.mem_cons_of_mem _ hz)
-    exact ⟨y :: ys, IR.mapM_eq_ok_iff.2 (.cons hy (IR.mapM_eq_ok_iff.1 hys))⟩
-
 /-- An array traversal fails nowhere its function succeeds on every entry. -/
 theorem mapM_ne_error {ε β γ : Type} {f : β → Except ε γ} {xs : Array β} {e : ε}
     (h : ∀ x ∈ xs, ∃ y, f x = .ok y) : xs.mapM f ≠ .error e := by
   rw [Array.mapM_eq_mapM_toList]
-  obtain ⟨ys, hys⟩ := IR.exists_mapM_eq_ok fun x hx => h x (Array.mem_toList_iff.1 hx)
+  obtain ⟨ys, hys⟩ := List.exists_mapM_eq_ok_iff.2 fun x hx => h x (Array.mem_toList_iff.1 hx)
   rw [hys]
   simp [Functor.map, Except.map]
 

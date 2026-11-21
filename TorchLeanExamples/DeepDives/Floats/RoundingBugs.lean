@@ -47,7 +47,7 @@ import TorchLean.NN.Softmax.Correctness
 import TorchLean.Verify.RuntimeApprox.Roundoff.CrossEntropy
 import TorchLean.NN.Loss.Clamp
 import TorchLean.NN.Loss.Cosine
-public import FloatLib.Numerics.Automation.Attributes
+public import FloatLib.Tactic.Numerics.Attribute
 public import TorchLean.Tensor.Literal
 public import TorchLean.Tensor.ShapeChange.Flatten
 public import TorchLean.Tensor.Tactic.Init
@@ -2099,7 +2099,7 @@ example :
     let x : Tensor Binary16 [2] := Tensor.ofFn fun i => if i = 0 then 181 else -1447 / 8
     let entry (v : Tensor Binary16 (Shape.reduce [2] [⟨0, by decide⟩] false)) :=
       Tensor.item (Tensor.castShape v (Shape.reduce_singleton _ _))
-    ExecFloat.Binary.isInf (entry (Tensor.twoPassVar x [⟨0, by decide⟩] false)) = true ∧
+    ExecFloat.Binary.isInfinite (entry (Tensor.twoPassVar x [⟨0, by decide⟩] false)) = true ∧
       ExecFloat.Binary.toRat? (entry (Tensor.var x [⟨0, by decide⟩] false)) = some 32768 := by
   decide +kernel
 

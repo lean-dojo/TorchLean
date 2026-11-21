@@ -22,8 +22,8 @@ skeleton in the `nn.Sequential!` style of `TorchLean.NN.Sequential.Literal`.
 
 The matching works on constructor names and substrings, with no Python parser and no model of
 PyTorch semantics. Graph capture goes through `torch.export` to a JSON capture document, which
-`IR.load` loads. This widget shows whether a model is close to the supported TorchLean
-subset before that capture and import.
+`IR.loadFlow` loads (`IR.load` where it has no control flow). This widget shows whether a model is
+close to the supported TorchLean subset before that capture and import.
 -/
 
 public meta section
@@ -383,7 +383,7 @@ private def layerRowHtml (l : Layer) : ProofWidgets.Html :=
     | .dropout => "recognized; probability/seed must be explicit"
     | _ => "direct sequential skeleton"
   ;
-  <tr>
+  jsx%{<tr>
     <td style={json% {"padding": "6px 8px", "border-bottom": "1px solid rgba(127,127,127,0.18)"}}>
       {badge}
     </td>
@@ -393,7 +393,7 @@ private def layerRowHtml (l : Layer) : ProofWidgets.Html :=
     <td style={json% {"padding": "6px 8px", "border-bottom": "1px solid rgba(127,127,127,0.18)"}}>
       {.text detail}
     </td>
-  </tr>
+  </tr>}
 
 /--
 A titled list of messages, badged as warnings when `kind = "warn"` and as errors otherwise. An
@@ -402,18 +402,18 @@ empty list renders as an empty `div`, so the caller can place it in the JSX bloc
 private def msgListHtml (title : String) (msgs : Array String) (kind : String) :
     ProofWidgets.Html :=
   if msgs.isEmpty then
-    <div></div>
+    jsx%{<div></div>}
   else
     let badge := if kind = "warn" then warnBadge title else errBadge title
     let rows := msgs.map (fun msg =>
-      <li style={json% {"margin": "4px 0"}}>{.text msg}</li>)
+      jsx%{<li style={json% {"margin": "4px 0"}}>{.text msg}</li>})
     ;
-    <div style={json% {"margin-top": "10px"}}>
+    jsx%{<div style={json% {"margin-top": "10px"}}>
       {badge}
       <ul style={json% {"margin-top": "6px"}}>
         {...rows}
       </ul>
-    </div>
+    </div>}
 
 /--
 Analyze `snippet` and render the report as an infoview panel. The panel holds badges with the row
@@ -426,7 +426,7 @@ def html (snippet : String) : ProofWidgets.Html :=
   let skeleton := torchLeanSkeleton r
   let allSupported := r.unsupported.isEmpty && !r.layers.isEmpty
   ;
-  <div style={json% {
+  jsx%{<div style={json% {
     "padding": "10px",
     "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
     "border-radius": "10px",
@@ -445,7 +445,7 @@ def html (snippet : String) : ProofWidgets.Html :=
         skeleton and names the parts that still need shape contracts or the full torch.export \
         path."}
     </p>
-    <details «open»={true}>
+    <details open={true}>
       <summary>{.text "Recognized layers"}</summary>
       <table style={json% {"border-collapse": "collapse", "margin-top": "8px", "width": "100%"}}>
         <thead>
@@ -460,7 +460,7 @@ def html (snippet : String) : ProofWidgets.Html :=
     </details>
     {msgListHtml "warnings" r.warnings "warn"}
     {msgListHtml "unsupported" r.unsupported "err"}
-    <details «open»={true} style={json% {"margin-top": "10px"}}>
+    <details open={true} style={json% {"margin-top": "10px"}}>
       <summary>{.text "Generated TorchLean skeleton"}</summary>
       <pre style={json% {
         "white-space": "pre",
@@ -483,7 +483,7 @@ def html (snippet : String) : ProofWidgets.Html :=
           validate the graph."}</li>
       </ul>
     </details>
-  </div>
+  </div>}
 
 /--
 `#pytorch_translate_view s` renders the translator report for Python text given as a Lean term
@@ -501,7 +501,7 @@ macro "#pytorch_translate_view " snippet:term : command =>
 
 /-- Panel shown when the source file cannot be read. -/
 private def fileErrorHtml (path msg : String) : ProofWidgets.Html :=
-  <div style={json% {
+  jsx%{<div style={json% {
     "padding": "10px",
     "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
     "border-radius": "10px",
@@ -517,7 +517,7 @@ private def fileErrorHtml (path msg : String) : ProofWidgets.Html :=
       "border": "1px solid var(--vscode-panel-border, #e5e5e5)",
       "background": "var(--vscode-textCodeBlock-background, rgba(127,127,127,0.12))"
     }}>{.text msg}</pre>
-  </div>
+  </div>}
 
 /--
 Read a Python source file during elaboration and render the translator report for its text.

@@ -43,6 +43,10 @@ Exponents in well-formed trees have at most 256 digits, the most `TextCursor.par
 
 @[expose] public section
 
+-- Batteries decides `∀ c : Char, P c` by `Char.all` over every character, which `decide` cannot
+-- reduce. The `decide`s below range over lists of characters.
+attribute [-instance] Char.instDecidableForallOfDecidablePred_batteries
+
 namespace TorchLean.Examples.TextCursor
 
 open String (utf8Len)
@@ -645,6 +649,7 @@ private theorem remainingFuel_le_of_ok (g : Grammar E) (fuel : Nat) :
     (∀ st e st', exprFuel g fuel st = .ok (e, st') → remainingFuel st' ≤ remainingFuel st) := by
   induction fuel with
   | zero =>
+    -- Without fuel the functions fail and the loops return their accumulator at `st`.
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · intro st e st' h; rw [primaryFuel.eq_1] at h; cases h
     · intro st e st' h; rw [factorFuel.eq_1] at h; cases h
@@ -654,6 +659,8 @@ private theorem remainingFuel_le_of_ok (g : Grammar E) (fuel : Nat) :
     · intro acc st e st' h; rw [exprFuel.loop.eq_1] at h; cases h; exact Nat.le_refl _
     · intro st e st' h; rw [exprFuel.eq_1] at h; cases h
   | succ k ih =>
+    -- Skipping whitespace, reading a token and consuming a character never add fuel, and the
+    -- recursive calls do not by induction.
     obtain ⟨ihP, ihFa, ihU, ihLT, ihT, ihLE, ihE⟩ := ih
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · intro st e st' h
@@ -788,6 +795,10 @@ private theorem eq_of_le_fuel (g : Grammar E) (n : Nat) : ∀ st : TextCursor, r
       exprFuel g f₁ st = exprFuel g f₂ st) := by
   have hpos : ∀ st : TextCursor, 1 ≤ remainingFuel st := fun _ => Nat.le_add_left _ _
   have hM := remainingFuel_le_of_ok g
+  -- Induct on a bound `n` of the remaining fuel. The offsets 0 to 4 cover the calls from
+  -- `exprFuel` down to `primaryFuel`, and a consumed character frees the five units the call
+  -- back to `exprFuel` needs. Calls after a consumed character use the induction hypothesis,
+  -- the others the function proved just before.
   induction n with
   | zero => intro st hst; have := hpos st; omega
   | succ n ih =>
@@ -1991,8 +2002,9 @@ private theorem aligned_of_peek (I : Insertion s s' L₁ W L₂) {c c' : TextCur
     rw [hL₂ ch hc] at ht
     cases ht
 
-private theorem aligned_of_peek' (I : Insertion s s' L₁ W L₂) {c c' : TextCursor} {ch : Char}
-    (h : TokenSafe s s' L₁ W L₂ c c') (hc : peek c' = some ch) (ht : tokenChar ch = true) :
+private theorem aligned_of_peek_inserted (I : Insertion s s' L₁ W L₂) {c c' : TextCursor}
+    {ch : Char} (h : TokenSafe s s' L₁ W L₂ c c') (hc : peek c' = some ch)
+    (ht : tokenChar ch = true) :
     Aligned s s' L₁ W L₂ c c' := by
   rcases h with h | ⟨rfl, rfl, hL₂⟩
   · exact h
@@ -2057,7 +2069,7 @@ private theorem parseFloatBounds_shifted (I : Insertion s s' L₁ W L₂) {c c' 
           | exact ResRel.ok _ (shifted_of_tokenSafe he)
           | split)
       · have hdot' : ¬ peek d' = some '.' := fun h' =>
-          hdot ((peek_eq_of_aligned I (aligned_of_peek' I hd h' (by decide))).symm.trans h')
+          hdot ((peek_eq_of_aligned I (aligned_of_peek_inserted I hd h' (by decide))).symm.trans h')
         simp only
         repeat' (first
           | exact ResRel.error _
@@ -2103,7 +2115,7 @@ private theorem resRel_fuel (g : Grammar E) (I : Insertion s s' L₁ W L₂) (fu
       split
       · refine resRel_bind (ihE _ _ (bump_shifted I ha ‹_›)) fun e d d' hd => ?_
         have ha₂ := skipWs_shifted I hd
-        try dsimp only
+        dsimp only
         rw [peek_eq_of_aligned I ha₂]
         split
         · exact ResRel.ok e (bump_shifted I ha₂ ‹_›)
@@ -2121,7 +2133,7 @@ private theorem resRel_fuel (g : Grammar E) (I : Insertion s s' L₁ W L₂) (fu
             split
             · refine resRel_bind (ihE _ _ (bump_shifted I ha₂ ‹_›)) fun a e e' he => ?_
               have ha₃ := skipWs_shifted I he
-              try dsimp only
+              dsimp only
               rw [peek_eq_of_aligned I ha₃]
               split
               · split
@@ -2137,7 +2149,7 @@ private theorem resRel_fuel (g : Grammar E) (I : Insertion s s' L₁ W L₂) (fu
       rw [factorFuel.eq_2, factorFuel.eq_2]
       refine resRel_bind (ihP _ _ h) fun b d d' hd => ?_
       have ha := skipWs_shifted I hd
-      try dsimp only
+      dsimp only
       rw [peek_eq_of_aligned I ha]
       split
       · exact resRel_bind (parseNat_shifted I (bump_shifted I ha ‹_›)) fun k e e' he =>

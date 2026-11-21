@@ -20,20 +20,22 @@ name and the constants of its parameter references (`ibp?`). A node with a refer
 other than `0` has no box, and neither has a node whose rule finds no box or no constant it reads.
 The Bernoulli mask's box ignores its input.
 
-`shared?` holds the rules of `cert?`, the certificate rule, at any scalar, one for each operator
-of kind `shared` in the table `ruleKind`: detach, add, sub, mul, relu, silu, softplus, safeLog,
-linear, matmul, scaledMatmul, conv and cat. `directed?` holds the engine's rules for the operators
-of kinds `backend` and `directed`, and an operator of kind `none` has no box. Tanh, sigmoid, sine,
-cosine and exp take the backend's enclosures, while `cert?` keeps endpoint min-max and
-clipped midpoint rules for the first four, the operators of kind `backend`. A backend may have no
-enclosure of an operator: native `Float` has none of exp, and native `Float32` none of exp, tanh
-and sigmoid. Log on a positive box, sqrt and reciprocal take the backend's enclosures too, and
-abs, negation and squaring use directed endpoint differences and products, with zero below a box
-across zero. Max and min, reshape and the operators that copy, select or take extrema of input
-entries (permute, slice, flip, broadcast, indexAt, max and min pooling, max and min reductions)
-apply the operator to each endpoint. Sum and average pooling sum each window by directed additions,
-and an average divides that sum by the backend's quotient enclosure with the window's count between
-directed sums of ones, on finite sums, counts and quotients.
+`shared?` holds the rules of `cert?`, the certificate rule, at any scalar, one transfer
+(`sharedTransfer`) for each operator of kind `shared` in the table `ruleKind`: detach, add, sub,
+mul, relu, silu, softplus, safeLog, linear, matmul, scaledMatmul, conv and cat. `directed?` holds
+the engine's rules for the operators of kinds `backend` and `directed`, and an operator of kind
+`none` has no box. An operator that takes a reduction order is of kind `none` in an order other than
+the left fold. Tanh, sigmoid, sine, cosine and exp take the backend's enclosures, while `cert?`
+keeps endpoint min-max and clipped midpoint rules for the first four, the operators of kind
+`backend`. A backend may have no enclosure of an operator: native `Float` has none of exp, and
+native `Float32` none of exp, tanh and sigmoid. Log on a positive box, sqrt and reciprocal take the
+backend's enclosures too, and abs, negation and squaring use directed endpoint differences and
+products, with zero below a box across zero. Max and min, reshape and the operators that copy,
+select or take extrema of input entries (permute, slice, flip, broadcast, indexAt, max and min
+pooling, max and min reductions) apply the operator to each endpoint. Sum and average pooling sum
+each window by directed additions, and an average divides that sum by the backend's quotient
+enclosure with the window's count between directed sums of ones, on finite sums, counts and
+quotients.
 
 The sums and means that `ibpReduce?` and `ibpMean?` accept go through those functions. Softmax and
 last-axis masked softmax on a finite box get boxes inside `[0, 1]`. Layer norm runs
@@ -226,7 +228,7 @@ def poolSumBounds {s : Shape} {dims : List (Fin s.rank)}
     window.foldl (fun acc i =>
       BoundOps.addUp acc (Tensor.poolInput hi o (Coord.unlinearize i))) 0)
 
-/-- The bounds of `sqrt (max var 0 + epsilon)` for a channel of a batch norm with mean `mean`,
+/-- The bounds of `sqrt (var + epsilon)` for a channel of a batch norm with mean `mean`,
 variance `var`, scale `gamma`, bias `beta` and epsilon `epsilon`: the backend's square root
 enclosure between directed sums. They exist only when every parameter, the sums and the root bounds
 pass `finiteBounds?` and the lower root bound is positive. -/
@@ -236,8 +238,7 @@ def batchNormDenominator? (mean var gamma beta epsilon : α) : Option (α × α)
   let _ ← finiteBounds? (gamma, gamma)
   let _ ← finiteBounds? (beta, beta)
   let _ ← finiteBounds? (var, var)
-  let v := Context.maximum var 0
-  let r ← finiteBounds? (BoundOps.addDown v epsilon, BoundOps.addUp v epsilon)
+  let r ← finiteBounds? (BoundOps.addDown var epsilon, BoundOps.addUp var epsilon)
   let d ← NonlinearBoundOps.sqrtBounds r.1 r.2 >>= finiteBounds?
   if 0 < d.1 then pure d else none
 
@@ -293,16 +294,22 @@ def leakyReLUBounds (a lo hi : α) : Option (α × α) :=
     some (Context.minimum (BoundOps.mulDown a lo) 0, Context.maximum (BoundOps.mulUp a lo) hi)
   else some (intervalMul lo hi a a)
 
-/-- The box of `x` above 0 and `a (exp x - 1)` at most 0 for `x` in `[lo, hi]`, for either sign of
-`a`. It is `[lo, hi]` when `0 < lo`. Otherwise it is the outward product of `[a, a]` and the
-backend's bounds of `exp` on `[lo, min hi 0]` less one rounded outward, joined with 0 and `hi` when
-`0 < hi`. -/
-def eluBounds (a lo hi : α) : Option (α × α) :=
-  if 0 < lo then some (lo, hi)
+/-- The box of `x * s` above 0 and `(exp (x * t) - 1) * (a * s)` at most 0 for `x` in `[lo, hi]`,
+for any signs of `a`, `s` and `t`. It is the outward product of `[lo, hi]` and `[s, s]` when
+`0 < lo`. Otherwise it is the outward product of the backend's bounds of `exp` on
+`[lo, min hi 0] * [t, t]` less one, rounded outward, and `[a, a] * [s, s]`, joined with
+`[0, hi] * [s, s]` when `0 < hi`. -/
+def eluBounds (a s t lo hi : α) : Option (α × α) :=
+  if 0 < lo then some (intervalMul lo hi s s)
   else do
-    let e ← NonlinearBoundOps.expBounds lo (Context.minimum hi 0)
-    let n := intervalMul (BoundOps.subDown e.1 1) (BoundOps.subUp e.2 1) a a
-    if 0 < hi then some (Context.minimum n.1 0, Context.maximum n.2 hi) else some n
+    let u := intervalMul lo (Context.minimum hi 0) t t
+    let e ← NonlinearBoundOps.expBounds u.1 u.2
+    let c := intervalMul a a s s
+    let n := intervalMul (BoundOps.subDown e.1 1) (BoundOps.subUp e.2 1) c.1 c.2
+    if 0 < hi then
+      let p := intervalMul 0 hi s s
+      some (Context.minimum n.1 p.1, Context.maximum n.2 p.2)
+    else some n
 
 /-- The box of a map whose value lies between its argument and 0, for `x` in `[lo, hi]`: the hull
 of `[lo, hi]` and 0. -/
@@ -657,9 +664,12 @@ value reference. Every other operator goes to `Op.elementwiseBox?`. -/
   | _, _, .leakyReLU, [rx, ra] => do
       let a ← constAt? G P ra (.frozen [])
       box? boxes rx >>= boxUnaryEnclosure? (Op.leakyReLUBounds (Tensor.item a))
-  | _, _, .elu, [rx, ra] => do
+  | _, _, .elu, [rx, ra, rs, rt] => do
       let a ← constAt? G P ra (.frozen [])
-      box? boxes rx >>= boxUnaryEnclosure? (Op.eluBounds (Tensor.item a))
+      let s ← constAt? G P rs (.frozen [])
+      let t ← constAt? G P rt (.frozen [])
+      box? boxes rx >>= boxUnaryEnclosure?
+        (Op.eluBounds (Tensor.item a) (Tensor.item s) (Tensor.item t))
   | _, _, .clamp, [rx, ra, rb] => do
       let a ← constAt? G P ra (.frozen [])
       let b ← constAt? G P rb (.frozen [])
@@ -703,14 +713,14 @@ def directed? (G : IR.Graph) (P : IR.Payload α) (boxes : Array (Option (FlatBox
   | ⟨_, _, .abs⟩, [r] => (box? boxes r).map boxAbs
   | ⟨_, _, .neg⟩, [r] => (box? boxes r).map boxNeg
   | ⟨_, _, .square⟩, [r] => (box? boxes r).map boxSquare
-  | ⟨_, _, .max⟩, [r₁, r₂] =>
-      match box? boxes r₁, box? boxes r₂ with
-      | some B₁, some B₂ => if B₁.dim = B₂.dim then some (boxMaxElem B₁ B₂) else none
-      | _, _ => none
-  | ⟨_, _, .min⟩, [r₁, r₂] =>
-      match box? boxes r₁, box? boxes r₂ with
-      | some B₁, some B₂ => if B₁.dim = B₂.dim then some (boxMinElem B₁ B₂) else none
-      | _, _ => none
+  | ⟨_, _, .max⟩, [r₁, r₂] => do
+      let B₁ ← box? boxes r₁
+      let B₂ ← box? boxes r₂
+      if B₁.dim = B₂.dim then some (boxMaxElem B₁ B₂) else none
+  | ⟨_, _, .min⟩, [r₁, r₂] => do
+      let B₁ ← box? boxes r₁
+      let B₂ ← box? boxes r₂
+      if B₁.dim = B₂.dim then some (boxMinElem B₁ B₂) else none
   | ⟨_, _, .reshape _⟩, [r] => box? boxes r
   | ⟨_, _, op@(.permute _ _ _)⟩, [r] => box? boxes r >>= endpointsBox? op
   | ⟨_, _, op@(.slice _ _ _ _ _)⟩, [r] => box? boxes r >>= endpointsBox? op
@@ -754,10 +764,11 @@ def directed? (G : IR.Graph) (P : IR.Payload α) (boxes : Array (Option (FlatBox
         let k := Shape.Coord.get c dim
         batchNormBounds (lo c) (hi c) (mean.getScalar k) (gamma.getScalar k)
           (beta.getScalar k) (d k)) B
-  | ⟨_, _, .mseLoss⟩, [r₁, r₂] =>
-      match box? boxes r₁, box? boxes r₂ with
-      | some y, some t => if y.dim = t.dim then boxMean? (boxSquare (boxSub y t)) else none
-      | _, _ => none
+  | ⟨_, _, .mseLoss⟩, [r₁, r₂] => do
+      let y ← box? boxes r₁
+      let t ← box? boxes r₂
+      if y.dim = t.dim then boxMean? (boxSquare (boxSub y t)) else none
+  -- Uniform draws and Bernoulli masks lie in `[0, 1]`, whatever the seed.
   | ⟨_, _, .randUniform (s := s) _⟩, [] => some (unitBox s.size)
   | ⟨_, _, .bernoulliMask (s := s) _⟩, [_] => some (unitBox s.size)
   | ⟨_, _, op⟩, refs => scalarParamBox? G P boxes op refs

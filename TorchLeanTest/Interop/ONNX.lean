@@ -206,7 +206,7 @@ model('mixed', [node('Relu', ['x'], 'y')], {'x': np.array([-1.0, 2.0], dtype=np.
       [constant('c', [1.0 + 2.0 ** -30], np.float64)], compare='words')
 # Opset 6 broadcasting: B placed from `axis`, or along the trailing axes without it.
 x = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
-model('legacy', [node('Add', ['x', 'b'], 'sum', broadcast=1, axis=0),
+model('opset6', [node('Add', ['x', 'b'], 'sum', broadcast=1, axis=0),
     node('Mul', ['sum', 'c'], 'y', broadcast=1)], {'x': x}, {'y': ([2, 2], F32)},
     [constant('b', [10.0, 20.0]), constant('c', [1.0, -1.0])], opset=6, compare='words',
     reference=lambda x: [(x + np.array([[10.0], [20.0]], dtype=np.float32)) *
@@ -294,12 +294,12 @@ for is_test in (0, 1):
         initializers=[constant('scale', [1]), constant('bias', [0]),
                       constant('mean', [0]), constant('var', [1])],
         error='is_test=0' if not is_test else None)
-check_case('legacy_shapes', [helper.make_node('Add', ['x', 'b'], ['y'])], shape=(2, 2),
+check_case('opset6_shapes', [helper.make_node('Add', ['x', 'b'], ['y'])], shape=(2, 2),
            opset=6, initializers=[constant('b', [1.0, 2.0])], error='broadcast is 0')
-check_case('legacy_singleton', [helper.make_node('Add', ['x', 'b'], ['y'], broadcast=1, axis=0)],
+check_case('opset6_singleton', [helper.make_node('Add', ['x', 'b'], ['y'], broadcast=1, axis=0)],
            shape=(2, 3), opset=6, initializers=[constant('b', [[1.0], [2.0]])],
            error='neither one element')
-check_case('legacy_extrema', [helper.make_node('Max', ['x', 'b'], ['y'])], shape=(2, 2),
+check_case('opset6_extrema', [helper.make_node('Max', ['x', 'b'], ['y'])], shape=(2, 2),
            opset=6, initializers=[constant('b', [1.0, 2.0])], error='broadcasts from opset 8')
 # A source value whose name looks like a generated helper's keeps its own step, and each step
 # names its source.

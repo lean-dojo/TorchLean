@@ -13,3 +13,12 @@ FloatLib bridges and APIs they use.
 | `LibraryBugs.lean` | Kernel-checked rounding failures in formulas from PyTorch, JAX, Hugging Face Transformers, TRL, Stable-Baselines3 and diffusers, each paired with a formula for the same quantity that does not fail. |
 | `ProbBugs/SurvivalComplement.lean` | The same for formulas from PyTorch, PyTorch Geometric and TensorFlow Probability. |
 | `LossBugs/FocalPower.lean` | The same for gradients and decay factors from torchvision, xLSTM and PyTorch. |
+
+`Stable/` holds worked proofs of `TorchLean.Verify.Stable`, whose programs round a real target once
+and carry the certificate of `Once.claim` in every IEEE binary format.
+
+| File | What it shows |
+| --- | --- |
+| `Stable/Exp.lean` | The sigmoid, the soft-margin loss gradient and the Weibull survival function rounded once, and the soft-margin gradient repaired where `LossBugs.SoftMargin.lossBackward` returns zero in its band. |
+| `Stable/K3.lean` | TRL's k3 KL estimator rounded once and positive in its band, where TRL's formula and its `expm1` rewrite are rejected. |
+| `Stable/Variance.lean` | The population and sample variance rounded once, `+0` at equal inputs, where PyG's one-pass formula returns `-2` in binary32. |

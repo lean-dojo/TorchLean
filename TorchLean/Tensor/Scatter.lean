@@ -28,8 +28,9 @@ gradient "to all locations in the source that correspond to the same index". The
 settles both: `[1, 2, 3]` scattered into one entry gives `3`, and an upstream `8` there sends
 `[0, 0, 8]` back, where torch 2.8.0 sends `[8, 8, 8]`. At a tie of `-0` and `0` torch's `amax`
 and `amin` keep whichever they meet first. The capture test
-`test_topk_pool_indices_and_scatter_folds_match_eager` in `scripts/checks/test_ir_capture.py`
-compares the `prod`, `amax` and `amin` folds with eager PyTorch where the two tie rules agree.
+`test_topk_pool_indices_and_scatter_folds_match_eager` in
+`scripts/checks/ir_capture_pytorch_operators.py` compares the `prod`, `amax` and `amin` folds
+with eager PyTorch where the two tie rules agree.
 Torch 2.8.0 gives the gradients that the guards of `TorchLeanTest/OpTable.lean` hold, in binary64
 and binary32.
 

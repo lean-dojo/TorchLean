@@ -20,12 +20,15 @@ BatchNorm normalizes every row of a `[channels, positions]` matrix. Both apply t
 `x ↦ (x - 𝔼 x) / sqrt (var x + ε)`
 
 to each row, where the row mean is Mathlib's `𝔼` (`Finset.expect`) and the row variance is the
-population variance `TorchLean.var`. For `0 < ε` the map is differentiable on flattened matrices,
-and for nonempty rows its derivative is the closed form
+population variance `TorchLean.var`. At a matrix whose rows have a single entry or each a nonzero
+sum of variance and `ε`, the map has the closed-form derivative
 
 `dx ↦ invStd * (dx - 𝔼 dx - xhat * 𝔼 (dx * xhat))`
 
-used by the normalization JVPs.
+used by the normalization JVPs (`hasFDerivAt_nrm_of_ne`, `hasFDerivAt_nrmVec`). Where the sum is
+negative, the normalized row is zero nearby, since the real square root of a negative number is
+zero, and a row with a single entry is zero once centered. Every `0 < ε` meets the condition
+(`rowVar_add_pos`).
 -/
 
 @[expose] public section
@@ -172,38 +175,34 @@ theorem hasFDerivAt_rowVar (X : Vec (Shape.size [m, n])) (i : Fin m) :
   rw [hfun]
   simpa [varD] using h
 
-/-- Derivative of the inverse standard deviation, for positive `ε`. -/
-theorem hasFDerivAt_invStd {ε : ℝ} (hε : 0 < ε) (X : Vec (Shape.size [m, n])) (i : Fin m) :
-    HasFDerivAt (fun Y : Vec (Shape.size [m, n]) => invStd Y ε i) (invD X ε i) X := by
-  have hpos := rowVar_add_pos hε X i
-  have hs := Real.sqrt_pos.2 hpos
-  have hsqrt : HasFDerivAt
-      (fun Y : Vec (Shape.size [m, n]) =>
-        Real.sqrt (TorchLean.var (fun j => Y (idxMN (m := m) (n := n) i j)) + ε))
-      (sqrtD X ε i) X :=
-    ((hasFDerivAt_rowVar X i).add_const ε).sqrt hpos.ne'
-  exact (hasDerivAt_inv hs.ne').comp_hasFDerivAt X hsqrt
+/-- If row `i` of `X` has a positive sum of its variance and `ε`, the inverse standard deviation of
+that row has derivative `invD` at `X`. -/
+theorem hasFDerivAt_invStd {ε : ℝ} (X : Vec (Shape.size [m, n])) (i : Fin m)
+    (hpos : 0 < TorchLean.var (fun j => X (idxMN (m := m) (n := n) i j)) + ε) :
+    HasFDerivAt (fun Y : Vec (Shape.size [m, n]) => invStd Y ε i) (invD X ε i) X :=
+  (hasDerivAt_inv (Real.sqrt_pos.2 hpos).ne').comp_hasFDerivAt X
+    (((hasFDerivAt_rowVar X i).add_const ε).sqrt hpos.ne')
 
-/-- The normalized entry is differentiable for positive `ε`. -/
-theorem hasFDerivAt_nrm {ε : ℝ} (hε : 0 < ε) (X : Vec (Shape.size [m, n])) (i : Fin m)
-    (j : Fin n) :
+/-- If row `i` of `X` has a positive sum of its variance and `ε`, the normalized entry `(i, j)` has
+derivative `nrmD` at `X`. -/
+theorem hasFDerivAt_nrm {ε : ℝ} (X : Vec (Shape.size [m, n])) (i : Fin m) (j : Fin n)
+    (hpos : 0 < TorchLean.var (fun k => X (idxMN (m := m) (n := n) i k)) + ε) :
     HasFDerivAt (fun Y : Vec (Shape.size [m, n]) => nrm Y ε i j) (nrmD X ε i j) X :=
-  (hasFDerivAt_centered X i j).mul (hasFDerivAt_invStd hε X i)
+  (hasFDerivAt_centered X i j).mul (hasFDerivAt_invStd X i hpos)
 
-/-- The derivative of the normalized entry is the closed-form JVP. -/
-theorem nrmD_apply (hn : 0 < n) {ε : ℝ} (hε : 0 < ε) (X : Vec (Shape.size [m, n])) (i : Fin m)
-    (j : Fin n) (dX : Vec (Shape.size [m, n])) :
+/-- If row `i` of `X` has a positive sum of its variance and `ε`, the derivative `nrmD` of the
+normalized entry `(i, j)` at `X` is the closed-form JVP `nrmJVP`. -/
+theorem nrmD_apply {ε : ℝ} (X : Vec (Shape.size [m, n])) (i : Fin m) (j : Fin n)
+    (hpos : 0 < TorchLean.var (fun k => X (idxMN (m := m) (n := n) i k)) + ε)
+    (dX : Vec (Shape.size [m, n])) :
     nrmD X ε i j dX = nrmJVP X ε dX i j := by
-  have hn' : (n : ℝ) ≠ 0 := by exact_mod_cast hn.ne'
-  have hs := Real.sqrt_pos.2 (rowVar_add_pos hε X i)
+  have hn' : (n : ℝ) ≠ 0 := by exact_mod_cast j.pos.ne'
+  have hs := Real.sqrt_pos.2 hpos
   have hsum :
       ∑ k : Fin n, dX (idxMN (m := m) (n := n) i k) * nrm X ε i k =
         (∑ k : Fin n, centered X i k * dX (idxMN (m := m) (n := n) i k)) * invStd X ε i := by
     rw [Finset.sum_mul]
-    apply Finset.sum_congr rfl
-    intro k _
-    simp only [nrm]
-    ring
+    exact Finset.sum_congr rfl fun k _ => by simp only [nrm]; ring
   simp only [nrmD, invD, sqrtD, add_apply, smul_apply, smul_eq_mul, centD_apply, varD_apply,
     nrmJVP]
   rw [hsum]
@@ -301,23 +300,59 @@ def nrmJVPCLM (X : Vec (Shape.size [m, n])) (ε : ℝ) :
     nrmJVPCLM X ε dX ip = nrmJVP X ε dX (rowOf ip) (colOf ip) := by
   simp [nrmJVPCLM]
 
-/-- Row normalization is differentiable on a nonempty feature axis, with the closed-form JVP
-as derivative. The coordinatewise chain-rule calculation agrees with that JVP because positive
-epsilon keeps each row's denominator nonzero. -/
-theorem hasFDerivAt_nrmVec (hn : 0 < n) {ε : ℝ} (hε : 0 < ε) (X : Vec (Shape.size [m, n])) :
+/-- If the rows have a single entry or row `i` of `X` has a nonzero sum of its variance and `ε`,
+the normalized entry `(i, j)` has the closed-form JVP as derivative at `X`. -/
+theorem hasFDerivAt_nrm_of_ne {ε : ℝ} (X : Vec (Shape.size [m, n])) (i : Fin m) (j : Fin n)
+    (h : n = 1 ∨ TorchLean.var (fun k => X (idxMN (m := m) (n := n) i k)) + ε ≠ 0) :
+    HasFDerivAt (fun Y : Vec (Shape.size [m, n]) => nrm Y ε i j)
+      ((EuclideanSpace.proj (𝕜 := ℝ) (idxMN (m := m) (n := n) i j) :
+        Vec (Shape.size [m, n]) →L[ℝ] ℝ).comp (nrmJVPCLM X ε)) X := by
+  rcases h with rfl | hne
+  · have hc : ∀ Y : Vec (Shape.size [m, 1]), centered Y i j = 0 := fun Y => by
+      rw [centered, Finset.expect_congr rfl fun k _ =>
+        congrArg (fun k => Y (idxMN (m := m) (n := 1) i k)) (Subsingleton.elim k j),
+        Fintype.expect_const, sub_self]
+    have hf : (fun Y : Vec (Shape.size [m, 1]) => nrm Y ε i j) = fun _ => 0 :=
+      funext fun Y => by rw [nrm, hc, zero_mul]
+    rw [hf]
+    refine (hasFDerivAt_const 0 X).congr_fderiv (ContinuousLinearMap.ext fun dX => ?_)
+    have hd := hc dX
+    rw [centered] at hd
+    simp only [_root_.zero_apply, ContinuousLinearMap.comp_apply, PiLp.proj_apply, nrmJVPCLM_apply,
+      rowOf_idxMN, colOf_idxMN, nrmJVP, hd, nrm, hc, zero_mul, sub_zero, mul_zero]
+  · rcases hne.lt_or_gt with hneg | hpos
+    · have hz : ∀ Y : Vec (Shape.size [m, n]),
+          TorchLean.var (fun k => Y (idxMN (m := m) (n := n) i k)) + ε < 0 → invStd Y ε i = 0 :=
+        fun Y hY => by rw [invStd, Real.sqrt_eq_zero_of_nonpos hY.le, inv_zero]
+      have hev : ∀ᶠ Y in nhds X,
+          TorchLean.var (fun k => Y (idxMN (m := m) (n := n) i k)) + ε < 0 :=
+        ((hasFDerivAt_rowVar X i).continuousAt.add continuousAt_const).eventually_lt
+          continuousAt_const hneg
+      refine ((hasFDerivAt_const (0 : ℝ) X).congr_of_eventuallyEq
+        (hev.mono fun Y hY => ?_)).congr_fderiv (ContinuousLinearMap.ext fun dX => ?_)
+      · show nrm Y ε i j = 0
+        rw [nrm, hz Y hY, mul_zero]
+      · simp only [_root_.zero_apply, ContinuousLinearMap.comp_apply, PiLp.proj_apply,
+          nrmJVPCLM_apply, rowOf_idxMN, colOf_idxMN, nrmJVP, hz X hneg, zero_mul]
+    · refine (hasFDerivAt_nrm X i j hpos).congr_fderiv (ContinuousLinearMap.ext fun dX => ?_)
+      rw [nrmD_apply X i j hpos]
+      simp only [ContinuousLinearMap.comp_apply, PiLp.proj_apply, nrmJVPCLM_apply, rowOf_idxMN,
+        colOf_idxMN]
+
+/-- If the rows have a single entry or every row of `X` has a nonzero sum of its variance and `ε`,
+row normalization has the closed-form JVP `nrmJVPCLM` as derivative at `X`. -/
+theorem hasFDerivAt_nrmVec {ε : ℝ} (X : Vec (Shape.size [m, n]))
+    (h : n = 1 ∨ ∀ i : Fin m, TorchLean.var (fun k => X (idxMN (m := m) (n := n) i k)) + ε ≠ 0) :
     HasFDerivAt (fun Y : Vec (Shape.size [m, n]) => nrmVec Y ε) (nrmJVPCLM X ε) X := by
   rw [← hasFDerivWithinAt_univ, hasFDerivWithinAt_euclidean]
   intro ip
   rw [hasFDerivWithinAt_univ]
-  have h := hasFDerivAt_nrm hε X (rowOf ip) (colOf ip)
   have hfun : (fun Y : Vec (Shape.size [m, n]) => nrmVec Y ε ip) =
-      fun Y : Vec (Shape.size [m, n]) => nrm Y ε (rowOf ip) (colOf ip) := by
-    funext Y
-    exact nrmVec_apply Y ε ip
+      fun Y => nrm Y ε (rowOf ip) (colOf ip) :=
+    funext fun Y => nrmVec_apply Y ε ip
   rw [hfun]
-  refine h.congr_fderiv ?_
-  ext dX
-  simp [nrmD_apply hn hε]
+  have hd := hasFDerivAt_nrm_of_ne X (rowOf ip) (colOf ip) (h.imp_right fun h => h (rowOf ip))
+  rwa [idxMN_rowOf_colOf] at hd
 
 end
 

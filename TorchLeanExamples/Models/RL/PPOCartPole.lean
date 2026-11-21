@@ -34,7 +34,7 @@ More concretely:
 
 ## CLI flags
 
-- `--device cuda`: run the Torch backend on CUDA (requires building with `-K cuda=true`).
+- `--device cuda`: run the Torch backend on CUDA (requires building with `-Kcuda=true`).
 - `--seed <n>`: deterministic seed for TorchLean RNG streams. Gymnasium resets do not depend on
   it: the rollout of update `u` (counted from `0`) resets with seed `u`, and evaluation episode `k`
   after `n` completed updates resets with seed `1000 + n + k`.
@@ -147,7 +147,7 @@ solved threshold.
 -/
 def solvedAverageReturn : Float := 475.0
 
-instance : NeZero horizon := ⟨by decide⟩
+/-- `actionCount` is positive. -/
 instance : NeZero actionCount := ⟨by decide⟩
 
 /-- Shape of one CartPole observation, `[observationWidth]`. -/

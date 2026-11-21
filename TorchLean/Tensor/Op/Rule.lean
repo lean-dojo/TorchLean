@@ -147,6 +147,17 @@ theorem check_ok (rule : Op.Rule α ins outs) (xs : Values α ins) (flags : Flag
   simp only [check, h]
   rfl
 
+/-- Two rules with the default recorder fields and the same pullback are equal when their forward
+maps and their forward-mode rules are. -/
+theorem ext_forward {forward forward' : Values α ins → Values α outs}
+    {backward : Values α ins → Tangents α outs → Tangents α ins}
+    {jvp jvp' : Option (Values α ins → Tangents α ins → Tangents α outs)}
+    (hforward : forward = forward') (hjvp : jvp = jvp') :
+    ({ forward, backward, jvp? := jvp } : Op.Rule α ins outs) =
+      { forward := forward', backward, jvp? := jvp' } := by
+  subst hforward hjvp
+  rfl
+
 end Op.Rule
 
 end TorchLean

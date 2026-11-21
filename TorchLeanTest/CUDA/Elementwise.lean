@@ -16,10 +16,6 @@ public import TorchLeanTest.Harness.CUDA
 import TorchLean.NN.Kernel.Function
 import TorchLean.NN.Kernel.Graph
 public import TorchLean.Tensor.Tactic.Init
-import TorchLean.NN.Sequential.Execution
-import TorchLean.NN.Optimizer.Constructor
-import TorchLean.NN.Builder
-import TorchLean.NN.Training.Reporting
 
 /-!
 # CUDA Kernel Coverage: Elementwise Ops

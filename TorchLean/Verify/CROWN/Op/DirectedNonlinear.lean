@@ -117,47 +117,56 @@ theorem _root_.TorchLean.CROWN.Directed.boxSafeLog?_encloses
   intro lo' hi' outLo outHi x' hout hxlo hxhi
   exact safeLogBounds_enclosure hout hxlo hxhi (he 0).1 (he 0).2
 
-/-- `eluBounds a` encloses `x` above 0 and `a (exp x - 1)` at most 0, for any sign of
-`a`. -/
-theorem eluBounds_enclosure (a : α) :
-    UnaryEnclosure (fun x => if 0 < x then x else value a * (Real.exp x - 1))
-      (eluBounds a) := by
+/-- `eluBounds a s t` encloses `x * s` above 0 and `(exp (x * t) - 1) * (a * s)` at most 0, for
+any signs of `a`, `s` and `t`. -/
+theorem eluBounds_enclosure (a s t : α) :
+    UnaryEnclosure (fun x => if 0 < x then x * value s
+      else (Real.exp (x * value t) - 1) * (value a * value s)) (eluBounds a s t) := by
   intro lo hi outLo outHi x h hlo hhi
   have hpos : ∀ e : α, 0 < e ↔ 0 < value e := fun e => by
     rw [LawfulBoundOps.lt_iff, LawfulBoundOps.toReal_zero]
   unfold eluBounds at h
   by_cases h₀ : 0 < lo
-  · simp only [h₀, ↓reduceIte, Option.some.injEq, Prod.mk.injEq] at h
-    obtain ⟨rfl, rfl⟩ := h
+  · simp only [h₀, ↓reduceIte, Option.some.injEq] at h
     have hx : 0 < x := ((hpos lo).mp h₀).trans_le hlo
     simp only [hx, ↓reduceIte]
-    exact ⟨hlo, hhi⟩
+    have hm := Graph.intervalMul_encloses (al := lo) (au := hi) (bl := s) (bu := s) hlo hhi
+      le_rfl le_rfl
+    rw [h] at hm
+    exact hm
   simp only [h₀, ↓reduceIte, Option.bind_eq_bind] at h
   obtain ⟨e, he, h⟩ := Option.bind_eq_some_iff.mp h
   -- the negative branch, on `[lo, min hi 0]`
   have hneg : x ≤ 0 →
-      value (intervalMul (BoundOps.subDown e.1 1) (BoundOps.subUp e.2 1) a a).1 ≤
-        value a * (Real.exp x - 1) ∧ value a * (Real.exp x - 1) ≤
-          value (intervalMul (BoundOps.subDown e.1 1) (BoundOps.subUp e.2 1) a a).2 := by
+      value (intervalMul (BoundOps.subDown e.1 1) (BoundOps.subUp e.2 1)
+          (intervalMul a a s s).1 (intervalMul a a s s).2).1 ≤
+        (Real.exp (x * value t) - 1) * (value a * value s) ∧
+      (Real.exp (x * value t) - 1) * (value a * value s) ≤
+        value (intervalMul (BoundOps.subDown e.1 1) (BoundOps.subUp e.2 1)
+          (intervalMul a a s s).1 (intervalMul a a s s).2).2 := by
     intro hx0
     have hxm : x ≤ value (Context.minimum hi 0) := by
       rw [LawfulBoundOps.toReal_minimum, LawfulBoundOps.toReal_zero]
       exact le_min hhi hx0
-    have hex := LawfulNonlinearBoundOps.expBounds_enclosure (α := α) he hlo hxm
+    have hu := Graph.intervalMul_encloses (al := lo) (au := Context.minimum hi 0) (bl := t)
+      (bu := t) hlo hxm le_rfl le_rfl
+    have hex := LawfulNonlinearBoundOps.expBounds_enclosure (α := α) he hu.1 hu.2
     have hd := LawfulBoundOps.subDown_le e.1 1
-    have hu := LawfulBoundOps.le_subUp e.2 1
-    rw [LawfulBoundOps.toReal_one] at hd hu
-    have hl : value (BoundOps.subDown e.1 1) ≤ Real.exp x - 1 := by linarith [hex.1]
-    have hh : Real.exp x - 1 ≤ value (BoundOps.subUp e.2 1) := by linarith [hex.2]
-    rw [mul_comm (value a)]
-    exact Graph.intervalMul_encloses hl hh le_rfl le_rfl
+    have hu' := LawfulBoundOps.le_subUp e.2 1
+    rw [LawfulBoundOps.toReal_one] at hd hu'
+    have hl : value (BoundOps.subDown e.1 1) ≤ Real.exp (x * value t) - 1 := by linarith [hex.1]
+    have hh : Real.exp (x * value t) - 1 ≤ value (BoundOps.subUp e.2 1) := by linarith [hex.2]
+    have hc := Graph.intervalMul_encloses (al := a) (au := a) (bl := s) (bu := s) le_rfl le_rfl
+      le_rfl le_rfl
+    exact Graph.intervalMul_encloses hl hh hc.1 hc.2
   split_ifs at h with h₁
   · simp only [Option.some.injEq, Prod.mk.injEq] at h
     obtain ⟨rfl, rfl⟩ := h
-    simp only [LawfulBoundOps.toReal_minimum, LawfulBoundOps.toReal_maximum,
-      LawfulBoundOps.toReal_zero]
+    simp only [LawfulBoundOps.toReal_minimum, LawfulBoundOps.toReal_maximum]
     split_ifs with hx
-    · exact ⟨(min_le_right _ _).trans hx.le, hhi.trans (le_max_right _ _)⟩
+    · have hp := Graph.intervalMul_encloses (al := 0) (au := hi) (bl := s) (bu := s) (x := x)
+        (by rw [LawfulBoundOps.toReal_zero]; exact hx.le) hhi le_rfl le_rfl
+      exact ⟨(min_le_right _ _).trans hp.1, hp.2.trans (le_max_right _ _)⟩
     · have hn := hneg (not_lt.mp hx)
       exact ⟨(min_le_left _ _).trans hn.1, hn.2.trans (le_max_left _ _)⟩
   · simp only [Option.some.injEq] at h
@@ -447,11 +456,11 @@ theorem hypotBounds_enclosure :
   exact LawfulNonlinearBoundOps.sqrtBounds_enclosure (α := α) h
     (by linarith [max_le hx2 hp.1, max_le hy2 hq.1]) (by linarith [hp.2, hq.2])
 
-/-- A box of `batchNormDenominator?` encloses `sqrt (max var 0 + epsilon)`. -/
+/-- A box of `batchNormDenominator?` encloses `sqrt (var + epsilon)`. -/
 theorem batchNormDenominator?_encloses {mean var gamma beta epsilon : α} {d : α × α}
     (h : batchNormDenominator? mean var gamma beta epsilon = some d) :
-    value d.1 ≤ Real.sqrt (max (value var) 0 + value epsilon) ∧
-      Real.sqrt (max (value var) 0 + value epsilon) ≤ value d.2 := by
+    value d.1 ≤ Real.sqrt (value var + value epsilon) ∧
+      Real.sqrt (value var + value epsilon) ≤ value d.2 := by
   simp only [batchNormDenominator?, Option.bind_eq_bind] at h
   obtain ⟨_, -, h⟩ := Option.bind_eq_some_iff.mp h
   obtain ⟨_, -, h⟩ := Option.bind_eq_some_iff.mp h
@@ -468,15 +477,8 @@ theorem batchNormDenominator?_encloses {mean var gamma beta epsilon : α} {d : �
     · exact Option.some.inj h
     · contradiction
   subst hd
-  have hv : value (Context.maximum var 0) = max (value var) 0 := by
-    rw [LawfulBoundOps.toReal_maximum, LawfulBoundOps.toReal_zero (α := α)]
-  have hdl : value (BoundOps.addDown (Context.maximum var 0) epsilon) ≤
-      max (value var) 0 + value epsilon := by
-    rw [← hv]; exact LawfulBoundOps.addDown_le _ _
-  have hdu : max (value var) 0 + value epsilon ≤
-      value (BoundOps.addUp (Context.maximum var 0) epsilon) := by
-    rw [← hv]; exact LawfulBoundOps.le_addUp _ _
-  exact LawfulNonlinearBoundOps.sqrtBounds_enclosure hd₀ hdl hdu
+  exact LawfulNonlinearBoundOps.sqrtBounds_enclosure hd₀ (LawfulBoundOps.addDown_le _ _)
+    (LawfulBoundOps.le_addUp _ _)
 
 /-- `batchNormBounds` encloses `(x - mean) / r * gamma + beta` when its endpoints
 enclose `x` and the endpoints of `d` enclose `r`. -/

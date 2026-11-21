@@ -41,7 +41,7 @@ instance instContextNested {α : Type} [Storage α] [Context α] (n : Nat) :
   match n with
   | 0 => inferInstanceAs (Context α)
   | n + 1 =>
-    @Dual.instContextOfStorage (Nested α n) (instStorageNested n) (instContextNested n)
+    @Dual.instContext (Nested α n) (instContextNested n)
 
 namespace Nested
 

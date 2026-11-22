@@ -258,6 +258,33 @@ private def specialCall {n : Nat} (f : SpecialFn n) (orders : List Nat) (xs : Li
       else .error s!"PyTorch has no function for the derivative of orders {orders} of \
         {f.torchName}"
 
+/-- The matrix product of `a` and `b` as `Op.matmul` computes it, written with `torch.matmul`.
+`torch.matmul` reads an operand as a vector only at rank one and broadcasts the batch prefixes to
+their smallest common shape, where the operator reads an `lv` or `rv` operand with batch axes as a
+batch of vectors and broadcasts to `batch`. When these differ, a vector operand becomes a one-row or
+one-column matrix, the product is expanded to `batch` and the inserted axes are dropped. Otherwise
+the result is the plain call. -/
+private def matmulExpr (batchA batchB batch : Shape) (m p : Nat) (lv rv : Bool) (a b : String) :
+    String :=
+  -- Both prefixes broadcast to `batch`, so each extent is one or `batch`'s, and PyTorch's batch is
+  -- the extent other than one at each axis after padding with leading ones.
+  let r := max batchA.length batchB.length
+  let pad (s : Shape) : Shape := List.replicate (r - s.length) 1 ++ s
+  let common := List.zipWith (fun i j => if i = 1 then j else i) (pad batchA) (pad batchB)
+  let wider := common != batch
+  -- A left vector with batch axes against an unbatched right operand needs no view: there
+  -- `torch.matmul` reads the left operand's leading axes as rows, and the result is the same.
+  let leftBatched := lv && !batchA.isEmpty && !batchB.isEmpty
+  let rightBatched := rv && !batchB.isEmpty
+  if !wider && !leftBatched && !rightBatched then s!"torch.matmul({a}, {b})"
+  else
+    let a := if lv then s!"{a}.unsqueeze(-2)" else a
+    let b := if rv then s!"{b}.unsqueeze(-1)" else b
+    let product := s!"torch.matmul({a}, {b})"
+    let product := if wider then s!"{product}.expand({shapeLiteral (batch ++ [m, p])})" else product
+    if lv || rv then s!"{product}.reshape({shapeLiteral (Shape.matmulOut lv rv batch m p)})"
+    else product
+
 /-- The `forward` lines of operator node `id`, whose inputs are the Python expressions `xs` in port
 order, where `literal k` is input `k` written as a literal when it is a scalar constant and `dtype`
 is the Python dtype of values: one row per `TorchLean.Op` constructor, a call of one PyTorch
@@ -374,7 +401,9 @@ private def opLines (id : Nat) (dtype : String) (literal : Nat → Option String
   | ⟨_, _, .cat d _⟩ =>
       if xs.isEmpty then refuse "a concatenation of no inputs has no PyTorch translation"
       else pure (line s!"torch.cat([{", ".intercalate xs.toList}], dim={d.val})")
-  | ⟨_, _, .matmul (order := .leftFold) ..⟩ => pure (call "torch.matmul")
+  | ⟨_, _, .matmul (batchA := batchA) (batchB := batchB) (batch := batch) (m := m) (p := p)
+      (order := .leftFold) lv rv ..⟩ =>
+      pure (line (matmulExpr batchA batchB batch m p lv rv (x 0) (x 1)))
   | ⟨_, _, .mseLoss (s := s)⟩ =>
       -- `Tensor.meanSquaredError` divides an empty input's sum `+0` by one, where `mse_loss` gives
       -- a NaN.
@@ -674,12 +703,13 @@ private def opLines (id : Nat) (dtype : String) (literal : Nat → Option String
       -- otherwise one where the probability is above the draw.
       pure (line <| s!"torch.where({x 0} > 0, torch.where({x 0} < 1, " ++
         s!"({x 0} > self.draws_{id}).to({dtype}), 1), 0)")
-  | ⟨_, _, .scaledMatmul (order := .leftFold) ..⟩ =>
+  | ⟨_, _, .scaledMatmul (batchA := batchA) (batchB := batchB) (batch := batch) (m := m) (p := p)
+      (order := .leftFold) lv rv ..⟩ =>
       -- The product, then the scale, as in the reference `scaledProductsSlice`. The reference
       -- sums each dot product left to right (`torch.matmul` fixes no order) and, on finite
       -- inputs, replays the exact coefficients when an intermediate leaves the range or a nonzero
       -- product is absorbed by the running sum. This line does not replay.
-      pure (line s!"torch.matmul({x 0}, {x 1}) * {x 2}")
+      pure (line s!"{matmulExpr batchA batchB batch m p lv rv (x 0) (x 1)} * {x 2}")
   | ⟨_, _, .custom name ..⟩ => refuse s!"custom {name} has no Python body translation"
   | o' =>
       let wire := Op.encode o'

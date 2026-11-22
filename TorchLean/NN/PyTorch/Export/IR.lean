@@ -263,18 +263,17 @@ private def specialCall {n : Nat} (f : SpecialFn n) (orders : List Nat) (xs : Li
 their smallest common shape, where the operator reads an `lv` or `rv` operand with batch axes as a
 batch of vectors and broadcasts to `batch`. When these differ, a vector operand becomes a one-row or
 one-column matrix, the product is expanded to `batch` and the inserted axes are dropped. Otherwise
-the result is the plain call, which includes left vectors with batch axes against a right operand
-without them: `torch.matmul` then reads the left operand's leading axes as rows. -/
+the result is the plain call. -/
 private def matmulExpr (batchA batchB batch : Shape) (m p : Nat) (lv rv : Bool) (a b : String) :
     String :=
-  let batchA : List Nat := batchA
-  let batchB : List Nat := batchB
   -- Both prefixes broadcast to `batch`, so each extent is one or `batch`'s, and PyTorch's batch is
   -- the extent other than one at each axis after padding with leading ones.
   let r := max batchA.length batchB.length
-  let pad (s : List Nat) : List Nat := List.replicate (r - s.length) 1 ++ s
+  let pad (s : Shape) : Shape := List.replicate (r - s.length) 1 ++ s
   let common := List.zipWith (fun i j => if i = 1 then j else i) (pad batchA) (pad batchB)
-  let wider := common != (batch : List Nat)
+  let wider := common != batch
+  -- A left vector with batch axes against an unbatched right operand needs no view: there
+  -- `torch.matmul` reads the left operand's leading axes as rows, and the result is the same.
   let leftBatched := lv && !batchA.isEmpty && !batchB.isEmpty
   let rightBatched := rv && !batchB.isEmpty
   if !wider && !leftBatched && !rightBatched then s!"torch.matmul({a}, {b})"

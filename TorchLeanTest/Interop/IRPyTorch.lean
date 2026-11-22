@@ -20,7 +20,8 @@ and `±0`, both results are NaNs at the NaN, and elsewhere they agree to a relat
 autograd slopes of each formula at `-∞` and `+∞` must be `0` and `1`. `runCases` then runs the
 modules of `cases` in binary64 and binary32. They are the extrema at every pair and `relu` at each
 of `±0`, `±1`, `±∞` and a NaN, a product whose regrouped partial products overflow, a mean over an
-empty axis, `topk` at ties and the draws of key `0`. Their words must equal `Graph.eval`'s in
+empty axis, `topk` at ties, the draws of key `0` and matrix products whose vector operands have
+batch axes or whose batch is wider than the operands'. Their words must equal `Graph.eval`'s in
 `Float` and `Float32`, a NaN matching any NaN. Both checks are skipped when Python cannot import
 PyTorch.
 -/
@@ -167,6 +168,45 @@ def drawsGraph : Except String IR.Graph :=
   let (b, y) := b.op (Op.cat (s := [2, 3]) ⟨0, by decide⟩ [2, 2]) (u ++ m)
   b.build #[y.headD p]
 
+/-- An input `[2, 3]` read as a batch of two left vectors against its broadcast to two `3 × 2`
+matrices. `torch.matmul` reads a left operand of rank two as a matrix. -/
+def vectorBatchGraph : Except String IR.Graph :=
+  let b : IR.Graph.Builder := {}
+  let (b, x) := b.input 0 (.value [2, 3])
+  let (b, r) := b.op (Op.broadcast (s := [2, 3]) (t := [2, 3, 2])
+    (fun i => if i.val = 0 then ⟨0, by decide⟩ else ⟨1, by decide⟩) (by decide)) [x]
+  let (b, y) := b.op (Op.matmul (batchA := [2]) (batchB := [2]) (batch := [2]) (m := 1) (n := 3)
+    (p := 2) true false (fun _ => rfl) (fun h => nomatch h) (by decide) (by decide)) (x :: r)
+  b.build #[y.headD x]
+
+/-- An input `[2, 3]` broadcast to two `2 × 3` matrices and read as a batch of two right vectors,
+then each row's dot product with itself, scaled by the sum of the input. -/
+def batchVectorGraph : Except String IR.Graph :=
+  let b : IR.Graph.Builder := {}
+  let (b, x) := b.input 0 (.value [2, 3])
+  let (b, l) := b.op (Op.broadcast (s := [2, 3]) (t := [2, 2, 3])
+    (fun i => if i.val = 0 then ⟨0, by decide⟩ else ⟨2, by decide⟩) (by decide)) [x]
+  let (b, mv) := b.op (Op.matmul (batchA := [2]) (batchB := [2]) (batch := [2]) (m := 2) (n := 3)
+    (p := 1) false true (fun h => nomatch h) (fun _ => rfl) (by decide) (by decide)) (l ++ [x])
+  let (b, s) := b.op (Op.reduce (s := [2, 3]) .sum [⟨0, by decide⟩, ⟨1, by decide⟩] false
+    (by decide)) [x]
+  let (b, dots) := b.op (Op.scaledMatmul (batchA := [2]) (batchB := [2]) (batch := [2]) (m := 1)
+    (n := 3) (p := 1) true true (fun _ => rfl) (fun _ => rfl) (by decide) (by decide))
+    (x :: x :: s)
+  let (b, flat) := b.op (Op.reshape (s := [2, 2]) (t := [4]) (by decide)) mv
+  let (b, y) := b.op (Op.cat (s := [2]) ⟨0, by decide⟩ [4, 2]) (flat ++ dots)
+  b.build #[y.headD x]
+
+/-- An input `[3, 3]` times itself, with the unbatched operands broadcast to the batch `[2]`.
+`torch.matmul` returns the one product `[3, 3]`. -/
+def widerBatchGraph : Except String IR.Graph :=
+  let b : IR.Graph.Builder := {}
+  let (b, x) := b.input 0 (.value [3, 3])
+  let (b, y) := b.op (Op.matmul (batchA := []) (batchB := []) (batch := [2]) (m := 3) (n := 3)
+    (p := 3) false false (fun h => nomatch h) (fun h => nomatch h) (by decide) (by decide))
+    [x, x]
+  b.build #[y.headD x]
+
 /-- The first draw of key `0`, a keep probability equal to the draw it meets. -/
 def firstDraw : Float := Random.sampleUnit (Random.sampleNat 0 0) (2 ^ 32)
 
@@ -184,7 +224,8 @@ structure Case where
 regrouped partial products overflow (`2⁻¹⁰²³ · 1 · 2¹⁰²³ · 2` in binary64,
 `2⁻¹⁴⁹ · 1 · 2¹²⁷ · 2` in binary32) and the mean over an empty axis. They end with `topk` at ties
 of `+0` and `-0`, of `1`, of `3` and of two NaNs, and with the draws at keep probabilities `±0`,
-`1`, `1 / 2`, a NaN, `-1`, `2`, `+∞`, the first draw and `3 / 4`. -/
+`1`, `1 / 2`, a NaN, `-1`, `2`, `+∞`, the first draw and `3 / 4`, then the matrix products whose
+vector operands have batch axes or whose batch is wider than the broadcast of the operands'. -/
 def cases : List Case :=
   [ ⟨extremaGraph, [7], [specials]⟩
   , ⟨productGraph, [2, 3, 2],
@@ -195,7 +236,10 @@ def cases : List Case :=
   , ⟨meanGraph, [2, 0], [#[]]⟩
   , ⟨topkGraph, [9], [#[1, 0 / 0, 0, 3, -0.0, 1, 0 / 0, -1 / 0, 3]]⟩
   , ⟨drawsGraph, .scalar,
-      [0, -0.0, 1, 0.5, 0 / 0, -1, 2, 1 / 0, firstDraw, 0.75].map fun p => #[p]⟩ ]
+      [0, -0.0, 1, 0.5, 0 / 0, -1, 2, 1 / 0, firstDraw, 0.75].map fun p => #[p]⟩
+  , ⟨vectorBatchGraph, [2, 3], [#[1, 2, 3, 4, 5, 6]]⟩
+  , ⟨batchVectorGraph, [2, 3], [#[1, 2, 3, 4, 5, 6]]⟩
+  , ⟨widerBatchGraph, [3, 3], [#[1, -2, 3, 4, 5, -6, 7, 8, 9]]⟩ ]
 
 /-- The words of the value output of `g` in `α` at the entries `x` of an input of shape `s`. -/
 def evalWords {α : Type} [Storage α] [Context α] [Op.Capabilities α] (word : α → Nat)

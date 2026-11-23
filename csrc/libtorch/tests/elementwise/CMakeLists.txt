@@ -43,7 +43,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_executable(torchlean_elementwise_regression regression.cpp)
 # USE_CUDA declares the CUDA shims of the Stable ABI, which the bridge's header uses.
-target_compile_definitions(torchlean_elementwise_regression PRIVATE TORCHLEAN_LIBTORCH USE_CUDA)
+target_compile_definitions(torchlean_elementwise_regression PRIVATE TORCHLEAN_LIBTORCH USE_CUDA
+  TORCHLEAN_LIBTORCH_CUDA=1)
 target_include_directories(torchlean_elementwise_regression PRIVATE
   "${TORCHLEAN_LEAN_PREFIX}/include")
 # Lean's shared runtime also exports _Unwind_* symbols. Select the host unwinder

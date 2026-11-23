@@ -106,6 +106,11 @@ LEAN_EXPORT lean_obj_res torchlean_libtorch_get_memory_fraction(void) {
 
 ZERO(lean_box_uint32, torchlean_libtorch_device_count)
 ZERO(lean_box_uint32, torchlean_libtorch_get_device)
+
+// 1 = CUDA: without LibTorch there is no host device either, and the status reports 0.
+LEAN_EXPORT lean_obj_res torchlean_libtorch_device_kind(void) {
+  return lean_io_result_mk_ok(lean_box_uint32(1u));
+}
 ZERO(lean_box_uint64, torchlean_libtorch_allocated_bytes)
 ZERO(lean_box_uint64, torchlean_libtorch_reserved_bytes)
 ZERO(lean_box_uint64, torchlean_libtorch_peak_allocated_bytes)

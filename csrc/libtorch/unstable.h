@@ -30,7 +30,8 @@ struct device_stats {
 };
 
 // The allocator calls below throw on a torch runtime other than 2.13, 2.14 and 2.15, the releases
-// whose allocator interface the bridge is checked against.
+// whose allocator interface the bridge is checked against, and with a CPU-only SDK. The bridge
+// does not call them on the host.
 device_stats allocator_stats(std::int32_t device);
 void empty_cache();
 double memory_fraction(std::int32_t device);

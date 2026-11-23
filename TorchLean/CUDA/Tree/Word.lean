@@ -37,12 +37,15 @@ namespace TorchLean.Kernel
 variable {α β : Type}
 
 /-- The arithmetic `A` of `β` carried to `α` along `decode` and `encode`: an operation decodes
-its operands, computes with `A` and encodes the result, and a comparison compares the decoded
-operands. -/
+its operands, computes with `A` and encodes the result, a comparison compares the decoded operands,
+and the conversions to and from indices decode their scalar operand or encode their scalar
+result. -/
 def Arithmetic.transfer (A : Arithmetic β) (decode : α → β) (encode : β → α) : Arithmetic α where
   binary op x y := encode (A.binary op (decode x) (decode y))
   neg x := encode (A.neg (decode x))
   compare op x y := A.compare op (decode x) (decode y)
+  toIndex x := A.toIndex (decode x)
+  ofIndex i := encode (A.ofIndex i)
 
 /-- When `decode` undoes `encode`, decoding the result of an operation of
 `Arithmetic.transfer A decode encode` is the operation of `A` on the decoded operands. -/

@@ -43,7 +43,8 @@ devices, bfloat16 addition and multiplication use the FMA identities of CUDA's b
 intrinsics, `a * 1 + b` and `a * b + (-0)`, each with a single rounding. Consecutive operations of
 the Lean program stay separate.
 
-The GPU frontend supports scalar arithmetic, comparisons, local bindings and lazy conditionals.
+The GPU frontend supports scalar arithmetic, comparisons, local bindings, lazy conditionals and
+the conversions between scalars and indices.
 Functions may capture scalar parameters, `UInt64` loop bounds and Boolean switches supplied at run
 time. Values that depend on neither the output index nor a loop variable are evaluated on the CPU
 and embedded in the generated source. Changing them can force another NVRTC compilation, and the
@@ -57,6 +58,20 @@ generated equation theorems to prove the loop equivalent to the recurrence, read
 included. Nested supported recurrences and helper functions are allowed. Depths can depend on the
 output index as well as on host parameters, and the generated body is a loop, with no unrolling
 per recursive step.
+
+A read can be at a position the kernel computes from its inputs: `Float32.toUInt64` and
+`Float.toUInt64` convert a scalar to an index, and `UInt64.toFloat32` and `UInt64.toFloat` convert
+an index to a scalar, with Lean's semantics. A scalar is truncated toward zero and saturated to the
+`UInt64` range, with `0` at a NaN and below zero, and an index is rounded once to the nearest
+scalar, ties to even. In any scalar type the same conversions are `IndexCast.toIndex` and
+`IndexCast.ofIndex`, part of the arithmetic like its operations. Native code converts a scalar as
+Lean's runtime does, `0 <= x ? (x < 2^64 ? __float2ull_rz(x) : 2^64 - 1) : 0`, so the truncating
+intrinsic sees only values it truncates exactly. On its own `__float2ull_rz` does not give `0` at a
+NaN: on an SM 8.6 device, a NaN converted to an index and back to binary32 gave `2^63`.
+An index converts with `__ull2float_rn` and `__ull2double_rn`. A configured format converts in the
+template, from its exact value. The interpolation of a coordinate into a uniform table, which reads
+the samples of the segment `⌊u⌋` it falls in, is then one kernel
+(`TorchLeanTest/CUDA/KernelIndex.lean`).
 
 `Program.of` does not compile general tree recursion, changing recursive state or dynamically
 allocated recursive structures. For a recursive function over an inductive type, `Fold.of` in
@@ -118,8 +133,10 @@ zero.
 
 Over the reals, `Expr.hasFDerivAt_evaluate_tangent` in `Tangent/FDeriv.lean` proves that the
 tangent computes the Fréchet derivative of the evaluation at a point where the evaluation
-succeeds nearby and is regular: no scalar division has a zero divisor, and no scalar comparison
-has equal operands unless both are constants. `Expr.gradient_eq_adjoint` in `Gradient/FDeriv.lean`
+succeeds nearby and is regular: no scalar division has a zero divisor, no scalar comparison
+has equal operands unless both are constants, and no scalar converted to an index is an integer.
+Over the reals an index is the floor of its scalar, clamped to the `UInt64` range, so it does not
+change near a scalar that is not an integer, and the scalar of an index has the tangent zero. `Expr.gradient_eq_adjoint` in `Gradient/FDeriv.lean`
 proves that the gradient computes the adjoint of that derivative at the cotangent.
 `Expr.map_gradient_eq_adjoint` and its variants in `Map.lean` prove the same of a program over
 `Float32` or binary32 read as reals. `TorchLeanTest/Verification/KernelMap.lean` proves with them

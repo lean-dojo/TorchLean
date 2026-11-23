@@ -64,6 +64,8 @@ def Expr.readsBelow {Γ : List Ty} {t : Ty} (n : Nat) : Expr α Γ t → Bool
   | .binary _ x y => x.readsBelow n && y.readsBelow n
   | .neg x => x.readsBelow n
   | .indexBinary _ x y => x.readsBelow n && y.readsBelow n
+  | .toIndex x => x.readsBelow n
+  | .ofIndex x => x.readsBelow n
   | .compare _ x y => x.readsBelow n && y.readsBelow n
   | .indexCompare _ x y => x.readsBelow n && y.readsBelow n
   | .cond p yes no => p.readsBelow n && yes.readsBelow n && no.readsBelow n
@@ -93,6 +95,14 @@ theorem Expr.eval_eq_of_readsBelow {Γ : List Ty} {t : Ty} {n : Nat} (arithmetic
     intro h env
     simp only [readsBelow, Bool.and_eq_true] at h
     simp only [Expr.eval, hx h.1 env, hy h.2 env]
+  | toIndex x hx =>
+    intro h env
+    simp only [readsBelow] at h
+    simp only [Expr.eval, hx h env]
+  | ofIndex x hx =>
+    intro h env
+    simp only [readsBelow] at h
+    simp only [Expr.eval, hx h env]
   | compare op x y hx hy =>
     intro h env
     simp only [readsBelow, Bool.and_eq_true] at h

@@ -83,6 +83,8 @@ def reads : {Γ : List Ty} → {s t : Ty} → Var Γ s → Expr α Γ t → Bool
   | _, _, _, v, .binary _ x y => reads v x || reads v y
   | _, _, _, v, .neg x => reads v x
   | _, _, _, v, .indexBinary _ x y => reads v x || reads v y
+  | _, _, _, v, .toIndex x => reads v x
+  | _, _, _, v, .ofIndex x => reads v x
   | _, _, _, v, .compare _ x y => reads v x || reads v y
   | _, _, _, v, .indexCompare _ x y => reads v x || reads v y
   | _, _, _, v, .cond p yes no => reads v p || reads v yes || reads v no
@@ -108,6 +110,8 @@ def primal : {Γ : List Ty} → {t : Ty} → Expr α Γ t → Expr α (dualScope
   | _, _, .binary op x y => .binary op x.primal y.primal
   | _, _, .neg x => .neg x.primal
   | _, _, .indexBinary op x y => .indexBinary op x.primal y.primal
+  | _, _, .toIndex x => .toIndex x.primal
+  | _, _, .ofIndex x => .ofIndex x.primal
   | _, _, .compare op x y => .compare op x.primal y.primal
   | _, _, .indexCompare op x y => .indexCompare op x.primal y.primal
   | _, _, .cond p yes no => .cond p.primal yes.primal no.primal
@@ -135,7 +139,8 @@ variable [OfNat α 0]
 
 /-- The forward-mode derivative of an expression that reads `k` inputs, in the dual scope: the
 tangent of a scalar expression, and the value of an index or predicate expression. The tangent of
-input `j` is read as operand `k + j`. -/
+input `j` is read as operand `k + j`. The scalar of an index has tangent zero, since an index does
+not move with the inputs. -/
 def tangent (k : Nat) : {Γ : List Ty} → {t : Ty} → Expr α Γ t → Expr α (dualScope Γ) t
   | _, _, .scalar _ => .scalar 0
   | _, _, .index i => .index i
@@ -154,6 +159,8 @@ def tangent (k : Nat) : {Γ : List Ty} → {t : Ty} → Expr α Γ t → Expr α
         y.primal
   | _, _, .neg x => .neg (x.tangent k)
   | _, _, .indexBinary op x y => .indexBinary op x.primal y.primal
+  | _, _, .toIndex x => .toIndex x.primal
+  | _, _, .ofIndex _ => .scalar 0
   | _, _, .compare op x y => .compare op x.primal y.primal
   | _, _, .indexCompare op x y => .indexCompare op x.primal y.primal
   | _, _, .cond p yes no => .cond p.primal (yes.tangent k) (no.tangent k)
@@ -226,6 +233,16 @@ theorem eval_primal (arithmetic : Arithmetic α) {read dread : Reader α}
       rw [hx henv ha, hy henv hb]
       exact h
   | neg x hx =>
+      simp only [eval, primal] at h ⊢
+      obtain ⟨a, ha, h⟩ := except_bind_eq_ok.mp h
+      rw [hx henv ha]
+      exact h
+  | toIndex x hx =>
+      simp only [eval, primal] at h ⊢
+      obtain ⟨a, ha, h⟩ := except_bind_eq_ok.mp h
+      rw [hx henv ha]
+      exact h
+  | ofIndex x hx =>
       simp only [eval, primal] at h ⊢
       obtain ⟨a, ha, h⟩ := except_bind_eq_ok.mp h
       rw [hx henv ha]

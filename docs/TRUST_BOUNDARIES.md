@@ -706,9 +706,17 @@ concurrent error recording and foreign memory are outside these theorems. The na
 reads, keeps input owners alive until completion, and bounds its compiled-module cache. Those checks
 are native implementation obligations.
 
+The conversions between scalars and indices are part of the supplied arithmetic contract, as the
+operations are. Native code converts a scalar with the comparisons of Lean's runtime
+(`lean_float32_to_uint64`), which give `0` at a NaN and below zero and `2^64 - 1` from `2^64` on,
+and truncates the remaining values with `__float2ull_rz` or `__double2ull_rz`, which must truncate
+exactly on `[0, 2^64)`. It converts an index with `__ull2float_rn` and `__ull2double_rn`, which
+must round to nearest even as Lean's `UInt64.toFloat32` and `UInt64.toFloat` do. `TorchLeanTest/CUDA/KernelIndex.lean` checks this on
+the device at the values where the rules differ.
+
 Configured binary arithmetic uses complete encoded words in CUDA buffers, including saved values
-and gradients on the autograd tape. The generated arithmetic is compared with FloatLib, and Lean's
-kernel does not verify it. The format descriptor, byte transfer, slicing, concatenation and zero
+and gradients on the autograd tape. The generated arithmetic and the conversions between values
+and indices are compared with FloatLib, and Lean's kernel does not verify them. The format descriptor, byte transfer, slicing, concatenation and zero
 allocation are additional native implementation obligations. Encoded buffers cannot be used as
 native optimizer checkpoints or passed to unsupported ATen operations.
 

@@ -29,10 +29,11 @@ namespace TorchLean.Kernel
 
 open FloatLib.Floats FloatLib.Floats.Formats.BinaryInterchange
 
-/-- Arithmetic from the type's own `+`, `-`, `*`, `/`, negation, `==`, `<` and `≤`, applied
-in the original evaluation order without algebraic reassociation. -/
+/-- Arithmetic from the type's own `+`, `-`, `*`, `/`, negation, `==`, `<` and `≤` and its
+`IndexCast` conversions, applied in the original evaluation order without algebraic
+reassociation. -/
 def Arithmetic.ofOps {α : Type} [Add α] [Sub α] [Mul α] [Div α] [Neg α]
-    [BEq α] [LT α] [LE α] [DecidableLT α] [DecidableLE α] : Arithmetic α where
+    [BEq α] [LT α] [LE α] [DecidableLT α] [DecidableLE α] [IndexCast α] : Arithmetic α where
   binary
     | .add, x, y => x + y
     | .sub, x, y => x - y
@@ -43,6 +44,8 @@ def Arithmetic.ofOps {α : Type} [Add α] [Sub α] [Mul α] [Div α] [Neg α]
     | .eq, x, y => x == y
     | .lt, x, y => x < y
     | .le, x, y => x ≤ y
+  toIndex := IndexCast.toIndex
+  ofIndex := IndexCast.ofIndex
 
 /-- The arithmetic representation of a scalar type: a native CUDA format or a configured binary
 format. It does not depend on the execution device. -/
@@ -69,6 +72,34 @@ instance instScalarFloat32 : Scalar Float32 where
 instance instScalarFloat : Scalar Float where
   precision := .native .binary64
   arithmetic := Arithmetic.ofOps
+
+/-- The index of a configured binary value: its exact value truncated toward zero
+(`ExecFloat.Binary.toInt?`) and saturated to the `UInt64` range, `0` at a NaN and below zero and
+`2^64 - 1` at a positive infinity, as `Float32.toUInt64` converts. -/
+def configuredToIndex {format : FloatFormat} {plan : Configured.StoragePlan format} {code : Type}
+    [ExecFloat.ModelCodec plan (Model format) code]
+    (x : ExecFloat (Configured.Family format code plan)) : UInt64 :=
+  match ExecFloat.Binary.toInt? x with
+  | some n =>
+      if n ≤ 0 then 0 else if n < 2 ^ 64 then n.toNat.toUInt64 else UInt64.ofNat (2 ^ 64 - 1)
+  | none =>
+      let m := ExecFloat.Binary.toModel x
+      if m.isNaN || m.signBit then 0 else UInt64.ofNat (2 ^ 64 - 1)
+
+/-- The configured binary value of an index: the index rounded once to nearest even in the
+format (the model's `NatCast`), with the format's overflow convention. -/
+def configuredOfIndex {format : FloatFormat} {plan : Configured.StoragePlan format} {code : Type}
+    [ExecFloat.ModelCodec plan (Model format) code]
+    (i : UInt64) : ExecFloat (Configured.Family format code plan) :=
+  ExecFloat.Binary.ofModel ((i.toNat : Nat) : Model format)
+
+/-- A configured binary format converts to and from indices by `configuredToIndex` and
+`configuredOfIndex`. -/
+instance instIndexCastConfigured {format : FloatFormat} {plan : Configured.StoragePlan format}
+    {code : Type} [ExecFloat.ModelCodec plan (Model format) code] :
+    IndexCast (ExecFloat (Configured.Family format code plan)) where
+  toIndex := configuredToIndex
+  ofIndex := configuredOfIndex
 
 /-- A configured binary format computes in that format with its own operations. -/
 instance instScalarConfigured {format : FloatFormat} {plan : Configured.StoragePlan format}

@@ -18,6 +18,13 @@ parameter of `Expr.eval`, and no field laws or floating-point reassociation are 
 Indices are `UInt64` values with wraparound arithmetic, so an unbounded natural number is never
 compiled silently to a machine integer, and the frontend rejects constants outside that range. A
 failed tensor read returns an `Error` instead of inventing a value for the bad address.
+
+A scalar becomes an index and an index a scalar only through the conversions of `IndexCast`, which
+the arithmetic fixes like its operations. `Float32` and `Float` use Lean's own `toUInt64` and
+`UInt64.toFloat32`/`UInt64.toFloat`: a scalar is truncated toward zero and saturated to the `UInt64`
+range, with `0` at a NaN, and an index is rounded once to the nearest scalar, ties to even. A
+kernel can then address an input at a position it computes, such as the segment of a table that a
+coordinate falls in.
 -/
 
 @[expose] public section
@@ -105,7 +112,26 @@ inductive Compare where
   | le
   deriving Repr, DecidableEq
 
-/-- An arithmetic implementation fixes scalar operations and comparisons for the whole kernel. -/
+/-- The conversions between a scalar type and `UInt64` indices that `Arithmetic.ofOps` uses. -/
+class IndexCast (α : Type) where
+  /-- The index of a scalar. -/
+  toIndex : α → UInt64
+  /-- The scalar of an index. -/
+  ofIndex : UInt64 → α
+
+/-- `Float32` truncates toward zero and saturates (`Float32.toUInt64`: `0` at a NaN or below zero,
+`2^64 - 1` at or above `2^64`), and rounds an index to nearest even (`UInt64.toFloat32`). -/
+instance instIndexCastFloat32 : IndexCast Float32 where
+  toIndex := Float32.toUInt64
+  ofIndex := UInt64.toFloat32
+
+/-- `Float` converts as `Float32` does, in binary64 (`Float.toUInt64`, `UInt64.toFloat`). -/
+instance instIndexCastFloat : IndexCast Float where
+  toIndex := Float.toUInt64
+  ofIndex := UInt64.toFloat
+
+/-- An arithmetic implementation fixes scalar operations, comparisons and the conversions between
+scalars and indices for the whole kernel. -/
 structure Arithmetic (α : Type) where
   /-- Each binary scalar operation. -/
   binary : ScalarOp → α → α → α
@@ -113,6 +139,10 @@ structure Arithmetic (α : Type) where
   neg : α → α
   /-- Each scalar comparison. -/
   compare : Compare → α → α → Bool
+  /-- The index of a scalar. -/
+  toIndex : α → UInt64
+  /-- The scalar of an index. -/
+  ofIndex : UInt64 → α
 
 /-- Evaluation failures retain the offending input, address, or unsupported output size. -/
 inductive Error where
@@ -151,6 +181,10 @@ inductive Expr (α : Type) : List Ty → Ty → Type where
   | neg {Γ : List Ty} (x : Expr α Γ .scalar) : Expr α Γ .scalar
   /-- A binary index operation. -/
   | indexBinary {Γ : List Ty} (op : IndexOp) (x y : Expr α Γ .index) : Expr α Γ .index
+  /-- The index of a scalar, by the arithmetic's `toIndex`. -/
+  | toIndex {Γ : List Ty} (x : Expr α Γ .scalar) : Expr α Γ .index
+  /-- The scalar of an index, by the arithmetic's `ofIndex`. -/
+  | ofIndex {Γ : List Ty} (x : Expr α Γ .index) : Expr α Γ .scalar
   /-- A comparison of two scalars. -/
   | compare {Γ : List Ty} (op : Compare) (x y : Expr α Γ .scalar) : Expr α Γ .predicate
   /-- A comparison of two indices. -/
@@ -258,6 +292,8 @@ def Expr.eval {α : Type} (arithmetic : Arithmetic α) (read : Reader α)
       let x ← x.eval arithmetic read env
       let y ← y.eval arithmetic read env
       return op.eval x y
+  | .toIndex x => do return arithmetic.toIndex (← x.eval arithmetic read env)
+  | .ofIndex x => do return arithmetic.ofIndex (← x.eval arithmetic read env)
   | .compare op x y => do
       let x ← x.eval arithmetic read env
       let y ← y.eval arithmetic read env
@@ -299,6 +335,8 @@ def Expr.rename {α : Type} {Γ Δ : List Ty} {t : Ty} (ρ : Renaming Γ Δ) :
   | .binary op x y => .binary op (x.rename ρ) (y.rename ρ)
   | .neg x => .neg (x.rename ρ)
   | .indexBinary op x y => .indexBinary op (x.rename ρ) (y.rename ρ)
+  | .toIndex x => .toIndex (x.rename ρ)
+  | .ofIndex x => .ofIndex (x.rename ρ)
   | .compare op x y => .compare op (x.rename ρ) (y.rename ρ)
   | .indexCompare op x y => .indexCompare op (x.rename ρ) (y.rename ρ)
   | .cond p yes no => .cond (p.rename ρ) (yes.rename ρ) (no.rename ρ)
@@ -336,6 +374,8 @@ theorem Expr.eval_rename {α : Type} {Γ : List Ty} {t : Ty} (expr : Expr α Γ 
   | binary op x y hx hy => simp only [rename, eval, hx, hy]
   | neg x hx => simp only [rename, eval, hx]
   | indexBinary op x y hx hy => simp only [rename, eval, hx, hy]
+  | toIndex x hx => simp only [rename, eval, hx]
+  | ofIndex x hx => simp only [rename, eval, hx]
   | compare op x y hx hy => simp only [rename, eval, hx, hy]
   | indexCompare op x y hx hy => simp only [rename, eval, hx, hy]
   | cond p yes no hp hy hn => simp only [rename, eval, hp, hy, hn]

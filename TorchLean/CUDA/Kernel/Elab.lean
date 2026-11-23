@@ -242,6 +242,19 @@ def reify (α read : Lean.Expr) (ctx : Context) (type : Ty) :
       return ← construct ``Expr.load #[mkNatLit operand,
         ← reify α read ctx .index fuel args[1]!]
     let name := head.constName?
+    -- The conversions between scalars and indices: `IndexCast`'s, or Lean's own for `Float32`
+    -- and `Float`, which are those of their instances.
+    let toIndexNames := [``IndexCast.toIndex, ``Float32.toUInt64, ``Float.toUInt64]
+    let ofIndexNames := [``IndexCast.ofIndex, ``UInt64.toFloat32, ``UInt64.toFloat]
+    if let some name := name then
+      if toIndexNames.contains name && args.size ≥ 1 then
+        unless type == .index do
+          throwError "Program.of: a conversion to an index must produce an index"
+        return ← construct ``Expr.toIndex #[← reify α read ctx .scalar fuel args.back!]
+      if ofIndexNames.contains name && args.size ≥ 1 then
+        unless type == .scalar do
+          throwError "Program.of: a conversion of an index must produce a scalar"
+        return ← construct ``Expr.ofIndex #[← reify α read ctx .index fuel args.back!]
     if name == some ``ite then
       let predicate ← mkAppOptM ``decide #[some args[1]!, none]
       let predicate ← reify α read ctx .predicate fuel predicate
@@ -471,7 +484,8 @@ def checkedProgram (source : Syntax) (expectedType? : Option Lean.Expr) : TermEl
             Lean.Elab.Tactic.evalTactic (← `(tactic|
               simp only
                 [evaluate, Expr.eval, Env.get_output, Env.get_push_zero, Env.get_push_succ,
-                Arithmetic.ofOps,
+                Arithmetic.ofOps, IndexCast.toIndex, IndexCast.ofIndex,
+                instIndexCastFloat32, instIndexCastFloat,
                 Compare.index, IndexOp.eval, Bind.bind, Pure.pure,
                 Except.instMonad, Except.bind, Except.pure, BEq.beq, instBEqOfDecidableEq,
                 Bool.cond_decide, apply_ite, $[$bridges],*] <;>

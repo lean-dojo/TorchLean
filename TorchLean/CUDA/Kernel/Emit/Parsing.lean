@@ -316,6 +316,18 @@ inductive Primitive.Denotes (format : Format) (arithmetic : Arithmetic format.Va
       (hx : Atom.parse format .scalar text = some x) :
       Primitive.Denotes format arithmetic locals .scalar s!"(-{text})"
         (some (.ok (arithmetic.neg (x.eval locals.get))))
+  /-- The guarded conversion text `Format.toIndex format x` denotes the conversion of a scalar
+  atom to an index. -/
+  | toIndex {text : String} (x : Atom format.Value Name .scalar)
+      (hx : Atom.parse format .scalar text = some x) :
+      Primitive.Denotes format arithmetic locals .index (Format.toIndex format text)
+        (some (.ok (arithmetic.toIndex (x.eval locals.get))))
+  /-- `name(x)` denotes the conversion of an index atom to a scalar, where `name` is the format's
+  conversion intrinsic `Format.ofIndex format`. -/
+  | ofIndex {text : String} (x : Atom format.Value Name .index)
+      (hx : Atom.parse format .index text = some x) :
+      Primitive.Denotes format arithmetic locals .scalar s!"{Format.ofIndex format}({text})"
+        (some (.ok (arithmetic.ofIndex (x.eval locals.get))))
   /-- Index text denotes its `Unsigned.Denotes` value, with names read from the locals. -/
   | unsigned {text : String} {result : Option UInt64}
       (h : Unsigned.Denotes (fun name => locals.get name) text result) :
@@ -396,6 +408,30 @@ theorem Primitive.denotes_render (format : Format) (arithmetic : Arithmetic form
           exact Primitive.Denotes.neg x (Atom.parse_of_render format x hx)
   | unsigned expression =>
       exact Primitive.Denotes.unsigned (Unsigned.denotes_render format locals.get expression h)
+  | toIndex x =>
+      cases hx : Atom.render format (fun x => (Literal.ofValue format x).bits) x with
+      | error error =>
+          simp only [render, renderWith, hx] at h
+          change Except.error error = Except.ok text at h
+          contradiction
+      | ok xt =>
+          simp only [render, renderWith, hx] at h
+          change Except.ok (Format.toIndex format xt) = Except.ok text at h
+          injection h with htext
+          subst text
+          exact Primitive.Denotes.toIndex x (Atom.parse_of_render format x hx)
+  | ofIndex x =>
+      cases hx : Atom.render format (fun x => (Literal.ofValue format x).bits) x with
+      | error error =>
+          simp only [render, renderWith, hx] at h
+          change Except.error error = Except.ok text at h
+          contradiction
+      | ok xt =>
+          simp only [render, renderWith, hx] at h
+          change Except.ok s!"{Format.ofIndex format}({xt})" = Except.ok text at h
+          injection h with htext
+          subst text
+          exact Primitive.Denotes.ofIndex x (Atom.parse_of_render format x hx)
   | compare op x y =>
       cases hx : Atom.render format (fun x => (Literal.ofValue format x).bits) x with
       | error error =>
@@ -586,6 +622,12 @@ theorem Assignment.denotes_render (format : Format) (arithmetic : Arithmetic for
   | unsigned value =>
       exact denotes_declaration format arithmetic read inputs size load locals
         name (.unsigned value) rfl h
+  | toIndex x =>
+      exact denotes_declaration format arithmetic read inputs size load locals
+        name (.toIndex x) rfl h
+  | ofIndex x =>
+      exact denotes_declaration format arithmetic read inputs size load locals
+        name (.ofIndex x) rfl h
   | compare op x y =>
       exact denotes_declaration format arithmetic read inputs size load locals
         name (.compare op x y) rfl h

@@ -51,6 +51,8 @@ def map (f : α → β) : {Γ : List Ty} → {t : Ty} → Expr α Γ t → Expr 
   | _, _, .binary op x y => .binary op (x.map f) (y.map f)
   | _, _, .neg x => .neg (x.map f)
   | _, _, .indexBinary op x y => .indexBinary op (x.map f) (y.map f)
+  | _, _, .toIndex x => .toIndex (x.map f)
+  | _, _, .ofIndex x => .ofIndex (x.map f)
   | _, _, .compare op x y => .compare op (x.map f) (y.map f)
   | _, _, .indexCompare op x y => .indexCompare op (x.map f) (y.map f)
   | _, _, .cond p yes no => .cond (p.map f) (yes.map f) (no.map f)
@@ -87,6 +89,12 @@ variable (f : α → β) {Γ : List Ty}
 @[simp] theorem map_indexBinary (op : IndexOp) (x y : Expr α Γ .index) :
     (indexBinary op x y).map f = indexBinary op (x.map f) (y.map f) := rfl
 
+/-- Mapping a conversion to an index maps its operand. -/
+@[simp] theorem map_toIndex (x : Expr α Γ .scalar) : (toIndex x).map f = toIndex (x.map f) := rfl
+
+/-- Mapping a conversion to a scalar maps its operand. -/
+@[simp] theorem map_ofIndex (x : Expr α Γ .index) : (ofIndex x).map f = ofIndex (x.map f) := rfl
+
 /-- Mapping a scalar comparison maps its operands. -/
 @[simp] theorem map_compare (op : Compare) (x y : Expr α Γ .scalar) :
     (compare op x y).map f = compare op (x.map f) (y.map f) := rfl
@@ -117,6 +125,8 @@ theorem rename_map {Δ : List Ty} {t : Ty} (ρ : Renaming Γ Δ) (e : Expr α Γ
   | binary op x y hx hy => simp only [map, rename, hx, hy]
   | neg x hx => simp only [map, rename, hx]
   | indexBinary op x y hx hy => simp only [map, rename, hx, hy]
+  | toIndex x hx => simp only [map, rename, hx]
+  | ofIndex x hx => simp only [map, rename, hx]
   | compare op x y hx hy => simp only [map, rename, hx, hy]
   | indexCompare op x y hx hy => simp only [map, rename, hx, hy]
   | cond p yes no hp hy hn => simp only [map, rename, hp, hy, hn]
@@ -131,6 +141,8 @@ theorem reads_map {s t : Ty} (v : Var Γ s) (e : Expr α Γ t) : (e.map f).reads
   | binary op x y hx hy => simp only [map, reads, hx, hy]
   | neg x hx => simp only [map, reads, hx]
   | indexBinary op x y hx hy => simp only [map, reads, hx, hy]
+  | toIndex x hx => simp only [map, reads, hx]
+  | ofIndex x hx => simp only [map, reads, hx]
   | compare op x y hx hy => simp only [map, reads, hx, hy]
   | indexCompare op x y hx hy => simp only [map, reads, hx, hy]
   | cond p yes no hp hy hn => simp only [map, reads, hp, hy, hn]
@@ -152,6 +164,8 @@ theorem primal_map {t : Ty} (e : Expr α Γ t) : (e.map f).primal = e.primal.map
   | binary op x y hx hy => simp only [map, primal, hx, hy]
   | neg x hx => simp only [map, primal, hx]
   | indexBinary op x y hx hy => simp only [map, primal, hx, hy]
+  | toIndex x hx => simp only [map, primal, hx]
+  | ofIndex x hx => simp only [map, primal, hx]
   | compare op x y hx hy => simp only [map, primal, hx, hy]
   | indexCompare op x y hx hy => simp only [map, primal, hx, hy]
   | cond p yes no hp hy hn => simp only [map, primal, hp, hy, hn]
@@ -183,6 +197,8 @@ theorem tangent_map [OfNat α 0] [OfNat β 0] (hf0 : f 0 = 0) (k : Nat) {t : Ty}
   | binary op x y hx hy => cases op <;> simp only [map, tangent, primal_map, hx, hy]
   | neg x hx => simp only [map, tangent, hx]
   | indexBinary op x y _ _ => simp only [map, tangent, primal_map]
+  | toIndex x _ => simp only [map, tangent, primal_map]
+  | ofIndex x _ => simp only [map, tangent, hf0]
   | compare op x y _ _ => simp only [map, tangent, primal_map]
   | indexCompare op x y _ _ => simp only [map, tangent, primal_map]
   | cond p yes no _ hy hn => simp only [map, tangent, primal_map, hy, hn]
@@ -206,6 +222,8 @@ theorem seed_map [OfNat α 0] [OfNat α 1] [OfNat β 0] [OfNat β 1] (hf0 : f 0 
   | binary op x y hx hy => simp only [map, seed, hx, hy]
   | neg x hx => simp only [map, seed, hx]
   | indexBinary op x y hx hy => simp only [map, seed, hx, hy]
+  | toIndex x hx => simp only [map, seed, hx]
+  | ofIndex x hx => simp only [map, seed, hx]
   | compare op x y hx hy => simp only [map, seed, hx, hy]
   | indexCompare op x y hx hy => simp only [map, seed, hx, hy]
   | cond p yes no hp hy hn => simp only [map, seed, hp, hy, hn]

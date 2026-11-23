@@ -3,12 +3,15 @@
 // 2.15 export each with the same signature. The caching allocator is reached through inline
 // functions that call virtual functions of the exported
 // `c10::cuda::CUDACachingAllocator::allocator`, which depends on the layout of its classes, so
-// those calls run only on the releases checked. Exceptions propagate unchanged, and the bridge's
-// `io` reports them as Lean errors.
+// those calls run only on the releases checked. A CPU-only SDK (TORCHLEAN_LIBTORCH_CUDA=0) has no
+// caching allocator, and its allocator calls throw. Exceptions propagate unchanged, and the
+// bridge's `io` reports them as Lean errors.
 #include "unstable.h"
 
 #include <ATen/Context.h>
+#if TORCHLEAN_LIBTORCH_CUDA
 #include <c10/cuda/CUDACachingAllocator.h>
+#endif
 #include <torch/csrc/inductor/aoti_torch/c/shim.h>
 
 #include <cstddef>
@@ -19,6 +22,7 @@ namespace torchlean __attribute__((visibility("hidden"))) {
 namespace unstable {
 namespace {
 
+#if TORCHLEAN_LIBTORCH_CUDA
 namespace allocator = c10::cuda::CUDACachingAllocator;
 
 // The torch releases in which the four allocator functions called below have the vtable slots,
@@ -33,6 +37,11 @@ void check_allocator_abi() {
         std::to_string(major) + "." + std::to_string(minor));
   }
 }
+#else
+[[noreturn]] void no_allocator() {
+  throw std::runtime_error("LibTorch: the CUDA caching allocator needs a CUDA-enabled SDK");
+}
+#endif
 
 }  // namespace
 
@@ -94,6 +103,7 @@ void set_setting(std::uint32_t id, bool value) {
 
 bool deterministic() { return at::globalContext().deterministicAlgorithms(); }
 
+#if TORCHLEAN_LIBTORCH_CUDA
 device_stats allocator_stats(std::int32_t device) {
   check_allocator_abi();
   const auto stats = allocator::getDeviceStats(static_cast<c10::DeviceIndex>(device));
@@ -118,6 +128,12 @@ void set_memory_fraction(double fraction, std::int32_t device) {
   check_allocator_abi();
   allocator::setMemoryFraction(fraction, static_cast<c10::DeviceIndex>(device));
 }
+#else
+device_stats allocator_stats(std::int32_t) { no_allocator(); }
+void empty_cache() { no_allocator(); }
+double memory_fraction(std::int32_t) { no_allocator(); }
+void set_memory_fraction(double, std::int32_t) { no_allocator(); }
+#endif
 
 }  // namespace unstable
 }  // namespace torchlean

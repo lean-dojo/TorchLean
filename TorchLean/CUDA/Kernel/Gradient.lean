@@ -88,6 +88,16 @@ theorem eval_eq_ok_of_reader (arithmetic : Arithmetic α) {read read' : Reader �
       obtain ⟨a, ha, h⟩ := except_bind_eq_ok.mp h
       rw [hx ha]
       exact h
+  | toIndex x hx =>
+      simp only [eval] at h ⊢
+      obtain ⟨a, ha, h⟩ := except_bind_eq_ok.mp h
+      rw [hx ha]
+      exact h
+  | ofIndex x hx =>
+      simp only [eval] at h ⊢
+      obtain ⟨a, ha, h⟩ := except_bind_eq_ok.mp h
+      rw [hx ha]
+      exact h
   | indexBinary op x y hx hy =>
       simp only [eval] at h ⊢
       obtain ⟨a, ha, h⟩ := except_bind_eq_ok.mp h
@@ -143,6 +153,8 @@ def seed (k j : Nat) : {Γ : List Ty} → {t : Ty} → Var Γ .index → Expr α
   | _, _, a, .binary op x y => .binary op (seed k j a x) (seed k j a y)
   | _, _, a, .neg x => .neg (seed k j a x)
   | _, _, a, .indexBinary op x y => .indexBinary op (seed k j a x) (seed k j a y)
+  | _, _, a, .toIndex x => .toIndex (seed k j a x)
+  | _, _, a, .ofIndex x => .ofIndex (seed k j a x)
   | _, _, a, .compare op x y => .compare op (seed k j a x) (seed k j a y)
   | _, _, a, .indexCompare op x y => .indexCompare op (seed k j a x) (seed k j a y)
   | _, _, a, .cond p yes no => .cond (seed k j a p) (seed k j a yes) (seed k j a no)
@@ -184,6 +196,8 @@ theorem eval_seed (arithmetic : Arithmetic α) (read : Reader α) (k j : Nat) {�
   | binary op x y hx hy => simp only [seed, eval, hx, hy]
   | neg x hx => simp only [seed, eval, hx]
   | indexBinary op x y hx hy => simp only [seed, eval, hx, hy]
+  | toIndex x hx => simp only [seed, eval, hx]
+  | ofIndex x hx => simp only [seed, eval, hx]
   | compare op x y hx hy => simp only [seed, eval, hx, hy]
   | indexCompare op x y hx hy => simp only [seed, eval, hx, hy]
   | cond p yes no hp hy hn => simp only [seed, eval, hp, hy, hn]

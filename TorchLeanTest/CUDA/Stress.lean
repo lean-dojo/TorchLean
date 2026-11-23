@@ -905,6 +905,15 @@ def runMemoryTests : IO Unit := do
   | .nativeUnavailable =>
       throw <| IO.userError "LibTorch memory tests require a usable CUDA device"
   | .nativeAvailable => pure ()
+  if (← LibTorch.deviceKind) == .host then
+    -- The host has no caching allocator and no driver memory: the native statistics read zero.
+    let stats ← Buffer.Memory.read
+    if stats.allocatedBytes != 0 || stats.reservedBytes != 0 ||
+        stats.peakAllocatedBytes != 0 || stats.peakReservedBytes != 0 ||
+        stats.deviceFreeBytes != 0 || stats.deviceTotalBytes != 0 then
+      throw <| IO.userError "the host bridge reported native CUDA memory accounting"
+    IO.println "  skipped: the host bridge has no native allocator (its statistics read zero)"
+    return
   let self : System.FilePath := "/proc/self/exe"
   if !(← self.pathExists) then
     IO.println "  skipped: isolated memory tests require Linux /proc/self/exe"

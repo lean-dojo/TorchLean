@@ -42,6 +42,38 @@ Counter wrappers;
 std::once_flag initialization;
 std::atomic<int> selected_device{0};
 
+// Where the bridge runs. `TORCHLEAN_LIBTORCH_DEVICE=cpu` selects the host and `=cuda` a CUDA
+// device. Unset, a visible CUDA device is selected, and the host only when the SDK is CPU-only: a
+// CUDA-enabled SDK with no visible device is unavailable rather than silently on the host.
+enum class Selection { cuda, host, unavailable };
+
+struct Choice {
+  Selection selection;
+  std::string reason;  // why nothing is usable, when `selection` is `unavailable`
+};
+
+Choice choose() {
+  const char* requested = std::getenv("TORCHLEAN_LIBTORCH_DEVICE");
+  const std::string value = requested ? requested : "";
+  if (value == "cpu") return {Selection::host, ""};
+  if (!value.empty() && value != "cuda")
+    return {Selection::unavailable,
+            "TORCHLEAN_LIBTORCH_DEVICE=\"" + value + "\" is neither \"cuda\" nor \"cpu\""};
+  if (!TORCHLEAN_LIBTORCH_CUDA)
+    return value.empty()
+               ? Choice{Selection::host, ""}
+               : Choice{Selection::unavailable,
+                        "TORCHLEAN_LIBTORCH_DEVICE=cuda, but the SDK is CPU-only"};
+  if (device_count() > 0) return {Selection::cuda, ""};
+  return {Selection::unavailable, "no usable CUDA device is visible"};
+}
+
+// Decided at the first query, before any buffer exists, and never changed.
+const Choice& choice() {
+  static const Choice decided = choose();
+  return decided;
+}
+
 // The bytes of `x`'s elements.
 size_t nbytes(const Tensor& x) {
   return static_cast<size_t>(x.numel()) * static_cast<size_t>(x.element_size());
@@ -203,6 +235,8 @@ namespace torchlean {
 
 void initialize() {
   std::call_once(initialization, [] {
+    TORCHLEAN_CHECK(choice().selection != Selection::unavailable,
+                    "LibTorch: no device is selected: ", choice().reason);
     unstable::initialize(deterministic_reductions_requested());
     // An empty tensor on the device initializes torch's CUDA state, as
     // `at::globalContext().lazyInitDevice(kCUDA)` does.
@@ -210,9 +244,22 @@ void initialize() {
   });
 }
 
+bool on_host() { return choice().selection == Selection::host; }
+
+void require_cuda(const char* feature) {
+  TORCHLEAN_CHECK(!on_host(), "LibTorch: ", feature,
+                  " needs a CUDA device, but the bridge runs on the host (a CPU-only SDK, or "
+                  "TORCHLEAN_LIBTORCH_DEVICE=cpu)");
+  TORCHLEAN_CHECK(choice().selection == Selection::cuda, "LibTorch: ", feature,
+                  " needs a CUDA device, but none is selected: ", choice().reason);
+}
+
 std::int32_t device_index() { return selected_device.load(); }
 
 tensor_options options() { return tensor_options{}.dtype(kFloat).device(device()); }
+
+// Whether `x` lives on the selected device's type: the host, or CUDA.
+bool on_device(const Tensor& x) { return on_host() ? x.is_cpu() : x.is_cuda(); }
 
 // A buffer's tensor never requires gradients: the bridge never requests them, the entry points
 // other than `of_handle` compute in no-grad mode, and the native tests check what they box.
@@ -220,18 +267,18 @@ const Tensor& tensor(b_lean_obj_arg object) {
   const auto* buffer = torchlean_cuda_buffer_unbox(object);
   TORCHLEAN_CHECK(buffer->tensor.has_value(), "LibTorch: buffer has been released");
   const auto& value = *buffer->tensor;
-  TORCHLEAN_CHECK(value.is_cuda() &&
+  TORCHLEAN_CHECK(on_device(value) &&
                   (value.scalar_type() == kFloat || value.scalar_type() == kDouble),
-                  "LibTorch: expected a CUDA real buffer");
+                  "LibTorch: expected a real buffer on the selected device");
   TORCHLEAN_CHECK(value.numel() == static_cast<int64_t>(buffer->size),
                   "LibTorch: buffer size disagrees with storage");
   return value;
 }
 
 torchlean_cuda_buffer* owned(Tensor value) {
-  TORCHLEAN_CHECK(value.defined() && value.is_cuda() &&
+  TORCHLEAN_CHECK(value.defined() && on_device(value) &&
                   (value.scalar_type() == kFloat || value.scalar_type() == kDouble),
-                  "LibTorch: expected a CUDA real result");
+                  "LibTorch: expected a real result on the selected device");
   auto buffer = std::make_unique<torchlean_cuda_buffer>();
   buffer->tensor = aten<"contiguous">(aten<"reshape">(value, {-1}));
   buffer->size = static_cast<size_t>(buffer->tensor->numel());
@@ -246,7 +293,7 @@ lean_obj_res box(Tensor value) {
 }
 
 lean_obj_res encoded(Tensor value, b_lean_obj_arg format, size_t width) {
-  TORCHLEAN_CHECK(value.is_cuda() && value.scalar_type() == kByte && width > 0 &&
+  TORCHLEAN_CHECK(on_device(value) && value.scalar_type() == kByte && width > 0 &&
                   value.numel() % width == 0, "encoded buffer: invalid storage extent");
   TORCHLEAN_CHECK(static_cast<uint64_t>(value.numel()) / width <= UINT32_MAX,
                   "encoded buffer: scalar count exceeds the tape ABI");
@@ -315,8 +362,21 @@ extern "C" LEAN_EXPORT AtenTensorHandle torchlean_cuda_buffer_handle(b_lean_obj_
   return torchlean::tensor(object).get();
 }
 
+// 1: a device is selected, a CUDA device or the host. 2: nothing is usable. `unavailable.c`
+// reports 0.
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_runtime_status() {
-  return lean_io_result_mk_ok(lean_box_uint32(device_count() > 0 ? 1u : 2u));
+  return lean_io_result_mk_ok(
+      lean_box_uint32(choice().selection == Selection::unavailable ? 2u : 1u));
+}
+
+// Why no device is selected, or the empty string when one is.
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_unavailable_reason() {
+  return lean_io_result_mk_ok(lean_mk_string(choice().reason.c_str()));
+}
+
+// 0: the host. 1: CUDA, a selected CUDA device or none usable on a CUDA-enabled SDK.
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_device_kind() {
+  return lean_io_result_mk_ok(lean_box_uint32(on_host() ? 0u : 1u));
 }
 
 // Ownership counters are relaxed atomic loads, so reading them never initializes CUDA.
@@ -346,7 +406,8 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_allocator_device_total_bytes(
 #define TORCHLEAN_ALLOCATOR_STAT(NAME, FIELD)                                         \
   extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_##NAME() {                 \
     return io([] {                                                                  \
-      return lean_box_uint64(unstable::allocator_stats(torchlean::device_index()).FIELD); \
+      return lean_box_uint64(                                                       \
+          on_host() ? 0 : unstable::allocator_stats(torchlean::device_index()).FIELD); \
     });                                                                             \
   }
 TORCHLEAN_ALLOCATOR_STAT(allocated_bytes, allocated)
@@ -534,6 +595,9 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_format(b_lean_obj_arg 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_of_encoded_io(
     b_lean_obj_arg bytes, b_lean_obj_arg format, uint64_t width) {
   return io([&] {
+    // Only generated kernels compute on encoded words, and the tape reaches them through the pure
+    // `torchlean_kernel_run_encoded`, where an error ends the process: refuse the upload instead.
+    require_cuda("configured binary arithmetic");
     TORCHLEAN_CHECK(width && lean_sarray_size(bytes) % width == 0,
                     "encoded buffer: truncated scalar word");
     return torchlean::encoded(upload_bytes(bytes, kByte, kByte), format, width);
@@ -598,6 +662,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_get_device() {
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_set_device(uint32_t index) {
   return io([&] {
+    require_cuda("device selection");
     TORCHLEAN_CHECK(index < static_cast<uint32_t>(device_count()),
                     "LibTorch: selected CUDA device does not exist");
     TORCHLEAN_CHECK(wrappers.live.load() == 0,
@@ -622,7 +687,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_set_setting(
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_get_memory_fraction() {
   return io([] {
-    return lean_box_float(unstable::memory_fraction(torchlean::device_index()));
+    return lean_box_float(on_host() ? 0.0 : unstable::memory_fraction(torchlean::device_index()));
   });
 }
 
@@ -630,6 +695,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_set_memory_fraction(doubl
   return io([&] {
     TORCHLEAN_CHECK(std::isfinite(fraction) && fraction > 0.0 && fraction <= 1.0,
                     "LibTorch: memory fraction must be finite and in (0, 1]");
+    require_cuda("the allocator memory fraction");
     unstable::set_memory_fraction(fraction, torchlean::device_index());
     return lean_box(0);
   });
@@ -644,7 +710,8 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_synchronize() {
 
 extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_empty_cache() {
   return io([] {
-    unstable::empty_cache();
+    // The host has no native cache to release.
+    if (!on_host()) unstable::empty_cache();
     return lean_box(0);
   });
 }
@@ -698,6 +765,25 @@ Tensor axpy(const Tensor& a, const Tensor& b, double c) {
   const auto x = aten<"contiguous">(a);
   const auto y = aten<"contiguous">(b);
   const auto result = aten<"empty_like">(x);
+  // The coefficient travels as the bits of a binary64 argument.
+  const double coefficient = rounded(c, dtype);
+  if (on_host()) {
+    // The host loop calls the same correctly rounded fma as the kernel, so it has its bits.
+    const auto n = static_cast<size_t>(x.numel());
+    if (dtype == kFloat) {
+      const auto* p = x.const_data_ptr<float>();
+      const auto* q = y.const_data_ptr<float>();
+      auto* out = result.mutable_data_ptr<float>();
+      const auto k = static_cast<float>(coefficient);
+      for (size_t i = 0; i < n; ++i) out[i] = std::fma(q[i], k, p[i]);
+    } else {
+      const auto* p = x.const_data_ptr<double>();
+      const auto* q = y.const_data_ptr<double>();
+      auto* out = result.mutable_data_ptr<double>();
+      for (size_t i = 0; i < n; ++i) out[i] = std::fma(q[i], coefficient, p[i]);
+    }
+    return result;
+  }
   const std::string type = dtype == kFloat ? "float" : "double";
   const std::string source =
       "extern \"C\" __global__ void torchlean_kernel(const " + type + "* a, const " + type +
@@ -706,8 +792,6 @@ Tensor axpy(const Tensor& a, const Tensor& b, double c) {
       "  if (index < n) out[index] = " + (dtype == kFloat ? "fmaf" : "fma") + "(b[index], (" +
       type + ")c, a[index]);\n"
       "}\n";
-  // The coefficient travels as the bits of a binary64 argument.
-  const double coefficient = rounded(c, dtype);
   uint64_t bits = 0;
   std::memcpy(&bits, &coefficient, sizeof bits);
   const auto n = static_cast<uint64_t>(x.numel());
@@ -1445,9 +1529,26 @@ Tensor ordered_segments(const Tensor& data, const std::vector<int64_t>& lengths,
           "LibTorch kernels: segment lengths must partition the rows");
   const int64_t columns = data.size(1);
   const auto x = aten<"contiguous">(data);
-  const auto starts = device_indices(offsets, data);
   const auto result = aten<"empty.memory_format">(
       {static_cast<int64_t>(lengths.size()), columns}, options(data));
+  if (on_host()) {
+    // The kernel's fold, one column of one segment at a time, in the same order.
+    const auto fold = [&](auto zero) {
+      using T = decltype(zero);
+      const auto* in = x.const_data_ptr<T>();
+      auto* out = result.mutable_data_ptr<T>();
+      for (size_t segment = 0; segment + 1 < offsets.size(); ++segment)
+        for (int64_t column = 0; column < columns; ++column) {
+          T sum = static_cast<T>(initial);
+          for (int64_t row = offsets[segment]; row < offsets[segment + 1]; ++row)
+            sum = sum + in[row * columns + column];
+          out[segment * columns + column] = sum;
+        }
+    };
+    if (dtype == kFloat) fold(0.0f); else fold(0.0);
+    return result;
+  }
+  const auto starts = device_indices(offsets, data);
   const std::string type = dtype == kFloat ? "float" : "double";
   const std::string source =
       "extern \"C\" __global__ void torchlean_kernel(const " + type +
@@ -1492,7 +1593,7 @@ Tensor log_normalizer(const Tensor& shifted, const Tensor& pivot, int64_t axis) 
   // dispatcher cannot pass. Each row has one pivot.
   const auto others = aten<"scatter.src">(aten<"exp">(shifted), axis, pivot,
                                           aten<"zeros">(pivot.sizes(), options(shifted)));
-  return aten<"log1p">(aten<"sum.dim_IntList">(others, {axis}, true));
+  return torchlean::log1p(aten<"sum.dim_IntList">(others, {axis}, true));
 }
 
 Tensor cross_entropy_normalizer(const Tensor& x, const Tensor& shifted,
@@ -1500,7 +1601,7 @@ Tensor cross_entropy_normalizer(const Tensor& x, const Tensor& shifted,
   const auto zeros = aten<"zeros">(pivot.sizes(), options(x));
   const auto tail = aten<"sum.dim_IntList">(
       aten<"scatter.src">(aten<"exp">(shifted), axis, pivot, zeros), {axis}, true);
-  const auto normalizer = aten<"log1p">(tail);
+  const auto normalizer = torchlean::log1p(tail);
   if (x.size(axis) <= 1) return normalizer;
 
   // Individual tail exponentials may round to zero even when their combined mass is
@@ -1517,8 +1618,8 @@ Tensor cross_entropy_normalizer(const Tensor& x, const Tensor& shifted,
       aten<"scatter.src">(aten<"exp">(sub(x, runner_value)), axis, pivot, zeros),
       axis, runner_up, zeros);
   const auto others = aten<"exp">(add(sub(runner_value, largest),
-      aten<"log1p">(aten<"sum.dim_IntList">(inner, {axis}, true))));
-  const auto two_level = aten<"log1p">(others);
+      torchlean::log1p(aten<"sum.dim_IntList">(inner, {axis}, true))));
+  const auto two_level = torchlean::log1p(others);
   const auto finite_result = aten<"logical_not">(aten<"any.dim">(
       aten<"logical_not">(aten<"isfinite">(sub(shifted, two_level))), axis, true));
   const auto use_two_level = aten<"logical_and">(
@@ -1818,7 +1919,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_distill(
     const auto delta = sub(x, t);
     const auto centered =
         sub(delta, aten<"sum.dim_IntList">(aten<"mul.Tensor">(p, delta), {axis}, true));
-    const auto ratio = sub(centered, aten<"log1p">(aten<"sum.dim_IntList">(
+    const auto ratio = sub(centered, torchlean::log1p(aten<"sum.dim_IntList">(
         aten<"mul.Tensor">(p, aten<"expm1">(centered)), {axis}, true)));
     const auto close = aten<"lt.Tensor">(aten<"abs">(ratio), scalar_for(ratio, std::int64_t{1}));
     // Mask before expm1 as well: the inactive near-field branch must not overflow.

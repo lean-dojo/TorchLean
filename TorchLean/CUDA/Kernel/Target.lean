@@ -93,6 +93,10 @@ inductive Primitive (α : Type) : List Ty → Ty → Type where
   | neg {Γ : List Ty} (x : Atom α Γ .scalar) : Primitive α Γ .scalar
   /-- A binary index operation with the semantics of `UInt64`. -/
   | indexBinary {Γ : List Ty} (op : IndexOp) (x y : Atom α Γ .index) : Primitive α Γ .index
+  /-- The index of a scalar atom. -/
+  | toIndex {Γ : List Ty} (x : Atom α Γ .scalar) : Primitive α Γ .index
+  /-- The scalar of an index atom. -/
+  | ofIndex {Γ : List Ty} (x : Atom α Γ .index) : Primitive α Γ .scalar
   /-- A comparison of two scalar atoms. -/
   | compare {Γ : List Ty} (op : Compare) (x y : Atom α Γ .scalar) : Primitive α Γ .predicate
   /-- A comparison of two index atoms. -/
@@ -130,6 +134,8 @@ def Primitive.eval {α : Type} (arithmetic : Arithmetic α) (read : Reader α)
   | .binary op x y => .ok (arithmetic.binary op (x.eval env) (y.eval env))
   | .neg x => .ok (arithmetic.neg (x.eval env))
   | .indexBinary op x y => .ok (op.eval (x.eval env) (y.eval env))
+  | .toIndex x => .ok (arithmetic.toIndex (x.eval env))
+  | .ofIndex x => .ok (arithmetic.ofIndex (x.eval env))
   | .compare op x y => .ok (arithmetic.compare op (x.eval env) (y.eval env))
   | .indexCompare op x y => .ok (op.index (x.eval env) (y.eval env))
 
@@ -165,6 +171,8 @@ def Primitive.rename {α : Type} {Γ Δ : List Ty} {t : Ty} (ρ : Renaming Γ Δ
   | .binary op x y => .binary op (x.rename ρ) (y.rename ρ)
   | .neg x => .neg (x.rename ρ)
   | .indexBinary op x y => .indexBinary op (x.rename ρ) (y.rename ρ)
+  | .toIndex x => .toIndex (x.rename ρ)
+  | .ofIndex x => .ofIndex (x.rename ρ)
   | .compare op x y => .compare op (x.rename ρ) (y.rename ρ)
   | .indexCompare op x y => .indexCompare op (x.rename ρ) (y.rename ρ)
 
@@ -219,6 +227,8 @@ def lower {α : Type} {Γ : List Ty} {t : Ty} : Expr α Γ t → Block α Γ t
   | .binary op x y => .bind (lower x) (.bind ((lower y).rename Var.succ)
       (.compute (.binary op (.var (.succ .zero)) (.var .zero))))
   | .neg x => .bind (lower x) (.compute (.neg (.var .zero)))
+  | .toIndex x => .bind (lower x) (.compute (.toIndex (.var .zero)))
+  | .ofIndex x => .bind (lower x) (.compute (.ofIndex (.var .zero)))
   | .indexBinary op x y => .bind (lower x) (.bind ((lower y).rename Var.succ)
       (.compute (.indexBinary op (.var (.succ .zero)) (.var .zero))))
   | .compare op x y => .bind (lower x) (.bind ((lower y).rename Var.succ)
@@ -252,6 +262,12 @@ theorem eval_lower {α : Type} {Γ : List Ty} {t : Ty} (expr : Expr α Γ t)
         Expr.eval, hx, hy, Env.pull, Env.push]
       rfl
   | neg x hx =>
+      simp only [lower, Block.eval, Primitive.eval, Atom.eval, Expr.eval, hx, Env.push]
+      rfl
+  | toIndex x hx =>
+      simp only [lower, Block.eval, Primitive.eval, Atom.eval, Expr.eval, hx, Env.push]
+      rfl
+  | ofIndex x hx =>
       simp only [lower, Block.eval, Primitive.eval, Atom.eval, Expr.eval, hx, Env.push]
       rfl
   | indexBinary op x y hx hy =>

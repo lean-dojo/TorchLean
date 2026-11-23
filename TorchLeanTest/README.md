@@ -99,8 +99,13 @@ scripts/lake.sh test
 `scripts/lake.sh exe nn_tests_suite` runs the suite directly. Without LibTorch it prints
 `CUDA kernels: skipped (LibTorch not linked)`. Two variables turn a skip into a failure:
 `TORCHLEAN_REQUIRE_INTEROP=1` when the `torch`, `numpy`, or `onnx` Python package is missing, and
-`TORCHLEAN_REQUIRE_CUDA=1` when LibTorch is not linked. A suite built with `-Kcuda=true` fails
-when no CUDA device is visible.
+`TORCHLEAN_REQUIRE_CUDA=1` when LibTorch is not linked or the bridge runs on the host. A suite built
+with `-Kcuda=true` fails when the bridge selects no device. With a CPU-only SDK, or with
+`TORCHLEAN_LIBTORCH_DEVICE=cpu`, the bridge runs on the host
+([host device](../csrc/libtorch/README.md#host-device)): the CUDA checks run there too, except that
+generated kernels and configured-binary arithmetic are checked to be refused and the native memory
+probes are replaced by a check that the allocator statistics read zero.
+`TORCHLEAN_REQUIRE_NATIVE=1` fails a run in which the bridge is not linked or selects no device.
 
 ```bash
 TORCHLEAN_REQUIRE_INTEROP=1 scripts/lake.sh -Kcuda=false test

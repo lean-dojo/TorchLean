@@ -20,9 +20,12 @@ rejects a CPU tensor beside CUDA tensors. `--write` regenerates the table from t
 those headers, and the list from that declaration file. `--library SO` also checks a built bridge:
 the operators it names are the table's, and it names no other `aten::` operator, the torch C shims
 it imports are the TRUST list, every other torch symbol it imports, apart from functions of the C++
-standard library, is under "Unstable Remainder", and it does not link the CUDA runtime. With both
-options, the libraries of the torch package define every torch symbol the bridge imports, so the
-bridge loads with them. `scripts/lake.sh lint` runs the source checks, and the build runs `--torch`
+standard library, is under "Unstable Remainder", and it does not link the CUDA runtime. A library
+that links `libtorch_cuda.so`, built against a CUDA-enabled SDK, also imports exactly the entries of
+"CUDA C Shims" and "CUDA Unstable Remainder", and a library built against a CPU-only SDK none of
+them. With both options, the libraries of the torch package define every torch symbol the bridge
+imports, so the bridge loads with them, and the package is CUDA-enabled exactly when the library
+links `libtorch_cuda.so`. `scripts/lake.sh lint` runs the source checks, and the build runs `--torch`
 and `--library` on the library it builds.
 
 Each bullet of a TRUST list names its entries in code spans, then gives one reason for all of them
@@ -44,6 +47,11 @@ TRUST = ROOT / "docs/TRUST_BOUNDARIES.md"
 SECTION = "## LibTorch Stable ABI"
 SCHEMAS, SHIMS, SHIM_OPERATORS, UNSTABLE = (
     "Dispatcher Schemas", "C Shims", "Operators Behind C Shims", "Unstable Remainder")
+# What a library built against a CUDA-enabled SDK imports besides SHIMS and UNSTABLE.
+CUDA_SHIMS, CUDA_UNSTABLE = "CUDA C Shims", "CUDA Unstable Remainder"
+# The library of a CUDA-enabled SDK that a bridge built against one links, and one built against a
+# CPU-only SDK does not.
+TORCH_CUDA = "libtorch_cuda.so"
 # The one source compiled against torch's C++ API. TRUST lists what it links, read from a library.
 UNSTABLE_SOURCES = {"unstable.cpp", "unstable.h"}
 LINE_LIMIT = 100
@@ -292,7 +300,8 @@ def compare(found: list[str], listed: list[str], found_in: str, listed_in: str) 
 def check_sources(trust: dict[str, list[str]]) -> list[str]:
     """The source-level checks: keys against the table, table and shims against TRUST, includes."""
     errors = [f"{TRUST.name} has no `### {title}` list under `{SECTION}`"
-              for title in (SCHEMAS, SHIMS, SHIM_OPERATORS, UNSTABLE) if title not in trust]
+              for title in (SCHEMAS, SHIMS, SHIM_OPERATORS, UNSTABLE, CUDA_SHIMS, CUDA_UNSTABLE)
+              if title not in trust]
     table = read_table()
     keys = [key(schema) for schema in table]
     if keys != sorted(set(keys)):
@@ -305,10 +314,11 @@ def check_sources(trust: dict[str, list[str]]) -> list[str]:
                f"table or of TRUST's {SHIM_OPERATORS}" for name in devices if name not in named]
     errors += compare(source_keys(), keys, "the aten keys of the sources", TABLE.name)
     errors += compare(table, trust.get(SCHEMAS, []), TABLE.name, f"TRUST's {SCHEMAS}")
-    listed = set(trust.get(SHIMS, []))
+    listed = set(trust.get(SHIMS, [])) | set(trust.get(CUDA_SHIMS, []))
     for name, files in sorted(source_shims().items()):
         if name not in listed:
-            errors.append(f"`{name}` is called in {', '.join(files)} but not in TRUST's {SHIMS}")
+            errors.append(f"`{name}` is called in {', '.join(files)} but not in TRUST's {SHIMS} "
+                          f"or {CUDA_SHIMS}")
     return errors + dispatcher_calls() + unstable_includes()
 
 
@@ -374,12 +384,25 @@ def check_exports(library: Path, torch: Path) -> list[str]:
         defined.update(line.split()[-1].partition("@")[0] for line in
                        tool("nm", "-D", "--defined-only", str(path)).splitlines())
     shims, others = torch_imports(library)
-    return [f"{torch} defines no `{name}`, which {library.name} imports"
-            for name in shims + others if name not in defined]
+    errors = [f"{torch} defines no `{name}`, which {library.name} imports"
+              for name in shims + others if name not in defined]
+    sdk_cuda = (torch / "lib" / TORCH_CUDA).exists()
+    if sdk_cuda != links_torch_cuda(library):
+        errors.append(f"{torch} is {'CUDA-enabled' if sdk_cuda else 'CPU-only'}, but "
+                      f"{library.name} {'does not link' if sdk_cuda else 'links'} {TORCH_CUDA}")
+    return errors
+
+
+def links_torch_cuda(library: Path) -> bool:
+    """Whether `library` links the CUDA library of torch, so was built against a CUDA-enabled SDK."""
+    return any(re.search(rf"\(NEEDED\).*\[{re.escape(TORCH_CUDA)}\]", line)
+               for line in tool("readelf", "-d", str(library)).splitlines())
 
 
 def check_library(library: Path, trust: dict[str, list[str]]) -> list[str]:
-    """A built bridge's operators, shims and torch imports against the table and TRUST."""
+    """A built bridge's operators, shims and torch imports against the table and TRUST. The CUDA
+    lists belong to the expected imports exactly when the library links torch's CUDA library."""
+    cuda = links_torch_cuda(library)
     data = library.read_bytes()
     keys = [key(schema) for schema in read_table()]
     named = sorted({(op + b"." + overload if overload else op).decode()
@@ -390,13 +413,18 @@ def check_library(library: Path, trust: dict[str, list[str]]) -> list[str]:
                for name in sorted({op.decode() for op in LIBRARY_OPERATOR_RE.findall(data)})
                if name not in operators]
     shims, others = torch_imports(library)
-    errors += compare(shims, trust.get(SHIMS, []), f"the imports of {library.name}",
-                      f"TRUST's {SHIMS}")
+    expected, listed_in = trust.get(SHIMS, []), f"TRUST's {SHIMS}"
+    if cuda:
+        expected, listed_in = expected + trust.get(CUDA_SHIMS, []), f"{listed_in} and {CUDA_SHIMS}"
+    errors += compare(shims, expected, f"the imports of {library.name}", listed_in)
     demangled = tool("c++filt", stdin="".join(name + "\n" for name in others)).splitlines()
     torch_names = {without_parameters(symbol) for symbol in demangled
                    if not (STANDARD_RE.match(symbol) and not TORCH_NAMESPACE_RE.search(symbol))}
-    errors += compare(sorted(torch_names), trust.get(UNSTABLE, []),
-                      f"the imports of {library.name}", f"TRUST's {UNSTABLE}")
+    expected, listed_in = trust.get(UNSTABLE, []), f"TRUST's {UNSTABLE}"
+    if cuda:
+        expected = expected + trust.get(CUDA_UNSTABLE, [])
+        listed_in = f"{listed_in} and {CUDA_UNSTABLE}"
+    errors += compare(sorted(torch_names), expected, f"the imports of {library.name}", listed_in)
     for line in tool("readelf", "-d", str(library)).splitlines():
         needed = re.search(r"\(NEEDED\).*\[(libcudart[^\]]*)\]", line)
         if needed:
@@ -440,8 +468,12 @@ def main() -> int:
     for error in errors:
         print(f"error: LibTorch ABI: {error}", file=sys.stderr)
     if not errors:
+        build = ""
+        if args.library:
+            build = (" (a CUDA-enabled build)" if links_torch_cuda(args.library)
+                     else " (a CPU-only build)")
         print(f"OK: {len(read_table())} dispatcher schemas, the C shims and the operators behind "
-              f"them match TRUST.")
+              f"them match TRUST{build}.")
     return 1 if errors else 0
 
 

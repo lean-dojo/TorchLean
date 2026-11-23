@@ -223,6 +223,7 @@ import TorchLeanExamples.Verification.ODE.ArithParseLanguage
 import TorchLeanExamples.Verification.ODE.EnclosureBackends
 import TorchLeanExamples.Verification.RobustMLP
 import TorchLeanTest.CUDA.KernelGradient
+import TorchLeanTest.CUDA.KernelIndex
 import TorchLeanTest.CUDA.MoE
 import TorchLeanTest.CUDA.Scheduler
 import TorchLeanTest.CUDA.Suite

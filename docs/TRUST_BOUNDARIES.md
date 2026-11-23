@@ -590,10 +590,9 @@ and the two message functions from 2.13, and the others in earlier releases.
 - `aoti_torch_new_tensor_handle`, `aoti_torch_delete_tensor_object`, `aoti_torch_is_defined`,
   `aoti_torch_get_dim`, `aoti_torch_get_numel`, `aoti_torch_get_size`, `aoti_torch_get_sizes`,
   `aoti_torch_get_dtype`, `aoti_torch_dtype_element_size`, `aoti_torch_get_device_type`,
-  `aoti_torch_get_device_index`, `aoti_torch_is_contiguous`, `torch_get_const_data_ptr`,
-  `torch_get_mutable_data_ptr`: the ownership of a tensor handle, the metadata the bridge's guards
-  check, and the data pointers of uploads, downloads and kernel launches, as `torch::stable::Tensor`
-  reads them.
+  `aoti_torch_get_device_index`, `torch_get_const_data_ptr`, `torch_get_mutable_data_ptr`: the
+  ownership of a tensor handle, the metadata the bridge's guards check, and the data pointers of
+  uploads, downloads, kernel launches and the host loops, as `torch::stable::Tensor` reads them.
 - `aoti_torch_dtype_bfloat16`, `aoti_torch_dtype_bool`, `aoti_torch_dtype_complex128`,
   `aoti_torch_dtype_complex32`, `aoti_torch_dtype_complex64`, `aoti_torch_dtype_float16`,
   `aoti_torch_dtype_float32`, `aoti_torch_dtype_float64`, `aoti_torch_dtype_float8_e4m3fn`,
@@ -615,11 +614,8 @@ and the two message functions from 2.13, and the others in earlier releases.
   (`subtract.Tensor`, whose `alpha` is a `Scalar`, which the dispatcher rejects) and zero padding
   (`constant_pad_nd` takes a `Scalar` value, and `pad` a `str` mode), through torch's generated C
   shims, which take those arguments as C values.
-- `aoti_torch_create_cuda_guard`, `aoti_torch_delete_cuda_guard`,
-  `aoti_torch_get_current_cuda_stream`, `aoti_torch_grad_mode_is_enabled`,
-  `aoti_torch_grad_mode_set_enabled`: the CUDA device guard around calls on the selected device,
-  torch's current stream, on which the generated kernels launch, and the grad mode that every entry
-  point Lean calls turns off.
+- `aoti_torch_grad_mode_is_enabled`, `aoti_torch_grad_mode_set_enabled`: the grad mode that every
+  entry point Lean calls turns off.
 - `aoti_torch_abi_version`: the release of the loaded torch runtime, which
   `TorchLean.LibTorch.version` reports and the allocator calls of `unstable.cpp` check.
 
@@ -676,11 +672,28 @@ mangled name in torch 2.13, 2.14 and 2.15, so the library binds it by name.
   (full-precision float32 matrix products and convolutions, no reduced-precision reductions, no
   cuDNN benchmarking, deterministic algorithms on request) and the runtime settings of
   `TorchLean.LibTorch`, IDs 0 to 8.
+
+### CUDA C Shims
+
+The C shims that a library built against a CUDA-enabled SDK imports besides those above, and one
+built against a CPU-only SDK does not: `USE_CUDA` declares them, and only `kernels.cpp`, which a
+CPU-only SDK builds without NVRTC and the driver, reads the layout of a generated kernel's inputs.
+
+- `aoti_torch_create_cuda_guard`, `aoti_torch_delete_cuda_guard`,
+  `aoti_torch_get_current_cuda_stream`: the CUDA device guard around calls on a selected CUDA
+  device, and torch's current stream, on which the generated kernels launch.
+- `aoti_torch_is_contiguous`: the layout check of a generated kernel's inputs.
+
+### CUDA Unstable Remainder
+
+The unstable symbols that a library built against a CUDA-enabled SDK imports besides those above.
+
 - `c10::cuda::CUDACachingAllocator::allocator`: the CUDA caching allocator's statistics,
   `emptyCache` and memory fraction, which no C shim exposes. The calls go through its virtual
   functions at the slots of the headers the library is built against, and throw unless the loaded
   runtime is torch 2.13, 2.14 or 2.15, which have the same slots. The check reads only the runtime's
-  release, so it guards the slots only for a library built against one of these releases.
+  release, so it guards the slots only for a library built against one of these releases. The
+  bridge does not call them on the host.
 
 ## Custom Tensor Computations
 
@@ -693,9 +706,17 @@ concurrent error recording and foreign memory are outside these theorems. The na
 reads, keeps input owners alive until completion, and bounds its compiled-module cache. Those checks
 are native implementation obligations.
 
+The conversions between scalars and indices are part of the supplied arithmetic contract, as the
+operations are. Native code converts a scalar with the comparisons of Lean's runtime
+(`lean_float32_to_uint64`), which give `0` at a NaN and below zero and `2^64 - 1` from `2^64` on,
+and truncates the remaining values with `__float2ull_rz` or `__double2ull_rz`, which must truncate
+exactly on `[0, 2^64)`. It converts an index with `__ull2float_rn` and `__ull2double_rn`, which
+must round to nearest even as Lean's `UInt64.toFloat32` and `UInt64.toFloat` do. `TorchLeanTest/CUDA/KernelIndex.lean` checks this on
+the device at the values where the rules differ.
+
 Configured binary arithmetic uses complete encoded words in CUDA buffers, including saved values
-and gradients on the autograd tape. The generated arithmetic is compared with FloatLib, and Lean's
-kernel does not verify it. The format descriptor, byte transfer, slicing, concatenation and zero
+and gradients on the autograd tape. The generated arithmetic and the conversions between values
+and indices are compared with FloatLib, and Lean's kernel does not verify them. The format descriptor, byte transfer, slicing, concatenation and zero
 allocation are additional native implementation obligations. Encoded buffers cannot be used as
 native optimizer checkpoints or passed to unsupported ATen operations.
 

@@ -121,8 +121,9 @@ def Literal.render {format : Format} : Literal format → String
   | .binary32 bits => s!"__uint_as_float({bits.toNat}U)"
   | .binary64 bits => s!"__longlong_as_double((long long){bits.toNat}ULL)"
 
-/-- How an emitter spells scalars: the type name, literals and the four binary operations. The
-native and configured binary emitters each supply one. -/
+/-- How an emitter spells scalars: the type name, literals, the four binary operations and the
+two conversions between scalars and indices. The native and configured binary emitters each
+supply one. -/
 structure Dialect (α : Type) where
   /-- The scalar type name, such as `float`. -/
   scalar : String
@@ -130,6 +131,10 @@ structure Dialect (α : Type) where
   literal : α → Except String String
   /-- The intrinsic name of each binary scalar operation, such as `__fadd_rn`. -/
   binary : ScalarOp → String
+  /-- The text of the conversion of the scalar atom with the given text to an index. -/
+  toIndex : String → String
+  /-- The function name of the conversion of an index to a scalar, such as `__ull2float_rn`. -/
+  ofIndex : String
 
 /-- Remove an exact prefix and suffix, rejecting mismatched emitted syntax. -/
 def unframe (first last text : String) : Option String := do
@@ -312,6 +317,10 @@ inductive Primitive (α : Type) (ν : Ty → Type) : Ty → Type where
   | neg (x : Atom α ν .scalar) : Primitive α ν .scalar
   /-- Unsigned arithmetic on index atoms. -/
   | unsigned (value : Unsigned (Atom α ν .index)) : Primitive α ν .index
+  /-- The index of a scalar atom, by the arithmetic contract. -/
+  | toIndex (x : Atom α ν .scalar) : Primitive α ν .index
+  /-- The scalar of an index atom, by the arithmetic contract. -/
+  | ofIndex (x : Atom α ν .index) : Primitive α ν .scalar
   /-- A comparison of two scalar atoms. -/
   | compare (op : Compare) (x y : Atom α ν .scalar) : Primitive α ν .predicate
   /-- A comparison of two index atoms. -/
@@ -327,6 +336,8 @@ def Primitive.eval {α : Type} (arithmetic : Arithmetic α) (read : Reader α)
   | .binary op x y => some (.ok (arithmetic.binary op (x.eval values) (y.eval values)))
   | .neg x => some (.ok (arithmetic.neg (x.eval values)))
   | .unsigned value => (value.eval (fun x => x.eval values)).map Except.ok
+  | .toIndex x => some (.ok (arithmetic.toIndex (x.eval values)))
+  | .ofIndex x => some (.ok (arithmetic.ofIndex (x.eval values)))
   | .compare op x y => some (.ok (arithmetic.compare op (x.eval values) (y.eval values)))
   | .indexCompare op x y => some (.ok (op.index (x.eval values) (y.eval values)))
 
@@ -337,6 +348,8 @@ def Primitive.lower {α : Type} {Γ : List Ty} {ν : Ty → Type} {t : Ty}
   | .binary op x y => .binary op (Atom.lower names x) (Atom.lower names y)
   | .neg x => .neg (Atom.lower names x)
   | .indexBinary op x y => .unsigned (Unsigned.lower op (Atom.lower names x) (Atom.lower names y))
+  | .toIndex x => .toIndex (Atom.lower names x)
+  | .ofIndex x => .ofIndex (Atom.lower names x)
   | .compare op x y => .compare op (Atom.lower names x) (Atom.lower names y)
   | .indexCompare op x y => .indexCompare op (Atom.lower names x) (Atom.lower names y)
 
@@ -655,6 +668,24 @@ def Format.binary (format : Format) (op : ScalarOp) : String :=
   let name := match op with | .add => "add" | .sub => "sub" | .mul => "mul" | .div => "div"
   start ++ name ++ "_rn"
 
+/-- The CUDA text converting the scalar atom `x` of `format` to an index, as Lean's
+`lean_float32_to_uint64` and `lean_float_to_uint64` convert:
+`0 <= x ? (x < 2^64 ? trunc(x) : 2^64 - 1) : 0`. The guards give `0` at a NaN and below zero and
+saturate at `2^64` and above, so the truncating intrinsic `__float2ull_rz` or `__double2ull_rz`
+only sees values in `[0, 2^64)`, where its result is the truncation. The constants are exact
+words, as literals are. -/
+def Format.toIndex (format : Format) (x : String) : String :=
+  let (zero, limit, convert) := match format with
+    | .binary32 => ("__uint_as_float(0U)", "__uint_as_float(1602224128U)", "__float2ull_rz")
+    | .binary64 => ("__longlong_as_double((long long)0ULL)",
+        "__longlong_as_double((long long)4895412794951729152ULL)", "__double2ull_rz")
+  s!"({zero} <= {x} ? ({x} < {limit} ? {convert}({x}) : 18446744073709551615ULL) : 0ULL)"
+
+/-- The CUDA intrinsic that rounds an index to the nearest scalar of `format`, ties to even. -/
+def Format.ofIndex : Format → String
+  | .binary32 => "__ull2float_rn"
+  | .binary64 => "__ull2double_rn"
+
 /-- The CUDA symbol of a comparison. -/
 def comparison : Compare → String
   | .eq => "=="
@@ -697,7 +728,7 @@ as `true` or `false`. -/
 /-- The dialect of a native format, which renders each literal from its checked word. -/
 abbrev Dialect.native {α : Type} (format : Format) (bits : α → UInt64) : Dialect α :=
   ⟨Format.name format, fun value => (Literal.ofBits format (bits value)).map Literal.render,
-    Format.binary format⟩
+    Format.binary format, Format.toIndex format, Format.ofIndex format⟩
 
 /-- Render an atom in the native dialect of `format`. -/
 abbrev Atom.render {α : Type} (format : Format) (bits : α → UInt64)
@@ -718,6 +749,12 @@ abbrev Atom.render {α : Type} (format : Format) (bits : α → UInt64)
       return s!"(-{x})"
   | .unsigned value =>
       value.render (Atom.renderWith dialect)
+  | .toIndex x => do
+      let x ← Atom.renderWith dialect x
+      return dialect.toIndex x
+  | .ofIndex x => do
+      let x ← Atom.renderWith dialect x
+      return s!"{dialect.ofIndex}({x})"
   | .compare op x y => do
       let x ← Atom.renderWith dialect x
       let y ← Atom.renderWith dialect y

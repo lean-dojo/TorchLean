@@ -39,10 +39,13 @@ operations as the template's round-to-nearest-even arithmetic. -/
         toString byte.toNat
       return "scalar{{" ++ String.intercalate ", " digits ++ "}}"
     binary := fun op => match op with
-      | .add => "tl_add" | .sub => "tl_sub" | .mul => "tl_mul" | .div => "tl_div" }
+      | .add => "tl_add" | .sub => "tl_sub" | .mul => "tl_mul" | .div => "tl_div"
+    toIndex := fun x => s!"tl_to_index({x})"
+    ofIndex := "tl_of_index" }
 
-/-- The include, the template instance and the four operations that precede a kernel of a
-configured binary format. Formats over 30 exponent bits or 4096 fraction bits are rejected. -/
+/-- The include, the template instance, the four operations and the two index conversions that
+precede a kernel of a configured binary format. Formats over 30 exponent bits or 4096 fraction bits
+are rejected. -/
 @[no_expose] def binaryPrelude (format : FloatFormat) : Except String String := do
   unless (Precision.binary format).supportsGPU do
     throw "custom computation: GPU software arithmetic supports at most 30 exponent bits and \
@@ -55,7 +58,9 @@ configured binary format. Formats over 30 exponent bits or 4096 fraction bits ar
     "__device__ scalar tl_add(scalar x, scalar y) { return x + y; }\n" ++
     "__device__ scalar tl_sub(scalar x, scalar y) { return x - y; }\n" ++
     "__device__ scalar tl_mul(scalar x, scalar y) { return x * y; }\n" ++
-    "__device__ scalar tl_div(scalar x, scalar y) { return x / y; }\n"
+    "__device__ scalar tl_div(scalar x, scalar y) { return x / y; }\n" ++
+    "__device__ unsigned long long tl_to_index(scalar x) { return x.toIndex(); }\n" ++
+    "__device__ scalar tl_of_index(unsigned long long x) { return scalar::ofIndex(x); }\n"
 
 /-- Render CUDA source for a configured binary format: the prelude of `binaryPrelude`, which
 rejects the formats the template does not support, then the body in the dialect of

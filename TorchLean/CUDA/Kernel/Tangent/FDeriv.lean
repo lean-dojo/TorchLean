@@ -20,8 +20,10 @@ derivative `x' j i` there. Then the value of `e` has a derivative `D` at `θ₀`
 expression computes `D u` with the dual reader that holds the primal inputs `x θ₀` and the
 tangents `x' j i u` (`Expr.exists_hasFDerivAt_tangent`).
 
-The hypothesis `Expr.Regular` asks that the evaluation at `θ₀` divides by no zero and compares no
-two equal scalars unless both are constants (`Expr.IsConstant`). Then the evaluation near `θ₀`
+The hypothesis `Expr.Regular` asks that the evaluation at `θ₀` divides by no zero, compares no
+two equal scalars unless both are constants (`Expr.IsConstant`) and converts no integer to an
+index. Over the reals an index is the floor of its scalar, clamped to the `UInt64` range
+(`realToIndex`), so away from the integers it does not change nearby. Then the evaluation near `θ₀`
 takes the same branches and the same numbers of fold steps, so near `θ₀` the value is built from
 input reads by the four arithmetic operations. The condition is sufficient and not necessary:
 `max x x` has a derivative although its comparison is a tie. It also rejects a tie whose outcome
@@ -89,10 +91,27 @@ theorem dual_add (k : Nat) (x dx : Nat → UInt64 → α) (j : Nat) (i : UInt64)
 
 end Reader
 
+/-- The index of a real number: its floor, `0` below zero and `2^64 - 1` from `2^64` on. On a
+finite `Float32` or `Float`, read as a real, `Float32.toUInt64` and `Float.toUInt64` compute the
+same index. -/
+noncomputable def realToIndex (x : ℝ) : UInt64 :=
+  if ⌊x⌋ < 0 then 0
+  else if ⌊x⌋ < 2 ^ 64 then ⌊x⌋.toNat.toUInt64 else UInt64.ofNat (2 ^ 64 - 1)
+
+/-- Over the reals, an index is `realToIndex` of its scalar and a scalar is its index's natural
+number. -/
+noncomputable instance instIndexCastReal : IndexCast ℝ where
+  toIndex := realToIndex
+  ofIndex i := (i.toNat : ℝ)
+
+/-- `realToIndex` depends on its argument only through the floor. -/
+theorem realToIndex_congr {x y : ℝ} (h : ⌊x⌋ = ⌊y⌋) : realToIndex x = realToIndex y := by
+  simp only [realToIndex, h]
+
 namespace Arithmetic
 
 variable {α : Type} [Add α] [Sub α] [Mul α] [Div α] [Neg α] [BEq α] [LT α] [LE α]
-  [DecidableLT α] [DecidableLE α]
+  [DecidableLT α] [DecidableLE α] [IndexCast α]
 
 /-- `ofOps` adds with the type's `+`. -/
 @[simp] theorem ofOps_binary_add (x y : α) : (ofOps : Arithmetic α).binary .add x y = x + y :=
@@ -112,6 +131,14 @@ variable {α : Type} [Add α] [Sub α] [Mul α] [Div α] [Neg α] [BEq α] [LT �
 
 /-- `ofOps` negates with the type's `-`. -/
 @[simp] theorem ofOps_neg (x : α) : (ofOps : Arithmetic α).neg x = -x := rfl
+
+/-- `ofOps` converts a scalar to an index with the type's `IndexCast`. -/
+@[simp] theorem ofOps_toIndex (x : α) :
+    (ofOps : Arithmetic α).toIndex x = IndexCast.toIndex x := rfl
+
+/-- `ofOps` converts an index to a scalar with the type's `IndexCast`. -/
+@[simp] theorem ofOps_ofIndex (i : UInt64) :
+    (ofOps : Arithmetic α).ofIndex i = IndexCast.ofIndex i := rfl
 
 end Arithmetic
 
@@ -141,7 +168,8 @@ theorem IsConstant.eval_eq {Γ : List Ty} {t : Ty} {e : Expr ℝ Γ t} (h : e.Is
   | _ => exact h.elim
 
 /-- At every step that the evaluation of `e` at `env` with `read` reaches, every scalar division
-has a nonzero divisor and every scalar comparison has unequal operands or two constant operands. A
+has a nonzero divisor, every scalar comparison has unequal operands or two constant operands, and
+every scalar converted to an index is not an integer. A
 zero divisor or a tie of operands that are not both constant is rejected even when the result does
 not depend on the inputs nearby, as for `0 / x` at `x = 0` or `acc < 0` at the first step of a fold
 from `0`. -/
@@ -157,6 +185,9 @@ def Regular (read : Reader ℝ) : {Γ : List Ty} → {t : Ty} → Expr ℝ Γ t 
   | _, _, .neg x, env => x.Regular read env
   | _, _, .indexBinary _ x y, env => x.Regular read env ∧
       ∀ a, x.eval Arithmetic.ofOps read env = .ok a → y.Regular read env
+  | _, _, .toIndex x, env => x.Regular read env ∧
+      ∀ a, x.eval Arithmetic.ofOps read env = .ok a → ∀ n : ℤ, a ≠ n
+  | _, _, .ofIndex x, env => x.Regular read env
   | _, _, .compare _ x y, env => x.Regular read env ∧
       ∀ a, x.eval Arithmetic.ofOps read env = .ok a → y.Regular read env ∧
         ∀ b, y.eval Arithmetic.ofOps read env = .ok b → a ≠ b ∨ (x.IsConstant ∧ y.IsConstant)
@@ -213,6 +244,8 @@ theorem eval_congr_of_reads (arithmetic : Arithmetic α) (read : Reader α) {Γ 
   | indexBinary op x y hx hy =>
       simp only [reads, Bool.or_eq_false_iff] at hv
       simp only [eval, hx v hv.1 h, hy v hv.2 h]
+  | toIndex x hx => simp only [eval, hx v hv h]
+  | ofIndex x hx => simp only [eval, hx v hv h]
   | compare op x y hx hy =>
       simp only [reads, Bool.or_eq_false_iff] at hv
       simp only [eval, hx v hv.1 h, hy v hv.2 h]
@@ -457,6 +490,40 @@ private theorem good {read : Reader ℝ} {k : Nat} (hk : ∀ j i y, read j i = .
         (hF₁.and hF₂).mono fun θ h => by simp only [eval, h.1, h.2, ← except_pure, pure_bind]
       exact ⟨_, hF, fun u =>
         eval_primal _ (hread u) (indexBinary op e₁ e₂) (htr.primal u) hF.self_of_nhds⟩
+  | toIndex e₁ ih₁ =>
+      obtain ⟨y, hy⟩ := hok
+      simp only [eval] at hy
+      obtain ⟨a, ha, -⟩ := except_bind_eq_ok.mp hy
+      obtain ⟨hreg₁, hint⟩ := hreg
+      obtain ⟨g₁, D₁, hF₁, hg₁, -⟩ := ih₁ htr ⟨a, ha⟩ hreg₁
+      -- Regularity puts `g₁ θ₀` strictly between two integers, and by continuity `g₁ θ` stays
+      -- there near `θ₀`, so its floor does not change.
+      have hga : g₁ θ₀ = a := Except.ok.inj (hF₁.self_of_nhds.symm.trans ha)
+      have hlo : (⌊g₁ θ₀⌋ : ℝ) < g₁ θ₀ :=
+        lt_of_le_of_ne (Int.floor_le _) fun h => hint a ha ⌊g₁ θ₀⌋ (hga ▸ h.symm)
+      have hhi : g₁ θ₀ < (⌊g₁ θ₀⌋ : ℝ) + 1 := Int.lt_floor_add_one _
+      have hfl : ∀ᶠ θ in 𝓝 θ₀, ⌊g₁ θ⌋ = ⌊g₁ θ₀⌋ :=
+        ((continuousAt_const.eventually_lt hg₁.continuousAt hlo).and
+          (hg₁.continuousAt.eventually_lt continuousAt_const hhi)).mono fun θ h =>
+            Int.floor_eq_iff.mpr ⟨h.1.le, h.2⟩
+      have hF : ∀ᶠ θ in 𝓝 θ₀, (toIndex e₁).eval Arithmetic.ofOps (read.withValues (x θ))
+          (env θ) = .ok (realToIndex (g₁ θ₀)) :=
+        (hF₁.and hfl).mono fun θ h => by
+          simp only [eval, h.1, ← except_pure, pure_bind, Arithmetic.ofOps_toIndex]
+          exact congrArg Except.ok (realToIndex_congr h.2)
+      exact ⟨_, hF, fun u =>
+        eval_primal _ (hread u) (toIndex e₁) (htr.primal u) hF.self_of_nhds⟩
+  | ofIndex e₁ ih₁ =>
+      obtain ⟨y, hy⟩ := hok
+      simp only [eval] at hy
+      obtain ⟨a, ha, -⟩ := except_bind_eq_ok.mp hy
+      -- The index is constant near `θ₀`, so its scalar is too, with derivative zero.
+      obtain ⟨b, hF₁, -⟩ := ih₁ htr ⟨a, ha⟩ hreg
+      refine ⟨fun _ => (b.toNat : ℝ), 0, hF₁.mono fun θ h => ?_, hasFDerivAt_const _ θ₀,
+        fun u => ?_⟩
+      · simp only [eval, h, ← except_pure, pure_bind, Arithmetic.ofOps_ofIndex]
+        rfl
+      · simp only [tangent, eval, _root_.zero_apply]
   | compare op e₁ e₂ ih₁ ih₂ =>
       obtain ⟨y, hy⟩ := hok
       simp only [eval] at hy

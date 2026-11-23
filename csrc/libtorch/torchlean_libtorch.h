@@ -3,6 +3,10 @@
 #ifndef TORCHLEAN_LIBTORCH
 #error "Compile the LibTorch backend with TORCHLEAN_LIBTORCH defined."
 #endif
+// 1 for a CUDA-enabled SDK, which exports `torch_cuda`, and 0 for a CPU-only SDK. CMake sets it.
+#ifndef TORCHLEAN_LIBTORCH_CUDA
+#error "Compile the LibTorch backend with TORCHLEAN_LIBTORCH_CUDA defined to 0 or 1."
+#endif
 
 #include <lean/lean.h>
 
@@ -85,7 +89,33 @@ namespace torchlean __attribute__((visibility("hidden"))) {
 __attribute__((visibility("default"))) void initialize();
 __attribute__((visibility("default"))) std::int32_t device_index();
 
-inline Device device() { return Device(kCUDA, device_index()); }
+// Whether the bridge runs on the host. It is decided once, before the first buffer exists: the
+// host when `TORCHLEAN_LIBTORCH_DEVICE=cpu` or the SDK is CPU-only, a CUDA device otherwise.
+bool on_host();
+
+// Throws unless the bridge runs on a CUDA device. An entry point with no host implementation calls
+// it first, so that on the host it fails naming `feature` rather than inside a CUDA call.
+void require_cuda(const char* feature);
+
+inline Device device() { return on_host() ? Device(kCPU) : Device(kCUDA, device_index()); }
+
+// CUDA device `device_index()` is current while it lives on a CUDA device. On the host it does
+// nothing.
+class device_guard {
+ public:
+  device_guard() {
+#if TORCHLEAN_LIBTORCH_CUDA
+    if (!on_host()) guard_.emplace(device_index());
+#endif
+  }
+  device_guard(const device_guard&) = delete;
+  device_guard& operator=(const device_guard&) = delete;
+
+ private:
+#if TORCHLEAN_LIBTORCH_CUDA
+  std::optional<cuda_guard> guard_;
+#endif
+};
 
 // The Lean tape owns differentiation. Native calls must not record a second graph.
 template <typename F>
@@ -93,7 +123,7 @@ auto invoke(F&& body) -> decltype(body()) {
   try {
     initialize();
     const no_grad grad_mode;
-    const cuda_guard guard(device_index());
+    const device_guard guard;
     return std::forward<F>(body)();
   } catch (const std::exception& error) {
     lean_internal_panic(error.what());
@@ -108,7 +138,7 @@ lean_obj_res io(F&& body) {
   try {
     initialize();
     const no_grad grad_mode;
-    const cuda_guard guard(device_index());
+    const device_guard guard;
     return lean_io_result_mk_ok(std::forward<F>(body)());
   } catch (const out_of_memory& error) {
     return lean_io_result_mk_error(
@@ -145,6 +175,9 @@ struct launch {
   std::vector<uint64_t> arguments;
 };
 
+// The generated kernels below run on a CUDA device only: on the host they throw, through
+// `require_cuda`.
+
 // A generated kernel compiled with the module cache and floating-point policy of custom
 // operations. Its module stays loaded while the handle is held, also after the cache has
 // evicted it.
@@ -167,13 +200,16 @@ void launch_rows(const std::string& source, std::vector<launch>& launches);
 Tensor run_kernel(b_lean_obj_arg source, const std::vector<Tensor>& inputs, ScalarType scalar,
                   uint64_t count, uint64_t stride = 1);
 
-// The number of visible CUDA devices, 0 when the driver cannot be initialized.
+// The number of visible CUDA devices, 0 when the driver cannot be initialized and 0 for a CPU-only
+// SDK.
 int device_count();
 
-// The selected device's free memory, or its total memory if `total`, as the driver reports it.
+// The selected CUDA device's free memory, or its total memory if `total`, as the driver reports
+// it. 0 on the host.
 uint64_t memory_info(bool total);
 
-// Returns when the selected device has finished all its work.
+// Returns when the selected CUDA device has finished all its work. Host work is synchronous, so on
+// the host it returns at once.
 void synchronize();
 
 inline Tensor shaped(b_lean_obj_arg object, ints shape) {
@@ -200,6 +236,18 @@ inline std::vector<int64_t> dimensions(b_lean_obj_arg values, const char* messag
 // The double `value` rounded to nearest in the buffer dtype `dtype`, binary32 or binary64.
 inline double rounded(double value, ScalarType dtype) {
   return dtype == kFloat ? static_cast<double>(static_cast<float>(value)) : value;
+}
+
+// `log1p(x)` on the selected device. On the host, ATen's CPU `log1p` of torch 2.13 returns zero at
+// the least subnormal of binary32 and of binary64, where the correctly rounded result is `x`, so
+// the host returns `x` wherever |x| < 2^-p for the p-bit significand: there `log1p x` is
+// `x (1 - x/2 + ...)`, whose correction lies below half an ulp of `x`, so `x` is its rounding. CUDA's
+// `log1p` is used unchanged.
+inline Tensor log1p(const Tensor& x) {
+  const auto result = aten<"log1p">(x);
+  if (!on_host()) return result;
+  const double small = x.scalar_type() == kFloat ? 0x1p-24 : 0x1p-53;
+  return aten<"where.self">(aten<"lt.Tensor">(aten<"abs">(x), scalar_for(x, small)), x, result);
 }
 
 // The pure ABI's dimension helpers panic. IO operations must reject malformed metadata by

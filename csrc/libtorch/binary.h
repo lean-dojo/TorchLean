@@ -343,6 +343,39 @@ template<int E, int F, long long Bias, int Encoding> struct TLBinary {
     return false;
   }
   __device__ bool operator<=(TLBinary b) const { return (*this < b) || (*this == b); }
+  // The low 64 bits of an integer.
+  __device__ static unsigned long long low64(const Integer& m) {
+    unsigned long long r = m.words[0];
+    if constexpr (Integer::limbs > 1) r |= (unsigned long long)m.words[1] << 32;
+    return r;
+  }
+  // The index of the value, as Lean's `toUInt64` converts: truncated toward zero, saturated to
+  // [0, 2^64 - 1], zero at a NaN and below zero, the maximum at a positive infinity.
+  __device__ unsigned long long toIndex() const {
+    if (nan() || zero() || sign()) return 0ULL;
+    if (inf()) return ~0ULL;
+    const auto m = significand();
+    const long long s = scale();
+    if (s >= 0) {
+      if (m.length() + s > 64) return ~0ULL;
+      return low64(m) << s;
+    }
+    const auto q = m.shift(s);
+    return q.length() > 64 ? ~0ULL : low64(q);
+  }
+  // The value nearest to an index, ties to even, with the format's overflow convention. The
+  // index is first cut to F + 3 bits and a sticky bit, which `round` needs, so that it fits the
+  // integer type of narrow formats.
+  __device__ static TLBinary ofIndex(unsigned long long u) {
+    if (!u) return zeroValue(false);
+    const int length = 64 - __clzll((long long)u);
+    int dropped = length > F + 3 ? length - (F + 3) : 0;
+    const bool sticky = dropped > 0 && (u & ((1ULL << dropped) - 1ULL)) != 0ULL;
+    const unsigned long long kept = u >> dropped;
+    Integer m;
+    for (int i = 0; i < 64 - dropped && i < F + 3; ++i) m.set(i, (kept >> i) & 1ULL);
+    return round(false, m, dropped, sticky);
+  }
 };
 )CUDA";
 }  // namespace torchlean

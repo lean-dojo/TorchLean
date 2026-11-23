@@ -64,6 +64,8 @@ def Expr.readsBelow {Γ : List Ty} {t : Ty} (n : Nat) : Expr α Γ t → Bool
   | .binary _ x y => x.readsBelow n && y.readsBelow n
   | .neg x => x.readsBelow n
   | .indexBinary _ x y => x.readsBelow n && y.readsBelow n
+  | .toIndex x => x.readsBelow n
+  | .ofIndex x => x.readsBelow n
   | .compare _ x y => x.readsBelow n && y.readsBelow n
   | .indexCompare _ x y => x.readsBelow n && y.readsBelow n
   | .cond p yes no => p.readsBelow n && yes.readsBelow n && no.readsBelow n
@@ -93,6 +95,14 @@ theorem Expr.eval_eq_of_readsBelow {Γ : List Ty} {t : Ty} {n : Nat} (arithmetic
     intro h env
     simp only [readsBelow, Bool.and_eq_true] at h
     simp only [Expr.eval, hx h.1 env, hy h.2 env]
+  | toIndex x hx =>
+    intro h env
+    simp only [readsBelow] at h
+    simp only [Expr.eval, hx h env]
+  | ofIndex x hx =>
+    intro h env
+    simp only [readsBelow] at h
+    simp only [Expr.eval, hx h env]
   | compare op x y hx hy =>
     intro h env
     simp only [readsBelow, Bool.and_eq_true] at h
@@ -508,15 +518,15 @@ when a read failed, or when the levels would hold more than `capacity` rows or m
   H.toStep.runBlocks handle sizes blocks
 
 /-- The results of the roots `roots` under a hylomorphism, with the arrays `inputs` as its inputs.
-With LibTorch and a usable device they come from the device (`Hylo.runDevice`). Otherwise, or
-when the device gives `none`, they are `Hylo.results` on the host at the capacity
+On a usable CUDA device they come from the device (`Hylo.runDevice`). Otherwise, the host bridge
+included, or when the device gives `none`, they are `Hylo.results` on the host at the capacity
 `min capacity Expansion.deviceCapacity`, which are the reference results by `Hylo.results_eq`.
 On the device it fails as `Hylo.runDevice` does: when a source does not render or compile, as
 for an expression that reads an input at or past `inputs`, or when the roots do not have the
 slots of the expansion. -/
 @[no_expose] def run (H : Hylo α m s) (capacity : Nat) (roots : Arena.Level α)
     (inputs : Array (Array α)) : IO (Array (Except Error α)) := do
-  if (← LibTorch.Buffer.RuntimeStatus.query) = .nativeAvailable then
+  if ← LibTorch.Buffer.cudaAvailable then
     if let some vs ← H.runDevice capacity roots inputs then
       return vs.map .ok
   return H.results (Reader.ofArrays inputs) (min capacity Expansion.deviceCapacity) roots

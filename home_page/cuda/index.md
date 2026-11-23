@@ -18,6 +18,11 @@ To run the tests and require a working CUDA device, use:
 TORCHLEAN_REQUIRE_CUDA=1 scripts/lake.sh -Kcuda=true test
 ```
 
+With a CPU-only LibTorch SDK, such as pip's CPU wheel, the same backend runs on the host with no
+CUDA toolkit; `TORCHLEAN_REQUIRE_NATIVE=1` requires it there (see the
+[host device](https://github.com/lean-dojo/TorchLean/blob/main/csrc/libtorch/README.md#host-device)
+notes).
+
 Run the CUDA sanitizer suite when changing the native adapter:
 
 ```bash

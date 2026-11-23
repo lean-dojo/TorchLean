@@ -95,8 +95,9 @@ has no proof. The tests compare every device result with the Lean function bit f
 ## Tests and benchmarks
 
 `scripts/lake.sh exe tree_tests` runs the host checks of `TorchLeanTest/Tree`, then the device
-checks in a `-Kcuda=true` build with a usable device. With `TORCHLEAN_REQUIRE_CUDA=1` a missing
-device is an error. `scripts/lake.sh test` runs the host checks too.
+checks in a `-Kcuda=true` build with a usable CUDA device. With `TORCHLEAN_REQUIRE_CUDA=1` a missing
+CUDA device is an error. On the host bridge the device checks are skipped, and `Hylo.run` and
+`Unfold.run` take their host references, because tree kernels are generated CUDA. `scripts/lake.sh test` runs the host checks too.
 `scripts/lake.sh exe torchlean tree_bench [--log2 K,...] [--device auto|cpu|cuda]` times the
 stages of an arena and the folds, hylomorphisms, unfolds and tables of `TorchLeanExamples/Tree`,
 on the host by default.

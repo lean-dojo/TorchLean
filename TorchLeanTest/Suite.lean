@@ -121,7 +121,8 @@ def run : IO Unit := do
         IO.println s!"  LibTorch device: {match kind with | .cuda => "cuda" | .host => "host"}"
         TorchLean.Test.MoE.run .cuda
         TorchLean.Test.Scheduler.run .cuda
-        TorchLean.Test.KernelGradient.run .cuda
+        if kind == .cuda then TorchLean.Test.KernelGradient.run .cuda
+        else TorchLean.Test.KernelGradient.checkHostRefusal
         TorchLean.Test.CUDA.run
     | .nativeUnavailable =>
         throw <| IO.userError

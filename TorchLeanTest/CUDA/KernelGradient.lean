@@ -281,6 +281,19 @@ def checkRowProducts (format : CheckFormat α) (program : Kernel.Program α)
         throw <| IO.userError s!"row product gradient[{r}, {c}] ({format.name}): \
           {gradient[a]}, expected {f cot[r] * others c}"
 
+/-- On the host bridge a generated kernel has no implementation: running one on the `cuda` device
+fails through `IO`, naming the requirement, and returns no values. -/
+def checkHostRefusal : IO Unit := do
+  let ones : Tensor Float32 [16] := Tensor.ofFn fun _ => 1
+  let outcome ← (some <$> (rational.tangent 1).run
+      (.cons (points .binary32) (.cons ones .nil)) [16] (device := .cuda)).toBaseIO
+  match outcome with
+  | .ok _ => throw <| IO.userError "a generated kernel ran on the host bridge"
+  | .error e =>
+    unless (toString e).contains "needs a CUDA device, but the bridge runs on the host" do
+      throw <| IO.userError s!"host refusal of a generated kernel: {e}"
+  IO.println "tangent and gradient kernels (host bridge): refused, as generated kernels need CUDA"
+
 /-- Run the derivative checks in binary32 and in binary64 on the CPU and, when `device` is CUDA,
 compare the GPU runs with the CPU bits. -/
 def run (device : Backend.Device) : IO Unit := do

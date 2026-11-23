@@ -286,6 +286,11 @@ int device_count() { return 0; }
 
 uint64_t memory_info(bool) { return 0; }
 
+device_identity identify_device(int64_t index) {
+  // There is no visible device, so every index is outside the count, as on a CUDA-enabled SDK.
+  fail("LibTorch: CUDA device ", index, " is outside the visible count 0");
+}
+
 void synchronize() {}
 
 Tensor run_kernel(b_lean_obj_arg, const std::vector<Tensor>&, ScalarType, uint64_t, uint64_t) {

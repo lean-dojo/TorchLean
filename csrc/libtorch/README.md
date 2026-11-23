@@ -1,7 +1,8 @@
 # TorchLean LibTorch backend
 
-`csrc/libtorch` holds the CUDA backend behind TorchLean's GPU buffer ABI: C++ that calls ATen
-operators through the LibTorch Stable ABI of torch 2.13, so one built library runs with torch 2.13
+`csrc/libtorch` holds the LibTorch backend behind TorchLean's buffer ABI: C++ that calls ATen
+operators, on a CUDA device or on the host (see [Host device](#host-device)), through the LibTorch
+Stable ABI of torch 2.13, so one built library runs with torch 2.13
 and later releases (see [Torch versions](#torch-versions)). Lean checks shapes and dispatches
 through the extern symbols. Native memory safety, torch's behavior and floating-point execution
 lie outside Lean's kernel.
@@ -38,7 +39,13 @@ C++ regression harness links the host unwinder (`gcc_s`) ahead of the Lean runti
 ## Build selection
 
 `scripts/lake.sh build` is the default build: the CPU runtime, with no LibTorch SDK or CUDA
-toolkit. `-Kcuda=true` builds and links the full LibTorch CUDA backend.
+toolkit. `-Kcuda=true` builds and links the LibTorch backend, and the SDK decides what it can run
+on. A CUDA-enabled SDK, which exports `torch_cuda`, builds the full backend with
+`TORCHLEAN_LIBTORCH_CUDA=1`. A CPU-only SDK, such as the CPU wheel of pip torch
+(`pip install --index-url https://download.pytorch.org/whl/cpu torch`), builds it for the host
+alone with `TORCHLEAN_LIBTORCH_CUDA=0`, with no CUDA toolkit: `USE_CUDA`, `kernels.cpp`'s NVRTC
+and driver code and the caching-allocator calls of `unstable.cpp` are not compiled, and the library
+links neither NVRTC nor the CUDA driver.
 
 The [LibTorch build instructions](../../scripts/README.md#libtorch-cuda-build) cover SDK
 selection, prerequisites, compiler controls, cache directories, and the build and test commands.
@@ -132,6 +139,44 @@ ABI check's record to `libtorch/abi_check.json` under the selected build directo
 The build environment includes `LD_LIBRARY_PATH`, so a Lake command that sets it to select another
 torch runtime rebuilds the library. To run the built library with another runtime, run the built
 executables directly with `LD_LIBRARY_PATH` set.
+
+## Host device
+
+The bridge selects its device once, at its first query, before any buffer exists:
+
+| `TORCHLEAN_LIBTORCH_DEVICE` | CUDA-enabled SDK | CPU-only SDK |
+| --- | --- | --- |
+| unset | a visible CUDA device; none visible is `nativeUnavailable` | the host |
+| `cuda` | a visible CUDA device; none visible is `nativeUnavailable` | `nativeUnavailable` |
+| `cpu` | the host | the host |
+
+Any other value is `nativeUnavailable`. A CUDA-enabled SDK never falls back to the host without
+`TORCHLEAN_LIBTORCH_DEVICE=cpu`. `RuntimeStatus.nativeAvailable` means that a device is selected,
+CUDA or the host, and `TorchLean.LibTorch.deviceKind` says which. `Buffer.requireCudaDevice`
+requires a CUDA device, and `Buffer.requireNativeRuntime` the bridge on either.
+
+On the host every buffer is a CPU tensor and ATen's CPU kernels run the operations. Generated
+kernels are CUDA source, so they have no host form:
+
+- `axpy` and the ordered sums (column sums, scan gradients, row scatters) are reached from pure
+  entry points, and run as host loops with the kernels' `fma` and summation order.
+- Generated custom operations, tree folds and expansions, and the upload of configured-binary
+  words call `require_cuda` first and fail through `IO`, naming the feature. `Hylo.run` and
+  `Unfold.run` take their host references unless a CUDA device is selected.
+- `setDevice` and `setMemoryFraction` fail. The allocator statistics, the driver's memory and the
+  memory fraction read zero, and `synchronize` and `emptyCache` return at once.
+
+Code that needs the CUDA headers compiles under `#if TORCHLEAN_LIBTORCH_CUDA`, and an entry point
+with no host implementation calls `require_cuda("<feature>")` before anything else.
+
+ATen's CPU `log1p` of torch 2.13 returns zero at the least subnormal of binary32 and binary64,
+which loses the combined tail of the two-level cross-entropy normalizer. The bridge's `log1p`
+returns `x` on the host wherever |x| < 2^-p, where `x` is the correctly rounded value, and
+`TorchLeanTest/CUDA/Numerics.lean` checks the tail on both devices.
+
+ATen's CPU kernels are not CUDA's. The IEEE basic operations agree, but transcendental functions
+come from different libraries and can differ in the last place, and reductions can differ in
+order. Run the suite on each device whose results you rely on.
 
 ## Generated custom operations
 

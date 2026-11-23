@@ -1,9 +1,14 @@
 // Generated CUDA kernels and the CUDA driver. NVRTC compiles a kernel's source for the device's
 // own architecture, and the driver loads it in the device's primary context, torch's context,
-// and launches it on torch's current stream. The device count, memory and synchronization the
-// bridge reports come from the driver too. No other file of the bridge calls the CUDA driver API
-// or NVRTC.
+// and launches it on torch's current stream. The device count, identity, memory and
+// synchronization the bridge reports come from the driver too. No other file of the bridge calls
+// the CUDA driver API or NVRTC. A CPU-only SDK (TORCHLEAN_LIBTORCH_CUDA=0) compiles none of it:
+// there are no CUDA devices, and every generated kernel fails through `require_cuda`. On a
+// CUDA-enabled SDK whose bridge runs on the host, the kernels fail the same way, and the device
+// queries read zero.
 #include "torchlean_libtorch.h"
+
+#if TORCHLEAN_LIBTORCH_CUDA
 #include "binary.h"
 
 #include <cuda.h>
@@ -141,19 +146,48 @@ int device_count() {
 }
 
 uint64_t memory_info(bool total) {
+  if (on_host()) return 0;
   size_t free_bytes = 0, total_bytes = 0;
   primary_context(device_index());
   check_driver(cuMemGetInfo(&free_bytes, &total_bytes));
   return total ? total_bytes : free_bytes;
 }
 
+device_identity identify_device(int64_t index) {
+  const int count = device_count();
+  TORCHLEAN_CHECK(index >= 0 && index < count, "LibTorch: CUDA device ", index,
+                  " is outside the visible count ", count);
+  const auto ordinal = static_cast<int32_t>(index);
+  const CUdevice device = cuda_device(ordinal);
+  const auto read = [&](CUdevice_attribute which) {
+    return static_cast<uint64_t>(attribute(which, ordinal));
+  };
+  char name[256] = {};
+  check_driver(cuDeviceGetName(name, sizeof name - 1, device));
+  size_t total_bytes = 0;
+  check_driver(cuDeviceTotalMem(&total_bytes, device));
+  int driver_version = 0;
+  check_driver(cuDriverGetVersion(&driver_version));
+  return {name,
+          10 * read(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR) +
+              read(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR),
+          read(CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT),
+          read(CU_DEVICE_ATTRIBUTE_CLOCK_RATE),
+          read(CU_DEVICE_ATTRIBUTE_MEMORY_CLOCK_RATE),
+          read(CU_DEVICE_ATTRIBUTE_GLOBAL_MEMORY_BUS_WIDTH),
+          static_cast<uint64_t>(total_bytes),
+          static_cast<uint64_t>(driver_version)};
+}
+
 void synchronize() {
+  if (on_host()) return;
   primary_context(device_index());
   check_driver(cuCtxSynchronize());
 }
 
 Tensor run_kernel(b_lean_obj_arg source, const std::vector<Tensor>& inputs, ScalarType scalar,
                   uint64_t count, uint64_t stride) {
+  require_cuda("a generated kernel");
   TORCHLEAN_CHECK(stride > 0 && stride <= INT64_MAX && count <= INT64_MAX / stride,
                   "kernel: invalid scalar width or output extent");
   TORCHLEAN_CHECK(count <= INT64_MAX, "kernel: output size exceeds signed tensor size range");
@@ -203,10 +237,12 @@ Tensor run_kernel(b_lean_obj_arg source, const std::vector<Tensor>& inputs, Scal
 }
 
 rows_kernel compile_rows(const std::string& source) {
+  require_cuda("a generated kernel");
   return compile_kernel(source);
 }
 
 void launch_rows(const rows_kernel& handle, std::vector<launch>& launches) {
+  require_cuda("a generated kernel");
   const auto* kernel = static_cast<const CompiledKernel*>(handle.get());
   constexpr uint64_t threads = 256;
   const int32_t index = device_index();
@@ -231,3 +267,42 @@ void launch_rows(const std::string& source, std::vector<launch>& launches) {
 }
 
 }  // namespace torchlean
+
+#else
+
+#include <stdexcept>
+
+namespace torchlean {
+namespace {
+
+[[noreturn]] void no_kernels() {
+  require_cuda("a generated kernel");
+  throw std::runtime_error("LibTorch: a generated kernel needs a CUDA-enabled SDK");
+}
+
+}  // namespace
+
+int device_count() { return 0; }
+
+uint64_t memory_info(bool) { return 0; }
+
+device_identity identify_device(int64_t index) {
+  // There is no visible device, so every index is outside the count, as on a CUDA-enabled SDK.
+  fail("LibTorch: CUDA device ", index, " is outside the visible count 0");
+}
+
+void synchronize() {}
+
+Tensor run_kernel(b_lean_obj_arg, const std::vector<Tensor>&, ScalarType, uint64_t, uint64_t) {
+  no_kernels();
+}
+
+rows_kernel compile_rows(const std::string&) { no_kernels(); }
+
+void launch_rows(const rows_kernel&, std::vector<launch>&) { no_kernels(); }
+
+void launch_rows(const std::string&, std::vector<launch>&) { no_kernels(); }
+
+}  // namespace torchlean
+
+#endif

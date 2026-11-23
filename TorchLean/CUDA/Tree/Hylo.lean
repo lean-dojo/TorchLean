@@ -508,15 +508,15 @@ when a read failed, or when the levels would hold more than `capacity` rows or m
   H.toStep.runBlocks handle sizes blocks
 
 /-- The results of the roots `roots` under a hylomorphism, with the arrays `inputs` as its inputs.
-With LibTorch and a usable device they come from the device (`Hylo.runDevice`). Otherwise, or
-when the device gives `none`, they are `Hylo.results` on the host at the capacity
+On a usable CUDA device they come from the device (`Hylo.runDevice`). Otherwise, the host bridge
+included, or when the device gives `none`, they are `Hylo.results` on the host at the capacity
 `min capacity Expansion.deviceCapacity`, which are the reference results by `Hylo.results_eq`.
 On the device it fails as `Hylo.runDevice` does: when a source does not render or compile, as
 for an expression that reads an input at or past `inputs`, or when the roots do not have the
 slots of the expansion. -/
 @[no_expose] def run (H : Hylo α m s) (capacity : Nat) (roots : Arena.Level α)
     (inputs : Array (Array α)) : IO (Array (Except Error α)) := do
-  if (← LibTorch.Buffer.RuntimeStatus.query) = .nativeAvailable then
+  if ← LibTorch.Buffer.cudaAvailable then
     if let some vs ← H.runDevice capacity roots inputs then
       return vs.map .ok
   return H.results (Reader.ofArrays inputs) (min capacity Expansion.deviceCapacity) roots

@@ -1017,7 +1017,10 @@ def run : IO Unit := do
   checkLayerNormDefaults
   checkEdges
   checkEmptySlicePullback
-  checkConfiguredEmptySlice
+  -- Configured-binary words and custom operations need a CUDA device. `Elementwise.lean` checks
+  -- their refusal on the host bridge.
+  let cuda := (← LibTorch.deviceKind) == .cuda
+  if cuda then checkConfiguredEmptySlice
   checkConv
   checkConvPullback
   checkConvPaddedEmpty
@@ -1028,7 +1031,7 @@ def run : IO Unit := do
   checkDetach
   checkOperatorRunner
   checkResidentPaths
-  checkCustom
+  if cuda then checkCustom
   checkGeneralEntries
   IO.println "  graph evaluation: registered operators run by their CUDA entries"
   IO.println "  operator graphs: operator-runner checks passed"

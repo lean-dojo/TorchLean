@@ -7,9 +7,14 @@ Authors: TorchLean Team
 module
 
 /-!
-# LibTorch CUDA Runtime Controls
+# LibTorch Runtime Controls
 
-Effectful configuration and readback for TorchLean's LibTorch bridge. The settings are process-wide
+Effectful configuration and readback for TorchLean's LibTorch bridge. The bridge runs on a CUDA
+device or on the host, and selects which once, at its first query: the host when
+`TORCHLEAN_LIBTORCH_DEVICE=cpu` or when the LibTorch SDK is CPU-only, and otherwise a visible CUDA
+device. `TORCHLEAN_LIBTORCH_DEVICE=cuda` insists on a CUDA device, and a CUDA-enabled SDK with no
+visible device selects nothing rather than the host. `deviceKind` reports the choice, and the
+controls below that act on CUDA devices say what they do on the host. The settings are process-wide
 requests to the native runtime, so configure them before concurrent runtime work. Neither IEEE
 precision nor strict determinism establishes a reference reduction order, correct rounding of every
 operation, or bit agreement with FloatLib.
@@ -37,13 +42,31 @@ is not linked. -/
 @[never_extract, extern "torchlean_libtorch_version"]
 opaque version : IO String
 
-/-- Number of CUDA devices visible to the linked runtime, or zero without LibTorch. -/
+/-- Number of CUDA devices visible to the linked runtime, or zero without LibTorch or with a
+CPU-only SDK. A visible device need not be the selected one: see `deviceKind`. -/
 @[never_extract, extern "torchlean_libtorch_device_count"]
 opaque deviceCount : IO UInt32
 
-/-- Device index selected by the bridge. This read alone does not establish availability. -/
+/-- CUDA device index selected by the bridge. This read alone does not establish availability,
+and the host has no index. -/
 @[never_extract, extern "torchlean_libtorch_get_device"]
 opaque getDevice : IO UInt32
+
+/-- The kind of device the bridge runs on. -/
+inductive DeviceKind where
+  /-- A CUDA device. `Buffer.RuntimeStatus.query` says whether one is usable. -/
+  | cuda
+  /-- The host, through ATen's CPU kernels: a CPU-only SDK, or `TORCHLEAN_LIBTORCH_DEVICE=cpu`. -/
+  | host
+  deriving DecidableEq, Repr
+
+@[never_extract, extern "torchlean_libtorch_device_kind"]
+private opaque deviceKindRaw : IO UInt32
+
+/-- The kind of device the bridge selected. A build without LibTorch reads `.cuda`, and its
+`Buffer.RuntimeStatus.query` reads `.notLinked`. -/
+@[no_expose] def deviceKind : IO DeviceKind := do
+  return if (← deviceKindRaw) == 0 then .host else .cuda
 
 @[never_extract, extern "torchlean_libtorch_set_device"]
 private opaque setDeviceRaw (device : UInt32) : IO Unit
@@ -60,12 +83,14 @@ private opaque getMemoryFractionRaw : IO Float
 @[never_extract, extern "torchlean_libtorch_set_memory_fraction"]
 private opaque setMemoryFractionRaw (fraction : Float) : IO Unit
 
-/-- Wait for the selected CUDA device's work, propagating native errors through `IO`. -/
+/-- Wait for the selected CUDA device's work, propagating native errors through `IO`. Host work
+is synchronous, so on the host it returns at once. -/
 @[never_extract, extern "torchlean_libtorch_synchronize"]
 opaque synchronize : IO Unit
 
 /-- Release unused native allocator cache blocks. Live tensors, saved forward state and library
-workspaces such as cuBLAS's keep their memory, so allocated and reserved bytes can stay nonzero. -/
+workspaces such as cuBLAS's keep their memory, so allocated and reserved bytes can stay nonzero.
+The host has no native cache, so on the host it returns at once. -/
 @[never_extract, extern "torchlean_libtorch_empty_cache"]
 opaque emptyCache : IO Unit
 
@@ -84,7 +109,7 @@ opaque emptyCache : IO Unit
       s!"LibTorch: setting {id} is {observed} after requesting {enabled}"
 
 /--
-Select the device for later bridge work.
+Select the CUDA device for later bridge work. On the host, which has no index, it fails.
 
 The native setter fails while any buffer wrapper is live, released and empty wrappers included,
 even when `device` is already selected. Select the device before creating buffers or after every

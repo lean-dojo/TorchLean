@@ -899,6 +899,13 @@ wrappers), and it doesn't migrate their tensors. Select the device before alloca
 Without LibTorch, `version` reports `unavailable`, `deviceCount` returns zero, and `getDevice`
 returns the stub index zero, but that index doesn't establish availability: the setters fail.
 
+`deviceInfo` in {src "TorchLean/CUDA/LibTorch/DeviceInfo.lean"}[`LibTorch`] names a visible device
+by index: its name, compute capability, multiprocessor count, clocks, memory bus width, total
+memory and driver version, read from the CUDA driver in one call. `currentDeviceInfo` reads the
+selected device, and `DeviceInfo.format` gives one line for a benchmark header, so that runtime
+numerical evidence records the device it was taken on. An index outside the visible count fails,
+`currentDeviceInfo` fails when the bridge runs on the host, and without LibTorch every query fails.
+
 # Reading CUDA Memory Usage
 
 The LibTorch allocator owns device storage and its reuse policy. TorchLean's counters report

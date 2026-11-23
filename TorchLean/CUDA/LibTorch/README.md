@@ -16,6 +16,8 @@ trusted.
 - `Controls.lean`: device selection, TF32, determinism, SDP, cuDNN and memory-fraction settings,
   reads of the device, determinism, cuDNN benchmarking, SDP and memory-fraction settings,
   `synchronize`, `emptyCache` and `version`.
+- `DeviceInfo.lean`: `deviceInfo`, the identity of a visible CUDA device (name, compute
+  capability, multiprocessors, clocks, memory bus, total memory and driver version) by index.
 - `Kernels.lean`: ATen softmax, cross-entropy, grouped convolution, reductions, indexing,
   matmul/BMM, normalization, FFT, scans and broadcast.
 - `ConvPool.lean`: float32 and float64 transposed convolution and pooling.

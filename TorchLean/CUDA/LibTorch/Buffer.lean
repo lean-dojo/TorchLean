@@ -76,6 +76,11 @@ inductive RuntimeStatus where
 @[never_extract, extern "torchlean_cuda_runtime_status"]
 private opaque runtimeStatusRaw : IO UInt32
 
+/-- Why the bridge selected no device, or the empty string when it selected one or LibTorch is not
+linked. -/
+@[never_extract, extern "torchlean_libtorch_unavailable_reason"]
+opaque unavailableReason : IO String
+
 /-- Query whether LibTorch is linked and has selected a device. -/
 @[no_expose] def RuntimeStatus.query : IO RuntimeStatus := do
   match (← runtimeStatusRaw) with
@@ -94,9 +99,11 @@ def requireNativeRuntime : IO Unit := do
         "CUDA was requested, but this executable was built without LibTorch; \
           rebuild and run with `-K cuda=true`"
   | .nativeUnavailable =>
-      throw <| IO.userError
-        "CUDA was requested and this is a CUDA build, but no usable CUDA device is visible; \
-          TORCHLEAN_LIBTORCH_DEVICE=cpu runs the bridge on the host"
+      let reason ← unavailableReason
+      throw <| IO.userError <|
+        if reason == "no usable CUDA device is visible" then
+          s!"CUDA was requested and this is a CUDA build, but {reason}"
+        else s!"the LibTorch bridge selected no device: {reason}"
 
 /-- Require the LibTorch bridge on a CUDA device. The host satisfies `requireNativeRuntime`, so a
 check that means "a GPU ran this" also asks for the device kind. -/

@@ -65,7 +65,7 @@ Choice choose() {
                : Choice{Selection::unavailable,
                         "TORCHLEAN_LIBTORCH_DEVICE=cuda, but the SDK is CPU-only"};
   if (device_count() > 0) return {Selection::cuda, ""};
-  return {Selection::unavailable, "no CUDA device is visible"};
+  return {Selection::unavailable, "no usable CUDA device is visible"};
 }
 
 // Decided at the first query, before any buffer exists, and never changed.
@@ -367,6 +367,11 @@ extern "C" LEAN_EXPORT AtenTensorHandle torchlean_cuda_buffer_handle(b_lean_obj_
 extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_runtime_status() {
   return lean_io_result_mk_ok(
       lean_box_uint32(choice().selection == Selection::unavailable ? 2u : 1u));
+}
+
+// Why no device is selected, or the empty string when one is.
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_unavailable_reason() {
+  return lean_io_result_mk_ok(lean_mk_string(choice().reason.c_str()));
 }
 
 // 0: the host. 1: CUDA, a selected CUDA device or none usable on a CUDA-enabled SDK.
@@ -1588,7 +1593,7 @@ Tensor log_normalizer(const Tensor& shifted, const Tensor& pivot, int64_t axis) 
   // dispatcher cannot pass. Each row has one pivot.
   const auto others = aten<"scatter.src">(aten<"exp">(shifted), axis, pivot,
                                           aten<"zeros">(pivot.sizes(), options(shifted)));
-  return aten<"log1p">(aten<"sum.dim_IntList">(others, {axis}, true));
+  return torchlean::log1p(aten<"sum.dim_IntList">(others, {axis}, true));
 }
 
 Tensor cross_entropy_normalizer(const Tensor& x, const Tensor& shifted,
@@ -1596,7 +1601,7 @@ Tensor cross_entropy_normalizer(const Tensor& x, const Tensor& shifted,
   const auto zeros = aten<"zeros">(pivot.sizes(), options(x));
   const auto tail = aten<"sum.dim_IntList">(
       aten<"scatter.src">(aten<"exp">(shifted), axis, pivot, zeros), {axis}, true);
-  const auto normalizer = aten<"log1p">(tail);
+  const auto normalizer = torchlean::log1p(tail);
   if (x.size(axis) <= 1) return normalizer;
 
   // Individual tail exponentials may round to zero even when their combined mass is
@@ -1613,8 +1618,8 @@ Tensor cross_entropy_normalizer(const Tensor& x, const Tensor& shifted,
       aten<"scatter.src">(aten<"exp">(sub(x, runner_value)), axis, pivot, zeros),
       axis, runner_up, zeros);
   const auto others = aten<"exp">(add(sub(runner_value, largest),
-      aten<"log1p">(aten<"sum.dim_IntList">(inner, {axis}, true))));
-  const auto two_level = aten<"log1p">(others);
+      torchlean::log1p(aten<"sum.dim_IntList">(inner, {axis}, true))));
+  const auto two_level = torchlean::log1p(others);
   const auto finite_result = aten<"logical_not">(aten<"any.dim">(
       aten<"logical_not">(aten<"isfinite">(sub(shifted, two_level))), axis, true));
   const auto use_two_level = aten<"logical_and">(
@@ -1914,7 +1919,7 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_distill(
     const auto delta = sub(x, t);
     const auto centered =
         sub(delta, aten<"sum.dim_IntList">(aten<"mul.Tensor">(p, delta), {axis}, true));
-    const auto ratio = sub(centered, aten<"log1p">(aten<"sum.dim_IntList">(
+    const auto ratio = sub(centered, torchlean::log1p(aten<"sum.dim_IntList">(
         aten<"mul.Tensor">(p, aten<"expm1">(centered)), {axis}, true)));
     const auto close = aten<"lt.Tensor">(aten<"abs">(ratio), scalar_for(ratio, std::int64_t{1}));
     // Mask before expm1 as well: the inactive near-field branch must not overflow.

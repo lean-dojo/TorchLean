@@ -238,6 +238,18 @@ inline double rounded(double value, ScalarType dtype) {
   return dtype == kFloat ? static_cast<double>(static_cast<float>(value)) : value;
 }
 
+// `log1p(x)` on the selected device. On the host, ATen's CPU `log1p` of torch 2.13 returns zero at
+// the least subnormal of binary32 and of binary64, where the correctly rounded result is `x`, so
+// the host returns `x` wherever |x| < 2^-p for the p-bit significand: there `log1p x` is
+// `x (1 - x/2 + ...)`, whose correction lies below half an ulp of `x`, so `x` is its rounding. CUDA's
+// `log1p` is used unchanged.
+inline Tensor log1p(const Tensor& x) {
+  const auto result = aten<"log1p">(x);
+  if (!on_host()) return result;
+  const double small = x.scalar_type() == kFloat ? 0x1p-24 : 0x1p-53;
+  return aten<"where.self">(aten<"lt.Tensor">(aten<"abs">(x), scalar_for(x, small)), x, result);
+}
+
 // The pure ABI's dimension helpers panic. IO operations must reject malformed metadata by
 // throwing instead, so `io` can return an ordinary Lean error without terminating the process.
 inline std::vector<int64_t> io_dimensions(b_lean_obj_arg object) {

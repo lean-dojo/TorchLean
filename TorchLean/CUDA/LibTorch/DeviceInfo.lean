@@ -84,8 +84,11 @@ LibTorch linked.
   | _ =>
     throw <| IO.userError s!"LibTorch: device identity returned {fields.size} fields, not 7"
 
-/-- The identity of the device the bridge selects, `deviceInfo (← getDevice)`. -/
+/-- The identity of the CUDA device the bridge selects, `deviceInfo (← getDevice)`. A bridge that
+runs on the host selects no CUDA device, so there this fails, also when a device is visible. -/
 @[no_expose] def currentDeviceInfo : IO DeviceInfo := do
+  if (← deviceKind) == .host then
+    throw <| IO.userError "LibTorch: the bridge runs on the host, so no CUDA device is selected"
   deviceInfo (← getDevice)
 
 namespace DeviceInfo

@@ -904,7 +904,7 @@ by index: its name, compute capability, multiprocessor count, clocks, memory bus
 memory and driver version, read from the CUDA driver in one call. `currentDeviceInfo` reads the
 selected device, and `DeviceInfo.format` gives one line for a benchmark header, so that runtime
 numerical evidence records the device it was taken on. An index outside the visible count fails,
-and without LibTorch every query fails.
+`currentDeviceInfo` fails when the bridge runs on the host, and without LibTorch every query fails.
 
 # Reading CUDA Memory Usage
 

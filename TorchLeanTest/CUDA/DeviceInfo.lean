@@ -16,8 +16,9 @@ Checks of `TorchLean.LibTorch.deviceInfo`. In every build, the formatting of a f
 LibTorch linked and a CUDA device visible, every visible index reports itself with a nonempty name
 and nonzero capability, multiprocessor count, memory and driver version, two reads of an index
 agree, `currentDeviceInfo` reads the selected device, the total memory agrees with
-`Buffer.Memory.read`, and the index at the visible count is rejected. Without LibTorch, every query
-is rejected.
+`Buffer.Memory.read`, and the index at the visible count is rejected. When the bridge runs on the
+host, the visible devices still report themselves, and `currentDeviceInfo` is rejected. Without
+LibTorch, every query is rejected.
 -/
 
 @[expose] public section
@@ -69,14 +70,19 @@ def runDevices : IO Unit := do
     unless (← deviceInfo index) == d do
       throw <| IO.userError s!"device identity: two reads of device {i} disagree"
     IO.println s!"  {d.format}"
-  let current ← currentDeviceInfo
-  unless current == (← deviceInfo (← getDevice)) do
-    throw <| IO.userError "device identity: currentDeviceInfo is not the selected device's"
-  let memory ← Buffer.Memory.read
-  unless memory.deviceTotalBytes.toNat == current.totalBytes do
-    throw <| IO.userError
-      s!"device identity: {current.totalBytes} total bytes, but Buffer.Memory.read reports \
-        {memory.deviceTotalBytes}"
+  if (← deviceKind) == .host then
+    expectRejected "the current device on the host" "the bridge runs on the host"
+      currentDeviceInfo
+    IO.println "  the current device is rejected on the host"
+  else
+    let current ← currentDeviceInfo
+    unless current == (← deviceInfo (← getDevice)) do
+      throw <| IO.userError "device identity: currentDeviceInfo is not the selected device's"
+    let memory ← Buffer.Memory.read
+    unless memory.deviceTotalBytes.toNat == current.totalBytes do
+      throw <| IO.userError
+        s!"device identity: {current.totalBytes} total bytes, but Buffer.Memory.read reports \
+          {memory.deviceTotalBytes}"
   expectRejected s!"device {count}" "outside the visible count" (deviceInfo count)
 
 /-- Run the checks that the runtime status allows. -/

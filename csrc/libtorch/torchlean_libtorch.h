@@ -208,6 +208,18 @@ int device_count();
 // it. 0 on the host.
 uint64_t memory_info(bool total);
 
+// The identity of CUDA device `index` as the driver reports it: its name, its compute capability
+// `10 * major + minor`, multiprocessor count, core and memory clocks in kHz, memory bus width in
+// bits and total memory in bytes, and the driver's CUDA version (`13000` for 13.0). The read
+// takes the device by index, so it never depends on the selected device, and it creates no
+// context. An index outside the visible count throws.
+struct device_identity {
+  std::string name;
+  uint64_t capability, multiprocessors, clock_khz, memory_clock_khz, memory_bus_bits,
+      total_bytes, driver_version;
+};
+device_identity identify_device(int64_t index);
+
 // Returns when the selected CUDA device has finished all its work. Host work is synchronous, so on
 // the host it returns at once.
 void synchronize();

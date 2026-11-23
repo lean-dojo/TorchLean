@@ -136,6 +136,7 @@ ZERO(lean_box_uint64, torchlean_cuda_allocator_device_total_bytes)
   LEAN_EXPORT lean_obj_res NAME(__VA_ARGS__) { return unavailable_io(); }
 
 UNAVAILABLE_IO(torchlean_libtorch_set_device, uint32_t index)
+UNAVAILABLE_IO(torchlean_libtorch_device_identity, uint32_t index)
 UNAVAILABLE_IO(torchlean_libtorch_set_setting, uint32_t setting, uint32_t enabled)
 UNAVAILABLE_IO(torchlean_libtorch_set_memory_fraction, double fraction)
 UNAVAILABLE_IO(torchlean_libtorch_synchronize, void)

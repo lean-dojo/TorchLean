@@ -656,6 +656,25 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_device_count() {
   return lean_io_result_mk_ok(lean_box_uint32(static_cast<uint32_t>(device_count())));
 }
 
+// The identity of CUDA device `index`: its name and, in this order, its compute capability,
+// multiprocessor count, core clock, memory clock, memory bus width, total memory and the driver
+// version, as `TorchLean.LibTorch.deviceInfo` reads them.
+extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_device_identity(uint32_t index) {
+  return io([&] {
+    const device_identity identity = identify_device(index);
+    const uint64_t fields[] = {identity.capability,       identity.multiprocessors,
+                               identity.clock_khz,        identity.memory_clock_khz,
+                               identity.memory_bus_bits,  identity.total_bytes,
+                               identity.driver_version};
+    lean_object* numbers = lean_mk_empty_array_with_capacity(lean_box(std::size(fields)));
+    for (const uint64_t field : fields) numbers = lean_array_push(numbers, lean_box_uint64(field));
+    lean_object* pair = lean_alloc_ctor(0, 2, 0);
+    lean_ctor_set(pair, 0, lean_mk_string(identity.name.c_str()));
+    lean_ctor_set(pair, 1, numbers);
+    return pair;
+  });
+}
+
 extern "C" LEAN_EXPORT lean_obj_res torchlean_libtorch_get_device() {
   return lean_io_result_mk_ok(lean_box_uint32(static_cast<uint32_t>(selected_device.load())));
 }

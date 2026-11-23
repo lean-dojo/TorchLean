@@ -1,10 +1,11 @@
 // Generated CUDA kernels and the CUDA driver. NVRTC compiles a kernel's source for the device's
 // own architecture, and the driver loads it in the device's primary context, torch's context,
-// and launches it on torch's current stream. The device count, memory and synchronization the
-// bridge reports come from the driver too. No other file of the bridge calls the CUDA driver API
-// or NVRTC. A CPU-only SDK (TORCHLEAN_LIBTORCH_CUDA=0) compiles none of it: there are no CUDA
-// devices, and every generated kernel fails through `require_cuda`. On a CUDA-enabled SDK whose
-// bridge runs on the host, the kernels fail the same way, and the device queries read zero.
+// and launches it on torch's current stream. The device count, identity, memory and
+// synchronization the bridge reports come from the driver too. No other file of the bridge calls
+// the CUDA driver API or NVRTC. A CPU-only SDK (TORCHLEAN_LIBTORCH_CUDA=0) compiles none of it:
+// there are no CUDA devices, and every generated kernel fails through `require_cuda`. On a
+// CUDA-enabled SDK whose bridge runs on the host, the kernels fail the same way, and the device
+// queries read zero.
 #include "torchlean_libtorch.h"
 
 #if TORCHLEAN_LIBTORCH_CUDA
@@ -150,6 +151,32 @@ uint64_t memory_info(bool total) {
   primary_context(device_index());
   check_driver(cuMemGetInfo(&free_bytes, &total_bytes));
   return total ? total_bytes : free_bytes;
+}
+
+device_identity identify_device(int64_t index) {
+  const int count = device_count();
+  TORCHLEAN_CHECK(index >= 0 && index < count, "LibTorch: CUDA device ", index,
+                  " is outside the visible count ", count);
+  const auto ordinal = static_cast<int32_t>(index);
+  const CUdevice device = cuda_device(ordinal);
+  const auto read = [&](CUdevice_attribute which) {
+    return static_cast<uint64_t>(attribute(which, ordinal));
+  };
+  char name[256] = {};
+  check_driver(cuDeviceGetName(name, sizeof name - 1, device));
+  size_t total_bytes = 0;
+  check_driver(cuDeviceTotalMem(&total_bytes, device));
+  int driver_version = 0;
+  check_driver(cuDriverGetVersion(&driver_version));
+  return {name,
+          10 * read(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR) +
+              read(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR),
+          read(CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT),
+          read(CU_DEVICE_ATTRIBUTE_CLOCK_RATE),
+          read(CU_DEVICE_ATTRIBUTE_MEMORY_CLOCK_RATE),
+          read(CU_DEVICE_ATTRIBUTE_GLOBAL_MEMORY_BUS_WIDTH),
+          static_cast<uint64_t>(total_bytes),
+          static_cast<uint64_t>(driver_version)};
 }
 
 void synchronize() {

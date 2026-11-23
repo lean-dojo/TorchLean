@@ -16,6 +16,7 @@ public import TorchLeanTest.IR.MoEImport
 public import TorchLeanTest.Verification.BuilderImport
 public import TorchLeanTest.Verification.CameraCertificates
 public import TorchLeanTest.Verification.CertificateParsing
+public import TorchLeanTest.CUDA.DeviceInfo
 public import TorchLeanTest.CUDA.MoE
 public import TorchLeanTest.CUDA.Scheduler
 public import TorchLeanTest.CUDA.KernelGradient
@@ -93,6 +94,7 @@ def run : IO Unit := do
     TorchLean.Test.Storage.run
     TorchLean.Test.PolicyKL.run
     TorchLean.Test.Floats.run
+    TorchLean.Test.CUDA.DeviceInfo.run
     TorchLean.Test.Tree.run
     TorchLean.Test.KernelGradient.run .cpu
     match (← TorchLean.LibTorch.Buffer.RuntimeStatus.query) with

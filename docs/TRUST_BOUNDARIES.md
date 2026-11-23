@@ -362,7 +362,8 @@ the library's numerical primitives.
   `csrc/libtorch/kernels.cpp` compiles them with NVRTC, as it compiles the kernels of [Custom
   Tensor Computations](#custom-tensor-computations), and launches them through the CUDA driver API
   on torch's current stream. It also takes the device count, the device's free and total memory,
-  its compute capability and grid limit, and device and stream synchronization from the driver.
+  its compute capability and grid limit, the identity `TorchLean.LibTorch.deviceInfo` reports, and
+  device and stream synchronization from the driver.
   Their source, NVRTC, the driver and the device arithmetic are trusted.
   `TorchLeanTest/CUDA/Numerics.lean` tests both kernels on binary32 and binary64 cases whose
   results change when the product rounds first or the fold runs in another order.

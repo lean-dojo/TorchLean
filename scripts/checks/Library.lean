@@ -222,6 +222,7 @@ import TorchLeanExamples.Verification.Lyapunov.SignConditions
 import TorchLeanExamples.Verification.ODE.ArithParseLanguage
 import TorchLeanExamples.Verification.ODE.EnclosureBackends
 import TorchLeanExamples.Verification.RobustMLP
+import TorchLeanTest.CUDA.DeviceInfo
 import TorchLeanTest.CUDA.KernelGradient
 import TorchLeanTest.CUDA.MoE
 import TorchLeanTest.CUDA.Scheduler

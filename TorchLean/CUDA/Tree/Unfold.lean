@@ -468,10 +468,10 @@ hold more than `capacity` rows or more than `Expansion.deviceCapacity`. -/
 
 /-- The values of the roots `roots`, with the arrays `inputs` as the inputs. On a usable CUDA
 device they are decoded from the arena of `Unfold.buildDevice` copied to the host. Otherwise, the
-host bridge included, or when the device gives `none`, they are `Unfold.results` on the host at the capacity
-`min capacity Expansion.deviceCapacity`, which are the reference values by `Unfold.results_eq`.
-On the device it fails as `Unfold.buildDevice` does, and when a root of the device arena does not
-decode. -/
+host bridge included, or when the device gives `none`, they are `Unfold.results` on the host at
+the capacity `min capacity Expansion.deviceCapacity`, which are the reference values by
+`Unfold.results_eq`. On the device it fails as `Unfold.buildDevice` does, and when a root of the
+device arena does not decode. -/
 @[no_expose] def run (U : Unfold σ α T m s) (capacity : Nat) (roots : Arena.Level α)
     (inputs : Array (Array α)) : IO (Array (Except Error (Σ i, T i))) := do
   if ← LibTorch.Buffer.cudaAvailable then

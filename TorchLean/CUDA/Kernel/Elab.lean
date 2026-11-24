@@ -474,7 +474,7 @@ def checkedProgram (source : Syntax) (expectedType? : Option Lean.Expr) : TermEl
                 Arithmetic.ofOps,
                 Compare.index, IndexOp.eval, Bind.bind, Pure.pure,
                 Except.instMonad, Except.bind, Except.pure, BEq.beq, instBEqOfDecidableEq,
-                Bool.cond_decide, apply_ite, $[$bridges],*] <;>
+                Bool.cond_decide, $[$bridges],*] <;>
                 repeat' first
                 | simp_all [UInt64.lt_iff_toNat_lt, UInt64.le_iff_toNat_le]
                 | split

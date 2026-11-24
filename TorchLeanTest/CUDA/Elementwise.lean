@@ -319,6 +319,20 @@ private def square := fun (x : Float32) => x * x
 private def positiveSquare := fun (x : Float32) => if x < 0 then 0 else x * x
 private def squareWide := fun (x : Float) => x * x
 
+/-- A chain of three `else if`, each conditional directly in the `else` branch of the one before. -/
+private def elseChain := Program.of
+  (fun (read : Kernel.Reader Float32) (i : UInt64) => (do
+    let x ← read 0 i
+    if x < -4 then pure (-x) else if x < 0 then pure (x * x)
+      else if x < 4 then pure (x + 1) else pure 4 : Except Kernel.Error Float32))
+
+/-- A conditional value in an `else` branch. -/
+private def elseValue := Program.of
+  (fun (read : Kernel.Reader Float32) (i : UInt64) => (do
+    let x ← read 0 i
+    let y ← read 1 i
+    if x ≤ 0 then pure x else pure (if y ≤ 0 then y else x + y) : Except Kernel.Error Float32))
+
 private abbrev WideBinary := FloatLib.Floats.ExecFloat.Binary 15 112
 
 /-- `x ^ n` by plain structural recursion, lowered from its equations without a fold helper such as
@@ -613,6 +627,16 @@ private def checkCustomComputations : IO Unit := do
   catch _ => pure true
   unless rejected do
     throw <| IO.userError "custom read: accepted an out-of-bounds native access"
+  let shifted : Tensor Float32 [513] := Tensor.ofFn fun i => 6 - Float32.ofNat (i.val % 13)
+  let pair : TensorPack Float32 [[513], [513]] := .cons input (.cons shifted .nil)
+  let chained ← elseChain.run (.singleton input) [513] (device := .cuda)
+  let chainedExpected ← elseChain.run (.singleton input) [513]
+  let valued ← elseValue.run pair [513] (device := .cuda)
+  let valuedExpected ← elseValue.run pair [513]
+  for i in List.finRange 513 do
+    unless chained[i].toBits == chainedExpected[i].toBits &&
+        valued[i].toBits == valuedExpected[i].toBits do
+      throw <| IO.userError s!"custom conditional in an else branch: incorrect result at {i}"
   -- The weight changes between calls, so it must not be frozen at elaboration time. These
   -- comparisons test code generation and native execution, beyond the source-equivalence proofs.
   let weights : Tensor Float32 [4] := [-0.25, 0, 0.5, 1.25]

@@ -222,27 +222,41 @@ class JaxCaptureTests(CheckerCase):
                     self.assertIn("operand/accumulator arithmetic rule", check["message"])
 
     def test_division_by_a_constant_keeps_the_ieee_quotient(self):
-        # The importer gives lax.div its IEEE meaning. XLA's CPU code multiplies by the binary32
-        # value of 1/3, so its x / 3.0 differs from the quotient: compare fails and lists the
-        # reciprocal as the documented behaviour the mismatch is consistent with.
+        # The importer gives lax.div its IEEE meaning. XLA's CPU code for jax.jit multiplies by the
+        # binary32 value of 1/3, so its x / 3.0 differs from the quotient: compare fails and lists
+        # the reciprocal as the documented behaviour the mismatch is consistent with.
         jnp, np = self.jnp, self.np
         values = (np.random.default_rng(1).standard_normal(4096) * 3).astype(np.float32)
         x = jnp.asarray(values)
-        report = self.verify(lambda v: v / 3.0, x, checks=COMPARE)
+        divide = self.jax.jit(lambda v: v / 3.0)
+        report = self.verify(divide, x, checks=COMPARE)
         words = np.array(report["outputs"][0]["bits"], dtype=np.uint32)
         self.assertTrue((words == (values / np.float32(3)).view(np.uint32)).all())
-        xla = np.asarray(x / 3.0)
+        xla = np.asarray(divide(x))
         self.assertTrue((xla == values * (np.float32(1) / np.float32(3))).all())
         self.assertGreater(int((xla.view(np.uint32) != words).sum()), 0)
         self.assertEqual(self.advice(report), ["divisor_reciprocal"])
+
+        def reciprocal_report(function):
+            # The report where XLA multiplies by the reciprocal, and None where it divides as the
+            # IR does, which compare then passes.
+            report = self.verify(function, x, checks=COMPARE)
+            if (np.asarray(function(x)).view(np.uint32) == words).all():
+                self.assert_passes(report)
+                return None
+            self.assertEqual(self.advice(report), ["divisor_reciprocal"])
+            return report
+
+        # Eager x / 3.0 is the reciprocal product in JAX 0.11.1 and the quotient in 0.12.1.
+        reciprocal_report(lambda v: v / 3.0)
         # Eager JAX divides by a closed-over array of threes as written, so the IR agrees.
         threes = jnp.full(4096, 3.0, dtype=jnp.float32)
         self.assert_passes(self.verify(lambda v: v / threes, x, checks=COMPARE))
-        # jax.jit folds the array and multiplies by its reciprocal. Primitive by primitive, XLA
-        # divides as the IR does.
-        report = self.verify(self.jax.jit(lambda v: v / threes), x, checks=COMPARE)
-        self.assertEqual(self.advice(report), ["divisor_reciprocal"])
-        self.assertEqual(report["checks"][-1]["eager_reference"]["status"], "agrees")
+        # jax.jit in JAX 0.11.1 folds the array and multiplies by its reciprocal, where primitive
+        # by primitive XLA divides as the IR does. In 0.12.1 jax.jit divides too.
+        report = reciprocal_report(self.jax.jit(lambda v: v / threes))
+        if report is not None:
+            self.assertEqual(report["checks"][-1]["eager_reference"]["status"], "agrees")
 
     def test_mean_multiplies_by_the_reciprocal_of_the_count(self):
         # jnp.mean divides its row sums by the broadcast count 768, which XLA multiplies by
@@ -450,9 +464,10 @@ class JaxCaptureTests(CheckerCase):
 
     def test_emulation_needs_a_cpu_reference(self):
         # XLA's CPU behaviour is emulated only for a reference that XLA's CPU backend computed.
+        # Under jax.jit the division is the reciprocal product in JAX 0.11.1 and 0.12.1.
         x = self.jnp.asarray((self.np.random.default_rng(1).standard_normal(4096) * 3)
                              .astype(self.np.float32))
-        document = self.artifact(lambda v: v / 3.0, x)
+        document = self.artifact(self.jax.jit(lambda v: v / 3.0), x)
         self.assertEqual(self.advice(torchlean.verify(document, checks=COMPARE, checker=CHECKER)),
                          ["divisor_reciprocal"])
         for platform in ("gpu", None):

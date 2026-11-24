@@ -19,6 +19,7 @@ public import TorchLeanTest.Verification.CertificateParsing
 public import TorchLeanTest.CUDA.MoE
 public import TorchLeanTest.CUDA.Scheduler
 public import TorchLeanTest.CUDA.KernelGradient
+public import TorchLeanTest.CUDA.KernelStorage
 public import TorchLeanTest.Interop.Suite
 public import TorchLeanTest.CUDA.Suite
 public import TorchLeanTest.Tree.Suite
@@ -90,6 +91,7 @@ def run : IO Unit := do
     TorchLean.Test.Floats.run
     TorchLean.Test.Tree.run
     TorchLean.Test.KernelGradient.run .cpu
+    TorchLean.Test.KernelStorage.run .cpu
     match (← TorchLean.LibTorch.Buffer.RuntimeStatus.query) with
     | .notLinked =>
         -- A build without LibTorch refuses a CUDA session.
@@ -106,6 +108,7 @@ def run : IO Unit := do
         TorchLean.Test.MoE.run .cuda
         TorchLean.Test.Scheduler.run .cuda
         TorchLean.Test.KernelGradient.run .cuda
+        TorchLean.Test.KernelStorage.run .cuda
         TorchLean.Test.CUDA.run
     | .nativeUnavailable =>
         throw <| IO.userError

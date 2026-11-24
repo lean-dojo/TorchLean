@@ -53,6 +53,20 @@ abbrev Format.Value : Format → Type
   | .binary32 => Float32
   | .binary64 => Float
 
+/-- The conversion of a value of one native format to another: `Float32.toFloat` widens exactly
+and `Float.toFloat32` rounds to nearest, ties to even, as the CUDA conversions between `float` and
+`double` do. -/
+def Format.convert : (source target : Format) → source.Value → target.Value
+  | .binary32, .binary32, x => x
+  | .binary32, .binary64, x => x.toFloat
+  | .binary64, .binary32, x => x.toFloat32
+  | .binary64, .binary64, x => x
+
+/-- Converting a value to its own format leaves it unchanged. -/
+@[simp] theorem Format.convert_self (format : Format) (x : format.Value) :
+    Format.convert format format x = x := by
+  cases format <;> rfl
+
 /-- A literal stores the interchange word of its format, so the renderer never casts it. -/
 inductive Literal : Format → Type where
   /-- A binary32 literal, stored as its 32-bit word. -/
@@ -633,15 +647,17 @@ theorem eval_loop_eq {α : Type} (arithmetic : Arithmetic α) (read : Reader α)
 
 end Statement
 
-/-- Generated CUDA source with its format and input count. The native bridge fixes the
+/-- Generated CUDA source with its formats and input count. The native bridge fixes the
 floating-point policy when it compiles the text. -/
 structure Source where
-  /-- The scalar format of the inputs and the output. -/
+  /-- The scalar format of the arithmetic. -/
   format : Format
   /-- The number of input buffers. -/
   inputs : Nat
   /-- The CUDA source text. -/
   text : String
+  /-- The scalar format of the inputs and the output, by default the format of the arithmetic. -/
+  storage : Format := format
   deriving Repr
 
 /-- The CUDA type name of the scalars of a format. -/
@@ -831,6 +847,20 @@ def entrypoint (scalar : String) (inputs : Nat) (body : String) (result : Name .
 
 open Statement
 
+/-- Emit one independent output calculation that computes in `format` on buffers of `storage`.
+
+`emit` with the pointer types of `storage`: the body is the same. A load initializes a local of
+`format` from an element of `storage`, and the final write assigns that local to an element of
+`storage`, so with binary32 storage and binary64 arithmetic each element is widened exactly and
+each result rounded once. Those two conversions are C++ conversions, outside `denotes_emitStored`.
+-/
+def emitStored {α : Type} (storage format : Format) (bits : α → UInt64) (inputs : Nat)
+    (expr : Expr α [.index] .scalar) : Except String Source := do
+  let ((statement, result), _) := (lower Names.output (Target.lower expr)).run 0
+  let body ← render format bits inputs statement
+  let text := entrypoint (Format.name storage) inputs body result
+  return { format, inputs, text, storage }
+
 /-- Emit one independent output calculation with exact bit-pattern scalar literals.
 
 The expression's only free variable is its row-major output index. Each input has its own pointer
@@ -838,10 +868,7 @@ and length argument. A four-word error record holds one observed invalid read, a
 check it after execution, before exposing the output. No caller-provided text enters the source.
 -/
 def emit {α : Type} (format : Format) (bits : α → UInt64) (inputs : Nat)
-    (expr : Expr α [.index] .scalar) : Except String Source := do
-  let ((statement, result), _) := (lower Names.output (Target.lower expr)).run 0
-  let body ← render format bits inputs statement
-  let text := entrypoint (Format.name format) inputs body result
-  return { format, inputs, text }
+    (expr : Expr α [.index] .scalar) : Except String Source :=
+  emitStored format format bits inputs expr
 
 end TorchLean.CUDA

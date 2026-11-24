@@ -54,16 +54,18 @@ encoded outputs. Wide binary values never pass through native floats. -/
         pure (source, (2 : UInt32))
   executeBytes source tag scalar.precision.bytes.toUInt64 inputs count
 
-/-- Run `expr`, generated for `format`, on resident buffers of that format and return a fresh
-output buffer.
+/-- Run `expr`, generated for `format`, on resident buffers of `storage`, by default `format`, and
+return a fresh output buffer of `storage`.
 
 Inputs are borrowed and never mutated. Bounds errors and compilation failures are returned before
-an output buffer is exposed.
+an output buffer is exposed. With a `storage` other than `format`, each element is converted to
+`format` when it is read and each result to `storage` when it is written (`CUDA.emitStored`).
 -/
 @[no_expose] def runBuffers {α : Type} (format : CUDA.Format) (bits : α → UInt64)
-    (expr : Expr α [.index] .scalar) (inputs : Array Buffer) (count : UInt64) : IO Buffer := do
-  let source ← IO.ofExcept (CUDA.emit format bits inputs.size expr)
-  executeBuffer source.text (match format with | .binary32 => .float32 | .binary64 => .float64)
+    (expr : Expr α [.index] .scalar) (inputs : Array Buffer) (count : UInt64)
+    (storage : CUDA.Format := format) : IO Buffer := do
+  let source ← IO.ofExcept (CUDA.emitStored storage format bits inputs.size expr)
+  executeBuffer source.text (match storage with | .binary32 => .float32 | .binary64 => .float64)
     inputs count
 
 end TorchLean.Kernel

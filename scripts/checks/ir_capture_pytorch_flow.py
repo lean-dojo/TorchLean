@@ -355,7 +355,10 @@ class PyTorchFlowTests(CheckerCase):
             return mapped(lambda u: torch.ops.aten.native_dropout(u, 0.5, True), a)
 
         def evaluated(self, a):
-            return mapped(lambda u: torch.nn.functional.dropout(u, 0.5, training=False), a)
+            # From torch 2.14, torch.export refuses a map body whose output aliases its input, and
+            # dropout in evaluation returns its input. The capture reads clone as its operand, so
+            # the captured graph is unchanged.
+            return mapped(lambda u: torch.nn.functional.dropout(u, 0.5, training=False).clone(), a)
 
         def looped(self, i, a):
             return while_loop(lambda j, u: j < 3, lambda j, u: (j + 1, u + torch.rand(3, 4)),

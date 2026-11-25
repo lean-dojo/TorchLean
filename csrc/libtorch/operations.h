@@ -19,6 +19,11 @@ TORCHLEAN_UNARY_EXPORT(gelu, staged_gelu(x))
 
 TORCHLEAN_BINARY_EXPORT(max, ieee_maximum(a, b))
 TORCHLEAN_BINARY_EXPORT(min, ieee_minimum(a, b))
+// IEEE 754-2019 9.6 maximumNumber/minimumNumber: the number against a NaN, `a` when both are NaNs.
+TORCHLEAN_BINARY_EXPORT(fmax, aten<"where.self">(aten<"isnan">(b), a,
+    aten<"where.self">(aten<"isnan">(a), b, ieee_maximum(a, b))))
+TORCHLEAN_BINARY_EXPORT(fmin, aten<"where.self">(aten<"isnan">(b), a,
+    aten<"where.self">(aten<"isnan">(a), b, ieee_minimum(a, b))))
 TORCHLEAN_BINARY_EXPORT(div, aten<"div.Tensor">(a, b))
 TORCHLEAN_UNARY_EXPORT(neg, aten<"neg">(x))
 TORCHLEAN_BINARY_EXPORT(add, add(a, b))

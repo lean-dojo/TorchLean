@@ -191,10 +191,11 @@ def record {ins outs : List Port} (t : Tape (SomeTensor α)) (name : String)
     (rule : Op.Rule α ins outs) (ids : List (Option Nat)) (flags : Flags ins)
     (p : Op.Prepared α ins outs × Option Nat) : Result (Tape (SomeTensor α) × Outs α outs) :=
   if valuePorts outs > 1 then throw s!"op: {name} has several value outputs" else
+  -- The outputs read `t.size` first, so `addNode` owns `t` and pushes in place.
+  let o := Values.outs t.size outs p.1.value
   match Values.value? outs p.1.value with
-  | none => pure (t, Values.outs t.size outs p.1.value)
-  | some y => pure ((t.addNode (recordedNode name rule ids flags p y)).1,
-      Values.outs t.size outs p.1.value)
+  | none => pure (t, o)
+  | some y => pure ((t.addNode (recordedNode name rule ids flags p y)).1, o)
 
 variable [Context α] [Op.Capabilities α]
 

@@ -85,13 +85,13 @@ inline size_t checked_mul_size(size_t a, size_t b, const char* msg) {
 
 namespace torchlean __attribute__((visibility("hidden"))) {
 
-// Exported for the native tests, whose copies of `invoke` call them.
+// Exported for the native tests, whose copies of `invoke` and `device_guard` call them.
 __attribute__((visibility("default"))) void initialize();
 __attribute__((visibility("default"))) std::int32_t device_index();
 
 // Whether the bridge runs on the host. It is decided once, before the first buffer exists: the
 // host when `TORCHLEAN_LIBTORCH_DEVICE=cpu` or the SDK is CPU-only, a CUDA device otherwise.
-bool on_host();
+__attribute__((visibility("default"))) bool on_host();
 
 // Throws unless the bridge runs on a CUDA device. An entry point with no host implementation calls
 // it first, so that on the host it fails naming `feature` rather than inside a CUDA call.

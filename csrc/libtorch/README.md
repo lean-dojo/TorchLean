@@ -339,6 +339,13 @@ checked only through the running statistics that training steps leave behind in
   CUDA entries of `Op.max`, `Op.min` and `Op.clamp` compute the CPU tape's values. The CUDA tests
   compare the `max` and `min` pullbacks with the CPU rules bit for bit at ties, infinities, signed
   zeros and NaN operands, and the forward values on the finite nonzero inputs of a composite test.
+- `fmax` and `fmin` are the IEEE 754-2019 maximumNumber and minimumNumber, `Context.fmax` and
+  `Context.fmin`: the other operand where one is a NaN, the first where both are, and `max` or `min`
+  above otherwise. They do not call `aten::fmax` and `aten::fmin`, which on CPU tensors return the
+  first of a pair of zeros (torch 2.13.0).
+  `checkNumberExtrema` compares both with the CPU functions bit for bit, up to a NaN's payload, at
+  every pair of NaN, infinities, signed zeros, the smallest subnormal and the largest finite value
+  in binary32 and binary64.
 - Attention uses matrix products composed in Lean and the softmax VJP over probabilities the tape
   owns. The attention tests in the compiled Lean CUDA suite compare values and gradients with the
   CPU reference and exercise saved-buffer ownership.

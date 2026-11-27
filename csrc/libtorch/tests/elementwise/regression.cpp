@@ -51,6 +51,8 @@ DECLARE_UNARY(reduce_sum)
 DECLARE_UNARY(reduce_mean)
 DECLARE_BINARY(max)
 DECLARE_BINARY(min)
+DECLARE_BINARY(fmax)
+DECLARE_BINARY(fmin)
 DECLARE_BINARY(div)
 DECLARE_BINARY(add)
 DECLARE_BINARY(sub)
@@ -719,6 +721,8 @@ void no_autograd_regressions() {
 #define CHECK_BINARY(name) run(#name, [&] { return torchlean_cuda_buffer_##name(x, y); });
     CHECK_BINARY(max)
     CHECK_BINARY(min)
+    CHECK_BINARY(fmax)
+    CHECK_BINARY(fmin)
     CHECK_BINARY(div)
     CHECK_BINARY(add)
     CHECK_BINARY(sub)
@@ -745,7 +749,7 @@ void no_autograd_regressions() {
     run("adam_step", [&] { return adam(x, g, x, y, {1, 0, 1, 0, 1, 1, 0, 0, 1}); }, 3);
     const Object copied(on_device({0x3f800000}));
     run("copy_and_release", [&] { return torchlean_cuda_buffer_copy_and_release(copied); });
-    check(export_count == 37, "noAutograd export coverage changed");
+    check(export_count == 39, "noAutograd export coverage changed");
     check(!x.tensor().requires_grad() && !y.tensor().requires_grad() && !g.tensor().requires_grad(),
           "export mutated an input's requires_grad flag");
     const auto old_deterministic = get_setting(kDeterministic);

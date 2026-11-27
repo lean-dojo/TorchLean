@@ -28,7 +28,8 @@ The VJP kernels of `abs`, `relu`, `sqrt` and `tanh` in binary32 and binary64 and
 binary32 have the expected bits, any two NaNs equal, at edge cases such as signed zeros, NaNs,
 infinities and subnormals.
 `Buffer.scaledProdExp` has the bits of the composed `exp ((c * x) * y)`, the `max` and `min`
-pullbacks those of their binary32 CPU rules, and `dropout` those of its specification at binary32.
+pullbacks those of their binary32 CPU rules, `fmax` and `fmin` those of `Context.fmax` and
+`Context.fmin` in binary32 and binary64, and `dropout` those of its specification at binary32.
 The Huber terms and slopes have the bits of `Huber.term` and `Tensor.huberLossBackward` at
 signed zeros, infinities, NaNs, rounding ties and overflow. Generated custom computations also
 exercise NVRTC, scalar precision, lazy branches, sequential accumulation, empty tensors and checked
@@ -765,6 +766,39 @@ private def checkHuberAt {α : Type} [Storage α] [Context α] (name : String)
           s!"Huber {name} {output} at delta {widen delta} [{i}]: bits {actual.toBits}, " ++
             s!"CPU rule {expected.toBits}"
 
+open LibTorch in
+/-- `Buffer.fmax` and `Buffer.fmin` at every ordered pair of `values` in `dtype`, against
+`Context.fmax` and `Context.fmin` at the scalar `α`, bit for bit up to a NaN's payload. -/
+private def checkNumberExtremaAt {α : Type} [Context α] (name : String) (dtype : LibTorch.Dtype)
+    (widen : α → Float) (values : Array α) : IO Unit := do
+  let pairs := values.flatMap fun x => values.map fun y => (x, y)
+  let upload := fun (xs : Array α) => Buffer.ofFloatArrayIO (FloatArray.mk (xs.map widen)) dtype
+  let a ← upload (pairs.map (·.1))
+  let b ← upload (pairs.map (·.2))
+  for (op, buffer, rule) in
+      [("fmax", Buffer.fmax a b, fun (x y : α) => Context.fmax x y),
+        ("fmin", Buffer.fmin a b, fun (x y : α) => Context.fmin x y)] do
+    let got ← Buffer.toFloatArrayIO buffer
+    unless got.size == pairs.size do
+      throw <| IO.userError s!"{op} {name}: size {got.size}"
+    for i in [:pairs.size] do
+      let (x, y) := pairs[i]!
+      let actual := got.get! i
+      let expected := widen (rule x y)
+      unless actual.toBits == expected.toBits || (actual.isNaN && expected.isNaN) do
+        throw <| IO.userError <|
+          s!"{op} {name} ({widen x}, {widen y}): bits {actual.toBits}, CPU rule {expected.toBits}"
+
+/-- The CUDA `fmax` and `fmin` are IEEE 754-2019 `maximumNumber` and `minimumNumber`: the number
+against a NaN, a NaN only when both operands are, and `+0` above `-0`, in binary32 and binary64. -/
+private def checkNumberExtrema : IO Unit := do
+  IO.println "=== fmax/fmin parity ==="
+  checkNumberExtremaAt "binary32" .float32 Float32.toFloat
+    #[0 / 0, -1 / 0, -1, -0.0, 0, Float32.ofBits 1, 1, Float32.ofBits 0x7F7FFFFF, 1 / 0]
+  checkNumberExtremaAt "binary64" .float64 id
+    #[0 / 0, -1 / 0, -1, -0.0, 0, Float.ofBits 1, 1, Float.ofBits 0x7FEFFFFFFFFFFFFF, 1 / 0]
+  IO.println "  fmax/fmin give the CPU rules ✓"
+
 /-- The CUDA Huber terms and slopes at signed zeros, infinities, a NaN, the branch joins, rounding
 ties and overflow, and at zero, negative, NaN and infinite thresholds, in binary32 and binary64. -/
 private def checkHuber : IO Unit := do
@@ -1041,15 +1075,16 @@ private def checkDropout : IO Unit := do
         (widen (Dropout.masked p32 keep (single seeds))) do
       throw <| IO.userError s!"dropout backward at p = {p}"
 
-/-- Runs the activation, pointwise VJP bit, `Buffer.scaledProdExp`, selection, Huber, custom
-computation and dropout checks, then compares the CPU and CUDA tapes on the composite pass and on
-GELU, and the fused AdamW step with its staged computation. -/
+/-- Runs the activation, pointwise VJP bit, `Buffer.scaledProdExp`, selection, `fmax` and `fmin`,
+Huber, custom computation and dropout checks, then compares the CPU and CUDA tapes on the composite
+pass and on GELU, and the fused AdamW step with its staged computation. -/
 @[no_expose] def run : IO Unit := do
   IO.println "=== CUDA kernel coverage: elementwise ==="
   runActivationNumerics
   checkPointwiseVJPBits
   checkScaledProductExp
   checkSelectionPullbacks
+  checkNumberExtrema
   checkHuber
   checkCustomComputations
   checkCustomAutograd

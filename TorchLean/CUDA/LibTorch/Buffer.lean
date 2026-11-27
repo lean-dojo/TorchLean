@@ -549,6 +549,16 @@ loser and half of the cotangent each at a tie or an unordered pair, as `maxBackw
 @[never_extract, extern "torchlean_cuda_buffer_min_bwd"]
 opaque minBackward (a b dLdy : @& Buffer) : Buffer × Buffer
 
+/-- Pointwise IEEE 754-2019 9.6 `maximumNumber`, `Context.fmax`: the number where one operand is a
+NaN, `a` where both are, `+0` above `-0`. -/
+@[never_extract, extern "torchlean_cuda_buffer_fmax"]
+opaque fmax (a b : @& Buffer) : Buffer
+
+/-- Pointwise IEEE 754-2019 9.6 `minimumNumber`, `Context.fmin`: the number where one operand is a
+NaN, `a` where both are, `-0` below `+0`. -/
+@[never_extract, extern "torchlean_cuda_buffer_fmin"]
+opaque fmin (a b : @& Buffer) : Buffer
+
 /-- Pointwise division of two equal-length CUDA buffers. -/
 @[never_extract, extern "torchlean_cuda_buffer_div"]
 private opaque divNative (a b : @& Buffer) : Buffer

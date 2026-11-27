@@ -361,6 +361,28 @@ Indices that fit in `UInt32` but are out of bounds are ignored, and repeated ind
 opaque scatterAddRows (mat values : @& Buffer) (rows cols : UInt32) (indices : @& Array Nat)
   (k : UInt32) : Buffer
 
+/--
+Gather `table[positions[i]]` for `count` positions held on the device.
+
+`table` has `size > 0` entries and `positions` is a binary32 or binary64 buffer. A NaN position
+reads as `0`, every position is clamped to `[0, size - 1]` and then truncated, so a non-integral
+position floors and no selection leaves the table. The clamp is applied to the position and again
+to the integer index, so it holds above `2^24` entries, where `size - 1` has no binary32
+representation. The result has `count` entries of the table's dtype.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_gather_at"]
+opaque gatherAt (table : @& Buffer) (size : UInt32) (positions : @& Buffer) (count : UInt32) :
+  Buffer
+
+/--
+Scatter-add `count` values into a fresh zero buffer of `size > 0` entries at positions held on the
+device, addressed as in `gatherAt`: the VJP of `gatherAt` with respect to its table. Repeated
+positions accumulate through `aten::scatter_add_`, in an order it does not specify on CUDA, so
+their sum may differ in its last bits from run to run.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_scatter_add_at"]
+opaque scatterAddAt (size : UInt32) (positions values : @& Buffer) (count : UInt32) : Buffer
+
 end Buffer
 
 end LibTorch

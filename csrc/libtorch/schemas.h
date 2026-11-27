@@ -57,6 +57,7 @@ inline constexpr std::string_view table[] = {
     "fft_rfft(Tensor self, SymInt? n=None, int dim=-1, str? norm=None) -> Tensor",
     "fill_.Tensor(Tensor(a!) self, Tensor value) -> Tensor(a!)",
     "flip(Tensor self, int[] dims) -> Tensor",
+    "floor(Tensor self) -> Tensor",
     "fmax(Tensor self, Tensor other) -> Tensor",
     "fmin(Tensor self, Tensor other) -> Tensor",
     "frexp.Tensor(Tensor self) -> (Tensor mantissa, Tensor exponent)",
@@ -146,13 +147,13 @@ inline constexpr std::string_view table[] = {
 inline constexpr std::string_view no_device_check[] = {
     "abs", "all", "any", "any.dim", "argmax", "bitwise_and.Tensor", "bitwise_right_shift.Tensor",
     "bitwise_xor.Tensor", "copy_", "copysign.Tensor", "cos", "cumsum", "div.Tensor", "empty_like",
-    "eq.Tensor", "exp", "expand", "expand_as", "expm1", "fill_.Tensor", "fmax", "fmin", "ge.Tensor",
-    "gt.Tensor", "imag", "isfinite", "isinf", "isnan", "le.Tensor", "log", "log1p", "logical_and",
-    "logical_not", "logical_or", "lt.Tensor", "masked_fill.Tensor", "maximum", "maximum.out",
-    "minimum", "minimum.out", "mul.Tensor", "mul_.Tensor", "narrow", "ne.Tensor", "neg",
-    "reciprocal", "reshape", "select.int", "sin", "slice.Tensor", "sqrt", "square", "squeeze.dim",
-    "sub.Tensor", "sum", "sum.dim_IntList", "tanh", "to.dtype", "to.dtype_layout", "transpose.int",
-    "unsqueeze", "view", "where.self", "zero_",
+    "eq.Tensor", "exp", "expand", "expand_as", "expm1", "fill_.Tensor", "floor", "fmax", "fmin",
+    "ge.Tensor", "gt.Tensor", "imag", "isfinite", "isinf", "isnan", "le.Tensor", "log", "log1p",
+    "logical_and", "logical_not", "logical_or", "lt.Tensor", "masked_fill.Tensor", "maximum",
+    "maximum.out", "minimum", "minimum.out", "mul.Tensor", "mul_.Tensor", "narrow", "ne.Tensor",
+    "neg", "reciprocal", "reshape", "select.int", "sin", "slice.Tensor", "sqrt", "square",
+    "squeeze.dim", "sub.Tensor", "sum", "sum.dim_IntList", "tanh", "to.dtype", "to.dtype_layout",
+    "transpose.int", "unsqueeze", "view", "where.self", "zero_",
 };
 
 }  // namespace torchlean::schema

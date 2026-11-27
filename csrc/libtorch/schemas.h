@@ -101,6 +101,7 @@ inline constexpr std::string_view table[] = {
     "ones_like(Tensor self, *, ScalarType? dtype=None, Layout? layout=None, Device? device=None, "
         "bool? pin_memory=None, MemoryFormat? memory_format=None) -> Tensor",
     "permute(Tensor(a) self, int[] dims) -> Tensor(a)",
+    "pow.Tensor_Tensor(Tensor self, Tensor exponent) -> Tensor",
     "reciprocal(Tensor self) -> Tensor",
     "repeat_interleave.Tensor(Tensor repeats, *, SymInt? output_size=None) -> Tensor",
     "reshape(Tensor(a) self, SymInt[] shape) -> Tensor(a)",
@@ -150,9 +151,9 @@ inline constexpr std::string_view no_device_check[] = {
     "gt.Tensor", "imag", "isfinite", "isinf", "isnan", "le.Tensor", "log", "log1p", "logical_and",
     "logical_not", "logical_or", "lt.Tensor", "masked_fill.Tensor", "maximum", "maximum.out",
     "minimum", "minimum.out", "mul.Tensor", "mul_.Tensor", "narrow", "ne.Tensor", "neg",
-    "reciprocal", "reshape", "select.int", "sin", "slice.Tensor", "sqrt", "square", "squeeze.dim",
-    "sub.Tensor", "sum", "sum.dim_IntList", "tanh", "to.dtype", "to.dtype_layout", "transpose.int",
-    "unsqueeze", "view", "where.self", "zero_",
+    "pow.Tensor_Tensor", "reciprocal", "reshape", "select.int", "sin", "slice.Tensor", "sqrt",
+    "square", "squeeze.dim", "sub.Tensor", "sum", "sum.dim_IntList", "tanh", "to.dtype",
+    "to.dtype_layout", "transpose.int", "unsqueeze", "view", "where.self", "zero_",
 };
 
 }  // namespace torchlean::schema

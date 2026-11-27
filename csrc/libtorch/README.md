@@ -339,6 +339,21 @@ checked only through the running statistics that training steps leave behind in
   CUDA entries of `Op.max`, `Op.min` and `Op.clamp` compute the CPU tape's values. The CUDA tests
   compare the `max` and `min` pullbacks with the CPU rules bit for bit at ties, infinities, signed
   zeros and NaN operands, and the forward values on the finite nonzero inputs of a composite test.
+- `fmax` and `fmin` are the IEEE 754-2019 maximumNumber and minimumNumber, `Context.fmax` and
+  `Context.fmin`: the other operand where one is a NaN, the first where both are, and `max` or `min`
+  above otherwise. They do not call `aten::fmax` and `aten::fmin`, which on CPU tensors return the
+  first of a pair of zeros (torch 2.13.0).
+  `checkNumberExtrema` compares both with the CPU functions bit for bit, up to a NaN's payload, at
+  every pair of NaN, infinities, signed zeros, the smallest subnormal and the largest finite value
+  in binary32 and binary64.
+- `pow` is `aten::pow` of two tensors, the dtype's C `pow`, as `Tensor.pow` is on the host. `lt`,
+  `le`, `gt` and `ge` return `1` where the ordered comparison holds and `0` elsewhere in the
+  operands' dtype, the scalar form of the Boolean tensors of `Tensor.lt`, `Tensor.le`, `Tensor.gt`
+  and `Tensor.ge`, and `select` is `aten::where` on `condition ≠ 0`, as `mask` reads its mask.
+  `checkPowerComparisonSelect` compares them in binary32 and binary64 with the CPU rules, `^`,
+  `Context.ltBool`, `leBool`, `gtBool`, `geBool` and `Tensor.select`, at every pair of NaN, signed
+  zeros, `±1` and infinities, `pow` at ordinary operands too, and `select` at every triple; it first
+  checks those CPU rules against tables written out from C Annex F and the IEEE 754 order.
 - Attention uses matrix products composed in Lean and the softmax VJP over probabilities the tape
   owns. The attention tests in the compiled Lean CUDA suite compare values and gradients with the
   CPU reference and exercise saved-buffer ownership.

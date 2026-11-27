@@ -53,6 +53,11 @@ DECLARE_BINARY(max)
 DECLARE_BINARY(min)
 DECLARE_BINARY(fmax)
 DECLARE_BINARY(fmin)
+DECLARE_BINARY(pow)
+DECLARE_BINARY(lt)
+DECLARE_BINARY(le)
+DECLARE_BINARY(gt)
+DECLARE_BINARY(ge)
 DECLARE_BINARY(div)
 DECLARE_BINARY(add)
 DECLARE_BINARY(sub)
@@ -65,6 +70,8 @@ DECLARE_BINARY(tanh_bwd)
 DECLARE_BINARY(gelu_bwd)
 DECLARE_BINARY(silu_bwd)
 #undef DECLARE_BINARY
+extern "C" lean_obj_res torchlean_cuda_buffer_select(b_lean_obj_arg, b_lean_obj_arg,
+                                                     b_lean_obj_arg);
 #undef DECLARE_UNARY
 extern "C" lean_obj_res torchlean_cuda_buffer_scale(b_lean_obj_arg, double);
 extern "C" lean_obj_res torchlean_cuda_buffer_axpy(b_lean_obj_arg, b_lean_obj_arg, double);
@@ -723,11 +730,17 @@ void no_autograd_regressions() {
     CHECK_BINARY(min)
     CHECK_BINARY(fmax)
     CHECK_BINARY(fmin)
+    CHECK_BINARY(pow)
+    CHECK_BINARY(lt)
+    CHECK_BINARY(le)
+    CHECK_BINARY(gt)
+    CHECK_BINARY(ge)
     CHECK_BINARY(div)
     CHECK_BINARY(add)
     CHECK_BINARY(sub)
     CHECK_BINARY(mul)
 #undef CHECK_BINARY
+    run("select", [&] { return torchlean_cuda_buffer_select(x, x, y); });
 #define CHECK_VJP(name) run(#name "_bwd", [&] { return torchlean_cuda_buffer_##name##_bwd(x, g); });
     CHECK_VJP(abs)
     CHECK_VJP(sqrt)
@@ -749,7 +762,7 @@ void no_autograd_regressions() {
     run("adam_step", [&] { return adam(x, g, x, y, {1, 0, 1, 0, 1, 1, 0, 0, 1}); }, 3);
     const Object copied(on_device({0x3f800000}));
     run("copy_and_release", [&] { return torchlean_cuda_buffer_copy_and_release(copied); });
-    check(export_count == 39, "noAutograd export coverage changed");
+    check(export_count == 45, "noAutograd export coverage changed");
     check(!x.tensor().requires_grad() && !y.tensor().requires_grad() && !g.tensor().requires_grad(),
           "export mutated an input's requires_grad flag");
     const auto old_deterministic = get_setting(kDeterministic);

@@ -346,6 +346,14 @@ checked only through the running statistics that training steps leave behind in
   `checkNumberExtrema` compares both with the CPU functions bit for bit, up to a NaN's payload, at
   every pair of NaN, infinities, signed zeros, the smallest subnormal and the largest finite value
   in binary32 and binary64.
+- `pow` is `aten::pow` of two tensors, the dtype's C `pow`, as `Tensor.pow` is on the host. `lt`,
+  `le`, `gt` and `ge` return `1` where the ordered comparison holds and `0` elsewhere in the
+  operands' dtype, the scalar form of the Boolean tensors of `Tensor.lt`, `Tensor.le`, `Tensor.gt`
+  and `Tensor.ge`, and `select` is `aten::where` on `condition ≠ 0`, as `mask` reads its mask.
+  `checkPowerComparisonSelect` compares them in binary32 and binary64 with the CPU rules, `^`,
+  `Context.ltBool`, `leBool`, `gtBool`, `geBool` and `Tensor.select`, at every pair of NaN, signed
+  zeros, `±1` and infinities, `pow` at ordinary operands too, and `select` at every triple; it first
+  checks those CPU rules against tables written out from C Annex F and the IEEE 754 order.
 - Attention uses matrix products composed in Lean and the softmax VJP over probabilities the tape
   owns. The attention tests in the compiled Lean CUDA suite compare values and gradients with the
   CPU reference and exercise saved-buffer ownership.

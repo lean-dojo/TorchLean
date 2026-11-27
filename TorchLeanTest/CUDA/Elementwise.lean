@@ -30,6 +30,9 @@ infinities and subnormals.
 `Buffer.scaledProdExp` has the bits of the composed `exp ((c * x) * y)`, the `max` and `min`
 pullbacks those of their binary32 CPU rules, `fmax` and `fmin` those of `Context.fmax` and
 `Context.fmin` in binary32 and binary64, and `dropout` those of its specification at binary32.
+`Buffer.pow`, `lt`, `le`, `gt`, `ge` and `select` give their CPU rules at NaN, signed zeros, `±1`
+and infinities in binary32 and binary64, rules that agree there with tables written out from C
+Annex F and the IEEE 754 order.
 The Huber terms and slopes have the bits of `Huber.term` and `Tensor.huberLossBackward` at
 signed zeros, infinities, NaNs, rounding ties and overflow. Generated custom computations also
 exercise NVRTC, scalar precision, lazy branches, sequential accumulation, empty tensors and checked
@@ -737,6 +740,116 @@ private def checkSelectionPullbacks : IO Unit := do
     LibTorch.Buffer.minBackward left right seed
   IO.println "  max/min pullbacks select as the CPU rules ✓"
 
+/-- NaN, `+0`, `-0`, `+1`, `-1`, `+∞` and `-∞`, the operands of `checkPowerComparisonSelect`. -/
+private def edgeOperands : Array Float := #[0 / 0, 0, -0.0, 1, -1, 1 / 0, -1 / 0]
+
+/-- The place of each of `edgeOperands` in the IEEE 754 order, the zeros equal and NaN unordered. -/
+private def edgeRanks : Array (Option Nat) :=
+  #[none, some 2, some 2, some 3, some 1, some 4, some 0]
+
+/-- C Annex F `pow` of each of `edgeOperands`, the rows, to each of them, the columns. -/
+private def edgePowers : Array (Array Float) := #[
+  #[0 / 0, 1, 1, 0 / 0, 0 / 0, 0 / 0, 0 / 0],
+  #[0 / 0, 1, 1, 0, 1 / 0, 0, 1 / 0],
+  #[0 / 0, 1, 1, -0.0, -1 / 0, 0, 1 / 0],
+  #[1, 1, 1, 1, 1, 1, 1],
+  #[0 / 0, 1, 1, -1, -1, 1, 1],
+  #[0 / 0, 1, 1, 1 / 0, 0, 1 / 0, 0],
+  #[0 / 0, 1, 1, -1 / 0, -0.0, 1 / 0, 0]]
+
+/-- Ordinary bases and exponents with their powers: a NaN at a negative base and a non-integer
+exponent, and `±0` to a negative odd integer the infinity of the same sign. -/
+private def ordinaryPowers : Array (Float × Float × Float) := #[
+  (2, 3, 8), (2, -2, 0.25), (4, 0.5, 2), (9, 1.5, 27), (0.5, 2, 0.25), (2, 0.5, 1.4142135623730951),
+  (10, -1, 0.1), (-2, 3, -8), (-2, 2, 4), (-2, -1, -0.5), (-2, 0.5, 0 / 0), (-8, 1 / 3, 0 / 0),
+  (0, -3, 1 / 0), (-0.0, -3, -1 / 0), (-0.0, -2, 1 / 0), (-0.0, 3, -0.0), (0.5, 1 / 0, 0),
+  (2, 1 / 0, 1 / 0), (-0.5, -1 / 0, 1 / 0), (-1 / 0, 3, -1 / 0), (-1 / 0, 2, 1 / 0),
+  (-1 / 0, -3, -0.0)]
+
+/-- Whether `actual` reads as `expected`: any NaN for a NaN, the same bits for a zero, an infinity
+or `±1`, and otherwise within relative tolerance `rtol`. -/
+private def readsAs (actual expected rtol : Float) : Bool :=
+  let exact := expected == 0 || expected.isInf || expected.abs == 1
+  (actual.isNaN && expected.isNaN) || actual.toBits == expected.toBits ||
+    (!exact && (actual - expected).abs ≤ rtol * expected.abs)
+
+open LibTorch in
+/-- Fail unless `buffer` reads back as `expected`, entry by entry as `readsAs`. -/
+private def checkBufferValues (label : String) (buffer : Buffer) (expected : Array Float)
+    (rtol : Float) : IO Unit := do
+  let got ← Buffer.toFloatArrayIO buffer
+  unless got.size == expected.size do
+    throw <| IO.userError s!"{label}: size {got.size}, expected {expected.size}"
+  for i in [:expected.size] do
+    unless readsAs (got.get! i) expected[i]! rtol do
+      throw <| IO.userError s!"{label} [{i}]: got {got.get! i}, expected {expected[i]!}"
+
+open LibTorch in
+/-- `Buffer.pow`, `lt`, `le`, `gt`, `ge` and `select` in `dtype` against the CPU rules at the scalar
+`α`: `^`, `Context.ltBool`, `leBool`, `gtBool` and `geBool` as `1` or `0`, and the choice of
+`Tensor.select` on `Context.neBool condition 0`. The CPU rules are first checked against the tables
+above, which are written out from C Annex F and the IEEE 754 order. -/
+private def checkPowerComparisonSelectAt {α : Type} [Context α] [HPow α α α] (name : String)
+    (dtype : LibTorch.Dtype) (narrow : Float → α) (widen : α → Float) (rtol : Float) :
+    IO Unit := do
+  let upload := fun (xs : Array Float) => Buffer.ofFloatArrayIO (FloatArray.mk xs) dtype
+  let hostPow := fun (x y : Float) => widen (narrow x ^ narrow y)
+  let n := edgeOperands.size
+  let pairs := (Array.range n).flatMap fun i => (Array.range n).map fun j => (i, j)
+  for (i, j) in pairs do
+    let (x, y) := (edgeOperands[i]!, edgeOperands[j]!)
+    unless readsAs (hostPow x y) (edgePowers[i]!)[j]! 0 do
+      throw <| IO.userError <|
+        s!"CPU pow {name} ({x}, {y}): {hostPow x y}, table {(edgePowers[i]!)[j]!}"
+  for (x, y, want) in ordinaryPowers do
+    unless readsAs (hostPow x y) want rtol do
+      throw <| IO.userError s!"CPU pow {name} ({x}, {y}): {hostPow x y}, table {want}"
+  let a ← upload (pairs.map fun (i, _) => edgeOperands[i]!)
+  let b ← upload (pairs.map fun (_, j) => edgeOperands[j]!)
+  checkBufferValues s!"pow {name}" (Buffer.pow a b) (rtol := 0) <|
+    pairs.map fun (i, j) => hostPow edgeOperands[i]! edgeOperands[j]!
+  for (op, buffer, rule, order) in
+      [("lt", Buffer.lt a b, fun (x y : α) => Context.ltBool x y,
+          fun (x y : Nat) => decide (x < y)),
+        ("le", Buffer.le a b, fun x y => Context.leBool x y, fun x y => decide (x ≤ y)),
+        ("gt", Buffer.gt a b, fun x y => Context.gtBool x y, fun x y => decide (x > y)),
+        ("ge", Buffer.ge a b, fun x y => Context.geBool x y, fun x y => decide (x ≥ y))] do
+    let holds := fun (i j : Nat) => rule (narrow edgeOperands[i]!) (narrow edgeOperands[j]!)
+    for (i, j) in pairs do
+      let ordered := match edgeRanks[i]!, edgeRanks[j]! with
+        | some x, some y => order x y
+        | _, _ => false
+      unless holds i j == ordered do
+        throw <| IO.userError
+          s!"CPU {op} {name} ({edgeOperands[i]!}, {edgeOperands[j]!}): {holds i j}, order {ordered}"
+    checkBufferValues s!"{op} {name}" buffer (rtol := 0) <|
+      pairs.map fun (i, j) => if holds i j then 1 else 0
+  let bases ← upload (ordinaryPowers.map (·.1))
+  let exponents ← upload (ordinaryPowers.map (·.2.1))
+  checkBufferValues s!"pow {name} at ordinary operands" (Buffer.pow bases exponents)
+    (ordinaryPowers.map fun (x, y, _) => hostPow x y) rtol
+  let chooses := fun (c : Nat) => Context.neBool (narrow edgeOperands[c]!) (narrow 0)
+  -- Only the zeros, entries 1 and 2 of `edgeOperands`, select the second branch.
+  for c in [:n] do
+    unless chooses c == !(c == 1 || c == 2) do
+      throw <| IO.userError s!"CPU select {name}: condition {edgeOperands[c]!}"
+  let triples := pairs.flatMap fun (c, i) => (Array.range n).map fun j => (c, i, j)
+  let condition ← upload (triples.map fun (c, _, _) => edgeOperands[c]!)
+  let x ← upload (triples.map fun (_, i, _) => edgeOperands[i]!)
+  let y ← upload (triples.map fun (_, _, j) => edgeOperands[j]!)
+  checkBufferValues s!"select {name}" (Buffer.select condition x y) (rtol := 0) <|
+    triples.map fun (c, i, j) =>
+      widen (if chooses c then narrow edgeOperands[i]! else narrow edgeOperands[j]!)
+
+/-- The CUDA `pow` is the CPU `^`, C `pow`; `lt`, `le`, `gt` and `ge` are `1` where the IEEE 754
+comparison holds and `0` elsewhere; and `select` takes its first branch where the condition is not a
+zero, as on the CPU. -/
+private def checkPowerComparisonSelect : IO Unit := do
+  IO.println "=== pow, comparison and select parity ==="
+  checkPowerComparisonSelectAt "binary32" .float32 Float.toFloat32 Float32.toFloat 1e-6
+  checkPowerComparisonSelectAt "binary64" .float64 id id 1e-14
+  IO.println "  pow, lt, le, gt, ge and select give the CPU rules ✓"
+
 open LibTorch in
 /-- `Buffer.huberTerms` and `Buffer.huberSlope` at the pairs `cases` and the threshold `delta` in
 `dtype`, against `Huber.term` and the slope of `Tensor.huberLossBackward` at the scalar `α`, bit
@@ -1076,6 +1189,7 @@ private def checkDropout : IO Unit := do
       throw <| IO.userError s!"dropout backward at p = {p}"
 
 /-- Runs the activation, pointwise VJP bit, `Buffer.scaledProdExp`, selection, `fmax` and `fmin`,
+power, comparison,
 Huber, custom computation and dropout checks, then compares the CPU and CUDA tapes on the composite
 pass and on GELU, and the fused AdamW step with its staged computation. -/
 @[no_expose] def run : IO Unit := do
@@ -1085,6 +1199,7 @@ pass and on GELU, and the fused AdamW step with its staged computation. -/
   checkScaledProductExp
   checkSelectionPullbacks
   checkNumberExtrema
+  checkPowerComparisonSelect
   checkHuber
   checkCustomComputations
   checkCustomAutograd

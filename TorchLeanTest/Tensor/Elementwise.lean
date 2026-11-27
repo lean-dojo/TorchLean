@@ -129,6 +129,20 @@ def run : IO Unit := do
       entries (Tensor.fmin ([-0.0, 0.0] : Tensor Float [2]) [0.0, -0.0])) #[0.0, 0.0, -0.0, -0.0]
   expect "fmax and fmin of two NaNs" <|
     (Context.fmax nan nan).isNaN && (Context.fmin nan nan).isNaN
+  let ones3 : Tensor Float [3] := Tensor.full [3] 1.0
+  let ones2 : Tensor Float [2] := Tensor.full [2] 1.0
+  let finite := Tensor.powBackward (α := Float) (s := [3]) ([2.0, 0.0, 0.0] : Tensor Float [3])
+    ([3.0, 2.0, 0.0] : Tensor Float [3]) ones3
+  let logTwo : Float := Float.log 2.0
+  expect "powBackward: the base gets y x^(y-1), the exponent x^y log x, zero at a zero base" <|
+    sameBits (entries finite.1) #[12.0, 0.0, 0.0] &&
+      sameBits (entries finite.2) #[8.0 * logTwo, 0.0, 0.0]
+  let singular := Tensor.powBackward (α := Float) (s := [2]) ([0.0, -8.0] : Tensor Float [2])
+    ([-1.0, 0.5] : Tensor Float [2]) ones2
+  let negInf : Float := -(1.0 / 0.0)
+  expect "powBackward at a zero base and a negative exponent, and at a NaN power" <|
+    (entries singular.1)[0]! == negInf && (entries singular.2)[0]! == negInf &&
+      (entries singular.1)[1]!.isNaN && (entries singular.2)[1]!.isNaN
   expect "copysign sign bits" <|
     sameBits (entries (Tensor.copysign magnitudes signSources)) #[-3.0, 2.0, -0.0]
   expect "clamp lo > hi" <|

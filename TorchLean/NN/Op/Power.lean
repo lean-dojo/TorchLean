@@ -80,6 +80,43 @@ theorem pow_backward_eq_adjoint (x e δ : Tensor ℝ s) (h : ∀ c, x c ≠ 0 �
       exact Numeric.powerBackward_real (x c) (e c) (δ c))
   exact ⟨hp.1.differentiableAt, hp.2⟩
 
+/-- Where every base entry is positive, the real forward of `Op.powValue` has the sum of the slope
+maps `y x ^ (y - 1)` and `x ^ y log x` as derivative on the L2 product of base and exponent, and
+its pair of pullbacks is the adjoint of the derivative. At a negative base the real model is
+Mathlib's `exp (log x * y) * cos (y * π)`, whose slope in the exponent is not `x ^ y log x`. -/
+@[op_cert TorchLean.Op.powValue derivative]
+theorem powValue_backward_eq_adjoint (x y δ : Tensor ℝ s) (hx : ∀ c, 0 < x c) :
+    HasFDerivAt (fun p : WithLp 2 (Tensor ℝ s × Tensor ℝ s) =>
+          (((Op.powValue (s := s)).rule? (α := ℝ) |>.get rfl).forward (p.fst, p.snd, ())).1)
+        ((slopeCLM fun c => y c * x c ^ (y c - 1)).comp
+            (WithLp.fstL 2 ℝ (Tensor ℝ s) (Tensor ℝ s)) +
+          (slopeCLM fun c => x c ^ y c * Real.log (x c)).comp
+            (WithLp.sndL 2 ℝ (Tensor ℝ s) (Tensor ℝ s)))
+        (WithLp.toLp 2 (x, y)) ∧
+      WithLp.toLp 2
+          ((((Op.powValue (s := s)).rule? (α := ℝ) |>.get rfl).backward (x, y, ()) (δ, ())).1,
+            (((Op.powValue (s := s)).rule? (α := ℝ) |>.get rfl).backward (x, y, ()) (δ, ())).2.1) =
+        (fderiv ℝ (fun p : WithLp 2 (Tensor ℝ s × Tensor ℝ s) =>
+          (((Op.powValue (s := s)).rule? (α := ℝ) |>.get rfl).forward (p.fst, p.snd, ())).1)
+          (WithLp.toLp 2 (x, y))).adjoint δ :=
+  pointwise₂_backward_eq_adjoint _ (fun _ q => q.1 ^ q.2) (fun c => y c * x c ^ (y c - 1))
+    (fun c => x c ^ y c * Real.log (x c)) x y δ _ _
+    (fun p c => Tensor.zipWith_apply _ p.fst p.snd c)
+    (fun c => (Real.hasStrictFDerivAt_rpow_of_pos (x c, y c) (hx c)).hasFDerivAt)
+    (fun c => by
+      show (Tensor.powBackward x y δ).1 c = _
+      simp only [Tensor.powBackward, Tensor.zipWith3_apply, Numeric.powerBackward_real]
+      split_ifs with h
+      · simp only [h, zero_mul]
+      · rfl)
+    (fun c => by
+      show (Tensor.powBackward x y δ).2 c = _
+      have hz : Context.isZero (x c) = false := by
+        show (x c == 0) = false
+        exact beq_false_of_ne (hx c).ne'
+      simp only [Tensor.powBackward, Tensor.zipWith3_apply, hz, Bool.false_and]
+      exact mul_comm _ _)
+
 end Op
 
 end TorchLean

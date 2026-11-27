@@ -484,6 +484,11 @@ theorem decode_encode_pow (s : Shape) (e : Op.NumericElement) :
     decode (encode ⟨_, _, Op.pow (s := s) e⟩) = some ⟨_, _, Op.pow (s := s) e⟩ := by
   cases e <;> rfl
 
+/-- The round trip of `powValue`. -/
+theorem decode_encode_powValue (s : Shape) :
+    decode (encode ⟨_, _, Op.powValue (s := s)⟩) = some ⟨_, _, Op.powValue (s := s)⟩ :=
+  rfl
+
 /-- The round trip of `cumprod`. -/
 theorem decode_encode_cumprod (s : Shape) (dim : Fin (s.rank)) (order : ReduceOrder) :
     decode (encode ⟨_, _, Op.cumprod (s := s) (dim := dim) (order := order)⟩) =
@@ -1397,6 +1402,7 @@ theorem Op.decode_encode (op : Σ ins outs, Op ins outs) : Op.decode (Op.encode 
   case smoothAbs => exact Op.Wire.decode_encode_smoothAbs ..
   case safeDiv => exact Op.Wire.decode_encode_safeDiv ..
   case pow => exact Op.Wire.decode_encode_pow ..
+  case powValue => exact Op.Wire.decode_encode_powValue ..
   case cumprod => exact Op.Wire.decode_encode_cumprod ..
   case cummax => exact Op.Wire.decode_encode_cummax ..
   case cummin => exact Op.Wire.decode_encode_cummin ..

@@ -62,7 +62,7 @@ about the exact tape and spec models at the given carrier. Neither says anything
 rounding, compiled code or CUDA.
 
 The local rules carry certificates over `ℝ`, which `@[op_cert]` registers and `#op_certs` lists. The
-operators with a fixed number of inputs have 178 value inputs, and the gradient of each has a
+operators with a fixed number of inputs have 180 value inputs, and the gradient of each has a
 `derivative` certificate. At the points its hypotheses name, the stored backward is the adjoint of
 the Fréchet derivative of the forward in all the value inputs together. For `igamma` and `igammac`
 (`Op.special`) the hypotheses hold where both arguments are positive, for `betainc` at `(a, b, x)`

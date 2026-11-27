@@ -2330,4 +2330,38 @@ extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_scatter_add_rows(
   });
 }
 
+// The table index of each device-resident position. `fmax` reads a NaN as 0, and the positions
+// are clamped to the table before the conversion, which truncates. The clamp is repeated on the
+// integer index: above 2^24 entries `size - 1` rounds up to `size` in binary32.
+Tensor table_positions(const Tensor& positions, uint32_t size) {
+  require(positions.scalar_type() == kFloat || positions.scalar_type() == kDouble,
+          "LibTorch kernels: positions must be a binary32 or binary64 buffer");
+  const double last = static_cast<double>(size) - 1.0;
+  const auto clamped = aten<"fmin">(aten<"fmax">(positions, scalar_for(positions, 0.0)),
+                                    scalar_for(positions, last));
+  const auto index = aten<"to.dtype">(clamped, kLong);
+  return aten<"minimum">(index, scalar_for(index, static_cast<int64_t>(size) - 1));
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_gather_at(
+    b_lean_obj_arg table, uint32_t size, b_lean_obj_arg positions, uint32_t count) {
+  return invoke([&] {
+    require(size > 0, "LibTorch kernels: gather_at needs a nonempty table");
+    const auto index = table_positions(checked(positions, {count}), size);
+    return box(aten<"index_select">(checked(table, {size}), 0, index));
+  });
+}
+
+extern "C" LEAN_EXPORT lean_obj_res torchlean_cuda_buffer_scatter_add_at(
+    uint32_t size, b_lean_obj_arg positions, b_lean_obj_arg values, uint32_t count) {
+  return invoke([&] {
+    require(size > 0, "LibTorch kernels: scatter_add_at needs a nonempty table");
+    const auto index = table_positions(checked(positions, {count}), size);
+    const auto source = checked(values, {count});
+    auto result = aten<"zeros">({static_cast<int64_t>(size)}, options(source));
+    aten<"scatter_add_">(result, 0, index, source);
+    return box(result);
+  });
+}
+
 }  // namespace torchlean::operators

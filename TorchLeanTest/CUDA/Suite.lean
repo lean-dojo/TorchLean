@@ -16,6 +16,7 @@ public import TorchLeanTest.CUDA.FFT
 public import TorchLeanTest.CUDA.Stress
 public import TorchLeanTest.CUDA.ReduceTree
 public import TorchLeanTest.CUDA.Indexing
+public import TorchLeanTest.CUDA.TableLookup
 public import TorchLeanTest.CUDA.Graph
 public import TorchLeanTest.CUDA.Trainer
 
@@ -46,6 +47,7 @@ def run : IO Unit := do
   Stress.run
   ReduceTree.run
   Indexing.run
+  TableLookup.run
   Graph.run
   Trainer.run
   IO.println "=== CUDA checks completed ==="

@@ -446,6 +446,10 @@ opaque bernoulliMaskIO (n : UInt32) (keepProb : Float) (key : UInt64)
 @[never_extract, extern "torchlean_cuda_buffer_abs"]
 opaque abs (b : @& Buffer) : Buffer
 
+/-- Elementwise floor (`aten::floor`): the largest integral value not above each element. -/
+@[never_extract, extern "torchlean_cuda_buffer_floor"]
+opaque floor (b : @& Buffer) : Buffer
+
 /-- Backward for `abs`: `dx = Context.sign x * dLdy`, where `Context.sign x` is `x` itself at a
 zero or NaN. -/
 @[never_extract, extern "torchlean_cuda_buffer_abs_bwd"]

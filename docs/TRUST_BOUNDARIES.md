@@ -498,12 +498,14 @@ operator headers declare it.
   `scatter_add_(Tensor(a!) self, int dim, Tensor index, Tensor src) -> Tensor(a!)`,
   `masked_fill.Tensor(Tensor self, Tensor mask, Tensor value) -> Tensor`, `where.self(Tensor
   condition, Tensor self, Tensor other) -> Tensor`: selection by index tensors and masks, for row
-  gathers and scatters, with accumulation for repeated rows, one-hot rows, masked fills and the
-  elementwise choice between two tensors.
+  gathers and scatters, with accumulation for repeated rows, the buffer API's `gatherAt` and
+  `scatterAddAt` at positions held on the device, one-hot rows, masked fills and the elementwise
+  choice between two tensors.
 - `abs(Tensor self) -> Tensor`, `cos(Tensor self) -> Tensor`, `exp(Tensor self) -> Tensor`,
-  `expm1(Tensor self) -> Tensor`, `log(Tensor self) -> Tensor`, `log1p(Tensor self) -> Tensor`,
-  `neg(Tensor self) -> Tensor`, `reciprocal(Tensor self) -> Tensor`, `sin(Tensor self) -> Tensor`,
-  `sqrt(Tensor self) -> Tensor`, `square(Tensor self) -> Tensor`, `tanh(Tensor self) -> Tensor`:
+  `expm1(Tensor self) -> Tensor`, `floor(Tensor self) -> Tensor`, `log(Tensor self) -> Tensor`,
+  `log1p(Tensor self) -> Tensor`, `neg(Tensor self) -> Tensor`, `reciprocal(Tensor self) -> Tensor`,
+  `sin(Tensor self) -> Tensor`, `sqrt(Tensor self) -> Tensor`, `square(Tensor self) -> Tensor`,
+  `tanh(Tensor self) -> Tensor`:
   unary elementwise functions, both the buffer API's elementwise operations and parts of the
   activations, losses, normalizations and optimizer steps the bridge composes.
 - `mul.Tensor(Tensor self, Tensor other) -> Tensor`, `mul_.Tensor(Tensor(a!) self, Tensor other) ->

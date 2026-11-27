@@ -298,6 +298,9 @@ UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_adam_step,
   UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_##NAME, b_lean_obj_arg x)
 #define TORCHLEAN_BINARY_EXPORT(NAME, EXPRESSION) \
   UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_##NAME, b_lean_obj_arg a, b_lean_obj_arg b)
+#define TORCHLEAN_TERNARY_EXPORT(NAME, EXPRESSION) \
+  UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_##NAME, \
+      b_lean_obj_arg condition, b_lean_obj_arg a, b_lean_obj_arg b)
 #define TORCHLEAN_UNARY_SCALAR_EXPORT(NAME, EXPRESSION) \
   UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_##NAME, b_lean_obj_arg x, double scalar)
 #define TORCHLEAN_BINARY_SCALAR_EXPORT(NAME, EXPRESSION) \
@@ -311,6 +314,7 @@ UNAVAILABLE(lean_obj_res, torchlean_cuda_buffer_adam_step,
 #undef TORCHLEAN_VJP_EXPORT
 #undef TORCHLEAN_BINARY_SCALAR_EXPORT
 #undef TORCHLEAN_UNARY_SCALAR_EXPORT
+#undef TORCHLEAN_TERNARY_EXPORT
 #undef TORCHLEAN_BINARY_EXPORT
 #undef TORCHLEAN_UNARY_EXPORT
 #undef UNAVAILABLE

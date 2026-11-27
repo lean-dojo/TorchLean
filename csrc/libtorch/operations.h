@@ -31,6 +31,16 @@ TORCHLEAN_BINARY_EXPORT(sub, sub(a, b))
 TORCHLEAN_BINARY_EXPORT(mul, aten<"mul.Tensor">(a, b))
 TORCHLEAN_BINARY_EXPORT(mask, aten<"where.self">(aten<"ne.Tensor">(b, scalar_for(b, 0.0)), a,
                                                  scalar_for(a, 0.0)))
+// aten::pow of two tensors, the dtype's C `pow` at each pair of entries.
+TORCHLEAN_BINARY_EXPORT(pow, aten<"pow.Tensor_Tensor">(a, b))
+// Ordered comparisons as 1 or 0 in the operands' dtype: 0 where an operand is a NaN.
+TORCHLEAN_BINARY_EXPORT(lt, indicator(aten<"lt.Tensor">(a, b), a))
+TORCHLEAN_BINARY_EXPORT(le, indicator(aten<"le.Tensor">(a, b), a))
+TORCHLEAN_BINARY_EXPORT(gt, indicator(aten<"gt.Tensor">(a, b), a))
+TORCHLEAN_BINARY_EXPORT(ge, indicator(aten<"ge.Tensor">(a, b), a))
+// `a` where the condition is nonzero, a NaN included as in `mask`, and `b` elsewhere.
+TORCHLEAN_TERNARY_EXPORT(select,
+    aten<"where.self">(aten<"ne.Tensor">(condition, scalar_for(condition, 0.0)), a, b))
 
 TORCHLEAN_UNARY_SCALAR_EXPORT(scale, aten<"mul.Tensor">(x, scalar_for(x, scalar)))
 TORCHLEAN_BINARY_SCALAR_EXPORT(axpy, axpy(a, b, scalar))

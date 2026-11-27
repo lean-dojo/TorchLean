@@ -676,6 +676,11 @@ void same_size(const Tensor& a, const Tensor& b, const char* message) {
   require(a.scalar_type() == b.scalar_type(), "LibTorch buffer operation: dtype mismatch");
 }
 
+// A Boolean tensor as 1 where it holds and 0 elsewhere, in the dtype of `like`.
+Tensor indicator(const Tensor& holds, const Tensor& like) {
+  return aten<"where.self">(holds, scalar_for(like, 1.0), scalar_for(like, 0.0));
+}
+
 Tensor selected_sqrt(const Tensor& x) {
   // Ordered comparison preserves NaN and selects positive zero for both signed zeros.
   return aten<"sqrt">(
@@ -1088,6 +1093,10 @@ lean_obj_res call_buffer(Function&& function, Args... args) {
 #define TORCHLEAN_BINARY_EXPORT(NAME, EXPRESSION) \
   TORCHLEAN_BUFFER_EXPORT(NAME, (b_lean_obj_arg a, b_lean_obj_arg b), \
       (a, b), ([](const auto& a, const auto& b) { return EXPRESSION; }))
+#define TORCHLEAN_TERNARY_EXPORT(NAME, EXPRESSION) \
+  TORCHLEAN_BUFFER_EXPORT(NAME, \
+      (b_lean_obj_arg condition, b_lean_obj_arg a, b_lean_obj_arg b), (condition, a, b), \
+      ([](const auto& condition, const auto& a, const auto& b) { return EXPRESSION; }))
 #define TORCHLEAN_UNARY_SCALAR_EXPORT(NAME, EXPRESSION) \
   TORCHLEAN_BUFFER_EXPORT(NAME, (b_lean_obj_arg x, double scalar), \
       (x, scalar), ([](const auto& x, double scalar) { return EXPRESSION; }))
@@ -1104,6 +1113,7 @@ lean_obj_res call_buffer(Function&& function, Args... args) {
 #undef TORCHLEAN_VJP_EXPORT
 #undef TORCHLEAN_BINARY_SCALAR_EXPORT
 #undef TORCHLEAN_UNARY_SCALAR_EXPORT
+#undef TORCHLEAN_TERNARY_EXPORT
 #undef TORCHLEAN_BINARY_EXPORT
 #undef TORCHLEAN_UNARY_EXPORT
 #undef TORCHLEAN_ARGUMENTS

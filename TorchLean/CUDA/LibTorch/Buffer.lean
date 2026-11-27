@@ -559,6 +559,42 @@ NaN, `a` where both are, `-0` below `+0`. -/
 @[never_extract, extern "torchlean_cuda_buffer_fmin"]
 opaque fmin (a b : @& Buffer) : Buffer
 
+/-- Pointwise power `a ^ b` of two equal-length buffers, `Tensor.pow` at `Float32` and `Float`: the
+dtype's C `pow` (`aten::pow`), so `x ^ 0` and `1 ^ y` are `1` at a NaN `x` or `y` too. -/
+@[never_extract, extern "torchlean_cuda_buffer_pow"]
+opaque pow (a b : @& Buffer) : Buffer
+
+/-- Whether `a < b` at each entry, `Tensor.lt` read as a scalar (`Op.cast .bool`): `1` where it
+holds and `0` elsewhere, in the operands' dtype. A NaN operand gives `0`. -/
+@[never_extract, extern "torchlean_cuda_buffer_lt"]
+opaque lt (a b : @& Buffer) : Buffer
+
+/-- Whether `a ≤ b` at each entry, as `1` or `0` in the operands' dtype (`Tensor.le`). A NaN
+operand gives `0`, and `-0` and `+0` compare equal. -/
+@[never_extract, extern "torchlean_cuda_buffer_le"]
+opaque le (a b : @& Buffer) : Buffer
+
+/-- Whether `a > b` at each entry, as `1` or `0` in the operands' dtype (`Tensor.gt`). A NaN
+operand gives `0`. -/
+@[never_extract, extern "torchlean_cuda_buffer_gt"]
+opaque gt (a b : @& Buffer) : Buffer
+
+/-- Whether `a ≥ b` at each entry, as `1` or `0` in the operands' dtype (`Tensor.ge`). A NaN
+operand gives `0`, and `-0` and `+0` compare equal. -/
+@[never_extract, extern "torchlean_cuda_buffer_ge"]
+opaque ge (a b : @& Buffer) : Buffer
+
+/--
+PyTorch's `where` on three equal-length buffers of one dtype, `Tensor.select` with the condition
+read as `condition ≠ 0`: the entry of `a` where `condition` is nonzero and that of `b` elsewhere,
+bit for bit up to a NaN's payload.
+
+As for `mask`, a NaN condition is nonzero and selects `a`, and `-0` selects `b`. The entry that is
+not selected has no effect, a NaN or an infinity included.
+-/
+@[never_extract, extern "torchlean_cuda_buffer_select"]
+opaque select (condition a b : @& Buffer) : Buffer
+
 /-- Pointwise division of two equal-length CUDA buffers. -/
 @[never_extract, extern "torchlean_cuda_buffer_div"]
 private opaque divNative (a b : @& Buffer) : Buffer

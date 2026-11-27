@@ -507,15 +507,16 @@ operator headers declare it.
   unary elementwise functions, both the buffer API's elementwise operations and parts of the
   activations, losses, normalizations and optimizer steps the bridge composes.
 - `mul.Tensor(Tensor self, Tensor other) -> Tensor`, `mul_.Tensor(Tensor(a!) self, Tensor other) ->
-  Tensor(a!)`, `div.Tensor(Tensor self, Tensor other) -> Tensor`, `maximum(Tensor self, Tensor
-  other) -> Tensor`, `maximum.out(Tensor self, Tensor other, *, Tensor(a!) out) -> Tensor(a!)`,
-  `minimum(Tensor self, Tensor other) -> Tensor`, `minimum.out(Tensor self, Tensor other, *,
-  Tensor(a!) out) -> Tensor(a!)`, `fmax(Tensor self, Tensor other) -> Tensor`, `fmin(Tensor self,
-  Tensor other) -> Tensor`, `copysign.Tensor(Tensor self, Tensor other) -> Tensor`,
-  `nextafter(Tensor self, Tensor other) -> Tensor`, `frexp.Tensor(Tensor self) -> (Tensor mantissa,
-  Tensor exponent)`, `ldexp.Tensor(Tensor self, Tensor other) -> Tensor`: elementwise arithmetic of
-  two tensors, a scalar operand being a 0-dim CPU tensor as a `Scalar` overload's wrapped number is,
-  with in-place and `out=` forms that update fresh workspaces, and `frexp`, `ldexp`, `nextafter` and
+  Tensor(a!)`, `div.Tensor(Tensor self, Tensor other) -> Tensor`, `pow.Tensor_Tensor(Tensor self,
+  Tensor exponent) -> Tensor`, `maximum(Tensor self, Tensor other) -> Tensor`, `maximum.out(Tensor
+  self, Tensor other, *, Tensor(a!) out) -> Tensor(a!)`, `minimum(Tensor self, Tensor other) ->
+  Tensor`, `minimum.out(Tensor self, Tensor other, *, Tensor(a!) out) -> Tensor(a!)`, `fmax(Tensor
+  self, Tensor other) -> Tensor`, `fmin(Tensor self, Tensor other) -> Tensor`,
+  `copysign.Tensor(Tensor self, Tensor other) -> Tensor`, `nextafter(Tensor self, Tensor other) ->
+  Tensor`, `frexp.Tensor(Tensor self) -> (Tensor mantissa, Tensor exponent)`, `ldexp.Tensor(Tensor
+  self, Tensor other) -> Tensor`: elementwise arithmetic of two tensors, a scalar operand being a
+  0-dim CPU tensor as a `Scalar` overload's wrapped number is, with in-place and `out=` forms that
+  update fresh workspaces, `pow` for the buffer API's power, and `frexp`, `ldexp`, `nextafter` and
   `copysign` for exact power-of-two scaling and the last-place and sign repairs of the optimizer and
   activation rules.
 - `eq.Tensor(Tensor self, Tensor other) -> Tensor`, `ge.Tensor(Tensor self, Tensor other) ->
@@ -525,7 +526,8 @@ operator headers declare it.
   `isnan(Tensor self) -> Tensor`, `signbit(Tensor self) -> Tensor`, `logical_and(Tensor self, Tensor
   other) -> Tensor`, `logical_not(Tensor self) -> Tensor`, `logical_or(Tensor self, Tensor other) ->
   Tensor`: comparisons, IEEE 754 class tests and Boolean logic, for the masks of piecewise rules and
-  their derivatives and for NaN, infinities and signed zeros.
+  their derivatives, for NaN, infinities and signed zeros, and for the buffer API's `lt`, `le`,
+  `gt`, `ge` and `select`.
 - `bitwise_and.Tensor(Tensor self, Tensor other) -> Tensor`, `bitwise_right_shift.Tensor(Tensor
   self, Tensor other) -> Tensor`, `bitwise_xor.Tensor(Tensor self, Tensor other) -> Tensor`: the
   64-bit SplitMix mixing behind the seeded random operations (`uniform`, `bernoulli` and `dropout`).

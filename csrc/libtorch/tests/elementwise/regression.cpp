@@ -38,6 +38,7 @@ DECLARE_UNARY(sqrt)
 DECLARE_UNARY(exp)
 DECLARE_UNARY(sin)
 DECLARE_UNARY(cos)
+DECLARE_UNARY(floor)
 DECLARE_UNARY(log)
 DECLARE_UNARY(inv)
 DECLARE_UNARY(neg)
@@ -79,6 +80,10 @@ extern "C" lean_obj_res torchlean_cuda_buffer_max_bwd(
     b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg);
 extern "C" lean_obj_res torchlean_cuda_buffer_min_bwd(
     b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg);
+extern "C" lean_obj_res torchlean_cuda_buffer_gather_at(
+    b_lean_obj_arg, uint32_t, b_lean_obj_arg, uint32_t);
+extern "C" lean_obj_res torchlean_cuda_buffer_scatter_add_at(
+    uint32_t, b_lean_obj_arg, b_lean_obj_arg, uint32_t);
 extern "C" lean_obj_res torchlean_cuda_buffer_adam_step(
     b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg, b_lean_obj_arg,
     double, double, double, double, double, double, double, b_lean_obj_arg, double);
@@ -703,6 +708,7 @@ void no_autograd_regressions() {
     };
 #define CHECK_UNARY(name) run(#name, [&] { return torchlean_cuda_buffer_##name(x); });
     CHECK_UNARY(abs)
+    CHECK_UNARY(floor)
     CHECK_UNARY(sqrt)
     CHECK_UNARY(exp)
     CHECK_UNARY(sin)
@@ -742,10 +748,12 @@ void no_autograd_regressions() {
     run("clamp_bwd", [&] { return torchlean_cuda_buffer_clamp_bwd(x, g, 0.0, 1.0); });
     run("max_bwd", [&] { return torchlean_cuda_buffer_max_bwd(x, y, g); }, 2);
     run("min_bwd", [&] { return torchlean_cuda_buffer_min_bwd(x, y, g); }, 2);
+    run("gather_at", [&] { return torchlean_cuda_buffer_gather_at(x, 2, x, 2); });
+    run("scatter_add_at", [&] { return torchlean_cuda_buffer_scatter_add_at(2, x, y, 2); });
     run("adam_step", [&] { return adam(x, g, x, y, {1, 0, 1, 0, 1, 1, 0, 0, 1}); }, 3);
     const Object copied(on_device({0x3f800000}));
     run("copy_and_release", [&] { return torchlean_cuda_buffer_copy_and_release(copied); });
-    check(export_count == 37, "noAutograd export coverage changed");
+    check(export_count == 40, "noAutograd export coverage changed");
     check(!x.tensor().requires_grad() && !y.tensor().requires_grad() && !g.tensor().requires_grad(),
           "export mutated an input's requires_grad flag");
     const auto old_deterministic = get_setting(kDeterministic);

@@ -363,6 +363,7 @@ private def opLines (id : Nat) (dtype : String) (literal : Nat → Option String
   | ⟨_, _, .hypot⟩ => pure (call "torch.hypot")
   | ⟨_, _, .copysign⟩ => pure (call "torch.copysign")
   | ⟨_, _, .pow⟩ => pure (call "torch.pow")
+  | ⟨_, _, .powValue⟩ => pure (call "torch.pow")
   | ⟨_, _, .div .none⟩ => pure (call "torch.div")
   | ⟨_, _, .div .trunc⟩ =>
       -- `rounding_mode='trunc'` truncates the rounded quotient, `10` at `(1, 0.1)`, where the

@@ -769,7 +769,7 @@ give each input half of the cotangent.
 
 For each fixed-arity operator over the reals, the registry contains a `derivative` certificate that
 covers all of that operator's value inputs. Across those operators (every operator except `cat` and
-`custom`), the arities total 178 value-input positions. Up to unfolding, each certificate states
+`custom`), the arities total 180 value-input positions. Up to unfolding, each certificate states
 `DerivCert f x δ v` for the operator's forward and stored backward, which `op_cert` checks on
 registration. The certificate holds at the points
 its hypotheses name, such as nonzero divisors for division, positive arguments for `igamma` and

@@ -483,6 +483,10 @@ inductive Op : List Port → List Port → Type where
   range checks. -/
   | pow {s : Shape} (e : Op.NumericElement := .scalar) :
       Op [e.port .value s, e.port .frozen s] [e.port .value s]
+  /-- The power `x ^ y` with the exponent a value, `torch.pow` of two tensors that both receive a
+  gradient: the forward map of `pow`, with the pullbacks of `Tensor.powBackward` to the base and
+  to the exponent. -/
+  | powValue {s : Shape} : Op [.value s, .value s] [.value s]
   /-- Cumulative product along `dim`. The pullback at an entry adds, over the prefixes that contain
   it, the upstream gradient at the prefix's last entry times the product of the prefix without the
   entry. The prefixes are multiplied in the order `order` (`Tensor.scanIn`), and the pullback and

@@ -34,7 +34,7 @@ namespace TorchLean.Coverage.Elementwise
   elementwise :=
     Op.abs, Op.sqrt, Op.neg, Op.add, Op.mul, Op.square, Op.reciprocal, Op.sub, Op.div, Op.cumsum,
     Op.scale, Op.rsqrt, Op.hypot, Op.lerp, Op.addcmul, Op.addcdiv, Op.safeInv, Op.smoothAbs,
-    Op.safeDiv, Op.pow, Op.detach, Op.cbrt, Op.fma, Op.cumsum (order := .pairwise),
+    Op.safeDiv, Op.pow, Op.powValue, Op.detach, Op.cbrt, Op.fma, Op.cumsum (order := .pairwise),
     Op.cumsum (order := .blocked ?width), Op.cumsum (order := .ofTree ?tree)
 
 end TorchLean.Coverage.Elementwise

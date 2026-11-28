@@ -828,6 +828,18 @@ theorem rule?_pow [Op.Capabilities α] {s : Shape} :
               (Tensor.Rep.getFlat dxs.1 index), ()) } :=
   rfl
 
+/-- The rule of `Op.powValue`. -/
+theorem rule?_powValue [Op.Capabilities α] {s : Shape} :
+    (Op.powValue (s := s)).rule? (α := α) = some
+      { forward := fun xs => (Tensor.pow xs.1 xs.2.1, ())
+        backward := fun xs g =>
+          let d := Tensor.powBackward xs.1 xs.2.1 g.1
+          (d.1, d.2, ())
+        jvp? := some fun xs dxs =>
+          ((Tensor.powBackward xs.1 xs.2.1 dxs.1).1 +
+            (Tensor.powBackward xs.1 xs.2.1 dxs.2.1).2, ()) } :=
+  rfl
+
 /-- The rule of `Op.pow` at integer words: PyTorch's integer power. -/
 theorem rule?_pow_integer [Op.Capabilities α] {signed : Bool} {width : Nat} {s : Shape} :
     (Op.pow (s := s) (.integer signed width)).rule? (α := α) = some

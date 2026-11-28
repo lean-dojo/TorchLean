@@ -1673,6 +1673,14 @@ def Op.rule? [Op.Capabilities α] :
           (d.1.1 * u.1 - d.1.2 * u.2 + (d.2.1 * v.1 - d.2.2 * v.2),
             d.1.2 * u.1 + d.1.1 * u.2 + (d.2.2 * v.1 + d.2.1 * v.2))), ()) }
     | none => none
+  | _, _, .powValue => some
+      { forward := fun xs => (Tensor.pow xs.1 xs.2.1, ())
+        backward := fun xs g =>
+          let d := Tensor.powBackward xs.1 xs.2.1 g.1
+          (d.1, d.2, ())
+        jvp? := some fun xs dxs =>
+          ((Tensor.powBackward xs.1 xs.2.1 dxs.1).1 +
+            (Tensor.powBackward xs.1 xs.2.1 dxs.2.1).2, ()) }
   | _, _, .custom .. => none
 
 end TorchLean

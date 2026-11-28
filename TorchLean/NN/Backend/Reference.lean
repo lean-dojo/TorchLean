@@ -77,7 +77,8 @@ def reduction {ins outs : List Port} : Op ins outs → ReductionPolicy
   | .logicalXor | .bitwiseAnd | .bitwiseOr | .bitwiseXor | .bitwiseNot | .bitwiseLeftShift
   | .shiftRightArithmetic | .shiftRightLogical | .populationCount | .countLeadingZeros | .mulhi
   | .bitcast .. | .cbrt | .special .. | .nextafter | .frexp | .fma | .complex .. | .complexPow
-  | .argmax .. | .argmin .. | .cast .. | .encodeIndex .. | .decodeIndex .. => .notApplicable
+  | .powValue | .argmax .. | .argmin .. | .cast .. | .encodeIndex .. | .decodeIndex .. =>
+      .notApplicable
   -- Moves and selections of entries, random sources and masks add no terms.
   | .sort .. | .topk .. | .randUniform .. | .randn .. | .reshape .. | .permute .. | .flip ..
   | .indices .. | .slice .. | .indexAt .. | .cat .. | .topKMask .. | .bernoulliMask ..

@@ -484,6 +484,7 @@ def Op.encode : (Σ ins outs, Op ins outs) → Op.Wire
   | ⟨_, _, @Op.smoothAbs s⟩ => ⟨formatVersion, "smoothAbs", [.shape s]⟩
   | ⟨_, _, @Op.safeDiv s⟩ => ⟨formatVersion, "safeDiv", [.shape s]⟩
   | ⟨_, _, @Op.pow s e⟩ => ⟨formatVersion, "pow", [.shape s, .element e.toElement]⟩
+  | ⟨_, _, @Op.powValue s⟩ => ⟨formatVersion, "powValue", [.shape s]⟩
   | ⟨_, _, @Op.cumprod s dim order⟩ =>
       ⟨formatVersion, "cumprod", [.shape s, .nat dim.val, .order order]⟩
   | ⟨_, _, @Op.cummax s dim order⟩ =>
@@ -753,6 +754,7 @@ def Op.decode (wire : Op.Wire) : Option (Σ ins outs, Op ins outs) :=
         let e ← e'.numeric?
         pure ⟨_, _, Op.remainder (s := s) e⟩
     | "hypot", [.shape s] => some ⟨_, _, Op.hypot (s := s)⟩
+    | "powValue", [.shape s] => some ⟨_, _, Op.powValue (s := s)⟩
     | "copysign", [.shape s] => some ⟨_, _, Op.copysign (s := s)⟩
     | "fmax", [.shape s] => some ⟨_, _, Op.fmax (s := s)⟩
     | "fmin", [.shape s] => some ⟨_, _, Op.fmin (s := s)⟩

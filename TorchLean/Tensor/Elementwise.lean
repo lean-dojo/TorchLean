@@ -666,6 +666,15 @@ def hypotBackward (a b g : Tensor α s) : Tensor α s × Tensor α s :=
   (zipWith3 (fun a b g => Numeric.hypotBackward a (Context.hypot a b) g) a b g,
     zipWith3 (fun a b g => Numeric.hypotBackward b (Context.hypot a b) g) a b g)
 
+/-- The pullbacks of `a ^ b` to both operands. The base receives `Numeric.powerBackward`, the rule
+of `Op.pow`. The exponent receives `g (a ^ b log a)`, and a zero where the base is zero and the
+exponent is at least zero, as PyTorch's `pow_backward_exponent`. -/
+def powBackward (a b g : Tensor α s) : Tensor α s × Tensor α s :=
+  (zipWith3 (fun a b g => Numeric.powerBackward Context.isZero a b g) a b g,
+    zipWith3 (fun a b g =>
+      if Context.isZero a && (Context.gtBool b 0 || Context.isZero b) then 0
+      else g * (a ^ b * MathFunctions.log a)) a b g)
+
 /-- Whether the entries are equal (`torch.eq`). In IEEE formats a NaN equals nothing, itself
 included, and `-0` equals `+0`. -/
 def eq (x y : Tensor α s) : Tensor Bool s := zipWith (· == ·) x y

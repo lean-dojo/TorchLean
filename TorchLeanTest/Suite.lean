@@ -61,7 +61,12 @@ def usage : String :=
 /-- Run the curated tests, or the one CUDA memory probe that `TORCHLEAN_LIBTORCH_MEMORY_PROBE`
 names. -/
 def run : IO Unit := do
+  -- `TORCHLEAN_REQUIRE_CUDA=1` means that a GPU ran the suite, which the host bridge does not
+  -- satisfy. `TORCHLEAN_REQUIRE_NATIVE=1` means that the bridge ran it on the device it selected,
+  -- the check for a CPU-only SDK, which a build without LibTorch fails.
   if (← IO.getEnv "TORCHLEAN_REQUIRE_CUDA") == some "1" then
+    TorchLean.LibTorch.Buffer.requireCudaDevice
+  if (← IO.getEnv "TORCHLEAN_REQUIRE_NATIVE") == some "1" then
     TorchLean.LibTorch.Buffer.requireNativeRuntime
   -- Fresh subprocesses isolate native memory accounting and restore allocator limits on exit.
   -- These probes are selected before the ordinary suite to avoid unrelated live GPU owners.
@@ -103,13 +108,25 @@ def run : IO Unit := do
         TorchLean.Test.Tree.runUnlinked
         IO.println "  CUDA kernels: skipped (LibTorch not linked)"
     | .nativeAvailable =>
+        -- The selected device agrees with the visible devices and with the request.
+        let kind ← TorchLean.LibTorch.deviceKind
+        let count ← TorchLean.LibTorch.deviceCount
+        let requested ← IO.getEnv "TORCHLEAN_LIBTORCH_DEVICE"
+        if kind == .cuda && count == 0 then
+          throw <| IO.userError "LibTorch selected a CUDA device while none is visible"
+        if requested == some "cpu" && kind != .host then
+          throw <| IO.userError "TORCHLEAN_LIBTORCH_DEVICE=cpu did not select the host"
+        if requested == some "cuda" && kind != .cuda then
+          throw <| IO.userError "TORCHLEAN_LIBTORCH_DEVICE=cuda did not select a CUDA device"
+        IO.println s!"  LibTorch device: {match kind with | .cuda => "cuda" | .host => "host"}"
         TorchLean.Test.MoE.run .cuda
         TorchLean.Test.Scheduler.run .cuda
-        TorchLean.Test.KernelGradient.run .cuda
+        if kind == .cuda then TorchLean.Test.KernelGradient.run .cuda
+        else TorchLean.Test.KernelGradient.checkHostRefusal
         TorchLean.Test.CUDA.run
     | .nativeUnavailable =>
         throw <| IO.userError
-          "TorchLean was built with CUDA, but no usable CUDA device is visible"
+          "TorchLean was built with LibTorch, but no usable device is selected"
     IO.println "== TorchLean: all curated tests passed =="
 
 /-- Run the suite without arguments, print `usage` for `--help` or `-h`, and fail on any other

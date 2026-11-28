@@ -995,6 +995,28 @@ private def checkCustomAutograd : IO Unit := do
   checkConfiguredAutograd
   checkRecordingBuffers
 
+/-- Fails unless `action` fails through `IO` with a message containing `needle`. -/
+private def expectRefusal (label needle : String) (action : IO Unit) : IO Unit := do
+  match ← action.toBaseIO with
+  | .ok _ => throw <| IO.userError s!"{label}: ran on the host bridge"
+  | .error e =>
+    unless (toString e).contains needle do
+      throw <| IO.userError s!"{label}: unexpected refusal: {e}"
+
+/-- On the host bridge, a generated custom operation and a configured-binary recording fail
+through `IO`, naming what needs a CUDA device, instead of running or ending the process. -/
+private def checkHostRefusals : IO Unit := do
+  let input : Tensor Float32 [513] := Tensor.ofFn fun i => Float32.ofNat (i.val % 17) - 8
+  expectRefusal "custom binary32 operation"
+    "a generated kernel needs a CUDA device, but the bridge runs on the host" do
+    discard <| square.run input (device := .cuda)
+  let a : WideBinary := Rat.cast (1 + 1 / (2 ^ 100 : Nat) : Rat)
+  let calculate := fun (x : WideBinary) => -(x * x / (x + 1))
+  expectRefusal "configured binary recording"
+    "configured binary arithmetic needs a CUDA device, but the bridge runs on the host" do
+    discard <| calculate.run (Tensor.full [1] a) (device := .cuda) (grad := true)
+  IO.println "  host bridge: generated and configured-binary computations refused"
+
 /-- Whether `got` has the bits of `expected`, any NaN matching a NaN. -/
 private def sameBits (got expected : Array Float) : Bool :=
   got.size == expected.size &&
@@ -1051,8 +1073,17 @@ GELU, and the fused AdamW step with its staged computation. -/
   checkScaledProductExp
   checkSelectionPullbacks
   checkHuber
-  checkCustomComputations
-  checkCustomAutograd
+  if (← LibTorch.deviceKind) == .cuda then
+    checkCustomComputations
+    checkCustomAutograd
+  else
+    -- Generated kernels need CUDA. The recordings of native-precision scalar code and the
+    -- resident-buffer checks need none, and run on the host too.
+    checkHostRefusals
+    checkRecordedRecurrence 0
+    checkRecordedRecurrence 3
+    checkNativeAutograd
+    checkRecordingBuffers
   checkDropout
 
   let s : Shape := [5]

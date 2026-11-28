@@ -105,8 +105,19 @@ TORCHLEAN_REQUIRE_CUDA=1 scripts/lake.sh -Kcuda=true test
 scripts/lake.sh -Kcuda=true lint
 ```
 
-`TORCHLEAN_REQUIRE_CUDA=1` makes the test suite fail on a build without LibTorch or a host with no
-CUDA device, and the sanitizer wrapper sets it. GPU execution needs a supported visible device, and
+`TORCHLEAN_REQUIRE_CUDA=1` makes the test suite fail on a build without LibTorch, a host with no
+CUDA device, or the bridge on the host, and the sanitizer wrapper sets it.
+`TORCHLEAN_REQUIRE_NATIVE=1` makes it fail unless the bridge is linked and has selected a device,
+a CUDA device or the host: it is the check for a CPU-only SDK, with which the bridge runs on the
+host ([host device](../csrc/libtorch/README.md#host-device)):
+
+```bash
+export TORCHLEAN_LIBTORCH_HOME=/path/to/cpu/torch   # for example pip's CPU wheel, no toolkit
+TORCHLEAN_BUILD_PROFILE=libtorch-cpu scripts/lake.sh -Kcuda=true build nn_tests_suite
+TORCHLEAN_REQUIRE_NATIVE=1 TORCHLEAN_BUILD_PROFILE=libtorch-cpu scripts/lake.sh -Kcuda=true test
+```
+
+With a CUDA-enabled SDK, `TORCHLEAN_LIBTORCH_DEVICE=cpu` runs the same executable on the host. GPU execution needs a supported visible device, and
 SDK configuration may probe the visible devices too. TorchLean builds one shared C++ adapter and
 needs no `nvcc` itself, though the SDK's CMake package may require a matching CUDA development
 toolkit and run its compiler during discovery.

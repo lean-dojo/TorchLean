@@ -64,8 +64,10 @@
 #include <utility>
 #include <vector>
 
-#ifndef USE_CUDA
-#error "stable.h needs USE_CUDA: the bridge uses torch's CUDA device guard and stream shims"
+// USE_CUDA declares torch's CUDA device guard and stream shims, which only a CUDA-enabled SDK
+// exports. CMake defines it exactly when TORCHLEAN_LIBTORCH_CUDA is 1.
+#if defined(USE_CUDA) != (TORCHLEAN_LIBTORCH_CUDA == 1)
+#error "stable.h needs USE_CUDA exactly for a CUDA-enabled SDK (TORCHLEAN_LIBTORCH_CUDA=1)"
 #endif
 static_assert(TORCH_FEATURE_VERSION >= TORCH_VERSION_2_13_0,
               "the LibTorch bridge targets the Stable ABI of torch 2.13 or later");
@@ -1038,6 +1040,7 @@ class no_grad {
   bool previous_;
 };
 
+#ifdef USE_CUDA
 /// `c10::cuda::CUDAGuard`: CUDA device `index` is current while it lives, then the previous one.
 class cuda_guard {
  public:
@@ -1056,5 +1059,6 @@ inline void* current_stream(std::int32_t index) {
   check(aoti_torch_get_current_cuda_stream(index, &stream));
   return stream;
 }
+#endif
 
 }  // namespace torchlean

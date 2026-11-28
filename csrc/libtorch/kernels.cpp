@@ -2,8 +2,12 @@
 // own architecture, and the driver loads it in the device's primary context, torch's context,
 // and launches it on torch's current stream. The device count, memory and synchronization the
 // bridge reports come from the driver too. No other file of the bridge calls the CUDA driver API
-// or NVRTC.
+// or NVRTC. A CPU-only SDK (TORCHLEAN_LIBTORCH_CUDA=0) compiles none of it: there are no CUDA
+// devices, and every generated kernel fails through `require_cuda`. On a CUDA-enabled SDK whose
+// bridge runs on the host, the kernels fail the same way, and the device queries read zero.
 #include "torchlean_libtorch.h"
+
+#if TORCHLEAN_LIBTORCH_CUDA
 #include "binary.h"
 
 #include <cuda.h>
@@ -141,6 +145,7 @@ int device_count() {
 }
 
 uint64_t memory_info(bool total) {
+  if (on_host()) return 0;
   size_t free_bytes = 0, total_bytes = 0;
   primary_context(device_index());
   check_driver(cuMemGetInfo(&free_bytes, &total_bytes));
@@ -148,12 +153,14 @@ uint64_t memory_info(bool total) {
 }
 
 void synchronize() {
+  if (on_host()) return;
   primary_context(device_index());
   check_driver(cuCtxSynchronize());
 }
 
 Tensor run_kernel(b_lean_obj_arg source, const std::vector<Tensor>& inputs, ScalarType scalar,
                   uint64_t count, uint64_t stride) {
+  require_cuda("a generated kernel");
   TORCHLEAN_CHECK(stride > 0 && stride <= INT64_MAX && count <= INT64_MAX / stride,
                   "kernel: invalid scalar width or output extent");
   TORCHLEAN_CHECK(count <= INT64_MAX, "kernel: output size exceeds signed tensor size range");
@@ -203,10 +210,12 @@ Tensor run_kernel(b_lean_obj_arg source, const std::vector<Tensor>& inputs, Scal
 }
 
 rows_kernel compile_rows(const std::string& source) {
+  require_cuda("a generated kernel");
   return compile_kernel(source);
 }
 
 void launch_rows(const rows_kernel& handle, std::vector<launch>& launches) {
+  require_cuda("a generated kernel");
   const auto* kernel = static_cast<const CompiledKernel*>(handle.get());
   constexpr uint64_t threads = 256;
   const int32_t index = device_index();
@@ -231,3 +240,37 @@ void launch_rows(const std::string& source, std::vector<launch>& launches) {
 }
 
 }  // namespace torchlean
+
+#else
+
+#include <stdexcept>
+
+namespace torchlean {
+namespace {
+
+[[noreturn]] void no_kernels() {
+  require_cuda("a generated kernel");
+  throw std::runtime_error("LibTorch: a generated kernel needs a CUDA-enabled SDK");
+}
+
+}  // namespace
+
+int device_count() { return 0; }
+
+uint64_t memory_info(bool) { return 0; }
+
+void synchronize() {}
+
+Tensor run_kernel(b_lean_obj_arg, const std::vector<Tensor>&, ScalarType, uint64_t, uint64_t) {
+  no_kernels();
+}
+
+rows_kernel compile_rows(const std::string&) { no_kernels(); }
+
+void launch_rows(const rows_kernel&, std::vector<launch>&) { no_kernels(); }
+
+void launch_rows(const std::string&, std::vector<launch>&) { no_kernels(); }
+
+}  // namespace torchlean
+
+#endif
